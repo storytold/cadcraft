@@ -22,7 +22,7 @@ this page is the local copy of the decision.
 ## Refreshing
 
 ```sh
-python3 ../craftrules/scripts/contributors.py .   # needs git, Python 3.11+, authenticated gh
+python3 ../../craftrules/scripts/contributors.py .   # needs git, Python 3.11+, authenticated gh
 ```
 
 Commit the updated `contributors/contributors.json`. Never hand-edit it: names come only from the
