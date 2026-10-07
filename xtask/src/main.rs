@@ -4,7 +4,6 @@
 //! invoked through `std::process::Command`.
 
 mod assets;
-mod contributors;
 mod ico;
 mod layers;
 mod parity;
@@ -26,7 +25,6 @@ commands:
                   show where test corpora live; --download fetches PngSuite into corpus/pngsuite
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
   parity          recompute the AutoCAD feature-parity summary in docs/parity.md
-  contributors    refresh contributors/commits.tsv and prs.tsv (git + gh)
   ico <out.ico> <in.png>...
                   pack square PNGs (<= 256 px) into a Windows .ico (see packaging/icons.sh)
 ";
@@ -44,7 +42,6 @@ fn main() -> ExitCode {
         Some("parity") => parity::run(&root()),
         Some("ico") => ico::run(&rest),
         Some("version") => version::run(&root(), &rest),
-        Some("contributors") => contributors::run_cmd(&root()),
         Some("-h" | "--help" | "help") | None => {
             print!("{USAGE}");
             Ok(())

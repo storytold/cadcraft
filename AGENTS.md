@@ -32,6 +32,7 @@ People trust CADCraft with their drawings; a crash loses their work. **This outr
 - **The UI is thin**: panels read engine state and act through `app.run(id, params)` / `app.start(id)` / `app.cmdline(text)`. Colours come from `theme::Tokens`.
 - **Rust only** (no handwritten JS/TS). **Never break wasm** (`cargo xtask wasm`).
 - **Quality gates** before every commit: `cargo xtask ci` (fmt, clippy -D warnings, tests, assets, layers, wasm). Commit after every feature arc that builds, and push to `main`.
+- **Contributor credits are compiled in.** About ▸ Contributors/Models come from `contributors/contributors.json`, baked into the binary by `crates/ui-egui/build.rs` (never read at run time). Regenerate it with `python3 ../craftrules/scripts/contributors.py .` and commit it; never hand-edit it. GitHub usernames only; display and real names only with consent recorded in craftrules `contributors/people.toml`. See `docs/contributors.md`.
 
 ## Running and looking at the app
 - `cargo run --release -p cadcraft -- --sample --control PORT` (sample drawing + control channel). Pick a free port; other crafting apps use control ports too.

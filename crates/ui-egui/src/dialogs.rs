@@ -92,8 +92,6 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
 fn about(ctx: &egui::Context, open: &mut bool) {
     let t = Tokens::get();
     let tab_id = egui::Id::new("about_tab");
-    let sort_id = egui::Id::new("about_sort");
-    let name_id = egui::Id::new("about_names");
     egui::Window::new("About CADCraft").open(open).default_size(vec2(640.0, 420.0)).collapsible(false).show(ctx, |ui| {
         let mut tab = ui.data_mut(|d| d.get_temp::<u8>(tab_id)).unwrap_or(0);
         ui.horizontal(|ui| {
@@ -106,77 +104,8 @@ fn about(ctx: &egui::Context, open: &mut bool) {
         ui.data_mut(|d| d.insert_temp(tab_id, tab));
         ui.separator();
         match tab {
-            1 => {
-                let mut names = ui.data_mut(|d| d.get_temp::<u8>(name_id)).unwrap_or(0);
-                ui.horizontal(|ui| {
-                    ui.label("Show:");
-                    for (i, l) in ["GitHub username", "Display name", "Real name"].iter().enumerate() {
-                        if ui.selectable_label(names == i as u8, *l).clicked() {
-                            names = i as u8;
-                        }
-                    }
-                });
-                ui.data_mut(|d| d.insert_temp(name_id, names));
-                let mut sort: (u8, bool) = ui.data_mut(|d| d.get_temp(sort_id)).unwrap_or((1, true));
-                let mut people = crate::about::people();
-                let name_of = |p: &crate::about::Person| match names {
-                    1 => p.display.clone().unwrap_or_else(|| format!("@{}", p.login)),
-                    2 => p.real.clone().unwrap_or_else(|| format!("@{}", p.login)),
-                    _ => format!("@{}", p.login),
-                };
-                people.sort_by(|a, b| {
-                    let o = match sort.0 {
-                        0 => name_of(a).trim_start_matches('@').to_lowercase().cmp(&name_of(b).trim_start_matches('@').to_lowercase()),
-                        1 => a.first.cmp(&b.first),
-                        2 => a.last.cmp(&b.last),
-                        3 => a.prs.cmp(&b.prs),
-                        4 => a.commits.cmp(&b.commits),
-                        5 => a.added.cmp(&b.added),
-                        _ => a.removed.cmp(&b.removed),
-                    };
-                    if sort.1 { o } else { o.reverse() }
-                });
-                egui::Grid::new("contributors").striped(true).num_columns(7).show(ui, |ui| {
-                    for (i, h) in ["Name", "First", "Last", "PRs", "Commits", "Added", "Removed"].iter().enumerate() {
-                        let arrow = if sort.0 == i as u8 { if sort.1 { " ▲" } else { " ▼" } } else { "" };
-                        if ui.button(RichText::new(format!("{h}{arrow}")).strong()).clicked() {
-                            sort = if sort.0 == i as u8 { (sort.0, !sort.1) } else { (i as u8, true) };
-                        }
-                    }
-                    ui.end_row();
-                    for p in &people {
-                        ui.hyperlink_to(name_of(p), format!("https://github.com/{}", p.login));
-                        ui.label(p.first.get(..10).unwrap_or(&p.first));
-                        ui.label(p.last.get(..10).unwrap_or(&p.last));
-                        ui.label(p.prs.to_string());
-                        ui.label(p.commits.to_string());
-                        ui.label(p.added.to_string());
-                        ui.label(p.removed.to_string());
-                        ui.end_row();
-                    }
-                });
-                ui.data_mut(|d| d.insert_temp(sort_id, sort));
-            }
-            2 => {
-                let (models, total) = crate::about::models();
-                let assisted: usize = models.iter().map(|m| m.commits).max().unwrap_or(0).max(1);
-                egui::Grid::new("models").striped(true).num_columns(7).show(ui, |ui| {
-                    for h in ["Company", "Model", "Version", "Commits", "% of assisted", "% of all", "Lines +/−"] {
-                        ui.label(RichText::new(h).strong());
-                    }
-                    ui.end_row();
-                    for m in &models {
-                        ui.label(&m.company);
-                        ui.label(&m.model);
-                        ui.label(&m.version);
-                        ui.label(m.commits.to_string());
-                        ui.label(format!("{:.0}%", 100.0 * m.commits as f64 / assisted as f64));
-                        ui.label(format!("{:.0}%", 100.0 * m.commits as f64 / total.max(1) as f64));
-                        ui.label(format!("+{} / −{}", m.added, m.removed));
-                        ui.end_row();
-                    }
-                });
-            }
+            1 => crate::credits::contributors_ui(ui),
+            2 => crate::credits::models_ui(ui),
             _ => {
                 ui.heading("CADCraft");
                 ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));

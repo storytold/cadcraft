@@ -1,6 +1,0 @@
-# Maps Co-Authored-By trailer names to AI models.
-id	company	model	version	trailer
-anthropic/claude-opus/5.5	Anthropic	Claude Opus	5.5	Claude Opus 5.5
-anthropic/claude-opus/5.5	Anthropic	Claude Opus	5.5	Claude Opus 5.5 (1M context)
-anthropic/claude-sonnet/5.5	Anthropic	Claude Sonnet	5.5	Claude Sonnet 5.5
-anthropic/claude-fable/5.1	Anthropic	Claude Fable	5.1	Claude Fable 5.1

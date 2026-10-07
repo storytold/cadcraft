@@ -8,11 +8,11 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
-pub mod about;
 pub mod canvas;
 pub mod chrome;
 pub mod cmdline;
 pub mod control;
+pub mod credits;
 pub mod dialogs;
 pub mod gpu;
 pub mod icons;

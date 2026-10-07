@@ -1,6 +1,0 @@
-sha	url	login	date	additions	deletions	pr	models
-7e4583b3406de501e48dce5e9accaade8b608e85	https://github.com/storytold/cadcraft/commit/7e4583b3406de501e48dce5e9accaade8b608e85	echelon	2026-10-07T02:15:47Z	7	0		
-70f0489e0ce753fdf46d03d59ea47f974bb0b26c	https://github.com/storytold/cadcraft/commit/70f0489e0ce753fdf46d03d59ea47f974bb0b26c	echelon	2026-10-07T05:22:25Z	30261	5		anthropic/claude-opus/5.5
-1565bfd5c70760fcdd007874f9fa4ba5e6658549	https://github.com/storytold/cadcraft/commit/1565bfd5c70760fcdd007874f9fa4ba5e6658549	echelon	2026-10-07T05:31:44Z	2191	44		anthropic/claude-opus/5.5
-125803d25823a1eb1f14ea46dfdb617d08bc27b8	https://github.com/storytold/cadcraft/commit/125803d25823a1eb1f14ea46dfdb617d08bc27b8	echelon	2026-10-07T05:43:22Z	236	6		anthropic/claude-opus/5.5
-e68e81a89ab7752cacd32acb0c93020b739b3624	https://github.com/storytold/cadcraft/commit/e68e81a89ab7752cacd32acb0c93020b739b3624	echelon	2026-10-07T05:50:51Z	1714	5		anthropic/claude-opus/5.5

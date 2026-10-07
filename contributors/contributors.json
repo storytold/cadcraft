@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "repo": "storytold/cadcraft",
+  "branch": "main",
+  "head": "14e143bfdd55fe9063ba7d87dbbc692e5c901063",
+  "head_date": "2026-10-07T18:45:23Z",
+  "commits": 18,
+  "unattributed_commits": 0,
+  "contributors": [
+    {
+      "login": "echelon",
+      "display_name": "Brandon Thomas",
+      "real_name": "Brandon Thomas",
+      "prs": 1,
+      "commits": 18,
+      "lines_added": 69334,
+      "lines_deleted": 2968,
+      "binary_added": 26,
+      "binary_deleted": 5,
+      "first_commit": "2026-10-06T00:15:47Z",
+      "last_commit": "2026-10-07T18:45:23Z"
+    }
+  ],
+  "models": [
+    {
+      "id": "anthropic/claude-opus/5.5",
+      "company": "Anthropic",
+      "model": "Claude Opus",
+      "version": "5.5",
+      "commits": 17,
+      "lines_added": 69327,
+      "lines_deleted": 2968
+    }
+  ]
+}
