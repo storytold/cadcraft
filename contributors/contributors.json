@@ -9,8 +9,8 @@
   "contributors": [
     {
       "login": "echelon",
-      "display_name": "Brandon Thomas",
-      "real_name": "Brandon Thomas",
+      "people_entry": true,
+      "github_name": null,
       "prs": 1,
       "commits": 18,
       "lines_added": 69334,
