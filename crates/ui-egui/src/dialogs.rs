@@ -155,6 +155,7 @@ fn commands(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
 }
 
 fn blocks(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
+    let mut pick = None;
     egui::Window::new("Blocks").open(open).default_size(vec2(320.0, 360.0)).show(ctx, |ui| {
         let Ok(d) = app.session.doc() else { return };
         let names: Vec<&String> = d.blocks.keys().filter(|k| !k.starts_with('*')).collect();
@@ -162,9 +163,26 @@ fn blocks(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             ui.label("No blocks defined in this drawing.");
         }
         for n in names {
-            ui.label(n);
+            if ui.button(n).on_hover_text("Insert this block").clicked() {
+                pick = Some(n.clone());
+            }
         }
     });
+    if let Some(n) = pick {
+        insert_block(app, &n);
+    }
+}
+
+/// Start INSERT with `name` already given at its block name prompt, so the next prompt asks for
+/// the insertion point.
+fn insert_block(app: &mut CadApp, name: &str) {
+    app.start("insert");
+    if !app.session.running.as_ref().is_some_and(|r| r.id == "insert") {
+        return;
+    }
+    if let Err(e) = app.session.input(cadcraft_engine::Input::Text(name.to_string())) {
+        app.session.echo(e.to_string());
+    }
 }
 
 /// The multiline text editor shown while MTEXT asks for its contents.
@@ -225,5 +243,52 @@ fn mtext_editor(app: &mut CadApp, ctx: &egui::Context) {
     } else if cancel {
         ctx.data_mut(|d| d.remove::<String>(id));
         app.session.cancel();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use cadcraft_engine::doc::EntityKind;
+    use cadcraft_engine::geom::Vec2;
+    use cadcraft_engine::{Input, Session};
+    use serde_json::json;
+
+    use crate::{CadApp, Services};
+
+    #[test]
+    fn picking_a_block_starts_insert_with_its_name() {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        let c = app.session.execute("circle", &json!({"center": [0, 0], "radius": 1})).unwrap();
+        let h = c["handle"].as_str().unwrap().to_string();
+        app.session.execute("block", &json!({"name": "Door 2", "base": [0, 0], "handles": [h], "keep": "delete"})).unwrap();
+        // A command already running is replaced, as when a command is typed.
+        app.start("line");
+
+        super::insert_block(&mut app, "Door 2");
+        assert!(app.session.running.as_ref().is_some_and(|r| r.id == "insert"));
+        assert_eq!(app.session.current_prompt().map(|p| p.message), Some("Specify insertion point".to_string()));
+
+        app.session.input(Input::Point(Vec2::new(5.0, 6.0))).unwrap();
+        app.session.input(Input::Enter).unwrap();
+        app.session.input(Input::Enter).unwrap();
+        assert!(app.session.running.is_none());
+        let d = app.session.doc().unwrap();
+        let mut ins = Vec::new();
+        for e in d.model.iter() {
+            if let EntityKind::Insert(i) = &e.kind {
+                ins.push(i.clone());
+            }
+        }
+        assert_eq!(ins.len(), 1);
+        assert_eq!(ins[0].block, "Door 2");
+        assert!((ins[0].insert.x - 5.0).abs() < 1e-9 && (ins[0].insert.y - 6.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn picking_a_missing_block_keeps_asking_for_a_name() {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        super::insert_block(&mut app, "Nope");
+        assert!(app.session.running.as_ref().is_some_and(|r| r.id == "insert"));
+        assert_eq!(app.session.current_prompt().map(|p| p.message), Some("Enter block name".to_string()));
     }
 }
