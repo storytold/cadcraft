@@ -60,11 +60,13 @@ fn services() -> Services {
                 .map(|p| p.to_string_lossy().to_string())
         })),
         pick_save: Some(Box::new(|name: &str| {
-            rfd::FileDialog::new()
-                .set_file_name(name)
-                .add_filter("Drawing (DXF)", &["dxf"])
-                .add_filter("SVG", &["svg"])
-                .add_filter("PNG", &["png"])
+            // The suggested name's type goes first: Windows adds the first filter's extension.
+            let mut filters = [("Drawing (DXF)", "dxf"), ("SVG", "svg"), ("PNG", "png"), ("PDF", "pdf")];
+            let lower = name.to_ascii_lowercase();
+            filters.sort_by_key(|(_, ext)| !lower.ends_with(&format!(".{ext}")));
+            filters
+                .iter()
+                .fold(rfd::FileDialog::new().set_file_name(name), |d, (label, ext)| d.add_filter(*label, &[*ext]))
                 .save_file()
                 .map(|p| p.to_string_lossy().to_string())
         })),
