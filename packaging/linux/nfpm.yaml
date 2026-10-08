@@ -17,9 +17,9 @@ vendor: Learning Machines LLC
 homepage: https://getartcraft.com/apps/cadcraft
 license: MIT OR Apache-2.0
 description: |-
-  Open-source, native image editor that works the way Photoshop users expect.
-  Layers, masks, adjustment layers, layer styles, type and brushes; opens and
-  saves layered PSD/PSB files; 8/16/32-bit documents; GPU compositing (wgpu).
+  Open-source computer-aided design and drafting: draft, dimension and plot 2D
+  drawings with a familiar command line, object snaps, layers, dimensions, hatches
+  and blocks. Opens and saves DXF and DWG; exports SVG and PNG.
   Includes cadcraft-cli, a headless converter and command runner.
 
 # The binaries link only glibc and libgcc_s directly. Windowing (X11/Wayland, xkbcommon) and the

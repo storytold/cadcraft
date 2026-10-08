@@ -200,7 +200,9 @@ jobs:
             chmod +x "$appimage"
             APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --version
             # Update information is embedded, and the .zsync for delta updates sits beside it.
-            APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --appimage-updateinformation | grep -F 'gh-releases-zsync|'
+            # Without APPIMAGE_EXTRACT_AND_RUN: with it, the runtime passes --appimage-* options
+            # on to the app (which then tries to open a window) instead of answering them.
+            "$appimage" --appimage-updateinformation | grep -F 'gh-releases-zsync|'
             test -s "$appimage.zsync"
           done
       - uses: actions/upload-artifact@v4
