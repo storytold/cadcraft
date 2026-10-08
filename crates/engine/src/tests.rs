@@ -26,6 +26,26 @@ fn line_via_command_line() {
 }
 
 #[test]
+fn edits_while_a_command_runs_redraw() {
+    // The canvas rebuilds when (revision, doc pointer) changes; each new segment must change it (issue #4).
+    fn key(s: &Session) -> (u64, usize) {
+        let st = s.state().unwrap();
+        (st.revision, Arc::as_ptr(&st.doc) as usize)
+    }
+    let mut s = Session::new();
+    for (cmd, pts) in [("line", ["0,0", "10,0", "10,5", "0,5"]), ("pline", ["20,0", "30,0", "30,5", "20,5"])] {
+        s.cmdline(cmd).unwrap();
+        s.cmdline(pts[0]).unwrap();
+        for p in &pts[1..] {
+            let before = key(&s);
+            s.cmdline(p).unwrap();
+            assert_ne!(key(&s), before, "{cmd}: segment to {p} not redrawn");
+        }
+        s.cmdline("").unwrap();
+    }
+}
+
+#[test]
 fn line_undo_option_and_aliases() {
     let mut s = Session::new();
     s.cmdline("l 0,0 5,5 10,0 u").unwrap();
