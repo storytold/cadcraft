@@ -2,6 +2,7 @@
 # Build and package CADCraft for Linux (<arch> is x86_64 or aarch64):
 #
 #   $DIST/cadcraft-<version>-linux-<arch>.AppImage  any distro with glibc >= the build host's
+#   $DIST/cadcraft-<version>-linux-<arch>.AppImage.zsync  delta updates (needs zsyncmake)
 #   $DIST/cadcraft-<version>-linux-<arch>.deb       Debian, Ubuntu, Mint, Pop!_OS, ...
 #   $DIST/cadcraft-<version>-linux-<arch>.rpm       Fedora, openSUSE, RHEL, ...
 #   $DIST/cadcraft-<version>-linux-<arch>.tar.gz    plain FHS-style tree (bin/, share/)
@@ -10,7 +11,8 @@
 #
 # Needs: cargo; nfpm for deb/rpm (https://nfpm.goreleaser.com); appimagetool for the AppImage
 # (downloaded into $CARGO_TARGET_DIR if missing). Build on an old distro (CI: Ubuntu 22.04,
-# glibc 2.35) so the binaries run on newer ones. Optional: desktop-file-validate, appstreamcli.
+# glibc 2.35) so the binaries run on newer ones. Optional: desktop-file-validate, appstreamcli,
+# zsyncmake (the zsync package) for the AppImage's .zsync.
 set -euo pipefail
 # shellcheck source=../env.sh
 . "$(dirname "${BASH_SOURCE[0]}")/../env.sh"
@@ -108,11 +110,29 @@ if has appimage; then
       chmod +x "$TOOL"
     fi
   fi
-  OUT="$DIST/$BASENAME.AppImage"
+  # Absolute, because appimagetool runs in $DIST below (CARGO_TARGET_DIR or APPIMAGETOOL may be
+  # relative).
+  OUT="$(cd "$DIST" && pwd)/$BASENAME.AppImage"
+  APPDIR="$(cd "$APPDIR" && pwd)"
+  TOOL="$(cd "$(dirname "$TOOL")" && pwd)/$(basename "$TOOL")"
+  # A .zsync left by an earlier run would hide a missing zsyncmake and describe another file.
+  rm -f "$OUT.zsync"
+  # Update information: AppImageUpdate, AppImageLauncher and the like read it from the file and
+  # fetch only the blocks that changed in a newer release, through the .zsync published next to
+  # each AppImage on GitHub Releases. `latest` is the newest published release that is not a
+  # pre-release. A fork's builds point at its own releases through GITHUB_REPOSITORY.
+  REPO="${GITHUB_REPOSITORY:-storytold/cadcraft}"
+  UPDATE_INFO="gh-releases-zsync|${REPO%%/*}|${REPO#*/}|latest|cadcraft-*-linux-$ARCH.AppImage.zsync"
   # Extract-and-run: works without FUSE (containers, CI). The output embeds the static runtime,
-  # so users don't need libfuse2 either.
-  ARCH="$ARCH" APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" --no-appstream "$APPDIR" "$OUT"
+  # so users don't need libfuse2 either. With zsyncmake on the host (CI installs the zsync
+  # package) appimagetool also writes the .zsync, into its working directory, hence the cd.
+  (cd "$DIST" && ARCH="$ARCH" APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" --no-appstream -u "$UPDATE_INFO" "$APPDIR" "$OUT")
   echo "wrote $OUT"
+  if [ -s "$OUT.zsync" ]; then
+    echo "wrote $OUT.zsync"
+  else
+    warn "zsyncmake not found, so $OUT.zsync was not written; AppImage delta updates need it"
+  fi
 fi
 
 "$STAGE/usr/bin/cadcraft-cli" --version

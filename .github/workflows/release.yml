@@ -1,12 +1,13 @@
 # Release pipeline: every push to `release` builds signed installers for every platform and
 # creates or updates the draft GitHub Release "CADCraft v<version>". See docs/releasing.md.
 #
-# Only the `release` branch builds: pushes to it trigger the run, and a manual dispatch from any
-# other ref is skipped by the guard on the `version` job (every other job needs it). Pushing to
-# `release` is limited by a repository ruleset to org admins and the release-managers team.
-# All jobs run in the `release` environment (restricted to the `release` branch), which holds
-# the signing secrets. Every secret is optional: missing ones produce unsigned artifacts and a
-# warning, never a failed build.
+# Pushes to `release` trigger the run; pushing there is limited by a repository ruleset to org
+# admins and the release-managers team. The jobs that sign (macOS, Windows) and the one that
+# drafts the GitHub Release run in the `release` environment (restricted to the `release` branch),
+# which holds the signing secrets. Every secret is optional: missing ones produce unsigned
+# artifacts and a warning, never a failed build. The other jobs (version, Linux, Flatpak, FreeBSD,
+# web) sign nothing and get no secrets, so a manual dispatch on any other branch is a dry run of
+# them: the environment refuses the signing jobs there, and the draft-release job is skipped.
 name: Release
 
 on:
@@ -37,9 +38,7 @@ env:
 jobs:
   version:
     name: version
-    if: github.ref == 'refs/heads/release'
     runs-on: ubuntu-latest
-    environment: release
     outputs:
       version: ${{ steps.v.outputs.version }}
       date: ${{ steps.v.outputs.date }}
@@ -117,7 +116,6 @@ jobs:
           - { arch: x64, target: x86_64-pc-windows-msvc }
           - { arch: x86, target: i686-pc-windows-msvc }
           # Windows on ARM: cross-compiled on the x64 runner, so signing and WiX run as above.
-          # .github/workflows/windows-arm64.yml installs and runs it on ARM64 hardware.
           - { arch: arm64, target: aarch64-pc-windows-msvc }
     env:
       CADCRAFT_VERSION: ${{ needs.version.outputs.version }}
@@ -161,7 +159,7 @@ jobs:
     # The oldest GitHub-hosted image, so the binaries only need glibc >= 2.35 (Ubuntu 22.04+,
     # Debian 12+, Fedora 36+, RHEL 10). See docs/releasing.md.
     runs-on: ${{ matrix.runner }}
-    environment: release
+    # No `environment: release`: this job signs nothing, so it gets no release secrets.
     strategy:
       fail-fast: false
       matrix:
@@ -179,7 +177,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev \
-            desktop-file-utils appstream python3-yaml
+            desktop-file-utils appstream python3-yaml zsync
           curl -fsSL -o "$RUNNER_TEMP/nfpm.deb" \
             "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_${{ matrix.deb }}.deb"
           sudo dpkg -i "$RUNNER_TEMP/nfpm.deb"
@@ -201,6 +199,9 @@ jobs:
           for appimage in dist/release/*.AppImage; do
             chmod +x "$appimage"
             APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --version
+            # Update information is embedded, and the .zsync for delta updates sits beside it.
+            APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --appimage-updateinformation | grep -F 'gh-releases-zsync|'
+            test -s "$appimage.zsync"
           done
       - uses: actions/upload-artifact@v4
         with:
@@ -208,11 +209,49 @@ jobs:
           path: dist/release/*
           if-no-files-found: error
 
+  flatpak:
+    name: Flatpak ${{ matrix.arch }}
+    needs: [version, linux]
+    # Repackages the Linux job's tarball (the same binaries as the AppImage/deb/rpm); no Rust
+    # build here. 24.04 for a newer flatpak-builder (1.4) than 22.04 ships.
+    runs-on: ${{ matrix.runner }}
+    # No `environment: release`: this job signs nothing, so it gets no release secrets.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    env:
+      CADCRAFT_VERSION: ${{ needs.version.outputs.version }}
+      CADCRAFT_BUILD_DATE: ${{ needs.version.outputs.date }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-linux-${{ matrix.arch }}
+          path: dist/linux
+      - name: Install flatpak-builder
+        run: |
+          sudo apt-get update
+          # librsvg2-common: the SVG pixbuf loader that the host's `appstreamcli compose` (run by
+          # flatpak-builder) needs for any scalable icon.
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder librsvg2-common
+          # Ubuntu 24.04's AppArmor blocks the unprivileged user namespaces bubblewrap needs.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Build the Flatpak bundle
+        run: packaging/linux/flatpak-bundle.sh "dist/linux/cadcraft-$CADCRAFT_VERSION-linux-${{ matrix.arch }}.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-flatpak-${{ matrix.arch }}
+          path: dist/release/*.flatpak
+          if-no-files-found: error
+
   web:
     name: Web (wasm)
     needs: version
     runs-on: ubuntu-latest
-    environment: release
+    # No `environment: release`: this job signs nothing, so it gets no release secrets.
     env:
       CADCRAFT_VERSION: ${{ needs.version.outputs.version }}
       CADCRAFT_BUILD_DATE: ${{ needs.version.outputs.date }}
@@ -246,7 +285,7 @@ jobs:
     needs: version
     # GitHub has no FreeBSD runners: build inside a FreeBSD VM on a Linux runner.
     runs-on: ubuntu-latest
-    environment: release
+    # No `environment: release`: this job signs nothing, so it gets no release secrets.
     timeout-minutes: 300
     env:
       CADCRAFT_VERSION: ${{ needs.version.outputs.version }}
@@ -287,7 +326,9 @@ jobs:
 
   release:
     name: Draft GitHub Release
-    needs: [version, macos, windows, linux, web, freebsd]
+    needs: [version, macos, windows, linux, flatpak, web, freebsd]
+    # Only the `release` branch publishes; a dry run on another branch stops before this job.
+    if: github.ref == 'refs/heads/release'
     runs-on: ubuntu-latest
     environment: release
     permissions:

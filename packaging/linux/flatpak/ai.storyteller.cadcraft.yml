@@ -8,22 +8,32 @@
 #   flatpak run ai.storyteller.cadcraft
 #
 # For Flathub, replace the `dir` source with a `git` source pinned to a release tag and commit.
+# The single-file .flatpak attached to each release comes from ai.storyteller.cadcraft.bundle.yml,
+# which repackages the prebuilt release binaries. Keep runtime-version and finish-args identical.
 id: ai.storyteller.cadcraft
 runtime: org.freedesktop.Platform
-runtime-version: '25.08'
+runtime-version: '26.08'
 sdk: org.freedesktop.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
 command: cadcraft
 finish-args:
-  - --share=ipc
+  # Display: Wayland first; X11 only when no Wayland compositor is running.
   - --socket=wayland
   - --socket=fallback-x11
+  # X11 shared memory (MIT-SHM). Without it the X11 fallback is slow or fails.
+  - --share=ipc
+  # GPU access for the wgpu canvas (Vulkan, or GL as a fallback).
   - --device=dri
-  # Open/Save dialogs use the file-chooser portal (rfd), and drag-and-drop uses the document
-  # portal, so broad filesystem access isn't needed. Pictures is granted for opening files by
-  # path from the command line.
+  # Open/Save dialogs go through the file-chooser portal (rfd) and drag-and-drop through the
+  # document portal, so picked files work anywhere without broad filesystem access. Documents
+  # and Pictures are granted so drawings passed by path (the command line, Open Recent, xrefs
+  # and images next to a DXF) work in the usual places.
+  - --filesystem=xdg-documents
   - --filesystem=xdg-pictures
+  # Deliberately not granted: network (the optional --control server listens on 127.0.0.1 in
+  # the sandbox; `flatpak override --user --share=network ai.storyteller.cadcraft` exposes it to
+  # host agents) and home/host filesystem access.
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
 modules:
@@ -34,8 +44,9 @@ modules:
         CARGO_HOME: /run/build/cadcraft/cargo
         CARGO_NET_OFFLINE: 'true'
     build-commands:
-      - cargo --offline build --release --locked -p cadcraft
+      - cargo --offline build --release --locked -p cadcraft -p cadcraft-cli
       - install -Dm755 target/release/cadcraft /app/bin/cadcraft
+      - install -Dm755 target/release/cadcraft-cli /app/bin/cadcraft-cli
       - install -Dm644 packaging/linux/ai.storyteller.cadcraft.desktop /app/share/applications/ai.storyteller.cadcraft.desktop
       - install -Dm644 packaging/linux/ai.storyteller.cadcraft.mime.xml /app/share/mime/packages/ai.storyteller.cadcraft.xml
       - mkdir -p /app/share/icons && cp -R assets/app-icon/hicolor /app/share/icons/
