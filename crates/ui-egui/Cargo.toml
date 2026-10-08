@@ -28,3 +28,4 @@ naga = { version = "30", features = ["wgsl-in", "glsl-out"] }
 
 [build-dependencies]
 serde_json = { workspace = true }
+toml = "1"
