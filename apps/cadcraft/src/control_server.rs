@@ -14,11 +14,11 @@ pub fn start(port: u16, ctx: egui::Context) -> Receiver<ControlRequest> {
     let listener = match TcpListener::bind(("127.0.0.1", port)) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("cadcraft: control server failed to bind 127.0.0.1:{port}: {e}");
+            log::error!("control server failed to bind 127.0.0.1:{port}: {e}");
             return rx;
         }
     };
-    eprintln!("cadcraft: control server listening on 127.0.0.1:{port}");
+    log::info!("control server listening on 127.0.0.1:{port}");
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
             let tx = tx.clone();

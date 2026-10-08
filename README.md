@@ -131,6 +131,23 @@ zoom e                          zoom to extents
 
 The web build: `cd apps/cadcraft-web && trunk serve` (needs [trunk](https://trunkrs.dev)).
 
+### Logs
+
+The desktop app writes its `log` records to standard error and to `logs/cadcraft.log` in the
+settings directory (Linux and the BSDs `~/.config/cadcraft/logs/`, or
+`$XDG_CONFIG_HOME/cadcraft/logs/`; macOS `~/Library/Application Support/CADCraft/logs/`; Windows
+`%APPDATA%\CADCraft\logs\`; or under `CADCRAFT_CONFIG_DIR`). A start from a desktop menu or the
+Dock has no terminal, so this file is what to attach to a bug report. Each launch moves the
+previous log to `cadcraft.1.log` (and that one to `cadcraft.2.log`), so the log of a run that
+crashed survives the next start. The file stops growing at 16 MiB. `--version` writes no file.
+
+| Variable | Effect |
+|---|---|
+| `CADCRAFT_CONFIG_DIR` | Use this directory instead of the platform settings directory (the log goes to its `logs/`) |
+| `RUST_LOG` | Log levels for standard error and the log file. Default: `info` for CADCraft's own crates, `warn` for everything else. env_logger-style directives replace that, e.g. `RUST_LOG=debug`, `RUST_LOG=warn,cadcraft_io=trace` or `RUST_LOG=info,wgpu_core=warn`; a directive ending in `*` covers every target starting with it (`cadcraft*=debug`). `cadcraft_engine=debug` also logs every command-line message. |
+
+The logger is `apps/cadcraft/src/logging.rs`; the web build logs to the browser console instead.
+
 ## Drive it from agents, MCP and the CLI
 
 ```sh
