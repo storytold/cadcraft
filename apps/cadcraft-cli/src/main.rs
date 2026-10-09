@@ -5,11 +5,14 @@
 //! cadcraft-cli convert IN.dxf OUT.(dxf|svg|png)    convert / export
 //! cadcraft-cli run [FILE|--sample|--metric] [--script TEXT|--script-file F.scr] [--cmd 'id {json}']... [--save OUT] [--export OUT.png]
 //! cadcraft-cli commands [FILTER]                   command catalog (JSON)
+//! cadcraft-cli smoke [--out DIR] [--filter S]      run every command headlessly; JSONL + report
 //! cadcraft-cli mcp [--connect HOST:PORT]           MCP server on stdio (headless or bridged to the app)
 //! cadcraft-cli perf [N]                            timing table on a synthetic N-entity drawing
 //! cadcraft-cli sample (bracket|floorplan) OUT       write a built-in sample drawing
 //! ```
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
+
+mod smoke;
 
 use std::process::ExitCode;
 
@@ -21,6 +24,7 @@ const USAGE: &str = "usage:
   cadcraft-cli convert IN.dxf OUT.(dxf|svg|png)
   cadcraft-cli run [FILE | --sample | --metric] [--script TEXT] [--script-file F.scr] [--cmd 'id {json}']... [--save OUT.dxf] [--export OUT.(png|svg)]
   cadcraft-cli commands [FILTER]
+  cadcraft-cli smoke [--out DIR] [--filter SUBSTR] [--only ID,ID] [--phase json|interactive|both] [--timeout-ms N] [--json] [--quiet]
   cadcraft-cli mcp [--connect HOST:PORT]
   cadcraft-cli perf [N]
   cadcraft-cli sample (bracket|floorplan) OUT.(dxf|dwg|svg|png)
@@ -280,6 +284,7 @@ fn main() -> ExitCode {
         Some("run") => run(&rest),
         Some("perf") => perf(&rest),
         Some("sample") => sample(&rest),
+        Some("smoke") => smoke::run(&rest),
         Some("commands") => {
             let s = Session::new();
             let f = rest.first().map(|x| x.to_ascii_lowercase());

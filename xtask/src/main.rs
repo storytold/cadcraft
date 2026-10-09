@@ -6,7 +6,9 @@
 mod assets;
 mod ico;
 mod layers;
+mod metrics;
 mod parity;
+mod smoke;
 mod stats;
 mod version;
 
@@ -25,6 +27,11 @@ commands:
                   show where test corpora live; --download fetches PngSuite into corpus/pngsuite
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
   parity          recompute the AutoCAD feature-parity summary in docs/parity.md
+  smoke [--out DIR] [--since WHEN] [--no-metrics] [-- <runner args>]
+                  run the command sweep (cadcraft-cli smoke), record the run and its cost
+                  in target/smoke/<run_id>/ and smoke/LEDGER.md
+  metrics [--since WHEN] [--until WHEN] [--session ID] [--json]
+                  agent work on this repo: wall-clock time, token usage and model use
   ico <out.ico> <in.png>...
                   pack square PNGs (<= 256 px) into a Windows .ico (see packaging/icons.sh)
 ";
@@ -40,6 +47,8 @@ fn main() -> ExitCode {
         Some("corpus") => cmd_corpus(rest.contains(&"--download")),
         Some("stats") => stats::run(&root(), rest.contains(&"--exact")),
         Some("parity") => parity::run(&root()),
+        Some("smoke") => smoke::run(&root(), &rest),
+        Some("metrics") => metrics::run(&root(), &rest),
         Some("ico") => ico::run(&rest),
         Some("version") => version::run(&root(), &rest),
         Some("-h" | "--help" | "help") | None => {
