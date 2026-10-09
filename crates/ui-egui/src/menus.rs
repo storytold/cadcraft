@@ -62,6 +62,17 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
             }
             Ok(Value::Null)
         }
+        // From the UI (menu, Cmd+W, typed) closing asks to save unsaved changes; JSON calls don't.
+        "close" if params.is_null() => {
+            let i = app.session.active;
+            app.close_drawings(&[i]);
+            Ok(Value::Null)
+        }
+        "closeall" if params.is_null() => {
+            let all: Vec<usize> = (0..app.session.docs.len()).collect();
+            app.close_drawings(&all);
+            Ok(Value::Null)
+        }
         "qsave" if no_path && app.session.state().is_ok_and(|s| s.path.is_none()) => return run_ui_command(app, "ui.saveas", &Value::Null),
         "ui.sample" => {
             let d = cadcraft_engine::sample::default_sample();

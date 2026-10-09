@@ -21,6 +21,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         "commands" => commands(app, ctx, &mut open),
         "blocks" => blocks(app, ctx, &mut open),
         "quit" => quit(app, ctx, &mut open),
+        "close" => close(app, ctx, &mut open),
         _ => open = false,
     }
     if !open {
@@ -28,22 +29,22 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     }
 }
 
-/// Closing the window with unsaved changes: Save / Don't Save / Cancel.
-fn quit(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
-    let close = |app: &mut CadApp| {
-        app.quit_confirmed = true;
-        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+#[derive(Clone, Copy, PartialEq)]
+enum Choice {
+    Save,
+    DontSave,
+    Cancel,
+}
+
+/// "Save changes to …?" with Save / Don't Save / Cancel; `None` until the user picks one.
+fn save_prompt(ctx: &egui::Context, id: &str, dirty: &[String], open: &mut bool) -> Option<Choice> {
+    let what = match dirty {
+        [one] => format!("“{one}”"),
+        _ => format!("{} drawings", dirty.len()),
     };
-    let dirty: Vec<String> = app.session.docs.iter().filter(|d| d.is_dirty()).map(|d| d.title.clone()).collect();
-    let [first, ..] = dirty.as_slice() else {
-        *open = false;
-        close(app);
-        return;
-    };
-    let what = if dirty.len() == 1 { format!("“{first}”") } else { format!("{} drawings", dirty.len()) };
-    let (mut save, mut discard, mut cancel) = (false, false, false);
+    let mut choice = None;
     egui::Window::new("CADCraft")
-        .id(egui::Id::new("quit_dialog"))
+        .id(egui::Id::new(id))
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, -40.0))
@@ -54,18 +55,62 @@ fn quit(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             ui.label("Your changes will be lost if you don't save them.");
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                discard = ui.button("Don't Save").clicked();
+                if ui.button("Don't Save").clicked() {
+                    choice = Some(Choice::DontSave);
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    save = ui.button("Save").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    cancel = ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape));
+                    if ui.button("Save").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        choice = Some(Choice::Save);
+                    }
+                    if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                        choice = Some(Choice::Cancel);
+                    }
                 });
             });
         });
-    if discard || (save && app.save_all()) {
+    choice
+}
+
+/// Closing the window with unsaved changes.
+fn quit(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
+    let close = |app: &mut CadApp| {
+        app.quit_confirmed = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    };
+    let dirty: Vec<String> = app.session.docs.iter().filter(|d| d.is_dirty()).map(|d| d.title.clone()).collect();
+    if dirty.is_empty() {
         *open = false;
         close(app);
-    } else if save || cancel {
+        return;
+    }
+    let choice = save_prompt(ctx, "quit_dialog", &dirty, open);
+    if choice == Some(Choice::DontSave) || (choice == Some(Choice::Save) && app.save_all()) {
+        close(app);
+    }
+    if choice.is_some() {
         *open = false;
+    }
+}
+
+/// Closing drawings (tab ×, File ▸ Close, Close All) with unsaved changes.
+fn close(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
+    let dirty: Vec<String> = app.session.docs.iter().filter(|d| d.is_dirty() && app.closing.contains(&d.uid)).map(|d| d.title.clone()).collect();
+    if dirty.is_empty() {
+        *open = false;
+        app.finish_close(false);
+        return;
+    }
+    let choice = save_prompt(ctx, "close_dialog", &dirty, open);
+    match choice {
+        Some(Choice::Save) => app.finish_close(true),
+        Some(Choice::DontSave) => app.finish_close(false),
+        Some(Choice::Cancel) | None => {}
+    }
+    if choice.is_some() {
+        *open = false;
+    }
+    if !*open {
+        app.closing.clear();
     }
 }
 
@@ -278,7 +323,7 @@ mod tests {
     use serde_json::json;
 
     fn sample_app() -> CadApp {
-        let mut session = cadcraft_engine::Session::new();
+        let mut session = cadcraft_engine::Session::empty();
         session.open_drawing(cadcraft_engine::sample::default_sample(), "Bracket", None);
         CadApp::new(session, Services::default())
     }
@@ -309,6 +354,71 @@ mod tests {
         // Once the user chose Don't Save, the close goes through.
         app.quit_confirmed = true;
         assert!(!close_frame(&mut app, &ctx));
+    }
+
+    fn dirty_app() -> CadApp {
+        let mut app = sample_app();
+        let r = app.run("line", json!({ "points": [[0.0, 0.0], [10.0, 0.0]] }));
+        assert!(r.is_ok(), "{r:?}");
+        app
+    }
+
+    /// Closing a tab (or File ▸ Close) with unsaved changes asks first; a saved one just closes.
+    #[test]
+    fn closing_a_drawing_with_unsaved_changes_asks_first() {
+        let mut clean = sample_app();
+        clean.close_drawings(&[0]);
+        assert!(clean.session.docs.is_empty());
+        assert_eq!(clean.ui.dialog, None);
+
+        let mut app = dirty_app();
+        app.close_drawings(&[0]);
+        assert_eq!(app.session.docs.len(), 1, "an unsaved drawing must not close without asking");
+        assert_eq!(app.ui.dialog.as_deref(), Some("close"));
+
+        // File ▸ Close, Cmd+W and typed CLOSE go through the same prompt.
+        let mut app = dirty_app();
+        app.start("close");
+        assert_eq!(app.session.docs.len(), 1);
+        assert_eq!(app.ui.dialog.as_deref(), Some("close"));
+    }
+
+    /// Programmatic `close` (JSON params, control channel, MCP) never opens the dialog.
+    #[test]
+    fn programmatic_close_skips_the_prompt() {
+        let mut app = dirty_app();
+        let r = app.run("close", json!({}));
+        assert!(r.is_ok(), "{r:?}");
+        assert!(app.session.docs.is_empty());
+        assert_eq!(app.ui.dialog, None);
+    }
+
+    #[test]
+    fn close_prompt_dont_save_and_save() {
+        let mut app = dirty_app();
+        app.close_drawings(&[0]);
+        app.finish_close(false);
+        assert!(app.session.docs.is_empty(), "Don't Save closes the drawing");
+
+        // File formats are installed by the app; a stand-in writer is enough to see the save land.
+        cadcraft_engine::cmd::file::set_io(cadcraft_engine::cmd::file::IoHooks {
+            read: |_, _| Err("not in this test".into()),
+            write: |d, _| Ok(format!("{d:?}").into_bytes()),
+            plot: None,
+        });
+        let path = std::env::temp_dir().join(format!("cadcraft-close-{}.dxf", std::process::id()));
+        let mut app = dirty_app();
+        let r = app.run("saveas", json!({ "path": path.to_string_lossy() }));
+        assert!(r.is_ok(), "{r:?}");
+        let r = app.run("line", json!({ "points": [[0.0, 0.0], [0.0, 10.0]] }));
+        assert!(r.is_ok(), "{r:?}");
+        let before = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        app.close_drawings(&[0]);
+        app.finish_close(true);
+        let after = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        let _ = std::fs::remove_file(&path);
+        assert!(app.session.docs.is_empty(), "Save closes the drawing once it is saved");
+        assert!(after > before, "Save wrote the new line ({before} -> {after} bytes)");
     }
 
     /// Programmatic quit (control channel `app.quit`) never opens the dialog.

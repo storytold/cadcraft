@@ -25,7 +25,7 @@ pub mod theme;
 
 use std::sync::mpsc::Receiver;
 
-use cadcraft_engine::Session;
+use cadcraft_engine::{DocState, Session};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -103,6 +103,8 @@ pub struct CadApp {
     pub quit_requested: bool,
     /// Set once the user chose to close despite unsaved changes (or saved them).
     pub quit_confirmed: bool,
+    /// Drawings (by uid) waiting on the close dialog's answer.
+    pub closing: Vec<u64>,
 }
 
 impl CadApp {
@@ -124,6 +126,7 @@ impl CadApp {
             frame_ms: 0.0,
             quit_requested: false,
             quit_confirmed: false,
+            closing: Vec::new(),
         }
     }
 
@@ -183,8 +186,13 @@ impl CadApp {
     /// Save every drawing with unsaved changes (asking for a file name where needed). Returns
     /// false if one wasn't saved (cancelled or failed).
     pub fn save_all(&mut self) -> bool {
+        self.save_where(|_| true)
+    }
+
+    /// Save the drawings with unsaved changes that `pick` selects; false if one wasn't saved.
+    fn save_where(&mut self, pick: impl Fn(&DocState) -> bool) -> bool {
         for i in 0..self.session.docs.len() {
-            if !self.session.docs.get(i).is_some_and(|d| d.is_dirty()) {
+            if !self.session.docs.get(i).is_some_and(|d| d.is_dirty() && pick(d)) {
                 continue;
             }
             let saved = self.run("document.switch", json!({ "index": i })).and_then(|_| self.run("qsave", Value::Null));
@@ -197,6 +205,32 @@ impl CadApp {
             }
         }
         true
+    }
+
+    /// Close drawings (by index) from the UI: if any has unsaved changes, ask first.
+    pub fn close_drawings(&mut self, indices: &[usize]) {
+        self.closing = indices.iter().filter_map(|i| self.session.docs.get(*i)).map(|d| d.uid).collect();
+        if self.session.docs.iter().any(|d| d.is_dirty() && self.closing.contains(&d.uid)) {
+            self.ui.dialog = Some("close".into());
+        } else {
+            self.finish_close(false);
+        }
+    }
+
+    /// Close the drawings picked by [`Self::close_drawings`], saving the changed ones first if
+    /// `save`. If a save is cancelled or fails, they all stay open.
+    pub fn finish_close(&mut self, save: bool) {
+        let uids = std::mem::take(&mut self.closing);
+        if save && !self.save_where(|d| uids.contains(&d.uid)) {
+            return;
+        }
+        for uid in uids {
+            if let Some(i) = self.session.docs.iter().position(|d| d.uid == uid)
+                && let Err(e) = self.run("close", json!({ "index": i }))
+            {
+                self.set_status(e);
+            }
+        }
     }
 
     pub fn set_status(&mut self, s: impl Into<String>) {
