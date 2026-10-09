@@ -791,7 +791,8 @@ impl Session {
             }
             let mut rest = line;
             loop {
-                let text_prompt = self.current_prompt().is_some_and(|p| p.accept.text && !p.accept.point);
+                // Free text only when the prompt has no keywords; otherwise split so `I 15` reaches the keyword and the value.
+                let text_prompt = self.current_prompt().is_some_and(|p| p.accept.text && !p.accept.point && p.keywords.is_empty());
                 if text_prompt || self.running.is_none() && rest.contains('{') {
                     self.cmdline(rest)?;
                     break;
