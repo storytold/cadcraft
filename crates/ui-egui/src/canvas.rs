@@ -100,6 +100,9 @@ pub struct CanvasState {
     pub cursor: Option<Vec2>,
     pub polar_angle: Option<f64>,
     pan_last: Option<Pos2>,
+    /// True when the latest scroll came from a trackpad (or other precise-scrolling device):
+    /// scrolling then pans and pinch zooms. A notched mouse wheel clears it so the wheel zooms.
+    scroll_pans: bool,
     /// A hot (clicked) grip being dragged: entity, grip index, grip position, mode.
     pub hot_grip: Option<HotGrip>,
     /// Zoom to extents once the canvas size is known (after opening a drawing).
@@ -511,7 +514,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     let (hover_pos, scroll, mods, middle_down, pressed_primary, pressed_secondary, dbl_middle, dbl_primary) = ui.input(|i| {
         (
             i.pointer.hover_pos(),
-            i.smooth_scroll_delta.y,
+            i.smooth_scroll_delta,
             i.modifiers,
             i.pointer.middle_down(),
             i.pointer.primary_clicked(),
@@ -521,14 +524,35 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         )
     });
     let inside = hover_pos.is_some_and(|p| rect.contains(p)) && resp.hovered();
-    // Zoom with the wheel about the cursor.
-    if inside
-        && scroll.abs() > 0.0
-        && let Some(hp) = hover_pos
-    {
-        let f = (f64::from(scroll) / 300.0).exp();
-        let about = xf.to_world(hp);
-        let _ = app.session.zoom_about(f, about);
+    // Which device is scrolling? Trackpads (and Magic Mouse) report precise point deltas;
+    // notched mouse wheels report lines. The answer is sticky because egui spreads a wheel
+    // notch over several frames.
+    ui.input(|i| {
+        for e in &i.raw.events {
+            if let egui::Event::MouseWheel { unit, .. } = e {
+                app.canvas.scroll_pans = *unit == egui::MouseWheelUnit::Point;
+            }
+        }
+    });
+    if inside && scroll != egui::Vec2::ZERO {
+        if app.canvas.scroll_pans {
+            // Two-finger swipe pans: the drawing follows the fingers, like a middle-drag.
+            // Pinch (and Cmd+scroll) still zoom via `zoom_delta` below.
+            if let Ok(st) = app.session.state_mut() {
+                let v = st.view();
+                st.set_view_quiet(cadcraft_engine::View {
+                    center: v.center - Vec2::new(f64::from(scroll.x) / scale, -f64::from(scroll.y) / scale),
+                    height: v.height,
+                });
+            }
+        } else if scroll.y.abs() > 0.0
+            && let Some(hp) = hover_pos
+        {
+            // Zoom with the mouse wheel about the cursor.
+            let f = (f64::from(scroll.y) / 300.0).exp();
+            let about = xf.to_world(hp);
+            let _ = app.session.zoom_about(f, about);
+        }
     }
     let zoom_pinch = ui.input(|i| i.zoom_delta());
     if inside
@@ -537,7 +561,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     {
         let _ = app.session.zoom_about(f64::from(zoom_pinch), xf.to_world(hp));
     }
-    // Pan with the middle button (or Shift+right-drag / two-finger drag on trackpads is scroll).
+    // Pan with the middle button (trackpads pan with a two-finger swipe, above).
     if middle_down && let Some(hp) = hover_pos {
         if let Some(last) = app.canvas.pan_last {
             let d = hp - last;
