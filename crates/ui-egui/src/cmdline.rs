@@ -10,6 +10,10 @@ use crate::theme::Tokens;
 #[derive(Default)]
 pub struct CmdLine {
     pub buffer: String,
+    /// The selection as of the last frame, to notice when it changes.
+    seen_selection: Vec<cadcraft_doc::Handle>,
+    /// Something was typed at the command line since the selection was made.
+    typed_since_selection: bool,
     pub history: Vec<String>,
     pub history_pos: Option<usize>,
     /// The expanded history window is open (F2, the chevron, or a click on the history lines).
@@ -38,12 +42,51 @@ fn suggestions(prefix: &str) -> Vec<(String, &'static str)> {
     v
 }
 
+impl CmdLine {
+    /// Track the selection: a new selection starts with nothing typed since.
+    pub fn watch_selection(&mut self, sel: &[cadcraft_doc::Handle]) {
+        if self.seen_selection != sel {
+            self.seen_selection = sel.to_vec();
+            self.typed_since_selection = false;
+        }
+    }
+
+    /// Note that the command line holds typed text.
+    pub fn note_typing(&mut self) {
+        if !self.buffer.is_empty() {
+            self.typed_since_selection = true;
+        }
+    }
+}
+
+/// Whether Backspace should erase the selection instead of editing the command line. The key
+/// labelled "delete" on a Mac sends Backspace, so on macOS it erases selected objects, but only
+/// when it can't be meant for the command line: a fresh, plain press (never an auto-repeat, so
+/// holding it to clear typing can't run on into the drawing, and not Option/Cmd+delete, which
+/// delete a word or line of text on macOS), no command running, the command line empty, and
+/// nothing typed there since the selection was made.
+pub fn backspace_erases(mac: bool, press: KeyPress, buffer: &str, command_running: bool, has_selection: bool, typed_since_selection: bool) -> bool {
+    mac && press.plain && !press.repeat && buffer.is_empty() && !command_running && has_selection && !typed_since_selection
+}
+
+/// How a key was pressed.
+#[derive(Clone, Copy, Debug)]
+pub struct KeyPress {
+    /// The operating system's auto-repeat while the key is held.
+    pub repeat: bool,
+    /// No Option, Control or Command held (Shift doesn't matter).
+    pub plain: bool,
+}
+
 /// Handle keyboard input destined for the command line (when no text field has focus).
 pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
     if ctx.egui_wants_keyboard_input() {
         return;
     }
     let events = ctx.input(|i| i.events.clone());
+    let selection = app.session.selection();
+    app.cmd.watch_selection(&selection);
+    let mac = ctx.os() == egui::os::OperatingSystem::Mac;
     // A hot grip takes Space/Enter (cycle mode, or apply a typed point) and Escape.
     if app.canvas.hot_grip.is_some() {
         for ev in &events {
@@ -88,14 +131,27 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
                     app.cmd.buffer.push_str(&t);
                 }
             }
-            egui::Event::Key { key, pressed: true, modifiers, .. } => match key {
+            egui::Event::Key { key, pressed: true, repeat, modifiers, .. } => match key {
                 Key::Enter => submit(app),
                 Key::Escape => {
                     app.cmd.buffer.clear();
                     app.session.cancel();
                 }
                 Key::Backspace => {
-                    app.cmd.buffer.pop();
+                    let press = KeyPress { repeat, plain: !(modifiers.alt || modifiers.ctrl || modifiers.command) };
+                    let erase = backspace_erases(
+                        mac,
+                        press,
+                        &app.cmd.buffer,
+                        app.session.running.is_some(),
+                        !app.session.selection().is_empty(),
+                        app.cmd.typed_since_selection,
+                    );
+                    if erase {
+                        let _ = app.run("erase.selection", serde_json::json!({}));
+                    } else {
+                        app.cmd.buffer.pop();
+                    }
                 }
                 Key::ArrowUp if !modifiers.any() => {
                     if !app.cmd.history.is_empty() {
@@ -129,6 +185,7 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
             },
             _ => {}
         }
+        app.cmd.note_typing();
     }
 }
 
@@ -455,5 +512,47 @@ mod tests {
         assert!(!app.cmd.expanded, "a drag isn't a click");
         assert!(app.session.pending_window.is_none());
         assert_eq!(app.run("ui.cmdline.lines", serde_json::json!({"lines": 99})), Ok(serde_json::json!({"lines": MAX_LINES})));
+    }
+}
+
+#[cfg(test)]
+mod delete_key_tests {
+    use super::*;
+    use cadcraft_doc::Handle;
+
+    const PRESS: KeyPress = KeyPress { repeat: false, plain: true };
+
+    #[test]
+    fn mac_delete_erases_a_fresh_selection() {
+        assert!(backspace_erases(true, PRESS, "", false, true, false));
+        // Not on Windows/Linux, where Backspace never deletes objects.
+        assert!(!backspace_erases(false, PRESS, "", false, true, false));
+        // Nothing selected, a command running, or text on the command line: just edit text.
+        assert!(!backspace_erases(true, PRESS, "", false, false, false));
+        assert!(!backspace_erases(true, PRESS, "", true, true, false));
+        assert!(!backspace_erases(true, PRESS, "m", false, true, false));
+        // Option/Cmd+delete are text-editing gestures on macOS.
+        assert!(!backspace_erases(true, KeyPress { plain: false, ..PRESS }, "", false, true, false));
+    }
+
+    #[test]
+    fn holding_delete_to_clear_typing_never_erases() {
+        // Auto-repeat after the last character is gone.
+        assert!(!backspace_erases(true, KeyPress { repeat: true, ..PRESS }, "", false, true, false));
+        // Typed, then cleared with separate presses: still not erased.
+        assert!(!backspace_erases(true, PRESS, "", false, true, true));
+    }
+
+    #[test]
+    fn typing_is_forgotten_when_the_selection_changes() {
+        let mut c = CmdLine::default();
+        c.watch_selection(&[Handle(1)]);
+        c.buffer.push('m');
+        c.note_typing();
+        c.buffer.clear();
+        c.watch_selection(&[Handle(1)]);
+        assert!(c.typed_since_selection);
+        c.watch_selection(&[Handle(1), Handle(2)]);
+        assert!(!c.typed_since_selection);
     }
 }
