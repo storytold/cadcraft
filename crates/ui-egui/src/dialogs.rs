@@ -1,8 +1,9 @@
-//! Dialogs: Drafting Settings, About, command reference, blocks; dispatches the Layer Properties
-//! Manager ([`crate::layers`]), Quick Select ([`crate::quick`]), Parameters Manager
-//! ([`crate::parametric`]) and the style and settings managers ([`crate::managers`]).
+//! Dialogs: Drafting Settings, Drawing Units, About, command reference, blocks; dispatches the
+//! Layer Properties Manager ([`crate::layers`]), Quick Select ([`crate::quick`]), Parameters
+//! Manager ([`crate::parametric`]) and the style and settings managers ([`crate::managers`]).
 
 use egui::{RichText, vec2};
+use serde_json::json;
 
 use crate::CadApp;
 use crate::theme::Tokens;
@@ -17,6 +18,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         "qselect" => crate::quick::qselect_dialog(app, ctx, &mut open),
         "parameters" => crate::parametric::parameters_dialog(app, ctx, &mut open),
         "dsettings" => dsettings(app, ctx, &mut open),
+        "units" => units(app, ctx, &mut open),
         "about" => about(ctx, &mut open),
         "commands" => commands(app, ctx, &mut open),
         "blocks" => blocks(app, ctx, &mut open),
@@ -87,6 +89,117 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         ui.checkbox(&mut s.dynmode, "Enable Dynamic Input (F12)");
         ui.checkbox(&mut s.orthomode, "Ortho (F8)");
     });
+}
+
+/// LUNITS values in the order the Type list shows them.
+const LENGTH_TYPES: [(i64, &str); 5] = [(4, "Architectural"), (2, "Decimal"), (3, "Engineering"), (5, "Fractional"), (1, "Scientific")];
+/// AUNITS values.
+const ANGLE_TYPES: [(i64, &str); 5] = [(0, "Decimal Degrees"), (1, "Deg/Min/Sec"), (2, "Grads"), (3, "Radians"), (4, "Surveyor's Units")];
+/// INSUNITS names, indexed by value (DXF Reference, header group code 70).
+const INSERTION_UNITS: [&str; 25] = [
+    "Unitless",
+    "Inches",
+    "Feet",
+    "Miles",
+    "Millimeters",
+    "Centimeters",
+    "Meters",
+    "Kilometers",
+    "Microinches",
+    "Mils",
+    "Yards",
+    "Angstroms",
+    "Nanometers",
+    "Microns",
+    "Decimeters",
+    "Decameters",
+    "Hectometers",
+    "Gigameters",
+    "Astronomical Units",
+    "Light Years",
+    "Parsecs",
+    "US Survey Feet",
+    "US Survey Inch",
+    "US Survey Yard",
+    "US Survey Mile",
+];
+
+/// A combo box over `(value, label)` options.
+fn pick(ui: &mut egui::Ui, salt: &str, value: &mut i64, options: &[(i64, String)]) {
+    let current = options.iter().find(|o| o.0 == *value).map(|o| o.1.clone()).unwrap_or_default();
+    egui::ComboBox::from_id_salt(salt).selected_text(current).width(180.0).show_ui(ui, |ui| {
+        for (k, label) in options {
+            ui.selectable_value(value, *k, label);
+        }
+    });
+}
+
+/// Drawing Units (UNITS): edits a copy of LUNITS/LUPREC/AUNITS/AUPREC/INSUNITS and applies it
+/// through the `units` command on OK.
+fn units(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
+    use cadcraft_engine::units::{format_angle, format_distance};
+    let id = egui::Id::new("units_dialog_values");
+    let mut v = ctx.data_mut(|d| d.get_temp::<[i64; 5]>(id)).unwrap_or_else(|| {
+        app.session
+            .doc()
+            .map(|d| {
+                let h = &d.header;
+                [h.i64("LUNITS", 2), h.i64("LUPREC", 4), h.i64("AUNITS", 0), h.i64("AUPREC", 0), h.i64("INSUNITS", 1)]
+            })
+            .unwrap_or([2, 4, 0, 0, 1])
+    });
+    let (mut apply, mut cancel) = (false, false);
+    egui::Window::new("Drawing Units").open(open).resizable(false).collapsible(false).show(ctx, |ui| {
+        let [lu, lp, au, ap, ins] = &mut v;
+        let types = |t: &[(i64, &str)]| t.iter().map(|(k, l)| (*k, l.to_string())).collect::<Vec<_>>();
+        egui::Grid::new("units_grid").num_columns(2).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
+            ui.strong("Length");
+            ui.end_row();
+            ui.label("Type");
+            pick(ui, "units_lunits", lu, &types(&LENGTH_TYPES));
+            ui.end_row();
+            ui.label("Precision");
+            pick(ui, "units_luprec", lp, &(0..=8).map(|p| (p, format_distance(1.5, *lu, p))).collect::<Vec<_>>());
+            ui.end_row();
+            ui.strong("Angle");
+            ui.end_row();
+            ui.label("Type");
+            pick(ui, "units_aunits", au, &types(&ANGLE_TYPES));
+            ui.end_row();
+            ui.label("Precision");
+            pick(ui, "units_auprec", ap, &(0..=8).map(|p| (p, format_angle(45f64.to_radians(), *au, p))).collect::<Vec<_>>());
+            ui.end_row();
+            ui.strong("Insertion scale");
+            ui.end_row();
+            ui.label("Units to scale inserted content");
+            let names = INSERTION_UNITS.iter().enumerate().map(|(k, l)| (k as i64, l.to_string())).collect::<Vec<_>>();
+            pick(ui, "units_insunits", ins, &names);
+            ui.end_row();
+            ui.strong("Sample output");
+            ui.end_row();
+            ui.label("");
+            ui.label(format!("{},{},{}", format_distance(1.5, *lu, *lp), format_distance(2.0039, *lu, *lp), format_distance(0.0, *lu, *lp)));
+            ui.end_row();
+            ui.label("");
+            ui.label(format_angle(45f64.to_radians(), *au, *ap));
+            ui.end_row();
+        });
+        ui.separator();
+        ui.horizontal(|ui| {
+            apply = ui.button("OK").clicked();
+            cancel = ui.button("Cancel").clicked();
+        });
+    });
+    if apply {
+        let [lu, lp, au, ap, ins] = v;
+        let _ = app.run("units", json!({ "lunits": lu, "luprec": lp, "aunits": au, "auprec": ap, "insunits": ins }));
+    }
+    if apply || cancel || !*open {
+        ctx.data_mut(|d| d.remove::<[i64; 5]>(id));
+        *open = false;
+    } else {
+        ctx.data_mut(|d| d.insert_temp(id, v));
+    }
 }
 
 fn about(ctx: &egui::Context, open: &mut bool) {

@@ -106,8 +106,18 @@ fn as_pt(v: &Value) -> Option<cadcraft_geom::Vec2> {
     crate::cmd::point_value(v).or_else(|| as_f64(v).map(|f| cadcraft_geom::Vec2::new(f, f)))
 }
 
+/// Variables `get` reports from session or drawing state that `set` can't change.
+const READ_ONLY: &[&str] = &["CMDNAMES", "DWGNAME", "DBMOD", "CTAB", "LASTPOINT", "VIEWCTR", "VIEWSIZE", "EXTMIN", "EXTMAX"];
+
+pub fn is_read_only(name: &str) -> bool {
+    READ_ONLY.iter().any(|r| r.eq_ignore_ascii_case(name.trim()))
+}
+
 pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
     let n = name.trim().to_ascii_uppercase();
+    if is_read_only(&n) {
+        return Err(EngineError::BadParams { cmd: "setvar".into(), msg: format!("{n} is read-only") });
+    }
     let bad = || EngineError::BadParams { cmd: "setvar".into(), msg: format!("invalid value for {n}") };
     let st = &mut s.settings;
     match n.as_str() {
@@ -148,12 +158,21 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
                 _ => return Err(bad()),
             };
             // Keep the header type stable for known numeric vars.
-            if let Some(old) = d.header.get(&n)
-                && matches!(old, cadcraft_doc::HVal::Real(_))
-                && let Some(f) = val.as_f64()
-            {
-                d.header.set_f64(&n, f);
-                return Ok(());
+            match d.header.get(&n) {
+                Some(cadcraft_doc::HVal::Real(_)) => {
+                    d.header.set_f64(&n, val.as_f64().ok_or_else(bad)?);
+                    return Ok(());
+                }
+                Some(cadcraft_doc::HVal::Int(_)) => {
+                    let i = match val {
+                        cadcraft_doc::HVal::Int(i) => i,
+                        cadcraft_doc::HVal::Real(f) if f.fract() == 0.0 && f.abs() < 1e15 => f as i64,
+                        _ => return Err(bad()),
+                    };
+                    d.header.set_i64(&n, i);
+                    return Ok(());
+                }
+                _ => {}
             }
             d.header.set(&n, val);
         }

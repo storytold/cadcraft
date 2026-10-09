@@ -459,6 +459,51 @@ fn sysvars_roundtrip() {
 }
 
 #[test]
+fn setvar_at_command_line() {
+    let mut s = Session::new();
+    // One line, as typed in issue #30: Space separates the inputs.
+    s.cmdline("SETVAR LUNITS 4").unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(s.doc().unwrap().header.i64("LUNITS", 0), 4);
+    // Step by step, offering the current value as the default.
+    s.cmdline("setvar").unwrap();
+    s.cmdline("luprec").unwrap();
+    assert_eq!(s.current_prompt().unwrap().default.as_deref(), Some("4"));
+    s.cmdline("2").unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(s.doc().unwrap().header.i64("LUPREC", 0), 2);
+    // Enter keeps the value.
+    s.cmdline("set osmode").unwrap();
+    s.cmdline("").unwrap();
+    assert!(s.running.is_none());
+    // A value of the wrong type re-prompts and changes nothing.
+    s.cmdline("SETVAR LUNITS abc").unwrap();
+    assert!(s.running.is_some());
+    assert_eq!(s.doc().unwrap().header.i64("LUNITS", 0), 4);
+    s.cancel();
+    // Unknown and read-only names end the command without creating or changing anything.
+    s.cmdline("SETVAR NOSUCHVAR 1").unwrap();
+    assert!(sysvars::get(&s, "NOSUCHVAR").is_none());
+    s.cmdline("SETVAR DWGNAME").unwrap();
+    assert!(s.running.is_none());
+    assert!(s.execute("setvar", &json!({"name": "dbmod", "value": 0})).is_err());
+    // `?` lists the variables.
+    s.cmdline("SETVAR ?").unwrap();
+    assert!(s.running.is_none());
+}
+
+#[test]
+fn setvar_keeps_header_types() {
+    let mut s = Session::new();
+    assert!(s.execute("setvar", &json!({"name": "LUNITS", "value": "x"})).is_err());
+    assert!(s.execute("setvar", &json!({"name": "LUNITS", "value": 2.5})).is_err());
+    s.execute("setvar", &json!({"name": "LUNITS", "value": 3.0})).unwrap();
+    assert_eq!(s.doc().unwrap().header.get("LUNITS"), Some(&cadcraft_doc::HVal::Int(3)));
+    assert!(s.execute("setvar", &json!({"name": "LTSCALE", "value": "big"})).is_err());
+    assert_eq!(s.doc().unwrap().header.f64("LTSCALE", 0.0), 1.0);
+}
+
+#[test]
 fn script_runs_commands() {
     let mut s = Session::new();
     s.script("LINE 0,0 10,0 10,10\n\nCIRCLE 5,5 2\nTEXT 0,-2 0.5 0 Hello world\n").unwrap();
