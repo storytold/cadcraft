@@ -122,6 +122,12 @@ impl DocState {
     pub fn is_dirty(&self) -> bool {
         !Arc::ptr_eq(&self.doc, &self.saved)
     }
+    /// Copy-on-write access to the drawing. Bumps the drawing revision so cached display lists and
+    /// GPU meshes rebuild.
+    pub fn doc_mut(&mut self) -> &mut Drawing {
+        self.revision += 1;
+        Arc::make_mut(&mut self.doc)
+    }
     /// The space edits, picks and snaps act on: model space inside an active viewport.
     pub fn edit_space(&self) -> Space {
         if self.active_viewport().is_some() { Space::Model } else { self.space.clone() }
@@ -163,8 +169,9 @@ impl DocState {
             } else {
                 let center = v.center - (pv.center - vp.center.xy()) * k;
                 let height = vp.height * k;
-                let doc = Arc::make_mut(&mut self.doc);
-                if let Some(store) = doc.space_mut(&self.space.clone()) {
+                let sp = self.space.clone();
+                let doc = self.doc_mut();
+                if let Some(store) = doc.space_mut(&sp) {
                     store.modify(h, |e| {
                         if let cadcraft_doc::EntityKind::Viewport(x) = &mut e.kind {
                             x.view_center = center;
@@ -371,9 +378,10 @@ impl Session {
     pub fn doc(&self) -> Result<&Drawing> {
         Ok(&self.state()?.doc)
     }
-    /// Copy-on-write access to the drawing.
+    /// Copy-on-write access to the drawing. Bumps the drawing revision so cached display lists and
+    /// GPU meshes rebuild.
     pub fn doc_mut(&mut self) -> Result<&mut Drawing> {
-        Ok(Arc::make_mut(&mut self.state_mut()?.doc))
+        Ok(self.state_mut()?.doc_mut())
     }
     /// The space commands act on (model space while working inside a layout viewport).
     pub fn space(&self) -> Space {
@@ -456,6 +464,7 @@ impl Session {
                 {
                     st.doc = doc.clone();
                     st.selection = sel.clone();
+                    st.revision += 1;
                 }
                 return Err(EngineError::Internal(id.into(), msg));
             }
@@ -633,6 +642,7 @@ impl Session {
                 // Restore and end the command.
                 if let Ok(st) = self.state_mut() {
                     st.doc = run.before.clone();
+                    st.revision += 1;
                 }
                 self.echo(format!("Internal error in {id}: {m}"));
                 Err(EngineError::Internal(id, m))

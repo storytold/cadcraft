@@ -420,3 +420,63 @@ fn mleader_and_qdim() {
     let r = s.execute("qdim", &json!({"handles": hs, "at": [0, -2]})).unwrap();
     assert_eq!(r["handles"].as_array().unwrap().len(), 2);
 }
+
+#[test]
+fn successive_interactive_lines_and_plines_bump_revision() {
+    // Regression test for issue #44: successive segments drawn during LINE and PLINE
+    // must bump the drawing revision so canvas display lists and GPU meshes rebuild mid-command.
+    let mut s = Session::new();
+    let rev0 = s.state().unwrap().revision;
+
+    // --- LINE command ---
+    s.start("line").unwrap();
+    s.input(Input::Point(Vec2::new(0.0, 0.0))).unwrap();
+    let rev1 = s.state().unwrap().revision;
+    assert_eq!(rev0, rev1, "first point only sets prompt base, no entity added");
+
+    // Second point: first line segment committed to drawing
+    s.input(Input::Point(Vec2::new(10.0, 0.0))).unwrap();
+    let rev2 = s.state().unwrap().revision;
+    assert!(rev2 > rev1, "first line segment bumped revision");
+
+    // Third point: second line segment committed to drawing
+    s.input(Input::Point(Vec2::new(10.0, 10.0))).unwrap();
+    let rev3 = s.state().unwrap().revision;
+    assert!(rev3 > rev2, "second successive line segment bumped revision");
+
+    // Fourth point: third line segment committed to drawing
+    s.input(Input::Point(Vec2::new(0.0, 10.0))).unwrap();
+    let rev4 = s.state().unwrap().revision;
+    assert!(rev4 > rev3, "third successive line segment bumped revision");
+
+    // Undo keyword inside LINE: removes last segment and must bump revision
+    s.input(Input::Keyword("Undo".into())).unwrap();
+    let rev_undo = s.state().unwrap().revision;
+    assert!(rev_undo > rev4, "interactive undo bumped revision");
+
+    s.input(Input::Enter).unwrap();
+    let rev_finish = s.state().unwrap().revision;
+    assert!(rev_finish > rev_undo, "ending command bumped revision");
+
+    // --- PLINE command ---
+    s.start("pline").unwrap();
+    s.input(Input::Point(Vec2::new(0.0, 0.0))).unwrap();
+    let prev_rev = s.state().unwrap().revision;
+
+    // Second point: first polyline segment committed
+    s.input(Input::Point(Vec2::new(5.0, 0.0))).unwrap();
+    let p_rev1 = s.state().unwrap().revision;
+    assert!(p_rev1 > prev_rev, "first pline segment bumped revision");
+
+    // Third point: second polyline segment committed (modifies polyline entity in-place)
+    s.input(Input::Point(Vec2::new(5.0, 5.0))).unwrap();
+    let p_rev2 = s.state().unwrap().revision;
+    assert!(p_rev2 > p_rev1, "second successive pline segment bumped revision");
+
+    // Fourth point: third polyline segment committed (modifies polyline entity in-place)
+    s.input(Input::Point(Vec2::new(0.0, 5.0))).unwrap();
+    let p_rev3 = s.state().unwrap().revision;
+    assert!(p_rev3 > p_rev2, "third successive pline segment bumped revision");
+
+    s.input(Input::Enter).unwrap();
+}
