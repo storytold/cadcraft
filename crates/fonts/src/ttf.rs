@@ -194,7 +194,23 @@ impl OutlinePen for Pen {
 /// Cap height of a font in font units at 1000 units per em.
 fn cap_height(f: &FontRef) -> f64 {
     let metrics = f.metrics(Size::new(UPEM), LocationRef::default());
-    f64::from(metrics.cap_height.filter(|c| *c > 0.0).unwrap_or(metrics.ascent * 0.72).max(1.0))
+    if let Some(c) = metrics.cap_height.filter(|c| *c > 0.0) {
+        return f64::from(c);
+    }
+    // Fall back to glyph 'H' if the font doesn't store cap_height in OS/2 (e.g. OS/2 v1).
+    let gid = f.charmap().map('H').unwrap_or_default();
+    if gid.to_u32() != 0 {
+        let mut pen = Pen { contours: Vec::new(), cur: Vec::new() };
+        if let Some(g) = f.outline_glyphs().get(gid) {
+            let _ = g.draw(DrawSettings::unhinted(Size::new(UPEM), LocationRef::default()), &mut pen);
+            pen.flush();
+            let max_y = pen.contours.iter().flatten().map(|p| p.y).fold(0.0, f64::max);
+            if max_y > 10.0 {
+                return max_y;
+            }
+        }
+    }
+    f64::from((metrics.ascent * 0.72).max(1.0))
 }
 
 fn glyph(font: &[u8], f: &FontRef, c: char) -> Arc<GlyphOutline> {

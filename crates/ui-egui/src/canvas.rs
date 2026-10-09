@@ -917,3 +917,71 @@ fn grip_at(app: &CadApp, xf: &Xf, hover: Option<Pos2>) -> Option<HotGrip> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cadcraft_engine::{Input, Session};
+
+    #[test]
+    fn display_list_updates_for_successive_drawn_lines() {
+        let mut app = CadApp::new(Session::new(), crate::Services::default());
+        ensure_list(&mut app, 1.0);
+        let initial_count = app.canvas.list.as_ref().map(|l| l.prims.len()).unwrap_or(0);
+
+        app.session.start("line").unwrap();
+        app.session.input(Input::Point(Vec2::new(0.0, 0.0))).unwrap();
+        ensure_list(&mut app, 1.0);
+        assert_eq!(app.canvas.list.as_ref().map(|l| l.prims.len()).unwrap_or(0), initial_count);
+
+        // Segment 1
+        app.session.input(Input::Point(Vec2::new(10.0, 0.0))).unwrap();
+        ensure_list(&mut app, 1.0);
+        assert_eq!(app.canvas.list.as_ref().map(|l| l.prims.len()).unwrap_or(0), initial_count + 1);
+
+        // Segment 2
+        app.session.input(Input::Point(Vec2::new(10.0, 10.0))).unwrap();
+        ensure_list(&mut app, 1.0);
+        assert_eq!(app.canvas.list.as_ref().map(|l| l.prims.len()).unwrap_or(0), initial_count + 2);
+
+        // Segment 3
+        app.session.input(Input::Point(Vec2::new(0.0, 10.0))).unwrap();
+        ensure_list(&mut app, 1.0);
+        assert_eq!(app.canvas.list.as_ref().map(|l| l.prims.len()).unwrap_or(0), initial_count + 3);
+
+        app.session.input(Input::Enter).unwrap();
+    }
+
+    #[test]
+    fn display_list_updates_for_successive_drawn_plines() {
+        let mut app = CadApp::new(Session::new(), crate::Services::default());
+        ensure_list(&mut app, 1.0);
+        let initial_count = app.canvas.list.as_ref().map(|l| l.prims.len()).unwrap_or(0);
+
+        app.session.start("pline").unwrap();
+        app.session.input(Input::Point(Vec2::new(0.0, 0.0))).unwrap();
+        ensure_list(&mut app, 1.0);
+        assert_eq!(app.canvas.list.as_ref().map(|l| l.prims.len()).unwrap_or(0), initial_count);
+
+        // Segment 1 (adds pline with 2 vertices)
+        app.session.input(Input::Point(Vec2::new(10.0, 0.0))).unwrap();
+        ensure_list(&mut app, 1.0);
+        let l1 = app.canvas.list.as_ref().unwrap();
+        assert_eq!(l1.prims.len(), initial_count + 1);
+        let v1_count = l1.verts.len();
+
+        // Segment 2 (modifies pline in place with 3 vertices)
+        app.session.input(Input::Point(Vec2::new(10.0, 10.0))).unwrap();
+        ensure_list(&mut app, 1.0);
+        let v2_count = app.canvas.list.as_ref().unwrap().verts.len();
+        assert!(v2_count > v1_count, "display list must update vertices for segment 2");
+
+        // Segment 3 (modifies pline in place with 4 vertices)
+        app.session.input(Input::Point(Vec2::new(0.0, 10.0))).unwrap();
+        ensure_list(&mut app, 1.0);
+        let v3_count = app.canvas.list.as_ref().unwrap().verts.len();
+        assert!(v3_count > v2_count, "display list must update vertices for segment 3");
+
+        app.session.input(Input::Enter).unwrap();
+    }
+}
