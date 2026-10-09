@@ -20,10 +20,52 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         "about" => about(ctx, &mut open),
         "commands" => commands(app, ctx, &mut open),
         "blocks" => blocks(app, ctx, &mut open),
+        "quit" => quit(app, ctx, &mut open),
         _ => open = false,
     }
     if !open {
         app.ui.dialog = None;
+    }
+}
+
+/// Closing the window with unsaved changes: Save / Don't Save / Cancel.
+fn quit(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
+    let close = |app: &mut CadApp| {
+        app.quit_confirmed = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    };
+    let dirty: Vec<String> = app.session.docs.iter().filter(|d| d.is_dirty()).map(|d| d.title.clone()).collect();
+    let [first, ..] = dirty.as_slice() else {
+        *open = false;
+        close(app);
+        return;
+    };
+    let what = if dirty.len() == 1 { format!("“{first}”") } else { format!("{} drawings", dirty.len()) };
+    let (mut save, mut discard, mut cancel) = (false, false, false);
+    egui::Window::new("CADCraft")
+        .id(egui::Id::new("quit_dialog"))
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, -40.0))
+        .open(open)
+        .show(ctx, |ui| {
+            ui.set_min_width(340.0);
+            ui.label(RichText::new(format!("Save changes to {what}?")).strong());
+            ui.label("Your changes will be lost if you don't save them.");
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                discard = ui.button("Don't Save").clicked();
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    save = ui.button("Save").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    cancel = ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape));
+                });
+            });
+        });
+    if discard || (save && app.save_all()) {
+        *open = false;
+        close(app);
+    } else if save || cancel {
+        *open = false;
     }
 }
 
@@ -225,5 +267,60 @@ fn mtext_editor(app: &mut CadApp, ctx: &egui::Context) {
     } else if cancel {
         ctx.data_mut(|d| d.remove::<String>(id));
         app.session.cancel();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Services;
+    use egui::{ViewportCommand, ViewportEvent, ViewportId, ViewportInfo};
+    use serde_json::json;
+
+    fn sample_app() -> CadApp {
+        let mut session = cadcraft_engine::Session::new();
+        session.open_drawing(cadcraft_engine::sample::default_sample(), "Bracket", None);
+        CadApp::new(session, Services::default())
+    }
+
+    /// One frame in which the window manager asks to close the window; returns whether the app
+    /// cancelled the close.
+    fn close_frame(app: &mut CadApp, ctx: &egui::Context) -> bool {
+        let mut input = egui::RawInput::default();
+        input.viewports.insert(ViewportId::ROOT, ViewportInfo { events: vec![ViewportEvent::Close], ..Default::default() });
+        let mut out = ctx.run_ui(input, |ui| app.logic(ui.ctx()));
+        out.textures_delta.clear();
+        out.viewport_output.get(&ViewportId::ROOT).is_some_and(|v| v.commands.contains(&ViewportCommand::CancelClose))
+    }
+
+    /// Issue #34: closing the window with unsaved changes asks first instead of losing them.
+    #[test]
+    fn closing_with_unsaved_changes_asks_first() {
+        let ctx = egui::Context::default();
+        let mut app = sample_app();
+        assert!(!close_frame(&mut app, &ctx), "a saved drawing closes without asking");
+        assert_eq!(app.ui.dialog, None);
+
+        let r = app.run("line", json!({ "points": [[0.0, 0.0], [10.0, 0.0]] }));
+        assert!(r.is_ok(), "{r:?}");
+        assert!(close_frame(&mut app, &ctx), "unsaved changes must cancel the close");
+        assert_eq!(app.ui.dialog.as_deref(), Some("quit"));
+
+        // Once the user chose Don't Save, the close goes through.
+        app.quit_confirmed = true;
+        assert!(!close_frame(&mut app, &ctx));
+    }
+
+    /// Programmatic quit (control channel `app.quit`) never opens the dialog.
+    #[test]
+    fn programmatic_quit_skips_the_prompt() {
+        let ctx = egui::Context::default();
+        let mut app = sample_app();
+        let r = app.run("line", json!({ "points": [[0.0, 0.0], [10.0, 0.0]] }));
+        assert!(r.is_ok(), "{r:?}");
+        let (req, _rx) = crate::control::ControlRequest::new("app.quit", json!({}));
+        let _ = crate::control::handle(&mut app, &ctx, &req);
+        assert!(!close_frame(&mut app, &ctx));
+        assert_eq!(app.ui.dialog, None);
     }
 }

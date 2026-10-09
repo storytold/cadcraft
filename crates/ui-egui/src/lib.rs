@@ -101,6 +101,8 @@ pub struct CadApp {
     styled: bool,
     pub frame_ms: f64,
     pub quit_requested: bool,
+    /// Set once the user chose to close despite unsaved changes (or saved them).
+    pub quit_confirmed: bool,
 }
 
 impl CadApp {
@@ -121,6 +123,7 @@ impl CadApp {
             styled: false,
             frame_ms: 0.0,
             quit_requested: false,
+            quit_confirmed: false,
         }
     }
 
@@ -177,6 +180,25 @@ impl CadApp {
         }
     }
 
+    /// Save every drawing with unsaved changes (asking for a file name where needed). Returns
+    /// false if one wasn't saved (cancelled or failed).
+    pub fn save_all(&mut self) -> bool {
+        for i in 0..self.session.docs.len() {
+            if !self.session.docs.get(i).is_some_and(|d| d.is_dirty()) {
+                continue;
+            }
+            let saved = self.run("document.switch", json!({ "index": i })).and_then(|_| self.run("qsave", Value::Null));
+            if let Err(e) = saved {
+                self.set_status(e);
+                return false;
+            }
+            if self.session.docs.get(i).is_some_and(|d| d.is_dirty()) {
+                return false;
+            }
+        }
+        true
+    }
+
     pub fn set_status(&mut self, s: impl Into<String>) {
         self.status = Some((s.into(), now_ms()));
     }
@@ -204,6 +226,11 @@ impl CadApp {
         self.collect_screenshots(ctx);
         self.issue_screenshots(ctx);
         menus::shortcuts(self, ctx);
+        // Closing the window (title bar, Exit, Cmd+Q) with unsaved changes asks first.
+        if ctx.input(|i| i.viewport().close_requested()) && !self.quit_confirmed && self.session.docs.iter().any(|d| d.is_dirty()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.ui.dialog = Some("quit".into());
+        }
         #[cfg(not(target_arch = "wasm32"))]
         for f in ctx.input(|i| i.raw.dropped_files.clone()) {
             let p = f.path().to_string_lossy().to_string();
