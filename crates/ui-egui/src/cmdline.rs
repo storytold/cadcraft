@@ -26,6 +26,52 @@ pub struct CmdLine {
 pub const MAX_LINES: usize = 12;
 const LINE_H: f32 = 16.0;
 
+/// The Dynamic Input frame for the prompt on screen, or `None` when the value boxes are not live
+/// (Dynamic Input off, no point prompt, a hot grip or a pending selection window).
+pub fn dyn_frame(app: &CadApp) -> Option<crate::dyninput::Frame> {
+    let st = &app.session.settings;
+    if !st.dynmode || app.canvas.hot_grip.is_some() || app.session.pending_window.is_some() {
+        return None;
+    }
+    let p = app.session.current_prompt().filter(|p| p.accept.point && !p.accept.select)?;
+    Some(crate::dyninput::Frame { base: p.base, cartesian: st.dynpi_cartesian, absolute: st.dynpi_absolute })
+}
+
+/// Take Tab away from egui before it moves keyboard focus to the next widget (which would leave
+/// the command line deaf to typing). While no widget has focus, a pressed Tab becomes a `"\t"`
+/// text event, which keeps its place among the other keystrokes; [`keyboard`] handles it.
+pub fn capture_tab(ctx: &egui::Context, raw: &mut egui::RawInput) {
+    if ctx.egui_wants_keyboard_input() {
+        return;
+    }
+    raw.events.retain_mut(|e| {
+        let tab = match e {
+            egui::Event::Key { key: Key::Tab, pressed, .. } => Some(*pressed),
+            _ => None,
+        };
+        match tab {
+            Some(true) => {
+                *e = egui::Event::Text("\t".into());
+                true
+            }
+            Some(false) => false,
+            None => true,
+        }
+    });
+}
+
+/// Tab on the command line: type the Dynamic Input separator (`,` or `<`) after a value, or
+/// complete a command name.
+fn tab(app: &mut CadApp) {
+    if let Some(f) = dyn_frame(app)
+        && let Some(sep) = crate::dyninput::tab_separator(&app.cmd.buffer, &f)
+    {
+        app.cmd.buffer.push(sep);
+    } else if let Some((id, _)) = suggestions(&app.cmd.buffer).first() {
+        app.cmd.buffer = id.clone();
+    }
+}
+
 /// Matching command names/aliases for AutoComplete.
 fn suggestions(prefix: &str) -> Vec<(String, &'static str)> {
     if prefix.is_empty() || prefix.contains(' ') {
@@ -91,7 +137,7 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
     if app.canvas.hot_grip.is_some() {
         for ev in &events {
             match ev {
-                egui::Event::Text(t) if t != " " => app.cmd.buffer.push_str(t),
+                egui::Event::Text(t) if t != " " && t != "\t" => app.cmd.buffer.push_str(t),
                 egui::Event::Key { key: Key::Backspace, pressed: true, .. } => {
                     app.cmd.buffer.pop();
                 }
@@ -125,7 +171,9 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
     for ev in events {
         match ev {
             egui::Event::Text(t) => {
-                if t == " " && !text_prompt {
+                if t == "\t" {
+                    tab(app);
+                } else if t == " " && !text_prompt {
                     submit(app);
                 } else {
                     app.cmd.buffer.push_str(&t);
@@ -173,11 +221,7 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
                         }
                     }
                 }
-                Key::Tab => {
-                    if let Some((id, _)) = suggestions(&app.cmd.buffer).first() {
-                        app.cmd.buffer = id.clone();
-                    }
-                }
+                Key::Tab => tab(app),
                 Key::Delete if app.cmd.buffer.is_empty() && app.session.running.is_none() => {
                     let _ = app.run("erase.selection", serde_json::json!({}));
                 }
@@ -190,6 +234,16 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
 }
 
 pub fn submit(app: &mut CadApp) {
+    // Dynamic Input: a split entry (`40,30`, `40<90`, `40,`) is completed from the cursor and
+    // measured from the last point.
+    if let Some(f) = dyn_frame(app) {
+        let cursor = app.canvas.cursor.unwrap_or(app.session.cursor);
+        let last = app.session.last_point;
+        let done = crate::dyninput::parse(&app.cmd.buffer, &f).and_then(|e| crate::dyninput::complete(&e, &f, cursor, last));
+        if let Some(text) = done {
+            app.cmd.buffer = text;
+        }
+    }
     let text = std::mem::take(&mut app.cmd.buffer);
     app.cmd.history_pos = None;
     if !text.trim().is_empty() && app.session.running.is_none() {

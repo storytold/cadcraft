@@ -504,6 +504,17 @@ fn setvar_keeps_header_types() {
 }
 
 #[test]
+fn dynamic_input_pointer_settings() {
+    let mut s = Session::new();
+    assert_eq!(sysvars::get(&s, "DYNPIFORMAT"), Some(json!(0)));
+    assert_eq!(sysvars::get(&s, "dynpicoords"), Some(json!(0)));
+    s.execute("setvar", &json!({"name": "dynpiformat", "value": 1})).unwrap();
+    s.execute("setvar", &json!({"name": "DYNPICOORDS", "value": 1})).unwrap();
+    assert!(s.settings.dynpi_cartesian && s.settings.dynpi_absolute);
+    assert!(s.execute("setvar", &json!({"name": "DYNPIFORMAT", "value": "x"})).is_err());
+}
+
+#[test]
 fn script_runs_commands() {
     let mut s = Session::new();
     s.script("LINE 0,0 10,0 10,10\n\nCIRCLE 5,5 2\nTEXT 0,-2 0.5 0 Hello world\n").unwrap();

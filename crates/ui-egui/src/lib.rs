@@ -15,6 +15,7 @@ pub mod cmdline;
 pub mod control;
 pub mod credits;
 pub mod dialogs;
+pub mod dyninput;
 pub mod gpu;
 pub mod icons;
 pub mod layers;

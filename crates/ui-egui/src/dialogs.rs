@@ -87,6 +87,20 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         });
         ui.separator();
         ui.checkbox(&mut s.dynmode, "Enable Dynamic Input (F12)");
+        // Pointer input format for second and next points (DYNPIFORMAT, DYNPICOORDS).
+        ui.indent("dynpi", |ui| {
+            ui.add_enabled_ui(s.dynmode, |ui| {
+                ui.label("Second and next points:");
+                ui.horizontal(|ui| {
+                    ui.radio_value(&mut s.dynpi_cartesian, false, "Polar (distance < angle)");
+                    ui.radio_value(&mut s.dynpi_cartesian, true, "Cartesian (x, y)");
+                });
+                ui.horizontal(|ui| {
+                    ui.radio_value(&mut s.dynpi_absolute, false, "Relative");
+                    ui.radio_value(&mut s.dynpi_absolute, true, "Absolute");
+                });
+            });
+        });
         ui.checkbox(&mut s.orthomode, "Ortho (F8)");
     });
 }
