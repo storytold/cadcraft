@@ -112,6 +112,8 @@ pub struct CanvasState {
     hover_at: Option<Pos2>,
     /// Constraint glyphs for the parametric overlay (cached per drawing revision).
     pub param: crate::parametric::Cache,
+    /// A selection window opened by a press-and-drag, to close where the button is let go.
+    drag_window: bool,
 }
 
 /// Primitives of `list` sorted by entity handle, built on the first highlight after each list
@@ -646,6 +648,31 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             app.session.echo(g.label());
         } else if let Err(e) = app.session.idle_click(raw_world.unwrap_or(p), mods.shift) {
             app.session.echo(e.to_string());
+        }
+    }
+    // Press-and-drag selection window (AutoCAD's PICKDRAG = 2; click-click still works): a drag
+    // that starts while objects are being selected opens a window where the button went down,
+    // and letting go closes it. Drags on grips and drags while drawing are left alone.
+    if resp.drag_started_by(egui::PointerButton::Primary)
+        && !middle_down
+        && app.canvas.hot_grip.is_none()
+        && app.session.pending_window.is_none()
+        && let Some(origin) = ui.input(|i| i.pointer.press_origin())
+        && rect.contains(origin)
+        && grip_at(app, &xf, Some(origin)).is_none()
+    {
+        app.canvas.drag_window = app.session.begin_window(xf.to_world(origin));
+    }
+    if app.canvas.drag_window && resp.drag_stopped_by(egui::PointerButton::Primary) {
+        app.canvas.drag_window = false;
+        if app.session.pending_window.is_some()
+            && let Some(end) = ui.input(|i| i.pointer.interact_pos())
+        {
+            let end = xf.to_world(end);
+            let done = if app.session.running.is_some() { app.session.input(Input::Point(end)) } else { app.session.idle_click(end, mods.shift) };
+            if let Err(e) = done {
+                app.session.echo(e.to_string());
+            }
         }
     }
     if inside && pressed_secondary {
