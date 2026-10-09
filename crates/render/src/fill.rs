@@ -118,6 +118,7 @@ mod tests {
     #[test]
     fn degenerate_input() {
         assert!(triangulate_evenodd(&[vec![Vec2::ZERO, Vec2::X]]).is_empty());
-        assert!(triangulate_evenodd(&[vec![Vec2::new(f64::NAN, 0.0), Vec2::X, Vec2::Y]]).is_empty() || true);
+        // NaN input must not panic; the result itself is unspecified.
+        let _ = triangulate_evenodd(&[vec![Vec2::new(f64::NAN, 0.0), Vec2::X, Vec2::Y]]);
     }
 }
