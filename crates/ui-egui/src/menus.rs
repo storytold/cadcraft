@@ -38,6 +38,8 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.dialog.commands", "Command Reference", &["Help", "CADCraft Help"], Some("F1")),
     ("ui.toggle.history", "Command History", &["Window", "Command History"], Some("F2")),
     ("ui.cmdline.lines", "Command Line History Lines", &[], None),
+    ("ui.dialog.language", "Interface Language", &["Edit", "Interface Language"], None),
+    ("ui.language", "Language", &[], None),
     ("ui.noop", "", &[], None),
     ("ui.quit", "Quit CADCraft", &[], Some("Cmd+Q")),
 ];
@@ -48,6 +50,10 @@ pub fn is_ui_command(id: &str) -> bool {
 
 /// Run a UI-only command. `None` if `id` isn't one.
 pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    crate::i18n::with_language(app.language(), || run_ui_command_inner(app, id, params))
+}
+
+fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
     if let Some(r) = crate::managers::route(app, id, params) {
         return Some(r);
     }
@@ -60,6 +66,13 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
     let no_path =
         if id.starts_with("ui.") { params.is_null() || (params.get("path").is_none() && params.get("data").is_none()) } else { params.is_null() };
     let r = match id {
+        "ui.language" => {
+            let Some(preference) = params.get("lang").and_then(Value::as_str).and_then(crate::i18n::Preference::parse) else {
+                return Some(Err("language must be auto, en or uk".into()));
+            };
+            app.ui.interface_language = preference;
+            Ok(json!({"interfaceLanguage": preference.code()}))
+        }
         "ui.open" | "open" if no_path => {
             let picked = app.services.pick_open.as_ref().and_then(|f| f());
             if let Some(p) = picked {
@@ -152,8 +165,8 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
             Ok(Value::Null)
         }
         "ui.resetpalettes" => {
-            let (menu, theme) = (app.ui.in_window_menu, app.ui.theme);
-            app.ui = crate::UiState { in_window_menu: menu, theme, ..Default::default() };
+            let (menu, theme, interface_language) = (app.ui.in_window_menu, app.ui.theme, app.ui.interface_language);
+            app.ui = crate::UiState { in_window_menu: menu, theme, interface_language, ..Default::default() };
             Ok(Value::Null)
         }
         "ui.start" => {
@@ -173,7 +186,8 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
             }
             Ok(json!({ "lines": app.ui.history_lines }))
         }
-        "ui.dialog.layers"
+        "ui.dialog.language"
+        | "ui.dialog.layers"
         | "ui.dialog.blocks"
         | "ui.dialog.dsettings"
         | "ui.dialog.about"
@@ -316,7 +330,7 @@ pub(crate) fn shortcut_label(s: &str, mac: bool) -> String {
 fn entry_ui(ui: &mut egui::Ui, e: &Entry, clicked: &mut Option<String>) {
     match e {
         Entry::Item { label, id, shortcut, enabled } => {
-            let mut b = egui::Button::new(label);
+            let mut b = egui::Button::new(crate::i18n::t(label));
             if let Some(s) = shortcut {
                 b = b.shortcut_text(shortcut_label(s, ui.ctx().os().is_mac()));
             }
@@ -326,7 +340,7 @@ fn entry_ui(ui: &mut egui::Ui, e: &Entry, clicked: &mut Option<String>) {
             }
         }
         Entry::Sub { label, children } => {
-            ui.menu_button(label, |ui| {
+            ui.menu_button(crate::i18n::t(label), |ui| {
                 for c in children {
                     entry_ui(ui, c, clicked);
                 }
@@ -344,7 +358,7 @@ pub fn menu_bar(app: &mut CadApp, ui: &mut egui::Ui) {
         |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 for (name, entries) in &tree {
-                    ui.menu_button(name, |ui| {
+                    ui.menu_button(crate::i18n::t(name), |ui| {
                         for e in entries {
                             entry_ui(ui, e, &mut clicked);
                         }

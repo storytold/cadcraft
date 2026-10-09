@@ -360,7 +360,12 @@ pub fn draw_overlay(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter
         if resp.double_clicked() {
             act = Some(Act::Edit(c.name.clone(), c.expr.clone(), r.left_center()));
         }
-        resp.on_hover_text(format!("{} constraint {} = {}  (double-click to edit)", c.kind.name(), c.name, c.expr));
+        resp.on_hover_text(crate::tf!(
+            "{kind} constraint {name} = {expression}  (double-click to edit)",
+            kind = crate::i18n::t(c.kind.name()),
+            name = c.name,
+            expression = c.expr
+        ));
     }
     // ----- geometric constraint bars -----
     let mut bars: Vec<(Handle, Vec2, Vec<(&str, u32)>)> = Vec::new();
@@ -425,7 +430,7 @@ pub fn draw_overlay(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter
                 painter.rect_filled(cr.shrink(1.0), 3.0, Color32::from_rgb(0xf2, 0xf4, 0xf7));
             }
             paint_glyph(painter, cr.shrink(2.0), kind, Color32::from_rgb(0x26, 0x2b, 0x33));
-            resp.on_hover_text(format!("{kind} (constraint {id})"));
+            resp.on_hover_text(crate::tf!("{kind} (constraint {id})", kind = crate::i18n::t(kind), id = id));
         }
     }
     let _ = act_take(app, act, ui);
@@ -514,57 +519,66 @@ pub fn parameters_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool)
     let filter_id = egui::Id::new("par_filter");
     let mut filter = ctx.data_mut(|d| d.get_temp::<String>(filter_id)).unwrap_or_default();
     let mut action: Option<Value> = None;
-    egui::Window::new("Parameters Manager").open(open).default_size(vec2(560.0, 300.0)).resizable(true).show(ctx, |ui| {
-        ui.horizontal(|ui| {
-            if ui.button("ƒx  New User Parameter").on_hover_text("Creates a user parameter").clicked() {
-                let mut n = 1;
-                while rows.iter().any(|r| r.name == format!("user{n}")) {
-                    n += 1;
-                }
-                action = Some(json!({ "name": format!("user{n}"), "expr": "1" }));
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(egui::TextEdit::singleline(&mut filter).hint_text("Search for parameter").desired_width(170.0));
-            });
-        });
-        ui.separator();
-        let f = filter.to_ascii_lowercase();
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            egui::Grid::new("par_grid").striped(true).num_columns(5).spacing(vec2(12.0, 4.0)).min_col_width(60.0).show(ui, |ui| {
-                for h in ["Name", "Expression", "Value", "Type", ""] {
-                    ui.label(egui::RichText::new(h).strong());
-                }
-                ui.end_row();
-                for (kind, title) in [("dimensional", "Dimensional Constraint Parameters"), ("user", "User Parameters")] {
-                    let group: Vec<&Row> =
-                        rows.iter().filter(|r| r.kind == kind && (f.is_empty() || r.name.to_ascii_lowercase().contains(&f))).collect();
-                    ui.label(egui::RichText::new(title).color(t.text_dim).small());
-                    ui.end_row();
-                    for r in group {
-                        ui.label(&r.name);
-                        let id = egui::Id::new(("par_expr", &r.name));
-                        if let Some(v) = expr_field(ui, id, &r.expr) {
-                            action = Some(json!({ "name": r.name, "expr": v }));
-                        }
-                        match (&r.value, &r.error) {
-                            (Some(v), _) => ui.label(trim_num(*v, 4)),
-                            (None, Some(e)) => ui.label(egui::RichText::new("error").color(Color32::from_rgb(0xff, 0x8a, 0x6a))).on_hover_text(e),
-                            _ => ui.label(""),
-                        };
-                        ui.label(egui::RichText::new(if kind == "user" { "User" } else { r.description.as_str() }).color(t.text_dim));
-                        if kind == "user" {
-                            if ui.small_button("Delete").clicked() {
-                                action = Some(json!({ "delete": r.name }));
-                            }
-                        } else {
-                            ui.label("");
-                        }
-                        ui.end_row();
+    egui::Window::new(crate::tl!("Parameters Manager"))
+        .id(egui::Id::new("Parameters Manager"))
+        .open(open)
+        .default_size(vec2(560.0, 300.0))
+        .resizable(true)
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                if ui.button(crate::tl!("ƒx  New User Parameter")).on_hover_text(crate::tl!("Creates a user parameter")).clicked() {
+                    let mut n = 1;
+                    while rows.iter().any(|r| r.name == format!("user{n}")) {
+                        n += 1;
                     }
+                    action = Some(json!({ "name": format!("user{n}"), "expr": "1" }));
                 }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add(egui::TextEdit::singleline(&mut filter).hint_text(crate::tl!("Search for parameter")).desired_width(170.0));
+                });
+            });
+            ui.separator();
+            let f = filter.to_ascii_lowercase();
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                egui::Grid::new("par_grid").striped(true).num_columns(5).spacing(vec2(12.0, 4.0)).min_col_width(60.0).show(ui, |ui| {
+                    for h in ["Name", "Expression", "Value", "Type", ""] {
+                        ui.label(egui::RichText::new(crate::i18n::t(h)).strong());
+                    }
+                    ui.end_row();
+                    for (kind, title) in [("dimensional", "Dimensional Constraint Parameters"), ("user", "User Parameters")] {
+                        let group: Vec<&Row> =
+                            rows.iter().filter(|r| r.kind == kind && (f.is_empty() || r.name.to_ascii_lowercase().contains(&f))).collect();
+                        ui.label(egui::RichText::new(crate::i18n::t(title)).color(t.text_dim).small());
+                        ui.end_row();
+                        for r in group {
+                            ui.label(&r.name);
+                            let id = egui::Id::new(("par_expr", &r.name));
+                            if let Some(v) = expr_field(ui, id, &r.expr) {
+                                action = Some(json!({ "name": r.name, "expr": v }));
+                            }
+                            match (&r.value, &r.error) {
+                                (Some(v), _) => ui.label(trim_num(*v, 4)),
+                                (None, Some(e)) => {
+                                    ui.label(egui::RichText::new(crate::tl!("error")).color(Color32::from_rgb(0xff, 0x8a, 0x6a))).on_hover_text(e)
+                                }
+                                _ => ui.label(""),
+                            };
+                            ui.label(
+                                egui::RichText::new(crate::i18n::t(if kind == "user" { "User" } else { r.description.as_str() })).color(t.text_dim),
+                            );
+                            if kind == "user" {
+                                if ui.small_button(crate::tl!("Delete")).clicked() {
+                                    action = Some(json!({ "delete": r.name }));
+                                }
+                            } else {
+                                ui.label("");
+                            }
+                            ui.end_row();
+                        }
+                    }
+                });
             });
         });
-    });
     ctx.data_mut(|d| d.insert_temp(filter_id, filter));
     if let Some(p) = action {
         let _ = app.run("parameters", p);

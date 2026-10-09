@@ -17,6 +17,7 @@ pub mod credits;
 pub mod dialogs;
 pub mod dyninput;
 pub mod gpu;
+pub mod i18n;
 pub mod icons;
 pub mod layers;
 pub mod managers;
@@ -42,6 +43,7 @@ pub const PREFS_KEY: &str = "cadcraft.prefs";
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct UiState {
+    pub interface_language: i18n::Preference,
     pub show_toolsets: bool,
     pub show_palettes: bool,
     pub show_toolbar: bool,
@@ -67,6 +69,7 @@ pub struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         UiState {
+            interface_language: i18n::Preference::default(),
             show_toolsets: true,
             show_palettes: true,
             show_toolbar: true,
@@ -96,6 +99,7 @@ pub struct Services {
 }
 
 pub struct CadApp {
+    pub system_languages: Vec<String>,
     pub session: Session,
     pub ui: UiState,
     pub services: Services,
@@ -126,6 +130,7 @@ pub struct CadApp {
 impl CadApp {
     pub fn new(session: Session, services: Services) -> Self {
         CadApp {
+            system_languages: Vec::new(),
             session,
             ui: UiState::default(),
             services,
@@ -147,6 +152,10 @@ impl CadApp {
             quit_confirmed: false,
             closing: None,
         }
+    }
+
+    pub fn language(&self) -> &'static str {
+        self.ui.interface_language.resolve(&self.system_languages)
     }
 
     /// Draw the canvas on the GPU with the app's wgpu render state (eframe's
@@ -211,7 +220,7 @@ impl CadApp {
 
     /// Preferences kept across restarts, as JSON for the host's storage ([`PREFS_KEY`]).
     pub fn prefs_json(&self) -> String {
-        json!({ "theme": self.ui.theme.as_str() }).to_string()
+        json!({ "theme": self.ui.theme.as_str(), "interfaceLanguage": self.ui.interface_language.code() }).to_string()
     }
 
     /// Restore preferences saved by [`Self::prefs_json`]; unknown or malformed values are ignored.
@@ -219,6 +228,9 @@ impl CadApp {
         let Ok(v) = serde_json::from_str::<Value>(json) else { return };
         if let Some(t) = v.get("theme").and_then(Value::as_str).and_then(theme::ThemePref::parse) {
             self.ui.theme = t;
+        }
+        if let Some(l) = v.get("interfaceLanguage").and_then(Value::as_str).and_then(i18n::Preference::parse) {
+            self.ui.interface_language = l;
         }
     }
 
@@ -291,6 +303,10 @@ impl CadApp {
 
     /// Lay out the whole window.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        i18n::with_language(self.language(), || self.draw(ui));
+    }
+
+    fn draw(&mut self, ui: &mut egui::Ui) {
         let t0 = now_ms();
         let t = theme::Tokens::get();
         chrome::title_and_toolbar(self, ui);
@@ -461,6 +477,6 @@ mod tests {
         frame(&mut a, &ctx, None);
         assert_eq!(Tokens::get(), Tokens::of(theme::SYSTEM_FALLBACK), "no OS appearance: the documented fallback");
         assert_eq!(a.ui.theme, ThemePref::System);
-        assert_eq!(a.prefs_json(), r#"{"theme":"system"}"#);
+        assert_eq!(a.prefs_json(), r#"{"interfaceLanguage":"auto","theme":"system"}"#);
     }
 }

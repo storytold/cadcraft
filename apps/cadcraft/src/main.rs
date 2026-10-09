@@ -22,7 +22,7 @@ mod logging;
 mod native_menu;
 
 use cadcraft_engine::Session;
-use cadcraft_ui_egui::{CadApp, Services};
+use cadcraft_ui_egui::{CadApp, Services, i18n};
 
 struct App(CadApp, #[cfg(target_os = "macos")] Option<native_menu::NativeMenu>);
 
@@ -71,8 +71,8 @@ fn services() -> Services {
     Services {
         pick_open: Some(Box::new(|| {
             rfd::FileDialog::new()
-                .add_filter("Drawings (DWG, DXF)", &["dwg", "dxf"])
-                .add_filter("All files", &["*"])
+                .add_filter(i18n::t("Drawings (DWG, DXF)"), &["dwg", "dxf"])
+                .add_filter(i18n::t("All files"), &["*"])
                 .pick_file()
                 .map(|p| p.to_string_lossy().to_string())
         })),
@@ -83,7 +83,7 @@ fn services() -> Services {
             filters.sort_by_key(|(_, ext)| !lower.ends_with(&format!(".{ext}")));
             filters
                 .iter()
-                .fold(rfd::FileDialog::new().set_file_name(name), |d, (label, ext)| d.add_filter(*label, &[*ext]))
+                .fold(rfd::FileDialog::new().set_file_name(name), |d, (label, ext)| d.add_filter(i18n::t(label), &[*ext]))
                 .save_file()
                 .map(|p| p.to_string_lossy().to_string())
         })),
@@ -212,6 +212,7 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             let mut app = CadApp::new(Session::empty(), services());
+            app.system_languages = std::env::var("CADCRAFT_LOCALE").map(|s| vec![s]).unwrap_or_else(|_| sys_locale::get_locales().collect());
             if let Some(prefs) = cc.storage.and_then(|s| s.get_string(cadcraft_ui_egui::PREFS_KEY)) {
                 app.load_prefs(&prefs);
             }

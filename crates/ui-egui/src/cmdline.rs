@@ -288,7 +288,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
     let prompt = app.session.current_prompt();
     let font = crate::theme::body();
     if let Some(g) = app.canvas.hot_grip {
-        let gl = p.layout_no_wrap(g.label().to_string(), font.clone(), t.text);
+        let gl = p.layout_no_wrap(crate::i18n::t(g.label()).to_string(), font.clone(), t.text);
         let gw = gl.size().x;
         p.galley(pos2(x, bar.center().y - gl.size().y / 2.0), gl, t.text);
         x += gw + 6.0;
@@ -300,12 +300,12 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
                 let gw = g.size().x;
                 p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text_faint);
                 x += gw;
-                let g = p.layout_no_wrap(pr.message.clone(), font.clone(), t.text);
+                let g = p.layout_no_wrap(crate::i18n::t(&pr.message).to_string(), font.clone(), t.text);
                 let gw = g.size().x;
                 p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
                 x += gw;
                 if !pr.keywords.is_empty() {
-                    let g = p.layout_no_wrap(if pr.message.is_empty() { " [".into() } else { " or [".into() }, font.clone(), t.text);
+                    let g = p.layout_no_wrap(if pr.message.is_empty() { " [".into() } else { crate::tl!(" or [").into() }, font.clone(), t.text);
                     let gw = g.size().x;
                     p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
                     x += gw;
@@ -348,7 +348,13 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
             }
             None => {
                 if app.cmd.buffer.is_empty() {
-                    p.text(pos2(x, bar.center().y), egui::Align2::LEFT_CENTER, "Type a command", egui::FontId::proportional(12.5), t.text_faint);
+                    p.text(
+                        pos2(x, bar.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        crate::tl!("Type a command"),
+                        egui::FontId::proportional(12.5),
+                        t.text_faint,
+                    );
                 }
             }
         }
@@ -389,7 +395,13 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
                     p.rect_filled(r.shrink(1.0), 2.0, if resp.hovered() { t.cmd_keyword_hover } else { t.list_row });
                 }
                 p.text(Pos2::new(r.left() + 8.0, r.center().y), egui::Align2::LEFT_CENTER, id, crate::theme::body(), t.text);
-                p.text(Pos2::new(r.right() - 8.0, r.center().y), egui::Align2::RIGHT_CENTER, *label, crate::theme::small(), t.text_faint);
+                p.text(
+                    Pos2::new(r.right() - 8.0, r.center().y),
+                    egui::Align2::RIGHT_CENTER,
+                    crate::i18n::t(label),
+                    crate::theme::small(),
+                    t.text_faint,
+                );
                 if resp.clicked() {
                     app.cmd.buffer.clear();
                     app.start(&id.to_ascii_lowercase());

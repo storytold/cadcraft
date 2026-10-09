@@ -25,6 +25,13 @@ mod web {
             self.0.raw_input_hook(raw);
             cadcraft_ui_egui::cmdline::capture_tab(ctx, raw);
         }
+        /// Preferences (interface theme and language) survive reloads; egui state is not kept.
+        fn save(&mut self, storage: &mut dyn eframe::Storage) {
+            storage.set_string(cadcraft_ui_egui::PREFS_KEY, self.0.prefs_json());
+        }
+        fn persist_egui_memory(&self) -> bool {
+            false
+        }
         fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
             self.0.ui(ui);
         }
@@ -59,6 +66,11 @@ mod web {
                     options,
                     Box::new(move |cc| {
                         let mut app = CadApp::new(Session::new(), Services::default());
+                        app.system_languages =
+                            web_sys::window().map(|w| w.navigator().languages().iter().filter_map(|v| v.as_string()).collect()).unwrap_or_default();
+                        if let Some(prefs) = cc.storage.and_then(|s| s.get_string(cadcraft_ui_egui::PREFS_KEY)) {
+                            app.load_prefs(&prefs);
+                        }
                         if let Some(rs) = &cc.wgpu_render_state {
                             app.set_wgpu(rs);
                         }

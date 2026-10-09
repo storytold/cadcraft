@@ -451,8 +451,8 @@ fn draw_snap_marker(p: &egui::Painter, at: Pos2, hit: &SnapHit) {
             p.line(vec![at + vec2(-s, -s), at + vec2(s, -s), at + vec2(-s, s), at + vec2(s, s), at + vec2(-s, -s)], st);
         }
     }
-    p.text(at + vec2(12.0, 12.0), egui::Align2::LEFT_TOP, hit.name, crate::theme::small(), Color32::BLACK);
-    let galley = p.layout_no_wrap(hit.name.to_string(), crate::theme::small(), Color32::BLACK);
+    p.text(at + vec2(12.0, 12.0), egui::Align2::LEFT_TOP, crate::i18n::t(hit.name), crate::theme::small(), Color32::BLACK);
+    let galley = p.layout_no_wrap(crate::i18n::t(hit.name).to_string(), crate::theme::small(), Color32::BLACK);
     let r = Rect::from_min_size(at + vec2(10.0, 10.0), galley.size() + vec2(6.0, 2.0));
     p.rect_filled(r, 2.0, Color32::from_rgb(0xff, 0xff, 0xe1));
     p.galley(r.min + vec2(3.0, 1.0), galley, Color32::BLACK);
@@ -881,7 +881,11 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         let far = base + Vec2::from_angle(a) * (view.height * 4.0);
         let pts = [xf.to_screen(base), xf.to_screen(far)];
         painter.extend(Shape::dashed_line(&pts, Stroke::new(1.0, Color32::from_rgb(0x4c, 0xd1, 0x37)), 3.0, 3.0));
-        let tip = format!("Polar: {} < {}°", cadcraft_engine::units::format_distance(base.dist(c), 2, 4), (a.to_degrees().round() as i64));
+        let tip = crate::tf!(
+            "Polar: {distance} < {angle}°",
+            distance = cadcraft_engine::units::format_distance(base.dist(c), 2, 4),
+            angle = a.to_degrees().round() as i64
+        );
         tooltip(&painter, xf.to_screen(c) + vec2(16.0, 18.0), &tip);
     }
     if let (Some(hit), Some(_)) = (app.canvas.snap, app.canvas.cursor) {
@@ -948,23 +952,23 @@ fn dynamic_input(app: &CadApp, p: &egui::Painter, at: Pos2) {
         && let Some(e) = crate::dyninput::parse(&app.cmd.buffer, &f)
         && let Some(c) = app.canvas.cursor
     {
-        dynamic_input_boxes(p, at, &prompt.message, &f, &e, c);
+        dynamic_input_boxes(p, at, crate::i18n::t(&prompt.message), &f, &e, c);
         return;
     }
-    let mut text = prompt.message.clone();
+    let mut text = crate::i18n::t(&prompt.message).to_string();
     if !app.cmd.buffer.is_empty() {
-        text = format!("{}: {}", prompt.message, app.cmd.buffer);
+        text = format!("{}: {}", crate::i18n::t(&prompt.message), app.cmd.buffer);
     } else if let (Some(base), Some(c)) = (prompt.base, app.canvas.cursor) {
         text = format!(
             "{}   {}  <  {}°",
-            prompt.message,
+            crate::i18n::t(&prompt.message),
             cadcraft_engine::units::format_distance(base.dist(c), 2, 4),
             (base.angle_to(c).to_degrees() * 10.0).round() / 10.0
         );
     } else if let Some(c) = app.canvas.cursor {
         text = format!(
             "{}   {}, {}",
-            prompt.message,
+            crate::i18n::t(&prompt.message),
             cadcraft_engine::units::format_distance(c.x, 2, 4),
             cadcraft_engine::units::format_distance(c.y, 2, 4)
         );
@@ -1083,14 +1087,14 @@ fn draw_ucs_icon(p: &egui::Painter, rect: Rect) {
     p.line_segment([o, o + vec2(0.0, -60.0)], st);
     p.rect_stroke(Rect::from_center_size(o, vec2(9.0, 9.0)), 0.0, st, egui::StrokeKind::Middle);
     let f = egui::FontId::proportional(13.0);
-    p.text(o + vec2(70.0, 0.0), egui::Align2::LEFT_CENTER, "X", f.clone(), t.canvas_ink);
-    p.text(o + vec2(0.0, -70.0), egui::Align2::CENTER_BOTTOM, "Y", f, t.canvas_ink);
+    p.text(o + vec2(70.0, 0.0), egui::Align2::LEFT_CENTER, crate::tl!("X"), f.clone(), t.canvas_ink);
+    p.text(o + vec2(0.0, -70.0), egui::Align2::CENTER_BOTTOM, crate::tl!("Y"), f, t.canvas_ink);
 }
 
 fn viewport_label(p: &egui::Painter, rect: Rect) {
     let t = Tokens::get();
     let at = pos2(rect.left() + 10.0, rect.top() + 8.0);
-    p.text(at, egui::Align2::LEFT_TOP, "+  |  Top  |  2D Wireframe", crate::theme::small(), t.canvas_ink);
+    p.text(at, egui::Align2::LEFT_TOP, crate::tl!("+  |  Top  |  2D Wireframe"), crate::theme::small(), t.canvas_ink);
 }
 
 fn draw_viewcube(app: &mut CadApp, ui: &mut egui::Ui, rect: Rect) {
@@ -1102,7 +1106,7 @@ fn draw_viewcube(app: &mut CadApp, ui: &mut egui::Ui, rect: Rect) {
     // WCS pill.
     let pill = Rect::from_center_size(c + vec2(0.0, ring + 26.0), vec2(56.0, 16.0));
     p.rect_filled(pill, 8.0, Color32::from_rgb(0x48, 0x50, 0x5c));
-    p.text(pill.center(), egui::Align2::CENTER_CENTER, "WCS ⌄", crate::theme::small(), t.canvas_ink);
+    p.text(pill.center(), egui::Align2::CENTER_CENTER, crate::tl!("WCS ⌄"), crate::theme::small(), t.canvas_ink);
 }
 
 /// The grip of a selected object under the cursor, if any.

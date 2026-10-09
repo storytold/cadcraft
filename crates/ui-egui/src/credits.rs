@@ -215,39 +215,47 @@ pub fn contributors_ui(ui: &mut egui::Ui) {
     let id = egui::Id::new("credits_view");
     let mut v = ui.data_mut(|d| d.get_temp::<View>(id)).unwrap_or_default();
     ui.horizontal_wrapped(|ui| {
-        ui.label("Show");
+        ui.label(crate::tl!("Show"));
         for m in NameMode::ALL {
-            if ui.selectable_label(v.names == m, m.label()).clicked() {
+            if ui.selectable_label(v.names == m, crate::i18n::t(m.label())).clicked() {
                 v.names = m;
             }
         }
         ui.separator();
-        ui.label("Sort");
-        egui::ComboBox::from_id_salt("credits_sort").selected_text(v.key.label().0).show_ui(ui, |ui| {
+        ui.label(crate::tl!("Sort"));
+        egui::ComboBox::from_id_salt("credits_sort").selected_text(crate::i18n::t(v.key.label().0)).show_ui(ui, |ui| {
             for k in SortKey::ALL {
-                if ui.selectable_label(v.key == k, k.label().0).clicked() {
+                if ui.selectable_label(v.key == k, crate::i18n::t(k.label().0)).clicked() {
                     v.key = k;
                     v.ascending = k.default_ascending();
                 }
             }
         });
-        if ui.button(if v.ascending { "▲" } else { "▼" }).on_hover_text("Reverse the order").clicked() {
+        if ui.button(if v.ascending { "▲" } else { "▼" }).on_hover_text(crate::tl!("Reverse the order")).clicked() {
             v.ascending = !v.ascending;
         }
         ui.separator();
-        if ui.selectable_label(!v.table, "Grab bag").clicked() {
+        if ui.selectable_label(!v.table, crate::tl!("Grab bag")).clicked() {
             v.table = false;
         }
-        if ui.selectable_label(v.table, "Table").clicked() {
+        if ui.selectable_label(v.table, crate::tl!("Table")).clicked() {
             v.table = true;
         }
     });
     let list = sorted(CONTRIBUTORS, v.names, v.key, v.ascending);
-    ui.label(RichText::new(format!("{} contributors · {} commits", list.len(), group(TOTAL_COMMITS))).small().weak());
+    ui.label(
+        RichText::new(crate::tf!(
+            "{contributors} · {commits}",
+            contributors = crate::i18n::count(list.len() as u64, "{n} contributor", "{n} contributors"),
+            commits = crate::i18n::count(TOTAL_COMMITS, "{n} commit", "{n} commits")
+        ))
+        .small()
+        .weak(),
+    );
     ui.separator();
     egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
         if list.is_empty() {
-            ui.label("No contributor data was built into this copy.");
+            ui.label(crate::tl!("No contributor data was built into this copy."));
         } else if v.table {
             table(ui, &list, &mut v);
         } else {
@@ -268,7 +276,11 @@ fn table(ui: &mut egui::Ui, list: &[&Contributor], v: &mut View) {
     egui::Grid::new("credits_table").striped(true).num_columns(SortKey::ALL.len()).show(ui, |ui| {
         for k in SortKey::ALL {
             let arrow = if v.key == k { if v.ascending { " ▲" } else { " ▼" } } else { "" };
-            if ui.button(RichText::new(format!("{}{arrow}", k.label().1)).strong()).on_hover_text(k.label().0).clicked() {
+            if ui
+                .button(RichText::new(format!("{}{arrow}", crate::i18n::t(k.label().1))).strong())
+                .on_hover_text(crate::i18n::t(k.label().0))
+                .clicked()
+            {
                 if v.key == k {
                     v.ascending = !v.ascending;
                 } else {
@@ -297,14 +309,14 @@ fn table(ui: &mut egui::Ui, list: &[&Contributor], v: &mut View) {
 /// About ▸ Models: AI models credited in Co-Authored-By trailers.
 pub fn models_ui(ui: &mut egui::Ui) {
     if MODELS.is_empty() {
-        ui.label("No model credits were built into this copy.");
+        ui.label(crate::tl!("No model credits were built into this copy."));
         return;
     }
     let assisted: u64 = MODELS.iter().map(|m| m.commits).max().unwrap_or(0).max(1);
     egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
         egui::Grid::new("credits_models").striped(true).num_columns(6).show(ui, |ui| {
             for h in ["Company", "Model", "Version", "Commits", "% of all commits", "Lines +/−"] {
-                ui.label(RichText::new(h).strong());
+                ui.label(RichText::new(crate::i18n::t(h)).strong());
             }
             ui.end_row();
             for m in MODELS {
