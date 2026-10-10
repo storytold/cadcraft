@@ -76,6 +76,24 @@ fn moving_the_object_keeps_the_ordinate_datum() {
 }
 
 #[test]
+fn moving_the_line_keeps_a_free_continued_origin() {
+    let mut s = Session::new();
+    let l = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
+    s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, -2] })).unwrap();
+    s.execute("dimcontinue", &json!({ "points": [[25, 0]] })).unwrap();
+    let d = s.doc().unwrap().model.last().unwrap().handle;
+    s.execute("move", &json!({ "handles": [l.hex()], "delta": [3, 0] })).unwrap();
+    let dm = dim(&s, d);
+    assert!(near(dm.p13.xy(), Vec2::new(13.0, 0.0)), "attached origin follows: {dm:?}");
+    assert!(near(dm.p14.xy(), Vec2::new(25.0, 0.0)), "free origin stays: {dm:?}");
+    assert_eq!(cadcraft_render::dimension_in(s.doc().unwrap(), &dm).value, "12.0000");
+    s.execute("move", &json!({ "handles": [l.hex()], "delta": [3, 0] })).unwrap();
+    let dm = dim(&s, d);
+    assert!(near(dm.p13.xy(), Vec2::new(16.0, 0.0)) && near(dm.p14.xy(), Vec2::new(25.0, 0.0)), "{dm:?}");
+    assert_eq!(cadcraft_render::dimension_in(s.doc().unwrap(), &dm).value, "9.0000");
+}
+
+#[test]
 fn interactive_dimlinear_select_object_is_associative() {
     let mut s = Session::new();
     s.cmdline("line 0,0 6,0").unwrap();
