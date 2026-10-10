@@ -73,7 +73,7 @@ jobs:
       CADCRAFT_BUILD_DATE: ${{ needs.version.outputs.date }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           targets: aarch64-apple-darwin, x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
@@ -122,7 +122,7 @@ jobs:
       CADCRAFT_BUILD_DATE: ${{ needs.version.outputs.date }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
@@ -183,7 +183,7 @@ jobs:
           curl -fsSL -o "$RUNNER_TEMP/nfpm.deb" \
             "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_${{ matrix.deb }}.deb"
           sudo dpkg -i "$RUNNER_TEMP/nfpm.deb"
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
       - uses: Swatinem/rust-cache@v2
         with:
           key: release-linux-${{ matrix.arch }}
@@ -262,7 +262,7 @@ jobs:
       TRUNK_VERSION: 0.21.14
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
@@ -282,6 +282,68 @@ jobs:
         with:
           name: release-web
           path: dist/release/*
+          if-no-files-found: error
+
+  linux-riscv64:
+    name: Linux riscv64
+    needs: version
+    runs-on: ubuntu-24.04
+    env:
+      CADCRAFT_VERSION: ${{ needs.version.outputs.version }}
+      CADCRAFT_BUILD_DATE: ${{ needs.version.outputs.date }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+          targets: riscv64gc-unknown-linux-gnu
+      - name: Apply version override
+        if: inputs.version != ''
+        run: cargo xtask version set "$CADCRAFT_VERSION"
+      - name: Install cross-compilation dependencies
+        run: |
+          sudo dpkg --add-architecture riscv64
+          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+            sudo sed -i '/^Types: deb/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources
+          fi
+          if [ -f /etc/apt/sources.list ]; then
+            sudo sed -i 's/^deb /deb [arch=amd64] /g' /etc/apt/sources.list
+            sudo sed -i 's/^deb-src /deb-src [arch=amd64] /g' /etc/apt/sources.list
+          fi
+          cat << 'EOF' | sudo tee /etc/apt/sources.list.d/riscv64.list
+          deb [arch=riscv64] http://ports.ubuntu.com/ubuntu-ports noble main universe restricted multiverse
+          deb [arch=riscv64] http://ports.ubuntu.com/ubuntu-ports noble-updates main universe restricted multiverse
+          deb [arch=riscv64] http://ports.ubuntu.com/ubuntu-ports noble-security main universe restricted multiverse
+          EOF
+          sudo apt-get update
+          sudo apt-get install -y --allow-downgrades --no-install-recommends \
+            gcc-riscv64-linux-gnu binutils-riscv64-linux-gnu libc6-dev-riscv64-cross libc6-dev:riscv64 qemu-user \
+            libasound2-dev:riscv64 libxkbcommon-dev:riscv64 \
+            libwayland-dev:riscv64 libx11-dev:riscv64 libxrandr-dev:riscv64 libxi-dev:riscv64 libgl1-mesa-dev:riscv64
+          if command -v qemu-riscv64 >/dev/null 2>&1 && ! command -v qemu-riscv64-static >/dev/null 2>&1; then
+            sudo ln -s "$(command -v qemu-riscv64)" /usr/local/bin/qemu-riscv64-static
+          fi
+      - name: Build and package
+        env:
+          CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER: riscv64-linux-gnu-gcc
+          CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-L/usr/riscv64-linux-gnu/lib -C link-arg=-L/usr/lib/riscv64-linux-gnu"
+          PKG_CONFIG_SYSROOT_DIR: /
+          PKG_CONFIG_PATH: /usr/lib/riscv64-linux-gnu/pkgconfig:/usr/share/pkgconfig
+          PKG_CONFIG_ALLOW_CROSS: "1"
+          CROSS_ARCH: riscv64
+          CROSS_TARGET: riscv64gc-unknown-linux-gnu
+          CROSS_COMPILE: riscv64-linux-gnu-
+          EMULATOR: qemu-riscv64-static
+        run: |
+          packaging/linux/package.sh --formats "tar"
+      - name: Smoke test CLI under QEMU
+        run: |
+          tar -xzf dist/release/*.tar.gz
+          qemu-riscv64-static -L /usr/riscv64-linux-gnu cadcraft-*/bin/cadcraft-cli --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-riscv64
+          path: dist/release/*.tar.gz
           if-no-files-found: error
 
   freebsd:
