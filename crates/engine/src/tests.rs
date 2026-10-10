@@ -456,6 +456,116 @@ fn hatch_from_overlapping_lines() {
     assert!((area["area"].as_f64().unwrap() - 50.0).abs() < 1e-6);
 }
 
+/// Outer rectangle [0,0]-[20,20] with a [5,5]-[10,10] square hole drawn as four LINEs or as one
+/// closed polyline (issue #106).
+fn square_hole_fixture(lines: bool) -> Session {
+    let mut s = Session::new();
+    s.execute("rectang", &json!({"p1": [0, 0], "p2": [20, 20]})).unwrap();
+    let sq = [[5, 5], [10, 5], [10, 10], [5, 10]];
+    if lines {
+        for i in 0..4 {
+            s.execute("line", &json!({"points": [sq[i], sq[(i + 1) % 4]]})).unwrap();
+        }
+    } else {
+        s.execute("pline", &json!({"vertices": sq, "closed": true})).unwrap();
+    }
+    s
+}
+
+fn only_hatch(s: &Session) -> std::sync::Arc<cadcraft_doc::Entity> {
+    let hs: Vec<_> = s.doc().unwrap().model.iter().filter(|e| matches!(e.kind, EntityKind::Hatch(_))).cloned().collect();
+    assert_eq!(hs.len(), 1);
+    hs[0].clone()
+}
+
+/// The hatch stores the outer rectangle plus the square island.
+fn assert_outer_and_square_island(h: &cadcraft_doc::Hatch) {
+    assert_eq!(h.loops.len(), 2, "outer boundary plus the square island");
+    assert!(h.loops[0].outer && !h.loops[1].outer);
+    let island: Vec<Vec2> = h.loops[1].vertices.iter().map(|v| v.p).collect();
+    assert!((cadcraft_geom::shoelace(&island).abs() - 25.0).abs() < 1e-9);
+    let b = cadcraft_geom::Bounds2::from_points(island.iter().copied());
+    assert!(b.min.near(Vec2::new(5.0, 5.0), 1e-9) && b.max.near(Vec2::new(10.0, 10.0), 1e-9));
+}
+
+fn inside_open_hole(q: Vec2) -> bool {
+    q.x > 5.0 + 1e-6 && q.x < 10.0 - 1e-6 && q.y > 5.0 + 1e-6 && q.y < 10.0 - 1e-6
+}
+
+#[test]
+fn hatch_pick_point_keeps_island_of_separate_lines() {
+    for lines in [true, false] {
+        let mut s = square_hole_fixture(lines);
+        s.execute("hatch", &json!({"points": [[2, 2]]})).unwrap();
+        let e = only_hatch(&s);
+        let EntityKind::Hatch(h) = &e.kind else { panic!("not a hatch") };
+        assert_outer_and_square_island(h);
+        // The rendered pattern never enters the hole.
+        let d = s.doc().unwrap();
+        let list = cadcraft_render::build_entities(d, std::iter::once(e.as_ref()), &cadcraft_render::Options::default());
+        assert!(list.segment_count() > 0);
+        for p in &list.prims {
+            for w in list.points(p).windows(2) {
+                for k in 0..=16 {
+                    let q = w[0] + (w[1] - w[0]) * (k as f64 / 16.0);
+                    assert!(!inside_open_hole(q), "pattern line through the hole at {q:?} (lines: {lines})");
+                }
+            }
+        }
+    }
+    // The interactive form finds the same island.
+    let mut s = square_hole_fixture(true);
+    s.cmdline("hatch 2,2").unwrap();
+    s.cmdline("").unwrap();
+    let e = only_hatch(&s);
+    let EntityKind::Hatch(h) = &e.kind else { panic!("not a hatch") };
+    assert_outer_and_square_island(h);
+}
+
+#[test]
+fn gradient_pick_point_keeps_island_of_separate_lines() {
+    for lines in [true, false] {
+        let mut s = square_hole_fixture(lines);
+        s.execute("gradient", &json!({"points": [[2, 2]]})).unwrap();
+        let e = only_hatch(&s);
+        let EntityKind::Hatch(h) = &e.kind else { panic!("not a hatch") };
+        assert_outer_and_square_island(h);
+        let loops: Vec<Vec<Vec2>> = h.loops.iter().map(|l| l.vertices.iter().map(|v| v.p).collect()).collect();
+        let tris = cadcraft_render::triangulate_evenodd(&loops);
+        let area: f64 = tris.chunks(3).map(|t| cadcraft_geom::shoelace(t).abs()).sum();
+        assert!((area - 375.0).abs() < 1e-6, "filled area {area} (lines: {lines})");
+        let sample = Vec2::new(7.25, 7.75);
+        assert!(!tris.chunks(3).any(|t| cadcraft_geom::point_in_polygon(t, sample)), "hole filled (lines: {lines})");
+    }
+}
+
+#[test]
+fn boundary_pick_point_keeps_island_of_separate_lines() {
+    for lines in [true, false] {
+        let mut s = square_hole_fixture(lines);
+        let r = s.execute("boundary", &json!({"points": [[2, 2]]})).unwrap();
+        let hs = r["handles"].as_array().unwrap();
+        assert_eq!(hs.len(), 2, "outer and island polylines (lines: {lines})");
+        let mut areas: Vec<f64> = hs.iter().map(|h| s.execute("area", &json!({"handle": h})).unwrap()["area"].as_f64().unwrap()).collect();
+        areas.sort_by(f64::total_cmp);
+        assert!((areas[0] - 25.0).abs() < 1e-6 && (areas[1] - 400.0).abs() < 1e-6, "{areas:?}");
+    }
+    // Four separate outer lines and no hole: still exactly one boundary.
+    let mut s = Session::new();
+    let sq = [[0, 0], [20, 0], [20, 20], [0, 20]];
+    for i in 0..4 {
+        s.execute("line", &json!({"points": [sq[i], sq[(i + 1) % 4]]})).unwrap();
+    }
+    let r = s.execute("boundary", &json!({"points": [[2, 2]]})).unwrap();
+    assert_eq!(r["handles"].as_array().unwrap().len(), 1);
+    // Picking inside the line square bounds the square itself, with no island.
+    let mut s = square_hole_fixture(true);
+    let r = s.execute("boundary", &json!({"points": [[7, 7]]})).unwrap();
+    assert_eq!(r["handles"].as_array().unwrap().len(), 1);
+    let area = s.execute("area", &json!({"handle": r["handles"][0]})).unwrap();
+    assert!((area["area"].as_f64().unwrap() - 25.0).abs() < 1e-6);
+}
+
 #[test]
 fn block_insert_with_attributes() {
     let mut s = Session::new();
