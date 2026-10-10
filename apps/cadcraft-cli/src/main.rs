@@ -138,6 +138,33 @@ fn open(s: &mut Session, path: &str) -> Result<(), String> {
     s.execute("open", &json!({ "path": path })).map(|_| ()).map_err(|e| e.to_string())
 }
 
+#[derive(Clone, Copy)]
+struct OptionSpec {
+    name: &'static str,
+    takes_value: bool,
+}
+
+fn validate_options(command: &str, args: &[String], specs: &[OptionSpec]) -> Result<(), String> {
+    let mut i = 0;
+    while let Some(arg) = args.get(i) {
+        if let Some(name) = arg.strip_prefix("--") {
+            let Some(spec) = specs.iter().find(|spec| spec.name == arg) else {
+                return Err(format!("{command}: unknown option --{name}"));
+            };
+            if spec.takes_value && args.get(i + 1).is_some_and(|value| !value.starts_with("--")) {
+                i += 2;
+            } else {
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    Ok(())
+}
+
+const NO_OPTIONS: &[OptionSpec] = &[];
+
 fn info(path: &str) -> Result<(), String> {
     let mut s = Session::empty();
     open(&mut s, path)?;
@@ -489,12 +516,12 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let rest: Vec<String> = args.iter().skip(1).cloned().collect();
     let r = match args.first().map(String::as_str) {
-        Some("info") => rest.first().ok_or_else(|| USAGE.to_string()).and_then(|p| info(p)),
+        Some("info") => validate_options("info", &rest, NO_OPTIONS).and_then(|_| rest.first().ok_or_else(|| USAGE.to_string())).and_then(|p| info(p)),
         Some("convert") => convert(&rest),
         Some("run") => run(&rest),
-        Some("perf") => perf(&rest),
-        Some("sample") => sample(&rest),
-        Some("commands") => {
+        Some("perf") => validate_options("perf", &rest, NO_OPTIONS).and_then(|_| perf(&rest)),
+        Some("sample") => validate_options("sample", &rest, NO_OPTIONS).and_then(|_| sample(&rest)),
+        Some("commands") => validate_options("commands", &rest, NO_OPTIONS).map(|_| {
             let s = Session::new();
             let f = rest.first().map(|x| x.to_ascii_lowercase());
             let v: Vec<Value> = cadcraft_engine::command_specs()
@@ -503,8 +530,7 @@ fn main() -> ExitCode {
                 .map(|c| serde_json::to_value(c.info(&s)).unwrap_or_default())
                 .collect();
             println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
-            Ok(())
-        }
+        }),
         Some("mcp") => mcp(&rest),
         Some("--version" | "-V") => {
             println!("cadcraft-cli {}", env!("CARGO_PKG_VERSION"));
@@ -677,5 +703,28 @@ mod tests {
         assert!(run(&bad).unwrap_err().contains("--window"));
         assert!(!dir.join("bad.png").exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).into()).collect()
+    }
+
+    #[test]
+    fn validators_accept_only_the_documented_options() {
+        assert!(validate_options("info", &args(&["file.dxf"]), NO_OPTIONS).is_ok());
+        assert!(validate_options("perf", &args(&["100"]), NO_OPTIONS).is_ok());
+        assert!(validate_options("sample", &args(&["bracket", "out.dxf"]), NO_OPTIONS).is_ok());
+        assert!(validate_options("commands", &args(&["line"]), NO_OPTIONS).is_ok());
+        for (command, specs) in [("info", NO_OPTIONS), ("perf", NO_OPTIONS), ("sample", NO_OPTIONS), ("commands", NO_OPTIONS)] {
+            assert!(validate_options(command, &args(&["--typo"]), specs).is_err());
+        }
+    }
+
+    #[test]
+    fn unknown_options_are_rejected_before_side_effects() {
+        assert_eq!(validate_options("info", &args(&["missing.dxf", "--typo"]), NO_OPTIONS), Err("info: unknown option --typo".into()));
+        assert_eq!(validate_options("perf", &args(&["1", "--typo"]), NO_OPTIONS), Err("perf: unknown option --typo".into()));
+        assert_eq!(validate_options("sample", &args(&["bracket", "out.dxf", "--typo"]), NO_OPTIONS), Err("sample: unknown option --typo".into()));
     }
 }
