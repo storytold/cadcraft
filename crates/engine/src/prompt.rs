@@ -95,16 +95,18 @@ impl Prompt {
             return None;
         }
         let tl = t.to_ascii_lowercase();
-        for k in &self.keywords {
+        let keys = self.keywords.iter().map(|k| {
             let shortcut: String = k.chars().filter(|c| c.is_ascii_uppercase() || c.is_ascii_digit()).collect::<String>().to_ascii_lowercase();
             let shortcut =
                 if shortcut.is_empty() { k.chars().next().map(|c| c.to_ascii_lowercase().to_string()).unwrap_or_default() } else { shortcut };
-            let kl = k.to_ascii_lowercase();
-            if tl == kl || tl == shortcut || (tl.len() >= shortcut.len() && kl.starts_with(&tl)) {
-                return Some(k.clone());
-            }
-        }
-        None
+            (k, k.to_ascii_lowercase(), shortcut)
+        });
+        // A whole keyword or its capital-letter shortcut wins over a prefix of another keyword
+        // (`M` is Multiple, not a prefix of mEthod).
+        keys.clone()
+            .find(|(_, kl, sc)| tl == *kl || tl == *sc)
+            .or_else(|| keys.clone().find(|(_, kl, sc)| tl.len() >= sc.len() && kl.starts_with(&tl)))
+            .map(|(k, _, _)| k.clone())
     }
 }
 
