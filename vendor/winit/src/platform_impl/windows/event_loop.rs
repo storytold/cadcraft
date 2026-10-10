@@ -2306,12 +2306,12 @@ unsafe fn public_window_callback_inner(
             }
 
             let new_outer_rect: RECT;
-            // PdfCraft patch: from Windows 11 (build 22000) on, apply the rect Windows suggests, as
+            // CADCraft patch: from Windows 11 (build 22000) on, apply the rect Windows suggests, as
             // winit master does since 488c036a (rust-windowing/winit#4341). The adjustment below
             // asks `MonitorFromWindow`, which during a drag still answers with the monitor being
             // left: it nudges the window back onto that monitor, which sends another WM_DPICHANGED,
             // and the window grows and stays on the wrong monitor at the wrong scale
-            // (rust-windowing/winit#4041, #4600; storytold/pdfcraft#324).
+            // (rust-windowing/winit#4041, #4600).
             if !WIN10_BUILD_VERSION.is_some_and(|build| build < 22000) {
                 new_outer_rect = suggested_rect;
             } else {
