@@ -22,6 +22,9 @@ log = { workspace = true }
 [build-dependencies]
 winresource = "0.1"
 
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+winit = { version = "0.30", default-features = false, features = ["x11"] }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rfd = { workspace = true }
 
