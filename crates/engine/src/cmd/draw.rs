@@ -861,7 +861,11 @@ struct EllipseM {
     center_mode: bool,
     arc_mode: bool,
     pts: Vec<Vec2>,
+    /// The `Rotation` option: the next value is the rotation around the major axis.
+    rotation: bool,
     ellipse: Option<Ellipse>,
+    /// The `Parameter` option: arc start/end values are ellipse parameters, not true angles.
+    param: bool,
     start: Option<f64>,
 }
 
@@ -885,6 +889,28 @@ impl EllipseM {
         let (major, ratio) = if minor > ml { (u.perp() * minor, ml / minor) } else { (m, minor / ml) };
         (ratio > 1e-9).then_some(Ellipse::full(c, major, ratio.min(1.0)))
     }
+    /// The ellipse seen as a circle on the first axis rotated by `a` around it: ratio = cos(a),
+    /// for rotations up to 89.4°.
+    fn rotated(&self, a: f64) -> Option<Ellipse> {
+        let (c, m) = self.axis()?;
+        let ratio = a.cos().abs();
+        (m.len() >= 1e-12 && ratio >= 89.4f64.to_radians().cos()).then_some(Ellipse::full(c, m, ratio.min(1.0)))
+    }
+    /// The full ellipse is known: draw it, or go on to the arc angles.
+    fn place(&mut self, s: &mut Session, e: Ellipse) -> Result<Step> {
+        if self.arc_mode {
+            self.ellipse = Some(e);
+            return Ok(Step::Continue);
+        }
+        s.add_entity(EntityKind::Ellipse(cadcraft_doc::Ellipse {
+            center: v3(e.center),
+            major: v3(e.major),
+            ratio: e.ratio,
+            start: 0.0,
+            end: cadcraft_geom::TAU,
+        }))?;
+        Ok(Step::Done)
+    }
 }
 
 impl Interactive for EllipseM {
@@ -893,30 +919,46 @@ impl Interactive for EllipseM {
     }
     fn prompt(&self, _s: &Session) -> Prompt {
         if let Some(e) = &self.ellipse {
-            return Prompt::new(if self.start.is_none() { "Specify start angle" } else { "Specify end angle" }, Accept::POINT_OR_NUMBER)
-                .kw(&["Parameter"])
-                .base(e.center);
+            let msg = match (self.start.is_none(), self.param) {
+                (true, false) => "Specify start angle",
+                (false, false) => "Specify end angle",
+                (true, true) => "Specify start parameter",
+                (false, true) => "Specify end parameter",
+            };
+            return Prompt::new(msg, Accept::POINT_OR_NUMBER).kw(if self.param { &["Angle"] } else { &["Parameter"] }).base(e.center);
         }
         match (self.center_mode, self.pts.len()) {
             (false, 0) => Prompt::new("Specify axis endpoint of ellipse", Accept::POINT).kw(&["Arc", "Center"]),
             (false, 1) => Prompt::new("Specify other endpoint of axis", Accept::POINT).base_opt(self.pts.first().copied()),
             (true, 0) => Prompt::new("Specify center of ellipse", Accept::POINT),
             (true, 1) => Prompt::new("Specify endpoint of axis", Accept::POINT).base_opt(self.pts.first().copied()),
+            _ if self.rotation => Prompt::new("Specify rotation around major axis", Accept::POINT_OR_NUMBER).base_opt(self.axis().map(|a| a.0)),
             _ => Prompt::new("Specify distance to other axis", Accept::POINT_OR_NUMBER).kw(&["Rotation"]).base_opt(self.axis().map(|a| a.0)),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         if let Some(e) = self.ellipse {
+            let ge = Ellipse { start: 0.0, end: cadcraft_geom::TAU, ..e };
             let ang = match i {
-                Input::Point(p) => {
-                    let ge = Ellipse { start: 0.0, end: cadcraft_geom::TAU, ..e };
-                    ge.param_of(p)
+                Input::Keyword(k) => {
+                    match k.as_str() {
+                        "Parameter" => self.param = true,
+                        "Angle" => self.param = false,
+                        _ => {}
+                    }
+                    return Ok(Step::Continue);
                 }
+                // A parameter is the angle from the major axis taken as the parameter itself.
+                Input::Point(p) if self.param => cadcraft_geom::norm_angle((p - e.center).angle() - e.major.angle()),
+                Input::Point(p) => ge.param_of(p),
                 Input::Text(t) => {
-                    // A typed angle is a true angle from the major axis; convert it to an ellipse parameter like a picked point.
                     let a = crate::units::parse_angle(&t).ok_or_else(|| crate::EngineError::Other("Requires an angle.".into()))?;
-                    let ge = Ellipse { start: 0.0, end: cadcraft_geom::TAU, ..e };
-                    ge.param_of(e.center + Vec2::from_angle(a + e.major.angle()))
+                    if self.param {
+                        cadcraft_geom::norm_angle(a)
+                    } else {
+                        // A typed angle is a true angle from the major axis; convert it to an ellipse parameter like a picked point.
+                        ge.param_of(e.center + Vec2::from_angle(a + e.major.angle()))
+                    }
                 }
                 _ => return Ok(Step::Continue),
             };
@@ -940,41 +982,30 @@ impl Interactive for EllipseM {
         match i {
             Input::Keyword(k) if k == "Center" => self.center_mode = true,
             Input::Keyword(k) if k == "Arc" => self.arc_mode = true,
-            Input::Point(p) => {
-                if self.pts.len() < 2 {
-                    self.pts.push(p);
-                } else if let Some(e) = self.build(p) {
-                    if self.arc_mode {
-                        self.ellipse = Some(e);
-                        return Ok(Step::Continue);
-                    }
-                    s.add_entity(EntityKind::Ellipse(cadcraft_doc::Ellipse {
-                        center: v3(e.center),
-                        major: v3(e.major),
-                        ratio: e.ratio,
-                        start: 0.0,
-                        end: cadcraft_geom::TAU,
-                    }))?;
-                    return Ok(Step::Done);
+            Input::Keyword(k) if k == "Rotation" && self.pts.len() == 2 => self.rotation = true,
+            Input::Point(p) if self.pts.len() < 2 => self.pts.push(p),
+            Input::Point(p) if self.rotation => {
+                if let Some(e) = self.axis().and_then(|(c, _)| self.rotated((p - c).angle())) {
+                    return self.place(s, e);
                 }
+            }
+            Input::Point(p) => {
+                if let Some(e) = self.build(p) {
+                    return self.place(s, e);
+                }
+            }
+            Input::Text(t) if self.pts.len() == 2 && self.rotation => {
+                let e = crate::units::parse_angle(&t)
+                    .and_then(|a| self.rotated(a))
+                    .ok_or_else(|| crate::EngineError::Other("Requires an angle between 0 and 89.4 degrees.".into()))?;
+                return self.place(s, e);
             }
             Input::Text(t) if self.pts.len() == 2 => {
                 let d = number(&t).ok_or_else(|| crate::EngineError::Other("Requires a distance.".into()))?;
                 if let Some((c, m)) = self.axis()
                     && let Some(e) = self.build(c + m.normalized().perp() * d)
                 {
-                    if self.arc_mode {
-                        self.ellipse = Some(e);
-                        return Ok(Step::Continue);
-                    }
-                    s.add_entity(EntityKind::Ellipse(cadcraft_doc::Ellipse {
-                        center: v3(e.center),
-                        major: v3(e.major),
-                        ratio: e.ratio,
-                        start: 0.0,
-                        end: cadcraft_geom::TAU,
-                    }))?;
-                    return Ok(Step::Done);
+                    return self.place(s, e);
                 }
             }
             Input::Enter => return Ok(Step::Cancel),
@@ -986,17 +1017,17 @@ impl Interactive for EllipseM {
         if self.pts.len() < 2 {
             return self.pts.first().map(|a| vec![line(*a, c)]).unwrap_or_default();
         }
-        self.build(c)
-            .map(|e| {
-                vec![EntityKind::Ellipse(cadcraft_doc::Ellipse {
-                    center: v3(e.center),
-                    major: v3(e.major),
-                    ratio: e.ratio,
-                    start: 0.0,
-                    end: cadcraft_geom::TAU,
-                })]
-            })
-            .unwrap_or_default()
+        let e = if self.rotation { self.axis().and_then(|(ctr, _)| self.rotated((c - ctr).angle())) } else { self.build(c) };
+        e.map(|e| {
+            vec![EntityKind::Ellipse(cadcraft_doc::Ellipse {
+                center: v3(e.center),
+                major: v3(e.major),
+                ratio: e.ratio,
+                start: 0.0,
+                end: cadcraft_geom::TAU,
+            })]
+        })
+        .unwrap_or_default()
     }
 }
 

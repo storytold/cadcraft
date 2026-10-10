@@ -1975,6 +1975,8 @@ impl Interactive for FilletM {
 #[derive(Default)]
 struct BreakM {
     obj: Option<(Handle, Vec2)>,
+    /// The `First point` option: the next point replaces the selection pick as the first break point.
+    first_point: bool,
 }
 
 impl Interactive for BreakM {
@@ -1984,6 +1986,7 @@ impl Interactive for BreakM {
     fn prompt(&self, _s: &Session) -> Prompt {
         match self.obj {
             None => Prompt::new("Select object", Accept::POINT),
+            Some(_) if self.first_point => Prompt::new("Specify first break point", Accept::POINT),
             Some(_) => Prompt::new("Specify second break point", Accept::POINT).kw(&["First point"]),
         }
     }
@@ -1999,6 +2002,15 @@ impl Interactive for BreakM {
                     }
                     None => s.echo("*Invalid selection*"),
                 }
+                Ok(Step::Continue)
+            }
+            (Some(_), Input::Keyword(k)) if k == "First point" => {
+                self.first_point = true;
+                Ok(Step::Continue)
+            }
+            (Some((h, _)), Input::Point(p1)) if self.first_point => {
+                self.obj = Some((h, p1));
+                self.first_point = false;
                 Ok(Step::Continue)
             }
             (Some((h, p1)), Input::Point(p2)) => {
