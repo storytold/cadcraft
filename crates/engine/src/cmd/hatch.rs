@@ -404,3 +404,33 @@ impl Interactive for BoundaryM {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    /// The drawing's only hatch and its handle (hatches go to the back of the draw order, so not the last entity).
+    fn only_hatch(s: &Session) -> (String, Hatch) {
+        let d = s.doc().unwrap();
+        d.model.iter().find_map(|e| if let EntityKind::Hatch(h) = &e.kind { Some((e.handle.hex(), h.clone())) } else { None }).unwrap()
+    }
+
+    #[test]
+    fn hatchedit_pattern_replaces_gradient() {
+        let mut s = Session::new();
+        s.execute("rectang", &json!({ "p1": [0, 0], "p2": [10, 10] })).unwrap();
+        s.execute("gradient", &json!({ "points": [[5, 5]], "color1": "1", "color2": "3" })).unwrap();
+        let (h, hatch) = only_hatch(&s);
+        assert!(hatch.gradient.is_some());
+        // Scale-only and angle-only edits keep the gradient.
+        s.execute("hatchedit", &json!({ "handles": [h.clone()], "scale": 2, "angle": 30 })).unwrap();
+        assert!(only_hatch(&s).1.gradient.is_some());
+        s.execute("hatchedit", &json!({ "handles": [h], "pattern": "ANSI31" })).unwrap();
+        let hatch = only_hatch(&s).1;
+        assert_eq!(hatch.pattern, "ANSI31");
+        assert!(!hatch.solid);
+        assert!(hatch.gradient.is_none());
+    }
+}
