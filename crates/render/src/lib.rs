@@ -61,6 +61,8 @@ pub struct DisplayList {
     /// The paper sheet when the list was built for a layout (paper space); the UI draws the
     /// white sheet, its shadow and the printable-area outline from it.
     pub sheet: Option<Sheet>,
+    /// Block contents expanded while building (see [`MAX_BLOCK_EXPANSION`]).
+    pub expanded: usize,
 }
 
 impl DisplayList {
@@ -130,7 +132,18 @@ struct Builder<'a> {
     plotting: bool,
 }
 
+/// Upper bound on the block contents drawn per display list (each block reference, MINSERT copy
+/// and entity drawn inside a block counts one). Nested, self-referencing or arrayed block
+/// references in a hostile file would otherwise expand exponentially (`MAX_BLOCK_DEPTH` only
+/// bounds the depth); past the limit the remaining block contents are not drawn.
+pub const MAX_BLOCK_EXPANSION: usize = 2_000_000;
+
 impl Builder<'_> {
+    /// Take one unit of the block-expansion budget; false once it is spent.
+    fn expand(&mut self) -> bool {
+        self.list.expanded = self.list.expanded.saturating_add(1);
+        self.list.expanded <= MAX_BLOCK_EXPANSION
+    }
     fn polyline(&mut self, ctx: &Ctx, color: Rgb, lw: f32, pts: &[Vec2]) {
         if pts.len() < 2 {
             return;
@@ -249,6 +262,9 @@ fn viewport(b: &mut Builder, d: &Drawing, e: &Entity, vp: &cadcraft_doc::Viewpor
     }
     // Border (on the viewport's layer; layer off hides only the border).
     entity(b, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
+    if b.list.expanded >= MAX_BLOCK_EXPANSION {
+        return;
+    }
     let center = vp.center.xy();
     let ok = |v: f64| v.is_finite() && v > 0.0;
     if !(ok(vp.width) && ok(vp.height) && ok(vp.view_height) && center.is_finite() && vp.view_center.is_finite()) {
@@ -277,6 +293,7 @@ fn viewport(b: &mut Builder, d: &Drawing, e: &Entity, vp: &cadcraft_doc::Viewpor
         }
         entity(&mut sub, &top_ctx(d, xf, VIEWPORT_CONTENT, &vp.frozen_layers, &vp.layer_colors), me);
     }
+    b.list.expanded = b.list.expanded.saturating_add(sub.list.expanded);
     append_clipped(&mut b.list, &sub.list, &rect);
 }
 
@@ -420,6 +437,9 @@ fn entity(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             {
                 let sub = sub_ctx(ctx, e, Mat3::IDENTITY);
                 for be in blk.entities.iter() {
+                    if !b.expand() {
+                        break;
+                    }
                     entity(b, &sub, be);
                 }
             } else {
@@ -800,8 +820,11 @@ fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rg
     if let Some(blk) = ctx.d.block(&ins.block) {
         let cols = ins.cols.clamp(1, 10_000);
         let rows = ins.rows.clamp(1, 10_000);
-        for r in 0..rows {
+        'copies: for r in 0..rows {
             for c in 0..cols {
+                if !b.expand() {
+                    break 'copies;
+                }
                 let off = Vec2::new(ins.col_spacing * f64::from(c), ins.row_spacing * f64::from(r)).rotate(ins.rotation);
                 let m = Mat3::translate(off).then_before(ins.transform(blk.base.xy()));
                 let sub = sub_ctx(ctx, e, m);
@@ -809,6 +832,9 @@ fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rg
                     // Constant/visible attribute definitions inside blocks are not drawn; attribs are.
                     if matches!(be.kind, EntityKind::AttDef(_)) {
                         continue;
+                    }
+                    if !b.expand() {
+                        break 'copies;
                     }
                     entity(b, &sub, be);
                 }
