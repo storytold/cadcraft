@@ -245,7 +245,48 @@ impl CadApp {
     }
 
     pub fn open_path(&mut self, path: &str) {
-        if let Err(e) = self.run("open", json!({ "path": path })) {
+        let r = self.run("open", json!({ "path": path }));
+        self.opened(r);
+    }
+
+    /// The largest file [`Self::open_bytes`] opens. A drawing opened from its contents (the
+    /// browser, where files have no path) is held in memory several times over while it is decoded,
+    /// so it is capped below the DWG reader's own limit instead of running out of memory.
+    pub const MAX_OPEN_BYTES: u64 = 256 << 20;
+
+    /// Why a `len`-byte file called `name` is too large for [`Self::open_bytes`], if it is.
+    pub fn open_size_error(name: &str, len: u64) -> Option<String> {
+        (len > Self::MAX_OPEN_BYTES).then(|| {
+            format!(
+                "Open: {name} is {:.1} MB, larger than the {} MB CADCraft opens in the browser",
+                len as f64 / 1048576.0,
+                Self::MAX_OPEN_BYTES >> 20
+            )
+        })
+    }
+
+    /// Open a drawing from its contents where there is no path to open (on the web: the file
+    /// picker, a dropped file). Runs OPEN with `{data, name}` as [`Self::open_path`] runs it with
+    /// `{path}`; failures show on the command line and in the status bar.
+    pub fn open_bytes(&mut self, name: &str, bytes: &[u8]) {
+        if let Some(e) = Self::open_size_error(name, bytes.len() as u64) {
+            return self.open_failed(e);
+        }
+        let data = cadcraft_engine::cmd::file::base64_encode(bytes);
+        let r = self.run("open", json!({ "data": data, "name": name }));
+        self.opened(r);
+    }
+
+    /// Report a file that could not be opened before OPEN ran (unreadable, too large) as a failed
+    /// OPEN is reported: on the command line and in the status bar.
+    pub fn open_failed(&mut self, e: impl Into<String>) {
+        let e = e.into();
+        self.session.echo(e.clone());
+        self.set_status(e);
+    }
+
+    fn opened(&mut self, r: Result<Value, String>) {
+        if let Err(e) = r {
             self.set_status(e);
         } else {
             self.ui.start_tab = false;

@@ -21,6 +21,10 @@ egui = { workspace = true }
 log = { workspace = true }
 serde_json = { workspace = true }
 
+# File > Open… and dropped files (src/upload.rs): the browser's file picker and file reads.
+[target.wasm32-unknown-unknown.dependencies]
+web-sys = { version = "0.3", features = ["HtmlInputElement", "FileList", "File"] }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 eframe = { workspace = true, features = ["persistence", "default_fonts", "wgpu", "accesskit"] }
 wasm-bindgen = "0.2"

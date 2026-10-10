@@ -15,10 +15,13 @@ mod web {
     const CANVAS_ID: &str = "cadcraft_canvas";
     const LOADING_ID: &str = "cadcraft_loading";
 
-    struct Shell(CadApp);
+    /// The app, and the files File > Open… and drag and drop read for it in the background.
+    struct Shell(CadApp, crate::upload::Inbox);
 
     impl eframe::App for Shell {
         fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+            self.1.take_dropped(ctx);
+            self.1.drain(&mut self.0);
             self.0.logic(ctx);
         }
         fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
@@ -77,7 +80,15 @@ mod web {
                         if query().contains("sample") {
                             let _ = app.run("ui.sample", serde_json::json!({}));
                         }
-                        Ok(Box::new(Shell(app)))
+                        // No paths on the web: OPEN asks the browser's file picker, which reads the
+                        // chosen file in the background (`upload.rs`), so the picker returns none.
+                        let inbox = crate::upload::Inbox::new(&cc.egui_ctx);
+                        let picker = inbox.clone();
+                        app.services.pick_open = Some(Box::new(move || {
+                            picker.pick();
+                            None
+                        }));
+                        Ok(Box::new(Shell(app, inbox)))
                     }),
                 )
                 .await;
@@ -92,6 +103,9 @@ mod web {
         });
     }
 }
+
+#[cfg(target_arch = "wasm32")]
+mod upload;
 
 #[cfg(target_arch = "wasm32")]
 fn main() {
