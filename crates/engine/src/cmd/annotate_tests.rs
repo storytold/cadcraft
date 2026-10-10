@@ -169,6 +169,22 @@ fn interactive_angular_picks_polyline_segments() {
 }
 
 #[test]
+fn interactive_angular_picks_circle() {
+    // Circle: the pick is the first endpoint, the center the vertex.
+    let mut s = Session::new();
+    s.cmdline("circle 0,0 5").unwrap();
+    s.cmdline("dimangular").unwrap();
+    s.cmdline("5,0").unwrap();
+    assert!(s.current_prompt().unwrap().message.contains("Specify second angle endpoint"));
+    s.cmdline("0,8").unwrap();
+    s.cmdline("3,3").unwrap();
+    assert!(s.running.is_none());
+    let dm = dim(&s, s.last_dim.unwrap());
+    assert!(near(dm.p15.xy(), Vec2::ZERO), "vertex at the center");
+    assert_eq!(cadcraft_render::dimension_in(s.doc().unwrap(), &dm).value, "90°");
+}
+
+#[test]
 fn erase_disassociate_and_reassociate() {
     let mut s = Session::new();
     let l = line(&mut s, [0.0, 0.0], [4.0, 0.0]);
