@@ -1469,8 +1469,9 @@ fn long_gradient_name_is_cut_only_in_xdata() {
     d.add(&Space::Model, Common::default(), EntityKind::Hatch(h)).unwrap();
     let text = write_dxf(&d);
     let lines: Vec<&str> = text.lines().collect();
-    assert!(lines.contains(&name.as_str()));
-    assert!(lines.contains(&"Ä".repeat(127).as_str()));
+    // Non-ASCII text is written as \U+ escapes (R2000 files are ANSI).
+    assert!(lines.contains(&"\\U+00C4".repeat(200).as_str()));
+    assert!(lines.contains(&"\\U+00C4".repeat(127).as_str()));
     let back = read_dxf(text.as_bytes()).unwrap();
     assert_eq!(hatches(&back).into_iter().next().and_then(|h| h.gradient).unwrap().name, name);
 }
