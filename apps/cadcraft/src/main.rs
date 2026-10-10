@@ -77,17 +77,24 @@ fn services() -> Services {
                 .map(|p| p.to_string_lossy().to_string())
         })),
         pick_save: Some(Box::new(|name: &str| {
-            // The suggested name's type goes first: Windows adds the first filter's extension.
-            let mut filters = [("Drawing (DXF)", "dxf"), ("SVG", "svg"), ("PNG", "png"), ("PDF", "pdf")];
-            let lower = name.to_ascii_lowercase();
-            filters.sort_by_key(|(_, ext)| !lower.ends_with(&format!(".{ext}")));
-            filters
+            filters_for_save(name)
                 .iter()
                 .fold(rfd::FileDialog::new().set_file_name(name), |d, (label, ext)| d.add_filter(i18n::t(label), &[*ext]))
                 .save_file()
                 .map(|p| p.to_string_lossy().to_string())
         })),
     }
+}
+
+/// File types for the Save dialog, the suggested name's type first: Windows adds the first
+/// filter's extension, and macOS accepts only listed extensions, replacing any other with the
+/// first one. DWG must be listed for a `.dwg` name to survive, and a drawing opened from DWG
+/// then defaults to DWG; other names keep DXF first.
+fn filters_for_save(name: &str) -> [(&'static str, &'static str); 5] {
+    let mut filters = [("Drawing (DXF)", "dxf"), ("Drawing (DWG)", "dwg"), ("SVG", "svg"), ("PNG", "png"), ("PDF", "pdf")];
+    let lower = name.to_ascii_lowercase();
+    filters.sort_by_key(|(_, ext)| !lower.ends_with(&format!(".{ext}")));
+    filters
 }
 
 /// The per-user settings directory (today it holds `logs/`): `CADCRAFT_CONFIG_DIR` if set, else
@@ -247,12 +254,27 @@ fn main() -> eframe::Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{config_dir_from, control_port_from};
+    use super::{config_dir_from, control_port_from, filters_for_save};
     use std::ffi::OsString;
     use std::path::PathBuf;
 
     fn env<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<OsString> + 'a {
         move |k| vars.iter().find(|(n, _)| *n == k).map(|(_, v)| OsString::from(v))
+    }
+
+    #[test]
+    fn save_dialog_offers_dwg_with_the_drawing_format_first() {
+        let first = |name: &str| filters_for_save(name)[0].1;
+        assert_eq!(first("Waco Winnelson Floorplan.dwg"), "dwg");
+        assert_eq!(first("FLOORPLAN.DWG"), "dwg");
+        // New drawings and DXF files keep DXF first.
+        assert_eq!(first("Drawing1.dxf"), "dxf");
+        assert_eq!(first("Drawing1"), "dxf");
+        assert_eq!(first("plan.pdf"), "pdf");
+        for name in ["a.dwg", "b.dxf", "c"] {
+            let exts: Vec<_> = filters_for_save(name).iter().map(|(_, e)| *e).collect();
+            assert!(exts.contains(&"dwg") && exts.contains(&"dxf"), "{name}");
+        }
     }
 
     #[test]
