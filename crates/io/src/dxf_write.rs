@@ -820,10 +820,10 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
             w.i(283, 0);
             w.i(71, 2);
             let mut pts = wo.boundary.clone();
-            if let (Some(first), Some(last)) = (pts.first().copied(), pts.last().copied()) {
-                if first != last {
-                    pts.push(first);
-                }
+            if let (Some(first), Some(last)) = (pts.first().copied(), pts.last().copied())
+                && first != last
+            {
+                pts.push(first);
             }
             w.i(91, pts.len() as i64);
             for q in pts {
