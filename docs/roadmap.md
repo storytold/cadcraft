@@ -1,6 +1,6 @@
 # CADCraft roadmap detail
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (milestones re-scored against the 2026-10-10 audit; beta checklist replaces the old alpha checklist) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (alpha gate added; stage is pre-alpha) · **Target:** Autodesk AutoCAD 2027
 
 Forward-looking plan: milestones with status, the current focus, and what comes next with
 estimates. The summary is [ROADMAP.md](../ROADMAP.md); the work items behind every line are in
@@ -19,6 +19,28 @@ Opus 5.5 agent-hours.
    overrides, editable dynamic input (U1–U4). ≈ 25–35 h.
 5. **Unstub the prompt options** of the most-used commands (F1). ≈ 15–25 h.
 6. **Autosave, recovery, AUDIT, RECOVER** (F4). ≈ 10–15 h.
+7. **The rest of the alpha gate:** block editor and REFEDIT, xref attach (F2, F3), and plot styles
+   with a plot dialog and preview (F14). ≈ 50–80 h.
+
+Items 2–5 and 7 are the [alpha gate](#alpha-gate) rows.
+
+## Alpha gate
+
+The core workflows a typical AutoCAD professional does every day (craftrules progress-docs
+standard). CADCraft is **pre-alpha** because four of the five fail the gate; the failing rows are
+the alpha checklist. Main platform: macOS.
+
+| Core workflow | Works end to end? | Evidence | Hours to pass |
+|---|---|---|---|
+| Draw and modify precisely with object snaps and tracking | **partial, blocking** | Running snaps, polar, ortho and coordinate entry work; object snap tracking, extension and parallel snaps are toggles with no behaviour; no FROM/M2P/TK or typed snap overrides; TRIM/EXTEND standard mode, OFFSET Erase/Layer/Multiple, ROTATE Reference print "not available yet"; ellipse/spline intersections approximate ([ui-parity.md](ui-parity.md), [gaps.md](gaps.md) U1, U3, U4, F1) | 35–50 |
+| Dimension and annotate | partial, not blocking | All core DIM types, associativity, DIMSTYLE variables (43 of ~80), TEXT/MTEXT, MLEADER, tables work; no DIMSTYLE dialog, MTEXT editor not in place, MLEADER thin (F7, F9, F10). A drafter can dimension a sheet end to end | 0 for the gate (beta work) |
+| Use blocks (insert library blocks, edit them, attributes, xrefs) | **partial, blocking** | Static BLOCK/INSERT/attributes work; no block editor (BEDIT) or REFEDIT, so a block can't be edited in place; no xrefs; dynamic blocks from other drawings lose their behaviour (F2, F3) | 35–55 |
+| Layers, layouts and plotting a sheet | **partial, blocking** | Layers, layouts, viewports, page setups and PDF output work; plot styles (CTB/STB) aren't applied, so office-standard monochrome/lineweight plots come out wrong; no plot preview or plot dialog (#160); printers/plotters only via PDF (F14, H3) | 15–25 |
+| Save DWG that AutoCAD opens without loss, and reopen others' DWGs | **no** | Saving drops every entity and object we don't model (Unknown, IMAGE, WIPEOUT, gradients, groups, views, foreign xdata); MULTILEADER becomes LEADER+MTEXT; DWG always written as R2000; never checked in AutoCAD; no real-file tests; a 10 MB DWG failed after ~2 min (#57) (FF1–FF6) | 40–60 + owner (real-file corpus, AutoCAD check) |
+| **To alpha** | | | **≈ 125–190** |
+
+Ready for real work is ≈ 37%, also under the ~40% alpha bar; closing the gate rows lifts it past
+40%.
 
 ## Beta checklist
 
@@ -81,4 +103,5 @@ AutoLISP surface, AI features with openly licensed local models, and every remai
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | Alpha gate added (5 core workflows, 4 failing); stage pre-alpha |
 | 2026-10-10 | major | Created from the old ROADMAP's milestone table and current focus; milestones re-scored by depth; beta checklist added |

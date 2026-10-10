@@ -1,6 +1,6 @@
 # Target-app parity: CADCraft vs AutoCAD 2027
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (full re-measure against AutoCAD 2027 for Mac 26.0; replaces the parity section of the old ROADMAP) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (stage re-normalized to pre-alpha under the core-workflow gate) · **Target:** Autodesk AutoCAD 2027
 
 The authoritative assessment of how close CADCraft is to AutoCAD, and how much Opus 5.5 work
 remains. [ROADMAP.md](../ROADMAP.md) summarises it, [gaps.md](gaps.md) lists every shortfall,
@@ -16,10 +16,11 @@ and the deep checklists are [geometry-parity.md](geometry-parity.md),
 | Feature breadth, 2D menus only (excluding 150 3D items) | **≈ 65%** (222 / 341 by `cargo xtask parity`'s rule) | measured (source scan, 2026-10-10) |
 | Feature depth, weighted by use (features dimension) | **≈ 41%** | estimated (table below) |
 | **Ready for real work** | **≈ 37%** | estimated (dimension table below; weighted 37.2%) |
+| Remaining to alpha (gate rows) | **≈ 125–190 Opus 5.5 hours** | estimated |
 | Remaining to beta | **≈ 600–930 Opus 5.5 hours** | estimated |
 | Remaining to full parity | **≈ 1,300–2,100 Opus 5.5 hours** | estimated |
 
-Stage: **alpha**, at the bottom of the band (see [ROADMAP.md](../ROADMAP.md) for why).
+Stage: **pre-alpha**. Four of the five core workflows fail the [alpha gate](roadmap.md#alpha-gate) (precise drafting with tracking, blocks, plotting, lossless DWG save), and ready for real work is under the ~40% alpha bar. Alpha is ≈ 125–190 h away.
 
 ## Target and how it was measured
 
@@ -127,4 +128,5 @@ DWG/DXF corpus (files from people who own them); black-box checks in AutoCAD of 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | Stage alpha → pre-alpha under the core-workflow gate; remaining-to-alpha row |
 | 2026-10-10 | major | Created from the old ROADMAP's parity section; full re-measure with weights, two numbers, per-area hours and calibration from the build session's transcripts |

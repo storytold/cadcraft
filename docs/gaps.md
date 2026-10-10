@@ -1,24 +1,25 @@
 # Where CADCraft falls short of AutoCAD
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (first gaps list, from a full audit of main at bd2412f against AutoCAD 2027) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (alpha blockers marked) · **Target:** Autodesk AutoCAD 2027
 
 Every known shortfall, one row each, ranked within each section by user impact. This is the work
 list: agents pick from here (top of a section first), and remove or update a row in the same PR
 that closes it. Numbers and weights live in [target-app-parity.md](target-app-parity.md); hours
 are Opus 5.5 agent-hours, calibrated as explained there. "Est." means a judgement from the cited
-evidence.
+evidence. Rows marked **[alpha blocker]** are what fails the [alpha gate](roadmap.md#alpha-gate);
+do them first.
 
 ## Top 10 across everything
 
 | # | Gap | Why it ranks here | Est. | Doc |
 |---|---|---|---|---|
-| 1 | **Saving drops whatever we don't model** (Unknown entities, IMAGE, WIPEOUT, gradient data, MULTILEADER written as LEADER+MTEXT, groups, named views/UCS, foreign xdata) | Opening a colleague's DWG and saving it silently deletes content: the one thing a CAD user can't forgive | 15–25 | [file formats](file-format-parity.md) |
-| 2 | **No real-file test corpus and no check in AutoCAD** | All 36 file tests are synthetic; nobody has verified a CADCraft DWG/DXF opens cleanly in AutoCAD | 10–15 + human | [file formats](file-format-parity.md#tests) |
-| 3 | **Object snap tracking, extension, parallel, apparent-intersection snaps are fake** | Drafters place most points with tracking; the F11 button does nothing | 8–12 | [ui](ui-parity.md#tracking-polar-ortho-grid-and-snap--30) |
-| 4 | **DWG always saves as R2000; DXF only R2000 ASCII; no code pages** | Can't exchange at 2018 format; pre-2007 CJK/Cyrillic files are garbled | 10–15 | [file formats](file-format-parity.md) |
-| 5 | **Stubbed prompt options** in TRIM/EXTEND, OFFSET, ROTATE, PLINE, SPLINE, MTEXT, MLEADER, FILLET | Scripts and muscle memory hit "not available yet" in the most-used commands | 15–25 | [features](#features) |
+| 1 | **[alpha blocker]** **Saving drops whatever we don't model** (Unknown entities, IMAGE, WIPEOUT, gradient data, MULTILEADER written as LEADER+MTEXT, groups, named views/UCS, foreign xdata) | Opening a colleague's DWG and saving it silently deletes content: the one thing a CAD user can't forgive | 15–25 | [file formats](file-format-parity.md) |
+| 2 | **[alpha blocker]** **No real-file test corpus and no check in AutoCAD** | All 36 file tests are synthetic; nobody has verified a CADCraft DWG/DXF opens cleanly in AutoCAD | 10–15 + human | [file formats](file-format-parity.md#tests) |
+| 3 | **[alpha blocker]** **Object snap tracking, extension, parallel, apparent-intersection snaps are fake** | Drafters place most points with tracking; the F11 button does nothing | 8–12 | [ui](ui-parity.md#tracking-polar-ortho-grid-and-snap--30) |
+| 4 | **[alpha blocker]** **DWG always saves as R2000; DXF only R2000 ASCII; no code pages** | Can't exchange at 2018 format; pre-2007 CJK/Cyrillic files are garbled | 10–15 | [file formats](file-format-parity.md) |
+| 5 | **[alpha blocker]** **Stubbed prompt options** in TRIM/EXTEND, OFFSET, ROTATE, PLINE, SPLINE, MTEXT, MLEADER, FILLET | Scripts and muscle memory hit "not available yet" in the most-used commands | 15–25 | [features](#features) |
 | 6 | **Ellipse and spline geometry is tessellated** (intersections, offsets, closest points; polyline offset ignores bulges) | Coordinates are subtly wrong; offsets of ellipses come out as polylines | 30–50 | [geometry](geometry-parity.md) |
-| 7 | **No xrefs, block editor, dynamic blocks or groups** | Most production drawings use them | 80–120 | [features](#features) |
+| 7 | **[alpha blocker]** **No xrefs, block editor, dynamic blocks or groups** | Most production drawings use them | 80–120 | [features](#features) |
 | 8 | **No autosave, crash recovery, AUDIT or RECOVER** | Work is lost if anything goes wrong; damaged files can't be repaired | 10–15 | [features](#features) |
 | 9 | **Dynamic input is read-only; no FROM/M2P/TK/point filters; grip options ignored** | Precision entry at the cursor is how AutoCAD is taught today | 15–25 | [ui](ui-parity.md) |
 | 10 | **No CI runs the Rust tests on pull requests, and `cargo fmt` fails on main** | 47 open PRs land without a gate; regressions go unseen | 3–5 | [stability](#stability) |
@@ -27,9 +28,9 @@ evidence.
 
 | # | Gap | Evidence | User impact | Est. |
 |---|---|---|---|---|
-| F1 | Prompt options print "not available yet": TRIM/EXTEND cuTting edges, Fence, Crossing, mOde, Project, eRase; OFFSET Erase, Layer, Multiple, Undo; ROTATE Reference; PLINE Angle, CEnter, Direction, Radius, Second pt; SPLINE Method, Knots, Object, Tangency, toLerance; MTEXT Height/Justify/Line spacing/Rotation/Style/Width/Columns; MLEADER options | `cmd/modify.rs:1537,1697-1730,1807-1843`, `cmd/draw.rs:542,623,1106-1128,1297-1320`, `modify2.rs:594,786,809` | High: the commands people use most | 15–25 |
-| F2 | No xrefs (XATTACH, XREF palette, REFEDIT, BIND, XCLIP, overlay, paths); DXF xref blocks read with an empty path | `dxf_read.rs:923` | High: multi-file projects | 30–45 |
-| F3 | No block editor (BEDIT) or dynamic blocks (parameters, actions, visibility, lookup); dynamic blocks from other files lose their behaviour | issue #185 offers help | High: standard libraries are dynamic | 50–75 |
+| F1 | **[alpha blocker]** Prompt options print "not available yet": TRIM/EXTEND cuTting edges, Fence, Crossing, mOde, Project, eRase; OFFSET Erase, Layer, Multiple, Undo; ROTATE Reference; PLINE Angle, CEnter, Direction, Radius, Second pt; SPLINE Method, Knots, Object, Tangency, toLerance; MTEXT Height/Justify/Line spacing/Rotation/Style/Width/Columns; MLEADER options | `cmd/modify.rs:1537,1697-1730,1807-1843`, `cmd/draw.rs:542,623,1106-1128,1297-1320`, `modify2.rs:594,786,809` | High: the commands people use most | 15–25 |
+| F2 | **[alpha blocker]** No xrefs (XATTACH, XREF palette, REFEDIT, BIND, XCLIP, overlay, paths); DXF xref blocks read with an empty path | `dxf_read.rs:923` | High: multi-file projects | 30–45 |
+| F3 | **[alpha blocker]** (block editor and REFEDIT; dynamic-block authoring is beta) No block editor (BEDIT) or dynamic blocks (parameters, actions, visibility, lookup); dynamic blocks from other files lose their behaviour | issue #185 offers help | High: standard libraries are dynamic | 50–75 |
 | F4 | No autosave (SAVETIME), crash recovery files, AUDIT, RECOVER, drawing recovery manager | no SAVETIME anywhere | High: lost work | 10–15 |
 | F5 | Arrays are not associative: no ARRAYEDIT; the interactive rectangular array always makes 3×4 at 1.5× bounds | `modify.rs:1356-1360` | Medium-high | 10–15 |
 | F6 | FILLET/CHAMFER/JOIN/LENGTHEN/EXTEND don't handle ellipses and splines; FILLET Trim/Multiple and polyline segment pairs; CHAMFER Angle/Method | [geometry-parity](geometry-parity.md#trim-extend-fillet-chamfer-break-join-lengthen--45) | Medium | 10–15 |
@@ -40,7 +41,7 @@ evidence.
 | F11 | Tables: no cell styles, formulas, data links, table breaking | `cmd/table.rs` | Medium | 10–15 |
 | F12 | Annotative scaling: the flag is stored, nothing scales; no scale list, no "Annotative Object Scale" commands | 4 uncovered menu items | Medium-high in layouts | 10–15 |
 | F13 | Hatch: 23 patterns (AutoCAD ~85; ours must stay original); gradients render as a flat colour; associativity not updated when the boundary moves; origin always 0,0; island style always normal; no gap tolerance, separate hatches, hatch dialog, MPolygon | `doc/src/library.rs`, `render/lib.rs:430-437`, `cmd/hatch.rs:198,201` | Medium | 15–25 |
-| F14 | Plot styles (CTB/STB) not applied; no plot preview, plotter devices, PUBLISH/batch plot; Print opens no plot dialog (#160, PR #200) | `palettes.rs:666` | High for sheet output | 25–35 |
+| F14 | **[alpha blocker]** Plot styles (CTB/STB) not applied; no plot preview, plotter devices, PUBLISH/batch plot; Print opens no plot dialog (#160, PR #200) | `palettes.rs:666` | High for sheet output | 25–35 |
 | F15 | Viewports: no polygonal, object or clipped viewports; no viewport scale control in the UI | menu items uncovered | Medium | 6–10 |
 | F16 | Groups (GROUP, GROUPEDIT, PICKSTYLE) missing; ACAD_GROUP written empty | `dxf_write.rs` | Medium | 4–6 |
 | F17 | Attributes: BATTMAN lists only; no ATTSYNC, EATTEXT, global ATTEDIT | `blocks.rs:300` | Medium | 6–10 |
@@ -59,10 +60,10 @@ Detail and evidence: [ui-parity.md](ui-parity.md).
 
 | # | Gap | User impact | Est. |
 |---|---|---|---|
-| U1 | Object snap tracking (acquire points, alignment paths); Extension and Parallel snaps; true apparent intersection | High | 8–12 |
+| U1 | **[alpha blocker]** Object snap tracking (acquire points, alignment paths); Extension and Parallel snaps; true apparent intersection | High | 8–12 |
 | U2 | Dynamic input: editable pointer and dimension fields, Tab between them, grip dimensional input (PR #60 open for pointer input) | High | 8–12 |
-| U3 | FROM, M2P/MTP, TK, `.x/.y/.xy` point filters, `*` WCS prefix, angle override `<a` | High | 4–6 |
-| U4 | Typed snap overrides (`END`, `MID` … at a prompt), Shift/Ctrl+right-click snap menu, Tab snap cycling | High | 4–6 |
+| U3 | **[alpha blocker]** FROM, M2P/MTP, TK, `.x/.y/.xy` point filters, `*` WCS prefix, angle override `<a` | High | 4–6 |
+| U4 | **[alpha blocker]** Typed snap overrides (`END`, `MID` … at a prompt), Shift/Ctrl+right-click snap menu, Tab snap cycling | High | 4–6 |
 | U5 | Hot-grip options (Base point, Copy, Undo, Reference) are shown but ignored; multiple hot grips; multifunctional grip menus (Add/Remove Vertex, Convert to Arc) | Medium-high | 6–10 |
 | U6 | Selection keywords W, C, WP, CP, F, BOX, AU, SI, M, G; lasso (PR #63); selection cycling; SELECTSIMILAR; ISOLATEOBJECTS/HIDEOBJECTS | Medium-high | 6–10 |
 | U7 | Right-click context menus (canvas, selection, command, command line, palettes, tabs) | Medium-high | 6–10 |
@@ -79,12 +80,12 @@ Detail: [file-format-parity.md](file-format-parity.md).
 
 | # | Gap | User impact | Est. |
 |---|---|---|---|
-| FF1 | Round-trip what we don't model: keep Unknown entities and objects, foreign xdata, extension dictionaries; write IMAGE (with IMAGEDEF), WIPEOUT (PR #147), gradients (PR #162), VIEW/UCS/VPORT tables, groups | High | 15–25 |
-| FF2 | Native MULTILEADER objects (read and write) | High | 6–10 |
-| FF3 | Write DXF 2004–2018 and binary DXF; save DWG at a chosen version (2018 default) instead of always R2000; SAVEAS version choice (PR #198 adds DWG to the dialog) | High | 8–12 |
+| FF1 | **[alpha blocker]** Round-trip what we don't model: keep Unknown entities and objects, foreign xdata, extension dictionaries; write IMAGE (with IMAGEDEF), WIPEOUT (PR #147), gradients (PR #162), VIEW/UCS/VPORT tables, groups | High | 15–25 |
+| FF2 | **[alpha blocker]** Native MULTILEADER objects (read and write) | High | 6–10 |
+| FF3 | **[alpha blocker]** Write DXF 2004–2018 and binary DXF; save DWG at a chosen version (2018 default) instead of always R2000; SAVEAS version choice (PR #198 adds DWG to the dialog) | High | 8–12 |
 | FF4 | Code pages (`$DWGCODEPAGE`, ANSI_932/936/949/950/125x) when reading pre-2007 files | Medium-high (Asia, Eastern Europe) | 3–5 |
-| FF5 | Real-file corpus (`storytold/cadcraft-corpus`), open → save → reopen tests, black-box check in AutoCAD | High | 10–15 + human |
-| FF6 | DWG throughput: a 10 MB DWG took ~2 min to fail (#57) | High for real projects | 6–10 |
+| FF5 | **[alpha blocker]** Real-file corpus (`storytold/cadcraft-corpus`), open → save → reopen tests, black-box check in AutoCAD | High | 10–15 + human |
+| FF6 | **[alpha blocker]** DWG throughput: a 10 MB DWG took ~2 min to fail (#57) | High for real projects | 6–10 |
 | FF7 | `*D` dimension blocks duplicate on re-save; handles regenerate every save | Medium | 3–5 |
 | FF8 | SHX fonts (shape and big fonts) not read | Medium-high (text metrics differ) | 8–12 |
 | FF9 | Templates (DWT), user `.lin`/`.pat` files, `.ctb`/`.stb`, `.pc3`, `.pgp` | Medium | 20–30 |
@@ -157,4 +158,5 @@ Detail: [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | Alpha blockers marked (rows failing the core-workflow gate) |
 | 2026-10-10 | major | First gaps list: ranked top 10 and every known shortfall by dimension, with evidence and estimates |
