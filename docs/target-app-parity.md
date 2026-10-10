@@ -1,6 +1,6 @@
 # Target-app parity: CADCraft vs AutoCAD 2027
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (mainstream-practitioner and essentials-user numbers added; ready for real work unchanged) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (hours to ~95% for each of the three readiness numbers) · **Target:** Autodesk AutoCAD 2027
 
 The authoritative assessment of how close CADCraft is to AutoCAD, and how much Opus 5.5 work
 remains. [ROADMAP.md](../ROADMAP.md) summarises it, [gaps.md](gaps.md) lists every shortfall,
@@ -23,6 +23,21 @@ and the deep checklists are [geometry-parity.md](geometry-parity.md),
 | Remaining to full parity | **≈ 1,300–2,100 Opus 5.5 hours** | estimated |
 
 Stage: **pre-alpha**. Four of the five core workflows fail the [alpha gate](roadmap.md#alpha-gate) (precise drafting with tracking, blocks, plotting, lossless DWG save), and ready for real work is under the ~40% alpha bar. Alpha is ≈ 125–190 h away.
+
+## Readiness by audience
+
+| Audience | Ready % | Opus 5.5 agent wall-clock hours to ~95% | Work that dominates |
+|---|---:|---|---|
+| Full target (ready for real work) | ≈ 37% | ≈ 1,150–1,850 h (≈ 70% parallelises across 4–6 agents: ≈ 300–480 h elapsed) | 3D kernel (300–450 h), DWG/DXF and other formats, AutoLISP and ecosystem, blocks/xrefs/dynamic blocks, localization |
+| Mainstream practitioner (2D drafter) | ≈ 27% | ≈ 570–880 h (≈ 70% parallelises: ≈ 150–240 h elapsed) | lossless DWG exchange and a real-file corpus, precision input (tracking, dynamic input), 2D geometry precision, blocks/xrefs, annotation depth, stability backlog |
+| Essentials user | ≈ 45% | ≈ 140–225 h (≈ 50% parallelises across 3 agents: ≈ 60–110 h elapsed) | stubbed options in basic draw/modify commands, opening DWGs people send, launch/stability fixes, plot dialog, context menus and dynamic input |
+
+Hours are subsets (essentials ⊂ mainstream ⊂ full) and use the calibration in [Remaining effort](#remaining-effort-and-how-it-was-calibrated): ≈ 25 commands
+per agent-hour at presence quality in the first build (≈ 11.5 agent-hours), 0.3–0.7 h per option
+or bug fix (≈ 60 such fixes on 2026-10-10), 2–5 h per moderate feature, 15–100 h per subsystem.
+
+The full number is an additive weighted sum over the dimensions (table below); only the
+mainstream and essentials numbers use multiplicative discounts.
 
 ## Target and how it was measured
 
@@ -207,6 +222,7 @@ DWG/DXF corpus (files from people who own them); black-box checks in AutoCAD of 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | Readiness-by-audience table: hours to ~95% for full (1,150–1,850 h), mainstream (570–880 h) and essentials (140–225 h); full number confirmed as an additive weighted sum, unchanged |
 | 2026-10-10 | minor | Mainstream-practitioner (≈ 27%) and essentials-user (≈ 45%) numbers with written weights, discounts and user evidence |
 | 2026-10-10 | minor | Stage alpha → pre-alpha under the core-workflow gate; remaining-to-alpha row |
 | 2026-10-10 | major | Created from the old ROADMAP's parity section; full re-measure with weights, two numbers, per-area hours and calibration from the build session's transcripts |

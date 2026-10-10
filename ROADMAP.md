@@ -2,7 +2,7 @@
 
 **Stage: pre-alpha** · next: alpha, ~3 points (37% → 40% ready for real work) and ~125–190 Opus 5.5 hours away (the four failing core workflows of the [alpha gate](docs/roadmap.md#alpha-gate))
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (mainstream-practitioner and essentials-user numbers added) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (hours to ~95% for each readiness number) · **Target:** Autodesk AutoCAD 2027
 
 CADCraft targets full parity with AutoCAD (2D drafting first, then annotation, layouts and
 plotting, DWG, parametrics and 3D), plus what AutoCAD doesn't have: agent control over MCP, a
@@ -26,6 +26,18 @@ is ≈ 600–930 h away.
 | Remaining to alpha | **≈ 125–190 h** (the gate rows) | estimated |
 | Remaining to beta | **≈ 600–930 h** (≈ 150–250 h elapsed with 4–6 agents) | estimated |
 | Remaining to full parity | **≈ 1,300–2,100 h** (≈ 330–550 h elapsed) | estimated |
+
+### Readiness by audience
+
+| Audience | Ready % | Opus 5.5 agent wall-clock hours to ~95% | Work that dominates |
+|---|---:|---|---|
+| Full target (ready for real work) | ≈ 37% | ≈ 1,150–1,850 h (≈ 70% parallelises across 4–6 agents: ≈ 300–480 h elapsed) | 3D kernel (300–450 h), DWG/DXF and other formats, AutoLISP and ecosystem, blocks/xrefs/dynamic blocks, localization |
+| Mainstream practitioner (2D drafter) | ≈ 27% | ≈ 570–880 h (≈ 70% parallelises: ≈ 150–240 h elapsed) | lossless DWG exchange and a real-file corpus, precision input (tracking, dynamic input), 2D geometry precision, blocks/xrefs, annotation depth, stability backlog |
+| Essentials user | ≈ 45% | ≈ 140–225 h (≈ 50% parallelises across 3 agents: ≈ 60–110 h elapsed) | stubbed options in basic draw/modify commands, opening DWGs people send, launch/stability fixes, plot dialog, context menus and dynamic input |
+
+Hours are subsets (essentials ⊂ mainstream ⊂ full) and use the calibration in [target-app-parity.md](docs/target-app-parity.md#remaining-effort-and-how-it-was-calibrated): ≈ 25 commands
+per agent-hour at presence quality in the first build (≈ 11.5 agent-hours), 0.3–0.7 h per option
+or bug fix (≈ 60 such fixes on 2026-10-10), 2–5 h per moderate feature, 15–100 h per subsystem.
 
 Hours are Opus 5.5 agent wall-clock hours, calibrated on this repo's own build: the first version
 (51k lines, 290 commands) took ≈ 11.5 agent-hours at presence quality, while depth work runs at
@@ -118,6 +130,7 @@ Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md)
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | Readiness-by-audience table with hours to ~95% for each number |
 | 2026-10-10 | minor | Mainstream practitioner and essentials user headline numbers |
 | 2026-10-10 | minor | Stage alpha → pre-alpha under the core-workflow gate; banner, why, headline row |
 | 2026-10-10 | major | Restructured to the progress-docs standard (stage, two numbers, dimensions, features, languages, upcoming, log); full re-measure; milestone detail moved to docs/roadmap.md, parity assessment to docs/target-app-parity.md |
