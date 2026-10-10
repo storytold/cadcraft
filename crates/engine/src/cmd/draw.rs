@@ -822,7 +822,10 @@ impl Interactive for EllipseM {
                     ge.param_of(p)
                 }
                 Input::Text(t) => {
-                    crate::units::parse_angle(&t).ok_or_else(|| crate::EngineError::Other("Requires an angle.".into()))? + e.major.angle()
+                    // A typed angle is a true angle from the major axis; convert it to an ellipse parameter like a picked point.
+                    let a = crate::units::parse_angle(&t).ok_or_else(|| crate::EngineError::Other("Requires an angle.".into()))?;
+                    let ge = Ellipse { start: 0.0, end: cadcraft_geom::TAU, ..e };
+                    ge.param_of(e.center + Vec2::from_angle(a + e.major.angle()))
                 }
                 _ => return Ok(Step::Continue),
             };

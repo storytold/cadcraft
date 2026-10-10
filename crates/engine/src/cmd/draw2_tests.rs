@@ -237,6 +237,17 @@ fn ellipse_axis_and_arc() {
     assert!(matches!(last(&s), EntityKind::Ellipse(e) if (e.end - e.start).abs() > 0.1 && (e.end - e.start).abs() < 6.0));
 }
 
+#[test]
+fn ellipse_arc_typed_angles_are_true_angles() {
+    let want = 2f64.atan2(1.0);
+    // Horizontal and rotated major axis, ratio 0.5: typed 0 and 45 degrees match the JSON form.
+    for line in ["ellipse.arc 0,0 10,0 2.5 0 45", "ellipse.arc 5,-5 5,5 2.5 0 45"] {
+        let mut s = Session::new();
+        s.cmdline(line).unwrap();
+        assert!(matches!(last(&s), EntityKind::Ellipse(e) if e.start.abs() < 1e-9 && (e.end - want).abs() < 1e-9), "{line}");
+    }
+}
+
 // ---------------- DIVIDE / MEASURE ----------------
 
 #[test]
