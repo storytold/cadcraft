@@ -703,7 +703,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
 
     // Hover highlight (throttled to cursor movement).
     let prompt = app.session.current_prompt();
-    let selecting = prompt.as_ref().is_none_or(|p| p.accept.select);
+    // The cursor picks objects (pick box, rollover highlight): "Select objects" and single-object
+    // prompts, or no command with PICKFIRST on.
+    let selecting = app.session.picking_objects();
     if inside && selecting && app.session.pending_window.is_none() {
         if hover_pos != app.canvas.hover_at
             && let (Some(w), Ok(st)) = (raw_world, app.session.state())
@@ -929,17 +931,23 @@ fn tooltip(p: &egui::Painter, at: Pos2, text: &str) {
     p.galley(r.min + vec2(4.0, 2.0), galley, Color32::BLACK);
 }
 
+/// Half the side of the pick box: the pick aperture (PICKBOX × 1.5 pixels, as `select::pick` is
+/// called with), so the square shows what a click hits. `None` when PICKBOX is 0 (no box).
+fn pickbox_half(pickbox: f64) -> Option<f32> {
+    let half = (pickbox * 1.5) as f32;
+    (half.is_finite() && half >= 1.0).then_some(half)
+}
+
 fn draw_crosshair(app: &CadApp, p: &egui::Painter, rect: Rect, at: Pos2, pickbox: bool) {
-    let c = Color32::from_rgb(0xe8, 0xe8, 0xe8);
+    let st = Stroke::new(1.0, Tokens::get().crosshair);
     let len = (rect.height() * app.session.settings.cursorsize as f32 / 100.0).max(12.0);
-    let pb = (app.session.settings.pickbox as f32 + 1.0).max(3.0);
-    let gap = if pickbox { pb } else { 0.0 };
-    let st = Stroke::new(1.0, c);
+    let pb = if pickbox { pickbox_half(app.session.settings.pickbox) } else { None };
+    let gap = pb.unwrap_or(0.0);
     p.line_segment([pos2(at.x - len, at.y), pos2(at.x - gap, at.y)], st);
     p.line_segment([pos2(at.x + gap, at.y), pos2(at.x + len, at.y)], st);
     p.line_segment([pos2(at.x, at.y - len), pos2(at.x, at.y - gap)], st);
     p.line_segment([pos2(at.x, at.y + gap), pos2(at.x, at.y + len)], st);
-    if pickbox {
+    if let Some(pb) = pb {
         p.rect_stroke(Rect::from_center_size(at, vec2(pb * 2.0, pb * 2.0)), 0.0, st, egui::StrokeKind::Middle);
     }
 }

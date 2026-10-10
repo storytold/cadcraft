@@ -786,9 +786,9 @@ impl Interactive for PolygonM {
             )
             .base_opt(self.edge_pts.first().copied()),
             (Some(_), false, None, _) => Prompt::new("Specify center of polygon", Accept::POINT).kw(&["Edge"]),
-            (Some(_), false, Some(_), None) => {
-                Prompt::new("Enter an option", Accept::TEXT).kw(&["Inscribed in circle", "Circumscribed about circle"]).default("I")
-            }
+            (Some(_), false, Some(_), None) => Prompt::new("Enter an option", Accept::TEXT)
+                .kw(&["Inscribed in circle", "Circumscribed about circle"])
+                .default(if s.last_used.polygon_circumscribed { "C" } else { "I" }),
             (Some(_), false, Some(c), Some(_)) => Prompt::new("Specify radius of circle", Accept::POINT_OR_NUMBER).base(c),
         }
     }
@@ -822,9 +822,16 @@ impl Interactive for PolygonM {
         match (self.center, self.inscribed, i) {
             (None, _, Input::Keyword(k)) if k == "Edge" => self.edge = true,
             (None, _, Input::Point(p)) => self.center = Some(p),
-            (Some(_), None, Input::Keyword(k)) => self.inscribed = Some(k.starts_with('I')),
-            (Some(_), None, Input::Enter) => self.inscribed = Some(true),
-            (Some(_), None, Input::Text(t)) => self.inscribed = Some(!t.trim().to_ascii_lowercase().starts_with('c')),
+            (Some(_), None, inp @ (Input::Keyword(_) | Input::Enter | Input::Text(_))) => {
+                // Enter takes the option used last time (the prompt's default).
+                let ins = match inp {
+                    Input::Keyword(k) => k.starts_with('I'),
+                    Input::Text(t) => !t.trim().to_ascii_lowercase().starts_with('c'),
+                    _ => !s.last_used.polygon_circumscribed,
+                };
+                self.inscribed = Some(ins);
+                s.last_used.polygon_circumscribed = !ins;
+            }
             (Some(c), Some(ins), Input::Point(p)) => {
                 s.add_entity(lwpoly(polygon_vertices(c, n, p, ins), true))?;
                 return Ok(Step::Done);

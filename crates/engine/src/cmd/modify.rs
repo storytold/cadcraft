@@ -1498,6 +1498,8 @@ impl SelectThen {
 
     fn scale_by(&mut self, s: &mut Session, base: Vec2, f: f64) -> Result<Step> {
         let f = require_length(Some(f))?;
+        // The next SCALE offers this factor.
+        s.last_used.scale_factor = f;
         transform_entities(s, &self.objs, &Mat3::scale_about(base, f), self.copy_mode)?;
         s.set_selection(Vec::new());
         Ok(Step::Done)
@@ -1543,7 +1545,7 @@ impl Interactive for SelectThen {
         }
         Ok(Step::Continue)
     }
-    fn prompt(&self, _s: &Session) -> Prompt {
+    fn prompt(&self, s: &Session) -> Prompt {
         if self.op == Op::Stretch && self.window.is_none() {
             return match self.pts.first() {
                 None => Prompt::new("Select objects (crossing window first corner)", Accept::POINT),
@@ -1576,8 +1578,18 @@ impl Interactive for SelectThen {
             (Op::Move | Op::Stretch, _) => Prompt::new("Specify second point or <use first point as displacement>", Accept::POINT).base_opt(bp),
             (Op::Copy, _) => Prompt::new("Specify second point", Accept::POINT).kw(&["Array", "Exit", "Undo"]).base_opt(base),
             (Op::Rotate | Op::Scale, 0) => Prompt::new("Specify base point", Accept::POINT),
-            (Op::Rotate, _) => Prompt::new("Specify rotation angle", Accept::POINT_OR_NUMBER).kw(&["Copy", "Reference"]).default("0").base_opt(base),
-            (Op::Scale, _) => Prompt::new("Specify scale factor", Accept::POINT_OR_NUMBER).kw(&["Copy", "Reference"]).base_opt(base),
+            // ROTATE and SCALE offer the angle/factor used last time.
+            (Op::Rotate, _) => {
+                let (au, ap) = s.doc().map(|d| (d.header.i64("AUNITS", 0), d.header.i64("AUPREC", 0))).unwrap_or((0, 0));
+                Prompt::new("Specify rotation angle", Accept::POINT_OR_NUMBER)
+                    .kw(&["Copy", "Reference"])
+                    .default(crate::units::format_angle(s.last_used.rotate_angle, au, ap))
+                    .base_opt(base)
+            }
+            (Op::Scale, _) => Prompt::new("Specify scale factor", Accept::POINT_OR_NUMBER)
+                .kw(&["Copy", "Reference"])
+                .default(format!("{:.4}", s.last_used.scale_factor))
+                .base_opt(base),
             (Op::Mirror, 0) => Prompt::new("Specify first point of mirror line", Accept::POINT),
             (Op::Mirror, _) => Prompt::new("Specify second point of mirror line", Accept::POINT).base_opt(base),
             (Op::ArrayPolar, 0) => Prompt::new("Specify center point of array", Accept::POINT).kw(&["Base point", "Axis of rotation"]),
@@ -1680,29 +1692,31 @@ impl Interactive for SelectThen {
                 s.set_selection(Vec::new());
                 Ok(Step::Done)
             }
-            (Op::Rotate, 1, Input::Point(p)) => {
-                let a = self.pts[0].angle_to(p);
+            (Op::Rotate, 1, inp @ (Input::Point(_) | Input::Text(_) | Input::Enter)) => {
+                let a = match inp {
+                    Input::Point(p) => self.pts[0].angle_to(p),
+                    Input::Text(t) => crate::units::parse_angle(&t)
+                        .filter(|a| a.is_finite())
+                        .ok_or_else(|| EngineError::Other("Requires an angle or point.".into()))?,
+                    _ => s.last_used.rotate_angle,
+                };
+                s.last_used.rotate_angle = a;
                 transform_entities(s, &self.objs, &Mat3::rotate_about(self.pts[0], a), self.copy_mode)?;
                 s.set_selection(Vec::new());
                 Ok(Step::Done)
             }
-            (Op::Rotate, 1, Input::Text(t)) => {
-                let a = crate::units::parse_angle(&t).ok_or_else(|| EngineError::Other("Requires an angle or point.".into()))?;
-                transform_entities(s, &self.objs, &Mat3::rotate_about(self.pts[0], a), self.copy_mode)?;
-                s.set_selection(Vec::new());
-                Ok(Step::Done)
-            }
-            (Op::Scale, 1, Input::Point(p)) => {
-                let f = self.pts[0].dist(p);
-                if f > 1e-12 {
+            (Op::Scale, 1, inp @ (Input::Point(_) | Input::Text(_) | Input::Enter)) => {
+                let f = match inp {
+                    Input::Point(p) => self.pts[0].dist(p),
+                    Input::Text(t) => {
+                        number(&t).filter(|f| f.is_finite() && *f > 0.0).ok_or_else(|| EngineError::Other("Requires a positive number.".into()))?
+                    }
+                    _ => s.last_used.scale_factor,
+                };
+                if f > 1e-12 && f.is_finite() {
+                    s.last_used.scale_factor = f;
                     transform_entities(s, &self.objs, &Mat3::scale_about(self.pts[0], f), self.copy_mode)?;
                 }
-                s.set_selection(Vec::new());
-                Ok(Step::Done)
-            }
-            (Op::Scale, 1, Input::Text(t)) => {
-                let f = number(&t).filter(|f| *f > 0.0).ok_or_else(|| EngineError::Other("Requires a positive number.".into()))?;
-                transform_entities(s, &self.objs, &Mat3::scale_about(self.pts[0], f), self.copy_mode)?;
                 s.set_selection(Vec::new());
                 Ok(Step::Done)
             }
@@ -1957,13 +1971,14 @@ impl Interactive for TrimM {
 struct FilletM {
     chamfer: bool,
     first: Option<(Handle, Vec2)>,
-    asking: bool,
+    /// Asking for the radius (FILLET) or a chamfer distance: 1 = first, 2 = second.
+    asking: u8,
     polyline: bool,
 }
 
 impl FilletM {
     fn new(_s: &Session, chamfer: bool) -> Self {
-        FilletM { chamfer, first: None, asking: false, polyline: false }
+        FilletM { chamfer, first: None, asking: 0, polyline: false }
     }
 }
 
@@ -1982,9 +1997,17 @@ impl Interactive for FilletM {
         s.echo(msg);
         Ok(Step::Continue)
     }
-    fn prompt(&self, _s: &Session) -> Prompt {
-        if self.asking {
-            return Prompt::new(if self.chamfer { "Specify first chamfer distance" } else { "Specify fillet radius" }, Accept::NUMBER);
+    fn prompt(&self, s: &Session) -> Prompt {
+        // The radius and distances are remembered in the drawing (FILLETRAD, CHAMFERA/B) and
+        // offered as defaults; the second chamfer distance defaults to the first.
+        if self.asking > 0 {
+            let hdr = |k: &str| s.doc().map(|d| d.header.f64(k, 0.0)).unwrap_or(0.0);
+            let (msg, v) = match (self.chamfer, self.asking) {
+                (false, _) => ("Specify fillet radius", hdr("FILLETRAD")),
+                (true, 1) => ("Specify first chamfer distance", hdr("CHAMFERA")),
+                (true, _) => ("Specify second chamfer distance", hdr("CHAMFERA")),
+            };
+            return Prompt::new(msg, Accept::NUMBER).default(format!("{v:.4}"));
         }
         if self.polyline {
             return Prompt::new("Select 2D polyline", Accept::POINT);
@@ -1999,23 +2022,40 @@ impl Interactive for FilletM {
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
-        if self.asking {
-            if let Input::Text(t) = &i {
-                let v = number(t).filter(|v| *v >= 0.0).ok_or_else(|| EngineError::Other("Requires a non-negative distance.".into()))?;
-                let d = s.doc_mut()?;
-                if self.chamfer {
-                    d.header.set_f64("CHAMFERA", v);
+        if self.asking > 0 {
+            // Enter keeps the default.
+            let v = match &i {
+                Input::Text(t) => Some(
+                    number(t).filter(|v| v.is_finite() && *v >= 0.0).ok_or_else(|| EngineError::Other("Requires a non-negative distance.".into()))?,
+                ),
+                Input::Enter => None,
+                _ => return Ok(Step::Continue),
+            };
+            let d = s.doc_mut()?;
+            match (self.chamfer, self.asking) {
+                (false, _) => {
+                    if let Some(v) = v {
+                        d.header.set_f64("FILLETRAD", v);
+                    }
+                    self.asking = 0;
+                }
+                (true, 1) => {
+                    if let Some(v) = v {
+                        d.header.set_f64("CHAMFERA", v);
+                    }
+                    self.asking = 2;
+                }
+                (true, _) => {
+                    let v = v.unwrap_or_else(|| d.header.f64("CHAMFERA", 0.0));
                     d.header.set_f64("CHAMFERB", v);
-                } else {
-                    d.header.set_f64("FILLETRAD", v);
+                    self.asking = 0;
                 }
             }
-            self.asking = false;
             return Ok(Step::Continue);
         }
         match i {
             Input::Keyword(k) if k == "Radius" || k == "Distance" => {
-                self.asking = true;
+                self.asking = 1;
                 Ok(Step::Continue)
             }
             Input::Keyword(k) if k == "Polyline" && !self.chamfer => {

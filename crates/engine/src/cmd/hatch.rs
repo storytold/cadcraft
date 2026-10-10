@@ -282,17 +282,76 @@ fn run_hatchedit(s: &mut Session, p: &Value) -> Result<Value> {
     s.execute("properties.set", &q)
 }
 
+/// What a HATCH sub-prompt asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HatchAsk {
+    Pattern,
+    Scale,
+    Angle,
+}
+
 struct HatchM {
     gradient: bool,
     settings: HatchSettings,
     loops: Vec<HatchLoop>,
-    asking: Option<&'static str>,
+    asking: Option<HatchAsk>,
+    /// "Select objects" mode instead of "Pick internal point"; the next HATCH starts in it again.
     selecting: bool,
 }
 
 impl HatchM {
     fn new(s: &Session, gradient: bool) -> Self {
-        HatchM { gradient, settings: HatchSettings::from(s, &Value::Null, gradient), loops: Vec::new(), asking: None, selecting: false }
+        HatchM {
+            gradient,
+            settings: HatchSettings::from(s, &Value::Null, gradient),
+            loops: Vec::new(),
+            asking: None,
+            selecting: s.last_used.hatch_select,
+        }
+    }
+    fn set_mode(&mut self, s: &mut Session, selecting: bool) {
+        self.selecting = selecting;
+        s.last_used.hatch_select = selecting;
+    }
+    fn finish(&mut self, s: &mut Session) -> Result<Step> {
+        if !self.loops.is_empty() {
+            let k = self.settings.hatch(std::mem::take(&mut self.loops));
+            let h = s.add_entity(k)?;
+            let space = s.space();
+            if let Some(store) = s.doc_mut()?.space_mut(&space) {
+                store.send_to_back(h);
+            }
+        }
+        Ok(Step::Done)
+    }
+    fn answer(&mut self, s: &mut Session, a: HatchAsk, t: &str) -> Result<()> {
+        match a {
+            HatchAsk::Pattern => {
+                let up = t.trim().to_ascii_uppercase();
+                if cadcraft_doc::library::pattern(&up).is_some() {
+                    self.settings.pattern = up.clone();
+                    s.doc_mut()?.header.set_str("HPNAME", &up);
+                } else {
+                    s.echo(format!(
+                        "Unknown pattern {up}. Available: {}",
+                        cadcraft_doc::library::standard_patterns().iter().map(|p| p.name).collect::<Vec<_>>().join(", ")
+                    ));
+                }
+            }
+            HatchAsk::Scale => {
+                if let Some(v) = super::machines::number(t).filter(|v| v.is_finite() && *v > 0.0) {
+                    self.settings.scale = v;
+                    s.doc_mut()?.header.set_f64("HPSCALE", v);
+                }
+            }
+            HatchAsk::Angle => {
+                if let Some(a) = crate::units::parse_angle(t).filter(|a| a.is_finite()) {
+                    self.settings.angle = a;
+                    s.doc_mut()?.header.set_f64("HPANG", a);
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -309,60 +368,34 @@ impl Interactive for HatchM {
         ));
         Ok(Step::Continue)
     }
-    fn prompt(&self, _s: &Session) -> Prompt {
-        if let Some(a) = self.asking {
-            return Prompt::new(a, Accept::TEXT);
+    fn prompt(&self, s: &Session) -> Prompt {
+        // The sub-prompts offer the current value: Enter keeps it.
+        match self.asking {
+            Some(HatchAsk::Pattern) => return Prompt::new("Enter a pattern name", Accept::TEXT).default(self.settings.pattern.clone()),
+            Some(HatchAsk::Scale) => {
+                return Prompt::new("Specify a scale for the hatch pattern", Accept::NUMBER).default(format!("{:.4}", self.settings.scale));
+            }
+            Some(HatchAsk::Angle) => {
+                let (au, ap) = s.doc().map(|d| (d.header.i64("AUNITS", 0), d.header.i64("AUPREC", 0))).unwrap_or((0, 0));
+                let d = crate::units::format_angle(self.settings.angle, au, ap);
+                return Prompt::new("Specify an angle for the hatch pattern", Accept::NUMBER).default(d);
+            }
+            None => {}
         }
         if self.selecting {
-            return Prompt::new("Select objects", Accept::SELECT);
+            return Prompt::new("Select objects", Accept::SELECT).kw(&["picK internal point", "Undo", "seTtings", "sCale", "Angle"]);
         }
         Prompt::new("Pick internal point", Accept::POINT).kw(&["Select objects", "Undo", "seTtings", "Pattern", "sCale", "Angle"])
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         if let Some(a) = self.asking.take() {
             if let Input::Text(t) | Input::Keyword(t) = &i {
-                match a {
-                    "Enter a pattern name" => {
-                        let up = t.trim().to_ascii_uppercase();
-                        if cadcraft_doc::library::pattern(&up).is_some() {
-                            self.settings.pattern = up.clone();
-                            s.doc_mut()?.header.set_str("HPNAME", &up);
-                        } else {
-                            s.echo(format!(
-                                "Unknown pattern {up}. Available: {}",
-                                cadcraft_doc::library::standard_patterns().iter().map(|p| p.name).collect::<Vec<_>>().join(", ")
-                            ));
-                        }
-                    }
-                    "Specify a scale for the hatch pattern" => {
-                        if let Some(v) = super::machines::number(t).filter(|v| *v > 0.0) {
-                            self.settings.scale = v;
-                            s.doc_mut()?.header.set_f64("HPSCALE", v);
-                        }
-                    }
-                    _ => {
-                        if let Some(a) = crate::units::parse_angle(t) {
-                            self.settings.angle = a;
-                            s.doc_mut()?.header.set_f64("HPANG", a);
-                        }
-                    }
-                }
-            }
-            return Ok(Step::Continue);
-        }
-        if self.selecting {
-            match i {
-                Input::Pick(hs) => match loops_from_handles(s, &hs) {
-                    Ok(l) => self.loops.extend(l),
-                    Err(e) => s.echo(e.to_string()),
-                },
-                Input::Enter => self.selecting = false,
-                _ => {}
+                self.answer(s, a, t)?;
             }
             return Ok(Step::Continue);
         }
         match i {
-            Input::Point(p) => {
+            Input::Point(p) if !self.selecting => {
                 match loops_at(s, p) {
                     Ok(l) => {
                         s.echo(format!("Analyzing the selected data... {} loop(s)", l.len()));
@@ -372,29 +405,30 @@ impl Interactive for HatchM {
                 }
                 Ok(Step::Continue)
             }
-            Input::Keyword(k) => {
-                match k.as_str() {
-                    "Select objects" => self.selecting = true,
-                    "Undo" => {
-                        self.loops.clear();
+            Input::Pick(hs) => {
+                match loops_from_handles(s, &hs) {
+                    Ok(l) => {
+                        s.echo(format!("{} found", hs.len()));
+                        self.loops.extend(l);
                     }
-                    "Pattern" | "seTtings" => self.asking = Some("Enter a pattern name"),
-                    "sCale" => self.asking = Some("Specify a scale for the hatch pattern"),
-                    _ => self.asking = Some("Specify an angle for the hatch pattern"),
+                    Err(e) => s.echo(e.to_string()),
                 }
                 Ok(Step::Continue)
             }
-            Input::Enter => {
-                if !self.loops.is_empty() {
-                    let k = self.settings.hatch(std::mem::take(&mut self.loops));
-                    let h = s.add_entity(k)?;
-                    let space = s.space();
-                    if let Some(store) = s.doc_mut()?.space_mut(&space) {
-                        store.send_to_back(h);
-                    }
+            Input::Keyword(k) => {
+                match k.as_str() {
+                    "Select objects" => self.set_mode(s, true),
+                    "picK internal point" => self.set_mode(s, false),
+                    "Undo" => self.loops.clear(),
+                    "Pattern" | "seTtings" => self.asking = Some(HatchAsk::Pattern),
+                    "sCale" => self.asking = Some(HatchAsk::Scale),
+                    "Angle" => self.asking = Some(HatchAsk::Angle),
+                    _ => {}
                 }
-                Ok(Step::Done)
+                Ok(Step::Continue)
             }
+            // Enter ends boundary picking in either mode and creates the hatch.
+            Input::Enter => self.finish(s),
             _ => Ok(Step::Continue),
         }
     }

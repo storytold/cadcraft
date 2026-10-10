@@ -68,6 +68,12 @@ impl Prompt {
         self.default = Some(d.into());
         self
     }
+    /// The prompt picks objects: a "Select objects" prompt, or a point prompt whose click selects
+    /// one object ("Select object to offset", "Select first line"…, the commands that pick a
+    /// single object themselves). The UI shows the pick box there.
+    pub fn picks_objects(&self) -> bool {
+        self.accept.select || (self.accept.point && self.message.starts_with("Select"))
+    }
     /// "Specify next point or [Undo/Close] <default>:".
     pub fn display(&self) -> String {
         let mut s = self.message.clone();
