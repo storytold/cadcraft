@@ -563,10 +563,15 @@ pub fn shoelace(pts: &[Vec2]) -> f64 {
     if n < 3 {
         return 0.0;
     }
+    let Some(origin) = pts.first().copied() else {
+        return 0.0;
+    };
+    // Measure about a local origin so a small polygon at a large world
+    // coordinate does not lose its area to cancellation of huge products.
     let mut s = 0.0;
     for i in 0..n {
         if let (Some(a), Some(b)) = (pts.get(i), pts.get((i + 1) % n)) {
-            s += a.cross(*b);
+            s += (*a - origin).cross(*b - origin);
         }
     }
     s / 2.0
