@@ -63,6 +63,19 @@ fn moving_the_object_carries_the_dimension() {
 }
 
 #[test]
+fn moving_the_object_keeps_the_ordinate_datum() {
+    let mut s = Session::new();
+    let l = line(&mut s, [5.0, 0.0], [5.0, 5.0]);
+    let d = h(&s.execute("dimordinate", &json!({ "feature": [5, 5], "leader": [5, 8] })).unwrap());
+    s.execute("move", &json!({ "handles": [l.hex()], "from": [5, 5], "to": [8, 5] })).unwrap();
+    let dm = dim(&s, d);
+    assert!(near(dm.p13.xy(), Vec2::new(8.0, 5.0)) && near(dm.p14.xy(), Vec2::new(8.0, 8.0)), "{dm:?}");
+    assert!(near(dm.defpt.xy(), Vec2::ZERO), "datum must stay at the origin: {:?}", dm.defpt);
+    let g = cadcraft_render::dimension_in(s.doc().unwrap(), &dm);
+    assert_eq!(g.value, "8.0000");
+}
+
+#[test]
 fn interactive_dimlinear_select_object_is_associative() {
     let mut s = Session::new();
     s.cmdline("line 0,0 6,0").unwrap();
