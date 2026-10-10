@@ -173,6 +173,32 @@ fn dxf_roundtrip_preserves_entities() {
 }
 
 #[test]
+fn lwpolyline_elevation_roundtrips() {
+    for elevation in [5.0, -2.5, 0.0] {
+        let mut d = Drawing::new_metric();
+        d.add(
+            &Space::Model,
+            Common::default(),
+            EntityKind::LwPolyline(LwPolyline {
+                vertices: vec![PolyVertex::new(Vec2::ZERO), PolyVertex::new(Vec2::new(10.0, 0.0)), PolyVertex::new(Vec2::new(10.0, 10.0))],
+                closed: true,
+                const_width: 0.0,
+                elevation,
+                plinegen: false,
+            }),
+        )
+        .unwrap();
+        let back = roundtrip(&d);
+        let again = roundtrip(&back);
+        for doc in [&back, &again] {
+            let p = first(doc, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+            assert_eq!(p.elevation, elevation);
+            assert_eq!(p.vertices.len(), 3);
+        }
+    }
+}
+
+#[test]
 fn second_roundtrip_is_stable() {
     let d = sample();
     let t1 = write_dxf(&d);
