@@ -1,6 +1,6 @@
 # CADCraft roadmap
 
-Status as of **2026-10-07**. CADCraft targets full parity with AutoCAD (2D drafting first, then
+Status as of **2026-10-09**. CADCraft targets full parity with AutoCAD (2D drafting first, then
 annotation, layouts and plotting, DWG, parametrics and 3D), plus things AutoCAD doesn't have:
 agent control over MCP, a scriptable CLI, a web build and a free licence.
 
@@ -8,7 +8,7 @@ agent control over MCP, a scriptable CLI, a web build and a free licence.
 
 | Question | Answer |
 |---|---|
-| **How close is an alpha?** | **≈ 75% of the way.** About **50 Opus 5.5 wall-clock hours** remain (≈ 15–20 hours elapsed with 3–4 agents in parallel). |
+| **How close is an alpha?** | **≈ 76% of the way.** About **46 Opus 5.5 wall-clock hours** remain (≈ 15–20 hours elapsed with 3–4 agents in parallel). |
 | **How far is 100% AutoCAD parity?** | **≈ 29% parity overall** (weighted by how much each area matters). About **570 Opus 5.5 wall-clock hours** remain (≈ 150–190 hours elapsed in parallel). |
 | **2D drafting parity** (what most AutoCAD users do every day: M1–M8) | **≈ 55%.** About **245 hours** remain. |
 | **The biggest single gap** | 3D modelling (M11): solids, surfaces, meshes, visual styles and rendering — ≈ 200 hours on its own. |
@@ -37,20 +37,20 @@ A person can do real 2D drafting work in CADCraft and trust it with their files:
 | Autosave, crash recovery, RECOVER/AUDIT | partial | 6 |
 | Options dialog and preferences | partial | 6 |
 | Plot preview | missing | 4 |
-| Scripted smoke test of all 290 commands through the UI, then fixing what it finds | not started | 12 |
+| Scripted smoke test of every command, then fixing what it finds | headless sweep lands (`cargo xtask smoke`): 291 commands, 428 results, 0 failures, no panics, every prompt machine exits on Enter or Escape; not yet: the UI/menu transport and parameterised JSON calls (171 commands still report `BadParams` on null params instead of running their body) | 8 |
 | Release pipeline: first green signed build on every platform | workflows written; first run being started | 6 |
 | Getting-started docs and the web build hosted | partial | 4 |
-| **Total** | | **≈ 50** |
+| **Total** | | **≈ 46** |
 
 ## Where we are
 
 | Measure | Value |
 |---|---|
 | Menu breadth (`cargo xtask parity`, [docs/parity.md](docs/parity.md)) | **233 / 491 reference menu items (47%)** |
-| Registered commands | 290 (133 with interactive prompts) |
+| Registered commands | 295 (133 with interactive prompts) |
 | **Estimated overall feature parity (weighted by how much each area matters)** | **≈ 29%** |
 | Performance | 200k entities: pick 0.001 ms, pick after an edit ≈ 4 ms (incremental R-tree), GPU canvas ≈ 4 ms per frame |
-| Tests | geometry, colour, document, fonts, render, DXF/DWG round trips, constraints solver, engine (commands, prompts, snaps, selection, undo, scripts, hostile input), MCP agent tasks, xtask |
+| Tests | geometry, colour, document, fonts, render, DXF/DWG round trips, constraints solver, engine (commands, prompts, snaps, selection, undo, scripts, hostile input), MCP agent tasks, xtask, headless command sweep ([docs/smoke-tests.md](docs/smoke-tests.md)) |
 | Gates | `cargo xtask ci`: fmt, clippy -D warnings, tests, asset attribution, layering, wasm — green |
 
 Menu breadth counts menu items that exist; the weighted parity estimate also counts depth (options,
@@ -82,7 +82,7 @@ about 150–190 hours of elapsed time), CADCraft would reach broad AutoCAD parit
 
 ## Current focus
 
-1. Finish the alpha checklist above (release builds, AutoCAD open check, smoke test of every command, autosave/recovery, plot preview).
+1. Finish the alpha checklist above (release builds, AutoCAD open check, parameterised and UI-transport smoke coverage, autosave/recovery, plot preview).
 2. Layer filter groups, constraint bar polish (close buttons, hover highlight).
 3. Native MULTILEADER objects in DXF; stop `*D` block duplication on re-save.
 4. Then 3D foundations (UCS, orbit, solids via truck/csgrs per plan/adr/0001).
