@@ -310,9 +310,11 @@ pub(crate) fn read_dstyle(tags: &[Tag], styles: &HashMap<String, String>, blocks
 /// CADCraft keeps that viewport implicit, so the reader drops it.
 pub(crate) const PAPER_VIEW: &str = "PAPERVIEW";
 
-/// True for a VIEWPORT record carrying the [`PAPER_VIEW`] marker.
+/// True for a VIEWPORT record carrying the [`PAPER_VIEW`] marker as the first string of its CADCraft
+/// xdata, where the writer puts it. Later strings are layer names (VPFROZEN, VPCOLORS), so a layer
+/// called PAPERVIEW does not count.
 pub(crate) fn is_paper_view(tags: &[Tag]) -> bool {
-    xdata(tags, APP).iter().any(|t| t.code == 1000 && t.str().trim().eq_ignore_ascii_case(PAPER_VIEW))
+    xdata(tags, APP).iter().find(|t| t.code == 1000).is_some_and(|t| t.str().trim().eq_ignore_ascii_case(PAPER_VIEW))
 }
 
 /// Snap kinds in CADCraft's ASSOC xdata.
