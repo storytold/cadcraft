@@ -16,6 +16,7 @@ fn menu_items_open_their_dialogs() {
         ("mleaderstyle", "mleaderstyle"),
         ("ddptype", "ptype"),
         ("constraintsettings", "csettings"),
+        ("plot", "plot"),
     ] {
         app.ui.dialog = None;
         menus::activate(&mut app, cmd);

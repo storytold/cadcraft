@@ -80,3 +80,19 @@ fn typed_json_form_runs_the_command() {
     assert!(app.ui.dialog.is_none());
     assert_eq!(app.session.settings.gridmajor, 7);
 }
+
+#[test]
+fn print_opens_the_plot_dialog_but_json_plot_never_does() {
+    let (mut app, picks) = app();
+    menus::activate(&mut app, "plot");
+    assert_eq!(app.ui.dialog.as_deref(), Some("plot"));
+    app.ui.dialog = None;
+    app.cmdline("PRINT");
+    assert_eq!(app.ui.dialog.as_deref(), Some("plot"), "the typed alias opens it too");
+    app.ui.dialog = None;
+    // Without an I/O hook the plot itself fails here; what matters is that no dialog or picker opens.
+    let _ = app.run("plot", json!({ "layout": "Model", "plotArea": "extents" }));
+    app.cmdline(r#"plot {"layout": "Model"}"#);
+    assert!(app.ui.dialog.is_none());
+    assert_eq!(picks.get(), 0);
+}

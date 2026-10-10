@@ -348,6 +348,7 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
         (sc(cmd, Key::O), "ui.open"),
         (sc(cmd_shift, Key::S), "ui.saveas"),
         (sc(cmd, Key::S), "qsave"),
+        (sc(cmd, Key::P), "plot"),
         (sc(cmd, Key::A), "selectall"),
         (sc(cmd_shift, Key::C), "copybase"),
         (sc(cmd, Key::C), "copyclip"),
