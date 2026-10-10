@@ -122,6 +122,9 @@ pub struct ViewState {
     ime_state: Cell<ImeState>,
     input_source: RefCell<String>,
 
+    /// True if this view was in a preedit session that will result in a commit.
+    pending_commit: Cell<bool>,
+
     /// True iff the application wants IME events.
     ///
     /// Can be set using `set_ime_allowed`
@@ -130,6 +133,9 @@ pub struct ViewState {
     /// True if the current key event should be forwarded
     /// to the application, even during IME
     forward_key_to_app: Cell<bool>,
+
+    /// True while `keyDown:` runs `interpretKeyEvents`.
+    in_key_down: Cell<bool>,
 
     marked_text: RefCell<Retained<NSMutableAttributedString>>,
     accepts_first_mouse: bool,
@@ -310,6 +316,7 @@ declare_class!(
                 // In case the preedit was cleared, set IME into the Ground state.
                 self.ivars().ime_state.set(ImeState::Ground);
             }
+            self.ivars().pending_commit.set(true);
 
             let cursor_range = if string.is_empty() {
                 // An empty string basically means that there's no preedit, so indicate that by
@@ -354,7 +361,12 @@ declare_class!(
         #[method_id(validAttributesForMarkedText)]
         fn valid_attributes_for_marked_text(&self) -> Retained<NSArray<NSAttributedStringKey>> {
             trace_scope!("validAttributesForMarkedText");
-            NSArray::new()
+            // The values of `NSUnderlineStyleAttributeName` and
+            // `NSMarkedClauseSegmentAttributeName`. Some input methods don't compose until this
+            // list is non-empty.
+            let underline_style = NSString::from_str("NSUnderline");
+            let marked_clause = NSString::from_str("NSMarkedClauseSegment");
+            NSArray::from_id_slice(&[underline_style, marked_clause])
         }
 
         #[method_id(attributedSubstringForProposedRange:actualRange:)]
@@ -406,12 +418,38 @@ declare_class!(
             };
 
             let is_control = string.chars().next().is_some_and(|c| c.is_control());
+            // CADCraft patch: commit when a composition was started (`pending_commit`, set by
+            // `setMarkedText`), not when marked text is still present, and send the text of other
+            // `insertText` calls through `KeyboardInput` as before (rust-windowing/winit#4650,
+            // the 0.30 backport of #4651). Input methods that call `unmarkText` before `insertText`
+            // lost the committed text.
+            let has_marked = unsafe { self.hasMarkedText() };
+            let pending_commit = self.ivars().pending_commit.get();
+            let ime_enabled = self.is_ime_enabled();
 
-            // Commit only if we have marked text.
-            if unsafe { self.hasMarkedText() } && self.is_ime_enabled() && !is_control {
+            // Clear preedit if there is marked text.
+            if has_marked {
                 self.queue_event(WindowEvent::Ime(Ime::Preedit(String::new(), None)));
+            }
+
+            // Only commit via IME if there was a real composition session.
+            // Some IMEs send insertText for all typing (e.g. spaces, English chars)
+            // which should go through keyboard input instead of paste.
+            if pending_commit && ime_enabled && !is_control {
+                self.ivars().pending_commit.set(false);
                 self.queue_event(WindowEvent::Ime(Ime::Commit(string)));
-                self.ivars().ime_state.set(ImeState::Committed);
+                // CADCraft patch: input methods also commit outside a key press (a candidate
+                // clicked with the mouse, dictation), where no key follows to clear the marked text
+                // and reset the state: the next key would be swallowed
+                // (rust-windowing/winit#4748).
+                if self.ivars().in_key_down.get() {
+                    // `keyDown:` clears the marked text and swallows the key that committed it.
+                    self.ivars().ime_state.set(ImeState::Committed);
+                } else {
+                    // Committed outside a key press. No key to swallow.
+                    *self.ivars().marked_text.borrow_mut() = NSMutableAttributedString::new();
+                    self.ivars().ime_state.set(ImeState::Ground);
+                }
             }
         }
 
@@ -465,7 +503,9 @@ declare_class!(
             // is not handled by IME and should be handled by the application)
             if self.ivars().ime_allowed.get() {
                 let events_for_nsview = NSArray::from_slice(&[&*event]);
+                self.ivars().in_key_down.set(true);
                 unsafe { self.interpretKeyEvents(&events_for_nsview) };
+                self.ivars().in_key_down.set(false);
 
                 // If the text was committed we must treat the next keyboard event as IME related.
                 if self.ivars().ime_state.get() == ImeState::Committed {
@@ -801,8 +841,10 @@ impl WinitView {
             tracking_rect: Default::default(),
             ime_state: Default::default(),
             input_source: Default::default(),
+            pending_commit: Default::default(),
             ime_allowed: Default::default(),
             forward_key_to_app: Default::default(),
+            in_key_down: Default::default(),
             marked_text: Default::default(),
             accepts_first_mouse,
             _ns_window: WeakId::new(&window.retain()),
@@ -888,6 +930,7 @@ impl WinitView {
 
         // Clear markedText
         *self.ivars().marked_text.borrow_mut() = NSMutableAttributedString::new();
+        self.ivars().pending_commit.set(false);
 
         if self.ivars().ime_state.get() != ImeState::Disabled {
             self.ivars().ime_state.set(ImeState::Disabled);
