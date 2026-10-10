@@ -206,3 +206,33 @@ fn circle_three_points_accepts_small_valid_triangles() {
     assert!(Circle::from_3_points(Vec2::ZERO, Vec2::new(r, 0.0), Vec2::new(2.0 * r, 0.0)).is_none());
     assert!(Circle::from_3_points(Vec2::ZERO, Vec2::X, Vec2::new(f64::NAN, 0.0)).is_none());
 }
+
+#[test]
+fn ellipse_bounds_find_analytic_extrema() {
+    // A tilted ellipse's extrema generally fall between tessellated samples.
+    let center = Vec2::new(7.0, -11.0);
+    let e = Ellipse::full(center, Vec2::new(3.0, 4.0), 0.5);
+    let bounds = e.bounds();
+    let dx = 13.0_f64.sqrt(); // hypot(major.x, minor.x)
+    let dy = 18.25_f64.sqrt(); // hypot(major.y, minor.y)
+    assert!((bounds.min.x - (center.x - dx)).abs() < 1e-12);
+    assert!((bounds.max.x - (center.x + dx)).abs() < 1e-12);
+    assert!((bounds.min.y - (center.y - dy)).abs() < 1e-12);
+    assert!((bounds.max.y - (center.y + dy)).abs() < 1e-12);
+}
+
+#[test]
+fn elliptical_arc_bounds_exclude_extrema_outside_the_sweep() {
+    let e = Ellipse {
+        center: Vec2::ZERO,
+        major: Vec2::new(3.0, 4.0),
+        ratio: 0.5,
+        start: 0.0,
+        end: PI / 4.0,
+    };
+    let bounds = e.bounds();
+    assert!((bounds.max.x - 3.0).abs() < 1e-12);
+    assert!((bounds.min.x - e.at_param(e.end).x).abs() < 1e-12);
+    assert!((bounds.min.y - e.at_param(e.end).y).abs() < 1e-12);
+    assert!((bounds.max.y - 18.25_f64.sqrt()).abs() < 1e-12);
+}

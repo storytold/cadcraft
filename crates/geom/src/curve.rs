@@ -256,9 +256,22 @@ impl Ellipse {
         }
     }
     pub fn bounds(&self) -> Bounds2 {
-        let mut pts = Vec::new();
-        self.tessellate(self.major.len() * 1e-4, &mut pts);
-        Bounds2::from_points(pts)
+        // Sampled bounds can cut off the true extrema, especially on a small arc or
+        // a large drawing. The derivative of each coordinate gives two exact
+        // candidate parameters (opposite sides of the ellipse).
+        let minor = self.minor();
+        let mut bounds = Bounds2::from_points([self.at_param(self.start), self.at_param(self.end)]);
+        for angle in [
+            minor.x.atan2(self.major.x),
+            minor.x.atan2(self.major.x) + PI,
+            minor.y.atan2(self.major.y),
+            minor.y.atan2(self.major.y) + PI,
+        ] {
+            if angle_in_sweep(angle, self.start, self.end) {
+                bounds.add(self.at_param(angle));
+            }
+        }
+        bounds
     }
     /// Parameter of the point on the ellipse nearest the direction of `p` (approximate).
     pub fn param_of(&self, p: Vec2) -> f64 {
