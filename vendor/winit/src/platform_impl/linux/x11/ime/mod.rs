@@ -194,14 +194,20 @@ impl Ime {
         }
     }
 
-    pub fn set_ime_allowed(&mut self, window: ffi::Window, allowed: bool) {
+    // CADCraft patch: returns whether the window's input context was replaced, so the caller can
+    // focus the new one (rust-windowing/winit#4727).
+    pub fn set_ime_allowed(
+        &mut self,
+        window: ffi::Window,
+        allowed: bool,
+    ) -> Result<bool, ImeContextCreationError> {
         if self.is_destroyed() {
-            return;
+            return Ok(false);
         }
 
         if let Some(&mut Some(ref mut context)) = self.inner.contexts.get_mut(&window) {
             if allowed == context.is_allowed() {
-                return;
+                return Ok(false);
             }
         }
 
@@ -209,7 +215,7 @@ impl Ime {
         let _ = self.remove_context(window);
 
         // Create new context supporting IME input.
-        let _ = self.create_context(window, allowed);
+        self.create_context(window, allowed)
     }
 
     pub fn is_ime_allowed(&self, window: ffi::Window) -> bool {
