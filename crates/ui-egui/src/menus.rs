@@ -298,12 +298,23 @@ pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
     out
 }
 
+/// Turn a registry shortcut ("Cmd+Shift+Z") into the form shown on this platform: macOS symbols ("⇧⌘Z") or
+/// Windows/Linux text ("Ctrl+Shift+Z"). `mac` comes from the runtime OS (`ctx.os()`), so the web build is right too.
+pub(crate) fn shortcut_label(s: &str, mac: bool) -> String {
+    if !mac {
+        return s.replace("Cmd+", "Ctrl+");
+    }
+    let shift = if s.contains("Shift+") { "⇧" } else { "" };
+    let cmd = if s.contains("Cmd+") { "⌘" } else { "" };
+    format!("{shift}{cmd}{}", s.replace("Cmd+", "").replace("Shift+", ""))
+}
+
 fn entry_ui(ui: &mut egui::Ui, e: &Entry, clicked: &mut Option<String>) {
     match e {
         Entry::Item { label, id, shortcut, enabled } => {
             let mut b = egui::Button::new(label);
             if let Some(s) = shortcut {
-                b = b.shortcut_text(s.replace("Cmd+", "⌘").replace("Shift+", "⇧"));
+                b = b.shortcut_text(shortcut_label(s, ui.ctx().os().is_mac()));
             }
             if ui.add_enabled(*enabled, b).clicked() {
                 *clicked = Some(id.clone());
@@ -478,5 +489,22 @@ mod tests {
         app.start("plot");
         assert_eq!(asked.borrow().len(), 1);
         assert!(app.session.running.is_none());
+    }
+}
+
+#[cfg(test)]
+mod shortcut_label_tests {
+    use super::shortcut_label;
+
+    #[test]
+    fn shortcut_label_per_platform() {
+        assert_eq!(shortcut_label("Cmd+Shift+Z", true), "⇧⌘Z");
+        assert_eq!(shortcut_label("Cmd+Z", true), "⌘Z");
+        assert_eq!(shortcut_label("Cmd+Shift+Z", false), "Ctrl+Shift+Z");
+        assert_eq!(shortcut_label("Cmd+Z", false), "Ctrl+Z");
+        assert_eq!(shortcut_label("Shift+F3", false), "Shift+F3");
+        assert_eq!(shortcut_label("Shift+F3", true), "⇧F3");
+        assert_eq!(shortcut_label("F1", false), "F1");
+        assert_eq!(shortcut_label("F1", true), "F1");
     }
 }

@@ -233,7 +233,8 @@ fn mtext_editor(app: &mut CadApp, ctx: &egui::Context) {
             if ui.button("Cancel").clicked() {
                 cancel = true;
             }
-            ui.label(RichText::new("⌘↩ to finish").small());
+            let finish = if ui.ctx().os().is_mac() { "⌘↩ to finish" } else { "Ctrl+Enter to finish" };
+            ui.label(RichText::new(finish).small());
         });
     });
     ctx.data_mut(|d| d.insert_temp(id, buf));
