@@ -21,3 +21,7 @@
 real_name = "Brandon Thomas"
 display_name = "Brandon Thomas"
 sync_github_name = false
+
+[people.Tru10]
+display_name = "by Truitt"
+sync_github_name = false
