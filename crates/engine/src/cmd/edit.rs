@@ -10,7 +10,9 @@ use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        CommandSpec::new("undo", "Undo", run_undo).menu(&["Edit", "Undo"]).key("Cmd+Z").alias(&["u"]).params("{count?: n}").noundo(),
+        // U undoes the last operation at once (Edit > Undo, Cmd+Z); UNDO asks how many.
+        CommandSpec::new("u", "Undo", run_u).menu(&["Edit", "Undo"]).key("Cmd+Z").params("{}").noundo(),
+        CommandSpec::new("undo", "Undo", run_undo).params("{count?: n}").noundo().interactive(|_| Ok(Box::new(UndoM::default()))),
         CommandSpec::new("redo", "Redo", run_redo).menu(&["Edit", "Redo"]).key("Cmd+Shift+Z").alias(&["mredo"]).params("{count?: n}").noundo(),
         CommandSpec::new("cutclip", "Cut", run_cut)
             .menu(&["Edit", "Cut"])
@@ -67,6 +69,63 @@ fn run_undo(s: &mut Session, p: &Value) -> Result<Value> {
         return Ok(json!({ "message": "Everything has been undone" }));
     }
     Ok(json!({ "undone": labels, "message": labels.join(", ").to_string() }))
+}
+
+fn run_u(s: &mut Session, _p: &Value) -> Result<Value> {
+    run_undo(s, &json!({}))
+}
+
+/// UNDO at the command line: "Enter the number of operations to undo" (default 1). Its other
+/// options are not available yet; Auto and Control still take their value, so it isn't run as a
+/// command.
+#[derive(Default)]
+struct UndoM {
+    /// Auto or Control was chosen: its value is being asked for.
+    option: Option<&'static str>,
+}
+
+impl Interactive for UndoM {
+    fn name(&self) -> &'static str {
+        "UNDO"
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        match self.option {
+            Some("Auto") => Prompt::new("Enter UNDO Auto mode", Accept::TEXT).kw(&["ON", "OFF"]).default("ON"),
+            Some(_) => Prompt::new("Enter an UNDO control option", Accept::TEXT).kw(&["All", "None", "One", "Combine", "Layer"]).default("All"),
+            None => Prompt::new("Enter the number of operations to undo", Accept::NUMBER)
+                .kw(&["Auto", "Control", "BEgin", "End", "Mark", "Back"])
+                .default("1"),
+        }
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if let Some(o) = self.option {
+            s.echo(format!("UNDO {o}: not available yet."));
+            return Ok(Step::Done);
+        }
+        let n = match i {
+            Input::Text(t) => {
+                t.trim().parse::<u64>().ok().filter(|n| *n >= 1).ok_or_else(|| EngineError::Other("Requires a positive integer.".into()))?
+            }
+            Input::Enter => 1,
+            Input::Keyword(k) => {
+                match k.as_str() {
+                    "Auto" => self.option = Some("Auto"),
+                    "Control" => self.option = Some("Control"),
+                    _ => {
+                        s.echo(format!("UNDO {k}: not available yet."));
+                        return Ok(Step::Done);
+                    }
+                }
+                return Ok(Step::Continue);
+            }
+            _ => return Ok(Step::Continue),
+        };
+        let r = run_undo(s, &json!({ "count": n }))?;
+        if let Some(m) = r.get("message").and_then(Value::as_str) {
+            s.echo(m.to_string());
+        }
+        Ok(Step::Done)
+    }
 }
 
 fn run_redo(s: &mut Session, p: &Value) -> Result<Value> {

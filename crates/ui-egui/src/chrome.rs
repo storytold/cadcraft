@@ -14,7 +14,7 @@ const TOOLBAR: &[&[(Icon, &str, &str, Option<&str>)]] = &[
         (Icon::Save, "qsave", "Save", Some("Cmd+S")),
         (Icon::SaveAs, "saveas", "Save As", None),
     ],
-    &[(Icon::Undo, "undo", "Undo", Some("Cmd+Z")), (Icon::Redo, "redo", "Redo", Some("Cmd+Shift+Z"))],
+    &[(Icon::Undo, "u", "Undo", Some("Cmd+Z")), (Icon::Redo, "redo", "Redo", Some("Cmd+Shift+Z"))],
     &[
         (Icon::Plot, "plot", "Print", None),
         (Icon::Publish, "publish", "Batch Publish", None),
