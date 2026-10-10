@@ -317,7 +317,7 @@ fn blocks(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
 /// the insertion point.
 fn insert_block(app: &mut CadApp, name: &str) {
     app.start("insert");
-    if !app.session.running.as_ref().is_some_and(|r| r.id == "insert") {
+    if app.session.running.as_ref().is_none_or(|r| r.id != "insert") {
         return;
     }
     if let Err(e) = app.session.input(cadcraft_engine::Input::Text(name.to_string())) {
