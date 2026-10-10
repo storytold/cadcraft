@@ -286,7 +286,7 @@ fn common_x(w: &mut W, e: &Entity, owner: &str, paper: bool, subclass: &str, ass
     }
 }
 
-fn text_tags(w: &mut W, t: &Text, attrib_tag: Option<(&str, bool)>, attdef: bool) {
+fn text_tags(w: &mut W, t: &Text, attrib_tag: Option<(&str, bool)>, attdef_prompt: Option<&str>) {
     w.p(10, t.insert);
     w.f(40, t.height);
     w.s(1, &t.value);
@@ -322,9 +322,9 @@ fn text_tags(w: &mut W, t: &Text, attrib_tag: Option<(&str, bool)>, attdef: bool
     }
     match attrib_tag {
         Some((tag, invisible)) => {
-            w.s(100, if attdef { "AcDbAttributeDefinition" } else { "AcDbAttribute" });
-            if attdef {
-                w.s(3, "");
+            w.s(100, if attdef_prompt.is_some() { "AcDbAttributeDefinition" } else { "AcDbAttribute" });
+            if let Some(prompt) = attdef_prompt {
+                w.s(3, prompt);
             }
             w.s(2, tag);
             w.i(70, i64::from(invisible));
@@ -454,12 +454,12 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
         EntityKind::Text(t) => {
             w.s(0, "TEXT");
             common(w, e, owner, paper, "AcDbText");
-            text_tags(w, t, None, false);
+            text_tags(w, t, None, None);
         }
         EntityKind::AttDef(a) => {
             w.s(0, "ATTDEF");
             common(w, e, owner, paper, "AcDbText");
-            text_tags(w, &a.text, Some((&a.tag, a.invisible)), true);
+            text_tags(w, &a.text, Some((&a.tag, a.invisible)), Some(&a.prompt));
         }
         EntityKind::MText(t) => {
             w.s(0, "MTEXT");
@@ -512,7 +512,7 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
                     w.s(100, "AcDbEntity");
                     w.s(8, &e.common.layer);
                     w.s(100, "AcDbText");
-                    text_tags(w, &a.text, Some((&a.tag, a.invisible)), false);
+                    text_tags(w, &a.text, Some((&a.tag, a.invisible)), None);
                 }
                 let sh = w.h();
                 w.s(0, "SEQEND");

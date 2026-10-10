@@ -865,3 +865,32 @@ fn mleader_is_written_as_leader_and_mtext() {
     assert!(back.model.iter().any(|e| matches!(e.kind, EntityKind::Leader(_))));
     assert!(back.model.iter().any(|e| matches!(&e.kind, EntityKind::MText(t) if t.contents == "Note")));
 }
+
+#[test]
+fn attdef_prompt_survives_dxf_roundtrip() {
+    let mut d = Drawing::new_metric();
+    let text = Text {
+        insert: Vec3::ZERO,
+        align_pt: None,
+        height: 2.0,
+        value: "X".into(),
+        rotation: 0.0,
+        width_factor: 1.0,
+        oblique: 0.0,
+        style: "Standard".into(),
+        halign: HAlign::Left,
+        valign: VAlign::Baseline,
+    };
+    let attdef = |prompt: &str| {
+        EntityKind::AttDef(Attrib { tag: "TAG1".into(), text: text.clone(), invisible: false, constant: false, prompt: prompt.into() })
+    };
+    d.add(&Space::Model, Default::default(), attdef("Enter value")).unwrap();
+    d.add(&Space::Model, Default::default(), attdef("")).unwrap();
+    let back = roundtrip(&d);
+    let prompts: Vec<&str> = back
+        .model
+        .iter()
+        .filter_map(|e| if let EntityKind::AttDef(a) = &e.kind { Some(a.prompt.as_str()) } else { None })
+        .collect();
+    assert_eq!(prompts, vec!["Enter value", ""]);
+}
