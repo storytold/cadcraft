@@ -221,6 +221,12 @@ pub struct Settings {
     /// Major grid line every N minor lines (GRIDMAJOR).
     pub gridmajor: u32,
     pub dynmode: bool,
+    /// DYNPIFORMAT = 1: Dynamic Input shows second and next points as Cartesian `x,y` instead of
+    /// polar `distance<angle` (the default).
+    pub dynpi_cartesian: bool,
+    /// DYNPICOORDS = 1: second and next points typed into Dynamic Input are absolute instead of
+    /// relative to the last point (the default).
+    pub dynpi_absolute: bool,
     pub lwdisplay: bool,
     pub transparency_display: bool,
     pub selection_cycling: bool,
@@ -253,6 +259,8 @@ impl Default for Settings {
             gridunit: Vec2::new(0.5, 0.5),
             gridmajor: 5,
             dynmode: true,
+            dynpi_cartesian: false,
+            dynpi_absolute: false,
             lwdisplay: false,
             transparency_display: false,
             selection_cycling: false,

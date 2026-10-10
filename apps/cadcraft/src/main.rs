@@ -42,8 +42,9 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
-    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
         self.0.raw_input_hook(raw);
+        cadcraft_ui_egui::cmdline::capture_tab(ctx, raw);
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.0.ui(ui);

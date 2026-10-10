@@ -617,8 +617,17 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     }
 
     let raw_world = hover_pos.filter(|_| inside).map(|p| xf.to_world(p));
+    let dyn_frame = crate::cmdline::dyn_frame(app);
     if let Some(w) = raw_world {
-        let eff = effective_point(app, w, &xf);
+        let mut eff = effective_point(app, w, &xf);
+        // A locked Dynamic Input value (`40,` or `40<` typed) holds the cursor and overrides snaps.
+        if let Some(f) = dyn_frame
+            && let Some(e) = crate::dyninput::parse(&app.cmd.buffer, &f)
+            && e.first_locked().is_some()
+        {
+            eff = crate::dyninput::constrain(&e, &f, eff);
+            app.canvas.snap = None;
+        }
         app.canvas.cursor = Some(eff);
         app.session.cursor = eff;
         app.session.cursor_deferred = app.canvas.snap.and_then(|h| h.deferred);
@@ -636,6 +645,12 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     {
         if app.session.running.is_some() {
             app.canvas.hot_grip = None;
+            // Clicking places the point; a value typed into the Dynamic Input boxes is used up.
+            if let Some(f) = dyn_frame
+                && crate::dyninput::parse(&app.cmd.buffer, &f).is_some()
+            {
+                app.cmd.buffer.clear();
+            }
             // A deferred tangent/perpendicular goes to the command as such.
             let input = app.canvas.snap.filter(|h| h.deferred.is_some()).map_or(Input::Point(p), |h| h.input());
             if let Err(e) = app.session.input(input) {
@@ -924,8 +939,18 @@ fn draw_crosshair(app: &CadApp, p: &egui::Painter, rect: Rect, at: Pos2, pickbox
     }
 }
 
+/// The Dynamic Input tooltip beside the cursor, styled like the command line. At a point prompt
+/// it shows the pair of value boxes, a view of the command-line text (see [`crate::dyninput`]);
+/// otherwise the prompt with what is being typed, or the live distance and angle.
 fn dynamic_input(app: &CadApp, p: &egui::Painter, at: Pos2) {
     let Some(prompt) = app.session.current_prompt() else { return };
+    if let Some(f) = crate::cmdline::dyn_frame(app)
+        && let Some(e) = crate::dyninput::parse(&app.cmd.buffer, &f)
+        && let Some(c) = app.canvas.cursor
+    {
+        dynamic_input_boxes(p, at, &prompt.message, &f, &e, c);
+        return;
+    }
     let mut text = prompt.message.clone();
     if !app.cmd.buffer.is_empty() {
         text = format!("{}: {}", prompt.message, app.cmd.buffer);
@@ -944,11 +969,110 @@ fn dynamic_input(app: &CadApp, p: &egui::Painter, at: Pos2) {
             cadcraft_engine::units::format_distance(c.y, 2, 4)
         );
     }
-    let galley = p.layout_no_wrap(text, crate::theme::small(), Color32::from_rgb(0x15, 0x15, 0x15));
-    let r = Rect::from_min_size(at + vec2(18.0, -30.0), galley.size() + vec2(10.0, 6.0));
-    p.rect_filled(r, 2.0, Color32::from_rgba_unmultiplied(0xe9, 0xec, 0xf0, 235));
-    p.rect_stroke(r, 2.0, Stroke::new(1.0, Color32::from_rgb(0x8a, 0x93, 0xa0)), egui::StrokeKind::Inside);
-    p.galley(r.min + vec2(5.0, 3.0), galley, Color32::BLACK);
+    let t = Tokens::get();
+    let galley = p.layout_no_wrap(text, crate::theme::small(), t.text);
+    let r = tooltip_frame(p, at, galley.size() + vec2(12.0, 8.0));
+    p.galley(r.min + vec2(6.0, 4.0), galley, t.text);
+}
+
+/// The tooltip background, matching the command line bar; returns its rectangle.
+fn tooltip_frame(p: &egui::Painter, at: Pos2, size: egui::Vec2) -> Rect {
+    let t = Tokens::get();
+    let r = Rect::from_min_size(at + vec2(18.0, -size.y - 14.0), size);
+    p.rect_filled(r, 3.0, t.cmd_bg);
+    p.rect_stroke(r, 3.0, Stroke::new(1.0, t.cmd_border), egui::StrokeKind::Inside);
+    r
+}
+
+/// The Dynamic Input value boxes: X and Y, or distance and angle. Typed values show in full
+/// text colour, a locked value (a separator typed after it) gets a lock, the active box gets the
+/// accent outline, and open boxes show the cursor's live value, dimmed. Values measured from the
+/// last point are marked with `@`.
+fn dynamic_input_boxes(p: &egui::Painter, at: Pos2, message: &str, f: &crate::dyninput::Frame, e: &crate::dyninput::Entry<'_>, cursor: Vec2) {
+    use crate::dyninput::Format;
+    let t = Tokens::get();
+    let font = crate::theme::small();
+    let dist = |v: f64| cadcraft_engine::units::format_distance(v, 2, 4);
+    let (live_first, live_second) = f.live(e.format, cursor);
+    let live_second = match e.format {
+        Format::Cartesian => dist(live_second),
+        Format::Polar => format!("{}°", (live_second.to_degrees() * 10.0).round() / 10.0),
+    };
+    let (label_first, label_second) = match e.format {
+        Format::Cartesian => ("X", "Y"),
+        Format::Polar => ("", "<"),
+    };
+    // (label, text, typed, locked, active)
+    let cells = [
+        (
+            label_first,
+            if e.first.is_empty() { dist(live_first) } else { e.first.to_owned() },
+            !e.first.is_empty(),
+            e.first_locked().is_some(),
+            !e.split,
+        ),
+        (label_second, if e.second.is_empty() { live_second } else { e.second.to_owned() }, !e.second.is_empty(), false, e.split),
+    ];
+
+    let msg = p.layout_no_wrap(message.to_owned(), font.clone(), t.text_dim);
+    let marker = p.layout_no_wrap(if f.relative() { "@".to_owned() } else { String::new() }, font.clone(), t.text_faint);
+    let lock_w = 10.0;
+    let laid: Vec<_> = cells
+        .into_iter()
+        .map(|(label, text, typed, locked, active)| {
+            let label = p.layout_no_wrap(label.to_owned(), font.clone(), t.text_faint);
+            let value = p.layout_no_wrap(text, font.clone(), if typed { t.text } else { t.text_faint });
+            let w = (value.size().x + 10.0 + if locked { lock_w } else { 0.0 }).max(48.0);
+            (label, value, w, locked, active)
+        })
+        .collect();
+
+    // Measure, then draw.
+    let pad = 6.0;
+    let gap = 6.0;
+    let box_h = msg.size().y + 6.0;
+    let mut w = pad + msg.size().x + gap + marker.size().x;
+    for (label, _, bw, _, _) in &laid {
+        w += gap + label.size().x + 3.0 + bw;
+    }
+    let r = tooltip_frame(p, at, vec2(w + pad, box_h + 2.0 * pad - 2.0));
+    let cy = r.center().y;
+    let mut x = r.left() + pad;
+    let (msg_w, msg_h) = (msg.size().x, msg.size().y);
+    p.galley(pos2(x, cy - msg_h / 2.0), msg, t.text_dim);
+    x += msg_w + gap;
+    let mw = marker.size().x;
+    p.galley(pos2(x, cy - marker.size().y / 2.0), marker, t.text_faint);
+    x += mw;
+    for (label, value, bw, locked, active) in laid {
+        x += gap;
+        let lw = label.size().x;
+        p.galley(pos2(x, cy - label.size().y / 2.0), label, t.text_faint);
+        x += lw + 3.0;
+        let b = Rect::from_min_size(pos2(x, cy - box_h / 2.0), vec2(bw, box_h));
+        p.rect_filled(b, 2.0, t.chrome_dark);
+        let stroke = if active { Stroke::new(1.5, t.accent) } else { Stroke::new(1.0, t.border) };
+        p.rect_stroke(b, 2.0, stroke, egui::StrokeKind::Inside);
+        let vw = value.size().x;
+        p.galley(pos2(b.left() + 5.0, cy - value.size().y / 2.0), value, t.text);
+        if active {
+            let cx = b.left() + 6.0 + vw;
+            p.line_segment([pos2(cx, b.top() + 3.0), pos2(cx, b.bottom() - 3.0)], Stroke::new(1.0, t.text));
+        }
+        if locked {
+            draw_lock(p, pos2(b.right() - lock_w / 2.0 - 3.0, cy), t.accent);
+        }
+        x += bw;
+    }
+}
+
+/// A small padlock, drawn in code: body plus shackle.
+fn draw_lock(p: &egui::Painter, c: Pos2, color: Color32) {
+    p.rect_filled(Rect::from_center_size(c + vec2(0.0, 1.5), vec2(7.0, 5.0)), 1.0, color);
+    p.add(Shape::line(
+        vec![pos2(c.x - 2.0, c.y - 1.0), pos2(c.x - 2.0, c.y - 4.0), pos2(c.x + 2.0, c.y - 4.0), pos2(c.x + 2.0, c.y - 1.0)],
+        Stroke::new(1.2, color),
+    ));
 }
 
 fn draw_ucs_icon(p: &egui::Painter, rect: Rect) {
