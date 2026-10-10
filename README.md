@@ -132,6 +132,15 @@ zoom e                          zoom to extents
 
 The web build: `cd apps/cadcraft-web && trunk serve` (needs [trunk](https://trunkrs.dev)).
 
+Each [GitHub release](https://github.com/storytold/cadcraft/releases) has ready-made builds, on Linux as an AppImage, a `.deb`, an `.rpm` and a tarball. On Gentoo, the community [::snakebyte overlay](https://github.com/switch87/snakebyte-overlay) packages the Linux release as `media-gfx/cadcraft-bin` (not maintained by the CADCraft team):
+
+```sh
+eselect repository add snakebyte git https://github.com/switch87/snakebyte-overlay.git
+emaint sync -r snakebyte
+echo 'media-gfx/cadcraft-bin ~amd64' >> /etc/portage/package.accept_keywords/cadcraft
+emerge --ask media-gfx/cadcraft-bin
+```
+
 ## Drive it from agents, MCP and the CLI
 
 ```sh
