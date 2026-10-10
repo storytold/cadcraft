@@ -562,6 +562,9 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
                 w.s(1, &dm.text);
             }
             w.s(3, &dm.style);
+            if dm.text_rotation != 0.0 {
+                w.f(53, dm.text_rotation.to_degrees());
+            }
             match dm.kind {
                 DimKind::Linear { rotation } => {
                     w.s(100, "AcDbAlignedDimension");
@@ -819,7 +822,7 @@ fn dim_block_entities(d: &Drawing, dm: &Dimension, layer: &str) -> Vec<Entity> {
                 height: style.text_height * style.scale.max(1e-9),
                 width: 0.0,
                 attach: 5,
-                rotation: 0.0,
+                rotation: g.text_angle,
                 style: style.text_style.clone(),
                 contents: g.value.clone(),
                 line_spacing: 1.0,

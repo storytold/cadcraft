@@ -1272,3 +1272,18 @@ fn attdef_prompt_survives_dxf_roundtrip() {
         .collect();
     assert_eq!(prompts, vec!["Enter value", ""]);
 }
+
+#[test]
+fn dimension_text_rotation_roundtrips() {
+    let mut d = Drawing::new_imperial();
+    let mut dm = dim(DimKind::Linear { rotation: 0.0 }, Vec3::ZERO, Vec3::new(10.0, 0.0, 0.0));
+    dm.text_rotation = 30.0_f64.to_radians();
+    let h = d.add(&Space::Model, Common::default(), EntityKind::Dimension(dm.clone())).unwrap();
+    let back = roundtrip(&d);
+    let EntityKind::Dimension(x) = &back.entity(h).unwrap().kind else { panic!("dimension expected") };
+    assert!((x.text_rotation - dm.text_rotation).abs() < 1e-9, "got {}", x.text_rotation);
+    // The anonymous block that renders the reopened dimension carries the same text angle.
+    let b = x.block.as_deref().and_then(|n| back.block(n)).expect("dimension block");
+    let rot = b.entities.iter().find_map(|e| if let EntityKind::MText(t) = &e.kind { Some(t.rotation) } else { None });
+    assert!(rot.is_some_and(|r| (r - dm.text_rotation).abs() < 1e-9), "block text rotation {rot:?}");
+}
