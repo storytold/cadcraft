@@ -788,7 +788,8 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     }
     // Crosshair cursor.
     if inside {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::None);
+        // Hide the OS cursor under the drawn crosshair, unless assistive tech needs it (#39).
+        ui.ctx().set_cursor_icon(if app.ui.system_cursor { egui::CursorIcon::Crosshair } else { egui::CursorIcon::None });
         if let Some(hp) = hover_pos {
             draw_crosshair(app, &painter, rect, hp, selecting);
         }

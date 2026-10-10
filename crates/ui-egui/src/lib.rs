@@ -44,6 +44,11 @@ pub struct UiState {
     pub show_viewcube: bool,
     pub show_ucs_icon: bool,
     pub show_layer_list: bool,
+    /// Keep the system cursor visible over the drawing area (a small crosshair at the centre of the
+    /// drawn one) instead of hiding it. Screen magnifiers (Windows Magnifier "follow the mouse
+    /// pointer"), screen readers, recorders and remote desktops track the system cursor and lose it
+    /// when it is hidden. Off by default; `CADCRAFT_SYSTEM_CURSOR=1` turns it on at startup.
+    pub system_cursor: bool,
     /// "Drafting" or "Modeling".
     pub toolset_tab: String,
     pub collapsed_groups: Vec<String>,
@@ -67,6 +72,7 @@ impl Default for UiState {
             show_viewcube: true,
             show_ucs_icon: true,
             show_layer_list: false,
+            system_cursor: std::env::var("CADCRAFT_SYSTEM_CURSOR").is_ok_and(|v| !matches!(v.trim(), "" | "0" | "false" | "off")),
             toolset_tab: "Drafting".into(),
             collapsed_groups: Vec::new(),
             properties_all: true,

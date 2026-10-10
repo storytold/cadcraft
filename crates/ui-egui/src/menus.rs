@@ -15,6 +15,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.sample", "Open Sample Drawing", &["Help", "Open Sample Drawing"], None),
     ("ui.toggle.toolsets", "Tool Sets", &["Window", "Tool Sets"], Some("Cmd+3")),
     ("ui.toggle.palettes", "Properties Inspector", &["Window", "Properties Inspector"], Some("Cmd+1")),
+    ("ui.toggle.systemcursor", "Show System Cursor", &["View", "Accessibility", "Show System Cursor"], None),
     ("ui.toggle.toolbar", "Tool Bar", &["Window", "Tool Bar"], None),
     ("ui.toggle.filetabs", "File Tab", &["Window", "File Tab"], None),
     ("ui.toggle.statusbar", "Status Bar", &["Window", "Status Bar"], None),
@@ -92,6 +93,10 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
         }
         "ui.toggle.cmdline" => {
             toggle(&mut app.ui.show_command_line, params);
+            Ok(Value::Null)
+        }
+        "ui.toggle.systemcursor" => {
+            toggle(&mut app.ui.system_cursor, params);
             Ok(Value::Null)
         }
         "ui.toggle.viewcube" => {
