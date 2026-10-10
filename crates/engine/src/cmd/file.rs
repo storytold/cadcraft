@@ -99,6 +99,10 @@ fn run_close(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.cancel();
     s.docs.remove(i);
+    if i < s.active {
+        // An earlier drawing went away: the active one shifted down by one.
+        s.active -= 1;
+    }
     if s.active >= s.docs.len() {
         s.active = s.docs.len().saturating_sub(1);
     }
@@ -200,4 +204,37 @@ pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
         }
     }
     Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use crate::Session;
+
+    fn active_title(s: &Session) -> String {
+        s.state().unwrap().title.clone()
+    }
+
+    #[test]
+    fn closing_earlier_inactive_drawing_keeps_active_drawing() {
+        let mut s = Session::new();
+        s.execute("new", &json!({})).unwrap();
+        s.execute("new", &json!({})).unwrap();
+        s.execute("document.switch", &json!({"index": 1})).unwrap();
+        assert_eq!(active_title(&s), "Drawing2");
+        s.execute("close", &json!({"index": 0})).unwrap();
+        assert_eq!(active_title(&s), "Drawing2");
+        assert_eq!(s.docs.len(), 2);
+    }
+
+    #[test]
+    fn closing_later_inactive_drawing_keeps_active_drawing() {
+        let mut s = Session::new();
+        s.execute("new", &json!({})).unwrap();
+        s.execute("new", &json!({})).unwrap();
+        s.execute("document.switch", &json!({"index": 1})).unwrap();
+        s.execute("close", &json!({"index": 2})).unwrap();
+        assert_eq!(active_title(&s), "Drawing2");
+    }
 }
