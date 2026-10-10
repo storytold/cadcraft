@@ -32,6 +32,8 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.dialog.dsettings", "Drafting Settings...", &[], None),
     ("ui.dialog.about", "About CADCraft", &["Help", "About CADCraft"], None),
     ("ui.dialog.commands", "Command Reference", &["Help", "CADCraft Help"], Some("F1")),
+    ("ui.toggle.history", "Command History", &["Window", "Command History"], Some("F2")),
+    ("ui.cmdline.lines", "Command Line History Lines", &[], None),
     ("ui.noop", "", &[], None),
     ("ui.quit", "Quit CADCraft", &[], Some("Cmd+Q")),
 ];
@@ -119,6 +121,19 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
         "ui.start" => {
             app.ui.start_tab = true;
             Ok(Value::Null)
+        }
+        // The expanded command history (AutoCAD's text window; TEXTSCR opens it).
+        "ui.toggle.history" | "textscr" => {
+            let open = json!({"on": true});
+            toggle(&mut app.cmd.expanded, if id == "textscr" { &open } else { params });
+            Ok(json!({ "on": app.cmd.expanded }))
+        }
+        // `{"lines": n}`: how many history lines show above the command line (0–12); without it, reports it.
+        "ui.cmdline.lines" => {
+            if let Some(n) = params.get("lines").and_then(Value::as_u64) {
+                app.ui.history_lines = n.min(crate::cmdline::MAX_LINES as u64) as usize;
+            }
+            Ok(json!({ "lines": app.ui.history_lines }))
         }
         "ui.dialog.layers"
         | "ui.dialog.blocks"
@@ -287,6 +302,7 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
         (sc(cmd, Key::Num3), "ui.toggle.toolsets"),
         (sc(cmd, Key::Num9), "ui.toggle.cmdline"),
         (sc(Modifiers::NONE, Key::F1), "ui.dialog.commands"),
+        (sc(Modifiers::NONE, Key::F2), "ui.toggle.history"),
         (sc(Modifiers::NONE, Key::F3), "osnap"),
         (sc(Modifiers::NONE, Key::F7), "grid"),
         (sc(Modifiers::NONE, Key::F8), "ortho"),

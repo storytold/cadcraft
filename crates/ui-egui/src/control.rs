@@ -85,6 +85,7 @@ pub fn cmdline_state(app: &CadApp) -> Value {
         "accept": p.as_ref().map(|p| p.accept),
         "buffer": app.cmd.buffer,
         "history": app.session.log.iter().rev().take(20).rev().cloned().collect::<Vec<_>>(),
+        "historyExpanded": app.cmd.expanded,
     })
 }
 
@@ -205,6 +206,29 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
                 app.synthetic.push(egui::Event::PointerButton { pos, button, pressed: true, modifiers });
                 app.synthetic.push(egui::Event::PointerButton { pos, button, pressed: false, modifiers });
             }
+            ok(Value::Null)
+        }
+        // Press at (x, y), move in steps to `to`, release there: a real drag through egui.
+        "ui.drag" => {
+            let (Some(x), Some(y)) = (f("x"), f("y")) else { return err("missing x/y") };
+            let to = p.get("to").and_then(Value::as_array);
+            let (Some(tx), Some(ty)) = (to.and_then(|a| a.first()).and_then(Value::as_f64), to.and_then(|a| a.get(1)).and_then(Value::as_f64)) else {
+                return err("missing to: [x, y]");
+            };
+            let button = match s("button") {
+                Some("right") => egui::PointerButton::Secondary,
+                Some("middle") => egui::PointerButton::Middle,
+                _ => egui::PointerButton::Primary,
+            };
+            let modifiers = egui::Modifiers::default();
+            let from = egui::pos2(x as f32, y as f32);
+            let to = egui::pos2(tx as f32, ty as f32);
+            app.synthetic.push(egui::Event::PointerMoved(from));
+            app.synthetic.push(egui::Event::PointerButton { pos: from, button, pressed: true, modifiers });
+            for i in 1..=8 {
+                app.synthetic.push(egui::Event::PointerMoved(from + (to - from) * (i as f32 / 8.0)));
+            }
+            app.synthetic.push(egui::Event::PointerButton { pos: to, button, pressed: false, modifiers });
             ok(Value::Null)
         }
         "ui.key" => {

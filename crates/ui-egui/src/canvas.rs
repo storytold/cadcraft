@@ -777,6 +777,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     // UCS icon, ViewCube and viewport label.
     if app.ui.show_ucs_icon {
         draw_ucs_icon(&painter, rect);
+        crate::viewcube::ucs_icon(app, ui, rect);
     }
     if app.ui.show_viewcube && sheet.is_none() {
         draw_viewcube(app, ui, rect);
@@ -873,25 +874,10 @@ fn viewport_label(p: &egui::Painter, rect: Rect) {
 
 fn draw_viewcube(app: &mut CadApp, ui: &mut egui::Ui, rect: Rect) {
     let t = Tokens::get();
-    let c = pos2(rect.right() - 92.0, rect.top() + 82.0);
+    let l = crate::viewcube::Layout::new(rect);
+    let (c, ring) = (l.center, l.ring);
     let p = ui.painter_at(rect);
-    let ring = 58.0;
-    p.circle_stroke(c, ring, Stroke::new(9.0, Color32::from_rgb(0x48, 0x50, 0x5c)));
-    p.circle_stroke(c, ring + 4.5, Stroke::new(1.0, Color32::from_rgb(0x5c, 0x65, 0x72)));
-    let f = egui::FontId::proportional(17.0);
-    let lc = Color32::from_rgb(0xc8, 0xcc, 0xd2);
-    p.text(c + vec2(0.0, -ring - 1.0), egui::Align2::CENTER_CENTER, "N", f.clone(), lc);
-    p.text(c + vec2(0.0, ring + 1.0), egui::Align2::CENTER_CENTER, "S", f.clone(), lc);
-    p.text(c + vec2(ring + 1.0, 0.0), egui::Align2::CENTER_CENTER, "E", f.clone(), lc);
-    p.text(c + vec2(-ring - 1.0, 0.0), egui::Align2::CENTER_CENTER, "W", f, lc);
-    let face = Rect::from_center_size(c, vec2(44.0, 44.0));
-    let resp = ui.interact(face, ui.id().with("viewcube"), Sense::click());
-    p.rect_filled(face, 2.0, if resp.hovered() { Color32::from_rgb(0xb8, 0xbc, 0xc2) } else { Color32::from_rgb(0x9a, 0x9e, 0xa4) });
-    p.rect_stroke(face, 2.0, Stroke::new(1.0, Color32::from_rgb(0x6c, 0x70, 0x76)), egui::StrokeKind::Inside);
-    p.text(c, egui::Align2::CENTER_CENTER, "TOP", egui::FontId::proportional(13.0), Color32::from_rgb(0x50, 0x54, 0x5a));
-    if resp.clicked() {
-        let _ = app.session.zoom_extents();
-    }
+    crate::viewcube::show(app, ui, &l);
     // WCS pill.
     let pill = Rect::from_center_size(c + vec2(0.0, ring + 26.0), vec2(56.0, 16.0));
     p.rect_filled(pill, 8.0, Color32::from_rgb(0x48, 0x50, 0x5c));
