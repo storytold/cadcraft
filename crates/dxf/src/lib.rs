@@ -17,8 +17,10 @@ pub enum DxfError {
     BadCode { line: usize, text: String },
     #[error("unexpected end of file")]
     Eof,
-    #[error("file too large")]
-    TooLarge,
+    /// More group codes than [`MAX_TAGS`]: `tags` is the count found (or the count read when the
+    /// limit was reached), `limit` the maximum.
+    #[error("drawing too large: {tags} DXF group codes, more than the {limit} CADCraft reads")]
+    TooLarge { tags: usize, limit: usize },
 }
 
 pub type Result<T> = std::result::Result<T, DxfError>;
@@ -157,22 +159,37 @@ fn typed(code: i32, text: &str) -> Value {
 }
 
 const BINARY_SENTINEL: &[u8] = b"AutoCAD Binary DXF\r\n\x1a\0";
-const MAX_TAGS: usize = 50_000_000;
+/// Most group codes read from one file. A `Tag` takes 40 bytes plus its text, so this bounds the
+/// tag list to a few GB; real drawings stay far below (a 10 MB DWG is typically a few million).
+pub const MAX_TAGS: usize = 50_000_000;
 
-/// Decode bytes as text: UTF-8 when valid, otherwise Latin-1 (old ANSI_1252 files).
-fn decode_text(b: &[u8]) -> String {
+/// Decode bytes as text: UTF-8 when valid (borrowed, no copy), otherwise Latin-1 (old ANSI_1252
+/// files).
+fn decode_text(b: &[u8]) -> std::borrow::Cow<'_, str> {
     match std::str::from_utf8(b) {
-        Ok(s) => s.to_string(),
-        Err(_) => b.iter().map(|&c| char::from(c)).collect(),
+        Ok(s) => std::borrow::Cow::Borrowed(s),
+        Err(_) => std::borrow::Cow::Owned(b.iter().map(|&c| char::from(c)).collect()),
     }
 }
 
 /// Parse a DXF file (ASCII or binary).
 pub fn parse(bytes: &[u8]) -> Result<Vec<Tag>> {
-    if bytes.starts_with(BINARY_SENTINEL) {
-        return parse_binary(bytes.get(BINARY_SENTINEL.len()..).unwrap_or(&[]));
+    parse_with_limit(bytes, MAX_TAGS)
+}
+
+/// [`parse`] with an explicit group-code limit. For ASCII DXF the limit is checked up front from
+/// the line count, before the text is decoded or any tag allocated, so an oversized file fails in
+/// milliseconds instead of after it has filled memory.
+pub fn parse_with_limit(bytes: &[u8], max_tags: usize) -> Result<Vec<Tag>> {
+    if let Some(body) = bytes.strip_prefix(BINARY_SENTINEL) {
+        return parse_binary_with_limit(body, max_tags);
     }
-    parse_ascii(&decode_text(bytes))
+    // Every group code takes two lines (code, value).
+    let tags = bytes.iter().filter(|&&b| b == b'\n').count().div_ceil(2);
+    if tags > max_tags {
+        return Err(DxfError::TooLarge { tags, limit: max_tags });
+    }
+    parse_ascii_with_limit(&decode_text(bytes), max_tags)
 }
 
 /// Unescape `\U+XXXX` sequences used by DXF R2007+ for non-ASCII characters.
@@ -200,8 +217,12 @@ fn unescape_unicode(s: &str) -> String {
     out
 }
 
-#[allow(clippy::while_let_loop)]
 pub fn parse_ascii(text: &str) -> Result<Vec<Tag>> {
+    parse_ascii_with_limit(text, MAX_TAGS)
+}
+
+#[allow(clippy::while_let_loop)]
+fn parse_ascii_with_limit(text: &str, max_tags: usize) -> Result<Vec<Tag>> {
     let mut tags = Vec::new();
     let mut lines = text.lines().enumerate();
     loop {
@@ -218,8 +239,8 @@ pub fn parse_ascii(text: &str) -> Result<Vec<Tag>> {
             o => o,
         };
         tags.push(Tag { code, value: v });
-        if tags.len() > MAX_TAGS {
-            return Err(DxfError::TooLarge);
+        if tags.len() > max_tags {
+            return Err(DxfError::TooLarge { tags: tags.len(), limit: max_tags });
         }
         if code == 0 && tags.last().is_some_and(|t| t.str() == "EOF") {
             break;
@@ -271,7 +292,7 @@ impl Cur<'_> {
         while self.p < self.b.len() && self.b.get(self.p) != Some(&0) {
             self.p += 1;
         }
-        let s = decode_text(self.b.get(start..self.p).unwrap_or(&[]));
+        let s = decode_text(self.b.get(start..self.p).unwrap_or(&[])).into_owned();
         if self.p >= self.b.len() {
             return Err(DxfError::Eof);
         }
@@ -282,6 +303,10 @@ impl Cur<'_> {
 
 /// Binary DXF (R13+: 2-byte group codes).
 pub fn parse_binary(b: &[u8]) -> Result<Vec<Tag>> {
+    parse_binary_with_limit(b, MAX_TAGS)
+}
+
+fn parse_binary_with_limit(b: &[u8], max_tags: usize) -> Result<Vec<Tag>> {
     let mut c = Cur { b, p: 0 };
     let mut tags = Vec::new();
     while c.p < b.len() {
@@ -308,8 +333,8 @@ pub fn parse_binary(b: &[u8]) -> Result<Vec<Tag>> {
         };
         let eof = code == 0 && matches!(&v, Value::Str(s) if s == "EOF");
         tags.push(Tag { code, value: v });
-        if tags.len() > MAX_TAGS {
-            return Err(DxfError::TooLarge);
+        if tags.len() > max_tags {
+            return Err(DxfError::TooLarge { tags: tags.len(), limit: max_tags });
         }
         if eof {
             break;
