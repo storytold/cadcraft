@@ -211,6 +211,36 @@ pub(crate) fn arrow_block_name(name: &str) -> Option<(String, Arrowhead)> {
     Some((if keep { n.to_string() } else { std_name }, kind))
 }
 
+/// Applications whose xdata carries layer properties: transparency and description.
+pub(crate) const LAYER_TRANSPARENCY_APP: &str = "AcCmTransparency";
+pub(crate) const LAYER_DESCRIPTION_APP: &str = "AcAecLayerStandard";
+
+/// A transparency percentage (0..=90) as an `AcCmTransparency` value: the alpha with the
+/// "by alpha" flag (0x02 in the top byte).
+pub(crate) fn transparency_to_dxf(percent: u8) -> i64 {
+    let t = u32::from(percent.min(90));
+    i64::from(0x0200_0000 | ((100 - t) * 255 / 100))
+}
+
+/// The percentage of an `AcCmTransparency` value; `None` unless it is "by alpha".
+pub(crate) fn transparency_from_dxf(v: i64) -> Option<u8> {
+    if (v >> 24) & 0xff != 2 {
+        return None;
+    }
+    let alpha = u32::try_from(v & 0xff).ok()?;
+    let opaque = (alpha * 100 + 127) / 255;
+    u8::try_from(100u32.saturating_sub(opaque).min(90)).ok()
+}
+
+/// An xdata string cut to the 255 bytes a `1000` group may hold, at a character boundary.
+pub(crate) fn xdata_str(s: &str) -> &str {
+    let mut end = s.len().min(255);
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s.get(..end).unwrap_or_default()
+}
+
 /// The extended data of one application: the groups after its `1001` up to the next `1001`.
 pub(crate) fn xdata<'a>(tags: &'a [Tag], app: &str) -> &'a [Tag] {
     let Some(start) = tags.iter().position(|t| t.code == 1001 && t.str().trim().eq_ignore_ascii_case(app)) else { return &[] };
