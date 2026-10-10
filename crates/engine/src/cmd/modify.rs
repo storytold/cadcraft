@@ -1310,6 +1310,11 @@ struct SelectThen {
     objs: Vec<Handle>,
     pts: Vec<Vec2>,
     reference: bool,
+    /// ROTATE Reference: the reference angle (radians), once known. Its first point, and the
+    /// first of the two new-angle points, are kept in `ref_from`.
+    ref_angle: Option<f64>,
+    /// ROTATE Reference: the new angle is given by two points (the `Points` option).
+    ref_points: bool,
     /// SCALE Reference: first point of a reference length given by two points.
     ref_from: Option<Vec2>,
     /// SCALE Reference: the reference length, once known.
@@ -1327,6 +1332,8 @@ impl SelectThen {
             objs: Vec::new(),
             pts: Vec::new(),
             reference: false,
+            ref_angle: None,
+            ref_points: false,
             ref_from: None,
             ref_len: None,
             copy_mode: false,
@@ -1408,6 +1415,87 @@ impl SelectThen {
         }
     }
 
+    /// ROTATE Reference: reference angle (typed, or two points), then the new angle (typed, a
+    /// point measured from the base point, or two points after `Points`). The objects turn by the
+    /// new angle minus the reference angle.
+    fn rotate_reference(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        let Some(base) = self.pts.first().copied() else { return Ok(Step::Done) };
+        let angle =
+            |t: &str| crate::units::parse_angle(t).filter(|a| a.is_finite()).ok_or_else(|| EngineError::Other("Requires an angle or point.".into()));
+        let two_points = |a: Vec2, p: Vec2| {
+            if a.near(p, 1e-12) { Err(EngineError::Other("The two points must differ.".into())) } else { Ok(a.angle_to(p)) }
+        };
+        let Some(r) = self.ref_angle else {
+            match (self.ref_from, i) {
+                (None, Input::Point(p)) => self.ref_from = Some(p),
+                (None, Input::Text(t)) => self.ref_angle = Some(angle(&t)?),
+                (None, Input::Enter) => self.ref_angle = Some(0.0),
+                (Some(a), Input::Point(p)) => {
+                    self.ref_angle = Some(two_points(a, p)?);
+                    self.ref_from = None;
+                }
+                _ => {}
+            }
+            return Ok(Step::Continue);
+        };
+        let new = match (self.ref_points, self.ref_from, i) {
+            (false, _, Input::Keyword(k)) if k == "Points" => {
+                self.ref_points = true;
+                return Ok(Step::Continue);
+            }
+            (false, _, Input::Point(p)) => base.angle_to(p),
+            (false, _, Input::Text(t)) => angle(&t)?,
+            (false, _, Input::Enter) => 0.0,
+            (true, None, Input::Point(p)) => {
+                self.ref_from = Some(p);
+                return Ok(Step::Continue);
+            }
+            (true, Some(a), Input::Point(p)) => two_points(a, p)?,
+            _ => return Ok(Step::Continue),
+        };
+        transform_entities(s, &self.objs, &Mat3::rotate_about(base, new - r), self.copy_mode)?;
+        s.set_selection(Vec::new());
+        Ok(Step::Done)
+    }
+
+    /// The prompt while ROTATE Reference collects its angles.
+    fn rotate_reference_prompt(&self) -> Prompt {
+        match (self.ref_angle, self.ref_points, self.ref_from) {
+            (None, _, None) => Prompt::new("Specify the reference angle", Accept::POINT_OR_NUMBER).default("0"),
+            (None, _, Some(p)) | (Some(_), true, Some(p)) => Prompt::new("Specify second point", Accept::POINT).base(p),
+            (Some(_), false, _) => {
+                Prompt::new("Specify the new angle", Accept::POINT_OR_NUMBER).kw(&["Points"]).default("0").base_opt(self.pts.first().copied())
+            }
+            (Some(_), true, None) => Prompt::new("Specify first point", Accept::POINT),
+        }
+    }
+
+    /// Rubber band while ROTATE Reference collects its angles: the objects turned to the cursor
+    /// once the reference angle is known, else the line from the first point.
+    fn rotate_reference_preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
+        let (Some(base), Ok(d)) = (self.pts.first().copied(), s.doc()) else { return Vec::new() };
+        match (self.ref_angle, self.ref_points, self.ref_from) {
+            (Some(r), false, _) => {
+                let m = Mat3::rotate_about(base, base.angle_to(c) - r);
+                let mut out: Vec<EntityKind> = self
+                    .objs
+                    .iter()
+                    .take(500)
+                    .filter_map(|h| d.entity(*h))
+                    .map(|e| {
+                        let mut k = e.kind.clone();
+                        k.transform(&m);
+                        k
+                    })
+                    .collect();
+                out.push(line(base, c));
+                out
+            }
+            (_, _, Some(a)) => vec![line(a, c)],
+            _ => Vec::new(),
+        }
+    }
+
     fn scale_by(&mut self, s: &mut Session, base: Vec2, f: f64) -> Result<Step> {
         let f = require_length(Some(f))?;
         transform_entities(s, &self.objs, &Mat3::scale_about(base, f), self.copy_mode)?;
@@ -1480,6 +1568,9 @@ impl Interactive for SelectThen {
                 (None, None) => Prompt::new("Specify reference length", Accept::POINT_OR_NUMBER).default("1"),
             };
         }
+        if self.op == Op::Rotate && self.reference {
+            return self.rotate_reference_prompt();
+        }
         match (self.op, k) {
             (Op::Move | Op::Copy | Op::Stretch, 0) => Prompt::new("Specify base point", Accept::POINT).kw(&["Displacement"]),
             (Op::Move | Op::Stretch, _) => Prompt::new("Specify second point or <use first point as displacement>", Accept::POINT).base_opt(bp),
@@ -1536,19 +1627,17 @@ impl Interactive for SelectThen {
         if self.op == Op::Scale && self.reference {
             return self.scale_reference(s, i);
         }
+        if self.op == Op::Rotate && self.reference {
+            return self.rotate_reference(s, i);
+        }
         match (self.op, k, i) {
             (_, _, Input::Keyword(kw)) if kw == "Copy" => {
                 self.copy_mode = true;
                 s.echo("Rotating/scaling a copy of the selected objects.");
                 Ok(Step::Continue)
             }
-            (Op::Scale, 1, Input::Keyword(kw)) if kw == "Reference" => {
+            (Op::Scale | Op::Rotate, 1, Input::Keyword(kw)) if kw == "Reference" => {
                 self.reference = true;
-                Ok(Step::Continue)
-            }
-            (_, _, Input::Keyword(kw)) if kw == "Reference" => {
-                self.reference = true;
-                s.echo("Reference: not available yet; enter a value.");
                 Ok(Step::Continue)
             }
             (Op::Copy, _, Input::Keyword(kw)) if kw == "Exit" => {
@@ -1643,6 +1732,9 @@ impl Interactive for SelectThen {
         }
     }
     fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
+        if self.op == Op::Rotate && self.reference {
+            return self.rotate_reference_preview(s, c);
+        }
         if !self.sel.done {
             return Vec::new();
         }
