@@ -980,7 +980,7 @@ fn tooltip_frame(p: &egui::Painter, at: Pos2, size: egui::Vec2) -> Rect {
     let t = Tokens::get();
     let r = Rect::from_min_size(at + vec2(18.0, -size.y - 14.0), size);
     p.rect_filled(r, 3.0, t.cmd_bg);
-    p.rect_stroke(r, 3.0, Stroke::new(1.0, Color32::from_rgb(0x55, 0x5f, 0x70)), egui::StrokeKind::Inside);
+    p.rect_stroke(r, 3.0, Stroke::new(1.0, t.cmd_border), egui::StrokeKind::Inside);
     r
 }
 
