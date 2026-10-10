@@ -210,6 +210,10 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
             app.ui.dialog = Some("qselect".into());
             Ok(Value::Null)
         }
+        "units" | "un" if params.is_null() => {
+            app.ui.dialog = Some("units".into());
+            Ok(Value::Null)
+        }
         "parameters" | "par" if params.is_null() => {
             app.ui.dialog = Some("parameters".into());
             Ok(Value::Null)
@@ -506,5 +510,29 @@ mod shortcut_label_tests {
         assert_eq!(shortcut_label("Shift+F3", true), "⇧F3");
         assert_eq!(shortcut_label("F1", false), "F1");
         assert_eq!(shortcut_label("F1", true), "F1");
+    }
+}
+
+#[cfg(test)]
+mod units_dialog_tests {
+    use cadcraft_engine::Session;
+    use serde_json::json;
+
+    use crate::{CadApp, Services};
+
+    #[test]
+    fn units_typed_opens_dialog_json_runs_command() {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        app.cmdline("UNITS");
+        assert_eq!(app.ui.dialog.as_deref(), Some("units"));
+        app.ui.dialog = None;
+        app.start("un");
+        assert_eq!(app.ui.dialog.as_deref(), Some("units"));
+        app.ui.dialog = None;
+        let r = app.run("units", json!({ "lunits": 4, "luprec": 3, "insunits": 4 })).unwrap();
+        assert_eq!(r["lunits"], 4);
+        assert!(app.ui.dialog.is_none(), "JSON calls never open dialogs");
+        let h = &app.session.doc().unwrap().header;
+        assert_eq!((h.i64("LUNITS", 0), h.i64("LUPREC", 0), h.i64("INSUNITS", 0)), (4, 3, 4));
     }
 }
