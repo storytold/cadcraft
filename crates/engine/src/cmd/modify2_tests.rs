@@ -95,6 +95,23 @@ fn pedit_json_options() {
 }
 
 #[test]
+fn join_keeps_selected_objects_outside_the_chain() {
+    let mut s = Session::new();
+    let a = h(&s.execute("line", &json!({"points": [[0, 0], [5, 0]]})).unwrap());
+    let b = h(&s.execute("line", &json!({"points": [[5, 0], [5, 5]]})).unwrap());
+    let far = h(&s.execute("line", &json!({"points": [[50, 50], [60, 60]]})).unwrap());
+    let c = h(&s.execute("circle", &json!({"center": [50, 50], "radius": 2})).unwrap());
+    let r = s.execute("join", &json!({"handles": [a, b, far, c]})).unwrap();
+    let joined = r["handle"].as_str().unwrap().to_string();
+    assert_eq!(poly(&kind(&s, &joined)).vertices.len(), 3);
+    let d = s.doc().unwrap();
+    assert!(d.entity(Handle::parse_hex(&a).unwrap()).is_none());
+    assert!(d.entity(Handle::parse_hex(&b).unwrap()).is_none());
+    assert!(d.entity(Handle::parse_hex(&far).unwrap()).is_some(), "unconnected line stays");
+    assert!(d.entity(Handle::parse_hex(&c).unwrap()).is_some(), "unrelated circle stays");
+}
+
+#[test]
 fn pedit_command_line() {
     let mut s = Session::new();
     pline(&mut s, json!([[0, 0], [10, 0], [10, 10]]), false);

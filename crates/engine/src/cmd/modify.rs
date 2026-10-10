@@ -1168,6 +1168,8 @@ fn run_breakat(s: &mut Session, p: &Value) -> Result<Value> {
 pub(crate) fn join(s: &mut Session, hs: &[Handle]) -> Result<Option<Handle>> {
     let d = s.doc()?;
     let mut segs: Vec<Segment> = Vec::new();
+    // Source entity of each segment in `segs`, so only entities that end up in the chain are removed.
+    let mut owners: Vec<Handle> = Vec::new();
     let mut common = None;
     for h in hs {
         let Some(e) = d.entity(*h) else { continue };
@@ -1178,12 +1180,14 @@ pub(crate) fn join(s: &mut Session, hs: &[Handle]) -> Result<Option<Handle>> {
             EntityKind::LwPolyline(p) if !p.closed => segs.extend(Polyline { vertices: p.vertices.clone(), closed: false }.segments()),
             _ => {}
         }
+        owners.resize(segs.len(), *h);
     }
     if segs.len() < 2 {
         return Err(EngineError::Other("Select at least two objects to join.".into()));
     }
     // Chain greedily from the first segment.
     let mut chain = vec![segs.remove(0)];
+    let mut used = vec![owners.remove(0)];
     let tol = 1e-6;
     loop {
         let start = chain.first().map(Segment::start).unwrap_or_default();
@@ -1194,6 +1198,7 @@ pub(crate) fn join(s: &mut Session, hs: &[Handle]) -> Result<Option<Handle>> {
             break;
         };
         let s0 = segs.remove(i);
+        used.push(owners.remove(i));
         if s0.start().near(end, tol) {
             chain.push(s0);
         } else if s0.end().near(end, tol) {
@@ -1224,7 +1229,7 @@ pub(crate) fn join(s: &mut Session, hs: &[Handle]) -> Result<Option<Handle>> {
     }
     let space = s.space();
     let doc = s.doc_mut()?;
-    for h in hs {
+    for h in hs.iter().filter(|h| used.contains(*h)) {
         doc.remove_entity(*h);
     }
     let nh = doc.new_handle();
@@ -1315,7 +1320,11 @@ impl SelectThen {
             }
             Op::Join => {
                 match join(s, &self.objs) {
-                    Ok(_) => s.echo(format!("{} objects joined into 1 polyline", self.objs.len())),
+                    Ok(_) => {
+                        // Objects outside the joined chain are kept, so count only the ones JOIN consumed.
+                        let n = s.doc().map(|d| self.objs.iter().filter(|h| d.entity(**h).is_none()).count()).unwrap_or(0);
+                        s.echo(format!("{n} objects joined into 1 polyline"))
+                    }
                     Err(e) => s.echo(e.to_string()),
                 }
                 Ok(Step::Done)
