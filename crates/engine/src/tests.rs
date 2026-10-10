@@ -343,6 +343,45 @@ fn copy_rotate_scale_mirror() {
 }
 
 #[test]
+fn scale_reference_typed_and_picked() {
+    // Issue #17: SCALE ▸ Reference scales by new length / reference length.
+    fn end(s: &Session) -> Vec2 {
+        let e = s.doc().unwrap().model.iter().next().unwrap();
+        let EntityKind::Line(l) = &e.kind else { panic!("expected a line") };
+        l.b.xy()
+    }
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [56, 0]]})).unwrap();
+    // Typed lengths: 56 → 100.
+    for t in ["scale", "all", "", "0,0", "r"] {
+        s.cmdline(t).unwrap();
+    }
+    assert_eq!(s.current_prompt().unwrap().message, "Specify reference length");
+    s.cmdline("56").unwrap();
+    assert_eq!(s.current_prompt().unwrap().message, "Specify new length");
+    s.cmdline("100").unwrap();
+    assert!(s.running.is_none());
+    assert!(end(&s).near(Vec2::new(100.0, 0.0), 1e-9));
+    // Reference from two points, a zero new length is rejected, new length picked from the base point.
+    for t in ["scale", "all", "", "0,0", "r", "0,0", "100,0"] {
+        s.cmdline(t).unwrap();
+    }
+    s.cmdline("0").unwrap();
+    assert!(s.running.is_some());
+    s.cmdline("0,25").unwrap();
+    assert!(s.running.is_none());
+    assert!(end(&s).near(Vec2::new(25.0, 0.0), 1e-9));
+    // A zero reference length is rejected and asked again.
+    for t in ["scale", "all", "", "0,0", "r", "0"] {
+        s.cmdline(t).unwrap();
+    }
+    assert_eq!(s.current_prompt().unwrap().message, "Specify reference length");
+    s.cmdline("25").unwrap();
+    s.cmdline("50").unwrap();
+    assert!(end(&s).near(Vec2::new(50.0, 0.0), 1e-9));
+}
+
+#[test]
 fn layers_and_properties() {
     let mut s = Session::new();
     s.execute("layer.new", &json!({"name": "Walls", "color": "red", "current": true})).unwrap();
