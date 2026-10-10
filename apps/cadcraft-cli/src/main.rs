@@ -310,6 +310,42 @@ fn mcp(args: &[String]) -> Result<(), String> {
     cadcraft_mcp::Server::new(backend).serve(stdin.lock(), stdout.lock()).map_err(|e| e.to_string())
 }
 
+#[cfg(test)]
+mod mcp_args_tests {
+    use super::*;
+
+    fn args(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn mcp_without_connect_is_headless() {
+        assert_eq!(parse_mcp_args(&args(&[])), Ok(McpTarget::Headless));
+    }
+
+    #[test]
+    fn mcp_connect_with_address_selects_remote() {
+        assert_eq!(parse_mcp_args(&args(&["--connect", "127.0.0.1:7979"])), Ok(McpTarget::Connect("127.0.0.1:7979".into())));
+        assert_eq!(parse_mcp_args(&args(&["--connect", "localhost:7979"])), Ok(McpTarget::Connect("localhost:7979".into())));
+    }
+
+    #[test]
+    fn mcp_connect_without_address_is_an_error_not_headless() {
+        for bad in [&["--connect"][..], &["--connect", ""], &["--connect", "  "], &["--connect", "--foo"], &["--connect", "-v"]] {
+            let r = parse_mcp_args(&args(bad));
+            let Err(e) = r else { panic!("{bad:?} should be rejected, got {r:?}") };
+            assert!(e.contains("--connect needs HOST:PORT"), "{bad:?}: {e}");
+        }
+    }
+
+    #[test]
+    fn mcp_rejects_unknown_and_repeated_arguments() {
+        assert!(parse_mcp_args(&args(&["--conect", "127.0.0.1:7979"])).is_err());
+        assert!(parse_mcp_args(&args(&["127.0.0.1:7979"])).is_err());
+        assert!(parse_mcp_args(&args(&["--connect", "127.0.0.1:1", "--connect", "127.0.0.1:2"])).is_err());
+    }
+}
+
 fn main() -> ExitCode {
     install_io();
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -350,41 +386,5 @@ fn main() -> ExitCode {
             eprintln!("{e}");
             ExitCode::FAILURE
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn args(a: &[&str]) -> Vec<String> {
-        a.iter().map(|s| s.to_string()).collect()
-    }
-
-    #[test]
-    fn mcp_without_connect_is_headless() {
-        assert_eq!(parse_mcp_args(&args(&[])), Ok(McpTarget::Headless));
-    }
-
-    #[test]
-    fn mcp_connect_with_address_selects_remote() {
-        assert_eq!(parse_mcp_args(&args(&["--connect", "127.0.0.1:7979"])), Ok(McpTarget::Connect("127.0.0.1:7979".into())));
-        assert_eq!(parse_mcp_args(&args(&["--connect", "localhost:7979"])), Ok(McpTarget::Connect("localhost:7979".into())));
-    }
-
-    #[test]
-    fn mcp_connect_without_address_is_an_error_not_headless() {
-        for bad in [&["--connect"][..], &["--connect", ""], &["--connect", "  "], &["--connect", "--foo"], &["--connect", "-v"]] {
-            let r = parse_mcp_args(&args(bad));
-            let Err(e) = r else { panic!("{bad:?} should be rejected, got {r:?}") };
-            assert!(e.contains("--connect needs HOST:PORT"), "{bad:?}: {e}");
-        }
-    }
-
-    #[test]
-    fn mcp_rejects_unknown_and_repeated_arguments() {
-        assert!(parse_mcp_args(&args(&["--conect", "127.0.0.1:7979"])).is_err());
-        assert!(parse_mcp_args(&args(&["127.0.0.1:7979"])).is_err());
-        assert!(parse_mcp_args(&args(&["--connect", "127.0.0.1:1", "--connect", "127.0.0.1:2"])).is_err());
     }
 }
