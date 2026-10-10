@@ -363,7 +363,7 @@ pub fn dimension_geometry(d: &Dimension, st: &DimStyle, dimscale: f64) -> DimGeo
 /// Generate the geometry of a dimension. The dimension's own overrides are applied to `st`.
 pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font: &DimText) -> DimGeometry {
     let st = &st.with_overrides(&d.overrides);
-    let k = if st.scale > 0.0 && st.scale.is_finite() { st.scale } else { dimscale.max(1e-9) };
+    let k = st.effective_scale(dimscale);
     let asz = st.arrow_size * k;
     let th = if font.fixed_height > 0.0 { font.fixed_height } else { st.text_height * k };
     let gap = st.text_gap.abs() * k;

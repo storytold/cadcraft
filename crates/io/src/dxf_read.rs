@@ -761,6 +761,14 @@ fn header(tags: &[Tag], d: &mut Drawing) {
                 },
                 _ => continue,
             };
+            // $DIMDSEP holds a character code; the dimension style holds the character.
+            let hv = match hv {
+                HVal::Int(n) if name == "DIMDSEP" => match u32::try_from(n).ok().and_then(char::from_u32).filter(|c| !c.is_control()) {
+                    Some(c) => HVal::Str(c.to_string()),
+                    None => continue,
+                },
+                hv => hv,
+            };
             d.header.set(&name, hv);
         } else {
             i += 1;

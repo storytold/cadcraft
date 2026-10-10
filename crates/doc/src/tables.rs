@@ -382,6 +382,12 @@ impl DimStyle {
         rejected
     }
 
+    /// The overall scale: the style's DIMSCALE, else the drawing's `dimscale`, else 1. Zero means
+    /// "scale to the layout viewport" in AutoCAD, which isn't computed here.
+    pub fn effective_scale(&self, dimscale: f64) -> f64 {
+        [self.scale, dimscale].into_iter().find(|k| *k > 0.0 && k.is_finite()).unwrap_or(1.0)
+    }
+
     /// This style with a dimension's overrides applied.
     pub fn with_overrides(&self, o: &serde_json::Map<String, serde_json::Value>) -> DimStyle {
         let mut st = self.clone();

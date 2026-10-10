@@ -1514,3 +1514,41 @@ fn wipeout_survives_dxf_roundtrip() {
     assert_eq!(&got[..4], &boundary[..]);
     assert_eq!(got[4], boundary[0]);
 }
+
+#[test]
+fn autocad_header_dim_variables_are_not_overrides() {
+    // AutoCAD writes the current style's values as $DIM* header variables; reading them back must
+    // not turn them into style overrides for new dimensions (issue #66).
+    use crate::dxf_ext::{K, dim_code};
+    let mut d = Drawing::new_imperial();
+    d.text_styles.push(TextStyle { name: "Romans".into(), font: "romans.shx".into(), ..TextStyle::default() });
+    d.dim_styles.push(full_dim_style());
+    d.header.set_str("DIMSTYLE", "Mech");
+    d.header.set_f64("DIMSCALE", full_dim_style().scale);
+    let st = serde_json::to_value(full_dim_style()).unwrap();
+    let mut vars = String::new();
+    for (var, field) in DIMVARS {
+        let Some((_, kind)) = dim_code(field) else { continue };
+        let v = &st[*field];
+        let (code, val) = match kind {
+            K::Real => (40, v.as_f64().unwrap().to_string()),
+            K::Int => (70, v.as_i64().unwrap().to_string()),
+            K::Bool => (70, i64::from(v.as_bool().unwrap()).to_string()),
+            K::Color => (70, serde_json::from_value::<Color>(v.clone()).unwrap().to_aci().to_string()),
+            K::Char => (70, u32::from(v.as_str().unwrap().chars().next().unwrap()).to_string()),
+            K::Str => (1, v.as_str().unwrap().to_string()),
+            // Names as AutoCAD may spell them.
+            K::Block => (1, v.as_str().unwrap().to_ascii_uppercase()),
+            K::TextStyle => (7, v.as_str().unwrap().to_ascii_uppercase()),
+        };
+        vars.push_str(&format!("  9\r\n${var}\r\n{code}\r\n{val}\r\n"));
+    }
+    let text = write_dxf(&d).replacen("HEADER\r\n", &format!("HEADER\r\n{vars}"), 1);
+    let back = read_dxf(text.as_bytes()).unwrap();
+    assert_eq!(back.header.str("DIMDSEP", ""), ",");
+    assert!(back.header.get("DIMTXT").is_some() && back.header.get("DIMCLRD").is_some());
+    assert_eq!(back.dim_overrides(), serde_json::Map::new());
+    // A variable that really differs from the style is an override.
+    let text = text.replacen("$DIMDEC\r\n70\r\n3\r\n", "$DIMDEC\r\n70\r\n5\r\n", 1);
+    assert_eq!(read_dxf(text.as_bytes()).unwrap().dim_overrides().get("decimals"), Some(&serde_json::json!(5)));
+}

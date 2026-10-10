@@ -77,8 +77,16 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
             json!([p.x, p.y, 0.0])
         }
         _ => {
-            let h = s.doc().ok()?.header.get(&n)?;
-            serde_json::to_value(h).ok()?
+            let d = s.doc().ok()?;
+            match d.header.get(&n) {
+                Some(h) => serde_json::to_value(h).ok()?,
+                // A dimension variable the header doesn't carry reads from the current style.
+                None => {
+                    let field = cadcraft_doc::DIMVARS.iter().find(|(v, _)| *v == n)?.1;
+                    let st = d.dim_style(&d.header.str("DIMSTYLE", "Standard"))?;
+                    serde_json::to_value(st).ok()?.get(field)?.clone()
+                }
+            }
         }
     };
     Some(v)
