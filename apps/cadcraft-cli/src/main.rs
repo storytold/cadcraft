@@ -264,6 +264,88 @@ fn perf(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// The backend `cadcraft-cli mcp` serves from.
+#[derive(Debug, PartialEq, Eq)]
+enum McpTarget {
+    /// An in-process drawing session (no `--connect`).
+    Headless,
+    /// The running app's control channel at `HOST:PORT`.
+    Connect(String),
+}
+
+/// Parses the arguments after `mcp`. `--connect` must be followed by a `HOST:PORT`; a missing,
+/// empty or flag-like value is an error, never a silent fall back to a headless session (#103).
+fn parse_mcp_args(args: &[String]) -> Result<McpTarget, String> {
+    let mut target = McpTarget::Headless;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--connect" => {
+                let addr = it
+                    .next()
+                    .map(|v| v.trim())
+                    .filter(|v| !v.is_empty() && !v.starts_with('-'))
+                    .ok_or("--connect needs HOST:PORT (the app's --control port, e.g. 127.0.0.1:7979)")?;
+                if target != McpTarget::Headless {
+                    return Err("--connect given more than once".into());
+                }
+                target = McpTarget::Connect(addr.to_string());
+            }
+            other => return Err(format!("mcp: unknown argument {other}\n{USAGE}")),
+        }
+    }
+    Ok(target)
+}
+
+fn mcp(args: &[String]) -> Result<(), String> {
+    let backend: Box<dyn cadcraft_mcp::Backend> = match parse_mcp_args(args)? {
+        McpTarget::Connect(addr) => match cadcraft_mcp::Remote::connect(&addr) {
+            Ok(r) => Box::new(r),
+            Err(e) => return Err(format!("cadcraft-cli: cannot connect to {addr}: {e}")),
+        },
+        McpTarget::Headless => Box::new(cadcraft_mcp::Headless::default()),
+    };
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    cadcraft_mcp::Server::new(backend).serve(stdin.lock(), stdout.lock()).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod mcp_args_tests {
+    use super::*;
+
+    fn args(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn mcp_without_connect_is_headless() {
+        assert_eq!(parse_mcp_args(&args(&[])), Ok(McpTarget::Headless));
+    }
+
+    #[test]
+    fn mcp_connect_with_address_selects_remote() {
+        assert_eq!(parse_mcp_args(&args(&["--connect", "127.0.0.1:7979"])), Ok(McpTarget::Connect("127.0.0.1:7979".into())));
+        assert_eq!(parse_mcp_args(&args(&["--connect", "localhost:7979"])), Ok(McpTarget::Connect("localhost:7979".into())));
+    }
+
+    #[test]
+    fn mcp_connect_without_address_is_an_error_not_headless() {
+        for bad in [&["--connect"][..], &["--connect", ""], &["--connect", "  "], &["--connect", "--foo"], &["--connect", "-v"]] {
+            let r = parse_mcp_args(&args(bad));
+            let Err(e) = r else { panic!("{bad:?} should be rejected, got {r:?}") };
+            assert!(e.contains("--connect needs HOST:PORT"), "{bad:?}: {e}");
+        }
+    }
+
+    #[test]
+    fn mcp_rejects_unknown_and_repeated_arguments() {
+        assert!(parse_mcp_args(&args(&["--conect", "127.0.0.1:7979"])).is_err());
+        assert!(parse_mcp_args(&args(&["127.0.0.1:7979"])).is_err());
+        assert!(parse_mcp_args(&args(&["--connect", "127.0.0.1:1", "--connect", "127.0.0.1:2"])).is_err());
+    }
+}
+
 fn main() -> ExitCode {
     install_io();
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -291,21 +373,7 @@ fn main() -> ExitCode {
             println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
             Ok(())
         }
-        Some("mcp") => {
-            let backend: Box<dyn cadcraft_mcp::Backend> = match rest.iter().position(|a| a == "--connect").and_then(|i| rest.get(i + 1)) {
-                Some(addr) => match cadcraft_mcp::Remote::connect(addr) {
-                    Ok(r) => Box::new(r),
-                    Err(e) => {
-                        eprintln!("cadcraft-cli: cannot connect to {addr}: {e}");
-                        return ExitCode::FAILURE;
-                    }
-                },
-                None => Box::new(cadcraft_mcp::Headless::default()),
-            };
-            let stdin = std::io::stdin();
-            let stdout = std::io::stdout();
-            cadcraft_mcp::Server::new(backend).serve(stdin.lock(), stdout.lock()).map_err(|e| e.to_string())
-        }
+        Some("mcp") => mcp(&rest),
         Some("--version" | "-V") => {
             println!("cadcraft-cli {}", env!("CARGO_PKG_VERSION"));
             Ok(())

@@ -13,6 +13,10 @@ cadcraft --control 7979 &
 cadcraft-cli mcp --connect 127.0.0.1:7979
 ```
 
+`--connect` needs the app's `HOST:PORT`. Without one (or with an unknown argument) `cadcraft-cli mcp`
+exits with an error instead of falling back to a headless session, so a client meant for the app
+never edits a separate drawing by mistake. If the app can't be reached, startup fails too.
+
 Example client configuration (Claude Code / Claude Desktop):
 
 ```json
