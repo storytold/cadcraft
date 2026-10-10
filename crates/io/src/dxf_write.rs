@@ -386,6 +386,9 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
             if p.const_width > 0.0 {
                 w.f(43, p.const_width);
             }
+            if p.elevation != 0.0 {
+                w.f(38, p.elevation);
+            }
             for v in &p.vertices {
                 w.p2(10, v.p);
                 if v.start_width != 0.0 || v.end_width != 0.0 {
