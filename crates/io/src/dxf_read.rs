@@ -552,6 +552,10 @@ fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityKind, rx: &m
         ("DIMENSION", EntityKind::Dimension(dm)) => {
             dm.overrides = crate::dxf_ext::read_dstyle(tags, &rx.styles, &rx.brs);
             dm.assoc = crate::dxf_ext::read_assoc(tags);
+            if let Some(center) = crate::dxf_ext::read_arclen(tags) {
+                dm.kind = DimKind::ArcLength;
+                dm.p15 = center;
+            }
         }
         ("ACAD_TABLE", EntityKind::Table(_)) => {
             let t = T(tags);

@@ -162,9 +162,16 @@ fn dim_xdata(w: &mut W, dm: &Dimension, cx: &Ctx) {
         w.xdata(ov.t);
         w.s(1002, "}");
     }
+    let mut ours = Vec::new();
+    if matches!(dm.kind, DimKind::ArcLength) {
+        ours.extend(dxf_ext::arclen_xdata(dm.p15));
+    }
     if !dm.assoc.is_empty() {
+        ours.extend(dxf_ext::assoc_xdata(&dm.assoc));
+    }
+    if !ours.is_empty() {
         w.s(1001, dxf_ext::APP);
-        w.xdata(dxf_ext::assoc_xdata(&dm.assoc));
+        w.xdata(ours);
     }
 }
 
@@ -555,7 +562,8 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
                 DimKind::Radius => 4,
                 DimKind::Angular3P => 5,
                 DimKind::Ordinate { x_type } => 6 | if x_type { 64 } else { 0 },
-                DimKind::ArcLength => 8,
+                // Written as aligned, marked by CADCraft xdata (see `dim_xdata`).
+                DimKind::ArcLength => 1,
             };
             w.i(70, ty | 32 | if dm.user_text_pos { 128 } else { 0 });
             if !dm.text.is_empty() {
@@ -573,17 +581,10 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
                     w.f(50, rotation.to_degrees());
                     w.s(100, "AcDbRotatedDimension");
                 }
-                DimKind::Aligned => {
+                DimKind::Aligned | DimKind::ArcLength => {
                     w.s(100, "AcDbAlignedDimension");
                     w.p(13, dm.p13);
                     w.p(14, dm.p14);
-                }
-                DimKind::ArcLength => {
-                    // The arc centre (p15) is needed to measure the arc again after reopening.
-                    w.s(100, "AcDbAlignedDimension");
-                    w.p(13, dm.p13);
-                    w.p(14, dm.p14);
-                    w.p(15, dm.p15);
                 }
                 DimKind::Radius => {
                     w.s(100, "AcDbRadialDimension");
