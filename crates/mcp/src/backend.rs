@@ -46,22 +46,35 @@ impl Remote {
         }
         Err(last)
     }
-    fn roundtrip(&mut self, line: &str) -> std::io::Result<String> {
+    /// On failure the flag says whether the request may already have reached the server.
+    fn roundtrip(&mut self, line: &str) -> Result<String, (std::io::Error, bool)> {
         if self.conn.is_none() {
-            self.reconnect()?;
+            self.reconnect().map_err(|e| (e, false))?;
         }
-        let Some((reader, writer)) = self.conn.as_mut() else { return Err(std::io::Error::other("not connected")) };
-        writer.write_all(line.as_bytes())?;
-        writer.write_all(b"\n")?;
-        writer.flush()?;
-        let mut reply = String::new();
-        let n = reader.read_line(&mut reply)?;
-        if n == 0 {
+        let Some((reader, writer)) = self.conn.as_mut() else { return Err((std::io::Error::other("not connected"), false)) };
+        let sent = writer.write_all(line.as_bytes()).and_then(|()| writer.write_all(b"\n")).and_then(|()| writer.flush());
+        if let Err(e) = sent {
             self.conn = None;
-            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "connection closed"));
+            return Err((e, false));
         }
-        Ok(reply)
+        let mut reply = String::new();
+        match reader.read_line(&mut reply) {
+            Ok(0) => {
+                self.conn = None;
+                Err((std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "connection closed"), true))
+            }
+            Ok(_) => Ok(reply),
+            Err(e) => {
+                self.conn = None;
+                Err((e, true))
+            }
+        }
     }
+}
+
+/// Methods that only read state, so resending them after a lost reply cannot change the drawing twice.
+fn is_read_only(method: &str) -> bool {
+    matches!(method, "drawing.inspect" | "document.inspect" | "engine.commands" | "cmdline.state" | "ui.inspect" | "ui.render" | "ui.screenshot")
 }
 
 impl Backend for Remote {
@@ -71,7 +84,15 @@ impl Backend for Remote {
         let line = json!({"id": id, "method": method, "params": params}).to_string();
         let reply = match self.roundtrip(&line) {
             Ok(r) => r,
-            Err(_) => self.roundtrip(&line).map_err(|e| format!("CADCraft at {}: {e}", self.addr))?,
+            // Resend only when the request cannot have been applied. After a sent mutation with no reply the outcome is unknown, and
+            // resending could apply it twice (for example two circles from one call), so report that instead.
+            Err((_, sent)) if !sent || is_read_only(method) => self.roundtrip(&line).map_err(|(e, _)| format!("CADCraft at {}: {e}", self.addr))?,
+            Err((e, _)) => {
+                return Err(format!(
+                    "CADCraft at {}: {e}; the reply was lost, so `{method}` may or may not have been applied. Inspect the drawing first",
+                    self.addr
+                ));
+            }
         };
         let v: Value = serde_json::from_str(&reply).map_err(|e| format!("bad reply: {e}"))?;
         if v.get("ok").and_then(Value::as_bool) == Some(true) {
@@ -184,5 +205,35 @@ impl Backend for Headless {
     }
     fn describe(&self) -> String {
         "headless CADCraft session".into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpListener;
+
+    /// A server that reads one request per connection and closes without replying must not see the request twice.
+    #[test]
+    fn lost_reply_to_a_mutation_is_not_resent() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let server = std::thread::spawn(move || {
+            let mut requests = 0;
+            listener.set_nonblocking(false).unwrap();
+            let (conn, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(conn).read_line(&mut line).unwrap();
+            requests += 1;
+            // Anything arriving on a second connection would be a resend.
+            listener.set_nonblocking(true).unwrap();
+            std::thread::sleep(Duration::from_millis(300));
+            requests += usize::from(listener.accept().is_ok());
+            requests
+        });
+        let mut remote = Remote::connect(&addr).unwrap();
+        let err = remote.call("engine.execute", json!({"command": "circle", "params": {}})).unwrap_err();
+        assert!(err.contains("may or may not have been applied"), "{err}");
+        assert_eq!(server.join().unwrap(), 1);
     }
 }
