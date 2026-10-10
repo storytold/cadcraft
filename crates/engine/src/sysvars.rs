@@ -25,6 +25,7 @@ const SESSION_VARS: &[&str] = &[
     "PICKADD",
     "GRIPSIZE",
     "CURSORSIZE",
+    "MAXARRAY",
     "LASTPOINT",
     "FONTALT",
     "FONTFALLBACK",
@@ -54,6 +55,7 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "PICKADD" => json!(i32::from(st.pickadd)),
         "GRIPSIZE" => json!(st.gripsize),
         "CURSORSIZE" => json!(st.cursorsize),
+        "MAXARRAY" => json!(st.maxarray),
         "LASTPOINT" => json!([s.last_point.x, s.last_point.y, 0.0]),
         // Process-wide font substitution (profile settings, not saved in the drawing).
         "FONTALT" => json!(cadcraft_fonts::ttf::font_alt()),
@@ -145,6 +147,7 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         "PICKADD" => st.pickadd = as_bool(v).ok_or_else(bad)?,
         "GRIPSIZE" => st.gripsize = as_f64(v).ok_or_else(bad)?.clamp(1.0, 255.0),
         "CURSORSIZE" => st.cursorsize = as_f64(v).ok_or_else(bad)?.clamp(1.0, 100.0),
+        "MAXARRAY" => st.maxarray = as_f64(v).ok_or_else(bad)?.clamp(100.0, 10_000_000.0) as u64,
         "FONTALT" => cadcraft_fonts::ttf::set_font_alt(v.as_str().ok_or_else(bad)?),
         "FONTFALLBACK" => cadcraft_fonts::ttf::set_fallback_fonts(v.as_str().ok_or_else(bad)?),
         _ => {

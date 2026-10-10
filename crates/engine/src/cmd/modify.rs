@@ -1,5 +1,5 @@
 //! Modify commands: ERASE, MOVE, COPY, ROTATE, SCALE, MIRROR, OFFSET, TRIM, EXTEND, FILLET,
-//! CHAMFER, EXPLODE, STRETCH, ARRAY, DRAWORDER, BREAK, JOIN.
+//! CHAMFER, EXPLODE, STRETCH, DRAWORDER, BREAK, JOIN (arrays: `array`).
 
 use cadcraft_doc::{Entity, EntityKind, Handle, Prim};
 use cadcraft_geom::{
@@ -79,14 +79,6 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["x"])
             .params("{handles?}")
             .interactive(|_| Ok(Box::new(SelectThen::new(Op::Explode)))),
-        CommandSpec::new("arrayrect", "Rectangular Array", run_arrayrect)
-            .menu(&["Modify", "Array", "Rectangular Array"])
-            .params("{handles?, rows, cols, rowSpacing, colSpacing}")
-            .interactive(|_| Ok(Box::new(SelectThen::new(Op::ArrayRect)))),
-        CommandSpec::new("arraypolar", "Polar Array", run_arraypolar)
-            .menu(&["Modify", "Array", "Polar Array"])
-            .params("{handles?, center, count, angle? (degrees, default 360), rotate?: bool}")
-            .interactive(|_| Ok(Box::new(SelectThen::new(Op::ArrayPolar)))),
         CommandSpec::new("draworder.front", "Bring to Front", run_front)
             .menu(&["Tools", "Draw Order", "Bring to Front"])
             .params("{handles?}")
@@ -1015,47 +1007,6 @@ fn run_explode(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "handles": r.iter().map(|h| h.hex()).collect::<Vec<_>>() }))
 }
 
-fn run_arrayrect(s: &mut Session, p: &Value) -> Result<Value> {
-    let hs = targets(s, p)?;
-    let rows = p.get("rows").and_then(Value::as_u64).unwrap_or(3).clamp(1, 1000);
-    let cols = p.get("cols").and_then(Value::as_u64).unwrap_or(4).clamp(1, 1000);
-    let rs = f64_or(p, "rowSpacing", 1.0);
-    let cs = f64_or(p, "colSpacing", 1.0);
-    let mut out = Vec::new();
-    for r in 0..rows {
-        for c in 0..cols {
-            if r == 0 && c == 0 {
-                continue;
-            }
-            out.extend(transform_entities(s, &hs, &Mat3::translate(Vec2::new(cs * c as f64, rs * r as f64)), true)?);
-        }
-    }
-    Ok(json!({ "created": out.len() }))
-}
-
-fn run_arraypolar(s: &mut Session, p: &Value) -> Result<Value> {
-    let hs = targets(s, p)?;
-    let c = point_req("arraypolar", p, "center")?;
-    let n = p.get("count").and_then(Value::as_u64).unwrap_or(6).clamp(1, 10_000);
-    let total = f64_or(p, "angle", 360.0).to_radians();
-    let rotate = bool_or(p, "rotate", true);
-    let step = if (total - TAU).abs() < 1e-9 { total / n as f64 } else { total / (n.saturating_sub(1).max(1)) as f64 };
-    let mut out = Vec::new();
-    for k in 1..n {
-        let a = step * k as f64;
-        let m = if rotate {
-            Mat3::rotate_about(c, a)
-        } else {
-            // Translate only: move the reference point around the circle.
-            let d = s.doc()?;
-            let r = hs.first().and_then(|h| d.entity(*h)).map(|e| cadcraft_doc::entity_bounds(d, e, 0).center()).unwrap_or(c);
-            Mat3::translate(r.rotate_about(c, a) - r)
-        };
-        out.extend(transform_entities(s, &hs, &m, true)?);
-    }
-    Ok(json!({ "created": out.len() }))
-}
-
 fn run_front(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
     let space = s.space();
@@ -1298,8 +1249,6 @@ enum Op {
     Mirror,
     Stretch,
     Explode,
-    ArrayRect,
-    ArrayPolar,
     Join,
 }
 
@@ -1362,22 +1311,6 @@ impl SelectThen {
                     }
                     Err(e) => s.echo(e.to_string()),
                 }
-                Ok(Step::Done)
-            }
-            Op::ArrayRect => {
-                let objs = self.objs.clone();
-                let d = s.doc()?;
-                let b = objs
-                    .iter()
-                    .filter_map(|h| d.entity(*h).map(|e| cadcraft_doc::entity_bounds(d, e, 0)))
-                    .fold(cadcraft_geom::Bounds2::EMPTY, |a, b| a.union(&b));
-                let cs = b.width() * 1.5 + 1e-9;
-                let rs = b.height() * 1.5 + 1e-9;
-                run_arrayrect(
-                    s,
-                    &json!({ "handles": objs.iter().map(|h| h.hex()).collect::<Vec<_>>(), "rows": 3, "cols": 4, "rowSpacing": rs, "colSpacing": cs }),
-                )?;
-                s.echo("Type = Rectangular  Associative = No (3 rows × 4 columns)");
                 Ok(Step::Done)
             }
             _ => Ok(Step::Continue),
@@ -1525,8 +1458,6 @@ impl Interactive for SelectThen {
             Op::Mirror => "MIRROR",
             Op::Stretch => "STRETCH",
             Op::Explode => "EXPLODE",
-            Op::ArrayRect => "ARRAYRECT",
-            Op::ArrayPolar => "ARRAYPOLAR",
             Op::Join => "JOIN",
         }
     }
@@ -1580,8 +1511,6 @@ impl Interactive for SelectThen {
             (Op::Scale, _) => Prompt::new("Specify scale factor", Accept::POINT_OR_NUMBER).kw(&["Copy", "Reference"]).base_opt(base),
             (Op::Mirror, 0) => Prompt::new("Specify first point of mirror line", Accept::POINT),
             (Op::Mirror, _) => Prompt::new("Specify second point of mirror line", Accept::POINT).base_opt(base),
-            (Op::ArrayPolar, 0) => Prompt::new("Specify center point of array", Accept::POINT).kw(&["Base point", "Axis of rotation"]),
-            (Op::ArrayPolar, _) => Prompt::new("Enter number of items", Accept::NUMBER).default("6"),
             _ => Prompt::new("", Accept::POINT),
         }
     }
@@ -1713,19 +1642,6 @@ impl Interactive for SelectThen {
                 self.pts.push(p);
                 self.ask_erase = true;
                 Ok(Step::Continue)
-            }
-            (Op::ArrayPolar, 1, inp) => {
-                let n = match inp {
-                    Input::Text(t) => {
-                        t.trim().parse::<u64>().ok().filter(|n| *n >= 1).ok_or_else(|| EngineError::Other("Requires a positive integer.".into()))?
-                    }
-                    Input::Enter => 6,
-                    _ => return Ok(Step::Continue),
-                };
-                let objs: Vec<String> = self.objs.iter().map(|h| h.hex()).collect();
-                run_arraypolar(s, &json!({ "handles": objs, "center": [self.pts[0].x, self.pts[0].y], "count": n }))?;
-                s.set_selection(Vec::new());
-                Ok(Step::Done)
             }
             (_, _, Input::Enter) => Ok(Step::Done),
             _ => Ok(Step::Continue),

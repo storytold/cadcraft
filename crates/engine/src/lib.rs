@@ -239,6 +239,8 @@ pub struct Settings {
     pub pickadd: bool,
     pub gripsize: f64,
     pub cursorsize: f64,
+    /// MAXARRAY: the most objects one array command creates (items × selected objects).
+    pub maxarray: u64,
     pub isodraft: bool,
     pub annoallvisible: bool,
     pub annoautoscale: bool,
@@ -271,6 +273,7 @@ impl Default for Settings {
             pickadd: true,
             gripsize: 5.0,
             cursorsize: 5.0,
+            maxarray: 100_000,
             isodraft: false,
             annoallvisible: true,
             annoautoscale: false,
