@@ -606,3 +606,21 @@ fn textedit_json_and_command_line() {
     assert!(s.running.is_none());
     assert!(matches!(kind(&s, &t), EntityKind::Text(x) if x.value == "hello world"));
 }
+
+#[test]
+fn explode_polyline3d_keeps_elevations() {
+    let mut s = Session::new();
+    let p = h(&s.execute("3dpoly", &json!({"points": [[0, 0, 5], [1, 0, 6], [1, 1, 7]]})).unwrap());
+    s.execute("explode", &json!({"handles": [p]})).unwrap();
+    let lines: Vec<(f64, f64)> = s
+        .doc()
+        .unwrap()
+        .model
+        .iter()
+        .filter_map(|e| match &e.kind {
+            EntityKind::Line(l) => Some((l.a.z, l.b.z)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(lines, vec![(5.0, 6.0), (6.0, 7.0)]);
+}

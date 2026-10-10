@@ -891,7 +891,10 @@ pub(crate) fn explode_kind(d: &cadcraft_doc::Drawing, e: &Entity) -> Option<Vec<
         EntityKind::Polyline3d(p) => Some(
             p.points
                 .windows(2)
-                .filter_map(|w| Some(Entity { handle: Handle(0), common: e.common.clone(), kind: line(w.first()?.xy(), w.get(1)?.xy()) }))
+                .filter_map(|w| {
+                    let kind = EntityKind::Line(cadcraft_doc::Line { a: *w.first()?, b: *w.get(1)? });
+                    Some(Entity { handle: Handle(0), common: e.common.clone(), kind })
+                })
                 .collect(),
         ),
         EntityKind::MText(m) => Some(
