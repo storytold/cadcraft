@@ -792,9 +792,15 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
             w.f(45, v.view_height);
             // Status flags: 16384 = display locked.
             w.i(90, if v.locked { 16384 } else { 0 });
-            if !v.frozen_layers.is_empty() {
+            // One CADCraft xdata group holds both lists: readers stop at the first group of an app.
+            if !v.frozen_layers.is_empty() || !v.layer_colors.is_empty() {
                 w.s(1001, dxf_ext::APP);
-                w.xdata(dxf_ext::frozen_xdata(&v.frozen_layers));
+                if !v.frozen_layers.is_empty() {
+                    w.xdata(dxf_ext::frozen_xdata(&v.frozen_layers));
+                }
+                if !v.layer_colors.is_empty() {
+                    w.xdata(dxf_ext::layer_colors_xdata(&v.layer_colors));
+                }
             }
         }
         EntityKind::Wipeout(wo) => {
