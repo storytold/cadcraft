@@ -194,6 +194,23 @@ fn dimension_overrides() {
 }
 
 #[test]
+fn dimension_override_text_with_variables() {
+    let mut s = Session::new();
+    let d = h(&s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, 2] })).unwrap());
+    s.execute("dimoverride", &json!({ "handles": [d.hex()], "text": "<> OLD" })).unwrap();
+    s.execute("dimoverride", &json!({ "handles": [d.hex()], "DIMTXT": 0.4 })).unwrap();
+    let r = s.execute("dimoverride", &json!({ "handles": [d.hex()], "text": "<> TYP", "DIMDEC": 1 })).unwrap();
+    assert_eq!(r["changed"], json!(1));
+    let dm = dim(&s, d);
+    assert_eq!(dm.text, "<> TYP");
+    assert_eq!(dm.overrides.get("decimals"), Some(&json!(1)));
+    assert!(dm.overrides.contains_key("textHeight"));
+    // An unknown variable next to valid text is still an error and changes nothing.
+    assert!(s.execute("dimoverride", &json!({ "handles": [d.hex()], "text": "X", "nope": 1 })).is_err());
+    assert_eq!(dim(&s, d).text, "<> TYP");
+}
+
+#[test]
 fn dimtedit_and_dimspace() {
     let mut s = Session::new();
     let a = h(&s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, 1] })).unwrap());
