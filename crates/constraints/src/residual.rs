@@ -244,7 +244,10 @@ impl Built {
                     return need("two lines or an arc");
                 }
                 b.target = target.to_radians();
-                if !b.target.is_finite() || b.target.abs() > std::f64::consts::TAU {
+                // Two lines measure a signed angle in [-180, 180] and the sign is re-read from the geometry, so a larger
+                // target would flip the sign once solved and never be satisfied; only an arc sweep can reach a full turn.
+                let max = if b.form == Form::LL { std::f64::consts::PI } else { std::f64::consts::TAU };
+                if !b.target.is_finite() || b.target.abs() > max {
                     return Err("angle out of range".into());
                 }
             }
