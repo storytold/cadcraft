@@ -245,7 +245,9 @@ fn run_spline(s: &mut Session, p: &Value) -> Result<Value> {
         if c.len() < 2 {
             return Err(bad("spline", "need 2+ control points"));
         }
-        Spline::from_control(c, p.get("degree").and_then(Value::as_u64).unwrap_or(3) as usize)
+        // Degree 1..=10 as at the Degree prompt, `spline.cv` and DXF input (tessellation grows
+        // with its square).
+        Spline::from_control(c, p.get("degree").and_then(Value::as_u64).unwrap_or(3).clamp(1, 10) as usize)
     } else {
         return Err(bad("spline", "`fit` or `control` points are required"));
     };
