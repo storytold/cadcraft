@@ -2,23 +2,49 @@
   "schema": 1,
   "repo": "storytold/cadcraft",
   "branch": "main",
-  "head": "14e143bfdd55fe9063ba7d87dbbc692e5c901063",
-  "head_date": "2026-10-07T18:45:23Z",
-  "commits": 18,
+  "head": "86f3199b400c271a1166103519b3785e4ac88e72",
+  "head_date": "2026-10-08T13:12:32Z",
+  "commits": 26,
   "unattributed_commits": 0,
   "contributors": [
     {
       "login": "echelon",
       "people_entry": true,
       "github_name": null,
-      "prs": 1,
-      "commits": 18,
-      "lines_added": 69334,
-      "lines_deleted": 2968,
+      "prs": 4,
+      "commits": 23,
+      "lines_added": 70258,
+      "lines_deleted": 3353,
       "binary_added": 26,
       "binary_deleted": 5,
       "first_commit": "2026-10-06T00:15:47Z",
-      "last_commit": "2026-10-07T18:45:23Z"
+      "last_commit": "2026-10-08T13:50:35Z"
+    },
+    {
+      "login": "h-a-n-a-s-h-i",
+      "people_entry": false,
+      "github_name": null,
+      "prs": 0,
+      "commits": 2,
+      "lines_added": 34,
+      "lines_deleted": 34,
+      "binary_added": 0,
+      "binary_deleted": 0,
+      "first_commit": "2026-10-08T12:13:20Z",
+      "last_commit": "2026-10-08T14:02:20Z"
+    },
+    {
+      "login": "XusBadia",
+      "people_entry": false,
+      "github_name": null,
+      "prs": 1,
+      "commits": 1,
+      "lines_added": 244,
+      "lines_deleted": 1,
+      "binary_added": 2,
+      "binary_deleted": 0,
+      "first_commit": "2026-10-08T13:12:32Z",
+      "last_commit": "2026-10-08T13:12:32Z"
     }
   ],
   "models": [
@@ -27,9 +53,9 @@
       "company": "Anthropic",
       "model": "Claude Opus",
       "version": "5.5",
-      "commits": 17,
-      "lines_added": 69327,
-      "lines_deleted": 2968
+      "commits": 25,
+      "lines_added": 70529,
+      "lines_deleted": 3388
     }
   ]
 }
