@@ -181,3 +181,28 @@ fn common_tangents_of_two_circles() {
     let z = a.common_tangents(&Circle::new(Vec2::new(30.0, 0.0), 0.0));
     assert!(!z.is_empty() && z.iter().all(|(p, q)| close(dist(a.center, *p, *q), 10.0) && q.near(Vec2::new(30.0, 0.0), 1e-9)));
 }
+
+#[test]
+fn circle_three_points_preserves_large_world_coordinates() {
+    // A unit circle near a survey coordinate. The absolute-square formula suffers
+    // catastrophic cancellation and returns a center tens of millions of units away.
+    let origin = 1.0e12;
+    let c = Circle::from_3_points(
+        Vec2::new(origin + 1.0, origin),
+        Vec2::new(origin, origin + 1.0),
+        Vec2::new(origin - 1.0, origin),
+    )
+    .unwrap();
+    assert!(c.center.near(Vec2::new(origin, origin), 1e-3), "{c:?}");
+    assert!((c.radius - 1.0).abs() < 1e-3, "{c:?}");
+}
+
+#[test]
+fn circle_three_points_accepts_small_valid_triangles() {
+    let r = 1.0e-7;
+    let c = Circle::from_3_points(Vec2::new(r, 0.0), Vec2::new(0.0, r), Vec2::new(-r, 0.0)).unwrap();
+    assert!(c.center.near(Vec2::ZERO, 1e-12), "{c:?}");
+    assert!((c.radius - r).abs() < 1e-12, "{c:?}");
+    assert!(Circle::from_3_points(Vec2::ZERO, Vec2::new(r, 0.0), Vec2::new(2.0 * r, 0.0)).is_none());
+    assert!(Circle::from_3_points(Vec2::ZERO, Vec2::X, Vec2::new(f64::NAN, 0.0)).is_none());
+}
