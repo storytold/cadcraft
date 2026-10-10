@@ -1285,6 +1285,32 @@ fn dimension_text_rotation_roundtrips() {
     assert!(rot.is_some_and(|r| (r - dm.text_rotation).abs() < 1e-9), "block text rotation {rot:?}");
 }
 
+/// Wipeout clip vertices are in image pixel space (origin top-left, y down): an asymmetric
+/// boundary must keep its orientation, both through our reader and in the file itself.
+#[test]
+fn wipeout_boundary_keeps_its_orientation() {
+    let mut d = Drawing::new_imperial();
+    // A triangle with its apex at the top.
+    let boundary = vec![Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(0.0, 4.0)];
+    d.add(&Space::Model, Common::default(), EntityKind::Wipeout(Wipeout { boundary: boundary.clone() })).unwrap();
+    let text = write_dxf(&d);
+    // The apex (0, 4) is at the top-left corner of the image: pixel (-0.5, -0.5).
+    let pts: Vec<(f64, f64)> = {
+        let lines: Vec<&str> = text.lines().map(str::trim).collect();
+        let mut v = Vec::new();
+        for i in 0..lines.len().saturating_sub(3) {
+            if lines[i] == "14" && lines[i + 2] == "24" {
+                v.push((lines[i + 1].parse().unwrap(), lines[i + 3].parse().unwrap()));
+            }
+        }
+        v
+    };
+    assert!(pts.iter().any(|&(x, y)| (x + 0.5).abs() < 1e-9 && (y + 0.5).abs() < 1e-9), "{pts:?}");
+    let back = roundtrip(&d);
+    let got = first(&back, |k| if let EntityKind::Wipeout(w) = k { Some(w.boundary.clone()) } else { None });
+    assert_eq!(&got[..3], &boundary[..]);
+}
+
 #[test]
 fn arc_length_dimension_keeps_its_kind_and_centre_on_roundtrip() {
     let mut d = Drawing::new_metric();
@@ -1474,4 +1500,17 @@ fn long_gradient_name_is_cut_only_in_xdata() {
     assert!(lines.contains(&"\\U+00C4".repeat(127).as_str()));
     let back = read_dxf(text.as_bytes()).unwrap();
     assert_eq!(hatches(&back).into_iter().next().and_then(|h| h.gradient).unwrap().name, name);
+}
+
+#[test]
+fn wipeout_survives_dxf_roundtrip() {
+    let mut d = Drawing::new_imperial();
+    let boundary = vec![Vec2::new(2.0, 3.0), Vec2::new(12.0, 3.0), Vec2::new(12.0, 13.0), Vec2::new(2.0, 13.0)];
+    d.add(&Space::Model, Common::default(), EntityKind::Wipeout(Wipeout { boundary: boundary.clone() })).unwrap();
+    let back = roundtrip(&d);
+    let got = first(&back, |k| if let EntityKind::Wipeout(w) = k { Some(w.boundary.clone()) } else { None });
+    // The DXF polygon is closed, so the first vertex is repeated at the end.
+    assert_eq!(got.len(), 5);
+    assert_eq!(&got[..4], &boundary[..]);
+    assert_eq!(got[4], boundary[0]);
 }

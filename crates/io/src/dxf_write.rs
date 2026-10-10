@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use cadcraft_color::Color;
 use cadcraft_doc::*;
 use cadcraft_dxf::Tag;
-use cadcraft_geom::{Vec2, Vec3};
+use cadcraft_geom::{Bounds2, Vec2, Vec3};
 
 use crate::dxf_ext::{self, DimVal, K};
 
@@ -797,7 +797,40 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
                 w.xdata(dxf_ext::frozen_xdata(&v.frozen_layers));
             }
         }
-        // Not yet written: images, wipeouts, tables, multileaders, unknown objects.
+        EntityKind::Wipeout(wo) => {
+            // A 1x1 image spanning the boundary's extents. Clip vertices are in pixel space, whose origin is
+            // the image's top-left corner with y pointing down: the reader maps each vertex back through
+            // insert + u * (x + 0.5) + v * (0.5 - y).
+            // Polygonal clip boundaries are closed, so the first vertex is repeated when needed.
+            let b = Bounds2::from_points(wo.boundary.iter().copied());
+            let o = if b.is_empty() { Vec2::ZERO } else { b.min };
+            let (sx, sy) = (if b.width() > 0.0 { b.width() } else { 1.0 }, if b.height() > 0.0 { b.height() } else { 1.0 });
+            w.s(0, "WIPEOUT");
+            common(w, e, owner, paper, "AcDbWipeout");
+            w.i(90, 0);
+            w.p(10, Vec3::new(o.x, o.y, 0.0));
+            w.p(11, Vec3::new(sx, 0.0, 0.0));
+            w.p(12, Vec3::new(0.0, sy, 0.0));
+            w.p2(13, Vec2::new(1.0, 1.0));
+            // Display flags 7 = show image, show unaligned, use clipping boundary; clipping on; default brightness/contrast/fade.
+            w.i(70, 7);
+            w.i(280, 1);
+            w.i(281, 50);
+            w.i(282, 50);
+            w.i(283, 0);
+            w.i(71, 2);
+            let mut pts = wo.boundary.clone();
+            if let (Some(first), Some(last)) = (pts.first().copied(), pts.last().copied())
+                && first != last
+            {
+                pts.push(first);
+            }
+            w.i(91, pts.len() as i64);
+            for q in pts {
+                w.p2(14, Vec2::new((q.x - o.x) / sx - 0.5, 0.5 - (q.y - o.y) / sy));
+            }
+        }
+        // Not yet written: images, tables, multileaders, unknown objects.
         _ => {}
     }
 }
@@ -1176,6 +1209,9 @@ pub fn write(d: &Drawing) -> String {
     }
     if !cx.assoc.is_empty() {
         classes.push(("DIMASSOC", "AcDbDimAssoc", 0, false));
+    }
+    if every.iter().any(|e| matches!(e.kind, EntityKind::Wipeout(_))) {
+        classes.push(("WIPEOUT", "AcDbWipeout", 127, true));
     }
     for (dxf_name, cpp, proxy, is_entity) in classes {
         w.s(0, "CLASS");
