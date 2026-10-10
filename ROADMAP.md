@@ -1,88 +1,116 @@
 # CADCraft roadmap
 
-Status as of **2026-10-07**. CADCraft targets full parity with AutoCAD (2D drafting first, then
-annotation, layouts and plotting, DWG, parametrics and 3D), plus things AutoCAD doesn't have:
-agent control over MCP, a scriptable CLI, a web build and a free licence.
+**Stage: alpha** · next: beta, ~38 points (37% → 75% ready for real work) and ~600–930 Opus 5.5 hours away
 
-## At a glance
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (full re-measure against AutoCAD 2027 for Mac 26.0; restructured to the craftrules progress-docs standard) · **Target:** Autodesk AutoCAD 2027
 
-| Question | Answer |
-|---|---|
-| **How close is an alpha?** | **≈ 75% of the way.** About **50 Opus 5.5 wall-clock hours** remain (≈ 15–20 hours elapsed with 3–4 agents in parallel). |
-| **How far is 100% AutoCAD parity?** | **≈ 29% parity overall** (weighted by how much each area matters). About **570 Opus 5.5 wall-clock hours** remain (≈ 150–190 hours elapsed in parallel). |
-| **2D drafting parity** (what most AutoCAD users do every day: M1–M8) | **≈ 55%.** About **245 hours** remain. |
-| **The biggest single gap** | 3D modelling (M11): solids, surfaces, meshes, visual styles and rendering — ≈ 200 hours on its own. |
+CADCraft targets full parity with AutoCAD (2D drafting first, then annotation, layouts and
+plotting, DWG, parametrics and 3D), plus what AutoCAD doesn't have: agent control over MCP, a
+scriptable CLI, a web build, Linux and FreeBSD builds, and a free licence.
 
-### What "alpha" means here
+**Why alpha:** the core 2D workflow works end to end (draw, modify, dimension, hatch, blocks,
+layouts, plot to PDF, open and save DXF/DWG), which is the alpha bar, and ready-for-real-work sits
+at the bottom of the alpha band (≈ 37%). It is not beta: saving drops content we don't model,
+DWG always saves as R2000, object snap tracking and dynamic input are not real yet, and there are
+no xrefs, dynamic blocks or autosave.
 
-A person can do real 2D drafting work in CADCraft and trust it with their files:
+## Headline numbers
 
-- Installable, signed builds for macOS, Windows, Linux, FreeBSD and the web from the release pipeline.
-- Drawings from AutoCAD open correctly, and CADCraft's DXF/DWG files open cleanly in AutoCAD and other readers.
-- Every common 2D draw, modify, annotate, layer, block, layout and plot command works, both with the mouse and at the command line.
-- No crashes and no lost work: autosave and recovery, plus undo that always works.
-
-### Alpha checklist
-
-| Item | State | Hours left |
+| Number | Value | Kind |
 |---|---|---|
-| 2D draw and modify commands, snaps, tracking, grips | done (minor options missing) | — |
-| Dimensions, text, MTEXT, leaders, tables, TrueType fonts | done | — |
-| Hatch with pick points, blocks, attributes | done | — |
-| Layouts, viewports, MSPACE/PSPACE, page setup, PLOT to PDF | done | — |
-| Parametric constraints, constraint bars and dimensional constraints on the canvas, Parameters Manager | done | — |
-| DXF/DWG round trip of everything above | done for our data; MULTILEADER is written as LEADER + MTEXT; `*D` dimension blocks duplicate on re-save | 6 |
-| Confirmed opening in AutoCAD (black-box check) | not yet confirmed | 4 |
-| Layer Properties Manager (VP overrides, states, filters), QSELECT, Quick Properties | done | — |
-| Autosave, crash recovery, RECOVER/AUDIT | partial | 6 |
-| Options dialog and preferences | partial | 6 |
-| Plot preview | missing | 4 |
-| Scripted smoke test of all 290 commands through the UI, then fixing what it finds | not started | 12 |
-| Release pipeline: first green signed build on every platform | workflows written; first run being started | 6 |
-| Getting-started docs and the web build hosted | partial | 4 |
-| **Total** | | **≈ 50** |
+| Feature breadth (AutoCAD for Mac menu items with a live command) | **50%** (245 / 491; 2D menus only ≈ 65%) | measured ([parity-checklist.md](docs/parity-checklist.md) + UI-only commands) |
+| Ready for real work | **≈ 37%** | estimated ([target-app-parity.md](docs/target-app-parity.md)) |
+| Remaining to beta | **≈ 600–930 h** (≈ 150–250 h elapsed with 4–6 agents) | estimated |
+| Remaining to full parity | **≈ 1,300–2,100 h** (≈ 330–550 h elapsed) | estimated |
 
-## Where we are
+Hours are Opus 5.5 agent wall-clock hours, calibrated on this repo's own build: the first version
+(51k lines, 290 commands) took ≈ 11.5 agent-hours at presence quality, while depth work runs at
+0.3–0.7 h per option or bug fix (≈ 60 such fixes landed on 2026-10-10). Details:
+[target-app-parity.md](docs/target-app-parity.md#remaining-effort-and-how-it-was-calibrated).
 
-| Measure | Value |
+## By dimension
+
+| Dimension | Parity | Remaining (h) | Doc |
+|---|---:|---|---|
+| Features (depth, weighted by use) | 41% | 735–1,115 | [target-app-parity.md](docs/target-app-parity.md#by-feature-area-the-features-dimension) |
+| UI/UX fidelity | 40% | 110–170 | [ui-parity.md](docs/ui-parity.md) |
+| File formats | 30% | 170–280 | [file-format-parity.md](docs/file-format-parity.md) |
+| Hardware | 45% | 15–25 | [hardware-parity.md](docs/hardware-parity.md) |
+| Localization | 3% | 70–110 | [localization-parity.md](docs/localization-parity.md) |
+| Performance | 60% | 20–40 | [hardware-parity.md](docs/hardware-parity.md#performance-on-hardware-internal-numbers-only) |
+| Stability | 35% | 30–50 | [gaps.md](docs/gaps.md#stability) |
+| Platforms | 75% | 15–25 | [gaps.md](docs/gaps.md#platforms) |
+| Ecosystem and automation | 10% | 120–200 | [gaps.md](docs/gaps.md#ecosystem-and-automation) |
+| AI features | 20% | 40–80 | [gaps.md](docs/gaps.md#ai-features) |
+
+## Features
+
+| Area | Parity | Remaining (h) | Doc |
+|---|---:|---|---|
+| Draw (2D) | 60% | 15–25 | [gaps.md](docs/gaps.md#features) |
+| Modify | 50% | 40–60 | [gaps.md](docs/gaps.md#features) |
+| Geometry precision | 40% | 70–110 | [geometry-parity.md](docs/geometry-parity.md) |
+| Layers and properties | 70% | 10–15 | [gaps.md](docs/gaps.md#features) |
+| Dimensions | 45% | 25–35 | [gaps.md](docs/gaps.md#features) |
+| Text and MTEXT | 35% | 30–45 | [gaps.md](docs/gaps.md#features) |
+| Leaders, tables, fields | 25% | 25–35 | [gaps.md](docs/gaps.md#features) |
+| Hatch and gradients | 35% | 15–25 | [gaps.md](docs/gaps.md#features) |
+| Blocks, attributes, xrefs, groups | 25% | 80–120 | [gaps.md](docs/gaps.md#features) |
+| Layouts, viewports, plotting | 35% | 35–50 | [gaps.md](docs/gaps.md#features) |
+| Inquiry and utilities | 30% | 30–45 | [gaps.md](docs/gaps.md#features) |
+| Parametric constraints | 50% | 20–30 | [geometry-parity.md](docs/geometry-parity.md) |
+| 3D modelling and rendering | 2% | 300–450 | [gaps.md](docs/gaps.md#features) |
+| Collaboration and cloud | 5% | 40–70 | [gaps.md](docs/gaps.md#features) |
+
+## Languages
+
+AutoCAD 2027 for Mac ships 8 interface languages; CADCraft ships English only. Detail:
+[localization-parity.md](docs/localization-parity.md).
+
+| Language | Status | UI translated |
+|---|---|---:|
+| English | full | 100% |
+| Simplified Chinese | none | 0% |
+| Spanish | none | 0% |
+| Hindi | none | 0% |
+| Arabic | none | 0% |
+| French | none | 0% |
+| Portuguese | none | 0% |
+| Indonesian | none | 0% |
+| Japanese | none | 0% |
+| German | none | 0% |
+| Korean | none | 0% |
+| Vietnamese | none | 0% |
+
+Other languages shipped: none (Ukrainian is in review, PR #36).
+
+## Upcoming
+
+Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md).
+
+1. Gate and land: fix fmt on main, run `cargo xtask ci` on every PR, land the 47 open PRs (15–25 h).
+2. Stop losing data on save; native MULTILEADER; save DWG/DXF at a chosen version (30–45 h).
+3. Real-file DWG/DXF corpus and a black-box check in AutoCAD (10–15 h + owner).
+4. Precision input: object snap tracking, extension/parallel snaps, FROM/M2P/TK, snap overrides,
+   editable dynamic input (25–35 h).
+5. Unstub prompt options in TRIM/EXTEND, OFFSET, ROTATE, PLINE, SPLINE, MTEXT, MLEADER (15–25 h).
+6. Autosave, recovery, AUDIT, RECOVER (10–15 h).
+7. Exact ellipse/spline geometry and correct polyline offsets (30–50 h).
+8. Xrefs, block editor, groups, then dynamic blocks (80–120 h).
+
+## Progress log
+
+| Date | Entry |
 |---|---|
-| Menu breadth (`cargo xtask parity`, [docs/parity.md](docs/parity.md)) | **233 / 491 reference menu items (47%)** |
-| Registered commands | 290 (133 with interactive prompts) |
-| **Estimated overall feature parity (weighted by how much each area matters)** | **≈ 29%** |
-| Performance | 200k entities: pick 0.001 ms, pick after an edit ≈ 4 ms (incremental R-tree), GPU canvas ≈ 4 ms per frame |
-| Tests | geometry, colour, document, fonts, render, DXF/DWG round trips, constraints solver, engine (commands, prompts, snaps, selection, undo, scripts, hostile input), MCP agent tasks, xtask |
-| Gates | `cargo xtask ci`: fmt, clippy -D warnings, tests, asset attribution, layering, wasm — green |
+| 2026-10-10 | Full re-measure against AutoCAD 2027 for Mac in the craftrules progress-docs format: menu breadth 245/491 (50%), ready for real work ≈ 37%, stage alpha. Remaining estimates rose (≈ 570 h → 1,300–2,100 h) on new evidence: behaviour audits found tracking/extension/parallel snaps and dynamic input are not real, saves drop unmodelled content, DWG saves as R2000, and the old estimate had no localization, ecosystem, stability, platform or AI rows. New docs: target-app-parity, gaps, roadmap, architecture, localization, file-format, hardware, UI and geometry parity; `docs/parity.md` became `docs/parity-checklist.md`. |
+| 2026-10-10 | About 60 community PRs merged in a day: DXF fidelity (transparency, LWPOLYLINE elevation, frozen VP layers, dimension text rotation, arc-length dims, non-ASCII escapes), CJK font fallback, Save/Don't Save on close, Light/System themes, F2 history, trackpad pan, Linux XWayland drag-and-drop, correctness fixes across draw/modify/constraints. Release v0.4.0. |
+| 2026-10-08 | Releases v0.1.0–v0.3.0: Flatpak, AppImage updates, signed macOS universal, Windows x64/x86/arm64, Linux, FreeBSD and web builds. |
+| 2026-10-07 | Old assessment: menu breadth 233/491 (47%), ≈ 29% weighted parity, 2D drafting ≈ 55%, ≈ 570 h remaining; milestones as reported then: M1 ~85%, M2 ~65%, M3 ~75%, M4 ~50%, M5 ~35%, M6 ~55%, M7 ~55%, M8 ~20%, M9 ~60%, M10 ~70%, M11 0%, M12 ~25%, M13 ~10%. |
+| 2026-10-07 | First version built in one session (≈ 6.9 h elapsed, ≈ 11.5 agent-hours): M0 vertical slice, dimensions, hatch, blocks, DWG bridge, layouts and PDF plotting, GPU canvas, R-tree, constraints, Layer Properties Manager, QSELECT, release pipeline. |
 
-Menu breadth counts menu items that exist; the weighted parity estimate also counts depth (options,
-edge cases, dialogs), which is why it is lower.
+## Revision history
 
-## Milestones
-
-| # | Milestone | Status | Estimate (Opus 5.5 wall-clock hours) |
-|---|---|---|---|
-| M0 | Skeleton + vertical slice: workspace, AutoCAD-style UI, command line, draw/modify basics, DXF, CLI, MCP, web | **done** | — |
-| M1 | Drafting core: every Draw-menu 2D command and option, dynamic input fields, object snap tracking, temporary snap overrides | ~85% (all 2D Draw items exist) | 8 |
-| M2 | Modify: grips (stretch/move/rotate/scale/mirror, multifunctional), PEDIT, SPLINEDIT, LENGTHEN, BLEND, ALIGN, associative arrays, trim/extend for all curve types, MATCHPROP UI, Quick Properties | ~65% (PEDIT, LENGTHEN, ALIGN, BLEND, grips API, TRIM on splines) | 18 |
-| M3 | Layers & properties: full Layer Properties Manager (filters, VP overrides, states), linetype manager, lineweight display, transparency, QSELECT dialog, Properties for every object type | ~75% (Layer Properties Manager with VP overrides/states/filters, QSELECT, Quick Properties) | 10 |
-| M4 | Annotation: DIM* commands, DIMSTYLE manager, associative dimensions, MLEADER + styles, in-place MTEXT editor, fields, tables + table styles, annotative scaling, TrueType fonts, SHX reader | ~50% (TrueType text incl. `.ttc`, per-character font fallback and FONTALT for unread SHX fonts, MTEXT formatting codes, full DIMSTYLE variables + overrides, all arrowheads, associative dimensions, TABLE editing; DXF round trip; not yet: native MULTILEADER objects, jogged/ordinate polish, tolerance frames, fields, annotative scaling, SHX) | 30 |
-| M5 | Hatch & blocks: pick-point boundary detection, islands, gradients, BLOCK/WBLOCK/INSERT dialogs, attributes (ATTDEF/ATTEDIT/BATTMAN), block editor, dynamic block parameters, xrefs, groups, Blocks palette | ~35% (pick-point boundaries with islands, gradients, BLOCK/INSERT, attributes, nested blocks) | 70 |
-| M6 | Layouts & plotting: paper space, viewports (rect/polygonal/object, scale, lock, per-VP layers), page setups, PLOT to PDF/PNG/SVG, plot styles (CTB/STB), PUBLISH | ~55% (layouts, viewports, MSPACE/PSPACE through viewports, page setup, PLOT/EXPORTPDF) | 25 |
-| M7 | Files: DWG read/write (done via acadrust), DXF fidelity (all object types, round-trip of unknown data), RECOVER/AUDIT, PURGE, templates, autosave, ETRANSMIT, PDF/raster underlays | ~55% (DXF round trip of dimension styles, associativity, tables and constraints) | 55 |
-| M8 | Inquiry & utilities: MEASUREGEOM, MASSPROP, QuickCalc, Find/Replace, spell check, COUNT, DWG Compare, Settings/OPTIONS, CUI-style customisation, alias editor | ~20% | 30 |
-| M9 | Parametric: geometric + dimensional constraints, AutoConstrain, Parameters Manager (constraint solver, see plan/adr/0001) | ~60% (own solver crate, all GC*/DC* commands, AUTOCONSTRAIN, PARAMETERS, conflict detection, re-solve after edits, DXF persistence; not yet: inference while drawing, Smooth as true G2) | 12 |
-| M10 | Performance: GPU canvas (wgpu batches), R-tree spatial index, incremental regen, 1M-entity drawings at 60 fps | ~70% (GPU canvas, incremental R-tree: pick 50 ms → 0.001 ms at 200k entities, ≈ 4 ms after an edit) | 12 |
-| M11 | 3D: UCS, orbit, visual styles, solids (box…loft, booleans, fillet edges), meshes, surfaces, sections, rendering | 0% | 200 |
-| M12 | Automation: an embedded safe AutoLISP-compatible interpreter, action recorder, sheet sets, CLI/MCP parity tests | ~25% | 60 |
-| M13 | 1.0 polish: preferences, workspaces, themes, localisation, accessibility, signed packages for every platform, docs | ~10% | 40 |
-| | **Remaining total** | | **≈ 570 hours** |
-
-At roughly 570 more hours of Opus 5.5 wall-clock work (with parallel agents this compresses to
-about 150–190 hours of elapsed time), CADCraft would reach broad AutoCAD parity. 2D drafting parity
-(M1–M8) is the first ≈ 250 hours.
-
-## Current focus
-
-1. Finish the alpha checklist above (release builds, AutoCAD open check, smoke test of every command, autosave/recovery, plot preview).
-2. Layer filter groups, constraint bar polish (close buttons, hover highlight).
-3. Native MULTILEADER objects in DXF; stop `*D` block duplication on re-save.
-4. Then 3D foundations (UCS, orbit, solids via truck/csgrs per plan/adr/0001).
+| Date | Change | Summary |
+|---|---|---|
+| 2026-10-10 | major | Restructured to the progress-docs standard (stage, two numbers, dimensions, features, languages, upcoming, log); full re-measure; milestone detail moved to docs/roadmap.md, parity assessment to docs/target-app-parity.md |
+| 2026-10-07 | major | Alpha checklist, milestone table, ≈ 29% weighted parity estimate |
