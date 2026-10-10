@@ -386,7 +386,7 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     let cmd_shift = Modifiers::COMMAND | Modifiers::SHIFT;
     let pairs: &[(KeyboardShortcut, &str)] = &[
         (sc(cmd_shift, Key::Z), "redo"),
-        (sc(cmd, Key::Z), "undo"),
+        (sc(cmd, Key::Z), "u"),
         (sc(cmd, Key::Y), "redo"),
         (sc(cmd, Key::N), "new"),
         (sc(cmd, Key::O), "ui.open"),

@@ -673,6 +673,12 @@ impl Session {
     }
 
     fn finish(&mut self, run: Running, cancelled: bool) {
+        // A command outside undo that changed the drawing (UNDO, which swapped it for an earlier
+        // one) records no undo step, as in `execute`.
+        if find_command(&run.id).is_some_and(|c| !c.undoable) && self.state().is_ok_and(|st| !Arc::ptr_eq(&run.before, &st.doc)) {
+            self.pending_window = None;
+            return;
+        }
         self.pending_window = None;
         let label = find_command(&run.id).map(|c| c.label).unwrap_or("Command");
         let _ = cancelled;
