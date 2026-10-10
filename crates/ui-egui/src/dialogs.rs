@@ -388,7 +388,13 @@ fn mtext_editor(app: &mut CadApp, ctx: &egui::Context) {
     ctx.data_mut(|d| d.insert_temp(id, buf));
     if let Some(t) = submit {
         ctx.data_mut(|d| d.remove::<String>(id));
-        let _ = app.session.input(cadcraft_engine::Input::Text(t));
+        // The editor holds the whole contents: one input, then Enter ends MTEXT's text entry.
+        if !t.is_empty() {
+            let _ = app.session.input(cadcraft_engine::Input::Text(t));
+        }
+        if app.session.running.as_ref().is_some_and(|r| r.id == "mtext") {
+            let _ = app.session.input(cadcraft_engine::Input::Enter);
+        }
     } else if cancel {
         ctx.data_mut(|d| d.remove::<String>(id));
         app.session.cancel();

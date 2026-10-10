@@ -1315,6 +1315,9 @@ impl Interactive for TextM {
 struct MTextM {
     first: Option<Vec2>,
     second: Option<Vec2>,
+    /// Paragraphs typed so far: one per input line, an empty line ends the text (as on
+    /// AutoCAD's command line and in scripts).
+    lines: Vec<String>,
 }
 
 impl Interactive for MTextM {
@@ -1327,14 +1330,19 @@ impl Interactive for MTextM {
             (Some(a), None) => Prompt::new("Specify opposite corner", Accept::POINT)
                 .kw(&["Height", "Justify", "Line spacing", "Rotation", "Style", "Width", "Columns"])
                 .base(a),
-            _ => Prompt::new("Enter text (use \\P for new paragraphs)", Accept::TEXT),
+            _ if self.lines.is_empty() => Prompt::new("Enter text (use \\P for new paragraphs)", Accept::TEXT),
+            _ => Prompt::new("Enter next line of text (empty line to finish)", Accept::TEXT),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         match (self.first, self.second, i) {
             (None, _, Input::Point(p)) => self.first = Some(p),
             (Some(_), None, Input::Point(p)) => self.second = Some(p),
-            (Some(a), Some(b), Input::Text(t)) => {
+            (Some(_), Some(_), Input::Text(t)) if !t.is_empty() => self.lines.push(t),
+            (Some(a), Some(b), Input::Text(_) | Input::Enter) => {
+                if self.lines.is_empty() {
+                    return Ok(Step::Done);
+                }
                 let d = s.doc()?;
                 let h = d.header.f64("TEXTSIZE", 0.2);
                 let style = d.header.str("TEXTSTYLE", "Standard");
@@ -1346,7 +1354,7 @@ impl Interactive for MTextM {
                     attach: 1,
                     rotation: 0.0,
                     style,
-                    contents: t,
+                    contents: self.lines.join("\\P"),
                     line_spacing: 1.0,
                 }))?;
                 return Ok(Step::Done);
