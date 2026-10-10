@@ -1265,11 +1265,8 @@ fn attdef_prompt_survives_dxf_roundtrip() {
     d.add(&Space::Model, Default::default(), attdef("Enter value")).unwrap();
     d.add(&Space::Model, Default::default(), attdef("")).unwrap();
     let back = roundtrip(&d);
-    let prompts: Vec<&str> = back
-        .model
-        .iter()
-        .filter_map(|e| if let EntityKind::AttDef(a) = &e.kind { Some(a.prompt.as_str()) } else { None })
-        .collect();
+    let prompts: Vec<&str> =
+        back.model.iter().filter_map(|e| if let EntityKind::AttDef(a) = &e.kind { Some(a.prompt.as_str()) } else { None }).collect();
     assert_eq!(prompts, vec!["Enter value", ""]);
 }
 
