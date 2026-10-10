@@ -649,9 +649,7 @@ fn spline_close(sp: &Spline) -> Spline {
         return sp.clone();
     }
     let mut out = if sp.fit.len() >= 2 {
-        let mut f = sp.fit.clone();
-        f.extend(sp.fit.first().copied());
-        Spline::from_fit_points(&f)
+        Spline::from_fit_points_closed(&sp.fit)
     } else {
         let mut c = sp.control.clone();
         c.extend(sp.control.first().copied());
@@ -701,9 +699,7 @@ fn run_splinedit(s: &mut Session, p: &Value) -> Result<Value> {
             if fit.len() < 2 || fit.len() > MAX_GEN {
                 return Err(other("The spline has no fit data; give `fit` points."));
             }
-            let mut n = Spline::from_fit_points(&fit);
-            n.closed = sp.closed;
-            EntityKind::Spline(n)
+            EntityKind::Spline(Spline::from_fit(&fit, sp.closed))
         }
         "polyline" => EntityKind::LwPolyline(spline_to_poly(sp, p.get("precision").and_then(Value::as_u64).unwrap_or(10) as usize)),
         "move" => {
@@ -713,9 +709,7 @@ fn run_splinedit(s: &mut Session, p: &Value) -> Result<Value> {
             if !n.fit.is_empty() {
                 let f = n.fit.get_mut(i).ok_or_else(|| bad("splinedit", "index out of range"))?;
                 *f = to;
-                let closed = n.closed;
-                n = Spline::from_fit_points(&n.fit);
-                n.closed = closed;
+                n = Spline::from_fit(&n.fit, n.closed);
             } else {
                 let c = n.control.get_mut(i).ok_or_else(|| bad("splinedit", "index out of range"))?;
                 *c = to;

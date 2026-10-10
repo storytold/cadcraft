@@ -181,10 +181,7 @@ pub fn stretch_grip(kind: &EntityKind, index: usize, to: Vec2) -> Option<EntityK
             } else {
                 let mut fit = sp.fit.clone();
                 *fit.get_mut(index)? = to;
-                let closed = sp.closed;
-                let mut n = Spline::from_fit_points(&fit);
-                n.closed = closed;
-                *sp = n;
+                *sp = Spline::from_fit(&fit, sp.closed);
             }
         }
         EntityKind::Ray(r) | EntityKind::XLine(r) => {

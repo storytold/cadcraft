@@ -40,7 +40,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("polygon", "Polygon", run_polygon)
             .menu(&["Draw", "Polygon"])
             .alias(&["pol"])
-            .params("{sides, center, radius, inscribed?: bool, angle?} | {sides, edge: [[x,y],[x,y]]}")
+            .params("{sides, center, radius, inscribed?: bool, angle?: deg to a vertex (inscribed) or edge midpoint (default: bottom edge horizontal)} | {sides, edge: [[x,y],[x,y]]}")
             .interactive(|_| Ok(Box::new(PolygonM::default()))),
         CommandSpec::new("ellipse", "Ellipse", run_ellipse)
             .menu(&["Draw", "Ellipse", "Center"])
@@ -189,14 +189,13 @@ fn run_polygon(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         let c = point_req("polygon", p, "center")?;
         let r = f64_req("polygon", p, "radius")?;
-        let ang = f64_or(p, "angle", 90.0).to_radians();
         let inscribed = bool_or(p, "inscribed", true);
-        polygon_vertices(
-            c,
-            n,
-            Vec2::polar(c, r, if inscribed { ang } else { ang - std::f64::consts::PI / n as f64 + std::f64::consts::PI / n as f64 }),
-            inscribed,
-        )
+        // Without an angle, the bottom edge is horizontal, as with a typed radius.
+        let rp = match p.get("angle").and_then(Value::as_f64).filter(|a| a.is_finite()) {
+            Some(a) => Vec2::polar(c, r, a.to_radians()),
+            None => polygon_typed_radius_point(c, n, r, inscribed),
+        };
+        polygon_vertices(c, n, rp, inscribed)
     };
     added(s.add_entity(lwpoly(vs, true))?)
 }
@@ -735,6 +734,9 @@ impl Interactive for CircleM {
                 }
             }
             Input::Enter => Ok(Step::Cancel),
+            // Garbage at a point prompt: report it and ask again.
+            Input::Text(_) if self.mode == 0 && self.pts.is_empty() => Err(crate::EngineError::Other("Point or option keyword required.".into())),
+            Input::Text(_) => Err(crate::EngineError::Other("Invalid point.".into())),
             _ => Ok(Step::Continue),
         }
     }
@@ -831,7 +833,7 @@ impl Interactive for PolygonM {
             }
             (Some(c), Some(ins), Input::Text(t)) => {
                 let r = number(&t).ok_or_else(|| crate::EngineError::Other("Requires numeric distance or point.".into()))?;
-                let rp = if ins { c + Vec2::Y * r } else { c - Vec2::Y * r };
+                let rp = polygon_typed_radius_point(c, n, r, ins);
                 s.add_entity(lwpoly(polygon_vertices(c, n, rp, ins), true))?;
                 return Ok(Step::Done);
             }
@@ -1095,13 +1097,26 @@ impl Interactive for XlineM {
 #[derive(Default)]
 struct SplineM {
     pts: Vec<Vec2>,
+    asking_method: bool,
+    /// `Method` > `CV` hands over to the control-vertex machine (`spline.cv`).
+    delegate: Option<Box<dyn Interactive>>,
 }
 
 impl Interactive for SplineM {
     fn name(&self) -> &'static str {
         "SPLINE"
     }
-    fn prompt(&self, _s: &Session) -> Prompt {
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        s.echo("Current settings: Method=Fit   Knots=Chord");
+        Ok(Step::Continue)
+    }
+    fn prompt(&self, s: &Session) -> Prompt {
+        if let Some(d) = &self.delegate {
+            return d.prompt(s);
+        }
+        if self.asking_method {
+            return Prompt::new("Enter spline creation method", super::curves::KW).kw(&["Fit", "CV"]).default("Fit");
+        }
         match self.pts.len() {
             0 => Prompt::new("Specify first point", Accept::POINT).kw(&["Method", "Knots", "Object"]),
             1 => Prompt::new("Enter next point", Accept::POINT).kw(&["start Tangency", "toLerance"]).base_opt(self.pts.last().copied()),
@@ -1112,6 +1127,27 @@ impl Interactive for SplineM {
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if let Some(d) = &mut self.delegate {
+            return d.input(s, i);
+        }
+        if self.asking_method {
+            match i {
+                Input::Keyword(k) if k == "CV" => {
+                    let Some(factory) = find_command("spline.cv").and_then(|c| c.interactive) else {
+                        return Err(crate::EngineError::Other("CV: not available yet".into()));
+                    };
+                    let mut m = factory(s)?;
+                    self.asking_method = false;
+                    let step = m.begin(s)?;
+                    self.delegate = Some(m);
+                    return Ok(step);
+                }
+                Input::Keyword(_) | Input::Enter => self.asking_method = false,
+                Input::Text(_) => return Err(crate::EngineError::Other("Invalid option keyword.".into())),
+                _ => {}
+            }
+            return Ok(Step::Continue);
+        }
         match i {
             Input::Point(p) => {
                 self.pts.push(p);
@@ -1122,13 +1158,18 @@ impl Interactive for SplineM {
                 Ok(Step::Continue)
             }
             Input::Keyword(k) if k == "Close" => {
-                if let Some(f) = self.pts.first().copied() {
-                    self.pts.push(f);
-                }
-                let mut sp = Spline::from_fit_points(&self.pts);
-                sp.closed = true;
-                s.add_entity(EntityKind::Spline(sp))?;
+                // A smooth closed (periodic) curve, not a repeat of the first point.
+                s.add_entity(EntityKind::Spline(Spline::from_fit_points_closed(&self.pts)))?;
                 Ok(Step::Done)
+            }
+            Input::Keyword(k) if k == "Method" => {
+                self.asking_method = true;
+                Ok(Step::Continue)
+            }
+            Input::Keyword(k) => {
+                // Knots, Object, start/end Tangency, toLerance: stay at this prompt.
+                s.echo(format!("{k}: not available yet"));
+                Ok(Step::Continue)
             }
             Input::Enter => {
                 if self.pts.len() >= 2 {
@@ -1136,10 +1177,14 @@ impl Interactive for SplineM {
                 }
                 Ok(Step::Done)
             }
+            Input::Text(_) => Err(crate::EngineError::Other("Point or option keyword required.".into())),
             _ => Ok(Step::Continue),
         }
     }
-    fn preview(&self, _s: &Session, c: Vec2) -> Vec<EntityKind> {
+    fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
+        if let Some(d) = &self.delegate {
+            return d.preview(s, c);
+        }
         if self.pts.is_empty() {
             return Vec::new();
         }
