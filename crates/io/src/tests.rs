@@ -1656,3 +1656,92 @@ fn autocad_header_dim_variables_are_not_overrides() {
     let text = text.replacen("$DIMDEC\r\n70\r\n3\r\n", "$DIMDEC\r\n70\r\n5\r\n", 1);
     assert_eq!(read_dxf(text.as_bytes()).unwrap().dim_overrides().get("decimals"), Some(&serde_json::json!(5)));
 }
+
+#[test]
+fn mirrored_insert_extrusion_maps_to_negative_x_scale() {
+    // A block reference mirrored in AutoCAD is stored with extrusion (0,0,-1); its insertion point,
+    // scale and rotation are in that OCS, where x runs the other way: OCS (-10,5) is WCS (10,5).
+    let text = "0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n2\nB\n10\n0\n20\n0\n0\nLINE\n8\n0\n10\n0\n20\n0\n11\n2\n21\n0\n0\nENDBLK\n0\nENDSEC\n\
+                0\nSECTION\n2\nENTITIES\n0\nINSERT\n8\n0\n2\nB\n10\n-10\n20\n5\n50\n90\n210\n0\n220\n0\n230\n-1\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "m.dxf").unwrap();
+    let ins = first(&d, |k| if let EntityKind::Insert(i) = k { Some(i.clone()) } else { None });
+    assert!((ins.insert.x - 10.0).abs() < 1e-9 && (ins.insert.y - 5.0).abs() < 1e-9, "{:?}", ins.insert);
+    assert_eq!((ins.scale.x, ins.scale.y), (-1.0, 1.0));
+    assert!((ins.rotation + std::f64::consts::FRAC_PI_2).abs() < 1e-12, "{}", ins.rotation);
+    // In the OCS the line (0,0)-(2,0) turned by 90° runs from (-10,5) to (-10,7); mirrored into the WCS
+    // that is (10,5)-(10,7). The same follows from T(10,5)·R(-90°)·S(-1,1): (2,0) → (-2,0) → (0,2) → (10,7).
+    let b = d.extents(&Space::Model);
+    for (got, want) in [(b.min.x, 10.0), (b.min.y, 5.0), (b.max.x, 10.0), (b.max.y, 7.0)] {
+        assert!((got - want).abs() < 1e-9, "extents {b:?}");
+    }
+    // Written back in the WCS (negative x scale, no extrusion), it reads back in the same place.
+    let b2 = roundtrip(&d).extents(&Space::Model);
+    assert!((b2.min - b.min).len() < 1e-9 && (b2.max - b.max).len() < 1e-9, "{b2:?} vs {b:?}");
+}
+
+#[test]
+fn mirrored_ellipse_extrusion_reverses_parameters() {
+    // Extrusion (0,0,-1) flips the minor axis (extrusion × major): parameters 0..90° of the ellipse
+    // centred at the origin with major (2,0) and ratio 0.5 run from (2,0) to (0,-1), not (0,1).
+    let text = "0\nSECTION\n2\nENTITIES\n0\nELLIPSE\n8\n0\n10\n0\n20\n0\n11\n2\n21\n0\n40\n0.5\n41\n0\n42\n1.5707963267948966\n\
+                210\n0\n220\n0\n230\n-1\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "e.dxf").unwrap();
+    let b = d.extents(&Space::Model);
+    for (got, want) in [(b.min.x, 0.0), (b.min.y, -1.0), (b.max.x, 2.0), (b.max.y, 0.0)] {
+        assert!((got - want).abs() < 1e-6, "extents {b:?}");
+    }
+}
+
+#[test]
+fn mirrored_2d_polyline_extrusion_flips_x_and_bulge() {
+    // R12-style 2D POLYLINE vertices are OCS like LWPOLYLINE: with extrusion (0,0,-1), OCS (1,0) is WCS
+    // (-1,0) and a counter-clockwise bulge turns clockwise.
+    let text = "0\nSECTION\n2\nENTITIES\n0\nPOLYLINE\n8\n0\n66\n1\n70\n0\n210\n0\n220\n0\n230\n-1\n\
+                0\nVERTEX\n8\n0\n10\n1\n20\n0\n42\n1\n0\nVERTEX\n8\n0\n10\n3\n20\n0\n0\nSEQEND\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "p.dxf").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    let got: Vec<(f64, f64, f64)> = p.vertices.iter().map(|v| (v.p.x, v.p.y, v.bulge)).collect();
+    assert_eq!(got, vec![(-1.0, 0.0, -1.0), (-3.0, 0.0, 0.0)]);
+}
+
+#[test]
+fn mirrored_hatch_extrusion_flips_boundary() {
+    // HATCH boundaries are OCS: the square (1,0)..(3,2) under extrusion (0,0,-1) lies at (-3,0)..(-1,2).
+    let text = "0\nSECTION\n2\nENTITIES\n0\nHATCH\n8\n0\n10\n0\n20\n0\n30\n0\n210\n0\n220\n0\n230\n-1\n2\nSOLID\n70\n1\n71\n0\n91\n1\n\
+                92\n2\n72\n0\n73\n1\n93\n4\n10\n1\n20\n0\n10\n3\n20\n0\n10\n3\n20\n2\n10\n1\n20\n2\n97\n0\n75\n0\n76\n1\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "h.dxf").unwrap();
+    let b = d.extents(&Space::Model);
+    for (got, want) in [(b.min.x, -3.0), (b.min.y, 0.0), (b.max.x, -1.0), (b.max.y, 2.0)] {
+        assert!((got - want).abs() < 1e-9, "extents {b:?}");
+    }
+}
+
+#[test]
+fn mirrored_text_extrusion_keeps_its_footprint() {
+    // TEXT at OCS (-10,5) under extrusion (0,0,-1) starts at WCS (10,5) and runs towards -x (with
+    // mirrored glyphs). Drawn readable, it becomes right-justified at (10,5) with the same footprint.
+    let text = "0\nSECTION\n2\nENTITIES\n0\nTEXT\n8\n0\n10\n-10\n20\n5\n40\n1\n1\nAB\n210\n0\n220\n0\n230\n-1\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "t.dxf").unwrap();
+    let t = first(&d, |k| if let EntityKind::Text(t) = k { Some(t.clone()) } else { None });
+    assert_eq!(t.halign, HAlign::Right);
+    assert!(t.rotation.abs() < 1e-12, "{}", t.rotation);
+    let a = t.align_pt.expect("right-justified text has an alignment point");
+    assert!((a.x - 10.0).abs() < 1e-9 && (a.y - 5.0).abs() < 1e-9, "{a:?}");
+    let list = cadcraft_render::build(&d, &Space::Model, &cadcraft_render::Options::default());
+    assert!((list.bounds.max.x - 10.0).abs() < 1e-6 && list.bounds.min.x < 9.5, "drawn left of (10,5): {:?}", list.bounds);
+}
+
+#[test]
+fn mirrored_mtext_extrusion_keeps_its_footprint() {
+    // MTEXT at (0,0) with direction (1,0), top-left attachment and extrusion (0,0,-1): the line height
+    // runs along extrusion × direction = (0,-1), so the text box lies above the insertion point
+    // (glyphs upside down). Drawn readable: turned round, top-right attachment, same box.
+    let text =
+        "0\nSECTION\n2\nENTITIES\n0\nMTEXT\n8\n0\n10\n0\n20\n0\n40\n1\n71\n1\n1\nAB\n11\n1\n21\n0\n210\n0\n220\n0\n230\n-1\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "mt.dxf").unwrap();
+    let t = first(&d, |k| if let EntityKind::MText(t) = k { Some(t.clone()) } else { None });
+    assert_eq!(t.attach, 3);
+    assert!((t.rotation - std::f64::consts::PI).abs() < 1e-12, "{}", t.rotation);
+    let b = cadcraft_render::build(&d, &Space::Model, &cadcraft_render::Options::default()).bounds;
+    assert!(b.min.x > -0.2 && b.max.x > 0.5 && b.min.y > -0.2 && b.max.y > 0.5, "box right of and above (0,0): {b:?}");
+}

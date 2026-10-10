@@ -83,11 +83,11 @@ fn common(t: &T) -> Common {
 
 /// Apply the OCS → WCS transform for 2D entities with a non-default extrusion.
 fn ocs(c: &Common, p: Vec3) -> Vec3 {
-    if (c.extrusion.z - 1.0).abs() < 1e-12 && c.extrusion.x.abs() < 1e-12 && c.extrusion.y.abs() < 1e-12 {
-        p
-    } else {
-        cadcraft_geom::Mat4::ocs(c.extrusion).apply(p)
-    }
+    ocs_n(c.extrusion, p)
+}
+
+fn ocs_n(n: Vec3, p: Vec3) -> Vec3 {
+    if (n.z - 1.0).abs() < 1e-12 && n.x.abs() < 1e-12 && n.y.abs() < 1e-12 { p } else { cadcraft_geom::Mat4::ocs(n).apply(p) }
 }
 
 fn text_from(t: &T) -> Text {
@@ -106,7 +106,7 @@ fn text_from(t: &T) -> Text {
         _ => VAlign::Baseline,
     };
     let align = if t.f(11).is_some() { Some(t.p(11)) } else { None };
-    Text {
+    let mut text = Text {
         insert: t.p(10),
         align_pt: if h == HAlign::Left && v == VAlign::Baseline { None } else { align },
         height: t.fd(40, 0.2).max(1e-9),
@@ -117,6 +117,40 @@ fn text_from(t: &T) -> Text {
         style: t.s(7).unwrap_or_else(|| "Standard".into()),
         halign: h,
         valign: v,
+    };
+    let n = Vec3::new(t.fd(210, 0.0), t.fd(220, 0.0), t.fd(230, 1.0));
+    if n.z < 0.0 {
+        mirror_text(&mut text, align.map(|a| ocs_n(n, a)), ocs_n(n, t.p(10)));
+    }
+    text
+}
+
+/// TEXT / ATTRIB / ATTDEF with extrusion (0,0,-1): the points are OCS and the text runs from its
+/// insertion point towards -x in the WCS, with mirrored glyphs. CADCraft draws text readable
+/// (MIRRTEXT = 0), so it keeps the mirrored footprint: the direction turns to -rotation and
+/// left/right justification swap ends (start ↔ end point).
+fn mirror_text(t: &mut Text, align: Option<Vec3>, insert: Vec3) {
+    t.rotation = cadcraft_geom::norm_angle(-t.rotation);
+    let baseline_left = |t: &Text, p: Vec3| if t.valign == VAlign::Baseline { None } else { Some(p) };
+    match t.halign {
+        HAlign::Left => {
+            t.halign = HAlign::Right;
+            t.insert = insert;
+            t.align_pt = Some(insert);
+        }
+        HAlign::Right => {
+            t.halign = HAlign::Left;
+            t.insert = align.unwrap_or(insert);
+            t.align_pt = baseline_left(t, t.insert);
+        }
+        HAlign::Aligned | HAlign::Fit => {
+            t.insert = align.unwrap_or(insert);
+            t.align_pt = Some(insert);
+        }
+        HAlign::Center | HAlign::Middle => {
+            t.insert = insert;
+            t.align_pt = align;
+        }
     }
 }
 
@@ -143,13 +177,24 @@ fn entity(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
             }
             EntityKind::Arc(a)
         }
-        "ELLIPSE" => EntityKind::Ellipse(Ellipse {
-            center: t.p(10),
-            major: t.p(11),
-            ratio: t.fd(40, 1.0).clamp(1e-9, 1.0),
-            start: t.fd(41, 0.0),
-            end: t.fd(42, std::f64::consts::TAU),
-        }),
+        "ELLIPSE" => {
+            let mut e = Ellipse {
+                center: t.p(10),
+                major: t.p(11),
+                ratio: t.fd(40, 1.0).clamp(1e-9, 1.0),
+                start: t.fd(41, 0.0),
+                end: t.fd(42, std::f64::consts::TAU),
+            };
+            if c.extrusion.z < 0.0 && (cadcraft_geom::ccw_sweep(e.start, e.end) - std::f64::consts::TAU).abs() > 1e-9 {
+                // Centre and major axis are WCS, but the minor axis is extrusion × major: with (0,0,-1)
+                // it points the other way, so parameter t lands where -t does in the XY plane. A full
+                // ellipse is symmetric and stays as it is.
+                let (s, e2) = (-e.end, -e.start);
+                e.start = cadcraft_geom::norm_angle(s);
+                e.end = cadcraft_geom::norm_angle(e2);
+            }
+            EntityKind::Ellipse(e)
+        }
         "LWPOLYLINE" => {
             let mut verts = Vec::new();
             let mut cur: Option<PolyVertex> = None;
@@ -224,15 +269,27 @@ fn entity(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
                 contents.push_str(&tg.str());
             }
             contents.push_str(&t.s(1).unwrap_or_default());
-            let rotation = match (t.f(11), t.f(21)) {
+            let mut rotation = match (t.f(11), t.f(21)) {
                 (Some(x), Some(y)) if x != 0.0 || y != 0.0 => Vec2::new(x, y).angle(),
                 _ => t.fd(50, 0.0).to_radians(),
             };
+            let mut attach = t.i(71).unwrap_or(1).clamp(1, 9) as u8;
+            if c.extrusion.z < 0.0 {
+                // Insertion point and direction are WCS, but the line height runs along extrusion ×
+                // direction: under (0,0,-1) the glyphs are mirrored. Drawn readable (MIRRTEXT = 0) with
+                // the same footprint, the text turns round and left/right attachment swap.
+                rotation = cadcraft_geom::norm_angle(rotation + std::f64::consts::PI);
+                attach = match attach {
+                    1 | 4 | 7 => attach + 2,
+                    3 | 6 | 9 => attach - 2,
+                    a => a,
+                };
+            }
             EntityKind::MText(MText {
                 insert: t.p(10),
                 height: t.fd(40, 0.2).max(1e-9),
                 width: t.fd(41, 0.0).max(0.0),
-                attach: t.i(71).unwrap_or(1).clamp(1, 9) as u8,
+                attach,
                 rotation,
                 style: t.s(7).unwrap_or_else(|| "Standard".into()),
                 contents,
@@ -246,17 +303,37 @@ fn entity(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
             constant: t.i(70).unwrap_or(0) & 2 != 0,
             prompt: t.s(3).unwrap_or_default(),
         }),
-        "INSERT" => EntityKind::Insert(Insert {
-            block: t.s(2).unwrap_or_default(),
-            insert: t.p(10),
-            scale: Vec3::new(t.fd(41, 1.0), t.fd(42, 1.0), t.fd(43, 1.0)),
-            rotation: t.fd(50, 0.0).to_radians(),
-            attribs: Vec::new(),
-            cols: t.i(70).unwrap_or(1).clamp(1, 10_000) as u32,
-            rows: t.i(71).unwrap_or(1).clamp(1, 10_000) as u32,
-            col_spacing: t.fd(44, 0.0),
-            row_spacing: t.fd(45, 0.0),
-        }),
+        "INSERT" => {
+            // A mirrored block reference comes with extrusion (0,0,-1): its insertion point, scale,
+            // rotation and column spacing are in that OCS, where x runs the other way. In the WCS that
+            // is the mirrored point, a negative x scale, the opposite rotation and a negative column
+            // spacing. Noise of up to 1e-3 in the extrusion's x/y moves the projection by ~1e-7 of the
+            // size, so it still counts as mirrored. A truly tilted extrusion (block plane not parallel
+            // to XY) needs the full 3D block transform, which Insert cannot hold; it is left as read.
+            let n = c.extrusion;
+            let mirrored = n.z < 0.0 && n.x.hypot(n.y) <= 1e-3 * n.z.abs();
+            let mut p = t.p(10);
+            let mut scale = Vec3::new(t.fd(41, 1.0), t.fd(42, 1.0), t.fd(43, 1.0));
+            let mut rotation = t.fd(50, 0.0).to_radians();
+            let mut col_spacing = t.fd(44, 0.0);
+            if mirrored {
+                p = ocs(&c, p);
+                scale.x = -scale.x;
+                rotation = -rotation;
+                col_spacing = -col_spacing;
+            }
+            EntityKind::Insert(Insert {
+                block: t.s(2).unwrap_or_default(),
+                insert: p,
+                scale,
+                rotation,
+                attribs: Vec::new(),
+                cols: t.i(70).unwrap_or(1).clamp(1, 10_000) as u32,
+                rows: t.i(71).unwrap_or(1).clamp(1, 10_000) as u32,
+                col_spacing,
+                row_spacing: t.fd(45, 0.0),
+            })
+        }
         "DIMENSION" => {
             let ty = t.i(70).unwrap_or(0) & 0x0f;
             let kind = match ty {
@@ -273,7 +350,8 @@ fn entity(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
             EntityKind::Dimension(Dimension {
                 kind,
                 defpt: t.p(10),
-                text_mid: t.p(11),
+                // The text midpoint is the one OCS point of a DIMENSION.
+                text_mid: if c.extrusion.z < 0.0 { ocs(&c, t.p(11)) } else { t.p(11) },
                 p13: t.p(13),
                 p14: t.p(14),
                 p15: t.p(15),
@@ -300,7 +378,20 @@ fn entity(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
             if kind == "SOLID" { EntityKind::Solid(Solid { corners }) } else { EntityKind::Trace(Solid { corners }) }
         }
         "3DFACE" => EntityKind::Face3d(Face3d { corners: [t.p(10), t.p(11), t.p(12), t.p(13)], hidden_edges: t.i(70).unwrap_or(0) as u8 }),
-        "HATCH" => hatch(tags, &t)?,
+        "HATCH" => {
+            let mut k = hatch(tags, &t)?;
+            if c.extrusion.z < 0.0
+                && let EntityKind::Hatch(h) = &mut k
+            {
+                // Boundary in the mirrored OCS, like LWPOLYLINE; the pattern direction mirrors too.
+                for v in h.loops.iter_mut().flat_map(|l| l.vertices.iter_mut()) {
+                    v.p.x = -v.p.x;
+                    v.bulge = -v.bulge;
+                }
+                h.angle = cadcraft_geom::norm_angle(std::f64::consts::PI - h.angle);
+            }
+            k
+        }
         "ACAD_TABLE" => EntityKind::Table(acad_table(tags)),
         "VIEWPORT" => EntityKind::Viewport(Viewport {
             center: t.p(10),
@@ -713,8 +804,13 @@ fn parse_entities(recs: &[(String, Vec<Tag>)], d: &mut Drawing, rx: &mut Rx) -> 
                 } else if flags & 8 != 0 {
                     EntityKind::Polyline3d(Polyline3d { points: pts.iter().map(|p| p.0).collect(), closed: flags & 1 != 0 })
                 } else {
+                    // A 2D polyline's vertices are in its OCS: mirrored like LWPOLYLINE.
+                    let m = if c.extrusion.z < 0.0 { -1.0 } else { 1.0 };
                     EntityKind::LwPolyline(LwPolyline {
-                        vertices: pts.iter().map(|p| PolyVertex { p: p.0.xy(), bulge: p.1, start_width: p.2, end_width: p.3 }).collect(),
+                        vertices: pts
+                            .iter()
+                            .map(|p| PolyVertex { p: Vec2::new(m * p.0.x, p.0.y), bulge: m * p.1, start_width: p.2, end_width: p.3 })
+                            .collect(),
                         closed: flags & 1 != 0,
                         const_width: t.fd(40, 0.0).min(t.fd(41, 0.0)).max(0.0),
                         elevation: t.p(10).z,
