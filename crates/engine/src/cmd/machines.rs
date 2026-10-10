@@ -165,7 +165,7 @@ pub fn number(t: &str) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
-    use cadcraft_doc::Handle;
+    use cadcraft_doc::{EntityKind, Handle};
     use cadcraft_geom::Vec2;
     use serde_json::json;
 
@@ -228,5 +228,109 @@ mod tests {
         }
         assert_eq!(s.doc().unwrap().model.len(), 1);
         assert!(s.doc().unwrap().layer("0").is_some_and(|l| l.on));
+    }
+
+    /// The cursor shows the pick box exactly where a click picks objects (#34): "Select objects",
+    /// single-object prompts, and the idle crosshair when PICKFIRST is on.
+    #[test]
+    fn pick_box_at_object_selection_prompts() {
+        let mut s = Session::new();
+        s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+        assert!(s.picking_objects(), "idle with PICKFIRST on");
+        s.settings.pickfirst = false;
+        assert!(!s.picking_objects(), "idle with PICKFIRST off");
+        s.settings.pickfirst = true;
+        for (cmd, picks) in [("erase", true), ("fillet", true), ("offset", false), ("line", false), ("hatch", false)] {
+            s.cmdline(cmd).unwrap();
+            assert_eq!(s.picking_objects(), picks, "{cmd}: {}", s.prompt_text());
+            s.cancel();
+        }
+        // OFFSET's object pick, FILLET's radius, HATCH's select mode.
+        s.cmdline("offset 2").unwrap();
+        assert!(s.picking_objects(), "{}", s.prompt_text());
+        s.cancel();
+        s.cmdline("fillet r").unwrap();
+        assert!(!s.picking_objects(), "{}", s.prompt_text());
+        s.cancel();
+        s.cmdline("hatch s").unwrap();
+        assert!(s.picking_objects(), "{}", s.prompt_text());
+        s.cancel();
+    }
+
+    /// Commands offer the option and values used last time as the `<default>`, and Enter takes it
+    /// (#34). JSON calls keep their documented defaults.
+    #[test]
+    fn prompts_remember_last_options() {
+        let mut s = Session::new();
+        s.execute("rectang", &json!({"p1": [0, 0], "p2": [10, 10]})).unwrap();
+        let rect = s.doc().unwrap().model.iter().next().unwrap().handle;
+
+        // HATCH: the "Select objects" mode sticks; `P` there is still Previous, not "picK".
+        s.cmdline("hatch s").unwrap();
+        assert!(s.prompt_text().contains("Select objects or [picK internal point"), "{}", s.prompt_text());
+        s.input(Input::Pick(vec![rect])).unwrap();
+        s.cmdline("").unwrap();
+        assert!(s.running.is_none(), "Enter creates the hatch");
+        let kinds: Vec<&str> = s.doc().unwrap().model.iter().map(|e| e.kind.type_name()).collect();
+        assert_eq!(kinds, vec!["Hatch", "Polyline"]);
+        s.cmdline("hatch").unwrap();
+        assert!(s.prompt_text().contains("HATCH Select objects"), "{}", s.prompt_text());
+        s.cmdline("p").unwrap();
+        assert!(s.prompt_text().contains("HATCH Select objects"), "{}", s.prompt_text());
+        // Pattern scale: the current value is the default, Enter keeps it.
+        s.cmdline("c").unwrap();
+        assert!(s.prompt_text().ends_with("<1.0000>:"), "{}", s.prompt_text());
+        s.cmdline("2").unwrap();
+        s.cmdline("c").unwrap();
+        assert!(s.prompt_text().ends_with("<2.0000>:"), "{}", s.prompt_text());
+        s.cmdline("").unwrap();
+        s.cmdline("k").unwrap();
+        s.cancel();
+        s.cmdline("hatch").unwrap();
+        assert!(s.prompt_text().contains("HATCH Pick internal point"), "{}", s.prompt_text());
+        s.cancel();
+
+        // POLYGON: sides and Inscribed/Circumscribed.
+        s.cmdline("polygon 5 30,0 c 2").unwrap();
+        s.cmdline("polygon").unwrap();
+        assert!(s.prompt_text().ends_with("<5>:"), "{}", s.prompt_text());
+        s.cmdline("").unwrap();
+        s.cmdline("40,0").unwrap();
+        assert!(s.prompt_text().ends_with("<C>:"), "{}", s.prompt_text());
+        s.cancel();
+
+        // FILLET radius and CHAMFER distances (the second defaults to the first).
+        s.cmdline("fillet r 2").unwrap();
+        s.cmdline("r").unwrap();
+        assert!(s.prompt_text().ends_with("<2.0000>:"), "{}", s.prompt_text());
+        s.cancel();
+        s.cmdline("chamfer d 1.5").unwrap();
+        assert!(s.prompt_text().contains("second chamfer distance <1.5000>:"), "{}", s.prompt_text());
+        s.cmdline("").unwrap();
+        assert_eq!(s.doc().unwrap().header.f64("CHAMFERB", 0.0), 1.5);
+        s.cancel();
+
+        // ROTATE angle and SCALE factor.
+        s.set_selection(vec![rect]);
+        s.cmdline("rotate 0,0 90").unwrap();
+        s.set_selection(vec![rect]);
+        s.cmdline("rotate 0,0").unwrap();
+        assert!(s.prompt_text().ends_with("<90>:"), "{}", s.prompt_text());
+        s.cmdline("").unwrap();
+        assert!(s.running.is_none());
+        s.set_selection(vec![rect]);
+        s.cmdline("scale 0,0 2").unwrap();
+        s.set_selection(vec![rect]);
+        s.cmdline("scale 0,0").unwrap();
+        assert!(s.prompt_text().ends_with("<2.0000>:"), "{}", s.prompt_text());
+        s.cancel();
+
+        // JSON calls are not affected by what was remembered.
+        let r = s.execute("polygon", &json!({"center": [60, 0], "radius": 1, "sides": 4})).unwrap();
+        let h = Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+        match &s.doc().unwrap().entity(h).unwrap().kind {
+            EntityKind::LwPolyline(p) => assert!((p.vertices[0].p.dist(Vec2::new(60.0, 0.0)) - 1.0).abs() < 1e-9, "inscribed"),
+            other => panic!("{other:?}"),
+        }
     }
 }

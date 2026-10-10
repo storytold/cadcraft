@@ -48,7 +48,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["Modify", "Stretch"])
             .alias(&["s"])
             .params("{window: [[x,y],[x,y]], delta: [dx,dy]}")
-            .interactive(|_| Ok(Box::new(SelectThen::new(Op::Stretch)))),
+            .interactive(|_| Ok(Box::new(StretchM::default()))),
         CommandSpec::new("offset", "Offset", run_offset)
             .menu(&["Modify", "Offset"])
             .alias(&["o"])
@@ -215,10 +215,11 @@ fn run_mirror(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "handles": r.iter().map(|h| h.hex()).collect::<Vec<_>>() }))
 }
 
-/// Move the vertices of `e` that lie inside `bx` by `d` (STRETCH).
-fn stretch_entity(e: &mut Entity, bx: &cadcraft_geom::Bounds2, d: Vec2) {
+/// Move the vertices of `e` that lie inside any of the windows `wins` by `d` (STRETCH).
+fn stretch_entity(e: &mut Entity, wins: &[cadcraft_geom::Bounds2], d: Vec2) {
+    let inside = |p: Vec2| wins.iter().any(|bx| bx.contains(p));
     let mv = |p: &mut cadcraft_geom::Vec3| {
-        if bx.contains(p.xy()) {
+        if inside(p.xy()) {
             p.x += d.x;
             p.y += d.y;
         }
@@ -230,14 +231,14 @@ fn stretch_entity(e: &mut Entity, bx: &cadcraft_geom::Bounds2, d: Vec2) {
         }
         EntityKind::LwPolyline(pl) => {
             for v in &mut pl.vertices {
-                if bx.contains(v.p) {
+                if inside(v.p) {
                     v.p += d;
                 }
             }
         }
         EntityKind::Arc(a) => {
             // Arcs keep their shape: move when the centre is inside.
-            if bx.contains(a.center.xy()) {
+            if inside(a.center.xy()) {
                 a.center.x += d.x;
                 a.center.y += d.y;
             }
@@ -251,7 +252,7 @@ fn stretch_entity(e: &mut Entity, bx: &cadcraft_geom::Bounds2, d: Vec2) {
         }
         k => {
             let g = k.grips();
-            if g.first().is_some_and(|p| bx.contains(*p)) {
+            if g.first().is_some_and(|p| inside(*p)) {
                 k.transform(&Mat3::translate(d));
             }
         }
@@ -268,9 +269,226 @@ fn run_stretch(s: &mut Session, p: &Value) -> Result<Value> {
     hs.retain(|h| !super::curves::is_locked(s, *h));
     let doc = s.doc_mut()?;
     for h in &hs {
-        doc.modify_entity(*h, |e| stretch_entity(e, &bx, d))?;
+        doc.modify_entity(*h, |e| stretch_entity(e, &[bx], d))?;
     }
     Ok(json!({ "stretched": hs.len() }))
+}
+
+#[derive(Clone, Copy, Default, PartialEq)]
+enum StretchPhase {
+    #[default]
+    Select,
+    Base,
+    Displacement,
+    Second,
+}
+
+/// STRETCH: "Select objects" repeats until Enter. Crossing windows (implied right to left, or after
+/// `C`) and windows (left to right, or after `W`) select objects and mark the area whose vertices
+/// move; objects picked one at a time (or by All/Last/Previous) move whole. Then the base point or
+/// Displacement, and the second point.
+#[derive(Default)]
+struct StretchM {
+    phase: StretchPhase,
+    objs: Vec<Handle>,
+    /// Objects selected without a window: they move whole.
+    whole: Vec<Handle>,
+    /// The selection windows: vertices inside any of them move.
+    windows: Vec<cadcraft_geom::Bounds2>,
+    removing: bool,
+    /// `C` (true) or `W` (false) was typed: the next two points are that kind of window.
+    mode: Option<bool>,
+    /// First corner of the window being drawn.
+    corner: Option<Vec2>,
+    base: Option<Vec2>,
+}
+
+impl StretchM {
+    fn add(&mut self, s: &mut Session, hs: Vec<Handle>, whole: bool) {
+        let n = hs.len();
+        for h in hs {
+            if self.removing {
+                self.objs.retain(|o| *o != h);
+                self.whole.retain(|o| *o != h);
+            } else {
+                if !self.objs.contains(&h) {
+                    self.objs.push(h);
+                }
+                if whole && !self.whole.contains(&h) {
+                    self.whole.push(h);
+                }
+            }
+        }
+        if n > 0 {
+            s.echo(format!("{n} found, {} total", self.objs.len()));
+        } else {
+            s.echo("0 found");
+        }
+        s.set_selection(self.objs.clone());
+    }
+
+    fn select(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        match i {
+            Input::Point(p) => match self.corner.take() {
+                Some(c) => {
+                    let bx = cadcraft_geom::Bounds2::new(c, p);
+                    let crossing = self.mode.take().unwrap_or(p.x < c.x);
+                    let space = s.space();
+                    let hs = crate::select::select_window(s.doc()?, &space, bx, crossing);
+                    if !self.removing {
+                        self.windows.push(bx);
+                    }
+                    self.add(s, hs, false);
+                }
+                None if self.mode.is_some() => self.corner = Some(p),
+                None => {
+                    let aperture = s.pixel_size() * s.settings.pickbox.max(1.0) * 1.5;
+                    let space = s.space();
+                    match crate::select::pick(s.doc()?, &space, p, aperture) {
+                        Some(h) => self.add(s, vec![h], true),
+                        None => self.corner = Some(p),
+                    }
+                }
+            },
+            Input::Pick(hs) => self.add(s, hs, true),
+            Input::Text(t) | Input::Keyword(t) => {
+                self.corner = None;
+                let d = s.doc()?;
+                let store = d.space(&s.space());
+                let picked = match t.trim().to_ascii_lowercase().as_str() {
+                    "c" | "crossing" => {
+                        self.mode = Some(true);
+                        None
+                    }
+                    "w" | "window" => {
+                        self.mode = Some(false);
+                        None
+                    }
+                    "r" | "remove" => {
+                        self.removing = true;
+                        None
+                    }
+                    "a" | "add" => {
+                        self.removing = false;
+                        None
+                    }
+                    "all" => Some(store.map(|st| st.iter().filter(|e| d.is_visible(e)).map(|e| e.handle).collect()).unwrap_or_default()),
+                    "l" | "last" => Some(store.and_then(|st| st.last()).map(|e| vec![e.handle]).unwrap_or_default()),
+                    "p" | "previous" => Some(s.state()?.previous_selection.clone()),
+                    "cp" | "wp" | "f" | "fence" => {
+                        s.echo("Polygon and fence selection are not available yet in STRETCH; use a crossing window.");
+                        None
+                    }
+                    _ => {
+                        s.echo("*Invalid selection*");
+                        None
+                    }
+                };
+                if let Some(hs) = picked {
+                    self.add(s, hs, true);
+                }
+            }
+            Input::Enter if self.corner.is_some() || self.mode.is_some() => {
+                self.corner = None;
+                self.mode = None;
+            }
+            Input::Enter if self.objs.is_empty() => return Ok(Step::Done),
+            Input::Enter => {
+                s.remember_selection(&self.objs);
+                self.phase = StretchPhase::Base;
+            }
+            _ => {}
+        }
+        Ok(Step::Continue)
+    }
+
+    fn apply(&self, s: &mut Session, d: Vec2) -> Result<Step> {
+        let whole: Vec<Handle> = self.objs.iter().filter(|h| self.whole.contains(h)).copied().collect();
+        transform_entities(s, &whole, &Mat3::translate(d), false)?;
+        let doc = s.doc_mut()?;
+        for h in self.objs.iter().filter(|h| !self.whole.contains(h)) {
+            let locked = doc.entity(*h).and_then(|e| doc.layer(&e.common.layer)).is_some_and(|l| l.locked);
+            if !locked {
+                doc.modify_entity(*h, |e| stretch_entity(e, &self.windows, d))?;
+            }
+        }
+        s.set_selection(Vec::new());
+        Ok(Step::Done)
+    }
+}
+
+impl Interactive for StretchM {
+    fn name(&self) -> &'static str {
+        "STRETCH"
+    }
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        s.set_selection(Vec::new());
+        s.echo("Select objects to stretch by crossing-window or crossing-polygon...");
+        Ok(Step::Continue)
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        match (self.phase, self.corner) {
+            (StretchPhase::Select, Some(c)) => Prompt::new("Specify opposite corner", Accept::POINT).base(c),
+            (StretchPhase::Select, None) if self.mode.is_some() => Prompt::new("Specify first corner", Accept::POINT),
+            (StretchPhase::Select, None) => Prompt::new(if self.removing { "Remove objects" } else { "Select objects" }, Accept::POINT),
+            (StretchPhase::Base, _) => Prompt::new("Specify base point", Accept::POINT).kw(&["Displacement"]).default("Displacement"),
+            (StretchPhase::Displacement, _) => Prompt::new("Specify displacement", Accept::POINT).default("0,0"),
+            (StretchPhase::Second, _) => Prompt::new("Specify second point or <use first point as displacement>", Accept::POINT).base_opt(self.base),
+        }
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        match (self.phase, i) {
+            (StretchPhase::Select, i) => self.select(s, i),
+            (StretchPhase::Base, Input::Point(p)) => {
+                self.base = Some(p);
+                self.phase = StretchPhase::Second;
+                Ok(Step::Continue)
+            }
+            (StretchPhase::Base, Input::Enter) => {
+                self.phase = StretchPhase::Displacement;
+                Ok(Step::Continue)
+            }
+            (StretchPhase::Base, Input::Keyword(k)) if k == "Displacement" => {
+                self.phase = StretchPhase::Displacement;
+                Ok(Step::Continue)
+            }
+            (StretchPhase::Displacement, Input::Point(p)) => self.apply(s, p),
+            (StretchPhase::Displacement, Input::Enter) => Ok(Step::Done),
+            (StretchPhase::Second, Input::Point(p)) => self.apply(s, p - self.base.unwrap_or(p)),
+            (StretchPhase::Second, Input::Enter) => self.apply(s, self.base.unwrap_or(Vec2::ZERO)),
+            _ => Ok(Step::Continue),
+        }
+    }
+    fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
+        match (self.phase, self.corner, self.base) {
+            (StretchPhase::Select, Some(a), _) => {
+                let (b, d) = (Vec2::new(c.x, a.y), Vec2::new(a.x, c.y));
+                vec![line(a, b), line(b, c), line(c, d), line(d, a)]
+            }
+            (StretchPhase::Second, _, Some(base)) => {
+                let Ok(doc) = s.doc() else { return Vec::new() };
+                let m = Mat3::translate(c - base);
+                let mut out: Vec<EntityKind> = self
+                    .objs
+                    .iter()
+                    .take(500)
+                    .filter_map(|h| doc.entity(*h))
+                    .map(|e| {
+                        let mut e = (**e).clone();
+                        if self.whole.contains(&e.handle) {
+                            e.kind.transform(&m);
+                        } else {
+                            stretch_entity(&mut e, &self.windows, c - base);
+                        }
+                        e.kind
+                    })
+                    .collect();
+                out.push(line(base, c));
+                out
+            }
+            _ => Vec::new(),
+        }
+    }
 }
 
 /// Offset an entity by `dist` towards `side`. Returns the new geometry.
@@ -1296,7 +1514,6 @@ enum Op {
     Rotate,
     Scale,
     Mirror,
-    Stretch,
     Explode,
     ArrayRect,
     ArrayPolar,
@@ -1320,7 +1537,6 @@ struct SelectThen {
     /// SCALE Reference: the reference length, once known.
     ref_len: Option<f64>,
     copy_mode: bool,
-    window: Option<cadcraft_geom::Bounds2>,
     ask_erase: bool,
 }
 
@@ -1337,7 +1553,6 @@ impl SelectThen {
             ref_from: None,
             ref_len: None,
             copy_mode: false,
-            window: None,
             ask_erase: false,
         }
     }
@@ -1498,6 +1713,8 @@ impl SelectThen {
 
     fn scale_by(&mut self, s: &mut Session, base: Vec2, f: f64) -> Result<Step> {
         let f = require_length(Some(f))?;
+        // The next SCALE offers this factor.
+        s.last_used.scale_factor = f;
         transform_entities(s, &self.objs, &Mat3::scale_about(base, f), self.copy_mode)?;
         s.set_selection(Vec::new());
         Ok(Step::Done)
@@ -1523,7 +1740,6 @@ impl Interactive for SelectThen {
             Op::Rotate => "ROTATE",
             Op::Scale => "SCALE",
             Op::Mirror => "MIRROR",
-            Op::Stretch => "STRETCH",
             Op::Explode => "EXPLODE",
             Op::ArrayRect => "ARRAYRECT",
             Op::ArrayPolar => "ARRAYPOLAR",
@@ -1531,11 +1747,6 @@ impl Interactive for SelectThen {
         }
     }
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
-        if self.op == Op::Stretch {
-            s.set_selection(Vec::new());
-            s.echo("Select objects to stretch by crossing-window or crossing-polygon...");
-            return Ok(Step::Continue);
-        }
         self.sel = SelectPhase::begin(s);
         if self.sel.done {
             self.objs = self.sel.picked.clone();
@@ -1543,24 +1754,15 @@ impl Interactive for SelectThen {
         }
         Ok(Step::Continue)
     }
-    fn prompt(&self, _s: &Session) -> Prompt {
-        if self.op == Op::Stretch && self.window.is_none() {
-            return match self.pts.first() {
-                None => Prompt::new("Select objects (crossing window first corner)", Accept::POINT),
-                Some(p) => Prompt::new("Specify opposite corner", Accept::POINT).base(*p),
-            };
-        }
-        if !self.sel.done && self.op != Op::Stretch {
+    fn prompt(&self, s: &Session) -> Prompt {
+        if !self.sel.done {
             return self.sel.prompt();
         }
         if self.ask_erase {
             return Prompt::new("Erase source objects?", Accept::TEXT).kw(&["Yes", "No"]).default("No");
         }
-        let n = self.pts.len();
+        let k = self.pts.len();
         let base = self.pts.first().copied();
-        let pts_from = if self.op == Op::Stretch { 2 } else { 0 };
-        let k = n.saturating_sub(pts_from);
-        let bp = if self.op == Op::Stretch { self.pts.get(2).copied() } else { base };
         if self.op == Op::Scale && self.reference {
             return match (self.ref_len, self.ref_from) {
                 (Some(_), _) => Prompt::new("Specify new length", Accept::POINT_OR_NUMBER).base_opt(base),
@@ -1572,12 +1774,22 @@ impl Interactive for SelectThen {
             return self.rotate_reference_prompt();
         }
         match (self.op, k) {
-            (Op::Move | Op::Copy | Op::Stretch, 0) => Prompt::new("Specify base point", Accept::POINT).kw(&["Displacement"]),
-            (Op::Move | Op::Stretch, _) => Prompt::new("Specify second point or <use first point as displacement>", Accept::POINT).base_opt(bp),
+            (Op::Move | Op::Copy, 0) => Prompt::new("Specify base point", Accept::POINT).kw(&["Displacement"]),
+            (Op::Move, _) => Prompt::new("Specify second point or <use first point as displacement>", Accept::POINT).base_opt(base),
             (Op::Copy, _) => Prompt::new("Specify second point", Accept::POINT).kw(&["Array", "Exit", "Undo"]).base_opt(base),
             (Op::Rotate | Op::Scale, 0) => Prompt::new("Specify base point", Accept::POINT),
-            (Op::Rotate, _) => Prompt::new("Specify rotation angle", Accept::POINT_OR_NUMBER).kw(&["Copy", "Reference"]).default("0").base_opt(base),
-            (Op::Scale, _) => Prompt::new("Specify scale factor", Accept::POINT_OR_NUMBER).kw(&["Copy", "Reference"]).base_opt(base),
+            // ROTATE and SCALE offer the angle/factor used last time.
+            (Op::Rotate, _) => {
+                let (au, ap) = s.doc().map(|d| (d.header.i64("AUNITS", 0), d.header.i64("AUPREC", 0))).unwrap_or((0, 0));
+                Prompt::new("Specify rotation angle", Accept::POINT_OR_NUMBER)
+                    .kw(&["Copy", "Reference"])
+                    .default(crate::units::format_angle(s.last_used.rotate_angle, au, ap))
+                    .base_opt(base)
+            }
+            (Op::Scale, _) => Prompt::new("Specify scale factor", Accept::POINT_OR_NUMBER)
+                .kw(&["Copy", "Reference"])
+                .default(format!("{:.4}", s.last_used.scale_factor))
+                .base_opt(base),
             (Op::Mirror, 0) => Prompt::new("Specify first point of mirror line", Accept::POINT),
             (Op::Mirror, _) => Prompt::new("Specify second point of mirror line", Accept::POINT).base_opt(base),
             (Op::ArrayPolar, 0) => Prompt::new("Specify center point of array", Accept::POINT).kw(&["Base point", "Axis of rotation"]),
@@ -1586,25 +1798,6 @@ impl Interactive for SelectThen {
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
-        if self.op == Op::Stretch && self.window.is_none() {
-            if let Input::Point(p) = i {
-                self.pts.push(p);
-                if self.pts.len() == 2 {
-                    let bx = cadcraft_geom::Bounds2::new(self.pts[0], self.pts[1]);
-                    self.window = Some(bx);
-                    let space = s.space();
-                    self.objs = crate::select::select_window(s.doc()?, &space, bx, true);
-                    self.objs.retain(|h| !super::curves::is_locked(s, *h));
-                    s.echo(format!("{} found", self.objs.len()));
-                    s.set_selection(self.objs.clone());
-                    self.sel.done = true;
-                    if self.objs.is_empty() {
-                        return Ok(Step::Done);
-                    }
-                }
-            }
-            return Ok(Step::Continue);
-        }
         if !self.sel.done {
             match self.sel.feed(s, &i)? {
                 SelOutcome::More => return Ok(Step::Continue),
@@ -1622,8 +1815,7 @@ impl Interactive for SelectThen {
             s.set_selection(Vec::new());
             return Ok(Step::Done);
         }
-        let off = if self.op == Op::Stretch { 2 } else { 0 };
-        let k = self.pts.len() - off;
+        let k = self.pts.len();
         if self.op == Op::Scale && self.reference {
             return self.scale_reference(s, i);
         }
@@ -1660,17 +1852,6 @@ impl Interactive for SelectThen {
                 s.set_selection(Vec::new());
                 Ok(Step::Done)
             }
-            (Op::Stretch, 1, Input::Point(p)) => {
-                let d = p - self.pts[2];
-                if let Some(bx) = self.window {
-                    let doc = s.doc_mut()?;
-                    for h in &self.objs {
-                        doc.modify_entity(*h, |e| stretch_entity(e, &bx, d))?;
-                    }
-                }
-                s.set_selection(Vec::new());
-                Ok(Step::Done)
-            }
             (Op::Copy, _, Input::Point(p)) => {
                 let d = p - self.pts[0];
                 transform_entities(s, &self.objs, &Mat3::translate(d), true)?;
@@ -1680,29 +1861,31 @@ impl Interactive for SelectThen {
                 s.set_selection(Vec::new());
                 Ok(Step::Done)
             }
-            (Op::Rotate, 1, Input::Point(p)) => {
-                let a = self.pts[0].angle_to(p);
+            (Op::Rotate, 1, inp @ (Input::Point(_) | Input::Text(_) | Input::Enter)) => {
+                let a = match inp {
+                    Input::Point(p) => self.pts[0].angle_to(p),
+                    Input::Text(t) => crate::units::parse_angle(&t)
+                        .filter(|a| a.is_finite())
+                        .ok_or_else(|| EngineError::Other("Requires an angle or point.".into()))?,
+                    _ => s.last_used.rotate_angle,
+                };
+                s.last_used.rotate_angle = a;
                 transform_entities(s, &self.objs, &Mat3::rotate_about(self.pts[0], a), self.copy_mode)?;
                 s.set_selection(Vec::new());
                 Ok(Step::Done)
             }
-            (Op::Rotate, 1, Input::Text(t)) => {
-                let a = crate::units::parse_angle(&t).ok_or_else(|| EngineError::Other("Requires an angle or point.".into()))?;
-                transform_entities(s, &self.objs, &Mat3::rotate_about(self.pts[0], a), self.copy_mode)?;
-                s.set_selection(Vec::new());
-                Ok(Step::Done)
-            }
-            (Op::Scale, 1, Input::Point(p)) => {
-                let f = self.pts[0].dist(p);
-                if f > 1e-12 {
+            (Op::Scale, 1, inp @ (Input::Point(_) | Input::Text(_) | Input::Enter)) => {
+                let f = match inp {
+                    Input::Point(p) => self.pts[0].dist(p),
+                    Input::Text(t) => {
+                        number(&t).filter(|f| f.is_finite() && *f > 0.0).ok_or_else(|| EngineError::Other("Requires a positive number.".into()))?
+                    }
+                    _ => s.last_used.scale_factor,
+                };
+                if f > 1e-12 && f.is_finite() {
+                    s.last_used.scale_factor = f;
                     transform_entities(s, &self.objs, &Mat3::scale_about(self.pts[0], f), self.copy_mode)?;
                 }
-                s.set_selection(Vec::new());
-                Ok(Step::Done)
-            }
-            (Op::Scale, 1, Input::Text(t)) => {
-                let f = number(&t).filter(|f| *f > 0.0).ok_or_else(|| EngineError::Other("Requires a positive number.".into()))?;
-                transform_entities(s, &self.objs, &Mat3::scale_about(self.pts[0], f), self.copy_mode)?;
                 s.set_selection(Vec::new());
                 Ok(Step::Done)
             }
@@ -1738,9 +1921,9 @@ impl Interactive for SelectThen {
         if !self.sel.done {
             return Vec::new();
         }
-        let Some(base) = (if self.op == Op::Stretch { self.pts.get(2) } else { self.pts.first() }).copied() else { return Vec::new() };
+        let Some(base) = self.pts.first().copied() else { return Vec::new() };
         let m = match self.op {
-            Op::Move | Op::Copy | Op::Stretch => Mat3::translate(c - base),
+            Op::Move | Op::Copy => Mat3::translate(c - base),
             Op::Rotate => Mat3::rotate_about(base, base.angle_to(c)),
             Op::Scale if !self.reference => Mat3::scale_about(base, base.dist(c).max(1e-9)),
             Op::Scale => match self.ref_len.and_then(|r| positive_length(Some(base.dist(c) / r))) {
@@ -1759,13 +1942,6 @@ impl Interactive for SelectThen {
             .filter_map(|h| d.entity(*h))
             .map(|e| {
                 let mut k = e.kind.clone();
-                if self.op == Op::Stretch {
-                    let mut ee = (**e).clone();
-                    if let Some(bx) = self.window {
-                        stretch_entity(&mut ee, &bx, c - base);
-                    }
-                    return ee.kind;
-                }
                 k.transform(&m);
                 k
             })
@@ -1957,13 +2133,14 @@ impl Interactive for TrimM {
 struct FilletM {
     chamfer: bool,
     first: Option<(Handle, Vec2)>,
-    asking: bool,
+    /// Asking for the radius (FILLET) or a chamfer distance: 1 = first, 2 = second.
+    asking: u8,
     polyline: bool,
 }
 
 impl FilletM {
     fn new(_s: &Session, chamfer: bool) -> Self {
-        FilletM { chamfer, first: None, asking: false, polyline: false }
+        FilletM { chamfer, first: None, asking: 0, polyline: false }
     }
 }
 
@@ -1982,9 +2159,17 @@ impl Interactive for FilletM {
         s.echo(msg);
         Ok(Step::Continue)
     }
-    fn prompt(&self, _s: &Session) -> Prompt {
-        if self.asking {
-            return Prompt::new(if self.chamfer { "Specify first chamfer distance" } else { "Specify fillet radius" }, Accept::NUMBER);
+    fn prompt(&self, s: &Session) -> Prompt {
+        // The radius and distances are remembered in the drawing (FILLETRAD, CHAMFERA/B) and
+        // offered as defaults; the second chamfer distance defaults to the first.
+        if self.asking > 0 {
+            let hdr = |k: &str| s.doc().map(|d| d.header.f64(k, 0.0)).unwrap_or(0.0);
+            let (msg, v) = match (self.chamfer, self.asking) {
+                (false, _) => ("Specify fillet radius", hdr("FILLETRAD")),
+                (true, 1) => ("Specify first chamfer distance", hdr("CHAMFERA")),
+                (true, _) => ("Specify second chamfer distance", hdr("CHAMFERA")),
+            };
+            return Prompt::new(msg, Accept::NUMBER).default(format!("{v:.4}"));
         }
         if self.polyline {
             return Prompt::new("Select 2D polyline", Accept::POINT);
@@ -1999,23 +2184,40 @@ impl Interactive for FilletM {
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
-        if self.asking {
-            if let Input::Text(t) = &i {
-                let v = number(t).filter(|v| *v >= 0.0).ok_or_else(|| EngineError::Other("Requires a non-negative distance.".into()))?;
-                let d = s.doc_mut()?;
-                if self.chamfer {
-                    d.header.set_f64("CHAMFERA", v);
+        if self.asking > 0 {
+            // Enter keeps the default.
+            let v = match &i {
+                Input::Text(t) => Some(
+                    number(t).filter(|v| v.is_finite() && *v >= 0.0).ok_or_else(|| EngineError::Other("Requires a non-negative distance.".into()))?,
+                ),
+                Input::Enter => None,
+                _ => return Ok(Step::Continue),
+            };
+            let d = s.doc_mut()?;
+            match (self.chamfer, self.asking) {
+                (false, _) => {
+                    if let Some(v) = v {
+                        d.header.set_f64("FILLETRAD", v);
+                    }
+                    self.asking = 0;
+                }
+                (true, 1) => {
+                    if let Some(v) = v {
+                        d.header.set_f64("CHAMFERA", v);
+                    }
+                    self.asking = 2;
+                }
+                (true, _) => {
+                    let v = v.unwrap_or_else(|| d.header.f64("CHAMFERA", 0.0));
                     d.header.set_f64("CHAMFERB", v);
-                } else {
-                    d.header.set_f64("FILLETRAD", v);
+                    self.asking = 0;
                 }
             }
-            self.asking = false;
             return Ok(Step::Continue);
         }
         match i {
             Input::Keyword(k) if k == "Radius" || k == "Distance" => {
-                self.asking = true;
+                self.asking = 1;
                 Ok(Step::Continue)
             }
             Input::Keyword(k) if k == "Polyline" && !self.chamfer => {
