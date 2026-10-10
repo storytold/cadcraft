@@ -99,6 +99,7 @@ pub fn inspect(app: &CadApp, ctx: &egui::Context) -> Value {
         "cursor": app.canvas.cursor.map(|c| [c.x, c.y]),
         "snap": app.canvas.snap.map(|s| json!({"point": [s.point.x, s.point.y], "mode": s.name})),
         "session": app.session.summary(),
+        "closePrompt": app.close_prompt(),
         "perf": {"frameMs": app.frame_ms, "buildMs": app.canvas.build_ms, "drawMs": app.canvas.draw_ms, "meshMs": app.canvas.mesh_ms, "renderer": if app.canvas.gpu.is_some() { "gpu" } else { "cpu" }, "prims": app.canvas.list.as_ref().map(|l| l.prims.len())},
     })
 }

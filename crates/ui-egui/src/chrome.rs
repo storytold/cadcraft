@@ -166,7 +166,7 @@ pub fn file_tabs(app: &mut CadApp, ui: &mut egui::Ui) {
             app.ui.start_tab = false;
         }
         if let Some(i) = close {
-            let _ = app.run("close", json!({ "index": i }));
+            app.request_close(Some(i));
         }
     });
 }
