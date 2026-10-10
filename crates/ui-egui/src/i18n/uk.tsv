@@ -1,0 +1,942 @@
+# CADCraft Ukrainian interface catalog — original translations by @dmatviichuk.
+# License: MIT OR Apache-2.0 (the repository LICENSE-MIT and LICENSE-APACHE).
+# Written from CADCraft's English strings; no proprietary translations were copied.
+# UTF-8: context<TAB>English source<TAB>Ukrainian translation.
+# Empty context = ordinary label; @plural = one|few|many forms with {n}.
+# Keep command IDs, keywords, technology/product names and user data unchanged.
+	  Cancel  	Скасувати
+	  OK  	Гаразд
+	 or [	 або [
+	% of all commits	% усіх комітів
+	* Wildcard Match	* За шаблоном
+	*VARIES*	*РІЗНІ*
+	+  |  Top  |  2D Wireframe	+  |  Зверху  |  2D-каркас
+	+Bin	+двійк.
+	+LOC	+рядків
+	1 Viewport	1 видовий екран
+	2 Points	2 точки
+	2 Viewports	2 видові екрани
+	2D Solid	2D-заливка
+	3 Points	3 точки
+	3 Viewports	3 видові екрани
+	3D Face	3D-грань
+	3D Operations	3D-операції
+	3D Polyline	3D-полілінія
+	4 Viewports	4 видові екрани
+	< Less than	< Менше ніж
+	<> Not Equal	<> Не дорівнює
+	= Equals	= Дорівнює
+	> Greater than	> Більше ніж
+	About	Про програму
+	About CADCraft	Про CADCraft
+	Absolute	Абсолютні
+	Add Leader	Додати виноску
+	Align	Вирівняти
+	Align Text	Вирівняти текст
+	Aligned	Паралельний
+	All	Усі
+	All Used Layers	Усі використані шари
+	All files	Усі файли
+	Angle	Кут
+	Angular	Кутовий
+	Annotation Visibility	Видимість анотацій
+	Annotation scale	Масштаб анотацій
+	Apparent Intersection	Уявний перетин
+	Append to current selection set	Додати до поточного набору вибраних об'єктів
+	Apply to:	Застосувати до:
+	Apply true color	Застосувати колір RGB
+	Arc	Дуга
+	Arc Length	Довжина дуги
+	Area	Площа
+	Array	Масив
+	Attach	Приєднати
+	Attribute	Атрибут
+	Attribute Definition	Визначення атрибута
+	Auto (system language)	Авто (мова системи)
+	Auto Constrain	Автоматичні обмеження
+	AutoConstrain	Автоматичні обмеження
+	Axis, End	Вісь, кінець
+	Base	База
+	Baseline	Базовий
+	Batch Publish	Пакетне публікування
+	Binary assets added	Додані двійкові ресурси
+	Binary assets removed	Видалені двійкові ресурси
+	Blend	Плавне з'єднання
+	Block	Блок
+	Block Attribute Manager...	Диспетчер атрибутів блоків...
+	Block Editor	Редактор блоків
+	Block Reference	Посилання на блок
+	Block...	Блок...
+	Blocks	Блоки
+	Blue	Синій
+	Bold	Жирний
+	Boolean	Булеві операції
+	Boundary	Межа
+	Boundary...	Межа...
+	Box	Паралелепіпед
+	Break	Розірвати
+	Break At Point	Розірвати в точці
+	Bring to Front	На передній план
+	ByBlock	За блоком
+	ByColor	За кольором
+	ByLayer	За шаром
+	CADCraft Help	Довідка CADCraft
+	Cancel	Скасувати
+	Cartesian (x, y)	Декартові (x, y)
+	Center	Центр
+	Center Line	Осьова лінія
+	Center Mark	Позначка центра
+	Center X	Центр X
+	Center Y	Центр Y
+	Center Z	Центр Z
+	Center, Diameter	Центр, діаметр
+	Center, Radius	Центр, радіус
+	Center, Start, Angle	Центр, початок, кут
+	Center, Start, End	Центр, початок, кінець
+	Center, Start, Length	Центр, початок, довжина
+	Chamfer	Фаска
+	Change Space	Змінити простір
+	Change to Current Layer	Перенести на поточний шар
+	Circle	Коло
+	Circumference	Довжина кола
+	Clear	Очистити
+	Close	Закрити
+	Close All	Закрити всі
+	Closed	Замкнений
+	Coincident	Збіг
+	Collapse Tool Sets	Згорнути набори інструментів
+	Collinear	Колінеарність
+	Color	Колір
+	Color 8	Колір 8
+	Color 9	Колір 9
+	Color Index	Індекс кольору
+	Color...	Колір...
+	Command History	Історія команд
+	Command Line	Командний рядок
+	Command Line History Lines	Рядки історії командного рядка
+	Command Reference	Довідник команд
+	Commits	Коміти
+	Company	Компанія
+	Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust.	Автоматизоване проєктування та креслення: CAD-програма з відкритим кодом, незалежно розроблена мовою Rust.
+	Concentric	Концентричність
+	Cone	Конус
+	Constraint Bars	Панелі обмежень
+	Constraint Settings	Налаштування обмежень
+	Construction Line	Допоміжна пряма
+	Contents	Вміст
+	Continue	Продовжити
+	Contributors	Учасники
+	Control Vertices	Керувальні вершини
+	Copy	Копіювати
+	Copy Layout	Копіювати аркуш
+	Copy Nested Objects	Копіювати вкладені об'єкти
+	Copy with Base Point	Копіювати з базовою точкою
+	Count	Кількість
+	Create Block	Створити блок
+	Creates a user parameter	Створює параметр користувача
+	Ctrl+Enter to finish	Ctrl+Enter для завершення
+	Current layer	Поточний шар
+	Current selection	Поточний вибір
+	Current: {color}	Поточний: {color}
+	Cut	Вирізати
+	Cyan	Блакитний
+	Cylinder	Циліндр
+	Dark	Темна
+	Default	Типово
+	Define Attributes	Визначити атрибути
+	Define Attributes...	Визначити атрибути...
+	Defined width	Задана ширина
+	Degree	Градус
+	Delete	Видалити
+	Delete Column	Видалити стовпець
+	Delete Constraints	Видалити обмеження
+	Delete Dimension Style	Видалити розмірний стиль
+	Delete Duplicate Objects	Видалити дублікати об'єктів
+	Delete Layer	Видалити шар
+	Delete Layer State	Видалити стан шарів
+	Delete Layout	Видалити аркуш
+	Delete Row	Видалити рядок
+	Delete Text Style	Видалити текстовий стиль
+	Delta X	Різниця X
+	Delta Y	Різниця Y
+	Description	Опис
+	Diameter	Діаметр
+	Dim style	Розмірний стиль
+	Dimension	Розміри
+	Dimension Space	Відстань між розмірами
+	Dimension Style Override	Перевизначення розмірного стилю
+	Dimension Style...	Розмірний стиль...
+	Dimension Text Edit	Редагувати розмірний текст
+	Dimension style	Розмірний стиль
+	Dimensional Constraint	Розмірне обмеження
+	Dimensional Constraint Parameters	Параметри розмірних обмежень
+	Dimensional Constraints	Розмірні обмеження
+	Disassociate Dimensions	Скасувати асоціативність розмірів
+	Display name	Відображуване ім'я
+	Distance	Відстань
+	Divide	Поділити
+	Do not plot (click: plot)	Не друкувати (натисніть для друку)
+	Donut	Кільце
+	Double-click to edit the description	Двічі клацніть, щоб редагувати опис
+	Down	Униз
+	Drafting	Креслення
+	Drafting Settings	Налаштування креслення
+	Drafting Settings...	Налаштування креслення...
+	Draw	Креслення
+	Draw Order	Порядок відображення
+	Drawing (DXF)	Креслення (DXF)
+	Drawing Limits	Межі креслення
+	Drawings (DWG, DXF)	Креслення (DWG, DXF)
+	Dynamic Dimensions	Динамічні розміри
+	Dynamic Input	Динамічне введення
+	Dynamic Input (F12)	Динамічне введення (F12)
+	E	Сх
+	Edit	Редагування
+	Edit Text...	Редагувати текст...
+	Elevation	Відмітка
+	Ellipse	Еліпс
+	Elliptical Arc	Еліптична дуга
+	Enable Dynamic Input (F12)	Увімкнути динамічне введення (F12)
+	End Width	Кінцева ширина
+	End X	Кінець X
+	End Y	Кінець Y
+	End angle	Кінцевий кут
+	Endpoint	Кінцева точка
+	Enter Top, Zero or Bottom.	Введіть Top, Zero або Bottom.
+	Enter a fit data option	Введіть параметр апроксимації
+	Enter a pattern name	Введіть назву візерунка
+	Enter a vertex editing option	Введіть параметр редагування вершини
+	Enter an option	Введіть параметр
+	Enter angle of xline	Введіть кут допоміжної прямої
+	Enter angle of xline (0) or	Введіть кут допоміжної прямої (0) або
+	Enter area of rectangle in current units	Введіть площу прямокутника в поточних одиницях
+	Enter attribute prompt	Введіть підказку атрибута
+	Enter attribute tag name	Введіть ім'я тегу атрибута
+	Enter attribute value	Введіть значення атрибута
+	Enter block name	Введіть назву блоку
+	Enter constraint type	Введіть тип обмеження
+	Enter continuity	Введіть тип неперервності
+	Enter default attribute value	Введіть типове значення атрибута
+	Enter degree of spline	Введіть степінь сплайна
+	Enter delta angle	Введіть зміну кута
+	Enter delta length or	Введіть зміну довжини або
+	Enter dimension text	Введіть розмірний текст
+	Enter dimension text (<> = measurement)	Введіть розмірний текст (<> = виміряне значення)
+	Enter dimension value or [name=expression]	Введіть розмірне значення або [name=expression]
+	Enter dimension variable name to override	Введіть назву розмірної змінної для перевизначення
+	Enter justification type	Введіть тип вирівнювання
+	Enter leader text	Введіть текст виноски
+	Enter mline scale	Введіть масштаб мультилінії
+	Enter mode	Введіть режим
+	Enter name of block to insert	Введіть назву блоку для вставлення
+	Enter new text	Введіть новий текст
+	Enter next point	Введіть наступну точку
+	Enter number of columns	Введіть кількість стовпців
+	Enter number of data rows	Введіть кількість рядків даних
+	Enter number of items	Введіть кількість елементів
+	Enter number of items along path	Введіть кількість елементів уздовж траєкторії
+	Enter number of sides	Введіть кількість сторін
+	Enter number of turns	Введіть кількість витків
+	Enter percentage length	Введіть довжину у відсотках
+	Enter rectangle length	Введіть довжину прямокутника
+	Enter rectangle width	Введіть ширину прямокутника
+	Enter scale factor	Введіть коефіцієнт масштабу
+	Enter text	Введіть текст
+	Enter text (use \P for new paragraphs)	Введіть текст (\P починає новий абзац)
+	Enter the number of segments	Введіть кількість сегментів
+	Enter twist direction of helix	Введіть напрямок закручування спіралі
+	Entire drawing	Усе креслення
+	Equal	Рівність
+	Erase	Стерти
+	Exclude from new selection set	Виключити з нового набору вибраних об'єктів
+	Explode	Розчленувати
+	Export	Експортувати
+	Export to PDF...	Експортувати в PDF...
+	Expression	Вираз
+	Extend	Подовжити
+	Extension	Продовження
+	Extents	За межами об'єктів
+	Extrude	Видавити
+	File	Файл
+	File Tab	Вкладка файлу
+	Fillet	Спряження
+	Filter	Фільтр
+	Filters	Фільтри
+	Find and Replace	Знайти й замінити
+	Find...	Знайти...
+	First	Перший
+	First commit	Перший коміт
+	Fit Points	Точки апроксимації
+	Fix	Фіксація
+	Flatten Objects	Спроєктувати об'єкти на площину
+	Format	Формат
+	Freehand	Від руки
+	Freeze	Заморозити
+	Freeze Layer	Заморозити шар
+	Freeze in new viewports	Заморозити в нових видових екранах
+	Freeze/Thaw	Заморозити/розморозити
+	Freeze/Thaw in all viewports	Заморозити/розморозити в усіх видових екранах
+	Freeze/Thaw in the current viewport	Заморозити/розморозити в поточному видовому екрані
+	General	Загальні
+	Geometric Center	Геометричний центр
+	Geometric Constraint	Геометричне обмеження
+	Geometric Constraints	Геометричні обмеження
+	Geometry	Геометрія
+	Get Variable	Отримати змінну
+	Get View	Отримати вид
+	Global width	Загальна ширина
+	Grab bag	Список
+	Gradient	Градієнт
+	Gradient...	Градієнт...
+	Green	Зелений
+	Grid (F7)	Сітка (F7)
+	Grid Display	Відображення сітки
+	Grid On (F7)	Увімкнути сітку (F7)
+	Grid spacing	Крок сітки
+	Grip Mirror	Дзеркальне відображення ручками
+	Grip Rotate	Поворот ручками
+	Grip Scale	Масштабування ручками
+	Grip Stretch	Розтягування ручками
+	Hatch	Штрихування
+	Hatch Edit	Редагувати штрихування
+	Hatch...	Штрихування...
+	Height	Висота
+	Height: {height}	Висота: {height}
+	Helix	Спіраль
+	Help	Довідка
+	Hide All	Приховати всі
+	Hide All Constraint Bars	Приховати всі панелі обмежень
+	Hide All Dynamic Dimensions	Приховати всі динамічні розміри
+	Hide Layer List	Приховати список шарів
+	Hide Palettes	Приховати палітри
+	Home	Початковий вид
+	Horizontal	Горизонтальність
+	HorizontalDistance	Горизонтальна відстань
+	How to apply:	Спосіб застосування:
+	ID Point	Координати точки
+	Import	Імпортувати
+	In	Наблизити
+	In-window Menu Bar	Рядок меню у вікні
+	Include in new selection set	Включити до нового набору вибраних об'єктів
+	Increment angle	Крок кута
+	Index Color	Індексований колір
+	Index color: {index}	Індексований колір: {index}
+	Inquiry	Вимірювання
+	Insert	Вставлення
+	Insert Block	Вставити блок
+	Insert Column	Вставити стовпець
+	Insert Row	Вставити рядок
+	Insert this block	Вставити цей блок
+	Insertion	Точка вставлення
+	Insertion X	Вставлення X
+	Insertion Y	Вставлення Y
+	Insertion Z	Вставлення Z
+	Inspect Constraints	Переглянути обмеження
+	Inspect Drawing	Переглянути креслення
+	Interface Language	Мова інтерфейсу
+	Interface Theme	Тема інтерфейсу
+	Intersect	Перетин
+	Intersection	Перетин
+	Isolate	Ізолювати
+	Isolate Layer	Ізолювати шар
+	Isometric Drafting	Ізометричне креслення
+	Join	Об'єднати
+	Join the ArtCraft Discord…	Приєднатися до Discord ArtCraft…
+	Join us on Discord	Приєднуйтеся до нас у Discord
+	Language	Мова
+	Last	Останній
+	Last commit	Останній коміт
+	Layer	Шар
+	Layer Match	Узгодити шар
+	Layer Off	Вимкнути шар
+	Layer Properties	Властивості шару
+	Layer Properties Manager	Диспетчер властивостей шарів
+	Layer Properties Manager — current viewport	Диспетчер властивостей шарів — поточний видовий екран
+	Layer State	Стан шарів
+	Layer States Manager...	Диспетчер станів шарів...
+	Layer Tools	Інструменти шарів
+	Layer contains objects (double-click to make current)	Шар містить об'єкти (двічі клацніть, щоб зробити поточним)
+	Layer is empty (double-click to make current)	Шар порожній (двічі клацніть, щоб зробити поточним)
+	Layers	Шари
+	Layers displayed: {shown} of {total}.   Current layer: {layer}	Показано шарів: {shown} із {total}.   Поточний шар: {layer}
+	Layout	Аркуш
+	Layout list	Список аркушів
+	Leader	Виноска
+	Left	Ліворуч
+	Length	Довжина
+	Length X	Довжина X
+	Length Y	Довжина Y
+	Lengthen	Змінити довжину
+	Light	Світла
+	Line	Відрізок
+	Line delta	Зміна кількості рядків
+	Linear	Лінійний
+	Lines +/−	Рядки +/−
+	Lines added	Додані рядки
+	Lines deleted	Видалені рядки
+	Linetype	Тип лінії
+	Linetype Scale	Масштаб типу лінії
+	Linetype scale	Масштаб типу лінії
+	Ltscale	Масштаб типу лінії
+	Linetype...	Тип лінії...
+	Lineweight	Товщина лінії
+	Lineweight...	Товщина лінії...
+	List	Список
+	List Blocks	Список блоків
+	List Dimension Styles	Список розмірних стилів
+	List Layer States	Список станів шарів
+	List Layouts	Список аркушів
+	List System Variables	Список системних змінних
+	List Text Styles	Список текстових стилів
+	Load all	Завантажити всі
+	Load...	Завантажити...
+	Loaded linetypes	Завантажені типи ліній
+	Lock	Заблокувати
+	Lock Layer	Заблокувати шар
+	Lock/Unlock	Заблокувати/розблокувати
+	Loft	Тіло за перерізами
+	MIT OR Apache-2.0. Not affiliated with Autodesk, Inc.	MIT OR Apache-2.0. Не пов'язано з Autodesk, Inc.
+	MODEL	МОДЕЛЬ
+	MText	Багаторядковий текст
+	Magenta	Пурпуровий
+	Major line every	Основна лінія через кожні
+	Make Current	Зробити поточним
+	Make Object's Layer Current	Зробити шар об'єкта поточним
+	Make...	Створити...
+	Match Layer	Узгодити шар
+	Match Properties	Копіювати властивості
+	Measure	Розмітити
+	Measure Distance	Виміряти відстань
+	Measure Geometry	Виміряти геометрію
+	Merge Cells	Об'єднати комірки
+	Merged PRs	Об'єднані PR
+	Midpoint	Середина
+	Mirror	Дзеркальне відображення
+	Model	Модель
+	Model Space (in viewport)	Простір моделі (у видовому екрані)
+	Modeling	Моделювання
+	Models	Моделі
+	Modify	Модифікація
+	Move	Перемістити
+	Multileader	Мультивиноска
+	Multileader Style...	Стиль мультивиносок...
+	Multileader style	Стиль мультивиносок
+	Multiline	Мультилінія
+	Multiline Text	Багаторядковий текст
+	Multiline Text...	Багаторядковий текст...
+	Multiple	Різні типи
+	Multiple Point	Кілька точок
+	My	Мої
+	My properties: not available yet	Мої властивості: поки недоступно
+	N	Пн
+	Name	Назва
+	Name (A–Z)	Назва (А–Я)
+	Nearest	Найближча точка
+	New	Створити
+	New (metric)	Створити (метричне)
+	New Drawing	Нове креслення
+	New Drawing (⌘N)	Нове креслення (⌘N)
+	New Drawing...	Нове креслення...
+	New Layer	Новий шар
+	New Layout	Новий аркуш
+	New VP Freeze	Заморозити в нових ВЕ
+	New Viewports...	Нові видові екрани...
+	New layout	Новий аркуш
+	New state name	Назва нового стану
+	No	Ні
+	No blocks defined in this drawing.	У цьому кресленні немає визначених блоків.
+	No contributor data was built into this copy.	Ця збірка не містить даних про учасників.
+	No model credits were built into this copy.	Ця збірка не містить даних про моделі.
+	No saved layer states	Немає збережених станів шарів
+	No selection	Нічого не вибрано
+	Node	Вузол
+	None	Немає
+	Not available	Недоступно
+	Not available yet	Поки недоступно
+	OK	Гаразд
+	Object	Об'єкт
+	Object Snap	Об'єктна прив'язка
+	Object Snap (F3)	Об'єктна прив'язка (F3)
+	Object Snap On (F3)	Увімкнути об'єктну прив'язку (F3)
+	Object Snap Tracking	Відстеження об'єктної прив'язки
+	Object Snap Tracking (F11)	Відстеження об'єктної прив'язки (F11)
+	Object type:	Тип об'єкта:
+	Off	Вимкнено
+	Offset	Зміщення
+	On	Увімкнено
+	On/Off	Увімкнути/вимкнути
+	One of the Crafting Apps by the ArtCraft team and community.	Одна з програм Crafting Apps від команди та спільноти ArtCraft.
+	Open (⌘O)	Відкрити (⌘O)
+	Open Sample Drawing	Відкрити зразок креслення
+	Open sample drawing	Відкрити зразок креслення
+	Open...	Відкрити...
+	Operator:	Оператор:
+	Orbit	Орбіта
+	Ordinate	Ординатний
+	Ortho (F8)	Орто (F8)
+	Ortho Mode	Режим Орто
+	Ortho Mode (F8)	Режим Орто (F8)
+	Out	Віддалити
+	Override	Перевизначити
+	PAPER	АРКУШ
+	Percent	Відсоток
+	Polar (distance < angle)	Полярні (відстань < кут)
+	PRs	PR
+	Page Setup Manager	Диспетчер параметрів аркушів
+	Page Setup Manager...	Диспетчер параметрів аркушів...
+	Pan	Панорамування
+	Pan Down	Панорамувати вниз
+	Pan Left	Панорамувати ліворуч
+	Pan Right	Панорамувати праворуч
+	Pan Up	Панорамувати вгору
+	Paper Space	Простір аркуша
+	Parallel	Паралельність
+	Parameters Manager	Диспетчер параметрів
+	Parametric	Параметризація
+	Paste	Вставити
+	Paste to Original Coordinates	Вставити у вихідні координати
+	Path Array	Масив уздовж траєкторії
+	Pattern	Візерунок
+	Perpendicular	Перпендикулярність
+	Plot	Друк креслення
+	Plot (click: do not plot)	Друкувати (натисніть, щоб вимкнути друк)
+	Plot Preview	Попередній перегляд друку
+	Plot style	Стиль друку
+	Plot style attached to	Стиль друку застосовано до
+	Plot style table	Таблиця стилів друку
+	Plot table type	Тип таблиці друку
+	Plus/minus	Плюс/мінус
+	Point	Точка
+	Point Style...	Стиль точок...
+	Polar Array	Круговий масив
+	Polar Tracking	Полярне відстеження
+	Polar Tracking (F10)	Полярне відстеження (F10)
+	Polar Tracking On (F10)	Увімкнути полярне відстеження (F10)
+	Polar: {distance} < {angle}°	Полярне: {distance} < {angle}°
+	Polygon	Правильний багатокутник
+	Polygonal	Багатокутний
+	Polyline	Полілінія
+	Position X	Позиція X
+	Position Y	Позиція Y
+	Position Z	Позиція Z
+	Previous	Попередній
+	Previous Layer	Попередній шар
+	Primitives	Примітиви
+	Print	Друк
+	Print...	Друк...
+	Properties	Властивості
+	Properties Inspector	Інспектор властивостей
+	Properties:	Властивості:
+	Proxy	Проксі-об'єкт
+	Purge	Очистити невикористане
+	Pyramid	Піраміда
+	Quadrant	Квадрант
+	Query Entities	Запит об'єктів
+	Quick	Швидкий
+	Quick Dimension	Швидкий розмір
+	Quick Properties	Швидкі властивості
+	Quick Select	Швидкий вибір
+	Quick Select Properties	Властивості швидкого вибору
+	Quick Select...	Швидкий вибір...
+	QuickCalc	Калькулятор
+	Quit CADCraft	Вийти з CADCraft
+	Radius	Радіус
+	Raster Image	Растрове зображення
+	Ray	Промінь
+	Read-only	Лише для читання
+	Real name	Справжнє ім'я
+	Realtime	У реальному часі
+	Reassociate Dimensions	Відновити асоціативність розмірів
+	Recent	Нещодавні
+	Rectangle	Прямокутник
+	Rectangular	Прямокутний
+	Rectangular Array	Прямокутний масив
+	Red	Червоний
+	Redo	Повторити
+	Redo (⇧⌘Z)	Повторити (⇧⌘Z)
+	Redraw	Перемалювати
+	Regen	Регенерувати
+	Regen All	Регенерувати все
+	Region	Область
+	Region/Mass Properties	Властивості області/маси
+	Relative	Відносні
+	Remove Leader	Видалити виноску
+	Remove the viewport override	Видалити перевизначення видового екрана
+	Rename Dimension Style	Перейменувати розмірний стиль
+	Rename Layer	Перейменувати шар
+	Rename Layer State	Перейменувати стан шарів
+	Rename Layout	Перейменувати аркуш
+	Rename Text Style	Перейменувати текстовий стиль
+	Rename...	Перейменувати...
+	Requires a point (x,y, @dx,dy or @d<a).	Потрібна точка (x,y, @dx,dy або @d<a).
+	Reset Palettes	Скинути палітри
+	Restore	Відновити
+	Restore Layer State	Відновити стан шарів
+	Reverse	Змінити напрямок
+	Reverse the order	Змінити порядок на зворотний
+	Revision Cloud	Хмарка змін
+	Revolve	Тіло обертання
+	Right	Праворуч
+	Rotate	Повернути
+	Rotation	Кут повороту
+	S	Пд
+	Save	Зберегти
+	Save (⌘S)	Зберегти (⌘S)
+	Save As	Зберегти як
+	Save As...	Зберегти як...
+	Save Layer State	Зберегти стан шарів
+	Save State	Зберегти стан
+	Scale	Масштаб
+	Search for layer	Пошук шару
+	Search for parameter	Пошук параметра
+	Second and next points:	Друга та наступні точки:
+	Select	Вибрати
+	Select 2D polyline	Виберіть 2D-полілінію
+	Select All	Вибрати все
+	Select Objects	Вибрати об'єкти
+	Select a 2D polyline.	Виберіть 2D-полілінію.
+	Select a block reference.	Виберіть посилання на блок.
+	Select a circle or arc.	Виберіть коло або дугу.
+	Select a closed polyline	Виберіть замкнену полілінію
+	Select a closed polyline, circle, ellipse or closed spline.	Виберіть замкнену полілінію, коло, еліпс або замкнений сплайн.
+	Select a closed polyline.	Виберіть замкнену полілінію.
+	Select a curve as the path.	Виберіть криву як траєкторію.
+	Select a dimension constraint type	Виберіть тип розмірного обмеження
+	Select a line object	Виберіть відрізок
+	Select a line object.	Виберіть відрізок.
+	Select a line or an arc.	Виберіть відрізок або дугу.
+	Select a line or polyline segment	Виберіть відрізок або сегмент полілінії
+	Select a line, arc or open polyline.	Виберіть відрізок, дугу або незамкнену полілінію.
+	Select a line, arc, circle, polyline, ellipse or spline as the path.	Виберіть відрізок, дугу, коло, полілінію, еліпс або сплайн як траєкторію.
+	Select a line, circle, arc or polyline segment.	Виберіть відрізок, коло, дугу або сегмент полілінії.
+	Select a line.	Виберіть відрізок.
+	Select a polyline.	Виберіть полілінію.
+	Select a text, mtext, attribute definition or dimension.	Виберіть текст, багаторядковий текст, визначення атрибута або розмір.
+	Select an annotation object or	Виберіть об'єкт анотації або
+	Select an arc or circle	Виберіть дугу або коло
+	Select an arc.	Виберіть дугу.
+	Select an object	Виберіть об'єкт
+	Select an object to change or	Виберіть об'єкт для зміни або
+	Select an object to measure or	Виберіть об'єкт для вимірювання або
+	Select an object.	Виберіть об'єкт.
+	Select an open curve.	Виберіть незамкнену криву.
+	Select an open line, arc, polyline, ellipse arc or spline.	Виберіть незамкнений відрізок, дугу, полілінію, еліптичну дугу або сплайн.
+	Select arc or circle	Виберіть дугу або коло
+	Select arc or polyline arc segment	Виберіть дугу або дуговий сегмент полілінії
+	Select arc style	Виберіть стиль дуги
+	Select arc, circle, line	Виберіть дугу, коло, відрізок
+	Select at least two objects to join.	Виберіть щонайменше два об'єкти для об'єднання.
+	Select circle or arc to add center mark	Виберіть коло або дугу для позначки центра
+	Select closed objects (regions, closed polylines, circles).	Виберіть замкнені об'єкти (області, замкнені полілінії, кола).
+	Select first line	Виберіть перший відрізок
+	Select first line or arc	Виберіть перший відрізок або дугу
+	Select first object	Виберіть перший об'єкт
+	Select first object or	Виберіть перший об'єкт або
+	Select first point	Виберіть першу точку
+	Select nested objects to copy or	Виберіть вкладені об'єкти для копіювання або
+	Select object	Виберіть об'єкт
+	Select object to dimension	Виберіть об'єкт для нанесення розміру
+	Select object to divide	Виберіть об'єкт для поділу
+	Select object to extend or shift-select to trim	Виберіть об'єкт для подовження або виберіть із Shift для обрізання
+	Select object to measure	Виберіть об'єкт для розмітки
+	Select object to offset	Виберіть об'єкт для зміщення
+	Select object to trim or shift-select to extend	Виберіть об'єкт для обрізання або виберіть із Shift для подовження
+	Select objects	Виберіть об'єкти
+	Select objects (crossing window first corner)	Виберіть об'єкти (перший кут січної рамки)
+	Select objects to array.	Виберіть об'єкти для масиву.
+	Select objects to stretch by crossing-window or crossing-polygon...	Виберіть об'єкти для розтягування січною рамкою або січним багатокутником...
+	Select objects:	Виберіть об'єкти:
+	Select one polyline (Multiple is available through the JSON form).	Виберіть одну полілінію (Multiple доступно через JSON).
+	Select path curve	Виберіть криву траєкторії
+	Select point or object	Виберіть точку або об'єкт
+	Select polyline or	Виберіть полілінію або
+	Select second line	Виберіть другий відрізок
+	Select second line or shift-select to apply corner	Виберіть другий відрізок або виберіть із Shift, щоб утворити кут
+	Select second object	Виберіть другий об'єкт
+	Select second object or shift-select to apply corner	Виберіть другий об'єкт або виберіть із Shift, щоб утворити кут
+	Select second point	Виберіть другу точку
+	Select spline	Виберіть сплайн
+	Select symmetry line	Виберіть вісь симетрії
+	Select two points	Виберіть дві точки
+	Selection Cycling	Перебирання вибору
+	Send to Back	На задній план
+	Set Current	Зробити поточним
+	Set Current Dimension Style	Зробити розмірний стиль поточним
+	Set Current Text Style	Зробити текстовий стиль поточним
+	Set Layer Properties	Задати властивості шару
+	Set Properties	Задати властивості
+	Set Table Cell	Задати комірку таблиці
+	Set Variable	Задати змінну
+	Set View	Задати вид
+	Share	Поділитися
+	Show	Показати
+	Show All	Показати всі
+	Show All Constraint Bars	Показати всі панелі обмежень
+	Show All Dynamic Dimensions	Показати всі динамічні розміри
+	Show Layer List	Показати список шарів
+	Show/Hide Lineweight	Показати/приховати товщину ліній
+	Show/Hide Transparency	Показати/приховати прозорість
+	Single Line Text	Однорядковий текст
+	Single Point	Одна точка
+	Single...	Один...
+	Smooth	Плавність
+	Snap	Прив'язка
+	Snap Mode	Режим крокової прив'язки
+	Snap Mode (F9)	Режим крокової прив'язки (F9)
+	Snap On (F9)	Увімкнути крокову прив'язку (F9)
+	Snap X spacing	Крок прив'язки X
+	Snap and Grid	Крокова прив'язка та сітка
+	Solid	Тіло
+	Sort	Сортування
+	Specify a point	Укажіть точку
+	Specify a scale for the hatch pattern	Укажіть масштаб візерунка штрихування
+	Specify a second extension line origin	Укажіть початок другої виносної лінії
+	Specify an angle for the hatch pattern	Укажіть кут візерунка штрихування
+	Specify angle end point	Укажіть кінцеву точку кута
+	Specify angle of dimension line	Укажіть кут розмірної лінії
+	Specify angle of dimension text	Укажіть кут розмірного тексту
+	Specify angle start point	Укажіть початкову точку кута
+	Specify angle vertex	Укажіть вершину кута
+	Specify angle vertex point	Укажіть точку вершини кута
+	Specify arc length dimension location	Укажіть розташування розміру довжини дуги
+	Specify axis endpoint of ellipse	Укажіть кінцеву точку осі еліпса
+	Specify base diameter	Укажіть діаметр основи
+	Specify base point	Укажіть базову точку
+	Specify base point or	Укажіть базову точку або
+	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Укажіть базову точку або зміщення (перетягуйте середньою кнопкою миші для панорамування)
+	Specify base radius or	Укажіть радіус основи або
+	Specify center of donut	Укажіть центр кільця
+	Specify center of ellipse	Укажіть центр еліпса
+	Specify center of polygon	Укажіть центр багатокутника
+	Specify center point for circle	Укажіть центр кола
+	Specify center point of arc	Укажіть центр дуги
+	Specify center point of array	Укажіть центр масиву
+	Specify center point of base	Укажіть центр основи
+	Specify corner of viewport	Укажіть кут видового екрана
+	Specify corner of window, enter a scale factor (nX or nXP)	Укажіть кут рамки, введіть коефіцієнт масштабу (nX або nXP)
+	Specify diameter of circle	Укажіть діаметр кола
+	Specify dimension arc line location	Укажіть розташування розмірної дуги
+	Specify dimension line location	Укажіть розташування розмірної лінії
+	Specify distance between turns	Укажіть відстань між витками
+	Specify distance to other axis	Укажіть відстань до іншої осі
+	Specify end angle	Укажіть кінцевий кут
+	Specify end point of arc	Укажіть кінцеву точку дуги
+	Specify end point of arc (hold Ctrl to switch direction)	Укажіть кінцеву точку дуги (утримуйте Ctrl для зміни напрямку)
+	Specify ending width	Укажіть кінцеву ширину
+	Specify ending width for next segment	Укажіть кінцеву ширину наступного сегмента
+	Specify endpoint of arc	Укажіть кінцеву точку дуги
+	Specify endpoint of axis	Укажіть кінцеву точку осі
+	Specify endpoint of line	Укажіть кінцеву точку відрізка
+	Specify feature location	Укажіть розташування елемента
+	Specify fillet radius	Укажіть радіус спряження
+	Specify fillet radius for rectangles	Укажіть радіус спряження прямокутників
+	Specify first angle endpoint	Укажіть першу кінцеву точку кута
+	Specify first chamfer distance	Укажіть першу відстань фаски
+	Specify first chamfer distance for rectangles	Укажіть першу відстань фаски прямокутників
+	Specify first constraint point	Укажіть першу точку обмеження
+	Specify first corner	Укажіть перший кут
+	Specify first corner point	Укажіть першу кутову точку
+	Specify first destination point	Укажіть першу цільову точку
+	Specify first end point of circle's diameter	Укажіть першу кінцеву точку діаметра кола
+	Specify first endpoint of edge	Укажіть першу кінцеву точку ребра
+	Specify first extension line origin	Укажіть початок першої виносної лінії
+	Specify first point	Укажіть першу точку
+	Specify first point of mirror line	Укажіть першу точку осі дзеркального відображення
+	Specify first point on circle	Укажіть першу точку на колі
+	Specify first point on circle: _tan to	Укажіть першу точку на колі: _tan до
+	Specify first source point	Укажіть першу вихідну точку
+	Specify height	Укажіть висоту
+	Specify helix height or	Укажіть висоту спіралі або
+	Specify included angle	Укажіть кут між сторонами
+	Specify insertion base point	Укажіть базову точку вставлення
+	Specify insertion point	Укажіть точку вставлення
+	Specify inside diameter of donut	Укажіть внутрішній діаметр кільця
+	Specify leader arrowhead location	Укажіть розташування стрілки виноски
+	Specify leader endpoint	Укажіть кінцеву точку виноски
+	Specify leader landing location	Укажіть розташування полиці виноски
+	Specify length for rectangles	Укажіть довжину прямокутників
+	Specify length of chord	Укажіть довжину хорди
+	Specify length of segment	Укажіть довжину сегмента
+	Specify line width for rectangles	Укажіть ширину ліній прямокутників
+	Specify location for new vertex	Укажіть розташування нової вершини
+	Specify minimum length of arc	Укажіть мінімальну довжину дуги
+	Specify new end point	Укажіть нову кінцеву точку
+	Specify new location for marked vertex	Укажіть нове розташування позначеної вершини
+	Specify new width for all segments	Укажіть нову ширину всіх сегментів
+	Specify next point	Укажіть наступну точку
+	Specify offset distance	Укажіть відстань зміщення
+	Specify offset distance or	Укажіть відстань зміщення або
+	Specify opposite corner	Укажіть протилежний кут
+	Specify other corner point	Укажіть іншу кутову точку
+	Specify other endpoint of axis	Укажіть іншу кінцеву точку осі
+	Specify outside diameter of donut	Укажіть зовнішній діаметр кільця
+	Specify point	Укажіть точку
+	Specify point on object for first tangent of circle	Укажіть точку на об'єкті для першої дотичної кола
+	Specify point on object for second tangent of circle	Укажіть точку на об'єкті для другої дотичної кола
+	Specify point on side to offset	Укажіть точку з боку зміщення
+	Specify radius of arc	Укажіть радіус дуги
+	Specify radius of circle	Укажіть радіус кола
+	Specify rotation angle	Укажіть кут повороту
+	Specify rotation angle of text	Укажіть кут повороту тексту
+	Specify rotation angle or	Укажіть кут повороту або
+	Specify scale factor	Укажіть коефіцієнт масштабу
+	Specify second angle endpoint	Укажіть другу кінцеву точку кута
+	Specify second break point	Укажіть другу точку розриву
+	Specify second chamfer distance for rectangles	Укажіть другу відстань фаски прямокутників
+	Specify second constraint point	Укажіть другу точку обмеження
+	Specify second destination point	Укажіть другу цільову точку
+	Specify second end point of circle's diameter	Укажіть другу кінцеву точку діаметра кола
+	Specify second endpoint of edge	Укажіть другу кінцеву точку ребра
+	Specify second extension line origin	Укажіть початок другої виносної лінії
+	Specify second point	Укажіть другу точку
+	Specify second point of arc	Укажіть другу точку дуги
+	Specify second point of mirror line	Укажіть другу точку осі дзеркального відображення
+	Specify second point on circle	Укажіть другу точку на колі
+	Specify second point on circle: _tan to	Укажіть другу точку на колі: _tan до
+	Specify second point or <use first point as displacement>	Укажіть другу точку або <використати першу точку як зміщення>
+	Specify second source point	Укажіть другу вихідну точку
+	Specify side to offset	Укажіть бік зміщення
+	Specify start angle	Укажіть початковий кут
+	Specify start point	Укажіть початкову точку
+	Specify start point of arc	Укажіть початкову точку дуги
+	Specify start point of polyline	Укажіть початкову точку полілінії
+	Specify start point of text	Укажіть початкову точку тексту
+	Specify starting width	Укажіть початкову ширину
+	Specify starting width for next segment	Укажіть початкову ширину наступного сегмента
+	Specify tangent direction for the start point of arc	Укажіть напрямок дотичної в початковій точці дуги
+	Specify the elevation for rectangles	Укажіть відмітку прямокутників
+	Specify thickness for rectangles	Укажіть висоту видавлювання прямокутників
+	Specify third point on circle	Укажіть третю точку на колі
+	Specify third point on circle: _tan to	Укажіть третю точку на колі: _tan до
+	Specify third source point or <continue>	Укажіть третю вихідну точку або <продовжити>
+	Specify through point	Укажіть точку, через яку проходить пряма
+	Specify top diameter	Укажіть діаметр вершини
+	Specify top radius or	Укажіть радіус вершини або
+	Specify total angle	Укажіть загальний кут
+	Specify total length or	Укажіть загальну довжину або
+	Specify width for rectangles	Укажіть ширину прямокутників
+	Sphere	Сфера
+	Spline	Сплайн
+	Stack (type 1/2 then select)	Дріб (введіть 1/2, потім виділіть)
+	Standard	Стандартний
+	Start	Початок
+	Start Width	Початкова ширина
+	Start X	Початок X
+	Start Y	Початок Y
+	Start angle	Початковий кут
+	Start, Center, Angle	Початок, центр, кут
+	Start, Center, End	Початок, центр, кінець
+	Start, Center, Length	Початок, центр, довжина
+	Start, End, Angle	Початок, кінець, кут
+	Start, End, Direction	Початок, кінець, напрямок
+	Start, End, Radius	Початок, кінець, радіус
+	Status	Стан
+	Status Bar	Рядок стану
+	Stretch	Розтягнути
+	Style: Standard	Стиль: Standard
+	Subtract	Відняти
+	Sweep	Тіло вздовж траєкторії
+	Switch Drawing	Перемкнути креслення
+	Switch Layout	Перемкнути аркуш
+	Switch between model space in a viewport and paper space	Перемкнути між простором моделі у видовому екрані та простором аркуша
+	Symmetric	Симетрія
+	Toggle PICKADD (off: each pick replaces the selection)	Перемкнути PICKADD (вимкнено: кожен вибір замінює набір вибраних об'єктів)
+	Toggle PICKADD (on: picks add to the selection)	Перемкнути PICKADD (увімкнено: вибране додається до набору вибраних об'єктів)
+	TOP	ЗВЕРХУ
+	Table	Таблиця
+	Table Style...	Стиль таблиць...
+	Table style	Стиль таблиць
+	Table...	Таблиця...
+	Tan, Tan, Radius	Дотична, дотична, радіус
+	Tan, Tan, Tan	Дотична, дотична, дотична
+	Tangent	Дотичність
+	Text	Текст
+	Text Editor	Текстовий редактор
+	Text Height	Висота тексту
+	Text Style...	Текстовий стиль...
+	Text height	Висота тексту
+	Text override	Перевизначення тексту
+	Text style	Текстовий стиль
+	Thaw All Layers	Розморозити всі шари
+	There is nothing here yet.	Тут поки що нічого немає.
+	Thickness	Висота видавлювання
+	Time	Час
+	To get started, create or open a drawing.	Щоб почати, створіть або відкрийте креслення.
+	Tool Bar	Панель інструментів
+	Tool Sets	Набори інструментів
+	Tools	Інструменти
+	Torus	Тор
+	Trace	Смуга
+	Transparency	Прозорість
+	Trim	Обрізати
+	True Color	Колір RGB
+	Turn All Layers On	Увімкнути всі шари
+	Turn Off Layer	Вимкнути шар
+	Turn Quick Properties off (QPMODE)	Вимкнути швидкі властивості (QPMODE)
+	Type	Тип
+	Type a command	Введіть команду
+	Type text; Enter starts a new paragraph	Введіть текст; Enter починає новий абзац
+	UCS Icon	Піктограма СКК
+	Undo	Скасувати дію
+	Undo (⌘Z)	Скасувати дію (⌘Z)
+	Union	Об'єднання
+	Unisolate Layer	Скасувати ізоляцію шарів
+	Units...	Одиниці...
+	Unlock Layer	Розблокувати шар
+	Unmerge Cells	Розділити комірки
+	Unsaved Layer State	Незбережений стан шарів
+	Up	Угору
+	Update	Оновити
+	Use System Setting	Як у системі
+	User	Користувач
+	User Parameters	Параметри користувача
+	Username	Ім'я користувача
+	VP Color	Колір ВЕ
+	VP Freeze	Заморожування ВЕ
+	Value	Значення
+	Value:	Значення:
+	Version	Версія
+	Version {version}	Версія {version}
+	Vertical	Вертикальність
+	VerticalDistance	Вертикальна відстань
+	View	Вид
+	ViewCube	Куб виду
+	Viewport	Видовий екран
+	Viewport Layer Freeze	Заморозити шар у видовому екрані
+	Viewport Properties	Властивості видового екрана
+	Viewport {id}	Видовий екран {id}
+	Viewports	Видові екрани
+	W	Зх
+	WCS ⌄	ССК ⌄
+	White	Білий
+	Width factor	Коефіцієнт ширини
+	Window	Вікно
+	Wipeout	Маскування
+	Workspace Switching	Перемикання робочого простору
+	Write Block	Записати блок у файл
+	Xline	Допоміжна пряма
+	Yellow	Жовтий
+	Yes	Так
+	Zoom	Масштабування виду
+	Zoom All	Показати все
+	Zoom Extents	Показати межі об'єктів
+	Zoom In	Наблизити
+	Zoom Object	Показати об'єкт
+	Zoom Out	Віддалити
+	Zoom Previous	Попередній масштаб
+	Zoom Window	Масштабувати рамкою
+	error	помилка
+	{contributors} · {commits}	{contributors} · {commits}
+	{kind} (constraint {id})	{kind} (обмеження {id})
+	{kind} constraint {name} = {expression}  (double-click to edit)	Обмеження «{kind}» {name} = {expression}  (двічі клацніть для редагування)
+	ƒx  New User Parameter	ƒx  Новий параметр користувача
+	ΔLOC	Δрядків
+	−Bin	−двійк.
+	−LOC	−рядків
+	⌘↩ to finish	⌘↩ для завершення
+@plural	{n} commit	{n} коміт|{n} коміти|{n} комітів
+@plural	{n} contributor	{n} учасник|{n} учасники|{n} учасників
+	Drawing as bytes	Креслення як байти
+	Services	Служби
+	Hide CADCraft	Приховати CADCraft
+	Hide Others	Приховати інші

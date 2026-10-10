@@ -917,5 +917,5 @@ pub fn button(ui: &mut egui::Ui, icon: Icon, size: f32, tooltip: &str, selected:
         ui.painter().rect_filled(rect, 3.0, t.control_hover.gamma_multiply(0.6));
     }
     paint(ui.painter(), rect.shrink(size * 0.08), icon, !ui.is_enabled());
-    resp.on_hover_text(tooltip)
+    resp.on_hover_text(crate::i18n::t(tooltip))
 }

@@ -73,7 +73,7 @@ edge cases, dialogs), which is why it is lower.
 | M10 | Performance: GPU canvas (wgpu batches), R-tree spatial index, incremental regen, 1M-entity drawings at 60 fps | ~70% (GPU canvas, incremental R-tree: pick 50 ms → 0.001 ms at 200k entities, ≈ 4 ms after an edit) | 12 |
 | M11 | 3D: UCS, orbit, visual styles, solids (box…loft, booleans, fillet edges), meshes, surfaces, sections, rendering | 0% | 200 |
 | M12 | Automation: an embedded safe AutoLISP-compatible interpreter, action recorder, sheet sets, CLI/MCP parity tests | ~25% | 60 |
-| M13 | 1.0 polish: preferences, workspaces, themes, localisation, accessibility, signed packages for every platform, docs | ~10% | 40 |
+| M13 | 1.0 polish: preferences, workspaces, themes, localisation, accessibility, signed packages for every platform, docs | ~10% (English/Ukrainian interface catalogs, live language switching and persisted system-language choice) | 40 |
 | | **Remaining total** | | **≈ 570 hours** |
 
 At roughly 570 more hours of Opus 5.5 wall-clock work (with parallel agents this compresses to
