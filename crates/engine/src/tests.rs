@@ -597,7 +597,7 @@ fn count_from_the_menu_shows_its_result() {
     s.execute("circle", &json!({"center": [0, 0], "radius": 1})).unwrap();
     s.execute("selectall", &json!({})).unwrap();
     s.cmdline("block Valve 0,0").unwrap();
-    s.cmdline("insert Valve 10,0 1 0").unwrap();
+    s.cmdline("insert Valve 10,0 1 1 0").unwrap();
     s.start("count").unwrap();
     let n = s.log.len();
     assert_eq!(&s.log[n - 3..], ["Block references in model space:", "  Valve: 2", "  Total: 2"]);
@@ -814,7 +814,7 @@ fn block_insert_with_attributes() {
     assert!(s.running.is_none());
     assert!(s.doc().unwrap().block("Valve").is_some());
     assert_eq!(s.doc().unwrap().model.len(), 1, "originals converted to one insert");
-    s.cmdline("insert Valve 10,0 2 90 V-101").unwrap();
+    s.cmdline("insert Valve 10,0 2 2 90 V-101").unwrap();
     let ins: Vec<_> =
         s.doc().unwrap().model.iter().filter_map(|e| if let EntityKind::Insert(i) = &e.kind { Some(i.clone()) } else { None }).collect();
     assert_eq!(ins.len(), 2);
