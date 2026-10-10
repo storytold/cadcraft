@@ -27,12 +27,12 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["Dimension", "Radius"])
             .alias(&["dra", "dimrad"])
             .params("{handle, at?} | {center, point}")
-            .interactive(|_| Ok(Box::new(RadialM { diameter: false, target: None }))),
+            .interactive(|_| Ok(Box::new(RadialM::new(false)))),
         CommandSpec::new("dimdiameter", "Diameter", run_diameter)
             .menu(&["Dimension", "Diameter"])
             .alias(&["ddi", "dimdia"])
             .params("{handle, at?} | {center, point}")
-            .interactive(|_| Ok(Box::new(RadialM { diameter: true, target: None }))),
+            .interactive(|_| Ok(Box::new(RadialM::new(true)))),
         CommandSpec::new("dimangular", "Angular", run_angular)
             .menu(&["Dimension", "Angular"])
             .alias(&["dan", "dimang"])
@@ -396,20 +396,22 @@ fn run_qdim(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "handles": out }))
 }
 
-fn mleader_kind(s: &Session, pts: &[Vec2], text: &str) -> Option<EntityKind> {
-    let (landing, arrow_pts) = pts.split_last()?;
+/// A multileader from arrowhead to landing; `landing` false leaves out the landing line (dogleg).
+fn mleader_kind(s: &Session, pts: &[Vec2], text: &str, landing: bool) -> Option<EntityKind> {
+    let (landing_pt, arrow_pts) = pts.split_last()?;
     let d = s.doc().ok()?;
     let cur = d.header.str("CMLEADERSTYLE", "Standard");
     let st = d.mleader_styles.iter().find(|m| m.name.eq_ignore_ascii_case(&cur)).or(d.mleader_styles.first()).cloned().unwrap_or_default();
     let k = d.header.f64("DIMSCALE", 1.0);
     let th = st.text_height * k;
-    let dir = if arrow_pts.first().is_some_and(|a| a.x > landing.x) { -1.0 } else { 1.0 };
+    let dir = if arrow_pts.first().is_some_and(|a| a.x > landing_pt.x) { -1.0 } else { 1.0 };
     let attach = if dir > 0.0 { 4 } else { 6 };
-    let tpos = *landing + Vec2::new((st.dogleg * k + st.landing_gap * k) * dir, 0.0);
+    let dogleg = if landing { st.dogleg * k } else { 0.0 };
+    let tpos = *landing_pt + Vec2::new((dogleg + st.landing_gap * k) * dir, 0.0);
     Some(EntityKind::MLeader(MLeader {
         leaders: vec![arrow_pts.iter().map(|p| v3(*p)).collect()],
-        landing: v3(*landing),
-        dogleg: st.dogleg * k,
+        landing: v3(*landing_pt),
+        dogleg,
         text: (!text.is_empty()).then(|| MText {
             insert: v3(tpos),
             height: th,
@@ -430,7 +432,7 @@ fn run_mleader(s: &mut Session, p: &Value) -> Result<Value> {
     if pts.len() < 2 {
         return Err(bad("mleader", "need an arrowhead and a landing point"));
     }
-    let k = mleader_kind(s, &pts, str_param(p, "text").unwrap_or("")).ok_or_else(|| bad("mleader", "bad points"))?;
+    let k = mleader_kind(s, &pts, str_param(p, "text").unwrap_or(""), true).ok_or_else(|| bad("mleader", "bad points"))?;
     Ok(json!({ "handle": s.add_entity(k)?.hex() }))
 }
 
@@ -773,18 +775,78 @@ fn segment_at(s: &Session, h: Handle, p: Vec2) -> Option<Segment> {
     }
 }
 
+/// What a dimension placement prompt asks after Mtext, Text or Angle.
+#[derive(Clone, Copy, PartialEq)]
+enum DimAsk {
+    Text,
+    Angle,
+}
+
+/// The Mtext / Text / Angle options of the dimension placement prompts: replace the measured text
+/// (`<>` stands for the measurement) and rotate the text.
+#[derive(Default)]
+struct DimText {
+    text: String,
+    angle: f64,
+    asking: Option<DimAsk>,
+}
+
+impl DimText {
+    /// Opens the sub-prompt for Mtext, Text or Angle; `false` for any other keyword.
+    fn keyword(&mut self, k: &str) -> bool {
+        self.asking = match k {
+            "Mtext" | "Text" => Some(DimAsk::Text),
+            "Angle" => Some(DimAsk::Angle),
+            _ => return false,
+        };
+        true
+    }
+    fn prompt(&self) -> Option<Prompt> {
+        Some(match self.asking? {
+            DimAsk::Text => Prompt::new("Enter dimension text (<> = measurement)", Accept::TEXT),
+            DimAsk::Angle => Prompt::new("Specify angle of dimension text", Accept::NUMBER),
+        })
+    }
+    /// Takes the answer to the open sub-prompt (Enter keeps the current value); `false` when none is open.
+    fn answer(&mut self, s: &mut Session, i: &Input) -> bool {
+        let Some(a) = self.asking else { return false };
+        match (a, i) {
+            (DimAsk::Text, Input::Text(t)) => self.text = t.clone(),
+            (DimAsk::Angle, Input::Text(t)) => match crate::units::parse_angle(t) {
+                Some(r) => self.angle = r,
+                None => {
+                    s.echo("Requires a valid angle.");
+                    return true;
+                }
+            },
+            _ => {}
+        }
+        self.asking = None;
+        true
+    }
+    /// `k` with this text and text angle.
+    fn apply(&self, mut k: EntityKind) -> EntityKind {
+        if let EntityKind::Dimension(d) = &mut k {
+            d.text = self.text.clone();
+            d.text_rotation = self.angle;
+        }
+        k
+    }
+}
+
 struct LinearM {
     aligned: bool,
     pts: Vec<Vec2>,
     rotation: Option<f64>,
-    text: String,
+    text: DimText,
     selecting: bool,
-    asking: Option<&'static str>,
+    /// Asking for the dimension line angle (Rotated).
+    rotating: bool,
 }
 
 impl LinearM {
     fn new(aligned: bool) -> Self {
-        LinearM { aligned, pts: Vec::new(), rotation: None, text: String::new(), selecting: false, asking: None }
+        LinearM { aligned, pts: Vec::new(), rotation: None, text: DimText::default(), selecting: false, rotating: false }
     }
 }
 
@@ -793,8 +855,11 @@ impl Interactive for LinearM {
         if self.aligned { "DIMALIGNED" } else { "DIMLINEAR" }
     }
     fn prompt(&self, _s: &Session) -> Prompt {
-        if let Some(a) = self.asking {
-            return Prompt::new(a, Accept::TEXT);
+        if self.rotating {
+            return Prompt::new("Specify angle of dimension line", Accept::NUMBER);
+        }
+        if let Some(p) = self.text.prompt() {
+            return p;
         }
         if self.selecting {
             return Prompt::new("Select object to dimension", Accept::POINT);
@@ -802,19 +867,26 @@ impl Interactive for LinearM {
         match self.pts.len() {
             0 => Prompt::new("Specify first extension line origin", Accept::POINT).default("select object"),
             1 => Prompt::new("Specify second extension line origin", Accept::POINT).base_opt(self.pts.first().copied()),
-            _ if self.aligned => Prompt::new("Specify dimension line location", Accept::POINT).kw(&["Mtext", "Text", "Angle"]),
+            // Once the orientation is forced, only the text options remain.
+            _ if self.aligned || self.rotation.is_some() => {
+                Prompt::new("Specify dimension line location", Accept::POINT).kw(&["Mtext", "Text", "Angle"])
+            }
             _ => Prompt::new("Specify dimension line location", Accept::POINT).kw(&["Mtext", "Text", "Angle", "Horizontal", "Vertical", "Rotated"]),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
-        if let Some(a) = self.asking.take() {
+        if self.rotating {
             if let Input::Text(t) = &i {
-                if a.starts_with("Enter dimension text") {
-                    self.text = t.clone();
-                } else if let Some(r) = crate::units::parse_angle(t) {
-                    self.rotation = Some(r);
-                }
+                let Some(r) = crate::units::parse_angle(t) else {
+                    s.echo("Requires a valid angle.");
+                    return Ok(Step::Continue);
+                };
+                self.rotation = Some(r);
             }
+            self.rotating = false;
+            return Ok(Step::Continue);
+        }
+        if self.text.answer(s, &i) {
             return Ok(Step::Continue);
         }
         if self.selecting {
@@ -853,7 +925,7 @@ impl Interactive for LinearM {
             }
             (_, Input::Point(at)) => {
                 let (Some(&a), Some(&b)) = (self.pts.first(), self.pts.get(1)) else { return Ok(Step::Continue) };
-                let k = dim(s, linear_kind(a, b, at, self.rotation, self.aligned), at, a, b, Vec2::ZERO, Vec2::ZERO, &self.text);
+                let k = self.text.apply(dim(s, linear_kind(a, b, at, self.rotation, self.aligned), at, a, b, Vec2::ZERO, Vec2::ZERO, ""));
                 add_dim(s, k)?;
                 if let Some(EntityKind::Dimension(d)) = s.last_dim.and_then(|h| s.doc().ok()?.entity(h).map(|e| e.kind.clone())) {
                     let st = s.doc()?.dim_style(&d.style).cloned().unwrap_or_default();
@@ -866,9 +938,10 @@ impl Interactive for LinearM {
                 match k.as_str() {
                     "Horizontal" => self.rotation = Some(0.0),
                     "Vertical" => self.rotation = Some(std::f64::consts::FRAC_PI_2),
-                    "Rotated" => self.asking = Some("Specify angle of dimension line"),
-                    "Text" | "Mtext" => self.asking = Some("Enter dimension text (<> = measurement)"),
-                    _ => self.asking = Some("Specify angle of dimension text"),
+                    "Rotated" => self.rotating = true,
+                    other => {
+                        self.text.keyword(other);
+                    }
                 }
                 Ok(Step::Continue)
             }
@@ -879,7 +952,7 @@ impl Interactive for LinearM {
     fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
         match self.pts.as_slice() {
             [a] => vec![super::helpers::line(*a, c)],
-            [a, b] => vec![dim(s, linear_kind(*a, *b, c, self.rotation, self.aligned), c, *a, *b, Vec2::ZERO, Vec2::ZERO, &self.text)],
+            [a, b] => vec![self.text.apply(dim(s, linear_kind(*a, *b, c, self.rotation, self.aligned), c, *a, *b, Vec2::ZERO, Vec2::ZERO, ""))],
             _ => Vec::new(),
         }
     }
@@ -888,16 +961,20 @@ impl Interactive for LinearM {
 struct RadialM {
     diameter: bool,
     target: Option<(Vec2, f64)>,
+    text: DimText,
 }
 
 impl RadialM {
+    fn new(diameter: bool) -> Self {
+        RadialM { diameter, target: None, text: DimText::default() }
+    }
     fn kind(&self, s: &Session, c: Vec2, r: f64, at: Vec2) -> EntityKind {
         let pt = c + (at - c).normalized() * r;
-        if self.diameter {
+        self.text.apply(if self.diameter {
             dim(s, DimKind::Diameter, c + (c - pt), Vec2::ZERO, Vec2::ZERO, pt, Vec2::ZERO, "")
         } else {
             dim(s, DimKind::Radius, c, Vec2::ZERO, Vec2::ZERO, pt, Vec2::ZERO, "")
-        }
+        })
     }
 }
 
@@ -906,12 +983,18 @@ impl Interactive for RadialM {
         if self.diameter { "DIMDIAMETER" } else { "DIMRADIUS" }
     }
     fn prompt(&self, _s: &Session) -> Prompt {
+        if let Some(p) = self.text.prompt() {
+            return p;
+        }
         match self.target {
             None => Prompt::new("Select arc or circle", Accept::POINT),
             Some((c, _)) => Prompt::new("Specify dimension line location", Accept::POINT).kw(&["Mtext", "Text", "Angle"]).base(c),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if self.text.answer(s, &i) {
+            return Ok(Step::Continue);
+        }
         match (self.target, i) {
             (None, Input::Point(p)) => {
                 match pick_at(s, p).and_then(|h| circle_of(s, h)) {
@@ -924,6 +1007,10 @@ impl Interactive for RadialM {
                 let k = self.kind(s, c, r, at);
                 add_dim(s, k)?;
                 Ok(Step::Done)
+            }
+            (Some(_), Input::Keyword(k)) => {
+                self.text.keyword(&k);
+                Ok(Step::Continue)
             }
             (_, Input::Enter) => Ok(Step::Cancel),
             _ => Ok(Step::Continue),
@@ -942,6 +1029,10 @@ struct AngularM {
     vertex_mode: Vec<Vec2>,
     vertex: bool,
     arc: Option<(Vec2, Vec2, Vec2)>,
+    text: DimText,
+    /// Quadrant: a point inside the angle to measure; the arc location then only sets the radius.
+    quadrant: Option<Vec2>,
+    asking_quadrant: bool,
 }
 
 impl AngularM {
@@ -958,6 +1049,13 @@ impl AngularM {
         let far = |p: Vec2, q: Vec2| if p.dist(v) > q.dist(v) { p } else { q };
         Some((v, far(a1, a2), far(b1, b2)))
     }
+    /// The arc location `at`, turned into the locked quadrant (same radius) when one is set.
+    fn located(&self, v: Vec2, at: Vec2) -> Vec2 {
+        match self.quadrant {
+            Some(q) if q.dist(v) > 1e-12 && at.dist(v) > 1e-12 => v + (q - v).normalized() * at.dist(v),
+            _ => at,
+        }
+    }
 }
 
 impl Interactive for AngularM {
@@ -965,6 +1063,12 @@ impl Interactive for AngularM {
         "DIMANGULAR"
     }
     fn prompt(&self, _s: &Session) -> Prompt {
+        if let Some(p) = self.text.prompt() {
+            return p;
+        }
+        if self.asking_quadrant {
+            return Prompt::new("Specify quadrant", Accept::POINT);
+        }
         if self.geometry().is_some() {
             return Prompt::new("Specify dimension arc line location", Accept::POINT).kw(&["Mtext", "Text", "Angle", "Quadrant"]);
         }
@@ -983,16 +1087,35 @@ impl Interactive for AngularM {
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if self.text.answer(s, &i) {
+            return Ok(Step::Continue);
+        }
+        if self.asking_quadrant {
+            if let Input::Point(q) = i {
+                self.quadrant = Some(q);
+            }
+            self.asking_quadrant = false;
+            return Ok(Step::Continue);
+        }
         if let Some((v, a, b)) = self.geometry() {
             return match i {
                 Input::Point(at) => {
+                    let at = self.located(v, at);
                     let k = match (self.handles.as_slice(), self.arc) {
                         ([h1, h2], None) => angular_from_lines(s, *h1, *h2, at),
                         _ => None,
                     };
                     let k = k.unwrap_or_else(|| dim(s, DimKind::Angular3P, at, a, b, v, Vec2::ZERO, ""));
-                    add_dim(s, k)?;
+                    add_dim(s, self.text.apply(k))?;
                     Ok(Step::Done)
+                }
+                Input::Keyword(k) => {
+                    if k == "Quadrant" {
+                        self.asking_quadrant = true;
+                    } else {
+                        self.text.keyword(&k);
+                    }
+                    Ok(Step::Continue)
                 }
                 Input::Enter => Ok(Step::Cancel),
                 _ => Ok(Step::Continue),
@@ -1048,13 +1171,37 @@ impl Interactive for AngularM {
         }
     }
     fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
-        self.geometry().map(|(v, a, b)| vec![dim(s, DimKind::Angular3P, c, a, b, v, Vec2::ZERO, "")]).unwrap_or_default()
+        self.geometry()
+            .map(|(v, a, b)| vec![self.text.apply(dim(s, DimKind::Angular3P, self.located(v, c), a, b, v, Vec2::ZERO, ""))])
+            .unwrap_or_default()
     }
 }
 
 #[derive(Default)]
 struct ArcLenM {
     arc: Option<cadcraft_geom::Arc>,
+    text: DimText,
+    /// Partial: the points picked so far on the arc (`None` when not choosing a part).
+    partial: Option<Vec<Vec2>>,
+}
+
+/// The part of `arc` between the points nearest `p` and `q` (in the arc's direction).
+fn arc_part(arc: &cadcraft_geom::Arc, p: Vec2, q: Vec2) -> Option<cadcraft_geom::Arc> {
+    let sweep = arc.sweep();
+    // Offset along the arc from its start, clamped to the nearer end when the point is off the arc.
+    let along = |x: Vec2| {
+        let t = cadcraft_geom::ccw_sweep(arc.start, arc.center.angle_to(x));
+        if t <= sweep {
+            t
+        } else if t - sweep < std::f64::consts::TAU - t {
+            sweep
+        } else {
+            0.0
+        }
+    };
+    let (t1, t2) = (along(p), along(q));
+    let (lo, hi) = (t1.min(t2), t1.max(t2));
+    (hi - lo > 1e-9).then(|| cadcraft_geom::Arc::new(arc.center, arc.radius, arc.start + lo, arc.start + hi))
 }
 
 impl Interactive for ArcLenM {
@@ -1062,12 +1209,36 @@ impl Interactive for ArcLenM {
         "DIMARC"
     }
     fn prompt(&self, _s: &Session) -> Prompt {
+        if let Some(p) = self.text.prompt() {
+            return p;
+        }
+        if let Some(picked) = &self.partial {
+            return match picked.first() {
+                None => Prompt::new("Specify first point for arc length dimension", Accept::POINT),
+                Some(&f) => Prompt::new("Specify second point for arc length dimension", Accept::POINT).base(f),
+            };
+        }
         match self.arc {
             None => Prompt::new("Select arc or polyline arc segment", Accept::POINT),
             Some(_) => Prompt::new("Specify arc length dimension location", Accept::POINT).kw(&["Mtext", "Text", "Angle", "Partial"]),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if self.text.answer(s, &i) {
+            return Ok(Step::Continue);
+        }
+        if let Some(picked) = self.partial.take() {
+            match (i, picked.first().copied(), self.arc) {
+                (Input::Point(p), None, _) => self.partial = Some(vec![p]),
+                (Input::Point(q), Some(p), Some(g)) => match arc_part(&g, p, q) {
+                    Some(part) => self.arc = Some(part),
+                    None => s.echo("The two points must be different."),
+                },
+                (Input::Enter, ..) => {}
+                _ => self.partial = Some(picked),
+            }
+            return Ok(Step::Continue);
+        }
         match (self.arc, i) {
             (None, Input::Point(p)) => {
                 if let Some(EntityKind::Arc(a)) = pick_at(s, p).and_then(|h| s.doc().ok()?.entity(h).map(|e| e.kind.clone())) {
@@ -1078,22 +1249,44 @@ impl Interactive for ArcLenM {
                 Ok(Step::Continue)
             }
             (Some(g), Input::Point(at)) => {
-                add_dim(s, dim(s, DimKind::ArcLength, at, g.start_point(), g.end_point(), g.center, Vec2::ZERO, ""))?;
+                add_dim(s, self.text.apply(dim(s, DimKind::ArcLength, at, g.start_point(), g.end_point(), g.center, Vec2::ZERO, "")))?;
                 Ok(Step::Done)
+            }
+            (Some(_), Input::Keyword(k)) => {
+                if k == "Partial" {
+                    self.partial = Some(Vec::new());
+                } else {
+                    self.text.keyword(&k);
+                }
+                Ok(Step::Continue)
             }
             (_, Input::Enter) => Ok(Step::Cancel),
             _ => Ok(Step::Continue),
         }
     }
     fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
-        self.arc.map(|g| vec![dim(s, DimKind::ArcLength, c, g.start_point(), g.end_point(), g.center, Vec2::ZERO, "")]).unwrap_or_default()
+        if self.partial.is_some() {
+            return Vec::new();
+        }
+        self.arc
+            .map(|g| vec![self.text.apply(dim(s, DimKind::ArcLength, c, g.start_point(), g.end_point(), g.center, Vec2::ZERO, ""))])
+            .unwrap_or_default()
     }
 }
 
 #[derive(Default)]
 struct OrdinateM {
     feature: Option<Vec2>,
+    /// Xdatum / Ydatum: the forced ordinate type (`true` = X datum).
     xtype: Option<bool>,
+    text: DimText,
+}
+
+impl OrdinateM {
+    fn kind(&self, s: &Session, f: Vec2, l: Vec2) -> EntityKind {
+        let x = self.xtype.unwrap_or((l - f).y.abs() > (l - f).x.abs());
+        self.text.apply(dim(s, DimKind::Ordinate { x_type: x }, Vec2::ZERO, f, l, Vec2::ZERO, Vec2::ZERO, ""))
+    }
 }
 
 impl Interactive for OrdinateM {
@@ -1101,24 +1294,36 @@ impl Interactive for OrdinateM {
         "DIMORDINATE"
     }
     fn prompt(&self, _s: &Session) -> Prompt {
-        match self.feature {
-            None => Prompt::new("Specify feature location", Accept::POINT),
-            Some(f) => Prompt::new("Specify leader endpoint", Accept::POINT).kw(&["Xdatum", "Ydatum", "Mtext", "Text", "Angle"]).base(f),
+        if let Some(p) = self.text.prompt() {
+            return p;
+        }
+        match (self.feature, self.xtype) {
+            (None, _) => Prompt::new("Specify feature location", Accept::POINT),
+            (Some(f), None) => Prompt::new("Specify leader endpoint", Accept::POINT).kw(&["Xdatum", "Ydatum", "Mtext", "Text", "Angle"]).base(f),
+            (Some(f), Some(_)) => Prompt::new("Specify leader endpoint", Accept::POINT).kw(&["Mtext", "Text", "Angle"]).base(f),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if self.text.answer(s, &i) {
+            return Ok(Step::Continue);
+        }
         match (self.feature, i) {
             (None, Input::Point(p)) => {
                 self.feature = Some(p);
                 Ok(Step::Continue)
             }
             (Some(_), Input::Keyword(k)) => {
-                self.xtype = Some(k == "Xdatum");
+                match k.as_str() {
+                    "Xdatum" => self.xtype = Some(true),
+                    "Ydatum" => self.xtype = Some(false),
+                    other => {
+                        self.text.keyword(other);
+                    }
+                }
                 Ok(Step::Continue)
             }
             (Some(f), Input::Point(l)) => {
-                let x = self.xtype.unwrap_or((l - f).y.abs() > (l - f).x.abs());
-                add_dim(s, dim(s, DimKind::Ordinate { x_type: x }, Vec2::ZERO, f, l, Vec2::ZERO, Vec2::ZERO, ""))?;
+                add_dim(s, self.kind(s, f, l))?;
                 Ok(Step::Done)
             }
             (_, Input::Enter) => Ok(Step::Cancel),
@@ -1126,20 +1331,7 @@ impl Interactive for OrdinateM {
         }
     }
     fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
-        self.feature
-            .map(|f| {
-                vec![dim(
-                    s,
-                    DimKind::Ordinate { x_type: self.xtype.unwrap_or((c - f).y.abs() > (c - f).x.abs()) },
-                    Vec2::ZERO,
-                    f,
-                    c,
-                    Vec2::ZERO,
-                    Vec2::ZERO,
-                    "",
-                )]
-            })
-            .unwrap_or_default()
+        self.feature.map(|f| vec![self.kind(s, f, c)]).unwrap_or_default()
     }
 }
 
@@ -1195,10 +1387,168 @@ impl Interactive for ChainM {
     }
 }
 
-#[derive(Default)]
+/// Which end of the multileader MLEADER places first.
+#[derive(Clone, Copy, Default, PartialEq)]
+enum LeaderOrder {
+    #[default]
+    Arrowhead,
+    Landing,
+    Content,
+}
+
+/// The MLEADER Options prompt being answered.
+#[derive(Clone, Copy, PartialEq)]
+enum LeaderOpt {
+    Menu,
+    LeaderType,
+    Landing,
+    ContentType,
+    MaxPoints,
+    FirstAngle,
+    SecondAngle,
+}
+
+/// Upper bound for MLEADER Maxpoints.
+const MAX_LEADER_POINTS: usize = 64;
+
 struct MLeaderM {
+    order: LeaderOrder,
+    /// Points in the order they were placed.
     pts: Vec<Vec2>,
-    landed: bool,
+    /// All leader points are placed.
+    leader_done: bool,
+    /// The leader text once entered (Content first enters it before the leader).
+    text: Option<String>,
+    opt: Option<LeaderOpt>,
+    max_points: usize,
+    /// First and second angle constraints (radians; 0 = free).
+    angles: [f64; 2],
+    landing: bool,
+    content: bool,
+}
+
+impl Default for MLeaderM {
+    fn default() -> Self {
+        MLeaderM {
+            order: LeaderOrder::Arrowhead,
+            pts: Vec::new(),
+            leader_done: false,
+            text: None,
+            opt: None,
+            max_points: 2,
+            angles: [0.0; 2],
+            landing: true,
+            content: true,
+        }
+    }
+}
+
+impl MLeaderM {
+    /// The leader from arrowhead to landing, with `extra` placed next.
+    fn leader(&self, extra: Option<Vec2>) -> Vec<Vec2> {
+        let mut pts = self.pts.clone();
+        pts.extend(extra);
+        if self.order != LeaderOrder::Arrowhead {
+            pts.reverse();
+        }
+        pts
+    }
+    /// `p` with the first/second angle constraint applied to the segment it ends (counted from the
+    /// first point placed).
+    fn constrained(&self, p: Vec2) -> Vec2 {
+        let (Some(&prev), Some(&inc)) = (self.pts.last(), self.angles.get(self.pts.len().wrapping_sub(1))) else { return p };
+        let len = prev.dist(p);
+        if inc <= 1e-9 || !inc.is_finite() || len <= 1e-12 {
+            return p;
+        }
+        Vec2::polar(prev, len, ((p - prev).angle() / inc).round() * inc)
+    }
+    /// The text is asked now: right after the content location (Content first) or after the leader.
+    fn wants_text(&self) -> bool {
+        self.content && self.text.is_none() && (self.leader_done || (self.order == LeaderOrder::Content && self.pts.len() == 1))
+    }
+    fn finish(&self, s: &mut Session) -> Result<Step> {
+        let text = self.text.clone().unwrap_or_default();
+        let k = mleader_kind(s, &self.leader(None), &text, self.landing).ok_or_else(|| EngineError::Other("bad leader".into()))?;
+        s.add_entity(k)?;
+        Ok(Step::Done)
+    }
+    fn option_prompt(o: LeaderOpt) -> Prompt {
+        let kw = super::curves::KW;
+        match o {
+            LeaderOpt::Menu => Prompt::new("Enter an option", kw)
+                .kw(&["Leader type", "leader lAnding", "Content type", "Maxpoints", "First angle", "Second angle", "eXit options"])
+                .default("eXit options"),
+            LeaderOpt::LeaderType => Prompt::new("Select a leader type", kw).kw(&["Straight", "sPline", "None"]).default("Straight"),
+            LeaderOpt::Landing => Prompt::new("Use landing", kw).kw(&["Yes", "No"]).default("Yes"),
+            LeaderOpt::ContentType => Prompt::new("Select a content type", kw).kw(&["Block", "Mtext", "None"]).default("Mtext"),
+            LeaderOpt::MaxPoints => Prompt::new("Enter the maximum points for leader line", Accept::NUMBER),
+            LeaderOpt::FirstAngle => Prompt::new("Enter first angle constraint", Accept::NUMBER),
+            LeaderOpt::SecondAngle => Prompt::new("Enter second angle constraint", Accept::NUMBER),
+        }
+    }
+    /// One answer at the Options prompts; Enter keeps the current value.
+    fn option(&mut self, s: &mut Session, o: LeaderOpt, i: Input) -> Option<LeaderOpt> {
+        use LeaderOpt::*;
+        match (o, i) {
+            (Menu, Input::Keyword(k)) => match k.as_str() {
+                "Leader type" => Some(LeaderType),
+                "leader lAnding" => Some(Landing),
+                "Content type" => Some(ContentType),
+                "Maxpoints" => Some(MaxPoints),
+                "First angle" => Some(FirstAngle),
+                "Second angle" => Some(SecondAngle),
+                _ => None,
+            },
+            (Menu, Input::Enter) => None,
+            (LeaderType, Input::Keyword(k)) => {
+                match k.as_str() {
+                    "sPline" => s.echo("Spline leaders are not available yet; the leader stays straight."),
+                    "None" => s.echo("Multileaders without a leader line are not available yet."),
+                    _ => {}
+                }
+                Some(Menu)
+            }
+            (Landing, Input::Keyword(k)) => {
+                self.landing = k == "Yes";
+                Some(Menu)
+            }
+            (ContentType, Input::Keyword(k)) => {
+                match k.as_str() {
+                    "Block" => s.echo("Block content is not available yet; the content stays multiline text."),
+                    "None" => self.content = false,
+                    _ => self.content = true,
+                }
+                Some(Menu)
+            }
+            (MaxPoints, Input::Text(t)) => match t.trim().parse::<usize>() {
+                Ok(n) if (2..=MAX_LEADER_POINTS).contains(&n) => {
+                    self.max_points = n;
+                    Some(Menu)
+                }
+                _ => {
+                    s.echo(format!("Requires an integer between 2 and {MAX_LEADER_POINTS}."));
+                    Some(MaxPoints)
+                }
+            },
+            (FirstAngle | SecondAngle, Input::Text(t)) => match crate::units::parse_angle(&t).filter(|a| *a >= 0.0) {
+                Some(a) => {
+                    self.angles[usize::from(o == SecondAngle)] = a;
+                    Some(Menu)
+                }
+                None => {
+                    s.echo("Requires a valid angle.");
+                    Some(o)
+                }
+            },
+            (Menu | LeaderType | Landing | ContentType, Input::Text(_)) => {
+                s.echo("Invalid option keyword.");
+                Some(o)
+            }
+            (_, Input::Enter) => Some(Menu),
+            _ => Some(o),
+        }
+    }
 }
 
 impl Interactive for MLeaderM {
@@ -1206,43 +1556,65 @@ impl Interactive for MLeaderM {
         "MLEADER"
     }
     fn prompt(&self, _s: &Session) -> Prompt {
-        if self.landed {
+        if let Some(o) = self.opt {
+            return Self::option_prompt(o);
+        }
+        if self.wants_text() {
             return Prompt::new("Enter leader text", Accept::TEXT);
         }
-        match self.pts.len() {
-            0 => Prompt::new("Specify leader arrowhead location", Accept::POINT).kw(&["leader Landing first", "Content first", "Options"]),
-            _ => Prompt::new("Specify leader landing location", Accept::POINT).base_opt(self.pts.last().copied()),
+        let last = self.pts.len() + 1 >= self.max_points;
+        match (self.pts.last(), self.order) {
+            (None, LeaderOrder::Arrowhead) => Prompt::new("Specify leader arrowhead location", Accept::POINT)
+                .kw(&["leader Landing first", "Content first", "Options"])
+                .default("Options"),
+            (None, LeaderOrder::Landing) => Prompt::new("Specify leader landing location", Accept::POINT)
+                .kw(&["leader arrowHead first", "Content first", "Options"])
+                .default("Options"),
+            (None, LeaderOrder::Content) => Prompt::new("Specify location of the text", Accept::POINT)
+                .kw(&["leader arrowHead first", "leader Landing first", "Options"])
+                .default("Options"),
+            (Some(&b), _) if !last => Prompt::new("Specify next point", Accept::POINT).base(b),
+            (Some(&b), LeaderOrder::Arrowhead) => Prompt::new("Specify leader landing location", Accept::POINT).base(b),
+            (Some(&b), _) => Prompt::new("Specify leader arrowhead location", Accept::POINT).base(b),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
-        if self.landed {
-            let t = match i {
-                Input::Text(t) => t,
-                _ => String::new(),
-            };
-            let k = mleader_kind(s, &self.pts, &t).ok_or_else(|| EngineError::Other("bad leader".into()))?;
-            s.add_entity(k)?;
-            return Ok(Step::Done);
+        if let Some(o) = self.opt {
+            self.opt = self.option(s, o, i);
+            return Ok(Step::Continue);
+        }
+        if self.wants_text() {
+            self.text = Some(if let Input::Text(t) = i { t } else { String::new() });
+            return if self.leader_done { self.finish(s) } else { Ok(Step::Continue) };
         }
         match i {
             Input::Point(p) => {
+                let p = self.constrained(p);
                 self.pts.push(p);
-                if self.pts.len() >= 2 {
-                    self.landed = true;
+                if self.pts.len() >= self.max_points {
+                    self.leader_done = true;
                 }
-                Ok(Step::Continue)
             }
-            Input::Enter => Ok(Step::Cancel),
-            _ => Ok(Step::Continue),
+            Input::Keyword(k) if self.pts.is_empty() => match k.as_str() {
+                "leader Landing first" => self.order = LeaderOrder::Landing,
+                "leader arrowHead first" => self.order = LeaderOrder::Arrowhead,
+                "Content first" => self.order = LeaderOrder::Content,
+                _ => self.opt = Some(LeaderOpt::Menu),
+            },
+            Input::Enter if self.pts.is_empty() => self.opt = Some(LeaderOpt::Menu),
+            // Enter at "next point" ends the leader at the last point.
+            Input::Enter if self.pts.len() >= 2 => self.leader_done = true,
+            Input::Enter => return Ok(Step::Cancel),
+            _ => {}
         }
+        if self.leader_done && !self.wants_text() { self.finish(s) } else { Ok(Step::Continue) }
     }
     fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
-        if self.landed || self.pts.is_empty() {
+        if self.opt.is_some() || self.wants_text() || self.leader_done || self.pts.is_empty() {
             return Vec::new();
         }
-        let mut pts = self.pts.clone();
-        pts.push(c);
-        mleader_kind(s, &pts, "").into_iter().collect()
+        let text = self.text.as_deref().unwrap_or("");
+        mleader_kind(s, &self.leader(Some(self.constrained(c))), text, self.landing).into_iter().collect()
     }
 }
 
