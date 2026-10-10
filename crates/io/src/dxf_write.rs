@@ -244,6 +244,16 @@ fn header_vars(w: &mut W, d: &Drawing) {
     }
 }
 
+/// An entity's group 440 (DXF Reference): ByBlock is `0x01000000`, a fixed transparency its alpha
+/// with the "by alpha" flag `0x02000000` (the alpha mapping layers use). ByLayer writes nothing.
+fn transparency_440(t: Transparency) -> Option<i64> {
+    match t {
+        Transparency::ByLayer => None,
+        Transparency::ByBlock => Some(0x0100_0000),
+        Transparency::Percent(p) => Some(i64::from(0x0200_0000 | ((100 - u32::from(p.min(90))) * 255 / 100))),
+    }
+}
+
 fn common(w: &mut W, e: &Entity, owner: &str, paper: bool, subclass: &str) {
     common_x(w, e, owner, paper, subclass, None);
 }
@@ -280,6 +290,9 @@ fn common_x(w: &mut W, e: &Entity, owner: &str, paper: bool, subclass: &str, ass
     }
     if !e.common.visible {
         w.i(60, 1);
+    }
+    if let Some(v) = transparency_440(e.common.transparency) {
+        w.i(440, v);
     }
     if !subclass.is_empty() {
         w.s(100, subclass);

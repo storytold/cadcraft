@@ -225,6 +225,39 @@ fn layers_and_properties() {
 }
 
 #[test]
+fn properties_set_transparency() {
+    use cadcraft_doc::Transparency;
+    // Issue #132: `properties.set` used to ignore `transparency`.
+    let mut s = Session::new();
+    let r = s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    let h = r["handles"][0].as_str().unwrap().to_string();
+    let hh = cadcraft_doc::Handle::parse_hex(&h).unwrap();
+    let tr = |s: &Session| s.doc().unwrap().entity(hh).unwrap().common.transparency;
+    for (v, want) in [
+        (json!(50), Transparency::Percent(50)),
+        (json!("ByBlock"), Transparency::ByBlock),
+        (json!("25%"), Transparency::Percent(25)),
+        (json!(0), Transparency::Percent(0)),
+        (json!("bylayer"), Transparency::ByLayer),
+        (json!(90), Transparency::Percent(90)),
+    ] {
+        s.execute("properties.set", &json!({"handles": [h], "transparency": v})).unwrap();
+        assert_eq!(tr(&s), want, "{v}");
+    }
+    // Out of range or not a transparency: an error, and the entity is unchanged.
+    for v in [json!(91), json!(-1), json!("NaN"), json!("inf"), json!("half"), json!(null), json!([50])] {
+        assert!(s.execute("properties.set", &json!({"handles": [h], "transparency": v})).is_err(), "{v}");
+        assert_eq!(tr(&s), Transparency::Percent(90), "{v}");
+    }
+    // `properties` and `drawing.inspect` report it in the form `properties.set` takes.
+    let p = s.execute("properties", &json!({"handles": [h]})).unwrap();
+    assert_eq!(p["objects"][0]["transparency"], json!(90));
+    s.execute("properties.set", &json!({"handles": [h], "transparency": "ByBlock"})).unwrap();
+    let i = s.execute("drawing.inspect", &json!({"entities": true})).unwrap();
+    assert_eq!(i["entities"][0]["transparency"], json!("ByBlock"));
+}
+
+#[test]
 fn zoom_extents_fits_drawing() {
     let mut s = Session::new();
     s.viewport_px = (1000.0, 500.0);

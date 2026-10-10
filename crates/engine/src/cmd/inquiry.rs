@@ -236,7 +236,7 @@ fn run_status(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 fn entity_summary(e: &cadcraft_doc::Entity) -> Value {
-    json!({ "handle": e.handle.hex(), "type": e.kind.type_name(), "layer": e.common.layer, "color": e.common.color.name(), "geometry": e.kind })
+    json!({ "handle": e.handle.hex(), "type": e.kind.type_name(), "layer": e.common.layer, "color": e.common.color.name(), "transparency": super::props::transparency_value(e.common.transparency), "geometry": e.kind })
 }
 
 fn run_inspect(s: &mut Session, p: &Value) -> Result<Value> {
