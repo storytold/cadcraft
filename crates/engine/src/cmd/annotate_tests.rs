@@ -477,3 +477,34 @@ fn setvar_dim_variables_apply_to_new_dimensions() {
     let zero = linear(&mut s, -120.0);
     assert!((text_height(&s, zero) - base).abs() < 1e-12);
 }
+
+#[test]
+fn linetype_rename_updates_references() {
+    fn line(s: &mut Session, y: f64) -> Handle {
+        let r = s.execute("line", &json!({ "points": [[0.0, y], [10.0, y]] })).unwrap();
+        Handle::parse_hex(r["handles"][0].as_str().unwrap()).unwrap()
+    }
+    let mut s = Session::new();
+    s.execute("linetype", &json!({ "load": "DASHED" })).unwrap();
+    s.execute("layer.new", &json!({ "name": "A", "linetype": "DASHED", "current": true })).unwrap();
+    let by_layer = line(&mut s, 0.0);
+    s.execute("linetype", &json!({ "current": "DASHED" })).unwrap();
+    let explicit = line(&mut s, 2.0);
+    let in_block = line(&mut s, 4.0);
+    s.execute("block", &json!({ "name": "B", "base": [0, 0], "handles": [in_block.hex()], "keep": "delete" })).unwrap();
+    s.execute("rename", &json!({ "table": "linetype", "from": "DASHED", "to": "MYDASH" })).unwrap();
+    let d = s.doc().unwrap();
+    assert!(d.linetype("DASHED").is_none());
+    assert!(d.linetype("MYDASH").is_some());
+    assert_eq!(d.layers.iter().find(|l| l.name == "A").unwrap().linetype, "MYDASH");
+    assert_eq!(d.layers.iter().find(|l| l.name == "0").unwrap().linetype, "Continuous");
+    assert_eq!(d.entity(by_layer).unwrap().common.linetype, "ByLayer");
+    assert_eq!(d.entity(explicit).unwrap().common.linetype, "MYDASH");
+    let block: Vec<&str> = d.blocks["B"].entities.iter().map(|e| e.common.linetype.as_str()).collect();
+    assert_eq!(block, ["MYDASH"]);
+    assert_eq!(d.header.str("CELTYPE", ""), "MYDASH");
+    // An existing target name and the reserved linetypes are refused.
+    assert!(s.execute("rename", &json!({ "table": "linetype", "from": "MYDASH", "to": "Continuous" })).is_err());
+    assert!(s.execute("rename", &json!({ "table": "linetype", "from": "ByLayer", "to": "X" })).is_err());
+    assert_eq!(s.doc().unwrap().entity(by_layer).unwrap().common.linetype, "ByLayer");
+}

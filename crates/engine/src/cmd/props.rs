@@ -869,8 +869,41 @@ fn run_rename(s: &mut Session, p: &Value) -> Result<Value> {
         }
         "linetype" => {
             let d = s.doc_mut()?;
+            if ["ByBlock", "ByLayer", "Continuous"].iter().any(|n| from.eq_ignore_ascii_case(n)) {
+                return Err(bad("rename", format!("the {from} linetype cannot be renamed")));
+            }
+            if d.linetype(&to).is_some() && !to.eq_ignore_ascii_case(&from) {
+                return Err(bad("rename", format!("a linetype `{to}` already exists")));
+            }
             let st = d.linetypes.iter_mut().find(|t| t.name.eq_ignore_ascii_case(&from)).ok_or_else(|| bad("rename", "no such linetype"))?;
-            st.name = to;
+            st.name = to.clone();
+            // References follow the new name.
+            let fix = |n: &mut String| {
+                if n.eq_ignore_ascii_case(&from) {
+                    *n = to.clone();
+                }
+            };
+            d.layers.iter_mut().for_each(|l| fix(&mut l.linetype));
+            if d.header.str("CELTYPE", "ByLayer").eq_ignore_ascii_case(&from) {
+                d.header.set_str("CELTYPE", &to);
+            }
+            let users = |st: &cadcraft_doc::EntityStore| -> Vec<cadcraft_doc::Handle> {
+                st.iter().filter(|e| e.common.linetype.eq_ignore_ascii_case(&from)).map(|e| e.handle).collect()
+            };
+            let mut hs = users(&d.model);
+            hs.extend(d.layouts.iter().flat_map(|l| users(&l.entities)));
+            for h in hs {
+                d.modify_entity(h, |e| fix(&mut e.common.linetype))?;
+            }
+            for block in d.blocks.values_mut() {
+                let hs = users(&block.entities);
+                if !hs.is_empty() {
+                    let b = std::sync::Arc::make_mut(block);
+                    for h in hs {
+                        b.entities.modify(h, |e| fix(&mut e.common.linetype));
+                    }
+                }
+            }
         }
         _ => return Err(bad("rename", "unsupported table")),
     }
