@@ -865,3 +865,131 @@ fn mleader_is_written_as_leader_and_mtext() {
     assert!(back.model.iter().any(|e| matches!(e.kind, EntityKind::Leader(_))));
     assert!(back.model.iter().any(|e| matches!(&e.kind, EntityKind::MText(t) if t.contents == "Note")));
 }
+
+/// Non-ASCII text in every kind of string the writer emits: CJK, Latin-1 and an astral
+/// character (issue #164).
+const INTL: &str = "图号 Ä°ø Ø 😀";
+
+fn intl_text(value: &str) -> Text {
+    Text {
+        insert: Vec3::new(1.0, 1.0, 0.0),
+        align_pt: None,
+        height: 2.5,
+        value: value.into(),
+        rotation: 0.0,
+        width_factor: 1.0,
+        oblique: 0.0,
+        style: "Standard".into(),
+        halign: HAlign::Left,
+        valign: VAlign::Baseline,
+    }
+}
+
+fn intl_sample() -> Drawing {
+    let mut d = Drawing::new_metric();
+    let layer = format!("层 {INTL}");
+    let block = format!("块 {INTL}");
+    d.layers.push(Layer { name: layer.clone(), color: Color::Index(3), ..Layer::default() });
+    let on = Common { layer: layer.clone(), ..Common::default() };
+    d.add(&Space::Model, on.clone(), EntityKind::Text(intl_text(INTL))).unwrap();
+    d.add(
+        &Space::Model,
+        on.clone(),
+        EntityKind::MText(MText {
+            insert: Vec3::new(5.0, 5.0, 0.0),
+            height: 2.5,
+            width: 30.0,
+            attach: 1,
+            rotation: 0.0,
+            style: "Standard".into(),
+            contents: format!("{INTL}\\P第二行 Ünïcødé"),
+            line_spacing: 1.0,
+        }),
+    )
+    .unwrap();
+    let def = Attrib { tag: "图号".into(), text: intl_text("默认"), invisible: false, constant: false, prompt: String::new() };
+    let mut b = Block::new(&block);
+    b.entities.push(Entity::new(Handle(0x50), EntityKind::AttDef(def)));
+    d.blocks.insert(block.clone(), std::sync::Arc::new(b));
+    let att = Attrib { tag: "图号".into(), text: intl_text(INTL), invisible: false, constant: false, prompt: String::new() };
+    d.add(
+        &Space::Model,
+        on,
+        EntityKind::Insert(Insert {
+            block,
+            insert: Vec3::new(2.0, 2.0, 0.0),
+            scale: Vec3::new(1.0, 1.0, 1.0),
+            rotation: 0.0,
+            attribs: vec![att],
+            cols: 1,
+            rows: 1,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+        }),
+    )
+    .unwrap();
+    d
+}
+
+fn assert_intl(back: &Drawing) {
+    let layer = format!("层 {INTL}");
+    let block = format!("块 {INTL}");
+    assert_eq!(back.layer(&layer).map(|l| l.color), Some(Color::Index(3)));
+    let text = first(back, |k| if let EntityKind::Text(t) = k { Some(t.value.clone()) } else { None });
+    assert_eq!(text, INTL);
+    let mtext = first(back, |k| if let EntityKind::MText(t) = k { Some(t.contents.clone()) } else { None });
+    assert_eq!(mtext, format!("{INTL}\\P第二行 Ünïcødé"));
+    let ins = first(back, |k| if let EntityKind::Insert(i) = k { Some(i.clone()) } else { None });
+    assert_eq!(ins.block, block);
+    assert_eq!(ins.attribs.len(), 1);
+    assert_eq!(ins.attribs[0].tag, "图号");
+    assert_eq!(ins.attribs[0].text.value, INTL);
+    let b = back.block(&block).unwrap();
+    let def = b.entities.iter().find_map(|e| if let EntityKind::AttDef(a) = &e.kind { Some(a.clone()) } else { None }).unwrap();
+    assert_eq!(def.tag, "图号");
+    assert_eq!(def.text.value, "默认");
+    assert!(back.model.iter().all(|e| e.common.layer == layer));
+}
+
+/// The writer declares R2000 (`AC1015`, `ANSI_1252`), where text is in the code page and not
+/// UTF-8, so every non-ASCII character must be a `\U+XXXX` escape and the file pure ASCII.
+#[test]
+fn non_ascii_text_is_escaped_for_r2000_and_roundtrips() {
+    let d = intl_sample();
+    let text = write_dxf(&d);
+    assert!(text.is_ascii(), "an AC1015 DXF must not contain UTF-8 bytes");
+    let tags = cadcraft_dxf::parse(text.as_bytes()).unwrap();
+    let header = |name: &str| tags.windows(2).find(|w| w[0].code == 9 && w[0].str() == name).map(|w| w[1].str());
+    assert_eq!(header("$ACADVER").as_deref(), Some("AC1015"));
+    assert_eq!(header("$DWGCODEPAGE").as_deref(), Some("ANSI_1252"));
+    // CJK, Latin-1 and a surrogate pair for the astral character.
+    assert!(text.contains("\\U+56FE\\U+53F7 \\U+00C4\\U+00B0\\U+00F8 \\U+00D8 \\U+D83D\\U+DE00"));
+    let back = read_dxf(text.as_bytes()).unwrap();
+    assert_intl(&back);
+    // A second save writes the same text.
+    assert_eq!(write_dxf(&back).matches("\\U+").count(), text.matches("\\U+").count());
+}
+
+/// Real R2007+ files are UTF-8 and older ones are in their code page; both still read.
+#[test]
+fn reads_utf8_and_code_page_text() {
+    let file = |ver: &str, value: &[u8]| {
+        let mut b =
+            format!("0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\n{ver}\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nTEXT\n8\n0\n10\n0\n20\n0\n40\n1\n1\n")
+                .into_bytes();
+        b.extend_from_slice(value);
+        b.extend_from_slice(b"\n0\nENDSEC\n0\nEOF\n");
+        b
+    };
+    let value = |bytes: &[u8]| first(&read_dxf(bytes).unwrap(), |k| if let EntityKind::Text(t) = k { Some(t.value.clone()) } else { None });
+    assert_eq!(value(&file("AC1032", INTL.as_bytes())), INTL);
+    assert_eq!(value(&file("AC1015", b"Caf\xe9 \xd8 \\U+56FE\\U+53F7")), "Café Ø 图号");
+}
+
+/// Saving as DWG goes through this DXF and acadrust, which decodes the escapes.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn dwg_roundtrip_keeps_non_ascii_text() {
+    let back = read(&write(&intl_sample(), "x.dwg").unwrap(), "x.dwg").unwrap();
+    assert_intl(&back);
+}
