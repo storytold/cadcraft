@@ -33,7 +33,17 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
+/// A programmatic undo/redo (`engine.execute`, MCP, control channel, scripts) first ends a running
+/// command the way Esc does, exactly as `Session::start` does for Cmd+Z, the menu or the command
+/// line. Otherwise it would swap the drawing under the command and pop the previous command's step.
+fn end_running_command(s: &mut Session) {
+    if s.running.is_some() {
+        s.cancel();
+    }
+}
+
 fn run_undo(s: &mut Session, p: &Value) -> Result<Value> {
+    end_running_command(s);
     let n = p.get("count").and_then(Value::as_u64).unwrap_or(1).clamp(1, 1000);
     let mut labels = Vec::new();
     for _ in 0..n {
@@ -49,6 +59,7 @@ fn run_undo(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn run_redo(s: &mut Session, p: &Value) -> Result<Value> {
+    end_running_command(s);
     let n = p.get("count").and_then(Value::as_u64).unwrap_or(1).clamp(1, 1000);
     let mut labels = Vec::new();
     for _ in 0..n {
