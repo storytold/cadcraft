@@ -317,9 +317,8 @@ fn entity(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
             let pts: Vec<Vec2> = t.pts(14).into_iter().map(|q| o.xy() + u.xy() * (q.x + 0.5) + v.xy() * (0.5 - q.y)).collect();
             EntityKind::Wipeout(Wipeout { boundary: pts })
         }
-        "IMAGE" => {
-            EntityKind::Image(Image { insert: t.p(10), u: t.p(11), v: t.p(12), size: Vec2::new(t.fd(13, 1.0), t.fd(23, 1.0)), path: String::new() })
-        }
+        // The file path comes from the IMAGEDEF object (`dxf_image::resolve`).
+        "IMAGE" => EntityKind::Image(crate::dxf_image::read_entity(tags)),
         other => EntityKind::Unknown(Unknown {
             dxf_type: other.to_string(),
             tags: tags.iter().map(|tg| RawTag { code: tg.code, value: tg.str() }).collect(),
@@ -1018,6 +1017,7 @@ pub fn read(bytes: &[u8]) -> Result<Drawing> {
         }
     }
     objs.apply(&mut d, &rx);
+    crate::dxf_image::resolve(&secs, &mut d);
     // Keep handles unique against the header's seed.
     let seed = d.header.str("HANDSEED", "");
     if let Some(h) = Handle::parse_hex(&seed) {
