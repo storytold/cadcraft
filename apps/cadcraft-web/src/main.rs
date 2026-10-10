@@ -3,8 +3,11 @@
 //! Runs the same [`cadcraft_ui_egui::CadApp`] as the desktop app through eframe's web runner
 //! (wgpu: WebGPU where available, WebGL2 otherwise). Build with `trunk build --release` from this
 //! directory (output in `dist/web`). URL flags: `?webgl` forces WebGL2, `?sample` opens the sample
-//! drawing.
+//! drawing. Saving downloads the drawing through the browser (`download.rs`).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
+
+#[cfg(target_arch = "wasm32")]
+pub mod download;
 
 #[cfg(target_arch = "wasm32")]
 mod web {
@@ -44,6 +47,12 @@ mod web {
         web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default()
     }
 
+    /// No file picker on the web: Save / Save As from the menu (and the close prompt) download the
+    /// drawing under its current name; `saveas {"path": "name.dxf"}` picks another name.
+    fn services() -> Services {
+        Services { pick_save: Some(Box::new(|name: &str| Some(name.to_string()))), ..Services::default() }
+    }
+
     pub fn start() {
         eframe::WebLogger::init(log::LevelFilter::Info).ok();
         cadcraft_engine::cmd::file::set_io(cadcraft_engine::cmd::file::IoHooks {
@@ -51,6 +60,8 @@ mod web {
             write: |d, name| cadcraft_io::write(d, name).map_err(|e| e.to_string()),
             plot: Some(|d, space, opts| cadcraft_io::plot(d, space, opts).map_err(|e| e.to_string())),
         });
+        // No file system here: saved files reach the user as browser downloads.
+        cadcraft_engine::cmd::file::set_deliver(crate::download::download);
         wasm_bindgen_futures::spawn_local(async {
             let Some(document) = web_sys::window().and_then(|w| w.document()) else { return };
             let Some(canvas) = document.get_element_by_id(CANVAS_ID).and_then(|e| e.dyn_into::<web_sys::HtmlCanvasElement>().ok()) else {
@@ -68,7 +79,7 @@ mod web {
                     canvas,
                     options,
                     Box::new(move |cc| {
-                        let mut app = CadApp::new(Session::new(), Services::default());
+                        let mut app = CadApp::new(Session::new(), services());
                         app.system_languages =
                             web_sys::window().map(|w| w.navigator().languages().iter().filter_map(|v| v.as_string()).collect()).unwrap_or_default();
                         if let Some(prefs) = cc.storage.and_then(|s| s.get_string(cadcraft_ui_egui::PREFS_KEY)) {
