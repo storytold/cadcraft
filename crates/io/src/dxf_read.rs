@@ -524,10 +524,76 @@ fn hatch(tags: &[Tag], t: &T) -> Option<EntityKind> {
         associative: t.i(71).unwrap_or(0) != 0,
         style: t.i(75).unwrap_or(0) as u8,
         elevation: 0.0,
-        gradient: None,
+        gradient: gradient(tags),
         origin: Vec2::ZERO,
         background: None,
     }))
+}
+
+/// Gradient values missing from a file fall back to the GRADIENT command's defaults.
+fn default_gradient() -> Gradient {
+    Gradient { name: "LINEAR".into(), color1: Color::Index(5), color2: Color::Index(7), angle: 0.0, centered: true }
+}
+
+/// A hatch's gradient fill: the native groups when present (another program may have edited
+/// them), otherwise CADCraft's `GRADIENT` xdata (kept by R2000 files and DWG conversions).
+fn gradient(tags: &[Tag]) -> Option<Gradient> {
+    if tags.iter().any(|x| x.code == 450) { native_gradient(tags) } else { xdata_gradient(tags) }
+}
+
+/// `CADCRAFT` xdata: `1000 GRADIENT`, then name, 1040 angle, 1070 centered, colour 1 and 2 names.
+fn xdata_gradient(tags: &[Tag]) -> Option<Gradient> {
+    let x = crate::dxf_ext::xdata(tags, crate::dxf_ext::APP);
+    let at = x.iter().position(|t| t.code == 1000 && t.str() == "GRADIENT")?;
+    let o = x.get(at + 1..).unwrap_or(&[]);
+    let d = default_gradient();
+    let strs: Vec<String> = o.iter().filter(|t| t.code == 1000).take(3).map(Tag::str).collect();
+    let color = |i: usize, d: Color| strs.get(i).and_then(|s| Color::parse(s)).unwrap_or(d);
+    Some(Gradient {
+        name: strs.first().cloned().unwrap_or(d.name),
+        color1: color(1, d.color1),
+        color2: color(2, d.color2),
+        angle: o.iter().find(|t| t.code == 1040).map(Tag::f64).filter(|a| a.is_finite()).unwrap_or(d.angle),
+        centered: o.iter().find(|t| t.code == 1070).map_or(d.centered, |t| t.i64() != 0),
+    })
+}
+
+/// DXF Reference HATCH groups 450–470, when 450 says gradient. Each 463 starts a colour record
+/// whose 63 (ACI) and 421 (true colour) groups follow.
+fn native_gradient(tags: &[Tag]) -> Option<Gradient> {
+    let start = tags.iter().position(|x| x.code == 450)?;
+    if tags.get(start)?.i64() != 1 {
+        return None;
+    }
+    let mut g = default_gradient();
+    // Per colour record: (ACI, true colour); a true colour wins over its ACI fallback.
+    let mut colors: [(Option<Color>, Option<Rgb>); 2] = [(None, None); 2];
+    let mut slot: Option<usize> = None;
+    for x in tags.iter().skip(start + 1).take_while(|x| x.code != 1001) {
+        let rec = slot.and_then(|s| colors.get_mut(s));
+        match x.code {
+            460 => g.angle = Some(x.f64()).filter(|a| a.is_finite()).unwrap_or(0.0),
+            461 => g.centered = x.f64().abs() < 1e-9,
+            463 => slot = Some(slot.map_or(0, |s| s.saturating_add(1))),
+            63 => {
+                if let Some(r) = rec {
+                    r.0 = Some(Color::from_aci(i16::try_from(x.i64()).unwrap_or(256)));
+                }
+            }
+            421 => {
+                if let Some(r) = rec {
+                    r.1 = Some(Rgb::from_u32(u32::try_from(x.i64() & 0xff_ffff).unwrap_or(0)));
+                }
+            }
+            470 => g.name = x.str(),
+            _ => {}
+        }
+    }
+    let [c1, c2] = colors;
+    let pick = |(aci, rgb): (Option<Color>, Option<Rgb>), d: Color| rgb.map(Color::True).or(aci).unwrap_or(d);
+    g.color1 = pick(c1, g.color1);
+    g.color2 = pick(c2, g.color2);
+    Some(g)
 }
 
 /// Handle maps and references gathered while reading.
