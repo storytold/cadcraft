@@ -30,7 +30,7 @@ fn ext(name: &str) -> String {
 pub fn read(bytes: &[u8], name: &str) -> Result<Drawing> {
     if cadcraft_dwg::is_dwg(bytes) {
         let dxf = cadcraft_dwg::dwg_to_dxf(bytes).map_err(IoError::Format)?;
-        return dxf_read::read(&dxf);
+        return dxf_read::read(&dxf).map_err(|e| IoError::Format(format!("{e} (in the DXF converted from this DWG)")));
     }
     match ext(name).as_str() {
         "dxf" | "" => dxf_read::read(bytes),

@@ -626,6 +626,78 @@ fn dimension_overrides_roundtrip_as_dstyle_xdata() {
     assert_eq!(again.overrides, got.overrides);
 }
 
+/// A drawing with `n` lines, circles and polylines on a grid (issue #57's tests).
+fn many_entities(n: usize) -> Drawing {
+    let mut d = Drawing::new_imperial();
+    for i in 0..n {
+        let (x, y) = ((i % 300) as f64 * 10.0, (i / 300) as f64 * 10.0);
+        let kind = match i % 3 {
+            0 => EntityKind::Line(Line { a: Vec3::new(x, y, 0.0), b: Vec3::new(x + 4.0, y + (i % 7) as f64, 0.0) }),
+            1 => EntityKind::Circle(Circle { center: Vec3::new(x, y, 0.0), radius: 1.0 + (i % 5) as f64 }),
+            _ => EntityKind::LwPolyline(LwPolyline {
+                vertices: (0..8).map(|k| PolyVertex::new(Vec2::new(x + f64::from(k), y + (k % 3) as f64))).collect(),
+                closed: false,
+                const_width: 0.0,
+                elevation: 0.0,
+                plinegen: false,
+            }),
+        };
+        d.add(&Space::Model, Common::default(), kind).unwrap();
+    }
+    d
+}
+
+/// An AutoCAD 2010 (AC1024) DWG of `n` entities, made through the DWG bridge.
+#[cfg(not(target_arch = "wasm32"))]
+fn ac1024_dwg(n: usize) -> Vec<u8> {
+    let dxf = write_dxf(&many_entities(n)).replacen("AC1015", "AC1024", 1);
+    let dwg = cadcraft_dwg::dxf_to_dwg(dxf.as_bytes()).unwrap();
+    assert_eq!(cadcraft_dwg::version(&dwg).as_deref(), Some("AC1024"));
+    dwg
+}
+
+/// Issue #57: an AutoCAD 2010 DWG with tens of thousands of entities opens completely, and its
+/// DXF rendition stays far inside the limits (about 6 bytes of DXF and 0.4 group codes per DWG
+/// byte), so a 10 MB file is nowhere near them.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn ac1024_dwg_with_many_entities_opens() {
+    let n = 30_000;
+    let dwg = ac1024_dwg(n);
+    let dxf = cadcraft_dwg::dwg_to_dxf(&dwg).unwrap();
+    let tags = cadcraft_dxf::parse(&dxf).unwrap().len();
+    assert!(dxf.len() < dwg.len() * 20, "DXF {} bytes from {} DWG bytes", dxf.len(), dwg.len());
+    assert!(tags < dwg.len(), "{tags} group codes from {} DWG bytes", dwg.len());
+    let d = read(&dwg, "big.dwg").unwrap();
+    assert_eq!(d.entity_count(), n);
+}
+
+/// Issue #57: oversized input is rejected early, with a message naming the limit, never a panic.
+/// A conversion that runs away (a damaged or misread DWG can make the reader produce a drawing
+/// thousands of times larger than the file) stops at the DXF size limit instead of filling memory
+/// and failing later with "file too large"; the DWG size is checked before reading; the DXF
+/// group-code count before parsing.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn oversized_dwg_and_dxf_are_rejected_early() {
+    let dwg = ac1024_dwg(3000);
+    let full = cadcraft_dwg::dwg_to_dxf(&dwg).unwrap().len();
+    assert!(full > 400_000, "{full}");
+    let limits = cadcraft_dwg::Limits { max_dxf_bytes: 300_000, ..cadcraft_dwg::Limits::DEFAULT };
+    let e = cadcraft_dwg::dwg_to_dxf_with(&dwg, limits).unwrap_err();
+    assert!(e.starts_with("DWG: converting this 0."), "{e}");
+    assert!(e.contains("MB file produced more than 0.3 MB of drawing data (the limit)"), "{e}");
+
+    let limits = cadcraft_dwg::Limits { max_dwg_bytes: 100_000, ..cadcraft_dwg::Limits::DEFAULT };
+    let e = cadcraft_dwg::dwg_to_dxf_with(&dwg, limits).unwrap_err();
+    assert!(e.starts_with("DWG: the file is 0.") && e.ends_with("MB, larger than the 0.1 MB CADCraft opens"), "{e}");
+
+    // Lines that aren't even group codes: the size is reported before anything is parsed.
+    let text = "not a group code\nx\n".repeat(60);
+    let e = cadcraft_dxf::parse_with_limit(text.as_bytes(), 50).unwrap_err();
+    assert_eq!(e.to_string(), "drawing too large: 60 DXF group codes, more than the 50 CADCraft reads");
+}
+
 #[test]
 fn dimension_associativity_roundtrips() {
     let mut d = Drawing::new_imperial();

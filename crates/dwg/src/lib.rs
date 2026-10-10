@@ -21,17 +21,87 @@ pub fn version(bytes: &[u8]) -> Option<String> {
     is_dwg(bytes).then(|| String::from_utf8_lossy(bytes.get(0..6).unwrap_or_default()).to_string())
 }
 
+/// Size limits for reading a DWG file. DWG is compressed and the DXF text it converts to is
+/// several times larger (about 6x in our tests: a 10 MB DWG becomes about 60 MB of DXF), so
+/// the limits are generous for real drawings. They exist because a damaged file, or one the reader
+/// misreads, can make the DWG reader produce a drawing thousands of times larger than the file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Limits {
+    /// Largest DWG file read at all (checked before reading starts).
+    pub max_dwg_bytes: usize,
+    /// Largest DXF rendition of a DWG (checked while it is written).
+    pub max_dxf_bytes: usize,
+}
+
+impl Limits {
+    /// 512 MB of DWG, 1 GB of DXF (more than the DXF reader's group-code limit fills).
+    pub const DEFAULT: Limits = Limits { max_dwg_bytes: 512 << 20, max_dxf_bytes: 1 << 30 };
+}
+
+/// A byte count in megabytes for messages ("9.9 MB", "1024 MB").
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn mb(n: u64) -> String {
+    let m = n as f64 / f64::from(1u32 << 20);
+    if m >= 100.0 { format!("{m:.0} MB") } else { format!("{m:.1} MB") }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
-    use std::io::Cursor;
+    use std::io::{Cursor, Write};
+    use std::panic::AssertUnwindSafe;
 
-    /// Read DWG bytes and return an ASCII DXF rendition.
+    use super::{Limits, mb};
+
+    /// Read DWG bytes and return an ASCII DXF rendition, within [`Limits::DEFAULT`].
     pub fn dwg_to_dxf(bytes: &[u8]) -> Result<Vec<u8>, String> {
-        let data = bytes.to_vec();
-        let doc = std::panic::catch_unwind(move || acadrust::DwgReader::from_stream(Cursor::new(data)).read())
+        dwg_to_dxf_with(bytes, Limits::DEFAULT)
+    }
+
+    /// [`dwg_to_dxf`] with explicit limits. Both are checked before the expensive step they
+    /// guard: the input size before the DWG reader runs, the DXF size while it is written, so a
+    /// runaway conversion stops at the limit instead of filling memory first.
+    pub fn dwg_to_dxf_with(bytes: &[u8], limits: Limits) -> Result<Vec<u8>, String> {
+        if bytes.len() > limits.max_dwg_bytes {
+            return Err(format!("DWG: the file is {}, larger than the {} CADCraft opens", mb(bytes.len() as u64), mb(limits.max_dwg_bytes as u64)));
+        }
+        let doc = std::panic::catch_unwind(|| acadrust::DwgReader::from_stream(Cursor::new(bytes)).read())
             .map_err(|_| "the DWG reader failed on this file".to_string())?
             .map_err(|e| format!("DWG: {e}"))?;
-        acadrust::DxfWriter::new(&doc).write_to_vec().map_err(|e| format!("DWG→DXF: {e}"))
+        let mut out = CappedWriter { buf: Vec::new(), limit: limits.max_dxf_bytes, exceeded: false };
+        let written = std::panic::catch_unwind(AssertUnwindSafe(|| acadrust::DxfWriter::new(&doc).write_to_writer(&mut out)))
+            .map_err(|_| "the DWG→DXF conversion failed on this file".to_string())?;
+        if out.exceeded {
+            return Err(format!(
+                "DWG: converting this {} file produced more than {} of drawing data (the limit); \
+                 the file is probably damaged, or uses objects the DWG reader misreads",
+                mb(bytes.len() as u64),
+                mb(limits.max_dxf_bytes as u64)
+            ));
+        }
+        written.map_err(|e| format!("DWG→DXF: {e}"))?;
+        Ok(out.buf)
+    }
+
+    /// Collects the DXF text and fails the write once it would grow past `limit`.
+    struct CappedWriter {
+        buf: Vec<u8>,
+        limit: usize,
+        exceeded: bool,
+    }
+
+    impl Write for CappedWriter {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            // Sticky: once over, every later write fails too.
+            if self.exceeded || self.buf.len().saturating_add(b.len()) > self.limit {
+                self.exceeded = true;
+                return Err(std::io::Error::other("DXF size limit reached"));
+            }
+            self.buf.extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
 
     /// Convert DXF bytes into a DWG file.
@@ -45,10 +115,14 @@ mod native {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use native::{dwg_to_dxf, dxf_to_dwg};
+pub use native::{dwg_to_dxf, dwg_to_dxf_with, dxf_to_dwg};
 
 #[cfg(target_arch = "wasm32")]
 pub fn dwg_to_dxf(_bytes: &[u8]) -> Result<Vec<u8>, String> {
+    Err("DWG files can't be opened in the web build yet; save as DXF".into())
+}
+#[cfg(target_arch = "wasm32")]
+pub fn dwg_to_dxf_with(_bytes: &[u8], _limits: Limits) -> Result<Vec<u8>, String> {
     Err("DWG files can't be opened in the web build yet; save as DXF".into())
 }
 #[cfg(target_arch = "wasm32")]
