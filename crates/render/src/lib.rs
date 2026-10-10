@@ -13,6 +13,7 @@ mod fill;
 mod hatch;
 mod linetype;
 pub mod paper;
+mod point;
 pub mod raster;
 pub mod units;
 
@@ -88,11 +89,14 @@ pub struct Options {
     /// Highlighted (selected) handles are not special here; the canvas overlays them.
     pub fill: bool,
     pub lineweights: bool,
+    /// Height of the visible area in world units of the space being built. Relative point
+    /// sizes (`PDSIZE` <= 0) are a percentage of it; 0 = the height of the space's extents.
+    pub view_height: f64,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Options { tolerance: 0.001, min_dash: 0.0, text: true, fill: true, lineweights: false }
+        Options { tolerance: 0.001, min_dash: 0.0, text: true, fill: true, lineweights: false, view_height: 0.0 }
     }
 }
 
@@ -217,6 +221,7 @@ fn top_ctx<'a>(d: &'a Drawing, xf: Mat3, top: Handle, frozen: &'a [String], vp_c
 }
 
 fn build_space(d: &Drawing, space: &Space, opts: &Options, plotting: bool) -> DisplayList {
+    let opts = &with_point_view(d, space, opts);
     let mut b = Builder { list: DisplayList::default(), opts, plotting };
     if let Space::Paper(name) = space {
         b.list.sheet = paper::sheet(d, name);
@@ -236,6 +241,18 @@ fn build_space(d: &Drawing, space: &Space, opts: &Options, plotting: bool) -> Di
         }
     }
     b.list
+}
+
+/// `opts` with a view height for relative point sizes: the extents height when none is given
+/// and points draw as figures sized relative to the view.
+fn with_point_view(d: &Drawing, space: &Space, opts: &Options) -> Options {
+    let mut o = opts.clone();
+    let relative = d.header.f64("PDSIZE", 0.0) <= 0.0 && point::sized(d.header.i64("PDMODE", 0));
+    if !(o.view_height.is_finite() && o.view_height > 0.0) && relative {
+        let ext = d.extents(space);
+        o.view_height = if ext.is_empty() { 0.0 } else { ext.height().max(ext.width() * 1e-3) };
+    }
+    o
 }
 
 /// Upper bound on viewports drawn per layout (hostile files).
@@ -336,6 +353,15 @@ fn push_raw(dst: &mut DisplayList, p: &DPrim, kind: Kind, pts: &[Vec2]) {
 
 /// Build the display list for a set of loose entities (previews, rubber bands).
 pub fn build_entities<'a, I: IntoIterator<Item = &'a Entity>>(d: &Drawing, ents: I, opts: &Options) -> DisplayList {
+    let ents: Vec<&Entity> = ents.into_iter().collect();
+    // Only previews holding points need the model extents for relative point sizes.
+    let with_view;
+    let opts = if ents.iter().any(|e| matches!(e.kind, EntityKind::Point(_))) {
+        with_view = with_point_view(d, &Space::Model, opts);
+        &with_view
+    } else {
+        opts
+    };
     let mut b = Builder { list: DisplayList::default(), opts, plotting: false };
     for e in ents {
         entity(&mut b, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
@@ -527,7 +553,18 @@ fn entity(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 mtext(b, ctx, t, rgb, lw);
             }
         }
-        EntityKind::Point(p) => b.point(ctx, rgb, p.p.xy()),
+        EntityKind::Point(p) => {
+            // Relative sizes follow the view: undo the block / viewport scale.
+            let view = b.opts.view_height / ctx.xf.scale_factor().max(1e-12);
+            let size = point::size(ctx.d.header.f64("PDSIZE", 0.0), view);
+            let fig = point::figure(ctx.d.header.i64("PDMODE", 0), size, p.p.xy(), p.angle, tol);
+            if fig.dot {
+                b.point(ctx, rgb, p.p.xy());
+            }
+            for l in &fig.lines {
+                b.polyline(ctx, rgb, lw, l);
+            }
+        }
         kind => {
             for prim in kind.prims() {
                 match prim {
