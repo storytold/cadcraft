@@ -46,8 +46,8 @@ pub fn specs() -> Vec<CommandSpec> {
             .noundo(),
         CommandSpec::new("close", "Close", run_close).menu(&["File", "Close"]).key("Cmd+W").params("{index?}").noundo(),
         CommandSpec::new("closeall", "Close All", run_closeall).menu(&["File", "Close All"]).enabled(always).noundo(),
-        CommandSpec::new("qsave", "Save", run_save).menu(&["File", "Save"]).key("Cmd+S").alias(&["save"]).params("{path?}").noundo(),
-        CommandSpec::new("saveas", "Save As...", run_saveas)
+        CommandSpec::new("qsave", "Save", run_qsave_reporting).menu(&["File", "Save"]).key("Cmd+S").alias(&["save"]).params("{path?}").noundo(),
+        CommandSpec::new("saveas", "Save As...", run_saveas_reporting)
             .menu(&["File", "Save As..."])
             .key("Cmd+Shift+S")
             .params("{path, format?: dxf|dwg}")
@@ -160,8 +160,70 @@ fn run_switch(s: &mut Session, p: &Value) -> Result<Value> {
 fn run_bytes(s: &mut Session, p: &Value) -> Result<Value> {
     let hooks = io().ok_or_else(|| bad("document.bytes", "file formats are not available in this build"))?;
     let fmt = str_param(p, "format").unwrap_or("dxf");
+    let lost = not_saved(s.doc()?);
     let bytes = (hooks.write)(s.doc()?, &format!("drawing.{fmt}")).map_err(|e| bad("document.bytes", e))?;
-    Ok(json!({ "data": base64_encode(&bytes), "bytes": bytes.len() }))
+    let mut r = json!({ "data": base64_encode(&bytes), "bytes": bytes.len() });
+    if is_drawing_file(&format!("drawing.{fmt}")) {
+        report_not_saved(s, &mut r, &lost);
+    }
+    Ok(r)
+}
+
+/// Entities a DXF or DWG file doesn't keep: those of object types CADCraft doesn't model
+/// (MLINE, 3DSOLID, MULTILEADER… read from other programs' files and kept in the drawing, but
+/// not written), counted by DXF type across model space, layouts and block definitions.
+pub fn not_saved(d: &Drawing) -> std::collections::BTreeMap<String, usize> {
+    let mut out: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(d.blocks.values().map(|b| &b.entities));
+    for e in stores.flat_map(|s| s.iter()) {
+        if let cadcraft_doc::EntityKind::Unknown(u) = &e.kind {
+            let n = out.entry(u.dxf_type.clone()).or_insert(0);
+            *n = n.saturating_add(1);
+        }
+    }
+    out
+}
+
+/// The command-line warning for [`not_saved`] entities, or `None` when the file keeps everything.
+pub fn not_saved_message(lost: &std::collections::BTreeMap<String, usize>) -> Option<String> {
+    if lost.is_empty() {
+        return None;
+    }
+    let list: Vec<String> = lost.iter().map(|(t, n)| format!("{n} {t}")).collect();
+    Some(format!("Not saved (CADCraft can't write these object types yet): {}", list.join(", ")))
+}
+
+/// Whether `path` is saved as a drawing (DXF, DWG) rather than exported as an image.
+fn is_drawing_file(path: &str) -> bool {
+    let ext = std::path::Path::new(path).extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    matches!(ext.as_str(), "dxf" | "dwg" | "")
+}
+
+/// Say on the command line what the file couldn't keep, and list it in the result's `notSaved`.
+fn report_not_saved(s: &mut Session, r: &mut Value, lost: &std::collections::BTreeMap<String, usize>) {
+    let Some(msg) = not_saved_message(lost) else { return };
+    s.echo(msg);
+    if let Some(o) = r.as_object_mut() {
+        o.insert("notSaved".into(), json!(lost));
+    }
+}
+
+/// Save, then report the entities the file couldn't keep (nothing is dropped silently).
+fn save_reporting(s: &mut Session, p: &Value, run: fn(&mut Session, &Value) -> Result<Value>) -> Result<Value> {
+    let lost = s.doc().map(not_saved).unwrap_or_default();
+    let mut r = run(s, p)?;
+    if r.get("path").and_then(Value::as_str).is_some_and(is_drawing_file) {
+        report_not_saved(s, &mut r, &lost);
+    }
+    Ok(r)
+}
+
+fn run_qsave_reporting(s: &mut Session, p: &Value) -> Result<Value> {
+    save_reporting(s, p, run_save)
+}
+
+fn run_saveas_reporting(s: &mut Session, p: &Value) -> Result<Value> {
+    save_reporting(s, p, run_saveas)
 }
 
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

@@ -182,6 +182,12 @@ fn export_framed(s: &Session, out: &str, window: Option<Bounds2>) -> Result<(), 
     let bytes = cadcraft_io::write_framed(d, out, window).map_err(|e| e.to_string())?;
     std::fs::write(out, &bytes).map_err(|e| format!("{out}: {e}"))?;
     eprintln!("wrote {out} ({} bytes)", bytes.len());
+    if !cadcraft_io::is_image(out) {
+        let lost = cadcraft_engine::cmd::file::not_saved(d);
+        if let Some(m) = cadcraft_engine::cmd::file::not_saved_message(&lost) {
+            eprintln!("{m}");
+        }
+    }
     Ok(())
 }
 

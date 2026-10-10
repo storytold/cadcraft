@@ -104,6 +104,8 @@ struct Ctx {
     tables: HashMap<Handle, (String, String)>,
     /// Table style name → TABLESTYLE handle (the first is the fallback).
     table_styles: Vec<(String, String)>,
+    /// Raster images' IMAGEDEF, IMAGEDEF_REACTOR and dictionary handles.
+    images: crate::dxf_image::Plan,
 }
 
 impl Ctx {
@@ -726,6 +728,13 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
                 w.p(10, *v);
             }
         }
+        EntityKind::Image(i) => {
+            // Every image has its IMAGEDEF (planned in `write`); the fallback never happens.
+            let Some((def, reactor)) = cx.images.by_entity.get(&e.handle) else { return };
+            w.s(0, "IMAGE");
+            common(w, e, owner, paper, "AcDbRasterImage");
+            w.t.extend(crate::dxf_image::entity_tags(i, def, reactor));
+        }
         EntityKind::Solid(s) | EntityKind::Trace(s) => {
             let solid = matches!(e.kind, EntityKind::Solid(_));
             w.s(0, if solid { "SOLID" } else { "TRACE" });
@@ -853,8 +862,8 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
                 w.p2(14, Vec2::new((q.x - o.x) / sx - 0.5, 0.5 - (q.y - o.y) / sy));
             }
         }
-        // Not yet written: images, tables, multileaders, unknown objects.
-        _ => {}
+        // Entity types CADCraft doesn't model aren't written; the save command reports them.
+        EntityKind::Unknown(_) => {}
     }
 }
 
@@ -1204,6 +1213,8 @@ pub fn write(d: &Drawing) -> String {
             table_defs.push((name, brh, table_block_entities(d, t, &e.common.layer)));
         }
     }
+    // Image definitions (IMAGEDEF objects) of raster images anywhere in the drawing.
+    cx.images = crate::dxf_image::plan(every.iter().copied(), || w.h());
     // DIMASSOC objects of associative dimensions in model and paper space.
     for st in &all_spaces {
         for e in st.iter() {
@@ -1270,6 +1281,12 @@ pub fn write(d: &Drawing) -> String {
     }
     if every.iter().any(|e| matches!(e.kind, EntityKind::Wipeout(_))) {
         classes.push(("WIPEOUT", "AcDbWipeout", 127, true));
+    }
+    if !cx.images.is_empty() {
+        classes.push(("IMAGE", "AcDbRasterImage", 127, true));
+        classes.push(("IMAGEDEF", "AcDbRasterImageDef", 0, false));
+        classes.push(("IMAGEDEF_REACTOR", "AcDbRasterImageDefReactor", 1, false));
+        classes.push(("RASTERVARIABLES", "AcDbRasterVariables", 0, false));
     }
     for (dxf_name, cpp, proxy, is_entity) in classes {
         w.s(0, "CLASS");
@@ -1634,6 +1651,12 @@ pub fn write(d: &Drawing) -> String {
     w.i(281, 1);
     w.s(3, "ACAD_GROUP");
     w.s(350, group_dict.clone());
+    if !cx.images.is_empty() {
+        w.s(3, "ACAD_IMAGE_DICT");
+        w.s(350, cx.images.dict.clone());
+        w.s(3, "ACAD_IMAGE_VARS");
+        w.s(350, cx.images.vars.clone());
+    }
     w.s(3, "ACAD_LAYOUT");
     w.s(350, layout_dict.clone());
     w.s(3, "ACAD_MLEADERSTYLE");
@@ -1738,7 +1761,7 @@ pub fn write(d: &Drawing) -> String {
     }
     w.s(0, "DICTIONARY");
     w.s(5, layout_dict.clone());
-    w.s(330, root_dict);
+    w.s(330, root_dict.clone());
     w.s(100, "AcDbDictionary");
     w.i(281, 1);
     w.s(3, "Model");
@@ -1826,6 +1849,8 @@ pub fn write(d: &Drawing) -> String {
         let h = layout_handles.get(i).cloned().unwrap_or_default();
         layout_obj(&mut w, &h, &l.name, i64::from(l.tab_order.max(1)), brh, 1, &l.page, l.view);
     }
+    // Raster image definitions.
+    w.t.extend(crate::dxf_image::objects(&cx.images, &root_dict));
     w.s(0, "ENDSEC");
     w.s(0, "EOF");
     let seed = format!("{:X}", w.next);
