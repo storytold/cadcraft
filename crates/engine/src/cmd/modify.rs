@@ -23,12 +23,12 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["Modify", "Move"])
             .alias(&["m"])
             .params("{handles?, from?: [x,y], to?: [x,y] | delta: [dx,dy]}")
-            .interactive(|_| Ok(Box::new(SelectThen::new(Op::Move)))),
+            .interactive(|_| Ok(Box::new(DisplaceM::new(Op::Move)))),
         CommandSpec::new("copy", "Copy", run_copy)
             .menu(&["Modify", "Copy"])
             .alias(&["co", "cp"])
             .params("{handles?, delta: [dx,dy] | from,to, count?: n}")
-            .interactive(|_| Ok(Box::new(SelectThen::new(Op::Copy)))),
+            .interactive(|_| Ok(Box::new(DisplaceM::new(Op::Copy)))),
         CommandSpec::new("rotate", "Rotate", run_rotate)
             .menu(&["Modify", "Rotate"])
             .alias(&["ro"])
@@ -52,7 +52,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("offset", "Offset", run_offset)
             .menu(&["Modify", "Offset"])
             .alias(&["o"])
-            .params("{handle, distance, side: [x,y]}")
+            .params("{handle, distance, side: [x,y], erase?: bool, layer?: \"source\"|\"current\"}")
             .interactive(|s| Ok(Box::new(OffsetM::new(s)))),
         CommandSpec::new("trim", "Trim", run_trim)
             .menu(&["Modify", "Trim"])
@@ -430,13 +430,33 @@ fn run_offset(s: &mut Session, p: &Value) -> Result<Value> {
     let side = point_req("offset", p, "side")?;
     let e = s.doc()?.entity(h).map(|e| (**e).clone()).ok_or_else(|| bad("offset", "no such object"))?;
     let k = offset_kind(&e.kind, dist.abs(), side).ok_or_else(|| bad("offset", "cannot offset that object"))?;
+    let current_layer = match str_param(p, "layer").map(str::to_ascii_lowercase).as_deref() {
+        None | Some("source") => false,
+        Some("current") => true,
+        Some(_) => return Err(bad("offset", "`layer` is \"source\" or \"current\"")),
+    };
+    let nh = add_offset(s, &e, k, current_layer, bool_or(p, "erase", false))?;
+    Ok(json!({ "handle": nh.hex() }))
+}
+
+/// Add the offset copy `k` of `src` (on the current layer instead of the source's when
+/// `current_layer`), then erase the source when `erase` and its layer is not locked.
+fn add_offset(s: &mut Session, src: &Entity, k: EntityKind, current_layer: bool, erase: bool) -> Result<Handle> {
     let space = s.space();
     let d = s.doc_mut()?;
+    let mut common = src.common.clone();
+    if current_layer {
+        common.layer = d.header.str("CLAYER", "0");
+    }
     let nh = d.new_handle();
     if let Some(st) = d.space_mut(&space) {
-        st.push(Entity { handle: nh, common: e.common.clone(), kind: k });
+        st.push(Entity { handle: nh, common, kind: k });
     }
-    Ok(json!({ "handle": nh.hex() }))
+    let locked = d.layer(&src.common.layer).is_some_and(|l| l.locked);
+    if erase && !locked {
+        d.remove_entity(src.handle);
+    }
+    Ok(nh)
 }
 
 // ---------------- trim / extend ----------------
@@ -1775,17 +1795,35 @@ impl Interactive for SelectThen {
     }
 }
 
+/// An OFFSET option prompt opened from "Specify offset distance".
+#[derive(Clone, Copy, PartialEq)]
+enum OffsetAsk {
+    Erase,
+    Layer,
+}
+
 struct OffsetM {
     dist: Option<f64>,
     through: bool,
     picked: Option<Handle>,
+    ask: Option<OffsetAsk>,
+    /// Multiple mode: each side point offsets the newest copy again, until Enter.
+    multiple: bool,
+    /// Undo: the drawing before each offset, with the object picked then.
+    undo: Vec<(std::sync::Arc<cadcraft_doc::Drawing>, Option<Handle>)>,
 }
 
 impl OffsetM {
     fn new(s: &Session) -> Self {
         let _ = s;
-        OffsetM { dist: None, through: false, picked: None }
+        OffsetM { dist: None, through: false, picked: None, ask: None, multiple: false, undo: Vec::new() }
     }
+}
+
+/// OFFSET's remembered options: erase the source (OFFSETERASE) and put copies on the current
+/// layer instead of the source's (kept in the drawing header beside it).
+fn offset_options(s: &Session) -> (bool, bool) {
+    s.doc().map(|d| (d.header.i64("OFFSETERASE", 0) != 0, d.header.i64("OFFSETLAYER", 0) != 0)).unwrap_or((false, false))
 }
 
 impl Interactive for OffsetM {
@@ -1794,10 +1832,33 @@ impl Interactive for OffsetM {
     }
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
         s.set_selection(Vec::new());
-        s.echo("Current settings: Erase source=No  Layer=Source  OFFSETGAPTYPE=0");
+        let (erase, current) = offset_options(s);
+        s.echo(format!(
+            "Current settings: Erase source={}  Layer={}  OFFSETGAPTYPE=0",
+            if erase { "Yes" } else { "No" },
+            if current { "Current" } else { "Source" }
+        ));
         Ok(Step::Continue)
     }
     fn prompt(&self, s: &Session) -> Prompt {
+        let (erase, current) = offset_options(s);
+        match self.ask {
+            Some(OffsetAsk::Erase) => {
+                return Prompt::new("Erase source object after offsetting?", Accept::TEXT).kw(&["Yes", "No"]).default(if erase {
+                    "Yes"
+                } else {
+                    "No"
+                });
+            }
+            Some(OffsetAsk::Layer) => {
+                return Prompt::new("Enter layer option for offset objects", Accept::TEXT).kw(&["Current", "Source"]).default(if current {
+                    "Current"
+                } else {
+                    "Source"
+                });
+            }
+            None => {}
+        }
         let last = s.doc().map(|d| d.header.f64("OFFSETDIST", -1.0)).unwrap_or(-1.0);
         match (self.dist.is_some() || self.through, self.picked) {
             (false, _) => Prompt::new("Specify offset distance", Accept::POINT_OR_NUMBER).kw(&["Through", "Erase", "Layer"]).default(if last < 0.0 {
@@ -1805,12 +1866,41 @@ impl Interactive for OffsetM {
             } else {
                 format!("{last:.4}")
             }),
-            (true, None) => Prompt::new("Select object to offset", Accept::POINT).kw(&["Exit", "Undo"]),
-            (true, Some(_)) if self.through => Prompt::new("Specify through point", Accept::POINT).kw(&["Exit", "Multiple", "Undo"]),
-            (true, Some(_)) => Prompt::new("Specify point on side to offset", Accept::POINT).kw(&["Exit", "Multiple", "Undo"]),
+            (true, None) => Prompt::new("Select object to offset", Accept::POINT).kw(&["Exit", "Undo"]).default("Exit"),
+            (true, Some(_)) if self.multiple => {
+                let msg = if self.through { "Specify through point" } else { "Specify point on side to offset" };
+                Prompt::new(msg, Accept::POINT).kw(&["Exit", "Undo"]).default("next object")
+            }
+            (true, Some(_)) if self.through => Prompt::new("Specify through point", Accept::POINT).kw(&["Exit", "Multiple", "Undo"]).default("Exit"),
+            (true, Some(_)) => Prompt::new("Specify point on side to offset", Accept::POINT).kw(&["Exit", "Multiple", "Undo"]).default("Exit"),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if let Some(ask) = self.ask {
+            let word = match &i {
+                Input::Keyword(k) | Input::Text(k) => k.trim().to_ascii_lowercase(),
+                Input::Enter => String::new(),
+                _ => return Ok(Step::Continue),
+            };
+            let (key, yes, no) = match ask {
+                OffsetAsk::Erase => ("OFFSETERASE", "y", "n"),
+                OffsetAsk::Layer => ("OFFSETLAYER", "c", "s"),
+            };
+            let v = if word.is_empty() {
+                None
+            } else if word.starts_with(yes) {
+                Some(1)
+            } else if word.starts_with(no) {
+                Some(0)
+            } else {
+                return Err(EngineError::Other("Invalid option keyword.".into()));
+            };
+            if let Some(v) = v {
+                s.doc_mut()?.header.set_i64(key, v);
+            }
+            self.ask = None;
+            return Ok(Step::Continue);
+        }
         if self.dist.is_none() && !self.through {
             match i {
                 Input::Text(t) => {
@@ -1819,6 +1909,8 @@ impl Interactive for OffsetM {
                     s.doc_mut()?.header.set_f64("OFFSETDIST", d);
                 }
                 Input::Keyword(k) if k == "Through" => self.through = true,
+                Input::Keyword(k) if k == "Erase" => self.ask = Some(OffsetAsk::Erase),
+                Input::Keyword(k) if k == "Layer" => self.ask = Some(OffsetAsk::Layer),
                 Input::Enter => {
                     let last = s.doc()?.header.f64("OFFSETDIST", -1.0);
                     if last > 0.0 {
@@ -1835,6 +1927,34 @@ impl Interactive for OffsetM {
             (_, Input::Keyword(k)) if k == "Exit" => {
                 s.set_selection(Vec::new());
                 Ok(Step::Done)
+            }
+            (_, Input::Keyword(k)) if k == "Undo" => {
+                match self.undo.pop() {
+                    Some((doc, picked)) => {
+                        // Settings changed meanwhile stay.
+                        let header = s.doc()?.header.clone();
+                        s.state_mut()?.doc = doc;
+                        s.doc_mut()?.header = header;
+                        self.picked = if self.multiple { picked } else { None };
+                        if self.picked.is_none() {
+                            self.multiple = false;
+                        }
+                        s.set_selection(self.picked.into_iter().collect());
+                    }
+                    None => s.echo("Nothing to undo."),
+                }
+                Ok(Step::Continue)
+            }
+            (Some(_), Input::Keyword(k)) if k == "Multiple" => {
+                self.multiple = true;
+                Ok(Step::Continue)
+            }
+            (Some(_), Input::Enter) if self.multiple => {
+                // <next object>: back to selecting.
+                self.multiple = false;
+                self.picked = None;
+                s.set_selection(Vec::new());
+                Ok(Step::Continue)
             }
             (_, Input::Enter) => {
                 s.set_selection(Vec::new());
@@ -1854,6 +1974,7 @@ impl Interactive for OffsetM {
             }
             (Some(h), Input::Point(p)) => {
                 let e = s.doc()?.entity(h).map(|e| (**e).clone());
+                let mut made = None;
                 if let Some(e) = e {
                     let dist = match self.dist {
                         Some(d) => d,
@@ -1867,18 +1988,17 @@ impl Interactive for OffsetM {
                     };
                     match offset_kind(&e.kind, dist, p) {
                         Some(k) => {
-                            let space = s.space();
-                            let d = s.doc_mut()?;
-                            let nh = d.new_handle();
-                            if let Some(st) = d.space_mut(&space) {
-                                st.push(Entity { handle: nh, common: e.common.clone(), kind: k });
-                            }
+                            let before = s.state()?.doc.clone();
+                            let (erase, current) = offset_options(s);
+                            made = Some(add_offset(s, &e, k, current, erase)?);
+                            self.undo.push((before, Some(h)));
                         }
                         None => s.echo("Cannot offset that object."),
                     }
                 }
-                self.picked = None;
-                s.set_selection(Vec::new());
+                // Multiple mode carries on from the new copy.
+                self.picked = if self.multiple { made.or(self.picked) } else { None };
+                s.set_selection(self.picked.into_iter().collect());
                 Ok(Step::Continue)
             }
             _ => Ok(Step::Continue),
@@ -2113,6 +2233,66 @@ impl Interactive for BreakM {
             (_, Input::Enter) => Ok(Step::Done),
             _ => Ok(Step::Continue),
         }
+    }
+}
+
+/// MOVE and COPY: [`SelectThen`], plus the Displacement option at the base point prompt
+/// (the keyword, or Enter): the typed point is the displacement itself.
+struct DisplaceM {
+    inner: SelectThen,
+    displacement: bool,
+}
+
+impl DisplaceM {
+    fn new(op: Op) -> Self {
+        DisplaceM { inner: SelectThen::new(op), displacement: false }
+    }
+    /// At "Specify base point": objects selected, no point yet.
+    fn at_base(&self) -> bool {
+        self.inner.sel.done && self.inner.pts.is_empty() && !self.displacement
+    }
+}
+
+impl Interactive for DisplaceM {
+    fn name(&self) -> &'static str {
+        self.inner.name()
+    }
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        self.inner.begin(s)
+    }
+    fn prompt(&self, s: &Session) -> Prompt {
+        if self.displacement {
+            return Prompt::new("Specify displacement", Accept::POINT).default("0,0");
+        }
+        if self.at_base() {
+            return Prompt::new("Specify base point", Accept::POINT).kw(&["Displacement"]).default("Displacement");
+        }
+        self.inner.prompt(s)
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if self.displacement {
+            let d = match i {
+                Input::Point(p) => p,
+                Input::Enter => Vec2::ZERO,
+                _ => return Ok(Step::Continue),
+            };
+            if d != Vec2::ZERO {
+                transform_entities(s, &self.inner.objs, &Mat3::translate(d), self.inner.op == Op::Copy)?;
+            }
+            s.set_selection(Vec::new());
+            return Ok(Step::Done);
+        }
+        if self.at_base() && (matches!(&i, Input::Enter) || matches!(&i, Input::Keyword(k) if k == "Displacement")) {
+            self.displacement = true;
+            return Ok(Step::Continue);
+        }
+        self.inner.input(s, i)
+    }
+    fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
+        if self.displacement {
+            return Vec::new();
+        }
+        self.inner.preview(s, c)
     }
 }
 
