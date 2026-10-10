@@ -31,3 +31,7 @@ sys-locale = "0.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "0.21", default-features = false }
+# Finder / Open With / Dock documents arrive as an Apple event, not in argv. Handling it needs
+# Objective-C class declarations (unsafe, forbidden here); this audited crate wraps that behind a
+# safe main-thread API (the sibling crafting apps use it too).
+fmv-macos-events = "=0.1.0"

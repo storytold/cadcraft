@@ -30,6 +30,7 @@
 	About	Про програму
 	About CADCraft	Про CADCraft
 	Absolute	Абсолютні
+	Accessibility	Спеціальні можливості
 	Add Leader	Додати виноску
 	Align	Вирівняти
 	Align Text	Вирівняти текст
@@ -674,6 +675,7 @@
 	Show All Constraint Bars	Показати всі панелі обмежень
 	Show All Dynamic Dimensions	Показати всі динамічні розміри
 	Show Layer List	Показати список шарів
+	Show System Cursor	Показати системний курсор
 	Show/Hide Lineweight	Показати/приховати товщину ліній
 	Show/Hide Transparency	Показати/приховати прозорість
 	Single Line Text	Однорядковий текст

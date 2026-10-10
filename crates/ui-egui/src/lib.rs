@@ -97,11 +97,22 @@ impl Default for UiState {
     }
 }
 
+/// A request from the operating system (the macOS Apple events).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OsEvent {
+    /// Open these drawings: a Finder double-click, Open With, the Dock icon or `open -a`.
+    Open(Vec<String>),
+    /// Quit (Dock ▸ Quit, logging out): like Cmd+Q, so unsaved changes are asked about first.
+    Quit,
+}
+
 /// Host services (file pickers, clipboard) injected by the app so this crate stays portable.
 #[derive(Default)]
 pub struct Services {
     pub pick_open: Option<Box<dyn Fn() -> Option<String>>>,
     pub pick_save: Option<Box<dyn Fn(&str) -> Option<String>>>,
+    /// Drains the operating system's pending requests; polled every frame.
+    pub os_events: Option<Box<dyn Fn() -> Vec<OsEvent>>>,
 }
 
 pub struct CadApp {
@@ -324,6 +335,12 @@ impl CadApp {
             let p = f.path().to_string_lossy().to_string();
             if !p.is_empty() {
                 self.open_path(&p);
+            }
+        }
+        for e in self.services.os_events.as_ref().map(|f| f()).unwrap_or_default() {
+            match e {
+                OsEvent::Open(paths) => paths.iter().filter(|p| !p.is_empty()).for_each(|p| self.open_path(p)),
+                OsEvent::Quit => self.quit_requested = true,
             }
         }
     }

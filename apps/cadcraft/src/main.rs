@@ -14,6 +14,8 @@
 #![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+#[cfg(target_os = "macos")]
+mod apple_events;
 mod control_server;
 #[cfg(any(target_os = "windows", test))]
 mod graphics;
@@ -87,6 +89,7 @@ fn services() -> Services {
                 .save_file()
                 .map(|p| p.to_string_lossy().to_string())
         })),
+        os_events: None,
     }
 }
 
@@ -207,11 +210,21 @@ fn main() -> eframe::Result {
             b.with_x11();
         }));
     }
+    // Finder / Open With / the Dock deliver drawings as Apple events, not arguments; registered
+    // before the event loop so the one that launched the app is caught. Lives until it returns.
+    #[cfg(target_os = "macos")]
+    let apple_events = apple_events::AppleEvents::install();
+    #[cfg(target_os = "macos")]
+    let apple_events = &apple_events;
     eframe::run_native(
         "CADCraft",
         options,
         Box::new(move |cc| {
             let mut app = CadApp::new(Session::empty(), services());
+            #[cfg(target_os = "macos")]
+            {
+                app.services.os_events = Some(apple_events.poll(&cc.egui_ctx));
+            }
             app.system_languages = std::env::var("CADCRAFT_LOCALE").map(|s| vec![s]).unwrap_or_else(|_| sys_locale::get_locales().collect());
             if let Some(prefs) = cc.storage.and_then(|s| s.get_string(cadcraft_ui_egui::PREFS_KEY)) {
                 app.load_prefs(&prefs);
