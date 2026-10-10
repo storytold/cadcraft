@@ -116,6 +116,9 @@ pub struct CadApp {
     shown_theme: Option<egui::Theme>,
     pub frame_ms: f64,
     pub quit_requested: bool,
+    /// The app may close although drawings have unsaved changes (they were dealt with, or the
+    /// quit came from the control channel, which never asks).
+    pub quit_confirmed: bool,
     /// A close request waiting for "Save changes?" answers ([`closing`]).
     pub closing: Option<closing::Closing>,
 }
@@ -141,6 +144,7 @@ impl CadApp {
             shown_theme: None,
             frame_ms: 0.0,
             quit_requested: false,
+            quit_confirmed: false,
             closing: None,
         }
     }
@@ -233,6 +237,10 @@ impl CadApp {
 
     /// Per-frame logic before layout.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        // Closing the window (title bar, File ▸ Exit, Cmd+Q) with unsaved changes asks first.
+        if ctx.input(|i| i.viewport().close_requested()) && self.request_quit() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        }
         if !self.styled {
             theme::install_fonts(ctx);
             self.styled = true;

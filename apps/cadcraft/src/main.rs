@@ -38,7 +38,7 @@ impl eframe::App for App {
             }
         }
         self.0.logic(ctx);
-        if self.0.quit_requested {
+        if std::mem::take(&mut self.0.quit_requested) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
