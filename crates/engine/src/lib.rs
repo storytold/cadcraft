@@ -845,15 +845,18 @@ impl Session {
     // ---------------- picking without a command ----------------
 
     /// A click with no command running: pick/toggle objects or start a selection window.
+    ///
+    /// PICKADD on (the default): picks add to the selection and Shift removes. PICKADD off: each pick
+    /// replaces the selection and Shift adds (Shift+pick on a selected object removes it).
     pub fn idle_click(&mut self, p: Vec2, shift: bool) -> Result<()> {
         let space = self.space();
+        let pickadd = self.settings.pickadd;
         if let Some(pw) = self.pending_window.take() {
             let crossing = p.x < pw.corner.x;
             let hs = select::select_window(self.doc()?, &space, Bounds2::new(pw.corner, p), crossing);
-            let mut sel = if shift { Vec::new() } else { self.selection() };
-            if shift {
-                let cur = self.selection();
-                sel = cur.into_iter().filter(|h| !hs.contains(h)).collect();
+            let mut sel = if pickadd || shift { self.selection() } else { Vec::new() };
+            if shift && pickadd {
+                sel.retain(|h| !hs.contains(h));
             } else {
                 sel.extend(hs);
             }
@@ -863,10 +866,11 @@ impl Session {
         let ap = self.pixel_size() * self.settings.pickbox.max(1.0) * 1.5;
         match select::pick(self.doc()?, &space, p, ap) {
             Some(h) => {
-                let mut sel = self.selection();
-                if shift {
+                let mut sel = if pickadd || shift { self.selection() } else { Vec::new() };
+                let had = sel.contains(&h);
+                if shift && (pickadd || had) {
                     sel.retain(|x| *x != h);
-                } else if !sel.contains(&h) {
+                } else if !had {
                     sel.push(h);
                 }
                 self.set_selection(sel);

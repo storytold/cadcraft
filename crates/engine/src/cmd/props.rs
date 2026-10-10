@@ -148,6 +148,9 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(l) = str_param(p, "layer") {
         d.ensure_layer(l);
     }
+    let dim_style = str_param(p, "dimStyle")
+        .map(|n| d.dim_style(n).map(|st| st.name.clone()).ok_or_else(|| bad("properties.set", format!("dimension style `{n}` not found"))))
+        .transpose()?;
     for h in &hs {
         d.modify_entity(*h, |e| {
             if let Some(l) = str_param(p, "layer") {
@@ -198,6 +201,12 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
                     }
                     if let Some(dm) = num("diameter").filter(|r| *r > 0.0) {
                         c.radius = dm / 2.0;
+                    }
+                    if let Some(cf) = num("circumference").filter(|x| *x > 0.0) {
+                        c.radius = cf / cadcraft_geom::TAU;
+                    }
+                    if let Some(a) = num("area").filter(|x| *x > 0.0) {
+                        c.radius = (a / cadcraft_geom::PI).sqrt();
                     }
                 }
                 EntityKind::Arc(a) => {
@@ -264,6 +273,10 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
                 EntityKind::Dimension(dm) => {
                     if let Some(v) = str_param(p, "textOverride") {
                         dm.text = v.to_string();
+                        dm.block = None;
+                    }
+                    if let Some(st) = &dim_style {
+                        dm.style.clone_from(st);
                         dm.block = None;
                     }
                 }
