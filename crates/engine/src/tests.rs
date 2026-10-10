@@ -461,6 +461,13 @@ fn script_runs_commands() {
 }
 
 #[test]
+fn script_splits_line_at_keyword_prompt() {
+    let mut s = Session::new();
+    s.script("POLYGON 6 200,20 I 15").unwrap();
+    assert_eq!(kinds(&s), vec!["Polyline"]);
+}
+
+#[test]
 fn enter_repeats_last_command() {
     let mut s = Session::new();
     s.cmdline("circle 0,0 1").unwrap();
