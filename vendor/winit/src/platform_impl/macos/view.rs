@@ -928,6 +928,17 @@ impl WinitView {
             return;
         }
 
+        // CADCraft patch: tell the input method to drop the composition in progress
+        // (rust-windowing/winit#4745). Otherwise it keeps the marked text and continues composing
+        // it once IME is allowed again (focus back in a text field), although winit has ended it:
+        // the old syllable is committed a second time or merged into the next one. AppKit may call
+        // `unmarkText` from here; IME is still enabled then, so its `Preedit("")` comes before
+        // `Disabled`.
+        if self.ivars().marked_text.borrow().length() > 0 {
+            let input_context = self.inputContext().expect("input context");
+            input_context.discardMarkedText();
+        }
+
         // Clear markedText
         *self.ivars().marked_text.borrow_mut() = NSMutableAttributedString::new();
         self.ivars().pending_commit.set(false);
