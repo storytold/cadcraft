@@ -207,8 +207,8 @@ fn font_switch(a: &str) -> Option<TextFont> {
     };
     if let Some(st) = style {
         for cand in [format!("{name} {st}"), format!("{name}-{}", st.replace(' ', "")), format!("{name}{}", if bold { "bd" } else { "i" })] {
-            if let Some(b) = crate::ttf::find(&cand) {
-                return Some(TextFont::Outline(b));
+            if let Some(f) = crate::ttf::find(&cand) {
+                return Some(TextFont::Outline(f));
             }
         }
     }

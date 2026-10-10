@@ -449,6 +449,13 @@ fn sysvars_roundtrip() {
     assert_eq!(s.doc().unwrap().header.f64("LTSCALE", 0.0), 2.5);
     assert!(s.execute("setvar", &json!({"name": "ORTHOMODE", "value": "x"})).is_err());
     assert_eq!(sysvars::get(&s, "orthomode"), Some(json!(0)));
+    // FONTALT is a process-wide font setting, not a drawing header variable.
+    s.execute("setvar", &json!({"name": "FONTALT", "value": "no-such-font-130"})).unwrap();
+    assert_eq!(sysvars::get(&s, "fontalt"), Some(json!("no-such-font-130")));
+    assert!(s.doc().unwrap().header.get("FONTALT").is_none());
+    assert!(s.execute("setvar", &json!({"name": "FONTALT", "value": 3})).is_err());
+    s.execute("setvar", &json!({"name": "FONTALT", "value": "."})).unwrap();
+    assert_eq!(sysvars::get(&s, "FONTALT"), Some(json!("")));
 }
 
 #[test]
