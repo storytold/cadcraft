@@ -635,6 +635,10 @@ fn run_dimstyle(s: &mut Session, p: &Value) -> Result<Value> {
     if bool_or(p, "current", true) {
         d.header.set_str("DIMSTYLE", &name);
     }
+    // Editing or making the current style current clears the SETVAR overrides.
+    if d.header.str("DIMSTYLE", "Standard").eq_ignore_ascii_case(&name) {
+        d.sync_dim_vars();
+    }
     let mut out = dimstyles_json(d);
     if !rejected.is_empty()
         && let Some(o) = out.as_object_mut()
@@ -666,6 +670,7 @@ fn run_dimstyle_current(s: &mut Session, p: &Value) -> Result<Value> {
     let d = s.doc_mut()?;
     let n = d.dim_style(name).map(|t| t.name.clone()).ok_or_else(|| bad("dimstyle.current", format!("no dimension style `{name}`")))?;
     d.header.set_str("DIMSTYLE", &n);
+    d.sync_dim_vars();
     Ok(dimstyles_json(d))
 }
 

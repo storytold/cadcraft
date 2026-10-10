@@ -125,7 +125,7 @@ fn dim(s: &Session, kind: DimKind, defpt: Vec2, p13: Vec2, p14: Vec2, p15: Vec2,
         text_rotation: 0.0,
         user_text_pos: false,
         block: None,
-        overrides: Default::default(),
+        overrides: s.doc().map(|d| d.dim_overrides()).unwrap_or_default(),
         assoc: Vec::new(),
     })
 }

@@ -93,7 +93,14 @@ pub fn entity_bounds(d: &Drawing, e: &Entity, depth: usize) -> Bounds2 {
                 b.add(dm.text_mid.xy());
             }
             // Room for text and arrows.
-            let th = d.dim_style(&dm.style).map(|s| s.text_height * s.scale.max(1e-9)).unwrap_or(0.18) * d.header.f64("DIMSCALE", 1.0).max(1e-9);
+            // The same scale the dimension's geometry uses.
+            let th = d
+                .dim_style(&dm.style)
+                .map(|s| {
+                    let s = s.with_overrides(&dm.overrides);
+                    s.text_height * s.effective_scale(d.header.f64("DIMSCALE", 1.0))
+                })
+                .unwrap_or(0.18 * d.header.f64("DIMSCALE", 1.0).max(1e-9));
             b = b.expand(th * 2.5);
             if let Some(blk) = dm.block.as_ref().and_then(|n| d.block(n))
                 && depth < MAX_BLOCK_DEPTH
