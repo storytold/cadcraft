@@ -15,6 +15,8 @@ const SESSION_VARS: &[&str] = &[
     "GRIDUNIT",
     "GRIDMAJOR",
     "DYNMODE",
+    "DYNPIFORMAT",
+    "DYNPICOORDS",
     "LWDISPLAY",
     "QPMODE",
     "PICKBOX",
@@ -42,6 +44,8 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "GRIDUNIT" => json!([st.gridunit.x, st.gridunit.y]),
         "GRIDMAJOR" => json!(st.gridmajor),
         "DYNMODE" => json!(i32::from(st.dynmode)),
+        "DYNPIFORMAT" => json!(i32::from(st.dynpi_cartesian)),
+        "DYNPICOORDS" => json!(i32::from(st.dynpi_absolute)),
         "LWDISPLAY" => json!(i32::from(st.lwdisplay)),
         "QPMODE" => json!(i32::from(st.qpmode)),
         "PICKBOX" => json!(st.pickbox),
@@ -77,8 +81,16 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
             json!([p.x, p.y, 0.0])
         }
         _ => {
-            let h = s.doc().ok()?.header.get(&n)?;
-            serde_json::to_value(h).ok()?
+            let d = s.doc().ok()?;
+            match d.header.get(&n) {
+                Some(h) => serde_json::to_value(h).ok()?,
+                // A dimension variable the header doesn't carry reads from the current style.
+                None => {
+                    let field = cadcraft_doc::DIMVARS.iter().find(|(v, _)| *v == n)?.1;
+                    let st = d.dim_style(&d.header.str("DIMSTYLE", "Standard"))?;
+                    serde_json::to_value(st).ok()?.get(field)?.clone()
+                }
+            }
         }
     };
     Some(v)
@@ -98,8 +110,18 @@ fn as_pt(v: &Value) -> Option<cadcraft_geom::Vec2> {
     crate::cmd::point_value(v).or_else(|| as_f64(v).map(|f| cadcraft_geom::Vec2::new(f, f)))
 }
 
+/// Variables `get` reports from session or drawing state that `set` can't change.
+const READ_ONLY: &[&str] = &["CMDNAMES", "DWGNAME", "DBMOD", "CTAB", "LASTPOINT", "VIEWCTR", "VIEWSIZE", "EXTMIN", "EXTMAX"];
+
+pub fn is_read_only(name: &str) -> bool {
+    READ_ONLY.iter().any(|r| r.eq_ignore_ascii_case(name.trim()))
+}
+
 pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
     let n = name.trim().to_ascii_uppercase();
+    if is_read_only(&n) {
+        return Err(EngineError::BadParams { cmd: "setvar".into(), msg: format!("{n} is read-only") });
+    }
     let bad = || EngineError::BadParams { cmd: "setvar".into(), msg: format!("invalid value for {n}") };
     let st = &mut s.settings;
     match n.as_str() {
@@ -113,6 +135,8 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         "GRIDUNIT" => st.gridunit = as_pt(v).filter(|p| p.x > 0.0 && p.y > 0.0).ok_or_else(bad)?,
         "GRIDMAJOR" => st.gridmajor = as_f64(v).ok_or_else(bad)?.clamp(1.0, 100.0) as u32,
         "DYNMODE" => st.dynmode = as_bool(v).ok_or_else(bad)?,
+        "DYNPIFORMAT" => st.dynpi_cartesian = as_bool(v).ok_or_else(bad)?,
+        "DYNPICOORDS" => st.dynpi_absolute = as_bool(v).ok_or_else(bad)?,
         "LWDISPLAY" => st.lwdisplay = as_bool(v).ok_or_else(bad)?,
         "QPMODE" => st.qpmode = as_i(v).ok_or_else(bad)? > 0,
         "PICKBOX" => st.pickbox = as_f64(v).ok_or_else(bad)?.clamp(0.0, 50.0),
@@ -140,12 +164,21 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
                 _ => return Err(bad()),
             };
             // Keep the header type stable for known numeric vars.
-            if let Some(old) = d.header.get(&n)
-                && matches!(old, cadcraft_doc::HVal::Real(_))
-                && let Some(f) = val.as_f64()
-            {
-                d.header.set_f64(&n, f);
-                return Ok(());
+            match d.header.get(&n) {
+                Some(cadcraft_doc::HVal::Real(_)) => {
+                    d.header.set_f64(&n, val.as_f64().ok_or_else(bad)?);
+                    return Ok(());
+                }
+                Some(cadcraft_doc::HVal::Int(_)) => {
+                    let i = match val {
+                        cadcraft_doc::HVal::Int(i) => i,
+                        cadcraft_doc::HVal::Real(f) if f.fract() == 0.0 && f.abs() < 1e15 => f as i64,
+                        _ => return Err(bad()),
+                    };
+                    d.header.set_i64(&n, i);
+                    return Ok(());
+                }
+                _ => {}
             }
             d.header.set(&n, val);
         }

@@ -1265,11 +1265,8 @@ fn attdef_prompt_survives_dxf_roundtrip() {
     d.add(&Space::Model, Default::default(), attdef("Enter value")).unwrap();
     d.add(&Space::Model, Default::default(), attdef("")).unwrap();
     let back = roundtrip(&d);
-    let prompts: Vec<&str> = back
-        .model
-        .iter()
-        .filter_map(|e| if let EntityKind::AttDef(a) = &e.kind { Some(a.prompt.as_str()) } else { None })
-        .collect();
+    let prompts: Vec<&str> =
+        back.model.iter().filter_map(|e| if let EntityKind::AttDef(a) = &e.kind { Some(a.prompt.as_str()) } else { None }).collect();
     assert_eq!(prompts, vec!["Enter value", ""]);
 }
 
@@ -1286,6 +1283,32 @@ fn dimension_text_rotation_roundtrips() {
     let b = x.block.as_deref().and_then(|n| back.block(n)).expect("dimension block");
     let rot = b.entities.iter().find_map(|e| if let EntityKind::MText(t) = &e.kind { Some(t.rotation) } else { None });
     assert!(rot.is_some_and(|r| (r - dm.text_rotation).abs() < 1e-9), "block text rotation {rot:?}");
+}
+
+/// Wipeout clip vertices are in image pixel space (origin top-left, y down): an asymmetric
+/// boundary must keep its orientation, both through our reader and in the file itself.
+#[test]
+fn wipeout_boundary_keeps_its_orientation() {
+    let mut d = Drawing::new_imperial();
+    // A triangle with its apex at the top.
+    let boundary = vec![Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(0.0, 4.0)];
+    d.add(&Space::Model, Common::default(), EntityKind::Wipeout(Wipeout { boundary: boundary.clone() })).unwrap();
+    let text = write_dxf(&d);
+    // The apex (0, 4) is at the top-left corner of the image: pixel (-0.5, -0.5).
+    let pts: Vec<(f64, f64)> = {
+        let lines: Vec<&str> = text.lines().map(str::trim).collect();
+        let mut v = Vec::new();
+        for i in 0..lines.len().saturating_sub(3) {
+            if lines[i] == "14" && lines[i + 2] == "24" {
+                v.push((lines[i + 1].parse().unwrap(), lines[i + 3].parse().unwrap()));
+            }
+        }
+        v
+    };
+    assert!(pts.iter().any(|&(x, y)| (x + 0.5).abs() < 1e-9 && (y + 0.5).abs() < 1e-9), "{pts:?}");
+    let back = roundtrip(&d);
+    let got = first(&back, |k| if let EntityKind::Wipeout(w) = k { Some(w.boundary.clone()) } else { None });
+    assert_eq!(&got[..3], &boundary[..]);
 }
 
 #[test]
@@ -1309,9 +1332,223 @@ fn arc_length_dimension_keeps_its_kind_and_centre_on_roundtrip() {
     }
     // And through DWG.
     let dwg = cadcraft_dwg::dxf_to_dwg(text.as_bytes()).unwrap();
-    let back = read_dxf(cadcraft_dwg::dwg_to_dxf(&dwg).unwrap().as_bytes()).unwrap();
+    let back = read_dxf(&cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).unwrap();
     let dims: Vec<_> = back.model.iter().filter_map(|e| if let EntityKind::Dimension(x) = &e.kind { Some(x.clone()) } else { None }).collect();
     assert_eq!(dims.len(), 1);
     assert!(matches!(dims[0].kind, DimKind::ArcLength), "{:?}", dims[0].kind);
     assert!((dims[0].p15 - Vec3::new(5.0, 5.0, 0.0)).len() < 1e-9);
+}
+
+/// Two gradient hatches (true colours, shifted, rotated; index colours, centered) and a plain
+/// solid hatch over the same square.
+fn gradient_sample() -> (Drawing, Vec<Option<Gradient>>) {
+    let mut d = Drawing::new_metric();
+    let square = vec![
+        PolyVertex::new(Vec2::ZERO),
+        PolyVertex::new(Vec2::new(10.0, 0.0)),
+        PolyVertex::new(Vec2::new(10.0, 10.0)),
+        PolyVertex::new(Vec2::new(0.0, 10.0)),
+    ];
+    let gradients = vec![
+        Some(Gradient {
+            name: "LINEAR".into(),
+            color1: Color::True(cadcraft_color::Rgb(255, 0, 0)),
+            color2: Color::True(cadcraft_color::Rgb(0, 0, 255)),
+            angle: 30f64.to_radians(),
+            centered: false,
+        }),
+        Some(Gradient { name: "CURVED".into(), color1: Color::Index(5), color2: Color::ByLayer, angle: 0.0, centered: true }),
+        None,
+    ];
+    for g in &gradients {
+        let h = Hatch {
+            pattern: "SOLID".into(),
+            solid: true,
+            loops: vec![HatchLoop { vertices: square.clone(), outer: true }],
+            scale: 1.0,
+            angle: 0.0,
+            associative: false,
+            style: 0,
+            elevation: 0.0,
+            gradient: g.clone(),
+            origin: Vec2::ZERO,
+            background: None,
+        };
+        d.add(&Space::Model, Common::default(), EntityKind::Hatch(h)).unwrap();
+    }
+    (d, gradients)
+}
+
+fn hatches(d: &Drawing) -> Vec<Hatch> {
+    d.model.iter().filter_map(|e| if let EntityKind::Hatch(h) = &e.kind { Some(h.clone()) } else { None }).collect()
+}
+
+/// Issue #80: a DXF save/reopen keeps each hatch's gradient (name, both colours, angle and
+/// centered setting) as native HATCH groups 450–470, and a plain solid stays plain.
+#[test]
+fn gradient_hatch_roundtrips_through_dxf() {
+    let (d, gradients) = gradient_sample();
+    let text = write_dxf(&d);
+    for code in ["450", "451", "452", "453", "460", "461", "462", "463", "421", "470"] {
+        assert!(text.lines().any(|l| l.trim() == code), "missing group {code}");
+    }
+    let back = read_dxf(text.as_bytes()).unwrap();
+    let (a, b) = (hatches(&d), hatches(&back));
+    assert_eq!(b.len(), gradients.len());
+    for ((x, y), g) in a.iter().zip(&b).zip(&gradients) {
+        assert_eq!(&y.gradient, g);
+        assert_eq!(x.loops, y.loops);
+    }
+    assert_eq!(roundtrip(&back).model.iter().map(|e| &e.kind).collect::<Vec<_>>(), back.model.iter().map(|e| &e.kind).collect::<Vec<_>>());
+}
+
+/// R2000 readers and DWG conversions drop the native groups; CADCraft's xdata copy restores the
+/// gradient. When native groups are present (another program may have edited them) they win.
+#[test]
+fn gradient_falls_back_to_xdata_and_native_groups_win() {
+    let (d, gradients) = gradient_sample();
+    let text = write_dxf(&d);
+    // Strip groups 450–470 and 63/421 (pairs of lines) from every entity.
+    let lines: Vec<&str> = text.lines().collect();
+    let mut stripped = String::new();
+    for pair in lines.chunks(2) {
+        let code = pair.first().map(|c| c.trim().parse::<i32>().unwrap_or(-1)).unwrap_or(-1);
+        if (450..=470).contains(&code) || code == 63 || code == 421 {
+            continue;
+        }
+        for l in pair {
+            stripped.push_str(l);
+            stripped.push('\n');
+        }
+    }
+    assert!(!stripped.lines().any(|l| l.trim() == "450"));
+    let back = read_dxf(stripped.as_bytes()).unwrap();
+    assert_eq!(hatches(&back).into_iter().map(|h| h.gradient).collect::<Vec<_>>(), gradients);
+
+    // Native groups edited elsewhere (new angle, colour, name) take precedence over stale xdata.
+    let edited = text.replacen("470\r\nLINEAR", "470\r\nSPHERICAL", 1).replacen("421\r\n16711680", "421\r\n65280", 1);
+    assert_ne!(edited, text);
+    let back = read_dxf(edited.as_bytes()).unwrap();
+    let g = hatches(&back).into_iter().next().and_then(|h| h.gradient).unwrap();
+    assert_eq!(g.name, "SPHERICAL");
+    assert_eq!(g.color1, Color::True(cadcraft_color::Rgb(0, 255, 0)));
+}
+
+/// Issue #80: DWG saves (R2000, which has no native gradient fields) keep the gradient too.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn gradient_hatch_roundtrips_through_dwg() {
+    let (d, gradients) = gradient_sample();
+    let back = read(&write(&d, "x.dwg").unwrap(), "x.dwg").unwrap();
+    let hs = hatches(&back);
+    assert_eq!(hs.iter().map(|h| h.gradient.clone()).collect::<Vec<_>>(), gradients);
+    assert_eq!(hs.iter().map(|h| h.loops.clone()).collect::<Vec<_>>(), hatches(&d).into_iter().map(|h| h.loops).collect::<Vec<_>>());
+}
+
+#[test]
+fn hostile_gradient_groups_never_panic() {
+    let hatch = |tail: &str| {
+        format!(
+            "0\nSECTION\n2\nENTITIES\n0\nHATCH\n2\nSOLID\n70\n1\n91\n1\n92\n2\n72\n0\n73\n1\n93\n3\n10\n0\n20\n0\n10\n1\n20\n0\n10\n1\n20\n1\n98\n0\n{tail}0\nENDSEC\n0\nEOF\n"
+        )
+    };
+    let cases = [
+        // Native: absurd counts, colour records past two, out-of-range ACI/true colours, NaN.
+        hatch(
+            "450\n1\n453\n2147483647\n460\nnan\n461\ninf\n463\n0\n63\n99999\n421\n-1\n463\n1\n63\n-32768\n421\n99999999999\n463\n2\n63\n3\n463\n7\n470\n\n",
+        ),
+        // Native flag only, or a non-gradient flag, or groups out of order.
+        hatch("450\n1\n"),
+        hatch("450\n-7\n470\nX\n"),
+        hatch("421\n255\n63\n1\n463\n0\n450\n1\n470\nLINEAR\n"),
+        // Xdata: missing values, junk colour names, huge numbers.
+        hatch("1001\nCADCRAFT\n1000\nGRADIENT\n"),
+        hatch("1001\nCADCRAFT\n1000\nGRADIENT\n1000\nX\n1040\n1e308\n1070\n-1\n1000\nnot a colour\n1000\n999,999,999\n"),
+        hatch("1001\nCADCRAFT\n1000\nGRADIENT\n1040\nnan\n1001\nACAD\n1000\n\n"),
+    ];
+    for t in &cases {
+        let d = read(t.as_bytes(), "x.dxf").unwrap();
+        for h in hatches(&d) {
+            if let Some(g) = &h.gradient {
+                assert!(g.angle.is_finite());
+            }
+        }
+        let _ = cadcraft_render::build(&d, &Space::Model, &cadcraft_render::Options::default());
+        let back = read_dxf(write_dxf(&d).as_bytes()).unwrap();
+        assert_eq!(
+            hatches(&back).into_iter().map(|h| h.gradient).collect::<Vec<_>>(),
+            hatches(&d).into_iter().map(|h| h.gradient).collect::<Vec<_>>()
+        );
+    }
+}
+
+/// The native 470 group keeps a long name whole; the xdata copy is cut to 255 bytes at a
+/// character boundary.
+#[test]
+fn long_gradient_name_is_cut_only_in_xdata() {
+    let name = "Ä".repeat(200);
+    let mut d = Drawing::new_metric();
+    let mut h = hatches(&gradient_sample().0).into_iter().next().unwrap();
+    if let Some(g) = &mut h.gradient {
+        g.name = name.clone();
+    }
+    d.add(&Space::Model, Common::default(), EntityKind::Hatch(h)).unwrap();
+    let text = write_dxf(&d);
+    let lines: Vec<&str> = text.lines().collect();
+    // Non-ASCII text is written as \U+ escapes (R2000 files are ANSI).
+    assert!(lines.contains(&"\\U+00C4".repeat(200).as_str()));
+    assert!(lines.contains(&"\\U+00C4".repeat(127).as_str()));
+    let back = read_dxf(text.as_bytes()).unwrap();
+    assert_eq!(hatches(&back).into_iter().next().and_then(|h| h.gradient).unwrap().name, name);
+}
+
+#[test]
+fn wipeout_survives_dxf_roundtrip() {
+    let mut d = Drawing::new_imperial();
+    let boundary = vec![Vec2::new(2.0, 3.0), Vec2::new(12.0, 3.0), Vec2::new(12.0, 13.0), Vec2::new(2.0, 13.0)];
+    d.add(&Space::Model, Common::default(), EntityKind::Wipeout(Wipeout { boundary: boundary.clone() })).unwrap();
+    let back = roundtrip(&d);
+    let got = first(&back, |k| if let EntityKind::Wipeout(w) = k { Some(w.boundary.clone()) } else { None });
+    // The DXF polygon is closed, so the first vertex is repeated at the end.
+    assert_eq!(got.len(), 5);
+    assert_eq!(&got[..4], &boundary[..]);
+    assert_eq!(got[4], boundary[0]);
+}
+
+#[test]
+fn autocad_header_dim_variables_are_not_overrides() {
+    // AutoCAD writes the current style's values as $DIM* header variables; reading them back must
+    // not turn them into style overrides for new dimensions (issue #66).
+    use crate::dxf_ext::{K, dim_code};
+    let mut d = Drawing::new_imperial();
+    d.text_styles.push(TextStyle { name: "Romans".into(), font: "romans.shx".into(), ..TextStyle::default() });
+    d.dim_styles.push(full_dim_style());
+    d.header.set_str("DIMSTYLE", "Mech");
+    d.header.set_f64("DIMSCALE", full_dim_style().scale);
+    let st = serde_json::to_value(full_dim_style()).unwrap();
+    let mut vars = String::new();
+    for (var, field) in DIMVARS {
+        let Some((_, kind)) = dim_code(field) else { continue };
+        let v = &st[*field];
+        let (code, val) = match kind {
+            K::Real => (40, v.as_f64().unwrap().to_string()),
+            K::Int => (70, v.as_i64().unwrap().to_string()),
+            K::Bool => (70, i64::from(v.as_bool().unwrap()).to_string()),
+            K::Color => (70, serde_json::from_value::<Color>(v.clone()).unwrap().to_aci().to_string()),
+            K::Char => (70, u32::from(v.as_str().unwrap().chars().next().unwrap()).to_string()),
+            K::Str => (1, v.as_str().unwrap().to_string()),
+            // Names as AutoCAD may spell them.
+            K::Block => (1, v.as_str().unwrap().to_ascii_uppercase()),
+            K::TextStyle => (7, v.as_str().unwrap().to_ascii_uppercase()),
+        };
+        vars.push_str(&format!("  9\r\n${var}\r\n{code}\r\n{val}\r\n"));
+    }
+    let text = write_dxf(&d).replacen("HEADER\r\n", &format!("HEADER\r\n{vars}"), 1);
+    let back = read_dxf(text.as_bytes()).unwrap();
+    assert_eq!(back.header.str("DIMDSEP", ""), ",");
+    assert!(back.header.get("DIMTXT").is_some() && back.header.get("DIMCLRD").is_some());
+    assert_eq!(back.dim_overrides(), serde_json::Map::new());
+    // A variable that really differs from the style is an override.
+    let text = text.replacen("$DIMDEC\r\n70\r\n3\r\n", "$DIMDEC\r\n70\r\n5\r\n", 1);
+    assert_eq!(read_dxf(text.as_bytes()).unwrap().dim_overrides().get("decimals"), Some(&serde_json::json!(5)));
 }

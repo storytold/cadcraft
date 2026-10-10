@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (first version-by-version DWG/DXF assessment, from the code on main at bd2412f) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (WIPEOUT and hatch gradients now written, #147, #162) · **Target:** Autodesk AutoCAD 2027
 
 Every format AutoCAD 2027 reads or writes, with CADCraft's support, fidelity and tests. Work
 items are in [gaps.md](gaps.md#file-formats); the weighted score feeds
@@ -74,12 +74,12 @@ early (#175), but the throughput problem remains. **DWG ≈ 30% read, ≈ 15% wr
 | LEADER | yes | yes | |
 | MULTILEADER | **no** (becomes Unknown) | **no**: our MLeaders are written as LEADER + MTEXT | MULTILEADER is AutoCAD's default leader since 2008 |
 | HATCH pattern / solid | yes | yes | |
-| HATCH gradient | yes | **no** (gradient groups dropped; PR #162 open, #80) | |
+| HATCH gradient | yes | yes (#162, fixes #80) | |
 | SOLID, TRACE, 3DFACE | yes | yes | |
 | ACAD_TABLE | yes | yes (entity + block) | |
 | VIEWPORT | yes | yes; frozen-layer lists kept (#150) | VP layer colour overrides lost (#99, PR #197) |
 | IMAGE | partial (no IMAGEDEF, so the file path is empty) | **dropped** | |
-| WIPEOUT | yes | **dropped** (#79, PR #147) | |
+| WIPEOUT | yes | yes (#147, fixes #79) | |
 | MLINE, REGION, 3DSOLID, BODY, SURFACE, MESH, TOLERANCE, SHAPE, HELIX, UNDERLAY, OLE2FRAME, LIGHT, CAMERA, SECTION, POINTCLOUD, proxy entities | kept as Unknown (raw tags) | **dropped on save** | the most serious file gap: opening and saving someone's drawing deletes what we don't model |
 | Header variables | all read | 36 written | AutoCAD writes about 280 |
 | Tables: LAYER (+ transparency, description), LTYPE, STYLE, DIMSTYLE, BLOCK_RECORD | yes | yes | |
@@ -127,4 +127,5 @@ our output in AutoCAD black-box.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | WIPEOUT and gradients written since #147/#162; other save losses remain (#201, #204, #208, #209, #213, #223) |
 | 2026-10-10 | major | First file-format parity doc: DWG and DXF version by version, per-object read/write, other formats |

@@ -459,6 +459,62 @@ fn sysvars_roundtrip() {
 }
 
 #[test]
+fn setvar_at_command_line() {
+    let mut s = Session::new();
+    // One line, as typed in issue #30: Space separates the inputs.
+    s.cmdline("SETVAR LUNITS 4").unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(s.doc().unwrap().header.i64("LUNITS", 0), 4);
+    // Step by step, offering the current value as the default.
+    s.cmdline("setvar").unwrap();
+    s.cmdline("luprec").unwrap();
+    assert_eq!(s.current_prompt().unwrap().default.as_deref(), Some("4"));
+    s.cmdline("2").unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(s.doc().unwrap().header.i64("LUPREC", 0), 2);
+    // Enter keeps the value.
+    s.cmdline("set osmode").unwrap();
+    s.cmdline("").unwrap();
+    assert!(s.running.is_none());
+    // A value of the wrong type re-prompts and changes nothing.
+    s.cmdline("SETVAR LUNITS abc").unwrap();
+    assert!(s.running.is_some());
+    assert_eq!(s.doc().unwrap().header.i64("LUNITS", 0), 4);
+    s.cancel();
+    // Unknown and read-only names end the command without creating or changing anything.
+    s.cmdline("SETVAR NOSUCHVAR 1").unwrap();
+    assert!(sysvars::get(&s, "NOSUCHVAR").is_none());
+    s.cmdline("SETVAR DWGNAME").unwrap();
+    assert!(s.running.is_none());
+    assert!(s.execute("setvar", &json!({"name": "dbmod", "value": 0})).is_err());
+    // `?` lists the variables.
+    s.cmdline("SETVAR ?").unwrap();
+    assert!(s.running.is_none());
+}
+
+#[test]
+fn setvar_keeps_header_types() {
+    let mut s = Session::new();
+    assert!(s.execute("setvar", &json!({"name": "LUNITS", "value": "x"})).is_err());
+    assert!(s.execute("setvar", &json!({"name": "LUNITS", "value": 2.5})).is_err());
+    s.execute("setvar", &json!({"name": "LUNITS", "value": 3.0})).unwrap();
+    assert_eq!(s.doc().unwrap().header.get("LUNITS"), Some(&cadcraft_doc::HVal::Int(3)));
+    assert!(s.execute("setvar", &json!({"name": "LTSCALE", "value": "big"})).is_err());
+    assert_eq!(s.doc().unwrap().header.f64("LTSCALE", 0.0), 1.0);
+}
+
+#[test]
+fn dynamic_input_pointer_settings() {
+    let mut s = Session::new();
+    assert_eq!(sysvars::get(&s, "DYNPIFORMAT"), Some(json!(0)));
+    assert_eq!(sysvars::get(&s, "dynpicoords"), Some(json!(0)));
+    s.execute("setvar", &json!({"name": "dynpiformat", "value": 1})).unwrap();
+    s.execute("setvar", &json!({"name": "DYNPICOORDS", "value": 1})).unwrap();
+    assert!(s.settings.dynpi_cartesian && s.settings.dynpi_absolute);
+    assert!(s.execute("setvar", &json!({"name": "DYNPIFORMAT", "value": "x"})).is_err());
+}
+
+#[test]
 fn script_runs_commands() {
     let mut s = Session::new();
     s.script("LINE 0,0 10,0 10,10\n\nCIRCLE 5,5 2\nTEXT 0,-2 0.5 0 Hello world\n").unwrap();
@@ -993,4 +1049,35 @@ fn pline_width_answers_taper_the_next_segment() {
     // Undo drops the taper with its segment.
     let p = typed_pline("pline 0,0 10,0 w 1 0.2 20,0 u");
     assert_eq!(widths(&p), (0.0, vec![(0.0, 0.0), (0.0, 0.0)]));
+}
+
+#[test]
+fn press_and_drag_selection_window() {
+    let mut s = Session::new();
+    s.cmdline("line 0,0 10,0").unwrap();
+    s.cmdline("").unwrap();
+    s.cmdline("circle 50,50 1").unwrap();
+    // No command: a drag from (-1,-1) to (11,1) is a window around the line only.
+    assert!(s.begin_window(Vec2::new(-1.0, -1.0)));
+    s.idle_click(Vec2::new(11.0, 1.0), false).unwrap();
+    assert_eq!(s.selection().len(), 1);
+    assert!(s.pending_window.is_none());
+    // Dragging right to left is a crossing window: it also catches the circle it touches.
+    s.set_selection(Vec::new());
+    assert!(s.begin_window(Vec2::new(60.0, 60.0)));
+    s.idle_click(Vec2::new(50.0, 40.0), false).unwrap();
+    assert_eq!(s.selection().len(), 1);
+    // A command asking for objects: the window feeds its selection.
+    s.set_selection(Vec::new());
+    s.cmdline("erase").unwrap();
+    assert!(s.begin_window(Vec2::new(-1.0, -1.0)));
+    s.input(Input::Point(Vec2::new(11.0, 1.0))).unwrap();
+    s.input(Input::Enter).unwrap();
+    assert_eq!(kinds(&s), vec!["Circle"]);
+    // A drawing command never opens one, and neither does a hostile point.
+    s.cmdline("line").unwrap();
+    assert!(!s.begin_window(Vec2::ZERO));
+    s.cancel();
+    assert!(!s.begin_window(Vec2::new(f64::NAN, 0.0)));
+    assert!(s.pending_window.is_none());
 }

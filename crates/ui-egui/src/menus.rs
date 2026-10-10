@@ -38,6 +38,8 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.dialog.commands", "Command Reference", &["Help", "CADCraft Help"], Some("F1")),
     ("ui.toggle.history", "Command History", &["Window", "Command History"], Some("F2")),
     ("ui.cmdline.lines", "Command Line History Lines", &[], None),
+    ("ui.dialog.language", "Interface Language", &["Edit", "Interface Language"], None),
+    ("ui.language", "Language", &[], None),
     ("ui.noop", "", &[], None),
     ("ui.quit", "Quit CADCraft", &[], Some("Cmd+Q")),
 ];
@@ -48,6 +50,10 @@ pub fn is_ui_command(id: &str) -> bool {
 
 /// Run a UI-only command. `None` if `id` isn't one.
 pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    crate::i18n::with_language(app.language(), || run_ui_command_inner(app, id, params))
+}
+
+fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
     if let Some(r) = crate::managers::route(app, id, params) {
         return Some(r);
     }
@@ -60,6 +66,13 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
     let no_path =
         if id.starts_with("ui.") { params.is_null() || (params.get("path").is_none() && params.get("data").is_none()) } else { params.is_null() };
     let r = match id {
+        "ui.language" => {
+            let Some(preference) = params.get("lang").and_then(Value::as_str).and_then(crate::i18n::Preference::parse) else {
+                return Some(Err("language must be auto, en or uk".into()));
+            };
+            app.ui.interface_language = preference;
+            Ok(json!({"interfaceLanguage": preference.code()}))
+        }
         "ui.open" | "open" if no_path => {
             let picked = app.services.pick_open.as_ref().and_then(|f| f());
             if let Some(p) = picked {
@@ -152,8 +165,8 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
             Ok(Value::Null)
         }
         "ui.resetpalettes" => {
-            let (menu, theme) = (app.ui.in_window_menu, app.ui.theme);
-            app.ui = crate::UiState { in_window_menu: menu, theme, ..Default::default() };
+            let (menu, theme, interface_language) = (app.ui.in_window_menu, app.ui.theme, app.ui.interface_language);
+            app.ui = crate::UiState { in_window_menu: menu, theme, interface_language, ..Default::default() };
             Ok(Value::Null)
         }
         "ui.start" => {
@@ -173,7 +186,8 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
             }
             Ok(json!({ "lines": app.ui.history_lines }))
         }
-        "ui.dialog.layers"
+        "ui.dialog.language"
+        | "ui.dialog.layers"
         | "ui.dialog.blocks"
         | "ui.dialog.dsettings"
         | "ui.dialog.about"
@@ -208,6 +222,10 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
         // Typed or menu-invoked (no parameters) these open their dialogs; JSON calls run the command.
         "qselect" | "qs" if params.is_null() => {
             app.ui.dialog = Some("qselect".into());
+            Ok(Value::Null)
+        }
+        "units" | "un" if params.is_null() => {
+            app.ui.dialog = Some("units".into());
             Ok(Value::Null)
         }
         "parameters" | "par" if params.is_null() => {
@@ -298,12 +316,23 @@ pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
     out
 }
 
+/// Turn a registry shortcut ("Cmd+Shift+Z") into the form shown on this platform: macOS symbols ("⇧⌘Z") or
+/// Windows/Linux text ("Ctrl+Shift+Z"). `mac` comes from the runtime OS (`ctx.os()`), so the web build is right too.
+pub(crate) fn shortcut_label(s: &str, mac: bool) -> String {
+    if !mac {
+        return s.replace("Cmd+", "Ctrl+");
+    }
+    let shift = if s.contains("Shift+") { "⇧" } else { "" };
+    let cmd = if s.contains("Cmd+") { "⌘" } else { "" };
+    format!("{shift}{cmd}{}", s.replace("Cmd+", "").replace("Shift+", ""))
+}
+
 fn entry_ui(ui: &mut egui::Ui, e: &Entry, clicked: &mut Option<String>) {
     match e {
         Entry::Item { label, id, shortcut, enabled } => {
-            let mut b = egui::Button::new(label);
+            let mut b = egui::Button::new(crate::i18n::t(label));
             if let Some(s) = shortcut {
-                b = b.shortcut_text(s.replace("Cmd+", "⌘").replace("Shift+", "⇧"));
+                b = b.shortcut_text(shortcut_label(s, ui.ctx().os().is_mac()));
             }
             if ui.add_enabled(*enabled, b).clicked() {
                 *clicked = Some(id.clone());
@@ -311,7 +340,7 @@ fn entry_ui(ui: &mut egui::Ui, e: &Entry, clicked: &mut Option<String>) {
             }
         }
         Entry::Sub { label, children } => {
-            ui.menu_button(label, |ui| {
+            ui.menu_button(crate::i18n::t(label), |ui| {
                 for c in children {
                     entry_ui(ui, c, clicked);
                 }
@@ -329,7 +358,7 @@ pub fn menu_bar(app: &mut CadApp, ui: &mut egui::Ui) {
         |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 for (name, entries) in &tree {
-                    ui.menu_button(name, |ui| {
+                    ui.menu_button(crate::i18n::t(name), |ui| {
                         for e in entries {
                             entry_ui(ui, e, &mut clicked);
                         }
@@ -478,5 +507,46 @@ mod tests {
         app.start("plot");
         assert_eq!(asked.borrow().len(), 1);
         assert!(app.session.running.is_none());
+    }
+}
+
+#[cfg(test)]
+mod shortcut_label_tests {
+    use super::shortcut_label;
+
+    #[test]
+    fn shortcut_label_per_platform() {
+        assert_eq!(shortcut_label("Cmd+Shift+Z", true), "⇧⌘Z");
+        assert_eq!(shortcut_label("Cmd+Z", true), "⌘Z");
+        assert_eq!(shortcut_label("Cmd+Shift+Z", false), "Ctrl+Shift+Z");
+        assert_eq!(shortcut_label("Cmd+Z", false), "Ctrl+Z");
+        assert_eq!(shortcut_label("Shift+F3", false), "Shift+F3");
+        assert_eq!(shortcut_label("Shift+F3", true), "⇧F3");
+        assert_eq!(shortcut_label("F1", false), "F1");
+        assert_eq!(shortcut_label("F1", true), "F1");
+    }
+}
+
+#[cfg(test)]
+mod units_dialog_tests {
+    use cadcraft_engine::Session;
+    use serde_json::json;
+
+    use crate::{CadApp, Services};
+
+    #[test]
+    fn units_typed_opens_dialog_json_runs_command() {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        app.cmdline("UNITS");
+        assert_eq!(app.ui.dialog.as_deref(), Some("units"));
+        app.ui.dialog = None;
+        app.start("un");
+        assert_eq!(app.ui.dialog.as_deref(), Some("units"));
+        app.ui.dialog = None;
+        let r = app.run("units", json!({ "lunits": 4, "luprec": 3, "insunits": 4 })).unwrap();
+        assert_eq!(r["lunits"], 4);
+        assert!(app.ui.dialog.is_none(), "JSON calls never open dialogs");
+        let h = &app.session.doc().unwrap().header;
+        assert_eq!((h.i64("LUNITS", 0), h.i64("LUPREC", 0), h.i64("INSUNITS", 0)), (4, 3, 4));
     }
 }

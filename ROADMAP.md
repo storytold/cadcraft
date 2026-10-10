@@ -1,6 +1,6 @@
 # CADCraft roadmap
 
-**Stage: pre-alpha** · next: alpha, ~3 points (37% → 40% ready for real work) and ~125–190 Opus 5.5 hours away (the four failing core workflows of the [alpha gate](docs/roadmap.md#alpha-gate))
+**Stage: pre-alpha** · next: alpha, ~2 points (38% → 40% ready for real work) and ~125–190 Opus 5.5 hours away (the four failing core workflows of the [alpha gate](docs/roadmap.md#alpha-gate))
 
 > **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (hours to ~95% for each readiness number) · **Target:** Autodesk AutoCAD 2027
 
@@ -12,7 +12,7 @@ scriptable CLI, a web build, Linux and FreeBSD builds, and a free licence.
 Precise drafting lacks object snap tracking and has stubbed TRIM/EXTEND/OFFSET options; blocks
 can't be edited (no block editor, REFEDIT or xrefs); plots ignore plot styles; and a DWG saved by
 CADCraft drops everything it doesn't model, is always R2000 and has never been checked in
-AutoCAD. Dimensioning passes. Ready for real work (≈ 37%) is also under the ~40% alpha bar. Beta
+AutoCAD. Dimensioning passes. Ready for real work (≈ 38%) is also under the ~40% alpha bar. Beta
 is ≈ 600–930 h away.
 
 ## Headline numbers
@@ -20,9 +20,9 @@ is ≈ 600–930 h away.
 | Number | Value | Kind |
 |---|---|---|
 | Feature breadth (AutoCAD for Mac menu items with a live command) | **50%** (245 / 491; 2D menus only ≈ 65%) | measured ([parity-checklist.md](docs/parity-checklist.md) + UI-only commands) |
-| Ready for real work | **≈ 37%** | estimated ([target-app-parity.md](docs/target-app-parity.md)) |
-| Mainstream practitioner (2D drafter) | **≈ 27%** (lower than the full number: file exchange, stability and interaction discounts multiply) | estimated ([target-app-parity.md](docs/target-app-parity.md#mainstream-practitioner)) |
-| Essentials user | **≈ 45%** | estimated ([target-app-parity.md](docs/target-app-parity.md#essentials-user)) |
+| Ready for real work | **≈ 38%** | estimated ([target-app-parity.md](docs/target-app-parity.md)) |
+| Mainstream practitioner (2D drafter) | **≈ 28%** (lower than the full number: file exchange, stability and interaction discounts multiply) | estimated ([target-app-parity.md](docs/target-app-parity.md#mainstream-practitioner)) |
+| Essentials user | **≈ 46%** | estimated ([target-app-parity.md](docs/target-app-parity.md#essentials-user)) |
 | Remaining to alpha | **≈ 125–190 h** (the gate rows) | estimated |
 | Remaining to beta | **≈ 600–930 h** (≈ 150–250 h elapsed with 4–6 agents) | estimated |
 | Remaining to full parity | **≈ 1,300–2,100 h** (≈ 330–550 h elapsed) | estimated |
@@ -31,9 +31,9 @@ is ≈ 600–930 h away.
 
 | Audience | Ready % | Opus 5.5 agent wall-clock hours to ~95% | Work that dominates |
 |---|---:|---|---|
-| Full target (ready for real work) | ≈ 37% | ≈ 1,150–1,850 h (≈ 70% parallelises across 4–6 agents: ≈ 300–480 h elapsed) | 3D kernel (300–450 h), DWG/DXF and other formats, AutoLISP and ecosystem, blocks/xrefs/dynamic blocks, localization |
-| Mainstream practitioner (2D drafter) | ≈ 27% | ≈ 570–880 h (≈ 70% parallelises: ≈ 150–240 h elapsed) | lossless DWG exchange and a real-file corpus, precision input (tracking, dynamic input), 2D geometry precision, blocks/xrefs, annotation depth, stability backlog |
-| Essentials user | ≈ 45% | ≈ 140–225 h (≈ 50% parallelises across 3 agents: ≈ 60–110 h elapsed) | stubbed options in basic draw/modify commands, opening DWGs people send, launch/stability fixes, plot dialog, context menus and dynamic input |
+| Full target (ready for real work) | ≈ 38% | ≈ 1,150–1,850 h (≈ 70% parallelises across 4–6 agents: ≈ 300–480 h elapsed) | 3D kernel (300–450 h), DWG/DXF and other formats, AutoLISP and ecosystem, blocks/xrefs/dynamic blocks, localization |
+| Mainstream practitioner (2D drafter) | ≈ 28% | ≈ 570–880 h (≈ 70% parallelises: ≈ 150–240 h elapsed) | lossless DWG exchange and a real-file corpus, precision input (tracking, dynamic input), 2D geometry precision, blocks/xrefs, annotation depth, stability backlog |
+| Essentials user | ≈ 46% | ≈ 140–225 h (≈ 50% parallelises across 3 agents: ≈ 60–110 h elapsed) | stubbed options in basic draw/modify commands, opening DWGs people send, launch/stability fixes, plot dialog, context menus and dynamic input |
 
 Hours are subsets (essentials ⊂ mainstream ⊂ full) and use the calibration in [target-app-parity.md](docs/target-app-parity.md#remaining-effort-and-how-it-was-calibrated): ≈ 25 commands
 per agent-hour at presence quality in the first build (≈ 11.5 agent-hours), 0.3–0.7 h per option
@@ -49,10 +49,10 @@ Hours are Opus 5.5 agent wall-clock hours, calibrated on this repo's own build: 
 | Dimension | Parity | Remaining (h) | Doc |
 |---|---:|---|---|
 | Features (depth, weighted by use) | 41% | 735–1,115 | [target-app-parity.md](docs/target-app-parity.md#by-feature-area-the-features-dimension) |
-| UI/UX fidelity | 40% | 110–170 | [ui-parity.md](docs/ui-parity.md) |
+| UI/UX fidelity | 43% | 100–160 | [ui-parity.md](docs/ui-parity.md) |
 | File formats | 30% | 170–280 | [file-format-parity.md](docs/file-format-parity.md) |
 | Hardware | 45% | 15–25 | [hardware-parity.md](docs/hardware-parity.md) |
-| Localization | 3% | 70–110 | [localization-parity.md](docs/localization-parity.md) |
+| Localization | 5% | 60–100 | [localization-parity.md](docs/localization-parity.md) |
 | Performance | 60% | 20–40 | [hardware-parity.md](docs/hardware-parity.md#performance-on-hardware-internal-numbers-only) |
 | Stability | 35% | 30–50 | [gaps.md](docs/gaps.md#stability) |
 | Platforms | 75% | 15–25 | [gaps.md](docs/gaps.md#platforms) |
@@ -98,7 +98,7 @@ AutoCAD 2027 for Mac ships 8 interface languages; CADCraft ships English only. D
 | Korean | none | 0% |
 | Vietnamese | none | 0% |
 
-Other languages shipped: none (Ukrainian is in review, PR #36).
+Other languages shipped: Ukrainian, partial (936 catalog rows, landed with #36; engine messages stay English).
 
 ## Upcoming
 
@@ -118,6 +118,7 @@ Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md)
 
 | Date | Entry |
 |---|---|
+| 2026-10-10 | Merged main: Ukrainian interface (#36, first string catalog), Dynamic Input pointer boxes with Tab and relative entry (#60), press-drag selection windows (#63), WIPEOUT and hatch gradients kept through DXF/DWG save (#147, #162), SETVAR DIM* as style overrides (#129), UNITS dialog (#38), close-window save prompt (#47), DIMANGULAR on circles (#20), cargo fmt fixed on main. UI/UX 40% → 43% (dynamic input 15% → 45%), localization 3% → 5%; ready for real work ≈ 37% → 38% (weighted 37.2% → 37.7%), mainstream 27% → 28%, essentials 45% → 46%. Beta is now ~37 points away; hours unchanged within rounding. |
 | 2026-10-10 | Added mainstream practitioner (≈ 27%) and essentials user (≈ 45%) numbers; ready for real work unchanged at ≈ 37%. User evidence: 2 praise comments, 0 "switched from AutoCAD" reports, 27 of 37 open issues on the core path. |
 | 2026-10-10 | Stage re-normalized from alpha to **pre-alpha** under the craftrules core-workflow gate: drafting with tracking, blocks, plotting and lossless DWG save fail; dimensioning passes. Alpha is ≈ 125–190 h away. |
 | 2026-10-10 | Full re-measure against AutoCAD 2027 for Mac in the craftrules progress-docs format: menu breadth 245/491 (50%), ready for real work ≈ 37%, stage alpha. Remaining estimates rose (≈ 570 h → 1,300–2,100 h) on new evidence: behaviour audits found tracking/extension/parallel snaps and dynamic input are not real, saves drop unmodelled content, DWG saves as R2000, and the old estimate had no localization, ecosystem, stability, platform or AI rows. New docs: target-app-parity, gaps, roadmap, architecture, localization, file-format, hardware, UI and geometry parity; `docs/parity.md` became `docs/parity-checklist.md`. |
@@ -130,6 +131,7 @@ Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md)
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | Merged main's changes (Ukrainian catalog, dynamic input pointer boxes, DXF fixes); UI/UX and localization numbers updated |
 | 2026-10-10 | minor | Readiness-by-audience table with hours to ~95% for each number |
 | 2026-10-10 | minor | Mainstream practitioner and essentials user headline numbers |
 | 2026-10-10 | minor | Stage alpha → pre-alpha under the core-workflow gate; banner, why, headline row |

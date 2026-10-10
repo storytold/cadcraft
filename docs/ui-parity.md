@@ -1,13 +1,13 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (first interaction-precision audit against AutoCAD 2027 for Mac) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (dynamic input pointer boxes #60 and press-drag selection windows #63 landed) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
 
 How CADCraft's interaction compares with AutoCAD's: point entry, object snaps, tracking, dynamic
 input, grips, selection, the command line, chrome and navigation. A drafter's speed in AutoCAD
 comes from these, so "the command exists" isn't enough: it has to accept the same input, snap to
 the same points and respond to the same keys. Work items: [gaps.md](gaps.md#uiux).
 
-**Headline (estimated): UI/UX fidelity ≈ 40%.** The command line, point syntax, the common
+**Headline (estimated): UI/UX fidelity ≈ 43%.** The command line, point syntax, the common
 running snaps, polar/ortho and the palettes are real. Object snap tracking, extension, parallel
 and apparent-intersection snaps are toggles with no behaviour; dynamic input is a read-only
 tooltip; FROM, M2P, TK and point filters don't exist; hot-grip options are advertised but
@@ -29,14 +29,14 @@ ignored; there are no context menus. Remaining: **≈ 110–170 Opus 5.5 hours**
 | Point entry | 15% | 45% | 6.8 |
 | Object snaps | 15% | 40% | 6.0 |
 | Tracking, polar, ortho, grid/snap | 10% | 30% | 3.0 |
-| Dynamic input | 10% | 15% | 1.5 |
+| Dynamic input | 10% | 45% | 4.5 |
 | Grips | 10% | 40% | 4.0 |
 | Selection | 10% | 40% | 4.0 |
 | Command line | 10% | 60% | 6.0 |
 | Chrome and palettes | 10% | 45% | 4.5 |
 | Navigation | 5% | 55% | 2.8 |
 | Keyboard shortcuts, context menus | 5% | 25% | 1.3 |
-| **Total** | 100% | | **≈ 40%** |
+| **Total** | 100% | | **≈ 43%** |
 
 ## Point entry (≈ 45%)
 
@@ -92,15 +92,18 @@ ignored; there are no context menus. Remaining: **≈ 110–170 Opus 5.5 hours**
 | Isometric drafting (ISODRAFT, isoplanes F5) | yes | **status-bar toggle with no effect** |
 | Drafting Settings dialog | yes | yes (`dialogs.rs:36-80`) |
 
-## Dynamic input (≈ 15%)
+## Dynamic input (≈ 45%)
 
 AutoCAD's heads-up input (F12) has editable pointer-input fields (x, y), dimensional input
 fields (length and angle) with Tab between them and lock icons, relative-by-default second
 points, dimensional input on grips, a prompt with clickable options and a down-arrow menu.
-CADCraft's `dynamic_input` (`canvas.rs:900-925`) paints a read-only tooltip: the prompt and
-either `distance < angle` or `x, y`, and echoes what is typed at the command line. No fields, no
-Tab, no grip dimensional input, no DYNPROMPT/DYNDIM/DYNPICOORDS. PR #60 (open) adds pointer
-input boxes with Tab, comma and relative entry.
+CADCraft has pointer input boxes since #60 (`crates/ui-egui/src/dyninput.rs`): value boxes
+beside the cursor while a command asks for a point; second and later points default to polar
+distance and angle (DYNPIFORMAT = 1 for Cartesian); `,` and `<` lock a value and move to the next
+box; Tab types the separator; Enter sends a relative entry (DYNPICOORDS = 1 for absolute) and
+fills an empty box from the cursor; a plain number stays direct distance entry. Missing:
+dimensional input on grips (length/angle fields while stretching), lock icons, the prompt with a
+down-arrow options menu (DYNPROMPT), and DYNDIM.
 
 ## Grips (≈ 40%)
 
@@ -122,7 +125,8 @@ input boxes with Tab, comma and relative entry.
 |---|---|---|
 | Pick, implied window (left→right) and crossing (right→left) | yes | yes, coloured and dashed rectangles (`lib.rs:576-589`, `canvas.rs:823-836`) |
 | Keywords W, C, WP, CP, F, BOX, AU, SI, M, G (group), CL (class) | yes | **All, Last, Previous, Add, Remove only** (`lib.rs:595-599`, `machines.rs:77-80`); fence only as a JSON parameter |
-| Lasso (press-drag) | yes | **no** (PR #63 open: PICKDRAG = 2) |
+| Press-drag selection windows (PICKDRAG) | yes | yes (#63, PICKDRAG = 2) |
+| Lasso | yes | **no** |
 | Selection cycling (SELECTIONCYCLING) | yes | toggle nothing reads |
 | Selection preview, hover highlight | yes | hover highlight |
 | PICKADD, PICKFIRST, PICKAUTO | yes | PICKADD (Shift), PICKFIRST |
@@ -191,4 +195,5 @@ input boxes with Tab, comma and relative entry.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | Dynamic input 15% → 45% (pointer boxes, #60); press-drag windows (#63); total 40% → 43% |
 | 2026-10-10 | major | First UI-parity audit: point entry, snaps, tracking, dynamic input, grips, selection, command line, chrome, navigation, keys |

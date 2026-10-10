@@ -1,6 +1,6 @@
 # Target-app parity: CADCraft vs AutoCAD 2027
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (hours to ~95% for each of the three readiness numbers) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (merged main: dynamic input pointer boxes, Ukrainian catalog, DXF fixes; numbers updated) · **Target:** Autodesk AutoCAD 2027
 
 The authoritative assessment of how close CADCraft is to AutoCAD, and how much Opus 5.5 work
 remains. [ROADMAP.md](../ROADMAP.md) summarises it, [gaps.md](gaps.md) lists every shortfall,
@@ -15,9 +15,9 @@ and the deep checklists are [geometry-parity.md](geometry-parity.md),
 | **Feature breadth** (AutoCAD for Mac menu items with a live command) | **245 / 491 = 50%** (233 = 47% counted by `cargo xtask parity`, which sees engine commands only; +12 UI-only items) | measured ([parity-checklist.md](parity-checklist.md), source scan) |
 | Feature breadth, 2D menus only (excluding 150 3D items) | **≈ 65%** (222 / 341 by `cargo xtask parity`'s rule) | measured (source scan, 2026-10-10) |
 | Feature depth, weighted by use (features dimension) | **≈ 41%** | estimated (table below) |
-| **Ready for real work** | **≈ 37%** | estimated (dimension table below; weighted 37.2%) |
-| Mainstream practitioner (2D drafter, weekly tools) | **≈ 27%** | estimated ([below](#mainstream-practitioner)) |
-| Essentials user (core tools, default settings) | **≈ 45%** | estimated ([below](#essentials-user)) |
+| **Ready for real work** | **≈ 38%** | estimated (dimension table below; weighted 37.7%) |
+| Mainstream practitioner (2D drafter, weekly tools) | **≈ 28%** | estimated ([below](#mainstream-practitioner)) |
+| Essentials user (core tools, default settings) | **≈ 46%** | estimated ([below](#essentials-user)) |
 | Remaining to alpha (gate rows) | **≈ 125–190 Opus 5.5 hours** | estimated |
 | Remaining to beta | **≈ 600–930 Opus 5.5 hours** | estimated |
 | Remaining to full parity | **≈ 1,300–2,100 Opus 5.5 hours** | estimated |
@@ -28,9 +28,9 @@ Stage: **pre-alpha**. Four of the five core workflows fail the [alpha gate](road
 
 | Audience | Ready % | Opus 5.5 agent wall-clock hours to ~95% | Work that dominates |
 |---|---:|---|---|
-| Full target (ready for real work) | ≈ 37% | ≈ 1,150–1,850 h (≈ 70% parallelises across 4–6 agents: ≈ 300–480 h elapsed) | 3D kernel (300–450 h), DWG/DXF and other formats, AutoLISP and ecosystem, blocks/xrefs/dynamic blocks, localization |
-| Mainstream practitioner (2D drafter) | ≈ 27% | ≈ 570–880 h (≈ 70% parallelises: ≈ 150–240 h elapsed) | lossless DWG exchange and a real-file corpus, precision input (tracking, dynamic input), 2D geometry precision, blocks/xrefs, annotation depth, stability backlog |
-| Essentials user | ≈ 45% | ≈ 140–225 h (≈ 50% parallelises across 3 agents: ≈ 60–110 h elapsed) | stubbed options in basic draw/modify commands, opening DWGs people send, launch/stability fixes, plot dialog, context menus and dynamic input |
+| Full target (ready for real work) | ≈ 38% | ≈ 1,150–1,850 h (≈ 70% parallelises across 4–6 agents: ≈ 300–480 h elapsed) | 3D kernel (300–450 h), DWG/DXF and other formats, AutoLISP and ecosystem, blocks/xrefs/dynamic blocks, localization |
+| Mainstream practitioner (2D drafter) | ≈ 28% | ≈ 570–880 h (≈ 70% parallelises: ≈ 150–240 h elapsed) | lossless DWG exchange and a real-file corpus, precision input (tracking, dynamic input), 2D geometry precision, blocks/xrefs, annotation depth, stability backlog |
+| Essentials user | ≈ 46% | ≈ 140–225 h (≈ 50% parallelises across 3 agents: ≈ 60–110 h elapsed) | stubbed options in basic draw/modify commands, opening DWGs people send, launch/stability fixes, plot dialog, context menus and dynamic input |
 
 Hours are subsets (essentials ⊂ mainstream ⊂ full) and use the calibration in [Remaining effort](#remaining-effort-and-how-it-was-calibrated): ≈ 25 commands
 per agent-hour at presence quality in the first build (≈ 11.5 agent-hours), 0.3–0.7 h per option
@@ -73,7 +73,7 @@ Share), Sheet Set Manager administration, specialist hardware, languages other t
 |---|---:|---:|---:|
 | Draw (2D) | 15% | 60% | 9.0 |
 | Modify | 18% | 50% | 9.0 |
-| Precision input (snaps, tracking, coordinate entry, dynamic input) | 13% | 35% | 4.6 |
+| Precision input (snaps, tracking, coordinate entry, dynamic input) | 13% | 40% | 5.2 |
 | Layers and properties | 8% | 70% | 5.6 |
 | Dimensions | 10% | 45% | 4.5 |
 | Text and MTEXT | 6% | 35% | 2.1 |
@@ -83,7 +83,7 @@ Share), Sheet Set Manager administration, specialist hardware, languages other t
 | Layouts and plotting | 8% | 35% | 2.8 |
 | Inquiry and utilities (incl. autosave) | 3% | 30% | 0.9 |
 | Command line and navigation | 3% | 58% | 1.7 |
-| **Average depth** | 100% | | **≈ 44.7%** |
+| **Average depth** | 100% | | **≈ 45.3%** |
 
 Depths are the area percentages above and in [ui-parity.md](ui-parity.md). File I/O is not an
 area here; it is counted once, as the file-exchange discount.
@@ -94,8 +94,8 @@ area here; it is counted once, as the file-exchange discount.
 | Stability on real machines | ×0.85 | 27 of 37 open issues are core-path bugs; about 60 correctness fixes merged on 2026-10-10 alone; lines not visible mid-command (#44); locked layers edited (#87); no CI runs the Rust tests on PRs |
 | Exchanging files with AutoCAD users | ×0.80 | saves drop unmodelled entities, images, layer states, multileader styles, true colours and more (#79, #201, #204, #208, #209, #213, #223); DWG always R2000; never checked in AutoCAD; a 10 MB DWG failed (#57) |
 
-**Mainstream practitioner ≈ 44.7% × 0.90 × 0.85 × 0.80 ≈ 27%** (estimated). It is lower than
-ready for real work (≈ 37%) for CADCraft, unlike most apps: the full number credits additively
+**Mainstream practitioner ≈ 45.3% × 0.90 × 0.85 × 0.80 ≈ 28%** (estimated). It is lower than
+ready for real work (≈ 38%) for CADCraft, unlike most apps: the full number credits additively
 what CADCraft does well beyond 2D drafting (platforms 75%, performance 60%, hardware 45%), while
 here the three blockers a working drafter hits every day multiply.
 
@@ -133,10 +133,10 @@ annotation styles, exchange edge cases and everything excluded above.
 | Discount | Factor | Evidence |
 |---|---:|---|
 | Launch and stability | ×0.90 | startup crash on Intel UHD graphics (#33, fixed in 0.4.0), lines not visible (#44), Linux mouse delay (#25), web open/save broken (#55, #133) |
-| Discoverability and UI clarity | ×0.90 | dynamic input is a read-only tooltip, no right-click menus, Print has no plot dialog (#160), some menu items only recently got dialogs (#126) |
+| Discoverability and UI clarity | ×0.92 | no right-click menus (dynamic input got real pointer boxes in #60, which raised this from ×0.90), Print has no plot dialog (#160), some menu items only recently got dialogs (#126) |
 | Opening files people send them | ×0.85 | DWGs from others untested on real files; a 10 MB DWG failed (#57); `.dxf` from Finder fails (#158); pre-2007 CJK/Cyrillic DXF garbled (no code pages) |
 
-**Essentials user ≈ 65% × 0.90 × 0.90 × 0.85 ≈ 45%** (estimated).
+**Essentials user ≈ 65% × 0.90 × 0.92 × 0.85 ≈ 46%** (estimated).
 
 ## By feature area (the features dimension)
 
@@ -167,16 +167,16 @@ presence: an option that prints "not available yet" doesn't count.
 | Dimension | Weight | Parity | Remaining (h) | Kind | Doc |
 |---|---:|---:|---|---|---|
 | Features (table above) | 35% | 41% | 735–1,115 | estimated | this file |
-| UI/UX fidelity (point entry, snaps, tracking, dynamic input, grips, selection, command line, chrome) | 15% | 40% | 110–170 | estimated, weighted in the doc | [ui-parity](ui-parity.md) |
+| UI/UX fidelity (point entry, snaps, tracking, dynamic input, grips, selection, command line, chrome) | 15% | 43% | 100–160 | estimated, weighted in the doc | [ui-parity](ui-parity.md) |
 | File formats (DWG/DXF fidelity first) | 20% | 30% | 170–280 | estimated | [file-format-parity](file-format-parity.md) |
 | Stability and correctness | 10% | 35% | 30–50 | estimated: about 60 bug fixes merged on 2026-10-10 alone, 30 open issues, `cargo fmt` failing on main (PR #194), no CI runs the Rust tests on pull requests | [gaps](gaps.md#stability) |
 | Performance | 5% | 60% | 20–40 | internal numbers only (200k entities fluent); 1M entities and large DWG loads untested; a 10 MB DWG took ~2 min to fail (#57) | [hardware-parity](hardware-parity.md#performance-on-hardware-internal-numbers-only) |
 | Ecosystem and automation (AutoLISP/Visual LISP, .NET/ObjectARX, CUI, APPLOAD, Express Tools, App Store) | 5% | 10% | 120–200 | estimated; MCP, CLI and the control channel are ahead of AutoCAD, but no LISP, CUI or plug-ins | [gaps](gaps.md#ecosystem-and-automation) |
 | Hardware | 3% | 45% | 15–25 | estimated | [hardware-parity](hardware-parity.md) |
 | Platforms | 3% | 75% | 15–25 | macOS, Windows (x64/x86/arm64), Linux, FreeBSD, web: more than AutoCAD; but the web build can't open or save files reliably (#55, #133, #134) and has no DWG, and Windows/Linux get little runtime testing | [gaps](gaps.md#platforms) |
-| Localization | 3% | 3% | 70–110 | measured: 0 translated strings, English only; AutoCAD for Mac ships 8 languages | [localization-parity](localization-parity.md) |
+| Localization | 3% | 5% | 60–100 | measured: string catalog with Ukrainian (936 rows, #36); none of AutoCAD for Mac's 7 other languages | [localization-parity](localization-parity.md) |
 | AI features (Autodesk Assistant, Smart Blocks, Markup Assist) | 1% | 20% | 40–80 | none of AutoCAD's in-app AI; agent control over MCP is a different strength | [gaps](gaps.md#ai-features) |
-| **Ready for real work** | 100% | **≈ 37%** | **≈ 1,300–2,100** | | |
+| **Ready for real work** | 100% | **≈ 38%** | **≈ 1,300–2,100** | | |
 
 The dimension weights describe what decides whether a professional can switch: features and
 file compatibility dominate.
@@ -214,6 +214,7 @@ DWG/DXF corpus (files from people who own them); black-box checks in AutoCAD of 
 
 | Date | Feature breadth | Weighted parity | Remaining | Note |
 |---|---|---|---|---|
+| 2026-10-10 (merge) | unchanged (233/491 re-scanned) | ready ≈ 38% (37.7%), mainstream ≈ 28%, essentials ≈ 46% | unchanged within rounding | main landed dynamic input pointer boxes (#60), the Ukrainian catalog (#36), WIPEOUT/gradient DXF fixes (#147, #162): UI/UX 40% → 43%, localization 3% → 5% |
 | 2026-10-10 (later) | unchanged | ready for real work ≈ 37% (unchanged: already built from the written dimension weights, no hidden judgement); mainstream practitioner ≈ 27%; essentials user ≈ 45% | unchanged | mainstream and essentials numbers added (craftrules standard) |
 | 2026-10-10 | 245/491 (50%), engine-only 233/491 | features ≈ 41%, ready for real work ≈ 37% | 1,300–2,100 h | full re-measure in this format (this file) |
 | 2026-10-07 | 233/491 (47%) | ≈ 29% overall, 2D ≈ 55% | ≈ 570 h | old ROADMAP: milestone percentages reported by the building agents |
@@ -222,6 +223,7 @@ DWG/DXF corpus (files from people who own them); black-box checks in AutoCAD of 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | Merged main: dynamic input pointer boxes (#60) lift UI/UX to 43%, Ukrainian catalog (#36) lifts localization to 5%; ready 37% → 38%, mainstream 27% → 28%, essentials 45% → 46% |
 | 2026-10-10 | minor | Readiness-by-audience table: hours to ~95% for full (1,150–1,850 h), mainstream (570–880 h) and essentials (140–225 h); full number confirmed as an additive weighted sum, unchanged |
 | 2026-10-10 | minor | Mainstream-practitioner (≈ 27%) and essentials-user (≈ 45%) numbers with written weights, discounts and user evidence |
 | 2026-10-10 | minor | Stage alpha → pre-alpha under the core-workflow gate; remaining-to-alpha row |

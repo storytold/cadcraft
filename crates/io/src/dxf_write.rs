@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use cadcraft_color::Color;
 use cadcraft_doc::*;
 use cadcraft_dxf::Tag;
-use cadcraft_geom::{Vec2, Vec3};
+use cadcraft_geom::{Bounds2, Vec2, Vec3};
 
 use crate::dxf_ext::{self, DimVal, K};
 
@@ -777,6 +777,9 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
                 }
             }
             w.i(98, 0);
+            if let Some(g) = &h.gradient {
+                gradient(w, g);
+            }
         }
         EntityKind::Viewport(v) => {
             w.s(0, "VIEWPORT");
@@ -794,9 +797,77 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
                 w.xdata(dxf_ext::frozen_xdata(&v.frozen_layers));
             }
         }
-        // Not yet written: images, wipeouts, tables, multileaders, unknown objects.
+        EntityKind::Wipeout(wo) => {
+            // A 1x1 image spanning the boundary's extents. Clip vertices are in pixel space, whose origin is
+            // the image's top-left corner with y pointing down: the reader maps each vertex back through
+            // insert + u * (x + 0.5) + v * (0.5 - y).
+            // Polygonal clip boundaries are closed, so the first vertex is repeated when needed.
+            let b = Bounds2::from_points(wo.boundary.iter().copied());
+            let o = if b.is_empty() { Vec2::ZERO } else { b.min };
+            let (sx, sy) = (if b.width() > 0.0 { b.width() } else { 1.0 }, if b.height() > 0.0 { b.height() } else { 1.0 });
+            w.s(0, "WIPEOUT");
+            common(w, e, owner, paper, "AcDbWipeout");
+            w.i(90, 0);
+            w.p(10, Vec3::new(o.x, o.y, 0.0));
+            w.p(11, Vec3::new(sx, 0.0, 0.0));
+            w.p(12, Vec3::new(0.0, sy, 0.0));
+            w.p2(13, Vec2::new(1.0, 1.0));
+            // Display flags 7 = show image, show unaligned, use clipping boundary; clipping on; default brightness/contrast/fade.
+            w.i(70, 7);
+            w.i(280, 1);
+            w.i(281, 50);
+            w.i(282, 50);
+            w.i(283, 0);
+            w.i(71, 2);
+            let mut pts = wo.boundary.clone();
+            if let (Some(first), Some(last)) = (pts.first().copied(), pts.last().copied())
+                && first != last
+            {
+                pts.push(first);
+            }
+            w.i(91, pts.len() as i64);
+            for q in pts {
+                w.p2(14, Vec2::new((q.x - o.x) / sx - 0.5, 0.5 - (q.y - o.y) / sy));
+            }
+        }
+        // Not yet written: images, tables, multileaders, unknown objects.
         _ => {}
     }
+}
+
+/// A hatch's gradient fill (DXF Reference, HATCH group codes 450–470): two-colour gradient
+/// with its rotation (radians), shift (0 = centered, 1 = shifted) and per-colour 463 records
+/// carrying ACI (63) and, for true colours, the RGB value (421). Those groups belong to R2004+
+/// files, so the same gradient also travels as `CADCRAFT` xdata, which survives this R2000
+/// file's conversion to DWG (where the native fields don't exist).
+fn gradient(w: &mut W, g: &Gradient) {
+    w.i(450, 1);
+    w.i(451, 0);
+    w.f(460, g.angle);
+    w.f(461, if g.centered { 0.0 } else { 1.0 });
+    w.i(452, 0);
+    w.f(462, 0.0);
+    w.i(453, 2);
+    for (k, c) in [(0.0, g.color1), (1.0, g.color2)] {
+        w.f(463, k);
+        match c {
+            Color::True(rgb) => {
+                w.i(63, i64::from(cadcraft_color::nearest_aci(rgb)));
+                w.i(421, i64::from(rgb.to_u32()));
+            }
+            c => w.i(63, i64::from(c.to_aci())),
+        }
+    }
+    w.s(470, &g.name);
+    w.s(1001, dxf_ext::APP);
+    w.s(1000, "GRADIENT");
+    // A 1000 group holds at most 255 bytes; cut at a character boundary.
+    let cut = g.name.char_indices().map(|(i, c)| i + c.len_utf8()).take_while(|end| *end <= 255).last().unwrap_or(0);
+    w.s(1000, g.name.get(..cut).unwrap_or_default());
+    w.f(1040, g.angle);
+    w.i(1070, i64::from(g.centered));
+    w.s(1000, g.color1.name());
+    w.s(1000, g.color2.name());
 }
 
 /// Anonymous dimension blocks (`*D1`…) with the rendered geometry, as consumers expect.
@@ -1138,6 +1209,9 @@ pub fn write(d: &Drawing) -> String {
     }
     if !cx.assoc.is_empty() {
         classes.push(("DIMASSOC", "AcDbDimAssoc", 0, false));
+    }
+    if every.iter().any(|e| matches!(e.kind, EntityKind::Wipeout(_))) {
+        classes.push(("WIPEOUT", "AcDbWipeout", 127, true));
     }
     for (dxf_name, cpp, proxy, is_entity) in classes {
         w.s(0, "CLASS");

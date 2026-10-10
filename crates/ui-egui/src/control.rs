@@ -299,6 +299,8 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
         }
         "app.save" => wrap(app.run(if s("path").is_some() { "saveas" } else { "qsave" }, p.clone())),
         "app.quit" => {
+            // Programmatic calls never open dialogs: quit without the unsaved-changes prompt.
+            app.quit_confirmed = true;
             app.quit_requested = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             ok(Value::Null)

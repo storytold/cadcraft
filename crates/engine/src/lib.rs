@@ -221,6 +221,12 @@ pub struct Settings {
     /// Major grid line every N minor lines (GRIDMAJOR).
     pub gridmajor: u32,
     pub dynmode: bool,
+    /// DYNPIFORMAT = 1: Dynamic Input shows second and next points as Cartesian `x,y` instead of
+    /// polar `distance<angle` (the default).
+    pub dynpi_cartesian: bool,
+    /// DYNPICOORDS = 1: second and next points typed into Dynamic Input are absolute instead of
+    /// relative to the last point (the default).
+    pub dynpi_absolute: bool,
     pub lwdisplay: bool,
     pub transparency_display: bool,
     pub selection_cycling: bool,
@@ -253,6 +259,8 @@ impl Default for Settings {
             gridunit: Vec2::new(0.5, 0.5),
             gridmajor: 5,
             dynmode: true,
+            dynpi_cartesian: false,
+            dynpi_absolute: false,
             lwdisplay: false,
             transparency_display: false,
             selection_cycling: false,
@@ -862,6 +870,19 @@ impl Session {
     }
 
     // ---------------- picking without a command ----------------
+
+    /// Open a selection window with one corner at `corner`, for press-and-drag selection
+    /// (AutoCAD's PICKDRAG = 2: a drag opens the window wherever it starts, even over an object;
+    /// the next point, where the drag ends, closes it). Only while objects are being selected: no
+    /// command running, or a command asking for objects. Returns whether a window was opened.
+    pub fn begin_window(&mut self, corner: Vec2) -> bool {
+        let during_command = self.running.is_some();
+        if !corner.is_finite() || (during_command && !self.current_prompt().is_some_and(|p| p.accept.select)) {
+            return false;
+        }
+        self.pending_window = Some(PendingWindow { corner, during_command });
+        true
+    }
 
     /// A click with no command running: pick/toggle objects or start a selection window.
     ///

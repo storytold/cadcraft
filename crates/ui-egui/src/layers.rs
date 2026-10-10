@@ -49,7 +49,7 @@ pub fn color_button(ui: &mut egui::Ui, id: egui::Id, current: Color, by: bool, w
         p.rect_filled(rect, 2.0, t.control_hover.gamma_multiply(0.5));
     }
     swatch(p, Rect::from_min_size(pos2(rect.left() + 3.0, rect.center().y - 6.0), vec2(12.0, 12.0)), current);
-    p.text(pos2(rect.left() + 20.0, rect.center().y), egui::Align2::LEFT_CENTER, current.name(), crate::theme::body(), t.text);
+    p.text(pos2(rect.left() + 20.0, rect.center().y), egui::Align2::LEFT_CENTER, crate::i18n::t(&current.name()), crate::theme::body(), t.text);
     let mut out = None;
     egui::Popup::from_toggle_button_response(&resp).id(id).width(300.0).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
         out = color_palette(ui, id, current, by);
@@ -68,7 +68,7 @@ pub fn color_palette(ui: &mut egui::Ui, id: egui::Id, current: Color, by: bool) 
     let mut out = None;
     ui.horizontal(|ui| {
         for (i, l) in ["Index Color", "True Color"].iter().enumerate() {
-            if ui.selectable_label(tab == i as u8, *l).clicked() {
+            if ui.selectable_label(tab == i as u8, crate::i18n::t(l)).clicked() {
                 tab = i as u8;
             }
         }
@@ -83,7 +83,7 @@ pub fn color_palette(ui: &mut egui::Ui, id: egui::Id, current: Color, by: bool) 
         if sel || resp.hovered() {
             ui.painter().rect_stroke(r, 0.0, Stroke::new(if sel { 2.0 } else { 1.0 }, Color32::WHITE), egui::StrokeKind::Inside);
         }
-        if resp.on_hover_text(format!("Index color: {i}")).clicked() {
+        if resp.on_hover_text(crate::tf!("Index color: {index}", index = i)).clicked() {
             *out = Some(Color::Index(i));
         }
     };
@@ -113,15 +113,15 @@ pub fn color_palette(ui: &mut egui::Ui, id: egui::Id, current: Color, by: bool) 
         ui.add_space(6.0);
         if by {
             ui.horizontal(|ui| {
-                if ui.button("ByLayer").clicked() {
+                if ui.button(crate::tl!("ByLayer")).clicked() {
                     out = Some(Color::ByLayer);
                 }
-                if ui.button("ByBlock").clicked() {
+                if ui.button(crate::tl!("ByBlock")).clicked() {
                     out = Some(Color::ByBlock);
                 }
             });
         }
-        ui.label(RichText::new(format!("Current: {}", current.name())).small().color(t.text_dim));
+        ui.label(RichText::new(crate::tf!("Current: {color}", color = crate::i18n::t(&current.name()))).small().color(t.text_dim));
     } else {
         let rid = id.with("rgb");
         let start = current.resolve(Color::Index(7), Color::Index(7));
@@ -138,7 +138,7 @@ pub fn color_palette(ui: &mut egui::Ui, id: egui::Id, current: Color, by: bool) 
             }
         });
         ui.data_mut(|d| d.insert_temp(rid, c));
-        if ui.button("Apply true color").clicked() {
+        if ui.button(crate::tl!("Apply true color")).clicked() {
             out = Some(Color::True(cadcraft_color::Rgb(c[0], c[1], c[2])));
             ui.data_mut(|d| d.remove::<[u8; 3]>(rid));
         }
@@ -237,9 +237,13 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         Some(_) => "Layer Properties Manager — current viewport",
         None => "Layer Properties Manager",
     };
-    egui::Window::new(title).id(egui::Id::new("lpm_window")).open(open).default_size(vec2(1180.0, 440.0)).min_width(640.0).resizable(true).show(
-        ctx,
-        |ui| {
+    egui::Window::new(crate::i18n::t(title))
+        .id(egui::Id::new("lpm_window"))
+        .open(open)
+        .default_size(vec2(1180.0, 440.0))
+        .min_width(640.0)
+        .resizable(true)
+        .show(ctx, |ui| {
             // ----- tool row -----
             ui.horizontal(|ui| {
                 if icons::button(ui, Icon::Plus, 24.0, "New Layer", false).clicked() {
@@ -264,8 +268,8 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 }
                 ui.separator();
                 // Layer states.
-                ui.label("Layer State");
-                let label = st.state_sel.clone().unwrap_or_else(|| "Unsaved Layer State".into());
+                ui.label(crate::tl!("Layer State"));
+                let label = st.state_sel.clone().unwrap_or_else(|| crate::tl!("Unsaved Layer State").into());
                 egui::ComboBox::from_id_salt("lpm_states").selected_text(label).width(170.0).show_ui(ui, |ui| {
                     for s in &states {
                         if ui.selectable_label(st.state_sel.as_deref() == Some(s), s).clicked() {
@@ -273,29 +277,29 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                         }
                     }
                     if states.is_empty() {
-                        ui.label(RichText::new("No saved layer states").color(t.text_dim));
+                        ui.label(RichText::new(crate::tl!("No saved layer states")).color(t.text_dim));
                     }
                 });
                 let has = st.state_sel.is_some();
-                if ui.add_enabled(has, egui::Button::new("Restore")).clicked()
+                if ui.add_enabled(has, egui::Button::new(crate::tl!("Restore"))).clicked()
                     && let Some(s) = &st.state_sel
                 {
                     actions.push(("layerstate.restore", json!({ "name": s })));
                 }
-                if ui.add_enabled(has, egui::Button::new("Delete")).clicked()
+                if ui.add_enabled(has, egui::Button::new(crate::tl!("Delete"))).clicked()
                     && let Some(s) = st.state_sel.take()
                 {
                     actions.push(("layerstate.delete", json!({ "name": s })));
                 }
-                ui.add(egui::TextEdit::singleline(&mut st.state_name).hint_text("New state name").desired_width(120.0));
-                if ui.add_enabled(!st.state_name.trim().is_empty(), egui::Button::new("Save State")).clicked() {
+                ui.add(egui::TextEdit::singleline(&mut st.state_name).hint_text(crate::tl!("New state name")).desired_width(120.0));
+                if ui.add_enabled(!st.state_name.trim().is_empty(), egui::Button::new(crate::tl!("Save State"))).clicked() {
                     let n = st.state_name.trim().to_string();
                     actions.push(("layerstate.save", json!({ "name": n })));
                     st.state_sel = Some(n);
                     st.state_name.clear();
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add(egui::TextEdit::singleline(&mut st.search).hint_text("Search for layer").desired_width(160.0));
+                    ui.add(egui::TextEdit::singleline(&mut st.search).hint_text(crate::tl!("Search for layer")).desired_width(160.0));
                     icons::paint(
                         ui.painter(),
                         Rect::from_center_size(ui.cursor().right_center() - vec2(8.0, 0.0), vec2(14.0, 14.0)),
@@ -315,18 +319,18 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 // ----- filter tree -----
                 ui.allocate_ui_with_layout(vec2(150.0, avail), egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.set_min_width(150.0);
-                    ui.label(RichText::new("Filters").small().color(t.text_dim));
+                    ui.label(RichText::new(crate::tl!("Filters")).small().color(t.text_dim));
                     for (i, l) in ["All", "All Used Layers"].iter().enumerate() {
                         ui.horizontal(|ui| {
                             ui.add_space(if i == 0 { 0.0 } else { 14.0 });
-                            if ui.selectable_label(st.filter == i as u8, *l).clicked() {
+                            if ui.selectable_label(st.filter == i as u8, crate::i18n::t(l)).clicked() {
                                 st.filter = i as u8;
                             }
                         });
                     }
                     ui.add_space(8.0);
                     if let Some((h, _)) = &vp {
-                        ui.label(RichText::new(format!("Viewport {}", h.hex())).small().color(t.text_dim));
+                        ui.label(RichText::new(crate::tf!("Viewport {id}", id = h.hex())).small().color(t.text_dim));
                     }
                 });
                 ui.separator();
@@ -345,11 +349,17 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                                 for h in &cols {
                                     if *h == "Name" {
                                         let arrow = if st.sort_desc { " ▼" } else { " ▲" };
-                                        if ui.add(egui::Label::new(RichText::new(format!("Name{arrow}")).strong()).sense(Sense::click())).clicked() {
+                                        if ui
+                                            .add(
+                                                egui::Label::new(RichText::new(format!("{}{arrow}", crate::tl!("Name"))).strong())
+                                                    .sense(Sense::click()),
+                                            )
+                                            .clicked()
+                                        {
                                             st.sort_desc = !st.sort_desc;
                                         }
                                     } else {
-                                        ui.label(RichText::new(*h).strong());
+                                        ui.label(RichText::new(crate::i18n::t(h)).strong());
                                     }
                                 }
                                 ui.end_row();
@@ -365,13 +375,17 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             ui.separator();
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new(format!("All: {} layer(s) displayed of {} total.   Current layer: {}", shown.len(), total, cur))
-                        .small()
-                        .color(t.text_dim),
+                    RichText::new(crate::tf!(
+                        "Layers displayed: {shown} of {total}.   Current layer: {layer}",
+                        shown = shown.len(),
+                        total = total,
+                        layer = cur
+                    ))
+                    .small()
+                    .color(t.text_dim),
                 );
             });
-        },
-    );
+        });
     ctx.data_mut(|dd| dd.insert_temp(sid, st));
     for (c, p) in actions {
         let _ = app.run(c, p);
@@ -408,7 +422,7 @@ fn row(
     } else {
         "Layer is empty (double-click to make current)"
     };
-    if sresp.on_hover_text(tip).double_clicked() {
+    if sresp.on_hover_text(crate::i18n::t(tip)).double_clicked() {
         actions.push(("layer.current", json!({ "name": name })));
     }
     // Name (double-click or F2-style rename).
@@ -444,15 +458,15 @@ fn row(
                 st.renaming = Some((name.clone(), name.clone()));
             }
             r.context_menu(|ui| {
-                if ui.button("Set Current").clicked() {
+                if ui.button(crate::tl!("Set Current")).clicked() {
                     actions.push(("layer.current", json!({ "name": name })));
                     ui.close();
                 }
-                if ui.button("Rename Layer").clicked() {
+                if ui.button(crate::tl!("Rename Layer")).clicked() {
                     st.renaming = Some((name.clone(), name.clone()));
                     ui.close();
                 }
-                if ui.button("Delete Layer").clicked() {
+                if ui.button(crate::tl!("Delete Layer")).clicked() {
                     actions.push(("layer.delete", json!({ "name": name })));
                     ui.close();
                 }
@@ -503,7 +517,7 @@ fn row(
         .width(240.0)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
-            ui.label(RichText::new("Loaded linetypes").small().color(t.text_dim));
+            ui.label(RichText::new(crate::tl!("Loaded linetypes")).small().color(t.text_dim));
             for lt in linetypes.iter().filter(|x| !["bylayer", "byblock"].contains(&x.name.to_ascii_lowercase().as_str())) {
                 let (r, resp) = ui.allocate_exact_size(vec2(230.0, 20.0), Sense::click());
                 if resp.hovered() || lt.name.eq_ignore_ascii_case(&l.linetype) {
@@ -529,7 +543,7 @@ fn row(
                         }
                     });
                     ui.separator();
-                    if ui.button("Load all").clicked() {
+                    if ui.button(crate::tl!("Load all")).clicked() {
                         actions.push(("linetype", json!({ "load": "*" })));
                         ui.close();
                     }
@@ -544,7 +558,13 @@ fn row(
                 ui.painter().rect_filled(r, 2.0, t.control_hover.gamma_multiply(0.5));
             }
             lw_sample(ui.painter(), Rect::from_min_size(pos2(r.left() + 3.0, r.top()), vec2(22.0, r.height())), l.lineweight, t.text);
-            ui.painter().text(pos2(r.left() + 30.0, r.center().y), egui::Align2::LEFT_CENTER, l.lineweight.name(), crate::theme::body(), t.text);
+            ui.painter().text(
+                pos2(r.left() + 30.0, r.center().y),
+                egui::Align2::LEFT_CENTER,
+                crate::i18n::t(&l.lineweight.name()),
+                crate::theme::body(),
+                t.text,
+            );
             resp
         })
         .inner;
@@ -561,7 +581,13 @@ fn row(
                         ui.painter().rect_filled(r, 2.0, t.accent.gamma_multiply(if resp.hovered() { 0.6 } else { 0.3 }));
                     }
                     lw_sample(ui.painter(), Rect::from_min_size(pos2(r.left() + 4.0, r.top()), vec2(40.0, r.height())), lw, t.text);
-                    ui.painter().text(pos2(r.left() + 52.0, r.center().y), egui::Align2::LEFT_CENTER, lw.name(), crate::theme::body(), t.text);
+                    ui.painter().text(
+                        pos2(r.left() + 52.0, r.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        crate::i18n::t(&lw.name()),
+                        crate::theme::body(),
+                        t.text,
+                    );
                     if resp.clicked() {
                         let v = match lw {
                             Lineweight::Mm100(v) => json!(f64::from(v) / 100.0),
@@ -598,7 +624,7 @@ fn row(
             if let Some(c) = color_button(ui, egui::Id::new(("lpm_vpcolor", &name)), vc.unwrap_or(l.color), false, 96.0) {
                 actions.push(("vplayer", json!({ "handle": h.hex(), "colors": { name.clone(): c.name() } })));
             }
-            if vc.is_some() && ui.small_button("×").on_hover_text("Remove the viewport override").clicked() {
+            if vc.is_some() && ui.small_button("×").on_hover_text(crate::tl!("Remove the viewport override")).clicked() {
                 actions.push(("vplayer", json!({ "handle": h.hex(), "colors": { name.clone(): Value::Null } })));
             }
         });
@@ -632,7 +658,7 @@ fn row(
         _ => {
             let text = if l.description.is_empty() { RichText::new("—").color(t.text_faint) } else { RichText::new(&l.description) };
             let r = ui.add_sized([200.0, 20.0], egui::Label::new(text).sense(Sense::click()).truncate());
-            if r.on_hover_text("Double-click to edit the description").double_clicked() {
+            if r.on_hover_text(crate::tl!("Double-click to edit the description")).double_clicked() {
                 st.describing = Some((name.clone(), l.description.clone()));
             }
         }

@@ -125,7 +125,7 @@ fn dim(s: &Session, kind: DimKind, defpt: Vec2, p13: Vec2, p14: Vec2, p15: Vec2,
         text_rotation: 0.0,
         user_text_pos: false,
         block: None,
-        overrides: Default::default(),
+        overrides: s.doc().map(|d| d.dim_overrides()).unwrap_or_default(),
         assoc: Vec::new(),
     })
 }
@@ -1016,6 +1016,16 @@ impl Interactive for AngularM {
                     s.echo("*Invalid selection*");
                     return Ok(Step::Continue);
                 };
+                let circle = s
+                    .doc()?
+                    .entity(h)
+                    .and_then(|e| if let EntityKind::Circle(c) = &e.kind { Some(cadcraft_geom::Circle::new(c.center.xy(), c.radius)) } else { None });
+                if let Some(g) = circle.filter(|_| self.first.is_none()) {
+                    // The center is the vertex and the pick the first endpoint; ask for the second.
+                    self.vertex = true;
+                    self.vertex_mode = vec![g.center, g.closest(p)];
+                    return Ok(Step::Continue);
+                }
                 match segment_at(s, h, p) {
                     Some(Segment::Arc { arc: g, .. }) if self.first.is_none() => {
                         self.arc = Some((g.center, g.start_point(), g.end_point()));
@@ -1029,7 +1039,7 @@ impl Interactive for AngularM {
                             self.second = Some(seg);
                         }
                     }
-                    _ => s.echo("Select a line or an arc."),
+                    _ => s.echo("Select an arc, circle or line."),
                 }
                 Ok(Step::Continue)
             }

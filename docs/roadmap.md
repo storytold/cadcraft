@@ -1,6 +1,6 @@
 # CADCraft roadmap detail
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (alpha gate added; stage is pre-alpha) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (merged main: fmt fixed, Ukrainian catalog in M13; alpha gate added earlier today) · **Target:** Autodesk AutoCAD 2027
 
 Forward-looking plan: milestones with status, the current focus, and what comes next with
 estimates. The summary is [ROADMAP.md](../ROADMAP.md); the work items behind every line are in
@@ -9,7 +9,7 @@ Opus 5.5 agent-hours.
 
 ## Current focus
 
-1. **Gate and land.** Fix `cargo fmt` on main (PR #194), add a PR workflow that runs
+1. **Gate and land.** (`cargo fmt` on main is fixed.) Add a PR workflow that runs
    `cargo xtask ci`, then review and land the 47 open PRs, most of them community bug fixes
    (S1–S3). ≈ 15–25 h.
 2. **Stop losing data on save** (FF1, FF2, FF7) and save DWG/DXF at a chosen version (FF3).
@@ -39,7 +39,7 @@ the alpha checklist. Main platform: macOS.
 | Save DWG that AutoCAD opens without loss, and reopen others' DWGs | **no** | Saving drops every entity and object we don't model (Unknown, IMAGE, WIPEOUT, gradients, groups, views, foreign xdata); MULTILEADER becomes LEADER+MTEXT; DWG always written as R2000; never checked in AutoCAD; no real-file tests; a 10 MB DWG failed after ~2 min (#57) (FF1–FF6) | 40–60 + owner (real-file corpus, AutoCAD check) |
 | **To alpha** | | | **≈ 125–190** |
 
-Ready for real work is ≈ 37%, also under the ~40% alpha bar; closing the gate rows lifts it past
+Ready for real work is ≈ 38%, also under the ~40% alpha bar; closing the gate rows lifts it past
 40%.
 
 ## Beta checklist
@@ -86,7 +86,7 @@ agents that built each milestone, are in the progress log of [ROADMAP.md](../ROA
 | M10 | Performance: 1M entities at 60 fps, large DWG loads | ≈ 60% (internal numbers only) | 20–40 |
 | M11 | 3D: UCS, orbit, visual styles, solids, surfaces, meshes, sections, rendering | ≈ 2% | 300–450 |
 | M12 | Automation: AutoLISP, SCRIPT, action recorder, sheet sets, Express Tools | ≈ 15% (MCP, CLI, control channel done) | 130–220 |
-| M13 | 1.0 polish: preferences, workspaces, localisation, accessibility, signed packages, docs | ≈ 15% (signed packages for every platform exist; themes done) | 110–170 |
+| M13 | 1.0 polish: preferences, workspaces, localisation, accessibility, signed packages, docs | ≈ 15% (signed packages for every platform exist; themes done; string catalog with Ukrainian, live language switching, #36) | 110–170 |
 | — | Geometry precision (cross-cutting, see [geometry-parity.md](geometry-parity.md)) | ≈ 40% | 70–110 |
 | — | AI features | ≈ 0% in-app | 40–80 |
 | | **Remaining to full parity** | | **≈ 1,300–2,100** |
@@ -103,5 +103,6 @@ AutoLISP surface, AI features with openly licensed local models, and every remai
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | Merged main: fmt fixed, Ukrainian catalog noted in M13, ready for real work 38% |
 | 2026-10-10 | minor | Alpha gate added (5 core workflows, 4 failing); stage pre-alpha |
 | 2026-10-10 | major | Created from the old ROADMAP's milestone table and current focus; milestones re-scored by depth; beta checklist added |

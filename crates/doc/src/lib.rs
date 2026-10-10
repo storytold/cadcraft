@@ -147,6 +147,62 @@ impl Drawing {
     pub fn dim_style(&self, name: &str) -> Option<&DimStyle> {
         self.dim_styles.iter().find(|l| l.name.eq_ignore_ascii_case(name))
     }
+
+    /// The DIM* variables in the header that differ from the current dimension style, as
+    /// [`DimStyle`] fields: AutoCAD's style overrides (set with SETVAR), which new dimensions
+    /// take on.
+    pub fn dim_overrides(&self) -> serde_json::Map<String, serde_json::Value> {
+        let mut out = serde_json::Map::new();
+        let Some(st) = self.dim_style(&self.header.str("DIMSTYLE", "Standard")) else { return out };
+        let base = serde_json::to_value(st).unwrap_or_default();
+        for (var, field) in DIMVARS {
+            let Some(v) = self.header.get(var).and_then(|h| serde_json::to_value(h).ok()) else { continue };
+            let mut cand = st.clone();
+            if !cand.apply_fields(&serde_json::Map::from_iter([((*field).to_string(), v)])).is_empty() {
+                continue;
+            }
+            let Some(cv) = serde_json::to_value(&cand).ok().and_then(|c| c.get(*field).cloned()) else { continue };
+            let same = match (base.get(*field), &cv) {
+                // Text style and arrow block names compare without case.
+                (Some(serde_json::Value::String(a)), serde_json::Value::String(b))
+                    if matches!(*field, "textStyle" | "arrowBlock" | "arrowBlock1" | "arrowBlock2") =>
+                {
+                    a.eq_ignore_ascii_case(b)
+                }
+                (b, cv) => b == Some(cv),
+            };
+            if !same {
+                out.insert((*field).to_string(), cv);
+            }
+        }
+        out
+    }
+
+    /// Set the header's DIM* variables to the current dimension style's values, clearing the
+    /// overrides (as making a style current or editing it does). Variables the header doesn't
+    /// carry stay absent; ones that can't hold the style's value are removed.
+    pub fn sync_dim_vars(&mut self) {
+        let Some(st) = self.dim_style(&self.header.str("DIMSTYLE", "Standard")) else { return };
+        let v = serde_json::to_value(st).unwrap_or_default();
+        for (var, field) in DIMVARS {
+            let Some(old) = self.header.get(var) else { continue };
+            let new = match (old, v.get(*field)) {
+                (HVal::Int(_), Some(serde_json::Value::Bool(b))) => Some(HVal::Int(i64::from(*b))),
+                (HVal::Int(_), Some(serde_json::Value::Number(n))) => {
+                    n.as_i64().or_else(|| n.as_f64().filter(|f| f.fract() == 0.0 && f.abs() < 1e15).map(|f| f as i64)).map(HVal::Int)
+                }
+                (HVal::Real(_), Some(serde_json::Value::Number(n))) => n.as_f64().map(HVal::Real),
+                (HVal::Str(_), Some(serde_json::Value::String(s))) => Some(HVal::Str(s.clone())),
+                _ => None,
+            };
+            match new {
+                Some(h) => self.header.set(var, h),
+                None => {
+                    self.header.vars.remove(*var);
+                }
+            }
+        }
+    }
     pub fn block(&self, name: &str) -> Option<&std::sync::Arc<Block>> {
         self.blocks.get(name).or_else(|| self.blocks.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v))
     }
