@@ -1,4 +1,6 @@
-//! Properties: per-object property edits, current properties, MATCHPROP, linetypes, units.
+//! Properties: per-object property edits, current properties, MATCHPROP, linetypes, units, RENAME.
+
+mod rename;
 
 use cadcraft_color::Color;
 use cadcraft_doc::{EntityKind, Lineweight, Transparency};
@@ -47,7 +49,11 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["mls"])
             .params("{name, arrowSize?, textHeight?, landingGap?, dogleg?, textStyle?, current?} → styles"),
         CommandSpec::new("ddptype", "Point Style...", run_ptype).menu(&["Format", "Point Style..."]).params("{pdmode, pdsize}"),
-        CommandSpec::new("rename", "Rename...", run_rename).menu(&["Format", "Rename..."]).params("{table: layer|linetype|style|dimstyle|block, from, to}"),
+        CommandSpec::new("rename", "Rename...", run_rename)
+            .menu(&["Format", "Rename..."])
+            .alias(&["ren", "-rename"])
+            .params("{table: layer|linetype|style|dimstyle|block|mleaderstyle|tablestyle|view|ucs, from, to}")
+            .interactive(|_| Ok(Box::new(rename::RenameM::default()))),
     ]
 }
 
@@ -859,15 +865,20 @@ fn run_rename(s: &mut Session, p: &Value) -> Result<Value> {
     let to = str_param(p, "to").ok_or_else(|| bad("rename", "`to` is required"))?.to_string();
     match table.as_str() {
         "layer" => {
-            s.execute("layer.set", &json!({ "name": from, "newName": to }))?;
+            // The command body, not `execute`: RENAME records the one undo step.
+            let set = find_command("layer.set").ok_or_else(|| bad("rename", "no layer.set command"))?;
+            (set.run)(s, &json!({ "name": from, "newName": to }))?;
         }
-        "style" => {
+        "block" => rename::block(s, &from, &to)?,
+        "mleaderstyle" | "multileaderstyle" => rename::simple(s, "mleaderstyle", &from, &to)?,
+        "tablestyle" | "view" | "ucs" => rename::simple(s, &table, &from, &to)?,
+        "style" | "textstyle" => {
             run_style_rename(s, &json!({ "from": from, "to": to }))?;
         }
         "dimstyle" => {
             run_dimstyle_rename(s, &json!({ "from": from, "to": to }))?;
         }
-        "linetype" => {
+        "linetype" | "ltype" => {
             let d = s.doc_mut()?;
             if ["ByBlock", "ByLayer", "Continuous"].iter().any(|n| from.eq_ignore_ascii_case(n)) {
                 return Err(bad("rename", format!("the {from} linetype cannot be renamed")));
