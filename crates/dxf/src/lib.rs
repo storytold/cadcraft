@@ -219,24 +219,6 @@ fn unescape_unicode(s: &str) -> String {
     out
 }
 
-/// Escape a string for a pre-R2007 DXF, whose text is in the `$DWGCODEPAGE` code page: ASCII
-/// stays as it is and every other character becomes `\U+XXXX` (a surrogate pair of escapes
-/// above U+FFFF), so the bytes are valid in any code page. Line breaks become spaces.
-fn escape_unicode(s: &str, out: &mut String) {
-    for c in s.chars() {
-        match c {
-            '\r' | '\n' => out.push(' '),
-            c if c.is_ascii() => out.push(c),
-            c => {
-                let mut units = [0u16; 2];
-                for u in c.encode_utf16(&mut units) {
-                    let _ = write!(out, "\\U+{u:04X}");
-                }
-            }
-        }
-    }
-}
-
 #[allow(clippy::while_let_loop)]
 pub fn parse_ascii(text: &str) -> Result<Vec<Tag>> {
     let mut tags = Vec::new();
@@ -382,6 +364,24 @@ pub fn write_ascii(tags: &[Tag]) -> String {
         out.push_str("\r\n");
     }
     out
+}
+
+/// Escape a string for a pre-R2007 DXF, whose text is in the `$DWGCODEPAGE` code page: ASCII
+/// stays as it is and every other character becomes `\U+XXXX` (a surrogate pair of escapes
+/// above U+FFFF), so the bytes are valid in any code page. Line breaks become spaces.
+fn escape_unicode(s: &str, out: &mut String) {
+    for c in s.chars() {
+        match c {
+            '\r' | '\n' => out.push(' '),
+            c if c.is_ascii() => out.push(c),
+            c => {
+                let mut units = [0u16; 2];
+                for u in c.encode_utf16(&mut units) {
+                    let _ = write!(out, "\\U+{u:04X}");
+                }
+            }
+        }
+    }
 }
 
 /// A section: `0 SECTION / 2 NAME ... 0 ENDSEC`.
