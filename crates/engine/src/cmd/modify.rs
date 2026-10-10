@@ -264,7 +264,8 @@ fn run_stretch(s: &mut Session, p: &Value) -> Result<Value> {
     let bx = cadcraft_geom::Bounds2::new(*a, *b);
     let d = delta_of("stretch", p)?;
     let space = s.space();
-    let hs = crate::select::select_window(s.doc()?, &space, bx, true);
+    let mut hs = crate::select::select_window(s.doc()?, &space, bx, true);
+    hs.retain(|h| !super::curves::is_locked(s, *h));
     let doc = s.doc_mut()?;
     for h in &hs {
         doc.modify_entity(*h, |e| stretch_entity(e, &bx, d))?;
@@ -483,6 +484,9 @@ fn prim_to_segments(p: &Prim) -> Vec<Segment> {
 
 /// Trim `h` at the piece containing `pick`. Returns the handles that replace it.
 pub(crate) fn trim(s: &mut Session, h: Handle, pick: Vec2, edges: Option<&[Handle]>) -> Result<Vec<Handle>> {
+    if super::curves::is_locked(s, h) {
+        return Err(EngineError::Other("The object is on a locked layer.".into()));
+    }
     let e = s.doc()?.entity(h).map(|e| (**e).clone()).ok_or_else(|| EngineError::Other("no such object".into()))?;
     let cut = edge_segments(s, edges, h)?;
     let pieces: Vec<EntityKind> = match &e.kind {
@@ -666,6 +670,9 @@ fn param_on(s: &Segment, p: Vec2) -> f64 {
 
 /// Extend the end of `h` nearest `pick` to the nearest boundary edge.
 pub(crate) fn extend(s: &mut Session, h: Handle, pick: Vec2, edges: Option<&[Handle]>) -> Result<()> {
+    if super::curves::is_locked(s, h) {
+        return Err(EngineError::Other("The object is on a locked layer.".into()));
+    }
     let e = s.doc()?.entity(h).map(|e| (**e).clone()).ok_or_else(|| EngineError::Other("no such object".into()))?;
     let cut = edge_segments(s, edges, h)?;
     let new_kind = match &e.kind {
@@ -762,6 +769,9 @@ pub(crate) fn fillet_lines(
     radius: f64,
     chamfer: Option<(f64, f64)>,
 ) -> Result<Option<Handle>> {
+    if super::curves::is_locked(s, h1) || super::curves::is_locked(s, h2) {
+        return Err(EngineError::Other("The object is on a locked layer.".into()));
+    }
     let d = s.doc()?;
     let e1 = d.entity(h1).map(|e| (**e).clone()).ok_or_else(|| EngineError::Other("no such object".into()))?;
     let e2 = d.entity(h2).map(|e| (**e).clone()).ok_or_else(|| EngineError::Other("no such object".into()))?;
@@ -980,6 +990,9 @@ fn explode(s: &mut Session, hs: &[Handle]) -> Result<Vec<Handle>> {
     let space = s.space();
     let mut out = Vec::new();
     for h in hs {
+        if super::curves::is_locked(s, *h) {
+            continue;
+        }
         let Some(e) = s.doc()?.entity(*h).map(|e| (**e).clone()) else { continue };
         let Some(parts) = explode_kind(s.doc()?, &e) else { continue };
         let d = s.doc_mut()?;
@@ -1429,6 +1442,7 @@ impl Interactive for SelectThen {
                     self.window = Some(bx);
                     let space = s.space();
                     self.objs = crate::select::select_window(s.doc()?, &space, bx, true);
+                    self.objs.retain(|h| !super::curves::is_locked(s, *h));
                     s.echo(format!("{} found", self.objs.len()));
                     s.set_selection(self.objs.clone());
                     self.sel.done = true;

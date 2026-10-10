@@ -689,6 +689,9 @@ pub(crate) fn spline_to_poly(sp: &Spline, precision: usize) -> LwPolyline {
 fn run_splinedit(s: &mut Session, p: &Value) -> Result<Value> {
     let h = targets(s, p)?.first().copied().ok_or_else(|| bad("splinedit", "`handle` is required"))?;
     let e = curves::entity(s, h)?;
+    if curves::is_locked(s, h) {
+        return Err(other("The object is on a locked layer."));
+    }
     let EntityKind::Spline(sp) = &e.kind else { return Err(other("Object selected is not a spline.")) };
     let opt = str_param(p, "option").ok_or_else(|| bad("splinedit", "`option` is required"))?.to_ascii_lowercase();
     let k = match opt.as_str() {
@@ -1802,6 +1805,9 @@ fn trim_for_fillet(k: &EntityKind, pick: Vec2, t: Vec2) -> Option<(Option<Entity
 
 /// Fillet two curves (lines, arcs, circles) with radius `r`. Returns the new arc, if any.
 pub(crate) fn fillet_curves(s: &mut Session, h1: Handle, p1: Vec2, h2: Handle, p2: Vec2, r: f64) -> Result<Option<Handle>> {
+    if curves::is_locked(s, h1) || curves::is_locked(s, h2) {
+        return Err(other("The object is on a locked layer."));
+    }
     let e1 = curves::entity(s, h1)?;
     let e2 = curves::entity(s, h2)?;
     let unsupported = || other("Fillet works on lines, arcs and circles (and polylines with the Polyline option).");
@@ -1858,6 +1864,9 @@ pub(crate) fn fillet_curves(s: &mut Session, h1: Handle, p1: Vec2, h2: Handle, p
 
 /// Fillet every corner between two straight segments of a polyline. Returns the count.
 pub(crate) fn fillet_polyline(s: &mut Session, h: Handle, r: f64) -> Result<usize> {
+    if curves::is_locked(s, h) {
+        return Err(other("The object is on a locked layer."));
+    }
     let e = curves::entity(s, h)?;
     let EntityKind::LwPolyline(pl) = &e.kind else { return Err(other("Select a 2D polyline.")) };
     let vs = &pl.vertices;

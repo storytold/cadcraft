@@ -106,7 +106,8 @@ fn run_copybase(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn run_cut(s: &mut Session, p: &Value) -> Result<Value> {
-    let hs = targets(s, p)?;
+    let mut hs = targets(s, p)?;
+    hs.retain(|h| !super::curves::is_locked(s, *h));
     let n = copy_to_clip(s, &hs, None)?;
     let d = s.doc_mut()?;
     for h in &hs {
@@ -153,7 +154,8 @@ fn run_pasteorig(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 fn run_clear(s: &mut Session, _p: &Value) -> Result<Value> {
-    let hs = s.selection();
+    let mut hs = s.selection();
+    hs.retain(|h| !super::curves::is_locked(s, *h));
     let d = s.doc_mut()?;
     let mut n = 0;
     for h in hs {

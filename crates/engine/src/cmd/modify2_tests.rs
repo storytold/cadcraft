@@ -641,3 +641,43 @@ fn explode_polyline3d_keeps_elevations() {
         .collect();
     assert_eq!(lines, vec![(5.0, 6.0), (6.0, 7.0)]);
 }
+
+/// Snapshot of every model entity, to prove a command left the drawing untouched.
+fn model_dump(s: &Session) -> String {
+    format!("{:?}", s.doc().unwrap().model.iter().map(|e| e.kind.clone()).collect::<Vec<_>>())
+}
+
+#[test]
+fn editing_commands_leave_locked_layer_objects_alone() {
+    let mut s = Session::new();
+    let a = h(&s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap());
+    let b = h(&s.execute("line", &json!({"points": [[5, -5], [5, 5]]})).unwrap());
+    let c = h(&s.execute("line", &json!({"points": [[0, 0], [0, 10]]})).unwrap());
+    let e = h(&s.execute("line", &json!({"points": [[0, 10], [3, 10]]})).unwrap());
+    let r = h(&s.execute("rectang", &json!({"p1": [20, 0], "p2": [25, 5]})).unwrap());
+    let sp = h(&s.execute("spline", &json!({"control": [[0, 20], [2, 23], [4, 23], [6, 20]], "degree": 3})).unwrap());
+    s.execute("layer.set", &json!({"name": "0", "locked": true})).unwrap();
+    let before = model_dump(&s);
+    // Commands that reject the request.
+    assert!(s.execute("trim", &json!({"handle": a, "pick": [2, 0], "edges": [b]})).is_err());
+    assert!(s.execute("extend", &json!({"handle": e, "pick": [3, 10], "edges": [b]})).is_err());
+    assert!(s.execute("fillet", &json!({"h1": a, "p1": [8, 0], "h2": c, "p2": [0, 8], "radius": 2})).is_err());
+    assert!(s.execute("splinedit", &json!({"handle": sp, "option": "move", "index": 1, "to": [2, 29]})).is_err());
+    // Commands that skip the locked objects.
+    s.execute("select", &json!({"handles": [a, r]})).unwrap();
+    assert_eq!(s.execute("erase.selection", &json!({})).unwrap()["erased"], 0);
+    assert_eq!(s.execute("cutclip", &json!({"handles": [a]})).unwrap()["cut"], 0);
+    assert_eq!(s.execute("stretch", &json!({"window": [[-1, -1], [11, 1]], "delta": [10, 0]})).unwrap()["stretched"], 0);
+    s.execute("explode", &json!({"handles": [r]})).unwrap();
+    // The interactive STRETCH (crossing window, base point, second point) too.
+    s.start("stretch").unwrap();
+    for (x, y) in [(-1.0, -1.0), (11.0, 1.0), (0.0, 0.0), (10.0, 0.0)] {
+        s.input(crate::Input::Point(Vec2::new(x, y))).unwrap();
+    }
+    assert_eq!(model_dump(&s), before);
+    // Unlocked, the same edits work.
+    s.execute("layer.set", &json!({"name": "0", "locked": false})).unwrap();
+    s.execute("trim", &json!({"handle": a, "pick": [2, 0], "edges": [b]})).unwrap();
+    s.execute("explode", &json!({"handles": [r]})).unwrap();
+    assert_ne!(model_dump(&s), before);
+}
