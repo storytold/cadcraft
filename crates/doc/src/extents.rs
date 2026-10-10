@@ -1,8 +1,8 @@
 //! Approximate entity bounds (used for extents, zoom and selection pre-filtering).
 
-use cadcraft_geom::{Bounds2, Polyline, Vec2};
+use cadcraft_geom::{Arc, Bounds2, EPS, Polyline, Vec2, bulge_to_arc};
 
-use crate::{Drawing, Entity, EntityKind, Prim};
+use crate::{Drawing, Entity, EntityKind, LwPolyline, Prim};
 
 /// Nested block references deeper than this are ignored (cyclic or hostile files).
 pub const MAX_BLOCK_DEPTH: usize = 16;
@@ -122,7 +122,7 @@ pub fn entity_bounds(d: &Drawing, e: &Entity, depth: usize) -> Bounds2 {
             let v = i.v.xy() * i.size.y;
             Bounds2::from_points([o, o + u, o + v, o + u + v])
         }
-        EntityKind::LwPolyline(p) => Polyline { vertices: p.vertices.clone(), closed: p.closed }.bounds().expand(p.const_width / 2.0),
+        EntityKind::LwPolyline(p) => lwpolyline_bounds(p),
         kind => {
             let mut b = Bounds2::EMPTY;
             for p in kind.prims() {
@@ -147,6 +147,58 @@ pub fn entity_bounds(d: &Drawing, e: &Entity, depth: usize) -> Bounds2 {
             b
         }
     }
+}
+
+/// The polyline's drawn extent: its centre line, widened by the filled band of every segment,
+/// with the constant width or each segment's own start/end widths tapering along it, as drawn.
+fn lwpolyline_bounds(p: &LwPolyline) -> Bounds2 {
+    let mut b = Polyline { vertices: p.vertices.clone(), closed: p.closed }.bounds();
+    let n = p.vertices.len();
+    let count = if p.closed { n } else { n.saturating_sub(1) };
+    // The constant width wins, as when drawing; non-finite or negative widths count as zero.
+    let half = |w: f64| if w.is_finite() && w > 0.0 { w / 2.0 } else { 0.0 };
+    for i in 0..count {
+        let (Some(v), Some(w)) = (p.vertices.get(i), p.vertices.get((i + 1) % n)) else { continue };
+        let (h0, h1) = if p.const_width > 0.0 { (half(p.const_width), half(p.const_width)) } else { (half(v.start_width), half(v.end_width)) };
+        if h0 == 0.0 && h1 == 0.0 {
+            // A thin segment: the centre line already counts.
+            continue;
+        }
+        match bulge_to_arc(v.p, w.p, v.bulge) {
+            // A straight segment's band is a trapezoid: its four corners are exact.
+            None if !v.p.near(w.p, EPS) => {
+                let nrm = (w.p - v.p).normalized().perp();
+                for q in [v.p + nrm * h0, v.p - nrm * h0, w.p + nrm * h1, w.p - nrm * h1] {
+                    b.add(q);
+                }
+            }
+            None => {}
+            // An arc segment: both band edges, sampled finely along the arc with the width
+            // interpolated along it, then widened by the sampling tolerance so the curve between
+            // samples is inside.
+            Some((arc, ccw)) => {
+                let outer = arc.radius + h0.max(h1);
+                let tol = outer * 1e-4;
+                let mut pts = Vec::new();
+                Arc { radius: outer, ..arc }.tessellate(tol, &mut pts);
+                let last = pts.len().saturating_sub(1).max(1) as f64;
+                let mut edges = Bounds2::EMPTY;
+                for (k, q) in pts.iter().enumerate() {
+                    // The fraction along the segment, which runs against the arc when not ccw.
+                    let t = k as f64 / last;
+                    let t = if ccw { t } else { 1.0 - t };
+                    let h = h0 + (h1 - h0) * t;
+                    let dir = (*q - arc.center).normalized();
+                    edges.add(arc.center + dir * (arc.radius + h));
+                    edges.add(arc.center + dir * (arc.radius - h));
+                }
+                if !edges.is_empty() {
+                    b = b.union(&edges.expand(tol));
+                }
+            }
+        }
+    }
+    b
 }
 
 #[cfg(test)]
