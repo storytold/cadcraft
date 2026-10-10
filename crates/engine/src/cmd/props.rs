@@ -271,6 +271,10 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
                     if let Some(v) = str_param(p, "pattern") {
                         h.pattern = v.to_ascii_uppercase();
                         h.solid = h.pattern == "SOLID";
+                        if !h.solid {
+                            // A named pattern replaces the gradient fill; the renderer draws the gradient first when it is set.
+                            h.gradient = None;
+                        }
                     }
                     if let Some(x) = num("scale").filter(|x| *x > 0.0) {
                         h.scale = x;
