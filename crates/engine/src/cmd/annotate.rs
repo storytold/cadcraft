@@ -481,21 +481,35 @@ fn run_update(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// DIMOVERRIDE: per-dimension style overrides (`clear` removes them); `text` sets the text.
 fn run_override(s: &mut Session, p: &Value) -> Result<Value> {
-    if p.get("text").is_some() && p.as_object().is_some_and(|o| o.keys().all(|k| matches!(k.as_str(), "text" | "handles" | "handle"))) {
-        let hs = targets(s, p)?;
-        let t = str_param(p, "text").unwrap_or("").to_string();
-        let d = s.doc_mut()?;
-        for h in &hs {
-            let _ = d.modify_entity(*h, |e| {
-                if let EntityKind::Dimension(dm) = &mut e.kind {
-                    dm.text = t.clone();
-                    dm.block = None;
-                }
-            });
-        }
-        return Ok(json!({ "changed": hs.len() }));
+    if p.get("text").is_none() {
+        return super::props::dim_override(s, p);
     }
-    super::props::dim_override(s, p)
+    let hs = targets(s, p)?;
+    let t = str_param(p, "text").unwrap_or("").to_string();
+    // Dimension variables given next to `text` are applied first, so an unknown name still errors before anything changes.
+    let vars: serde_json::Map<String, Value> = p
+        .as_object()
+        .map(|o| o.iter().filter(|(k, _)| !matches!(k.as_str(), "text" | "handles" | "handle")).map(|(k, v)| (k.clone(), v.clone())).collect())
+        .unwrap_or_default();
+    let mut ignored = Value::Null;
+    if !vars.is_empty() {
+        let mut rest = vars;
+        rest.insert("handles".into(), json!(hs.iter().map(|h| h.hex()).collect::<Vec<_>>()));
+        ignored = super::props::dim_override(s, &Value::Object(rest))?.get("ignored").cloned().unwrap_or(Value::Null);
+    }
+    let d = s.doc_mut()?;
+    for h in &hs {
+        let _ = d.modify_entity(*h, |e| {
+            if let EntityKind::Dimension(dm) = &mut e.kind {
+                dm.text = t.clone();
+                dm.block = None;
+            }
+        });
+    }
+    match ignored {
+        Value::Null => Ok(json!({ "changed": hs.len() })),
+        ig => Ok(json!({ "changed": hs.len(), "ignored": ig })),
+    }
 }
 
 /// The two points a picked object is dimensioned between (DIMLINEAR "select object").
