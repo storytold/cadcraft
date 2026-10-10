@@ -1312,3 +1312,166 @@ fn arc_length_dimension_keeps_its_kind_and_centre_on_roundtrip() {
     assert!(matches!(dims[0].kind, DimKind::ArcLength), "{:?}", dims[0].kind);
     assert!((dims[0].p15 - Vec3::new(5.0, 5.0, 0.0)).len() < 1e-9);
 }
+
+/// Two gradient hatches (true colours, shifted, rotated; index colours, centered) and a plain
+/// solid hatch over the same square.
+fn gradient_sample() -> (Drawing, Vec<Option<Gradient>>) {
+    let mut d = Drawing::new_metric();
+    let square = vec![
+        PolyVertex::new(Vec2::ZERO),
+        PolyVertex::new(Vec2::new(10.0, 0.0)),
+        PolyVertex::new(Vec2::new(10.0, 10.0)),
+        PolyVertex::new(Vec2::new(0.0, 10.0)),
+    ];
+    let gradients = vec![
+        Some(Gradient {
+            name: "LINEAR".into(),
+            color1: Color::True(cadcraft_color::Rgb(255, 0, 0)),
+            color2: Color::True(cadcraft_color::Rgb(0, 0, 255)),
+            angle: 30f64.to_radians(),
+            centered: false,
+        }),
+        Some(Gradient { name: "CURVED".into(), color1: Color::Index(5), color2: Color::ByLayer, angle: 0.0, centered: true }),
+        None,
+    ];
+    for g in &gradients {
+        let h = Hatch {
+            pattern: "SOLID".into(),
+            solid: true,
+            loops: vec![HatchLoop { vertices: square.clone(), outer: true }],
+            scale: 1.0,
+            angle: 0.0,
+            associative: false,
+            style: 0,
+            elevation: 0.0,
+            gradient: g.clone(),
+            origin: Vec2::ZERO,
+            background: None,
+        };
+        d.add(&Space::Model, Common::default(), EntityKind::Hatch(h)).unwrap();
+    }
+    (d, gradients)
+}
+
+fn hatches(d: &Drawing) -> Vec<Hatch> {
+    d.model.iter().filter_map(|e| if let EntityKind::Hatch(h) = &e.kind { Some(h.clone()) } else { None }).collect()
+}
+
+/// Issue #80: a DXF save/reopen keeps each hatch's gradient (name, both colours, angle and
+/// centered setting) as native HATCH groups 450–470, and a plain solid stays plain.
+#[test]
+fn gradient_hatch_roundtrips_through_dxf() {
+    let (d, gradients) = gradient_sample();
+    let text = write_dxf(&d);
+    for code in ["450", "451", "452", "453", "460", "461", "462", "463", "421", "470"] {
+        assert!(text.lines().any(|l| l.trim() == code), "missing group {code}");
+    }
+    let back = read_dxf(text.as_bytes()).unwrap();
+    let (a, b) = (hatches(&d), hatches(&back));
+    assert_eq!(b.len(), gradients.len());
+    for ((x, y), g) in a.iter().zip(&b).zip(&gradients) {
+        assert_eq!(&y.gradient, g);
+        assert_eq!(x.loops, y.loops);
+    }
+    assert_eq!(roundtrip(&back).model.iter().map(|e| &e.kind).collect::<Vec<_>>(), back.model.iter().map(|e| &e.kind).collect::<Vec<_>>());
+}
+
+/// R2000 readers and DWG conversions drop the native groups; CADCraft's xdata copy restores the
+/// gradient. When native groups are present (another program may have edited them) they win.
+#[test]
+fn gradient_falls_back_to_xdata_and_native_groups_win() {
+    let (d, gradients) = gradient_sample();
+    let text = write_dxf(&d);
+    // Strip groups 450–470 and 63/421 (pairs of lines) from every entity.
+    let lines: Vec<&str> = text.lines().collect();
+    let mut stripped = String::new();
+    for pair in lines.chunks(2) {
+        let code = pair.first().map(|c| c.trim().parse::<i32>().unwrap_or(-1)).unwrap_or(-1);
+        if (450..=470).contains(&code) || code == 63 || code == 421 {
+            continue;
+        }
+        for l in pair {
+            stripped.push_str(l);
+            stripped.push('\n');
+        }
+    }
+    assert!(!stripped.lines().any(|l| l.trim() == "450"));
+    let back = read_dxf(stripped.as_bytes()).unwrap();
+    assert_eq!(hatches(&back).into_iter().map(|h| h.gradient).collect::<Vec<_>>(), gradients);
+
+    // Native groups edited elsewhere (new angle, colour, name) take precedence over stale xdata.
+    let edited = text.replacen("470\r\nLINEAR", "470\r\nSPHERICAL", 1).replacen("421\r\n16711680", "421\r\n65280", 1);
+    assert_ne!(edited, text);
+    let back = read_dxf(edited.as_bytes()).unwrap();
+    let g = hatches(&back).into_iter().next().and_then(|h| h.gradient).unwrap();
+    assert_eq!(g.name, "SPHERICAL");
+    assert_eq!(g.color1, Color::True(cadcraft_color::Rgb(0, 255, 0)));
+}
+
+/// Issue #80: DWG saves (R2000, which has no native gradient fields) keep the gradient too.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn gradient_hatch_roundtrips_through_dwg() {
+    let (d, gradients) = gradient_sample();
+    let back = read(&write(&d, "x.dwg").unwrap(), "x.dwg").unwrap();
+    let hs = hatches(&back);
+    assert_eq!(hs.iter().map(|h| h.gradient.clone()).collect::<Vec<_>>(), gradients);
+    assert_eq!(hs.iter().map(|h| h.loops.clone()).collect::<Vec<_>>(), hatches(&d).into_iter().map(|h| h.loops).collect::<Vec<_>>());
+}
+
+#[test]
+fn hostile_gradient_groups_never_panic() {
+    let hatch = |tail: &str| {
+        format!(
+            "0\nSECTION\n2\nENTITIES\n0\nHATCH\n2\nSOLID\n70\n1\n91\n1\n92\n2\n72\n0\n73\n1\n93\n3\n10\n0\n20\n0\n10\n1\n20\n0\n10\n1\n20\n1\n98\n0\n{tail}0\nENDSEC\n0\nEOF\n"
+        )
+    };
+    let cases = [
+        // Native: absurd counts, colour records past two, out-of-range ACI/true colours, NaN.
+        hatch(
+            "450\n1\n453\n2147483647\n460\nnan\n461\ninf\n463\n0\n63\n99999\n421\n-1\n463\n1\n63\n-32768\n421\n99999999999\n463\n2\n63\n3\n463\n7\n470\n\n",
+        ),
+        // Native flag only, or a non-gradient flag, or groups out of order.
+        hatch("450\n1\n"),
+        hatch("450\n-7\n470\nX\n"),
+        hatch("421\n255\n63\n1\n463\n0\n450\n1\n470\nLINEAR\n"),
+        // Xdata: missing values, junk colour names, huge numbers.
+        hatch("1001\nCADCRAFT\n1000\nGRADIENT\n"),
+        hatch("1001\nCADCRAFT\n1000\nGRADIENT\n1000\nX\n1040\n1e308\n1070\n-1\n1000\nnot a colour\n1000\n999,999,999\n"),
+        hatch("1001\nCADCRAFT\n1000\nGRADIENT\n1040\nnan\n1001\nACAD\n1000\n\n"),
+    ];
+    for t in &cases {
+        let d = read(t.as_bytes(), "x.dxf").unwrap();
+        for h in hatches(&d) {
+            if let Some(g) = &h.gradient {
+                assert!(g.angle.is_finite());
+            }
+        }
+        let _ = cadcraft_render::build(&d, &Space::Model, &cadcraft_render::Options::default());
+        let back = read_dxf(write_dxf(&d).as_bytes()).unwrap();
+        assert_eq!(
+            hatches(&back).into_iter().map(|h| h.gradient).collect::<Vec<_>>(),
+            hatches(&d).into_iter().map(|h| h.gradient).collect::<Vec<_>>()
+        );
+    }
+}
+
+/// The native 470 group keeps a long name whole; the xdata copy is cut to 255 bytes at a
+/// character boundary.
+#[test]
+fn long_gradient_name_is_cut_only_in_xdata() {
+    let name = "Ä".repeat(200);
+    let mut d = Drawing::new_metric();
+    let mut h = hatches(&gradient_sample().0).into_iter().next().unwrap();
+    if let Some(g) = &mut h.gradient {
+        g.name = name.clone();
+    }
+    d.add(&Space::Model, Common::default(), EntityKind::Hatch(h)).unwrap();
+    let text = write_dxf(&d);
+    let lines: Vec<&str> = text.lines().collect();
+    // Non-ASCII text is written as \U+ escapes (R2000 files are ANSI).
+    assert!(lines.contains(&"\\U+00C4".repeat(200).as_str()));
+    assert!(lines.contains(&"\\U+00C4".repeat(127).as_str()));
+    let back = read_dxf(text.as_bytes()).unwrap();
+    assert_eq!(hatches(&back).into_iter().next().and_then(|h| h.gradient).unwrap().name, name);
+}

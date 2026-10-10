@@ -777,6 +777,9 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
                 }
             }
             w.i(98, 0);
+            if let Some(g) = &h.gradient {
+                gradient(w, g);
+            }
         }
         EntityKind::Viewport(v) => {
             w.s(0, "VIEWPORT");
@@ -797,6 +800,41 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
         // Not yet written: images, wipeouts, tables, multileaders, unknown objects.
         _ => {}
     }
+}
+
+/// A hatch's gradient fill (DXF Reference, HATCH group codes 450–470): two-colour gradient
+/// with its rotation (radians), shift (0 = centered, 1 = shifted) and per-colour 463 records
+/// carrying ACI (63) and, for true colours, the RGB value (421). Those groups belong to R2004+
+/// files, so the same gradient also travels as `CADCRAFT` xdata, which survives this R2000
+/// file's conversion to DWG (where the native fields don't exist).
+fn gradient(w: &mut W, g: &Gradient) {
+    w.i(450, 1);
+    w.i(451, 0);
+    w.f(460, g.angle);
+    w.f(461, if g.centered { 0.0 } else { 1.0 });
+    w.i(452, 0);
+    w.f(462, 0.0);
+    w.i(453, 2);
+    for (k, c) in [(0.0, g.color1), (1.0, g.color2)] {
+        w.f(463, k);
+        match c {
+            Color::True(rgb) => {
+                w.i(63, i64::from(cadcraft_color::nearest_aci(rgb)));
+                w.i(421, i64::from(rgb.to_u32()));
+            }
+            c => w.i(63, i64::from(c.to_aci())),
+        }
+    }
+    w.s(470, &g.name);
+    w.s(1001, dxf_ext::APP);
+    w.s(1000, "GRADIENT");
+    // A 1000 group holds at most 255 bytes; cut at a character boundary.
+    let cut = g.name.char_indices().map(|(i, c)| i + c.len_utf8()).take_while(|end| *end <= 255).last().unwrap_or(0);
+    w.s(1000, g.name.get(..cut).unwrap_or_default());
+    w.f(1040, g.angle);
+    w.i(1070, i64::from(g.centered));
+    w.s(1000, g.color1.name());
+    w.s(1000, g.color2.name());
 }
 
 /// Anonymous dimension blocks (`*D1`…) with the rendered geometry, as consumers expect.
