@@ -994,3 +994,34 @@ fn pline_width_answers_taper_the_next_segment() {
     let p = typed_pline("pline 0,0 10,0 w 1 0.2 20,0 u");
     assert_eq!(widths(&p), (0.0, vec![(0.0, 0.0), (0.0, 0.0)]));
 }
+
+#[test]
+fn press_and_drag_selection_window() {
+    let mut s = Session::new();
+    s.cmdline("line 0,0 10,0").unwrap();
+    s.cmdline("").unwrap();
+    s.cmdline("circle 50,50 1").unwrap();
+    // No command: a drag from (-1,-1) to (11,1) is a window around the line only.
+    assert!(s.begin_window(Vec2::new(-1.0, -1.0)));
+    s.idle_click(Vec2::new(11.0, 1.0), false).unwrap();
+    assert_eq!(s.selection().len(), 1);
+    assert!(s.pending_window.is_none());
+    // Dragging right to left is a crossing window: it also catches the circle it touches.
+    s.set_selection(Vec::new());
+    assert!(s.begin_window(Vec2::new(60.0, 60.0)));
+    s.idle_click(Vec2::new(50.0, 40.0), false).unwrap();
+    assert_eq!(s.selection().len(), 1);
+    // A command asking for objects: the window feeds its selection.
+    s.set_selection(Vec::new());
+    s.cmdline("erase").unwrap();
+    assert!(s.begin_window(Vec2::new(-1.0, -1.0)));
+    s.input(Input::Point(Vec2::new(11.0, 1.0))).unwrap();
+    s.input(Input::Enter).unwrap();
+    assert_eq!(kinds(&s), vec!["Circle"]);
+    // A drawing command never opens one, and neither does a hostile point.
+    s.cmdline("line").unwrap();
+    assert!(!s.begin_window(Vec2::ZERO));
+    s.cancel();
+    assert!(!s.begin_window(Vec2::new(f64::NAN, 0.0)));
+    assert!(s.pending_window.is_none());
+}
