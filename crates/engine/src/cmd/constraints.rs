@@ -783,7 +783,7 @@ fn run_autoconstrain(s: &mut Session, p: &Value) -> Result<Value> {
     o.distance_tolerance = f64_or(p, "tolerance", o.distance_tolerance);
     o.angle_tolerance = f64_or(p, "angleTolerance", o.angle_tolerance);
     if let Some(t) = p.get("types").and_then(Value::as_array) {
-        o.types = t.iter().filter_map(Value::as_str).map(str::to_string).collect();
+        o.types = t.iter().filter_map(Value::as_str).map(|n| kind_from_name(n).map_or_else(|| n.to_string(), |k| k.name().to_string())).collect();
     }
     let mut d = s.doc()?.clone();
     let ids = cs::autoconstrain(&mut d, &hs, &o);
@@ -922,7 +922,7 @@ fn run_constraintsettings(s: &mut Session, p: &Value) -> Result<Value> {
         set.bar_transparency = t.clamp(0.0, 90.0) as u8;
     }
     if let Some(t) = p.get("autoTypes").and_then(Value::as_array) {
-        set.auto_types = t.iter().filter_map(Value::as_str).filter(|n| kind_from_name(n).is_some()).map(str::to_string).take(32).collect();
+        set.auto_types = t.iter().filter_map(Value::as_str).filter_map(|n| kind_from_name(n).map(|k| k.name().to_string())).take(32).collect();
     }
     if set != cur {
         s.doc_mut()?.parametric.settings = set.clone();
