@@ -1,6 +1,6 @@
 //! Dialogs: Drafting Settings, About, command reference, blocks; dispatches the Layer Properties
-//! Manager ([`crate::layers`]), Quick Select ([`crate::quick`]) and Parameters Manager
-//! ([`crate::parametric`]).
+//! Manager ([`crate::layers`]), Quick Select ([`crate::quick`]), Parameters Manager
+//! ([`crate::parametric`]) and the style and settings managers ([`crate::managers`]).
 
 use egui::{RichText, vec2};
 
@@ -20,7 +20,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         "about" => about(ctx, &mut open),
         "commands" => commands(app, ctx, &mut open),
         "blocks" => blocks(app, ctx, &mut open),
-        _ => open = false,
+        other => crate::managers::dialog(app, ctx, other, &mut open),
     }
     if !open {
         app.ui.dialog = None;

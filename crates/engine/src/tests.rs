@@ -420,3 +420,19 @@ fn mleader_and_qdim() {
     let r = s.execute("qdim", &json!({"handles": hs, "at": [0, -2]})).unwrap();
     assert_eq!(r["handles"].as_array().unwrap().len(), 2);
 }
+
+#[test]
+fn count_from_the_menu_shows_its_result() {
+    let mut s = Session::new();
+    s.start("count").unwrap();
+    assert_eq!(s.log.last().map(String::as_str), Some("No block references in model space."));
+    s.execute("circle", &json!({"center": [0, 0], "radius": 1})).unwrap();
+    s.execute("selectall", &json!({})).unwrap();
+    s.cmdline("block Valve 0,0").unwrap();
+    s.cmdline("insert Valve 10,0 1 0").unwrap();
+    s.start("count").unwrap();
+    let n = s.log.len();
+    assert_eq!(&s.log[n - 3..], ["Block references in model space:", "  Valve: 2", "  Total: 2"]);
+    let r = s.execute("count", &json!({"block": "Valve"})).unwrap();
+    assert_eq!((r["count"].as_u64(), r["message"].as_str()), (Some(2), Some("Block Valve: 2 in model space.")));
+}

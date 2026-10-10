@@ -528,7 +528,9 @@ impl Session {
                 } else if !r.is_null()
                     && let Some(msg) = r.get("message").and_then(Value::as_str)
                 {
-                    self.echo(msg.to_string());
+                    for l in msg.lines() {
+                        self.echo(l.to_string());
+                    }
                 }
                 Ok(())
             }

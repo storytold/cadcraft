@@ -39,7 +39,10 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("status", "Status", run_status).menu(&["Tools", "Inquiry", "Status"]).noundo(),
         CommandSpec::new("drawing.inspect", "Inspect Drawing", run_inspect).params("{entities?: bool, limit?: n}").noundo(),
         CommandSpec::new("entities", "Query Entities", run_entities).params("{type?, layer?, window?: [[x,y],[x,y]], limit?, offset?}").noundo(),
-        CommandSpec::new("count", "Count", run_count).menu(&["Tools", "Count"]).params("{block?}").noundo(),
+        CommandSpec::new("count", "Count", run_count)
+            .menu(&["Tools", "Count"])
+            .params("{block?} → {blocks: {name: n}} | {block, count}, plus a `message` line")
+            .noundo(),
     ]
 }
 
@@ -296,10 +299,22 @@ fn run_count(s: &mut Session, p: &Value) -> Result<Value> {
             *counts.entry(i.block.clone()).or_default() += 1;
         }
     }
+    // `message` is what the command line shows when COUNT is typed or chosen from the menu.
     if let Some(b) = str_param(p, "block") {
-        return Ok(json!({ "block": b, "count": counts.get(b).copied().unwrap_or(0) }));
+        let n = counts.get(b).copied().unwrap_or(0);
+        return Ok(json!({ "block": b, "count": n, "message": format!("Block {b}: {n} in model space.") }));
     }
-    Ok(json!({ "blocks": counts }))
+    let message = if counts.is_empty() {
+        "No block references in model space.".to_string()
+    } else {
+        let mut m = String::from("Block references in model space:");
+        for (name, n) in &counts {
+            m.push_str(&format!("\n  {name}: {n}"));
+        }
+        m.push_str(&format!("\n  Total: {}", counts.values().sum::<usize>()));
+        m
+    };
+    Ok(json!({ "blocks": counts, "message": message }))
 }
 
 #[derive(Default)]
