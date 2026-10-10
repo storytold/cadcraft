@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use super::helpers::*;
 use super::machines::number;
 use super::*;
-use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
+use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step, snap};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -343,6 +343,23 @@ fn run_mtext(s: &mut Session, p: &Value) -> Result<Value> {
 struct LineM {
     pts: Vec<Vec2>,
     handles: Vec<cadcraft_doc::Handle>,
+    /// A first point picked as a deferred tangent/perpendicular, resolved by the next point.
+    first: Option<snap::Deferred>,
+}
+
+impl LineM {
+    /// Draw the first segment from the deferred first point to `end`.
+    fn resolve_first(&mut self, s: &mut Session, first: snap::Deferred, end: snap::LineEnd) -> Result<Step> {
+        let Some((a, b)) = snap::resolve_deferred(snap::LineEnd::Deferred(first), end) else {
+            let what = if first.mode == snap::mode::TAN { "tangent" } else { "perpendicular" };
+            return Err(crate::EngineError::Other(format!("No {what} line through that point; pick another point.")));
+        };
+        self.handles.push(s.add_entity(line(a, b))?);
+        self.pts = vec![a, b];
+        self.first = None;
+        s.last_point = b;
+        Ok(Step::Continue)
+    }
 }
 
 impl Interactive for LineM {
@@ -351,13 +368,35 @@ impl Interactive for LineM {
     }
     fn prompt(&self, _s: &Session) -> Prompt {
         match self.pts.len() {
-            0 => Prompt::new("Specify first point", Accept::POINT),
+            0 if self.first.is_some() => Prompt::new("Specify next point", Accept::POINT).kw(&["Undo"]).deferred(),
+            0 => Prompt::new("Specify first point", Accept::POINT).deferred(),
             1 | 2 => Prompt::new("Specify next point", Accept::POINT).kw(&["Undo"]).base_opt(self.pts.last().copied()),
             _ => Prompt::new("Specify next point", Accept::POINT).kw(&["Close", "Undo"]).base_opt(self.pts.last().copied()),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if self.pts.is_empty()
+            && let Some(first) = self.first
+        {
+            match i {
+                Input::Point(p) => return self.resolve_first(s, first, snap::LineEnd::Point(p)),
+                Input::Deferred(d) => return self.resolve_first(s, first, snap::LineEnd::Deferred(d)),
+                _ => {}
+            }
+        }
         match i {
+            Input::Deferred(d) if self.pts.is_empty() => {
+                self.first = Some(d);
+                Ok(Step::Continue)
+            }
+            // A deferred pick with a known last point (not offered by the prompt, but harmless).
+            Input::Deferred(d) => match self.pts.last().copied() {
+                Some(last) => match snap::resolve_deferred(snap::LineEnd::Point(last), snap::LineEnd::Deferred(d)) {
+                    Some((_, p)) => self.input(s, Input::Point(p)),
+                    None => Err(crate::EngineError::Other("No tangent or perpendicular from the last point.".into())),
+                },
+                None => Ok(Step::Continue),
+            },
             Input::Point(p) => {
                 if let Some(last) = self.pts.last().copied() {
                     if last.near(p, 1e-12) {
@@ -369,6 +408,9 @@ impl Interactive for LineM {
                 Ok(Step::Continue)
             }
             Input::Keyword(k) if k == "Undo" => {
+                if self.first.take().is_some() {
+                    return Ok(Step::Continue);
+                }
                 if let Some(h) = self.handles.pop() {
                     s.doc_mut()?.remove_entity(h);
                 }
@@ -385,7 +427,12 @@ impl Interactive for LineM {
             _ => Err(crate::EngineError::Other("Point or option keyword required.".into())),
         }
     }
-    fn preview(&self, _s: &Session, c: Vec2) -> Vec<EntityKind> {
+    fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
+        if let Some(first) = self.first {
+            // Over a second curve, show the tangent-to-tangent line the click would draw.
+            let end = s.cursor_deferred.map_or(snap::LineEnd::Point(c), snap::LineEnd::Deferred);
+            return snap::resolve_deferred(snap::LineEnd::Deferred(first), end).map(|(a, b)| vec![line(a, b)]).unwrap_or_default();
+        }
         self.pts.last().map(|l| vec![line(*l, c)]).unwrap_or_default()
     }
 }

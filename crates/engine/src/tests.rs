@@ -606,3 +606,136 @@ fn mleader_and_qdim() {
     let r = s.execute("qdim", &json!({"handles": hs, "at": [0, -2]})).unwrap();
     assert_eq!(r["handles"].as_array().unwrap().len(), 2);
 }
+
+/// Click at `at` the way the canvas does: object snap for the current prompt, then the input.
+fn snap_click(s: &mut Session, at: Vec2) {
+    let prompt = s.current_prompt().unwrap();
+    let hit = snap::osnap(s.doc().unwrap(), &cadcraft_doc::Space::Model, at, 0.5, s.settings.osmode, prompt.base, prompt.deferred);
+    s.input(hit.map_or(Input::Point(at), |h| h.input())).unwrap();
+}
+
+fn line_ends(s: &Session) -> Vec<(Vec2, Vec2)> {
+    s.doc()
+        .unwrap()
+        .model
+        .iter()
+        .filter_map(|e| match &e.kind {
+            EntityKind::Line(l) => Some((l.a.xy(), l.b.xy())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Distance from `c` to the infinite line through `p` and `q`.
+fn line_dist(c: Vec2, p: Vec2, q: Vec2) -> f64 {
+    ((q - p).cross(c - p) / p.dist(q)).abs()
+}
+
+#[test]
+fn line_first_point_deferred_tangent() {
+    let mut s = Session::new();
+    s.cmdline("circle 0,0 5").unwrap();
+    s.execute("osnap", &json!({"modes": ["tan"]})).unwrap();
+    s.cmdline("line").unwrap();
+    assert!(s.current_prompt().unwrap().deferred);
+    snap_click(&mut s, Vec2::new(0.1, 5.2)); // the top of the circle: deferred tangent
+    let p = s.current_prompt().unwrap();
+    assert_eq!(p.message, "Specify next point");
+    assert!(p.base.is_none() && p.deferred);
+    // The rubber band already runs tangent from the circle to the cursor.
+    let pv = s.preview(Vec2::new(20.0, 5.0));
+    assert_eq!(pv.len(), 1);
+    snap_click(&mut s, Vec2::new(20.0, 5.0)); // a free point
+    let ends = line_ends(&s);
+    assert_eq!(ends.len(), 1);
+    let (a, b) = ends[0];
+    assert!(b.near(Vec2::new(20.0, 5.0), 1e-9));
+    assert!((a.len() - 5.0).abs() < 1e-9 && (line_dist(Vec2::ZERO, a, b) - 5.0).abs() < 1e-9 && a.y > 0.0);
+    // The line goes on from the second point as usual.
+    let p = s.current_prompt().unwrap();
+    assert_eq!(p.base, Some(b));
+    assert!(!p.deferred);
+    s.cmdline("@0,5").unwrap();
+    s.cmdline("").unwrap();
+    assert_eq!(line_ends(&s).len(), 2);
+    assert!(line_ends(&s)[1].0.near(b, 1e-12));
+}
+
+#[test]
+fn line_belt_tangent_to_tangent() {
+    let mut s = Session::new();
+    s.cmdline("circle 0,0 10").unwrap();
+    s.cmdline("circle 30,0 4").unwrap();
+    s.execute("osnap", &json!({"modes": ["tan"]})).unwrap();
+    // Top of the large circle to the top of the small one: the outer (belt) tangent.
+    s.cmdline("line").unwrap();
+    snap_click(&mut s, Vec2::new(-1.0, 10.1));
+    // Hovering the small circle previews the line the click will draw.
+    let hover = snap::osnap(s.doc().unwrap(), &cadcraft_doc::Space::Model, Vec2::new(31.0, 4.1), 0.5, s.settings.osmode, None, true).unwrap();
+    s.cursor_deferred = hover.deferred;
+    let pv = s.preview(hover.point);
+    s.cursor_deferred = None;
+    snap_click(&mut s, Vec2::new(31.0, 4.1));
+    s.cmdline("").unwrap();
+    assert_eq!(pv.len(), 1);
+    assert_eq!(Some(&pv[0].kind), s.doc().unwrap().model.iter().last().map(|e| &e.kind));
+    // Bottom of the large one to the top of the small one: the crossed tangent.
+    s.cmdline("line").unwrap();
+    snap_click(&mut s, Vec2::new(0.0, -10.2));
+    snap_click(&mut s, Vec2::new(30.0, 4.2));
+    s.cmdline("").unwrap();
+    let ends = line_ends(&s);
+    assert_eq!(ends.len(), 2);
+    for (a, b) in &ends {
+        assert!((a.dist(Vec2::ZERO) - 10.0).abs() < 1e-9 && (b.dist(Vec2::new(30.0, 0.0)) - 4.0).abs() < 1e-9);
+        assert!((line_dist(Vec2::ZERO, *a, *b) - 10.0).abs() < 1e-9);
+        assert!((line_dist(Vec2::new(30.0, 0.0), *a, *b) - 4.0).abs() < 1e-9);
+    }
+    assert!(ends[0].0.y > 0.0 && ends[0].1.y > 0.0);
+    assert!(ends[1].0.y < 0.0 && ends[1].1.y > 0.0);
+}
+
+#[test]
+fn line_deferred_tangent_without_solution_reprompts() {
+    let mut s = Session::new();
+    s.cmdline("circle 0,0 10").unwrap();
+    s.cmdline("circle 0,0 4").unwrap();
+    s.execute("osnap", &json!({"modes": ["tan"]})).unwrap();
+    s.cmdline("line").unwrap();
+    snap_click(&mut s, Vec2::new(0.0, 10.1));
+    // A point inside the circle: no tangent; the command reports it and keeps prompting.
+    snap_click(&mut s, Vec2::new(1.0, 1.0));
+    assert!(s.running.is_some() && line_ends(&s).is_empty());
+    assert!(s.current_prompt().unwrap().deferred);
+    // Concentric circles: no common tangent either.
+    snap_click(&mut s, Vec2::new(0.0, 4.1));
+    assert!(s.running.is_some() && line_ends(&s).is_empty());
+    // Undo drops the deferred first point.
+    s.cmdline("u").unwrap();
+    assert_eq!(s.current_prompt().unwrap().message, "Specify first point");
+    s.cmdline("20,0 30,0").unwrap();
+    assert_eq!(line_ends(&s).len(), 1);
+    s.cmdline("").unwrap();
+    // Enter right after a deferred first point just ends the command.
+    s.cmdline("line").unwrap();
+    snap_click(&mut s, Vec2::new(0.0, 10.1));
+    s.cmdline("").unwrap();
+    assert!(s.running.is_none() && line_ends(&s).len() == 1);
+}
+
+#[test]
+fn deferred_pick_elsewhere_is_a_plain_point() {
+    let mut s = Session::new();
+    let curve = snap::SnapCurve::Circle { center: Vec2::ZERO, radius: 5.0 };
+    let d = snap::Deferred { mode: snap::mode::TAN, curve, at: Vec2::new(0.0, 5.0) };
+    // CIRCLE's center prompt doesn't resolve deferred snaps: it gets the picked point.
+    s.cmdline("circle").unwrap();
+    assert!(!s.current_prompt().unwrap().deferred);
+    s.input(Input::Deferred(d)).unwrap();
+    s.cmdline("2").unwrap();
+    let c = s.doc().unwrap().model.iter().find_map(|e| match &e.kind {
+        EntityKind::Circle(c) => Some(c.center.xy()),
+        _ => None,
+    });
+    assert_eq!(c, Some(Vec2::new(0.0, 5.0)));
+}

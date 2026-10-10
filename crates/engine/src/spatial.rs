@@ -401,8 +401,8 @@ mod tests {
             let p = Vec2::new(r.r(0.0, 100.0), r.r(0.0, 100.0));
             let base = if k % 2 == 0 { Some(Vec2::new(r.r(0.0, 100.0), r.r(0.0, 100.0))) } else { None };
             let m = modes[k % 3];
-            let a = snap::osnap_with(&d, &Space::Model, &ix, p, 1.0, m, base);
-            let b = snap::osnap_with(&d, &Space::Model, &None, p, 1.0, m, base);
+            let a = snap::osnap_with(&d, &Space::Model, &ix, p, 1.0, m, base, false);
+            let b = snap::osnap_with(&d, &Space::Model, &None, p, 1.0, m, base, false);
             assert_eq!(a, b, "p {p:?} mode {m}");
             hits += usize::from(a.is_some());
         }

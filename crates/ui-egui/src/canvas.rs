@@ -418,6 +418,7 @@ fn effective_point(app: &mut CadApp, raw: Vec2, xf: &Xf) -> Vec2 {
     let hot = app.canvas.hot_grip;
     let wants_point = hot.is_some() || prompt.as_ref().is_some_and(|p| p.accept.point && !p.accept.select);
     let base = hot.map(|g| g.base).or_else(|| prompt.as_ref().and_then(|p| p.base));
+    let deferred = hot.is_none() && prompt.as_ref().is_some_and(|p| p.deferred);
     let s = app.session.settings.clone();
     app.canvas.snap = None;
     app.canvas.polar_angle = None;
@@ -426,7 +427,7 @@ fn effective_point(app: &mut CadApp, raw: Vec2, xf: &Xf) -> Vec2 {
     }
     let ap = s.aperture / xf.scale;
     if let Ok(st) = app.session.state()
-        && let Some(hit) = snap::osnap(&st.doc, &st.edit_space(), raw, ap, s.osmode, base)
+        && let Some(hit) = snap::osnap(&st.doc, &st.edit_space(), raw, ap, s.osmode, base, deferred)
     {
         app.canvas.snap = Some(hit);
         return hit.point;
@@ -552,9 +553,11 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         let eff = effective_point(app, w, &xf);
         app.canvas.cursor = Some(eff);
         app.session.cursor = eff;
+        app.session.cursor_deferred = app.canvas.snap.and_then(|h| h.deferred);
     } else {
         app.canvas.cursor = None;
         app.canvas.snap = None;
+        app.session.cursor_deferred = None;
     }
 
     // Clicks.
@@ -565,7 +568,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     {
         if app.session.running.is_some() {
             app.canvas.hot_grip = None;
-            if let Err(e) = app.session.input(Input::Point(p)) {
+            // A deferred tangent/perpendicular goes to the command as such.
+            let input = app.canvas.snap.filter(|h| h.deferred.is_some()).map_or(Input::Point(p), |h| h.input());
+            if let Err(e) = app.session.input(input) {
                 app.session.echo(e.to_string());
             }
         } else if app.canvas.hot_grip.is_some() {
