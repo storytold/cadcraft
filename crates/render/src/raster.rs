@@ -109,8 +109,10 @@ pub fn render(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Pixm
             Kind::Point => {
                 if let Some(q) = pts.first() {
                     let (x, y) = view.to_screen(*q);
+                    // Filled as a path: tiny-skia's anti-aliased `fill_rect` trips a debug
+                    // assertion on rects under two pixels wide whose sides both fall mid-pixel.
                     if let Some(r) = tiny_skia::Rect::from_xywh(x - 0.5, y - 0.5, 1.5, 1.5) {
-                        pm.fill_rect(r, &paint, Transform::identity(), None);
+                        pm.fill_path(&PathBuilder::from_rect(r), &paint, FillRule::Winding, Transform::identity(), None);
                     }
                 }
             }
