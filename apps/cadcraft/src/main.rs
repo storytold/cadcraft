@@ -66,7 +66,7 @@ fn services() -> Services {
     Services {
         pick_open: Some(Box::new(|| {
             rfd::FileDialog::new()
-                .add_filter("Drawing (DXF)", &["dxf"])
+                .add_filter("Drawings (DWG, DXF)", &["dwg", "dxf"])
                 .add_filter("All files", &["*"])
                 .pick_file()
                 .map(|p| p.to_string_lossy().to_string())
