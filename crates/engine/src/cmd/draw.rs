@@ -172,6 +172,9 @@ fn run_arc(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         return Err(bad("arc", "give {p1,p2,p3}, {start,center,end} or {center,radius,start,end}"));
     };
+    // Zero or non-finite radius (e.g. start == center): refuse, like the interactive ARC and the
+    // arc.* variants, before anything is added (#85).
+    let a = super::curves::finite_arc(a).ok_or_else(|| bad("arc", "these values do not define an arc"))?;
     added(s.add_entity(arc(&a))?)
 }
 

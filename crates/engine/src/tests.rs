@@ -846,3 +846,24 @@ fn deferred_pick_elsewhere_is_a_plain_point() {
     });
     assert_eq!(c, Some(Vec2::new(0.0, 5.0)));
 }
+
+/// #85: an `arc` request that builds a zero-radius arc is refused and the drawing is unchanged.
+#[test]
+fn arc_refuses_zero_radius() {
+    for params in [json!({"center": [0, 0], "radius": 0, "start": 0, "end": 90}), json!({"start": [0, 0], "center": [0, 0], "end": [1, 0]})] {
+        let mut s = Session::new();
+        let err = s.execute("arc", &params).unwrap_err().to_string();
+        assert!(err.contains("do not define an arc"), "{params}: {err}");
+        let info = s.execute("drawing.inspect", &json!({})).unwrap();
+        assert_eq!(info["entityCount"], 0, "{params}: {info}");
+        assert_eq!(info["dirty"], false, "{params}: {info}");
+        assert_eq!(info["undo"], json!([]), "{params}: {info}");
+    }
+    // The positive-radius control still adds the quarter circle.
+    let mut s = Session::new();
+    s.execute("arc", &json!({"center": [0, 0], "radius": 5, "start": 0, "end": 90})).unwrap();
+    match &s.doc().unwrap().model.iter().next().unwrap().kind {
+        EntityKind::Arc(a) => assert_eq!((a.radius, a.start, a.end), (5.0, 0.0, std::f64::consts::FRAC_PI_2)),
+        other => panic!("{other:?}"),
+    }
+}
