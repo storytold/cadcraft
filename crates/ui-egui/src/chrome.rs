@@ -38,10 +38,31 @@ const TOOLBAR: &[&[(Icon, &str, &str, Option<&str>)]] = &[
     &[(Icon::Help, "ui.dialog.about", "Help", None)],
 ];
 
+/// Height of the macOS integrated title row (#161). AppKit draws the traffic lights itself,
+/// centred in the standard 28 pt title-bar band at the top of the window; moving them would take
+/// AppKit calls (`unsafe`, which the workspace forbids). So the title row is that band, and what
+/// it holds is centred on the same line as the lights.
+const MAC_TITLE_BAR: f32 = 28.0;
+/// The traffic lights as AppKit lays them out: button diameter, centre-to-centre pitch and the
+/// first button's left edge (8–10 pt depending on the macOS version; the larger value keeps the
+/// gap after them from shrinking).
+const MAC_LIGHT: f32 = 12.0;
+const MAC_LIGHT_PITCH: f32 = 20.0;
+const MAC_LIGHTS_LEFT: f32 = 10.0;
+/// Where title-row content may start to the right of the traffic lights: the end of the three
+/// lights plus the same gap the lights keep from the top of the window.
+const MAC_CONTENT_LEFT: f32 = MAC_LIGHTS_LEFT + 2.0 * MAC_LIGHT_PITCH + MAC_LIGHT + (MAC_TITLE_BAR - MAC_LIGHT) / 2.0;
+
+/// Left edge of the window title in a title row starting at `left`, `width` wide: centred, but
+/// never under the traffic lights (a long drawing name in a narrow window slides right instead).
+fn title_left(left: f32, width: f32, text_w: f32) -> f32 {
+    (left + (width - text_w) / 2.0).max(left + MAC_CONTENT_LEFT)
+}
+
 /// Title row (with the integrated macOS title bar) and the Tool Bar.
 pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
-    let title_h = if app.integrated_titlebar { 28.0 } else { 0.0 };
+    let title_h = if app.integrated_titlebar { MAC_TITLE_BAR } else { 0.0 };
     let tb_h = if app.ui.show_toolbar { 34.0 } else { 0.0 };
     egui::Panel::top("cc_title_toolbar").exact_size(title_h + tb_h).frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
         let r = ui.max_rect();
@@ -50,13 +71,11 @@ pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
                 Ok(st) if !app.ui.start_tab => format!("CADCraft      {}{}", st.title, if st.title.contains('.') { "" } else { ".dwg" }),
                 _ => format!("CADCraft      {}", crate::tl!("Start")),
             };
-            ui.painter().text(
-                pos2(r.center().x, r.top() + title_h / 2.0 + 1.0),
-                egui::Align2::CENTER_CENTER,
-                title,
-                egui::FontId::proportional(13.0),
-                t.text_dim,
-            );
+            // Centred on the traffic lights' centre line (the row's middle): with the system font
+            // the capitals' middle is the text box's middle, so no optical nudge.
+            let galley = ui.painter().layout_no_wrap(title, egui::FontId::proportional(13.0), t.text_dim);
+            let x = title_left(r.left(), r.width(), galley.size().x);
+            ui.painter().galley(pos2(x, r.top() + (title_h - galley.size().y) / 2.0), galley, t.text_dim);
             // Allow dragging the window by the title row.
             let tr = Rect::from_min_size(r.min, vec2(r.width(), title_h));
             let resp = ui.interact(tr, ui.id().with("titledrag"), Sense::click_and_drag());
@@ -389,5 +408,21 @@ pub fn start_page(app: &mut CadApp, ui: &mut egui::Ui) {
             app.start("ui.sample");
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mac_title_row_centres_and_clears_the_traffic_lights() {
+        // The lights are centred in the row, and content keeps the same gap after them.
+        let margin = (MAC_TITLE_BAR - MAC_LIGHT) / 2.0;
+        let lights_end = MAC_LIGHTS_LEFT + 2.0 * MAC_LIGHT_PITCH + MAC_LIGHT;
+        assert_eq!(MAC_CONTENT_LEFT - lights_end, margin);
+        // A short title is centred; one too wide for that starts after the lights.
+        assert_eq!(title_left(100.0, 1000.0, 200.0), 500.0);
+        assert_eq!(title_left(100.0, 900.0, 800.0), 100.0 + MAC_CONTENT_LEFT);
     }
 }
