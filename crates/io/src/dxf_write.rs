@@ -306,7 +306,12 @@ fn common_x(w: &mut W, e: &Entity, owner: &str, paper: bool, subclass: &str, ass
     }
 }
 
-fn text_tags(w: &mut W, t: &Text, attrib_tag: Option<(&str, bool)>, attdef_prompt: Option<&str>) {
+/// ATTRIB/ATTDEF flags (group 70): 1 invisible, 2 constant.
+fn attrib_flags(a: &Attrib) -> i64 {
+    i64::from(a.invisible) | if a.constant { 2 } else { 0 }
+}
+
+fn text_tags(w: &mut W, t: &Text, attrib_tag: Option<(&str, i64)>, attdef_prompt: Option<&str>) {
     w.p(10, t.insert);
     w.f(40, t.height);
     w.s(1, &t.value);
@@ -341,13 +346,13 @@ fn text_tags(w: &mut W, t: &Text, attrib_tag: Option<(&str, bool)>, attdef_promp
         w.p(11, a);
     }
     match attrib_tag {
-        Some((tag, invisible)) => {
+        Some((tag, flags)) => {
             w.s(100, if attdef_prompt.is_some() { "AcDbAttributeDefinition" } else { "AcDbAttribute" });
             if let Some(prompt) = attdef_prompt {
                 w.s(3, prompt);
             }
             w.s(2, tag);
-            w.i(70, i64::from(invisible));
+            w.i(70, flags);
             if v != 0 {
                 w.i(74, v);
             }
@@ -482,7 +487,7 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
         EntityKind::AttDef(a) => {
             w.s(0, "ATTDEF");
             common(w, e, owner, paper, "AcDbText");
-            text_tags(w, &a.text, Some((&a.tag, a.invisible)), Some(&a.prompt));
+            text_tags(w, &a.text, Some((&a.tag, attrib_flags(a))), Some(&a.prompt));
         }
         EntityKind::MText(t) => {
             w.s(0, "MTEXT");
@@ -535,7 +540,7 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
                     w.s(100, "AcDbEntity");
                     w.s(8, &e.common.layer);
                     w.s(100, "AcDbText");
-                    text_tags(w, &a.text, Some((&a.tag, a.invisible)), None);
+                    text_tags(w, &a.text, Some((&a.tag, attrib_flags(a))), None);
                 }
                 let sh = w.h();
                 w.s(0, "SEQEND");
@@ -1282,7 +1287,7 @@ pub fn write(d: &Drawing) -> String {
     w.s(0, "ENDTAB");
     // BLOCK_RECORD
     let th = table_head(&mut w, "BLOCK_RECORD", 1 + ps_brs.len() + user_blocks.len() + dim_defs.len() + arrow_defs.len() + table_defs.len());
-    let br_rec = |w: &mut W, h: &str, name: &str, layout: Option<&str>| {
+    let br_rec = |w: &mut W, h: &str, name: &str, layout: Option<&str>, blk: Option<&Block>| {
         w.s(0, "BLOCK_RECORD");
         w.s(5, h);
         w.s(330, th.clone());
@@ -1290,16 +1295,21 @@ pub fn write(d: &Drawing) -> String {
         w.s(100, "AcDbBlockTableRecord");
         w.s(2, name);
         w.s(340, layout.unwrap_or("0"));
+        // User blocks: insertion units (70) and explodability (280).
+        if let Some(b) = blk {
+            w.i(70, i64::from(b.units));
+            w.i(280, i64::from(b.explodable));
+        }
     };
-    br_rec(&mut w, &ms_br, "*Model_Space", Some(&model_layout));
+    br_rec(&mut w, &ms_br, "*Model_Space", Some(&model_layout), None);
     for (i, (n, h, _)) in ps_brs.iter().enumerate() {
-        br_rec(&mut w, h, n, layout_handles.get(i).map(String::as_str));
+        br_rec(&mut w, h, n, layout_handles.get(i).map(String::as_str), None);
     }
-    for (n, h, _) in &user_blocks {
-        br_rec(&mut w, h, n, None);
+    for (n, h, b) in &user_blocks {
+        br_rec(&mut w, h, n, None, Some(b));
     }
     for (n, h, _) in dim_defs.iter().chain(&arrow_defs).chain(&table_defs) {
-        br_rec(&mut w, h, n, None);
+        br_rec(&mut w, h, n, None, None);
     }
     w.s(0, "ENDTAB");
     w.s(0, "ENDSEC");
@@ -1307,7 +1317,7 @@ pub fn write(d: &Drawing) -> String {
     // ---------------- BLOCKS ----------------
     w.s(0, "SECTION");
     w.s(2, "BLOCKS");
-    let block = |w: &mut W, name: &str, brh: &str, base: Vec3, flags: i64, ents: &mut dyn Iterator<Item = &Entity>, paper: bool| {
+    let block = |w: &mut W, name: &str, desc: &str, brh: &str, base: Vec3, flags: i64, ents: &mut dyn Iterator<Item = &Entity>, paper: bool| {
         let bh = w.h();
         w.s(0, "BLOCK");
         w.s(5, bh);
@@ -1323,6 +1333,9 @@ pub fn write(d: &Drawing) -> String {
         w.p(10, base);
         w.s(3, name);
         w.s(1, "");
+        if !desc.is_empty() {
+            w.s(4, desc);
+        }
         for e in ents {
             entity(w, d, e, brh, false, &cx);
         }
@@ -1337,16 +1350,16 @@ pub fn write(d: &Drawing) -> String {
         w.s(8, "0");
         w.s(100, "AcDbBlockEnd");
     };
-    block(&mut w, "*Model_Space", &ms_br, Vec3::ZERO, 0, &mut std::iter::empty(), false);
+    block(&mut w, "*Model_Space", "", &ms_br, Vec3::ZERO, 0, &mut std::iter::empty(), false);
     for (i, (n, h, l)) in ps_brs.iter().enumerate() {
         if i == 0 {
-            block(&mut w, n, h, Vec3::ZERO, 0, &mut std::iter::empty(), true);
+            block(&mut w, n, "", h, Vec3::ZERO, 0, &mut std::iter::empty(), true);
         } else {
-            block(&mut w, n, h, Vec3::ZERO, 0, &mut l.entities.iter().map(|e| e.as_ref()), true);
+            block(&mut w, n, "", h, Vec3::ZERO, 0, &mut l.entities.iter().map(|e| e.as_ref()), true);
         }
     }
     for (n, h, b) in &user_blocks {
-        block(&mut w, n, h, b.base, if b.anonymous { 1 } else { 0 }, &mut b.entities.iter().map(|e| e.as_ref()), false);
+        block(&mut w, n, &b.description, h, b.base, if b.anonymous { 1 } else { 0 }, &mut b.entities.iter().map(|e| e.as_ref()), false);
     }
     // Generated geometry entities (dimension, arrowhead and table blocks) need handles.
     for (_, _, ents) in dim_defs.iter_mut().chain(arrow_defs.iter_mut()).chain(table_defs.iter_mut()) {
@@ -1356,13 +1369,13 @@ pub fn write(d: &Drawing) -> String {
         }
     }
     for (n, h, ents) in &dim_defs {
-        block(&mut w, n, h, Vec3::ZERO, 1, &mut ents.iter(), false);
+        block(&mut w, n, "", h, Vec3::ZERO, 1, &mut ents.iter(), false);
     }
     for (n, h, ents) in &arrow_defs {
-        block(&mut w, n, h, Vec3::ZERO, 0, &mut ents.iter(), false);
+        block(&mut w, n, "", h, Vec3::ZERO, 0, &mut ents.iter(), false);
     }
     for (n, h, ents) in &table_defs {
-        block(&mut w, n, h, Vec3::ZERO, 1, &mut ents.iter(), false);
+        block(&mut w, n, "", h, Vec3::ZERO, 1, &mut ents.iter(), false);
     }
     w.s(0, "ENDSEC");
 
