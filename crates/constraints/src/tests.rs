@@ -156,6 +156,19 @@ fn symmetric_fix() {
 }
 
 #[test]
+fn two_line_angle_over_180_is_rejected() {
+    let mut d = Drawing::default();
+    let a = line(&mut d, (0.0, 0.0), (10.0, 0.0));
+    let b = line(&mut d, (0.0, 0.0), (0.0, 5.0));
+    let before = (ln(&d, a), ln(&d, b));
+    assert!(add(&mut d, dim(ConstraintKind::Angular, &[w(a), w(b)], "", "200"), &SolveOptions::default()).is_err());
+    assert!(d.constraints.is_empty());
+    assert_eq!((ln(&d, a), ln(&d, b)), before);
+    ok(&mut d, dim(ConstraintKind::Angular, &[w(a), w(b)], "", "180"));
+    assert!(all_satisfied(&d));
+}
+
+#[test]
 fn dimensional_constraints() {
     let mut d = Drawing::default();
     let a = line(&mut d, (0.0, 0.0), (10.0, 1.0));
