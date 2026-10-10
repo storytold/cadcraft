@@ -43,7 +43,7 @@ pub fn is_locked(s: &Session, h: Handle) -> bool {
 
 // ---------------- arc constructions ----------------
 
-fn finite_arc(a: Arc) -> Option<Arc> {
+pub(crate) fn finite_arc(a: Arc) -> Option<Arc> {
     (a.center.is_finite() && a.radius.is_finite() && a.radius > EPS && a.start.is_finite() && a.end.is_finite()).then_some(a)
 }
 
