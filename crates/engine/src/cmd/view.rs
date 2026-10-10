@@ -4,7 +4,7 @@ use cadcraft_doc::{Space, entity_bounds};
 use cadcraft_geom::{Bounds2, Vec2};
 use serde_json::{Value, json};
 
-use super::machines::number;
+use super::machines::{SelectRun, number};
 use super::*;
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step, View};
 
@@ -40,7 +40,8 @@ pub fn specs() -> Vec<CommandSpec> {
         .menu(&["View", "Zoom", "Object"])
         .params("{handles?}")
         .noundo()
-        .transparent(),
+        .transparent()
+        .interactive(|_| Ok(Box::new(SelectRun::new("zoom.object", "ZOOM")))),
         CommandSpec::new("pan", "Pan", run_pan)
             .menu(&["View", "Pan", "Realtime"])
             .alias(&["p"])

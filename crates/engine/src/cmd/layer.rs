@@ -4,6 +4,7 @@ use cadcraft_color::Color;
 use cadcraft_doc::{Layer, Lineweight};
 use serde_json::{Value, json};
 
+use super::machines::SelectRun;
 use super::*;
 use crate::{Result, Session};
 
@@ -22,21 +23,26 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("laymch", "Layer Match", run_laymch).menu(&["Format", "Layer Tools", "Layer Match"]).params("{handles?, layer}"),
         CommandSpec::new("laycur", "Change to Current Layer", run_laycur)
             .menu(&["Format", "Layer Tools", "Change to Current Layer"])
-            .params("{handles?}"),
+            .params("{handles?}")
+            .interactive(|_| Ok(Box::new(SelectRun::new("laycur", "LAYCUR")))),
         CommandSpec::new("layiso", "Isolate Layer", run_layiso).menu(&["Format", "Layer Tools", "Isolate Layer"]).params("{handles?}"),
         CommandSpec::new("layuniso", "Unisolate Layer", run_layuniso).menu(&["Format", "Layer Tools", "Unisolate Layer"]),
         CommandSpec::new("layfrz", "Freeze Layer", |s, p| set_obj_layers(s, p, |l| l.frozen = true))
             .menu(&["Format", "Layer Tools", "Freeze Layer"])
-            .params("{handles?}"),
+            .params("{handles?}")
+            .interactive(|_| Ok(Box::new(SelectRun::single("layfrz", "LAYFRZ", "Select an object on the layer to be frozen")))),
         CommandSpec::new("layoff", "Layer Off", |s, p| set_obj_layers(s, p, |l| l.on = false))
             .menu(&["Format", "Layer Tools", "Layer Off"])
-            .params("{handles?}"),
+            .params("{handles?}")
+            .interactive(|_| Ok(Box::new(SelectRun::single("layoff", "LAYOFF", "Select an object on the layer to be turned off")))),
         CommandSpec::new("laylck", "Lock Layer", |s, p| set_obj_layers(s, p, |l| l.locked = true))
             .menu(&["Format", "Layer Tools", "Lock Layer"])
-            .params("{handles?}"),
+            .params("{handles?}")
+            .interactive(|_| Ok(Box::new(SelectRun::single("laylck", "LAYLCK", "Select an object on the layer to be locked")))),
         CommandSpec::new("layulk", "Unlock Layer", |s, p| set_obj_layers(s, p, |l| l.locked = false))
             .menu(&["Format", "Layer Tools", "Unlock Layer"])
-            .params("{handles?}"),
+            .params("{handles?}")
+            .interactive(|_| Ok(Box::new(SelectRun::single("layulk", "LAYULK", "Select an object on the layer to be unlocked")))),
         CommandSpec::new("layon", "Turn All Layers On", |s, _| all_layers(s, |l| l.on = true)),
         CommandSpec::new("laythw", "Thaw All Layers", |s, _| all_layers(s, |l| l.frozen = false)),
         CommandSpec::new("layerp", "Previous Layer", run_layerp).menu(&["Format", "Layer Tools", "Previous Layer"]),
