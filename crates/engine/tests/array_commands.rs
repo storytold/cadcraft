@@ -167,3 +167,35 @@ fn arraypolar_asks_for_the_center_then_edits_items_and_angles() {
     // The middle copy: the line's centre (11,0) moved to (0,11), still horizontal.
     assert!(lines.iter().any(|(a, b)| a.near(Vec2::new(-1.0, 11.0), 1e-6) && b.near(Vec2::new(1.0, 11.0), 1e-6)), "{lines:?}");
 }
+
+#[test]
+fn arrays_over_maxarray_are_refused_not_shrunk() {
+    // JSON: a million × a million rows/cols (or items) is refused up front, nothing is created.
+    let mut s = Session::new();
+    let c = s.execute("circle", &json!({"center": [0, 0], "radius": 1})).unwrap();
+    let h = c["handle"].clone();
+    let before = s.doc().unwrap().model.iter().count();
+    let e = s.execute("arrayrect", &json!({"handles": [h], "rows": 1_000_000, "cols": 1_000_000})).unwrap_err();
+    assert!(e.to_string().contains("MAXARRAY"), "{e}");
+    assert!(s.execute("arraypolar", &json!({"handles": [h], "center": [5, 5], "count": 200_000})).unwrap_err().to_string().contains("MAXARRAY"));
+    let path = s.execute("line", &json!({"points": [[0, 5], [100, 5]]})).unwrap()["handles"][0].clone();
+    let e = s.execute("arraypath", &json!({"handles": [h], "path": path, "spacing": 1e-6})).unwrap_err();
+    assert!(e.to_string().contains("MAXARRAY"), "{e}");
+    assert_eq!(s.doc().unwrap().model.iter().count(), before + 1);
+
+    // The limit counts every selected object, and MAXARRAY is a settable system variable.
+    s.execute("setvar", &json!({"name": "MAXARRAY", "value": 100})).unwrap();
+    let h2 = s.execute("circle", &json!({"center": [3, 0], "radius": 1})).unwrap()["handle"].clone();
+    assert!(s.execute("arrayrect", &json!({"handles": [h, h2], "rows": 10, "cols": 6})).is_err());
+    assert_eq!(s.execute("arrayrect", &json!({"handles": [h, h2], "rows": 10, "cols": 5})).unwrap()["created"], 98);
+
+    // Interactive: a count over the limit is rejected at its prompt and the loop keeps going.
+    let mut s = Session::new();
+    s.execute("circle", &json!({"center": [0, 0], "radius": 1})).unwrap();
+    typed(&mut s, &["arrayrect", "l", "", "cou", "1000", "1000"]);
+    assert!(s.log.iter().any(|l| l.contains("MAXARRAY")), "{:?}", s.log);
+    assert!(prompt(&s).contains("rows"), "{}", prompt(&s));
+    typed(&mut s, &["2", ""]);
+    assert!(s.current_prompt().is_none(), "{}", prompt(&s));
+    assert_eq!(circle_centers(&s).len(), 2000);
+}

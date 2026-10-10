@@ -2123,13 +2123,14 @@ pub(crate) fn arraypath(
         return Err(other("Select objects to array."));
     }
     let (n, step) = match (count, spacing) {
-        (_, Some(sp)) if sp.is_finite() && sp > 0.0 => (((l / sp).floor() as usize + 1).clamp(1, MAX_GEN), sp),
+        (_, Some(sp)) if sp.is_finite() && sp > 0.0 => (((l / sp).floor() as usize).saturating_add(1), sp),
         (Some(n), _) => {
-            let n = n.clamp(1, MAX_GEN);
+            let n = n.max(1);
             (n, if c.closed { l / n as f64 } else { l / (n.max(2) - 1) as f64 })
         }
         _ => (6, if c.closed { l / 6.0 } else { l / 5.0 }),
     };
+    super::array::check_size(s, n as u64, objs.len())?;
     let Some((p0, t0)) = c.at_length(0.0) else { return Ok(Vec::new()) };
     let mut out = Vec::new();
     for i in 1..n {
@@ -2146,7 +2147,7 @@ pub(crate) fn arraypath(
 fn run_arraypath(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
     let path = curves::handle_param(p, "path").ok_or_else(|| bad("arraypath", "`path` (handle) is required"))?;
-    let count = p.get("count").and_then(Value::as_u64).map(|n| n.min(MAX_GEN as u64) as usize);
+    let count = p.get("count").and_then(Value::as_u64).map(|n| usize::try_from(n).unwrap_or(usize::MAX));
     let spacing = p.get("spacing").and_then(Value::as_f64);
     let r = arraypath(s, &hs, path, count, spacing, bool_or(p, "align", true))?;
     Ok(json!({ "handles": r.iter().map(|h| h.hex()).collect::<Vec<_>>() }))
@@ -2206,9 +2207,7 @@ impl Interactive for PathArrayM {
             }
             (Some(path), inp @ (Input::Text(_) | Input::Enter)) => {
                 let n = match &inp {
-                    Input::Text(t) => {
-                        number(t).filter(|n| *n >= 1.0 && *n <= MAX_GEN as f64).ok_or_else(|| other("Requires a count of 1 or more."))? as usize
-                    }
+                    Input::Text(t) => number(t).filter(|n| *n >= 1.0).ok_or_else(|| other("Requires a count of 1 or more."))? as usize,
                     _ => 6,
                 };
                 arraypath(s, &self.objs, path, Some(n), None, true)?;

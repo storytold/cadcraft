@@ -14,10 +14,6 @@ use super::modify::transform_entities;
 use super::*;
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
-/// Most rows or columns in a rectangular array.
-const MAX_SIDE: u64 = 1000;
-/// Most items in a polar array.
-const MAX_ITEMS: u64 = 10_000;
 /// Most preview entities drawn while the array is edited.
 const PREVIEW_LIMIT: usize = 2000;
 /// Keyword-only prompts: each typed token is matched on its own (no free text).
@@ -74,6 +70,24 @@ fn first_center(d: &Drawing, hs: &[Handle]) -> Option<Vec2> {
     hs.first().and_then(|h| d.entity(*h)).map(|e| cadcraft_doc::entity_bounds(d, e, 0).center()).filter(|c| c.is_finite())
 }
 
+/// MAXARRAY: refuse an array of `items` copies of `objs` objects that would exceed the limit
+/// (instead of creating fewer copies than asked for).
+pub(crate) fn check_size(s: &Session, items: u64, objs: usize) -> Result<()> {
+    let max = s.settings.maxarray;
+    let total = items.saturating_mul(objs.max(1) as u64);
+    if total > max {
+        return Err(other(format!(
+            "The array would create {total} objects; the limit is {max} (MAXARRAY). Use fewer items or select fewer objects."
+        )));
+    }
+    Ok(())
+}
+
+/// The most items a count prompt accepts when the rest of the array is `others` items of `objs` objects.
+fn max_count(s: &Session, others: u64, objs: usize) -> u64 {
+    (s.settings.maxarray / others.max(1).saturating_mul(objs.max(1) as u64)).max(1)
+}
+
 fn copy_all(s: &mut Session, hs: &[Handle], mats: impl Iterator<Item = Mat3>) -> Result<usize> {
     let mut n = 0;
     for m in mats {
@@ -86,6 +100,9 @@ fn copy_all(s: &mut Session, hs: &[Handle], mats: impl Iterator<Item = Mat3>) ->
 fn preview_copies(s: &Session, hs: &[Handle], mats: impl Iterator<Item = Mat3>) -> Vec<EntityKind> {
     let Ok(d) = s.doc() else { return Vec::new() };
     let src: Vec<EntityKind> = hs.iter().take(PREVIEW_LIMIT).filter_map(|h| d.entity(*h)).map(|e| e.kind.clone()).collect();
+    if src.is_empty() {
+        return Vec::new();
+    }
     let mut out = Vec::new();
     for m in mats {
         for k in &src {
@@ -118,7 +135,7 @@ fn count(i: &Input, cur: u64, max: u64) -> Result<Option<u64>> {
             .ok()
             .filter(|v| v.fract() == 0.0 && *v >= 1.0 && *v <= max as f64)
             .map(|v| Some(v as u64))
-            .ok_or_else(|| other(format!("Requires an integer between 1 and {max}."))),
+            .ok_or_else(|| other(format!("Requires an integer between 1 and {max} (MAXARRAY limits the size of the array)."))),
         _ => Ok(None),
     }
 }
@@ -159,8 +176,9 @@ fn run_array(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn run_arrayrect(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
-    let rows = p.get("rows").and_then(Value::as_u64).unwrap_or(3).clamp(1, MAX_SIDE);
-    let cols = p.get("cols").and_then(Value::as_u64).unwrap_or(4).clamp(1, MAX_SIDE);
+    let rows = p.get("rows").and_then(Value::as_u64).unwrap_or(3).max(1);
+    let cols = p.get("cols").and_then(Value::as_u64).unwrap_or(4).max(1);
+    check_size(s, rows.saturating_mul(cols), hs.len())?;
     let rs = f64_or(p, "rowSpacing", 1.0);
     let cs = f64_or(p, "colSpacing", 1.0);
     let n = copy_all(s, &hs, rect_mats(rows, cols, rs, cs))?;
@@ -170,7 +188,8 @@ fn run_arrayrect(s: &mut Session, p: &Value) -> Result<Value> {
 fn run_arraypolar(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
     let c = point_req("arraypolar", p, "center")?;
-    let n = p.get("count").and_then(Value::as_u64).unwrap_or(6).clamp(1, MAX_ITEMS);
+    let n = p.get("count").and_then(Value::as_u64).unwrap_or(6).max(1);
+    check_size(s, n, hs.len())?;
     let fill = f64_or(p, "angle", 360.0);
     let rotate = bool_or(p, "rotate", true);
     let reference = first_center(s.doc()?, &hs).unwrap_or(c);
@@ -324,6 +343,7 @@ impl RectM {
     }
 
     fn finish(&mut self, s: &mut Session) -> Result<Step> {
+        check_size(s, self.rows.saturating_mul(self.cols), self.objs.len())?;
         copy_all(s, &self.objs, rect_mats(self.rows, self.cols, self.rs, self.cs))?;
         s.set_selection(Vec::new());
         Ok(Step::Done)
@@ -423,14 +443,14 @@ impl Interactive for RectM {
                 s.echo("Key points are not available yet; specify a point.");
                 Base
             }
-            (CountCols | ColsCount, _) => match count(&i, self.cols, MAX_SIDE)? {
+            (CountCols | ColsCount, _) => match count(&i, self.cols, max_count(s, self.rows, self.objs.len()))? {
                 Some(n) => {
                     self.cols = n;
                     if stage == CountCols { CountRows } else { ColsSpace }
                 }
                 None => stage,
             },
-            (CountRows | RowsCount, _) => match count(&i, self.rows, MAX_SIDE)? {
+            (CountRows | RowsCount, _) => match count(&i, self.rows, max_count(s, self.cols, self.objs.len()))? {
                 Some(n) => {
                     self.rows = n;
                     if stage == CountRows { Main } else { RowsSpace }
@@ -596,6 +616,7 @@ impl PolarM {
     }
 
     fn finish(&mut self, s: &mut Session) -> Result<Step> {
+        check_size(s, self.items, self.objs.len())?;
         let mats: Vec<Mat3> = self.mats(s, self.center).collect();
         copy_all(s, &self.objs, mats.into_iter())?;
         s.set_selection(Vec::new());
@@ -699,7 +720,7 @@ impl Interactive for PolarM {
                 s.echo("Key points are not available yet; specify a point.");
                 stage
             }
-            (Items, _) => match count(&i, self.items, MAX_ITEMS)? {
+            (Items, _) => match count(&i, self.items, max_count(s, 1, self.objs.len()))? {
                 Some(n) => {
                     self.items = n;
                     Main
