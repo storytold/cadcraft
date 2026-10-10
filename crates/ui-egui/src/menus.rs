@@ -21,6 +21,10 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.toggle.cmdline", "Command Line", &["Window", "Command Line"], Some("Cmd+9")),
     ("ui.toggle.viewcube", "ViewCube", &["View", "ViewCube", "On"], None),
     ("ui.toggle.ucsicon", "UCS Icon", &["View", "UCS Icon", "On"], None),
+    ("ui.theme.system", "Use System Setting", &["View", "Interface Theme", "Use System Setting"], None),
+    ("ui.theme.light", "Light", &["View", "Interface Theme", "Light"], None),
+    ("ui.theme.dark", "Dark", &["View", "Interface Theme", "Dark"], None),
+    ("ui.theme", "Interface Theme", &[], None),
     ("ui.toggle.menubar", "In-window Menu Bar", &["Window", "In-window Menu Bar"], None),
     ("ui.hidepalettes", "Hide Palettes", &["Window", "Hide Palettes"], None),
     ("ui.resetpalettes", "Reset Palettes", &["Window", "Reset Palettes"], None),
@@ -109,14 +113,26 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
             toggle(&mut app.ui.in_window_menu, params);
             Ok(Value::Null)
         }
+        "ui.theme.system" | "ui.theme.light" | "ui.theme.dark" => {
+            let pref = crate::theme::ThemePref::parse(id.trim_start_matches("ui.theme.")).unwrap_or_default();
+            set_theme(app, pref)
+        }
+        // `{"theme": "system"|"light"|"dark"}` sets the choice; without it, reports it.
+        "ui.theme" => match params.get("theme").and_then(Value::as_str) {
+            Some(name) => match crate::theme::ThemePref::parse(name) {
+                Some(pref) => set_theme(app, pref),
+                None => Err(format!("unknown theme \"{name}\" (system, light or dark)")),
+            },
+            None => Ok(theme_json(app)),
+        },
         "ui.hidepalettes" => {
             app.ui.show_palettes = false;
             app.ui.show_toolsets = false;
             Ok(Value::Null)
         }
         "ui.resetpalettes" => {
-            let menu = app.ui.in_window_menu;
-            app.ui = crate::UiState { in_window_menu: menu, ..Default::default() };
+            let (menu, theme) = (app.ui.in_window_menu, app.ui.theme);
+            app.ui = crate::UiState { in_window_menu: menu, theme, ..Default::default() };
             Ok(Value::Null)
         }
         "ui.start" => {
@@ -164,6 +180,21 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
         _ => return None,
     };
     Some(r)
+}
+
+fn set_theme(app: &mut CadApp, pref: crate::theme::ThemePref) -> Result<Value, String> {
+    app.ui.theme = pref;
+    Ok(theme_json(app))
+}
+
+/// The theme choice and, for an explicit choice, the theme it shows (System resolves on the next
+/// frame against the OS appearance; see `ui.inspect` → `theme`).
+fn theme_json(app: &CadApp) -> Value {
+    let shown = match app.ui.theme {
+        crate::theme::ThemePref::System => app.shown_theme(),
+        p => p.resolve(None),
+    };
+    json!({ "theme": app.ui.theme.as_str(), "shown": if shown == egui::Theme::Light { "light" } else { "dark" } })
 }
 
 /// A menu entry.

@@ -188,7 +188,8 @@ fn status_icon(p: &egui::Painter, r: Rect, current: bool, used: bool) {
         p.line_segment([pos2(r.left() + 3.0, r.center().y), pos2(r.left() + 7.0, r.bottom() - 4.0)], Stroke::new(2.0, g));
         p.line_segment([pos2(r.left() + 7.0, r.bottom() - 4.0), pos2(r.right() - 3.0, r.top() + 3.0)], Stroke::new(2.0, g));
     } else {
-        let c = if used { Color32::from_rgb(0xc8, 0xcc, 0xd2) } else { Color32::from_rgb(0x80, 0x86, 0x90) };
+        let t = Tokens::get();
+        let c = if used { t.icon } else { t.text_faint };
         let pts = vec![
             pos2(r.left() + 2.0, r.center().y + 1.0),
             pos2(r.center().x, r.top() + 4.0),

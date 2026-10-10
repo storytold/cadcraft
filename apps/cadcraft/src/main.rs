@@ -39,6 +39,13 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.0.ui(ui);
     }
+    /// Preferences (the interface theme) survive restarts; window and egui state are not kept.
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        storage.set_string(cadcraft_ui_egui::PREFS_KEY, self.0.prefs_json());
+    }
+    fn persist_egui_memory(&self) -> bool {
+        false
+    }
 }
 
 /// File format hooks for the engine (it stays I/O-agnostic).
@@ -110,6 +117,7 @@ fn main() -> eframe::Result {
             .with_titlebar_shown(false)
             .with_title_shown(false)
             .with_app_id(APP_ID),
+        persist_window: false,
         ..Default::default()
     };
     if let Some(icon) = app_icon() {
@@ -120,6 +128,9 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             let mut app = CadApp::new(Session::empty(), services());
+            if let Some(prefs) = cc.storage.and_then(|s| s.get_string(cadcraft_ui_egui::PREFS_KEY)) {
+                app.load_prefs(&prefs);
+            }
             app.integrated_titlebar = cfg!(target_os = "macos");
             if let Some(rs) = &cc.wgpu_render_state {
                 app.set_wgpu(rs);

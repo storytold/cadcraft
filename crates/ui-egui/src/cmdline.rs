@@ -2,7 +2,7 @@
 //! (keyboard focus stays on the drawing — typing anywhere goes here) and AutoComplete.
 
 use cadcraft_engine::Input;
-use egui::{Color32, Key, Pos2, Rect, Sense, Stroke, pos2, vec2};
+use egui::{Key, Pos2, Rect, Sense, Stroke, pos2, vec2};
 
 use crate::CadApp;
 use crate::theme::Tokens;
@@ -156,13 +156,13 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
     if !lines.is_empty() {
         let lh = 16.0;
         let hr = Rect::from_min_size(pos2(bar.left(), bar.top() - lh * lines.len() as f32 - 4.0), vec2(w, lh * lines.len() as f32 + 2.0));
-        p.rect_filled(hr, 3.0, Color32::from_rgba_unmultiplied(0x2a, 0x30, 0x3a, 170));
+        p.rect_filled(hr, 3.0, t.cmd_history);
         for (i, l) in lines.iter().enumerate() {
             p.text(pos2(hr.left() + 8.0, hr.top() + 1.0 + lh * i as f32), egui::Align2::LEFT_TOP, l, crate::theme::small(), t.text_dim);
         }
     }
     p.rect_filled(bar, 3.0, t.cmd_bg);
-    p.rect_stroke(bar, 3.0, Stroke::new(1.0, Color32::from_rgb(0x55, 0x5f, 0x70)), egui::StrokeKind::Inside);
+    p.rect_stroke(bar, 3.0, Stroke::new(1.0, t.cmd_border), egui::StrokeKind::Inside);
     // Prompt glyph.
     p.text(pos2(bar.left() + 8.0, bar.center().y), egui::Align2::LEFT_CENTER, ">_", crate::theme::mono(), t.text_dim);
     let mut x = bar.left() + 30.0;
@@ -192,14 +192,14 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
                     x += gw;
                     let kws = pr.keywords.clone();
                     for (i, k) in kws.iter().enumerate() {
-                        let g = p.layout_no_wrap(k.clone(), font.clone(), Color32::from_rgb(0x8f, 0xc1, 0xff));
+                        let g = p.layout_no_wrap(k.clone(), font.clone(), t.cmd_keyword);
                         let r = Rect::from_min_size(pos2(x, bar.top() + 3.0), vec2(g.size().x, h - 6.0));
                         let resp = ui.interact(r, ui.id().with(("kw", i)), Sense::click());
                         if resp.hovered() {
-                            p.rect_filled(r, 2.0, Color32::from_rgb(0x2f, 0x5e, 0xa8));
+                            p.rect_filled(r, 2.0, t.cmd_keyword_hover);
                         }
                         let gw = g.size().x;
-                        p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, Color32::from_rgb(0x8f, 0xc1, 0xff));
+                        p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.cmd_keyword);
                         x += gw;
                         if resp.clicked() {
                             let _ = app.session.input(Input::Keyword(k.clone()));
@@ -261,17 +261,13 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
                 ),
                 vec2(300.0, rh * sug.len() as f32),
             );
-            p.rect_filled(lr, 3.0, Color32::from_rgb(0x2b, 0x31, 0x3b));
-            p.rect_stroke(lr, 3.0, Stroke::new(1.0, Color32::from_rgb(0x55, 0x5f, 0x70)), egui::StrokeKind::Inside);
+            p.rect_filled(lr, 3.0, t.list_bg);
+            p.rect_stroke(lr, 3.0, Stroke::new(1.0, t.cmd_border), egui::StrokeKind::Inside);
             for (i, (id, label)) in sug.iter().enumerate() {
                 let r = Rect::from_min_size(pos2(lr.left(), lr.top() + rh * i as f32), vec2(lr.width(), rh));
                 let resp = ui.interact(r, ui.id().with(("sug", i)), Sense::click());
                 if resp.hovered() || i == 0 {
-                    p.rect_filled(
-                        r.shrink(1.0),
-                        2.0,
-                        if resp.hovered() { Color32::from_rgb(0x2f, 0x5e, 0xa8) } else { Color32::from_rgb(0x3a, 0x42, 0x50) },
-                    );
+                    p.rect_filled(r.shrink(1.0), 2.0, if resp.hovered() { t.cmd_keyword_hover } else { t.list_row });
                 }
                 p.text(Pos2::new(r.left() + 8.0, r.center().y), egui::Align2::LEFT_CENTER, id, crate::theme::body(), t.text);
                 p.text(Pos2::new(r.right() - 8.0, r.center().y), egui::Align2::RIGHT_CENTER, *label, crate::theme::small(), t.text_faint);
