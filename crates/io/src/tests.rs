@@ -393,6 +393,39 @@ fn roundtrip(d: &Drawing) -> Drawing {
     read_dxf(write_dxf(d).as_bytes()).unwrap()
 }
 
+#[test]
+fn viewport_frozen_layers_roundtrip() {
+    let mut d = sample();
+    let paper = Space::Paper("Layout1".into());
+    let vp = |id: u32, frozen: Vec<String>| {
+        EntityKind::Viewport(Viewport {
+            center: Vec3::new(5.0, 4.0, 0.0),
+            width: 8.0,
+            height: 6.0,
+            view_center: Vec2::new(5.0, 2.5),
+            view_height: 12.0,
+            id,
+            locked: true,
+            frozen_layers: frozen,
+            layer_colors: Vec::new(),
+        })
+    };
+    d.add(&paper, Common::default(), vp(2, vec!["Walls".into(), "A B".into()])).unwrap();
+    d.add(&paper, Common::default(), vp(3, Vec::new())).unwrap();
+    let back = roundtrip(&d);
+    let frozen: Vec<(u32, Vec<String>)> = back
+        .layouts
+        .iter()
+        .flat_map(|l| l.entities.iter())
+        .filter_map(|e| match &e.kind {
+            EntityKind::Viewport(v) => Some((v.id, v.frozen_layers.clone())),
+            _ => None,
+        })
+        .collect();
+    assert!(frozen.contains(&(2, vec!["Walls".to_string(), "A B".to_string()])), "{frozen:?}");
+    assert!(frozen.contains(&(3, Vec::new())), "{frozen:?}");
+}
+
 fn full_dim_style() -> DimStyle {
     DimStyle {
         name: "Mech".into(),
