@@ -1,5 +1,7 @@
 //! Blocks: BLOCK, INSERT, ATTDEF, ATTEDIT (programmatic), WBLOCK, BASE, PURGE, block listing.
 
+mod purge;
+
 use std::sync::Arc;
 
 use cadcraft_doc::{Attrib, Block, Entity, EntityKind, HAlign, Handle, Insert, Text, VAlign};
@@ -34,7 +36,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{handle, values: {TAG: value}}"),
         CommandSpec::new("wblock", "Write Block", run_wblock).alias(&["w"]).params("{path, name? | handles?, base?}"),
         CommandSpec::new("base", "Base", run_base).menu(&["Draw", "Block", "Base"]).params("{at: [x,y]}"),
-        CommandSpec::new("purge", "Purge", run_purge).alias(&["pu", "-purge"]).params("{} (unused blocks, layers, linetypes, styles)"),
+        CommandSpec::new("purge", "Purge", purge::run)
+            .alias(&["pu", "-purge"])
+            .params("{type?: all|blocks|dimstyles|groups|layers|linetypes|mleaderstyles|tablestyles|textstyles|zerolength|emptytext (default all: every named type), names?: \"A*,B\" (default *)} → purged")
+            .interactive(|_| Ok(Box::new(purge::PurgeM::default()))),
         CommandSpec::new("blocks.list", "List Blocks", run_list).enabled(has_doc).noundo(),
         CommandSpec::new("battman", "Block Attribute Manager...", run_battman)
             .menu(&["Modify", "Object", "Attribute", "Block Attribute Manager..."])
@@ -235,60 +240,6 @@ fn run_base(s: &mut Session, p: &Value) -> Result<Value> {
     let at = point_req("base", p, "at")?;
     s.doc_mut()?.header.set("INSBASE", cadcraft_doc::HVal::Point(v3(at)));
     ok()
-}
-
-fn run_purge(s: &mut Session, _p: &Value) -> Result<Value> {
-    let d = s.doc_mut()?;
-    // Blocks referenced anywhere (including nested references), iterated to a fixed point.
-    let mut used: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let all: Vec<Arc<Entity>> = d.model.iter().cloned().chain(d.layouts.iter().flat_map(|l| l.entities.iter().cloned())).collect();
-    let mut frontier: Vec<String> =
-        all.iter().filter_map(|e| if let EntityKind::Insert(i) = &e.kind { Some(i.block.clone()) } else { None }).collect();
-    for e in &all {
-        if let EntityKind::Dimension(dm) = &e.kind
-            && let Some(b) = &dm.block
-        {
-            frontier.push(b.clone());
-        }
-    }
-    let mut guard = 0;
-    while let Some(n) = frontier.pop() {
-        guard += 1;
-        if guard > 100_000 || !used.insert(n.to_ascii_uppercase()) {
-            continue;
-        }
-        if let Some(b) = d.block(&n) {
-            for e in b.entities.iter() {
-                if let EntityKind::Insert(i) = &e.kind {
-                    frontier.push(i.block.clone());
-                }
-            }
-        }
-    }
-    let before_b = d.blocks.len();
-    d.blocks.retain(|k, _| used.contains(&k.to_ascii_uppercase()));
-    let blocks = before_b - d.blocks.len();
-    // Layers used by the model, layouts and the block definitions that survived above.
-    let used_layers = super::layer::used_layers(d);
-    let cur = d.header.str("CLAYER", "0").to_ascii_lowercase();
-    let before_l = d.layers.len();
-    d.layers.retain(|l| {
-        l.name == "0"
-            || l.name.eq_ignore_ascii_case("Defpoints")
-            || l.name.to_ascii_lowercase() == cur
-            || used_layers.contains(&l.name.to_ascii_lowercase())
-    });
-    let layers = before_l - d.layers.len();
-    let used_lt: std::collections::HashSet<String> =
-        all.iter().map(|e| e.common.linetype.to_ascii_lowercase()).chain(d.layers.iter().map(|l| l.linetype.to_ascii_lowercase())).collect();
-    let before_t = d.linetypes.len();
-    d.linetypes.retain(|l| {
-        ["byblock", "bylayer", "continuous"].contains(&l.name.to_ascii_lowercase().as_str()) || used_lt.contains(&l.name.to_ascii_lowercase())
-    });
-    let linetypes = before_t - d.linetypes.len();
-    Ok(
-        json!({ "blocks": blocks, "layers": layers, "linetypes": linetypes, "message": format!("{blocks} blocks, {layers} layers, {linetypes} linetypes purged.") }),
-    )
 }
 
 fn run_list(s: &mut Session, _p: &Value) -> Result<Value> {
