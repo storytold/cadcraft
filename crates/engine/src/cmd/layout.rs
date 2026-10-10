@@ -19,7 +19,8 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{option: new|copy|delete|rename|set|list, name?, to?}"),
         CommandSpec::new("layout.new", "New Layout", run_new)
             .menu(&["Insert", "Layout", "New Layout"])
-            .params("{name?, viewport?: bool (default true)} → {name, viewport}"),
+            .params("{name?, viewport?: bool (default true)} → {name, viewport}")
+            .interactive(|_| Ok(Box::new(NewLayoutM))),
         CommandSpec::new("layout.delete", "Delete Layout", run_delete).params("{name}"),
         CommandSpec::new("layout.rename", "Rename Layout", run_rename).params("{from?: current layout, to}"),
         CommandSpec::new("layout.copy", "Copy Layout", run_copy).params("{from, to?}"),
@@ -176,6 +177,29 @@ fn default_page(d: &Drawing) -> PageSetup {
         p.height_mm = a4.height_mm;
     }
     p
+}
+
+/// LAYOUT.NEW from the menu or command line: asks for the name (Enter takes the next free one).
+struct NewLayoutM;
+
+impl Interactive for NewLayoutM {
+    fn name(&self) -> &'static str {
+        "LAYOUT"
+    }
+    fn prompt(&self, s: &Session) -> Prompt {
+        let next = s.doc().map(next_layout_name).unwrap_or_else(|_| "Layout1".into());
+        Prompt::new("Enter name of new layout", Accept::TEXT).default(next)
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        let p = match i {
+            Input::Text(t) if !t.trim().is_empty() => json!({ "name": t.trim() }),
+            Input::Text(_) | Input::Enter => json!({}),
+            _ => return Ok(Step::Continue),
+        };
+        // A taken or invalid name is an error: the session reports it and asks again.
+        run_new(s, &p)?;
+        Ok(Step::Done)
+    }
 }
 
 fn run_new(s: &mut Session, p: &Value) -> Result<Value> {
@@ -847,6 +871,21 @@ mod tests {
         let l = s.execute("layout", &json!({"option": "list"})).unwrap();
         assert_eq!(l.as_array().unwrap().len(), 1);
         assert!(s.execute("layout.delete", &json!({"name": "Model"})).is_err());
+    }
+
+    #[test]
+    fn new_layout_from_the_menu_asks_for_a_name() {
+        let mut s = session_with_model();
+        s.start("layout.new").unwrap();
+        assert_eq!(s.current_prompt().map(|p| p.display()).as_deref(), Some("Enter name of new layout <Layout3>:"));
+        s.cmdline("Layout1").unwrap();
+        assert!(s.running.is_some(), "a taken name asks again");
+        s.cmdline("Sheet A").unwrap();
+        assert!(s.running.is_none());
+        s.start("layout.new").unwrap();
+        s.cmdline("").unwrap();
+        let d = s.doc().unwrap();
+        assert!(d.layout("Sheet A").is_some() && d.layout("Layout3").is_some(), "Enter takes the default name");
     }
 
     #[test]

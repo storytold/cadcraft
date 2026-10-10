@@ -17,6 +17,7 @@ pub mod dialogs;
 pub mod gpu;
 pub mod icons;
 pub mod layers;
+pub mod managers;
 pub mod menus;
 pub mod palettes;
 pub mod parametric;
