@@ -351,6 +351,27 @@ fn dim_auto_vertical_and_radius() {
 }
 
 #[test]
+fn area_of_hatch_excludes_island() {
+    let mut s = Session::new();
+    s.execute("pline", &json!({"vertices": [[0, 0], [10, 0], [10, 10], [0, 10]], "closed": true})).unwrap();
+    s.execute("pline", &json!({"vertices": [[4, 4], [6, 4], [6, 6], [4, 6]], "closed": true})).unwrap();
+    s.execute("hatch", &json!({"points": [[1, 1]], "pattern": "SOLID"})).unwrap();
+    let h = s.doc().unwrap().model.iter().find_map(|e| if let EntityKind::Hatch(_) = &e.kind { Some(e.handle) } else { None }).unwrap();
+    let r = s.execute("area", &json!({"handle": h.hex()})).unwrap();
+    assert!((r["area"].as_f64().unwrap() - 96.0).abs() < 1e-6);
+    assert!((r["perimeter"].as_f64().unwrap() - 48.0).abs() < 1e-6);
+    // A loop nested inside the island is filled again: 100 - 36 + 4.
+    let mut s = Session::new();
+    s.execute("pline", &json!({"vertices": [[0, 0], [10, 0], [10, 10], [0, 10]], "closed": true})).unwrap();
+    s.execute("pline", &json!({"vertices": [[2, 2], [8, 2], [8, 8], [2, 8]], "closed": true})).unwrap();
+    s.execute("pline", &json!({"vertices": [[4, 4], [6, 4], [6, 6], [4, 6]], "closed": true})).unwrap();
+    s.execute("hatch", &json!({"points": [[1, 1]], "pattern": "SOLID"})).unwrap();
+    let h = s.doc().unwrap().model.iter().find_map(|e| if let EntityKind::Hatch(_) = &e.kind { Some(e.handle) } else { None }).unwrap();
+    let r = s.execute("area", &json!({"handle": h.hex()})).unwrap();
+    assert!((r["area"].as_f64().unwrap() - 68.0).abs() < 1e-6);
+}
+
+#[test]
 fn hatch_by_pick_point_with_island() {
     let mut s = Session::new();
     s.execute("rectang", &json!({"p1": [0, 0], "p2": [10, 10]})).unwrap();
