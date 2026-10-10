@@ -184,6 +184,97 @@ fn extend_line_to_boundary() {
 }
 
 #[test]
+fn properties_set_circle_size_and_dim_style() {
+    // Issue #6: the Properties palette edits a circle's circumference/area and a dimension's style.
+    let mut s = Session::new();
+    s.execute("circle", &json!({"center": [0, 0], "radius": 1})).unwrap();
+    let c = s.doc().unwrap().model.last().unwrap().handle;
+    let radius = |s: &Session| match &s.doc().unwrap().entity(c).unwrap().kind {
+        EntityKind::Circle(c) => c.radius,
+        _ => f64::NAN,
+    };
+    s.execute("properties.set", &json!({"handles": [c.hex()], "circumference": 4.0 * std::f64::consts::PI})).unwrap();
+    assert!((radius(&s) - 2.0).abs() < 1e-12);
+    s.execute("properties.set", &json!({"handles": [c.hex()], "area": 9.0 * std::f64::consts::PI})).unwrap();
+    assert!((radius(&s) - 3.0).abs() < 1e-12);
+    // Zero, negative or non-numeric sizes are ignored.
+    for v in [json!(0), json!(-5), json!("NaN"), json!(null)] {
+        s.execute("properties.set", &json!({"handles": [c.hex()], "circumference": v, "area": v})).unwrap();
+        assert!((radius(&s) - 3.0).abs() < 1e-12, "{v}");
+    }
+    s.execute("properties.set", &json!({"handles": [c.hex()], "area": 1e308})).unwrap();
+    assert!(radius(&s).is_finite());
+
+    s.execute("dimstyle", &json!({"name": "Big", "current": false})).unwrap();
+    s.execute("dimlinear", &json!({"p1": [0, 0], "p2": [3, 8], "at": [6, 4]})).unwrap();
+    let dm = s.doc().unwrap().model.last().unwrap().handle;
+    let style = |s: &Session| match &s.doc().unwrap().entity(dm).unwrap().kind {
+        EntityKind::Dimension(d) => d.style.clone(),
+        _ => String::new(),
+    };
+    s.execute("properties.set", &json!({"handles": [dm.hex()], "dimStyle": "big"})).unwrap();
+    assert_eq!(style(&s), "Big");
+    assert!(s.execute("properties.set", &json!({"handles": [dm.hex()], "dimStyle": "Nope"})).is_err());
+    assert_eq!(style(&s), "Big");
+}
+
+#[test]
+fn properties_palette_current_property_commands() {
+    // Issue #6: the commands the Properties palette runs with nothing selected.
+    let mut s = Session::new();
+    s.execute("linetype", &json!({"current": "ByBlock"})).unwrap();
+    s.execute("lweight", &json!({"lineweight": 0.5})).unwrap();
+    s.execute("setvar", &json!({"name": "THICKNESS", "value": 2.5})).unwrap();
+    s.execute("dimstyle", &json!({"name": "Big", "current": false})).unwrap();
+    s.execute("dimstyle.current", &json!({"name": "Big"})).unwrap();
+    s.execute("mleaderstyle", &json!({"name": "Callout", "current": false})).unwrap();
+    s.execute("mleaderstyle", &json!({"name": "Callout", "current": true})).unwrap();
+    s.execute("tablestyle", &json!({"name": "Schedule", "current": false})).unwrap();
+    s.execute("tablestyle", &json!({"name": "Schedule", "current": true})).unwrap();
+    s.execute("style", &json!({"name": "Notes", "current": false})).unwrap();
+    s.execute("style.current", &json!({"name": "Notes"})).unwrap();
+    let h = &s.doc().unwrap().header;
+    assert_eq!(h.str("CELTYPE", ""), "ByBlock");
+    assert_eq!(h.i64("CELWEIGHT", 0), 50);
+    assert_eq!(h.f64("THICKNESS", 0.0), 2.5);
+    assert_eq!(h.str("DIMSTYLE", ""), "Big");
+    assert_eq!(h.str("CMLEADERSTYLE", ""), "Callout");
+    assert_eq!(h.str("CTABLESTYLE", ""), "Schedule");
+    assert_eq!(h.str("TEXTSTYLE", ""), "Notes");
+}
+
+#[test]
+fn pickadd_controls_idle_picks() {
+    // Issue #6: the palette's PICKADD toggle must change how clicks select.
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    let a = s.doc().unwrap().model.last().unwrap().handle;
+    s.execute("line", &json!({"points": [[0, 5], [10, 5]]})).unwrap();
+    let b = s.doc().unwrap().model.last().unwrap().handle;
+    let (pa, pb) = (Vec2::new(5.0, 0.0), Vec2::new(5.0, 5.0));
+    // PICKADD on: picks add, Shift removes.
+    s.idle_click(pa, false).unwrap();
+    s.idle_click(pb, false).unwrap();
+    assert_eq!(s.selection(), vec![a, b]);
+    s.idle_click(pa, true).unwrap();
+    assert_eq!(s.selection(), vec![b]);
+    // PICKADD off: each pick replaces, Shift adds, Shift on a selected object removes it.
+    s.execute("setvar", &json!({"name": "PICKADD", "value": 0})).unwrap();
+    s.idle_click(pa, false).unwrap();
+    assert_eq!(s.selection(), vec![a]);
+    s.idle_click(pb, true).unwrap();
+    assert_eq!(s.selection(), vec![a, b]);
+    s.idle_click(pa, true).unwrap();
+    assert_eq!(s.selection(), vec![b]);
+    s.idle_click(pa, false).unwrap();
+    assert_eq!(s.selection(), vec![a]);
+    // A window replaces the selection too.
+    s.idle_click(Vec2::new(-1.0, 4.0), false).unwrap();
+    s.idle_click(Vec2::new(11.0, 6.0), false).unwrap();
+    assert_eq!(s.selection(), vec![b]);
+}
+
+#[test]
 fn fillet_two_lines() {
     let mut s = Session::new();
     s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
