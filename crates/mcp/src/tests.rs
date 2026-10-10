@@ -43,8 +43,10 @@ fn agent_draws_a_plate_with_holes() {
     tool(&mut s, "execute", json!({"command": "layer.new", "params": {"name": "Center", "color": "red", "current": true}}));
     tool(&mut s, "command_line", json!({"text": "line -5,30 105,30"}));
     tool(&mut s, "command_line", json!({"text": ""}));
-    // Task 4: a script with text.
-    tool(&mut s, "script", json!({"text": "TEXT 0,-10 5 0 PLATE 100x60\n"}));
+    // Task 4: a script with text. TEXT keeps asking for further lines until an empty one, as in
+    // AutoCAD, so the script ends it with a blank line (= Enter).
+    let r = tool(&mut s, "script", json!({"text": "TEXT 0,-10 5 0 PLATE 100x60\n\n"}));
+    assert_eq!(r["state"]["running"], Value::Null, "TEXT must be finished: {r}");
     // Verify only through MCP.
     let d = tool(&mut s, "inspect_drawing", json!({}));
     assert_eq!(d["counts"]["Circle"], 4);
@@ -54,9 +56,15 @@ fn agent_draws_a_plate_with_holes() {
     let lines = tool(&mut s, "query_entities", json!({"type": "Line", "layer": "Center"}));
     assert_eq!(lines["count"], 1);
     // Task 5: undo the text, check, then render.
-    tool(&mut s, "execute", json!({"command": "undo"}));
+    let u = tool(&mut s, "execute", json!({"command": "undo"}));
+    assert_eq!(u["undone"], json!(["Single Line Text"]), "{u}");
     let d = tool(&mut s, "inspect_drawing", json!({"entities": false}));
     assert!(d["counts"].get("Text").is_none());
+    assert_eq!(d["counts"]["Circle"], 4);
+    assert_eq!(d["counts"]["Polyline"], 1);
+    assert_eq!(d["counts"]["Line"], 1);
+    let lines = tool(&mut s, "query_entities", json!({"type": "Line", "layer": "Center"}));
+    assert_eq!(lines["count"], 1, "the centre line must survive undoing the text");
     let img = tool(&mut s, "render", json!({"width": 320, "height": 200}));
     assert_eq!(img["type"], "image");
     assert!(img["data"].as_str().unwrap().len() > 100);
