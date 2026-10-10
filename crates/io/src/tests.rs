@@ -1265,11 +1265,8 @@ fn attdef_prompt_survives_dxf_roundtrip() {
     d.add(&Space::Model, Default::default(), attdef("Enter value")).unwrap();
     d.add(&Space::Model, Default::default(), attdef("")).unwrap();
     let back = roundtrip(&d);
-    let prompts: Vec<&str> = back
-        .model
-        .iter()
-        .filter_map(|e| if let EntityKind::AttDef(a) = &e.kind { Some(a.prompt.as_str()) } else { None })
-        .collect();
+    let prompts: Vec<&str> =
+        back.model.iter().filter_map(|e| if let EntityKind::AttDef(a) = &e.kind { Some(a.prompt.as_str()) } else { None }).collect();
     assert_eq!(prompts, vec!["Enter value", ""]);
 }
 
@@ -1309,7 +1306,7 @@ fn arc_length_dimension_keeps_its_kind_and_centre_on_roundtrip() {
     }
     // And through DWG.
     let dwg = cadcraft_dwg::dxf_to_dwg(text.as_bytes()).unwrap();
-    let back = read_dxf(cadcraft_dwg::dwg_to_dxf(&dwg).unwrap().as_bytes()).unwrap();
+    let back = read_dxf(&cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).unwrap();
     let dims: Vec<_> = back.model.iter().filter_map(|e| if let EntityKind::Dimension(x) = &e.kind { Some(x.clone()) } else { None }).collect();
     assert_eq!(dims.len(), 1);
     assert!(matches!(dims[0].kind, DimKind::ArcLength), "{:?}", dims[0].kind);

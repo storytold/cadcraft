@@ -705,7 +705,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).into()).collect()
     }
