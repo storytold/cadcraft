@@ -2,7 +2,7 @@
 
 **Stage: pre-alpha** · next: alpha, ~3 points (37% → 40% ready for real work) and ~125–190 Opus 5.5 hours away (the four failing core workflows of the [alpha gate](docs/roadmap.md#alpha-gate))
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (stage re-normalized to pre-alpha under the core-workflow gate) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (mainstream-practitioner and essentials-user numbers added) · **Target:** Autodesk AutoCAD 2027
 
 CADCraft targets full parity with AutoCAD (2D drafting first, then annotation, layouts and
 plotting, DWG, parametrics and 3D), plus what AutoCAD doesn't have: agent control over MCP, a
@@ -21,6 +21,8 @@ is ≈ 600–930 h away.
 |---|---|---|
 | Feature breadth (AutoCAD for Mac menu items with a live command) | **50%** (245 / 491; 2D menus only ≈ 65%) | measured ([parity-checklist.md](docs/parity-checklist.md) + UI-only commands) |
 | Ready for real work | **≈ 37%** | estimated ([target-app-parity.md](docs/target-app-parity.md)) |
+| Mainstream practitioner (2D drafter) | **≈ 27%** (lower than the full number: file exchange, stability and interaction discounts multiply) | estimated ([target-app-parity.md](docs/target-app-parity.md#mainstream-practitioner)) |
+| Essentials user | **≈ 45%** | estimated ([target-app-parity.md](docs/target-app-parity.md#essentials-user)) |
 | Remaining to alpha | **≈ 125–190 h** (the gate rows) | estimated |
 | Remaining to beta | **≈ 600–930 h** (≈ 150–250 h elapsed with 4–6 agents) | estimated |
 | Remaining to full parity | **≈ 1,300–2,100 h** (≈ 330–550 h elapsed) | estimated |
@@ -104,6 +106,7 @@ Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md)
 
 | Date | Entry |
 |---|---|
+| 2026-10-10 | Added mainstream practitioner (≈ 27%) and essentials user (≈ 45%) numbers; ready for real work unchanged at ≈ 37%. User evidence: 2 praise comments, 0 "switched from AutoCAD" reports, 27 of 37 open issues on the core path. |
 | 2026-10-10 | Stage re-normalized from alpha to **pre-alpha** under the craftrules core-workflow gate: drafting with tracking, blocks, plotting and lossless DWG save fail; dimensioning passes. Alpha is ≈ 125–190 h away. |
 | 2026-10-10 | Full re-measure against AutoCAD 2027 for Mac in the craftrules progress-docs format: menu breadth 245/491 (50%), ready for real work ≈ 37%, stage alpha. Remaining estimates rose (≈ 570 h → 1,300–2,100 h) on new evidence: behaviour audits found tracking/extension/parallel snaps and dynamic input are not real, saves drop unmodelled content, DWG saves as R2000, and the old estimate had no localization, ecosystem, stability, platform or AI rows. New docs: target-app-parity, gaps, roadmap, architecture, localization, file-format, hardware, UI and geometry parity; `docs/parity.md` became `docs/parity-checklist.md`. |
 | 2026-10-10 | About 60 community PRs merged in a day: DXF fidelity (transparency, LWPOLYLINE elevation, frozen VP layers, dimension text rotation, arc-length dims, non-ASCII escapes), CJK font fallback, Save/Don't Save on close, Light/System themes, F2 history, trackpad pan, Linux XWayland drag-and-drop, correctness fixes across draw/modify/constraints. Release v0.4.0. |
@@ -115,6 +118,7 @@ Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md)
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | Mainstream practitioner and essentials user headline numbers |
 | 2026-10-10 | minor | Stage alpha → pre-alpha under the core-workflow gate; banner, why, headline row |
 | 2026-10-10 | major | Restructured to the progress-docs standard (stage, two numbers, dimensions, features, languages, upcoming, log); full re-measure; milestone detail moved to docs/roadmap.md, parity assessment to docs/target-app-parity.md |
 | 2026-10-07 | major | Alpha checklist, milestone table, ≈ 29% weighted parity estimate |
