@@ -288,7 +288,7 @@ fn entity(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
             view_height: t.fd(45, 1.0),
             id: t.i(69).unwrap_or(0) as u32,
             locked: t.i(90).unwrap_or(0) & 16384 != 0,
-            frozen_layers: Vec::new(),
+            frozen_layers: crate::dxf_ext::read_frozen(tags),
             layer_colors: Vec::new(),
         }),
         "WIPEOUT" => {

@@ -306,6 +306,20 @@ pub(crate) fn assoc_xdata(assoc: &[DimAssoc]) -> Vec<Tag> {
     v
 }
 
+/// A viewport's frozen layer names as CADCraft xdata: `1000 VPFROZEN`, `1002 {`, one `1000` per layer, `1002 }`.
+pub(crate) fn frozen_xdata(layers: &[String]) -> Vec<Tag> {
+    let mut v = vec![Tag::s(1000, "VPFROZEN"), Tag::s(1002, "{")];
+    v.extend(layers.iter().map(|l| Tag::s(1000, l.clone())));
+    v.push(Tag::s(1002, "}"));
+    v
+}
+
+/// The frozen layer names written by [`frozen_xdata`]; empty for files from other writers.
+pub(crate) fn read_frozen(tags: &[Tag]) -> Vec<String> {
+    let list = xdata_list(xdata(tags, APP), "VPFROZEN");
+    list.iter().take(MAX_XDATA_ITEMS).filter(|t| t.code == 1000).map(Tag::str).collect()
+}
+
 const POINT_NAMES: [&str; 5] = ["defpt", "p13", "p14", "p15", "p16"];
 
 /// Associativity links from CADCraft xdata; malformed links are skipped.
