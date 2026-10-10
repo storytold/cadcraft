@@ -371,6 +371,7 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
         EntityKind::Line(l) => {
             w.s(0, "LINE");
             common(w, e, owner, paper, "AcDbLine");
+            thickness(w, e);
             w.p(10, l.a);
             w.p(11, l.b);
         }
@@ -378,16 +379,22 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
             w.s(0, "POINT");
             common(w, e, owner, paper, "AcDbPoint");
             w.p(10, p.p);
+            thickness(w, e);
+            if p.angle != 0.0 {
+                w.f(50, p.angle.to_degrees());
+            }
         }
         EntityKind::Circle(c) => {
             w.s(0, "CIRCLE");
             common(w, e, owner, paper, "AcDbCircle");
+            thickness(w, e);
             w.p(10, c.center);
             w.f(40, c.radius);
         }
         EntityKind::Arc(a) => {
             w.s(0, "ARC");
             common(w, e, owner, paper, "AcDbCircle");
+            thickness(w, e);
             w.p(10, a.center);
             w.f(40, a.radius);
             w.s(100, "AcDbArc");
@@ -414,6 +421,7 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
             if p.elevation != 0.0 {
                 w.f(38, p.elevation);
             }
+            thickness(w, e);
             for v in &p.vertices {
                 w.p2(10, v.p);
                 if v.start_width != 0.0 || v.end_width != 0.0 {
@@ -430,6 +438,7 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
             common(w, e, owner, paper, "AcDb3dPolyline");
             w.i(66, 1);
             w.p(10, Vec3::ZERO);
+            thickness(w, e);
             w.i(70, 8 | i64::from(p.closed));
             for q in &p.points {
                 let vh = w.h();
@@ -482,6 +491,7 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
         EntityKind::Text(t) => {
             w.s(0, "TEXT");
             common(w, e, owner, paper, "AcDbText");
+            thickness(w, e);
             text_tags(w, t, None, None);
         }
         EntityKind::AttDef(a) => {
@@ -724,6 +734,7 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
             w.p(11, s.corners[1]);
             w.p(12, s.corners[2]);
             w.p(13, s.corners[3]);
+            thickness(w, e);
         }
         EntityKind::Face3d(f) => {
             w.s(0, "3DFACE");
@@ -769,7 +780,7 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
                 for pl in lines {
                     let ang = pl.angle.to_radians() + h.angle;
                     w.f(53, ang.to_degrees());
-                    let o = Vec2::new(pl.origin.0, pl.origin.1).rotate(h.angle) * h.scale;
+                    let o = h.origin + Vec2::new(pl.origin.0, pl.origin.1).rotate(h.angle) * h.scale;
                     w.f(43, o.x);
                     w.f(44, o.y);
                     let dl = Vec2::new(pl.delta.0, pl.delta.1).rotate(ang) * h.scale;
@@ -785,6 +796,7 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
             if let Some(g) = &h.gradient {
                 gradient(w, g);
             }
+            hatch_xdata(w, h);
         }
         EntityKind::Viewport(v) => {
             w.s(0, "VIEWPORT");
@@ -879,6 +891,30 @@ fn gradient(w: &mut W, g: &Gradient) {
     w.i(1070, i64::from(g.centered));
     w.s(1000, g.color1.name());
     w.s(1000, g.color2.name());
+}
+
+/// Group 39 (thickness) of the entities whose DXF Reference record has one; only when set.
+fn thickness(w: &mut W, e: &Entity) {
+    if e.common.thickness != 0.0 {
+        w.f(39, e.common.thickness);
+    }
+}
+
+/// Hatch origin and background colour as `CADCRAFT` xdata: `1000 HATCH`, the origin as a
+/// world position (`1011`, moved with the hatch by other programs) and the background colour
+/// name (`1000`, empty for none). The DXF Reference has no HATCH groups for either: other
+/// readers get the origin through the pattern lines' base points (43/44), the background isn't
+/// carried. Appended to the gradient's `CADCRAFT` xdata when there is one.
+fn hatch_xdata(w: &mut W, h: &Hatch) {
+    if h.origin == Vec2::ZERO && h.background.is_none() {
+        return;
+    }
+    if h.gradient.is_none() {
+        w.s(1001, dxf_ext::APP);
+    }
+    w.s(1000, "HATCH");
+    w.p(1011, h.origin.to3(0.0));
+    w.s(1000, h.background.map(Color::name).unwrap_or_default());
 }
 
 /// Anonymous dimension blocks (`*D1`…) with the rendered geometry, as consumers expect.
@@ -1321,10 +1357,18 @@ pub fn write(d: &Drawing) -> String {
         w.f(50, s.oblique.to_degrees());
         w.i(71, if s.backwards { 2 } else { 0 } | if s.upside_down { 4 } else { 0 });
         w.f(42, 0.2);
-        w.s(3, if s.font == cadcraft_fonts_name() { "txt" } else { s.font.as_str() });
+        // The built-in font goes out as `txt`, which every reader has; CADCraft's own name
+        // travels in `CADCRAFT` xdata (`1000 FONT`, name) so the style reopens with it.
+        let file = if s.font == cadcraft_fonts_name() { "txt" } else { s.font.as_str() };
+        w.s(3, file);
         w.s(4, &s.big_font);
         if s.annotative {
             annotative_xdata(&mut w);
+        }
+        if file != s.font {
+            w.s(1001, dxf_ext::APP);
+            w.s(1000, "FONT");
+            w.s(1000, dxf_ext::xdata_str(&s.font));
         }
     }
     w.s(0, "ENDTAB");
@@ -1641,7 +1685,28 @@ pub fn write(d: &Drawing) -> String {
     if let Some(t) = w.t.get_mut(seed_pos + 1) {
         *t = Tag::s(5, seed);
     }
+    mark_xrefs(&mut w.t, d);
     cadcraft_dxf::write_ascii(&w.t)
+}
+
+/// Xref blocks (DXF Reference, BLOCK): bit 4 of group 70 and the external drawing's path in
+/// group 1, set on the written BLOCK records of blocks that have an `xref_path`.
+fn mark_xrefs(tags: &mut [Tag], d: &Drawing) {
+    let xrefs: HashMap<String, &str> = d.blocks.values().filter_map(|b| Some((b.name.to_ascii_uppercase(), b.xref_path.as_deref()?))).collect();
+    if xrefs.is_empty() {
+        return;
+    }
+    // Inside a BLOCK record: the path once its name (2) says it is an xref.
+    let mut block: Option<Option<&str>> = None;
+    for t in tags.iter_mut() {
+        match (t.code, block) {
+            (0, _) => block = (t.str() == "BLOCK").then_some(None),
+            (2, Some(None)) => block = Some(xrefs.get(&t.str().to_ascii_uppercase()).copied()),
+            (70, Some(Some(_))) => *t = Tag::i(70, t.i64() | 4),
+            (1, Some(Some(p))) => *t = Tag::s(1, p),
+            _ => {}
+        }
+    }
 }
 
 /// A TABLESTYLE object (DXF Reference, OBJECTS: TABLESTYLE): margins, title/header
