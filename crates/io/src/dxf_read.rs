@@ -313,7 +313,8 @@ fn entity(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
             let o = t.p(10);
             let u = t.p(11);
             let v = t.p(12);
-            let pts: Vec<Vec2> = t.pts(14).into_iter().map(|q| o.xy() + u.xy() * (q.x + 0.5) + v.xy() * (q.y + 0.5)).collect();
+            // Clip vertices are in pixel space: origin at the image's top-left corner, y pointing down.
+            let pts: Vec<Vec2> = t.pts(14).into_iter().map(|q| o.xy() + u.xy() * (q.x + 0.5) + v.xy() * (0.5 - q.y)).collect();
             EntityKind::Wipeout(Wipeout { boundary: pts })
         }
         "IMAGE" => {

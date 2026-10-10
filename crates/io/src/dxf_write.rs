@@ -798,7 +798,9 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
             }
         }
         EntityKind::Wipeout(wo) => {
-            // A 1x1 image spanning the boundary's extents; the reader maps each vertex back through insert + u * (x + 0.5) + v * (y + 0.5).
+            // A 1x1 image spanning the boundary's extents. Clip vertices are in pixel space, whose origin is
+            // the image's top-left corner with y pointing down: the reader maps each vertex back through
+            // insert + u * (x + 0.5) + v * (0.5 - y).
             // Polygonal clip boundaries are closed, so the first vertex is repeated when needed.
             let b = Bounds2::from_points(wo.boundary.iter().copied());
             let o = if b.is_empty() { Vec2::ZERO } else { b.min };
@@ -825,7 +827,7 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
             }
             w.i(91, pts.len() as i64);
             for q in pts {
-                w.p2(14, Vec2::new((q.x - o.x) / sx - 0.5, (q.y - o.y) / sy - 0.5));
+                w.p2(14, Vec2::new((q.x - o.x) / sx - 0.5, 0.5 - (q.y - o.y) / sy));
             }
         }
         // Not yet written: images, tables, multileaders, unknown objects.
