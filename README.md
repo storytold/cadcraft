@@ -197,6 +197,8 @@ See [ROADMAP.md](ROADMAP.md) for milestones, measured parity and the estimate of
 
 Installers and executables are code-signed.
 
+The installer adds CADCraft to the Start menu and asks whether to add a desktop shortcut too (unticked by default). For a silent install with the desktop shortcut: `msiexec /i cadcraft-<ver>-windows-x64.msi /qn DESKTOPSHORTCUT=1`.
+
 ### macOS
 
 | Build | File | Notes |
