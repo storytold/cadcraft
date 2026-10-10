@@ -26,8 +26,10 @@ impl ImeContext {
         ImeContext { hwnd, himc }
     }
 
+    /// `composition_flags` is the `lParam` of the `WM_IME_COMPOSITION` message.
     pub unsafe fn get_composing_text_and_cursor(
         &self,
+        composition_flags: u32,
     ) -> Option<(String, Option<usize>, Option<usize>)> {
         let text = unsafe { self.get_composition_string(GCS_COMPSTR) }?;
         let attrs = unsafe { self.get_composition_data(GCS_COMPATTR) }.unwrap_or_default();
@@ -60,7 +62,15 @@ impl ImeContext {
         } else if first.is_none() {
             // IME haven't split words and select any clause yet, so trying to retrieve normal
             // cursor.
-            let cursor = unsafe { self.get_composition_cursor(&text) };
+            // CADCraft patch: read `GCS_CURSORPOS` only when `WM_IME_COMPOSITION` says it is set,
+            // else put the cursor at the end (rust-windowing/winit#4746). The Microsoft Korean IME
+            // never sets it, so the cursor read as 0 and was drawn before the syllable being
+            // composed, with the candidate window there too.
+            let cursor = if composition_flags & GCS_CURSORPOS != 0 {
+                unsafe { self.get_composition_cursor(&text) }
+            } else {
+                Some(text.len())
+            };
             first = cursor;
             last = cursor;
         }
