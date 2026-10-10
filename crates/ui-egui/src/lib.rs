@@ -23,6 +23,7 @@ pub mod palettes;
 pub mod parametric;
 pub mod quick;
 pub mod theme;
+pub mod viewcube;
 
 use std::sync::mpsc::Receiver;
 

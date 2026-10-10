@@ -118,6 +118,7 @@ pub enum Icon {
     Annotation,
     Workspace,
     ChevronDown,
+    ChevronUp,
     ChevronLeft,
     ChevronRight,
     Plus,
@@ -793,6 +794,7 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, dim: bool) {
             pen.l(9.0, 9.0, 21.0, 9.0);
         }
         ChevronDown => pen.poly(&[(6.0, 9.0), (12.0, 15.0), (18.0, 9.0)], false, b),
+        ChevronUp => pen.poly(&[(6.0, 15.0), (12.0, 9.0), (18.0, 15.0)], false, b),
         ChevronLeft => pen.poly(&[(15.0, 6.0), (9.0, 12.0), (15.0, 18.0)], false, b),
         ChevronRight => pen.poly(&[(9.0, 6.0), (15.0, 12.0), (9.0, 18.0)], false, b),
         Plus => {
