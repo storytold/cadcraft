@@ -278,3 +278,25 @@ fn shoelace_preserves_small_polygon_area_at_large_coordinates() {
     assert_eq!(shoelace(&corners), 100.0);
     assert_eq!(shoelace(&corners.iter().rev().copied().collect::<Vec<_>>()), -100.0);
 }
+
+#[test]
+fn near_tangent_long_line_does_not_invent_a_circle_hit() {
+    let c = Circle::new(Vec2::ZERO, 1.0);
+    let far = 1.0e8;
+    let outside = Line::new(Vec2::new(-far, 1.0 + 1e-9), Vec2::new(far, 1.0 + 1e-9));
+    assert!(line_circle(&outside, &c).is_empty());
+    let tangent = Line::new(Vec2::new(-far, 1.0), Vec2::new(far, 1.0));
+    let hits = line_circle(&tangent, &c);
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].0.near(Vec2::new(0.0, 1.0), 1e-9));
+}
+
+#[test]
+fn long_secant_keeps_both_intersections() {
+    let c = Circle::new(Vec2::ZERO, 2.0);
+    let l = Line::new(Vec2::new(-1.0e8, 0.0), Vec2::new(1.0e8, 0.0));
+    let hits = line_circle(&l, &c);
+    assert_eq!(hits.len(), 2);
+    assert!(hits[0].0.near(Vec2::new(-2.0, 0.0), 1e-8), "{hits:?}");
+    assert!(hits[1].0.near(Vec2::new(2.0, 0.0), 1e-8), "{hits:?}");
+}

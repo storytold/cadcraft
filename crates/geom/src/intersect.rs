@@ -25,23 +25,30 @@ pub fn line_circle(l: &Line, c: &Circle) -> Vec<(Vec2, f64)> {
     let d = l.b - l.a;
     let f = l.a - c.center;
     let a = d.dot(d);
-    if a < EPS * EPS {
+    if !(a >= EPS * EPS && a.is_finite() && c.radius.is_finite() && f.is_finite()) {
         return Vec::new();
     }
-    let b = 2.0 * f.dot(d);
-    let cc = f.dot(f) - c.radius * c.radius;
-    let disc = b * b - 4.0 * a * cc;
-    if disc < -1e-12 * a {
+    // The quadratic discriminant subtracts two O(length^4) numbers. For a
+    // long construction line nearly tangent to a small circle, that loses the
+    // gap entirely and reports a false intersection. Measure from the closest
+    // point on the infinite line instead.
+    let t = -f.dot(d) / a;
+    let nearest = f + d * t;
+    let delta = c.radius * c.radius - nearest.len2();
+    let tolerance = 1e-12 * c.radius * c.radius;
+    if !delta.is_finite() || delta < -tolerance {
         return Vec::new();
     }
-    if disc.abs() <= 1e-12 * a {
-        let t = -b / (2.0 * a);
-        return vec![(l.at(t), t)];
+    let foot = c.center + nearest;
+    if delta <= tolerance {
+        return vec![(foot, t)];
     }
-    let sq = disc.max(0.0).sqrt();
-    let t1 = (-b - sq) / (2.0 * a);
-    let t2 = (-b + sq) / (2.0 * a);
-    vec![(l.at(t1), t1), (l.at(t2), t2)]
+    let offset = (delta / a).sqrt();
+    let (t1, t2) = (t - offset, t + offset);
+    let step = d * offset;
+    // Construct the intersections around the foot, not from a tiny change
+    // to t on a very long line (which loses the small distance again).
+    vec![(foot - step, t1), (foot + step, t2)]
 }
 
 /// Intersections of two full circles.
