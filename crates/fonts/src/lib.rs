@@ -1,17 +1,16 @@
 //! CADCraft text layout.
 //!
 //! Turns TEXT and MTEXT into stroke polylines with the built-in single-stroke font
-//! ("CADCraft Stroke"). Handles the `%%` control codes, alignment modes, width factor,
-//! obliquing, MTEXT inline formatting (paragraphs, stacking, height changes), word wrap and
-//! attachment points.
+//! ("CADCraft Stroke") or glyph outlines of installed TrueType fonts ([`ttf`]), with a
+//! per-character fallback to installed fonts for characters the chosen font lacks. Handles the
+//! `%%` control codes, alignment modes, width factor, obliquing, MTEXT inline formatting
+//! (paragraphs, stacking, height changes), word wrap and attachment points.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
 mod mtext;
 mod stroke;
 pub mod ttf;
-
-use std::sync::Arc;
 
 use cadcraft_geom::{Bounds2, Vec2};
 
@@ -78,43 +77,66 @@ pub fn char_advance(c: char) -> f64 {
     }
 }
 
-/// Lay out a single line at `height`, with `width_factor` and `oblique` (radians).
-pub fn layout_line(s: &str, height: f64, width_factor: f64, oblique: f64) -> Run {
+/// Advance of `c` in the stroke font at height `h` and width factor `wf`; characters the
+/// stroke font lacks take a fallback font's advance when one has them.
+fn stroke_advance(c: char, h: f64, wf: f64) -> f64 {
+    if stroke::glyph(c).is_none()
+        && !c.is_whitespace()
+        && let Some(g) = ttf::fallback_glyph(c)
+    {
+        return g.advance * h / g.cap * wf;
+    }
+    char_advance(c) * h * wf
+}
+
+/// Shape a single line in the stroke font at `height`, with `width_factor` and `oblique`
+/// (radians). Characters the stroke font lacks are drawn from an installed font that has them
+/// (glyph outlines, sized like TrueType text), else as a missing-glyph box.
+pub fn shape_stroke(s: &str, height: f64, width_factor: f64, oblique: f64) -> Shaped {
     let h = if height.is_finite() && height > 0.0 { height } else { 1.0 };
     let wf = if width_factor.is_finite() && width_factor.abs() > 1e-6 { width_factor } else { 1.0 };
     let sc = h / stroke::CAP;
     let shear = oblique.tan().clamp(-10.0, 10.0);
-    let mut run = Run::default();
+    let mut out = Shaped::default();
     let mut x = 0.0;
     let mut under_start: Option<f64> = None;
     let mut over_start: Option<f64> = None;
     for (c, under, over) in decode_controls(s) {
-        let adv = char_advance(c) * h * wf;
+        let mut adv = char_advance(c) * h * wf;
         match stroke::glyph(c) {
             Some((_, spec)) => {
                 for st in stroke::strokes(spec) {
                     let pts: Vec<Vec2> = st.iter().map(|(gx, gy)| Vec2::new(x + (gx * sc * wf) + gy * sc * shear, gy * sc)).collect();
                     if pts.len() == 1 {
                         if let Some(p) = pts.first() {
-                            run.strokes.push(vec![*p, *p + Vec2::new(sc * 0.2, 0.0)]);
+                            out.strokes.push(vec![*p, *p + Vec2::new(sc * 0.2, 0.0)]);
                         }
                     } else {
-                        run.strokes.push(pts);
+                        out.strokes.push(pts);
                     }
                 }
             }
-            None if !c.is_whitespace() => {
-                // Unknown glyph: a small box, like a missing-glyph rectangle.
-                let w = 4.0 * sc * wf;
-                run.strokes.push(vec![Vec2::new(x, 0.0), Vec2::new(x + w, 0.0), Vec2::new(x + w, h), Vec2::new(x, h), Vec2::new(x, 0.0)]);
-            }
+            None if !c.is_whitespace() => match ttf::fallback_glyph(c) {
+                Some(g) => {
+                    let contours = ttf::place_glyph(&g, x, h, wf, shear);
+                    if !contours.is_empty() {
+                        out.glyphs.push(contours);
+                    }
+                    adv = g.advance * h / g.cap * wf;
+                }
+                None => {
+                    // Unknown glyph: a small box, like a missing-glyph rectangle.
+                    let w = 4.0 * sc * wf;
+                    out.strokes.push(vec![Vec2::new(x, 0.0), Vec2::new(x + w, 0.0), Vec2::new(x + w, h), Vec2::new(x, h), Vec2::new(x, 0.0)]);
+                }
+            },
             None => {}
         }
         // Decorations.
         match (under, under_start) {
             (true, None) => under_start = Some(x),
             (false, Some(sx)) => {
-                run.strokes.push(vec![Vec2::new(sx, -h * 0.2), Vec2::new(x, -h * 0.2)]);
+                out.strokes.push(vec![Vec2::new(sx, -h * 0.2), Vec2::new(x, -h * 0.2)]);
                 under_start = None;
             }
             _ => {}
@@ -122,7 +144,7 @@ pub fn layout_line(s: &str, height: f64, width_factor: f64, oblique: f64) -> Run
         match (over, over_start) {
             (true, None) => over_start = Some(x),
             (false, Some(sx)) => {
-                run.strokes.push(vec![Vec2::new(sx, h * 1.2), Vec2::new(x, h * 1.2)]);
+                out.strokes.push(vec![Vec2::new(sx, h * 1.2), Vec2::new(x, h * 1.2)]);
                 over_start = None;
             }
             _ => {}
@@ -131,34 +153,52 @@ pub fn layout_line(s: &str, height: f64, width_factor: f64, oblique: f64) -> Run
     }
     let end = (x - stroke::GAP * sc * wf).max(0.0);
     if let Some(sx) = under_start {
-        run.strokes.push(vec![Vec2::new(sx, -h * 0.2), Vec2::new(end, -h * 0.2)]);
+        out.strokes.push(vec![Vec2::new(sx, -h * 0.2), Vec2::new(end, -h * 0.2)]);
     }
     if let Some(sx) = over_start {
-        run.strokes.push(vec![Vec2::new(sx, h * 1.2), Vec2::new(end, h * 1.2)]);
+        out.strokes.push(vec![Vec2::new(sx, h * 1.2), Vec2::new(end, h * 1.2)]);
     }
-    run.width = end;
-    run
+    out.width = end;
+    out
+}
+
+/// Lay out a single line at `height`, with `width_factor` and `oblique` (radians), in the
+/// stroke font (fallback glyphs become closed outlines).
+pub fn layout_line(s: &str, height: f64, width_factor: f64, oblique: f64) -> Run {
+    let sh = shape_stroke(s, height, width_factor, oblique);
+    let mut strokes = sh.strokes;
+    strokes.extend(sh.glyphs.into_iter().flatten());
+    Run { strokes, width: sh.width }
 }
 
 /// Width of a line without building strokes.
 pub fn line_width(s: &str, height: f64, width_factor: f64) -> f64 {
-    let n: f64 = decode_controls(s).iter().map(|(c, _, _)| char_advance(*c)).sum();
-    (n * height * width_factor - stroke::GAP / stroke::CAP * height * width_factor).max(0.0)
+    let n: f64 = decode_controls(s).iter().map(|(c, _, _)| stroke_advance(*c, height, width_factor)).sum();
+    (n - stroke::GAP / stroke::CAP * height * width_factor).max(0.0)
 }
 
 /// The font a piece of text is set in: the built-in stroke font or an installed TrueType /
-/// OpenType font (outlines).
+/// OpenType face (outlines). Either way, characters the font lacks come from a fallback font.
 #[derive(Clone, Debug, Default)]
 pub enum TextFont {
     #[default]
     Stroke,
-    Outline(Arc<Vec<u8>>),
+    Outline(ttf::Face),
 }
 
 impl TextFont {
-    /// Resolve a text style font name: an installed TTF/OTF when found, else the stroke font.
+    /// Resolve a text style font name: an installed TTF/OTF/TTC when found; else, for a font we
+    /// can't find (an SHX file, a missing TTF), the FONTALT font ([`ttf::font_alt`]) when set;
+    /// else the stroke font.
     pub fn resolve(name: &str) -> TextFont {
-        ttf::find(name).map(TextFont::Outline).unwrap_or(TextFont::Stroke)
+        if let Some(f) = ttf::find(name) {
+            return TextFont::Outline(f);
+        }
+        let n = name.trim();
+        if n.is_empty() || n.eq_ignore_ascii_case(BUILTIN_FONT) {
+            return TextFont::Stroke;
+        }
+        ttf::find(&ttf::font_alt()).map(TextFont::Outline).unwrap_or(TextFont::Stroke)
     }
     pub fn is_outline(&self) -> bool {
         matches!(self, TextFont::Outline(_))
@@ -237,19 +277,18 @@ pub(crate) fn decorations(spans: &[(f64, f64, bool, bool)], h: f64) -> Vec<Vec<V
 /// Shape one line in `font` (baseline at y = 0, x from 0). TrueType fonts that fail to parse
 /// fall back to the stroke font.
 pub fn shape_line(font: &TextFont, s: &str, height: f64, width_factor: f64, oblique: f64) -> Shaped {
-    if let TextFont::Outline(bytes) = font
-        && let Some(sh) = ttf::shape(bytes, s, height, width_factor, oblique)
+    if let TextFont::Outline(face) = font
+        && let Some(sh) = ttf::shape(face, s, height, width_factor, oblique)
     {
         return sh;
     }
-    let run = layout_line(s, height, width_factor, oblique);
-    Shaped { strokes: run.strokes, glyphs: Vec::new(), width: run.width }
+    shape_stroke(s, height, width_factor, oblique)
 }
 
 /// Width of one line in `font`.
 pub fn text_width(font: &TextFont, s: &str, height: f64, width_factor: f64) -> f64 {
-    if let TextFont::Outline(bytes) = font
-        && let Some(w) = ttf::width(bytes, s, height, width_factor)
+    if let TextFont::Outline(face) = font
+        && let Some(w) = ttf::width(face, s, height, width_factor)
     {
         return w;
     }
@@ -451,10 +490,10 @@ mod ttf_tests {
     #[test]
     fn system_font_outlines_when_available() {
         // Skips cleanly when no common system font is installed.
-        let Some(bytes) = ["Arial", "Helvetica", "DejaVuSans", "Verdana", "LiberationSans-Regular"].iter().find_map(|n| crate::ttf::find(n)) else {
+        let Some(face) = ["Arial", "Helvetica", "DejaVuSans", "Verdana", "LiberationSans-Regular"].iter().find_map(|n| crate::ttf::find(n)) else {
             return;
         };
-        let run = crate::ttf::layout_line(&bytes, "CAD", 1.0, 1.0, 0.0).unwrap();
+        let run = crate::ttf::layout_line(&face, "CAD", 1.0, 1.0, 0.0).unwrap();
         assert!(run.strokes.len() >= 3, "glyph contours");
         assert!(run.width > 1.5 && run.width < 4.0, "width {}", run.width);
         let maxy = run.strokes.iter().flatten().map(|p| p.y).fold(f64::MIN, f64::max);
@@ -465,6 +504,74 @@ mod ttf_tests {
     fn stroke_names_are_not_ttf() {
         assert!(crate::ttf::find("txt.shx").is_none());
         assert!(crate::ttf::find("").is_none());
-        assert!(crate::ttf::layout_line(b"not a font", "x", 1.0, 1.0, 0.0).is_none());
+        let junk = crate::ttf::Face { bytes: std::sync::Arc::new(b"not a font".to_vec()), index: 0 };
+        assert!(crate::ttf::layout_line(&junk, "x", 1.0, 1.0, 0.0).is_none());
+    }
+
+    #[test]
+    fn fallback_ranking_prefers_wide_coverage_regular_fonts() {
+        let stems: Vec<String> =
+            ["zapfino", "dejavusans", "notosanscjk-bold", "notosanscjk-regular", "wqy-zenhei", "notosansarabic-regular", "arial"]
+                .map(String::from)
+                .to_vec();
+        let r = crate::ttf::rank_fallback(&stems);
+        assert_eq!(r.first().map(String::as_str), Some("notosanscjk-regular"));
+        assert_eq!(r.get(1).map(String::as_str), Some("notosanscjk-bold"));
+        assert_eq!(r.get(2).map(String::as_str), Some("wqy-zenhei"));
+        assert_eq!(r.last().map(String::as_str), Some("zapfino"));
+        assert_eq!(r.len(), stems.len());
+    }
+
+    #[test]
+    fn missing_glyph_without_fallback_draws_a_box() {
+        // Private-use code points never take a fallback font: the stroke font's box, no panic.
+        let sh = crate::shape_stroke("A\u{E000}", 1.0, 1.0, 0.0);
+        let sh2 = crate::shape_stroke("A\u{E000}B", 1.0, 1.0, 0.0);
+        assert!(sh.glyphs.is_empty() && sh2.glyphs.is_empty());
+        let boxed = sh.strokes.iter().any(|s| s.len() == 5 && s.first() == s.last() && s.iter().any(|p| (p.y - 1.0).abs() < 1e-9));
+        assert!(boxed, "missing-glyph box");
+        assert!((crate::line_width("A\u{E000}B", 1.0, 1.0) - sh2.width).abs() < 1e-9);
+    }
+
+    #[test]
+    fn hostile_collections_never_panic() {
+        // A TTC header claiming many faces with bogus or truncated offsets.
+        let mut ttc = b"ttcf\x00\x01\x00\x00\x7f\xff\xff\xff".to_vec();
+        ttc.extend_from_slice(&[0xff; 16]);
+        for bytes in [ttc.clone(), ttc[..10].to_vec(), b"ttcf".to_vec(), Vec::new()] {
+            let arc = std::sync::Arc::new(bytes);
+            assert!(crate::ttf::faces(&arc).is_empty());
+            assert!(crate::ttf::Face::new(arc.clone(), 3).is_none());
+            assert!(!crate::ttf::Face { bytes: arc, index: u32::MAX }.has_glyph('a'));
+        }
+        crate::ttf::register("cadcraft-hostile-test.ttc", ttc);
+        assert!(crate::ttf::find("cadcraft-hostile-test.ttc").is_none());
+        let _ = crate::ttf::fallback_for('\u{4E2D}');
+    }
+
+    #[test]
+    fn font_alt_that_is_not_installed_keeps_the_stroke_font() {
+        crate::ttf::set_fallback_fonts(" no-such-font-130 ; . ,other-missing ");
+        assert_eq!(crate::ttf::fallback_fonts(), "no-such-font-130, other-missing");
+        crate::ttf::set_fallback_fonts("");
+        crate::ttf::set_font_alt("no-such-font-130");
+        assert_eq!(crate::ttf::font_alt(), "no-such-font-130");
+        assert!(!crate::TextFont::resolve("romans.shx").is_outline());
+        crate::ttf::set_font_alt(".");
+        assert_eq!(crate::ttf::font_alt(), "");
+    }
+
+    #[test]
+    fn cjk_falls_back_to_an_installed_font_when_available() {
+        // Skips cleanly when no installed font covers CJK.
+        if crate::ttf::fallback_for('\u{4E2D}').is_none() {
+            return;
+        }
+        let sh = crate::shape_stroke("AB\u{4E2D}\u{6587}", 1.0, 1.0, 0.0);
+        assert_eq!(sh.glyphs.len(), 2, "two fallback glyphs");
+        assert!(!sh.strokes.iter().any(|s| s.len() == 5 && s.first() == s.last()), "no missing-glyph boxes");
+        let maxy = sh.glyphs.iter().flatten().flatten().map(|p| p.y).fold(f64::MIN, f64::max);
+        assert!(maxy > 0.8 && maxy < 1.8, "sized like TrueType text (cap height = text height), got {maxy}");
+        assert!((crate::line_width("AB\u{4E2D}\u{6587}", 1.0, 1.0) - sh.width).abs() < 1e-9);
     }
 }

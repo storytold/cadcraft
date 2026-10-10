@@ -24,6 +24,8 @@ const SESSION_VARS: &[&str] = &[
     "GRIPSIZE",
     "CURSORSIZE",
     "LASTPOINT",
+    "FONTALT",
+    "FONTFALLBACK",
 ];
 
 pub fn get(s: &Session, name: &str) -> Option<Value> {
@@ -49,6 +51,9 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "GRIPSIZE" => json!(st.gripsize),
         "CURSORSIZE" => json!(st.cursorsize),
         "LASTPOINT" => json!([s.last_point.x, s.last_point.y, 0.0]),
+        // Process-wide font substitution (profile settings, not saved in the drawing).
+        "FONTALT" => json!(cadcraft_fonts::ttf::font_alt()),
+        "FONTFALLBACK" => json!(cadcraft_fonts::ttf::fallback_fonts()),
         "CMDNAMES" => json!(s.running.as_ref().map(|r| r.id.to_ascii_uppercase()).unwrap_or_default()),
         "DWGNAME" => json!(s.state().map(|d| d.title.clone()).unwrap_or_default()),
         "DBMOD" => json!(s.state().map(|d| i32::from(d.is_dirty())).unwrap_or(0)),
@@ -116,6 +121,8 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         "PICKADD" => st.pickadd = as_bool(v).ok_or_else(bad)?,
         "GRIPSIZE" => st.gripsize = as_f64(v).ok_or_else(bad)?.clamp(1.0, 255.0),
         "CURSORSIZE" => st.cursorsize = as_f64(v).ok_or_else(bad)?.clamp(1.0, 100.0),
+        "FONTALT" => cadcraft_fonts::ttf::set_font_alt(v.as_str().ok_or_else(bad)?),
+        "FONTFALLBACK" => cadcraft_fonts::ttf::set_fallback_fonts(v.as_str().ok_or_else(bad)?),
         _ => {
             let d = s.doc_mut()?;
             let val = match v {

@@ -105,7 +105,7 @@ numbers):
 | Modify | ERASE, MOVE, COPY, ROTATE, SCALE, MIRROR, STRETCH, OFFSET, TRIM, EXTEND, FILLET, CHAMFER, BREAK, JOIN, EXPLODE, rectangular/polar ARRAY, draw order, OVERKILL |
 | Precision | Object snaps (endpoint, midpoint, center, geometric center, node, quadrant, intersection, insertion, perpendicular, tangent, nearest; deferred tangent/perpendicular for the first point of a line, e.g. belt lines tangent to two circles), polar tracking, ortho, grid snap |
 | Layers & properties | Layers palette and Layer Properties Manager (on/off, freeze, lock, plot, colour, linetype), layer tools (isolate, freeze, off, lock, match, previous), Properties palette with per-object editing, linetypes, lineweights, colour index and true colour |
-| Annotation | All DIM* commands with full DIMSTYLE variables, overrides and every arrowhead, associative dimensions that follow geometry, MLEADER, TABLE, TrueType fonts, MTEXT formatting codes (fonts, heights, colours, stacked fractions), our own single-stroke drafting font |
+| Annotation | All DIM* commands with full DIMSTYLE variables, overrides and every arrowhead, associative dimensions that follow geometry, MLEADER, TABLE, TrueType fonts (`.ttf`, `.otf`, `.ttc` collections), MTEXT formatting codes (fonts, heights, colours, stacked fractions), our own single-stroke drafting font |
 | Hatch & blocks | Pick-point hatch boundaries with islands, pattern, solid and gradient fills from our own pattern library, BLOCK/INSERT, attributes and nested blocks |
 | Files | DXF read/write (R12–2018, including dimension styles, associativity, tables and constraints), DWG read/write (R13–2018, via the acadrust library), PDF plotting, SVG and PNG export |
 | Layouts & plotting | Paper-space layouts, viewports (scale, lock, per-viewport layer freeze), MSPACE/PSPACE through viewports, page setups, PLOT and EXPORTPDF |
@@ -131,6 +131,22 @@ zoom e                          zoom to extents
 ```
 
 The web build: `cd apps/cadcraft-web && trunk serve` (needs [trunk](https://trunkrs.dev)).
+
+### Fonts
+
+CADCraft never ships fonts; it uses the TrueType/OpenType fonts installed on your system. SHX
+fonts (including big fonts such as `chineset.shx`) aren't read yet: text in an SHX style is drawn
+with our own stroke font, and any character a text's font lacks (CJK, for example) is drawn from
+an installed font that has it, preferring wide-coverage fonts such as Noto Sans CJK, Source Han
+Sans, WenQuanYi, PingFang or Microsoft JhengHei. Two settings, set with `SETVAR` or (for every
+run) an environment variable, steer this:
+
+| Variable | Environment | Meaning |
+|---|---|---|
+| `FONTALT` | `CADCRAFT_FONTALT` | Font used instead of a text style font that can't be found (an SHX file, a missing TTF), by file or family name, e.g. `Noto Sans CJK TC`. Empty (default) = our stroke font. |
+| `FONTFALLBACK` | `CADCRAFT_FONTFALLBACK` | Fonts tried first for characters a text's font lacks, comma-separated, e.g. `Noto Sans CJK TC, msjh.ttc`. |
+
+`.` clears either one.
 
 ## Drive it from agents, MCP and the CLI
 
