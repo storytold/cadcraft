@@ -16,7 +16,6 @@ pub mod control;
 pub mod credits;
 pub mod dialogs;
 pub mod dyninput;
-pub mod exchange;
 pub mod gpu;
 pub mod icons;
 pub mod layers;
@@ -27,6 +26,8 @@ pub mod parametric;
 pub mod quick;
 pub mod theme;
 pub mod viewcube;
+
+pub mod exchange;
 
 use std::sync::mpsc::Receiver;
 
