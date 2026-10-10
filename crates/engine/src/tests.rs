@@ -867,3 +867,57 @@ fn arc_refuses_zero_radius() {
         other => panic!("{other:?}"),
     }
 }
+
+/// The single polyline in a fresh drawing after typing `script`, then pressing Enter.
+fn typed_pline(script: &str) -> cadcraft_doc::LwPolyline {
+    let mut s = Session::new();
+    for line in script.split('\n') {
+        s.cmdline(line).unwrap();
+    }
+    s.cmdline("").unwrap();
+    let d = s.doc().unwrap();
+    let mut it = d.model.iter();
+    let pl = match &it.next().unwrap().kind {
+        EntityKind::LwPolyline(p) => p.clone(),
+        other => panic!("{other:?}"),
+    };
+    assert!(it.next().is_none(), "one polyline");
+    pl
+}
+
+/// (const_width, [(start_width, end_width) per vertex]).
+fn widths(p: &cadcraft_doc::LwPolyline) -> (f64, Vec<(f64, f64)>) {
+    (p.const_width, p.vertices.iter().map(|v| (v.start_width, v.end_width)).collect())
+}
+
+#[test]
+fn pline_halfwidth_is_centre_to_edge() {
+    // #83: half-width 0.5 at both prompts is a band 1.0 wide; Width keeps the total width.
+    assert_eq!(typed_pline("pline 0,0 h 0.5 0.5 10,0").const_width, 1.0);
+    assert_eq!(typed_pline("pline 0,0 w 0.5 0.5 10,0").const_width, 0.5);
+    assert_eq!(typed_pline("pline 0,0 w 1 1 10,0").const_width, 1.0);
+    // The ending half-width defaults to the starting one.
+    assert_eq!(typed_pline("pline 0,0 h 0.5\n\n10,0").const_width, 1.0);
+    // A half-width taper.
+    assert_eq!(widths(&typed_pline("pline 0,0 h 0.5 0.1 10,0")), (0.0, vec![(1.0, 0.2), (0.0, 0.0)]));
+}
+
+#[test]
+fn pline_width_answers_taper_the_next_segment() {
+    // #104: the starting and ending widths are the segment's own, not one constant width.
+    assert_eq!(widths(&typed_pline("pline 0,0 w 1 0.2 10,0")), (0.0, vec![(1.0, 0.2), (0.0, 0.0)]));
+    assert_eq!(widths(&typed_pline("pline 0,0 w 0.2 1 10,0")), (0.0, vec![(0.2, 1.0), (0.0, 0.0)]));
+    // Equal answers, or Enter at the ending prompt, stay one constant width.
+    assert_eq!(widths(&typed_pline("pline 0,0 w 1 1 10,0")), (1.0, vec![(0.0, 0.0), (0.0, 0.0)]));
+    assert_eq!(widths(&typed_pline("pline 0,0 w 1\n\n10,0")), (1.0, vec![(0.0, 0.0), (0.0, 0.0)]));
+    // After a taper, later segments are uniform at the ending width.
+    let p = typed_pline("pline 0,0 w 1 0.2 10,0 20,0 30,0");
+    assert_eq!(widths(&p), (0.0, vec![(1.0, 0.2), (0.2, 0.2), (0.2, 0.2), (0.0, 0.0)]));
+    // A width set mid-polyline applies from that segment on; the closing segment takes it too.
+    let p = typed_pline("pline 0,0 10,0 w 2 2 10,10 c");
+    assert!(p.closed);
+    assert_eq!(widths(&p), (0.0, vec![(0.0, 0.0), (2.0, 2.0), (2.0, 2.0)]));
+    // Undo drops the taper with its segment.
+    let p = typed_pline("pline 0,0 10,0 w 1 0.2 20,0 u");
+    assert_eq!(widths(&p), (0.0, vec![(0.0, 0.0), (0.0, 0.0)]));
+}
