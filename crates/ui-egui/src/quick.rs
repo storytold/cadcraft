@@ -60,6 +60,8 @@ fn pretty(k: &str) -> String {
 }
 
 pub fn qselect_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
+    let language = app.ui.language.clone();
+    let tr = |english: &str| crate::i18n::tr(&language, english).to_owned();
     let t = Tokens::get();
     let sid = egui::Id::new("qselect_state");
     let mut st: QsState = ctx.data_mut(|d| d.get_temp(sid)).unwrap_or_default();
@@ -76,20 +78,20 @@ pub fn qselect_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let has_sel = !app.session.selection().is_empty();
     let mut run: Option<Value> = None;
     let mut close = false;
-    egui::Window::new("Quick Select").open(open).collapsible(false).resizable(false).default_width(380.0).show(ctx, |ui| {
+    egui::Window::new(tr("Quick Select")).open(open).collapsible(false).resizable(false).default_width(380.0).show(ctx, |ui| {
         egui::Grid::new("qs_grid").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
-            ui.label("Apply to:");
+            ui.label(tr("Apply to:"));
             egui::ComboBox::from_id_salt("qs_apply")
                 .width(220.0)
-                .selected_text(if st.apply_selection { "Current selection" } else { "Entire drawing" })
+                .selected_text(if st.apply_selection { tr("Current selection") } else { tr("Entire drawing") })
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut st.apply_selection, false, "Entire drawing");
+                    ui.selectable_value(&mut st.apply_selection, false, tr("Entire drawing"));
                     ui.add_enabled_ui(has_sel, |ui| {
-                        ui.selectable_value(&mut st.apply_selection, true, "Current selection");
+                        ui.selectable_value(&mut st.apply_selection, true, tr("Current selection"));
                     });
                 });
             ui.end_row();
-            ui.label("Object type:");
+            ui.label(tr("Object type:"));
             let types: Vec<(String, u64)> = st
                 .info
                 .get("types")
@@ -100,14 +102,14 @@ pub fn qselect_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                         .collect()
                 })
                 .unwrap_or_default();
-            egui::ComboBox::from_id_salt("qs_type").width(220.0).selected_text(st.ty.clone()).show_ui(ui, |ui| {
-                ui.selectable_value(&mut st.ty, "Multiple".to_string(), "Multiple");
+            egui::ComboBox::from_id_salt("qs_type").width(220.0).selected_text(tr(&st.ty)).show_ui(ui, |ui| {
+                ui.selectable_value(&mut st.ty, "Multiple".to_string(), tr("Multiple"));
                 for (n, c) in &types {
-                    ui.selectable_value(&mut st.ty, n.clone(), format!("{n} ({c})"));
+                    ui.selectable_value(&mut st.ty, n.clone(), format!("{} ({c})", tr(n)));
                 }
             });
             ui.end_row();
-            ui.label("Properties:");
+            ui.label(tr("Properties:"));
             let props: Vec<String> = st
                 .info
                 .get("properties")
@@ -127,15 +129,15 @@ pub fn qselect_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 });
             });
             ui.end_row();
-            ui.label("Operator:");
+            ui.label(tr("Operator:"));
             let op_label = OPERATORS.iter().find(|o| o.0 == st.operator).map(|o| o.1).unwrap_or("= Equals");
-            egui::ComboBox::from_id_salt("qs_op").width(220.0).selected_text(op_label).show_ui(ui, |ui| {
+            egui::ComboBox::from_id_salt("qs_op").width(220.0).selected_text(tr(op_label)).show_ui(ui, |ui| {
                 for (o, l) in OPERATORS {
-                    ui.selectable_value(&mut st.operator, o.to_string(), *l);
+                    ui.selectable_value(&mut st.operator, o.to_string(), tr(l));
                 }
             });
             ui.end_row();
-            ui.label("Value:");
+            ui.label(tr("Value:"));
             let choices: Vec<String> = match st.property.as_str() {
                 "color" => {
                     ["ByLayer", "ByBlock", "Red", "Yellow", "Green", "Cyan", "Blue", "Magenta", "White"].iter().map(|s| s.to_string()).collect()
@@ -149,9 +151,9 @@ pub fn qselect_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 ui.add(egui::TextEdit::singleline(&mut st.value).desired_width(if choices.is_empty() { 220.0 } else { 190.0 }));
                 if !choices.is_empty() {
                     ui.menu_button("▼", |ui| {
-                        egui::ScrollArea::vertical().max_height(240.0).show(ui, |ui| {
+                        egui::ScrollArea::vertical().max_height(160.0).show(ui, |ui| {
                             for c in &choices {
-                                if ui.button(c).clicked() {
+                                if ui.button(tr(c)).clicked() {
                                     st.value = c.clone();
                                     ui.close();
                                 }
@@ -163,14 +165,14 @@ pub fn qselect_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             ui.end_row();
         });
         ui.separator();
-        ui.label("How to apply:");
-        ui.radio_value(&mut st.exclude, false, "Include in new selection set");
-        ui.radio_value(&mut st.exclude, true, "Exclude from new selection set");
-        ui.checkbox(&mut st.append, "Append to current selection set");
+        ui.label(tr("How to apply:"));
+        ui.radio_value(&mut st.exclude, false, tr("Include in new selection set"));
+        ui.radio_value(&mut st.exclude, true, tr("Exclude from new selection set"));
+        ui.checkbox(&mut st.append, tr("Append to current selection set"));
         ui.separator();
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("  OK  ").clicked() {
+                if ui.button(tr("  OK  ")).clicked() {
                     let mode = if st.exclude {
                         "exclude"
                     } else if st.append {
@@ -196,7 +198,7 @@ pub fn qselect_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                     run = Some(p);
                     close = true;
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.button(tr("Cancel")).clicked() {
                     close = true;
                 }
             });
@@ -238,6 +240,8 @@ fn ro_row(ui: &mut egui::Ui, label: &str, v: String) {
 
 /// The Quick Properties palette, near where the selection was made.
 pub fn quick_properties(app: &mut CadApp, ctx: &egui::Context) {
+    let language = app.ui.language.clone();
+    let tr = |english: &str| crate::i18n::tr(&language, english).to_owned();
     let sid = egui::Id::new("qp_state");
     let sel = app.session.selection();
     let active = app.session.settings.qpmode
@@ -269,11 +273,11 @@ pub fn quick_properties(app: &mut CadApp, ctx: &egui::Context) {
     let ty = first.kind.type_name();
     let same_type = ents.iter().all(|e| e.kind.type_name() == ty);
     let title = if ents.len() == 1 {
-        ty.to_string()
+        tr(ty)
     } else if same_type {
         format!("{ty} ({})", ents.len())
     } else {
-        format!("All ({})", ents.len())
+        format!("{} ({})", tr("All"), ents.len())
     };
     let same = |f: &dyn Fn(&cadcraft_doc::Entity) -> String| -> String {
         let v0 = ents.first().map(|e| f(e)).unwrap_or_default();
@@ -297,13 +301,13 @@ pub fn quick_properties(app: &mut CadApp, ctx: &egui::Context) {
         .default_width(250.0)
         .show(ctx, |ui| {
             egui::Grid::new("qp_grid").num_columns(2).spacing(vec2(10.0, 4.0)).min_col_width(80.0).show(ui, |ui| {
-                ui.label(RichText::new("Color").color(Tokens::get().text_dim));
+                ui.label(RichText::new(tr("Color")).color(Tokens::get().text_dim));
                 let cur = color.unwrap_or(cadcraft_color::Color::ByLayer);
                 if let Some(c) = crate::layers::color_button(ui, egui::Id::new(("qp_color", &ids)), cur, true, 150.0) {
                     set = Some(("color".into(), json!(c.name())));
                 }
                 ui.end_row();
-                ui.label(RichText::new("Layer").color(Tokens::get().text_dim));
+                ui.label(RichText::new(tr("Layer")).color(Tokens::get().text_dim));
                 egui::ComboBox::from_id_salt("qp_layer").width(150.0).selected_text(layer.clone()).show_ui(ui, |ui| {
                     for l in &layers {
                         if ui.selectable_label(*l == layer, l).clicked() {
@@ -312,7 +316,7 @@ pub fn quick_properties(app: &mut CadApp, ctx: &egui::Context) {
                     }
                 });
                 ui.end_row();
-                ui.label(RichText::new("Linetype").color(Tokens::get().text_dim));
+                ui.label(RichText::new(tr("Linetype")).color(Tokens::get().text_dim));
                 egui::ComboBox::from_id_salt("qp_lt").width(150.0).selected_text(linetype.clone()).show_ui(ui, |ui| {
                     for l in std::iter::once("ByLayer".to_string())
                         .chain(std::iter::once("ByBlock".to_string()))
@@ -359,7 +363,7 @@ pub fn quick_properties(app: &mut CadApp, ctx: &egui::Context) {
                         num_row(ui, "Global width", id("w"), p.const_width, &mut set, "width");
                     }
                     Some(EntityKind::Text(tx)) => {
-                        ui.label(RichText::new("Contents").color(Tokens::get().text_dim));
+                        ui.label(RichText::new(tr("Contents")).color(Tokens::get().text_dim));
                         if let Some(v) = crate::parametric::expr_field(ui, id("txt"), &tx.value) {
                             set = Some(("text".into(), json!(v)));
                         }
@@ -368,7 +372,7 @@ pub fn quick_properties(app: &mut CadApp, ctx: &egui::Context) {
                         num_row(ui, "Rotation", id("rot"), tx.rotation.to_degrees(), &mut set, "rotation");
                     }
                     Some(EntityKind::MText(tx)) => {
-                        ui.label(RichText::new("Contents").color(Tokens::get().text_dim));
+                        ui.label(RichText::new(tr("Contents")).color(Tokens::get().text_dim));
                         if let Some(v) = crate::parametric::expr_field(ui, id("mtxt"), &tx.contents) {
                             set = Some(("text".into(), json!(v)));
                         }
@@ -381,7 +385,7 @@ pub fn quick_properties(app: &mut CadApp, ctx: &egui::Context) {
                         num_row(ui, "Scale", id("sc"), i.scale.x, &mut set, "scale");
                     }
                     Some(EntityKind::Dimension(dm)) => {
-                        ui.label(RichText::new("Text override").color(Tokens::get().text_dim));
+                        ui.label(RichText::new(tr("Text override")).color(Tokens::get().text_dim));
                         if let Some(v) = crate::parametric::expr_field(ui, id("dt"), &dm.text) {
                             set = Some(("textOverride".into(), json!(v)));
                         }
@@ -392,7 +396,7 @@ pub fn quick_properties(app: &mut CadApp, ctx: &egui::Context) {
             });
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("Close").on_hover_text("Turn Quick Properties off (QPMODE)").clicked() {
+                    if ui.small_button(tr("Close")).on_hover_text(tr("Turn Quick Properties off (QPMODE)")).clicked() {
                         close = true;
                     }
                 });

@@ -503,6 +503,7 @@ struct Row {
 
 /// The Parameters Manager (PARAMETERS): name / expression / value; edit, add, delete.
 pub fn parameters_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
+    let language = app.ui.language.clone();
     let t = Tokens::get();
     let rows: Vec<Row> = app
         .session
@@ -514,9 +515,9 @@ pub fn parameters_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool)
     let filter_id = egui::Id::new("par_filter");
     let mut filter = ctx.data_mut(|d| d.get_temp::<String>(filter_id)).unwrap_or_default();
     let mut action: Option<Value> = None;
-    egui::Window::new("Parameters Manager").open(open).default_size(vec2(560.0, 300.0)).resizable(true).show(ctx, |ui| {
+    egui::Window::new(crate::i18n::tr(&language, "Parameters Manager")).open(open).default_size(vec2(560.0, 300.0)).resizable(true).show(ctx, |ui| {
         ui.horizontal(|ui| {
-            if ui.button("ƒx  New User Parameter").on_hover_text("Creates a user parameter").clicked() {
+            if ui.button(crate::i18n::tr(&language, "ƒx  New User Parameter")).on_hover_text(crate::i18n::tr(&language, "Creates a user parameter")).clicked() {
                 let mut n = 1;
                 while rows.iter().any(|r| r.name == format!("user{n}")) {
                     n += 1;
@@ -524,7 +525,7 @@ pub fn parameters_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool)
                 action = Some(json!({ "name": format!("user{n}"), "expr": "1" }));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(egui::TextEdit::singleline(&mut filter).hint_text("Search for parameter").desired_width(170.0));
+                ui.add(egui::TextEdit::singleline(&mut filter).hint_text(crate::i18n::tr(&language, "Search for parameter")).desired_width(170.0));
             });
         });
         ui.separator();
@@ -532,13 +533,13 @@ pub fn parameters_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool)
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             egui::Grid::new("par_grid").striped(true).num_columns(5).spacing(vec2(12.0, 4.0)).min_col_width(60.0).show(ui, |ui| {
                 for h in ["Name", "Expression", "Value", "Type", ""] {
-                    ui.label(egui::RichText::new(h).strong());
+                    ui.label(egui::RichText::new(crate::i18n::tr(&language, h)).strong());
                 }
                 ui.end_row();
                 for (kind, title) in [("dimensional", "Dimensional Constraint Parameters"), ("user", "User Parameters")] {
                     let group: Vec<&Row> =
                         rows.iter().filter(|r| r.kind == kind && (f.is_empty() || r.name.to_ascii_lowercase().contains(&f))).collect();
-                    ui.label(egui::RichText::new(title).color(t.text_dim).small());
+                    ui.label(egui::RichText::new(crate::i18n::tr(&language, title)).color(t.text_dim).small());
                     ui.end_row();
                     for r in group {
                         ui.label(&r.name);
@@ -548,12 +549,12 @@ pub fn parameters_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool)
                         }
                         match (&r.value, &r.error) {
                             (Some(v), _) => ui.label(trim_num(*v, 4)),
-                            (None, Some(e)) => ui.label(egui::RichText::new("error").color(Color32::from_rgb(0xff, 0x8a, 0x6a))).on_hover_text(e),
+                            (None, Some(e)) => ui.label(egui::RichText::new(crate::i18n::tr(&language, "error")).color(Color32::from_rgb(0xff, 0x8a, 0x6a))).on_hover_text(e),
                             _ => ui.label(""),
                         };
-                        ui.label(egui::RichText::new(if kind == "user" { "User" } else { r.description.as_str() }).color(t.text_dim));
+                        ui.label(egui::RichText::new(if kind == "user" { crate::i18n::tr(&language, "User") } else { r.description.as_str() }).color(t.text_dim));
                         if kind == "user" {
-                            if ui.small_button("Delete").clicked() {
+                            if ui.small_button(crate::i18n::tr(&language, "Delete")).clicked() {
                                 action = Some(json!({ "delete": r.name }));
                             }
                         } else {

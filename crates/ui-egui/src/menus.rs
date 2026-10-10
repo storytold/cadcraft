@@ -283,10 +283,10 @@ pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
     out
 }
 
-fn entry_ui(ui: &mut egui::Ui, e: &Entry, clicked: &mut Option<String>) {
+fn entry_ui(ui: &mut egui::Ui, e: &Entry, clicked: &mut Option<String>, language: &str) {
     match e {
         Entry::Item { label, id, shortcut, enabled } => {
-            let mut b = egui::Button::new(label);
+            let mut b = egui::Button::new(crate::i18n::tr(language, label));
             if let Some(s) = shortcut {
                 b = b.shortcut_text(s.replace("Cmd+", "⌘").replace("Shift+", "⇧"));
             }
@@ -296,9 +296,9 @@ fn entry_ui(ui: &mut egui::Ui, e: &Entry, clicked: &mut Option<String>) {
             }
         }
         Entry::Sub { label, children } => {
-            ui.menu_button(label, |ui| {
+            ui.menu_button(crate::i18n::tr(language, label), |ui| {
                 for c in children {
-                    entry_ui(ui, c, clicked);
+                    entry_ui(ui, c, clicked, language);
                 }
             });
         }
@@ -308,21 +308,34 @@ fn entry_ui(ui: &mut egui::Ui, e: &Entry, clicked: &mut Option<String>) {
 pub fn menu_bar(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = crate::theme::Tokens::get();
     let tree = tree(app);
+    let language = app.ui.language.clone();
+    let mut chosen_language: Option<String> = None;
     let mut clicked = None;
     egui::Panel::top("cc_menubar").exact_size(22.0).frame(egui::Frame::NONE.fill(t.chrome_dark).inner_margin(egui::Margin::symmetric(6, 0))).show(
         ui,
         |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 for (name, entries) in &tree {
-                    ui.menu_button(name, |ui| {
+                    ui.menu_button(crate::i18n::tr(&language, name), |ui| {
                         for e in entries {
-                            entry_ui(ui, e, &mut clicked);
+                            entry_ui(ui, e, &mut clicked, &language);
                         }
                     });
                 }
+                ui.menu_button(if language == "pl" { "Język" } else { "Language" }, |ui| {
+                    if ui.selectable_label(language == "en", "English").clicked() {
+                        chosen_language = Some("en".to_string());
+                        ui.close();
+                    }
+                    if ui.selectable_label(language == "pl", "Polski").clicked() {
+                        chosen_language = Some("pl".to_string());
+                        ui.close();
+                    }
+                });
             });
         },
     );
+    if let Some(lang) = chosen_language { app.ui.language = lang; }
     if let Some(id) = clicked {
         activate(app, &id);
     }

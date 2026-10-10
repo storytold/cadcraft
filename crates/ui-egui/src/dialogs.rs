@@ -17,7 +17,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         "qselect" => crate::quick::qselect_dialog(app, ctx, &mut open),
         "parameters" => crate::parametric::parameters_dialog(app, ctx, &mut open),
         "dsettings" => dsettings(app, ctx, &mut open),
-        "about" => about(ctx, &mut open),
+        "about" => about(&app.ui.language, ctx, &mut open),
         "commands" => commands(app, ctx, &mut open),
         "blocks" => blocks(app, ctx, &mut open),
         other => crate::managers::dialog(app, ctx, other, &mut open),
@@ -28,29 +28,30 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
 }
 
 fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
-    egui::Window::new("Drafting Settings").open(open).resizable(false).show(ctx, |ui| {
+    let language = app.ui.language.clone();
+    egui::Window::new(crate::i18n::tr(&language, "Drafting Settings")).open(open).resizable(false).show(ctx, |ui| {
         let s = &mut app.session.settings;
-        ui.heading("Snap and Grid");
-        ui.checkbox(&mut s.snapmode, "Snap On (F9)");
+        ui.heading(crate::i18n::tr(&language, "Snap and Grid"));
+        ui.checkbox(&mut s.snapmode, crate::i18n::tr(&language, "Snap On (F9)"));
         ui.horizontal(|ui| {
-            ui.label("Snap X spacing");
+            ui.label(crate::i18n::tr(&language, "Snap X spacing"));
             ui.add(egui::DragValue::new(&mut s.snapunit.x).speed(0.05).range(0.0001..=1e6));
             ui.label("Y");
             ui.add(egui::DragValue::new(&mut s.snapunit.y).speed(0.05).range(0.0001..=1e6));
         });
-        ui.checkbox(&mut s.gridmode, "Grid On (F7)");
+        ui.checkbox(&mut s.gridmode, crate::i18n::tr(&language, "Grid On (F7)"));
         ui.horizontal(|ui| {
-            ui.label("Grid spacing");
+            ui.label(crate::i18n::tr(&language, "Grid spacing"));
             ui.add(egui::DragValue::new(&mut s.gridunit.x).speed(0.05).range(0.0001..=1e6));
-            ui.label("Major line every");
+            ui.label(crate::i18n::tr(&language, "Major line every"));
             ui.add(egui::DragValue::new(&mut s.gridmajor).range(1..=100));
         });
         ui.separator();
-        ui.heading("Polar Tracking");
-        ui.checkbox(&mut s.polarmode, "Polar Tracking On (F10)");
+        ui.heading(crate::i18n::tr(&language, "Polar Tracking"));
+        ui.checkbox(&mut s.polarmode, crate::i18n::tr(&language, "Polar Tracking On (F10)"));
         let mut deg = s.polarang.to_degrees();
         ui.horizontal(|ui| {
-            ui.label("Increment angle");
+            ui.label(crate::i18n::tr(&language, "Increment angle"));
             egui::ComboBox::from_id_salt("polarang").selected_text(format!("{deg}")).show_ui(ui, |ui| {
                 for a in [90.0, 45.0, 30.0, 22.5, 18.0, 15.0, 10.0, 5.0] {
                     ui.selectable_value(&mut deg, a, format!("{a}"));
@@ -59,9 +60,9 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         });
         s.polarang = deg.to_radians();
         ui.separator();
-        ui.heading("Object Snap");
+        ui.heading(crate::i18n::tr(&language, "Object Snap"));
         let mut on = s.osmode & cadcraft_engine::snap::mode::OFF == 0;
-        if ui.checkbox(&mut on, "Object Snap On (F3)").changed() {
+        if ui.checkbox(&mut on, crate::i18n::tr(&language, "Object Snap On (F3)")).changed() {
             if on {
                 s.osmode &= !cadcraft_engine::snap::mode::OFF;
             } else {
@@ -71,7 +72,7 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         egui::Grid::new("osnap_grid").num_columns(2).show(ui, |ui| {
             for (i, (bit, name)) in cadcraft_engine::snap::mode::ALL.iter().enumerate() {
                 let mut v = s.osmode & bit != 0;
-                if ui.checkbox(&mut v, *name).changed() {
+                if ui.checkbox(&mut v, crate::i18n::tr(&language, name)).changed() {
                     if v {
                         s.osmode |= bit;
                     } else {
@@ -84,19 +85,19 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             }
         });
         ui.separator();
-        ui.checkbox(&mut s.dynmode, "Enable Dynamic Input (F12)");
-        ui.checkbox(&mut s.orthomode, "Ortho (F8)");
+        ui.checkbox(&mut s.dynmode, crate::i18n::tr(&language, "Enable Dynamic Input (F12)"));
+        ui.checkbox(&mut s.orthomode, crate::i18n::tr(&language, "Ortho (F8)"));
     });
 }
 
-fn about(ctx: &egui::Context, open: &mut bool) {
+fn about(language: &str, ctx: &egui::Context, open: &mut bool) {
     let t = Tokens::get();
     let tab_id = egui::Id::new("about_tab");
-    egui::Window::new("About CADCraft").open(open).default_size(vec2(640.0, 420.0)).collapsible(false).show(ctx, |ui| {
+    egui::Window::new(crate::i18n::tr(language, "About CADCraft")).open(open).default_size(vec2(640.0, 420.0)).collapsible(false).show(ctx, |ui| {
         let mut tab = ui.data_mut(|d| d.get_temp::<u8>(tab_id)).unwrap_or(0);
         ui.horizontal(|ui| {
             for (i, l) in ["About", "Contributors", "Models"].iter().enumerate() {
-                if ui.selectable_label(tab == i as u8, *l).clicked() {
+                if ui.selectable_label(tab == i as u8, crate::i18n::tr(language, l)).clicked() {
                     tab = i as u8;
                 }
             }
@@ -108,14 +109,14 @@ fn about(ctx: &egui::Context, open: &mut bool) {
             2 => crate::credits::models_ui(ui),
             _ => {
                 ui.heading("CADCraft");
-                ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
-                ui.label("Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust.");
+                ui.label(format!("{} {}", crate::i18n::tr(language, "Version"), env!("CARGO_PKG_VERSION")));
+                ui.label(crate::i18n::tr(language, "Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust."));
                 ui.add_space(6.0);
-                ui.label(RichText::new("One of the Crafting Apps by the ArtCraft team and community.").color(t.text_dim));
+                ui.label(RichText::new(crate::i18n::tr(language, "One of the Crafting Apps by the ArtCraft team and community.")).color(t.text_dim));
                 ui.hyperlink_to("getartcraft.com/apps/cadcraft", "https://getartcraft.com/apps/cadcraft");
-                ui.hyperlink_to("Join us on Discord", "https://discord.gg/artcraft");
+                ui.hyperlink_to(crate::i18n::tr(language, "Join us on Discord"), "https://discord.gg/artcraft");
                 ui.add_space(6.0);
-                ui.label(RichText::new("MIT OR Apache-2.0. Not affiliated with Autodesk, Inc.").small().color(t.text_faint));
+                ui.label(RichText::new(crate::i18n::tr(language, "MIT OR Apache-2.0. Not affiliated with Autodesk, Inc.")).small().color(t.text_faint));
             }
         }
     });
@@ -123,11 +124,12 @@ fn about(ctx: &egui::Context, open: &mut bool) {
 
 fn commands(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let mut start = None;
-    egui::Window::new("Command Reference").open(open).default_size(vec2(640.0, 480.0)).show(ctx, |ui| {
+    let language = app.ui.language.clone();
+    egui::Window::new(crate::i18n::tr(&language, "Command Reference")).open(open).default_size(vec2(640.0, 480.0)).show(ctx, |ui| {
         let id = ui.id().with("cmdfilter");
         let mut filter = ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_default();
         ui.horizontal(|ui| {
-            ui.label("Filter");
+            ui.label(crate::i18n::tr(&language, "Filter"));
             ui.text_edit_singleline(&mut filter);
         });
         ui.data_mut(|d| d.insert_temp(id, filter.clone()));
@@ -141,7 +143,7 @@ fn commands(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                     if ui.link(c.id.to_ascii_uppercase()).clicked() {
                         start = Some(c.id);
                     }
-                    ui.label(c.label);
+                    ui.label(crate::i18n::tr(&language, c.label));
                     ui.label(RichText::new(if c.aliases.is_empty() { String::new() } else { c.aliases.join(", ").to_ascii_uppercase() }).small());
                     ui.end_row();
                 }
@@ -155,11 +157,12 @@ fn commands(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
 }
 
 fn blocks(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
-    egui::Window::new("Blocks").open(open).default_size(vec2(320.0, 360.0)).show(ctx, |ui| {
+    let language = app.ui.language.clone();
+    egui::Window::new(crate::i18n::tr(&language, "Blocks")).open(open).default_size(vec2(320.0, 360.0)).show(ctx, |ui| {
         let Ok(d) = app.session.doc() else { return };
         let names: Vec<&String> = d.blocks.keys().filter(|k| !k.starts_with('*')).collect();
         if names.is_empty() {
-            ui.label("No blocks defined in this drawing.");
+            ui.label(crate::i18n::tr(&language, "No blocks defined in this drawing."));
         }
         for n in names {
             ui.label(n);
@@ -179,31 +182,32 @@ fn mtext_editor(app: &mut CadApp, ctx: &egui::Context) {
     let mut buf = ctx.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_default();
     let mut submit = None;
     let mut cancel = false;
-    egui::Window::new("Text Editor").collapsible(false).resizable(true).default_size(vec2(460.0, 220.0)).show(ctx, |ui| {
+    let language = app.ui.language.clone();
+    egui::Window::new(crate::i18n::tr(&language, "Text Editor")).collapsible(false).resizable(true).default_size(vec2(460.0, 220.0)).show(ctx, |ui| {
         ui.horizontal(|ui| {
-            ui.label("Style: Standard");
+            ui.label(crate::i18n::tr(&language, "Style: Standard"));
             ui.separator();
             let h = app.session.doc().map(|d| d.header.f64("TEXTSIZE", 0.2)).unwrap_or(0.2);
-            ui.label(format!("Height: {h:.4}"));
+            ui.label(format!("{} {h:.4}", crate::i18n::tr(&language, "Height:")));
             ui.separator();
-            if ui.button("B").on_hover_text("Bold").clicked() {
+            if ui.button("B").on_hover_text(crate::i18n::tr(&language, "Bold")).clicked() {
                 buf.push_str("{\\fArial|b1;}");
             }
-            if ui.button("⅟").on_hover_text("Stack (type 1/2 then select)").clicked() {
+            if ui.button("⅟").on_hover_text(crate::i18n::tr(&language, "Stack (type 1/2 then select)")).clicked() {
                 buf.push_str("\\S1/2;");
             }
-            if ui.button("°").on_hover_text("Degree").clicked() {
+            if ui.button("°").on_hover_text(crate::i18n::tr(&language, "Degree")).clicked() {
                 buf.push_str("%%d");
             }
-            if ui.button("±").on_hover_text("Plus/minus").clicked() {
+            if ui.button("±").on_hover_text(crate::i18n::tr(&language, "Plus/minus")).clicked() {
                 buf.push_str("%%p");
             }
-            if ui.button("⌀").on_hover_text("Diameter").clicked() {
+            if ui.button("⌀").on_hover_text(crate::i18n::tr(&language, "Diameter")).clicked() {
                 buf.push_str("%%c");
             }
         });
         let r = ui.add(
-            egui::TextEdit::multiline(&mut buf).desired_rows(6).desired_width(f32::INFINITY).hint_text("Type text; Enter starts a new paragraph"),
+            egui::TextEdit::multiline(&mut buf).desired_rows(6).desired_width(f32::INFINITY).hint_text(crate::i18n::tr(&language, "Type text; Enter starts a new paragraph")),
         );
         if !r.has_focus() && buf.is_empty() {
             r.request_focus();
@@ -212,10 +216,10 @@ fn mtext_editor(app: &mut CadApp, ctx: &egui::Context) {
             if ui.button("OK").clicked() || (r.has_focus() && ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Enter))) {
                 submit = Some(buf.replace('\n', "\\P"));
             }
-            if ui.button("Cancel").clicked() {
+            if ui.button(crate::i18n::tr(&language, "Cancel")).clicked() {
                 cancel = true;
             }
-            ui.label(RichText::new("⌘↩ to finish").small());
+            ui.label(RichText::new(crate::i18n::tr(&language, "⌘↩ to finish")).small());
         });
     });
     ctx.data_mut(|d| d.insert_temp(id, buf));

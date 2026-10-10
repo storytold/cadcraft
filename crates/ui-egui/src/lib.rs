@@ -17,6 +17,7 @@ pub mod credits;
 pub mod dialogs;
 pub mod gpu;
 pub mod icons;
+pub mod i18n;
 pub mod layers;
 pub mod managers;
 pub mod menus;
@@ -42,6 +43,8 @@ pub const PREFS_KEY: &str = "cadcraft.prefs";
 #[serde(default, rename_all = "camelCase")]
 pub struct UiState {
     pub show_toolsets: bool,
+    /// UI language: en or pl.
+    pub language: String,
     pub show_palettes: bool,
     pub show_toolbar: bool,
     pub show_file_tabs: bool,
@@ -67,6 +70,7 @@ impl Default for UiState {
     fn default() -> Self {
         UiState {
             show_toolsets: true,
+            language: "en".into(),
             show_palettes: true,
             show_toolbar: true,
             show_file_tabs: true,

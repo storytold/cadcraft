@@ -828,7 +828,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     if app.ui.show_viewcube && sheet.is_none() {
         draw_viewcube(app, ui, rect);
     }
-    viewport_label(&painter, rect);
+    viewport_label(app, &painter, rect);
     // Command line overlay.
     if app.ui.show_command_line {
         crate::cmdline::show(app, ui, rect);
@@ -874,20 +874,21 @@ fn draw_crosshair(app: &CadApp, p: &egui::Painter, rect: Rect, at: Pos2, pickbox
 
 fn dynamic_input(app: &CadApp, p: &egui::Painter, at: Pos2) {
     let Some(prompt) = app.session.current_prompt() else { return };
-    let mut text = prompt.message.clone();
+    let translated = crate::i18n::tr(&app.ui.language, &prompt.message);
+    let mut text = translated.to_owned();
     if !app.cmd.buffer.is_empty() {
-        text = format!("{}: {}", prompt.message, app.cmd.buffer);
+        text = format!("{}: {}", translated, app.cmd.buffer);
     } else if let (Some(base), Some(c)) = (prompt.base, app.canvas.cursor) {
         text = format!(
             "{}   {}  <  {}°",
-            prompt.message,
+            translated,
             cadcraft_engine::units::format_distance(base.dist(c), 2, 4),
             (base.angle_to(c).to_degrees() * 10.0).round() / 10.0
         );
     } else if let Some(c) = app.canvas.cursor {
         text = format!(
             "{}   {}, {}",
-            prompt.message,
+            translated,
             cadcraft_engine::units::format_distance(c.x, 2, 4),
             cadcraft_engine::units::format_distance(c.y, 2, 4)
         );
@@ -911,10 +912,11 @@ fn draw_ucs_icon(p: &egui::Painter, rect: Rect) {
     p.text(o + vec2(0.0, -70.0), egui::Align2::CENTER_BOTTOM, "Y", f, t.canvas_ink);
 }
 
-fn viewport_label(p: &egui::Painter, rect: Rect) {
+fn viewport_label(app: &CadApp, p: &egui::Painter, rect: Rect) {
     let t = Tokens::get();
     let at = pos2(rect.left() + 10.0, rect.top() + 8.0);
-    p.text(at, egui::Align2::LEFT_TOP, "+  |  Top  |  2D Wireframe", crate::theme::small(), t.canvas_ink);
+    let caption = format!("+  |  {}  |  {}", crate::i18n::tr(&app.ui.language, "Top"), crate::i18n::tr(&app.ui.language, "2D Wireframe"));
+    p.text(at, egui::Align2::LEFT_TOP, caption, crate::theme::small(), t.canvas_ink);
 }
 
 fn draw_viewcube(app: &mut CadApp, ui: &mut egui::Ui, rect: Rect) {
