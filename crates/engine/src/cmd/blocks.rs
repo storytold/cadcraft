@@ -21,7 +21,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("insert", "Block...", run_insert)
             .menu(&["Insert", "Block..."])
             .alias(&["i", "-insert", "ddinsert"])
-            .params("{name, at: [x,y], scale?, rotation? (degrees), attribs?: {TAG: value}, explode?: bool}")
+            .params("{name, at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y] (block coordinates), attribs?: {TAG: value}, explode?: bool}")
             .interactive(|_| Ok(Box::new(InsertM::default()))),
         CommandSpec::new("attdef", "Define Attributes...", run_attdef)
             .menu(&["Draw", "Block", "Define Attributes..."])
@@ -81,11 +81,16 @@ pub(crate) fn make_block(s: &mut Session, name: &str, base: Vec2, hs: &[Handle],
 
 /// Insert a block reference, filling attributes from `values` (else their defaults).
 pub(crate) fn insert(s: &mut Session, name: &str, at: Vec2, scale: f64, rotation: f64, values: &serde_json::Map<String, Value>) -> Result<Handle> {
-    let blk = s.doc()?.block(name).cloned().ok_or_else(|| EngineError::Other(format!("Block \"{name}\" not found.")))?;
+    insert_with(s, name, at, Vec2::new(scale, scale), rotation, None, values)
+}
+
+/// The block reference INSERT places: X/Y scale factors, and an optional base point (in block
+/// coordinates) that lands on `at` instead of the block's own base point.
+fn insert_entity(blk: &Block, at: Vec2, scale: Vec2, rotation: f64, base: Option<Vec2>) -> Insert {
     let mut ins = Insert {
         block: blk.name.clone(),
         insert: v3(at),
-        scale: Vec3::new(scale, scale, scale),
+        scale: Vec3::new(scale.x, scale.y, scale.x),
         rotation,
         attribs: Vec::new(),
         cols: 1,
@@ -93,6 +98,25 @@ pub(crate) fn insert(s: &mut Session, name: &str, at: Vec2, scale: f64, rotation
         col_spacing: 0.0,
         row_spacing: 0.0,
     };
+    if let Some(b) = base {
+        let landed = ins.transform(blk.base.xy()).apply(b);
+        ins.insert = v3(at + (at - landed));
+    }
+    ins
+}
+
+/// [`insert`] with separate X/Y scale factors and an optional base point (see [`insert_entity`]).
+pub(crate) fn insert_with(
+    s: &mut Session,
+    name: &str,
+    at: Vec2,
+    scale: Vec2,
+    rotation: f64,
+    base: Option<Vec2>,
+    values: &serde_json::Map<String, Value>,
+) -> Result<Handle> {
+    let blk = s.doc()?.block(name).cloned().ok_or_else(|| EngineError::Other(format!("Block \"{name}\" not found.")))?;
+    let mut ins = insert_entity(&blk, at, scale, rotation, base);
     let m = ins.transform(blk.base.xy());
     for e in blk.entities.iter() {
         if let EntityKind::AttDef(ad) = &e.kind {
@@ -124,13 +148,20 @@ fn run_block(s: &mut Session, p: &Value) -> Result<Value> {
 fn run_insert(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").ok_or_else(|| bad("insert", "`name` is required"))?.to_string();
     let at = point_req("insert", p, "at")?;
-    let scale = f64_or(p, "scale", 1.0);
-    if scale == 0.0 {
+    // `scale`: one factor, or [x, y] for different X and Y scale factors.
+    let scale = match p.get("scale") {
+        Some(v) if v.is_array() => point_value(v).ok_or_else(|| bad("insert", "`scale` must be a number or [x, y]"))?,
+        _ => {
+            let f = f64_or(p, "scale", 1.0);
+            Vec2::new(f, f)
+        }
+    };
+    if scale.x == 0.0 || scale.y == 0.0 {
         return Err(bad("insert", "scale cannot be 0"));
     }
     let rot = f64_or(p, "rotation", 0.0).to_radians();
     let vals = p.get("attribs").and_then(Value::as_object).cloned().unwrap_or_default();
-    let h = insert(s, &name, at, scale, rot, &vals)?;
+    let h = insert_with(s, &name, at, scale, rot, point_param(p, "basePoint"), &vals)?;
     if bool_or(p, "explode", false) {
         return s.execute("explode", &json!({ "handles": [h.hex()] }));
     }
@@ -380,14 +411,70 @@ impl BlockM {
     }
 }
 
+/// Where the command-line INSERT is in its prompt sequence.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+enum InsStage {
+    #[default]
+    Name,
+    Point,
+    /// Basepoint: a new base point, picked on the block shown at its definition position.
+    BasePoint,
+    /// Scale preset before the insertion point.
+    PresetScale,
+    /// Rotate preset before the insertion point.
+    PresetRotation,
+    XScale,
+    Corner,
+    YScale,
+    Rotation,
+    Attribs,
+}
+
 #[derive(Default)]
 struct InsertM {
+    stage: InsStage,
     name: Option<String>,
     at: Option<Vec2>,
-    scale: Option<f64>,
+    base: Option<Vec2>,
+    x_scale: Option<f64>,
+    scale: Option<Vec2>,
     rotation: Option<f64>,
     attdefs: Vec<(String, String, String)>,
     values: serde_json::Map<String, Value>,
+}
+
+impl InsertM {
+    /// After the insertion point or a scale/rotation answer: the next prompt still needed.
+    fn advance(&mut self, s: &mut Session) -> Result<Step> {
+        self.stage = if self.scale.is_none() {
+            InsStage::XScale
+        } else if self.rotation.is_none() {
+            InsStage::Rotation
+        } else {
+            InsStage::Attribs
+        };
+        if self.stage == InsStage::Attribs
+            && self.values.len() >= self.attdefs.len()
+            && let (Some(n), Some(a), Some(sc), Some(r)) = (self.name.clone(), self.at, self.scale, self.rotation)
+        {
+            insert_with(s, &n, a, sc, r, self.base, &self.values)?;
+            return Ok(Step::Done);
+        }
+        Ok(Step::Continue)
+    }
+
+    /// Scale factors from an opposite corner: the X and Y distances from the insertion point.
+    fn corner(a: Vec2, p: Vec2) -> Result<Vec2> {
+        let d = p - a;
+        if d.x.abs() < 1e-12 || d.y.abs() < 1e-12 {
+            return Err(EngineError::Other("The corner must not be level with the insertion point.".into()));
+        }
+        Ok(d)
+    }
+}
+
+fn nonzero(t: &str) -> Result<f64> {
+    number(t).filter(|v| *v != 0.0).ok_or_else(|| EngineError::Other("Requires a non-zero number.".into()))
 }
 
 impl Interactive for InsertM {
@@ -395,25 +482,32 @@ impl Interactive for InsertM {
         "INSERT"
     }
     fn prompt(&self, s: &Session) -> Prompt {
-        let last = s.doc().map(|d| d.header.str("INSNAME", "")).unwrap_or_default();
-        match (&self.name, self.at, self.scale, self.rotation) {
-            (None, ..) => {
+        let at = self.at.unwrap_or_default();
+        match self.stage {
+            InsStage::Name => {
+                let last = s.doc().map(|d| d.header.str("INSNAME", "")).unwrap_or_default();
                 let p = Prompt::new("Enter block name", Accept::TEXT).kw(&["?"]);
                 if last.is_empty() { p } else { p.default(last) }
             }
-            (Some(_), None, ..) => Prompt::new("Specify insertion point", Accept::POINT).kw(&["Basepoint", "Scale", "Rotate"]),
-            (Some(_), Some(a), None, _) => Prompt::new("Enter scale factor", Accept::POINT_OR_NUMBER).default("1").base(a),
-            (Some(_), Some(a), Some(_), None) => Prompt::new("Specify rotation angle", Accept::POINT_OR_NUMBER).default("0").base(a),
-            _ => {
-                let (tag, prompt, default) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
-                let _ = tag;
+            InsStage::Point => Prompt::new("Specify insertion point", Accept::POINT).kw(&["Basepoint", "Scale", "Rotate"]),
+            InsStage::BasePoint => Prompt::new("Specify base point", Accept::POINT),
+            InsStage::PresetScale => Prompt::new("Specify scale factor for XYZ axes", Accept::NUMBER).default("1"),
+            InsStage::PresetRotation => Prompt::new("Specify rotation angle", Accept::NUMBER).default("0"),
+            InsStage::XScale => {
+                Prompt::new("Enter X scale factor, specify opposite corner", Accept::POINT_OR_NUMBER).kw(&["Corner"]).default("1").base(at)
+            }
+            InsStage::Corner => Prompt::new("Specify opposite corner", Accept::POINT).base(at),
+            InsStage::YScale => Prompt::new("Enter Y scale factor", Accept::NUMBER).default("use X scale factor"),
+            InsStage::Rotation => Prompt::new("Specify rotation angle", Accept::POINT_OR_NUMBER).default("0").base(at),
+            InsStage::Attribs => {
+                let (_, prompt, default) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
                 Prompt::new(if prompt.is_empty() { "Enter attribute value".into() } else { prompt }, Accept::TEXT).default(default)
             }
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
-        match (&self.name, self.at, self.scale, self.rotation) {
-            (None, ..) => {
+        match self.stage {
+            InsStage::Name => {
                 let n = match i {
                     Input::Text(t) => t.trim().to_string(),
                     Input::Enter => s.doc()?.header.str("INSNAME", ""),
@@ -441,60 +535,109 @@ impl Interactive for InsertM {
                     .collect();
                 s.doc_mut()?.header.set_str("INSNAME", &b.name);
                 self.name = Some(b.name.clone());
+                self.stage = InsStage::Point;
             }
-            (Some(_), None, ..) => {
-                if let Input::Point(p) = i {
+            InsStage::Point => match i {
+                Input::Point(p) => {
                     self.at = Some(p);
+                    return self.advance(s);
+                }
+                Input::Keyword(k) if k == "Basepoint" => self.stage = InsStage::BasePoint,
+                Input::Keyword(k) if k == "Scale" => self.stage = InsStage::PresetScale,
+                Input::Keyword(k) if k == "Rotate" => self.stage = InsStage::PresetRotation,
+                _ => {}
+            },
+            InsStage::BasePoint => {
+                if let Input::Point(p) = i {
+                    self.base = Some(p);
+                    self.stage = InsStage::Point;
                 }
             }
-            (Some(_), Some(a), None, _) => {
-                self.scale = Some(match i {
-                    Input::Point(p) => a.dist(p).max(1e-9),
-                    Input::Text(t) => number(&t).filter(|v| *v != 0.0).ok_or_else(|| EngineError::Other("Requires a non-zero number.".into()))?,
-                    _ => 1.0,
-                });
+            InsStage::PresetScale => {
+                let f = match i {
+                    Input::Text(t) => nonzero(&t)?,
+                    Input::Enter => 1.0,
+                    _ => return Ok(Step::Continue),
+                };
+                self.scale = Some(Vec2::new(f, f));
+                self.stage = InsStage::Point;
             }
-            (Some(_), Some(a), Some(_), None) => {
+            InsStage::PresetRotation => {
+                self.rotation = Some(match i {
+                    Input::Text(t) => crate::units::parse_angle(&t).ok_or_else(|| EngineError::Other("Requires an angle.".into()))?,
+                    Input::Enter => 0.0,
+                    _ => return Ok(Step::Continue),
+                });
+                self.stage = InsStage::Point;
+            }
+            InsStage::XScale => match i {
+                Input::Keyword(k) if k == "Corner" => self.stage = InsStage::Corner,
+                Input::Point(p) => {
+                    self.scale = Some(Self::corner(self.at.unwrap_or_default(), p)?);
+                    return self.advance(s);
+                }
+                Input::Text(t) => {
+                    self.x_scale = Some(nonzero(&t)?);
+                    self.stage = InsStage::YScale;
+                }
+                Input::Enter => {
+                    self.x_scale = Some(1.0);
+                    self.stage = InsStage::YScale;
+                }
+                _ => {}
+            },
+            InsStage::Corner => {
+                if let Input::Point(p) = i {
+                    self.scale = Some(Self::corner(self.at.unwrap_or_default(), p)?);
+                    return self.advance(s);
+                }
+            }
+            InsStage::YScale => {
+                let x = self.x_scale.unwrap_or(1.0);
+                let y = match i {
+                    Input::Text(t) => nonzero(&t)?,
+                    Input::Enter => x,
+                    _ => return Ok(Step::Continue),
+                };
+                self.scale = Some(Vec2::new(x, y));
+                return self.advance(s);
+            }
+            InsStage::Rotation => {
+                let a = self.at.unwrap_or_default();
                 self.rotation = Some(match i {
                     Input::Point(p) => a.angle_to(p),
                     Input::Text(t) => crate::units::parse_angle(&t).ok_or_else(|| EngineError::Other("Requires an angle.".into()))?,
                     _ => 0.0,
                 });
+                return self.advance(s);
             }
-            _ => {
+            InsStage::Attribs => {
                 let (tag, _, default) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
                 let v = match i {
                     Input::Text(t) => t,
                     _ => default,
                 };
                 self.values.insert(tag, Value::String(v));
+                return self.advance(s);
             }
-        }
-        if let (Some(n), Some(a), Some(sc), Some(r)) = (self.name.clone(), self.at, self.scale, self.rotation)
-            && self.values.len() >= self.attdefs.len()
-        {
-            insert(s, &n, a, sc, r, &self.values)?;
-            return Ok(Step::Done);
         }
         Ok(Step::Continue)
     }
     fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
         let (Some(n), Ok(d)) = (&self.name, s.doc()) else { return Vec::new() };
         let Some(b) = d.block(n) else { return Vec::new() };
+        // Picking a new base point: the block sits at its definition position.
+        if self.stage == InsStage::BasePoint {
+            return vec![EntityKind::Insert(insert_entity(b, b.base.xy(), Vec2::new(1.0, 1.0), 0.0, None))];
+        }
         let at = self.at.unwrap_or(c);
-        let sc = self.scale.unwrap_or(if self.at.is_some() { at.dist(c).max(1e-9) } else { 1.0 });
-        let rot = self.rotation.unwrap_or(if self.scale.is_some() { at.angle_to(c) } else { 0.0 });
-        vec![EntityKind::Insert(Insert {
-            block: b.name.clone(),
-            insert: v3(at),
-            scale: Vec3::new(sc, sc, sc),
-            rotation: rot,
-            attribs: Vec::new(),
-            cols: 1,
-            rows: 1,
-            col_spacing: 0.0,
-            row_spacing: 0.0,
-        })]
+        let scale = self.scale.unwrap_or_else(|| match (self.stage, self.x_scale) {
+            (InsStage::XScale | InsStage::Corner, _) => Self::corner(at, c).unwrap_or(Vec2::new(1.0, 1.0)),
+            (_, Some(x)) => Vec2::new(x, x),
+            _ => Vec2::new(1.0, 1.0),
+        });
+        let rot = self.rotation.unwrap_or(if self.stage == InsStage::Rotation { at.angle_to(c) } else { 0.0 });
+        vec![EntityKind::Insert(insert_entity(b, at, scale, rot, self.base))]
     }
 }
 
