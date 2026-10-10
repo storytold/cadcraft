@@ -144,6 +144,31 @@ fn angular_between_lines_follows_rotation() {
 }
 
 #[test]
+fn interactive_angular_picks_polyline_segments() {
+    // Rectangle sides are polyline segments, not lines (issue #10).
+    let mut s = Session::new();
+    s.cmdline("rectang 0,0 10,5").unwrap();
+    s.cmdline("dimangular").unwrap();
+    s.cmdline("5,0").unwrap();
+    s.cmdline("0,2").unwrap();
+    s.cmdline("2,2").unwrap();
+    assert!(s.running.is_none());
+    let d = s.last_dim.unwrap();
+    assert_eq!(cadcraft_render::dimension_in(s.doc().unwrap(), &dim(&s, d)).value, "90°");
+    // A polyline arc segment works like an arc.
+    s.cmdline("pline 20,0 30,0 a 30,10").unwrap();
+    s.cmdline("").unwrap();
+    s.cmdline("dimangular").unwrap();
+    let (cx, cy) = (30.0 + 5.0 * std::f64::consts::FRAC_1_SQRT_2, 5.0 - 5.0 * std::f64::consts::FRAC_1_SQRT_2);
+    s.cmdline(&format!("{cx},{cy}")).unwrap();
+    s.cmdline("40,5").unwrap();
+    assert!(s.running.is_none());
+    let d2 = s.last_dim.unwrap();
+    assert_ne!(d, d2);
+    assert_eq!(cadcraft_render::dimension_in(s.doc().unwrap(), &dim(&s, d2)).value, "180°");
+}
+
+#[test]
 fn erase_disassociate_and_reassociate() {
     let mut s = Session::new();
     let l = line(&mut s, [0.0, 0.0], [4.0, 0.0]);
