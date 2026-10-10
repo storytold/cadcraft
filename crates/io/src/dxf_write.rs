@@ -1100,12 +1100,18 @@ pub fn write(d: &Drawing) -> String {
     let default_table_style = [TableStyle::default()];
     let table_styles: &[TableStyle] = if d.table_styles.is_empty() { &default_table_style } else { &d.table_styles };
     cx.table_styles = table_styles.iter().map(|s| (s.name.clone(), w.h())).collect();
-    let constraint_chunks = dxf_ext::constraint_chunks(&d.constraints, &d.parametric);
     let root_dict = w.h();
     let group_dict = w.h();
     let layout_dict = w.h();
     let table_style_dict = w.h();
-    let constraints_xrec = w.h();
+    // CADCraft data in XRECORDs of the named object dictionary: (key, handle, text chunks).
+    let mut xrecords: Vec<(&str, String, Vec<String>)> = Vec::new();
+    if let Some(chunks) = dxf_ext::constraint_chunks(&d.constraints, &d.parametric) {
+        xrecords.push((dxf_ext::CONSTRAINTS_KEY, w.h(), chunks));
+    }
+    if let Some(chunks) = dxf_ext::layer_state_chunks(&d.layer_states) {
+        xrecords.push((dxf_ext::LAYER_STATES_KEY, w.h(), chunks));
+    }
     let model_layout = w.h();
     let layout_handles: Vec<String> = ps_brs.iter().map(|_| w.h()).collect();
 
@@ -1393,9 +1399,9 @@ pub fn write(d: &Drawing) -> String {
     w.s(350, layout_dict.clone());
     w.s(3, "ACAD_TABLESTYLE");
     w.s(350, table_style_dict.clone());
-    if constraint_chunks.is_some() {
-        w.s(3, dxf_ext::CONSTRAINTS_KEY);
-        w.s(350, constraints_xrec.clone());
+    for (key, h, _) in &xrecords {
+        w.s(3, *key);
+        w.s(350, h);
     }
     w.s(0, "DICTIONARY");
     w.s(5, group_dict);
@@ -1415,10 +1421,10 @@ pub fn write(d: &Drawing) -> String {
     for (s, (_, h)) in table_styles.iter().zip(&cx.table_styles) {
         table_style_obj(&mut w, s, h, &table_style_dict);
     }
-    // Parametric constraints and parameters (CADCraft data).
-    if let Some(chunks) = &constraint_chunks {
+    // Parametric constraints and parameters, saved layer states (CADCraft data).
+    for (_, h, chunks) in &xrecords {
         w.s(0, "XRECORD");
-        w.s(5, constraints_xrec.clone());
+        w.s(5, h);
         w.group("ACAD_REACTORS", 330, &[&root_dict]);
         w.s(330, root_dict.clone());
         w.s(100, "AcDbXrecord");
