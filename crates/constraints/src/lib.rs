@@ -532,6 +532,15 @@ pub fn set_parameter(d: &mut Drawing, name: &str, expr_text: &str, opts: &SolveO
         }
     }
     let report = solve(&mut trial, opts)?;
+    // A new value that a constraint rejects (negative distance, non-positive radius) would silently
+    // stop enforcing it, so refuse it like `add` does. Constraints already skipped before stay allowed.
+    if !report.skipped.is_empty() {
+        let cons: Vec<&Constraint> = d.constraints.iter().take(MAX_CONSTRAINTS).collect();
+        let before = build(d, &cons, opts).map(|(_, skipped)| skipped).unwrap_or_default();
+        if let Some((id, msg)) = report.skipped.iter().find(|(id, _)| !before.iter().any(|(b, _)| b == id)) {
+            return Err(SolveError::Invalid { id: *id, msg: msg.clone() });
+        }
+    }
     *d = trial;
     Ok(report)
 }
