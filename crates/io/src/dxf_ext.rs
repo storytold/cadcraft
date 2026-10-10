@@ -5,13 +5,13 @@
 //! constraints).
 //!
 //! CADCraft's own data lives under the registered application `CADCRAFT` (xdata) and the
-//! named-object-dictionary entry `CADCRAFT_CONSTRAINTS` (an XRECORD). Other readers keep or
-//! ignore both.
+//! named-object-dictionary entries `CADCRAFT_CONSTRAINTS` and `CADCRAFT_LAYERSTATES`
+//! (XRECORDs). Other readers keep or ignore them.
 
 use std::collections::HashMap;
 
 use cadcraft_color::Color;
-use cadcraft_doc::{AssocSnap, Constraint, DimAssoc, DimStyle, Handle, Parametric};
+use cadcraft_doc::{AssocSnap, Constraint, DimAssoc, DimStyle, Handle, LayerState, Parametric};
 use cadcraft_dxf::Tag;
 use cadcraft_render::Arrowhead;
 use serde::{Deserialize, Serialize};
@@ -21,11 +21,14 @@ use serde_json::Value;
 pub(crate) const APP: &str = "CADCRAFT";
 /// Named-object-dictionary key of the constraint XRECORD.
 pub(crate) const CONSTRAINTS_KEY: &str = "CADCRAFT_CONSTRAINTS";
+/// Named-object-dictionary key of the saved layer states XRECORD.
+pub(crate) const LAYER_STATES_KEY: &str = "CADCRAFT_LAYERSTATES";
 
 /// Caps for hostile input.
 pub(crate) const MAX_XDATA_ITEMS: usize = 4096;
 pub(crate) const MAX_PAYLOAD: usize = 64 << 20;
 pub(crate) const MAX_CONSTRAINTS: usize = 1_000_000;
+pub(crate) const MAX_LAYER_STATES: usize = 100_000;
 
 /// How a dimension variable is stored.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -442,13 +445,18 @@ struct Payload {
 }
 
 /// JSON chunks (≤ 250 characters) for the constraint XRECORD, or `None` when the drawing has
-/// no parametric data. Backslashes are written as `\` so no chunk contains a DXF
-/// `\U+` escape.
+/// no parametric data.
 pub(crate) fn constraint_chunks(constraints: &[Constraint], parametric: &Parametric) -> Option<Vec<String>> {
     if constraints.is_empty() && *parametric == Parametric::default() {
         return None;
     }
     let json = serde_json::to_string(&Payload { version: 1, constraints: constraints.to_vec(), parametric: parametric.clone() }).ok()?;
+    Some(json_chunks(&json))
+}
+
+/// JSON text split into XRECORD strings of at most 250 characters. Backslashes are written as
+/// `\u005c` so no chunk contains a DXF `\U+` escape.
+fn json_chunks(json: &str) -> Vec<String> {
     let mut safe = String::with_capacity(json.len());
     let mut it = json.chars().peekable();
     while let Some(c) = it.next() {
@@ -466,7 +474,37 @@ pub(crate) fn constraint_chunks(constraints: &[Constraint], parametric: &Paramet
         }
     }
     let chars: Vec<char> = safe.chars().collect();
-    Some(chars.chunks(250).map(|c| c.iter().collect()).collect())
+    chars.chunks(250).map(|c| c.iter().collect()).collect()
+}
+
+/// The saved layer states stored in the `CADCRAFT_LAYERSTATES` XRECORD.
+#[derive(Serialize, Deserialize)]
+struct LayerStatesPayload {
+    version: u32,
+    #[serde(default)]
+    states: Vec<LayerState>,
+}
+
+/// JSON chunks for the layer states XRECORD, or `None` when the drawing has no saved layer
+/// states.
+pub(crate) fn layer_state_chunks(states: &[LayerState]) -> Option<Vec<String>> {
+    if states.is_empty() {
+        return None;
+    }
+    let json = serde_json::to_string(&LayerStatesPayload { version: 1, states: states.to_vec() }).ok()?;
+    Some(json_chunks(&json))
+}
+
+/// Parse the layer states XRECORD text; `None` when it is not a payload we understand.
+pub(crate) fn parse_layer_states(text: &str) -> Option<Vec<LayerState>> {
+    if text.len() > MAX_PAYLOAD {
+        return None;
+    }
+    let p: LayerStatesPayload = serde_json::from_str(text).ok()?;
+    if p.version != 1 || p.states.len() > MAX_LAYER_STATES {
+        return None;
+    }
+    Some(p.states)
 }
 
 /// Parse the constraint XRECORD text; `None` when it is not a payload we understand.

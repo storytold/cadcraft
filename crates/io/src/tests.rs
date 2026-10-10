@@ -945,6 +945,35 @@ fn constraints_and_parameters_roundtrip_exactly() {
     assert!(!write_dxf(&Drawing::new_imperial()).contains("CADCRAFT_CONSTRAINTS"));
 }
 
+#[test]
+fn layer_states_roundtrip_next_to_constraints() {
+    let mut d = Drawing::new_imperial();
+    let (constraints, _) = parametric_sample(&mut d);
+    d.layers.push(Layer {
+        name: "Wände".into(),
+        color: Color::True(cadcraft_color::Rgb(200, 10, 40)),
+        transparency: 30,
+        description: "walls \\ hidden".into(),
+        ..Layer::default()
+    });
+    d.layer_states.push(LayerState { name: "Plot".into(), layers: d.layers.clone() });
+    let mut off = d.layers.clone();
+    for l in &mut off {
+        (l.on, l.frozen, l.locked, l.plot) = (false, true, true, false);
+    }
+    d.layer_states.push(LayerState { name: "All off".into(), layers: off });
+    let text = write_dxf(&d);
+    assert!(text.contains("CADCRAFT_LAYERSTATES"));
+    let back = read_dxf(text.as_bytes()).unwrap();
+    assert_eq!(back.layer_states, d.layer_states);
+    assert_eq!(back.constraints, constraints);
+    assert_eq!(roundtrip(&back).layer_states, d.layer_states);
+    #[cfg(not(target_arch = "wasm32"))]
+    assert_eq!(read(&write(&d, "x.dwg").unwrap(), "x.dwg").unwrap().layer_states, d.layer_states);
+    // Drawings without saved layer states carry no record.
+    assert!(!write_dxf(&Drawing::new_imperial()).contains("CADCRAFT_LAYERSTATES"));
+}
+
 fn table_sample() -> Table {
     let cell = |t: &str| TableCell { text: t.into(), merged: None };
     let mut rows = vec![

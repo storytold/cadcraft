@@ -1073,6 +1073,20 @@ impl Objects {
         }
     }
 
+    /// The text of the CADCraft XRECORD stored under `key` in a dictionary (its 1/3 strings).
+    fn xrecord_text(&self, key: &str) -> Option<String> {
+        let h = self.names.iter().find(|(_, n)| n.as_str() == key).map(|(h, _)| h)?;
+        let tags = self.xrecords.get(h)?;
+        let mut text = String::new();
+        for t in tags.iter().filter(|t| t.code == 1 || t.code == 3) {
+            if text.len() > crate::dxf_ext::MAX_PAYLOAD {
+                break;
+            }
+            text.push_str(&t.str());
+        }
+        Some(text)
+    }
+
     fn apply(self, d: &mut Drawing, rx: &Rx) {
         // Table styles (named by their ACAD_TABLESTYLE dictionary entries).
         for (h, tags) in &self.table_styles {
@@ -1102,19 +1116,13 @@ impl Objects {
             }
         }
         // Parametric constraints and parameters.
-        let key = self.names.iter().find(|(_, n)| n.as_str() == crate::dxf_ext::CONSTRAINTS_KEY).map(|(h, _)| h.clone());
-        if let Some(tags) = key.and_then(|k| self.xrecords.get(&k)) {
-            let mut text = String::new();
-            for t in tags.iter().filter(|t| t.code == 1 || t.code == 3) {
-                if text.len() > crate::dxf_ext::MAX_PAYLOAD {
-                    break;
-                }
-                text.push_str(&t.str());
-            }
-            if let Some((c, p)) = crate::dxf_ext::parse_constraints(&text) {
-                d.constraints = c;
-                d.parametric = p;
-            }
+        if let Some((c, p)) = self.xrecord_text(crate::dxf_ext::CONSTRAINTS_KEY).and_then(|t| crate::dxf_ext::parse_constraints(&t)) {
+            d.constraints = c;
+            d.parametric = p;
+        }
+        // Saved layer states.
+        if let Some(states) = self.xrecord_text(crate::dxf_ext::LAYER_STATES_KEY).and_then(|t| crate::dxf_ext::parse_layer_states(&t)) {
+            d.layer_states = states;
         }
         // Standard associativity, for dimensions without CADCraft's exact links.
         for tags in &self.dimassocs {
