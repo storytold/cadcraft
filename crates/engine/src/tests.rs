@@ -420,3 +420,25 @@ fn mleader_and_qdim() {
     let r = s.execute("qdim", &json!({"handles": hs, "at": [0, -2]})).unwrap();
     assert_eq!(r["handles"].as_array().unwrap().len(), 2);
 }
+
+#[test]
+fn programmatic_undo_during_a_command_ends_it_first() {
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    // TEXT stays active, waiting for the next line.
+    s.script("TEXT 0,0 5 0 HELLO\n").unwrap();
+    assert!(s.running.is_some());
+    assert_eq!(kinds(&s), vec!["Line", "Text"]);
+    // Like Ctrl+Z during a command: end it (as Esc does), then undo it, not the line.
+    s.execute("undo", &json!({})).unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(kinds(&s), vec!["Line"]);
+    s.execute("redo", &json!({})).unwrap();
+    assert_eq!(kinds(&s), vec!["Line", "Text"]);
+    // Redo while a command runs ends it the same way and leaves the drawing alone.
+    s.script("TEXT 0,-10 5 0\n").unwrap();
+    assert!(s.running.is_some());
+    s.execute("redo", &json!({})).unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(kinds(&s), vec!["Line", "Text"]);
+}
