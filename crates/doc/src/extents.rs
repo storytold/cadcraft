@@ -7,22 +7,35 @@ use crate::{Drawing, Entity, EntityKind, Prim};
 /// Nested block references deeper than this are ignored (cyclic or hostile files).
 pub const MAX_BLOCK_DEPTH: usize = 16;
 
-fn text_box(insert: Vec2, height: f64, len: usize, width_factor: f64, rotation: f64) -> Bounds2 {
-    let w = height * 0.8 * width_factor.abs().max(0.01) * len.max(1) as f64;
-    let pts = [Vec2::ZERO, Vec2::new(w, 0.0), Vec2::new(w, height), Vec2::new(0.0, height)].map(|p| insert + p.rotate(rotation));
-    Bounds2::from_points(pts)
+/// Bounds of a single-line TEXT / ATTDEF / ATTRIB of `len` characters, following its justification
+/// the same way the renderer places it (the stroke font is about 0.88 of the height per character).
+fn text_box(t: &crate::Text, len: usize) -> Bounds2 {
+    use crate::{HAlign, VAlign};
+    let w = t.height * 0.9 * t.width_factor.abs().max(0.01) * len.max(1) as f64;
+    let origin = match t.halign {
+        HAlign::Left | HAlign::Aligned | HAlign::Fit => t.insert,
+        _ => t.align_pt.unwrap_or(t.insert),
+    };
+    let dx = match t.halign {
+        HAlign::Left | HAlign::Aligned | HAlign::Fit => 0.0,
+        HAlign::Center | HAlign::Middle => -w / 2.0,
+        HAlign::Right => -w,
+    };
+    let dy = match (t.halign, t.valign) {
+        (HAlign::Middle, _) => -t.height / 2.0,
+        (_, VAlign::Baseline) => 0.0,
+        (_, VAlign::Bottom) => t.height / 3.0,
+        (_, VAlign::Middle) => -t.height / 2.0,
+        (_, VAlign::Top) => -t.height,
+    };
+    let local = [Vec2::new(dx, dy), Vec2::new(dx + w, dy), Vec2::new(dx + w, dy + t.height), Vec2::new(dx, dy + t.height)];
+    Bounds2::from_points(local.map(|p| origin.xy() + p.rotate(t.rotation)))
 }
 
 pub fn entity_bounds(d: &Drawing, e: &Entity, depth: usize) -> Bounds2 {
     match &e.kind {
-        EntityKind::Text(t) => text_box(
-            t.align_pt.filter(|_| t.halign != crate::HAlign::Left).unwrap_or(t.insert).xy(),
-            t.height,
-            t.value.chars().count(),
-            t.width_factor,
-            t.rotation,
-        ),
-        EntityKind::AttDef(a) => text_box(a.text.insert.xy(), a.text.height, a.tag.chars().count(), a.text.width_factor, a.text.rotation),
+        EntityKind::Text(t) => text_box(t, t.value.chars().count()),
+        EntityKind::AttDef(a) => text_box(&a.text, a.tag.chars().count()),
         EntityKind::MText(t) => {
             let lines = t.contents.split("\\P").count().max(1);
             let longest = t.contents.split("\\P").map(|l| l.chars().count()).max().unwrap_or(1);
@@ -62,7 +75,7 @@ pub fn entity_bounds(d: &Drawing, e: &Entity, depth: usize) -> Bounds2 {
             }
             for a in &ins.attribs {
                 if !a.invisible {
-                    b = b.union(&text_box(a.text.insert.xy(), a.text.height, a.text.value.chars().count(), a.text.width_factor, a.text.rotation));
+                    b = b.union(&text_box(&a.text, a.text.value.chars().count()));
                 }
             }
             b
@@ -133,5 +146,56 @@ pub fn entity_bounds(d: &Drawing, e: &Entity, depth: usize) -> Bounds2 {
             }
             b
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{HAlign, Text, VAlign};
+    use cadcraft_geom::Vec3;
+
+    fn text(halign: HAlign, valign: VAlign) -> Text {
+        Text {
+            insert: Vec3::new(0.0, 0.0, 0.0),
+            align_pt: Some(Vec3::new(0.0, 0.0, 0.0)),
+            height: 1.0,
+            value: "HELLO".into(),
+            rotation: 0.0,
+            width_factor: 1.0,
+            oblique: 0.0,
+            style: "Standard".into(),
+            halign,
+            valign,
+        }
+    }
+
+    fn bounds(kind: EntityKind) -> Bounds2 {
+        entity_bounds(&Drawing::default(), &Entity::new(crate::Handle(1), kind), 0)
+    }
+
+    #[test]
+    fn right_justified_text_is_left_of_alignment_point() {
+        let b = bounds(EntityKind::Text(text(HAlign::Right, VAlign::Baseline)));
+        // Rendered strokes span x -4.4..0, y 0..1.
+        assert!(b.min.x <= -4.4 && b.max.x >= 0.0 && b.max.x < 1.0);
+        assert!(b.min.y <= 0.0 && b.max.y >= 1.0);
+    }
+
+    #[test]
+    fn centered_and_top_left_text_follow_placement() {
+        let c = bounds(EntityKind::Text(text(HAlign::Center, VAlign::Baseline)));
+        assert!(c.min.x <= -2.2 && c.max.x >= 2.2);
+        let tl = bounds(EntityKind::Text(text(HAlign::Left, VAlign::Top)));
+        assert!(tl.min.x <= 0.0 && tl.max.x >= 4.4);
+        assert!(tl.min.y <= -1.0 && tl.max.y >= 0.0 && tl.max.y < 1.0);
+    }
+
+    #[test]
+    fn right_justified_attdef_is_left_of_alignment_point() {
+        let text = text(HAlign::Right, VAlign::Baseline);
+        let a = crate::Attrib { tag: "HELLO".into(), text, invisible: false, constant: false, prompt: String::new() };
+        let b = bounds(EntityKind::AttDef(a));
+        assert!(b.min.x <= -4.4 && b.max.x < 1.0);
     }
 }
