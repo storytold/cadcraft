@@ -37,11 +37,15 @@ pub struct Prompt {
     pub accept: Accept,
     /// Rubber-band origin (for direct distance entry, ortho and polar).
     pub base: Option<Vec2>,
+    /// The command resolves deferred tangent/perpendicular snaps ([`Input::Deferred`]) at this
+    /// prompt (a point with no base yet, e.g. the first point of a line). Elsewhere a deferred
+    /// pick arrives as the plain point it was picked at.
+    pub deferred: bool,
 }
 
 impl Prompt {
     pub fn new(message: impl Into<String>, accept: Accept) -> Self {
-        Prompt { message: message.into(), keywords: Vec::new(), default: None, accept, base: None }
+        Prompt { message: message.into(), keywords: Vec::new(), default: None, accept, base: None, deferred: false }
     }
     pub fn kw(mut self, k: &[&str]) -> Self {
         self.keywords = k.iter().map(|s| s.to_string()).collect();
@@ -53,6 +57,11 @@ impl Prompt {
     }
     pub fn base_opt(mut self, p: Option<Vec2>) -> Self {
         self.base = p;
+        self
+    }
+    /// Accept deferred tangent/perpendicular snaps (the `deferred` field).
+    pub fn deferred(mut self) -> Self {
+        self.deferred = true;
         self
     }
     pub fn default(mut self, d: impl Into<String>) -> Self {
@@ -98,6 +107,9 @@ impl Prompt {
 #[serde(tag = "kind", content = "value", rename_all = "camelCase")]
 pub enum Input {
     Point(Vec2),
+    /// A deferred tangent/perpendicular snap, only sent to prompts that accept it
+    /// (`Prompt.deferred`).
+    Deferred(crate::snap::Deferred),
     Keyword(String),
     /// Free text or a number/distance/angle to be parsed by the command.
     Text(String),

@@ -298,6 +298,9 @@ pub struct Session {
     pub last_point: Vec2,
     /// Cursor position in world coordinates (from the UI; used for direct distance entry).
     pub cursor: Vec2,
+    /// The deferred tangent/perpendicular snap under the cursor, if any (from the UI; lets the
+    /// rubber band show the line it resolves to).
+    pub cursor_deferred: Option<snap::Deferred>,
     /// Viewport size in pixels (from the UI; used for zoom and pick apertures).
     pub viewport_px: (f64, f64),
     pub clipboard: Vec<Entity>,
@@ -331,6 +334,7 @@ impl Session {
             last_command: None,
             last_point: Vec2::ZERO,
             cursor: Vec2::ZERO,
+            cursor_deferred: None,
             viewport_px: (1200.0, 800.0),
             clipboard: Vec::new(),
             clipboard_base: Vec2::ZERO,
@@ -546,6 +550,12 @@ impl Session {
             }
             return Ok(());
         }
+        // A deferred snap is only meaningful where the prompt resolves it; elsewhere it is the
+        // point it was picked at.
+        let input = match input {
+            Input::Deferred(d) if !self.current_prompt().is_some_and(|p| p.deferred) => Input::Point(d.at),
+            other => other,
+        };
         // Generic selection handling during "Select objects:" prompts.
         let input = self.preprocess_selection(input)?;
         match input {

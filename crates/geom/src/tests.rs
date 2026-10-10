@@ -157,3 +157,27 @@ fn ocs_identity_for_z() {
     let p = m.apply(Vec3::new(1.0, 0.0, 0.0));
     assert!((p.x + 1.0).abs() < 1e-9);
 }
+
+#[test]
+fn common_tangents_of_two_circles() {
+    // Distance from `c` to the infinite line through `p`, `q`.
+    let dist = |c: Vec2, p: Vec2, q: Vec2| ((q - p).cross(c - p) / p.dist(q)).abs();
+    let (a, b) = (Circle::new(Vec2::ZERO, 10.0), Circle::new(Vec2::new(30.0, 0.0), 4.0));
+    let ts = a.common_tangents(&b);
+    assert_eq!(ts.len(), 4, "separate circles: 2 outer + 2 inner tangents");
+    for (p, q) in &ts {
+        assert!(close(p.dist(a.center), 10.0) && close(q.dist(b.center), 4.0));
+        assert!(close(dist(a.center, *p, *q), 10.0) && close(dist(b.center, *p, *q), 4.0));
+    }
+    // Overlapping circles only have the two outer tangents.
+    assert_eq!(a.common_tangents(&Circle::new(Vec2::new(12.0, 0.0), 4.0)).len(), 2);
+    // Concentric, nested, touching inside, non-finite: none, and no panic.
+    assert!(a.common_tangents(&Circle::new(Vec2::ZERO, 3.0)).is_empty());
+    assert!(a.common_tangents(&Circle::new(Vec2::new(1.0, 0.0), 3.0)).is_empty());
+    assert!(a.common_tangents(&Circle::new(Vec2::new(6.0, 0.0), 4.0)).is_empty());
+    assert!(a.common_tangents(&Circle::new(Vec2::new(f64::NAN, 0.0), 4.0)).is_empty());
+    assert!(a.common_tangents(&Circle::new(Vec2::new(f64::INFINITY, 0.0), 4.0)).is_empty());
+    // A zero-radius circle (a point): the tangents from that point.
+    let z = a.common_tangents(&Circle::new(Vec2::new(30.0, 0.0), 0.0));
+    assert!(!z.is_empty() && z.iter().all(|(p, q)| close(dist(a.center, *p, *q), 10.0) && q.near(Vec2::new(30.0, 0.0), 1e-9)));
+}

@@ -176,6 +176,37 @@ impl Circle {
         let off = (self.radius / d).clamp(-1.0, 1.0).acos();
         vec![Vec2::polar(self.center, self.radius, base + off), Vec2::polar(self.center, self.radius, base - off)]
     }
+    /// Lines tangent to both `self` and `other`, as (point on `self`, point on `other`) pairs:
+    /// up to two outer (belt) tangents and two inner (crossed) tangents. Empty for concentric
+    /// circles or when one circle lies inside the other; tangents that touch both circles at the
+    /// same point (circles touching each other) are left out.
+    pub fn common_tangents(&self, other: &Circle) -> Vec<(Vec2, Vec2)> {
+        let (r1, r2) = (self.radius, other.radius);
+        let v = other.center - self.center;
+        let d = v.len();
+        if !(d.is_finite() && r1.is_finite() && r2.is_finite()) || d <= EPS {
+            return Vec::new();
+        }
+        let u = v / d;
+        let mut out = Vec::new();
+        // `s` = +1: outer tangents (both circles on the same side); -1: inner tangents.
+        for s in [1.0, -1.0] {
+            let c = (r1 - s * r2) / d;
+            if c.abs() > 1.0 - EPS {
+                continue;
+            }
+            let h = (1.0 - c * c).max(0.0).sqrt();
+            for k in [1.0, -1.0] {
+                // Unit normal of the tangent line, pointing from each center towards its tangent point.
+                let n = u * c + u.perp() * (h * k);
+                let (p, q) = (self.center + n * r1, other.center + n * (s * r2));
+                if p.is_finite() && q.is_finite() && p.dist(q) > EPS {
+                    out.push((p, q));
+                }
+            }
+        }
+        out
+    }
 }
 
 /// An ellipse (or elliptical arc), DXF-style: center, major-axis endpoint vector, ratio, params.
