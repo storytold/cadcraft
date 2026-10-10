@@ -604,6 +604,8 @@ struct Rx {
     styles: HashMap<String, String>,
     /// BLOCK_RECORD handle (upper case) → block name.
     brs: HashMap<String, String>,
+    /// Upper-case block name → (insertion units, explodable) from its BLOCK_RECORD.
+    block_props: HashMap<String, (u8, bool)>,
     /// Upper-case names of anonymous `*T` blocks drawn by ACAD_TABLE entities.
     table_blocks: std::collections::HashSet<String>,
     /// Upper-case block names used by INSERTs.
@@ -793,6 +795,8 @@ fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 rx.styles.insert(h.trim().to_ascii_uppercase(), n);
             }
             "BLOCK_RECORD" => {
+                let units = t.i(70).and_then(|u| u8::try_from(u).ok()).unwrap_or(0);
+                rx.block_props.insert(n.to_ascii_uppercase(), (units, t.i(280).unwrap_or(1) != 0));
                 rx.brs.insert(h.trim().to_ascii_uppercase(), n);
             }
             _ => {}
@@ -903,7 +907,7 @@ pub fn read(bytes: &[u8]) -> Result<Drawing> {
     let mut d = Drawing::new_imperial();
     d.layouts.clear();
     let mut rx = Rx::default();
-    let mut blocks: Vec<(String, Vec3, Vec<(Option<String>, bool, Entity)>, bool)> = Vec::new();
+    let mut blocks: Vec<(String, Vec3, String, Vec<(Option<String>, bool, Entity)>, bool)> = Vec::new();
     let mut layout_objs: Vec<(String, u32, String, PageSetup)> = Vec::new();
     let mut entities = Vec::new();
     let mut objs = Objects::default();
@@ -919,6 +923,7 @@ pub fn read(bytes: &[u8]) -> Result<Drawing> {
                         let t = T(tg);
                         let name = t.s(2).unwrap_or_default();
                         let base = t.p(10);
+                        let description = t.s(4).unwrap_or_default();
                         let xref = t.i(70).unwrap_or(0) & 4 != 0;
                         let mut j = i + 1;
                         while recs.get(j).is_some_and(|(k, _)| k != "ENDBLK") {
@@ -926,7 +931,7 @@ pub fn read(bytes: &[u8]) -> Result<Drawing> {
                         }
                         let body = recs.get(i + 1..j).unwrap_or(&[]);
                         let ents = parse_entities(body, &mut d, &mut rx);
-                        blocks.push((name, base, ents, xref));
+                        blocks.push((name, base, description, ents, xref));
                         i = j + 1;
                     } else {
                         i += 1;
@@ -970,7 +975,7 @@ pub fn read(bytes: &[u8]) -> Result<Drawing> {
     }
     let first_layout = d.layouts.first().map(|l| l.name.clone()).unwrap_or_else(|| "Layout1".into());
     // Blocks: model/paper space blocks hold entities in newer files.
-    for (name, base, ents, xref) in blocks {
+    for (name, base, description, ents, xref) in blocks {
         let up = name.to_ascii_uppercase();
         if up == "*MODEL_SPACE" {
             for (_, _, e) in ents {
@@ -995,6 +1000,10 @@ pub fn read(bytes: &[u8]) -> Result<Drawing> {
         }
         let mut b = Block::new(&name);
         b.base = base;
+        b.description = description;
+        if let Some(&(units, explodable)) = rx.block_props.get(&up) {
+            (b.units, b.explodable) = (units, explodable);
+        }
         if xref {
             b.xref_path = Some(String::new());
         }

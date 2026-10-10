@@ -245,6 +245,44 @@ fn layer_transparency_and_description_roundtrip() {
 }
 
 #[test]
+fn block_definition_properties_and_constant_attdefs_roundtrip() {
+    let mut d = Drawing::new_metric();
+    let mut b = Block::new("Title");
+    (b.description, b.units, b.explodable) = ("Drawing title block".into(), 4, false);
+    let text = Text {
+        insert: Vec3::ZERO,
+        align_pt: None,
+        height: 2.5,
+        value: "ACME".into(),
+        rotation: 0.0,
+        width_factor: 1.0,
+        oblique: 0.0,
+        style: "Standard".into(),
+        halign: HAlign::Left,
+        valign: VAlign::Baseline,
+    };
+    let attdef =
+        |tag: &str, invisible: bool, constant: bool| Attrib { tag: tag.into(), text: text.clone(), invisible, constant, prompt: String::new() };
+    for (i, a) in [attdef("COMPANY", false, true), attdef("SECRET", true, true), attdef("SHEET", false, false)].into_iter().enumerate() {
+        b.entities.push(Entity::new(Handle(0x500 + i as u64), EntityKind::AttDef(a)));
+    }
+    d.blocks.insert("Title".into(), std::sync::Arc::new(b));
+    d.blocks.insert("Plain".into(), std::sync::Arc::new(Block::new("Plain")));
+    d.bump_handseed(Handle(0x510));
+    let back = roundtrip(&d);
+    let t = back.block("Title").unwrap();
+    assert_eq!((t.description.as_str(), t.units, t.explodable), ("Drawing title block", 4, false));
+    let flags: Vec<(String, bool, bool)> = t
+        .entities
+        .iter()
+        .filter_map(|e| if let EntityKind::AttDef(a) = &e.kind { Some((a.tag.clone(), a.invisible, a.constant)) } else { None })
+        .collect();
+    assert_eq!(flags, [("COMPANY".into(), false, true), ("SECRET".into(), true, true), ("SHEET".into(), false, false)]);
+    let p = back.block("Plain").unwrap();
+    assert_eq!((p.description.as_str(), p.units, p.explodable), ("", 0, true));
+}
+
+#[test]
 fn reads_r12_style_polyline_and_paper_flag() {
     let text = "0\nSECTION\n2\nENTITIES\n0\nPOLYLINE\n8\n0\n66\n1\n70\n1\n0\nVERTEX\n8\n0\n10\n0\n20\n0\n0\nVERTEX\n8\n0\n10\n5\n20\n0\n42\n1\n0\nVERTEX\n8\n0\n10\n5\n20\n5\n0\nSEQEND\n0\nLINE\n67\n1\n8\n0\n10\n0\n20\n0\n11\n1\n21\n1\n0\nENDSEC\n0\nEOF\n";
     let d = read(text.as_bytes(), "a.dxf").unwrap();
