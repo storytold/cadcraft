@@ -732,7 +732,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             );
             draw_list(&painter, &xf, &list, bg, false);
         }
-        painter.extend(Shape::dashed_line(&[xf.to_screen(g.base), xf.to_screen(c)], Stroke::new(1.0, t.text_dim), 4.0, 3.0));
+        painter.extend(Shape::dashed_line(&[xf.to_screen(g.base), xf.to_screen(c)], Stroke::new(1.0, t.canvas_ink), 4.0, 3.0));
     }
     // Rubber band preview of the active command.
     if let (Some(c), true) = (app.canvas.cursor, app.session.running.is_some()) {
@@ -856,19 +856,19 @@ fn dynamic_input(app: &CadApp, p: &egui::Painter, at: Pos2) {
 fn draw_ucs_icon(p: &egui::Painter, rect: Rect) {
     let t = Tokens::get();
     let o = pos2(rect.left() + 36.0, rect.bottom() - 34.0);
-    let st = Stroke::new(1.0, t.text_dim);
+    let st = Stroke::new(1.0, t.canvas_ink);
     p.line_segment([o, o + vec2(60.0, 0.0)], st);
     p.line_segment([o, o + vec2(0.0, -60.0)], st);
     p.rect_stroke(Rect::from_center_size(o, vec2(9.0, 9.0)), 0.0, st, egui::StrokeKind::Middle);
     let f = egui::FontId::proportional(13.0);
-    p.text(o + vec2(70.0, 0.0), egui::Align2::LEFT_CENTER, "X", f.clone(), t.text_dim);
-    p.text(o + vec2(0.0, -70.0), egui::Align2::CENTER_BOTTOM, "Y", f, t.text_dim);
+    p.text(o + vec2(70.0, 0.0), egui::Align2::LEFT_CENTER, "X", f.clone(), t.canvas_ink);
+    p.text(o + vec2(0.0, -70.0), egui::Align2::CENTER_BOTTOM, "Y", f, t.canvas_ink);
 }
 
 fn viewport_label(p: &egui::Painter, rect: Rect) {
     let t = Tokens::get();
     let at = pos2(rect.left() + 10.0, rect.top() + 8.0);
-    p.text(at, egui::Align2::LEFT_TOP, "+  |  Top  |  2D Wireframe", crate::theme::small(), t.text_dim);
+    p.text(at, egui::Align2::LEFT_TOP, "+  |  Top  |  2D Wireframe", crate::theme::small(), t.canvas_ink);
 }
 
 fn draw_viewcube(app: &mut CadApp, ui: &mut egui::Ui, rect: Rect) {
@@ -895,7 +895,7 @@ fn draw_viewcube(app: &mut CadApp, ui: &mut egui::Ui, rect: Rect) {
     // WCS pill.
     let pill = Rect::from_center_size(c + vec2(0.0, ring + 26.0), vec2(56.0, 16.0));
     p.rect_filled(pill, 8.0, Color32::from_rgb(0x48, 0x50, 0x5c));
-    p.text(pill.center(), egui::Align2::CENTER_CENTER, "WCS ⌄", crate::theme::small(), t.text_dim);
+    p.text(pill.center(), egui::Align2::CENTER_CENTER, "WCS ⌄", crate::theme::small(), t.canvas_ink);
 }
 
 /// The grip of a selected object under the cursor, if any.

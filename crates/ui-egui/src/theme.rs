@@ -1,9 +1,72 @@
 //! Design tokens. Colours were measured from the reference look (dark slate chrome, near-black
 //! navy model space) and are CADCraft's own values; every widget reads them from here.
+//!
+//! Two palettes: [`Tokens::DARK`] (the original look) and [`Tokens::LIGHT`]. The interface theme
+//! changes the chrome (title and tool bar, menus, palettes, tabs, command line, status bar,
+//! dialogs); the drawing area keeps its model-space colours in both, as drawing colours are not
+//! part of the interface theme. [`Tokens::get`] returns the palette of the theme in use, which
+//! [`CadApp::logic`](crate::CadApp::logic) resolves once per frame from the user's [`ThemePref`].
 
-use egui::{Color32, FontFamily, FontId, Visuals};
+use std::cell::Cell;
 
-#[derive(Clone, Copy, Debug)]
+use egui::{Color32, FontFamily, FontId, Theme, Visuals};
+use serde::{Deserialize, Serialize};
+
+/// The interface theme the user chose.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemePref {
+    /// Follow the operating system's light/dark appearance, live.
+    System,
+    Light,
+    /// The default: CADCraft's original look.
+    #[default]
+    Dark,
+}
+
+/// The theme `System` uses when the OS (or browser) reports no appearance.
+pub const SYSTEM_FALLBACK: Theme = Theme::Dark;
+
+impl ThemePref {
+    pub const ALL: [ThemePref; 3] = [ThemePref::System, ThemePref::Light, ThemePref::Dark];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ThemePref::System => "system",
+            ThemePref::Light => "light",
+            ThemePref::Dark => "dark",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<ThemePref> {
+        ThemePref::ALL.into_iter().find(|t| t.as_str().eq_ignore_ascii_case(s.trim()))
+    }
+
+    /// The theme to show, given what the OS reports (`ctx.system_theme()`).
+    pub fn resolve(self, system: Option<Theme>) -> Theme {
+        match self {
+            ThemePref::System => system.unwrap_or(SYSTEM_FALLBACK),
+            ThemePref::Light => Theme::Light,
+            ThemePref::Dark => Theme::Dark,
+        }
+    }
+}
+
+thread_local! {
+    /// The theme in use on the UI thread (set by [`set_active`] each frame).
+    static ACTIVE: Cell<Theme> = const { Cell::new(Theme::Dark) };
+}
+
+/// The theme [`Tokens::get`] returns colours for.
+pub fn active() -> Theme {
+    ACTIVE.with(Cell::get)
+}
+
+pub fn set_active(theme: Theme) {
+    ACTIVE.with(|a| a.set(theme));
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Tokens {
     pub chrome: Color32,
     pub chrome_dark: Color32,
@@ -35,6 +98,24 @@ pub struct Tokens {
     pub crossing_stroke: Color32,
     pub cmd_bg: Color32,
     pub toggle_on: Color32,
+    /// Text fields and other inset (extreme) backgrounds.
+    pub field: Color32,
+    /// Selected text and selected list rows.
+    pub select_bg: Color32,
+    /// Lines and labels drawn straight onto the drawing area (UCS icon, viewport label, rubber
+    /// bands): they follow the model-space background, not the interface theme.
+    pub canvas_ink: Color32,
+    /// The command-line history lines behind the input bar.
+    pub cmd_history: Color32,
+    pub cmd_border: Color32,
+    /// Command-line keywords (`[Undo/Close]`) and their hover background.
+    pub cmd_keyword: Color32,
+    pub cmd_keyword_hover: Color32,
+    /// The command-line AutoComplete list: background and the highlighted first row.
+    pub list_bg: Color32,
+    pub list_row: Color32,
+    /// Transient warnings (status bar messages).
+    pub warn: Color32,
 }
 
 impl Tokens {
@@ -69,10 +150,60 @@ impl Tokens {
         crossing_stroke: Color32::from_rgb(0x7f, 0xe0, 0x7f),
         cmd_bg: Color32::from_rgba_premultiplied(0x34, 0x3c, 0x4a, 0xf0),
         toggle_on: Color32::from_rgb(0x3d, 0x8b, 0xfd),
+        field: Color32::from_rgb(0x31, 0x38, 0x44),
+        select_bg: Color32::from_rgb(0x3d, 0x8b, 0xfd),
+        canvas_ink: Color32::from_rgb(0xa3, 0xaa, 0xb4),
+        cmd_history: Color32::from_rgba_unmultiplied_const(0x2a, 0x30, 0x3a, 170),
+        cmd_border: Color32::from_rgb(0x55, 0x5f, 0x70),
+        cmd_keyword: Color32::from_rgb(0x8f, 0xc1, 0xff),
+        cmd_keyword_hover: Color32::from_rgb(0x2f, 0x5e, 0xa8),
+        list_bg: Color32::from_rgb(0x2b, 0x31, 0x3b),
+        list_row: Color32::from_rgb(0x3a, 0x42, 0x50),
+        warn: Color32::from_rgb(0xff, 0xd0, 0x80),
     };
 
+    /// Light grey chrome with dark text. The drawing-area colours (canvas, grid, axes, selection,
+    /// grips, snap markers, selection windows) are the same as [`Tokens::DARK`]'s.
+    pub const LIGHT: Tokens = Tokens {
+        chrome: Color32::from_rgb(0xe4, 0xe7, 0xeb),
+        chrome_dark: Color32::from_rgb(0xd5, 0xd9, 0xdf),
+        panel: Color32::from_rgb(0xee, 0xf0, 0xf3),
+        tab_active: Color32::from_rgb(0xc8, 0xd3, 0xe2),
+        control: Color32::from_rgb(0xdc, 0xe0, 0xe6),
+        control_hover: Color32::from_rgb(0xcb, 0xd2, 0xdc),
+        border: Color32::from_rgb(0xb3, 0xba, 0xc4),
+        text: Color32::from_rgb(0x1d, 0x23, 0x2b),
+        text_dim: Color32::from_rgb(0x47, 0x50, 0x5c),
+        text_faint: Color32::from_rgb(0x62, 0x6a, 0x76),
+        icon: Color32::from_rgb(0x34, 0x3c, 0x48),
+        icon_accent: Color32::from_rgb(0x1b, 0x6f, 0xd6),
+        icon_point: Color32::from_rgb(0xd3, 0x5a, 0x1c),
+        accent: Color32::from_rgb(0x2f, 0x7c, 0xf6),
+        cmd_bg: Color32::from_rgba_unmultiplied_const(0xf9, 0xfa, 0xfb, 0xf0),
+        toggle_on: Color32::from_rgb(0x2f, 0x7c, 0xf6),
+        field: Color32::from_rgb(0xff, 0xff, 0xff),
+        select_bg: Color32::from_rgb(0xb6, 0xd3, 0xfb),
+        cmd_history: Color32::from_rgba_unmultiplied_const(0xf0, 0xf2, 0xf5, 0xdc),
+        cmd_border: Color32::from_rgb(0xa9, 0xb0, 0xba),
+        cmd_keyword: Color32::from_rgb(0x15, 0x59, 0xc0),
+        cmd_keyword_hover: Color32::from_rgb(0xcf, 0xe0, 0xfa),
+        list_bg: Color32::from_rgb(0xfb, 0xfc, 0xfd),
+        list_row: Color32::from_rgb(0xe3, 0xe8, 0xef),
+        warn: Color32::from_rgb(0x8a, 0x53, 0x00),
+        ..Tokens::DARK
+    };
+
+    /// The palette of `theme`.
+    pub fn of(theme: Theme) -> Tokens {
+        match theme {
+            Theme::Dark => Tokens::DARK,
+            Theme::Light => Tokens::LIGHT,
+        }
+    }
+
+    /// The palette of the theme in use.
     pub fn get() -> Tokens {
-        Tokens::DARK
+        Tokens::of(active())
     }
 }
 
@@ -118,12 +249,16 @@ pub fn install_fonts(ctx: &egui::Context) {
     let _ = ctx;
 }
 
-pub fn apply(ctx: &egui::Context) {
-    let t = Tokens::get();
-    let mut v = Visuals::dark();
+/// egui's visuals for `theme`, from its tokens.
+fn visuals(theme: Theme) -> Visuals {
+    let t = Tokens::of(theme);
+    let mut v = match theme {
+        Theme::Dark => Visuals::dark(),
+        Theme::Light => Visuals::light(),
+    };
     v.panel_fill = t.panel;
     v.window_fill = t.chrome;
-    v.extreme_bg_color = t.chrome_dark;
+    v.extreme_bg_color = t.field;
     v.faint_bg_color = t.chrome_dark;
     v.override_text_color = Some(t.text);
     v.widgets.noninteractive.bg_fill = t.panel;
@@ -136,12 +271,22 @@ pub fn apply(ctx: &egui::Context) {
     v.widgets.hovered.weak_bg_fill = t.control_hover;
     v.widgets.active.bg_fill = t.accent;
     v.widgets.active.weak_bg_fill = t.accent;
-    v.selection.bg_fill = t.accent;
+    v.selection.bg_fill = t.select_bg;
     v.window_stroke = egui::Stroke::new(1.0, t.border);
-    v.popup_shadow = egui::epaint::Shadow { offset: [0, 4], blur: 12, spread: 0, color: Color32::from_black_alpha(90) };
+    let shadow = Color32::from_black_alpha(if theme == Theme::Dark { 90 } else { 40 });
+    v.popup_shadow = egui::epaint::Shadow { offset: [0, 4], blur: 12, spread: 0, color: shadow };
     v.window_corner_radius = egui::CornerRadius::same(6);
     v.menu_corner_radius = egui::CornerRadius::same(5);
-    ctx.set_visuals(v);
+    v
+}
+
+/// Install the styles of both themes and show `theme` (egui's own widgets, popups and menus
+/// follow it; our own painting follows [`Tokens::get`]).
+pub fn apply(ctx: &egui::Context, theme: Theme) {
+    set_active(theme);
+    ctx.set_visuals_of(Theme::Dark, visuals(Theme::Dark));
+    ctx.set_visuals_of(Theme::Light, visuals(Theme::Light));
+    ctx.set_theme(theme);
     ctx.all_styles_mut(|s| {
         s.spacing.item_spacing = egui::vec2(6.0, 4.0);
         s.spacing.button_padding = egui::vec2(6.0, 3.0);

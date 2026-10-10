@@ -1,6 +1,6 @@
 //! Window chrome: title and tool bar, file tabs, status bar and the Start page.
 
-use egui::{Color32, Rect, Sense, Stroke, pos2, vec2};
+use egui::{Rect, Sense, Stroke, pos2, vec2};
 use serde_json::json;
 
 use crate::CadApp;
@@ -309,7 +309,7 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
         if let Some((msg, at)) = &app.status
             && crate::now_ms() - at < 5000.0
         {
-            p.text(pos2(x + 20.0, r.center().y), egui::Align2::LEFT_CENTER, msg, crate::theme::small(), Color32::from_rgb(0xff, 0xd0, 0x80));
+            p.text(pos2(x + 20.0, r.center().y), egui::Align2::LEFT_CENTER, msg, crate::theme::small(), t.warn);
         }
     });
 }
