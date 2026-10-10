@@ -122,6 +122,10 @@ fn text_from(t: &T) -> Text {
 
 /// Parse one entity record. POLYLINE/INSERT followers are handled by the caller.
 fn entity(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
+    // The paper-space viewport our writer adds (dxf_write::paper_view) stays implicit.
+    if kind == "VIEWPORT" && crate::dxf_ext::is_paper_view(tags) {
+        return None;
+    }
     let t = T(tags);
     let c = common(&t);
     let k = match kind {

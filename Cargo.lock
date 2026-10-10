@@ -4,9 +4,9 @@ version = 4
 
 [[package]]
 name = "acadrust"
-version = "0.6.1"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1db2bd3da02ed787f3f5c8afba8779dd104b4459b78bb1431b1a0211cc3719f0"
+checksum = "7df99ae4f5a6d0147907f9976fe1dd166d01e72ab1a93820b50242937c5797e6"
 dependencies = [
  "anyhow",
  "bitflags 2.13.2",

@@ -306,6 +306,15 @@ pub(crate) fn read_dstyle(tags: &[Tag], styles: &HashMap<String, String>, blocks
     out
 }
 
+/// Xdata marker of the paper-space viewport (id 1) the writer adds to layouts that have none;
+/// CADCraft keeps that viewport implicit, so the reader drops it.
+pub(crate) const PAPER_VIEW: &str = "PAPERVIEW";
+
+/// True for a VIEWPORT record carrying the [`PAPER_VIEW`] marker.
+pub(crate) fn is_paper_view(tags: &[Tag]) -> bool {
+    xdata(tags, APP).iter().any(|t| t.code == 1000 && t.str().trim().eq_ignore_ascii_case(PAPER_VIEW))
+}
+
 /// Snap kinds in CADCraft's ASSOC xdata.
 fn snap_code(s: &AssocSnap) -> i64 {
     match s {
