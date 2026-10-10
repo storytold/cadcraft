@@ -162,9 +162,16 @@ fn dim_xdata(w: &mut W, dm: &Dimension, cx: &Ctx) {
         w.xdata(ov.t);
         w.s(1002, "}");
     }
+    let mut ours = Vec::new();
+    if matches!(dm.kind, DimKind::ArcLength) {
+        ours.extend(dxf_ext::arclen_xdata(dm.p15));
+    }
     if !dm.assoc.is_empty() {
+        ours.extend(dxf_ext::assoc_xdata(&dm.assoc));
+    }
+    if !ours.is_empty() {
         w.s(1001, dxf_ext::APP);
-        w.xdata(dxf_ext::assoc_xdata(&dm.assoc));
+        w.xdata(ours);
     }
 }
 
@@ -555,6 +562,7 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
                 DimKind::Radius => 4,
                 DimKind::Angular3P => 5,
                 DimKind::Ordinate { x_type } => 6 | if x_type { 64 } else { 0 },
+                // Written as aligned, marked by CADCraft xdata (see `dim_xdata`).
                 DimKind::ArcLength => 1,
             };
             w.i(70, ty | 32 | if dm.user_text_pos { 128 } else { 0 });

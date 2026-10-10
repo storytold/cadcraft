@@ -336,6 +336,20 @@ pub(crate) fn assoc_xdata(assoc: &[DimAssoc]) -> Vec<Tag> {
     v
 }
 
+/// An arc-length dimension as CADCraft xdata: `1000 ARCLEN`, `1002 {`, the arc centre as an xdata
+/// point (`1010`/`1020`/`1030`), `1002 }`. The record itself stays a standard aligned dimension
+/// (DXF has no arc-length DIMENSION type), so other programs still read it.
+pub(crate) fn arclen_xdata(center: cadcraft_geom::Vec3) -> Vec<Tag> {
+    vec![Tag::s(1000, "ARCLEN"), Tag::s(1002, "{"), Tag::f(1010, center.x), Tag::f(1020, center.y), Tag::f(1030, center.z), Tag::s(1002, "}")]
+}
+
+/// The arc centre written by [`arclen_xdata`]; None for other dimensions and other writers.
+pub(crate) fn read_arclen(tags: &[Tag]) -> Option<cadcraft_geom::Vec3> {
+    let list = xdata_list(xdata(tags, APP), "ARCLEN");
+    let g = |c: i32| list.iter().find(|t| t.code == c).map(Tag::f64).filter(|v| v.is_finite());
+    Some(cadcraft_geom::Vec3::new(g(1010)?, g(1020)?, g(1030).unwrap_or(0.0)))
+}
+
 /// A viewport's frozen layer names as CADCraft xdata: `1000 VPFROZEN`, `1002 {`, one `1000` per layer, `1002 }`.
 pub(crate) fn frozen_xdata(layers: &[String]) -> Vec<Tag> {
     let mut v = vec![Tag::s(1000, "VPFROZEN"), Tag::s(1002, "{")];
