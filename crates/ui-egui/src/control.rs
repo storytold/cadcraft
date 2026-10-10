@@ -14,8 +14,8 @@
 //! - `ui.click {x, y}`, `ui.move {x, y}`: real egui pointer input in screen points
 //! - `ui.key {key, cmd?, shift?, alt?}`, `ui.text {text}`: synthetic keyboard input
 //! - `ui.set {...UiState fields}`, `ui.resize {width, height}`
-//! - `ui.screenshot {path?}`: PNG of the window; `ui.render {path, width?, height?}`: headless
-//!   render of the drawing (no window needed)
+//! - `ui.screenshot {path?}`: PNG of the window; `ui.render {path?, width?, height?, fit?}`: headless
+//!   render of the drawing (no window needed; fits the drawing unless `fit` is false; replies `pngBase64`)
 //! - `app.open {path}`, `app.save {path?}`, `app.quit`
 
 use std::sync::mpsc::Sender;
@@ -279,18 +279,19 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
             let Ok(st) = app.session.state() else { return err("no drawing") };
             let list = cadcraft_render::build(&st.doc, &st.space, &cadcraft_render::Options::default());
             let v = st.view();
-            let view = cadcraft_render::raster::View { center: v.center, scale: f64::from(h) / v.height.max(1e-12), width: w, height: h };
+            let fit = p.get("fit").and_then(Value::as_bool).unwrap_or(true);
+            let view = render_view(&list.bounds, v.center, v.height, fit, w, h);
             let Some(png) = cadcraft_render::raster::render_png(&list, &view, &cadcraft_render::raster::RasterOptions::default()) else {
                 return err("render failed");
             };
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(path) = s("path") {
-                return match std::fs::write(path, &png) {
-                    Ok(()) => ok(json!({"path": path, "bytes": png.len()})),
-                    Err(e) => err(e),
-                };
+                if let Err(e) = std::fs::write(path, &png) {
+                    return err(e);
+                }
+                return ok(render_reply(&png, w, h, Some(path)));
             }
-            ok(json!({"bytes": png.len()}))
+            ok(render_reply(&png, w, h, None))
         }
         "app.open" => {
             let Some(path) = s("path") else { return err("missing path") };
@@ -306,6 +307,24 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
     }
 }
 
+/// The raster view for `ui.render`: fitted to the drawing's bounds, or the current screen view.
+fn render_view(bounds: &cadcraft_geom::Bounds2, center: Vec2, height: f64, fit: bool, w: u32, h: u32) -> cadcraft_render::raster::View {
+    if fit {
+        cadcraft_render::raster::View::fit(bounds, w, h, 0.05)
+    } else {
+        cadcraft_render::raster::View { center, scale: f64::from(h) / height.max(1e-12), width: w, height: h }
+    }
+}
+
+/// The `ui.render` reply, matching the headless backend (`pngBase64`, `width`, `height`), plus `bytes` and `path`.
+fn render_reply(png: &[u8], w: u32, h: u32, path: Option<&str>) -> Value {
+    let mut v = json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(png), "width": w, "height": h, "bytes": png.len()});
+    if let (Some(path), Some(o)) = (path, v.as_object_mut()) {
+        o.insert("path".to_string(), json!(path));
+    }
+    v
+}
+
 /// Save a screenshot PNG.
 pub fn save_screenshot(image: &egui::ColorImage, path: Option<&str>) -> Value {
     let [w, h] = image.size;
@@ -318,5 +337,31 @@ pub fn save_screenshot(image: &egui::ColorImage, path: Option<&str>) -> Value {
     match img.save(&path) {
         Ok(()) => json!({"ok": true, "result": {"path": path, "width": w, "height": h}}),
         Err(e) => json!({"ok": false, "error": e.to_string()}),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn render_view_fit_finds_offscreen_drawing() {
+        let far = cadcraft_geom::Bounds2::new(Vec2::new(9000.0, 9000.0), Vec2::new(9100.0, 9050.0));
+        let fitted = render_view(&far, Vec2::ZERO, 100.0, true, 800, 500);
+        assert_eq!(fitted.center, far.center());
+        let kept = render_view(&far, Vec2::ZERO, 100.0, false, 800, 500);
+        assert_eq!(kept.center, Vec2::ZERO);
+        assert!((kept.scale - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn render_reply_has_base64_width_height_and_keeps_old_keys() {
+        let r = render_reply(b"abc", 7, 5, Some("x.png"));
+        assert_eq!(r["pngBase64"], "YWJj");
+        assert_eq!(r["width"], 7);
+        assert_eq!(r["height"], 5);
+        assert_eq!(r["bytes"], 3);
+        assert_eq!(r["path"], "x.png");
+        assert!(render_reply(b"abc", 7, 5, None).get("path").is_none());
     }
 }
