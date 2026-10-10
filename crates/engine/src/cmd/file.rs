@@ -1,5 +1,6 @@
 //! File menu: new, close, switching drawings. Open/save of DWG/DXF go through the io layer,
-//! registered by the host (desktop/CLI) via [`crate::cmd::file::set_io`].
+//! registered by the host (desktop/CLI) via [`crate::cmd::file::set_io`]. On the web, where there is
+//! no file system, saved files reach the user through the host's [`crate::cmd::file::set_deliver`].
 
 use std::sync::OnceLock;
 
@@ -27,6 +28,21 @@ pub fn set_io(h: IoHooks) {
 }
 pub fn io() -> Option<&'static IoHooks> {
     IO.get()
+}
+
+/// Hand finished file bytes to the user where there is no file system (the browser: a download).
+/// Arguments: file name, MIME type, bytes. `Ok` only once the delivery was actually started.
+pub type DeliverHook = fn(&str, &str, &[u8]) -> std::result::Result<(), String>;
+
+static DELIVER: OnceLock<DeliverHook> = OnceLock::new();
+
+/// Install the host's file delivery (the web app: a browser download). Saving uses it on wasm;
+/// anything else that produces a file on the web (plots) can use [`deliver`] too.
+pub fn set_deliver(h: DeliverHook) {
+    let _ = DELIVER.set(h);
+}
+pub fn deliver() -> Option<DeliverHook> {
+    DELIVER.get().copied()
 }
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -119,17 +135,48 @@ fn run_closeall(s: &mut Session, _p: &Value) -> Result<Value> {
 pub(crate) fn save_to(s: &mut Session, path: &str) -> Result<usize> {
     let hooks = io().ok_or_else(|| bad("save", "file formats are not available in this build"))?;
     let bytes = (hooks.write)(s.doc()?, path).map_err(|e| bad("save", e))?;
+    commit_save(s, path, &bytes, store)
+}
+
+/// Put saved bytes where the user gets them: natively the file at `path` (written atomically); on
+/// the web, which has no file system, a browser download named after `path` via [`deliver`].
+fn store(path: &str, bytes: &[u8]) -> Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let tmp = format!("{path}.cadcraft-tmp");
-        std::fs::write(&tmp, &bytes).map_err(|e| bad("save", format!("{path}: {e}")))?;
+        std::fs::write(&tmp, bytes).map_err(|e| bad("save", format!("{path}: {e}")))?;
         std::fs::rename(&tmp, path).map_err(|e| bad("save", format!("{path}: {e}")))?;
+        Ok(())
     }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let name = file_name(path);
+        let deliver = deliver().ok_or_else(|| bad("save", "saving files is not available in this build; use document.bytes"))?;
+        deliver(&name, "application/octet-stream", bytes).map_err(|e| bad("save", format!("{name}: {e}")))
+    }
+}
+
+/// Store the bytes, then mark the drawing saved under `path`. If storing fails the drawing keeps
+/// its unsaved changes, file name and title. On the web a started download counts as saved: the
+/// browser owns the file from there (we can't see whether the user keeps it), and the name stays so
+/// a later QSAVE downloads the drawing again under it.
+fn commit_save(s: &mut Session, path: &str, bytes: &[u8], store: impl FnOnce(&str, &[u8]) -> Result<()>) -> Result<usize> {
+    s.state()?;
+    store(path, bytes)?;
     let st = s.state_mut()?;
     st.saved = st.doc.clone();
     st.path = Some(path.to_string());
     st.title = file_name(path);
     Ok(bytes.len())
+}
+
+/// The save result; on the web it also names the file the browser downloaded.
+fn saved(path: &str, bytes: usize) -> Value {
+    let mut r = json!({ "path": path, "bytes": bytes });
+    if cfg!(target_arch = "wasm32") {
+        r["download"] = json!(file_name(path));
+    }
+    r
 }
 
 fn run_save(s: &mut Session, p: &Value) -> Result<Value> {
@@ -138,13 +185,13 @@ fn run_save(s: &mut Session, p: &Value) -> Result<Value> {
         None => s.state()?.path.clone().ok_or_else(|| bad("qsave", "drawing has no file name yet; use saveas {path}"))?,
     };
     let n = save_to(s, &path)?;
-    Ok(json!({ "path": path, "bytes": n }))
+    Ok(saved(&path, n))
 }
 
 fn run_saveas(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").ok_or_else(|| bad("saveas", "`path` is required"))?.to_string();
     let n = save_to(s, &path)?;
-    Ok(json!({ "path": path, "bytes": n }))
+    Ok(saved(&path, n))
 }
 
 fn run_switch(s: &mut Session, p: &Value) -> Result<Value> {
@@ -298,5 +345,39 @@ mod tests {
         s.execute("document.switch", &json!({"index": 1})).unwrap();
         s.execute("close", &json!({"index": 2})).unwrap();
         assert_eq!(active_title(&s), "Drawing2");
+    }
+}
+
+#[cfg(test)]
+mod pr193_tests {
+    use super::*;
+
+    #[test]
+    fn failed_store_keeps_unsaved_changes_and_delivered_save_clears_them() {
+        let mut s = Session::new();
+        s.cmdline("circle 4,4 1").unwrap();
+        let st = s.state().unwrap();
+        let title = st.title.clone();
+        assert!(st.is_dirty() && st.path.is_none());
+
+        // The file route is unavailable or fails (the web without a download): no success, still dirty.
+        let failed = commit_save(&mut s, "a/Owned.dxf", b"0\nEOF\n", |_, _| Err(bad("save", "no download")));
+        assert!(failed.is_err());
+        let st = s.state().unwrap();
+        assert!(st.is_dirty(), "a save that delivered nothing must keep the unsaved state");
+        assert_eq!((st.path.as_deref(), st.title.as_str()), (None, title.as_str()));
+
+        // The file route took the bytes (written, or a download started): saved under that name.
+        let mut got = None;
+        let n = commit_save(&mut s, "a/Owned.dxf", b"0\nEOF\n", |p, b| {
+            got = Some((p.to_string(), b.len()));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!((n, got), (6, Some(("a/Owned.dxf".to_string(), 6))));
+        let st = s.state().unwrap();
+        assert!(!st.is_dirty());
+        assert_eq!((st.path.as_deref(), st.title.as_str()), (Some("a/Owned.dxf"), "Owned.dxf"));
+        assert_eq!(saved("a/Owned.dxf", n)["bytes"], 6);
     }
 }
