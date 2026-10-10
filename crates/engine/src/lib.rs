@@ -627,6 +627,12 @@ impl Session {
             }
             None => run.machine.begin(self),
         };
+        // Redraw what the command has added so far (LINE adds a segment per point), not only when it ends.
+        if let Ok(st) = self.state_mut()
+            && !Arc::ptr_eq(&run.before, &st.doc)
+        {
+            st.revision += 1;
+        }
         match step {
             Ok(Step::Continue) => {
                 self.running = Some(run);
