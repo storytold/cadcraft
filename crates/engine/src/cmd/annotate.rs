@@ -760,6 +760,19 @@ fn pick_at(s: &Session, p: Vec2) -> Option<Handle> {
     crate::select::pick(s.doc().ok()?, &s.space(), p, ap)
 }
 
+/// The straight or curved piece of `h` picked at `p`: a line, an arc, or the polyline segment nearest `p`.
+fn segment_at(s: &Session, h: Handle, p: Vec2) -> Option<Segment> {
+    match &s.doc().ok()?.entity(h)?.kind {
+        EntityKind::Line(l) => Some(Segment::Line(cadcraft_geom::Line::new(l.a.xy(), l.b.xy()))),
+        EntityKind::Arc(a) => Some(Segment::Arc { arc: cadcraft_geom::Arc::new(a.center.xy(), a.radius, a.start, a.end), ccw: true }),
+        EntityKind::LwPolyline(pl) => cadcraft_geom::Polyline { vertices: pl.vertices.clone(), closed: pl.closed }
+            .segments()
+            .into_iter()
+            .min_by(|x, y| x.closest(p).dist(p).total_cmp(&y.closest(p).dist(p))),
+        _ => None,
+    }
+}
+
 struct LinearM {
     aligned: bool,
     pts: Vec<Vec2>,
@@ -1003,15 +1016,13 @@ impl Interactive for AngularM {
                     s.echo("*Invalid selection*");
                     return Ok(Step::Continue);
                 };
-                let kind = s.doc()?.entity(h).map(|e| e.kind.clone());
-                match kind {
-                    Some(EntityKind::Arc(a)) if self.first.is_none() => {
-                        let g = cadcraft_geom::Arc::new(a.center.xy(), a.radius, a.start, a.end);
+                match segment_at(s, h, p) {
+                    Some(Segment::Arc { arc: g, .. }) if self.first.is_none() => {
                         self.arc = Some((g.center, g.start_point(), g.end_point()));
                     }
-                    Some(EntityKind::Line(l)) => {
+                    Some(Segment::Line(l)) => {
                         self.handles.push(h);
-                        let seg = (l.a.xy(), l.b.xy());
+                        let seg = (l.a, l.b);
                         if self.first.is_none() {
                             self.first = Some(seg);
                         } else {
