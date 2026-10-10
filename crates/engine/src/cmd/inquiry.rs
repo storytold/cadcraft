@@ -179,37 +179,45 @@ fn run_area(s: &mut Session, p: &Value) -> Result<Value> {
         area_of(&pts)
     } else {
         let h = targets(s, p)?.first().copied().ok_or_else(|| bad("area", "`points` or `handle` is required"))?;
-        let d = s.doc()?;
-        let e = d.entity(h).ok_or_else(|| bad("area", "no such object"))?;
-        match &e.kind {
-            EntityKind::Circle(c) => (c.radius * c.radius * cadcraft_geom::PI, c.radius * cadcraft_geom::TAU),
-            EntityKind::LwPolyline(pl) => {
-                let g = Polyline { vertices: pl.vertices.clone(), closed: true };
-                (g.area().abs(), g.len())
-            }
-            EntityKind::Ellipse(el) => {
-                let a = el.major.xy().len();
-                let b = a * el.ratio;
-                (cadcraft_geom::PI * a * b, cadcraft_geom::PI * (3.0 * (a + b) - ((3.0 * a + b) * (a + 3.0 * b)).sqrt()))
-            }
-            EntityKind::Hatch(hh) => {
-                // Odd parity, as drawn: a loop nested inside an odd number of other loops is an unfilled island.
-                let geoms: Vec<Polyline> = hh.loops.iter().map(|l| Polyline { vertices: l.vertices.clone(), closed: true }).collect();
-                let polys: Vec<Vec<Vec2>> = geoms.iter().map(|g| g.tessellate(1e-3)).collect();
-                let mut total = (0.0, 0.0);
-                for (i, g) in geoms.iter().enumerate() {
-                    let probe = polys.get(i).and_then(|p| p.first().copied());
-                    let depth =
-                        probe.map_or(0, |pt| polys.iter().enumerate().filter(|(j, q)| *j != i && cadcraft_geom::point_in_polygon(q, pt)).count());
-                    total.0 += if depth % 2 == 0 { g.area().abs() } else { -g.area().abs() };
-                    total.1 += g.len();
-                }
-                total
-            }
-            _ => return Err(bad("area", "object has no area")),
-        }
+        object_area(s, h)?
     };
-    Ok(json!({ "area": a, "perimeter": per, "message": format!("Area = {}, Perimeter = {}", fmt_d(s, a), fmt_d(s, per)) }))
+    Ok(json!({ "area": a, "perimeter": per, "message": area_text(s, a, per) }))
+}
+
+fn area_text(s: &Session, a: f64, per: f64) -> String {
+    format!("Area = {}, Perimeter = {}", fmt_d(s, a), fmt_d(s, per))
+}
+
+/// Area and perimeter of a closed object (AREA's Object option).
+fn object_area(s: &Session, h: Handle) -> Result<(f64, f64)> {
+    let d = s.doc()?;
+    let e = d.entity(h).ok_or_else(|| bad("area", "no such object"))?;
+    Ok(match &e.kind {
+        EntityKind::Circle(c) => (c.radius * c.radius * cadcraft_geom::PI, c.radius * cadcraft_geom::TAU),
+        EntityKind::LwPolyline(pl) => {
+            let g = Polyline { vertices: pl.vertices.clone(), closed: true };
+            (g.area().abs(), g.len())
+        }
+        EntityKind::Ellipse(el) => {
+            let a = el.major.xy().len();
+            let b = a * el.ratio;
+            (cadcraft_geom::PI * a * b, cadcraft_geom::PI * (3.0 * (a + b) - ((3.0 * a + b) * (a + 3.0 * b)).sqrt()))
+        }
+        EntityKind::Hatch(hh) => {
+            // Odd parity, as drawn: a loop nested inside an odd number of other loops is an unfilled island.
+            let geoms: Vec<Polyline> = hh.loops.iter().map(|l| Polyline { vertices: l.vertices.clone(), closed: true }).collect();
+            let polys: Vec<Vec<Vec2>> = geoms.iter().map(|g| g.tessellate(1e-3)).collect();
+            let mut total = (0.0, 0.0);
+            for (i, g) in geoms.iter().enumerate() {
+                let probe = polys.get(i).and_then(|p| p.first().copied());
+                let depth = probe.map_or(0, |pt| polys.iter().enumerate().filter(|(j, q)| *j != i && cadcraft_geom::point_in_polygon(q, pt)).count());
+                total.0 += if depth % 2 == 0 { g.area().abs() } else { -g.area().abs() };
+                total.1 += g.len();
+            }
+            total
+        }
+        _ => return Err(bad("area", "object has no area")),
+    })
 }
 
 fn run_time(s: &mut Session, _p: &Value) -> Result<Value> {
@@ -330,6 +338,47 @@ fn run_count(s: &mut Session, p: &Value) -> Result<Value> {
 #[derive(Default)]
 struct DistM {
     first: Option<Vec2>,
+    /// Multiple points: the points so far, the first included.
+    multi: Option<Vec<Vec2>>,
+    /// Asking for the length of a segment (the Length option).
+    length: bool,
+}
+
+/// Total length of the segments through `pts`.
+fn path_len(pts: &[Vec2]) -> f64 {
+    pts.windows(2)
+        .map(|w| match w {
+            [a, b] => a.dist(*b),
+            _ => 0.0,
+        })
+        .sum()
+}
+
+/// The point `len` beyond the last of `pts`, continuing the last segment (along X after a single
+/// point): the Length option of AREA and DIST's point sequences.
+fn extend_last(pts: &[Vec2], len: f64) -> Option<Vec2> {
+    let last = *pts.last()?;
+    let dir = match pts.len().checked_sub(2).and_then(|i| pts.get(i)) {
+        Some(prev) => (last - *prev).normalized(),
+        None => Vec2::X,
+    };
+    let dir = if dir == Vec2::ZERO { Vec2::X } else { dir };
+    let p = last + dir * len;
+    p.is_finite().then_some(p)
+}
+
+fn length_prompt() -> Prompt {
+    Prompt::new("Specify length of line", Accept::NUMBER)
+}
+
+/// Feed the Length option's answer: the next point, or `None` when the option was dismissed (Enter).
+fn length_input(pts: &[Vec2], i: Input) -> Result<Option<Vec2>> {
+    let t = match i {
+        Input::Text(t) => t,
+        _ => return Ok(None),
+    };
+    let len = crate::units::parse_distance(&t).filter(|v| v.is_finite()).ok_or_else(|| crate::EngineError::Other("Requires a distance.".into()))?;
+    Ok(extend_last(pts, len))
 }
 
 impl Interactive for DistM {
@@ -337,12 +386,49 @@ impl Interactive for DistM {
         "DIST"
     }
     fn prompt(&self, _s: &Session) -> Prompt {
-        match self.first {
-            None => Prompt::new("Specify first point", Accept::POINT),
-            Some(a) => Prompt::new("Specify second point", Accept::POINT).kw(&["Multiple points"]).base(a),
+        if self.length {
+            return length_prompt();
+        }
+        match (&self.multi, self.first) {
+            (Some(pts), _) if pts.len() < 2 => {
+                Prompt::new("Specify second point", Accept::POINT).kw(&["Arc", "Length", "Undo"]).base_opt(pts.last().copied())
+            }
+            (Some(pts), _) => Prompt::new("Specify next point", Accept::POINT)
+                .kw(&["Arc", "Length", "Undo", "Total"])
+                .default("Total")
+                .base_opt(pts.last().copied()),
+            (None, None) => Prompt::new("Specify first point", Accept::POINT),
+            (None, Some(a)) => Prompt::new("Specify second point", Accept::POINT).kw(&["Multiple points"]).base(a),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if let Some(pts) = &mut self.multi {
+            if self.length {
+                if let Some(p) = length_input(pts, i)? {
+                    pts.push(p);
+                    s.echo(format!("Distance = {}", fmt_d(s, path_len(pts))));
+                }
+                self.length = false;
+                return Ok(Step::Continue);
+            }
+            match i {
+                Input::Point(p) => {
+                    pts.push(p);
+                    s.echo(format!("Distance = {}", fmt_d(s, path_len(pts))));
+                }
+                Input::Keyword(k) if k == "Undo" => {
+                    if pts.len() > 1 {
+                        pts.pop();
+                    }
+                }
+                Input::Keyword(k) if k == "Length" => self.length = true,
+                Input::Keyword(k) if k == "Total" => return self.total(s),
+                Input::Keyword(k) => s.echo(format!("{k}: not available yet")),
+                Input::Enter => return self.total(s),
+                _ => {}
+            }
+            return Ok(Step::Continue);
+        }
         match (self.first, i) {
             (None, Input::Point(p)) => {
                 self.first = Some(p);
@@ -355,12 +441,31 @@ impl Interactive for DistM {
                 }
                 Ok(Step::Done)
             }
+            (Some(a), Input::Keyword(k)) if k == "Multiple points" => {
+                self.multi = Some(vec![a]);
+                Ok(Step::Continue)
+            }
             (_, Input::Enter) => Ok(Step::Done),
             _ => Ok(Step::Continue),
         }
     }
     fn preview(&self, _s: &Session, c: Vec2) -> Vec<EntityKind> {
-        self.first.map(|a| vec![super::helpers::line(a, c)]).unwrap_or_default()
+        match &self.multi {
+            Some(pts) => {
+                let mut v: Vec<cadcraft_geom::PolyVertex> = pts.iter().map(|p| cadcraft_geom::PolyVertex::new(*p)).collect();
+                v.push(cadcraft_geom::PolyVertex::new(c));
+                vec![super::helpers::lwpoly(v, false)]
+            }
+            None => self.first.map(|a| vec![super::helpers::line(a, c)]).unwrap_or_default(),
+        }
+    }
+}
+
+impl DistM {
+    fn total(&self, s: &mut Session) -> Result<Step> {
+        let d = self.multi.as_deref().map_or(0.0, path_len);
+        s.echo(format!("Distance = {}", fmt_d(s, d)));
+        Ok(Step::Done)
     }
 }
 
@@ -425,9 +530,56 @@ impl Interactive for ListM {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum AreaMode {
+    /// Measure one area and end.
+    #[default]
+    Single,
+    /// Add each measured area to the running total.
+    Add,
+    /// Subtract each measured area from the running total.
+    Subtract,
+}
+
 #[derive(Default)]
 struct AreaM {
     pts: Vec<Vec2>,
+    mode: AreaMode,
+    total: f64,
+    /// Selecting objects (the Object option).
+    object: bool,
+    /// Asking for the length of a segment (the Length option).
+    length: bool,
+}
+
+impl AreaM {
+    fn mode_prefix(&self) -> &'static str {
+        match self.mode {
+            AreaMode::Single => "",
+            AreaMode::Add => "(ADD mode) ",
+            AreaMode::Subtract => "(SUBTRACT mode) ",
+        }
+    }
+    /// Report an area (and the running total in add/subtract mode); ends the command in single mode.
+    fn measured(&mut self, s: &mut Session, a: f64, per: f64) -> Step {
+        s.echo(area_text(s, a, per));
+        match self.mode {
+            AreaMode::Single => return Step::Done,
+            AreaMode::Add => self.total += a,
+            AreaMode::Subtract => self.total -= a,
+        }
+        s.echo(format!("Total area = {}", fmt_d(s, self.total)));
+        Step::Continue
+    }
+    /// Close the boundary picked so far (Enter or Total at the next-point prompt).
+    fn close(&mut self, s: &mut Session) -> Step {
+        let pts = std::mem::take(&mut self.pts);
+        if pts.len() < 3 {
+            return if self.mode == AreaMode::Single { Step::Done } else { Step::Continue };
+        }
+        let (a, per) = area_of(&pts);
+        self.measured(s, a, per)
+    }
 }
 
 impl Interactive for AreaM {
@@ -435,37 +587,81 @@ impl Interactive for AreaM {
         "AREA"
     }
     fn prompt(&self, _s: &Session) -> Prompt {
-        match self.pts.len() {
-            0 => Prompt::new("Specify first corner point", Accept::POINT).kw(&["Object", "Add area", "Subtract area"]).default("Object"),
-            1 => Prompt::new("Specify next point", Accept::POINT).kw(&["Arc", "Length", "Undo"]).base_opt(self.pts.last().copied()),
-            _ => Prompt::new("Specify next point", Accept::POINT)
-                .kw(&["Arc", "Length", "Undo", "Total"])
-                .default("Total")
-                .base_opt(self.pts.last().copied()),
+        if self.object {
+            return Prompt::new(format!("{}Select objects", self.mode_prefix()), Accept::SELECT);
+        }
+        if self.length {
+            return length_prompt();
+        }
+        let next = format!("{}Specify next point", self.mode_prefix());
+        match (self.pts.len(), self.mode) {
+            (0, AreaMode::Single) => {
+                Prompt::new("Specify first corner point", Accept::POINT).kw(&["Object", "Add area", "Subtract area"]).default("Object")
+            }
+            (0, AreaMode::Add) => Prompt::new("Specify first corner point", Accept::POINT).kw(&["Object", "Subtract area"]),
+            (0, AreaMode::Subtract) => Prompt::new("Specify first corner point", Accept::POINT).kw(&["Object", "Add area"]),
+            (1, _) => Prompt::new(next, Accept::POINT).kw(&["Arc", "Length", "Undo"]).base_opt(self.pts.last().copied()),
+            _ => Prompt::new(next, Accept::POINT).kw(&["Arc", "Length", "Undo", "Total"]).default("Total").base_opt(self.pts.last().copied()),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
-        match i {
-            Input::Point(p) => {
-                self.pts.push(p);
-                Ok(Step::Continue)
+        if self.object {
+            match i {
+                Input::Pick(hs) => {
+                    for h in hs {
+                        match object_area(s, h) {
+                            Ok((a, per)) => {
+                                if self.measured(s, a, per) == Step::Done {
+                                    return Ok(Step::Done);
+                                }
+                            }
+                            Err(_) => s.echo("The selected object has no area."),
+                        }
+                    }
+                }
+                Input::Enter => {
+                    self.object = false;
+                    if self.mode == AreaMode::Single {
+                        return Ok(Step::Done);
+                    }
+                }
+                Input::Text(_) | Input::Keyword(_) => s.echo("*Invalid selection*"),
+                _ => {}
             }
-            Input::Keyword(k) if k == "Undo" => {
-                self.pts.pop();
-                Ok(Step::Continue)
-            }
-            Input::Enter | Input::Keyword(_) if self.pts.len() >= 3 => {
-                let (a, per) = area_of(&self.pts);
-                let m = format!("Area = {}, Perimeter = {}", fmt_d(s, a), fmt_d(s, per));
-                s.echo(m);
-                Ok(Step::Done)
-            }
-            Input::Enter => Ok(Step::Done),
-            _ => Ok(Step::Continue),
+            return Ok(Step::Continue);
         }
+        if self.length {
+            if let Some(p) = length_input(&self.pts, i)? {
+                self.pts.push(p);
+            }
+            self.length = false;
+            return Ok(Step::Continue);
+        }
+        match i {
+            Input::Point(p) => self.pts.push(p),
+            Input::Keyword(k) => match k.as_str() {
+                "Object" => self.object = true,
+                "Add area" => self.mode = AreaMode::Add,
+                "Subtract area" => self.mode = AreaMode::Subtract,
+                "Undo" => {
+                    self.pts.pop();
+                }
+                "Length" => self.length = true,
+                "Total" => return Ok(self.close(s)),
+                _ => s.echo(format!("{k}: not available yet")),
+            },
+            Input::Enter if self.pts.is_empty() => match self.mode {
+                // Enter takes the default, Object; in add/subtract mode it ends the command.
+                AreaMode::Single => self.object = true,
+                AreaMode::Add | AreaMode::Subtract => return Ok(Step::Done),
+            },
+            Input::Enter => return Ok(self.close(s)),
+            _ => {}
+        }
+        Ok(Step::Continue)
     }
     fn preview(&self, _s: &Session, c: Vec2) -> Vec<EntityKind> {
-        if self.pts.is_empty() {
+        if self.pts.is_empty() || self.object || self.length {
             return Vec::new();
         }
         let mut v: Vec<cadcraft_geom::PolyVertex> = self.pts.iter().map(|p| cadcraft_geom::PolyVertex::new(*p)).collect();
