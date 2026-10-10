@@ -306,7 +306,7 @@ fn entity(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
             id: t.i(69).unwrap_or(0) as u32,
             locked: t.i(90).unwrap_or(0) & 16384 != 0,
             frozen_layers: crate::dxf_ext::read_frozen(tags),
-            layer_colors: Vec::new(),
+            layer_colors: crate::dxf_ext::read_layer_colors(tags),
         }),
         "WIPEOUT" => {
             let o = t.p(10);

@@ -571,6 +571,43 @@ fn viewport_frozen_layers_roundtrip() {
     assert!(frozen.contains(&(3, Vec::new())), "{frozen:?}");
 }
 
+#[test]
+fn viewport_layer_colors_roundtrip() {
+    let mut d = sample();
+    let paper = Space::Paper("Layout1".into());
+    let vp = |id: u32, frozen: Vec<String>, colors: Vec<(String, Color)>| {
+        EntityKind::Viewport(Viewport {
+            center: Vec3::new(5.0, 4.0, 0.0),
+            width: 8.0,
+            height: 6.0,
+            view_center: Vec2::new(5.0, 2.5),
+            view_height: 12.0,
+            id,
+            locked: false,
+            frozen_layers: frozen,
+            layer_colors: colors,
+        })
+    };
+    let colors = vec![("Walls".to_string(), Color::Index(5)), ("A B".to_string(), Color::True(cadcraft_color::Rgb(255, 128, 0)))];
+    d.add(&paper, Common::default(), vp(2, Vec::new(), colors.clone())).unwrap();
+    d.add(&paper, Common::default(), vp(3, Vec::new(), Vec::new())).unwrap();
+    // Frozen layers and colour overrides share one CADCraft xdata group.
+    d.add(&paper, Common::default(), vp(4, vec!["Walls".into()], colors.clone())).unwrap();
+    let back = roundtrip(&d);
+    let found: Vec<(u32, Vec<String>, Vec<(String, Color)>)> = back
+        .layouts
+        .iter()
+        .flat_map(|l| l.entities.iter())
+        .filter_map(|e| match &e.kind {
+            EntityKind::Viewport(v) => Some((v.id, v.frozen_layers.clone(), v.layer_colors.clone())),
+            _ => None,
+        })
+        .collect();
+    assert!(found.contains(&(2, Vec::new(), colors.clone())), "{found:?}");
+    assert!(found.contains(&(3, Vec::new(), Vec::new())), "{found:?}");
+    assert!(found.contains(&(4, vec!["Walls".to_string()], colors)), "{found:?}");
+}
+
 fn full_dim_style() -> DimStyle {
     DimStyle {
         name: "Mech".into(),

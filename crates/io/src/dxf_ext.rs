@@ -350,6 +350,25 @@ pub(crate) fn read_frozen(tags: &[Tag]) -> Vec<String> {
     list.iter().take(MAX_XDATA_ITEMS).filter(|t| t.code == 1000).map(Tag::str).collect()
 }
 
+/// A viewport's layer colour overrides as CADCraft xdata: `1000 VPCOLORS`, `1002 {`, then per override
+/// `1000 layer` and `1000 colour` (the [`Color::name`] text, which keeps true colours), `1002 }`.
+pub(crate) fn layer_colors_xdata(colors: &[(String, Color)]) -> Vec<Tag> {
+    let mut v = vec![Tag::s(1000, "VPCOLORS"), Tag::s(1002, "{")];
+    for (layer, color) in colors {
+        v.push(Tag::s(1000, layer.clone()));
+        v.push(Tag::s(1000, color.name()));
+    }
+    v.push(Tag::s(1002, "}"));
+    v
+}
+
+/// The overrides written by [`layer_colors_xdata`]; empty for files from other writers, bad pairs are skipped.
+pub(crate) fn read_layer_colors(tags: &[Tag]) -> Vec<(String, Color)> {
+    let list = xdata_list(xdata(tags, APP), "VPCOLORS");
+    let names: Vec<String> = list.iter().take(MAX_XDATA_ITEMS * 2).filter(|t| t.code == 1000).map(Tag::str).collect();
+    names.chunks_exact(2).filter_map(|p| Some((p.first()?.clone(), Color::parse(p.get(1)?)?))).collect()
+}
+
 const POINT_NAMES: [&str; 5] = ["defpt", "p13", "p14", "p15", "p16"];
 
 /// Associativity links from CADCraft xdata; malformed links are skipped.
