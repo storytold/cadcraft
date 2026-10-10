@@ -1248,6 +1248,11 @@ pub fn write(d: &Drawing) -> String {
         w.p(10, ext.max.to3(0.0));
     }
     header_vars(&mut w, d);
+    // The current multileader style (an R2007 variable; older readers skip it).
+    if let Some(name) = d.header.get("CMLEADERSTYLE").and_then(HVal::as_str) {
+        w.s(9, "$CMLEADERSTYLE");
+        w.s(2, name);
+    }
     let seed_pos = w.t.len();
     w.s(9, "$HANDSEED");
     w.s(5, "0");
@@ -1256,7 +1261,7 @@ pub fn write(d: &Drawing) -> String {
     // ---------------- CLASSES ----------------
     w.s(0, "SECTION");
     w.s(2, "CLASSES");
-    let mut classes = vec![("TABLESTYLE", "AcDbTableStyle", 4095, false)];
+    let mut classes = vec![("TABLESTYLE", "AcDbTableStyle", 4095, false), ("MLEADERSTYLE", "AcDbMLeaderStyle", 4095, false)];
     if !cx.tables.is_empty() {
         classes.push(("ACAD_TABLE", "AcDbTable", 1025, true));
     }
@@ -1297,10 +1302,14 @@ pub fn write(d: &Drawing) -> String {
     w.f(41, 1.6);
     w.f(42, 50.0);
     w.s(0, "ENDTAB");
-    // LTYPE
+    // LTYPE. Embedded text and shapes point at STYLE records (340), which get their handles
+    // in the STYLE table below: (tag position, style name, is a shape) are filled in there.
+    let mut ltype_handles: HashMap<String, String> = HashMap::new();
+    let mut ltype_style_refs: Vec<(usize, Option<String>, bool)> = Vec::new();
     let th = table_head(&mut w, "LTYPE", d.linetypes.len());
     for lt in &d.linetypes {
-        record_head(&mut w, "LTYPE", &th, "AcDbLinetypeTableRecord");
+        let h = record_head(&mut w, "LTYPE", &th, "AcDbLinetypeTableRecord");
+        ltype_handles.entry(lt.name.to_ascii_uppercase()).or_insert(h);
         w.s(2, &lt.name);
         w.i(70, 0);
         w.s(3, &lt.description);
@@ -1309,7 +1318,27 @@ pub fn write(d: &Drawing) -> String {
         w.f(40, lt.pattern_length());
         for el in &lt.pattern {
             w.f(49, el.length);
-            w.i(74, 0);
+            // 74: 2 = text, 4 = shape, + 1 when the rotation is absolute (DXF Reference, LTYPE).
+            let (kind, shape) = match (&el.text, el.shape) {
+                (Some(_), _) => (2, 0),
+                (None, Some(n)) => (4, n),
+                (None, None) => (0, 0),
+            };
+            if kind == 0 {
+                w.i(74, 0);
+                continue;
+            }
+            w.i(74, kind | i64::from(el.absolute));
+            w.i(75, i64::from(shape));
+            ltype_style_refs.push((w.t.len(), el.style.clone(), kind == 4));
+            w.s(340, "0");
+            w.f(46, el.scale);
+            w.f(50, el.rotation);
+            w.f(44, el.offset.x);
+            w.f(45, el.offset.y);
+            if let Some(t) = &el.text {
+                w.s(9, t.clone());
+            }
         }
     }
     w.s(0, "ENDTAB");
@@ -1344,8 +1373,16 @@ pub fn write(d: &Drawing) -> String {
         }
     }
     w.s(0, "ENDTAB");
-    // STYLE
-    let th = table_head(&mut w, "STYLE", d.text_styles.len());
+    // STYLE. Linetype shapes from a shape file that isn't a text style get an unnamed shape
+    // style record (70 bit 1) naming the file.
+    let mut shape_files: Vec<String> = Vec::new();
+    for (_, style, shape) in &ltype_style_refs {
+        let Some(f) = style.as_deref().map(str::trim).filter(|f| *shape && !f.is_empty() && d.text_style(f).is_none()) else { continue };
+        if !shape_files.iter().any(|x| x.eq_ignore_ascii_case(f)) {
+            shape_files.push(f.to_string());
+        }
+    }
+    let th = table_head(&mut w, "STYLE", d.text_styles.len() + shape_files.len());
     for s in &d.text_styles {
         let h = record_head(&mut w, "STYLE", &th, "AcDbTextStyleTableRecord");
         cx.styles.entry(s.name.to_ascii_uppercase()).or_insert(h);
@@ -1371,11 +1408,68 @@ pub fn write(d: &Drawing) -> String {
             w.s(1000, dxf_ext::xdata_str(&s.font));
         }
     }
-    w.s(0, "ENDTAB");
-    for name in ["VIEW", "UCS"] {
-        table_head(&mut w, name, 0);
-        w.s(0, "ENDTAB");
+    let mut shape_handles: HashMap<String, String> = HashMap::new();
+    for f in &shape_files {
+        let h = record_head(&mut w, "STYLE", &th, "AcDbTextStyleTableRecord");
+        shape_handles.insert(f.to_ascii_uppercase(), h);
+        w.s(2, "");
+        w.i(70, 1);
+        w.f(40, 0.0);
+        w.f(41, 1.0);
+        w.f(50, 0.0);
+        w.i(71, 0);
+        w.f(42, 0.2);
+        w.s(3, f.clone());
+        w.s(4, "");
     }
+    w.s(0, "ENDTAB");
+    // Linetype text and shapes without a known style use Standard (else the first style).
+    let fallback_style = cx.style("Standard").or_else(|| d.text_styles.first().and_then(|s| cx.style(&s.name))).unwrap_or_else(|| "0".into());
+    for (pos, style, shape) in ltype_style_refs {
+        let name = style.as_deref().map(str::trim).unwrap_or_default();
+        let h = shape.then(|| shape_handles.get(&name.to_ascii_uppercase()).cloned()).flatten().or_else(|| cx.style(name));
+        if let Some(t) = w.t.get_mut(pos) {
+            *t = Tag::s(340, h.unwrap_or_else(|| fallback_style.clone()));
+        }
+    }
+    // VIEW: named views (DXF Reference, VIEW). A view's layer state is CADCraft xdata.
+    let th = table_head(&mut w, "VIEW", d.views.len());
+    for v in &d.views {
+        record_head(&mut w, "VIEW", &th, "AcDbViewTableRecord");
+        w.s(2, &v.name);
+        w.i(70, 0);
+        w.f(40, v.height);
+        w.p2(10, v.center);
+        w.f(41, v.width);
+        w.p(11, Vec3::Z);
+        w.p(12, Vec3::ZERO);
+        w.f(42, 50.0);
+        w.f(43, 0.0);
+        w.f(44, 0.0);
+        w.f(50, 0.0);
+        w.i(71, 0);
+        w.i(281, 0);
+        w.i(72, 0);
+        if let Some(ls) = &v.layer_state {
+            w.s(1001, dxf_ext::APP);
+            w.s(1000, "LAYERSTATE");
+            w.s(1000, dxf_ext::xdata_str(ls));
+        }
+    }
+    w.s(0, "ENDTAB");
+    // UCS: named user coordinate systems (DXF Reference, UCS).
+    let th = table_head(&mut w, "UCS", d.ucss.len());
+    for u in &d.ucss {
+        record_head(&mut w, "UCS", &th, "AcDbUCSTableRecord");
+        w.s(2, &u.name);
+        w.i(70, 0);
+        w.p(10, u.origin);
+        w.p(11, u.x_axis);
+        w.p(12, u.y_axis);
+        w.i(79, 0);
+        w.f(146, 0.0);
+    }
+    w.s(0, "ENDTAB");
     let apps = ["ACAD", dxf_ext::APP, "AcadAnnotative", dxf_ext::LAYER_TRANSPARENCY_APP, dxf_ext::LAYER_DESCRIPTION_APP];
     let th = table_head(&mut w, "APPID", apps.len());
     for app in apps {
@@ -1523,6 +1617,14 @@ pub fn write(d: &Drawing) -> String {
     w.s(0, "ENDSEC");
 
     // ---------------- OBJECTS ----------------
+    // Groups (members that still exist) and multileader styles.
+    let group_owner = group_dict.clone();
+    let written: std::collections::HashSet<String> = w.t.iter().filter(|t| t.code == 5).map(Tag::str).collect();
+    let groups: Vec<(&Group, String)> = d.groups.iter().filter(|g| !g.name.is_empty()).map(|g| (g, w.h())).collect();
+    let default_mleader_style = [MLeaderStyle::default()];
+    let mleader_styles: &[MLeaderStyle] = if d.mleader_styles.is_empty() { &default_mleader_style } else { &d.mleader_styles };
+    let mleader_dict = w.h();
+    let mleader_handles: Vec<String> = mleader_styles.iter().map(|_| w.h()).collect();
     w.s(0, "SECTION");
     w.s(2, "OBJECTS");
     w.s(0, "DICTIONARY");
@@ -1534,6 +1636,8 @@ pub fn write(d: &Drawing) -> String {
     w.s(350, group_dict.clone());
     w.s(3, "ACAD_LAYOUT");
     w.s(350, layout_dict.clone());
+    w.s(3, "ACAD_MLEADERSTYLE");
+    w.s(350, mleader_dict.clone());
     w.s(3, "ACAD_TABLESTYLE");
     w.s(350, table_style_dict.clone());
     for (key, h, _) in &xrecords {
@@ -1545,6 +1649,27 @@ pub fn write(d: &Drawing) -> String {
     w.s(330, root_dict.clone());
     w.s(100, "AcDbDictionary");
     w.i(281, 1);
+    for (g, h) in &groups {
+        w.s(3, &g.name);
+        w.s(350, h);
+    }
+    for (g, h) in &groups {
+        group_obj(&mut w, g, h, &group_owner, &written);
+    }
+    // Multileader styles.
+    w.s(0, "DICTIONARY");
+    w.s(5, mleader_dict.clone());
+    w.s(330, root_dict.clone());
+    w.s(100, "AcDbDictionary");
+    w.i(281, 1);
+    for (s, h) in mleader_styles.iter().zip(&mleader_handles) {
+        w.s(3, &s.name);
+        w.s(350, h);
+    }
+    let byblock_ltype = ltype_handles.get("BYBLOCK").cloned();
+    for (s, h) in mleader_styles.iter().zip(&mleader_handles) {
+        mleader_style_obj(&mut w, s, h, &mleader_dict, byblock_ltype.as_deref(), cx.style(&s.text_style));
+    }
     // Table styles.
     w.s(0, "DICTIONARY");
     w.s(5, table_style_dict.clone());
@@ -1622,13 +1747,26 @@ pub fn write(d: &Drawing) -> String {
         w.s(3, &l.name);
         w.s(350, layout_handles.get(i).cloned().unwrap_or_default());
     }
-    let layout_obj = |w: &mut W, h: &str, name: &str, tab: i64, brh: &str, flags: i64, page: &PageSetup| {
+    let layout_obj = |w: &mut W, h: &str, name: &str, tab: i64, brh: &str, flags: i64, page: &PageSetup, view: Option<(Vec2, f64)>| {
+        // Plot scale: a standard scale when fitting or 1:1, otherwise custom (142 paper units
+        // per 143 drawing units).
+        let scale = if page.scale.is_finite() && page.scale > 0.0 { page.scale } else { 1.0 };
+        let standard = page.scale_to_fit || scale == 1.0;
+        let plot_flags = 512 | 32 | if standard { 16 } else { 0 } | if page.lineweights { 128 } else { 0 } | if page.center { 4 } else { 0 };
+        let plot_type = match page.plot_area.as_str() {
+            "display" => 0,
+            "extents" => 1,
+            "limits" => 2,
+            "window" => 4,
+            _ => 5,
+        };
         w.s(0, "LAYOUT");
         w.s(5, h);
         w.s(330, layout_dict.clone());
         w.s(100, "AcDbPlotSettings");
         w.s(1, "");
-        w.s(2, "none_device");
+        let device = page.device.trim();
+        w.s(2, if device.is_empty() || device.eq_ignore_ascii_case("None") { "none_device" } else { device });
         w.s(4, page.paper.replace(' ', "_"));
         w.s(6, "");
         for (c, v) in [
@@ -1644,18 +1782,18 @@ pub fn write(d: &Drawing) -> String {
             (49, 0.0),
             (140, 0.0),
             (141, 0.0),
-            (142, 1.0),
+            (142, scale),
             (143, 1.0),
         ] {
             w.f(c, v);
         }
-        w.i(70, 688);
+        w.i(70, plot_flags);
         w.i(72, 0);
         w.i(73, i64::from(page.landscape));
-        w.i(74, 5);
-        w.s(7, "");
-        w.i(75, 16);
-        w.f(147, 1.0);
+        w.i(74, plot_type);
+        w.s(7, &page.plot_style_table);
+        w.i(75, if page.scale_to_fit { 0 } else { 16 });
+        w.f(147, scale);
         w.f(148, 0.0);
         w.f(149, 0.0);
         w.s(100, "AcDbLayout");
@@ -1673,11 +1811,20 @@ pub fn write(d: &Drawing) -> String {
         w.p(17, Vec3::new(0.0, 1.0, 0.0));
         w.i(76, 0);
         w.s(330, brh);
+        // The saved paper-space view (centre, height) as CADCraft xdata.
+        if let Some((c, height)) = view.filter(|(c, v)| c.x.is_finite() && c.y.is_finite() && v.is_finite()) {
+            w.s(1001, dxf_ext::APP);
+            w.s(1000, "PSVIEW");
+            w.s(1002, "{");
+            w.p(1010, c.to3(0.0));
+            w.f(1040, height);
+            w.s(1002, "}");
+        }
     };
-    layout_obj(&mut w, &model_layout, "Model", 0, &ms_br, 1, &PageSetup::default());
+    layout_obj(&mut w, &model_layout, "Model", 0, &ms_br, 1, &PageSetup::default(), None);
     for (i, (_, brh, l)) in ps_brs.iter().enumerate() {
         let h = layout_handles.get(i).cloned().unwrap_or_default();
-        layout_obj(&mut w, &h, &l.name, i64::from(l.tab_order.max(1)), brh, 1, &l.page);
+        layout_obj(&mut w, &h, &l.name, i64::from(l.tab_order.max(1)), brh, 1, &l.page, l.view);
     }
     w.s(0, "ENDSEC");
     w.s(0, "EOF");
@@ -1742,6 +1889,82 @@ fn table_style_obj(w: &mut W, s: &TableStyle, h: &str, dict: &str) {
             w.i(c, 0);
         }
     }
+}
+
+/// A GROUP object (DXF Reference, OBJECTS: GROUP): description, unnamed (`*A…`) and selectable
+/// flags, and the member entities that were written to this file.
+fn group_obj(w: &mut W, g: &Group, h: &str, dict: &str, written: &std::collections::HashSet<String>) {
+    w.s(0, "GROUP");
+    w.s(5, h);
+    w.group("ACAD_REACTORS", 330, &[dict]);
+    w.s(330, dict);
+    w.s(100, "AcDbGroup");
+    w.s(300, &g.description);
+    w.i(70, i64::from(g.name.starts_with('*')));
+    w.i(71, i64::from(g.selectable));
+    for m in g.members.iter().map(|m| m.hex()).filter(|m| written.contains(m)) {
+        w.s(340, m);
+    }
+}
+
+/// A MLEADERSTYLE object (DXF Reference, OBJECTS: MLEADERSTYLE): MText content and straight
+/// ByBlock leaders with the style's landing gap, dogleg length, arrow size, text style and
+/// text height.
+fn mleader_style_obj(w: &mut W, s: &MLeaderStyle, h: &str, dict: &str, byblock_ltype: Option<&str>, text_style: Option<String>) {
+    // ByBlock as a 32-bit colour value (0xC1000000).
+    const BYBLOCK: i64 = -1_056_964_608;
+    w.s(0, "MLEADERSTYLE");
+    w.s(5, h);
+    w.group("ACAD_REACTORS", 330, &[dict]);
+    w.s(330, dict);
+    w.s(100, "AcDbMLeaderStyle");
+    w.i(179, 2);
+    w.i(170, 2);
+    w.i(171, 1);
+    w.i(172, 0);
+    w.i(90, 2);
+    w.f(40, 0.0);
+    w.f(41, 0.0);
+    w.i(173, 1);
+    w.i(91, BYBLOCK);
+    if let Some(lt) = byblock_ltype {
+        w.s(340, lt);
+    }
+    w.i(92, -2);
+    w.i(290, 1);
+    w.f(42, s.landing_gap);
+    w.i(291, 1);
+    w.f(43, s.dogleg);
+    w.s(3, "");
+    w.f(44, s.arrow_size);
+    w.s(300, "");
+    if let Some(ts) = text_style {
+        w.s(342, ts);
+    }
+    w.i(174, 1);
+    w.i(178, 1);
+    w.i(175, 1);
+    w.i(176, 0);
+    w.i(93, BYBLOCK);
+    w.f(45, s.text_height);
+    w.i(292, 0);
+    w.i(297, 0);
+    w.f(46, 4.0);
+    w.i(94, BYBLOCK);
+    for c in [47, 49, 140] {
+        w.f(c, 1.0);
+    }
+    w.i(293, 1);
+    w.f(141, 0.0);
+    w.i(294, 1);
+    w.i(177, 0);
+    w.f(142, 1.0);
+    w.i(295, 0);
+    w.i(296, 0);
+    w.f(143, 0.125);
+    w.i(271, 0);
+    w.i(272, 9);
+    w.i(273, 9);
 }
 
 fn cadcraft_fonts_name() -> &'static str {
