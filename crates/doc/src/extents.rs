@@ -1,5 +1,7 @@
 //! Approximate entity bounds (used for extents, zoom and selection pre-filtering).
 
+use std::collections::HashMap;
+
 use cadcraft_geom::{Arc, Bounds2, EPS, Polyline, Vec2, bulge_to_arc};
 
 use crate::{Drawing, Entity, EntityKind, LwPolyline, Prim};
@@ -33,6 +35,14 @@ fn text_box(t: &crate::Text, len: usize) -> Bounds2 {
 }
 
 pub fn entity_bounds(d: &Drawing, e: &Entity, depth: usize) -> Bounds2 {
+    bounds_in(d, e, depth, &mut HashMap::new())
+}
+
+/// [`entity_bounds`] with the bounds of block contents (in block coordinates) already computed,
+/// by block name: every further reference to a block reuses them instead of expanding the block
+/// again, so nested or self-referencing blocks cost one pass over each definition instead of one
+/// per reference (which grows exponentially with the nesting depth).
+fn bounds_in(d: &Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<String, Bounds2>) -> Bounds2 {
     match &e.kind {
         EntityKind::Text(t) => text_box(t, t.value.chars().count()),
         EntityKind::AttDef(a) => text_box(&a.text, a.tag.chars().count()),
@@ -62,10 +72,17 @@ pub fn entity_bounds(d: &Drawing, e: &Entity, depth: usize) -> Bounds2 {
             }
             let Some(blk) = d.block(&ins.block) else { return Bounds2::from_points([ins.insert.xy()]) };
             let m = ins.transform(blk.base.xy());
-            let mut inner = Bounds2::EMPTY;
-            for be in blk.entities.iter() {
-                inner = inner.union(&entity_bounds(d, be, depth + 1));
-            }
+            let inner = match blocks.get(&blk.name) {
+                Some(b) => *b,
+                None => {
+                    let mut inner = Bounds2::EMPTY;
+                    for be in blk.entities.iter() {
+                        inner = inner.union(&bounds_in(d, be, depth + 1, blocks));
+                    }
+                    blocks.insert(blk.name.clone(), inner);
+                    inner
+                }
+            };
             let mut b =
                 if inner.is_empty() { Bounds2::from_points([ins.insert.xy()]) } else { Bounds2::from_points(inner.corners().map(|c| m.apply(c))) };
             if ins.cols > 1 || ins.rows > 1 {
@@ -106,7 +123,7 @@ pub fn entity_bounds(d: &Drawing, e: &Entity, depth: usize) -> Bounds2 {
                 && depth < MAX_BLOCK_DEPTH
             {
                 for be in blk.entities.iter() {
-                    b = b.union(&entity_bounds(d, be, depth + 1));
+                    b = b.union(&bounds_in(d, be, depth + 1, blocks));
                 }
             }
             b
