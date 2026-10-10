@@ -1016,7 +1016,10 @@ impl Interactive for AngularM {
                     s.echo("*Invalid selection*");
                     return Ok(Step::Continue);
                 };
-                let circle = s.doc()?.entity(h).and_then(|e| if let EntityKind::Circle(c) = &e.kind { Some(cadcraft_geom::Circle::new(c.center.xy(), c.radius)) } else { None });
+                let circle = s
+                    .doc()?
+                    .entity(h)
+                    .and_then(|e| if let EntityKind::Circle(c) = &e.kind { Some(cadcraft_geom::Circle::new(c.center.xy(), c.radius)) } else { None });
                 if let Some(g) = circle.filter(|_| self.first.is_none()) {
                     // The center is the vertex and the pick the first endpoint; ask for the second.
                     self.vertex = true;
