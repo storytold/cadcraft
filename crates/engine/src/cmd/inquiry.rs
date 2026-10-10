@@ -189,10 +189,21 @@ fn run_area(s: &mut Session, p: &Value) -> Result<Value> {
                 let b = a * el.ratio;
                 (cadcraft_geom::PI * a * b, cadcraft_geom::PI * (3.0 * (a + b) - ((3.0 * a + b) * (a + 3.0 * b)).sqrt()))
             }
-            EntityKind::Hatch(hh) => hh.loops.iter().fold((0.0, 0.0), |acc, l| {
-                let g = Polyline { vertices: l.vertices.clone(), closed: true };
-                (acc.0 + g.area().abs(), acc.1 + g.len())
-            }),
+            EntityKind::Hatch(hh) => {
+                // Odd parity, as drawn: a loop nested inside an odd number of other loops is an unfilled island.
+                let geoms: Vec<Polyline> = hh.loops.iter().map(|l| Polyline { vertices: l.vertices.clone(), closed: true }).collect();
+                let polys: Vec<Vec<Vec2>> = geoms.iter().map(|g| g.tessellate(1e-3)).collect();
+                let mut total = (0.0, 0.0);
+                for (i, g) in geoms.iter().enumerate() {
+                    let probe = polys.get(i).and_then(|p| p.first().copied());
+                    let depth = probe.map_or(0, |pt| {
+                        polys.iter().enumerate().filter(|(j, q)| *j != i && cadcraft_geom::point_in_polygon(q, pt)).count()
+                    });
+                    total.0 += if depth % 2 == 0 { g.area().abs() } else { -g.area().abs() };
+                    total.1 += g.len();
+                }
+                total
+            }
             _ => return Err(bad("area", "object has no area")),
         }
     };
