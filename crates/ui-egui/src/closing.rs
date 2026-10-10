@@ -1,11 +1,12 @@
-//! Closing drawings from the UI: File ▸ Close (or typing CLOSE), a file tab's ×, and
-//! File ▸ Close All.
+//! Closing drawings from the UI: File ▸ Close (or typing CLOSE), a file tab's ×,
+//! File ▸ Close All, and closing the app (the window's close button, File ▸ Exit, Cmd+Q).
 //!
 //! A drawing with unsaved changes is not closed until the user answers "Save changes to …?"
 //! (Save / Don't Save / Cancel) in an in-app modal — the same on desktop and on the web, where no
 //! native message box exists. Close All works through the drawings in tab order and asks about
 //! each dirty one; Cancel stops it there (drawings already closed stay closed). Save closes the
-//! drawing only if it really was saved.
+//! drawing only if it really was saved. Closing the app asks the same way, and quits once every
+//! drawing has been dealt with; Cancel keeps the app open.
 //!
 //! Programmatic `close` / `closeall` (`engine.execute`, the control channel, MCP, scripts) never
 //! ask: they keep their discard semantics.
@@ -33,6 +34,8 @@ pub struct Closing {
     queue: VecDeque<u64>,
     /// The drawing the prompt is asking about (always the front of `queue`).
     asking: Option<u64>,
+    /// Quit the app once the queue is done (the window was closed).
+    quit: bool,
 }
 
 impl CadApp {
@@ -53,6 +56,21 @@ impl CadApp {
     pub fn request_close_all(&mut self) {
         let uids = self.session.docs.iter().map(|d| d.uid).collect();
         self.begin_close(uids);
+    }
+
+    /// The app is closing (window close button, File ▸ Exit, Cmd+Q): with unsaved changes, ask
+    /// about each drawing first and quit once all are dealt with. Returns whether the close has to
+    /// wait (the caller then cancels the window close).
+    pub fn request_quit(&mut self) -> bool {
+        if self.quit_confirmed || !self.session.docs.iter().any(|d| d.is_dirty()) {
+            return false;
+        }
+        if self.closing.is_none() {
+            let uids = self.session.docs.iter().map(|d| d.uid).collect();
+            self.closing = Some(Closing { queue: uids, asking: None, quit: true });
+            self.advance_close();
+        }
+        true
     }
 
     /// Title of the drawing the close prompt is asking about, if a prompt is open.
@@ -116,7 +134,7 @@ impl CadApp {
             // A prompt is already open; it has to be answered first.
             return;
         }
-        self.closing = Some(Closing { queue: uids.into(), asking: None });
+        self.closing = Some(Closing { queue: uids.into(), asking: None, quit: false });
         self.advance_close();
     }
 
@@ -137,7 +155,11 @@ impl CadApp {
     fn advance_close(&mut self) {
         loop {
             let Some(uid) = self.closing.as_ref().and_then(|c| c.queue.front().copied()) else {
-                self.closing = None;
+                if self.closing.take().is_some_and(|c| c.quit) {
+                    // Every drawing was saved or discarded: now the app may close.
+                    self.quit_confirmed = true;
+                    self.quit_requested = true;
+                }
                 return;
             };
             let Some(i) = self.doc_index(uid) else {
@@ -293,6 +315,69 @@ mod tests {
         assert!(app.closing.is_none());
         assert_eq!(titles(&app), ["D"]);
         assert!(app.session.docs[0].is_dirty());
+    }
+
+    #[test]
+    fn quitting_asks_about_each_dirty_drawing_then_quits() {
+        let mut app = app_with(&["A", "B", "C"]);
+        assert!(!app.request_quit(), "nothing unsaved: quit right away");
+        dirty(&mut app, 0);
+        dirty(&mut app, 2);
+        assert!(app.request_quit(), "unsaved changes hold the window open");
+        assert_eq!(app.close_prompt(), Some("A"));
+        app.answer_close(Choice::Discard);
+        assert_eq!(app.close_prompt(), Some("C"));
+        assert!(!app.quit_requested);
+        app.answer_close(Choice::Discard);
+        assert!(app.closing.is_none());
+        assert!(app.quit_requested && app.quit_confirmed);
+        assert!(!app.request_quit(), "the confirmed close goes through");
+    }
+
+    #[test]
+    fn cancel_keeps_the_app_open() {
+        let mut app = app_with(&["A"]);
+        dirty(&mut app, 0);
+        assert!(app.request_quit());
+        app.answer_close(Choice::Cancel);
+        assert!(app.closing.is_none());
+        assert!(!app.quit_requested && !app.quit_confirmed);
+        assert_eq!(titles(&app), ["A"]);
+        assert!(app.session.docs[0].is_dirty());
+    }
+
+    /// One frame in which the window manager asks to close the window; returns whether the app
+    /// cancelled the close.
+    fn close_frame(app: &mut CadApp, ctx: &egui::Context) -> bool {
+        use egui::{ViewportCommand, ViewportEvent, ViewportId, ViewportInfo};
+        let mut input = egui::RawInput::default();
+        input.viewports.insert(ViewportId::ROOT, ViewportInfo { events: vec![ViewportEvent::Close], ..Default::default() });
+        let mut out = ctx.run_ui(input, |ui| app.logic(ui.ctx()));
+        out.textures_delta.clear();
+        out.viewport_output.get(&ViewportId::ROOT).is_some_and(|v| v.commands.contains(&ViewportCommand::CancelClose))
+    }
+
+    /// Issue #34: closing the window with unsaved changes asks first instead of losing them.
+    #[test]
+    fn window_close_with_unsaved_changes_is_held() {
+        let ctx = egui::Context::default();
+        let mut app = app_with(&["A"]);
+        assert!(!close_frame(&mut app, &ctx), "a saved drawing closes without asking");
+        dirty(&mut app, 0);
+        assert!(close_frame(&mut app, &ctx), "unsaved changes must cancel the close");
+        assert_eq!(app.close_prompt(), Some("A"));
+    }
+
+    /// Programmatic quit (control channel `app.quit`) never asks.
+    #[test]
+    fn programmatic_quit_skips_the_prompt() {
+        let ctx = egui::Context::default();
+        let mut app = app_with(&["A"]);
+        dirty(&mut app, 0);
+        let (req, _rx) = crate::control::ControlRequest::new("app.quit", json!({}));
+        let _ = crate::control::handle(&mut app, &ctx, &req);
+        assert!(!close_frame(&mut app, &ctx));
+        assert!(app.closing.is_none());
     }
 
     #[test]
