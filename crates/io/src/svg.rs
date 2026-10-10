@@ -4,14 +4,22 @@ use std::fmt::Write as _;
 
 use cadcraft_color::{Rgb, display_rgb};
 use cadcraft_doc::{Drawing, Space};
+use cadcraft_geom::Bounds2;
 use cadcraft_render::Kind;
 
-/// Export with a white background (colour 7 prints black).
+/// Export with a white background (colour 7 prints black), fitted to the extents.
 pub fn export(d: &Drawing, space: &Space) -> String {
+    export_window(d, space, None)
+}
+
+/// Export showing exactly `window` (the `viewBox`; geometry outside it is clipped by the viewer),
+/// or the extents with a 2% margin when `window` is `None`.
+pub fn export_window(d: &Drawing, space: &Space, window: Option<Bounds2>) -> String {
     let list = cadcraft_render::build(d, space, &cadcraft_render::Options::default());
-    let b = list.bounds;
+    let window = window.filter(|w| !w.is_empty());
+    let b = window.unwrap_or(list.bounds);
     let (w, h) = if b.is_empty() { (1.0, 1.0) } else { (b.width().max(1e-9), b.height().max(1e-9)) };
-    let m = (w.max(h)) * 0.02;
+    let m = if window.is_some() { 0.0 } else { (w.max(h)) * 0.02 };
     let (x0, y1) = if b.is_empty() { (0.0, 1.0) } else { (b.min.x - m, b.max.y + m) };
     let vw = w + 2.0 * m;
     let vh = h + 2.0 * m;
@@ -56,7 +64,8 @@ pub fn export(d: &Drawing, space: &Space) -> String {
             }
             Kind::Infinite { ray } => {
                 if let (Some(bp), Some(dir)) = (pts.first(), pts.get(1)) {
-                    let far = (vw + vh) * 2.0;
+                    // A window can lie far from the base point: reach past it.
+                    let far = (vw + vh) * 2.0 + if window.is_some() { bp.dist(b.center()) } else { 0.0 };
                     let a = if ray { *bp } else { *bp - *dir * far };
                     let e = *bp + *dir * far;
                     let _ = write!(

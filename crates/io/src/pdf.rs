@@ -38,6 +38,9 @@ pub struct PdfOptions {
     /// Flate-compress the content stream.
     pub compress: bool,
     pub title: String,
+    /// Model space only: plot this rectangle (drawing units), fitted to the printable area,
+    /// instead of the extents. Ignored for layouts.
+    pub window: Option<Bounds2>,
 }
 
 impl PdfOptions {
@@ -57,6 +60,7 @@ impl PdfOptions {
             lineweights: v.get("lineweights").and_then(Value::as_bool),
             compress: v.get("compress").and_then(Value::as_bool).unwrap_or(true),
             title: v.get("title").and_then(Value::as_str).unwrap_or("").to_string(),
+            window: None,
         }
     }
 }
@@ -128,13 +132,14 @@ pub fn pdf(d: &Drawing, space: &Space, o: &PdfOptions) -> Result<Vec<u8>> {
     });
     let ropts = cadcraft_render::Options { tolerance: 0.001, min_dash: 0.0, text: true, fill: true, lineweights };
     let k = unit_mm * PT_PER_MM;
-    let fit = o.fit.unwrap_or(matches!(space, Space::Model));
+    let window = o.window.filter(|w| matches!(space, Space::Model) && !w.is_empty());
+    let fit = window.is_some() || o.fit.unwrap_or(matches!(space, Space::Model));
     // Chord tolerance: about 0.05 mm on paper.
-    let est = plot_scale(&d.extents(space), &sheet, fit, o.scale);
+    let est = plot_scale(&window.unwrap_or_else(|| d.extents(space)), &sheet, fit, o.scale);
     let tol = 0.05 / unit_mm / est.max(1e-300);
     let tolerance = if tol.is_finite() && tol > 0.0 { tol } else { ropts.tolerance };
     let list = cadcraft_render::build_plot(d, space, &cadcraft_render::Options { tolerance, ..ropts });
-    let b = list.bounds;
+    let b = window.unwrap_or(list.bounds);
     let s = plot_scale(&b, &sheet, fit, o.scale);
     let map = if fit || matches!(space, Space::Model) {
         let from = if b.is_empty() { Vec2::ZERO } else { b.center() };

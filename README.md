@@ -144,7 +144,18 @@ cadcraft-cli mcp --connect 127.0.0.1:7979
 cadcraft-cli run --sample --script 'CIRCLE 22,3 1\n' --save out.dxf --export out.png
 cadcraft-cli info drawing.dxf
 cadcraft-cli convert drawing.dxf drawing.svg
+
+# Frame part of the drawing (model space, drawing units, lower-left corner first):
+cadcraft-cli convert drawing.dwg detail.png --window 0,0,20000,15000
+cadcraft-cli run drawing.dwg --cmd 'zoom {"mode":"window","p1":[0,0],"p2":[20000,15000]}' --export detail.png
+cadcraft-cli run drawing.dwg --cmd 'select {"window":[[0,0],[20000,15000]]}' --cmd 'zoom {"mode":"object"}' --export sel.png
 ```
+
+How image exports (PNG 2400×1600, SVG, PDF) are framed: `convert` fits the model-space extents.
+`run --export` shows the current view when the script or commands changed it (`zoom`, `pan`,
+`view.set`, …) and otherwise fits the extents too. `--window x0,y0,x1,y1` shows exactly that
+rectangle, centred and scaled without distortion; `--view extents` or `--view current` forces
+either framing. To frame a selection set, `zoom {"mode":"object"}` after selecting.
 
 MCP tools include `command_line` (type at the prompt), `execute` (any command with JSON),
 `inspect_drawing`, `query_entities`, `render` (returns a PNG) and, when connected to the app,
