@@ -2,8 +2,8 @@
 //!
 //! ```text
 //! cadcraft-cli info FILE.dxf                       summary as JSON
-//! cadcraft-cli convert IN.dxf OUT.(dxf|svg|png)    convert / export
-//! cadcraft-cli run [FILE|--sample|--metric] [--script TEXT|--script-file F.scr] [--cmd 'id {json}']... [--save OUT] [--export OUT.png]
+//! cadcraft-cli convert IN.dxf OUT.(dxf|svg|png) [--window x0,y0,x1,y1 | --view extents|current]
+//! cadcraft-cli run [FILE|--sample|--metric] [--script TEXT|--script-file F.scr] [--cmd 'id {json}']... [--save OUT] [--export OUT.png] [--window ... | --view ...]
 //! cadcraft-cli commands [FILTER]                   command catalog (JSON)
 //! cadcraft-cli mcp [--connect HOST:PORT]           MCP server on stdio (headless or bridged to the app)
 //! cadcraft-cli perf [N]                            timing table on a synthetic N-entity drawing
@@ -13,18 +13,118 @@
 
 use std::process::ExitCode;
 
-use cadcraft_engine::Session;
+use cadcraft_engine::doc::Space;
+use cadcraft_engine::geom::{Bounds2, Vec2};
+use cadcraft_engine::{Session, View};
 use serde_json::{Value, json};
 
 const USAGE: &str = "usage:
   cadcraft-cli info FILE.dxf
-  cadcraft-cli convert IN.dxf OUT.(dxf|svg|png)
-  cadcraft-cli run [FILE | --sample | --metric] [--script TEXT] [--script-file F.scr] [--cmd 'id {json}']... [--save OUT.dxf] [--export OUT.(png|svg)]
+  cadcraft-cli convert IN.dxf OUT.(dxf|dwg|svg|png|pdf) [FRAMING]
+  cadcraft-cli run [FILE | --sample | --metric] [--script TEXT] [--script-file F.scr] [--cmd 'id {json}']... [--save OUT.dxf] [--export OUT.(png|svg|pdf)] [FRAMING]
   cadcraft-cli commands [FILTER]
   cadcraft-cli mcp [--connect HOST:PORT]
   cadcraft-cli perf [N]
   cadcraft-cli sample (bracket|floorplan) OUT.(dxf|dwg|svg|png)
-  cadcraft-cli --version";
+  cadcraft-cli --version
+
+image framing (png 2400x1600, svg, pdf; always model space):
+  default                  convert: fit the drawing extents.
+                           run --export: the current view if the script/commands changed it
+                           (zoom, pan, view.set...), otherwise fit the drawing extents.
+  --window x0,y0,x1,y1     show this rectangle (drawing units, x0<x1, y0<y1), centred and
+                           scaled to fit the image without distortion.
+  --view extents           always fit the drawing extents.
+  --view current           the current view (as last set by zoom/pan/view.set; a freshly
+                           opened drawing's view is its extents plus a 10% margin).";
+
+/// What part of model space an image export shows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Framing {
+    /// `run`: the current view if the commands changed it, else the extents. `convert`: extents.
+    Auto,
+    Extents,
+    Current,
+    Window(Bounds2),
+}
+
+/// Parse `--window x0,y0,x1,y1` (min corner first). Hostile values are errors, never panics.
+fn parse_window(text: &str) -> Result<Bounds2, String> {
+    let parts: Vec<&str> = text.split(',').map(str::trim).collect();
+    let [x0, y0, x1, y1] = parts.as_slice() else {
+        return Err(format!("--window needs four numbers x0,y0,x1,y1, got `{text}`"));
+    };
+    let num = |name: &str, v: &str| -> Result<f64, String> {
+        match v.parse::<f64>() {
+            Ok(n) if n.is_finite() => Ok(n),
+            _ => Err(format!("--window: {name} must be a finite number, got `{v}`")),
+        }
+    };
+    let (x0, y0, x1, y1) = (num("x0", x0)?, num("y0", y0)?, num("x1", x1)?, num("y1", y1)?);
+    if !(x0 < x1 && y0 < y1) {
+        return Err(format!("--window: need x0 < x1 and y0 < y1 (lower-left corner first), got {x0},{y0},{x1},{y1}"));
+    }
+    let w = Bounds2 { min: Vec2::new(x0, y0), max: Vec2::new(x1, y1) };
+    cadcraft_io::check_window(&w).map_err(|e| format!("--window: {e}"))?;
+    Ok(w)
+}
+
+/// Parse a framing option (`--window`, `--view`) at `a`, taking its value from `it`. `Ok(false)`
+/// means `a` is not a framing option.
+fn framing_option<'a>(a: &str, it: &mut impl Iterator<Item = &'a String>, framing: &mut Framing) -> Result<bool, String> {
+    let f = match a {
+        "--window" => Framing::Window(parse_window(it.next().ok_or("--window needs x0,y0,x1,y1")?)?),
+        "--view" => match it.next().map(|v| v.to_ascii_lowercase()).as_deref() {
+            Some("extents") => Framing::Extents,
+            Some("current") => Framing::Current,
+            _ => return Err("--view needs `extents` or `current`".into()),
+        },
+        _ => return Ok(false),
+    };
+    if *framing != Framing::Auto && std::mem::discriminant(framing) != std::mem::discriminant(&f) {
+        return Err("use only one of --window and --view".into());
+    }
+    *framing = f;
+    Ok(true)
+}
+
+/// The model-space view of every open drawing, by drawing id (to tell whether commands changed it).
+fn model_views(s: &Session) -> Vec<(u64, Option<View>)> {
+    s.docs.iter().map(|st| (st.uid, st.views.iter().find(|(sp, _)| *sp == Space::Model).map(|(_, v)| *v))).collect()
+}
+
+/// The active drawing's current model-space view as a rectangle with the viewport's aspect ratio
+/// (the CLI viewport is 3:2 like the PNG export, so the image shows exactly this view).
+fn current_window(s: &Session) -> Option<Bounds2> {
+    let st = s.state().ok()?;
+    let v = st.views.iter().find(|(sp, _)| *sp == Space::Model).map(|(_, v)| *v)?;
+    let (w, h) = s.viewport_px;
+    let half = Vec2::new(v.height * w / h.max(1.0), v.height) * 0.5;
+    Some(Bounds2::new(v.center - half, v.center + half))
+}
+
+/// The window an image export shows, or `None` to fit the extents. `before` is [`model_views`]
+/// taken before the commands ran (`None` for `convert`, where nothing ran).
+fn export_window(s: &Session, framing: Framing, before: Option<&[(u64, Option<View>)]>) -> Result<Option<Bounds2>, String> {
+    match framing {
+        Framing::Window(w) => Ok(Some(w)),
+        Framing::Extents => Ok(None),
+        Framing::Current => current_window(s).map(Some).ok_or_else(|| "--view current: the drawing has no model-space view".into()),
+        Framing::Auto => {
+            let Some(before) = before else { return Ok(None) };
+            let Ok(st) = s.state() else { return Ok(None) };
+            let now = model_views(s);
+            let was = before.iter().find(|(uid, _)| *uid == st.uid);
+            let is = now.iter().find(|(uid, _)| *uid == st.uid);
+            // Only a view the commands changed counts; a drawing opened by the commands keeps
+            // the extents framing.
+            match (was, is) {
+                (Some(a), Some(b)) if a.1 != b.1 => Ok(current_window(s)),
+                _ => Ok(None),
+            }
+        }
+    }
+}
 
 fn install_io() {
     cadcraft_engine::cmd::file::set_io(cadcraft_engine::cmd::file::IoHooks {
@@ -47,8 +147,12 @@ fn info(path: &str) -> Result<(), String> {
 }
 
 fn export(s: &Session, out: &str) -> Result<(), String> {
+    export_framed(s, out, None)
+}
+
+fn export_framed(s: &Session, out: &str, window: Option<Bounds2>) -> Result<(), String> {
     let d = s.doc().map_err(|e| e.to_string())?;
-    let bytes = cadcraft_io::write(d, out).map_err(|e| e.to_string())?;
+    let bytes = cadcraft_io::write_framed(d, out, window).map_err(|e| e.to_string())?;
     std::fs::write(out, &bytes).map_err(|e| format!("{out}: {e}"))?;
     eprintln!("wrote {out} ({} bytes)", bytes.len());
     Ok(())
@@ -67,13 +171,44 @@ fn sample(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Reject an explicit framing option without an image output to apply it to.
+fn check_framed_output(framing: Framing, out: Option<&str>) -> Result<(), String> {
+    match out {
+        _ if framing == Framing::Auto => Ok(()),
+        Some(o) if !cadcraft_io::is_image(o) => Err(format!("--window/--view only apply to image output (png, svg, pdf), not `{o}`")),
+        Some(_) => Ok(()),
+        None => Err("--window/--view need an image output (--export OUT.png|svg|pdf)".into()),
+    }
+}
+
+fn convert(args: &[String]) -> Result<(), String> {
+    let mut framing = Framing::Auto;
+    let mut files = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if !framing_option(a, &mut it, &mut framing)? {
+            files.push(a);
+        }
+    }
+    let [i, o] = files.as_slice() else { return Err(USAGE.into()) };
+    check_framed_output(framing, Some(o))?;
+    let mut s = Session::empty();
+    open(&mut s, i)?;
+    let window = export_window(&s, framing, None)?;
+    export_framed(&s, o, window)
+}
+
 fn run(args: &[String]) -> Result<(), String> {
     let mut s = Session::empty();
     let mut it = args.iter();
     let mut save = None;
-    let mut exp = None;
+    let mut exp: Option<String> = None;
+    let mut framing = Framing::Auto;
     let mut steps: Vec<(String, String)> = Vec::new();
     while let Some(a) = it.next() {
+        if framing_option(a, &mut it, &mut framing)? {
+            continue;
+        }
         match a.as_str() {
             "--sample" => {
                 s.open_drawing(cadcraft_engine::sample::default_sample(), "Bracket", None);
@@ -96,6 +231,8 @@ fn run(args: &[String]) -> Result<(), String> {
     if s.docs.is_empty() {
         s.new_drawing(false);
     }
+    check_framed_output(framing, exp.as_deref())?;
+    let before = model_views(&s);
     for (kind, body) in steps {
         match kind.as_str() {
             "script" => s.script(&body).map_err(|e| e.to_string())?,
@@ -116,7 +253,8 @@ fn run(args: &[String]) -> Result<(), String> {
         export(&s, &p)?;
     }
     if let Some(p) = exp {
-        export(&s, &p)?;
+        let window = if cadcraft_io::is_image(&p) { export_window(&s, framing, Some(&before))? } else { None };
+        export_framed(&s, &p, window)?;
     }
     Ok(())
 }
@@ -352,13 +490,7 @@ fn main() -> ExitCode {
     let rest: Vec<String> = args.iter().skip(1).cloned().collect();
     let r = match args.first().map(String::as_str) {
         Some("info") => rest.first().ok_or_else(|| USAGE.to_string()).and_then(|p| info(p)),
-        Some("convert") => match rest.as_slice() {
-            [i, o] => {
-                let mut s = Session::empty();
-                open(&mut s, i).and_then(|_| export(&s, o))
-            }
-            _ => Err(USAGE.into()),
-        },
+        Some("convert") => convert(&rest),
         Some("run") => run(&rest),
         Some("perf") => perf(&rest),
         Some("sample") => sample(&rest),
@@ -386,5 +518,164 @@ fn main() -> ExitCode {
             eprintln!("{e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn b(x0: f64, y0: f64, x1: f64, y1: f64) -> Bounds2 {
+        Bounds2::new(Vec2::new(x0, y0), Vec2::new(x1, y1))
+    }
+
+    fn sample_session() -> Session {
+        let mut s = Session::empty();
+        s.open_drawing(cadcraft_engine::sample::default_sample(), "Bracket", None);
+        s
+    }
+
+    fn view_box(svg: &str) -> String {
+        let i = svg.find("viewBox=\"").map(|i| i + 9).unwrap_or(0);
+        svg[i..].split('"').next().unwrap_or("").to_string()
+    }
+
+    fn assert_near(a: Bounds2, e: Bounds2) {
+        let d = (a.min - e.min).len().max((a.max - e.max).len());
+        assert!(d < 1e-9, "{a:?} != {e:?}");
+    }
+
+    #[test]
+    fn window_parses() {
+        assert_eq!(parse_window("0,0,30,20"), Ok(b(0.0, 0.0, 30.0, 20.0)));
+        assert_eq!(parse_window(" -5.5, -1e3 ,2e3,4 "), Ok(b(-5.5, -1000.0, 2000.0, 4.0)));
+    }
+
+    #[test]
+    fn hostile_window_is_an_error() {
+        for w in [
+            "",
+            "1,2,3",
+            "1,2,3,4,5",
+            "a,0,1,1",
+            "NaN,0,1,1",
+            "0,0,inf,1",
+            "0,0,1e400,1",
+            "0,0,0,1",
+            "0,0,1,0",
+            "5,0,1,1",
+            "0,5,1,1",
+            "-1e300,-1e300,1e300,1e300",
+            "0,0,1e-12,1e-12",
+        ] {
+            assert!(parse_window(w).is_err(), "`{w}` should be rejected");
+        }
+    }
+
+    #[test]
+    fn framing_options() {
+        let parse = |args: &[&str]| -> Result<Framing, String> {
+            let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+            let mut f = Framing::Auto;
+            let mut it = args.iter();
+            while let Some(a) = it.next() {
+                assert!(framing_option(a, &mut it, &mut f)?, "{a} is a framing option");
+            }
+            Ok(f)
+        };
+        assert_eq!(parse(&["--view", "extents"]), Ok(Framing::Extents));
+        assert_eq!(parse(&["--view", "CURRENT"]), Ok(Framing::Current));
+        assert_eq!(parse(&["--window", "0,0,2,1"]), Ok(Framing::Window(b(0.0, 0.0, 2.0, 1.0))));
+        assert!(parse(&["--view"]).is_err());
+        assert!(parse(&["--view", "selection"]).is_err());
+        assert!(parse(&["--window"]).is_err());
+        assert!(parse(&["--window", "0,0,2,1", "--view", "extents"]).is_err());
+        assert!(check_framed_output(Framing::Extents, Some("a.dxf")).is_err());
+        assert!(check_framed_output(Framing::Extents, None).is_err());
+        assert!(check_framed_output(Framing::Extents, Some("a.png")).is_ok());
+        assert!(check_framed_output(Framing::Auto, Some("a.dxf")).is_ok());
+    }
+
+    #[test]
+    fn default_framing_is_extents() {
+        // convert: nothing ran, always the extents.
+        let s = sample_session();
+        assert_eq!(export_window(&s, Framing::Auto, None), Ok(None));
+        // run: commands that leave the view alone keep the extents framing.
+        let mut s = sample_session();
+        let before = model_views(&s);
+        s.script("LINE 0,0 10,10\n\n").unwrap();
+        assert_eq!(export_window(&s, Framing::Auto, Some(&before)), Ok(None));
+        // A fresh drawing too.
+        let mut s = Session::empty();
+        s.new_drawing(false);
+        let before = model_views(&s);
+        s.execute("circle", &json!({"center": [0, 0], "radius": 5})).unwrap();
+        assert_eq!(export_window(&s, Framing::Auto, Some(&before)), Ok(None));
+    }
+
+    #[test]
+    fn zoom_window_frames_export() {
+        let mut s = sample_session();
+        let before = model_views(&s);
+        s.execute("zoom", &json!({"mode": "window", "p1": [0, 0], "p2": [30, 20]})).unwrap();
+        let w = export_window(&s, Framing::Auto, Some(&before)).unwrap().unwrap();
+        // The CLI viewport is 3:2, so a 3:2 window is shown exactly.
+        assert_near(w, b(0.0, 0.0, 30.0, 20.0));
+        assert_eq!(export_window(&s, Framing::Current, Some(&before)), Ok(Some(w)));
+        // --view extents and --window override the zoom.
+        assert_eq!(export_window(&s, Framing::Extents, Some(&before)), Ok(None));
+        let explicit = b(1.0, 1.0, 2.0, 2.0);
+        assert_eq!(export_window(&s, Framing::Window(explicit), Some(&before)), Ok(Some(explicit)));
+        // A taller window keeps its height; the 3:2 image adds room left and right.
+        s.execute("zoom", &json!({"mode": "center", "center": [5, 5], "height": 4})).unwrap();
+        assert_near(export_window(&s, Framing::Auto, Some(&before)).unwrap().unwrap(), b(2.0, 3.0, 8.0, 7.0));
+    }
+
+    #[test]
+    fn zoom_object_frames_the_selection() {
+        let mut s = sample_session();
+        let before = model_views(&s);
+        // The smallest entity with an area, selected then framed with ZOOM Object.
+        let d = s.doc().unwrap();
+        let bounds = |e: &cadcraft_engine::doc::Entity| cadcraft_engine::doc::entity_bounds(d, e, 0);
+        let e = d
+            .model
+            .iter()
+            .filter(|e| bounds(e).width() > 0.0 && bounds(e).height() > 0.0)
+            .min_by(|a, b| bounds(a).width().total_cmp(&bounds(b).width()))
+            .unwrap();
+        let (h, eb, ext) = (e.handle, bounds(e), d.extents(&Space::Model));
+        s.set_selection(vec![h]);
+        s.execute("zoom", &json!({"mode": "object"})).unwrap();
+        let w = export_window(&s, Framing::Auto, Some(&before)).unwrap().unwrap();
+        assert!(w.contains(eb.min) && w.contains(eb.max));
+        assert!(w.width() < ext.width() && w.height() < ext.height(), "{w:?} vs extents {ext:?}");
+    }
+
+    #[test]
+    fn run_export_honours_zoom() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-cli-165-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = |n: &str| dir.join(n).to_string_lossy().to_string();
+        let run_svg = |extra: &[&str], out: &str| -> String {
+            let mut args: Vec<String> = ["--sample"].iter().chain(extra).map(|a| a.to_string()).collect();
+            args.extend(["--export".to_string(), path(out)]);
+            run(&args).unwrap();
+            std::fs::read_to_string(path(out)).unwrap()
+        };
+        let base = run_svg(&[], "base.svg");
+        let zoomed = run_svg(&["--cmd", r#"zoom {"mode":"window","p1":[0,0],"p2":[30,20]}"#], "zoom.svg");
+        let window = run_svg(&["--window", "0,0,30,20"], "window.svg");
+        let forced = run_svg(&["--cmd", r#"zoom {"mode":"window","p1":[0,0],"p2":[30,20]}"#, "--view", "extents"], "forced.svg");
+        assert_ne!(view_box(&zoomed), view_box(&base));
+        assert_eq!(view_box(&zoomed), "0 0 30.000000 20.000000");
+        assert_eq!(zoomed, window);
+        assert_eq!(forced, base);
+        // Hostile --window: a clear error, nothing written.
+        let bad: Vec<String> = ["--sample", "--window", "0,0,NaN,1", "--export", &path("bad.png")].iter().map(|a| a.to_string()).collect();
+        assert!(run(&bad).unwrap_err().contains("--window"));
+        assert!(!dir.join("bad.png").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

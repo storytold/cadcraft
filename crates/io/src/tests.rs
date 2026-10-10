@@ -307,6 +307,66 @@ fn svg_and_png_export() {
     assert_eq!(&png[1..4], b"PNG");
 }
 
+fn view_box(svg: &str) -> String {
+    let i = svg.find("viewBox=\"").map(|i| i + 9).unwrap_or(0);
+    svg[i..].split('"').next().unwrap_or("").to_string()
+}
+
+#[test]
+fn image_export_frames_window() {
+    use cadcraft_geom::Bounds2;
+    let d = sample();
+    let win = Bounds2::new(Vec2::new(1.0, 2.0), Vec2::new(31.0, 22.0));
+    // SVG: the viewBox is exactly the window (no margin); the default still fits the extents.
+    let framed = String::from_utf8(write_framed(&d, "a.svg", Some(win)).unwrap()).unwrap();
+    let plain = String::from_utf8(write(&d, "a.svg").unwrap()).unwrap();
+    assert_eq!(view_box(&framed), "0 0 30.000000 20.000000");
+    assert_ne!(view_box(&framed), view_box(&plain));
+    assert_eq!(plain, String::from_utf8(write_framed(&d, "a.svg", None).unwrap()).unwrap());
+    let ext = cadcraft_render::build(&d, &Space::Model, &cadcraft_render::Options::default()).bounds;
+    let m = ext.width().max(ext.height()) * 0.02;
+    assert_eq!(view_box(&plain), format!("0 0 {:.6} {:.6}", ext.width() + 2.0 * m, ext.height() + 2.0 * m));
+    // PNG: the window fills the 3:2 image exactly, centred.
+    let v = png_view(&ext, 2400, 1600, Some(win));
+    assert_eq!(v.center, Vec2::new(16.0, 12.0));
+    assert!((v.scale - 80.0).abs() < 1e-9);
+    assert_eq!(png_view(&ext, 2400, 1600, None), cadcraft_render::raster::View::fit(&ext, 2400, 1600, 0.05));
+    let png_framed = write_framed(&d, "a.png", Some(win)).unwrap();
+    assert_eq!(&png_framed[1..4], b"PNG");
+    assert_ne!(png_framed, write(&d, "a.png").unwrap());
+    // PDF: the window is fitted to the sheet instead of the extents.
+    let pdf_framed = write_framed(&d, "a.pdf", Some(win)).unwrap();
+    check_pdf(&pdf_framed);
+    assert_ne!(pdf_framed, write(&d, "a.pdf").unwrap());
+    // Non-image formats ignore the window.
+    assert_eq!(write_framed(&d, "a.dxf", Some(win)).unwrap(), write(&d, "a.dxf").unwrap());
+}
+
+#[test]
+fn hostile_export_window_is_an_error() {
+    use cadcraft_geom::Bounds2;
+    let d = sample();
+    let raw = |x0: f64, y0: f64, x1: f64, y1: f64| Bounds2 { min: Vec2::new(x0, y0), max: Vec2::new(x1, y1) };
+    let bad = [
+        raw(f64::NAN, 0.0, 1.0, 1.0),
+        raw(0.0, 0.0, f64::INFINITY, 1.0),
+        raw(0.0, 0.0, 0.0, 1.0),                   // zero width
+        raw(0.0, 0.0, 1.0, 0.0),                   // zero height
+        raw(5.0, 0.0, 1.0, 1.0),                   // inverted
+        raw(-1e300, -1e300, 1e300, 1e300),         // huge
+        raw(1e11, 1e11, 1e11 + 1e-6, 1e11 + 1e-6), // vanishingly small next to its coordinates
+        Bounds2::EMPTY,
+    ];
+    for w in bad {
+        assert!(check_window(&w).is_err(), "{w:?}");
+        for name in ["a.png", "a.svg", "a.pdf"] {
+            assert!(write_framed(&d, name, Some(w)).is_err(), "{name} {w:?}");
+        }
+    }
+    assert!(check_window(&raw(-1e6, -1e6, 1e6, 1e6)).is_ok());
+    assert!(check_window(&raw(0.0, 0.0, 1e-3, 1e-3)).is_ok());
+}
+
 /// Structural sanity check of a PDF: header, object count, xref offsets pointing at `n 0 obj`.
 fn check_pdf(bytes: &[u8]) -> String {
     assert!(bytes.starts_with(b"%PDF-1.4"));
