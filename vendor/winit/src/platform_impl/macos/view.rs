@@ -137,6 +137,9 @@ pub struct ViewState {
     /// True while `keyDown:` runs `interpretKeyEvents`.
     in_key_down: Cell<bool>,
 
+    /// True if the key being handled by `keyDown:` committed IME text.
+    committed_in_key_down: Cell<bool>,
+
     marked_text: RefCell<Retained<NSMutableAttributedString>>,
     accepts_first_mouse: bool,
 
@@ -445,6 +448,7 @@ declare_class!(
                 if self.ivars().in_key_down.get() {
                     // `keyDown:` clears the marked text and swallows the key that committed it.
                     self.ivars().ime_state.set(ImeState::Committed);
+                    self.ivars().committed_in_key_down.set(true);
                 } else {
                     // Committed outside a key press. No key to swallow.
                     *self.ivars().marked_text.borrow_mut() = NSMutableAttributedString::new();
@@ -541,6 +545,12 @@ declare_class!(
                 // `key_down` could result in preedit clear, so compare old and current state.
                 _ => old_ime_state != self.ivars().ime_state.get(),
             };
+            // CADCraft patch: a key whose text was committed through IME isn't sent again as
+            // `KeyboardInput` (unless `doCommandBySelector` forwards it, as for Enter). Apple Korean
+            // answers Space with no syllable in progress with `setMarkedText(" ")`,
+            // `insertText(" ")`, then `setMarkedText("")`, which resets the state above to the
+            // ground state, so the space arrived twice (rust-windowing/winit#4478).
+            let had_ime_input = self.ivars().committed_in_key_down.replace(false) || had_ime_input;
 
             if !had_ime_input || self.ivars().forward_key_to_app.get() {
                 let key_event = create_key_event(&event, true, unsafe { event.isARepeat() });
@@ -860,6 +870,7 @@ impl WinitView {
             ime_allowed: Default::default(),
             forward_key_to_app: Default::default(),
             in_key_down: Default::default(),
+            committed_in_key_down: Default::default(),
             marked_text: Default::default(),
             accepts_first_mouse,
             _ns_window: WeakId::new(&window.retain()),
