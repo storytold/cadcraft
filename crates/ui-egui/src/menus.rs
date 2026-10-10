@@ -114,6 +114,10 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
             toggle(&mut app.ui.show_file_tabs, params);
             Ok(Value::Null)
         }
+        // Typed or chosen from a menu or the tool bar: ask for the file (or show the preview).
+        "export" | "exp" | "import" | "imp" | "publish" | "preview" | "pre" if params.is_null() && app.session.state().is_ok() => {
+            return Some(crate::exchange::route(app, id));
+        }
         "ui.toggle.statusbar" => {
             toggle(&mut app.ui.show_status_bar, params);
             Ok(Value::Null)
