@@ -151,7 +151,7 @@ fn splinedit_json_and_command_line() {
     let mut s = Session::new();
     let sp = h(&s.execute("spline", &json!({"fit": [[0, 0], [2, 2], [4, 0], [6, 2]]})).unwrap());
     s.execute("splinedit", &json!({"handle": sp, "option": "close"})).unwrap();
-    assert!(matches!(kind(&s, &sp), EntityKind::Spline(x) if x.closed && x.fit.len() == 5));
+    assert!(matches!(kind(&s, &sp), EntityKind::Spline(x) if x.closed && x.is_periodic() && x.fit.len() == 4));
     s.execute("splinedit", &json!({"handle": sp, "option": "open"})).unwrap();
     assert!(matches!(kind(&s, &sp), EntityKind::Spline(x) if !x.closed && x.fit.len() == 4));
     s.execute("splinedit", &json!({"handle": sp, "option": "reverse"})).unwrap();

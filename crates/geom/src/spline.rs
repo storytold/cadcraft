@@ -87,6 +87,79 @@ impl Spline {
         Spline { degree, knots, control, weights: Vec::new(), fit: fit.to_vec(), closed: false }
     }
 
+    /// Smooth closed (periodic) cubic interpolation through fit points. Chord-length parameters
+    /// include the closing chord; the knot vector is the periodic (unclamped) extension and the
+    /// first `degree` control points repeat at the end, so the curve has continuous tangent and
+    /// curvature at the seam. A repeated closing fit point is dropped.
+    pub fn from_fit_points_closed(fit: &[Vec2]) -> Spline {
+        let mut pts = fit.to_vec();
+        if pts.len() > 3 && pts.first().zip(pts.last()).is_some_and(|(a, b)| a.near(*b, 1e-12)) {
+            pts.pop();
+        }
+        let n = pts.len();
+        let fallback = |pts: &[Vec2]| {
+            let mut f = pts.to_vec();
+            f.extend(pts.first().copied());
+            let mut s = Spline::from_fit_points(&f);
+            s.fit = pts.to_vec();
+            s.closed = true;
+            s
+        };
+        let p = 3;
+        if n < p {
+            return fallback(&pts);
+        }
+        // Parameters t_0 = 0 .. t_n = 1 (t_n is the return to the first point).
+        let mut t = vec![0.0; n + 1];
+        let mut total = 0.0;
+        for i in 1..=n {
+            total += pts.get(i - 1).zip(pts.get(i % n)).map(|(a, b)| a.dist(*b)).unwrap_or(0.0).max(1e-12);
+            if let Some(x) = t.get_mut(i) {
+                *x = total;
+            }
+        }
+        for x in t.iter_mut() {
+            *x /= total;
+        }
+        // Periodic knots: knots[j] = t_(j-p), extended by whole periods on both sides.
+        let tk = |i: isize| {
+            let (q, r) = (i.div_euclid(n as isize), i.rem_euclid(n as isize) as usize);
+            t.get(r).copied().unwrap_or(0.0) + q as f64
+        };
+        let m = n + p;
+        let knots: Vec<f64> = (0..m + p + 1).map(|j| tk(j as isize - p as isize)).collect();
+        // Interpolation at t_i; control index k and k + n are the same unknown.
+        let mut a = vec![vec![0.0; n]; n];
+        for (i, row) in a.iter_mut().enumerate() {
+            let u = t.get(i).copied().unwrap_or(0.0);
+            let span = find_span(m - 1, p, u, &knots);
+            for (k, v) in basis(span, u, p, &knots).iter().enumerate() {
+                if let Some(cell) = row.get_mut((span + k - p) % n) {
+                    *cell += *v;
+                }
+            }
+        }
+        let xs: Vec<f64> = pts.iter().map(|q| q.x).collect();
+        let ys: Vec<f64> = pts.iter().map(|q| q.y).collect();
+        let (Some(cx), Some(cy)) = (solve(a.clone(), xs), solve(a, ys)) else { return fallback(&pts) };
+        let mut control: Vec<Vec2> = cx.into_iter().zip(cy).map(|(x, y)| Vec2::new(x, y)).collect();
+        if control.iter().any(|c| !c.x.is_finite() || !c.y.is_finite()) {
+            return fallback(&pts);
+        }
+        control.extend_from_within(..p);
+        Spline { degree: p, knots, control, weights: Vec::new(), fit: pts, closed: true }
+    }
+
+    /// Interpolation through fit points, open or closed (see `from_fit_points_closed`).
+    pub fn from_fit(fit: &[Vec2], closed: bool) -> Spline {
+        if closed { Spline::from_fit_points_closed(fit) } else { Spline::from_fit_points(fit) }
+    }
+
+    /// Closed with an unclamped (periodic) knot vector, as DXF flags it (group 70 bit 2).
+    pub fn is_periodic(&self) -> bool {
+        self.closed && self.knots.first() != self.knots.get(self.degree)
+    }
+
     pub fn is_valid(&self) -> bool {
         let n = self.control.len();
         n > self.degree && self.degree >= 1 && self.knots.len() == n + self.degree + 1 && self.knots.windows(2).all(|w| w.first() <= w.get(1))

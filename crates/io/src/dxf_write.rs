@@ -448,7 +448,7 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
         EntityKind::Spline(s) => {
             w.s(0, "SPLINE");
             common(w, e, owner, paper, "AcDbSpline");
-            let flags = 8 | i64::from(s.closed) | if s.weights.is_empty() { 0 } else { 4 };
+            let flags = 8 | i64::from(s.closed) | if s.is_periodic() { 2 } else { 0 } | if s.weights.is_empty() { 0 } else { 4 };
             w.i(70, flags);
             w.i(71, s.degree as i64);
             w.i(72, s.knots.len() as i64);

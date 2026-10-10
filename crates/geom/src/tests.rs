@@ -124,6 +124,29 @@ fn spline_interpolates_fit_points() {
 }
 
 #[test]
+fn closed_spline_is_smooth_at_the_seam() {
+    let fit = [Vec2::new(0.0, 0.0), Vec2::new(4.0, 0.0), Vec2::new(4.0, 3.0), Vec2::new(0.0, 3.0)];
+    let s = Spline::from_fit_points_closed(&fit);
+    assert!(s.is_valid() && s.closed && s.is_periodic());
+    assert_eq!(s.fit.len(), 4, "the first fit point is not repeated");
+    let (lo, hi) = s.domain();
+    assert!(s.eval(lo).near(fit[0], 1e-9) && s.eval(hi).near(fit[0], 1e-9));
+    let pts = s.tessellate(1e-4);
+    for f in fit {
+        assert!(pts.iter().any(|p| p.dist(f) < 0.05), "fit point {f:?} missed");
+    }
+    // Same tangent leaving and arriving at the seam (an open fit through a repeated point has a corner there).
+    let h = 1e-6;
+    let out = (s.eval(lo + h) - s.eval(lo)).normalized();
+    let back = (s.eval(hi) - s.eval(hi - h)).normalized();
+    assert!(out.near(back, 1e-4), "kink at the seam: {out:?} vs {back:?}");
+    // A repeated closing point is dropped.
+    let mut dup = fit.to_vec();
+    dup.push(fit[0]);
+    assert_eq!(Spline::from_fit_points_closed(&dup).fit.len(), 4);
+}
+
+#[test]
 fn ellipse_points() {
     let e = Ellipse::full(Vec2::ZERO, Vec2::new(4.0, 0.0), 0.5);
     assert!(e.at_param(PI / 2.0).near(Vec2::new(0.0, 2.0), 1e-9));

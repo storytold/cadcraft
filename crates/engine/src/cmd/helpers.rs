@@ -38,6 +38,15 @@ pub fn polygon_vertices(center: Vec2, sides: usize, radius_pt: Vec2, inscribed: 
     (0..n).map(|i| PolyVertex::new(Vec2::polar(center, r, a0 + step * i as f64))).collect()
 }
 
+/// The radius point for a polygon whose radius is typed: the bottom edge is horizontal in both
+/// modes (inscribed: a vertex half a side's angle past straight down; circumscribed: the bottom
+/// edge's midpoint straight down).
+pub fn polygon_typed_radius_point(center: Vec2, sides: usize, radius: f64, inscribed: bool) -> Vec2 {
+    let down = -std::f64::consts::FRAC_PI_2;
+    let a = if inscribed { down + std::f64::consts::PI / sides.clamp(3, 1024) as f64 } else { down };
+    Vec2::polar(center, radius, a)
+}
+
 /// Polygon from an edge (first two vertices).
 pub fn polygon_from_edge(p1: Vec2, p2: Vec2, sides: usize) -> Vec<PolyVertex> {
     let n = sides.clamp(3, 1024);

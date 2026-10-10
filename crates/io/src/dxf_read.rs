@@ -204,7 +204,7 @@ fn entity(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
             let fit = t.pts(11);
             let mut sp = Spline { degree, knots, control, weights, fit: fit.clone(), closed: t.i(70).unwrap_or(0) & 1 != 0 };
             if !sp.is_valid() && fit.len() >= 2 {
-                sp = Spline::from_fit_points(&fit);
+                sp = Spline::from_fit(&fit, sp.closed);
             } else if !sp.is_valid() && sp.control.len() >= 2 {
                 sp = Spline::from_control(sp.control.clone(), degree);
             }
