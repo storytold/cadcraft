@@ -1,0 +1,11 @@
+kind = "app"
+categories = ["Graphics", "2DGraphics"]
+icon = "assets/app-icon/hicolor/256x256/apps/ai.storyteller.cadcraft.png"
+
+[linux.x86_64]
+asset = "cadcraft-{version}-linux-x86_64.tar.gz"
+exec = "cadcraft-{version}-linux-x86_64/usr/bin/cadcraft"
+
+[linux.aarch64]
+asset = "cadcraft-{version}-linux-aarch64.tar.gz"
+exec = "cadcraft-{version}-linux-aarch64/usr/bin/cadcraft"
