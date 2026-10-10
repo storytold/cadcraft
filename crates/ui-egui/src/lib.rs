@@ -101,6 +101,9 @@ pub struct CadApp {
     styled: bool,
     pub frame_ms: f64,
     pub quit_requested: bool,
+    /// Caps the frame rate when presenting without vsync (see [`gpu::FrameCap`]).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub frame_cap: Option<gpu::FrameCap>,
 }
 
 impl CadApp {
@@ -121,6 +124,8 @@ impl CadApp {
             styled: false,
             frame_ms: 0.0,
             quit_requested: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            frame_cap: None,
         }
     }
 
@@ -213,8 +218,12 @@ impl CadApp {
         }
     }
 
-    /// Inject synthetic events (one pointer event per frame).
+    /// Wait for the frame cap (if any), then inject synthetic events (one pointer event per frame).
     pub fn raw_input_hook(&mut self, raw: &mut egui::RawInput) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(cap) = &mut self.frame_cap {
+            cap.wait();
+        }
         if self.synthetic.is_empty() {
             return;
         }

@@ -30,6 +30,62 @@ const CHUNK: usize = 4_194_300;
 /// Point markers are 1.5 × 1.5 points (as on the CPU path).
 const POINT_SIZE: f32 = 1.5;
 
+/// How the native window presents frames (`NativeOptions::wgpu_options.surface`).
+///
+/// The canvas hides the OS pointer and draws its own crosshair, so every frame the swapchain holds
+/// back is visible as cursor lag. With FIFO (vsync) wgpu asks for one queued frame, but Vulkan
+/// clamps that to the driver's minimum swapchain size, which is three images on X11 (two frames
+/// queued behind the one on screen; Windows DX12 honours one). `low_latency` (the
+/// app passes it on Linux/BSD) prefers a mode that never queues: `AutoNoVsync` picks Immediate,
+/// then Mailbox, then falls back to FIFO, so it is valid on every surface; under a compositor the
+/// compositor still syncs to the display. `vsync` is the `CADCRAFT_VSYNC` override: `1`/`on`
+/// forces FIFO (tear-free without a compositor), `0`/`off` forces the low-latency mode.
+pub fn surface_config(vsync: Option<&str>, low_latency: bool) -> egui_wgpu::SurfaceConfig {
+    let no_vsync = match vsync.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+        Some("1" | "on" | "true" | "yes") => false,
+        Some("0" | "off" | "false" | "no") => true,
+        _ => low_latency,
+    };
+    egui_wgpu::SurfaceConfig {
+        present_mode: if no_vsync { wgpu::PresentMode::AutoNoVsync } else { wgpu::PresentMode::AutoVsync },
+        desired_maximum_frame_latency: Some(1),
+    }
+}
+
+/// Frame-rate cap for presenting without vsync. Nothing else paces frames then (on X11; Wayland
+/// still throttles to the compositor), so a 1000 Hz mouse made the app render ~900 frames per
+/// second and keep a CPU core busy. Waiting out the rest of a short minimum interval adds at most
+/// that interval of input age, far less than a vsync queue.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug)]
+pub struct FrameCap {
+    min: std::time::Duration,
+    next: Option<std::time::Instant>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl FrameCap {
+    /// At most `max_fps` frames per second.
+    pub fn new(max_fps: u32) -> Self {
+        FrameCap { min: std::time::Duration::from_secs(1) / max_fps.max(1), next: None }
+    }
+
+    /// How long a frame starting at `now` waits; records when the following one may start.
+    pub fn wait_at(&mut self, now: std::time::Instant) -> std::time::Duration {
+        let wait = self.next.map_or(std::time::Duration::ZERO, |n| n.saturating_duration_since(now));
+        self.next = now.checked_add(wait.saturating_add(self.min));
+        wait
+    }
+
+    /// Block until this frame may start (call once per frame, at its start).
+    pub fn wait(&mut self) {
+        let wait = self.wait_at(std::time::Instant::now());
+        if !wait.is_zero() {
+            std::thread::sleep(wait);
+        }
+    }
+}
+
 /// The wgpu target the app renders into, recorded by [`install`].
 #[derive(Clone, Copy, Debug)]
 pub struct GpuTarget {
@@ -422,6 +478,36 @@ mod tests {
     use super::*;
     use cadcraft_doc::Handle;
     use cadcraft_render::DPrim;
+
+    #[test]
+    fn surface_config_prefers_low_latency_where_asked_and_honours_override() {
+        use wgpu::PresentMode::{AutoNoVsync, AutoVsync};
+        assert_eq!(surface_config(None, true).present_mode, AutoNoVsync);
+        assert_eq!(surface_config(None, false).present_mode, AutoVsync);
+        for on in ["1", "on", " TRUE ", "yes"] {
+            assert_eq!(surface_config(Some(on), true).present_mode, AutoVsync, "{on}");
+        }
+        for off in ["0", "Off", "false", "no"] {
+            assert_eq!(surface_config(Some(off), false).present_mode, AutoNoVsync, "{off}");
+        }
+        assert_eq!(surface_config(Some("maybe"), true).present_mode, AutoNoVsync);
+        assert_eq!(surface_config(Some(""), false).present_mode, AutoVsync);
+        assert_eq!(surface_config(None, true).desired_maximum_frame_latency, Some(1));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn frame_cap_waits_out_the_minimum_interval_only() {
+        use std::time::{Duration, Instant};
+        let mut cap = FrameCap::new(250); // 4 ms
+        let t0 = Instant::now();
+        assert_eq!(cap.wait_at(t0), Duration::ZERO, "first frame never waits");
+        assert_eq!(cap.wait_at(t0 + Duration::from_millis(1)), Duration::from_millis(3));
+        // That frame started at 4 ms; the next one 10 ms later is long past the interval.
+        assert_eq!(cap.wait_at(t0 + Duration::from_millis(14)), Duration::ZERO);
+        assert_eq!(cap.wait_at(t0 + Duration::from_millis(18)), Duration::ZERO);
+        assert_eq!(FrameCap::new(0).min, Duration::from_secs(1));
+    }
 
     fn list() -> DisplayList {
         let mut l = DisplayList {

@@ -310,6 +310,9 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
             && crate::now_ms() - at < 5000.0
         {
             p.text(pos2(x + 20.0, r.center().y), egui::Align2::LEFT_CENTER, msg, crate::theme::small(), Color32::from_rgb(0xff, 0xd0, 0x80));
+            // Clear it on time even when no input arrives (the app only repaints on input).
+            let left = std::time::Duration::try_from_secs_f64((5000.0 - (crate::now_ms() - at)) / 1000.0).unwrap_or_default();
+            ui.ctx().request_repaint_after(left);
         }
     });
 }
