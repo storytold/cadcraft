@@ -514,8 +514,31 @@ impl Polyline {
     }
     /// Signed area (CCW positive) of a closed polyline including bulge areas.
     pub fn area(&self) -> f64 {
-        let pts = self.tessellate(1e-4);
-        shoelace(&pts)
+        // Integrate the chords exactly and add the signed circular-segment area
+        // for every bulge. A tessellated shoelace loses precision on large arcs.
+        // Working relative to the first vertex avoids cancellation when a small
+        // shape is located far from the drawing origin.
+        let Some(first) = self.vertices.first() else {
+            return 0.0;
+        };
+        let origin = first.p;
+        let n = self.vertices.len();
+        let mut twice_area = 0.0;
+        for i in 0..n {
+            let (Some(a), Some(b)) = (self.vertices.get(i), self.vertices.get((i + 1) % n)) else {
+                continue;
+            };
+            twice_area += (a.p - origin).cross(b.p - origin);
+            // Open polylines keep their historical implicit straight closing edge.
+            // The final vertex's bulge is only used for an explicit closing segment.
+            if (i + 1 < n || self.closed)
+                && let Some((arc, ccw)) = bulge_to_arc(a.p, b.p, a.bulge)
+            {
+                let sweep = if ccw { arc.sweep() } else { -arc.sweep() };
+                twice_area += arc.radius * arc.radius * (sweep - sweep.sin());
+            }
+        }
+        twice_area / 2.0
     }
     pub fn closest(&self, p: Vec2) -> Option<Vec2> {
         let mut best: Option<(f64, Vec2)> = None;

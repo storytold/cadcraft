@@ -236,3 +236,32 @@ fn elliptical_arc_bounds_exclude_extrema_outside_the_sweep() {
     assert!((bounds.min.y - e.at_param(e.end).y).abs() < 1e-12);
     assert!((bounds.max.y - 18.25_f64.sqrt()).abs() < 1e-12);
 }
+
+#[test]
+fn polyline_area_is_exact_for_bulge_segments() {
+    // One semicircular arc from left to right plus a straight closing edge.
+    let mut p = Polyline::from_points(&[Vec2::new(0.0, 0.0), Vec2::new(2.0, 0.0)], true);
+    p.vertices[0].bulge = 1.0;
+    assert!((p.area() - PI / 2.0).abs() < 1e-12, "{}", p.area());
+    p.vertices[0].bulge = -1.0;
+    assert!((p.area() + PI / 2.0).abs() < 1e-12, "{}", p.area());
+}
+
+#[test]
+fn polyline_area_is_stable_far_from_the_origin() {
+    let o = 1.0e12;
+    let p = Polyline::from_points(
+        &[
+            Vec2::new(o, o),
+            Vec2::new(o + 10.0, o),
+            Vec2::new(o + 10.0, o + 10.0),
+            Vec2::new(o, o + 10.0),
+        ],
+        true,
+    );
+    assert!((p.area() - 100.0).abs() < 1e-12, "{}", p.area());
+    // An open polyline's measured area retains the implicit straight closing edge.
+    let mut open = p;
+    open.closed = false;
+    assert!((open.area() - 100.0).abs() < 1e-12);
+}
