@@ -716,17 +716,33 @@ impl Session {
         r.machine.preview(self, cursor).into_iter().map(|k| Entity { handle: Handle(0), common: common.clone(), kind: k }).collect()
     }
 
-    /// Process one line typed at the command line (Enter pressed).
+    /// Process one line typed at the command line (Enter pressed). Spaces separate inputs as in a
+    /// script line (see [`Session::script`]), so `MOVE L  0,0 5,5` ends the selection with the
+    /// second space and `ERASE L ` with the trailing one. Input after the command ends is ignored.
     pub fn cmdline(&mut self, text: &str) -> Result<()> {
         let t = text.trim_end_matches(['\r', '\n']);
-        match &self.running {
-            None => {
-                let t = t.trim();
-                if t.is_empty() {
-                    return self.input(Input::Enter);
+        // The command line types spaces literally at free-text prompts: the line is one input.
+        if self.current_prompt().is_some_and(|p| p.accept.text && !p.accept.point && !p.accept.number) {
+            return self.typed(t);
+        }
+        self.input_line(t, false)
+    }
+
+    /// One line of input: each space ends an input and an empty input (two spaces in a row, a
+    /// trailing space, an empty line) is Enter, which at `Command:` repeats the last command. In a
+    /// script, a free-text prompt (TEXT/MTEXT contents) takes the rest of the line, a prompt with
+    /// keywords still splits so `I 15` reaches the keyword and the value, and the line goes on
+    /// after its command ends; at the command line the rest after the command ends is ignored.
+    fn input_line(&mut self, line: &str, script: bool) -> Result<()> {
+        let mut rest = line;
+        let mut first = true;
+        loop {
+            if self.running.is_none() {
+                if !script && !first {
+                    return Ok(());
                 }
                 // `cmd {json}`: programmatic call with parameters.
-                if let Some((name, json)) = t.split_once(' ')
+                if let Some((name, json)) = rest.trim().split_once(' ')
                     && json.trim_start().starts_with('{')
                 {
                     let params: Value =
@@ -738,31 +754,24 @@ impl Session {
                     }
                     return Ok(());
                 }
-                // Expressions like "LINE 0,0 5,5" in one line: first token is the command.
-                let mut parts = t.split_whitespace();
-                let name = parts.next().unwrap_or("");
-                self.start(name)?;
-                for rest in parts {
-                    if self.running.is_none() {
-                        break;
-                    }
-                    self.typed(rest)?;
-                }
-                Ok(())
+            } else if script && self.current_prompt().is_some_and(|p| p.accept.text && !p.accept.point && !p.accept.number && p.keywords.is_empty()) {
+                return self.typed(rest);
             }
-            Some(_) => {
-                // Space acts as Enter except where the prompt wants free text.
-                let text_prompt = self.current_prompt().is_some_and(|p| p.accept.text && !p.accept.point && !p.accept.number);
-                if text_prompt || !t.contains(' ') {
-                    return self.typed(t);
-                }
-                for tok in t.split_whitespace() {
-                    if self.running.is_none() {
-                        break;
-                    }
-                    self.typed(tok)?;
-                }
-                Ok(())
+            first = false;
+            let (tok, more) = match rest.split_once([' ', '\t']) {
+                Some((tok, more)) => (tok, Some(more)),
+                None => (rest, None),
+            };
+            if self.running.is_some() {
+                self.typed(tok)?;
+            } else if tok.trim().is_empty() {
+                self.input(Input::Enter)?;
+            } else {
+                self.start(tok)?;
+            }
+            match more {
+                Some(more) => rest = more,
+                None => return Ok(()),
             }
         }
     }
@@ -803,45 +812,17 @@ impl Session {
         self.input(Input::Text(tt.to_string()))
     }
 
-    /// Run a script: one input per line; within a line, spaces separate inputs except at text
-    /// prompts (as AutoCAD scripts do).
+    /// Run a script, as AutoCAD reads one: a space or a line end ends an input, and an empty
+    /// input (two spaces in a row, a space at the end of a line, an empty line) is Enter. At
+    /// free-text prompts spaces are part of the text. Lines starting with `;` are comments.
     pub fn script(&mut self, text: &str) -> Result<()> {
         for line in text.lines() {
-            let line = line.trim_end();
+            // Trailing spaces are inputs (Enter); other trailing whitespace (`\r`) is not.
+            let line = line.trim_end_matches(|c: char| c.is_whitespace() && c != ' ');
             if line.trim_start().starts_with(';') {
                 continue;
             }
-            if line.is_empty() {
-                self.cmdline("")?;
-                continue;
-            }
-            let mut rest = line;
-            loop {
-                // Free text only when the prompt has no keywords; otherwise split so `I 15` reaches the keyword and the value.
-                let text_prompt = self.current_prompt().is_some_and(|p| p.accept.text && !p.accept.point && p.keywords.is_empty());
-                if text_prompt || self.running.is_none() && rest.contains('{') {
-                    self.cmdline(rest)?;
-                    break;
-                }
-                match rest.split_once(' ') {
-                    Some((tok, r)) => {
-                        if self.running.is_none() {
-                            self.start(tok)?;
-                        } else {
-                            self.typed(tok)?;
-                        }
-                        rest = r;
-                    }
-                    None => {
-                        if self.running.is_none() {
-                            self.start(rest)?;
-                        } else {
-                            self.typed(rest)?;
-                        }
-                        break;
-                    }
-                }
-            }
+            self.input_line(line, true)?;
         }
         Ok(())
     }
