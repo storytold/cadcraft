@@ -104,12 +104,22 @@ mod native {
         }
     }
 
-    /// Convert DXF bytes into a DWG file.
+    /// Oldest DWG version written; older DXF input is written as this version.
+    const MIN_DWG_VERSION: acadrust::DxfVersion = acadrust::DxfVersion::AC1018;
+
+    /// Convert DXF bytes into a DWG file of the DXF's version, and at least AutoCAD 2004
+    /// (AC1018).
     pub fn dxf_to_dwg(dxf: &[u8]) -> Result<Vec<u8>, String> {
         let data = dxf.to_vec();
-        let doc = std::panic::catch_unwind(move || acadrust::DxfReader::from_reader(Cursor::new(data)).and_then(|r| r.read()))
+        let mut doc = std::panic::catch_unwind(move || acadrust::DxfReader::from_reader(Cursor::new(data)).and_then(|r| r.read()))
             .map_err(|_| "the DXF→DWG conversion failed".to_string())?
             .map_err(|e| format!("DXF: {e}"))?;
+        // Write at least AutoCAD 2004 (AC1018) DWG: R2000 DWG has no true colours, transparency,
+        // table styles or gradients, and readers can't tell its layouts apart reliably. The DXF
+        // stays R2000; only the DWG is newer.
+        if doc.version < MIN_DWG_VERSION {
+            doc.version = MIN_DWG_VERSION;
+        }
         acadrust::DwgWriter::write_to_vec(&doc).map_err(|e| format!("DWG write: {e}"))
     }
 }

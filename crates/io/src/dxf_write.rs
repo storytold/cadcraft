@@ -92,6 +92,9 @@ struct OsnapRef {
 /// Handles and names the entity writer needs from the rest of the file.
 #[derive(Default)]
 struct Ctx {
+    /// First viewport of each layout that has no paper-space viewport (id 1) → the layout's index;
+    /// [`paper_view`] writes that layout's paper-space viewport ahead of it.
+    paper_views: HashMap<Handle, usize>,
     /// Dimension → anonymous `*D` block name.
     dim_blocks: HashMap<Handle, String>,
     /// Upper-case text style name → STYLE record handle.
@@ -808,16 +811,19 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
             hatch_xdata(w, h);
         }
         EntityKind::Viewport(v) => {
+            paper_view(w, d, e, owner, cx);
             w.s(0, "VIEWPORT");
             common(w, e, owner, paper, "AcDbViewport");
             w.p(10, v.center);
             w.f(40, v.width);
             w.f(41, v.height);
+            // Status 68: a positive value is "on" (the stacking order; 1 is the active viewport).
+            w.i(68, i64::from(v.id.clamp(1, 32767)));
             w.i(69, i64::from(v.id));
             w.p2(12, v.view_center);
             w.f(45, v.view_height);
-            // Status flags: 16384 = display locked.
-            w.i(90, if v.locked { 16384 } else { 0 });
+            // Status flags: 16384 = display locked, 32768 = always set (readers take it as "on").
+            w.i(90, 32768 | if v.locked { 16384 } else { 0 });
             // One CADCraft xdata group holds both lists: readers stop at the first group of an app.
             if !v.frozen_layers.is_empty() || !v.layer_colors.is_empty() {
                 w.s(1001, dxf_ext::APP);
@@ -1091,6 +1097,56 @@ fn std_assoc_refs(d: &Drawing, dm: &Dimension) -> (i64, Vec<OsnapRef>) {
     (flags, refs)
 }
 
+/// Layouts with viewports but without the paper-space viewport (id 1, the sheet itself), keyed
+/// by their first viewport. AutoCAD and DWG take a layout's first viewport as its paper-space
+/// viewport (DWG does not store viewport ids; readers number them in order), so a layout made in
+/// CADCraft, whose paper-space viewport is implicit, gets one written ahead of its viewports.
+fn paper_views(d: &Drawing) -> HashMap<Handle, usize> {
+    let mut out = HashMap::new();
+    'layouts: for (i, l) in d.layouts.iter().enumerate() {
+        let mut first = None;
+        for e in l.entities.iter() {
+            if let EntityKind::Viewport(v) = &e.kind {
+                if v.id == 1 {
+                    continue 'layouts;
+                }
+                first.get_or_insert(e.handle);
+            }
+        }
+        if let Some(h) = first {
+            out.insert(h, i);
+        }
+    }
+    out
+}
+
+/// The paper-space viewport (id 1) of the layout whose first viewport is `e`, if it needs one
+/// ([`paper_views`]): the whole sheet, viewed 1:1. Marked with CADCraft xdata so that our reader
+/// leaves it implicit again.
+fn paper_view(w: &mut W, d: &Drawing, e: &Entity, owner: &str, cx: &Ctx) {
+    let Some(l) = cx.paper_views.get(&e.handle).and_then(|i| d.layouts.get(*i)) else { return };
+    let size = cadcraft_render::paper::sheet(d, &l.name).map(|s| s.size).unwrap_or(Vec2::new(12.0, 9.0));
+    let center = size * 0.5;
+    let h = w.h();
+    w.s(0, "VIEWPORT");
+    w.s(5, h);
+    w.s(330, owner);
+    w.s(100, "AcDbEntity");
+    w.i(67, 1);
+    w.s(8, "0");
+    w.s(100, "AcDbViewport");
+    w.p(10, center.to3(0.0));
+    w.f(40, size.x);
+    w.f(41, size.y);
+    w.i(68, 1);
+    w.i(69, 1);
+    w.p2(12, center);
+    w.f(45, size.y);
+    w.i(90, 32768);
+    w.s(1001, dxf_ext::APP);
+    w.s(1000, dxf_ext::PAPER_VIEW);
+}
+
 fn table_head(w: &mut W, name: &str, count: usize) -> String {
     let h = w.h();
     w.s(0, "TABLE");
@@ -1129,7 +1185,7 @@ pub fn write(d: &Drawing) -> String {
     let mut user_blocks: Vec<(String, String, &Block)> = d.blocks.values().map(|b| (b.name.clone(), String::new(), b.as_ref())).collect();
     user_blocks.iter_mut().for_each(|b| b.1 = format!("{:X}", 0));
     let user_blocks: Vec<(String, String, &Block)> = user_blocks.into_iter().map(|(n, _, b)| (n, w.h(), b)).collect();
-    let mut cx = Ctx::default();
+    let mut cx = Ctx { paper_views: paper_views(d), ..Ctx::default() };
     // Dimension blocks.
     let mut dim_defs: Vec<(String, String, Vec<Entity>)> = Vec::new(); // filled below
     let mut n = 1;
