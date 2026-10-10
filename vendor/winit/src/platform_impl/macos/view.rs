@@ -450,6 +450,21 @@ declare_class!(
                     *self.ivars().marked_text.borrow_mut() = NSMutableAttributedString::new();
                     self.ivars().ime_state.set(ImeState::Ground);
                 }
+            } else if !self.ivars().in_key_down.get()
+                && self.ivars().ime_allowed.get()
+                && !string.is_empty()
+                && !is_control
+            {
+                // CADCraft patch: text sent outside a key press without a composition, e.g. from
+                // the emoji picker (Fn/Globe-E, Control-Command-Space). No `KeyboardInput` event
+                // will carry it, so commit it directly (rust-windowing/winit#4749, the 0.30 backport
+                // of #4748).
+                if self.ivars().ime_state.get() == ImeState::Disabled {
+                    *self.ivars().input_source.borrow_mut() = self.current_input_source();
+                    self.ivars().ime_state.set(ImeState::Ground);
+                    self.queue_event(WindowEvent::Ime(Ime::Enabled));
+                }
+                self.queue_event(WindowEvent::Ime(Ime::Commit(string)));
             }
         }
 
