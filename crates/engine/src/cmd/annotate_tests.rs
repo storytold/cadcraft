@@ -324,3 +324,14 @@ fn hostile_annotation_params_never_panic() {
     let _ = cadcraft_render::build(s.doc().unwrap(), &cadcraft_doc::Space::Model, &cadcraft_render::Options::default());
     assert!(matches!(dim(&s, d).kind, DimKind::Linear { .. }));
 }
+
+#[test]
+fn mtext_rejects_nonpositive_height() {
+    let mut s = Session::new();
+    for height in [0.0, -2.0] {
+        assert!(s.execute("mtext", &json!({ "at": [0, 0], "text": "hi", "height": height })).is_err(), "height {height}");
+    }
+    assert!(s.doc().unwrap().model.is_empty());
+    s.execute("mtext", &json!({ "at": [0, 0], "text": "hi", "height": 2 })).unwrap();
+    assert_eq!(s.doc().unwrap().model.len(), 1);
+}

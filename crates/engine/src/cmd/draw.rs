@@ -320,6 +320,9 @@ fn run_mtext(s: &mut Session, p: &Value) -> Result<Value> {
     let at = point_req("mtext", p, "at")?;
     let text = str_param(p, "text").ok_or_else(|| bad("mtext", "`text` is required"))?;
     let height = f64_or(p, "height", s.doc()?.header.f64("TEXTSIZE", 0.2));
+    if height <= 0.0 {
+        return Err(bad("mtext", "height must be positive"));
+    }
     let style = s.doc()?.header.str("TEXTSTYLE", "Standard");
     let k = EntityKind::MText(MText {
         insert: v3(at),
