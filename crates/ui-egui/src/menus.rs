@@ -76,6 +76,21 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
             Ok(Value::Null)
         }
         "qsave" if no_path && app.session.state().is_ok_and(|s| s.path.is_none()) => return run_ui_command(app, "ui.saveas", &Value::Null),
+        // Menu, toolbar, Cmd+P or typed: ask where to save the PDF. JSON calls (scripts, control
+        // channel, MCP) always carry params, never get here and never open a dialog.
+        "plot" | "print" | "exportpdf" if params.is_null() && app.session.state().is_ok() => {
+            let pick = app.services.pick_save.as_ref()?;
+            let title = app.session.state().map(|s| s.title.clone()).unwrap_or_default();
+            let stem = std::path::Path::new(&title).file_stem().map(|s| s.to_string_lossy().to_string()).filter(|s| !s.is_empty());
+            let Some(path) = pick(&format!("{}.pdf", stem.unwrap_or_else(|| "Drawing".into()))) else { return Some(Ok(Value::Null)) };
+            let cmd = if id == "exportpdf" { "exportpdf" } else { "plot" };
+            let r = app.session.execute(cmd, &json!({ "path": path })).map_err(|e| e.to_string());
+            app.session.echo(match &r {
+                Ok(_) => format!("Plotted to {path}"),
+                Err(e) => e.clone(),
+            });
+            r
+        }
         "ui.sample" => {
             let d = cadcraft_engine::sample::default_sample();
             app.session.open_drawing(d, "Bracket", None);
@@ -348,6 +363,7 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
         (sc(cmd, Key::O), "ui.open"),
         (sc(cmd_shift, Key::S), "ui.saveas"),
         (sc(cmd, Key::S), "qsave"),
+        (sc(cmd, Key::P), "plot"),
         (sc(cmd, Key::A), "selectall"),
         (sc(cmd_shift, Key::C), "copybase"),
         (sc(cmd, Key::C), "copyclip"),
@@ -394,5 +410,73 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
         } else {
             activate(app, id);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use cadcraft_engine::Session;
+    use cadcraft_engine::cmd::file::{IoHooks, io, set_io};
+    use serde_json::{Value, json};
+
+    use crate::{CadApp, Services};
+
+    fn fake_plot(_: &cadcraft_doc::Drawing, _: &cadcraft_doc::Space, _: &Value) -> Result<Vec<u8>, String> {
+        Ok(b"%PDF-1.4 test".to_vec())
+    }
+
+    /// An app whose save dialog records the suggested name and answers `answer`.
+    fn app_with_picker(answer: Option<String>) -> (CadApp, Rc<RefCell<Vec<String>>>) {
+        let asked = Rc::new(RefCell::new(Vec::new()));
+        let log = Rc::clone(&asked);
+        let services = Services {
+            pick_open: None,
+            pick_save: Some(Box::new(move |name: &str| {
+                log.borrow_mut().push(name.to_string());
+                answer.clone()
+            })),
+        };
+        (CadApp::new(Session::new(), services), asked)
+    }
+
+    #[test]
+    fn print_asks_where_to_save_the_pdf() {
+        set_io(IoHooks { read: |_, _| Err("no reader in tests".into()), write: |_, _| Err("no writer in tests".into()), plot: Some(fake_plot) });
+        if io().and_then(|h| h.plot).is_none() {
+            return; // another test installed hooks without a plotter first
+        }
+        let path = std::env::temp_dir().join(format!("cadcraft-print-test-{}.pdf", std::process::id()));
+        let ps = path.to_string_lossy().to_string();
+        let _ = std::fs::remove_file(&path);
+        let (mut app, asked) = app_with_picker(Some(ps.clone()));
+
+        // Toolbar, menu and Cmd+P all start the command by name.
+        app.start("plot");
+        assert_eq!(*asked.borrow(), vec!["Drawing1.pdf".to_string()]);
+        assert!(std::fs::read(&path).unwrap().starts_with(b"%PDF"));
+        assert!(app.session.log.iter().any(|l| l.contains(&ps)));
+        let _ = std::fs::remove_file(&path);
+
+        app.cmdline("print");
+        app.start("exportpdf");
+        assert_eq!(asked.borrow().len(), 3);
+        assert!(path.exists());
+        let _ = std::fs::remove_file(&path);
+
+        // Programmatic calls never open a dialog.
+        let r = app.run("plot", json!({})).unwrap();
+        assert!(r["data"].is_string());
+        assert_eq!(asked.borrow().len(), 3);
+    }
+
+    #[test]
+    fn cancelled_print_writes_nothing() {
+        let (mut app, asked) = app_with_picker(None);
+        app.start("plot");
+        assert_eq!(asked.borrow().len(), 1);
+        assert!(app.session.running.is_none());
     }
 }
