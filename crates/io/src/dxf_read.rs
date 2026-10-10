@@ -263,6 +263,7 @@ fn entity(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
                 4 => DimKind::Radius,
                 5 => DimKind::Angular3P,
                 6 => DimKind::Ordinate { x_type: t.i(70).unwrap_or(0) & 64 != 0 },
+                8 => DimKind::ArcLength,
                 _ => DimKind::Aligned,
             };
             EntityKind::Dimension(Dimension {

@@ -555,7 +555,7 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
                 DimKind::Radius => 4,
                 DimKind::Angular3P => 5,
                 DimKind::Ordinate { x_type } => 6 | if x_type { 64 } else { 0 },
-                DimKind::ArcLength => 1,
+                DimKind::ArcLength => 8,
             };
             w.i(70, ty | 32 | if dm.user_text_pos { 128 } else { 0 });
             if !dm.text.is_empty() {
@@ -573,10 +573,17 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
                     w.f(50, rotation.to_degrees());
                     w.s(100, "AcDbRotatedDimension");
                 }
-                DimKind::Aligned | DimKind::ArcLength => {
+                DimKind::Aligned => {
                     w.s(100, "AcDbAlignedDimension");
                     w.p(13, dm.p13);
                     w.p(14, dm.p14);
+                }
+                DimKind::ArcLength => {
+                    // The arc centre (p15) is needed to measure the arc again after reopening.
+                    w.s(100, "AcDbAlignedDimension");
+                    w.p(13, dm.p13);
+                    w.p(14, dm.p14);
+                    w.p(15, dm.p15);
                 }
                 DimKind::Radius => {
                     w.s(100, "AcDbRadialDimension");
