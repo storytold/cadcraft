@@ -784,6 +784,16 @@ fn annotative(tags: &[Tag]) -> bool {
 
 fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
     let recs = records(tags);
+    // STYLE handle → name, or the shape file of an unnamed shape style (linetype elements).
+    let ltype_styles: HashMap<String, String> = recs
+        .iter()
+        .filter(|(k, _)| k == "STYLE")
+        .filter_map(|(_, tg)| {
+            let t = T(tg);
+            let name = t.s(2).filter(|n| !n.trim().is_empty());
+            Some((t.s(5)?.trim().to_ascii_uppercase(), name.or_else(|| t.s(3))?))
+        })
+        .collect();
     // Handle maps first: DIMSTYLE records refer to text styles and arrow blocks by handle.
     for (kind, tg) in &recs {
         let t = T(tg);
@@ -840,7 +850,7 @@ fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 if name.is_empty() || d.linetype(&name).is_some() {
                     continue;
                 }
-                let pattern = tg.iter().filter(|x| x.code == 49).map(|x| DashElement::dash(x.f64())).collect();
+                let pattern = ltype_pattern(&tg, &ltype_styles);
                 d.linetypes.push(Linetype { name, description: t.s(3).unwrap_or_default(), pattern });
             }
             "STYLE" => {
@@ -867,6 +877,42 @@ fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                     None => d.text_styles.push(st),
                 }
             }
+            "VIEW" => {
+                let name = t.s(2).unwrap_or_default();
+                let (h, w) = (t.fd(40, 0.0), t.fd(41, 0.0));
+                if name.is_empty() || !(h.is_finite() && w.is_finite() && h > 0.0 && w > 0.0) || d.views.len() >= MAX_OBJECTS {
+                    continue;
+                }
+                let center = t.p(10).xy();
+                if !(center.x.is_finite() && center.y.is_finite()) {
+                    continue;
+                }
+                let x = crate::dxf_ext::xdata(&tg, crate::dxf_ext::APP);
+                let layer_state = x
+                    .iter()
+                    .position(|t| t.code == 1000 && t.str() == "LAYERSTATE")
+                    .and_then(|i| x.get(i + 1))
+                    .filter(|t| t.code == 1000)
+                    .map(Tag::str);
+                let v = NamedView { name: name.clone(), center, height: h, width: w, layer_state };
+                match d.views.iter_mut().find(|x| x.name.eq_ignore_ascii_case(&name)) {
+                    Some(x) => *x = v,
+                    None => d.views.push(v),
+                }
+            }
+            "UCS" => {
+                let name = t.s(2).unwrap_or_default();
+                let (origin, x_axis, y_axis) = (t.p(10), t.p(11), t.p(12));
+                let finite = [origin, x_axis, y_axis].iter().all(|p| p.x.is_finite() && p.y.is_finite() && p.z.is_finite());
+                if name.is_empty() || !finite || d.ucss.len() >= MAX_OBJECTS {
+                    continue;
+                }
+                let u = Ucs { name: name.clone(), origin, x_axis, y_axis };
+                match d.ucss.iter_mut().find(|x| x.name.eq_ignore_ascii_case(&name)) {
+                    Some(x) => *x = u,
+                    None => d.ucss.push(u),
+                }
+            }
             "DIMSTYLE" => {
                 let name = t.s(2).unwrap_or_default();
                 if name.is_empty() {
@@ -891,6 +937,43 @@ fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
             _ => {}
         }
     }
+}
+
+/// The dash elements of an LTYPE record with their embedded text and shapes (DXF Reference,
+/// LTYPE): each `49` length starts an element; `74` type flags (1 absolute rotation, 2 text,
+/// 4 shape), `75` shape number, `340` STYLE, `46` scale, `50` rotation (radians), `44`/`45`
+/// offset and `9` text follow it.
+fn ltype_pattern(tags: &[Tag], styles: &HashMap<String, String>) -> Vec<DashElement> {
+    let mut out: Vec<DashElement> = Vec::new();
+    for t in tags.iter().take_while(|t| t.code < 1000) {
+        if t.code == 49 {
+            out.push(DashElement::dash(t.f64()));
+            continue;
+        }
+        let Some(el) = out.last_mut() else { continue };
+        let complex = el.text.is_some() || el.shape.is_some();
+        let v = t.f64();
+        match t.code {
+            74 => {
+                let flags = t.i64();
+                el.absolute = flags & 1 != 0;
+                if flags & 2 != 0 {
+                    el.text = Some(String::new());
+                } else if flags & 4 != 0 {
+                    el.shape = Some(0);
+                }
+            }
+            75 if el.shape.is_some() => el.shape = Some(u16::try_from(t.i64()).unwrap_or(0)),
+            340 if complex => el.style = styles.get(&t.str().trim().to_ascii_uppercase()).filter(|n| !n.trim().is_empty()).cloned(),
+            9 if el.text.is_some() => el.text = Some(t.str()),
+            46 if complex && v.is_finite() => el.scale = v,
+            50 if complex && v.is_finite() => el.rotation = v,
+            44 if complex && v.is_finite() => el.offset.x = v,
+            45 if complex && v.is_finite() => el.offset.y = v,
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Read a DXF file into a drawing.
@@ -1040,6 +1123,12 @@ struct Objects {
     table_styles: Vec<(String, Vec<Tag>)>,
     /// DIMASSOC objects.
     dimassocs: Vec<Vec<Tag>>,
+    /// MLEADERSTYLE objects: (handle, groups).
+    mleader_styles: Vec<(String, Vec<Tag>)>,
+    /// GROUP objects: (handle, groups).
+    groups: Vec<(String, Vec<Tag>)>,
+    /// Saved paper-space views of layouts: (layout name, view).
+    layout_views: Vec<(String, (Vec2, f64))>,
 }
 
 const MAX_OBJECTS: usize = 1_000_000;
@@ -1069,6 +1158,14 @@ impl Objects {
             }
             "TABLESTYLE" if self.table_styles.len() < MAX_OBJECTS => self.table_styles.push((h, tags.to_vec())),
             "DIMASSOC" if self.dimassocs.len() < MAX_OBJECTS => self.dimassocs.push(tags.to_vec()),
+            "MLEADERSTYLE" if self.mleader_styles.len() < MAX_OBJECTS => self.mleader_styles.push((h, tags.to_vec())),
+            "GROUP" if self.groups.len() < MAX_OBJECTS => self.groups.push((h, tags.to_vec())),
+            "LAYOUT" if self.layout_views.len() < MAX_OBJECTS => {
+                let start = tags.iter().position(|x| x.code == 100 && x.str() == "AcDbLayout").unwrap_or(0);
+                if let (Some(name), Some(view)) = (T(tags.get(start..).unwrap_or(&[])).s(1), layout_view(tags)) {
+                    self.layout_views.push((name, view));
+                }
+            }
             _ => {}
         }
     }
@@ -1114,6 +1211,48 @@ impl Objects {
             if let Some((c, p)) = crate::dxf_ext::parse_constraints(&text) {
                 d.constraints = c;
                 d.parametric = p;
+            }
+        }
+        // Multileader styles (named by their ACAD_MLEADERSTYLE dictionary entries).
+        for (h, tags) in &self.mleader_styles {
+            let Some(name) = self.names.get(h).filter(|n| !n.is_empty()) else { continue };
+            let t = T(tags);
+            let def = MLeaderStyle::default();
+            let num = |code: i32, d: f64, min: f64| t.f(code).filter(|v| v.is_finite() && *v >= min).unwrap_or(d);
+            let text_style = t.s(342).and_then(|sh| rx.styles.get(&sh.trim().to_ascii_uppercase()).cloned()).filter(|n| !n.is_empty());
+            let st = MLeaderStyle {
+                name: name.clone(),
+                arrow_size: num(44, def.arrow_size, 0.0),
+                text_height: t.f(45).filter(|v| v.is_finite() && *v > 0.0).unwrap_or(def.text_height),
+                landing_gap: num(42, def.landing_gap, 0.0),
+                dogleg: num(43, def.dogleg, 0.0),
+                text_style: text_style.unwrap_or(def.text_style),
+            };
+            match d.mleader_styles.iter_mut().find(|s| s.name.eq_ignore_ascii_case(name)) {
+                Some(x) => *x = st,
+                None => d.mleader_styles.push(st),
+            }
+        }
+        for (name, view) in &self.layout_views {
+            if let Some(l) = d.layouts.iter_mut().find(|l| l.name == *name) {
+                l.view = Some(*view);
+            }
+        }
+        // Groups (named by their ACAD_GROUP dictionary entries); members that exist.
+        for (h, tags) in &self.groups {
+            let Some(name) = self.names.get(h).filter(|n| !n.is_empty()) else { continue };
+            let t = T(tags);
+            let members: Vec<Handle> = tags
+                .iter()
+                .filter(|x| x.code == 340)
+                .filter_map(|x| Handle::parse_hex(&x.str()))
+                .filter(|m| d.entity(*m).is_some())
+                .take(MAX_OBJECTS)
+                .collect();
+            let g = Group { name: name.clone(), description: t.s(300).unwrap_or_default(), selectable: t.i(71).unwrap_or(1) != 0, members };
+            match d.groups.iter_mut().find(|x| x.name.eq_ignore_ascii_case(name)) {
+                Some(x) => *x = g,
+                None => d.groups.push(g),
             }
         }
         // Standard associativity, for dimensions without CADCraft's exact links.
@@ -1223,5 +1362,36 @@ fn page_setup(t: &T) -> PageSetup {
     if let Some(name) = t.s(4).filter(|n| !n.is_empty()) {
         p.paper = name.replace('_', " ");
     }
+    if let Some(dev) = t.s(2).map(|s| s.trim().to_string()) {
+        p.device = if dev.is_empty() || dev.eq_ignore_ascii_case("none_device") { "None".into() } else { dev };
+    }
+    // Plot layout flags: 4 centred, 16 standard scale (75 = 0: scaled to fit), 128 lineweights.
+    if let Some(flags) = t.i(70) {
+        p.center = flags & 4 != 0;
+        p.lineweights = flags & 128 != 0;
+        p.scale_to_fit = flags & 16 != 0 && t.i(75) == Some(0);
+    }
+    // Custom scale: 142 paper units per 143 drawing units; 147 is the scale factor.
+    let pos = |v: Option<f64>| v.filter(|v| v.is_finite() && *v > 0.0);
+    let ratio = pos(t.f(142)).zip(pos(t.f(143))).map(|(n, d)| n / d);
+    if let Some(s) = pos(ratio).or_else(|| pos(t.f(147))) {
+        p.scale = s;
+    }
+    p.plot_area = match t.i(74) {
+        Some(0) => "display",
+        Some(1) => "extents",
+        Some(2) => "limits",
+        Some(4) => "window",
+        _ => "layout",
+    }
+    .into();
+    p.plot_style_table = t.s(7).unwrap_or_default();
     p
+}
+
+/// A layout's saved paper-space view (centre, height) from CADCraft xdata.
+fn layout_view(tags: &[Tag]) -> Option<(Vec2, f64)> {
+    let list = crate::dxf_ext::xdata_list(crate::dxf_ext::xdata(tags, crate::dxf_ext::APP), "PSVIEW");
+    let g = |c: i32| list.iter().find(|t| t.code == c).map(Tag::f64).filter(|v| v.is_finite());
+    Some((Vec2::new(g(1010)?, g(1020)?), g(1040)?))
 }

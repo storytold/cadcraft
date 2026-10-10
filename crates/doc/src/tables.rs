@@ -70,15 +70,20 @@ pub struct DashElement {
     pub style: Option<String>,
     #[serde(default)]
     pub scale: f64,
+    /// Rotation of embedded text or a shape, in radians.
     #[serde(default)]
     pub rotation: f64,
     #[serde(default)]
     pub offset: Vec2,
+    /// The rotation of embedded text or a shape is absolute (`A=`) instead of relative to the
+    /// line direction (`R=`).
+    #[serde(default)]
+    pub absolute: bool,
 }
 
 impl DashElement {
     pub fn dash(length: f64) -> Self {
-        DashElement { length, text: None, shape: None, style: None, scale: 1.0, rotation: 0.0, offset: Vec2::ZERO }
+        DashElement { length, text: None, shape: None, style: None, scale: 1.0, rotation: 0.0, offset: Vec2::ZERO, absolute: false }
     }
 }
 

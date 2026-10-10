@@ -33,7 +33,7 @@ pub fn standard_linetypes() -> Vec<Linetype> {
             pattern: vec![
                 DashElement::dash(0.25),
                 DashElement::dash(-0.1),
-                DashElement { text: Some("o".into()), scale: 0.1, ..DashElement::dash(-0.1) },
+                DashElement { text: Some("o".into()), style: Some("Standard".into()), scale: 0.1, ..DashElement::dash(-0.1) },
                 DashElement::dash(0.5),
             ],
         },
