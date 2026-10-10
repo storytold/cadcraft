@@ -206,10 +206,11 @@ pub(crate) fn select_fence_with(d: &Drawing, space: &Space, ix: &Option<std::syn
     let fb = Bounds2::from_points(fence.iter().copied());
     let tol = (fb.width() + fb.height()).max(1e-9) / 2000.0;
     let probe = fb.expand(tol);
-    let Some(cands) = candidates(d, space, ix, &probe, false, false) else { return Vec::new() };
+    let Some(cands) = candidates(d, space, ix, &probe, true, false) else { return Vec::new() };
     let mut out = Vec::new();
     for (e, known) in cands {
-        if !selectable(d, e) || !bounds_of(d, e, known).intersects(&probe) {
+        // Infinite objects have no useful bounds; like window selection, test their geometry directly.
+        if !selectable(d, e) || (!is_infinite(e) && !bounds_of(d, e, known).intersects(&probe)) {
             continue;
         }
         let polys = hit_polylines(d, e, tol);
@@ -225,4 +226,31 @@ pub(crate) fn select_fence_with(d: &Drawing, space: &Space, ix: &Option<std::syn
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cadcraft_doc::{Common, RayLine};
+    use cadcraft_geom::Vec3;
+
+    fn fence_hits(kind: EntityKind, fence: [(f64, f64); 2]) -> usize {
+        let mut d = Drawing::new_metric();
+        d.add(&Space::Model, Common::default(), kind).unwrap();
+        let f = [Vec2::new(fence[0].0, fence[0].1), Vec2::new(fence[1].0, fence[1].1)];
+        select_fence(&d, &Space::Model, &f).len()
+    }
+
+    #[test]
+    fn fence_selects_crossed_xline_and_ray() {
+        let line = RayLine { base: Vec3::new(0.0, 0.0, 0.0), dir: Vec3::new(1.0, 0.0, 0.0) };
+        for x in [-5.0, 0.0, 5.0] {
+            assert_eq!(fence_hits(EntityKind::XLine(line.clone()), [(x, -5.0), (x, 5.0)]), 1, "xline at x={x}");
+        }
+        assert_eq!(fence_hits(EntityKind::Ray(line.clone()), [(5.0, -5.0), (5.0, 5.0)]), 1);
+        assert_eq!(fence_hits(EntityKind::Ray(line.clone()), [(0.0, -5.0), (0.0, 5.0)]), 1);
+        assert_eq!(fence_hits(EntityKind::Ray(line.clone()), [(-5.0, -5.0), (-5.0, 5.0)]), 0);
+        assert_eq!(fence_hits(EntityKind::XLine(line.clone()), [(0.0, 1.0), (0.0, 5.0)]), 0);
+        assert_eq!(fence_hits(EntityKind::Ray(line), [(5.0, 1.0), (5.0, 5.0)]), 0);
+    }
 }
