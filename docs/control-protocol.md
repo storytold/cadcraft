@@ -28,7 +28,7 @@ Errors come back as `{"id": …, "ok": false, "error": "message"}`.
 | `ui.set` | UiState fields | Show/hide palettes, toolbars, command line, ViewCube…; `theme: "system"\|"light"\|"dark"` (also `engine.execute` with `ui.theme {theme}`); `ui.inspect` reports the theme shown (`theme`: light/dark). |
 | `ui.resize` | `{width, height}` | Resize the window. |
 | `ui.screenshot` | `{path?}` | PNG of the window (needs a presented frame). |
-| `ui.render` | `{path?, width?, height?}` | Headless render of the current view of the drawing. |
+| `ui.render` | `{path?, width?, height?, fit?}` | Headless render. `fit` (default true) frames the whole drawing; `false` uses the current view. Replies `{pngBase64, width, height, bytes, path?}`. |
 | `app.open` / `app.save` / `app.quit` | `{path}` | File operations. |
 
 The MCP server (`cadcraft-cli mcp --connect 127.0.0.1:PORT`) wraps this protocol; headless
