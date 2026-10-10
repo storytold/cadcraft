@@ -238,7 +238,8 @@ fn run_delete(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("layer.delete", "cannot delete layer 0, Defpoints or the current layer"));
     }
     let used = d.model.iter().any(|e| e.common.layer.eq_ignore_ascii_case(&name))
-        || d.layouts.iter().any(|l| l.entities.iter().any(|e| e.common.layer.eq_ignore_ascii_case(&name)));
+        || d.layouts.iter().any(|l| l.entities.iter().any(|e| e.common.layer.eq_ignore_ascii_case(&name)))
+        || d.blocks.values().any(|b| b.entities.iter().any(|e| e.common.layer.eq_ignore_ascii_case(&name)));
     if used {
         return Err(bad("layer.delete", "layer has objects on it"));
     }
@@ -437,5 +438,19 @@ mod tests {
         // A valid colour-only edit of the current layer still applies.
         s.execute("layer.set", &json!({ "name": "0", "color": 3 })).unwrap();
         assert_ne!(s.doc().unwrap().layer("0").unwrap(), &before);
+    }
+
+    #[test]
+    fn delete_and_purge_keep_layers_used_by_block_definitions() {
+        let mut s = Session::new();
+        s.execute("layer.new", &json!({ "name": "A", "color": 1 })).unwrap();
+        s.execute("layer.current", &json!({ "name": "A" })).unwrap();
+        let l = s.execute("line", &json!({ "points": [[0, 0], [1, 1]] })).unwrap()["handles"][0].as_str().unwrap().to_string();
+        s.execute("block", &json!({ "name": "B", "base": [0, 0], "handles": [l], "keep": "delete" })).unwrap();
+        s.execute("layer.current", &json!({ "name": "0" })).unwrap();
+        s.execute("insert", &json!({ "name": "B", "at": [5, 5] })).unwrap();
+        assert!(s.execute("layer.delete", &json!({ "name": "A" })).is_err());
+        s.execute("purge", &json!({})).unwrap();
+        assert!(s.doc().unwrap().layer("A").is_some());
     }
 }

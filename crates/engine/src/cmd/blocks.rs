@@ -268,7 +268,8 @@ fn run_purge(s: &mut Session, _p: &Value) -> Result<Value> {
     let before_b = d.blocks.len();
     d.blocks.retain(|k, _| used.contains(&k.to_ascii_uppercase()));
     let blocks = before_b - d.blocks.len();
-    let used_layers: std::collections::HashSet<String> = all.iter().map(|e| e.common.layer.to_ascii_lowercase()).collect();
+    // Layers used by the model, layouts and the block definitions that survived above.
+    let used_layers = super::layer::used_layers(d);
     let cur = d.header.str("CLAYER", "0").to_ascii_lowercase();
     let before_l = d.layers.len();
     d.layers.retain(|l| {
