@@ -178,6 +178,13 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
         let r = ui.max_rect();
         let p = ui.painter().clone();
         let mut x = r.left() + 8.0;
+        // Clear the status message on time even when no input arrives (the app only repaints on input).
+        if let Some((_, at)) = &app.status
+            && crate::now_ms() - at < 5000.0
+        {
+            let left = std::time::Duration::try_from_secs_f64((5000.0 - (crate::now_ms() - at)) / 1000.0).unwrap_or_default();
+            ui.ctx().request_repaint_after(left);
+        }
         for (icon, tip) in [(Icon::Plus, "New layout"), (Icon::Menu, "Layout list")] {
             let br = Rect::from_min_size(pos2(x, r.top() + 4.0), vec2(18.0, 18.0));
             let resp = ui.interact(br, ui.id().with(("sb", tip)), Sense::click());

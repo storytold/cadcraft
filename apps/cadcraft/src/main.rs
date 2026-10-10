@@ -5,6 +5,9 @@
 //! `--control <port>` (or `CADCRAFT_CONTROL_PORT`) starts a localhost JSON-lines control server:
 //! `{"id":1,"method":"cmdline.input","params":{"text":"circle 0,0 5"}}` → `{"id":1,"ok":true,…}`.
 //! See `cadcraft_ui_egui::control` for the methods.
+//!
+//! `CADCRAFT_VSYNC=1` presents with vsync on Linux/BSD, where the default is the low-latency
+//! present mode (`CADCRAFT_VSYNC=0` selects that elsewhere); see `cadcraft_ui_egui::gpu::surface_config`.
 #![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
@@ -107,7 +110,11 @@ fn main() -> eframe::Result {
         }
     }
     install_io();
+    let surface = cadcraft_ui_egui::gpu::surface_config(std::env::var("CADCRAFT_VSYNC").ok().as_deref(), cfg!(all(unix, not(target_os = "macos"))));
     let mut options = eframe::NativeOptions {
+        // The crosshair is drawn by the app: present without a queue on Linux/BSD, where X11
+        // swapchains hold two frames back under vsync (`CADCRAFT_VSYNC=1` restores vsync).
+        wgpu_options: eframe::egui_wgpu::WgpuConfiguration::default().with_surface_config(surface),
         viewport: egui::ViewportBuilder::default()
             .with_title("CADCraft")
             .with_inner_size([1600.0, 1000.0])
@@ -132,6 +139,9 @@ fn main() -> eframe::Result {
                 app.load_prefs(&prefs);
             }
             app.integrated_titlebar = cfg!(target_os = "macos");
+            if surface.present_mode == eframe::wgpu::PresentMode::AutoNoVsync {
+                app.frame_cap = Some(cadcraft_ui_egui::gpu::FrameCap::new(240));
+            }
             if let Some(rs) = &cc.wgpu_render_state {
                 app.set_wgpu(rs);
             }

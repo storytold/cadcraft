@@ -79,6 +79,9 @@ pub fn apply_hot_grip(app: &mut CadApp, to: Vec2) {
 pub struct CanvasState {
     pub list: Option<DisplayList>,
     key: (u64, u64, i32, bool, usize),
+    /// Bumped whenever `list` is rebuilt (identifies it for [`PrimIndex`]).
+    list_gen: u64,
+    prim_index: PrimIndex,
     /// Set when the app runs on wgpu: entities are drawn by [`crate::gpu`]; otherwise on the CPU.
     pub gpu: Option<crate::gpu::GpuTarget>,
     /// The mesh last handed to the GPU (see [`crate::gpu::CanvasCallback::key`]).
@@ -108,6 +111,46 @@ pub struct CanvasState {
     pub param: crate::parametric::Cache,
 }
 
+/// Primitives of `list` sorted by entity handle, built on the first highlight after each list
+/// rebuild. Highlighting the hovered entity used to scan every primitive on every frame: ~2.5 ms
+/// per frame on a 270k-entity drawing, whether or not anything changed.
+#[derive(Default)]
+struct PrimIndex {
+    list_gen: Option<u64>,
+    by_handle: Vec<(Handle, usize)>,
+}
+
+impl PrimIndex {
+    /// Indices of the primitives drawn for `handles` (in list order).
+    fn prims(&mut self, list_gen: u64, list: &DisplayList, handles: &[Handle]) -> Vec<usize> {
+        if handles.is_empty() {
+            return Vec::new();
+        }
+        if self.list_gen != Some(list_gen) {
+            self.by_handle = list.prims.iter().enumerate().map(|(i, p)| (p.handle, i)).collect();
+            self.by_handle.sort_unstable();
+            self.list_gen = Some(list_gen);
+        }
+        let mut out = Vec::new();
+        for h in handles {
+            let from = self.by_handle.partition_point(|(k, _)| k < h);
+            out.extend(self.by_handle.get(from..).unwrap_or(&[]).iter().take_while(|(k, _)| k == h).map(|(_, i)| *i));
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+}
+
+/// Indices of the primitives in `list` drawn for `handles` (a scan; for small lists).
+fn prims_of(list: &DisplayList, handles: &[Handle]) -> Vec<usize> {
+    if handles.is_empty() {
+        return Vec::new();
+    }
+    let set: std::collections::HashSet<Handle> = handles.iter().copied().collect();
+    list.prims.iter().enumerate().filter(|(_, pr)| set.contains(&pr.handle)).map(|(i, _)| i).collect()
+}
+
 fn color32(c: Rgb) -> Color32 {
     Color32::from_rgb(c.0, c.1, c.2)
 }
@@ -132,6 +175,7 @@ fn ensure_list(app: &mut CadApp, px: f64) {
     let space = st.space.clone();
     app.canvas.list = Some(cadcraft_render::build(&st.doc, &space, &opts));
     app.canvas.key = key;
+    app.canvas.list_gen = app.canvas.list_gen.wrapping_add(1);
     app.canvas.build_ms = crate::now_ms() - t0;
 }
 
@@ -307,14 +351,11 @@ fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, bg: Rgb, lwdis
     p.extend(shapes);
 }
 
-/// Draw selected/hovered entities as highlight overlays.
-fn draw_highlight(p: &egui::Painter, xf: &Xf, list: &DisplayList, handles: &[Handle], color: Color32, width: f32, dashed: bool) {
-    if handles.is_empty() {
-        return;
-    }
-    let set: std::collections::HashSet<Handle> = handles.iter().copied().collect();
+/// Draw selected/hovered entities as highlight overlays: `prims` are indices into `list` (from
+/// [`PrimIndex::prims`] or [`prims_of`]).
+fn draw_highlight(p: &egui::Painter, xf: &Xf, list: &DisplayList, prims: &[usize], color: Color32, width: f32, dashed: bool) {
     let mut shapes = Vec::new();
-    for prim in list.prims.iter().filter(|pr| set.contains(&pr.handle)) {
+    for prim in prims.iter().filter_map(|&i| list.prims.get(i)) {
         let pts = list.points(prim);
         match prim.kind {
             Kind::Polyline => {
@@ -658,18 +699,18 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
                 if let Some(h) = app.canvas.hover
                     && !sel.contains(&h)
                 {
-                    draw_highlight(&clipped, &xf, &list, &[h], t.hover, 2.0, false);
+                    draw_highlight(&clipped, &xf, &list, &prims_of(&list, &[h]), t.hover, 2.0, false);
                 }
-                draw_highlight(&clipped, &xf, &list, &sel, t.selection, 1.5, true);
+                draw_highlight(&clipped, &xf, &list, &prims_of(&list, &sel), t.selection, 1.5, true);
             }
         }
-    } else if let Some(list) = &app.canvas.list {
-        if let Some(h) = app.canvas.hover
+    } else if let CanvasState { list: Some(list), list_gen, prim_index, hover, .. } = &mut app.canvas {
+        if let Some(h) = *hover
             && !sel.contains(&h)
         {
-            draw_highlight(&painter, &xf, list, &[h], t.hover, 2.0, false);
+            draw_highlight(&painter, &xf, list, &prim_index.prims(*list_gen, list, &[h]), t.hover, 2.0, false);
         }
-        draw_highlight(&painter, &xf, list, &sel, t.selection, 1.5, true);
+        draw_highlight(&painter, &xf, list, &prim_index.prims(*list_gen, list, &sel), t.selection, 1.5, true);
     }
     app.canvas.draw_ms = crate::now_ms() - t0;
     // Constraint bars and dynamic dimensional constraints (model space, or inside a viewport).
@@ -804,10 +845,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             dynamic_input(app, &painter, hp);
         }
     }
-    // Keep animating during interaction.
-    if inside {
-        ui.ctx().request_repaint();
-    }
+    // No continuous repaint while hovering: input events repaint by themselves. Repainting every
+    // frame kept a vsync swapchain's queue full (every frame waited behind queued ones) and would
+    // spin the CPU with the low-latency present mode (`gpu::surface_config`).
 }
 
 fn tooltip(p: &egui::Painter, at: Pos2, text: &str) {
@@ -907,4 +947,34 @@ fn grip_at(app: &CadApp, xf: &Xf, hover: Option<Pos2>) -> Option<HotGrip> {
         }
     }
     None
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use cadcraft_render::DPrim;
+
+    fn list(handles: &[u64]) -> DisplayList {
+        let prim = |h| DPrim { handle: Handle(h), color: Rgb(255, 255, 255), lw: 0.0, kind: Kind::Polyline, start: 0, len: 0 };
+        DisplayList { prims: handles.iter().map(|&h| prim(h)).collect(), ..Default::default() }
+    }
+
+    fn hs(v: &[u64]) -> Vec<Handle> {
+        v.iter().map(|&h| Handle(h)).collect()
+    }
+
+    #[test]
+    fn prim_index_matches_a_scan_and_follows_list_rebuilds() {
+        let a = list(&[3, 1, 3, 2, 7, 3]);
+        let mut ix = PrimIndex::default();
+        assert_eq!(ix.prims(1, &a, &hs(&[3])), vec![0, 2, 5]);
+        assert_eq!(ix.prims(1, &a, &hs(&[3])), prims_of(&a, &hs(&[3])));
+        assert_eq!(ix.prims(1, &a, &hs(&[2, 1, 2])), vec![1, 3]);
+        assert!(ix.prims(1, &a, &hs(&[9])).is_empty());
+        assert!(ix.prims(1, &a, &[]).is_empty());
+        // A rebuilt list (new generation) is re-indexed.
+        let b = list(&[3, 9]);
+        assert_eq!(ix.prims(2, &b, &hs(&[9, 3])), vec![0, 1]);
+    }
 }

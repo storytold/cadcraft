@@ -106,6 +106,9 @@ pub struct CadApp {
     queued_shots: Vec<(u64, f64, u32)>,
     shot_token: u64,
     pub synthetic: Vec<egui::Event>,
+    /// Caps the frame rate when presenting without vsync (see [`gpu::FrameCap`]).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub frame_cap: Option<gpu::FrameCap>,
     styled: bool,
     /// The theme last installed into egui (`None` until the first frame).
     shown_theme: Option<egui::Theme>,
@@ -128,6 +131,8 @@ impl CadApp {
             queued_shots: Vec::new(),
             shot_token: 0,
             synthetic: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            frame_cap: None,
             styled: false,
             shown_theme: None,
             frame_ms: 0.0,
@@ -249,8 +254,12 @@ impl CadApp {
         }
     }
 
-    /// Inject synthetic events (one pointer event per frame).
+    /// Wait for the frame cap (if any), then inject synthetic events (one pointer event per frame).
     pub fn raw_input_hook(&mut self, raw: &mut egui::RawInput) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(cap) = &mut self.frame_cap {
+            cap.wait();
+        }
         if self.synthetic.is_empty() {
             return;
         }
