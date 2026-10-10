@@ -8,7 +8,7 @@ use cadcraft_geom::{
 use serde_json::{Value, json};
 
 use super::helpers::*;
-use super::machines::{SelOutcome, SelectPhase, number};
+use super::machines::{SelOutcome, SelectPhase, SelectRun, number};
 use super::*;
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
@@ -87,8 +87,14 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["Modify", "Array", "Polar Array"])
             .params("{handles?, center, count, angle? (degrees, default 360), rotate?: bool}")
             .interactive(|_| Ok(Box::new(SelectThen::new(Op::ArrayPolar)))),
-        CommandSpec::new("draworder.front", "Bring to Front", run_front).menu(&["Tools", "Draw Order", "Bring to Front"]).params("{handles?}"),
-        CommandSpec::new("draworder.back", "Send to Back", run_back).menu(&["Tools", "Draw Order", "Send to Back"]).params("{handles?}"),
+        CommandSpec::new("draworder.front", "Bring to Front", run_front)
+            .menu(&["Tools", "Draw Order", "Bring to Front"])
+            .params("{handles?}")
+            .interactive(|_| Ok(Box::new(SelectRun::new("draworder.front", "DRAWORDER")))),
+        CommandSpec::new("draworder.back", "Send to Back", run_back)
+            .menu(&["Tools", "Draw Order", "Send to Back"])
+            .params("{handles?}")
+            .interactive(|_| Ok(Box::new(SelectRun::new("draworder.back", "DRAWORDER")))),
         CommandSpec::new("break", "Break", run_break)
             .menu(&["Modify", "Break"])
             .alias(&["br"])

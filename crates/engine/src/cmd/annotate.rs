@@ -7,6 +7,7 @@ use cadcraft_geom::{Segment, Vec2, Vec3};
 use serde_json::{Value, json};
 
 use super::helpers::v3;
+use super::machines::SelectRun;
 use super::*;
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
@@ -70,7 +71,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{points: [[arrow], ..., [landing]], text}")
             .interactive(|_| Ok(Box::new(MLeaderM::default()))),
         CommandSpec::new("leader", "Leader", run_leader).alias(&["lead"]).params("{points: [[x,y]...], text?}"),
-        CommandSpec::new("dimstyle.update", "Update", run_update).menu(&["Dimension", "Update"]).params("{handles?}"),
+        CommandSpec::new("dimstyle.update", "Update", run_update)
+            .menu(&["Dimension", "Update"])
+            .params("{handles?}")
+            .interactive(|_| Ok(Box::new(SelectRun::new("dimstyle.update", "DIMSTYLE")))),
         CommandSpec::new("dimoverride", "Override", run_override)
             .menu(&["Dimension", "Override"])
             .alias(&["dov", "dimover"])
@@ -80,11 +84,11 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["Dimension", "Reassociate Dimensions"])
             .alias(&["dre"])
             .params("{handles?} (dimensions; attaches their definition points to the objects under them)")
-            .interactive(|s| Ok(Box::new(SelectThen::new(s, "dimreassociate")))),
+            .interactive(|_| Ok(Box::new(SelectRun::new("dimreassociate", "DIMREASSOCIATE")))),
         CommandSpec::new("dimdisassociate", "Disassociate Dimensions", run_disassociate)
             .alias(&["dda"])
             .params("{handles?}")
-            .interactive(|s| Ok(Box::new(SelectThen::new(s, "dimdisassociate")))),
+            .interactive(|_| Ok(Box::new(SelectRun::new("dimdisassociate", "DIMDISASSOCIATE")))),
         CommandSpec::new("dimtedit.home", "Home", |s, p| run_tedit(s, p, "home")).menu(&["Dimension", "Align Text", "Home"]).params("{handles?}"),
         CommandSpec::new("dimtedit.angle", "Angle", |s, p| run_tedit(s, p, "angle"))
             .menu(&["Dimension", "Align Text", "Angle"])
@@ -666,53 +670,6 @@ fn run_dimspace(s: &mut Session, p: &Value) -> Result<Value> {
         })?;
     }
     Ok(json!({ "spaced": others.len() }))
-}
-
-/// Select objects, then run a JSON command on them.
-struct SelectThen {
-    sel: super::machines::SelectPhase,
-    id: &'static str,
-}
-
-impl SelectThen {
-    fn new(_s: &Session, id: &'static str) -> Self {
-        SelectThen { sel: super::machines::SelectPhase::default(), id }
-    }
-    fn run(&self, s: &mut Session, hs: Vec<Handle>) -> Result<Step> {
-        let hex: Vec<String> = hs.iter().map(|h| h.hex()).collect();
-        let r = s.execute(self.id, &json!({ "handles": hex }))?;
-        if let Some(m) = r.get("message").and_then(Value::as_str) {
-            s.echo(m.to_string());
-        }
-        Ok(Step::Done)
-    }
-}
-
-impl Interactive for SelectThen {
-    fn name(&self) -> &'static str {
-        if self.id == "dimreassociate" { "DIMREASSOCIATE" } else { "DIMDISASSOCIATE" }
-    }
-    fn begin(&mut self, s: &mut Session) -> Result<Step> {
-        self.sel = super::machines::SelectPhase::begin(s);
-        if self.sel.done {
-            let hs = self.sel.picked.clone();
-            return self.run(s, hs);
-        }
-        Ok(Step::Continue)
-    }
-    fn prompt(&self, _s: &Session) -> Prompt {
-        self.sel.prompt()
-    }
-    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
-        match self.sel.feed(s, &i)? {
-            super::machines::SelOutcome::More => Ok(Step::Continue),
-            super::machines::SelOutcome::Empty => Ok(Step::Done),
-            super::machines::SelOutcome::Done(hs) => self.run(s, hs),
-        }
-    }
-    fn preview(&self, _s: &Session, _c: Vec2) -> Vec<EntityKind> {
-        Vec::new()
-    }
 }
 
 /// DIMOVERRIDE at the command line: variable, value (repeat), Enter, then select dimensions.
