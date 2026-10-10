@@ -1297,6 +1297,10 @@ struct SelectThen {
     objs: Vec<Handle>,
     pts: Vec<Vec2>,
     reference: bool,
+    /// SCALE Reference: first point of a reference length given by two points.
+    ref_from: Option<Vec2>,
+    /// SCALE Reference: the reference length, once known.
+    ref_len: Option<f64>,
     copy_mode: bool,
     window: Option<cadcraft_geom::Bounds2>,
     ask_erase: bool,
@@ -1310,6 +1314,8 @@ impl SelectThen {
             objs: Vec::new(),
             pts: Vec::new(),
             reference: false,
+            ref_from: None,
+            ref_len: None,
             copy_mode: false,
             window: None,
             ask_erase: false,
@@ -1357,6 +1363,54 @@ impl SelectThen {
             _ => Ok(Step::Continue),
         }
     }
+
+    /// SCALE Reference: reference length (typed, or two points), then new length (typed, or a
+    /// point measured from the base point). The scale factor is new length / reference length.
+    fn scale_reference(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        let Some(base) = self.pts.first().copied() else { return Ok(Step::Done) };
+        match (self.ref_len, self.ref_from, i) {
+            (None, None, Input::Point(p)) => {
+                self.ref_from = Some(p);
+                Ok(Step::Continue)
+            }
+            (None, None, Input::Text(t)) => {
+                self.ref_len = Some(require_length(number(&t))?);
+                Ok(Step::Continue)
+            }
+            (None, None, Input::Enter) => {
+                self.ref_len = Some(1.0);
+                Ok(Step::Continue)
+            }
+            (None, Some(a), Input::Point(p)) => {
+                self.ref_len = Some(require_length(Some(a.dist(p)))?);
+                Ok(Step::Continue)
+            }
+            (Some(r), _, Input::Point(p)) => self.scale_by(s, base, base.dist(p) / r),
+            (Some(r), _, Input::Text(t)) => {
+                let n = require_length(number(&t))?;
+                self.scale_by(s, base, n / r)
+            }
+            (_, _, Input::Enter) => Ok(Step::Done),
+            _ => Ok(Step::Continue),
+        }
+    }
+
+    fn scale_by(&mut self, s: &mut Session, base: Vec2, f: f64) -> Result<Step> {
+        let f = require_length(Some(f))?;
+        transform_entities(s, &self.objs, &Mat3::scale_about(base, f), self.copy_mode)?;
+        s.set_selection(Vec::new());
+        Ok(Step::Done)
+    }
+}
+
+/// A finite length greater than zero (rejects 0, negatives, NaN and infinity).
+fn positive_length(v: Option<f64>) -> Option<f64> {
+    v.filter(|f| f.is_finite() && *f > 1e-12)
+}
+
+/// [`positive_length`], or the error that makes the prompt ask again.
+fn require_length(v: Option<f64>) -> Result<f64> {
+    positive_length(v).ok_or_else(|| EngineError::Other("Requires a positive number.".into()))
 }
 
 impl Interactive for SelectThen {
@@ -1406,6 +1460,13 @@ impl Interactive for SelectThen {
         let pts_from = if self.op == Op::Stretch { 2 } else { 0 };
         let k = n.saturating_sub(pts_from);
         let bp = if self.op == Op::Stretch { self.pts.get(2).copied() } else { base };
+        if self.op == Op::Scale && self.reference {
+            return match (self.ref_len, self.ref_from) {
+                (Some(_), _) => Prompt::new("Specify new length", Accept::POINT_OR_NUMBER).base_opt(base),
+                (None, Some(p)) => Prompt::new("Specify second point", Accept::POINT).base(p),
+                (None, None) => Prompt::new("Specify reference length", Accept::POINT_OR_NUMBER).default("1"),
+            };
+        }
         match (self.op, k) {
             (Op::Move | Op::Copy | Op::Stretch, 0) => Prompt::new("Specify base point", Accept::POINT).kw(&["Displacement"]),
             (Op::Move | Op::Stretch, _) => Prompt::new("Specify second point or <use first point as displacement>", Accept::POINT).base_opt(bp),
@@ -1458,10 +1519,17 @@ impl Interactive for SelectThen {
         }
         let off = if self.op == Op::Stretch { 2 } else { 0 };
         let k = self.pts.len() - off;
+        if self.op == Op::Scale && self.reference {
+            return self.scale_reference(s, i);
+        }
         match (self.op, k, i) {
             (_, _, Input::Keyword(kw)) if kw == "Copy" => {
                 self.copy_mode = true;
                 s.echo("Rotating/scaling a copy of the selected objects.");
+                Ok(Step::Continue)
+            }
+            (Op::Scale, 1, Input::Keyword(kw)) if kw == "Reference" => {
+                self.reference = true;
                 Ok(Step::Continue)
             }
             (_, _, Input::Keyword(kw)) if kw == "Reference" => {
@@ -1568,7 +1636,12 @@ impl Interactive for SelectThen {
         let m = match self.op {
             Op::Move | Op::Copy | Op::Stretch => Mat3::translate(c - base),
             Op::Rotate => Mat3::rotate_about(base, base.angle_to(c)),
-            Op::Scale => Mat3::scale_about(base, base.dist(c).max(1e-9)),
+            Op::Scale if !self.reference => Mat3::scale_about(base, base.dist(c).max(1e-9)),
+            Op::Scale => match self.ref_len.and_then(|r| positive_length(Some(base.dist(c) / r))) {
+                Some(f) => Mat3::scale_about(base, f),
+                None if self.ref_len.is_some() => return Vec::new(),
+                None => return self.ref_from.map(|a| vec![line(a, c)]).unwrap_or_default(),
+            },
             Op::Mirror if !self.ask_erase => Mat3::mirror(base, c),
             _ => return Vec::new(),
         };
