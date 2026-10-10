@@ -576,6 +576,7 @@ fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     let linetype = same(&|e| e.common.linetype.clone());
     let lts = same(&|e| format!("{:.4}", e.common.ltscale));
     let lw = same(&|e| e.common.lineweight.name());
+    let tr = same(&|e| e.common.transparency.name());
     let layers: Vec<String> = d.layers.iter().map(|l| l.name.clone()).collect();
     let linetypes: Vec<String> = d.linetypes.iter().map(|l| l.name.clone()).collect();
     let ids: Vec<String> = sel.iter().map(|h| h.hex()).collect();
@@ -653,7 +654,32 @@ fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
         });
     });
     prop_row(ui, "Transparency", |ui| {
-        value_box(ui, "ByLayer", true, true);
+        ui.menu_button(tr.clone(), |ui| {
+            for v in ["ByLayer", "ByBlock"] {
+                if ui.button(v).clicked() {
+                    set = Some(json!({ "handles": ids, "transparency": v }));
+                    ui.close();
+                }
+            }
+            ui.separator();
+            // A fixed percentage, committed when the drag or edit ends.
+            let tid = egui::Id::new(("prop_tr", &ids));
+            let cur = tr.parse::<u8>().ok();
+            let mut pct = ui.data_mut(|d| d.get_temp::<u8>(tid)).or(cur).unwrap_or(0);
+            ui.horizontal(|ui| {
+                ui.label("Percent");
+                let r = ui.add(egui::DragValue::new(&mut pct).range(0..=90).speed(0.5));
+                if r.dragged() || r.has_focus() {
+                    ui.data_mut(|d| d.insert_temp(tid, pct));
+                }
+                if r.drag_stopped() || r.lost_focus() {
+                    if cur != Some(pct) {
+                        set = Some(json!({ "handles": ids, "transparency": pct }));
+                    }
+                    ui.data_mut(|d| d.remove::<u8>(tid));
+                }
+            });
+        });
     });
     if sel.len() == 1 {
         group(ui, "Geometry");

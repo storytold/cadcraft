@@ -70,6 +70,17 @@ pub enum Transparency {
     Percent(u8),
 }
 
+impl Transparency {
+    /// "ByLayer", "ByBlock" or the percentage ("50").
+    pub fn name(&self) -> String {
+        match self {
+            Transparency::ByLayer => "ByLayer".into(),
+            Transparency::ByBlock => "ByBlock".into(),
+            Transparency::Percent(p) => p.to_string(),
+        }
+    }
+}
+
 /// Properties every entity has.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]

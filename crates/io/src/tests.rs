@@ -198,6 +198,28 @@ fn reads_r12_style_polyline_and_paper_flag() {
 }
 
 #[test]
+fn entity_transparency_roundtrips_as_group_440() {
+    // Issue #132: ByLayer writes nothing, ByBlock 0x01000000, a percentage its alpha | 0x02000000.
+    let ts = [Transparency::ByLayer, Transparency::ByBlock, Transparency::Percent(0), Transparency::Percent(40), Transparency::Percent(90)];
+    let mut d = Drawing::new_imperial();
+    for (i, t) in ts.iter().enumerate() {
+        let y = i as f64;
+        let line = EntityKind::Line(Line { a: Vec3::new(0.0, y, 0.0), b: Vec3::new(1.0, y, 0.0) });
+        d.add(&Space::Model, Common { transparency: *t, ..Common::default() }, line).unwrap();
+    }
+    let text = write_dxf(&d);
+    assert_eq!(text.matches("\r\n440\r\n").count(), 4, "ByLayer writes no 440");
+    assert!(text.contains("\r\n440\r\n16777216\r\n"), "ByBlock");
+    assert!(text.contains("\r\n440\r\n33554585\r\n"), "40% is alpha 153");
+    let back = read_dxf(text.as_bytes()).unwrap();
+    assert_eq!(back.model.iter().map(|e| e.common.transparency).collect::<Vec<_>>(), ts);
+    // Values that are neither ByBlock nor "by alpha" read as ByLayer.
+    let text = "0\nSECTION\n2\nENTITIES\n0\nLINE\n8\n0\n440\n-1\n10\n0\n20\n0\n11\n1\n21\n1\n0\nLINE\n8\n0\n440\n33554432\n10\n0\n20\n0\n11\n1\n21\n1\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "a.dxf").unwrap();
+    assert_eq!(d.model.iter().map(|e| e.common.transparency).collect::<Vec<_>>(), [Transparency::ByLayer, Transparency::Percent(90)]);
+}
+
+#[test]
 fn hostile_dxf_does_not_panic() {
     for t in [
         "0\nSECTION\n2\nENTITIES\n0\nHATCH\n91\n999999999\n92\n2\n93\n99999\n0\nENDSEC\n0\nEOF\n",

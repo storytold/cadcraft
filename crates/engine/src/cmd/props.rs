@@ -1,7 +1,7 @@
 //! Properties: per-object property edits, current properties, MATCHPROP, linetypes, units.
 
 use cadcraft_color::Color;
-use cadcraft_doc::{EntityKind, Lineweight};
+use cadcraft_doc::{EntityKind, Lineweight, Transparency};
 use cadcraft_geom::Vec3;
 use serde_json::{Value, json};
 
@@ -11,7 +11,7 @@ use crate::{Result, Session};
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("properties", "Properties", run_get).menu(&["Modify", "Properties"]).alias(&["pr", "props", "ch"]).params("{handles?} → properties of the selection").noundo(),
-        CommandSpec::new("properties.set", "Set Properties", run_set).params("{handles?, layer?, color?, linetype?, lineweight?, ltscale?, transparency?, visible?, <geometry fields: radius, center, start, end, text, height, rotation…>}"),
+        CommandSpec::new("properties.set", "Set Properties", run_set).params("{handles?, layer?, color?, linetype?, lineweight?, ltscale?, transparency?: \"ByLayer\" | \"ByBlock\" | 0..90, visible?, <geometry fields: radius, center, start, end, text, height, rotation…>}"),
         CommandSpec::new("matchprop", "Match Properties", run_matchprop).menu(&["Modify", "Match Properties"]).alias(&["ma", "painter"]).params("{source, targets: [hex]}"),
         CommandSpec::new("color", "Color...", run_color).menu(&["Format", "Color..."]).alias(&["col", "colour"]).params("{color: \"ByLayer\" | \"red\" | 1..255 | \"r,g,b\"}"),
         CommandSpec::new("linetype", "Linetype...", run_linetype).menu(&["Format", "Linetype..."]).alias(&["lt", "ltype"]).params("{current?: name, load?: name | \"*\"}"),
@@ -60,6 +60,7 @@ pub(super) fn entity_props(d: &cadcraft_doc::Drawing, e: &cadcraft_doc::Entity) 
         "linetype": e.common.linetype,
         "lineweight": e.common.lineweight.name(),
         "ltscale": e.common.ltscale,
+        "transparency": transparency_value(e.common.transparency),
         "visible": e.common.visible,
     });
     let geo = serde_json::to_value(&e.kind).unwrap_or(Value::Null);
@@ -121,6 +122,25 @@ fn parse_color(v: &Value) -> Option<Color> {
     v.as_str().and_then(Color::parse).or_else(|| v.as_i64().and_then(|i| i16::try_from(i).ok()).map(Color::from_aci))
 }
 
+/// A transparency as JSON, in the form `properties.set` takes: "ByLayer", "ByBlock" or a percentage.
+pub(super) fn transparency_value(t: Transparency) -> Value {
+    match t {
+        Transparency::Percent(p) => json!(p),
+        other => json!(other.name()),
+    }
+}
+
+/// "ByLayer", "ByBlock" or a percentage 0..=90 (a number, or a string such as "50" or "50%").
+fn parse_transparency(v: &Value) -> Option<Transparency> {
+    let pct = match v.as_str() {
+        Some(s) if s.trim().eq_ignore_ascii_case("bylayer") => return Some(Transparency::ByLayer),
+        Some(s) if s.trim().eq_ignore_ascii_case("byblock") => return Some(Transparency::ByBlock),
+        Some(s) => s.trim().trim_end_matches('%').trim_end().parse::<f64>().ok()?,
+        None => v.as_f64()?,
+    };
+    (pct.is_finite() && (0.0..=90.0).contains(&pct)).then(|| Transparency::Percent(pct.round() as u8))
+}
+
 fn set_xy(p: &mut Vec3, v: &Value) {
     if let Some(q) = point_value(v) {
         p.x = q.x;
@@ -134,6 +154,10 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("properties.set", "nothing selected"));
     }
     let color = p.get("color").map(|c| parse_color(c).ok_or_else(|| bad("properties.set", "bad colour"))).transpose()?;
+    let transparency = p
+        .get("transparency")
+        .map(|v| parse_transparency(v).ok_or_else(|| bad("properties.set", "transparency must be ByLayer, ByBlock or a percentage from 0 to 90")))
+        .transpose()?;
     let lw = p.get("lineweight").map(|v| match v.as_str().map(str::to_ascii_lowercase).as_deref() {
         Some("bylayer") => Lineweight::ByLayer,
         Some("byblock") => Lineweight::ByBlock,
@@ -164,6 +188,9 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
             }
             if let Some(x) = p.get("ltscale").and_then(Value::as_f64).filter(|x| *x > 0.0) {
                 e.common.ltscale = x;
+            }
+            if let Some(t) = transparency {
+                e.common.transparency = t;
             }
             if let Some(v) = p.get("visible").and_then(Value::as_bool) {
                 e.common.visible = v;
