@@ -39,12 +39,16 @@ pub fn line_circle(l: &Line, c: &Circle) -> Vec<(Vec2, f64)> {
     if !delta.is_finite() || delta < -tolerance {
         return Vec::new();
     }
+    let foot = c.center + nearest;
     if delta <= tolerance {
-        return vec![(l.at(t), t)];
+        return vec![(foot, t)];
     }
     let offset = (delta / a).sqrt();
     let (t1, t2) = (t - offset, t + offset);
-    vec![(l.at(t1), t1), (l.at(t2), t2)]
+    let step = d * offset;
+    // Construct the intersections around the foot, not from a tiny change
+    // to t on a very long line (which loses the small distance again).
+    vec![(foot - step, t1), (foot + step, t2)]
 }
 
 /// Intersections of two full circles.
