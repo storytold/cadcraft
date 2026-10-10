@@ -393,7 +393,7 @@ pub(crate) fn layer_colors_xdata(colors: &[(String, Color)]) -> Vec<Tag> {
 pub(crate) fn read_layer_colors(tags: &[Tag]) -> Vec<(String, Color)> {
     let list = xdata_list(xdata(tags, APP), "VPCOLORS");
     let names: Vec<String> = list.iter().take(MAX_XDATA_ITEMS * 2).filter(|t| t.code == 1000).map(Tag::str).collect();
-    names.chunks_exact(2).filter_map(|p| Some((p.first()?.clone(), Color::parse(p.get(1)?)?))).collect()
+    names.as_chunks::<2>().0.iter().filter_map(|[name, color]| Some((name.clone(), Color::parse(color)?))).collect()
 }
 
 const POINT_NAMES: [&str; 5] = ["defpt", "p13", "p14", "p15", "p16"];

@@ -187,12 +187,7 @@ fn circle_three_points_preserves_large_world_coordinates() {
     // A unit circle near a survey coordinate. The absolute-square formula suffers
     // catastrophic cancellation and returns a center tens of millions of units away.
     let origin = 1.0e12;
-    let c = Circle::from_3_points(
-        Vec2::new(origin + 1.0, origin),
-        Vec2::new(origin, origin + 1.0),
-        Vec2::new(origin - 1.0, origin),
-    )
-    .unwrap();
+    let c = Circle::from_3_points(Vec2::new(origin + 1.0, origin), Vec2::new(origin, origin + 1.0), Vec2::new(origin - 1.0, origin)).unwrap();
     assert!(c.center.near(Vec2::new(origin, origin), 1e-3), "{c:?}");
     assert!((c.radius - 1.0).abs() < 1e-3, "{c:?}");
 }
@@ -223,13 +218,7 @@ fn ellipse_bounds_find_analytic_extrema() {
 
 #[test]
 fn elliptical_arc_bounds_exclude_extrema_outside_the_sweep() {
-    let e = Ellipse {
-        center: Vec2::ZERO,
-        major: Vec2::new(3.0, 4.0),
-        ratio: 0.5,
-        start: 0.0,
-        end: PI / 4.0,
-    };
+    let e = Ellipse { center: Vec2::ZERO, major: Vec2::new(3.0, 4.0), ratio: 0.5, start: 0.0, end: PI / 4.0 };
     let bounds = e.bounds();
     assert!((bounds.max.x - 3.0).abs() < 1e-12);
     assert!((bounds.min.x - e.at_param(e.end).x).abs() < 1e-12);
@@ -250,15 +239,7 @@ fn polyline_area_is_exact_for_bulge_segments() {
 #[test]
 fn polyline_area_is_stable_far_from_the_origin() {
     let o = 1.0e12;
-    let p = Polyline::from_points(
-        &[
-            Vec2::new(o, o),
-            Vec2::new(o + 10.0, o),
-            Vec2::new(o + 10.0, o + 10.0),
-            Vec2::new(o, o + 10.0),
-        ],
-        true,
-    );
+    let p = Polyline::from_points(&[Vec2::new(o, o), Vec2::new(o + 10.0, o), Vec2::new(o + 10.0, o + 10.0), Vec2::new(o, o + 10.0)], true);
     assert!((p.area() - 100.0).abs() < 1e-12, "{}", p.area());
     // An open polyline's measured area retains the implicit straight closing edge.
     let mut open = p;
@@ -269,12 +250,7 @@ fn polyline_area_is_stable_far_from_the_origin() {
 #[test]
 fn shoelace_preserves_small_polygon_area_at_large_coordinates() {
     let o = 1.0e12;
-    let corners = [
-        Vec2::new(o, o),
-        Vec2::new(o + 10.0, o),
-        Vec2::new(o + 10.0, o + 10.0),
-        Vec2::new(o, o + 10.0),
-    ];
+    let corners = [Vec2::new(o, o), Vec2::new(o + 10.0, o), Vec2::new(o + 10.0, o + 10.0), Vec2::new(o, o + 10.0)];
     assert_eq!(shoelace(&corners), 100.0);
     assert_eq!(shoelace(&corners.iter().rev().copied().collect::<Vec<_>>()), -100.0);
 }

@@ -261,12 +261,7 @@ impl Ellipse {
         // candidate parameters (opposite sides of the ellipse).
         let minor = self.minor();
         let mut bounds = Bounds2::from_points([self.at_param(self.start), self.at_param(self.end)]);
-        for angle in [
-            minor.x.atan2(self.major.x),
-            minor.x.atan2(self.major.x) + PI,
-            minor.y.atan2(self.major.y),
-            minor.y.atan2(self.major.y) + PI,
-        ] {
+        for angle in [minor.x.atan2(self.major.x), minor.x.atan2(self.major.x) + PI, minor.y.atan2(self.major.y), minor.y.atan2(self.major.y) + PI] {
             if angle_in_sweep(angle, self.start, self.end) {
                 bounds.add(self.at_param(angle));
             }
