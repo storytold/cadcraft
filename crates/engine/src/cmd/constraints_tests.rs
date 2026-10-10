@@ -143,6 +143,27 @@ fn bars_settings_and_autoconstrain_json() {
 }
 
 #[test]
+fn auto_types_spellings_are_stored_canonically() {
+    for spelling in ["gcParallel", " Parallel ", "parallel"] {
+        let mut s = Session::new();
+        let a = line(&mut s, [0.0, 0.0], [10.0, 10.0]);
+        let b = line(&mut s, [0.0, 3.0], [10.0, 13.01]);
+        let r = s.execute("constraintsettings", &json!({ "autoTypes": [spelling], "angleTolerance": 1 })).unwrap();
+        assert_eq!(r["autoTypes"], json!(["Parallel"]));
+        let r = s.execute("autoconstrain", &json!({ "handles": [a, b] })).unwrap();
+        assert_eq!(r["added"], 1, "{spelling}");
+        assert_eq!(s.doc().unwrap().constraints[0].kind, ConstraintKind::Parallel);
+        // The per-command `types` override accepts the same spellings.
+        let mut s = Session::new();
+        let a = line(&mut s, [0.0, 0.0], [10.0, 10.0]);
+        let b = line(&mut s, [0.0, 3.0], [10.0, 13.01]);
+        let r = s.execute("autoconstrain", &json!({ "handles": [a, b], "types": [spelling], "angleTolerance": 1 })).unwrap();
+        assert_eq!(r["added"], 1, "{spelling}");
+        assert_eq!(s.doc().unwrap().constraints[0].kind, ConstraintKind::Parallel);
+    }
+}
+
+#[test]
 fn hostile_constraint_params_never_panic() {
     let mut s = Session::new();
     let a = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
