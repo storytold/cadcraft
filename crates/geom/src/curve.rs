@@ -141,17 +141,29 @@ impl Circle {
         Circle { center, radius: radius.abs() }
     }
     pub fn from_3_points(p1: Vec2, p2: Vec2, p3: Vec2) -> Option<Circle> {
-        let d = 2.0 * (p1.x * (p2.y - p3.y) + p2.x * (p3.y - p1.y) + p3.x * (p1.y - p2.y));
-        if d.abs() < 1e-12 {
+        // Work in point-relative coordinates. Absolute coordinate squares lose the small
+        // differences between points in drawings far from the origin.
+        if !p1.is_finite() || !p2.is_finite() || !p3.is_finite() {
             return None;
         }
-        let s1 = p1.len2();
-        let s2 = p2.len2();
-        let s3 = p3.len2();
-        let ux = (s1 * (p2.y - p3.y) + s2 * (p3.y - p1.y) + s3 * (p1.y - p2.y)) / d;
-        let uy = (s1 * (p3.x - p2.x) + s2 * (p1.x - p3.x) + s3 * (p2.x - p1.x)) / d;
-        let c = Vec2::new(ux, uy);
-        Some(Circle::new(c, c.dist(p1)))
+        let u = p2 - p1;
+        let v = p3 - p1;
+        let det = 2.0 * u.cross(v);
+        // The collinearity threshold must scale with the triangle, not drawing units.
+        if !det.is_finite() || det.abs() <= 1e-12 * (u.len() * v.len()).max(1e-300) {
+            return None;
+        }
+        let u2 = u.len2();
+        let v2 = v.len2();
+        let c = p1 + Vec2::new((u2 * v.y - v2 * u.y) / det, (v2 * u.x - u2 * v.x) / det);
+        if !c.is_finite() {
+            return None;
+        }
+        let radius = c.dist(p1);
+        if !radius.is_finite() {
+            return None;
+        }
+        Some(Circle::new(c, radius))
     }
     pub fn from_2_points(p1: Vec2, p2: Vec2) -> Circle {
         Circle::new(p1.mid(p2), p1.dist(p2) / 2.0)
