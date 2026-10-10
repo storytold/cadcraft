@@ -806,7 +806,20 @@ fn run_delconstraint(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let n = s.doc()?.constraints.iter().filter(|c| doomed(c)).count();
     if n > 0 {
-        s.doc_mut()?.constraints.retain(|c| !doomed(c));
+        let mut d = s.doc()?.clone();
+        let broken_before: Vec<String> = cs::parameter_table(&d).into_iter().filter(|r| r.error.is_some()).map(|r| r.name).collect();
+        let removed: Vec<String> = d.constraints.iter().filter(|c| doomed(c)).map(|c| c.name.clone()).collect();
+        d.constraints.retain(|c| !doomed(c));
+        // Reject when a surviving expression would lose a dimension it refers to (same guard as `parameters delete`).
+        if let Some(row) = cs::parameter_table(&d).into_iter().find(|r| r.error.is_some() && !broken_before.contains(&r.name)) {
+            let mut refs = Vec::new();
+            if let Ok(e) = cs::expr::parse(&row.expr) {
+                cs::expr::names(&e, &mut refs);
+            }
+            let used = removed.iter().find(|n| refs.contains(*n)).or(removed.first()).cloned().unwrap_or_default();
+            return Err(EngineError::Other(format!("`{used}` is used by `{}`", row.name)));
+        }
+        *s.doc_mut()? = d;
     }
     Ok(json!({ "removed": n, "message": format!("{n} constraint(s) removed") }))
 }

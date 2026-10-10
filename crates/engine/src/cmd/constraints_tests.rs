@@ -190,3 +190,23 @@ fn hostile_constraint_params_never_panic() {
         assert!(s.running.is_none());
     }
 }
+
+#[test]
+fn delconstraint_rejects_referenced_dimension() {
+    let mut s = Session::new();
+    let a = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
+    let b = line(&mut s, [0.0, 5.0], [4.0, 5.0]);
+    s.execute("dimconstraint", &json!({ "type": "horizontal", "h1": a, "expr": "8" })).unwrap();
+    s.execute("dimconstraint", &json!({ "type": "horizontal", "h1": b, "expr": "d1/2" })).unwrap();
+    let before = s.doc().unwrap().clone();
+    let first = s.doc().unwrap().constraints[0].id;
+    let e = s.execute("delconstraint", &json!({ "ids": [first] })).unwrap_err().to_string();
+    assert!(e.contains("`d1` is used by `d2`"), "{e}");
+    assert_eq!(*s.doc().unwrap(), before);
+    assert!(s.execute("delconstraint", &json!({ "handles": [a] })).is_err());
+    assert_eq!(*s.doc().unwrap(), before);
+    // Selecting both dimensions removes both; the dependent one may go with its source.
+    let ids: Vec<u32> = s.doc().unwrap().constraints.iter().map(|c| c.id).collect();
+    s.execute("delconstraint", &json!({ "ids": ids })).unwrap();
+    assert!(s.doc().unwrap().constraints.is_empty());
+}
