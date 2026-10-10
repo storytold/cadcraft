@@ -1,9 +1,11 @@
 //! Style and settings dialogs opened from the menus: Linetype Manager, Point Style, Table Style,
-//! Multileader Style, Page Setup Manager and Constraint Settings.
+//! Multileader Style, Page Setup Manager, Plot and Constraint Settings.
 //!
 //! Typed or chosen from a menu (no parameters) these commands open their dialog; JSON calls run
 //! the command. The dialogs read the drawing and change it only through the same commands
 //! (`app.run`), so every change is undoable and scriptable.
+
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use egui::{RichText, Sense, Stroke, vec2};
 use serde_json::{Value, json};
@@ -25,6 +27,10 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
         "mleaderstyle" | "mls" => "mleaderstyle",
         "pagesetup" => "pagesetup",
         "constraintsettings" | "csettings" => "csettings",
+        "plot" | "print" => {
+            PLOT_GEN.fetch_add(1, Ordering::Relaxed);
+            "plot"
+        }
         _ => return None,
     };
     app.ui.dialog = Some(dialog.into());
@@ -40,6 +46,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
         "mleaderstyle" => mleader_style(app, ctx, open),
         "pagesetup" => page_setup(app, ctx, open),
         "csettings" => constraint_settings(app, ctx, open),
+        "plot" => plot(app, ctx, open),
         _ => {
             *open = false;
             None
@@ -452,62 +459,11 @@ fn page_setup(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
             });
             let Some((_, name, page)) = layouts.iter().find(|l| l.1 == sel) else { return };
             right.label(RichText::new(format!("Page setup of {name}")).strong());
-            let set = |k: &str, v: Value| Some(("pagesetup", json!({ "layout": name, k: v })));
+            let rows = PageRows { areas: &["layout", "extents", "display", "limits"], scale: true, center: true };
             egui::Grid::new("pagesetup_grid").num_columns(2).spacing(vec2(10.0, 6.0)).show(right, |ui| {
-                ui.label("Paper size");
-                egui::ComboBox::from_id_salt("pagesetup_paper").selected_text(page.paper.as_str()).width(190.0).show_ui(ui, |ui| {
-                    for p in cadcraft_render::PAPER_SIZES {
-                        if ui.selectable_label(p.name == page.paper, p.name).clicked() && p.name != page.paper {
-                            action = set("paper", json!(p.name));
-                        }
-                    }
-                });
-                ui.end_row();
-                ui.label("Orientation");
-                ui.horizontal(|ui| {
-                    if ui.radio(!page.landscape, "Portrait").clicked() && page.landscape {
-                        action = set("landscape", json!(false));
-                    }
-                    if ui.radio(page.landscape, "Landscape").clicked() && !page.landscape {
-                        action = set("landscape", json!(true));
-                    }
-                });
-                ui.end_row();
-                ui.label("Plot area");
-                egui::ComboBox::from_id_salt("pagesetup_area").selected_text(page.plot_area.as_str()).show_ui(ui, |ui| {
-                    for a in ["layout", "extents", "display", "limits"] {
-                        if ui.selectable_label(page.plot_area == a, a).clicked() && page.plot_area != a {
-                            action = set("plotArea", json!(a));
-                        }
-                    }
-                });
-                ui.end_row();
-                ui.label("");
-                let mut fit = page.scale_to_fit;
-                if ui.checkbox(&mut fit, "Fit to paper").changed() {
-                    action = set("scaleToFit", json!(fit));
+                if let Some((k, v)) = page_rows(ui, egui::Id::new(("pagesetup", name)), page, &rows) {
+                    action = Some(("pagesetup", json!({ "layout": name, k: v })));
                 }
-                ui.end_row();
-                ui.label("Scale");
-                ui.add_enabled_ui(!page.scale_to_fit, |ui| {
-                    // A number (paper units per drawing unit) or a ratio such as 1:50.
-                    if let Some(v) = expr_field(ui, egui::Id::new(("pagesetup_scale", name)), &fmt_num(page.scale)) {
-                        action = set("scale", v.parse::<f64>().map_or(json!(v), |n| json!(n)));
-                    }
-                });
-                ui.end_row();
-                ui.label("");
-                let mut center = page.center;
-                if ui.checkbox(&mut center, "Center the plot").changed() {
-                    action = set("center", json!(center));
-                }
-                ui.end_row();
-                ui.label("");
-                let mut lw = page.lineweights;
-                if ui.checkbox(&mut lw, "Plot object lineweights").changed() {
-                    action = set("lineweights", json!(lw));
-                }
-                ui.end_row();
             });
             let (w, h) = if page.landscape { (page.height_mm, page.width_mm) } else { (page.width_mm, page.height_mm) };
             right.label(RichText::new(format!("{w:.1} × {h:.1} mm")).color(t.text_dim));
@@ -515,6 +471,335 @@ fn page_setup(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
     });
     set_temp(ctx, "pagesetup_sel", sel);
     action
+}
+
+/// Which page-setup rows a dialog shows.
+struct PageRows {
+    /// Plot area choices (`plotArea` values).
+    areas: &'static [&'static str],
+    scale: bool,
+    center: bool,
+}
+
+fn area_label(a: &str) -> &str {
+    match a {
+        "layout" => "Layout",
+        "extents" => "Extents",
+        "display" => "Display",
+        "limits" => "Limits",
+        "window" => "Window",
+        other => other,
+    }
+}
+
+/// A plot scale typed as a number (paper units per drawing unit) or a ratio such as `1:50`.
+fn parse_ratio(t: &str) -> Option<f64> {
+    let v = match t.trim().split_once([':', '/']) {
+        Some((a, b)) => a.trim().parse::<f64>().ok()? / b.trim().parse::<f64>().ok()?,
+        None => t.trim().trim_end_matches(['x', 'X']).parse().ok()?,
+    };
+    (v.is_finite() && v > 0.0).then_some(v)
+}
+
+/// The page-setup rows (paper, orientation, plot area, fit, scale, center, lineweights) shared by
+/// the Page Setup Manager and the Plot dialog, inside a two-column grid. Returns the setting the
+/// user changed as a `pagesetup` parameter (`paper`, `landscape`, `plotArea`, `scaleToFit`,
+/// `scale`, `center` or `lineweights`).
+fn page_rows(ui: &mut egui::Ui, salt: egui::Id, page: &cadcraft_doc::PageSetup, rows: &PageRows) -> Option<(&'static str, Value)> {
+    let mut change = None;
+    ui.label("Paper size");
+    egui::ComboBox::from_id_salt(salt.with("paper")).selected_text(page.paper.as_str()).width(190.0).show_ui(ui, |ui| {
+        for p in cadcraft_render::PAPER_SIZES {
+            if ui.selectable_label(p.name == page.paper, p.name).clicked() && p.name != page.paper {
+                change = Some(("paper", json!(p.name)));
+            }
+        }
+    });
+    ui.end_row();
+    ui.label("Orientation");
+    ui.horizontal(|ui| {
+        if ui.radio(!page.landscape, "Portrait").clicked() && page.landscape {
+            change = Some(("landscape", json!(false)));
+        }
+        if ui.radio(page.landscape, "Landscape").clicked() && !page.landscape {
+            change = Some(("landscape", json!(true)));
+        }
+    });
+    ui.end_row();
+    ui.label("Plot area");
+    ui.add_enabled_ui(rows.areas.len() > 1, |ui| {
+        egui::ComboBox::from_id_salt(salt.with("area")).selected_text(area_label(&page.plot_area)).show_ui(ui, |ui| {
+            for a in rows.areas {
+                if ui.selectable_label(page.plot_area == *a, area_label(a)).clicked() && page.plot_area != *a {
+                    change = Some(("plotArea", json!(a)));
+                }
+            }
+        });
+    });
+    ui.end_row();
+    ui.label("");
+    let mut fit = page.scale_to_fit;
+    if ui.checkbox(&mut fit, "Fit to paper").changed() {
+        change = Some(("scaleToFit", json!(fit)));
+    }
+    ui.end_row();
+    if rows.scale {
+        ui.label("Scale");
+        ui.add_enabled_ui(!page.scale_to_fit, |ui| {
+            if let Some(v) = expr_field(ui, salt.with("scale"), &fmt_num(page.scale)).and_then(|t| parse_ratio(&t)) {
+                change = Some(("scale", json!(v)));
+            }
+        })
+        .response
+        .on_hover_text("Paper units per drawing unit, or a ratio such as 1:50");
+        ui.end_row();
+    }
+    if rows.center {
+        ui.label("");
+        let mut center = page.center;
+        if ui.checkbox(&mut center, "Center the plot").changed() {
+            change = Some(("center", json!(center)));
+        }
+        ui.end_row();
+    }
+    ui.label("");
+    let mut lw = page.lineweights;
+    if ui.checkbox(&mut lw, "Plot object lineweights").changed() {
+        change = Some(("lineweights", json!(lw)));
+    }
+    ui.end_row();
+    change
+}
+
+/// Apply a [`page_rows`] change to a page setup held by a dialog.
+fn apply_page_change(page: &mut cadcraft_doc::PageSetup, key: &str, v: &Value) {
+    match key {
+        "paper" => {
+            if let Some(ps) = v.as_str().and_then(cadcraft_render::paper_size) {
+                page.paper = ps.name.into();
+                page.width_mm = ps.width_mm;
+                page.height_mm = ps.height_mm;
+            }
+        }
+        "plotArea" => page.plot_area = v.as_str().unwrap_or("extents").into(),
+        "scale" => page.scale = v.as_f64().filter(|s| s.is_finite() && *s > 0.0).unwrap_or(page.scale),
+        _ => {
+            let b = v.as_bool().unwrap_or_default();
+            match key {
+                "landscape" => page.landscape = b,
+                "scaleToFit" => page.scale_to_fit = b,
+                "center" => page.center = b,
+                "lineweights" => page.lineweights = b,
+                _ => {}
+            }
+        }
+    }
+}
+
+// ---------- Plot ----------
+
+/// Bumped each time PLOT opens its dialog, so it starts again from the page setup.
+static PLOT_GEN: AtomicU32 = AtomicU32::new(0);
+
+/// Plot areas for model space (a layout always plots its sheet).
+const MODEL_AREAS: &[&str] = &["extents", "display", "limits", "window"];
+
+/// The Plot dialog's settings until OK.
+#[derive(Clone)]
+struct PlotState {
+    generation: u32,
+    /// "Model" or a layout name.
+    target: String,
+    page: cadcraft_doc::PageSetup,
+    /// Plot area "window" corners in drawing units: [x1, y1, x2, y2].
+    window: [f64; 4],
+}
+
+/// The page setup a plot of `target` starts from: the layout's, or model-space defaults (fitted
+/// extents on A4 in metric drawings, ANSI A otherwise).
+fn plot_page(d: &cadcraft_doc::Drawing, target: &str) -> cadcraft_doc::PageSetup {
+    if let Some(l) = d.layouts.iter().find(|l| l.name == target) {
+        let mut page = l.page.clone();
+        page.plot_area = "layout".into();
+        return page;
+    }
+    let mut page = cadcraft_doc::PageSetup { plot_area: "extents".into(), scale_to_fit: true, ..Default::default() };
+    if cadcraft_render::paper::paper_unit_mm(d) == 1.0
+        && let Some(a4) = cadcraft_render::paper_size("A4")
+    {
+        page.paper = a4.name.into();
+        page.width_mm = a4.width_mm;
+        page.height_mm = a4.height_mm;
+    }
+    page
+}
+
+/// The `plot` parameters for the dialog's settings (without the output path).
+fn plot_params(st: &PlotState) -> Value {
+    let page = &st.page;
+    let mut p = json!({
+        "layout": st.target,
+        "landscape": page.landscape,
+        "fit": page.scale_to_fit,
+        "lineweights": page.lineweights,
+    });
+    if let Some(o) = p.as_object_mut() {
+        if cadcraft_render::paper_size(&page.paper).is_some() {
+            o.insert("paper".into(), json!(page.paper));
+        } else {
+            o.insert("width".into(), json!(page.width_mm));
+            o.insert("height".into(), json!(page.height_mm));
+        }
+        if st.target == "Model" {
+            o.insert("plotArea".into(), json!(page.plot_area));
+            if !page.scale_to_fit {
+                o.insert("scale".into(), json!(page.scale));
+            }
+            if page.plot_area == "window" {
+                let [x1, y1, x2, y2] = st.window;
+                o.insert("window".into(), json!([[x1, y1], [x2, y2]]));
+            }
+        }
+    }
+    p
+}
+
+/// The Plot dialog: what to plot, on which paper and at what scale; OK asks where to save the PDF
+/// (where the host has a file dialog) and runs `plot` with those settings.
+fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
+    let t = Tokens::get();
+    let Ok(d) = app.session.doc() else {
+        no_drawing(ctx, "Plot", open);
+        return None;
+    };
+    let mut targets = vec!["Model".to_string()];
+    let mut layouts: Vec<(u32, String)> = d.layouts.iter().map(|l| (l.tab_order, l.name.clone())).collect();
+    layouts.sort_by_key(|l| l.0);
+    targets.extend(layouts.into_iter().map(|l| l.1));
+    let generation = PLOT_GEN.load(Ordering::Relaxed);
+    let mut st = temp::<PlotState>(ctx, "plot_state").filter(|s| s.generation == generation && targets.contains(&s.target)).unwrap_or_else(|| {
+        let target = match app.session.layout_space() {
+            cadcraft_doc::Space::Paper(n) => n,
+            cadcraft_doc::Space::Model => "Model".into(),
+        };
+        let mut ext = d.extents(&cadcraft_doc::Space::Model);
+        if ext.is_empty() {
+            ext = cadcraft_geom::Bounds2::new(cadcraft_geom::Vec2::ZERO, cadcraft_geom::Vec2::new(12.0, 9.0));
+        }
+        PlotState { generation, page: plot_page(d, &target), target, window: [ext.min.x, ext.min.y, ext.max.x, ext.max.y] }
+    });
+    let model = st.target == "Model";
+    let (mut ok, mut cancel, mut action) = (false, false, None);
+    egui::Window::new("Plot").open(open).collapsible(false).resizable(false).show(ctx, |ui| {
+        egui::Grid::new("plot_target").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
+            ui.label("Printer/plotter");
+            ui.label("PDF (vector)").on_hover_text("CADCraft plots to vector PDF files");
+            ui.end_row();
+            ui.label("Layout");
+            egui::ComboBox::from_id_salt("plot_layout").selected_text(st.target.as_str()).width(190.0).show_ui(ui, |ui| {
+                for n in &targets {
+                    if ui.selectable_label(*n == st.target, n).clicked() && *n != st.target {
+                        st.page = plot_page(d, n);
+                        st.target = n.clone();
+                    }
+                }
+            });
+            ui.end_row();
+        });
+        ui.separator();
+        ui.horizontal_top(|ui| {
+            egui::Grid::new("plot_grid").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
+                let rows = if model {
+                    PageRows { areas: MODEL_AREAS, scale: true, center: false }
+                } else {
+                    PageRows { areas: &["layout"], scale: false, center: false }
+                };
+                if let Some((k, v)) = page_rows(ui, egui::Id::new(("plot", st.target.as_str())), &st.page, &rows) {
+                    apply_page_change(&mut st.page, k, &v);
+                }
+                if model && st.page.plot_area == "window" {
+                    for (i, label) in [(0, "First corner"), (2, "Opposite corner")] {
+                        ui.label(label);
+                        ui.horizontal(|ui| {
+                            for (j, axis) in ["X", "Y"].iter().enumerate() {
+                                ui.label(*axis);
+                                let k = i + j;
+                                if let Some(slot) = st.window.get_mut(k)
+                                    && let Some(v) = num_field(ui, ("plot_window", k), *slot)
+                                {
+                                    *slot = v;
+                                }
+                            }
+                        });
+                        ui.end_row();
+                    }
+                }
+            });
+            sheet_sketch(ui, &st.page, &t);
+        });
+        ui.separator();
+        ui.horizontal(|ui| {
+            if !model && ui.button("Apply to Layout").on_hover_text("Save these settings in the layout's page setup").clicked() {
+                let page = &st.page;
+                action = Some((
+                    "pagesetup",
+                    json!({ "layout": st.target, "paper": page.paper, "landscape": page.landscape, "scaleToFit": page.scale_to_fit, "lineweights": page.lineweights }),
+                ));
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                cancel = ui.button("Cancel").clicked();
+                ok = ui.button("OK").clicked();
+            });
+        });
+    });
+    set_temp(ctx, "plot_state", st.clone());
+    if cancel {
+        *open = false;
+    }
+    if ok {
+        let mut params = plot_params(&st);
+        if let Some(pick) = app.services.pick_save.as_ref() {
+            let title = app.session.state().map(|s| s.title.clone()).unwrap_or_default();
+            let stem = std::path::Path::new(&title).file_stem().map(|s| s.to_string_lossy().to_string()).filter(|s| !s.is_empty());
+            let suggested = format!("{}-{}.pdf", stem.unwrap_or_else(|| "Drawing".into()), st.target);
+            // Cancelling the file dialog keeps the Plot dialog open with its settings.
+            let Some(path) = pick(&suggested) else { return action };
+            if let Some(o) = params.as_object_mut() {
+                o.insert("path".into(), json!(path));
+            }
+        }
+        *open = false;
+        match app.run("plot", params) {
+            Ok(r) => {
+                let msg = match r.get("path").and_then(Value::as_str) {
+                    Some(path) => format!("Plotted {} to {path}", st.target),
+                    None => format!("Plotted {} ({} bytes of PDF; there is no file dialog here)", st.target, r["bytes"]),
+                };
+                app.session.echo(msg);
+            }
+            // `run` already echoed the error; keep the dialog open to fix the settings.
+            Err(_) => *open = true,
+        }
+    }
+    action
+}
+
+/// The sheet in the chosen orientation with its printable area, and its size.
+fn sheet_sketch(ui: &mut egui::Ui, page: &cadcraft_doc::PageSetup, t: &Tokens) {
+    let (w, h) = if page.landscape { (page.height_mm, page.width_mm) } else { (page.width_mm, page.height_mm) };
+    ui.vertical(|ui| {
+        let (rect, _) = ui.allocate_exact_size(vec2(120.0, 120.0), Sense::hover());
+        let k = (110.0 / w.max(h).max(1.0)) as f32;
+        let sheet = egui::Rect::from_center_size(rect.center(), vec2(w as f32 * k, h as f32 * k));
+        ui.painter().rect_filled(sheet, 0.0, t.field);
+        ui.painter().rect_stroke(sheet, 0.0, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+        let [l, b, r, top] = page.margins_mm.map(|m| m as f32 * k);
+        let printable = egui::Rect::from_min_max(sheet.min + vec2(l, top), sheet.max - vec2(r, b));
+        if printable.is_positive() {
+            ui.painter().rect_stroke(printable, 0.0, Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
+        }
+        ui.label(RichText::new(format!("{w:.1} × {h:.1} mm")).color(t.text_dim));
+    });
 }
 
 // ---------- Constraint Settings ----------

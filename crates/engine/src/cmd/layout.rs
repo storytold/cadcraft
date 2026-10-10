@@ -63,11 +63,11 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["File", "Print..."])
             .key("Cmd+P")
             .alias(&["print"])
-            .params("{path? (else returns base64 `data`), layout?: current|\"Model\", paper?, landscape?, fit?: bool, scale?, lineweights?: bool}")
+            .params("{path? (else returns base64 `data`), layout?: current|\"Model\", paper?, landscape?, fit?: bool, scale?: number | \"1:50\", lineweights?: bool, plotArea?: extents|display|limits|window (Model) | layout, window?: [[x1,y1],[x2,y2]]} (typed or from the menu: the Plot dialog)")
             .noundo(),
         CommandSpec::new("exportpdf", "Export to PDF...", |s, p| run_plot(s, p, "exportpdf"))
             .menu(&["File", "Export to PDF..."])
-            .params("{path? (else returns base64 `data`), layout?, paper?, landscape?, fit?, lineweights?}")
+            .params("{path? (else returns base64 `data`), layout?, paper?, landscape?, fit?, scale?, lineweights?, plotArea?, window?} (as PLOT)")
             .noundo(),
         CommandSpec::new("mspace", "Model Space (in viewport)", run_mspace)
             .alias(&["ms"])
@@ -774,7 +774,16 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
         Some(n) => Space::Paper(layout_name(cmd, s.doc()?, n)?),
         None => s.space(),
     };
-    let opts = if p.is_object() { p.clone() } else { json!({}) };
+    let mut opts = if p.is_object() { p.clone() } else { json!({}) };
+    if let Some(o) = opts.as_object_mut() {
+        if let Some(v) = p.get("scale") {
+            let k = parse_scale(v).ok_or_else(|| bad(cmd, "`scale` must be positive: paper units per drawing unit, or a ratio such as \"1:50\""))?;
+            o.insert("scale".into(), json!(k));
+        }
+        if let Some(w) = plot_window(s, p, cmd, &space)? {
+            o.insert("window".into(), json!([[w.min.x, w.min.y], [w.max.x, w.max.y]]));
+        }
+    }
     let bytes = hook(s.doc()?, &space, &opts).map_err(|e| bad(cmd, e))?;
     let layout = match &space {
         Space::Model => "Model".to_string(),
@@ -795,6 +804,43 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
         }
         None => Ok(json!({ "data": base64_encode(&bytes), "bytes": bytes.len(), "layout": layout })),
     }
+}
+
+/// The model-space rectangle a plot of `plotArea` covers: `extents` (default) plots everything,
+/// `display` the current model view, `limits` the drawing limits, `window` the `window` corners.
+/// Layouts plot their sheet (`layout`).
+fn plot_window(s: &Session, p: &Value, cmd: &str, space: &Space) -> Result<Option<Bounds2>> {
+    let area = str_param(p, "plotArea").map(str::to_ascii_lowercase);
+    let w = match (space, area.as_deref()) {
+        (_, None) | (Space::Model, Some("extents")) | (Space::Paper(_), Some("layout")) => return Ok(None),
+        (Space::Paper(_), Some(_)) => return Err(bad(cmd, "a layout plots its whole sheet: `plotArea` must be layout")),
+        (Space::Model, Some("display")) => {
+            let st = s.state()?;
+            let v = st.views.iter().find(|(sp, _)| *sp == Space::Model).map(|(_, v)| *v).unwrap_or_default();
+            let (px, py) = s.viewport_px;
+            let aspect = if px.is_finite() && py.is_finite() && px > 0.0 && py > 0.0 { px / py } else { 1.0 };
+            let half = Vec2::new(v.height * aspect / 2.0, v.height / 2.0);
+            Bounds2::new(v.center - half, v.center + half)
+        }
+        (Space::Model, Some("limits")) => {
+            let d = s.doc()?;
+            let lo = d.header.point("LIMMIN").map(|p| p.xy()).unwrap_or(Vec2::ZERO);
+            let hi = d.header.point("LIMMAX").map(|p| p.xy()).unwrap_or(Vec2::new(12.0, 9.0));
+            Bounds2::new(lo, hi)
+        }
+        (Space::Model, Some("window")) => {
+            let corners = p.get("window").and_then(Value::as_array);
+            let a = corners.and_then(|c| c.first()).and_then(point_value);
+            let b = corners.and_then(|c| c.get(1)).and_then(point_value);
+            let (Some(a), Some(b)) = (a, b) else {
+                return Err(bad(cmd, "`plotArea` window needs `window`: [[x1, y1], [x2, y2]]"));
+            };
+            Bounds2::new(a, b)
+        }
+        (Space::Model, Some(_)) => return Err(bad(cmd, "`plotArea` must be extents, display, limits or window (layouts: layout)")),
+    };
+    let ok = w.min.is_finite() && w.max.is_finite() && w.width() > 1e-9 && w.height() > 1e-9;
+    if ok { Ok(Some(w)) } else { Err(bad(cmd, "the plot area is empty")) }
 }
 
 #[cfg(test)]
@@ -1002,6 +1048,15 @@ mod tests {
         let r = s.execute("exportpdf", &json!({})).unwrap();
         assert_eq!(r["layout"], "Model");
         assert!(s.execute("plot", &json!({"layout": "Nope"})).is_err());
+        // Plot area and a ratio scale reach the plotter as a model-space window and a number.
+        let opts = |r: Value| String::from_utf8(super::super::file::base64_decode(r["data"].as_str().unwrap()).unwrap()).unwrap();
+        let p = json!({"layout": "Model", "plotArea": "window", "window": [[10, 0], [0, 5]], "fit": false, "scale": "1:2"});
+        let text = opts(s.execute("plot", &p).unwrap());
+        assert!(text.contains(r#""window":[[0.0,0.0],[10.0,5.0]]"#) && text.contains(r#""scale":0.5"#), "{text}");
+        assert!(opts(s.execute("plot", &json!({"layout": "Model", "plotArea": "limits"})).unwrap()).contains(r#""window":[[0.0,0.0],"#));
+        assert!(s.execute("plot", &json!({"layout": "Model", "plotArea": "window"})).is_err(), "window needs corners");
+        assert!(s.execute("plot", &json!({"layout": "Layout1", "plotArea": "display"})).is_err(), "layouts plot their sheet");
+        assert!(s.execute("plot", &json!({"layout": "Model", "scale": -1})).is_err());
         #[cfg(not(target_arch = "wasm32"))]
         {
             let path = std::env::temp_dir().join(format!("cadcraft-plot-test-{}.pdf", std::process::id()));
