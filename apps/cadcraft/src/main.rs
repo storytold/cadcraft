@@ -78,6 +78,31 @@ fn app_icon() -> Option<egui::IconData> {
     eframe::icon_data::from_png_bytes(png).map_err(|e| log::warn!("app icon: {e}")).ok()
 }
 
+/// Pick the GPU backend set wgpu may use.
+///
+/// wgpu's default on Windows prefers Vulkan. AMD's Vulkan driver (`amdvlk64.dll`) has
+/// crashed with an access violation on startup on Radeon laptops (RX 6800M + integrated
+/// Radeon), which no Rust-side guard can catch. DirectX 12 is the native, best-tested
+/// path on Windows, so prefer it and keep OpenGL as the fallback for machines without
+/// a DX12 device. `WGPU_BACKEND` still overrides this when set.
+fn prefer_stable_gpu_backend(options: &mut eframe::NativeOptions) {
+    #[cfg(target_os = "windows")]
+    {
+        use eframe::egui_wgpu::WgpuSetup;
+        use eframe::wgpu::Backends;
+        if Backends::from_env().is_some() {
+            return;
+        }
+        if let WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup {
+            setup.instance_descriptor.backends = Backends::DX12 | Backends::GL;
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = options;
+    }
+}
+
 fn version_string() -> String {
     let sha = option_env!("CADCRAFT_BUILD_SHA").unwrap_or("dev");
     format!("cadcraft {} ({sha})", env!("CARGO_PKG_VERSION"))
@@ -115,6 +140,7 @@ fn main() -> eframe::Result {
     if let Some(icon) = app_icon() {
         options.viewport = options.viewport.with_icon(icon);
     }
+    prefer_stable_gpu_backend(&mut options);
     eframe::run_native(
         "CADCraft",
         options,
