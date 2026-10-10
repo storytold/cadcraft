@@ -1174,6 +1174,16 @@ pub fn write(d: &Drawing) -> String {
             w.i(290, 0);
         }
         w.i(370, i64::from(l.lineweight.to_dxf()));
+        if l.transparency > 0 {
+            w.s(1001, dxf_ext::LAYER_TRANSPARENCY_APP);
+            w.i(1071, dxf_ext::transparency_to_dxf(l.transparency));
+        }
+        if !l.description.is_empty() {
+            // The first string is the layer standard's name, unused here.
+            w.s(1001, dxf_ext::LAYER_DESCRIPTION_APP);
+            w.s(1000, "");
+            w.s(1000, dxf_ext::xdata_str(&l.description));
+        }
     }
     w.s(0, "ENDTAB");
     // STYLE
@@ -1200,7 +1210,7 @@ pub fn write(d: &Drawing) -> String {
         table_head(&mut w, name, 0);
         w.s(0, "ENDTAB");
     }
-    let apps = ["ACAD", dxf_ext::APP, "AcadAnnotative"];
+    let apps = ["ACAD", dxf_ext::APP, "AcadAnnotative", dxf_ext::LAYER_TRANSPARENCY_APP, dxf_ext::LAYER_DESCRIPTION_APP];
     let th = table_head(&mut w, "APPID", apps.len());
     for app in apps {
         record_head(&mut w, "APPID", &th, "AcDbRegAppTableRecord");

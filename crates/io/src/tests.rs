@@ -182,6 +182,43 @@ fn second_roundtrip_is_stable() {
 }
 
 #[test]
+fn layer_transparency_and_description_roundtrip() {
+    // Issues #96 and #97: both are LAYER xdata (AcCmTransparency, AcAecLayerStandard).
+    let layers = [("T0", 0, ""), ("T1", 1, "One"), ("T40", 40, "Existing brick walls to remain"), ("T90", 90, "Ångström – ünïcode")];
+    let mut d = Drawing::new_imperial();
+    for (name, transparency, description) in layers {
+        d.layers.push(Layer {
+            name: name.into(),
+            transparency,
+            description: description.into(),
+            color: Color::Index(1),
+            plot: false,
+            ..Layer::default()
+        });
+    }
+    let long = "é".repeat(200);
+    d.layers.push(Layer { name: "Long".into(), description: long.clone(), ..Layer::default() });
+    let text = write_dxf(&d);
+    let back = read_dxf(text.as_bytes()).unwrap();
+    for (name, transparency, description) in layers {
+        let l = back.layer(name).unwrap();
+        assert_eq!((l.transparency, l.description.as_str(), l.color, l.plot), (transparency, description, Color::Index(1), false), "{name}");
+    }
+    // An xdata string holds at most 255 bytes; the cut falls on a character boundary.
+    assert_eq!(back.layer("Long").unwrap().description, long[..254]);
+    // AutoCAD's encoding: the alpha with the "by alpha" flag, under registered applications.
+    assert!(text.contains("AcCmTransparency\r\n1071\r\n33554585\r\n"), "40% is alpha 153");
+    assert_eq!(text.matches("AcDbRegAppTableRecord\r\n  2\r\nAcCmTransparency").count(), 1);
+    assert!(text.contains("AcDbRegAppTableRecord\r\n  2\r\nAcAecLayerStandard"));
+    // Values that aren't "by alpha" (ByLayer, ByBlock, junk) leave the layer opaque.
+    for v in [0, 0x0100_0000, -1, i64::MAX] {
+        assert_eq!(crate::dxf_ext::transparency_from_dxf(v), None, "{v:#x}");
+    }
+    assert_eq!(crate::dxf_ext::transparency_from_dxf(0x0200_00ff), Some(0));
+    assert_eq!(crate::dxf_ext::transparency_from_dxf(0x0200_0000), Some(90));
+}
+
+#[test]
 fn reads_r12_style_polyline_and_paper_flag() {
     let text = "0\nSECTION\n2\nENTITIES\n0\nPOLYLINE\n8\n0\n66\n1\n70\n1\n0\nVERTEX\n8\n0\n10\n0\n20\n0\n0\nVERTEX\n8\n0\n10\n5\n20\n0\n42\n1\n0\nVERTEX\n8\n0\n10\n5\n20\n5\n0\nSEQEND\n0\nLINE\n67\n1\n8\n0\n10\n0\n20\n0\n11\n1\n21\n1\n0\nENDSEC\n0\nEOF\n";
     let d = read(text.as_bytes(), "a.dxf").unwrap();

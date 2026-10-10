@@ -726,6 +726,13 @@ fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 if let Some(tc) = t.i(420) {
                     l.color = Color::True(Rgb::from_u32(tc as u32));
                 }
+                let alpha = crate::dxf_ext::xdata(&tg, crate::dxf_ext::LAYER_TRANSPARENCY_APP).iter().find(|x| x.code == 1071);
+                if let Some(pct) = alpha.and_then(|x| crate::dxf_ext::transparency_from_dxf(x.i64())) {
+                    l.transparency = pct;
+                }
+                if let Some(desc) = crate::dxf_ext::xdata(&tg, crate::dxf_ext::LAYER_DESCRIPTION_APP).iter().filter(|x| x.code == 1000).nth(1) {
+                    l.description = desc.str();
+                }
                 match d.layer_mut(&name) {
                     Some(x) => *x = l,
                     None => d.layers.push(l),
