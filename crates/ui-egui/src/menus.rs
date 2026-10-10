@@ -54,7 +54,11 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
     let toggle = |b: &mut bool, p: &Value| {
         *b = p.get("on").and_then(Value::as_bool).unwrap_or(!*b);
     };
-    let no_path = params.is_null() || (params.get("path").is_none() && params.get("data").is_none());
+    // When a file command should ask for a file. The `ui.*` commands are the pickers; the engine's
+    // OPEN/SAVEAS/QSAVE ask only when typed or chosen from a menu (no parameters), so JSON calls
+    // never open a picker.
+    let no_path =
+        if id.starts_with("ui.") { params.is_null() || (params.get("path").is_none() && params.get("data").is_none()) } else { params.is_null() };
     let r = match id {
         "ui.open" | "open" if no_path => {
             let picked = app.services.pick_open.as_ref().and_then(|f| f());
@@ -199,6 +203,14 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
             if app.ui.dialog.as_deref() == Some("parameters") {
                 app.ui.dialog = None;
             }
+            Ok(Value::Null)
+        }
+        "dsettings" | "ds" | "se" if params.is_null() => {
+            app.ui.dialog = Some("dsettings".into());
+            Ok(Value::Null)
+        }
+        "properties" | "pr" | "props" | "ch" if params.is_null() => {
+            app.ui.show_palettes = true;
             Ok(Value::Null)
         }
         _ => return None,
