@@ -2153,10 +2153,17 @@ fn run_arraypath(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 #[derive(Default)]
-struct PathArrayM {
+pub(super) struct PathArrayM {
     sel: SelectPhase,
     objs: Vec<Handle>,
     path: Option<Handle>,
+}
+
+impl PathArrayM {
+    /// Start at the path prompt with the objects already selected (ARRAY > PAth).
+    pub(super) fn with_objects(objs: Vec<Handle>) -> Self {
+        PathArrayM { sel: SelectPhase { picked: objs.clone(), done: true, ..SelectPhase::default() }, objs, path: None }
+    }
 }
 
 impl Interactive for PathArrayM {
