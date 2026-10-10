@@ -73,9 +73,13 @@ fn services() -> Services {
 
 const APP_ID: &str = "ai.storyteller.cadcraft";
 
+#[cfg(target_os = "macos")]
+const APP_ICON_PNG: &[u8] = include_bytes!("../../../assets/app-icon/cadcraft-macos-512.png");
+#[cfg(not(target_os = "macos"))]
+const APP_ICON_PNG: &[u8] = include_bytes!("../../../assets/app-icon/cadcraft-256.png");
+
 fn app_icon() -> Option<egui::IconData> {
-    let png: &[u8] = include_bytes!("../../../assets/app-icon/cadcraft-256.png");
-    eframe::icon_data::from_png_bytes(png).map_err(|e| log::warn!("app icon: {e}")).ok()
+    eframe::icon_data::from_png_bytes(APP_ICON_PNG).map_err(|e| log::warn!("app icon: {e}")).ok()
 }
 
 fn version_string() -> String {
