@@ -444,18 +444,39 @@ impl Interactive for LineM {
 struct PlineM {
     verts: Vec<PolyVertex>,
     arc_mode: bool,
-    width: f64,
+    /// Total width at the start and end of the next segment (Width / Halfwidth answers).
+    start_w: f64,
+    end_w: f64,
     handle: Option<cadcraft_doc::Handle>,
+    /// 1 = asking the starting width, 2 = the ending width.
     asking_width: u8,
+    /// The widths are being asked as half-widths (centre line to edge).
+    half: bool,
 }
 
 impl PlineM {
     fn entity(&self, closed: bool) -> EntityKind {
         let mut k = lwpoly(self.verts.clone(), closed);
         if let EntityKind::LwPolyline(pl) = &mut k {
-            pl.const_width = self.width;
+            // Every segment the same uniform width: store it as the constant width, as before.
+            let segs = if closed { pl.vertices.len() } else { pl.vertices.len().saturating_sub(1) };
+            let w = pl.vertices.first().map_or(0.0, |v| v.start_width);
+            if pl.vertices.iter().take(segs).all(|v| v.start_width == w && v.end_width == w) {
+                pl.const_width = w;
+                for v in &mut pl.vertices {
+                    (v.start_width, v.end_width) = (0.0, 0.0);
+                }
+            }
         }
         k
+    }
+    /// The next segment, starting at the last vertex, takes the requested widths (#104); the
+    /// segments after it are uniform at the ending width, as in AutoCAD.
+    fn begin_segment(&mut self) {
+        if let Some(last) = self.verts.last_mut() {
+            (last.start_width, last.end_width) = (self.start_w, self.end_w);
+            self.start_w = self.end_w;
+        }
     }
     fn sync(&mut self, s: &mut Session, closed: bool) -> Result<()> {
         if self.verts.len() < 2 {
@@ -502,8 +523,10 @@ impl Interactive for PlineM {
     }
     fn prompt(&self, _s: &Session) -> Prompt {
         if self.asking_width > 0 {
-            return Prompt::new(if self.asking_width == 1 { "Specify starting width" } else { "Specify ending width" }, Accept::NUMBER)
-                .default(format!("{:.4}", self.width));
+            let unit = if self.half { "half-width" } else { "width" };
+            let (which, w) = if self.asking_width == 1 { ("starting", self.start_w) } else { ("ending", self.end_w) };
+            let shown = if self.half { w / 2.0 } else { w };
+            return Prompt::new(format!("Specify {which} {unit}"), Accept::NUMBER).default(format!("{shown:.4}"));
         }
         let base = self.verts.last().map(|v| v.p);
         match (self.verts.len(), self.arc_mode) {
@@ -524,11 +547,21 @@ impl Interactive for PlineM {
         if self.asking_width > 0 {
             match i {
                 Input::Text(t) => {
-                    let w = number(&t).ok_or_else(|| crate::EngineError::Other("Requires a distance.".into()))?;
-                    self.width = w.max(0.0);
+                    let w = number(&t).filter(|w| w.is_finite()).ok_or_else(|| crate::EngineError::Other("Requires a distance.".into()))?;
+                    // Halfwidth is centre line to edge: the total width is twice the answer (#83).
+                    let w = w.max(0.0) * if self.half { 2.0 } else { 1.0 };
+                    if self.asking_width == 1 {
+                        self.start_w = w;
+                    } else {
+                        self.end_w = w;
+                    }
                 }
                 Input::Enter => {}
                 _ => return Ok(Step::Continue),
+            }
+            if self.asking_width == 1 {
+                // The ending width defaults to the starting width.
+                self.end_w = self.start_w;
             }
             self.asking_width = if self.asking_width == 1 { 2 } else { 0 };
             return Ok(Step::Continue);
@@ -536,8 +569,9 @@ impl Interactive for PlineM {
         match i {
             Input::Point(p) => {
                 if self.verts.is_empty() {
-                    s.echo(format!("Current line-width is {:.4}", self.width));
+                    s.echo(format!("Current line-width is {:.4}", self.start_w));
                 }
+                self.begin_segment();
                 if self.arc_mode && !self.verts.is_empty() {
                     let b = self.tangent_bulge(p);
                     if let Some(last) = self.verts.last_mut() {
@@ -566,6 +600,8 @@ impl Interactive for PlineM {
                             last.bulge = b;
                         }
                     }
+                    // The closing segment starts at the last vertex.
+                    self.begin_segment();
                     self.sync(s, true)?;
                     Ok(Step::Done)
                 }
@@ -573,11 +609,13 @@ impl Interactive for PlineM {
                     self.verts.pop();
                     if let Some(l) = self.verts.last_mut() {
                         l.bulge = 0.0;
+                        (l.start_width, l.end_width) = (0.0, 0.0);
                     }
                     self.sync(s, false)?;
                     Ok(Step::Continue)
                 }
                 "Width" | "Halfwidth" => {
+                    self.half = k == "Halfwidth";
                     self.asking_width = 1;
                     Ok(Step::Continue)
                 }

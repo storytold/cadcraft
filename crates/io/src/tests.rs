@@ -1287,3 +1287,31 @@ fn dimension_text_rotation_roundtrips() {
     let rot = b.entities.iter().find_map(|e| if let EntityKind::MText(t) = &e.kind { Some(t.rotation) } else { None });
     assert!(rot.is_some_and(|r| (r - dm.text_rotation).abs() < 1e-9), "block text rotation {rot:?}");
 }
+
+#[test]
+fn arc_length_dimension_keeps_its_kind_and_centre_on_roundtrip() {
+    let mut d = Drawing::new_metric();
+    // Arc of radius 10 centred off the origin, so a missing centre would read back as zero.
+    let mut al = dim(DimKind::ArcLength, Vec3::new(15.0, 5.0, 0.0), Vec3::new(5.0, 15.0, 0.0));
+    al.p15 = Vec3::new(5.0, 5.0, 0.0);
+    let h = d.add(&Space::Model, Default::default(), EntityKind::Dimension(al)).unwrap();
+    let text = write_dxf(&d);
+    // A standard aligned DIMENSION record (type 1 | 32), so other programs can read it.
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    assert!(lines.windows(2).any(|w| w == ["70", "33"]) && !lines.windows(2).any(|w| w == ["70", "40"]), "{text}");
+    let back = read_dxf(text.as_bytes()).unwrap();
+    match &back.entity(h).unwrap().kind {
+        EntityKind::Dimension(x) => {
+            assert!(matches!(x.kind, DimKind::ArcLength));
+            assert_eq!(x.p15, Vec3::new(5.0, 5.0, 0.0));
+        }
+        _ => panic!("not a dimension"),
+    }
+    // And through DWG.
+    let dwg = cadcraft_dwg::dxf_to_dwg(text.as_bytes()).unwrap();
+    let back = read_dxf(cadcraft_dwg::dwg_to_dxf(&dwg).unwrap().as_bytes()).unwrap();
+    let dims: Vec<_> = back.model.iter().filter_map(|e| if let EntityKind::Dimension(x) = &e.kind { Some(x.clone()) } else { None }).collect();
+    assert_eq!(dims.len(), 1);
+    assert!(matches!(dims[0].kind, DimKind::ArcLength), "{:?}", dims[0].kind);
+    assert!((dims[0].p15 - Vec3::new(5.0, 5.0, 0.0)).len() < 1e-9);
+}
