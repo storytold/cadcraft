@@ -173,6 +173,15 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
             Ok(Value::Null)
         }
         "ui.noop" => Ok(Value::Null),
+        // From a menu or typed, closing asks about unsaved changes; JSON calls close without asking.
+        "close" if params.is_null() => {
+            app.request_close(None);
+            Ok(Value::Null)
+        }
+        "closeall" if params.is_null() => {
+            app.request_close_all();
+            Ok(Value::Null)
+        }
         "layer" | "la" | "layers" if params.is_null() => {
             app.ui.dialog = Some("layers".into());
             Ok(Value::Null)
@@ -345,7 +354,7 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
         (sc(Modifiers::NONE, Key::F11), "otrack"),
         (sc(Modifiers::NONE, Key::F12), "dynmode"),
     ];
-    if ctx.egui_wants_keyboard_input() {
+    if ctx.egui_wants_keyboard_input() || app.closing.is_some() {
         return;
     }
     let mut fire = Vec::new();

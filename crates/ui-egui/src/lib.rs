@@ -10,6 +10,7 @@
 
 pub mod canvas;
 pub mod chrome;
+pub mod closing;
 pub mod cmdline;
 pub mod control;
 pub mod credits;
@@ -114,6 +115,8 @@ pub struct CadApp {
     shown_theme: Option<egui::Theme>,
     pub frame_ms: f64,
     pub quit_requested: bool,
+    /// A close request waiting for "Save changes?" answers ([`closing`]).
+    pub closing: Option<closing::Closing>,
 }
 
 impl CadApp {
@@ -137,6 +140,7 @@ impl CadApp {
             shown_theme: None,
             frame_ms: 0.0,
             quit_requested: false,
+            closing: None,
         }
     }
 
@@ -303,6 +307,7 @@ impl CadApp {
             }
         });
         dialogs::show(self, ui.ctx());
+        closing::prompt(self, ui.ctx());
         self.frame_ms = now_ms() - t0;
     }
 
