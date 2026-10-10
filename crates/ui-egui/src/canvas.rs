@@ -524,13 +524,14 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         )
     });
     let inside = hover_pos.is_some_and(|p| rect.contains(p)) && resp.hovered();
-    // Which device is scrolling? Trackpads (and Magic Mouse) report precise point deltas;
-    // notched mouse wheels report lines. The answer is sticky because egui spreads a wheel
-    // notch over several frames.
+    // Which device is scrolling? On macOS, trackpads (and Magic Mouse) report precise point
+    // deltas; notched mouse wheels report lines. The answer is sticky because egui spreads a wheel
+    // notch over several frames. Elsewhere (browsers, Wayland smooth-scroll mice) ordinary wheels
+    // also report points, so the wheel keeps zooming there.
     ui.input(|i| {
         for e in &i.raw.events {
             if let egui::Event::MouseWheel { unit, .. } = e {
-                app.canvas.scroll_pans = *unit == egui::MouseWheelUnit::Point;
+                app.canvas.scroll_pans = cfg!(target_os = "macos") && *unit == egui::MouseWheelUnit::Point;
             }
         }
     });
