@@ -1475,3 +1475,16 @@ fn long_gradient_name_is_cut_only_in_xdata() {
     let back = read_dxf(text.as_bytes()).unwrap();
     assert_eq!(hatches(&back).into_iter().next().and_then(|h| h.gradient).unwrap().name, name);
 }
+
+#[test]
+fn wipeout_survives_dxf_roundtrip() {
+    let mut d = Drawing::new_imperial();
+    let boundary = vec![Vec2::new(2.0, 3.0), Vec2::new(12.0, 3.0), Vec2::new(12.0, 13.0), Vec2::new(2.0, 13.0)];
+    d.add(&Space::Model, Common::default(), EntityKind::Wipeout(Wipeout { boundary: boundary.clone() })).unwrap();
+    let back = roundtrip(&d);
+    let got = first(&back, |k| if let EntityKind::Wipeout(w) = k { Some(w.boundary.clone()) } else { None });
+    // The DXF polygon is closed, so the first vertex is repeated at the end.
+    assert_eq!(got.len(), 5);
+    assert_eq!(&got[..4], &boundary[..]);
+    assert_eq!(got[4], boundary[0]);
+}
