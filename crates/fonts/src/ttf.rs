@@ -78,6 +78,9 @@ const MAX_FALLBACK_BYTES: usize = 160 << 20;
 const MAX_FALLBACK_FACES: usize = 256;
 /// Files loaded by one family-name lookup.
 const MAX_FAMILY_FILES: usize = 6;
+/// Total bytes of system font files loaded from disk: a drawing naming many styles can't pull
+/// every installed font into memory.
+const MAX_LOADED_BYTES: usize = 256 << 20;
 const MAX_CACHED_NAMES: usize = 4096;
 const MAX_CACHED_CHARS: usize = 50_000;
 
@@ -119,6 +122,8 @@ struct Db {
     /// Name lookups already answered, found or not.
     resolved: HashMap<String, Option<Face>>,
     fallback: Fallback,
+    /// Bytes of font files loaded from disk so far (bounded by `MAX_LOADED_BYTES`).
+    loaded_bytes: usize,
 }
 
 /// State of the missing-glyph search.
@@ -219,7 +224,11 @@ impl Db {
         if let Some(b) = self.files.get(stem) {
             return Some(b.clone());
         }
+        if self.loaded_bytes >= MAX_LOADED_BYTES {
+            return None;
+        }
         let bytes = Arc::new(read_file(self.paths.get(stem)?)?);
+        self.loaded_bytes = self.loaded_bytes.saturating_add(bytes.len());
         self.files.insert(stem.to_string(), bytes.clone());
         Some(bytes)
     }
