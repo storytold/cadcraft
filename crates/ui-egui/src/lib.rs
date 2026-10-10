@@ -98,12 +98,12 @@ pub struct CadApp {
     queued_shots: Vec<(u64, f64, u32)>,
     shot_token: u64,
     pub synthetic: Vec<egui::Event>,
-    styled: bool,
-    pub frame_ms: f64,
-    pub quit_requested: bool,
     /// Caps the frame rate when presenting without vsync (see [`gpu::FrameCap`]).
     #[cfg(not(target_arch = "wasm32"))]
     pub frame_cap: Option<gpu::FrameCap>,
+    styled: bool,
+    pub frame_ms: f64,
+    pub quit_requested: bool,
 }
 
 impl CadApp {
@@ -121,11 +121,11 @@ impl CadApp {
             queued_shots: Vec::new(),
             shot_token: 0,
             synthetic: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            frame_cap: None,
             styled: false,
             frame_ms: 0.0,
             quit_requested: false,
-            #[cfg(not(target_arch = "wasm32"))]
-            frame_cap: None,
         }
     }
 

@@ -105,6 +105,9 @@ fn main() -> eframe::Result {
     install_io();
     let surface = cadcraft_ui_egui::gpu::surface_config(std::env::var("CADCRAFT_VSYNC").ok().as_deref(), cfg!(all(unix, not(target_os = "macos"))));
     let mut options = eframe::NativeOptions {
+        // The crosshair is drawn by the app: present without a queue on Linux/BSD, where X11
+        // swapchains hold two frames back under vsync (`CADCRAFT_VSYNC=1` restores vsync).
+        wgpu_options: eframe::egui_wgpu::WgpuConfiguration::default().with_surface_config(surface),
         viewport: egui::ViewportBuilder::default()
             .with_title("CADCraft")
             .with_inner_size([1600.0, 1000.0])
@@ -114,9 +117,6 @@ fn main() -> eframe::Result {
             .with_titlebar_shown(false)
             .with_title_shown(false)
             .with_app_id(APP_ID),
-        // The crosshair is drawn by the app: present without a queue on Linux/BSD, where X11
-        // swapchains hold two frames back under vsync (`CADCRAFT_VSYNC=1` restores vsync).
-        wgpu_options: eframe::egui_wgpu::WgpuConfiguration::default().with_surface_config(surface),
         ..Default::default()
     };
     if let Some(icon) = app_icon() {
