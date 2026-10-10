@@ -172,22 +172,28 @@ fn run_new(s: &mut Session, p: &Value) -> Result<Value> {
 fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").ok_or_else(|| bad("layer.set", "`name` is required"))?.to_string();
     let new_name = str_param(p, "newName").map(str::to_string);
-    let d = s.doc_mut()?;
+    // Validate on a copy before borrowing the drawing mutably, so a rejected call
+    // leaves the layer untouched and records no undo step.
+    let d = s.doc()?;
     let cur = d.header.str("CLAYER", "0");
-    let l = d.layer_mut(&name).ok_or_else(|| bad("layer.set", format!("no layer `{name}`")))?;
-    apply(l, p)?;
-    if p.get("frozen").and_then(Value::as_bool) == Some(true) && l.name.eq_ignore_ascii_case(&cur) {
-        l.frozen = false;
+    let mut updated = d.layer(&name).cloned().ok_or_else(|| bad("layer.set", format!("no layer `{name}`")))?;
+    let old = updated.name.clone();
+    apply(&mut updated, p)?;
+    if p.get("frozen").and_then(Value::as_bool) == Some(true) && old.eq_ignore_ascii_case(&cur) {
         return Err(bad("layer.set", "cannot freeze the current layer"));
     }
-    if let Some(nn) = new_name {
-        if l.name == "0" || l.name.eq_ignore_ascii_case("Defpoints") {
+    if let Some(nn) = &new_name {
+        if old == "0" || old.eq_ignore_ascii_case("Defpoints") {
             return Err(bad("layer.set", "cannot rename layer 0 or Defpoints"));
         }
-        if !valid_name(&nn) {
+        if !valid_name(nn) {
             return Err(bad("layer.set", "invalid layer name"));
         }
-        let old = l.name.clone();
+    }
+    let d = s.doc_mut()?;
+    let l = d.layer_mut(&old).ok_or_else(|| bad("layer.set", format!("no layer `{name}`")))?;
+    *l = updated;
+    if let Some(nn) = new_name {
         l.name = nn.clone();
         // Re-point entities.
         let hs: Vec<_> = d.model.iter().filter(|e| e.common.layer.eq_ignore_ascii_case(&old)).map(|e| e.handle).collect();
@@ -413,5 +419,23 @@ mod tests {
         let v = s.execute("layer", &json!({})).unwrap();
         let used: Vec<bool> = v["layers"].as_array().unwrap().iter().map(|l| l["used"].as_bool().unwrap()).collect();
         assert!(used.contains(&true) && used.contains(&false));
+    }
+
+    #[test]
+    fn rejected_layer_set_changes_nothing() {
+        let mut s = Session::new();
+        // Layer 0 is current; freezing it is rejected and must not apply the colour either.
+        let before = s.doc().unwrap().layer("0").unwrap().clone();
+        let undo = s.state().unwrap().undo.len();
+        assert!(s.execute("layer.set", &json!({ "name": "0", "frozen": true, "color": 3 })).is_err());
+        assert_eq!(s.doc().unwrap().layer("0").unwrap(), &before);
+        assert_eq!(s.state().unwrap().undo.len(), undo, "no undo step for a rejected call");
+        // Same for a rejected rename.
+        assert!(s.execute("layer.set", &json!({ "name": "0", "newName": "X", "color": 3 })).is_err());
+        assert_eq!(s.doc().unwrap().layer("0").unwrap(), &before);
+        assert_eq!(s.state().unwrap().undo.len(), undo, "no undo step for a rejected call");
+        // A valid colour-only edit of the current layer still applies.
+        s.execute("layer.set", &json!({ "name": "0", "color": 3 })).unwrap();
+        assert_ne!(s.doc().unwrap().layer("0").unwrap(), &before);
     }
 }
