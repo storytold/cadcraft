@@ -440,7 +440,7 @@ fn styles_json(d: &cadcraft_doc::Drawing) -> Value {
     json!({ "current": cur, "styles": d.text_styles.iter().map(|t| style_json(t, &cur)).collect::<Vec<_>>() })
 }
 
-fn run_style(s: &mut Session, p: &Value) -> Result<Value> {
+pub(super) fn run_style(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").ok_or_else(|| bad("style", "`name` is required"))?.trim().to_string();
     if name.is_empty() || name.len() > 255 {
         return Err(bad("style", "bad style name"));
@@ -510,7 +510,7 @@ fn run_style_current(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// Text style names used by entities (in model, paper spaces and blocks), dimension,
 /// multileader and table styles (their cell styles), and the text of complex linetypes.
-pub(super) fn text_styles_in_use(d: &cadcraft_doc::Drawing) -> Vec<String> {
+pub fn text_styles_in_use(d: &cadcraft_doc::Drawing) -> Vec<String> {
     let mut out: Vec<String> = d.dim_styles.iter().map(|s| s.text_style.clone()).collect();
     out.extend(d.mleader_styles.iter().map(|s| s.text_style.clone()));
     out.extend(d.table_styles.iter().flat_map(|s| s.cell_styles.iter().map(|c| c.text_style.clone())));
