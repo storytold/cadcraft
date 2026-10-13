@@ -89,6 +89,11 @@ fn missing_property_labels(language: &str) -> Vec<String> {
         }
     }
     labels.extend(["Yes", "No"].map(String::from));
+    // The Dimension Style dialog edits every dimension variable, the style's own ones too.
+    for p in cadcraft_engine::properties::DIM_PROPS {
+        labels.insert(p.label.to_string());
+        labels.extend(p.kind.options().into_iter().map(|o| o.label));
+    }
     // Numbers (precisions, lineweights in mm) aren't words to translate.
     labels
         .into_iter()
@@ -136,6 +141,7 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
         "layers",
         "bedit",
         "palettes",
+        "managers/dimstyle",
         "parametric",
         "quick",
         "vpscale",
