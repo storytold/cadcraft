@@ -199,3 +199,15 @@ fn rotations_show_as_the_drawing_measures_directions() {
     assert_eq!(r["display"], "87.77");
     assert!((r["value"].as_f64().unwrap() - 2.22729505553431).abs() < 1e-9);
 }
+
+#[test]
+fn empty_arrowheads_read_as_the_ones_drawn() {
+    use cadcraft_engine::doc::DimStyle;
+    use cadcraft_engine::properties::{DIM_PROPS, dim_value};
+    let st = serde_json::to_value(DimStyle { arrow_block: "_DOT".into(), ..DimStyle::default() }).unwrap();
+    let p = |field: &str| DIM_PROPS.iter().find(|p| p.field == field).unwrap();
+    // An empty per-end arrowhead draws DIMBLK's; an empty leader arrowhead is closed filled.
+    assert_eq!(dim_value(p("arrowBlock1"), &st), json!("_DOT"));
+    assert_eq!(dim_value(p("arrowBlock"), &st), json!("_DOT"));
+    assert_eq!(dim_value(p("leaderArrowBlock"), &st), json!(""));
+}
