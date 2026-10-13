@@ -23,7 +23,7 @@ fn references_take_lock_position_from_the_definition() {
         halign: Default::default(),
         valign: Default::default(),
     };
-    let modes = AttribModes { verify: true, preset: true, lock_position: true };
+    let modes = AttribModes { verify: true, preset: true, lock_position: true, hidden: false };
     let def = Attrib {
         tag: "MARK".into(),
         text,
@@ -43,7 +43,7 @@ fn references_take_lock_position_from_the_definition() {
     let r = s.execute("insert", &json!({ "name": "TAG", "at": [10, 5] })).unwrap();
     let h = cadcraft_engine::doc::Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
     let Some(EntityKind::Insert(i)) = s.doc().unwrap().entity(h).map(|e| e.kind.clone()) else { panic!("no reference") };
-    assert_eq!(i.attribs[0].modes, AttribModes { verify: false, preset: false, lock_position: true });
+    assert_eq!(i.attribs[0].modes, AttribModes { verify: false, preset: false, lock_position: true, hidden: false });
 }
 
 /// A definition at `x` with `modes`, invisible or not, multiline or not.
