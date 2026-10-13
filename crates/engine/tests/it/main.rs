@@ -30,6 +30,7 @@ mod dim_radial_inside;
 mod dim_radial_outside;
 mod dim_style_menu;
 mod dim_vars;
+mod dimstyle_cli;
 mod dimtedit_prompts;
 mod drafting_spacing;
 mod draw_prompts;

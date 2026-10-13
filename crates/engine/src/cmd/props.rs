@@ -584,7 +584,7 @@ fn run_dimstyle_current(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// Dimensions (in model space, layouts and block definitions) that `uses` matches drop the
 /// geometry block they were read with, so they are drawn and saved from their style again.
-fn regen_dims(d: &mut cadcraft_doc::Drawing, uses: impl Fn(&cadcraft_doc::Dimension) -> bool) -> Result<()> {
+pub(super) fn regen_dims(d: &mut cadcraft_doc::Drawing, uses: impl Fn(&cadcraft_doc::Dimension) -> bool) -> Result<()> {
     let stale = |e: &cadcraft_doc::Entity| matches!(&e.kind, EntityKind::Dimension(dm) if dm.block.is_some() && uses(dm));
     let regen = |e: &mut cadcraft_doc::Entity| {
         if let EntityKind::Dimension(dm) = &mut e.kind {

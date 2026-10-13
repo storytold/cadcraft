@@ -1512,3 +1512,46 @@
 	Remove Style Overrides	Видалити перевизначення стилю
 	Save as New Style...	Зберегти як новий стиль...
 	Dimension Style	Розмірний стиль
+# Dimension Style Manager (DIMSTYLE) and -DIMSTYLE
+	Dimension Style Manager	Диспетчер розмірних стилів
+	Current dimension style: {style}	Поточний розмірний стиль: {style}
+	Styles	Стилі
+	All styles	Усі стилі
+	Styles in use	Стилі, що використовуються
+	<style overrides>	<перевизначення стилю>
+	Save to current style	Зберегти в поточному стилі
+	Rename	Перейменувати
+	Preview of: {style}	Попередній перегляд: {style}
+	Preview of: {style} (overrides)	Попередній перегляд: {style} (перевизначення)
+	New...	Новий...
+	Modify...	Змінити...
+	Override...	Перевизначити...
+	Compare...	Порівняти...
+	Create New Dimension Style	Створення нового розмірного стилю
+	New style name	Назва нового стилю
+	Start with	На основі
+	A dimension style with this name already exists.	Розмірний стиль із такою назвою вже існує.
+	Modify Dimension Style: {style}	Змінення розмірного стилю: {style}
+	Override Current Style: {style}	Перевизначення поточного стилю: {style}
+	New Dimension Style: {style}	Новий розмірний стиль: {style}
+	Lines	Лінії
+	Symbols and Arrows	Символи та стрілки
+	Leading	Початкові
+	Trailing	Кінцеві
+	Compare Dimension Styles	Порівняння розмірних стилів
+	Compare	Порівняти
+	With	з
+	All properties of {style}	Усі властивості стилю {style}
+	{count} differences	Відмінностей: {count}
+	Variable	Змінна
+	Dimension Style Overrides	Перевизначення розмірного стилю
+	Arrowheads	Наконечники стрілок
+	Leader arrow	Стрілка виноски
+	Baseline spacing	Крок базових розмірів
+	Text vertical position	Вертикальне положення тексту
+	Prefix and suffix	Префікс і суфікс
+	Zero suppression	Приховування нулів
+	Angular zero suppression	Приховування нулів у кутах
+	Alt prefix and suffix	Префікс і суфікс альтернативних одиниць
+	Alt zero suppression	Приховування нулів альтернативних одиниць
+	Tolerance zero suppression	Приховування нулів допусків

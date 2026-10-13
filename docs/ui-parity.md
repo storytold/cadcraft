@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (Properties Inspector: text, mtext and dimension rows from properties.describe) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (Dimension Style Manager) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
 
 How CADCraft's interaction compares with AutoCAD's: point entry, object snaps, tracking, dynamic
 input, grips, selection, the command line, chrome and navigation. A drafter's speed in AutoCAD
@@ -161,6 +161,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 | Tool Sets palette (Drafting, Modeling, … with flyouts) | yes | yes for 2D groups |
 | Properties Inspector, Quick Properties | yes | yes (every control acts or is visibly unavailable, #182); text, mtext and dimensions show the rows `properties.describe` gives — every dimension style setting in AutoCAD's groups (Misc, Lines & Arrows, Text, Fit, Primary Units, Alternate Units, Tolerances) as an override of the dimension, overridden rows marked and reset from their label, style, justification, obliquing and line spacing rows, several objects of one type at once with *VARIES*, and a fixed-height text style's height read-only with the reason; block references show read-only Position X/Y/Z from their stored insertion point; coordinate editing of other objects is still missing; Quick Properties keeps its own rows |
 | Layer Properties Manager (filters, states, VP overrides) | yes | yes |
+| Dimension Style Manager (DIMSTYLE) | yes | yes: the styles (all or in use) with the current style's `<style overrides>`, a preview drawn with the settings, Set Current, New, Modify, Override, Compare, Rename and Delete; Modify, Override and New edit every modeled style variable on AutoCAD's seven tabs (Lines, Symbols and Arrows, Text, Fit, Primary Units, Alternate Units, Tolerances), as AutoCAD's Properties labels rather than its dialog's grouped controls and pictures |
 | Blocks palette, Content | yes | Blocks window (click to insert, #28) |
 | Status bar toggles | ~25 | most toggles; Annotation Visibility and Workspace do nothing |
 | ViewCube | interactive 3D | clickable for 2D (Top/Home → extents); dragging does nothing (#7) |
@@ -205,6 +206,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Dimension Style Manager (DIMSTYLE): styles, overrides, preview, Set Current, New, Modify, Override, Compare, Rename, Delete and the seven tabs |
 | 2026-10-13 | minor | Dimension shortcut menu: Align Text, Dimension Style (styles, Save as New Style), Precision, Remove Style Overrides |
 | 2026-10-13 | minor | Properties Inspector shows the text, mtext and dimension rows `properties.describe` gives (dimension style settings as overrides, *VARIES* for several objects, fixed-height note) |
 | 2026-10-22 | minor | Polyline segment midpoint grips use rectangles, distinct from square vertex grips, with matching hover and pick bounds (#1950) |

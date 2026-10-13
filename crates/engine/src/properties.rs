@@ -585,28 +585,36 @@ pub fn is_dim_linetype(field: &str) -> bool {
 }
 
 impl DimPropKind {
+    /// The values a choice kind can take, with their labels (none for the other kinds; text
+    /// styles are the drawing's).
+    pub fn options(self) -> Vec<Choice> {
+        match self {
+            DimPropKind::Choice(list) => list.iter().map(|(v, l)| Choice::new(json!(v), *l)).collect(),
+            DimPropKind::Precision => {
+                (0..=8u8).map(|n| Choice::new(json!(n), if n == 0 { "0".into() } else { format!("0.{}", "0".repeat(usize::from(n))) })).collect()
+            }
+            DimPropKind::Lineweight => {
+                let mut o = vec![Choice::new(json!(-2), "ByBlock"), Choice::new(json!(-1), "ByLayer"), Choice::new(json!(-3), "Default")];
+                o.extend(Lineweight::STANDARD.iter().map(|w| Choice::new(json!(w), Lineweight::Mm100(*w).name())));
+                o
+            }
+            DimPropKind::Arrow => ARROWHEADS.iter().map(|(v, l)| Choice::new(json!(v), *l)).collect(),
+            DimPropKind::Separator => [(".", "Period"), (",", "Comma"), (" ", "Space")].iter().map(|(v, l)| Choice::new(json!(v), *l)).collect(),
+            _ => Vec::new(),
+        }
+    }
+
     fn row_kind(self, c: &Ctx) -> (Kind, Vec<Choice>) {
         match self {
             DimPropKind::Distance => (Kind::Distance, Vec::new()),
             DimPropKind::Number => (Kind::Number, Vec::new()),
             DimPropKind::Angle => (Kind::Angle, Vec::new()),
             DimPropKind::Bool => (Kind::Bool, Vec::new()),
-            DimPropKind::Choice(list) => (Kind::Choice, list.iter().map(|(v, l)| Choice::new(json!(v), *l)).collect()),
-            DimPropKind::Precision => (
-                Kind::Choice,
-                (0..=8u8).map(|n| Choice::new(json!(n), if n == 0 { "0".into() } else { format!("0.{}", "0".repeat(usize::from(n))) })).collect(),
-            ),
             DimPropKind::Color => (Kind::Color, Vec::new()),
             DimPropKind::TextStyle => (Kind::TextStyle, c.text_styles()),
             DimPropKind::Linetype => (Kind::Linetype, Vec::new()),
-            DimPropKind::Lineweight => {
-                let mut o = vec![Choice::new(json!(-2), "ByBlock"), Choice::new(json!(-1), "ByLayer"), Choice::new(json!(-3), "Default")];
-                o.extend(Lineweight::STANDARD.iter().map(|w| Choice::new(json!(w), Lineweight::Mm100(*w).name())));
-                (Kind::Choice, o)
-            }
-            DimPropKind::Arrow => (Kind::Choice, ARROWHEADS.iter().map(|(v, l)| Choice::new(json!(v), *l)).collect()),
-            DimPropKind::Separator => {
-                (Kind::Choice, [(".", "Period"), (",", "Comma"), (" ", "Space")].iter().map(|(v, l)| Choice::new(json!(v), *l)).collect())
+            DimPropKind::Choice(_) | DimPropKind::Precision | DimPropKind::Lineweight | DimPropKind::Arrow | DimPropKind::Separator => {
+                (Kind::Choice, self.options())
             }
         }
     }
@@ -617,8 +625,9 @@ fn arrow_key(name: &str) -> String {
     name.trim().trim_start_matches('_').chars().filter(char::is_ascii_alphanumeric).collect::<String>().to_ascii_lowercase()
 }
 
-/// A dimension style field's value as the row shows and `properties.set` takes it.
-fn dim_value(p: &DimProp, st: &Value) -> Value {
+/// A dimension style field's value as the row shows and `properties.set` takes it: a color's
+/// name, ByBlock for an empty linetype, and the arrowhead an empty per-end arrowhead draws.
+pub fn dim_value(p: &DimProp, st: &Value) -> Value {
     let v = st.get(p.field).cloned().unwrap_or(Value::Null);
     match p.kind {
         DimPropKind::Color => serde_json::from_value::<cadcraft_color::Color>(v).map(|c| json!(c.name())).unwrap_or(Value::Null),
@@ -627,8 +636,8 @@ fn dim_value(p: &DimProp, st: &Value) -> Value {
             Some(_) => v,
         },
         DimPropKind::Arrow => {
-            // Per-end arrowheads left empty use DIMBLK.
-            let name = v.as_str().filter(|s| !s.is_empty() || p.field == "arrowBlock").map(str::to_string);
+            // Per-end arrowheads left empty use DIMBLK (an empty leader arrowhead is closed filled).
+            let name = v.as_str().filter(|s| !s.is_empty() || !matches!(p.field, "arrowBlock1" | "arrowBlock2")).map(str::to_string);
             let name = name.unwrap_or_else(|| st.get("arrowBlock").and_then(Value::as_str).unwrap_or_default().to_string());
             // A drawn arrowhead reads as its standard name; a block of the user's stays as it is.
             match ARROWHEADS.iter().find(|(n, _)| arrow_key(n) == arrow_key(&name) || (n.is_empty() && arrow_key(&name) == "closedfilled")) {
