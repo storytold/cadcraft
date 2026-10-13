@@ -1555,3 +1555,31 @@
 	Alt prefix and suffix	Префікс і суфікс альтернативних одиниць
 	Alt zero suppression	Приховування нулів альтернативних одиниць
 	Tolerance zero suppression	Приховування нулів допусків
+
+# Text Style dialog (STYLE) and -STYLE
+	Text Style	Текстовий стиль
+	List Fonts	Список шрифтів
+	Current text style: {style}	Поточний текстовий стиль: {style}
+	Font	Шрифт
+	Font Name	Назва шрифту
+	Font Style	Накреслення
+	Regular	Звичайний
+	Search fonts	Пошук шрифтів
+	{font} (not installed)	{font} (не встановлено)
+	Use Big Font	Використовувати великий шрифт
+	Big Font	Великий шрифт
+	Size	Розмір
+	Match text orientation to layout	Орієнтація тексту за аркушем
+	Not available yet: CADCraft doesn't keep this setting.	Поки недоступно: CADCraft не зберігає цей параметр.
+	Paper Text Height	Висота тексту на аркуші
+	0 asks for the height each time text is placed; a fixed height is used for all text in the style.	0 — висота запитується щоразу, коли розміщують текст; фіксована висота діє для всього тексту цього стилю.
+	Effects	Ефекти
+	Upside down	Перевернутий
+	Backwards	Справа наліво
+	Width Factor	Коефіцієнт ширини
+	Oblique Angle	Кут нахилу
+	Vertical text isn't available yet.	Вертикальний текст поки недоступний.
+	New Text Style	Новий текстовий стиль
+	Style Name	Назва стилю
+	A text style with this name already exists.	Текстовий стиль із такою назвою вже існує.
+	The style {style} has been modified. Do you want to save your changes?	Стиль {style} змінено. Зберегти зміни?
