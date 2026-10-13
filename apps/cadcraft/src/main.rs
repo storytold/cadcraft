@@ -40,6 +40,8 @@ struct App {
     system_animations: system_animations::SystemAnimations,
     workspace: workspace::Workspace,
     workspace_error: Option<String>,
+    /// The system cursor is hidden over the drawing area (see `update_system_cursor`).
+    system_cursor_hidden: bool,
     #[cfg(target_os = "macos")]
     native_menu: Option<native_menu::NativeMenu>,
     /// `CADCRAFT_NO_NATIVE_MENU`: the menus stay inside the window.
@@ -49,6 +51,36 @@ struct App {
     #[cfg(target_os = "macos")]
     movable: Option<bool>,
 }
+
+impl App {
+    /// The system cursor is hidden over the drawing area, where the drawn crosshair is the pointer (as in games). macOS
+    /// shake-to-locate reveals a cursor that is only made transparent, so it is hidden with AppKit. Only while the window
+    /// has focus, so it never stays hidden over other apps.
+    fn update_system_cursor(&mut self, ctx: &egui::Context) {
+        let hide = self.cad.canvas.hide_system_cursor && ctx.input(|i| i.focused);
+        self.apply_system_cursor(hide);
+    }
+
+    fn apply_system_cursor(&mut self, hide: bool) {
+        if hide != self.system_cursor_hidden {
+            set_system_cursor_hidden(hide);
+            self.system_cursor_hidden = hide;
+        }
+    }
+}
+
+/// Each hide is matched by one unhide: `App::apply_system_cursor` calls this only when the state changes.
+#[cfg(target_os = "macos")]
+fn set_system_cursor_hidden(hide: bool) {
+    if hide {
+        objc2_app_kit::NSCursor::hide();
+    } else {
+        objc2_app_kit::NSCursor::unhide();
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_system_cursor_hidden(_hide: bool) {}
 
 impl App {
     /// `ctx` is `None` only for the final attempt at exit.
@@ -116,13 +148,16 @@ impl eframe::App for App {
         cadcraft_ui_egui::cmdline::capture_tab(ctx, raw);
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.cad.canvas.hide_system_cursor = false;
         self.cad.ui(ui);
         #[cfg(target_os = "macos")]
         craft_window::title_bar::sync_movable(ui.ctx(), &mut self.movable);
+        self.update_system_cursor(ui.ctx());
     }
     /// A normal exit: the workspace is saved, and this run's autosave files are not needed (a
     /// crash leaves them for recovery).
     fn on_exit(&mut self) {
+        self.apply_system_cursor(false);
         self.persist_workspace(None);
         self.cad.cancel_screenshots();
         self.cad.shutdown_autosave();
@@ -370,6 +405,7 @@ fn main() -> eframe::Result {
                 spacemouse: spacemouse::SpaceMouse::start(cc.egui_ctx.clone()),
                 workspace,
                 workspace_error,
+                system_cursor_hidden: false,
                 #[cfg(target_os = "macos")]
                 native_menu: None,
                 #[cfg(target_os = "macos")]
