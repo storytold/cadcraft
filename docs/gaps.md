@@ -151,7 +151,7 @@ Detail: [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-13 | minor | Dimension shortcut menu: Remove Style Overrides (`dimoverride.clear`), Dimension Style ▸ with Save as New Style (`dimstyle.saveas`), Precision ▸, Align Text ▸; U14 narrowed to Quick Properties and unmodeled rows |
+| 2026-10-13 | minor | Dimension shortcut menu: Remove Style Overrides (`dimoverride.clear`), Dimension Style ▸ with Save as New Style (`dimstyle.saveas`), Precision ▸, Align Text ▸; U14 narrowed to Quick Properties and unmodeled rows (#1008) |
 | 2026-10-13 | minor | Properties palette draws the text, mtext and dimension rows the engine describes: every dimension style setting as an override of the selected dimensions, style, justification and line spacing rows, several objects of one type at once with *VARIES*; U14 narrowed to the shortcut menu, Quick Properties and unmodeled rows (#994) |
 | 2026-10-13 | minor | U14 added: the Properties palette's text, mtext and dimension rows; `properties.describe` and the `properties.set` keys behind them landed (engine side, #954). Dimension and text style edits now redraw dimensions read from files |
 | 2026-10-22 | minor | APPLOAD typed or from Tools ▸ Load Application opens a `.lsp` file browser starting in the last-used folder (kept in the preferences); a picked file loads interactively like a typed name (routines that ask for input wait), the web says to drop the file (no file system), and the JSON form `{path}` reads the path as given and returns the commands the file defined, never opening a dialog (#1820): E1 narrowed |
