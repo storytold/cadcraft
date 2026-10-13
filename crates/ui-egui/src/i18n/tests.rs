@@ -141,6 +141,7 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
         "layers",
         "bedit",
         "palettes",
+        "managers/textstyle",
         "managers/dimstyle",
         "parametric",
         "quick",

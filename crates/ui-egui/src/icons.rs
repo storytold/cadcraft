@@ -117,6 +117,8 @@ pub enum Icon {
     QuickProps,
     Gear,
     Annotation,
+    /// An annotative style or object: a drafting set square.
+    Annotative,
     Workspace,
     ChevronDown,
     ChevronUp,
@@ -756,7 +758,7 @@ fn paint_layer_tools(pen: &Pen<'_>, icon: Icon, _b: Color32, _a: Color32, dim: b
     }
 }
 
-fn paint_display_toggles(pen: &Pen<'_>, icon: Icon, b: Color32, _a: Color32, dim: bool) {
+fn paint_display_toggles(pen: &Pen<'_>, icon: Icon, b: Color32, a: Color32, dim: bool) {
     let alpha = |c: Color32| if dim { c.gamma_multiply(0.4) } else { c };
     use Icon::*;
     match icon {
@@ -859,6 +861,10 @@ fn paint_display_toggles(pen: &Pen<'_>, icon: Icon, b: Color32, _a: Color32, dim
             pen.poly(&[(12.0, 3.0), (21.0, 20.0), (3.0, 20.0)], true, b);
             pen.l(12.0, 9.0, 12.0, 15.0);
             pen.fill_c(12.0, 17.5, 1.0, b);
+        }
+        Annotative => {
+            pen.poly(&[(4.0, 3.0), (4.0, 20.0), (21.0, 20.0)], true, b);
+            pen.poly(&[(7.5, 10.5), (7.5, 16.5), (13.5, 16.5)], true, a);
         }
         Workspace => {
             pen.rect(3.0, 4.0, 18.0, 16.0, b);

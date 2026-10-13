@@ -407,6 +407,7 @@
 	List	列表
 	List Blocks	列出块
 	List Dimension Styles	列出标注样式
+	List Fonts	列出字体
 	List Groups	列出编组
 	List Layer States	列出图层状态
 	List Layouts	列出布局
@@ -917,6 +918,7 @@
 	Text	文字
 	Text Editor	文字编辑器
 	Text Height	文字高度
+	Text Style	文字样式
 	Text Style...	文字样式...
 	Text height	文字高度
 	Text override	文字替代
