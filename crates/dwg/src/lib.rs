@@ -412,6 +412,68 @@ mod native {
     /// and objects without raw DWG data of that version. acadrust 0.6.4 refuses the whole file
     /// for one of them (0.6.3 left them out); CADCraft already tells the user which entity types
     /// a DWG doesn't keep (`not_saved`), so the rest of the drawing is written. Returns how many.
+    /// Most CLASS entries read from a DXF's CLASSES section.
+    const MAX_CLASSES: usize = 10_000;
+
+    /// The C++ class names a DXF's CLASS entries give, by DXF name (upper case): the names the
+    /// file came with (from AutoCAD, for the objects CADCraft keeps).
+    fn file_class_names(dxf: &[u8]) -> std::collections::HashMap<String, String> {
+        let text = String::from_utf8_lossy(dxf);
+        let mut lines = text.lines();
+        let mut out = std::collections::HashMap::new();
+        let (mut in_class, mut name, mut seen) = (false, None::<String>, false);
+        while let (Some(code), Some(value)) = (lines.next(), lines.next()) {
+            match (code.trim(), value.trim()) {
+                ("0", "CLASS") => {
+                    in_class = true;
+                    seen = true;
+                    name = None;
+                }
+                // The CLASSES section is over.
+                ("0", "ENDSEC") if seen => break,
+                ("0", _) => in_class = false,
+                ("1", n) if in_class => name = Some(n.to_ascii_uppercase()),
+                ("2", cpp) if in_class => {
+                    if let Some(n) = name.take()
+                        && out.len() < MAX_CLASSES
+                    {
+                        out.insert(n, cpp.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// Give the document's classes the C++ class names the file came with. acadrust keeps its
+    /// own built-in names over the file's, and one of them is wrong: it calls the dynamic block
+    /// rotate action's class `AcDbBlockRotationAction` where AutoCAD's is `AcDbBlockRotateAction`.
+    /// AutoCAD drops an object whose class it doesn't know, so a dynamic block with a rotate action
+    /// stopped being dynamic in the DWG. Classes keep their order (a custom object's type code is
+    /// its class's position).
+    fn use_file_class_names(doc: &mut acadrust::CadDocument, names: &std::collections::HashMap<String, String>) {
+        let differs = |c: &acadrust::classes::DxfClass| names.get(&c.dxf_name.to_ascii_uppercase()).is_some_and(|n| *n != c.cpp_class_name);
+        if !doc.classes.iter().any(differs) {
+            return;
+        }
+        let all: Vec<acadrust::classes::DxfClass> = doc
+            .classes
+            .iter()
+            .cloned()
+            .map(|mut c| {
+                if let Some(n) = names.get(&c.dxf_name.to_ascii_uppercase()) {
+                    c.cpp_class_name.clone_from(n);
+                }
+                c
+            })
+            .collect();
+        doc.classes.clear();
+        for c in all {
+            doc.classes.push_preserving(c);
+        }
+    }
+
     fn drop_unwritable(doc: &mut acadrust::CadDocument) -> usize {
         let version = doc.version;
         let unwritable: Vec<acadrust::Handle> = doc
@@ -608,6 +670,7 @@ mod native {
             current_dimstyle(&mut doc);
             add_variable_dictionary(&mut doc);
             current_text_style(&mut doc);
+            use_file_class_names(&mut doc, &file_class_names(dxf));
             current_layer(&mut doc);
         }))
         .map_err(|_| "the DXF to DWG conversion failed on this file".to_string())?;
@@ -737,6 +800,69 @@ mod native {
             let r = guarded(AssertUnwindSafe(|| -> usize { panic!("boom") }));
             assert!(r.is_err());
             assert_eq!(guarded(|| 3), Ok(3));
+        }
+    }
+
+    #[cfg(test)]
+    mod class_names {
+        use super::{file_class_names, use_file_class_names};
+
+        /// The file's C++ class names win over acadrust's built-in ones (its name for the dynamic
+        /// block rotate action, `AcDbBlockRotationAction`, isn't AutoCAD's), in the same order.
+        #[test]
+        fn the_files_class_names_win() {
+            let class = |dxf: &str, cpp: &str| {
+                format!(
+                    "0
+CLASS
+1
+{dxf}
+2
+{cpp}
+3
+ObjectDBX Classes
+90
+1153
+91
+1
+"
+                )
+            };
+            let dxf = format!(
+                "0
+SECTION
+2
+CLASSES
+{}{}0
+ENDSEC
+0
+SECTION
+2
+ENTITIES
+0
+CLASS
+1
+NOT_A_CLASS
+2
+Ignored
+0
+ENDSEC
+0
+EOF
+",
+                class("BLOCKROTATEACTION", "AcDbBlockRotateAction"),
+                class("blockflipaction", "AcDbBlockFlipAction"),
+            );
+            let names = file_class_names(dxf.as_bytes());
+            assert_eq!(names.len(), 2, "only the CLASSES section: {names:?}");
+            let mut doc = acadrust::CadDocument::new();
+            doc.classes.update_defaults();
+            let before: Vec<String> = doc.classes.iter().map(|c| c.dxf_name.clone()).collect();
+            assert_eq!(doc.classes.get_by_name("BLOCKROTATEACTION").map(|c| c.cpp_class_name.as_str()), Some("AcDbBlockRotationAction"));
+            use_file_class_names(&mut doc, &names);
+            assert_eq!(doc.classes.get_by_name("BLOCKROTATEACTION").map(|c| c.cpp_class_name.as_str()), Some("AcDbBlockRotateAction"));
+            assert_eq!(doc.classes.get_by_name("BLOCKFLIPACTION").map(|c| c.cpp_class_name.as_str()), Some("AcDbBlockFlipAction"));
+            assert_eq!(doc.classes.iter().map(|c| c.dxf_name.clone()).collect::<Vec<_>>(), before, "same classes, same order");
         }
     }
 }
