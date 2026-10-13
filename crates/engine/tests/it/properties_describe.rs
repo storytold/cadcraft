@@ -182,3 +182,20 @@ fn hostile_requests_never_panic() {
     // Duplicates count once.
     assert_eq!(describe(&mut s, json!({ "handles": [t, t] }))["count"], 1);
 }
+
+#[test]
+fn rotations_show_as_the_drawing_measures_directions() {
+    let mut s = Session::new();
+    s.execute("text", &json!({ "at": [0, 0], "text": "N", "height": 1, "rotation": 2.22729505553431 })).unwrap();
+    // Clockwise from north (ANGBASE 90, ANGDIR 1): AutoCAD shows the text turned 2.23° as 87.77
+    // (#1275); the value stays from +X counterclockwise, as properties.set takes it.
+    for (name, value) in [("ANGDIR", json!(1)), ("ANGBASE", json!(90)), ("AUPREC", json!(2))] {
+        s.execute("setvar", &json!({ "name": name, "value": value })).unwrap();
+    }
+    let h = last(&s);
+    let desc = describe(&mut s, json!({ "handles": [h] }));
+    let r = row(&desc, "Text", "rotation");
+    assert_eq!(r["kind"], "direction");
+    assert_eq!(r["display"], "87.77");
+    assert!((r["value"].as_f64().unwrap() - 2.22729505553431).abs() < 1e-9);
+}
