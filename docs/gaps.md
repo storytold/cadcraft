@@ -1,6 +1,6 @@
 # Where CADCraft falls short of AutoCAD
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-30 · **Change:** minor (QSAVE asks before losing content and keeps a `.bak`: rows 1, FF1 and F20 updated) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-30 · **Change:** minor (QSAVE asks before losing content and keeps a `.bak`: rows 1, FF1 and F20 updated; U14 added: Properties palette text and dimension rows) · **Target:** Autodesk AutoCAD 2027
 
 Every known shortfall, one row each, ranked within each section by user impact. This is the work
 list: agents pick from here (top of a section first). A PR names the rows it closes in its
@@ -58,6 +58,7 @@ Options ▸ Selection can now require two separate clicks for a selection window
 or allow clicks and drag (2, default), saved in the user profile. Drag-only mode (1) remains unavailable.
 | # | Gap | User impact | Est. |
 |---|---|---|---|
+| U14 | The Properties palette edits few text and dimension properties: TEXT shows Contents, Height, Rotation and Width factor; MTEXT only its raw contents, Text height and Defined width; a dimension only Text override and Dim style, so its text height can't be changed there; type rows appear for one object at a time. The engine side is done: `properties.describe` lists every TEXT, MTEXT and dimension row (dimension style variables as the dimension draws them, *VARIES*, drawing units, the fixed-height text style that decides a dimension's text height) and `properties.set` takes them all, dimension variables as overrides of each dimension. Left: the palette and Quick Properties drawing those rows, editing several objects with a type filter, Remove Style Overrides and Save as New Style on the dimension shortcut menu | High | 4–7 |
 | U4 | Tab snap cycling offers the closest snap of each mode, not every candidate. Typed snap overrides (`END`, `MID` … `NON`), the Shift/Ctrl+right-click snap menu and Tab cycling landed (#393), the menu's Temporary track point in #441 | Low | 1 |
 | U5 | Grip menus open on right-click only (no hover menu, no Ctrl to cycle the options); no multifunctional grips on dimensions, MLEADER, hatches or text; Add Vertex on an arc segment straightens it. Hot-grip options (Base point, Copy, Undo, Reference, eXit), multiple hot grips and the polyline/line/arc grip menus landed (#425) | Low-medium | 2–4 |
 | U6 | Selection: lasso; the CLass keyword; isolation saved with the drawing (OBJECTISOLATIONMODE 1) and the status-bar isolate button. Press-drag windows (#63), the W, C, F, WP and CP keywords (#226), BOX, AUto, SIngle, Multiple, Group, Add, Remove and Undo, SELECTSIMILAR, ISOLATEOBJECTS/HIDEOBJECTS/UNISOLATEOBJECTS (#428) and selection cycling (#1143) landed | Medium | 3–5 |
@@ -151,6 +152,7 @@ Detail: [localization-parity.md](localization-parity.md).
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-30 | minor | QSAVE asks before replacing a file with content the DWG writer can't keep, and ISAVEBAK keeps the previous file as `.bak`: row 1 narrowed, FF1 and F20 updated |
+| 2026-10-13 | minor | U14 added: the Properties palette's text, mtext and dimension rows; `properties.describe` and the `properties.set` keys behind them landed (engine side). Dimension and text style edits now redraw dimensions read from files |
 | 2026-10-25 | minor | Named Viewports (View ▸ Viewports ▸ Named Viewports..., `vports.named`) lists the saved viewport configurations with a preview and the current one's name, and restores or deletes one; in a layout Restore places it as MVIEW Restore does: U11 narrowed. F15 and U11 no longer list MVIEW Restore (#633), and F21 no longer says PURGE skips multiline styles |
 | 2026-10-25 | minor | DIMTFILL limits: with DIMTFILL 1 (the drawing's background color) the written `*D` block and EXPLODE keep no background mask (a WIPEOUT over the text box would), and a true-color DIMTFILLCLR is written to DXF as the nearest ACI: F7 updated |
 | 2026-10-26 | minor | BEDIT in the Block Editor (typed, Edit Block, or the Edit Block Definition dialog) switches to another block as AutoCAD's does, asking whether to save the changes not saved yet; the JSON form takes `save`: F3 evidence |

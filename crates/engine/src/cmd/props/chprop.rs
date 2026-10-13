@@ -96,7 +96,7 @@ impl ChpropM {
         if let (Some(p), Value::Object(props)) = (p.as_object_mut(), props) {
             p.extend(props);
         }
-        super::run_set(s, &p).map(|_| ())
+        super::set::run_set(s, &p).map(|_| ())
     }
 
     /// Take an answer to `ask`; `false` when it was refused (the prompt comes again).
@@ -243,7 +243,7 @@ pub(super) fn run_chprop(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
     let locked = locked(s, &hs);
     if locked.is_empty() {
-        return super::run_set(s, p).map(|r| with_locked(r, 0));
+        return super::set::run_set(s, p).map(|r| with_locked(r, 0));
     }
     let free: Vec<Handle> = hs.into_iter().filter(|h| !locked.contains(h)).collect();
     let r = if free.is_empty() {
@@ -251,7 +251,7 @@ pub(super) fn run_chprop(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         let mut q = p.as_object().cloned().unwrap_or_default();
         q.insert("handles".into(), json!(free.iter().map(|h| h.hex()).collect::<Vec<_>>()));
-        super::run_set(s, &Value::Object(q))?
+        super::set::run_set(s, &Value::Object(q))?
     };
     Ok(with_locked(r, locked.len()))
 }
