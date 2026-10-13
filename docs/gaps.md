@@ -151,7 +151,7 @@ Detail: [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-13 | minor | Text Style dialog (STYLE, ST): styles (all or in use, annotative marked) with a preview, the font by family and style from the installed fonts (`style.fonts`), height or paper height, effects, Set Current, New, Rename, Delete, edits on Apply; -STYLE asks in AutoCAD's order for scripts. No row closed; vertical text stays with L4 |
+| 2026-10-13 | minor | Text Style dialog (STYLE, ST): styles (all or in use, annotative marked) with a preview, the font by family and style from the installed fonts (`style.fonts`), height or paper height, effects, Set Current, New, Rename, Delete, edits on Apply; -STYLE asks in AutoCAD's order for scripts. No row closed; vertical text stays with L4 (#1083) |
 | 2026-10-13 | minor | Dimension Style Manager (DIMSTYLE, D, DDIM): styles with their overrides, preview, Set Current, New, Modify, Override, Compare, Rename, Delete, and AutoCAD's seven tabs; -DIMSTYLE at the command line (Save, Restore, STatus, Variables, Apply, ?, ANnotative) and `dimstyle.overrides`; F7 narrowed (#1042) |
 | 2026-10-13 | minor | Dimension shortcut menu: Remove Style Overrides (`dimoverride.clear`), Dimension Style ▸ with Save as New Style (`dimstyle.saveas`), Precision ▸, Align Text ▸; U14 narrowed to Quick Properties and unmodeled rows (#1008) |
 | 2026-10-13 | minor | Properties palette draws the text, mtext and dimension rows the engine describes: every dimension style setting as an override of the selected dimensions, style, justification and line spacing rows, several objects of one type at once with *VARIES*; U14 narrowed to the shortcut menu, Quick Properties and unmodeled rows (#994) |
