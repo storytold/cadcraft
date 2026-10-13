@@ -127,6 +127,10 @@ pub enum Kind {
     Distance,
     /// An angle in degrees.
     Angle,
+    /// A direction (a text's rotation): `value` is in degrees counterclockwise from +X, as
+    /// `properties.set` takes it; `display` shows it as the drawing measures directions, from
+    /// ANGBASE in the ANGDIR sense (#1275).
+    Direction,
     Bool,
     /// One of `options`.
     Choice,
@@ -190,12 +194,20 @@ struct Ctx<'a> {
     luprec: i64,
     aunits: i64,
     auprec: i64,
+    angles: units::AngleSettings,
 }
 
 impl<'a> Ctx<'a> {
     fn new(d: &'a Drawing) -> Self {
         let h = &d.header;
-        Ctx { d, lunits: h.i64("LUNITS", 2), luprec: h.i64("LUPREC", 4), aunits: h.i64("AUNITS", 0), auprec: h.i64("AUPREC", 0) }
+        Ctx {
+            d,
+            lunits: h.i64("LUNITS", 2),
+            luprec: h.i64("LUPREC", 4),
+            aunits: h.i64("AUNITS", 0),
+            auprec: h.i64("AUPREC", 0),
+            angles: units::AngleSettings::from_header(h),
+        }
     }
 
     fn distance(&self, v: f64) -> String {
@@ -212,6 +224,7 @@ impl<'a> Ctx<'a> {
             Kind::Distance => v.as_f64().map(|x| self.distance(x)).unwrap_or_default(),
             Kind::Number => v.as_f64().map(|x| format!("{x:.4}")).unwrap_or_default(),
             Kind::Angle => v.as_f64().map(|x| self.angle(x)).unwrap_or_default(),
+            Kind::Direction => v.as_f64().map(|x| self.angle(self.angles.shown(x.to_radians()).to_degrees())).unwrap_or_default(),
             Kind::Bool => (if v.as_bool() == Some(true) { "Yes" } else { "No" }).to_string(),
             Kind::Choice => options.iter().find(|o| o.value == *v).map(|o| o.label.clone()).unwrap_or_else(|| plain(v)),
             _ => plain(v),
@@ -271,7 +284,7 @@ pub const TEXT_JUSTIFY: &[(&str, &str)] = &[
     ("Left", "Left"),
     ("Center", "Center"),
     ("Right", "Right"),
-    ("Align", "Aligned"),
+    ("Align", "Align"),
     ("Middle", "Middle"),
     ("Fit", "Fit"),
     ("TL", "Top left"),
@@ -333,9 +346,9 @@ fn text_groups(c: &Ctx, ents: &[&Entity], texts: &[&Text]) -> Vec<Group> {
         c.row("text", "Contents", Kind::Text, texts.iter().map(|t| json!(t.value))).quick(),
         c.choice("style", "Style", Kind::TextStyle, c.text_styles(), texts.iter().map(|t| json!(t.style))).quick(),
         annotative(c, ents),
-        c.choice("justify", "Justify", Kind::Choice, options(TEXT_JUSTIFY), texts.iter().map(|t| json!(text_justify(t)))).quick(),
+        c.choice("justify", "Justification", Kind::Choice, options(TEXT_JUSTIFY), texts.iter().map(|t| json!(text_justify(t)))).quick(),
         c.row("height", "Height", Kind::Distance, texts.iter().map(|t| json!(t.height))).quick(),
-        c.row("rotation", "Rotation", Kind::Angle, texts.iter().map(|t| json!(t.rotation.to_degrees()))).quick(),
+        c.row("rotation", "Rotation", Kind::Direction, texts.iter().map(|t| json!(t.rotation.to_degrees()))).quick(),
         c.row("widthFactor", "Width factor", Kind::Number, texts.iter().map(|t| json!(t.width_factor))),
         c.row("oblique", "Obliquing", Kind::Angle, texts.iter().map(|t| json!(t.oblique.to_degrees()))),
     ];
@@ -368,9 +381,9 @@ fn mtext_groups(c: &Ctx, ents: &[&Entity], mts: &[&MText]) -> Vec<Group> {
         c.row("text", "Contents", Kind::Contents, mts.iter().map(|t| json!(t.contents))).quick(),
         c.choice("style", "Style", Kind::TextStyle, c.text_styles(), mts.iter().map(|t| json!(t.style))).quick(),
         annotative(c, ents),
-        c.choice("justify", "Justify", Kind::Choice, options(MTEXT_JUSTIFY), mts.iter().map(|t| json!(mtext_justify(t.attach)))).quick(),
+        c.choice("justify", "Justification", Kind::Choice, options(MTEXT_JUSTIFY), mts.iter().map(|t| json!(mtext_justify(t.attach)))).quick(),
         c.row("height", "Text height", Kind::Distance, mts.iter().map(|t| json!(t.height))).quick(),
-        c.row("rotation", "Rotation", Kind::Angle, mts.iter().map(|t| json!(t.rotation.to_degrees()))).quick(),
+        c.row("rotation", "Rotation", Kind::Direction, mts.iter().map(|t| json!(t.rotation.to_degrees()))).quick(),
         c.row("lineSpacing", "Line space factor", Kind::Number, mts.iter().map(|t| json!(t.line_spacing))),
         c.row("lineSpacingDistance", "Line space distance", Kind::Distance, mts.iter().map(|t| json!(t.line_spacing * t.height * LINE_PITCH))),
         c.choice(
@@ -455,7 +468,7 @@ const ALT_UNITS: &[(i64, &str)] = &[
     (8, "Windows desktop"),
 ];
 const ANGLE_FORMAT: &[(i64, &str)] = &[(0, "Decimal degrees"), (1, "Degrees Minutes Seconds"), (2, "Gradians"), (3, "Radians")];
-const FRACTION_FORMAT: &[(i64, &str)] = &[(0, "Horizontal"), (1, "Diagonal"), (2, "Not stacked")];
+const FRACTION_FORMAT: &[(i64, &str)] = &[(0, "Horizontal stacking"), (1, "Diagonal stacking"), (2, "Not stacked")];
 const TOL_POS: &[(i64, &str)] = &[(0, "Bottom"), (1, "Middle"), (2, "Top")];
 const ARC_SYMBOL: &[(i64, &str)] = &[(0, "Before text"), (1, "Above text"), (2, "None")];
 
@@ -472,8 +485,8 @@ pub const DIM_PROPS: &[DimProp] = &[
     prop("dimLinetype", "Lines & Arrows", "Dim line linetype", DimPropKind::Linetype),
     prop("dimLineweight", "Lines & Arrows", "Dim line lineweight", DimPropKind::Lineweight),
     prop("dimLineExtend", "Lines & Arrows", "Dim line ext", DimPropKind::Distance),
-    prop("suppressDim1", "Lines & Arrows", "Suppress dim line 1", DimPropKind::Bool),
-    prop("suppressDim2", "Lines & Arrows", "Suppress dim line 2", DimPropKind::Bool),
+    prop("suppressDim1", "Lines & Arrows", "Hide dim line 1", DimPropKind::Bool),
+    prop("suppressDim2", "Lines & Arrows", "Hide dim line 2", DimPropKind::Bool),
     prop("extLineColor", "Lines & Arrows", "Ext line color", DimPropKind::Color),
     prop("extLinetype1", "Lines & Arrows", "Ext line 1 linetype", DimPropKind::Linetype),
     prop("extLinetype2", "Lines & Arrows", "Ext line 2 linetype", DimPropKind::Linetype),
@@ -481,9 +494,9 @@ pub const DIM_PROPS: &[DimProp] = &[
     prop("extExtend", "Lines & Arrows", "Ext line ext", DimPropKind::Distance),
     prop("extOffset", "Lines & Arrows", "Ext line offset", DimPropKind::Distance),
     prop("fixedExt", "Lines & Arrows", "Ext line fixed", DimPropKind::Bool),
-    prop("fixedExtLength", "Lines & Arrows", "Ext line fixed length", DimPropKind::Distance),
-    prop("suppressExt1", "Lines & Arrows", "Suppress ext line 1", DimPropKind::Bool),
-    prop("suppressExt2", "Lines & Arrows", "Suppress ext line 2", DimPropKind::Bool),
+    prop("fixedExtLength", "Lines & Arrows", "Ext line length", DimPropKind::Distance),
+    prop("suppressExt1", "Lines & Arrows", "Hide ext line 1", DimPropKind::Bool),
+    prop("suppressExt2", "Lines & Arrows", "Hide ext line 2", DimPropKind::Bool),
     prop("centerMark", "Lines & Arrows", "Center mark size", DimPropKind::Distance),
     prop("jogAngle", "Lines & Arrows", "Jog angle", DimPropKind::Angle),
     prop("arcSymbol", "Lines & Arrows", "Arc length symbol", DimPropKind::Choice(ARC_SYMBOL)),
@@ -501,7 +514,7 @@ pub const DIM_PROPS: &[DimProp] = &[
     style_only("textVerticalPos", "Text", "Text vertical position", DimPropKind::Number),
     // Fit
     prop("forceLineInside", "Fit", "Dim line forced", DimPropKind::Bool),
-    prop("suppressOutsideArrows", "Fit", "Suppress arrows outside", DimPropKind::Bool),
+    prop("suppressOutsideArrows", "Fit", "Suppress arrows", DimPropKind::Bool),
     prop("scale", "Fit", "Dim scale overall", DimPropKind::Number),
     prop("fit", "Fit", "Fit", DimPropKind::Choice(FIT)),
     prop("textInside", "Fit", "Text inside", DimPropKind::Bool),
@@ -529,10 +542,10 @@ pub const DIM_PROPS: &[DimProp] = &[
     // Tolerances
     prop("tolerance", "Tolerances", "Tolerances", DimPropKind::Bool),
     prop("limits", "Tolerances", "Limits", DimPropKind::Bool),
-    prop("tolPlus", "Tolerances", "Tolerance limit upper", DimPropKind::Number),
-    prop("tolMinus", "Tolerances", "Tolerance limit lower", DimPropKind::Number),
+    prop("tolPlus", "Tolerances", "Upper tolerance", DimPropKind::Number),
+    prop("tolMinus", "Tolerances", "Lower tolerance", DimPropKind::Number),
     prop("tolDecimals", "Tolerances", "Tolerance precision", DimPropKind::Precision),
-    prop("tolScale", "Tolerances", "Tolerance text height", DimPropKind::Number),
+    prop("tolScale", "Tolerances", "Tolerance height", DimPropKind::Number),
     prop("tolJust", "Tolerances", "Tolerance pos vert", DimPropKind::Choice(TOL_POS)),
     style_only("tolZeroSuppression", "Tolerances", "Tolerance zero suppression", DimPropKind::Number),
 ];
@@ -545,7 +558,7 @@ pub const ARROWHEADS: &[(&str, &str)] = &[
     ("_DOT", "Dot"),
     ("_ARCHTICK", "Architectural tick"),
     ("_OBLIQUE", "Oblique"),
-    ("_OPEN", "Open"),
+    ("_OPEN", "Open arrow"),
     ("_ORIGIN", "Origin indicator"),
     ("_ORIGIN2", "Origin indicator 2"),
     ("_OPEN90", "Right angle"),
