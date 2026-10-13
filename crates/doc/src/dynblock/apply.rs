@@ -1348,6 +1348,16 @@ fn apply(
         f.targets.insert(h, ("BLOCK_RECORD".to_string(), definition.to_ascii_uppercase()));
         h
     }));
+    // Whether each attribute definition is shown in the new block: the reference's attribute of
+    // that tag is hidden with it (a visibility state).
+    let def_shown: HashMap<String, bool> = b
+        .entities
+        .iter()
+        .filter_map(|e| match &e.kind {
+            EntityKind::AttDef(ad) => Some((ad.tag.to_ascii_uppercase(), e.common.visible)),
+            _ => None,
+        })
+        .collect();
     let old = ins.block.clone();
     d.blocks.insert(name.clone(), std::sync::Arc::new(b));
     let f = std::sync::Arc::make_mut(&mut d.foreign);
@@ -1383,6 +1393,9 @@ fn apply(
             i.block = name.clone();
             i.insert = i.insert + shift.to3(0.0);
             for a in &mut i.attribs {
+                if let Some(shown) = def_shown.get(&a.tag.to_ascii_uppercase()) {
+                    a.modes.hidden = !shown;
+                }
                 if let Some(t) = attrib_moves.get(&a.tag.to_ascii_uppercase()) {
                     let w = to_block.then(*t).then(Mat3::translate(rebase)).then(to_world);
                     carry_text(&mut a.text, &w);
