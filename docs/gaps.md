@@ -1,6 +1,6 @@
 # Where CADCraft falls short of AutoCAD
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-19 · **Change:** minor (Properties palette draws the described text and dimension rows; U14 narrowed) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-19 · **Change:** minor (dimension shortcut menu: style overrides, Save as New Style, Precision; U14 narrowed) · **Target:** Autodesk AutoCAD 2027
 
 Every known shortfall, one row each, ranked within each section by user impact. This is the work
 list: agents pick from here (top of a section first), and remove or update a row in the same PR
@@ -58,7 +58,7 @@ Options ▸ Selection can now require two separate clicks for a selection window
 or allow clicks and drag (2, default), saved in the user profile. Drag-only mode (1) remains unavailable.
 | # | Gap | User impact | Est. |
 |---|---|---|---|
-| U14 | Properties palette leftovers for text and dimensions: no Remove Style Overrides or Save as New Style on the dimension shortcut menu (one row at a time: right-click an overridden row); Quick Properties still shows its own few text rows; no rows yet for MTEXT background mask, direction and defined height or TEXT backwards and upside down (not modeled). Every other TEXT, MTEXT and dimension property is edited there, for one object or several of one type, from `properties.describe` (#954, #994) | Medium | 2–4 |
+| U14 | Properties palette leftovers for text and dimensions: Quick Properties still shows its own few text rows; no rows yet for MTEXT background mask, direction and defined height or TEXT backwards and upside down (not modeled). Every other TEXT, MTEXT and dimension property is edited there, for one object or several of one type, from `properties.describe` (#954, #994) | Low | 2–4 |
 | U4 | Tab snap cycling offers the closest snap of each mode, not every candidate. Typed snap overrides (`END`, `MID` … `NON`), the Shift/Ctrl+right-click snap menu and Tab cycling landed (#393), the menu's Temporary track point in #441 | Low | 1 |
 | U5 | Grip menus open on right-click only (no hover menu, no Ctrl to cycle the options); no multifunctional grips on dimensions, MLEADER, hatches or text; Add Vertex on an arc segment straightens it. Hot-grip options (Base point, Copy, Undo, Reference, eXit), multiple hot grips and the polyline/line/arc grip menus landed (#425) | Low-medium | 2–4 |
 | U6 | Selection: lasso; the CLass keyword; isolation saved with the drawing (OBJECTISOLATIONMODE 1) and the status-bar isolate button. Press-drag windows (#63), the W, C, F, WP and CP keywords (#226), BOX, AUto, SIngle, Multiple, Group, Add, Remove and Undo, SELECTSIMILAR, ISOLATEOBJECTS/HIDEOBJECTS/UNISOLATEOBJECTS (#428) and selection cycling (#1143) landed | Medium | 3–5 |
@@ -151,6 +151,7 @@ Detail: [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Dimension shortcut menu: Remove Style Overrides (`dimoverride.clear`), Dimension Style ▸ with Save as New Style (`dimstyle.saveas`), Precision ▸, Align Text ▸; U14 narrowed to Quick Properties and unmodeled rows |
 | 2026-10-13 | minor | Properties palette draws the text, mtext and dimension rows the engine describes: every dimension style setting as an override of the selected dimensions, style, justification and line spacing rows, several objects of one type at once with *VARIES*; U14 narrowed to the shortcut menu, Quick Properties and unmodeled rows (#994) |
 | 2026-10-13 | minor | U14 added: the Properties palette's text, mtext and dimension rows; `properties.describe` and the `properties.set` keys behind them landed (engine side, #954). Dimension and text style edits now redraw dimensions read from files |
 | 2026-10-22 | minor | APPLOAD typed or from Tools ▸ Load Application opens a `.lsp` file browser starting in the last-used folder (kept in the preferences); a picked file loads interactively like a typed name (routines that ask for input wait), the web says to drop the file (no file system), and the JSON form `{path}` reads the path as given and returns the commands the file defined, never opening a dialog (#1820): E1 narrowed |

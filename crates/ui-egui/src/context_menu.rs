@@ -18,6 +18,7 @@
 use cadcraft_doc::EntityKind;
 use cadcraft_engine::snap::mode;
 use cadcraft_engine::{Input, find_command};
+use serde_json::json;
 
 use crate::CadApp;
 use crate::menus::{Entry, activate, entry_ui};
@@ -53,6 +54,10 @@ pub const TYPE: &str = "type:";
 pub const KEYWORD: &str = "keyword:";
 /// An object snap menu item ([`choose_snap`]).
 pub const SNAP: &str = "snap:";
+/// Dimension Style ▸ item: the selected dimensions take the style that follows.
+pub const DIM_STYLE: &str = "dimstyle:";
+/// Precision ▸ item: the selected dimensions show this many decimal places (an override).
+pub const DIM_PRECISION: &str = "dimprecision:";
 
 fn item(app: &CadApp, id: &str, label: Option<&str>) -> Option<Entry> {
     let spec = find_command(id)?;
@@ -153,9 +158,70 @@ fn object_commands(app: &CadApp) -> Vec<(&'static str, Option<&'static str>)> {
     }
 }
 
-/// [`object_commands`] that are registered, as menu items.
+/// [`object_commands`] that are registered, as menu items, then the dimension shortcut menu's
+/// items when the selection is dimensions.
 pub fn object_entries(app: &CadApp) -> Vec<Entry> {
-    object_commands(app).into_iter().filter_map(|(id, label)| item(app, id, label)).collect()
+    let mut out: Vec<Entry> = object_commands(app).into_iter().filter_map(|(id, label)| item(app, id, label)).collect();
+    out.extend(dimension_entries(app));
+    out
+}
+
+/// For selected dimensions (and only dimensions): Align Text ▸, Dimension Style ▸ (the
+/// drawing's styles, then Save as New Style), Precision ▸ and Remove Style Overrides.
+fn dimension_entries(app: &CadApp) -> Vec<Entry> {
+    let Ok(d) = app.session.doc() else { return Vec::new() };
+    let sel = app.session.selection();
+    let dims: Vec<&cadcraft_doc::Dimension> =
+        sel.iter().filter_map(|h| d.entity(*h)).filter_map(|e| if let EntityKind::Dimension(dm) = &e.kind { Some(dm) } else { None }).collect();
+    if dims.is_empty() || dims.len() != sel.len() {
+        return Vec::new();
+    }
+    let mut out: Vec<Entry> =
+        sub("Align Text", items(app, &["dimtedit.home", "dimtedit.angle", "dimtedit.left", "dimtedit.center", "dimtedit.right"]))
+            .into_iter()
+            .collect();
+    // Style names are the drawing's own.
+    let mut styles: Vec<Entry> = d
+        .dim_styles
+        .iter()
+        .map(|st| Entry::Item { label: st.name.clone(), id: format!("{DIM_STYLE}{}", st.name), shortcut: None, enabled: true })
+        .collect();
+    styles.extend(item(app, "dimstyle.saveas", None));
+    out.extend(sub("Dimension Style", styles));
+    let precision = (0..=8usize)
+        .map(|n| Entry::Item {
+            label: if n == 0 { "0".into() } else { format!("0.{}", "0".repeat(n)) },
+            id: format!("{DIM_PRECISION}{n}"),
+            shortcut: None,
+            enabled: true,
+        })
+        .collect();
+    out.extend(sub("Precision", precision));
+    // Available while some selected dimension overrides its style.
+    if let Some(Entry::Item { label, id, shortcut, .. }) = item(app, "dimoverride.clear", None) {
+        out.push(Entry::Item { label, id, shortcut, enabled: dims.iter().any(|dm| !dm.overrides.is_empty()) });
+    }
+    out
+}
+
+/// Precision ▸: the selected dimensions show `places` decimal places (DIMDEC, or DIMADEC for
+/// angular dimensions), as overrides.
+fn set_precision(app: &mut CadApp, places: u8) {
+    let (mut linear, mut angular) = (Vec::new(), Vec::new());
+    if let Ok(d) = app.session.doc() {
+        for h in app.session.selection() {
+            if let Some(EntityKind::Dimension(dm)) = d.entity(h).map(|e| &e.kind) {
+                let list =
+                    if matches!(dm.kind, cadcraft_doc::DimKind::Angular | cadcraft_doc::DimKind::Angular3P) { &mut angular } else { &mut linear };
+                list.push(h.hex());
+            }
+        }
+    }
+    for (hs, key) in [(linear, "decimals"), (angular, "angularDecimals")] {
+        if !hs.is_empty() {
+            let _ = app.run("properties.set", json!({ "handles": hs, key: places }));
+        }
+    }
 }
 
 /// The command menu while a command runs (`None` when none does): Enter and Cancel, Recent Input,
@@ -213,6 +279,11 @@ pub fn choose(app: &mut CadApp, id: &str) {
         }
     } else if let Some(s) = id.strip_prefix(SNAP) {
         choose_snap(app, s);
+    } else if let Some(name) = id.strip_prefix(DIM_STYLE) {
+        let hs: Vec<String> = app.session.selection().iter().map(|h| h.hex()).collect();
+        let _ = app.run("properties.set", json!({ "handles": hs, "dimStyle": name }));
+    } else if let Some(n) = id.strip_prefix(DIM_PRECISION).and_then(|n| n.parse::<u8>().ok()) {
+        set_precision(app, n.min(8));
     } else {
         activate(app, id);
     }
