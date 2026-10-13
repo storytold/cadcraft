@@ -8,7 +8,7 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use egui::{RichText, Sense, Stroke, vec2};
+use egui::{Align2, Color32, FontId, RichText, Sense, Stroke, pos2, vec2};
 use serde_json::{Value, json};
 
 use crate::CadApp;
@@ -1017,8 +1017,16 @@ fn apply_to_layout_params(st: &PlotState) -> Value {
 }
 
 fn plot_section(ui: &mut egui::Ui, heading: &str, content: impl FnOnce(&mut egui::Ui)) {
-    egui::Frame::group(ui.style()).show(ui, |ui| {
+    plot_section_filled(ui, heading, 0.0, content);
+}
+
+/// A plot section whose frame is at least `min_height` tall, so sections side by side share a bottom edge.
+fn plot_section_filled(ui: &mut egui::Ui, heading: &str, min_height: f32, content: impl FnOnce(&mut egui::Ui)) {
+    let frame = egui::Frame::group(ui.style());
+    let padding = frame.inner_margin.sum().y;
+    frame.show(ui, |ui| {
         ui.take_available_width();
+        ui.set_min_height((min_height - padding).max(0.0));
         ui.label(RichText::new(heading).strong());
         ui.add_space(4.0);
         content(ui);
@@ -1160,7 +1168,7 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
                         });
 
                         plot_section(left, "Plot area", |ui| {
-                            egui::Grid::new("plot_area_grid").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
+                            egui::Grid::new("plot_area_grid").num_columns(2).min_col_width(90.0).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
                                 if let Some((k, v)) = page_rows(
                                     ui,
                                     egui::Id::unique(("plot", st.target.as_str())),
@@ -1186,7 +1194,15 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
                                 ) {
                                     apply_page_change(&mut st.page, k, &v);
                                 }
-                                if model && st.page.plot_area == "window" {
+                            });
+                            // The corners only apply to Window. Outside it their space stays with a note instead of values that
+                            // would not be plotted, so the section keeps its height.
+                            let window_rows = model && st.page.plot_area == "window";
+                            let corners = ui.scope(|ui| {
+                                if !window_rows {
+                                    ui.set_invisible();
+                                }
+                                egui::Grid::new("plot_corner_grid").num_columns(2).min_col_width(90.0).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
                                     for (i, label) in [(0, "First corner"), (2, "Opposite corner")] {
                                         ui.label(label);
                                         ui.horizontal(|ui| {
@@ -1205,14 +1221,60 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
                                     ui.label("");
                                     pick = ui.button("Window <").on_hover_text("Pick the window's corners in the drawing").clicked();
                                     ui.end_row();
-                                }
+                                });
                             });
+                            if !window_rows {
+                                let note = if model { "Choose Window to set the corners" } else { "Layouts plot the whole sheet" };
+                                ui.painter().text(
+                                    corners.response.rect.left_top(),
+                                    egui::Align2::LEFT_TOP,
+                                    note,
+                                    egui::FontId::proportional(13.0),
+                                    t.text_dim,
+                                );
+                            }
                         });
 
-                        if model {
-                            plot_section(left, "Plot offset", |ui| {
-                                ui.label(RichText::new("Origin: printable area").color(t.text_dim));
-                                egui::Grid::new("plot_offset_grid").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
+                        // The right column is laid out after this row, so the row reads its bottom from the previous pass.
+                        let row_top = left.cursor().top();
+                        let row_h = temp::<f32>(ctx, "plot_right_bottom").map_or(0.0, |bottom| (bottom - row_top).max(0.0));
+                        left.columns(if model { 2 } else { 1 }, |cols| {
+                            let scale_col = cols.len() - 1;
+                            if model {
+                                plot_section_filled(&mut cols[0], "Plot offset", row_h, |ui| {
+                                    ui.label(RichText::new("Origin: printable area").color(t.text_dim));
+                                    egui::Grid::new("plot_offset_grid").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
+                                        if let Some((k, v)) = page_rows(
+                                            ui,
+                                            egui::Id::unique(("plot", st.target.as_str())),
+                                            &st.page,
+                                            &PageRows {
+                                                device: false,
+                                                device_properties: false,
+                                                paper: false,
+                                                copies: false,
+                                                orientation: false,
+                                                areas: &[],
+                                                fit: false,
+                                                scale: false,
+                                                center: false,
+                                                lineweights: false,
+                                                plot_transparency: false,
+                                                plot_style_table: false,
+                                                plot_style_edit: false,
+                                                labels: PageRowLabels::PlotDialog,
+                                            },
+                                            &choices,
+                                            Some((&mut st.center, &mut st.offset_mm, offset_supported)),
+                                        ) {
+                                            apply_page_change(&mut st.page, k, &v);
+                                        }
+                                    });
+                                });
+                            }
+
+                            plot_section_filled(&mut cols[scale_col], "Plot scale", row_h, |ui| {
+                                egui::Grid::new("plot_scale_grid").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
                                     if let Some((k, v)) = page_rows(
                                         ui,
                                         egui::Id::unique(("plot", st.target.as_str())),
@@ -1224,8 +1286,8 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
                                             copies: false,
                                             orientation: false,
                                             areas: &[],
-                                            fit: false,
-                                            scale: false,
+                                            fit: true,
+                                            scale: model,
                                             center: false,
                                             lineweights: false,
                                             plot_transparency: false,
@@ -1234,46 +1296,16 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
                                             labels: PageRowLabels::PlotDialog,
                                         },
                                         &choices,
-                                        Some((&mut st.center, &mut st.offset_mm, offset_supported)),
+                                        None,
                                     ) {
                                         apply_page_change(&mut st.page, k, &v);
                                     }
+                                    ui.label("");
+                                    let mut scale_lineweights = false;
+                                    ui.add_enabled(false, egui::Checkbox::new(&mut scale_lineweights, "Scale lineweights"))
+                                        .on_hover_text("Scaling lineweights independently is not available yet.");
+                                    ui.end_row();
                                 });
-                            });
-                        }
-
-                        plot_section(left, "Plot scale", |ui| {
-                            egui::Grid::new("plot_scale_grid").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
-                                if let Some((k, v)) = page_rows(
-                                    ui,
-                                    egui::Id::unique(("plot", st.target.as_str())),
-                                    &st.page,
-                                    &PageRows {
-                                        device: false,
-                                        device_properties: false,
-                                        paper: false,
-                                        copies: false,
-                                        orientation: false,
-                                        areas: &[],
-                                        fit: true,
-                                        scale: model,
-                                        center: false,
-                                        lineweights: false,
-                                        plot_transparency: false,
-                                        plot_style_table: false,
-                                        plot_style_edit: false,
-                                        labels: PageRowLabels::PlotDialog,
-                                    },
-                                    &choices,
-                                    None,
-                                ) {
-                                    apply_page_change(&mut st.page, k, &v);
-                                }
-                                ui.label("");
-                                let mut scale_lineweights = false;
-                                ui.add_enabled(false, egui::Checkbox::new(&mut scale_lineweights, "Scale lineweights"))
-                                    .on_hover_text("Scaling lineweights independently is not available yet.");
-                                ui.end_row();
                             });
                         });
                     });
@@ -1421,6 +1453,11 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
                                 ui.end_row();
                             });
                         });
+                        let bottom = right.min_rect().bottom();
+                        if temp::<f32>(ctx, "plot_right_bottom") != Some(bottom) {
+                            set_temp(ctx, "plot_right_bottom", bottom);
+                            ctx.request_repaint();
+                        }
                     });
                 });
             });
@@ -1492,22 +1529,69 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
     action
 }
 
-/// The sheet in the chosen orientation with its printable area, and its size.
+/// The sheet in the chosen orientation: a paper with its printable area, its width and height
+/// dimensioned on the bottom and right edges.
 fn sheet_sketch(ui: &mut egui::Ui, page: &cadcraft_doc::PageSetup, t: &Tokens) {
+    const PAPER: Color32 = Color32::from_rgb(250, 250, 247);
     let (w, h) = if page.landscape { (page.height_mm, page.width_mm) } else { (page.width_mm, page.height_mm) };
     ui.vertical(|ui| {
-        let (rect, _) = ui.allocate_exact_size(vec2(120.0, 120.0), Sense::hover());
-        let k = (110.0 / w.max(h).max(1.0)) as f32;
-        let sheet = egui::Rect::from_center_size(rect.center(), vec2(w as f32 * k, h as f32 * k));
-        ui.painter().rect_filled(sheet, 0.0, t.field);
-        ui.painter().rect_stroke(sheet, 0.0, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
-        let [l, b, r, top] = page.margins_mm.map(|m| m as f32 * k);
-        let printable = egui::Rect::from_min_max(sheet.min + vec2(l, top), sheet.max - vec2(r, b));
+        // The dimension lines and their labels take the space the sheet leaves on its bottom and right.
+        let (rect, _) = ui.allocate_exact_size(vec2(140.0, 124.0), Sense::hover());
+        let area = egui::Rect::from_min_size(rect.min, rect.size() - vec2(30.0, 30.0));
+        let k = (area.width() / w.max(1.0) as f32).min(area.height() / h.max(1.0) as f32);
+        let sheet = egui::Rect::from_center_size(area.center(), vec2(w as f32 * k, h as f32 * k));
+        let painter = ui.painter();
+        painter.rect_filled(sheet.translate(vec2(2.0, 2.0)), 0.0, Color32::from_black_alpha(70));
+        // The folded top-right corner is what makes it read as paper.
+        let fold = sheet.width().min(sheet.height()) * 0.18;
+        let (right, top) = (sheet.max.x, sheet.min.y);
+        painter.add(egui::Shape::convex_polygon(
+            vec![sheet.min, pos2(right - fold, top), pos2(right, top + fold), sheet.max, pos2(sheet.min.x, sheet.max.y)],
+            PAPER,
+            Stroke::new(1.0, t.border),
+        ));
+        painter.add(egui::Shape::convex_polygon(
+            vec![pos2(right - fold, top), pos2(right - fold, top + fold), pos2(right, top + fold)],
+            Color32::from_gray(222),
+            Stroke::new(1.0, t.border),
+        ));
+        let [l, b, r, top_margin] = page.margins_mm.map(|m| m as f32 * k);
+        let printable = egui::Rect::from_min_max(sheet.min + vec2(l, top_margin), sheet.max - vec2(r, b));
         if printable.is_positive() {
-            ui.painter().rect_stroke(printable, 0.0, Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
+            painter.rect_stroke(printable, 0.0, Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
         }
-        ui.label(RichText::new(format!("{w:.1} × {h:.1} mm")).color(t.text_dim));
+        // Width along the bottom edge; height along the right edge, reading upwards.
+        let dim = Stroke::new(1.0, t.text_dim);
+        let font = FontId::proportional(11.0);
+        let y = sheet.max.y + 10.0;
+        painter.line_segment([pos2(sheet.min.x, y), pos2(sheet.max.x, y)], dim);
+        for x in [sheet.min.x, sheet.max.x] {
+            painter.line_segment([pos2(x, sheet.max.y + 2.0), pos2(x, y + 3.0)], dim);
+        }
+        dim_arrow(painter, pos2(sheet.min.x, y), vec2(1.0, 0.0), t.text_dim);
+        dim_arrow(painter, pos2(sheet.max.x, y), vec2(-1.0, 0.0), t.text_dim);
+        painter.text(pos2(sheet.center().x, y + 2.0), Align2::CENTER_TOP, format!("{w:.1} mm"), font.clone(), t.text_dim);
+        let x = sheet.max.x + 10.0;
+        painter.line_segment([pos2(x, sheet.min.y), pos2(x, sheet.max.y)], dim);
+        for y in [sheet.min.y, sheet.max.y] {
+            painter.line_segment([pos2(sheet.max.x + 2.0, y), pos2(x + 3.0, y)], dim);
+        }
+        dim_arrow(painter, pos2(x, sheet.min.y), vec2(0.0, 1.0), t.text_dim);
+        dim_arrow(painter, pos2(x, sheet.max.y), vec2(0.0, -1.0), t.text_dim);
+        // Rotated a quarter turn counter-clockwise about its top-left corner, so its centre lands beside the line.
+        let galley = painter.layout_no_wrap(format!("{h:.1} mm"), font, t.text_dim);
+        let (gw, gh) = (galley.size().x, galley.size().y);
+        let mut label = egui::epaint::TextShape::new(pos2(x + 9.0 - gh / 2.0, sheet.center().y + gw / 2.0), galley, t.text_dim);
+        label.angle = -std::f32::consts::FRAC_PI_2;
+        painter.add(label);
     });
+}
+
+/// A filled arrowhead with its tip at `tip`, opening along `into` (the way from the tip into the dimension line).
+fn dim_arrow(painter: &egui::Painter, tip: egui::Pos2, into: egui::Vec2, color: Color32) {
+    let base = tip + into * 6.0;
+    let side = vec2(-into.y, into.x) * 2.5;
+    painter.add(egui::Shape::convex_polygon(vec![tip, base + side, base - side], color, Stroke::NONE));
 }
 
 // ---------- Constraint Settings ----------
