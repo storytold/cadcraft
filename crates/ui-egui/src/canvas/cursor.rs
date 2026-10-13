@@ -217,23 +217,36 @@ fn pickbox_half(pickbox: f64) -> Option<f32> {
     (half.is_finite() && half >= 1.0).then_some(half)
 }
 
+/// How far the crosshair's arms reach from the cursor in the drawing area `rect`: along the
+/// horizontal, along the vertical and along an isometric axis. CURSORSIZE is a percentage of the
+/// area's height; at 100 the arms run out to the edges of the area wherever the cursor is (the
+/// horizontal one is as long as the width, which a window wider than it is tall needs).
+fn crosshair_reach(rect: Rect, percent: f64) -> (f32, f32, f32) {
+    let len = (rect.height() * percent as f32 / 100.0).max(12.0);
+    if percent >= 100.0 {
+        let diagonal = rect.size().length();
+        return (rect.width().max(len), rect.height().max(len), diagonal.max(len));
+    }
+    (len, len, len)
+}
+
 pub(super) fn draw_crosshair(app: &CadApp, p: &egui::Painter, rect: Rect, at: Pos2, pickbox: bool, ink: Color32) {
     let st = Stroke::new(1.0, ink);
-    let len = (rect.height() * app.session.settings.cursorsize as f32 / 100.0).max(12.0);
+    let (len_x, len_y, len_iso) = crosshair_reach(rect, app.session.settings.cursorsize);
     let pb = if pickbox { pickbox_half(app.session.settings.pickbox) } else { None };
     let gap = pb.unwrap_or(0.0);
     // Along the isometric plane's axes in isometric drafting.
     if app.session.settings.isodraft {
         for a in cadcraft_engine::snap::iso::cursor_axes(&app.session.settings) {
             let dir = vec2(a.cos() as f32, -(a.sin() as f32));
-            p.line_segment([at - dir * len, at - dir * gap], st);
-            p.line_segment([at + dir * gap, at + dir * len], st);
+            p.line_segment([at - dir * len_iso, at - dir * gap], st);
+            p.line_segment([at + dir * gap, at + dir * len_iso], st);
         }
     } else {
-        p.line_segment([pos2(at.x - len, at.y), pos2(at.x - gap, at.y)], st);
-        p.line_segment([pos2(at.x + gap, at.y), pos2(at.x + len, at.y)], st);
-        p.line_segment([pos2(at.x, at.y - len), pos2(at.x, at.y - gap)], st);
-        p.line_segment([pos2(at.x, at.y + gap), pos2(at.x, at.y + len)], st);
+        p.line_segment([pos2(at.x - len_x, at.y), pos2(at.x - gap, at.y)], st);
+        p.line_segment([pos2(at.x + gap, at.y), pos2(at.x + len_x, at.y)], st);
+        p.line_segment([pos2(at.x, at.y - len_y), pos2(at.x, at.y - gap)], st);
+        p.line_segment([pos2(at.x, at.y + gap), pos2(at.x, at.y + len_y)], st);
     }
     if let Some(pb) = pb {
         p.rect_stroke(Rect::from_center_size(at, vec2(pb * 2.0, pb * 2.0)), 0.0, st, egui::StrokeKind::Middle);
