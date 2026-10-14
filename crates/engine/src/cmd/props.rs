@@ -20,7 +20,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("properties.set", "Set Properties", set::run_set).params(
             "{handles?, layer?, color?, linetype?, lineweight?, ltscale?, thickness?, transparency?: \"ByLayer\" | \"ByBlock\" | 0..90, visible?, annotative?, \
              <geometry fields: radius, center, start, end, text, height, rotation…>, text: style?, justify?, oblique?, backwards?, upsideDown?, positionX/Y/Z?, alignmentX/Y?, \
-             mtext: style?, justify?, lineSpacing?, lineSpacingDistance?, lineSpacingStyle?: atLeast | exactly, positionX/Y/Z?, \
+             mtext: style?, justify?, lineSpacing?, lineSpacingDistance?, lineSpacingStyle?: atLeast | exactly, positionX/Y/Z?, backgroundMask?, maskFill?: background | color, maskColor?, maskOffset? (1..5), \
              dimension: dimStyle?, textOverride?, textRotation?, textPositionX/Y?, prefix?, suffix?, altPrefix?, altSuffix?, dimScale?, precision?, \
              <dimension style variables (field or DIM* name, e.g. textHeight / DIMTXT) set as overrides of each dimension>, clearOverrides?, clear?: [variable]} \
              → {changed, ignored: keys no selected object took} (the keys are those of `properties.describe` rows)",

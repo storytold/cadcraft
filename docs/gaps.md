@@ -1,6 +1,6 @@
 # Where CADCraft falls short of AutoCAD
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-19 · **Change:** minor (TEXT's own Backwards and Upside down; U14 narrowed) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-19 · **Change:** minor (MTEXT background mask and drawing direction; U14 narrowed) · **Target:** Autodesk AutoCAD 2027
 
 Every known shortfall, one row each, ranked within each section by user impact. This is the work
 list: agents pick from here (top of a section first), and remove or update a row in the same PR
@@ -58,7 +58,7 @@ Options ▸ Selection can now require two separate clicks for a selection window
 or allow clicks and drag (2, default), saved in the user profile. Drag-only mode (1) remains unavailable.
 | # | Gap | User impact | Est. |
 |---|---|---|---|
-| U14 | Properties palette leftovers for text and dimensions: no rows yet for MTEXT background mask, direction and defined height (not modeled). Every other TEXT, MTEXT and dimension property is edited there, for one object or several of one type, from `properties.describe` (#954, #994), and Quick Properties shows AutoCAD's default rows of them (#1128) | Low | 2–3 |
+| U14 | Properties palette leftovers for text and dimensions: no Defined height row for MTEXT (group 46 isn't in the DXF Reference's MTEXT table; it is read only as the columns' height); MTEXT drawing direction is kept but always drawn left to right. Every other TEXT, MTEXT and dimension property is edited there, for one object or several of one type, from `properties.describe` (#954, #994), and Quick Properties shows AutoCAD's default rows of them (#1128) | Low | 1–2 |
 | U4 | Tab snap cycling offers the closest snap of each mode, not every candidate. Typed snap overrides (`END`, `MID` … `NON`), the Shift/Ctrl+right-click snap menu and Tab cycling landed (#393), the menu's Temporary track point in #441 | Low | 1 |
 | U5 | Grip menus open on right-click only (no hover menu, no Ctrl to cycle the options); no multifunctional grips on dimensions, MLEADER, hatches or text; Add Vertex on an arc segment straightens it. Hot-grip options (Base point, Copy, Undo, Reference, eXit), multiple hot grips and the polyline/line/arc grip menus landed (#425) | Low-medium | 2–4 |
 | U6 | Selection: lasso; the CLass keyword; isolation saved with the drawing (OBJECTISOLATIONMODE 1) and the status-bar isolate button. Press-drag windows (#63), the W, C, F, WP and CP keywords (#226), BOX, AUto, SIngle, Multiple, Group, Add, Remove and Undo, SELECTSIMILAR, ISOLATEOBJECTS/HIDEOBJECTS/UNISOLATEOBJECTS (#428) and selection cycling (#1143) landed | Medium | 3–5 |
@@ -151,6 +151,7 @@ Detail: [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | MTEXT background mask (fill with the drawing background or a color, border offset factor; DXF 90, 63/421, 45) drawn behind the text on screen and in plots, and drawing direction (72) kept; palette rows Background mask, Mask fill, Mask color, Border offset and a read-only Direction; U14 narrowed to Defined height |
 | 2026-10-14 | minor | TEXT has its own Backwards and Upside down (DXF 71), drawn from the text, taken from the style by new TEXT and ATTDEF, shown and set in the palette's Misc group; U14 narrowed to MTEXT's mask, direction and defined height (#1136) |
 | 2026-10-13 | minor | Quick Properties shows AutoCAD's default rows for text, mtext and dimensions (Layer, Contents, Style, Annotative, Justification, Height, Rotation; Layer, Dim style, Annotative, Measurement, Text override) from `properties.describe`, edited as the palette edits them, for several objects of one type too; U14 narrowed to the unmodeled rows (#1128) |
 | 2026-10-13 | minor | F25 closed: TEXT Align and Fit ask for the two ends of the baseline (Align works out the height, Fit the width factor; `text` takes `end`), Enter continues aligned and fit text along a baseline as long, and the line being typed is drawn on the canvas where it goes (`Session::typing_preview`, #1121) |

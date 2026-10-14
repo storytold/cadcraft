@@ -373,6 +373,20 @@ fn text_groups(c: &Ctx, ents: &[&Entity], texts: &[&Text]) -> Vec<Group> {
     vec![Group { name: "Text", rows: text }, Group { name: "Geometry", rows: geometry }, Group { name: "Misc", rows: misc }]
 }
 
+/// MTEXT drawing directions as `properties.describe` gives them, with their labels.
+pub const MTEXT_DIRECTIONS: &[(&str, &str)] = &[("leftToRight", "Left to right"), ("topToBottom", "Top to bottom"), ("byStyle", "By style")];
+
+/// What fills an MTEXT's background mask, with the labels.
+pub const MASK_FILLS: &[(&str, &str)] = &[("background", "Drawing background"), ("color", "Color")];
+
+fn direction_code(d: cadcraft_doc::MTextDirection) -> &'static str {
+    match d {
+        cadcraft_doc::MTextDirection::LeftToRight => "leftToRight",
+        cadcraft_doc::MTextDirection::TopToBottom => "topToBottom",
+        cadcraft_doc::MTextDirection::ByStyle => "byStyle",
+    }
+}
+
 fn mtext_groups(c: &Ctx, ents: &[&Entity], mts: &[&MText]) -> Vec<Group> {
     let spacing = vec![Choice::new(json!("atLeast"), "At least"), Choice::new(json!("exactly"), "Exactly")];
     let columns = |t: &MText| match &t.columns {
@@ -400,7 +414,28 @@ fn mtext_groups(c: &Ctx, ents: &[&Entity], mts: &[&MText]) -> Vec<Group> {
         ),
         c.row("width", "Defined width", Kind::Distance, mts.iter().map(|t| json!(t.width))),
         c.row("columns", "Columns", Kind::Text, mts.iter().map(|t| json!(columns(t)))).read_only(),
+        // Kept for the file; CADCraft lays every MTEXT out left to right.
+        Row {
+            note: Some("CADCraft draws multiline text left to right.".into()),
+            ..c.choice("direction", "Direction", Kind::Choice, options(MTEXT_DIRECTIONS), mts.iter().map(|t| json!(direction_code(t.direction))))
+                .read_only()
+        },
+        c.row("backgroundMask", "Background mask", Kind::Bool, mts.iter().map(|t| json!(t.background.is_some()))),
     ];
+    // The mask's settings, when every described MTEXT has one.
+    let masks: Option<Vec<cadcraft_doc::MTextMask>> = mts.iter().map(|t| t.background).collect();
+    let mut text = text;
+    if let Some(masks) = masks {
+        text.push(c.choice(
+            "maskFill",
+            "Mask fill",
+            Kind::Choice,
+            options(MASK_FILLS),
+            masks.iter().map(|m| json!(if m.use_background { "background" } else { "color" })),
+        ));
+        text.push(c.row("maskColor", "Mask color", Kind::Color, masks.iter().map(|m| json!(m.color.name()))));
+        text.push(c.row("maskOffset", "Border offset", Kind::Number, masks.iter().map(|m| json!(m.scale))));
+    }
     let geometry = vec![
         c.row("positionX", "Position X", Kind::Distance, mts.iter().map(|t| json!(t.insert.x))),
         c.row("positionY", "Position Y", Kind::Distance, mts.iter().map(|t| json!(t.insert.y))),

@@ -481,6 +481,8 @@ fn run_mtext(s: &mut Session, p: &Value) -> Result<Value> {
         line_spacing: f64_or(p, "lineSpacing", 1.0),
         line_spacing_exact: bool_or(p, "lineSpacingExact", false),
         columns: super::mtext_opts::json_columns(p, height, width)?,
+        direction: Default::default(),
+        background: None,
     });
     added(s.add_entity(k)?)
 }

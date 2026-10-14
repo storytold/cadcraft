@@ -75,6 +75,9 @@ fn missing_property_labels(language: &str) -> Vec<String> {
     ] {
         s.execute(cmd, &p).unwrap();
     }
+    // The mtext's background mask rows show while it has one.
+    let mtext = s.doc().unwrap().model.iter().find(|e| matches!(e.kind, cadcraft_engine::doc::EntityKind::MText(_))).map(|e| e.handle.hex());
+    s.execute("properties.set", &json!({ "handles": [mtext], "backgroundMask": true })).unwrap();
     let d = s.doc().unwrap();
     let mut labels = BTreeSet::new();
     for e in d.model.iter() {
@@ -82,6 +85,7 @@ fn missing_property_labels(language: &str) -> Vec<String> {
             labels.insert(g.name.to_string());
             for r in g.rows {
                 labels.insert(r.label.to_string());
+                labels.extend(r.note.clone());
                 if r.kind == Kind::Choice {
                     labels.extend(r.options.into_iter().map(|o| o.label));
                 }

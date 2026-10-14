@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (Quick Properties rows for text and dimensions) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (MTEXT background mask rows) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
 
 How CADCraft's interaction compares with AutoCAD's: point entry, object snaps, tracking, dynamic
 input, grips, selection, the command line, chrome and navigation. A drafter's speed in AutoCAD
@@ -208,6 +208,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | Properties Inspector: MTEXT Background mask, Mask fill, Mask color, Border offset and a read-only Direction |
 | 2026-10-13 | minor | Quick Properties: AutoCAD's default text, mtext and dimension rows; the described rows' labels reach screen readers |
 | 2026-10-13 | minor | TEXT: the line being typed is drawn on the canvas where it goes |
 | 2026-10-13 | minor | Text Style dialog (STYLE): fonts by family and style, preview, effects, Set Current, New, Rename, Delete, Apply (#1083) |

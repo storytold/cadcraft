@@ -287,9 +287,75 @@ pub struct MText {
     /// one column.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub columns: Option<MTextColumns>,
+    /// Drawing direction (DXF 72). CADCraft draws every MTEXT left to right; the direction is
+    /// kept for the file.
+    #[serde(default)]
+    pub direction: MTextDirection,
+    /// Background mask: a filled box behind the text (DXF 90, 63/421, 45); `None`: none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<MTextMask>,
 }
 fn attach_tl() -> u8 {
     1
+}
+
+/// MTEXT drawing direction (DXF 72: 1, 3, 5).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MTextDirection {
+    #[default]
+    LeftToRight,
+    TopToBottom,
+    ByStyle,
+}
+
+impl MTextDirection {
+    /// The DXF 72 code.
+    pub fn code(self) -> i64 {
+        match self {
+            MTextDirection::LeftToRight => 1,
+            MTextDirection::TopToBottom => 3,
+            MTextDirection::ByStyle => 5,
+        }
+    }
+    /// The direction of DXF 72 code `c` (anything else reads as left to right).
+    pub fn from_code(c: i64) -> Self {
+        match c {
+            3 => MTextDirection::TopToBottom,
+            5 => MTextDirection::ByStyle,
+            _ => MTextDirection::LeftToRight,
+        }
+    }
+}
+
+/// An MTEXT background mask (AutoCAD's Background Mask): a box behind the text, filled with the
+/// drawing's background or a color, hiding what was drawn before it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MTextMask {
+    /// Filled with the drawing's background color (DXF 90 = 2) rather than `color` (90 = 1).
+    #[serde(default)]
+    pub use_background: bool,
+    /// The fill when not the background (DXF 63, 421).
+    #[serde(default)]
+    pub color: Color,
+    /// The border offset factor (DXF 45, "fill box scale"), in text heights: 1 fits the text,
+    /// 1.5 (AutoCAD's default) reaches half a text height further, split between the sides.
+    #[serde(default = "mask_scale")]
+    pub scale: f64,
+}
+
+/// AutoCAD's default border offset factor.
+pub const MASK_SCALE: f64 = 1.5;
+
+fn mask_scale() -> f64 {
+    MASK_SCALE
+}
+
+impl Default for MTextMask {
+    fn default() -> Self {
+        MTextMask { use_background: true, color: Color::ByLayer, scale: MASK_SCALE }
+    }
 }
 
 /// Static columns: a fixed number of columns of one height. Dynamic columns: as many columns

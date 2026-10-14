@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (TEXT generation flags read and written) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (MTEXT background mask and drawing direction read and written) · **Target:** Autodesk AutoCAD 2027
 
 Every format AutoCAD 2027 reads or writes, with CADCraft's support, fidelity and tests. Work
 items are in [gaps.md](gaps.md#file-formats); the weighted score feeds
@@ -75,7 +75,7 @@ on read with a note, so such files no longer exceed the DXF limit (#1482). **DWG
 |---|---|---|---|
 | LINE, POINT, CIRCLE, ARC, ELLIPSE, LWPOLYLINE (widths, bulges, elevation), SPLINE, RAY, XLINE | yes | yes | round-trip tests |
 | POLYLINE 2D/3D | yes | yes (as LWPOLYLINE / 3D POLYLINE) | polyface and polygon meshes flattened: lossy |
-| TEXT, MTEXT, ATTDEF, INSERT + ATTRIB | yes; multiline attributes (embedded MTEXT) read and drawn | yes; multiline attributes written as embedded MTEXT (DXF 2007 and later; older versions: one line) | ATTDEF prompt kept (#137); TEXT, ATTDEF and ATTRIB generation flags (71: backwards, upside down) read and written (#1136) |
+| TEXT, MTEXT, ATTDEF, INSERT + ATTRIB | yes; multiline attributes (embedded MTEXT) read and drawn | yes; multiline attributes written as embedded MTEXT (DXF 2007 and later; older versions: one line) | ATTDEF prompt kept (#137); TEXT, ATTDEF and ATTRIB generation flags (71: backwards, upside down) read and written (#1136); MTEXT background mask (90, 63/421, 45) and drawing direction (72) read and written |
 | DIMENSION (all 7 kinds) | yes | yes, with anonymous `*D` blocks | a reopened dimension's `*D` block is regenerated under its name, unreferenced ones dropped (#495); DIMASSOC objects written for every associated kind — linear/aligned, angular, radial/diametric, ordinate and arc length — and read back without CADCraft's xdata (#1651) |
 | DIMENSION (all 7 kinds) | yes | yes, with anonymous `*D` blocks | a reopened dimension's `*D` block is regenerated under its name, unreferenced ones dropped (#495); DIMASSOC objects written; angular block text honors DIMDSEP, including per-dimension overrides (#1646) |
 | DIMENSION (all 7 kinds) | yes | yes, with anonymous `*D` blocks; their text keeps the diameter sign as `%%c`, so SHX styles plot it (#1645) | a reopened dimension's `*D` block is regenerated under its name, unreferenced ones dropped (#495); DIMASSOC objects written |
@@ -140,6 +140,7 @@ our output in AutoCAD black-box.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | MTEXT background mask (90 fill setting, 63/421 color, 45 fill box scale) and drawing direction (72) are read and written |
 | 2026-10-14 | minor | TEXT, ATTDEF and ATTRIB generation flags (DXF 71: backwards, upside down) are read and written per object (#1136) |
 | 2026-10-22 | minor | DXF/DWG save: angular, diametric and radial dimensions get standard DIMASSOC objects (one centre reference to the circle for radial/diametric, the definition points for angular), so AutoCAD follows their geometry; the standard objects of those kinds are read back too, without CADCraft's xdata (#1651) |
 | 2026-10-19 | minor | DXF/DWG save: angular dimension block text honors DIMDSEP, including per-dimension overrides (#1646) |

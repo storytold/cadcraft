@@ -1117,7 +1117,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             if !b.opts.text {
                 return;
             }
-            mtext(b, ctx, t, rgb, lw);
+            mtext(b, ctx, t, rgb, lw, &e.common.layer);
         }
         EntityKind::Insert(ins) => insert(b, ctx, e, ins, rgb),
         EntityKind::Dimension(dm) => {
@@ -1261,7 +1261,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 let land = m.landing.xy();
                 let dir = if t.insert.x >= land.x { 1.0 } else { -1.0 };
                 b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);
-                mtext(b, ctx, t, rgb, lw);
+                mtext(b, ctx, t, rgb, lw, &e.common.layer);
             }
             if let Some(ins) = &m.block {
                 if m.dogleg > 0.0 && !m.leaders.is_empty() {
@@ -1378,8 +1378,48 @@ fn mtext_color(c: Option<cadcraft_fonts::MTextColor>, rgb: Ink) -> Ink {
     }
 }
 
-fn mtext(b: &mut Builder, ctx: &Ctx, t: &cadcraft_doc::MText, rgb: Ink, lw: f32) {
+/// The box an MTEXT's background mask fills: the text's extents in its own (rotated) frame,
+/// across the defined width when it has one, out by the border offset factor (split between
+/// the sides, in text heights).
+pub fn mask_box(t: &cadcraft_doc::MText, l: &cadcraft_fonts::MTextLayout) -> Option<[Vec2; 4]> {
+    let mask = t.background.as_ref()?;
+    let (o, rot) = (t.insert.xy(), if t.rotation.is_finite() { t.rotation } else { 0.0 });
+    let (mut x0, mut y0, mut x1, mut y1) = (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for q in l.strokes.iter().flatten() {
+        let p = (*q - o).rotate(-rot);
+        (x0, y0, x1, y1) = (x0.min(p.x), y0.min(p.y), x1.max(p.x), y1.max(p.y));
+    }
+    if !(x0.is_finite() && y0.is_finite() && x1.is_finite() && y1.is_finite()) {
+        return None;
+    }
+    if t.width > 0.0 && t.width.is_finite() && t.columns.is_none() {
+        let w = t.width;
+        (x0, x1) = match (t.attach.clamp(1, 9) - 1) % 3 {
+            0 => (0.0, w),
+            1 => (-w / 2.0, w / 2.0),
+            _ => (-w, 0.0),
+        };
+    }
+    let scale = if mask.scale.is_finite() { mask.scale.clamp(1.0, 5.0) } else { cadcraft_doc::MASK_SCALE };
+    let m = (scale - 1.0) * t.height.abs() / 2.0;
+    Some([(x0 - m, y0 - m), (x1 + m, y0 - m), (x1 + m, y1 + m), (x0 - m, y1 + m)].map(|(x, y)| o + Vec2::new(x, y).rotate(rot)))
+}
+
+/// `layer` is the MTEXT's (or its multileader's), for a ByLayer mask color.
+fn mtext(b: &mut Builder, ctx: &Ctx, t: &cadcraft_doc::MText, rgb: Ink, lw: f32, layer: &str) {
     let l = layout_mtext_entity(ctx.d, t);
+    // The background mask hides what was drawn before it (draw order), under the text.
+    if let (Some(m), Some(q), true) = (&t.background, mask_box(t, &l), b.opts.fill) {
+        let layer = if layer == "0" { ctx.block_layer.as_deref().unwrap_or("0") } else { layer };
+        let fill = if m.use_background { rgb } else { ink(m.color, ctx.layer_color(layer).unwrap_or(Color::Index(7)), ctx.block_color) };
+        let n = b.list.prims.len();
+        b.tris(ctx, fill, &[q[0], q[1], q[2], q[0], q[2], q[3]]);
+        if m.use_background
+            && let Some(p) = b.list.prims.get_mut(n)
+        {
+            p.kind = Kind::Mask;
+        }
+    }
     for p in &l.pieces {
         b.shaped(ctx, mtext_color(p.color, rgb), lw, &p.shaped);
     }
@@ -1597,7 +1637,7 @@ fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rg
                 b.transparency = t;
                 let lw = if b.opts.lineweights { lw } else { 0.0 };
                 match (&multiline, &sh) {
-                    (Some(m), _) => mtext(b, ctx, m, ink, lw),
+                    (Some(m), _) => mtext(b, ctx, m, ink, lw, &e.common.layer),
                     (None, Some(sh)) => b.shaped(ctx, ink, lw, sh),
                     (None, None) => {}
                 }

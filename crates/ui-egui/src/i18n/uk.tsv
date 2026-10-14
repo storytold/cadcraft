@@ -1583,3 +1583,14 @@
 	Style Name	Назва стилю
 	A text style with this name already exists.	Текстовий стиль із такою назвою вже існує.
 	The style {style} has been modified. Do you want to save your changes?	Стиль {style} змінено. Зберегти зміни?
+# MTEXT direction and background mask (Properties)
+	Direction	Напрямок
+	Left to right	Зліва направо
+	Top to bottom	Згори донизу
+	By style	За стилем
+	CADCraft draws multiline text left to right.	CADCraft малює багаторядковий текст зліва направо.
+	Background mask	Маскування фону
+	Mask fill	Заливка маски
+	Drawing background	Фон креслення
+	Mask color	Колір маски
+	Border offset	Відступ рамки
