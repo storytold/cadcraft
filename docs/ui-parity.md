@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-27 · **Change:** minor (WIPEOUT closure-aware grips; previously: re-audit of the evidence text against main 41d9b5e95: point entry, tracking, Dynamic Input, grips, scripts, views; percentages not re-measured; previously: distinct polyline midpoint grips) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-27 · **Change:** minor (WIPEOUT closure-aware grips; previously: re-audit of the evidence text against main 41d9b5e95: point entry, tracking, Dynamic Input, grips, scripts, views; percentages not re-measured; previously: distinct polyline midpoint grips; previously: reopening a drawing path selects its existing tab) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
 
 How CADCraft's interaction compares with AutoCAD's: point entry, object snaps, tracking, dynamic
 input, grips, selection, the command line, chrome and navigation. A drafter's speed in AutoCAD
@@ -162,6 +162,7 @@ dimensions are edited).
 |---|---|---|
 | Menu bar | 11 menus, 491 leaf items | same 11 menus; 245/491 items covered at the 2026-10-10 re-measure, not re-measured since (the generated checklist now reads 298/491, engine commands only; 233 by `cargo xtask parity`, which counts engine commands only, plus 12 UI-only items: see [parity-checklist.md](parity-checklist.md)); once a menu is open, pointing at another title opens that menu (#1567) |
 | Tool Bar, File tabs, Start tab, layout tabs | yes | yes |
+| Reopening an existing drawing through window drop / Open Recent | not re-measured | existing tab; edits, undo and view retained; native symlinks share a tab |
 | Tool Sets palette (Drafting, Modeling, … with flyouts) | yes | yes for 2D groups |
 | Properties Inspector, Quick Properties | yes | yes (every control acts or is visibly unavailable, #182); block references show read-only Position X/Y/Z from their stored insertion point; coordinate editing is still missing; numeric fields take feet and inches and show lengths in the drawing's units (#870) |
 | Layer Properties Manager (filters, states, VP overrides) | yes | yes |
@@ -208,6 +209,7 @@ dimensions are edited).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-16 | minor | Shared path opening reuses existing drawing tabs and pending reads, preserving edits, undo and view |
 | 2026-10-27 | minor | WIPEOUT grips treat implicit and explicit closure alike; moving the first vertex carries the closing marker, and moving endpoints together keeps both corners editable. Open/closed polyline flags and coincident polyline vertices remain independent (#2256) |
 | 2026-10-26 | minor | Browser host stores bounded, validated panel layout separately from drawing state; malformed or unsupported records retain defaults. Native workspace storage is unchanged. |
 | 2026-10-24 | minor | Re-audit against main 41d9b5e95: evidence text for TK and typed snap overrides, PolarSnap, Dynamic Input, hot-grip options, dynamic block grips, SCRIPT, ZOOM Realtime/Dynamic, named views and VPORTS; headline no longer lists selection cycling as missing; the 48% and the area percentages are not re-measured |
