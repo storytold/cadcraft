@@ -408,3 +408,35 @@ fn a_reference_s_contexts_follow_it_when_it_is_moved_turned_and_scaled() {
     }
     assert_eq!(ctx.len(), 2);
 }
+
+/// A reference's annotation contexts as CADCraft's model keeps them: (scale's SCALE handle,
+/// rotation, x scale) of each, by the order kept.
+fn kept_contexts(d: &Drawing) -> Vec<(f64, f64)> {
+    let num = |o: &cadcraft_doc::foreign::ForeignObject, c: i32| {
+        o.tags.iter().find(|t| t.code == c).and_then(|t| t.value.trim().parse::<f64>().ok()).unwrap_or(f64::NAN)
+    };
+    d.foreign.objects.iter().filter(|o| o.kind == "ACDB_BLKREFOBJECTCONTEXTDATA_CLASS").map(|o| (num(o, 50), num(o, 41))).collect()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_reference_s_contexts_survive_dwg() {
+    // Turned 30° first, so the rotation's unit shows (DXF degrees, DWG radians).
+    let mut d = read();
+    let r = Handle::parse_hex("40").unwrap();
+    d.modify_entity(r, |e| {
+        if let cadcraft_doc::EntityKind::Insert(i) = &mut e.kind {
+            i.rotation = 30f64.to_radians();
+        }
+    })
+    .unwrap();
+    let back =
+        cadcraft_io::read(&cadcraft_io::read_dxf(write_dxf(&d).as_bytes()).map(|d| cadcraft_io::write(&d, "x.dwg").unwrap()).unwrap(), "x.dwg")
+            .unwrap();
+    let mut ctx = kept_contexts(&back);
+    ctx.sort_by(|a, b| a.1.total_cmp(&b.1));
+    assert_eq!(ctx.len(), 2, "{ctx:?}");
+    for ((rot, sx), want) in ctx.iter().zip([1.0, 5.0]) {
+        assert!((rot - 30.0).abs() < 1e-9 && (sx - want).abs() < 1e-9, "{ctx:?}");
+    }
+}
