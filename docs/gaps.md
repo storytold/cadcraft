@@ -151,7 +151,7 @@ Detail: [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-14 | minor | TEXT has its own Backwards and Upside down (DXF 71), drawn from the text, taken from the style by new TEXT and ATTDEF, shown and set in the palette's Misc group; U14 narrowed to MTEXT's mask, direction and defined height |
+| 2026-10-14 | minor | TEXT has its own Backwards and Upside down (DXF 71), drawn from the text, taken from the style by new TEXT and ATTDEF, shown and set in the palette's Misc group; U14 narrowed to MTEXT's mask, direction and defined height (#1136) |
 | 2026-10-13 | minor | Quick Properties shows AutoCAD's default rows for text, mtext and dimensions (Layer, Contents, Style, Annotative, Justification, Height, Rotation; Layer, Dim style, Annotative, Measurement, Text override) from `properties.describe`, edited as the palette edits them, for several objects of one type too; U14 narrowed to the unmodeled rows (#1128) |
 | 2026-10-13 | minor | F25 closed: TEXT Align and Fit ask for the two ends of the baseline (Align works out the height, Fit the width factor; `text` takes `end`), Enter continues aligned and fit text along a baseline as long, and the line being typed is drawn on the canvas where it goes (`Session::typing_preview`, #1121) |
 | 2026-10-13 | minor | New text follows its style: a fixed-height style isn't asked for a height (TEXT, MTEXT, JSON), an annotative style asks for the paper height, TEXT takes the style's width factor and obliquing angle, TEXT's Style option works (name or ?), Enter at the start point continues below the last TEXT. F25 added for the Align/Fit points and the typing preview (#1089) |
