@@ -6,7 +6,7 @@ pub(in crate::cmd) mod purge;
 
 use std::sync::Arc;
 
-use cadcraft_doc::{Attrib, Block, Entity, EntityKind, HAlign, Handle, Insert, Text, VAlign};
+use cadcraft_doc::{Attrib, Block, Entity, EntityKind, HAlign, Handle, Insert, VAlign};
 use cadcraft_geom::{Mat3, Vec2, Vec3};
 use serde_json::{Value, json};
 
@@ -300,18 +300,8 @@ fn attdef_kind(s: &Session, tag: &str, prompt: &str, default: &str, at: Vec2, he
     let style = s.doc().map(|d| d.header.str("TEXTSTYLE", "Standard")).unwrap_or_else(|_| "Standard".into());
     EntityKind::AttDef(Attrib {
         tag: tag.to_ascii_uppercase(),
-        text: Text {
-            insert: v3(at),
-            align_pt: None,
-            height,
-            value: default.into(),
-            rotation: 0.0,
-            width_factor: 1.0,
-            oblique: 0.0,
-            style,
-            halign: HAlign::Left,
-            valign: VAlign::Baseline,
-        },
+        // Set in the current style as TEXT is: its width factor, obliquing and effects.
+        text: super::draw::text_in(s, &style, at, default, height, 0.0, (HAlign::Left, VAlign::Baseline)),
         invisible,
         constant: false,
         prompt: prompt.into(),

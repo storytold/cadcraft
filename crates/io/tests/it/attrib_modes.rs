@@ -19,6 +19,8 @@ fn attrib(tag: &str, modes: AttribModes) -> Attrib {
         style: "Standard".into(),
         halign: HAlign::Left,
         valign: VAlign::Baseline,
+        backwards: false,
+        upside_down: false,
     };
     Attrib { tag: tag.into(), text, invisible: false, constant: false, prompt: String::new(), props: Default::default(), multiline: None, modes }
 }

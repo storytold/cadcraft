@@ -232,6 +232,13 @@ pub struct Text {
     pub halign: HAlign,
     #[serde(default)]
     pub valign: VAlign,
+    /// Mirrored left to right (AutoCAD's Backwards; DXF 71 bit 2). New text takes it from its
+    /// style; later style changes don't change it.
+    #[serde(default)]
+    pub backwards: bool,
+    /// Mirrored top to bottom (AutoCAD's Upside down; DXF 71 bit 4).
+    #[serde(default)]
+    pub upside_down: bool,
 }
 impl Text {
     /// The point the text is placed by, as the Insertion snap and the grip show it: the alignment

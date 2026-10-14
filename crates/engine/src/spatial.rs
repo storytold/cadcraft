@@ -340,6 +340,8 @@ mod tests {
                     style: "Standard".into(),
                     halign: Default::default(),
                     valign: Default::default(),
+                    backwards: false,
+                    upside_down: false,
                 }),
                 6 => EntityKind::Point(cadcraft_doc::Point { p: v3(x, y), angle: 0.0 }),
                 7 => EntityKind::Insert(Insert {

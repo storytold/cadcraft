@@ -58,6 +58,8 @@ fn text_produces_strokes() {
             style: "Standard".into(),
             halign: Default::default(),
             valign: Default::default(),
+            backwards: false,
+            upside_down: false,
         }),
     )
     .unwrap();
@@ -265,6 +267,8 @@ fn text_doc(style_font: &str, value: &str) -> Drawing {
             style: "TT".into(),
             halign: Default::default(),
             valign: Default::default(),
+            backwards: false,
+            upside_down: false,
         }),
     )
     .unwrap();
@@ -309,13 +313,25 @@ fn backwards_and_upside_down_mirror_text() {
     let mut d = text_doc("CADCraft Stroke", "ABC");
     let normal = build(&d, &Space::Model, &Options::default()).bounds;
     assert!(normal.min.x >= -1e-9 && normal.min.y >= -1e-9);
+    // The text's own flags (DXF 71) mirror it, as AutoCAD's do; its style's are what new text
+    // starts with and don't change it.
+    let set = |d: &mut Drawing, backwards: bool, upside_down: bool| {
+        let h = d.model.iter().next().map(|e| e.handle).unwrap();
+        d.modify_entity(h, |e| {
+            if let EntityKind::Text(t) = &mut e.kind {
+                t.backwards = backwards;
+                t.upside_down = upside_down;
+            }
+        })
+        .unwrap();
+    };
     d.text_styles.iter_mut().for_each(|s| s.backwards = true);
+    let styled = build(&d, &Space::Model, &Options::default()).bounds;
+    assert!((styled.min.x - normal.min.x).abs() < 1e-9, "the style's flag doesn't mirror existing text");
+    set(&mut d, true, false);
     let back = build(&d, &Space::Model, &Options::default()).bounds;
     assert!(back.max.x <= 1e-9 && (back.width() - normal.width()).abs() < 1e-9, "mirrored to the left");
-    d.text_styles.iter_mut().for_each(|s| {
-        s.backwards = false;
-        s.upside_down = true;
-    });
+    set(&mut d, false, true);
     let up = build(&d, &Space::Model, &Options::default()).bounds;
     assert!(up.max.y <= 1e-9 && up.min.y < -0.9, "mirrored below the baseline");
 }
@@ -774,6 +790,8 @@ fn attrib(tag: &str) -> cadcraft_doc::Attrib {
             style: "Standard".into(),
             halign: Default::default(),
             valign: Default::default(),
+            backwards: false,
+            upside_down: false,
         },
         invisible: false,
         constant: false,

@@ -205,6 +205,9 @@ fn text_from(t: &T) -> Text {
         style: t.s(7).unwrap_or_else(|| "Standard".into()),
         halign: h,
         valign: v,
+        // Text generation flags: 2 backwards, 4 upside down.
+        backwards: t.i(71).unwrap_or(0) & 2 != 0,
+        upside_down: t.i(71).unwrap_or(0) & 4 != 0,
     };
     let n = Vec3::new(t.fd(210, 0.0), t.fd(220, 0.0), t.fd(230, 1.0));
     if n.z < 0.0 {

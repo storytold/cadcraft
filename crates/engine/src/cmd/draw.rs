@@ -357,19 +357,22 @@ pub(super) fn fixed_height(d: &cadcraft_doc::Drawing, style: &str) -> Option<f64
     d.text_style(style).map(|t| t.height).filter(|h| h.is_finite() && *h > 0.0)
 }
 
-/// TEXT in `style`, which gives it its width factor and obliquing angle, as AutoCAD's new text
-/// takes them from its style (later style changes don't change them).
+/// TEXT in `style`, which gives it its width factor, obliquing angle and the Backwards and
+/// Upside down effects, as AutoCAD's new text takes them from its style (later style changes
+/// don't change them).
 pub(crate) fn make_text(s: &Session, style: &str, at: Vec2, value: &str, height: f64, rotation: f64, j: (HAlign, VAlign)) -> EntityKind {
-    let (width_factor, oblique) = s
-        .doc()
-        .ok()
-        .and_then(|d| d.text_style(style))
-        .map(|t| (t.width_factor, t.oblique))
-        .filter(|(w, o)| w.is_finite() && *w > 0.0 && o.is_finite())
-        .unwrap_or((1.0, 0.0));
+    EntityKind::Text(text_in(s, style, at, value, height, rotation, j))
+}
+
+/// The text of [`make_text`] (attribute definitions take theirs the same way).
+pub(crate) fn text_in(s: &Session, style: &str, at: Vec2, value: &str, height: f64, rotation: f64, j: (HAlign, VAlign)) -> Text {
+    let st = s.doc().ok().and_then(|d| d.text_style(style));
+    let (width_factor, oblique) =
+        st.map(|t| (t.width_factor, t.oblique)).filter(|(w, o)| w.is_finite() && *w > 0.0 && o.is_finite()).unwrap_or((1.0, 0.0));
+    let (backwards, upside_down) = st.map_or((false, false), |t| (t.backwards, t.upside_down));
     let (h, v) = j;
     let left = h == HAlign::Left && v == VAlign::Baseline;
-    EntityKind::Text(Text {
+    Text {
         insert: v3(at),
         align_pt: if left { None } else { Some(v3(at)) },
         height,
@@ -380,7 +383,9 @@ pub(crate) fn make_text(s: &Session, style: &str, at: Vec2, value: &str, height:
         style: style.to_string(),
         halign: h,
         valign: v,
-    })
+        backwards,
+        upside_down,
+    }
 }
 
 /// Aligned (`aligned`) or fit TEXT along the baseline from `start` to `end`: aligned text gets

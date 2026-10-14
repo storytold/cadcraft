@@ -67,6 +67,8 @@ fn corrupt(d: &mut Drawing) -> (Handle, Handle) {
             style: "Vanished".into(),
             halign: Default::default(),
             valign: Default::default(),
+            backwards: false,
+            upside_down: false,
         }),
     );
     raw(d, &Space::Model, on("0"), insert("Nowhere"));
