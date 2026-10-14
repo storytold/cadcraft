@@ -196,6 +196,15 @@ fn mtext_spacing() {
     check(geometry::mtext_spacing());
 }
 #[test]
+fn mtext_directions() {
+    check(geometry::mtext_directions());
+}
+#[test]
+#[ignore = "Confirmed DWG loss: an MTEXT's background mask disappears"]
+fn mtext_masks() {
+    check(geometry::mtext_masks());
+}
+#[test]
 fn mtext_contents() {
     check(geometry::mtext_contents());
 }

@@ -161,7 +161,7 @@ pub(super) fn multiline_tags(w: &mut W, a: &Attrib, attdef: bool) {
     w.f(41, m.width);
     w.f(46, 0.0);
     w.i(71, i64::from(m.attach));
-    w.i(72, 5);
+    w.i(72, m.direction.code());
     let chars: Vec<char> = crate::dxf_read::mtext_dxf::encode_contents(&m.contents).chars().collect();
     let chunks: Vec<String> = chars.chunks(250).map(|c| c.iter().collect()).collect();
     let n = chunks.len();

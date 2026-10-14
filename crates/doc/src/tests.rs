@@ -588,6 +588,8 @@ fn mtext_kind(contents: &str) -> EntityKind {
         line_spacing: 1.0,
         line_spacing_exact: false,
         columns: None,
+        direction: Default::default(),
+        background: None,
     })
 }
 

@@ -148,6 +148,8 @@ fn a_dimension_read_with_its_block_keeps_the_block_and_gets_the_background() {
         line_spacing: 1.0,
         line_spacing_exact: false,
         columns: None,
+        direction: Default::default(),
+        background: None,
     };
     blk.entities.push(Entity::new(Handle(2), EntityKind::MText(text)));
     d.blocks.insert("*D1".into(), std::sync::Arc::new(blk));
@@ -180,6 +182,8 @@ fn every_text_of_a_block_gets_a_background() {
             line_spacing: 1.0,
             line_spacing_exact: false,
             columns: None,
+            direction: Default::default(),
+            background: None,
         };
         blk.entities.push(Entity::new(Handle(i as u64 + 1), EntityKind::MText(text)));
     }
@@ -210,6 +214,8 @@ fn a_block_that_holds_its_background_gets_no_second_one() {
             line_spacing: 1.0,
             line_spacing_exact: false,
             columns: None,
+            direction: Default::default(),
+            background: None,
         };
         blk.entities.push(Entity::new(Handle(2), EntityKind::MText(text)));
         d.blocks.insert("*D1".into(), std::sync::Arc::new(blk));

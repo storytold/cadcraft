@@ -355,6 +355,8 @@ fn truetype_mtext_and_dimension_text() {
             line_spacing: 1.0,
             line_spacing_exact: false,
             columns: None,
+            direction: Default::default(),
+            background: None,
         }),
     )
     .unwrap();
@@ -889,6 +891,8 @@ fn mtext_exact_spacing_ignores_taller_lines() {
         line_spacing,
         line_spacing_exact,
         columns: None,
+        direction: Default::default(),
+        background: None,
     };
     let d = Drawing::new_imperial();
     let height = |contents: &str, ls: f64, exact: bool| layout_mtext_entity(&d, &mtext(contents, ls, exact)).bounds.height();

@@ -122,9 +122,9 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 return;
             }
             if e.common.matches_layout_orientation() && t.rotation != 0.0 {
-                mtext(b, ctx, &cadcraft_doc::MText { rotation: 0.0, ..t.clone() }, rgb, lw);
+                mtext(b, ctx, &cadcraft_doc::MText { rotation: 0.0, ..t.clone() }, rgb, lw, &e.common.layer);
             } else {
-                mtext(b, ctx, t, rgb, lw);
+                mtext(b, ctx, t, rgb, lw, &e.common.layer);
             }
         }
         EntityKind::Insert(ins) => insert(b, ctx, e, ins, rgb),
@@ -277,7 +277,7 @@ fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeade
         let land = m.landing.xy();
         let dir = if t.insert.x >= land.x { 1.0 } else { -1.0 };
         b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);
-        mtext(b, ctx, t, rgb, lw);
+        mtext(b, ctx, t, rgb, lw, &e.common.layer);
     }
     if let Some(ins) = &m.block {
         if m.dogleg > 0.0 && !m.leaders.is_empty() {

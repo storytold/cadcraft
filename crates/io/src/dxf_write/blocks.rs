@@ -126,6 +126,8 @@ pub(super) fn dim_block_entities(d: &Drawing, dm: &Dimension, layer: &str) -> Ve
                 line_spacing: 1.0,
                 line_spacing_exact: false,
                 columns: None,
+                direction: Default::default(),
+                background: None,
             }),
         });
     }
@@ -180,6 +182,8 @@ pub(crate) fn table_block_entities(d: &Drawing, t: &Table, layer: &str) -> Vec<E
                     line_spacing: 1.0,
                     line_spacing_exact: false,
                     columns: None,
+                    direction: Default::default(),
+                    background: None,
                 }),
             });
         }

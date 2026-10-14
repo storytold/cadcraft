@@ -45,6 +45,8 @@ fn mleader_drawing() -> (Drawing, MLeader) {
             line_spacing: 1.0,
             line_spacing_exact: false,
             columns: None,
+            direction: Default::default(),
+            background: None,
         }),
         style: "Standard".into(),
         arrow_size: 1.0,

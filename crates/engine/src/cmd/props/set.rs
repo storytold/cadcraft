@@ -557,6 +557,39 @@ fn mtext(t: &mut MText, c: &Call<'_>, used: &mut Used<'_>) {
             used.insert(k);
         }
     }
+    mtext_mask(t, c, used);
+}
+
+/// MTEXT's background mask: on (the drawing's background, AutoCAD's border offset) or off,
+/// then its fill, color and border offset factor (1 to 5).
+fn mtext_mask(t: &mut MText, c: &Call<'_>, used: &mut Used<'_>) {
+    let p = c.p;
+    if let Some(on) = p.get("backgroundMask").and_then(Value::as_bool) {
+        t.background = if on { Some(t.background.unwrap_or_default()) } else { None };
+        used.insert("backgroundMask");
+    }
+    let Some(m) = &mut t.background else { return };
+    match str_param(p, "maskFill") {
+        Some("background") => {
+            m.use_background = true;
+            used.insert("maskFill");
+        }
+        Some("color") => {
+            m.use_background = false;
+            used.insert("maskFill");
+        }
+        _ => {}
+    }
+    // A color picked fills the mask with it.
+    if let Some(color) = p.get("maskColor").and_then(parse_color) {
+        m.color = color;
+        m.use_background = false;
+        used.insert("maskColor");
+    }
+    if let Some(x) = c.num("maskOffset").filter(|x| (1.0..=5.0).contains(x)) {
+        m.scale = x;
+        used.insert("maskOffset");
+    }
 }
 
 /// MTEXT's line spacing: a factor, a distance, or its style.
