@@ -239,3 +239,13 @@ fn plotwindow_picks_both_corners_with_ortho_on() {
     let c = hover(&mut s, Vec2::new(10.0, 4.0));
     assert!(c.near(Vec2::new(10.0, 0.0), 1e-9), "ortho keeps the line horizontal: {c:?}");
 }
+
+#[test]
+fn paper_margins_are_checked_against_their_own_axis() {
+    let mut s = session();
+    s.execute("plottermanager", &json!({"action": "new", "name": "Banner Printer", "output": "png"})).unwrap();
+    let paper = |margins: Value| json!({"action": "set", "name": "Banner Printer", "paper": {"name": "Banner", "width": 400, "height": 200, "margins": margins}});
+    // 250 mm of bottom + top margin leaves no printable height on a 200 mm paper.
+    assert!(s.execute("plottermanager", &paper(json!([0, 250, 0, 0]))).is_err());
+    // 300 mm of left + right margin still leaves 100 mm of printable width on a 400 mm paper.
+    assert!(s.execute("plottermanager", &paper(json!([150, 0, 150, 0]))).is_ok());
