@@ -56,7 +56,7 @@ pub fn texts(d: &Drawing, pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: 
     let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
     let total = lt.pattern_length() * scale;
     let len: f64 = pts.windows(2).map(|w| w.first().zip(w.get(1)).map(|(a, b)| a.dist(*b)).unwrap_or(0.0)).sum();
-    if !(total.is_finite() && total > 1e-12 && len.is_finite()) || total < min_pattern || len / total > 50_000.0 {
+    if !(total.is_finite() && total > 1e-12 && len.is_finite()) || total < min_pattern || (min_pattern > 0.0 && len / total > 50_000.0) {
         return out;
     }
     let elements = elements(d, lt, scale);
