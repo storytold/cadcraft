@@ -23,6 +23,7 @@ mod parameters_rename;
 mod pickdrag;
 mod properties_described;
 mod properties_units;
+mod quick_properties_described;
 mod rapid_clicks;
 mod selection_cycling;
 mod shared_controls;

@@ -10,7 +10,7 @@ use crate::icons::{self, Icon};
 use crate::theme::Tokens;
 
 /// Rows the engine describes (text, mtext, dimensions).
-mod described;
+pub(crate) mod described;
 #[cfg(test)]
 mod layer_menu_tests;
 /// The hatch pattern picker.
@@ -1112,13 +1112,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
         }
         let _ = app.run("properties.set", p);
     }
-    // A described row the engine couldn't take (a value out of range…) says so.
-    if let Some(e) = edit
-        && let Ok(r) = app.run("properties.set", e.params)
-        && r["ignored"].as_array().is_some_and(|a| !a.is_empty())
-    {
-        app.session.echo(crate::tf!("{property}: that value can't be used here.", property = crate::i18n::t(e.label)));
-    }
+    described::apply(app, edit);
     report_bad(app, bad);
     if let Some(p) = custom_set {
         let _ = app.run("blocks.reference.set", p);

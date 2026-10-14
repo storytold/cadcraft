@@ -1,6 +1,7 @@
 //! The Properties palette rows the engine describes (`properties.describe`): text, mtext and
 //! dimensions, for one object or many of the same type, with *VARIES*, values in the drawing's
-//! units, and dimension variables the dimension overrides.
+//! units, and dimension variables the dimension overrides. Quick Properties draws the rows the
+//! description flags `quick` the same way.
 
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -17,7 +18,7 @@ use crate::theme::Tokens;
 
 /// What the engine says the palette shows for `sel`, worked out again only when the drawing,
 /// its revision or the selection changes (dimension rows draw each dimension to measure it).
-pub(super) fn described(ui: &egui::Ui, app: &CadApp, sel: &[Handle]) -> Option<Arc<Description>> {
+pub(crate) fn described(ui: &egui::Ui, app: &CadApp, sel: &[Handle]) -> Option<Arc<Description>> {
     let st = app.session.state().ok()?;
     let mut hasher = std::hash::DefaultHasher::new();
     (st.uid, st.revision, sel).hash(&mut hasher);
@@ -42,9 +43,42 @@ fn group(ui: &mut egui::Ui, title: &str) {
 }
 
 /// An edit the palette makes: the `properties.set` call and the row it came from.
-pub(super) struct Edit {
+pub(crate) struct Edit {
     pub params: Value,
     pub label: &'static str,
+}
+
+/// Make `edit`; a value the engine couldn't take (out of range…) says so on the command line.
+pub(crate) fn apply(app: &mut CadApp, edit: Option<Edit>) {
+    if let Some(e) = edit
+        && let Ok(r) = app.run("properties.set", e.params)
+        && r["ignored"].as_array().is_some_and(|a| !a.is_empty())
+    {
+        app.session.echo(crate::tf!("{property}: that value can't be used here.", property = crate::i18n::t(e.label)));
+    }
+}
+
+/// Quick Properties: the rows the description flags `quick` (AutoCAD's defaults: Layer,
+/// Contents, Style, Annotative, Justification, Height and Rotation for text; Layer, Dim style,
+/// Annotative, Measurement and Text override for dimensions). False when the selection isn't of
+/// a described type, so Quick Properties draws its own rows.
+pub(crate) fn quick_rows(
+    ui: &mut egui::Ui,
+    d: &Drawing,
+    desc: &Description,
+    ids: &[String],
+    edit: &mut Option<Edit>,
+    bad: &mut Option<String>,
+) -> bool {
+    if !desc.groups.iter().any(|g| g.name != "General") {
+        return false;
+    }
+    let angles = AngleSettings::from_header(&d.header);
+    let text_style = desc.groups.iter().flat_map(|g| &g.rows).find(|r| r.key == "textStyle" && !r.varies).map(|r| r.display.clone());
+    for row in desc.groups.iter().flat_map(|g| &g.rows).filter(|r| r.quick) {
+        described_row(ui, d, row, ids, &angles, text_style.as_deref(), edit, bad);
+    }
+    true
 }
 
 /// The described groups after General (the palette draws General itself). Returns false when
@@ -110,11 +144,14 @@ fn described_row(
         // The label: in the accent color where a dimension overrides its style, with a menu
         // that goes back to the style's value.
         let color = if row.overridden { t.accent } else { t.text_dim };
-        let mut job = egui::text::LayoutJob::simple(crate::i18n::t(row.label).to_string(), crate::theme::body(), color, 106.0);
+        let label = crate::i18n::t(row.label).to_string();
+        let mut job = egui::text::LayoutJob::simple(label.clone(), crate::theme::body(), color, 106.0);
         job.halign = egui::Align::RIGHT;
         let galley = ui.painter().layout_job(job);
         let sense = if row.overridden { Sense::click() } else { Sense::hover() };
         let (lr, resp) = ui.allocate_exact_size(vec2(118.0, galley.size().y.max(22.0)), sense);
+        // Painted, so screen readers are given the label too.
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &label));
         ui.painter().galley(pos2(lr.right() - 6.0, lr.center().y - galley.size().y / 2.0), galley, color);
         if row.overridden {
             resp.on_hover_text(crate::tl!("Overrides the dimension style. Right-click to use the style's value.")).context_menu(|ui| {
@@ -210,7 +247,18 @@ fn described_row(
                     }
                 });
             }
-            // General's own kinds (layer, lineweight, transparency) aren't in the typed groups.
+            // Quick Properties shows General's Layer.
+            Kind::Layer => {
+                ui.menu_button(shown, |ui| {
+                    for l in &d.layers {
+                        if ui.button(&l.name).clicked() {
+                            picked = Some(json!(l.name));
+                            ui.close();
+                        }
+                    }
+                });
+            }
+            // General's other kinds (lineweight, transparency) aren't in the typed groups.
             _ => {
                 value_box(ui, &shown, false, false);
             }
