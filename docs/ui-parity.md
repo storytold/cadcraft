@@ -151,7 +151,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 | SETVAR for every system variable | ~1,000 sysvars | about 60 session/header variables by name (`sysvars.rs`) |
 | Scripts (SCRIPT, `.scr`) | yes | script text via CLI/MCP/control; no `.scr` file command |
 | Floating/docked command window, transparency, lines of history | yes | floating overlay, history lines setting |
-| TEXT typed in place on the canvas | yes | the line typed on the command line is drawn where it goes as it is typed; Enter places it and starts the next line (no caret or editing within the line on the canvas) |
+| TEXT typed in place on the canvas | yes | the line typed on the command line is drawn where it goes as it is typed; Enter places it and starts the next line (no caret or editing within the line on the canvas; #1121) |
 
 ## Chrome and palettes (≈ 45%)
 
