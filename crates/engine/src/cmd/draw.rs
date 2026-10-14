@@ -33,8 +33,8 @@ use point::{DonutM, PointM, RayM, run_donut, run_point, run_ray};
 use polygon::{PolygonM, run_polygon};
 use solid::{SolidM, run_solid};
 use spline::{SplineM, run_spline};
-pub(crate) use text::justify;
 use text::{MTextM, TextM, run_mtext, run_text};
+pub(crate) use text::{fixed_height, justify};
 
 /// Every draw command's spec: JSON parameters, menu path, aliases and the interactive prompt
 /// machine each command starts.
@@ -111,13 +111,15 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("text", "Single Line Text", run_text)
             .menu(&["Draw", "Text", "Single Line Text"])
             .alias(&["dt", "dtext"])
-            .params("{at, text, height?, rotation? (degrees), justify?: L|C|R|M|TL|TC|TR|ML|MC|MR|BL|BC|BR}")
+            .params(
+                "{at, text, height? (default: the style's fixed height, else TEXTSIZE), rotation? (degrees), justify?: L|C|R|M|TL|TC|TR|ML|MC|MR|BL|BC|BR,                  style? (default: the current style; the text takes its width factor and obliquing angle)}",
+            )
             .interactive(|s| Ok(Box::new(TextM::new(s)))),
         CommandSpec::new("mtext", "Multiline Text", run_mtext)
             .menu(&["Draw", "Text", "Multiline Text..."])
             .alias(&["t", "mt"])
             .params(
-                "{at, text, height?, width?, attach?: 1..9 | justify?: TL..BR, rotation?, style?, lineSpacing?, lineSpacingExact?, \
+                "{at, text, height? (default: the style's fixed height, else TEXTSIZE), width?, attach?: 1..9 | justify?: TL..BR, rotation?, style?, lineSpacing?, lineSpacingExact?, \
                  list?: bullet|number|lower|upper, indent?, firstIndent?, rightIndent?, tabs?: [..], align?: left|center|right|justify|distributed, \
                  columns?: {type: static|dynamic, count?, gutter?, height, heights?, reversed?}} (indents and tabs in text heights; width = one column)",
             )
