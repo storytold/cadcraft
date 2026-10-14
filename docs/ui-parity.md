@@ -208,7 +208,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-14 | minor | Properties Inspector: MTEXT Background mask, Mask fill, Mask color, Border offset and a read-only Direction |
+| 2026-10-14 | minor | Properties Inspector: MTEXT Background mask, Mask fill, Mask color, Border offset and a read-only Direction (#1152) |
 | 2026-10-13 | minor | Quick Properties: AutoCAD's default text, mtext and dimension rows; the described rows' labels reach screen readers |
 | 2026-10-13 | minor | TEXT: the line being typed is drawn on the canvas where it goes |
 | 2026-10-13 | minor | Text Style dialog (STYLE): fonts by family and style, preview, effects, Set Current, New, Rename, Delete, Apply (#1083) |
