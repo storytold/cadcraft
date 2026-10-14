@@ -97,6 +97,29 @@ const FIXTURE: &str = "
 42 5
 43 5
 50 0
+66 1
+0 ATTRIB
+5 70
+102 {ACAD_XDICTIONARY
+360 71
+102 }
+330 40
+100 AcDbEntity
+8 0
+100 AcDbText
+10 15
+20 30
+30 0
+40 1
+1 X
+100 AcDbAttribute
+2 TAG
+70 0
+0 SEQEND
+5 77
+330 40
+100 AcDbEntity
+8 0
 0 ENDSEC
 0 SECTION
 2 OBJECTS
@@ -188,6 +211,60 @@ const FIXTURE: &str = "
 41 1
 42 1
 43 1
+0 DICTIONARY
+5 71
+330 70
+100 AcDbDictionary
+280 1
+281 1
+3 AcDbContextDataManager
+360 73
+0 DICTIONARY
+5 73
+330 71
+100 AcDbDictionary
+281 1
+3 ACDB_ANNOTATIONSCALES
+350 74
+0 DICTIONARY
+5 74
+330 73
+100 AcDbDictionary
+281 1
+3 *A1
+350 75
+3 *A2
+350 76
+0 ACDB_MTEXTATTRIBUTEOBJECTCONTEXTDATA_CLASS
+5 75
+330 74
+100 AcDbObjectContextData
+70 4
+290 1
+100 AcDbAnnotScaleObjectContextData
+340 52
+70 0
+50 0
+10 15
+20 30
+11 15
+21 30
+290 0
+0 ACDB_MTEXTATTRIBUTEOBJECTCONTEXTDATA_CLASS
+5 76
+330 74
+100 AcDbObjectContextData
+70 4
+290 0
+100 AcDbAnnotScaleObjectContextData
+340 51
+70 0
+50 0
+10 11
+20 22
+11 11
+21 22
+290 0
 0 ENDSEC
 0 EOF
 ";
@@ -237,6 +314,19 @@ fn contexts(text: &str) -> Vec<(String, bool, Vec2, f64, f64)> {
         .collect()
 }
 
+/// The written attribute contexts: (scale name, insertion point), and the ATTRIB they hang on
+/// (its tag, through its extension dictionary).
+fn attribute_contexts(text: &str) -> Vec<(String, Vec2)> {
+    let recs = records(text);
+    let scales: std::collections::HashMap<&str, &str> =
+        recs.iter().filter(|(k, _)| k == "SCALE").filter_map(|(_, t)| Some((get(t, 5)?, get(t, 300)?))).collect();
+    let num = |t: &[(i32, String)], c: i32| get(t, c).and_then(|v| v.parse::<f64>().ok()).unwrap_or(f64::NAN);
+    recs.iter()
+        .filter(|(k, _)| k == "ACDB_MTEXTATTRIBUTEOBJECTCONTEXTDATA_CLASS")
+        .map(|(_, t)| (get(t, 340).and_then(|h| scales.get(h)).map_or("?", |s| s).to_string(), Vec2::new(num(t, 10), num(t, 20))))
+        .collect()
+}
+
 fn read() -> Drawing {
     read_dxf(dxf(FIXTURE).as_bytes()).unwrap()
 }
@@ -260,6 +350,39 @@ fn an_annotative_block_keeps_its_record_and_its_reference_s_contexts() {
     assert!(ctx.iter().all(|c| c.2 == Vec2::new(10.0, 20.0) && c.3 == 0.0));
     // Read back: still annotative.
     assert!(read_dxf(text.as_bytes()).unwrap().block("SIGN").unwrap().annotative);
+    // The attribute's contexts, on the written attribute (its handle is new), as read.
+    let mut actx = attribute_contexts(&text);
+    actx.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(actx, [("1:1".to_string(), Vec2::new(11.0, 22.0)), ("1:5".to_string(), Vec2::new(15.0, 30.0))]);
+    let recs = records(&text);
+    let (_, attrib) = recs.iter().find(|(k, t)| k == "ATTRIB" && get(t, 2) == Some("TAG")).unwrap();
+    assert!(attrib.iter().any(|(c, v)| *c == 102 && v == "{ACAD_XDICTIONARY"), "{attrib:?}");
+}
+
+#[test]
+fn an_attribute_s_contexts_follow_its_reference() {
+    // Moved 5 along x and scaled 2 (the attribute with it, as MOVE and SCALE move it): at 1:5
+    // the attribute goes to (15 + 10, 20 + 20); at 1:1, through the reference's 1:1 context (now
+    // at (15, 20), scale 2), to (15 + 2, 20 + 4).
+    let mut d = read();
+    let r = Handle::parse_hex("40").unwrap();
+    d.modify_entity(r, |e| {
+        if let cadcraft_doc::EntityKind::Insert(i) = &mut e.kind {
+            i.insert = i.insert + cadcraft_doc::geom::Vec3::new(5.0, 0.0, 0.0);
+            i.scale = i.scale * 2.0;
+            for a in &mut i.attribs {
+                a.text.insert = cadcraft_doc::geom::Vec3::new(25.0, 40.0, 0.0);
+                a.text.align_pt = Some(a.text.insert);
+            }
+        }
+    })
+    .unwrap();
+    let mut actx = attribute_contexts(&write_dxf(&d));
+    actx.sort_by(|a, b| a.0.cmp(&b.0));
+    let near = |p: Vec2, x: f64, y: f64| (p.x - x).abs() < 1e-9 && (p.y - y).abs() < 1e-9;
+    assert_eq!(actx.len(), 2);
+    assert!(near(actx[0].1, 17.0, 24.0), "1:1 {:?}", actx[0]);
+    assert!(near(actx[1].1, 25.0, 40.0), "1:5 {:?}", actx[1]);
 }
 
 #[test]

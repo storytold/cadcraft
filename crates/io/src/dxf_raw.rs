@@ -193,13 +193,17 @@ fn modelled_key(key: &str) -> bool {
 
 /// The roles of a file's handles (see [`ForeignKey`]): table records and tables by type and
 /// name, blocks by name, the named object dictionary, its entries, and their entries.
-fn identities(tables: &Recs, blocks: &Recs, objects: &Recs) -> HashMap<String, ForeignKey> {
+fn identities(tables: &Recs, blocks: &Recs, entities: &Recs, objects: &Recs) -> HashMap<String, ForeignKey> {
     let mut out: HashMap<String, ForeignKey> = HashMap::new();
     let mut put = |h: Option<String>, k: ForeignKey| {
         if let Some(h) = h {
             out.entry(h).or_insert(k);
         }
     };
+    // Attributes (written with new handles each time) by their reference and tag.
+    for (kind, _, t) in blocks.iter().chain(entities).filter(|(k, _, _)| k == "ATTRIB") {
+        put(head(t).handle, (kind.clone(), attrib_key(t)));
+    }
     for (kind, _, t) in tables {
         let name = up(&val(t, 2).unwrap_or_default());
         if kind == "TABLE" || !name.is_empty() {
@@ -347,7 +351,7 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
     let (classes, tables, blocks, entities, objects) = (get("CLASSES"), get("TABLES"), get("BLOCKS"), get("ENTITIES"), get("OBJECTS"));
     // The drawing's entities by handle: whether each is of a type CADCraft doesn't model.
     let ents = entity_types(d);
-    let ids = identities(&tables, &blocks, &objects);
+    let ids = identities(&tables, &blocks, &entities, &objects);
     // Extension dictionaries of entities and records: owner → dictionary.
     let xdict_of = extension_dictionaries(&tables, &blocks, &entities);
     // Objects by handle: the first of each, and none that has an entity's handle.
@@ -367,9 +371,10 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
         let (Some(h), Some(o)) = (hd.handle, hd.owner) else { return false };
         !by_handle.contains_key(&o) && xdict_of.get(&o) == Some(&h) && (ents.contains_key(&o) || ids.contains_key(&o))
     };
-    // Block references (their extension dictionaries keep annotation scale contexts).
+    // Block references and their attributes (their extension dictionaries keep annotation scale
+    // contexts).
     let inserts: HashSet<String> = all_entities(d).filter(|e| matches!(e.kind, EntityKind::Insert(_))).map(|e| e.handle.hex()).collect();
-    let of_insert = |t: &[Tag]| head(t).owner.is_some_and(|o| inserts.contains(&o));
+    let of_insert = |t: &[Tag]| head(t).owner.is_some_and(|o| inserts.contains(&o) || ids.get(&o).is_some_and(|k| k.0 == "ATTRIB"));
     let memo = retained_objects(&objects, &ents, &ids, &by_handle, (root.as_deref(), &root_entries), &xdict_of, &inserts);
     let mut f = Foreign::default();
     let mut kept: HashSet<String> = HashSet::new();
@@ -410,6 +415,12 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
         }
     }
     put_xdata(d, xdata_of);
+    // Attributes' extension dictionaries (their annotation scale contexts), by attribute.
+    for (kind, _, t) in blocks.iter().chain(&entities).filter(|(k, _, _)| k == "ATTRIB") {
+        if let Some(xd) = head(t).xdict.filter(|x| kept.contains(x)).and_then(|x| handle(&x)) {
+            f.records.entry((kind.clone(), attrib_key(t))).or_insert(ForeignExtra { xdict: Some(xd), ..ForeignExtra::default() });
+        }
+    }
     for (kind, _, t) in tables.iter().chain(blocks.iter().filter(|(k, _, _)| k == "BLOCK")) {
         let Some(key) = head(t).handle.and_then(|h| ids.get(&h).cloned()) else { continue };
         let x = extra(kind, t, kind == "BLOCK", false, &kept);
@@ -515,7 +526,9 @@ fn retained_objects(
     xdict_of: &HashMap<String, String>,
     inserts: &HashSet<String>,
 ) -> HashMap<usize, bool> {
-    let of_insert = |tags: &[Tag]| head(tags).owner.is_some_and(|owner| inserts.contains(&owner));
+    let of_insert = |tags: &[Tag]| {
+        head(tags).owner.is_some_and(|owner| inserts.contains(&owner) || records.get(&owner).is_some_and(|key| key.0 == "ATTRIB"))
+    };
     let root_key = |handle: &str| root_entries.iter().find(|(_, entry_handle)| entry_handle == handle).map(|(key, _)| key);
     let is_xdict = |index: usize| {
         let Some((_, _, tags)) = objects.get(index) else { return false };
@@ -643,6 +656,12 @@ pub(crate) fn data_store(tags: &mut Vec<Tag>, d: &Drawing, modern: bool) {
     tags.splice(at..at, out);
 }
 
+/// An attribute's identity across saves (its handle is new each time): its reference's handle
+/// and its tag.
+fn attrib_key(tags: &[Tag]) -> String {
+    format!("{}/{}", head(tags).owner.unwrap_or_default(), up(&val(tags, 2).unwrap_or_default()))
+}
+
 /// The kept annotation scale contexts of block references, brought up to date with each
 /// reference (see [`CONTEXTS_KEY`]). A context holds the reference's insertion point, rotation
 /// (degrees) and scale at one annotation scale; the default context (group 290 = 1) was the
@@ -706,6 +725,128 @@ fn block_contexts(f: &Foreign, d: &Drawing, owners: &HashMap<String, String>) ->
                 }
             }
             out.insert(o.handle.hex(), o);
+        }
+    }
+    out
+}
+
+/// The kept annotation scale contexts of block references' attributes, brought up to date. A
+/// context holds the attribute's insertion and alignment points (10, 11) and rotation (50) at one
+/// annotation scale. It keeps its own place in the block at that scale (as read, through the
+/// reference's context for the same scale), moved by what the attribute did in the block since
+/// (seen in its default context, 290 = 1), and is placed by the reference's context as it is now
+/// (`block`: the reference contexts [`block_contexts`] refreshed). Only changed contexts are
+/// returned (by handle).
+fn attribute_contexts(
+    f: &Foreign,
+    d: &Drawing,
+    owners: &HashMap<String, String>,
+    block: &HashMap<String, ForeignObject>,
+) -> HashMap<String, ForeignObject> {
+    use cadcraft_doc::geom::{Mat3, Vec2};
+    let num = |o: &ForeignObject, code: i32| {
+        o.tags.iter().find(|t| t.code == code).and_then(|t| t.value.trim().parse::<f64>().ok()).filter(|v| v.is_finite())
+    };
+    let text = |o: &ForeignObject, code: i32| o.tags.iter().find(|t| t.code == code).map(|t| norm(&t.value));
+    // The last kept object up the owner chain (an extension dictionary) and its owner.
+    let top = |h: &str| {
+        let mut cur = h.to_string();
+        for _ in 0..MAX_DEPTH {
+            match owners.get(&cur) {
+                Some(o) if owners.contains_key(o) => cur = o.clone(),
+                Some(o) => return Some((cur, o.clone())),
+                None => return None,
+            }
+        }
+        None
+    };
+    // Attributes' extension dictionaries: (reference, tag).
+    let attribs: HashMap<String, (Handle, String)> = f
+        .records
+        .iter()
+        .filter(|(k, _)| k.0 == "ATTRIB")
+        .filter_map(|(k, x)| {
+            let (ins, tag) = k.1.split_once('/')?;
+            Some((x.xdict?.hex(), (Handle::parse_hex(ins)?, tag.to_string())))
+        })
+        .collect();
+    // A reference's context at each scale, as read and as written: (insertion, degrees, scale).
+    type Place = (Vec2, f64, (f64, f64));
+    let place =
+        |o: &ForeignObject| -> Option<Place> { Some((Vec2::new(num(o, 10)?, num(o, 20)?), num(o, 50).unwrap_or(0.0), (num(o, 41)?, num(o, 42)?))) };
+    let mut read: HashMap<(Handle, String), Place> = HashMap::new();
+    let mut now: HashMap<(Handle, String), Place> = HashMap::new();
+    for o in f.objects.iter().filter(|o| o.kind.eq_ignore_ascii_case("ACDB_BLKREFOBJECTCONTEXTDATA_CLASS")) {
+        let (Some((_, r)), Some(s)) = (top(&o.handle.hex()), text(o, 340)) else { continue };
+        let Some(r) = Handle::parse_hex(&r) else { continue };
+        if let Some(p) = place(o) {
+            read.insert((r, s.clone()), p);
+        }
+        if let Some(p) = place(block.get(&o.handle.hex()).unwrap_or(o)) {
+            now.insert((r, s), p);
+        }
+    }
+    // The block-to-drawing transform of a reference placed at `p` (its block's base `base`).
+    let matrix = |ins: &cadcraft_doc::Insert, base: Vec2, p: Place| {
+        let mut i = ins.clone();
+        i.insert = p.0.to3(ins.insert.z);
+        i.rotation = p.1.to_radians();
+        i.scale = cadcraft_doc::geom::Vec3::new(p.2.0, p.2.1, ins.scale.z);
+        i.transform(base)
+    };
+    // Each attribute's contexts, together.
+    let mut by_attrib: BTreeMap<String, Vec<&ForeignObject>> = BTreeMap::new();
+    for o in f.objects.iter().filter(|o| up(&o.kind).contains("ATTRIBUTEOBJECTCONTEXTDATA")) {
+        if let Some((xd, _)) = top(&o.handle.hex()) {
+            by_attrib.entry(xd).or_default().push(o);
+        }
+    }
+    let mut out = HashMap::new();
+    for (xd, list) in &by_attrib {
+        let Some((r, tag)) = attribs.get(xd) else { continue };
+        let Some(EntityKind::Insert(ins)) = d.entity(*r).map(|e| &e.kind) else { continue };
+        let Some(a) = ins.attribs.iter().find(|a| up(&a.tag) == *tag) else { continue };
+        let base = d.block(&ins.block).map(|b| b.base.xy()).unwrap_or_default();
+        let Some(to_block_now) = ins.transform(base).inverse() else { continue };
+        let Some(def) = list.iter().find(|o| o.tags.iter().any(|t| t.code == 290 && t.value.trim() == "1")).or(list.first()) else { continue };
+        let at = |o: &ForeignObject, x: i32| Some(Vec2::new(num(o, x)?, num(o, x + 10)?));
+        // What the attribute did in the block since: its default context then, the attribute now.
+        let Some(def_place) = text(def, 340).and_then(|s| read.get(&(*r, s))).copied() else { continue };
+        let Some(to_block_then) = matrix(ins, base, def_place).inverse() else { continue };
+        let now_ins = to_block_now.apply(a.text.insert.xy());
+        let now_align = to_block_now.apply(a.text.align_pt.unwrap_or(a.text.insert).xy());
+        let (Some(then_ins), Some(then_align)) = (at(def, 10).map(|p| to_block_then.apply(p)), at(def, 11).map(|p| to_block_then.apply(p))) else {
+            continue;
+        };
+        let turn = (a.text.rotation.to_degrees() - ins.rotation.to_degrees()) - (num(def, 50).unwrap_or(0.0) - def_place.1);
+        for c in list {
+            let Some(s) = text(c, 340) else { continue };
+            let (Some(was), Some(is)) = (read.get(&(*r, s.clone())).copied(), now.get(&(*r, s)).copied()) else { continue };
+            let (Some(from), to): (Option<Mat3>, Mat3) = (matrix(ins, base, was).inverse(), matrix(ins, base, is)) else { continue };
+            let moved = |x: i32, delta: Vec2| at(c, x).map(|p| to.apply(from.apply(p) + delta));
+            let (new_ins, new_align) = (moved(10, now_ins - then_ins), moved(11, now_align - then_align));
+            let rot = num(c, 50).map(|v| v + (is.1 - was.1) + turn);
+            let mut o = (*c).clone();
+            let mut changed = false;
+            for t in &mut o.tags {
+                let v = match t.code {
+                    10 => new_ins.map(|p| p.x),
+                    20 => new_ins.map(|p| p.y),
+                    11 => new_align.map(|p| p.x),
+                    21 => new_align.map(|p| p.y),
+                    50 => rot,
+                    _ => None,
+                };
+                if let Some(v) = v.filter(|v| v.is_finite())
+                    && t.value.trim().parse::<f64>().map_or(true, |old| (old - v).abs() > 1e-9)
+                {
+                    t.value = v.to_string();
+                    changed = true;
+                }
+            }
+            if changed {
+                out.insert(o.handle.hex(), o);
+            }
         }
     }
     out
@@ -908,6 +1049,8 @@ fn extra_for<'a>(f: &'a Foreign, xd: &XdataOf, rec: &Rec, body: &[Tag], block: &
     match (rec.sec.as_str(), rec.kind.as_str()) {
         ("BLOCKS", "BLOCK") => f.records.get(&("BLOCK".to_string(), block.to_string())).map(Cow::Borrowed),
         ("BLOCKS", "ENDBLK") => None,
+        // An attribute by its reference and tag (its handle is new).
+        ("ENTITIES" | "BLOCKS", "ATTRIB") => f.records.get(&("ATTRIB".to_string(), attrib_key(body))).map(Cow::Borrowed),
         ("ENTITIES" | "BLOCKS", _) => entity_extra(f, xd, handle(&head(body).handle?)?),
         ("TABLES", kind) => {
             let name = up(&val(body, 2).unwrap_or_default());
@@ -951,9 +1094,9 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
     let by_sec = |name: &str| -> Recs {
         recs.iter().filter(|r| r.sec == name && r.kind != "SECTION" && r.kind != "ENDSEC").map(|r| (r.kind.clone(), r.start, body(r))).collect()
     };
-    let (tables, blocks, objects) = (by_sec("TABLES"), by_sec("BLOCKS"), by_sec("OBJECTS"));
+    let (tables, blocks, entities, objects) = (by_sec("TABLES"), by_sec("BLOCKS"), by_sec("ENTITIES"), by_sec("OBJECTS"));
     let mut roles: HashMap<ForeignKey, String> = HashMap::new();
-    for (h, k) in identities(&tables, &blocks, &objects) {
+    for (h, k) in identities(&tables, &blocks, &entities, &objects) {
         roles.entry(k).or_insert(h);
     }
     let mut written: HashSet<String> = recs.iter().filter_map(|r| head(body(r)).handle).collect();
@@ -1015,7 +1158,9 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
         .filter_map(|o| Some((o.handle.hex(), head(&o.tags.iter().take_while(|t| t.code < 1000).map(tag).collect::<Vec<_>>()).owner?)))
         .collect();
     // Block references' annotation scale contexts, up to date with the references.
-    let contexts = block_contexts(f, d, &owners);
+    let mut contexts = block_contexts(f, d, &owners);
+    let attribute = attribute_contexts(f, d, &owners, &contexts);
+    contexts.extend(attribute);
     let mut alive_memo: HashMap<String, bool> = HashMap::new();
     for o in f.objects.iter().filter(|o| is_proxy(&o.kind) && renumber(class_number(o.tags.iter().map(|r| (r.code, r.value.as_str())))).is_none()) {
         alive_memo.insert(o.handle.hex(), false);
