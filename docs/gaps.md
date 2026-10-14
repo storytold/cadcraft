@@ -1,6 +1,6 @@
 # Where CADCraft falls short of AutoCAD
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-19 · **Change:** minor (Text Style dialog with installed fonts by family and style, and -STYLE) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-19 · **Change:** minor (new text follows its style; F25 added) · **Target:** Autodesk AutoCAD 2027
 
 Every known shortfall, one row each, ranked within each section by user impact. This is the work
 list: agents pick from here (top of a section first), and remove or update a row in the same PR
@@ -46,6 +46,7 @@ do them first.
 | F22 | Inquiry leftovers (COUNT across spaces and nested blocks, the QuickCalc palette and COMPARE landed, #563; MASSPROP on regions, #510): COMPARE compares the tab shown, not every layout at once, and has no COMPAREEXPORT report; QuickCalc keeps its history and variables for the session only | `file/compare.rs`, `palettes/quickcalc.rs` | Low | 3–5 |
 | F23 | No Sheet Set Manager, eTransmit, Share, Traces, Markup Import, Activity Insights | menu items uncovered | Low-medium (team workflows) | 40–70 |
 | F24 | No 3D: UCS, 3D views, orbit, solids, surfaces, meshes, sections, visual styles, materials, lights, rendering (150 menu items) | [parity-checklist](parity-checklist.md) | Medium (3D users) | 300–450 |
+| F25 | TEXT leftovers: Align and Fit ask for one point and a height, not the two ends of the baseline (Align derives the height, Fit keeps it); the line being typed isn't previewed on the canvas. New text follows its style (fixed height, annotative paper height, width factor, obliquing, the Style option, Enter continuing below the last text) | `cmd/draw.rs` (`TextM`) | Low-medium | 2–3 |
 
 ## UI/UX
 
@@ -151,6 +152,7 @@ Detail: [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | New text follows its style: a fixed-height style isn't asked for a height (TEXT, MTEXT, JSON), an annotative style asks for the paper height, TEXT takes the style's width factor and obliquing angle, TEXT's Style option works (name or ?), Enter at the start point continues below the last TEXT. F25 added for the Align/Fit points and the typing preview |
 | 2026-10-13 | minor | Text Style dialog (STYLE, ST): styles (all or in use, annotative marked) with a preview, the font by family and style from the installed fonts (`style.fonts`), height or paper height, effects, Set Current, New, Rename, Delete, edits on Apply; -STYLE asks in AutoCAD's order for scripts. No row closed; vertical text stays with L4 (#1083) |
 | 2026-10-13 | minor | Dimension Style Manager (DIMSTYLE, D, DDIM): styles with their overrides, preview, Set Current, New, Modify, Override, Compare, Rename, Delete, and AutoCAD's seven tabs; -DIMSTYLE at the command line (Save, Restore, STatus, Variables, Apply, ?, ANnotative) and `dimstyle.overrides`; F7 narrowed (#1042) |
 | 2026-10-13 | minor | Dimension shortcut menu: Remove Style Overrides (`dimoverride.clear`), Dimension Style ▸ with Save as New Style (`dimstyle.saveas`), Precision ▸, Align Text ▸; U14 narrowed to Quick Properties and unmodeled rows (#1008) |

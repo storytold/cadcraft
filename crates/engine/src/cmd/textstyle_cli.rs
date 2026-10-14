@@ -46,7 +46,7 @@ fn yes(text: Option<&str>, default: bool) -> bool {
 }
 
 /// A style's settings in one line, as `?` lists them.
-fn listing(st: &TextStyle) -> String {
+pub(super) fn listing(st: &TextStyle) -> String {
     let mut generation: Vec<&str> = Vec::new();
     if st.backwards {
         generation.push("Backwards");
@@ -70,7 +70,7 @@ fn listing(st: &TextStyle) -> String {
 }
 
 /// Text style names matching `pattern` (`*` and `?` wildcards, any case).
-fn styles_matching<'a>(d: &'a Drawing, pattern: &str) -> Vec<&'a TextStyle> {
+pub(super) fn styles_matching<'a>(d: &'a Drawing, pattern: &str) -> Vec<&'a TextStyle> {
     let p: Vec<char> = pattern.trim().to_lowercase().chars().take(255).collect();
     let p = if p.is_empty() { vec!['*'] } else { p };
     d.text_styles.iter().filter(|st| wildcard(&p, &st.name.to_lowercase().chars().collect::<Vec<_>>())).collect()

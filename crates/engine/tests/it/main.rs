@@ -133,6 +133,7 @@ mod table_styles;
 mod temp_tracking;
 mod text_commands;
 mod text_left_justify;
+mod text_style_creation;
 mod tolerance;
 mod transparent;
 mod trim_closed_polyline;
