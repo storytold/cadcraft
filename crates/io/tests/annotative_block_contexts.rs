@@ -218,7 +218,7 @@ fn records(text: &str) -> Vec<(String, Vec<(i32, String)>)> {
     out
 }
 
-fn get<'a>(tags: &'a [(i32, String)], code: i32) -> Option<&'a str> {
+fn get(tags: &[(i32, String)], code: i32) -> Option<&str> {
     tags.iter().find(|(c, _)| *c == code).map(|(_, v)| v.as_str())
 }
 
