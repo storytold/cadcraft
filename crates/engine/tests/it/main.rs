@@ -131,6 +131,7 @@ mod stretch_select;
 mod table_formulas;
 mod table_styles;
 mod temp_tracking;
+mod text_align_fit;
 mod text_commands;
 mod text_left_justify;
 mod text_style_creation;

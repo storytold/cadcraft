@@ -82,8 +82,9 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["Draw", "Text", "Single Line Text"])
             .alias(&["dt", "dtext"])
             .params(
-                "{at, text, height? (default: the style's fixed height, else TEXTSIZE), rotation? (degrees), justify?: L|C|R|M|TL|TC|TR|ML|MC|MR|BL|BC|BR, \
-                 style? (default: the current style; the text takes its width factor and obliquing angle)}",
+                "{at, text, height? (default: the style's fixed height, else TEXTSIZE), rotation? (degrees), \
+                 justify?: L|C|R|A|M|F|TL|TC|TR|ML|MC|MR|BL|BC|BR, end? (A and F: the other end of the baseline from `at`; Align sets the \
+                 height to fit, Fit the width factor), style? (default: the current style; the text takes its width factor and obliquing angle)}",
             )
             .interactive(|s| Ok(Box::new(TextM::new(s)))),
         CommandSpec::new("mtext", "Multiline Text", run_mtext)
@@ -382,6 +383,30 @@ pub(crate) fn make_text(s: &Session, style: &str, at: Vec2, value: &str, height:
     })
 }
 
+/// Aligned (`aligned`) or fit TEXT along the baseline from `start` to `end`: aligned text gets
+/// the height that makes it span the baseline at the style's width factor, fit text keeps
+/// `height` and gets the width factor that makes it span it (AutoCAD stores both the same way).
+pub(crate) fn make_fitted_text(s: &Session, style: &str, start: Vec2, end: Vec2, value: &str, height: f64, aligned: bool) -> EntityKind {
+    let mut k = make_text(s, style, start, value, height, start.angle_to(end), (HAlign::Left, VAlign::Baseline));
+    if let EntityKind::Text(t) = &mut k {
+        // Measured as the renderer measures it, so the text spans the baseline as drawn.
+        let font = s.doc().ok().and_then(|d| d.text_style(style)).map(|st| cadcraft_fonts::TextFont::resolve(&st.font)).unwrap_or_default();
+        let width = cadcraft_fonts::text_width(&font, value, t.height, t.width_factor);
+        let span = start.dist(end);
+        if width.is_finite() && width > 1e-12 && span.is_finite() && span > 1e-12 {
+            let f = span / width;
+            if aligned {
+                t.height *= f;
+            } else {
+                t.width_factor *= f;
+            }
+        }
+        t.align_pt = Some(v3(end));
+        t.halign = if aligned { HAlign::Aligned } else { HAlign::Fit };
+    }
+    k
+}
+
 /// A `style` parameter: the drawing's style of that name, else the current style.
 fn style_param(s: &Session, cmd: &str, p: &Value) -> Result<String> {
     let d = s.doc()?;
@@ -401,7 +426,28 @@ fn run_text(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("text", "height must be positive"));
     }
     let j = justify(str_param(p, "justify").unwrap_or("L")).ok_or_else(|| bad("text", "unknown justification"))?;
-    let k = make_text(s, &style, at, text, height, f64_or(p, "rotation", 0.0).to_radians(), j);
+    let rotation = f64_or(p, "rotation", 0.0).to_radians();
+    let k = if matches!(j.0, HAlign::Aligned | HAlign::Fit) {
+        // Align and Fit span the baseline from `at` to `end`; without `end`, the baseline runs
+        // along `rotation` as long as the text is at `height`.
+        let end = match point_param(p, "end") {
+            Some(end) => end,
+            None => {
+                let EntityKind::Text(t) = make_text(s, &style, at, text, height, rotation, (HAlign::Left, VAlign::Baseline)) else {
+                    return Err(bad("text", "`end` ([x, y]) is required"));
+                };
+                let font = s.doc()?.text_style(&style).map(|st| cadcraft_fonts::TextFont::resolve(&st.font)).unwrap_or_default();
+                let w = cadcraft_fonts::text_width(&font, text, t.height, t.width_factor);
+                at + Vec2::from_angle(t.rotation) * if w.is_finite() && w > 1e-9 { w } else { height }
+            }
+        };
+        if at.dist(end) < 1e-9 || !end.is_finite() {
+            return Err(bad("text", "`end` must differ from `at`"));
+        }
+        make_fitted_text(s, &style, at, end, text, height, j.0 == HAlign::Aligned)
+    } else {
+        make_text(s, &style, at, text, height, rotation, j)
+    };
     added(s.add_entity(k)?)
 }
 
@@ -1492,11 +1538,14 @@ enum TextAsk {
 
 struct TextM {
     at: Option<Vec2>,
+    /// The other end of the baseline, for aligned and fit text.
+    end: Option<Vec2>,
     height: Option<f64>,
     rotation: Option<f64>,
     justify: (HAlign, VAlign),
     ask: Option<TextAsk>,
-    line: usize,
+    /// How far below the first line the next line goes.
+    drop: f64,
     /// The style of the text continued below (Enter at the start point); else the current one.
     style: Option<String>,
     /// Run by a LISP routine (`command`): one line of text ends the command, as AutoLISP's
@@ -1508,14 +1557,20 @@ impl TextM {
     fn new(s: &Session) -> Self {
         TextM {
             at: None,
+            end: None,
             height: None,
             rotation: None,
             justify: (HAlign::Left, VAlign::Baseline),
             ask: None,
-            line: 0,
+            drop: 0.0,
             style: None,
             single_line: s.lisp_running(),
         }
+    }
+
+    /// Aligned and fit text span the two ends of a baseline.
+    fn two_point(&self) -> bool {
+        matches!(self.justify.0, HAlign::Aligned | HAlign::Fit)
     }
 
     /// The style new lines are set in.
@@ -1533,6 +1588,20 @@ impl TextM {
         Ok(())
     }
 
+    /// The text line `value` makes, where the next line goes (`None` until its points, height
+    /// and rotation are known).
+    fn next_line(&self, s: &Session, value: &str) -> Option<EntityKind> {
+        let (a, h, r) = (self.at?, self.height?, self.rotation?);
+        let style = self.style(s);
+        let off = Vec2::from_angle(r - std::f64::consts::FRAC_PI_2) * self.drop;
+        if self.two_point() {
+            let e = self.end?;
+            Some(make_fitted_text(s, &style, a + off, e + off, value, h, self.justify.0 == HAlign::Aligned))
+        } else {
+            Some(make_text(s, &style, a + off, value, h, r, self.justify))
+        }
+    }
+
     /// Continue directly below the last TEXT in this space, with its style, height, rotation and
     /// justification, as Enter at AutoCAD's start point does. False when there is none.
     fn continue_below(&mut self, s: &Session) -> bool {
@@ -1543,15 +1612,25 @@ impl TextM {
         let Some(t) = last else { return false };
         let h = if t.height.is_finite() && t.height > 0.0 { t.height } else { d.header.f64("TEXTSIZE", 0.2) };
         let r = if t.rotation.is_finite() { t.rotation } else { 0.0 };
-        // Aligned and fit text need two points: the next line is left-justified at the start point.
-        let (j, from) = match t.halign {
-            HAlign::Aligned | HAlign::Fit => ((HAlign::Left, VAlign::Baseline), t.insert.xy()),
-            _ => ((t.halign, t.valign), t.justify_point()),
-        };
-        self.at = Some(from + Vec2::from_angle(r - std::f64::consts::FRAC_PI_2) * (h * 5.0 / 3.0));
+        let below = Vec2::from_angle(r - std::f64::consts::FRAC_PI_2) * (h * 5.0 / 3.0);
+        match (t.halign, t.align_pt) {
+            // Aligned and fit text continue along a baseline as long, one line below.
+            (HAlign::Aligned | HAlign::Fit, Some(e)) => {
+                self.at = Some(t.insert.xy() + below);
+                self.end = Some(e.xy() + below);
+                self.justify = (t.halign, VAlign::Baseline);
+            }
+            (HAlign::Aligned | HAlign::Fit, None) => {
+                self.at = Some(t.insert.xy() + below);
+                self.justify = (HAlign::Left, VAlign::Baseline);
+            }
+            _ => {
+                self.at = Some(t.justify_point() + below);
+                self.justify = (t.halign, t.valign);
+            }
+        }
         self.height = Some(h);
         self.rotation = Some(r);
-        self.justify = j;
         self.style = d.text_style(&t.style).map(|st| st.name.clone());
         true
     }
@@ -1572,15 +1651,18 @@ impl Interactive for TextM {
             Some(TextAsk::StyleList) => return Prompt::new("Enter text style(s) to list", Accept::TEXT).default("*"),
             None => {}
         }
-        match (self.at, self.height, self.rotation) {
-            (None, _, _) => Prompt::new("Specify start point of text", Accept::POINT).kw(&["Justify", "Style"]),
-            (Some(a), None, _) => {
+        let two = self.two_point();
+        match (self.at, self.end, self.height, self.rotation) {
+            (None, ..) if two => Prompt::new("Specify first endpoint of text baseline", Accept::POINT),
+            (None, ..) => Prompt::new("Specify start point of text", Accept::POINT).kw(&["Justify", "Style"]),
+            (Some(a), None, ..) if two => Prompt::new("Specify second endpoint of text baseline", Accept::POINT).base(a),
+            (Some(a), _, None, _) => {
                 // An annotative style's text is sized as it measures on paper.
                 let annotative = s.doc().is_ok_and(|d| d.text_style(&self.style(s)).is_some_and(|st| st.annotative));
                 let ask = if annotative { "Specify paper text height" } else { "Specify height" };
                 Prompt::new(ask, Accept::POINT_OR_NUMBER).default(format!("{th:.4}")).base(a)
             }
-            (Some(a), Some(_), None) => Prompt::new("Specify rotation angle of text", Accept::POINT_OR_NUMBER).default("0").base(a),
+            (Some(a), _, Some(_), None) => Prompt::new("Specify rotation angle of text", Accept::POINT_OR_NUMBER).default("0").base(a),
             _ => Prompt::new("Enter text", Accept::TEXT),
         }
     }
@@ -1630,19 +1712,34 @@ impl Interactive for TextM {
             None => {}
         }
         let th = s.doc()?.header.f64("TEXTSIZE", 0.2);
+        let two = self.two_point();
         match (self.at, self.height, self.rotation, i) {
             (None, _, _, Input::Keyword(k)) if k == "Justify" => self.ask = Some(TextAsk::Justify),
             (None, _, _, Input::Keyword(k)) if k == "Style" => self.ask = Some(TextAsk::Style),
             (None, _, _, Input::Point(p)) => {
                 self.at = Some(p);
-                // A fixed-height style isn't asked for a height.
-                self.height = fixed_height(s.doc()?, &self.style(s));
+                // A fixed-height style isn't asked for a height (aligned text works its height out).
+                if !two {
+                    self.height = fixed_height(s.doc()?, &self.style(s));
+                }
             }
             (None, _, _, Input::Enter) => {
                 if !self.continue_below(s) {
                     return Ok(Step::Done);
                 }
             }
+            // The second end of an aligned or fit baseline gives the rotation; aligned text's
+            // height comes from the text, fit text keeps a fixed style's height or asks.
+            (Some(a), _, _, Input::Point(p)) if two && self.end.is_none() => {
+                if a.dist(p) < 1e-9 {
+                    return Err(crate::EngineError::Other("The two ends of the baseline must differ.".into()));
+                }
+                self.end = Some(p);
+                self.rotation = Some(a.angle_to(p));
+                let fixed = fixed_height(s.doc()?, &self.style(s));
+                self.height = if self.justify.0 == HAlign::Aligned { Some(fixed.unwrap_or(th)) } else { fixed };
+            }
+            (Some(_), _, _, _) if two && self.end.is_none() => {}
             (Some(_), None, _, Input::Enter) => self.height = Some(th),
             (Some(a), None, _, Input::Point(p)) => self.height = Some(a.dist(p).max(1e-9)),
             (Some(_), None, _, Input::Text(t)) => {
@@ -1657,11 +1754,13 @@ impl Interactive for TextM {
             (Some(_), Some(_), None, Input::Text(t)) => {
                 self.rotation = Some(s.angle_settings().direction(&t).ok_or_else(|| crate::EngineError::Other("Requires an angle.".into()))?)
             }
-            (Some(a), Some(h), Some(r), Input::Text(t)) => {
-                let at = a + Vec2::from_angle(r - std::f64::consts::FRAC_PI_2) * (h * 5.0 / 3.0 * self.line as f64);
-                let k = make_text(s, &self.style(s), at, &t, h, r, self.justify);
+            // An empty line ends the command; no empty text is made.
+            (Some(_), Some(_), Some(_), Input::Text(t)) if t.is_empty() => return Ok(Step::Done),
+            (Some(_), Some(h), Some(_), Input::Text(t)) => {
+                let Some(k) = self.next_line(s, &t) else { return Ok(Step::Continue) };
+                let line_height = if let EntityKind::Text(x) = &k { x.height } else { h };
                 s.add_entity(k)?;
-                self.line += 1;
+                self.drop += line_height * 5.0 / 3.0;
                 if self.single_line {
                     return Ok(Step::Done);
                 }
@@ -1670,6 +1769,12 @@ impl Interactive for TextM {
             _ => {}
         }
         Ok(Step::Continue)
+    }
+    fn typing(&self, s: &Session, typed: &str) -> Vec<EntityKind> {
+        if self.ask.is_some() || typed.is_empty() {
+            return Vec::new();
+        }
+        self.next_line(s, typed).into_iter().collect()
     }
 }
 

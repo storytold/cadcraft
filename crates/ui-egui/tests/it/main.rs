@@ -31,6 +31,7 @@ mod status_bar_toggles;
 mod style_dialogs;
 mod system_cursor;
 mod text_double_click;
+mod text_typing_preview;
 mod toolsets_gear;
 mod toolsets_parametric;
 mod viewport_double_click_selection;

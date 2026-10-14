@@ -1986,6 +1986,16 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             draw_list(&painter, &xf, &list, bg, false);
         }
     }
+    // The line TEXT is typing, drawn where it goes, wherever the cursor is.
+    if app.session.prompting() && !app.cmd.buffer.is_empty() {
+        let ents = app.session.typing_preview(&app.cmd.buffer);
+        if !ents.is_empty()
+            && let Ok(st) = app.session.state()
+        {
+            let list = rebuilt_preview(&st.doc, ents.iter(), scale);
+            draw_list(&painter, &xf, &list, bg, false);
+        }
+    }
     // Pending selection window.
     if let (Some(pw), Some(c)) = (app.session.pending_window, raw_world) {
         let a = xf.to_screen(pw.corner);

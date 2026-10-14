@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (Text Style dialog) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (TEXT typing drawn in place) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
 
 How CADCraft's interaction compares with AutoCAD's: point entry, object snaps, tracking, dynamic
 input, grips, selection, the command line, chrome and navigation. A drafter's speed in AutoCAD
@@ -151,6 +151,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 | SETVAR for every system variable | ~1,000 sysvars | about 60 session/header variables by name (`sysvars.rs`) |
 | Scripts (SCRIPT, `.scr`) | yes | script text via CLI/MCP/control; no `.scr` file command |
 | Floating/docked command window, transparency, lines of history | yes | floating overlay, history lines setting |
+| TEXT typed in place on the canvas | yes | the line typed on the command line is drawn where it goes as it is typed; Enter places it and starts the next line (no caret or editing within the line on the canvas) |
 
 ## Chrome and palettes (≈ 45%)
 
@@ -207,6 +208,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | TEXT: the line being typed is drawn on the canvas where it goes |
 | 2026-10-13 | minor | Text Style dialog (STYLE): fonts by family and style, preview, effects, Set Current, New, Rename, Delete, Apply (#1083) |
 | 2026-10-13 | minor | Dimension Style Manager (DIMSTYLE): styles, overrides, preview, Set Current, New, Modify, Override, Compare, Rename, Delete and the seven tabs |
 | 2026-10-13 | minor | Dimension shortcut menu: Align Text, Dimension Style (styles, Save as New Style), Precision, Remove Style Overrides |
