@@ -41,6 +41,8 @@ fn drawing() -> Result<(Drawing, Vec<(Handle, String)>), Box<dyn std::error::Err
             line_spacing: 1.0,
             line_spacing_exact: false,
             columns: None,
+            direction: Default::default(),
+            background: None,
         });
         let handle = d.add(&Space::Model, Common::default(), kind)?;
         expected.push((handle, contents));

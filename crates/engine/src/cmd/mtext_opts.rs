@@ -95,6 +95,8 @@ impl MTextOpts {
             line_spacing: self.spacing,
             line_spacing_exact: self.exact,
             columns: self.columns.clone().filter(|_| width > 0.0),
+            direction: Default::default(),
+            background: None,
         }
     }
 }

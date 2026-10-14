@@ -36,6 +36,8 @@ fn session() -> Session {
         line_spacing: 1.0,
         line_spacing_exact: false,
         columns: None,
+        direction: Default::default(),
+        background: None,
     };
     let def = Attrib {
         tag: "LABEL".into(),

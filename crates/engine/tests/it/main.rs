@@ -91,6 +91,7 @@ mod mline;
 mod mocoro;
 mod modify_curves;
 mod mtext_columns;
+mod mtext_mask;
 mod mtext_options;
 mod multiline_attributes;
 mod named_viewports;

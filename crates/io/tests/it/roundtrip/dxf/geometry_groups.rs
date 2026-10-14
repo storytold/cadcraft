@@ -74,6 +74,8 @@ fn fixtures() -> Vec<Fixture> {
                 line_spacing: 1.75,
                 line_spacing_exact: true,
                 columns: None,
+                direction: Default::default(),
+                background: None,
             }),
             groups: "10\n1.25\n20\n-2.5\n30\n3.75\n40\n2.25\n41\n12.5\n71\n5\n50\n90\n7\nStandard\n1\nfirst\\Psecond\n73\n2\n44\n1.75\n",
             output: vec![
