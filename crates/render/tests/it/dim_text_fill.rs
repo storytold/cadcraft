@@ -240,6 +240,8 @@ fn a_block_with_turned_text_gets_a_turned_background() {
         style: "Standard".into(),
         halign: Default::default(),
         valign: Default::default(),
+        backwards: false,
+        upside_down: false,
     };
     blk.entities.push(Entity::new(Handle(1), EntityKind::Text(text)));
     d.blocks.insert("*D1".into(), std::sync::Arc::new(blk));

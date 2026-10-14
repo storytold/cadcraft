@@ -76,6 +76,10 @@ fn text_values() {
     check(cases::text_values());
 }
 #[test]
+fn text_generation() {
+    check(cases::text_generation());
+}
+#[test]
 #[ignore = "Confirmed DWG bridge loss: literal Unicode/MIF escape text is decoded again, including R2018"]
 fn text_literal_escapes() {
     check(cases::text_literal_escapes());

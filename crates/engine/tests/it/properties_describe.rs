@@ -32,7 +32,7 @@ fn text_rows_share_values_and_vary() {
     let a = handle(&s.execute("text", &json!({ "at": [0, 0], "text": "A", "height": 2.5 })).unwrap());
     let b = handle(&s.execute("text", &json!({ "at": [0, 5], "text": "B", "height": 1, "justify": "MC" })).unwrap());
     let one = describe(&mut s, json!({ "handles": [a] }));
-    assert_eq!(group_names(&one), ["General", "Text", "Geometry"]);
+    assert_eq!(group_names(&one), ["General", "Text", "Geometry", "Misc"]);
     let h = row(&one, "Text", "height");
     assert_eq!((h["value"].as_f64(), h["display"].as_str(), h["kind"].as_str()), (Some(2.5), Some("2.5000"), Some("distance")));
     assert_eq!(row(&one, "Text", "justify")["display"], "Left");
@@ -62,7 +62,7 @@ fn mixed_selections_show_general_rows_unless_filtered() {
     assert_eq!(row(&mixed, "General", "layer")["value"], "0");
     let texts = describe(&mut s, json!({ "handles": [t, c], "type": "text" }));
     assert_eq!((texts["filter"].as_str(), texts["count"].as_u64()), (Some("Text"), Some(1)));
-    assert_eq!(group_names(&texts), ["General", "Text", "Geometry"]);
+    assert_eq!(group_names(&texts), ["General", "Text", "Geometry", "Misc"]);
     // An unknown filter describes everything.
     assert_eq!(describe(&mut s, json!({ "handles": [t, c], "type": "nope" }))["count"], 2);
     // Nothing selected, or handles that name nothing: no rows.

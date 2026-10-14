@@ -468,6 +468,14 @@ fn text(t: &mut Text, c: &Call<'_>, h: Handle, used: &mut Used<'_>) {
         t.oblique = x.to_radians();
         used.insert("oblique");
     }
+    if let Some(b) = p.get("backwards").and_then(Value::as_bool) {
+        t.backwards = b;
+        used.insert("backwards");
+    }
+    if let Some(b) = p.get("upsideDown").and_then(Value::as_bool) {
+        t.upside_down = b;
+        used.insert("upsideDown");
+    }
     if let Some((ha, va)) = str_param(p, "justify").and_then(crate::cmd::draw::justify) {
         set_justify(t, ha, va, c.prep.ends.get(&h).copied());
         used.insert("justify");

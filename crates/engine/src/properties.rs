@@ -365,7 +365,12 @@ fn text_groups(c: &Ctx, ents: &[&Entity], texts: &[&Text]) -> Vec<Group> {
         c.row("positionY", "Position Y", Kind::Distance, texts.iter().map(|t| json!(t.justify_point().y))),
         c.row("positionZ", "Position Z", Kind::Distance, texts.iter().map(|t| json!(t.insert.z))),
     ];
-    vec![Group { name: "Text", rows: text }, Group { name: "Geometry", rows: geometry }]
+    // The text's own effects (new text takes them from its style).
+    let misc = vec![
+        c.row("upsideDown", "Upside down", Kind::Bool, texts.iter().map(|t| json!(t.upside_down))),
+        c.row("backwards", "Backwards", Kind::Bool, texts.iter().map(|t| json!(t.backwards))),
+    ];
+    vec![Group { name: "Text", rows: text }, Group { name: "Geometry", rows: geometry }, Group { name: "Misc", rows: misc }]
 }
 
 fn mtext_groups(c: &Ctx, ents: &[&Entity], mts: &[&MText]) -> Vec<Group> {
