@@ -35,6 +35,8 @@ fn drawing(scale: f64, all_visible: bool) -> Drawing {
         style: "Standard".into(),
         halign: Default::default(),
         valign: Default::default(),
+        backwards: false,
+        upside_down: false,
     };
     d.add(&Space::Model, anno, EntityKind::Text(text)).unwrap();
     d.add(&Space::Paper("Layout1".into()), Common::default(), EntityKind::Viewport(viewport(50.0, scale))).unwrap();

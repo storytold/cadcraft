@@ -22,6 +22,8 @@ fn session() -> Session {
         style: "Standard".into(),
         halign: Default::default(),
         valign: Default::default(),
+        backwards: false,
+        upside_down: false,
     };
     let mtext = MText {
         insert: Vec3::new(10.0, 3.0, 0.0),
