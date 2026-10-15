@@ -16,7 +16,6 @@ pub fn format_distance(v: f64, lunits: i64, luprec: i64) -> String {
     match lunits {
         1 => scientific(v, prec),
         3 => {
-            let neg = v < 0.0;
             // Round at the displayed precision before splitting, so 11.999 carries to 1'-0.00".
             let scale = 10f64.powi(prec as i32);
             let rounded = (v.abs() * scale).round() / scale;
@@ -25,11 +24,11 @@ pub fn format_distance(v: f64, lunits: i64, luprec: i64) -> String {
             if ft >= I64_SAFE_MAX {
                 return format!("{:.*}", prec, v);
             }
-            let inch = a - ft * 12.0;
-            format!("{}{}'-{:.*}\"", if neg { "-" } else { "" }, ft as i64, prec, inch)
+            let inch = format!("{:.*}", prec, a - ft * 12.0);
+            let neg = v < 0.0 && (ft != 0.0 || has_nonzero_digit(&inch));
+            format!("{}{}'-{}\"", if neg { "-" } else { "" }, ft as i64, inch)
         }
         4 => {
-            let neg = v < 0.0;
             let a = v.abs();
             let denom = 1i64 << prec.min(8);
             let scaled = (a * denom as f64).round();
@@ -37,6 +36,7 @@ pub fn format_distance(v: f64, lunits: i64, luprec: i64) -> String {
                 return format!("{:.*}", prec, v);
             }
             let total = scaled as i64;
+            let neg = v < 0.0 && total != 0;
             let ft = total / (12 * denom);
             let rem = total - ft * 12 * denom;
             let inch = rem / denom;
@@ -50,7 +50,6 @@ pub fn format_distance(v: f64, lunits: i64, luprec: i64) -> String {
             format!("{}{}'-{}{}\"", if neg { "-" } else { "" }, ft, inch, fs)
         }
         5 => {
-            let neg = v < 0.0;
             let a = v.abs();
             let denom = 1i64 << prec.min(8);
             let scaled = (a * denom as f64).round();
@@ -58,6 +57,7 @@ pub fn format_distance(v: f64, lunits: i64, luprec: i64) -> String {
                 return format!("{:.*}", prec, v);
             }
             let total = scaled as i64;
+            let neg = v < 0.0 && total != 0;
             let whole = total / denom;
             let frac = total % denom;
             let fs = if frac == 0 {
@@ -70,6 +70,10 @@ pub fn format_distance(v: f64, lunits: i64, luprec: i64) -> String {
         }
         _ => fixed(v, prec),
     }
+}
+
+fn has_nonzero_digit(s: &str) -> bool {
+    s.chars().any(|c| ('1'..='9').contains(&c))
 }
 
 /// `v` with `prec` decimals, rounded as AutoCAD rounds a number it shows (RTOS, LUNITS): at 15
@@ -532,6 +536,26 @@ mod tests {
         assert_eq!(format_distance(-17.5, 1, 4), "-1.7500E+01");
         assert_eq!(format_distance(0.0, 1, 2), "0.00E+00");
         assert_eq!(format_distance(1e100, 1, 1), "1.0E+100");
+    }
+
+    #[test]
+    fn negative_zero() {
+        assert_eq!(format_distance(-0.00001, 2, 4), "0.0000");
+        assert_eq!(format_distance(-0.0, 2, 2), "0.00");
+        assert_eq!(format_distance(-0.001, 4, 2), "0'-0\"");
+        assert_eq!(format_distance(-0.001, 5, 2), "0");
+        assert_eq!(format_distance(-0.001, 3, 2), "0'-0.00\"");
+        assert_eq!(format_distance(-0.0, 1, 2), "0.00E+00");
+        for lunits in 1..=5 {
+            for luprec in 0..=4 {
+                let s = format_distance(-1e-9, lunits, luprec);
+                assert!(!s.starts_with('-') || lunits == 1, "LUNITS {lunits} LUPREC {luprec}: {s}");
+            }
+        }
+        assert_eq!(format_distance(-1.5, 2, 2), "-1.50");
+        assert_eq!(format_distance(-1.5, 5, 2), "-1 1/2");
+        assert_eq!(format_distance(-18.5, 4, 4), "-1'-6 1/2\"");
+        assert_eq!(format_distance(-30.0, 3, 2), "-2'-6.00\"");
     }
 
     #[test]
