@@ -243,7 +243,8 @@ fn write_dimstyles(w: &mut W, d: &Drawing, cx: &mut Ctx, version: Version) {
         w.i(70, 0);
         let v = serde_json::to_value(s).unwrap_or_default();
         let defaults = serde_json::to_value(DimStyle::default()).unwrap_or_default();
-        let mut newer = W { t: Vec::new(), next: 0, pstyles: HashMap::new(), layers: HashMap::new(), reactors: HashMap::new() };
+        let mut newer =
+            W { t: Vec::new(), next: 0, pstyles: HashMap::new(), layers: HashMap::new(), reactors: HashMap::new(), xdicts: HashMap::new() };
         for (field, code, kind) in dxf_ext::DIM_CODES {
             let Some(enc) = v.get(*field).and_then(|x| cx.encode(*kind, x)) else { continue };
             // DIMPOST is written even when empty: a reader that defaults a missing one to "<>"
@@ -313,7 +314,7 @@ fn write_header(w: &mut W, d: &Drawing, version: Version) -> usize {
     seed_pos
 }
 
-fn write_classes(w: &mut W, cx: &Ctx, every: &[&Entity]) {
+fn write_classes(w: &mut W, d: &Drawing, cx: &Ctx, every: &[&Entity]) {
     w.s(0, "SECTION");
     w.s(2, "CLASSES");
     let mut classes = vec![
@@ -344,6 +345,9 @@ fn write_classes(w: &mut W, cx: &Ctx, every: &[&Entity]) {
         classes.push(("RASTERVARIABLES", "AcDbRasterVariables", 0, false));
     }
     classes.push(("SCALE", "AcDbScale", 0, false));
+    for (dxf_name, cpp) in cx.anno.classes(d) {
+        classes.push((dxf_name, cpp, 1153, false));
+    }
     for (dxf_name, cpp, proxy, is_entity) in classes {
         w.s(0, "CLASS");
         w.s(1, dxf_name);
@@ -685,7 +689,8 @@ fn write_named_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
     scale_list(w, scales, scale_dict, root_dict);
 }
 
-fn write_associative_objects(w: &mut W, cx: &Ctx) {
+fn write_associative_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
+    let cx = plan.cx;
     // Dimension associativity: extension dictionary + DIMASSOC per dimension.
     let mut assoc: Vec<(&Handle, &AssocObj)> = cx.assoc.iter().collect();
     assoc.sort_by_key(|(h, _)| **h);
@@ -700,6 +705,10 @@ fn write_associative_objects(w: &mut W, cx: &Ctx) {
         w.i(281, 1);
         w.s(3, "ACAD_DIMASSOC");
         w.s(360, a.handle.clone());
+        // An annotative dimension's contexts share the dictionary.
+        if let Some(o) = cx.anno.objs.get(dim) {
+            w.t.extend(crate::dxf_anno::xdict_entry(o));
+        }
         w.s(0, "DIMASSOC");
         w.s(5, a.handle.clone());
         w.group("ACAD_REACTORS", 330, &[&a.xdict]);
@@ -729,6 +738,17 @@ fn write_associative_objects(w: &mut W, cx: &Ctx) {
     }
 }
 
+/// The annotation scale contexts of annotative text, MText and dimensions.
+fn write_annotation_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
+    let mut annos: Vec<(&Handle, &crate::dxf_anno::Obj)> = plan.cx.anno.objs.iter().collect();
+    annos.sort_by_key(|(h, _)| **h);
+    for (h, o) in annos {
+        if let Some(e) = plan.d.entity(*h) {
+            w.t.extend(crate::dxf_anno::objects(plan.d, e, o));
+        }
+    }
+}
+
 fn write_objects(w: &mut W, plan: ObjectWritePlan<'_>) {
     // Groups (members that still exist) and multileader styles.
     let group_owner = plan.group_dict.clone();
@@ -739,25 +759,74 @@ fn write_objects(w: &mut W, plan: ObjectWritePlan<'_>) {
     write_root_group_objects(w, &plan, &groups, &group_owner, &written, &mleader_dict);
     write_style_objects(w, &plan, &mleader_dict, &mleader_handles);
     write_named_objects(w, &plan);
-    write_associative_objects(w, plan.cx);
+    write_associative_objects(w, &plan);
+    write_annotation_objects(w, &plan);
     write_layout_objects(w, &plan);
     // Raster image definitions.
     w.t.extend(crate::dxf_image::objects(&plan.cx.images, plan.root_dict));
     w.s(0, "ENDSEC");
 }
 
+/// The next free `*D` block name at or after `*D{n}`.
+fn fresh_dim_name(d: &Drawing, n: &mut usize) -> String {
+    let mut name = format!("*D{n}");
+    while d.block(&name).is_some() {
+        *n += 1;
+        name = format!("*D{n}");
+    }
+    *n += 1;
+    name
+}
+
+type DimDef = (String, String, Vec<Entity>);
+
+/// An annotative dimension's blocks, one per annotation scale (its default scale's is the
+/// dimension's own); `None` when it has no scales.
+fn annotative_dimension_blocks(
+    d: &Drawing,
+    e: &Entity,
+    n: &mut usize,
+    w: &mut W,
+    (cx, dim_defs): (&mut Ctx, &mut Vec<DimDef>),
+) -> Option<Vec<String>> {
+    let (scales, default) = crate::dxf_anno::scales(d, e);
+    let mut names = Vec::new();
+    for s in &scales {
+        let at = crate::dxf_anno::at_scale(e, s.factor());
+        let ents = match &at.kind {
+            EntityKind::Dimension(sdm) => dim_block_entities(d, sdm, &e.common.layer),
+            _ => Vec::new(),
+        };
+        let name = fresh_dim_name(d, n);
+        dim_defs.push((name.clone(), w.h(), ents));
+        names.push(name);
+    }
+    cx.dim_blocks.insert(e.handle, names.get(default)?.clone());
+    Some(names)
+}
+
+/// The dimensions' anonymous blocks, and the blocks of each annotative dimension by scale (from
+/// AutoCAD 2008, the 2007 format: `contexts`).
 fn dimension_block_definitions(
     d: &Drawing,
     all_spaces: &[&EntityStore],
-    dim_plan: &super::blocks::DimBlockPlan,
+    (dim_plan, contexts): (&super::blocks::DimBlockPlan, bool),
     w: &mut W,
     cx: &mut Ctx,
-) -> Vec<(String, String, Vec<Entity>)> {
+) -> (Vec<DimDef>, HashMap<Handle, Vec<String>>) {
     let mut dim_defs = Vec::new();
+    let mut anno_dim_blocks: HashMap<Handle, Vec<String>> = HashMap::new();
     let mut n = 1;
     let mut reused_handles = std::collections::HashSet::new();
     for st in all_spaces {
         for e in st.iter() {
+            if contexts
+                && crate::dxf_anno::has_contexts(e)
+                && let Some(names) = annotative_dimension_blocks(d, e, &mut n, w, (cx, &mut dim_defs))
+            {
+                anno_dim_blocks.insert(e.handle, names);
+                continue;
+            }
             if let EntityKind::Dimension(dm) = &e.kind {
                 let reused = dim_plan.reuse.get(&e.handle);
                 let ents: Vec<Entity>;
@@ -778,13 +847,7 @@ fn dimension_block_definitions(
                     }
                     None => {
                         ents = dim_block_entities(d, dm, &e.common.layer);
-                        let mut name = format!("*D{n}");
-                        while d.block(&name).is_some() {
-                            n += 1;
-                            name = format!("*D{n}");
-                        }
-                        n += 1;
-                        name
+                        fresh_dim_name(d, &mut n)
                     }
                 };
                 let brh = w.h();
@@ -793,7 +856,7 @@ fn dimension_block_definitions(
             }
         }
     }
-    dim_defs
+    (dim_defs, anno_dim_blocks)
 }
 
 fn arrow_block_definitions(
@@ -893,6 +956,7 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Ta
         pstyles: HashMap::new(),
         layers: HashMap::new(),
         reactors: hatch_reactors(d),
+        xdicts: HashMap::new(),
     };
     // Pre-allocate handles for block records.
     let paper_layouts = d.paper_space_layouts();
@@ -918,7 +982,9 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Ta
     let mut cx = Ctx { paper_views: paper_views(d), target, ..Ctx::default() };
     cx.block_records = user_blocks.iter().map(|(n, h, _)| (n.to_ascii_uppercase(), h.clone())).collect();
     let all_spaces: Vec<&EntityStore> = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).collect();
-    let mut dim_defs = dimension_block_definitions(d, &all_spaces, &dim_plan, &mut w, &mut cx);
+    // Annotation scale contexts (from AutoCAD 2008, the 2007 format).
+    let contexts = target >= Version::R2007;
+    let (mut dim_defs, anno_dim_blocks) = dimension_block_definitions(d, &all_spaces, (&dim_plan, contexts), &mut w, &mut cx);
     // Every entity, including block contents (for arrows, tables and overrides).
     let every: Vec<&Entity> = all_spaces
         .iter()
@@ -958,12 +1024,38 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Ta
     if let Some(chunks) = dxf_ext::plot_style_chunks(&d.plot_style_tables) {
         xrecords.push((dxf_ext::PLOT_STYLES_KEY, w.h(), chunks));
     }
-    if let Some(chunks) = dxf_ext::anno_chunks(d) {
+    if let Some(chunks) = dxf_ext::anno_chunks(d, contexts) {
         xrecords.push((dxf_ext::ANNOTATION_KEY, w.h(), chunks));
     }
     // The annotation scale list: the ACAD_SCALELIST dictionary of SCALE objects.
     let scale_dict = w.h();
-    let scales: Vec<(&cadcraft_doc::AnnoScale, String)> = d.scales.iter().filter(|s| s.is_valid()).map(|s| (s, w.h())).collect();
+    // Scales annotative objects support that the list lacks are added to it (each context names
+    // its SCALE object).
+    let mut extra_scales: Vec<cadcraft_doc::AnnoScale> = Vec::new();
+    for e in all_spaces.iter().flat_map(|s| s.iter()).filter(|e| contexts && crate::dxf_anno::has_contexts(e)) {
+        for s in crate::dxf_anno::scales(d, e).0 {
+            let known = |x: &cadcraft_doc::AnnoScale| x.is_valid() && x.name.eq_ignore_ascii_case(&s.name);
+            if !d.scales.iter().any(known) && !extra_scales.iter().any(known) && extra_scales.len() < cadcraft_doc::MAX_SCALES {
+                extra_scales.push(s);
+            }
+        }
+    }
+    let scales: Vec<(&cadcraft_doc::AnnoScale, String)> =
+        d.scales.iter().filter(|s| s.is_valid()).chain(extra_scales.iter()).map(|s| (s, w.h())).collect();
+    // The annotation scale contexts of annotative text, MText and dimensions.
+    if contexts {
+        let scale_handle = |name: &str| scales.iter().find(|(s, _)| s.name.eq_ignore_ascii_case(name)).map(|(_, h)| h.clone());
+        for e in all_spaces.iter().flat_map(|s| s.iter()).filter(|e| crate::dxf_anno::has_contexts(e)) {
+            let xdict = cx.assoc.get(&e.handle).map(|a| a.xdict.clone());
+            let blocks = anno_dim_blocks.get(&e.handle).map(Vec::as_slice);
+            if let Some(o) = crate::dxf_anno::plan_one(d, e, scale_handle, xdict, blocks, || w.h()) {
+                if o.own_xdict {
+                    w.xdicts.insert(e.handle, o.xdict.clone());
+                }
+                cx.anno.objs.insert(e.handle, o);
+            }
+        }
+    }
     // Plot style names used by layers and objects (Normal always), each a placeholder object.
     let pstyle_dict = w.h();
     let mut pstyle_names: Vec<String> = vec![cadcraft_doc::NORMAL_STYLE.to_string()];
@@ -982,7 +1074,7 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Ta
 
     let seed_pos = write_header(&mut w, d, version);
 
-    write_classes(&mut w, &cx, &every);
+    write_classes(&mut w, d, &cx, &every);
 
     let ltype_handles = write_tables(&mut w, TableWritePlan { d, version, cx: &mut cx, ext: d.extents(&Space::Model) });
 

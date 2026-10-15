@@ -16,7 +16,7 @@ pub(super) fn annotative_xdata(w: &mut W) {
 
 /// Override (`ACAD` DSTYLE) and associativity (`CADCRAFT` ASSOC) xdata of a dimension.
 pub(super) fn dim_xdata(w: &mut W, dm: &Dimension, cx: &Ctx) {
-    let mut ov = W { t: Vec::new(), next: 0, pstyles: HashMap::new(), layers: HashMap::new(), reactors: HashMap::new() };
+    let mut ov = W { t: Vec::new(), next: 0, pstyles: HashMap::new(), layers: HashMap::new(), reactors: HashMap::new(), xdicts: HashMap::new() };
     let mut sah = false;
     for (k, v) in &dm.overrides {
         let Some(field) = DimStyle::field_name(k) else { continue };
@@ -83,8 +83,8 @@ pub(super) fn common_x(w: &mut W, e: &Entity, owner: &str, paper: bool, subclass
         let rs: Vec<&str> = reactors.iter().map(String::as_str).collect();
         w.group("ACAD_REACTORS", 330, &rs);
     }
-    if let Some(a) = assoc {
-        w.group("ACAD_XDICTIONARY", 360, &[&a.xdict]);
+    if let Some(xd) = assoc.map(|a| a.xdict.clone()).or_else(|| w.xdicts.get(&e.handle).cloned()) {
+        w.group("ACAD_XDICTIONARY", 360, &[&xd]);
     }
     w.s(330, owner);
     w.s(100, "AcDbEntity");
