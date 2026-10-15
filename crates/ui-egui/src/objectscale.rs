@@ -167,103 +167,101 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let t = Tokens::get();
     let mut ok = false;
     let mut cancel = false;
-    egui::Window::new(crate::tl!("Annotation Object Scale"))
-        .id(egui::Id::new("Annotation Object Scale"))
-        .open(open)
-        .resizable(false)
-        .collapsible(false)
-        .pivot(egui::Align2::CENTER_CENTER)
-        .default_pos(ctx.content_rect().center())
-        .show(ctx, |ui| {
-            ui.label(egui::RichText::new(crate::tl!("Object Scale List")).color(t.text_dim));
-            let list = listed(&d, &s);
-            if s.selected.as_ref().is_some_and(|n| !list.iter().any(|x| same(x, n))) {
-                s.selected = None;
-            }
-            ui.horizontal_top(|ui| {
-                egui::Frame::new().fill(t.control).inner_margin(4.0).show(ui, |ui| {
-                    egui::ScrollArea::vertical().max_height(160.0).min_scrolled_height(160.0).show(ui, |ui| {
-                        // One scale per line, from the top.
-                        ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-                            ui.set_width(220.0);
-                            ui.set_min_height(160.0);
-                            for n in &list {
-                                let on = s.selected.as_ref().is_some_and(|x| same(x, n));
-                                if ui.selectable_label(on, n).clicked() {
-                                    s.selected = Some(n.clone());
-                                }
+    // Escape closes the Add window, then the dialog. The dialog is modal: the drawing behind
+    // takes no clicks or keys while it is open (see `cmdline::keyboard`).
+    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        if s.adding.is_some() {
+            s.adding = None;
+        } else {
+            cancel = true;
+        }
+    }
+    egui::Modal::new(egui::Id::new("Annotation Object Scale")).show(ctx, |ui| {
+        ui.heading(crate::tl!("Annotation Object Scale"));
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new(crate::tl!("Object Scale List")).color(t.text_dim));
+        let list = listed(&d, &s);
+        if s.selected.as_ref().is_some_and(|n| !list.iter().any(|x| same(x, n))) {
+            s.selected = None;
+        }
+        ui.horizontal_top(|ui| {
+            egui::Frame::new().fill(t.control).inner_margin(4.0).show(ui, |ui| {
+                egui::ScrollArea::vertical().max_height(160.0).min_scrolled_height(160.0).show(ui, |ui| {
+                    // One scale per line, from the top.
+                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                        ui.set_width(220.0);
+                        ui.set_min_height(160.0);
+                        for n in &list {
+                            let on = s.selected.as_ref().is_some_and(|x| same(x, n));
+                            if ui.selectable_label(on, n).clicked() {
+                                s.selected = Some(n.clone());
                             }
-                        });
+                        }
                     });
                 });
-                ui.vertical(|ui| {
-                    if ui.button(crate::tl!("Add...")).clicked() {
-                        s.adding = Some(Vec::new());
-                    }
-                    let picked = s.selected.clone().filter(|n| can_delete(&d, &s, n));
-                    if ui.add_enabled(picked.is_some(), egui::Button::new(crate::tl!("Delete"))).clicked()
-                        && let Some(n) = picked
-                    {
-                        delete(&mut s, &n);
-                    }
-                });
             });
-            let shown = s.selected.clone().or_else(|| list.first().cloned());
-            if let Some(line) = shown.and_then(|n| units_line(&d, &n)) {
-                ui.label(line);
-            }
-            ui.radio_value(&mut s.common_only, false, crate::tl!("List all scales for selected objects"));
-            ui.radio_value(&mut s.common_only, true, crate::tl!("List scales common to all selected objects only"));
-            if let Some(e) = &s.error {
-                ui.colored_label(t.warn, e);
-            }
-            ui.separator();
-            ui.horizontal(|ui| {
-                ok = ui.button(crate::tl!("OK")).clicked();
-                cancel = ui.button(crate::tl!("Cancel")).clicked();
+            ui.vertical(|ui| {
+                if ui.button(crate::tl!("Add...")).clicked() {
+                    s.adding = Some(Vec::new());
+                }
+                let picked = s.selected.clone().filter(|n| can_delete(&d, &s, n));
+                if ui.add_enabled(picked.is_some(), egui::Button::new(crate::tl!("Delete"))).clicked()
+                    && let Some(n) = picked
+                {
+                    delete(&mut s, &n);
+                }
             });
         });
+        let shown = s.selected.clone().or_else(|| list.first().cloned());
+        if let Some(line) = shown.and_then(|n| units_line(&d, &n)) {
+            ui.label(line);
+        }
+        ui.radio_value(&mut s.common_only, false, crate::tl!("List all scales for selected objects"));
+        ui.radio_value(&mut s.common_only, true, crate::tl!("List scales common to all selected objects only"));
+        if let Some(e) = &s.error {
+            ui.colored_label(t.warn, e);
+        }
+        ui.separator();
+        ui.horizontal(|ui| {
+            ok = ui.button(crate::tl!("OK")).clicked();
+            cancel = ui.button(crate::tl!("Cancel")).clicked();
+        });
+    });
     // Add Scales to Object: the drawing's other scales, several at a time.
     if let Some(mut picks) = s.adding.clone() {
-        let mut keep = true;
         let mut done = false;
-        egui::Window::new(crate::tl!("Add Scales to Object"))
-            .id(egui::Id::new("Add Scales to Object"))
-            .open(&mut keep)
-            .resizable(false)
-            .collapsible(false)
-            .pivot(egui::Align2::CENTER_CENTER)
-            .default_pos(ctx.content_rect().center() + egui::vec2(40.0, 40.0))
-            .show(ctx, |ui| {
-                ui.label(egui::RichText::new(crate::tl!("Scale List")).color(t.text_dim));
-                egui::Frame::new().fill(t.control).inner_margin(4.0).show(ui, |ui| {
-                    egui::ScrollArea::vertical().max_height(220.0).min_scrolled_height(220.0).show(ui, |ui| {
-                        ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-                            ui.set_width(220.0);
-                            for n in addable(&d, &s) {
-                                let on = picks.iter().any(|x| same(x, &n));
-                                if ui.selectable_label(on, &n).clicked() {
-                                    if on {
-                                        picks.retain(|x| !same(x, &n));
-                                    } else {
-                                        picks.push(n.clone());
-                                    }
+        egui::Modal::new(egui::Id::new("Add Scales to Object")).show(ctx, |ui| {
+            ui.heading(crate::tl!("Add Scales to Object"));
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new(crate::tl!("Scale List")).color(t.text_dim));
+            egui::Frame::new().fill(t.control).inner_margin(4.0).show(ui, |ui| {
+                egui::ScrollArea::vertical().max_height(220.0).min_scrolled_height(220.0).show(ui, |ui| {
+                    ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                        ui.set_width(220.0);
+                        for n in addable(&d, &s) {
+                            let on = picks.iter().any(|x| same(x, &n));
+                            if ui.selectable_label(on, &n).clicked() {
+                                if on {
+                                    picks.retain(|x| !same(x, &n));
+                                } else {
+                                    picks.push(n.clone());
                                 }
                             }
-                        });
+                        }
                     });
                 });
-                ui.horizontal(|ui| {
-                    if ui.button(crate::tl!("OK")).clicked() {
-                        add(&mut s, &picks);
-                        done = true;
-                    }
-                    if ui.button(crate::tl!("Cancel")).clicked() {
-                        done = true;
-                    }
-                });
             });
-        s.adding = if done || !keep { None } else { Some(picks) };
+            ui.horizontal(|ui| {
+                if ui.button(crate::tl!("OK")).clicked() {
+                    add(&mut s, &picks);
+                    done = true;
+                }
+                if ui.button(crate::tl!("Cancel")).clicked() {
+                    done = true;
+                }
+            });
+        });
+        s.adding = if done { None } else { Some(picks) };
     }
     if cancel {
         *open = false;

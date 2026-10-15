@@ -48,13 +48,18 @@ fn annotative_text_shows_its_scales_and_its_height_on_paper_and_in_the_model() {
         ["text", "style", "annotative", "annoScales", "justify", "height", "modelHeight", "rotation", "widthFactor", "oblique"]
     );
     let sc = row(&d, "Text", "annoScales");
-    assert_eq!((sc["kind"].as_str(), sc["value"].clone(), sc["display"].as_str()), (Some("annoScales"), json!(["1:10", "1:2"]), Some("1:10, 1:2")));
+    assert_eq!((sc["kind"].as_str(), sc["value"].clone(), sc["display"].as_str()), (Some("annoScales"), json!(["1:10", "1:2"]), Some("1:10")));
     assert_eq!(row(&d, "Text", "height")["label"], "Paper text height");
     let model = row(&d, "Text", "modelHeight");
     assert_eq!((model["value"].as_f64(), model["editable"].as_bool()), (Some(25.0), Some(false)));
-    // At a scale it supports, the model height follows it.
+    // At a scale it supports, the row shows that scale and the model height follows it.
     s.execute("setvar", &json!({ "name": "CANNOSCALE", "value": "1:2" })).unwrap();
-    assert_eq!(row(&describe(&mut s, &[&t]), "Text", "modelHeight")["value"].as_f64(), Some(5.0));
+    let d = describe(&mut s, &[&t]);
+    assert_eq!(row(&d, "Text", "modelHeight")["value"].as_f64(), Some(5.0));
+    assert_eq!(row(&d, "Text", "annoScales")["display"], "1:2");
+    // At one it doesn't, the scale it draws at (its first).
+    s.execute("setvar", &json!({ "name": "CANNOSCALE", "value": "1:4" })).unwrap();
+    assert_eq!(row(&describe(&mut s, &[&t]), "Text", "annoScales")["display"], "1:10");
 }
 
 #[test]
@@ -78,8 +83,12 @@ fn scales_that_differ_vary() {
     let (mut s, a) = annotative_text();
     let b = handle(&s.execute("text", &json!({ "at": [0, 5], "text": "B", "height": 2.5 })).unwrap());
     s.execute("properties.set", &json!({ "handles": [b], "annotative": true })).unwrap();
+    // Both draw at 1:10, the current scale: that is what the row shows, though their lists differ.
     let r = row(&describe(&mut s, &[&a, &b]), "Text", "annoScales").clone();
-    assert_eq!((r["varies"].as_bool(), r["display"].as_str()), (Some(true), Some("*VARIES*")));
+    assert_eq!((r["varies"].as_bool(), r["display"].as_str()), (Some(true), Some("1:10")));
+    // At 1:2 one draws at 1:2 and the other at 1:10.
+    s.execute("setvar", &json!({ "name": "CANNOSCALE", "value": "1:2" })).unwrap();
+    assert_eq!(row(&describe(&mut s, &[&a, &b]), "Text", "annoScales")["display"], "*VARIES*");
 }
 
 #[test]

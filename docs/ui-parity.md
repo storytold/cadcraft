@@ -206,6 +206,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 |---|---|---|
 | 2026-10-27 | minor | WIPEOUT grips treat implicit and explicit closure alike; moving the first vertex carries the closing marker, and moving endpoints together keeps both corners editable. Open/closed polyline flags and coincident polyline vertices remain independent (#2256) |
 | 2026-10-26 | minor | Browser host stores bounded, validated panel layout separately from drawing state; malformed or unsupported records retain defaults. Native workspace storage is unchanged. |
+| 2026-10-15 | minor | Properties palette: Annotative scale row with the Annotation Object Scale dialog (also OBJECTSCALE with a selection), paper and model text height and defined width for annotative text and MText, annotative rows for hatches and multileaders, the no-selection Annotation scale row sets CANNOSCALE |
 | 2026-10-13 | minor | Properties Inspector shows the text, mtext and dimension rows `properties.describe` gives (dimension style settings as overrides, *VARIES* for several objects, fixed-height note) |
 | 2026-10-22 | minor | Polyline segment midpoint grips use rectangles, distinct from square vertex grips, with matching hover and pick bounds (#1950) |
 | 2026-10-13 | minor | Filled-region highlight boundaries are traversed in deterministic coordinate order, fixing dash-phase jumps on CPU hover/selection redraws and GPU highlight rebuilds; CPU dash-position, pixel and GPU mesh regressions |
