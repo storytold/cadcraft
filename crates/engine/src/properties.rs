@@ -302,20 +302,9 @@ fn annotative_rows(c: &Ctx, ents: &[&Entity]) -> Vec<Row> {
     if ents.iter().all(|e| cadcraft_doc::is_annotative(e)) {
         let names = |e: &Entity| json!(e.common.anno_scales.iter().map(|s| s.name.clone()).collect::<Vec<_>>());
         let mut r = c.row("annoScales", "Annotative scale", Kind::AnnoScales, ents.iter().map(|e| names(e)));
-        // Shown as AutoCAD shows it: the scale the objects draw at now (the current one when
-        // they support it); the value is every scale they support.
-        let current = c.d.current_anno_scale();
-        let shown: Vec<String> = ents
-            .iter()
-            .map(|e| {
-                let s = &e.common.anno_scales;
-                s.iter().find(|x| x.name.eq_ignore_ascii_case(&current.name)).or(s.first()).map(|x| x.name.clone()).unwrap_or_default()
-            })
-            .collect();
-        r.display = match shown.split_first() {
-            Some((first, rest)) if rest.iter().all(|x| x == first) => first.clone(),
-            _ => VARIES.to_string(),
-        };
+        if !r.varies {
+            r.display = r.value.as_array().into_iter().flatten().filter_map(Value::as_str).collect::<Vec<_>>().join(", ");
+        }
         rows.push(r);
     }
     rows
