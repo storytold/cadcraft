@@ -1520,3 +1520,19 @@
 	Datum triangle	Базовий трикутник
 	Datum triangle filled	Зафарбований базовий трикутник
 	Integral	Інтеграл
+	Annotative scale	Анотативний масштаб
+	Paper text height	Висота тексту на папері
+	Model text height	Висота тексту в моделі
+	Paper defined width	Задана ширина на папері
+	Model defined width	Задана ширина в моделі
+	The paper size at the current annotation scale	Розмір на папері в поточному масштабі анотацій
+	Annotation Object Scale	Масштаб анотативного об'єкта
+	Object Scale List	Список масштабів об'єкта
+	Add...	Додати...
+	{paper} paper unit = {drawing} drawing units	{paper} од. паперу = {drawing} од. креслення
+	List all scales for selected objects	Показати всі масштаби вибраних об'єктів
+	List scales common to all selected objects only	Показати лише масштаби, спільні для всіх вибраних об'єктів
+	Add Scales to Object	Додати масштаби до об'єкта
+	Scale List	Список масштабів
+	Select annotative objects to change their annotation scales.	Виберіть анотативні об'єкти, щоб змінити їхні масштаби анотацій.
+	Add or delete annotation scales	Додати або видалити масштаби анотацій

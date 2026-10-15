@@ -826,7 +826,13 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                 act("tablestyle", json!({ "name": n, "current": true }));
             }
         });
-        prop_row(ui, "Annotation scale", |ui| unavailable(ui, "1:1"));
+        // CANNOSCALE, from the drawing's scale list.
+        let scales: Vec<String> = d.scales.iter().filter(|s| s.is_valid()).map(|s| s.name.clone()).collect();
+        prop_row(ui, "Annotation scale", |ui| {
+            if let Some(n) = pick_menu(ui, &d.current_anno_scale().name, scales) {
+                act("setvar", json!({ "name": "CANNOSCALE", "value": n }));
+            }
+        });
         prop_row(ui, "Text height", |ui| {
             if let Some(f) = number(edit_field(ui, ui.scope_id().with("cur_textsize"), len(h.f64("TEXTSIZE", 0.2))), &mut bad) {
                 act("setvar", json!({ "name": "TEXTSIZE", "value": f }));
@@ -1122,6 +1128,13 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
             }
             _ => {}
         }
+    }
+    // A hatch's or multileader's annotative scaling, after its own rows.
+    if let Some(desc) = &desc {
+        described::extra_groups(ui, d, desc, &ids, &mut edit, &mut bad);
+    }
+    if described::take_open_scales(ui) {
+        crate::objectscale::open(app, &sel);
     }
     if let Some(mut p) = set {
         // A rotation is typed as shown (from ANGBASE, in the ANGDIR sense); properties.set takes it

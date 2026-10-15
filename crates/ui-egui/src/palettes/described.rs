@@ -48,9 +48,10 @@ pub(super) struct Edit {
 }
 
 /// The described groups after General (the palette draws General itself). Returns false when
-/// the description has none, so the palette draws its own rows for the object.
+/// the description has none, so the palette draws its own rows for the object; [`extra_groups`]
+/// come after those.
 pub(super) fn groups(ui: &mut egui::Ui, d: &Drawing, desc: &Description, ids: &[String], edit: &mut Option<Edit>, bad: &mut Option<String>) -> bool {
-    let typed: Vec<_> = desc.groups.iter().filter(|g| g.name != "General").collect();
+    let typed: Vec<_> = desc.groups.iter().filter(|g| g.name != "General" && !g.extra).collect();
     if typed.is_empty() {
         return false;
     }
@@ -67,6 +68,26 @@ pub(super) fn groups(ui: &mut egui::Ui, d: &Drawing, desc: &Description, ids: &[
     }
     true
 }
+
+/// The described groups that follow the palette's own rows for the object (a hatch's or
+/// multileader's annotative scaling).
+pub(super) fn extra_groups(ui: &mut egui::Ui, d: &Drawing, desc: &Description, ids: &[String], edit: &mut Option<Edit>, bad: &mut Option<String>) {
+    let angles = AngleSettings::from_header(&d.header);
+    let rows = Rows { d, ids, angles: &angles, text_style: None };
+    for g in desc.groups.iter().filter(|g| g.extra) {
+        group(ui, g.name);
+        for row in &g.rows {
+            described_row(ui, &rows, row, edit, bad);
+        }
+    }
+}
+
+/// Whether a row's "…" asked for the Annotation Object Scale dialog this frame (and forget it).
+pub(super) fn take_open_scales(ui: &egui::Ui) -> bool {
+    ui.data_mut(|m| m.remove_temp::<bool>(egui::Id::new(OPEN_SCALES))).unwrap_or(false)
+}
+
+const OPEN_SCALES: &str = "properties-open-objectscale";
 
 /// The value as the row shows it: *VARIES* and choice labels in the interface language, the
 /// drawing's own names and the objects' text as they are.
@@ -213,6 +234,14 @@ fn described_row(ui: &mut egui::Ui, rows: &Rows<'_>, row: &Row, edit: &mut Optio
                         }
                     }
                 });
+            }
+            // The scales: shown, and changed in the Annotation Object Scale dialog ("…").
+            Kind::AnnoScales => {
+                let w = ui.available_width();
+                ui.allocate_ui(vec2((w - 30.0).max(40.0), 22.0), |ui| value_box(ui, &shown, false, true));
+                if ui.small_button("…").on_hover_text(crate::tl!("Add or delete annotation scales")).clicked() {
+                    ui.data_mut(|m| m.insert_temp(egui::Id::new(OPEN_SCALES), true));
+                }
             }
             // General's own kinds (layer, lineweight, transparency) aren't in the typed groups.
             _ => {

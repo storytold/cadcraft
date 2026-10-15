@@ -51,6 +51,16 @@ pub struct TypeCount {
 pub struct Group {
     pub name: &'static str,
     pub rows: Vec<Row>,
+    /// Rows the palette shows after its own for the object (a hatch's or multileader's
+    /// annotative scaling), rather than in their place.
+    #[serde(skip_serializing_if = "is_false")]
+    pub extra: bool,
+}
+
+impl Group {
+    fn new(name: &'static str, rows: Vec<Row>) -> Self {
+        Group { name, rows, extra: false }
+    }
 }
 
 /// One property of the described objects.
@@ -141,6 +151,9 @@ pub enum Kind {
     Transparency,
     TextStyle,
     DimStyle,
+    /// The annotation scales an annotative object supports: names of the drawing's scale list,
+    /// changed in the Annotation Object Scale dialog (OBJECTSCALE) or with `annoScales`.
+    AnnoScales,
 }
 
 /// A transparency as `properties.set` takes it: "ByLayer", "ByBlock" or a percentage.
@@ -182,6 +195,9 @@ pub fn describe(d: &Drawing, handles: &[Handle], filter: Option<&str>) -> Descri
             groups.extend(mtext_groups(&c, &ents, &mtexts));
         } else if dims.len() == ents.len() {
             groups.extend(dimension_groups(&c, &ents, &dims));
+        } else if ents.iter().all(|e| matches!(e.kind, EntityKind::Hatch(_) | EntityKind::MLeader(_))) {
+            // Hatches and multileaders: their annotative scaling, after the palette's own rows.
+            groups.push(Group { name: "Misc", rows: annotative_rows(&c, &ents), extra: true });
         }
     }
     Description { types, filter, count: ents.len(), groups }
@@ -272,11 +288,49 @@ fn general(c: &Ctx, ents: &[&Entity]) -> Group {
         c.row("lineweight", "Lineweight", Kind::Lineweight, ents.iter().map(|e| json!(e.common.lineweight.name()))),
         c.row("transparency", "Transparency", Kind::Transparency, ents.iter().map(|e| transparency_value(e.common.transparency))),
     ];
-    Group { name: "General", rows }
+    Group::new("General", rows)
 }
 
 fn annotative(c: &Ctx, ents: &[&Entity]) -> Row {
     c.row("annotative", "Annotative", Kind::Bool, ents.iter().map(|e| json!(cadcraft_doc::is_annotative(e)))).quick()
+}
+
+/// Annotative, and when every described object is annotative, the scales they support
+/// (Annotative scale).
+fn annotative_rows(c: &Ctx, ents: &[&Entity]) -> Vec<Row> {
+    let mut rows = vec![annotative(c, ents)];
+    if ents.iter().all(|e| cadcraft_doc::is_annotative(e)) {
+        let names = |e: &Entity| json!(e.common.anno_scales.iter().map(|s| s.name.clone()).collect::<Vec<_>>());
+        let mut r = c.row("annoScales", "Annotative scale", Kind::AnnoScales, ents.iter().map(|e| names(e)));
+        if !r.varies {
+            r.display = r.value.as_array().into_iter().flatten().filter_map(Value::as_str).collect::<Vec<_>>().join(", ");
+        }
+        rows.push(r);
+    }
+    rows
+}
+
+/// Whether every described object is annotative: its sizes are then paper sizes, shown at the
+/// current annotation scale too (Model text height…).
+fn all_annotative(ents: &[&Entity]) -> bool {
+    !ents.is_empty() && ents.iter().all(|e| cadcraft_doc::is_annotative(e))
+}
+
+/// The factor `e` draws at in model space now: the current annotation scale's when it supports
+/// it, else the scale it shows at (1 when hidden or not annotative).
+fn model_factor(d: &Drawing, e: &Entity) -> f64 {
+    match d.anno_draw(e) {
+        cadcraft_doc::AnnoDraw::Scaled(f) if f.is_finite() && f > 0.0 => f,
+        _ => 1.0,
+    }
+}
+
+/// A paper size row's model size companion (read-only): `paper` × each object's factor.
+fn model_row(c: &Ctx, key: &'static str, label: &'static str, ents: &[&Entity], paper: impl IntoIterator<Item = f64>) -> Row {
+    let vals: Vec<Value> = ents.iter().zip(paper).map(|(e, v)| json!(v * model_factor(c.d, e))).collect();
+    let mut r = c.row(key, label, Kind::Distance, vals).read_only();
+    r.note = Some("The paper size at the current annotation scale".into());
+    r
 }
 
 /// TEXT justifications as `properties.set` takes them, with their labels.
@@ -345,13 +399,21 @@ fn text_groups(c: &Ctx, ents: &[&Entity], texts: &[&Text]) -> Vec<Group> {
     let mut text = vec![
         c.row("text", "Contents", Kind::Text, texts.iter().map(|t| json!(t.value))).quick(),
         c.choice("style", "Style", Kind::TextStyle, c.text_styles(), texts.iter().map(|t| json!(t.style))).quick(),
-        annotative(c, ents),
-        c.choice("justify", "Justification", Kind::Choice, options(TEXT_JUSTIFY), texts.iter().map(|t| json!(text_justify(t)))).quick(),
-        c.row("height", "Height", Kind::Distance, texts.iter().map(|t| json!(t.height))).quick(),
+    ];
+    text.extend(annotative_rows(c, ents));
+    text.push(c.choice("justify", "Justification", Kind::Choice, options(TEXT_JUSTIFY), texts.iter().map(|t| json!(text_justify(t)))).quick());
+    // Annotative text's height is on paper; AutoCAD shows it in the model too.
+    if all_annotative(ents) {
+        text.push(c.row("height", "Paper text height", Kind::Distance, texts.iter().map(|t| json!(t.height))).quick());
+        text.push(model_row(c, "modelHeight", "Model text height", ents, texts.iter().map(|t| t.height)));
+    } else {
+        text.push(c.row("height", "Height", Kind::Distance, texts.iter().map(|t| json!(t.height))).quick());
+    }
+    text.extend([
         c.row("rotation", "Rotation", Kind::Direction, texts.iter().map(|t| json!(t.rotation.to_degrees()))).quick(),
         c.row("widthFactor", "Width factor", Kind::Number, texts.iter().map(|t| json!(t.width_factor))),
         c.row("oblique", "Obliquing", Kind::Angle, texts.iter().map(|t| json!(t.oblique.to_degrees()))),
-    ];
+    ]);
     // Aligned and fit text sit between two points: the second is the text alignment point.
     let second: Option<Vec<cadcraft_geom::Vec3>> =
         texts.iter().map(|t| if matches!(t.halign, HAlign::Aligned | HAlign::Fit) { t.align_pt } else { None }).collect();
@@ -365,7 +427,7 @@ fn text_groups(c: &Ctx, ents: &[&Entity], texts: &[&Text]) -> Vec<Group> {
         c.row("positionY", "Position Y", Kind::Distance, texts.iter().map(|t| json!(t.justify_point().y))),
         c.row("positionZ", "Position Z", Kind::Distance, texts.iter().map(|t| json!(t.insert.z))),
     ];
-    vec![Group { name: "Text", rows: text }, Group { name: "Geometry", rows: geometry }]
+    vec![Group::new("Text", text), Group::new("Geometry", geometry)]
 }
 
 fn mtext_groups(c: &Ctx, ents: &[&Entity], mts: &[&MText]) -> Vec<Group> {
@@ -377,12 +439,20 @@ fn mtext_groups(c: &Ctx, ents: &[&Entity], mts: &[&MText]) -> Vec<Group> {
             cadcraft_doc::MTextColumnType::Dynamic => "Dynamic".to_string(),
         },
     };
-    let text = vec![
+    let anno = all_annotative(ents);
+    let mut text = vec![
         c.row("text", "Contents", Kind::Contents, mts.iter().map(|t| json!(t.contents))).quick(),
         c.choice("style", "Style", Kind::TextStyle, c.text_styles(), mts.iter().map(|t| json!(t.style))).quick(),
-        annotative(c, ents),
-        c.choice("justify", "Justification", Kind::Choice, options(MTEXT_JUSTIFY), mts.iter().map(|t| json!(mtext_justify(t.attach)))).quick(),
-        c.row("height", "Text height", Kind::Distance, mts.iter().map(|t| json!(t.height))).quick(),
+    ];
+    text.extend(annotative_rows(c, ents));
+    text.push(c.choice("justify", "Justification", Kind::Choice, options(MTEXT_JUSTIFY), mts.iter().map(|t| json!(mtext_justify(t.attach)))).quick());
+    if anno {
+        text.push(c.row("height", "Paper text height", Kind::Distance, mts.iter().map(|t| json!(t.height))).quick());
+        text.push(model_row(c, "modelHeight", "Model text height", ents, mts.iter().map(|t| t.height)));
+    } else {
+        text.push(c.row("height", "Text height", Kind::Distance, mts.iter().map(|t| json!(t.height))).quick());
+    }
+    text.extend([
         c.row("rotation", "Rotation", Kind::Direction, mts.iter().map(|t| json!(t.rotation.to_degrees()))).quick(),
         c.row("lineSpacing", "Line space factor", Kind::Number, mts.iter().map(|t| json!(t.line_spacing))),
         c.row("lineSpacingDistance", "Line space distance", Kind::Distance, mts.iter().map(|t| json!(t.line_spacing * t.height * LINE_PITCH))),
@@ -393,15 +463,20 @@ fn mtext_groups(c: &Ctx, ents: &[&Entity], mts: &[&MText]) -> Vec<Group> {
             spacing,
             mts.iter().map(|t| json!(if t.line_spacing_exact { "exactly" } else { "atLeast" })),
         ),
-        c.row("width", "Defined width", Kind::Distance, mts.iter().map(|t| json!(t.width))),
-        c.row("columns", "Columns", Kind::Text, mts.iter().map(|t| json!(columns(t)))).read_only(),
-    ];
+    ]);
+    if anno {
+        text.push(c.row("width", "Paper defined width", Kind::Distance, mts.iter().map(|t| json!(t.width))));
+        text.push(model_row(c, "modelWidth", "Model defined width", ents, mts.iter().map(|t| t.width)));
+    } else {
+        text.push(c.row("width", "Defined width", Kind::Distance, mts.iter().map(|t| json!(t.width))));
+    }
+    text.push(c.row("columns", "Columns", Kind::Text, mts.iter().map(|t| json!(columns(t)))).read_only());
     let geometry = vec![
         c.row("positionX", "Position X", Kind::Distance, mts.iter().map(|t| json!(t.insert.x))),
         c.row("positionY", "Position Y", Kind::Distance, mts.iter().map(|t| json!(t.insert.y))),
         c.row("positionZ", "Position Z", Kind::Distance, mts.iter().map(|t| json!(t.insert.z))),
     ];
-    vec![Group { name: "Text", rows: text }, Group { name: "Geometry", rows: geometry }]
+    vec![Group::new("Text", text), Group::new("Geometry", geometry)]
 }
 
 /// How a dimension style variable is entered.
@@ -676,13 +751,9 @@ fn dimension_groups(c: &Ctx, ents: &[&Entity], dims: &[&Dimension]) -> Vec<Group
     // Measurement and text position need each dimension's geometry.
     let geometry: Option<Vec<cadcraft_render::DimGeometry>> =
         (dims.len() <= GEOMETRY_CAP).then(|| dims.iter().map(|dm| cadcraft_render::dimension_in(c.d, dm)).collect());
-    let mut groups = vec![Group {
-        name: "Misc",
-        rows: vec![
-            c.choice("dimStyle", "Dim style", Kind::DimStyle, c.dim_styles(), dims.iter().map(|dm| json!(dm.style))).quick(),
-            annotative(c, ents),
-        ],
-    }];
+    let mut misc = vec![c.choice("dimStyle", "Dim style", Kind::DimStyle, c.dim_styles(), dims.iter().map(|dm| json!(dm.style))).quick()];
+    misc.extend(annotative_rows(c, ents));
+    let mut groups = vec![Group::new("Misc", misc)];
     for &name in DIM_GROUPS {
         let mut rows: Vec<Row> = Vec::new();
         for p in DIM_PROPS.iter().filter(|p| p.group == name && p.palette) {
@@ -745,7 +816,7 @@ fn dimension_groups(c: &Ctx, ents: &[&Entity], dims: &[&Dimension]) -> Vec<Group
             }
             _ => {}
         }
-        groups.push(Group { name, rows });
+        groups.push(Group::new(name, rows));
     }
     groups
 }

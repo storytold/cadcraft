@@ -23,6 +23,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("properties", "Properties", run_get).menu(&["Modify", "Properties"]).alias(&["pr", "props", "ch"]).params("{handles?} → properties of the selection").noundo(),
         CommandSpec::new("properties.set", "Set Properties", set::run_set).params(
             "{handles?, layer?, color?, linetype?, lineweight?, ltscale?, thickness?, transparency?: \"ByLayer\" | \"ByBlock\" | 0..90, visible?, annotative?, \
+             annoScales?: [scale name] (the scales an annotative object supports), \
              <geometry fields: radius, center, start, end, text, height, rotation…>, text: style?, justify?, oblique?, positionX/Y/Z?, alignmentX/Y?, \
              mtext: style?, justify?, lineSpacing?, lineSpacingDistance?, lineSpacingStyle?: atLeast | exactly, positionX/Y/Z?, \
              dimension: dimStyle?, textOverride?, textRotation?, textPositionX/Y?, prefix?, suffix?, altPrefix?, altSuffix?, dimScale?, precision?, \
@@ -39,8 +40,8 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("properties.describe", "Describe Properties", run_describe)
             .params(
                 "{handles?, type?: one of the `types` names, to describe only those objects} → {types: [{type, count}], filter?, count, \
-                 groups: [{name, rows: [{key, label, kind, value, varies, display, editable, note?, overridden?, options?: [{value, label}], quick?}]}]} \
-                 (each row's `key` is the `properties.set` key that changes it; text, mtext and dimensions have their own groups)",
+                 groups: [{name, extra?, rows: [{key, label, kind, value, varies, display, editable, note?, overridden?, options?: [{value, label}], quick?}]}]} \
+                 (each row's `key` is the `properties.set` key that changes it; text, mtext and dimensions have their own groups; hatches and multileaders an `extra` group of annotative rows)",
             )
             .noundo(),
         CommandSpec::new("matchprop", "Match Properties", matchprop::run_matchprop)
