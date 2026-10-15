@@ -172,22 +172,28 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         .open(open)
         .resizable(false)
         .collapsible(false)
+        .pivot(egui::Align2::CENTER_CENTER)
+        .default_pos(ctx.content_rect().center())
         .show(ctx, |ui| {
             ui.label(egui::RichText::new(crate::tl!("Object Scale List")).color(t.text_dim));
             let list = listed(&d, &s);
             if s.selected.as_ref().is_some_and(|n| !list.iter().any(|x| same(x, n))) {
                 s.selected = None;
             }
-            ui.horizontal(|ui| {
+            ui.horizontal_top(|ui| {
                 egui::Frame::new().fill(t.control).inner_margin(4.0).show(ui, |ui| {
                     egui::ScrollArea::vertical().max_height(160.0).min_scrolled_height(160.0).show(ui, |ui| {
-                        ui.set_width(220.0);
-                        for n in &list {
-                            let on = s.selected.as_ref().is_some_and(|x| same(x, n));
-                            if ui.selectable_label(on, n).clicked() {
-                                s.selected = Some(n.clone());
+                        // One scale per line, from the top.
+                        ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                            ui.set_width(220.0);
+                            ui.set_min_height(160.0);
+                            for n in &list {
+                                let on = s.selected.as_ref().is_some_and(|x| same(x, n));
+                                if ui.selectable_label(on, n).clicked() {
+                                    s.selected = Some(n.clone());
+                                }
                             }
-                        }
+                        });
                     });
                 });
                 ui.vertical(|ui| {
@@ -226,21 +232,25 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             .open(&mut keep)
             .resizable(false)
             .collapsible(false)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.content_rect().center() + egui::vec2(40.0, 40.0))
             .show(ctx, |ui| {
                 ui.label(egui::RichText::new(crate::tl!("Scale List")).color(t.text_dim));
                 egui::Frame::new().fill(t.control).inner_margin(4.0).show(ui, |ui| {
                     egui::ScrollArea::vertical().max_height(220.0).min_scrolled_height(220.0).show(ui, |ui| {
-                        ui.set_width(220.0);
-                        for n in addable(&d, &s) {
-                            let on = picks.iter().any(|x| same(x, &n));
-                            if ui.selectable_label(on, &n).clicked() {
-                                if on {
-                                    picks.retain(|x| !same(x, &n));
-                                } else {
-                                    picks.push(n.clone());
+                        ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                            ui.set_width(220.0);
+                            for n in addable(&d, &s) {
+                                let on = picks.iter().any(|x| same(x, &n));
+                                if ui.selectable_label(on, &n).clicked() {
+                                    if on {
+                                        picks.retain(|x| !same(x, &n));
+                                    } else {
+                                        picks.push(n.clone());
+                                    }
                                 }
                             }
-                        }
+                        });
                     });
                 });
                 ui.horizontal(|ui| {
