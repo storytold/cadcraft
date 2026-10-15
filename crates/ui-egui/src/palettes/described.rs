@@ -236,9 +236,8 @@ fn described_row(ui: &mut egui::Ui, rows: &Rows<'_>, row: &Row, edit: &mut Optio
                 });
             }
             // The scales: shown, and changed in the Annotation Object Scale dialog ("…").
-            // The scale the objects draw at now; a click opens the Annotation Object Scale dialog.
+            // The scales; a click opens the Annotation Object Scale dialog.
             Kind::AnnoScales => {
-                let shown = if row.display == VARIES { crate::i18n::t(VARIES).to_string() } else { row.display.clone() };
                 let w = ui.available_width();
                 let boxed = ui.allocate_ui(vec2((w - 30.0).max(40.0), 22.0), |ui| value_box(ui, &shown, false, true)).inner;
                 let dots = ui.small_button("…");

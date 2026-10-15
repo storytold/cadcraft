@@ -167,15 +167,8 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let t = Tokens::get();
     let mut ok = false;
     let mut cancel = false;
-    // Escape closes the Add window, then the dialog. The dialog is modal: the drawing behind
-    // takes no clicks or keys while it is open (see `cmdline::keyboard`).
-    if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-        if s.adding.is_some() {
-            s.adding = None;
-        } else {
-            cancel = true;
-        }
-    }
+    // Modal: the drawing behind takes no clicks or keys while it is open (see
+    // `cmdline::keyboard`), so Escape doesn't cancel or deselect there.
     egui::Modal::new(egui::Id::new("Annotation Object Scale")).show(ctx, |ui| {
         ui.heading(crate::tl!("Annotation Object Scale"));
         ui.add_space(4.0);
