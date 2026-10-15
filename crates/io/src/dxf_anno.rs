@@ -390,6 +390,7 @@ pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
             objs.entry(h).or_insert((kind.to_ascii_uppercase(), tags));
         }
     });
+    current_scale(&objs, d);
     if !objs.values().any(|(k, _)| k.ends_with("OBJECTCONTEXTDATA_CLASS")) {
         return;
     }
@@ -442,6 +443,21 @@ pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
             e.common.anno_scales = list;
             to_paper(e, f);
         });
+    }
+}
+
+/// The current annotation scale as AutoCAD keeps it: in the named object dictionary's
+/// `AcDbVariableDictionary`, a DICTIONARYVAR `CANNOSCALE` with the scale's name (group 1). It is
+/// newer than CADCraft's own record when AutoCAD saved the file last (AutoCAD keeps that record as
+/// it was), and CADCraft writes the two alike. A name the scale list lacks is passed over.
+fn current_scale(objs: &HashMap<Handle, (String, &[Tag])>, d: &mut Drawing) {
+    let root = objs.iter().filter(|(_, (k, t))| k == "DICTIONARY" && own(t).iter().find(|t| t.code == 330).is_some_and(|o| o.str().trim() == "0"));
+    let Some((_, (_, root))) = root.min_by_key(|(h, _)| h.0) else { return };
+    let var = entry(root, "AcDbVariableDictionary").and_then(|v| objs.get(&v)).and_then(|(_, t)| entry(t, "CANNOSCALE")).and_then(|c| objs.get(&c));
+    let Some(name) = var.and_then(|(_, t)| own(t).iter().find(|t| t.code == 1).map(Tag::str)) else { return };
+    let name = name.trim();
+    if d.anno_scale(name).is_some_and(AnnoScale::is_valid) {
+        d.header.set_str("CANNOSCALE", name);
     }
 }
 

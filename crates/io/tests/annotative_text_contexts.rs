@@ -775,3 +775,29 @@ fn a_multileader_keeps_its_scales_through_dwg() {
     scales.sort_by(f64::total_cmp);
     assert_eq!(scales, [1.0, 10.0]);
 }
+
+/// The fixture with AutoCAD's variable dictionary naming 1:10 as the current annotation scale.
+fn with_current_scale() -> String {
+    dxf(FIXTURE)
+        .replace("3\nACAD_SCALELIST\n350\n10\n", "3\nACAD_SCALELIST\n350\n10\n3\nAcDbVariableDictionary\n350\n60\n")
+        .replace(
+            "0\nENDSEC\n0\nEOF\n",
+            "0\nDICTIONARY\n5\n60\n330\nC\n100\nAcDbDictionary\n281\n1\n3\nCANNOSCALE\n350\n61\n0\nDICTIONARYVAR\n5\n61\n330\n60\n100\nDictionaryVariables\n280\n0\n1\n1:10\n0\nENDSEC\n0\nEOF\n",
+        )
+}
+
+#[test]
+fn the_current_scale_is_autocad_s_and_saving_keeps_it_current() {
+    let mut d = cadcraft_io::read_dxf(with_current_scale().as_bytes()).unwrap();
+    assert_eq!(d.header.str("CANNOSCALE", ""), "1:10");
+    // Written at the current scale: the 1:10 context is the default one.
+    let text = save(&d);
+    let got: Vec<(String, bool)> = contexts_of(&text, "30").into_iter().map(|c| (c.scale, c.default)).collect();
+    assert_eq!(got, [("1:2".to_string(), false), ("1:10".to_string(), true)]);
+    // Changed in CADCraft, AutoCAD's variable says so too.
+    d.header.set_str("CANNOSCALE", "1:2");
+    let recs = records(&save(&d));
+    let var = recs.iter().find(|(k, _)| k == "DICTIONARYVAR").unwrap();
+    assert_eq!(get(&var.1, 1), Some("1:2"));
+    assert_eq!(recs.iter().filter(|(k, _)| k == "DICTIONARYVAR").count(), 1);
+}
