@@ -233,6 +233,31 @@ pub fn anno_draw(e: &Entity, view: f64, all_visible: bool) -> AnnoDraw {
     }
 }
 
+/// `e` at each of its scales other than the one it shows at in a view of scale `view` (see
+/// [`anno_draw`]): at that scale's size and position, no longer annotative (so it draws as it
+/// is). AutoCAD shows these faded while the object is selected (SELECTIONANNODISPLAY). Empty when
+/// `e` isn't annotative, supports one scale or doesn't show in that view; scales of the same
+/// ratio come once.
+pub fn anno_others(e: &Entity, view: f64, all_visible: bool) -> Vec<Entity> {
+    let AnnoDraw::Scaled { factor, .. } = anno_draw(e, view, all_visible) else {
+        return Vec::new();
+    };
+    let mut seen = vec![factor];
+    let mut out = Vec::new();
+    for s in e.common.anno_scales.iter().take(MAX_SCALES).filter(|s| s.is_valid()) {
+        let f = s.factor();
+        if seen.iter().any(|g| same_factor(*g, f)) {
+            continue;
+        }
+        seen.push(f);
+        let mut other = anno_placed(e, f, e.common.moved_at(&s.name));
+        other.common.anno_scales.clear();
+        other.common.anno_moves.clear();
+        out.push(other);
+    }
+    out
+}
+
 /// `e` as it draws at annotation scale `f` with its position moved `by` there: [`anno_scaled`],
 /// then [`shift_position`].
 pub fn anno_placed(e: &Entity, f: f64, by: Vec2) -> Entity {
@@ -345,6 +370,14 @@ impl Drawing {
             AnnoDraw::Scaled { factor, .. } => e.common.anno_scales.iter().find(|s| s.has_factor(factor)).cloned(),
             _ => None,
         }
+    }
+    /// `e` at its other scales outside a viewport (see [`anno_others`]); none in a layout's paper
+    /// space, which shows annotative objects at 1:1 only.
+    pub fn anno_others(&self, e: &Entity) -> Vec<Entity> {
+        if !is_annotative(e) || (!self.model.contains(e.handle) && self.layouts.iter().any(|l| l.entities.contains(e.handle))) {
+            return Vec::new();
+        }
+        anno_others(e, self.current_anno_scale().factor(), self.anno_all_visible())
     }
     /// `e` as it draws outside a viewport: an annotative object at its scale and position there,
     /// anything else (and a hidden annotative object) as stored.

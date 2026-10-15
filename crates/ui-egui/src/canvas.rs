@@ -31,7 +31,7 @@ use dyn_boxes::dynamic_input;
 pub(crate) use dyn_boxes::length_units;
 use grid::draw_grid;
 use grips::{click_grip, grip_at, grip_menu, grip_options, grip_rect};
-use list::{PrimIndex, ensure_list, rebuilt_preview};
+use list::{AnnoOthers, PrimIndex, draw_anno_others, ensure_list, rebuilt_preview};
 #[cfg(test)]
 use list::{preview_options, prims_of};
 use pick::{edit_text_at, hatch_at, wheel_zoom_points};
@@ -107,6 +107,8 @@ pub struct CanvasState {
     /// The selection and hover highlights inside the active MSPACE viewport (see [`VpHighlight`]).
     vp_sel: VpHighlight,
     vp_hover: VpHighlight,
+    /// Selected annotative objects at their other scales (see [`AnnoOthers`]).
+    anno_others: AnnoOthers,
     /// Model space seen through the active MSPACE viewport (see [`VpContent`]).
     vp: VpContent,
     /// Indices of infinite-line primitives in `list` (drawn on the CPU in GPU mode).
@@ -408,6 +410,7 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
             if let Some(look) = selection_look
                 && !sel.is_empty()
             {
+                draw_anno_others(&mut c.anno_others, &app.session, &clipped, &xf, sel, look);
                 c.vp_sel.update(st, sel, scale);
                 let list = &c.vp_sel.list;
                 let all = || (0..list.prims.len()).collect::<Vec<_>>();
@@ -424,13 +427,18 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
                 }
             }
         }
-    } else if let CanvasState { list: Some(list), list_gen, prim_index, hover, gpu, hl_key, hl_slot, hl_origin, hl_infinite, .. } = &mut app.canvas {
+    } else if let CanvasState { list: Some(list), list_gen, prim_index, hover, gpu, hl_key, hl_slot, hl_origin, hl_infinite, anno_others, .. } =
+        &mut app.canvas
+    {
         if let Some(h) = *hover
             && !sel.contains(&h)
         {
             draw_highlight(painter, &xf, list, &prim_index.prims(*list_gen, list, &[h]), t.hover, preview_look);
         }
         if let Some(look) = selection_look {
+            if !sel.is_empty() {
+                draw_anno_others(anno_others, &app.session, painter, &xf, sel, look);
+            }
             if gpu.is_some() && !sel.is_empty() {
                 let list_id = *list_gen;
                 let hl = (hl_key, &*hl_slot, hl_origin, &mut *hl_infinite);

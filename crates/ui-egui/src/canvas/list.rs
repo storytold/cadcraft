@@ -1,4 +1,5 @@
-use super::viewport::{split_viewport, stencil_clip};
+use super::draw::{Look, draw_highlight};
+use super::viewport::{split_viewport, stencil_clip, viewport_highlight_tolerance};
 use super::{Bounds2, CadApp, DisplayList, Handle, ListKey, Rgb, Tokens, Xf, rebuild, same_content};
 
 /// Primitives of `list` sorted by entity handle, built on the first highlight after each list
@@ -160,6 +161,49 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
     app.canvas.window = opts.view;
     app.canvas.list_gen = app.canvas.list_gen.wrapping_add(1);
     app.canvas.build_ms = crate::now_ms() - t0;
+}
+
+/// The selected annotative objects at their other scales (SELECTIONANNODISPLAY), tessellated in
+/// model units from [`cadcraft_engine::Session::selection_anno_others`]; rebuilt only when the
+/// drawing, the selection, the setting, the active viewport or the zoom band change.
+#[derive(Default)]
+pub(super) struct AnnoOthers {
+    pub(super) key: Option<u64>,
+    list: DisplayList,
+}
+
+impl AnnoOthers {
+    pub(super) fn update(&mut self, session: &cadcraft_engine::Session, sel: &[Handle], scale: f64) -> &DisplayList {
+        let tolerance = viewport_highlight_tolerance(scale);
+        let key = session.state().ok().map(|st| {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            let on = session.settings.selectionannodisplay;
+            (st.uid, st.revision, std::sync::Arc::as_ptr(&st.doc) as usize, tolerance.to_bits(), sel, on, st.mspace).hash(&mut h);
+            h.finish()
+        });
+        if self.key != key {
+            let others = session.selection_anno_others();
+            self.list = match session.state() {
+                Ok(st) if !others.is_empty() => {
+                    cadcraft_render::build_entities(&st.doc, others.iter(), &cadcraft_render::Options { tolerance, ..Default::default() })
+                }
+                _ => DisplayList::default(),
+            };
+            self.key = key;
+        }
+        &self.list
+    }
+}
+
+/// Draw the selected annotative objects' other scales faded (SELECTIONANNODISPLAY), under the
+/// selection highlight; `xf` maps model units to the screen.
+pub(super) fn draw_anno_others(others: &mut AnnoOthers, session: &cadcraft_engine::Session, p: &egui::Painter, xf: &Xf, sel: &[Handle], look: Look) {
+    let list = others.update(session, sel, xf.scale);
+    if !list.prims.is_empty() {
+        let all: Vec<usize> = (0..list.prims.len()).collect();
+        draw_highlight(p, xf, list, &all, Tokens::get().selection_faded, Look { width: 1.0, ..look });
+    }
 }
 
 /// The area a display list is built for: each view with half its larger side of margin all

@@ -51,6 +51,10 @@ pub use cmd::hatch::{HatchPicks, PatternChoice, PickMode, pattern_choices};
 pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command};
 pub use prompt::{Accept, Drag, Input, Interactive, Picker, Prompt, Step};
 
+/// The most selected objects [`Session::selection_anno_others`] shows at their other scales (as
+/// grips, a big selection is drawn without them).
+pub const MAX_ANNO_OTHERS: usize = 200;
+
 mod doc_state;
 mod error;
 mod last_used;
