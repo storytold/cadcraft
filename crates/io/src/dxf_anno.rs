@@ -397,6 +397,16 @@ pub(crate) fn mleader_at(tags: &mut [Tag], f: f64) {
     }
 }
 
+/// A multileader's groups (as [`crate::dxf_mleader::entity_tags`] writes them) marked annotative:
+/// the entity's "enable annotation scale" (its 293, after the `CONTEXT_DATA{` block) is on.
+/// Without it AutoCAD keeps the contexts but its ANNORESET passes the multileader over.
+pub(crate) fn mleader_annotative(tags: &mut [Tag]) {
+    let Some(close) = tags.iter().position(|t| t.code == 301) else { return };
+    if let Some(t) = tags.iter_mut().skip(close + 1).find(|t| t.code == 293) {
+        *t = Tag::i(293, 1);
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Reading
 

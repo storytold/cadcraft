@@ -514,6 +514,7 @@ fn write_annotations_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, pap
             let mut tags = cx.mleader_tags(d, m);
             if let Some(o) = cx.anno.objs.get(&e.handle) {
                 crate::dxf_anno::mleader_at(&mut tags, crate::dxf_anno::default_factor(o));
+                crate::dxf_anno::mleader_annotative(&mut tags);
             }
             w.t.extend(tags);
             cx.anno_xdata(w, e);

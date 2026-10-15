@@ -880,6 +880,24 @@ fn a_multileader_moved_at_one_scale_keeps_it_through_dxf_and_dwg() {
     }
 }
 
+/// The MULTILEADER entity's own 293 ("enable annotation scale", after its `CONTEXT_DATA{` block).
+fn mleader_enable_annotation_scale(text: &str) -> Option<String> {
+    let recs = records(text);
+    let (_, t) = recs.iter().find(|(k, _)| k == "MULTILEADER")?;
+    let close = t.iter().position(|(c, _)| *c == 301)?;
+    t.iter().skip(close + 1).find(|(c, _)| *c == 293).map(|(_, v)| v.trim().to_string())
+}
+
+#[test]
+fn an_annotative_multileader_has_annotation_scale_enabled() {
+    // AutoCAD's ANNORESET passes over a multileader whose 293 is off, even with its contexts.
+    let (d, h) = with_mleader();
+    assert_eq!(mleader_enable_annotation_scale(&save(&d)).as_deref(), Some("1"));
+    let mut plain = d.clone();
+    plain.modify_entity(h, |e| e.common.anno_scales.clear()).unwrap();
+    assert_eq!(mleader_enable_annotation_scale(&save(&plain)).as_deref(), Some("0"));
+}
+
 #[test]
 fn hostile_context_positions_do_not_panic() {
     for bad in ["10 1e309\n20 nan\n11 inf", "10 x\n20 0\n11 -1e308", "10 -40\n20 0\n11 1e308"] {
