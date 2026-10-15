@@ -685,3 +685,93 @@ fn text_mtext_and_dimensions_keep_their_scales_through_dwg() {
         assert!(get(t, 2).is_some_and(|b| b.starts_with("*D")), "{t:?}");
     }
 }
+
+/// A drawing made in CADCraft with an annotative multileader (text 2.5 on paper, 1:1 and 1:10,
+/// 1:10 current).
+fn with_mleader() -> (Drawing, Handle) {
+    let mut d = Drawing::default();
+    d.header.set_str("CANNOSCALE", "1:10");
+    let common = Common { anno_scales: vec![AnnoScale::new("1:1", 1.0, 1.0), AnnoScale::new("1:10", 1.0, 10.0)], ..Common::default() };
+    let text = cadcraft_doc::MText {
+        insert: Vec3::new(10.5, 10.1, 0.0),
+        height: 2.5,
+        width: 0.0,
+        attach: 1,
+        rotation: 0.0,
+        style: "Standard".into(),
+        contents: "Note".into(),
+        line_spacing: 1.0,
+        line_spacing_exact: false,
+        columns: None,
+    };
+    let m = cadcraft_doc::MLeader {
+        leaders: vec![vec![Vec3::ZERO]],
+        landing: Vec3::new(10.0, 10.0, 0.0),
+        dogleg: 0.36,
+        text: Some(text),
+        style: "Standard".into(),
+        arrow_size: 0.18,
+        spline: false,
+        block: None,
+    };
+    let h = d.add(&Space::Model, common, EntityKind::MLeader(m)).unwrap();
+    (d, h)
+}
+
+#[test]
+fn a_multileader_gets_its_context_data_at_each_scale() {
+    let (d, h) = with_mleader();
+    let text = save(&d);
+    let recs = records(&text);
+    let ent = recs.iter().find(|(k, t)| k == "MULTILEADER" && get(t, 5) == Some(h.hex().as_str())).unwrap();
+    assert!(ent.1.iter().any(|(c, v)| *c == 1001 && v == "AcadAnnotative"));
+    // The entity is at 1:10, the current scale: overall scale 10 and text 25.
+    assert_eq!(num(&ent.1, 40), 10.0);
+    assert_eq!(num(&ent.1, 41), 25.0);
+    let ctx = contexts_of(&text, &h.hex());
+    let got: Vec<(&str, bool, &str)> = ctx.iter().map(|c| (c.scale.as_str(), c.default, c.class.as_str())).collect();
+    assert_eq!(got, [("1:1", false, "ACDB_MLEADEROBJECTCONTEXTDATA_CLASS"), ("1:10", true, "ACDB_MLEADEROBJECTCONTEXTDATA_CLASS")]);
+    for (c, f) in ctx.iter().zip([1.0, 10.0]) {
+        // AutoCAD's layout: the context groups straight after the scale, no braces of their own.
+        assert_eq!(c.tags.first().map(|t| t.0), Some(40), "{:?}", c.tags);
+        assert!(c.tags.iter().all(|(code, v)| !(*code == 300 && v.starts_with("CONTEXT_DATA")) && *code != 301));
+        assert_eq!(num(&c.tags, 40), f);
+        assert!((num(&c.tags, 41) - 2.5 * f).abs() < 1e-9);
+        assert!((num(&c.tags, 140) - 0.18 * f).abs() < 1e-9);
+        // The text keeps its place about the landing, at the scale's size.
+        assert!((num(&c.tags, 12) - (10.0 + 0.5 * f)).abs() < 1e-9 && (num(&c.tags, 22) - (10.0 + 0.1 * f)).abs() < 1e-9);
+    }
+    let back = cadcraft_io::read_dxf(text.as_bytes()).unwrap();
+    let (a, b) = (d.entity(h).unwrap(), back.entity(h).unwrap());
+    assert_eq!(a.common.anno_scales, b.common.anno_scales);
+    let (EntityKind::MLeader(x), EntityKind::MLeader(y)) = (&a.kind, &b.kind) else { panic!("multileader") };
+    let (tx, ty) = (x.text.as_ref().unwrap(), y.text.as_ref().unwrap());
+    assert!((tx.height - ty.height).abs() < 1e-9 && (tx.insert - ty.insert).len() < 1e-9, "{ty:?}");
+    assert!((x.arrow_size - y.arrow_size).abs() < 1e-9 && (x.dogleg - y.dogleg).abs() < 1e-9, "{y:?}");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_multileader_keeps_its_scales_through_dwg() {
+    let (d, _) = with_mleader();
+    let dwg = cadcraft_io::write(&d, "x.dwg").unwrap();
+    let back = cadcraft_io::read(&dwg, "x.dwg").unwrap();
+    let e = back.model.iter().find(|e| matches!(e.kind, EntityKind::MLeader(_))).unwrap();
+    let got: Vec<&str> = e.common.anno_scales.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(got, ["1:1", "1:10"]);
+    let EntityKind::MLeader(m) = &e.kind else { panic!("multileader") };
+    assert!((m.text.as_ref().unwrap().height - 2.5).abs() < 1e-9, "{m:?}");
+    // The DXF read back from the DWG has AutoCAD's layout and each context at its scale.
+    let text = String::from_utf8_lossy(&cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).into_owned();
+    let ctx: Vec<Rec> = records(&text).into_iter().filter(|(k, _)| k == "ACDB_MLEADEROBJECTCONTEXTDATA_CLASS").collect();
+    let mut scales: Vec<f64> = ctx
+        .iter()
+        .map(|(_, t)| {
+            assert!(t.iter().all(|(c, v)| !(*c == 300 && v.starts_with("CONTEXT_DATA"))), "{t:?}");
+            let at = t.iter().position(|(c, _)| *c == 340).unwrap();
+            num(&t[at + 1..], 40)
+        })
+        .collect();
+    scales.sort_by(f64::total_cmp);
+    assert_eq!(scales, [1.0, 10.0]);
+}

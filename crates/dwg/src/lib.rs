@@ -582,8 +582,11 @@ mod native {
     /// `AcDbTextObjectContextData` marker, with the rotation in radians (as DWG holds it), and
     /// without the marker reads zeros (an annotative reference at scale 0 draws nothing in
     /// AutoCAD). Dimension contexts (`ACDB_*DIMOBJECTCONTEXTDATA_CLASS`): AutoCAD names the
-    /// geometry block in group 2, acadrust reads a BLOCK_RECORD handle there. Text that isn't
-    /// UTF-8, or has no such context, is returned as it is.
+    /// geometry block in group 2, acadrust reads a BLOCK_RECORD handle there. Multileader contexts
+    /// (`ACDB_MLEADEROBJECTCONTEXTDATA_CLASS`): AutoCAD has the multileader's context groups
+    /// straight after the scale, acadrust reads them only after a `300 CONTEXT_DATA{` group (and
+    /// writes them between it and `301 }` after an `AcDbMLeaderObjectContextData` marker). Text
+    /// that isn't UTF-8, or has no such context, is returned as it is.
     pub(crate) fn contexts(dxf: &[u8], to_acadrust: bool) -> Vec<u8> {
         const KINDS: [(&str, &str); 2] = [
             ("ACDB_BLKREFOBJECTCONTEXTDATA_CLASS", "AcDbBlkRefObjectContextData"),
@@ -591,7 +594,8 @@ mod native {
         ];
         let is_dim = |k: &str| k.starts_with("ACDB_") && k.ends_with("DIMOBJECTCONTEXTDATA_CLASS");
         let Ok(text) = std::str::from_utf8(dxf) else { return dxf.to_vec() };
-        if !KINDS.iter().any(|(k, _)| text.contains(k)) && !text.contains("DIMOBJECTCONTEXTDATA_CLASS") {
+        const MLEADER: &str = "ACDB_MLEADEROBJECTCONTEXTDATA_CLASS";
+        if !KINDS.iter().any(|(k, _)| text.contains(k)) && !text.contains("DIMOBJECTCONTEXTDATA_CLASS") && !text.contains(MLEADER) {
             return dxf.to_vec();
         }
         let lines: Vec<&str> = text.split('\n').collect();
@@ -619,6 +623,8 @@ mod native {
         // The marker of the context being read (block reference or text), whether it is a
         // dimension's, whether its scale (340) was passed and whether its marker was.
         let (mut marker, mut dim, mut scaled, mut marked) = (None::<&str>, false, false, false);
+        // In a multileader context: whether its scale was passed and its body opened.
+        let (mut ml, mut ml_scaled, mut ml_open) = (false, false, false);
         let mut i = 0;
         while let (Some(&code_line), Some(&value_line)) = (lines.get(i), lines.get(i + 1)) {
             let (code, value) = (code_line.trim(), value_line.trim_end_matches('\r'));
@@ -627,6 +633,27 @@ mod native {
                 marker = KINDS.iter().find(|(k, _)| *k == kind).map(|(_, m)| *m);
                 dim = is_dim(kind);
                 (scaled, marked) = (false, false);
+                (ml, ml_scaled, ml_open) = (kind == MLEADER, false, false);
+            }
+            if ml {
+                let v = value.trim();
+                // acadrust's braces and marker go.
+                let theirs = (code == "100" && v == "AcDbMLeaderObjectContextData")
+                    || (code == "300" && v.starts_with("CONTEXT_DATA"))
+                    || (code == "301" && v == "}");
+                if theirs && !to_acadrust {
+                    i += 2;
+                    continue;
+                }
+                if to_acadrust && ml_scaled && !ml_open {
+                    out.push(format!("300{}", eol(code_line)));
+                    out.push(format!("CONTEXT_DATA{{{}", eol(value_line)));
+                    ml_open = true;
+                }
+                // The first 340 is the scale (a later one is the text style).
+                if code == "340" && !ml_scaled {
+                    ml_scaled = true;
+                }
             }
             let mut value = value.to_string();
             if let Some(m) = marker {

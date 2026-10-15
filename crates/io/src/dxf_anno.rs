@@ -1,11 +1,12 @@
-//! Annotative text, MText and dimensions in DXF, as AutoCAD keeps them. An annotative object
+//! Annotative text, MText, dimensions and multileaders in DXF, as AutoCAD keeps them. An annotative object
 //! carries `AcadAnnotative` xdata and, in its extension dictionary under
 //! `AcDbContextDataManager`, a dictionary `ACDB_ANNOTATIONSCALES` with one "object context data"
 //! object per annotation scale it supports (`*A1`, `*A2`…). Each context names its SCALE object
 //! (340), says whether it is the default one (290 = 1, the scale the object's own groups are
 //! written at) and holds what changes with the scale: a text's insertion and alignment points, an
 //! MText's insertion point, width and columns, a dimension's text position and the anonymous `*D`
-//! block with its geometry at that scale.
+//! block with its geometry at that scale, a multileader's whole `CONTEXT_DATA{` body at that
+//! scale.
 //!
 //! CADCraft keeps an annotative object at paper size with the list of scales it supports
 //! ([`cadcraft_doc::Common::anno_scales`]). It writes the object at its default scale with a
@@ -18,7 +19,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use cadcraft_doc::{AnnoScale, DimKind, Drawing, Entity, EntityKind, HAlign, Handle, MTextColumnType, Text, VAlign};
+use cadcraft_doc::{AnnoScale, DimKind, Drawing, Entity, EntityKind, HAlign, Handle, MLeader, MTextColumnType, Text, VAlign};
 use cadcraft_dxf::{Section, Tag};
 use cadcraft_geom::Vec3;
 
@@ -30,6 +31,7 @@ const ANGDIM: (&str, &str) = ("ACDB_ANGDIMOBJECTCONTEXTDATA_CLASS", "AcDbAngular
 const RADIM: (&str, &str) = ("ACDB_RADIMOBJECTCONTEXTDATA_CLASS", "AcDbRadialDimensionObjectContextData");
 const DMDIM: (&str, &str) = ("ACDB_DMDIMOBJECTCONTEXTDATA_CLASS", "AcDbDiametricDimensionObjectContextData");
 const ORDDIM: (&str, &str) = ("ACDB_ORDDIMOBJECTCONTEXTDATA_CLASS", "AcDbOrdinateDimensionObjectContextData");
+const MLEADER: (&str, &str) = ("ACDB_MLEADEROBJECTCONTEXTDATA_CLASS", "AcDbMLeaderObjectContextData");
 
 /// The extension dictionary entry and the dictionary of contexts.
 const MANAGER_KEY: &str = "AcDbContextDataManager";
@@ -39,9 +41,9 @@ const SCALES_KEY: &str = "ACDB_ANNOTATIONSCALES";
 const MAX_CONTEXTS: usize = cadcraft_doc::MAX_SCALES;
 
 /// Whether `e` (in model space or a layout) is written with annotation scale contexts: annotative
-/// text, MText and dimensions.
+/// text, MText, dimensions and multileaders.
 pub(crate) fn has_contexts(e: &Entity) -> bool {
-    cadcraft_doc::is_annotative(e) && matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::Dimension(_))
+    cadcraft_doc::is_annotative(e) && matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::Dimension(_) | EntityKind::MLeader(_))
 }
 
 /// The scales `e` is written at (valid, each name once) and which of them is the default: the
@@ -121,6 +123,7 @@ fn class_of(e: &Entity) -> Option<(&'static str, &'static str)> {
     Some(match &e.kind {
         EntityKind::Text(_) => TEXT,
         EntityKind::MText(_) => MTEXT,
+        EntityKind::MLeader(_) => MLEADER,
         EntityKind::Dimension(dm) => match dm.kind {
             DimKind::Linear { .. } | DimKind::Aligned | DimKind::ArcLength => ALDIM,
             DimKind::Angular | DimKind::Angular3P => ANGDIM,
@@ -210,8 +213,8 @@ fn dictionary(out: &mut Vec<Tag>, h: &str, owner: &str, cloning: bool, entries: 
 
 /// The objects of annotative object `e` planned as `o`: its extension dictionary (unless the
 /// DIMASSOC's holds the manager), the context manager, the dictionary of contexts and the
-/// contexts.
-pub(crate) fn objects(d: &Drawing, e: &Entity, o: &Obj) -> Vec<Tag> {
+/// contexts. `mleader` gives a multileader's groups as the entity writer writes them.
+pub(crate) fn objects(d: &Drawing, e: &Entity, o: &Obj, mleader: &dyn Fn(&MLeader) -> Vec<Tag>) -> Vec<Tag> {
     let mut out = Vec::new();
     let eh = e.handle.hex();
     if o.own_xdict {
@@ -231,14 +234,26 @@ pub(crate) fn objects(d: &Drawing, e: &Entity, o: &Obj) -> Vec<Tag> {
         out.push(Tag::i(290, i64::from(c.default)));
         out.push(Tag::s(100, "AcDbAnnotScaleObjectContextData"));
         out.push(Tag::s(340, c.scale.clone()));
-        context_groups(&mut out, d, &at_scale(e, c.factor), c);
+        context_groups(&mut out, d, &at_scale(e, c.factor), c, mleader);
     }
     out
 }
 
 /// What a context holds of `e` (already at the context's scale).
-fn context_groups(out: &mut Vec<Tag>, d: &Drawing, e: &Entity, c: &Context) {
+fn context_groups(out: &mut Vec<Tag>, d: &Drawing, e: &Entity, c: &Context, mleader: &dyn Fn(&MLeader) -> Vec<Tag>) {
     match &e.kind {
+        // The multileader's `CONTEXT_DATA{` body, without its braces.
+        EntityKind::MLeader(m) => {
+            let mut tags = mleader(m);
+            mleader_at(&mut tags, c.factor);
+            let open = tags.iter().position(|t| t.code == 300 && t.str().trim_start().starts_with("CONTEXT_DATA"));
+            let close = tags.iter().position(|t| t.code == 301);
+            if let (Some(a), Some(b)) = (open, close)
+                && a < b
+            {
+                out.extend(tags.get(a + 1..b).unwrap_or(&[]).iter().cloned());
+            }
+        }
         EntityKind::Text(t) => {
             let h = match t.halign {
                 HAlign::Left => 0,
@@ -310,6 +325,28 @@ fn context_groups(out: &mut Vec<Tag>, d: &Drawing, e: &Entity, c: &Context) {
     }
 }
 
+/// A multileader's groups (as [`crate::dxf_mleader::entity_tags`] writes them) at annotation
+/// scale `f`: its context's overall scale (40) is `f` and its landing gap (145) is at that scale.
+pub(crate) fn mleader_at(tags: &mut [Tag], f: f64) {
+    let Some(open) = tags.iter().position(|t| t.code == 300 && t.str().trim_start().starts_with("CONTEXT_DATA")) else { return };
+    let (mut scale, mut gap) = (false, false);
+    for t in tags.iter_mut().skip(open + 1) {
+        match t.code {
+            // The context's own groups end where its leaders start.
+            302 | 301 => break,
+            40 if !scale => {
+                *t = Tag::f(40, f);
+                scale = true;
+            }
+            145 if !gap => {
+                *t = Tag::f(145, t.f64() * f);
+                gap = true;
+            }
+            _ => {}
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Reading
 
@@ -362,7 +399,7 @@ pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
     let mut found: Vec<(Handle, Handle)> = Vec::new();
     for s in secs.iter().filter(|s| s.name == "ENTITIES" || s.name == "BLOCKS") {
         each_record(&s.tags, |kind, tags| {
-            if !matches!(kind, "TEXT" | "MTEXT" | "DIMENSION" | "ARC_DIMENSION" | "LARGE_RADIAL_DIMENSION") {
+            if !matches!(kind, "TEXT" | "MTEXT" | "DIMENSION" | "ARC_DIMENSION" | "LARGE_RADIAL_DIMENSION" | "MULTILEADER") {
                 return;
             }
             let h = own(tags).iter().find(|t| t.code == 5).and_then(|t| key(&t.str()));
@@ -373,7 +410,7 @@ pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
     }
     for (h, xdict) in found {
         let Some(e) = d.entity(h) else { continue };
-        if !matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::Dimension(_)) {
+        if !matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::Dimension(_) | EntityKind::MLeader(_)) {
             continue;
         }
         let dict = objs
@@ -431,6 +468,8 @@ fn to_paper(e: &mut Entity, f: f64) {
                 c.scale(inv);
             }
         }
+        // Its sizes, and its content's place about the landing, scale linearly.
+        EntityKind::MLeader(_) => e.kind = cadcraft_doc::anno_scaled(e, inv).kind,
         _ => {}
     }
 }

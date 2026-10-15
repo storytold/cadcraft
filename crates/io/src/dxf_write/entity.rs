@@ -504,14 +504,19 @@ fn write_annotations_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, pap
     match &e.kind {
         EntityKind::MLeader(m) if !cx.native_mleader() => mleader_fallback(w, d, e, m, owner, paper, cx),
         EntityKind::MLeader(m) => {
+            let scaled = cx.at_default(e);
+            let m = match scaled.as_ref().map(|s| &s.kind) {
+                Some(EntityKind::MLeader(s)) => s,
+                _ => m,
+            };
             w.s(0, "MULTILEADER");
             common(w, e, owner, paper, "AcDbMLeader");
-            let refs = crate::dxf_mleader::Refs {
-                style: cx.mleader_style(&m.style),
-                text_style: m.text.as_ref().and_then(|t| cx.style(&t.style)),
-                block: m.block.as_ref().and_then(|b| cx.block_records.get(&b.block.to_ascii_uppercase()).cloned()),
-            };
-            w.t.extend(crate::dxf_mleader::entity_tags(d, m, &refs));
+            let mut tags = cx.mleader_tags(d, m);
+            if let Some(o) = cx.anno.objs.get(&e.handle) {
+                crate::dxf_anno::mleader_at(&mut tags, crate::dxf_anno::default_factor(o));
+            }
+            w.t.extend(tags);
+            cx.anno_xdata(w, e);
         }
         EntityKind::Leader(l) => {
             w.s(0, "LEADER");

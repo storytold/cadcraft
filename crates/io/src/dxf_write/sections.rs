@@ -744,7 +744,7 @@ fn write_annotation_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
     annos.sort_by_key(|(h, _)| **h);
     for (h, o) in annos {
         if let Some(e) = plan.d.entity(*h) {
-            w.t.extend(crate::dxf_anno::objects(plan.d, e, o));
+            w.t.extend(crate::dxf_anno::objects(plan.d, e, o, &|m| plan.cx.mleader_tags(plan.d, m)));
         }
     }
 }

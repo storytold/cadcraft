@@ -1,4 +1,4 @@
-use super::{DimVal, Entity, Handle, HashMap, K, Vec3, Version, W, dxf_ext};
+use super::{DimVal, Drawing, Entity, Handle, HashMap, K, MLeader, Tag, Vec3, Version, W, dxf_ext};
 
 /// The `DIMASSOC` object of an associative dimension (stored in the dimension's extension
 /// dictionary under `ACAD_DIMASSOC`).
@@ -69,6 +69,15 @@ impl Ctx {
     /// not written with contexts, as it is).
     pub(super) fn at_default(&self, e: &Entity) -> Option<Entity> {
         self.anno.objs.get(&e.handle).map(|o| crate::dxf_anno::at_scale(e, crate::dxf_anno::default_factor(o)))
+    }
+    /// A native MULTILEADER's groups after its `AcDbMLeader` marker.
+    pub(super) fn mleader_tags(&self, d: &Drawing, m: &MLeader) -> Vec<Tag> {
+        let refs = crate::dxf_mleader::Refs {
+            style: self.mleader_style(&m.style),
+            text_style: m.text.as_ref().and_then(|t| self.style(&t.style)),
+            block: m.block.as_ref().and_then(|b| self.block_records.get(&b.block.to_ascii_uppercase()).cloned()),
+        };
+        crate::dxf_mleader::entity_tags(d, m, &refs)
     }
     /// `AcadAnnotative` xdata of an object written with contexts.
     pub(super) fn anno_xdata(&self, w: &mut W, e: &Entity) {
