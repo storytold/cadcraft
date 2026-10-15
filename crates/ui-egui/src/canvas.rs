@@ -1051,7 +1051,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         let gs = app.session.settings.gripsize as f32;
         for h in sel.iter().take(200) {
             if let Some(e) = st.doc.entity(*h) {
-                let grips = e.kind.grips();
+                let grips = cadcraft_engine::grips::shown_grips(&st.doc, e);
                 let count = grips.len();
                 for (gi, g) in grips.into_iter().enumerate() {
                     let sp = xf.to_screen(g);

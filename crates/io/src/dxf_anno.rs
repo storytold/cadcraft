@@ -11,8 +11,9 @@
 //! CADCraft keeps an annotative object at paper size with the list of scales it supports
 //! ([`cadcraft_doc::Common::anno_scales`]). It writes the object at its default scale with a
 //! context per scale ([`plan`], [`objects`]), and reads the scales and paper size back from the
-//! contexts ([`resolve`]). An object's position at each scale is the one the scale gives it:
-//! AutoCAD lets a context move an object at one scale only, which CADCraft doesn't model.
+//! contexts ([`resolve`]). A context can place the object somewhere else at its scale (moved with
+//! grips at that scale in AutoCAD or CADCraft): that is the object's offset at the scale
+//! ([`cadcraft_doc::AnnoMove`]), written into and read back from the context's position.
 //!
 //! Objects inside block definitions are left alone, and files older than AutoCAD 2007's format
 //! (before annotation scaling) don't get contexts.
@@ -67,8 +68,16 @@ fn by_alignment(t: &Text) -> bool {
 
 /// `e` at annotation scale `f`, as its groups are written there: sizes scaled (see
 /// [`cadcraft_doc::anno_scaled`]) and justified text's start point moved with its size about its
-/// alignment point. A dimension's definition gets that scale (DIMSCALE).
+/// alignment point. A dimension's definition gets that scale (DIMSCALE). The object's offset at
+/// that scale moves it there.
 pub(crate) fn at_scale(e: &Entity, f: f64) -> Entity {
+    let mut out = shared_at_scale(e, f);
+    cadcraft_doc::shift_position(&mut out.kind, e.common.moved_at_factor(f));
+    out
+}
+
+/// [`at_scale`] at the object's shared position (without its offset there).
+fn shared_at_scale(e: &Entity, f: f64) -> Entity {
     let mut out = cadcraft_doc::anno_scaled(e, f);
     if let (EntityKind::Text(t), EntityKind::Text(paper)) = (&mut out.kind, &e.kind)
         && by_alignment(paper)
@@ -77,6 +86,47 @@ pub(crate) fn at_scale(e: &Entity, f: f64) -> Entity {
         t.insert = a + (paper.insert - a) * f;
     }
     out
+}
+
+/// The point that places `e` (as written at some scale): a text's start or alignment point, an
+/// MText's insertion point, a dimension's text position, a multileader's landing.
+fn anchor(d: &Drawing, e: &Entity) -> Option<cadcraft_geom::Vec2> {
+    let p = match &e.kind {
+        EntityKind::Text(t) if by_alignment(t) => t.align_pt?.xy(),
+        EntityKind::Text(t) => t.insert.xy(),
+        EntityKind::MText(t) => t.insert.xy(),
+        EntityKind::Dimension(dm) if dm.user_text_pos => dm.text_mid.xy(),
+        EntityKind::Dimension(dm) => cadcraft_render::dimension_in(d, dm).text_pos,
+        EntityKind::MLeader(m) => m.landing.xy(),
+        _ => return None,
+    };
+    p.is_finite().then_some(p)
+}
+
+/// The same point as a context of `e` holds it (`g`: the context's groups after its SCALE
+/// handle).
+fn context_anchor(e: &Entity, g: &[Tag]) -> Option<cadcraft_geom::Vec2> {
+    let xy = |code: i32| -> Option<cadcraft_geom::Vec2> {
+        let i = g.iter().position(|t| t.code == code)?;
+        let y = g.get(i + 1).filter(|t| t.code == code + 10)?;
+        let v = cadcraft_geom::Vec2::new(g.get(i)?.f64(), y.f64());
+        v.is_finite().then_some(v)
+    };
+    match &e.kind {
+        EntityKind::Text(t) if by_alignment(t) => xy(11),
+        EntityKind::Text(_) => xy(10),
+        EntityKind::MText(_) => xy(11),
+        // Only a text the user placed (294 = 0) holds its own position.
+        EntityKind::Dimension(_) => g.iter().find(|t| t.code == 294).is_some_and(|t| t.i64() == 0).then(|| xy(10)).flatten(),
+        EntityKind::MLeader(_) => {
+            let mut tags = vec![Tag::s(100, "AcDbMLeader"), Tag::s(300, "CONTEXT_DATA{")];
+            tags.extend(g.iter().cloned());
+            tags.push(Tag::s(301, "}"));
+            let p = crate::dxf_mleader::read(&tags).landing.xy();
+            p.is_finite().then_some(p)
+        }
+        _ => None,
+    }
 }
 
 /// One context: its handle, the SCALE object's handle and the scale.
@@ -422,6 +472,7 @@ pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
             .and_then(|s| objs.get(&s));
         let Some((_, dict)) = dict else { continue };
         let mut list: Vec<(AnnoScale, bool)> = Vec::new();
+        let mut placed: Vec<(String, f64, cadcraft_geom::Vec2)> = Vec::new();
         for c in all_entries(dict) {
             let Some((_, t)) = objs.get(&c).filter(|(k, _)| k.ends_with("OBJECTCONTEXTDATA_CLASS")) else { continue };
             let g = own(t);
@@ -431,6 +482,10 @@ pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
                 && !list.iter().any(|(x, _)| x.name.eq_ignore_ascii_case(&s.name))
             {
                 list.push((s.clone(), default));
+                let after = g.iter().position(|t| t.code == 340).map_or(&[][..], |i| g.get(i + 1..).unwrap_or(&[]));
+                if let Some(at) = context_anchor(e, after) {
+                    placed.push((s.name.clone(), s.factor(), at));
+                }
             }
         }
         if list.is_empty() {
@@ -443,6 +498,23 @@ pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
             e.common.anno_scales = list;
             to_paper(e, f);
         });
+        // A context placing the object elsewhere than its scale would: its offset there.
+        let Some(e) = d.entity(h).map(|e| (**e).clone()) else { continue };
+        let moves: Vec<(String, cadcraft_geom::Vec2)> = placed
+            .iter()
+            .filter_map(|(name, f, at)| {
+                let by = *at - anchor(d, &shared_at_scale(&e, *f))?;
+                let tol = 1e-6 * (1.0 + at.len());
+                (by.is_finite() && by.len() > tol).then(|| (name.clone(), by))
+            })
+            .collect();
+        if !moves.is_empty() {
+            let _ = d.modify_entity(h, |e| {
+                for (name, by) in &moves {
+                    e.common.move_at(name, *by);
+                }
+            });
+        }
     }
 }
 

@@ -808,3 +808,86 @@ fn the_current_scale_is_autocad_s_and_saving_keeps_it_current() {
     let var = recs.iter().find(|(k, _)| k == "DICTIONARYVAR").unwrap();
     assert_eq!(get(&var.1, 1), Some("1:1"));
 }
+
+#[test]
+fn a_context_placing_the_object_elsewhere_reads_as_its_offset_there() {
+    // The text sits 5 further right at 1:10 than its 1:2 position would put it.
+    let src = FIXTURE.replacen("10 -40\n20 0\n11 30", "10 -35\n20 0\n11 35", 1);
+    assert_ne!(src, FIXTURE);
+    let d = cadcraft_io::read_dxf(dxf(&src).as_bytes()).unwrap();
+    let e = d.entity(Handle::parse_hex("30").unwrap()).unwrap();
+    assert_eq!(e.common.anno_moves.len(), 1, "{:?}", e.common.anno_moves);
+    assert_eq!(e.common.anno_moves[0].scale, "1:10");
+    assert!(e.common.anno_moves[0].by.dist(cadcraft_geom::Vec2::new(5.0, 0.0)) < 1e-9);
+    // An unmoved fixture has none.
+    assert!(read().model.iter().all(|e| e.common.anno_moves.is_empty()));
+    // Written back, the 1:10 context keeps its own position.
+    let text = save(&d);
+    let starts: Vec<f64> = contexts_of(&text, "30").iter().map(|c| num(&c.tags, 11)).collect();
+    assert_eq!(starts, [30.0, 35.0]);
+}
+
+#[test]
+fn offsets_made_in_cadcraft_survive_a_save() {
+    let mut d = made();
+    let hs: Vec<Handle> = d.model.iter().map(|e| e.handle).collect();
+    for h in &hs {
+        d.modify_entity(*h, |e| e.common.move_at("1:1", cadcraft_geom::Vec2::new(3.0, 4.0))).unwrap();
+    }
+    let back = cadcraft_io::read_dxf(save(&d).as_bytes()).unwrap();
+    for h in &hs {
+        let (a, b) = (d.entity(*h).unwrap(), back.entity(*h).unwrap());
+        for f in [1.0, 50.0] {
+            let shown = |d: &Drawing, e: &cadcraft_doc::Entity| match cadcraft_doc::anno_draw(e, f, true) {
+                cadcraft_doc::AnnoDraw::Scaled { factor, by } => match cadcraft_doc::anno_placed(e, factor, by).kind {
+                    EntityKind::Text(t) => t.insert.xy(),
+                    EntityKind::Dimension(dm) if dm.user_text_pos => dm.text_mid.xy(),
+                    EntityKind::Dimension(dm) => cadcraft_render::dimension_in(d, &dm).text_pos,
+                    k => panic!("{k:?}"),
+                },
+                m => panic!("{m:?}"),
+            };
+            let (p, q) = (shown(&d, a), shown(&back, b));
+            assert!(p.dist(q) < 1e-6, "{h:?} at {f}: {p:?} vs {q:?}");
+        }
+    }
+}
+
+/// The landing and text of multileader `e` as it shows at annotation scale `f`.
+fn mleader_shown(e: &cadcraft_doc::Entity, f: f64) -> (cadcraft_geom::Vec2, cadcraft_geom::Vec2) {
+    let cadcraft_doc::AnnoDraw::Scaled { factor, by } = cadcraft_doc::anno_draw(e, f, true) else { panic!("hidden") };
+    let EntityKind::MLeader(m) = cadcraft_doc::anno_placed(e, factor, by).kind else { panic!("multileader") };
+    (m.landing.xy(), m.text.unwrap().insert.xy())
+}
+
+#[test]
+fn a_multileader_moved_at_one_scale_keeps_it_through_dxf_and_dwg() {
+    let (mut d, h) = with_mleader();
+    d.modify_entity(h, |e| e.common.move_at("1:1", cadcraft_geom::Vec2::new(2.0, -1.0))).unwrap();
+    let dxf_back = cadcraft_io::read_dxf(save(&d).as_bytes()).unwrap();
+    let dwg = cadcraft_io::write(&d, "x.dwg").unwrap();
+    #[cfg(not(target_arch = "wasm32"))]
+    let dwg_back = Some(cadcraft_io::read(&dwg, "x.dwg").unwrap());
+    #[cfg(target_arch = "wasm32")]
+    let dwg_back: Option<Drawing> = None;
+    let a = d.entity(h).unwrap();
+    for back in std::iter::once(&dxf_back).chain(dwg_back.as_ref()) {
+        let b = back.model.iter().find(|e| matches!(e.kind, EntityKind::MLeader(_))).unwrap();
+        for f in [1.0, 10.0] {
+            let ((la, ta), (lb, tb)) = (mleader_shown(a, f), mleader_shown(b, f));
+            assert!(la.dist(lb) < 1e-6 && ta.dist(tb) < 1e-6, "at {f}: {la:?} {ta:?} vs {lb:?} {tb:?}");
+        }
+    }
+}
+
+#[test]
+fn hostile_context_positions_do_not_panic() {
+    for bad in ["10 1e309\n20 nan\n11 inf", "10 x\n20 0\n11 -1e308", "10 -40\n20 0\n11 1e308"] {
+        let src = FIXTURE.replacen("10 -40\n20 0\n11 30", bad, 1);
+        let Ok(d) = cadcraft_io::read_dxf(dxf(&src).as_bytes()) else { continue };
+        for e in d.model.iter() {
+            assert!(e.common.anno_moves.iter().all(|m| m.by.is_finite()), "{:?}", e.common.anno_moves);
+        }
+        let _ = save(&d);
+    }
+}
