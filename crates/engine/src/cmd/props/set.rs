@@ -37,6 +37,7 @@ const SET_KEYS: &[&str] = &[
     "transparency",
     "visible",
     "annotative",
+    "annoScales",
     "dimStyle",
     "textOverride",
     "textRotation",
@@ -214,6 +215,8 @@ struct Call<'a> {
     dim_vars: DimVars,
     prep: Prepared,
     anno_scale: AnnoScale,
+    /// `annoScales`: the exact scales an annotative object supports.
+    anno_scales: Option<Vec<AnnoScale>>,
 }
 
 /// The keys some object took.
@@ -330,13 +333,14 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
     {
         return Err(bad("properties.set", format!("unknown pattern {}", v.trim().to_ascii_uppercase())));
     }
+    let anno_scales = anno_scales_of(d, p)?;
     if hs.is_empty() {
         // Every object was left out: the drawing stays as it was, with no undo step.
         return Ok(left_out.result(0, &[]));
     }
     let prep = Prepared::new(d, p, &hs);
     let anno_scale = d.current_anno_scale();
-    let c = Call { p, color, transparency, thickness, lineweight, linetype, dim_style, text_style, dim_vars, prep, anno_scale };
+    let c = Call { p, color, transparency, thickness, lineweight, linetype, dim_style, text_style, dim_vars, prep, anno_scale, anno_scales };
     // A failed call changes nothing (a command's error doesn't undo what it did), so the drawing
     // is taken for writing, and the layer made, only after every check.
     let d = s.doc_mut()?;
@@ -395,6 +399,26 @@ fn mleader<'c>(m: &mut cadcraft_doc::MLeader, c: &'c Call<'_>, used: &mut Used<'
     }
 }
 
+/// `annoScales`: the exact scales an annotative object supports (names of the scale list, each
+/// once; at least one), or `None` when the call doesn't give any.
+fn anno_scales_of(d: &Drawing, p: &Value) -> Result<Option<Vec<AnnoScale>>> {
+    let v = match p.get("annoScales") {
+        None | Some(Value::Null) => return Ok(None),
+        Some(v) => v,
+    };
+    let mut list: Vec<AnnoScale> = Vec::new();
+    for n in crate::cmd::annoscale::scale_names("properties.set", Some(v))? {
+        let sc = d.anno_scale(&n).cloned().ok_or_else(|| bad("properties.set", format!("`{n}` is not in the scale list")))?;
+        if !list.iter().any(|x| x.name.eq_ignore_ascii_case(&sc.name)) {
+            list.push(sc);
+        }
+    }
+    if list.is_empty() {
+        return Err(bad("properties.set", "an annotative object keeps at least one scale"));
+    }
+    Ok(Some(list))
+}
+
 /// The properties every object has: annotative, layer, color, linetype, lineweight, linetype
 /// scale, transparency, thickness and visibility.
 fn common<'c>(e: &mut Entity, c: &'c Call<'_>, used: &mut Used<'c>) {
@@ -408,6 +432,17 @@ fn common<'c>(e: &mut Entity, c: &'c Call<'_>, used: &mut Used<'c>) {
             dm.block = None;
         }
         used.insert("annotative");
+    }
+    // The scales of an annotative object (one made annotative just above included): a plain
+    // object stays plain, as `annotative: false` leaves it.
+    if let Some(list) = &c.anno_scales
+        && cadcraft_doc::is_annotative(e)
+    {
+        e.common.anno_scales.clone_from(list);
+        if let EntityKind::Dimension(dm) = &mut e.kind {
+            dm.block = None;
+        }
+        used.insert("annoScales");
     }
     if let Some(l) = str_param(p, "layer") {
         e.common.layer = l.to_string();
