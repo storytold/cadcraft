@@ -196,7 +196,19 @@ pub(crate) fn explode_kind(d: &cadcraft_doc::Drawing, e: &Entity) -> Option<Vec<
     match &e.kind {
         EntityKind::LwPolyline(p) => {
             let pl = Polyline { vertices: p.vertices.clone(), closed: p.closed };
-            Some(segment_entities(e, pl.segments()))
+            let mut out = segment_entities(e, pl.segments());
+            // The pieces stay on the polyline's elevation plane.
+            for piece in &mut out {
+                match &mut piece.kind {
+                    EntityKind::Line(l) => {
+                        l.a.z = p.elevation;
+                        l.b.z = p.elevation;
+                    }
+                    EntityKind::Arc(a) => a.center.z = p.elevation,
+                    _ => {}
+                }
+            }
+            Some(out)
         }
         EntityKind::Insert(ins) => explode_block_ref(d, e, ins),
         // A helix explodes into its spline (seen from above).
