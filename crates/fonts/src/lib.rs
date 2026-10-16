@@ -1,8 +1,8 @@
 //! CADCraft text layout.
 //!
 //! Turns TEXT and MTEXT into stroke polylines with the built-in single-stroke font
-//! ("CADCraft Stroke") or glyph outlines of installed TrueType fonts ([`ttf`]), with a
-//! per-character fallback to installed fonts for characters the chosen font lacks. Handles the
+//! ("CADCraft Stroke"), user-supplied SHX fonts ([`shx`]) or glyph outlines of installed
+//! TrueType fonts ([`ttf`]), with a per-character fallback for characters the chosen font lacks. Handles the
 //! `%%` control codes, alignment modes, width factor, obliquing, MTEXT inline formatting
 //! (paragraphs, stacking, height changes), word wrap and attachment points.
 //!
@@ -16,6 +16,7 @@
 pub mod bidi;
 mod complex;
 mod mtext;
+pub mod shx;
 mod stroke;
 pub mod subset;
 pub mod ttf;
@@ -263,6 +264,9 @@ pub fn line_width(s: &str, height: f64, width_factor: f64) -> f64 {
 /// Width of the gap MTEXT leaves between two words. Words are measured without their trailing
 /// letter gap, so the stroke font's gap is added on both sides of the space, as TEXT lays it out.
 pub fn space_width(font: &TextFont, height: f64, width_factor: f64) -> f64 {
+    if let TextFont::Shx(face) = font {
+        return face.width(" ", height, width_factor);
+    }
     if let TextFont::Outline(face) = font
         && let Some(w) = ttf::width(face, " ", height, width_factor)
     {
@@ -271,28 +275,33 @@ pub fn space_width(font: &TextFont, height: f64, width_factor: f64) -> f64 {
     stroke_advance(' ', height, width_factor) + stroke::GAP / stroke::CAP * height * width_factor
 }
 
-/// The font a piece of text is set in: the built-in stroke font or an installed TrueType /
-/// OpenType face (outlines). Either way, characters the font lacks come from a fallback font.
+/// The font a piece of text is set in: the built-in stroke font, a user SHX font or an installed
+/// TrueType / OpenType face (outlines). Characters the font lacks come from a fallback font.
 #[derive(Clone, Debug, Default)]
 pub enum TextFont {
     #[default]
     Stroke,
     Outline(ttf::Face),
+    Shx(std::sync::Arc<shx::Font>),
 }
 
 impl TextFont {
-    /// Resolve a text style font name: an installed TTF/OTF/TTC when found; else, for a font we
-    /// can't find (an SHX file, a missing TTF), the FONTALT font ([`ttf::font_alt`]) when set;
+    /// Resolve a text style font name: an installed TTF/OTF/TTC or user SHX when found; else,
+    /// for a font we can't find, the FONTALT font ([`ttf::font_alt`]) when set;
     /// else the stroke font.
     pub fn resolve(name: &str) -> TextFont {
         if let Some(f) = ttf::find(name) {
             return TextFont::Outline(f);
         }
+        if let Some(f) = shx::find(name) {
+            return TextFont::Shx(f);
+        }
         let n = name.trim();
         if n.is_empty() || n.eq_ignore_ascii_case(BUILTIN_FONT) {
             return TextFont::Stroke;
         }
-        ttf::find(&ttf::font_alt()).map(TextFont::Outline).unwrap_or(TextFont::Stroke)
+        let alt = ttf::font_alt();
+        ttf::find(&alt).map(TextFont::Outline).or_else(|| shx::find(&alt).map(TextFont::Shx)).unwrap_or(TextFont::Stroke)
     }
     pub fn is_outline(&self) -> bool {
         matches!(self, TextFont::Outline(_))
@@ -410,6 +419,9 @@ pub(crate) fn decorations(spans: &[(f64, f64, bool, bool)], h: f64) -> Vec<Vec<V
 /// Shape one line in `font` (baseline at y = 0, x from 0). TrueType fonts that fail to parse
 /// fall back to the stroke font.
 pub fn shape_line(font: &TextFont, s: &str, height: f64, width_factor: f64, oblique: f64) -> Shaped {
+    if let TextFont::Shx(face) = font {
+        return face.shape(s, height, width_factor, oblique);
+    }
     if let TextFont::Outline(face) = font
         && let Some(sh) = ttf::shape(face, s, height, width_factor, oblique)
     {
@@ -420,6 +432,9 @@ pub fn shape_line(font: &TextFont, s: &str, height: f64, width_factor: f64, obli
 
 /// Width of one line in `font`.
 pub fn text_width(font: &TextFont, s: &str, height: f64, width_factor: f64) -> f64 {
+    if let TextFont::Shx(face) = font {
+        return face.width(s, height, width_factor);
+    }
     if let TextFont::Outline(face) = font
         && let Some(w) = ttf::width(face, s, height, width_factor)
     {

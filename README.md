@@ -144,9 +144,11 @@ input (`CRAFT_FONTS_DIR=<absolute path to a checkout> cargo build --release`) al
 fonts: BIZ UDPGothic, BIZ UDMincho and Shippori Mincho (Japanese) and Noto Sans Arabic (the web
 build, which has no system fonts, only BIZ UDPGothic Regular and Noto Sans Arabic). A text style
 can use them by family name, and they draw characters a text's font lacks when no installed
-wide-coverage CJK font has them. Without `CRAFT_FONTS_DIR` nothing is embedded. SHX
-fonts (including big fonts such as `chineset.shx`) aren't read yet: text in an SHX style is drawn
-with our own stroke font, and any character a text's font lacks (CJK, for example) is drawn from
+wide-coverage CJK font has them. Without `CRAFT_FONTS_DIR` nothing is embedded. User-supplied
+SHX text fonts (`shapes 1.0/1.1`, Unicode `unifont 1.0`) load from the directories in
+`CADCRAFT_SHXPATH`, with their own strokes and advances. Big fonts aren't read yet. Missing
+SHX fonts use FONTALT or our own stroke font (including Latin accents); any character a text's
+font lacks (CJK, for example) is drawn from
 an installed font that has it, preferring wide-coverage fonts such as Noto Sans CJK, Source Han
 Sans, WenQuanYi, PingFang or Microsoft JhengHei. Two settings, set with `SETVAR` or (for every
 run) an environment variable, steer this:
@@ -164,6 +166,11 @@ Linux and the BSDs `/usr/share/fonts`, `/usr/local/share/fonts`, `~/.local/share
 `~/.fonts`) and name it in a text style (`STYLE`, or `style {"name":"FA","font":"Vazirmatn"}`)
 by file name (`Vazirmatn-Regular.ttf`) or family name (`Vazirmatn`), or inline in MTEXT with
 `\fVazirmatn;`. Restart CADCraft after installing a font: the font folders are scanned once.
+
+**Your own SHX fonts.** Set `CADCRAFT_SHXPATH` to the folders containing fonts you are entitled
+to use (semicolon-separated on Windows, colon-separated on Unix), then name the file or stem in
+STYLE or inline MTEXT. CADCraft does not bundle proprietary fonts or scan CAD installations.
+See [SHX fonts](docs/shx-fonts.md) for configuration, supported programs and limits.
 
 **Right-to-left text (Persian, Arabic, Urdu, Hebrew).** TEXT and MTEXT lines are laid out with the
 Unicode Bidirectional Algorithm (the paragraph direction comes from its first letter, so numbers

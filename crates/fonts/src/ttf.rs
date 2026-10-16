@@ -7,7 +7,7 @@
 //!
 //! Two process-wide settings (like AutoCAD's profile variables) control substitution:
 //! - [`font_alt`] (`FONTALT`): the font used for a text style font that can't be found (an SHX
-//!   file we don't read, a missing TTF). Empty = the built-in stroke font.
+//!   file that isn't available, a missing TTF). Empty = the built-in stroke font.
 //! - [`fallback_fonts`] (`FONTFALLBACK`): fonts tried first for characters the text's font
 //!   lacks (CJK in an SHX big font, for example), before the automatic system font search.
 //!

@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (multiline attributes read, drawn and written) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (user SHX text fonts read; Latin stroke accents) · **Target:** Autodesk AutoCAD 2027
 
 Every format AutoCAD 2027 reads or writes, with CADCraft's support, fidelity and tests. Work
 items are in [gaps.md](gaps.md#file-formats); the weighted score feeds
@@ -112,7 +112,7 @@ early (#175), but the throughput problem remains. **DWG ≈ 30% read, ≈ 15% wr
 | DWF/DWFx export, DWF underlay | yes | no | 10–15 |
 | DGN import/export/underlay | yes | no (needs a public spec; owner decision) | 25–40 |
 | WMF, EPS, ACIS SAT, STL, FBX, IGES/STEP (Windows), 3DS | various | no; most are 3D and wait for M11 | 20–40 |
-| SHX fonts (`.shx`, big fonts) | read | **not parsed**: our stroke font or FONTALT stands in, so text metrics differ from AutoCAD | 8–12 |
+| SHX fonts (`.shx`, big fonts) | read | user `shapes 1.0/1.1` and Unicode `unifont 1.0` text fonts read via `CADCRAFT_SHXPATH`, native strokes/cap/advances; original Latin fallback accents. Big fonts, packed encodings and vertical text not read; separate SHX MTEXT attachment rules remain ([details](shx-fonts.md), part of #801) | 8–12 (not re-estimated) |
 | Linetype (`.lin`) and hatch pattern (`.pat`) files | load user files | user files load (#552); linetype shape (SHX) elements are skipped | 1–2 |
 | Plot styles (`.ctb`, `.stb`), plotter configs (`.pc3`), `.pmp` | yes | plot style tables in our own JSON format ([plot-styles.md](plot-styles.md)) and kept in the drawing; plotter devices with papers and printable areas in our own JSON format ([plotters.md](plotters.md), #564); binary `.ctb`/`.stb`/`.pc3`/`.pmp` not read (no public spec) | 4–8 |
 | Scripts (`.scr`) | SCRIPT | script text through the CLI, MCP and control channel; no SCRIPT command reading a `.scr` file | 1–2 |
@@ -135,6 +135,7 @@ our output in AutoCAD black-box.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | SHX text fonts: bounded, lazy pen-program reader; style resolution and inline MTEXT use native cap/advance metrics; missing-font Latin accents draw as original single strokes. Big fonts and separate SHX MTEXT attachment rules remain; no proprietary fonts bundled |
 | 2026-10-12 | minor | PDF output: object transparency plotted as PDF alpha (`/ExtGState` `/ca` `/CA`) when the page setup's or the plot's "Plot transparency" is on; PNG plots blend it, SVG uses `opacity`; plots without it are unchanged byte for byte |
 | 2026-10-12 | minor | DXF/DWG save: the Model layout's plot settings are written as CADCraft plots model space, drawing extents scaled to fit (PLOTSETTINGS 74 = 1, 75 = 0), instead of plot type 5 "Layout information", which other programs' Plot dialogs can't use for model space |
 | 2026-10-12 | minor | VIEWPORT frozen layers also written and read as AutoCAD's group 341 layer handles, so third-party viewers honour per-viewport freezing in DXF (DWG converter gap noted) |

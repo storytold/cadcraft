@@ -1,6 +1,6 @@
 # Where CADCraft falls short of AutoCAD
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (multiline attributes read, drawn and saved: F17 narrowed) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (FF8 narrowed: user SHX text fonts read; Latin stroke accents) · **Target:** Autodesk AutoCAD 2027
 
 Every known shortfall, one row each, ranked within each section by user impact. This is the work
 list: agents pick from here (top of a section first), and remove or update a row in the same PR
@@ -75,7 +75,7 @@ Detail: [file-format-parity.md](file-format-parity.md).
 | FF5 | **[alpha blocker]** Real-file corpus (`storytold/cadcraft-corpus`), open → save → reopen tests, black-box check in AutoCAD | High | 10–15 + human |
 | FF6 | **[alpha blocker]** DWG throughput: a 10 MB DWG took ~2 min to fail (#57) | High for real projects | 6–10 |
 | FF7 | Table record and object handles from other programs' files are renumbered on the first save (entity handles are kept; `*D` blocks no longer duplicate and once reopened, CADCraft's own files keep every handle across saves, #495) | Low | 4–6 |
-| FF8 | SHX fonts (shape and big fonts) not read | Medium-high (text metrics differ) | 8–12 |
+| FF8 | SHX big fonts and packed encodings not read; vertical text and SHX-specific MTEXT attachment offsets remain. User shape fonts 1.0/1.1 and Unicode unifont 1.0 load via `CADCRAFT_SHXPATH`, with native strokes/advances; missing-font Latin accents stay single-stroke ([details](shx-fonts.md), part of #801) | Medium-high (unsupported fonts and some layout metrics differ) | 8–12 (not re-estimated) |
 | FF9 | `.pc3` plotter configuration files; linetype shape (SHX) elements are skipped (templates and `.dwt`, user `.lin`/`.pat` and `.pgp` alias files landed, #552; `.ctb`/`.stb`, #410) | Low-medium | 5–10 |
 | FF10 | PDF import and underlays (PDFATTACH); raster image attach (IMAGEATTACH). PDF export has real text in embedded TrueType subsets, PDF layers, several sheets per file and hyperlinks (#567, #571) | Medium | 20–35 |
 | FF11 | DWF/DWFx, DGN, WMF, EPS, ACIS/STL and other exchange formats | Low-medium | 50–100 |
@@ -145,6 +145,7 @@ Detail: [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | FF8 narrowed: user SHX text fonts read with bounded pen-program decoding, native cap/advance metrics and original Latin stroke accents; big fonts, alternate encodings and separate SHX MTEXT layout rules remain |
 | 2026-10-12 | minor | Object transparency (entity, ByLayer, ByBlock) is drawn: on screen (TRANSPARENCYDISPLAY, on by default), in PNG/SVG exports, and in plots when the page setup's "Plot transparency" is on (PDF alpha, PNG blending, SVG opacity; PLOTTRANSPARENCYOVERRIDE): F14 narrowed |
 | 2026-10-12 | minor | Hatch and Gradient dialog (HATCH, GRADIENT; HPDLGMODE) and Hatch Edit dialog (HATCHEDIT, right-click, double-click a hatch): F13 narrowed to Preview, Inherit Properties and boundary add/remove in edit mode |
 | 2026-10-12 | minor | A bare system variable name typed at the command line (ORTHOMODE, GRIDMODE…) runs SETVAR on that variable, as in AutoCAD; U10 narrowed |
