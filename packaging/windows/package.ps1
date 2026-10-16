@@ -12,9 +12,8 @@
   warning when no signing secrets are set).
 
   Needs: Rust (MSVC toolchain + the target), the Windows SDK (rc.exe, signtool.exe),
-  and WiX v5 with its UI extension (the setup wizard):
+  and WiX v5:
     dotnet tool install --global wix --version 5.0.2
-    wix extension add -g WixToolset.UI.wixext/5.0.2
 
 .EXAMPLE
   pwsh packaging/windows/package.ps1 -Arch x64
@@ -95,7 +94,7 @@ Copy-Item (Join-Path $Bin 'cadcraft.exe'), (Join-Path $Bin 'cadcraft-cli.exe') $
 # ---- MSI ---------------------------------------------------------------------------------------
 $Msi = Join-Path $Dist "cadcraft-$Version-windows-$Arch.msi"
 Invoke-Native 'wix build' {
-  wix build (Join-Path $PSScriptRoot 'cadcraft.wxs') -arch $Arch -ext WixToolset.UI.wixext `
+  wix build (Join-Path $PSScriptRoot 'cadcraft.wxs') (Join-Path $PSScriptRoot 'installer-ui.wxs') -arch $Arch `
     -d "Version=$MsiVersion" -d "BinDir=$Stage" -d "IconPath=$(Join-Path $Root 'assets\app-icon\cadcraft.ico')" `
     -o $Msi
 }
