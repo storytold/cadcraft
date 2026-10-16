@@ -137,6 +137,18 @@ fn reshaped(prev: &Hatch, h: &Hatch) -> bool {
     h.loops.iter().any(|l| !prev.loops.iter().any(|q| q.vertices == l.vertices))
 }
 
+/// HATCHEDIT may add or remove whole loops without moving the ones it kept. New associative
+/// loops must still match their source objects; a hatch moved on its own must not keep its link.
+fn valid_loop_edit(prev: &Hatch, h: &Hatch, after: &Drawing) -> bool {
+    if prev.loops.len().saturating_mul(h.loops.len()) > 4_000_000 {
+        return false;
+    }
+    h.loops.iter().all(|l| {
+        prev.loops.iter().any(|old| old.vertices == l.vertices)
+            || (!l.sources.is_empty() && matches!(refill(after, after, l), Refill::Loop(vs) if same_shape(&vs, &l.vertices)))
+    })
+}
+
 /// What happens to one associative hatch after a command; `None` when nothing changes.
 fn follow(before: &Drawing, after: &Drawing, handle: Handle, h: &Hatch, checked: &mut usize) -> Option<(Hatch, Option<String>)> {
     let prev = match before.entity(handle).map(|e| &e.kind) {
@@ -153,7 +165,7 @@ fn follow(before: &Drawing, after: &Drawing, handle: Handle, h: &Hatch, checked:
         }
         match prev {
             // Moved or reshaped on its own: no longer tied to the boundary.
-            Some(p) if reshaped(p, h) => {
+            Some(p) if reshaped(p, h) && !valid_loop_edit(p, h, after) => {
                 detach(&mut nh);
                 return Some((nh, None));
             }

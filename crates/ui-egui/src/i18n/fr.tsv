@@ -1007,3 +1007,260 @@
 	Search for pattern	Rechercher un motif
 	Not a number or distance: {text}	Ni un nombre ni une distance : {text}
 	Query Texts	Interroger les textes
+# Ribbon labels (context `ribbon`): the wording observed on AutoCAD LT 2025 for Windows, French (owner's screenshots, 2026-10-13).
+ribbon	Home	Début
+ribbon	Tab: Insert	Insertion
+ribbon	Insert	Insérer
+ribbon	Annotate	Annoter
+ribbon	Parametric	Paramétrique
+ribbon	View	Vue
+ribbon	Manage	Gérer
+ribbon	Output	Sortie
+ribbon	Collaborate	Collaborer
+ribbon	Draw	Dessin
+ribbon	Modify	Modification
+ribbon	Annotation	Annotation
+ribbon	Layers	Calques
+ribbon	Block	Bloc
+ribbon	Properties	Propriétés
+ribbon	Groups	Groupes
+ribbon	Utilities	Utilitaires
+ribbon	Clipboard	Presse-papiers
+ribbon	Block Definition	Définition de bloc
+ribbon	Reference	Référence
+ribbon	Import	Importer
+ribbon	Data	Données
+ribbon	Linking & Extraction	Liaison et extraction
+ribbon	Location	Position
+ribbon	Text	Texte
+ribbon	Dimensions	Cotes
+ribbon	Centerlines	Traits d'axe
+ribbon	Leaders	Lignes de repère
+ribbon	Tables	Tableaux
+ribbon	Markup	Annotation
+ribbon	Annotation Scaling	Echelle d'annotation
+ribbon	Geometric	Géométrique
+ribbon	Dimensional	Dimensionnelle
+ribbon	Viewport Tools	Outils de fenêtre
+ribbon	Named Views	Vues existantes
+ribbon	Model Viewports	Fenêtres d'espace objet
+ribbon	Review	Vérifier
+ribbon	History	Historique
+ribbon	Palettes	Palettes
+ribbon	Interface	Interface
+ribbon	Customization	Personnalisation
+ribbon	Applications	Applications
+ribbon	Cleanup	Nettoyer
+ribbon	Plot	Traceur
+ribbon	Export to DWF/PDF	Exporter au format DWF/PDF
+ribbon	Share	Partager
+ribbon	Compare	Comparer
+ribbon	Line	Ligne
+ribbon	Polyline	Polyligne
+ribbon	Circle	Cercle
+ribbon	Arc	Arc
+ribbon	Rectangle	Rectangle
+ribbon	Ellipse	Ellipse
+ribbon	Hatch	Hachures
+ribbon	Move	Déplacer
+ribbon	Copy	Copier
+ribbon	Stretch	Etirer
+ribbon	Rotate	Rotation
+ribbon	Mirror	Miroir
+ribbon	Scale	Echelle
+ribbon	Trim	Ajuster
+ribbon	Fillet	Raccord
+ribbon	Array	Réseau
+ribbon	Erase	Effacer
+ribbon	Explode	Décomposer
+ribbon	Offset	Décaler
+ribbon	Dimension	Cote
+ribbon	Linear	Linéaire
+ribbon	Leader	Ligne de repère
+ribbon	Table	Tableau
+ribbon	Layer Properties	Propriétés des calques
+ribbon	Make Current	Rendre courant
+ribbon	Match Layer	Faire correspondre le calque
+ribbon	Copy to Layer	Copier le calque
+ribbon	Create	Créer
+ribbon	Edit	Modifier
+ribbon	Edit Attributes	Modifier attributs
+ribbon	Match Properties	Copier les propriétés
+ribbon	Group	Grouper
+ribbon	Measure	Mesurer
+ribbon	Paste	Coller
+ribbon	Edit Attribute	Editer les attributs
+ribbon	Retain Attribute Display	Conserver l'affichage des attributs
+ribbon	Create Block	Créer un bloc
+ribbon	Define Attributes	Définir des attributs
+ribbon	Manage Attributes	Gérer les attributs
+ribbon	Block Editor	Editeur de blocs
+ribbon	Attach	Attacher
+ribbon	Clip	Délimiter
+ribbon	Adjust	Ajuster
+ribbon	External References	Références externes
+ribbon	Frames vary	Variation de cadres
+ribbon	Snap to Underlays	Accrochage aux fonds de plan
+ribbon	PDF Import	Importer en PDF
+ribbon	Recognize SHX Text	Reconnaître le texte SHX
+ribbon	Recognition Settings	Paramètres de reconnaissance
+ribbon	Combine Text	Combiner le texte
+ribbon	Field	Champ
+ribbon	Update Fields	Mettre à jour les champs
+ribbon	OLE Object	Objet OLE
+ribbon	Hyperlink	Hyperlien
+ribbon	Data Link	Liaison de données
+ribbon	Set Location	Définir l'emplacement
+ribbon	Multiline Text	Texte multiligne
+ribbon	Quick	Rapide
+ribbon	Continue	Continuer
+ribbon	Center Mark	Marque centrale
+ribbon	Centerline	Trait d'axe
+ribbon	Multileader	Ligne de repère multiple
+ribbon	Add Leader	Ajouter une ligne de repère
+ribbon	Remove Leader	Supprimer une ligne de repère
+ribbon	Link Data	Liaison de données
+ribbon	Wipeout	Masque
+ribbon	Revision Cloud	Nuage de révision
+ribbon	Add Current Scale	Ajouter échelle courante
+ribbon	Scale List	Liste d'échelles
+ribbon	Auto Constrain	Contrainte auto
+ribbon	Show/Hide	Afficher/Masquer
+ribbon	Show All	Tout afficher
+ribbon	Hide All	Tout masquer
+ribbon	Delete Constraints	Supprimer les contraintes
+ribbon	Parameters Manager	Gestionnaire des paramètres
+ribbon	UCS Icon	Icône du SCU
+ribbon	View Cube	ViewCube
+ribbon	Navigation Bar	Barre de navigation
+ribbon	New View	Nouvelle vue
+ribbon	View Manager	Gestionnaire des vues
+ribbon	Viewport Configuration	Configuration de la fenêtre
+ribbon	Named	Nommé
+ribbon	Join	Joindre
+ribbon	Restore	Restaurer
+ribbon	DWG Compare	Comparaison de fichiers DWG
+ribbon	Activity Insights	Informations sur l'activité
+ribbon	Tool Palettes	Palettes d'outils
+ribbon	Blocks	Blocs
+ribbon	Count	Quantité
+ribbon	Sheet Set Manager	Gestionnaire du jeu de feuilles
+ribbon	Switch Windows	Basculer les fenêtres
+ribbon	File Tabs	Onglets Fichier
+ribbon	Layout Tabs	Onglets de présentation
+ribbon	Tile Horizontally	Mosaïque horizontale
+ribbon	Tile Vertically	Mosaïque verticale
+ribbon	Cascade	Cascade
+ribbon	User Interface	Interface utilisateur
+ribbon	Export	Exporter
+ribbon	Edit Aliases	Modifier les alias
+ribbon	Load Application	Charger une application
+ribbon	Run Script	Exécuter le script
+ribbon	Find Non-Purgeable Items	Rechercher des éléments ne pouvant pas être purgés
+ribbon	Purge	Purger
+ribbon	Overkill	Epurer
+ribbon	Audit	Contrôler
+ribbon	Batch Plot	Tracé par lot
+ribbon	Preview	Aperçu
+ribbon	Page Setup Manager	Gestionnaire des mises en page
+ribbon	View Details	Afficher les détails
+ribbon	Plotter Manager	Gestionnaire de traçage
+ribbon	Share Drawing	Partager le dessin
+ribbon	Shared Views	Vues partagées
+ribbon	Off	Désactiver
+ribbon	Isolate	Isoler
+ribbon	Freeze	Geler
+ribbon	Lock	Verrouiller
+ribbon	Unlock	Déverrouiller
+ribbon	Previous	Précédent
+ribbon	Turn All Layers On	Activer tous les calques
+ribbon	Unisolate	Annuler l'isolement
+ribbon	Thaw All Layers	Libérer tous les calques
+ribbon	Quick Select	Sélection rapide
+ribbon	Command Line	Ligne de commande
+	Ribbon	Ruban
+	AutoCAD for Windows Layout	Disposition AutoCAD pour Windows
+	AutoCAD for Mac Layout	Disposition AutoCAD pour Mac
+# Hatch Editor contextual tab (context `ribbon`, and `hatchribbon` where the Hatch Editor words a
+# label differently from the other tabs): wording observed on AutoCAD 2027 for Windows, French
+# (owner's screenshots, 2026-10-16).
+ribbon	Hatch Editor	Editeur de hachures
+ribbon	Boundaries	Contours
+ribbon	Origin	Origine
+ribbon	Options	Options
+ribbon	Close	Fermer
+ribbon	Pick Points	Choisir des points
+ribbon	Select	Sélection
+ribbon	Recreate	Recréer
+ribbon	Set Origin	Définir l'origine
+ribbon	Close Hatch Editor	Fermer Editeur de hachures
+ribbon	Associative	Associatif
+ribbon	Annotative	Annotatif
+ribbon	Spacing	Espacement
+ribbon	Hatch Transparency	Transparence des hachures
+ribbon	User defined	Défini par l'utilisateur
+ribbon	Display Boundary Objects	Afficher les objets de contour
+ribbon	Don't Retain Boundaries	Ne pas conserver les contours
+ribbon	Use Current Viewport	Utiliser la fenêtre courante
+ribbon	Use Current	Utiliser la valeur courante
+ribbon	Relative to Paper Space	Relative à l'espace papier
+ribbon	Double	Double
+ribbon	ISO Pen Width:	Largeur de plume ISO:
+ribbon	Top Left	En haut à gauche
+ribbon	Top Right	En haut à droite
+ribbon	Bottom Left	En bas à gauche
+ribbon	Bottom Right	En bas à droite
+ribbon	Center	Centre
+ribbon	Use Current Origin	Utiliser l'origine courante
+ribbon	Store as Default Origin	Enregistrer en tant qu'origine par défaut
+ribbon	Use Source Hatch Origin	Utiliser l'origine de la hachure source
+ribbon	Gap Tolerance	Tolérance d'espace
+ribbon	Separate Hatches	Séparer les hachures
+ribbon	Normal Island Detection	Détection d'îlots normale
+ribbon	Outer Island Detection	Détection d'îlots externe
+ribbon	Ignore Island Detection	Ignorer la détection d'îlots
+ribbon	No Island Detection	Pas de détection d'îlots
+ribbon	Do Not Change	Ne pas modifier
+ribbon	Send Behind Boundary	Placer derrière le contour
+ribbon	Bring in Front of Boundary	Placer devant le contour
+ribbon	Hatch Type	Type de hachure
+ribbon	Hatch Color	Couleur de hachure
+ribbon	Background Color	Couleur d'arrière-plan
+ribbon	Gradient Color 2	Couleur de dégradé 2
+ribbon	Hatch Layer Override	Remplacement du calque de hachure
+ribbon	Island Detection	Détection d'îlots
+ribbon	Draw Order	Ordre de tracé
+ribbon	Retain Boundaries	Conserver les contours
+ribbon	Boundary Set	Jeu de contours
+ribbon	Next	Suivant
+ribbon	More	Plus
+ribbon	GR_LINEAR	GR_LINEAIRE
+ribbon	GR_INVCYL	GR_CYLINV
+ribbon	GR_CURVED	GR_COURBE
+ribbon	GR_INVSPH	GR_SPHINV
+ribbon	GR_INVHEM	GR_HEMINV
+ribbon	GR_INVCUR	GR_CURINV
+hatchribbon	Match Properties	Faire correspondre les propriétés
+hatchribbon	Send to Back	Mettre à l'arrière-plan
+hatchribbon	Bring to Front	Mettre au premier plan
+	Transparency Value	Valeur de transparence
+	Pin	Épingler
+	Pick Points	Choisir des points
+	Select Boundary Objects	Sélectionner les objets de contour
+	Remove Boundaries	Supprimer des contours
+	Recreate Boundary	Recréer le contour
+	Set Origin	Définir l'origine
+	Display Boundary Objects	Afficher les objets de contour
+	Boundary Set	Jeu de contours
+	Close Hatch Editor	Fermer Editeur de hachures
+	Index Colors	Couleurs de l'index
+	More Colors...	Plus de couleurs...
+	Select Color	Sélectionner une couleur
+ribbon	Hatch Creation	Création de hachures
+ribbon	Close Hatch Creation	Fermer Création de hachures
+ribbon	Retain Boundaries - Polyline	Conserver les contours - Polyligne
+ribbon	Retain Boundaries - Region	Conserver les contours - Région
+ribbon	Select New Boundary Set	Sélectionner un nouveau jeu de contours
+ribbon	Hatch and Gradient	Hachures et gradient
+	Close Hatch Creation	Fermer Création de hachures
+	Select Hatch	Sélectionner une hachure

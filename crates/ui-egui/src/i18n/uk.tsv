@@ -1298,6 +1298,8 @@
 	Add: Pick points	Додати: вказати точки
 	Add: Select objects	Додати: вибрати об'єкти
 	Boundaries picked: {n}	Вибрано контурів: {n}
+	Select boundaries to remove	Виберіть контури для видалення
+	Island	Острів
 	Associative	Асоціативне
 	Create separate hatches	Створити окремі штрихування
 	Island detection	Виявлення островів
@@ -1330,3 +1332,16 @@
 	Justify	За шириною
 	Text color	Колір тексту
 	Click the ruler to add a tab stop, right-click to remove one	Натисніть на лінійку, щоб додати табуляцію; права кнопка видаляє її
+	Ribbon	Стрічка
+	AutoCAD for Windows Layout	Розкладка AutoCAD для Windows
+	AutoCAD for Mac Layout	Розкладка AutoCAD для Mac
+	Pick Points	Вибрати точки
+	Select Boundary Objects	Вибрати об'єкти контуру
+	Remove Boundaries	Видалити контури
+	Recreate Boundary	Відтворити контур
+	Set Origin	Задати початок
+	Display Boundary Objects	Показати об'єкти контуру
+	Boundary Set	Набір контурів
+	Close Hatch Editor	Закрити редактор штрихування
+	Close Hatch Creation	Закрити створення штрихування
+	Select Hatch	Вибрати штрихування

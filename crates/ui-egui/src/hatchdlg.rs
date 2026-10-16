@@ -55,6 +55,10 @@ pub struct HatchDlgState {
     /// Internal points and boundary objects picked so far (create mode).
     pub points: Vec<[f64; 2]>,
     pub handles: Vec<Handle>,
+    /// The loops of the first edited hatch; geometry edits require exactly one hatch.
+    pub loop_outer: Vec<bool>,
+    /// Zero-based loop numbers to remove on OK.
+    pub remove_loops: Vec<usize>,
     /// A HATCHPICK the dialog started that hasn't ended yet.
     pub picking: Option<PickMode>,
     /// The last command error, shown in the dialog.
@@ -98,6 +102,8 @@ pub fn create_state(d: &Drawing, uid: u64, gradient: bool) -> HatchDlgState {
         separate: h.i64("HPSEPARATE", 0) != 0,
         points: Vec::new(),
         handles: Vec::new(),
+        loop_outer: Vec::new(),
+        remove_loops: Vec::new(),
         picking: None,
         error: None,
         uid,
@@ -139,6 +145,9 @@ pub fn edit_state(d: &Drawing, uid: u64, handles: Vec<Handle>) -> Option<HatchDl
     }
     st.opened = st.fill.clone();
     st.edit = hatches;
+    if st.edit.len() == 1 {
+        st.loop_outer = first.loops.iter().map(|l| l.outer).collect();
+    }
     st.separate = false;
     Some(st)
 }
@@ -195,6 +204,15 @@ pub fn ok_call(st: &HatchDlgState) -> Option<(&'static str, Value)> {
         return Some((if f.gradient { "gradient" } else { "hatch" }, Value::Object(p)));
     }
     let o = &st.opened;
+    if !st.points.is_empty() {
+        p.insert("addPoints".into(), json!(st.points));
+    }
+    if !st.handles.is_empty() {
+        p.insert("addBoundary".into(), hexes(&st.handles));
+    }
+    if !st.remove_loops.is_empty() {
+        p.insert("removeLoops".into(), json!(st.remove_loops));
+    }
     if f.gradient {
         let changed = !o.gradient
             || f.shape != o.shape
@@ -536,7 +554,7 @@ fn fill_ui(ui: &mut egui::Ui, f: &mut Fill, action: &mut Action) {
 }
 
 fn options_ui(ui: &mut egui::Ui, st: &mut HatchDlgState, action: &mut Action) {
-    if st.edit.is_empty() {
+    if st.edit.is_empty() || st.edit.len() == 1 {
         ui.strong(crate::tl!("Boundaries"));
         if ui.button(crate::tl!("Add: Pick points")).clicked() {
             *action = Action::Pick(PickMode::Points);
@@ -552,6 +570,22 @@ fn options_ui(ui: &mut egui::Ui, st: &mut HatchDlgState, action: &mut Action) {
                 st.handles.clear();
             }
         });
+        if !st.edit.is_empty() {
+            egui::ScrollArea::vertical().max_height(120.0).show(ui, |ui| {
+                for (i, outer) in st.loop_outer.iter().enumerate() {
+                    let mut remove = st.remove_loops.contains(&i);
+                    let label = format!("{} {} ({})", crate::tl!("Boundary"), i + 1, if *outer { crate::tl!("Outer") } else { crate::tl!("Island") });
+                    if ui.checkbox(&mut remove, label).changed() {
+                        if remove {
+                            st.remove_loops.push(i);
+                        } else {
+                            st.remove_loops.retain(|n| *n != i);
+                        }
+                    }
+                }
+            });
+            ui.label(crate::tl!("Select boundaries to remove"));
+        }
         ui.separator();
     }
     ui.strong(crate::tl!("Options"));
@@ -762,6 +796,29 @@ mod tests {
         // Not a hatch: no edit state.
         let line = s.execute("line", &json!({ "points": [[20, 0], [30, 0]] })).unwrap()["handles"][0].as_str().unwrap().to_string();
         assert!(edit_state(s.doc().unwrap(), 1, vec![Handle::parse_hex(&line).unwrap()]).is_none());
+    }
+
+    #[test]
+    fn edit_dialog_sends_boundary_additions_and_removals() {
+        let (mut s, outer) = session_with_rect();
+        let island = s.execute("rectang", &json!({ "p1": [2, 2], "p2": [4, 4] })).unwrap()["handle"].as_str().unwrap().to_string();
+        let h = s.execute("hatch", &json!({ "handles": [outer.hex()] })).unwrap()["handle"].as_str().unwrap().to_string();
+        let h = Handle::parse_hex(&h).unwrap();
+        let mut st = edit_state(s.doc().unwrap(), 1, vec![h]).unwrap();
+        assert_eq!(st.loop_outer, vec![true]);
+        merge_picks(&mut st, HatchPicks { mode: PickMode::Objects, handles: vec![Handle::parse_hex(&island).unwrap()], ..HatchPicks::default() });
+        let (cmd, p) = ok_call(&st).unwrap();
+        assert_eq!(cmd, "hatchedit");
+        assert_eq!(p["addBoundary"], json!([island]));
+        s.execute(cmd, &p).unwrap();
+        assert_eq!(edit_state(s.doc().unwrap(), 1, vec![h]).unwrap().loop_outer, vec![true, false]);
+
+        let mut st = edit_state(s.doc().unwrap(), 1, vec![h]).unwrap();
+        st.remove_loops.push(1);
+        let (_, p) = ok_call(&st).unwrap();
+        assert_eq!(p["removeLoops"], json!([1]));
+        s.execute("hatchedit", &p).unwrap();
+        assert_eq!(edit_state(s.doc().unwrap(), 1, vec![h]).unwrap().loop_outer, vec![true]);
     }
 
     #[test]

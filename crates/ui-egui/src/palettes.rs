@@ -693,24 +693,10 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
         let mut action: Option<(&str, Value)> = None;
         let mut act = |c: &'static str, p: Value| action = Some((c, p));
         prop_row(ui, "Color", |ui| {
-            ui.menu_button(format!("■ {}", crate::i18n::t(&Color::from_aci(h.i64("CECOLOR", 256) as i16).name())), |ui| {
-                for (n, c) in [
-                    ("ByLayer", 256),
-                    ("ByBlock", 0),
-                    ("Red", 1),
-                    ("Yellow", 2),
-                    ("Green", 3),
-                    ("Cyan", 4),
-                    ("Blue", 5),
-                    ("Magenta", 6),
-                    ("White", 7),
-                ] {
-                    if ui.button(crate::i18n::t(n)).clicked() {
-                        act("color", json!({ "color": c }));
-                        ui.close();
-                    }
-                }
-            });
+            let cur = Color::from_aci(h.i64("CECOLOR", 256) as i16);
+            if let Some(c) = color_list_button(ui, egui::Id::new("prop_cecolor"), Some(cur), &cur.name()) {
+                act("color", json!({ "color": color_param(c) }));
+            }
         });
         prop_row(ui, "Layer", |ui| {
             if let Some(l) = pick_menu(ui, &h.str("CLAYER", "0"), layers) {
@@ -844,26 +830,10 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     };
     group(ui, "General");
     prop_row(ui, "Color", |ui| {
-        ui.menu_button(format!("■ {}", crate::i18n::t(&color)), |ui| {
-            for (n, c) in [
-                ("ByLayer", 256),
-                ("ByBlock", 0),
-                ("Red", 1),
-                ("Yellow", 2),
-                ("Green", 3),
-                ("Cyan", 4),
-                ("Blue", 5),
-                ("Magenta", 6),
-                ("White", 7),
-                ("Color 8", 8),
-                ("Color 9", 9),
-            ] {
-                if ui.button(crate::i18n::t(n)).clicked() {
-                    set = Some(json!({ "handles": ids, "color": c }));
-                    ui.close();
-                }
-            }
-        });
+        let cur = (color != "*VARIES*").then_some(e.common.color);
+        if let Some(c) = color_list_button(ui, egui::Id::new(("prop_color", &ids)), cur, &color) {
+            set = Some(json!({ "handles": ids, "color": color_param(c) }));
+        }
     });
     prop_row(ui, "Layer", |ui| {
         ui.menu_button(layer.clone(), |ui| {
@@ -1096,5 +1066,35 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     report_bad(app, bad);
     if let Some(p) = custom_set {
         let _ = app.run("blocks.reference.set", p);
+    }
+}
+
+/// A colour as the commands take it ("ByLayer", an index or "r,g,b").
+fn color_param(c: Color) -> String {
+    match c {
+        Color::ByLayer => "ByLayer".into(),
+        Color::ByBlock => "ByBlock".into(),
+        Color::Index(i) => i.to_string(),
+        Color::True(rgb) => format!("{},{},{}", rgb.0, rgb.1, rgb.2),
+    }
+}
+
+/// A palette colour row: swatch and name, opening the colour drop-down.
+fn color_list_button(ui: &mut egui::Ui, id: egui::Id, current: Option<Color>, name: &str) -> Option<Color> {
+    let t = crate::theme::Tokens::get();
+    let w = ui.available_width().max(80.0);
+    let (r, resp) = ui.allocate_exact_size(vec2(w, 20.0), egui::Sense::click());
+    if resp.hovered() {
+        ui.painter().rect_filled(r, 2.0, t.control_hover.gamma_multiply(0.5));
+    }
+    if let Some(c) = current {
+        let s = egui::Rect::from_min_size(pos2(r.left() + 3.0, r.center().y - 6.0), vec2(12.0, 12.0));
+        ui.painter().rect_filled(s, 1.0, crate::color_list::swatch_color(c));
+        ui.painter().rect_stroke(s, 1.0, egui::Stroke::new(1.0, egui::Color32::from_gray(25)), egui::StrokeKind::Inside);
+    }
+    ui.painter().text(pos2(r.left() + 20.0, r.center().y), egui::Align2::LEFT_CENTER, crate::i18n::t(name), crate::theme::body(), t.text);
+    match crate::color_list::popup(&resp, id, current, true, false) {
+        Some(crate::color_list::Pick::Color(c)) => Some(c),
+        _ => None,
     }
 }
