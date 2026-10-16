@@ -7,9 +7,11 @@ use egui::{Rect, Shape, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 
-fn harness(width: f32, height: f32, scale: f32, message: bool) -> Harness<'static, CadApp> {
+/// `pc`: AutoCAD for Windows' layout (Ribbon); else the AutoCAD for Mac layout (Tool Bar).
+fn harness(width: f32, height: f32, scale: f32, message: bool, pc: bool) -> Harness<'static, CadApp> {
     let mut app = CadApp::new(Session::default(), Services::default());
     app.run("new", serde_json::json!({})).unwrap();
+    app.run(if pc { "ui.layout.pc" } else { "ui.layout.mac" }, serde_json::json!({})).unwrap();
     app.ui.start_tab = false;
     app.ui.in_window_menu = false;
     app.integrated_titlebar = true;
@@ -50,8 +52,8 @@ fn status_labels_never_overlap_at_standard_and_compact_sizes() {
     let mut overlaps = Vec::new();
     for (width, height) in [(1200.0, 760.0), (900.0, 560.0)] {
         for scale in [1.0, 2.0] {
-            for message in [false, true] {
-                let mut h = harness(width, height, scale, message);
+            for (message, pc) in [(false, false), (true, false), (false, true), (true, true)] {
+                let mut h = harness(width, height, scale, message, pc);
                 if let Ok(directory) = std::env::var("CRAFT_UI_VISUAL_DIR") {
                     std::fs::create_dir_all(&directory).unwrap();
                     h.render().unwrap().save(format!("{directory}/cad-{width}-{scale}-{message}.png")).unwrap();
@@ -81,7 +83,7 @@ fn status_labels_never_overlap_at_standard_and_compact_sizes() {
 
 #[test]
 fn compact_toolbar_overflow_keeps_help_reachable() {
-    let mut h = harness(900.0, 560.0, 1.0, false);
+    let mut h = harness(900.0, 560.0, 1.0, false, false);
     h.get_by_label("More toolbar commands").click();
     h.run_steps(3);
     h.get_by_label("Help").click();
@@ -91,8 +93,27 @@ fn compact_toolbar_overflow_keeps_help_reachable() {
 
 #[test]
 fn toolbar_plot_preview_opens_dialog() {
-    let mut h = harness(1200.0, 760.0, 1.0, false);
+    let mut h = harness(1200.0, 760.0, 1.0, false, false);
     h.get_by_label("Plot Preview").click();
     h.run_steps(3);
     assert_eq!(h.state().ui.dialog.as_deref(), Some("preview"));
+}
+
+#[test]
+fn ribbon_output_tab_preview_opens_dialog() {
+    let mut h = harness(1200.0, 760.0, 1.0, false, true);
+    h.get_by_label("Output").click();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.ribbon_tab, "output");
+    h.get_by_label("Preview").click();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.dialog.as_deref(), Some("preview"));
+}
+
+#[test]
+fn ribbon_home_tab_starts_line() {
+    let mut h = harness(1200.0, 760.0, 1.0, false, true);
+    h.get_by_label("Line").click();
+    h.run_steps(3);
+    assert!(h.state().session.running.is_some(), "LINE should be prompting");
 }
