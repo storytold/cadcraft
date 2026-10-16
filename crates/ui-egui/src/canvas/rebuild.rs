@@ -28,6 +28,9 @@ pub(super) struct Request {
     pub opts: Options,
     /// Also convert the list to GPU vertex data (GPU canvas only).
     pub mesh: Option<MeshRequest>,
+    /// Build only the objects near the view window (`Options::only`, looked up on the worker:
+    /// the spatial index of a large drawing can take a while to build the first time).
+    pub near_view: bool,
 }
 
 /// How to convert the list for the GPU: the view the vertex origin is chosen for and the
@@ -100,8 +103,11 @@ impl Job {
 
 /// Build `req` on the calling thread; `None` once it has been cancelled (the partial list is
 /// thrown away, and no vertex data is made for it).
-fn run(req: Request) -> Option<Built> {
+fn run(mut req: Request) -> Option<Built> {
     let t0 = crate::now_ms();
+    if req.near_view {
+        req.opts.only = cadcraft_engine::spatial::near_view(&req.doc, &req.space, req.opts.view);
+    }
     let list = cadcraft_render::build(&req.doc, &req.space, &req.opts);
     if req.opts.cancelled() {
         return None;
@@ -190,6 +196,7 @@ mod tests {
                 lwdisplay: false,
                 device: None,
             }),
+            near_view: true,
         };
         let ctx = egui::Context::default();
         let Some(job) = spawn(req, Default::default(), None, &ctx) else { panic!("no worker") };
@@ -210,7 +217,7 @@ mod tests {
     #[test]
     fn cancelled_run_makes_nothing() {
         let opts = Options { cancel: Some(Arc::new(AtomicBool::new(true))), ..Default::default() };
-        let req = Request { doc: Arc::new(Drawing::new_imperial()), space: Space::Model, opts, mesh: None };
+        let req = Request { doc: Arc::new(Drawing::new_imperial()), space: Space::Model, opts, mesh: None, near_view: false };
         assert!(run(req).is_none());
     }
 

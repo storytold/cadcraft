@@ -80,7 +80,7 @@ pub fn export_list(list: &cadcraft_render::DisplayList, window: Option<Bounds2>)
                 s.push_str(r#""/>"#);
             }
             Kind::Point => {
-                if let Some(q) = pts.first() {
+                for q in pts {
                     let _ = write!(s, r#"<circle cx="{:.6}" cy="{:.6}" r="{:.6}" fill="{c}"{op}/>"#, tx(q.x), ty(q.y), stroke);
                 }
             }

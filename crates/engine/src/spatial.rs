@@ -253,6 +253,24 @@ pub fn index_store(d: &Drawing, store: &EntityStore) -> Arc<SpatialIndex> {
     ix
 }
 
+/// Above this share of a space's objects near the view, [`near_view`] builds them all: the
+/// saving would be small, and the list then stays complete at any view while a new one builds.
+pub const NEAR_VIEW_SHARE: f64 = 0.6;
+
+/// The model-space objects a display list built for `window` needs (ascending draw indices,
+/// from the cached index, infinite lines included), or `None` to build them all: layouts, no
+/// window, a space too small to index, or a window that takes in most of the drawing anyway.
+/// Zoomed in on a large drawing this skips most of it, so a rebuild costs what the view shows.
+pub fn near_view(d: &Drawing, space: &Space, window: Option<Bounds2>) -> Option<Arc<Vec<u32>>> {
+    if !matches!(space, Space::Model) {
+        return None;
+    }
+    let window = window?;
+    let ix = index(d, space)?;
+    let hits = ix.query(&window, true)?;
+    ((hits.len() as f64) < NEAR_VIEW_SHARE * ix.len() as f64).then(|| Arc::new(hits))
+}
+
 /// Drop every cached index (frees memory held by closed drawings).
 pub fn clear_cache() {
     CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
@@ -265,6 +283,23 @@ mod tests {
     use crate::{select, snap};
     use cadcraft_doc::{Common, Insert, Text};
     use cadcraft_geom::{PolyVertex, Vec2, Vec3};
+
+    /// A small window over a large model space lists only the objects in it (in draw order);
+    /// a window taking in most of the drawing, a layout or no window builds everything.
+    #[test]
+    fn near_view_lists_the_objects_by_the_window() {
+        let mut d = Drawing::new_imperial();
+        for i in 0..1000 {
+            let x = f64::from(i);
+            let line = cadcraft_doc::Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x + 0.5, 1.0, 0.0) };
+            d.add(&Space::Model, Common::default(), EntityKind::Line(line)).unwrap();
+        }
+        let near = near_view(&d, &Space::Model, Some(Bounds2::new(Vec2::new(99.9, -1.0), Vec2::new(110.1, 2.0)))).unwrap();
+        assert_eq!(*near, (100..=110).collect::<Vec<u32>>());
+        assert!(near_view(&d, &Space::Model, Some(Bounds2::new(Vec2::new(-10.0, -10.0), Vec2::new(900.0, 10.0)))).is_none());
+        assert!(near_view(&d, &Space::Model, None).is_none());
+        assert!(near_view(&d, &Space::Paper("Layout1".into()), Some(Bounds2::new(Vec2::ZERO, Vec2::new(1.0, 1.0)))).is_none());
+    }
 
     struct Rng(u64);
     impl Rng {

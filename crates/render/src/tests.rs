@@ -1,7 +1,7 @@
 use crate::raster::{RasterOptions, View, render};
 use crate::*;
 use cadcraft_doc::{Common, Drawing, EntityKind, Hatch, HatchLoop, Space};
-use cadcraft_geom::{PolyVertex, Vec3};
+use cadcraft_geom::{Bounds2, PolyVertex, Vec2, Vec3};
 
 fn sample() -> Drawing {
     let mut d = Drawing::new_imperial();
@@ -923,4 +923,89 @@ fn cancelled_build_stops_early() {
     let drawing = cadcraft_doc::Drawing::new_imperial();
     assert!(!crate::hatch::pattern_lines_until(&drawing, &h, &loops, 0.0, None, None).is_empty());
     assert!(crate::hatch::pattern_lines_until(&drawing, &h, &loops, 0.0, None, set.as_deref()).is_empty());
+}
+
+/// `Options::only` builds just the listed top-level entities, in draw order, on the one-thread
+/// path and on the parallel one (large spaces), and the same primitives as a full build.
+#[test]
+fn only_builds_the_listed_entities() {
+    let d = sample();
+    let full = build(&d, &Space::Model, &Options { tolerance: 0.01, ..Default::default() });
+    let circle_only = build(&d, &Space::Model, &Options { tolerance: 0.01, only: Some(std::sync::Arc::new(vec![1])), ..Default::default() });
+    assert_eq!(circle_only.prims.len(), 1);
+    assert_eq!(circle_only.prims[0].color, full.prims[1].color);
+    assert_eq!(circle_only.prims[0].len, full.prims[1].len);
+    // Past-the-end indices are skipped; an empty list builds nothing.
+    assert_eq!(build(&d, &Space::Model, &Options { only: Some(std::sync::Arc::new(vec![0, 7])), ..Default::default() }).prims.len(), 1);
+    assert!(build(&d, &Space::Model, &Options { only: Some(std::sync::Arc::new(vec![])), ..Default::default() }).prims.is_empty());
+
+    // A space large enough for the parallel build: every 3rd line.
+    let mut big = Drawing::new_imperial();
+    for i in 0..2000 {
+        let y = f64::from(i);
+        big.add(&Space::Model, Common::default(), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, y, 0.0), b: Vec3::new(1.0, y, 0.0) }))
+            .unwrap();
+    }
+    let pick: Vec<u32> = (0..2000).step_by(3).collect();
+    let l = build(&big, &Space::Model, &Options { only: Some(std::sync::Arc::new(pick.clone())), ..Default::default() });
+    assert_eq!(l.prims.len(), pick.len());
+    let ys: Vec<f64> = l.prims.iter().map(|p| l.verts[p.start as usize].y).collect();
+    assert_eq!(ys, pick.iter().map(|i| f64::from(*i)).collect::<Vec<_>>());
+}
+
+/// A screen build (view + pixel size) skips a block's entities outside the view and draws those
+/// under a pixel as a dot; a plot or export (no view, full detail) draws them all in full.
+#[test]
+fn block_contents_off_view_are_skipped_and_specks_become_dots_on_screen_only() {
+    let line = |a: (f64, f64), b: (f64, f64)| EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(a.0, a.1, 0.0), b: Vec3::new(b.0, b.1, 0.0) });
+    let mut blk = cadcraft_doc::Block::new("Site");
+    blk.entities.push(block_entity(1, Common::default(), line((0.0, 0.0), (10.0, 0.0)))); // in view
+    blk.entities.push(block_entity(2, Common::default(), line((1000.0, 0.0), (1010.0, 0.0)))); // far away
+    blk.entities.push(block_entity(3, Common::default(), line((5.0, 5.0), (5.001, 5.0)))); // a speck
+    let mut d = Drawing::new_imperial();
+    d.blocks.insert("Site".into(), std::sync::Arc::new(blk));
+    d.add(&Space::Model, Common::default(), insert_of("Site")).unwrap();
+    let screen =
+        Options { tolerance: 0.05, min_dash: 0.2, view: Some(Bounds2::new(Vec2::new(-20.0, -20.0), Vec2::new(30.0, 30.0))), ..Default::default() };
+    let l = build(&d, &Space::Model, &screen);
+    let kinds: Vec<Kind> = l.prims.iter().map(|p| p.kind).collect();
+    assert_eq!(kinds, [Kind::Polyline, Kind::Point], "the far line is left out, the speck is a dot");
+    let plot = build(&d, &Space::Model, &Options::default());
+    assert_eq!(plot.prims.iter().filter(|p| p.kind == Kind::Polyline).count(), 3, "a plot draws every line");
+}
+
+/// A dot pattern's dots are one primitive (a dense AR-SAND made hundreds of thousands), and none
+/// is lost: as many as the pattern lines give, and all of them rasterised.
+#[test]
+fn hatch_dots_are_one_primitive_and_all_drawn() {
+    let mut h = pattern_hatch("DOTS", 1.0, (0.0, 0.0, 10.0, 10.0));
+    h.pattern_lines = vec![cadcraft_doc::library::PatternLine { angle: 0.0, origin: (0.0, 0.0), delta: (0.0, 1.0), dashes: vec![0.0, -1.0] }];
+    let d = drawing_with(h.clone());
+    let l = build(&d, &Space::Model, &Options::default());
+    let points: Vec<_> = l.prims.iter().filter(|p| p.kind == Kind::Point).collect();
+    assert_eq!(points.len(), 1, "one primitive for all the dots");
+    let expected = crate::hatch::pattern_lines(&d, &h, &loops_of(&h), 0.0, None).iter().filter(|r| r.len() == 1).count();
+    assert!(expected > 50, "{expected}");
+    assert_eq!(points[0].len as usize, expected);
+    let view = View::fit(&l.bounds, 200, 200, 0.0);
+    let pm = render(&l, &view, &RasterOptions { background: Rgb(0, 0, 0), antialias: false, ..Default::default() }).unwrap();
+    let lit = pm.pixels().iter().filter(|p| p.red() > 0 || p.green() > 0 || p.blue() > 0).count();
+    assert!(lit > expected, "every dot is rasterised ({lit} pixels for {expected} dots)");
+}
+
+/// Layers are found whatever the case of the name an object uses, as `Drawing::layer` finds them
+/// (the build's layer index must not change which layer an object takes its colour from).
+#[test]
+fn layer_lookup_ignores_case() {
+    let mut d = Drawing::new_imperial();
+    d.ensure_layer("Walls");
+    d.layer_mut("Walls").unwrap().color = Color::Index(1);
+    d.add(
+        &Space::Model,
+        Common { layer: "WALLS".into(), ..Default::default() },
+        EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(1.0, 0.0, 0.0) }),
+    )
+    .unwrap();
+    let l = build(&d, &Space::Model, &Options::default());
+    assert_eq!(l.prims[0].color, Rgb(255, 0, 0));
 }
