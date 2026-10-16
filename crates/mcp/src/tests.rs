@@ -98,6 +98,8 @@ fn bad_tool_calls_are_invalid_params() {
         json!({"name": "query_entities", "arguments": {"type": 7}}),
         json!({"name": "query_entities", "arguments": {"layer": ["0"]}}),
         json!({"name": "query_entities", "arguments": {"offset": -1}}),
+        json!({"name": "query_entities", "arguments": {"selected": "true"}}),
+        json!({"name": "query_entities", "arguments": {"selected": 1}}),
     ];
     for (i, params) in bad.into_iter().enumerate() {
         let r = call(&mut s, i as u64, "tools/call", params.clone());
@@ -107,6 +109,24 @@ fn bad_tool_calls_are_invalid_params() {
     let d = tool(&mut s, "inspect_drawing", json!({"entities": false}));
     assert_eq!(d["entityCount"], 1, "{d}");
     assert_eq!(s.handle_line("[]").map(|r| serde_json::from_str::<Value>(&r).unwrap()["error"]["code"].clone()), Some(json!(-32600)));
+}
+
+#[test]
+fn query_entities_selection_filter_is_discoverable_and_forwarded() {
+    let mut s = Server::new(Box::new(Headless::default()));
+    let tools = call(&mut s, 1, "tools/list", json!({}));
+    let query = tools["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "query_entities").unwrap();
+    assert_eq!(query["inputSchema"]["properties"]["selected"]["type"], "boolean");
+    tool(&mut s, "execute", json!({"command": "circle", "params": {"center": [0, 0], "radius": 2}}));
+    tool(&mut s, "execute", json!({"command": "circle", "params": {"center": [10, 0], "radius": 2}}));
+    assert_eq!(tool(&mut s, "query_entities", json!({"selected": true}))["count"], 0);
+    tool(&mut s, "execute", json!({"command": "select", "params": {"window": [[-3, -3], [3, 3]]}}));
+    let before = tool(&mut s, "inspect_drawing", json!({}));
+    let selected = tool(&mut s, "query_entities", json!({"selected": true, "type": "Circle"}));
+    assert_eq!(selected["count"], 1);
+    assert_eq!(selected["entities"][0]["geometry"]["center"]["x"], 0.0);
+    assert_eq!(tool(&mut s, "query_entities", json!({"selected": false}))["count"], 2);
+    assert_eq!(tool(&mut s, "inspect_drawing", json!({})), before);
 }
 
 /// `count` is every match while `returned` is the page; a window matches geometry, not bounding boxes.

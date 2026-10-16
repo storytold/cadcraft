@@ -77,6 +77,19 @@ Sending `open` or `document.bytes` as the top-level `method` returns an `unknown
 the protocol dispatches methods explicitly and does not fall through to the command registry.
 `app.open` is a top-level convenience method for opening a drawing with `{path}`.
 
+To read selected objects as structured geometry in a single query, execute `entities` with
+`selected: true` (a boolean; omitted/false keeps the unfiltered selection behavior):
+
+```json
+{"id":7,"method":"engine.execute","params":{"command":"entities","params":{"selected":true,"limit":1000}}}
+```
+
+Only selected entities in the active space are returned; an empty selection returns an empty
+page. The selection filter combines with `type`, `layer` and `window` before `offset`/`limit`.
+The existing response is unchanged: `count` is all matches, `returned` is the page size and
+`entities` contains handles, layers and geometry. This query does not change selection, drawing
+contents or undo history. `entities` is a command, not a top-level protocol method.
+
 The MCP server (`cadcraft-cli mcp --connect 127.0.0.1:PORT`) wraps this protocol; headless
 (`cadcraft-cli mcp`) it serves the same methods from an in-process session.
 MCP tool names are another interface: `execute` maps to `engine.execute`, `list_commands` to
