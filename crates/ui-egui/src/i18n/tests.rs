@@ -39,7 +39,7 @@ fn catalog_is_valid_and_preserves_placeholders_and_ellipses() {
 /// to English for what they don't cover yet; their gaps are reported, not enforced, so adding a
 /// command doesn't require a row in every language.
 const REQUIRED: &[&str] = &["uk"];
-const REPORTED: &[&str] = &["pt-BR", "de", "es", "cs", "ru", "fr", "zh", "it", "ko", "sv", "ar"];
+const REPORTED: &[&str] = &["pt-BR", "de", "es", "cs", "ru", "fr", "zh", "it", "ko", "sv", "ar", "th"];
 
 fn check(language: &str, what: &str, missing: Vec<String>) {
     if REQUIRED.contains(&language) {
@@ -883,4 +883,85 @@ fn default_fonts_cover_swedish_letters_and_quotes() {
             }
         }
     });
+}
+
+/// Thai file names and text read in the interface when the system has a Thai font (none is
+/// bundled), whatever the interface language.
+#[test]
+fn thai_text_shows_with_an_installed_thai_font() {
+    let Some(_) = crate::theme::thai_font() else { return };
+    let ctx = egui::Context::default();
+    crate::theme::install_fonts(&ctx, "en");
+    // The new fonts take effect when a frame begins.
+    ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+    for font in [crate::theme::body(), crate::theme::mono()] {
+        assert!(ctx.fonts_mut(|f| f.has_glyphs(&font, "แบบบ้าน")), "{font:?}");
+    }
+}
+
+/// Thai shows only with an installed Thai font (none is bundled), like Chinese; its catalog has
+/// no plural forms, and switching to it keeps the drawing, the command and the saved choice.
+#[test]
+fn thai_locales_preferences_font_and_live_switch() {
+    for tag in ["th", "th-TH", "th_TH.UTF-8", "TH-th", " th-TH ", "th_TH@calendar=buddhist"] {
+        assert_eq!(locale_language(tag), Some("th"), "{tag}");
+    }
+    for tag in ["tha", "thai", "tr-TR"] {
+        assert_eq!(locale_language(tag), None, "{tag}");
+    }
+    assert_eq!(Preference::parse("th"), Some(Preference::Thai));
+    assert_eq!(Preference::Thai.name(), "ไทย");
+    assert_eq!(Preference::Thai.resolve(&["en-US".into()]), "th");
+    assert_eq!(Preference::Auto.resolve(&["lo-LA".into(), "th-TH".into(), "en-US".into()]), "th");
+    with_language("th", || {
+        for n in [0, 1, 2, 11, u64::MAX] {
+            assert_eq!(count(n, "{n} contributor", "{n} contributors"), format!("{n} ผู้ร่วมพัฒนา"));
+            assert_eq!(count(n, "{n} commit", "{n} commits"), format!("{n} คอมมิต"));
+        }
+        assert_eq!(format("Current: {color}", &[("color", "{n} Open".into())]), "ปัจจุบัน: {n} Open");
+        assert_eq!(menu("Draw"), t("Draw"));
+    });
+
+    let mut app = CadApp::new(Session::new(), Services::default());
+    app.ui.in_window_menu = true;
+    app.session.state_mut().unwrap().title = "Open".into();
+    let ctx = egui::Context::default();
+    app.logic(&ctx);
+    app.start("line");
+    let prompt = crate::control::cmdline_state(&app);
+    let r = app.run("ui.language", json!({"lang": "th"})).unwrap();
+    assert_eq!(r["interfaceLanguage"], "th");
+    let font = crate::theme::thai_font();
+    assert_eq!(crate::theme::can_show("th"), font.is_some());
+    assert_eq!(app.language(), if font.is_some() { "th" } else { "en" });
+    assert_eq!(r["shown"], app.language());
+    // The next frame's logic installs the Thai font.
+    app.logic(&ctx);
+    let text = render(&mut app, &ctx);
+    if font.is_some() {
+        for label in ["คุณสมบัติ", "ไฟล์", "มุมมอง", "วาด", "เส้นบอกขนาด", "ระบุจุดแรก"]
+        {
+            assert!(text.contains(label), "missing {label}: {text}");
+        }
+        // The installed font has every Thai letter and mark the catalog uses.
+        let letters: BTreeSet<_> = include_str!("th.tsv").chars().filter(|c| ('\u{0e00}'..='\u{0e7f}').contains(c)).collect();
+        ctx.fonts_mut(|view| {
+            for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                let mut font = view.fonts.font(&family);
+                for c in &letters {
+                    assert!(font.characters().contains_key(c), "missing {c} in {family:?}");
+                }
+            }
+        });
+    } else {
+        assert!(text.contains("Properties"));
+        assert!(app.status.as_ref().is_some_and(|(s, _)| s.contains("No Thai font")));
+    }
+    assert_eq!(app.session.state().unwrap().title, "Open");
+    assert_eq!(crate::control::cmdline_state(&app), prompt);
+    let mut restored = CadApp::new(Session::new(), Services::default());
+    restored.load_prefs(&app.prefs_json());
+    assert_eq!(restored.ui.interface_language, Preference::Thai);
+    app.run("ui.language", json!({"lang": "en"})).unwrap();
+    assert!(render(&mut app, &ctx).contains("Properties"));
 }

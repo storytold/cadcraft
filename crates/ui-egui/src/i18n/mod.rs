@@ -39,10 +39,12 @@ pub enum Preference {
     Swedish,
     #[serde(rename = "ar")]
     Arabic,
+    #[serde(rename = "th")]
+    Thai,
 }
 
 impl Preference {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::Auto,
         Self::English,
         Self::Ukrainian,
@@ -57,6 +59,7 @@ impl Preference {
         Self::Korean,
         Self::Swedish,
         Self::Arabic,
+        Self::Thai,
     ];
 
     /// The codes a preference can be given as, for messages ("auto, en or uk").
@@ -84,6 +87,7 @@ impl Preference {
             Self::Korean => "ko",
             Self::Swedish => "sv",
             Self::Arabic => "ar",
+            Self::Thai => "th",
         }
     }
 
@@ -109,6 +113,7 @@ impl Preference {
             }
             Self::Swedish => "Svenska",
             Self::Arabic => "العربية",
+            Self::Thai => "ไทย",
         }
     }
 
@@ -136,6 +141,7 @@ impl Preference {
             Self::Korean => "ko",
             Self::Swedish => "sv",
             Self::Arabic => "ar",
+            Self::Thai => "th",
             Self::Auto => locales.iter().find_map(|s| locale_language(s)).unwrap_or("en"),
         }
     }
@@ -152,7 +158,7 @@ pub struct Language {
     catalog: OnceLock<Catalog<'static>>,
 }
 
-pub static LANGUAGES: [Language; 13] = [
+pub static LANGUAGES: [Language; 14] = [
     Language { code: "en", name: "English", source: "", plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     Language {
         code: "uk", name: "Українська", source: include_str!("uk.tsv"), plural: plural_uk, plural_forms: 3, catalog: OnceLock::new()
@@ -187,6 +193,9 @@ pub static LANGUAGES: [Language; 13] = [
     // covers its glyphs, and the shell keeps egui's left-to-right run order. Six plural
     // forms: zero, one, two, few, many, other.
     Language { code: "ar", name: "العربية", source: include_str!("ar.tsv"), plural: plural_arabic, plural_forms: 6, catalog: OnceLock::new() },
+    // Thai has no grammatical plural either. Its glyphs come from an installed Thai font
+    // (`theme::thai_font`); without one the interface stays English.
+    Language { code: "th", name: "ไทย", source: include_str!("th.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
 ];
 
 /// BCP 47 and POSIX locale tags, including `uk-UA`, `uk_UA.UTF-8` and `pt_BR.UTF-8`.
