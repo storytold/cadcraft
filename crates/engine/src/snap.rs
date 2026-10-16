@@ -188,7 +188,7 @@ pub(crate) fn osnap_with_neighborhood(
         return (None, None);
     }
     let (mut best, near_prims) = match osnap_in_with_prims(d, space, ix, cursor, aperture, osmode, base, deferred, &[], None) {
-        Some((hit, prims)) => (hit, Some(prims)),
+        Some((hit, prims, _)) => (hit, Some(prims)),
         None => (None, None),
     };
     let views = viewport::near(d, space, cursor, aperture);
@@ -239,7 +239,21 @@ fn osnap_in(
     frozen: &[String],
     clip: Option<Bounds2>,
 ) -> Option<SnapHit> {
-    osnap_in_with_prims(d, space, ix, cursor, aperture, osmode, base, deferred, frozen, clip).and_then(|(hit, _)| hit)
+    osnap_in_with_prims(d, space, ix, cursor, aperture, osmode, base, deferred, frozen, clip).and_then(|(hit, _, _)| hit)
+}
+
+/// Every snap point of `osmode` within `aperture` of `cursor` in `space`, unordered and with
+/// repeats: what Tab cycles through ([`crate::pointmod::snap_candidates`]). Nearest and the
+/// deferred snaps are left out (they have no fixed points), and so are layout viewports.
+pub fn points_near(d: &Drawing, space: &Space, cursor: Vec2, aperture: f64, osmode: u32, base: Option<Vec2>) -> Vec<(u32, Vec2)> {
+    if osmode == 0 || osmode & mode::OFF != 0 || !cursor.is_finite() || !(aperture.is_finite() && aperture > 0.0) {
+        return Vec::new();
+    }
+    let ix = crate::spatial::index(d, space);
+    let Some((_, _, cands)) = osnap_in_with_prims(d, space, &ix, cursor, aperture, osmode, base, false, &[], None) else {
+        return Vec::new();
+    };
+    cands.into_iter().filter(|(_, p)| p.is_finite() && p.dist(cursor) <= aperture).collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -254,7 +268,7 @@ fn osnap_in_with_prims(
     deferred: bool,
     frozen: &[String],
     clip: Option<Bounds2>,
-) -> Option<(Option<SnapHit>, Vec<Prim>)> {
+) -> Option<(Option<SnapHit>, Vec<Prim>, Vec<(u32, Vec2)>)> {
     let (mut cands, near_prims) = gather_in(d, space, ix, cursor, aperture, osmode, frozen)?;
     // Intersections between nearby primitives; Apparent Intersection also where their extensions
     // meet (lines extended, arcs as full circles: in 2D, the "apparent" crossing of objects
@@ -292,8 +306,8 @@ fn osnap_in_with_prims(
             }
         }
     }
-    let hit = finish(cands, &near_prims, cursor, aperture, osmode, base, deferred, clip);
-    Some((hit, near_prims))
+    let hit = finish(&mut cands, &near_prims, cursor, aperture, osmode, base, deferred, clip);
+    Some((hit, near_prims, cands))
 }
 
 fn finite_intersection_probe(cursor: Vec2, aperture: f64) -> Option<Bounds2> {
@@ -405,10 +419,11 @@ fn gather_in(
     Some((cands, near_prims))
 }
 
-/// Picks the best of the gathered candidates, adding the base-dependent and deferred snaps.
+/// Picks the best of the gathered candidates, adding the base-dependent snaps (to `cands`) and
+/// the deferred ones.
 #[allow(clippy::too_many_arguments)]
 fn finish(
-    mut cands: Vec<(u32, Vec2)>,
+    cands: &mut Vec<(u32, Vec2)>,
     near_prims: &[Prim],
     cursor: Vec2,
     aperture: f64,

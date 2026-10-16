@@ -119,8 +119,10 @@ pub fn snap_name(m: u32) -> &'static str {
     mode::ALL.iter().find(|(b, _)| *b == m).map_or("None", |(_, n)| *n)
 }
 
-/// The candidate snaps near `cursor` for Tab cycling: the snap [`crate::snap::osnap`] picks
-/// first, then the closest snap of each other mode in `osmode`, nearest first, without repeats.
+/// The candidate snaps near `cursor` for Tab cycling, as in AutoCAD: the snap
+/// [`crate::snap::osnap`] picks first, then every other snap of `osmode` in the aperture (all the
+/// endpoints, intersections …, and the closest snap of each mode for Nearest, deferred and
+/// viewport snaps), nearest first, without repeats.
 pub fn snap_candidates(d: &Drawing, space: &Space, cursor: Vec2, aperture: f64, osmode: u32, base: Option<Vec2>, deferred: bool) -> Vec<SnapHit> {
     if osmode & !mode::HATCH == 0 || osmode & mode::OFF != 0 {
         return Vec::new();
@@ -128,6 +130,10 @@ pub fn snap_candidates(d: &Drawing, space: &Space, cursor: Vec2, aperture: f64, 
     let osnap = |m: u32| crate::snap::osnap(d, space, cursor, aperture, m, base, deferred);
     let extra = osmode & mode::HATCH;
     let mut per_mode: Vec<SnapHit> = mode::ALL.iter().filter(|(b, _)| osmode & b != 0).filter_map(|(b, _)| osnap(*b | extra)).collect();
+    let points = crate::snap::points_near(d, space, cursor, aperture, osmode, base);
+    per_mode.extend(points.into_iter().map(|(m, point)| SnapHit { point, mode: m, name: snap_name(m), viewport: None, deferred: None }));
+    // Stable: at equal distance a per-mode hit (which may carry its viewport or deferred curve)
+    // stays ahead of the same point found again, and the repeat is dropped.
     per_mode.sort_by(|a, b| a.point.dist(cursor).total_cmp(&b.point.dist(cursor)));
     let mut out: Vec<SnapHit> = osnap(osmode).into_iter().collect();
     for h in per_mode {

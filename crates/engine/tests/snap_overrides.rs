@@ -106,6 +106,21 @@ fn tab_cycling_candidates_start_with_the_running_snap() {
 }
 
 #[test]
+fn tab_cycling_offers_every_endpoint_in_the_aperture_nearest_first() {
+    let mut s = Session::new();
+    s.script("LINE 0,0 10,0\n\nLINE 10.03,0 20,0\n\nLINE 9.95,0 9.95,-5\n\n").unwrap();
+    let d = s.doc().unwrap();
+    let space = s.space();
+    let cands = snap_candidates(d, &space, Vec2::new(10.01, 0.0), 0.125, mode::END, None, false);
+    let points: Vec<Vec2> = cands.iter().map(|h| h.point).collect();
+    assert_eq!(points.len(), 3, "{points:?}");
+    for (p, x) in points.iter().zip([10.0, 10.03, 9.95]) {
+        assert!(near(*p, x, 0.0), "{points:?}");
+    }
+    assert!(cands.iter().all(|h| h.mode == mode::END && h.name == "Endpoint"), "{cands:?}");
+}
+
+#[test]
 fn a_command_keyword_wins_over_a_snap_word() {
     let mut s = drawing();
     // ARC's Center keyword is still `cen`; `_cen` is the override.
