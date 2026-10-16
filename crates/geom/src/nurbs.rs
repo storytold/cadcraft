@@ -548,7 +548,14 @@ impl Ellipse {
         }
         let n = ((sweep / TAU) * 128.0).ceil().clamp(1.0, 512.0) as usize;
         let h = sweep / n as f64;
-        let l: f64 = (0..n).map(|i| gauss(t0 + h * i as f64, t0 + h * (i + 1) as f64, |t| self.derivative(t).len())).sum();
+        // Each panel halved where it needs it: a flat ellipse turns sharply at its ends.
+        let speed = |t: f64| self.derivative(t).len();
+        let l: f64 = (0..n)
+            .map(|i| {
+                let (a, b) = (t0 + h * i as f64, t0 + h * (i + 1) as f64);
+                adaptive_gauss(a, b, gauss(a, b, speed), &speed, MAX_GAUSS_DEPTH)
+            })
+            .sum();
         if l.is_finite() { l } else { 0.0 }
     }
 
@@ -768,5 +775,8 @@ mod tests {
         assert!((t + FRAC_PI_2).abs() < 1e-9);
         assert!(e.param_at_length(0.0, e.length() * 2.0).is_none());
         assert!(e.param_at_length(f64::NAN, 1.0).is_none());
+        // A 100:1 ellipse, against the arithmetic-geometric mean's 40.010983297227.
+        let flat = Ellipse::full(Vec2::ZERO, Vec2::new(10.0, 0.0), 0.01);
+        assert!((flat.length() - 40.010_983_297_227).abs() < 1e-9, "{}", flat.length());
     }
 }

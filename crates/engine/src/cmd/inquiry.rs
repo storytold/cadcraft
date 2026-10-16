@@ -221,7 +221,9 @@ fn object_area(s: &Session, h: Handle) -> Result<(f64, f64)> {
             }
             let a = el.major.xy().len();
             let b = a * el.ratio;
-            (cadcraft_geom::PI * a * b, cadcraft_geom::PI * (3.0 * (a + b) - ((3.0 * a + b) * (a + 3.0 * b)).sqrt()))
+            // The perimeter integrated around the ellipse, not a closed-form estimate (those
+            // fall short as the ellipse flattens: 0.3% on a 100:1 one).
+            (cadcraft_geom::PI * a * b, arc.arc_length_from(0.0, cadcraft_geom::TAU))
         }
         EntityKind::Hatch(hh) => {
             // Odd parity, as drawn: a loop nested inside an odd number of other loops is an unfilled island.
