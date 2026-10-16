@@ -28,7 +28,7 @@ requirements and graphics-performance documentation. Nothing was benchmarked in 
 | 3D mouse (3Dconnexion SpaceMouse) | yes | **no** | **no** | **no** | no |
 | Pen tablet / digitizer (TABLET command, calibration) | yes (Windows) | **no** | **no** | **no** | no |
 | Screen magnifier following the cursor | yes | — | breaks (#39; PR #187 adds a system-cursor option) | — | — |
-| Plotters and printers (PC3 devices, system printers) | yes | **no**: PDF/PNG/SVG files only; Print asks where to save the PDF (#26) | same | same | PDF bytes shown instead of a download (#134) |
+| Plotters and printers (PC3 devices, system printers) | yes | **no**: PDF/PNG/SVG files only; Plot asks where to save the PDF (#26) | same | same | PDF bytes shown instead of a download (#134) |
 
 ## Performance on hardware (internal numbers only)
 

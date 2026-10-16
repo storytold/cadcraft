@@ -76,8 +76,8 @@ pub fn specs() -> Vec<CommandSpec> {
             .params(
                 "{layout?: current, device?: plotter name (PLOTTERMANAGER) | \"None\", paper?: the device's paper | \"A4\"|\"A3\"|\"Letter\"|\"ANSI B\"|…, width?, height? (mm), landscape?, margins?: [l,b,r,t] mm, lineweights?, plotArea?, scale?, scaleToFit?, center?, plotStyleTable?: \"monochrome.ctb\"|\"grayscale.ctb\"|\"default.ctb\"|\"None\"|…, displayPlotStyles?: bool, plotTransparency?: bool}",
             ),
-        CommandSpec::new("plot", "Print...", |s, p| run_plot(s, &super::plotters::plot_options(s, p, "plot")?, "plot"))
-            .menu(&["File", "Print..."])
+        CommandSpec::new("plot", "Plot...", |s, p| run_plot(s, &super::plotters::plot_options(s, p, "plot")?, "plot"))
+            .menu(&["File", "Plot..."])
             .key("Cmd+P")
             .alias(&["print"])
             .params("{path? (else returns base64 `data`), layout?: current|\"Model\", paper?, landscape?, fit?: bool, scale?: number | \"1:50\", center?: bool (Model, default true), offset?: [x,y] mm (Model, when center is false; each within ±100000), lineweights?: bool, plotTransparency?: bool (default: the page setup's; PLOTTRANSPARENCYOVERRIDE 0/2 overrides it), plotArea?: extents|display|limits|window (Model) | layout, window?: [[x1,y1],[x2,y2]]} (typed or from the menu: the Plot dialog)")
