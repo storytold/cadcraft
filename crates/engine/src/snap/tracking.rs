@@ -790,7 +790,7 @@ impl crate::Session {
         // Polar angles relative to the last segment when the base point is where it ends.
         let last = self.last_segment.filter(|(_, b)| q.base.is_some_and(|base| base.near(*b, 1e-9 * (1.0 + b.len())))).map(|(a, b)| a.angle_to(b));
         let cfg = TrackConfig::relative_to(&s, angbase, last);
-        let osmode = s.osmode | if s.osnaphatch { mode::HATCH } else { 0 };
+        let osmode = s.object_snap_modes(s.osmode);
         let ix = crate::spatial::index(&doc, &space);
         let (hit, near_prims) = super::osnap_with_neighborhood(&doc, &space, &ix, raw, q.aperture, osmode, q.base, q.deferred);
         let cand = match (osmode & mode::HATCH, near_prims.as_deref()) {

@@ -1243,3 +1243,5 @@
 	Search for pattern	Buscar patrón
 	Not a number or distance: {text}	No es un número ni una distancia: {text}
 	Query Texts	Consultar textos
+	Ignore hatch objects	Ignorar objetos de sombreado
+	Ignore dimension extension-line endpoints	Ignorar extremos de las líneas de referencia de cotas

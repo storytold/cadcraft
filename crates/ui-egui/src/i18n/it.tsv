@@ -1237,3 +1237,5 @@ menu	Modify	Edita
 	Search for pattern	Cerca modello
 	Run Script...	Esegui script...
 	Select closed objects (regions, closed polylines, circles).	Selezionare oggetti chiusi (regioni, polilinee chiuse, cerchi).
+	Ignore hatch objects	Ignora oggetti di tratteggio
+	Ignore dimension extension-line endpoints	Ignora estremità delle linee di estensione delle quote

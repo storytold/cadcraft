@@ -1217,3 +1217,5 @@ menu	Modify	Modifikace
 	Search for pattern	Hledat vzor
 	Not a number or distance: {text}	Není číslo ani vzdálenost: {text}
 	Query Texts	Dotaz na texty
+	Ignore hatch objects	Ignorovat objekty šrafování
+	Ignore dimension extension-line endpoints	Ignorovat koncové body vynášecích čar kót

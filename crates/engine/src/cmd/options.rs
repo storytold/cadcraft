@@ -31,6 +31,7 @@ pub const PROFILE_VARS: &[&str] = &[
     "DYNDIGRIP",
     "DYNDIVIS",
     "OSNAPHATCH",
+    "OSOPTIONS",
     "LWDISPLAY",
     "QPMODE",
     "SELECTIONEFFECT",
@@ -88,7 +89,10 @@ pub fn profile(s: &Session) -> Value {
 pub fn apply(s: &mut Session, values: &Value) -> Result<()> {
     let Some(obj) = values.as_object() else { return Err(bad("options", "expected an object of profile variables")) };
     let before = s.settings.clone();
-    for (name, v) in obj {
+    // The canonical bitcode wins over its legacy hatch alias, regardless of key casing/order.
+    for (name, v) in
+        obj.iter().filter(|(n, _)| !n.eq_ignore_ascii_case("OSOPTIONS")).chain(obj.iter().filter(|(n, _)| n.eq_ignore_ascii_case("OSOPTIONS")))
+    {
         if !is_profile_var(name) {
             s.settings = before;
             return Err(bad("options", format!("{name} is not a profile setting")));
@@ -105,7 +109,12 @@ pub fn apply(s: &mut Session, values: &Value) -> Result<()> {
 /// skipped (an old or hand-edited profile never stops the app from starting).
 pub fn restore(s: &mut Session, saved: &Value) {
     let Some(obj) = saved.as_object() else { return };
-    for (name, v) in obj.iter().take(MAX_ENTRIES) {
+    for (name, v) in obj
+        .iter()
+        .take(MAX_ENTRIES)
+        .filter(|(n, _)| !n.eq_ignore_ascii_case("OSOPTIONS"))
+        .chain(obj.iter().take(MAX_ENTRIES).filter(|(n, _)| n.eq_ignore_ascii_case("OSOPTIONS")))
+    {
         if is_profile_var(name) {
             let before = s.settings.clone();
             if crate::sysvars::set(s, name, v).is_err() {
@@ -133,6 +142,7 @@ pub fn reset(s: &mut Session) {
     st.dynpi_cartesian = d.dynpi_cartesian;
     st.dynpi_absolute = d.dynpi_absolute;
     st.osnaphatch = d.osnaphatch;
+    st.osoptions = d.osoptions;
     st.lwdisplay = d.lwdisplay;
     st.qpmode = d.qpmode;
     st.pickbox = d.pickbox;

@@ -1116,3 +1116,5 @@
 	Polar angle measurement	极轴角测量
 	Relative to last segment	相对于上一线段
 	Show command prompting near the crosshairs	在光标附近显示命令提示
+	Ignore hatch objects	忽略填充对象
+	Ignore dimension extension-line endpoints	忽略尺寸界线端点

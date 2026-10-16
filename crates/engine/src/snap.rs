@@ -31,6 +31,8 @@ pub mod mode {
     pub const OFF: u32 = 16384;
     /// Not an OSMODE bit: snaps also find hatch objects (OSNAPHATCH = 1).
     pub const HATCH: u32 = 1 << 16;
+    /// Not an OSMODE bit: OSOPTIONS 4 suppresses dimension extension-line endpoints.
+    pub const IGNORE_DIM_ENDS: u32 = 1 << 17;
     pub const ALL: [(u32, &str); 14] = [
         (END, "Endpoint"),
         (MID, "Midpoint"),
@@ -47,6 +49,14 @@ pub mod mode {
         (APP, "Apparent Intersection"),
         (PAR, "Parallel"),
     ];
+}
+
+/// OSOPTIONS bits. Negative-Z filtering is reserved until dynamic UCS is implemented.
+pub mod options {
+    pub const IGNORE_HATCH: u8 = 1;
+    pub const IGNORE_NEGATIVE_Z: u8 = 2;
+    pub const IGNORE_DIM_ENDS: u8 = 4;
+    pub const DEFAULT: u8 = IGNORE_HATCH | IGNORE_NEGATIVE_Z | IGNORE_DIM_ENDS;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -151,7 +161,7 @@ fn prim_segments(p: &Prim) -> Vec<Segment> {
 /// they snap as *deferred*: the hit carries the curve and is resolved once the other end is
 /// known. Deferred hits only win where no other snap does (they are as unspecific as Nearest).
 pub fn osnap(d: &Drawing, space: &Space, cursor: Vec2, aperture: f64, osmode: u32, base: Option<Vec2>, deferred: bool) -> Option<SnapHit> {
-    if osmode == 0 || osmode & mode::OFF != 0 {
+    if osmode & !(mode::HATCH | mode::IGNORE_DIM_ENDS) == 0 || osmode & mode::OFF != 0 {
         return None;
     }
     let ix = crate::spatial::index(d, space);
@@ -184,7 +194,11 @@ pub(crate) fn osnap_with_neighborhood(
     base: Option<Vec2>,
     deferred: bool,
 ) -> (Option<SnapHit>, Option<Vec<Prim>>) {
-    if osmode == 0 || osmode & mode::OFF != 0 || !cursor.is_finite() || !(aperture.is_finite() && aperture > 0.0) {
+    if osmode & !(mode::HATCH | mode::IGNORE_DIM_ENDS) == 0
+        || osmode & mode::OFF != 0
+        || !cursor.is_finite()
+        || !(aperture.is_finite() && aperture > 0.0)
+    {
         return (None, None);
     }
     let (mut best, near_prims) = match osnap_in_with_prims(d, space, ix, cursor, aperture, osmode, base, deferred, &[], None) {
@@ -629,8 +643,12 @@ impl Sink<'_> {
     /// block when the drawing has one (read from a file), else the lines generated from it
     /// (Endpoint on their ends); Node on its definition points.
     fn dimension(&mut self, d: &Drawing, dm: &cadcraft_doc::Dimension, budget: &mut usize, frozen: &[String]) {
+        let ignore_ends = self.osmode & mode::IGNORE_DIM_ENDS != 0;
         match dm.block.as_ref().and_then(|n| d.block(n)) {
             Some(blk) => {
+                // Imported blocks have no line-role metadata. Recognise extension lines by
+                // their supporting lines in the dimension's definition/style geometry.
+                let geometry = ignore_ends.then(|| cadcraft_render::dimension_in(d, dm));
                 // The block holds world geometry: a reference at its own base point places it as is.
                 let ins = Insert {
                     block: blk.name.clone(),
@@ -643,13 +661,20 @@ impl Sink<'_> {
                     col_spacing: 0.0,
                     row_spacing: 0.0,
                 };
-                block_leaves(d, &ins, &Mat3::IDENTITY, 0, budget, frozen, &mut |k, m| self.object(k, Some(m)));
+                block_leaves(d, &ins, &Mat3::IDENTITY, 0, budget, frozen, &mut |k, m| {
+                    let modes = self.osmode;
+                    if geometry.as_ref().is_some_and(|g| dimension_extension(k, m, g)) {
+                        self.osmode &= !mode::END;
+                    }
+                    self.object(k, Some(m));
+                    self.osmode = modes;
+                });
             }
             None => {
                 let g = cadcraft_render::dimension_in(d, dm);
-                for line in &g.lines {
+                for (i, line) in g.lines.iter().enumerate() {
                     let (Some(a), Some(b)) = (line.first(), line.last()) else { continue };
-                    if self.osmode & mode::END != 0 {
+                    if self.osmode & mode::END != 0 && !(ignore_ends && g.extension_lines.contains(&i)) {
                         self.cands.extend([(mode::END, *a), (mode::END, *b)]);
                     }
                     if self.osmode & mode::MID != 0 && line.len() == 2 {
@@ -670,6 +695,23 @@ impl Sink<'_> {
             self.cands.extend(dim_def_points(dm).into_iter().map(|p| (mode::NOD, p)));
         }
     }
+}
+
+/// Whether a block line lies along one of the dimension's extension lines. Reject non-finite
+/// geometry and use unit directions to avoid squaring large input-derived lengths.
+fn dimension_extension(kind: &EntityKind, xf: &Mat3, g: &cadcraft_render::DimGeometry) -> bool {
+    let EntityKind::Line(l) = kind else { return false };
+    let (p, q) = (xf.apply(l.a.xy()), xf.apply(l.b.xy()));
+    if !(p.is_finite() && q.is_finite()) {
+        return false;
+    }
+    g.extension_lines.iter().filter_map(|i| g.lines.get(*i)).any(|line| {
+        let (Some(a), Some(b)) = (line.first(), line.last()) else { return false };
+        let length = a.dist(*b);
+        let u = (*b - *a).normalized();
+        let tolerance = EPS * (1.0 + length);
+        length.is_finite() && u.is_finite() && u != Vec2::ZERO && u.cross(p - *a).abs() <= tolerance && u.cross(q - *a).abs() <= tolerance
+    })
 }
 
 /// The definition points of a dimension that its kind uses.

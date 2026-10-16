@@ -11,6 +11,35 @@ fn app() -> CadApp {
     CadApp::new(Session::new(), Services::default())
 }
 
+#[test]
+fn drafting_snap_filters_apply_and_survive_restarts() {
+    use egui_kittest::{Harness, kittest::Queryable};
+
+    let mut a = app();
+    a.ui.dialog = Some("dsettings".into());
+    let mut harness = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_ui_state(
+        |ui, app: &mut CadApp| {
+            app.logic(&ui.ctx().clone());
+            app.ui(ui);
+        },
+        a,
+    );
+    harness.run_steps(5);
+    assert_eq!(harness.state().session.settings.object_snap_options(), 7);
+    harness.get_by_label("Ignore hatch objects").click();
+    harness.run_steps(5);
+    assert_eq!(harness.state().session.settings.object_snap_options(), 6);
+    assert!(harness.state().session.settings.osnaphatch);
+    harness.get_by_label("Ignore dimension extension-line endpoints").click();
+    harness.run_steps(5);
+    assert_eq!(harness.state().session.settings.object_snap_options(), 2);
+    let mut restored = app();
+    restored.load_profile(&harness.state().profile_json());
+    assert_eq!(restored.session.settings.object_snap_options(), 2);
+    restored.run("options", json!({"reset": true})).unwrap();
+    assert_eq!(restored.session.settings.object_snap_options(), 7);
+}
+
 fn painted_text(shapes: &[egui::epaint::ClippedShape]) -> String {
     fn collect(shape: &egui::Shape, text: &mut String) {
         match shape {

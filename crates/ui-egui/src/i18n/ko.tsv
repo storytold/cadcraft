@@ -1238,3 +1238,5 @@ menu	View	보기
 menu	Draw	그리기
 menu	Dimension	치수
 menu	Modify	수정
+	Ignore hatch objects	해치 객체 무시
+	Ignore dimension extension-line endpoints	치수 보조선 끝점 무시

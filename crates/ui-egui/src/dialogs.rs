@@ -41,7 +41,14 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
 fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let settings = app.session.drafting_settings();
     let (mut snapunit, mut gridunit) = (settings.snapunit, settings.gridunit);
-    egui::Window::new(crate::tl!("Drafting Settings")).id(egui::Id::new("Drafting Settings")).open(open).resizable(false).show(ctx, |ui| {
+    let mut osoptions = settings.object_snap_options();
+    let window = egui::Window::new(crate::tl!("Drafting Settings"))
+        .id(egui::Id::new("Drafting Settings"))
+        .open(open)
+        .resizable(false)
+        .default_height(900.0)
+        .vscroll(true);
+    window.show(ctx, |ui| {
         let s = &mut app.session.settings;
         ui.heading(crate::tl!("Snap and Grid"));
         ui.checkbox(&mut s.snapmode, crate::tl!("Snap On (F9)"));
@@ -114,6 +121,16 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 }
             }
         });
+        ui.add_space(8.0);
+        let mut hatch = osoptions & cadcraft_engine::snap::options::IGNORE_HATCH != 0;
+        let mut dimensions = osoptions & cadcraft_engine::snap::options::IGNORE_DIM_ENDS != 0;
+        if ui.checkbox(&mut hatch, crate::tl!("Ignore hatch objects")).changed() {
+            osoptions = (osoptions & !cadcraft_engine::snap::options::IGNORE_HATCH) | u8::from(hatch);
+        }
+        if ui.checkbox(&mut dimensions, crate::tl!("Ignore dimension extension-line endpoints")).changed() {
+            osoptions = (osoptions & !cadcraft_engine::snap::options::IGNORE_DIM_ENDS)
+                | if dimensions { cadcraft_engine::snap::options::IGNORE_DIM_ENDS } else { 0 };
+        }
         ui.separator();
         ui.checkbox(&mut s.dynmode, crate::tl!("Enable Dynamic Input (F12)"));
         // Pointer input format for second and next points (DYNPIFORMAT, DYNPICOORDS).
@@ -134,6 +151,9 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         });
         ui.checkbox(&mut s.orthomode, crate::tl!("Ortho (F8)"));
     });
+    if osoptions != settings.object_snap_options() {
+        let _ = app.run("setvar", json!({"name": "OSOPTIONS", "value": osoptions}));
+    }
     // Drawing edits go through the same command as the CLI, including dirty state and undo.
     for (name, before, after) in [("SNAPUNIT", settings.snapunit, snapunit), ("GRIDUNIT", settings.gridunit, gridunit)] {
         if before != after {

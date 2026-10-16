@@ -9,6 +9,7 @@ mod table;
 const SESSION_VARS: &[&str] = &[
     "OSMODE",
     "OSNAPHATCH",
+    "OSOPTIONS",
     "ANNOAUTOSCALE",
     "ORTHOMODE",
     "POLARMODE",
@@ -72,6 +73,7 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
     let v = match n.as_str() {
         "OSMODE" => json!(st.osmode),
         "OSNAPHATCH" => json!(i32::from(st.osnaphatch)),
+        "OSOPTIONS" => json!(st.object_snap_options()),
         // AutoCAD's values: positive on, negative off (4 = every annotative object).
         "ANNOAUTOSCALE" => json!(if st.annoautoscale { 4 } else { -4 }),
         // Paper units per drawing unit of the current annotation scale (1:50 → 0.02).
@@ -225,7 +227,14 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
     let st = &mut s.settings;
     match n.as_str() {
         "OSMODE" => st.osmode = v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())).ok_or_else(bad)? as u32 & 0x7fff,
-        "OSNAPHATCH" => st.osnaphatch = as_bool(v).ok_or_else(bad)?,
+        "OSNAPHATCH" => {
+            st.osnaphatch = as_bool(v).ok_or_else(bad)?;
+            st.osoptions = st.object_snap_options();
+        }
+        "OSOPTIONS" => {
+            st.osoptions = small(v, 7).ok_or_else(bad)?;
+            st.osnaphatch = st.osoptions & crate::snap::options::IGNORE_HATCH == 0;
+        }
         "ANNOAUTOSCALE" => st.annoautoscale = as_i(v).filter(|i| (-4..=4).contains(i)).ok_or_else(bad)? > 0,
         // A scale of the drawing's list; ANNOAUTOSCALE adds it to the annotative objects.
         "CANNOSCALE" => crate::cmd::annoscale::set_current(s, v.as_str().ok_or_else(bad)?)?,

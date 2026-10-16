@@ -1007,3 +1007,5 @@
 	Search for pattern	Rechercher un motif
 	Not a number or distance: {text}	Ni un nombre ni une distance : {text}
 	Query Texts	Interroger les textes
+	Ignore hatch objects	Ignorer les objets de hachures
+	Ignore dimension extension-line endpoints	Ignorer les extrémités des lignes d’attache des cotes

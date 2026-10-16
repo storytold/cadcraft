@@ -122,11 +122,11 @@ pub fn snap_name(m: u32) -> &'static str {
 /// The candidate snaps near `cursor` for Tab cycling: the snap [`crate::snap::osnap`] picks
 /// first, then the closest snap of each other mode in `osmode`, nearest first, without repeats.
 pub fn snap_candidates(d: &Drawing, space: &Space, cursor: Vec2, aperture: f64, osmode: u32, base: Option<Vec2>, deferred: bool) -> Vec<SnapHit> {
-    if osmode & !mode::HATCH == 0 || osmode & mode::OFF != 0 {
+    if osmode & !(mode::HATCH | mode::IGNORE_DIM_ENDS) == 0 || osmode & mode::OFF != 0 {
         return Vec::new();
     }
     let osnap = |m: u32| crate::snap::osnap(d, space, cursor, aperture, m, base, deferred);
-    let extra = osmode & mode::HATCH;
+    let extra = osmode & (mode::HATCH | mode::IGNORE_DIM_ENDS);
     let mut per_mode: Vec<SnapHit> = mode::ALL.iter().filter(|(b, _)| osmode & b != 0).filter_map(|(b, _)| osnap(*b | extra)).collect();
     per_mode.sort_by(|a, b| a.point.dist(cursor).total_cmp(&b.point.dist(cursor)));
     let mut out: Vec<SnapHit> = osnap(osmode).into_iter().collect();
@@ -344,10 +344,9 @@ impl Session {
                     let prompt = self.current_prompt();
                     let space = self.space();
                     let aperture = self.pixel_size() * self.settings.aperture.max(1.0);
-                    let hatch = if self.settings.osnaphatch { mode::HATCH } else { 0 };
                     let base = prompt.as_ref().and_then(|q| q.base);
                     let deferred = prompt.as_ref().is_some_and(|q| q.deferred);
-                    let hit = crate::snap::osnap(self.doc()?, &space, p, aperture, mode | hatch, base, deferred);
+                    let hit = crate::snap::osnap(self.doc()?, &space, p, aperture, self.settings.object_snap_modes(mode), base, deferred);
                     match hit {
                         Some(h) if self.point_mods.is_empty() => return self.input_snapped(h),
                         Some(h) => p = h.point,

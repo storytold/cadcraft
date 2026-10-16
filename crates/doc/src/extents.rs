@@ -152,16 +152,20 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
             if dm.user_text_pos {
                 b.add(dm.text_mid.xy());
             }
-            // Room for text and arrows.
+            // Room for text, arrows and extension-line tips. In particular DIMEXE can be
+            // larger than the text padding; omitting it makes small-aperture snaps miss tips.
             // The same scale the dimension's geometry uses.
-            let th = d
+            let padding = d
                 .dim_style(&dm.style)
                 .map(|s| {
                     let s = s.with_overrides(&dm.overrides);
-                    s.text_height * s.effective_scale(d.header.f64("DIMSCALE", 1.0))
+                    (s.text_height.abs() * 2.5).max(s.arrow_size.abs()).max(s.ext_extend.abs()).max(s.ext_offset.abs())
+                        * s.effective_scale(d.header.f64("DIMSCALE", 1.0))
                 })
-                .unwrap_or(0.18 * d.header.f64("DIMSCALE", 1.0).max(1e-9));
-            b = b.expand(th * 2.5);
+                .unwrap_or(0.45 * d.header.f64("DIMSCALE", 1.0).max(1e-9));
+            if padding.is_finite() && padding >= 0.0 {
+                b = b.expand(padding);
+            }
             if let Some(blk) = dm.block.as_ref().and_then(|n| d.block(n))
                 && depth < MAX_BLOCK_DEPTH
             {

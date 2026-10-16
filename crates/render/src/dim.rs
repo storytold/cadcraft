@@ -50,6 +50,8 @@ pub struct DimGeometry {
     /// Indices into `lines` of the second extension line (DIMLTEX2); the other extension
     /// lines take DIMLTEX1.
     pub ext2_lines: Vec<usize>,
+    /// Indices into `lines` of extension lines (excludes radial centre marks).
+    pub extension_lines: Vec<usize>,
 }
 
 impl DimGeometry {
@@ -73,21 +75,27 @@ impl DimGeometry {
         let mut lines = Vec::with_capacity(self.lines.len());
         let mut roles = Vec::with_capacity(self.lines.len());
         let mut ext2 = Vec::new();
+        let mut extensions = Vec::new();
         for (i, (l, rl)) in self.lines.iter().zip(&self.line_roles).enumerate() {
             let pieces = if role.is_none_or(|x| x == *rl) { cut_polyline(l, c, r) } else { vec![l.clone()] };
             for p in pieces {
                 if self.ext2_lines.contains(&i) {
                     ext2.push(lines.len());
                 }
+                if self.extension_lines.contains(&i) {
+                    extensions.push(lines.len());
+                }
                 lines.push(p);
                 roles.push(*rl);
             }
         }
         (self.lines, self.line_roles, self.ext2_lines) = (lines, roles, ext2);
+        self.extension_lines = extensions;
     }
     /// Extension line 1 or 2 (`second`).
     fn ext_n(&mut self, l: Option<Vec<Vec2>>, second: bool) {
         if let Some(l) = l.filter(|l| l.len() >= 2) {
+            self.extension_lines.push(self.lines.len());
             if second {
                 self.ext2_lines.push(self.lines.len());
             }

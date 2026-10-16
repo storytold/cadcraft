@@ -1008,3 +1008,5 @@
 	Sheet Books to PDF...	Книги листов в PDF...
 	Not a number or distance: {text}	Не число и не расстояние: {text}
 	Query Texts	Запрос текстов
+	Ignore hatch objects	Игнорировать объекты штриховки
+	Ignore dimension extension-line endpoints	Игнорировать конечные точки выносных линий размеров
