@@ -883,6 +883,17 @@ mod tests {
     }
 
     #[test]
+    fn rebuilding_dashed_fill_highlights_keeps_the_same_gpu_dash_positions() {
+        let l = list();
+        let expected = build_highlight_mesh(&l, &[1], Vec2::ZERO, [1, 2, 3, 255], 1.5, true);
+        assert_eq!(expected.quad_instances(), 3);
+        for _ in 0..64 {
+            let rebuilt = build_highlight_mesh(&l, &[1], Vec2::ZERO, [1, 2, 3, 255], 1.5, true);
+            assert_eq!(rebuilt.quads, expected.quads, "the same filled triangle must keep its segment positions, directions and dash offsets");
+        }
+    }
+
+    #[test]
     fn mesh_counts_and_precision() {
         let l = list();
         let origin = Vec2::new(1e6, 1e6);
