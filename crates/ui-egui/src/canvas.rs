@@ -1845,7 +1845,15 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         // Hide the OS cursor under the drawn crosshair, unless assistive tech needs it (#39).
         ui.ctx().set_cursor_icon(if app.ui.system_cursor { egui::CursorIcon::Crosshair } else { egui::CursorIcon::None });
         if let Some(hp) = hover_pos {
-            draw_crosshair(app, &painter, rect, hp, selecting);
+            // At a "Select objects" prompt AutoCAD shows the pickbox alone, without crosshairs.
+            if pickbox_only(app.session.current_prompt().as_ref())
+                && let Some(pb) = pickbox_half(app.session.settings.pickbox)
+            {
+                let st = Stroke::new(1.0, Tokens::get().crosshair);
+                painter.rect_stroke(Rect::from_center_size(hp, vec2(pb * 2.0, pb * 2.0)), 0.0, st, egui::StrokeKind::Middle);
+            } else {
+                draw_crosshair(app, &painter, rect, hp, selecting);
+            }
         }
         if app.session.settings.dynmode
             && let Some(hp) = hover_pos
@@ -1986,6 +1994,11 @@ fn override_cursor(app: &mut CadApp, raw: Vec2, xf: &Xf) {
     app.canvas.cursor = Some(p);
     app.session.cursor = p;
     app.session.cursor_deferred = app.canvas.snap.and_then(|h| h.deferred);
+}
+
+/// The cursor is the pickbox alone (no crosshairs): a prompt that selects objects.
+fn pickbox_only(prompt: Option<&cadcraft_engine::Prompt>) -> bool {
+    prompt.is_some_and(|p| p.accept.select)
 }
 
 fn pickbox_half(pickbox: f64) -> Option<f32> {
@@ -2373,6 +2386,17 @@ pub(crate) mod tests {
         let prim =
             |h| DPrim { handle: Handle(h), color: Rgb(255, 255, 255), aci7: true, lw: 0.0, transparency: 0, kind: Kind::Polyline, start: 0, len: 0 };
         DisplayList { prims: handles.iter().map(|&h| prim(h)).collect(), ..Default::default() }
+    }
+
+    #[test]
+    fn the_cursor_is_the_pickbox_alone_at_select_objects() {
+        let mut s = cadcraft_engine::Session::new();
+        assert!(!pickbox_only(s.current_prompt().as_ref()), "no command: crosshairs and pickbox");
+        s.start("erase").unwrap();
+        assert!(pickbox_only(s.current_prompt().as_ref()), "ERASE's Select objects");
+        s.cancel();
+        s.start("line").unwrap();
+        assert!(!pickbox_only(s.current_prompt().as_ref()), "a point prompt keeps the crosshairs");
     }
 
     fn hs(v: &[u64]) -> Vec<Handle> {
