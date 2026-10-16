@@ -1,5 +1,5 @@
 //! Style and settings dialogs opened from the menus: Linetype Manager, Point Style, Text Style,
-//! Table Style, Multileader Style, Page Setup Manager, Plot and Constraint Settings.
+//! Dimension Style, Table Style, Multileader Style, Page Setup Manager, Plot and Constraint Settings.
 //!
 //! Typed or chosen from a menu (no parameters) these commands open their dialog; JSON calls run
 //! the command. The dialogs read the drawing and change it only through the same commands
@@ -28,6 +28,7 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
         "linetype" | "lt" | "ltype" => "linetype",
         "ddptype" | "ptype" => "ptype",
         "style" | "st" => "textstyle",
+        "dimstyle" | "dimstyle.dimension" | "d" | "dst" | "ddim" => "dimstyle",
         "tablestyle" | "ts" => "tablestyle",
         "mleaderstyle" | "mls" => "mleaderstyle",
         "pagesetup" => "pagesetup",
@@ -49,6 +50,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
         "linetype" => linetype(app, ctx, open),
         "ptype" => point_style(app, ctx, open),
         "textstyle" => text_style(app, ctx, open),
+        "dimstyle" => dim_style(app, ctx, open),
         "tablestyle" => table_style(app, ctx, open),
         "mleaderstyle" => mleader_style(app, ctx, open),
         "pagesetup" => page_setup(app, ctx, open),
@@ -331,6 +333,45 @@ fn text_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
     style_manager(ctx, open, "Text Style", "style", &current, &styles)
 }
 
+fn dim_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
+    let Ok(d) = app.session.doc() else {
+        no_drawing(ctx, "Dimension Style", open);
+        return None;
+    };
+    let text_styles: Vec<String> = d.text_styles.iter().map(|s| s.name.clone()).collect();
+    let mut styles: Vec<Style> = d
+        .dim_styles
+        .iter()
+        .map(|s| Style {
+            name: s.name.clone(),
+            fields: vec![
+                Field::Num("scale", "Overall scale (DIMSCALE)", s.scale),
+                Field::Num("arrowSize", "Arrow size (DIMASZ)", s.arrow_size),
+                Field::Num("textHeight", "Text height (DIMTXT)", s.text_height),
+                Field::Num("extExtend", "Extension line extend (DIMEXE)", s.ext_extend),
+                Field::Num("extOffset", "Extension line offset (DIMEXO)", s.ext_offset),
+                Field::Num("textGap", "Text gap (DIMGAP)", s.text_gap),
+                Field::Num("baselineSpacing", "Baseline spacing (DIMDLI)", s.baseline_spacing),
+                Field::Num("decimals", "Precision decimals (DIMDEC)", s.decimals as f64),
+                Field::Choice("textStyle", "Text style", s.text_style.clone(), text_styles.clone()),
+                Field::Bool("annotative", "Annotative", s.annotative),
+                Field::Bool("suppressExt1", "Suppress ext line 1", s.suppress_ext1),
+                Field::Bool("suppressExt2", "Suppress ext line 2", s.suppress_ext2),
+                Field::Bool("suppressDim1", "Suppress dim line 1", s.suppress_dim1),
+                Field::Bool("suppressDim2", "Suppress dim line 2", s.suppress_dim2),
+                Field::Bool("textInsideHorizontal", "Text inside horizontal", s.text_inside_horizontal),
+                Field::Bool("textOutsideHorizontal", "Text outside horizontal", s.text_outside_horizontal),
+            ],
+        })
+        .collect();
+    if styles.is_empty() {
+        let s = cadcraft_doc::DimStyle::default();
+        styles.push(Style { name: s.name, fields: Vec::new() });
+    }
+    let current = d.header.str("DIMSTYLE", "Standard");
+    style_manager(ctx, open, "Dimension Style", "dimstyle", &current, &styles)
+}
+
 fn table_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
     let Ok(d) = app.session.doc() else {
         no_drawing(ctx, "Table Style", open);
@@ -394,13 +435,13 @@ fn style_manager(ctx: &egui::Context, open: &mut bool, title: &str, cmd: &'stati
     let mut sel = temp::<String>(ctx, &sel_key).filter(|s| styles.iter().any(|x| x.name == *s)).unwrap_or_else(|| current.to_string());
     let mut new_name = temp::<String>(ctx, &new_key).unwrap_or_default();
     let mut action = None;
-    egui::Window::new(title).open(open).default_size(vec2(520.0, 280.0)).resizable(true).show(ctx, |ui| {
+    egui::Window::new(title).open(open).default_size(vec2(540.0, 320.0)).resizable(true).show(ctx, |ui| {
         ui.label(RichText::new(format!("Current style: {current}")).color(t.text_dim));
         ui.separator();
         ui.columns(2, |cols| {
             let [left, right] = cols else { return };
             left.label(RichText::new("Styles").strong());
-            egui::ScrollArea::vertical().id_salt((cmd, "list")).max_height(160.0).auto_shrink([false, true]).show(left, |ui| {
+            egui::ScrollArea::vertical().id_salt((cmd, "list")).max_height(200.0).auto_shrink([false, true]).show(left, |ui| {
                 for s in styles {
                     let mut label = RichText::new(&s.name);
                     if s.name.eq_ignore_ascii_case(current) {
@@ -426,36 +467,38 @@ fn style_manager(ctx: &egui::Context, open: &mut bool, title: &str, cmd: &'stati
             });
             right.label(RichText::new(format!("Properties of {sel}")).strong());
             let Some(style) = styles.iter().find(|s| s.name == sel) else { return };
-            egui::Grid::new((cmd, "props")).num_columns(2).spacing(vec2(10.0, 6.0)).show(right, |ui| {
-                for f in &style.fields {
-                    let change = match f {
-                        Field::Num(key, label, v) => {
-                            ui.label(*label);
-                            num_field(ui, (cmd, &style.name, *key), *v).filter(|v| *v >= 0.0).map(|v| (*key, json!(v)))
-                        }
-                        Field::Bool(key, label, v) => {
-                            ui.label("");
-                            let mut b = *v;
-                            ui.checkbox(&mut b, *label).changed().then(|| (*key, json!(b)))
-                        }
-                        Field::Choice(key, label, v, choices) => {
-                            ui.label(*label);
-                            let mut picked = None;
-                            egui::ComboBox::from_id_salt((cmd, *key)).selected_text(v.as_str()).show_ui(ui, |ui| {
-                                for c in choices {
-                                    if ui.selectable_label(c == v, c).clicked() && c != v {
-                                        picked = Some(c.clone());
+            egui::ScrollArea::vertical().id_salt((cmd, "props_scroll")).max_height(200.0).auto_shrink([false, true]).show(right, |right| {
+                egui::Grid::new((cmd, "props")).num_columns(2).spacing(vec2(10.0, 6.0)).show(right, |ui| {
+                    for f in &style.fields {
+                        let change = match f {
+                            Field::Num(key, label, v) => {
+                                ui.label(*label);
+                                num_field(ui, (cmd, &style.name, *key), *v).filter(|v| *v >= 0.0).map(|v| (*key, json!(v)))
+                            }
+                            Field::Bool(key, label, v) => {
+                                ui.label("");
+                                let mut b = *v;
+                                ui.checkbox(&mut b, *label).changed().then(|| (*key, json!(b)))
+                            }
+                            Field::Choice(key, label, v, choices) => {
+                                ui.label(*label);
+                                let mut picked = None;
+                                egui::ComboBox::from_id_salt((cmd, *key)).selected_text(v.as_str()).show_ui(ui, |ui| {
+                                    for c in choices {
+                                        if ui.selectable_label(c == v, c).clicked() && c != v {
+                                            picked = Some(c.clone());
+                                        }
                                     }
-                                }
-                            });
-                            picked.map(|c| (*key, json!(c)))
+                                });
+                                picked.map(|c| (*key, json!(c)))
+                            }
+                        };
+                        if let Some((key, v)) = change {
+                            action = Some((cmd, json!({ "name": style.name, key: v, "current": false })));
                         }
-                    };
-                    if let Some((key, v)) = change {
-                        action = Some((cmd, json!({ "name": style.name, key: v, "current": false })));
+                        ui.end_row();
                     }
-                    ui.end_row();
-                }
+                });
             });
         });
     });
