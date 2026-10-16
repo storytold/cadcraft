@@ -136,6 +136,25 @@ impl Default for Drawing {
 }
 
 impl Drawing {
+    /// Whether cached geometry can keep using this drawing's symbols and rendering settings.
+    /// Entity stores and the next handle are deliberately excluded: their chunks are tracked
+    /// independently. Block identities are checked without walking their contents.
+    pub fn same_render_context(&self, other: &Drawing) -> bool {
+        self.header == other.header
+            && self.layers == other.layers
+            && self.linetypes == other.linetypes
+            && self.text_styles == other.text_styles
+            && self.dim_styles == other.dim_styles
+            && self.mleader_styles == other.mleader_styles
+            && self.table_styles == other.table_styles
+            && self.mline_styles == other.mline_styles
+            && self.scales == other.scales
+            && self.hidden_objects == other.hidden_objects
+            && self.plot_style_tables == other.plot_style_tables
+            && self.parametric == other.parametric
+            && self.blocks.len() == other.blocks.len()
+            && self.blocks.iter().zip(&other.blocks).all(|((ka, a), (kb, b))| ka == kb && std::sync::Arc::ptr_eq(a, b))
+    }
     /// An empty drawing with the standard tables (inch-based, like acad.dwt-style defaults).
     pub fn new_imperial() -> Self {
         let mut d = Drawing::bare();

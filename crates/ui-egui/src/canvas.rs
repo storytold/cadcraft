@@ -37,16 +37,21 @@ impl Xf {
 
 /// What a display list was built from: drawing uid, revision, tessellation band, hatch level of
 /// detail band, lineweight display, document and active viewport view (see [`ensure_list`]).
-type ListKey = (u64, u64, i32, i32, bool, bool, usize, u64);
+type ListKey = (u64, u64, i32, i32, bool, bool, usize, u64, u64);
 
 /// Whether two list keys are for the same drawing content (they may differ only in the view).
 fn same_content(a: &ListKey, b: &ListKey) -> bool {
-    (a.0, a.1, a.4, a.5, a.6, a.7) == (b.0, b.1, b.4, b.5, b.6, b.7)
+    (a.0, a.1, a.4, a.5, a.6, a.7, a.8) == (b.0, b.1, b.4, b.5, b.6, b.7, b.8)
 }
 
 #[derive(Default)]
 pub struct CanvasState {
     pub list: Option<DisplayList>,
+    render_cache: cadcraft_render::screen::Cache,
+    parts: Vec<cadcraft_render::screen::Part>,
+    part_meshes: std::collections::HashMap<u64, std::sync::Arc<crate::gpu::MeshData>>,
+    pub rebuilt_parts: usize,
+    pub reused_parts: usize,
     key: ListKey,
     /// The area `list` was built for (hatch patterns exist only inside it); a view leaving it
     /// rebuilds the list.
@@ -155,6 +160,10 @@ impl CanvasState {
             self.mesh_ms = m.ms;
             self.infinite = m.infinite;
         }
+        self.render_cache = built.cache;
+        self.parts = built.parts;
+        self.rebuilt_parts = built.rebuilt;
+        self.reused_parts = built.reused;
         self.list = Some(built.list);
         self.key = key;
         self.window = window;
@@ -267,7 +276,17 @@ fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], ctx: &egui::
         s.finish()
     };
     let (lwdisplay, transparency_display) = (app.session.settings.lwdisplay, app.session.settings.transparency_display);
-    let key: ListKey = (st.uid, st.revision, band(px), lod_band, lwdisplay, transparency_display, std::sync::Arc::as_ptr(&st.doc) as usize, vp_view);
+    let key: ListKey = (
+        st.uid,
+        st.revision,
+        band(px),
+        lod_band,
+        lwdisplay,
+        transparency_display,
+        std::sync::Arc::as_ptr(&st.doc) as usize,
+        vp_view,
+        cadcraft_render::screen::font_revision(),
+    );
     // A background build that finished: use it unless the drawing has changed since it started
     // (or the list was dropped to force a rebuild).
     if let Some(job) = &app.canvas.job {
@@ -311,7 +330,7 @@ fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], ctx: &egui::
         lineweights: lwdisplay,
         view_height: st.paper_view().height,
         plot_style_table: None,
-        view: build_window(views),
+        view: if inside && app.canvas.list.is_some() { app.canvas.window } else { build_window(views) },
         transparency: app.session.settings.transparency_display,
         skip_viewport: split,
         cancel: None,
@@ -327,14 +346,18 @@ fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], ctx: &egui::
             device: app.canvas.gpu_device.clone(),
         });
         let window = opts.view;
-        let req = rebuild::Request { doc: st.doc.clone(), space: st.space.clone(), opts: opts.clone(), mesh };
+        let req = rebuild::Request { doc: st.doc.clone(), space: st.space.clone(), opts: opts.clone(), mesh, cache: app.canvas.render_cache.clone() };
         if let Some(job) = rebuild::spawn(req, key, window, ctx) {
             app.canvas.job = Some(job);
             return;
         }
     }
     let space = st.space.clone();
-    app.canvas.list = Some(cadcraft_render::build(&st.doc, &space, &opts));
+    let built = app.canvas.render_cache.build(&st.doc, &space, &opts);
+    app.canvas.rebuilt_parts = built.rebuilt;
+    app.canvas.reused_parts = built.reused;
+    app.canvas.parts = built.parts;
+    app.canvas.list = Some(built.list);
     app.canvas.key = key;
     app.canvas.window = opts.view;
     app.canvas.list_gen = app.canvas.list_gen.wrapping_add(1);
@@ -931,11 +954,30 @@ fn list_mesh_key(key: &ListKey, list_gen: u64, origin: Vec2, bg: Rgb, lwdisplay:
 /// the infinite lines, which are clipped to the view on the CPU every frame.
 fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, bg: Rgb, lwdisplay: bool) {
     let Some(list) = &c.list else { return };
-    let origin = crate::gpu::choose_origin(&list.bounds, xf.center, f64::from(xf.rect.height()) / xf.scale.max(1e-300));
+    let bounds = c.window.as_ref().filter(|_| !c.parts.is_empty()).unwrap_or(&list.bounds);
+    let origin = crate::gpu::choose_origin(bounds, xf.center, f64::from(xf.rect.height()) / xf.scale.max(1e-300));
     let key = list_mesh_key(&c.key, c.list_gen, origin, bg, lwdisplay);
     if c.mesh_key != Some(key) {
         let t0 = crate::now_ms();
-        let mesh = crate::gpu::build_mesh(list, origin, bg, lwdisplay);
+        let mesh = if c.parts.is_empty() {
+            c.part_meshes.clear();
+            crate::gpu::build_mesh(list, origin, bg, lwdisplay)
+        } else {
+            let mut next = std::collections::HashMap::new();
+            let mut mesh = crate::gpu::MeshData::default();
+            for part in &c.parts {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                (part.id, origin.x.to_bits(), origin.y.to_bits(), bg.0, bg.1, bg.2, lwdisplay).hash(&mut h);
+                let id = h.finish();
+                let data =
+                    c.part_meshes.get(&id).cloned().unwrap_or_else(|| std::sync::Arc::new(crate::gpu::build_mesh(&part.list, origin, bg, lwdisplay)));
+                next.insert(id, data.clone());
+                mesh.parts.push((id, data));
+            }
+            c.part_meshes = if next.values().map(|m| m.bytes()).sum::<usize>() <= 32 << 20 { next } else { std::collections::HashMap::new() };
+            mesh
+        };
         if let Ok(mut slot) = c.mesh_slot.lock() {
             *slot = Some(mesh);
         }
@@ -2377,6 +2419,37 @@ pub(crate) mod tests {
 
     fn hs(v: &[u64]) -> Vec<Handle> {
         v.iter().map(|&h| Handle(h)).collect()
+    }
+
+    #[test]
+    fn editing_one_chunk_keeps_other_gpu_meshes_and_the_vertex_origin() {
+        use cadcraft_doc::{Common, EntityKind, Line, Space};
+        use cadcraft_geom::Vec3;
+        let mut s = cadcraft_engine::Session::new();
+        for i in 0..2050 {
+            let x = f64::from(i);
+            s.doc_mut()
+                .unwrap()
+                .add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x, 5.0, 0.0) }))
+                .unwrap();
+        }
+        let mut app = CadApp::new(s, crate::Services { pick_open: None, pick_save: None });
+        let rect = Rect::from_min_size(Pos2::ZERO, vec2(200.0, 100.0));
+        let xf = Xf { rect, center: Vec2::new(5.0, 0.0), scale: 10.0 };
+        let views = [(xf.world_bounds(), 1.0 / xf.scale)];
+        let ctx = egui::Context::default();
+        let painter = egui::Painter::new(ctx.clone(), egui::LayerId::background(), rect);
+        ensure_list(&mut app, &xf, &views, &ctx);
+        draw_list_gpu(&mut app.canvas, &painter, &xf, Rgb(0, 0, 0), false);
+        let old = app.canvas.part_meshes.clone();
+        let origin = app.canvas.mesh_origin;
+        app.session.execute("line", &serde_json::json!({"points": [[3000, 0], [3010, 5]]})).unwrap();
+        ensure_list(&mut app, &xf, &views, &ctx);
+        draw_list_gpu(&mut app.canvas, &painter, &xf, Rgb(0, 0, 0), false);
+        assert_eq!((app.canvas.rebuilt_parts, app.canvas.reused_parts), (1, 2));
+        assert_eq!(app.canvas.mesh_origin, origin, "extents growth must not invalidate every vertex buffer");
+        let reused = app.canvas.part_meshes.iter().filter(|(k, m)| old.get(*k).is_some_and(|before| std::sync::Arc::ptr_eq(before, m))).count();
+        assert_eq!(reused, 2);
     }
 
     /// A dragged object keeps its transparency in the GPU preview when TRANSPARENCYDISPLAY is

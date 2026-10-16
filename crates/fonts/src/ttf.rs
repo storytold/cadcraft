@@ -471,6 +471,7 @@ pub fn register(name: &str, bytes: Vec<u8>) {
     g.files.insert(key(name), Arc::new(bytes));
     g.resolved.clear();
     g.fallback = Fallback::default();
+    FONT_REVISION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Register font bytes that live for the whole process under a name; they are copied only when
@@ -483,6 +484,7 @@ pub(crate) fn register_static(name: &str, bytes: &'static [u8]) {
     g.paths.insert(k, Source::Static(bytes));
     g.resolved.clear();
     g.fallback = Fallback::default();
+    FONT_REVISION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Normalise a style font name ("arial.ttf", "Arial", "ARIALBD.TTF") to a lookup key.
@@ -551,7 +553,12 @@ pub fn font_alt() -> String {
 
 /// Set FONTALT ("" or "." clears it).
 pub fn set_font_alt(name: &str) {
-    prefs().alt = clean_name(name);
+    let mut p = prefs();
+    let name = clean_name(name);
+    if p.alt != name {
+        p.alt = name;
+        FONT_REVISION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 /// FONTFALLBACK: fonts tried first for characters a text's font lacks, comma-separated.
@@ -561,7 +568,19 @@ pub fn fallback_fonts() -> String {
 
 /// Set FONTFALLBACK from a comma- or semicolon-separated list ("" or "." clears it).
 pub fn set_fallback_fonts(list: &str) {
-    prefs().fallback = split_list(list);
+    let mut p = prefs();
+    let names = split_list(list);
+    if p.fallback != names {
+        p.fallback = names;
+        FONT_REVISION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+static FONT_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Invalidates geometry using process-wide font preferences when those preferences change.
+pub fn revision() -> u64 {
+    FONT_REVISION.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Characters worth a fallback search (not spaces, controls or private-use code points).
@@ -614,14 +633,26 @@ enum GlyphKey {
 /// Cached glyph outlines keyed by (font bytes address, length, face, glyph). Fonts live for the
 /// whole process in the font table, so the address identifies them. A read-write lock: display
 /// lists are built on all cores and nearly every lookup is a hit, which a mutex serialized.
-type GlyphCache = HashMap<(usize, usize, u32, GlyphKey), Arc<GlyphOutline>>;
+type OutlineKey = (usize, usize, u32, GlyphKey);
+struct OutlineEntry {
+    outline: Arc<GlyphOutline>,
+    used: std::sync::atomic::AtomicBool,
+    bytes: usize,
+}
+#[derive(Default)]
+struct GlyphCache {
+    entries: HashMap<OutlineKey, OutlineEntry>,
+    clock: std::collections::VecDeque<OutlineKey>,
+    bytes: usize,
+}
 
 fn glyph_cache() -> &'static RwLock<GlyphCache> {
     static C: OnceLock<RwLock<GlyphCache>> = OnceLock::new();
-    C.get_or_init(|| RwLock::new(HashMap::new()))
+    C.get_or_init(|| RwLock::new(GlyphCache::default()))
 }
 
 const MAX_CACHED_GLYPHS: usize = 40_000;
+const MAX_OUTLINE_BYTES: usize = 64 << 20;
 const UPEM: f32 = 1000.0;
 
 struct Pen {
@@ -714,8 +745,9 @@ pub fn glyph_contours(face: &Face, gid: u16) -> Arc<[Vec<Vec2>]> {
 
 fn outline(face: &Face, k: GlyphKey) -> Arc<GlyphOutline> {
     let key = (face.bytes.as_ptr() as usize, face.bytes.len(), face.index, k);
-    if let Some(g) = glyph_cache().read().unwrap_or_else(PoisonError::into_inner).get(&key) {
-        return g.clone();
+    if let Some(g) = glyph_cache().read().unwrap_or_else(PoisonError::into_inner).entries.get(&key) {
+        g.used.store(true, std::sync::atomic::Ordering::Relaxed);
+        return g.outline.clone();
     }
     let Some(f) = face.font() else { return Arc::new(GlyphOutline { cap: 1.0, ..Default::default() }) };
     let mapped = match k {
@@ -732,10 +764,33 @@ fn outline(face: &Face, k: GlyphKey) -> Arc<GlyphOutline> {
     let (cap, mapped, gid) = (cap_height(&f), mapped.is_some(), gid.to_u32());
     let g = Arc::new(GlyphOutline { contours: pen.contours.into(), advance, cap, mapped, gid, face: Some(face.clone()) });
     let mut cache = glyph_cache().write().unwrap_or_else(PoisonError::into_inner);
-    if cache.len() > MAX_CACHED_GLYPHS {
-        cache.clear();
+    if let Some(old) = cache.entries.get(&key) {
+        return old.outline.clone();
     }
-    cache.insert(key, g.clone());
+    let bytes = g
+        .contours
+        .iter()
+        .map(|c| c.capacity().saturating_mul(std::mem::size_of::<Vec2>()))
+        .fold(0usize, usize::saturating_add)
+        .saturating_add(g.contours.len().saturating_mul(std::mem::size_of::<Vec<Vec2>>()))
+        .saturating_add(std::mem::size_of::<OutlineEntry>());
+    if bytes <= MAX_OUTLINE_BYTES {
+        let mut second_chances = cache.clock.len();
+        while cache.entries.len() >= MAX_CACHED_GLYPHS || cache.bytes.saturating_add(bytes) > MAX_OUTLINE_BYTES {
+            let Some(old) = cache.clock.pop_front() else { break };
+            if second_chances > 0 && cache.entries.get(&old).is_some_and(|entry| entry.used.swap(false, std::sync::atomic::Ordering::Relaxed)) {
+                cache.clock.push_back(old);
+                second_chances -= 1;
+                continue;
+            }
+            if let Some(entry) = cache.entries.remove(&old) {
+                cache.bytes = cache.bytes.saturating_sub(entry.bytes);
+            }
+        }
+        cache.bytes = cache.bytes.saturating_add(bytes);
+        cache.clock.push_back(key);
+        cache.entries.insert(key, OutlineEntry { outline: g.clone(), used: std::sync::atomic::AtomicBool::new(true), bytes });
+    }
     g
 }
 

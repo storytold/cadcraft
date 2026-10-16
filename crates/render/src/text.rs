@@ -1,6 +1,7 @@
 //! Filled font glyphs: bounded font-unit meshes shared across placements and zoom rebuilds.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, PoisonError, RwLock};
 
 use cadcraft_fonts::{TextGlyph, ttf};
@@ -35,12 +36,15 @@ struct Entry {
     // Keep the bytes alive: registering a replacement font must never reuse this key's address.
     _face: ttf::Face,
     mesh: Arc<Mesh>,
+    used: AtomicBool,
+    bytes: usize,
 }
 
 #[derive(Default)]
 struct Cache {
     entries: HashMap<Key, Entry>,
     bytes: usize,
+    clock: VecDeque<Key>,
 }
 
 /// A read-write lock: display lists are built on all cores and nearly every lookup is a hit.
@@ -72,6 +76,7 @@ pub(super) fn mesh(g: &TextGlyph, xf: Mat3, pixel: f64) -> Arc<Mesh> {
     let detail = detail(xf, pixel);
     let key = (g.face.bytes.as_ptr() as usize, g.face.bytes.len(), g.face.index, g.gid, detail);
     if let Some(entry) = cache().read().unwrap_or_else(PoisonError::into_inner).entries.get(&key) {
+        entry.used.store(true, Ordering::Relaxed);
         return entry.mesh.clone();
     }
     let contours = ttf::glyph_contours(&g.face, g.gid);
@@ -100,13 +105,22 @@ pub(super) fn mesh(g: &TextGlyph, xf: Mat3, pixel: f64) -> Arc<Mesh> {
         .saturating_add(std::mem::size_of::<Entry>() + std::mem::size_of::<Key>() + std::mem::size_of::<Mesh>());
     if bytes <= MAX_CACHE_BYTES {
         let mut c = cache().write().unwrap_or_else(PoisonError::into_inner);
-        if c.entries.len() >= MAX_ENTRIES || c.bytes.saturating_add(bytes) > MAX_CACHE_BYTES {
-            c.entries.clear();
-            c.bytes = 0;
-        }
         if !c.entries.contains_key(&key) {
+            let mut second_chances = c.clock.len();
+            while c.entries.len() >= MAX_ENTRIES || c.bytes.saturating_add(bytes) > MAX_CACHE_BYTES {
+                let Some(old) = c.clock.pop_front() else { break };
+                if second_chances > 0 && c.entries.get(&old).is_some_and(|entry| entry.used.swap(false, Ordering::Relaxed)) {
+                    c.clock.push_back(old);
+                    second_chances -= 1;
+                    continue;
+                }
+                if let Some(entry) = c.entries.remove(&old) {
+                    c.bytes = c.bytes.saturating_sub(entry.bytes);
+                }
+            }
             c.bytes = c.bytes.saturating_add(bytes);
-            c.entries.insert(key, Entry { _face: g.face.clone(), mesh: mesh.clone() });
+            c.clock.push_back(key);
+            c.entries.insert(key, Entry { _face: g.face.clone(), mesh: mesh.clone(), used: AtomicBool::new(true), bytes });
         }
     }
     mesh

@@ -24,6 +24,7 @@ use cadcraft_render::{DisplayList, Kind, Options};
 /// What a build needs: the drawing (shared, never copied), the space and the options.
 pub(super) struct Request {
     pub doc: Arc<Drawing>,
+    pub cache: cadcraft_render::screen::Cache,
     pub space: Space,
     pub opts: Options,
     /// Also convert the list to GPU vertex data (GPU canvas only).
@@ -46,6 +47,10 @@ pub(super) struct MeshRequest {
 /// A finished build.
 pub(super) struct Built {
     pub list: DisplayList,
+    pub cache: cadcraft_render::screen::Cache,
+    pub parts: Vec<cadcraft_render::screen::Part>,
+    pub rebuilt: usize,
+    pub reused: usize,
     pub build_ms: f64,
     pub mesh: Option<BuiltMesh>,
 }
@@ -100,9 +105,10 @@ impl Job {
 
 /// Build `req` on the calling thread; `None` once it has been cancelled (the partial list is
 /// thrown away, and no vertex data is made for it).
-fn run(req: Request) -> Option<Built> {
+fn run(mut req: Request) -> Option<Built> {
     let t0 = crate::now_ms();
-    let list = cadcraft_render::build(&req.doc, &req.space, &req.opts);
+    let built = req.cache.build(&req.doc, &req.space, &req.opts);
+    let list = built.list;
     if req.opts.cancelled() {
         return None;
     }
@@ -111,7 +117,10 @@ fn run(req: Request) -> Option<Built> {
         None => None,
         Some(m) => {
             let t1 = crate::now_ms();
-            let origin = crate::gpu::choose_origin(&list.bounds, m.view_center, m.view_height);
+            // Match the drawing callback's stable origin, so installing a worker result does
+            // not immediately convert and upload the same scene again on the UI thread.
+            let bounds = req.opts.view.as_ref().filter(|_| !built.parts.is_empty()).unwrap_or(&list.bounds);
+            let origin = crate::gpu::choose_origin(bounds, m.view_center, m.view_height);
             let bg = if list.sheet.is_some() { m.paper_bg } else { m.model_bg };
             let mut data = crate::gpu::build_mesh(&list, origin, bg, m.lwdisplay);
             if req.opts.cancelled() {
@@ -124,7 +133,7 @@ fn run(req: Request) -> Option<Built> {
             Some(BuiltMesh { data, origin, bg, lwdisplay: m.lwdisplay, infinite, ms: crate::now_ms() - t1 })
         }
     };
-    Some(Built { list, build_ms, mesh })
+    Some(Built { list, build_ms, mesh, cache: req.cache, parts: built.parts, rebuilt: built.rebuilt, reused: built.reused })
 }
 
 /// Start building `req` on a worker thread for `key` / `window`; the worker asks `ctx` for a
@@ -179,6 +188,7 @@ mod tests {
         let opts = Options::default();
         let sync = cadcraft_render::build(&doc, &Space::Model, &opts);
         let req = Request {
+            cache: Default::default(),
             doc: doc.clone(),
             space: Space::Model,
             opts: opts.clone(),
@@ -210,7 +220,7 @@ mod tests {
     #[test]
     fn cancelled_run_makes_nothing() {
         let opts = Options { cancel: Some(Arc::new(AtomicBool::new(true))), ..Default::default() };
-        let req = Request { doc: Arc::new(Drawing::new_imperial()), space: Space::Model, opts, mesh: None };
+        let req = Request { cache: Default::default(), doc: Arc::new(Drawing::new_imperial()), space: Space::Model, opts, mesh: None };
         assert!(run(req).is_none());
     }
 

@@ -20,6 +20,7 @@ pub mod pen;
 mod plotstyle;
 mod point;
 pub mod raster;
+pub mod screen;
 mod text;
 mod tolerance;
 pub mod units;

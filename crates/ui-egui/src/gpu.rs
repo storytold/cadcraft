@@ -108,6 +108,8 @@ pub struct MeshData {
     /// Draw-order breaks, one before each wipeout mask: the fill vertices, line vertices and
     /// quad instances drawn before it. Each group is drawn fills, lines, quads in turn.
     pub breaks: Vec<[usize; 3]>,
+    /// Geometry chunks in complete drawing order; each keeps its own uploaded buffers.
+    pub parts: Vec<(u64, Arc<MeshData>)>,
     /// The vertex buffers already created from this data (see [`MeshData::upload_now`]); the
     /// paint callback then only swaps them in.
     uploaded: Option<Uploaded>,
@@ -118,6 +120,21 @@ struct Uploaded {
     lines: Vec<Batch>,
     tris: Vec<Batch>,
     quads: Vec<Batch>,
+    breaks: Vec<[usize; 3]>,
+    bytes: usize,
+}
+
+impl Uploaded {
+    fn new(device: &wgpu::Device, m: &MeshData) -> Self {
+        let usage = wgpu::BufferUsages::VERTEX;
+        Self {
+            lines: upload(device, "cad_lines", &m.lines, VERTEX_SIZE, usage),
+            tris: upload(device, "cad_fills", &m.tris, VERTEX_SIZE, usage),
+            quads: upload(device, "cad_quads", &m.quads, INSTANCE_SIZE, usage),
+            breaks: m.breaks.clone(),
+            bytes: m.bytes(),
+        }
+    }
 }
 
 impl MeshData {
@@ -125,15 +142,14 @@ impl MeshData {
     /// buffer zero-fills and copies it: about 0.35 s for a million-primitive drawing, which a
     /// background rebuild does off the UI thread (see `canvas::rebuild`).
     pub fn upload_now(&mut self, device: &wgpu::Device) {
-        let usage = wgpu::BufferUsages::VERTEX;
-        self.uploaded = Some(Uploaded {
-            lines: upload(device, "cad_lines", &self.lines, VERTEX_SIZE, usage),
-            tris: upload(device, "cad_fills", &self.tris, VERTEX_SIZE, usage),
-            quads: upload(device, "cad_quads", &self.quads, INSTANCE_SIZE, usage),
-        });
+        self.uploaded = Some(Uploaded::new(device, self));
         self.lines = Vec::new();
         self.tris = Vec::new();
         self.quads = Vec::new();
+    }
+
+    pub fn bytes(&self) -> usize {
+        self.lines.len().saturating_add(self.tris.len()).saturating_add(self.quads.len())
     }
 
     pub fn line_vertices(&self) -> usize {
@@ -189,6 +205,7 @@ pub fn build_mesh(list: &DisplayList, origin: Vec2, bg: Rgb, lwdisplay: bool) ->
         quads: Vec::new(),
         breaks: Vec::new(),
         uploaded: None,
+        parts: Vec::new(),
     };
     for prim in &list.prims {
         let col = premultiplied(prim.display_rgb(bg), prim.alpha());
@@ -365,6 +382,7 @@ fn translucent(c: [u8; 4], alpha: f32) -> [u8; 4] {
 }
 pub const IDENTITY_XFORM: [f32; 6] = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
 
+#[derive(Clone)]
 struct Batch {
     buffer: wgpu::Buffer,
     count: u32,
@@ -379,6 +397,43 @@ struct Layer {
     tris: Vec<Batch>,
     quads: Vec<Batch>,
     breaks: Vec<[usize; 3]>,
+    parts: std::collections::HashMap<u64, Arc<Uploaded>>,
+}
+
+impl Layer {
+    fn load(&mut self, device: &wgpu::Device, mut mesh: MeshData) {
+        if mesh.parts.is_empty() {
+            let data = mesh.uploaded.take().unwrap_or_else(|| Uploaded::new(device, &mesh));
+            self.lines = data.lines;
+            self.tris = data.tris;
+            self.quads = data.quads;
+            self.breaks = data.breaks;
+            self.parts.clear();
+            return;
+        }
+        self.lines.clear();
+        self.tris.clear();
+        self.quads.clear();
+        self.breaks.clear();
+        let mut next = std::collections::HashMap::new();
+        let mut bytes = 0usize;
+        let mut offset = [0usize; 3];
+        for (id, m) in mesh.parts {
+            // A map lookup, rather than a scan for every part: total upload lookup work is O(n).
+            let data = self.parts.remove(&id).unwrap_or_else(|| Arc::new(Uploaded::new(device, &m)));
+            self.breaks.extend(data.breaks.iter().map(|b| [offset[0] + b[0], offset[1] + b[1], offset[2] + b[2]]));
+            offset[0] += data.tris.iter().map(|b| b.count as usize).sum::<usize>();
+            offset[1] += data.lines.iter().map(|b| b.count as usize).sum::<usize>();
+            offset[2] += data.quads.iter().map(|b| b.count as usize).sum::<usize>();
+            self.lines.extend_from_slice(&data.lines);
+            self.tris.extend_from_slice(&data.tris);
+            self.quads.extend_from_slice(&data.quads);
+            bytes = bytes.saturating_add(data.bytes);
+            next.insert(id, data);
+        }
+        // Only the current scene's buffers are retained, under one budget.
+        self.parts = if bytes <= 64 << 20 { next } else { std::collections::HashMap::new() };
+    }
 }
 
 struct Resources {
@@ -528,7 +583,16 @@ impl Resources {
                 layout: &bgl,
                 entries: &[wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() }],
             });
-            Layer { uniform, bind_group, key: None, lines: Vec::new(), tris: Vec::new(), quads: Vec::new(), breaks: Vec::new() }
+            Layer {
+                uniform,
+                bind_group,
+                key: None,
+                lines: Vec::new(),
+                tris: Vec::new(),
+                quads: Vec::new(),
+                breaks: Vec::new(),
+                parts: Default::default(),
+            }
         };
         // A render pass with a stencil buffer needs every pipeline to name its format; only the
         // clipped-viewport pipelines read or write it.
@@ -704,14 +768,8 @@ impl egui_wgpu::CallbackTrait for CanvasCallback {
         let Some(res) = res.layers.get_mut(self.layer) else { return Vec::new() };
         if res.key != Some(self.key) {
             let pending = self.slot.lock().ok().and_then(|mut s| s.take());
-            if let Some(mut m) = pending {
-                if m.uploaded.is_none() {
-                    m.upload_now(device);
-                }
-                if let Some(u) = m.uploaded {
-                    (res.lines, res.tris, res.quads) = (u.lines, u.tris, u.quads);
-                }
-                res.breaks = m.breaks;
+            if let Some(m) = pending {
+                res.load(device, m);
                 res.key = Some(self.key);
             }
         }
@@ -896,6 +954,40 @@ mod tests {
         assert_eq!(&m.lines[8..12], &[0, 0, 0, 255]);
         let x = f32::from_le_bytes([m.lines[12], m.lines[13], m.lines[14], m.lines[15]]);
         assert_eq!(x, 1.0);
+    }
+
+    #[test]
+    fn chunk_meshes_match_whole_scene_with_wipeout_barriers() {
+        let mut l = list();
+        if let Some(mut mask) = l.prims.get(1).copied() {
+            mask.kind = Kind::Mask;
+            l.prims.insert(1, mask);
+        }
+        for p in &mut l.prims {
+            p.transparency = 35;
+        }
+        let origin = Vec2::new(1e6, 1e6);
+        for bg in [Rgb(0, 0, 0), Rgb(255, 255, 255)] {
+            for lwdisplay in [false, true] {
+                let full = build_mesh(&l, origin, bg, lwdisplay);
+                for split in 1..l.prims.len() {
+                    let mut joined = MeshData::default();
+                    for prims in [&l.prims[..split], &l.prims[split..]] {
+                        let part = DisplayList { prims: prims.to_vec(), verts: l.verts.clone(), tris: l.tris.clone(), ..Default::default() };
+                        let m = build_mesh(&part, origin, bg, lwdisplay);
+                        let offsets = [joined.tri_vertices(), joined.line_vertices(), joined.quad_instances()];
+                        joined.breaks.extend(m.breaks.iter().map(|b| [offsets[0] + b[0], offsets[1] + b[1], offsets[2] + b[2]]));
+                        joined.lines.extend_from_slice(&m.lines);
+                        joined.tris.extend_from_slice(&m.tris);
+                        joined.quads.extend_from_slice(&m.quads);
+                    }
+                    assert_eq!(joined.lines, full.lines);
+                    assert_eq!(joined.tris, full.tris);
+                    assert_eq!(joined.quads, full.quads);
+                    assert_eq!(joined.breaks, full.breaks, "barriers must cover the complete scene");
+                }
+            }
+        }
     }
 
     #[test]
