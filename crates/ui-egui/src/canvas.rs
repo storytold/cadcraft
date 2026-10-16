@@ -106,6 +106,10 @@ pub struct CanvasState {
     grip_editing: bool,
     /// The grip whose menu (Stretch, Add Vertex, Lengthen…) a right-click opened.
     grip_menu: Option<(Handle, usize)>,
+    /// The grip whose menu opened because the idle cursor rested on it ([`grip_hover_menu`]), and
+    /// the grip under the cursor with the time it got there.
+    grip_tip: Option<(Handle, usize)>,
+    grip_rest: Option<((Handle, usize), f64)>,
     /// Dynamic block grips of the selection (cached), the one being dragged, and the list grip
     /// whose choices are open (and whether it opened this frame).
     pub(crate) dyn_grips: crate::dyngrips::Cache,
@@ -1565,6 +1569,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     // Right-click on a grip with options (polyline vertex, line end…) opens the grip menu.
     if inside && pressed_secondary && idle && !app.canvas.snap_menu {
         app.canvas.grip_menu = grip_at(app, &xf, hover_pos).filter(|g| !grip_options(app, *g).is_empty());
+        app.canvas.grip_tip = None;
     }
     crate::dyngrips::menu(app, ui.ctx(), &xf);
     if idle && !app.canvas.snap_menu && app.canvas.grip_menu.is_some() {
@@ -1572,6 +1577,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     } else if idle || app.canvas.snap_menu {
         crate::context_menu::show(app, &resp);
     }
+    grip_hover_menu(app, ui, &xf, inside && idle, hover_pos);
 
     // Hover highlight (throttled to cursor movement).
     // The cursor picks objects (pick box, rollover highlight): "Select objects" and single-object
@@ -2308,26 +2314,93 @@ fn grip_options(app: &CadApp, (h, i): (Handle, usize)) -> Vec<cadcraft_engine::g
 fn grip_menu(app: &mut CadApp, resp: &egui::Response) {
     let Some(g) = app.canvas.grip_menu else { return };
     let options = grip_options(app, g);
-    let mut chosen: Option<Option<cadcraft_engine::grips::GripAction>> = None;
-    let open = resp
-        .context_menu(|ui| {
-            let vertex = options.contains(&cadcraft_engine::grips::GripAction::RemoveVertex);
-            if ui.button(crate::i18n::t(if vertex { "Stretch Vertex" } else { "Stretch" })).clicked() {
-                chosen = Some(None);
-                ui.close();
-            }
-            for a in &options {
-                if ui.button(crate::i18n::t(a.label())).clicked() {
-                    chosen = Some(Some(*a));
-                    ui.close();
-                }
-            }
-        })
-        .is_some();
+    let mut chosen = None;
+    let open = resp.context_menu(|ui| chosen = grip_menu_items(ui, &options)).is_some();
     if !open || chosen.is_some() {
         app.canvas.grip_menu = None;
     }
-    let Some(choice) = chosen else { return };
+    if let Some(choice) = chosen {
+        choose_grip_option(app, g, choice);
+    }
+}
+
+/// How long the cursor rests on a multifunctional grip before its menu opens. AutoCAD documents
+/// no value for it (GRIPMULTIFUNCTIONAL only turns the menu on); this is egui's tooltip delay.
+const GRIP_MENU_DELAY: f64 = 0.5;
+
+/// AutoCAD's hover grip menu: the idle cursor resting on a multifunctional grip opens the same
+/// menu as a right-click on it; leaving both the grip and the menu closes it. Not while a button
+/// is held (the grip is being dragged), a command or a selection window wants points, or another
+/// grip menu is open.
+fn grip_hover_menu(app: &mut CadApp, ui: &egui::Ui, xf: &Xf, idle: bool, hover: Option<Pos2>) {
+    let ctx = ui.ctx().clone();
+    let id = egui::Id::new("cc_grip_hover_menu");
+    let (now, down) = ctx.input(|i| (i.time, i.pointer.any_down()));
+    let quiet = !app.session.prompting() && app.canvas.grip_menu.is_none() && app.canvas.dyn_menu.is_none();
+    if let Some(g) = app.canvas.grip_tip {
+        // `idle` is false over the menu: it covers the canvas there.
+        let on_menu = hover.and_then(|p| ctx.layer_id_at(p)).is_some_and(|l| l.id == id);
+        if !quiet || grip_options(app, g).is_empty() || !(on_menu || grip_at(app, xf, hover) == Some(g)) {
+            app.canvas.grip_tip = None;
+        }
+    }
+    let ready = idle && quiet && !down && app.session.pending_window.is_none();
+    let under = if ready { grip_at(app, xf, hover).filter(|g| !grip_options(app, *g).is_empty()) } else { None };
+    app.canvas.grip_rest = match (app.canvas.grip_rest, under) {
+        (Some((g, t)), Some(u)) if g == u => Some((g, t)),
+        (_, u) => u.map(|u| (u, now)),
+    };
+    if app.canvas.grip_tip.is_none()
+        && let Some((g, t)) = app.canvas.grip_rest
+    {
+        let wait = t + GRIP_MENU_DELAY - now;
+        if wait <= 0.0 {
+            app.canvas.grip_tip = Some(g);
+        } else {
+            ctx.request_repaint_after_secs(wait as f32);
+        }
+    }
+    let Some(g) = app.canvas.grip_tip else { return };
+    let Some(at) = app.session.state().ok().and_then(|st| st.doc.entity(g.0)).and_then(|e| e.kind.grips().get(g.1).copied()) else {
+        app.canvas.grip_tip = None;
+        return;
+    };
+    let gs = app.session.settings.gripsize as f32 + 3.0;
+    let grip_box = Rect::from_center_size(xf.to_screen(at), egui::Vec2::splat(2.0 * gs));
+    let options = grip_options(app, g);
+    let mut chosen = None;
+    egui::Popup::new(id, ctx, grip_box, ui.layer_id())
+        .kind(egui::PopupKind::Menu)
+        .layout(egui::Layout::top_down_justified(egui::Align::Min))
+        .style(egui::containers::menu::menu_style)
+        .gap(0.0)
+        .open(true)
+        .show(|ui| chosen = grip_menu_items(ui, &options));
+    if let Some(choice) = chosen {
+        app.canvas.grip_tip = None;
+        choose_grip_option(app, g, choice);
+    }
+}
+
+/// The items of a grip menu; the choice: Stretch (`None`) or an option.
+fn grip_menu_items(ui: &mut egui::Ui, options: &[cadcraft_engine::grips::GripAction]) -> Option<Option<cadcraft_engine::grips::GripAction>> {
+    let mut chosen = None;
+    let vertex = options.contains(&cadcraft_engine::grips::GripAction::RemoveVertex);
+    if ui.button(crate::i18n::t(if vertex { "Stretch Vertex" } else { "Stretch" })).clicked() {
+        chosen = Some(None);
+        ui.close();
+    }
+    for a in options {
+        if ui.button(crate::i18n::t(a.label())).clicked() {
+            chosen = Some(Some(*a));
+            ui.close();
+        }
+    }
+    chosen
+}
+
+/// Make grip `g` hot and run `choice` at the grip prompt (`None`: plain Stretch).
+fn choose_grip_option(app: &mut CadApp, g: (Handle, usize), choice: Option<cadcraft_engine::grips::GripAction>) {
     app.canvas.hot_grips = vec![g];
     let r = app.session.start_grip_edit(&[g]).and_then(|()| match choice {
         Some(a) => app.session.input(Input::Keyword(a.keyword().to_string())),
