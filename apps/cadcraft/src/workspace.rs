@@ -42,6 +42,12 @@ fn snapshot(ui: &UiState) -> Result<Value, String> {
     if ui.history_lines > 12 {
         return Err("historyLines must be between 0 and 12".into());
     }
+    // The command bar's width; a hostile profile cannot make it enormous.
+    if let Some(w) = ui.cmdline_width
+        && !(w.is_finite() && w > 0.0 && w <= 20_000.0)
+    {
+        return Err("cmdlineWidth must be a positive number of points".into());
+    }
     Ok(json!({
         "docking": ui.docking,
         "showToolsets": ui.show_toolsets,
@@ -58,6 +64,7 @@ fn snapshot(ui: &UiState) -> Result<Value, String> {
         "propertiesAll": ui.properties_all,
         "inWindowMenu": ui.in_window_menu,
         "historyLines": ui.history_lines,
+        "cmdlineWidth": ui.cmdline_width,
     }))
 }
 
@@ -231,6 +238,36 @@ mod tests {
         transient_only.start_tab = false;
         first.save_if_changed(&transient_only).unwrap();
         assert_eq!(fs::read(&path).unwrap(), bytes);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn the_command_bar_width_survives_a_reload_and_hostile_values_are_refused() {
+        let directory = temp_dir();
+        let path = directory.join("workspace.json");
+        let (mut store, _, _) = Workspace::at(Some(path.clone()));
+        let ui = UiState { cmdline_width: Some(1_024.0), ..Default::default() };
+        store.save_if_changed(&ui).unwrap();
+        let (_, reloaded, error) = Workspace::at(Some(path.clone()));
+        assert!(error.is_none());
+        assert_eq!(reloaded.unwrap().cmdline_width, Some(1_024.0));
+        // A width that could not be a real one (negative, huge, enormous) is refused whole, and
+        // the file it came from is left as it was.
+        // (NaN cannot be written as JSON, so the hostile values that can arrive are these.)
+        for bad in [json!(-4.0), json!(1e308), json!(50_000.0)] {
+            let bytes = serde_json::to_vec(&json!({"version": 1, "workspace": {"cmdlineWidth": bad}})).unwrap();
+            fs::write(&path, &bytes).unwrap();
+            let (mut store, ui, error) = Workspace::at(Some(path.clone()));
+            assert!(ui.is_none(), "{bad}");
+            assert!(error.as_deref().is_some_and(|error| error.contains("left unchanged")), "{bad}: {error:?}");
+            store.save_if_changed(&UiState { show_palettes: false, ..Default::default() }).unwrap();
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+        }
+        // Null is the default width, not an error.
+        fs::write(&path, br#"{"version":1,"workspace":{"cmdlineWidth":null}}"#).unwrap();
+        let (_, restored, error) = Workspace::at(Some(path));
+        assert!(error.is_none(), "{error:?}");
+        assert_eq!(restored.unwrap().cmdline_width, None);
         fs::remove_dir_all(directory).unwrap();
     }
 

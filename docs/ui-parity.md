@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (animation effects follow the operating system's setting) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-16 · **Change:** minor (a prompt's keyword list wraps above the command bar instead of running off it, and the bar's side edges resize its width) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
 
 How CADCraft's interaction compares with AutoCAD's: point entry, object snaps, tracking, dynamic
 input, grips, selection, the command line, chrome and navigation. A drafter's speed in AutoCAD
@@ -145,7 +145,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 | History (F2), Up/Down recall | yes | yes |
 | Transparent commands (`'zoom`, `'pan`, `'osnap`) | yes | yes (`lib.rs:496-503`) |
 | Enter/Space repeats last command | yes | yes |
-| Clickable keywords in the prompt | yes | yes (`cmdline.rs:253-267`) |
+| Clickable keywords in the prompt | yes | yes (`cmdline.rs:253-267`); the keywords that don't fit after the prompt are drawn above the bar, so a long list (PURGE's 20) no longer runs off it (#1327) |
 | UNDO with Mark, Back, BEgin, End, Auto, Control | yes | count only, whole-document snapshots capped at 2,000 (`lib.rs:477`, `edit.rs:56`) |
 | SETVAR for every system variable | ~1,000 sysvars | about 60 session/header variables by name (`sysvars.rs`) |
 | Scripts (SCRIPT, `.scr`) | yes | script text via CLI/MCP/control; no `.scr` file command |
@@ -202,6 +202,8 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-16 | minor | The command bar's left and right edges drag to resize it (`ui.cmdline.width`, in the workspace and the Options profile; `null`/0 keeps the default share of the drawing area), so a long prompt can be widened instead of only scrolled (#1327) |
+| 2026-10-16 | minor | A prompt's keywords that don't fit after the prompt are drawn on lines above the command bar (with "+N more" for any that fit nowhere), so PURGE's 20 options stay on screen and clickable instead of running off the bar (#1327) |
 | 2026-10-12 | minor | Selected and hovered objects redrawn in the selection colour (text and arrowheads included); Options ▸ Selection laid out as AutoCAD's: Object grouping, Show grips, grip object limit, selection preview, Visual Effect Settings (selection area, preview filter) |
 | 2026-10-12 | minor | Animation effects (dialog and menu fades, smoothed wheel scrolling and ⌘/Ctrl+wheel zoom) follow the operating system's setting; View ▸ Accessibility ▸ Animation Effects chooses System, On or Off |
 | 2026-10-12 | minor | Hatch and Gradient / Hatch Edit dialogs (HATCH, GRADIENT, HATCHEDIT, double-click a hatch; HPDLGMODE) |

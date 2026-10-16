@@ -133,6 +133,7 @@ struct UiChanges {
     save_format: Option<crate::SaveFormat>,
     system_cursor: Option<bool>,
     history_lines: Option<usize>,
+    cmdline_width: Option<Option<f32>>,
     model_background: Option<Option<Color32>>,
     paper_background: Option<Option<Color32>>,
     selection_color: Option<Option<Color32>>,
@@ -166,6 +167,18 @@ fn parse_ui(key: &str, v: &Value, c: &mut UiChanges) -> Result<bool, String> {
         "historyLines" => {
             let n = v.as_u64().filter(|n| *n <= crate::cmdline::MAX_LINES as u64).ok_or("historyLines must be a whole number from 0 to 12")?;
             c.history_lines = Some(n as usize);
+        }
+        // The command bar's width in points; null goes back to the default (48 % of the canvas).
+        "cmdlineWidth" => {
+            let w = match v {
+                Value::Null => None,
+                _ => Some(
+                    v.as_f64()
+                        .filter(|w| w.is_finite() && *w >= crate::cmdline::MIN_WIDTH as f64)
+                        .ok_or("cmdlineWidth must be a number of at least 360, or null")? as f32,
+                ),
+            };
+            c.cmdline_width = Some(w);
         }
         "modelBackground" => c.model_background = Some(color_param(key, v)?),
         "paperBackground" => c.paper_background = Some(color_param(key, v)?),
@@ -206,6 +219,7 @@ fn ui_json(app: &CadApp) -> Map<String, Value> {
     m.insert("saveFormat".into(), json!(app.ui.save_format.as_str()));
     m.insert("systemCursor".into(), json!(app.ui.system_cursor));
     m.insert("historyLines".into(), json!(app.ui.history_lines));
+    m.insert("cmdlineWidth".into(), json!(app.ui.cmdline_width));
     m.insert("modelBackground".into(), color_json(o.model_background));
     m.insert("paperBackground".into(), color_json(o.paper_background));
     m.insert("selectionColor".into(), color_json(o.selection_color));
@@ -260,6 +274,9 @@ fn run_json(app: &mut CadApp, params: &Value) -> Result<Value, String> {
     if let Some(n) = ui.history_lines {
         app.ui.history_lines = n;
     }
+    if let Some(w) = ui.cmdline_width {
+        app.ui.cmdline_width = w;
+    }
     if let Some(c) = ui.model_background {
         app.options.model_background = c;
     }
@@ -296,6 +313,7 @@ fn reset_ui(app: &mut CadApp) {
     app.ui.save_version = d.save_version;
     app.ui.system_cursor = d.system_cursor;
     app.ui.history_lines = d.history_lines;
+    app.ui.cmdline_width = d.cmdline_width;
     app.options = UiOptions::default();
 }
 

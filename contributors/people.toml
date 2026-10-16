@@ -61,3 +61,8 @@ sync_github_name = false
 real_name = "Chester Fung"
 display_name = "Chester Fung"
 sync_github_name = true
+
+# The public GitHub profile name is "Dorival Pedroso" too, so the display name syncs to it.
+[people.cpmech]
+real_name = "Dorival Pedroso"
+sync_github_name = true

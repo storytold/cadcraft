@@ -182,6 +182,14 @@ fn display(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
             changes.insert("historyLines".into(), json!(lines));
         }
         ui.end_row();
+
+        // Dragging the bar's left or right edge widens it; 0 keeps the default share of the canvas.
+        ui.label(crate::tl!("Command line width"));
+        let mut width = app.ui.cmdline_width.unwrap_or(0.0);
+        if ui.add(egui::DragValue::new(&mut width).range(0.0..=2000.0).speed(4.0).suffix(" pt")).changed() {
+            changes.insert("cmdlineWidth".into(), if width <= 0.0 { json!(null) } else { json!(width) });
+        }
+        ui.end_row();
     });
     ui.add_space(6.0);
     let mut system_cursor = app.ui.system_cursor;

@@ -23,8 +23,8 @@ pub struct CmdLine {
     pub recent_input: Vec<String>,
     /// The expanded history window is open (F2, the chevron, or a click on the history lines).
     pub expanded: bool,
-    /// Dragging the history's top edge: (pointer y, line count) when the drag started.
-    resize_from: Option<(f32, usize)>,
+    /// The command line resizing under the pointer: what the drag started from.
+    resize_from: Option<ResizeFrom>,
     /// The Dynamic Input options menu at the cursor (Down Arrow at a prompt with keywords).
     pub options: Option<crate::dyninput::OptionsMenu>,
     /// The text whose second Dynamic Input value Tab locked; the lock holds while it is unchanged.
@@ -38,6 +38,36 @@ pub struct CmdLine {
 /// The most history lines the command line shows above its bar.
 pub const MAX_LINES: usize = 12;
 const LINE_H: f32 = 16.0;
+
+/// The narrowest the command bar gets, in points: below this a prompt and its input line have no
+/// room at all. The widest is the drawing area less [`BAR_MARGIN`].
+pub const MIN_WIDTH: f32 = 360.0;
+
+/// How much drawing area the command bar leaves beside itself at its widest, in points.
+pub const BAR_MARGIN: f32 = 8.0;
+
+/// What a command-line resize drag started from: the pointer and the size when it began, so the
+/// size follows the pointer instead of accumulating frame by frame.
+#[derive(Clone, Copy, Debug)]
+enum ResizeFrom {
+    /// Its top edge: (pointer y, history lines).
+    Lines(f32, usize),
+    /// Its left or right edge: (pointer x, bar width), `right` false for the left edge, whose
+    /// anchor is the bar's right edge.
+    Width(f32, f32, bool),
+}
+
+/// The command bar's width: the saved width ([`crate::UiState::cmdline_width`], points), or 48 %
+/// of the drawing area when the user has never resized it. Clamped so the bar always fits the
+/// drawing area whatever the window did since the width was saved, and never narrower than
+/// [`MIN_WIDTH`] while the area can hold that (in a narrower window the bar takes the whole area).
+/// A non-finite saved value (a hostile profile) falls back to the default.
+pub fn bar_width(app: &CadApp, canvas: Rect) -> f32 {
+    let max = (canvas.width() - BAR_MARGIN).max(0.0);
+    let saved = app.ui.cmdline_width.filter(|w| w.is_finite() && *w > 0.0);
+    let want = saved.unwrap_or_else(|| (canvas.width() * 0.48).clamp(MIN_WIDTH, 760.0));
+    want.clamp(MIN_WIDTH.min(max), max)
+}
 
 /// The Dynamic Input frame for the prompt on screen, or `None` when the value boxes are not live
 /// (Dynamic Input off, no point prompt or a pending selection window).
@@ -95,6 +125,63 @@ fn tab(app: &mut CadApp) {
     } else if let Some(s) = suggestions(&app.cmd.buffer).first() {
         app.cmd.buffer = s.id.clone();
     }
+}
+
+/// The most lines of prompt keywords the command bar draws above itself.
+pub const MAX_KEYWORD_LINES: usize = 6;
+
+/// How a prompt's keywords are laid out: the ones that fit after `open` on the bar's own line,
+/// and the rest, one line each, above it.
+pub struct KeywordLayout {
+    /// The keywords drawn after the prompt.
+    pub inline: usize,
+    /// The keywords drawn one per line above the bar (at most [`MAX_KEYWORD_LINES`] lines).
+    pub above: Vec<Vec<String>>,
+    /// Keywords that fit nowhere (drawn as "+N more" at the end of the last line).
+    pub hidden: usize,
+}
+
+/// Fit a prompt's keywords into `width` points after `open` points of prompt text: as many as
+/// fit on the bar's own line, then the rest, one line per `line_width`, above it, up to
+/// `MAX_KEYWORD_LINES` lines. `open` is the room left for the first keyword, so the caller keeps
+/// its own margins; `sep_width` is the width of the "/" between keywords and `bracket` the room
+/// the closing "]" needs. The first keyword is always inline (the bar clips it, as it did before
+/// this layout existed). Pure, so the layout is testable without a UI frame.
+pub fn keyword_layout(keywords: &[String], widths: &[f32], sep_width: f32, bracket: f32, open: f32, line_width: f32) -> KeywordLayout {
+    let wid = |i: usize| widths.get(i).copied().unwrap_or(0.0);
+    // The bar's own line: `open` counts the space the first keyword starts at, so a keyword only
+    // has to fit from the second one on.
+    let mut inline = 0;
+    let mut used = 0.0f32;
+    while inline < keywords.len() {
+        let need = if inline == 0 { wid(0) - sep_width } else { wid(inline) + sep_width };
+        if inline > 0 && used + need > open - bracket {
+            break;
+        }
+        used += need;
+        inline += 1;
+    }
+    // The lines above: filled left to right, one budget each.
+    let mut above: Vec<Vec<String>> = Vec::new();
+    let mut line: Vec<String> = Vec::new();
+    let mut room = line_width;
+    for (i, k) in keywords.iter().enumerate().skip(inline) {
+        let need = if line.is_empty() { wid(i) } else { wid(i) + sep_width };
+        if need > room && !line.is_empty() {
+            above.push(std::mem::take(&mut line));
+            room = line_width;
+            if above.len() == MAX_KEYWORD_LINES {
+                break;
+            }
+        }
+        room = if room > need { room - need } else { 0.0 };
+        line.push(k.clone());
+    }
+    if !line.is_empty() && above.len() < MAX_KEYWORD_LINES {
+        above.push(line);
+    }
+    let shown: usize = above.iter().map(Vec::len).sum();
+    KeywordLayout { inline, above, hidden: keywords.len() - inline - shown }
 }
 
 /// An AutoComplete suggestion for the command line.
@@ -397,20 +484,64 @@ fn visible_lines(app: &CadApp, canvas: Rect, bar: Rect) -> usize {
 
 pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
     let t = Tokens::get();
-    let w = (canvas.width() * 0.48).clamp(360.0, 760.0).min((canvas.width() - 8.0).max(0.0));
+    let w = bar_width(app, canvas);
     let h = 24.0;
     let bar = Rect::from_min_size(pos2(canvas.center().x - w / 2.0, canvas.bottom() - h - 10.0), vec2(w, h));
     let p = ui.painter_at(canvas);
     history(app, ui, canvas, bar);
-    // History lines above the bar (the expanded window replaces them).
-    let n = if app.cmd.expanded { 0 } else { visible_lines(app, canvas, bar) };
+    // A prompt with more keywords than fit on the bar (PURGE, for one) draws the rest one line
+    // each above it, like the history lines they sit over: no keyword runs off the bar, and the
+    // ones on those lines are the same set read left to right.
+    let font = crate::theme::body();
+    let kws: Vec<String> = app.session.current_prompt().filter(|pr| !pr.raw).map(|pr| pr.keywords.clone()).unwrap_or_default();
+    let sep = p.layout_no_wrap("/".into(), font.clone(), t.text).size().x;
+    let bracket = p.layout_no_wrap("]".into(), font.clone(), t.text).size().x;
+    let open = 30.0
+        + if app.session.running.as_ref().is_some_and(|r| r.id != "grip") { 40.0 } else { 0.0 }
+        + p.layout_no_wrap(
+            if app.session.current_prompt().is_some_and(|pr| pr.message.is_empty()) { " [".to_string() } else { crate::tl!(" or [").into() },
+            font.clone(),
+            t.text,
+        )
+        .size()
+        .x;
+    let (kw_inline, kw_lines): (Option<usize>, Vec<String>) = if kws.is_empty() {
+        (None, Vec::new())
+    } else {
+        let widths: Vec<f32> = kws.iter().map(|k| p.layout_no_wrap(k.clone(), font.clone(), t.cmd_keyword).size().x).collect();
+        let l = keyword_layout(&kws, &widths, sep, bracket, w - open, w - 56.0);
+        let mut rows: Vec<String> = Vec::with_capacity(l.above.len());
+        for (n, row) in l.above.iter().enumerate() {
+            // The marker goes on the last line that shows keywords, never in a row of its own:
+            // `above` never runs past MAX_KEYWORD_LINES.
+            if n + 1 == l.above.len() && l.hidden > 0 {
+                rows.push(format!("{}/+{} more", row.join("/"), l.hidden));
+            } else {
+                rows.push(row.join("/"));
+            }
+        }
+        (Some(l.inline), rows)
+    };
+    let lh = LINE_H;
+    let room = ((bar.top() - canvas.top() - 8.0).max(0.0) / lh) as usize;
+    let kw_shown = kw_lines.len().min(room);
+    let kw_start = bar.top() - lh * kw_shown as f32 - 2.0;
+    // History lines above the bar (the expanded window replaces them); the keyword lines sit
+    // directly on the bar and the history above them.
+    let n = if app.cmd.expanded { 0 } else { visible_lines(app, canvas, bar).saturating_sub(kw_shown) };
     let lines: Vec<String> = app.session.log.iter().rev().take(n).rev().cloned().collect();
     if !lines.is_empty() {
-        let lh = 16.0;
-        let hr = Rect::from_min_size(pos2(bar.left(), bar.top() - lh * lines.len() as f32 - 4.0), vec2(w, lh * lines.len() as f32 + 2.0));
+        let hr = Rect::from_min_size(pos2(bar.left(), kw_start - lh * lines.len() as f32 - 4.0), vec2(w, lh * lines.len() as f32 + 2.0));
         p.rect_filled(hr, 3.0, t.cmd_history);
         for (i, l) in lines.iter().enumerate() {
             p.text(pos2(hr.left() + 8.0, hr.top() + 1.0 + lh * i as f32), egui::Align2::LEFT_TOP, l, crate::theme::small(), t.text_dim);
+        }
+    }
+    if kw_shown > 0 {
+        let kr = Rect::from_min_size(pos2(bar.left(), kw_start), vec2(w, lh * kw_shown as f32 + 2.0));
+        p.rect_filled(kr, 3.0, t.cmd_history);
+        for (i, row) in kw_lines.iter().take(kw_shown).enumerate() {
+            p.text(pos2(kr.left() + 8.0, kr.top() + 1.0 + lh * i as f32), egui::Align2::LEFT_TOP, row, font.clone(), t.cmd_keyword);
         }
     }
     p.rect_filled(bar, 3.0, t.cmd_bg);
@@ -419,7 +550,6 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
     p.text(pos2(bar.left() + 8.0, bar.center().y), egui::Align2::LEFT_CENTER, ">_", crate::theme::mono(), t.text_dim);
     let mut x = bar.left() + 30.0;
     let prompt = app.session.current_prompt();
-    let font = crate::theme::body();
     match &prompt {
         Some(pr) => {
             // The grip modes name themselves ("** STRETCH **…").
@@ -439,7 +569,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
                 let gw = g.size().x;
                 p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
                 x += gw;
-                let kws = pr.keywords.clone();
+                // Only the keywords that fit: the rest are on the lines above ([`kw_inline`]).
+                let upto = kw_inline.unwrap_or(0).min(pr.keywords.len());
+                let kws = pr.keywords[..upto].to_vec();
                 for (i, k) in kws.iter().enumerate() {
                     let g = p.layout_no_wrap(k.clone(), font.clone(), t.cmd_keyword);
                     let r = Rect::from_min_size(pos2(x, bar.top() + 3.0), vec2(g.size().x, h - 6.0));
@@ -552,7 +684,10 @@ struct Zones {
     window: Option<Rect>,
     chevron: Rect,
     /// The top edge that resizes the inline history.
-    grip: Rect,
+    top_grip: Rect,
+    /// The bar's left and right edges, which resize its width.
+    left_grip: Rect,
+    right_grip: Rect,
     /// Everything, AutoComplete list included: kept away from the drawing underneath.
     all: Rect,
 }
@@ -568,8 +703,14 @@ fn zones(app: &CadApp, canvas: Rect, bar: Rect) -> Zones {
         Rect::from_min_size(pos2(bar.left(), bar.top() - h - 4.0), vec2(bar.width(), h + 2.0))
     });
     let top = window.or(lines).map_or(bar.top(), |r| r.top());
-    let grip = Rect::from_min_max(pos2(bar.left(), top - 3.0), pos2(bar.right(), top + 3.0));
-    let mut all = bar.union(grip);
+    let top_grip = Rect::from_min_max(pos2(bar.left(), top - 3.0), pos2(bar.right(), top + 3.0));
+    // The side grips span the bar and whatever sits above it, so they never overlap its rows.
+    let side = |left: bool| {
+        let x = if left { bar.left() - 3.0 } else { bar.right() };
+        Rect::from_min_max(pos2(x, top), pos2(x + 3.0, bar.bottom()))
+    };
+    let (left_grip, right_grip) = (side(true), side(false));
+    let mut all = bar.union(top_grip).union(left_grip).union(right_grip);
     if !app.session.prompting() {
         let k = suggestions(&app.cmd.buffer).len();
         if k > 0 {
@@ -577,35 +718,64 @@ fn zones(app: &CadApp, canvas: Rect, bar: Rect) -> Zones {
             all = all.union(Rect::from_min_size(pos2(bar.left(), bar.top() - 6.0 - 20.0 * k as f32 - above), vec2(bar.width(), 1.0)));
         }
     }
-    Zones { lines, window, chevron: Rect::from_center_size(pos2(bar.right() - 14.0, bar.center().y), vec2(24.0, 22.0)), grip, all }
+    Zones {
+        lines,
+        window,
+        chevron: Rect::from_center_size(pos2(bar.right() - 14.0, bar.center().y), vec2(24.0, 22.0)),
+        top_grip,
+        left_grip,
+        right_grip,
+        all,
+    }
 }
 
 /// The pointer on the command line: one widget under all of it keeps clicks, drags and the wheel
 /// off the drawing (the keywords and AutoComplete rows sit on top of it). Clicking the history
 /// lines or the chevron opens/closes the history window (`ui.toggle.history`, also F2); dragging
-/// the top edge sets how many lines show (`ui.cmdline.lines`).
+/// the top edge sets how many lines show (`ui.cmdline.lines`) and dragging a side edge sets how
+/// wide the bar is (`ui.cmdline.width`).
 fn history(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect, bar: Rect) {
     let z = zones(app, canvas, bar);
     let resp = ui.interact(z.all, ui.id().with("cmdline"), Sense::click_and_drag());
     let at = resp.hover_pos().or(resp.interact_pointer_pos());
-    let on_grip = |p: Pos2| z.grip.contains(p) && z.window.is_none();
+    let on_grip = |p: Pos2| z.top_grip.contains(p) && z.window.is_none();
+    // A side edge: only the grips themselves, so a click on the bar's own line still opens or
+    // closes the history window as it did before.
+    let on_side = |p: Pos2| (z.left_grip.contains(p) || z.right_grip.contains(p)) && z.window.is_none();
     let on_toggle = |p: Pos2| z.chevron.contains(p) || z.lines.is_some_and(|r| r.contains(p));
-    if app.cmd.resize_from.is_some() || at.is_some_and(on_grip) {
+    if app.cmd.resize_from.is_some_and(|r| matches!(r, ResizeFrom::Width(..))) {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+    } else if app.cmd.resize_from.is_some() || at.is_some_and(on_grip) {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+    } else if at.is_some_and(on_side) {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
     } else if at.is_some_and(on_toggle) {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     if resp.drag_started()
         && let Some(o) = ui.input(|i| i.pointer.press_origin())
-        && on_grip(o)
     {
-        app.cmd.resize_from = Some((o.y, visible_lines(app, canvas, bar)));
+        if on_grip(o) {
+            app.cmd.resize_from = Some(ResizeFrom::Lines(o.y, visible_lines(app, canvas, bar)));
+        } else if on_side(o) {
+            let middle = bar.center().x;
+            app.cmd.resize_from = Some(ResizeFrom::Width(o.x, bar.width(), o.x >= middle));
+        }
     }
-    if let Some((y0, n0)) = app.cmd.resize_from {
+    if let Some(from) = app.cmd.resize_from {
         if let (true, Some(p)) = (resp.dragged(), resp.interact_pointer_pos()) {
-            let n = (n0 as f32 + (y0 - p.y) / LINE_H).round().clamp(0.0, MAX_LINES as f32) as usize;
-            if n != app.ui.history_lines {
-                let _ = app.run("ui.cmdline.lines", serde_json::json!({ "lines": n }));
+            match from {
+                ResizeFrom::Lines(y0, n0) => {
+                    let n = (n0 as f32 + (y0 - p.y) / LINE_H).round().clamp(0.0, MAX_LINES as f32) as usize;
+                    if n != app.ui.history_lines {
+                        let _ = app.run("ui.cmdline.lines", serde_json::json!({ "lines": n }));
+                    }
+                }
+                // The dragged edge follows the pointer; the other one stays where it is.
+                ResizeFrom::Width(x0, w0, right) => {
+                    let w = if right { w0 + (p.x - x0) } else { w0 - (p.x - x0) };
+                    let _ = app.run("ui.cmdline.width", serde_json::json!({ "width": w }));
+                }
             }
         } else {
             app.cmd.resize_from = None;
@@ -657,13 +827,17 @@ mod tests {
             app.session.echo(format!("line {i}"));
         }
         let canvas = Rect::from_min_size(Pos2::ZERO, vec2(300.0, 180.0));
-        let w = (canvas.width() * 0.48).clamp(360.0, 760.0).min((canvas.width() - 8.0).max(0.0));
+        let w = bar_width(&app, canvas);
         let bar = Rect::from_min_size(pos2(canvas.center().x - w / 2.0, canvas.bottom() - 34.0), vec2(w, 24.0));
         let z = zones(&app, canvas, bar);
         assert!(canvas.contains_rect(bar));
         assert!(canvas.contains_rect(z.chevron));
         assert!(z.lines.is_some_and(|r| canvas.contains_rect(r)));
-        assert!(canvas.contains_rect(z.grip));
+        assert!(canvas.contains_rect(z.top_grip));
+        // On a canvas this narrow the bar is as wide as it fits, and its grips are inside it too.
+        assert_eq!(w, canvas.width() - BAR_MARGIN);
+        assert!(canvas.contains_rect(z.left_grip));
+        assert!(canvas.contains_rect(z.right_grip));
         assert_eq!(app.ui.history_lines, 12);
     }
 
@@ -730,6 +904,73 @@ mod tests {
         assert!(!app.cmd.expanded, "a drag isn't a click");
         assert!(app.session.pending_window.is_none());
         assert_eq!(app.run("ui.cmdline.lines", serde_json::json!({"lines": 99})), Ok(serde_json::json!({"lines": MAX_LINES})));
+    }
+
+    #[test]
+    fn dragging_a_side_edge_resizes_the_bar_and_the_other_edge_stays_put() {
+        let mut app = CadApp::new(Session::empty(), crate::Services::default());
+        app.start("ui.sample");
+        let ctx = egui::Context::default();
+        frame(&mut app, &ctx, Vec::new());
+        frame(&mut app, &ctx, Vec::new());
+        let canvas = app.canvas.rect.unwrap_or(Rect::NOTHING);
+        let w0 = bar_width(&app, canvas);
+        let bar = Rect::from_min_size(pos2(canvas.center().x - w0 / 2.0, canvas.bottom() - 34.0), vec2(w0, 24.0));
+        let z = zones(&app, canvas, bar);
+        let Some(right) = z.right_grip.intersect(bar).center().into() else { panic!("the bar has a right edge") };
+        // Drag the right edge 120 pt to the right: the bar widens, its left edge doesn't move.
+        frame(&mut app, &ctx, vec![Event::PointerMoved(right)]);
+        press(&mut app, &ctx, right, true);
+        for dx in [20.0, 60.0, 120.0] {
+            frame(&mut app, &ctx, vec![Event::PointerMoved(right + vec2(dx, 0.0))]);
+        }
+        press(&mut app, &ctx, right + vec2(120.0, 0.0), false);
+        frame(&mut app, &ctx, Vec::new());
+        let w1 = bar_width(&app, canvas);
+        assert!((w1 - (w0 + 120.0)).abs() <= 1.0, "{w0} -> {w1}");
+        let bar1 = Rect::from_min_size(pos2(canvas.center().x - w1 / 2.0, canvas.bottom() - 34.0), vec2(w1, 24.0));
+        assert!(bar1.left() < bar.left(), "the left edge stays where it was");
+        assert_eq!(app.session.pending_window, None, "the drag stayed on the command line");
+        // A left-edge drag moves the left edge and keeps the right one: width follows the pointer.
+        let z1 = zones(&app, canvas, bar1);
+        let Some(left) = z1.left_grip.intersect(bar1).center().into() else { panic!("the bar has a left edge") };
+        frame(&mut app, &ctx, vec![Event::PointerMoved(left)]);
+        press(&mut app, &ctx, left, true);
+        for dx in [10.0, 40.0, 60.0] {
+            frame(&mut app, &ctx, vec![Event::PointerMoved(left + vec2(dx, 0.0))]);
+        }
+        press(&mut app, &ctx, left + vec2(60.0, 0.0), false);
+        frame(&mut app, &ctx, Vec::new());
+        let w2 = bar_width(&app, canvas);
+        assert!((w2 - (w1 - 60.0)).abs() <= 1.0, "{w1} -> {w2}");
+        // The command line reports the width in use, clamps to the drawing area, and null resets it.
+        let reported = app.run("ui.cmdline.width", serde_json::json!({})).unwrap();
+        assert!((reported["width"].as_f64().unwrap_or_default() - f64::from(w2)).abs() <= 1.0, "{reported}");
+        let huge = app.run("ui.cmdline.width", serde_json::json!({"width": 99999.0})).unwrap();
+        assert!(huge["width"].as_f64().unwrap_or_default() <= f64::from(canvas.width() - BAR_MARGIN) + 1.0, "{huge}");
+        let reset = app.run("ui.cmdline.width", serde_json::json!({"width": null})).unwrap();
+        let auto = (canvas.width() * 0.48).clamp(MIN_WIDTH, 760.0);
+        assert!((reset["width"].as_f64().unwrap_or_default() - f64::from(auto)).abs() <= 1.0, "{reset}");
+        assert_eq!(app.ui.cmdline_width, None);
+        assert!(app.run("ui.cmdline.width", serde_json::json!({"width": "wide"})).is_err());
+    }
+
+    #[test]
+    fn a_saved_width_that_no_longer_fits_clamps_to_the_canvas() {
+        let mut app = CadApp::new(Session::empty(), crate::Services::default());
+        app.ui.cmdline_width = Some(5_000.0);
+        for width in [200.0, 3_000.0] {
+            let canvas = Rect::from_min_size(Pos2::ZERO, vec2(width, 400.0));
+            let w = bar_width(&app, canvas);
+            // A canvas narrower than MIN_WIDTH gets the whole area: the bar never runs off it.
+            let fits = canvas.width() - BAR_MARGIN;
+            assert!(w <= fits, "{width}: {w}");
+            assert!(w >= MIN_WIDTH.min(fits), "{width}: {w}");
+        }
+        // A hostile saved value falls back to the default instead of a NaN bar.
+        app.ui.cmdline_width = Some(f32::NAN);
+        let canvas = Rect::from_min_size(Pos2::ZERO, vec2(1_200.0, 400.0));
+        assert_eq!(bar_width(&app, canvas), (1_200.0_f32 * 0.48).clamp(MIN_WIDTH, 760.0));
     }
 }
 
@@ -821,5 +1062,113 @@ mod autocomplete_tests {
         app.cmd.buffer = "rec".to_string();
         tab(&mut app);
         assert_eq!(app.cmd.buffer, "RECTANG");
+    }
+}
+
+#[cfg(test)]
+mod keyword_layout_tests {
+    use super::*;
+
+    /// PURGE's own list, as it reaches the bar.
+    fn purge() -> Vec<String> {
+        [
+            "Blocks",
+            "DEtailviewstyles",
+            "Dimstyles",
+            "Groups",
+            "LAyers",
+            "LTypes",
+            "MAterials",
+            "MUltileaderstyles",
+            "Plotstyles",
+            "SHapes",
+            "textSTyles",
+            "Mlinestyles",
+            "SEctionviewstyles",
+            "Tablestyles",
+            "Visualstyles",
+            "Regapps",
+            "Zero-length geometry",
+            "Empty text objects",
+            "Orphaned data",
+            "All",
+        ]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect()
+    }
+
+    /// Every keyword is 40 pt, the separator 8: 110 pt fits two per line.
+    fn widths(n: usize) -> Vec<f32> {
+        vec![40.0; n]
+    }
+
+    #[test]
+    fn a_short_prompt_stays_on_the_bar() {
+        let kws: Vec<String> = ["Close", "Undo"].iter().map(|s| (*s).to_string()).collect();
+        let l = keyword_layout(&kws, &widths(2), 8.0, 8.0, 400.0, 300.0);
+        assert_eq!(l.inline, 2);
+        assert!(l.above.is_empty());
+        assert_eq!(l.hidden, 0);
+    }
+
+    #[test]
+    fn purge_puts_the_rest_on_the_lines_above_and_hides_nothing() {
+        let kws = purge();
+        // The bar has 110 pt for keywords, so two 40 pt ones fit; 110 pt per line above fits
+        // two each.
+        let l = keyword_layout(&kws, &widths(kws.len()), 8.0, 8.0, 110.0, 110.0);
+        assert_eq!(l.inline, 2, "Blocks / DEtailviewstyles");
+        assert_eq!(l.above.len(), MAX_KEYWORD_LINES);
+        let shown: usize = l.above.iter().map(Vec::len).sum();
+        assert_eq!(shown, MAX_KEYWORD_LINES * 2, "two per line");
+        assert_eq!(l.hidden, kws.len() - l.inline - shown);
+        // The order is the prompt's own, left to right and top to bottom.
+        let flat: Vec<&String> = l.above.iter().flatten().collect();
+        assert_eq!(flat.first().map(|s| s.as_str()), Some("Dimstyles"));
+        assert_eq!(flat.last().map(|s| s.as_str()), Some("Tablestyles"));
+    }
+
+    #[test]
+    fn nothing_is_hidden_when_every_keyword_fits_above() {
+        let kws = purge();
+        // Roomy: the whole list fits on the bar and nothing needs the lines above.
+        let l = keyword_layout(&kws, &widths(kws.len()), 8.0, 8.0, 2000.0, 2000.0);
+        assert_eq!(l.inline, kws.len());
+        assert!(l.above.is_empty());
+        assert_eq!(l.hidden, 0);
+    }
+
+    #[test]
+    fn hidden_counts_what_no_line_can_hold() {
+        let kws = purge();
+        // Two per line and six lines at most: 2 inline + 12 above = 14 of 20.
+        let l = keyword_layout(&kws, &widths(kws.len()), 8.0, 8.0, 110.0, 110.0);
+        assert_eq!(l.inline + l.above.iter().map(Vec::len).sum::<usize>() + l.hidden, kws.len());
+        assert!(l.hidden > 0);
+        // A line too narrow for two keywords still takes one (it is clipped, as on the bar).
+        let l = keyword_layout(&kws, &widths(kws.len()), 8.0, 8.0, 110.0, 10.0);
+        assert_eq!(l.inline, 2);
+        assert_eq!(l.above.iter().map(Vec::len).sum::<usize>(), MAX_KEYWORD_LINES, "one per line");
+        assert_eq!(l.hidden, kws.len() - 2 - MAX_KEYWORD_LINES);
+    }
+
+    #[test]
+    fn an_empty_keyword_list_lays_out_nothing() {
+        let l = keyword_layout(&[], &[], 8.0, 8.0, 200.0, 110.0);
+        assert_eq!(l.inline, 0);
+        assert!(l.above.is_empty());
+        assert_eq!(l.hidden, 0);
+    }
+
+    #[test]
+    fn a_keyword_wider_than_the_bar_still_draws_inline() {
+        let kws: Vec<String> = ["VeryLongKeywordIndeed", "Short"].iter().map(|s| (*s).to_string()).collect();
+        let widths = vec![900.0, 40.0];
+        // No room at all: the first is drawn inline anyway (the bar clips it), the rest above.
+        let l = keyword_layout(&kws, &widths, 8.0, 8.0, 100.0, 500.0);
+        assert_eq!(l.inline, 1);
+        assert_eq!(l.above, vec![vec!["Short".to_string()]]);
+        assert_eq!(l.hidden, 0);
     }
 }

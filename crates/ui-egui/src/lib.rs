@@ -96,6 +96,9 @@ pub struct UiState {
     pub start_tab: bool,
     pub dialog: Option<String>,
     pub history_lines: usize,
+    /// The command bar's width in points, or `None` for the default (48 % of the drawing area).
+    /// A side-edge drag or `ui.cmdline.width` sets it.
+    pub cmdline_width: Option<f32>,
     /// Interface theme: "system" (follow the OS light/dark appearance), "light" or "dark".
     pub theme: theme::ThemePref,
     /// Animation effects (dialog and menu fades, smoothed scrolling): "system" (follow the OS
@@ -174,6 +177,7 @@ impl Default for UiState {
             start_tab: false,
             dialog: None,
             history_lines: 3,
+            cmdline_width: None,
             theme: theme::ThemePref::default(),
             animations: animation::AnimationPref::default(),
             save_format: SaveFormat::default(),

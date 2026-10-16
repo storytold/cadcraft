@@ -66,6 +66,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.dialog.commands", "Command Reference", &["Help", "CADCraft Help"], Some("F1")),
     ("ui.toggle.history", "Command History", &["Window", "Command History"], Some("F2")),
     ("ui.cmdline.lines", "Command Line History Lines", &[], None),
+    ("ui.cmdline.width", "Command Line Width", &[], None),
     ("ui.cmdline.clear", "Clear Command History", &[], None),
     ("ui.dialog.language", "Interface Language", &["Edit", "Interface Language"], None),
     ("ui.language", "Language", &[], None),
@@ -329,6 +330,20 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
                 app.ui.history_lines = n.min(crate::cmdline::MAX_LINES as u64) as usize;
             }
             Ok(json!({ "lines": app.ui.history_lines }))
+        }
+        // `{"width": w}`: the command bar's width in points (null = the default share of the
+        // drawing area, as a left or right edge drag sets it); without it, reports the width in
+        // use, clamped to what the drawing area holds.
+        "ui.cmdline.width" => {
+            if let Some(v) = params.get("width") {
+                app.ui.cmdline_width = match v {
+                    Value::Null => None,
+                    Value::Number(n) => n.as_f64().filter(|w| w.is_finite() && *w > 0.0).map(|w| w as f32),
+                    _ => return Some(Err("width must be a number of points or null".into())),
+                };
+            }
+            let canvas = app.canvas.rect.unwrap_or(egui::Rect::NOTHING);
+            Ok(json!({ "width": crate::cmdline::bar_width(app, canvas) }))
         }
         "ui.cmdline.clear" => {
             app.session.log.clear();
