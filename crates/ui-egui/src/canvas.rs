@@ -1184,7 +1184,7 @@ fn effective_point(app: &mut CadApp, raw: Vec2, xf: &Xf, ctx: &egui::Context) ->
         if !wants_point {
             app.session.tracking.clear();
         }
-        return raw;
+        return idle_grip_point(app, xf, xf.to_screen(raw)).unwrap_or(raw);
     }
     let (now, shift) = ctx.input(|i| (i.time, i.modifiers.shift));
     let q =
@@ -1845,7 +1845,12 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         // Hide the OS cursor under the drawn crosshair, unless assistive tech needs it (#39).
         ui.ctx().set_cursor_icon(if app.ui.system_cursor { egui::CursorIcon::Crosshair } else { egui::CursorIcon::None });
         if let Some(hp) = hover_pos {
-            draw_crosshair(app, &painter, rect, hp, selecting);
+            let at = if !app.session.prompting() && app.session.pending_window.is_none() {
+                app.canvas.cursor.map_or(hp, |point| xf.to_screen(point))
+            } else {
+                hp
+            };
+            draw_crosshair(app, &painter, rect, at, selecting);
         }
         if app.session.settings.dynmode
             && let Some(hp) = hover_pos
@@ -2339,7 +2344,19 @@ fn grip_menu(app: &mut CadApp, resp: &egui::Response) {
     }
 }
 
-/// The grip of a selected object under the cursor, if any: (object, grip index).
+/// Acquire an editable grip while idle, independently of running object-snap modes.
+fn idle_grip_point(app: &mut CadApp, xf: &Xf, hover: Pos2) -> Option<Vec2> {
+    if app.session.prompting() || app.session.pending_window.is_some() || !app.session.shows_grips(app.session.selection().len()) {
+        return None;
+    }
+    if let Some((_, grip)) = crate::dyngrips::at(app, xf, Some(hover)) {
+        return Some(grip.at);
+    }
+    let (handle, index) = grip_at(app, xf, Some(hover))?;
+    app.session.doc().ok()?.entity(handle)?.kind.grips().get(index).copied()
+}
+
+/// The nearest editable grip under the pointer; used by both acquisition and clicking.
 fn grip_at(app: &CadApp, xf: &Xf, hover: Option<Pos2>) -> Option<(Handle, usize)> {
     let hp = hover?;
     let st = app.session.state().ok()?;
@@ -2348,19 +2365,23 @@ fn grip_at(app: &CadApp, xf: &Xf, hover: Option<Pos2>) -> Option<(Handle, usize)
     if !app.session.shows_grips(sel.len()) {
         return None;
     }
+    let mut nearest = None;
+    let mut distance = f32::INFINITY;
     for h in sel.iter().take(200) {
-        let e = st.doc.entity(*h)?;
+        let Some(e) = st.doc.entity(*h) else { continue };
         if st.doc.layer(&e.common.layer).is_some_and(|l| l.locked) {
             continue;
         }
         for (i, g) in e.kind.grips().into_iter().enumerate() {
             let sp = xf.to_screen(g);
-            if (sp.x - hp.x).abs() <= gs && (sp.y - hp.y).abs() <= gs {
-                return Some((*h, i));
+            let d = sp.distance_sq(hp);
+            if xf.rect.contains(sp) && (sp.x - hp.x).abs() <= gs && (sp.y - hp.y).abs() <= gs && d < distance {
+                nearest = Some((*h, i));
+                distance = d;
             }
         }
     }
-    None
+    nearest
 }
 
 #[cfg(test)]

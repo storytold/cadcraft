@@ -25,7 +25,8 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.saveas", "Save As...", &[], None),
     ("ui.sample", "Open Sample Drawing", &["Help", "Open Sample Drawing"], None),
     ("ui.toggle.toolsets", "Tool Sets", &["Window", "Tool Sets"], Some("Cmd+3")),
-    ("ui.panel.properties", "Properties Inspector", &["Window", "Properties Inspector"], Some("Cmd+1")),
+    ("ui.panel.properties", "Properties Inspector", &[], None),
+    ("ui.toggle.properties", "Properties Inspector", &["Window", "Properties Inspector"], Some("Cmd+1")),
     ("ui.panel.layers", "Layers Palette", &["Window", "Layers Palette"], None),
     ("ui.panel.quickcalc", "QuickCalc", &["Window", "QuickCalc"], Some("Cmd+8")),
     ("ui.toggle.systemcursor", "Show System Cursor", &["View", "Accessibility", "Show System Cursor"], None),
@@ -97,6 +98,10 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
     }
     if matches!(id, "ui.dock" | "ui.dock.reset") {
         return Some(crate::docking::command(app, id == "ui.dock.reset", params));
+    }
+    if id == "ui.toggle.properties" {
+        let visible = app.ui.show_palettes && app.ui.docking.layout.contains(&crate::docking::Panel::Properties);
+        return Some(crate::docking::command(app, false, &json!({"operation": if visible { "close" } else { "open" }, "panel":"properties"})));
     }
     if matches!(id, "ui.panel.properties" | "ui.panel.layers") {
         let panel = if id == "ui.panel.properties" { "properties" } else { "layers" };
@@ -596,6 +601,11 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     let sc = |m: Modifiers, k: Key| KeyboardShortcut::new(m, k);
     let cmd = Modifiers::COMMAND;
     let cmd_shift = Modifiers::COMMAND | Modifiers::SHIFT;
+    // Palette visibility is available even while a text field owns keyboard focus.
+    // Consume it first so Ctrl/Cmd+1 cannot also enter a digit or cancel a command.
+    if app.closing.is_none() && ctx.input_mut(|i| i.consume_shortcut(&sc(cmd, Key::Num1))) {
+        let _ = app.run("ui.toggle.properties", json!({}));
+    }
     let pairs: &[(KeyboardShortcut, &str)] = &[
         (sc(cmd_shift, Key::A), "pickstyle"),
         (sc(cmd_shift, Key::Z), "redo"),
@@ -612,7 +622,6 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
         (sc(cmd, Key::X), "cutclip"),
         (sc(cmd_shift, Key::V), "pasteblock"),
         (sc(cmd, Key::V), "pasteclip"),
-        (sc(cmd, Key::Num1), "ui.panel.properties"),
         (sc(cmd, Key::Num3), "ui.toggle.toolsets"),
         (sc(cmd, Key::Num9), "ui.toggle.cmdline"),
         (sc(Modifiers::NONE, Key::F1), "ui.dialog.commands"),
