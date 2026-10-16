@@ -1620,6 +1620,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         }
         None => {
             blockedit::wash(app, &painter, rect);
+            crate::geomap::paint(app, &painter, &xf);
             draw_grid(app, &painter, &xf);
             Rgb(t.canvas.r(), t.canvas.g(), t.canvas.b())
         }
@@ -1641,6 +1642,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         draw_list_gpu(&mut app.canvas, &painter, &xf_paper, bg, app.session.settings.lwdisplay);
     } else if let Some(list) = &app.canvas.list {
         draw_list(&painter, &xf_paper, list, bg, app.session.settings.lwdisplay);
+    }
+    if sheet.is_none() {
+        crate::geomap::paint_attribution(app, &painter);
     }
     if let Some(vp) = &active_vp {
         // The active viewport: a heavy border, highlights in model units clipped to it.

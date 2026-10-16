@@ -16,6 +16,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     match d.as_str() {
         "spacemouse" => crate::spacemouse::dialog(app, ctx, &mut open),
         "language" => language(app, ctx, &mut open),
+        "geomap" => crate::geomap::dialog(app, ctx, &mut open),
         "layers" => crate::layers::dialog(app, ctx, &mut open),
         "qselect" => crate::quick::qselect_dialog(app, ctx, &mut open),
         "parameters" => crate::parametric::parameters_dialog(app, ctx, &mut open),

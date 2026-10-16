@@ -29,6 +29,7 @@ pub mod xrefs;
 
 pub mod dyngrips;
 pub mod dyninput;
+pub mod geomap;
 pub mod gpu;
 pub mod grip_dyn;
 pub mod i18n;
@@ -201,6 +202,8 @@ pub struct CadApp {
     pub options: options::UiOptions,
     pub services: Services,
     pub canvas: canvas::CanvasState,
+    /// Online map behind the current model-space drawing.
+    pub geomap: geomap::State,
     /// Desktop HID status and navigation preferences; the web host supplies no HID backend.
     pub spacemouse: spacemouse::State,
     pub cmd: cmdline::CmdLine,
@@ -255,6 +258,7 @@ impl CadApp {
             options: options::UiOptions::default(),
             services,
             canvas: canvas::CanvasState::default(),
+            geomap: geomap::State::default(),
             spacemouse: spacemouse::State::default(),
             cmd: cmdline::CmdLine::default(),
             status: None,
@@ -341,6 +345,14 @@ impl CadApp {
             let first = text.split_whitespace().next().unwrap_or("");
             // `cmd {json}` is a programmatic call: the engine runs it with those parameters.
             let json_form = text.trim_start().get(first.len()..).is_some_and(|rest| rest.trim_start().starts_with('{'));
+            if first.eq_ignore_ascii_case("geomap") && json_form {
+                let params = text.trim_start().get(first.len()..).unwrap_or("").trim();
+                let result = serde_json::from_str::<Value>(params).map_err(|e| e.to_string()).and_then(|v| self.run("geomap", v));
+                if let Err(e) = &result {
+                    self.session.echo(e.clone());
+                }
+                return result.err();
+            }
             if !first.is_empty() && !json_form && menus::run_ui_command(self, &first.to_ascii_lowercase(), &Value::Null).is_some() {
                 return None;
             }

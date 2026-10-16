@@ -25,6 +25,12 @@ serde_json = { workspace = true }
 log = { workspace = true }
 image = { workspace = true }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+ureq = { version = "2.12", default-features = false, features = ["native-tls"] }
+
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "windows")))'.dependencies]
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
+
 [dev-dependencies]
 egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
 # Validates the canvas WGSL and its GLSL ES 3.0 (WebGL2) translation in tests (same naga wgpu uses).
