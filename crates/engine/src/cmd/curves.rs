@@ -129,6 +129,12 @@ pub fn last_curve_end(s: &Session) -> Option<(Vec2, Vec2)> {
             }
             EntityKind::Arc(a) => {
                 let g = Arc::new(a.center.xy(), a.radius, a.start, a.end);
+                // Arcs are stored CCW: one drawn clockwise ended on its start point, so continue
+                // from the last picked point (LASTPOINT), leaving it in the drawing direction.
+                let tol = 1e-9 * g.radius.max(1.0);
+                if g.start_point().near(s.last_point, tol) && !g.end_point().near(s.last_point, tol) {
+                    return Some((g.start_point(), -Vec2::from_angle(g.start).perp()));
+                }
                 return Some((g.end_point(), Vec2::from_angle(g.end).perp()));
             }
             EntityKind::LwPolyline(p) if !p.closed => {

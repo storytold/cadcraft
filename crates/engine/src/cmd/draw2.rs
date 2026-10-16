@@ -460,7 +460,10 @@ fn run_arc_continue(s: &mut Session, p: &Value) -> Result<Value> {
         _ => curves::last_curve_end(s).ok_or_else(|| bad("arc.continue", "no line or arc to continue from"))?,
     };
     let a = curves::arc_sed(st, e, dir).ok_or_else(|| bad("arc.continue", "end point is on the tangent line"))?;
-    added(s.add_entity(arc(&a))?)
+    let h = s.add_entity(arc(&a))?;
+    // The next continuation starts where this arc was drawn to, not at its stored CCW end.
+    s.last_point = e;
+    added(h)
 }
 
 #[derive(Default)]
