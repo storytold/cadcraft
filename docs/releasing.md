@@ -9,3 +9,4 @@ The canonical recipe is craftrules' [`release/playbook.md`](https://github.com/s
 - **Windows installer:** `packaging/windows/cadcraft.wxs` (WiX v5 + `WixToolset.UI.wixext`). Its wizard has a Shortcuts page: the Start Menu shortcut is always created, the desktop shortcut is opt-in (`DESKTOPSHORTCUT=1` for silent installs, `DESKTOPSHORTCUT=0` drops it on an upgrade; otherwise upgrades keep the previous choice).
 - **File types:** `.dxf` and `.dwg` (macOS document types, Windows "Open with", Linux MIME types).
 - **Local packaging test:** `packaging/macos/package.sh` (ad-hoc signed DMG), `packaging/linux/package.sh`, `packaging/web/package.sh`.
+- **AppImage CLI:** the AppImage's `AppRun` (`packaging/linux/AppRun`) launches the app, and runs the bundled `cadcraft-cli` for `CADCraft.AppImage cli <args>` (e.g. `cli mcp`); `packaging/linux/apprun-test.sh` checks it in seconds with no build.

@@ -104,7 +104,8 @@ if has appimage; then
   APPDIR="$WORK/CADCraft.AppDir"
   cp -R "$STAGE" "$APPDIR"
   mv "$APPDIR/usr/share/doc" "$WORK/doc-unused"
-  ln -s usr/bin/cadcraft "$APPDIR/AppRun"
+  # AppRun launches the app, or the bundled CLI for `CADCraft.AppImage cli <args>` (apprun-test.sh).
+  install -m755 "$HERE/AppRun" "$APPDIR/AppRun"
   cp "$HERE/$APP_ID.desktop" "$APPDIR/$APP_ID.desktop"
   cp "$ROOT/assets/app-icon/hicolor/256x256/apps/$APP_ID.png" "$APPDIR/$APP_ID.png"
   ln -s "$APP_ID.png" "$APPDIR/.DirIcon"
