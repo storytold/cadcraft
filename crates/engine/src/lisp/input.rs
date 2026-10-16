@@ -33,6 +33,10 @@ pub enum GetKind {
         spaces: bool,
     },
     Kword,
+    /// `getfiled`: a file name typed; `new`: it may name a file that doesn't exist yet.
+    File {
+        new: bool,
+    },
     /// `entsel` / `nentsel`: an object picked.
     EntSel,
 }
@@ -46,6 +50,27 @@ pub struct GetRequest {
     pub initget: Initget,
     /// `getdist`/`getangle` without a base point: the first point given, the second to come.
     pub first: Option<[f64; 3]>,
+    /// `getfiled`'s extension and default.
+    pub file: FileAsk,
+}
+
+/// `getfiled`: the extension a bare name gets and the name Enter gives.
+#[derive(Clone, Debug, Default)]
+pub struct FileAsk {
+    pub ext: String,
+    pub default: String,
+}
+
+impl FileAsk {
+    /// `name` with the extension when it has none (`None` for an empty name).
+    fn complete(&self, name: &str) -> Option<String> {
+        let name = name.trim().trim_matches('"');
+        if name.is_empty() {
+            return None;
+        }
+        let has_ext = std::path::Path::new(name).extension().is_some();
+        Some(if has_ext || self.ext.is_empty() { name.to_string() } else { format!("{name}.{}", self.ext) })
+    }
 }
 
 impl GetRequest {
@@ -56,7 +81,7 @@ impl GetRequest {
             GetKind::Point | GetKind::Corner | GetKind::EntSel => Accept { text: any, ..Accept::POINT },
             GetKind::Dist | GetKind::Angle { .. } => Accept { text: any, ..Accept::POINT_OR_NUMBER },
             GetKind::Real | GetKind::Int => Accept { text: any, ..Accept::NUMBER },
-            GetKind::String { .. } | GetKind::Kword => Accept::TEXT,
+            GetKind::String { .. } | GetKind::Kword | GetKind::File { .. } => Accept::TEXT,
         };
         let message = match (&self.first, self.message.is_empty()) {
             (Some(_), _) => "Specify second point: ".to_string(),
@@ -87,6 +112,10 @@ impl GetRequest {
             Input::Enter => {
                 if matches!(self.kind, GetKind::String { .. }) {
                     return Ok(Value::str(""));
+                }
+                if let GetKind::File { .. } = self.kind {
+                    // Enter takes the default name, or cancels the choice (nil) without one.
+                    return Ok(self.file.complete(&self.file.default).map(|n| Value::str(&n)).unwrap_or_default());
                 }
                 if no_null {
                     return Err(match self.kind {
@@ -144,6 +173,7 @@ impl GetRequest {
                 GetKind::Int => "Requires an integer value.",
                 GetKind::Kword => "Invalid option keyword.",
                 GetKind::String { .. } => "Requires a string.",
+                GetKind::File { .. } => "Requires a file name.",
                 _ => "Requires numeric value.",
             }
             .into()),
@@ -162,6 +192,13 @@ impl GetRequest {
                 Ok(Value::str(t))
             }
             GetKind::Kword => Err("Invalid option keyword.".into()),
+            GetKind::File { new } => {
+                let Some(name) = self.file.complete(t).or_else(|| self.file.complete(&self.file.default)) else { return Ok(Value::Nil) };
+                if !new && !super::builtins::file_exists(&name) {
+                    return Err(format!("Can't find file {name}.").as_str().into());
+                }
+                Ok(Value::str(&name))
+            }
             GetKind::Int => match t.trim().parse::<i32>() {
                 Ok(i) if (-32768..=32767).contains(&i) => self.check_number(f64::from(i), true),
                 Ok(_) => Err("Value must be between -32768 and 32767.".into()),
@@ -293,6 +330,10 @@ fn point_and_message(args: &[Value], name: &str) -> Result<(Option<[f64; 3]>, St
 }
 
 fn wait(ctx: &mut Ctx<'_>, kind: GetKind, message: String, base: Option<[f64; 3]>) -> Result<Flow, LispError> {
+    wait_with(ctx, kind, message, base, FileAsk::default())
+}
+
+fn wait_with(ctx: &mut Ctx<'_>, kind: GetKind, message: String, base: Option<[f64; 3]>, file: FileAsk) -> Result<Flow, LispError> {
     let initget = ctx.env.initget.take().unwrap_or_default();
     // Text printed so far shows before the prompt.
     let printed = std::mem::take(&mut ctx.env.out);
@@ -302,7 +343,27 @@ fn wait(ctx: &mut Ctx<'_>, kind: GetKind, message: String, base: Option<[f64; 3]
             ctx.env.printed_at = Some(ctx.s.log.len());
         }
     }
-    Ok(Flow::Wait(Need::Get(GetRequest { kind, message, base, initget, first: None })))
+    Ok(Flow::Wait(Need::Get(GetRequest { kind, message, base, initget, first: None, file })))
+}
+
+/// `(getfiled title default ext flags)`: a file name, asked at the command line (no dialog opens
+/// from LISP, as with FILEDIA 0). A bare name gets `ext`; Enter takes `default`, or gives nil
+/// without one. Flag 1 asks for a new file (Save As); otherwise the file must exist.
+pub fn getfiled(ctx: &mut Ctx<'_>, args: Vec<Value>) -> Result<Flow, LispError> {
+    let [title, default, ext, flags] = args.as_slice() else { return Err(args_err(args.len() < 4)) };
+    let s = |v: &Value| match v {
+        Value::Str(s) => Ok(s.to_string()),
+        Value::Nil => Ok(String::new()),
+        other => Err(LispError::bad_arg("stringp", other)),
+    };
+    let (title, default, ext) = (s(title)?, s(default)?, s(ext)?);
+    let Value::Int(flags) = flags else { return Err(LispError::bad_arg("fixnump", flags)) };
+    // The first of "dwg;dxf", without its dot; "*" or "" adds none.
+    let ext = ext.split(';').next().unwrap_or("").trim().trim_start_matches('.').to_string();
+    let ext = if ext == "*" { String::new() } else { ext };
+    let title = if title.is_empty() { "Enter file name".to_string() } else { title.trim_end_matches([' ', ':']).to_string() };
+    let message = if default.is_empty() { format!("{title}: ") } else { format!("{title} <{default}>: ") };
+    wait_with(ctx, GetKind::File { new: flags & 1 != 0 }, message, None, FileAsk { ext, default })
 }
 
 pub fn getpoint(ctx: &mut Ctx<'_>, args: Vec<Value>) -> Result<Flow, LispError> {

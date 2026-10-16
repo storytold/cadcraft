@@ -63,9 +63,31 @@ reached", malformed source is a reader error, and every built-in checks its argu
   `vl-string-search vl-string-subst vl-string-trim vl-string-left-trim vl-string-right-trim
   vl-string-translate vl-string->list vl-list->string vl-prin1-to-string vl-princ-to-string
   vl-symbol-name vl-symbol-value vl-filename-base vl-filename-extension vl-filename-directory`
+- **Strings, more:** `vl-string-position vl-string-elt vl-string-mismatch`
+- **Numbers, more:** `boole`
 - **Geometry:** `polar distance angle inters trans` (`trans` returns the point: no UCS yet)
+- **Curves:** `vlax-curve-getStartParam vlax-curve-getEndParam vlax-curve-getStartPoint
+  vlax-curve-getEndPoint vlax-curve-getDistAtParam vlax-curve-getParamAtDist
+  vlax-curve-getPointAtParam vlax-curve-getPointAtDist vlax-curve-getParamAtPoint
+  vlax-curve-getDistAtPoint vlax-curve-getClosestPointTo vlax-curve-getClosestPointToProjection
+  vlax-curve-getFirstDeriv vlax-curve-getSecondDeriv vlax-curve-getArea vlax-curve-isClosed
+  vlax-curve-isPeriodic vlax-curve-isPlanar`, on lines, arcs, circles, polylines (2D and 3D),
+  ellipses and splines, given by entity name. Parameters are AutoLISP's: a line's is the
+  distance along it, an arc's or a circle's the angle, a polyline's the vertex index (plus the
+  fraction of the segment after it), an ellipse's or a spline's its own. Ellipses and splines
+  are exact too: lengths and areas are integrated along the curve itself, the same lengths
+  LENGTHEN measures.
 - **Output and files:** `princ prin1 print prompt terpri alert open close read-line write-line
-  findfile`
+  read-char write-char findfile`
+- **Files and folders:** `vl-file-copy` (never over an existing file; appends with its third
+  argument) `vl-file-delete vl-file-rename vl-file-size vl-file-systime` (UTC)
+  `vl-file-directory-p vl-directory-files` (sorted) `vl-mkdir`. On the web, where there is no
+  file system, they answer nil.
+- **Environment:** `getenv setenv`. What `setenv` sets lasts while CADCraft runs; `getenv` falls
+  back to the operating system's variables.
+- **Object snaps:** `osnap` (`"_end,_mid"`, the same names as at a prompt), within the aperture.
+- **Names:** `getcname` (`"line"` gives `"_LINE"`, `"_line"` gives `"LINE"`), `snvalid`,
+  `atoms-family`
 - **Errors:** `*error*`, `vl-catch-all-apply vl-catch-all-error-p vl-catch-all-error-message`
 - **Drawing:** `command` (also `command-s`, `vl-cmdf`) with `pause`, a command left open for the
   next call, and `(command)` to cancel; `getvar setvar`; `entget entmake entmod entdel entlast
@@ -73,9 +95,12 @@ reached", malformed source is a reader error, and every built-in checks its argu
   selecting; filters with wildcards and `-4` operators) `ssadd ssdel sslength ssname ssmemb
   sssetfirst ssgetfirst`; `tblsearch tblnext` (LAYER, LTYPE, STYLE, BLOCK, DIMSTYLE, APPID)
 - **Input:** `initget getpoint getcorner getdist getangle getorient getreal getint getstring
-  getkword entsel nentsel`
+  getkword entsel nentsel getfiled`. `getfiled` asks for the name at the command line, as with
+  FILEDIA 0 (no dialog opens from LISP): a bare name gets the extension, Enter takes the default
+  (nil without one), and unless flag 1 asks for a new file the file must exist.
 - **Units:** `rtos angtos distof angtof`
-- **No-ops:** `vl-load-com gc redraw`; `ver`
+- **No-ops:** `vl-load-com gc redraw textscr graphscr textpage acad-push-dbmod acad-pop-dbmod`;
+  `ver`
 
 Entity lists use the DXF group codes of CADCraft's DXF files: what `entget` returns is what a
 DXF file holds for the object, plus `-1` (its name) and `410` (its layout).

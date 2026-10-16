@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use super::eval::{Ctx, Flow, Special};
 use super::value::{Builtin, BuiltinKind, Sym, Value, charge_bytes, check_string_len, eq, equal, real_text, to_text};
-use super::{Env, LispError, drawing, input, read};
+use super::{Env, LispError, curve, drawing, input, read, system};
 
 type R = Result<Value, LispError>;
 
@@ -821,7 +821,7 @@ fn inters(a: &[Value]) -> R {
 // ---------------- output ----------------
 
 /// Text printed to a file (an open file argument) or the command line.
-fn emit(ctx: &mut Ctx<'_>, text: &str, file: Option<&Value>) -> Result<(), LispError> {
+pub(super) fn emit(ctx: &mut Ctx<'_>, text: &str, file: Option<&Value>) -> Result<(), LispError> {
     charge_bytes(text.len())?;
     match file {
         None | Some(Value::Nil) => {
@@ -993,11 +993,11 @@ fn write_text_file(path: &str, text: &str, append: bool) {
 #[cfg(target_arch = "wasm32")]
 fn write_text_file(_path: &str, _text: &str, _append: bool) {}
 #[cfg(not(target_arch = "wasm32"))]
-fn file_exists(path: &str) -> bool {
+pub(super) fn file_exists(path: &str) -> bool {
     std::path::Path::new(path).is_file()
 }
 #[cfg(target_arch = "wasm32")]
-fn file_exists(_path: &str) -> bool {
+pub(super) fn file_exists(_path: &str) -> bool {
     false
 }
 
@@ -1451,6 +1451,50 @@ static BUILTINS: &[Builtin] = &[
     ctx!("DISTOF", drawing::distof),
     ctx!("ANGTOF", drawing::angtof),
     ctx!("TRANS", drawing::trans),
+    ctx!("GETFILED", input::getfiled),
+    ctx!("OSNAP", system::osnap),
+    ctx!("ATOMS-FAMILY", system::atoms_family),
+    ctx!("READ-CHAR", system::read_char),
+    ctx!("WRITE-CHAR", system::write_char),
+    pure!("VL-FILE-COPY", system::vl_file_copy),
+    pure!("VL-FILE-DELETE", system::vl_file_delete),
+    pure!("VL-FILE-RENAME", system::vl_file_rename),
+    pure!("VL-FILE-SIZE", system::vl_file_size),
+    pure!("VL-FILE-SYSTIME", system::vl_file_systime),
+    pure!("VL-FILE-DIRECTORY-P", system::vl_file_directory_p),
+    pure!("VL-DIRECTORY-FILES", system::vl_directory_files),
+    pure!("VL-MKDIR", system::vl_mkdir),
+    pure!("GETENV", system::getenv),
+    pure!("SETENV", system::setenv),
+    pure!("GETCNAME", system::getcname),
+    pure!("SNVALID", system::snvalid),
+    pure!("BOOLE", system::boole),
+    pure!("VL-STRING-POSITION", system::vl_string_position),
+    pure!("VL-STRING-ELT", system::vl_string_elt),
+    pure!("VL-STRING-MISMATCH", system::vl_string_mismatch),
+    pure!("ACAD-PUSH-DBMOD", system::t),
+    pure!("ACAD-POP-DBMOD", system::t),
+    pure!("TEXTSCR", system::nil),
+    pure!("GRAPHSCR", system::nil),
+    pure!("TEXTPAGE", system::nil),
+    ctx!("VLAX-CURVE-GETSTARTPARAM", curve::get_start_param),
+    ctx!("VLAX-CURVE-GETENDPARAM", curve::get_end_param),
+    ctx!("VLAX-CURVE-GETSTARTPOINT", curve::get_start_point),
+    ctx!("VLAX-CURVE-GETENDPOINT", curve::get_end_point),
+    ctx!("VLAX-CURVE-GETDISTATPARAM", curve::get_dist_at_param),
+    ctx!("VLAX-CURVE-GETPARAMATDIST", curve::get_param_at_dist),
+    ctx!("VLAX-CURVE-GETPOINTATPARAM", curve::get_point_at_param),
+    ctx!("VLAX-CURVE-GETPOINTATDIST", curve::get_point_at_dist),
+    ctx!("VLAX-CURVE-GETPARAMATPOINT", curve::get_param_at_point),
+    ctx!("VLAX-CURVE-GETDISTATPOINT", curve::get_dist_at_point),
+    ctx!("VLAX-CURVE-GETCLOSESTPOINTTO", curve::get_closest_point_to),
+    ctx!("VLAX-CURVE-GETCLOSESTPOINTTOPROJECTION", curve::get_closest_point_to_projection),
+    ctx!("VLAX-CURVE-GETFIRSTDERIV", curve::get_first_deriv),
+    ctx!("VLAX-CURVE-GETSECONDDERIV", curve::get_second_deriv),
+    ctx!("VLAX-CURVE-GETAREA", curve::get_area),
+    ctx!("VLAX-CURVE-ISCLOSED", curve::is_closed),
+    ctx!("VLAX-CURVE-ISPERIODIC", curve::is_periodic),
+    ctx!("VLAX-CURVE-ISPLANAR", curve::is_planar),
 ];
 
 /// Bind the builtins and constants in a new environment.

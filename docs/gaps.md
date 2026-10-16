@@ -128,7 +128,7 @@ Detail: [localization-parity.md](localization-parity.md).
 
 | # | Gap | Est. |
 |---|---|---|
-| E1 | AutoLISP beyond the core (#758 landed the language, `command`, entity lists, selection sets, `get…` input, APPLOAD, `(load)`, `c:` commands and `acad.lsp`/`acaddoc.lsp` at startup): Visual LISP ActiveX (`vlax-`, `vla-`), DCL dialogs, reactors, an APPLOAD dialog with a Startup Suite, UCS-aware `trans` | 30–50 |
+| E1 | AutoLISP beyond the core (#758 landed the language, `command`, entity lists, selection sets, `get…` input, APPLOAD, `(load)`, `c:` commands and `acad.lsp`/`acaddoc.lsp` at startup; then `vlax-curve-*`, the `vl-file-*` functions, `getfiled`, `getenv`/`setenv` and `osnap`): the Visual LISP object model (`vlax-` objects, `vla-`), `grread`/`grdraw`, DCL dialogs, reactors, an APPLOAD dialog with a Startup Suite, UCS-aware `trans` | 30–50 |
 | E3 | Express Tools equivalents (TXT2MTXT, BREAKLINE, BURST, NCOPY exists, SUPERHATCH, Move/Copy/Rotate) | 30–50 |
 | E4 | Plug-in API (owner decision: Rust/WASM plug-ins rather than ObjectARX/.NET) | 30–50 |
 | E5 | CUI customisation and alias (`.pgp`) editor | 15–25 |
