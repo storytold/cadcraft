@@ -930,7 +930,7 @@ checksum = "7f8f80099a98041a3d1622845c271458a2d73e688351bf3cb999266764b81d48"
 [[package]]
 name = "craft-ui"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=5c874d51eeb3de70e735c8ce87a59a7dedd47675#5c874d51eeb3de70e735c8ce87a59a7dedd47675"
+source = "git+https://github.com/storytold/craft-libs?rev=8134693a69e0fca8ec7913ad5a95dedc05daad74#8134693a69e0fca8ec7913ad5a95dedc05daad74"
 dependencies = [
  "egui",
  "serde",

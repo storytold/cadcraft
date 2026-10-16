@@ -213,7 +213,7 @@ pub fn prompt(app: &mut CadApp, ctx: &egui::Context) {
         ui.add_space(10.0);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let size = vec2(84.0, 22.0);
-            let save = ui.add(egui::Button::new(RichText::new("Save").color(t.text)).fill(t.accent).min_size(size));
+            let save = ui.add(egui::Button::new(RichText::new("Save").color(t.on_accent)).fill(t.accent).min_size(size));
             if save.clicked() {
                 choice = Some(Choice::Save);
             }

@@ -46,7 +46,7 @@ encoding_rs = "0.8.35"
 quick-xml = "0.41"
 
 # ui
-craft-ui = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "5c874d51eeb3de70e735c8ce87a59a7dedd47675", features = ["serde"] }
+craft-ui = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "8134693a69e0fca8ec7913ad5a95dedc05daad74", features = ["serde"] }
 egui = "0.36"
 egui_kittest = "0.36"
 eframe = { version = "0.36", default-features = false }
