@@ -1330,3 +1330,20 @@
 	Justify	За шириною
 	Text color	Колір тексту
 	Click the ruler to add a tab stop, right-click to remove one	Натисніть на лінійку, щоб додати табуляцію; права кнопка видаляє її
+	Type an alias name.	Введіть назву псевдоніма.
+	Choose the command the alias starts.	Виберіть команду, яку запускає псевдонім.
+	{command} is an unknown command.	{command} — невідома команда.
+	{alias} is already defined; select it and use Edit.	{alias} уже визначено; виберіть його та натисніть «Змінити».
+	More than {n} aliases.	Понад {n} псевдонімів.
+	Alias file: {file}	Файл псевдонімів: {file}
+	No alias file loaded. REINIT replaces these aliases with a file's.	Файл псевдонімів не завантажено. REINIT замінює ці псевдоніми псевдонімами з файлу.
+	Alias	Псевдонім
+	Command	Команда
+	overrides built-in	замінює вбудований
+	built-in	вбудований
+	Add…	Додати…
+	Edit…	Змінити…
+	Save alias	Зберегти псевдонім
+	Discard	Скасувати зміни
+	Customize	Налаштування інтерфейсу
+	Edit Command Aliases (PGP)...	Редагувати псевдоніми команд (PGP)...

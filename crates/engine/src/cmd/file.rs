@@ -14,6 +14,8 @@ use serde_json::{Value, json};
 use super::*;
 use crate::{Accept, Input, Prompt, Result, Session, Step};
 
+/// The rules the Command Aliases dialog checks before it sends an alias to ALIASEDIT.
+pub use pgp::{MAX_ALIASES, alias_name, command_id};
 pub(crate) use pgp::{specs as alias_specs, user_alias};
 pub use template::{qnew_template, set_qnew_template};
 

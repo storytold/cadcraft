@@ -1237,3 +1237,20 @@ menu	Modify	Edita
 	Search for pattern	Cerca modello
 	Run Script...	Esegui script...
 	Select closed objects (regions, closed polylines, circles).	Selezionare oggetti chiusi (regioni, polilinee chiuse, cerchi).
+	Type an alias name.	Digitare un nome di alias.
+	Choose the command the alias starts.	Scegliere il comando che l'alias avvia.
+	{command} is an unknown command.	{command} è un comando sconosciuto.
+	{alias} is already defined; select it and use Edit.	{alias} è già definito; selezionarlo e usare Modifica.
+	More than {n} aliases.	Più di {n} alias.
+	Alias file: {file}	File degli alias: {file}
+	No alias file loaded. REINIT replaces these aliases with a file's.	Nessun file di alias caricato. REINIT sostituisce questi alias con quelli di un file.
+	Alias	Alias
+	Command	Comando
+	overrides built-in	sostituisce il predefinito
+	built-in	predefinito
+	Add…	Aggiungi…
+	Edit…	Modifica…
+	Save alias	Salva alias
+	Discard	Scarta
+	Customize	Personalizza
+	Edit Command Aliases (PGP)...	Modifica alias dei comandi (PGP)...

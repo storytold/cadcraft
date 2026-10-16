@@ -396,6 +396,11 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             crate::hatchdlg::open_create(app, matches!(id, "gradient" | "gd"));
             Ok(Value::Null)
         }
+        // Typed or from the Tools menu: the Command Aliases dialog. JSON calls keep the JSON form.
+        "aliasedit" if params.is_null() => {
+            crate::aliasdlg::open(app);
+            Ok(Value::Null)
+        }
         "hatchedit" | "he" if params.is_null() && app.session.state().is_ok() => {
             crate::hatchdlg::open_edit(app);
             Ok(Value::Null)
