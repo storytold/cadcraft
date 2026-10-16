@@ -1,9 +1,9 @@
 //! HATCH and HATCHEDIT options (#451): HPGAPTOL gap tolerance, pattern origin, separate
 //! hatches, island style, linking and unlinking boundaries, recreated boundaries, -HATCHEDIT.
 
-use cadcraft_engine::Session;
 use cadcraft_engine::doc::{EntityKind, Handle, Hatch};
 use cadcraft_engine::geom::Vec2;
+use cadcraft_engine::{Input, Session};
 use serde_json::{Value, json};
 
 fn hatch(s: &Session, h: &str) -> Hatch {
@@ -123,6 +123,63 @@ fn hatchedit_needs_a_hatch() {
 }
 
 #[test]
+fn hatchedit_adds_and_removes_boundary_loops() {
+    let mut s = Session::new();
+    let outer = rect(&mut s, [0.0, 0.0], [20.0, 20.0]);
+    let island = rect(&mut s, [5.0, 5.0], [10.0, 10.0]);
+    rect(&mut s, [30.0, 0.0], [40.0, 10.0]);
+    let h = handle(&s.execute("hatch", &json!({ "handles": [outer] })).unwrap());
+    s.execute("hatchedit", &json!({ "handles": [h.clone()], "addBoundary": [island.clone()], "addPoints": [[35, 5]] })).unwrap();
+    let edited = hatch(&s, &h);
+    assert_eq!(edited.loops.len(), 3);
+    assert_eq!(edited.loops.iter().map(|l| l.outer).collect::<Vec<_>>(), vec![true, true, false]);
+    assert!(edited.associative);
+    assert_eq!(edited.loops[2].sources, vec![Handle::parse_hex(&island).unwrap()]);
+
+    s.execute("hatchedit", &json!({ "handles": [h.clone()], "removeLoops": [2] })).unwrap();
+    let edited = hatch(&s, &h);
+    assert_eq!(edited.loops.len(), 2);
+    assert!(edited.loops.iter().all(|l| l.outer));
+    s.execute("undo", &json!({})).unwrap();
+    assert_eq!(hatch(&s, &h).loops.len(), 3, "one edit is one undo step");
+}
+
+#[test]
+fn hatchedit_added_object_boundary_stays_associative() {
+    let mut s = Session::new();
+    let outer = rect(&mut s, [0.0, 0.0], [20.0, 20.0]);
+    let island = rect(&mut s, [5.0, 5.0], [10.0, 10.0]);
+    let h = handle(&s.execute("hatch", &json!({ "handles": [outer] })).unwrap());
+    s.execute("hatchedit", &json!({ "handles": [h.clone()], "addBoundary": [island.clone()] })).unwrap();
+    let edited = hatch(&s, &h);
+    assert!(edited.associative, "{edited:?}");
+    assert_eq!(edited.loops.iter().map(|l| l.outer).collect::<Vec<_>>(), vec![true, false]);
+    assert_eq!(edited.loops[1].sources, vec![Handle::parse_hex(&island).unwrap()]);
+    s.execute("move", &json!({ "handles": [island], "delta": [1, 0] })).unwrap();
+    assert_eq!(hatch(&s, &h).loops[1].vertices[0].p.x, 6.0);
+}
+
+#[test]
+fn hatchedit_refuses_invalid_boundary_changes_without_editing() {
+    let mut s = Session::new();
+    let outer = rect(&mut s, [0.0, 0.0], [10.0, 10.0]);
+    let h = handle(&s.execute("hatch", &json!({ "handles": [outer] })).unwrap());
+    let before = hatch(&s, &h);
+    for change in [
+        json!({ "removeLoops": [0] }),
+        json!({ "removeLoops": [9] }),
+        json!({ "addBoundary": ["BAD-HANDLE"] }),
+        json!({ "addPoints": [[f64::NAN, 1.0]] }),
+    ] {
+        let mut p = change.as_object().unwrap().clone();
+        p.insert("handles".into(), json!([h.clone()]));
+        p.insert("scale".into(), json!(2.0));
+        assert!(s.execute("hatchedit", &Value::Object(p)).is_err());
+        assert_eq!(hatch(&s, &h), before);
+    }
+}
+
+#[test]
 fn hatch_origin_and_separate_keywords_at_the_command_line() {
     let mut s = Session::new();
     rect(&mut s, [0.0, 0.0], [10.0, 10.0]);
@@ -155,6 +212,26 @@ fn dash_hatchedit_options_at_the_command_line() {
     assert!(s.running.is_none(), "{}", s.prompt_text());
     assert!(hatch(&s, &h).associative, "{:?}", s.log);
     assert_eq!(hatch(&s, &h).loops[0].sources, vec![Handle::parse_hex(&r).unwrap()]);
+}
+
+#[test]
+fn dash_hatchedit_adds_and_removes_boundaries() {
+    let mut s = Session::new();
+    let outer = rect(&mut s, [0.0, 0.0], [20.0, 20.0]);
+    let island = rect(&mut s, [5.0, 5.0], [10.0, 10.0]);
+    let h = handle(&s.execute("hatch", &json!({ "handles": [outer] })).unwrap());
+    let selected = Handle::parse_hex(&h).unwrap();
+    s.set_selection(vec![selected]);
+    s.start("hatchedit").unwrap();
+    s.input(Input::Keyword("add Object".into())).unwrap();
+    s.input(Input::Pick(vec![Handle::parse_hex(&island).unwrap()])).unwrap();
+    assert_eq!(hatch(&s, &h).loops.len(), 2);
+
+    s.set_selection(vec![selected]);
+    s.start("hatchedit").unwrap();
+    s.input(Input::Keyword("remove Boundary".into())).unwrap();
+    s.input(Input::Text("2".into())).unwrap();
+    assert_eq!(hatch(&s, &h).loops.len(), 1);
 }
 
 #[test]
