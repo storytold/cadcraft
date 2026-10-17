@@ -30,6 +30,7 @@ winit = { version = "0.30", default-features = false, features = ["x11"] }
 zbus = { version = "=5.19.0", default-features = false, features = ["async-io", "blocking-api"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+arboard = { workspace = true }
 rfd = { workspace = true }
 sys-locale = "0.3"
 

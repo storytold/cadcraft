@@ -143,6 +143,7 @@ fn services() -> Services {
                 .save_file()
                 .map(|p| p.to_string_lossy().to_string())
         })),
+        get_clipboard: Some(Box::new(|| arboard::Clipboard::new().ok()?.get_text().ok())),
     }
 }
 

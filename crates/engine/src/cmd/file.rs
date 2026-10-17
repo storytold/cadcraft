@@ -168,7 +168,8 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["File", "Save As..."])
             .key("Cmd+Shift+S")
             .params("{path, version?: 2000|2004|2007|2010|2013|2018, binary?: bool}")
-            .noundo(),
+            .noundo()
+            .interactive(|_| Ok(Box::new(SaveAsM::default()))),
         CommandSpec::new("document.switch", "Switch Drawing", run_switch).params("{index}").enabled(always).noundo(),
         CommandSpec::new("document.bytes", "Drawing as bytes", run_bytes)
             .params("{format?: dxf, version?: 2000…2018, binary?: bool} → {data: base64}")
@@ -232,6 +233,137 @@ impl Interactive for ScriptM {
                 Ok(Step::Done)
             }
             Err(e) => Err(e),
+        }
+    }
+}
+
+/// Interactive SAVEAS machine: prompts for file format/version, then save path.
+#[derive(Default)]
+enum SaveAsStage {
+    #[default]
+    Format,
+    Path {
+        version: Option<Version>,
+        binary: bool,
+    },
+}
+
+#[derive(Default)]
+struct SaveAsM {
+    stage: SaveAsStage,
+}
+
+impl Interactive for SaveAsM {
+    fn name(&self) -> &'static str {
+        "SAVEAS"
+    }
+
+    fn prompt(&self, s: &Session) -> Prompt {
+        match &self.stage {
+            SaveAsStage::Format => {
+                let cur_ver = s
+                    .state()
+                    .ok()
+                    .and_then(|st| st.doc.header.get("ACADVER").and_then(cadcraft_doc::HVal::as_str).and_then(Version::for_acadver))
+                    .unwrap_or_default();
+                Prompt::new("Enter file format", Accept::TEXT)
+                    .kw(&["2000", "2004", "2007", "2010", "2013", "2018", "DXF", "BinaryDXF"])
+                    .default(cur_ver.year())
+            }
+            SaveAsStage::Path { .. } => {
+                let def = s
+                    .state()
+                    .ok()
+                    .and_then(|st| st.path.clone())
+                    .unwrap_or_else(|| s.state().ok().map(|st| st.title.clone()).unwrap_or_else(|| "Drawing.dwg".to_string()));
+                Prompt::new("Save drawing as", Accept::TEXT).default(&def)
+            }
+        }
+    }
+
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if matches!(i, Input::Cancel) {
+            return Ok(Step::Cancel);
+        }
+        match &mut self.stage {
+            SaveAsStage::Format => {
+                let cur_ver = s
+                    .state()
+                    .ok()
+                    .and_then(|st| st.doc.header.get("ACADVER").and_then(cadcraft_doc::HVal::as_str).and_then(Version::for_acadver))
+                    .unwrap_or_default();
+
+                match i {
+                    Input::Enter => {
+                        self.stage = SaveAsStage::Path { version: Some(cur_ver), binary: false };
+                        Ok(Step::Continue)
+                    }
+                    Input::Keyword(k) | Input::Text(k) => {
+                        let text = k.trim();
+                        if text.is_empty() {
+                            self.stage = SaveAsStage::Path { version: Some(cur_ver), binary: false };
+                            return Ok(Step::Continue);
+                        }
+                        let lower = text.to_ascii_lowercase();
+                        if lower.ends_with(".dwg") || lower.ends_with(".dxf") || text.contains('/') || text.contains('\\') {
+                            let p = json!({ "path": text });
+                            let r = run_saveas_reporting(s, &p)?;
+                            if let Some(msg) = r.get("message").and_then(Value::as_str) {
+                                s.echo(msg);
+                            }
+                            return Ok(Step::Done);
+                        }
+
+                        if lower == "dxf" {
+                            self.stage = SaveAsStage::Path { version: None, binary: false };
+                            Ok(Step::Continue)
+                        } else if lower == "binarydxf" || lower == "binary" || lower == "bdxf" {
+                            self.stage = SaveAsStage::Path { version: None, binary: true };
+                            Ok(Step::Continue)
+                        } else if let Some(v) = Version::parse(text) {
+                            self.stage = SaveAsStage::Path { version: Some(v), binary: false };
+                            Ok(Step::Continue)
+                        } else {
+                            s.echo(format!("Unknown format \"{text}\". Valid formats: 2000, 2004, 2007, 2010, 2013, 2018, DXF, BinaryDXF"));
+                            Ok(Step::Continue)
+                        }
+                    }
+                    _ => Ok(Step::Continue),
+                }
+            }
+            SaveAsStage::Path { version, binary } => {
+                let path_str = match i {
+                    Input::Enter => s
+                        .state()
+                        .ok()
+                        .and_then(|st| st.path.clone())
+                        .unwrap_or_else(|| s.state().ok().map(|st| st.title.clone()).unwrap_or_else(|| "Drawing.dwg".to_string())),
+                    Input::Text(t) | Input::Keyword(t) => {
+                        let trimmed = t.trim();
+                        if trimmed.is_empty() {
+                            s.state()
+                                .ok()
+                                .and_then(|st| st.path.clone())
+                                .unwrap_or_else(|| s.state().ok().map(|st| st.title.clone()).unwrap_or_else(|| "Drawing.dwg".to_string()))
+                        } else {
+                            trimmed.to_string()
+                        }
+                    }
+                    _ => return Ok(Step::Continue),
+                };
+
+                let final_path = if *binary && !path_str.ends_with(".dxf") && !path_str.contains('.') { format!("{path_str}.dxf") } else { path_str };
+
+                let mut params = json!({ "path": final_path, "binary": *binary });
+                if let Some(v) = version {
+                    params["version"] = json!(v.year());
+                }
+                let r = run_saveas_reporting(s, &params)?;
+                if let Some(msg) = r.get("message").and_then(Value::as_str) {
+                    s.echo(msg);
+                }
+                Ok(Step::Done)
+            }
         }
     }
 }

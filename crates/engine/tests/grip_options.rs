@@ -325,3 +325,44 @@ fn grip_option_json_form() {
         assert!(s.execute("grip.option", &p).is_err(), "{p}");
     }
 }
+
+#[test]
+fn add_vertex_on_arc_segment_preserves_curvature() {
+    let mut s = Session::new();
+    let bulge_90 = (std::f64::consts::FRAC_PI_2 / 4.0).tan();
+    s.execute(
+        "pline",
+        &json!({
+            "vertices": [
+                { "p": [10, 0], "bulge": bulge_90 },
+                [0, 10],
+                [-10, 10]
+            ]
+        }),
+    )
+    .unwrap();
+    let h = s.doc().unwrap().model.iter().last().unwrap().handle;
+
+    // Adding vertex at the arc's midpoint (10*cos(45°), 10*sin(45°))
+    let mid_x = 10.0 * (std::f64::consts::FRAC_PI_4).cos();
+    let mid_y = 10.0 * (std::f64::consts::FRAC_PI_4).sin();
+    s.execute(
+        "grip.option",
+        &json!({
+            "handle": h.hex(),
+            "index": 0,
+            "option": "addVertex",
+            "to": [mid_x, mid_y]
+        }),
+    )
+    .unwrap();
+
+    let vs = vertices(&s, h);
+    assert_eq!(vs.len(), 4);
+    // Both sub-segments must preserve curvature and have non-zero bulges representing 45° arcs: tan((pi/4)/4)
+    let expected_sub_bulge = (std::f64::consts::FRAC_PI_4 / 4.0).tan();
+    assert!((vs[0].1 - expected_sub_bulge).abs() < 1e-4, "subsegment 0 bulge: {}", vs[0].1);
+    assert!((vs[1].1 - expected_sub_bulge).abs() < 1e-4, "subsegment 1 bulge: {}", vs[1].1);
+    // The straight segment from (0, 10) to (-10, 10) remains straight (bulge 0.0)
+    assert_eq!(vs[2].1, 0.0);
+}

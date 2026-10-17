@@ -53,6 +53,11 @@ fn command_line_menu() {
     assert!(find(&g, "Recent Commands/LINE").is_some());
     assert!(find(&g, "Dynamic Input").is_some() && find(&g, "Command History").is_some());
     assert!(find(&g, "Copy History").is_some_and(|(_, e)| e));
+    app.services.get_clipboard = Some(Box::new(|| Some("circle 5,5 3".to_string())));
+    let g = sm::command_line_entries(&app);
+    assert!(find(&g, "Paste to Command Line").is_some_and(|(_, e)| e));
+    choose(&mut app, &g, "Paste to Command Line");
+    assert_eq!(app.cmd.buffer, "circle 5,5 3");
     choose(&mut app, &g, "Lines of Command History/5");
     assert_eq!(app.ui.history_lines, 5);
     choose(&mut app, &g, "Recent Commands/LINE");
@@ -110,9 +115,12 @@ fn layout_tab_menu() {
     assert_eq!(layout_names(&app).len(), n + 1);
     assert!(matches!(app.session.state().unwrap().space, cadcraft_doc::Space::Paper(_)), "the new layout is current");
 
-    // Page Setup acts on the right-clicked tab.
+    // Page Setup and Select All Layouts act on the right-clicked tab.
     let g = sm::layout_tab_entries(&app, "Sheet A");
     assert!(find(&g, "Page Setup Manager...").is_some() && find(&g, "Print...").is_some());
+    assert!(find(&g, "Select All Layouts").is_some_and(|(_, e)| e));
+    choose(&mut app, &g, "Select All Layouts");
+    assert!(app.session.log.last().is_some_and(|l| l.contains("layout(s) selected")));
 }
 
 #[test]

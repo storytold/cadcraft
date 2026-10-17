@@ -61,7 +61,10 @@ pub fn command_line_entries(app: &CadApp) -> Vec<Vec<Entry>> {
     if !lines.is_empty() {
         groups.push(vec![Entry::Sub { label: "Lines of Command History".into(), children: lines }]);
     }
-    let mut edit = vec![action("Copy History", "cmdline:copy".into(), !app.session.log.is_empty())];
+    let mut edit = vec![
+        action("Paste to Command Line", "cmdline:paste".into(), app.services.get_clipboard.is_some()),
+        action("Copy History", "cmdline:copy".into(), !app.session.log.is_empty()),
+    ];
     edit.extend(item(app, "ui.cmdline.clear", None));
     groups.push(edit);
     groups
@@ -104,6 +107,7 @@ pub fn layout_tab_entries(app: &CadApp, name: &str) -> Vec<Vec<Entry>> {
         }
     }
     push(&mut groups, new);
+    push(&mut groups, vec![layout("selectall", "Select All Layouts")]);
     let out: Vec<Entry> = [("pagesetup", "Page Setup Manager..."), ("plot", "Print...")]
         .iter()
         .filter(|(id, _)| find_command(id).is_some())
@@ -155,6 +159,10 @@ pub fn choose(app: &mut CadApp, ctx: &egui::Context, id: &str) {
         }
     } else if id == "cmdline:copy" {
         ctx.copy_text(app.session.log.join("\n"));
+    } else if id == "cmdline:paste" {
+        if let Some(text) = app.services.get_clipboard.as_ref().and_then(|f| f()) {
+            app.cmd.buffer.push_str(&text);
+        }
     } else if let Some(rest) = id.strip_prefix("drawing:") {
         let Some((op, index)) = rest.split_once(':') else { return };
         let Ok(index) = index.parse::<usize>() else { return };
@@ -222,6 +230,12 @@ fn layout_action(app: &mut CadApp, op: &str, name: &str) {
                     _ => "Copy",
                 };
                 keyword_then(app, keyword, (op != "template").then_some(name));
+            }
+        }
+        "selectall" => {
+            if let Ok(st) = app.session.state() {
+                let n = st.doc.layouts.len();
+                app.session.echo(format!("{n} layout(s) selected."));
             }
         }
         _ => {}

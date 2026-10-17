@@ -176,6 +176,7 @@ mod tests {
                 b.borrow_mut().push(name.to_string());
                 None
             })),
+            ..Default::default()
         };
         (CadApp::new(Session::new(), services), asked)
     }

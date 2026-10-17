@@ -5,7 +5,7 @@
 //! undoable and reachable from scripts, the control channel and MCP.
 
 use cadcraft_doc::{DimKind, EntityKind, Handle, LwPolyline};
-use cadcraft_geom::{Arc, EPS, Mat3, Polyline, Vec2, Vec3, norm_angle};
+use cadcraft_geom::{Arc, EPS, Mat3, Polyline, Vec2, Vec3, arc_to_bulge, bulge_to_arc, ccw_sweep, norm_angle};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -403,13 +403,21 @@ pub fn grip_action(kind: &EntityKind, index: usize, action: GripAction, to: Opti
             let at = match poly_grip(p, index)? {
                 PolyGrip::Vertex(i) | PolyGrip::Mid(i) => i,
             };
-            if at >= p.vertices.len() {
+            let n = p.vertices.len();
+            if at >= n {
                 return None;
             }
+            let (b1, b2) = if at + 1 < n || p.closed {
+                let next_idx = (at + 1) % n;
+                let (a, b) = (p.vertices[at].p, p.vertices[next_idx].p);
+                let old_bulge = p.vertices[at].bulge;
+                split_bulge(a, b, old_bulge, to)
+            } else {
+                (0.0, 0.0)
+            };
             let v = p.vertices.get_mut(at)?;
-            // The segment is split in two straight ones.
-            v.bulge = 0.0;
-            let nv = cadcraft_geom::PolyVertex { p: to, bulge: 0.0, ..*v };
+            v.bulge = b1;
+            let nv = cadcraft_geom::PolyVertex { p: to, bulge: b2, ..*v };
             p.vertices.insert(at + 1, nv);
         }
         (EntityKind::LwPolyline(p), GripAction::RemoveVertex) => {
@@ -535,6 +543,44 @@ impl Session {
 /// Polyline helper kept public for the UI: segment midpoints are grips too.
 pub fn polyline_grip_count(p: &LwPolyline) -> usize {
     p.vertices.len() + Polyline { vertices: p.vertices.clone(), closed: p.closed }.segments().len().min(p.vertices.len())
+}
+
+/// Split an arc bulge segment from `a` to `b` into two arcs at point `p` (sub-segment 1: a -> p, sub-segment 2: p -> b).
+/// Preserves the original circular curvature rather than straightening the arc.
+fn split_bulge(a: Vec2, b: Vec2, bulge: f64, p: Vec2) -> (f64, f64) {
+    if bulge.abs() < 1e-12 {
+        return (0.0, 0.0);
+    }
+    let Some((arc, ccw)) = bulge_to_arc(a, b, bulge) else {
+        return (0.0, 0.0);
+    };
+    let c = arc.center;
+    let th_a = c.angle_to(a);
+    let th_b = c.angle_to(b);
+    let th_p = c.angle_to(p);
+    if ccw {
+        let total = ccw_sweep(th_a, th_b);
+        let s1 = ccw_sweep(th_a, th_p);
+        if s1 > 1e-6 && s1 < total - 1e-6 {
+            let s2 = total - s1;
+            (arc_to_bulge(s1), arc_to_bulge(s2))
+        } else {
+            let half = total / 2.0;
+            let b_half = arc_to_bulge(half);
+            (b_half, b_half)
+        }
+    } else {
+        let total = ccw_sweep(th_b, th_a);
+        let s1 = ccw_sweep(th_p, th_a);
+        if s1 > 1e-6 && s1 < total - 1e-6 {
+            let s2 = total - s1;
+            (arc_to_bulge(-s1), arc_to_bulge(-s2))
+        } else {
+            let half = total / 2.0;
+            let b_half = arc_to_bulge(-half);
+            (b_half, b_half)
+        }
+    }
 }
 
 #[cfg(test)]

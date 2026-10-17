@@ -96,3 +96,35 @@ fn opening_binary_dxf_keeps_it_binary() {
     assert!(!s.state().unwrap().binary_dxf);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn interactive_saveas_prompts_format_and_path() {
+    install();
+    let dir = std::env::temp_dir().join(format!("cadcraft-saveas-interactive-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = |name: &str| dir.join(name).to_string_lossy().to_string();
+    let read = |name: &str| String::from_utf8(std::fs::read(dir.join(name)).unwrap()).unwrap();
+
+    let mut s = Session::new();
+    s.cmdline("saveas").unwrap();
+    assert!(s.prompt_text().contains("Enter file format"), "{}", s.prompt_text());
+
+    // Choose format 2010
+    s.cmdline("2010").unwrap();
+    assert!(s.prompt_text().contains("Save drawing as"), "{}", s.prompt_text());
+
+    // Enter target path
+    let target = path("interactive_test.dxf");
+    s.cmdline(&target).unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(read("interactive_test.dxf"), "2010|false");
+
+    // Also test DXF Binary choice
+    s.cmdline("saveas").unwrap();
+    s.cmdline("BinaryDXF").unwrap();
+    let target_bin = path("interactive_bin.dxf");
+    s.cmdline(&target_bin).unwrap();
+    assert_eq!(read("interactive_bin.dxf"), "-|true");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
