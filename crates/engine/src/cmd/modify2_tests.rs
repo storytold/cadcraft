@@ -721,3 +721,82 @@ fn offset_polyline_arc_bulge_follows_joined_endpoints() {
     assert!(near(arc.center, 10.0, 5.0), "arc centre drifted to {:?}", arc.center);
     assert!((arc.radius - 4.0).abs() < 1e-6, "radius {}", arc.radius);
 }
+
+/// Offset the polyline `pl` by 1 towards `side` with OFFSETGAPTYPE = `gap`.
+fn offset_with_gap(pts: Value, closed: bool, side: [f64; 2], gap: i64) -> cadcraft_doc::LwPolyline {
+    let mut s = Session::new();
+    s.execute("setvar", &json!({"name": "OFFSETGAPTYPE", "value": gap})).unwrap();
+    let pl = pline(&mut s, pts, closed);
+    s.execute("offset", &json!({"handle": pl, "distance": 1, "side": side})).unwrap();
+    poly(&last(&s))
+}
+
+fn area(p: &cadcraft_doc::LwPolyline) -> f64 {
+    Polyline { vertices: p.vertices.clone(), closed: p.closed }.area()
+}
+
+fn square() -> Value {
+    json!([[0, 0], [10, 0], [10, 10], [0, 10]])
+}
+
+#[test]
+fn offset_gap_type_extends_fillets_or_chamfers_outside_corners() {
+    let p = offset_with_gap(square(), true, [12.0, 5.0], 0);
+    assert_eq!(p.vertices.len(), 4);
+    assert!(p.vertices.iter().all(|v| v.bulge == 0.0));
+    assert!((area(&p) - 144.0).abs() < 1e-9, "area {}", area(&p));
+
+    let p = offset_with_gap(square(), true, [12.0, 5.0], 1);
+    assert_eq!(p.vertices.len(), 8);
+    let q = (std::f64::consts::PI / 8.0).tan();
+    assert_eq!(p.vertices.iter().filter(|v| (v.bulge - q).abs() < 1e-9).count(), 4, "{:?}", p.vertices);
+    assert_eq!(p.vertices.iter().filter(|v| v.bulge == 0.0).count(), 4);
+    assert!((area(&p) - (140.0 + std::f64::consts::PI)).abs() < 1e-9, "area {}", area(&p));
+    for v in p.vertices.iter().filter(|v| v.bulge != 0.0) {
+        let (arc, ccw) = cadcraft_geom::bulge_to_arc(v.p, p.vertices[(p.vertices.iter().position(|w| w == v).unwrap() + 1) % 8].p, v.bulge).unwrap();
+        assert!(ccw && (arc.radius - 1.0).abs() < 1e-9, "{arc:?}");
+        assert!([(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)].iter().any(|&(x, y)| near(arc.center, x, y)), "{arc:?}");
+    }
+
+    let p = offset_with_gap(square(), true, [12.0, 5.0], 2);
+    assert_eq!(p.vertices.len(), 8);
+    assert!(p.vertices.iter().all(|v| v.bulge == 0.0));
+    let k = std::f64::consts::SQRT_2 - 1.0;
+    assert!(p.vertices.iter().any(|v| near(v.p, 10.0 + k, -1.0)) && p.vertices.iter().any(|v| near(v.p, 11.0, -k)), "{:?}", p.vertices);
+    // Every chamfer lies at distance 1 from its corner.
+    let corners = [Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(10.0, 10.0), Vec2::new(0.0, 10.0)];
+    for i in 0..8 {
+        let (a, b) = (p.vertices[i].p, p.vertices[(i + 1) % 8].p);
+        if a.dist(b) < 2.0 {
+            let c = corners.iter().min_by(|x, y| x.dist(a).total_cmp(&y.dist(a))).unwrap();
+            assert!((cadcraft_geom::Line::new(a, b).dist(*c) - 1.0).abs() < 1e-9, "chamfer {a:?}-{b:?}");
+        }
+    }
+    assert!((area(&p) - (144.0 - 2.0 * (1.0 - k) * (1.0 - k))).abs() < 1e-9, "area {}", area(&p));
+}
+
+#[test]
+fn offset_gap_type_leaves_inside_corners_and_arc_joints_alone() {
+    let inward: Vec<_> = (0..3).map(|g| offset_with_gap(square(), true, [5.0, 2.0], g).vertices).collect();
+    assert_eq!(inward[0].len(), 4);
+    assert!(inward.iter().all(|v| *v == inward[0]));
+    // An L's inside corner.
+    let l = json!([[0, 0], [10, 0], [10, 10]]);
+    let inside: Vec<_> = (0..3).map(|g| offset_with_gap(l.clone(), false, [8.0, 2.0], g).vertices).collect();
+    assert!(near(inside[0][1].p, 9.0, 1.0), "{:?}", inside[0]);
+    assert!(inside.iter().all(|v| *v == inside[0]));
+    // A line into an arc keeps its join.
+    let la = json!([[0, -5], {"p": [10, 0], "bulge": 1}, [10, 10]]);
+    let arcs: Vec<_> = (0..3).map(|g| offset_with_gap(la.clone(), false, [12.0, 5.0], g).vertices).collect();
+    assert!(arcs.iter().all(|v| *v == arcs[0]));
+    let outward: Vec<_> = (0..3).map(|g| offset_with_gap(la.clone(), false, [9.0, 5.0], g).vertices).collect();
+    assert!(outward.iter().all(|v| *v == outward[0]));
+}
+
+#[test]
+fn offset_echoes_the_gap_type() {
+    let mut s = Session::new();
+    s.execute("setvar", &json!({"name": "OFFSETGAPTYPE", "value": 1})).unwrap();
+    s.cmdline("offset").unwrap();
+    assert!(s.log.iter().any(|l| l.contains("OFFSETGAPTYPE=1")), "{:?}", s.log);
+}

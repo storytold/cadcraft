@@ -73,7 +73,7 @@ constraints 10%.
 | Circle, arc | exact | exact (radius change) |
 | Ellipse | spline approximation within tolerance | **a polyline** from tessellation at 1e-3 × major axis |
 | Spline | spline approximation within tolerance | tessellate at 1e-3, offset vertices along normals, keep about 40 points, refit: **lossy** |
-| Polyline with arcs | exact, with self-intersection trimming, OFFSETGAPTYPE (extend, fillet, chamfer) | segments offset and joined at neighbours' intersections; **arc bulges not recomputed** after endpoints move (comment at L413), **no loop cleanup**, collapsed segments not removed; OFFSETGAPTYPE only echoed |
+| Polyline with arcs | exact, with self-intersection trimming, OFFSETGAPTYPE (extend, fillet, chamfer) | segments offset and joined at neighbours' intersections; arc bulges follow the joined endpoints; OFFSETGAPTYPE 0/1/2 extends, fillets or chamfers the outside corner between two lines (arc joints are always extended); **no loop cleanup**, collapsed segments not removed |
 | Options: Through, Erase, Layer, Multiple | yes | see [gaps.md](gaps.md) |
 
 ## Trim, extend, fillet, chamfer, break, join, lengthen (≈ 70%)
@@ -140,7 +140,7 @@ coordinates to 1e-9 relative.
 
 1. Exact ellipse and spline intersection and closest point (subdivision + Newton with a
    relative tolerance); use them in snaps, TRIM, EXTEND, BREAK. 15–25 h.
-2. Polyline offset with bulge recomputation, self-intersection cleanup and OFFSETGAPTYPE;
+2. Polyline offset with self-intersection cleanup;
    spline/ellipse offset as fitted splines within a tolerance. 15–25 h.
 3. A tolerance context relative to the drawing's extents, and a known-answer test suite at
    origin and at 1e6–1e7 coordinates. 8–12 h.
