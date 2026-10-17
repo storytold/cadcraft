@@ -116,3 +116,20 @@ fn a_command_keyword_wins_over_a_snap_word() {
     s.cmdline("arc _cen").unwrap();
     assert!(s.prompt_text().ends_with("Center of:"), "{}", s.prompt_text());
 }
+
+#[test]
+fn tab_cycling_offers_every_candidate_of_each_mode() {
+    let mut s = Session::new();
+    // Two lines with distinct endpoints within the same aperture
+    s.script("LINE 0,0 10,0\n\nLINE 10.04,0.02 20,0\n\n").unwrap();
+    let d = s.doc().unwrap();
+    let space = s.space();
+    let osmode = mode::END;
+    let cursor = Vec2::new(10.02, 0.01);
+    let cands = snap_candidates(d, &space, cursor, 0.1, osmode, None, false);
+    // Both endpoints must be present as candidates, not just the closest one
+    let pts: Vec<Vec2> = cands.iter().map(|h| h.point).collect();
+    assert_eq!(pts.len(), 2, "must offer both endpoint candidates: {pts:?}");
+    assert!(pts.iter().any(|p| (p.x - 10.0).abs() < 1e-4 && p.y.abs() < 1e-4));
+    assert!(pts.iter().any(|p| (p.x - 10.04).abs() < 1e-4 && (p.y - 0.02).abs() < 1e-4));
+}
