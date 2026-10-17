@@ -79,6 +79,9 @@
       </dict>
     </dict>
   </array>
+  <!-- With AutoCAD or LibreOffice installed, .dwg and .dxf files carry their exported types
+       (com.autodesk.autocad.dwg, org.libreoffice.dxf-document) instead of ours, so those are
+       claimed too. Otherwise Finder never offers CADCraft in Open With. -->
   <key>CFBundleDocumentTypes</key>
   <array>
     <dict>
@@ -89,7 +92,7 @@
       <key>LSHandlerRank</key>
       <string>Alternate</string>
       <key>LSItemContentTypes</key>
-      <array><string>ai.storyteller.cadcraft.dxf</string></array>
+      <array><string>ai.storyteller.cadcraft.dxf</string><string>org.libreoffice.dxf-document</string></array>
       <key>CFBundleTypeIconFile</key>
       <string>CADCraft</string>
     </dict>
@@ -101,7 +104,7 @@
       <key>LSHandlerRank</key>
       <string>Alternate</string>
       <key>LSItemContentTypes</key>
-      <array><string>ai.storyteller.cadcraft.dwg</string></array>
+      <array><string>ai.storyteller.cadcraft.dwg</string><string>com.autodesk.autocad.dwg</string></array>
       <key>CFBundleTypeIconFile</key>
       <string>CADCraft</string>
     </dict>

@@ -60,7 +60,7 @@ Detail and evidence: [ui-parity.md](ui-parity.md).
 | U10 | SETVAR covers about 150 of ~1,000 variables (UNDO options, MREDO and UNDOCTL, and header variables such as CIRCLERAD, OFFSETDIST, POLYSIDES, HPNAME and the dimension variables in SETVAR ? landed, #461; typing a bare variable name as a command runs SETVAR on it) | Low-medium | 3–5 |
 | U11 | MVIEW Restore (a saved viewport configuration into a layout); VIEW Orthographic, UCS and background settings; view twist is kept but not shown (Zoom Realtime and Dynamic, ZOOMFACTOR, named views (VIEW) and tiled model viewports with saved configurations (VPORTS) landed in #463) | Low | 1–2 |
 | U12 | Workspaces, navigation bar, CUI customisation, alias editor, ViewCube drag (#7) | Low-medium | 15–25 |
-| U13 | `.dxf` from Finder fails to open on macOS (#158) (window controls fixed, #161) | Medium | 1–2 |
+| U13 | ~~`.dxf` from Finder fails to open on macOS (#158)~~ fixed: Apple events `kAEOpenDocuments` handler registered via `fmv-macos-events` and UTIs claimed for DXF/DWG (window controls fixed, #161) | Medium | 0 |
 
 ## File formats
 

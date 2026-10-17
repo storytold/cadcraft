@@ -554,6 +554,7 @@ dependencies = [
  "cadcraft-ui-egui",
  "eframe",
  "egui",
+ "fmv-macos-events",
  "hidapi",
  "log",
  "muda",
@@ -1411,6 +1412,17 @@ name = "float_next_after"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8bf7cc16383c4b8d58b9905a8509f02926ce3058053c056376248d958c9df1e8"
+
+[[package]]
+name = "fmv-macos-events"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "90642cf66dde7f205dc8b42dfe57b47d0f3a29f571b832742883ef512e23fe55"
+dependencies = [
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+]
 
 [[package]]
 name = "foldhash"
