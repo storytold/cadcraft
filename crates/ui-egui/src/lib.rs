@@ -224,6 +224,8 @@ pub struct CadApp {
     shown_follows_system: bool,
     /// Whether egui was last told to animate (`None` until the first frame).
     shown_animations: Option<bool>,
+    /// The interface scale last handed to egui (`None` until the first frame).
+    shown_interface_scale: Option<f32>,
     pub frame_ms: f64,
     pub quit_requested: bool,
     /// The app may close although drawings have unsaved changes (they were dealt with, or the
@@ -271,6 +273,7 @@ impl CadApp {
             shown_theme: None,
             shown_follows_system: false,
             shown_animations: None,
+            shown_interface_scale: None,
             frame_ms: 0.0,
             quit_requested: false,
             quit_confirmed: false,
@@ -560,6 +563,13 @@ impl CadApp {
         }
         if !animate {
             animation::unsmooth_scroll(ctx);
+        }
+        // Applied only when the saved scale changes, so egui's own keyboard zoom keeps working
+        // within a session (and is never saved).
+        let scale = self.options.interface_scale;
+        if self.shown_interface_scale != Some(scale) {
+            ctx.set_zoom_factor(scale);
+            self.shown_interface_scale = Some(scale);
         }
         self.drain_control(ctx);
         self.finish_opening();

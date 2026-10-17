@@ -161,6 +161,19 @@ fn display(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
         }
         ui.end_row();
 
+        ui.label(crate::tl!("Interface scale"));
+        let scale = app.options.interface_scale;
+        let percent = |s: f32| format!("{} %", (s * 100.0).round());
+        egui::ComboBox::from_id_salt("options_interface_scale").selected_text(percent(scale)).show_ui(ui, |ui| {
+            for n in [75u16, 100, 125, 150, 175, 200, 250, 300] {
+                let s = f32::from(n) / 100.0;
+                if ui.selectable_label((scale - s).abs() < 1e-4, format!("{n} %")).clicked() && (scale - s).abs() >= 1e-4 {
+                    changes.insert("interfaceScale".into(), json!(s));
+                }
+            }
+        });
+        ui.end_row();
+
         ui.label(crate::tl!("Model background"));
         color_row(ui, app.options.model_background, Tokens::DARK.canvas, "modelBackground", changes);
         ui.end_row();
