@@ -9,6 +9,7 @@ use crate::units::{format_angle, format_distance};
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 mod regions;
+mod shapes;
 
 pub fn specs() -> Vec<CommandSpec> {
     let mut v = vec![
@@ -43,6 +44,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("entities", "Query Entities", run_entities)
             .params("{type?, layer?, window?: [[x,y],[x,y]], crossing?: bool (default true; false = entirely inside), limit?, offset?} → {count (all matches), returned, offset, entities}")
             .noundo(),
+        CommandSpec::new("shapes", "Analyze Shapes", shapes::run).params(shapes::PARAMS).noundo(),
         CommandSpec::new("texts", "Query Texts", run_texts)
             .params("{contains?: text (any case), layer?, window?: [[x,y],[x,y]] (by insertion point), limit? (default 200), offset?} → {count (all matches), returned, offset, texts: [{handle, type, layer, text, at, height, rotation (degrees), style, tag? (attributes)}]}: the readable text of TEXT, MTEXT (formatting removed), block attributes and multileaders")
             .noundo(),
@@ -183,7 +185,7 @@ fn run_list(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "message": texts.join("\n\n") }))
 }
 
-fn area_of(pts: &[Vec2]) -> (f64, f64) {
+pub(super) fn area_of(pts: &[Vec2]) -> (f64, f64) {
     let a = cadcraft_geom::shoelace(pts).abs();
     let n = pts.len();
     let per: f64 = (0..n).filter_map(|i| Some(pts.get(i)?.dist(*pts.get((i + 1) % n)?))).sum();
@@ -205,7 +207,7 @@ fn area_text(s: &Session, a: f64, per: f64) -> String {
 }
 
 /// Area and perimeter of a closed object (AREA's Object option).
-fn object_area(s: &Session, h: Handle) -> Result<(f64, f64)> {
+pub(super) fn object_area(s: &Session, h: Handle) -> Result<(f64, f64)> {
     let d = s.doc()?;
     let e = d.entity(h).ok_or_else(|| bad("area", "no such object"))?;
     Ok(match &e.kind {
