@@ -793,6 +793,52 @@ pub struct Face3d {
     #[serde(default)]
     pub hidden_edges: u8,
 }
+impl Face3d {
+    /// The edges drawn: side i (corner i to the next) unless bit i of `hidden_edges` hides it,
+    /// without the zero-length side of a triangle.
+    pub fn visible_edges(&self) -> Vec<(Vec3, Vec3)> {
+        let c = self.corners;
+        (0..4).filter(|i| self.hidden_edges & (1 << i) == 0).map(|i| (c[i], c[(i + 1) % 4])).filter(|(a, b)| a != b).collect()
+    }
+}
+/// POLYLINE polyface mesh (DXF flag 64): its vertices, and faces naming three or four of them
+/// by 1-based index as DXF stores them (0: no fourth vertex; a negative index hides the edge
+/// that starts at that vertex).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PolyfaceMesh {
+    pub vertices: Vec<Vec3>,
+    pub faces: Vec<[i32; 4]>,
+}
+impl PolyfaceMesh {
+    /// The faces as 3D faces (what EXPLODE makes). Faces with fewer than three vertices or an
+    /// index outside the vertex list are skipped.
+    pub fn faces3d(&self) -> Vec<Face3d> {
+        let mut out = Vec::new();
+        for f in &self.faces {
+            let mut corners: Vec<Vec3> = Vec::with_capacity(4);
+            let mut hidden = 0u8;
+            let mut ok = true;
+            for &ix in f.iter().filter(|&&ix| ix != 0) {
+                let at = usize::try_from(ix.unsigned_abs()).ok().and_then(|n| n.checked_sub(1));
+                let Some(p) = at.and_then(|n| self.vertices.get(n)) else {
+                    ok = false;
+                    break;
+                };
+                if ix < 0 {
+                    hidden |= 1 << corners.len();
+                }
+                corners.push(*p);
+            }
+            match (ok, corners.as_slice()) {
+                // A triangle's closing edge is the 3DFACE's fourth (the third is degenerate).
+                (true, [a, b, c]) => out.push(Face3d { corners: [*a, *b, *c, *c], hidden_edges: hidden | if hidden & 4 != 0 { 8 } else { 0 } }),
+                (true, [a, b, c, d]) => out.push(Face3d { corners: [*a, *b, *c, *d], hidden_edges: hidden }),
+                _ => {}
+            }
+        }
+        out
+    }
+}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RayLine {
     pub base: Vec3,
@@ -822,6 +868,27 @@ pub struct Viewport {
     /// Display on (MVIEW ON/OFF). An off viewport shows its border but no model space.
     #[serde(default = "yes")]
     pub on: bool,
+    /// A 3D view of model space (`view_center` is then in its view coordinates); `None`: plan view.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view3d: Option<ViewDir>,
+}
+/// A 3D view of model space as DXF stores it (VIEWPORT and VPORT groups 16/26/36 direction from
+/// the target towards the viewer, 17/27/37 target).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ViewDir {
+    pub dir: Vec3,
+    #[serde(default)]
+    pub target: Vec3,
+}
+impl ViewDir {
+    /// WCS → its view coordinates.
+    pub fn matrix(&self) -> cadcraft_geom::Mat4 {
+        cadcraft_geom::Mat4::view(self.dir, self.target, 0.0)
+    }
+    /// Whether it differs from the plan view of the WCS, which `None` stands for.
+    pub fn is_3d(&self) -> bool {
+        !(self.target == Vec3::ZERO && self.matrix().is_plan())
+    }
 }
 impl Default for Viewport {
     fn default() -> Self {
@@ -837,6 +904,7 @@ impl Default for Viewport {
             layer_colors: Vec::new(),
             clip: None,
             on: true,
+            view3d: None,
         }
     }
 }
@@ -999,6 +1067,7 @@ pub enum EntityKind {
     Solid(Solid),
     Trace(Solid),
     Face3d(Face3d),
+    PolyfaceMesh(PolyfaceMesh),
     Region(Region),
     Viewport(Viewport),
     Image(Image),
@@ -1053,6 +1122,7 @@ impl EntityKind {
             EntityKind::Solid(_) => "2D Solid",
             EntityKind::Trace(_) => "Trace",
             EntityKind::Face3d(_) => "3D Face",
+            EntityKind::PolyfaceMesh(_) => "Polyface Mesh",
             EntityKind::Region(_) => "Region",
             EntityKind::Viewport(_) => "Viewport",
             EntityKind::Image(_) => "Raster Image",
@@ -1088,6 +1158,7 @@ impl EntityKind {
             EntityKind::Solid(_) => "SOLID",
             EntityKind::Trace(_) => "TRACE",
             EntityKind::Face3d(_) => "3DFACE",
+            EntityKind::PolyfaceMesh(_) => "POLYLINE",
             EntityKind::Region(_) => "REGION",
             EntityKind::Viewport(_) => "VIEWPORT",
             EntityKind::Image(_) => "IMAGE",
@@ -1131,10 +1202,10 @@ impl EntityKind {
                 let c = &s.corners;
                 vec![Prim::Fill(vec![c[0].xy(), c[1].xy(), c[3].xy(), c[2].xy()])]
             }
-            EntityKind::Face3d(f) => {
-                let c = &f.corners;
-                let pts = [c[0].xy(), c[1].xy(), c[2].xy(), c[3].xy(), c[0].xy()];
-                pts.windows(2).filter_map(|w| Some(Prim::Seg(Segment::Line(GLine::new(*w.first()?, *w.get(1)?))))).collect()
+            EntityKind::Face3d(f) => f.visible_edges().into_iter().map(|(a, b)| Prim::Seg(Segment::Line(GLine::new(a.xy(), b.xy())))).collect(),
+            // A mesh hides the edges inside its surface.
+            EntityKind::PolyfaceMesh(m) => {
+                m.faces3d().iter().flat_map(Face3d::visible_edges).map(|(a, b)| Prim::Seg(Segment::Line(GLine::new(a.xy(), b.xy())))).collect()
             }
             EntityKind::Region(r) => r.segments().into_iter().map(Prim::Seg).collect(),
             EntityKind::Hatch(h) => {
@@ -1341,6 +1412,7 @@ impl EntityKind {
             }
             EntityKind::Solid(so) | EntityKind::Trace(so) => so.corners.iter_mut().for_each(t3),
             EntityKind::Face3d(f) => f.corners.iter_mut().for_each(t3),
+            EntityKind::PolyfaceMesh(pm) => pm.vertices.iter_mut().for_each(t3),
             EntityKind::Region(r) => {
                 for v in r.loops.iter_mut().flat_map(|l| l.vertices.iter_mut()) {
                     v.p = m.apply(v.p);
@@ -1440,6 +1512,7 @@ impl EntityKind {
             }
             EntityKind::Solid(s) | EntityKind::Trace(s) => s.corners.iter().map(|c| c.xy()).collect(),
             EntityKind::Face3d(f) => f.corners.iter().map(|c| c.xy()).collect(),
+            EntityKind::PolyfaceMesh(m) => m.vertices.iter().map(|v| v.xy()).collect(),
             EntityKind::Region(r) => vec![r.bounds().center()],
             EntityKind::Viewport(v) => {
                 let c = v.center.xy();

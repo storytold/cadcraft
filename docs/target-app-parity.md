@@ -1,6 +1,6 @@
 # Target-app parity: CADCraft vs AutoCAD 2027
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Block Editor for static blocks; blocks evidence updated, numbers not re-measured) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (3D views, orbit and shaded visual styles; 3D evidence updated, numbers not re-measured) · **Target:** Autodesk AutoCAD 2027
 
 The authoritative assessment of how close CADCraft is to AutoCAD, and how much Opus 5.5 work
 remains. [ROADMAP.md](../ROADMAP.md) summarises it, [gaps.md](gaps.md) lists every shortfall,
@@ -158,7 +158,7 @@ presence: an option that prints "not available yet" doesn't count.
 | Layouts, viewports, plotting | 9% | 35% | 35–50 | layouts, per-VP layers, page setups, plot styles (CTB/STB), Plot dialog (#160), Plot Preview and PUBLISH (#186), plotter devices (#564), PDF with text, layers and sheets (#567, #571), polygonal/object/clipped viewports (#453), annotative scales (#468); no MVIEW Restore, no system printers | [gaps](gaps.md#features) |
 | Inquiry and utilities | 4% | 30% | 30–45 | DIST, AREA, ID, LIST, MEASUREGEOM, CAL, FIND, COUNT across layouts, QuickCalc, COMPARE (#563), MASSPROP on regions (#510), autosave/recovery, AUDIT, RECOVER (#406), OPTIONS (#23); no SPELL (open PR #551), ETRANSMIT | [gaps](gaps.md#features) |
 | Parametric constraints | 2% | 50% | 20–30 | all 12 geometric and the dimensional constraints, own solver; DOF report, G2 Smooth, ellipse/spline/block geometry and CONSTRAINTINFER landed (#546) | [geometry-parity](geometry-parity.md#constraint-solver--50) |
-| 3D modelling, visualisation, rendering | 5% | 2% | 300–450 | no UCS, 3D views, orbit, solids, surfaces, meshes, sections, visual styles, materials, lights or rendering; 150 of the 491 menu items | [gaps](gaps.md#features) |
+| 3D modelling, visualisation, rendering | 5% | 2% | 300–450 | 3D views, orbit, shaded visual styles and polyface meshes; no UCS, solids, surfaces, editable meshes, sections, materials, lights or rendering; 150 of the 491 menu items | [gaps](gaps.md#features) |
 | Collaboration and cloud (Sheet Set Manager, Share, Traces, Markup Import, Activity Insights, DWG Compare) | 2% | 5% | 40–70 | none of these exist | [gaps](gaps.md#features) |
 | **Features dimension** | 100% | **≈ 41%** | **735–1,115** | | |
 
@@ -223,6 +223,7 @@ DWG/DXF corpus (files from people who own them); black-box checks in AutoCAD of 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | 3D row evidence: 3D views, orbit, shaded visual styles and polyface meshes; percentages and hours not re-measured |
 | 2026-10-12 | minor | Hatch row evidence: Hatch and Gradient / Hatch Edit dialogs; percentages and hours not re-measured |
 | 2026-10-12 | minor | Blocks row evidence: Block Editor for static blocks (BEDIT, BSAVE, BSAVEAS, BCLOSE); percentages and hours not re-measured |
 | 2026-10-11 | minor | Evidence text of the feature-area rows refreshed for merged work (#397, #406, #408, #417, #420, #433, #448, #451, #453, #459, #468, #507, #510, #525, #534, #546, #547, #558, #563, #564, #567, #571); parity percentages and hours not re-measured |

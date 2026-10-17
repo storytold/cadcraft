@@ -142,7 +142,7 @@ fn draw_preview(ui: &mut egui::Ui, list: Option<&DisplayList>, note: &str) {
             let inner = rect.shrink(12.0);
             let (w, h) = (b.width().max(1e-9), b.height().max(1e-9));
             let scale = (f64::from(inner.width()) / w).min(f64::from(inner.height()) / h);
-            let xf = Xf { rect, center: Vec2::new((b.min.x + b.max.x) / 2.0, (b.min.y + b.max.y) / 2.0), scale };
+            let xf = Xf::new(rect, Vec2::new((b.min.x + b.max.x) / 2.0, (b.min.y + b.max.y) / 2.0), scale);
             crate::canvas::draw_list(&p, &xf, l, Rgb(t.canvas.r(), t.canvas.g(), t.canvas.b()), false);
         }
         None => {

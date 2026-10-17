@@ -62,6 +62,9 @@ pub struct PdfOptions {
     /// Model space only: plot this rectangle (drawing units), fitted to the printable area,
     /// instead of the extents. Ignored for layouts.
     pub window: Option<Bounds2>,
+    /// Model space only: draw it in this 3D view (`window` is then in its view coordinates)
+    /// instead of in plan. Ignored for layouts.
+    pub view: Option<crate::View3d>,
     /// Drawing layers become PDF layers (optional content groups). Default on.
     pub layers: bool,
     /// With `layers`: objects on layers that are off are included on PDF layers that start
@@ -100,6 +103,7 @@ impl Default for PdfOptions {
             compress: false,
             title: String::new(),
             window: None,
+            view: None,
             layers: true,
             include_off_layers: false,
             links: Vec::new(),
@@ -114,7 +118,8 @@ impl Default for PdfOptions {
 impl PdfOptions {
     /// Parse `{paper?, width?, height?, landscape?, fit?, scale?, center?, offset?: [x,y] mm,
     /// lineweights?, compress?, title?, window?: [[x1, y1], [x2, y2]], margins?: [l, b, r, t] (mm),
-    /// hyperlinks?: bool, plotTransparency?: bool}`.
+    /// hyperlinks?: bool, plotTransparency?: bool, viewDir?: [x, y, z], visualStyle?}` (a
+    /// model-space 3D view: [`PdfOptions::view`]).
     pub fn from_json(v: &Value) -> PdfOptions {
         let num = |k: &str| v.get(k).and_then(Value::as_f64).filter(|x| x.is_finite());
         let paper_mm = match (num("width"), num("height")) {
@@ -140,11 +145,36 @@ impl PdfOptions {
             compress: v.get("compress").and_then(Value::as_bool).unwrap_or(true),
             title: v.get("title").and_then(Value::as_str).unwrap_or("").to_string(),
             window: window(v.get("window")),
+            view: view3d(v),
             margins: margins(v.get("margins")),
             hyperlinks: v.get("hyperlinks").and_then(Value::as_bool).unwrap_or(true),
             plot_transparency: v.get("plotTransparency").and_then(Value::as_bool),
         }
     }
+}
+
+/// The 3D view of `viewDir: [x, y, z]` (from the target towards the viewer; any length) in the
+/// `visualStyle` (`2dwireframe` default, `shaded`, `shadedwithedges`). `None` for a missing,
+/// non-finite or zero direction, or a plan view.
+fn view3d(v: &Value) -> Option<crate::View3d> {
+    let a = v.get("viewDir")?.as_array()?;
+    let [x, y, z] = a.as_slice() else { return None };
+    let dir = cadcraft_geom::Vec3::new(x.as_f64()?, y.as_f64()?, z.as_f64()?);
+    let len = dir.len();
+    if !(len.is_finite() && len > 1e-12) {
+        return None;
+    }
+    let projection = cadcraft_geom::Mat4::view(dir * (1.0 / len), cadcraft_geom::Vec3::ZERO, 0.0);
+    if projection.is_plan() {
+        return None;
+    }
+    let style = v.get("visualStyle").and_then(Value::as_str).map(str::to_ascii_lowercase);
+    let (shaded, shaded_edges) = match style.as_deref() {
+        Some("shaded") => (true, false),
+        Some("shadedwithedges") => (true, true),
+        _ => (false, false),
+    };
+    Some(crate::View3d { projection, shaded, shaded_edges })
 }
 
 fn offset(v: Option<&Value>) -> Option<[f64; 2]> {
@@ -410,6 +440,9 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
         view: None,
         skip_viewport: None,
         cancel: None,
+        projection: None,
+        shaded: false,
+        shaded_edges: false,
     };
     let k = unit_mm * PT_PER_MM;
     let window = o.window.filter(|w| matches!(space, Space::Model) && !w.is_empty());
@@ -420,7 +453,8 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
     let tolerance = if tol.is_finite() && tol > 0.0 { tol } else { ropts.tolerance };
     // Relative point sizes follow the plotted window (else the extents).
     let view_height = window.map(|w| w.height()).unwrap_or(0.0);
-    let list = cadcraft_render::build_plot(d, space, &cadcraft_render::Options { tolerance, view_height, ..ropts });
+    let ropts = crate::View3d::apply(o.view.as_ref(), space, cadcraft_render::Options { tolerance, view_height, ..ropts });
+    let list = cadcraft_render::build_plot(d, space, &ropts);
     let b = window.unwrap_or(list.bounds);
     let s = plot_scale(&b, &sheet, fit, o.scale);
     let map = if fit || matches!(space, Space::Model) {

@@ -1,23 +1,20 @@
-//! The navigation overlays on the drawing area: the ViewCube (Top face, Home, compass ring and
-//! the WCS menu) and the UCS icon.
+//! The navigation overlays on the drawing area: the ViewCube (the current view's face, Home,
+//! compass ring and the WCS menu) and the UCS icon.
 //!
 //! Every overlay registers a widget that senses clicks *and* drags, so egui hands the pointer to
 //! the overlay instead of the canvas underneath (a click on the ViewCube must never also pick or
-//! start a selection window in the drawing). What the overlays do goes through commands:
-//! `zoom.extents` (Top face, Home), `ui.toggle.viewcube`, `ui.toggle.ucsicon`.
+//! start a selection window in the drawing). What the overlays do goes through commands and the
+//! session: `plan` (a click on the face), [`cadcraft_engine::Session::drag_view`] (dragging the
+//! face), `zoom.extents` (Home), [`cadcraft_engine::Session::rotate_view`] (dragging the compass
+//! ring), `ui.toggle.viewcube`, `ui.toggle.ucsicon`.
 //!
-//! CADCraft's model view is a 2D plan view of the World Coordinate System: there is no view
-//! twist, no 3D view direction and no user coordinate system yet, so the compass ring explains
-//! that instead of rotating, and the WCS menu lists the only coordinate system there is.
+//! There is no user coordinate system yet, so the WCS menu lists the only one there is.
 
 use egui::{Color32, CursorIcon, Pos2, Rect, Sense, Stroke, pos2, vec2};
 use serde_json::json;
 
 use crate::CadApp;
 use crate::theme::Tokens;
-
-/// Shown when the compass ring is clicked or dragged.
-pub const NO_TWIST: &str = "ViewCube: rotating the view needs a view twist, which the 2D plan view doesn't support yet.";
 
 /// Where the ViewCube's parts are on the canvas.
 #[derive(Clone, Copy, Debug)]
@@ -70,9 +67,9 @@ pub enum Part {
 impl Part {
     fn tip(self) -> &'static str {
         match self {
-            Part::Face => "Top: plan view of the drawing (zoom extents)",
+            Part::Face => "The current view; click for the plan view (PLAN), drag to orbit",
             Part::Home => "Home: zoom to the drawing extents",
-            Part::Ring => "Compass: view rotation isn't available in the 2D plan view yet",
+            Part::Ring => "Compass: drag to turn a 3D view about the Z axis",
         }
     }
 }
@@ -97,7 +94,13 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
     let face_col = if part == Some(Part::Face) { Color32::from_rgb(0xb8, 0xbc, 0xc2) } else { Color32::from_rgb(0x9a, 0x9e, 0xa4) };
     p.rect_filled(l.face, 2.0, face_col);
     p.rect_stroke(l.face, 2.0, Stroke::new(1.0, Color32::from_rgb(0x6c, 0x70, 0x76)), egui::StrokeKind::Inside);
-    p.text(c, egui::Align2::CENTER_CENTER, crate::tl!("TOP"), egui::FontId::proportional(13.0), Color32::from_rgb(0x50, 0x54, 0x5a));
+    let face = match app.session.view_name() {
+        "Top" => crate::tl!("TOP").to_string(),
+        "Custom" => "3D".to_string(),
+        v if v.ends_with("Isometric") => "ISO".to_string(),
+        v => crate::i18n::t(v).to_uppercase(),
+    };
+    p.text(c, egui::Align2::CENTER_CENTER, face, egui::FontId::proportional(13.0), Color32::from_rgb(0x50, 0x54, 0x5a));
     paint_home(&p, l.home, part == Some(Part::Home));
 
     let resp = match part {
@@ -107,15 +110,33 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
     let pressed_on = resp.interact_pointer_pos().and_then(|o| l.part_at(o));
     if resp.clicked() {
         match pressed_on {
-            Some(Part::Face | Part::Home) => {
+            Some(Part::Face) => {
+                let _ = app.run("plan", json!({}));
+            }
+            Some(Part::Home) => {
                 let _ = app.run("zoom.extents", json!({}));
             }
-            Some(Part::Ring) => app.session.echo(NO_TWIST),
-            None => {}
+            Some(Part::Ring) | None => {}
         }
     }
-    if resp.drag_started() && pressed_on == Some(Part::Ring) {
-        app.session.echo(NO_TWIST);
+    if resp.dragged() && pressed_on == Some(Part::Face) {
+        let d = resp.drag_delta();
+        let _ = app.session.drag_view(f64::from(d.x), f64::from(d.y));
+    }
+    // Dragging the ring turns the view with the pointer, about the cube's centre.
+    if resp.dragged()
+        && pressed_on == Some(Part::Ring)
+        && let Some(p1) = resp.interact_pointer_pos()
+    {
+        let p0 = p1 - resp.drag_delta();
+        let angle = |q: Pos2| f64::from(-(q.y - c.y)).atan2(f64::from(q.x - c.x));
+        let mut delta = angle(p1) - angle(p0);
+        if delta > std::f64::consts::PI {
+            delta -= std::f64::consts::TAU;
+        } else if delta < -std::f64::consts::PI {
+            delta += std::f64::consts::TAU;
+        }
+        let _ = app.session.rotate_view(-delta);
     }
     let mut action = None;
     resp.context_menu(|ui| {
@@ -259,26 +280,48 @@ mod tests {
         let (mut app, ctx) = app_and_ctx();
         let l = Layout::new(canvas(&app));
         let fitted = view(&app);
-        // Zoomed in, the Top face fits the drawing again (zoom extents) and nothing is picked.
+        // Zoomed in, the face (PLAN) fits the drawing again (zoom extents) and nothing is picked.
         let _ = app.run("zoom.in", json!({}));
         assert_ne!(view(&app), fitted);
         click(&mut app, &ctx, l.center, egui::PointerButton::Primary);
         assert_eq!(view(&app), fitted, "Top face zooms to extents");
+        // From a 3D view the face goes back to the plan view.
+        let _ = app.run("vpoint", json!({"preset": "seiso"}));
+        assert_eq!(app.session.view_name(), "SE Isometric");
+        click(&mut app, &ctx, l.center, egui::PointerButton::Primary);
+        assert_eq!(app.session.view_name(), "Top");
+        assert_eq!(view(&app), fitted);
         assert!(app.session.pending_window.is_none(), "the click didn't start a selection window");
         assert!(app.session.selection().is_empty());
         // Home does the same.
         let _ = app.run("zoom.in", json!({}));
         click(&mut app, &ctx, l.home.center(), egui::PointerButton::Primary);
         assert_eq!(view(&app), fitted, "Home zooms to extents");
-        // The ring explains that the 2D view can't rotate, and doesn't touch the drawing.
+        // A click on the ring (it turns the view when dragged) doesn't touch the drawing.
         click(&mut app, &ctx, l.center + vec2(0.0, -l.ring), egui::PointerButton::Primary);
-        assert_eq!(app.session.log.last().map(String::as_str), Some(NO_TWIST));
         assert!(app.session.pending_window.is_none());
         assert_eq!(view(&app), fitted);
         // A click in the drawing still reaches the drawing.
         let empty = canvas(&app).center() + vec2(0.0, -300.0);
         click(&mut app, &ctx, empty, egui::PointerButton::Primary);
         assert!(app.session.pending_window.is_some(), "an empty-space click starts a selection window");
+    }
+
+    #[test]
+    fn dragging_the_face_orbits_the_view() {
+        let (mut app, ctx) = app_and_ctx();
+        let l = Layout::new(canvas(&app));
+        let m = egui::Modifiers::default();
+        let end = l.center + vec2(60.0, 40.0);
+        frame(&mut app, &ctx, vec![egui::Event::PointerMoved(l.center)]);
+        frame(&mut app, &ctx, vec![egui::Event::PointerButton { pos: l.center, button: egui::PointerButton::Primary, pressed: true, modifiers: m }]);
+        for k in 1..=4 {
+            frame(&mut app, &ctx, vec![egui::Event::PointerMoved(l.center + (end - l.center) * (k as f32 / 4.0))]);
+        }
+        frame(&mut app, &ctx, vec![egui::Event::PointerButton { pos: end, button: egui::PointerButton::Primary, pressed: false, modifiers: m }]);
+        let d = app.session.state().unwrap().view_dir;
+        assert!(d.z < 1.0 && d.z > 0.0, "looking down at the model from the side: {d:?}");
+        assert!(app.session.pending_window.is_none(), "the drag didn't start a selection window");
     }
 
     #[test]

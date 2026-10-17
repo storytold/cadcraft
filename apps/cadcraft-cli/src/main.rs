@@ -29,7 +29,7 @@ macro_rules! outln {
 use std::process::ExitCode;
 
 use cadcraft_engine::doc::Space;
-use cadcraft_engine::geom::{Bounds2, Vec2};
+use cadcraft_engine::geom::{Bounds2, Mat4, Vec2, Vec3};
 use cadcraft_engine::{Session, View};
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -73,7 +73,9 @@ image framing (png 2400x1600, svg, pdf; always model space):
                            scaled to fit the image without distortion.
   --view extents           always fit the drawing extents.
   --view current           the current view (as last set by zoom/pan/view.set; a freshly
-                           opened drawing's view is its extents plus a 10% margin).";
+                           opened drawing's view is its extents plus a 10% margin). A 3D view
+                           (vpoint, 3dorbit...) is drawn as the screen shows it, in its visual
+                           style; the other framings draw model space in plan.";
 
 /// What part of model space an image export shows.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -163,6 +165,34 @@ fn export_window(s: &Session, framing: Framing, before: Option<&[(u64, Option<Vi
     }
 }
 
+/// The active drawing's 3D model view as an image of the current view draws it, or `None` in plan
+/// view.
+fn current_view3d(s: &Session) -> Option<cadcraft_io::View3d> {
+    let st = s.state().ok()?;
+    let projection = Mat4::view(st.view_dir, Vec3::ZERO, 0.0);
+    if projection.is_plan() {
+        return None;
+    }
+    let (shaded, shaded_edges) = st.visual_style.shading();
+    Some(cadcraft_io::View3d { projection, shaded, shaded_edges })
+}
+
+/// [`export_window`] and the 3D view the image is drawn in: the current view's when the window is
+/// the current view (a 3D view's window is in its view coordinates), else the plan.
+fn export_frame(
+    s: &Session,
+    framing: Framing,
+    before: Option<&[(u64, Option<View>)]>,
+) -> Result<(Option<Bounds2>, Option<cadcraft_io::View3d>), String> {
+    let window = export_window(s, framing, before)?;
+    let current = match framing {
+        Framing::Current => true,
+        Framing::Auto => window.is_some(),
+        Framing::Extents | Framing::Window(_) => false,
+    };
+    Ok((window, if current { current_view3d(s) } else { None }))
+}
+
 fn install_io() {
     cadcraft_engine::cmd::file::set_io(cadcraft_engine::cmd::file::IoHooks {
         read: |b, name| cadcraft_io::read(b, name).map_err(|e| e.to_string()),
@@ -219,12 +249,12 @@ fn info(path: &str) -> Result<(), String> {
 }
 
 fn export(s: &Session, out: &str) -> Result<(), String> {
-    export_framed(s, out, None)
+    export_framed(s, out, None, None)
 }
 
-fn export_framed(s: &Session, out: &str, window: Option<Bounds2>) -> Result<(), String> {
+fn export_framed(s: &Session, out: &str, window: Option<Bounds2>, view: Option<cadcraft_io::View3d>) -> Result<(), String> {
     let d = s.doc().map_err(|e| e.to_string())?;
-    let bytes = cadcraft_io::write_framed(d, out, window).map_err(|e| e.to_string())?;
+    let bytes = cadcraft_io::write_view(d, out, window, view.as_ref()).map_err(|e| e.to_string())?;
     std::fs::write(out, &bytes).map_err(|e| format!("{out}: {e}"))?;
     eprintln!("wrote {out} ({} bytes)", bytes.len());
     if cadcraft_engine::cmd::file::drops_unknown(out) {
@@ -275,8 +305,8 @@ fn convert(args: &[String]) -> Result<(), String> {
     if let Some(m) = skipped_message(s.doc().map_err(|e| e.to_string())?, i) {
         eprintln!("{m}");
     }
-    let window = export_window(&s, framing, None)?;
-    export_framed(&s, o, window)
+    let (window, view) = export_frame(&s, framing, None)?;
+    export_framed(&s, o, window, view)
 }
 
 /// The warning for the records of `path` the reader could not place, or `None` when there are none.
@@ -345,8 +375,8 @@ fn run(args: &[String]) -> Result<(), String> {
         export(&s, &p)?;
     }
     if let Some(p) = exp {
-        let window = if cadcraft_io::is_image(&p) { export_window(&s, framing, Some(&before))? } else { None };
-        export_framed(&s, &p, window)?;
+        let (window, view) = if cadcraft_io::is_image(&p) { export_frame(&s, framing, Some(&before))? } else { (None, None) };
+        export_framed(&s, &p, window, view)?;
     }
     Ok(())
 }
@@ -786,6 +816,39 @@ mod tests {
         // A taller window keeps its height; the 3:2 image adds room left and right.
         s.execute("zoom", &json!({"mode": "center", "center": [5, 5], "height": 4})).unwrap();
         assert_near(export_window(&s, Framing::Auto, Some(&before)).unwrap().unwrap(), b(2.0, 3.0, 8.0, 7.0));
+    }
+
+    #[test]
+    fn current_view_export_draws_the_3d_view() {
+        let mut s = sample_session();
+        let before = model_views(&s);
+        let cmds = [("vpoint", json!({"preset": "swiso"})), ("vscurrent", json!({"style": "shaded"})), ("zoom", json!({"mode": "extents"}))];
+        for (id, p) in &cmds {
+            s.execute(id, p).unwrap();
+        }
+        let (w, view) = export_frame(&s, Framing::Current, Some(&before)).unwrap();
+        let (w, view) = (w.unwrap(), view.unwrap());
+        assert!(view.shaded && !view.shaded_edges && !view.projection.is_plan());
+        assert_eq!(export_frame(&s, Framing::Auto, Some(&before)), Ok((Some(w), Some(view))));
+        // The window is in view coordinates and shows the whole drawing as the 3D view draws it.
+        let opts = cadcraft_engine::render::Options { projection: Some(view.projection), ..Default::default() };
+        let drawn = cadcraft_engine::render::build(s.doc().unwrap(), &Space::Model, &opts).bounds;
+        assert!(w.contains(drawn.min) && w.contains(drawn.max), "{w:?} vs {drawn:?}");
+        // The other framings draw the plan.
+        assert_eq!(export_frame(&s, Framing::Extents, Some(&before)), Ok((None, None)));
+        let explicit = b(1.0, 1.0, 2.0, 2.0);
+        assert_eq!(export_frame(&s, Framing::Window(explicit), Some(&before)), Ok((Some(explicit), None)));
+        // End to end: `run --export --view current` writes the 3D view.
+        let out = std::env::temp_dir().join(format!("cadcraft-cli-3d-{}.svg", std::process::id())).to_string_lossy().to_string();
+        let mut args: Vec<String> = vec!["--sample".into()];
+        for (id, p) in &cmds {
+            args.extend(["--cmd".to_string(), format!("{id} {p}")]);
+        }
+        args.extend(["--export".into(), out.clone(), "--view".into(), "current".into()]);
+        run(&args).unwrap();
+        let written = std::fs::read(&out).unwrap();
+        let _ = std::fs::remove_file(&out);
+        assert_eq!(written, cadcraft_io::write_view(s.doc().unwrap(), "a.svg", Some(w), Some(&view)).unwrap());
     }
 
     #[test]

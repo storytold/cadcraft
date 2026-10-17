@@ -617,6 +617,50 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
             w.s(100, "AcDbEntity");
             w.s(8, &e.common.layer);
         }
+        // Polyface mesh: the vertices (flags 64 | 128), then one face record (128) per face.
+        EntityKind::PolyfaceMesh(m) => {
+            w.s(0, "POLYLINE");
+            common(w, e, owner, paper, "AcDbPolyFaceMesh");
+            w.i(66, 1);
+            w.p(10, Vec3::ZERO);
+            w.i(70, 64);
+            w.i(71, m.vertices.len() as i64);
+            w.i(72, m.faces.len() as i64);
+            for q in &m.vertices {
+                let vh = w.h();
+                w.s(0, "VERTEX");
+                w.s(5, vh);
+                w.s(330, e.handle.hex());
+                w.s(100, "AcDbEntity");
+                w.s(8, &e.common.layer);
+                w.s(100, "AcDbVertex");
+                w.s(100, "AcDbPolyFaceMeshVertex");
+                w.p(10, *q);
+                w.i(70, 192);
+            }
+            for f in &m.faces {
+                let vh = w.h();
+                w.s(0, "VERTEX");
+                w.s(5, vh);
+                w.s(330, e.handle.hex());
+                w.s(100, "AcDbEntity");
+                w.s(8, &e.common.layer);
+                w.s(100, "AcDbFaceRecord");
+                w.p(10, Vec3::ZERO);
+                w.i(70, 128);
+                for (code, ix) in [71, 72, 73, 74].into_iter().zip(f) {
+                    if *ix != 0 {
+                        w.i(code, i64::from(*ix));
+                    }
+                }
+            }
+            let sh = w.h();
+            w.s(0, "SEQEND");
+            w.s(5, sh);
+            w.s(330, e.handle.hex());
+            w.s(100, "AcDbEntity");
+            w.s(8, &e.common.layer);
+        }
         EntityKind::Spline(s) => {
             w.s(0, "SPLINE");
             common(w, e, owner, paper, "AcDbSpline");
@@ -1058,6 +1102,11 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
             w.i(68, if v.on { i64::from(v.id.clamp(1, 32767)) } else { 0 });
             w.i(69, i64::from(v.id));
             w.p2(12, v.view_center);
+            // A 3D view: direction and target (the view centre is relative to it).
+            if let Some(v3) = &v.view3d {
+                w.p(16, v3.dir);
+                w.p(17, v3.target);
+            }
             w.f(45, v.view_height);
             // Status flags: 16384 = display locked, 32768 = always set, 65536 = clipped by the
             // 340 entity, 131072 = off.
@@ -1486,12 +1535,22 @@ fn paper_view(w: &mut W, d: &Drawing, e: &Entity, owner: &str, cx: &Ctx) {
 /// The VPORT table: the `*Active` model space tiles (one viewport on the extents when there is no
 /// tiled configuration) and the saved configurations, each tile a record, the current one first.
 fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
+    // A single *Active viewport keeps its 3D view, on the extents seen from it.
+    let view3d = d.vports.iter().find(|c| c.is_active() && c.tiles.len() == 1).and_then(|c| c.tiles.first()).and_then(|t| t.view3d);
+    let seen = match view3d {
+        Some(v) if !ext.is_empty() => {
+            let m = v.matrix().plane(0.0);
+            Bounds2::from_points(ext.corners().map(|p| m.apply(p)))
+        }
+        _ => ext,
+    };
     let single = VportTile {
         min: Vec2::ZERO,
         max: Vec2::new(1.0, 1.0),
-        center: if ext.is_empty() { Vec2::new(6.0, 4.5) } else { ext.center() },
-        height: if ext.is_empty() { 9.0 } else { (ext.height() * 1.1).max(1e-6) },
+        center: if seen.is_empty() { Vec2::new(6.0, 4.5) } else { seen.center() },
+        height: if seen.is_empty() { 9.0 } else { (seen.height().max(seen.width() / 1.6) * 1.1).max(1e-6) },
         aspect: 1.6,
+        view3d,
     };
     let tiled = d.vports.iter().find(|c| c.is_active() && c.tiles.len() > 1);
     let mut records: Vec<(&str, &VportTile)> = match tiled {
@@ -1512,8 +1571,8 @@ fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
         w.p2(13, d.header.point("SNAPBASE").map(|p| p.xy()).filter(|p| p.is_finite()).unwrap_or(Vec2::ZERO));
         w.p2(14, d.header.snap_unit());
         w.p2(15, d.header.grid_unit());
-        w.p(16, Vec3::Z);
-        w.p(17, Vec3::ZERO);
+        w.p(16, t.view3d.map_or(Vec3::Z, |v| v.dir));
+        w.p(17, t.view3d.map_or(Vec3::ZERO, |v| v.target));
         w.f(40, if t.height.is_finite() && t.height > 0.0 { t.height } else { 1.0 });
         w.f(41, if t.aspect.is_finite() && t.aspect > 0.0 { t.aspect } else { 1.0 });
         w.f(42, 50.0);

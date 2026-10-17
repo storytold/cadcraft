@@ -1,6 +1,6 @@
 //! Saving a drawing with entities of types CADCraft doesn't model (read from another program's
-//! file) as DWG says which ones the file doesn't keep, instead of dropping them silently. DXF
-//! writes them back as read: nothing to report.
+//! file) as DWG says which ones the file doesn't keep, instead of dropping them silently; meshes,
+//! which the DWG keeps, aren't listed. DXF writes them back as read: nothing to report.
 
 use cadcraft_engine::Session;
 use cadcraft_engine::cmd::file::{IoHooks, set_io};
@@ -15,7 +15,7 @@ fn unknown(kind: &str) -> EntityKind {
 fn save_lists_the_entities_the_file_does_not_keep() {
     set_io(IoHooks { read: |_, _| Err("no reader in this test".into()), write: |_, _| Ok(b"0\nEOF\n".to_vec()), plot: None });
     let mut d = Drawing::new_imperial();
-    for k in ["MLINE", "3DSOLID", "MLINE"] {
+    for k in ["MLINE", "3DSOLID", "MLINE", "MESH"] {
         d.add(&Space::Model, Common::default(), unknown(k)).unwrap();
     }
     let mut b = Block::new("Part");

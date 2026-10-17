@@ -137,6 +137,14 @@ fn write_bytes(s: &Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<Vec<
     }
     // A drawing file is the drawing outside the Block Editor; an image is what is shown.
     let d: &cadcraft_doc::Drawing = if is_drawing_file(path) { s.state()?.drawing() } else { s.doc()? };
+    let with_view;
+    let d = match with_model_view(s, d, path) {
+        Some(v) => {
+            with_view = v;
+            &with_view
+        }
+        None => d,
+    };
     let r = if *opts == SaveAs::default() {
         (hooks.write)(d, path)
     } else {
@@ -144,6 +152,26 @@ fn write_bytes(s: &Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<Vec<
         w(d, path, opts)
     };
     r.map_err(|e| bad(cmd, e))
+}
+
+/// The drawing with model space's 3D view in its `*Active` viewport (a single one), so a drawing
+/// file opens in it; `None` when there is nothing to add (plan view, tiled viewports, images).
+fn with_model_view(s: &Session, d: &cadcraft_doc::Drawing, path: &str) -> Option<cadcraft_doc::Drawing> {
+    let st = s.state().ok()?;
+    if cadcraft_geom::Mat4::view(st.view_dir, cadcraft_geom::Vec3::ZERO, 0.0).is_plan() {
+        return None;
+    }
+    if !is_drawing_file(path) || d.vports.iter().any(|c| c.is_active() && c.tiles.len() > 1) {
+        return None;
+    }
+    let mut copy = d.clone();
+    let view3d = Some(cadcraft_doc::ViewDir { dir: st.view_dir, target: cadcraft_geom::Vec3::ZERO });
+    let tile = cadcraft_doc::VportTile { max: cadcraft_geom::Vec2::new(1.0, 1.0), view3d, ..Default::default() };
+    match copy.vports.iter_mut().find(|c| c.is_active()) {
+        Some(c) => c.tiles = vec![cadcraft_doc::VportTile { view3d, ..c.tiles.first().copied().unwrap_or(tile) }],
+        None => copy.vports.push(cadcraft_doc::VportConfig { name: cadcraft_doc::VportConfig::ACTIVE.into(), tiles: vec![tile] }),
+    }
+    Some(copy)
 }
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -508,6 +536,10 @@ pub fn not_saved(d: &Drawing) -> std::collections::BTreeMap<String, usize> {
 /// store section, which is written back with the drawing (`Foreign::data_store`).
 const MODELER_TYPES: [&str; 3] = ["3DSOLID", "REGION", "BODY"];
 
+/// Entity types CADCraft doesn't model that a DWG keeps anyway: the DWG bridge reads their groups
+/// as its own entity and writes it (io's `dwg_keeps_meshes`).
+const DWG_KEEPS: [&str; 1] = ["MESH"];
+
 /// [`not_saved`] for a file saved as `version`. From 2013 on, a 3D solid, region or body the data
 /// store has a record for keeps its geometry and is not counted.
 pub fn not_saved_as(d: &Drawing, version: Version) -> std::collections::BTreeMap<String, usize> {
@@ -517,6 +549,9 @@ pub fn not_saved_as(d: &Drawing, version: Version) -> std::collections::BTreeMap
     for e in stores.flat_map(|s| s.iter()) {
         if let cadcraft_doc::EntityKind::Unknown(u) = &e.kind {
             if MODELER_TYPES.iter().any(|t| u.dxf_type.eq_ignore_ascii_case(t)) && stored.contains(&e.handle) {
+                continue;
+            }
+            if DWG_KEEPS.iter().any(|t| u.dxf_type.eq_ignore_ascii_case(t)) {
                 continue;
             }
             let n = out.entry(u.dxf_type.clone()).or_insert(0);

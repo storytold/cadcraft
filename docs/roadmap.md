@@ -1,6 +1,6 @@
 # CADCraft roadmap detail
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Block Editor for static blocks: "Use blocks" evidence updated) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (3D views, orbit and shaded visual styles: M11 evidence updated) · **Target:** Autodesk AutoCAD 2027
 
 Forward-looking plan: milestones with status, the current focus, and what comes next with
 estimates. The summary is [ROADMAP.md](../ROADMAP.md); the work items behind every line are in
@@ -84,7 +84,7 @@ agents that built each milestone, are in the progress log of [ROADMAP.md](../ROA
 | M8 | Inquiry and utilities, OPTIONS, customisation | ≈ 25% | 45–70 |
 | M9 | Parametric | ≈ 50% | 20–30 |
 | M10 | Performance: 1M entities at 60 fps, large DWG loads | ≈ 60% (internal numbers only) | 20–40 |
-| M11 | 3D: UCS, orbit, visual styles, solids, surfaces, meshes, sections, rendering | ≈ 2% | 300–450 |
+| M11 | 3D: UCS, solids, surfaces, meshes, sections, rendering (3D views, orbit, shaded visual styles and polyface meshes done) | ≈ 2% (not re-measured) | 300–450 |
 | M12 | Automation: AutoLISP, SCRIPT, action recorder, sheet sets, Express Tools | ≈ 15% (MCP, CLI, control channel done) | 130–220 |
 | M13 | 1.0 polish: preferences, workspaces, localisation, accessibility, signed packages, docs | ≈ 15% (signed packages for every platform exist; themes done; string catalog with Ukrainian and German, live language switching, #36) | 110–170 |
 | — | Geometry precision (cross-cutting, see [geometry-parity.md](geometry-parity.md)) | ≈ 40% | 70–110 |
@@ -96,13 +96,14 @@ Milestone rows overlap a little with the cross-cutting rows; the total is the di
 
 ## After beta
 
-3D foundations (UCS, 3D views, orbit, then solids per `plan/adr/0001`), sheet sets, the full
+3D foundations (UCS, then solids per `plan/adr/0001`), sheet sets, the full
 AutoLISP surface, AI features with openly licensed local models, and every remaining language.
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | 3D views, orbit, shaded visual styles and polyface meshes landed: M11 evidence updated; status and hours not re-measured |
 | 2026-10-12 | minor | Block Editor for static blocks landed: "Use blocks" evidence updated; status and hours unchanged (REFEDIT and dynamic blocks remain) |
 | 2026-10-11 | minor | Alpha-gate evidence refreshed for merged work (#459, #525, #528, #160, #186, #564); statuses and hours unchanged |
 | 2026-10-10 | minor | Merged main: fmt fixed, Ukrainian catalog noted in M13, ready for real work 38% |

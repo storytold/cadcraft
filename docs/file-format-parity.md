@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (multiline attributes read, drawn and written) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (polyface meshes kept) · **Target:** Autodesk AutoCAD 2027
 
 Every format AutoCAD 2027 reads or writes, with CADCraft's support, fidelity and tests. Work
 items are in [gaps.md](gaps.md#file-formats); the weighted score feeds
@@ -59,7 +59,7 @@ early (#175), but the throughput problem remains. **DWG ≈ 30% read, ≈ 15% wr
 
 | DXF version | AutoCAD 2027 | CADCraft read | CADCraft write |
 |---|---|---|---|
-| R12 (AC1009), ASCII | read, write | yes: no version gating; old-style POLYLINE/VERTEX read (polyface meshes flattened to 3D polylines) | **no** |
+| R12 (AC1009), ASCII | read, write | yes: no version gating; old-style POLYLINE/VERTEX read (polyface meshes kept as polyface meshes) | **no** |
 | R12 binary | read, write | **no** (binary parser expects R13+ 2-byte group codes) | no |
 | R13–R2018, ASCII | read, write each of 2000/2004/2007/2010/2013/2018 | yes, one reader for all versions | yes, each of 2000–2018 (#421): R2000 structure (later versions add only optional groups) with that `$ACADVER`; UTF-8 text from 2007; no CLASS instance counts (91) |
 | R13–R2018, binary | read, write | yes | yes, each of 2000–2018 (SAVEAS `binary`; a binary file stays binary on QSAVE) |
@@ -71,7 +71,7 @@ early (#175), but the throughput problem remains. **DWG ≈ 30% read, ≈ 15% wr
 | Content | Read | Write | Notes |
 |---|---|---|---|
 | LINE, POINT, CIRCLE, ARC, ELLIPSE, LWPOLYLINE (widths, bulges, elevation), SPLINE, RAY, XLINE | yes | yes | round-trip tests |
-| POLYLINE 2D/3D | yes | yes (as LWPOLYLINE / 3D POLYLINE) | polyface and polygon meshes flattened: lossy |
+| POLYLINE 2D/3D, polyface mesh | yes | yes (as LWPOLYLINE / 3D POLYLINE / polyface mesh, which DWG keeps too) | polyface meshes are one object, drawn by their visible edges, EXPLODE gives 3D faces; polygon meshes become 3D faces: lossy |
 | TEXT, MTEXT, ATTDEF, INSERT + ATTRIB | yes; multiline attributes (embedded MTEXT) read and drawn | yes; multiline attributes written as embedded MTEXT (DXF 2007 and later; older versions: one line) | ATTDEF prompt kept (#137) |
 | DIMENSION (all 7 kinds) | yes | yes, with anonymous `*D` blocks | a reopened dimension's `*D` block is regenerated under its name, unreferenced ones dropped (#495); DIMASSOC objects written |
 | LEADER | yes | yes | |
@@ -80,15 +80,15 @@ early (#175), but the throughput problem remains. **DWG ≈ 30% read, ≈ 15% wr
 | HATCH gradient | yes | yes (#162, fixes #80) | |
 | SOLID, TRACE, 3DFACE | yes | yes | |
 | ACAD_TABLE | yes | yes (entity + block) | |
-| VIEWPORT | yes | yes; frozen-layer lists kept (#150), also as standard group 341 layer handles that other programs read | DWG: the DXF→DWG converter does not yet write group 341 (frozen layers survive a CADCraft round trip via xdata); VP layer colour overrides lost (#99, PR #197) |
+| VIEWPORT | yes | yes; 3D view direction and target (16, 17) drawn and kept, a plan view's target added to its centre; frozen-layer lists kept (#150), also as standard group 341 layer handles that other programs read | DWG: the DXF→DWG converter does not yet write group 341 (frozen layers survive a CADCraft round trip via xdata); VP layer colour overrides lost (#99, PR #197) |
 | IMAGE | yes, with IMAGEDEF | yes, with IMAGEDEF and IMAGEDEF_REACTOR | no attach command or display of the picture yet (FF10) |
 | WIPEOUT | yes | yes (#147, fixes #79) | |
 | MLINE (+ MLINESTYLE), HELIX, TOLERANCE | yes (#510, #420) | yes | |
 | REGION | other programs' REGIONs (ACIS data) kept as Unknown | our regions are written as closed polylines tagged with CADCraft xdata (#510; ACIS has no public spec) | |
-| 3DSOLID, BODY, SURFACE, MESH, SHAPE, UNDERLAY, OLE2FRAME, LIGHT, CAMERA, SECTION, POINTCLOUD, proxy entities | kept as Unknown (raw tags) | written back as read, with their CLASS records (#528); **dropped by DWG save** (acadrust) | only their layer follows edits |
+| 3DSOLID, BODY, SURFACE, MESH, SHAPE, UNDERLAY, OLE2FRAME, LIGHT, CAMERA, SECTION, POINTCLOUD, proxy entities | kept as Unknown (raw tags) | written back as read, with their CLASS records (#528); **dropped by DWG save** (acadrust), except MESH, which the DWG keeps with every vertex and face | only their layer follows edits |
 | Header variables | all read | 36 written | AutoCAD writes about 280 |
 | Tables: LAYER (+ transparency, description), LTYPE, STYLE, DIMSTYLE, BLOCK_RECORD | yes | yes | |
-| Tables: VPORT, VIEW, UCS, APPID | yes | yes: saved viewport configurations (#504), named views, UCSs | UCS elevation lost |
+| Tables: VPORT, VIEW, UCS, APPID | yes | yes: saved viewport configurations (#504), the model view's 3D direction in `*Active` (the drawing opens in it), named views, UCSs | UCS elevation lost |
 | Objects: LAYOUT, DICTIONARY, XRECORD, TABLESTYLE, DIMASSOC | yes | yes | |
 | Objects: GROUP, MLINESTYLE, MLEADERSTYLE, IMAGEDEF, SCALE | yes | yes (groups #417, scale list #468) | |
 | Objects: VISUALSTYLE, PLOTSETTINGS, materials, field objects and other unmodelled objects | kept raw (#528) | written back as read | not editable |
@@ -135,6 +135,10 @@ our output in AutoCAD black-box.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | A plan VIEWPORT or VPORT whose view is kept in its target (centre relative to it, as DWG files often store it) opens on that view instead of the origin |
+| 2026-10-13 | minor | VIEWPORT and the `*Active` VPORT keep their 3D view direction and target (groups 16, 17): layouts draw 3D viewports, a drawing saved in a 3D view opens in it |
+| 2026-10-13 | minor | Polyface meshes read, drawn (visible edges), exploded (3D faces) and written as one POLYLINE polyface mesh instead of loose 3D faces; DWG keeps them |
+| 2026-10-13 | minor | DWG save keeps MESH entities (the bridge reads their groups as meshes and writes them; test `dwg_keeps_meshes`); the save no longer reports them as not saved |
 | 2026-10-12 | minor | PDF output: object transparency plotted as PDF alpha (`/ExtGState` `/ca` `/CA`) when the page setup's or the plot's "Plot transparency" is on; PNG plots blend it, SVG uses `opacity`; plots without it are unchanged byte for byte |
 | 2026-10-12 | minor | DXF/DWG save: the Model layout's plot settings are written as CADCraft plots model space, drawing extents scaled to fit (PLOTSETTINGS 74 = 1, 75 = 0), instead of plot type 5 "Layout information", which other programs' Plot dialogs can't use for model space |
 | 2026-10-12 | minor | VIEWPORT frozen layers also written and read as AutoCAD's group 341 layer handles, so third-party viewers honour per-viewport freezing in DXF (DWG converter gap noted) |

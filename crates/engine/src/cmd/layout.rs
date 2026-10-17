@@ -809,6 +809,14 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
         if let Some(w) = plot_window(s, p, cmd, &space)? {
             o.insert("window".into(), json!([[w.min.x, w.min.y], [w.max.x, w.max.y]]));
         }
+        // The plotter's 3D view: set only here, for a display plot of a 3D model view (whose
+        // window is in that view's coordinates), never taken from the caller.
+        o.remove("viewDir");
+        o.remove("visualStyle");
+        if let Some((dir, style)) = display_view(s, p, &space)? {
+            o.insert("viewDir".into(), json!([dir.x, dir.y, dir.z]));
+            o.insert("visualStyle".into(), json!(style));
+        }
         // Without one, the plotter uses each sheet's page setup.
         match super::plotters::plot_transparency(s, p) {
             Some(t) => o.insert("plotTransparency".into(), json!(t)),
@@ -838,9 +846,30 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
     }
 }
 
+/// The 3D view a `display` plot of model space draws in, as the screen shows it: the view direction
+/// and the visual style's name (`2dwireframe`, `shaded`, `shadedwithedges`). `None` in plan view
+/// and for the other plot areas.
+fn display_view(s: &Session, p: &Value, space: &Space) -> Result<Option<(cadcraft_geom::Vec3, &'static str)>> {
+    let display = str_param(p, "plotArea").is_some_and(|a| a.eq_ignore_ascii_case("display"));
+    if !(display && matches!(space, Space::Model)) {
+        return Ok(None);
+    }
+    let st = s.state()?;
+    if cadcraft_geom::Mat4::view(st.view_dir, cadcraft_geom::Vec3::ZERO, 0.0).is_plan() {
+        return Ok(None);
+    }
+    let style = match st.visual_style {
+        crate::VisualStyle::Wireframe2d => "2dwireframe",
+        crate::VisualStyle::Shaded => "shaded",
+        crate::VisualStyle::ShadedWithEdges => "shadedwithedges",
+    };
+    Ok(Some((st.view_dir, style)))
+}
+
 /// The model-space rectangle a plot of `plotArea` covers: `extents` (default) plots everything,
-/// `display` the current model view, `limits` the drawing limits, `window` the `window` corners.
-/// Layouts plot their sheet (`layout`).
+/// `display` the current model view (in a 3D view, in its view coordinates: [`display_view`]),
+/// `limits` the drawing limits, `window` the `window` corners. Layouts plot their sheet
+/// (`layout`).
 fn plot_window(s: &Session, p: &Value, cmd: &str, space: &Space) -> Result<Option<Bounds2>> {
     let area = str_param(p, "plotArea").map(str::to_ascii_lowercase);
     let w = match (space, area.as_deref()) {
@@ -1067,6 +1096,37 @@ mod tests {
     fn fake_plot(d: &Drawing, space: &Space, opts: &Value) -> std::result::Result<Vec<u8>, String> {
         let _ = d;
         Ok(format!("%PDF-1.4 fake {space:?} {opts}").into_bytes())
+    }
+
+    #[test]
+    fn display_plot_of_a_3d_view_reaches_the_plotter() {
+        super::super::file::set_io(super::super::file::IoHooks {
+            read: |_, _| Err("no reader in tests".into()),
+            write: |_, _| Err("no writer in tests".into()),
+            plot: Some(fake_plot),
+        });
+        let mut s = session_with_model();
+        if io().and_then(|h| h.plot).is_none() {
+            return; // another test installed hooks without a plotter first
+        }
+        let opts = |s: &mut Session, p: Value| {
+            let r = s.execute("plot", &p).unwrap();
+            String::from_utf8(super::super::file::base64_decode(r["data"].as_str().unwrap()).unwrap()).unwrap()
+        };
+        // Plan view: no 3D view, and the caller's is dropped.
+        let text = opts(&mut s, json!({"layout": "Model", "plotArea": "display", "viewDir": [1, 1, 1], "visualStyle": "shaded"}));
+        assert!(!text.contains("viewDir") && !text.contains("visualStyle"), "{text}");
+        s.execute("vpoint", &json!({"preset": "swiso"})).unwrap();
+        s.execute("vscurrent", &json!({"style": "shadedwithedges"})).unwrap();
+        let dir = s.state().unwrap().view_dir;
+        let text = opts(&mut s, json!({"layout": "Model", "plotArea": "display"}));
+        assert!(text.contains(&format!(r#""viewDir":{}"#, json!([dir.x, dir.y, dir.z]))), "{text}");
+        assert!(text.contains(r#""visualStyle":"shadedwithedges""#), "{text}");
+        // The other plot areas plot the plan.
+        for area in ["extents", "limits"] {
+            let text = opts(&mut s, json!({"layout": "Model", "plotArea": area, "viewDir": [1, 1, 1]}));
+            assert!(!text.contains("viewDir"), "{area}: {text}");
+        }
     }
 
     #[test]

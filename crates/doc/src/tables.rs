@@ -824,6 +824,9 @@ pub struct VportTile {
     /// Width / height of the tile on screen when it was saved (0: unknown).
     #[serde(default)]
     pub aspect: f64,
+    /// A 3D view of model space (`center` is then in its view coordinates); `None`: plan view.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view3d: Option<crate::ViewDir>,
 }
 
 /// A model space viewport configuration (VPORTS): `*Active` is the one shown, other names are

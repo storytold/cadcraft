@@ -75,7 +75,14 @@ fn foreign_paper_view_and_hostile_twist() {
 }
 
 fn tile(min: (f64, f64), max: (f64, f64), center: (f64, f64), height: f64) -> VportTile {
-    VportTile { min: Vec2::new(min.0, min.1), max: Vec2::new(max.0, max.1), center: Vec2::new(center.0, center.1), height, aspect: 0.75 }
+    VportTile {
+        min: Vec2::new(min.0, min.1),
+        max: Vec2::new(max.0, max.1),
+        center: Vec2::new(center.0, center.1),
+        height,
+        aspect: 0.75,
+        view3d: None,
+    }
 }
 
 #[test]

@@ -21,7 +21,14 @@ pub fn export_window(d: &Drawing, space: &Space, window: Option<Bounds2>) -> Str
 
 /// [`export_window`], drawing transparency only when `transparency` is on (plots).
 pub fn export_window_with(d: &Drawing, space: &Space, window: Option<Bounds2>, transparency: bool) -> String {
-    let list = cadcraft_render::build(d, space, &cadcraft_render::Options { transparency, ..cadcraft_render::Options::default() });
+    export_view(d, space, window, None, transparency)
+}
+
+/// [`export_window_with`] with model space drawn in `view` (`None`: plan; see
+/// [`crate::write_view`]).
+pub fn export_view(d: &Drawing, space: &Space, window: Option<Bounds2>, view: Option<&crate::View3d>, transparency: bool) -> String {
+    let opts = crate::View3d::apply(view, space, cadcraft_render::Options { transparency, ..cadcraft_render::Options::default() });
+    let list = cadcraft_render::build(d, space, &opts);
     export_list(&list, window)
 }
 

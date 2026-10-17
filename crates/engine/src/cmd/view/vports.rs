@@ -109,7 +109,7 @@ fn live(st: &DocState, px: (f64, f64)) -> (Vec<VportTile>, usize) {
     let now = st.views.iter().find(|(sp, _)| *sp == Space::Model).map(|(_, v)| *v).unwrap_or_default();
     let Some(cfg) = active_config(&st.doc) else {
         let aspect = px.0 / px.1.max(1.0);
-        return (vec![VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center: now.center, height: now.height, aspect }], 0);
+        return (vec![VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center: now.center, height: now.height, aspect, view3d: None }], 0);
     };
     let mut tiles = cfg.tiles.clone();
     let synced =
