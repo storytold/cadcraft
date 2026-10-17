@@ -88,4 +88,27 @@ impl Foreign {
     pub fn data_store_entities(&self) -> std::collections::BTreeSet<Handle> {
         self.data_store.iter().filter(|t| t.code == 320).filter_map(|t| Handle::parse_hex(t.value.trim())).collect()
     }
+
+    /// Update foreign records and target references when a layer is renamed.
+    pub fn rename_layer(&mut self, from: &str, to: &str) {
+        self.rename_record("LAYER", from, to);
+    }
+
+    /// Update foreign records and target references when a block is renamed.
+    pub fn rename_block(&mut self, from: &str, to: &str) {
+        self.rename_record("BLOCK", from, to);
+    }
+
+    fn rename_record(&mut self, kind: &str, from: &str, to: &str) {
+        let from_key = (kind.to_string(), from.to_ascii_uppercase());
+        let to_key = (kind.to_string(), to.to_ascii_uppercase());
+        if let Some(extra) = self.records.remove(&from_key) {
+            self.records.insert(to_key.clone(), extra);
+        }
+        for target in self.targets.values_mut() {
+            if target.0.eq_ignore_ascii_case(kind) && target.1.eq_ignore_ascii_case(from) {
+                target.1 = to_key.1.clone();
+            }
+        }
+    }
 }

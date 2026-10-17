@@ -100,37 +100,98 @@ pub fn specs() -> Vec<CommandSpec> {
 // ---------------- core operations ----------------
 
 pub(crate) fn transform_entities(s: &mut Session, hs: &[Handle], m: &Mat3, copy: bool) -> Result<Vec<Handle>> {
+    use super::layout::viewports::{clip_boundary_of_viewport, viewports_clipped_by};
+    let d = s.doc()?;
+    let mut all_hs = Vec::with_capacity(hs.len());
+    let mut seen = std::collections::BTreeSet::new();
+    for &h in hs {
+        if seen.insert(h) {
+            all_hs.push(h);
+        }
+        if let Some(bh) = clip_boundary_of_viewport(d, h)
+            && seen.insert(bh)
+        {
+            all_hs.push(bh);
+        }
+        for vh in viewports_clipped_by(d, h) {
+            if seen.insert(vh) {
+                all_hs.push(vh);
+            }
+        }
+    }
+
     let d = s.doc_mut()?;
     let mut out = Vec::new();
-    for h in hs {
-        let Some(sp) = d.space_of(*h) else { continue };
+    let mut copied_map = std::collections::BTreeMap::new();
+    for &h in &all_hs {
+        let Some(sp) = d.space_of(h) else { continue };
         if copy {
-            let Some(e) = d.entity(*h).map(|e| (**e).clone()) else { continue };
+            let Some(e) = d.entity(h).map(|e| (**e).clone()) else { continue };
             let nh = d.new_handle();
             let mut ne = Entity { handle: nh, ..e };
             ne.kind.transform(m);
             if let Some(st) = d.space_mut(&sp) {
                 st.push(ne);
+                copied_map.insert(h, nh);
                 out.push(nh);
             }
         } else {
-            let locked = d.entity(*h).and_then(|e| d.layer(&e.common.layer)).is_some_and(|l| l.locked);
+            let locked = d.entity(h).and_then(|e| d.layer(&e.common.layer)).is_some_and(|l| l.locked);
             if locked {
                 continue;
             }
-            d.modify_entity(*h, |e| e.kind.transform(m))?;
-            out.push(*h);
+            d.modify_entity(h, |e| e.kind.transform(m))?;
+            out.push(h);
         }
     }
+
+    if copy {
+        for (&old_h, &new_h) in &copied_map {
+            let old_clip = d.entity(old_h).and_then(|e| if let EntityKind::Viewport(v) = &e.kind { v.clip } else { None });
+            if let Some(old_bh) = old_clip
+                && let Some(&new_bh) = copied_map.get(&old_bh)
+            {
+                let _ = d.modify_entity(new_h, |e| {
+                    if let EntityKind::Viewport(v) = &mut e.kind {
+                        v.clip = Some(new_bh);
+                    }
+                });
+            }
+        }
+    }
+
     Ok(out)
 }
 
 fn erase(s: &mut Session, hs: &[Handle]) -> Result<usize> {
+    use super::layout::viewports::{clip_boundary_of_viewport, viewports_clipped_by};
     let d = s.doc_mut()?;
     let mut n = 0;
-    for h in hs {
-        let locked = d.entity(*h).and_then(|e| d.layer(&e.common.layer)).is_some_and(|l| l.locked);
-        if !locked && d.remove_entity(*h).is_some() {
+    let mut to_erase = Vec::new();
+    let mut to_unclip = Vec::new();
+    for &h in hs {
+        to_erase.push(h);
+        if let Some(bh) = clip_boundary_of_viewport(d, h) {
+            to_erase.push(bh);
+        }
+        for vh in viewports_clipped_by(d, h) {
+            to_unclip.push(vh);
+        }
+    }
+    for vh in to_unclip {
+        let _ = d.modify_entity(vh, |e| {
+            if let EntityKind::Viewport(v) = &mut e.kind {
+                v.clip = None;
+            }
+        });
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for h in to_erase {
+        if !seen.insert(h) {
+            continue;
+        }
+        let locked = d.entity(h).and_then(|e| d.layer(&e.common.layer)).is_some_and(|l| l.locked);
+        if !locked && d.remove_entity(h).is_some() {
             n += 1;
         }
     }
@@ -288,10 +349,29 @@ fn run_stretch(s: &mut Session, p: &Value) -> Result<Value> {
         (crate::select::select_window(s.doc()?, &space, bx, true), StretchArea::Box(bx))
     };
     hs.retain(|h| !super::curves::is_locked(s, *h));
+
+    use super::layout::viewports::{clip_boundary_of_viewport, sync_viewport_to_boundary, viewports_clipped_by};
+    let doc = s.doc()?;
+    let mut extra = Vec::new();
+    for &h in &hs {
+        if let Some(bh) = clip_boundary_of_viewport(doc, h)
+            && !hs.contains(&bh)
+            && !super::curves::is_locked(s, bh)
+        {
+            extra.push(bh);
+        }
+    }
+    hs.extend(extra);
+
     let doc = s.doc_mut()?;
     let areas = [area];
     for h in &hs {
         doc.modify_entity(*h, |e| stretch_entity(e, &areas, d))?;
+    }
+    for &h in &hs {
+        for vh in viewports_clipped_by(doc, h) {
+            sync_viewport_to_boundary(doc, vh, h);
+        }
     }
     Ok(json!({ "stretched": hs.len() }))
 }
@@ -1386,6 +1466,7 @@ pub(crate) fn explode_kind(d: &cadcraft_doc::Drawing, e: &Entity) -> Option<Vec<
                         line_spacing: 1.0,
                         line_spacing_exact: false,
                         columns: None,
+                        background: None,
                     }),
                 });
             }

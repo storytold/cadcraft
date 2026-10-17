@@ -36,9 +36,13 @@ fn index_param(cmd: &str, p: &Value) -> Result<usize> {
 }
 
 fn stretch(s: &mut Session, cmd: &str, p: &Value) -> Result<Value> {
-    let h = curves::handle_param(p, "handle")
+    use super::layout::viewports::{clip_boundary_of_viewport, sync_viewport_to_boundary, viewports_clipped_by};
+    let mut h = curves::handle_param(p, "handle")
         .or_else(|| targets(s, p).ok().and_then(|t| t.first().copied()))
         .ok_or_else(|| bad(cmd, "`handle` is required"))?;
+    if let Some(bh) = clip_boundary_of_viewport(s.doc()?, h) {
+        h = bh;
+    }
     let i = index_param(cmd, p)?;
     let to = point_req(cmd, p, "to")?;
     if curves::is_locked(s, h) {
@@ -73,6 +77,9 @@ fn stretch(s: &mut Session, cmd: &str, p: &Value) -> Result<Value> {
             st.follow_text(dm, d.header.f64("DIMSCALE", 1.0));
         }
         d.modify_entity(*o, |e| e.kind = k.clone())?;
+        for vh in viewports_clipped_by(d, *o) {
+            sync_viewport_to_boundary(d, vh, *o);
+        }
     }
     Ok(json!({ "handle": h.hex(), "handles": edits.iter().map(|(o, _)| o.hex()).collect::<Vec<_>>() }))
 }
@@ -222,6 +229,11 @@ pub(super) fn stretch_grips(s: &mut Session, hot: &[(Handle, usize)], others: &[
         } else {
             d.modify_entity(h, |e| e.kind = k)?;
             out.push(h);
+        }
+    }
+    for &h in &out {
+        for vh in super::layout::viewports::viewports_clipped_by(d, h) {
+            super::layout::viewports::sync_viewport_to_boundary(d, vh, h);
         }
     }
     Ok(out)

@@ -136,7 +136,9 @@
 	Clear History	Очистити журнал
 	Clear	Очистити
 	Clip	Обрізати
+	Clip Image	Обрізати зображення
 	Clip Viewport	Обрізати видовий екран
+	Clip Xref	Обрізати зовнішнє посилання
 	Clipboard	Буфер обміну
 	Close	Закрити
 	Close All	Закрити всі
@@ -406,6 +408,7 @@
 	How to apply:	Спосіб застосування:
 	ID Point	Координати точки
 	Import	Імпортувати
+	Image	Зображення
 	Align Multileaders	Вирівняти мультивиноски
 	Collect	Зібрати
 	Collect Multileaders	Зібрати мультивиноски
@@ -996,6 +999,7 @@
 	When a command is active	Коли команда активна
 	When no command is active	Коли жодна команда не активна
 	Window selection color:	Колір вибору рамкою:
+	Xref	Зовнішнє посилання
 	Xrefs	Зовнішні посилання
 	objects	об'єктів
 	Specify inside diameter of donut	Укажіть внутрішній діаметр кільця

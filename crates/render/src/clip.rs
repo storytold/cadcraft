@@ -391,6 +391,58 @@ impl PolyClip {
             None => Vec::new(),
         }
     }
+    /// Clip a segment: the pieces outside the region.
+    fn clip_segment_inverted(&self, a: Vec2, b: Vec2, out: &mut Vec<(Vec2, Vec2)>) {
+        if !a.is_finite() || !b.is_finite() {
+            return;
+        }
+        let d = b - a;
+        let mut prev = 0.0;
+        for t in self.crossings(a, b).into_iter().chain(std::iter::once(1.0)) {
+            if t - prev > 1e-12 && !self.contains(a + d * ((prev + t) / 2.0)) {
+                out.push((a + d * prev, a + d * t));
+            }
+            prev = t;
+        }
+    }
+    /// Clip a polyline; returns the visible pieces outside the region (each with at least two points).
+    pub fn clip_polyline_inverted(&self, pts: &[Vec2]) -> Vec<Vec<Vec2>> {
+        let mut out: Vec<Vec<Vec2>> = Vec::new();
+        let mut cur: Vec<Vec2> = Vec::new();
+        let mut pieces = Vec::new();
+        for w in pts.windows(2) {
+            let (Some(a), Some(b)) = (w.first(), w.get(1)) else { continue };
+            pieces.clear();
+            self.clip_segment_inverted(*a, *b, &mut pieces);
+            if pieces.is_empty() {
+                if cur.len() >= 2 {
+                    out.push(std::mem::take(&mut cur));
+                }
+                cur.clear();
+            }
+            for (p, q) in pieces.drain(..) {
+                if !cur.last().is_some_and(|l| l.near(p, 1e-12)) {
+                    if cur.len() >= 2 {
+                        out.push(std::mem::take(&mut cur));
+                    }
+                    cur.clear();
+                    cur.push(p);
+                }
+                cur.push(q);
+            }
+        }
+        if cur.len() >= 2 {
+            out.push(cur);
+        }
+        out
+    }
+    /// Clip an infinite line (or a ray when `ray`) to outside the region.
+    pub fn clip_infinite_inverted(&self, base: Vec2, dir: Vec2, ray: bool) -> Vec<Vec<Vec2>> {
+        let far = 1e6;
+        let a = if ray { base } else { base - dir * far };
+        let b = base + dir * far;
+        self.clip_polyline_inverted(&[a, b])
+    }
     /// Clip a triangle list (three vertices per triangle) to the region, re-triangulating as fans.
     pub fn clip_triangles(&self, tris: &[Vec2]) -> Vec<Vec2> {
         let mut out = Vec::new();

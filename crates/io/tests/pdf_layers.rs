@@ -93,6 +93,7 @@ fn layered() -> Drawing {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     d.add(&Space::Model, Common { layer: "Doors".into(), ..Default::default() }, EntityKind::Insert(ins)).unwrap();
     d

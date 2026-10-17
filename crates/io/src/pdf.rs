@@ -280,6 +280,7 @@ pub fn page_for(d: &Drawing, space: &Space, o: &PdfOptions) -> Result<PageSetup>
                 p.paper = a4.name.into();
                 p.width_mm = a4.width_mm;
                 p.height_mm = a4.height_mm;
+                p.margins_mm = a4.margins_mm();
             }
             p
         }
@@ -289,6 +290,7 @@ pub fn page_for(d: &Drawing, space: &Space, o: &PdfOptions) -> Result<PageSetup>
         page.paper = ps.name.into();
         page.width_mm = ps.width_mm;
         page.height_mm = ps.height_mm;
+        page.margins_mm = ps.margins_mm();
     }
     if let Some((w, h)) = o.paper_mm {
         page.paper = format!("User ({w:.2} x {h:.2} MM)");

@@ -142,6 +142,20 @@ pub struct MTextLayout {
     pub bounds: Bounds2,
     /// Plain text of each laid-out line.
     pub lines: Vec<String>,
+    /// The 4 corners of the text boundary in world coordinates: TL, TR, BR, BL.
+    pub corners: [Vec2; 4],
+}
+
+impl MTextLayout {
+    /// Returns the 4 corners (TL, TR, BR, BL) expanded by `margin` along the local text axes.
+    pub fn expanded_corners(&self, margin: f64, rotation: f64) -> [Vec2; 4] {
+        if margin.abs() < 1e-9 {
+            return self.corners;
+        }
+        let u = Vec2::new(rotation.cos(), rotation.sin()) * margin;
+        let v = Vec2::new(-rotation.sin(), rotation.cos()) * margin;
+        [self.corners[0] - u + v, self.corners[1] + u + v, self.corners[2] + u - v, self.corners[3] - u - v]
+    }
 }
 
 /// Inline character format.
@@ -669,9 +683,8 @@ pub fn layout_mtext_with(contents: &str, p: &MTextParams) -> MTextLayout {
         1 => -block_w / 2.0,
         _ => -block_w,
     };
-    out.bounds = Bounds2::from_points(
-        [Vec2::new(x0, top), Vec2::new(x0 + block_w, top), Vec2::new(x0 + block_w, top - block_h), Vec2::new(x0, top - block_h)].map(xf),
-    );
+    out.corners = [Vec2::new(x0, top), Vec2::new(x0 + block_w, top), Vec2::new(x0 + block_w, top - block_h), Vec2::new(x0, top - block_h)].map(xf);
+    out.bounds = Bounds2::from_points(out.corners);
     out
 }
 

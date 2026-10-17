@@ -67,7 +67,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("rename", "Rename...", run_rename)
             .menu(&["Format", "Rename..."])
             .alias(&["ren", "-rename"])
-            .params("{table: layer|linetype|style|dimstyle|block|mleaderstyle|tablestyle|view|ucs, from, to}")
+            .params("{table: layer|linetype|style|dimstyle|block|mleaderstyle|tablestyle|view|ucs|vport, from, to}")
             .interactive(|_| Ok(Box::new(rename::RenameM::default()))),
     ]
 }
@@ -317,6 +317,13 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
                     }
                     if let Some(x) = num("rotation") {
                         t.rotation = x.to_radians();
+                    }
+                    if let Some(bg) = p.get("background") {
+                        if bg.is_null() {
+                            t.background = None;
+                        } else if let Ok(bg_obj) = serde_json::from_value::<cadcraft_doc::MTextBackground>(bg.clone()) {
+                            t.background = Some(bg_obj);
+                        }
                     }
                 }
                 EntityKind::LwPolyline(pl) => {
@@ -969,7 +976,7 @@ fn run_rename(s: &mut Session, p: &Value) -> Result<Value> {
         }
         "block" => rename::block(s, &from, &to)?,
         "mleaderstyle" | "multileaderstyle" => rename::simple(s, "mleaderstyle", &from, &to)?,
-        "tablestyle" | "view" | "ucs" => rename::simple(s, &table, &from, &to)?,
+        "tablestyle" | "view" | "ucs" | "vport" | "vports" => rename::simple(s, &table, &from, &to)?,
         "style" | "textstyle" => {
             run_style_rename(s, &json!({ "from": from, "to": to }))?;
         }

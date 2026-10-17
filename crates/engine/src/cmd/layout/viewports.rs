@@ -114,6 +114,57 @@ fn viewport_of_boundary(d: &Drawing, space: &Space, h: Handle) -> Option<Handle>
     d.space(space)?.iter().find(|e| matches!(&e.kind, EntityKind::Viewport(v) if v.clip == Some(h))).map(|e| e.handle)
 }
 
+/// The boundary clipping viewport `h`, if any.
+pub(crate) fn clip_boundary_of_viewport(d: &Drawing, h: Handle) -> Option<Handle> {
+    match d.entity(h).map(|e| &e.kind) {
+        Some(EntityKind::Viewport(v)) => v.clip.filter(|b| *b != h),
+        _ => None,
+    }
+}
+
+/// All viewports clipped by `h`.
+pub(crate) fn viewports_clipped_by(d: &Drawing, h: Handle) -> Vec<Handle> {
+    let mut out = Vec::new();
+    for l in &d.layouts {
+        for e in l.entities.iter() {
+            if let EntityKind::Viewport(v) = &e.kind
+                && v.clip == Some(h)
+                && e.handle != h
+            {
+                out.push(e.handle);
+            }
+        }
+    }
+    out
+}
+
+/// Sync a viewport's bounds (`center`, `width`, `height`, `view_center`, `view_height`) to match
+/// its clipping boundary entity `boundary`.
+pub(crate) fn sync_viewport_to_boundary(d: &mut Drawing, vh: Handle, boundary: Handle) {
+    let Some(be) = d.entity(boundary).map(|e| (**e).clone()) else { return };
+    let Some(b) = boundary_bounds(&be.kind) else { return };
+    let eb = cadcraft_doc::entity_bounds(d, &be, 0);
+    let b = if eb.is_empty() || !eb.min.is_finite() || !eb.max.is_finite() { b } else { b.union(&eb) };
+    if b.is_empty() || !b.min.is_finite() || !b.max.is_finite() || b.width() < 1e-6 || b.height() < 1e-6 {
+        return;
+    }
+    let _ = d.modify_entity(vh, |e| {
+        if let EntityKind::Viewport(v) = &mut e.kind {
+            let k = v.view_height / v.height.max(1e-12);
+            let c = b.center();
+            let view_center = v.view_center + (c - v.center.xy()) * k;
+            let view_height = b.height() * k;
+            if view_center.is_finite() && view_height.is_finite() && view_height > 0.0 {
+                v.view_center = view_center;
+                v.view_height = view_height;
+            }
+            v.center = c.to3(v.center.z);
+            v.width = b.width();
+            v.height = b.height();
+        }
+    });
+}
+
 /// Add a closed polyline (a polygonal viewport's boundary) to `space`.
 fn add_boundary(s: &mut Session, space: &Space, vs: Vec<PolyVertex>) -> Result<Handle> {
     let common = s.current_common();
@@ -289,7 +340,7 @@ pub(super) fn mview_option(s: &mut Session, p: &Value) -> Option<Result<Value>> 
 }
 
 /// VPCLIP: `{handle? (viewport; default: the selected or active one), object? | points? (+ bulges?), delete?: bool}`.
-pub(super) fn run_vpclip(s: &mut Session, p: &Value) -> Result<Value> {
+pub(crate) fn run_vpclip(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "vpclip";
     let space = target_layout(s, cmd, p)?;
     let d = s.doc()?;
@@ -834,7 +885,7 @@ enum ClipStage {
 
 /// VPCLIP typed at the command line.
 #[derive(Default)]
-pub(super) struct VpclipM {
+pub(crate) struct VpclipM {
     stage: ClipStage,
 }
 

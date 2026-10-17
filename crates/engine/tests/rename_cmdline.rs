@@ -81,8 +81,45 @@ fn rename_prompts_type_old_and_new_name() {
     assert!(s.running.is_none(), "{}", s.prompt_text());
     assert!(s.doc().unwrap().layer("Newer").is_some());
     let n = s.log.len();
-    s.script("-RENAME VP a b\nLINE 0,0 2,0\n\n").unwrap();
+    s.script("-RENAME M a b\nLINE 0,0 2,0\n\n").unwrap();
     assert!(s.running.is_none(), "{}", s.prompt_text());
     assert!(s.log[n..].iter().any(|l| l.contains("not available yet")), "{:?}", &s.log[n..]);
     assert_eq!(s.doc().unwrap().model.iter().filter(|e| matches!(e.kind, EntityKind::Line(_))).count(), 2);
+
+    // A viewport configuration can be renamed.
+    s.execute("-vports", &json!({ "option": "save", "name": "TwoH" })).unwrap();
+    s.script("-RENAME VP TwoH TwoHorizontal\n").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    let d = s.doc().unwrap();
+    assert!(d.vports.iter().any(|c| c.name == "TwoHorizontal"));
+    assert!(!d.vports.iter().any(|c| c.name == "TwoH"));
+}
+
+#[test]
+fn rename_preserves_foreign_records_and_targets() {
+    let mut s = drawing();
+    s.execute("layer.new", &json!({ "name": "OldLayer" })).unwrap();
+    {
+        let d = s.doc_mut().unwrap();
+        let f = std::sync::Arc::make_mut(&mut d.foreign);
+        f.records.insert(
+            ("LAYER".into(), "OLDLAYER".into()),
+            cadcraft_engine::doc::foreign::ForeignExtra { color_book: Some(("RAL".into(), "RAL 1000".into())), ..Default::default() },
+        );
+        f.records.insert(
+            ("BLOCK".into(), "VALVE".into()),
+            cadcraft_engine::doc::foreign::ForeignExtra { color_book: Some(("Pantone".into(), "123 C".into())), ..Default::default() },
+        );
+        f.targets.insert(cadcraft_engine::doc::Handle(100), ("LAYER".into(), "OLDLAYER".into()));
+        f.targets.insert(cadcraft_engine::doc::Handle(101), ("BLOCK".into(), "VALVE".into()));
+    }
+    s.execute("rename", &json!({ "table": "layer", "from": "OldLayer", "to": "NewLayer" })).unwrap();
+    s.execute("rename", &json!({ "table": "block", "from": "Valve", "to": "NewValve" })).unwrap();
+    let d = s.doc().unwrap();
+    assert!(d.foreign.records.contains_key(&("LAYER".into(), "NEWLAYER".into())));
+    assert!(!d.foreign.records.contains_key(&("LAYER".into(), "OLDLAYER".into())));
+    assert!(d.foreign.records.contains_key(&("BLOCK".into(), "NEWVALVE".into())));
+    assert!(!d.foreign.records.contains_key(&("BLOCK".into(), "VALVE".into())));
+    assert_eq!(d.foreign.targets.get(&cadcraft_engine::doc::Handle(100)), Some(&("LAYER".into(), "NEWLAYER".into())));
+    assert_eq!(d.foreign.targets.get(&cadcraft_engine::doc::Handle(101)), Some(&("BLOCK".into(), "NEWVALVE".into())));
 }

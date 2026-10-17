@@ -528,7 +528,15 @@ impl Session {
 
     /// Grip points of an object (the indices `grip_edit` takes).
     pub fn grips_of(&self, handle: Handle) -> Result<Vec<Vec2>> {
-        self.doc()?.entity(handle).map(|e| e.kind.grips()).ok_or_else(|| EngineError::Other("no such object".into()))
+        let d = self.doc()?;
+        let e = d.entity(handle).ok_or_else(|| EngineError::Other("no such object".into()))?;
+        if let EntityKind::Viewport(v) = &e.kind
+            && let Some(bh) = v.clip.filter(|b| *b != handle)
+            && let Some(be) = d.entity(bh)
+        {
+            return Ok(be.kind.grips());
+        }
+        Ok(e.kind.grips())
     }
 }
 

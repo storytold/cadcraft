@@ -280,7 +280,64 @@ pub struct MText {
     /// one column.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub columns: Option<MTextColumns>,
+    /// Background fill or mask (DXF 90/63/421/45/441).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<MTextBackground>,
 }
+
+impl Default for MText {
+    fn default() -> Self {
+        Self {
+            insert: Vec3::ZERO,
+            height: 0.2,
+            width: 0.0,
+            attach: 1,
+            rotation: 0.0,
+            style: standard(),
+            contents: String::new(),
+            line_spacing: 1.0,
+            line_spacing_exact: false,
+            columns: None,
+            background: None,
+        }
+    }
+}
+
+/// MTEXT background fill or mask (DXF groups 90, 63, 421, 45, 441, 430).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MTextBackground {
+    /// Fill setting (DXF 90): 1 = use background colour, 2 = use drawing window background colour / mask.
+    #[serde(default = "default_bg_fill")]
+    pub fill: u8,
+    /// Background colour when `fill == 1` (DXF 63 / 421).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<Color>,
+    /// Scale factor for the background fill box (DXF 45), border offset factor (default 1.5).
+    #[serde(default = "default_bg_scale")]
+    pub scale: f64,
+    /// Background fill transparency (DXF 441).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transparency: Option<u32>,
+    /// Colour book name (DXF 430).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_book: Option<String>,
+}
+
+fn default_bg_fill() -> u8 {
+    1
+}
+
+fn default_bg_scale() -> f64 {
+    1.5
+}
+
+impl Default for MTextBackground {
+    fn default() -> Self {
+        Self { fill: 1, color: None, scale: 1.5, transparency: None, color_book: None }
+    }
+}
+
 fn attach_tl() -> u8 {
     1
 }
@@ -494,6 +551,43 @@ pub struct Insert {
     pub col_spacing: f64,
     #[serde(default)]
     pub row_spacing: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clip: Option<ClipBoundary>,
+}
+
+/// A 2D clipping boundary for block references and xrefs (XCLIP).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipBoundary {
+    /// 2D boundary vertices in the block reference's coordinate space.
+    pub points: Vec<Vec2>,
+    /// Whether the clipping boundary is active (default true).
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Invert clipping boundary: show outside, cut inside (default false).
+    #[serde(default)]
+    pub inverted: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for Insert {
+    fn default() -> Self {
+        Insert {
+            block: String::new(),
+            insert: Vec3::ZERO,
+            scale: unit_scale(),
+            rotation: 0.0,
+            attribs: Vec::new(),
+            cols: 1,
+            rows: 1,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+            clip: None,
+        }
+    }
 }
 fn unit_scale() -> Vec3 {
     Vec3::new(1.0, 1.0, 1.0)

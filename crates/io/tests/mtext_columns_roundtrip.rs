@@ -17,6 +17,7 @@ fn mtext(contents: &str, rotation: f64, columns: Option<MTextColumns>) -> MText 
         line_spacing: 1.0,
         line_spacing_exact: false,
         columns,
+        background: None,
     }
 }
 

@@ -167,6 +167,7 @@ fn insert_entity(blk: &Block, at: Vec2, scale: Vec2, rotation: f64, base: Option
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     if let Some(b) = base {
         let landed = ins.transform(blk.base.xy()).apply(b);

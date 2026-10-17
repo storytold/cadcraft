@@ -1,29 +1,29 @@
 # CADCraft roadmap
 
-**Stage: pre-alpha** · next: alpha, ~2 points (38% → 40% ready for real work) and ~125–190 Opus 5.5 hours away (the four failing core workflows of the [alpha gate](docs/roadmap.md#alpha-gate))
+**Stage: pre-alpha** · next: alpha, ~85–138 Opus 5.5 hours away (the remaining failing core workflows of the [alpha gate](docs/roadmap.md#alpha-gate))
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (hours to ~95% for each readiness number) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-16 · **Change:** minor (clipped viewports/boundaries linked, precision input & plotting margins updated: remaining to alpha ≈ 85–138 h) · **Target:** Autodesk AutoCAD 2027
 
 CADCraft targets full parity with AutoCAD (2D drafting first, then annotation, layouts and
 plotting, DWG, parametrics and 3D), plus what AutoCAD doesn't have: agent control over MCP, a
 scriptable CLI, a web build, Linux and FreeBSD builds, and a free licence.
 
 **Why pre-alpha:** four of AutoCAD's five core workflows fail the [alpha gate](docs/roadmap.md#alpha-gate).
-Precise drafting lacks object snap tracking and has stubbed TRIM/EXTEND/OFFSET options; blocks
-can't be edited in a block editor (REFEDIT edits them in place, xrefs not yet); plots ignore plot styles; and a DWG saved by
-CADCraft drops everything it doesn't model and has never been checked in
-AutoCAD. Dimensioning passes. Ready for real work (≈ 38%) is also under the ~40% alpha bar. Beta
+Precise drafting lacks exact spline/ellipse intersections; blocks
+can't author dynamic block parameters/actions (REFEDIT, BEDIT, reference clipping work); plots lack binary .pc3/system printers; and a DWG saved by
+CADCraft drops custom classes and has never been checked in
+AutoCAD. Dimensioning passes. Ready for real work is ≈ 40% (at the alpha bar). Beta
 is ≈ 600–930 h away.
 
 ## Headline numbers
 
 | Number | Value | Kind |
 |---|---|---|
-| Feature breadth (AutoCAD for Mac menu items with a live command) | **50%** (245 / 491; 2D menus only ≈ 65%) | measured ([parity-checklist.md](docs/parity-checklist.md) + UI-only commands) |
-| Ready for real work | **≈ 38%** | estimated ([target-app-parity.md](docs/target-app-parity.md)) |
-| Mainstream practitioner (2D drafter) | **≈ 28%** (lower than the full number: file exchange, stability and interaction discounts multiply) | estimated ([target-app-parity.md](docs/target-app-parity.md#mainstream-practitioner)) |
-| Essentials user | **≈ 46%** | estimated ([target-app-parity.md](docs/target-app-parity.md#essentials-user)) |
-| Remaining to alpha | **≈ 125–190 h** (the gate rows) | estimated |
+| Feature breadth (AutoCAD for Mac menu items with a live command) | **58%** (284 / 491; 2D menus only ≈ 75%) | measured ([parity-checklist.md](docs/parity-checklist.md) + UI-only commands) |
+| Ready for real work | **≈ 40%** | estimated ([target-app-parity.md](docs/target-app-parity.md)) |
+| Mainstream practitioner (2D drafter) | **≈ 30%** (lower than the full number: file exchange, stability and interaction discounts multiply) | estimated ([target-app-parity.md](docs/target-app-parity.md#mainstream-practitioner)) |
+| Essentials user | **≈ 48%** | estimated ([target-app-parity.md](docs/target-app-parity.md#essentials-user)) |
+| Remaining to alpha | **≈ 85–138 h** (the gate rows) | estimated |
 | Remaining to beta | **≈ 600–930 h** (≈ 150–250 h elapsed with 4–6 agents) | estimated |
 | Remaining to full parity | **≈ 1,300–2,100 h** (≈ 330–550 h elapsed) | estimated |
 

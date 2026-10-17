@@ -88,7 +88,7 @@ early (#175), but the throughput problem remains. **DWG ≈ 30% read, ≈ 15% wr
 | 3DSOLID, BODY, SURFACE, MESH, SHAPE, UNDERLAY, OLE2FRAME, LIGHT, CAMERA, SECTION, POINTCLOUD, proxy entities | kept as Unknown (raw tags) | written back as read, with their CLASS records (#528); **dropped by DWG save** (acadrust) | only their layer follows edits |
 | Header variables | all read | 36 written | AutoCAD writes about 280 |
 | Tables: LAYER (+ transparency, description), LTYPE, STYLE, DIMSTYLE, BLOCK_RECORD | yes | yes | |
-| Tables: VPORT, VIEW, UCS, APPID | yes | yes: saved viewport configurations (#504), named views, UCSs | UCS elevation lost |
+| Tables: VPORT, VIEW, UCS, APPID | yes | yes: saved viewport configurations (#504), named views, UCSs (+ elevation) | |
 | Objects: LAYOUT, DICTIONARY, XRECORD, TABLESTYLE, DIMASSOC | yes | yes | |
 | Objects: GROUP, MLINESTYLE, MLEADERSTYLE, IMAGEDEF, SCALE | yes | yes (groups #417, scale list #468) | |
 | Objects: VISUALSTYLE, PLOTSETTINGS, materials, field objects and other unmodelled objects | kept raw (#528) | written back as read | not editable |

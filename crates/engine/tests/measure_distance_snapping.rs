@@ -217,6 +217,7 @@ fn viewport_frozen_layers_apply_inside_nested_block_references() {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         })
     };
     let mut outer = Block::new("Outer");

@@ -618,10 +618,10 @@ pub(super) fn layout(contents: &str, p: &MTextParams, base: &Fmt) -> MTextLayout
     for pc in &out.pieces {
         out.strokes.extend(pc.shaped.outlines());
     }
-    out.bounds = Bounds2::from_points(
+    out.corners =
         [Vec2::new(box_x0, top), Vec2::new(box_x0 + total_w, top), Vec2::new(box_x0 + total_w, top - block_h), Vec2::new(box_x0, top - block_h)]
-            .map(xf),
-    );
+            .map(xf);
+    out.bounds = Bounds2::from_points(out.corners);
     out
 }
 

@@ -339,6 +339,7 @@ fn truetype_mtext_and_dimension_text() {
             line_spacing: 1.0,
             line_spacing_exact: false,
             columns: None,
+            background: None,
         }),
     )
     .unwrap();
@@ -632,6 +633,7 @@ fn hatch_in_a_squashed_block_keeps_lines_that_show() {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
     // One pixel = 1 unit: 0.125 spacing × 100 along x is far more than a pixel.
@@ -676,6 +678,7 @@ fn insert_of(block: &str) -> EntityKind {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     })
 }
 
@@ -871,6 +874,7 @@ fn mtext_exact_spacing_ignores_taller_lines() {
         line_spacing,
         line_spacing_exact,
         columns: None,
+        background: None,
     };
     let d = Drawing::new_imperial();
     let height = |contents: &str, ls: f64, exact: bool| layout_mtext_entity(&d, &mtext(contents, ls, exact)).bounds.height();
@@ -923,4 +927,40 @@ fn cancelled_build_stops_early() {
     let drawing = cadcraft_doc::Drawing::new_imperial();
     assert!(!crate::hatch::pattern_lines_until(&drawing, &h, &loops, 0.0, None, None).is_empty());
     assert!(crate::hatch::pattern_lines_until(&drawing, &h, &loops, 0.0, None, set.as_deref()).is_empty());
+}
+
+#[test]
+fn insert_clipping_clips_block_geometry() {
+    let mut d = Drawing::new_metric();
+    let mut blk = cadcraft_doc::Block::new("TEST_BLK");
+    blk.entities.push(cadcraft_doc::Entity::new(
+        cadcraft_doc::Handle(1),
+        EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(100.0, 0.0, 0.0) }),
+    ));
+    d.blocks.insert("TEST_BLK".into(), std::sync::Arc::new(blk));
+
+    let mut ins = cadcraft_doc::Insert {
+        block: "TEST_BLK".into(),
+        insert: Vec3::ZERO,
+        clip: Some(cadcraft_doc::ClipBoundary { points: vec![Vec2::new(20.0, -10.0), Vec2::new(50.0, 10.0)], enabled: true, inverted: false }),
+        ..Default::default()
+    };
+    let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(ins.clone())).unwrap();
+
+    let list = build(&d, &Space::Model, &Options::default());
+    // Should have clipped line segment around [20, 0] to [50, 0]
+    let line_pts: Vec<_> = list.prims.iter().filter(|p| p.kind == Kind::Polyline).map(|p| list.points(p)).collect();
+    assert!(!line_pts.is_empty(), "clipped piece should be present");
+    let piece = line_pts.iter().find(|pts| pts.len() >= 2 && pts[0].near(Vec2::new(20.0, 0.0), 1e-4) && pts[1].near(Vec2::new(50.0, 0.0), 1e-4));
+    assert!(piece.is_some(), "found piece from 20 to 50: {line_pts:?}");
+
+    // Now test inverted clipping:
+    ins.clip = Some(cadcraft_doc::ClipBoundary { points: vec![Vec2::new(20.0, -10.0), Vec2::new(50.0, 10.0)], enabled: true, inverted: true });
+    d.modify_entity(h, |e| e.kind = EntityKind::Insert(ins)).unwrap();
+    let inv_list = build(&d, &Space::Model, &Options::default());
+    let inv_pts: Vec<_> = inv_list.prims.iter().filter(|p| p.kind == Kind::Polyline).map(|p| inv_list.points(p)).collect();
+    // Inverted should keep [0, 20] and [50, 100]
+    let piece1 = inv_pts.iter().find(|pts| pts.len() >= 2 && pts[0].near(Vec2::new(0.0, 0.0), 1e-4) && pts[1].near(Vec2::new(20.0, 0.0), 1e-4));
+    let piece2 = inv_pts.iter().find(|pts| pts.len() >= 2 && pts[0].near(Vec2::new(50.0, 0.0), 1e-4) && pts[1].near(Vec2::new(100.0, 0.0), 1e-4));
+    assert!(piece1.is_some() && piece2.is_some(), "inverted keeps both outside pieces: {inv_pts:?}");
 }

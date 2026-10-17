@@ -742,6 +742,24 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
             // Line spacing style: 1 = at least, 2 = exactly.
             w.i(73, if t.line_spacing_exact { 2 } else { 1 });
             w.f(44, t.line_spacing);
+            if let Some(bg) = &t.background {
+                w.i(90, i64::from(bg.fill));
+                if bg.fill == 1
+                    && let Some(color) = bg.color
+                {
+                    w.i(63, i64::from(color.to_aci()));
+                    if let Color::True(rgb) = color {
+                        w.i(421, i64::from(rgb.to_u32()));
+                    }
+                }
+                if let Some(cb) = &bg.color_book {
+                    w.s(430, cb);
+                }
+                w.f(45, bg.scale);
+                if let Some(tr) = bg.transparency {
+                    w.i(441, i64::from(tr));
+                }
+            }
             w.t.extend(crate::dxf_read::mtext_dxf::column_tags(t));
         }
         EntityKind::Insert(i) => {
@@ -761,6 +779,18 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
                 w.i(71, i64::from(i.rows));
                 w.f(44, i.col_spacing);
                 w.f(45, i.row_spacing);
+            }
+            if let Some(cb) = &i.clip {
+                w.s(1001, "CADCRAFT");
+                w.s(1000, "XCLIP");
+                w.i(1070, if cb.enabled { 1 } else { 0 });
+                w.i(1070, if cb.inverted { 1 } else { 0 });
+                w.i(1070, cb.points.len() as i64);
+                for pt in &cb.points {
+                    w.f(1010, pt.x);
+                    w.f(1020, pt.y);
+                    w.f(1030, 0.0);
+                }
             }
             if !i.attribs.is_empty() {
                 for a in &i.attribs {
@@ -1317,6 +1347,7 @@ fn dim_block_entities(d: &Drawing, dm: &Dimension, layer: &str) -> Vec<Entity> {
                 line_spacing: 1.0,
                 line_spacing_exact: false,
                 columns: None,
+                background: None,
             }),
         });
     }
@@ -1368,6 +1399,7 @@ fn table_block_entities(d: &Drawing, t: &Table, layer: &str) -> Vec<Entity> {
                     line_spacing: 1.0,
                     line_spacing_exact: false,
                     columns: None,
+                    background: None,
                 }),
             });
         }
@@ -2024,7 +2056,7 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
         w.p(11, u.x_axis);
         w.p(12, u.y_axis);
         w.i(79, 0);
-        w.f(146, 0.0);
+        w.f(146, u.elevation);
     }
     w.s(0, "ENDTAB");
     let apps = ["ACAD", dxf_ext::APP, "AcadAnnotative", dxf_ext::LAYER_TRANSPARENCY_APP, dxf_ext::LAYER_DESCRIPTION_APP];

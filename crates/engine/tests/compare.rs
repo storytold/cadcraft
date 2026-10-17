@@ -151,6 +151,7 @@ fn hostile_inputs_are_errors() {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     b.entities.push(Entity::new(cadcraft_engine::doc::Handle(0x900), EntityKind::Insert(ins.clone())));
     let d = s.doc_mut().unwrap();

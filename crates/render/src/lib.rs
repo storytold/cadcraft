@@ -804,6 +804,8 @@ enum Clip<'a> {
     Rect(Bounds2),
     /// A clip boundary's outline.
     Poly(&'a clip::PolyClip),
+    /// An inverted clip boundary's outline (keeps what is outside).
+    InvertedPoly(&'a clip::PolyClip),
 }
 
 /// Append `src` to `dst`, clipped to `clip`.
@@ -821,6 +823,11 @@ fn append_clipped(dst: &mut DisplayList, src: &DisplayList, clip: &Clip) {
                     push_raw(dst, p, Kind::Polyline, &piece);
                 }
             }
+            (Kind::Polyline, Clip::InvertedPoly(c)) => {
+                for piece in c.clip_polyline_inverted(pts) {
+                    push_raw(dst, p, Kind::Polyline, &piece);
+                }
+            }
             (Kind::Tris | Kind::Mask, Clip::Rect(rect)) => {
                 let t = clip::clip_triangles(pts, rect);
                 push_raw(dst, p, p.kind, &t);
@@ -829,10 +836,21 @@ fn append_clipped(dst: &mut DisplayList, src: &DisplayList, clip: &Clip) {
                 let t = c.clip_triangles(pts);
                 push_raw(dst, p, p.kind, &t);
             }
+            (Kind::Tris | Kind::Mask, Clip::InvertedPoly(c)) => {
+                let mut out_tris = Vec::new();
+                for t in pts.as_chunks::<3>().0 {
+                    let tb = Bounds2::from_points(t.iter().copied());
+                    if !tb.intersects(&c.bounds()) || !t.iter().all(|pt| c.contains(*pt)) {
+                        out_tris.extend_from_slice(t);
+                    }
+                }
+                push_raw(dst, p, p.kind, &out_tris);
+            }
             (Kind::Point, _) => {
                 let inside = |q: Vec2| match clip {
                     Clip::Rect(rect) => rect.contains(q),
                     Clip::Poly(c) => c.contains(q),
+                    Clip::InvertedPoly(c) => !c.contains(q),
                 };
                 if let Some(q) = pts.first()
                     && inside(*q)
@@ -850,6 +868,13 @@ fn append_clipped(dst: &mut DisplayList, src: &DisplayList, clip: &Clip) {
             (Kind::Infinite { ray }, Clip::Poly(c)) => {
                 if let (Some(base), Some(dir)) = (pts.first(), pts.get(1)) {
                     for piece in c.clip_infinite(*base, *dir, ray) {
+                        push_raw(dst, p, Kind::Polyline, &piece);
+                    }
+                }
+            }
+            (Kind::Infinite { ray }, Clip::InvertedPoly(c)) => {
+                if let (Some(base), Some(dir)) = (pts.first(), pts.get(1)) {
+                    for piece in c.clip_infinite_inverted(*base, *dir, ray) {
                         push_raw(dst, p, Kind::Polyline, &piece);
                     }
                 }
@@ -1101,7 +1126,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             if !b.opts.text {
                 return;
             }
-            mtext(b, ctx, t, rgb, lw);
+            mtext(b, ctx, &e.common.layer, t, rgb, lw);
         }
         EntityKind::Insert(ins) => insert(b, ctx, e, ins, rgb),
         EntityKind::Dimension(dm) => {
@@ -1227,7 +1252,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 let land = m.landing.xy();
                 let dir = if t.insert.x >= land.x { 1.0 } else { -1.0 };
                 b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);
-                mtext(b, ctx, t, rgb, lw);
+                mtext(b, ctx, &e.common.layer, t, rgb, lw);
             }
             if let Some(ins) = &m.block {
                 if m.dogleg > 0.0 && !m.leaders.is_empty() {
@@ -1344,8 +1369,29 @@ fn mtext_color(c: Option<cadcraft_fonts::MTextColor>, rgb: Ink) -> Ink {
     }
 }
 
-fn mtext(b: &mut Builder, ctx: &Ctx, t: &cadcraft_doc::MText, rgb: Ink, lw: f32) {
+fn mtext(b: &mut Builder, ctx: &Ctx, layer: &str, t: &cadcraft_doc::MText, rgb: Ink, lw: f32) {
     let l = layout_mtext_entity(ctx.d, t);
+    if let Some(bg) = &t.background
+        && bg.fill != 0
+        && b.opts.fill
+        && !l.bounds.is_empty()
+    {
+        let scale = if bg.scale > 0.0 { bg.scale } else { 1.5 };
+        let margin = (scale - 1.0).max(0.0) * t.height;
+        let q = l.expanded_corners(margin, t.rotation);
+        let tris = [q[0], q[1], q[2], q[0], q[2], q[3]];
+        if bg.fill == 2 {
+            let n = b.list.prims.len();
+            b.tris(ctx, rgb, &tris);
+            if let Some(p) = b.list.prims.get_mut(n) {
+                p.kind = Kind::Mask;
+            }
+        } else if let Some(c) = bg.color {
+            let layer_color = ctx.layer_color(layer).unwrap_or(Color::Index(7));
+            let bg_ink = ink(c, layer_color, ctx.block_color);
+            b.tris(ctx, bg_ink, &tris);
+        }
+    }
     for p in &l.pieces {
         b.shaped(ctx, mtext_color(p.color, rgb), lw, &p.shaped);
     }
@@ -1514,6 +1560,53 @@ fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rg
                 let off = Vec2::new(ins.col_spacing * f64::from(c), ins.row_spacing * f64::from(r)).rotate(ins.rotation);
                 let m = Mat3::translate(off).then_before(ins.transform(blk.base.xy()));
                 let sub = Ctx { block_pstyle: b.named, block_transparency: b.transparency, ..sub_ctx(ctx, e, m) };
+                if let Some(cb) = &ins.clip
+                    && cb.enabled
+                    && cb.points.len() >= 2
+                {
+                    let raw_pts = if cb.points.len() == 2 {
+                        let (Some(p0), Some(p1)) = (cb.points.first(), cb.points.get(1)) else { continue };
+                        let (min_x, max_x) = (p0.x.min(p1.x), p0.x.max(p1.x));
+                        let (min_y, max_y) = (p0.y.min(p1.y), p0.y.max(p1.y));
+                        vec![Vec2::new(min_x, min_y), Vec2::new(max_x, min_y), Vec2::new(max_x, max_y), Vec2::new(min_x, max_y)]
+                    } else {
+                        cb.points.clone()
+                    };
+                    let world_pts: Vec<Vec2> = raw_pts.iter().map(|p| m.apply(*p)).collect();
+                    if let Some(poly_clip) = clip::PolyClip::new(&world_pts) {
+                        let mut sub_b = Builder {
+                            list: DisplayList::default(),
+                            opts: b.opts,
+                            plotting: b.plotting,
+                            styles: b.styles,
+                            named: b.named,
+                            shared_budget: b.shared_budget,
+                            transparency: b.transparency,
+                        };
+                        for be in blk.entities.iter() {
+                            if matches!(be.kind, EntityKind::AttDef(_)) {
+                                continue;
+                            }
+                            if !sub_b.expand() {
+                                break 'copies;
+                            }
+                            entity(&mut sub_b, &sub, be);
+                        }
+                        let cl = if cb.inverted { Clip::InvertedPoly(&poly_clip) } else { Clip::Poly(&poly_clip) };
+                        append_clipped(&mut b.list, &sub_b.list, &cl);
+
+                        let xclipframe = ctx.d.header.i64("XCLIPFRAME", 2);
+                        let show_frame = if b.plotting { xclipframe == 1 } else { xclipframe != 0 };
+                        if show_frame {
+                            let mut frame = world_pts.clone();
+                            if let Some(first) = world_pts.first() {
+                                frame.push(*first);
+                            }
+                            b.polyline(ctx, rgb, 0.0, &frame);
+                        }
+                        continue;
+                    }
+                }
                 for be in blk.entities.iter() {
                     // Constant/visible attribute definitions inside blocks are not drawn; attribs are.
                     if matches!(be.kind, EntityKind::AttDef(_)) {
@@ -1556,7 +1649,7 @@ fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rg
                 b.transparency = t;
                 let lw = if b.opts.lineweights { lw } else { 0.0 };
                 match (&multiline, &sh) {
-                    (Some(m), _) => mtext(b, ctx, m, ink, lw),
+                    (Some(m), _) => mtext(b, ctx, &e.common.layer, m, ink, lw),
                     (None, Some(sh)) => b.shaped(ctx, ink, lw, sh),
                     (None, None) => {}
                 }

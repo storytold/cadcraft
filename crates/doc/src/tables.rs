@@ -849,6 +849,8 @@ pub struct Ucs {
     pub origin: Vec3,
     pub x_axis: Vec3,
     pub y_axis: Vec3,
+    #[serde(default)]
+    pub elevation: f64,
 }
 
 /// A saved layer state (LAYERSTATE).

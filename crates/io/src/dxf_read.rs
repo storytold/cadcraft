@@ -161,6 +161,29 @@ fn mtext_from(tags: &[Tag], c: &Common) -> MText {
             a => a,
         };
     }
+    let bg_fill = t.i(90);
+    let read_color =
+        || t.i(421).or_else(|| t.i(420)).map(|tc| Color::True(Rgb::from_u32(tc as u32))).or_else(|| t.i(63).map(|aci| Color::from_aci(aci as i16)));
+    let background = if let Some(flag) = bg_fill {
+        if flag != 0 {
+            let fill = if (flag & 2) != 0 || flag == 2 { 2 } else { 1 };
+            let color = read_color();
+            let scale = t.f(45).filter(|s| s.is_finite() && *s > 0.0).unwrap_or(1.5);
+            let transparency = t.i(441).map(|v| v as u32);
+            let color_book = t.s(430);
+            Some(MTextBackground { fill, color, scale, transparency, color_book })
+        } else {
+            None
+        }
+    } else if t.i(63).is_some() || t.i(421).is_some() {
+        let color = read_color();
+        let scale = t.f(45).filter(|s| s.is_finite() && *s > 0.0).unwrap_or(1.5);
+        let transparency = t.i(441).map(|v| v as u32);
+        let color_book = t.s(430);
+        Some(MTextBackground { fill: 1, color, scale, transparency, color_book })
+    } else {
+        None
+    };
     MText {
         insert: t.p(10),
         height: t.fd(40, 0.2).max(1e-9),
@@ -175,6 +198,7 @@ fn mtext_from(tags: &[Tag], c: &Common) -> MText {
         line_spacing: t.fd(44, 1.0),
         line_spacing_exact: t.i(73) == Some(2),
         columns: columns.map(|(c, _)| c),
+        background,
     }
 }
 
@@ -406,6 +430,27 @@ fn entity(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
                 rotation = -rotation;
                 col_spacing = -col_spacing;
             }
+            let clip = t.0.iter().position(|tag| tag.code == 1001 && tag.str().eq_ignore_ascii_case("CADCRAFT")).and_then(|pos| {
+                let sub = &t.0[pos + 1..];
+                if sub.first().is_some_and(|g| g.code == 1000 && g.str().eq_ignore_ascii_case("XCLIP")) {
+                    let enabled = sub.get(1).map(Tag::i64).map(|v| v != 0).unwrap_or(true);
+                    let inverted = sub.get(2).map(Tag::i64).map(|v| v != 0).unwrap_or(false);
+                    let count = sub.get(3).map(Tag::i64).unwrap_or(0).max(0) as usize;
+                    let mut points = Vec::new();
+                    let mut idx = 4;
+                    while idx < sub.len() && points.len() < count {
+                        if sub[idx].code == 1010 {
+                            let x = sub[idx].f64();
+                            let y = sub.get(idx + 1).filter(|g| g.code == 1020).map(Tag::f64).unwrap_or(0.0);
+                            points.push(Vec2::new(x, y));
+                        }
+                        idx += 1;
+                    }
+                    if !points.is_empty() { Some(cadcraft_doc::ClipBoundary { points, enabled, inverted }) } else { None }
+                } else {
+                    None
+                }
+            });
             EntityKind::Insert(Insert {
                 block: t.s(2).unwrap_or_default(),
                 insert: p,
@@ -416,6 +461,7 @@ fn entity(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
                 rows: t.i(71).unwrap_or(1).clamp(1, 10_000) as u32,
                 col_spacing,
                 row_spacing: t.fd(45, 0.0),
+                clip,
             })
         }
         "DIMENSION" => {
@@ -1541,7 +1587,8 @@ fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 if name.is_empty() || !finite || d.ucss.len() >= MAX_OBJECTS {
                     continue;
                 }
-                let u = Ucs { name: name.clone(), origin, x_axis, y_axis };
+                let elevation = t.f(146).filter(|e| e.is_finite()).unwrap_or(0.0);
+                let u = Ucs { name: name.clone(), origin, x_axis, y_axis, elevation };
                 match d.ucss.iter_mut().find(|x| x.name.eq_ignore_ascii_case(&name)) {
                     Some(x) => *x = u,
                     None => d.ucss.push(u),

@@ -144,6 +144,7 @@ fn xref_block_flag_and_path_roundtrip() {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     let h = add(&mut d, 0.0, EntityKind::Insert(ins));
 

@@ -241,3 +241,128 @@ fn polygonal_viewport_menu_item_asks_for_points() {
     s.execute("mview.polygonal", &json!({"points": [[120, 10], [200, 10], [160, 80]]})).unwrap();
     assert_eq!(layout_viewports(&s).len(), 2);
 }
+
+#[test]
+fn clipped_viewport_and_boundary_move_scale_copy_erase_together() {
+    let mut s = session();
+    let r = s.execute("mview", &json!({"p1": [0, 0], "p2": [200, 100]})).unwrap();
+    let vh = r["viewports"][0].as_str().unwrap().to_string();
+    let r = s.execute("vpclip", &json!({"handle": vh, "points": [[20, 20], [80, 20], [50, 90]]})).unwrap();
+    let bh = r["clip"].as_str().unwrap().to_string();
+
+    let v0 = viewport(&s, &vh);
+    let b0 = s.doc().unwrap().entity(Handle::parse_hex(&bh).unwrap()).map(|e| (**e).clone()).unwrap();
+
+    // 1. Moving the viewport moves the boundary entity by the same delta.
+    s.execute("move", &json!({"handles": [vh], "from": [0, 0], "to": [10, 5]})).unwrap();
+    let v1 = viewport(&s, &vh);
+    let b1 = s.doc().unwrap().entity(Handle::parse_hex(&bh).unwrap()).map(|e| (**e).clone()).unwrap();
+    assert!(v1.center.xy().near(v0.center.xy() + Vec2::new(10.0, 5.0), 1e-6));
+    if let EntityKind::LwPolyline(pl0) = &b0.kind
+        && let EntityKind::LwPolyline(pl1) = &b1.kind
+    {
+        for (p0, p1) in pl0.vertices.iter().zip(&pl1.vertices) {
+            assert!(p1.p.near(p0.p + Vec2::new(10.0, 5.0), 1e-6));
+        }
+    } else {
+        panic!("expected lwpolyline");
+    }
+
+    // 2. Moving the boundary moves the viewport by the same delta.
+    s.execute("move", &json!({"handles": [bh], "from": [0, 0], "to": [-10, -5]})).unwrap();
+    let v2 = viewport(&s, &vh);
+    assert!(v2.center.xy().near(v0.center.xy(), 1e-6));
+
+    // 3. Scaling the viewport scales the boundary entity.
+    s.execute("scale", &json!({"handles": [vh], "base": [0, 0], "factor": 2.0})).unwrap();
+    let v3 = viewport(&s, &vh);
+    let b3 = s.doc().unwrap().entity(Handle::parse_hex(&bh).unwrap()).map(|e| (**e).clone()).unwrap();
+    assert!((v3.width - v0.width * 2.0).abs() < 1e-6);
+    if let EntityKind::LwPolyline(pl3) = &b3.kind
+        && let EntityKind::LwPolyline(pl0) = &b0.kind
+    {
+        for (p0, p3) in pl0.vertices.iter().zip(&pl3.vertices) {
+            assert!(p3.p.near(p0.p * 2.0, 1e-6));
+        }
+    }
+
+    // 4. Copying the viewport copies the boundary and links the new viewport to the new boundary.
+    let cr = s.execute("copy", &json!({"handles": [vh], "from": [0, 0], "to": [100, 100]})).unwrap();
+    let copies = cr["handles"].as_array().unwrap();
+    assert_eq!(copies.len(), 2, "both viewport and boundary are copied");
+    let new_vh = copies
+        .iter()
+        .find(|h| {
+            let handle = Handle::parse_hex(h.as_str().unwrap()).unwrap();
+            matches!(s.doc().unwrap().entity(handle).map(|e| &e.kind), Some(EntityKind::Viewport(_)))
+        })
+        .unwrap()
+        .as_str()
+        .unwrap();
+    let new_bh = copies
+        .iter()
+        .find(|h| {
+            let handle = Handle::parse_hex(h.as_str().unwrap()).unwrap();
+            matches!(s.doc().unwrap().entity(handle).map(|e| &e.kind), Some(EntityKind::LwPolyline(_)))
+        })
+        .unwrap()
+        .as_str()
+        .unwrap();
+    let new_vp = viewport(&s, new_vh);
+    assert_eq!(new_vp.clip.unwrap().hex(), new_bh);
+
+    // 5. Erasing the boundary unclips the viewport (reverts to unclipped).
+    s.execute("erase", &json!({"handles": [new_bh]})).unwrap();
+    assert_eq!(viewport(&s, new_vh).clip, None);
+    assert!(s.doc().unwrap().entity(Handle::parse_hex(new_bh).unwrap()).is_none());
+
+    // 6. Erasing the original clipped viewport erases its boundary too.
+    s.execute("erase", &json!({"handles": [vh]})).unwrap();
+    assert!(s.doc().unwrap().entity(Handle::parse_hex(&vh).unwrap()).is_none());
+    assert!(s.doc().unwrap().entity(Handle::parse_hex(&bh).unwrap()).is_none());
+}
+
+#[test]
+fn clipped_viewport_grips_and_stretch() {
+    let mut s = session();
+    let r = s.execute("mview", &json!({"p1": [0, 0], "p2": [200, 100]})).unwrap();
+    let vh = r["viewports"][0].as_str().unwrap().to_string();
+    let r = s.execute("vpclip", &json!({"handle": vh, "points": [[20, 20], [80, 20], [80, 80], [20, 80]]})).unwrap();
+    let bh = r["clip"].as_str().unwrap().to_string();
+    let vhandle = Handle::parse_hex(&vh).unwrap();
+    let bhandle = Handle::parse_hex(&bh).unwrap();
+
+    // Grips of the clipped viewport match the boundary's grips (4 vertices + 4 midpoints = 8 grips).
+    let v_grips = s.grips_of(vhandle).unwrap();
+    let b_grips = s.grips_of(bhandle).unwrap();
+    assert_eq!(v_grips, b_grips);
+    assert_eq!(v_grips.len(), 8);
+
+    // Grip-stretching vertex 2 (80, 80) of the viewport to (100, 80)
+    // Polyline grips are [v0, m0, v1, m1, v2, m2, v3, m3], so index 4 is v2.
+    s.grip_edit(vhandle, 4, Vec2::new(100.0, 80.0), cadcraft_engine::grips::GripMode::Stretch).unwrap();
+    let after_v = viewport(&s, &vh);
+    let after_b = s.doc().unwrap().entity(bhandle).map(|e| (**e).clone()).unwrap();
+    if let EntityKind::LwPolyline(pl) = &after_b.kind {
+        assert!(pl.vertices[2].p.near(Vec2::new(100.0, 80.0), 1e-6));
+    }
+    // Viewport envelope width synced to 80.0 (from 20 to 100)
+    assert!((after_v.width - 80.0).abs() < 1e-6);
+
+    // STRETCH command with crossing window covering vertex (100, 80)
+    s.execute(
+        "stretch",
+        &json!({
+            "window": [[90, 70], [110, 90]],
+            "from": [0, 0],
+            "to": [20, 0]
+        }),
+    )
+    .unwrap();
+    let after_stretch_v = viewport(&s, &vh);
+    let after_stretch_b = s.doc().unwrap().entity(bhandle).map(|e| (**e).clone()).unwrap();
+    if let EntityKind::LwPolyline(pl) = &after_stretch_b.kind {
+        assert!(pl.vertices[2].p.near(Vec2::new(120.0, 80.0), 1e-6));
+    }
+    assert!((after_stretch_v.width - 100.0).abs() < 1e-6);
+}

@@ -32,6 +32,7 @@ fn text_mleader() -> MLeader {
             line_spacing: 1.25,
             line_spacing_exact: true,
             columns: None,
+            background: None,
         }),
         style: "Callout".into(),
         arrow_size: 0.3,
@@ -51,6 +52,7 @@ fn insert(block: &str, at: Vec3) -> Insert {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     }
 }
 

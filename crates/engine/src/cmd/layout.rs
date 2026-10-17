@@ -15,7 +15,7 @@ use viewports::MviewM;
 
 mod plotstyle;
 mod prompts;
-mod viewports;
+pub(crate) mod viewports;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![

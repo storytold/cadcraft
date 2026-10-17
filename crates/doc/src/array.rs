@@ -228,6 +228,7 @@ impl ArrayParams {
                 rows: 1,
                 col_spacing: 0.0,
                 row_spacing: 0.0,
+                clip: None,
             };
             out.push(Entity { handle: d.new_handle(), common: common.clone(), kind: EntityKind::Insert(ins) });
         }

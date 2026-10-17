@@ -802,6 +802,7 @@ fn ucs_layer_states_and_block_descriptions_are_kept() {
     let u = d.ucss.iter().find(|u| u.name == "TILTED").expect("UCS TILTED");
     assert_eq!((u.origin.x, u.origin.y, u.origin.z), (1.0, 2.0, 3.0));
     assert_eq!((u.x_axis.y, u.y_axis.x), (1.0, -1.0));
+    assert_eq!(u.elevation, 5.5);
     assert_eq!(d.block("DOOR").map(|b| b.description.as_str()), Some("A door leaf"));
     for o in [&a, &b] {
         // Layer states live in the LAYER table's extension dictionary.

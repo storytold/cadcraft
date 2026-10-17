@@ -250,6 +250,7 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         if cur.eq_ignore_ascii_case(&old) {
             d.header.set_str("CLAYER", &nn);
         }
+        std::sync::Arc::make_mut(&mut d.foreign).rename_layer(&old, &nn);
     }
     ok()
 }
