@@ -342,20 +342,39 @@ impl<'a> Cur<'a> {
     }
 }
 
-/// Binary DXF (R13+: 2-byte group codes).
+/// Binary DXF, the body after the sentinel: R13+ (2-byte group codes) or R12 and earlier (1-byte
+/// group codes, where 255 is followed by a 2-byte code).
 pub fn parse_binary(b: &[u8]) -> Result<Vec<Tag>> {
     parse_binary_with_limit(b, MAX_TAGS)
+}
+
+/// Whether a binary DXF body uses the pre-R13 layout with 1-byte group codes, told from its first
+/// tag: R13+ starts with a 2-byte code (`00 00` for the usual `0 SECTION`, `E7 03` for a 999
+/// comment), the old layout with a 1-byte `00` followed by the string's first character, or with
+/// the 255 escape.
+fn legacy_binary_layout(b: &[u8]) -> bool {
+    match b {
+        [0, next, ..] => *next != 0,
+        [255, ..] => true,
+        _ => false,
+    }
 }
 
 fn parse_binary_with_limit(b: &[u8], max_tags: usize) -> Result<Vec<Tag>> {
     let mut c = Cur { b, p: 0 };
     let mut text = codepage::BinaryText::default();
     let mut tags = Vec::new();
+    let legacy = legacy_binary_layout(b);
     while c.p < b.len() {
-        let mut code = i32::from(c.i16()?);
-        if code == 255 {
-            code = i32::from(c.i16()?);
-        }
+        // 255 escapes a 2-byte code only in the 1-byte layout; in R13+ it is an ordinary code.
+        let code = if !legacy {
+            i32::from(c.i16()?)
+        } else {
+            match c.u8()? {
+                255 => i32::from(c.i16()?),
+                x => i32::from(x),
+            }
+        };
         let v = match kind_of(code) {
             Kind::Str => Value::Str(unescape_unicode(&text.string(code, c.cstr()?))),
             Kind::Real => Value::Real(c.f64()?),
@@ -610,6 +629,75 @@ mod tests {
         let tags = parse(&b).unwrap();
         assert_eq!(tags[1], Tag::f(10, 3.25));
         assert_eq!(tags[2], Tag::i(62, 5));
+    }
+
+    /// A pre-R13 binary body: 1-byte group codes, 255 escaping a 2-byte code (1001 here).
+    fn r12_binary() -> Vec<u8> {
+        let mut b = BINARY_SENTINEL.to_vec();
+        let push_str = |b: &mut Vec<u8>, code: u8, s: &str| {
+            b.push(code);
+            b.extend_from_slice(s.as_bytes());
+            b.push(0);
+        };
+        push_str(&mut b, 0, "SECTION");
+        push_str(&mut b, 2, "ENTITIES");
+        push_str(&mut b, 0, "LINE");
+        push_str(&mut b, 8, "RAILROAD");
+        b.push(10);
+        b.extend_from_slice(&3.25f64.to_le_bytes());
+        b.push(62);
+        b.extend_from_slice(&5i16.to_le_bytes());
+        b.push(255);
+        b.extend_from_slice(&1001i16.to_le_bytes());
+        b.extend_from_slice(b"APP\0");
+        push_str(&mut b, 0, "ENDSEC");
+        push_str(&mut b, 0, "EOF");
+        b
+    }
+
+    #[test]
+    fn r12_binary_parse() {
+        let tags = parse(&r12_binary()).unwrap();
+        assert_eq!(tags[0], Tag::s(0, "SECTION"));
+        assert_eq!(tags[3], Tag::s(8, "RAILROAD"));
+        assert_eq!(tags[4], Tag::f(10, 3.25));
+        assert_eq!(tags[5], Tag::i(62, 5));
+        assert_eq!(tags[6], Tag::s(1001, "APP"));
+        assert_eq!(tags.last(), Some(&Tag::s(0, "EOF")));
+    }
+
+    #[test]
+    fn r13_binary_code_255_is_ordinary() {
+        let mut b = BINARY_SENTINEL.to_vec();
+        for (code, s) in [(0i16, "LINE"), (255, "x"), (0, "EOF")] {
+            b.extend_from_slice(&code.to_le_bytes());
+            b.extend_from_slice(s.as_bytes());
+            b.push(0);
+        }
+        let tags = parse(&b).unwrap();
+        assert_eq!(tags.get(1).map(|t| t.code), Some(255));
+        assert_eq!(tags.len(), 3);
+    }
+
+    #[test]
+    fn binary_layout_detection() {
+        assert!(legacy_binary_layout(b"\0SECTION\0"));
+        assert!(legacy_binary_layout(&[255, 0xE7, 0x03]));
+        assert!(!legacy_binary_layout(b"\0\0SECTION\0"));
+        assert!(!legacy_binary_layout(&[0xE7, 0x03, b'x', 0]));
+        assert!(!legacy_binary_layout(b""));
+        assert!(!legacy_binary_layout(&[0]));
+    }
+
+    #[test]
+    fn truncated_r12_binary_never_panics() {
+        let b = r12_binary();
+        for n in BINARY_SENTINEL.len()..b.len() {
+            let _ = parse(b.get(..n).unwrap_or(&[]));
+        }
+        let mut cut = BINARY_SENTINEL.to_vec();
+        cut.extend_from_slice(&[0, b'S', 0, 255, 0x10]);
+        assert!(parse(&cut).is_err());
     }
 
     #[test]

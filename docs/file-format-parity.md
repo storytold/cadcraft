@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (multiline attributes read, drawn and written) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-15 · **Change:** minor (R12 binary DXF read) · **Target:** Autodesk AutoCAD 2027
 
 Every format AutoCAD 2027 reads or writes, with CADCraft's support, fidelity and tests. Work
 items are in [gaps.md](gaps.md#file-formats); the weighted score feeds
@@ -60,7 +60,7 @@ early (#175), but the throughput problem remains. **DWG ≈ 30% read, ≈ 15% wr
 | DXF version | AutoCAD 2027 | CADCraft read | CADCraft write |
 |---|---|---|---|
 | R12 (AC1009), ASCII | read, write | yes: no version gating; old-style POLYLINE/VERTEX read (polyface meshes flattened to 3D polylines) | **no** |
-| R12 binary | read, write | **no** (binary parser expects R13+ 2-byte group codes) | no |
+| R12 binary | read, write | read: yes (1-byte group codes and the 255 escape, layout told from the first tag, `dxf/src/lib.rs`); write: no | no |
 | R13–R2018, ASCII | read, write each of 2000/2004/2007/2010/2013/2018 | yes, one reader for all versions | yes, each of 2000–2018 (#421): R2000 structure (later versions add only optional groups) with that `$ACADVER`; UTF-8 text from 2007; no CLASS instance counts (91) |
 | R13–R2018, binary | read, write | yes | yes, each of 2000–2018 (SAVEAS `binary`; a binary file stays binary on QSAVE) |
 | Code pages (`$DWGCODEPAGE`, ANSI_932/936/949/950/125x) | yes | yes (#505): ASCII and binary DXF before 2007 decode from their code page (ANSI_874/932/936/949/950/1250–1258, DOS437/850/852/866, ISO 8859, Macintosh); a file that is valid UTF-8 reads as UTF-8; Johab and other DOS code pages read as ANSI_1252 (`dxf/src/codepage.rs`) | writes `\U+` escapes (#169), which is correct; declares `ANSI_1252` |
@@ -137,6 +137,7 @@ our output in AutoCAD black-box.
 |---|---|---|
 | 2026-10-12 | minor | PDF output: object transparency plotted as PDF alpha (`/ExtGState` `/ca` `/CA`) when the page setup's or the plot's "Plot transparency" is on; PNG plots blend it, SVG uses `opacity`; plots without it are unchanged byte for byte |
 | 2026-10-12 | minor | DXF/DWG save: the Model layout's plot settings are written as CADCraft plots model space, drawing extents scaled to fit (PLOTSETTINGS 74 = 1, 75 = 0), instead of plot type 5 "Layout information", which other programs' Plot dialogs can't use for model space |
+| 2026-10-15 | minor | R12 and earlier binary DXF (1-byte group codes) read |
 | 2026-10-12 | minor | VIEWPORT frozen layers also written and read as AutoCAD's group 341 layer handles, so third-party viewers honour per-viewport freezing in DXF (DWG converter gap noted) |
 | 2026-10-12 | minor | HATCH: associative hatches inside blocks keep their source objects; boundaries carry `{ACAD_REACTORS}` |
 | 2026-10-12 | minor | Dynamic block grips: grip objects read by graph id; a drag is saved as AutoCAD saves a Properties change |
