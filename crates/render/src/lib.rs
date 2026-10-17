@@ -218,6 +218,7 @@ pub struct Options {
     pub view: Option<Bounds2>,
     /// Draw objects with their transparency ([`DPrim::transparency`]). Off by default: the screen
     /// follows TRANSPARENCYDISPLAY, plots the page setup's "Plot transparency".
+    /// On-screen builds fade objects on locked layers by LAYLOCKFADECTL either way.
     pub transparency: bool,
     /// A layout viewport whose model-space contents are left out (its border is still drawn):
     /// the canvas draws the active viewport's contents itself, see [`viewport_content`].
@@ -943,9 +944,9 @@ fn take_viewport_layers(list: &mut DisplayList) {
     }
 }
 
-/// An object's colour, lineweight (mm), linetype, linetype scale, visibility and the transparency
-/// of the layer it is drawn on (for ByLayer, see [`transparency`]).
-type Resolved = (Ink, f32, Option<cadcraft_doc::Linetype>, f64, bool, u8);
+/// An object's colour, lineweight (mm), linetype, linetype scale, visibility, the transparency
+/// of the layer it is drawn on (for ByLayer, see [`transparency`]) and its locked-layer fade.
+type Resolved = (Ink, f32, Option<cadcraft_doc::Linetype>, f64, bool, u8, u8);
 
 fn resolve(ctx: &Ctx, e: &Entity, plotting: bool) -> Resolved {
     resolve_common(ctx, &e.common, plotting)
@@ -977,7 +978,16 @@ fn resolve_common(ctx: &Ctx, c: &cadcraft_doc::Common, plotting: bool) -> Resolv
     };
     let lt = d.linetype(&lt_name).filter(|l| !l.pattern.is_empty()).cloned();
     let scale = d.header.f64("LTSCALE", 1.0) * c.ltscale * ctx.lt_factor;
-    (rgb, lw_mm, lt, scale, visible, layer.map_or(0, |l| l.transparency))
+    (rgb, lw_mm, lt, scale, visible, layer.map_or(0, |l| l.transparency), lock_fade(d, layer, plotting))
+}
+
+/// The fade (percent, 0..=90) of an object on `layer`: LAYLOCKFADECTL on screen when the layer is
+/// locked (0 or negative: no fade); plots never fade.
+fn lock_fade(d: &Drawing, layer: Option<&cadcraft_doc::Layer>, plotting: bool) -> u8 {
+    if plotting || !layer.is_some_and(|l| l.locked) {
+        return 0;
+    }
+    d.header.i64("LAYLOCKFADECTL", 50).clamp(0, i64::from(MAX_TRANSPARENCY)) as u8
 }
 
 /// The transparency (percent, 0..=90) of an object whose own setting is `t`: the percentage, its
@@ -1049,13 +1059,13 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             cadcraft_doc::AnnoDraw::Plain => {}
         }
     }
-    let (rgb, lw, lt, ltscale, visible, layer_transparency) = resolve(ctx, e, b.plotting);
+    let (rgb, lw, lt, ltscale, visible, layer_transparency, fade) = resolve(ctx, e, b.plotting);
     if !visible {
         return;
     }
-    if b.opts.transparency {
-        b.transparency = transparency(e.common.transparency, layer_transparency, ctx.block_transparency);
-    }
+    // A locked layer's fade shows even when transparency display is off.
+    let own = if b.opts.transparency { transparency(e.common.transparency, layer_transparency, ctx.block_transparency) } else { 0 };
+    b.transparency = own.max(fade);
     // A plot style's linetype replaces the object's.
     let lt = match b.styles.and_then(|s| s.linetype(rgb, b.named)) {
         Some(over) => over,
@@ -1547,8 +1557,9 @@ fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rg
                 (None, true) => (rgb, resolve(ctx, e, b.plotting).1, true, reference),
                 (def, _) => {
                     let c = a.props.over(&def.map(|d| d.common.clone()).unwrap_or_else(by_block));
-                    let (ink, lw, _, _, shown, layer_t) = resolve_common(&sub_ctx(ctx, e, Mat3::IDENTITY), &c, b.plotting);
+                    let (ink, lw, _, _, shown, layer_t, fade) = resolve_common(&sub_ctx(ctx, e, Mat3::IDENTITY), &c, b.plotting);
                     let t = if b.opts.transparency { transparency(c.transparency, layer_t, reference) } else { 0 };
+                    let t = t.max(fade);
                     (ink, lw, shown, t)
                 }
             };

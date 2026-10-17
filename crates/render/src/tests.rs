@@ -924,3 +924,55 @@ fn cancelled_build_stops_early() {
     assert!(!crate::hatch::pattern_lines_until(&drawing, &h, &loops, 0.0, None, None).is_empty());
     assert!(crate::hatch::pattern_lines_until(&drawing, &h, &loops, 0.0, None, set.as_deref()).is_empty());
 }
+
+// ---------- locked-layer fade ----------
+
+/// A line on locked layer "Locked" (own transparency `own`) and a line on layer 0.
+fn locked_lines(own: cadcraft_doc::Transparency) -> Drawing {
+    let mut d = Drawing::new_imperial();
+    d.layers.push(cadcraft_doc::Layer { name: "Locked".into(), locked: true, ..Default::default() });
+    let (c, k) = line_common(Common { layer: "Locked".into(), transparency: own, ..Default::default() });
+    d.add(&Space::Model, c, k).unwrap();
+    let (c, k) = line_common(Common::default());
+    d.add(&Space::Model, c, k).unwrap();
+    d
+}
+
+fn faded(l: &DisplayList) -> Vec<u8> {
+    l.prims.iter().map(|p| p.transparency).collect()
+}
+
+#[test]
+fn objects_on_locked_layers_fade_on_screen() {
+    use cadcraft_doc::Transparency::{ByLayer, Percent};
+    let mut d = locked_lines(ByLayer);
+    // Default 50, whether transparency display is on or off; the unlocked line is unchanged.
+    for opts in [Options::default(), with_transparency()] {
+        let l = build(&d, &Space::Model, &opts);
+        assert_eq!(faded(&l), vec![50, 0]);
+        assert!(l.prims[0].alpha() < 255);
+        assert_eq!(l.prims[1].alpha(), 255);
+    }
+    // Plots never fade.
+    assert_eq!(faded(&build_plot(&d, &Space::Model, &Options::default())), vec![0, 0]);
+    for (v, want) in [(0, 0), (-30, 0), (70, 70)] {
+        d.header.set_i64("LAYLOCKFADECTL", v);
+        assert_eq!(faded(&build(&d, &Space::Model, &Options::default())), vec![want, 0], "LAYLOCKFADECTL {v}");
+    }
+    // An object more transparent than the fade keeps its own transparency.
+    let d = locked_lines(Percent(80));
+    assert_eq!(faded(&build(&d, &Space::Model, &with_transparency())), vec![80, 0]);
+    assert_eq!(faded(&build(&d, &Space::Model, &Options::default())), vec![50, 0]);
+}
+
+#[test]
+fn layer_zero_in_a_block_on_a_locked_layer_fades() {
+    let mut d = Drawing::new_imperial();
+    d.layers.push(cadcraft_doc::Layer { name: "Locked".into(), locked: true, ..Default::default() });
+    let mut blk = cadcraft_doc::Block::new("B");
+    let (c, k) = line_common(Common::default());
+    blk.entities.push(block_entity(1, c, k));
+    d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+    d.add(&Space::Model, Common { layer: "Locked".into(), ..Default::default() }, insert_of("B")).unwrap();
+    assert_eq!(faded(&build(&d, &Space::Model, &Options::default())), vec![50]);
+}
