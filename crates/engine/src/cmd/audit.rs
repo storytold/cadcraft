@@ -84,7 +84,11 @@ fn run_audit(s: &mut Session, p: &Value) -> Result<Value> {
     if fix && !issues.is_empty() {
         s.state_mut()?.doc = Arc::new(copy);
     }
-    Ok(crate::audit::Report { issues, fixed: fix }.to_json())
+    let report = crate::audit::Report { issues, fixed: fix };
+    if s.settings.auditctl {
+        write_audit_log(s, &report);
+    }
+    Ok(report.to_json())
 }
 
 /// Open a drawing file as tolerantly as the readers allow, then fix what AUDIT finds. The
@@ -119,11 +123,36 @@ fn run_recover(s: &mut Session, p: &Value) -> Result<Value> {
         st.saved = Arc::new((*st.doc).clone());
     }
     let uid = st.uid;
+    if s.settings.auditctl {
+        write_audit_log(s, &report);
+    }
     let mut r = report.to_json();
     r["index"] = json!(i);
     r["uid"] = json!(uid);
     Ok(r)
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+fn write_audit_log(s: &Session, report: &crate::audit::Report) {
+    let (path_str, title) = match s.state() {
+        Ok(st) => (st.path.clone(), st.title.clone()),
+        Err(_) => (None, "Drawing".to_string()),
+    };
+    let adt_path = match &path_str {
+        Some(p) => std::path::PathBuf::from(p).with_extension("adt"),
+        None => {
+            let dir = crate::autosave::savefilepath();
+            if !dir.is_empty() { std::path::Path::new(&dir).join(format!("{title}.adt")) } else { std::path::PathBuf::from(format!("{title}.adt")) }
+        }
+    };
+    let content = report.format_adt(&title, path_str.as_deref());
+    if let Err(e) = std::fs::write(&adt_path, content) {
+        log::warn!("AUDITCTL: could not write audit log {}: {e}", adt_path.display());
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn write_audit_log(_: &Session, _: &crate::audit::Report) {}
 
 #[cfg(not(target_arch = "wasm32"))]
 fn read_path(cmd: &str, path: &str) -> Result<Vec<u8>> {

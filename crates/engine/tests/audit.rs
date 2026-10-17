@@ -300,3 +300,31 @@ fn recover_opens_the_file_with_the_fixes_applied() {
     assert_eq!(s.docs.len(), docs);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn auditctl_generates_adt_report_file() {
+    let mut s = Session::new();
+    // Default is 0 (off)
+    assert_eq!(s.execute("getvar", &json!({"name": "AUDITCTL"})).unwrap()["value"], json!(0));
+    s.execute("setvar", &json!({"name": "AUDITCTL", "value": 1})).unwrap();
+    assert_eq!(s.execute("getvar", &json!({"name": "AUDITCTL"})).unwrap()["value"], json!(1));
+
+    let dir = std::env::temp_dir().join(format!("cadcraft-auditctl-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let dxf_path = dir.join("drawing_test.dxf");
+    std::fs::write(&dxf_path, b"dummy").unwrap();
+
+    s.state_mut().unwrap().path = Some(dxf_path.to_string_lossy().to_string());
+    s.state_mut().unwrap().title = "drawing_test.dxf".to_string();
+
+    let r = s.execute("audit", &json!({"fix": false})).unwrap();
+    assert_eq!(r["errors"], 0);
+
+    let adt_path = dxf_path.with_extension("adt");
+    assert!(adt_path.exists(), "AUDITCTL 1 must generate .adt log file");
+    let content = std::fs::read_to_string(&adt_path).unwrap();
+    assert!(content.contains("Audit of drawing:"), "{content}");
+    assert!(content.contains("Audit: 0 errors found"), "{content}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

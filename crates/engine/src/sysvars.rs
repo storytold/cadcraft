@@ -7,6 +7,7 @@ use crate::{EngineError, Result, Session};
 mod table;
 
 const SESSION_VARS: &[&str] = &[
+    "AUDITCTL",
     "OSMODE",
     "OSNAPHATCH",
     "ANNOAUTOSCALE",

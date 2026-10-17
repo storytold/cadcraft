@@ -82,6 +82,12 @@ impl Report {
             "message": self.message(),
         })
     }
+
+    /// Format this report for an AUDITCTL `.adt` log file.
+    pub fn format_adt(&self, title: &str, path: Option<&str>) -> String {
+        let name = path.unwrap_or(title);
+        format!("Audit of drawing: {name}\n\n{}\n", self.message())
+    }
 }
 
 /// Audit `d` without changing it.

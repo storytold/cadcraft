@@ -443,6 +443,8 @@ pub struct Settings {
     pub polarsnap: bool,
     /// POLARDIST: the PolarSnap step; 0 uses the snap X spacing.
     pub polardist: f64,
+    /// AUDITCTL: 1 creates an audit report (.adt) file when AUDIT is run (default: 0).
+    pub auditctl: bool,
 }
 
 impl Default for Settings {
@@ -501,6 +503,7 @@ impl Default for Settings {
             polaraddang: Vec::new(),
             polarsnap: false,
             polardist: 0.0,
+            auditctl: false,
         }
     }
 }
