@@ -1,6 +1,6 @@
 # CADCraft roadmap detail
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Block Editor for static blocks: "Use blocks" evidence updated) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-17 · **Change:** minor (PR CI workflow in place: S1 closed) · **Target:** Autodesk AutoCAD 2027
 
 Forward-looking plan: milestones with status, the current focus, and what comes next with
 estimates. The summary is [ROADMAP.md](../ROADMAP.md); the work items behind every line are in
@@ -9,9 +9,8 @@ Opus 5.5 agent-hours.
 
 ## Current focus
 
-1. **Gate and land.** (`cargo fmt` on main is fixed.) Add a PR workflow that runs
-   `cargo xtask ci`, then review and land the 47 open PRs, most of them community bug fixes
-   (S1–S3). ≈ 15–25 h.
+1. **Gate and land.** PR CI workflow running `cargo xtask ci` added (`.github/workflows/ci.yml`),
+   gating open PRs and main; next: review and land open community bug fixes (S3). ≈ 10–20 h.
 2. **Stop losing data on save** (FF1, FF2, FF7) and save DWG/DXF at a chosen version (FF3).
    ≈ 30–45 h.
 3. **A real-file corpus** and a check of our output in AutoCAD (FF5, needs the owner).
@@ -103,6 +102,7 @@ AutoLISP surface, AI features with openly licensed local models, and every remai
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-17 | minor | PR CI workflow running `cargo xtask ci` added (.github/workflows/ci.yml): S1 closed |
 | 2026-10-12 | minor | Block Editor for static blocks landed: "Use blocks" evidence updated; status and hours unchanged (REFEDIT and dynamic blocks remain) |
 | 2026-10-11 | minor | Alpha-gate evidence refreshed for merged work (#459, #525, #528, #160, #186, #564); statuses and hours unchanged |
 | 2026-10-10 | minor | Merged main: fmt fixed, Ukrainian catalog noted in M13, ready for real work 38% |
