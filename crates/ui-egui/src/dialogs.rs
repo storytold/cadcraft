@@ -2,6 +2,10 @@
 //! Layer Properties Manager ([`crate::layers`]), Quick Select ([`crate::quick`]), Parameters
 //! Manager ([`crate::parametric`]) and the style and settings managers ([`crate::managers`]).
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use cadcraft_render::DisplayList;
 use egui::{RichText, vec2};
 use serde_json::json;
 
@@ -374,19 +378,86 @@ fn commands(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     }
 }
 
+/// The Blocks window's previews, for one drawing revision.
+#[derive(Default)]
+pub struct BlockPreviews {
+    /// (drawing uid, revision) the previews were built for.
+    key: Option<(u64, u64)>,
+    /// Previews by upper-cased block name.
+    lists: HashMap<String, Arc<DisplayList>>,
+}
+
+/// Thumbnail size in the Blocks window.
+const THUMB: egui::Vec2 = vec2(64.0, 48.0);
+
+/// The preview of block `name`, built at most once per drawing revision; `None` when the drawing
+/// has no such block.
+fn block_preview(app: &mut CadApp, name: &str) -> Option<Arc<DisplayList>> {
+    let st = app.session.state().ok()?;
+    let key = (st.uid, st.revision);
+    let cache = &mut app.block_previews;
+    if cache.key != Some(key) {
+        cache.key = Some(key);
+        cache.lists.clear();
+    }
+    let upper = name.to_ascii_uppercase();
+    if let Some(list) = cache.lists.get(&upper) {
+        return Some(list.clone());
+    }
+    let list = Arc::new(crate::bedit::build_preview(&st.doc, name, f64::from(THUMB.x))?);
+    cache.lists.insert(upper, list.clone());
+    Some(list)
+}
+
+/// Whether block `name`'s preview is already built for the current drawing revision.
+fn block_preview_ready(app: &CadApp, name: &str) -> bool {
+    let Ok(st) = app.session.state() else { return false };
+    app.block_previews.key == Some((st.uid, st.revision)) && app.block_previews.lists.contains_key(&name.to_ascii_uppercase())
+}
+
 fn blocks(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let mut pick = None;
+    let names: Vec<String> = app.session.doc().map(|d| d.blocks.keys().filter(|k| !k.starts_with('*')).cloned().collect()).unwrap_or_default();
     egui::Window::new(crate::tl!("Blocks")).id(egui::Id::new("Blocks")).open(open).default_size(vec2(320.0, 360.0)).show(ctx, |ui| {
-        let Ok(d) = app.session.doc() else { return };
-        let names: Vec<&String> = d.blocks.keys().filter(|k| !k.starts_with('*')).collect();
         if names.is_empty() {
             ui.label(crate::tl!("No blocks defined in this drawing."));
+            return;
         }
-        for n in names {
-            if ui.button(n).on_hover_text(crate::tl!("Insert this block")).clicked() {
-                pick = Some(n.clone());
+        let id = egui::Id::new("blockfilter");
+        let mut filter = ui.data_mut(|d| d.get_temp::<String>(id)).unwrap_or_default();
+        ui.horizontal(|ui| {
+            ui.label(crate::tl!("Filter"));
+            ui.text_edit_singleline(&mut filter);
+        });
+        ui.data_mut(|d| d.insert_temp(id, filter.clone()));
+        let f = filter.to_lowercase();
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            // At most one visible preview is built per frame, so a large library opens at once.
+            let mut build = true;
+            for n in names.iter().filter(|n| f.is_empty() || n.to_lowercase().contains(&f)) {
+                let row = ui
+                    .horizontal(|ui| {
+                        let (rect, _) = ui.allocate_exact_size(THUMB, egui::Sense::hover());
+                        if ui.is_rect_visible(rect) {
+                            let list = if block_preview_ready(app, n) || std::mem::take(&mut build) {
+                                block_preview(app, n)
+                            } else {
+                                ui.ctx().request_repaint();
+                                None
+                            };
+                            let note = if list.is_some() { crate::tl!("Empty") } else { "" };
+                            crate::bedit::draw_preview_at(ui, rect, list.as_deref(), note);
+                        }
+                        ui.label(n);
+                    })
+                    .response
+                    .interact(egui::Sense::click())
+                    .on_hover_text(crate::tl!("Insert this block"));
+                if row.clicked() {
+                    pick = Some(n.clone());
+                }
             }
-        }
+        });
     });
     if let Some(n) = pick {
         insert_block(app, &n);
@@ -464,5 +535,30 @@ mod tests {
         super::insert_block(&mut app, "Nope");
         assert!(app.session.running.as_ref().is_some_and(|r| r.id == "insert"));
         assert_eq!(app.session.current_prompt().map(|p| p.message), Some("Enter block name".to_string()));
+    }
+
+    #[test]
+    fn block_previews_are_built_once_per_revision() {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        let c = app.session.execute("circle", &json!({"center": [10, 20], "radius": 5})).unwrap();
+        let h = c["handle"].as_str().unwrap().to_string();
+        app.session.execute("block", &json!({"name": "Door 2", "base": [0, 0], "handles": [h], "keep": "delete"})).unwrap();
+
+        let first = super::block_preview(&mut app, "Door 2").expect("a preview");
+        assert!(!first.prims.is_empty());
+        let b = first.bounds;
+        assert!((b.min.x - 5.0).abs() < 0.1 && (b.max.x - 15.0).abs() < 0.1, "{b:?}");
+        assert!((b.min.y - 15.0).abs() < 0.1 && (b.max.y - 25.0).abs() < 0.1, "{b:?}");
+        assert!(super::block_preview_ready(&app, "door 2"));
+
+        let again = super::block_preview(&mut app, "Door 2").unwrap();
+        assert!(std::sync::Arc::ptr_eq(&first, &again));
+
+        app.session.execute("line", &json!({"points": [[0, 0], [1, 1]]})).unwrap();
+        assert!(!super::block_preview_ready(&app, "Door 2"));
+        let after = super::block_preview(&mut app, "Door 2").unwrap();
+        assert!(!std::sync::Arc::ptr_eq(&first, &after));
+
+        assert!(super::block_preview(&mut app, "Nope").is_none());
     }
 }
