@@ -1114,7 +1114,20 @@ fn draw_snap_marker(p: &egui::Painter, at: Pos2, hit: &SnapHit) {
 
 /// Acquired tracking points (small `+`, `//` for a Parallel line), the dotted paths the cursor
 /// is on and the tooltip naming them ("Endpoint: 5.0000 < 90°").
-fn draw_tracking(p: &egui::Painter, xf: &Xf, acquired: &[snap::tracking::Acquired], track: Option<&snap::tracking::Track>, far: f64) {
+///
+/// `tk` is the pending TK run: its last point and the axis the last segment ran along
+/// (`Some(true)` horizontal, `Some(false)` vertical, `None` after only the first pick, when the
+/// green `+` and the running object snap tracking still steer it). After a segment, `mouse`
+/// draws the next leg as a half-axis line on the other axis, stopped at the cursor's projection.
+fn draw_tracking(
+    p: &egui::Painter,
+    xf: &Xf,
+    acquired: &[snap::tracking::Acquired],
+    track: Option<&snap::tracking::Track>,
+    tk: Option<(Vec2, Option<bool>)>,
+    mouse: Option<Vec2>,
+    far: f64,
+) {
     use snap::tracking::{Acquired, PathShape};
     let t = Tokens::get();
     let st = Stroke::new(1.0, t.snap);
@@ -1126,6 +1139,21 @@ fn draw_tracking(p: &egui::Painter, xf: &Xf, acquired: &[snap::tracking::Acquire
         } else {
             p.line_segment([c + vec2(-4.0, 0.0), c + vec2(4.0, 0.0)], st);
             p.line_segment([c + vec2(0.0, -4.0), c + vec2(0.0, 4.0)], st);
+        }
+    }
+    // A TK run past its first segment: the next leg runs on the other axis, on the cursor's
+    // side, and stops at the cursor's projection. No `+` here; TK carries none after the first
+    // pick.
+    if let (Some((anchor, axis_opt)), Some(m)) = (tk, mouse) {
+        // First leg: follow the cursor. Later legs: alternate.
+        let prev_h = match axis_opt {
+            Some(h) => h,
+            None => (m.x - anchor.x).abs() >= (m.y - anchor.y).abs(),
+        };
+        let end = if prev_h { Vec2::new(m.x, anchor.y) } else { Vec2::new(anchor.x, m.y) };
+        let (a, b) = (xf.to_screen(anchor), xf.to_screen(end));
+        if a != b {
+            p.extend(Shape::dotted_line(&[a, b], t.snap, 6.0, 1.0));
         }
     }
     let Some(tr) = track else { return };
@@ -1819,7 +1847,11 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     }
     // Acquired tracking points and the polar / tracking paths under the cursor.
     if app.canvas.cursor.is_some() {
-        draw_tracking(&painter, &xf, &app.session.tracking.acquired, app.canvas.track.as_ref(), view.height * 4.0);
+        let tk = match app.session.point_mods.last() {
+            Some(cadcraft_engine::pointmod::Frame::Track { last: Some(l), axis }) => Some((*l, *axis)),
+            _ => None,
+        };
+        draw_tracking(&painter, &xf, &app.session.tracking.acquired, app.canvas.track.as_ref(), tk, raw_world, view.height * 4.0);
     }
     if let (Some(hit), Some(_)) = (app.canvas.snap, app.canvas.cursor) {
         draw_snap_marker(&painter, xf.to_screen(hit.point), &hit);
