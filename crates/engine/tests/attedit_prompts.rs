@@ -78,18 +78,26 @@ fn dash_attedit_global_replaces_a_string_in_matching_attributes() {
     assert_eq!(value(&s, a, "U"), "A-8");
 }
 
+fn attrib_text(s: &Session, h: Handle, tag: &str) -> cadcraft_doc::Text {
+    let EntityKind::Insert(i) = &s.doc().unwrap().entity(h).unwrap().kind else { panic!("not an insert") };
+    i.attribs.iter().find(|a| a.tag == tag).unwrap().text.clone()
+}
+
 #[test]
 fn dash_attedit_one_at_a_time_edits_the_selected_attributes() {
     let mut s = with_block();
     let h = handle(&insert(&mut s, 100.0, json!({"T": "abc"})));
     type_lines(&mut s, &["-attedit", "y", "", "T", "", "105,0", ""]);
-    assert!(s.prompt_text().contains("[Value/Layer/Color/Next] <N>"), "{}", s.prompt_text());
-    // Unsupported options say so and keep the prompt.
-    s.cmdline("p").unwrap();
-    assert!(s.log.iter().any(|l| l.contains("Position is not available yet")), "{:?}", s.log);
-    type_lines(&mut s, &["v", "c", "b", "B", "v", "r", "replaced value", "n"]);
+    assert!(s.prompt_text().contains("[Value/Position/Height/Angle/Style/Layer/Color/Next] <N>"), "{}", s.prompt_text());
+    // Position, Height, Angle, Value options.
+    type_lines(&mut s, &["p", "110,20", "h", "3.5", "a", "45", "v", "c", "b", "B", "v", "r", "replaced value", "n"]);
     assert!(s.running.is_none(), "{}", s.prompt_text());
-    assert_eq!(value(&s, h, "T"), "replaced value");
+    let t = attrib_text(&s, h, "T");
+    assert_eq!(t.value, "replaced value");
+    assert_eq!(t.insert.x, 110.0);
+    assert_eq!(t.insert.y, 20.0);
+    assert_eq!(t.height, 3.5);
+    assert!((t.rotation - 45.0f64.to_radians()).abs() < 1e-6);
     assert_eq!(value(&s, h, "U"), "u");
 }
 

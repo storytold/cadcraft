@@ -969,7 +969,7 @@ fn run_rename(s: &mut Session, p: &Value) -> Result<Value> {
         }
         "block" => rename::block(s, &from, &to)?,
         "mleaderstyle" | "multileaderstyle" => rename::simple(s, "mleaderstyle", &from, &to)?,
-        "tablestyle" | "view" | "ucs" => rename::simple(s, &table, &from, &to)?,
+        "tablestyle" | "view" | "ucs" | "vport" | "vports" | "plotstyle" => rename::simple(s, &table, &from, &to)?,
         "style" | "textstyle" => {
             run_style_rename(s, &json!({ "from": from, "to": to }))?;
         }

@@ -2,7 +2,7 @@
 
 **Stage: pre-alpha** · next: alpha, ~2 points (38% → 40% ready for real work) and ~125–190 Opus 5.5 hours away (the four failing core workflows of the [alpha gate](docs/roadmap.md#alpha-gate))
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (hours to ~95% for each readiness number) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-17 · **Change:** minor (PR CI workflow added; S1 closed) · **Target:** Autodesk AutoCAD 2027
 
 CADCraft targets full parity with AutoCAD (2D drafting first, then annotation, layouts and
 plotting, DWG, parametrics and 3D), plus what AutoCAD doesn't have: agent control over MCP, a
@@ -104,7 +104,7 @@ Other languages shipped: Ukrainian and German (989 catalog rows each; Ukrainian 
 
 Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md).
 
-1. Gate and land: fix fmt on main, run `cargo xtask ci` on every PR, land the 47 open PRs (15–25 h).
+1. Gate and land: PR workflow running `cargo xtask ci` added (`.github/workflows/ci.yml`), land open PRs (10–20 h).
 2. Stop losing data on save; native MULTILEADER; save DWG/DXF at a chosen version (30–45 h).
 3. Real-file DWG/DXF corpus and a black-box check in AutoCAD (10–15 h + owner).
 4. Precision input: object snap tracking, extension/parallel snaps, FROM/M2P/TK, snap overrides,
@@ -133,6 +133,7 @@ Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md)
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-17 | minor | PR CI workflow running `cargo xtask ci` added (.github/workflows/ci.yml): S1 closed |
 | 2026-10-12 | trivial | Progress log: closed-polyline TRIM (#726) |
 | 2026-10-12 | trivial | Progress log: HATCHEDIT numeric validation (#724) |
 | 2026-10-10 | minor | Merged main's changes (Ukrainian catalog, dynamic input pointer boxes, DXF fixes); UI/UX and localization numbers updated |

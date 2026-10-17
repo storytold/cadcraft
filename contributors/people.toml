@@ -61,3 +61,8 @@ sync_github_name = false
 real_name = "Chester Fung"
 display_name = "Chester Fung"
 sync_github_name = true
+
+[people.aljormon84]
+real_name = "Alex Ortiz"
+display_name = "Alex Ortiz"
+sync_github_name = false

@@ -80,9 +80,16 @@ fn rename_prompts_type_old_and_new_name() {
     s.script("-RENAME LA Missing\nNew\nNewer\n").unwrap();
     assert!(s.running.is_none(), "{}", s.prompt_text());
     assert!(s.doc().unwrap().layer("Newer").is_some());
+    // Material is unmodelled: reads both names and reports not available yet.
     let n = s.log.len();
-    s.script("-RENAME VP a b\nLINE 0,0 2,0\n\n").unwrap();
+    s.script("-RENAME M a b\nLINE 0,0 2,0\n\n").unwrap();
     assert!(s.running.is_none(), "{}", s.prompt_text());
     assert!(s.log[n..].iter().any(|l| l.contains("not available yet")), "{:?}", &s.log[n..]);
     assert_eq!(s.doc().unwrap().model.iter().filter(|e| matches!(e.kind, EntityKind::Line(_))).count(), 2);
+
+    // Viewport configurations can be renamed.
+    s.doc_mut().unwrap().vports.push(cadcraft_engine::doc::VportConfig { name: "FourWay".into(), tiles: vec![] });
+    s.script("-RENAME VP FourWay Split4\n").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert!(s.doc().unwrap().vports.iter().any(|c| c.name == "Split4"));
 }
