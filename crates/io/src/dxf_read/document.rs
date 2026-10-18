@@ -4,7 +4,7 @@ use super::objects::{MAX_OBJECTS, Objects, page_setup};
 use super::{Block, BlockDef, Drawing, Entity, EntityKind, Handle, HashMap, Layout, LayoutDef, Rx, Tag, records};
 
 pub(super) fn parse_entities(
-    recs: &[(String, Vec<Tag>)],
+    recs: &[cadcraft_dxf::Record<'_>],
     d: &mut Drawing,
     rx: &mut Rx,
     skipped: &mut usize,
@@ -26,7 +26,7 @@ pub(super) fn parse_entities(
         // More entities from this record (the faces of a polyface or polygon mesh).
         let mut extra: Vec<EntityKind> = Vec::new();
         i += 1;
-        match kind.as_str() {
+        match *kind {
             "POLYLINE" => {
                 let Some((c, k, more)) = polyline_entity(recs, &mut i, &t) else {
                     *skipped = skipped.saturating_add(1);
@@ -63,7 +63,7 @@ pub(super) fn parse_entities(
                 extra.into_iter().map(|f| (owner.clone(), paper, Entity { handle: d.new_handle(), common: c.clone(), kind: f })).collect();
             out.push((owner, paper, Entity { handle: h, common: c, kind: k }));
             out.extend(more);
-        } else if kind == "HATCH" {
+        } else if *kind == "HATCH" {
             // Without boundary data. The other records `entity` returns nothing for are read
             // elsewhere (the writer's paper viewport, the loops of a region).
             *skipped = skipped.saturating_add(1);
@@ -91,7 +91,7 @@ pub(super) fn read_blocks(
     let recs = records(tags);
     for (k, tg) in &recs {
         let t = T(tg);
-        if k == "BLOCK" && t.i(70).unwrap_or(0) & 4 != 0 {
+        if *k == "BLOCK" && t.i(70).unwrap_or(0) & 4 != 0 {
             rx.xref_paths.insert(t.s(2).unwrap_or_default().to_ascii_uppercase(), t.s(1).unwrap_or_default());
         }
     }
@@ -99,7 +99,7 @@ pub(super) fn read_blocks(
     let mut n = 0;
     let mut i = 0;
     while let Some((k, tg)) = recs.get(i) {
-        if k == "BLOCK" {
+        if *k == "BLOCK" {
             let t = T(tg);
             let name = t.s(2).unwrap_or_default();
             let base = t.p(10);
@@ -107,7 +107,7 @@ pub(super) fn read_blocks(
             // Block flags: 4 xref, 8 overlay.
             let xref = t.i(70).unwrap_or(0) & 12;
             let mut j = i + 1;
-            while recs.get(j).is_some_and(|(k, _)| k != "ENDBLK") {
+            while recs.get(j).is_some_and(|(k, _)| *k != "ENDBLK") {
                 j += 1;
             }
             let body = recs.get(i + 1..j).unwrap_or(&[]);
@@ -116,7 +116,7 @@ pub(super) fn read_blocks(
             i = j + 1;
         } else {
             // A record outside any BLOCK ... ENDBLK pair.
-            if k != "ENDBLK" {
+            if *k != "ENDBLK" {
                 n = n.saturating_add(1);
             }
             i += 1;
@@ -129,7 +129,7 @@ pub(super) fn read_blocks(
 /// Read the OBJECTS section into `objs`, and each LAYOUT into `layout_objs`.
 pub(super) fn read_objects(tags: &[Tag], objs: &mut Objects, layout_objs: &mut Vec<LayoutDef>) {
     for (k, tg) in records(tags) {
-        objs.add(&k, &tg);
+        objs.add(k, tg);
         if k == "LAYOUT" {
             // Fields after the AcDbLayout marker (AcDbPlotSettings also has a code 1).
             let start = tg.iter().position(|x| x.code == 100 && x.str() == "AcDbLayout").unwrap_or(0);

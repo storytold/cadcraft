@@ -336,7 +336,7 @@ fn has_mlines(store: &EntityStore) -> bool {
 pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
     let mut styles: Vec<MLineStyle> = Vec::new();
     for s in secs.iter().filter(|s| s.name == "OBJECTS") {
-        each_record(&s.tags, |kind, tags| {
+        each_record(s.tags, |kind, tags| {
             if kind == "MLINESTYLE"
                 && styles.len() < MAX_STYLES
                 && let Some(st) = read_style(tags)
