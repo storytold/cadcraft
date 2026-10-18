@@ -1015,6 +1015,43 @@ fn oversized_dwg_and_dxf_are_rejected_early() {
     assert_eq!(e.to_string(), "drawing too large: 60 DXF group codes, more than the 50 CADCraft reads");
 }
 
+/// A DWG older than R13 names its version: it opens with a note at the head of `read_notes`
+/// saying the blocks are missing (`cadcraft_dwg::pre_r13_note`; checked by hand on two R12
+/// sheets, which the reader hands back as layers and block references and used to show as empty
+/// drawings without a word). If the reader fails on one instead, the error says the same; the
+/// current acadrust reads even this synthetic body, so that path isn't reached here. R13 and
+/// later are untouched.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn pre_r13_dwg_names_its_version_in_the_note_or_the_error() {
+    let mut old = b"AC1009".to_vec();
+    old.extend(std::iter::repeat_n(0u8, 4096));
+    assert_eq!(cadcraft_dwg::older_than_readable(&old).as_deref(), Some("AC1009"));
+    let note = cadcraft_dwg::pre_r13_note("AC1009");
+    assert!(note.starts_with("R12 or older DWG (AC1009): ") && note.contains("none of its blocks"), "{note}");
+    assert!(note.contains("save it as DWG 2000 or later, or as DXF"), "{note}");
+    // The reader opens this synthetic body as an empty drawing, and the note comes first.
+    let d = crate::read(&old, "gear.dwg").unwrap();
+    assert_eq!(d.read_notes.first(), Some(&note), "{:?}", d.read_notes);
+    // Whole headers (the magic alone is not a DWG to `is_dwg`), so the version threshold is
+    // what decides here.
+    for code in ["AC1012", "AC1014", "AC1015", "AC1032"] {
+        let header = [code.as_bytes(), &[0u8; 64]].concat();
+        assert!(cadcraft_dwg::is_dwg(&header));
+        assert_eq!(cadcraft_dwg::older_than_readable(&header), None, "{code} is readable");
+    }
+    for code in ["AC1004", "AC1006", "AC1009"] {
+        let header = [code.as_bytes(), &[0u8; 64]].concat();
+        assert_eq!(cadcraft_dwg::older_than_readable(&header).as_deref(), Some(code), "{code} is too old");
+    }
+    assert_eq!(cadcraft_dwg::older_than_readable(b"not a dwg"), None);
+    // A readable version with the same empty body fails in the reader without the R12 hint.
+    let mut newer = b"AC1015".to_vec();
+    newer.extend(std::iter::repeat_n(0u8, 4096));
+    let e = crate::read(&newer, "gear.dwg").unwrap_err().to_string();
+    assert!(!e.contains("R12"), "{e}");
+}
+
 /// Issue #800: one unreadable object record doesn't fail the whole DWG. The reader skips it, the
 /// rest opens, and the drawing's read notes say how many records were left out and of which
 /// types, so a partial read never passes for a complete one. A complete read has no notes.

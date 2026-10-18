@@ -40,6 +40,28 @@ pub fn version(bytes: &[u8]) -> Option<String> {
     is_dwg(bytes).then(|| String::from_utf8_lossy(bytes.get(0..6).unwrap_or_default()).to_string())
 }
 
+/// The first DWG version the reader understands: R13. The codes before it (`AC1009` is R11
+/// and R12, `AC1006` R10, `AC1004` R9) are older than the object model acadrust reads.
+pub const FIRST_READABLE: &str = "AC1012";
+
+/// The version code of a DWG older than [`FIRST_READABLE`], or `None` for a readable one (or
+/// not a DWG). acadrust reads such a file without complaint and hands back its layers and its
+/// block references, but none of its blocks, so two R12 equipment sheets from an office
+/// archive opened as empty drawings without a word. The read now says so in a note
+/// ([`pre_r13_note`]). The codes share the `AC10` prefix and compare as text.
+pub fn older_than_readable(bytes: &[u8]) -> Option<String> {
+    version(bytes).filter(|v| v.as_str() < FIRST_READABLE)
+}
+
+/// The read note for a DWG older than [`FIRST_READABLE`]: what came through, what did not,
+/// and the way out. It heads `Drawing::read_notes`, so the partial read never passes for a
+/// complete one (the rule the notes exist for, #800).
+pub fn pre_r13_note(code: &str) -> String {
+    format!(
+        "R12 or older DWG ({code}): the reader understands its layers and block references but none of its blocks, so the drawing opened without them; save it as DWG 2000 or later, or as DXF, in the program that made it"
+    )
+}
+
 /// Size limits for reading a DWG file. DWG is compressed and the DXF text it converts to is
 /// several times larger (about 6x in our tests: a 10 MB DWG becomes about 60 MB of DXF), so
 /// the limits are generous for real drawings. They exist because a damaged file, or one the reader
@@ -91,18 +113,31 @@ mod native {
         if bytes.len() > limits.max_dwg_bytes {
             return Err(format!("DWG: the file is {}, larger than the {} CADCraft opens", mb(bytes.len() as u64), mb(limits.max_dwg_bytes as u64)));
         }
+        // A pre-R13 file is read like any other (its layers and block references do come
+        // through) and opens with a note that names the version and the missing blocks; when
+        // the read fails instead, the error says the same, since the age is the likely cause.
+        let pre_r13 = super::older_than_readable(bytes);
+        let hint = |e: String| match &pre_r13 {
+            Some(code) => format!(
+                "{e}; this is an R12 or older drawing ({code}), which the reader doesn't understand yet; save it as DWG 2000 or later, or as DXF, in the program that made it"
+            ),
+            None => e,
+        };
         let outcome = std::panic::catch_unwind(|| {
             acadrust::DwgReader::from_stream_with_options(Cursor::new(bytes), acadrust::DwgReadOptions::failsafe()).read_with_stats()
         })
-        .map_err(|_| "the DWG reader failed on this file".to_string())?
-        .map_err(|e| format!("DWG: {e}"))?;
+        .map_err(|_| hint("the DWG reader failed on this file".to_string()))?
+        .map_err(|e| hint(format!("DWG: {e}")))?;
         // Failsafe skips records, not whole files: when the objects stream itself couldn't be
         // read (a damaged header or section map, or not a DWG at all), nothing was read.
         if !outcome.stats.record_stream_read {
             let why = outcome.stats.diagnostics.first().map(|d| d.message.trim_start_matches("Failsafe: ").to_string());
-            return Err(format!("DWG: {}", why.unwrap_or_else(|| "the file's objects couldn't be read".to_string())));
+            return Err(hint(format!("DWG: {}", why.unwrap_or_else(|| "the file's objects couldn't be read".to_string()))));
         }
         let mut notes = read_notes(&outcome.stats);
+        if let Some(code) = &pre_r13 {
+            notes.insert(0, super::pre_r13_note(code));
+        }
         let mut doc = outcome.document;
         let orphans = guarded(AssertUnwindSafe(|| post_process(&mut doc))).map_err(|_| "the DWG post-processing failed on this file".to_string())?;
         if orphans > 0 {
