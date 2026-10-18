@@ -127,7 +127,7 @@ pub fn render(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Pixm
                 }
             }
             Kind::Point => {
-                if let Some(q) = pts.first() {
+                for q in pts {
                     let (x, y) = view.to_screen(*q);
                     // Filled as a path: tiny-skia's anti-aliased `fill_rect` trips a debug
                     // assertion on rects under two pixels wide whose sides both fall mid-pixel.

@@ -7,6 +7,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+mod blockcull;
 pub mod clip;
 mod dim;
 mod fill;
@@ -54,7 +55,7 @@ pub enum Kind {
     /// (paper white when plotting, the canvas colour on screen) so they hide what was drawn
     /// before them.
     Mask,
-    /// A single point marker at `verts[start]`.
+    /// Point markers at `verts[start..start+len]` (one for a POINT, all the dots of a hatch).
     Point,
     /// An infinite line or ray: `verts[start]` = base, `verts[start+1]` = unit direction.
     Infinite { ray: bool },
@@ -226,6 +227,11 @@ pub struct Options {
     /// rebuild the view no longer needs). A cancelled build returns a partial list, which the
     /// caller must discard; see [`Options::cancelled`].
     pub cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// Model space only: the top-level entities to build, as ascending draw indices (positions
+    /// in the space's store). The canvas passes the objects near the view (from the engine's
+    /// spatial index), so a zoomed-in view builds what it shows instead of the whole drawing.
+    /// `None` = every entity. Ignored for layouts.
+    pub only: Option<std::sync::Arc<Vec<u32>>>,
 }
 
 impl Options {
@@ -249,6 +255,7 @@ impl Default for Options {
             skip_viewport: None,
             transparency: false,
             cancel: None,
+            only: None,
         }
     }
 }
@@ -266,8 +273,33 @@ fn max_scale(m: &Mat3) -> f64 {
 
 /// Graphics state inherited through block references.
 #[derive(Clone)]
+/// The drawing's layers by lower-case name, made once per build: every object drawn looks its
+/// layer up two or three times, and a linear, case-insensitive scan of a few hundred layers per
+/// lookup was a large share of a rebuild.
+struct LayerIndex<'a> {
+    by_name: std::collections::HashMap<String, &'a cadcraft_doc::Layer>,
+}
+
+impl<'a> LayerIndex<'a> {
+    fn new(d: &'a Drawing) -> Self {
+        let mut by_name = std::collections::HashMap::with_capacity(d.layers.len());
+        for l in &d.layers {
+            // The first of two names differing only in case wins, as `Drawing::layer` finds it.
+            by_name.entry(l.name.to_ascii_lowercase()).or_insert(l);
+        }
+        LayerIndex { by_name }
+    }
+    fn get(&self, name: &str) -> Option<&'a cadcraft_doc::Layer> {
+        match self.by_name.get(name) {
+            Some(l) => Some(*l),
+            None => self.by_name.get(&name.to_ascii_lowercase()).copied(),
+        }
+    }
+}
+
 struct Ctx<'a> {
     d: &'a Drawing,
+    layers: &'a LayerIndex<'a>,
     xf: Mat3,
     block_color: Color,
     block_layer: Option<String>,
@@ -294,13 +326,14 @@ impl Ctx<'_> {
         if let Some((_, c)) = self.vp_colors.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
             return Some(*c);
         }
-        self.d.layer(name).map(|l| l.color)
+        self.layers.get(name).map(|l| l.color)
     }
 }
 
 struct Builder<'a> {
     list: DisplayList,
     opts: &'a Options,
+    layers: &'a LayerIndex<'a>,
     /// Plotting: skip layers marked "do not plot".
     plotting: bool,
     /// The plot style table drawn with.
@@ -446,6 +479,29 @@ impl Builder<'_> {
             len: 1,
         });
     }
+    /// Many point markers as one primitive (the dots of a hatch pattern).
+    fn points(&mut self, ctx: &Ctx, color: Ink, ps: &[Vec2]) {
+        if ps.is_empty() {
+            return;
+        }
+        let (color, _) = self.styled(color, 0.0);
+        let start = self.list.verts.len() as u32;
+        for p in ps {
+            let q = ctx.xf.apply(*p);
+            self.list.bounds.add(q);
+            self.list.verts.push(q);
+        }
+        self.list.prims.push(DPrim {
+            handle: ctx.top,
+            color: color.rgb,
+            aci7: color.aci7,
+            lw: 0.0,
+            transparency: self.transparency,
+            kind: Kind::Point,
+            start,
+            len: u32::try_from(ps.len()).unwrap_or(u32::MAX),
+        });
+    }
     fn infinite(&mut self, ctx: &Ctx, color: Ink, base: Vec2, dir: Vec2, ray: bool) {
         let (color, _) = self.styled(color, 0.0);
         let start = self.list.verts.len() as u32;
@@ -483,9 +539,10 @@ pub fn build_plot(d: &Drawing, space: &Space, opts: &Options) -> DisplayList {
     build_space(d, space, opts, true)
 }
 
-fn top_ctx<'a>(d: &'a Drawing, xf: Mat3, top: Handle, frozen: &'a [String], vp_colors: &'a [(String, Color)]) -> Ctx<'a> {
+fn top_ctx<'a>(d: &'a Drawing, layers: &'a LayerIndex<'a>, xf: Mat3, top: Handle, frozen: &'a [String], vp_colors: &'a [(String, Color)]) -> Ctx<'a> {
     Ctx {
         d,
+        layers,
         xf,
         block_color: Color::Index(7),
         block_layer: None,
@@ -502,9 +559,12 @@ fn top_ctx<'a>(d: &'a Drawing, xf: Mat3, top: Handle, frozen: &'a [String], vp_c
 }
 
 fn build_space(d: &Drawing, space: &Space, opts: &Options, plotting: bool) -> DisplayList {
+    let index = LayerIndex::new(d);
+    let layers = &index;
     let opts = &with_point_view(d, space, opts);
     let styler = style_table(d, space, opts, plotting).map(|t| plotstyle::Styler::new(d, t));
-    let mut b = Builder { list: DisplayList::default(), opts, plotting, styles: styler.as_ref(), named: None, shared_budget: None, transparency: 0 };
+    let mut b =
+        Builder { list: DisplayList::default(), layers, opts, plotting, styles: styler.as_ref(), named: None, shared_budget: None, transparency: 0 };
     if let Space::Paper(name) = space {
         b.list.sheet = paper::sheet(d, name);
     }
@@ -516,7 +576,8 @@ fn build_space(d: &Drawing, space: &Space, opts: &Options, plotting: bool) -> Di
             return b.list;
         }
         let mut viewports = 0usize;
-        for e in store.iter() {
+        let only = if paper { None } else { b.opts.only.as_deref().map(Vec::as_slice) };
+        for e in top_level(store, only) {
             if paper && let EntityKind::Viewport(vp) = &e.kind {
                 if viewports < MAX_VIEWPORTS {
                     viewports += 1;
@@ -527,7 +588,7 @@ fn build_space(d: &Drawing, space: &Space, opts: &Options, plotting: bool) -> Di
                 }
                 continue;
             }
-            entity(&mut b, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
+            entity(&mut b, &top_ctx(d, layers, Mat3::IDENTITY, e.handle, &[], &[]), e);
         }
     }
     // A layout is drawn in paper units, so its pens become geometry now.
@@ -549,16 +610,25 @@ const PARALLEL_CHUNK: usize = 256;
 #[cfg(not(target_arch = "wasm32"))]
 fn build_parallel(b: &mut Builder, d: &Drawing, store: &cadcraft_doc::EntityStore) {
     use rayon::prelude::*;
-    let ents: Vec<&std::sync::Arc<Entity>> = store.iter().collect();
+    let layers = b.layers;
+    let ents = top_level(store, b.opts.only.as_deref().map(Vec::as_slice));
     let budget = std::sync::atomic::AtomicUsize::new(0);
     let (opts, plotting) = (b.opts, b.plotting);
     let parts: Vec<DisplayList> = ents
         .par_chunks(PARALLEL_CHUNK)
         .map(|chunk| {
-            let mut part =
-                Builder { list: DisplayList::default(), opts, plotting, styles: None, named: None, shared_budget: Some(&budget), transparency: 0 };
+            let mut part = Builder {
+                list: DisplayList::default(),
+                layers,
+                opts,
+                plotting,
+                styles: None,
+                named: None,
+                shared_budget: Some(&budget),
+                transparency: 0,
+            };
             for e in chunk {
-                entity(&mut part, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
+                entity(&mut part, &top_ctx(d, layers, Mat3::IDENTITY, e.handle, &[], &[]), e);
             }
             part.list
         })
@@ -570,6 +640,77 @@ fn build_parallel(b: &mut Builder, d: &Drawing, store: &cadcraft_doc::EntityStor
     for part in parts {
         append(&mut b.list, part);
     }
+}
+
+/// The top-level entities of `store` to build: all of them, or those at the draw indices `only`
+/// (ascending; indices past the end are skipped).
+fn top_level<'a>(store: &'a cadcraft_doc::EntityStore, only: Option<&[u32]>) -> Vec<&'a std::sync::Arc<Entity>> {
+    match only {
+        None => store.iter().collect(),
+        Some(ix) => {
+            let mut want = ix.iter().copied().peekable();
+            let mut out = Vec::with_capacity(ix.len());
+            for (i, e) in store.iter().enumerate() {
+                let Some(&next) = want.peek() else { break };
+                if u32::try_from(i).is_ok_and(|i| i == next) {
+                    out.push(e);
+                    want.next();
+                }
+            }
+            out
+        }
+    }
+}
+
+/// One entity of a block reference: in full, or as a dot at `dot` (block coordinates) when it is
+/// smaller than a pixel on screen, in the colour it would be drawn with.
+fn block_entity(b: &mut Builder, sub: &Ctx, be: &Entity, dot: Option<Vec2>) {
+    match dot {
+        None => entity(b, sub, be),
+        Some(p) => {
+            let (ink, _, _, _, visible, _) = resolve_common(sub, &be.common, b.plotting);
+            if visible {
+                b.point(sub, ink, p);
+            }
+        }
+    }
+}
+
+/// Build a large block's entities `ents` (in `sub`, the reference's context) on all cores and
+/// append them to `b` in drawing order. False once the shared expansion budget ran out.
+#[cfg(not(target_arch = "wasm32"))]
+fn insert_parallel(b: &mut Builder, sub: &Ctx, ents: &[(&std::sync::Arc<Entity>, Option<Vec2>)], budget: &std::sync::atomic::AtomicUsize) -> bool {
+    use rayon::prelude::*;
+    let layers = b.layers;
+    let (opts, named, transparency) = (b.opts, b.named, b.transparency);
+    let exhausted = std::sync::atomic::AtomicBool::new(false);
+    let parts: Vec<DisplayList> = ents
+        .par_chunks(PARALLEL_CHUNK)
+        .map(|chunk| {
+            let mut part = Builder {
+                list: DisplayList::default(),
+                layers,
+                opts,
+                plotting: false,
+                styles: None,
+                named,
+                shared_budget: Some(budget),
+                transparency,
+            };
+            for (be, dot) in chunk {
+                if !part.expand() {
+                    exhausted.store(true, std::sync::atomic::Ordering::Relaxed);
+                    break;
+                }
+                block_entity(&mut part, sub, be, *dot);
+            }
+            part.list
+        })
+        .collect();
+    for part in parts {
+        append(&mut b.list, part);
+    }
+    !exhausted.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Append `src` to `dst`: its primitives index into `dst`'s vertex and triangle arrays.
@@ -637,7 +778,8 @@ fn viewport(b: &mut Builder, d: &Drawing, e: &Entity, vp: &cadcraft_doc::Viewpor
     let poly = viewport_clip(d, e.handle, vp);
     // Border (on the viewport's layer; layer off hides only the border).
     if poly.is_none() {
-        entity(b, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
+        let layers = b.layers;
+        entity(b, &top_ctx(d, layers, Mat3::IDENTITY, e.handle, &[], &[]), e);
     }
     if b.opts.skip_viewport == Some(e.handle) {
         return;
@@ -682,8 +824,18 @@ pub fn viewport_content(d: &Drawing, space: &Space, handle: Handle, area: Bounds
     }
     let opts = &with_point_view(d, space, opts);
     let styler = style_table(d, space, opts, false).map(|t| plotstyle::Styler::new(d, t));
-    let mut b =
-        Builder { list: DisplayList::default(), opts, plotting: false, styles: styler.as_ref(), named: None, shared_budget: None, transparency: 0 };
+    let index = LayerIndex::new(d);
+    let layers = &index;
+    let mut b = Builder {
+        list: DisplayList::default(),
+        layers,
+        opts,
+        plotting: false,
+        styles: styler.as_ref(),
+        named: None,
+        shared_budget: None,
+        transparency: 0,
+    };
     contents(&mut b, d, vp, area, &Clip::Rect(area));
     b.list
 }
@@ -691,6 +843,7 @@ pub fn viewport_content(d: &Drawing, space: &Space, handle: Handle, area: Bounds
 /// Model space seen through `vp`, in paper units, appended to `b`'s list clipped to `clip`;
 /// `area` (the clip's bounds on paper) picks the model objects to draw.
 fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bounds2, clip: &Clip) {
+    let layers = b.layers;
     if b.list.expanded >= MAX_BLOCK_EXPANSION || !vp.on {
         return;
     }
@@ -711,7 +864,7 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
     // PSLTSCALE on: model-space dashes are scaled so they measure the same on paper as in
     // paper space, whatever the viewport scale.
     let lt_factor = if d.header.i64("PSLTSCALE", 1) != 0 { 1.0 / s } else { 1.0 };
-    let ctx = || Ctx { lt_factor, ..top_ctx(d, xf, VIEWPORT_CONTENT, &vp.frozen_layers, &vp.layer_colors) };
+    let ctx = || Ctx { lt_factor, ..top_ctx(d, layers, xf, VIEWPORT_CONTENT, &vp.frozen_layers, &vp.layer_colors) };
     let seen = |me: &Entity| {
         if matches!(me.kind, EntityKind::Viewport(_)) {
             return false;
@@ -724,6 +877,7 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
     };
     let mut sub = Builder {
         list: DisplayList::default(),
+        layers,
         opts: b.opts,
         plotting: b.plotting,
         styles: b.styles,
@@ -748,6 +902,7 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
                 .map(|chunk| {
                     let mut part = Builder {
                         list: DisplayList::default(),
+                        layers,
                         opts,
                         plotting: false,
                         styles: None,
@@ -834,10 +989,9 @@ fn append_clipped(dst: &mut DisplayList, src: &DisplayList, clip: &Clip) {
                     Clip::Rect(rect) => rect.contains(q),
                     Clip::Poly(c) => c.contains(q),
                 };
-                if let Some(q) = pts.first()
-                    && inside(*q)
-                {
-                    push_raw(dst, p, Kind::Point, &[*q]);
+                let kept: Vec<Vec2> = pts.iter().copied().filter(|q| inside(*q)).collect();
+                if !kept.is_empty() {
+                    push_raw(dst, p, Kind::Point, &kept);
                 }
             }
             (Kind::Infinite { ray }, Clip::Rect(rect)) => {
@@ -900,9 +1054,12 @@ pub fn build_entities<'a, I: IntoIterator<Item = &'a Entity>>(d: &Drawing, ents:
     } else {
         opts
     };
-    let mut b = Builder { list: DisplayList::default(), opts, plotting: false, styles: None, named: None, shared_budget: None, transparency: 0 };
+    let index = LayerIndex::new(d);
+    let layers = &index;
+    let mut b =
+        Builder { list: DisplayList::default(), layers, opts, plotting: false, styles: None, named: None, shared_budget: None, transparency: 0 };
     for e in ents {
-        entity(&mut b, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
+        entity(&mut b, &top_ctx(d, layers, Mat3::IDENTITY, e.handle, &[], &[]), e);
     }
     b.list
 }
@@ -956,7 +1113,7 @@ fn resolve_common(ctx: &Ctx, c: &cadcraft_doc::Common, plotting: bool) -> Resolv
     let d = ctx.d;
     // Layer "0" inside a block takes the insert's layer.
     let layer_name = if c.layer == "0" { ctx.block_layer.as_deref().unwrap_or("0") } else { c.layer.as_str() };
-    let layer = d.layer(layer_name);
+    let layer = ctx.layers.get(layer_name);
     let visible =
         c.visible && layer.is_none_or(|l| l.visible() && (!plotting || l.plot)) && !ctx.frozen.iter().any(|f| f.eq_ignore_ascii_case(layer_name));
     let layer_color = ctx.layer_color(layer_name).unwrap_or(Color::Index(7));
@@ -1397,7 +1554,7 @@ fn dimension(b: &mut Builder, ctx: &Ctx, e: &Entity, dm: &cadcraft_doc::Dimensio
     let dim_rgb = ink(style.dim_line_color, layer_color, own);
     let ext_rgb = ink(style.ext_line_color, layer_color, own);
     let txt_rgb = ink(style.text_color, layer_color, own);
-    let layer = d.layer(layer_name);
+    let layer = ctx.layers.get(layer_name);
     let weight = |v: i16| -> f32 {
         if !b.opts.lineweights {
             return 0.0;
@@ -1473,16 +1630,17 @@ fn sub_ctx<'a>(ctx: &Ctx<'a>, e: &Entity, m: Mat3) -> Ctx<'a> {
     };
     let lw = match e.common.lineweight {
         Lineweight::ByBlock => ctx.block_lw,
-        Lineweight::ByLayer => ctx.d.layer(layer.as_deref().unwrap_or("0")).map(|l| l.lineweight).unwrap_or(Lineweight::Default),
+        Lineweight::ByLayer => ctx.layers.get(layer.as_deref().unwrap_or("0")).map(|l| l.lineweight).unwrap_or(Lineweight::Default),
         x => x,
     };
     let lt = match e.common.linetype.to_ascii_lowercase().as_str() {
         "byblock" => ctx.block_ltype.clone(),
-        "bylayer" => ctx.d.layer(layer.as_deref().unwrap_or("0")).map(|l| l.linetype.clone()).unwrap_or_else(|| "Continuous".into()),
+        "bylayer" => ctx.layers.get(layer.as_deref().unwrap_or("0")).map(|l| l.linetype.clone()).unwrap_or_else(|| "Continuous".into()),
         _ => e.common.linetype.clone(),
     };
     Ctx {
         d: ctx.d,
+        layers: ctx.layers,
         xf: ctx.xf.then_before(m),
         block_color: color,
         block_layer: layer,
@@ -1514,15 +1672,57 @@ fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rg
                 let off = Vec2::new(ins.col_spacing * f64::from(c), ins.row_spacing * f64::from(r)).rotate(ins.rotation);
                 let m = Mat3::translate(off).then_before(ins.transform(blk.base.xy()));
                 let sub = Ctx { block_pstyle: b.named, block_transparency: b.transparency, ..sub_ctx(ctx, e, m) };
-                for be in blk.entities.iter() {
+                // A screen build (a view and a pixel size; never plots or exports) skips the
+                // block's entities outside the view, brought into block coordinates, and draws
+                // those smaller than a pixel as a dot. An entity with no measurable bounds is
+                // always drawn in full.
+                let cull = match b.opts.view {
+                    Some(v) if b.opts.min_dash > 0.0 => sub.xf.inverse().map(|inv| {
+                        let px = b.opts.min_dash / 2.0 / max_scale(&sub.xf).max(1e-300);
+                        (Bounds2::from_points(v.corners().map(|p| inv.apply(p))), blockcull::entity_bounds_of(ctx.d, blk), px)
+                    }),
+                    _ => None,
+                };
+                let shown = blk.entities.iter().enumerate().filter_map(|(k, be)| {
                     // Constant/visible attribute definitions inside blocks are not drawn; attribs are.
                     if matches!(be.kind, EntityKind::AttDef(_)) {
-                        continue;
+                        return None;
                     }
+                    let Some((view, bounds, px)) = &cull else { return Some((be, None)) };
+                    match bounds.get(k) {
+                        Some(eb) if !eb.is_empty() && !eb.intersects(view) => None,
+                        Some(eb) if !eb.is_empty() && eb.width().max(eb.height()) < *px => Some((be, Some(eb.center()))),
+                        _ => Some((be, None)),
+                    }
+                });
+                #[cfg(not(target_arch = "wasm32"))]
+                if ctx.depth == 0
+                    && !b.plotting
+                    && b.styles.is_none()
+                    && let Some(budget) = b.shared_budget
+                {
+                    let ents: Vec<(&std::sync::Arc<Entity>, Option<Vec2>)> = shown.collect();
+                    if ents.len() >= 2 * PARALLEL_CHUNK {
+                        // A large block (a whole plan inserted as one block): its entities are
+                        // built on all cores, joined in drawing order like `build_parallel`.
+                        if !insert_parallel(b, &sub, &ents, budget) {
+                            break 'copies;
+                        }
+                    } else {
+                        for (be, dot) in ents {
+                            if !b.expand() {
+                                break 'copies;
+                            }
+                            block_entity(b, &sub, be, dot);
+                        }
+                    }
+                    continue;
+                }
+                for (be, dot) in shown {
                     if !b.expand() {
                         break 'copies;
                     }
-                    entity(b, &sub, be);
+                    block_entity(b, &sub, be, dot);
                 }
             }
         }

@@ -227,7 +227,7 @@ pub fn build_mesh(list: &DisplayList, origin: Vec2, bg: Rgb, lwdisplay: bool) ->
                 }
             }
             Kind::Point => {
-                if let Some(q) = pts.first() {
+                for q in pts {
                     let p = rel(*q, origin);
                     push_instance(&mut m.quads, p, p, col, POINT_SIZE, 0.0);
                 }
@@ -258,7 +258,7 @@ pub fn build_highlight_mesh(list: &DisplayList, prims: &[usize], origin: Vec2, c
                 }
             }
             Kind::Point => {
-                if let Some(q) = pts.first() {
+                for q in pts {
                     let p = rel(*q, origin);
                     push_instance(&mut m.quads, p, p, color, 3.0, 0.0);
                 }

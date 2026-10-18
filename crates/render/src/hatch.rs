@@ -51,15 +51,16 @@ pub(super) fn draw(b: &mut Builder, ctx: &Ctx, e: &Entity, h: &Hatch, rgb: Ink, 
         let inv = ctx.xf.inverse()?;
         Some(Bounds2::from_points(v.corners().iter().map(|p| inv.apply(*p))))
     });
+    // Dots (AR-SAND, AR-CONC…) go into one primitive: a dense pattern has hundreds of thousands.
+    let mut dots = Vec::new();
     for seg in pattern_lines_until(ctx.d, h, &loops, px, view.as_ref(), b.opts.cancel.as_deref()) {
         if seg.len() == 1 {
-            if let Some(p) = seg.first() {
-                b.point(ctx, rgb, *p);
-            }
+            dots.extend(seg.first().copied());
         } else {
             b.polyline(ctx, rgb, lw, &seg);
         }
     }
+    b.points(ctx, rgb, &dots);
 }
 
 /// Upper bound on loop count × vertex count for island detection (the nesting test compares
