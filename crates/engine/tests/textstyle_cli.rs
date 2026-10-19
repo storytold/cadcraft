@@ -119,6 +119,24 @@ fn annotative_styles_ask_for_the_paper_height() {
     let st = style(&s, "Anno");
     assert!(st.annotative);
     assert_eq!(st.height, 0.125);
+    // Enter at the question says yes, as its default shows; No asks for the height again.
+    lines(&mut s, &["-STYLE", "Plain", "", "A"]);
+    assert!(s.prompt_text().contains("<Yes>"), "{}", s.prompt_text());
+    s.cmdline("N").unwrap();
+    assert!(s.prompt_text().contains("Specify height of text or [Annotative]"), "{}", s.prompt_text());
+    lines(&mut s, &["0.2", "", "", "", ""]);
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert!(!style(&s, "Plain").annotative);
+}
+
+#[test]
+fn a_new_style_keeps_the_current_styles_big_font() {
+    let mut s = Session::new();
+    s.execute("style", &json!({ "name": "Asian", "font": "txt.shx", "bigFont": "bigfont.shx" })).unwrap();
+    // Name, font, height, width factor, obliquing angle, backwards, upside down, vertical.
+    lines(&mut s, &["-STYLE", "Copy", "", "", "", "", "", "", ""]);
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(style(&s, "Copy").big_font, "bigfont.shx");
 }
 
 #[test]

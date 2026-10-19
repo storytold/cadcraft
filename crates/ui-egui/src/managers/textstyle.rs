@@ -69,6 +69,11 @@ fn new_name(d: &Drawing) -> String {
     (1..10_000).map(|i| format!("style{i}")).find(|n| d.text_style(n).is_none()).unwrap_or_else(|| "style".into())
 }
 
+/// A name no text style can have (as -STYLE refuses it), trimmed.
+fn bad_name(name: &str) -> bool {
+    name.is_empty() || name.len() > 255 || name.contains(['<', '>', '/', '\\', '"', ':', ';', '?', '*', '|', ',', '=', '`'])
+}
+
 /// Whether style `name` can be deleted: not Standard, the current style or a style in use.
 fn deletable(name: &str, current: &str, used: &[String]) -> bool {
     !name.eq_ignore_ascii_case("Standard") && !name.eq_ignore_ascii_case(current) && !used.iter().any(|n| n.eq_ignore_ascii_case(name))
@@ -229,7 +234,7 @@ fn new_page(ui: &mut egui::Ui, d: &Drawing, st: &mut State, saved: &TextStyle, a
     });
     let trimmed = name.trim().to_string();
     let taken = d.text_style(&trimmed).is_some();
-    let bad = trimmed.is_empty() || trimmed.len() > 255 || trimmed.contains(['<', '>', '/', '\\', '"', ':', ';', '?', '*', '|', ',', '=', '`']);
+    let bad = bad_name(&trimmed);
     if taken {
         ui.label(RichText::new(crate::tl!("A text style with this name already exists.")).color(Tokens::get().text_dim));
     }
@@ -383,12 +388,16 @@ fn style_list(
         let mut done = false;
         ui.horizontal(|ui| {
             let r = ui.add(egui::TextEdit::singleline(to).desired_width(120.0));
-            if ui.button(crate::tl!("OK")).clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
-                let to = to.trim().to_string();
-                if !to.is_empty() && to != from {
-                    actions.push(("style.rename", json!({ "from": from, "to": to })));
+            let name = to.trim().to_string();
+            // Only a name the rename takes: a refused one would leave the selection on no style
+            // (and drop the edits waiting for Apply).
+            let usable = !bad_name(&name) && d.text_style(&name).is_none_or(|t| t.name.eq_ignore_ascii_case(&from));
+            let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if ui.add_enabled(usable, egui::Button::new(crate::tl!("OK"))).clicked() || enter && usable {
+                if name != from {
+                    actions.push(("style.rename", json!({ "from": from, "to": name })));
                     if st.selected == from {
-                        st.selected = to;
+                        st.selected = name;
                     }
                 }
                 done = true;

@@ -278,6 +278,8 @@ fn renaming_a_text_style_follows_dimension_overrides() {
     set(&mut s, &dm, json!({ "textStyle": "Old" }));
     s.execute("style.rename", &json!({ "from": "Old", "to": "New" })).unwrap();
     assert_eq!(dim(&s, &dm).overrides.get("textStyle"), Some(&json!("New")));
+    // A style only a dimension override names is in use: it can't be deleted.
+    assert!(s.execute("style.delete", &json!({ "name": "New" })).is_err());
 }
 
 #[test]

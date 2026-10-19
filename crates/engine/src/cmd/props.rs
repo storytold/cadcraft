@@ -426,6 +426,13 @@ pub fn text_styles_in_use(d: &cadcraft_doc::Drawing) -> Vec<String> {
                 EntityKind::AttDef(a) => out.push(a.text.style.clone()),
                 EntityKind::Insert(i) => out.extend(i.attribs.iter().map(|a| a.text.style.clone())),
                 EntityKind::MLeader(m) => out.extend(m.text.iter().map(|t| t.style.clone())),
+                // A dimension's own text style (a DIMTXSTY override), which a rename follows too.
+                EntityKind::Dimension(dm) => out.extend(
+                    dm.overrides
+                        .iter()
+                        .filter(|(k, _)| cadcraft_doc::DimStyle::field_name(k) == Some("textStyle"))
+                        .filter_map(|(_, v)| v.as_str().map(str::to_string)),
+                ),
                 _ => {}
             }
         }
