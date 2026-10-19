@@ -48,8 +48,8 @@ fn save_as_new_style_takes_the_dimensions_settings() {
     let g = cadcraft_engine::render::dimension_in(s.doc().unwrap(), &d);
     assert!((g.text_height - 0.3).abs() < 1e-12 && g.value == "10.00", "{} {}", g.text_height, g.value);
     assert_eq!(s.doc().unwrap().header.str("DIMSTYLE", "Standard"), "Standard");
-    // A new name that a style can have.
-    for name in ["detail", "  ", "a<b"] {
+    // A new name that a style can have (no `~`, which -DIMSTYLE Restore reads as compare).
+    for name in ["detail", "  ", "a<b", "~Plan"] {
         assert!(s.execute("dimstyle.saveas", &json!({ "handle": h.hex(), "name": name })).is_err(), "{name}");
     }
     // Only dimensions.

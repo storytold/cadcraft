@@ -25,7 +25,7 @@ pub fn specs() -> Vec<CommandSpec> {
                  → save (annotative: an annotative style): the current settings (style and its overrides) as style `name`, made current \
                  (`replace` redefines one); restore: style `name` (or dimension `handle`'s style) made current; status: {variables} of the \
                  current settings; variables: {variables} of style `name` or dimension `handle`; apply: the current settings given to \
-                 `handles` (default: the selection); list: {styles} matching `pattern` (* and ?)",
+                 `handles` (default: the selection); list: {styles} matching `pattern` (*, ? and #)",
             )
             .interactive(|_| Ok(Box::new(DashDimStyle::default()))),
         CommandSpec::new("dimstyle.overrides", "Dimension Style Overrides", run_overrides).params(
@@ -88,27 +88,21 @@ fn differences(a: &DimStyle, b: &DimStyle) -> Vec<(String, Value, Value)> {
         .collect()
 }
 
-/// `name` against a pattern with `*` (any run) and `?` (any character), ignoring case.
+/// `name` against a pattern with `*` (any run), `?` (any character) and `#` (a digit), ignoring
+/// case: QSELECT's matcher, which takes time in proportion to the lengths (a pattern that backs
+/// up at every `*` can't hang the command).
 fn matches(pattern: &str, name: &str) -> bool {
-    fn go(p: &[char], n: &[char]) -> bool {
-        match (p.first(), n.first()) {
-            (None, None) => true,
-            (Some('*'), _) => go(&p[1..], n) || (!n.is_empty() && go(p, &n[1..])),
-            (Some('?'), Some(_)) => go(&p[1..], &n[1..]),
-            (Some(a), Some(b)) if a.eq_ignore_ascii_case(b) => go(&p[1..], &n[1..]),
-            _ => false,
-        }
-    }
-    let p: Vec<char> = pattern.trim().chars().take(256).collect();
-    let n: Vec<char> = name.chars().collect();
-    p.is_empty() || go(&p, &n)
+    let p = pattern.trim();
+    p.is_empty() || super::qselect::wildcard(p, name)
 }
 
 fn styles_matching(d: &Drawing, pattern: &str) -> Vec<String> {
     d.dim_styles.iter().filter(|s| matches(pattern, &s.name)).map(|s| s.name.clone()).collect()
 }
 
-fn check_name(name: &str) -> Result<String> {
+/// A usable dimension style name, trimmed: for -DIMSTYLE and `dimstyle.saveas` alike. No `~`,
+/// which Restore reads as "compare with".
+pub(super) fn check_name(name: &str) -> Result<String> {
     let name = name.trim();
     if name.is_empty() || name.len() > 255 || name.contains(['<', '>', '/', '\\', '"', ':', ';', '?', '*', '|', ',', '=', '`', '~']) {
         return Err(bad(CMD, "bad style name"));
@@ -224,9 +218,7 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// `dimstyle.overrides`: set the current style's overrides (the header DIM* variables).
 fn run_overrides(s: &mut Session, p: &Value) -> Result<Value> {
-    if bool_or(p, "clear", false) {
-        s.doc_mut()?.sync_dim_vars();
-    }
+    let clear = bool_or(p, "clear", false);
     let mut given = serde_json::Map::new();
     for (k, v) in p.as_object().into_iter().flatten() {
         if k == "clear" {
@@ -237,10 +229,19 @@ fn run_overrides(s: &mut Session, p: &Value) -> Result<Value> {
             .ok_or_else(|| bad("dimstyle.overrides", format!("`{k}` is not a dimension variable")))?;
         given.insert(field.to_string(), v.clone());
     }
-    // Checked against the current style first, so nothing changes when one value is unusable.
-    let rejected = current_settings(s.doc()?).apply_fields(&given);
+    // Checked first (against the style alone when its overrides go), so nothing changes when
+    // one value is unusable: a command's error doesn't undo what it did.
+    let d = s.doc()?;
+    let mut base = current_settings(d);
+    if clear {
+        base = d.dim_style(&base.name).cloned().unwrap_or_default();
+    }
+    let rejected = base.apply_fields(&given);
     if !rejected.is_empty() {
         return Err(bad("dimstyle.overrides", format!("unusable values for {}", rejected.join(", "))));
+    }
+    if clear {
+        s.doc_mut()?.sync_dim_vars();
     }
     for (field, v) in &given {
         let Some((var, _)) = cadcraft_doc::DIMVARS.iter().find(|(_, f)| f == field) else { continue };
@@ -255,7 +256,7 @@ fn run_overrides(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// What -DIMSTYLE asks next.
-#[derive(Default)]
+#[derive(Clone, Default)]
 enum Ask {
     #[default]
     Option,
@@ -293,36 +294,7 @@ impl DashDimStyle {
             s.echo(line);
         }
     }
-}
-
-impl Interactive for DashDimStyle {
-    fn name(&self) -> &'static str {
-        "-DIMSTYLE"
-    }
-    fn begin(&mut self, s: &mut Session) -> Result<Step> {
-        let d = s.doc()?;
-        let current = d.header.str("DIMSTYLE", "Standard");
-        let annotative = d.dim_style(&current).is_some_and(|st| st.annotative);
-        let overridden = if d.dim_overrides().is_empty() { "" } else { " (with overrides)" };
-        s.echo(format!("Current dimension style: {current}{overridden}  Annotative: {}", if annotative { "Yes" } else { "No" }));
-        Ok(Step::Continue)
-    }
-    fn prompt(&self, _s: &Session) -> Prompt {
-        match &self.ask {
-            Ask::Option => Prompt::new("Enter a dimension style option", curves::KW)
-                .kw(&["ANnotative", "Save", "Restore", "STatus", "Variables", "Apply", "?"])
-                .default("Restore"),
-            Ask::Annotative => Prompt::new("Create annotative dimension style", curves::KW).kw(&["Yes", "No"]).default("Yes"),
-            Ask::SaveName { .. } => Prompt::new("Enter name for new dimension style or [?]", Accept::TEXT).kw(&["?"]),
-            Ask::Redefine { .. } => Prompt::new("That name is already in use, redefine it?", curves::KW).kw(&["Yes", "No"]).default("No"),
-            Ask::RestoreName => Prompt::new("Enter a dimension style name, [?] or <select dimension>", Accept::TEXT).kw(&["?"]),
-            Ask::RestorePick | Ask::VariablesPick => Prompt::new("Select dimension", Accept::POINT),
-            Ask::VariablesName => Prompt::new("Enter a dimension style name, [?] or <select dimensions>", Accept::TEXT).kw(&["?"]),
-            Ask::Apply => self.sel.prompt(),
-            Ask::ListPattern => Prompt::new("Enter dimension style(s) to list", Accept::TEXT).default("*"),
-        }
-    }
-    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+    fn answer(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         let ask = std::mem::take(&mut self.ask);
         let text = match &i {
             Input::Text(t) | Input::Keyword(t) => Some(t.trim().to_string()),
@@ -421,7 +393,12 @@ impl Interactive for DashDimStyle {
             Ask::RestorePick | Ask::VariablesPick => {
                 let restoring = matches!(ask, Ask::RestorePick);
                 let Input::Point(p) = i else {
-                    return Ok(if matches!(i, Input::Enter) { Step::Done } else { Step::Continue });
+                    if matches!(i, Input::Enter) {
+                        return Ok(Step::Done);
+                    }
+                    // Anything else asks for the dimension again.
+                    self.ask = ask;
+                    return Ok(Step::Continue);
                 };
                 let picked = curves::pick_at(s, p).and_then(|h| dimension_settings(s, h).ok());
                 let Some(st) = picked else {
@@ -472,5 +449,43 @@ impl Interactive for DashDimStyle {
                 Ok(Step::Done)
             }
         }
+    }
+}
+
+impl Interactive for DashDimStyle {
+    fn name(&self) -> &'static str {
+        "-DIMSTYLE"
+    }
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        let d = s.doc()?;
+        let current = d.header.str("DIMSTYLE", "Standard");
+        let annotative = d.dim_style(&current).is_some_and(|st| st.annotative);
+        let overridden = if d.dim_overrides().is_empty() { "" } else { " (with overrides)" };
+        s.echo(format!("Current dimension style: {current}{overridden}  Annotative: {}", if annotative { "Yes" } else { "No" }));
+        Ok(Step::Continue)
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        match &self.ask {
+            Ask::Option => Prompt::new("Enter a dimension style option", curves::KW)
+                .kw(&["ANnotative", "Save", "Restore", "STatus", "Variables", "Apply", "?"])
+                .default("Restore"),
+            Ask::Annotative => Prompt::new("Create annotative dimension style", curves::KW).kw(&["Yes", "No"]).default("Yes"),
+            Ask::SaveName { .. } => Prompt::new("Enter name for new dimension style or [?]", Accept::TEXT).kw(&["?"]),
+            Ask::Redefine { .. } => Prompt::new("That name is already in use, redefine it?", curves::KW).kw(&["Yes", "No"]).default("No"),
+            Ask::RestoreName => Prompt::new("Enter a dimension style name, [?] or <select dimension>", Accept::TEXT).kw(&["?"]),
+            Ask::RestorePick | Ask::VariablesPick => Prompt::new("Select dimension", Accept::POINT),
+            Ask::VariablesName => Prompt::new("Enter a dimension style name, [?] or <select dimensions>", Accept::TEXT).kw(&["?"]),
+            Ask::Apply => self.sel.prompt(),
+            Ask::ListPattern => Prompt::new("Enter dimension style(s) to list", Accept::TEXT).default("*"),
+        }
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        // A refused answer asks the same question again.
+        let asked = self.ask.clone();
+        let r = self.answer(s, i);
+        if r.is_err() {
+            self.ask = asked;
+        }
+        r
     }
 }
