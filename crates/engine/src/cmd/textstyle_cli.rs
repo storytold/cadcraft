@@ -136,6 +136,8 @@ impl DashStyle {
             &json!({
                 "name": st.name,
                 "font": st.font,
+                // A new style keeps the big font of the style it starts from.
+                "bigFont": st.big_font,
                 "height": st.height,
                 "widthFactor": st.width_factor,
                 "oblique": st.oblique.to_degrees(),
@@ -175,7 +177,8 @@ impl Interactive for DashStyle {
             Ask::ListPattern => Prompt::new("Enter text style(s) to list", Accept::TEXT).default("*"),
             Ask::Font => Prompt::new("Specify full font name or font filename (TTF or SHX)", Accept::TEXT).default(st.font.clone()),
             Ask::Height => Prompt::new("Specify height of text", Accept::TEXT).kw(&["Annotative"]).default(dist(st.height)),
-            Ask::Annotative => Prompt::new("Create annotative text style?", Accept::TEXT).kw(&["Yes", "No"]).default(yes_no(st.annotative)),
+            // Asked after Annotative was picked: Enter says yes.
+            Ask::Annotative => Prompt::new("Create annotative text style?", Accept::TEXT).kw(&["Yes", "No"]).default("Yes"),
             Ask::Orientation => Prompt::new("Match text orientation to layout?", Accept::TEXT).kw(&["Yes", "No"]).default("No"),
             Ask::PaperHeight => Prompt::new("Specify paper text height", Accept::TEXT).default(dist(st.height)),
             Ask::Width => Prompt::new("Specify width factor", Accept::TEXT).default(format!("{:.4}", st.width_factor)),
@@ -252,7 +255,8 @@ impl Interactive for DashStyle {
             },
             Ask::Annotative => {
                 self.style.annotative = yes(t, true);
-                self.ask = if self.style.annotative { Ask::Orientation } else { Ask::PaperHeight };
+                // No asks for the height again, as it measures in the drawing.
+                self.ask = if self.style.annotative { Ask::Orientation } else { Ask::Height };
             }
             // CADCraft doesn't model the layout orientation; the answer is taken and not kept.
             Ask::Orientation => self.ask = Ask::PaperHeight,
