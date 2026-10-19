@@ -19,6 +19,7 @@ const SESSION_VARS: &[&str] = &[
     "POLARDIST",
     "SNAPTYPE",
     "AUTOSNAP",
+    "APBOX",
     "QNEWTEMPLATE",
     "GRIDMODE",
     "SNAPMODE",
@@ -89,8 +90,10 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "POLARADDANG" => json!(format_angle_list(&st.polaraddang)),
         "POLARDIST" => json!(st.polardist),
         "SNAPTYPE" => json!(i32::from(st.polarsnap)),
-        // Marker, tooltip and tracking tooltip always on (1 + 4 + 32); polar 8, tracking 16.
-        "AUTOSNAP" => json!(37 + 8 * u32::from(st.polarmode) + 16 * u32::from(st.otrack)),
+        // Marker 1, tooltip 2, magnet 4, polar tracking 8, object snap tracking 16, AutoTrack
+        // tooltip 32.
+        "AUTOSNAP" => json!(st.autosnap()),
+        "APBOX" => json!(i32::from(st.apbox)),
         "POLARANG" => json!(st.polarang.to_degrees()),
         "GRIDMODE" => json!(i32::from(st.gridmode)),
         "SNAPMODE" => json!(i32::from(st.snapmode)),
@@ -302,9 +305,9 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         "SNAPTYPE" => st.polarsnap = as_i(v).filter(|b| (0..=1).contains(b)).ok_or_else(bad)? == 1,
         "AUTOSNAP" => {
             let bits = as_i(v).filter(|b| (0..=63).contains(b)).ok_or_else(bad)?;
-            st.polarmode = bits & 8 != 0;
-            st.otrack = bits & 16 != 0;
+            st.set_autosnap(bits as u32);
         }
+        "APBOX" => st.apbox = as_bool(v).ok_or_else(bad)?,
         "QNEWTEMPLATE" => crate::cmd::file::set_qnew_template(v.as_str().ok_or_else(bad)?),
         "POLARANG" => st.polarang = as_f64(v).filter(|a| *a > 0.0).ok_or_else(bad)?.to_radians(),
         "GRIDMODE" => st.gridmode = as_bool(v).ok_or_else(bad)?,

@@ -1352,3 +1352,10 @@ menu	View	Görünüm
 	Check for Updates…	Güncellemeleri denetle…
 	CADCraft is up to date.	CADCraft güncel.
 	Could not check for updates.	Güncellemeler denetlenemedi.
+	AutoSnap settings	AutoSnap ayarları
+	Marker	İşaretçi
+	Magnet	Mıknatıs
+	Display AutoSnap tooltip	AutoSnap araç ipucunu göster
+	Display AutoSnap aperture box	AutoSnap açıklık kutusunu göster
+	Display AutoTrack tooltip	AutoTrack araç ipucunu göster
+	The magnet locks the crosshair onto the snap point; the aperture box shows how near the cursor must come to find one.	Mıknatıs, artı imleci kenetleme noktasına kilitler; açıklık kutusu, bir nokta bulmak için imlecin ne kadar yaklaşması gerektiğini gösterir.

@@ -1229,6 +1229,13 @@ menu	Modify	Izmijeni
 	Check for Updates…	Provjeri ažuriranja…
 	CADCraft is up to date.	CADCraft je ažuran.
 	Could not check for updates.	Nije moguće provjeriti ažuriranja.
+	AutoSnap settings	Postavke AutoSnapa
+	Marker	Oznaka
+	Magnet	Magnet
+	Display AutoSnap tooltip	Prikaži AutoSnap savjet
+	Display AutoSnap aperture box	Prikaži AutoSnap okvir otvora
+	Display AutoTrack tooltip	Prikaži AutoTrack savjet
+	The magnet locks the crosshair onto the snap point; the aperture box shows how near the cursor must come to find one.	Magnet zaključava nišan na tački hvatanja; okvir otvora pokazuje koliko blizu kursor mora doći da bi je pronašao.
 	3D Mouse	3D miš
 	3D Mouse Navigation	Navigacija 3D mišem
 	3D Mouse...	3D miš...

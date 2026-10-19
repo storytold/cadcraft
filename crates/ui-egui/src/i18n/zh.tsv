@@ -1349,3 +1349,10 @@
 	Check for Updates…	检查更新…
 	CADCraft is up to date.	CADCraft 已是最新版本。
 	Could not check for updates.	无法检查更新。
+	AutoSnap settings	自动捕捉设置
+	Marker	标记
+	Magnet	磁吸
+	Display AutoSnap tooltip	显示自动捕捉工具提示
+	Display AutoSnap aperture box	显示自动捕捉靶框
+	Display AutoTrack tooltip	显示自动追踪工具提示
+	The magnet locks the crosshair onto the snap point; the aperture box shows how near the cursor must come to find one.	磁吸将十字光标吸附到捕捉点；靶框显示光标需要多近才能找到捕捉点。

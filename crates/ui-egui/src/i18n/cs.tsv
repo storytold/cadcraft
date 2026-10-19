@@ -1227,3 +1227,10 @@ menu	Modify	Modifikace
 	Check for Updates…	Zkontrolovat aktualizace…
 	CADCraft is up to date.	CADCraft je aktuální.
 	Could not check for updates.	Aktualizace se nepodařilo zkontrolovat.
+	AutoSnap settings	Nastavení AutoSnap
+	Marker	Značka
+	Magnet	Magnet
+	Display AutoSnap tooltip	Zobrazit popisek AutoSnap
+	Display AutoSnap aperture box	Zobrazit rámeček AutoSnap
+	Display AutoTrack tooltip	Zobrazit popisek AutoTrack
+	The magnet locks the crosshair onto the snap point; the aperture box shows how near the cursor must come to find one.	Magnet přitáhne nitkový kříž k bodu uchopení; rámeček ukazuje, jak blízko se musí kurzor dostat, aby ho našel.
