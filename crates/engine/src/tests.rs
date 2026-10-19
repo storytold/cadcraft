@@ -577,6 +577,29 @@ fn sysvars_roundtrip() {
     assert_eq!(sysvars::get(&s, "FONTALT"), Some(json!("")));
 }
 
+/// AUTOSNAP's bits each have a setting (marker 1, tooltip 2, magnet 4, polar 8, object snap
+/// tracking 16, AutoTrack tooltip 32); APBOX is the aperture box.
+#[test]
+fn autosnap_bits_and_apbox_roundtrip() {
+    let mut s = Session::new();
+    let defaults = s.settings.autosnap();
+    assert_eq!(defaults & 7, 7, "marker, tooltip and magnet start on");
+    s.execute("setvar", &json!({"name": "AUTOSNAP", "value": 0})).unwrap();
+    let st = &s.settings;
+    assert!(!st.autosnap_marker && !st.autosnap_tooltip && !st.autosnap_magnet && !st.polarmode && !st.otrack && !st.autotrack_tooltip);
+    assert_eq!(sysvars::get(&s, "AUTOSNAP"), Some(json!(0)));
+    s.execute("setvar", &json!({"name": "autosnap", "value": 4 + 32})).unwrap();
+    assert!(s.settings.autosnap_magnet && s.settings.autotrack_tooltip && !s.settings.autosnap_marker);
+    assert_eq!(sysvars::get(&s, "AUTOSNAP"), Some(json!(36)));
+    assert!(s.execute("setvar", &json!({"name": "AUTOSNAP", "value": 64})).is_err(), "0–63 only");
+    s.execute("setvar", &json!({"name": "AUTOSNAP", "value": defaults})).unwrap();
+    assert_eq!(s.settings.autosnap(), defaults);
+    assert_eq!(sysvars::get(&s, "APBOX"), Some(json!(0)));
+    s.execute("setvar", &json!({"name": "APBOX", "value": 1})).unwrap();
+    assert!(s.settings.apbox);
+    assert_eq!(sysvars::get(&s, "apbox"), Some(json!(1)));
+}
+
 #[test]
 fn setvar_clayer_keeps_numeric_layer_name() {
     let mut s = Session::new();

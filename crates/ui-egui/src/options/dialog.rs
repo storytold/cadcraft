@@ -344,12 +344,35 @@ fn drafting(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>, s
     });
     hint(ui, crate::tl!("The aperture is how near the cursor must come to a point for an object snap to find it."));
     ui.add_space(8.0);
+    // AutoSnap (AUTOSNAP bits 1, 4, 2 and 32; APBOX), as AutoCAD's Drafting tab groups them.
+    heading(ui, crate::tl!("AutoSnap settings"));
+    let mut bits = app.session.settings.autosnap();
+    autosnap_bit(ui, changes, &mut bits, crate::tl!("Marker"), 1);
+    autosnap_bit(ui, changes, &mut bits, crate::tl!("Magnet"), 4);
+    autosnap_bit(ui, changes, &mut bits, crate::tl!("Display AutoSnap tooltip"), 2);
+    let mut apbox = app.session.settings.apbox;
+    if ui.checkbox(&mut apbox, crate::tl!("Display AutoSnap aperture box")).changed() {
+        changes.insert("APBOX".into(), json!(apbox));
+    }
+    autosnap_bit(ui, changes, &mut bits, crate::tl!("Display AutoTrack tooltip"), 32);
+    hint(ui, crate::tl!("The magnet locks the crosshair onto the snap point; the aperture box shows how near the cursor must come to find one."));
+    ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.label(crate::tl!("Snap, grid, polar tracking and Dynamic Input:"));
         if ui.button(crate::tl!("Drafting Settings...")).clicked() {
             *start = Some("dsettings");
         }
     });
+}
+
+/// One AUTOSNAP bit as a checkbox: a change writes the whole value, so several toggles in one
+/// visit of the dialog add up.
+fn autosnap_bit(ui: &mut egui::Ui, changes: &mut Map<String, Value>, bits: &mut u32, label: &str, mask: u32) {
+    let mut on = *bits & mask != 0;
+    if ui.checkbox(&mut on, label).changed() {
+        *bits = if on { *bits | mask } else { *bits & !mask };
+        changes.insert("AUTOSNAP".into(), json!(*bits));
+    }
 }
 
 /// Selection tab: pickbox and selection-mode controls, selection preview/area effects and the Visual Effect Settings window; edits accumulate in `changes`.
