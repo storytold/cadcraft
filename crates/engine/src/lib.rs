@@ -873,21 +873,26 @@ impl Session {
 
     /// Add an entity to the current space with current properties.
     pub fn add_entity(&mut self, kind: EntityKind) -> Result<Handle> {
-        let common = self.current_common();
+        let common = self.placed_common(&kind)?;
         let space = self.space();
-        let true_color = self.doc()?.header.get("CECOLOR_RGB").and_then(|v| v.as_i64());
-        let mut common = common;
-        if let Some(rgb) = true_color {
+        let h = self.doc_mut()?.add(&space, common, kind)?;
+        Ok(h)
+    }
+
+    /// The properties `kind` is added with ([`Session::add_entity`]): the current ones, a true
+    /// color when one is current, and the current annotation scale for an annotative style's.
+    fn placed_common(&self, kind: &EntityKind) -> Result<Common> {
+        let mut common = self.current_common();
+        let d = self.doc()?;
+        if let Some(rgb) = d.header.get("CECOLOR_RGB").and_then(|v| v.as_i64()) {
             common.color = cadcraft_color::Color::True(cadcraft_color::Rgb::from_u32(rgb as u32));
         }
         // Text, dimensions, multileaders, hatches and block references of annotative styles are
         // annotative, supporting the current annotation scale.
-        let d = self.doc()?;
-        if d.annotative_by_style(&kind) {
+        if d.annotative_by_style(kind) {
             common.anno_scales = vec![d.current_anno_scale()];
         }
-        let h = self.doc_mut()?.add(&space, common, kind)?;
-        Ok(h)
+        Ok(common)
     }
 
     /// World units per pixel at the current view.
@@ -1444,14 +1449,17 @@ impl Session {
     }
 
     /// What the running command would place for `typed`, the line being typed at its text
-    /// prompt ([`Interactive::typing`]), with the current properties.
+    /// prompt ([`Interactive::typing`]), with the properties it would be placed with.
     pub fn typing_preview(&self, typed: &str) -> Vec<Entity> {
         let Some(r) = self.running.as_ref() else { return Vec::new() };
         if typed.is_empty() || self.lisp_prompt().is_some() {
             return Vec::new();
         }
-        let common = self.current_common();
-        r.machine.typing(self, typed).into_iter().map(|k| Entity { handle: Handle(0), common: common.clone(), kind: k }).collect()
+        r.machine
+            .typing(self, typed)
+            .into_iter()
+            .filter_map(|k| Some(Entity { handle: Handle(0), common: self.placed_common(&k).ok()?, kind: k }))
+            .collect()
     }
 
     /// Preview entities for the cursor: objects drawn with their own properties
