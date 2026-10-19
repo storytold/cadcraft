@@ -55,6 +55,8 @@ mod plot_layout_scale;
 mod plot_model_png_scale;
 mod plot_styles;
 mod region_roundtrip;
+#[cfg(not(target_arch = "wasm32"))]
+mod render_settings_version;
 mod roundtrip;
 mod roundtrip_audit;
 mod skipped_records;
