@@ -129,8 +129,44 @@ fn style_overrides_are_set_in_one_step() {
     assert!(s.execute("dimstyle.overrides", &json!({ "nope": 1 })).is_err());
     assert!(s.doc().unwrap().dim_overrides().is_empty());
     s.execute("dimstyle.overrides", &json!({ "DIMDEC": 2 })).unwrap();
+    // Clear drops them only when every value is usable.
+    assert!(s.execute("dimstyle.overrides", &json!({ "clear": true, "textHeight": -1 })).is_err());
+    assert!(s.execute("dimstyle.overrides", &json!({ "clear": true, "nope": 1 })).is_err());
+    assert_eq!(s.doc().unwrap().dim_overrides().get("decimals"), Some(&json!(2)));
+    s.execute("dimstyle.overrides", &json!({ "clear": true, "textGap": 0.05 })).unwrap();
+    let o = s.doc().unwrap().dim_overrides();
+    assert_eq!((o.len(), o.get("textGap")), (1, Some(&json!(0.05))));
     s.execute("dimstyle.overrides", &json!({ "clear": true })).unwrap();
     assert!(s.doc().unwrap().dim_overrides().is_empty());
+}
+
+#[test]
+fn a_refused_answer_asks_the_same_question() {
+    let mut s = Session::new();
+    s.cmdline("-DIMSTYLE").unwrap();
+    s.cmdline("R").unwrap();
+    // A style to compare with that doesn't exist.
+    let _ = s.cmdline("~Nope");
+    assert!(s.prompt_text().contains("Enter a dimension style name"), "{}", s.prompt_text());
+    // Words at "Select dimension".
+    s.cmdline("").unwrap();
+    let _ = s.cmdline("Standard");
+    assert!(s.prompt_text().contains("Select dimension"), "{}", s.prompt_text());
+    s.cancel();
+}
+
+#[test]
+fn listing_with_many_stars_takes_no_time() {
+    let mut s = Session::new();
+    s.execute("dimstyle", &json!({ "name": "a".repeat(200), "current": false })).unwrap();
+    let start = std::time::Instant::now();
+    for pattern in ["*".repeat(255) + "x", "*a".repeat(120) + "b"] {
+        let r = s.execute("-dimstyle", &json!({ "option": "list", "pattern": pattern })).unwrap();
+        assert_eq!(r["styles"], json!([]));
+    }
+    assert!(start.elapsed() < std::time::Duration::from_secs(5), "{:?}", start.elapsed());
+    let r = s.execute("-dimstyle", &json!({ "option": "list", "pattern": "a*a?" })).unwrap();
+    assert_eq!(r["styles"], json!(["a".repeat(200)]));
 }
 
 #[test]

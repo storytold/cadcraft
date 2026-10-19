@@ -36,16 +36,13 @@ fn is_dim(s: &Session, h: Handle) -> bool {
     s.doc().ok().and_then(|d| d.entity(h)).is_some_and(|e| matches!(e.kind, EntityKind::Dimension(_)))
 }
 
-/// A usable new dimension style name.
+/// A usable new dimension style name (as -DIMSTYLE takes one).
 fn new_name(s: &Session, name: &str) -> Result<String> {
-    let name = name.trim();
-    if name.is_empty() || name.len() > 255 || name.contains(['<', '>', '/', '\\', '"', ':', ';', '?', '*', '|', ',', '=', '`']) {
-        return Err(bad("dimstyle.saveas", "bad style name"));
-    }
-    if s.doc()?.dim_style(name).is_some() {
+    let name = super::dimstyle_cli::check_name(name).map_err(|_| bad("dimstyle.saveas", "bad style name"))?;
+    if s.doc()?.dim_style(&name).is_some() {
         return Err(bad("dimstyle.saveas", format!("a dimension style `{name}` already exists")));
     }
-    Ok(name.to_string())
+    Ok(name)
 }
 
 /// Make style `name` from dimension `h`'s settings and give it to the dimension.
