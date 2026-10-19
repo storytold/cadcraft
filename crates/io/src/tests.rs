@@ -1004,6 +1004,7 @@ fn oversized_dwg_and_dxf_are_rejected_early() {
     let e = cadcraft_dwg::dwg_to_dxf_with(&dwg, limits).unwrap_err();
     assert!(e.starts_with("DWG: converting this 0."), "{e}");
     assert!(e.contains("MB file produced more than 0.3 MB of drawing data (the limit)"), "{e}");
+    assert!(e.contains("it assumes 16.0 GB of free memory at 16 bytes per byte of drawing data (CADCRAFT_MEMORY_GB sets what to assume)"), "{e}");
 
     let limits = cadcraft_dwg::Limits { max_dwg_bytes: 100_000, ..cadcraft_dwg::Limits::DEFAULT };
     let e = cadcraft_dwg::dwg_to_dxf_with(&dwg, limits).unwrap_err();

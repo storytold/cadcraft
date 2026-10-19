@@ -65,7 +65,13 @@ struct Rx {
 
 /// Read a DXF file into a drawing.
 pub fn read(bytes: &[u8]) -> Result<Drawing> {
-    read_budgeted(bytes, 4_000_000)
+    read_with_limit(bytes, cadcraft_dxf::MAX_TAGS)
+}
+
+/// [`read`] with an explicit group-code limit: the DWG bridge's renditions are bounded by their
+/// own size limit, so their group codes may outnumber what a file of unknown origin gets.
+pub fn read_with_limit(bytes: &[u8], max_tags: usize) -> Result<Drawing> {
+    read_budgeted(bytes, max_tags, 4_000_000)
 }
 
 /// A block definition read from BLOCKS: name, base point, description, entities (owner, paper
@@ -76,8 +82,8 @@ type BlockDef = (String, Vec3, String, Vec<(Option<String>, bool, Entity)>, i64)
 type LayoutDef = (String, u32, String, PageSetup);
 
 /// Import DXF sections while sharing one materialized-table-cell budget across blocks and entity sections.
-fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
-    let tags = cadcraft_dxf::parse(bytes).map_err(|e| IoError::Format(e.to_string()))?;
+fn read_budgeted(bytes: &[u8], max_tags: usize, mut table_cells_left: usize) -> Result<Drawing> {
+    let tags = cadcraft_dxf::parse_with_limit(bytes, max_tags).map_err(|e| IoError::Format(e.to_string()))?;
     let secs = sections(&tags);
     if secs.is_empty() {
         return Err(IoError::Format("no sections found".into()));
@@ -173,7 +179,7 @@ mod table_budget_tests {
         let dxf = format!(
             "0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n2\nTEST\n10\n0\n20\n0\n{table}0\nENDBLK\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n{table}0\nENDSEC\n0\nSECTION\n2\nENTITIES\n{table}0\nENDSEC\n0\nEOF\n"
         );
-        let d = read_budgeted(dxf.as_bytes(), 2).unwrap();
+        let d = read_budgeted(dxf.as_bytes(), cadcraft_dxf::MAX_TAGS, 2).unwrap();
         let block = d.block("TEST").unwrap();
         let count = |e: &Entity| match &e.kind {
             EntityKind::Table(t) => t.cells.iter().map(Vec::len).sum::<usize>(),

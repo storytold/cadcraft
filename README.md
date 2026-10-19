@@ -197,6 +197,7 @@ crashed survives the next start. The file stops growing at 16 MiB. `--version` w
 | Variable | Effect |
 |---|---|
 | `CADCRAFT_CONFIG_DIR` | Use this directory instead of the platform settings directory (the log goes to its `logs/`); empty means no settings folder (no log file, autosave, workspace or plotters) |
+| `CADCRAFT_MEMORY_GB` | Free memory to assume when a DWG is opened, in gigabytes: its DXF rendition may take a sixteenth of it (never less than 1 GB, which assumes 16 GB). Without it, Linux reads `MemAvailable`; other systems assume 16 GB. |
 | `RUST_LOG` | Log levels for standard error and the log file. Default: `info` for CADCraft's own crates, `warn` for everything else. env_logger-style directives replace that, e.g. `RUST_LOG=debug`, `RUST_LOG=warn,cadcraft_io=trace` or `RUST_LOG=info,wgpu_core=warn`; a directive ending in `*` covers every target starting with it (`cadcraft*=debug`). `cadcraft_engine=debug` also logs every command-line message. |
 
 The logger is `apps/cadcraft/src/logging.rs`; the web build logs to the browser console instead.
