@@ -61,6 +61,8 @@ mod plot_styles;
 mod polyface_roundtrip;
 mod portable_fonts;
 mod region_roundtrip;
+#[cfg(not(target_arch = "wasm32"))]
+mod render_settings_version;
 mod roundtrip;
 mod roundtrip_audit;
 mod skipped_records;
