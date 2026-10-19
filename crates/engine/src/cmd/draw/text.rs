@@ -242,8 +242,13 @@ impl Interactive for TextM {
         };
         match self.ask {
             Some(TextAsk::Justify) => {
-                let Some(code) = word else { return Ok(Step::Continue) };
-                self.justify = justify(&code).unwrap_or(self.justify);
+                // Enter leaves the question with the justification as it was (as Style's does).
+                let Some(code) = word.filter(|w| !w.is_empty()) else {
+                    self.ask = None;
+                    return Ok(Step::Continue);
+                };
+                // As MTEXT's: an answer that is no option is refused, and asked again.
+                self.justify = justify(&code).ok_or_else(|| crate::EngineError::Other("Invalid option keyword.".into()))?;
                 self.ask = None;
                 return Ok(Step::Continue);
             }
