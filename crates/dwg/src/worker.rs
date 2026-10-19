@@ -26,7 +26,7 @@ use super::Limits;
 /// The argument that makes the app a worker.
 pub const WORKER_ARG: &str = "--dwg-worker";
 /// Bumped when the messages change: an app updated while running may start a newer copy.
-const PROTOCOL: u8 = 1;
+const PROTOCOL: u8 = 2;
 const DECODE: u8 = 1;
 const ENCODE: u8 = 2;
 const CRASH: u8 = 0xff;
@@ -117,6 +117,7 @@ fn request(op: u8, limits: Limits, version: &str) -> Vec<u8> {
     let mut r = vec![PROTOCOL, op];
     r.extend((limits.max_dwg_bytes as u64).to_le_bytes());
     r.extend((limits.max_dxf_bytes as u64).to_le_bytes());
+    r.extend(limits.assumed_memory.to_le_bytes());
     r.push(u8::try_from(version.len()).unwrap_or(0));
     r.extend(version.as_bytes());
     r
@@ -253,10 +254,11 @@ fn handle(mut b: &[u8]) -> Reply {
     let op = take(&mut b, 1).and_then(<[u8]>::first).copied().ok_or_else(bad)?;
     let max_dwg_bytes = take_u64(&mut b).and_then(|n| usize::try_from(n).ok()).ok_or_else(bad)?;
     let max_dxf_bytes = take_u64(&mut b).and_then(|n| usize::try_from(n).ok()).ok_or_else(bad)?;
+    let assumed_memory = take_u64(&mut b).ok_or_else(bad)?;
     let version_len = take(&mut b, 1).and_then(<[u8]>::first).copied().ok_or_else(bad)?;
     let version = take(&mut b, usize::from(version_len)).and_then(|v| std::str::from_utf8(v).ok()).ok_or_else(bad)?;
     match op {
-        DECODE => super::dwg_to_dxf_noted(b, Limits { max_dwg_bytes, max_dxf_bytes }),
+        DECODE => super::dwg_to_dxf_noted(b, Limits { max_dwg_bytes, max_dxf_bytes, assumed_memory }),
         ENCODE => super::dxf_to_dwg_noted(b, version).map(|(dwg, left_out)| (dwg, left_out.iter().map(|(kind, n)| format!("{kind}\t{n}")).collect())),
         CRASH => std::process::abort(),
         _ => Err(bad()),

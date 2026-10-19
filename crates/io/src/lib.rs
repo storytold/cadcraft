@@ -78,8 +78,14 @@ pub fn read(bytes: &[u8], name: impl AsRef<Path>) -> Result<Drawing> {
 /// which the round-trip harness counts.
 pub(crate) fn read_source(bytes: &[u8], name: &Path) -> Result<(Drawing, Option<Vec<u8>>)> {
     if cadcraft_dwg::is_dwg(bytes) {
-        let (dxf, notes) = cadcraft_dwg::decode(bytes, cadcraft_dwg::Limits::DEFAULT).map_err(IoError::Format)?;
-        let mut d = dxf_read::read(&dxf).map_err(|e| IoError::Format(format!("{e} (in the DXF converted from this DWG)")))?;
+        // The rendition may take what the machine's free memory holds (`Limits::for_machine`),
+        // and its size is checked as it is written; its group codes can't outnumber a quarter of
+        // its bytes (a code and a value take two lines of at least two bytes), so the DXF
+        // reader's group-code limit, meant for files of unknown origin, gives way to that.
+        let limits = cadcraft_dwg::Limits::for_machine();
+        let (dxf, notes) = cadcraft_dwg::decode(bytes, limits).map_err(IoError::Format)?;
+        let max_tags = cadcraft_dxf::max_tags().max(dxf.len() / 4);
+        let mut d = dxf_read::read_with_limit(&dxf, max_tags).map_err(|e| IoError::Format(format!("{e} (in the DXF converted from this DWG)")))?;
         d.read_notes = notes;
         return Ok((d, Some(dxf)));
     }
