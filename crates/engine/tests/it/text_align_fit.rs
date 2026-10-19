@@ -137,6 +137,12 @@ fn the_line_being_typed_is_previewed_where_it_goes() {
     let EntityKind::Text(t) = &s.typing_preview("Wide")[0].kind else { panic!() };
     assert!(close(width(&s, t), 6.0));
     s.cancel();
+    // An annotative style's text previews at the current annotation scale, as it's placed.
+    s.execute("style", &json!({ "name": "Notes", "annotative": true })).unwrap();
+    lines(&mut s, &["TEXT", "0,0", "0.2", "0"]);
+    let preview = s.typing_preview("Note");
+    assert_eq!(preview[0].common.anno_scales, [s.doc().unwrap().current_anno_scale()]);
+    s.cancel();
 }
 
 #[test]
