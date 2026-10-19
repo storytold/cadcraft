@@ -130,6 +130,35 @@ fn a_fixed_height_text_style_decides_dimension_text_height() {
     let th = row(&d, "Text", "textHeight");
     assert_eq!((th["editable"].as_bool(), th["display"].as_str()), (Some(false), Some("0.5000")));
     assert!(th["note"].as_str().unwrap().contains("Fixed"), "{th}");
+    // Fixed heights that differ vary, whatever their DIMTXT says.
+    s.execute("style", &json!({ "name": "Large", "height": 0.75, "current": false })).unwrap();
+    s.execute("dimstyle", &json!({ "name": "LargeDims", "textStyle": "Large" })).unwrap();
+    s.execute("dimlinear", &json!({ "p1": [0, 10], "p2": [10, 10], "at": [5, 13] })).unwrap();
+    let large = last(&s);
+    let d = describe(&mut s, json!({ "handles": [dm, large] }));
+    let th = row(&d, "Text", "textHeight");
+    assert_eq!((th["editable"].as_bool(), th["display"].as_str()), (Some(false), Some("*VARIES*")));
+}
+
+#[test]
+fn measurements_read_as_each_dimension_writes_them() {
+    let mut s = Session::new();
+    let shown =
+        |s: &mut Session, hs: Value| row(&describe(s, json!({ "handles": hs })), "Text", "measurement")["display"].as_str().unwrap().to_string();
+    s.execute("dimangular", &json!({ "vertex": [0, 0], "p1": [10, 0], "p2": [0, 10], "at": [3, 3] })).unwrap();
+    let angle = last(&s);
+    assert_eq!(shown(&mut s, json!([angle])), "90°");
+    // In the dimension's angle format.
+    s.execute("properties.set", &json!({ "handles": [angle], "angularUnit": 3, "angularDecimals": 2 })).unwrap();
+    assert_eq!(shown(&mut s, json!([angle])), "1.57r");
+    // The same length written at two precisions varies.
+    s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, 3] })).unwrap();
+    let a = last(&s);
+    s.execute("dimlinear", &json!({ "p1": [0, 20], "p2": [10, 20], "at": [5, 23] })).unwrap();
+    let b = last(&s);
+    assert_eq!(shown(&mut s, json!([a, b])), "10.0000");
+    s.execute("properties.set", &json!({ "handles": [b], "precision": 1 })).unwrap();
+    assert_eq!(shown(&mut s, json!([a, b])), "*VARIES*");
 }
 
 #[test]
