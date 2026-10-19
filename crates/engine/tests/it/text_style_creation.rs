@@ -101,6 +101,18 @@ fn the_style_option_makes_a_style_current() {
 }
 
 #[test]
+fn a_justification_that_is_no_option_is_asked_again() {
+    let mut s = Session::new();
+    lines(&mut s, &["TEXT", "J"]);
+    let _ = s.cmdline("X");
+    assert!(s.log.iter().any(|l| l.contains("Invalid option keyword.")), "{:?}", s.log);
+    assert!(s.prompt_text().contains("Enter an option"), "asked again: {}", s.prompt_text());
+    s.cmdline("MC").unwrap();
+    lines(&mut s, &["0,0", "2", "0", "Centered", ""]);
+    assert_eq!(texts(&s)[0].halign, cadcraft_engine::doc::HAlign::Center);
+}
+
+#[test]
 fn enter_at_the_start_point_continues_below_the_last_text() {
     let mut s = Session::new();
     lines(&mut s, &["TEXT", "J", "MC", "10,10", "2", "90", "First", ""]);
@@ -141,6 +153,10 @@ fn mtext_starts_with_a_fixed_style_height() {
 
 #[test]
 fn hostile_text_input_never_panics() {
+    // A caught panic comes back as an internal error: refused input may fail, but never so.
+    let not_internal = |r: &Result<_, cadcraft_engine::EngineError>, what: &str| {
+        assert!(!matches!(r, Err(cadcraft_engine::EngineError::Internal(..))), "{what}: {:?}", r.as_ref().err());
+    };
     let mut s = Session::new();
     s.execute("style", &json!({ "name": "Weird", "height": 1e308, "widthFactor": 1e-300 })).unwrap();
     for script in [
@@ -150,7 +166,7 @@ fn hostile_text_input_never_panics() {
         vec!["TEXT", "", "", "", ""],
     ] {
         for l in script {
-            let _ = s.cmdline(l);
+            not_internal(&s.cmdline(l).map(|_| ()), l);
         }
         s.cancel();
     }
@@ -159,7 +175,8 @@ fn hostile_text_input_never_panics() {
         json!({ "at": [0, 0], "text": "x", "height": f64::MAX }),
         json!({ "at": [0, 0], "text": "x", "height": -1 }),
     ] {
-        let _ = s.execute("text", &p);
-        let _ = s.execute("mtext", &p);
+        for cmd in ["text", "mtext"] {
+            not_internal(&s.execute(cmd, &p).map(|_| ()), cmd);
+        }
     }
 }

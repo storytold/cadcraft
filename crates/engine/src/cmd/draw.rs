@@ -82,7 +82,8 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["Draw", "Text", "Single Line Text"])
             .alias(&["dt", "dtext"])
             .params(
-                "{at, text, height? (default: the style's fixed height, else TEXTSIZE), rotation? (degrees), justify?: L|C|R|M|TL|TC|TR|ML|MC|MR|BL|BC|BR,                  style? (default: the current style; the text takes its width factor and obliquing angle)}",
+                "{at, text, height? (default: the style's fixed height, else TEXTSIZE), rotation? (degrees), justify?: L|C|R|M|TL|TC|TR|ML|MC|MR|BL|BC|BR, \
+                 style? (default: the current style; the text takes its width factor and obliquing angle)}",
             )
             .interactive(|s| Ok(Box::new(TextM::new(s)))),
         CommandSpec::new("mtext", "Multiline Text", run_mtext)
@@ -1595,7 +1596,8 @@ impl Interactive for TextM {
         match self.ask {
             Some(TextAsk::Justify) => {
                 let Some(code) = word else { return Ok(Step::Continue) };
-                self.justify = justify(&code).unwrap_or(self.justify);
+                // As MTEXT's: an answer that is no option is refused, and asked again.
+                self.justify = justify(&code).ok_or_else(|| crate::EngineError::Other("Invalid option keyword.".into()))?;
                 self.ask = None;
                 return Ok(Step::Continue);
             }
