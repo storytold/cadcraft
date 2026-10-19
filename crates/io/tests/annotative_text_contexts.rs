@@ -479,9 +479,23 @@ fn a_saved_drawing_reads_back_the_same() {
     for h in ["30", "40", "50"] {
         let (a, b) = (d.entity(Handle::parse_hex(h).unwrap()).unwrap(), back.entity(Handle::parse_hex(h).unwrap()).unwrap());
         assert_eq!(a.common.anno_scales, b.common.anno_scales, "{h}");
-        if !matches!(a.kind, EntityKind::Dimension(_)) {
-            assert_eq!(a.kind, b.kind, "{h}");
+        // A justified text's start point is worked out from its alignment point on save, as
+        // AutoCAD does; the rest reads back as it was.
+        let mut kind = a.kind.clone();
+        if let (EntityKind::Text(t), EntityKind::Text(u)) = (&mut kind, &b.kind)
+            && t.align_pt.is_some()
+        {
+            t.insert = u.insert;
         }
+        if !matches!(a.kind, EntityKind::Dimension(_)) {
+            assert_eq!(kind, b.kind, "{h}");
+        }
+    }
+    // Saved again, it reads back exactly.
+    let again = cadcraft_io::read_dxf(save(&back).as_bytes()).unwrap();
+    for h in ["30", "40"] {
+        let h = Handle::parse_hex(h).unwrap();
+        assert_eq!(back.entity(h).unwrap().kind, again.entity(h).unwrap().kind);
     }
     // Saved again, the file is the same: nothing piles up.
     assert_eq!(contexts_of(&save(&back), "30").len(), 2);
