@@ -94,3 +94,20 @@ fn dxf_keeps_them() {
     assert_eq!(flags("Both").as_deref(), Some("6"));
     assert_eq!(flags("Plain"), None);
 }
+
+#[test]
+fn dxf_starts_justified_text_by_its_own_flags() {
+    // The same centered text twice, one backwards by its own flag (its style isn't): DXF group 10,
+    // the start of the baseline, is worked out with each text's flags, so the two differ.
+    let mut s = Session::new();
+    for y in [0, 5] {
+        s.execute("text", &json!({ "at": [10, y], "text": "Same", "height": 1, "justify": "MC" })).unwrap();
+    }
+    let back_one = handles(&s)[1].clone();
+    s.execute("properties.set", &json!({ "handles": [back_one], "backwards": true })).unwrap();
+    let back = cadcraft_io::read_dxf(cadcraft_io::write_dxf(s.doc().unwrap()).as_bytes()).unwrap();
+    let starts: Vec<(bool, f64)> =
+        back.model.iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some((t.backwards, t.insert.x)) } else { None }).collect();
+    let x = |b: bool| starts.iter().find(|(f, _)| *f == b).unwrap().1;
+    assert!((x(true) - x(false)).abs() > 0.1, "{starts:?}");
+}
