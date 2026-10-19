@@ -1425,3 +1425,10 @@
 
 # ArtCraft feature naming
 	Additional Tools	Додаткові інструменти
+	AutoSnap settings	Параметри AutoSnap
+	Marker	Маркер
+	Magnet	Магніт
+	Display AutoSnap tooltip	Показувати підказку AutoSnap
+	Display AutoSnap aperture box	Показувати рамку прив'язки AutoSnap
+	Display AutoTrack tooltip	Показувати підказку AutoTrack
+	The magnet locks the crosshair onto the snap point; the aperture box shows how near the cursor must come to find one.	Магніт притягує перехрестя до точки прив'язки; рамка прив'язки показує, як близько має підійти курсор, щоб знайти точку.
