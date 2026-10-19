@@ -645,7 +645,10 @@ pub fn join_post(prefix: &str, suffix: &str) -> String {
 /// The measurement as the dimension writes it (its own units and precision).
 fn measurement_text(dm: &Dimension, st: &DimStyle, meas: f64) -> String {
     match dm.kind {
-        DimKind::Angular | DimKind::Angular3P => format!("{:.*}°", usize::from(st.angular_decimals.min(8)), meas.to_degrees()),
+        // As the renderer writes angles: DIMAUNIT, DIMADEC, and DIMAZIN's leading and trailing zeros.
+        DimKind::Angular | DimKind::Angular3P => {
+            cadcraft_render::units::format_angle(meas, st.angular_unit, st.angular_decimals, (st.angular_zero_suppression & 3) * 4)
+        }
         _ => cadcraft_render::format_linear_value(meas, st),
     }
 }
@@ -697,8 +700,12 @@ fn dimension_groups(c: &Ctx, ents: &[&Entity], dims: &[&Dimension]) -> Vec<Group
                 };
                 // A length, or an angle in degrees, shown as the dimension writes it.
                 let mut m = c.row("measurement", "Measurement", Kind::Number, measured.iter().map(|(v, _)| v.clone())).read_only().quick();
-                if !m.varies {
-                    m.display = measured.first().map(|(_, s)| s.clone()).unwrap_or_default();
+                let shown = measured.first().map(|(_, s)| s.clone()).unwrap_or_default();
+                // Equal measurements written differently (units, precision) vary too.
+                if measured.iter().any(|(_, s)| *s != shown) {
+                    (m.value, m.varies, m.display) = (Value::Null, true, VARIES.to_string());
+                } else if !m.varies {
+                    m.display = shown;
                 }
                 rows.push(m);
                 rows.push(c.row("textOverride", "Text override", Kind::Text, dims.iter().map(|dm| json!(dm.text))).quick());
@@ -739,6 +746,14 @@ fn fixed_height(c: &Ctx, r: &mut Row, styles: &[DimStyle]) {
         r.note =
             Some(format!("Set by text style \"{name}\", which has a fixed height. Give the style a height of 0 to use the dimension text height."));
     } else {
+        // Each dimension's text is its style's fixed height or its own DIMTXT.
+        let heights: Vec<f64> = fixed.iter().zip(styles).map(|(f, st)| f.map_or(st.text_height, |(_, h)| h)).collect();
+        let first = heights.first().copied().unwrap_or_default();
+        if heights.iter().all(|h| *h == first) {
+            (r.value, r.varies, r.display) = (json!(first), false, c.distance(first));
+        } else {
+            (r.value, r.varies, r.display) = (Value::Null, true, VARIES.to_string());
+        }
         r.editable = fixed.iter().any(Option::is_none);
         r.note = Some("Some of these dimensions take their text height from a fixed-height text style.".into());
     }

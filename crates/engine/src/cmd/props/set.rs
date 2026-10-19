@@ -73,6 +73,9 @@ impl DimVars {
                         json!(d.linetype(n).map(|t| t.name.clone()).ok_or_else(|| bad("properties.set", format!("linetype `{n}` is not loaded")))?)
                     }
                 }
+                // Closed filled is `""` among the arrowheads, but an empty per-end arrowhead draws
+                // DIMBLK's: chosen for one end, it's named.
+                ("arrowBlock1" | "arrowBlock2", Some("")) => json!("_CLOSEDFILLED"),
                 _ => v.clone(),
             };
             given.insert(k.clone(), v);
@@ -208,9 +211,6 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
             }
         })
         .transpose()?;
-    if let Some(l) = str_param(p, "layer") {
-        d.ensure_layer(l);
-    }
     let dim_style = str_param(p, "dimStyle")
         .map(|n| d.dim_style(n).map(|st| st.name.clone()).ok_or_else(|| bad("properties.set", format!("dimension style `{n}` not found"))))
         .transpose()?;
@@ -218,6 +218,11 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         .map(|n| d.text_style(n).map(|st| st.name.clone()).ok_or_else(|| bad("properties.set", format!("text style `{n}` not found"))))
         .transpose()?;
     let dim_vars = DimVars::new(d, p)?;
+    // A failed call changes nothing (a command's error doesn't undo what it did), so the layer
+    // comes after every check.
+    if let Some(l) = str_param(p, "layer") {
+        d.ensure_layer(l);
+    }
     let prep = Prepared::new(d, p, &hs);
     let anno_scale = d.current_anno_scale();
     let mut used: BTreeSet<&str> = BTreeSet::new();
@@ -560,16 +565,18 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
                 }
                 EntityKind::Hatch(h) => {
                     if let Some(v) = str_param(p, "pattern") {
-                        if !h.pattern.eq_ignore_ascii_case(v) {
-                            h.pattern_lines = crate::cmd::hatch::lines_for(v);
-                        }
                         h.pattern = v.to_ascii_uppercase();
-                        // The old pattern's definition lines no longer apply.
-                        h.pattern_lines.clear();
                         h.solid = h.pattern == "SOLID";
                         if !h.solid {
                             // A named pattern replaces the gradient fill; the renderer draws the gradient first when it is set.
                             h.gradient = None;
+                            // As HATCHEDIT: a library pattern is drawn from the library, a loaded .pat
+                            // pattern brings its lines, and any other name is the hatch's own and keeps them.
+                            if cadcraft_doc::library::pattern(&h.pattern).is_some() {
+                                h.pattern_lines.clear();
+                            } else if let Some(user) = crate::cmd::hatch::user_pattern(&h.pattern) {
+                                h.pattern_lines = user.lines;
+                            }
                         }
                         used.insert("pattern");
                     }

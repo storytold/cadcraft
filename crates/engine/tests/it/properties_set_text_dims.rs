@@ -125,6 +125,25 @@ fn dimension_variables_become_overrides_of_each_dimension() {
     assert!(s.execute("properties.set", &json!({ "handles": [dm], "textHeight": -1 })).is_err());
     assert!(s.execute("properties.set", &json!({ "handles": [dm], "textStyle": "Nope" })).is_err());
     assert!(dim(&s, &dm).overrides.is_empty());
+    // A refused call makes no layer either.
+    assert!(s.execute("properties.set", &json!({ "handles": [dm], "layer": "Notes", "dimStyle": "Nope" })).is_err());
+    assert!(s.doc().unwrap().layer("Notes").is_none());
+}
+
+#[test]
+fn closed_filled_for_one_end_is_drawn_whatever_dimblk_says() {
+    let mut s = Session::new();
+    s.execute("dimstyle", &json!({ "name": "Ticks", "arrowBlock": "_ARCHTICK" })).unwrap();
+    s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, 3] })).unwrap();
+    let dm = last(&s);
+    // Closed filled is "" among the arrowheads; for one end it's named, as "" there is DIMBLK's.
+    set(&mut s, &dm, json!({ "arrowBlock1": "" }));
+    assert_eq!(dim(&s, &dm).overrides.get("arrowBlock1"), Some(&json!("_CLOSEDFILLED")));
+    let rows = s.execute("properties.describe", &json!({ "handles": [dm] })).unwrap();
+    let arrow = |key: &str| {
+        rows["groups"].as_array().unwrap().iter().flat_map(|g| g["rows"].as_array().unwrap()).find(|r| r["key"] == key).unwrap()["value"].clone()
+    };
+    assert_eq!((arrow("arrowBlock1"), arrow("arrowBlock2")), (json!(""), json!("_ARCHTICK")));
 }
 
 #[test]
