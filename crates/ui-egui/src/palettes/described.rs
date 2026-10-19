@@ -250,12 +250,15 @@ fn described_row(
             // Quick Properties shows General's Layer.
             Kind::Layer => {
                 ui.menu_button(shown, |ui| {
-                    for l in &d.layers {
-                        if ui.button(&l.name).clicked() {
-                            picked = Some(json!(l.name));
-                            ui.close();
+                    // Scrolled as General's Layer menu is, for drawings with many layers.
+                    egui::ScrollArea::vertical().id_salt("described_layer_menu").max_height(300.0).show(ui, |ui| {
+                        for l in &d.layers {
+                            if ui.button(&l.name).clicked() {
+                                picked = Some(json!(l.name));
+                                ui.close();
+                            }
                         }
-                    }
+                    });
                 });
             }
             // General's other kinds (lineweight, transparency) aren't in the typed groups.
