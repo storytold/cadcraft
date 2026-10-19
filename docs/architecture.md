@@ -1,6 +1,6 @@
 # CADCraft architecture
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (first committed architecture doc, written from the code on main at bd2412f) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-18 · **Change:** minor (DXF/DWG save-version documentation corrected) · **Target:** Autodesk AutoCAD 2027
 
 How CADCraft is built today. This describes the code on `main`, not plans; plans live in
 [roadmap.md](roadmap.md). Agents: the rules that keep this shape (layering, never-crash,
@@ -64,8 +64,17 @@ SVG and plot preview reuse the same display list through the CPU rasteriser or v
 ## Files
 
 DXF is the native path: `dxf` parses tags, `io::dxf_read` maps them to the document, and
-`io::dxf_write` writes an R2000 (AC1015) DXF. DWG is converted to DXF in memory by `acadrust` and
-read through the same path; saving DWG writes our DXF and converts it back. CADCraft-only data
+`io::dxf_write` uses R2000 DXF structure with the chosen version's `$ACADVER` (2000–2018),
+version-specific groups and UTF-8 text from 2007. New drawings default to 2018 (AC1032).
+In the app's Save dialog, File ▸ Default Save Format (also Options ▸ Open and Save,
+`saveVersion`, default 2018) sets the version for untitled drawings; drawings with a file keep
+their own version, subject to supported-version mapping and the DWG minimum.
+Without an explicit save version, `io::save_version` uses the drawing's `$ACADVER`, keeping
+supported versions, mapping older files to 2000 and newer files to 2018 (missing or invalid
+codes also default to 2018). DWG is converted to DXF in memory by `acadrust` and read through
+the same path; saving DWG converts an internal R2000 DXF to the chosen DWG version, not
+necessarily R2000. DWG defaults to at least 2004 to retain true colours, transparency, table
+styles and gradients; an explicit save version can still request 2000. CADCraft-only data
 (constraints, associativity details, table flags) travels in xdata under our own application
 name. Detail and gaps: [file-format-parity.md](file-format-parity.md).
 
@@ -91,4 +100,5 @@ allocations are capped (DXF tag counts, DWG size limits, hatch segment and islan
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-18 | minor | Clarify 2018 defaults, opened-drawing version selection, the DWG 2004 minimum unless explicitly overridden, and R2000 DXF structure versus output version |
 | 2026-10-10 | major | First committed architecture doc, measured from the code (crate sizes, entity kinds, command counts) |

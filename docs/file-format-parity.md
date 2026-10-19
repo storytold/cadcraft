@@ -31,9 +31,12 @@ below, and ≈ 20–40 h for 3D exchange formats that wait for 3D modelling.
 
 AutoCAD 2027 opens every DWG version from R2.0 onward and saves 2018 (AC1032, still the current
 DWG format), 2013, 2010, 2007, 2004, 2000 and R14. CADCraft reads DWG by converting it to DXF
-with the `acadrust` 0.6.3 crate and reading that DXF; it saves by writing its own R2000 DXF and
-converting it to a DWG of the chosen version (#421): SAVEAS `version`, else the drawing's own
-version (the file's `$ACADVER`, 2018 for a new drawing), at least 2004 unless 2000 is asked for.
+with the `acadrust` 0.6.3 crate and reading that DXF; saving uses an internal R2000 DXF as a
+bridge, not as the output DWG version. The bridge converts it to the chosen DWG version
+(2000/2004/2007/2010/2013/2018, #421): SAVEAS `version`, else the drawing's own version as
+selected below, at least 2004 unless 2000 is explicitly asked for. New drawings therefore
+save as 2018 (AC1032), not R2000. The 2004 minimum retains true colours, transparency,
+table styles and gradients that R2000 DWG cannot represent.
 The bridge repairs two acadrust 0.6.3 gaps in 2010+ DWG: merged table cells and table-style
 title/header suppression.
 
@@ -59,6 +62,20 @@ on read with a note, so such files no longer exceed the DXF limit (#1482). **DWG
 ≈ 15% write.**
 
 ## DXF, version by version
+
+New drawings have `$ACADVER` AC1032 (`crates/doc/src/header.rs`) and default to 2018 DXF
+and DWG. Without an explicit save version, `io::save_version` keeps an opened drawing's
+`$ACADVER` when supported; older versions map to 2000, newer versions to 2018, and a missing
+or invalid code defaults to 2018 (`crates/io/src/lib.rs`, `crates/dxf/src/version.rs`). DWG
+uses the version carried through its DXF read bridge, with the 2004 minimum described above.
+In the app's Save dialog, File ▸ Default Save Format (also Options ▸ Open and Save,
+`saveVersion`, default 2018) sets the version for untitled drawings; drawings with a file keep
+their own version, subject to supported-version mapping and the DWG minimum.
+CLI, script and engine SAVEAS/QSAVE JSON saves do not read this UI preference; MCP honours it only when
+driving the app's Save dialog.
+SAVEAS `version` overrides this choice and remembers it for later saves. DXF output uses
+R2000 structure with the selected `$ACADVER`, version-specific groups and UTF-8 text from
+2007; that structure does not mean every saved file declares AC1015.
 
 | DXF version | AutoCAD 2027 | CADCraft read | CADCraft write |
 |---|---|---|---|
@@ -144,6 +161,7 @@ our output in AutoCAD black-box.
 | 2026-10-29 | minor | R2000 DXF: CLASS records written without group 91 (instance count), which came with the 2004 format; AutoCAD LT 2026 stopped responding on every R2000 DXF CADCraft saved (checked black-box in AutoCAD LT 2026) |
 | 2026-10-26 | minor | CC-046: ATTEDIT and -ATTEDIT value changes invalidate derived justified baselines before DXF/DWG export; preserve alignment anchors, unchanged values and Aligned/Fit endpoints. Review follow-up: baseline recomputation preserves insertion elevation independently of alignment elevation. The shared writer correction also applies to justified TEXT. Independent of attribute editor UI; reverting the follow-up restores elevation loss on recomputation, while reverting the value setter restores stale XY baselines. |
 | 2026-10-25 | minor | LAYOUT SAveas (`layout.saveas`) writes a layout as a drawing template: its page setup and paper space objects, no model space objects or other layouts, and only the named objects they use |
+| 2026-10-25 | minor | Clarify default 2018 (AC1032) saves, opened-drawing version selection, explicit overrides and the DWG 2004 minimum; distinguish R2000 DXF structure and the internal DWG bridge from output versions |
 | 2026-10-22 | minor | DXF/DWG save: angular, diametric and radial dimensions get standard DIMASSOC objects (one centre reference to the circle for radial/diametric, the definition points for angular), so AutoCAD follows their geometry; the standard objects of those kinds are read back too, without CADCraft's xdata (#1651) |
 | 2026-10-19 | minor | DXF/DWG save: angular dimension block text honors DIMDSEP, including per-dimension overrides (#1646) |
 | 2026-10-19 | minor | A file's own arrowhead blocks with standard names (AutoCAD's `_Dot`, `_DotSmall`), named only by a dimension style, are kept and saved as they were instead of being replaced by CADCraft's solids; PURGE keeps arrowhead blocks dimension styles name |
