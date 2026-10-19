@@ -168,6 +168,7 @@ fn new_copies_the_chosen_style() {
 fn set_current_rename_and_delete() {
     let mut h = dialog(|app| {
         app.run("style", json!({ "name": "Spare", "current": false })).unwrap();
+        app.run("style", json!({ "name": "Unused", "current": false })).unwrap();
         // New text takes the current style.
         app.run("style", json!({ "name": "Used" })).unwrap();
         app.run("text", json!({ "at": [0, 0], "text": "x", "height": 1 })).unwrap();
@@ -191,13 +192,20 @@ fn set_current_rename_and_delete() {
     click(&mut h, "Rename");
     type_into(&mut h, "Spare", "Extra");
     assert!(h.state().session.doc().unwrap().text_style("Extra").is_some());
+    // A name in use isn't offered: Extra keeps its name and stays chosen.
+    h.get(by().label("Extra").role(Role::Button)).click_secondary();
+    h.run_steps(3);
+    click(&mut h, "Rename");
+    type_into(&mut h, "Extra", "Used");
+    assert!(!enabled(&h, "OK"));
+    assert!(h.state().session.doc().unwrap().text_style("Extra").is_some());
     click(&mut h, "Delete");
     assert!(h.state().session.doc().unwrap().text_style("Extra").is_none());
     // In use only lists the current style and the styles in use.
     h.get(by().role(Role::ComboBox).value("All styles")).click();
     h.run_steps(3);
     click(&mut h, "Styles in use");
-    assert!(h.query(by().label("Notes").role(Role::Button)).is_none());
+    assert!(h.query(by().label("Unused").role(Role::Button)).is_none());
     h.get(by().label("Used").role(Role::Button));
 }
 
