@@ -1411,6 +1411,11 @@ impl Session {
         }
     }
 
+    /// The running interactive command id, or `None` if the command line is idle.
+    pub fn active_command_id(&self) -> Option<&str> {
+        self.running.as_ref().map(|r| r.id.as_str())
+    }
+
     /// Rubber-band preview entities for the cursor.
     pub fn preview(&self, cursor: Vec2) -> Vec<Entity> {
         let common = self.current_common();

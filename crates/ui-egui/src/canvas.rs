@@ -226,6 +226,39 @@ fn rebuilt_preview<'a>(doc: &cadcraft_doc::Drawing, ents: impl IntoIterator<Item
     cadcraft_render::build_entities(doc, ents, &preview_options(scale))
 }
 
+/// Screen-only AREA rubber-band shading. This is not a HATCH and never enters the drawing.
+fn area_preview_fill(command: Option<&str>, ents: &[cadcraft_doc::Entity], xf: &Xf) -> Option<egui::Mesh> {
+    if command != Some("area") {
+        return None;
+    }
+    let cadcraft_doc::EntityKind::LwPolyline(poly) = &ents.first()?.kind else {
+        return None;
+    };
+    // This runs on pointer movement; keep triangulation and mesh allocation bounded.
+    if !poly.closed || poly.vertices.len() < 3 || poly.vertices.len() > 256 {
+        return None;
+    }
+    let boundary: Vec<Vec2> = poly.vertices.iter().map(|v| v.p).collect();
+    if boundary.iter().any(|p| !p.is_finite()) {
+        return None;
+    }
+    // Use the existing even-odd renderer for concave polygons (not a triangle fan).
+    let triangles = cadcraft_render::triangulate_evenodd(&[boundary]);
+    if triangles.len() > 24_000 || triangles.iter().any(|p| !p.is_finite()) {
+        return None;
+    }
+    let mut mesh = egui::Mesh::default();
+    let fill = Color32::from_rgba_unmultiplied(48, 195, 112, 76); // ~30% opacity
+    for triangle in triangles.chunks_exact(3) {
+        let start = mesh.vertices.len() as u32;
+        for point in triangle {
+            mesh.colored_vertex(xf.to_screen(*point), fill);
+        }
+        mesh.add_triangle(start, start + 1, start + 2);
+    }
+    (!mesh.indices.is_empty()).then_some(mesh)
+}
+
 fn color32(c: Rgb) -> Color32 {
     Color32::from_rgb(c.0, c.1, c.2)
 }
@@ -1805,6 +1838,10 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         if !ents.is_empty()
             && let Ok(st) = app.session.state()
         {
+            // Paint below the existing AREA rubber-band outline and snap markers.
+            if let Some(mesh) = area_preview_fill(app.session.active_command_id(), &ents, &xf) {
+                painter.add(Shape::mesh(mesh));
+            }
             let list = rebuilt_preview(&st.doc, ents.iter(), scale);
             draw_list(&painter, &xf, &list, bg, false);
         }
@@ -2425,6 +2462,60 @@ pub(crate) mod tests {
         assert_eq!(alpha(true), 128);
         assert_eq!(alpha(false), 255);
         assert_eq!(alpha(true), 128);
+    }
+
+    #[test]
+    fn area_preview_fills_rectangle_without_changing_drawing() {
+        let mut s = cadcraft_engine::Session::new();
+        let initial = s.doc().unwrap().model.len();
+        s.start("area").unwrap();
+        for p in [Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(10.0, 10.0)] {
+            s.input(Input::Point(p)).unwrap();
+        }
+        let ents = s.preview(Vec2::new(0.0, 10.0));
+        let xf = Xf { rect: Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0)), center: Vec2::new(5.0, 5.0), scale: 10.0 };
+        let mesh = area_preview_fill(s.active_command_id(), &ents, &xf).unwrap();
+        assert!(!mesh.indices.is_empty());
+        assert!(mesh.vertices.iter().all(|v| v.color.a() == 76));
+        assert_eq!(s.doc().unwrap().model.len(), initial);
+        assert!(area_preview_fill(Some("line"), &ents, &xf).is_none());
+        s.input(Input::Enter).unwrap();
+        assert_eq!(s.active_command_id(), None);
+        assert_eq!(s.doc().unwrap().model.len(), initial);
+    }
+
+    #[test]
+    fn area_preview_concave_polygon_respects_notch() {
+        let mut s = cadcraft_engine::Session::new();
+        s.start("area").unwrap();
+        for p in [Vec2::new(0.0, 0.0), Vec2::new(6.0, 0.0), Vec2::new(6.0, 2.0), Vec2::new(2.0, 2.0), Vec2::new(2.0, 6.0)] {
+            s.input(Input::Point(p)).unwrap();
+        }
+        let ents = s.preview(Vec2::new(0.0, 6.0));
+        let xf = Xf { rect: Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0)), center: Vec2::new(3.0, 3.0), scale: 10.0 };
+        let mesh = area_preview_fill(s.active_command_id(), &ents, &xf).unwrap();
+        let drawn_area: f32 = mesh.indices.chunks_exact(3).map(|tri| {
+            let a = mesh.vertices[tri[0] as usize].pos;
+            let b = mesh.vertices[tri[1] as usize].pos;
+            let c = mesh.vertices[tri[2] as usize].pos;
+            ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)).abs() / 2.0
+        }).sum();
+        // L-shaped polygon = (6 x 2) + (2 x 4) = 20 square drawing units.
+        assert!((drawn_area / 100.0 - 20.0).abs() < 0.01);
+        s.cancel();
+        assert_eq!(s.active_command_id(), None);
+    }
+
+    #[test]
+    fn area_preview_collinear_points_have_no_fill() {
+        let mut s = cadcraft_engine::Session::new();
+        s.start("area").unwrap();
+        s.input(Input::Point(Vec2::new(0.0, 0.0))).unwrap();
+        s.input(Input::Point(Vec2::new(2.0, 0.0))).unwrap();
+        let ents = s.preview(Vec2::new(4.0, 0.0));
+        let xf = Xf { rect: Rect::from_min_max(pos2(0.0, 0.0), pos2(300.0, 300.0)), center: Vec2::new(2.0, 0.0), scale: 10.0 };
+        assert!(area_preview_fill(s.active_command_id(), &ents, &xf).is_none());
+        s.cancel();
     }
 
     /// Previews the session rebuilds with the current properties (the rubber band, copies of
