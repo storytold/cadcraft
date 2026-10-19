@@ -440,7 +440,13 @@ fn edit_page(ui: &mut egui::Ui, d: &Drawing, st: &mut State, actions: &mut Vec<(
                     p.insert("current".into(), json!(false));
                     actions.push(("dimstyle", Value::Object(p)));
                 }
-                Target::Override if !changed.is_empty() => actions.push(("dimstyle.overrides", Value::Object(changed))),
+                // What differs from the style is the whole override set: a value set back to the
+                // style's drops its override.
+                Target::Override if !changed.is_empty() || !d.dim_overrides().is_empty() => {
+                    let mut p = changed;
+                    p.insert("clear".into(), json!(true));
+                    actions.push(("dimstyle.overrides", Value::Object(p)));
+                }
                 Target::Create => {
                     // Every variable, so the new style is what was shown whatever the current style is.
                     let mut p: Map<String, Value> =

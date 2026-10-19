@@ -135,6 +135,19 @@ fn override_changes_the_current_settings_only() {
 }
 
 #[test]
+fn override_drops_a_value_set_back_to_the_styles() {
+    let mut h = manager(|app| {
+        app.run("dimstyle.overrides", json!({ "textHeight": 0.3, "textGap": 0.05 })).unwrap();
+    });
+    click(&mut h, "Override...");
+    click(&mut h, "Text");
+    type_into(&mut h, "0.3000", "0.18");
+    click(&mut h, "OK");
+    let o = h.state().session.doc().unwrap().dim_overrides();
+    assert_eq!((o.get("textHeight"), o.get("textGap")), (None, Some(&json!(0.05))), "{o:?}");
+}
+
+#[test]
 fn set_current_compare_and_delete() {
     let mut h = manager(|app| {
         app.run("dimstyle", json!({ "name": "Temp", "DIMASZ": 0.5, "current": false })).unwrap();
