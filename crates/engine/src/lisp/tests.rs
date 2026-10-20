@@ -5,7 +5,11 @@ use crate::Session;
 use crate::cmd::file::{EntityCodec, set_entity_codec};
 
 pub(super) fn session() -> Session {
-    set_entity_codec(EntityCodec { groups: cadcraft_io::entity_groups, entity: cadcraft_io::entity_from_groups });
+    set_entity_codec(EntityCodec {
+        groups: cadcraft_io::entity_groups,
+        sub_groups: cadcraft_io::entity_sub_groups,
+        entity: cadcraft_io::entity_from_groups,
+    });
     Session::new()
 }
 
@@ -402,6 +406,37 @@ fn entity_lists_round_trip() {
     assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget e)))"), "\"LINE\"");
     assert_eq!(ok(&mut s, "(entmake '((0 . \"NOSUCHTHING\")))"), "nil");
     assert_eq!(ok(&mut s, "(handent \"ZZZZZZ\")"), "nil");
+}
+
+#[test]
+fn entnext_walks_an_inserts_attribs() {
+    // An INSERT with attributes is followed by its ATTRIBs and a SEQEND, then the next entity (#1660).
+    let mut s = session();
+    use serde_json::json;
+    s.execute("attdef", &json!({"tag": "TAG", "default": "x", "at": [0, 0], "height": 2.5})).unwrap();
+    s.execute("line", &json!({"points": [[0, -5], [20, -5]]})).unwrap();
+    let handles: Vec<String> = s.doc().unwrap().model.handles().iter().map(|h| h.hex()).collect();
+    s.execute("block", &json!({"name": "B", "base": [0, 0], "handles": handles, "keep": "delete"})).unwrap();
+    s.execute("insert", &json!({"name": "B", "at": [50, 50], "attribs": {"TAG": "VALUE"}})).unwrap();
+    ok(&mut s, "(setq i (entlast))");
+    s.execute("line", &json!({"points": [[100, 0], [120, 0]]})).unwrap();
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget i)))"), "\"INSERT\"");
+    assert_eq!(ok(&mut s, "(cdr (assoc 66 (entget i)))"), "1");
+    ok(&mut s, "(setq a (entnext i))");
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget a)))"), "\"ATTRIB\"");
+    assert_eq!(ok(&mut s, "(cdr (assoc 2 (entget a)))"), "\"TAG\"");
+    assert_eq!(ok(&mut s, "(cdr (assoc 1 (entget a)))"), "\"VALUE\"");
+    assert_eq!(ok(&mut s, "(equal (cdr (assoc 330 (entget a))) i)"), "T");
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget (entnext a))))"), "\"SEQEND\"");
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget (entnext (entnext a)))))"), "\"LINE\"");
+    // entmod on the ATTRIB changes the reference's attribute.
+    ok(&mut s, "(setq d (entget a)) (entmod (subst (cons 1 \"NEW\") (assoc 1 d) d))");
+    assert_eq!(ok(&mut s, "(cdr (assoc 1 (entget a)))"), "\"NEW\"");
+    let value = s.doc().unwrap().model.iter().find_map(|e| match &e.kind {
+        cadcraft_doc::EntityKind::Insert(ins) => ins.attribs.first().map(|a| (a.tag.clone(), a.text.value.clone())),
+        _ => None,
+    });
+    assert_eq!(value, Some(("TAG".to_string(), "NEW".to_string())));
 }
 
 #[test]

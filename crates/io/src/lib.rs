@@ -33,7 +33,7 @@ use std::path::{Path, PathBuf};
 pub use cadcraft_doc::Format;
 pub use craft_dxf::Version;
 pub use dxf_read::entity_from_groups;
-pub use dxf_write::entity_groups;
+pub use dxf_write::{entity_groups, entity_sub_groups};
 pub use pdf::{PdfOptions, pdf, plot};
 
 /// How a drawing is saved as DXF or DWG.
