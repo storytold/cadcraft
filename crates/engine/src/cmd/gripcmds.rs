@@ -46,20 +46,21 @@ fn stretch(s: &mut Session, cmd: &str, p: &Value) -> Result<Value> {
         return Err(EngineError::Other("The object is on a locked layer.".into()));
     }
     let e = curves::entity(s, h)?;
+    let view = s.anno_view();
     let doc = s.doc()?;
-    let ne = stretch_shown(doc, &e, i, to).ok_or_else(|| bad(cmd, "no such grip, or the result would be degenerate"))?;
+    let ne = stretch_shown(doc, &e, i, to, view).ok_or_else(|| bad(cmd, "no such grip, or the result would be degenerate"))?;
     let mut edits = vec![(h, ne)];
     // The other `handles` with a grip on the same point stretch with it (connected objects stay
     // connected); locked ones and edits that would be degenerate are left alone.
-    let from = shown_grips(doc, &e).get(i).copied().unwrap_or(to);
+    let from = shown_grips(doc, &e, view).get(i).copied().unwrap_or(to);
     let tol = 1e-9 * (1.0 + from.len());
     for o in targets(s, p)? {
         if o == h || edits.iter().any(|(x, _)| *x == o) || curves::is_locked(s, o) {
             continue;
         }
         let Ok(oe) = curves::entity(s, o) else { continue };
-        if let Some(j) = shown_grips(doc, &oe).iter().position(|g| g.near(from, tol))
-            && let Some(ne) = stretch_shown(doc, &oe, j, to)
+        if let Some(j) = shown_grips(doc, &oe, view).iter().position(|g| g.near(from, tol))
+            && let Some(ne) = stretch_shown(doc, &oe, j, to, view)
         {
             edits.push((o, ne));
         }
@@ -92,7 +93,7 @@ fn base_point(s: &Session, cmd: &str, p: &Value, hs: &[Handle]) -> Result<Vec2> 
         .or_else(|| hs.first().copied())
         .ok_or_else(|| bad(cmd, "`base` or `baseHandle` + `index` is required"))?;
     let i = index_param(cmd, p)?;
-    let g = shown_grips(s.doc()?, &curves::entity(s, h)?);
+    let g = shown_grips(s.doc()?, &curves::entity(s, h)?, s.anno_view());
     g.get(i).copied().ok_or_else(|| bad(cmd, "no such grip"))
 }
 
@@ -121,7 +122,7 @@ fn run_grip_stretch(s: &mut Session, p: &Value) -> Result<Value> {
         None => {
             let base = match point_param(p, "base") {
                 Some(b) => b,
-                None => shown_grips(s.doc()?, &curves::entity(s, h0)?).get(i0).copied().ok_or_else(|| bad(cmd, "no such grip"))?,
+                None => shown_grips(s.doc()?, &curves::entity(s, h0)?, s.anno_view()).get(i0).copied().ok_or_else(|| bad(cmd, "no such grip"))?,
             };
             point_req(cmd, p, "to")? - base
         }
@@ -167,6 +168,7 @@ const MAX_GRIPS: usize = 1000;
 /// that would be degenerate are left out; several hot grips of one object move together.
 pub(super) fn stretched(s: &Session, hot: &[(Handle, usize)], others: &[Handle], delta: Vec2) -> Vec<(Handle, Entity)> {
     let Ok(d) = s.doc() else { return Vec::new() };
+    let view = s.anno_view();
     // Every grip to move, per object, with its target point.
     let mut moves: Vec<(Handle, Vec<(usize, Vec2)>)> = Vec::new();
     let mut add = |h: Handle, i: usize, to: Vec2| match moves.iter_mut().find(|(x, _)| *x == h) {
@@ -178,14 +180,14 @@ pub(super) fn stretched(s: &Session, hot: &[(Handle, usize)], others: &[Handle],
         None => moves.push((h, vec![(i, to)])),
     };
     for &(h, i) in hot.iter().take(MAX_GRIPS) {
-        let Some(from) = d.entity(h).and_then(|e| shown_grips(d, e).get(i).copied()) else { continue };
+        let Some(from) = d.entity(h).and_then(|e| shown_grips(d, e, view).get(i).copied()) else { continue };
         add(h, i, from + delta);
         let tol = 1e-9 * (1.0 + from.len());
         for &o in others.iter().take(MAX_GRIPS) {
             if o == h {
                 continue;
             }
-            if let Some(j) = d.entity(o).and_then(|e| shown_grips(d, e).iter().position(|g| g.near(from, tol))) {
+            if let Some(j) = d.entity(o).and_then(|e| shown_grips(d, e, view).iter().position(|g| g.near(from, tol))) {
                 add(o, j, from + delta);
             }
         }
@@ -199,7 +201,7 @@ pub(super) fn stretched(s: &Session, hot: &[(Handle, usize)], others: &[Handle],
         let mut ne = (**e).clone();
         let mut changed = false;
         for (i, to) in mv {
-            if let Some(n) = stretch_shown(d, &ne, i, to) {
+            if let Some(n) = stretch_shown(d, &ne, i, to, view) {
                 ne = n;
                 changed = true;
             }

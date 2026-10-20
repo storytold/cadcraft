@@ -172,3 +172,27 @@ fn hostile_offsets_never_panic() {
 fn bounds(d: &cadcraft_engine::doc::Drawing, h: Handle) -> cadcraft_engine::geom::Bounds2 {
     cadcraft_engine::doc::entity_bounds(d, d.entity(h).unwrap(), 0)
 }
+
+#[test]
+fn in_a_viewport_grips_and_annoreset_use_the_viewport_s_scale() {
+    // The text moved at 1:50; CANNOSCALE is 1:1 while a 1:50 viewport is active (MSPACE): the
+    // grips show where the viewport draws it, a grip moves it at 1:50, ANNORESET takes 1:50's place.
+    let (mut s, h) = two_scales();
+    s.execute("grip.move", &json!({ "handle": h.hex(), "index": 0, "to": [5, 5] })).unwrap();
+    setvar(&mut s, "CANNOSCALE", json!("1:1"));
+    s.execute("layout.set", &json!({ "name": "Layout1" })).unwrap();
+    let vp = s.execute("mview", &json!({ "p1": [0, 0], "p2": [200, 100] })).unwrap();
+    let vh = vp["viewports"][0].as_str().and_then(Handle::parse_hex).unwrap();
+    s.execute("viewport.set", &json!({ "handle": vh.hex(), "scale": "1:50", "center": [0, 0] })).unwrap();
+    s.execute("mspace", &json!({ "handle": vh.hex() })).unwrap();
+    assert!((s.anno_view().unwrap() - 50.0).abs() < 1e-9);
+    assert!(near(s.grips_of(h).unwrap()[0], Vec2::new(5.0, 5.0)), "{:?}", s.grips_of(h));
+    s.execute("grip.move", &json!({ "handle": h.hex(), "index": 0, "to": [7, 7] })).unwrap();
+    assert!(near(s.grips_of(h).unwrap()[0], Vec2::new(7.0, 7.0)));
+    s.execute("annoreset", &json!({ "handles": [h.hex()] })).unwrap();
+    s.execute("pspace", &json!({})).unwrap();
+    s.execute("layout.set", &json!({ "name": "Model" })).unwrap();
+    // 1:1 was never moved by the grips, and now sits where 1:50 is.
+    assert!(near(shown_at(&mut s, h, "1:1"), Vec2::new(7.0, 7.0)));
+    assert!(near(shown_at(&mut s, h, "1:50"), Vec2::new(7.0, 7.0)));
+}

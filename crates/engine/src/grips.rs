@@ -554,23 +554,24 @@ impl Session {
     /// Grip points of an object (the indices `grip_edit` takes).
     pub fn grips_of(&self, handle: Handle) -> Result<Vec<Vec2>> {
         let d = self.doc()?;
-        d.entity(handle).map(|e| shown_grips(d, e)).ok_or_else(|| EngineError::Other("no such object".into()))
+        d.entity(handle).map(|e| shown_grips(d, e, self.anno_view())).ok_or_else(|| EngineError::Other("no such object".into()))
     }
 }
 
 /// The grip points of `e` as it shows (the indices `grip_edit` takes): an annotative object's at
-/// its current annotation scale and its position there.
-pub fn shown_grips(d: &Drawing, e: &Entity) -> Vec<Vec2> {
-    d.anno_shown(e).grips()
+/// the annotation scale it shows at and its position there. `view`: the active viewport's scale
+/// in MSPACE ([`crate::DocState::anno_view`]), else the current annotation scale applies.
+pub fn shown_grips(d: &Drawing, e: &Entity, view: Option<f64>) -> Vec<Vec2> {
+    d.anno_shown_in(e, view).grips()
 }
 
 /// `e` with grip `index` of [`shown_grips`] moved to `to`, or `None` when that grip can't move
-/// there. An annotative object's position grip moves it at the current scale only when it
+/// there. An annotative object's position grip moves it at the scale it shows at only when it
 /// supports several scales; its other grips change its shape at every scale (the edit is taken
 /// back to paper size).
-pub fn stretch_shown(d: &Drawing, e: &Entity, index: usize, to: Vec2) -> Option<Entity> {
+pub fn stretch_shown(d: &Drawing, e: &Entity, index: usize, to: Vec2, view: Option<f64>) -> Option<Entity> {
     let with = |kind: EntityKind| Some(Entity { kind, ..e.clone() });
-    let (Some(scale), cadcraft_doc::AnnoDraw::Scaled { factor, by }) = (d.anno_shown_scale(e), d.anno_draw(e)) else {
+    let (Some(scale), cadcraft_doc::AnnoDraw::Scaled { factor, by }) = (d.anno_shown_scale_in(e, view), d.anno_draw_in(e, view)) else {
         return with(stretch_grip(&e.kind, index, to)?);
     };
     let shown = cadcraft_doc::anno_placed(e, factor, by).kind;

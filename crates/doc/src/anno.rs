@@ -319,18 +319,29 @@ impl Drawing {
     /// (paper space shows every annotative object), elsewhere (model space, or an object not in
     /// the drawing yet) as [`anno_draw`] at the current annotation scale.
     pub fn anno_draw(&self, e: &Entity) -> AnnoDraw {
+        self.anno_draw_in(e, None)
+    }
+    /// How top-level object `e` draws where it is edited: through an active viewport whose
+    /// annotation scale is `view` (drawing units per paper unit, the viewport's scale, as the
+    /// renderer draws model space there), else as [`Drawing::anno_draw`].
+    pub fn anno_draw_in(&self, e: &Entity, view: Option<f64>) -> AnnoDraw {
         if !is_annotative(e) {
             return AnnoDraw::Plain;
         }
         if !self.model.contains(e.handle) && self.layouts.iter().any(|l| l.entities.contains(e.handle)) {
             return AnnoDraw::Scaled { factor: 1.0, by: e.common.moved_at_factor(1.0) };
         }
-        anno_draw(e, self.current_anno_scale().factor(), self.anno_all_visible())
+        let view = view.filter(|f| f.is_finite() && *f > 0.0).unwrap_or_else(|| self.current_anno_scale().factor());
+        anno_draw(e, view, self.anno_all_visible())
     }
     /// The scale `e` shows at outside a viewport (see [`Drawing::anno_draw`]): its name and
     /// factor, `None` when `e` isn't annotative or doesn't show.
     pub fn anno_shown_scale(&self, e: &Entity) -> Option<AnnoScale> {
-        match self.anno_draw(e) {
+        self.anno_shown_scale_in(e, None)
+    }
+    /// The scale `e` shows at in view `view` (see [`Drawing::anno_draw_in`]).
+    pub fn anno_shown_scale_in(&self, e: &Entity, view: Option<f64>) -> Option<AnnoScale> {
+        match self.anno_draw_in(e, view) {
             AnnoDraw::Scaled { factor, .. } => e.common.anno_scales.iter().find(|s| s.has_factor(factor)).cloned(),
             _ => None,
         }
@@ -338,7 +349,11 @@ impl Drawing {
     /// `e` as it draws outside a viewport: an annotative object at its scale and position there,
     /// anything else (and a hidden annotative object) as stored.
     pub fn anno_shown(&self, e: &Entity) -> EntityKind {
-        match self.anno_draw(e) {
+        self.anno_shown_in(e, None)
+    }
+    /// `e` as it draws in view `view` (see [`Drawing::anno_draw_in`]).
+    pub fn anno_shown_in(&self, e: &Entity, view: Option<f64>) -> EntityKind {
+        match self.anno_draw_in(e, view) {
             AnnoDraw::Scaled { factor, by } => anno_placed(e, factor, by).kind,
             _ => e.kind.clone(),
         }

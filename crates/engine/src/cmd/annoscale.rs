@@ -217,7 +217,9 @@ fn with_handles(s: &Session, p: &Value, mut extra: Value) -> Value {
 
 fn run_annoreset(s: &mut Session, p: &Value) -> Result<Value> {
     let (hs, _) = annotative_targets(s, p, "annoreset")?;
-    // Every scale goes where the object shows now: that offset becomes the shared position.
+    // Every scale goes where the object shows now (in the active viewport, at its scale): that
+    // offset becomes the shared position.
+    let view = s.anno_view();
     let d = s.doc_mut()?;
     let mut moved = 0;
     for h in &hs {
@@ -225,7 +227,7 @@ fn run_annoreset(s: &mut Session, p: &Value) -> Result<Value> {
         if e.common.anno_moves.is_empty() || d.layer(&e.common.layer).is_some_and(|l| l.locked) {
             continue;
         }
-        let by = match d.anno_draw(e) {
+        let by = match d.anno_draw_in(e, view) {
             cadcraft_doc::AnnoDraw::Scaled { by, .. } => by,
             _ => Vec2::ZERO,
         };
