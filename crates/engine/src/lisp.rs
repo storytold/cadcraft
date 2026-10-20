@@ -65,6 +65,9 @@ pub struct Env {
     /// Each block-definition entity with its successor in its block (None for the last), for the drawing
     /// it was taken from: `entnext`'s indexed lookup, which also tells whether a handle is a block's.
     pub block_next: Option<(usize, Arc<BlockSlots>)>,
+    /// The records after an INSERT's own (its ATTRIBs, then its SEQEND) LISP has named: the
+    /// INSERT and the record's place. The one at `i` is named `Handle(u64::MAX - i)`.
+    pub subents: Vec<(Handle, usize)>,
     /// `tblnext`'s place in each table.
     pub tblnext: HashMap<String, usize>,
     /// A block definition `entmake` has begun (a BLOCK list) and not yet ended (ENDBLK): the
@@ -89,6 +92,7 @@ impl Default for Env {
             deleted: HashMap::new(),
             order: None,
             block_next: None,
+            subents: Vec::new(),
             tblnext: HashMap::new(),
             pending_block: None,
             objects: objects::Names::default(),
