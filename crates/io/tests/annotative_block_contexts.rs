@@ -440,3 +440,125 @@ fn a_reference_s_contexts_survive_dwg() {
         assert!((rot - 30.0).abs() < 1e-9 && (sx - want).abs() < 1e-9, "{ctx:?}");
     }
 }
+
+/// Every written ACDB_ANNOTATIONSCALES dictionary entry names a written context, and every
+/// written context is listed once.
+fn listed_contexts(text: &str) -> usize {
+    let recs = records(text);
+    let handles: std::collections::HashSet<&str> =
+        recs.iter().filter(|(k, _)| k.ends_with("OBJECTCONTEXTDATA_CLASS")).filter_map(|(_, t)| get(t, 5)).collect();
+    let mut listed = 0;
+    for (_, t) in recs.iter().filter(|(k, _)| k == "DICTIONARY") {
+        for (c, v) in t {
+            if *c == 350 && handles.contains(v.as_str()) {
+                listed += 1;
+            }
+        }
+    }
+    assert_eq!(listed, handles.len(), "contexts listed in their dictionaries");
+    listed
+}
+
+#[test]
+fn a_context_whose_scale_was_deleted_is_not_written() {
+    let mut d = read();
+    d.scales.retain(|s| s.name != "1:1");
+    let text = write_dxf(&d);
+    let ctx = contexts(&text);
+    assert_eq!(ctx.iter().map(|c| (c.0.as_str(), c.1)).collect::<Vec<_>>(), [("1:5", true)]);
+    let actx = attribute_contexts(&text);
+    assert_eq!(actx.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(), ["1:5"]);
+    assert_eq!(listed_contexts(&text), 2);
+}
+
+#[test]
+fn an_annotative_reference_s_contexts_follow_its_scales() {
+    // CADCraft's model makes the reference annotative at 1:5 and a new 1:2 (1:1 no longer):
+    // the 1:1 contexts go, 1:2 ones are made from the default 1:5 ones, scaled 2/5 about the
+    // reference's insertion point.
+    let mut d = read();
+    let half = cadcraft_doc::AnnoScale::new("1:2", 1.0, 2.0);
+    d.scales.push(half.clone());
+    let five = d.scales.iter().find(|s| s.name == "1:5").cloned().unwrap();
+    d.modify_entity(Handle::parse_hex("40").unwrap(), |e| e.common.anno_scales = vec![five, half]).unwrap();
+    let text = write_dxf(&d);
+    let mut ctx = contexts(&text);
+    ctx.sort_by(|a, b| a.0.cmp(&b.0));
+    let got: Vec<(String, bool, f64)> = ctx.iter().map(|c| (c.0.clone(), c.1, c.4)).collect();
+    assert_eq!(got.len(), 2, "{got:?}");
+    assert_eq!((got[0].0.as_str(), got[0].1), ("1:2", false));
+    assert!((got[0].2 - 2.0).abs() < 1e-9, "{got:?}");
+    assert_eq!(got[1], ("1:5".to_string(), true, 5.0));
+    assert!(ctx.iter().all(|c| c.2 == Vec2::new(10.0, 20.0)));
+    let mut actx = attribute_contexts(&text);
+    actx.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(actx.len(), 2, "{actx:?}");
+    assert_eq!(actx[0].0, "1:2");
+    assert!((actx[0].1 - Vec2::new(12.0, 24.0)).len() < 1e-9, "{actx:?}");
+    assert_eq!(actx[1], ("1:5".to_string(), Vec2::new(15.0, 30.0)));
+    assert_eq!(listed_contexts(&text), 4);
+    // Read back, the reference keeps them (and nothing points at a missing scale).
+    let back = read_dxf(text.as_bytes()).unwrap();
+    assert!(contexts(&write_dxf(&back)).iter().all(|c| c.0 != "?"));
+}
+
+#[test]
+fn two_attributes_with_one_tag_keep_their_own_contexts() {
+    // A second attribute TAG on the reference, with its own extension dictionary (no contexts
+    // in it): each written ATTRIB gets its own dictionary, the first keeps the contexts.
+    let second = "
+0 ATTRIB
+5 80
+102 {ACAD_XDICTIONARY
+360 81
+102 }
+330 40
+100 AcDbEntity
+8 0
+100 AcDbText
+10 1
+20 2
+30 0
+40 1
+1 Y
+100 AcDbAttribute
+2 TAG
+70 0
+0 SEQEND";
+    let objs = "
+0 DICTIONARY
+5 81
+330 80
+100 AcDbDictionary
+280 1
+281 1
+3 OTHER
+360 82
+0 XRECORD
+5 82
+330 81
+100 AcDbXrecord
+1 kept
+0 ENDSEC
+0 EOF";
+    let src = FIXTURE.replacen("0 SEQEND", second, 1);
+    let at = src.rfind("0 ENDSEC").unwrap();
+    let src = format!("{}{objs}", &src[..at]);
+    let d = read_dxf(dxf(&src).as_bytes()).unwrap();
+    let text = write_dxf(&d);
+    let recs = records(&text);
+    let xdict = |t: &[(i32, String)]| {
+        let i = t.iter().position(|(c, v)| *c == 102 && v == "{ACAD_XDICTIONARY")?;
+        t.get(i + 1).map(|(_, v)| v.clone())
+    };
+    let attribs: Vec<(String, Option<String>)> =
+        recs.iter().filter(|(k, _)| k == "ATTRIB").map(|(_, t)| (get(t, 1).unwrap_or_default().to_string(), xdict(t))).collect();
+    assert_eq!(attribs.len(), 2, "{attribs:?}");
+    let (x, y) = (attribs[0].1.clone().unwrap(), attribs[1].1.clone().unwrap());
+    assert_ne!(x, y, "{attribs:?}");
+    // The first attribute's dictionary leads to its contexts, the second's to the xrecord.
+    let owner_of = |h: &str| recs.iter().find(|(_, t)| get(t, 5) == Some(h)).and_then(|(_, t)| get(t, 330)).map(str::to_string);
+    let xrec = recs.iter().find(|(k, t)| k == "XRECORD" && get(t, 1) == Some("kept")).map(|(_, t)| get(t, 5).unwrap().to_string()).unwrap();
+    assert_eq!(owner_of(&xrec), Some(y));
+    assert_eq!(attribute_contexts(&text).len(), 2);
+}
