@@ -408,15 +408,12 @@ mod native {
         orphans.len()
     }
 
-    /// Leave out what acadrust can't write as this DWG version: other programs' custom entities
-    /// and objects without raw DWG data of that version. acadrust 0.6.4 refuses the whole file
-    /// for one of them (0.6.3 left them out); CADCraft already tells the user which entity types
-    /// a DWG doesn't keep (`not_saved`), so the rest of the drawing is written. Returns how many.
     /// Most CLASS entries read from a DXF's CLASSES section.
     const MAX_CLASSES: usize = 10_000;
 
     /// The C++ class names a DXF's CLASS entries give, by DXF name (upper case): the names the
-    /// file came with (from AutoCAD, for the objects CADCraft keeps).
+    /// file came with (from AutoCAD, for the objects CADCraft keeps). A DXF object names its
+    /// class, so a name has one class; for a name listed twice, the first entry's.
     fn file_class_names(dxf: &[u8]) -> std::collections::HashMap<String, String> {
         let text = String::from_utf8_lossy(dxf);
         let mut lines = text.lines();
@@ -434,10 +431,11 @@ mod native {
                 ("0", _) => in_class = false,
                 ("1", n) if in_class => name = Some(n.to_ascii_uppercase()),
                 ("2", cpp) if in_class => {
+                    // A name given twice: the first, the class acadrust's DXF reader keeps.
                     if let Some(n) = name.take()
                         && out.len() < MAX_CLASSES
                     {
-                        out.insert(n, cpp.to_string());
+                        out.entry(n).or_insert_with(|| cpp.to_string());
                     }
                 }
                 _ => {}
@@ -474,6 +472,10 @@ mod native {
         }
     }
 
+    /// Leave out what acadrust can't write as this DWG version: other programs' custom entities
+    /// and objects without raw DWG data of that version. acadrust 0.6.4 refuses the whole file
+    /// for one of them (0.6.3 left them out); CADCraft already tells the user which entity types
+    /// a DWG doesn't keep (`not_saved`), so the rest of the drawing is written. Returns how many.
     fn drop_unwritable(doc: &mut acadrust::CadDocument) -> usize {
         let version = doc.version;
         let unwritable: Vec<acadrust::Handle> = doc
@@ -863,6 +865,63 @@ EOF
             assert_eq!(doc.classes.get_by_name("BLOCKROTATEACTION").map(|c| c.cpp_class_name.as_str()), Some("AcDbBlockRotateAction"));
             assert_eq!(doc.classes.get_by_name("BLOCKFLIPACTION").map(|c| c.cpp_class_name.as_str()), Some("AcDbBlockFlipAction"));
             assert_eq!(doc.classes.iter().map(|c| c.dxf_name.clone()).collect::<Vec<_>>(), before, "same classes, same order");
+        }
+
+        /// A DXF name listed twice: acadrust's DXF reader keeps the first entry, and so does the
+        /// name given to it (the second entry's name isn't put on the first's class).
+        #[test]
+        fn a_class_listed_twice_keeps_its_first_name() {
+            let class = |cpp: &str| {
+                format!(
+                    "0
+CLASS
+1
+BLOCKROTATEACTION
+2
+{cpp}
+3
+ObjectDBX Classes
+90
+1153
+91
+0
+280
+0
+281
+0
+"
+                )
+            };
+            let dxf = format!(
+                "0
+SECTION
+2
+HEADER
+9
+$ACADVER
+1
+AC1015
+0
+ENDSEC
+0
+SECTION
+2
+CLASSES
+{}{}0
+ENDSEC
+0
+EOF
+",
+                class("AcDbBlockRotateAction"),
+                class("AcDbSomethingElse"),
+            );
+            let names = file_class_names(dxf.as_bytes());
+            assert_eq!(names.get("BLOCKROTATEACTION").map(String::as_str), Some("AcDbBlockRotateAction"));
+            let mut doc = acadrust::DxfReader::from_reader(std::io::Cursor::new(dxf.into_bytes())).and_then(|r| r.read()).unwrap();
+            use_file_class_names(&mut doc, &names);
+            let kept: Vec<&str> =
+                doc.classes.iter().filter(|c| c.dxf_name.eq_ignore_ascii_case("BLOCKROTATEACTION")).map(|c| c.cpp_class_name.as_str()).collect();
+            assert_eq!(kept, ["AcDbBlockRotateAction"]);
         }
     }
 }
