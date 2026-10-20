@@ -148,6 +148,12 @@ pub fn open(app: &mut CadApp, handles: &[Handle]) {
     app.ui.dialog = Some("objectscale".into());
 }
 
+/// Whether the dialog is up: its state and the open dialog both say so (another dialog, or a
+/// control call, can replace it).
+pub fn is_open(app: &CadApp) -> bool {
+    app.objectscale.is_some() && app.ui.dialog.as_deref() == Some("objectscale")
+}
+
 pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let Some(mut s) = app.objectscale.clone() else {
         *open = false;
@@ -293,6 +299,18 @@ mod tests {
         app.run("objectscale", json!({ "handles": [hs[0].hex(), hs[1].hex()], "add": "1:2" })).unwrap();
         app.run("objectscale", json!({ "handles": [hs[1].hex()], "delete": "1:1" })).unwrap();
         (app, hs)
+    }
+
+    #[test]
+    fn the_dialog_replaced_by_another_no_longer_takes_the_keys() {
+        let (mut app, hs) = app();
+        open(&mut app, &hs);
+        assert!(is_open(&app));
+        // Another dialog (or `ui.dialog.close`) replaces it: the command line gets the keys again.
+        app.ui.dialog = Some("authoring".into());
+        assert!(!is_open(&app));
+        app.ui.dialog = None;
+        assert!(!is_open(&app));
     }
 
     #[test]

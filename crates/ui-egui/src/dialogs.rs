@@ -11,6 +11,10 @@ use crate::theme::Tokens;
 pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     crate::mtext_editor::show(app, ctx);
     crate::quick::quick_properties(app, ctx);
+    // The Annotation Object Scale dialog replaced or closed from elsewhere leaves no state behind.
+    if app.ui.dialog.as_deref() != Some("objectscale") {
+        app.objectscale = None;
+    }
     let Some(d) = app.ui.dialog.clone() else { return };
     let mut open = true;
     match d.as_str() {

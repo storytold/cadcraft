@@ -285,7 +285,7 @@ fn enable_ime(app: &mut CadApp, ctx: &egui::Context) {
 /// Handle keyboard input destined for the command line (when no text field has focus).
 pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
     // A modal dialog takes the keys (its Escape mustn't also cancel or deselect).
-    if ctx.egui_wants_keyboard_input() || app.objectscale.is_some() {
+    if ctx.egui_wants_keyboard_input() || crate::objectscale::is_open(app) {
         app.cmd.preedit.clear();
         app.cmd.ime_on = false;
         return;
