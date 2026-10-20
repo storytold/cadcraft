@@ -741,6 +741,8 @@ fn a_multileader_gets_its_context_data_at_each_scale() {
         // The text keeps its place about the landing, at the scale's size.
         assert!((num(&c.tags, 12) - (10.0 + 0.5 * f)).abs() < 1e-9 && (num(&c.tags, 22) - (10.0 + 0.1 * f)).abs() < 1e-9);
     }
+    // A multileader has no block per scale (only dimensions do).
+    assert!(!recs.iter().any(|(k, t)| k == "BLOCK" && get(t, 2).is_some_and(|n| n.starts_with("*D"))));
     let back = cadcraft_io::read_dxf(text.as_bytes()).unwrap();
     let (a, b) = (d.entity(h).unwrap(), back.entity(h).unwrap());
     assert_eq!(a.common.anno_scales, b.common.anno_scales);
