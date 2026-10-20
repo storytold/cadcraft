@@ -494,7 +494,7 @@ impl Session {
             return Vec::new();
         }
         let d = &st.doc;
-        let vp_scale = st.active_viewport().map(|(_, v)| v.view_height / v.height);
+        let vp_scale = st.anno_view();
         let mut out = Vec::new();
         for h in st.selection.iter().take(crate::MAX_ANNO_OTHERS) {
             match vp_scale {

@@ -179,7 +179,9 @@ impl AnnoOthers {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
             let on = session.settings.selectionannodisplay;
-            (st.uid, st.revision, std::sync::Arc::as_ptr(&st.doc) as usize, tolerance.to_bits(), sel, on, st.mspace).hash(&mut h);
+            // An unlocked viewport's zoom changes its scale without a new revision.
+            let vp_scale = st.anno_view().map(f64::to_bits);
+            (st.uid, st.revision, std::sync::Arc::as_ptr(&st.doc) as usize, tolerance.to_bits(), sel, on, st.mspace, vp_scale).hash(&mut h);
             h.finish()
         });
         if self.key != key {
