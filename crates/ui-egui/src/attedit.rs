@@ -28,6 +28,9 @@ pub struct Row {
 pub struct State {
     /// The block reference edited.
     pub handle: Option<Handle>,
+    /// The drawing it is in (`DocState::uid`): handles repeat across drawings, and the dialog
+    /// doesn't stop another drawing's tab from being chosen.
+    pub doc: Option<u64>,
     /// Its block's name (the dynamic block's for a dynamic block reference).
     pub block: String,
     pub rows: Vec<Row>,
@@ -70,7 +73,15 @@ fn load(app: &mut CadApp, h: Handle) {
             multiline: a.multiline,
         })
         .collect();
-    app.attedit = State { handle: Some(h), block: block_name(&st.doc, h), rows, error: None };
+    app.attedit = State { handle: Some(h), doc: Some(st.uid), block: block_name(&st.doc, h), rows, error: None };
+}
+
+/// The block reference the dialog edits, while the drawing it was opened for is the active one
+/// and still has it.
+fn edited(app: &CadApp) -> Option<Handle> {
+    let h = app.attedit.handle?;
+    let st = app.session.state().ok()?;
+    (Some(st.uid) == app.attedit.doc && st.doc.entity(h).is_some()).then_some(h)
 }
 
 /// ATTEDIT / EATTEDIT typed or from a menu without parameters opens the dialog when one block
@@ -93,7 +104,7 @@ fn changed(rows: &[Row]) -> Map<String, Value> {
 
 /// Apply: run `attedit` with the changed values; true when it went through (or nothing changed).
 pub fn apply(app: &mut CadApp) -> bool {
-    let Some(h) = app.attedit.handle else { return false };
+    let Some(h) = edited(app) else { return false };
     let values = changed(&app.attedit.rows);
     if values.is_empty() {
         return true;
@@ -111,9 +122,9 @@ pub fn apply(app: &mut CadApp) -> bool {
 }
 
 pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
-    // The reference went away (undo, erase from the command line): nothing to edit.
-    let alive = app.attedit.handle.is_some_and(|h| app.session.state().ok().is_some_and(|st| st.doc.entity(h).is_some()));
-    if !alive {
+    // The reference went away (undo, erase from the command line) or another drawing is active:
+    // nothing to edit.
+    if edited(app).is_none() {
         *open = false;
         return;
     }
