@@ -789,14 +789,16 @@ fn annotative_dimension_blocks(
     w: &mut W,
     (cx, dim_defs): (&mut Ctx, &mut Vec<DimDef>),
 ) -> Option<Vec<String>> {
+    // Only dimensions have a block per scale (text and multileaders have none).
+    if !matches!(e.kind, EntityKind::Dimension(_)) {
+        return None;
+    }
     let (scales, default) = crate::dxf_anno::scales(d, e);
     let mut names = Vec::new();
     for s in &scales {
         let at = crate::dxf_anno::at_scale(e, s.factor());
-        let ents = match &at.kind {
-            EntityKind::Dimension(sdm) => dim_block_entities(d, sdm, &e.common.layer),
-            _ => Vec::new(),
-        };
+        let EntityKind::Dimension(sdm) = &at.kind else { continue };
+        let ents = dim_block_entities(d, sdm, &e.common.layer);
         let name = fresh_dim_name(d, n);
         dim_defs.push((name.clone(), w.h(), ents));
         names.push(name);

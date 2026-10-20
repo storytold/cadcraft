@@ -466,6 +466,13 @@ fn each_object_is_written_at_its_default_scale_with_a_context_per_scale() {
     };
     let (h2, h10) = (text_height(&blocks[0]), text_height(&blocks[1]));
     assert!((h10 / h2 - 5.0).abs() < 1e-9, "{h2} {h10}");
+    // Only the dimension has blocks per scale: no empty `*D` block for the text or the MText.
+    let d_blocks: Vec<&str> = recs.iter().filter(|(k, _)| k == "BLOCK").filter_map(|(_, t)| get(t, 2)).filter(|n| n.starts_with("*D")).collect();
+    assert_eq!(d_blocks.len(), 2, "{d_blocks:?}");
+    for name in &d_blocks {
+        let start = recs.iter().position(|(k, t)| k == "BLOCK" && get(t, 2) == Some(name)).unwrap();
+        assert_ne!(recs.get(start + 1).map(|(k, _)| k.as_str()), Some("ENDBLK"), "{name} is empty");
+    }
     // Each context class is declared.
     for class in ["ACDB_TEXTOBJECTCONTEXTDATA_CLASS", "ACDB_MTEXTOBJECTCONTEXTDATA_CLASS", "ACDB_ALDIMOBJECTCONTEXTDATA_CLASS"] {
         assert!(recs.iter().any(|(k, t)| k == "CLASS" && get(t, 1) == Some(class)), "{class}");
@@ -628,7 +635,15 @@ fn hostile_contexts_do_not_panic() {
         let n = names(&d, h);
         assert!(n.len() <= 1, "{h}: {n:?}");
     }
-    let _ = save(&d);
+    // Saved and opened again: the same scales, every context naming a written SCALE.
+    let text = save(&d);
+    let back = cadcraft_io::read_dxf(text.as_bytes()).unwrap();
+    for h in ["30", "40", "50"] {
+        assert_eq!(names(&back, h), names(&d, h), "{h}");
+        for c in contexts_of(&text, h) {
+            assert_ne!(c.scale, "?", "{h}: a context names a missing SCALE");
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
