@@ -141,3 +141,19 @@ fn anno_scales_sets_exactly_the_scales_given() {
     assert!(s.execute("properties.set", &json!({ "handles": [t], "annoScales": 7 })).is_err());
     assert_eq!(row(&describe(&mut s, &[&t]), "Text", "annoScales")["value"], json!(["1:4", "1:2"]));
 }
+
+#[test]
+fn anno_scales_leave_plain_objects_plain() {
+    let (mut s, t) = annotative_text();
+    let plain = handle(&s.execute("text", &json!({ "at": [0, 5], "text": "B", "height": 2.5 })).unwrap());
+    // A plain text among the selection takes no scales (it isn't annotative).
+    s.execute("properties.set", &json!({ "handles": [t, plain], "annoScales": ["1:2"] })).unwrap();
+    assert!(!keys(&describe(&mut s, &[&plain]), "Text").contains(&"annoScales".to_string()));
+    assert_eq!(row(&describe(&mut s, &[&t]), "Text", "annoScales")["value"], json!(["1:2"]));
+    // `annotative: false` with a scale list makes the object plain.
+    s.execute("properties.set", &json!({ "handles": [t], "annotative": false, "annoScales": ["1:10"] })).unwrap();
+    assert!(!keys(&describe(&mut s, &[&t]), "Text").contains(&"annoScales".to_string()));
+    // `annotative: true` with a list: annotative at exactly those scales.
+    s.execute("properties.set", &json!({ "handles": [plain], "annotative": true, "annoScales": ["1:2", "1:10"] })).unwrap();
+    assert_eq!(row(&describe(&mut s, &[&plain]), "Text", "annoScales")["value"], json!(["1:2", "1:10"]));
+}
