@@ -9,6 +9,12 @@ use serde_json::json;
 /// A block "Tag" with attributes NO (prompt "Number") and NOTE, and one reference to it.
 fn app_with_reference() -> (CadApp, Handle) {
     let mut app = CadApp::new(Session::new(), Services::default());
+    let h = add_reference(&mut app);
+    (app, h)
+}
+
+/// Block "Tag" and its reference, as [`app_with_reference`], in the active drawing (selected).
+fn add_reference(app: &mut CadApp) -> Handle {
     let mut hs = vec![app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap()["handles"][0].clone()];
     hs.push(app.run("attdef", json!({ "tag": "NO", "prompt": "Number", "default": "1", "at": [0, 1] })).unwrap()["handle"].clone());
     hs.push(app.run("attdef", json!({ "tag": "NOTE", "default": "n", "at": [0, 2] })).unwrap()["handle"].clone());
@@ -16,7 +22,7 @@ fn app_with_reference() -> (CadApp, Handle) {
     let r = app.run("insert", json!({ "name": "Tag", "at": [100, 0], "attribs": { "NO": "7" } })).unwrap();
     let h = Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
     app.session.set_selection(vec![h]);
-    (app, h)
+    h
 }
 
 fn value(app: &CadApp, h: Handle, tag: &str) -> String {
@@ -111,4 +117,28 @@ fn the_properties_palette_lists_the_attributes() {
     for s in ["Attributes", "NO", "NOTE"] {
         assert!(text.lines().any(|l| l == s), "{s} missing from:\n{text}");
     }
+}
+
+/// The dialog belongs to the drawing it was opened for: with another drawing's tab chosen (where
+/// the same handle is a reference with the same tags), Apply changes nothing and the dialog
+/// closes.
+#[test]
+fn the_dialog_closes_in_another_drawing() {
+    let (mut app, h) = app_with_reference();
+    menus::activate(&mut app, "attedit");
+    assert_eq!(app.ui.dialog.as_deref(), Some("attedit"));
+    app.attedit.rows[1].typed = "a note".into();
+
+    app.session.new_drawing(false);
+    assert_eq!(add_reference(&mut app), h, "the same handle in the other drawing");
+    assert!(!attedit::apply(&mut app));
+    assert_eq!(value(&app, h, "NOTE"), "n", "the other drawing's reference is untouched");
+    let ctx = egui::Context::default();
+    app.logic(&ctx);
+    painted(&mut app, &ctx);
+    assert!(app.ui.dialog.is_none(), "closed");
+
+    // Back in the first drawing, its reference is as it was too.
+    app.session.active = 0;
+    assert_eq!(value(&app, h, "NOTE"), "n");
 }
