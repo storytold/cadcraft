@@ -103,8 +103,9 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 # Executable and icon carry the display name (CFBundleExecutable / CFBundleIconFile).
 cp "$WORK/bin/cadcraft" "$APP/Contents/MacOS/CADCraft"
 cp "$ROOT/assets/app-icon/cadcraft.icns" "$APP/Contents/Resources/CADCraft.icns"
-# Licences of the embedded craft-fonts fonts (only when built with CRAFT_FONTS_DIR).
-copy_font_licences "$APP/Contents/Resources"
+# The licences and README, as in the CLI zip, plus the licences of the embedded craft-fonts
+# fonts when built with CRAFT_FONTS_DIR. Before signing, so the seal covers them.
+copy_docs "$APP/Contents/Resources"
 sed -e "s/@VERSION@/$VERSION/g" -e "s/@SHORT_VERSION@/$SHORT_VERSION/g" \
   -e "s/@BUILD_SHA@/${CADCRAFT_BUILD_SHA:-unknown}/g" \
   "$HERE/Info.plist.in" >"$APP/Contents/Info.plist"
