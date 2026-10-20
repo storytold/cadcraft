@@ -411,26 +411,92 @@ mod native {
     /// Most CLASS entries read from a DXF's CLASSES section.
     const MAX_CLASSES: usize = 10_000;
 
+    /// The start of a binary DXF (DXF Reference, "Binary DXF Files").
+    const BINARY_SENTINEL: &[u8] = b"AutoCAD Binary DXF\r\n\x1a\0";
+
+    /// A binary DXF's groups (code, and the text of a string value; other values are skipped
+    /// over and given as ""), until the data ends or can't be read.
+    struct BinaryGroups<'a> {
+        b: &'a [u8],
+        p: usize,
+    }
+
+    impl BinaryGroups<'_> {
+        fn take(&mut self, n: usize) -> Option<&[u8]> {
+            let s = self.b.get(self.p..self.p.checked_add(n)?)?;
+            self.p += n;
+            Some(s)
+        }
+
+        fn code(&mut self) -> Option<i32> {
+            let c = self.take(2)?;
+            Some(i32::from(i16::from_le_bytes([*c.first()?, *c.get(1)?])))
+        }
+    }
+
+    impl Iterator for BinaryGroups<'_> {
+        type Item = (i32, String);
+
+        fn next(&mut self) -> Option<(i32, String)> {
+            let mut code = self.code()?;
+            // Code 255 is followed by the real code.
+            if code == 255 {
+                code = self.code()?;
+            }
+            // The value's size by its code (DXF Reference, "Group Code Value Types").
+            let size = match code {
+                10..=59 | 110..=149 | 160..=169 | 210..=239 | 460..=469 | 1010..=1059 => 8,
+                60..=79 | 170..=179 | 270..=289 | 370..=389 | 400..=409 | 1060..=1070 => 2,
+                90..=99 | 420..=429 | 440..=459 | 1071 => 4,
+                290..=299 => 1,
+                // Binary chunks: a length byte, then the bytes.
+                310..=319 | 1004 => usize::from(*self.take(1)?.first()?),
+                _ => {
+                    let rest = self.b.get(self.p..)?;
+                    let end = rest.iter().position(|&c| c == 0)?;
+                    let text = String::from_utf8_lossy(rest.get(..end)?).into_owned();
+                    self.p = self.p.checked_add(end + 1)?;
+                    return Some((code, text));
+                }
+            };
+            self.take(size)?;
+            Some((code, String::new()))
+        }
+    }
+
     /// The C++ class names a DXF's CLASS entries give, by DXF name (upper case): the names the
     /// file came with (from AutoCAD, for the objects CADCraft keeps). A DXF object names its
-    /// class, so a name has one class; for a name listed twice, the first entry's.
+    /// class, so a name has one class; for a name listed twice, the first entry's. The DXF may be
+    /// ASCII or binary.
     fn file_class_names(dxf: &[u8]) -> std::collections::HashMap<String, String> {
+        if let Some(b) = dxf.strip_prefix(BINARY_SENTINEL) {
+            return class_names(BinaryGroups { b, p: 0 });
+        }
         let text = String::from_utf8_lossy(dxf);
         let mut lines = text.lines();
+        let groups = std::iter::from_fn(move || {
+            let (code, value) = (lines.next()?, lines.next()?);
+            Some((code.trim().parse::<i32>().unwrap_or(-1), value.trim().to_string()))
+        });
+        class_names(groups)
+    }
+
+    /// [`file_class_names`] from a DXF's groups.
+    fn class_names(groups: impl Iterator<Item = (i32, String)>) -> std::collections::HashMap<String, String> {
         let mut out = std::collections::HashMap::new();
         let (mut in_class, mut name, mut seen) = (false, None::<String>, false);
-        while let (Some(code), Some(value)) = (lines.next(), lines.next()) {
-            match (code.trim(), value.trim()) {
-                ("0", "CLASS") => {
+        for (code, value) in groups {
+            match (code, value.as_str()) {
+                (0, "CLASS") => {
                     in_class = true;
                     seen = true;
                     name = None;
                 }
                 // The CLASSES section is over.
-                ("0", "ENDSEC") if seen => break,
-                ("0", _) => in_class = false,
-                ("1", n) if in_class => name = Some(n.to_ascii_uppercase()),
-                ("2", cpp) if in_class => {
+                (0, "ENDSEC") if seen => break,
+                (0, _) => in_class = false,
+                (1, n) if in_class => name = Some(n.to_ascii_uppercase()),
+                (2, cpp) if in_class => {
                     // A name given twice: the first, the class acadrust's DXF reader keeps.
                     if let Some(n) = name.take()
                         && out.len() < MAX_CLASSES
@@ -807,7 +873,7 @@ mod native {
 
     #[cfg(test)]
     mod class_names {
-        use super::{file_class_names, use_file_class_names};
+        use super::{BINARY_SENTINEL, file_class_names, use_file_class_names};
 
         /// The file's C++ class names win over acadrust's built-in ones (its name for the dynamic
         /// block rotate action, `AcDbBlockRotationAction`, isn't AutoCAD's), in the same order.
@@ -865,6 +931,57 @@ EOF
             assert_eq!(doc.classes.get_by_name("BLOCKROTATEACTION").map(|c| c.cpp_class_name.as_str()), Some("AcDbBlockRotateAction"));
             assert_eq!(doc.classes.get_by_name("BLOCKFLIPACTION").map(|c| c.cpp_class_name.as_str()), Some("AcDbBlockFlipAction"));
             assert_eq!(doc.classes.iter().map(|c| c.dxf_name.clone()).collect::<Vec<_>>(), before, "same classes, same order");
+        }
+
+        /// A binary DXF's CLASSES section gives its names too: the groups before it (values of
+        /// every size) are stepped over, and data that ends early gives what was read.
+        #[test]
+        fn a_binary_dxf_gives_its_class_names() {
+            let mut b = BINARY_SENTINEL.to_vec();
+            let code = |b: &mut Vec<u8>, c: i16| b.extend_from_slice(&c.to_le_bytes());
+            let text = |b: &mut Vec<u8>, c: i16, s: &str| {
+                code(b, c);
+                b.extend_from_slice(s.as_bytes());
+                b.push(0);
+            };
+            text(&mut b, 0, "SECTION");
+            text(&mut b, 2, "HEADER");
+            text(&mut b, 9, "$ACADVER");
+            text(&mut b, 1, "AC1015");
+            text(&mut b, 9, "$EXTMIN");
+            code(&mut b, 10);
+            b.extend_from_slice(&1.5f64.to_le_bytes());
+            code(&mut b, 70);
+            b.extend_from_slice(&7i16.to_le_bytes());
+            code(&mut b, 90);
+            b.extend_from_slice(&9i32.to_le_bytes());
+            code(&mut b, 290);
+            b.push(1);
+            code(&mut b, 310);
+            b.extend_from_slice(&[3, 0, 0, 0]);
+            text(&mut b, 0, "ENDSEC");
+            text(&mut b, 0, "SECTION");
+            text(&mut b, 2, "CLASSES");
+            text(&mut b, 0, "CLASS");
+            text(&mut b, 1, "BLOCKROTATEACTION");
+            text(&mut b, 2, "AcDbBlockRotateAction");
+            code(&mut b, 90);
+            b.extend_from_slice(&1153i32.to_le_bytes());
+            text(&mut b, 0, "CLASS");
+            text(&mut b, 1, "BLOCKFLIPACTION");
+            let cut = b.len();
+            text(&mut b, 2, "AcDbBlockFlipAction");
+            text(&mut b, 0, "ENDSEC");
+            text(&mut b, 0, "EOF");
+            let names = file_class_names(&b);
+            assert_eq!(names.get("BLOCKROTATEACTION").map(String::as_str), Some("AcDbBlockRotateAction"));
+            assert_eq!(names.get("BLOCKFLIPACTION").map(String::as_str), Some("AcDbBlockFlipAction"));
+            assert_eq!(names.len(), 2);
+            // Cut off before the second class's C++ name, and at every byte: no panic.
+            assert_eq!(file_class_names(&b[..cut]).len(), 1);
+            for n in 0..b.len() {
+                let _ = file_class_names(&b[..n]);
+            }
         }
 
         /// A DXF name listed twice: acadrust's DXF reader keeps the first entry, and so does the
