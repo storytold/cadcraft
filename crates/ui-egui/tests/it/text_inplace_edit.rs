@@ -1,5 +1,6 @@
 //! Double-clicking a single-line text edits it in place: a field over the text takes the new
-//! value; Enter commits it, Escape keeps the text; the command line's prompt still works.
+//! value; Enter commits it, Escape (or Enter on a blank field) keeps the text; the command line's
+//! prompt still works.
 
 use cadcraft_engine::doc::EntityKind;
 use cadcraft_engine::geom::Vec2;
@@ -107,4 +108,21 @@ fn the_command_line_prompt_still_takes_the_text_and_mtext_has_no_field() {
     double_click(&mut h, Vec2::new(3.0, 18.8));
     assert_eq!(h.state().session.running.as_ref().map(|r| r.id.as_str()), Some("textedit"));
     assert!(text_editor::editing(&h.ctx).is_none(), "multiline text has its own editor");
+}
+
+#[test]
+fn enter_on_a_blank_field_keeps_the_text_as_the_command_line_does() {
+    let mut h = harness();
+    double_click(&mut h, Vec2::new(4.0, 1.2));
+    assert_eq!(text_editor::editing(&h.ctx).as_deref(), Some("HELLO"));
+    for _ in 0.."HELLO".len() {
+        key(&mut h, Key::Backspace);
+    }
+    h.event(Event::Text("  ".into()));
+    h.run_steps(2);
+    assert_eq!(text_editor::editing(&h.ctx).as_deref(), Some("  "), "the field holds only blanks");
+    key(&mut h, Key::Enter);
+    assert_eq!(value(&h, 0), "HELLO", "an empty text would draw nothing and be hard to pick again");
+    assert!(text_editor::editing(&h.ctx).is_none(), "the field is gone");
+    assert_eq!(h.state().session.current_prompt().unwrap().message, "Select an annotation object");
 }

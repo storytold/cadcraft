@@ -1,7 +1,8 @@
 //! In-place editing of single-line text: TEXTEDIT with a TEXT or an attribute definition picked
 //! (double-clicking one does that) shows a field over the text instead of only asking "Enter new
-//! text" at the command line, as AutoCAD and BricsCAD do. Enter commits the field, Escape keeps the
-//! text as it was; the command line's prompt still takes typed text as before.
+//! text" at the command line, as AutoCAD and BricsCAD do. Enter commits the field, Escape (or Enter
+//! on a blank field) keeps the text as it was; the command line's prompt still takes typed text as
+//! before.
 
 use cadcraft_engine::Input;
 use cadcraft_engine::doc::{HAlign, VAlign};
@@ -76,7 +77,10 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         }
         Some(commit) => {
             ctx.data_mut(|d| d.remove::<String>(state_id()));
-            // Enter commits the field; Escape answers the prompt with Enter, which keeps the text.
+            // Enter commits the field; Escape, or Enter on a blank field (as a blank answer at the
+            // command line), answers the prompt with Enter, which keeps the text: an empty text
+            // would draw nothing and be hard to pick again.
+            let commit = commit && !buf.trim().is_empty();
             let _ = app.session.input(if commit { Input::Text(buf) } else { Input::Enter });
         }
     }
