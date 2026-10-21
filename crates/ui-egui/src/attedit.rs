@@ -34,6 +34,11 @@ pub struct State {
     /// Its block's name (the dynamic block's for a dynamic block reference).
     pub block: String,
     pub rows: Vec<Row>,
+    /// The row that is current: shown in bold, and its value box takes the focus when the
+    /// dialog opens (the attribute double-clicked).
+    pub current: Option<usize>,
+    /// The current row's value box still has to take the focus.
+    pub focus: bool,
     /// Why the last Apply failed.
     pub error: Option<String>,
 }
@@ -73,7 +78,27 @@ fn load(app: &mut CadApp, h: Handle) {
             multiline: a.multiline,
         })
         .collect();
-    app.attedit = State { handle: Some(h), doc: Some(st.uid), block: block_name(&st.doc, h), rows, error: None };
+    let current = app.attedit.current;
+    app.attedit = State { handle: Some(h), doc: Some(st.uid), block: block_name(&st.doc, h), rows, current, focus: false, error: None };
+}
+
+/// Open the dialog on block reference `h` of the active drawing, with attribute `current` (an
+/// index into its attributes, in `cadcraft_engine::attributes` order) current; without one, or
+/// when that attribute can't be changed, the first one that can. False, and nothing opens, when
+/// `h` is not a block reference with an attribute that can be changed.
+pub fn open(app: &mut CadApp, h: Handle, current: Option<usize>) -> bool {
+    let Ok(st) = app.session.state() else { return false };
+    if !matches!(st.doc.entity(h).map(|e| &e.kind), Some(EntityKind::Insert(_))) {
+        return false;
+    }
+    let attribs = cadcraft_engine::attributes(&st.doc, h);
+    let Some(first) = attribs.iter().position(|a| a.editable) else { return false };
+    let current = current.filter(|i| attribs.get(*i).is_some_and(|a| a.editable)).unwrap_or(first);
+    app.attedit.current = Some(current);
+    load(app, h);
+    app.attedit.focus = true;
+    app.ui.dialog = Some("attedit".into());
+    true
 }
 
 /// The block reference the dialog edits, while the drawing it was opened for is the active one
@@ -92,9 +117,7 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
     }
     let h = selected_reference(app)?;
     app.session.echo(format!("Command: {}", id.to_ascii_uppercase()));
-    load(app, h);
-    app.ui.dialog = Some("attedit".into());
-    Some(Ok(Value::Null))
+    open(app, h, None).then_some(Ok(Value::Null))
 }
 
 /// The values typed that differ from the drawing's, as `attedit`'s `values`.
@@ -151,9 +174,10 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                     ui.label(RichText::new(crate::tl!("Prompt")).color(t.text_dim));
                     ui.label(RichText::new(crate::tl!("Value")).color(t.text_dim));
                     ui.end_row();
-                    for r in &mut st.rows {
+                    for (i, r) in st.rows.iter_mut().enumerate() {
+                        let current = st.current == Some(i);
                         let tag = if r.invisible { format!("{} ({})", r.tag, crate::i18n::t("invisible")) } else { r.tag.clone() };
-                        ui.label(tag);
+                        ui.label(if current { RichText::new(tag).strong() } else { RichText::new(tag) });
                         ui.label(&r.prompt);
                         let edit = if r.multiline {
                             egui::TextEdit::multiline(&mut r.typed).desired_rows(2)
@@ -161,6 +185,14 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                             egui::TextEdit::singleline(&mut r.typed)
                         };
                         let resp = ui.add_enabled(r.editable, edit.desired_width(220.0));
+                        if resp.has_focus() {
+                            st.current = Some(i);
+                        }
+                        if current && st.focus {
+                            resp.request_focus();
+                            resp.scroll_to_me(Some(egui::Align::Center));
+                            st.focus = false;
+                        }
                         if !r.editable {
                             let _ = resp.on_disabled_hover_text(crate::tl!("Constant"));
                         }
