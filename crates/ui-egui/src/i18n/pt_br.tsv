@@ -1462,3 +1462,7 @@ menu	Dimension	Cota
 menu	Draw	Desenho
 menu	Modify	Modificar
 menu	View	Exibir
+	Minimize	Minimizar
+	Maximize	Maximizar
+	Use system title bar	Usar a barra de título do sistema
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	Mostra uma barra de título simples com os botões da janela acima da do CADCraft. O GNOME não desenha barras de título para os aplicativos, então esta não segue o tema dele.
