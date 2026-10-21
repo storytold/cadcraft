@@ -15,6 +15,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod control_server;
+mod decorations;
 mod desktop_theme;
 mod env;
 #[cfg(any(target_os = "windows", test))]
@@ -112,6 +113,7 @@ impl eframe::App for App {
     /// Apply the desktop-theme fallback, forward raw input to `CadApp`, and capture Tab at the command line.
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
         follow_desktop(raw, self.desktop_theme.current());
+        cadcraft_ui_egui::window_controls::release_after_desktop_grab(ctx, raw);
         self.cad.raw_input_hook(ctx, raw);
         cadcraft_ui_egui::cmdline::capture_tab(ctx, raw);
     }
@@ -332,18 +334,30 @@ fn main() -> eframe::Result {
     // misbehaves; 0, off or unset leaves it off. The X11 libraries are only recommended by the
     // packages, so without them the setting is ignored rather than failing.
     #[cfg(all(unix, not(target_os = "macos")))]
-    if use_x11(std::env::var_os("DISPLAY").is_some(), vars.x11, x11_libraries_load) {
+    let x11 = use_x11(std::env::var_os("DISPLAY").is_some(), vars.x11, x11_libraries_load);
+    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    let x11 = false;
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if x11 {
         options.event_loop_builder = Some(Box::new(|b| {
             use winit::platform::x11::EventLoopBuilderExtX11;
             b.with_x11();
         }));
+    }
+    // Read before the window opens: it decides the window's frame (Use system title bar).
+    let (workspace, restored, workspace_error) = workspace::Workspace::load(vars.config_dir.as_deref());
+    // GNOME on Wayland leaves the window frame to the app (decorations.rs): a title row carries the
+    // window buttons instead, unless Options ▸ Display ▸ Use system title bar is on.
+    let window_controls = decorations::app_drawn(x11, vars.titlebar.as_deref());
+    let app_frame = window_controls.is_some() && !restored.as_ref().is_some_and(|ui| ui.system_title_bar);
+    if app_frame {
+        options.viewport = options.viewport.with_decorations(false);
     }
     eframe::run_native(
         "CADCraft",
         options,
         Box::new(move |cc| {
             let mut app = CadApp::new(Session::empty(), services());
-            let (workspace, restored, workspace_error) = workspace::Workspace::load(vars.config_dir.as_deref());
             if let Some(ui) = restored {
                 app.ui = ui;
             }
@@ -376,6 +390,8 @@ fn main() -> eframe::Result {
                 app.session.set_lisp_support_dir(Some(support));
             }
             app.integrated_titlebar = cfg!(target_os = "macos");
+            app.app_frame_shown = window_controls.as_ref().map(|_| app_frame);
+            app.window_controls = window_controls;
             if surface.present_mode == eframe::wgpu::PresentMode::AutoNoVsync {
                 app.frame_cap = Some(cadcraft_ui_egui::gpu::FrameCap::new(240));
             }

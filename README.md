@@ -360,6 +360,11 @@ libxkbcommon-x11):
 CADCRAFT_X11=1 cadcraft
 ```
 
+GNOME on Wayland draws no window frames, so there CADCraft draws a title row with the window
+buttons in GNOME's order and resizes from the window's edges. **Options ▸ Display ▸ Use system
+title bar** shows a basic frame instead. `CADCRAFT_TITLEBAR=app` or `CADCRAFT_TITLEBAR=system`
+overrides the detection.
+
 ### FreeBSD
 
 | Build | File |
