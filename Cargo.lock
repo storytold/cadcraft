@@ -640,6 +640,8 @@ dependencies = [
  "windows",
  "winit",
  "winresource",
+ "x11-dl",
+ "xkbcommon-dl",
  "zbus",
 ]
 
