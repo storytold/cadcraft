@@ -959,10 +959,12 @@ fn reconcile(
         next = next.saturating_add(1);
         format!("{next:X}")
     };
-    // Each annotative reference's default context: (scale, insertion point).
+    // Each reference's template for new contexts: (scale, insertion point) of its default
+    // context, else of its first, among those whose scale is still written.
     let mut ref_default: HashMap<Handle, (String, Vec2)> = HashMap::new();
     for (r, attribute, list) in groups.values() {
-        if let (false, Some(def)) = (attribute, list.iter().find(|o| is_default(o)).or(list.first()))
+        let written: Vec<&ForeignObject> = list.iter().filter(|o| scale_of(o).is_some()).collect();
+        if let (false, Some(def)) = (attribute, written.iter().find(|o| is_default(o)).or(written.first()))
             && let (Some(s), Some(x), Some(y)) = (scale_of(def), num(def, 10), num(def, 20))
         {
             ref_default.insert(*r, (s, Vec2::new(x, y)));

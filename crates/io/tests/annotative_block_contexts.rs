@@ -562,3 +562,28 @@ fn two_attributes_with_one_tag_keep_their_own_contexts() {
     assert_eq!(owner_of(&xrec), Some(y));
     assert_eq!(attribute_contexts(&text).len(), 2);
 }
+
+#[test]
+fn new_contexts_come_from_one_whose_scale_remains() {
+    // The default context's scale (1:5) is deleted, and the reference is annotative at 1:1 and a
+    // new 1:2: the 1:2 contexts are made from the 1:1 ones (scale 1 → 2 about the insertion
+    // point), and 1:1 becomes the default.
+    let mut d = read();
+    let half = cadcraft_doc::AnnoScale::new("1:2", 1.0, 2.0);
+    d.scales.retain(|s| s.name != "1:5");
+    d.scales.push(half.clone());
+    let one = d.scales.iter().find(|s| s.name == "1:1").cloned().unwrap();
+    d.modify_entity(Handle::parse_hex("40").unwrap(), |e| e.common.anno_scales = vec![one, half]).unwrap();
+    let text = write_dxf(&d);
+    let mut ctx = contexts(&text);
+    ctx.sort_by(|a, b| a.0.cmp(&b.0));
+    let got: Vec<(String, bool, f64)> = ctx.iter().map(|c| (c.0.clone(), c.1, c.4)).collect();
+    assert_eq!(got, [("1:1".to_string(), true, 1.0), ("1:2".to_string(), false, 2.0)]);
+    let mut actx = attribute_contexts(&text);
+    actx.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(actx.len(), 2, "{actx:?}");
+    assert_eq!(actx[0], ("1:1".to_string(), Vec2::new(11.0, 22.0)));
+    assert_eq!(actx[1].0, "1:2");
+    assert!((actx[1].1 - Vec2::new(12.0, 24.0)).len() < 1e-9, "{actx:?}");
+    assert_eq!(listed_contexts(&text), 4);
+}
