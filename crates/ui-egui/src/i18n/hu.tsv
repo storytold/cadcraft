@@ -1361,3 +1361,7 @@ menu	View	Nézet
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	A rajz megváltozott. Zárja be az ablakot, és nyissa meg újra.
+	Minimize	Kis méret
+	Maximize	Teljes méret
+	Use system title bar	A rendszer címsorának használata
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	Egyszerű címsort jelenít meg az ablak gombjaival a CADCraft saját címsora fölött. A GNOME nem rajzol címsort az alkalmazásoknak, ezért ez nem követi a témáját.

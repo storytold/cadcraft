@@ -1056,3 +1056,7 @@
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Die Zeichnung hat sich geändert. Schließen Sie das Fenster und öffnen Sie es erneut.
+	Minimize	Minimieren
+	Maximize	Maximieren
+	Use system title bar	System-Titelleiste verwenden
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	Eine einfache Titelleiste für die Fensterknöpfe über der von CADCraft anzeigen. GNOME zeichnet für Apps keine Titelleisten, daher folgt diese nicht seinem Design.

@@ -1239,3 +1239,7 @@ menu	Modify	Modifikace
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Výkres se změnil. Zavřete okno a otevřete jej znovu.
+	Minimize	Minimalizovat
+	Maximize	Maximalizovat
+	Use system title bar	Použít systémové záhlaví okna
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	Zobrazí nad záhlavím CADCraftu jednoduché záhlaví s tlačítky okna. GNOME aplikacím záhlaví nekreslí, takže toto nesleduje jeho motiv.

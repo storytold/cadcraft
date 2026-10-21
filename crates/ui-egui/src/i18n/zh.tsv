@@ -1476,3 +1476,7 @@ menu	View	视图
 	Ctrl+Enter to apply	Ctrl+Enter 应用
 	Edit Text	编辑文字
 	The drawing changed. Close the window and open it again.	图纸已切换。请关闭窗口后重新打开。
+	Minimize	最小化
+	Maximize	最大化
+	Use system title bar	使用系统标题栏
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	在 CADCraft 自己的标题栏上方显示带窗口按钮的基本标题栏。GNOME 不为应用绘制标题栏，因此此标题栏不跟随其主题。

@@ -1350,3 +1350,7 @@ menu	View	Προβολή
 	Ctrl+Enter to apply	Ctrl+Enter to apply
 	Edit Text	Edit Text
 	The drawing changed. Close the window and open it again.	Το σχέδιο άλλαξε. Κλείστε το παράθυρο και ανοίξτε το ξανά.
+	Minimize	Ελαχιστοποίηση
+	Maximize	Μεγιστοποίηση
+	Use system title bar	Χρήση της γραμμής τίτλου του συστήματος
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	Εμφανίζει μια απλή γραμμή τίτλου με τα κουμπιά του παραθύρου πάνω από τη γραμμή του CADCraft. Το GNOME δεν σχεδιάζει γραμμές τίτλου για τις εφαρμογές, οπότε αυτή δεν ακολουθεί το θέμα του.
