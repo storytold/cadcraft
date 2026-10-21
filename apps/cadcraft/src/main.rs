@@ -237,6 +237,32 @@ fn version_string() -> String {
     format!("cadcraft {}", cadcraft_engine::build_version())
 }
 
+/// Whether the libraries winit's X11 backend opens at startup are installed (libX11, libXcursor,
+/// libX11-xcb and libXi; libX11-xcb brings in libxcb; and libxkbcommon-x11, for the keyboard).
+/// The deb and rpm only recommend them, and a forced X11 backend without them fails to start
+/// (winit panics when libxkbcommon-x11 is missing).
+#[cfg(all(unix, not(target_os = "macos")))]
+fn x11_libraries_load() -> bool {
+    use x11_dl::{xcursor::Xcursor, xinput2::XInput2, xlib::Xlib, xlib_xcb::Xlib_xcb};
+    let missing = [Xlib::open().err(), Xcursor::open().err(), Xlib_xcb::open().err(), XInput2::open().err()];
+    let mut missing: Vec<String> = missing.into_iter().flatten().map(|e| e.to_string()).collect();
+    if xkbcommon_dl::x11::xkbcommon_x11_option().is_none() {
+        missing.push("libxkbcommon-x11.so.0 could not be loaded".into());
+    }
+    if !missing.is_empty() {
+        log::warn!("CADCRAFT_X11: X11 libraries missing, using the native Wayland backend: {}", missing.join("; "));
+    }
+    missing.is_empty()
+}
+
+/// Whether to force winit's X11 backend (XWayland on a Wayland desktop): an X display is there,
+/// `CADCRAFT_X11` is on, and the X11 libraries load. The libraries are probed last, only when X11
+/// would otherwise be chosen.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn use_x11(display: bool, setting: Switch, x11_libraries_load: impl FnOnce() -> bool) -> bool {
+    display && setting == Switch::On && x11_libraries_load()
+}
+
 /// Parse CLI options (`--control`, `--sample`, files, `--version`), install logging and I/O hooks, build the services and app, and run eframe.
 fn main() -> eframe::Result {
     // First, so every start-up record is captured; see `logging`.
@@ -300,11 +326,13 @@ fn main() -> eframe::Result {
             d
         });
     }
-    // winit has no file drag-and-drop on Wayland (only on X11), so dropping files from the file
-    // manager showed a "no" cursor. Run through XWayland when it's there; CADCRAFT_WAYLAND=1
-    // keeps the native Wayland backend.
+    // winit runs natively on a Wayland desktop: sharp at fractional scales, with working input
+    // methods, and file drops from the file manager through storytold/winit's W15 patch.
+    // CADCRAFT_X11=1 runs through XWayland instead, as a fallback where the native backend
+    // misbehaves; 0, off or unset leaves it off. The X11 libraries are only recommended by the
+    // packages, so without them the setting is ignored rather than failing.
     #[cfg(all(unix, not(target_os = "macos")))]
-    if std::env::var_os("DISPLAY").is_some() && vars.wayland != Switch::On {
+    if use_x11(std::env::var_os("DISPLAY").is_some(), vars.x11, x11_libraries_load) {
         options.event_loop_builder = Some(Box::new(|b| {
             use winit::platform::x11::EventLoopBuilderExtX11;
             b.with_x11();
@@ -394,6 +422,26 @@ fn main() -> eframe::Result {
 #[cfg(test)]
 mod tests {
     use super::{filters_for_save, follow_desktop, window_options};
+
+    /// A Wayland desktop without the X11 libraries (libxkbcommon-x11 removed, or a package
+    /// installed without its recommendations) crashed at startup: X11 was forced through XWayland
+    /// and winit panicked loading them. Native Wayland is now the default, `CADCRAFT_X11=1` asks
+    /// for X11 only when the libraries load, and probing them never panics, whichever of them
+    /// this machine has.
+    #[test]
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn x11_only_when_asked_for_and_the_libraries_load() {
+        use super::{use_x11, x11_libraries_load};
+        use cadcraft_ui_egui::switch::Switch;
+        let unprobed = || -> bool { panic!("the libraries are probed only when X11 would be chosen") };
+        assert!(!use_x11(true, Switch::Default, unprobed), "native Wayland by default");
+        assert!(!use_x11(true, Switch::Off, unprobed), "CADCRAFT_X11=0 leaves it off");
+        assert!(!use_x11(false, Switch::On, unprobed), "no X display");
+        assert!(use_x11(true, Switch::On, || true));
+        assert!(!use_x11(true, Switch::On, || false), "missing X11 libraries: native Wayland, no crash");
+        let loaded = x11_libraries_load();
+        assert_eq!(use_x11(true, Switch::On, || loaded), loaded);
+    }
 
     #[test]
     fn save_dialog_offers_dwg_with_the_drawing_format_first() {

@@ -350,6 +350,16 @@ and web backend defaults are unchanged.
 
 RISC-V (riscv64): `cadcraft-<ver>-linux-riscv64.tar.gz`, cross-compiled; needs glibc 2.39 or newer (Ubuntu 24.04+, Debian 13+).
 
+**Wayland:** on a Wayland desktop the app uses the native Wayland backend, which is sharp at
+fractional scales, works with input methods and accepts files dropped from the file manager. If
+the native backend misbehaves on your desktop, run the app through XWayland instead with
+`CADCRAFT_X11=1` (this needs the X11 libraries: libX11, libX11-xcb, libXcursor, libXi and
+libxkbcommon-x11):
+
+```sh
+CADCRAFT_X11=1 cadcraft
+```
+
 ### FreeBSD
 
 | Build | File |
