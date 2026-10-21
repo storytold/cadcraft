@@ -90,6 +90,41 @@ fn edit_attributes_on_a_selected_reference_opens_the_dialog() {
     assert_eq!(value(&app, h, "NOTE"), "n");
 }
 
+/// `attedit::open` (a double-click on an attribute) opens the dialog on a reference with a
+/// chosen attribute current; its value box takes the focus in the first frame.
+#[test]
+fn open_makes_the_chosen_attribute_current() {
+    let (mut app, h) = app_with_reference();
+    app.session.set_selection(Vec::new());
+    assert!(attedit::open(&mut app, h, Some(1)));
+    assert_eq!(app.ui.dialog.as_deref(), Some("attedit"));
+    assert_eq!((app.attedit.current, app.attedit.focus), (Some(1), true));
+    let ctx = egui::Context::default();
+    app.logic(&ctx);
+    painted(&mut app, &ctx);
+    assert!(!app.attedit.focus, "the focus was given in the first frame");
+    assert!(ctx.memory(|m| m.focused().is_some()), "a value box has the focus");
+    assert_eq!(app.attedit.current, Some(1));
+
+    // Apply keeps the current attribute.
+    app.attedit.rows[1].typed = "x".into();
+    assert!(attedit::apply(&mut app));
+    assert_eq!(app.attedit.current, Some(1));
+
+    // No attribute, or one out of range: the first that can be changed.
+    assert!(attedit::open(&mut app, h, None));
+    assert_eq!(app.attedit.current, Some(0));
+    assert!(attedit::open(&mut app, h, Some(99)));
+    assert_eq!(app.attedit.current, Some(0));
+
+    // Not a block reference with attributes: nothing opens.
+    app.ui.dialog = None;
+    let line = app.run("line", json!({ "points": [[0, 0], [1, 1]] })).unwrap()["handles"][0].as_str().map(str::to_string).unwrap();
+    assert!(!attedit::open(&mut app, Handle::parse_hex(&line).unwrap(), Some(0)));
+    assert!(!attedit::open(&mut app, Handle(0xFFFF_FFFF), None));
+    assert!(app.ui.dialog.is_none());
+}
+
 #[test]
 fn without_a_selected_reference_attedit_asks_at_the_command_line() {
     let (mut app, _) = app_with_reference();
