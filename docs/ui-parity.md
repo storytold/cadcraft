@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-27 · **Change:** minor (WIPEOUT closure-aware grips; previously: re-audit of the evidence text against main 41d9b5e95: point entry, tracking, Dynamic Input, grips, scripts, views; percentages not re-measured; previously: distinct polyline midpoint grips) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-01 · **Change:** minor (window buttons and resize edges where GNOME on Wayland leaves the frame to the app; previously minor: WIPEOUT closure-aware grips; previously: re-audit of the evidence text against main 41d9b5e95) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
 
 How CADCraft's interaction compares with AutoCAD's: point entry, object snaps, tracking, dynamic
 input, grips, selection, the command line, chrome and navigation. A drafter's speed in AutoCAD
@@ -173,6 +173,7 @@ dimensions are edited).
 | Browser panel layout storage | not applicable | Versioned, validated panel placement and visibility saved through the browser host; floating palettes remain embedded. Requires available browser storage and a completed host save; named workspaces and drawing persistence are separate. |
 | Options / Preferences dialog | many tabs | **no** (issue #23) |
 | Customisation (CUI, aliases editor, tool palettes) | yes | Command Aliases dialog (ALIASEDIT, #1381); no CUI or tool palettes |
+| Window frame | the desktop's | the desktop's; where GNOME on Wayland draws none, a title row with minimize, maximize and close in GNOME's `button-layout` order, resize edges, and Options ▸ Display ▸ Use system title bar (`systemTitleBar`) for winit's frame instead |
 | Themes | Dark, Light | Dark, Light, System (#179) |
 | Accessibility | VoiceOver basics | AccessKit through eframe; screen-reader coverage untested; magnifier issue #39; animation effects follow the OS setting (View ▸ Accessibility ▸ Animation Effects: System, On, Off) |
 
@@ -208,6 +209,7 @@ dimensions are edited).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | Window frame row: in-app window buttons and resize edges on GNOME Wayland, Use system title bar (ported from WordCraft #3361) |
 | 2026-10-27 | minor | WIPEOUT grips treat implicit and explicit closure alike; moving the first vertex carries the closing marker, and moving endpoints together keeps both corners editable. Open/closed polyline flags and coincident polyline vertices remain independent (#2256) |
 | 2026-10-26 | minor | Browser host stores bounded, validated panel layout separately from drawing state; malformed or unsupported records retain defaults. Native workspace storage is unchanged. |
 | 2026-10-24 | minor | Re-audit against main 41d9b5e95: evidence text for TK and typed snap overrides, PolarSnap, Dynamic Input, hot-grip options, dynamic block grips, SCRIPT, ZOOM Realtime/Dynamic, named views and VPORTS; headline no longer lists selection cycling as missing; the 48% and the area percentages are not re-measured |
