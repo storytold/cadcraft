@@ -430,6 +430,17 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
             f.records.entry(key).or_insert(x);
         }
     }
+    // Block references whose extension dictionaries are kept (their annotation scale contexts),
+    // as read.
+    for e in all_entities(d) {
+        if let EntityKind::Insert(ins) = &e.kind
+            && f.entities.get(&e.handle).is_some_and(|x| x.xdict.is_some())
+        {
+            let attribs = ins.attribs.iter().map(|a| (a.text.insert, a.text.align_pt.unwrap_or(a.text.insert))).collect();
+            f.placements
+                .insert(e.handle, cadcraft_doc::foreign::KeptPlacement { insert: ins.insert, rotation: ins.rotation, scale: ins.scale, attribs });
+        }
+    }
     // The classes of kept objects and of entities of types CADCraft doesn't model.
     let mut types: HashSet<String> = f.objects.iter().map(|o| up(&o.kind)).collect();
     types.extend(all_entities(d).filter_map(|e| match &e.kind {
@@ -714,22 +725,36 @@ fn block_contexts(f: &Foreign, d: &Drawing, owners: &HashMap<String, String>) ->
     let mut out = HashMap::new();
     for list in by_parent.values() {
         let Some(first) = list.first() else { continue };
-        let Some(EntityKind::Insert(ins)) = owner_entity(&first.handle.hex()).and_then(|h| d.entity(h)).map(|e| &e.kind) else { continue };
-        let def = list.iter().find(|o| o.tags.iter().any(|t| t.code == 290 && t.value.trim() == "1")).unwrap_or(first);
-        let (Some(x0), Some(y0)) = (num(def, 10), num(def, 20)) else { continue };
-        let turn = (ins.rotation.to_degrees() - num(def, 50).unwrap_or(0.0)).to_radians();
-        let at0 = cadcraft_doc::geom::Vec2::new(x0, y0);
-        let ratio = |code: i32, now: f64| num(def, code).filter(|s| s.abs() > 1e-12).map_or(1.0, |s| now / s);
-        let ratios = [(41, ratio(41, ins.scale.x)), (42, ratio(42, ins.scale.y)), (43, ratio(43, ins.scale.z))];
+        let Some(h) = owner_entity(&first.handle.hex()) else { continue };
+        let Some(EntityKind::Insert(ins)) = d.entity(h).map(|e| &e.kind) else { continue };
+        // The reference as read: kept when it was read, else (data made before that was kept)
+        // its default context.
+        let (at0, rot0, scale0) = match f.placements.get(&h) {
+            Some(p) => (p.insert.xy(), p.rotation, [p.scale.x, p.scale.y, p.scale.z]),
+            None => {
+                let def = list.iter().find(|o| is_default(o)).unwrap_or(first);
+                let (Some(x0), Some(y0)) = (num(def, 10), num(def, 20)) else { continue };
+                let s = |code: i32, now: f64| num(def, code).unwrap_or(now);
+                let rot = num(def, 50).unwrap_or(0.0).to_radians();
+                (cadcraft_doc::geom::Vec2::new(x0, y0), rot, [s(41, ins.scale.x), s(42, ins.scale.y), s(43, ins.scale.z)])
+            }
+        };
+        let turn = ins.rotation - rot0;
+        let ratio = |then: f64, now: f64| if then.abs() > 1e-12 { now / then } else { 1.0 };
+        let ratios = [(41, ratio(scale0[0], ins.scale.x)), (42, ratio(scale0[1], ins.scale.y)), (43, ratio(scale0[2], ins.scale.z))];
         let unchanged = (ins.insert.xy() - at0).len() < 1e-9 && turn.abs() < 1e-12 && ratios.iter().all(|(_, r)| (r - 1.0).abs() < 1e-12);
         if unchanged || !ratios.iter().all(|(_, r)| r.is_finite()) || !turn.is_finite() {
             continue;
         }
         for c in list {
             let mut o = (*c).clone();
-            // Its offset from the default context turns with the reference.
+            // Its offset from where the reference was moves as the reference did: back into the
+            // reference's frame then, scaled (a mirror flips it), turned to its frame now.
             let at = match (num(c, 10), num(c, 20)) {
-                (Some(x), Some(y)) => ins.insert.xy() + (cadcraft_doc::geom::Vec2::new(x, y) - at0).rotate(turn),
+                (Some(x), Some(y)) => {
+                    let off = (cadcraft_doc::geom::Vec2::new(x, y) - at0).rotate(-rot0);
+                    ins.insert.xy() + cadcraft_doc::geom::Vec2::new(off.x * ratios[0].1, off.y * ratios[1].1).rotate(ins.rotation)
+                }
                 _ => ins.insert.xy(),
             };
             for t in &mut o.tags {
@@ -817,19 +842,25 @@ fn attribute_contexts(
     for (xd, list) in &by_attrib {
         let Some((r, tag, nth)) = attribs.get(xd) else { continue };
         let Some(EntityKind::Insert(ins)) = d.entity(*r).map(|e| &e.kind) else { continue };
-        let Some(a) = ins.attribs.iter().filter(|a| up(&a.tag) == *tag).nth(*nth) else { continue };
+        let Some((index, a)) = ins.attribs.iter().enumerate().filter(|(_, a)| up(&a.tag) == *tag).nth(*nth) else { continue };
         let base = d.block(&ins.block).map(|b| b.base.xy()).unwrap_or_default();
         let Some(to_block_now) = ins.transform(base).inverse() else { continue };
-        let Some(def) = list.iter().find(|o| o.tags.iter().any(|t| t.code == 290 && t.value.trim() == "1")).or(list.first()) else { continue };
+        let Some(def) = list.iter().find(|o| is_default(o)).or(list.first()) else { continue };
         let at = |o: &ForeignObject, x: i32| Some(Vec2::new(num(o, x)?, num(o, x + 10)?));
         // What the attribute did in the block since: its default context then, the attribute now.
         let Some(def_place) = text(def, 340).and_then(|s| read.get(&(*r, s))).copied() else { continue };
         let Some(to_block_then) = matrix(ins, base, def_place).inverse() else { continue };
         let now_ins = to_block_now.apply(a.text.insert.xy());
         let now_align = to_block_now.apply(a.text.align_pt.unwrap_or(a.text.insert).xy());
-        let (Some(then_ins), Some(then_align)) = (at(def, 10).map(|p| to_block_then.apply(p)), at(def, 11).map(|p| to_block_then.apply(p))) else {
-            continue;
-        };
+        // The attribute as read, in its reference as read, when that was kept; else its default
+        // context in the reference's.
+        let kept = f.placements.get(r).and_then(|p| {
+            let (ins_then, align_then) = p.attribs.get(index)?;
+            let then = matrix(ins, base, (p.insert.xy(), p.rotation.to_degrees(), (p.scale.x, p.scale.y))).inverse()?;
+            Some((then.apply(ins_then.xy()), then.apply(align_then.xy())))
+        });
+        let then = kept.or_else(|| Some((to_block_then.apply(at(def, 10)?), to_block_then.apply(at(def, 11)?))));
+        let Some((then_ins, then_align)) = then else { continue };
         let turn = (a.text.rotation.to_degrees() - ins.rotation.to_degrees()) - (num(def, 50).unwrap_or(0.0) - def_place.1);
         for c in list {
             let Some(s) = text(c, 340) else { continue };
@@ -862,6 +893,12 @@ fn attribute_contexts(
         }
     }
     out
+}
+
+/// Whether a kept context is its object's default one: its first 290 group (of
+/// AcDbObjectContextData) is 1. An attribute context has a later 290 group of its own.
+fn is_default(o: &ForeignObject) -> bool {
+    o.tags.iter().find(|t| t.code == 290).is_some_and(|t| t.value.trim() == "1")
 }
 
 fn is_blkref_context(kind: &str) -> bool {
@@ -924,7 +961,6 @@ fn reconcile(
         let k = f.targets.get(&handle(&norm(&v.value))?)?;
         (k.0 == "SCALE" && roles.contains_key(k)).then(|| k.1.clone())
     };
-    let is_default = |o: &ForeignObject| o.tags.iter().find(|t| t.code == 290).is_some_and(|t| t.value.trim() == "1");
     let set_default = |o: &mut ForeignObject, on: bool| {
         if let Some(t) = o.tags.iter_mut().find(|t| t.code == 290) {
             t.value = if on { "1" } else { "0" }.into();

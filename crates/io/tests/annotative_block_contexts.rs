@@ -587,3 +587,84 @@ fn new_contexts_come_from_one_whose_scale_remains() {
     assert!((actx[1].1 - Vec2::new(12.0, 24.0)).len() < 1e-9, "{actx:?}");
     assert_eq!(listed_contexts(&text), 4);
 }
+
+/// The written context of the block reference at scale `name`: (insertion, rotation).
+fn context_at(text: &str, name: &str) -> (Vec2, f64) {
+    contexts(text).into_iter().find(|c| c.0 == name).map(|c| (c.2, c.3)).unwrap()
+}
+
+#[test]
+fn an_unchanged_reference_keeps_its_contexts_when_its_default_one_is_elsewhere() {
+    // The reference sits at (11, 20) while its default context says (10, 20): saved unchanged,
+    // every context is written as read (what moves them is what the reference did since).
+    let d = read_dxf(dxf(&FIXTURE.replace("2 SIGN\n10 10\n20 20\n30 0\n41 5", "2 SIGN\n10 11\n20 20\n30 0\n41 5")).as_bytes()).unwrap();
+    let text = write_dxf(&d);
+    for scale in ["1:1", "1:5"] {
+        assert_eq!(context_at(&text, scale).0, Vec2::new(10.0, 20.0), "{scale}");
+    }
+    let mut actx = attribute_contexts(&text);
+    actx.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(actx, [("1:1".to_string(), Vec2::new(11.0, 22.0)), ("1:5".to_string(), Vec2::new(15.0, 30.0))]);
+}
+
+#[test]
+fn a_context_s_own_offset_scales_turns_and_mirrors_with_the_reference() {
+    // The 1:1 context sits 2 to the right of the reference. Scaled 2 and turned 90°, it is 4
+    // above; mirrored (x scale -5), 2 to the left.
+    let src = FIXTURE.replace("340 51\n50 0\n10 10", "340 51\n50 0\n10 12");
+    let edit = |f: &dyn Fn(&mut cadcraft_doc::Insert)| {
+        let mut d = read_dxf(dxf(&src).as_bytes()).unwrap();
+        d.modify_entity(Handle::parse_hex("40").unwrap(), |e| {
+            if let cadcraft_doc::EntityKind::Insert(i) = &mut e.kind {
+                f(i);
+            }
+        })
+        .unwrap();
+        write_dxf(&d)
+    };
+    let near = |p: Vec2, x: f64, y: f64| (p.x - x).abs() < 1e-9 && (p.y - y).abs() < 1e-9;
+    let text = edit(&|i| {
+        i.scale = i.scale * 2.0;
+        i.rotation = 90f64.to_radians();
+    });
+    let (at, rot) = context_at(&text, "1:1");
+    assert!(near(at, 10.0, 24.0) && (rot - 90.0).abs() < 1e-9, "{at:?} {rot}");
+    let text = edit(&|i| i.scale.x = -i.scale.x);
+    let (at, _) = context_at(&text, "1:1");
+    assert!(near(at, 8.0, 20.0), "{at:?}");
+}
+
+#[test]
+fn the_default_context_is_the_one_whose_first_290_is_1() {
+    // The 1:1 attribute context comes first, turned 10° in its reference, with its own later
+    // 290 set: the 1:5 one is still the default, so an unchanged save keeps the 10°.
+    let at = FIXTURE.find("0 ACDB_MTEXTATTRIBUTEOBJECTCONTEXTDATA_CLASS\n5 76").unwrap();
+    let end = FIXTURE.find("0 ENDSEC\n0 EOF").unwrap();
+    let second = FIXTURE[at..end].replace("50 0\n10 11", "50 10\n10 11").replace("21 22\n290 0", "21 22\n290 1");
+    let first = FIXTURE.find("0 ACDB_MTEXTATTRIBUTEOBJECTCONTEXTDATA_CLASS\n5 75").unwrap();
+    let src = format!("{}{second}{}{}", &FIXTURE[..first], &FIXTURE[first..at], &FIXTURE[end..]);
+    let mut d = read_dxf(dxf(&src).as_bytes()).unwrap();
+    // Moved, so the attribute contexts are brought up to date.
+    d.modify_entity(Handle::parse_hex("40").unwrap(), |e| {
+        if let cadcraft_doc::EntityKind::Insert(i) = &mut e.kind {
+            i.insert = i.insert + cadcraft_doc::geom::Vec3::new(5.0, 0.0, 0.0);
+            for a in &mut i.attribs {
+                a.text.insert = a.text.insert + cadcraft_doc::geom::Vec3::new(5.0, 0.0, 0.0);
+                a.text.align_pt = Some(a.text.insert);
+            }
+        }
+    })
+    .unwrap();
+    let text = write_dxf(&d);
+    let recs = records(&text);
+    let scales: std::collections::HashMap<&str, &str> =
+        recs.iter().filter(|(k, _)| k == "SCALE").filter_map(|(_, t)| Some((get(t, 5)?, get(t, 300)?))).collect();
+    let rot = recs
+        .iter()
+        .filter(|(k, _)| k == "ACDB_MTEXTATTRIBUTEOBJECTCONTEXTDATA_CLASS")
+        .find(|(_, t)| get(t, 340).and_then(|h| scales.get(h)) == Some(&"1:1"))
+        .and_then(|(_, t)| get(t, 50))
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap();
+    assert!((rot - 10.0).abs() < 1e-9, "{rot}");
+}
