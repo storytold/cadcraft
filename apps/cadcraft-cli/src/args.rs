@@ -276,10 +276,11 @@ pub(crate) struct McpArgs {
     /// port first (macOS)
     #[arg(long, requires = "connect")]
     pub(crate) launch: bool,
-    /// The only folder the agent's commands may read from (headless only)
+    /// The only folder the agent's commands may read from; reads are also allowed under the write
+    /// root (headless only)
     #[arg(long, value_name = "DIR")]
     pub(crate) automation_read_root: Option<String>,
-    /// The only folder the agent's commands may write to (headless only)
+    /// The only folder the agent's commands may write to, never the folder itself (headless only)
     #[arg(long, value_name = "DIR")]
     pub(crate) automation_write_root: Option<String>,
     #[command(flatten)]

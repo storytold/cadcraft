@@ -41,17 +41,19 @@ cadcraft-cli mcp --automation-read-root /work/project --automation-write-root /w
 The two flags (PhotoCraft, VectorCraft and the other Craft apps take the same ones, so one client
 configuration works across the suite) keep the agent to the folders you give it:
 
-- Every file a command **reads** must lie inside the **read root**: `open`, `recover`, `compare`,
-  `script`, `import`, `insert`, `xattach` and every xref it loads, `new` templates, `appload` and
-  LISP `load`/`open`, support files (`linetype`, `hatch.patterns`, `aliasedit`, `reinit`), data
-  links, and plot style and plotter configuration files named by a path.
+- Every file a command **reads** must lie inside the **read root or the write root**: `open`,
+  `recover`, `compare`, `script`, `import`, `insert`, `xattach` and every xref it loads, `new`
+  templates, `appload` and LISP `load`/`open`, support files (`linetype`, `hatch.patterns`,
+  `aliasedit`, `reinit`), data links, plot style and plotter configuration files named by a path,
+  and the shared plotter settings folder.
 - Every file a command **writes** must lie inside the **write root**: `save`/`qsave`/`saveas`
   (including the temporary file written beside the destination), `export`, `plot`, `publish`,
-  `pdfbook`, `wblock`, data extraction, table export, plot style and plotter saves, and
-  `render {path}`.
-- Read and write access are separate. Give the same folder twice for both; a root left out grants
-  none of its access (with only `--automation-read-root`, nothing can be written to disk). Without
-  either flag nothing changes.
+  `pdfbook`, `wblock`, data extraction, table export, plot style and plotter saves, the shared
+  plotter settings folder, and `render {path}`. The write root itself is refused: a save's
+  temporary file would sit beside it, outside the root.
+- Give the same folder twice for both. A root left out grants none of its *own* access: a read
+  root allows no writes, while a write root still allows reads inside it (files the agent wrote it
+  can read back). Without either flag nothing changes.
 - A path is made absolute against the server's working directory, then its links are followed: a
   file or folder link that leads out of a root is outside it. For a file that doesn't exist yet,
   its nearest existing folder's links are followed and the rest must be plain names, so `..` below
@@ -61,8 +63,10 @@ configuration works across the suite) keep the agent to the folders you give it:
   refused.
 - A refused path is an ordinary tool error with `isError: true` that the agent can read and
   correct, for example `automation path rejected: outside the write root
-  /work/project/out: /etc/x.png` or `automation filesystem access is not granted: write authority
-  is absent: /work/project/out/x.png`.
+  /work/project/out: /etc/x.png`, `automation path rejected: outside the read root (or the write
+  root): /etc/x.png`, `automation path rejected: the write root itself cannot be written:
+  /work/project/out`, or `automation filesystem access is not granted: write authority is absent:
+  /work/project/out/x.png`.
 - The roots must be existing folders; a missing one stops the server with an error. Each flag is
   given once (`--flag <dir>` or `--flag=<dir>`).
 

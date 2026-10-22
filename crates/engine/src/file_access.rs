@@ -11,8 +11,9 @@
 //!   is a link that leads nowhere).
 //! - The result must lie inside the root, compared by whole components (`/work2` isn't inside
 //!   `/work`), without regard to case on Windows.
-//! - Read and write access are separate: a root given alone grants only its own kind of access.
-//!   A root left out grants none of that access.
+//! - Reads may lie under either root; writes only under the write root, and never at the write
+//!   root itself (its save-style temporary file would be outside). A root given alone grants
+//!   reads under it even when it is the write root; a read root grants no writes.
 //!
 //! Roots are in force on a thread inside [`confine`]. The MCP headless backend runs every call in
 //! it; without roots nothing is checked, so the app and the command line keep working everywhere.
@@ -85,25 +86,33 @@ impl AutomationRoots {
     }
 
     /// May the file or folder at `path` be read (or written)? `Err` says why not.
+    ///
+    /// A read may lie under either root: the read root, or the write root (files the agent may
+    /// write it may also read back). A write may lie only under the write root, and not at the
+    /// root itself, whose save-style temporary file would sit beside it.
     pub fn check(&self, path: &str, access: Access) -> Result<(), String> {
-        let root = match access {
-            Access::Read => self.read.as_ref(),
-            Access::Write => self.write.as_ref(),
-        };
-        let Some(Root { resolved: folder, shown }) = root else {
-            return match access {
-                Access::Read => Err(format!("automation filesystem access is not granted: read authority is absent: {path}")),
-                Access::Write => Err(format!("automation filesystem access is not granted: write authority is absent: {path}")),
-            };
-        };
-        if inside(&resolve(path)?, folder) {
-            return Ok(());
+        let target = resolve(path)?;
+        if access == Access::Read {
+            let roots = [self.read.as_ref(), self.write.as_ref()];
+            if roots.iter().flatten().any(|r| inside(&target, &r.resolved)) {
+                return Ok(());
+            }
+            if roots.iter().all(|r| r.is_none()) {
+                return Err(format!("automation filesystem access is not granted: read authority is absent: {path}"));
+            }
+            return Err(format!("automation path rejected: outside the read root (or the write root): {path}"));
         }
-        let root = shown.display();
-        match access {
-            Access::Read => Err(format!("automation path rejected: outside the read root {root}: {path}")),
-            Access::Write => Err(format!("automation path rejected: outside the write root {root}: {path}")),
+        let Some(Root { resolved: folder, shown }) = self.write.as_ref() else {
+            return Err(format!("automation filesystem access is not granted: write authority is absent: {path}"));
+        };
+        if !inside(&target, folder) {
+            return Err(format!("automation path rejected: outside the write root {}: {path}", shown.display()));
         }
+        // A write to the root itself would put its temporary file beside the root, outside it.
+        if same(&target, folder) {
+            return Err(format!("automation path rejected: the write root itself cannot be written: {path}"));
+        }
+        Ok(())
     }
 }
 
@@ -196,6 +205,11 @@ fn inside(path: &Path, root: &Path) -> bool {
     root.components().all(|r| path.next().is_some_and(|p| same_component(p, r)))
 }
 
+/// Is `path` (resolved) exactly `root`, compared like [`inside`] does?
+fn same(path: &Path, root: &Path) -> bool {
+    path.components().count() == root.components().count() && path.components().zip(root.components()).all(|(p, r)| same_component(p, r))
+}
+
 fn same_component(a: Component, b: Component) -> bool {
     if a == b {
         return true;
@@ -233,10 +247,12 @@ mod tests {
         (base, roots)
     }
 
+    /// `p` as a string a command would pass.
     fn s(p: PathBuf) -> String {
         p.to_string_lossy().into_owned()
     }
 
+    /// Paths under either root may be read; writes stay inside the write root.
     #[test]
     fn paths_inside_the_roots_pass_and_others_dont() {
         let (base, roots) = folders("inside");
@@ -246,10 +262,39 @@ mod tests {
         assert_eq!(roots.check(&s(base.join("out/new/deeper/x.png")), Access::Write), Ok(()), "and by their nearest folder");
         let e = roots.check(&s(base.join("outside/secret.dxf")), Access::Read).unwrap_err();
         assert!(e.starts_with("automation path rejected: outside the read root"), "{e}");
-        // Read and write access are separate.
+        // Reads are allowed under the write root too; writes are not allowed under the read root.
+        assert_eq!(roots.check(&s(base.join("out/x.png")), Access::Read), Ok(()), "the write root also grants reads");
         let e = roots.check(&s(base.join("in/a.dxf")), Access::Write).unwrap_err();
         assert!(e.contains("outside the write root"), "{e}");
-        assert!(roots.check(&s(base.join("out/x.png")), Access::Read).unwrap_err().contains("outside the read root"));
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// A write-only root still permits reads inside it; reads outside both roots are refused.
+    #[test]
+    fn reads_are_allowed_under_either_root() {
+        let (base, _) = folders("either");
+        let write_only = AutomationRoots::new(None, Some(&base.join("out"))).unwrap().unwrap();
+        assert_eq!(write_only.check(&s(base.join("out/new.dxf")), Access::Read), Ok(()), "a file to read back");
+        let e = write_only.check(&s(base.join("in/a.dxf")), Access::Read).unwrap_err();
+        assert!(e.contains("outside the read root (or the write root)"), "{e}");
+        let read_only = AutomationRoots::new(Some(&base.join("in")), None).unwrap().unwrap();
+        assert_eq!(read_only.check(&s(base.join("in/a.dxf")), Access::Read), Ok(()));
+        assert!(read_only.check(&s(base.join("out/new.dxf")), Access::Read).is_err(), "a read root alone grants no read of another folder");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    /// A write to the write root itself would put its `.cadcraft-tmp` file beside the root: refused.
+    #[test]
+    fn writing_to_the_write_root_itself_is_refused() {
+        let (base, roots) = folders("write-root");
+        let out = s(base.join("out"));
+        let sep = std::path::MAIN_SEPARATOR;
+        for p in [out.clone(), format!("{out}{sep}."), format!("{out}{sep}..{sep}out")] {
+            let e = roots.check(&p, Access::Write).unwrap_err();
+            assert!(e.contains("the write root itself cannot be written"), "{p}: {e}");
+        }
+        assert_eq!(roots.check(&out, Access::Read), Ok(()), "reading the root stays allowed");
+        assert_eq!(roots.check(&s(base.join("out/new/x.png")), Access::Write), Ok(()), "a normal save inside still works");
         let _ = std::fs::remove_dir_all(base);
     }
 

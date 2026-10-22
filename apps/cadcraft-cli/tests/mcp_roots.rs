@@ -40,6 +40,11 @@ struct Tool {
 
 /// Run `cadcraft-cli mcp` with `args`, initialise, then make each call in order.
 fn run(args: &[&str], calls: &[(&str, Value)]) -> (Output, Vec<Tool>) {
+    run_env(args, calls, &[])
+}
+
+/// [`run`], with `env` set for the server process (a private settings folder).
+fn run_env(args: &[&str], calls: &[(&str, Value)], env: &[(&str, &str)]) -> (Output, Vec<Tool>) {
     let mut input = format!("{INIT}\n");
     for (i, (name, arguments)) in calls.iter().enumerate() {
         let req = json!({"jsonrpc": "2.0", "id": i + 2, "method": "tools/call", "params": {"name": name, "arguments": arguments}});
@@ -49,6 +54,7 @@ fn run(args: &[&str], calls: &[(&str, Value)]) -> (Output, Vec<Tool>) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_cadcraft-cli"))
         .arg("mcp")
         .args(args)
+        .envs(env.iter().copied())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -104,17 +110,21 @@ fn files_open_only_from_inside_the_read_root() {
     let _ = std::fs::remove_dir_all(base);
 }
 
+/// Writes stay inside the write root, the root itself is refused, and no temporary file is left outside.
 #[test]
 fn writes_go_only_into_the_write_root_and_leave_no_temp_file_outside() {
     let base = folders("write");
-    let (out, t) = run(
-        &["--automation-read-root", &s(&base.join("in")), "--automation-write-root", &s(&base.join("out"))],
+    let out = s(&base.join("out"));
+    let (out_run, t) = run(
+        &["--automation-read-root", &s(&base.join("in")), "--automation-write-root", &out],
         &[
             ("open", json!({"path": s(&base.join("in/a.dxf"))})),
             ("save", json!({"path": s(&base.join("out/saved.dxf"))})),
             ("save", json!({"path": s(&base.join("outside/saved.dxf"))})),
             ("save", json!({"path": s(&base.join("in/a.dxf"))})),
             ("save", json!({"path": format!("{}/../outside/up.dxf", s(&base.join("out")))})),
+            ("save", json!({"path": out})),
+            ("save", json!({"path": format!("{out}/../out")})),
             ("execute", json!({"command": "export", "params": {"path": s(&base.join("out/art.png")), "format": "png"}})),
             ("execute", json!({"command": "export", "params": {"path": s(&base.join("outside/art.png")), "format": "png"}})),
             ("render", json!({"path": s(&base.join("out/view.png"))})),
@@ -122,20 +132,22 @@ fn writes_go_only_into_the_write_root_and_leave_no_temp_file_outside() {
             ("execute", json!({"command": "circle", "params": {"center": [0, 0], "radius": 1}})),
         ],
     );
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(out_run.status.success(), "stderr: {}", String::from_utf8_lossy(&out_run.stderr));
     ok(&t[0]);
     ok(&t[1]);
     assert!(base.join("out/saved.dxf").is_file());
     refused(&t[2], "outside the write root");
     refused(&t[3], "outside the write root");
     refused(&t[4], "outside the write root");
-    ok(&t[5]);
-    assert!(base.join("out/art.png").is_file());
-    refused(&t[6], "outside the write root");
+    refused(&t[5], "the write root itself cannot be written");
+    refused(&t[6], "the write root itself cannot be written");
     ok(&t[7]);
-    assert!(base.join("out/view.png").is_file());
+    assert!(base.join("out/art.png").is_file());
     refused(&t[8], "outside the write root");
     ok(&t[9]);
+    assert!(base.join("out/view.png").is_file());
+    refused(&t[10], "outside the write root");
+    ok(&t[11]);
 
     assert!(!base.join("outside/saved.dxf").exists());
     assert!(!base.join("outside/art.png").exists());
@@ -143,12 +155,17 @@ fn writes_go_only_into_the_write_root_and_leave_no_temp_file_outside() {
     // The save's temporary file is beside the destination, inside the root; none is outside.
     assert!(!base.join("outside/saved.dxf.cadcraft-tmp").exists());
     assert!(!base.join("outside/up.dxf.cadcraft-tmp").exists());
+    assert!(!base.join("out.cadcraft-tmp").exists(), "writing to the root must not leave its temporary file beside it");
     let leftovers: Vec<String> =
         std::fs::read_dir(base.join("outside")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
     assert_eq!(leftovers, ["b.dxf"], "nothing was written outside the roots");
+    let temps: Vec<String> =
+        std::fs::read_dir(&base).unwrap().filter_map(|e| e.ok()?.file_name().into_string().ok()).filter(|n| n.ends_with(".cadcraft-tmp")).collect();
+    assert!(temps.is_empty(), "no temporary file beside or outside the roots: {temps:?}");
     let _ = std::fs::remove_dir_all(base);
 }
 
+/// A root left out grants none of its own access: a read root allows no writes, while a write root also allows reads.
 #[test]
 fn a_root_left_out_grants_none_of_its_access() {
     let base = folders("left-out");
@@ -164,12 +181,63 @@ fn a_root_left_out_grants_none_of_its_access() {
 
     let (out, t) = run(
         &["--automation-write-root", &s(&base.join("out"))],
-        &[("open", json!({"path": s(&base.join("in/a.dxf"))})), ("save", json!({"path": s(&base.join("out/new.dxf"))}))],
+        &[
+            ("open", json!({"path": s(&base.join("in/a.dxf"))})),
+            ("save", json!({"path": s(&base.join("out/new.dxf"))})),
+            // Reads are allowed under the write root: the agent can reopen what it saved.
+            ("open", json!({"path": s(&base.join("out/new.dxf"))})),
+        ],
     );
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    refused(&t[0], "read authority is absent");
+    refused(&t[0], "outside the read root (or the write root)");
     ok(&t[1]);
     assert!(base.join("out/new.dxf").is_file());
+    ok(&t[2]);
+    let _ = std::fs::remove_dir_all(base);
+}
+
+/// The shared plotter settings folder is outside the roots: every action refuses and it is unchanged.
+#[test]
+fn plotter_settings_outside_the_roots_are_refused() {
+    let base = folders("plotters");
+    let config = base.join("config");
+    let settings = config.join("plotters");
+    std::fs::create_dir_all(&settings).unwrap();
+    let device = cadcraft_engine::doc::PlotterConfig {
+        name: "Office".into(),
+        description: "not the agent's".into(),
+        papers: vec![cadcraft_engine::doc::DevicePaper { name: "A4".into(), width: 210.0, height: 297.0, margins: [5.0; 4] }],
+        ..Default::default()
+    };
+    let file = settings.join("Office.plotter.json");
+    let original = device.to_file_text();
+    std::fs::write(&file, &original).unwrap();
+
+    let text = original.clone();
+    let (out, t) = run_env(
+        &["--automation-read-root", &s(&base.join("in")), "--automation-write-root", &s(&base.join("out"))],
+        &[
+            ("execute", json!({"command": "plottermanager", "params": {}})),
+            ("execute", json!({"command": "plottermanager", "params": {"action": "get", "name": "Office"}})),
+            ("execute", json!({"command": "plottermanager", "params": {"action": "new", "name": "Leak", "output": "pdf"}})),
+            ("execute", json!({"command": "plottermanager", "params": {"action": "set", "name": "Office", "description": "changed"}})),
+            ("execute", json!({"command": "plottermanager", "params": {"action": "load", "text": text, "name": "Leaked Copy"}})),
+            ("execute", json!({"command": "plottermanager", "params": {"action": "delete", "name": "Office"}})),
+        ],
+        &[("CADCRAFT_CONFIG_DIR", &s(&config))],
+    );
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    refused(&t[0], "outside the read root (or the write root)");
+    refused(&t[1], "unknown plotter");
+    refused(&t[2], "outside the write root");
+    refused(&t[3], "unknown plotter");
+    refused(&t[4], "outside the write root");
+    refused(&t[5], "unknown plotter");
+
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), original, "the shared file is unchanged");
+    let names: Vec<String> = std::fs::read_dir(&settings).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    assert_eq!(names, ["Office.plotter.json"], "nothing was created or deleted in the settings folder");
+    assert!(!settings.join("Office.plotter.json.cadcraft-tmp").exists());
     let _ = std::fs::remove_dir_all(base);
 }
 
