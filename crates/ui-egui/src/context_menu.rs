@@ -338,10 +338,12 @@ pub fn in_command(app: &mut CadApp, ui: &egui::Ui, inside: bool, right_clicked: 
     let timed = app.options.time_sensitive_right_click;
     let mut open = false;
     if released && let Some(Press(t0, p0)) = ctx.data_mut(|d| d.remove_temp::<Press>(press_id)) {
-        // A drag isn't a click; a click held long enough asks for the menu.
+        // A drag isn't a click. With time-sensitive right-click on, a click held long enough asks
+        // for the menu; with it off (AutoCAD's default) the prompt's options alone decide, so a
+        // prompt without options stays on the Enter path however long the button is held.
         let still = pos.is_some_and(|p| p.distance(p0) <= 6.0);
         let held = now - t0 >= HOLD_SECS;
-        open = running && still && (held || (!timed && options));
+        open = running && still && if timed { held } else { options };
     }
     let enter = running && inside && right_clicked && !open && (timed || !options);
     if !running {

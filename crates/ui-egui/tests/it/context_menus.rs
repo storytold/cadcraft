@@ -250,6 +250,19 @@ fn painted(app: &mut CadApp, ctx: &egui::Context, events: Vec<egui::Event>, time
     text
 }
 
+/// A secondary-button press (`pressed`) or release at `at`.
+fn button(at: egui::Pos2, pressed: bool) -> egui::Event {
+    egui::Event::PointerButton { pos: at, button: egui::PointerButton::Secondary, pressed, modifiers: egui::Modifiers::NONE }
+}
+
+/// Press at `at`, keep the button still past [`context_menu::HOLD_SECS`] and release there.
+fn hold(app: &mut CadApp, ctx: &egui::Context, at: egui::Pos2, t0: f64) {
+    painted(app, ctx, vec![egui::Event::PointerMoved(at)], t0);
+    painted(app, ctx, vec![button(at, true)], t0 + 0.02);
+    painted(app, ctx, Vec::new(), t0 + 0.02 + context_menu::HOLD_SECS + 0.05);
+    painted(app, ctx, vec![button(at, false)], t0 + 0.02 + context_menu::HOLD_SECS + 0.1);
+}
+
 /// A quick right-click during a command is Enter; holding the button opens the command menu
 /// (time-sensitive right-click, off by default as in AutoCAD; see [`context_menu::in_command`]).
 #[test]
@@ -282,4 +295,67 @@ fn time_sensitive_right_click() {
     painted(&mut app, &ctx, Vec::new(), 3.1);
     assert!(app.session.running.is_none(), "a quick right-click is Enter: {}", app.session.prompt_text());
     assert_eq!(app.session.doc().unwrap().model.handles().len(), 1);
+}
+
+/// The command menu opens only at prompts with options when time-sensitive right-click is off
+/// (AutoCAD's default): a stationary hold at a prompt without options is still Enter, so the
+/// command moves on instead of showing a menu it would not have shown on a quick click.
+#[test]
+fn a_hold_at_a_prompt_without_options_is_enter_when_time_sensitive_is_off() {
+    let mut app = app();
+    assert!(!app.options.time_sensitive_right_click, "the default is AutoCAD's time-sensitive right-click off");
+    let ctx = egui::Context::default();
+    app.logic(&ctx);
+    painted(&mut app, &ctx, Vec::new(), 0.0);
+    app.cmdline("LINE");
+    assert!(app.session.current_prompt().is_some_and(|p| p.keywords.is_empty()), "{}", app.session.prompt_text());
+    let at = egui::pos2(800.0, 500.0);
+    painted(&mut app, &ctx, vec![egui::Event::PointerMoved(at)], 0.1);
+
+    hold(&mut app, &ctx, at, 1.0);
+    let text = painted(&mut app, &ctx, Vec::new(), 1.4);
+    assert!(!text.contains("Cancel"), "no command menu at a prompt without options:\n{text}");
+    assert!(app.session.current_prompt().is_none_or(|p| p.message != "Specify first point"), "the hold was not Enter: {}", app.session.prompt_text());
+}
+
+/// With time-sensitive right-click off, a prompt with options still opens the command menu on a
+/// right-click, held or not, and the hold is not Enter.
+#[test]
+fn a_hold_at_a_prompt_with_options_opens_the_menu_when_time_sensitive_is_off() {
+    let mut app = app();
+    assert!(!app.options.time_sensitive_right_click, "the default is AutoCAD's time-sensitive right-click off");
+    let ctx = egui::Context::default();
+    app.logic(&ctx);
+    painted(&mut app, &ctx, Vec::new(), 0.0);
+    app.cmdline("LINE 0,0");
+    assert!(app.session.current_prompt().is_some_and(|p| !p.keywords.is_empty()), "{}", app.session.prompt_text());
+    let at = egui::pos2(800.0, 500.0);
+    painted(&mut app, &ctx, vec![egui::Event::PointerMoved(at)], 0.1);
+
+    hold(&mut app, &ctx, at, 1.0);
+    let text = painted(&mut app, &ctx, Vec::new(), 1.4);
+    for l in ["Cancel", "Undo"] {
+        assert!(text.contains(l), "{l} missing from the menu at the options prompt:\n{text}");
+    }
+    assert!(app.session.prompt_text().contains("next point"), "the hold was Enter: {}", app.session.prompt_text());
+}
+
+/// Time-sensitive right-click on is unchanged: holding the button opens the command menu even at a
+/// prompt without options (a quick click there is Enter).
+#[test]
+fn time_sensitive_right_click_opens_the_menu_at_a_prompt_without_options() {
+    let mut app = app();
+    app.options.time_sensitive_right_click = true;
+    let ctx = egui::Context::default();
+    app.logic(&ctx);
+    painted(&mut app, &ctx, Vec::new(), 0.0);
+    app.cmdline("LINE");
+    assert!(app.session.current_prompt().is_some_and(|p| p.keywords.is_empty()), "{}", app.session.prompt_text());
+    let at = egui::pos2(800.0, 500.0);
+    painted(&mut app, &ctx, vec![egui::Event::PointerMoved(at)], 0.1);
+
+    hold(&mut app, &ctx, at, 1.0);
+    let text = painted(&mut app, &ctx, Vec::new(), 1.4);
+    assert!(text.contains("Cancel"), "a hold opens the menu with time-sensitive right-click on:\n{text}");
+    assert!(app.session.prompt_text().contains("first point"), "the hold was Enter: {}", app.session.prompt_text());
 }
