@@ -48,13 +48,13 @@ fn autosave_save_version_and_right_click_in_options() {
     for key in ["SAVETIME", "SAVEFILEPATH", "saveVersion", "timeSensitiveRightClick"] {
         assert!(all.get(key).is_some(), "{key} is reported");
     }
-    assert_eq!(all["timeSensitiveRightClick"], json!(true));
+    assert_eq!(all["timeSensitiveRightClick"], json!(false), "AutoCAD's default: no time-sensitive right-click");
 
     let r = a
-        .run("options", json!({"SAVETIME": 25, "savefilepath": " /tmp/cc-autosave ", "saveVersion": 2010, "timeSensitiveRightClick": false}))
+        .run("options", json!({"SAVETIME": 25, "savefilepath": " /tmp/cc-autosave ", "saveVersion": 2010, "timeSensitiveRightClick": true}))
         .unwrap();
     assert_eq!((r["SAVETIME"].clone(), r["SAVEFILEPATH"].clone()), (json!(25), json!("/tmp/cc-autosave")));
-    assert_eq!((r["saveVersion"].clone(), r["timeSensitiveRightClick"].clone()), (json!("2010"), json!(false)));
+    assert_eq!((r["saveVersion"].clone(), r["timeSensitiveRightClick"].clone()), (json!("2010"), json!(true)));
     assert_eq!((autosave::savetime(), autosave::savefilepath()), (25, "/tmp/cc-autosave".to_string()));
     assert_eq!(a.run("ui.saveversion", json!({})).unwrap()["saveVersion"], "2010", "the same setting as File ▸ Default Save Format");
 
@@ -77,9 +77,9 @@ fn autosave_save_version_and_right_click_in_options() {
     // The right-click setting survives a restart; reset puts it and the save version back.
     let mut b = app();
     b.load_profile(&a.profile_json());
-    assert!(!b.options.time_sensitive_right_click);
+    assert!(b.options.time_sensitive_right_click);
     let r = b.run("options", json!({"reset": true})).unwrap();
-    assert_eq!((r["timeSensitiveRightClick"].clone(), r["saveVersion"].clone()), (json!(true), json!("2018")));
+    assert_eq!((r["timeSensitiveRightClick"].clone(), r["saveVersion"].clone()), (json!(false), json!("2018")));
 
     // The tabs show the settings.
     let ctx = egui::Context::default();
@@ -95,6 +95,7 @@ fn autosave_save_version_and_right_click_in_options() {
 
     // Turned off, a quick right-click during a command opens the menu instead of acting as Enter.
     a.ui.dialog = None;
+    a.run("options", json!({"timeSensitiveRightClick": false})).unwrap();
     let ctx = egui::Context::default();
     frame(&mut a, &ctx, Vec::new(), 0.0);
     let at = egui::pos2(800.0, 500.0);

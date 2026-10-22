@@ -16,7 +16,7 @@
 //! | `SAVETIME` | minutes between automatic saves, 0–600 (0: off) |
 //! | `SAVEFILEPATH` | the folder automatic saves go to |
 //! | `ISAVEBAK` | 1: saving over a drawing keeps the previous file as `<name>.bak` (default); 0: no backup |
-//! | `timeSensitiveRightClick` | while a command runs, a quick right-click is Enter and holding the button opens the shortcut menu (default); `false`: a right-click always opens the menu |
+//! | `timeSensitiveRightClick` | while a command runs, a quick right-click is Enter and holding the button opens the shortcut menu; `false` (the default, as in AutoCAD): the menu opens when the prompt has options and the click is otherwise Enter |
 //! | `systemCursor` | keep the system cursor visible over the drawing area |
 //! | `historyLines` | command-line history lines, 0–12 |
 //! | `modelBackground`, `paperBackground` | `"#rrggbb"`, or `null` for the default |
@@ -69,7 +69,8 @@ pub struct UiOptions {
     /// The selection highlight colour; `None` keeps the theme's.
     pub selection_color: Option<Color32>,
     /// While a command runs: a quick right-click is Enter and a held one opens the shortcut menu
-    /// (AutoCAD's time-sensitive right-click). Off: a right-click always opens the menu.
+    /// (AutoCAD's time-sensitive right-click). Off (AutoCAD's default): a right-click opens the
+    /// menu when the prompt has options and is otherwise Enter.
     pub time_sensitive_right_click: bool,
     /// The size of every menu, palette, dialog and the command line (1: the system's own).
     pub interface_scale: f32,
@@ -82,7 +83,7 @@ impl Default for UiOptions {
             paper_background: None,
             snap_marker_size: theme::SNAP_MARKER,
             selection_color: None,
-            time_sensitive_right_click: true,
+            time_sensitive_right_click: false,
             interface_scale: 1.0,
         }
     }

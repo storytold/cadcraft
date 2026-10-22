@@ -196,10 +196,12 @@ fn painted(app: &mut CadApp, ctx: &egui::Context, events: Vec<egui::Event>, time
     text
 }
 
-/// A quick right-click during a command is Enter; holding the button opens the command menu.
+/// A quick right-click during a command is Enter; holding the button opens the command menu
+/// (time-sensitive right-click, off by default as in AutoCAD; see [`context_menu::in_command`]).
 #[test]
 fn time_sensitive_right_click() {
     let mut app = app();
+    app.options.time_sensitive_right_click = true;
     let ctx = egui::Context::default();
     app.logic(&ctx);
     painted(&mut app, &ctx, Vec::new(), 0.0);

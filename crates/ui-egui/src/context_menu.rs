@@ -4,10 +4,11 @@
 //!   Clipboard and Isolate; with a selection the editing commands, Draw Order, Group, the edit
 //!   commands of the selected object type, Select Similar and Deselect All; then Undo/Redo,
 //!   Pan/Zoom, Quick Select, Find, Properties and Options.
-//! - **While a command runs** ([`command_entries`]): a quick right-click is Enter; holding the
-//!   button for [`HOLD_SECS`] opens Enter, Cancel, Recent Input, the prompt's options, Snap
-//!   Overrides and Pan/Zoom instead (AutoCAD's time-sensitive right-click). With that turned off
-//!   in OPTIONS (`timeSensitiveRightClick`), every right-click opens the menu.
+//! - **While a command runs** ([`command_entries`]): at a prompt with options a right-click opens
+//!   the menu (Enter, Cancel, Recent Input, the prompt's options, Snap Overrides and Pan/Zoom), as
+//!   AutoCAD's Command shortcut menu does; at a prompt without options it is Enter. With the
+//!   time-sensitive right-click option (`timeSensitiveRightClick`) a quick click is Enter
+//!   everywhere and holding the button for [`HOLD_SECS`] opens the menu instead.
 //! - **Shift/Ctrl+right-click** ([`snap_entries`]): the object snap menu. Its items type the point
 //!   modifiers and snap overrides (`_from`, `_endp`, `_non`…) at the current point prompt.
 //!
@@ -41,7 +42,7 @@ const SETTINGS: &[&str] = &["options"];
 /// How many recent commands and inputs the menus list.
 pub const RECENT: usize = 8;
 /// How long the right button must be held while a command runs to open the command menu instead
-/// of acting as Enter (AutoCAD's time-sensitive right-click; 250 ms there by default).
+/// of acting as Enter, with time-sensitive right-click on (250 ms in AutoCAD).
 pub const HOLD_SECS: f64 = 0.25;
 
 /// Item ids that are not commands: keys, typed text and snap menu items.
@@ -305,12 +306,13 @@ pub fn show(app: &mut CadApp, resp: &egui::Response) {
 #[derive(Clone, Copy, Default)]
 struct Press(f64, egui::Pos2);
 
-/// The canvas's right button while a command runs (Shift/Ctrl+right-click is the snap menu's): a
-/// quick click is Enter — returns `true` when the caller should send it — and a click held for
-/// [`HOLD_SECS`] opens the command menu ([`command_entries`]) at the pointer (any click does with
-/// the time-sensitive right-click turned off). Call it every frame
-/// with whether the pointer is on the canvas and whether a right-click ended there; it also shows
-/// the menu while it is open.
+/// The canvas's right button while a command runs (Shift/Ctrl+right-click is the snap menu's).
+/// With AutoCAD's default (time-sensitive right-click off), the command menu ([`command_entries`])
+/// opens at the pointer when the prompt has options — its keywords are in the menu, not only in
+/// the command line — and a right-click at a prompt without options is Enter. With time-sensitive
+/// right-click on, a quick click is Enter (returns `true` when the caller should send it) and one
+/// held for [`HOLD_SECS`] opens the menu. Call it every frame with whether the pointer is on the
+/// canvas and whether a right-click ended there; it also shows the menu while it is open.
 pub fn in_command(app: &mut CadApp, ui: &egui::Ui, inside: bool, right_clicked: bool) -> bool {
     let ctx = ui.ctx().clone();
     let press_id = egui::Id::unique("cc_command_menu_press");
@@ -325,14 +327,18 @@ pub fn in_command(app: &mut CadApp, ui: &egui::Ui, inside: bool, right_clicked: 
         ctx.data_mut(|d| d.insert_temp(press_id, Press(now, p)));
     }
     let running = app.session.prompting() && !app.canvas.snap_menu;
+    // A prompt with options (its keywords are in brackets in the command line) gets the command
+    // menu — AutoCAD's Command mode, "enabled when command options are present".
+    let options = app.session.current_prompt().is_some_and(|p| !p.keywords.is_empty());
+    let timed = app.options.time_sensitive_right_click;
     let mut open = false;
     if released && let Some(Press(t0, p0)) = ctx.data_mut(|d| d.remove_temp::<Press>(press_id)) {
         // A drag isn't a click; a click held long enough asks for the menu.
         let still = pos.is_some_and(|p| p.distance(p0) <= 6.0);
-        let held = now - t0 >= HOLD_SECS || !app.options.time_sensitive_right_click;
-        open = running && still && held;
+        let held = now - t0 >= HOLD_SECS;
+        open = running && still && (held || (!timed && options));
     }
-    let enter = running && inside && right_clicked && !open && app.options.time_sensitive_right_click;
+    let enter = running && inside && right_clicked && !open && (timed || !options);
     if !running {
         return false;
     }
