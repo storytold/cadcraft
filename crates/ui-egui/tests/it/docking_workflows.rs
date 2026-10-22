@@ -636,3 +636,18 @@ fn every_panel_header_has_a_close_button_that_closes_like_the_context_menu() {
     h.run_steps(4);
     assert!(!h.state().ui.docking.layout.contains(&Panel::Properties));
 }
+
+/// The accessible name is one translated string, not an English verb glued to a translated
+/// panel label: Spanish readers must hear "Cerrar Capas", never "Close Capas".
+#[test]
+fn spanish_close_button_accessible_name_is_localized_as_a_whole() {
+    let mut h = harness(None, 1280.0, 1.0);
+    h.state_mut().run("ui.language", json!({"lang": "es"})).unwrap();
+    h.run_steps(4);
+    assert!(h.query_by_label("Cerrar Capas").is_some(), "the accordion close button is named in Spanish");
+    assert!(h.query_by_label("Cerrar Propiedades").is_some(), "every panel's close button follows the language");
+    assert!(h.query_by_label("Close Capas").is_none(), "no English verb survives the translation");
+    h.get_by_label("Cerrar Capas").click();
+    h.run_steps(4);
+    assert!(!h.state().ui.docking.layout.contains(&Panel::Layers), "the localized name still closes its panel");
+}
