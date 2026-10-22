@@ -130,7 +130,7 @@ PROCESS
        --body "<what was wrong, root cause, fix, tests, commands and results; end with: Fixes #<N>>"
 8. Report: PR URL, commit hash, files changed, test commands and results, root cause, uncertainties.
 
-If you cannot fix it, stop, delete <TARGET>, and report exactly why with evidence. Do not open a PR. The wrapper releases the shared lock on exit; do not remove the shared lock file yourself.
+If you cannot fix it, stop, delete <TARGET>, and report exactly why with evidence. Do not open a PR. Include a ready-to-post failure follow-up for the issue submitter: what you ran (version/commit, commands, files), what you observed, what you checked and ruled out, and what you need from them to go further (the original drawing/file, screenshots, `drawing.inspect` output, a retest on the current version). The wrapper releases the shared lock on exit; do not remove the shared lock file yourself.
 ```
 
 If the user asked for more than 10 issues, run them in batches of 10 so lock waits stay reasonable.
@@ -140,7 +140,28 @@ If the user asked for more than 10 issues, run them in batches of 10 so lock wai
 You will be notified as each background agent finishes. Do not poll or ask for status.
 
 - On success: record the issue number and PR URL.
-- On failure: delete the "I'm working on this." comment (find its node id from `gh issue view <N> --json comments` and use `deleteIssueComment`), remove the worktree and branch, delete its wrapper and target directory, then pick a replacement issue with the same filters and launch it. Repeat until N issues have PRs.
+- On failure, in this order:
+  1. Delete the "I'm working on this." comment (find its node id from `gh issue view <N> --json comments` and use `deleteIssueComment`).
+  2. Post a follow-up comment to the issue submitter from the subagent's failure report. Say clearly that the attempt did not reproduce or fix the issue, describe the process, state exactly where it failed, and list what would help. Use this shape:
+
+     ```text
+     I tried to reproduce this but could not, so I'm stopping here and leaving the details in case they help.
+
+     What I ran:
+     - <version/commit, commands, files>
+
+     What I saw:
+     - <observed result vs expected>
+
+     What I checked:
+     - <code paths, tests, ruled-out causes>
+
+     What would help:
+     - <original drawing/file, screenshots, inspect output, a retest on the current version>
+     ```
+
+     Keep it factual and polite: do not blame the reporter, do not close the issue, and do not claim the issue is invalid. If the issue is already fixed on `main`, say which commit or test covers it and ask for a retest. Include only relevant environment details, not the local machine's OS name or absolute paths. Post the comment even when the reporter cannot be reached (for example a ticket-relay issue), so maintainers and future readers see the findings.
+  3. Remove the worktree and branch, delete its wrapper and target directory, then pick a replacement issue with the same filters and launch it. Repeat until N issues have PRs.
 - If an issue is not reproducible in this environment, treat it as a failure and replace it. Say so in the final report.
 - Keep at least 4 GB free. Delete target directories for finished agents; remove worktrees and branches for failed/abandoned issues. Keep successful worktrees until the PRs are reviewed or merged.
 
