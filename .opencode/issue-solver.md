@@ -11,7 +11,7 @@ Read `AGENTS.md` at the start and follow it. Every change happens on its own git
 - Ensure a `fork` remote exists. `origin` is `storytold/cadcraft`, where push is denied. If `git remote get-url fork` fails:
   - `gh repo fork storytold/cadcraft --clone=false --remote=false`
   - `git remote add fork https://github.com/<login>/cadcraft.git`
-- `df -h /home` — require at least 8 GB free. Delete stale `/tmp/opencode/target-*` directories first. If space is still tight, run a smaller batch and tell the user.
+- Check free disk space portably (for example `python3 -c 'import shutil; print(shutil.disk_usage(".").free // 2**30)'` from the repository root) and require at least 8 GB. Delete stale `target-*` directories under the issue work root first. If space is still tight, run a smaller batch and tell the user.
 - Work from a clean canonical checkout. Do not start if the repository has uncommitted work that is not yours.
 
 ## 2. Select N issues
@@ -38,7 +38,7 @@ Exclude an issue when any of these is true:
   ```
 
 - It is labelled `needs info`, `in progress`, or `duplicate`.
-- It is Windows/macOS-only, needs specific hardware, or cannot be verified headlessly on this Linux machine.
+- It depends on a platform or hardware this environment does not provide, or cannot be verified headlessly here.
 - It needs new font/image assets or licence decisions.
 - It is a translation, a large feature, or a bundle of unrelated problems ("multiple issues") without one concrete defect.
 - The diagnosis is not testable in this repository (for example a driver/compositor bug).
@@ -49,15 +49,21 @@ Record the chosen numbers and titles.
 
 ## 3. Prepare one worktree and build lock per issue
 
-For each chosen issue `<N>`:
+Choose a temporary root that works on any machine and use it for every issue:
+
+```sh
+WORKROOT="${CADCRAFT_ISSUE_WORKROOT:-${TMPDIR:-${TEMP:-/tmp}}/opencode/cadcraft-issues}"
+mkdir -p "$WORKROOT"
+```
+
+Then, for each chosen issue `<N>`:
 
 ```sh
 slug=<short-kebab-slug>
-mkdir -p /tmp/opencode/cadcraft-issues
-git worktree add -b "fix/<N>-$slug" "/tmp/opencode/cadcraft-issues/issue-<N>" origin/main
+git worktree add -b "fix/<N>-$slug" "$WORKROOT/issue-<N>" origin/main
 ```
 
-Create `/tmp/opencode/agent-<N>/cargo.sh` (executable) with exactly this shape, substituting `<N>`:
+Create `"$WORKROOT/agent-<N>/cargo.sh"` (executable) with exactly this shape, substituting `<N>`:
 
 ```bash
 #!/usr/bin/env bash
@@ -65,9 +71,10 @@ Create `/tmp/opencode/agent-<N>/cargo.sh` (executable) with exactly this shape, 
 # only one builds/tests at a time; waiters retry every 30 seconds.
 set -u
 export PATH="$HOME/.cargo/bin:$PATH"
-WT=/tmp/opencode/cadcraft-issues/issue-<N>
-TARGET=/tmp/opencode/target-<N>
-LOCK=/tmp/opencode/cadcraft-cargo.lock
+WORKROOT="${CADCRAFT_ISSUE_WORKROOT:-${TMPDIR:-${TEMP:-/tmp}}/opencode/cadcraft-issues}"
+WT="$WORKROOT/issue-<N>"
+TARGET="$WORKROOT/target-<N>"
+LOCK="$WORKROOT/cargo.lock"
 waited=0
 while ! mkdir "$LOCK" 2>/dev/null; do
   if [ -d "$LOCK" ] && [ -z "$(find "$LOCK" -maxdepth 0 -mmin -120 2>/dev/null)" ]; then
@@ -91,7 +98,7 @@ cd "$WT" || exit 1
 cargo "$@"
 ```
 
-Why: several agents share the machine; only one may build or test at a time. Each issue gets a private target directory (debuginfo and incremental off) that the agent deletes immediately after its final test run. A wait of 10–30 minutes is normal; tell agents not to kill the wrapper.
+Why: several agents run at the same time; only one may build or test at a time. Each issue gets a private target directory (debuginfo and incremental off) that the agent deletes immediately after its final test run. A wait of 10–30 minutes is normal; tell agents not to kill the wrapper.
 
 ## 4. Launch one subagent per issue
 
@@ -111,7 +118,7 @@ PROCESS
 1. First post: gh issue comment <N> --repo storytold/cadcraft --body "I'm working on this."
 2. Add a failing regression test first, in the right test suite (usually crates/<crate>/tests/<behaviour>.rs), or extend an existing file in the domain. Confirm it fails before the fix.
 3. Find the exact cause and make the smallest in-style fix. No new dependencies. No unwrap/expect/panic in non-test code. If the fix belongs upstream or cannot be verified here, stop and report instead of guessing.
-4. Use ONLY /tmp/opencode/agent-<N>/cargo.sh for every cargo command, for example:
+4. Use ONLY <WRAPPER> for every cargo command, for example:
      <WRAPPER> test -p <crate> --test <file>
    It waits in 30-second steps for the shared build/test lock (waits of 10–30 minutes are normal; do not kill it), sets a private CARGO_TARGET_DIR with debuginfo/incremental off, and cd's into your worktree. Never run cargo directly. Run targeted tests plus `cargo fmt --all -- --check`; do NOT run the whole workspace or `cargo xtask ci`.
 5. IMMEDIATELY after the final test run: rm -rf <TARGET>. Rebuild through the wrapper if you need to test again later.
@@ -123,7 +130,7 @@ PROCESS
        --body "<what was wrong, root cause, fix, tests, commands and results; end with: Fixes #<N>>"
 8. Report: PR URL, commit hash, files changed, test commands and results, root cause, uncertainties.
 
-If you cannot fix it, stop, delete <TARGET>, and report exactly why with evidence. Do not open a PR. The wrapper releases the shared lock on exit; do not remove /tmp/opencode/cadcraft-cargo.lock yourself.
+If you cannot fix it, stop, delete <TARGET>, and report exactly why with evidence. Do not open a PR. The wrapper releases the shared lock on exit; do not remove the shared lock file yourself.
 ```
 
 If the user asked for more than 10 issues, run them in batches of 10 so lock waits stay reasonable.
@@ -134,7 +141,7 @@ You will be notified as each background agent finishes. Do not poll or ask for s
 
 - On success: record the issue number and PR URL.
 - On failure: delete the "I'm working on this." comment (find its node id from `gh issue view <N> --json comments` and use `deleteIssueComment`), remove the worktree and branch, delete its wrapper and target directory, then pick a replacement issue with the same filters and launch it. Repeat until N issues have PRs.
-- If an issue is not reproducible on this machine, treat it as a failure and replace it. Say so in the final report.
+- If an issue is not reproducible in this environment, treat it as a failure and replace it. Say so in the final report.
 - Keep at least 4 GB free. Delete target directories for finished agents; remove worktrees and branches for failed/abandoned issues. Keep successful worktrees until the PRs are reviewed or merged.
 
 ## 6. CodeRabbit docstring follow-up
