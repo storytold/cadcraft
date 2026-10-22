@@ -123,3 +123,59 @@ fn a_dimension_drawn_from_its_block_is_picked_on_the_block_text() {
     assert_eq!(pick(d, &Space::Model, mid, 0.01), Some(dim), "on the block's text");
     assert_eq!(pick(d, &Space::Model, Vec2::new(50.0, 33.0), 0.01), None, "not where the dimension would have set it");
 }
+
+#[test]
+fn mtext_empty_wrap_width_is_not_picked() {
+    let mut s = Session::new();
+    // A short MText with a wide defined wrap width
+    s.execute(
+        "mtext",
+        &json!({
+            "at": [0, 0],
+            "text": "HI",
+            "height": 5.0,
+            "width": 100.0,
+            "attach": 1,
+        }),
+    )
+    .unwrap();
+    let d = s.doc().unwrap();
+    let mtext_h = d.model.last().unwrap().handle;
+
+    // Inside the actual letters "HI" (near origin): should be picked
+    assert_eq!(pick(d, &Space::Model, Vec2::new(2.0, -2.5), 0.5), Some(mtext_h), "clicking on actual letters should pick");
+
+    // In the empty space of the defined wrap box (e.g. at x=50.0): should NOT be picked
+    assert_eq!(pick(d, &Space::Model, Vec2::new(50.0, -2.5), 0.5), None, "clicking in empty space of wrap width must not pick");
+}
+
+#[test]
+fn mtext_empty_wrap_does_not_mask_other_entities() {
+    let mut s = Session::new();
+    // A line drawn at x=50 first
+    s.execute(
+        "line",
+        &json!({
+            "points": [[50.0, -10.0], [50.0, 10.0]]
+        }),
+    )
+    .unwrap();
+    let line_h = s.doc().unwrap().model.last().unwrap().handle;
+
+    // An MText added after (topmost), with text 'HI' near x=0, but wide width=100 extending past x=50
+    s.execute(
+        "mtext",
+        &json!({
+            "at": [0, 0],
+            "text": "HI",
+            "height": 5.0,
+            "width": 100.0,
+            "attach": 1,
+        }),
+    )
+    .unwrap();
+    let d = s.doc().unwrap();
+
+    // Clicking on the line at (50.0, 0.0) should pick the line, NOT the MText phantom box!
+    assert_eq!(pick(d, &Space::Model, Vec2::new(50.0, 0.0), 0.5), Some(line_h), "should pick the line, not the MText phantom box");
+}
