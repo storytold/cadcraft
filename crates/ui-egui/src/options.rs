@@ -38,6 +38,8 @@ pub use dialog::dialog;
 use egui::Color32;
 use serde_json::{Map, Value, json};
 
+use cadcraft_engine::cmd::file::MAX_ALIAS_PROFILE_BYTES;
+
 use crate::CadApp;
 use crate::animation::AnimationPref;
 use crate::theme::{self, ThemePref};
@@ -45,8 +47,14 @@ use crate::theme::{self, ThemePref};
 /// The host storage key for [`CadApp::profile_json`].
 pub const PROFILE_KEY: &str = "cadcraft.profile";
 
-/// The largest saved profile [`CadApp::load_profile`] reads.
-const MAX_PROFILE_BYTES: usize = 64 * 1024;
+/// The largest saved profile [`CadApp::load_profile`] reads: everything [`CadApp::profile_json`]
+/// writes — a full ALIASEDIT alias set (up to [`MAX_ALIAS_PROFILE_BYTES`]) and the profile
+/// variables, colours and interface preferences — plus the JSON around them. A valid profile is
+/// never refused; anything larger is corrupt or hostile.
+pub const MAX_PROFILE_BYTES: usize = MAX_ALIAS_PROFILE_BYTES + PROFILE_OVERHEAD_BYTES;
+
+/// Room for the profile variables, the interface preferences and the JSON around them.
+const PROFILE_OVERHEAD_BYTES: usize = 64 * 1024;
 
 /// The longest SAVEFILEPATH the JSON form accepts.
 const MAX_PATH_CHARS: usize = 1024;

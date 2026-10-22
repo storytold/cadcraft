@@ -7,6 +7,7 @@ use std::sync::Mutex;
 use cadcraft_engine::Session;
 use cadcraft_engine::cmd::file::MAX_ALIASES;
 use cadcraft_engine::cmd::resolve_alias;
+use cadcraft_ui_egui::options::MAX_PROFILE_BYTES;
 use cadcraft_ui_egui::{CadApp, Services};
 use serde_json::{Value, json};
 
@@ -90,7 +91,7 @@ fn malformed_or_oversized_saved_aliases_are_skipped_safely() {
     bad_values["aliases"] = json!({ "aliases": { "zzbad": 5, "zznames": { "x": 1 }, "zzreal": "line" } });
     let mut not_an_object = saved.clone();
     not_an_object["aliases"] = json!("zzsafe, *LINE");
-    let oversized = format!(r#"{{"aliases": {}, "pad": "{}"}}"#, saved["aliases"], "x".repeat(70_000));
+    let oversized = format!(r#"{{"aliases": {}, "pad": "{}"}}"#, saved["aliases"], "x".repeat(MAX_PROFILE_BYTES));
 
     let mut b = app();
     b.load_profile(&huge_saved.to_string()); // must not panic
@@ -104,6 +105,48 @@ fn malformed_or_oversized_saved_aliases_are_skipped_safely() {
     assert_eq!(resolve_alias("zzbad"), "zzbad", "a non-string command is skipped");
     assert_eq!(resolve_alias("zzreal"), "line", "valid entries beside bad ones still restore");
     a.run("aliasedit", json!({ "clear": true })).unwrap();
+}
+
+#[test]
+fn a_full_alias_set_saved_by_the_profile_restores_after_a_restart() {
+    let _one = lock();
+    // ALIASEDIT holds up to MAX_ALIASES aliases. Long names make the saved profile far larger
+    // than a small one, and the loader must still accept everything `profile_json` writes.
+    let mut a = app();
+    let mut set = serde_json::Map::new();
+    let mut names = Vec::new();
+    for i in 0..MAX_ALIASES {
+        let name = format!("zz{i:05}alias{}", "x".repeat(40));
+        names.push(name.clone());
+        set.insert(name, json!("line"));
+    }
+    a.run("aliasedit", json!({ "set": set })).unwrap();
+    let saved = a.profile_json();
+    assert!(saved.len() > 64 * 1024, "the saved profile crosses 64 KiB: {} bytes", saved.len());
+    assert!(saved.len() <= MAX_PROFILE_BYTES, "the limit covers a full alias set: {} bytes", saved.len());
+
+    let mut b = app();
+    b.load_profile(&saved);
+    let listing = b.run("aliasedit", json!({})).unwrap();
+    let count = listing["aliases"].as_object().map_or(0, serde_json::Map::len);
+    assert_eq!(count, MAX_ALIASES, "every saved alias restores");
+    for name in [names.first(), names.last()].into_iter().flatten() {
+        assert_eq!(resolve_alias(name), "line", "restored {name}");
+    }
+    a.run("aliasedit", json!({ "clear": true })).unwrap();
+}
+
+#[test]
+fn a_profile_one_byte_over_the_limit_is_refused_safely() {
+    let _one = lock();
+    let defaults = app().run("options", json!({})).unwrap();
+    // Still valid JSON that would change PICKBOX, so accepting it would show.
+    let overhead = r#"{"sysvars":{"PICKBOX":9},"pad":""}"#.len();
+    let over = format!(r#"{{"sysvars":{{"PICKBOX":9}},"pad":"{}"}}"#, "x".repeat(MAX_PROFILE_BYTES + 1 - overhead));
+    assert_eq!(over.len(), MAX_PROFILE_BYTES + 1);
+    let mut b = app();
+    b.load_profile(&over); // must not panic
+    assert_eq!(b.run("options", json!({})).unwrap(), defaults, "an oversized profile changes nothing");
 }
 
 #[test]

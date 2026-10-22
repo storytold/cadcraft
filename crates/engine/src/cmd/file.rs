@@ -16,7 +16,7 @@ use super::{CommandSpec, EngineError, Interactive, always, bad, bool_or, find_co
 use crate::{Accept, Input, Prompt, Result, Session, Step};
 
 /// The rules the Command Aliases dialog checks before it sends an alias to ALIASEDIT.
-pub use pgp::{MAX_ALIASES, alias_name, alias_profile, command_id, restore_aliases};
+pub use pgp::{MAX_ALIAS_PROFILE_BYTES, MAX_ALIASES, alias_name, alias_profile, command_id, restore_aliases};
 pub(crate) use pgp::{specs as alias_specs, user_alias};
 pub use template::{qnew_template, set_qnew_template};
 
