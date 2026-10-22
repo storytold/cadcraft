@@ -594,6 +594,9 @@ fn group_drag_bar_moves_the_whole_group_into_the_other_dock() {
     assert_eq!(h.state().session.doc().unwrap(), &document);
 }
 
+/// Guard that every closable panel header offers a visible close button: a docked tab group,
+/// the default accordion stack, and a floating group. Each click must remove the panel, the
+/// button must not cover the title, and the tab context menu must still close the same panel.
 #[test]
 fn every_panel_header_has_a_close_button_that_closes_like_the_context_menu() {
     let mut h = harness(None, 1280.0, 1.0);
