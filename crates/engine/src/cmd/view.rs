@@ -1,5 +1,5 @@
-//! View menu: ZOOM (with Realtime and Dynamic), PAN, REGEN, REDRAW, named views (VIEW), layout
-//! switching.
+//! View menu: ZOOM (with Realtime and Dynamic), PAN, REGEN, REDRAW, named views (VIEW), 3D views
+//! (VPOINT, PLAN), layout switching.
 
 use cadcraft_doc::{Space, entity_bounds};
 use cadcraft_geom::{Bounds2, Vec2};
@@ -10,6 +10,7 @@ use super::*;
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step, View};
 
 mod named_views;
+mod view3d;
 mod vports;
 
 pub(super) use vports::{config_names, config_tiles, model_vports, tile_model};
@@ -96,20 +97,21 @@ pub fn specs() -> Vec<CommandSpec> {
         .transparent(),
         CommandSpec::new("view.set", "Set View", run_view_set).params("{center: [x,y], height}").noundo(),
         CommandSpec::new("view.get", "Get View", |s, _| {
-            let v = s.state()?.view();
-            Ok(json!({"center": [v.center.x, v.center.y], "height": v.height, "viewportPx": [s.viewport_px.0, s.viewport_px.1]}))
+            let st = s.state()?;
+            let (v, d) = (st.view(), st.view_dir);
+            Ok(json!({"center": [v.center.x, v.center.y], "height": v.height, "viewportPx": [s.viewport_px.0, s.viewport_px.1], "direction": [d.x, d.y, d.z]}))
         })
         .noundo(),
         CommandSpec::new("layout.set", "Switch Layout", run_layout_set).params("{name: \"Model\" | layout name}").noundo(),
     ];
     v.extend(named_views::specs());
+    v.extend(view3d::specs());
     v.extend(vports::specs());
     v
 }
 
 fn ext_bounds(s: &Session) -> Result<Bounds2> {
-    let space = s.space();
-    Ok(s.doc()?.extents(&space))
+    s.view_extents()
 }
 
 fn fit(s: &mut Session, b: Bounds2) -> Result<()> {
@@ -128,6 +130,8 @@ pub(crate) fn zoom(s: &mut Session, p: &Value) -> Result<Value> {
     let mode = str_param(p, "mode").unwrap_or("extents").to_ascii_lowercase();
     match mode.as_str() {
         "extents" | "e" => s.zoom_extents()?,
+        // In a 3D view ZOOM All is ZOOM Extents: the limits frame the plan view.
+        "all" | "a" if s.state()?.projection().is_some() => s.zoom_extents()?,
         "all" | "a" => {
             let b = ext_bounds(s)?.union(&s.zoom_limits()?);
             fit(s, b.expand(b.height().max(b.width()) * 0.02))?;

@@ -109,7 +109,7 @@ fn live(st: &DocState, px: (f64, f64)) -> (Vec<VportTile>, usize) {
     let now = st.views.iter().find(|(sp, _)| *sp == Space::Model).map(|(_, v)| *v).unwrap_or_default();
     let Some(cfg) = active_config(&st.doc) else {
         let aspect = px.0 / px.1.max(1.0);
-        return (vec![VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center: now.center, height: now.height, aspect }], 0);
+        return (vec![VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center: now.center, height: now.height, aspect, view3d: None }], 0);
     };
     let mut tiles = cfg.tiles.clone();
     let synced =
@@ -139,6 +139,10 @@ fn live(st: &DocState, px: (f64, f64)) -> (Vec<VportTile>, usize) {
 fn apply(s: &mut Session, mut tiles: Vec<VportTile>, current: usize) -> Result<()> {
     if tiles.is_empty() {
         return Err(EngineError::Other("A viewport configuration needs a viewport.".into()));
+    }
+    // Tiles draw in plan: a 3D model view goes back to plan before model space is split.
+    if tiles.len() > 1 && !cadcraft_geom::Mat4::view(s.state()?.view_dir, cadcraft_geom::Vec3::ZERO, 0.0).is_plan() {
+        return Err(EngineError::Other("Tiled viewports show model space in plan: PLAN first.".into()));
     }
     let cur = tiles.remove(current.min(tiles.len() - 1));
     tiles.insert(0, cur);

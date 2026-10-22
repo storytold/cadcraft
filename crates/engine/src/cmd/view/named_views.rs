@@ -122,6 +122,12 @@ fn save(s: &mut Session, name: &str, window: Option<Bounds2>, snapshot: bool) ->
             (f.center, f.height, f.height * aspect)
         }
     };
+    // The current view of a 3D model space keeps its direction (its centre is in view
+    // coordinates); a window is picked on the XY plane, a plan view.
+    let view3d = match (window, st.projection()) {
+        (None, Some(_)) if !in_viewport => Some(cadcraft_doc::ViewDir { dir: st.view_dir, target: cadcraft_geom::Vec3::ZERO }),
+        _ => None,
+    };
     let replaced = find(&st.doc.views, name).map(|v| v.name.clone());
     let d = s.doc_mut()?;
     let layer_state = snapshot.then(|| {
@@ -138,7 +144,7 @@ fn save(s: &mut Session, name: &str, window: Option<Bounds2>, snapshot: bool) ->
         }
         d.views.retain(|v| !v.name.eq_ignore_ascii_case(old));
     }
-    d.views.push(NamedView { name: name.to_string(), center, height, width, layer_state, twist: 0.0, layout });
+    d.views.push(NamedView { name: name.to_string(), center, height, width, layer_state, twist: 0.0, layout, view3d });
     let msg = if replaced.is_some() { format!("View \"{name}\" replaced.") } else { format!("View \"{name}\" saved.") };
     Ok(json!({ "name": name, "center": [center.x, center.y], "height": height, "width": width, "message": msg }))
 }
@@ -170,14 +176,38 @@ fn restore(s: &mut Session, name: &str) -> Result<Value> {
             st.set_view(View { center: v.center, height });
         }
         None => {
-            // A model space view: into the active MSPACE viewport, else on the Model tab.
-            if s.layout_space() != Space::Model && s.state()?.active_viewport().is_none() {
+            // A model space view: into the active MSPACE viewport, else on the Model tab. A 3D
+            // view is the Model tab's (layout viewports keep their own direction).
+            let in_3d = v.view3d.filter(|v3| v3.is_3d() && v3.dir.is_finite() && v3.dir.len() > 1e-12 && v3.target.is_finite());
+            // Refused before anything changes (the tab, the selection).
+            if in_3d.is_some() && s.model_tiled() {
+                return Err(EngineError::Other(format!(
+                    "View \"{}\" is a 3D view: 3D views need a single model viewport (VPORTS Single first).",
+                    v.name
+                )));
+            }
+            if s.layout_space() != Space::Model && (s.state()?.active_viewport().is_none() || in_3d.is_some()) {
                 super::run_layout_set(s, &json!({ "name": "Model" }))?;
             }
             let (w, h) = s.viewport_px;
+            let on_model_tab = s.layout_space() == Space::Model;
             let st = s.state_mut()?;
+            let mut center = v.center;
+            if on_model_tab {
+                // Its direction (plan for a plan view), the centre moved from relative to its
+                // target to the view coordinates the editor uses (target at the origin).
+                let dir = in_3d.map_or(cadcraft_geom::Vec3::Z, |v3| v3.dir * (1.0 / v3.dir.len()));
+                if let Some(v3) = in_3d {
+                    let t = cadcraft_geom::Mat4::view(dir, cadcraft_geom::Vec3::ZERO, 0.0).apply(v3.target);
+                    let moved = center + cadcraft_geom::Vec2::new(t.x, t.y);
+                    if moved.is_finite() {
+                        center = moved;
+                    }
+                }
+                st.view_dir = dir;
+            }
             let aspect = st.zoom_aspect(w / h.max(1.0)).max(1e-9);
-            st.set_zoom_frame(View { center: v.center, height: v.height.max(v.width / aspect) });
+            st.set_zoom_frame(View { center, height: v.height.max(v.width / aspect) });
         }
     }
     let mut msg = format!("View \"{}\" restored.", v.name);

@@ -27,6 +27,7 @@ fn drawing() -> (Drawing, Space) {
             layer_colors: Vec::new(),
             clip: None,
             on: true,
+            view3d: None,
         }),
     )
     .unwrap();

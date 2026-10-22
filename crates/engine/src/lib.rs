@@ -34,7 +34,7 @@ pub mod units;
 use std::sync::Arc;
 
 use cadcraft_doc::{Common, Drawing, Entity, EntityKind, Handle, Space};
-use cadcraft_geom::{Bounds2, Vec2};
+use cadcraft_geom::{Bounds2, Mat4, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -87,6 +87,30 @@ fn usable_view(v: &View) -> bool {
     v.center.is_finite() && v.height.is_finite() && v.height > 1e-12
 }
 
+/// How model space is drawn (VSCURRENT): edges only, or 3D faces and meshes filled and lit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum VisualStyle {
+    #[default]
+    Wireframe2d,
+    Shaded,
+    ShadedWithEdges,
+}
+
+impl VisualStyle {
+    /// The name shown in the view label and the View ▸ Visual Styles menu.
+    pub fn label(self) -> &'static str {
+        match self {
+            VisualStyle::Wireframe2d => "2D Wireframe",
+            VisualStyle::Shaded => "Shaded",
+            VisualStyle::ShadedWithEdges => "Shaded with Edges",
+        }
+    }
+    /// The display list's `shaded` and `shaded_edges` options.
+    pub fn shading(self) -> (bool, bool) {
+        (self != VisualStyle::Wireframe2d, self == VisualStyle::ShadedWithEdges)
+    }
+}
+
 /// Tiled model viewports (VPORTS): the session side of the drawing's `*Active` configuration.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModelTiles {
@@ -137,6 +161,11 @@ pub struct DocState {
     pub mspace: Option<Handle>,
     pub views: Vec<(Space, View)>,
     pub view_history: Vec<View>,
+    /// Model space's viewing direction from the target towards the viewer (VPOINT, the ViewCube,
+    /// 3DORBIT; +Z = plan view): the view's centre and height are then in view coordinates
+    /// ([`DocState::projection`]).
+    pub view_dir: Vec3,
+    pub visual_style: VisualStyle,
     pub uid: u64,
     /// The drawing is saved as binary DXF (it was opened from one, or last saved as one).
     pub binary_dxf: bool,
@@ -166,6 +195,8 @@ impl DocState {
             mspace: None,
             views: Vec::new(),
             view_history: Vec::new(),
+            view_dir: Vec3::Z,
+            visual_style: VisualStyle::default(),
             uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             binary_dxf: false,
             block_edit: None,
@@ -217,6 +248,15 @@ impl DocState {
             cadcraft_doc::EntityKind::Viewport(v) if v.height > 1e-12 && v.view_height > 1e-12 => Some((h, v.clone())),
             _ => None,
         }
+    }
+    /// The 3D view of model space shown on the Model tab (WCS → view coordinates), or `None` in
+    /// plan view and on layouts.
+    pub fn projection(&self) -> Option<Mat4> {
+        if self.space != Space::Model {
+            return None;
+        }
+        let m = Mat4::view(self.view_dir, Vec3::ZERO, 0.0);
+        (!m.is_plan()).then_some(m)
     }
     pub fn paper_view(&self) -> View {
         self.views.iter().find(|(s, _)| *s == self.space).map(|(_, v)| *v).unwrap_or_default()
@@ -755,7 +795,11 @@ impl Session {
         self.active = self.docs.len() - 1;
         self.active
     }
-    pub fn open_drawing(&mut self, d: Drawing, title: &str, path: Option<String>) -> usize {
+    pub fn open_drawing(&mut self, mut d: Drawing, title: &str, path: Option<String>) -> usize {
+        // A drawing saved in a 3D view of model space opens in it: the view is the editor's, the
+        // single *Active viewport that carries it isn't kept.
+        let single = d.vports.iter().position(|c| c.is_active() && c.tiles.len() == 1);
+        let saved = single.and_then(|i| d.vports.remove(i).tiles[0].view3d);
         let mut st = DocState::new(d, title, path);
         let ext = st.doc.extents(&Space::Model);
         if !ext.is_empty() {
@@ -764,9 +808,15 @@ impl Session {
                 height: (ext.height().max(ext.width() * self.viewport_px.1 / self.viewport_px.0.max(1.0)) * 1.1).max(1e-6),
             });
         }
+        if let Some(v) = saved {
+            st.view_dir = v.dir * (1.0 / v.dir.len());
+        }
         self.end_running();
         self.docs.push(st);
         self.active = self.docs.len() - 1;
+        if saved.is_some() {
+            let _ = self.zoom_extents();
+        }
         self.active
     }
     /// A command still waiting for input belongs to the drawing it started in: end it there
@@ -1793,11 +1843,40 @@ impl Session {
         Ok(Bounds2::new(lo, hi))
     }
 
-    pub fn zoom_extents(&mut self) -> Result<()> {
+    /// [`Session::zoom_limits`] as the view shows them: in a 3D view, the limits (a rectangle on
+    /// the XY plane) in view coordinates.
+    pub fn view_limits(&self) -> Result<Bounds2> {
+        let lim = self.zoom_limits()?;
+        Ok(match self.state()?.projection() {
+            Some(m) => {
+                let p = m.plane(0.0);
+                let corners = [lim.min, Vec2::new(lim.max.x, lim.min.y), lim.max, Vec2::new(lim.min.x, lim.max.y)];
+                Bounds2::from_points(corners.map(|c| p.apply(c)))
+            }
+            None => lim,
+        })
+    }
+
+    /// The current space's extents as the view shows them: the drawing's extents in plan view,
+    /// the bounds of what is drawn in a 3D view (in view coordinates).
+    pub fn view_extents(&self) -> Result<Bounds2> {
         let space = self.space();
-        let ext = self.doc()?.extents(&space);
+        let d = self.doc()?;
+        let ext = d.extents(&space);
+        match self.state()?.projection() {
+            Some(projection) if !ext.is_empty() => {
+                let tolerance = (ext.width().max(ext.height()) / 1000.0).max(1e-9);
+                let opts = render::Options { projection: Some(projection), tolerance, ..render::Options::default() };
+                Ok(render::build(d, &space, &opts).bounds)
+            }
+            _ => Ok(ext),
+        }
+    }
+
+    pub fn zoom_extents(&mut self) -> Result<()> {
+        let ext = self.view_extents()?;
         let (w, h) = self.viewport_px;
-        let ext = if ext.is_empty() { self.zoom_limits()? } else { ext };
+        let ext = if ext.is_empty() { self.view_limits()? } else { ext };
         let st = self.state_mut()?;
         let aspect = st.zoom_aspect(w / h.max(1.0));
         let height = ext.height().max(ext.width() / aspect.max(1e-6)).max(1e-6) * 1.05;

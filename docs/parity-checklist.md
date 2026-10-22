@@ -1,20 +1,19 @@
 # Parity checklist
 
-> **Generated:** 2026-10-15 by `cargo xtask parity`. Do not edit by hand.
-> **Generated:** 2026-10-16 by `cargo xtask parity`. Do not edit by hand.
+> **Generated:** 2026-10-19 by `cargo xtask parity`. Do not edit by hand.
 
 Menu-breadth parity: a reference menu item counts as covered when a CADCraft command is registered under the same menu label. It measures breadth, not depth; see [target-app-parity.md](target-app-parity.md) for the weighted assessment.
 
-**Menu breadth: 283 / 491 items (58%)** · 427 registered commands.
+**Menu breadth: 301 / 491 items (61%)** · 447 registered commands.
 
 | Menu | Items | Covered | % |
 |---|---|---|---|
 | File | 22 | 13 | 59% |
 | Edit | 13 | 11 | 85% |
-| View | 75 | 31 | 41% |
+| View | 75 | 45 | 60% |
 | Insert | 11 | 5 | 45% |
 | Format | 27 | 25 | 93% |
-| Tools | 85 | 60 | 71% |
+| Tools | 85 | 64 | 75% |
 | Draw | 87 | 55 | 63% |
 | Dimension | 28 | 28 | 100% |
 | Modify | 113 | 52 | 46% |
@@ -35,31 +34,17 @@ Menu-breadth parity: a reference menu item counts as covered when a CADCraft com
 - Edit > Undo Group of commands
 - Edit > Cut with Base Point
 - View > Pan > Point
-- View > Orbit > Constrained Orbit
 - View > Orbit > Free Orbit
 - View > Camera > Adjust Distance
 - View > Camera > Swivel
 - View > Viewports > Named Viewports...
-- View > 3D Views > Viewpoint
 - View > 3D Views > Plan View > Current UCS
-- View > 3D Views > Plan View > World UCS
 - View > 3D Views > Plan View > Named UCS
-- View > 3D Views > Top
-- View > 3D Views > Bottom
-- View > 3D Views > Front
-- View > 3D Views > Back
-- View > 3D Views > SW Isometric
-- View > 3D Views > SE Isometric
-- View > 3D Views > NE Isometric
-- View > 3D Views > NW Isometric
 - View > Hide
-- View > Visual Styles > 2D Wireframe
 - View > Visual Styles > Wireframe
 - View > Visual Styles > Hidden
 - View > Visual Styles > Realistic
 - View > Visual Styles > Conceptual
-- View > Visual Styles > Shaded
-- View > Visual Styles > Shaded with Edges
 - View > Visual Styles > Shades of Gray
 - View > Visual Styles > Sketchy
 - View > Visual Styles > X-Ray
@@ -101,13 +86,8 @@ Menu-breadth parity: a reference menu item counts as covered when a CADCraft com
 - Tools > New UCS > Z
 - Tools > Named UCS...
 - Tools > Customize > Interface (CUI)...
-- Tools > Customize > Edit Command Aliases (PGP)...
 - Tools > Import Settings
 - Tools > Export Settings
-- Tools > Express Tools > Convert Text to Mtext
-- Tools > Express Tools > Break-line Symbol
-- Tools > Express Tools > Move/Copy/Rotate
-- Tools > Express Tools > Explode Attributes to Text
 - Tools > Express Tools > Replace Block...
 - Tools > Express Tools > Super Hatch > Image...
 - Tools > Express Tools > Super Hatch > Xref...

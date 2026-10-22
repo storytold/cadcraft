@@ -204,6 +204,37 @@ fn ocs_identity_for_z() {
 }
 
 #[test]
+fn view_matrices() {
+    let near = |p: Vec3, q: Vec3| (p - q).len() < 1e-9;
+    let (ux, uy) = (Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0));
+    // Plan view: the identity, and a plan as far as `is_plan` goes.
+    let plan = Mat4::view(Vec3::Z, Vec3::ZERO, 0.0);
+    assert_eq!(plan, Mat4::IDENTITY);
+    assert!(plan.is_plan());
+    // South-east isometric (from +X, -Y, +Z): +X goes right and down, +Y right and up, +Z up.
+    let se = Mat4::view(Vec3::new(1.0, -1.0, 1.0), Vec3::ZERO, 0.0);
+    assert!(!se.is_plan());
+    let (x, y, z) = (se.apply(ux), se.apply(uy), se.apply(Vec3::Z));
+    assert!(x.x > 0.0 && x.y < 0.0 && y.x > 0.0 && y.y > 0.0 && z.x.abs() < 1e-12 && z.y > 0.0);
+    // The viewer looks along -dir: the point towards the viewer has the largest view z.
+    assert!(se.apply(Vec3::new(1.0, -1.0, 1.0)).z > se.apply(Vec3::new(-1.0, 1.0, -1.0)).z);
+    // Front view (from -Y): x stays, z becomes up.
+    let front = Mat4::view(Vec3::new(0.0, -1.0, 0.0), Vec3::ZERO, 0.0);
+    assert!(near(front.apply(Vec3::new(2.0, 5.0, 3.0)), Vec3::new(2.0, 3.0, -5.0)));
+    // The target is the origin of the view.
+    let t = Vec3::new(4.0, 5.0, 6.0);
+    assert!(near(Mat4::view(Vec3::new(1.0, 2.0, 3.0), t, 0.3).apply(t), Vec3::ZERO));
+    // A 90° twist turns the view counterclockwise: +X then points down.
+    let twisted = Mat4::view(Vec3::Z, Vec3::ZERO, std::f64::consts::FRAC_PI_2);
+    assert!(near(twisted.apply(ux), Vec3::new(0.0, -1.0, 0.0)));
+    // On a plane, the 2D map agrees with the 3D transform.
+    let m = se.plane(7.0);
+    let p = se.apply(Vec3::new(3.0, -2.0, 7.0));
+    let q = m.apply(Vec2::new(3.0, -2.0));
+    assert!(close(p.x, q.x) && close(p.y, q.y));
+}
+
+#[test]
 fn common_tangents_of_two_circles() {
     // Distance from `c` to the infinite line through `p`, `q`.
     let dist = |c: Vec2, p: Vec2, q: Vec2| ((q - p).cross(c - p) / p.dist(q)).abs();

@@ -28,6 +28,7 @@ fn viewport(id: u32) -> EntityKind {
         layer_colors: vec![],
         clip: None,
         on: true,
+        view3d: None,
     })
 }
 
@@ -138,4 +139,31 @@ fn viewport_ids_survive_dwg_and_the_paper_viewport_stays_implicit() {
     let text = cadcraft_io::write_dxf(&d);
     assert!(!text.contains("PAPERVIEW"));
     assert_eq!(viewport_ids(&cadcraft_io::read_dxf(text.as_bytes()).unwrap().layouts[0]), [1, 2]);
+}
+
+/// A pyramid as a MESH (AcDbSubDMesh): five vertices, four triangles and the square base.
+const MESH_DXF: &str = "0\nSECTION\n2\nENTITIES\n0\nMESH\n5\n2F\n100\nAcDbEntity\n8\n0\n100\nAcDbSubDMesh\n71\n2\n72\n0\n91\n0\n92\n5\n\
+10\n0\n20\n0\n30\n0\n10\n10\n20\n0\n30\n0\n10\n10\n20\n10\n30\n0\n10\n0\n20\n10\n30\n0\n10\n5\n20\n5\n30\n8\n\
+93\n21\n90\n3\n90\n0\n90\n1\n90\n4\n90\n3\n90\n1\n90\n2\n90\n4\n90\n3\n90\n2\n90\n3\n90\n4\n90\n3\n90\n3\n90\n0\n90\n4\n\
+90\n4\n90\n0\n90\n3\n90\n2\n90\n1\n94\n0\n95\n0\n90\n0\n0\nENDSEC\n0\nEOF\n";
+
+/// The value of `code` in a MESH's raw groups.
+fn mesh_count(d: &Drawing, code: i32) -> Option<String> {
+    d.model.iter().find_map(|e| match &e.kind {
+        EntityKind::Unknown(u) if u.dxf_type.eq_ignore_ascii_case("MESH") => {
+            u.tags.iter().find(|t| t.code == code).map(|t| t.value.trim().to_string())
+        }
+        _ => None,
+    })
+}
+
+/// A MESH read from another program's file isn't modelled, but the DWG keeps it: the bridge
+/// reads its groups as a mesh and writes it, with every vertex and face.
+#[test]
+fn dwg_keeps_meshes() {
+    let d = cadcraft_io::read_dxf(MESH_DXF.as_bytes()).unwrap();
+    assert_eq!(mesh_count(&d, 92).as_deref(), Some("5"));
+    let back = through_dwg(&d);
+    assert_eq!(mesh_count(&back, 92).as_deref(), Some("5"), "vertices");
+    assert_eq!(mesh_count(&back, 93).as_deref(), Some("21"), "face list");
 }

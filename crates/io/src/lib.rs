@@ -21,12 +21,36 @@ mod svg_read;
 mod dxf_mline;
 
 use cadcraft_doc::{Drawing, Space};
-use cadcraft_geom::Bounds2;
+use cadcraft_geom::{Bounds2, Mat4};
 
 pub use cadcraft_dxf::Version;
 pub use dxf_read::entity_from_groups;
 pub use dxf_write::entity_groups;
 pub use pdf::{PdfOptions, pdf, plot};
+
+/// A 3D view of model space for an image export or plot, drawn as the screen shows it: WCS → view
+/// coordinates ([`Mat4::view`]; the export window is in view coordinates) and the visual style.
+/// `None` where one is taken means the plan view. Layouts are always drawn in plan.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct View3d {
+    pub projection: Mat4,
+    /// Fill 3D faces and meshes (the Shaded visual style), see [`cadcraft_render::Options::shaded`].
+    pub shaded: bool,
+    /// With `shaded`, draw their edges too (Shaded with Edges).
+    pub shaded_edges: bool,
+}
+
+impl View3d {
+    /// `opts` drawing `space` in this view (model space only; `view` `None` leaves `opts` as is).
+    pub fn apply(view: Option<&View3d>, space: &Space, opts: cadcraft_render::Options) -> cadcraft_render::Options {
+        match view {
+            Some(v) if matches!(space, Space::Model) => {
+                cadcraft_render::Options { projection: Some(v.projection), shaded: v.shaded, shaded_edges: v.shaded_edges, ..opts }
+            }
+            _ => opts,
+        }
+    }
+}
 
 /// How a drawing is saved as DXF or DWG.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -111,6 +135,12 @@ pub fn write_with(d: &Drawing, name: &str, opts: &SaveOptions) -> Result<Vec<u8>
 /// extents. Formats that are not images (DXF, DWG) ignore the window. The window is checked with
 /// [`check_window`].
 pub fn write_framed(d: &Drawing, name: &str, window: Option<Bounds2>) -> Result<Vec<u8>> {
+    write_view(d, name, window, None)
+}
+
+/// Like [`write_framed`], with images drawing model space in `view` (`None`: plan), the window in
+/// its view coordinates: the current view of a 3D model space, as the screen shows it.
+pub fn write_view(d: &Drawing, name: &str, window: Option<Bounds2>, view: Option<&View3d>) -> Result<Vec<u8>> {
     // A drawing template (.dwt) is DWG content.
     if ext(name) == "dwt" {
         return write_framed(d, &format!("{name}.dwg"), None);
@@ -122,9 +152,9 @@ pub fn write_framed(d: &Drawing, name: &str, window: Option<Bounds2>) -> Result<
     }
     match ext(name).as_str() {
         "dxf" | "" | "dwg" => write_with(d, name, &SaveOptions::default()),
-        "svg" => Ok(svg::export_window(d, &Space::Model, window).into_bytes()),
-        "png" => png_framed(d, &Space::Model, 2400, 1600, window),
-        "pdf" => pdf::pdf(d, &Space::Model, &PdfOptions { compress: true, window, ..PdfOptions::default() }),
+        "svg" => Ok(svg::export_view(d, &Space::Model, window, view, true).into_bytes()),
+        "png" => png_view_framed(d, &Space::Model, 2400, 1600, window, view),
+        "pdf" => pdf::pdf(d, &Space::Model, &PdfOptions { compress: true, window, view: view.copied(), ..PdfOptions::default() }),
         e => Err(IoError::Unsupported(e.to_string())),
     }
 }
@@ -166,7 +196,13 @@ pub fn png(d: &Drawing, space: &Space, width: u32, height: u32) -> Result<Vec<u8
 /// extents (5% margin) when `window` is `None`. Objects are drawn with their transparency, as on
 /// screen.
 pub fn png_framed(d: &Drawing, space: &Space, width: u32, height: u32, window: Option<Bounds2>) -> Result<Vec<u8>> {
-    let list = cadcraft_render::build(d, space, &cadcraft_render::Options { transparency: true, ..cadcraft_render::Options::default() });
+    png_view_framed(d, space, width, height, window, None)
+}
+
+/// [`png_framed`] with model space drawn in `view` (`None`: plan; see [`write_view`]).
+pub fn png_view_framed(d: &Drawing, space: &Space, width: u32, height: u32, window: Option<Bounds2>, view: Option<&View3d>) -> Result<Vec<u8>> {
+    let opts = View3d::apply(view, space, cadcraft_render::Options { transparency: true, ..cadcraft_render::Options::default() });
+    let list = cadcraft_render::build(d, space, &opts);
     let view = png_view(&list.bounds, width, height, window);
     cadcraft_render::raster::render_png(&list, &view, &cadcraft_render::raster::RasterOptions::default())
         .ok_or_else(|| IoError::Format("render failed".into()))

@@ -1339,6 +1339,23 @@
 	Justify	За шириною
 	Text color	Колір тексту
 	Click the ruler to add a tab stop, right-click to remove one	Натисніть на лінійку, щоб додати табуляцію; права кнопка видаляє її
+	3D Views	3D-види
+	Viewpoint	Точка зору
+	Plan View	Вид у плані
+	Top	Зверху
+	Bottom	Знизу
+	Front	Спереду
+	Back	Ззаду
+	SW Isometric	Ізометрія ПдЗх
+	SE Isometric	Ізометрія ПдСх
+	NE Isometric	Ізометрія ПнСх
+	NW Isometric	Ізометрія ПнЗх
+	Constrained Orbit	Обмежена орбіта
+	World UCS	Світова ПСК
+	2D Wireframe	2D-каркас
+	Visual Styles	Візуальні стилі
+	Shaded	Розфарбований
+	Shaded with Edges	Розфарбований з ребрами
 	Select using two clicks only	Вибирати лише двома клацаннями
 	Define each corner of the selection window with a separate click.	Задайте кожен кут рамки вибору окремим клацанням.
 	Type an alias name.	Введіть назву псевдоніма.
