@@ -929,8 +929,8 @@ struct Reconciled {
     /// Contexts not written: their scale is gone from the drawing's scale list, or their
     /// reference is annotative in CADCraft's model and no longer supports it.
     dropped: HashSet<String>,
-    /// New contexts for the scales such a reference supports without a context, with handles
-    /// above every file handle ([`MAX_HANDLE`]); their dictionaries list them.
+    /// New contexts for the scales such a reference supports without a context, with stand-in
+    /// handles above every handle in use (`above`); their dictionaries list them.
     added: Vec<ForeignObject>,
     /// The SCALE objects the added contexts name (group 340): stand-in handle → the scale's role.
     scales: HashMap<String, ForeignKey>,
@@ -943,12 +943,15 @@ struct Reconciled {
 /// supports: one per new scale is made from its default context, scaled by the ratio of the two
 /// scales about the reference's insertion point (as AutoCAD adds a scale). One context of each
 /// reference stays the default (290 = 1). Changed dictionaries and contexts go into `contexts`.
+/// New objects take stand-in handles above `above` and the kept objects' and targets' handles
+/// (AutoCAD writes handles above 2^48, so no range is free by itself).
 fn reconcile(
     f: &Foreign,
     d: &Drawing,
     owners: &HashMap<String, String>,
     roles: &HashMap<ForeignKey, String>,
     contexts: &mut HashMap<String, ForeignObject>,
+    above: u64,
 ) -> Reconciled {
     use cadcraft_doc::geom::Vec2;
     let mut out = Reconciled::default();
@@ -990,7 +993,7 @@ fn reconcile(
         let Some(reference) = reference else { continue };
         groups.entry(parent.clone()).or_insert((reference, attribute, Vec::new())).2.push(contexts.get(&h).unwrap_or(o).clone());
     }
-    let mut next = MAX_HANDLE;
+    let mut next = f.objects.iter().map(|o| o.handle.0).chain(f.targets.keys().map(|h| h.0)).fold(above, u64::max);
     let mut fresh = || {
         next = next.saturating_add(1);
         format!("{next:X}")
@@ -1425,7 +1428,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
     let attribute = attribute_contexts(f, d, &owners, &contexts);
     contexts.extend(attribute);
     // In line with the drawing's scales and each reference's.
-    let rec = reconcile(f, d, &owners, &roles, &mut contexts);
+    let rec = reconcile(f, d, &owners, &roles, &mut contexts, seed(tags).max(max_handle(tags)));
     let all: Vec<&ForeignObject> = f.objects.iter().chain(&rec.added).collect();
     for o in &rec.added {
         if let Some(parent) = o.tags.iter().find(|t| t.code == 330) {

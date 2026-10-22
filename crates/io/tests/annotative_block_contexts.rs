@@ -502,6 +502,45 @@ fn an_annotative_reference_s_contexts_follow_its_scales() {
     assert!(contexts(&write_dxf(&back)).iter().all(|c| c.0 != "?"));
 }
 
+/// The fixture with every handle moved up to just past 2^48 (AutoCAD writes handles that high):
+/// the reference (40) lands on 2^48 + 1.
+fn far_handles(src: &str) -> String {
+    const SHIFT: u64 = (1 << 48) - 0x3F;
+    let is_handle = |code: i32| matches!(code, 5 | 105 | 320..=369 | 390..=399 | 480 | 481 | 1005);
+    let mut out = String::new();
+    for line in src.lines() {
+        let (code, value) = line.trim().split_once(' ').unwrap_or((line.trim(), ""));
+        let moved = match (code.parse::<i32>(), u64::from_str_radix(value, 16)) {
+            (Ok(c), Ok(h)) if is_handle(c) && h != 0 => format!("{:X}", h + SHIFT),
+            _ => value.to_string(),
+        };
+        out.push_str(&format!("{code} {moved}\n"));
+    }
+    out
+}
+
+#[test]
+fn new_contexts_get_their_own_handles_when_the_file_s_are_above_2_pow_48() {
+    // As in the test above, but every file handle is above 2^48: the new 1:2 contexts and their
+    // scale take handles no other object has.
+    let mut d = read_dxf(dxf(&far_handles(FIXTURE)).as_bytes()).unwrap();
+    let half = cadcraft_doc::AnnoScale::new("1:2", 1.0, 2.0);
+    d.scales.push(half.clone());
+    let five = d.scales.iter().find(|s| s.name == "1:5").cloned().unwrap();
+    let reference = Handle::parse_hex("1000000000001").unwrap();
+    d.modify_entity(reference, |e| e.common.anno_scales = vec![five, half]).unwrap();
+    let text = write_dxf(&d);
+    let mut names: Vec<String> = contexts(&text).into_iter().map(|c| c.0).collect();
+    names.sort();
+    assert_eq!(names, ["1:2", "1:5"]);
+    assert_eq!(attribute_contexts(&text).len(), 2);
+    let mut handles: Vec<String> = records(&text).iter().filter_map(|(_, t)| get(t, 5).map(str::to_string)).collect();
+    let n = handles.len();
+    handles.sort();
+    handles.dedup();
+    assert_eq!(handles.len(), n, "every written handle is unique");
+}
+
 #[test]
 fn two_attributes_with_one_tag_keep_their_own_contexts() {
     // A second attribute TAG on the reference, with its own extension dictionary (no contexts
