@@ -34,7 +34,7 @@ use grips::{click_grip, grip_at, grip_menu, grip_options, grip_rect};
 use list::{PrimIndex, ensure_list, rebuilt_preview};
 #[cfg(test)]
 use list::{preview_options, prims_of};
-use pick::{edit_text_at, hatch_at, wheel_zoom_points};
+use pick::{edit_text_at, hatch_at, insert_at, wheel_zoom_points};
 #[cfg(test)]
 use viewport::viewport_highlight_tolerance;
 use viewport::{VpContent, VpHighlight, draw_vp_content, ensure_vp_content};
@@ -540,6 +540,23 @@ struct DoubleClickContext<'a> {
 
 fn handle_double_click(app: &mut CadApp, ctx: DoubleClickContext<'_>) -> Option<bool> {
     let DoubleClickContext { inside, double, hover, xf, xf_paper, scale, active_viewport, active_clip } = ctx;
+    // Double-click a block reference (no command running) to edit that reference in place with
+    // REFEDIT, as AutoCAD's default DBLCLKEDIT does: its objects become ordinary objects with the
+    // rest of the block faded and the drawing still visible. The Block Editor, which hides the
+    // drawing, stays on the context menu and the menu bar. The click is used up, and it comes
+    // before the viewport case so a reference on a paper-space sheet is edited, not MSPACE'd.
+    if inside
+        && double
+        && app.session.running.is_none()
+        && let Some(hp) = hover
+        && let Some(h) = insert_at(app, xf.to_world(hp))
+    {
+        app.session.set_selection(vec![h]);
+        // REFEDIT reports why it refuses a reference (unequal scale, an xref, generated geometry)
+        // through the command line; `run` echoes the error and nothing panics.
+        let _ = app.run("refedit", serde_json::json!({ "handle": h.hex() }));
+        return Some(false);
+    }
     if inside
         && double
         && !app.session.prompting()
