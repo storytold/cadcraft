@@ -9,8 +9,18 @@ use crate::{Accept, Prompt};
 /// Polylines approximating an entity for hit testing, tessellated at `tol`.
 pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
     match &e.kind {
+        EntityKind::MText(t) => {
+            let pts = cadcraft_render::layout_mtext_entity(d, t).strokes.into_iter().flatten();
+            let turn = |q: Vec2| q.rotate(-t.rotation);
+            let b = Bounds2::from_points(pts.filter(|q| q.is_finite()).map(turn));
+            if b.is_empty() {
+                return Vec::new();
+            }
+            let unturn = |q: Vec2| q.rotate(t.rotation);
+            let c = b.corners().map(unturn);
+            vec![vec![c[0], c[1], c[2], c[3], c[0]]]
+        }
         EntityKind::Text(_)
-        | EntityKind::MText(_)
         | EntityKind::Insert(_)
         | EntityKind::Dimension(_)
         | EntityKind::AttDef(_)
@@ -88,8 +98,7 @@ fn dist_to_polyline(pts: &[Vec2], p: Vec2) -> f64 {
 pub fn entity_distance(d: &Drawing, e: &Entity, p: Vec2, tol: f64) -> f64 {
     let polys = hit_polylines(d, e, tol);
     let mut best = polys.iter().map(|pl| dist_to_polyline(pl, p)).fold(f64::INFINITY, f64::min);
-    let filled = matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) | EntityKind::Table(_))
-        || matches!(e.kind, EntityKind::Tolerance(_));
+    let filled = matches!(e.kind, EntityKind::Text(_) | EntityKind::AttDef(_) | EntityKind::Table(_)) || matches!(e.kind, EntityKind::Tolerance(_));
     if (filled && entity_bounds(d, e, 0).contains(p)) || in_text(d, e, p) {
         best = 0.0;
     }
@@ -130,6 +139,7 @@ fn in_text(d: &Drawing, e: &Entity, p: Vec2) -> bool {
         EntityKind::MLeader(m) => {
             m.text.as_ref().is_some_and(|t| in_box(cadcraft_render::layout_mtext_entity(d, t).strokes.into_iter().flatten(), t.rotation, p))
         }
+        EntityKind::MText(t) => in_box(cadcraft_render::layout_mtext_entity(d, t).strokes.into_iter().flatten(), t.rotation, p),
         _ => false,
     }
 }
