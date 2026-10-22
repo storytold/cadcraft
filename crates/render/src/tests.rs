@@ -925,6 +925,169 @@ fn cancelled_build_stops_early() {
     assert!(crate::hatch::pattern_lines_until(&drawing, &h, &loops, 0.0, None, set.as_deref()).is_empty());
 }
 
+fn handle_prims(l: &DisplayList, h: cadcraft_doc::Handle) -> Vec<Vec<Vec2>> {
+    l.prims.iter().filter(|p| p.handle == h).map(|p| l.verts[p.start as usize..(p.start + p.len) as usize].to_vec()).collect()
+}
+
+fn add_line(d: &mut Drawing, space: &Space, a: (f64, f64), b: (f64, f64)) -> cadcraft_doc::Handle {
+    d.add(space, Common::default(), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(a.0, a.1, 0.0), b: Vec3::new(b.0, b.1, 0.0) })).unwrap()
+}
+
+#[test]
+fn window_plot_builds_only_what_reaches_the_window() {
+    let mut d = Drawing::new_imperial();
+    let m = Space::Model;
+    let inside = add_line(&mut d, &m, (1.0, 1.0), (9.0, 2.0));
+    let far = add_line(&mut d, &m, (1000.0, 1000.0), (1010.0, 1003.0));
+    let straddling = add_line(&mut d, &m, (5.0, 5.0), (50.0, 7.0));
+    let xline = d
+        .add(&m, Common::default(), EntityKind::XLine(cadcraft_doc::RayLine { base: Vec3::new(500.0, 500.0, 0.0), dir: Vec3::new(1.0, 0.0, 0.0) }))
+        .unwrap();
+    let window = Bounds2::new(Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0));
+    let all = build_plot(&d, &m, &Options::default());
+    let windowed = build_plot(&d, &m, &Options { view: Some(window), ..Default::default() });
+    assert!(!handle_prims(&all, far).is_empty());
+    assert!(handle_prims(&windowed, far).is_empty(), "far line left out");
+    assert_eq!(handle_prims(&windowed, inside), handle_prims(&all, inside));
+    assert_eq!(handle_prims(&windowed, straddling), handle_prims(&all, straddling));
+    assert!(!handle_prims(&windowed, straddling).is_empty());
+    assert_eq!(handle_prims(&windowed, xline).is_empty(), handle_prims(&all, xline).is_empty(), "unbounded object kept");
+}
+
+#[test]
+fn window_cull_is_only_for_model_space_plots() {
+    let mut d = sample();
+    let far = add_line(&mut d, &Space::Model, (1000.0, 1000.0), (1010.0, 1003.0));
+    let window = Bounds2::new(Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0));
+    // A screen build with a view still builds every object.
+    assert!(!handle_prims(&build(&d, &Space::Model, &Options { view: Some(window), ..Default::default() }), far).is_empty());
+    // A layout plot ignores the view for culling.
+    let paper = Space::Paper("Layout1".into());
+    d.add(&paper, Common::default(), EntityKind::Viewport(vp(Vec2::new(5.0, 4.0), 4.0, 4.0, Vec2::new(5.0, 5.0), 8.0, 2))).unwrap();
+    let paper_far = add_line(&mut d, &paper, (300.0, 300.0), (310.0, 300.0));
+    let l = build_plot(&d, &paper, &Options { view: Some(window), ..Default::default() });
+    assert!(!handle_prims(&l, paper_far).is_empty());
+}
+
+fn wrapped_mtext(contents: &str, insert: Vec2, attach: u8) -> cadcraft_doc::MText {
+    cadcraft_doc::MText {
+        insert: Vec3::new(insert.x, insert.y, 0.0),
+        height: 1.0,
+        width: 6.0,
+        attach,
+        rotation: 0.0,
+        style: "Standard".into(),
+        contents: contents.into(),
+        line_spacing: 1.0,
+        line_spacing_exact: false,
+        columns: None,
+    }
+}
+
+const WORDS: &str = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu";
+
+#[test]
+fn mtext_bounds_take_every_wrapped_line() {
+    // At every attachment the measured box holds the laid-out block and every stroke drawn.
+    let d = Drawing::new_imperial();
+    for contents in [WORDS, r"one two\Pthree {\H2x;four five} six seven\P\Peight", r"{\H0.5;small words} wrap to the column width here"] {
+        for attach in 1..=9 {
+            let t = wrapped_mtext(contents, Vec2::new(3.0, -2.0), attach);
+            let laid = layout_mtext_entity(&d, &t);
+            let b = cadcraft_doc::entity_bounds(&d, &cadcraft_doc::Entity::new(cadcraft_doc::Handle(1), EntityKind::MText(t)), 0).expand(1e-9);
+            assert!(laid.lines.len() > 2, "{contents}: wraps");
+            assert!(b.contains(laid.bounds.min) && b.contains(laid.bounds.max), "{contents} attach {attach}: {b:?} vs block {:?}", laid.bounds);
+            assert!(laid.strokes.iter().flatten().all(|p| b.contains(*p)), "{contents} attach {attach}: a stroke outside {b:?}");
+        }
+    }
+}
+
+#[test]
+fn window_plot_keeps_wrapped_mtext_whose_lower_lines_reach_it() {
+    // The first line sits above the window; the lines it wraps onto come down into it.
+    let mut d = Drawing::new_imperial();
+    let m = Space::Model;
+    let t = d.add(&m, Common::default(), EntityKind::MText(wrapped_mtext(WORDS, Vec2::new(1.0, 14.0), 1))).unwrap();
+    let window = Bounds2::new(Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0));
+    let all = build_plot(&d, &m, &Options::default());
+    let windowed = build_plot(&d, &m, &Options { view: Some(window), ..Default::default() });
+    assert!(handle_prims(&all, t).iter().flatten().any(|p| window.contains(*p)), "the text reaches the window");
+    assert_eq!(handle_prims(&windowed, t), handle_prims(&all, t));
+}
+
+fn kinded_prims(l: &DisplayList, h: cadcraft_doc::Handle) -> Vec<(Kind, Vec<Vec2>)> {
+    l.prims.iter().filter(|p| p.handle == h).map(|p| (p.kind, l.verts[p.start as usize..(p.start + p.len) as usize].to_vec())).collect()
+}
+
+#[test]
+fn window_plot_measures_a_block_again_when_a_block_nested_in_it_changes() {
+    let line = |a: (f64, f64), b: (f64, f64)| {
+        block_entity(1, Common::default(), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(a.0, a.1, 0.0), b: Vec3::new(b.0, b.1, 0.0) }))
+    };
+    let inner = |a: (f64, f64), b: (f64, f64)| {
+        let mut blk = cadcraft_doc::Block::new("INNER");
+        blk.entities.push(line(a, b));
+        std::sync::Arc::new(blk)
+    };
+    let mut d = Drawing::new_imperial();
+    d.blocks.insert("INNER".into(), inner((500.0, 500.0), (510.0, 500.0)));
+    let mut outer = cadcraft_doc::Block::new("OUTER");
+    outer.entities.push(line((3.0, 3.0), (4.0, 4.0)));
+    outer.entities.push(block_entity(2, Common::default(), insert_of("INNER")));
+    d.blocks.insert("OUTER".into(), std::sync::Arc::new(outer));
+    let h = d.add(&Space::Model, Common::default(), insert_of("OUTER")).unwrap();
+    let opts = Options { view: Some(Bounds2::new(Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0))), ..Default::default() };
+    assert_eq!(kinded_prims(&build_plot(&d, &Space::Model, &opts), h).len(), 1, "INNER out of the window");
+    // INNER is redefined into the window; OUTER's definition is unchanged.
+    d.blocks.insert("INNER".into(), inner((1.0, 1.0), (2.0, 2.0)));
+    assert_eq!(kinded_prims(&build_plot(&d, &Space::Model, &opts), h).len(), 2, "INNER now reaches the window");
+}
+
+#[test]
+fn window_plot_builds_only_the_block_contents_that_reach_the_window() {
+    let line = |h: u64, a: (f64, f64), b: (f64, f64)| {
+        block_entity(h, Common::default(), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(a.0, a.1, 0.0), b: Vec3::new(b.0, b.1, 0.0) }))
+    };
+    let at = |block: &str, x: f64, y: f64| match insert_of(block) {
+        EntityKind::Insert(ins) => EntityKind::Insert(cadcraft_doc::Insert { insert: Vec3::new(x, y, 0.0), ..ins }),
+        k => k,
+    };
+    let mut d = Drawing::new_imperial();
+    let mut inner = cadcraft_doc::Block::new("INNER");
+    inner.entities.push(line(1, (1.0, 1.0), (2.0, 2.0)));
+    inner.entities.push(line(2, (500.0, 500.0), (510.0, 500.0)));
+    d.blocks.insert("INNER".into(), std::sync::Arc::new(inner));
+    let mut outer = cadcraft_doc::Block::new("OUTER");
+    outer.entities.push(line(3, (3.0, 3.0), (4.0, 4.0)));
+    outer.entities.push(line(4, (800.0, 0.0), (810.0, 0.0)));
+    outer.entities.push(block_entity(5, Common::default(), at("INNER", 0.0, 0.0)));
+    outer.entities.push(block_entity(6, Common::default(), at("INNER", 2000.0, 2000.0)));
+    outer.entities.push(block_entity(
+        7,
+        Common::default(),
+        EntityKind::XLine(cadcraft_doc::RayLine { base: Vec3::new(900.0, 900.0, 0.0), dir: Vec3::new(0.0, 1.0, 0.0) }),
+    ));
+    d.blocks.insert("OUTER".into(), std::sync::Arc::new(outer));
+    let m = Space::Model;
+    let reference = match at("OUTER", 0.5, 0.5) {
+        EntityKind::Insert(ins) => EntityKind::Insert(cadcraft_doc::Insert { rotation: 0.2, ..ins }),
+        k => k,
+    };
+    let h = d.add(&m, Common::default(), reference).unwrap();
+    let window = Bounds2::new(Vec2::new(0.0, 0.0), Vec2::new(10.0, 10.0));
+    let all = kinded_prims(&build_plot(&d, &m, &Options::default()), h);
+    let windowed = kinded_prims(&build_plot(&d, &m, &Options { view: Some(window), ..Default::default() }), h);
+    // Everything that reaches the window, the infinite line included, and nothing else.
+    let reaching: Vec<_> = all
+        .iter()
+        .filter(|(k, pts)| matches!(k, Kind::Infinite { .. }) || Bounds2::from_points(pts.iter().copied()).intersects(&window))
+        .cloned()
+        .collect();
+    assert_eq!(reaching.len(), 3, "two near lines and the infinite line");
+    assert_eq!(all.len(), 7);
+    assert_eq!(windowed, reaching);
+}
+
 /// #1434: a closed polyline with a global width narrower than a pixel loses whole sides at
 /// some zooms, while the same polyline with width 0 always shows every side.
 #[test]

@@ -420,7 +420,16 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
     let tolerance = if tol.is_finite() && tol > 0.0 { tol } else { ropts.tolerance };
     // Relative point sizes follow the plotted window (else the extents).
     let view_height = window.map(|w| w.height()).unwrap_or(0.0);
-    let list = cadcraft_render::build_plot(d, space, &cadcraft_render::Options { tolerance, view_height, ..ropts });
+    // A window plot builds only what reaches the part of the drawing that lands on the page.
+    let view = window.and_then(|w| {
+        let s = plot_scale(&w, &sheet, fit, o.scale);
+        if !(s.is_finite() && s > 0.0) {
+            return None;
+        }
+        let (from, to) = placement(space, &w, fit, &sheet, o);
+        Some(Bounds2::new(from + (sheet.printable.min - to) / s, from + (sheet.printable.max - to) / s))
+    });
+    let list = cadcraft_render::build_plot(d, space, &cadcraft_render::Options { tolerance, view_height, view, ..ropts });
     let b = window.unwrap_or(list.bounds);
     let s = plot_scale(&b, &sheet, fit, o.scale);
     let map = if fit || matches!(space, Space::Model) {
