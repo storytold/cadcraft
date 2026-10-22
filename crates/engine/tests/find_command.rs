@@ -64,6 +64,25 @@ fn find_without_replacement_selects_the_matches() {
     assert_eq!(s.selection().len(), 1, "the match is selected");
 }
 
+/// Regression: `Remove` at the replacement prompt is a replacement with empty text (not `Enter`,
+/// which only finds): FIND deletes the matching text. `Enter` still selects the matches only
+/// (`find_without_replacement_selects_the_matches`).
+#[test]
+fn find_remove_keyword_deletes_the_matching_text() {
+    let mut s = Session::new();
+    add_text(&mut s, [0.0, 0.0], "bolt");
+    add_text(&mut s, [0.0, 5.0], "pin");
+    s.cmdline("find").unwrap();
+    s.cmdline("bolt").unwrap();
+    assert!(s.prompt_text().contains("Remove"), "the empty replacement is offered: {}", s.prompt_text());
+    s.cmdline("remove").unwrap(); // Remove: replace with nothing.
+    assert!(s.prompt_text().contains("Search options"), "{}", s.prompt_text());
+    s.cmdline("").unwrap(); // <Done>
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(texts(&s), vec![String::new(), "pin".to_string()], "the match is deleted, not selected");
+    assert!(s.selection().is_empty(), "removing is not a find-only selection");
+}
+
 /// Regression: the JSON form still runs in one call, reports the match/replacement counts and
 /// messages, and honours `matchCase` (default off) without starting a prompt.
 #[test]
