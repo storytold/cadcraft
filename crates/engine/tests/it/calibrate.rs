@@ -19,10 +19,14 @@ fn ends(s: &Session, h: Handle) -> (Vec2, Vec2) {
     (l.a.xy(), l.b.xy())
 }
 
+/// Compare two points at the tolerance the CALIBRATE tests accept, so valid scaling arithmetic is
+/// compared without exact-float brittleness.
 fn near(a: Vec2, b: Vec2) -> bool {
     a.near(b, 1e-9)
 }
 
+/// The JSON form with no `apply` scales every object about `p1`, so the measured segment becomes
+/// exactly `length` and objects elsewhere move by the same factor.
 #[test]
 fn json_scales_everything_by_the_true_length() {
     let mut s = Session::new();
@@ -44,6 +48,8 @@ fn json_scales_everything_by_the_true_length() {
     assert!(near(b1, Vec2::new(2500.0, 0.0)) && near(b2, Vec2::new(2500.0, 1250.0)), "{b1:?} {b2:?}");
 }
 
+/// `apply: "selection"` scales only the named handles, and an explicit empty selection is an error
+/// that leaves the drawing untouched instead of silently falling back to the whole drawing.
 #[test]
 fn json_selection_leaves_other_objects_untouched() {
     let mut s = Session::new();
@@ -66,6 +72,8 @@ fn json_selection_leaves_other_objects_untouched() {
     assert_eq!(s.doc().unwrap().model.len(), model);
 }
 
+/// Naming handles without an `apply` target means the selection: the rest of the drawing is never
+/// scaled by accident.
 #[test]
 fn json_handles_default_to_the_selection() {
     let mut s = Session::new();
@@ -82,6 +90,9 @@ fn json_handles_default_to_the_selection() {
     assert!(near(b1, Vec2::new(10.0, 0.0)) && near(b2, Vec2::new(10.0, 5.0)), "untouched: {b1:?} {b2:?}");
 }
 
+/// Hostile inputs — coincident points, a distance that overflows from finite coordinates, zero,
+/// negative or textual lengths, a malformed point and an unknown target — each return a message and
+/// change nothing, guarding against division by zero and panics.
 #[test]
 fn json_refuses_degenerate_distances_and_bad_lengths() {
     let mut s = Session::new();
@@ -105,6 +116,9 @@ fn json_refuses_degenerate_distances_and_bad_lengths() {
     assert_eq!(ends(&s, a), before, "a refused calibration changes nothing");
 }
 
+/// The interactive sequence asks for the two points, rejects the same point twice with a clear
+/// message and asks again, then takes the true length and Enter at the target prompt to scale
+/// everything — the default a user gets without choosing.
 #[test]
 fn command_line_picks_two_points_the_length_and_everything() {
     let mut s = Session::new();
@@ -135,6 +149,8 @@ fn command_line_picks_two_points_the_length_and_everything() {
     assert!(near(b1, Vec2::new(2500.0, 0.0)) && near(b2, Vec2::new(2500.0, 1250.0)), "{b1:?} {b2:?}");
 }
 
+/// Choosing Selection at the last prompt applies the calibration to the objects already selected
+/// and leaves every other object exactly where it was.
 #[test]
 fn command_line_selection_scales_only_what_was_selected() {
     let mut s = Session::new();
@@ -152,6 +168,8 @@ fn command_line_selection_scales_only_what_was_selected() {
     assert!(near(b1, Vec2::new(2500.0, 0.0)) && near(b2, Vec2::new(2500.0, 1250.0)), "{b1:?} {b2:?}");
 }
 
+/// Choosing Selection with nothing preselected asks for objects, and an empty pick reports
+/// "Nothing selected" and ends without scaling anything.
 #[test]
 fn command_line_selection_with_nothing_selected_scales_nothing() {
     let mut s = Session::new();
@@ -168,6 +186,9 @@ fn command_line_selection_with_nothing_selected_scales_nothing() {
     assert_eq!(ends(&s, a), before);
 }
 
+/// Choosing Underlay while underlays are unsupported reports so clearly, keeps the command at the
+/// target prompt so another choice is possible, and changes nothing; Choosing Everything afterwards
+/// still completes the calibration.
 #[test]
 fn command_line_underlay_without_one_is_a_clear_refusal() {
     let mut s = Session::new();

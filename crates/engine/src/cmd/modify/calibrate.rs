@@ -17,6 +17,8 @@ enum CalibrateTo {
 }
 
 impl CalibrateTo {
+    /// Read the JSON `apply` target. When it is absent, named objects mean the selection and no
+    /// objects mean everything; an unknown or non-string value is an error.
     fn parse(p: &Value) -> Result<Self> {
         match p.get("apply") {
             // No target: objects given to scale mean the selection; else everything. Scaling the
@@ -31,6 +33,8 @@ impl CalibrateTo {
             Some(other) => Err(bad("calibrate", format!("`apply` must be a string, got {other}"))),
         }
     }
+    /// Map a typed or JSON name to a target, ignoring case and surrounding space, and accepting
+    /// the synonyms a user or script may reach for (`everything`, `pdf`, …).
     fn from_name(name: &str) -> Option<Self> {
         match name.trim().to_ascii_lowercase().as_str() {
             "all" | "everything" | "drawing" => Some(CalibrateTo::All),
@@ -39,6 +43,7 @@ impl CalibrateTo {
             _ => None,
         }
     }
+    /// The target's canonical name, as reported in CALIBRATE's JSON result.
     fn name(self) -> &'static str {
         match self {
             CalibrateTo::All => "all",
@@ -95,6 +100,8 @@ fn report_calibration(s: &mut Session, measured: f64, length: f64, factor: f64, 
     ));
 }
 
+/// CALIBRATE's JSON form: validate the points and true length, resolve what to scale, scale it
+/// about the first point and report the factor and the number of objects moved.
 pub(super) fn run_calibrate(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "calibrate";
     let p1 = point_req(cmd, p, "p1")?;
@@ -157,9 +164,12 @@ impl CalibrateM {
 }
 
 impl Interactive for CalibrateM {
+    /// The command name shown in the prompt bar while CALIBRATE runs.
     fn name(&self) -> &'static str {
         "CALIBRATE"
     }
+    /// Ask for the two points, then the true length, then the target; once object picking has
+    /// begun, defer to the selection prompt.
     fn prompt(&self, _s: &Session) -> Prompt {
         if let Some(sel) = &self.sel {
             return sel.prompt();
@@ -171,6 +181,8 @@ impl Interactive for CalibrateM {
             (_, Some(_)) => Prompt::new("Apply the scale to", Accept::TEXT).kw(&["Everything", "Selection", "Underlay"]).default("Everything"),
         }
     }
+    /// Feed one input into the calibration: pick a point, validate the typed length, choose the
+    /// target, then scale; Enter at any prompt ends the command without changing the drawing.
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         if let Some(sel) = &mut self.sel {
             return match sel.feed(s, &i)? {
@@ -242,6 +254,8 @@ impl Interactive for CalibrateM {
             CalibrateTo::Underlay => Err(no_underlay()),
         }
     }
+    /// Rubber-band the first calibration point to the cursor while the second point is picked;
+    /// after that the target is chosen, so nothing is previewed.
     fn preview(&self, _s: &Session, c: Vec2) -> Vec<EntityKind> {
         match (self.pts.as_slice(), &self.sel) {
             ([a], None) => vec![line(*a, c)],
