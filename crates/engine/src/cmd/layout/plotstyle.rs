@@ -21,7 +21,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("stylesmanager", "Plot Style Manager...", run_stylesmanager)
             .menu(&["File", "Plot Styles..."])
             .params(
-                "{action?: list (default)|get|new|set|delete|load|save, name?: table (\"x.ctb\"/\"x.stb\"), kind?: colorDependent|named (new), from?: table to copy (new), description?, style?: {name, color?: \"#rrggbb\"|null, grayscale?, screening?: 0-100, linetype?: name|null, lineweight?: mm|null, end?, join?, fill?, description?} (set), removeStyle?: name (set, named tables), path? (load/save; save without one returns `text`), text? (load)}",
+                "{action?: list (default)|get|new|set|delete|load|save, name?: table (\"x.ctb\"/\"x.stb\"), kind?: colorDependent|named (new), from?: table to copy (new), description?, style?: {name, color?: \"#rrggbb\"|null, grayscale?, screening?: 0-100, linetype?: name|null, lineweight?: mm|null, end?, join?, fill?, description?} (set), removeStyle?: name (set, named tables), path? (load/save; save without one returns `text`; load reads CADCraft JSON — binary AutoCAD .ctb/.stb/.pc3/.pmp files are not read, see docs/plot-styles.md), text? (load)}",
             ),
     ]
 }
@@ -187,6 +187,51 @@ fn edit_style(cmd: &str, st: &mut PlotStyle, v: &Value) -> Result<()> {
     Ok(())
 }
 
+/// The docs a user needs to move a vendor's plot style table over by hand. The error below names
+/// them; `crates/engine/tests/plot_styles.rs` checks that they exist.
+const PLOT_STYLE_DOCS: &str = "docs/plot-styles.md";
+/// The customization overview, which lists plot styles among the supported formats.
+const CUSTOMIZATION_DOCS: &str = "docs/customization.md";
+/// The plotter docs, for `.pc3` and `.pmp`.
+const PLOTTER_DOCS: &str = "docs/plotters.md";
+
+/// AutoCAD's binary formats CADCraft can't read: plot style tables (`.ctb`, `.stb`) and plotter
+/// configurations (`.pc3`, `.pmp`). They have no public specification, and CADCraft is
+/// clean-room: it never reverse-engineers vendor data.
+#[cfg(not(target_arch = "wasm32"))]
+fn vendor_binary_extension(path: &str) -> Option<&'static str> {
+    let ext = std::path::Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
+    match ext.as_str() {
+        "ctb" => Some("ctb"),
+        "stb" => Some("stb"),
+        "pc3" => Some("pc3"),
+        "pmp" => Some("pmp"),
+        _ => None,
+    }
+}
+
+/// The actionable error for a vendor binary file: the limit, why, and the supported migration.
+fn vendor_binary_error(cmd: &str, path: &str, ext: &str) -> crate::EngineError {
+    let what = match ext {
+        "ctb" | "stb" => "plot style table",
+        _ => "plotter configuration",
+    };
+    let mut msg = format!(
+        "`{path}` is an AutoCAD binary .{ext} {what}. CADCraft can't read .ctb/.stb/.pc3/.pmp files: the formats have no public specification and CADCraft is clean-room, so it doesn't reverse-engineer vendor data.",
+    );
+    if ext == "ctb" || ext == "stb" {
+        msg.push_str(&format!(
+            " Recreate or convert the table in CADCraft's JSON plot style format and load that instead: the migration checklist and a complete example are in {PLOT_STYLE_DOCS}, and the supported route is in {CUSTOMIZATION_DOCS}.",
+        ));
+    } else {
+        msg.push_str(&format!(
+            " A .{ext} is a plotter configuration, not a plot style table: recreate the device and its papers in CADCraft's plotter JSON format ({PLOTTER_DOCS}). The plot style limit and the table migration path are in {PLOT_STYLE_DOCS} and {CUSTOMIZATION_DOCS}.",
+        ));
+    }
+    msg.push_str(" The drawing was left unchanged.");
+    bad(cmd, msg)
+}
+
 fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "stylesmanager";
     let action = str_param(p, "action").unwrap_or("list").to_ascii_lowercase();
@@ -298,8 +343,8 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
             Ok(json!({ "deleted": name }))
         }
         "load" => {
-            let text = match (str_param(p, "text"), str_param(p, "path")) {
-                (Some(t), _) => t.to_string(),
+            let (text, vendor) = match (str_param(p, "text"), str_param(p, "path")) {
+                (Some(t), _) => (t.to_string(), None),
                 (None, Some(_path)) => {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
@@ -307,14 +352,34 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
                         if meta.len() > cadcraft_doc::MAX_TABLE_FILE as u64 {
                             return Err(bad(cmd, format!("{_path}: the plot style table file is too large")));
                         }
-                        std::fs::read_to_string(_path).map_err(|e| bad(cmd, format!("{_path}: {e}")))?
+                        let bytes = std::fs::read(_path).map_err(|e| bad(cmd, format!("{_path}: {e}")))?;
+                        let vendor = vendor_binary_extension(_path).map(|ext| (_path, ext));
+                        match String::from_utf8(bytes) {
+                            Ok(text) => (text, vendor),
+                            Err(_) => {
+                                return Err(match vendor {
+                                    Some((path, ext)) => vendor_binary_error(cmd, path, ext),
+                                    None => bad(cmd, format!("{_path}: the plot style table file is not UTF-8 text")),
+                                });
+                            }
+                        }
                     }
                     #[cfg(target_arch = "wasm32")]
                     return Err(bad(cmd, "files can't be read here: pass `text`"));
                 }
                 (None, None) => return Err(bad(cmd, "`path` or `text` is required")),
             };
-            let mut t = PlotStyleTable::from_file_text(&text).map_err(|e| bad(cmd, e))?;
+            let mut t = match PlotStyleTable::from_file_text(&text) {
+                Ok(t) => t,
+                Err(e) => {
+                    // A file with our marker is ours: report its problem as it is, even when its
+                    // name ends in `.ctb`.
+                    return Err(match vendor {
+                        Some((path, ext)) if !text.contains(cadcraft_doc::TABLE_FILE_MARKER) => vendor_binary_error(cmd, path, ext),
+                        _ => bad(cmd, e),
+                    });
+                }
+            };
             if let Some(n) = str_param(p, "name").map(str::trim).filter(|n| !n.is_empty()) {
                 t.name = n.chars().take(255).collect();
             }

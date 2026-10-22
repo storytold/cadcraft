@@ -117,7 +117,92 @@ Reading fixes hostile values:
 - A named table gets unique style names (at most 1024), with `Normal` first.
 - Files over 4 MB are refused.
 
-Binary `.ctb`/`.stb` files are not read. We haven't found a public specification of that format.
+## Importing AutoCAD `.ctb`/`.stb`/`.pc3` files
+
+**CADCraft does not read AutoCAD's binary plot style tables (`.ctb`, `.stb`) or plotter
+configurations (`.pc3`, `.pmp`).** Those formats have no public specification, and CADCraft is
+clean-room: it does not reverse-engineer vendor files, use code that did, or ship vendor data.
+`STYLESMANAGER load` on one of them says so and names this page; it never guesses at the file and
+never changes the drawing.
+
+The supported route is to recreate the table once in CADCraft's documented JSON format and load
+that. Nothing is read from the vendor file, so you only need the settings that the source
+application's plot style table editor shows.
+
+### Migration checklist
+
+1. **Read the settings in the source application.** Open the CTB or STB in its plot style table
+   editor. For each colour (CTB) or named style (STB), note the output colour, screening,
+   lineweight, linetype, grayscale and, if used, the line end, join and fill.
+2. **Choose the kind.** A colour-dependent table (from a CTB) is `"kind": "colorDependent"`. A
+   named table (from an STB) is `"kind": "named"`.
+3. **Map the names.** In a colour-dependent table the styles are `Color_1` … `Color_255`, one per
+   AutoCAD Color Index (ACI) colour. List only the colours that differ from the object's
+   properties: loading fills the rest with "use the object's". In a named table the style names
+   must match the `PlotStyle` names the layers and objects use; `Normal` is always there.
+4. **Convert the numbers.** In the file, `lineweight` is hundredths of a millimetre (`0.35` mm is
+   `35`), `screening` is 0–100, and `color` is `"#rrggbb"`.
+5. **Load it.** `stylesmanager {"action": "load", "path": "office.ctb.json"}` (or Load in
+   **File ▸ Plot Styles...**).
+6. **Assign and check it.** `pagesetup {layout, plotStyleTable}` (or Page Setup), then Plot
+   Preview or plot a one-sheet test to PDF.
+7. **Keep the file.** It is an ordinary file; keep it with your templates. A user plot style
+   library that shares one table across drawings is the follow-up in #1901.
+
+### A CTB template
+
+This is **CADCraft's** format, not a CTB. A binary `.ctb` is never read; the marker
+`cadcraftPlotStyleTable` is what tells CADCraft the file is its own.
+
+```json
+{
+  "cadcraftPlotStyleTable": 1,
+  "name": "office-monochrome.ctb",
+  "description": "Converted from the office plot style table",
+  "kind": "colorDependent",
+  "styles": [
+    { "name": "Color_1", "color": "#000000", "screening": 100, "lineweight": 35, "linetype": "Continuous", "end": "round", "join": "round", "fill": "solid" },
+    { "name": "Color_2", "color": "#000000", "screening": 80, "lineweight": 25 },
+    { "name": "Color_3", "grayscale": true, "lineweight": 18 },
+    { "name": "Color_7", "color": "#000000" },
+    { "name": "Color_250", "color": "#808080", "screening": 60, "lineweight": 13 }
+  ]
+}
+```
+
+- `Color_1` … `Color_255` map to ACI colours 1–255 (colour 0 is ByBlock and 256 is ByLayer, so
+  neither has a style): 1 red, 2 yellow, 3 green, 4 cyan, 5 blue, 6 magenta, 7 white (prints
+  black), 8 and 9 greys, 10–249 the rest of the palette, 250–255 greys. Colours not listed keep
+  the object's properties.
+- In a style, every field except `name` may be left out. A missing field means "use the
+  object's", which is `screening` 100, `lineweight` and `linetype` from the object, and
+  `end`/`join`/`fill` `object`.
+- `end` is `object`, `butt`, `square`, `round` or `diamond`; `join` is `object`, `miter`,
+  `bevel`, `round` or `diamond`; `fill` is `object`, `solid`, `checkerboard`, `crosshatch`,
+  `diamonds`, `horizontalBars`, `slantLeft`, `slantRight`, `squareDots` or `verticalBars`.
+- A colour-dependent table always ends up with 255 styles named `Color_n`, including the ones
+  you don't list.
+
+A named table (from an STB) uses the same file with `"kind": "named"`; name the styles as the
+drawing does:
+
+```json
+{
+  "cadcraftPlotStyleTable": 1,
+  "name": "office.stb",
+  "description": "Converted from the office named plot style table",
+  "kind": "named",
+  "styles": [
+    { "name": "Normal" },
+    { "name": "Pen 1", "color": "#000000", "lineweight": 35, "end": "round", "join": "round" },
+    { "name": "Pen 2", "color": "#000000", "screening": 50, "lineweight": 25 }
+  ]
+}
+```
+
+A `.pc3` is a plotter configuration, not a plot style table. CADCraft doesn't read those either;
+recreate the device and its papers in CADCraft's plotter JSON format instead
+([plotters.md](plotters.md)).
 
 ## In DXF files
 
