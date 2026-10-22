@@ -77,19 +77,23 @@ TARGET="$WORKROOT/target-<N>"
 LOCK="$WORKROOT/cargo.lock"
 waited=0
 while ! mkdir "$LOCK" 2>/dev/null; do
-  if [ -d "$LOCK" ] && [ -z "$(find "$LOCK" -maxdepth 0 -mmin -120 2>/dev/null)" ]; then
-    rmdir "$LOCK" 2>/dev/null || true
+  owner="$(cat "$LOCK/pid" 2>/dev/null || true)"
+  # Reclaim only when the recorded holder is definitely gone. Never reclaim
+  # because the lock is old: a long Cargo run must keep it until it exits.
+  if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
+    rm -rf "$LOCK" 2>/dev/null || true
     continue
   fi
   waited=$((waited+1))
   if [ "$waited" -gt 240 ]; then
-    echo "timed out waiting for the shared cargo lock" >&2
+    echo "timed out waiting for the shared cargo lock (holder pid ${owner:-unknown})" >&2
     exit 1
   fi
   echo "another agent is building or testing; waiting 30s..." >&2
   sleep 30
 done
-trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT INT TERM
+echo "$$" > "$LOCK/pid"
+trap 'rm -rf "$LOCK" 2>/dev/null || true' EXIT INT TERM
 export CARGO_TARGET_DIR="$TARGET"
 export CARGO_INCREMENTAL=0
 export CARGO_PROFILE_DEV_DEBUG=0
@@ -120,7 +124,7 @@ PROCESS
 3. Find the exact cause and make the smallest in-style fix. No new dependencies. No unwrap/expect/panic in non-test code. If the fix belongs upstream or cannot be verified here, stop and report instead of guessing.
 4. Use ONLY <WRAPPER> for every cargo command, for example:
      <WRAPPER> test -p <crate> --test <file>
-   It waits in 30-second steps for the shared build/test lock (waits of 10–30 minutes are normal; do not kill it), sets a private CARGO_TARGET_DIR with debuginfo/incremental off, and cd's into your worktree. Never run cargo directly. Run targeted tests plus `cargo fmt --all -- --check`; do NOT run the whole workspace or `cargo xtask ci`.
+   It waits in 30-second steps for the shared build/test lock (waits of 10–30 minutes are normal; do not kill it), sets a private CARGO_TARGET_DIR with debuginfo/incremental off, and cd's into your worktree. Never run cargo directly. Use targeted tests while iterating. Before committing, run the repository's required quality gate `cargo xtask ci` through the same wrapper (it is intentionally serialized and may take a while); fix failures or stop and report. Never commit with a failing gate.
 5. IMMEDIATELY after the final test run: rm -rf <TARGET>. Rebuild through the wrapper if you need to test again later.
 6. Commit only your files on your branch. Do not modify contributors/people.toml or contributors.json. Do not switch branches.
 7. Push and open the PR:
@@ -170,8 +174,8 @@ You will be notified as each background agent finishes. Do not poll or ask for s
 After all PRs from the run are open, check each one:
 
 ```sh
-gh api repos/storytold/cadcraft/issues/<PR>/comments \
-  --jq '[.[] | select(.user.login|test("coderabbit";"i"))] | last | .body'
+gh api --paginate repos/storytold/cadcraft/issues/<PR>/comments \
+  | jq -s '[.[][] | select(.user.login|test("coderabbit";"i"))] | last | .body'
 ```
 
 Parse `Docstring coverage is X%`. If it is below 80%, or if the PR has no CodeRabbit review yet but the diff adds undocumented functions, launch a docstring-only subagent for that PR on its existing worktree/branch. Use this prompt:
@@ -191,7 +195,7 @@ TASK
 3. Comments only: no code, assertions or Cargo changes.
 
 VERIFY / SHIP
-- Use ONLY <WRAPPER> for cargo. Run `cargo fmt --all -- --check` and a targeted `cargo check -p <crate> --tests`. Do not run the full suite or `cargo xtask ci`.
+- Use ONLY <WRAPPER> for cargo. Run `cargo fmt --all -- --check` and the repository's required quality gate `cargo xtask ci` before committing; comments-only changes still go through the gate. Fix failures or stop and report; never commit with a failing gate.
 - Immediately after the final check: rm -rf <TARGET>.
 - Commit only the docstring changes: `docs: document the functions touched by #<N>`; then `git push fork <BRANCH>` (updates the existing PR; do not open a new one).
 - Report: commit hash, functions documented, fmt/check results.
