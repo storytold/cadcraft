@@ -62,8 +62,12 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("dimstyle", "Dimension Style...", run_dimstyle)
             .menu(&["Format", "Dimension Style..."])
             .alias(&["d", "dst", "ddim"])
-            .params("{name, current?, <style fields or DIM* variables, e.g. arrowSize / DIMASZ, DIMTSZ, DIMBLK, DIMTAD, DIMLUNIT…>} → styles"),
-        CommandSpec::new("dimstyle.dimension", "Dimension Style...", run_dimstyle).menu(&["Dimension", "Dimension Style..."]).params("same as `dimstyle`"),
+            .params("{name, current?, <style fields or DIM* variables, e.g. arrowSize / DIMASZ, DIMTSZ, DIMBLK, DIMTAD, DIMLUNIT…>} → styles")
+            .interactive(|_| Ok(Box::new(DimstyleM))),
+        CommandSpec::new("dimstyle.dimension", "Dimension Style...", run_dimstyle)
+            .menu(&["Dimension", "Dimension Style..."])
+            .params("same as `dimstyle`")
+            .interactive(|_| Ok(Box::new(DimstyleM))),
         CommandSpec::new("dimstyle.list", "List Dimension Styles", run_dimstyle_list).params("{name?} → styles (with all variables for `name`)").noundo(),
         CommandSpec::new("dimstyle.rename", "Rename Dimension Style", run_dimstyle_rename).params("{from, to}"),
         CommandSpec::new("dimstyle.delete", "Delete Dimension Style", run_dimstyle_delete).params("{name} (not Standard, the current style or one in use)"),
@@ -900,6 +904,54 @@ fn run_dimstyle(s: &mut Session, p: &Value) -> Result<Value> {
         o.insert("ignored".into(), json!(rejected));
     }
     Ok(out)
+}
+
+/// DIMSTYLE at the command line: `?` lists the styles, a name makes that style current.
+/// (The Dimension Style Manager dialog is not implemented yet.)
+struct DimstyleM;
+
+impl Interactive for DimstyleM {
+    fn name(&self) -> &'static str {
+        "DIMSTYLE"
+    }
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        let cur = s.doc()?.header.str("DIMSTYLE", "Standard");
+        s.echo(format!("Current dimension style: {cur}"));
+        Ok(Step::Continue)
+    }
+    fn prompt(&self, s: &Session) -> Prompt {
+        let cur = s.doc().map(|d| d.header.str("DIMSTYLE", "Standard")).unwrap_or_else(|_| "Standard".to_string());
+        Prompt::new("Enter dimension style name", Accept::TEXT).kw(&["?"]).default(cur)
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        match i {
+            Input::Enter | Input::Cancel => Ok(Step::Done),
+            Input::Keyword(k) if k == "?" => {
+                let r = run_dimstyle_list(s, &Value::Null)?;
+                let names = r["styles"].as_array().map(|a| a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")).unwrap_or_default();
+                s.echo(format!("Dimension styles: {names}"));
+                Ok(Step::Continue)
+            }
+            Input::Text(t) => {
+                let name = t.trim();
+                if name.is_empty() {
+                    return Ok(Step::Done);
+                }
+                match run_dimstyle_current(s, &json!({ "name": name })) {
+                    Ok(r) => {
+                        let cur = r["current"].as_str().unwrap_or(name).to_string();
+                        s.echo(format!("Current dimension style: {cur}"));
+                        Ok(Step::Done)
+                    }
+                    Err(e) => {
+                        s.echo(e.to_string());
+                        Ok(Step::Continue)
+                    }
+                }
+            }
+            _ => Ok(Step::Continue),
+        }
+    }
 }
 
 fn run_dimstyle_list(s: &mut Session, p: &Value) -> Result<Value> {

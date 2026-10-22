@@ -26,7 +26,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{mode: point|distance|angle|intersection, points: [[x,y],...]} → {value} | {point}")
             .noundo()
             .interactive(|_| Ok(Box::<PickM>::default())),
-        CommandSpec::new("find", "Find...", run_find).menu(&["Edit", "Find..."]).params("{find, replace?, matchCase?: bool, wholeWord?: bool}"),
+        CommandSpec::new("find", "Find...", run_find)
+            .menu(&["Edit", "Find..."])
+            .params("{find, replace?, matchCase?: bool, wholeWord?: bool}")
+            .interactive(|_| Ok(Box::<FindM>::default())),
         CommandSpec::new("measuregeom", "Measure Geometry", run_measuregeom)
             .params("{mode: distance|radius|angle|area|volume, ...}")
             .noundo()
@@ -287,6 +290,96 @@ fn run_find(s: &mut Session, p: &Value) -> Result<Value> {
     let msg =
         if rep.is_some() { format!("{total} replacement(s) in {n} object(s)") } else { format!("{total} match(es) in {} object(s)", found.len()) };
     Ok(json!({ "matches": found, "total": total, "message": msg }))
+}
+
+/// What FIND asks next.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum FindStage {
+    #[default]
+    Find,
+    Replace,
+    Options,
+}
+
+/// FIND at the command line: the search text, the replacement (Enter for none), then the same
+/// options the Find and Replace dialog offers (Match case, Whole word).
+#[derive(Default)]
+struct FindM {
+    find: String,
+    replace: Option<String>,
+    match_case: bool,
+    whole_word: bool,
+    stage: FindStage,
+}
+
+fn on_off(b: bool) -> &'static str {
+    if b { "on" } else { "off" }
+}
+
+impl FindM {
+    fn search(&self, s: &mut Session) -> Result<Step> {
+        let r = run_find(s, &json!({ "find": self.find, "replace": self.replace, "matchCase": self.match_case, "wholeWord": self.whole_word }))?;
+        if let Some(m) = r.get("message").and_then(Value::as_str) {
+            s.echo(m.to_string());
+        }
+        Ok(Step::Done)
+    }
+}
+
+impl Interactive for FindM {
+    fn name(&self) -> &'static str {
+        "FIND"
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        match self.stage {
+            FindStage::Find => Prompt::new("Find what", Accept::TEXT),
+            FindStage::Replace => Prompt::new("Replace with (Enter to only find)", Accept::TEXT),
+            FindStage::Options => Prompt::new("Search options", Accept::TEXT).kw(&["Match case", "Whole word", "Done"]).default("Done"),
+        }
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        match self.stage {
+            FindStage::Find => match i {
+                Input::Text(t) if !t.trim().is_empty() => {
+                    self.find = t;
+                    self.stage = FindStage::Replace;
+                    Ok(Step::Continue)
+                }
+                Input::Text(_) | Input::Enter | Input::Cancel => Ok(Step::Done),
+                _ => Ok(Step::Continue),
+            },
+            FindStage::Replace => match i {
+                Input::Text(t) => {
+                    self.replace = Some(t).filter(|t| !t.is_empty());
+                    self.stage = FindStage::Options;
+                    Ok(Step::Continue)
+                }
+                Input::Enter => {
+                    self.replace = None;
+                    self.stage = FindStage::Options;
+                    Ok(Step::Continue)
+                }
+                Input::Cancel => Ok(Step::Done),
+                _ => Ok(Step::Continue),
+            },
+            FindStage::Options => match i {
+                Input::Keyword(k) if k == "Match case" => {
+                    self.match_case = !self.match_case;
+                    s.echo(format!("Match case: {}", on_off(self.match_case)));
+                    Ok(Step::Continue)
+                }
+                Input::Keyword(k) if k == "Whole word" => {
+                    self.whole_word = !self.whole_word;
+                    s.echo(format!("Whole word: {}", on_off(self.whole_word)));
+                    Ok(Step::Continue)
+                }
+                Input::Keyword(k) if k == "Done" => self.search(s),
+                Input::Enter => self.search(s),
+                Input::Cancel => Ok(Step::Done),
+                _ => Ok(Step::Continue),
+            },
+        }
+    }
 }
 
 // ---------------- MEASUREGEOM ----------------

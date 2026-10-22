@@ -283,4 +283,23 @@ fn a_new_dimension_reports_its_text_position() {
         assert!(dm.text_mid.xy().dist(Vec2::ZERO) > 1.0, "still at the origin: {:?}", dm.text_mid);
     }
     assert!((dim_of(&s, &horizontal).0.text_mid.x - 50.0).abs() < 1e-9);
+
+#[test]
+fn dimstyle_from_the_command_line_prompts_and_sets_the_current_style() {
+    let mut s = Session::new();
+    s.execute("dimstyle", &json!({ "name": "Arch", "DIMTXT": 2.5 })).unwrap();
+    s.execute("dimstyle.current", &json!({ "name": "Standard" })).unwrap();
+    s.cmdline("dimstyle").unwrap();
+    assert!(s.running.is_some(), "DIMSTYLE should prompt, not run with no parameters");
+    assert!(s.prompt_text().contains("dimension style name"), "{}", s.prompt_text());
+    s.cmdline("Arch").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(s.doc().unwrap().header.str("DIMSTYLE", "Standard"), "Arch");
+    // An unknown name is refused and the prompt stays.
+    s.cmdline("dimstyle").unwrap();
+    s.cmdline("Nope").unwrap();
+    assert!(s.running.is_some(), "{}", s.prompt_text());
+    assert!(s.log.iter().any(|l| l.contains("no dimension style `Nope`")), "{:?}", s.log);
+    s.cmdline("").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
 }
