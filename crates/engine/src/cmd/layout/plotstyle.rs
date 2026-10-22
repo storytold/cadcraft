@@ -114,8 +114,11 @@ fn table_summary(d: &Drawing, t: &PlotStyleTable) -> Value {
 }
 
 /// Whether `library` asks for the user library instead of the drawing.
-fn to_library(p: &Value) -> bool {
-    p.get("library").and_then(Value::as_bool).unwrap_or(false)
+fn to_library(cmd: &str, p: &Value) -> Result<bool> {
+    match p.get("library") {
+        None | Some(Value::Null) => Ok(false),
+        Some(v) => v.as_bool().ok_or_else(|| bad(cmd, "`library` must be true or false")),
+    }
 }
 
 fn table_name(cmd: &str, p: &Value) -> Result<String> {
@@ -304,7 +307,7 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
         }
         "delete" => {
             let name = table_name(cmd, p)?;
-            if to_library(p) {
+            if to_library(cmd, p)? {
                 plotstyle_library::delete_table(&name).map_err(|e| bad(cmd, e))?;
                 return Ok(json!({ "deleted": name, "library": true }));
             }
@@ -343,7 +346,7 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
             if t.name.is_empty() {
                 return Err(bad(cmd, "the table has no name: pass `name`"));
             }
-            if to_library(p) {
+            if to_library(cmd, p)? {
                 let file = plotstyle_library::save_table(&t).map_err(|e| bad(cmd, e))?;
                 let mut out = table_summary(s.doc()?, &t);
                 if let Some(o) = out.as_object_mut() {
@@ -361,7 +364,7 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
         "save" => {
             let name = table_name(cmd, p)?;
             let t = find_table(cmd, s.doc()?, &name)?;
-            if to_library(p) {
+            if to_library(cmd, p)? {
                 if let Some(path) = str_param(p, "path") {
                     return Err(bad(cmd, format!("pass either `path` ({path}) or `library`, not both")));
                 }

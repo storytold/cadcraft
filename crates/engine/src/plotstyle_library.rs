@@ -88,32 +88,58 @@ impl PlotStyleStore {
         }
     }
 
-    fn list(&self) -> Result<Vec<String>, String> {
+    fn list(&self) -> Result<(Vec<String>, Vec<String>), String> {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
             PlotStyleStore::Folder(dir) => {
                 let entries = match std::fs::read_dir(dir) {
                     Ok(entries) => entries,
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((Vec::new(), Vec::new())),
                     Err(e) => return Err(format!("{}: {e}", dir.display())),
                 };
-                let mut names: Vec<String> = entries
-                    .filter_map(|e| e.ok())
-                    .filter(|e| e.file_type().ok().is_some_and(|t| t.is_file()))
-                    .filter_map(|e| e.file_name().into_string().ok())
-                    .filter(|n| is_library_file(n))
-                    .collect();
+                let mut names: Vec<String> = Vec::new();
+                let mut warnings: Vec<String> = Vec::new();
+                for entry in entries {
+                    let entry = match entry {
+                        Ok(entry) => entry,
+                        Err(e) => {
+                            warnings.push(format!("{}: {e}", dir.display()));
+                            continue;
+                        }
+                    };
+                    let file_type = match entry.file_type() {
+                        Ok(file_type) => file_type,
+                        Err(e) => {
+                            warnings.push(format!("{}: {e}", entry.path().display()));
+                            continue;
+                        }
+                    };
+                    // Folders and symlinks are not library files, so they are not worth a warning.
+                    if !file_type.is_file() {
+                        continue;
+                    }
+                    let name = match entry.file_name().into_string() {
+                        Ok(name) => name,
+                        Err(name) => {
+                            warnings.push(format!("{name:?}: the file name is not valid UTF-8"));
+                            continue;
+                        }
+                    };
+                    if is_library_file(&name) {
+                        names.push(name);
+                    }
+                }
                 names.sort();
                 names.truncate(MAX_LIBRARY_FILES);
-                Ok(names)
+                Ok((names, warnings))
             }
             PlotStyleStore::Memory => {
                 let mut names: Vec<String> = memory()?.iter().map(|(n, _)| n.clone()).filter(|n| is_library_file(n)).collect();
                 names.sort();
                 names.truncate(MAX_LIBRARY_FILES);
-                Ok(names)
+                Ok((names, Vec::new()))
             }
-            PlotStyleStore::Unavailable => Ok(Vec::new()),
+            PlotStyleStore::Unavailable => Ok((Vec::new(), Vec::new())),
         }
     }
 
@@ -205,7 +231,7 @@ fn loaded() -> &'static OnceLock<()> {
 /// [`cadcraft_doc`]. Returns the library as installed.
 pub fn reload_plot_style_library() -> Arc<PlotStyleLibrary> {
     let store = store();
-    let files = match store.list() {
+    let (files, mut warnings) = match store.list() {
         Ok(files) => files,
         Err(e) => {
             let lib = PlotStyleLibrary::new(Vec::new(), vec![format!("the plot style library: {e}")]);
@@ -214,7 +240,6 @@ pub fn reload_plot_style_library() -> Arc<PlotStyleLibrary> {
         }
     };
     let mut tables = Vec::new();
-    let mut warnings = Vec::new();
     for file in files.iter().take(MAX_LIBRARY_FILES) {
         let text = match store.read(file) {
             Ok(text) => text,
@@ -273,8 +298,17 @@ pub fn save_table(table: &PlotStyleTable) -> Result<String, String> {
 
 /// Delete the library table `name` (the drawing's own tables are untouched).
 pub fn delete_table(name: &str) -> Result<(), String> {
-    let file = cadcraft_doc::plot_style_file_name(name).ok_or_else(|| "the plot style table has no name".to_string())?;
-    store().delete(&file)?;
+    let requested = cadcraft_doc::plot_style_file_name(name).ok_or_else(|| "the plot style table has no name".to_string())?;
+    let store = store();
+    let (files, _) = store.list()?;
+    // The table name is case-insensitive, so the file it was saved as may differ in case.
+    let file = files
+        .iter()
+        .find(|file| file.as_str() == requested.as_str())
+        .or_else(|| files.iter().find(|file| file.eq_ignore_ascii_case(&requested)))
+        .ok_or_else(|| format!("{requested}: no such file"))?
+        .clone();
+    store.delete(&file)?;
     reload_plot_style_library();
     Ok(())
 }
@@ -301,8 +335,8 @@ mod tests {
         let text = table.to_file_text();
         store.write("default.stb.json", &text).unwrap();
         assert_eq!(store.read("default.stb.json").unwrap(), text);
-        assert!(store.list().unwrap().contains(&"default.stb.json".to_string()));
+        assert!(store.list().unwrap().0.contains(&"default.stb.json".to_string()));
         store.delete("default.stb.json").unwrap();
-        assert!(store.list().unwrap().is_empty());
+        assert!(store.list().unwrap().0.is_empty());
     }
 }

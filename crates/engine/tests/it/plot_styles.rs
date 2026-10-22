@@ -3,8 +3,15 @@
 use cadcraft_engine::Session;
 use serde_json::json;
 
+/// The plot style library is process-wide, so tests that read or replace it run one at a time.
+fn lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(())).lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[test]
 fn pagesetup_sets_table_and_display_flag() {
+    let _lock = lock();
     let mut s = Session::new();
     let r = s.execute("pagesetup", &json!({"layout": "Layout1", "plotStyleTable": "monochrome.ctb", "displayPlotStyles": true})).unwrap();
     assert_eq!(r["page"]["plotStyleTable"], "monochrome.ctb");
@@ -21,6 +28,7 @@ fn pagesetup_sets_table_and_display_flag() {
 
 #[test]
 fn plotstyle_sets_objects_and_the_current_style() {
+    let _lock = lock();
     let mut s = Session::new();
     s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
     let handle = s.doc().unwrap().model.last().unwrap().handle;
@@ -49,6 +57,7 @@ fn plotstyle_sets_objects_and_the_current_style() {
 
 #[test]
 fn stylesmanager_creates_edits_saves_and_loads_tables() {
+    let _lock = lock();
     let mut s = Session::new();
     let list = s.execute("stylesmanager", &json!({})).unwrap();
     let names: Vec<&str> = list["tables"].as_array().unwrap().iter().filter_map(|t| t["name"].as_str()).collect();
@@ -105,19 +114,40 @@ fn stylesmanager_creates_edits_saves_and_loads_tables() {
     s.execute("undo", &json!({})).unwrap();
 }
 
+#[test]
+fn stylesmanager_requires_a_boolean_library_flag() {
+    let _lock = lock();
+    let mut s = Session::new();
+    s.execute("stylesmanager", &json!({"action": "new", "name": "office", "kind": "named"})).unwrap();
+    let text = s.execute("stylesmanager", &json!({"action": "save", "name": "office.stb"})).unwrap()["text"].as_str().unwrap().to_string();
+    for bad in [json!("yes"), json!(1), json!({})] {
+        assert!(s.execute("stylesmanager", &json!({"action": "save", "name": "office.stb", "library": bad.clone()})).is_err(), "save accepted {bad}");
+        assert!(
+            s.execute("stylesmanager", &json!({"action": "delete", "name": "office.stb", "library": bad.clone()})).is_err(),
+            "delete accepted {bad}"
+        );
+        assert!(
+            s.execute("stylesmanager", &json!({"action": "load", "text": text.clone(), "library": bad})).is_err(),
+            "load accepted a bad library flag"
+        );
+    }
+    // The refused deletes left the drawing's table alone.
+    assert_eq!(s.execute("stylesmanager", &json!({"action": "get", "name": "office.stb"})).unwrap()["inDrawing"], true);
+    // Absent, null and false all mean the drawing: save returns the table as text.
+    for library in [json!(null), json!(false)] {
+        let r = s.execute("stylesmanager", &json!({"action": "save", "name": "office.stb", "library": library})).unwrap();
+        assert!(r["text"].is_string(), "{r}");
+    }
+    let r = s.execute("stylesmanager", &json!({"action": "save", "name": "office.stb"})).unwrap();
+    assert!(r["text"].is_string(), "{r}");
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 mod library {
     use super::*;
     use cadcraft_doc::{PlotStyle, PlotStyleSource, PlotStyleTable};
     use cadcraft_engine::plotstyle_library::{PlotStyleStore, set_plot_style_store};
     use std::path::{Path, PathBuf};
-    use std::sync::{Mutex, MutexGuard, OnceLock};
-
-    /// The library store is process-wide, so library tests run one at a time.
-    fn lock() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap_or_else(|e| e.into_inner())
-    }
 
     struct TempLibrary {
         dir: PathBuf,
@@ -224,6 +254,50 @@ mod library {
         assert!(warnings.iter().any(|w| w.as_str().is_some_and(|w| w.contains("broken.json"))), "{warnings:?}");
         assert!(warnings.iter().any(|w| w.as_str().is_some_and(|w| w.contains("huge.json"))), "{warnings:?}");
         assert!(cadcraft_doc::plot_style_table(s.doc().unwrap(), "office.stb").is_some(), "the other tables still load");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_library_entries_are_reported_as_warnings() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let _lock = lock();
+        let lib = TempLibrary::new("non-utf8");
+        lib.write(&office("Office pens", 35));
+        std::fs::write(lib.path().join(std::ffi::OsStr::from_bytes(b"broken-\xff.json")), office("Broken", 35).to_file_text()).unwrap();
+        // Folders and symlinks are not library files, so they are not worth a warning.
+        std::fs::create_dir(lib.path().join("nested.json")).unwrap();
+        std::os::unix::fs::symlink(lib.path().join("office.stb.json"), lib.path().join("link.json")).unwrap();
+        lib.install();
+
+        let mut s = Session::new();
+        let list = s.execute("stylesmanager", &json!({})).unwrap();
+        assert_eq!(table(&list, "office.stb")["source"], "library");
+        let warnings = list["warnings"].as_array().unwrap();
+        assert!(warnings.iter().any(|w| w.as_str().is_some_and(|w| w.contains("not valid UTF-8"))), "{warnings:?}");
+        assert!(!warnings.iter().any(|w| w.as_str().is_some_and(|w| w.contains("nested.json") || w.contains("link.json"))), "{warnings:?}");
+    }
+
+    #[test]
+    fn deleting_a_library_table_ignores_the_case_of_its_file_name() {
+        let _lock = lock();
+        let lib = TempLibrary::new("case-delete");
+        let mut stored = office("Office pens", 35);
+        stored.name = "Office.stb".into();
+        lib.write(&stored);
+        lib.install();
+
+        let mut s = Session::new();
+        let list = s.execute("stylesmanager", &json!({})).unwrap();
+        assert_eq!(table(&list, "Office.stb")["source"], "library");
+        s.execute("stylesmanager", &json!({"action": "delete", "name": "office.stb", "library": true})).unwrap();
+        assert!(!lib.path().join("Office.stb.json").exists());
+        let list = s.execute("stylesmanager", &json!({})).unwrap();
+        assert!(list["tables"].as_array().unwrap().iter().all(|t| t["name"] != "Office.stb"), "{list}");
+        assert!(
+            s.execute("stylesmanager", &json!({"action": "delete", "name": "office.stb", "library": true})).is_err(),
+            "deleting a table that is gone reports that it is not found"
+        );
     }
 
     #[test]
