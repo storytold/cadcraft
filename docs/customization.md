@@ -36,7 +36,10 @@ cadcraft-cli run drawing.dxf --script-file setup.scr --save out.dxf
 
 ALIASEDIT reads a `.pgp` alias file (`ALIAS, *COMMAND` lines) and adds its aliases for the rest of
 the session. Lines that would start external programs are skipped. From a script or the control
-channel: `aliasedit {"file": "/path/to/aliases.pgp"}`.
+channel: `aliasedit {"file": "/path/to/aliases.pgp"}`. The Command Aliases dialog's **Import…**
+button picks a `.pgp` file, loads it the same way, shows its path and warnings, and remembers the
+folder it came from; on the web (no native file dialog) type `ALIASEDIT` with the file's contents
+instead.
 
 ## Driving CADCraft from another program
 

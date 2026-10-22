@@ -1369,6 +1369,10 @@
 	built-in	вбудований
 	Add…	Додати…
 	Edit…	Змінити…
+	Import…	Імпортувати…
+	Import: there is no file dialog here; run ALIASEDIT with a path.	Імпорт: тут немає діалогу вибору файлів; запустіть ALIASEDIT із шляхом.
+	{n} more warnings; see the command line.	Ще {n} попереджень; див. командний рядок.
+	Alias files (PGP)	Файли псевдонімів (PGP)
 	Save alias	Зберегти псевдонім
 	Discard	Скасувати зміни
 	Customize	Налаштування інтерфейсу
