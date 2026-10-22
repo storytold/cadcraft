@@ -63,6 +63,32 @@ These are CADCraft's own definitions, not copies of any vendor's files.
 
 A table kept in the drawing shadows a built-in table of the same name.
 
+### User library
+
+Tables can also live in a user-level library shared by every drawing. It is read once at
+start-up and holds JSON table files in the `plotstyles` folder of the CADCraft settings
+directory:
+
+| System | Folder |
+|---|---|
+| Linux and FreeBSD | `$XDG_CONFIG_HOME/cadcraft/plotstyles` or `~/.config/cadcraft/plotstyles` |
+| macOS | `~/Library/Application Support/CADCraft/plotstyles` |
+| Windows | `%APPDATA%\CADCraft\plotstyles` |
+
+`CADCRAFT_CONFIG_DIR` replaces the settings directory. A page setup naming a table resolves it
+with this precedence:
+
+1. the drawing's own tables (saved with the drawing),
+2. the user library,
+3. the built-in tables.
+
+Library tables are not copied into a drawing just because a page setup or the manager shows
+them; only an explicit load keeps one in the drawing. Reading the folder is bounded and
+hostile-input-safe: files over 4 MB are refused, malformed files are skipped, and a duplicate
+table name keeps the first file. Every skipped file is reported as a warning by
+`stylesmanager list` and in the log. On the web there is no settings directory, so the
+built-in tables are used unless the host installs a store.
+
 ## Named plot styles
 
 Layers have a plot style name (default `Normal`). Objects have `ByLayer` (the default), `ByBlock`
@@ -73,7 +99,8 @@ prints as `Normal`. A colour-dependent table ignores the property.
 ## Commands
 
 - `pagesetup {layout, plotStyleTable, displayPlotStyles}` sets the layout's table and the
-  Display plot styles flag. Without a layout, it reports the built-in tables in `plotStyleTables`.
+  Display plot styles flag. Without a layout, it reports every table a drawing can use in
+  `plotStyleTables` (the drawing's, the library's and the built-in ones).
 - `plot` / `exportpdf {plotStyleTable}` replaces the page setup's table for one plot. `"None"`
   plots object colours.
 - `plotstyle {name, handles?}` sets the objects' plot style. With nothing selected, it sets the
@@ -82,13 +109,16 @@ prints as `Normal`. A colour-dependent table ignores the property.
 - `layer.set {name, plotStyle}` sets a layer's plot style.
 - `stylesmanager {action, …}` manages the tables: `list`, `get`, `new` (`kind`, `from`), `set`
   (`style: {name, …fields}`, `removeStyle`, `description`), `delete`, `load` (`path` or `text`)
-  and `save` (`path`, or returns `text`). Typed or chosen from **File ▸ Plot Styles...**, it
-  opens the Plot Style Manager dialog.
+  and `save` (`path`, or returns `text`). `list` names the `source` of each table (`drawing`,
+  `library` or `builtin`) and reports skipped library files in `warnings`. `load`, `save` and
+  `delete` take `library: true` to work on the user library instead of the drawing (the library
+  file is `<table name>.json`). Typed or chosen from **File ▸ Plot Styles...**, it opens the
+  Plot Style Manager dialog.
 
 ## Table files
 
 Tables are saved in our own format: UTF-8 JSON with a format marker. Fields left at "use the
-object's" are omitted.
+object's" are omitted. The user library keeps the same files, named `<table name>.json`.
 
 ```json
 {

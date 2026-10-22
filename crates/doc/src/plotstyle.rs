@@ -14,6 +14,8 @@
 //! Tables are saved as files in our own JSON format (see `docs/plot-styles.md`):
 //! [`PlotStyleTable::to_file_text`] and [`PlotStyleTable::from_file_text`].
 
+use std::sync::{Arc, OnceLock, RwLock};
+
 use cadcraft_color::Rgb;
 use serde::{Deserialize, Serialize};
 
@@ -39,6 +41,10 @@ pub const NORMAL_STYLE: &str = "Normal";
 pub const MAX_NAMED_STYLES: usize = 1024;
 /// Largest table file we read, in bytes.
 pub const MAX_TABLE_FILE: usize = 4 << 20;
+/// Most tables the user library keeps.
+pub const MAX_LIBRARY_TABLES: usize = 1000;
+/// File-name suffix of a table in the user library.
+pub const PLOT_STYLE_FILE_EXT: &str = ".json";
 /// Format marker and version of our table files.
 const FILE_MARKER: &str = "cadcraftPlotStyleTable";
 const FILE_VERSION: u64 = 1;
@@ -372,6 +378,109 @@ impl PlotStyleTable {
     }
 }
 
+/// Where a plot style table comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlotStyleSource {
+    /// Kept in the drawing and saved with it.
+    Drawing,
+    /// Kept in the user-level library, shared by every drawing.
+    Library,
+    /// One of CADCraft's own built-in tables.
+    Builtin,
+}
+
+impl PlotStyleSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PlotStyleSource::Drawing => "drawing",
+            PlotStyleSource::Library => "library",
+            PlotStyleSource::Builtin => "builtin",
+        }
+    }
+}
+
+/// The user-level plot style tables: loaded files shared by every drawing. It sits between the
+/// drawing's own tables and the built-in ones in precedence.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PlotStyleLibrary {
+    tables: Vec<PlotStyleTable>,
+    warnings: Vec<String>,
+}
+
+impl PlotStyleLibrary {
+    /// A library of `tables` (sanitized; empty names and duplicates are dropped) and the
+    /// warnings of the files it could not read.
+    pub fn new(tables: Vec<PlotStyleTable>, warnings: Vec<String>) -> PlotStyleLibrary {
+        let mut kept: Vec<PlotStyleTable> = Vec::new();
+        for t in tables.into_iter().take(MAX_LIBRARY_TABLES) {
+            let t = t.sanitized();
+            if t.name.is_empty() || kept.iter().any(|k| k.name.eq_ignore_ascii_case(&t.name)) {
+                continue;
+            }
+            kept.push(t);
+        }
+        PlotStyleLibrary { tables: kept, warnings }
+    }
+
+    /// The tables, in library order.
+    pub fn tables(&self) -> &[PlotStyleTable] {
+        &self.tables
+    }
+
+    /// The files that were skipped (or the library folder's problem), for the user.
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tables.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.tables.len()
+    }
+
+    /// The table called `name` (any case).
+    pub fn table(&self, name: &str) -> Option<&PlotStyleTable> {
+        let n = name.trim();
+        self.tables.iter().find(|t| t.name.eq_ignore_ascii_case(n))
+    }
+}
+
+fn library_slot() -> &'static RwLock<Arc<PlotStyleLibrary>> {
+    static SLOT: OnceLock<RwLock<Arc<PlotStyleLibrary>>> = OnceLock::new();
+    SLOT.get_or_init(|| RwLock::new(Arc::new(PlotStyleLibrary::default())))
+}
+
+/// The user library as the program currently sees it.
+pub fn plot_style_library() -> Arc<PlotStyleLibrary> {
+    match library_slot().read() {
+        Ok(lib) => Arc::clone(&lib),
+        Err(poisoned) => Arc::clone(&poisoned.into_inner()),
+    }
+}
+
+/// Replace the user library (the host loads it at start-up; tests install their own).
+pub fn set_plot_style_library(lib: PlotStyleLibrary) {
+    let mut slot = match library_slot().write() {
+        Ok(slot) => slot,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    *slot = Arc::new(lib);
+}
+
+/// The library file name of a table: its name with characters that can't appear in file names
+/// replaced by `_`, plus [`PLOT_STYLE_FILE_EXT`]. `None` for an empty name.
+pub fn plot_style_file_name(name: &str) -> Option<String> {
+    let base: String = name
+        .trim()
+        .chars()
+        .map(|c| if c.is_alphanumeric() || matches!(c, ' ' | '-' | '_' | '(' | ')' | '+' | ',' | '.') { c } else { '_' })
+        .collect();
+    let base = base.trim().trim_start_matches('.');
+    (!base.is_empty()).then(|| format!("{base}{PLOT_STYLE_FILE_EXT}"))
+}
+
 /// Whether a page setup's table name means "no plot style table".
 pub fn no_plot_style_table(name: &str) -> bool {
     let n = name.trim();
@@ -379,20 +488,51 @@ pub fn no_plot_style_table(name: &str) -> bool {
 }
 
 /// The plot style table a page setup names, if it is one we know: the drawing's own tables
-/// first, then the built-in ones. `None` for no table (empty or "None") and for tables we don't
-/// have.
-pub fn plot_style_table(d: &crate::Drawing, name: &str) -> Option<PlotStyleTable> {
+/// first, then the user library, then the built-in ones. `None` for no table (empty or "None")
+/// and for tables we don't have.
+pub fn plot_style_table_with_source(d: &crate::Drawing, name: &str) -> Option<(PlotStyleTable, PlotStyleSource)> {
     if no_plot_style_table(name) {
         return None;
     }
     let n = name.trim();
-    d.plot_style_tables.iter().find(|t| t.name.eq_ignore_ascii_case(n)).cloned().or_else(|| PlotStyleTable::builtin(n))
+    if let Some(t) = d.plot_style_tables.iter().find(|t| t.name.eq_ignore_ascii_case(n)) {
+        return Some((t.clone(), PlotStyleSource::Drawing));
+    }
+    if let Some(t) = plot_style_library().table(n) {
+        return Some((t.clone(), PlotStyleSource::Library));
+    }
+    PlotStyleTable::builtin(n).map(|t| (t, PlotStyleSource::Builtin))
 }
 
-/// The names of every table a drawing can use: its own, then the built-in ones it doesn't
-/// shadow.
+/// The plot style table a page setup names, if it is one we know.
+pub fn plot_style_table(d: &crate::Drawing, name: &str) -> Option<PlotStyleTable> {
+    plot_style_table_with_source(d, name).map(|(t, _)| t)
+}
+
+/// Where the table called `name` comes from, if the drawing can use it.
+pub fn plot_style_table_source(d: &crate::Drawing, name: &str) -> Option<PlotStyleSource> {
+    if no_plot_style_table(name) {
+        return None;
+    }
+    let n = name.trim();
+    if d.plot_style_tables.iter().any(|t| t.name.eq_ignore_ascii_case(n)) {
+        return Some(PlotStyleSource::Drawing);
+    }
+    if plot_style_library().table(n).is_some() {
+        return Some(PlotStyleSource::Library);
+    }
+    PlotStyleTable::builtin(n).map(|_| PlotStyleSource::Builtin)
+}
+
+/// The names of every table a drawing can use: its own, then the user library, then the built-in
+/// ones they don't shadow.
 pub fn plot_style_table_names(d: &crate::Drawing) -> Vec<String> {
     let mut v: Vec<String> = d.plot_style_tables.iter().map(|t| t.name.clone()).collect();
+    for t in plot_style_library().tables() {
+        if !v.iter().any(|n| n.eq_ignore_ascii_case(&t.name)) {
+            v.push(t.name.clone());
+        }
+    }
     for b in BUILTIN_PLOT_STYLE_TABLES {
         if !v.iter().any(|n| n.eq_ignore_ascii_case(b)) {
             v.push((*b).to_string());

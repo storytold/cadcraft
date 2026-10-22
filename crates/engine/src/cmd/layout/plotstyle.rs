@@ -1,15 +1,22 @@
 //! Plot styles: PLOTSTYLE (an object's or the current named plot style) and STYLESMANAGER (the
 //! plot style tables: list, view, create, edit, delete, load and save in our own file format).
 //!
-//! Tables the drawing keeps live in `Drawing::plot_style_tables` and are saved with it; they
-//! shadow built-in tables of the same name. Editing a built-in table stores an edited copy in
-//! the drawing.
+//! Tables the drawing keeps live in `Drawing::plot_style_tables` and are saved with it. The
+//! user-level library ([`crate::plotstyle_library`]) follows them and comes before the built-in
+//! tables; `load`/`save` with `library` target the library instead of the drawing. Editing a
+//! built-in or library table stores an edited copy in the drawing.
 
-use cadcraft_doc::{Drawing, PlotStyle, PlotStyleKind, PlotStyleTable};
+use cadcraft_doc::{Drawing, PlotStyle, PlotStyleKind, PlotStyleSource, PlotStyleTable};
 use serde_json::{Value, json};
 
+<<<<<<< HEAD
 use super::super::targets;
 use super::{CommandSpec, Result, Session, bad, str_param};
+use crate::plotstyle_library;
+=======
+use super::*;
+use crate::plotstyle_library;
+>>>>>>> 9f54eb6 (plot styles: a user library shared across drawings)
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -21,7 +28,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("stylesmanager", "Plot Style Manager...", run_stylesmanager)
             .menu(&["File", "Plot Styles..."])
             .params(
-                "{action?: list (default)|get|new|set|delete|load|save, name?: table (\"x.ctb\"/\"x.stb\"), kind?: colorDependent|named (new), from?: table to copy (new), description?, style?: {name, color?: \"#rrggbb\"|null, grayscale?, screening?: 0-100, linetype?: name|null, lineweight?: mm|null, end?, join?, fill?, description?} (set), removeStyle?: name (set, named tables), path? (load/save; save without one returns `text`), text? (load)}",
+                "{action?: list (default)|get|new|set|delete|load|save, name?: table (\"x.ctb\"/\"x.stb\"), kind?: colorDependent|named (new), from?: table to copy (new), description?, style?: {name, color?: \"#rrggbb\"|null, grayscale?, screening?: 0-100, linetype?: name|null, lineweight?: mm|null, end?, join?, fill?, description?} (set), removeStyle?: name (set, named tables), library?: bool (load/save/delete: the user library instead of the drawing), path? (load/save; save without one returns `text`), text? (load)}",
             ),
     ]
 }
@@ -94,15 +101,21 @@ fn run_plotstyle(s: &mut Session, p: &Value) -> Result<Value> {
 // ---------- STYLESMANAGER ----------
 
 fn table_summary(d: &Drawing, t: &PlotStyleTable) -> Value {
-    let in_drawing = d.plot_style_tables.iter().any(|x| x.name.eq_ignore_ascii_case(&t.name));
+    let source = cadcraft_doc::plot_style_table_source(d, &t.name);
     json!({
         "name": t.name,
         "description": t.description,
         "kind": if t.is_color_dependent() { "colorDependent" } else { "named" },
         "styles": t.styles.len(),
-        "inDrawing": in_drawing,
-        "builtin": PlotStyleTable::builtin(&t.name).is_some() && !in_drawing,
+        "source": source.map(PlotStyleSource::as_str),
+        "inDrawing": source == Some(PlotStyleSource::Drawing),
+        "builtin": source == Some(PlotStyleSource::Builtin),
     })
+}
+
+/// Whether `library` asks for the user library instead of the drawing.
+fn to_library(p: &Value) -> bool {
+    p.get("library").and_then(Value::as_bool).unwrap_or(false)
 }
 
 fn table_name(cmd: &str, p: &Value) -> Result<String> {
@@ -198,15 +211,18 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
                 .filter_map(|n| cadcraft_doc::plot_style_table(d, n))
                 .map(|t| table_summary(d, &t))
                 .collect();
-            Ok(json!({ "tables": tables }))
+            // Files the library skipped say why; the valid ones are listed above.
+            let warnings = cadcraft_doc::plot_style_library().warnings().to_vec();
+            Ok(json!({ "tables": tables, "warnings": warnings }))
         }
         "get" => {
             let d = s.doc()?;
             let t = find_table(cmd, d, &table_name(cmd, p)?)?;
             let mut v = serde_json::to_value(&t).unwrap_or(Value::Null);
             if let (Some(o), Value::Object(sum)) = (v.as_object_mut(), table_summary(d, &t)) {
-                o.insert("inDrawing".into(), sum.get("inDrawing").cloned().unwrap_or(Value::Null));
-                o.insert("builtin".into(), sum.get("builtin").cloned().unwrap_or(Value::Null));
+                for key in ["source", "inDrawing", "builtin"] {
+                    o.insert(key.into(), sum.get(key).cloned().unwrap_or(Value::Null));
+                }
             }
             Ok(v)
         }
@@ -241,9 +257,8 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
                 t.description = desc.chars().take(255).collect();
             }
             let t = t.sanitized();
-            let out = table_summary(d, &t);
-            store(s.doc_mut()?, t);
-            Ok(out)
+            store(s.doc_mut()?, t.clone());
+            Ok(table_summary(s.doc()?, &t))
         }
         "set" => {
             let name = table_name(cmd, p)?;
@@ -289,11 +304,18 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
         }
         "delete" => {
             let name = table_name(cmd, p)?;
+            if to_library(p) {
+                plotstyle_library::delete_table(&name).map_err(|e| bad(cmd, e))?;
+                return Ok(json!({ "deleted": name, "library": true }));
+            }
             let d = s.doc_mut()?;
             let before = d.plot_style_tables.len();
             d.plot_style_tables.retain(|t| !t.name.eq_ignore_ascii_case(&name));
             if d.plot_style_tables.len() == before {
-                return Err(bad(cmd, format!("the drawing keeps no plot style table `{name}` (built-in tables can't be deleted)")));
+                return Err(bad(
+                    cmd,
+                    format!("the drawing keeps no plot style table `{name}` (built-in and library tables can't be deleted from the drawing)"),
+                ));
             }
             Ok(json!({ "deleted": name }))
         }
@@ -321,13 +343,32 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
             if t.name.is_empty() {
                 return Err(bad(cmd, "the table has no name: pass `name`"));
             }
-            let out = table_summary(s.doc()?, &t);
-            store(s.doc_mut()?, t);
-            Ok(out)
+            if to_library(p) {
+                let file = plotstyle_library::save_table(&t).map_err(|e| bad(cmd, e))?;
+                let mut out = table_summary(s.doc()?, &t);
+                if let Some(o) = out.as_object_mut() {
+                    o.insert("source".into(), json!("library"));
+                    o.insert("inDrawing".into(), json!(false));
+                    o.insert("builtin".into(), json!(false));
+                    o.insert("library".into(), json!(true));
+                    o.insert("file".into(), json!(file));
+                }
+                return Ok(out);
+            }
+            store(s.doc_mut()?, t.clone());
+            Ok(table_summary(s.doc()?, &t))
         }
         "save" => {
             let name = table_name(cmd, p)?;
-            let text = find_table(cmd, s.doc()?, &name)?.to_file_text();
+            let t = find_table(cmd, s.doc()?, &name)?;
+            if to_library(p) {
+                if let Some(path) = str_param(p, "path") {
+                    return Err(bad(cmd, format!("pass either `path` ({path}) or `library`, not both")));
+                }
+                let file = plotstyle_library::save_table(&t).map_err(|e| bad(cmd, e))?;
+                return Ok(json!({ "name": t.name, "library": true, "file": file, "bytes": t.to_file_text().len() }));
+            }
+            let text = t.to_file_text();
             match str_param(p, "path") {
                 None => Ok(json!({ "name": name, "text": text })),
                 Some(_path) => {

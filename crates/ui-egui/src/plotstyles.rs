@@ -60,7 +60,8 @@ fn window(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
         .or_else(|| names.first().cloned())
         .unwrap_or_default();
     let table = cadcraft_doc::plot_style_table(d, &sel);
-    let in_drawing = d.plot_style_tables.iter().any(|x| x.name.eq_ignore_ascii_case(&sel));
+    let source = cadcraft_doc::plot_style_table_source(d, &sel);
+    let in_drawing = source == Some(cadcraft_doc::PlotStyleSource::Drawing);
     let linetypes: Vec<String> =
         d.linetypes.iter().map(|l| l.name.clone()).filter(|n| !n.eq_ignore_ascii_case("ByLayer") && !n.eq_ignore_ascii_case("ByBlock")).collect();
     let mut new_style = temp::<String>(ctx, "pstyle_new").unwrap_or_default();
@@ -80,6 +81,9 @@ fn window(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
                 let stem = sel.rsplit_once('.').map(|(s, _)| s).unwrap_or(&sel);
                 let copy = format!("{stem}-copy");
                 action = Some(("stylesmanager", json!({ "action": "new", "name": copy, "from": sel })));
+            }
+            if ui.add_enabled(in_drawing, egui::Button::new(crate::tl!("Save to library"))).clicked() {
+                action = Some(("stylesmanager", json!({ "action": "save", "name": sel, "library": true })));
             }
             if ui.button(crate::tl!("New CTB")).clicked() {
                 action = Some(("stylesmanager", json!({ "action": "new", "name": "new.ctb" })));
@@ -117,7 +121,11 @@ fn window(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
         };
         let named = !table.is_color_dependent();
         ui.label(RichText::new(&table.description).color(t.text_dim));
-        if !in_drawing {
+        if source == Some(cadcraft_doc::PlotStyleSource::Library) {
+            ui.label(
+                RichText::new(crate::tl!("A library table: shared by every drawing; editing it keeps a copy in this drawing.")).color(t.text_faint),
+            );
+        } else if source == Some(cadcraft_doc::PlotStyleSource::Builtin) {
             ui.label(RichText::new(crate::tl!("A built-in table: editing it keeps an edited copy in the drawing.")).color(t.text_faint));
         }
         egui::ScrollArea::vertical().id_salt("pstyle_rows").max_height(300.0).auto_shrink([false, true]).show(ui, |ui| {
