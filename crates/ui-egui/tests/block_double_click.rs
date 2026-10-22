@@ -9,6 +9,7 @@ use egui::{Event, Modifiers, PointerButton, Pos2, vec2};
 use egui_kittest::Harness;
 use serde_json::{Value, json};
 
+/// The handle a command result reports, from either the `handle` or the `handles` array.
 fn handle(v: &Value) -> String {
     v.get("handle").or_else(|| v.get("handles").and_then(|a| a.get(0))).and_then(Value::as_str).expect("a handle").to_string()
 }
@@ -39,6 +40,8 @@ fn harness(scope: impl FnOnce(&mut CadApp), scale: Value) -> (Harness<'static, C
     (h, i)
 }
 
+/// Send two primary-button clicks at world point `at` through the harness, one frame per press
+/// and release, so egui sees them as a double-click rather than two separate clicks.
 fn double_click(h: &mut Harness<'_, CadApp>, at: Vec2) {
     let pos: Pos2 = h.state().canvas.xf.unwrap().to_screen(at);
     h.event(Event::PointerMoved(pos));
@@ -52,6 +55,9 @@ fn double_click(h: &mut Harness<'_, CadApp>, at: Vec2) {
     h.run_steps(2);
 }
 
+/// Guards #1609: double-clicking a reference starts REFEDIT on that reference in both model and
+/// paper space, hiding it and standing its geometry in the drawing, without opening the Block
+/// Editor dialog (which would take the drawing away) or leaving an error behind.
 #[test]
 fn double_click_on_a_block_reference_edits_it_in_place() {
     for paper in [false, true] {
@@ -78,6 +84,8 @@ fn double_click_on_a_block_reference_edits_it_in_place() {
     }
 }
 
+/// Guards that the new double-click case is narrow: a double-click over empty space starts no
+/// REFEDIT session and no command.
 #[test]
 fn double_click_on_empty_space_does_nothing() {
     let (mut h, _) = harness(|_| {}, json!(1.0));
@@ -86,6 +94,8 @@ fn double_click_on_empty_space_does_nothing() {
     assert!(h.state().session.running.is_none());
 }
 
+/// Guards the never-crash rule: a reference REFEDIT refuses (here unequal X and Y scale) leaves
+/// no editing session, echoes the reason on the command line, and does not panic.
 #[test]
 fn a_reference_refedit_refuses_leaves_an_error_and_does_not_panic() {
     // Unequal X and Y scale: REFEDIT can't map the working set back into the block.
