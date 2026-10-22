@@ -67,7 +67,7 @@ fn tol_height_code(st: &DimStyle) -> String {
 }
 
 /// Apply measurement placeholders or append a dimension suffix, bounding the resulting UTF-8 text.
-fn post(template: &str, meas: &str) -> String {
+pub(super) fn post(template: &str, meas: &str) -> String {
     if template.contains("<>") {
         bounded_replace(template, meas)
     } else {
