@@ -41,6 +41,10 @@ pub struct Options {
     /// rebuild the view no longer needs). A cancelled build returns a partial list, which the
     /// caller must discard; see [`Options::cancelled`].
     pub cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// Record the outline-font glyphs that stand for filled glyph primitives in
+    /// [`DisplayList::texts`], so output formats can write text instead of outlines. Plots
+    /// record them anyway; exports ask for them with this flag.
+    pub text_glyphs: bool,
 }
 
 impl Options {
@@ -65,6 +69,7 @@ impl Default for Options {
             skip_viewport: None,
             transparency: false,
             cancel: None,
+            text_glyphs: false,
         }
     }
 }

@@ -137,6 +137,7 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
         transparency: app.session.settings.transparency_display,
         skip_viewport: split,
         cancel: None,
+        text_glyphs: false,
     };
     if view_only {
         let t = Tokens::get();

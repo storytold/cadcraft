@@ -39,7 +39,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("export", "Export...", run_export)
             .menu(&["File", "Export..."])
             .alias(&["exp"])
-            .params("{path? (else returns base64 `data`), format?: dxf|dwg|svg|png|pdf (default: the path's extension)} → {format, bytes, path? | data}")
+            .params("{path? (else returns base64 `data`), format?: dxf|dwg|svg|png|pdf (default: the path's extension), text?: \"text\" | \"geometry\" (SVG: write TEXT/MTEXT as <text> elements, the default, or as glyph outlines)} → {format, bytes, path? | data}")
             .noundo(),
         CommandSpec::new("preview", "Plot Preview", run_preview)
             .menu(&["File", "Plot Preview"])
@@ -117,7 +117,11 @@ fn run_export(s: &mut Session, p: &Value) -> Result<Value> {
     if !EXPORT_FORMATS.contains(&format.as_str()) {
         return Err(bad("export", "`format` must be dxf, dwg, svg, png or pdf (or give a `path` with one of those extensions)"));
     }
-    let bytes = (hooks.write)(s.doc()?, &format!("export.{format}")).map_err(|e| bad("export", e))?;
+    let bytes = match super::file::export_with() {
+        Some(write) => write(s.doc()?, &format!("export.{format}"), p),
+        None => (hooks.write)(s.doc()?, &format!("export.{format}")),
+    }
+    .map_err(|e| bad("export", e))?;
     match path {
         Some(path) => {
             write_file("export", path, &bytes)?;

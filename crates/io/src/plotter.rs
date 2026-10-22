@@ -121,10 +121,11 @@ fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
 
 fn svg(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let o = PdfOptions::from_json(opts);
+    let text = crate::svg::TextMode::from_json(opts);
     let Space::Model = space else {
         let (sheet, page) = sheet(d, space, &o)?;
         let transparency = o.plot_transparency.unwrap_or(page.plot_transparency);
-        return Ok(crate::svg::export_window_with(d, space, Some(sheet.bounds()), transparency).into_bytes());
+        return Ok(crate::svg::export_window_with_text(d, space, Some(sheet.bounds()), transparency, text).into_bytes());
     };
     // Model space as plotted: the plot style table, lineweights, and the table's ends, joins and
     // fills at the scale that fits the window (or the extents) on the device's paper.
@@ -137,11 +138,18 @@ fn svg(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let tolerance = (0.05 / (sheet.unit_mm * est)).max(1e-9);
     let tolerance = if tolerance.is_finite() { tolerance } else { cadcraft_render::Options::default().tolerance };
     let transparency = o.plot_transparency.unwrap_or(page.plot_transparency);
-    let ropts = cadcraft_render::Options { tolerance, lineweights, plot_style_table: table, transparency, ..cadcraft_render::Options::default() };
+    let ropts = cadcraft_render::Options {
+        tolerance,
+        lineweights,
+        plot_style_table: table,
+        transparency,
+        text_glyphs: text == crate::svg::TextMode::Text,
+        ..cadcraft_render::Options::default()
+    };
     let mut list = cadcraft_render::build_plot(d, space, &ropts);
     let s = fit_scale(&window.unwrap_or(list.bounds), &sheet, &o);
     cadcraft_render::pen::apply(&mut list, s * sheet.unit_mm);
-    Ok(crate::svg::export_list(&list, window).into_bytes())
+    Ok(crate::svg::export_list_with(&list, window, text).into_bytes())
 }
 
 #[cfg(test)]
