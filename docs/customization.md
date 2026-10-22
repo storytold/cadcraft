@@ -38,8 +38,8 @@ ALIASEDIT reads a `.pgp` alias file (`ALIAS, *COMMAND` lines) and adds its alias
 the session. Lines that would start external programs are skipped. From a script or the control
 channel: `aliasedit {"file": "/path/to/aliases.pgp"}`. The Command Aliases dialog's **Import…**
 button picks a `.pgp` file, loads it the same way, shows its path and warnings, and remembers the
-folder it came from; on the web (no native file dialog) type `ALIASEDIT` with the file's contents
-instead.
+folder it came from; on the web (no native file dialog) type `ALIASEDIT` with the file's contents in
+its `text` parameter instead.
 
 ## Driving CADCraft from another program
 

@@ -208,12 +208,15 @@ pub fn import(app: &mut CadApp, path: &str) -> Result<(), String> {
 
 /// Import…: ask the host for a `.pgp` file (starting in the folder the last import came from),
 /// then load it. A cancelled picker is a no-op; without a native picker (the web) the error names
-/// the ALIASEDIT path form instead.
+/// the ALIASEDIT `text` form, since the web has no file system to read a path from.
 pub fn pick_and_import(app: &mut CadApp) -> Result<(), String> {
     let dir = app.ui.last_pgp_dir.clone();
     let picked = app.services.pick_pgp.as_ref().map(|pick| pick(dir.as_deref()));
     match picked {
-        None => Err(refused(app, crate::tl!("Import: there is no file dialog here; run ALIASEDIT with a path.").to_string())),
+        None => Err(refused(
+            app,
+            crate::tl!("Import: there is no file dialog here; run ALIASEDIT with the file's contents using its text parameter.").to_string(),
+        )),
         Some(None) => Ok(()),
         Some(Some(path)) => import(app, &path),
     }
@@ -522,12 +525,15 @@ mod tests {
     }
 
     #[test]
-    fn no_picker_reports_a_path_prompt_error_without_changing_aliases() {
+    fn no_picker_points_at_aliasedit_text_without_changing_aliases() {
         let mut app = CadApp::new(Session::new(), Services::default());
         open(&mut app);
         let before = app.alias_dlg.clone();
         let e = pick_and_import(&mut app).expect_err("the web has no native picker");
         assert!(e.contains("ALIASEDIT"), "{e}");
+        assert!(e.contains("contents"), "the web is told to give the file's contents: {e}");
+        assert!(e.contains("text"), "the web is told which parameter carries the contents: {e}");
+        assert!(!e.contains("path"), "the web has no file system, so a path is not the supported form: {e}");
         let st = app.alias_dlg.as_ref().expect("the dialog stays open");
         assert_eq!(st.user, before.as_ref().map(|b| b.user.clone()).unwrap_or_default());
         assert!(st.error.as_deref().is_some_and(|e| e.contains("ALIASEDIT")));
