@@ -179,3 +179,96 @@ fn mtext_empty_wrap_does_not_mask_other_entities() {
     // Clicking on the line at (50.0, 0.0) should pick the line, NOT the MText phantom box!
     assert_eq!(pick(d, &Space::Model, Vec2::new(50.0, 0.0), 0.5), Some(line_h), "should pick the line, not the MText phantom box");
 }
+
+#[test]
+fn mtext_rotated_empty_wrap_does_not_pick() {
+    let mut s = Session::new();
+    // MText rotated 90 degrees CCW, text 'HI' near origin, wide wrap width=100 extending along +Y
+    s.execute(
+        "mtext",
+        &json!({
+            "at": [0, 0],
+            "text": "HI",
+            "height": 5.0,
+            "width": 100.0,
+            "rotation": 90.0,
+            "attach": 1,
+        }),
+    )
+    .unwrap();
+    let d = s.doc().unwrap();
+    let mtext_h = d.model.last().unwrap().handle;
+
+    // Inside the rotated letters "HI" (local x in [0, 6.33], y in [-5, 0] rotated 90 deg -> world x in [0, 5], y in [0, 6.33])
+    assert_eq!(pick(d, &Space::Model, Vec2::new(2.5, 3.0), 0.5), Some(mtext_h), "clicking on rotated letters should pick");
+
+    // In the empty space of the rotated wrap width (e.g. at world y=50.0, x=2.5): should NOT be picked
+    assert_eq!(pick(d, &Space::Model, Vec2::new(2.5, 50.0), 0.5), None, "clicking in empty space of rotated wrap width must not pick");
+}
+
+#[test]
+fn mtext_multiline_empty_wrap_does_not_pick() {
+    let mut s = Session::new();
+    // Multi-line MText with \P: line 1 and line 2, but wrap width is 100 extending far to the right
+    s.execute(
+        "mtext",
+        &json!({
+            "at": [0, 0],
+            "text": "LINE 1\\PLINE 2",
+            "height": 5.0,
+            "width": 100.0,
+            "attach": 1,
+        }),
+    )
+    .unwrap();
+    let d = s.doc().unwrap();
+    let mtext_h = d.model.last().unwrap().handle;
+
+    // Inside the actual text on line 1: should be picked
+    assert_eq!(pick(d, &Space::Model, Vec2::new(5.0, -2.5), 0.5), Some(mtext_h), "clicking on multi-line text should pick");
+
+    // In the empty space of wrap width (e.g. at x=80.0): should NOT be picked
+    assert_eq!(pick(d, &Space::Model, Vec2::new(80.0, -2.5), 0.5), None, "clicking in empty space of multi-line wrap width must not pick");
+}
+
+#[test]
+fn mtext_glyph_hit_picks_successfully() {
+    let mut s = Session::new();
+    s.execute(
+        "mtext",
+        &json!({
+            "at": [10.0, 20.0],
+            "text": "HELLO",
+            "height": 4.0,
+            "width": 50.0,
+            "attach": 1,
+        }),
+    )
+    .unwrap();
+    let d = s.doc().unwrap();
+    let mtext_h = d.model.last().unwrap().handle;
+
+    // Clicking directly within the bounds of "HELLO" (at x=15.0, y=18.0)
+    assert_eq!(pick(d, &Space::Model, Vec2::new(15.0, 18.0), 0.5), Some(mtext_h), "direct hit on MText glyphs should pick");
+}
+
+#[test]
+fn mtext_empty_content_does_not_panic_or_pick() {
+    let mut s = Session::new();
+    s.execute(
+        "mtext",
+        &json!({
+            "at": [0, 0],
+            "text": "",
+            "height": 5.0,
+            "width": 100.0,
+            "attach": 1,
+        }),
+    )
+    .unwrap();
+    let d = s.doc().unwrap();
+
+    // Clicking anywhere in the empty MText box should not panic and must return None
+    assert_eq!(pick(d, &Space::Model, Vec2::new(0.0, 0.0), 0.5), None);
+    assert_eq!(pick(d, &Space::Model, Vec2::new(50.0, -2.5), 0.5), None);
+}
