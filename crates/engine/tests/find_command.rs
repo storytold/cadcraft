@@ -5,14 +5,18 @@ use cadcraft_engine::Session;
 use cadcraft_engine::doc::EntityKind;
 use serde_json::json;
 
+/// Add a TEXT entity of height 2 at `at`, for the search tests to match and rewrite.
 fn add_text(s: &mut Session, at: [f64; 2], value: &str) {
     s.execute("text", &json!({ "at": at, "text": value, "height": 2.0 })).unwrap();
 }
 
+/// The values of every TEXT entity in the model, in drawing order.
 fn texts(s: &Session) -> Vec<String> {
     s.doc().unwrap().model.iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.clone()) } else { None }).collect()
 }
 
+/// Regression: bare `FIND` starts its prompts instead of failing on the missing `find` parameter,
+/// and `Enter` at the first prompt leaves the command.
 #[test]
 fn find_prompts_instead_of_erroring() {
     let mut s = Session::new();
@@ -24,6 +28,9 @@ fn find_prompts_instead_of_erroring() {
     assert!(s.running.is_none(), "{}", s.prompt_text());
 }
 
+/// Regression: after the search text and replacement, the option keywords toggle Match case and
+/// Whole word (accepting their abbreviations `w` and `m`) and `<Done>` runs the replacement, which
+/// leaves the differently-cased `Bolt` alone.
 #[test]
 fn find_replaces_with_match_case_and_whole_word_options() {
     let mut s = Session::new();
@@ -41,6 +48,8 @@ fn find_replaces_with_match_case_and_whole_word_options() {
     assert_eq!(texts(&s), vec!["pin pin".to_string(), "Bolt".to_string()]);
 }
 
+/// Regression: leaving the replacement empty makes FIND select the matches (Match case is off by
+/// default, so `BOLT` finds `bolt`) and leave the text unchanged.
 #[test]
 fn find_without_replacement_selects_the_matches() {
     let mut s = Session::new();
@@ -55,6 +64,8 @@ fn find_without_replacement_selects_the_matches() {
     assert_eq!(s.selection().len(), 1, "the match is selected");
 }
 
+/// Regression: the JSON form still runs in one call, reports the match/replacement counts and
+/// messages, and honours `matchCase` (default off) without starting a prompt.
 #[test]
 fn find_json_form_runs_without_prompting() {
     let mut s = Session::new();

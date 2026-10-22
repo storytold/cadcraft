@@ -8,6 +8,8 @@ use super::{CommandSpec, always, bad, bool_or, point_param, points_param, str_pa
 
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
+/// This module's command table: CAL, the QuickCalc picks, FIND, MEASUREGEOM and the Radius/Angle
+/// measurements that also appear under Tools ▸ Inquiry.
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("cal", "QuickCalc", run_cal)
@@ -226,6 +228,10 @@ fn replace_in(text: &str, find: &str, rep: &str, case: bool, whole: bool) -> (St
     (out, n)
 }
 
+/// FIND's programmatic form: count the occurrences of `find` in text, MText, attribute, dimension,
+/// multileader and table text. With `replace`, rewrite them in place; without it, select the
+/// entities that contain a match. `matchCase` and `wholeWord` narrow the search (both off by
+/// default). Returns `{matches, total, message}`.
 fn run_find(s: &mut Session, p: &Value) -> Result<Value> {
     let find = str_param(p, "find").ok_or_else(|| bad("find", "`find` is required"))?.to_string();
     let rep = str_param(p, "replace").map(str::to_string);
@@ -312,11 +318,13 @@ struct FindM {
     stage: FindStage,
 }
 
+/// `on`/`off`, the words the command line uses when echoing a toggled search option.
 fn on_off(b: bool) -> &'static str {
     if b { "on" } else { "off" }
 }
 
 impl FindM {
+    /// Run FIND with the values collected so far, echo its summary and end the command.
     fn search(&self, s: &mut Session) -> Result<Step> {
         let r = run_find(s, &json!({ "find": self.find, "replace": self.replace, "matchCase": self.match_case, "wholeWord": self.whole_word }))?;
         if let Some(m) = r.get("message").and_then(Value::as_str) {
@@ -327,9 +335,12 @@ impl FindM {
 }
 
 impl Interactive for FindM {
+    /// The name shown while the FIND prompts are active.
     fn name(&self) -> &'static str {
         "FIND"
     }
+    /// The prompt for the current step: the search text, the replacement (`Enter` to only find),
+    /// or the search options with the keywords `Match case`, `Whole word` and `Done` (the default).
     fn prompt(&self, _s: &Session) -> Prompt {
         match self.stage {
             FindStage::Find => Prompt::new("Find what", Accept::TEXT),
@@ -337,6 +348,9 @@ impl Interactive for FindM {
             FindStage::Options => Prompt::new("Search options", Accept::TEXT).kw(&["Match case", "Whole word", "Done"]).default("Done"),
         }
     }
+    /// Advance FIND through its steps: a non-empty search text moves on to the replacement, `Enter`
+    /// there means "find only", and the option keywords toggle their flag (echoing the new state)
+    /// or, for `Done`, run the search. Empty text at the first prompt or `Cancel` leaves the command.
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         match self.stage {
             FindStage::Find => match i {

@@ -284,6 +284,9 @@ fn a_new_dimension_reports_its_text_position() {
     }
     assert!((dim_of(&s, &horizontal).0.text_mid.x - 50.0).abs() < 1e-9);
 
+/// Regression: bare `DIMSTYLE` at the command line prompts for a style name instead of failing on
+/// the missing `name` parameter; the accepted name becomes current, and an unknown name is refused
+/// with the prompt still running.
 #[test]
 fn dimstyle_from_the_command_line_prompts_and_sets_the_current_style() {
     let mut s = Session::new();
