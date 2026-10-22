@@ -80,6 +80,10 @@ pub fn build_plot(d: &Drawing, space: &Space, opts: &Options) -> DisplayList {
     build_space(d, space, opts, true)
 }
 
+/// The context for a space's top-level entities: the transform `xf` from their coordinates to the
+/// output space, handle `top` for the primitives built with it, `frozen`/`vp_colors` overrides from
+/// a layout viewport, and no inherited block properties. `lt_factor` is 1 and `cull` is `None`;
+/// `contents` overrides both for model space seen through a viewport.
 pub(crate) fn top_ctx<'a>(d: &'a Drawing, xf: Mat3, top: Handle, frozen: &'a [String], vp_colors: &'a [(String, Color)]) -> Ctx<'a> {
     Ctx {
         d,

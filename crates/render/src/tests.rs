@@ -214,6 +214,8 @@ fn viewport_contents_can_be_left_out_and_built_for_any_area() {
     assert!(viewport_content(&d, &paper, h, nan, &opts).prims.is_empty());
 }
 
+/// A line entity from `a` to `b` (both at z = 0) with handle `handle`, for block fixtures whose
+/// expanded-entity counts the viewport culling tests assert on.
 fn block_line(handle: u64, a: Vec2, b: Vec2) -> cadcraft_doc::Entity {
     let line = cadcraft_doc::Line { a: a.to3(0.0), b: b.to3(0.0) };
     block_entity(handle, Common::default(), EntityKind::Line(line))
@@ -280,6 +282,10 @@ fn viewport_draws_and_clips_block_entities_that_reach_it() {
     assert!(pts[0].iter().all(|q| rect.contains(*q) && (q.y - 5.0).abs() < 1e-9));
 }
 
+/// Hostile insert scales (not a number, near-`f64::MAX`, and zero) must not panic when the new
+/// viewport culling measures a block entity's bounds: bounds that cannot be computed count as in
+/// reach and fall through to the normal draw path, so the plot still completes (#1719,
+/// never-crash standard).
 #[test]
 fn hostile_insert_transforms_do_not_panic_when_culled() {
     for scale in [Vec3::new(f64::NAN, 1.0, 1.0), Vec3::new(1e308, 1e308, 1.0), Vec3::new(0.0, 0.0, 1.0)] {

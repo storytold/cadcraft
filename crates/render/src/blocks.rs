@@ -3,6 +3,10 @@ use super::props::{resolve, resolve_common, transparency};
 use super::text_entity::{mtext, place_text_entity};
 use super::{Bounds2, Builder, Color, Ctx, Drawing, Entity, EntityKind, Ink, Lineweight, Mat3, Vec2};
 
+/// The context for the contents of block reference `e` placed through transform `m`: `m` is
+/// composed with the parent's transform, ByBlock/ByLayer colours, lineweights and linetypes
+/// resolve against the reference and its layer, the nesting depth grows by one, and the parent's
+/// linetype factor and cull window carry into the block.
 pub(crate) fn sub_ctx<'a>(ctx: &Ctx<'a>, e: &Entity, m: Mat3) -> Ctx<'a> {
     let layer = if e.common.layer == "0" { ctx.block_layer.clone() } else { Some(e.common.layer.clone()) };
     let color = match e.common.color {
@@ -54,6 +58,10 @@ fn reaches_window(win: Option<Bounds2>, d: &Drawing, e: &Entity, xf: &Mat3, dept
     out.is_empty() || out.intersects(&win)
 }
 
+/// Append block reference `ins` to `b`: every array copy and nested block of its definition, in
+/// the colour `rgb` resolved for the reference, followed by its visible attributes. Stops at
+/// `MAX_BLOCK_DEPTH` and once the block-expansion budget is spent; inside a layout viewport,
+/// entities that cannot reach the cull window are skipped instead of built and clipped away.
 pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rgb: Ink) {
     if ctx.depth >= cadcraft_doc::MAX_BLOCK_DEPTH {
         return;

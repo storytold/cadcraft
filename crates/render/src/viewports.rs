@@ -74,7 +74,8 @@ pub fn viewport_content(d: &Drawing, space: &Space, handle: Handle, area: Bounds
 }
 
 /// Model space seen through `vp`, in paper units, appended to `b`'s list clipped to `clip`;
-/// `area` (the clip's bounds on paper) picks the model objects to draw.
+/// `area` (the clip's bounds on paper) picks the model objects to draw, and the model window it
+/// maps to also culls block contents, which are never built when they miss it (#1719).
 fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bounds2, clip: &Clip, unit_mm: f64) {
     if b.list.expanded >= MAX_BLOCK_EXPANSION || !vp.on {
         return;
