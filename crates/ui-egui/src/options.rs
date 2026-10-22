@@ -27,9 +27,9 @@
 //! SAVETIME, SAVEFILEPATH and ISAVEBAK are the engine's save settings, kept with the autosave state
 //! rather than in the profile.
 //!
-//! The profile variables and the interface preferences survive restarts: the host saves
-//! [`CadApp::profile_json`] under [`PROFILE_KEY`] next to the interface prefs and restores it with
-//! [`CadApp::load_profile`].
+//! The profile variables, the user's ALIASEDIT aliases and the interface preferences survive
+//! restarts: the host saves [`CadApp::profile_json`] under [`PROFILE_KEY`] next to the interface
+//! prefs and restores it with [`CadApp::load_profile`].
 
 mod dialog;
 
@@ -327,13 +327,14 @@ fn reset_ui(app: &mut CadApp) {
 
 impl CadApp {
     /// The user profile kept across restarts, as JSON for the host's storage ([`PROFILE_KEY`]):
-    /// the engine's profile variables and the interface preferences the interface prefs
-    /// ([`CadApp::prefs_json`]) and the desktop workspace file (panels, command line) do not
-    /// already keep.
+    /// the engine's profile variables, the user's aliases (ALIASEDIT, not drawing data) and the
+    /// interface preferences the interface prefs ([`CadApp::prefs_json`]) and the desktop
+    /// workspace file (panels, command line) do not already keep.
     pub fn profile_json(&self) -> String {
         json!({
             "version": 1,
             "sysvars": cadcraft_engine::cmd::options::profile(&self.session),
+            "aliases": cadcraft_engine::cmd::file::alias_profile(),
             "systemCursor": self.ui.system_cursor,
             "modelBackground": color_json(self.options.model_background),
             "paperBackground": color_json(self.options.paper_background),
@@ -354,6 +355,11 @@ impl CadApp {
         let Ok(v) = serde_json::from_str::<Value>(json) else { return };
         if let Some(vars) = v.get("sysvars") {
             cadcraft_engine::cmd::options::restore(&mut self.session, vars);
+        }
+        // The user's aliases (ALIASEDIT) are settings, not drawing data; a malformed section is
+        // skipped by the engine without touching the aliases already in use.
+        if let Some(aliases) = v.get("aliases") {
+            cadcraft_engine::cmd::file::restore_aliases(aliases);
         }
         let mut c = UiChanges::default();
         for key in

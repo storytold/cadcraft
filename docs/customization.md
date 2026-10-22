@@ -8,7 +8,7 @@ and what is not there yet.
 | LISP routines (`.lsp`) | Run with APPLOAD or `(load "name")`. The core language, `command`, entity lists, selection sets, `get…` input and `c:` commands work. | [autolisp.md](autolisp.md) |
 | Startup LISP (`acad.lsp`, `acaddoc.lsp`) | Loaded from the support folder at startup and for each drawing. | [autolisp.md](autolisp.md#at-startup) |
 | Scripts (`.scr`) | SCRIPT (Tools > Run Script...), `cadcraft-cli run --script-file`, and script text over MCP and the control channel. | below |
-| Command aliases (`.pgp`) | ALIASEDIT `{file}` loads an alias file for the session; REINIT reads it again. | below |
+| Command aliases (`.pgp`) | ALIASEDIT `{file}` loads an alias file and keeps it; the aliases and the file survive restarts. REINIT reads it again. | below |
 | Compiled plug-ins (C++, .NET) | Not supported. A plug-in API is planned, for plug-ins written in Rust and compiled to WebAssembly. | [gaps.md](gaps.md) (E4) |
 | Programs that drive the CAD program from outside | The JSON control channel, the MCP server and `cadcraft-cli`. Any language that can open a TCP socket or start a process can use them. | below |
 
@@ -34,9 +34,15 @@ cadcraft-cli run drawing.dxf --script-file setup.scr --save out.dxf
 
 ## Command aliases
 
-ALIASEDIT reads a `.pgp` alias file (`ALIAS, *COMMAND` lines) and adds its aliases for the rest of
-the session. Lines that would start external programs are skipped. From a script or the control
-channel: `aliasedit {"file": "/path/to/aliases.pgp"}`.
+ALIASEDIT reads a `.pgp` alias file (`ALIAS, *COMMAND` lines) and adds its aliases. Lines that
+would start external programs are skipped. From a script or the control channel:
+`aliasedit {"file": "/path/to/aliases.pgp"}`.
+
+Aliases are user settings, never part of a drawing. The desktop and web apps keep them, and the
+file REINIT reads, in the user profile (`cadcraft.profile`), so aliases added, edited or removed in
+the Command Aliases dialog (or with ALIASEDIT's `set`, `remove` and `clear`) are there after a
+restart, and REINIT reads the same file again. The headless CLI has no user profile: there, aliases
+last for that run.
 
 ## Driving CADCraft from another program
 

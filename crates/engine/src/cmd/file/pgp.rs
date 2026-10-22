@@ -6,6 +6,11 @@
 //! (programs the file would have the application start) are never run: they are skipped with a
 //! note. CADCraft ships no alias file; the aliases built into the command catalog stay the
 //! defaults.
+//!
+//! The aliases are user settings, never part of a drawing: [`alias_profile`] gives them (and the
+//! file REINIT reads) to the host's user profile, and [`restore_aliases`] brings them back on the
+//! next start. The desktop and web hosts keep that profile; the headless CLI has no profile, so
+//! aliases set in a script last for that session only.
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
@@ -24,6 +29,8 @@ const MAX_ALIAS_CHARS: usize = 64;
 const MAX_LINE_CHARS: usize = 4096;
 /// Most warnings reported.
 const MAX_WARNINGS: usize = 100;
+/// Longest alias file path kept in the user profile.
+const MAX_ALIAS_FILE_CHARS: usize = 1024;
 
 #[derive(Default)]
 struct Aliases {
@@ -41,6 +48,39 @@ fn store() -> MutexGuard<'static, Aliases> {
 /// The command a user alias stands for (`name` in lower case).
 pub(crate) fn user_alias(name: &str) -> Option<String> {
     store().map.get(name).cloned()
+}
+
+/// The user aliases and the file REINIT reads, as the host's user profile keeps them:
+/// `{"aliases": {alias: command}, "file": path or null}`. Not drawing data.
+pub fn alias_profile() -> Value {
+    let st = store();
+    json!({ "aliases": st.map, "file": st.file })
+}
+
+/// Restore aliases saved by [`alias_profile`], replacing the user aliases and the file.
+///
+/// The saved set is untrusted (a hand-edited or older profile): entries that are not aliases of
+/// real commands are skipped, command names are never aliased, at most [`MAX_ALIASES`] are kept,
+/// and a malformed section changes nothing.
+pub fn restore_aliases(saved: &Value) {
+    let Some(obj) = saved.as_object() else { return };
+    let file = match obj.get("file") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(f)) if f.chars().count() <= MAX_ALIAS_FILE_CHARS && !f.chars().any(char::is_control) => Some(f.clone()),
+        Some(Value::String(_)) => None,
+        // A file entry that is not a path makes the section malformed: keep the aliases as they are.
+        Some(_) => return,
+    };
+    let Some(map) = obj.get("aliases").and_then(Value::as_object) else { return };
+    let mut aliases = BTreeMap::new();
+    for (alias, target) in map.iter().take(MAX_ALIASES) {
+        let Ok(name) = alias_name(alias) else { continue };
+        let Some(id) = target.as_str().and_then(command_id) else { continue };
+        aliases.insert(name, id);
+    }
+    let mut st = store();
+    st.map = aliases;
+    st.file = file;
 }
 
 /// The command id `target` names (`*LINE`, `_.line`, `-LAYER`…), if there is such a command.
