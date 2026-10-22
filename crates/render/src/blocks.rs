@@ -45,17 +45,23 @@ pub(crate) fn sub_ctx<'a>(ctx: &Ctx<'a>, e: &Entity, m: Mat3) -> Ctx<'a> {
     }
 }
 
-/// Whether a block entity can reach `win` (in the space `xf` maps to) when drawn through `xf`.
-/// False only when its bounds are known and miss the window: approximate bounds (text,
-/// dimensions) are safe, and a transform without finite bounds is not culled.
-fn reaches_window(win: Option<Bounds2>, d: &Drawing, e: &Entity, xf: &Mat3, depth: usize) -> bool {
+/// Whether a block entity can reach `win` (in the space `xf` maps to) when drawn through `xf`,
+/// measuring its bounds through this build's cache. False only when its bounds are known and miss
+/// the window: approximate bounds (text, dimensions) are safe, and a transform without finite
+/// bounds is not culled.
+fn reaches_window(cache: &mut cadcraft_doc::BoundsCache, win: Option<Bounds2>, d: &Drawing, e: &Entity, xf: &Mat3, depth: usize) -> bool {
     let Some(win) = win else { return true };
-    let eb = cadcraft_doc::entity_bounds(d, e, depth);
+    let eb = cache.entity_bounds(d, e, depth);
     if eb.is_empty() {
         return true;
     }
-    let out = Bounds2::from_points(eb.corners().map(|c| xf.apply(c)));
-    out.is_empty() || out.intersects(&win)
+    let corners = eb.corners().map(|c| xf.apply(c));
+    // `Bounds2::add` drops non-finite points: a box built from the corners that stayed finite would
+    // cover only part of the entity (an extreme insert scale), so keep it uncullable (#1719).
+    if corners.iter().any(|c| !c.is_finite()) {
+        return true;
+    }
+    Bounds2::from_points(corners).intersects(&win)
 }
 
 /// Append block reference `ins` to `b`: every array copy and nested block of its definition, in
@@ -83,7 +89,7 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
                         continue;
                     }
                     // A layout viewport only builds what can reach its model window (#1719).
-                    if !reaches_window(ctx.cull, ctx.d, be, &sub.xf, sub.depth) {
+                    if !reaches_window(&mut b.bounds_cache, ctx.cull, ctx.d, be, &sub.xf, sub.depth) {
                         continue;
                     }
                     if !b.expand() {

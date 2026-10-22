@@ -273,6 +273,107 @@ fn insert_bounds_with_cyclic_block_terminate() {
     assert_eq!(bb.max, Vec2::new(7.0, 7.0));
 }
 
+/// One [`BoundsCache`] measures each block definition once per depth, however many references the
+/// drawing holds: OUTER's 40 references to INNER cost one pass over INNER, not 40 (#1719 review).
+#[test]
+fn bounds_cache_measures_a_block_once_per_depth() {
+    let mut d = Drawing::new_imperial();
+    let mut inner = Block::new("INNER");
+    for i in 0..10u64 {
+        let x = i as f64;
+        inner.entities.push(Entity::new(Handle(i + 1), line((x, 0.0), (x + 1.0, 1.0))));
+    }
+    d.blocks.insert("INNER".into(), std::sync::Arc::new(inner));
+    let mut outer = Block::new("OUTER");
+    for i in 0..40u64 {
+        outer.entities.push(Entity::new(
+            Handle(i + 1),
+            EntityKind::Insert(Insert {
+                block: "INNER".into(),
+                insert: Vec3::ZERO,
+                scale: Vec3::new(1.0, 1.0, 1.0),
+                rotation: 0.0,
+                attribs: vec![],
+                cols: 1,
+                rows: 1,
+                col_spacing: 0.0,
+                row_spacing: 0.0,
+            }),
+        ));
+    }
+    d.blocks.insert("OUTER".into(), std::sync::Arc::new(outer));
+    let e = Entity::new(
+        Handle(1),
+        EntityKind::Insert(Insert {
+            block: "OUTER".into(),
+            insert: Vec3::ZERO,
+            scale: Vec3::new(1.0, 1.0, 1.0),
+            rotation: 0.0,
+            attribs: vec![],
+            cols: 1,
+            rows: 1,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+        }),
+    );
+    let mut cache = BoundsCache::new();
+    assert!(cache.is_empty());
+    let b = cache.entity_bounds(&d, &e, 0);
+    // OUTER's contents, and INNER's inside them, each measured once.
+    assert_eq!(cache.len(), 2);
+    assert_eq!(b, entity_bounds(&d, &e, 0), "cached bounds match a fresh measure");
+    assert_eq!(cache.entity_bounds(&d, &e, 0), b);
+    assert_eq!(cache.len(), 2, "a second measure reuses the cache");
+}
+
+/// ATTMODE 2 (ATTDISP All) draws invisible attributes, so insert bounds count them then: viewport
+/// culling must not skip a reference whose only content in the window is such an attribute
+/// (#1719 review).
+#[test]
+fn invisible_attributes_count_for_bounds_when_attmode_shows_them() {
+    let attrib = Attrib {
+        tag: "TAG".into(),
+        text: Text {
+            insert: Vec3::new(1000.0, 1000.0, 0.0),
+            align_pt: None,
+            height: 10.0,
+            value: "hello".into(),
+            rotation: 0.0,
+            width_factor: 1.0,
+            oblique: 0.0,
+            style: "Standard".into(),
+            halign: HAlign::Left,
+            valign: VAlign::Baseline,
+        },
+        invisible: true,
+        constant: false,
+        prompt: String::new(),
+        props: Default::default(),
+        multiline: None,
+        modes: Default::default(),
+    };
+    let mut d = Drawing::new_imperial();
+    let e = Entity::new(
+        Handle(1),
+        EntityKind::Insert(Insert {
+            block: "Missing".into(),
+            insert: Vec3::ZERO,
+            scale: Vec3::new(1.0, 1.0, 1.0),
+            rotation: 0.0,
+            attribs: vec![attrib],
+            cols: 1,
+            rows: 1,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+        }),
+    );
+    assert!(entity_bounds(&d, &e, 0).is_empty(), "hidden by default (ATTMODE 1)");
+    d.header.set_i64("ATTMODE", 2);
+    let shown = entity_bounds(&d, &e, 0);
+    assert!(!shown.is_empty(), "ATTMODE 2 draws it");
+    assert_eq!(shown.min, Vec2::new(1000.0, 1000.0));
+}
+
 #[test]
 fn entity_serde_roundtrip() {
     let e = Entity::new(Handle(7), line((1.0, 2.0), (3.0, 4.0)));

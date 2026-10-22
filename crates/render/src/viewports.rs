@@ -6,6 +6,7 @@ use super::draw::entity;
 use super::pipeline::PARALLEL_CHUNK;
 use super::pipeline::{Options, style_table, top_ctx, with_point_view};
 use super::{Bounds2, Builder, Ctx, Drawing, Entity, EntityKind, Handle, MAX_BLOCK_EXPANSION, Mat3, Space, Vec2, clip, paper, pen, plotstyle};
+use cadcraft_doc::BoundsCache;
 
 /// Upper bound on viewports drawn per layout (hostile files).
 pub(crate) const MAX_VIEWPORTS: usize = 256;
@@ -67,8 +68,16 @@ pub fn viewport_content(d: &Drawing, space: &Space, handle: Handle, area: Bounds
     }
     let opts = &with_point_view(d, space, opts);
     let styler = style_table(d, space, opts, false).map(|t| plotstyle::Styler::new(d, t));
-    let mut b =
-        Builder { list: DisplayList::default(), opts, plotting: false, styles: styler.as_ref(), named: None, shared_budget: None, transparency: 0 };
+    let mut b = Builder {
+        list: DisplayList::default(),
+        opts,
+        plotting: false,
+        styles: styler.as_ref(),
+        named: None,
+        shared_budget: None,
+        transparency: 0,
+        bounds_cache: BoundsCache::new(),
+    };
     contents(&mut b, d, vp, area, &Clip::Rect(area), paper::unit_mm_of(d, handle));
     b.list
 }
@@ -97,20 +106,27 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
     // The same window in paper units, where `xf` maps block coordinates (these are model units):
     // block contents that cannot reach it are skipped instead of built and clipped away. An
     // unbounded window (hostile sizes) leaves culling off rather than dropping everything.
-    let cull = Bounds2::from_points(win.corners().map(|c| xf.apply(c)));
-    let cull = (!cull.is_empty()).then_some(cull);
+    // One whose corners overflow through `xf` (a finite centre near `f64::MAX`) would leave a box
+    // covering only part of the window, so culling stays off there (#1719).
+    let corners = win.corners().map(|c| xf.apply(c));
+    let cull = if corners.iter().all(|c| c.is_finite()) {
+        let cull = Bounds2::from_points(corners);
+        (!cull.is_empty()).then_some(cull)
+    } else {
+        None
+    };
     // PSLTSCALE on: model-space dashes are scaled so they measure the same on paper as in
     // paper space, whatever the viewport scale.
     let lt_factor = if d.header.i64("PSLTSCALE", 1) != 0 { 1.0 / s } else { 1.0 };
     let ctx = || Ctx { lt_factor, cull, ..top_ctx(d, xf, VIEWPORT_CONTENT, &vp.frozen_layers, &vp.layer_colors) };
-    let seen = |me: &Entity| {
+    let seen = |cache: &mut cadcraft_doc::BoundsCache, me: &Entity| {
         if matches!(me.kind, EntityKind::Viewport(_)) {
             return false;
         }
         if matches!(me.kind, EntityKind::Ray(_) | EntityKind::XLine(_)) {
             return true;
         }
-        let eb = cadcraft_doc::entity_bounds(d, me, 0);
+        let eb = cache.entity_bounds(d, me, 0);
         eb.is_empty() || eb.intersects(&win)
     };
     // One expansion budget for the whole build: seed it with what the enclosing list has already
@@ -125,6 +141,7 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
         named: None,
         shared_budget: Some(&budget),
         transparency: 0,
+        bounds_cache: BoundsCache::new(),
     };
     #[cfg(not(target_arch = "wasm32"))]
     let parallel = !b.plotting && b.styles.is_none() && d.model.len() >= 2 * PARALLEL_CHUNK;
@@ -148,9 +165,13 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
                         named: None,
                         shared_budget: Some(&budget),
                         transparency: 0,
+                        bounds_cache: BoundsCache::new(),
                     };
                     let c = ctx();
-                    for me in chunk.iter().filter(|me| seen(me)) {
+                    for me in chunk.iter() {
+                        if !seen(&mut part.bounds_cache, me) {
+                            continue;
+                        }
                         entity(&mut part, &c, me);
                     }
                     part.list
@@ -162,7 +183,10 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
         }
     } else {
         let c = ctx();
-        for me in d.model.iter().filter(|me| seen(me)) {
+        for me in d.model.iter() {
+            if !seen(&mut sub.bounds_cache, me) {
+                continue;
+            }
             entity(&mut sub, &c, me);
         }
     }

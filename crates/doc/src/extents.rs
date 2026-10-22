@@ -94,173 +94,220 @@ fn mtext_box(t: &crate::MText) -> Bounds2 {
 
 /// The box of what `e` draws (block contents on layers turned off left out).
 pub fn entity_bounds(d: &Drawing, e: &Entity, depth: usize) -> Bounds2 {
-    bounds_of(d, e, depth, false)
+    BoundsCache::new().bounds_of(d, e, depth, false)
 }
 
 /// The box `e` takes in the drawing's extents: as [`entity_bounds`], but block contents on a layer
 /// turned off count, as AutoCAD 2024's ZOOM Extents counts them (a frozen layer's do not).
 pub fn extent_bounds(d: &Drawing, e: &Entity) -> Bounds2 {
-    bounds_of(d, e, 0, true)
+    BoundsCache::new().bounds_of(d, e, 0, true)
 }
 
-fn bounds_of(d: &Drawing, e: &Entity, depth: usize, off_counts: bool) -> Bounds2 {
-    // A top-level annotative object measures as it draws at the current annotation scale.
-    if depth == 0 {
-        match d.anno_draw(e) {
-            crate::AnnoDraw::Plain => {}
-            crate::AnnoDraw::Hidden => return Bounds2::EMPTY,
-            crate::AnnoDraw::Scaled(f) => return bounds_in(d, &crate::anno_scaled(e, f), 0, &mut HashMap::new(), off_counts),
-        }
+/// The bounds of block contents (in block coordinates) measured so far, by nesting depth and block
+/// name: every further reference to a block at that depth reuses them instead of expanding the
+/// block again, so nested or self-referencing blocks cost at most one pass over each definition per
+/// depth instead of one per reference (which grows exponentially with the nesting depth). The depth
+/// is part of the key because [`MAX_BLOCK_DEPTH`] cuts a deep visit short: its bounds must not
+/// stand in for a shallower reference to the same block (#706).
+///
+/// One [`entity_bounds`] call starts with an empty cache. A caller that measures many entities of
+/// the same drawing (the renderer, while culling) keeps one for the whole pass, so repeated
+/// references to a block are measured once instead of once per reference (#1719).
+#[derive(Clone, Debug, Default)]
+pub struct BoundsCache {
+    /// By nesting depth and whether blocks on turned-off layers count, then by block name.
+    blocks: HashMap<(usize, bool), HashMap<String, Bounds2>>,
+}
+
+impl BoundsCache {
+    /// A cache that has measured nothing yet.
+    pub fn new() -> Self {
+        Self::default()
     }
-    bounds_in(d, e, depth, &mut HashMap::new(), off_counts)
-}
 
-/// [`entity_bounds`] with the bounds of block contents (in block coordinates) already computed,
-/// by block name and depth: every further reference to a block at that depth reuses them instead of
-/// expanding the block again, so nested or self-referencing blocks cost at most one pass over each
-/// definition per depth instead of one per reference (which grows exponentially with the nesting
-/// depth). The depth is part of the key because [`MAX_BLOCK_DEPTH`] cuts a deep visit short: its
-/// bounds must not stand in for a shallower reference to the same block (#706).
-fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<(&'a str, usize), Bounds2>, off_counts: bool) -> Bounds2 {
-    match &e.kind {
-        EntityKind::Table(t) if t.is_broken() => t.bounds(),
-        EntityKind::Text(t) if blank(&t.value) => Bounds2::EMPTY,
-        EntityKind::MText(t) if blank(&t.contents) => Bounds2::EMPTY,
-        // Text that matches the layout's orientation is drawn upright (#2498).
-        EntityKind::Text(t) if e.common.matches_layout_orientation() => {
-            text_box(&crate::Text { rotation: 0.0, ..t.clone() }, t.value.chars().count())
-        }
-        EntityKind::MText(t) if e.common.matches_layout_orientation() => mtext_box(&crate::MText { rotation: 0.0, ..t.clone() }),
-        EntityKind::Text(t) => text_box(t, t.value.chars().count()),
-        EntityKind::AttDef(a) => text_box(&a.text, a.tag.chars().count()),
-        EntityKind::MText(t) => mtext_box(t),
-        EntityKind::Insert(ins) => {
-            if depth >= MAX_BLOCK_DEPTH {
-                return Bounds2::EMPTY;
+    /// Whether no block definition has been measured yet.
+    pub fn is_empty(&self) -> bool {
+        self.blocks.is_empty()
+    }
+
+    /// The number of block definitions measured so far (one per block and nesting depth, so at
+    /// most the drawing's blocks times [`MAX_BLOCK_DEPTH`]).
+    pub fn len(&self) -> usize {
+        self.blocks.values().map(HashMap::len).sum()
+    }
+
+    /// [`entity_bounds`] for `e`, reusing the block bounds this cache already measured.
+    pub fn entity_bounds(&mut self, d: &Drawing, e: &Entity, depth: usize) -> Bounds2 {
+        self.bounds_of(d, e, depth, false)
+    }
+
+    fn bounds_of(&mut self, d: &Drawing, e: &Entity, depth: usize, off_counts: bool) -> Bounds2 {
+        // A top-level annotative object measures as it draws at the current annotation scale.
+        if depth == 0 {
+            match d.anno_draw(e) {
+                crate::AnnoDraw::Plain => {}
+                crate::AnnoDraw::Hidden => return Bounds2::EMPTY,
+                crate::AnnoDraw::Scaled(f) => return self.bounds_in(d, &crate::anno_scaled(e, f), 0, off_counts),
             }
-            // A reference to a missing block (an unloaded xref, a purged definition) or to an empty
-            // one draws nothing, so it contributes nothing: ZOOM Extents must not fly off to its
-            // insertion point. Attributes below still count.
-            let mut b = Bounds2::EMPTY;
-            if let Some(blk) = d.block(&ins.block) {
-                let m = ins.transform(blk.base.xy());
-                let inner = match blocks.get(&(blk.name.as_str(), depth)) {
-                    Some(b) => *b,
-                    None => {
-                        let mut inner = Bounds2::EMPTY;
-                        for be in blk.entities.iter().filter(|be| in_block_visible(d, be, off_counts)) {
-                            inner = inner.union(&bounds_in(d, be, depth + 1, blocks, off_counts));
+        }
+        self.bounds_in(d, e, depth, off_counts)
+    }
+
+    /// Block `blk`'s contents at `depth`, measured now when the cache lacks them.
+    fn content(&mut self, d: &Drawing, blk: &crate::Block, depth: usize, off_counts: bool) -> Bounds2 {
+        if let Some(b) = self.blocks.get(&(depth, off_counts)).and_then(|m| m.get(blk.name.as_str())).copied() {
+            return b;
+        }
+        let mut inner = Bounds2::EMPTY;
+        for be in blk.entities.iter().filter(|be| in_block_visible(d, be, off_counts)) {
+            inner = inner.union(&self.bounds_in(d, be, depth + 1, off_counts));
+        }
+        self.blocks.entry((depth, off_counts)).or_default().insert(blk.name.clone(), inner);
+        inner
+    }
+
+    /// The box of what `e` draws at `depth`, with the bounds of block contents (in block
+    /// coordinates) taken from this cache.
+    fn bounds_in(&mut self, d: &Drawing, e: &Entity, depth: usize, off_counts: bool) -> Bounds2 {
+        match &e.kind {
+            EntityKind::Table(t) if t.is_broken() => t.bounds(),
+            EntityKind::Text(t) if blank(&t.value) => Bounds2::EMPTY,
+            EntityKind::MText(t) if blank(&t.contents) => Bounds2::EMPTY,
+            // Text that matches the layout's orientation is drawn upright (#2498).
+            EntityKind::Text(t) if e.common.matches_layout_orientation() => {
+                text_box(&crate::Text { rotation: 0.0, ..t.clone() }, t.value.chars().count())
+            }
+            EntityKind::MText(t) if e.common.matches_layout_orientation() => mtext_box(&crate::MText { rotation: 0.0, ..t.clone() }),
+            EntityKind::Text(t) => text_box(t, t.value.chars().count()),
+            EntityKind::AttDef(a) => text_box(&a.text, a.tag.chars().count()),
+            EntityKind::MText(t) => mtext_box(t),
+            EntityKind::Insert(ins) => {
+                if depth >= MAX_BLOCK_DEPTH {
+                    return Bounds2::EMPTY;
+                }
+                // A reference to a missing block (an unloaded xref, a purged definition) or to an empty
+                // one draws nothing, so it contributes nothing: ZOOM Extents must not fly off to its
+                // insertion point. Attributes below still count.
+                let mut b = Bounds2::EMPTY;
+                if let Some(blk) = d.block(&ins.block) {
+                    let m = ins.transform(blk.base.xy());
+                    let inner = self.content(d, blk, depth, off_counts);
+                    if !inner.is_empty() {
+                        let corners = inner.corners().map(|c| m.apply(c));
+                        // A transform that overflows leaves no usable bounds: the corners that stayed
+                        // finite cover only part of what draws, which would make culling skip visible
+                        // geometry, so report none (callers keep such a reference unculled) (#1719).
+                        if corners.iter().any(|c| !c.is_finite()) {
+                            return Bounds2::EMPTY;
                         }
-                        blocks.insert((blk.name.as_str(), depth), inner);
-                        inner
+                        b = Bounds2::from_points(corners);
                     }
-                };
-                b = if inner.is_empty() { Bounds2::EMPTY } else { Bounds2::from_points(inner.corners().map(|c| m.apply(c))) };
-                if ins.cols > 1 || ins.rows > 1 {
-                    let off =
-                        Vec2::new(ins.col_spacing * f64::from(ins.cols.saturating_sub(1)), ins.row_spacing * f64::from(ins.rows.saturating_sub(1)))
-                            .rotate(ins.rotation);
-                    b = b.union(&Bounds2::from_points(b.corners().map(|c| c + off)));
-                }
-            }
-            for a in &ins.attribs {
-                if !a.invisible && layer_counts(d, attrib_layer(d, ins, a), off_counts) {
-                    b = b.union(&match a.multiline_text() {
-                        Some(m) => mtext_box(&m),
-                        None => text_box(&a.text, a.text.value.chars().count()),
-                    });
-                }
-            }
-            b
-        }
-        EntityKind::Dimension(dm) => {
-            let pts: Vec<Vec2> = match dm.kind {
-                crate::DimKind::Linear { .. } | crate::DimKind::Aligned | crate::DimKind::ArcLength => vec![dm.defpt.xy(), dm.p13.xy(), dm.p14.xy()],
-                crate::DimKind::Radius | crate::DimKind::Diameter => vec![dm.defpt.xy(), dm.p15.xy()],
-                crate::DimKind::Angular3P => vec![dm.defpt.xy(), dm.p13.xy(), dm.p14.xy(), dm.p15.xy()],
-                crate::DimKind::Angular => vec![dm.defpt.xy(), dm.p13.xy(), dm.p14.xy(), dm.p15.xy(), dm.p16.xy()],
-                crate::DimKind::Ordinate { .. } => vec![dm.p13.xy(), dm.p14.xy()],
-            };
-            let mut b = Bounds2::from_points(pts);
-            if dm.user_text_pos {
-                b.add(dm.text_mid.xy());
-            }
-            // Room for text and arrows.
-            // The same scale the dimension's geometry uses.
-            let th = d
-                .dim_style(&dm.style)
-                .map(|s| {
-                    let s = s.with_overrides(&dm.overrides);
-                    s.text_height * s.effective_scale(d.header.f64("DIMSCALE", 1.0))
-                })
-                .unwrap_or(0.18 * d.header.f64("DIMSCALE", 1.0).max(1e-9));
-            b = b.expand(th * 2.5);
-            if let Some(blk) = dm.block.as_ref().and_then(|n| d.block(n))
-                && depth < MAX_BLOCK_DEPTH
-            {
-                // Reuse the shared block-bounds cache (as the Insert branch does) so a dimension
-                // block with branching or self-referencing children costs one pass per definition
-                // per depth, not one per reference (which grows exponentially) (CWE-400).
-                let inner = match blocks.get(&(blk.name.as_str(), depth)) {
-                    Some(cached) => *cached,
-                    None => {
-                        let mut inner = Bounds2::EMPTY;
-                        for be in blk.entities.iter().filter(|be| in_block_visible(d, be, off_counts)) {
-                            inner = inner.union(&bounds_in(d, be, depth + 1, blocks, off_counts));
+                    if !b.is_empty() && (ins.cols > 1 || ins.rows > 1) {
+                        let off = Vec2::new(
+                            ins.col_spacing * f64::from(ins.cols.saturating_sub(1)),
+                            ins.row_spacing * f64::from(ins.rows.saturating_sub(1)),
+                        )
+                        .rotate(ins.rotation);
+                        let corners = b.corners().map(|c| c + off);
+                        if corners.iter().any(|c| !c.is_finite()) {
+                            return Bounds2::EMPTY;
                         }
-                        blocks.insert((blk.name.as_str(), depth), inner);
-                        inner
+                        b = b.union(&Bounds2::from_points(corners));
                     }
-                };
-                b = b.union(&inner);
-            }
-            b
-        }
-        EntityKind::MLeader(m) => {
-            let mut b = Bounds2::from_points(m.leaders.iter().flatten().map(|v| v.xy()).chain(std::iter::once(m.landing.xy())));
-            if let Some(t) = &m.text {
-                b.add(t.insert.xy());
-                if !blank(&t.contents) {
-                    b = b.union(&mtext_box(t));
                 }
+                for a in &ins.attribs {
+                    // ATTMODE 2 (ATTDISP All) draws invisible attributes too, so they measure as well:
+                    // culling a block reference on bounds that leave them out would drop them (#1719).
+                    if (!a.invisible || d.header.i64("ATTMODE", 1) == 2) && layer_counts(d, attrib_layer(d, ins, a), off_counts) {
+                        b = b.union(&match a.multiline_text() {
+                            Some(m) => mtext_box(&m),
+                            None => text_box(&a.text, a.text.value.chars().count()),
+                        });
+                    }
+                }
+                b
             }
-            if let Some(ins) = &m.block {
-                let be = Entity { handle: e.handle, common: e.common.clone(), kind: EntityKind::Insert(ins.clone()) };
-                b = b.union(&bounds_in(d, &be, depth, blocks, off_counts));
-            }
-            b
-        }
-        EntityKind::Table(t) => {
-            let w: f64 = t.col_widths.iter().sum();
-            let h: f64 = t.row_heights.iter().sum();
-            Bounds2::new(t.insert.xy(), t.insert.xy() + Vec2::new(w, -h))
-        }
-        // Text widths estimated like `text_box`; the renderer measures the font.
-        EntityKind::Tolerance(t) => t.layout(d, &|s, h| h * 0.9 * s.chars().count() as f64).bounds,
-        EntityKind::Image(i) => {
-            let o = i.insert.xy();
-            let u = i.u.xy() * i.size.x;
-            let v = i.v.xy() * i.size.y;
-            Bounds2::from_points([o, o + u, o + v, o + u + v])
-        }
-        EntityKind::LwPolyline(p) => lwpolyline_bounds(p),
-        kind => {
-            let mut b = Bounds2::EMPTY;
-            for p in kind.prims() {
-                let pb = match p {
-                    Prim::Seg(s) => s.bounds(),
-                    Prim::Circle(c) => c.bounds(),
-                    Prim::Ellipse(e) => e.bounds(),
-                    Prim::Spline(s) => s.bounds(),
-                    Prim::Point(p) => Bounds2::from_points([p]),
-                    // Infinite lines don't contribute to extents, rays included (as in ZOOM Extents;
-                    // real drawings carry stray rays millions of units away).
-                    Prim::Infinite { .. } => Bounds2::EMPTY,
-                    Prim::Fill(pts) => Bounds2::from_points(pts),
+            EntityKind::Dimension(dm) => {
+                let pts: Vec<Vec2> = match dm.kind {
+                    crate::DimKind::Linear { .. } | crate::DimKind::Aligned | crate::DimKind::ArcLength => {
+                        vec![dm.defpt.xy(), dm.p13.xy(), dm.p14.xy()]
+                    }
+                    crate::DimKind::Radius | crate::DimKind::Diameter => vec![dm.defpt.xy(), dm.p15.xy()],
+                    crate::DimKind::Angular3P => vec![dm.defpt.xy(), dm.p13.xy(), dm.p14.xy(), dm.p15.xy()],
+                    crate::DimKind::Angular => vec![dm.defpt.xy(), dm.p13.xy(), dm.p14.xy(), dm.p15.xy(), dm.p16.xy()],
+                    crate::DimKind::Ordinate { .. } => vec![dm.p13.xy(), dm.p14.xy()],
                 };
-                b = b.union(&pb);
+                let mut b = Bounds2::from_points(pts);
+                if dm.user_text_pos {
+                    b.add(dm.text_mid.xy());
+                }
+                // Room for text and arrows.
+                // The same scale the dimension's geometry uses.
+                let th = d
+                    .dim_style(&dm.style)
+                    .map(|s| {
+                        let s = s.with_overrides(&dm.overrides);
+                        s.text_height * s.effective_scale(d.header.f64("DIMSCALE", 1.0))
+                    })
+                    .unwrap_or(0.18 * d.header.f64("DIMSCALE", 1.0).max(1e-9));
+                b = b.expand(th * 2.5);
+                if let Some(blk) = dm.block.as_ref().and_then(|n| d.block(n))
+                    && depth < MAX_BLOCK_DEPTH
+                {
+                    // Reuse the shared block-bounds cache (as the Insert branch does) so a dimension
+                    // block with branching or self-referencing children costs one pass per definition
+                    // per depth, not one per reference (which grows exponentially) (CWE-400).
+                    let inner = self.content(d, blk, depth, off_counts);
+                    b = b.union(&inner);
+                }
+                b
             }
-            b
+            EntityKind::MLeader(m) => {
+                let mut b = Bounds2::from_points(m.leaders.iter().flatten().map(|v| v.xy()).chain(std::iter::once(m.landing.xy())));
+                if let Some(t) = &m.text {
+                    b.add(t.insert.xy());
+                    if !blank(&t.contents) {
+                        b = b.union(&mtext_box(t));
+                    }
+                }
+                if let Some(ins) = &m.block {
+                    let be = Entity { handle: e.handle, common: e.common.clone(), kind: EntityKind::Insert(ins.clone()) };
+                    b = b.union(&self.bounds_in(d, &be, depth, off_counts));
+                }
+                b
+            }
+            EntityKind::Table(t) => {
+                let w: f64 = t.col_widths.iter().sum();
+                let h: f64 = t.row_heights.iter().sum();
+                Bounds2::new(t.insert.xy(), t.insert.xy() + Vec2::new(w, -h))
+            }
+            // Text widths estimated like `text_box`; the renderer measures the font.
+            EntityKind::Tolerance(t) => t.layout(d, &|s, h| h * 0.9 * s.chars().count() as f64).bounds,
+            EntityKind::Image(i) => {
+                let o = i.insert.xy();
+                let u = i.u.xy() * i.size.x;
+                let v = i.v.xy() * i.size.y;
+                Bounds2::from_points([o, o + u, o + v, o + u + v])
+            }
+            EntityKind::LwPolyline(p) => lwpolyline_bounds(p),
+            kind => {
+                let mut b = Bounds2::EMPTY;
+                for p in kind.prims() {
+                    let pb = match p {
+                        Prim::Seg(s) => s.bounds(),
+                        Prim::Circle(c) => c.bounds(),
+                        Prim::Ellipse(e) => e.bounds(),
+                        Prim::Spline(s) => s.bounds(),
+                        Prim::Point(p) => Bounds2::from_points([p]),
+                        // Infinite lines don't contribute to extents, rays included (as in ZOOM Extents;
+                        // real drawings carry stray rays millions of units away).
+                        Prim::Infinite { .. } => Bounds2::EMPTY,
+                        Prim::Fill(pts) => Bounds2::from_points(pts),
+                    };
+                    b = b.union(&pb);
+                }
+                b
+            }
         }
     }
 }
