@@ -7,6 +7,10 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use serde_json::json;
 
+/// Builds a headless harness showing Drafting Settings with POLARMODE preset to `flags`.
+///
+/// The dialog is opened through `CadApp::ui.dialog` and the frame is stepped a few times so
+/// widget ids and labels are registered before the test queries them by text.
 fn harness(flags: u32) -> Harness<'static, CadApp> {
     let mut app = CadApp::new(Session::new(), Services::default());
     app.run("setvar", json!({"name": "POLARMODE", "value": flags})).expect("set POLARMODE");
@@ -22,6 +26,11 @@ fn harness(flags: u32) -> Harness<'static, CadApp> {
     h
 }
 
+/// Guards that the "Shift to Acquire" radio button toggles POLARMODE bit 8 alone (#1600).
+///
+/// Regression: the two new controls must not reset the bits already set (relative, track
+/// polar, additional angles), and the change must reach the POLARMODE sysvar; selecting
+/// "Automatic" must clear bit 8 and leave the remaining bits untouched.
 #[test]
 fn shift_to_acquire_sets_and_clears_only_bit_8() {
     // Bits 1 (relative), 2 (track polar) and 4 (additional angles) are on: they must survive.
