@@ -96,6 +96,9 @@ struct Ctx<'a> {
     /// Extra linetype scale for model space seen through a viewport: 1 / viewport scale when
     /// `PSLTSCALE` is on (dashes keep their paper-space length at any viewport scale), else 1.
     lt_factor: f64,
+    /// The model window a layout viewport draws, in the space `xf` maps to (paper units): block
+    /// entities whose bounds through `xf` miss it are not expanded. `None` when not culling.
+    cull: Option<Bounds2>,
     /// Named plot style (table index) of the block reference being expanded, for `ByBlock`.
     block_pstyle: Option<usize>,
     /// Transparency (percent) of the block reference being expanded, for `ByBlock`.

@@ -214,6 +214,88 @@ fn viewport_contents_can_be_left_out_and_built_for_any_area() {
     assert!(viewport_content(&d, &paper, h, nan, &opts).prims.is_empty());
 }
 
+fn block_line(handle: u64, a: Vec2, b: Vec2) -> cadcraft_doc::Entity {
+    let line = cadcraft_doc::Line { a: a.to3(0.0), b: b.to3(0.0) };
+    block_entity(handle, Common::default(), EntityKind::Line(line))
+}
+
+/// A block of many separated lines shown through a small viewport: only the lines that can reach
+/// the viewport's model window are expanded (issue #1719). Before, `insert()` built the whole
+/// block and the clip threw most of it away.
+#[test]
+fn viewport_expands_only_block_entities_that_reach_it() {
+    let mut d = Drawing::new_imperial();
+    // SITE: 500 lines a unit long, 10 units apart along x, plus a nested copy of the same spread
+    // (through a block reference) so the culling carries into nested blocks too.
+    let mut site = cadcraft_doc::Block::new("SITE");
+    for i in 0..500u64 {
+        let x = i as f64 * 10.0;
+        site.entities.push(block_line(i + 1, Vec2::new(x, 0.0), Vec2::new(x + 1.0, 0.0)));
+    }
+    let mut nested = cadcraft_doc::Block::new("NESTED");
+    for i in 0..300u64 {
+        let x = i as f64 * 10.0;
+        nested.entities.push(block_line(i + 1, Vec2::new(x, 2.0), Vec2::new(x + 1.0, 2.0)));
+    }
+    d.blocks.insert("NESTED".into(), std::sync::Arc::new(nested));
+    site.entities.push(block_entity(1000, Common::default(), insert_of("NESTED")));
+    d.blocks.insert("SITE".into(), std::sync::Arc::new(site));
+    let model = Space::Model;
+    d.add(&model, Common::default(), insert_of("SITE")).unwrap();
+    // Paper viewport 20x20 showing the 20x20 model window around the origin (scale 1), widened
+    // by the 10 % slack: lines at x = 0 and x = 10 reach it; the other 798 do not.
+    let paper = Space::Paper("Layout1".into());
+    d.add(&paper, Common::default(), EntityKind::Viewport(vp(Vec2::new(5.0, 5.0), 20.0, 20.0, Vec2::ZERO, 20.0, 2))).unwrap();
+    let l = build_plot(&d, &paper, &Options::default());
+    // The two block references themselves and the four lines in reach (two in each block).
+    assert!(l.expanded <= 8, "{} block contents built through the viewport", l.expanded);
+    assert!(!viewport_points(&l).is_empty(), "the lines in the window are drawn");
+}
+
+/// A block reference that does reach the window still draws its visible objects, through its
+/// insert transform, clipped to the viewport.
+#[test]
+fn viewport_draws_and_clips_block_entities_that_reach_it() {
+    let mut d = Drawing::new_imperial();
+    let mut blk = cadcraft_doc::Block::new("B");
+    // Through the window at model (1000, 0), one line above it, and one far away.
+    blk.entities.push(block_line(1, Vec2::new(-100.0, 0.0), Vec2::new(100.0, 0.0)));
+    blk.entities.push(block_line(2, Vec2::new(-100.0, 50.0), Vec2::new(100.0, 50.0)));
+    blk.entities.push(block_line(3, Vec2::new(900.0, 0.0), Vec2::new(901.0, 0.0)));
+    d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+    let EntityKind::Insert(mut ins) = insert_of("B") else { panic!("an insert") };
+    ins.insert = Vec2::new(1000.0, 0.0).to3(0.0);
+    ins.scale = Vec3::new(2.0, 2.0, 1.0);
+    d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+    let paper = Space::Paper("Layout1".into());
+    d.add(&paper, Common::default(), EntityKind::Viewport(vp(Vec2::new(5.0, 5.0), 20.0, 20.0, Vec2::new(1000.0, 0.0), 20.0, 2))).unwrap();
+    let l = build_plot(&d, &paper, &Options::default());
+    // Only the crossing line is built (the reference and one entity).
+    assert!(l.expanded <= 3, "{} block contents built through the viewport", l.expanded);
+    let pts = viewport_points(&l);
+    assert_eq!(pts.len(), 1, "the line through the window is drawn, the others are not");
+    // It is clipped to the viewport rectangle and sits at paper y = 5 (model y = 0).
+    let rect = Bounds2::new(Vec2::new(-5.0, -5.0), Vec2::new(15.0, 15.0)).expand(1e-9);
+    assert_eq!(pts[0].len(), 2);
+    assert!(pts[0].iter().all(|q| rect.contains(*q) && (q.y - 5.0).abs() < 1e-9));
+}
+
+#[test]
+fn hostile_insert_transforms_do_not_panic_when_culled() {
+    for scale in [Vec3::new(f64::NAN, 1.0, 1.0), Vec3::new(1e308, 1e308, 1.0), Vec3::new(0.0, 0.0, 1.0)] {
+        let mut d = Drawing::new_imperial();
+        let mut blk = cadcraft_doc::Block::new("B");
+        blk.entities.push(block_line(1, Vec2::new(-1.0, -1.0), Vec2::new(1.0, 1.0)));
+        d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+        let EntityKind::Insert(mut ins) = insert_of("B") else { panic!("an insert") };
+        ins.scale = scale;
+        d.add(&Space::Model, Common::default(), EntityKind::Insert(ins)).unwrap();
+        let paper = Space::Paper("Layout1".into());
+        d.add(&paper, Common::default(), EntityKind::Viewport(vp(Vec2::new(5.0, 5.0), 20.0, 20.0, Vec2::ZERO, 20.0, 2))).unwrap();
+        let _ = build_plot(&d, &paper, &Options::default());
+    }
+}
+
 #[test]
 fn viewport_contents_built_on_all_cores_match_one_thread() {
     // Enough model objects for the parallel path; plots build on one thread.

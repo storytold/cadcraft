@@ -93,10 +93,15 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
     let mcenter = vp.view_center + (area.center() - center) / s;
     // Model window with slack: entity bounds are approximate (text, dimensions).
     let win = Bounds2::new(mcenter - mhalf, mcenter + mhalf).expand(mhalf.x.max(mhalf.y) * 0.1);
+    // The same window in paper units, where `xf` maps block coordinates (these are model units):
+    // block contents that cannot reach it are skipped instead of built and clipped away. An
+    // unbounded window (hostile sizes) leaves culling off rather than dropping everything.
+    let cull = Bounds2::from_points(win.corners().map(|c| xf.apply(c)));
+    let cull = (!cull.is_empty()).then_some(cull);
     // PSLTSCALE on: model-space dashes are scaled so they measure the same on paper as in
     // paper space, whatever the viewport scale.
     let lt_factor = if d.header.i64("PSLTSCALE", 1) != 0 { 1.0 / s } else { 1.0 };
-    let ctx = || Ctx { lt_factor, ..top_ctx(d, xf, VIEWPORT_CONTENT, &vp.frozen_layers, &vp.layer_colors) };
+    let ctx = || Ctx { lt_factor, cull, ..top_ctx(d, xf, VIEWPORT_CONTENT, &vp.frozen_layers, &vp.layer_colors) };
     let seen = |me: &Entity| {
         if matches!(me.kind, EntityKind::Viewport(_)) {
             return false;
