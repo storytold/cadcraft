@@ -55,6 +55,8 @@ pub const KEYWORD: &str = "keyword:";
 /// An object snap menu item ([`choose_snap`]).
 pub const SNAP: &str = "snap:";
 
+/// One registered command as a menu item: the command's own label unless `label` overrides it, its
+/// shortcut, and enabled only when it may run now; `None` when the id is not registered.
 fn item(app: &CadApp, id: &str, label: Option<&str>) -> Option<Entry> {
     let spec = find_command(id)?;
     Some(Entry::Item {
@@ -65,6 +67,7 @@ fn item(app: &CadApp, id: &str, label: Option<&str>) -> Option<Entry> {
     })
 }
 
+/// `ids` as menu items in order, skipping the ones that are not registered.
 fn items(app: &CadApp, ids: &[&str]) -> Vec<Entry> {
     ids.iter().filter_map(|id| item(app, id, None)).collect()
 }
@@ -188,6 +191,8 @@ pub fn command_entries(app: &CadApp) -> Option<Vec<Vec<Entry>>> {
     Some(groups)
 }
 
+/// Prefix every id in `e` (an item, or each item of a submenu), so a submenu's clicks route
+/// through [`choose`] as typed text or snap overrides.
 fn prefix_ids(e: Entry, prefix: &str) -> Entry {
     match e {
         Entry::Item { label, id, shortcut, enabled } => Entry::Item { label, id: format!("{prefix}{id}"), shortcut, enabled },

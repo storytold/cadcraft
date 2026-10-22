@@ -7,11 +7,14 @@ use cadcraft_engine::autosave;
 use cadcraft_ui_egui::{CadApp, Services};
 use serde_json::json;
 
+/// An app with an empty drawing and default services.
 fn app() -> CadApp {
     CadApp::new(Session::new(), Services::default())
 }
 
+/// The text of every text shape across the clipped shapes of a frame.
 fn painted_text(shapes: &[egui::epaint::ClippedShape]) -> String {
+    /// Append every text shape in `shape`, one line each.
     fn collect(shape: &egui::Shape, text: &mut String) {
         match shape {
             egui::Shape::Text(s) => {
@@ -41,6 +44,9 @@ fn frame(app: &mut CadApp, ctx: &egui::Context, events: Vec<egui::Event>, time: 
     painted_text(&output.shapes)
 }
 
+/// OPTIONS reports and sets SAVETIME, SAVEFILEPATH, saveVersion and timeSensitiveRightClick. The
+/// default is AutoCAD's (time-sensitive off, so a prompt with options gets the menu); the setting
+/// survives a profile round trip, and reset restores the default.
 #[test]
 fn autosave_save_version_and_right_click_in_options() {
     let mut a = app();
@@ -109,6 +115,9 @@ fn autosave_save_version_and_right_click_in_options() {
     assert!(a.session.prompt_text().contains("next point"), "no Enter: {}", a.session.prompt_text());
 }
 
+/// OPTIONS takes an interface scale from 0.5 to 3, applies it as egui's zoom factor, refuses an
+/// out-of-range or non-numeric value all or nothing, keeps it across a profile round trip (skipping
+/// a bad saved value), resets to 1.0, and shows the percentage on the Display tab.
 #[test]
 fn interface_scale_in_options() {
     let mut a = app();

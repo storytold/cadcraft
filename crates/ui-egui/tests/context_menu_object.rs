@@ -9,6 +9,8 @@ use serde_json::json;
 
 /// The text painted in one frame.
 fn painted(app: &mut CadApp, ctx: &egui::Context, events: Vec<egui::Event>, time: f64) -> String {
+    /// Append every text shape in a frame, one line each, so a test can assert on what the user
+    /// sees (the menu labels, not just the menu's model).
     fn collect(shape: &egui::Shape, text: &mut String) {
         match shape {
             egui::Shape::Text(s) => {
@@ -34,6 +36,7 @@ fn painted(app: &mut CadApp, ctx: &egui::Context, events: Vec<egui::Event>, time
     text
 }
 
+/// A secondary-button press (`pressed`) or release at `at`; the frame it is fed to does the rest.
 fn button(at: egui::Pos2, pressed: bool) -> egui::Event {
     egui::Event::PointerButton { pos: at, button: egui::PointerButton::Secondary, pressed, modifiers: egui::Modifiers::NONE }
 }
@@ -45,7 +48,10 @@ fn right_click(app: &mut CadApp, ctx: &egui::Context, at: egui::Pos2, time: f64)
     painted(app, ctx, vec![button(at, false)], time + 0.04);
 }
 
+/// Every item in the canvas menus as (label path, id), submenu labels joined by `/`; the ids are
+/// the ones [`context_menu::choose`] accepts.
 fn items(app: &CadApp) -> Vec<(String, String)> {
+    /// Flatten `es` into (prefixed label, id) pairs, descending into submenus.
     fn walk(prefix: &str, es: &[Entry], out: &mut Vec<(String, String)>) {
         for e in es {
             match e {

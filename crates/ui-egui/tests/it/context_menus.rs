@@ -9,6 +9,7 @@ use serde_json::json;
 
 /// (label, id, enabled) of the items, with submenu items prefixed by "Sub/".
 fn flatten(groups: &[Vec<Entry>]) -> Vec<(String, String, bool)> {
+    /// Push `es` into `out`, submenu items prefixed with their label and `/`.
     fn walk(prefix: &str, es: &[Entry], out: &mut Vec<(String, String, bool)>) {
         for e in es {
             match e {
@@ -24,14 +25,17 @@ fn flatten(groups: &[Vec<Entry>]) -> Vec<(String, String, bool)> {
     out
 }
 
+/// The labels of the menu groups' flattened items.
 fn labels(groups: &[Vec<Entry>]) -> Vec<String> {
     flatten(groups).into_iter().map(|(l, _, _)| l).collect()
 }
 
+/// The ids of the menu groups' flattened items.
 fn ids(groups: &[Vec<Entry>]) -> Vec<String> {
     flatten(groups).into_iter().map(|(_, id, _)| id).collect()
 }
 
+/// An app with an empty drawing and default services.
 fn app() -> CadApp {
     CadApp::new(Session::new(), Services::default())
 }
@@ -42,11 +46,17 @@ fn select_all(app: &mut CadApp) {
     app.session.set_selection(all);
 }
 
+/// Type `text` at the command line and submit it, as a user would (so commands and their prompts
+/// run exactly as typed).
 fn type_line(app: &mut CadApp, text: &str) {
     app.cmd.buffer = text.into();
     cmdline::submit(app);
 }
 
+/// The command menu lists Enter, Cancel, Recent Input (newest first, command names excluded), the
+/// prompt's keyword options, Snap Overrides at point prompts and transparent Pan/Zoom; choosing
+/// each gives the command the same input as typing it, and a chosen snap override is typed at the
+/// point prompt.
 #[test]
 fn command_menu_offers_enter_cancel_options_snaps_and_views() {
     let mut app = app();
@@ -88,6 +98,8 @@ fn command_menu_offers_enter_cancel_options_snaps_and_views() {
     assert!(app.session.running.is_none());
 }
 
+/// Snap Overrides appears only where a point is wanted; ERASE's Select objects prompt does not
+/// offer it (the regression: it was listed there and typed a modifier nothing could use).
 #[test]
 fn snap_overrides_only_at_point_prompts() {
     let mut app = app();
@@ -98,6 +110,9 @@ fn snap_overrides_only_at_point_prompts() {
     assert!(!l.iter().any(|x| x.starts_with("Snap Overrides/")), "Select objects isn't a point prompt: {l:?}");
 }
 
+/// The idle menu shows Repeat and Recent Commands (newest first), adds the selection commands only
+/// with a selection, runs a chosen one on it, and leaves out commands that are not registered
+/// rather than stubbing them; a mixed selection offers no object-type edit commands.
 #[test]
 fn idle_menu_lists_recent_commands_and_selection_commands() {
     let mut app = app();
@@ -130,6 +145,9 @@ fn idle_menu_lists_recent_commands_and_selection_commands() {
     assert!(app.session.doc().unwrap().model.handles().is_empty());
 }
 
+/// Each selected object type offers its own edit command — Edit Text, Polyline Edit, Spline Edit —
+/// in the selection menu and the idle menu, with the label AutoCAD uses rather than the command's
+/// bare name.
 #[test]
 fn selection_menu_has_the_object_types_edit_commands() {
     let cases = [
@@ -152,6 +170,8 @@ fn selection_menu_has_the_object_types_edit_commands() {
     assert_eq!(labels(&[context_menu::object_entries(&app)]), ["Polyline Edit"]);
 }
 
+/// A selected block reference offers Block Editor and Edit Reference In-Place; inside the Block
+/// Editor the idle menu instead offers saving and closing the block.
 #[test]
 fn a_selected_block_reference_offers_the_block_editor() {
     let mut app = app();
@@ -169,8 +189,42 @@ fn a_selected_block_reference_offers_the_block_editor() {
     assert_eq!(app.session.state().unwrap().block_editor(), None);
 }
 
+/// Every idle, selection, command and snap menu label has a Ukrainian translation (typed values,
+/// point filters and the "Repeat LINE" template excepted, since they are not catalog keys).
+#[test]
+fn every_menu_label_has_a_ukrainian_translation() {
+    let mut app = app();
+    app.cmdline("LINE 0,0 10,0");
+    app.cmdline("");
+    app.run("pline", json!({ "vertices": [[0, 0], [10, 0]] })).unwrap();
+    select_all(&mut app);
+    let mut all = flatten(&context_menu::entries(&app));
+    let line = app.session.doc().unwrap().model.handles()[0];
+    app.session.set_selection(app.session.doc().unwrap().model.handles().into_iter().filter(|h| *h != line).collect());
+    all.extend(flatten(&context_menu::entries(&app)));
+    all.extend(flatten(&context_menu::snap_entries(&app)));
+    type_line(&mut app, "LINE");
+    type_line(&mut app, "0,0");
+    all.extend(flatten(&context_menu::command_entries(&app).unwrap()));
+    let mut missing = Vec::new();
+    for (label, id, _) in &all {
+        let segments: Vec<&str> = label.split('/').collect();
+        // The item itself is user text when it types a value, or a command name (Recent Commands).
+        let user_text = (id.starts_with(context_menu::TYPE) && !id.contains('\'')) || segments.first() == Some(&"Recent Commands");
+        let n = segments.len() - usize::from(user_text);
+        for s in &segments[..n] {
+            // Point filters (.X) and "Repeat LINE" (a template) aren't catalog keys.
+            if !s.starts_with('.') && !s.starts_with("Repeat ") && cadcraft_ui_egui::i18n::tr("uk", s) == *s {
+                missing.push(s.to_string());
+            }
+        }
+    }
+    assert!(missing.is_empty(), "untranslated menu labels: {missing:?}");
+}
+
 /// The text painted in one frame at `time` (seconds).
 fn painted(app: &mut CadApp, ctx: &egui::Context, events: Vec<egui::Event>, time: f64) -> String {
+    /// Append every text shape in the frame, one line each.
     fn collect(shape: &egui::Shape, text: &mut String) {
         match shape {
             egui::Shape::Text(s) => {
