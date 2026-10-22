@@ -112,6 +112,9 @@ mod web {
         Services { pick_save: Some(Box::new(|name: &str| Some(name.to_string()))), no_file_system: true, ..Services::default() }
     }
 
+    /// Start the web app: install the browser's file-format hooks (read, write, plot, save-as and
+    /// export), choose the parent-frame bridge for `?host=parent` or browser downloads otherwise,
+    /// and run the app on the page's canvas.
     pub fn start() {
         eframe::WebLogger::init(log::LevelFilter::Info).ok();
         cadcraft_engine::cmd::file::set_io(cadcraft_engine::cmd::file::IoHooks {

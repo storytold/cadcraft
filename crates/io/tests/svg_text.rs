@@ -10,13 +10,16 @@ use serde_json::json;
 
 // ---------- a minimal TrueType font: .notdef, "A" (triangle), "B" (square) ----------
 
+/// Append `x` to `v` big-endian, as a TrueType table stores 16-bit values.
 fn be16(v: &mut Vec<u8>, x: u16) {
     v.extend_from_slice(&x.to_be_bytes());
 }
+/// Append `x` to `v` big-endian, as a TrueType table stores 32-bit values.
 fn be32(v: &mut Vec<u8>, x: u32) {
     v.extend_from_slice(&x.to_be_bytes());
 }
 
+/// One simple TrueType glyph from `pts`, all flagged on-curve, padded to a 4-byte boundary.
 fn simple_glyph(pts: &[(i16, i16)]) -> Vec<u8> {
     let mut g = Vec::new();
     let xs: Vec<i16> = pts.iter().map(|p| p.0).collect();
@@ -171,11 +174,13 @@ fn test_font() -> Vec<u8> {
     out
 }
 
+/// Register the synthetic test font once per process, so every drawing here can use it.
 fn fonts() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| cadcraft_fonts::ttf::register("cadcraft-svg-test.ttf", test_font()));
 }
 
+/// A metric drawing whose "Real" text style uses the synthetic outline font.
 fn drawing() -> Drawing {
     fonts();
     let mut d = Drawing::new_metric();
@@ -183,6 +188,7 @@ fn drawing() -> Drawing {
     d
 }
 
+/// Add a single-line TEXT of `value` at `at`, `height` tall, in the synthetic font.
 fn text(d: &mut Drawing, at: (f64, f64), value: &str, height: f64) {
     let t = Text {
         insert: Vec3::new(at.0, at.1, 0.0),
@@ -199,6 +205,8 @@ fn text(d: &mut Drawing, at: (f64, f64), value: &str, height: f64) {
     d.add(&Space::Model, Common::default(), EntityKind::Text(t)).unwrap();
 }
 
+/// Add an MTEXT at `at`, 10 units tall and unbounded wide, whose `contents` use `\P` for line
+/// breaks.
 fn mtext(d: &mut Drawing, at: (f64, f64), contents: &str) {
     let t = MText {
         insert: Vec3::new(at.0, at.1, 0.0),
@@ -223,6 +231,9 @@ fn attr(s: &str, name: &str) -> Vec<f64> {
     val.split(|c: char| c.is_whitespace() || c == ',').filter(|t| !t.is_empty()).filter_map(|t| t.parse().ok()).collect()
 }
 
+/// Guards #1876's main promise: TEXT and every MTEXT line become `<text>` elements with the
+/// font family, a positive font size and the glyphs' matrix, and the outlines they replace are
+/// not drawn as well.
 #[test]
 fn text_and_mtext_are_written_as_text() {
     let mut d = drawing();
@@ -244,6 +255,8 @@ fn text_and_mtext_are_written_as_text() {
     assert!(!s.contains("<path"), "no glyph outlines alongside the text: {s}");
 }
 
+/// Guards that geometry mode (`text: "geometry"`) writes no `<text>` elements and keeps the glyphs
+/// as outline polylines (here with TEXTFILL off), exactly like a plot.
 #[test]
 fn geometry_mode_keeps_glyph_outlines() {
     let mut d = drawing();
@@ -256,6 +269,8 @@ fn geometry_mode_keeps_glyph_outlines() {
     assert!(s.contains("<polyline"), "glyph outlines stay polylines: {s}");
 }
 
+/// Guards that a rotated TEXT keeps the space between its words in the run's characters and puts
+/// the rotation (with SVG's flipped y axis) in the text's matrix rather than guessed positions.
 #[test]
 fn rotation_and_spaces_are_kept() {
     let mut d = drawing();
@@ -290,6 +305,8 @@ fn rotation_and_spaces_are_kept() {
     assert!((m[2] + 0.5f64.sin()).abs() < 1e-5 && (m[3] + 0.5f64.cos()).abs() < 1e-5, "{m:?}");
 }
 
+/// Guards that `&`, `<` and `>` in drawing text are XML-escaped inside `<text>`, so a drawing
+/// with those characters still yields a well-formed document.
 #[test]
 fn special_characters_are_escaped() {
     let mut d = drawing();
@@ -299,6 +316,8 @@ fn special_characters_are_escaped() {
     assert!(!s.contains(">A&B<A></text>"), "unescaped text: {s}");
 }
 
+/// Guards that hostile text heights (zero, negative, NaN, infinite, huge, tiny) and control
+/// characters still produce a complete SVG instead of panicking.
 #[test]
 fn hostile_text_never_panics() {
     let mut d = drawing();
@@ -309,6 +328,8 @@ fn hostile_text_never_panics() {
     assert!(s.starts_with("<svg") && s.ends_with("</svg>"), "{s}");
 }
 
+/// Guards that `export_with` reads the `text` option for SVG (text by default, glyph outlines for
+/// `"geometry"`) and that formats such as DXF ignore it.
 #[test]
 fn the_export_json_option_selects_the_mode() {
     let mut d = drawing();

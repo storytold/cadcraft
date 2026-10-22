@@ -8,6 +8,9 @@ use serde_json::json;
 
 static SEEN: Mutex<Option<(String, String)>> = Mutex::new(None);
 
+/// Guards #1876: EXPORT must hand its JSON options (`text: "geometry"`) to the host's exporter,
+/// under the generated name `export.svg`, and return that exporter's bytes rather than the plain
+/// writer's.
 #[test]
 fn export_forwards_the_text_option() {
     set_io(IoHooks { read: |_, _| Err("no reader in this test".into()), write: |_, _| Ok(b"plain".to_vec()), plot: None });

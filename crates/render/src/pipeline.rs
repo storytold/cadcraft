@@ -55,6 +55,8 @@ impl Options {
 }
 
 impl Default for Options {
+    /// The defaults a build starts from: text and fills on, lineweights off, the whole space in
+    /// view, opaque, and no plot style, cancellation or recorded text glyphs.
     fn default() -> Self {
         Options {
             tolerance: 0.001,

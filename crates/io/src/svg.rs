@@ -182,13 +182,19 @@ struct TextRun {
     /// The primitive of the first glyph (the run is written before it and the glyphs' own
     /// outline primitives are left out).
     first: u32,
+    /// The primitives of all the run's glyphs, whose outlines are left out once it is written.
     prims: Vec<u32>,
+    /// The run's characters, in drawing order (spaces restored from the gaps between glyphs).
     text: String,
+    /// The baseline origin of the first glyph, in world coordinates.
     origin: Vec2,
-    /// One em along the baseline and one em up, in world units (font-unit axes in em).
+    /// One em along the glyphs' baseline, in world units (font-unit axes in em).
     x: Vec2,
+    /// One em up the glyphs' vertical axis, in world units (font-unit axes in em).
     y: Vec2,
+    /// The font face the glyphs were shaped from (its family names the SVG font).
     face: cadcraft_fonts::ttf::Face,
+    /// The font size (one em) in world units, from the glyph's two axes.
     em: f64,
 }
 
@@ -284,6 +290,8 @@ fn glyph_em(g: &TextGlyph) -> Option<f64> {
     (em.is_finite() && em > 0.0 && em <= MAX_TEXT_EM).then_some(em)
 }
 
+/// Whether two vectors agree to within floating-point noise (relative to their length), so glyphs
+/// of one shaping pass keep their run.
 fn same_vec(a: Vec2, b: Vec2) -> bool {
     let scale = 1.0 + a.len().max(b.len());
     a.dist(b) <= 1e-9 * scale
@@ -362,6 +370,8 @@ fn escape(s: &str) -> String {
     out
 }
 
+/// Append `s` to `out`, escaping XML's five predefined entities and leaving out characters XML
+/// cannot hold.
 fn escape_into(out: &mut String, s: &str) {
     for c in s.chars() {
         match c {
