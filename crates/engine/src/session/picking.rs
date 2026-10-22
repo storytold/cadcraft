@@ -34,6 +34,12 @@ impl Session {
             let crossing = self.window_is_crossing(pw.corner, p);
             let hs = select::select_window(self.doc()?, &space, Bounds2::new(pw.corner, p), crossing);
             let hs = cmd::groups::expand(self, hs);
+            if hs.is_empty() {
+                if !shift {
+                    self.set_selection(Vec::new());
+                }
+                return Ok(());
+            }
             let mut sel = if pickadd || shift { self.selection() } else { Vec::new() };
             if shift && pickadd {
                 sel.retain(|h| !hs.contains(h));
