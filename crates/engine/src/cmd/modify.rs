@@ -17,6 +17,7 @@ use crate::select::{SelectKind, SelectMode};
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 mod break_join;
+mod calibrate;
 mod explode;
 mod fillet;
 mod offset;
@@ -27,6 +28,7 @@ mod transform;
 mod trim;
 
 use break_join::{BreakM, run_break, run_breakat, run_join};
+use calibrate::{CalibrateM, run_calibrate};
 use explode::run_explode;
 pub(crate) use explode::{explode_kind, explode_with};
 use fillet::{FilletM, run_chamfer, run_fillet};
@@ -67,6 +69,11 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["sc"])
             .params("{handles?, base: [x,y] or [x,y,z] (default Z: ELEVATION), factor, copy?: bool}")
             .interactive(|_| Ok(Box::new(SelectThen::new(Op::Scale)))),
+        CommandSpec::new("calibrate", "Calibrate Scale", run_calibrate)
+            .menu(&["Modify", "Calibrate Scale"])
+            .alias(&["cali"])
+            .params("{p1, p2, length, apply?: \"all\"|\"selection\"|\"underlay\" (default: all, or selection with handles), handles?} → {factor, measured, length, apply, scaled}")
+            .interactive(|_| Ok(Box::new(CalibrateM::default()))),
         CommandSpec::new("mirror", "Mirror", run_mirror)
             .menu(&["Modify", "Mirror"])
             .alias(&["mi"])
