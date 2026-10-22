@@ -109,17 +109,19 @@ pub fn export_list_with(list: &DisplayList, window: Option<Bounds2>, text: TextM
     let mut replaced = vec![false; list.prims.len()];
     for (i, run) in runs.iter().enumerate() {
         run_at.insert(run.first, i);
-        for p in run.prims.iter().filter_map(|p| usize::try_from(*p).ok()) {
-            if let Some(slot) = replaced.get_mut(p) {
-                *slot = true;
-            }
-        }
     }
     for (i, p) in list.prims.iter().enumerate() {
         if let Some(&ri) = u32::try_from(i).ok().and_then(|k| run_at.get(&k))
             && let Some(run) = runs.get(ri)
+            && write_run(&mut s, list, run, white, dp, &tx, &ty)
         {
-            write_run(&mut s, list, run, white, dp, &tx, &ty);
+            // The text replaces its glyph outlines only when it was written: a run whose
+            // transform can't be written stays geometry.
+            for p in run.prims.iter().filter_map(|p| usize::try_from(*p).ok()) {
+                if let Some(slot) = replaced.get_mut(p) {
+                    *slot = true;
+                }
+            }
         }
         if replaced.get(i).copied().unwrap_or(false) {
             continue;
@@ -198,7 +200,8 @@ struct TextRun {
     em: f64,
 }
 
-/// Most characters written in one `<text>` run; a longer run continues in another element.
+/// Most glyphs written in one `<text>` run (a run's characters stay below twice this, with the
+/// inferred spaces); a longer run continues in another element.
 const MAX_RUN_CHARS: usize = 100_000;
 /// Largest text em (world units) written as text; a hostile height stays outlines.
 const MAX_TEXT_EM: f64 = 1.0e12;
@@ -244,7 +247,9 @@ fn text_runs(list: &DisplayList) -> Vec<TextRun> {
             {
                 break;
             }
-            if run.text.chars().count() >= MAX_RUN_CHARS {
+            // O(1): the glyph count, not a rescan of the run's characters (which made a long
+            // TEXT quadratic). A run's text holds at most twice its glyphs (inferred spaces).
+            if run.prims.len() >= MAX_RUN_CHARS {
                 break;
             }
             let Some(c) = text_char(n.glyph.ch) else { break };
@@ -339,12 +344,20 @@ fn text_char(c: char) -> Option<char> {
 
 /// Write one text run: a `<text>` with the glyphs' font, size and a matrix mapping em units
 /// (font size) to world coordinates. SVG's y axis points down, so the matrix includes the flip.
-fn write_run(s: &mut String, list: &DisplayList, run: &TextRun, white: Rgb, dp: usize, tx: &impl Fn(f64) -> f64, ty: &impl Fn(f64) -> f64) {
-    let Some(p) = usize::try_from(run.first).ok().and_then(|i| list.prims.get(i)) else { return };
+/// Returns whether it wrote the element (its transform must be finite).
+fn write_run(s: &mut String, list: &DisplayList, run: &TextRun, white: Rgb, dp: usize, tx: &impl Fn(f64) -> f64, ty: &impl Fn(f64) -> f64) -> bool {
+    let Some(p) = usize::try_from(run.first).ok().and_then(|i| list.prims.get(i)) else { return false };
     let color = p.display_rgb(white).hex();
     let op = opacity(p);
     let family = run.face.family_name();
-    let family = if family.is_empty() { "sans-serif".to_string() } else { escape(&family) };
+    // `font-family` takes quoted family names or a sequence of CSS identifiers: a name such as
+    // `Font Awesome 6 Free` is neither (a digit can't start an identifier), so quote it and
+    // keep `sans-serif` as the fallback. XML escaping turns the quotes into entities.
+    let family = if family.is_empty() {
+        "sans-serif".to_string()
+    } else {
+        escape(&format!("'{}', sans-serif", family.replace('\\', "\\\\").replace('\'', "\\'")))
+    };
     let em = run.em;
     let a = run.x.x / em;
     let b = -run.x.y / em;
@@ -353,7 +366,7 @@ fn write_run(s: &mut String, list: &DisplayList, run: &TextRun, white: Rgb, dp: 
     let e = tx(run.origin.x);
     let f = ty(run.origin.y);
     if ![a, b, c, d, e, f, em].iter().all(|v| v.is_finite()) {
-        return;
+        return false;
     }
     let _ = write!(
         s,
@@ -361,6 +374,7 @@ fn write_run(s: &mut String, list: &DisplayList, run: &TextRun, white: Rgb, dp: 
     );
     escape_into(s, &run.text);
     s.push_str("</text>");
+    true
 }
 
 /// `s` with `&`, `<`, `>`, `"` and `'` escaped for XML, and characters XML can't hold left out.

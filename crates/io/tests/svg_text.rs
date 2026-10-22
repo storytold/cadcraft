@@ -3,9 +3,12 @@
 //!
 //! The font is a tiny synthetic TrueType file built here (no font files in the repository).
 
-use cadcraft_doc::{Common, Drawing, EntityKind, MText, Space, Text, TextStyle};
-use cadcraft_geom::Vec3;
+use cadcraft_color::Rgb;
+use cadcraft_doc::{Common, Drawing, EntityKind, MText, Space, Text, TextStyle, Viewport};
+use cadcraft_fonts::TextGlyph;
+use cadcraft_geom::{Bounds2, Vec2, Vec3};
 use cadcraft_io::svg::{self, TextMode};
+use cadcraft_render::{DPrim, DisplayList, Kind, Options, PlotText};
 use serde_json::json;
 
 // ---------- a minimal TrueType font: .notdef, "A" (triangle), "B" (square) ----------
@@ -46,9 +49,9 @@ fn simple_glyph(pts: &[(i16, i16)]) -> Vec<u8> {
     g
 }
 
-/// A name table naming the family (and full/PostScript names) "SvgTest".
-fn name_table() -> Vec<u8> {
-    let string: Vec<u8> = "SvgTest".encode_utf16().flat_map(u16::to_be_bytes).collect();
+/// A name table naming the family (and full/PostScript names) `family`.
+fn name_table(family: &str) -> Vec<u8> {
+    let string: Vec<u8> = family.encode_utf16().flat_map(u16::to_be_bytes).collect();
     let mut t = Vec::new();
     be16(&mut t, 0);
     be16(&mut t, 3);
@@ -64,7 +67,7 @@ fn name_table() -> Vec<u8> {
 
 /// A TrueType font with glyphs .notdef (empty), A (triangle) and B (square); its cmap also maps
 /// `&`, `<` and `>` so XML escaping can be tested.
-fn test_font() -> Vec<u8> {
+fn test_font_named(family: &str) -> Vec<u8> {
     let glyphs = [Vec::new(), simple_glyph(&[(50, 0), (550, 0), (300, 700)]), simple_glyph(&[(50, 0), (550, 0), (550, 700), (50, 700)])];
     let mut glyf = Vec::new();
     let mut loca = Vec::new();
@@ -149,7 +152,7 @@ fn test_font() -> Vec<u8> {
         (b"hmtx", hmtx),
         (b"loca", loca),
         (b"maxp", maxp),
-        (b"name", name_table()),
+        (b"name", name_table(family)),
     ];
     tables.sort_by_key(|t| *t.0);
     let mut out = Vec::new();
@@ -174,10 +177,20 @@ fn test_font() -> Vec<u8> {
     out
 }
 
-/// Register the synthetic test font once per process, so every drawing here can use it.
+/// The test font with the family name `SvgTest`.
+fn test_font() -> Vec<u8> {
+    test_font_named("SvgTest")
+}
+
+/// Register the synthetic test fonts once per process, so every drawing here can use them.
 fn fonts() {
     static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| cadcraft_fonts::ttf::register("cadcraft-svg-test.ttf", test_font()));
+    ONCE.call_once(|| {
+        cadcraft_fonts::ttf::register("cadcraft-svg-test.ttf", test_font());
+        // A family name that is not a sequence of CSS identifiers (it starts with a letter but a
+        // later word starts with a digit), so `font-family` must quote it.
+        cadcraft_fonts::ttf::register("cadcraft-svg-fa.ttf", test_font_named("Font Awesome 6 Free"));
+    });
 }
 
 /// A metric drawing whose "Real" text style uses the synthetic outline font.
@@ -244,7 +257,7 @@ fn text_and_mtext_are_written_as_text() {
     assert!(s.matches("<text").count() >= 3, "one TEXT and two MTEXT lines: {s}");
     assert!(s.contains(">ABBA</text>"), "{s}");
     assert!(s.contains(">AB</text>") && s.contains(">BA</text>"), "MTEXT lines: {s}");
-    assert!(s.contains(r#"font-family="SvgTest""#), "{s}");
+    assert!(s.contains(r#"font-family="&apos;SvgTest&apos;, sans-serif""#), "{s}");
     assert!(s.matches("font-size=\"").count() >= 3, "{s}");
     let size = attr(&s, "font-size");
     assert!(size.len() == 1 && size[0].is_finite() && size[0] > 0.0, "{s}");
@@ -340,4 +353,126 @@ fn the_export_json_option_selects_the_mode() {
     assert!(!String::from_utf8_lossy(&outlines).contains("<text"));
     // Other formats ignore the option.
     assert!(cadcraft_io::export_with(&d, "a.dxf", &json!({ "text": "geometry" })).is_ok());
+}
+
+/// Guards that a family name that isn't a sequence of CSS identifiers (such as
+/// `Font Awesome 6 Free`, whose third word starts with a digit) is written as a quoted CSS
+/// family with a generic fallback, so viewers don't discard the declaration.
+#[test]
+fn a_family_name_is_quoted_with_a_generic_fallback() {
+    let mut d = drawing();
+    d.text_styles.push(TextStyle { name: "FA".into(), font: "cadcraft-svg-fa.ttf".into(), ..TextStyle::default() });
+    let t = Text {
+        insert: Vec3::ZERO,
+        align_pt: None,
+        height: 10.0,
+        value: "AB".into(),
+        rotation: 0.0,
+        width_factor: 1.0,
+        oblique: 0.0,
+        style: "FA".into(),
+        halign: Default::default(),
+        valign: Default::default(),
+    };
+    d.add(&Space::Model, Common::default(), EntityKind::Text(t)).unwrap();
+    let s = svg::export_window_with_text(&d, &Space::Model, None, true, TextMode::Text);
+    assert!(s.contains(r#"font-family="&apos;Font Awesome 6 Free&apos;, sans-serif""#), "{s}");
+    assert!(!s.contains(r#"font-family="Font Awesome 6 Free""#), "unquoted family: {s}");
+}
+
+/// Guards that an ill-conditioned (nearly degenerate) glyph whose em passes `glyph_em` but whose
+/// `<text>` matrix overflows leaves its outline as geometry instead of vanishing (the text run
+/// replaces the outline only when it was written).
+#[test]
+fn an_ill_conditioned_glyph_stays_geometry() {
+    let mut d = drawing();
+    text(&mut d, (0.0, 0.0), "A", 10.0);
+    let opts = Options { text_glyphs: true, ..Options::default() };
+    let mut list = cadcraft_render::build(&d, &Space::Model, &opts);
+    assert_eq!(list.texts.len(), 1, "one glyph to write");
+    // A huge baseline axis with a tiny vertical axis: the em is finite and positive (the
+    // determinant over the axis length), but dividing the axis by it overflows.
+    list.texts[0].glyph.x = Vec2::new(1e300, 0.0);
+    list.texts[0].glyph.y = Vec2::new(0.0, 1e-300);
+    let s = svg::export_list_with(&list, None, TextMode::Text);
+    assert!(!s.contains("<text"), "no unusable text transform: {s}");
+    assert!(s.contains("<path"), "the glyph outline stays geometry: {s}");
+}
+
+/// Guards that a long text run is split at `MAX_RUN_CHARS` glyphs: the run-length check counts
+/// glyphs (O(1)) instead of rescanning the run's characters (which made a long TEXT quadratic),
+/// and every glyph is still written.
+#[test]
+fn a_long_text_run_is_bounded() {
+    fonts();
+    let Some(face) = cadcraft_fonts::ttf::Face::new(std::sync::Arc::new(test_font()), 0) else { panic!("the test font parses") };
+    let n = 100_001u32;
+    let mut list = DisplayList::default();
+    // Every glyph outline is the same triangle, but each has its own primitive.
+    list.tris = vec![Vec2::ZERO, Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0)];
+    list.bounds = Bounds2::from_points(list.tris.iter().copied());
+    for i in 0..n {
+        list.prims.push(DPrim {
+            handle: cadcraft_doc::Handle(0),
+            color: Rgb(0, 0, 0),
+            aci7: false,
+            lw: 0.0,
+            transparency: 0,
+            kind: Kind::Tris,
+            start: 0,
+            len: 3,
+        });
+        list.texts.push(PlotText {
+            prim: i,
+            verts: 3,
+            bounds: list.bounds,
+            glyph: TextGlyph {
+                face: face.clone(),
+                gid: 1,
+                ch: 'A',
+                outline: 0,
+                // Origin advanced by the glyph's own advance: no inferred spaces.
+                origin: Vec2::new(f64::from(i) * 0.6, 0.0),
+                x: Vec2::new(1.0, 0.0),
+                y: Vec2::new(0.0, 1.0),
+            },
+        });
+    }
+    let s = svg::export_list_with(&list, None, TextMode::Text);
+    assert_eq!(s.matches("<text").count(), 2, "100_001 glyphs make two runs");
+    assert_eq!(s.matches('A').count(), n as usize, "every glyph is still written");
+}
+
+/// Guards that text seen through a paper-space viewport is written as `<text>` by a non-plot
+/// export: `resolve_viewport_text` gives each whole glyph its outline primitive back and clears
+/// the encoded text index from the handle (#1876).
+#[test]
+fn viewport_text_is_written_as_text() {
+    let mut d = drawing();
+    text(&mut d, (0.0, 0.0), "AB", 10.0);
+    let vp = Viewport {
+        center: Vec3::new(50.0, 50.0, 0.0),
+        width: 100.0,
+        height: 100.0,
+        view_center: Vec2::new(0.0, 0.0),
+        view_height: 100.0,
+        id: 2,
+        locked: false,
+        frozen_layers: Vec::new(),
+        layer_colors: Vec::new(),
+        clip: None,
+        on: true,
+    };
+    d.add(&Space::Paper("Layout1".into()), Common::default(), EntityKind::Viewport(vp)).unwrap();
+    let paper = Space::Paper("Layout1".into());
+
+    let opts = Options { text_glyphs: true, ..Options::default() };
+    let list = cadcraft_render::build(&d, &paper, &opts);
+    assert!(!list.texts.is_empty(), "the viewport's text glyphs are recorded");
+    assert!(list.texts.iter().all(|t| t.prim != PlotText::NONE), "each whole glyph keeps its outline primitive");
+    assert!(list.prims.iter().all(|p| p.handle.0 >> 32 == 0), "no encoded text index is left in a handle");
+
+    let s = svg::export_window_with_text(&d, &paper, None, true, TextMode::Text);
+    assert!(s.contains(">AB</text>"), "viewport text is an SVG text element: {s}");
+    assert!(!s.contains("<path"), "the glyph outlines are not drawn as well: {s}");
 }

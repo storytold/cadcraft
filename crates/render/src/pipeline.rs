@@ -124,9 +124,14 @@ fn build_space(d: &Drawing, space: &Space, opts: &Options, plotting: bool) -> Di
             if paper && let EntityKind::Viewport(vp) = &e.kind {
                 if viewports < MAX_VIEWPORTS {
                     viewports += 1;
+                    let start = b.list.prims.len();
                     viewport(&mut b, d, e, vp);
                     if plotting {
                         take_viewport_layers(&mut b.list);
+                    } else if opts.text_glyphs {
+                        // A text export replaces the outlines with `<text>`: resolve the glyphs
+                        // it should write (a plot does this in `take_viewport_layers`).
+                        resolve_viewport_text(&mut b.list, start);
                     }
                 }
                 continue;
@@ -244,6 +249,34 @@ fn take_viewport_layers(list: &mut DisplayList) {
         }
         if let Some(p) = list.prims.get_mut(i) {
             p.handle = VIEWPORT_CONTENT;
+        }
+    }
+}
+
+/// The non-plot counterpart of the glyph half of [`take_viewport_layers`]: text seen through a
+/// layout viewport is marked with its index in the handle's high half until it is clipped. A
+/// glyph outline that came through whole takes its own primitive back, so an SVG text export can
+/// write it as `<text>`; one the clip changed stays geometry. The handle loses the index (it goes
+/// back to [`VIEWPORT_CONTENT`]) without plot-only layer bookkeeping.
+fn resolve_viewport_text(list: &mut DisplayList, start: usize) {
+    for i in start..list.prims.len() {
+        let Some(p) = list.prims.get(i).copied() else { break };
+        let Some(k) = (p.handle.0 >> 32).checked_sub(1) else { continue };
+        let bounds = Bounds2::from_points(list.points(&p).iter().copied());
+        let same = |a: Vec2, b: Vec2| a.dist(b) <= 1e-9 * (1.0 + a.len());
+        let whole = usize::try_from(k).ok().and_then(|k| list.texts.get(k)).is_some_and(|t| {
+            t.prim == PlotText::NONE
+                && p.kind == Kind::Tris
+                && p.len == t.verts
+                && same(bounds.min, t.bounds.min)
+                && same(bounds.max, t.bounds.max)
+                && u32::try_from(i).is_ok()
+        });
+        if whole && let Some(t) = usize::try_from(k).ok().and_then(|k| list.texts.get_mut(k)) {
+            t.prim = u32::try_from(i).unwrap_or(PlotText::NONE);
+        }
+        if let Some(p) = list.prims.get_mut(i) {
+            p.handle = Handle(p.handle.0 & 0xFFFF_FFFF);
         }
     }
 }
