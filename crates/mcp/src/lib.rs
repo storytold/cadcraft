@@ -12,7 +12,7 @@ mod backend;
 mod server;
 mod tools;
 
-pub use backend::{Backend, Headless, Remote};
+pub use backend::{Backend, CallError, Headless, Remote};
 pub use server::{PROTOCOL_VERSION, Server};
 
 #[cfg(test)]

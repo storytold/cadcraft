@@ -12,6 +12,29 @@ Start the desktop app with `--control PORT` (or `CADCRAFT_CONTROL_PORT=PORT`). I
 Errors come back as `{"id": …, "ok": false, "error": "message"}`. An unknown method's error points
 to `control.methods`, which lists the methods the server answers.
 
+When the engine refused or failed the request (`engine.execute`/`command`, `cmdline.script`,
+`drawing.inspect`, `app.open`, `app.save`), the reply also has `data` `{code, command, param?}`
+(named after JSON-RPC's error `data`): a stable code, the command the error concerns and, when the
+message names one, the parameter. `param` is best effort: the first key the message names. `error`
+keeps the text.
+
+```json
+{"id": 7, "ok": false, "error": "invalid parameters for `circle`: `radius` or `diameter` is required", "data": {"code": "bad_params", "command": "circle", "param": "radius"}}
+```
+
+| Code | Meaning |
+|---|---|
+| `unknown_command` | No command has this name or alias. |
+| `not_available` | The command exists but can't run now (its `enabled` check refused it; `list_commands` shows `enabled`). |
+| `bad_params` | The parameters were refused: missing, of the wrong type, out of range, or naming something that doesn't exist (a block, a file). |
+| `no_document` | No drawing is open. |
+| `failed` | The command ran and failed for another reason (nothing to act on, an unknown or malformed object handle, an operation it can't do). |
+| `internal` | A bug in the command: it panicked and the drawing was kept as it was. Please report it. |
+
+Other errors (an unknown method, a missing `command`, a timeout) have no `data`. `cmdline.input`
+and `cmdline.key` succeed and report a refused line in `result.error`, as before. The MCP server
+passes `data` on as `structuredContent` ([mcp.md](mcp.md#error-codes)).
+
 A line that is not a JSON object with a string `method` (an HTTP request, text that isn't JSON,
 bytes that aren't UTF-8) gets one error reply and the server closes the connection; nothing sent
 after it runs. Blank lines are skipped.
@@ -41,7 +64,7 @@ field. `engine.commands` returns a separate command catalog, not a list of addit
 | `cmdline.state` | | Current prompt, keywords, accepted input kinds, history tail. |
 | `engine.execute` | `{command, params}` | Run any command with JSON parameters. Never opens a dialog. `command` is an alias of this method, with the same parameters and result. |
 | `engine.commands` | | Every command: id, label, menu path, shortcut, aliases, params doc, enabled. |
-| `drawing.inspect` | `{entities?, limit?}` | Drawing summary (counts, extents, layers, styles, blocks, layouts, selection, undo) and entities with handles and geometry. |
+| `drawing.inspect` | `{entities?, limit?}` | Drawing summary (counts, extents, insertion units `insunits`, layers, styles, blocks, layouts, selection, undo) and entities with handles, geometry, `bbox` and, when not `(0,0,1)`, `extrusion` (see [mcp.md](mcp.md#coordinates-units-and-angles)). Entities by default here; the MCP tool `inspect_drawing` leaves them out unless asked. |
 | `ui.inspect` | | UI state, canvas rect, view, cursor and snap, performance counters; `closePrompt`: the drawing a "Save changes?" prompt is asking about (null when none); and actual egui keyboard focus (`focus.id`, `focus.label`, `focus.role`). |
 | `ui.elements` | `{label?, role?, focused?}` | Observed toolbar, tab, drafting and layer-palette controls from the latest UI frame. Filters match exactly. Each entry has its real egui `id`, label, role, rectangle `[x,y,width,height]`, enabled/visible/selected state and current focus. |
 | `ui.menu.list` / `ui.menu.invoke` | `{command}` | The menu tree; invoke an item like a click (interactive). |

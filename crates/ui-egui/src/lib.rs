@@ -314,10 +314,15 @@ impl CadApp {
 
     /// Run a command programmatically (or a UI command).
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        self.run_detailed(id, params).map_err(|(e, _)| e)
+    }
+
+    /// [`Self::run`] with an engine error also as data (a UI command's error is text only).
+    pub fn run_detailed(&mut self, id: &str, params: Value) -> Result<Value, (String, Option<cadcraft_engine::ErrorInfo>)> {
         if let Some(r) = menus::run_ui_command(self, id, &params) {
-            return r;
+            return r.map_err(|e| (e, None));
         }
-        let r = self.session.execute(id, &params).map_err(|e| e.to_string());
+        let r = self.session.execute(id, &params).map_err(|e| (e.to_string(), Some(e.info(id))));
         if let Ok(v) = &r
             && let Some(m) = v.get("message").and_then(Value::as_str)
         {
@@ -325,7 +330,7 @@ impl CadApp {
                 self.session.echo(l.to_string());
             }
         }
-        if let Err(e) = &r {
+        if let Err((e, _)) = &r {
             self.session.echo(e.clone());
         }
         r

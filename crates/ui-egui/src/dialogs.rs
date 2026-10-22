@@ -196,34 +196,6 @@ fn tracking_options(ui: &mut egui::Ui, s: &mut cadcraft_engine::Settings) {
 const LENGTH_TYPES: [(i64, &str); 5] = [(4, "Architectural"), (2, "Decimal"), (3, "Engineering"), (5, "Fractional"), (1, "Scientific")];
 /// AUNITS values.
 const ANGLE_TYPES: [(i64, &str); 5] = [(0, "Decimal Degrees"), (1, "Deg/Min/Sec"), (2, "Grads"), (3, "Radians"), (4, "Surveyor's Units")];
-/// INSUNITS names, indexed by value (DXF Reference, header group code 70).
-const INSERTION_UNITS: [&str; 25] = [
-    "Unitless",
-    "Inches",
-    "Feet",
-    "Miles",
-    "Millimeters",
-    "Centimeters",
-    "Meters",
-    "Kilometers",
-    "Microinches",
-    "Mils",
-    "Yards",
-    "Angstroms",
-    "Nanometers",
-    "Microns",
-    "Decimeters",
-    "Decameters",
-    "Hectometers",
-    "Gigameters",
-    "Astronomical Units",
-    "Light Years",
-    "Parsecs",
-    "US Survey Feet",
-    "US Survey Inch",
-    "US Survey Yard",
-    "US Survey Mile",
-];
 
 /// A combo box over `(value, label)` options.
 fn pick(ui: &mut egui::Ui, salt: &str, value: &mut i64, options: &[(i64, String)]) {
@@ -273,7 +245,7 @@ fn units(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             ui.strong("Insertion scale");
             ui.end_row();
             ui.label("Units to scale inserted content");
-            let names = INSERTION_UNITS.iter().enumerate().map(|(k, l)| (k as i64, l.to_string())).collect::<Vec<_>>();
+            let names = cadcraft_engine::units::INSERTION_UNITS.iter().enumerate().map(|(k, l)| (k as i64, l.to_string())).collect::<Vec<_>>();
             pick(ui, "units_insunits", ins, &names);
             ui.end_row();
             ui.strong("Sample output");

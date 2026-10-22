@@ -10,10 +10,40 @@ use serde_json::{Value, json};
 /// Something that answers control-channel methods (`engine.execute`, `cmdline.input`,
 /// `drawing.inspect`, `ui.render`…). See `cadcraft_ui_egui::control` for the full list.
 pub trait Backend {
-    fn call(&mut self, method: &str, params: Value) -> Result<Value, String>;
+    /// Call `method`; `Err` is the error text.
+    fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        self.call_detailed(method, params).map_err(|e| e.message)
+    }
+    /// Like [`Backend::call`], with the error as data when the engine reported it.
+    fn call_detailed(&mut self, method: &str, params: Value) -> Result<Value, CallError>;
     /// True when a real UI is attached (`ui.screenshot` works).
     fn has_ui(&self) -> bool;
     fn describe(&self) -> String;
+}
+
+/// A failed call: its text and, when the engine refused or failed the call, the error as data:
+/// `{code, command, param?, message}` (`cadcraft_engine::ErrorInfo`, codes in `docs/mcp.md`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CallError {
+    pub message: String,
+    pub data: Option<Value>,
+}
+
+impl From<String> for CallError {
+    fn from(message: String) -> Self {
+        CallError { message, data: None }
+    }
+}
+
+impl From<&str> for CallError {
+    fn from(message: &str) -> Self {
+        CallError { message: message.to_string(), data: None }
+    }
+}
+
+/// An engine error from running `command`, with its data.
+fn engine_error(e: &cadcraft_engine::EngineError, command: &str) -> CallError {
+    CallError { message: e.to_string(), data: serde_json::to_value(e.info(command)).ok() }
 }
 
 /// A running CADCraft app reached through its loopback control port.
@@ -159,7 +189,7 @@ fn is_read_only(method: &str) -> bool {
 }
 
 impl Backend for Remote {
-    fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+    fn call_detailed(&mut self, method: &str, params: Value) -> Result<Value, CallError> {
         let id = self.next_id;
         self.next_id += 1;
         let line = json!({"id": id, "method": method, "params": params}).to_string();
@@ -172,7 +202,8 @@ impl Backend for Remote {
                 return Err(format!(
                     "CADCraft at {}: {e}; the reply was lost, so `{method}` may or may not have been applied. Inspect the drawing first",
                     self.addr
-                ));
+                )
+                .into());
             }
         };
         let v: Value = serde_json::from_str(&reply).map_err(|e| format!("bad reply: {e}"))?;
@@ -181,11 +212,18 @@ impl Backend for Remote {
         } else {
             let e = v.get("error").and_then(Value::as_str).unwrap_or("error");
             // A timeout says whether the request can still have run (#345).
-            Err(match v.get("state").and_then(Value::as_str) {
+            let message = match v.get("state").and_then(Value::as_str) {
                 Some("not-run") => format!("{e}: CADCraft did not start `{method}` and won't; it is safe to send again"),
                 Some("may-have-run") => format!("{e}: `{method}` may or may not have been applied. Inspect the drawing first"),
                 _ => e.to_string(),
-            })
+            };
+            // The app's `data` ({code, command, param?}) plus the message: the same object as headless.
+            let data = v.get("data").and_then(Value::as_object).map(|d| {
+                let mut d = d.clone();
+                d.insert("message".into(), json!(e));
+                Value::Object(d)
+            });
+            Err(CallError { message, data })
         }
     }
     fn has_ui(&self) -> bool {
@@ -240,14 +278,14 @@ fn state(s: &Session) -> Value {
 }
 
 impl Backend for Headless {
-    fn call(&mut self, method: &str, p: Value) -> Result<Value, String> {
+    fn call_detailed(&mut self, method: &str, p: Value) -> Result<Value, CallError> {
         let s = &mut self.session;
         let str_p = |k: &str| p.get(k).and_then(Value::as_str).map(str::to_string);
         match method {
             "engine.execute" | "command" => {
                 let id = str_p("command").ok_or("missing `command`")?;
                 let params = p.get("params").cloned().filter(|v| !v.is_null()).unwrap_or(json!({}));
-                s.execute(&id, &params).map_err(|e| e.to_string())
+                s.execute(&id, &params).map_err(|e| engine_error(&e, &id))
             }
             "cmdline.input" => {
                 let before = s.log.len();
@@ -269,7 +307,7 @@ impl Backend for Headless {
             }
             "cmdline.script" => {
                 let before = s.log.len();
-                s.script(&str_p("text").unwrap_or_default()).map_err(|e| e.to_string())?;
+                s.script(&str_p("text").unwrap_or_default()).map_err(|e| engine_error(&e, "script"))?;
                 let out: Vec<String> = s.log.iter().skip(before).cloned().collect();
                 Ok(json!({"output": out, "state": state(s)}))
             }
@@ -300,7 +338,7 @@ impl Backend for Headless {
             "engine.commands" => {
                 Ok(Value::Array(cadcraft_engine::command_specs().iter().map(|c| serde_json::to_value(c.info(s)).unwrap_or_default()).collect()))
             }
-            "drawing.inspect" | "document.inspect" => s.execute("drawing.inspect", &p).map_err(|e| e.to_string()),
+            "drawing.inspect" | "document.inspect" => s.execute("drawing.inspect", &p).map_err(|e| engine_error(&e, "drawing.inspect")),
             "ui.render" => {
                 let w = p.get("width").and_then(Value::as_f64).unwrap_or(1600.0).clamp(16.0, 8192.0) as u32;
                 let h = p.get("height").and_then(Value::as_f64).unwrap_or(1000.0).clamp(16.0, 8192.0) as u32;
@@ -322,17 +360,17 @@ impl Backend for Headless {
                 let png =
                     cadcraft_render::raster::render_png(&list, &view, &cadcraft_render::raster::RasterOptions::default()).ok_or("render failed")?;
                 if let Some(path) = str_p("path") {
-                    std::fs::write(&path, &png).map_err(|e| format!("{path}: {e}"))?;
+                    std::fs::write(&path, &png).map_err(|e| CallError::from(format!("{path}: {e}")))?;
                 }
                 Ok(json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(&png), "width": w, "height": h}))
             }
             "app.open" => {
                 let path = str_p("path").ok_or("missing path")?;
-                s.execute("open", &json!({ "path": path })).map_err(|e| e.to_string())
+                s.execute("open", &json!({ "path": path })).map_err(|e| engine_error(&e, "open"))
             }
             "app.save" => {
                 let id = if p.get("path").is_some() { "saveas" } else { "qsave" };
-                s.execute(id, &p).map_err(|e| e.to_string())
+                s.execute(id, &p).map_err(|e| engine_error(&e, id))
             }
             "ui.screenshot" => Err("no UI in headless mode; use render".into()),
             "control.methods" => Ok(HEADLESS_METHODS
@@ -340,7 +378,7 @@ impl Backend for Headless {
                 .map(|(method, params, description)| json!({"method": method, "params": params, "description": description}))
                 .collect()),
             "ping" => Ok(json!("pong")),
-            other => Err(format!("unknown method `{other}`; `control.methods` lists them (docs/control-protocol.md)")),
+            other => Err(format!("unknown method `{other}`; `control.methods` lists them (docs/control-protocol.md)").into()),
         }
     }
     fn has_ui(&self) -> bool {
@@ -398,5 +436,35 @@ mod tests {
             assert!(err.starts_with("timeout") && err.contains(want), "{err}");
             server.join().unwrap();
         }
+    }
+
+    /// The app's error `data` reaches the MCP side with the message added, as headless gives it.
+    #[test]
+    fn remote_error_data_is_passed_on() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let server = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let mut line = String::new();
+                let (conn, _) = listener.accept().unwrap();
+                let mut read = BufReader::new(conn.try_clone().unwrap());
+                read.read_line(&mut line).unwrap();
+                let mut out = conn;
+                let reply = if line.contains("frob") {
+                    json!({"id": 1, "ok": false, "error": "unknown command `frob`", "data": {"code": "unknown_command", "command": "frob"}})
+                } else {
+                    json!({"id": 2, "ok": false, "error": "missing x/y"})
+                };
+                writeln!(out, "{reply}").unwrap();
+            }
+        });
+        let mut remote = Remote::connect(&addr).unwrap();
+        let e = remote.call_detailed("engine.execute", json!({"command": "frob"})).unwrap_err();
+        assert_eq!(e.message, "unknown command `frob`");
+        assert_eq!(e.data, Some(json!({"code": "unknown_command", "command": "frob", "message": "unknown command `frob`"})));
+        remote.conn = None;
+        let e = remote.call_detailed("ui.pointer", json!({})).unwrap_err();
+        assert_eq!(e, CallError::from("missing x/y"));
+        server.join().unwrap();
     }
 }

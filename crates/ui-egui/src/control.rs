@@ -179,10 +179,27 @@ fn ok(v: Value) -> Outcome {
 fn err(e: impl std::fmt::Display) -> Outcome {
     Outcome::Done(json!({"ok": false, "error": e.to_string()}))
 }
-fn wrap(r: Result<Value, String>) -> Outcome {
+/// An engine error: the text in `error` as always, and `data` `{code, command, param?}`
+/// (`docs/control-protocol.md`).
+fn err_info(e: &cadcraft_engine::ErrorInfo) -> Outcome {
+    let mut data = json!({"code": e.code, "command": e.command});
+    if let (Some(p), Some(o)) = (&e.param, data.as_object_mut()) {
+        o.insert("param".into(), json!(p));
+    }
+    Outcome::Done(json!({"ok": false, "error": e.message, "data": data}))
+}
+fn wrap_detailed(r: Result<Value, (String, Option<cadcraft_engine::ErrorInfo>)>) -> Outcome {
     match r {
         Ok(v) => ok(v),
-        Err(e) => err(e),
+        Err((_, Some(info))) => err_info(&info),
+        Err((e, None)) => err(e),
+    }
+}
+/// An engine result of running `command`, as [`wrap_detailed`] replies it.
+fn wrap_engine(r: cadcraft_engine::Result<Value>, command: &str) -> Outcome {
+    match r {
+        Ok(v) => ok(v),
+        Err(e) => err_info(&e.info(command)),
     }
 }
 
@@ -292,7 +309,7 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
             let Some(id) = s("command").or(s("id")) else { return err("missing `command`") };
             let params = p.get("params").cloned().unwrap_or(json!({}));
             let params = if params.is_null() { json!({}) } else { params };
-            wrap(app.run(id, params))
+            wrap_detailed(app.run_detailed(id, params))
         }
         "ui.menu.invoke" => {
             let Some(id) = s("command").or(s("id")) else { return err("missing `command`") };
@@ -315,11 +332,11 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
         }
         "cmdline.script" => {
             let before = app.session.log.len();
-            let r = app.session.script(s("text").unwrap_or("")).map_err(|e| e.to_string());
+            let r = app.session.script(s("text").unwrap_or(""));
             let out: Vec<String> = app.session.log.iter().skip(before).cloned().collect();
             match r {
                 Ok(()) => ok(json!({"output": out, "state": cmdline_state(app)})),
-                Err(e) => err(e),
+                Err(e) => err_info(&e.info("script")),
             }
         }
         "cmdline.key" => {
@@ -347,7 +364,7 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
         }
         "cmdline.state" => ok(cmdline_state(app)),
         "engine.commands" => ok(all_commands(app)),
-        "drawing.inspect" | "document.inspect" => wrap(app.session.execute("drawing.inspect", p).map_err(|e| e.to_string())),
+        "drawing.inspect" | "document.inspect" => wrap_engine(app.session.execute("drawing.inspect", p), "drawing.inspect"),
         "ui.inspect" => ok(inspect(app, ctx)),
         "ui.elements" => ok(elements(ctx, p)),
         "ui.focus" => {
@@ -496,9 +513,9 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
         }
         "app.open" => {
             let Some(path) = s("path") else { return err("missing path") };
-            wrap(app.run("open", json!({"path": path})))
+            wrap_detailed(app.run_detailed("open", json!({"path": path})))
         }
-        "app.save" => wrap(app.run(if s("path").is_some() { "saveas" } else { "qsave" }, p.clone())),
+        "app.save" => wrap_detailed(app.run_detailed(if s("path").is_some() { "saveas" } else { "qsave" }, p.clone())),
         "app.quit" => {
             // Programmatic calls never open dialogs: quit without the unsaved-changes prompt.
             app.quit_confirmed = true;
