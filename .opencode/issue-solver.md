@@ -11,7 +11,15 @@ Read `AGENTS.md` at the start and follow it. Every change happens on its own git
 - Ensure a `fork` remote exists. `origin` is `storytold/cadcraft`, where push is denied. If `git remote get-url fork` fails:
   - `gh repo fork storytold/cadcraft --clone=false --remote=false`
   - `git remote add fork https://github.com/<login>/cadcraft.git`
-- Check free disk space portably (for example `python3 -c 'import shutil; print(shutil.disk_usage(".").free // 2**30)'` from the repository root) and require at least 8 GB. Delete stale `target-*` directories under the issue work root first. If space is still tight, run a smaller batch and tell the user.
+- Resolve the issue work root and check free space on *that* filesystem, not the canonical checkout's (`CADCRAFT_ISSUE_WORKROOT` or `TMPDIR` may point elsewhere):
+
+  ```sh
+  WORKROOT="${CADCRAFT_ISSUE_WORKROOT:-${TMPDIR:-${TEMP:-/tmp}}/opencode/cadcraft-issues}"
+  mkdir -p "$WORKROOT"
+  python3 -c 'import shutil, sys; print(shutil.disk_usage(sys.argv[1]).free // 2**30)' "$WORKROOT"
+  ```
+
+  Require at least 8 GB. Delete stale `target-*` directories under `"$WORKROOT"` first. If space is still tight, run a smaller batch and tell the user.
 - Work from a clean canonical checkout. Do not start if the repository has uncommitted work that is not yours.
 
 ## 2. Select N issues
@@ -49,7 +57,7 @@ Record the chosen numbers and titles.
 
 ## 3. Prepare one worktree and build lock per issue
 
-Choose a temporary root that works on any machine and use it for every issue:
+Use the `WORKROOT` resolved in §1 for every issue. Re-resolve the same default so each shell is self-contained:
 
 ```sh
 WORKROOT="${CADCRAFT_ISSUE_WORKROOT:-${TMPDIR:-${TEMP:-/tmp}}/opencode/cadcraft-issues}"
@@ -92,14 +100,30 @@ while ! mkdir "$LOCK" 2>/dev/null; do
   echo "another agent is building or testing; waiting 30s..." >&2
   sleep 30
 done
+# Hand the lock to the Cargo process itself. If this wrapper is killed while
+# Cargo keeps running, the recorded pid is still alive, so waiters do not
+# reclaim the lock until the build really exits.
 echo "$$" > "$LOCK/pid"
-trap 'rm -rf "$LOCK" 2>/dev/null || true' EXIT INT TERM
+cleanup() { rm -rf "$LOCK" 2>/dev/null || true; }
+trap cleanup EXIT
 export CARGO_TARGET_DIR="$TARGET"
 export CARGO_INCREMENTAL=0
 export CARGO_PROFILE_DEV_DEBUG=0
 export CARGO_PROFILE_TEST_DEBUG=0
 cd "$WT" || exit 1
-cargo "$@"
+cargo "$@" &
+child=$!
+echo "$child" > "$LOCK/pid"
+# On SIGINT/SIGTERM stop Cargo, reap it, then let the EXIT trap release the lock.
+terminate() {
+  kill -TERM "$child" 2>/dev/null || true
+  wait "$child" 2>/dev/null || true
+  exit 130
+}
+trap terminate INT TERM
+wait "$child"
+status=$?
+exit "$status"
 ```
 
 Why: several agents run at the same time; only one may build or test at a time. Each issue gets a private target directory (debuginfo and incremental off) that the agent deletes immediately after its final test run. A wait of 10–30 minutes is normal; tell agents not to kill the wrapper.
@@ -143,6 +167,7 @@ If the user asked for more than 10 issues, run them in batches of 10 so lock wai
 
 You will be notified as each background agent finishes. Do not poll or ask for status.
 
+- Keep a `FAILED` list of issue numbers that fail during this run; never select one of them again (see step 3).
 - On success: record the issue number and PR URL.
 - On failure, in this order:
   1. Delete the "I'm working on this." comment (find its node id from `gh issue view <N> --json comments` and use `deleteIssueComment`).
@@ -165,7 +190,7 @@ You will be notified as each background agent finishes. Do not poll or ask for s
      ```
 
      Keep it factual and polite: do not blame the reporter, do not close the issue, and do not claim the issue is invalid. If the issue is already fixed on `main`, say which commit or test covers it and ask for a retest. Include only relevant environment details, not the local machine's OS name or absolute paths. Post the comment even when the reporter cannot be reached (for example a ticket-relay issue), so maintainers and future readers see the findings.
-  3. Remove the worktree and branch, delete its wrapper and target directory, then pick a replacement issue with the same filters and launch it. Repeat until N issues have PRs.
+  3. Record the issue number in `FAILED`. Remove the worktree and branch, delete its wrapper and target directory, then pick a replacement issue with the same filters, excluding every number in `FAILED`, and launch it. Repeat until N issues have PRs.
 - If an issue is not reproducible in this environment, treat it as a failure and replace it. Say so in the final report.
 - Keep at least 4 GB free. Delete target directories for finished agents; remove worktrees and branches for failed/abandoned issues. Keep successful worktrees until the PRs are reviewed or merged.
 
@@ -178,7 +203,7 @@ gh api --paginate repos/storytold/cadcraft/issues/<PR>/comments \
   | jq -s '[.[][] | select(.user.login|test("coderabbit";"i"))] | last | .body'
 ```
 
-Parse `Docstring coverage is X%`. If it is below 80%, or if the PR has no CodeRabbit review yet but the diff adds undocumented functions, launch a docstring-only subagent for that PR on its existing worktree/branch. Use this prompt:
+Parse `Docstring coverage is X%`. If it is below 80%, or if the PR has no CodeRabbit review yet but the diff adds undocumented functions, launch a docstring-only subagent for that PR on its existing worktree/branch. Use this prompt after replacing `<PR>`, `<N>`, `<WORKTREE>`, `<BRANCH>`, `<WRAPPER>`, and `<TARGET>` with the concrete values recorded for that issue (its worktree, branch and wrapper path from §3–4, and `$WORKROOT/target-<N>` for the target); the docstring agent must never receive literal placeholders:
 
 ```text
 CodeRabbit's docstring coverage check on CADCraft PR #<PR> is below 80%. Its resolution prompt is: "Write docstrings for the functions missing them to satisfy the coverage threshold."
