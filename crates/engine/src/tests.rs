@@ -1391,10 +1391,20 @@ fn empty_window_clears_selection() {
     s.idle_click(Vec2::new(100.0, 100.0), false).unwrap();
     s.idle_click(Vec2::new(110.0, 110.0), false).unwrap();
     assert_eq!(s.selection(), Vec::<Handle>::new(), "empty selection window should deselect all");
+}
 
-    // An empty window with Shift held must keep the selection
+#[test]
+fn empty_window_with_shift_preserves_selection() {
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    let a = s.doc().unwrap().model.last().unwrap().handle;
+    let pa = Vec2::new(5.0, 0.0);
+
+    // Click to select line a
     s.idle_click(pa, false).unwrap();
     assert_eq!(s.selection(), vec![a]);
+
+    // An empty window with Shift held must keep the selection (AutoCAD standard)
     s.idle_click(Vec2::new(100.0, 100.0), true).unwrap();
     s.idle_click(Vec2::new(110.0, 110.0), true).unwrap();
     assert_eq!(s.selection(), vec![a], "empty selection window with shift should keep selection");
