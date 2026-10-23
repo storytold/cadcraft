@@ -1436,8 +1436,7 @@ fn chspace(s: &mut Session, hs: &[Handle], to: Option<&str>, vp: Option<Handle>)
     };
     let m = match viewport_of(s, &layout, vp) {
         Some(v) => {
-            let k = v.view_height / v.height;
-            let to_paper = Mat3::translate(v.center.xy()).then_before(Mat3::scale(1.0 / k, 1.0 / k)).then_before(Mat3::translate(-v.view_center));
+            let to_paper = v.model_to_paper_matrix();
             if target == Space::Model { to_paper.inverse().unwrap_or(Mat3::IDENTITY) } else { to_paper }
         }
         None => Mat3::IDENTITY,

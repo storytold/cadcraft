@@ -824,7 +824,7 @@ pub struct NamedView {
     /// The layer state restored with the view (its layer snapshot).
     #[serde(default)]
     pub layer_state: Option<String>,
-    /// View twist (radians, counterclockwise); kept for files, not applied to the 2D display.
+    /// View twist (radians, counterclockwise); VIEW Restore applies it to the model space view.
     #[serde(default)]
     pub twist: f64,
     /// The layout a paper space view belongs to (`None`: a model space view; an empty name: a
@@ -845,6 +845,9 @@ pub struct VportTile {
     /// Width / height of the tile on screen when it was saved (0: unknown).
     #[serde(default)]
     pub aspect: f64,
+    /// The tile's view twist (radians, counterclockwise; DXF VPORT group 51 in degrees).
+    #[serde(default)]
+    pub twist: f64,
 }
 
 /// A model space viewport configuration (VPORTS): `*Active` is the one shown, other names are

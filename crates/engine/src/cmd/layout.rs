@@ -512,6 +512,7 @@ fn viewport_json(h: Handle, v: &Viewport) -> Value {
         "height": v.height,
         "viewCenter": [v.view_center.x, v.view_center.y],
         "viewHeight": v.view_height,
+        "twist": v.view_twist().to_degrees(),
         "scale": if v.view_height > 0.0 { v.height / v.view_height } else { 0.0 },
         "locked": v.locked,
         "on": v.on,
@@ -1157,7 +1158,7 @@ mod tests {
         s.cmdline("circle 10,10 3").unwrap();
         assert_eq!(s.doc().unwrap().model.len(), before + 1);
         // Zooming changes the viewport's model view, not the sheet.
-        s.state_mut().unwrap().set_view(crate::View { center: v.center, height: v.height / 2.0 });
+        s.state_mut().unwrap().set_view(crate::View { center: v.center, height: v.height / 2.0, twist: v.twist });
         let vp2 = viewports(&s, "L").into_iter().find(|(x, _)| *x == h).unwrap().1;
         assert!((vp2.view_height - vp.view_height / 2.0).abs() < 1e-9);
         assert_eq!(s.state().unwrap().paper_view(), pv);

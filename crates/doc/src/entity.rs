@@ -822,6 +822,39 @@ pub struct Viewport {
     /// Display on (MVIEW ON/OFF). An off viewport shows its border but no model space.
     #[serde(default = "yes")]
     pub on: bool,
+    /// The view twist (DVIEW TWist inside the viewport; DXF group 51): radians counterclockwise,
+    /// the model view seen through the viewport is turned on the sheet by it. 0 is untwisted.
+    #[serde(default, skip_serializing_if = "is_zero_twist")]
+    pub twist: f64,
+}
+fn is_zero_twist(v: &f64) -> bool {
+    *v == 0.0
+}
+impl Viewport {
+    /// The view twist, usable: 0 when it isn't finite.
+    pub fn view_twist(&self) -> f64 {
+        if self.twist.is_finite() { self.twist } else { 0.0 }
+    }
+    /// Paper units per model unit.
+    pub fn scale(&self) -> f64 {
+        self.height / self.view_height
+    }
+    /// Where model point `m` is on the sheet: `center + scale · R(twist)(m − view_center)`.
+    pub fn model_to_paper(&self, m: Vec2) -> Vec2 {
+        self.center.xy() + (m - self.view_center).rotate(self.view_twist()) * self.scale()
+    }
+    /// The model point at sheet point `p` (the inverse of [`Viewport::model_to_paper`]).
+    pub fn paper_to_model(&self, p: Vec2) -> Vec2 {
+        self.view_center + ((p - self.center.xy()) / self.scale()).rotate(-self.view_twist())
+    }
+    /// [`Viewport::model_to_paper`] as a matrix.
+    pub fn model_to_paper_matrix(&self) -> Mat3 {
+        let s = self.scale();
+        Mat3::translate(self.center.xy())
+            .then_before(Mat3::scale(s, s))
+            .then_before(Mat3::rotate(self.view_twist()))
+            .then_before(Mat3::translate(-self.view_center))
+    }
 }
 impl Default for Viewport {
     fn default() -> Self {
@@ -837,6 +870,7 @@ impl Default for Viewport {
             layer_colors: Vec::new(),
             clip: None,
             on: true,
+            twist: 0.0,
         }
     }
 }

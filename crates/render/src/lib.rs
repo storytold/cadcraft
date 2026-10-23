@@ -716,11 +716,12 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
     if !ok(s) {
         return;
     }
-    let xf = Mat3::translate(center).then_before(Mat3::scale(s, s)).then_before(Mat3::translate(-vp.view_center));
-    let mhalf = Vec2::new(area.width(), area.height()) / (2.0 * s);
-    let mcenter = vp.view_center + (area.center() - center) / s;
-    // Model window with slack: entity bounds are approximate (text, dimensions).
-    let win = Bounds2::new(mcenter - mhalf, mcenter + mhalf).expand(mhalf.x.max(mhalf.y) * 0.1);
+    // Model space scaled onto the sheet and turned by the viewport's view twist.
+    let xf = vp.model_to_paper_matrix();
+    // The model box the area covers (turned, with a twist), with slack: entity bounds are
+    // approximate (text, dimensions).
+    let mbox = Bounds2::from_points(area.corners().map(|p| vp.paper_to_model(p)));
+    let win = mbox.expand(mbox.width().max(mbox.height()) * 0.05);
     // PSLTSCALE on: model-space dashes are scaled so they measure the same on paper as in
     // paper space, whatever the viewport scale.
     let lt_factor = if d.header.i64("PSLTSCALE", 1) != 0 { 1.0 / s } else { 1.0 };

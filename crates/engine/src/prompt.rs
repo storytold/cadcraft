@@ -57,6 +57,10 @@ pub struct Prompt {
     /// prompt (the routine writes all of it).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub raw: bool,
+    /// The message asks for one of the keywords, so they follow it without "or" (DVIEW's
+    /// "Enter option [CAmera/TArget/…]:").
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub options_only: bool,
     /// The prompt asks for a distance from `base` (a radius, a diameter, a length), and a point
     /// answers with its distance from it: Dynamic Input shows one distance field instead of the
     /// pointer boxes.
@@ -128,6 +132,22 @@ impl Prompt {
         self.deferred = true;
         self
     }
+    /// The keywords follow the message without "or" (the `options_only` field).
+    pub fn options_only(mut self) -> Self {
+        self.options_only = true;
+        self
+    }
+    /// The separator written between the message and the keywords: " or [", or " [" for a
+    /// question ("Fix any errors detected? [Yes/No]") or an option prompt ([`Prompt::options_only`]).
+    pub fn keyword_opening(&self) -> &'static str {
+        if self.message.is_empty() {
+            "["
+        } else if self.message.ends_with('?') || self.options_only {
+            " ["
+        } else {
+            " or ["
+        }
+    }
     pub fn default(mut self, d: impl Into<String>) -> Self {
         self.default = Some(d.into());
         self
@@ -150,13 +170,7 @@ impl Prompt {
         if !self.keywords.is_empty() {
             // A question offers its answers ("Fix any errors detected? [Yes/No]"); anything else
             // offers options besides what it asks for ("Specify next point or [Undo]").
-            s.push_str(if self.message.is_empty() {
-                "["
-            } else if self.message.ends_with('?') {
-                " ["
-            } else {
-                " or ["
-            });
+            s.push_str(self.keyword_opening());
             s.push_str(&self.keywords.join("/"));
             s.push(']');
         }
@@ -222,6 +236,9 @@ pub trait Interactive: Send {
     fn begin(&mut self, _s: &mut Session) -> Result<Step> {
         Ok(Step::Continue)
     }
+    /// Called when the command is cancelled from outside (Esc, or another command starting),
+    /// before it finishes: what it records on every exit path.
+    fn cancelled(&mut self, _s: &mut Session) {}
     /// Rubber-band geometry for the cursor position.
     fn preview(&self, _s: &Session, _cursor: Vec2) -> Vec<EntityKind> {
         Vec::new()
@@ -243,6 +260,22 @@ pub trait Interactive: Send {
     fn editing_mtext(&self) -> Option<cadcraft_doc::MText> {
         None
     }
+    /// What the drawing area shows in place of the drawing while the command runs (DVIEW draws
+    /// only its preview set); `None` shows the drawing.
+    fn display_only(&self, _s: &Session) -> Option<DisplayOnly> {
+        None
+    }
+}
+
+/// See [`Interactive::display_only`]: the only things drawn in the current view while a command
+/// runs. The whole drawing is drawn again when it ends.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DisplayOnly {
+    /// Objects of the drawing, drawn as they are.
+    pub handles: Vec<Handle>,
+    /// Geometry that is not in the drawing (DVIEW's sample house, or an insert of the drawing's
+    /// DVIEWBLOCK block), with its own properties.
+    pub extra: Vec<cadcraft_doc::Entity>,
 }
 
 /// See [`Interactive::drag`].

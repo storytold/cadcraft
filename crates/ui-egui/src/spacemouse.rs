@@ -128,7 +128,7 @@ fn navigate(app: &mut CadApp, params: &Value) -> Result<Value, String> {
     if !center.is_finite() || !height.is_finite() {
         return Err("3D mouse navigation would produce an invalid view".into());
     }
-    state.set_view_quiet(View { center, height });
+    state.set_view_quiet(View { center, height, twist: view.twist });
     Ok(json!({"center": [center.x, center.y], "height": height}))
 }
 

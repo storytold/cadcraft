@@ -46,15 +46,15 @@ fn split_activate_and_each_tile_keeps_its_view() {
     s.execute("-vports", &json!({ "option": "2", "arrangement": "vertical" })).unwrap();
     assert_eq!(rects(&s), vec![[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 1.0, 1.0]]);
     // Every new tile starts with the view that was split.
-    assert!(tiles(&s).iter().all(|t| t.view == View { center: Vec2::new(10.0, 10.0), height: 20.0 }));
+    assert!(tiles(&s).iter().all(|t| t.view == View { center: Vec2::new(10.0, 10.0), height: 20.0, twist: 0.0 }));
     let first = current(&s);
     let other = 1 - first;
     s.activate_tile(other).unwrap();
     assert_eq!(current(&s), other);
     s.execute("view.set", &json!({ "center": [50, 25], "height": 5 })).unwrap();
     s.execute("vports.activate", &json!({ "index": first + 1 })).unwrap();
-    assert_eq!(view(&s), View { center: Vec2::new(10.0, 10.0), height: 20.0 });
-    assert_eq!(tiles(&s)[other].view, View { center: Vec2::new(50.0, 25.0), height: 5.0 });
+    assert_eq!(view(&s), View { center: Vec2::new(10.0, 10.0), height: 20.0, twist: 0.0 });
+    assert_eq!(tiles(&s)[other].view, View { center: Vec2::new(50.0, 25.0), height: 5.0, twist: 0.0 });
     // Switching tiles changes no drawing data; arranging them is an undo step.
     assert_eq!(s.state().unwrap().undo.len(), 2, "line + VPORTS");
     s.undo().unwrap();
@@ -82,7 +82,7 @@ fn typed_three_right_then_join_and_single() {
     s.click_tile(bottom).unwrap();
     assert!(s.running.is_none(), "{}", s.prompt_text());
     assert_eq!(rects(&s), vec![[0.0, 0.0, 0.5, 1.0], [0.5, 0.0, 1.0, 1.0]]);
-    assert_eq!(view(&s), View { center: Vec2::new(1.0, 2.0), height: 3.0 });
+    assert_eq!(view(&s), View { center: Vec2::new(1.0, 2.0), height: 3.0, twist: 0.0 });
     // Tiles that don't make a rectangle can't be joined.
     s.execute("-vports", &json!({ "option": "3", "arrangement": "above" })).unwrap();
     let t = tiles(&s);
@@ -93,7 +93,7 @@ fn typed_three_right_then_join_and_single() {
     s.execute("view.set", &json!({ "center": [7, 7], "height": 7 })).unwrap();
     typed(&mut s, &["-vports", "si"]);
     assert!(tiles(&s).is_empty());
-    assert_eq!(view(&s), View { center: Vec2::new(7.0, 7.0), height: 7.0 });
+    assert_eq!(view(&s), View { center: Vec2::new(7.0, 7.0), height: 7.0, twist: 0.0 });
 }
 
 #[test]

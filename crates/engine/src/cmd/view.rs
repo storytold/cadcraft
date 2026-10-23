@@ -1,5 +1,5 @@
-//! View menu: ZOOM (with Realtime and Dynamic), PAN, REGEN, REDRAW, named views (VIEW), layout
-//! switching.
+//! View menu: ZOOM (with Realtime and Dynamic), PAN, REGEN, REDRAW, named views (VIEW), the view
+//! twist (DVIEW TWist), layout switching.
 
 use cadcraft_doc::{Space, entity_bounds};
 use cadcraft_geom::{Bounds2, Vec2};
@@ -9,6 +9,7 @@ use super::machines::{SelectRun, number};
 use super::*;
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step, View};
 
+mod dview;
 mod named_views;
 mod vports;
 
@@ -94,10 +95,13 @@ pub fn specs() -> Vec<CommandSpec> {
         .alias(&["r"])
         .noundo()
         .transparent(),
-        CommandSpec::new("view.set", "Set View", run_view_set).params("{center: [x,y], height}").noundo(),
+        dview::spec(),
+        CommandSpec::new("view.set", "Set View", run_view_set)
+            .params("{center: [x,y], height, twist?: degrees (default: keep the current twist; in a layout viewport it is the viewport's twist, an undoable edit; not in Paper space)}")
+            .noundo(),
         CommandSpec::new("view.get", "Get View", |s, _| {
             let v = s.state()?.view();
-            Ok(json!({"center": [v.center.x, v.center.y], "height": v.height, "viewportPx": [s.viewport_px.0, s.viewport_px.1]}))
+            Ok(json!({"center": [v.center.x, v.center.y], "height": v.height, "twist": v.twist.to_degrees(), "viewportPx": [s.viewport_px.0, s.viewport_px.1]}))
         })
         .noundo(),
         CommandSpec::new("layout.set", "Switch Layout", run_layout_set).params("{name: \"Model\" | layout name}").noundo(),
@@ -119,8 +123,11 @@ fn fit(s: &mut Session, b: Bounds2) -> Result<()> {
     let (w, h) = s.viewport_px;
     let st = s.state_mut()?;
     let aspect = st.zoom_aspect(w / h.max(1.0));
-    let height = b.height().max(b.width() / aspect.max(1e-6)).max(1e-9);
-    st.set_zoom_frame(View { center: b.center(), height });
+    // A twisted view fits the box the bounds make on screen.
+    let twist = st.zoom_frame().twist;
+    let (center, bw, bh) = View::twisted_box(b, twist);
+    let height = bh.max(bw / aspect.max(1e-6)).max(1e-9);
+    st.set_zoom_frame(View { center, height, twist });
     Ok(())
 }
 
@@ -149,18 +156,18 @@ pub(crate) fn zoom(s: &mut Session, p: &Value) -> Result<Value> {
             let f = if mode == "in" { 2.0 } else { 0.5 };
             let st = s.state_mut()?;
             let v = st.zoom_frame();
-            st.set_zoom_frame(View { center: v.center, height: v.height / f });
+            st.set_zoom_frame(View { height: v.height / f, ..v });
         }
         "center" | "c" | "dynamic" | "d" => {
             let c = point_req("zoom", p, "center")?;
-            let cur = s.state()?.zoom_frame().height;
-            let h = if p.get("factor").is_some() { factor_height(s, p, cur)? } else { f64_or(p, "height", cur) };
-            s.state_mut()?.set_zoom_frame(View { center: c, height: h.max(1e-9) });
+            let cur = s.state()?.zoom_frame();
+            let h = if p.get("factor").is_some() { factor_height(s, p, cur.height)? } else { f64_or(p, "height", cur.height) };
+            s.state_mut()?.set_zoom_frame(View { center: c, height: h.max(1e-9), ..cur });
         }
         "scale" | "s" => {
             let v = s.state()?.zoom_frame();
             let height = factor_height(s, p, v.height)?;
-            s.state_mut()?.set_zoom_frame(View { center: v.center, height });
+            s.state_mut()?.set_zoom_frame(View { height, ..v });
         }
         "realtime" => {
             let v = s.state()?.zoom_frame();
@@ -168,7 +175,7 @@ pub(crate) fn zoom(s: &mut Session, p: &Value) -> Result<Value> {
             if f <= 0.0 {
                 return Err(bad("zoom", "factor must be positive"));
             }
-            s.state_mut()?.set_zoom_frame(View { center: v.center, height: (v.height / f).clamp(1e-9, 1e12) });
+            s.state_mut()?.set_zoom_frame(View { height: (v.height / f).clamp(1e-9, 1e12), ..v });
         }
         "object" | "o" => {
             let hs = targets(s, p)?;
@@ -241,7 +248,8 @@ fn pan_frac(s: &mut Session, f: Vec2) -> Result<Value> {
     let st = s.state_mut()?;
     let v = st.view();
     let ww = v.height * w / h.max(1.0);
-    st.set_view(View { center: v.center + Vec2::new(f.x * ww, f.y * v.height), height: v.height });
+    // Screen directions: in a twisted view the drawing is turned by the twist.
+    st.set_view(View { center: v.center + Vec2::new(f.x * ww, f.y * v.height).rotate(-v.twist), ..v });
     ok()
 }
 
@@ -257,7 +265,7 @@ fn run_pan(s: &mut Session, p: &Value) -> Result<Value> {
         let b = point_req("pan", p, "to")?;
         v.center - (b - a)
     };
-    st.set_view(View { center: c, height: v.height });
+    st.set_view(View { center: c, ..v });
     ok()
 }
 
@@ -267,8 +275,32 @@ fn run_view_set(s: &mut Session, p: &Value) -> Result<Value> {
     if h <= 0.0 {
         return Err(bad("view.set", "height must be positive"));
     }
-    if !s.state_mut()?.set_view(View { center: c, height: h }) {
+    let twist = match p.get("twist") {
+        Some(t) => t.as_f64().filter(|t| t.is_finite()).ok_or_else(|| bad("view.set", "twist must be a number of degrees"))?.to_radians(),
+        None => s.state()?.view().twist,
+    };
+    // As DVIEW TWist: the Model tab's view or the active layout viewport turns; a layout sheet
+    // (paper space) is never twisted.
+    let target = match dview::target(s) {
+        Ok(t) => Some(t),
+        Err(_) if twist == 0.0 => None,
+        Err(e) => return Err(e),
+    };
+    let before = (s.state()?.doc.clone(), s.state()?.selection.clone());
+    let twist = match target {
+        Some(t @ dview::Target::Viewport(_)) => {
+            dview::set_twist(s, t, twist)?;
+            s.state()?.view().twist
+        }
+        Some(dview::Target::Model) => twist.rem_euclid(std::f64::consts::TAU),
+        None => 0.0,
+    };
+    if !s.state_mut()?.set_view(View { center: c, height: h, twist }) {
+        s.state_mut()?.doc = before.0;
         return Err(bad("view.set", "the view is too large to show. Nothing was changed"));
+    }
+    if let Some(dview::Target::Viewport(h)) = target {
+        dview::record_viewport_edit(s, before, h)?;
     }
     ok()
 }
@@ -293,7 +325,7 @@ fn run_layout_set(s: &mut Session, p: &Value) -> Result<Value> {
         let page = st.doc.layout(n).map(|l| l.page.clone()).unwrap_or_default();
         let (w, h) = if page.landscape { (page.height_mm, page.width_mm) } else { (page.width_mm, page.height_mm) };
         let unit = if st.doc.header.i64("MEASUREMENT", 0) == 1 { 1.0 } else { 1.0 / 25.4 };
-        st.set_view_quiet(View { center: Vec2::new(w * unit / 2.0, h * unit / 2.0), height: h * unit * 1.15 });
+        st.set_view_quiet(View { center: Vec2::new(w * unit / 2.0, h * unit / 2.0), height: h * unit * 1.15, twist: 0.0 });
     }
     s.touch();
     ok()
@@ -440,7 +472,7 @@ impl Interactive for ZoomM {
                 if st.view_history.last() == Some(&b.screen) {
                     st.view_history.pop();
                 }
-                st.set_zoom_frame(View { center: b.center, height: b.height });
+                st.set_zoom_frame(View { center: b.center, height: b.height, twist: b.frame.twist });
                 return Ok(Step::Done);
             }
             (ZoomStage::Dynamic(mut b), Input::Point(p)) => {
@@ -564,7 +596,7 @@ impl Session {
         let f = 2f64.powf((-dy / half).clamp(-16.0, 16.0));
         let st = self.state_mut()?;
         let v = st.view();
-        st.set_view_quiet(View { center: v.center, height: (v.height / f).clamp(1e-9, 1e12) });
+        st.set_view_quiet(View { height: (v.height / f).clamp(1e-9, 1e12), ..v });
         self.touch();
         Ok(())
     }

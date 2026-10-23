@@ -66,6 +66,14 @@ impl Interactive for Guarded {
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
         catch_unwind(AssertUnwindSafe(|| self.inner.begin(s))).unwrap_or_else(|p| Err(self.internal(&*p)))
     }
+    fn cancelled(&mut self, s: &mut Session) {
+        if self.broken.get().is_none()
+            && let Err(p) = catch_unwind(AssertUnwindSafe(|| self.inner.cancelled(s)))
+        {
+            let e = self.internal(&*p);
+            s.echo(e.to_string());
+        }
+    }
     fn preview(&self, s: &Session, cursor: Vec2) -> Vec<EntityKind> {
         if self.broken.get().is_some() {
             return Vec::new();
@@ -99,6 +107,15 @@ impl Interactive for Guarded {
         }
         catch_unwind(AssertUnwindSafe(|| self.inner.editing_mtext())).unwrap_or_else(|_| {
             self.broken.set(Some("panic in prompt"));
+            None
+        })
+    }
+    fn display_only(&self, s: &Session) -> Option<crate::prompt::DisplayOnly> {
+        if self.broken.get().is_some() {
+            return None;
+        }
+        catch_unwind(AssertUnwindSafe(|| self.inner.display_only(s))).unwrap_or_else(|_| {
+            self.broken.set(Some("panic in preview"));
             None
         })
     }

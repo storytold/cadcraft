@@ -1162,6 +1162,10 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
             w.i(69, i64::from(v.id));
             w.p2(12, v.view_center);
             w.f(45, v.view_height);
+            // View twist (degrees), when the viewport has one.
+            if v.view_twist() != 0.0 {
+                w.f(51, v.view_twist().to_degrees());
+            }
             // Status flags: 16384 = display locked, 32768 = always set, 65536 = clipped by the
             // 340 entity, 131072 = off.
             let clip = v.clip.filter(|h| *h != e.handle && d.entity(*h).is_some());
@@ -1655,6 +1659,8 @@ fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
         center: if ext.is_empty() { Vec2::new(6.0, 4.5) } else { ext.center() },
         height: if ext.is_empty() { 9.0 } else { (ext.height() * 1.1).max(1e-6) },
         aspect: 1.6,
+        // An untiled view's twist: the lone `*Active` tile the editor keeps for it.
+        twist: d.vports.iter().find(|c| c.is_active() && c.tiles.len() == 1).and_then(|c| c.tiles.first()).map_or(0.0, |t| t.twist),
     };
     let tiled = d.vports.iter().find(|c| c.is_active() && c.tiles.len() > 1);
     let mut records: Vec<(&str, &VportTile)> = match tiled {
@@ -1681,6 +1687,7 @@ fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
         w.f(41, if t.aspect.is_finite() && t.aspect > 0.0 { t.aspect } else { 1.0 });
         w.f(42, 50.0);
         w.f(50, d.header.f64("SNAPANG", 0.0));
+        w.f(51, if t.twist.is_finite() { t.twist.to_degrees() } else { 0.0 });
     }
     w.s(0, "ENDTAB");
 }

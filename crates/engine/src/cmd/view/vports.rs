@@ -96,7 +96,7 @@ fn rect(t: &VportTile) -> Rect {
 }
 
 fn view_of(t: &VportTile) -> View {
-    View { center: t.center, height: t.height }
+    View { center: t.center, height: t.height, twist: if t.twist.is_finite() { t.twist } else { 0.0 } }
 }
 
 fn active_config(d: &Drawing) -> Option<&VportConfig> {
@@ -109,7 +109,7 @@ fn live(st: &DocState, px: (f64, f64)) -> (Vec<VportTile>, usize) {
     let now = st.views.iter().find(|(sp, _)| *sp == Space::Model).map(|(_, v)| *v).unwrap_or_default();
     let Some(cfg) = active_config(&st.doc) else {
         let aspect = px.0 / px.1.max(1.0);
-        return (vec![VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center: now.center, height: now.height, aspect }], 0);
+        return (vec![VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center: now.center, height: now.height, aspect, twist: now.twist }], 0);
     };
     let mut tiles = cfg.tiles.clone();
     let synced =
@@ -117,11 +117,11 @@ fn live(st: &DocState, px: (f64, f64)) -> (Vec<VportTile>, usize) {
     let active = if synced { st.tiles.active.min(tiles.len() - 1) } else { 0 };
     if synced {
         for (t, v) in tiles.iter_mut().zip(&st.tiles.views) {
-            (t.center, t.height) = (v.center, v.height);
+            (t.center, t.height, t.twist) = (v.center, v.height, v.twist);
         }
     }
     if let Some(t) = tiles.get_mut(active) {
-        (t.center, t.height) = (now.center, now.height);
+        (t.center, t.height, t.twist) = (now.center, now.height, now.twist);
     }
     // Screen aspects from the current tile's size in pixels.
     if let Some(cur) = tiles.get(active).copied() {
@@ -163,7 +163,7 @@ fn summary(s: &Session) -> Result<Value> {
     let rows: Vec<Value> = tiles
         .iter()
         .enumerate()
-        .map(|(i, t)| json!({ "index": i + 1, "min": [t.min.x, t.min.y], "max": [t.max.x, t.max.y], "center": [t.center.x, t.center.y], "height": t.height, "current": i == active }))
+        .map(|(i, t)| json!({ "index": i + 1, "min": [t.min.x, t.min.y], "max": [t.max.x, t.max.y], "center": [t.center.x, t.center.y], "height": t.height, "twist": t.twist.to_degrees(), "current": i == active }))
         .collect();
     Ok(json!({ "tiles": rows }))
 }

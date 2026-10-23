@@ -5,7 +5,7 @@ use cadcraft_color::Rgb;
 use cadcraft_doc::Handle;
 use cadcraft_engine::Input;
 use cadcraft_engine::snap::{self, SnapHit};
-use cadcraft_geom::{Bounds2, Vec2};
+use cadcraft_geom::{Bounds2, Mat3, Vec2};
 use cadcraft_render::{DisplayList, Kind};
 use egui::{Color32, Pos2, Rect, Sense, Shape, Stroke, pos2, vec2};
 
@@ -19,19 +19,45 @@ pub struct Xf {
     pub center: Vec2,
     /// Pixels (points) per drawing unit.
     pub scale: f64,
+    /// The view twist (radians counterclockwise, `cadcraft_engine::View::twist`): the drawing
+    /// appears turned by it about `center`. 0 for paper space.
+    pub twist: f64,
 }
 
 impl Xf {
+    /// A world offset from `center` in the screen's frame (y up): turned by the twist.
+    fn turn(&self, v: Vec2) -> Vec2 {
+        if self.twist == 0.0 { v } else { v.rotate(self.twist) }
+    }
     pub fn to_screen(&self, p: Vec2) -> Pos2 {
         let c = self.rect.center();
-        pos2(c.x + ((p.x - self.center.x) * self.scale) as f32, c.y - ((p.y - self.center.y) * self.scale) as f32)
+        let q = self.turn(p - self.center);
+        pos2(c.x + (q.x * self.scale) as f32, c.y - (q.y * self.scale) as f32)
     }
     pub fn to_world(&self, p: Pos2) -> Vec2 {
         let c = self.rect.center();
-        Vec2::new(self.center.x + f64::from(p.x - c.x) / self.scale, self.center.y - f64::from(p.y - c.y) / self.scale)
+        self.center + self.screen_delta_to_world(p - c)
     }
+    /// The world offset a screen offset `d` (points, y down) covers: a pan moves the view by it.
+    pub fn screen_delta_to_world(&self, d: egui::Vec2) -> Vec2 {
+        let q = Vec2::new(f64::from(d.x) / self.scale, -f64::from(d.y) / self.scale);
+        if self.twist == 0.0 { q } else { q.rotate(-self.twist) }
+    }
+    /// The world box holding everything on screen (in a twisted view, the box of the rect's
+    /// four corners).
     pub fn world_bounds(&self) -> Bounds2 {
-        Bounds2::new(self.to_world(self.rect.left_bottom()), self.to_world(self.rect.right_top()))
+        let r = self.rect;
+        Bounds2::from_points([r.left_bottom(), r.right_top(), r.left_top(), r.right_bottom()].map(|p| self.to_world(p)))
+    }
+    /// The GPU transform ([`crate::gpu::CanvasCallback::xform`]) that draws vertex data built at
+    /// `origin`, moved by `m` (a drag; [`Mat3::IDENTITY`] for the drawing), in this view: the
+    /// shader takes `L·p + e + (origin − center)` to the screen frame, which must be
+    /// `R(m(origin + p) − center)` with `R` the twist, so `L = R·m` and
+    /// `e = R(m(origin) − center) − (origin − center)`.
+    pub(crate) fn gpu_xform(&self, origin: Vec2, m: Mat3) -> [f32; 6] {
+        let (a, b) = (self.turn(Vec2::new(m.a, m.b)), self.turn(Vec2::new(m.c, m.d)));
+        let e = self.turn(m.apply(origin) - self.center) - (origin - self.center);
+        [a.x as f32, a.y as f32, b.x as f32, b.y as f32, e.x as f32, e.y as f32]
     }
 }
 
@@ -81,6 +107,8 @@ pub struct CanvasState {
     vp_hover: VpHighlight,
     /// Model space seen through the active MSPACE viewport (see [`VpContent`]).
     vp: VpContent,
+    /// What a running command shows in place of the drawing (see [`OnlyList`]).
+    only: OnlyList,
     /// Indices of infinite-line primitives in `list` (drawn on the CPU in GPU mode).
     infinite: Vec<usize>,
     /// Milliseconds spent converting the display list to vertex data (last rebuild).
@@ -436,12 +464,12 @@ impl VpContent {
 }
 
 /// How a list built for view `built` (centre, height) of viewport `vp` maps to its current
-/// view, as `p = k·p0 + b` on paper. A model point m is at p0 = c + s0 (m − c0) in the list and
-/// belongs at p = c + s (m − vc), with c the viewport's centre and s, s0 paper units per model
-/// unit, so k = s / s0 and b = c (1 − k) + s (c0 − vc).
+/// view, as `p = k·p0 + b` on paper. A model point m is at p0 = c + s0 R(m − c0) in the list and
+/// belongs at p = c + s R(m − vc), with c the viewport's centre, R its view twist and s, s0 paper
+/// units per model unit, so k = s / s0 and b = c (1 − k) + s R(c0 − vc).
 fn vp_motion(vp: &cadcraft_doc::Viewport, built: (Vec2, f64)) -> Option<(f64, Vec2)> {
     let (s, k) = (vp.height / vp.view_height, built.1 / vp.view_height);
-    let b = vp.center.xy() * (1.0 - k) + (built.0 - vp.view_center) * s;
+    let b = vp.center.xy() * (1.0 - k) + (built.0 - vp.view_center).rotate(vp.view_twist()) * s;
     (k.is_finite() && k > 0.0 && b.is_finite()).then_some((k, b))
 }
 
@@ -523,7 +551,7 @@ fn ensure_vp_content(app: &mut CadApp, xf_paper: &Xf, ctx: &egui::Context) -> Op
     let (k, b) = vp_motion(&vp, c.view)?;
     c.motion = Some((k, b));
     // Paper p = k·p0 + b, so the list is drawn by the paper transform scaled by k about b.
-    let xf = Xf { rect: xf_paper.rect, center: (xf_paper.center - b) / k, scale: xf_paper.scale * k };
+    let xf = Xf { rect: xf_paper.rect, center: (xf_paper.center - b) / k, scale: xf_paper.scale * k, twist: xf_paper.twist };
     let on_screen = Rect::from_two_pos(xf_paper.to_screen(Vec2::new(rect.min.x, rect.max.y)), xf_paper.to_screen(Vec2::new(rect.max.x, rect.min.y)));
     Some(VpFrame { xf, on_screen, outline: clip.map(|p| p.polygon().to_vec()) })
 }
@@ -567,7 +595,7 @@ fn draw_vp_content(c: &mut VpContent, gpu: bool, p: &egui::Painter, f: &VpFrame,
             scale: xf.scale as f32,
             center: [center.x, center.y],
             layer: crate::gpu::LAYER_VIEWPORT,
-            xform: crate::gpu::IDENTITY_XFORM,
+            xform: xf.gpu_xform(c.mesh_origin, Mat3::IDENTITY),
             dash: 0.0,
             stencil,
         },
@@ -622,7 +650,7 @@ fn draw_vp_mask(c: &mut VpContent, p: &egui::Painter, outline: &[Vec2], xf_paper
             scale: xf_paper.scale as f32,
             center: [center.x, center.y],
             layer: crate::gpu::LAYER_MASK,
-            xform: crate::gpu::IDENTITY_XFORM,
+            xform: xf_paper.gpu_xform(c.mask_origin, Mat3::IDENTITY),
             dash: 0.0,
             stencil: crate::gpu::Stencil::Mask,
         },
@@ -662,6 +690,32 @@ impl VpHighlight {
             self.list = cadcraft_render::build_entities(&st.doc, ents, &cadcraft_render::Options { tolerance, ..Default::default() });
             self.key = Some(key);
             self.list_gen = self.list_gen.wrapping_add(1);
+        }
+    }
+}
+
+/// The display list of what a running command shows in place of the drawing
+/// ([`cadcraft_engine::Session::display_only`]: DVIEW's preview set), rebuilt when the drawing,
+/// the set or the 2x zoom band changes.
+#[derive(Default)]
+struct OnlyList {
+    key: Option<u64>,
+    list: DisplayList,
+}
+
+impl OnlyList {
+    fn update(&mut self, st: &cadcraft_engine::DocState, only: &cadcraft_engine::DisplayOnly, scale: f64) {
+        let band = (1.0 / scale.max(1e-300)).log2().floor() as i32;
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            (st.uid, st.revision, std::sync::Arc::as_ptr(&st.doc) as usize, band, &only.handles, format!("{:?}", only.extra)).hash(&mut h);
+            h.finish()
+        };
+        if self.key != Some(key) {
+            let ents = only.handles.iter().filter_map(|h| st.doc.entity(*h)).map(|e| e.as_ref()).chain(only.extra.iter());
+            self.list = rebuilt_preview(&st.doc, ents, 2f64.powi(-band));
+            self.key = Some(key);
         }
     }
 }
@@ -709,21 +763,20 @@ fn draw_grid(app: &CadApp, p: &egui::Painter, xf: &Xf) {
         let y0 = (wb.min.y / minor).floor() as i64;
         let y1 = (wb.max.y / minor).ceil() as i64;
         if (x1 - x0) < 2000 && (y1 - y0) < 2000 {
+            // World-aligned lines across the visible box (the painter clips them to the rect).
             for i in x0..=x1 {
                 let x = i as f64 * minor;
                 let is_major = (x / major).round() * major - x == 0.0 || ((x / major) - (x / major).round()).abs() < 1e-6;
-                let sx = xf.to_screen(Vec2::new(x, 0.0)).x;
                 lines.push(Shape::line_segment(
-                    [pos2(sx, xf.rect.top()), pos2(sx, xf.rect.bottom())],
+                    [xf.to_screen(Vec2::new(x, wb.min.y)), xf.to_screen(Vec2::new(x, wb.max.y))],
                     Stroke::new(1.0, if is_major { t.grid_major } else { t.grid_minor }),
                 ));
             }
             for j in y0..=y1 {
                 let y = j as f64 * minor;
                 let is_major = ((y / major) - (y / major).round()).abs() < 1e-6;
-                let sy = xf.to_screen(Vec2::new(0.0, y)).y;
                 lines.push(Shape::line_segment(
-                    [pos2(xf.rect.left(), sy), pos2(xf.rect.right(), sy)],
+                    [xf.to_screen(Vec2::new(wb.min.x, y)), xf.to_screen(Vec2::new(wb.max.x, y))],
                     Stroke::new(1.0, if is_major { t.grid_major } else { t.grid_minor }),
                 ));
             }
@@ -731,12 +784,11 @@ fn draw_grid(app: &CadApp, p: &egui::Painter, xf: &Xf) {
         p.extend(lines);
     }
     // Axes through the origin.
-    let o = xf.to_screen(Vec2::ZERO);
-    if xf.rect.y_range().contains(o.y) {
-        p.line_segment([pos2(xf.rect.left(), o.y), pos2(xf.rect.right(), o.y)], Stroke::new(1.0, t.axis_x));
+    if (wb.min.y..=wb.max.y).contains(&0.0) {
+        p.line_segment([xf.to_screen(Vec2::new(wb.min.x, 0.0)), xf.to_screen(Vec2::new(wb.max.x, 0.0))], Stroke::new(1.0, t.axis_x));
     }
-    if xf.rect.x_range().contains(o.x) {
-        p.line_segment([pos2(o.x, xf.rect.top()), pos2(o.x, xf.rect.bottom())], Stroke::new(1.0, t.axis_y));
+    if (wb.min.x..=wb.max.x).contains(&0.0) {
+        p.line_segment([xf.to_screen(Vec2::new(0.0, wb.min.y)), xf.to_screen(Vec2::new(0.0, wb.max.y))], Stroke::new(1.0, t.axis_y));
     }
 }
 
@@ -881,7 +933,7 @@ fn draw_highlight_gpu(
             scale: xf.scale as f32,
             center: [center.x, center.y],
             layer: crate::gpu::LAYER_HIGHLIGHT,
-            xform: crate::gpu::IDENTITY_XFORM,
+            xform: xf.gpu_xform(*hl_origin, Mat3::IDENTITY),
             dash: if look.dashed { 10.0 } else { 0.0 },
             stencil,
         },
@@ -933,10 +985,8 @@ fn draw_drag_gpu(
         c.drag_key = Some(key);
         c.drag_origin = origin;
     }
-    // Positions are relative to the origin o: M(o + p) = L·p + (M(o) − o).
-    let m = drag.matrix;
+    // Positions are relative to the origin o: M(o + p) = L·p + (M(o) − o), turned with the view.
     let o = c.drag_origin;
-    let t = m.apply(o) - o;
     let center = xf.rect.center();
     p.add(egui_wgpu::Callback::new_paint_callback(
         xf.rect,
@@ -947,7 +997,7 @@ fn draw_drag_gpu(
             scale: xf.scale as f32,
             center: [center.x, center.y],
             layer: crate::gpu::LAYER_DRAG,
-            xform: [m.a as f32, m.b as f32, m.c as f32, m.d as f32, t.x as f32, t.y as f32],
+            xform: xf.gpu_xform(o, drag.matrix),
             dash: 0.0,
             stencil: crate::gpu::Stencil::Off,
         },
@@ -989,7 +1039,7 @@ fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, bg: Rgb, lwdis
             scale: xf.scale as f32,
             center: [center.x, center.y],
             layer: crate::gpu::LAYER_DRAWING,
-            xform: crate::gpu::IDENTITY_XFORM,
+            xform: xf.gpu_xform(c.mesh_origin, Mat3::IDENTITY),
             dash: 0.0,
             stencil: crate::gpu::Stencil::Off,
         },
@@ -1085,7 +1135,7 @@ mod highlight_stability_tests {
         let rect = Rect::from_min_size(Pos2::ZERO, vec2(600.0, 400.0));
         let input = egui::RawInput { screen_rect: Some(rect), events: vec![egui::Event::PointerMoved(pointer)], ..Default::default() };
         let mut output = ctx.run_ui(input, |ui| {
-            draw_highlight(ui.painter(), &Xf { rect, center: Vec2::ZERO, scale: 11.0 }, list, &[0], Color32::LIGHT_BLUE, look);
+            draw_highlight(ui.painter(), &Xf { rect, center: Vec2::ZERO, scale: 11.0, twist: 0.0 }, list, &[0], Color32::LIGHT_BLUE, look);
         });
         let shapes = std::mem::take(&mut output.shapes);
         output.textures_delta.clear();
@@ -1142,7 +1192,7 @@ mod highlight_stability_tests {
             let dir = std::path::PathBuf::from(dir);
             std::fs::create_dir_all(&dir).unwrap();
             let mut h = egui_kittest::Harness::builder().with_size(vec2(600.0, 400.0)).build_ui(|ui| {
-                let xf = Xf { rect: ui.max_rect(), center: Vec2::new(3.5, 1.5), scale: 31.0 };
+                let xf = Xf { rect: ui.max_rect(), center: Vec2::new(3.5, 1.5), scale: 31.0, twist: 0.0 };
                 draw_highlight(ui.painter(), &xf, &list, &[0], Color32::LIGHT_BLUE, Look { width: 2.0, dashed: true });
             });
             h.run_steps(3);
@@ -1365,7 +1415,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     let Ok(st) = app.session.state() else { return };
     let view = st.view();
     let scale = f64::from(rect.height()) / view.height.max(1e-12);
-    let xf = Xf { rect, center: view.center, scale };
+    let xf = Xf { rect, center: view.center, scale, twist: view.twist };
     app.canvas.xf = Some(xf);
 
     // ---------- input ----------
@@ -1403,10 +1453,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         // Pinch (and Cmd+scroll) still zoom via `zoom_delta` below.
         if let Ok(st) = app.session.state_mut() {
             let v = st.view();
-            st.set_view_quiet(cadcraft_engine::View {
-                center: v.center - Vec2::new(f64::from(scroll.x) / scale, -f64::from(scroll.y) / scale),
-                height: v.height,
-            });
+            st.set_view_quiet(cadcraft_engine::View { center: v.center - xf.screen_delta_to_world(scroll), height: v.height, twist: v.twist });
         }
     }
     let opts = ui.ctx().options(|o| o.input_options);
@@ -1440,10 +1487,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             let d = hp - last;
             if let Ok(st) = app.session.state_mut() {
                 let v = st.view();
-                st.set_view_quiet(cadcraft_engine::View {
-                    center: v.center - Vec2::new(f64::from(d.x) / scale, -f64::from(d.y) / scale),
-                    height: v.height,
-                });
+                st.set_view_quiet(cadcraft_engine::View { center: v.center - xf.screen_delta_to_world(d), height: v.height, twist: v.twist });
             }
         }
         app.canvas.pan_last = Some(hp);
@@ -1472,13 +1516,14 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     // Re-read the view after navigation.
     let view = app.session.state().map(|s| s.view()).unwrap_or(view);
     let scale = f64::from(rect.height()) / view.height.max(1e-12);
-    let xf = Xf { rect, center: view.center, scale };
+    let xf = Xf { rect, center: view.center, scale, twist: view.twist };
     app.canvas.xf = Some(xf);
     // The paper (display) transform; equal to `xf` except inside an MSPACE viewport.
     let (xf_paper, active_vp) = match app.session.state() {
         Ok(st) => {
             let pv = st.paper_view();
-            let xp = Xf { rect, center: pv.center, scale: f64::from(rect.height()) / pv.height.max(1e-12) };
+            // Paper space is never twisted.
+            let xp = Xf { rect, center: pv.center, scale: f64::from(rect.height()) / pv.height.max(1e-12), twist: 0.0 };
             (if st.mspace.is_some() { xp } else { xf }, st.active_viewport().map(|(_, v)| v))
         }
         Err(_) => (xf, None),
@@ -1796,16 +1841,32 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     // The active viewport's contents, drawn apart from the layout's list, under its own objects.
     // `masked`: its outline is in the stencil buffer this frame.
     let mut masked = false;
-    if let Some(f) = ensure_vp_content(app, &xf_paper, ui.ctx()) {
-        let gpu = app.canvas.gpu.is_some();
-        let clipped = painter.with_clip_rect(f.on_screen.intersect(rect));
-        draw_vp_content(&mut app.canvas.vp, gpu, &clipped, &f, &xf_paper, bg, app.session.settings.lwdisplay);
-        masked = gpu && f.outline.is_some();
-    }
-    if app.canvas.gpu.is_some() {
-        draw_list_gpu(&mut app.canvas, &painter, &xf_paper, bg, app.session.settings.lwdisplay);
-    } else if let Some(list) = &app.canvas.list {
-        draw_list(&painter, &xf_paper, list, bg, app.session.settings.lwdisplay);
+    if let Some(only) = app.session.display_only() {
+        // A command that shows only some objects while it runs (DVIEW's preview set): those,
+        // in the view being changed (inside the active viewport, clipped to it).
+        let clip = active_vp.as_ref().map_or(rect, |vp| {
+            Rect::from_two_pos(
+                xf_paper.to_screen(Vec2::new(vp.center.x - vp.width / 2.0, vp.center.y + vp.height / 2.0)),
+                xf_paper.to_screen(Vec2::new(vp.center.x + vp.width / 2.0, vp.center.y - vp.height / 2.0)),
+            )
+            .intersect(rect)
+        });
+        if let Ok(st) = app.session.state() {
+            app.canvas.only.update(st, &only, scale);
+        }
+        draw_list(&painter.with_clip_rect(clip), &xf, &app.canvas.only.list, bg, app.session.settings.lwdisplay);
+    } else {
+        if let Some(f) = ensure_vp_content(app, &xf_paper, ui.ctx()) {
+            let gpu = app.canvas.gpu.is_some();
+            let clipped = painter.with_clip_rect(f.on_screen.intersect(rect));
+            draw_vp_content(&mut app.canvas.vp, gpu, &clipped, &f, &xf_paper, bg, app.session.settings.lwdisplay);
+            masked = gpu && f.outline.is_some();
+        }
+        if app.canvas.gpu.is_some() {
+            draw_list_gpu(&mut app.canvas, &painter, &xf_paper, bg, app.session.settings.lwdisplay);
+        } else if let Some(list) = &app.canvas.list {
+            draw_list(&painter, &xf_paper, list, bg, app.session.settings.lwdisplay);
+        }
     }
     if let Some(vp) = &active_vp {
         // The active viewport: a heavy border, highlights in model units clipped to it.
@@ -1967,19 +2028,19 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     }
     // Pending selection window.
     if let (Some(pw), Some(c)) = (app.session.pending_window, raw_world) {
-        let a = xf.to_screen(pw.corner);
-        let b = xf.to_screen(c);
-        let r = Rect::from_two_pos(a, b);
+        // The world box it selects (turned in a twisted view).
+        let corners = [pw.corner, Vec2::new(c.x, pw.corner.y), c, Vec2::new(pw.corner.x, c.y)].map(|q| xf.to_screen(q));
         let crossing = c.x < pw.corner.x;
         if let Some(fill) = selection_area_fill(&app.session.settings, crossing) {
-            painter.rect_filled(r, 0.0, fill);
+            painter.add(Shape::convex_polygon(corners.to_vec(), fill, Stroke::NONE));
         }
         let st = Stroke::new(1.0, if crossing { t.crossing_stroke } else { t.window_stroke });
+        let mut pts = corners.to_vec();
+        pts.push(corners[0]);
         if crossing {
-            let pts = vec![r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
             painter.extend(Shape::dashed_line(&pts, st, 5.0, 3.0));
         } else {
-            painter.rect_stroke(r, 0.0, st, egui::StrokeKind::Middle);
+            painter.add(Shape::line(pts, st));
         }
     }
     // Acquired tracking points and the polar / tracking paths under the cursor.
@@ -2063,7 +2124,7 @@ fn tile_rects(app: &CadApp, full: Rect) -> Vec<(Rect, cadcraft_engine::ModelTile
 
 /// The world ↔ screen transform of a model tile drawn in `r`.
 fn tile_xf(r: Rect, tile: &cadcraft_engine::ModelTile) -> Xf {
-    Xf { rect: r, center: tile.view.center, scale: f64::from(r.height()) / tile.view.height.max(1e-12) }
+    Xf { rect: r, center: tile.view.center, scale: f64::from(r.height()) / tile.view.height.max(1e-12), twist: tile.view.twist }
 }
 
 /// The tiles other than the current one (each with its own view, clipped to it), then the
@@ -2686,7 +2747,7 @@ pub(crate) mod tests {
         let h = d.add(&cadcraft_doc::Space::Model, common, cadcraft_doc::EntityKind::Line(line)).unwrap();
         let drag = cadcraft_engine::Drag { handles: vec![h], matrix: cadcraft_geom::Mat3::IDENTITY, extra: Vec::new(), clipboard: false };
         let rect = Rect::from_min_size(Pos2::ZERO, vec2(200.0, 100.0));
-        let xf = Xf { rect, center: Vec2::new(5.0, 0.0), scale: 10.0 };
+        let xf = Xf { rect, center: Vec2::new(5.0, 0.0), scale: 10.0, twist: 0.0 };
         let painter = egui::Painter::new(egui::Context::default(), egui::LayerId::background(), rect);
         // One canvas across the toggle: the cached drag mesh must be rebuilt.
         let mut c = CanvasState::default();
@@ -2734,6 +2795,101 @@ pub(crate) mod tests {
         assert!(!extra.is_empty());
         let list = rebuilt_preview(s.doc().unwrap(), extra.iter(), 1.0);
         assert!(!list.prims.is_empty() && list.prims.iter().all(|p| p.transparency == 0));
+    }
+
+    fn twisted() -> Xf {
+        let rect = Rect::from_min_size(pos2(10.0, 20.0), vec2(300.0, 200.0));
+        Xf { rect, center: Vec2::new(5.0, -3.0), scale: 4.0, twist: 30f64.to_radians() }
+    }
+
+    /// A twisted view turns the drawing counterclockwise on screen, and `to_world` undoes
+    /// `to_screen` exactly.
+    #[test]
+    fn a_twisted_view_turns_the_drawing_and_round_trips() {
+        let xf = twisted();
+        let p = Vec2::new(17.0, 4.0);
+        let back = xf.to_world(xf.to_screen(p));
+        assert!((back - p).len() < 1e-4, "{back:?}");
+        // World +X points 30° above the horizontal (screen y grows down).
+        let (a, b) = (xf.to_screen(xf.center), xf.to_screen(xf.center + Vec2::new(10.0, 0.0)));
+        let ang = f64::from(-(b.y - a.y)).atan2(f64::from(b.x - a.x)).to_degrees();
+        assert!((ang - 30.0).abs() < 1e-3, "{ang}");
+        // A screen drag maps back to the world move that pans by it.
+        let d = xf.screen_delta_to_world(b - a);
+        assert!((d - Vec2::new(10.0, 0.0)).len() < 1e-4, "{d:?}");
+        // The visible box holds every corner of the rect.
+        let wb = xf.world_bounds();
+        for c in [xf.rect.left_top(), xf.rect.right_top(), xf.rect.left_bottom(), xf.rect.right_bottom()] {
+            assert!(wb.expand(1e-6).contains(xf.to_world(c)));
+        }
+        // Untwisted it is the plain transform.
+        let plain = Xf { twist: 0.0, ..xf };
+        let s = plain.to_screen(p);
+        assert_eq!(s, pos2(160.0 + 12.0 * 4.0, 120.0 - 7.0 * 4.0));
+    }
+
+    /// What the shader does with a callback's xform (see `to_px` in `gpu.rs`), in points.
+    fn shader(xf: &Xf, origin: Vec2, x: [f32; 6], p: Vec2) -> Pos2 {
+        let q = p - origin;
+        let [a, b, c, d, tx, ty] = x.map(f64::from);
+        let r = Vec2::new(a * q.x + c * q.y + tx, b * q.x + d * q.y + ty) + (origin - xf.center);
+        let k = xf.rect.center();
+        pos2(k.x + (r.x * xf.scale) as f32, k.y - (r.y * xf.scale) as f32)
+    }
+
+    /// The GPU transform draws each point where `to_screen` puts it, for the drawing and for a
+    /// dragged copy.
+    #[test]
+    fn gpu_xform_agrees_with_to_screen() {
+        let xf = twisted();
+        let origin = Vec2::new(40.0, -12.0);
+        let x = xf.gpu_xform(origin, Mat3::IDENTITY);
+        for p in [Vec2::new(0.0, 0.0), Vec2::new(17.0, 4.0), Vec2::new(-30.0, 55.0)] {
+            let (g, c) = (shader(&xf, origin, x, p), xf.to_screen(p));
+            assert!((g - c).length() < 1e-2, "{p:?}: {g:?} vs {c:?}");
+        }
+        let m = Mat3::rotate_about(Vec2::new(3.0, 1.0), 0.7);
+        let x = xf.gpu_xform(origin, m);
+        for p in [Vec2::new(1.0, 2.0), Vec2::new(-8.0, 9.0), Vec2::new(25.0, -4.0)] {
+            let (g, c) = (shader(&xf, origin, x, p), xf.to_screen(m.apply(p)));
+            assert!((g - c).length() < 1e-2, "{p:?}: {g:?} vs {c:?}");
+        }
+        // No twist: the identity for the drawing, as before.
+        assert_eq!(Xf { twist: 0.0, ..xf }.gpu_xform(origin, Mat3::IDENTITY), crate::gpu::IDENTITY_XFORM);
+    }
+
+    /// A model tile is drawn with its own twist.
+    #[test]
+    fn tile_xf_carries_the_tiles_twist() {
+        let tile = cadcraft_engine::ModelTile {
+            min: Vec2::ZERO,
+            max: Vec2::new(0.5, 1.0),
+            view: cadcraft_engine::View { center: Vec2::new(1.0, 2.0), height: 50.0, twist: 0.5 },
+            active: false,
+        };
+        let xf = tile_xf(Rect::from_min_size(Pos2::ZERO, vec2(100.0, 100.0)), &tile);
+        assert_eq!((xf.twist, xf.center, xf.scale), (0.5, Vec2::new(1.0, 2.0), 2.0));
+    }
+
+    /// The active viewport's list, built at one view of a twisted viewport, lands where the
+    /// viewport now shows each model point after a pan and a zoom.
+    #[test]
+    fn vp_motion_follows_a_twisted_viewport() {
+        let built = cadcraft_doc::Viewport {
+            center: cadcraft_geom::Vec3::new(5.0, 4.0, 0.0),
+            width: 8.0,
+            height: 6.0,
+            view_center: Vec2::new(1.0, 2.0),
+            view_height: 12.0,
+            twist: 0.7,
+            ..Default::default()
+        };
+        let now = cadcraft_doc::Viewport { view_center: Vec2::new(-3.0, 0.5), view_height: 7.0, ..built.clone() };
+        let (k, b) = vp_motion(&now, (built.view_center, built.view_height)).unwrap();
+        for m in [Vec2::new(0.0, 0.0), Vec2::new(4.0, -2.5), Vec2::new(-7.0, 3.0)] {
+            let moved = built.model_to_paper(m) * k + b;
+            assert!((moved - now.model_to_paper(m)).len() < 1e-9, "{m:?}");
+        }
     }
 
     #[test]

@@ -109,6 +109,8 @@ fn save(s: &mut Session, name: &str, window: Option<Bounds2>, snapshot: bool) ->
         (Space::Paper(l), false) => Some(l.clone()),
         _ => None,
     };
+    // The view twist goes with the view (layout viewports and paper space have none).
+    let twist = if in_viewport { 0.0 } else { st.view().twist };
     let (center, height, width) = match window {
         Some(b) => {
             if !(b.width() > 1e-12 && b.height() > 1e-12 && b.min.is_finite() && b.max.is_finite()) {
@@ -138,7 +140,7 @@ fn save(s: &mut Session, name: &str, window: Option<Bounds2>, snapshot: bool) ->
         }
         d.views.retain(|v| !v.name.eq_ignore_ascii_case(old));
     }
-    d.views.push(NamedView { name: name.to_string(), center, height, width, layer_state, twist: 0.0, layout });
+    d.views.push(NamedView { name: name.to_string(), center, height, width, layer_state, twist, layout });
     let msg = if replaced.is_some() { format!("View \"{name}\" replaced.") } else { format!("View \"{name}\" saved.") };
     Ok(json!({ "name": name, "center": [center.x, center.y], "height": height, "width": width, "message": msg }))
 }
@@ -167,7 +169,7 @@ fn restore(s: &mut Session, name: &str) -> Result<Value> {
             let st = s.state_mut()?;
             st.mspace = None;
             let height = v.height.max(v.width / (w / h.max(1.0)).max(1e-9));
-            st.set_view(View { center: v.center, height });
+            st.set_view(View { center: v.center, height, twist: 0.0 });
         }
         None => {
             // A model space view: into the active MSPACE viewport, else on the Model tab.
@@ -177,7 +179,8 @@ fn restore(s: &mut Session, name: &str) -> Result<Value> {
             let (w, h) = s.viewport_px;
             let st = s.state_mut()?;
             let aspect = st.zoom_aspect(w / h.max(1.0)).max(1e-9);
-            st.set_zoom_frame(View { center: v.center, height: v.height.max(v.width / aspect) });
+            let twist = if v.twist.is_finite() { v.twist } else { 0.0 };
+            st.set_zoom_frame(View { center: v.center, height: v.height.max(v.width / aspect), twist });
         }
     }
     let mut msg = format!("View \"{}\" restored.", v.name);
