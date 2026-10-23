@@ -746,3 +746,85 @@ fn a_panic_inside_a_routine_ends_it_with_an_error() {
     assert!(s.log.iter().any(|l| l.contains("internal error")), "{:?}", s.log);
     assert_eq!(ok(&mut s, "(+ 1 2)"), "3");
 }
+
+// ---------------- entities of block definitions (#1700) ----------------
+
+/// A drawing with one linear dimension measuring 100 whose `*D1` block, as stored in the file,
+/// says 99.5 (a stale block: the defpoints moved, the block wasn't rebuilt).
+fn stale_dimension() -> Session {
+    let mut s = session();
+    s.execute("dimlinear", &serde_json::json!({"p1": [0, 0], "p2": [100, 0], "at": [50, -20], "rotation": 0})).unwrap();
+    let dxf = cadcraft_io::write_dxf(s.doc().unwrap());
+    // The *D1 block's MTEXT says 100 (100.0000 here); make the file say 99.5.
+    let lines: Vec<&str> = dxf.lines().collect();
+    let (mut kind, mut block, mut out, mut changed) = (String::new(), String::new(), Vec::new(), 0);
+    for (i, l) in lines.iter().enumerate() {
+        let code = if i % 2 == 0 { l.trim() } else { "" };
+        let value = lines.get(i + 1).map(|v| v.trim()).unwrap_or("");
+        if code == "0" {
+            kind = value.to_string();
+        }
+        if code == "2" && kind == "BLOCK" {
+            block = value.to_string();
+        }
+        if i % 2 == 1 && kind == "MTEXT" && block == "*D1" && lines.get(i - 1).map(|c| c.trim()) == Some("1") && l.trim().starts_with("100") {
+            out.push("99.5".to_string());
+            changed += 1;
+            continue;
+        }
+        out.push(l.to_string());
+    }
+    assert_eq!(changed, 1, "the fixture found the *D1 text");
+    let mut s = session();
+    s.open_drawing(cadcraft_io::read_dxf(out.join("\n").as_bytes()).unwrap(), "stale", None);
+    s
+}
+
+/// The issue's use: a routine reads the text a dimension's block stores and compares it with the
+/// measurement, so it finds the stale block.
+#[test]
+fn a_routine_reads_the_text_a_dimension_block_stores() {
+    let mut s = stale_dimension();
+    let code = r#"(progn
+      (defun dtext (dim / e txt)
+        (setq e (cdr (assoc -2 (tblsearch "BLOCK" (cdr (assoc 2 (entget dim)))))))
+        (while e
+          (if (= (cdr (assoc 0 (entget e))) "MTEXT") (setq txt (cdr (assoc 1 (entget e)))))
+          (setq e (entnext e)))
+        txt)
+      (setq dim (entlast))
+      (list (dtext dim) (cdr (assoc 42 (entget dim)))))"#;
+    assert_eq!(ok(&mut s, code), "(\"99.5\" 100.0)");
+}
+
+/// tblsearch names a block's first entity (-2); entnext walks the definition in order and ends
+/// with nil; entget lists each one (without a layout); handent finds them by handle.
+#[test]
+fn entnext_and_entget_walk_a_block_definition() {
+    let mut s = session();
+    let l = s.execute("line", &serde_json::json!({"points": [[0, 0], [10, 0]]})).unwrap()["handles"][0].as_str().unwrap().to_string();
+    let c = s.execute("circle", &serde_json::json!({"center": [5, 5], "radius": 2})).unwrap()["handle"].as_str().unwrap().to_string();
+    s.execute("block", &serde_json::json!({"name": "B", "base": [0, 0], "handles": [l, c], "keep": "delete"})).unwrap();
+    s.execute("line", &serde_json::json!({"points": [[50, 0], [60, 0]]})).unwrap();
+    let walk = r#"(progn (setq e (cdr (assoc -2 (tblsearch "BLOCK" "B"))) types nil)
+      (while e (setq types (cons (cdr (assoc 0 (entget e))) types) e (entnext e)))
+      (reverse types))"#;
+    assert_eq!(ok(&mut s, walk), "(\"LINE\" \"CIRCLE\")", "the block's own entities, not the drawing's");
+    let first = "(cdr (assoc -2 (tblsearch \"BLOCK\" \"B\")))";
+    assert_eq!(ok(&mut s, &format!("(assoc 410 (entget {first}))")), "nil", "no layout");
+    assert_eq!(ok(&mut s, &format!("(equal (handent (cdr (assoc 5 (entget {first})))) {first})")), "T");
+    // The drawing's own entities walk as before.
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget (entnext))))"), "\"LINE\"");
+    assert_eq!(ok(&mut s, "(entnext (entlast))"), "nil");
+    // Editing a block's entity through entmod or entdel isn't offered: nil, nothing changes.
+    assert_eq!(ok(&mut s, &format!("(entdel {first})")), "nil");
+    assert_eq!(ok(&mut s, &format!("(entmod (entget {first}))")), "nil");
+    assert_eq!(s.doc().unwrap().block("B").unwrap().entities.len(), 2);
+}
+
+#[test]
+fn an_empty_block_has_no_first_entity() {
+    let mut s = session();
+    s.doc_mut().unwrap().blocks.insert("EMPTY".into(), std::sync::Arc::new(cadcraft_doc::Block::new("EMPTY")));
+    assert_eq!(ok(&mut s, "(assoc -2 (tblsearch \"BLOCK\" \"EMPTY\"))"), "nil");
+}

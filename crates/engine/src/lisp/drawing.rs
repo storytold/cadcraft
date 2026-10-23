@@ -318,7 +318,14 @@ pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 2)?;
     let h = ename(&a[0])?;
     let Ok(d) = ctx.s.doc() else { return Ok(Flow::Value(Value::Nil)) };
-    let Some(e) = d.entity(h) else { return Ok(Flow::Value(Value::Nil)) };
+    // An entity of a block definition (#1700) has no layout.
+    let (e, in_block) = match d.entity(h) {
+        Some(e) => (e, false),
+        None => match block_entity(d, h) {
+            Some(e) => (e, true),
+            None => return Ok(Flow::Value(Value::Nil)),
+        },
+    };
     let (kind, mut tags) = (codec()?.groups)(d, e);
     convert_angles(&kind, &mut tags, f64::to_radians);
     let layout = match space_of(d, h) {
@@ -326,7 +333,7 @@ pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         _ => "Model".into(),
     };
     let mut items = vec![Value::cons(Value::Int(-1), Value::Ename(h)), Value::cons(Value::Int(0), Value::str(&kind))];
-    let mut placed_layout = false;
+    let mut placed_layout = in_block;
     for v in groups_to_list(&tags) {
         // The layout name follows the AcDbEntity marker, as AutoCAD lists it.
         let after_marker = !placed_layout && v.car().as_number() == Some(100.0) && matches!(v.cdr(), Value::Str(ref s) if &**s == "AcDbEntity");
@@ -461,6 +468,17 @@ pub fn entlast(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 
 pub fn entnext(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 0, 1)?;
+    // From an entity of a block definition: the next one in that block, nil after the last (#1700).
+    if let Some(v) = a.first().filter(|v| !v.is_nil()) {
+        let h = ename(v)?;
+        if let Ok(d) = ctx.s.doc()
+            && d.entity(h).is_none()
+            && let Some(b) = block_of(d, h)
+        {
+            let next = b.entities.iter().skip_while(|e| e.handle != h).nth(1).map(|e| Value::Ename(e.handle));
+            return Ok(Flow::Value(next.unwrap_or_default()));
+        }
+    }
     let order = handles_in_order(ctx);
     let next = match a.first() {
         None | Some(Value::Nil) => order.first().copied(),
@@ -476,8 +494,21 @@ pub fn entnext(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 pub fn handent(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 1)?;
     let s = string(&a[0])?;
-    let h = Handle::parse_hex(&s).filter(|h| ctx.s.doc().is_ok_and(|d| d.entity(*h).is_some()));
+    let h = Handle::parse_hex(&s).filter(|h| ctx.s.doc().is_ok_and(|d| d.entity(*h).is_some() || block_entity(d, *h).is_some()));
     Ok(Flow::Value(h.map(Value::Ename).unwrap_or_default()))
+}
+
+/// The block definition holding entity `h`, when it is one of a block's (not a drawn entity).
+fn block_of(d: &cadcraft_doc::Drawing, h: Handle) -> Option<&cadcraft_doc::Block> {
+    if h == Handle(0) {
+        return None;
+    }
+    d.blocks.values().map(|b| b.as_ref()).find(|b| b.entities.get(h).is_some())
+}
+
+/// Entity `h` of a block definition (#1700).
+fn block_entity(d: &cadcraft_doc::Drawing, h: Handle) -> Option<&Arc<Entity>> {
+    block_of(d, h).and_then(|b| b.entities.get(h))
 }
 
 // ---------------- selection sets ----------------
@@ -865,12 +896,17 @@ fn table_records(d: &cadcraft_doc::Drawing, table: &str) -> Vec<Value> {
             .blocks
             .values()
             .map(|b| {
-                Value::list(vec![
+                let mut items = vec![
                     pair(0, Value::str("BLOCK")),
                     pair(2, Value::str(&b.name)),
                     pair(70, Value::Int(0)),
                     Value::list(vec![Value::Int(10), Value::Real(b.base.x), Value::Real(b.base.y), Value::Real(b.base.z)]),
-                ])
+                ];
+                // Its first entity (-2): entnext walks the rest of the definition (#1700).
+                if let Some(first) = b.entities.iter().next() {
+                    items.push(pair(-2, Value::Ename(first.handle)));
+                }
+                Value::list(items)
             })
             .collect(),
         "DIMSTYLE" => d
