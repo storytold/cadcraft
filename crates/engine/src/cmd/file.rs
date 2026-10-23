@@ -101,8 +101,26 @@ static WRITE_AS: OnceLock<WriteAsHook> = OnceLock::new();
 pub fn set_write_as(h: WriteAsHook) {
     let _ = WRITE_AS.set(h);
 }
+/// The host's writer for [`SaveAs`] options, when it installed one; saves that ask for none use
+/// [`IoHooks::write`].
 pub fn write_as() -> Option<WriteAsHook> {
     WRITE_AS.get().copied()
+}
+
+/// Write a drawing as an image or vector with the export command's JSON options (installed by
+/// hosts whose writer supports them; otherwise [`IoHooks::write`] is used).
+pub type ExportWithHook = fn(&Drawing, &str, &Value) -> std::result::Result<Vec<u8>, String>;
+
+static EXPORT_WITH: OnceLock<ExportWithHook> = OnceLock::new();
+
+/// Install the host's exporter for JSON options (SVG `text` mode, and the like).
+pub fn set_export_with(h: ExportWithHook) {
+    let _ = EXPORT_WITH.set(h);
+}
+/// The host's exporter for JSON options, when it installed one; EXPORT falls back to
+/// [`IoHooks::write`] otherwise.
+pub fn export_with() -> Option<ExportWithHook> {
+    EXPORT_WITH.get().copied()
 }
 
 /// The versions a drawing can be saved in, for messages ("2000, 2004, …, 2018").

@@ -75,6 +75,19 @@ impl Face {
     pub fn has_glyph(&self, c: char) -> bool {
         self.font().is_some_and(|f| f.charmap().map(c).is_some())
     }
+    /// The face's family name (its typographic family, family, or full name): what output
+    /// formats that name fonts write as `font-family` (SVG). Empty when the font has none.
+    pub fn family_name(&self) -> String {
+        let Some(f) = self.font() else { return String::new() };
+        [skrifa::string::StringId::TYPOGRAPHIC_FAMILY_NAME, skrifa::string::StringId::FAMILY_NAME, skrifa::string::StringId::FULL_NAME]
+            .into_iter()
+            .find_map(|id| f.localized_strings(id).english_or_first().map(|s| s.to_string()))
+            .unwrap_or_default()
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(120)
+            .collect()
+    }
     fn names(&self) -> Vec<String> {
         let Some(f) = self.font() else { return Vec::new() };
         [skrifa::string::StringId::FAMILY_NAME, skrifa::string::StringId::TYPOGRAPHIC_FAMILY_NAME, skrifa::string::StringId::FULL_NAME]

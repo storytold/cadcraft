@@ -86,8 +86,9 @@ pub struct DisplayList {
     /// it is drawn on (block contents on layer 0: the block reference's; [`NO_LAYER`] when the
     /// layer isn't in the table), for PDF layers. Empty for other lists.
     pub prim_layers: Vec<u32>,
-    /// Plots: outline-font glyphs that a plotter can write as text instead of drawing the
-    /// filled outline primitive they stand for ([`PlotText::prim`]), in drawing order.
+    /// Plots and text exports: outline-font glyphs that a plotter can write as text instead of
+    /// drawing the filled outline primitive they stand for ([`PlotText::prim`]), in drawing
+    /// order. Empty for other builds.
     pub texts: Vec<PlotText>,
     pub bounds: Bounds2,
     /// The paper sheet when the list was built for a layout (paper space); the UI draws the
@@ -226,6 +227,10 @@ pub struct Options {
     /// rebuild the view no longer needs). A cancelled build returns a partial list, which the
     /// caller must discard; see [`Options::cancelled`].
     pub cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// Record the outline-font glyphs that stand for filled glyph primitives in
+    /// [`DisplayList::texts`], so output formats can write text instead of outlines. Plots
+    /// record them anyway; exports ask for them with this flag.
+    pub text_glyphs: bool,
 }
 
 impl Options {
@@ -236,6 +241,8 @@ impl Options {
 }
 
 impl Default for Options {
+    /// The defaults a build starts from: text and fills on, lineweights off, the whole space in
+    /// view, opaque, and no plot style, cancellation or recorded text glyphs.
     fn default() -> Self {
         Options {
             tolerance: 0.001,
@@ -249,6 +256,7 @@ impl Default for Options {
             skip_viewport: None,
             transparency: false,
             cancel: None,
+            text_glyphs: false,
         }
     }
 }
@@ -406,8 +414,9 @@ impl Builder<'_> {
         if sh.glyphs.is_empty() {
             return;
         }
-        let fill = self.opts.fill && ctx.d.header.i64("TEXTFILL", 1) != 0;
-        // Plots note which filled outlines are font glyphs (see `DisplayList::texts`).
+        let fill = self.opts.fill && (ctx.d.header.i64("TEXTFILL", 1) != 0 || self.opts.text_glyphs);
+        // Plots note which filled outlines are font glyphs (see `DisplayList::texts`); so do
+        // exports that want to write text.
         let mut text = sh.text.iter().peekable();
         let pixel = if self.plotting { 0.0 } else { self.opts.min_dash * 0.5 };
         for (i, g) in sh.glyphs.iter().enumerate() {
@@ -425,7 +434,7 @@ impl Builder<'_> {
                     self.tris(ctx, color, &tris);
                     tris.len()
                 };
-                if let Some(t) = glyph.filter(|_| self.plotting)
+                if let Some(t) = glyph.filter(|_| self.plotting || self.opts.text_glyphs)
                     && self.list.prims.len() > at
                     && let (Ok(prim), Ok(verts)) = (u32::try_from(at), u32::try_from(len))
                 {
@@ -532,9 +541,14 @@ fn build_space(d: &Drawing, space: &Space, opts: &Options, plotting: bool) -> Di
             if paper && let EntityKind::Viewport(vp) = &e.kind {
                 if viewports < MAX_VIEWPORTS {
                     viewports += 1;
+                    let start = b.list.prims.len();
                     viewport(&mut b, d, e, vp);
                     if plotting {
                         take_viewport_layers(&mut b.list);
+                    } else if opts.text_glyphs {
+                        // A text export replaces the outlines with `<text>`: resolve the glyphs
+                        // it should write (a plot does this in `take_viewport_layers`).
+                        resolve_viewport_text(&mut b.list, start);
                     }
                 }
                 continue;
@@ -955,6 +969,34 @@ fn take_viewport_layers(list: &mut DisplayList) {
         }
         if let Some(p) = list.prims.get_mut(i) {
             p.handle = VIEWPORT_CONTENT;
+        }
+    }
+}
+
+/// The non-plot counterpart of the glyph half of [`take_viewport_layers`]: text seen through a
+/// layout viewport is marked with its index in the handle's high half until it is clipped. A
+/// glyph outline that came through whole takes its own primitive back, so an SVG text export can
+/// write it as `<text>`; one the clip changed stays geometry. The handle loses the index (it goes
+/// back to [`VIEWPORT_CONTENT`]) without plot-only layer bookkeeping.
+fn resolve_viewport_text(list: &mut DisplayList, start: usize) {
+    for i in start..list.prims.len() {
+        let Some(p) = list.prims.get(i).copied() else { break };
+        let Some(k) = (p.handle.0 >> 32).checked_sub(1) else { continue };
+        let bounds = Bounds2::from_points(list.points(&p).iter().copied());
+        let same = |a: Vec2, b: Vec2| a.dist(b) <= 1e-9 * (1.0 + a.len());
+        let whole = usize::try_from(k).ok().and_then(|k| list.texts.get(k)).is_some_and(|t| {
+            t.prim == PlotText::NONE
+                && p.kind == Kind::Tris
+                && p.len == t.verts
+                && same(bounds.min, t.bounds.min)
+                && same(bounds.max, t.bounds.max)
+                && u32::try_from(i).is_ok()
+        });
+        if whole && let Some(t) = usize::try_from(k).ok().and_then(|k| list.texts.get_mut(k)) {
+            t.prim = u32::try_from(i).unwrap_or(PlotText::NONE);
+        }
+        if let Some(p) = list.prims.get_mut(i) {
+            p.handle = Handle(p.handle.0 & 0xFFFF_FFFF);
         }
     }
 }
