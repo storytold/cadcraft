@@ -29,6 +29,10 @@ fn accel(sc: &str) -> Option<Accelerator> {
     Accelerator::from_str(&sc.replace("Cmd", "CMD").replace("Alt", "ALT").replace("Shift", "SHIFT").replace("Ctrl", "CTRL")).ok()
 }
 
+fn native_quit(language: &str) -> (&'static str, &'static str, String) {
+    ("cc-quit", "ui.quit", i18n::tr(language, "Quit CADCraft").to_string())
+}
+
 impl NativeMenu {
     pub fn install(app: &mut CadApp) -> Self {
         let menu = Menu::new();
@@ -39,16 +43,17 @@ impl NativeMenu {
         let app_menu = Submenu::new("CADCraft", true);
         let about = MenuItem::with_id("cc-about", i18n::tr(language, "About CADCraft"), true, None);
         let discord = MenuItem::with_id("cc-discord", i18n::tr(language, "Join the ArtCraft Discord…"), true, None);
+        let (quit_id, quit_command, quit_label) = native_quit(language);
+        let quit = MenuItem::with_id(quit_id, quit_label.clone(), true, accel("Cmd+Q"));
         let predefined = vec![
             ("Services", PredefinedMenuItem::services(Some(i18n::tr(language, "Services")))),
             ("Hide CADCraft", PredefinedMenuItem::hide(Some(i18n::tr(language, "Hide CADCraft")))),
             ("Hide Others", PredefinedMenuItem::hide_others(Some(i18n::tr(language, "Hide Others")))),
             ("Show All", PredefinedMenuItem::show_all(Some(i18n::tr(language, "Show All")))),
-            ("Quit CADCraft", PredefinedMenuItem::quit(Some(i18n::tr(language, "Quit CADCraft")))),
         ];
         // The Mac place for preferences: CADCraft ▸ Settings… (⌘,) opens the Options dialog.
         let settings = MenuItem::with_id("cc-settings", i18n::tr(language, "Settings..."), true, accel("Cmd+Comma"));
-        let _ = app_menu.append_items(&[&about, &discord, &PredefinedMenuItem::separator(), &settings, &PredefinedMenuItem::separator()]);
+        let _ = app_menu.append_items(&[&about, &discord, &PredefinedMenuItem::separator(), &settings, &PredefinedMenuItem::separator(), &quit]);
         for (label, item) in &predefined {
             let _ = app_menu.append(item);
             if ["Services", "Show All"].contains(label) {
@@ -57,6 +62,7 @@ impl NativeMenu {
         }
         items.insert("cc-about".into(), ("ui.dialog.about".into(), "About CADCraft".into(), about));
         items.insert("cc-discord".into(), ("ui.discord".into(), "Join the ArtCraft Discord…".into(), discord));
+        items.insert(quit_id.to_owned(), (quit_command.to_owned(), quit_label, quit));
         items.insert("cc-settings".into(), ("options".into(), "Settings...".into(), settings));
         let _ = menu.append(&app_menu);
         for (title, entries) in menus::tree(app) {
@@ -148,5 +154,18 @@ fn build(
                 items.insert(mid, (id.clone(), label.clone(), i));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mac_native_menu_registers_quit_command() {
+        let (id, cmd, label) = native_quit("en");
+        assert_eq!(id, "cc-quit");
+        assert_eq!(cmd, "ui.quit");
+        assert_eq!(label, "Quit CADCraft");
     }
 }
