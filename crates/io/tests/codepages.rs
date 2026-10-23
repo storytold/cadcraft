@@ -156,8 +156,10 @@ fn binary_dxf_honours_the_code_page() {
     let read = |b: &[u8]| text_of(&cadcraft_io::read_dxf(b).unwrap());
     assert_eq!(read(&bin("AC1015", "ANSI_1251", b"\xCF\xF0\xE8\xE2\xE5\xF2")), "Привет");
     assert_eq!(read(&bin("AC1018", "ANSI_932", b"\x95\x5C\\U+00E9")), "表é");
-    // A short Cyrillic string that is also valid UTF-8 (D1 B2) is still read in the code page.
-    assert_eq!(read(&bin("AC1015", "ANSI_1251", b"\xD1\xB2")), "СІ");
+    // A string that is valid UTF-8 (D1 B2) is read as UTF-8 in binary files too, the same policy
+    // as ASCII files (#1025); a code-page string with a non-UTF-8 byte still uses the code page.
+    assert_eq!(read(&bin("AC1015", "ANSI_1251", b"\xD1\xB2")), "\u{0472}");
+    assert_eq!(read(&bin("AC1015", "ANSI_1252", "Größe".as_bytes())), "Größe");
     assert_eq!(read(&bin("AC1021", "ANSI_1251", "Привет".as_bytes())), "Привет");
     assert_eq!(read(&bin("AC1015", "ANSI_1361", b"Caf\xE9")), "Café");
 }
