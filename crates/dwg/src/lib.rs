@@ -125,7 +125,7 @@ mod native {
             ));
         }
         written.map_err(|e| format!("DWG→DXF: {e}"))?;
-        Ok((add_header_vars(out.buf, &doc.header), notes))
+        Ok((add_header_vars(contexts(&out.buf, false), &doc.header), notes))
     }
 
     /// Most record types named in the skipped-records note.
@@ -523,6 +523,102 @@ mod native {
         }
     }
 
+    /// Annotation scale contexts as acadrust reads and writes them (`to_acadrust`), or back as
+    /// AutoCAD writes them. Block reference and text contexts
+    /// (`ACDB_BLKREFOBJECTCONTEXTDATA_CLASS`, `ACDB_TEXTOBJECTCONTEXTDATA_CLASS`): AutoCAD's DXF
+    /// has their fields straight after the context's scale (340), with the rotation (50) in
+    /// degrees; acadrust 0.6.4 looks for them after an `AcDbBlkRefObjectContextData` or
+    /// `AcDbTextObjectContextData` marker, with the rotation in radians (as DWG holds it), and
+    /// without the marker reads zeros (an annotative reference at scale 0 draws nothing in
+    /// AutoCAD). Dimension contexts (`ACDB_*DIMOBJECTCONTEXTDATA_CLASS`): AutoCAD names the
+    /// geometry block in group 2, acadrust reads a BLOCK_RECORD handle there. Text that isn't
+    /// UTF-8, or has no such context, is returned as it is.
+    pub(crate) fn contexts(dxf: &[u8], to_acadrust: bool) -> Vec<u8> {
+        const KINDS: [(&str, &str); 2] = [
+            ("ACDB_BLKREFOBJECTCONTEXTDATA_CLASS", "AcDbBlkRefObjectContextData"),
+            ("ACDB_TEXTOBJECTCONTEXTDATA_CLASS", "AcDbTextObjectContextData"),
+        ];
+        let is_dim = |k: &str| k.starts_with("ACDB_") && k.ends_with("DIMOBJECTCONTEXTDATA_CLASS");
+        let Ok(text) = std::str::from_utf8(dxf) else { return dxf.to_vec() };
+        if !KINDS.iter().any(|(k, _)| text.contains(k)) && !text.contains("DIMOBJECTCONTEXTDATA_CLASS") {
+            return dxf.to_vec();
+        }
+        let lines: Vec<&str> = text.split('\n').collect();
+        let eol = |l: &str| if l.ends_with('\r') { "\r" } else { "" };
+        // Block records: name (upper case) → handle, and back.
+        let mut by_name: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let mut by_handle: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let (mut record, mut h, mut i) = (false, None::<String>, 0);
+        while let (Some(c), Some(v)) = (lines.get(i), lines.get(i + 1)) {
+            let (c, v) = (c.trim(), v.trim());
+            match c {
+                "0" => (record, h) = (v == "BLOCK_RECORD", None),
+                "5" if record => h = Some(v.to_ascii_uppercase()),
+                "2" if record => {
+                    if let Some(h) = h.take() {
+                        by_name.entry(v.to_ascii_uppercase()).or_insert_with(|| h.clone());
+                        by_handle.entry(h).or_insert_with(|| v.to_string());
+                    }
+                }
+                _ => {}
+            }
+            i += 2;
+        }
+        let mut out: Vec<String> = Vec::with_capacity(lines.len() + 16);
+        // The marker of the context being read (block reference or text), whether it is a
+        // dimension's, whether its scale (340) was passed and whether its marker was.
+        let (mut marker, mut dim, mut scaled, mut marked) = (None::<&str>, false, false, false);
+        let mut i = 0;
+        while let (Some(&code_line), Some(&value_line)) = (lines.get(i), lines.get(i + 1)) {
+            let (code, value) = (code_line.trim(), value_line.trim_end_matches('\r'));
+            if code == "0" {
+                let kind = value.trim();
+                marker = KINDS.iter().find(|(k, _)| *k == kind).map(|(_, m)| *m);
+                dim = is_dim(kind);
+                (scaled, marked) = (false, false);
+            }
+            let mut value = value.to_string();
+            if let Some(m) = marker {
+                if code == "100" && value.trim() == m {
+                    marked = true;
+                    i += 2;
+                    if to_acadrust {
+                        out.push(code_line.to_string());
+                        out.push(value_line.to_string());
+                    }
+                    continue;
+                }
+                // The marker goes before the first field after the scale.
+                if to_acadrust && scaled && !marked && code != "100" {
+                    out.push(format!("100{}", eol(code_line)));
+                    out.push(format!("{m}{}", eol(value_line)));
+                    marked = true;
+                }
+                if code == "340" {
+                    scaled = true;
+                }
+                if code == "50"
+                    && scaled
+                    && let Ok(a) = value.trim().parse::<f64>()
+                {
+                    value = if to_acadrust { a.to_radians() } else { a.to_degrees() }.to_string();
+                }
+            }
+            if dim && code == "2" {
+                let swap =
+                    if to_acadrust { by_name.get(&value.trim().to_ascii_uppercase()) } else { by_handle.get(&value.trim().to_ascii_uppercase()) };
+                if let Some(v) = swap {
+                    value = v.clone();
+                }
+            }
+            out.push(code_line.to_string());
+            out.push(format!("{value}{}", eol(value_line)));
+            i += 2;
+        }
+        out.extend(lines.get(i..).unwrap_or(&[]).iter().map(|l| (*l).to_string()));
+        out.join("\n").into_bytes()
+    }
+
     fn convert(dxf: &[u8], version: Option<acadrust::DxfVersion>) -> Result<Vec<u8>, String> {
         // Reject a pathologically large DXF before handing it to the third-party decoder, which
         // allocates tables and section buffers from the input's declared sizes and cannot be
@@ -535,7 +631,7 @@ mod native {
                 mb(Limits::DEFAULT.max_dxf_bytes as u64)
             ));
         }
-        let data = dxf.to_vec();
+        let data = contexts(dxf, true);
         let mut doc = std::panic::catch_unwind(move || acadrust::DxfReader::from_reader(Cursor::new(data)).and_then(|r| r.read()))
             .map_err(|_| "the DXF→DWG conversion failed".to_string())?
             .map_err(|e| format!("DXF: {e}"))?;
