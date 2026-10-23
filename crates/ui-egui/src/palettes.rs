@@ -212,16 +212,18 @@ pub fn toolsets(app: &mut CadApp, ui: &mut egui::Ui) {
                     }
                     let hidden = |cmd: &str| app.ui.hidden_tools.iter().any(|h| h == cmd);
                     egui::Popup::from_toggle_button_response(&gresp).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
-                        ui.label(crate::tl!("Show in Tool Sets"));
-                        for (_, cmd, tip) in large.iter().chain(small.iter()) {
-                            let mut shown = !hidden(cmd);
-                            if ui.checkbox(&mut shown, *tip).changed() {
-                                tool_visible = Some((cmd.to_string(), shown));
+                        crate::dropdown::list(ui, |ui| {
+                            ui.label(crate::tl!("Show in Tool Sets"));
+                            for (_, cmd, tip) in large.iter().chain(small.iter()) {
+                                let mut shown = !hidden(cmd);
+                                if ui.checkbox(&mut shown, *tip).changed() {
+                                    tool_visible = Some((cmd.to_string(), shown));
+                                }
                             }
-                        }
-                        if ui.selectable_label(false, crate::tl!("Show All")).clicked() {
-                            restore = large.iter().chain(small.iter()).map(|(_, cmd, _)| cmd.to_string()).collect();
-                        }
+                            if ui.selectable_label(false, crate::tl!("Show All")).clicked() {
+                                restore = large.iter().chain(small.iter()).map(|(_, cmd, _)| cmd.to_string()).collect();
+                            }
+                        });
                     });
                     if !collapsed {
                         ui.add_space(4.0);
@@ -431,24 +433,26 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
         }
         icons::paint(p, Rect::from_center_size(pos2(rect.right() - 12.0, rect.center().y), vec2(12.0, 12.0)), Icon::ChevronDown, false);
         egui::Popup::from_toggle_button_response(&resp).width(w).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
-            for (name, on, frozen, locked, color) in &layers {
-                ui.horizontal(|ui| {
-                    if icons::button(ui, if *on { Icon::Bulb } else { Icon::BulbOff }, 18.0, "On/Off", false).clicked() {
-                        toggle = Some((name.clone(), "on", !*on));
-                    }
-                    if icons::button(ui, if *frozen { Icon::Snowflake } else { Icon::Sun }, 18.0, "Freeze/Thaw", false).clicked() {
-                        toggle = Some((name.clone(), "frozen", !*frozen));
-                    }
-                    if icons::button(ui, if *locked { Icon::Lock } else { Icon::Unlock }, 18.0, "Lock/Unlock", false).clicked() {
-                        toggle = Some((name.clone(), "locked", !*locked));
-                    }
-                    let (sr, _) = ui.allocate_exact_size(vec2(12.0, 12.0), Sense::hover());
-                    swatch(ui.painter(), sr, *color);
-                    if ui.selectable_label(name.eq_ignore_ascii_case(&cur), name).clicked() {
-                        set_current = Some(name.clone());
-                    }
-                });
-            }
+            crate::dropdown::list(ui, |ui| {
+                for (name, on, frozen, locked, color) in &layers {
+                    ui.horizontal(|ui| {
+                        if icons::button(ui, if *on { Icon::Bulb } else { Icon::BulbOff }, 18.0, "On/Off", false).clicked() {
+                            toggle = Some((name.clone(), "on", !*on));
+                        }
+                        if icons::button(ui, if *frozen { Icon::Snowflake } else { Icon::Sun }, 18.0, "Freeze/Thaw", false).clicked() {
+                            toggle = Some((name.clone(), "frozen", !*frozen));
+                        }
+                        if icons::button(ui, if *locked { Icon::Lock } else { Icon::Unlock }, 18.0, "Lock/Unlock", false).clicked() {
+                            toggle = Some((name.clone(), "locked", !*locked));
+                        }
+                        let (sr, _) = ui.allocate_exact_size(vec2(12.0, 12.0), Sense::hover());
+                        swatch(ui.painter(), sr, *color);
+                        if ui.selectable_label(name.eq_ignore_ascii_case(&cur), name).clicked() {
+                            set_current = Some(name.clone());
+                        }
+                    });
+                }
+            });
         });
     });
     ui.add_space(4.0);
@@ -585,18 +589,20 @@ fn report_bad(app: &mut CadApp, bad: Option<String>) {
     }
 }
 
-/// A drop-down of `items` showing `current`; returns the item clicked.
+/// A drop-down of `items` showing `current`; returns the item clicked. Only overflowing lists scroll.
 fn pick_menu(ui: &mut egui::Ui, current: &str, items: impl IntoIterator<Item = String>) -> Option<String> {
     // Names are the drawing's own; only the ByLayer/ByBlock keywords are translated.
     let shown = |s: &str| if ["ByLayer", "ByBlock"].contains(&s) { crate::i18n::t(s).to_string() } else { s.to_string() };
     let mut out = None;
     ui.menu_button(shown(current), |ui| {
-        for it in items {
-            if ui.button(shown(&it)).clicked() {
-                out = Some(it);
-                ui.close();
+        crate::dropdown::list(ui, |ui| {
+            for it in items {
+                if ui.button(shown(&it)).clicked() {
+                    out = Some(it);
+                    ui.close();
+                }
             }
-        }
+        });
     });
     out
 }
@@ -671,11 +677,13 @@ fn properties_header(app: &mut CadApp, ui: &mut egui::Ui) {
         if count > 0 {
             // Narrow the selection to one object type.
             egui::Popup::from_toggle_button_response(&resp).width(w - 10.0).close_behavior(egui::PopupCloseBehavior::CloseOnClick).show(|ui| {
-                for (ty, hs) in &types {
-                    if ui.button(format!("{} ({})", crate::i18n::t(ty), hs.len())).clicked() {
-                        run = Some(("select", json!({ "handles": hs })));
+                crate::dropdown::list(ui, |ui| {
+                    for (ty, hs) in &types {
+                        if ui.button(format!("{} ({})", crate::i18n::t(ty), hs.len())).clicked() {
+                            run = Some(("select", json!({ "handles": hs })));
+                        }
                     }
-                }
+                });
             });
         }
         let tip = if pickadd {
@@ -763,18 +771,20 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
         });
         prop_row(ui, "Lineweight", |ui| {
             ui.menu_button(crate::i18n::t(&cadcraft_doc::Lineweight::from_dxf(h.i64("CELWEIGHT", -1) as i16).name()), |ui| {
-                for n in ["ByLayer", "ByBlock", "Default"] {
-                    if ui.button(crate::i18n::t(n)).clicked() {
-                        act("lweight", json!({ "lineweight": n }));
-                        ui.close();
+                crate::dropdown::list(ui, |ui| {
+                    for n in ["ByLayer", "ByBlock", "Default"] {
+                        if ui.button(crate::i18n::t(n)).clicked() {
+                            act("lweight", json!({ "lineweight": n }));
+                            ui.close();
+                        }
                     }
-                }
-                for v in cadcraft_doc::Lineweight::STANDARD {
-                    if ui.button(format!("{:.2} mm", f64::from(v) / 100.0)).clicked() {
-                        act("lweight", json!({ "lineweight": f64::from(v) / 100.0 }));
-                        ui.close();
+                    for v in cadcraft_doc::Lineweight::STANDARD {
+                        if ui.button(format!("{:.2} mm", f64::from(v) / 100.0)).clicked() {
+                            act("lweight", json!({ "lineweight": f64::from(v) / 100.0 }));
+                            ui.close();
+                        }
                     }
-                }
+                });
             });
         });
         prop_row(ui, "Transparency", |ui| unavailable(ui, "ByLayer"));
@@ -900,7 +910,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     });
     prop_row(ui, "Layer", |ui| {
         ui.menu_button(layer.clone(), |ui| {
-            egui::ScrollArea::vertical().id_salt("properties_layer_menu").max_height(300.0).show(ui, |ui| {
+            crate::dropdown::list(ui, |ui| {
                 for l in &layers {
                     if ui.button(l).clicked() {
                         set = Some(json!({ "handles": ids, "layer": l }));
@@ -911,17 +921,14 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
         });
     });
     prop_row(ui, "Linetype", |ui| {
-        ui.menu_button(if ["ByLayer", "ByBlock", "*VARIES*"].contains(&linetype.as_str()) { crate::i18n::t(&linetype) } else { &linetype }, |ui| {
-            for l in std::iter::once("ByLayer".to_string())
-                .chain(std::iter::once("ByBlock".to_string()))
-                .chain(linetypes.iter().filter(|l| !["ByLayer", "ByBlock"].contains(&l.as_str())).cloned())
-            {
-                if ui.button(if ["ByLayer", "ByBlock"].contains(&l.as_str()) { crate::i18n::t(&l) } else { &l }).clicked() {
-                    set = Some(json!({ "handles": ids, "linetype": l }));
-                    ui.close();
-                }
-            }
-        });
+        let items = ["ByLayer", "ByBlock"]
+            .map(String::from)
+            .into_iter()
+            .chain(linetypes.into_iter().filter(|l| !["ByLayer", "ByBlock"].contains(&l.as_str())));
+        let shown = if linetype == "*VARIES*" { crate::i18n::t(&linetype) } else { &linetype };
+        if let Some(l) = pick_menu(ui, shown, items) {
+            set = Some(json!({ "handles": ids, "linetype": l }));
+        }
     });
     prop_row(ui, "Linetype scale", |ui| {
         if let Some(f) = number(edit_field(ui, ui.id().with(("lts", &ids)), lts.clone()), &mut bad) {
@@ -930,18 +937,20 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     });
     prop_row(ui, "Lineweight", |ui| {
         ui.menu_button(crate::i18n::t(&lw), |ui| {
-            for n in ["ByLayer", "ByBlock", "Default"] {
-                if ui.button(crate::i18n::t(n)).clicked() {
-                    set = Some(json!({ "handles": ids, "lineweight": n }));
-                    ui.close();
+            crate::dropdown::list(ui, |ui| {
+                for n in ["ByLayer", "ByBlock", "Default"] {
+                    if ui.button(crate::i18n::t(n)).clicked() {
+                        set = Some(json!({ "handles": ids, "lineweight": n }));
+                        ui.close();
+                    }
                 }
-            }
-            for v in cadcraft_doc::Lineweight::STANDARD {
-                if ui.button(format!("{:.2} mm", f64::from(v) / 100.0)).clicked() {
-                    set = Some(json!({ "handles": ids, "lineweight": f64::from(v) / 100.0 }));
-                    ui.close();
+                for v in cadcraft_doc::Lineweight::STANDARD {
+                    if ui.button(format!("{:.2} mm", f64::from(v) / 100.0)).clicked() {
+                        set = Some(json!({ "handles": ids, "lineweight": f64::from(v) / 100.0 }));
+                        ui.close();
+                    }
                 }
-            }
+            });
         });
     });
     prop_row(ui, "Transparency", |ui| {

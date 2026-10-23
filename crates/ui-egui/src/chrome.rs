@@ -150,20 +150,22 @@ pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
                 }
                 icons::describe_control(ui, &response, "More toolbar commands", None, false);
                 egui::Popup::menu(&response).show(|ui| {
-                    for (position, index) in fit.overflow.iter().enumerate() {
-                        let Some(group) = TOOLBAR.get(*index) else { continue };
-                        if position > 0 {
-                            ui.separator();
-                        }
-                        for (_, command, label, _) in *group {
-                            let response = ui.button(crate::i18n::t(label));
-                            crate::control::record_widget(ui, &response, label, "button", None);
-                            if response.clicked() {
-                                clicked = Some(*command);
-                                ui.close();
+                    crate::dropdown::list(ui, |ui| {
+                        for (position, index) in fit.overflow.iter().enumerate() {
+                            let Some(group) = TOOLBAR.get(*index) else { continue };
+                            if position > 0 {
+                                ui.separator();
+                            }
+                            for (_, command, label, _) in *group {
+                                let response = ui.button(crate::i18n::t(label));
+                                crate::control::record_widget(ui, &response, label, "button", None);
+                                if response.clicked() {
+                                    clicked = Some(*command);
+                                    ui.close();
+                                }
                             }
                         }
-                    }
+                    });
                 });
                 response.on_hover_text(crate::tl!("More toolbar commands"));
             }

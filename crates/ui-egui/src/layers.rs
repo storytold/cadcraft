@@ -528,38 +528,40 @@ fn row(
         .width(240.0)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
-            ui.label(RichText::new(crate::tl!("Loaded linetypes")).small().color(t.text_dim));
-            for lt in linetypes.iter().filter(|x| !["bylayer", "byblock"].contains(&x.name.to_ascii_lowercase().as_str())) {
-                let (r, resp) = ui.allocate_exact_size(vec2(230.0, 20.0), Sense::click());
-                if resp.hovered() || lt.name.eq_ignore_ascii_case(&l.linetype) {
-                    ui.painter().rect_filled(r, 2.0, t.accent.gamma_multiply(if resp.hovered() { 0.6 } else { 0.3 }));
-                }
-                lt_sample(ui.painter(), Rect::from_min_size(pos2(r.left() + 4.0, r.top()), vec2(50.0, r.height())), Some(lt), t.text);
-                ui.painter().text(pos2(r.left() + 62.0, r.center().y), egui::Align2::LEFT_CENTER, &lt.name, crate::theme::body(), t.text);
-                if resp.on_hover_text(&lt.description).clicked() {
-                    actions.push(("layer.set", json!({ "name": name, "linetype": lt.name })));
-                    ui.close();
-                }
-            }
-            if !library.is_empty() {
-                ui.separator();
-                ui.menu_button("Load...", |ui| {
-                    egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-                        for n in library {
-                            if ui.button(n).clicked() {
-                                actions.push(("linetype", json!({ "load": n })));
-                                actions.push(("layer.set", json!({ "name": name, "linetype": n })));
-                                ui.close();
-                            }
-                        }
-                    });
-                    ui.separator();
-                    if ui.button(crate::tl!("Load all")).clicked() {
-                        actions.push(("linetype", json!({ "load": "*" })));
+            crate::dropdown::list(ui, |ui| {
+                ui.label(RichText::new(crate::tl!("Loaded linetypes")).small().color(t.text_dim));
+                for lt in linetypes.iter().filter(|x| !["bylayer", "byblock"].contains(&x.name.to_ascii_lowercase().as_str())) {
+                    let (r, resp) = ui.allocate_exact_size(vec2(230.0, 20.0), Sense::click());
+                    if resp.hovered() || lt.name.eq_ignore_ascii_case(&l.linetype) {
+                        ui.painter().rect_filled(r, 2.0, t.accent.gamma_multiply(if resp.hovered() { 0.6 } else { 0.3 }));
+                    }
+                    lt_sample(ui.painter(), Rect::from_min_size(pos2(r.left() + 4.0, r.top()), vec2(50.0, r.height())), Some(lt), t.text);
+                    ui.painter().text(pos2(r.left() + 62.0, r.center().y), egui::Align2::LEFT_CENTER, &lt.name, crate::theme::body(), t.text);
+                    if resp.on_hover_text(&lt.description).clicked() {
+                        actions.push(("layer.set", json!({ "name": name, "linetype": lt.name })));
                         ui.close();
                     }
-                });
-            }
+                }
+                if !library.is_empty() {
+                    ui.separator();
+                    ui.menu_button("Load...", |ui| {
+                        crate::dropdown::list(ui, |ui| {
+                            for n in library {
+                                if ui.button(n).clicked() {
+                                    actions.push(("linetype", json!({ "load": n })));
+                                    actions.push(("layer.set", json!({ "name": name, "linetype": n })));
+                                    ui.close();
+                                }
+                            }
+                            ui.separator();
+                            if ui.button(crate::tl!("Load all")).clicked() {
+                                actions.push(("linetype", json!({ "load": "*" })));
+                                ui.close();
+                            }
+                        });
+                    });
+                }
+            });
         });
     // Lineweight.
     let lw_resp = ui
