@@ -401,6 +401,13 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             crate::aliasdlg::open(app);
             Ok(Value::Null)
         }
+        // Typed or from a menu with annotative objects selected: the Annotation Object Scale
+        // dialog. Without a selection (and -OBJECTSCALE, JSON calls) the command line asks.
+        "objectscale" if params.is_null() && objectscale_targets(app) => {
+            let sel = app.session.selection();
+            crate::objectscale::open(app, &sel);
+            Ok(Value::Null)
+        }
         "hatchedit" | "he" if params.is_null() && app.session.state().is_ok() => {
             crate::hatchdlg::open_edit(app);
             Ok(Value::Null)
@@ -411,6 +418,12 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         _ => return None,
     };
     Some(r)
+}
+
+/// Whether the selection has annotative objects for the Annotation Object Scale dialog.
+fn objectscale_targets(app: &CadApp) -> bool {
+    let Ok(st) = app.session.state() else { return false };
+    app.session.selection().iter().any(|h| st.doc.entity(*h).is_some_and(|e| cadcraft_doc::is_annotative(e)))
 }
 
 /// SAVEAS parameters for a path picked in the Save dialog: a drawing that has no file yet is saved

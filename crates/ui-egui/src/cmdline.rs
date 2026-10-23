@@ -249,7 +249,8 @@ pub struct KeyPress {
 
 /// Handle keyboard input destined for the command line (when no text field has focus).
 pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
-    if ctx.egui_wants_keyboard_input() {
+    // A modal dialog takes the keys (its Escape mustn't also cancel or deselect).
+    if ctx.egui_wants_keyboard_input() || crate::objectscale::is_open(app) {
         return;
     }
     let events = ctx.input(|i| i.events.clone());

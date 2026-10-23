@@ -24,6 +24,7 @@ pub mod dialogs;
 pub mod docking;
 pub mod hatchdlg;
 mod mtext_editor;
+pub mod objectscale;
 pub mod spacemouse;
 // The External References palette.
 pub mod xrefs;
@@ -246,6 +247,8 @@ pub struct CadApp {
     pub alias_dlg: Option<aliasdlg::AliasDlgState>,
     /// The Hatch and Gradient dialog while open or picking ([`hatchdlg`]).
     pub hatch_dlg: Option<hatchdlg::HatchDlgState>,
+    /// The Annotation Object Scale dialog while open ([`objectscale`]).
+    pub objectscale: Option<objectscale::ObjectScaleDlg>,
     /// The Edit Block Definition dialog ([`bedit`]).
     pub bedit: bedit::State,
 }
@@ -287,6 +290,7 @@ impl CadApp {
             gpu_notice: None,
             alias_dlg: None,
             hatch_dlg: None,
+            objectscale: None,
             bedit: bedit::State::default(),
         }
     }

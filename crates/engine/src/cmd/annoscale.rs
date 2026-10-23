@@ -61,6 +61,11 @@ fn list_json(d: &Drawing) -> Value {
 }
 
 /// Scale names given as one string or an array of strings.
+/// Scale names given as one name or an array of names (`cmd` names the caller in errors).
+pub(crate) fn scale_names(cmd: &str, v: Option<&Value>) -> Result<Vec<String>> {
+    names(cmd, v)
+}
+
 fn names(cmd: &str, v: Option<&Value>) -> Result<Vec<String>> {
     match v {
         None | Some(Value::Null) => Ok(Vec::new()),
