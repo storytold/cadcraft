@@ -103,6 +103,27 @@ fn refers_to(d: &Drawing, store: &EntityStore, name: &str) -> bool {
 }
 
 impl BlockEdit {
+    /// The block's base point, which is the editor's origin.
+    pub fn base(&self) -> Vec2 {
+        self.base
+    }
+
+    /// The edited block's parameters and actions as the editor draws them, in the editor's
+    /// coordinates (`editor` is the editor's drawing).
+    pub fn marks(&self, editor: &Drawing) -> Vec<cadcraft_doc::dynblock::Mark> {
+        use cadcraft_doc::dynblock::Mark;
+        let off = self.base.to3(0.0);
+        let mut out = cadcraft_doc::dynblock::marks(editor, &self.name);
+        for m in &mut out {
+            match m {
+                Mark::Linear { base, end, .. } => (*base, *end) = (*base - off, *end - off),
+                Mark::Point { at, label_at, .. } => (*at, *label_at) = (*at - off, *label_at - off),
+                Mark::Parameter { at, .. } | Mark::Action { at, .. } => *at = *at - off,
+            }
+        }
+        out
+    }
+
     /// The editor's objects in block coordinates, ready to be the block's: unchanged objects are
     /// the block's own, the others are moved back from the editor's origin to the base point.
     fn block_objects(&self, editor: &Drawing) -> EntityStore {
@@ -165,6 +186,10 @@ impl BlockEdit {
         }
         b.base.x = self.base.x;
         b.base.y = self.base.y;
+        let mut entities = entities;
+        // A dynamic block's objects carry element tags, which its references' copies are paired
+        // with; objects added in the editor get theirs here.
+        cadcraft_doc::dynblock::tag_elements(&mut d, name, &mut entities);
         b.entities = entities;
         d.blocks.insert(key, Arc::new(b));
         Ok(d)

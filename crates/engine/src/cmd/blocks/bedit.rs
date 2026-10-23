@@ -123,7 +123,7 @@ fn open(s: &mut Session, name: &str, create: bool) -> Result<Value> {
     let dynamic =
         |be: &crate::blockedit::BlockEdit| crate::blockedit::has_dynamic_data(&be.host.doc, if be.current { "*Model_Space" } else { &be.name });
     if s.state().is_ok_and(|st| st.block_edit.as_ref().is_some_and(dynamic)) {
-        s.echo("This is a dynamic block: its parameters and actions are kept but can't be edited in CADCraft yet.");
+        s.echo("This is a dynamic block: BPARAMETER and BACTION add linear and point parameters with stretch and move actions; its other parameters and actions are kept as they are.");
     }
     Ok(json!({ "block": name, "new": new }))
 }

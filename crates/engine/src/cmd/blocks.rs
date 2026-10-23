@@ -16,6 +16,7 @@ use super::*;
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 mod attedit;
+mod bauthor;
 mod burst;
 mod dyngrip;
 mod extract;
@@ -81,6 +82,7 @@ pub fn specs() -> Vec<CommandSpec> {
     .chain(xref::specs())
     .chain(refedit::specs())
     .chain(bedit::specs())
+    .chain(bauthor::specs())
     .collect()
 }
 
