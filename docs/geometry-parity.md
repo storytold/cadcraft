@@ -1,6 +1,6 @@
 # Geometry parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-14 · **Change:** trivial (JOIN Close on a single arc or elliptical arc) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-20 · **Change:** minor (polyline OFFSET follows OFFSETGAPTYPE; arc bulges follow the joined endpoints) · **Target:** Autodesk AutoCAD 2027
 
 CAD users trust numbers: a trimmed endpoint, an offset, an intersection or an area is either right
 to the last displayed digit or the tool is unusable for production drawings. This document
@@ -11,7 +11,7 @@ in [ui-parity.md](ui-parity.md); dimension and hatch behaviour in [gaps.md](gaps
 **Headline (estimated): geometry ≈ 40% (weighted below: 41%), of which the constraint solver ≈ 50%.** Everything built
 from lines, arcs and circles is exact. Ellipses and splines are handled by tessellating them, so
 intersections, offsets, trims and snaps on them are approximations; polyline offsets don't
-recompute arc bulges or clean up loops; tolerances are absolute, so very large or very small
+clean up loops; tolerances are absolute, so very large or very small
 drawings behave differently from mid-sized ones. 3D geometry doesn't exist. Remaining:
 **≈ 90–140 Opus 5.5 hours** for 2D precision and the solver, plus the 3D kernel (M11, see
 [target-app-parity.md](target-app-parity.md)).
@@ -73,7 +73,7 @@ constraints 10%.
 | Circle, arc | exact | exact (radius change) |
 | Ellipse | spline approximation within tolerance | **a polyline** from tessellation at 1e-3 × major axis |
 | Spline | spline approximation within tolerance | tessellate at 1e-3, offset vertices along normals, keep about 40 points, refit: **lossy** |
-| Polyline with arcs | exact, with self-intersection trimming, OFFSETGAPTYPE (extend, fillet, chamfer) | segments offset and joined at neighbours' intersections; **arc bulges not recomputed** after endpoints move (comment at L413), **no loop cleanup**, collapsed segments not removed; OFFSETGAPTYPE only echoed |
+| Polyline with arcs | exact, with self-intersection trimming, OFFSETGAPTYPE (extend, fillet, chamfer) | segments offset and joined at neighbours' intersections; arc bulges follow the joined endpoints; OFFSETGAPTYPE 0/1/2 extends, fillets or chamfers the outside corner between two lines (arc joints are always extended); **no loop cleanup**, collapsed segments not removed |
 | Options: Through, Erase, Layer, Multiple | yes | see [gaps.md](gaps.md) |
 
 ## Trim, extend, fillet, chamfer, break, join, lengthen (≈ 70%)
@@ -142,7 +142,7 @@ coordinates to 1e-9 relative.
 
 1. Exact ellipse and spline intersection and closest point (subdivision + Newton with a
    relative tolerance); use them in snaps, TRIM, EXTEND, BREAK. 15–25 h.
-2. Polyline offset with bulge recomputation, self-intersection cleanup and OFFSETGAPTYPE;
+2. Polyline offset with self-intersection cleanup;
    spline/ellipse offset as fitted splines within a tolerance. 15–25 h.
 3. A tolerance context relative to the drawing's extents, and a known-answer test suite at
    origin and at 1e6–1e7 coordinates. 8–12 h.
@@ -157,6 +157,7 @@ Total ≈ 90–140 h; items 1–6 parallelise across two or three agents.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-20 | minor | Polyline OFFSET: OFFSETGAPTYPE 0/1/2 extends, fillets or chamfers the outside corner between two lines, and arc bulges follow the joined endpoints |
 | 2026-10-14 | trivial | JOIN Close: a single arc becomes its circle, a single elliptical arc its full ellipse (#1175) |
 | 2026-10-12 | trivial | TRIM on a closed polyline keeps only the complementary run when the pick lies past the last cut (#726) |
 | 2026-10-12 | minor | Property-based and hostile-input tests for geometry numerics landed (`crates/geom/src/property_tests.rs`): intersections, closest points, three-point arcs, bounds, vector identities; hostile f64s never panic; known answers at 1e6–1e7 |

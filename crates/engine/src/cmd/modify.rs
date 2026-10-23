@@ -565,7 +565,8 @@ impl Interactive for StretchM {
 }
 
 /// Offset an entity by `dist` towards `side`. Returns the new geometry.
-pub(crate) fn offset_kind(k: &EntityKind, dist: f64, side: Vec2) -> Option<EntityKind> {
+/// `gap` is OFFSETGAPTYPE, used by polylines only.
+pub(crate) fn offset_kind(k: &EntityKind, dist: f64, side: Vec2, gap: i64) -> Option<EntityKind> {
     match k {
         EntityKind::Line(l) => {
             let ln = Line::new(l.a.xy(), l.b.xy());
@@ -610,7 +611,7 @@ pub(crate) fn offset_kind(k: &EntityKind, dist: f64, side: Vec2) -> Option<Entit
             let t = nearest.tangent(0.5);
             let left = t.cross(side - c) > 0.0;
             let d = if left { dist } else { -dist };
-            offset_polyline(&pl, d).map(|vs| {
+            offset_polyline(&pl, d, gap).map(|vs| {
                 let mut k = lwpoly(vs, p.closed);
                 if let EntityKind::LwPolyline(n) = &mut k {
                     n.const_width = p.const_width;
@@ -681,35 +682,50 @@ fn offset_points(pts: &[Vec2], d: f64, closed: bool) -> Vec<Vec2> {
     out
 }
 
-/// Offset a polyline: offset each segment, then join neighbours at their intersections.
-pub(crate) fn offset_polyline(pl: &Polyline, d: f64) -> Option<Vec<PolyVertex>> {
-    let segs: Vec<Segment> = pl.segments().iter().filter_map(|s| s.offset(d)).collect();
-    if segs.is_empty() {
+/// Offset a polyline: offset each segment, then join neighbours at their intersections. `gap`
+/// (OFFSETGAPTYPE) fills the gap at the outside of a corner between two lines: 0 extends both
+/// copies to meet, 1 inserts an arc of radius `d` centred on the corner, 2 inserts a chamfer line.
+pub(crate) fn offset_polyline(pl: &Polyline, d: f64, gap: i64) -> Option<Vec<PolyVertex>> {
+    let pairs: Vec<(Segment, Segment)> = pl.segments().iter().filter_map(|s| s.offset(d).map(|o| (*s, o))).collect();
+    if pairs.is_empty() {
         return None;
     }
+    let segs: Vec<Segment> = pairs.iter().map(|(_, o)| *o).collect();
     let n = segs.len();
-    // Where each offset segment starts after joining it to the previous one.
-    let mut starts: Vec<Vec2> = Vec::with_capacity(n);
+    // At each joint: where the previous copy ends, an optional fill vertex (its start and bulge),
+    // and where this copy starts.
+    let mut joints: Vec<(Vec2, Option<PolyVertex>, Vec2)> = Vec::with_capacity(n);
     for i in 0..n {
         let s = segs.get(i)?;
-        starts.push(if i == 0 && !pl.closed {
-            s.start()
+        joints.push(if i == 0 && !pl.closed {
+            (s.start(), None, s.start())
         } else {
             let prev = segs.get((i + n - 1) % n)?;
-            join_point(prev, s).unwrap_or(s.start())
+            let corner = pairs.get(i)?.0.start();
+            // Only two segments that meet in the source have a corner to fill (a collapsed arc
+            // between them leaves none).
+            let adjacent = pairs.get((i + n - 1) % n)?.0.end().near(corner, 1e-9);
+            match gap_fill(prev, s, corner, d.abs(), if adjacent { gap } else { 0 }) {
+                Some((a, fill, b)) => (a, Some(fill), b),
+                None => {
+                    let j = join_point(prev, s).unwrap_or(s.start());
+                    (j, None, j)
+                }
+            }
         });
     }
     let mut verts: Vec<PolyVertex> = Vec::new();
     for i in 0..n {
         let s = segs.get(i)?;
-        let start = *starts.get(i)?;
-        let end = if i + 1 < n {
-            *starts.get(i + 1)?
+        let start = joints.get(i)?.2;
+        let next = if i + 1 < n {
+            joints.get(i + 1)
         } else if pl.closed {
-            *starts.first()?
+            joints.first()
         } else {
-            s.end()
+            None
         };
+        let end = next.map_or(s.end(), |j| j.0);
         let bulge = match s {
             Segment::Line(_) => 0.0,
             Segment::Arc { arc, ccw } => {
@@ -725,11 +741,48 @@ pub(crate) fn offset_polyline(pl: &Polyline, d: f64) -> Option<Vec<PolyVertex>> 
             }
         };
         verts.push(PolyVertex { p: start, bulge, start_width: 0.0, end_width: 0.0 });
+        if let Some(fill) = next.and_then(|j| j.1) {
+            verts.push(fill);
+        }
     }
     if !pl.closed {
         verts.push(PolyVertex::new(segs.last()?.end()));
     }
     Some(verts)
+}
+
+/// The OFFSETGAPTYPE fill between the offset copies `a` and `b` of two lines meeting at `corner`,
+/// when the copies leave a gap (the outside of the turn): where `a` ends, the fill vertex, and
+/// where `b` starts. `None` keeps the extended join.
+fn gap_fill(a: &Segment, b: &Segment, corner: Vec2, d: f64, gap: i64) -> Option<(Vec2, PolyVertex, Vec2)> {
+    let (Segment::Line(la), Segment::Line(lb)) = (a, b) else { return None };
+    if gap == 0 || la.a.near(la.b, 1e-12) || lb.a.near(lb.b, 1e-12) || a.end().near(b.start(), 1e-9) {
+        return None;
+    }
+    let (ta, tb) = (la.dir(), lb.dir());
+    let j = join_point(a, b)?;
+    if (j - la.b).dot(ta) <= 1e-9 {
+        return None;
+    }
+    let (ra, rb) = (la.b - corner, lb.a - corner);
+    match gap {
+        1 => {
+            let sweep = ra.cross(rb).atan2(ra.dot(rb));
+            Some((la.b, PolyVertex::with_bulge(la.b, cadcraft_geom::arc_to_bulge(sweep)), lb.a))
+        }
+        2 => {
+            // The chamfer is the line at distance `d` from the corner, square to the bisector.
+            let m = (ra + rb).normalized();
+            let (ka, kb) = (ta.dot(m), tb.dot(m));
+            if ka.abs() < 1e-9 || kb.abs() < 1e-9 {
+                return None;
+            }
+            let pa = la.b + ta * ((d - ra.dot(m)) / ka);
+            let pb = lb.a + tb * ((d - rb.dot(m)) / kb);
+            Some((pa, PolyVertex::new(pa), pb))
+        }
+        _ => None,
+    }
 }
 
 fn join_point(a: &Segment, b: &Segment) -> Option<Vec2> {
@@ -745,7 +798,8 @@ fn run_offset(s: &mut Session, p: &Value) -> Result<Value> {
     let dist = f64_req("offset", p, "distance")?;
     let side = point_req("offset", p, "side")?;
     let e = s.doc()?.entity(h).map(|e| (**e).clone()).ok_or_else(|| bad("offset", "no such object"))?;
-    let k = offset_kind(&e.kind, dist.abs(), side).ok_or_else(|| bad("offset", "cannot offset that object"))?;
+    let gap = s.doc()?.header.i64("OFFSETGAPTYPE", 0);
+    let k = offset_kind(&e.kind, dist.abs(), side, gap).ok_or_else(|| bad("offset", "cannot offset that object"))?;
     let current_layer = match str_param(p, "layer").map(str::to_ascii_lowercase).as_deref() {
         None | Some("source") => false,
         Some("current") => true,
@@ -2243,9 +2297,10 @@ impl Interactive for OffsetM {
         s.set_selection(Vec::new());
         let (erase, current) = offset_options(s);
         s.echo(format!(
-            "Current settings: Erase source={}  Layer={}  OFFSETGAPTYPE=0",
+            "Current settings: Erase source={}  Layer={}  OFFSETGAPTYPE={}",
             if erase { "Yes" } else { "No" },
-            if current { "Current" } else { "Source" }
+            if current { "Current" } else { "Source" },
+            s.doc().map(|d| d.header.i64("OFFSETGAPTYPE", 0)).unwrap_or(0)
         ));
         Ok(Step::Continue)
     }
@@ -2413,7 +2468,7 @@ impl Interactive for OffsetM {
                                 .fold(f64::INFINITY, f64::min)
                         }
                     };
-                    match offset_kind(&e.kind, dist, p) {
+                    match offset_kind(&e.kind, dist, p, s.doc()?.header.i64("OFFSETGAPTYPE", 0)) {
                         Some(k) => {
                             let before = s.state()?.doc.clone();
                             let (erase, current) = offset_options(s);
@@ -2443,7 +2498,7 @@ impl Interactive for OffsetM {
             Some(x) => x,
             None => crate::select::entity_distance(d, e, c, 1e-3),
         };
-        offset_kind(&e.kind, dist, c).into_iter().collect()
+        offset_kind(&e.kind, dist, c, d.header.i64("OFFSETGAPTYPE", 0)).into_iter().collect()
     }
 }
 
