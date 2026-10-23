@@ -52,7 +52,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("pdfbook", "Sheet Books to PDF...", run_pdfbook)
             .menu(&["File", "Sheet Books to PDF..."])
             .alias(&["printpdf", "pdfb"])
-            .params("{path?: \"DIR/NAME^NAME2.pdf\" (default: the drawing's file; a `^` splits the name into one book name per row of frames; else returns base64 `data` per book), names?: [book names], frameHeight?: mm (default 297), unit?: mm per drawing unit (default 1)} → {books: [{name, pages, bytes, path? | data}], skipped}: closed polylines of the frame height in model space are sheet frames; each row (same lower edge, bottom to top) is one PDF, its frames left to right one page each on the paper (ISO A-series, either orientation) they match")
+            .params("{path?: \"DIR/NAME^NAME2.pdf\" (default: the drawing's file; a `^` splits the name into one book name per row of frames; else returns base64 `data` per book), names?: [book names], frameHeight?: mm (default 297), unit?: mm per drawing unit (default 1)} → {books: [{name, pages, bytes, path? | data}], skipped}: closed polylines of the frame height in model space are sheet frames; each row (same lower edge, bottom to top) is one PDF, its frames left to right one page each on the paper (any standard size — ISO, JIS, ANSI — either orientation) they match")
             .noundo(),
         CommandSpec::new("attach", "Attach", |_, _| {
             Err(EngineError::Other("ATTACH is not available yet: raster images and PDF/DWF/DGN underlays can't be shown yet".into()))
@@ -435,7 +435,8 @@ struct Frame {
     landscape: bool,
 }
 
-/// The ISO/ANSI paper a frame of `w` x `h` mm fits (either orientation), and whether it is landscape.
+/// The standard paper (ISO, JIS or ANSI) a frame of `w` x `h` mm fits (either orientation), and whether
+/// it is landscape.
 fn paper_for(w: f64, h: f64) -> Option<(&'static str, bool)> {
     cadcraft_render::PAPER_SIZES.iter().find_map(|p| {
         let (pw, ph) = (p.width_mm, p.height_mm);
@@ -685,6 +686,16 @@ mod tests {
         let r = s.execute("preview", &json!({ "layout": "layout1", "paper": "A4", "landscape": true, "width": 600 })).unwrap();
         assert_eq!((r["layout"].as_str(), r["width"].as_u64(), r["height"].as_u64()), (Some("Layout1"), Some(600), Some(424)));
         assert_eq!(r["paper"], "ISO A4 (210.00 x 297.00 MM)");
+        // B4/B5/B6 are the JIS sizes Japanese drawings use, and the Japanese postcards resolve by
+        // their names and their Japanese spelling; the ISO B5 stays by name.
+        let r = s.execute("preview", &json!({ "layout": "layout1", "paper": "B5", "landscape": false, "width": 400 })).unwrap();
+        assert_eq!(r["paper"], "JIS B5 (182.00 x 257.00 MM)");
+        assert_eq!((r["width"].as_u64(), r["height"].as_u64()), (Some(400), Some(565)));
+        let r = s.execute("preview", &json!({ "layout": "layout1", "paper": "はがき", "landscape": false, "width": 200 })).unwrap();
+        assert_eq!(r["paper"], "Japanese Postcard (100.00 x 148.00 MM)");
+        assert_eq!(r["height"], 296);
+        let r = s.execute("preview", &json!({ "layout": "layout1", "paper": "B5 (ISO)", "landscape": false, "width": 400 })).unwrap();
+        assert_eq!(r["paper"], "ISO B5 (176.00 x 250.00 MM)");
         assert!(s.execute("preview", &json!({ "layout": "Nope" })).is_err());
         assert!(s.execute("preview", &json!({ "paper": "Nope" })).is_err());
         for p in [json!({ "scale": -1, "fit": false }), json!({ "scale": 1e-300, "fit": false }), json!({ "width": -5 }), json!({ "width": 1e30 })] {

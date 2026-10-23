@@ -41,7 +41,8 @@ const MAX_URL: usize = 2048;
 pub struct PdfOptions {
     /// Plot style table name, replacing the page setup's (`"None"` plots without one).
     pub plot_style_table: Option<String>,
-    /// Paper name from [`cadcraft_render::PAPER_SIZES`] (`"A4"`, `"Letter"`, `"ANSI B"`…).
+    /// Paper name from [`cadcraft_render::PAPER_SIZES`] (`"A4"`, `"Letter"`, `"ANSI B"`, `"B5 (JIS)"`,
+    /// `"Japanese Postcard"`…).
     pub paper: Option<String>,
     /// Custom paper size in millimetres (portrait width, height).
     pub paper_mm: Option<(f64, f64)>,
