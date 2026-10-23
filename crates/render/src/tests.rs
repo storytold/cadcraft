@@ -925,6 +925,87 @@ fn cancelled_build_stops_early() {
     assert!(crate::hatch::pattern_lines_until(&drawing, &h, &loops, 0.0, None, set.as_deref()).is_empty());
 }
 
+// ---------- locked-layer fade ----------
+
+/// A line on locked layer "Locked" (own transparency `own`) and a line on layer 0.
+fn locked_lines(own: cadcraft_doc::Transparency) -> Drawing {
+    let mut d = Drawing::new_imperial();
+    d.layers.push(cadcraft_doc::Layer { name: "Locked".into(), locked: true, ..Default::default() });
+    let (c, k) = line_common(Common { layer: "Locked".into(), transparency: own, ..Default::default() });
+    d.add(&Space::Model, c, k).unwrap();
+    let (c, k) = line_common(Common::default());
+    d.add(&Space::Model, c, k).unwrap();
+    d
+}
+
+fn faded(l: &DisplayList) -> Vec<u8> {
+    l.prims.iter().map(|p| p.transparency).collect()
+}
+
+fn on_screen(o: Options) -> Options {
+    Options { on_screen: true, ..o }
+}
+
+#[test]
+fn objects_on_locked_layers_fade_on_screen() {
+    use cadcraft_doc::Transparency::{ByLayer, Percent};
+    let mut d = locked_lines(ByLayer);
+    // Default 50, whether transparency display is on or off; the unlocked line is unchanged.
+    for opts in [on_screen(Options::default()), on_screen(with_transparency())] {
+        let l = build(&d, &Space::Model, &opts);
+        assert_eq!(faded(&l), vec![50, 0]);
+        assert!(l.prims[0].alpha() < 255);
+        assert_eq!(l.prims[1].alpha(), 255);
+    }
+    // Builds without the on-screen flag (exports) and plots never fade.
+    for opts in [Options::default(), with_transparency()] {
+        assert_eq!(faded(&build(&d, &Space::Model, &opts)), vec![0, 0]);
+    }
+    assert_eq!(faded(&build_plot(&d, &Space::Model, &on_screen(Options::default()))), vec![0, 0]);
+    for (v, want) in [(0, 0), (-30, 0), (70, 70)] {
+        d.header.set_i64("LAYLOCKFADECTL", v);
+        assert_eq!(faded(&build(&d, &Space::Model, &on_screen(Options::default()))), vec![want, 0], "LAYLOCKFADECTL {v}");
+    }
+    // An object more transparent than the fade keeps its own transparency.
+    let d = locked_lines(Percent(80));
+    assert_eq!(faded(&build(&d, &Space::Model, &on_screen(with_transparency()))), vec![80, 0]);
+    assert_eq!(faded(&build(&d, &Space::Model, &on_screen(Options::default()))), vec![50, 0]);
+    assert_eq!(faded(&build(&d, &Space::Model, &with_transparency())), vec![80, 0]);
+}
+
+#[test]
+fn layer_zero_in_a_block_on_a_locked_layer_fades() {
+    let mut d = Drawing::new_imperial();
+    d.layers.push(cadcraft_doc::Layer { name: "Locked".into(), locked: true, ..Default::default() });
+    let mut blk = cadcraft_doc::Block::new("B");
+    let (c, k) = line_common(Common::default());
+    blk.entities.push(block_entity(1, c, k));
+    d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+    d.add(&Space::Model, Common { layer: "Locked".into(), ..Default::default() }, insert_of("B")).unwrap();
+    assert_eq!(faded(&build(&d, &Space::Model, &on_screen(Options::default()))), vec![50]);
+    assert_eq!(faded(&build(&d, &Space::Model, &Options::default())), vec![0]);
+}
+#[test]
+fn byblock_child_on_an_unlocked_layer_does_not_inherit_the_fade() {
+    use cadcraft_doc::Transparency::{ByBlock, ByLayer, Percent};
+    // A ByBlock line on unlocked layer "Open" in a block inserted on locked layer "Locked".
+    let drawing = |insert_transparency| {
+        let mut d = Drawing::new_imperial();
+        d.layers.push(cadcraft_doc::Layer { name: "Locked".into(), locked: true, ..Default::default() });
+        d.layers.push(cadcraft_doc::Layer { name: "Open".into(), ..Default::default() });
+        let mut blk = cadcraft_doc::Block::new("B");
+        let (c, k) = line_common(Common { layer: "Open".into(), transparency: ByBlock, ..Default::default() });
+        blk.entities.push(block_entity(1, c, k));
+        d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+        let common = Common { layer: "Locked".into(), transparency: insert_transparency, ..Default::default() };
+        d.add(&Space::Model, common, insert_of("B")).unwrap();
+        d
+    };
+    // The child takes the reference's own transparency, not its display fade.
+    assert_eq!(faded(&build(&drawing(ByLayer), &Space::Model, &on_screen(with_transparency()))), vec![0]);
+    assert_eq!(faded(&build(&drawing(Percent(20)), &Space::Model, &on_screen(with_transparency()))), vec![20]);
+}
+
 /// #1434: a closed polyline with a global width narrower than a pixel loses whole sides at
 /// some zooms, while the same polyline with width 0 always shows every side.
 #[test]

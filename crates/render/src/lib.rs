@@ -219,6 +219,9 @@ pub struct Options {
     /// Draw objects with their transparency ([`DPrim::transparency`]). Off by default: the screen
     /// follows TRANSPARENCYDISPLAY, plots the page setup's "Plot transparency".
     pub transparency: bool,
+    /// A build for the interactive canvas: objects on locked layers fade by LAYLOCKFADECTL,
+    /// whatever [`Options::transparency`] says. Off by default, so plots and exports never fade.
+    pub on_screen: bool,
     /// A layout viewport whose model-space contents are left out (its border is still drawn):
     /// the canvas draws the active viewport's contents itself, see [`viewport_content`].
     pub skip_viewport: Option<Handle>,
@@ -248,6 +251,7 @@ impl Default for Options {
             view: None,
             skip_viewport: None,
             transparency: false,
+            on_screen: false,
             cancel: None,
         }
     }
@@ -959,9 +963,9 @@ fn take_viewport_layers(list: &mut DisplayList) {
     }
 }
 
-/// An object's colour, lineweight (mm), linetype, linetype scale, visibility and the transparency
-/// of the layer it is drawn on (for ByLayer, see [`transparency`]).
-type Resolved = (Ink, f32, Option<cadcraft_doc::Linetype>, f64, bool, u8);
+/// An object's colour, lineweight (mm), linetype, linetype scale, visibility, the transparency
+/// of the layer it is drawn on (for ByLayer, see [`transparency`]) and its locked-layer fade.
+type Resolved = (Ink, f32, Option<cadcraft_doc::Linetype>, f64, bool, u8, u8);
 
 fn resolve(ctx: &Ctx, e: &Entity, plotting: bool) -> Resolved {
     resolve_common(ctx, &e.common, plotting)
@@ -993,7 +997,16 @@ fn resolve_common(ctx: &Ctx, c: &cadcraft_doc::Common, plotting: bool) -> Resolv
     };
     let lt = d.linetype(&lt_name).filter(|l| !l.pattern.is_empty()).cloned();
     let scale = d.header.f64("LTSCALE", 1.0) * c.ltscale * ctx.lt_factor;
-    (rgb, lw_mm, lt, scale, visible, layer.map_or(0, |l| l.transparency))
+    (rgb, lw_mm, lt, scale, visible, layer.map_or(0, |l| l.transparency), lock_fade(d, layer, plotting))
+}
+
+/// The fade (percent, 0..=90) of an object on `layer`: LAYLOCKFADECTL when the layer is locked
+/// (0 or negative: no fade); plots never fade. Only [`Options::on_screen`] builds apply it.
+fn lock_fade(d: &Drawing, layer: Option<&cadcraft_doc::Layer>, plotting: bool) -> u8 {
+    if plotting || !layer.is_some_and(|l| l.locked) {
+        return 0;
+    }
+    d.header.i64("LAYLOCKFADECTL", 50).clamp(0, i64::from(MAX_TRANSPARENCY)) as u8
 }
 
 /// The transparency (percent, 0..=90) of an object whose own setting is `t`: the percentage, its
@@ -1065,13 +1078,14 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             cadcraft_doc::AnnoDraw::Plain => {}
         }
     }
-    let (rgb, lw, lt, ltscale, visible, layer_transparency) = resolve(ctx, e, b.plotting);
+    let (rgb, lw, lt, ltscale, visible, layer_transparency, fade) = resolve(ctx, e, b.plotting);
     if !visible {
         return;
     }
-    if b.opts.transparency {
-        b.transparency = transparency(e.common.transparency, layer_transparency, ctx.block_transparency);
-    }
+    // A locked layer's fade shows on screen even when transparency display is off.
+    let fade = if b.opts.on_screen { fade } else { 0 };
+    let own = if b.opts.transparency { transparency(e.common.transparency, layer_transparency, ctx.block_transparency) } else { 0 };
+    b.transparency = own.max(fade);
     // A plot style's linetype replaces the object's.
     let lt = match b.styles.and_then(|s| s.linetype(rgb, b.named)) {
         Some(over) => over,
@@ -1119,12 +1133,12 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             }
             mtext(b, ctx, t, rgb, lw);
         }
-        EntityKind::Insert(ins) => insert(b, ctx, e, ins, rgb),
+        EntityKind::Insert(ins) => insert(b, ctx, e, ins, rgb, own),
         EntityKind::Dimension(dm) => {
             if let Some(blk) = dm.block.as_ref().and_then(|n| ctx.d.block(n))
                 && ctx.depth < cadcraft_doc::MAX_BLOCK_DEPTH
             {
-                let sub = Ctx { block_pstyle: b.named, block_transparency: b.transparency, ..sub_ctx(ctx, e, Mat3::IDENTITY) };
+                let sub = Ctx { block_pstyle: b.named, block_transparency: own, ..sub_ctx(ctx, e, Mat3::IDENTITY) };
                 for be in blk.entities.iter() {
                     if !b.expand() {
                         break;
@@ -1269,7 +1283,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                     let dir = if ins.insert.x >= land.x { 1.0 } else { -1.0 };
                     b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);
                 }
-                insert(b, ctx, e, ins, rgb);
+                insert(b, ctx, e, ins, rgb, own);
             }
         }
         EntityKind::Point(p) => {
@@ -1538,7 +1552,9 @@ fn sub_ctx<'a>(ctx: &Ctx<'a>, e: &Entity, m: Mat3) -> Ctx<'a> {
     }
 }
 
-fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rgb: Ink) {
+/// `own` is the reference's resolved transparency without its locked-layer fade: what ByBlock
+/// children inherit (a child fades only for its own layer).
+fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rgb: Ink, own: u8) {
     if ctx.depth >= cadcraft_doc::MAX_BLOCK_DEPTH {
         return;
     }
@@ -1552,7 +1568,7 @@ fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rg
                 }
                 let off = Vec2::new(ins.col_spacing * f64::from(c), ins.row_spacing * f64::from(r)).rotate(ins.rotation);
                 let m = Mat3::translate(off).then_before(ins.transform(blk.base.xy()));
-                let sub = Ctx { block_pstyle: b.named, block_transparency: b.transparency, ..sub_ctx(ctx, e, m) };
+                let sub = Ctx { block_pstyle: b.named, block_transparency: own, ..sub_ctx(ctx, e, m) };
                 for be in blk.entities.iter() {
                     // Constant/visible attribute definitions inside blocks are not drawn; attribs are.
                     if matches!(be.kind, EntityKind::AttDef(_)) {
@@ -1586,8 +1602,9 @@ fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rg
                 (None, true) => (rgb, resolve(ctx, e, b.plotting).1, true, reference),
                 (def, _) => {
                     let c = a.props.over(&def.map(|d| d.common.clone()).unwrap_or_else(by_block));
-                    let (ink, lw, _, _, shown, layer_t) = resolve_common(&sub_ctx(ctx, e, Mat3::IDENTITY), &c, b.plotting);
+                    let (ink, lw, _, _, shown, layer_t, fade) = resolve_common(&sub_ctx(ctx, e, Mat3::IDENTITY), &c, b.plotting);
                     let t = if b.opts.transparency { transparency(c.transparency, layer_t, reference) } else { 0 };
+                    let t = if b.opts.on_screen { t.max(fade) } else { t };
                     (ink, lw, shown, t)
                 }
             };

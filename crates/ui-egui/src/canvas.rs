@@ -348,6 +348,7 @@ fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], ctx: &egui::
         plot_style_table: None,
         view: build_window(views),
         transparency: app.session.settings.transparency_display,
+        on_screen: true,
         skip_viewport: split,
         cancel: None,
     };
@@ -510,6 +511,7 @@ fn ensure_vp_content(app: &mut CadApp, xf_paper: &Xf, ctx: &egui::Context) -> Op
             view: Some(area),
             skip_viewport: None,
             transparency,
+            on_screen: true,
             cancel: None,
         };
         c.list = cadcraft_render::viewport_content(&st.doc, &st.space, h, area, &opts);

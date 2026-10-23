@@ -408,6 +408,7 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
         view_height: 0.0,
         plot_style_table,
         view: None,
+        on_screen: false,
         skip_viewport: None,
         cancel: None,
     };

@@ -358,6 +358,26 @@ fn svg_and_png_export() {
     assert_eq!(&png[1..4], b"PNG");
 }
 
+#[test]
+fn exports_do_not_fade_locked_layers() {
+    let drawing = |locked: bool, t: Transparency| {
+        let mut d = Drawing::new_imperial();
+        d.header.set_i64("LAYLOCKFADECTL", 50);
+        d.layers.push(Layer { name: "Locked".into(), locked, ..Default::default() });
+        let line = EntityKind::Line(Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(10.0, 5.0, 0.0) });
+        d.add(&Space::Model, Common { layer: "Locked".into(), transparency: t, ..Common::default() }, line).unwrap();
+        d
+    };
+    let locked = drawing(true, Transparency::ByLayer);
+    let svg = String::from_utf8(write(&locked, "a.svg").unwrap()).unwrap();
+    assert!(!svg.contains("opacity="), "{svg}");
+    // An object's own transparency still exports.
+    let own = String::from_utf8(write(&drawing(true, Transparency::Percent(50)), "a.svg").unwrap()).unwrap();
+    assert!(own.contains("opacity="), "{own}");
+    // The PNG of a locked layer's object matches the unlocked one.
+    assert_eq!(write(&locked, "a.png").unwrap(), write(&drawing(false, Transparency::ByLayer), "a.png").unwrap());
+}
+
 fn view_box(svg: &str) -> String {
     let i = svg.find("viewBox=\"").map(|i| i + 9).unwrap_or(0);
     svg[i..].split('"').next().unwrap_or("").to_string()
