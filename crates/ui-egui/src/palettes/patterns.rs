@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use cadcraft_engine::geom::Vec2;
 use cadcraft_engine::{Input, PatternChoice, Picker, pattern_choices};
-use egui::{Align2, Rect, Sense, Stroke, pos2, vec2};
+use egui::{Align2, Color32, Rect, Sense, Stroke, pos2, vec2};
 
 use crate::CadApp;
 use crate::theme::Tokens;
@@ -124,6 +124,10 @@ pub fn menu(ui: &mut egui::Ui, current: &str) -> Option<String> {
 /// HATCHEDIT's pattern prompt): a click enters the pattern's name at the prompt.
 pub fn prompt_picker(app: &mut CadApp, ctx: &egui::Context) {
     let Some(Picker::HatchPattern(current)) = app.session.current_prompt().and_then(|p| p.picker) else { return };
+    // With the Ribbon, the Hatch Creation / Hatch Editor tab's gallery is the picker.
+    if app.ui.show_ribbon {
+        return;
+    }
     let filter_id = egui::Id::new("hatch_pattern_filter");
     let mut filter: String = ctx.data_mut(|d| d.get_temp(filter_id)).unwrap_or_default();
     let mut chosen = None;
@@ -148,4 +152,115 @@ pub fn prompt_picker(app: &mut CadApp, ctx: &egui::Context) {
             app.session.echo(e.to_string());
         }
     }
+}
+
+/// The gradient fills as the Hatch Editor's gallery names them, with the engine's names.
+pub const GRADIENTS: [(&str, &str); 9] = [
+    ("GR_LINEAR", "LINEAR"),
+    ("GR_CYLIN", "CYLINDER"),
+    ("GR_INVCYL", "INVCYLINDER"),
+    ("GR_SPHER", "SPHERICAL"),
+    ("GR_HEMISP", "HEMISPHERICAL"),
+    ("GR_CURVED", "CURVED"),
+    ("GR_INVSPH", "INVSPHERICAL"),
+    ("GR_INVHEM", "INVHEMISPHERICAL"),
+    ("GR_INVCUR", "INVCURVED"),
+];
+
+/// The engine's gradient name of a gallery tile (`GR_LINEAR` → `LINEAR`).
+pub fn gradient_of(tile: &str) -> Option<&'static str> {
+    GRADIENTS.iter().find(|(t, _)| t.eq_ignore_ascii_case(tile)).map(|(_, g)| *g)
+}
+
+/// The gallery tile of a gradient fill (`LINEAR` → `GR_LINEAR`).
+pub fn tile_of_gradient(name: &str) -> Option<&'static str> {
+    GRADIENTS.iter().find(|(_, g)| g.eq_ignore_ascii_case(name)).map(|(t, _)| *t)
+}
+
+/// The Hatch Editor gallery's tiles in order: SOLID first, then the patterns by name with the
+/// gradients in their place among them (after the G… patterns that sort before `GR_`).
+pub fn gallery() -> Vec<String> {
+    // The usual CAD order: `_` sorts before letters (GOST_WOOD, GR_LINEAR, GRASS).
+    let key = |n: &str| n.to_ascii_uppercase().replace('_', " ");
+    let mut names: Vec<String> = swatches().iter().map(|s| s.name.clone()).filter(|n| n != "SOLID").collect();
+    names.sort_by_key(|n| key(n));
+    let at = names.iter().position(|n| key(n) > key("GR_")).unwrap_or(names.len());
+    let mut out = vec!["SOLID".to_string()];
+    out.extend(names.iter().take(at).cloned());
+    out.extend(GRADIENTS.iter().map(|(t, _)| (*t).to_string()));
+    out.extend(names.iter().skip(at).cloned());
+    out
+}
+
+/// One gallery tile in `r`: the pattern or gradient in a square, its name under it.
+pub fn paint_tile(p: &egui::Painter, r: Rect, name: &str, selected: bool, hovered: bool) {
+    let t = Tokens::get();
+    if selected || hovered {
+        p.rect_filled(r, 2.0, if selected { t.control_hover } else { t.control_hover.gamma_multiply(0.6) });
+    }
+    let side = (r.width() - 8.0).min(r.height() - LABEL_H - 4.0).max(4.0);
+    let square = Rect::from_center_size(pos2(r.center().x, r.top() + 3.0 + side / 2.0), vec2(side, side));
+    let inner = square.shrink(1.0);
+    if let Some(g) = gradient_of(name) {
+        gradient_mesh(p, inner, g);
+    } else if let Some(s) = swatches().iter().find(|s| s.name.eq_ignore_ascii_case(name)) {
+        p.rect_filled(inner, 0.0, Color32::WHITE);
+        if s.solid {
+            p.rect_filled(inner, 0.0, Color32::BLACK);
+        } else {
+            let at = |v: &Vec2| pos2(inner.min.x + v.x as f32 * inner.width(), inner.max.y - v.y as f32 * inner.height());
+            // One physical pixel, as a line of global width 0 in the drawing.
+            let px = 1.0 / p.ctx().pixels_per_point();
+            let stroke = Stroke::new(px, Color32::BLACK);
+            for run in &s.runs {
+                match run.as_slice() {
+                    [] => {}
+                    [dot] => {
+                        p.rect_filled(Rect::from_center_size(at(dot), vec2(px, px)), 0.0, Color32::BLACK);
+                    }
+                    pts => {
+                        p.add(egui::Shape::line(pts.iter().map(at).collect(), stroke));
+                    }
+                }
+            }
+        }
+    }
+    p.rect_stroke(square, 0.0, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+    let label = Rect::from_min_max(pos2(r.min.x, square.max.y + 1.0), r.max);
+    let shown = crate::i18n::ribbon(name);
+    p.with_clip_rect(label).text(label.center_top() + vec2(0.0, 1.0), Align2::CENTER_TOP, shown, egui::FontId::proportional(10.5), t.text);
+}
+
+/// A gradient's preview, black to white, in the shape the renderer draws it.
+fn gradient_mesh(p: &egui::Painter, r: Rect, name: &str) {
+    const N: usize = 16;
+    let inv = name.starts_with("INV");
+    let base = name.trim_start_matches("INV");
+    let shade = |u: f32, v: f32| -> f32 {
+        let x = match base {
+            "CYLINDER" => 1.0 - (2.0 * u - 1.0).abs(),
+            "SPHERICAL" => 1.0 - (((u - 0.5).powi(2) + (v - 0.5).powi(2)).sqrt() * 2.0).min(1.0),
+            "HEMISPHERICAL" => 1.0 - (((u - 0.3).powi(2) + (v - 0.15).powi(2)).sqrt() * 1.3).min(1.0),
+            "CURVED" => 1.0 - v * v,
+            _ => u,
+        };
+        if inv { 1.0 - x } else { x }
+    };
+    let mut mesh = egui::Mesh::default();
+    for j in 0..=N {
+        for i in 0..=N {
+            let (u, v) = (i as f32 / N as f32, j as f32 / N as f32);
+            let g = (shade(u, v).clamp(0.0, 1.0) * 255.0) as u8;
+            mesh.colored_vertex(pos2(r.min.x + u * r.width(), r.min.y + v * r.height()), Color32::from_gray(g));
+        }
+    }
+    let w = (N + 1) as u32;
+    for j in 0..N as u32 {
+        for i in 0..N as u32 {
+            let k = j * w + i;
+            mesh.add_triangle(k, k + 1, k + w);
+            mesh.add_triangle(k + 1, k + w + 1, k + w);
+        }
+    }
+    p.add(egui::Shape::mesh(mesh));
 }

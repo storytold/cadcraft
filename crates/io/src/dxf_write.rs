@@ -1117,11 +1117,22 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
                 }
             }
             w.i(75, i64::from(h.style));
-            w.i(76, 1);
+            // Pattern type: 0 user-defined, 1 predefined (the library's), 2 custom (from a file).
+            let custom = !h.solid && !h.is_user() && cadcraft_doc::library::pattern_for(d, &h.pattern).is_none();
+            w.i(
+                76,
+                if h.is_user() {
+                    0
+                } else if custom {
+                    2
+                } else {
+                    1
+                },
+            );
             if !h.solid {
                 w.f(52, h.angle.to_degrees());
                 w.f(41, h.scale);
-                w.i(77, 0);
+                w.i(77, i64::from(h.is_double()));
                 // The lines read from the file, else the library's pattern of that name.
                 let lines = if h.pattern_lines.is_empty() {
                     cadcraft_doc::library::pattern_for(d, &h.pattern).map(|p| p.lines).unwrap_or_default()

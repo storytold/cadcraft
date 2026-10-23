@@ -61,14 +61,10 @@ pub fn color_button_resolved(ui: &mut egui::Ui, id: egui::Id, current: Color, re
     }
     swatch_rgb(p, Rect::from_min_size(pos2(rect.left() + 3.0, rect.center().y - 6.0), vec2(12.0, 12.0)), resolved);
     p.text(pos2(rect.left() + 20.0, rect.center().y), egui::Align2::LEFT_CENTER, crate::i18n::t(label), crate::theme::body(), t.text);
-    let mut out = None;
-    egui::Popup::from_toggle_button_response(&resp).id(id).width(300.0).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
-        out = color_palette(ui, id, current, by);
-        if out.is_some() {
-            ui.close();
-        }
-    });
-    out
+    match crate::color_list::popup(&resp, id, Some(current), by, false) {
+        Some(crate::color_list::Pick::Color(c)) => Some(c),
+        _ => None,
+    }
 }
 
 /// The palette body (index colours + true colour).

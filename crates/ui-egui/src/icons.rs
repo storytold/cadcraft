@@ -149,6 +149,41 @@ pub enum Icon {
     PickAdd,
     SelectObjects,
     QuickSelect,
+    // Hatch Editor contextual tab.
+    HatchPick,
+    HatchSelect,
+    HatchRemove,
+    HatchRecreate,
+    HatchOrigin,
+    Associative,
+    Annotative,
+    HatchMatch,
+    CloseEditor,
+    OriginTopLeft,
+    OriginTopRight,
+    OriginBottomLeft,
+    OriginBottomRight,
+    OriginCenter,
+    OriginCurrent,
+    StoreOrigin,
+    HatchType,
+    HatchColor,
+    HatchBackground,
+    HatchTransparency,
+    HatchAngle,
+    HatchScale,
+    HatchLayer,
+    PaperSpace,
+    HatchDouble,
+    IslandNormal,
+    IslandOuter,
+    IslandIgnore,
+    IslandNone,
+    HatchDrawOrder,
+    GapTolerance,
+    SeparateHatches,
+    DisplayBoundary,
+    Pin,
 }
 
 struct Pen<'a> {
@@ -798,6 +833,209 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, dim: bool) {
             pen.rect(3.0, 4.0, 18.0, 16.0, b);
             pen.l(9.0, 4.0, 9.0, 20.0);
             pen.l(9.0, 9.0, 21.0, 9.0);
+        }
+        // ---- Hatch Editor contextual tab ----
+        HatchPick => {
+            pen.rect(3.0, 6.0, 15.0, 15.0, b);
+            for (x1, y1, x2, y2) in
+                [(3.0, 11.0, 8.0, 6.0), (3.0, 16.0, 13.0, 6.0), (3.0, 21.0, 18.0, 6.0), (8.0, 21.0, 18.0, 11.0), (13.0, 21.0, 18.0, 16.0)]
+            {
+                pen.l(x1, y1, x2, y2);
+            }
+            pen.fill_c(10.5, 13.5, 2.2, Tokens::get().panel);
+            pen.dot(10.5, 13.5);
+            pen.la(18.0, 1.0, 18.0, 9.0);
+            pen.la(14.0, 5.0, 22.0, 5.0);
+        }
+        HatchSelect => {
+            pen.rect(3.0, 3.0, 14.0, 14.0, a);
+            pen.poly(&[(12.0, 10.0), (12.0, 22.0), (15.0, 19.0), (17.5, 23.0), (19.5, 22.0), (17.0, 18.0), (21.0, 18.0)], true, b);
+        }
+        HatchRemove => {
+            pen.rect(3.0, 3.0, 14.0, 14.0, b);
+            pen.c(10.0, 10.0, 3.5, b);
+            pen.la(13.0, 15.0, 21.0, 23.0);
+            pen.la(21.0, 15.0, 13.0, 23.0);
+        }
+        HatchRecreate => {
+            pen.rect(3.0, 3.0, 11.0, 11.0, b);
+            pen.l(3.0, 9.0, 9.0, 3.0);
+            pen.l(3.0, 14.0, 14.0, 3.0);
+            pen.rect(10.0, 10.0, 11.0, 11.0, a);
+        }
+        HatchOrigin => {
+            pen.rect(5.0, 3.0, 16.0, 16.0, b);
+            for k in 1..4 {
+                let o = k as f32 * 4.0;
+                pen.l(5.0, 3.0 + o, 5.0 + o, 3.0);
+                pen.l(5.0 + o, 19.0, 21.0, 3.0 + o);
+            }
+            pen.la(2.0, 22.0, 9.0, 22.0);
+            pen.la(5.0, 19.0, 5.0, 23.0);
+            pen.fill_c(5.0, 19.0, 1.8, a);
+        }
+        Associative => {
+            pen.rect(4.0, 4.0, 13.0, 13.0, b);
+            for k in 1..4 {
+                let o = k as f32 * 3.3;
+                pen.l(4.0, 4.0 + o, 4.0 + o, 4.0);
+            }
+            pen.rect(9.0, 9.0, 12.0, 12.0, a);
+            pen.fill_c(21.0, 21.0, 1.6, a);
+            pen.fill_c(9.0, 9.0, 1.6, a);
+        }
+        Annotative => {
+            pen.poly(&[(4.0, 21.0), (12.0, 3.0), (20.0, 21.0)], false, b);
+            pen.l(7.5, 14.0, 16.5, 14.0);
+            pen.la(16.0, 8.0, 21.0, 3.0);
+            pen.arrow_tip(21.5, 2.5, 1.0, -1.0, a);
+        }
+        HatchMatch => {
+            pen.rect(3.0, 3.0, 9.0, 9.0, b);
+            pen.l(3.0, 8.0, 8.0, 3.0);
+            pen.l(6.0, 12.0, 12.0, 6.0);
+            pen.rect(12.0, 12.0, 9.0, 9.0, a);
+            pen.la(12.0, 17.0, 17.0, 12.0);
+            pen.la(15.0, 21.0, 21.0, 15.0);
+            pen.l(12.0, 5.0, 17.0, 5.0);
+            pen.poly(&[(17.0, 5.0), (17.0, 10.0)], false, b);
+            pen.arrow_tip(17.0, 11.0, 0.0, 1.0, b);
+        }
+        CloseEditor => {
+            let g = if dim { Color32::from_rgb(70, 170, 90).gamma_multiply(0.4) } else { Color32::from_rgb(70, 190, 100) };
+            let st = Stroke::new(pen.w * 2.2, g);
+            p.line(vec![pen.at(4.0, 13.0), pen.at(10.0, 19.0), pen.at(20.0, 5.0)], st);
+        }
+        OriginTopLeft | OriginTopRight | OriginBottomLeft | OriginBottomRight | OriginCenter => {
+            pen.rect(4.0, 4.0, 16.0, 16.0, b);
+            pen.l(4.0, 12.0, 12.0, 4.0);
+            pen.l(12.0, 20.0, 20.0, 12.0);
+            pen.l(4.0, 20.0, 20.0, 4.0);
+            let (x, y) = match icon {
+                OriginTopLeft => (4.0, 4.0),
+                OriginTopRight => (20.0, 4.0),
+                OriginBottomLeft => (4.0, 20.0),
+                OriginBottomRight => (20.0, 20.0),
+                _ => (12.0, 12.0),
+            };
+            pen.fill_c(x, y, 2.4, a);
+        }
+        OriginCurrent => {
+            pen.la(5.0, 19.0, 19.0, 19.0);
+            pen.la(5.0, 19.0, 5.0, 5.0);
+            pen.arrow_tip(20.0, 19.0, 1.0, 0.0, a);
+            pen.arrow_tip(5.0, 4.0, 0.0, -1.0, a);
+            pen.fill_c(5.0, 19.0, 1.8, b);
+        }
+        StoreOrigin => {
+            pen.rect(3.0, 6.0, 12.0, 12.0, b);
+            pen.l(3.0, 12.0, 9.0, 6.0);
+            pen.l(9.0, 18.0, 15.0, 12.0);
+            pen.fill_c(3.0, 18.0, 1.8, a);
+            pen.poly(&[(14.0, 3.0), (21.0, 3.0), (21.0, 10.0), (14.0, 10.0)], true, a);
+            pen.la(16.0, 3.0, 16.0, 6.0);
+        }
+        HatchType => {
+            pen.rect(3.0, 3.0, 18.0, 18.0, b);
+            pen.l(3.0, 9.0, 9.0, 3.0);
+            pen.l(3.0, 15.0, 15.0, 3.0);
+            pen.l(3.0, 21.0, 21.0, 3.0);
+            pen.l(9.0, 21.0, 21.0, 9.0);
+            pen.l(15.0, 21.0, 21.0, 15.0);
+        }
+        HatchColor => {
+            pen.rect(3.0, 3.0, 18.0, 18.0, b);
+            pen.fill_rect(6.0, 6.0, 12.0, 12.0, a);
+        }
+        HatchBackground => {
+            pen.fill_rect(3.0, 3.0, 18.0, 18.0, a.gamma_multiply(0.45));
+            pen.l(3.0, 13.0, 13.0, 3.0);
+            pen.l(3.0, 21.0, 21.0, 3.0);
+            pen.l(11.0, 21.0, 21.0, 11.0);
+            pen.rect(3.0, 3.0, 18.0, 18.0, b);
+        }
+        HatchTransparency => {
+            pen.rect(3.0, 7.0, 12.0, 12.0, b);
+            pen.fill_rect(9.0, 3.0, 12.0, 12.0, a.gamma_multiply(0.45));
+            pen.rect(9.0, 3.0, 12.0, 12.0, a);
+        }
+        HatchAngle => {
+            pen.l(3.0, 20.0, 21.0, 20.0);
+            pen.l(3.0, 20.0, 18.0, 5.0);
+            pen.arc(3.0, 20.0, 10.0, 0.0, 45.0, a);
+        }
+        HatchScale => {
+            pen.rect(3.0, 11.0, 10.0, 10.0, b);
+            pen.rect(3.0, 3.0, 18.0, 18.0, a);
+            pen.la(10.0, 14.0, 18.0, 6.0);
+            pen.arrow_tip(19.0, 5.0, 1.0, -1.0, a);
+        }
+        HatchLayer => {
+            pen.poly(&[(12.0, 4.0), (21.0, 9.0), (12.0, 14.0), (3.0, 9.0)], true, b);
+            pen.poly(&[(3.0, 13.0), (12.0, 18.0), (21.0, 13.0)], false, a);
+        }
+        PaperSpace => {
+            pen.poly(&[(5.0, 3.0), (15.0, 3.0), (19.0, 7.0), (19.0, 21.0), (5.0, 21.0)], true, b);
+            pen.l(8.0, 17.0, 15.0, 10.0);
+            pen.l(8.0, 13.0, 11.0, 10.0);
+        }
+        HatchDouble => {
+            pen.rect(3.0, 3.0, 18.0, 18.0, b);
+            for k in 1..4 {
+                let o = 3.0 + k as f32 * 4.5;
+                pen.l(o, 3.0, o, 21.0);
+                pen.l(3.0, o, 21.0, o);
+            }
+        }
+        IslandNormal | IslandOuter | IslandIgnore | IslandNone => {
+            let fill = a.gamma_multiply(0.55);
+            pen.fill_rect(3.0, 3.0, 18.0, 18.0, if matches!(icon, IslandIgnore | IslandNone) { fill } else { Color32::TRANSPARENT });
+            if matches!(icon, IslandNormal | IslandOuter) {
+                // The ring between the outer boundary and the first island is filled.
+                for (x, y, w, h) in [(3.0, 3.0, 18.0, 4.0), (3.0, 17.0, 18.0, 4.0), (3.0, 7.0, 4.0, 10.0), (17.0, 7.0, 4.0, 10.0)] {
+                    pen.fill_rect(x, y, w, h, fill);
+                }
+                if icon == IslandNormal {
+                    pen.fill_rect(10.0, 10.0, 4.0, 4.0, fill);
+                }
+            }
+            pen.rect(3.0, 3.0, 18.0, 18.0, b);
+            pen.rect(7.0, 7.0, 10.0, 10.0, b);
+            pen.rect(10.0, 10.0, 4.0, 4.0, b);
+            if icon == IslandNone {
+                pen.la(3.0, 21.0, 21.0, 3.0);
+            }
+        }
+        HatchDrawOrder => {
+            pen.rect(3.0, 3.0, 12.0, 12.0, b);
+            pen.fill_rect(9.0, 9.0, 12.0, 12.0, a.gamma_multiply(0.5));
+            pen.rect(9.0, 9.0, 12.0, 12.0, a);
+        }
+        GapTolerance => {
+            pen.poly(&[(9.0, 4.0), (3.0, 4.0), (3.0, 20.0), (21.0, 20.0), (21.0, 4.0), (15.0, 4.0)], false, b);
+            pen.la(9.0, 4.0, 15.0, 4.0);
+            pen.arrow_tip(9.0, 4.0, -1.0, 0.0, a);
+            pen.arrow_tip(15.0, 4.0, 1.0, 0.0, a);
+        }
+        SeparateHatches => {
+            pen.rect(3.0, 6.0, 8.0, 12.0, b);
+            pen.rect(13.0, 6.0, 8.0, 12.0, b);
+            pen.l(3.0, 12.0, 9.0, 6.0);
+            pen.l(13.0, 12.0, 19.0, 6.0);
+            pen.l(5.0, 18.0, 11.0, 12.0);
+            pen.l(15.0, 18.0, 21.0, 12.0);
+        }
+        DisplayBoundary => {
+            pen.rect(4.0, 4.0, 16.0, 16.0, a);
+            for (x, y) in [(4.0, 4.0), (20.0, 4.0), (4.0, 20.0), (20.0, 20.0)] {
+                pen.fill_rect(x - 2.0, y - 2.0, 4.0, 4.0, Color32::from_rgb(70, 130, 230));
+            }
+            pen.l(4.0, 12.0, 12.0, 4.0);
+            pen.l(12.0, 20.0, 20.0, 12.0);
+        }
+        Pin => {
+            pen.poly(&[(9.0, 3.0), (15.0, 3.0), (14.0, 10.0), (17.0, 14.0), (7.0, 14.0), (10.0, 10.0)], true, b);
+            pen.l(12.0, 14.0, 12.0, 21.0);
         }
         ChevronDown => pen.poly(&[(6.0, 9.0), (12.0, 15.0), (18.0, 9.0)], false, b),
         ChevronUp => pen.poly(&[(6.0, 15.0), (12.0, 9.0), (18.0, 15.0)], false, b),

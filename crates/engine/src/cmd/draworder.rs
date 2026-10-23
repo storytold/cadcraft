@@ -55,7 +55,7 @@ pub fn specs() -> Vec<CommandSpec> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Order {
+pub(crate) enum Order {
     Front,
     Back,
     Above,
@@ -65,7 +65,7 @@ enum Order {
 /// Move `hs` in the current space's draw order, keeping their order among themselves. Above and
 /// Under place them right over the topmost reference object or right under the lowest one.
 /// Returns how many objects moved.
-fn reorder(s: &mut Session, hs: &[Handle], order: Order, refs: &[Handle]) -> Result<usize> {
+pub(crate) fn reorder(s: &mut Session, hs: &[Handle], order: Order, refs: &[Handle]) -> Result<usize> {
     let space = s.space();
     let d = s.doc_mut()?;
     let Some(st) = d.space_mut(&space) else { return Ok(0) };

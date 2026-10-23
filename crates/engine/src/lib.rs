@@ -698,6 +698,11 @@ pub struct Session {
     lisp_last: Option<std::result::Result<lisp::value::Value, String>>,
     /// What the last HATCHPICK kept (the Hatch and Gradient dialog's picks).
     pub hatch_picks: Option<cmd::hatch::HatchPicks>,
+    /// The Hatch Editor's boundary set (HATCHBOUNDARYSET) and the drawing (`DocState::uid`) it
+    /// belongs to: see [`Session::hatch_boundary_set`].
+    hatch_boundary_set: Option<(u64, Vec<Handle>)>,
+    /// The Hatch Editor's "Store as Default Origin": a newly set origin becomes HPORIGIN.
+    pub hatch_store_origin: bool,
 }
 
 impl Default for Session {
@@ -747,6 +752,8 @@ impl Session {
             lisp: lisp::LispState::default(),
             lisp_last: None,
             hatch_picks: None,
+            hatch_boundary_set: None,
+            hatch_store_origin: false,
         }
     }
     pub fn new_drawing(&mut self, metric: bool) -> usize {
@@ -793,6 +800,20 @@ impl Session {
                 Err(EngineError::Internal("open".into(), "panic".into()))
             }
         }
+    }
+
+    /// The current drawing's boundary set (HATCHBOUNDARYSET): the only objects pick points look
+    /// at; `None` uses everything visible in the current viewport. A set chosen in another drawing
+    /// doesn't apply (handles are numbered per drawing).
+    pub fn hatch_boundary_set(&self) -> Option<&[Handle]> {
+        let uid = self.state().ok()?.uid;
+        self.hatch_boundary_set.as_ref().filter(|(u, _)| *u == uid).map(|(_, hs)| hs.as_slice())
+    }
+
+    /// Set the current drawing's boundary set, or clear it.
+    pub fn set_hatch_boundary_set(&mut self, set: Option<Vec<Handle>>) {
+        let uid = self.state().map(|st| st.uid).ok();
+        self.hatch_boundary_set = set.zip(uid).map(|(hs, uid)| (uid, hs));
     }
 
     pub fn state(&self) -> Result<&DocState> {

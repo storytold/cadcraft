@@ -1518,8 +1518,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         return;
     }
 
-    // Double-click a hatch (no command running) to edit it in the Hatch Edit dialog. The click is
-    // used up: it must not also start a grip edit on the hatch's centre grip below.
+    // Double-click a hatch (no command running): it is selected alone, so the Ribbon's Hatch
+    // Editor opens; without the Ribbon, the Hatch Edit dialog. The click is used up: it must not
+    // also start a grip edit on the hatch's centre grip below.
     let mut hatch_dialog = false;
     if inside
         && dbl_primary
@@ -1528,7 +1529,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         && let Some(h) = hatch_at(app, xf.to_world(hp), scale)
     {
         app.session.set_selection(vec![h]);
-        crate::hatchdlg::open_edit(app);
+        if !app.ui.show_ribbon {
+            crate::hatchdlg::open_edit(app);
+        }
         hatch_dialog = true;
     }
 

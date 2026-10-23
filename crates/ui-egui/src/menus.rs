@@ -34,6 +34,16 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.animations.off", "Off", &["View", "Accessibility", "Animation Effects", "Off"], None),
     ("ui.animations", "Animation Effects", &[], None),
     ("ui.toggle.toolbar", "Tool Bar", &["Window", "Tool Bar"], None),
+    ("ui.toggle.ribbon", "Ribbon", &["Window", "Ribbon"], None),
+    ("ui.layout.pc", "Windows Layout (Ribbon)", &["Window", "Windows Layout (Ribbon)"], None),
+    ("ui.layout.mac", "Mac Layout (Tool Sets)", &["Window", "Mac Layout (Tool Sets)"], None),
+    ("ui.hatcheditor.close", "Close Hatch Editor", &[], None),
+    ("ui.hatchcreate.points", "Pick Points", &[], None),
+    ("ui.hatchcreate.select", "Select Boundary Objects", &[], None),
+    ("ui.hatchcreate.remove", "Remove Boundaries", &[], None),
+    ("ui.hatchcreate.origin", "Set Origin", &[], None),
+    ("ui.hatchcreate.match", "Match Properties", &[], None),
+    ("ui.hatchcreate.close", "Close Hatch Creation", &[], None),
     ("ui.toggle.filetabs", "File Tab", &["Window", "File Tab"], None),
     ("ui.toggle.statusbar", "Status Bar", &["Window", "Status Bar"], None),
     ("ui.toggle.cmdline", "Command Line", &["Window", "Command Line"], Some("Cmd+9")),
@@ -214,6 +224,53 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             toggle(&mut app.ui.show_toolbar, params);
             Ok(Value::Null)
         }
+        "ui.toggle.ribbon" => {
+            toggle(&mut app.ui.show_ribbon, params);
+            Ok(Value::Null)
+        }
+        "ui.layout.pc" => {
+            crate::ribbon::apply_pc_layout(app);
+            Ok(Value::Null)
+        }
+        "ui.layout.mac" => {
+            crate::ribbon::apply_mac_layout(app);
+            Ok(Value::Null)
+        }
+        // Hatch Editor > Close: the hatches are deselected and the contextual tab goes away.
+        "ui.hatcheditor.close" => {
+            app.session.set_selection(Vec::new());
+            Ok(Value::Null)
+        }
+        // Hatch Creation's buttons answer the running HATCH; Close ends it and makes the hatch.
+        // Called by name with no HATCH running, they would answer another command, and Close
+        // would repeat the last one.
+        "ui.hatchcreate.points"
+        | "ui.hatchcreate.select"
+        | "ui.hatchcreate.remove"
+        | "ui.hatchcreate.origin"
+        | "ui.hatchcreate.match"
+        | "ui.hatchcreate.close"
+            if !crate::ribbon_hatch::creating(app) =>
+        {
+            Err("HATCH or GRADIENT is not running".into())
+        }
+        "ui.hatchcreate.points" | "ui.hatchcreate.select" | "ui.hatchcreate.remove" | "ui.hatchcreate.origin" | "ui.hatchcreate.match" => {
+            let k = match id {
+                "ui.hatchcreate.points" => "picK internal point",
+                "ui.hatchcreate.select" => "Select objects",
+                "ui.hatchcreate.remove" => "Remove boundaries",
+                "ui.hatchcreate.origin" => "Origin",
+                _ => "Inherit properties",
+            };
+            crate::ribbon_hatch::keyword(app, k);
+            Ok(Value::Null)
+        }
+        "ui.hatchcreate.close" => {
+            if let Err(e) = app.session.input(cadcraft_engine::Input::Enter) {
+                app.session.echo(e.to_string());
+            }
+            Ok(Value::Null)
+        }
         "ui.toggle.filetabs" => {
             toggle(&mut app.ui.show_file_tabs, params);
             Ok(Value::Null)
@@ -390,15 +447,23 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             app.ui.dialog = Some("dsettings".into());
             Ok(Value::Null)
         }
-        // Typed or from a menu (no parameters): the Hatch and Gradient dialog (HPDLGMODE 1) and the
-        // Hatch Edit dialog. -HATCH, -HATCHEDIT and JSON calls keep the command line and the JSON form.
-        "hatch" | "h" | "bh" | "gradient" | "gd" if params.is_null() && crate::hatchdlg::dialog_on(app) => {
+        // HATCH and GRADIENT typed or from a menu run at the command line with the Ribbon's Hatch
+        // Creation tab (no dialog: the owner's choice, 2026-10-16); without the Ribbon (the Mac
+        // layout) the Hatch and Gradient dialog stays, as HPDLGMODE says.
+        "hatch" | "h" | "bh" | "gradient" | "gd" if params.is_null() && !app.ui.show_ribbon && crate::hatchdlg::dialog_on(app) => {
             crate::hatchdlg::open_create(app, matches!(id, "gradient" | "gd"));
             Ok(Value::Null)
         }
         // Typed or from the Tools menu: the Command Aliases dialog. JSON calls keep the JSON form.
         "aliasedit" if params.is_null() => {
             crate::aliasdlg::open(app);
+            Ok(Value::Null)
+        }
+        // HATCHEDIT: the selected hatches open the Hatch Editor tab; with none, pick one first.
+        "hatchedit" | "he" if params.is_null() && app.session.state().is_ok() && app.ui.show_ribbon => {
+            if crate::ribbon_hatch::selected(app).is_empty() {
+                app.start("hatchedit.pick");
+            }
             Ok(Value::Null)
         }
         "hatchedit" | "he" if params.is_null() && app.session.state().is_ok() => {

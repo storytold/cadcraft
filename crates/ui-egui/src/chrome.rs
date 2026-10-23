@@ -61,13 +61,60 @@ fn title_left(left: f32, width: f32, text_w: f32) -> f32 {
     (left + (width - text_w) / 2.0).max(left + MAC_CONTENT_LEFT)
 }
 
+/// The Windows layout's quick access tool bar (title row, with the Ribbon).
+const QAT: &[(Icon, &str, &str, Option<&str>)] = &[
+    (Icon::New, "new", "New Drawing", Some("Cmd+N")),
+    (Icon::Open, "open", "Open", Some("Cmd+O")),
+    (Icon::Save, "qsave", "Save", Some("Cmd+S")),
+    (Icon::SaveAs, "saveas", "Save As", None),
+    (Icon::Plot, "plot", "Plot", Some("Cmd+P")),
+    (Icon::Undo, "u", "Undo", Some("Cmd+Z")),
+    (Icon::Redo, "redo", "Redo", Some("Cmd+Shift+Z")),
+];
+const QAT_SIZE: f32 = 22.0;
+
+/// Draw the quick access tool bar from `x` on the row centred at `cy`; returns its right edge.
+fn quick_access(ui: &mut egui::Ui, x: f32, cy: f32, clicked: &mut Option<&'static str>) -> f32 {
+    let t = Tokens::get();
+    let mac = ui.ctx().os().is_mac();
+    let mut x = x;
+    for (i, (icon, cmd, label, shortcut)) in QAT.iter().enumerate() {
+        if i == 5 {
+            x += 8.0;
+        }
+        let br = Rect::from_min_size(pos2(x, cy - QAT_SIZE / 2.0), vec2(QAT_SIZE, QAT_SIZE));
+        let resp = ui.interact(br, ui.id().with(("qat", *cmd)), Sense::click());
+        if resp.hovered() {
+            ui.painter().rect_filled(br, 3.0, t.control_hover.gamma_multiply(0.6));
+        }
+        icons::paint(ui.painter(), br.shrink(3.0), *icon, false);
+        let tip = match shortcut {
+            Some(sc) => format!("{} ({})", crate::i18n::t(label), crate::menus::shortcut_label(sc, mac)),
+            None => crate::i18n::t(label).to_string(),
+        };
+        icons::describe_control(ui, &resp, &tip, None, false);
+        if resp.on_hover_text(tip).clicked() {
+            *clicked = Some(cmd);
+        }
+        x += QAT_SIZE + 4.0;
+    }
+    x
+}
+
 /// Title row (with the integrated macOS title bar) and the Tool Bar.
 pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let title_h = if app.integrated_titlebar { MAC_TITLE_BAR } else { 0.0 };
+    // With the Ribbon and no integrated title bar, the quick access tool bar gets its own row.
+    let qat_h = if app.ui.show_ribbon && !app.integrated_titlebar { 28.0 } else { 0.0 };
     let tb_h = if app.ui.show_toolbar { 34.0 } else { 0.0 };
-    egui::Panel::top("cc_title_toolbar").exact_size(title_h + tb_h).frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
+    egui::Panel::top("cc_title_toolbar").exact_size(title_h + qat_h + tb_h).frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
         let r = ui.max_rect();
+        let mut qat_clicked = None;
+        if qat_h > 0.0 {
+            quick_access(ui, r.left() + 10.0, r.top() + qat_h / 2.0, &mut qat_clicked);
+        }
+        let r = Rect::from_min_max(pos2(r.left(), r.top() + qat_h), r.max);
         if title_h > 0.0 {
             let title = match app.session.state() {
                 Ok(st) if !app.ui.start_tab => format!("CADCraft      {}{}", st.title, if st.title.contains('.') { "" } else { ".dwg" }),
@@ -76,7 +123,8 @@ pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
             // Centred on the traffic lights' centre line (the row's middle): with the system font
             // the capitals' middle is the text box's middle, so no optical nudge.
             let galley = ui.painter().layout_no_wrap(title, egui::FontId::proportional(13.0), t.text_dim);
-            let x = title_left(r.left(), r.width(), galley.size().x);
+            let qat_room = if app.ui.show_ribbon { QAT.len() as f32 * (QAT_SIZE + 4.0) + 24.0 } else { 0.0 };
+            let x = title_left(r.left(), r.width(), galley.size().x).max(r.left() + MAC_CONTENT_LEFT + qat_room);
             ui.painter().galley(pos2(x, r.top() + (title_h - galley.size().y) / 2.0), galley, t.text_dim);
             // Allow dragging the window by the title row.
             let tr = Rect::from_min_size(r.min, vec2(r.width(), title_h));
@@ -88,6 +136,13 @@ pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
                 let max = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
             }
+            // The Windows layout keeps its quick access tool bar in the title row.
+            if app.ui.show_ribbon {
+                quick_access(ui, r.left() + MAC_CONTENT_LEFT + 4.0, r.top() + title_h / 2.0, &mut qat_clicked);
+            }
+        }
+        if let Some(c) = qat_clicked {
+            app.start(c);
         }
         if tb_h > 0.0 {
             let row = Rect::from_min_size(pos2(r.left(), r.top() + title_h), vec2(r.width(), tb_h));

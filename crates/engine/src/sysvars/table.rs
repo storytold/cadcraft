@@ -54,11 +54,27 @@ const HEADER: &[(&str, Kind, Def)] = &[
     ("DONUTID", Kind::Real { min: 0.0, strict: false }, Def::Real(0.5)),
     ("DONUTOD", Kind::Real { min: 0.0, strict: true }, Def::Real(1.0)),
     ("EDGEMODE", Kind::Choice(&[0, 1]), Def::Int(0)),
+    // Gradient fills made from the Hatch Creation tab: angle in degrees, colours ("5", "r,g,b").
+    ("GFANG", Kind::AnyReal, Def::Real(0.0)),
+    ("GFCLR1", Kind::Name, Def::Str("5")),
+    ("GFCLR2", Kind::Name, Def::Str("7")),
     ("HPANG", Kind::Angle, Def::Real(0.0)),
+    // The Hatch Creation tab's settings for new hatches ("." or empty: the current ones).
+    ("HPBACKGROUNDCOLOR", Kind::Name, Def::Str("")),
+    // Boundary objects kept with a new hatch: 0 none, 1 polylines, 2 regions.
+    ("HPBOUNDRETAIN", Kind::Choice(&[0, 1, 2]), Def::Int(0)),
+    ("HPCOLOR", Kind::Name, Def::Str("")),
     // 1: HATCH and GRADIENT typed or from a menu open the Hatch and Gradient dialog; 0: the command line.
     ("HPDLGMODE", Kind::Choice(&[0, 1]), Def::Int(1)),
+    ("HPDOUBLE", Kind::Choice(&[0, 1]), Def::Int(0)),
+    // 0 none, 1 to the back (CADCraft's default), 2 to the front, 3 behind the boundary, 4 in front of it.
+    ("HPDRAWORDER", Kind::Choice(&[0, 1, 2, 3, 4]), Def::Int(1)),
+    // Match Properties: 0 keeps the current origin, 1 takes the source hatch's.
+    ("HPINHERIT", Kind::Choice(&[0, 1]), Def::Int(0)),
+    ("HPLAYER", Kind::Name, Def::Str("")),
     ("HPNAME", Kind::Pattern, Def::Str("ANSI31")),
     ("HPSCALE", Kind::Real { min: 0.0, strict: true }, Def::Real(1.0)),
+    ("HPTRANSPARENCY", Kind::Name, Def::Str("")),
     ("INSNAME", Kind::Name, Def::Str("")),
     ("LWDEFAULT", Kind::Choice(&LINEWEIGHTS), Def::Int(25)),
     // Negative: Through (OFFSET picks a point).
@@ -182,7 +198,14 @@ fn set_header(s: &mut Session, name: &str, kind: Kind, v: &Value, bad: impl Fn(S
             s.doc_mut()?.header.set_f64(name, cadcraft_geom::norm_angle(a));
         }
         Kind::Pattern => {
-            let p = v.as_str().map(|t| t.trim().to_ascii_uppercase()).filter(|p| cadcraft_doc::library::pattern(p).is_some());
+            // The library's patterns, a loaded .pat file's, user-defined lines (_USER) and the
+            // Hatch Creation tab's gradient tiles (GR_LINEAR…).
+            let p = v.as_str().map(|t| t.trim().to_ascii_uppercase()).filter(|p| {
+                cadcraft_doc::library::pattern(p).is_some()
+                    || p == cadcraft_doc::USER_PATTERN
+                    || crate::cmd::hatch::GRADIENT_TILES.iter().any(|(t, _)| t == p)
+                    || crate::cmd::hatch::is_user_pattern(p)
+            });
             let p = p.ok_or_else(|| bad("a hatch pattern name".into()))?;
             s.doc_mut()?.header.set_str(name, &p);
         }

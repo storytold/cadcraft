@@ -771,6 +771,21 @@ pub struct Hatch {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pattern_lines: Vec<crate::library::PatternLine>,
 }
+/// A user-defined hatch pattern's name (parallel lines at the hatch's spacing), as drawing files
+/// store it (DXF 2 `_USER`, 76 = 0).
+pub const USER_PATTERN: &str = "_USER";
+
+impl Hatch {
+    /// A user-defined pattern: parallel lines, `scale` apart.
+    pub fn is_user(&self) -> bool {
+        !self.solid && self.pattern.eq_ignore_ascii_case(USER_PATTERN)
+    }
+    /// A user-defined pattern drawn with a second, crossing family of lines (DXF 77).
+    pub fn is_double(&self) -> bool {
+        self.is_user() && self.pattern_lines.len() == 2
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Gradient {

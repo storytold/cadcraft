@@ -158,7 +158,7 @@ pub(super) fn transparency_value(t: Transparency) -> Value {
 }
 
 /// "ByLayer", "ByBlock" or a percentage 0..=90 (a number, or a string such as "50" or "50%").
-fn parse_transparency(v: &Value) -> Option<Transparency> {
+pub(crate) fn parse_transparency(v: &Value) -> Option<Transparency> {
     let pct = match v.as_str() {
         Some(s) if s.trim().eq_ignore_ascii_case("bylayer") => return Some(Transparency::ByLayer),
         Some(s) if s.trim().eq_ignore_ascii_case("byblock") => return Some(Transparency::ByBlock),
