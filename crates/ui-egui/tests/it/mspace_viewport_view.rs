@@ -37,6 +37,7 @@ fn harness(clipped: bool) -> Harness<'static, CadApp> {
             layer_colors: Vec::new(),
             clip,
             on: true,
+            twist: 0.0,
         }),
     )
     .unwrap();
