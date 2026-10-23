@@ -411,7 +411,9 @@ fn copy_and_rotate_drag_as_a_transform_of_the_selection() {
     assert!(d.matrix.apply(Vec2::new(1.0, 0.0)).near(Vec2::new(-1.0, 0.0), 1e-9));
     assert_eq!(extra.len(), 2, "the base-to-cursor line and the text");
     let EntityKind::Text(t) = &extra[1].kind else { panic!("expected the text") };
-    assert!(t.insert.xy().near(Vec2::new(-2.0, 2.0), 1e-9) && t.rotation.abs() < 1e-9, "mirrored, still reading left to right");
+    // Readable, in the box its mirror image would occupy: it starts at -(2 + width) (#1169).
+    let w = cadcraft_render::place_text_entity(s.doc().unwrap(), t, "A").1.width();
+    assert!(t.insert.xy().near(Vec2::new(-2.0 - w, 2.0), 1e-9) && t.rotation.abs() < 1e-9, "mirrored, still reading left to right: {:?}", t.insert);
 
     // PASTECLIP drags the clipboard.
     let mut s = Session::new();

@@ -433,9 +433,8 @@ fn attribs(d: &Drawing, ins: &Insert, values: &[(String, String)]) -> Vec<Attrib
     for (h, value) in values {
         let def = Handle::parse_hex(h).and_then(|h| blk.entities.get(h));
         let Some(EntityKind::AttDef(ad)) = def.map(|e| &e.kind) else { continue };
-        let mut k = EntityKind::Text(ad.text.clone());
-        k.transform(&m);
-        let EntityKind::Text(mut text) = k else { continue };
+        // Placed by the content's matrix alone, not measured for a mirror image (`Text::placed`).
+        let mut text = ad.text.placed(&m);
         text.value = value.clone();
         out.push(Attrib {
             tag: ad.tag.clone(),

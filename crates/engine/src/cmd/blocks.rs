@@ -228,12 +228,9 @@ pub(crate) fn insert_with(
             if ad.constant {
                 continue;
             }
-            let mut t = ad.text.clone();
-            let mut k = EntityKind::Text(t.clone());
-            k.transform(&m);
-            if let EntityKind::Text(tt) = k {
-                t = tt;
-            }
+            // The attribute is placed by the block's matrix whatever value it takes: a mirrored
+            // block leaves its rotation alone, it is not measured for a mirror image (see `Text::placed`).
+            let mut t = ad.text.placed(&m);
             t.value = attedit::value_for(values, &ad.tag).unwrap_or_else(|| ad.text.value.clone());
             ins.attribs.push(Attrib {
                 tag: ad.tag.clone(),
@@ -242,7 +239,7 @@ pub(crate) fn insert_with(
                 constant: false,
                 prompt: String::new(),
                 props: Default::default(),
-                multiline: ad.multiline.as_ref().map(|ml| ml.transformed(&m)),
+                multiline: ad.multiline.as_ref().map(|ml| ml.placed(&m)),
                 modes: ad.modes.for_reference(),
             });
         }

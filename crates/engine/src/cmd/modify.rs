@@ -1,9 +1,10 @@
 //! Modify commands: ERASE, MOVE, COPY, ROTATE, SCALE, MIRROR, OFFSET, TRIM, EXTEND, FILLET,
 //! CHAMFER, EXPLODE, STRETCH, BREAK, JOIN (arrays: `array`; draw order: `draworder`).
 
-use cadcraft_doc::{Entity, EntityKind, Handle, Prim};
+use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, Prim};
 use cadcraft_geom::{
-    Arc, Circle, Line, Mat3, PolyVertex, Polyline, Segment, TAU, Vec2, angle_in_sweep, ccw_sweep, intersect_ext, line_line_infinite, norm_angle,
+    Arc, Bounds2, Circle, Line, Mat3, PolyVertex, Polyline, Segment, TAU, Vec2, angle_in_sweep, ccw_sweep, intersect_ext, line_line_infinite,
+    norm_angle,
 };
 use serde_json::{Value, json};
 
@@ -99,6 +100,22 @@ pub fn specs() -> Vec<CommandSpec> {
 
 // ---------------- core operations ----------------
 
+/// The box a TEXT, ATTDEF or MTEXT draws in, measured with its style's font: what
+/// `EntityKind::transform_measured` asks for when it mirrors a text (empty for anything else).
+fn drawn_text_box(d: &Drawing, k: &EntityKind) -> Bounds2 {
+    match k {
+        EntityKind::Text(t) => cadcraft_render::place_text_entity(d, t, &t.value).1,
+        EntityKind::AttDef(a) => cadcraft_render::place_text_entity(d, &a.text, &a.tag).1,
+        EntityKind::MText(t) => cadcraft_render::layout_mtext_entity(d, t).bounds,
+        _ => Bounds2::EMPTY,
+    }
+}
+
+/// `k` transformed by `m`; a mirrored text takes the box its font measures (#1169).
+pub(crate) fn transform_kind(d: &Drawing, k: &mut EntityKind, m: &Mat3) {
+    k.transform_measured(m, &|t| drawn_text_box(d, t));
+}
+
 pub(crate) fn transform_entities(s: &mut Session, hs: &[Handle], m: &Mat3, copy: bool) -> Result<Vec<Handle>> {
     let d = s.doc_mut()?;
     let mut out = Vec::new();
@@ -108,7 +125,7 @@ pub(crate) fn transform_entities(s: &mut Session, hs: &[Handle], m: &Mat3, copy:
             let Some(e) = d.entity(*h).map(|e| (**e).clone()) else { continue };
             let nh = d.new_handle();
             let mut ne = Entity { handle: nh, ..e };
-            ne.kind.transform(m);
+            transform_kind(d, &mut ne.kind, m);
             if let Some(st) = d.space_mut(&sp) {
                 st.push(ne);
                 out.push(nh);
@@ -118,7 +135,9 @@ pub(crate) fn transform_entities(s: &mut Session, hs: &[Handle], m: &Mat3, copy:
             if locked {
                 continue;
             }
-            d.modify_entity(*h, |e| e.kind.transform(m))?;
+            let Some(mut k) = d.entity(*h).map(|e| e.kind.clone()) else { continue };
+            transform_kind(d, &mut k, m);
+            d.modify_entity(*h, |e| e.kind = k)?;
             out.push(*h);
         }
     }
@@ -2149,7 +2168,7 @@ impl Interactive for SelectThen {
             .filter_map(|h| d.entity(*h))
             .map(|e| {
                 let mut k = e.kind.clone();
-                k.transform(&m);
+                transform_kind(d, &mut k, &m);
                 k
             })
             .collect();
@@ -2185,7 +2204,7 @@ impl Interactive for SelectThen {
             } else if texts < MAX_MIRROR_TEXT_PREVIEW {
                 texts += 1;
                 let mut k = e.kind.clone();
-                k.transform(&matrix);
+                transform_kind(d, &mut k, &matrix);
                 extra.push(k);
             }
         }

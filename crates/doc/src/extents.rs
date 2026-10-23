@@ -75,6 +75,20 @@ fn mtext_box(t: &crate::MText) -> Bounds2 {
     Bounds2::from_points(pts)
 }
 
+/// The approximate box a TEXT, ATTDEF or MTEXT draws in, for callers without a renderer (what
+/// [`EntityKind::transform`](crate::EntityKind::transform) mirrors text into); empty for any other
+/// entity.
+pub(crate) fn text_kind_box(k: &EntityKind) -> Bounds2 {
+    match k {
+        EntityKind::Text(t) if blank(&t.value) => Bounds2::EMPTY,
+        EntityKind::MText(t) if blank(&t.contents) => Bounds2::EMPTY,
+        EntityKind::Text(t) => text_box(t, t.value.chars().count()),
+        EntityKind::AttDef(a) => text_box(&a.text, a.tag.chars().count()),
+        EntityKind::MText(t) => mtext_box(t),
+        _ => Bounds2::EMPTY,
+    }
+}
+
 pub fn entity_bounds(d: &Drawing, e: &Entity, depth: usize) -> Bounds2 {
     // A top-level annotative object measures as it draws at the current annotation scale.
     if depth == 0 {
@@ -96,11 +110,7 @@ pub fn entity_bounds(d: &Drawing, e: &Entity, depth: usize) -> Bounds2 {
 fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<(&'a str, usize), Bounds2>) -> Bounds2 {
     match &e.kind {
         EntityKind::Table(t) if t.is_broken() => t.bounds(),
-        EntityKind::Text(t) if blank(&t.value) => Bounds2::EMPTY,
-        EntityKind::MText(t) if blank(&t.contents) => Bounds2::EMPTY,
-        EntityKind::Text(t) => text_box(t, t.value.chars().count()),
-        EntityKind::AttDef(a) => text_box(&a.text, a.tag.chars().count()),
-        EntityKind::MText(t) => mtext_box(t),
+        EntityKind::Text(_) | EntityKind::AttDef(_) | EntityKind::MText(_) => text_kind_box(&e.kind),
         EntityKind::Insert(ins) => {
             if depth >= MAX_BLOCK_DEPTH {
                 return Bounds2::EMPTY;

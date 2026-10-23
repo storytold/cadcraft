@@ -88,9 +88,8 @@ fn synced(blk: &Block, defs: &[&Attrib], ins: &Insert) -> Vec<Attrib> {
     let m = ins.transform(blk.base.xy());
     defs.iter()
         .map(|ad| {
-            let mut k = EntityKind::Text(ad.text.clone());
-            k.transform(&m);
-            let mut t = if let EntityKind::Text(t) = k { t } else { ad.text.clone() };
+            // As in `insert_with`: the attribute follows the block, it is not measured.
+            let mut t = ad.text.placed(&m);
             t.value = ins
                 .attribs
                 .iter()
@@ -104,7 +103,7 @@ fn synced(blk: &Block, defs: &[&Attrib], ins: &Insert) -> Vec<Attrib> {
                 constant: false,
                 prompt: String::new(),
                 props: Default::default(),
-                multiline: ad.multiline.as_ref().map(|ml| ml.transformed(&m)),
+                multiline: ad.multiline.as_ref().map(|ml| ml.placed(&m)),
                 modes: ad.modes.for_reference(),
             }
         })
