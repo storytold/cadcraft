@@ -31,8 +31,14 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
                     std::iter::once(e),
                     &cadcraft_render::Options { tolerance: tol, text: false, ..Default::default() },
                 );
+                // Picked on what they draw (their text inside its box, see `in_text`), not on their
+                // bounding box: its edges run through empty space, out to a dimension's definition
+                // points or a block's farthest object. Only something that draws nothing but text
+                // keeps the box.
                 v = list.prims.iter().map(|p| list.points(p).to_vec()).collect();
-                v.push(vec![c[0], c[1], c[2], c[3], c[0]]);
+                if v.is_empty() {
+                    v.push(vec![c[0], c[1], c[2], c[3], c[0]]);
+                }
             }
             v
         }
@@ -130,8 +136,28 @@ fn in_text(d: &Drawing, e: &Entity, p: Vec2) -> bool {
         EntityKind::MLeader(m) => {
             m.text.as_ref().is_some_and(|t| in_box(cadcraft_render::layout_mtext_entity(d, t).strokes.into_iter().flatten(), t.rotation, p))
         }
+        // A block reference's attributes, and the text of its block, inside their boxes.
+        EntityKind::Insert(ins) => {
+            let attrib = ins.attribs.iter().filter(|a| !a.invisible).any(|a| match a.multiline_text() {
+                Some(t) => in_box(cadcraft_render::layout_mtext_entity(d, &t).strokes.into_iter().flatten(), t.rotation, p),
+                None => entity_bounds(d, &Entity::new(e.handle, EntityKind::Text(a.text.clone())), 0).contains(p),
+            });
+            attrib || in_block_text(d, ins, p)
+        }
         _ => false,
     }
+}
+
+/// Whether `p` is inside the box of a shown text of block reference `ins`'s block (its own
+/// objects, not those of nested blocks).
+fn in_block_text(d: &Drawing, ins: &cadcraft_doc::Insert, p: Vec2) -> bool {
+    let Some(blk) = d.block(&ins.block) else { return false };
+    let Some(q) = ins.transform(blk.base.xy()).inverse().map(|m| m.apply(p)) else { return false };
+    blk.entities.iter().filter(|be| be.common.visible).any(|be| match &be.kind {
+        EntityKind::MText(t) => in_box(cadcraft_render::layout_mtext_entity(d, t).strokes.into_iter().flatten(), t.rotation, q),
+        EntityKind::Text(_) => entity_bounds(d, be, 0).contains(q),
+        _ => false,
+    })
 }
 
 /// Whether `p` is inside the box around `pts` turned by `angle` (the box of text set at `angle`).

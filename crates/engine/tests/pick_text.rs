@@ -123,3 +123,37 @@ fn a_dimension_drawn_from_its_block_is_picked_on_the_block_text() {
     assert_eq!(pick(d, &Space::Model, mid, 0.01), Some(dim), "on the block's text");
     assert_eq!(pick(d, &Space::Model, Vec2::new(50.0, 33.0), 0.01), None, "not where the dimension would have set it");
 }
+
+/// Dimensions and block references are picked on what they draw (and their text inside its box),
+/// not along the edges of their bounding box, which run through empty space: a dimension's box
+/// reaches out to its definition points, so its bottom edge lay on the line between them.
+#[test]
+fn bounding_box_edges_pick_nothing() {
+    use cadcraft_engine::doc::entity_bounds;
+    let mut s = Session::new();
+    s.execute("dimlinear", &json!({"p1": [0, 0], "p2": [100, 0], "at": [50, 30], "text": "16.00"})).unwrap();
+    let d = s.doc().unwrap();
+    let dim = d.model.iter().last().unwrap();
+    let b = entity_bounds(d, dim, 0);
+    let (h, mid_x) = (dim.handle, (b.min.x + b.max.x) / 2.0);
+    let d = s.doc().unwrap();
+    assert_eq!(pick(d, &Space::Model, Vec2::new(mid_x, b.min.y), 0.01), None, "bottom edge, between the definition points");
+    assert_eq!(pick(d, &Space::Model, Vec2::new(mid_x, 30.0), 0.01), Some(h), "the dimension line still is");
+
+    // A block of a diagonal line and a text, and a reference with an attribute.
+    let mut s = Session::new();
+    let l = s.execute("line", &json!({"points": [[0, 0], [10, 10]]})).unwrap()["handles"][0].clone();
+    let t = s.execute("text", &json!({"at": [20, 0], "height": 2, "text": "TAG"})).unwrap()["handle"].clone();
+    let a = s.execute("attdef", &json!({"tag": "ID", "prompt": "Id", "default": "A1", "at": [20, 5], "height": 2})).unwrap()["handle"].clone();
+    s.execute("block", &json!({"name": "Mark", "base": [0, 0], "handles": [l, t, a]})).unwrap();
+    let r = s.execute("insert", &json!({"name": "Mark", "at": [100, 100]})).unwrap();
+    let h = Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap();
+    let d = s.doc().unwrap();
+    let b = entity_bounds(d, d.entity(h).unwrap(), 0);
+    // On the box's bottom edge, away from the line: nothing.
+    assert_eq!(pick(d, &Space::Model, Vec2::new(108.0, b.min.y), 0.01), None);
+    // On the line, and inside the block's text and the attribute: the reference.
+    assert_eq!(pick(d, &Space::Model, Vec2::new(105.0, 105.0), 0.01), Some(h));
+    assert_eq!(pick(d, &Space::Model, Vec2::new(121.5, 100.8), 0.01), Some(h), "the block's text");
+    assert_eq!(pick(d, &Space::Model, Vec2::new(121.0, 105.8), 0.01), Some(h), "the attribute");
+}
