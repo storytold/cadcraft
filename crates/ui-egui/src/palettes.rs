@@ -2,6 +2,7 @@
 
 use cadcraft_color::{Color, Rgb};
 use cadcraft_doc::EntityKind;
+use egui::containers::menu::{MenuButton, MenuConfig};
 use egui::{Color32, Rect, Sense, Stroke, pos2, vec2};
 use serde_json::{Value, json};
 
@@ -594,7 +595,7 @@ fn pick_menu(ui: &mut egui::Ui, current: &str, items: impl IntoIterator<Item = S
     // Names are the drawing's own; only the ByLayer/ByBlock keywords are translated.
     let shown = |s: &str| if ["ByLayer", "ByBlock"].contains(&s) { crate::i18n::t(s).to_string() } else { s.to_string() };
     let mut out = None;
-    ui.menu_button(shown(current), |ui| {
+    MenuButton::new(shown(current)).config(MenuConfig::new().close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)).ui(ui, |ui| {
         crate::dropdown::list(ui, |ui| {
             for it in items {
                 if ui.button(shown(&it)).clicked() {
@@ -676,15 +677,18 @@ fn properties_header(app: &mut CadApp, ui: &mut egui::Ui) {
         let resp = ui.allocate_ui(vec2(w, 20.0), |ui| value_box(ui, &header, true, count > 0)).inner;
         if count > 0 {
             // Narrow the selection to one object type.
-            egui::Popup::from_toggle_button_response(&resp).width(w - 10.0).close_behavior(egui::PopupCloseBehavior::CloseOnClick).show(|ui| {
-                crate::dropdown::list(ui, |ui| {
-                    for (ty, hs) in &types {
-                        if ui.button(format!("{} ({})", crate::i18n::t(ty), hs.len())).clicked() {
-                            run = Some(("select", json!({ "handles": hs })));
+            egui::Popup::from_toggle_button_response(&resp).width(w - 10.0).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(
+                |ui| {
+                    crate::dropdown::list(ui, |ui| {
+                        for (ty, hs) in &types {
+                            if ui.button(format!("{} ({})", crate::i18n::t(ty), hs.len())).clicked() {
+                                run = Some(("select", json!({ "handles": hs })));
+                                ui.close();
+                            }
                         }
-                    }
-                });
-            });
+                    });
+                },
+            );
         }
         let tip = if pickadd {
             crate::tl!("Toggle PICKADD (on: picks add to the selection)")
@@ -770,22 +774,24 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
             }
         });
         prop_row(ui, "Lineweight", |ui| {
-            ui.menu_button(crate::i18n::t(&cadcraft_doc::Lineweight::from_dxf(h.i64("CELWEIGHT", -1) as i16).name()), |ui| {
-                crate::dropdown::list(ui, |ui| {
-                    for n in ["ByLayer", "ByBlock", "Default"] {
-                        if ui.button(crate::i18n::t(n)).clicked() {
-                            act("lweight", json!({ "lineweight": n }));
-                            ui.close();
+            MenuButton::new(crate::i18n::t(&cadcraft_doc::Lineweight::from_dxf(h.i64("CELWEIGHT", -1) as i16).name()))
+                .config(MenuConfig::new().close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside))
+                .ui(ui, |ui| {
+                    crate::dropdown::list(ui, |ui| {
+                        for n in ["ByLayer", "ByBlock", "Default"] {
+                            if ui.button(crate::i18n::t(n)).clicked() {
+                                act("lweight", json!({ "lineweight": n }));
+                                ui.close();
+                            }
                         }
-                    }
-                    for v in cadcraft_doc::Lineweight::STANDARD {
-                        if ui.button(format!("{:.2} mm", f64::from(v) / 100.0)).clicked() {
-                            act("lweight", json!({ "lineweight": f64::from(v) / 100.0 }));
-                            ui.close();
+                        for v in cadcraft_doc::Lineweight::STANDARD {
+                            if ui.button(format!("{:.2} mm", f64::from(v) / 100.0)).clicked() {
+                                act("lweight", json!({ "lineweight": f64::from(v) / 100.0 }));
+                                ui.close();
+                            }
                         }
-                    }
+                    });
                 });
-            });
         });
         prop_row(ui, "Transparency", |ui| unavailable(ui, "ByLayer"));
         prop_row(ui, "Thickness", |ui| {
@@ -909,7 +915,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
         }
     });
     prop_row(ui, "Layer", |ui| {
-        ui.menu_button(layer.clone(), |ui| {
+        MenuButton::new(layer.clone()).config(MenuConfig::new().close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)).ui(ui, |ui| {
             crate::dropdown::list(ui, |ui| {
                 for l in &layers {
                     if ui.button(l).clicked() {
@@ -936,7 +942,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
         }
     });
     prop_row(ui, "Lineweight", |ui| {
-        ui.menu_button(crate::i18n::t(&lw), |ui| {
+        MenuButton::new(crate::i18n::t(&lw)).config(MenuConfig::new().close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)).ui(ui, |ui| {
             crate::dropdown::list(ui, |ui| {
                 for n in ["ByLayer", "ByBlock", "Default"] {
                     if ui.button(crate::i18n::t(n)).clicked() {

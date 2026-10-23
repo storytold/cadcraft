@@ -544,22 +544,24 @@ fn row(
                 }
                 if !library.is_empty() {
                     ui.separator();
-                    ui.menu_button("Load...", |ui| {
-                        crate::dropdown::list(ui, |ui| {
-                            for n in library {
-                                if ui.button(n).clicked() {
-                                    actions.push(("linetype", json!({ "load": n })));
-                                    actions.push(("layer.set", json!({ "name": name, "linetype": n })));
+                    egui::containers::menu::SubMenuButton::new("Load...")
+                        .config(egui::containers::menu::MenuConfig::new().close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside))
+                        .ui(ui, |ui| {
+                            crate::dropdown::list(ui, |ui| {
+                                for n in library {
+                                    if ui.button(n).clicked() {
+                                        actions.push(("linetype", json!({ "load": n })));
+                                        actions.push(("layer.set", json!({ "name": name, "linetype": n })));
+                                        ui.close();
+                                    }
+                                }
+                                ui.separator();
+                                if ui.button(crate::tl!("Load all")).clicked() {
+                                    actions.push(("linetype", json!({ "load": "*" })));
                                     ui.close();
                                 }
-                            }
-                            ui.separator();
-                            if ui.button(crate::tl!("Load all")).clicked() {
-                                actions.push(("linetype", json!({ "load": "*" })));
-                                ui.close();
-                            }
+                            });
                         });
-                    });
                 }
             });
         });

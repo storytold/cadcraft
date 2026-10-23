@@ -1,9 +1,9 @@
 //! Popup regressions exercise real property/layer controls, including selection and row toggles.
 
-use super::{layers_section, pick_menu, properties_section};
+use super::{layers_section, pick_menu, properties_header, properties_section};
 use crate::{CadApp, Services};
 use cadcraft_engine::Session;
-use egui::{Rect, Shape, vec2};
+use egui::{Rect, Shape, pos2, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use serde_json::json;
@@ -41,6 +41,7 @@ fn selected_entity_layer_menu_scrolls_to_its_last_layer() {
     h.run_steps(4);
     h.get_by_label("Property Layer 00").click();
     h.run_steps(3);
+    click_menu_scrollbar(&mut h, "Property Layer 59");
     let last = "Property Layer 59";
     h.get_by_label(last).scroll_to_me();
     h.run_steps(4);
@@ -80,11 +81,32 @@ fn painted_rect(h: &Harness<'_, CadApp>, text: &str) -> Rect {
     painted.iter().find(|(t, at, clip)| t == text && clip.contains_rect(*at)).unwrap_or_else(|| panic!("{text} is not visible: {painted:?}")).1
 }
 
-fn click_at(h: &Harness<'_, CadApp>, pos: egui::Pos2) {
+fn click_at<State>(h: &Harness<'_, State>, pos: egui::Pos2) {
     h.hover_at(pos);
     for pressed in [true, false] {
         h.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
     }
+}
+
+/// Exercise real popup callers, not just the list-body harness. Solid bars give a stable hit target.
+fn click_menu_scrollbar<State>(h: &mut Harness<'_, State>, last: &str) {
+    h.ctx.global_style_mut(|style| style.spacing.scroll = egui::style::ScrollStyle::solid());
+    h.run_steps(6);
+    let popup = h.ctx.memory(|memory| {
+        let popups: Vec<_> = memory.areas().visible_layer_ids().into_iter().filter(|layer| layer.order == egui::Order::Foreground).collect();
+        assert_eq!(popups.len(), 1);
+        memory.area_rect(popups[0].id).unwrap()
+    });
+    let margin = egui::Frame::popup(&h.ctx.global_style()).total_margin();
+    let scroll = egui::style::ScrollStyle::solid();
+    let x = popup.right() - margin.right - scroll.bar_outer_margin - scroll.bar_width / 2.0;
+    let before = h.get_by_label(last).rect().top();
+    for y in [popup.top() + margin.top + 4.0, popup.center().y] {
+        click_at(h, pos2(x, y));
+        h.run_steps(4);
+        assert!(h.query_by_label(last).is_some(), "scrollbar clicks must not dismiss the menu");
+    }
+    assert!(h.get_by_label(last).rect().top() < before - 1.0, "track click must scroll the list");
 }
 
 #[test]
@@ -99,6 +121,7 @@ fn current_property_layer_menu_can_select_its_last_layer() {
     h.run_steps(4);
     h.get_by_label("Layer 00").click();
     h.run_steps(4);
+    click_menu_scrollbar(&mut h, "Layer 59");
     h.get_by_label("Layer 59").scroll_to_me();
     h.run_steps(4);
     painted_rect(&h, "Layer 59");
@@ -175,6 +198,7 @@ fn property_linetype_menus_select_the_last_loaded_type() {
         h.run_steps(4);
         h.get_by_label("Dash 00").click();
         h.run_steps(4);
+        click_menu_scrollbar(&mut h, "Dash 59");
         h.get_by_label("Dash 59").scroll_to_me();
         h.run_steps(4);
         painted_rect(&h, "Dash 59");
@@ -192,6 +216,64 @@ fn property_linetype_menus_select_the_last_loaded_type() {
 }
 
 #[test]
+fn property_lineweight_menus_allow_scrollbar_clicks_and_close_on_selection() {
+    for selected in [false, true] {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        app.run("lweight", json!({ "lineweight": 0.25 })).unwrap();
+        if selected {
+            let line = app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+            app.run("select", json!({ "handles": [line["handles"][0].clone()] })).unwrap();
+        }
+        let mut h = Harness::builder().with_size(vec2(400.0, 600.0)).build_ui_state(
+            |ui, app: &mut CadApp| {
+                app.logic(&ui.ctx().clone());
+                properties_section(app, ui);
+            },
+            app,
+        );
+        h.run_steps(4);
+        h.get_by_label("0.25 mm").click();
+        h.run_steps(4);
+        click_menu_scrollbar(&mut h, "2.11 mm");
+        h.get_by_label("2.11 mm").scroll_to_me();
+        h.run_steps(4);
+        h.get_by_label("2.11 mm").click();
+        h.run_steps(4);
+        let doc = h.state().session.doc().unwrap();
+        if selected {
+            assert_eq!(doc.entity(h.state().session.selection()[0]).unwrap().common.lineweight.to_dxf(), 211);
+            assert_eq!(doc.header.i64("CELWEIGHT", -1), 25);
+        } else {
+            assert_eq!(doc.header.i64("CELWEIGHT", -1), 211);
+        }
+        assert!(h.query_by_label("0.53 mm").is_none(), "selection closes the menu");
+    }
+}
+
+#[test]
+fn object_type_filter_closes_after_narrowing_selection() {
+    let mut app = CadApp::new(Session::default(), Services::default());
+    let line = app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+    let circle = app.run("circle", json!({ "center": [0, 0], "radius": 5 })).unwrap();
+    app.run("select", json!({ "handles": [line["handles"][0].clone(), circle["handle"].clone()] })).unwrap();
+    let mut h = Harness::builder().with_size(vec2(400.0, 600.0)).build_ui_state(
+        |ui, app: &mut CadApp| {
+            app.logic(&ui.ctx().clone());
+            properties_header(app, ui);
+        },
+        app,
+    );
+    h.run_steps(4);
+    click_at(&h, painted_rect(&h, "All (2)").center());
+    h.run_steps(4);
+    h.get_by_label("Line (1)").click();
+    h.run_steps(4);
+    assert_eq!(h.state().session.selection().len(), 1);
+    assert_eq!(h.state().session.selection()[0].hex(), line["handles"][0].as_str().unwrap());
+    assert!(h.query_by_label("Circle (1)").is_none(), "selection closes the filter");
+}
+
+#[test]
 fn pick_menu_keeps_short_lists_small_and_selects_from_long_lists() {
     for count in [3, 60] {
         let mut h = Harness::builder().with_size(vec2(300.0, 200.0)).build_ui_state(
@@ -205,11 +287,22 @@ fn pick_menu_keeps_short_lists_small_and_selects_from_long_lists() {
         h.get_by_label("Choose").click();
         h.run_steps(5);
         let last = format!("Item {:02}", count - 1);
+        if count == 60 {
+            click_menu_scrollbar(&mut h, &last);
+            assert_eq!(h.state(), "Choose");
+        }
         h.get_by_label(&last).scroll_to_me();
         h.run_steps(4);
         h.get_by_label(&last).click();
         h.run_steps(4);
         assert_eq!(h.state(), &last);
         assert!(h.query_by_label("Item 00").is_none());
+        h.get_by_label(&last).click();
+        h.run_steps(4);
+        assert!(h.query_by_label("Item 00").is_some());
+        click_at(&h, pos2(290.0, 190.0));
+        h.run_steps(4);
+        assert!(h.query_by_label("Item 00").is_none(), "outside click closes the menu");
+        assert_eq!(h.state(), &last);
     }
 }

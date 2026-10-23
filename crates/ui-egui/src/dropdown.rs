@@ -2,7 +2,10 @@
 //! to their contents without a scrollbar; long lists scroll within a viewport-bounded height.
 //! This is a list body, not a replacement for popup placement or selection/closing behavior.
 
-/// Show a list inside a popup. The popup may move to fit the viewport, so use the viewport's
+/// Show a list inside a popup. Callers must use `CloseOnClickOutside` and close explicitly on
+/// selection so scrollbar clicks don't dismiss the popup.
+///
+/// The popup may move to fit the viewport, so use the viewport's
 /// height rather than only the space below its anchor. Reset the maximum height each frame so
 /// a popup can grow again after a window resize instead of retaining its previous small size.
 pub(crate) fn list<R>(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui) -> R) -> egui::scroll_area::ScrollAreaOutput<R> {
@@ -48,7 +51,7 @@ mod tests {
         Harness::builder().with_size(size).with_pixels_per_point(scale).build_ui_state(
             |ui, state: &mut State| {
                 let button = ui.button("Choose");
-                let response = egui::Popup::menu(&button).show(|ui| {
+                let response = egui::Popup::menu(&button).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
                     // Solid bars would reserve space if a short list unnecessarily showed a bar.
                     ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
                     if state.bounded {
@@ -92,6 +95,38 @@ mod tests {
             assert!(bounded.state().content.y <= bounded.state().viewport.height() + 1.0);
             assert!(bounded.state().last_clip.contains_rect(bounded.state().last));
         }
+    }
+
+    #[test]
+    fn scrollbar_clicks_keep_the_popup_open_but_outside_clicks_close_it() {
+        let mut h = harness(true, 60, vec2(400.0, 600.0), 1.0);
+        h.get_by_label("Choose").click();
+        h.run_steps(6);
+        let viewport = h.state().viewport;
+        let style = egui::style::ScrollStyle::solid();
+        let x = viewport.right() + style.bar_inner_margin + style.bar_width / 2.0;
+        let before = h.state().last.top();
+        // Click the thumb without dragging, then the track below it.
+        for y in [viewport.top() + 4.0, viewport.center().y] {
+            let pos = egui::pos2(x, y);
+            h.hover_at(pos);
+            for pressed in [true, false] {
+                h.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+            }
+            h.run_steps(4);
+            assert!(h.query_by_label("Choice 59").is_some(), "scrollbar clicks must not close the popup");
+            assert_eq!(h.state().picked, None);
+        }
+        assert!(h.state().last.top() < before - 1.0, "track click must scroll the list");
+        let outside = egui::pos2(390.0, 590.0);
+        assert!(!h.state().popup.contains(outside));
+        h.hover_at(outside);
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton { pos: outside, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+        }
+        h.run_steps(4);
+        assert!(h.query_by_label("Choice 59").is_none(), "outside click closes the menu");
+        assert_eq!(h.state().picked, None);
     }
 
     #[test]

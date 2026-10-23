@@ -149,7 +149,7 @@ pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
                     ui.painter().circle_filled(br.center() + vec2(offset, 0.0), 1.5, t.text);
                 }
                 icons::describe_control(ui, &response, "More toolbar commands", None, false);
-                egui::Popup::menu(&response).show(|ui| {
+                egui::Popup::menu(&response).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
                     crate::dropdown::list(ui, |ui| {
                         for (position, index) in fit.overflow.iter().enumerate() {
                             let Some(group) = TOOLBAR.get(*index) else { continue };
