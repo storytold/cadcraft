@@ -72,6 +72,20 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
                 );
                 out.extend(list.prims.iter().map(|p| list.points(p).to_vec()));
             }
+            // A wide polyline is drawn as a filled band: it is also hit on the edges of the band's
+            // triangles (its sides, ends, joints and diagonals), as the reference app picks it.
+            if let EntityKind::LwPolyline(p) = kind
+                && (p.const_width > 0.0 || p.vertices.iter().any(|v| v.start_width > 0.0 || v.end_width > 0.0))
+            {
+                let list = cadcraft_render::build_entities(
+                    d,
+                    std::iter::once(e),
+                    &cadcraft_render::Options { tolerance: tol, text: false, ..Default::default() },
+                );
+                for prim in list.prims.iter().filter(|p| p.kind == cadcraft_render::Kind::Tris) {
+                    out.extend(list.points(prim).as_chunks::<3>().0.iter().map(|&[a, b, c]| vec![a, b, c, a]));
+                }
+            }
             out
         }
     }
@@ -633,5 +647,50 @@ mod hatch_pattern_pick_tests {
         // Ignore style fills over the island.
         let d = solid_hatch(loops(), 2);
         assert!(pick(&d, &Space::Model, Vec2::new(5.0, 5.0), 0.05).is_some());
+    }
+}
+
+#[cfg(test)]
+mod wide_polyline_pick_tests {
+    use super::*;
+    use cadcraft_doc::{Common, LwPolyline};
+    use cadcraft_geom::PolyVertex;
+
+    fn pline(verts: &[(f64, f64, f64, f64)], const_width: f64) -> Drawing {
+        let vertices =
+            verts.iter().map(|&(x, y, start_width, end_width)| PolyVertex { start_width, end_width, ..PolyVertex::new(Vec2::new(x, y)) }).collect();
+        let mut d = Drawing::new_metric();
+        let p = LwPolyline { vertices, closed: false, const_width, elevation: 0.0, plinegen: false };
+        d.add(&Space::Model, Common::default(), EntityKind::LwPolyline(p)).unwrap();
+        d
+    }
+
+    #[test]
+    fn wide_polyline_is_picked_on_the_edges_of_its_band() {
+        // #1176: PLINE 0,0 W 10 10 50,0 50,50.
+        let d = pline(&[(0.0, 0.0, 0.0, 0.0), (50.0, 0.0, 0.0, 0.0), (50.0, 50.0, 0.0, 0.0)], 10.0);
+        let at = |x: f64, y: f64| pick(&d, &Space::Model, Vec2::new(x, y), 0.25);
+        for (x, y) in [(25.0, 5.0), (25.0, -5.0), (45.0, 25.0), (55.0, 25.0), (0.0, 3.0), (52.0, 50.0)] {
+            assert!(at(x, y).is_some(), "edge of the band at {x},{y}");
+        }
+        // Just outside the band, farther than the aperture from its edge.
+        for (x, y) in [(25.0, 5.5), (25.0, -5.5), (44.5, 25.0), (55.5, 25.0)] {
+            assert!(at(x, y).is_none(), "outside the band at {x},{y}");
+        }
+        // A crossing box touching only the edge of the band selects it; one just above does not.
+        let touch = Bounds2::new(Vec2::new(20.0, 4.9), Vec2::new(30.0, 6.0));
+        assert_eq!(select_window(&d, &Space::Model, touch, true).len(), 1);
+        let above = Bounds2::new(Vec2::new(20.0, 5.5), Vec2::new(30.0, 6.0));
+        assert!(select_window(&d, &Space::Model, above, true).is_empty());
+    }
+
+    #[test]
+    fn tapered_polyline_is_picked_on_the_edges_of_its_band() {
+        // 0 wide at 0,0 to 10 wide at 50,0: 5 wide (2.5 each side) halfway.
+        let d = pline(&[(0.0, 0.0, 0.0, 10.0), (50.0, 0.0, 0.0, 0.0)], 0.0);
+        let at = |x: f64, y: f64| pick(&d, &Space::Model, Vec2::new(x, y), 0.25);
+        assert!(at(25.0, 2.5).is_some());
+        assert!(at(25.0, -2.5).is_some());
+        assert!(at(25.0, 3.0).is_none());
     }
 }
