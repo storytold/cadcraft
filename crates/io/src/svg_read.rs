@@ -835,8 +835,12 @@ fn parse_path(d: &str) -> Result<Vec<Subpath>> {
         };
         let abs = cmd.to_ascii_uppercase();
         let count = match abs {
-            b'M' | b'L' => 2,
-            b'H' | b'V' | b'T' => 1,
+            // `T`/`t` (smooth quadratic) takes an (x, y) pair like `M`/`L` — its handler
+            // below reads `args[1]` as the endpoint's y. It was grouped with the
+            // single-value `H`/`V`, so the y was always read as 0 and the real y was
+            // reparsed as a further implicit `T` segment (#944).
+            b'M' | b'L' | b'T' => 2,
+            b'H' | b'V' => 1,
             b'C' => 6,
             b'S' | b'Q' => 4,
             b'A' => 7,

@@ -2201,6 +2201,35 @@ fn svg_path_lines_curves_and_arcs() {
 }
 
 #[test]
+fn svg_path_smooth_quadratic_t_takes_an_xy_pair() {
+    // Regression for #944: `T`/`t` takes an (x, y) endpoint pair (SVG 1.1 §8.3.8),
+    // but the parser's arity table grouped it with the single-value `H`/`V`, so the
+    // endpoint's y was read as 0 and the real y was reparsed as another implicit
+    // `T` segment. The page is 20×10 with Y flipped, so SVG (x, y) lands at
+    // drawing (x, 10 - y).
+    // Absolute: Q ends at SVG (10, 5); T must end at SVG (20, 5) -> drawing (20, 5).
+    let svg = format!("{SVG_PAGE}<path d=\"M0 5 Q5 0 10 5 T20 5\"/></svg>");
+    let d = read(svg.as_bytes(), "t.svg").unwrap();
+    assert_eq!(kinds(&d), ["Spline"]);
+    let spline = first(&d, |k| if let EntityKind::Spline(s) = k { Some(s.clone()) } else { None });
+    assert!(spline.is_valid(), "{spline:?}");
+    // Start + one cubic triple per curve segment (Q, then T): no phantom segment.
+    assert_eq!(spline.control.len(), 7, "{spline:?}");
+    let first_pt = spline.control.first().copied().unwrap_or(Vec2::ZERO);
+    let last_pt = spline.control.last().copied().unwrap_or(Vec2::ZERO);
+    assert!((first_pt - Vec2::new(0.0, 5.0)).len() < 1e-9, "{spline:?}");
+    assert!((last_pt - Vec2::new(20.0, 5.0)).len() < 1e-9, "T endpoint must keep its y, got {last_pt:?} in {spline:?}");
+    // Relative form of the same geometry must land on the same endpoint.
+    let svg = format!("{SVG_PAGE}<path d=\"M0 5 q5 -5 10 0 t10 0\"/></svg>");
+    let d = read(svg.as_bytes(), "t-rel.svg").unwrap();
+    assert_eq!(kinds(&d), ["Spline"]);
+    let spline = first(&d, |k| if let EntityKind::Spline(s) = k { Some(s.clone()) } else { None });
+    assert_eq!(spline.control.len(), 7, "{spline:?}");
+    let last_pt = spline.control.last().copied().unwrap_or(Vec2::ZERO);
+    assert!((last_pt - Vec2::new(20.0, 5.0)).len() < 1e-9, "relative t endpoint, got {last_pt:?} in {spline:?}");
+}
+
+#[test]
 fn svg_group_transforms_apply() {
     let svg = format!("{SVG_PAGE}<g transform=\"translate(5,2)\"><line x1=\"0\" y1=\"0\" x2=\"10\" y2=\"0\"/></g></svg>");
     let d = read(svg.as_bytes(), "t.svg").unwrap();
