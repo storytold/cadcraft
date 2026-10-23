@@ -502,6 +502,12 @@ fn one_u() -> u32 {
     1
 }
 impl Insert {
+    /// The attributes that have a grip of their own (grips 1, 2… after the insertion point), with
+    /// their index in `attribs`: those shown and not locked in position, as AutoCAD offers them.
+    pub fn grip_attribs(&self) -> impl Iterator<Item = (usize, &Attrib)> {
+        self.attribs.iter().enumerate().filter(|(_, a)| !a.invisible && !a.modes.lock_position)
+    }
+
     /// Block-to-world transform (2D part).
     pub fn transform(&self, base: Vec2) -> Mat3 {
         Mat3::translate(self.insert.xy())
@@ -1432,7 +1438,7 @@ impl EntityKind {
             EntityKind::Text(t) => vec![t.justify_point()],
             EntityKind::MText(t) => vec![t.insert.xy()],
             EntityKind::AttDef(a) => vec![a.text.justify_point()],
-            EntityKind::Insert(i) => std::iter::once(i.insert.xy()).chain(i.attribs.iter().map(|a| a.text.justify_point())).collect(),
+            EntityKind::Insert(i) => std::iter::once(i.insert.xy()).chain(i.grip_attribs().map(|(_, a)| a.text.justify_point())).collect(),
             EntityKind::Dimension(d) => vec![d.p13.xy(), d.p14.xy(), d.defpt.xy(), d.text_mid.xy()],
             EntityKind::MLine(m) => m.points(),
             EntityKind::Leader(l) => l.vertices.iter().map(|v| v.xy()).collect(),
