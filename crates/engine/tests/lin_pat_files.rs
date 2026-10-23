@@ -179,3 +179,21 @@ fn hostile_support_files_never_panic() {
     }
     assert!(hatches(&s).is_empty());
 }
+
+#[test]
+fn properties_set_pattern_keeps_a_user_patterns_definition() {
+    let mut s = Session::new();
+    s.execute("rectang", &json!({ "p1": [0, 0], "p2": [10, 10] })).unwrap();
+    s.execute("hatch", &json!({ "points": [[5, 5]], "pattern": "MYGRID", "patternText": PAT })).unwrap();
+    let hx = s.doc().unwrap().model.iter().find(|e| matches!(e.kind, EntityKind::Hatch(_))).unwrap().handle.hex();
+    // Setting the same name again keeps the definition the hatch carries.
+    s.execute("properties.set", &json!({ "handles": [hx], "pattern": "MYGRID" })).unwrap();
+    assert_eq!(hatches(&s).pop().unwrap().pattern_lines.len(), 2);
+    // Another loaded .pat pattern brings its own lines.
+    s.execute("properties.set", &json!({ "handles": [hx], "pattern": "MYSTEPS" })).unwrap();
+    let h = hatches(&s).pop().unwrap();
+    assert_eq!((h.pattern.as_str(), h.pattern_lines.first().map(|l| l.dashes.clone())), ("MYSTEPS", Some(vec![0.25, -0.25])));
+    // A library pattern is drawn from the library, with no lines of its own.
+    s.execute("properties.set", &json!({ "handles": [hx], "pattern": "ANSI31" })).unwrap();
+    assert!(hatches(&s).pop().unwrap().pattern_lines.is_empty());
+}

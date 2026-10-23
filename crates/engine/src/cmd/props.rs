@@ -382,12 +382,10 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
                 }
                 EntityKind::Hatch(h) => {
                     if let Some(v) = str_param(p, "pattern") {
-                        if !h.pattern.eq_ignore_ascii_case(v) {
-                            h.pattern_lines = super::hatch::lines_for(v);
-                        }
                         h.pattern = v.to_ascii_uppercase();
-                        // The old pattern's definition lines no longer apply.
-                        h.pattern_lines.clear();
+                        // A library pattern is drawn from the library; a loaded .pat pattern
+                        // carries its own line families; nothing else is known about the name.
+                        h.pattern_lines = super::hatch::lines_for(&h.pattern);
                         h.solid = h.pattern == "SOLID";
                         if !h.solid {
                             // A named pattern replaces the gradient fill; the renderer draws the gradient first when it is set.
