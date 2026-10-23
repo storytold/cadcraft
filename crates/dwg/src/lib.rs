@@ -125,7 +125,7 @@ mod native {
             ));
         }
         written.map_err(|e| format!("DWG→DXF: {e}"))?;
-        Ok((add_header_vars(out.buf, &doc.header), notes))
+        Ok((add_header_vars(blkref_contexts(&out.buf, false), &doc.header), notes))
     }
 
     /// Most record types named in the skipped-records note.
@@ -523,6 +523,62 @@ mod native {
         }
     }
 
+    /// Block reference annotation contexts (`ACDB_BLKREFOBJECTCONTEXTDATA_CLASS`) as acadrust
+    /// reads and writes them (`to_acadrust`), or back as AutoCAD writes them. AutoCAD's DXF has
+    /// the rotation (50, degrees), insertion point and scales straight after the context's scale
+    /// (340); acadrust 0.6.4 looks for them after an `AcDbBlkRefObjectContextData` marker, with
+    /// the rotation in radians (as DWG holds it), and without the marker reads zeros (an
+    /// annotative reference at scale 0 draws nothing in AutoCAD). Text that isn't UTF-8, or has
+    /// no such context, is returned as it is.
+    pub(crate) fn blkref_contexts(dxf: &[u8], to_acadrust: bool) -> Vec<u8> {
+        const KIND: &str = "ACDB_BLKREFOBJECTCONTEXTDATA_CLASS";
+        const MARKER: &str = "AcDbBlkRefObjectContextData";
+        let Ok(text) = std::str::from_utf8(dxf) else { return dxf.to_vec() };
+        if !text.contains(KIND) {
+            return dxf.to_vec();
+        }
+        let lines: Vec<&str> = text.split('\n').collect();
+        let eol = |l: &str| if l.ends_with('\r') { "\r" } else { "" };
+        let mut out: Vec<String> = Vec::with_capacity(lines.len() + 16);
+        let (mut inside, mut marked) = (false, false);
+        let mut i = 0;
+        while let (Some(&code_line), Some(&value_line)) = (lines.get(i), lines.get(i + 1)) {
+            let (code, value) = (code_line.trim(), value_line.trim_end_matches('\r'));
+            if code == "0" {
+                inside = value.trim() == KIND;
+                marked = false;
+            }
+            let mut value = value.to_string();
+            if inside {
+                if code == "100" && value.trim() == MARKER {
+                    marked = true;
+                    i += 2;
+                    if !to_acadrust {
+                        continue;
+                    }
+                    out.push(code_line.to_string());
+                    out.push(value_line.to_string());
+                    continue;
+                }
+                if code == "50" {
+                    if to_acadrust && !marked {
+                        out.push(format!("100{}", eol(code_line)));
+                        out.push(format!("{MARKER}{}", eol(value_line)));
+                        marked = true;
+                    }
+                    if let Ok(a) = value.trim().parse::<f64>() {
+                        value = if to_acadrust { a.to_radians() } else { a.to_degrees() }.to_string();
+                    }
+                }
+            }
+            out.push(code_line.to_string());
+            out.push(format!("{value}{}", eol(value_line)));
+            i += 2;
+        }
+        out.extend(lines.get(i..).unwrap_or(&[]).iter().map(|l| (*l).to_string()));
+        out.join("\n").into_bytes()
+    }
+
     fn convert(dxf: &[u8], version: Option<acadrust::DxfVersion>) -> Result<Vec<u8>, String> {
         // Reject a pathologically large DXF before handing it to the third-party decoder, which
         // allocates tables and section buffers from the input's declared sizes and cannot be
@@ -535,7 +591,7 @@ mod native {
                 mb(Limits::DEFAULT.max_dxf_bytes as u64)
             ));
         }
-        let data = dxf.to_vec();
+        let data = blkref_contexts(dxf, true);
         let mut doc = std::panic::catch_unwind(move || acadrust::DxfReader::from_reader(Cursor::new(data)).and_then(|r| r.read()))
             .map_err(|_| "the DXF→DWG conversion failed".to_string())?
             .map_err(|e| format!("DXF: {e}"))?;

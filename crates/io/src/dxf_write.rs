@@ -192,7 +192,7 @@ fn hatch_reactors(d: &Drawing) -> HashMap<Handle, Vec<String>> {
     out
 }
 
-/// `AcadAnnotative` xdata marking an annotative style.
+/// `AcadAnnotative` xdata marking an annotative style or block.
 fn annotative_xdata(w: &mut W) {
     w.s(1001, "AcadAnnotative");
     w.s(1000, "AnnotativeData");
@@ -2267,10 +2267,16 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
         w.s(100, "AcDbBlockTableRecord");
         w.s(2, name);
         w.s(340, layout.unwrap_or("0"));
-        // User blocks: insertion units (70) and explodability (280).
+        // User blocks: insertion units (70), explodability (280), uniform scaling (281) and
+        // whether references are annotative (`AcadAnnotative` xdata: without it AutoCAD scales
+        // the references by their units instead of the annotation scale).
         if let Some(b) = blk {
             w.i(70, i64::from(b.units));
             w.i(280, i64::from(b.explodable));
+            w.i(281, i64::from(b.scale_uniformly));
+            if b.annotative {
+                annotative_xdata(w);
+            }
             if let Some(a) = &b.array {
                 w.s(1001, dxf_ext::APP);
                 w.xdata(dxf_ext::array_xdata(a));

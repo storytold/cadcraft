@@ -969,6 +969,15 @@ fn native_gradient(tags: &[Tag]) -> Option<Gradient> {
     Some(g)
 }
 
+/// A block record's properties (see [`Rx::block_props`]).
+#[derive(Clone, Copy, Default)]
+struct BlockProps {
+    units: u8,
+    explodable: bool,
+    scale_uniformly: bool,
+    annotative: bool,
+}
+
 /// Handle maps and references gathered while reading.
 #[derive(Default)]
 struct Rx {
@@ -978,8 +987,9 @@ struct Rx {
     brs: HashMap<String, String>,
     /// LTYPE record handle (upper case) → linetype name (DIMLTYPE, DIMLTEX1, DIMLTEX2).
     ltypes: HashMap<String, String>,
-    /// Upper-case block name → (insertion units, explodable) from its BLOCK_RECORD.
-    block_props: HashMap<String, (u8, bool)>,
+    /// Upper-case block name → its BLOCK_RECORD's properties: units (70), explodable (280),
+    /// scale uniformly (281) and annotative (`AcadAnnotative` xdata).
+    block_props: HashMap<String, BlockProps>,
     /// Upper-case names of anonymous `*T` blocks drawn by ACAD_TABLE entities.
     table_blocks: std::collections::HashSet<String>,
     /// Upper-case block names used by INSERTs.
@@ -1422,7 +1432,13 @@ fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
             }
             "BLOCK_RECORD" => {
                 let units = t.i(70).and_then(|u| u8::try_from(u).ok()).unwrap_or(0);
-                rx.block_props.insert(n.to_ascii_uppercase(), (units, t.i(280).unwrap_or(1) != 0));
+                let props = BlockProps {
+                    units,
+                    explodable: t.i(280).unwrap_or(1) != 0,
+                    scale_uniformly: t.i(281).unwrap_or(0) != 0,
+                    annotative: annotative(tg),
+                };
+                rx.block_props.insert(n.to_ascii_uppercase(), props);
                 if let Some(a) = crate::dxf_ext::read_array(tg) {
                     rx.block_arrays.insert(n.to_ascii_uppercase(), a);
                 }
@@ -1823,8 +1839,8 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
         let mut b = Block::new(&name);
         b.base = base;
         b.description = description;
-        if let Some(&(units, explodable)) = rx.block_props.get(&up) {
-            (b.units, b.explodable) = (units, explodable);
+        if let Some(p) = rx.block_props.get(&up) {
+            (b.units, b.explodable, b.scale_uniformly, b.annotative) = (p.units, p.explodable, p.scale_uniformly, p.annotative);
         }
         if xref & 4 != 0 {
             b.xref_path = Some(String::new());
