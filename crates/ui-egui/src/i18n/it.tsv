@@ -1242,6 +1242,7 @@ menu	Modify	Edita
 	Search for pattern	Cerca modello
 	Run Script...	Esegui script...
 	Select closed objects (regions, closed polylines, circles).	Selezionare oggetti chiusi (regioni, polilinee chiuse, cerchi).
+	Empty	Vuoto
 	Type an alias name.	Digitare un nome di alias.
 	Choose the command the alias starts.	Scegliere il comando che l'alias avvia.
 	{command} is an unknown command.	{command} è un comando sconosciuto.
