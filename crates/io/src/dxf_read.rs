@@ -398,9 +398,13 @@ fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_left: &mut usi
             // is the mirrored point, a negative x scale, the opposite rotation and a negative column
             // spacing. Noise of up to 1e-3 in the extrusion's x/y moves the projection by ~1e-7 of the
             // size, so it still counts as mirrored. A truly tilted extrusion (block plane not parallel
-            // to XY) needs the full 3D block transform, which Insert cannot hold; it is left as read.
+            // to XY) needs the full 3D block transform, which Insert cannot hold. Its insertion point
+            // and direction are still mapped to the WCS (the block is drawn flat there, turned to the
+            // projected direction): read as WCS, the OCS point of a block in a drawing far from the
+            // origin lands millions of units away and the extents take it in.
             let n = c.extrusion;
             let mirrored = n.z < 0.0 && n.x.hypot(n.y) <= 1e-3 * n.z.abs();
+            let tilted = !mirrored && n.x.hypot(n.y) > 1e-3 * n.z.abs();
             let mut p = t.p(10);
             let mut scale = Vec3::new(t.fd(41, 1.0), t.fd(42, 1.0), t.fd(43, 1.0));
             let mut rotation = t.fd(50, 0.0).to_radians();
@@ -410,6 +414,12 @@ fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_left: &mut usi
                 scale.x = -scale.x;
                 rotation = -rotation;
                 col_spacing = -col_spacing;
+            } else if tilted {
+                let dir = ocs(&c, Vec3::new(rotation.cos(), rotation.sin(), 0.0));
+                p = ocs(&c, p);
+                if dir.x.hypot(dir.y) > 1e-9 {
+                    rotation = dir.y.atan2(dir.x);
+                }
             }
             EntityKind::Insert(Insert {
                 block: t.s(2).unwrap_or_default(),

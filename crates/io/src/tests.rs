@@ -2032,6 +2032,23 @@ fn mirrored_insert_extrusion_maps_to_negative_x_scale() {
 }
 
 #[test]
+fn tilted_insert_extrusion_maps_point_and_direction_to_wcs() {
+    // Extrusion (0.6,0,0.8): the arbitrary axis algorithm gives OCS x = (0,1,0), y = (-0.8,0,0.6), so
+    // OCS (2000,-800,600) is WCS (1000,2000,0). Read as WCS, the block landed at (2000,-800) and the
+    // extents took it in. The block is drawn flat at the WCS point, turned to the OCS x axis (90°).
+    let text = "0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n2\nB\n10\n0\n20\n0\n0\nLINE\n8\n0\n10\n0\n20\n0\n11\n2\n21\n0\n0\nENDBLK\n0\nENDSEC\n\
+                0\nSECTION\n2\nENTITIES\n0\nINSERT\n8\n0\n2\nB\n10\n2000\n20\n-800\n30\n600\n210\n0.6\n220\n0\n230\n0.8\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "t.dxf").unwrap();
+    let ins = first(&d, |k| if let EntityKind::Insert(i) = k { Some(i.clone()) } else { None });
+    assert!((ins.insert - Vec3::new(1000.0, 2000.0, 0.0)).len() < 1e-6, "{:?}", ins.insert);
+    assert!((ins.rotation - std::f64::consts::FRAC_PI_2).abs() < 1e-9, "{}", ins.rotation);
+    let b = d.extents(&Space::Model);
+    for (got, want) in [(b.min.x, 1000.0), (b.min.y, 2000.0), (b.max.x, 1000.0), (b.max.y, 2002.0)] {
+        assert!((got - want).abs() < 1e-6, "extents {b:?}");
+    }
+}
+
+#[test]
 fn mirrored_ellipse_extrusion_reverses_parameters() {
     // Extrusion (0,0,-1) flips the minor axis (extrusion × major): parameters 0..90° of the ellipse
     // centred at the origin with major (2,0) and ratio 0.5 run from (2,0) to (0,-1), not (0,1).
