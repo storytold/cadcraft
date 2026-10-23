@@ -483,7 +483,9 @@ fn run_leader(s: &mut Session, p: &Value) -> Result<Value> {
     }))?;
     let mut out = vec![h.hex()];
     if let (Some(t), Some(last)) = (str_param(p, "text"), pts.last()) {
-        let th = s.doc()?.dim_style(&style(s)).map(|d| d.text_height).unwrap_or(0.18);
+        let d = s.doc()?;
+        let st = d.dim_style(&style(s)).cloned().unwrap_or_default();
+        let th = st.text_height * st.effective_scale(d.header.f64("DIMSCALE", 1.0));
         out.push(
             s.add_entity(EntityKind::MText(MText {
                 insert: v3(*last + Vec2::new(th * 0.5, th * 0.5)),
