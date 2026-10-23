@@ -562,3 +562,55 @@ fn a_dynamic_block_with_handles_above_2_pow_48_is_kept() {
     let again = read_dxf(write_dxf(&d).as_bytes()).unwrap();
     assert_eq!(by_node(dynamic_block(&again, "Door").unwrap()), by_node(before));
 }
+
+/// A multiline attribute (LABEL, two lines) in the stretch's selection: when Width changes, the
+/// reference's attribute moves with its definition, its multiline text too.
+#[test]
+fn a_stretch_moves_a_multiline_attributes_text() {
+    let attdef = "0 ATTDEF\n5 3A\n330 1D\n100 AcDbEntity\n8 0\n100 AcDbText\n10 35\n20 0\n30 0\n40 1\n1 SITE\n7 Standard\n100 AcDbAttributeDefinition\n280 0\n3 Label\n2 LABEL\n70 0\n280 1\n71 4\n72 0\n11 35\n21 0\n31 0\n101 Embedded Object\n10 35\n20 0\n30 0\n40 1\n41 0\n46 0\n71 1\n72 5\n1 SITE\\PNAME\n7 Standard\n73 1\n44 1\n";
+    let src = fixture().replace("71 1\n330 30\n1010 40", "71 2\n330 30\n330 3A\n1010 40");
+    // Into Door's block, before its end.
+    let door = src.find("2 Door\n70 0").unwrap();
+    let end = door + src[door..].find("0 ENDBLK").unwrap();
+    let src = format!("{}{attdef}{}", &src[..end], &src[end..]);
+    let mut d = read_dxf(dxf(&src).as_bytes()).unwrap();
+    let def = d
+        .block("Door")
+        .unwrap()
+        .entities
+        .iter()
+        .find_map(|e| if let cadcraft_doc::EntityKind::AttDef(a) = &e.kind { Some(a.clone()) } else { None })
+        .expect("the attribute definition");
+    assert!(def.multiline.is_some(), "a multiline definition");
+    // A reference at (100, 0) with its attribute where the definition puts it.
+    let r = door_at_100(&mut d);
+    d.modify_entity(r, |e| {
+        if let cadcraft_doc::EntityKind::Insert(i) = &mut e.kind {
+            let mut a = def.clone();
+            let m = cadcraft_doc::geom::Mat3::translate(cadcraft_doc::geom::Vec2::new(100.0, 0.0));
+            let mut k = cadcraft_doc::EntityKind::Text(a.text.clone());
+            k.transform(&m);
+            if let cadcraft_doc::EntityKind::Text(t) = k {
+                a.text = t;
+            }
+            a.transform_multiline(&m);
+            i.attribs.push(a);
+        }
+    })
+    .unwrap();
+    // Width 36 → 30: the attribute moves 6 to the left, its multiline text with it.
+    cadcraft_doc::dynblock::set_property(&mut d, r, "Width", "30").unwrap();
+    let Some(cadcraft_doc::EntityKind::Insert(i)) = d.entity(r).map(|e| &e.kind) else { panic!("no reference") };
+    let a = &i.attribs[0];
+    assert_eq!(a.text.insert.x, 129.0);
+    assert_eq!(a.multiline.as_ref().unwrap().mtext.insert.x, 129.0);
+    // Saved (in the drawing's version, 2018: R2000 DXF has no multiline attributes) and reopened:
+    // the moved attribute and its multiline text stay where they went.
+    let again = cadcraft_io::read(&cadcraft_io::write(&d, "door.dxf").unwrap(), "door.dxf").unwrap();
+    let Some(cadcraft_doc::EntityKind::Insert(i)) = again.entity(r).map(|e| &e.kind) else { panic!("no reference after reopening") };
+    let a = &i.attribs[0];
+    assert_eq!((a.text.insert.x, a.text.insert.y), (129.0, 0.0));
+    let m = &a.multiline.as_ref().expect("still multiline").mtext;
+    assert_eq!((m.insert.x, m.insert.y), (129.0, 0.0));
+    assert_eq!(m.contents, r"SITE\PNAME");
+}

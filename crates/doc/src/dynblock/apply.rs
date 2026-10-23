@@ -598,6 +598,8 @@ fn apply(
                     if let EntityKind::Text(t) = k {
                         a.text = t;
                     }
+                    // A multiline attribute's text moves with it.
+                    a.transform_multiline(&Mat3::translate(w));
                 }
             }
         }

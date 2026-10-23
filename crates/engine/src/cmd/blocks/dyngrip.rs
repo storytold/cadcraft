@@ -102,7 +102,11 @@ fn drawn(d: &Drawing, h: Handle) -> Vec<Entity> {
             _ => None,
         });
         let common = under(&a.props.over(def.unwrap_or(&by_block)), r);
-        Entity { handle: Handle(0), common, kind: EntityKind::Text(a.text.clone()) }
+        let kind = match a.multiline_text() {
+            Some(m) => EntityKind::MText(m),
+            None => EntityKind::Text(a.text.clone()),
+        };
+        Entity { handle: Handle(0), common, kind }
     }));
     out
 }
