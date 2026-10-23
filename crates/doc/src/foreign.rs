@@ -81,14 +81,25 @@ pub struct Foreign {
 }
 
 /// A block reference as read: its insertion point, rotation (radians) and scale, and each of its
-/// attributes' insertion and alignment points, in order. Its kept contexts were written for it
-/// then; what it did since moves them.
+/// attributes as read, in order. Its kept contexts were written for it then; what it did since
+/// moves them.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct KeptPlacement {
     pub insert: crate::geom::Vec3,
     pub rotation: f64,
     pub scale: crate::geom::Vec3,
-    pub attribs: Vec<(crate::geom::Vec3, crate::geom::Vec3)>,
+    pub attribs: Vec<KeptAttrib>,
+}
+
+/// An attribute of a block reference as read: its tag, insertion and alignment points and
+/// rotation (radians). Found again by tag and place among the reference's attributes with that
+/// tag, since the attributes can be reordered or replaced (ATTSYNC) after the file is read.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KeptAttrib {
+    pub tag: String,
+    pub insert: crate::geom::Vec3,
+    pub align: crate::geom::Vec3,
+    pub rotation: f64,
 }
 
 impl Foreign {

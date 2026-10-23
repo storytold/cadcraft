@@ -707,3 +707,39 @@ fn the_default_context_is_the_one_whose_first_290_is_1() {
         .unwrap();
     assert!((rot - 10.0).abs() < 1e-9, "{rot}");
 }
+
+#[test]
+fn an_unchanged_attribute_turned_at_the_current_scale_keeps_its_contexts_rotation() {
+    // The ATTRIB is turned 20° (it is the attribute at the file's current scale) while its default
+    // context says 0°: saved unchanged, no context turns (what turns them is what the attribute
+    // did since it was read).
+    let d = read_dxf(dxf(&FIXTURE.replace("1 X\n", "1 X\n50 20\n")).as_bytes()).unwrap();
+    let text = write_dxf(&d);
+    let rots: Vec<f64> = records(&text)
+        .iter()
+        .filter(|(k, _)| k == "ACDB_MTEXTATTRIBUTEOBJECTCONTEXTDATA_CLASS")
+        .filter_map(|(_, t)| get(t, 50).and_then(|v| v.parse::<f64>().ok()))
+        .collect();
+    assert_eq!(rots.len(), 2, "{rots:?}");
+    assert!(rots.iter().all(|r| r.abs() < 1e-9), "{rots:?}");
+}
+
+#[test]
+fn an_attribute_s_contexts_stay_when_the_reference_s_attributes_are_reordered() {
+    // A second attribute OTHER after TAG, then the reference's attributes reversed (as a block
+    // redefinition's attribute sync can): TAG is found as read by its tag, so saved otherwise
+    // unchanged its contexts don't move.
+    let other = "1 X\n100 AcDbAttribute\n2 TAG\n70 0\n0 ATTRIB\n5 80\n330 40\n100 AcDbEntity\n8 0\n100 AcDbText\n10 1\n20 2\n30 0\n40 1\n1 Y\n100 AcDbAttribute\n2 OTHER\n70 0\n";
+    let src = FIXTURE.replacen("1 X\n100 AcDbAttribute\n2 TAG\n70 0\n", other, 1);
+    let mut d = read_dxf(dxf(&src).as_bytes()).unwrap();
+    d.modify_entity(Handle::parse_hex("40").unwrap(), |e| {
+        if let cadcraft_doc::EntityKind::Insert(i) = &mut e.kind {
+            assert_eq!(i.attribs.len(), 2);
+            i.attribs.reverse();
+        }
+    })
+    .unwrap();
+    let mut actx = attribute_contexts(&write_dxf(&d));
+    actx.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(actx, [("1:1".to_string(), Vec2::new(11.0, 22.0)), ("1:5".to_string(), Vec2::new(15.0, 30.0))]);
+}

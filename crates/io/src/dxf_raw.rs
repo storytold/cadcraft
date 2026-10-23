@@ -436,7 +436,16 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
         if let EntityKind::Insert(ins) = &e.kind
             && f.entities.get(&e.handle).is_some_and(|x| x.xdict.is_some())
         {
-            let attribs = ins.attribs.iter().map(|a| (a.text.insert, a.text.align_pt.unwrap_or(a.text.insert))).collect();
+            let attribs = ins
+                .attribs
+                .iter()
+                .map(|a| cadcraft_doc::foreign::KeptAttrib {
+                    tag: a.tag.clone(),
+                    insert: a.text.insert,
+                    align: a.text.align_pt.unwrap_or(a.text.insert),
+                    rotation: a.text.rotation,
+                })
+                .collect();
             f.placements
                 .insert(e.handle, cadcraft_doc::foreign::KeptPlacement { insert: ins.insert, rotation: ins.rotation, scale: ins.scale, attribs });
         }
@@ -842,7 +851,7 @@ fn attribute_contexts(
     for (xd, list) in &by_attrib {
         let Some((r, tag, nth)) = attribs.get(xd) else { continue };
         let Some(EntityKind::Insert(ins)) = d.entity(*r).map(|e| &e.kind) else { continue };
-        let Some((index, a)) = ins.attribs.iter().enumerate().filter(|(_, a)| up(&a.tag) == *tag).nth(*nth) else { continue };
+        let Some(a) = ins.attribs.iter().filter(|a| up(&a.tag) == *tag).nth(*nth) else { continue };
         let base = d.block(&ins.block).map(|b| b.base.xy()).unwrap_or_default();
         let Some(to_block_now) = ins.transform(base).inverse() else { continue };
         let Some(def) = list.iter().find(|o| is_default(o)).or(list.first()) else { continue };
@@ -852,16 +861,18 @@ fn attribute_contexts(
         let Some(to_block_then) = matrix(ins, base, def_place).inverse() else { continue };
         let now_ins = to_block_now.apply(a.text.insert.xy());
         let now_align = to_block_now.apply(a.text.align_pt.unwrap_or(a.text.insert).xy());
-        // The attribute as read, in its reference as read, when that was kept; else its default
-        // context in the reference's.
+        // The attribute as read (the same tag and place among its tag), in its reference as read,
+        // when that was kept: its points in the block and its rotation from the reference's
+        // (degrees). Else its default context in the reference's.
         let kept = f.placements.get(r).and_then(|p| {
-            let (ins_then, align_then) = p.attribs.get(index)?;
+            let k = p.attribs.iter().filter(|k| up(&k.tag) == *tag).nth(*nth)?;
             let then = matrix(ins, base, (p.insert.xy(), p.rotation.to_degrees(), (p.scale.x, p.scale.y))).inverse()?;
-            Some((then.apply(ins_then.xy()), then.apply(align_then.xy())))
+            Some((then.apply(k.insert.xy()), then.apply(k.align.xy()), k.rotation.to_degrees() - p.rotation.to_degrees()))
         });
-        let then = kept.or_else(|| Some((to_block_then.apply(at(def, 10)?), to_block_then.apply(at(def, 11)?))));
-        let Some((then_ins, then_align)) = then else { continue };
-        let turn = (a.text.rotation.to_degrees() - ins.rotation.to_degrees()) - (num(def, 50).unwrap_or(0.0) - def_place.1);
+        let then =
+            kept.or_else(|| Some((to_block_then.apply(at(def, 10)?), to_block_then.apply(at(def, 11)?), num(def, 50).unwrap_or(0.0) - def_place.1)));
+        let Some((then_ins, then_align, then_turn)) = then else { continue };
+        let turn = (a.text.rotation.to_degrees() - ins.rotation.to_degrees()) - then_turn;
         for c in list {
             let Some(s) = text(c, 340) else { continue };
             let (Some(was), Some(is)) = (read.get(&(*r, s.clone())).copied(), now.get(&(*r, s)).copied()) else { continue };
