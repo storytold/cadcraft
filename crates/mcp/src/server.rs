@@ -9,6 +9,8 @@ use crate::tools::{call_tool, tool_definitions};
 
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
 const SUPPORTED: &[&str] = &[PROTOCOL_VERSION, "2025-03-26", "2024-11-05"];
+/// The first protocol version whose tool results carry `structuredContent`.
+const STRUCTURED_SINCE: &str = "2025-06-18";
 
 const PARSE_ERROR: i64 = -32700;
 const INVALID_REQUEST: i64 = -32600;
@@ -18,11 +20,13 @@ const INVALID_PARAMS: i64 = -32602;
 const INSTRUCTIONS: &str = "CADCraft is a 2D/3D CAD drafting app (an AutoCAD clone). Coordinates are drawing units, \
 y up. Fastest path: command_line with AutoCAD syntax, e.g. `line 0,0 10,0 10,5 c`, `circle 5,2.5 1`, \
 `rectang 0,0 4,3`, `offset 1` then pick, `zoom e`. Or execute with JSON (list_commands shows ids and params). \
-Verify with inspect_drawing / query_entities and look with render.";
+Verify with inspect_drawing (counts, units) / query_entities (geometry, world coordinates) and look with render.";
 
 pub struct Server {
     backend: Box<dyn Backend>,
     initialized: bool,
+    /// The protocol version `initialize` agreed on (the latest until then).
+    protocol: &'static str,
 }
 
 fn response(id: Value, result: Value) -> Value {
@@ -34,7 +38,7 @@ fn error(id: Value, code: i64, message: impl Into<String>) -> Value {
 
 impl Server {
     pub fn new(backend: Box<dyn Backend>) -> Self {
-        Self { backend, initialized: false }
+        Self { backend, initialized: false, protocol: PROTOCOL_VERSION }
     }
     pub fn backend(&mut self) -> &mut dyn Backend {
         self.backend.as_mut()
@@ -100,9 +104,9 @@ impl Server {
         match method {
             "initialize" => {
                 let asked = params.get("protocolVersion").and_then(Value::as_str).unwrap_or(PROTOCOL_VERSION);
-                let version = if SUPPORTED.contains(&asked) { asked } else { PROTOCOL_VERSION };
+                self.protocol = SUPPORTED.iter().copied().find(|v| *v == asked).unwrap_or(PROTOCOL_VERSION);
                 Ok(json!({
-                    "protocolVersion": version,
+                    "protocolVersion": self.protocol,
                     "capabilities": {"tools": {"listChanged": false}, "resources": {"listChanged": false}},
                     "serverInfo": {"name": "cadcraft", "title": "CADCraft", "version": env!("CARGO_PKG_VERSION")},
                     "instructions": format!("{INSTRUCTIONS} Backend: {}.", self.backend.describe()),
@@ -113,7 +117,9 @@ impl Server {
             "tools/call" => {
                 let name = params.get("name").and_then(Value::as_str).ok_or((INVALID_PARAMS, "missing tool `name`".to_string()))?;
                 let args = params.get("arguments").unwrap_or(&Value::Null);
-                call_tool(self.backend.as_mut(), name, args).map_err(|m| (INVALID_PARAMS, m))
+                // `structuredContent` came with 2025-06-18; the versions are dates, so they sort as text.
+                let structured = self.protocol >= STRUCTURED_SINCE;
+                call_tool(self.backend.as_mut(), name, args, structured).map_err(|m| (INVALID_PARAMS, m))
             }
             "resources/list" => Ok(json!({"resources": [
                 {"uri": "cadcraft://drawing", "name": "Active drawing", "mimeType": "application/json"},

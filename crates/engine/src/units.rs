@@ -1,6 +1,41 @@
-//! Linear and angular unit formatting and parsing (LUNITS/LUPREC, AUNITS/AUPREC).
+//! Linear and angular unit formatting and parsing (LUNITS/LUPREC, AUNITS/AUPREC) and the
+//! INSUNITS names.
 
 use std::f64::consts::PI;
+
+/// INSUNITS names, indexed by value (DXF Reference, header group code 70).
+pub const INSERTION_UNITS: [&str; 25] = [
+    "Unitless",
+    "Inches",
+    "Feet",
+    "Miles",
+    "Millimeters",
+    "Centimeters",
+    "Meters",
+    "Kilometers",
+    "Microinches",
+    "Mils",
+    "Yards",
+    "Angstroms",
+    "Nanometers",
+    "Microns",
+    "Decimeters",
+    "Decameters",
+    "Hectometers",
+    "Gigameters",
+    "Astronomical Units",
+    "Light Years",
+    "Parsecs",
+    "US Survey Feet",
+    "US Survey Inch",
+    "US Survey Yard",
+    "US Survey Mile",
+];
+
+/// The name of an INSUNITS value (`None` outside 0..=24).
+pub fn insunits_name(code: i64) -> Option<&'static str> {
+    usize::try_from(code).ok().and_then(|i| INSERTION_UNITS.get(i)).copied()
+}
 
 /// Format a distance per LUNITS (1 scientific, 2 decimal, 3 engineering, 4 architectural,
 /// 5 fractional) and LUPREC.

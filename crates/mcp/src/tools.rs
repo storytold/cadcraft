@@ -14,9 +14,9 @@ pub fn tool_definitions(has_ui: bool) -> Value {
             "inputSchema": {"type": "object", "properties": {"command": {"type": "string"}, "params": {"type": "object"}}, "required": ["command"]}}),
         json!({"name": "list_commands", "description": "List commands with ids, labels, menu paths, aliases and parameter docs. Optional filter: a substring of the command id, label or an alias.",
             "inputSchema": {"type": "object", "properties": {"filter": {"type": "string"}}}}),
-        json!({"name": "inspect_drawing", "description": "Summary of the active drawing: entity counts, extents, layers, styles, blocks, layouts, selection, undo history and (optionally) entities with handles and geometry.",
+        json!({"name": "inspect_drawing", "description": "Summary of the active drawing: entity counts, extents, insertion units (insunits), layers, styles, blocks, layouts, selection and undo history. Entities only with entities:true (up to limit, default 200); use query_entities to filter and page them.",
             "inputSchema": {"type": "object", "properties": {"entities": {"type": "boolean"}, "limit": {"type": "integer"}}}}),
-        json!({"name": "query_entities", "description": "Entities filtered by type (Line, Circle, Polyline…), layer, current selection (selected:true; active space only) and/or a window [[x0,y0],[x1,y1]] (objects whose geometry is inside or crosses it; crossing:false = entirely inside). Returns count (all matches), returned (this page) and entities; page with offset and limit (default 500).",
+        json!({"name": "query_entities", "description": "Entities filtered by type (Line, Circle, Polyline…), layer, current selection (selected:true; active space only) and/or a window [[x0,y0],[x1,y1]] (objects whose geometry is inside or crosses it; crossing:false = entirely inside). Returns count (all matches), returned (this page) and entities (handle, type, layer, color, geometry in world coordinates (2D objects with a tilted extrusion can keep their points in OCS: apply the extrusion transform first), bbox [[x0,y0],[x1,y1]], extrusion only when not 0,0,1); page with offset and limit (default 500).",
             "inputSchema": {"type": "object", "properties": {"type": {"type": "string"}, "layer": {"type": "string"}, "selected": {"type": "boolean"},
                 "window": {"type": "array", "items": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2}, "minItems": 2, "maxItems": 2},
                 "crossing": {"type": "boolean"}, "limit": {"type": "integer", "minimum": 0}, "offset": {"type": "integer", "minimum": 0}}}}),
@@ -42,8 +42,17 @@ pub fn tool_definitions(has_ui: bool) -> Value {
     json!({ "tools": tools })
 }
 
-fn text(v: &Value) -> Value {
-    json!({"content": [{"type": "text", "text": serde_json::to_string_pretty(v).unwrap_or_default()}]})
+/// A tool result: the value as compact JSON text and, when `structured` (protocol 2025-06-18 or
+/// later) and the value is an object, the same value as `structuredContent`.
+fn text(v: Value, structured: bool) -> Value {
+    let mut r = json!({"content": [{"type": "text", "text": v.to_string()}]});
+    if structured
+        && v.is_object()
+        && let Some(o) = r.as_object_mut()
+    {
+        o.insert("structuredContent".into(), v);
+    }
+    r
 }
 
 fn err_text(e: &str) -> Value {
@@ -107,7 +116,8 @@ fn command_matches(c: &Value, f: &str) -> bool {
 
 /// Run a tool. `Err` is a protocol error (unknown tool, or arguments that don't fit its input
 /// schema), answered with JSON-RPC invalid params; a failing tool is an `isError` result.
-pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> Result<Value, String> {
+/// `structured`: the client speaks a protocol with `structuredContent` (2025-06-18 or later).
+pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value, structured: bool) -> Result<Value, String> {
     let a = check_args(name, args)?;
     let r = match name {
         "command_line" => b.call("cmdline.input", a),
@@ -123,7 +133,16 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> Result<Value,
                 (v, _) => v,
             }
         }),
-        "inspect_drawing" => b.call("drawing.inspect", a),
+        // Without entities unless asked: query_entities pages and filters them.
+        "inspect_drawing" => {
+            let mut a = a;
+            if let Some(o) = a.as_object_mut()
+                && o.get("entities").is_none_or(Value::is_null)
+            {
+                o.insert("entities".into(), json!(false));
+            }
+            b.call("drawing.inspect", a)
+        }
         "query_entities" => b.call("engine.execute", json!({"command": "entities", "params": a})),
         "find_text" => b.call("engine.execute", json!({"command": "texts", "params": a})),
         "new_drawing" => b.call("engine.execute", json!({"command": "new", "params": a})),
@@ -137,7 +156,7 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> Result<Value,
             return Ok(match b.call("ui.render", a) {
                 Ok(v) => match v.get("pngBase64").and_then(Value::as_str) {
                     Some(data) => json!({"content": [{"type": "image", "data": data, "mimeType": "image/png"}]}),
-                    None => text(&v),
+                    None => text(v, structured),
                 },
                 Err(e) => err_text(&e),
             });
@@ -145,7 +164,7 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, args: &Value) -> Result<Value,
         other => return Err(format!("unknown tool `{other}`")),
     };
     Ok(match r {
-        Ok(v) => text(&v),
+        Ok(v) => text(v, structured),
         Err(e) => err_text(&e),
     })
 }

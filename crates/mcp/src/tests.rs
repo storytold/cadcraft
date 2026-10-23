@@ -230,3 +230,44 @@ fn a_lazy_bridge_starts_without_the_app_and_says_how_to_open_it() {
     assert_ne!(r["result"]["isError"], json!(true), "{r}");
     app.join().unwrap();
 }
+
+/// Tool results are compact JSON; from protocol 2025-06-18 on, an object result also comes as
+/// `structuredContent`. `inspect_drawing` leaves the entities to `query_entities` unless asked.
+#[test]
+fn results_are_compact_and_structured_from_2025_06_18() {
+    let mut s = Server::new(Box::new(Headless::default()));
+    let init = call(&mut s, 1, "initialize", json!({"protocolVersion": "2025-06-18"}));
+    assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
+    tool(&mut s, "command_line", json!({"text": "circle 0,0 5"}));
+    let r = call(&mut s, 2, "tools/call", json!({"name": "inspect_drawing", "arguments": {}}));
+    let text = r["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(!text.contains('\n') && !text.contains(": "), "compact JSON: {text}");
+    let parsed: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(r["result"]["structuredContent"], parsed);
+    assert!(parsed.get("entities").is_none(), "no entities unless asked: {text}");
+    assert_eq!(parsed["insunits"]["code"], 1, "{text}");
+    assert_eq!(parsed["insunits"]["name"], "Inches", "{text}");
+    let d = tool(&mut s, "inspect_drawing", json!({"entities": true}));
+    assert_eq!(d["entities"].as_array().map(Vec::len), Some(1), "{d}");
+    let q = tool(&mut s, "query_entities", json!({}));
+    assert_eq!(q["entities"][0]["bbox"], json!([[-5.0, -5.0], [5.0, 5.0]]), "{q}");
+    assert!(q["entities"][0].get("extrusion").is_none(), "{q}");
+    // An array result (the command list) has no structured form.
+    let r = call(&mut s, 3, "tools/call", json!({"name": "list_commands", "arguments": {"filter": "circle"}}));
+    assert!(r["result"].get("structuredContent").is_none(), "{r}");
+
+    // An older client gets the same compact text and no `structuredContent`.
+    let mut old = Server::new(Box::new(Headless::default()));
+    let init = call(&mut old, 1, "initialize", json!({"protocolVersion": "2025-03-26"}));
+    assert_eq!(init["result"]["protocolVersion"], "2025-03-26");
+    let r = call(&mut old, 2, "tools/call", json!({"name": "inspect_drawing", "arguments": {}}));
+    assert!(r["result"].get("structuredContent").is_none(), "{r}");
+    assert!(!r["result"]["content"][0]["text"].as_str().unwrap().contains('\n'), "{r}");
+
+    // A client asking for a version the server doesn't know gets 2025-06-18, structured.
+    let mut future = Server::new(Box::new(Headless::default()));
+    let init = call(&mut future, 1, "initialize", json!({"protocolVersion": "2027-01-01"}));
+    assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
+    let r = call(&mut future, 2, "tools/call", json!({"name": "inspect_drawing", "arguments": {}}));
+    assert!(r["result"]["structuredContent"].is_object(), "{r}");
+}
