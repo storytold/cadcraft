@@ -786,8 +786,9 @@ struct AnnoObject {
 const MAX_ANNO_OBJECTS: usize = 1_000_000;
 
 /// JSON chunks for the annotative scaling XRECORD, or `None` when nothing differs from a new
-/// drawing (1:1, ANNOALLVISIBLE 1, no annotative objects or blocks).
-pub(crate) fn anno_chunks(d: &cadcraft_doc::Drawing) -> Option<Vec<String>> {
+/// drawing (1:1, ANNOALLVISIBLE 1, no annotative objects or blocks). With `contexts` the objects
+/// written with AutoCAD's annotation scale contexts (`dxf_anno`) are left to them.
+pub(crate) fn anno_chunks(d: &cadcraft_doc::Drawing, contexts: bool) -> Option<Vec<String>> {
     let cannoscale = d.header.str("CANNOSCALE", "1:1");
     let annoallvisible = d.header.i64("ANNOALLVISIBLE", 1);
     let blocks: Vec<String> = d.blocks.values().filter(|b| b.annotative).map(|b| b.name.clone()).collect();
@@ -795,7 +796,7 @@ pub(crate) fn anno_chunks(d: &cadcraft_doc::Drawing) -> Option<Vec<String>> {
         .model
         .iter()
         .chain(d.layouts.iter().flat_map(|l| l.entities.iter()))
-        .filter(|e| cadcraft_doc::is_annotative(e))
+        .filter(|e| cadcraft_doc::is_annotative(e) && !(contexts && crate::dxf_anno::has_contexts(e)))
         .map(|e| AnnoObject { handle: e.handle.hex(), scales: e.common.anno_scales.clone() })
         .collect();
     if cannoscale == "1:1" && annoallvisible == 1 && blocks.is_empty() && objects.is_empty() {

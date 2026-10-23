@@ -1918,7 +1918,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         let gs = app.session.settings.gripsize as f32;
         for h in sel.iter().take(200) {
             if let Some(e) = st.doc.entity(*h) {
-                for (gi, g) in e.kind.grips().into_iter().enumerate() {
+                for (gi, g) in cadcraft_engine::grips::shown_grips(&st.doc, e, st.anno_view()).into_iter().enumerate() {
                     let sp = xf.to_screen(g);
                     if rect.contains(sp) {
                         let r = Rect::from_center_size(sp, vec2(gs * 2.0, gs * 2.0));
@@ -2650,7 +2650,7 @@ fn grip_at(app: &CadApp, xf: &Xf, hover: Option<Pos2>) -> Option<(Handle, usize)
         if st.doc.layer(&e.common.layer).is_some_and(|l| l.locked) {
             continue;
         }
-        for (i, g) in e.kind.grips().into_iter().enumerate() {
+        for (i, g) in cadcraft_engine::grips::shown_grips(&st.doc, e, st.anno_view()).into_iter().enumerate() {
             let sp = xf.to_screen(g);
             if (sp.x - hp.x).abs() <= gs && (sp.y - hp.y).abs() <= gs {
                 return Some((*h, i));

@@ -1057,8 +1057,8 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
         };
         match mode {
             cadcraft_doc::AnnoDraw::Hidden => return,
-            cadcraft_doc::AnnoDraw::Scaled(f) => {
-                let mut scaled = cadcraft_doc::anno_scaled(e, f);
+            cadcraft_doc::AnnoDraw::Scaled { factor, by } => {
+                let mut scaled = cadcraft_doc::anno_placed(e, factor, by);
                 scaled.common.anno_scales.clear();
                 return entity_parts(b, ctx, &scaled);
             }

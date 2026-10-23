@@ -222,6 +222,12 @@ impl DocState {
             _ => None,
         }
     }
+    /// The annotation scale model space is edited at in the active MSPACE viewport: the
+    /// viewport's scale (drawing units per paper unit, as the renderer draws it there); `None`
+    /// outside one (the current annotation scale applies).
+    pub fn anno_view(&self) -> Option<f64> {
+        self.active_viewport().map(|(_, v)| v.view_height / v.height).filter(|f| f.is_finite() && *f > 0.0)
+    }
     pub fn paper_view(&self) -> View {
         self.views.iter().find(|(s, _)| *s == self.space).map(|(_, v)| *v).unwrap_or_default()
     }
@@ -877,6 +883,11 @@ impl Session {
         }
         let h = self.doc_mut()?.add(&space, common, kind)?;
         Ok(h)
+    }
+
+    /// The annotation scale of the active MSPACE viewport ([`DocState::anno_view`]).
+    pub fn anno_view(&self) -> Option<f64> {
+        self.state().ok().and_then(DocState::anno_view)
     }
 
     /// World units per pixel at the current view.

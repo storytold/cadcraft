@@ -109,6 +109,7 @@ pub(crate) fn transform_entities(s: &mut Session, hs: &[Handle], m: &Mat3, copy:
             let nh = d.new_handle();
             let mut ne = Entity { handle: nh, ..e };
             ne.kind.transform(m);
+            ne.common.transform_moves(m);
             if let Some(st) = d.space_mut(&sp) {
                 st.push(ne);
                 out.push(nh);
@@ -118,7 +119,10 @@ pub(crate) fn transform_entities(s: &mut Session, hs: &[Handle], m: &Mat3, copy:
             if locked {
                 continue;
             }
-            d.modify_entity(*h, |e| e.kind.transform(m))?;
+            d.modify_entity(*h, |e| {
+                e.kind.transform(m);
+                e.common.transform_moves(m);
+            })?;
             out.push(*h);
         }
     }
@@ -1254,10 +1258,11 @@ pub(crate) fn explode_kind(d: &cadcraft_doc::Drawing, e: &Entity) -> Option<Vec<
     // An annotative object explodes into plain objects as it draws at the current annotation scale.
     if cadcraft_doc::is_annotative(e) {
         let mut se = match d.anno_draw(e) {
-            cadcraft_doc::AnnoDraw::Scaled(f) => cadcraft_doc::anno_scaled(e, f),
+            cadcraft_doc::AnnoDraw::Scaled { factor, by } => cadcraft_doc::anno_placed(e, factor, by),
             _ => e.clone(),
         };
         se.common.anno_scales.clear();
+        se.common.anno_moves.clear();
         return explode_kind(d, &se);
     }
     match &e.kind {
