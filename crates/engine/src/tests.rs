@@ -1,6 +1,7 @@
-use cadcraft_doc::EntityKind;
+use cadcraft_doc::{Drawing, EntityKind};
 use cadcraft_geom::Vec2;
 use serde_json::json;
+use std::sync::Arc;
 
 use crate::*;
 
@@ -1358,4 +1359,59 @@ fn hostile_variable_like_input_never_panics() {
     // The session is still usable afterwards.
     s.cmdline("pickadd").unwrap();
     assert!(setvar_prompt_open(&s));
+}
+
+// ---------- extents cache (#1079) ----------
+
+/// `drawing.inspect` reports extents that follow edits and undo, with repeated reads cached.
+#[test]
+fn inspect_extents_follow_edits_and_undo() {
+    let mut s = Session::new();
+    s.execute("circle", &json!({"center": [0, 0], "radius": 1})).unwrap();
+    let ext = |s: &mut Session| s.execute("drawing.inspect", &json!({})).unwrap()["extents"].clone();
+    assert_eq!(ext(&mut s), json!([[-1.0, -1.0], [1.0, 1.0]]));
+    // The cached second read gives the same answer.
+    assert_eq!(ext(&mut s), json!([[-1.0, -1.0], [1.0, 1.0]]));
+    // An edit invalidates the cache; an undo restores both the drawing and the extents.
+    s.execute("line", &json!({"points": [[0, 0], [50, 0]]})).unwrap();
+    assert_eq!(ext(&mut s), json!([[-1.0, -1.0], [50.0, 1.0]]));
+    s.execute("u", &json!({})).unwrap();
+    assert_eq!(ext(&mut s), json!([[-1.0, -1.0], [1.0, 1.0]]));
+}
+
+/// The cache is per space: model and a layout keep separate extents.
+#[test]
+fn extents_are_cached_per_space() {
+    let mut s = Session::new();
+    s.execute("circle", &json!({"center": [0, 0], "radius": 1})).unwrap();
+    s.state_mut().unwrap().space = Space::Paper("Layout1".into());
+    s.execute("circle", &json!({"center": [100, 100], "radius": 2})).unwrap();
+    let model = s.state_mut().unwrap().extents_of(&Space::Model);
+    let paper = s.state_mut().unwrap().extents_of(&Space::Paper("Layout1".into()));
+    assert_eq!((model.min.x, model.max.x), (-1.0, 1.0));
+    assert_eq!((paper.min.x, paper.max.x), (98.0, 102.0));
+}
+
+/// Invalidation keys: a new revision recomputes, and so does a different drawing at the same
+/// revision (the Block Editor swaps `doc` without an undo step in between).
+#[test]
+fn extents_cache_keys_on_revision_and_doc_identity() {
+    let mut s = Session::new();
+    s.execute("circle", &json!({"center": [5, 5], "radius": 1})).unwrap();
+    let st = s.state_mut().unwrap();
+    assert!(!st.extents_of(&Space::Model).is_empty());
+    let (rev, id) = {
+        let c = &st.extents_cache[0];
+        (c.1, c.2)
+    };
+    assert_eq!(rev, st.revision);
+    assert_eq!(id, Arc::as_ptr(&st.doc) as usize);
+    // A revision bump alone recomputes.
+    st.revision += 1;
+    st.extents_of(&Space::Model);
+    assert_eq!(st.extents_cache[0].1, st.revision, "a new revision must not reuse the cached extents");
+    // A different drawing at the same revision recomputes too.
+    st.doc = Arc::new(Drawing::new_imperial());
+    assert!(st.extents_of(&Space::Model).is_empty(), "an empty drawing has no extents");
+    assert_eq!(st.extents_cache[0].2, Arc::as_ptr(&st.doc) as usize, "the cache must follow the new drawing");
 }

@@ -350,8 +350,8 @@ fn run_time(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 fn run_status(s: &mut Session, _p: &Value) -> Result<Value> {
+    let ext = s.state_mut()?.extents_of(&cadcraft_doc::Space::Model);
     let d = s.doc()?;
-    let ext = d.extents(&cadcraft_doc::Space::Model);
     let msg = format!(
         "{} objects in {}\nModel space limits are X: {}  Y: {}  (Off)\nModel space uses X: {}  Y: {}\n                 X: {}  Y: {}\nCurrent layer: {}\nCurrent color: {}\nCurrent linetype: {}",
         d.entity_count(),
@@ -374,11 +374,12 @@ fn entity_summary(e: &cadcraft_doc::Entity) -> Value {
 }
 
 fn run_inspect(s: &mut Session, p: &Value) -> Result<Value> {
+    let space = s.state()?.space.clone();
+    // Cached per revision (#1079): agents poll this in loops; the extents walk is the cost.
+    let ext = s.state_mut()?.extents_of(&space);
     let st = s.state()?;
     let d = &st.doc;
     let limit = p.get("limit").and_then(Value::as_u64).unwrap_or(200) as usize;
-    let space = st.space.clone();
-    let ext = d.extents(&space);
     let mut counts: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
     if let Some(store) = d.space(&space) {
         for e in store.iter() {

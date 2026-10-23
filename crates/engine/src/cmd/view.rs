@@ -107,9 +107,9 @@ pub fn specs() -> Vec<CommandSpec> {
     v
 }
 
-fn ext_bounds(s: &Session) -> Result<Bounds2> {
+fn ext_bounds(s: &mut Session) -> Result<Bounds2> {
     let space = s.space();
-    Ok(s.doc()?.extents(&space))
+    Ok(s.state_mut()?.extents_of(&space))
 }
 
 fn fit(s: &mut Session, b: Bounds2) -> Result<()> {

@@ -147,6 +147,9 @@ pub struct DocState {
     /// The Block Editor (BEDIT), when it is open: `doc` is then the editor's drawing, and the
     /// drawing itself waits in it ([`DocState::drawing`]).
     pub block_edit: Option<blockedit::BlockEdit>,
+    /// Extents per space, valid for the revision and the drawing they were computed from
+    /// ([`DocState::extents_of`]).
+    extents_cache: Vec<(Space, u64, usize, Bounds2)>,
 }
 
 static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -173,7 +176,31 @@ impl DocState {
             uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             binary_dxf: false,
             block_edit: None,
+            extents_cache: Vec::new(),
         }
+    }
+
+    /// The extents of `space`, computed once per drawing revision. [`Drawing::extents`] walks
+    /// every entity (about 2.5 s on a 985k-entity drawing, on the calling thread), and
+    /// `drawing.inspect`, STATUS and ZOOM Extents read it repeatedly — agents poll inspect in
+    /// loops (#1079). A result is reused only for the same space, revision and `doc` it was
+    /// computed from, so every edit, undo, reopen or Block Editor swap recomputes.
+    pub fn extents_of(&mut self, space: &Space) -> Bounds2 {
+        let doc_id = Arc::as_ptr(&self.doc) as usize;
+        if let Some((_, _, _, b)) = self.extents_cache.iter().find(|(s, rev, id, _)| s == space && *rev == self.revision && *id == doc_id) {
+            return *b;
+        }
+        let b = self.doc.extents(space);
+        match self.extents_cache.iter_mut().find(|(s, _, _, _)| s == space) {
+            Some(slot) => *slot = (space.clone(), self.revision, doc_id, b),
+            None => {
+                self.extents_cache.push((space.clone(), self.revision, doc_id, b));
+                if self.extents_cache.len() > 8 {
+                    self.extents_cache.remove(0);
+                }
+            }
+        }
+        b
     }
     /// The drawing has changes not saved to its file, or the Block Editor has changes not yet
     /// saved into its block.
@@ -761,7 +788,9 @@ impl Session {
     }
     pub fn open_drawing(&mut self, d: Drawing, title: &str, path: Option<String>) -> usize {
         let mut st = DocState::new(d, title, path);
-        let ext = st.doc.extents(&Space::Model);
+        // Also warms the extents cache, so the first drawing.inspect after opening a large
+        // drawing answers at once (#1079).
+        let ext = st.extents_of(&Space::Model);
         if !ext.is_empty() {
             st.set_view_quiet(View {
                 center: ext.center(),
@@ -1799,7 +1828,7 @@ impl Session {
 
     pub fn zoom_extents(&mut self) -> Result<()> {
         let space = self.space();
-        let ext = self.doc()?.extents(&space);
+        let ext = self.state_mut()?.extents_of(&space);
         let (w, h) = self.viewport_px;
         let ext = if ext.is_empty() { self.zoom_limits()? } else { ext };
         let st = self.state_mut()?;
