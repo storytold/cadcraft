@@ -983,6 +983,13 @@
 	Screen magnifiers, screen readers and recorders follow the system cursor.	Екранні лупи, програми читання з екрана та запису стежать за системним курсором.
 	Select objects first, then choose a command	Спочатку вибирати об'єкти, потім команду
 	Selection	Вибір
+	Selection Preview Effect	Ефект попереднього перегляду вибору
+	Dash	Штрих
+	Thicken	Потовщення
+	Both	Обидва
+	Selected Objects Effect	Ефект вибраних об'єктів
+	Dashed	Штриховий
+	Selection color	Колір вибору
 	Selection Area Effect	Ефект області вибору
 	Selection Preview Filter	Фільтр попереднього перегляду вибору
 	Selection area opacity:	Непрозорість області вибору:

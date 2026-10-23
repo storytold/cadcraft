@@ -228,15 +228,23 @@ fn selection_highlight_settings_set_save_and_show_in_the_selection_tab() {
     ] {
         assert!(text.contains(label), "{label} missing from:\n{text}");
     }
-    // HIGHLIGHT, SELECTIONEFFECT and PREVIEWEFFECT are typed, not offered (as in AutoCAD), so
-    // the highlight can't be switched off or changed by accident.
+    // HIGHLIGHT is typed, not offered (as in AutoCAD), so the highlight can't be switched off by
+    // accident; the effects are in Visual Effect Settings, not on the tab.
     for label in ["Highlight selected objects", "Preview effect", "Dashed"] {
         assert!(!text.contains(label), "{label} offered");
     }
-    // Visual Effect Settings: the selection area and the preview filter.
+    // Visual Effect Settings: the preview and selection effects, the selection area and the
+    // preview filter.
     ctx.data_mut(|d| d.insert_temp(egui::Id::new("cc_options_visual_effects"), true));
     let text = render(&mut a, &ctx);
     for label in [
+        "Selection Preview Effect",
+        "Dash",
+        "Thicken",
+        "Both",
+        "Selected Objects Effect",
+        "Dashed",
+        "Selection color",
         "Selection Area Effect",
         "Indicate selection area",
         "Window selection color:",

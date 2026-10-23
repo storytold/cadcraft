@@ -388,8 +388,11 @@ fn heading(ui: &mut egui::Ui, text: &str) {
     ui.label(RichText::new(text).strong());
 }
 
-/// Visual Effect Settings: the selection area (window and crossing fills) and the objects the
-/// cursor never highlights (PREVIEWFILTER). Changes apply at once, as on the Options tabs.
+/// Visual Effect Settings: how the object under the cursor is highlighted (PREVIEWEFFECT: Dash,
+/// Thicken or Both, as AutoCAD offers it) and how selected objects are (SELECTIONEFFECT: dashed
+/// or redrawn in the selection colour), the selection area (window and crossing fills) and the
+/// objects the cursor never highlights (PREVIEWFILTER). Changes apply at once, as on the Options
+/// tabs.
 fn visual_effects(ctx: &egui::Context, st: &cadcraft_engine::Settings, open: &mut bool, changes: &mut Map<String, Value>) {
     let mut close = false;
     egui::Window::new(crate::tl!("Visual Effect Settings"))
@@ -402,6 +405,23 @@ fn visual_effects(ctx: &egui::Context, st: &cadcraft_engine::Settings, open: &mu
         .show(ctx, |ui| {
             ui.columns(2, |cols| {
                 let [left, right] = cols else { return };
+                heading(left, crate::tl!("Selection Preview Effect"));
+                left.horizontal(|ui| {
+                    for (v, label) in [(0u8, crate::tl!("Dash")), (1, crate::tl!("Thicken")), (2, crate::tl!("Both"))] {
+                        if ui.radio(st.previeweffect == v, label).clicked() {
+                            changes.insert("PREVIEWEFFECT".into(), json!(v));
+                        }
+                    }
+                });
+                heading(left, crate::tl!("Selected Objects Effect"));
+                left.horizontal(|ui| {
+                    for (v, label) in [(0u8, crate::tl!("Dashed")), (1, crate::tl!("Selection color"))] {
+                        if ui.radio(st.selectioneffect == v, label).clicked() {
+                            changes.insert("SELECTIONEFFECT".into(), json!(v));
+                        }
+                    }
+                });
+                left.add_space(6.0);
                 heading(left, crate::tl!("Selection Area Effect"));
                 let mut area = st.selectionarea;
                 if left.checkbox(&mut area, crate::tl!("Indicate selection area")).changed() {
