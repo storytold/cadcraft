@@ -616,8 +616,9 @@ fn write_viewport_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper:
         w.i(69, i64::from(v.id));
         w.p2(12, v.view_center);
         w.f(45, v.view_height);
-        if v.twist.is_finite() && v.twist != 0.0 {
-            w.f(51, v.twist.to_degrees());
+        let twist = cadcraft_geom::norm_angle(v.twist);
+        if twist != 0.0 {
+            w.f(51, twist.to_degrees());
         }
         // Status flags: 16384 = display locked, 32768 = always set, 65536 = clipped by the
         // 340 entity, 131072 = off.
