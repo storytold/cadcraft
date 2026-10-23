@@ -1429,27 +1429,42 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         let _ = app.session.zoom_about(f64::from(zoom_pinch), xf.to_world(hp));
     }
     // Pan with the middle button (or Shift+right-drag / two-finger drag on trackpads is scroll).
-    let middle_pressed = ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Middle));
-    let focused = ui.input(|i| i.focused);
-    if middle_down
-        && focused
-        && (app.canvas.pan_last.is_some() || (middle_pressed && inside))
-        && let Some(hp) = hover_pos
-    {
-        if let Some(last) = app.canvas.pan_last {
-            let d = hp - last;
-            if let Ok(st) = app.session.state_mut() {
-                let v = st.view();
-                st.set_view_quiet(cadcraft_engine::View {
-                    center: v.center - Vec2::new(f64::from(d.x) / scale, -f64::from(d.y) / scale),
-                    height: v.height,
-                });
+    // The pan follows the frame's pointer events in order, like the wheel above: on a heavy drawing
+    // frames are slow and a whole drag, release included, can arrive in one frame, so the button
+    // state at the end of the frame would drop it (#1131). A press starts it only over the drawing.
+    let mut last = app.canvas.pan_last;
+    let mut d = egui::Vec2::ZERO;
+    ui.input(|i| {
+        for e in &i.raw.events {
+            match e {
+                egui::Event::PointerButton { pos, button: egui::PointerButton::Middle, pressed: true, .. } => {
+                    if last.is_none() && inside {
+                        last = Some(*pos);
+                    }
+                }
+                egui::Event::PointerMoved(p) => {
+                    if let Some(l) = last {
+                        d += *p - l;
+                        last = Some(*p);
+                    }
+                }
+                egui::Event::PointerButton { pos, button: egui::PointerButton::Middle, pressed: false, .. } => {
+                    if let Some(l) = last.take() {
+                        d += *pos - l;
+                    }
+                }
+                egui::Event::PointerGone | egui::Event::WindowFocused(false) => last = None,
+                _ => {}
             }
         }
-        app.canvas.pan_last = Some(hp);
-    } else {
-        app.canvas.pan_last = None;
+    });
+    if d != egui::Vec2::ZERO
+        && let Ok(st) = app.session.state_mut()
+    {
+        let v = st.view();
+        st.set_view_quiet(cadcraft_engine::View { center: v.center - Vec2::new(f64::from(d.x) / scale, -f64::from(d.y) / scale), height: v.height });
     }
+    app.canvas.pan_last = if middle_down { last } else { None };
     if dbl_middle && inside {
         let _ = app.session.zoom_extents();
     }
