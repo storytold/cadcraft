@@ -480,7 +480,33 @@ fn finish(
             return Some(SnapHit { point: p, mode: mode::NEA, name: "Nearest", viewport: None, deferred: None });
         }
     }
+    // Hovering a circle, an arc or an ellipse offers its center, which on a large curve lies
+    // far outside the aperture (as AutoCAD does). Last, so the snaps under the cursor (and a
+    // deferred tangent on the curve) keep winning there.
+    if osmode & mode::CEN != 0
+        && let Some(c) = hovered_center(near_prims, cursor, aperture).filter(|c| visible(*c))
+    {
+        return Some(SnapHit { point: c, mode: mode::CEN, name: name_of(mode::CEN), viewport: None, deferred: None });
+    }
     None
+}
+
+/// The center of the circle, arc or ellipse whose curve passes nearest `cursor`, within `aperture`.
+fn hovered_center(prims: &[Prim], cursor: Vec2, aperture: f64) -> Option<Vec2> {
+    let mut best: Option<(f64, Vec2)> = None;
+    for p in prims {
+        let center = match p {
+            Prim::Circle(c) => c.center,
+            Prim::Seg(Segment::Arc { arc, .. }) => arc.center,
+            Prim::Ellipse(e) => e.center,
+            _ => continue,
+        };
+        let dd = prim_segments(p).iter().map(|s| fix_circle(s).closest(cursor).dist(cursor)).fold(f64::INFINITY, f64::min);
+        if dd <= aperture && best.is_none_or(|(bd, _)| dd < bd) {
+            best = Some((dd, center));
+        }
+    }
+    best.map(|(_, c)| c)
 }
 
 fn snap_score(mode: u32, point: Vec2, cursor: Vec2, aperture: f64) -> f64 {
@@ -1052,6 +1078,28 @@ mod tests {
         assert!(osnap(&d, &Space::Model, Vec2::new(20.0, 2.1), 0.5, mode::QUA, None, false).unwrap().point.near(Vec2::new(20.0, 2.0), 1e-9));
         let t = osnap(&d, &Space::Model, Vec2::new(19.9, 1.9), 1.0, mode::TAN, Some(Vec2::new(10.0, 0.0)), false);
         assert!(t.is_some());
+    }
+
+    #[test]
+    fn center_snaps_from_the_curve_far_from_it() {
+        let mut d = Drawing::new_imperial();
+        let arc = cadcraft_doc::Arc { center: Vec3::new(100.0, 50.0, 0.0), radius: 80.0, start: 30f64.to_radians(), end: 150f64.to_radians() };
+        d.add(&Space::Model, Common::default(), EntityKind::Arc(arc)).unwrap();
+        let on_arc = Vec2::polar(Vec2::new(100.0, 50.0), 80.1, 70f64.to_radians());
+        let h = osnap(&d, &Space::Model, on_arc, 0.5, mode::CEN, None, false).unwrap();
+        assert_eq!((h.mode, h.point), (mode::CEN, Vec2::new(100.0, 50.0)));
+        // Without Center, or away from the curve, nothing.
+        assert!(osnap(&d, &Space::Model, on_arc, 0.5, mode::END | mode::MID, None, false).is_none());
+        assert!(osnap(&d, &Space::Model, Vec2::polar(Vec2::new(100.0, 50.0), 81.0, 70f64.to_radians()), 0.5, mode::CEN, None, false).is_none());
+        // Past the arc's ends, its circle isn't hovered.
+        assert!(osnap(&d, &Space::Model, Vec2::polar(Vec2::new(100.0, 50.0), 80.0, -30f64.to_radians()), 0.5, mode::CEN, None, false).is_none());
+        // A snap under the cursor still wins: the arc's midpoint.
+        let top = Vec2::new(100.2, 130.1);
+        assert_eq!(osnap(&d, &Space::Model, top, 0.5, mode::CEN | mode::MID, None, false).unwrap().mode, mode::MID);
+        // A full circle, too.
+        let d = drawing();
+        let h = osnap(&d, &Space::Model, Vec2::new(21.0, 1.8), 0.5, mode::CEN, None, false).unwrap();
+        assert_eq!(h.point, Vec2::new(20.0, 0.0));
     }
 
     #[test]
