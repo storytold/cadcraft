@@ -629,6 +629,12 @@ mod native {
         while let (Some(&code_line), Some(&value_line)) = (lines.get(i), lines.get(i + 1)) {
             let (code, value) = (code_line.trim(), value_line.trim_end_matches('\r'));
             if code == "0" {
+                // An opened multileader context body closes before the next record, as acadrust
+                // writes it.
+                if ml_open {
+                    out.push(format!("301{}", eol(code_line)));
+                    out.push(format!("}}{}", eol(value_line)));
+                }
                 let kind = value.trim();
                 marker = KINDS.iter().find(|(k, _)| *k == kind).map(|(_, m)| *m);
                 dim = is_dim(kind);
@@ -962,6 +968,21 @@ mod tests {
         let _panic = PanicIn::at("convert");
         let err = dxf_to_dwg(MINIMAL_DXF.as_bytes()).unwrap_err();
         assert!(err.contains("the DXF to DWG conversion failed on this file"), "{err}");
+    }
+
+    /// A multileader context read by acadrust has its body between `300 CONTEXT_DATA{` and
+    /// `301 }`, closed before the next record; back as AutoCAD writes it, both go.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_multileader_context_body_is_closed() {
+        let ours = "  0\nACDB_MLEADEROBJECTCONTEXTDATA_CLASS\n  5\n90\n340\n51\n 40\n1\n  0\nENDSEC\n";
+        let theirs = String::from_utf8(native::contexts(ours.as_bytes(), true)).unwrap();
+        let lines: Vec<&str> = theirs.lines().map(str::trim).collect();
+        let open = lines.iter().position(|l| *l == "CONTEXT_DATA{").unwrap();
+        let close = lines.iter().position(|l| *l == "}").unwrap();
+        let next = lines.iter().position(|l| *l == "ENDSEC").unwrap();
+        assert!(open < close && close < next && lines.get(close - 1) == Some(&"301"), "{theirs}");
+        assert_eq!(String::from_utf8(native::contexts(theirs.as_bytes(), false)).unwrap(), ours);
     }
 
     #[test]
