@@ -130,7 +130,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 | Press-drag selection windows (PICKDRAG) | yes | clicks or drag (2, default), or two clicks only (0); Options ▸ Selection ▸ Select using two clicks only, saved in the profile; drag-only mode (1) is unavailable |
 | Lasso | yes | **no** |
 | Selection cycling (SELECTIONCYCLING) | yes | yes (#1143): SELECTIONCYCLING 2 lists the objects under a click (type, layer; the row under the pointer highlights its object), 1 the badge; Shift+Space steps the highlight through them (#1145); no Ctrl+W |
-| Selection preview, hover highlight | yes | selected and hovered objects redrawn in the selection colour, fills half see-through (SELECTIONEFFECT 1; 0 dashed), selection effect color; HIGHLIGHT (not saved), SELECTIONPREVIEW, PREVIEWEFFECT, PREVIEWFILTER (Visual Effect Settings) |
+| Selection preview, hover highlight | yes | selected and hovered objects redrawn in the selection colour, fills half see-through (SELECTIONEFFECT 1; 0 dashed), selection effect color; HIGHLIGHT (not saved), SELECTIONPREVIEW, PREVIEWEFFECT, PREVIEWFILTER (Visual Effect Settings); a selected annotative object also shows faded at its other scales (SELECTIONANNODISPLAY) |
 | PICKADD, PICKFIRST, PICKAUTO | yes | PICKADD (Shift), PICKFIRST |
 | Stability of outlined fill highlights | yes | closed contours keep the same start, direction and ordering on repaints and GPU rebuilds; dashed filled glyphs, hatch/solid regions, arrowheads and wipeout outlines no longer shift with pointer movement |
 | QSELECT, SELECTSIMILAR, FILTER | yes | QSELECT dialog; SELECTSIMILAR with SELECTSIMILARMODE (#428, SEttings asks for the bit code; no dialog); no FILTER |

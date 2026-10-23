@@ -1457,6 +1457,7 @@ fn chspace(s: &mut Session, hs: &[Handle], to: Option<&str>, vp: Option<Handle>)
         }
         let mut e = e;
         e.kind.transform(&m);
+        e.common.transform_moves(&m);
         d.remove_entity(*h);
         if let Some(st) = d.space_mut(&target) {
             st.push(e);

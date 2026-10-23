@@ -103,6 +103,10 @@ pub struct Common {
     /// The annotation scales an annotative object supports (empty: not annotative).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub anno_scales: Vec<crate::AnnoScale>,
+    /// Where an annotative object sits apart from its shared position at some of its scales
+    /// (moved with its grips at that scale; ANNORESET clears them).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub anno_moves: Vec<crate::AnnoMove>,
     /// Other applications' extended data (xdata) as read from the drawing file: whole
     /// applications, each from its `1001` group on. It is part of the object, so a copy of the
     /// object (COPY, MIRROR, ARRAY, paste) carries it, as in AutoCAD.
@@ -124,6 +128,7 @@ impl Default for Common {
             extrusion: Vec3::Z,
             plot_style: "ByLayer".into(),
             anno_scales: Vec::new(),
+            anno_moves: Vec::new(),
             xdata: Vec::new(),
         }
     }

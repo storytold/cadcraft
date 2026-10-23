@@ -298,6 +298,7 @@ mod tests {
             xref_path: None,
             explodable: true,
             units: 0,
+            scale_uniformly: false,
             array: None,
         };
         blk.entities

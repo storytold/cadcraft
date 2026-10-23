@@ -135,6 +135,7 @@ fn remove_scale(d: &mut Drawing, h: Handle, name: &str) -> Removed {
             return;
         }
         e.common.anno_scales.retain(|s| !s.name.eq_ignore_ascii_case(name));
+        e.common.anno_moves.retain(|m| !m.scale.eq_ignore_ascii_case(name));
         r = Removed::Yes;
     });
     r
@@ -215,8 +216,27 @@ fn with_handles(s: &Session, p: &Value, mut extra: Value) -> Value {
 
 fn run_annoreset(s: &mut Session, p: &Value) -> Result<Value> {
     let (hs, _) = annotative_targets(s, p, "annoreset")?;
-    // One position serves every scale of an object, so they are always in step.
-    Ok(json!({ "objects": hs.len(), "message": format!("{} annotative object(s) synchronized", hs.len()) }))
+    // Every scale goes where the object shows now (in the active viewport, at its scale): that
+    // offset becomes the shared position.
+    let view = s.anno_view();
+    let d = s.doc_mut()?;
+    let mut moved = 0;
+    for h in &hs {
+        let Some(e) = d.entity(*h) else { continue };
+        if e.common.anno_moves.is_empty() || d.layer(&e.common.layer).is_some_and(|l| l.locked) {
+            continue;
+        }
+        let by = match d.anno_draw_in(e, view) {
+            cadcraft_doc::AnnoDraw::Scaled { by, .. } => by,
+            _ => Vec2::ZERO,
+        };
+        d.modify_entity(*h, |e| {
+            cadcraft_doc::shift_position(&mut e.kind, by);
+            e.common.anno_moves.clear();
+        })?;
+        moved += 1;
+    }
+    Ok(json!({ "objects": hs.len(), "reset": moved, "message": format!("{} annotative object(s) synchronized", hs.len()) }))
 }
 
 fn run_annoupdate(s: &mut Session, p: &Value) -> Result<Value> {

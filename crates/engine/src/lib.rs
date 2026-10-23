@@ -49,6 +49,10 @@ pub use cmd::hatch::{HatchPicks, PatternChoice, PickMode, pattern_choices};
 pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command};
 pub use prompt::{Accept, Drag, Input, Interactive, Picker, Prompt, Step};
 
+/// The most selected objects [`Session::selection_anno_others`] shows at their other scales (as
+/// grips, a big selection is drawn without them).
+pub const MAX_ANNO_OTHERS: usize = 200;
+
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
     #[error("unknown command `{0}`")]
@@ -221,6 +225,12 @@ impl DocState {
             cadcraft_doc::EntityKind::Viewport(v) if v.height > 1e-12 && v.view_height > 1e-12 => Some((h, v.clone())),
             _ => None,
         }
+    }
+    /// The annotation scale model space is edited at in the active MSPACE viewport: the
+    /// viewport's scale (drawing units per paper unit, as the renderer draws it there); `None`
+    /// outside one (the current annotation scale applies).
+    pub fn anno_view(&self) -> Option<f64> {
+        self.active_viewport().map(|(_, v)| v.view_height / v.height).filter(|f| f.is_finite() && *f > 0.0)
     }
     pub fn paper_view(&self) -> View {
         self.views.iter().find(|(s, _)| *s == self.space).map(|(_, v)| *v).unwrap_or_default()
@@ -428,6 +438,8 @@ pub struct Settings {
     /// SELECTIONPREVIEW bits: the object under the cursor is highlighted (1) when no command is
     /// active, (2) when a command asks for objects.
     pub selectionpreview: u8,
+    /// SELECTIONANNODISPLAY: a selected annotative object also shows faded at its other scales.
+    pub selectionannodisplay: bool,
     /// PREVIEWEFFECT: how that object is highlighted: 0 dashed, 1 thicker, 2 dashed and thicker.
     pub previeweffect: u8,
     /// PREVIEWFILTER bits: objects the cursor never highlights: 1 on locked layers, 2 xrefs,
@@ -505,6 +517,7 @@ impl Default for Settings {
             highlight: true,
             selectioneffect: 1,
             selectionpreview: 3,
+            selectionannodisplay: true,
             previeweffect: 2,
             previewfilter: 3,
             grips: 1,
@@ -877,6 +890,11 @@ impl Session {
         }
         let h = self.doc_mut()?.add(&space, common, kind)?;
         Ok(h)
+    }
+
+    /// The annotation scale of the active MSPACE viewport ([`DocState::anno_view`]).
+    pub fn anno_view(&self) -> Option<f64> {
+        self.state().ok().and_then(DocState::anno_view)
     }
 
     /// World units per pixel at the current view.
@@ -1408,6 +1426,36 @@ impl Session {
     pub fn previews_selection(&self) -> bool {
         let bit = if self.current_prompt().is_some() { 2 } else { 1 };
         self.picking_objects() && self.settings.selectionpreview & bit != 0
+    }
+
+    /// The selected annotative objects at their other scales, drawn faded while they are selected
+    /// (SELECTIONANNODISPLAY): each at that scale's size and position, as
+    /// [`cadcraft_doc::anno_others`] gives them. In model space the current scale is CANNOSCALE;
+    /// inside an active viewport it is the viewport's scale. Empty with SELECTIONANNODISPLAY 0. At
+    /// most [`MAX_ANNO_OTHERS`] selected objects are looked at.
+    pub fn selection_anno_others(&self) -> Vec<Entity> {
+        let Ok(st) = self.state() else { return Vec::new() };
+        if !self.settings.selectionannodisplay {
+            return Vec::new();
+        }
+        let d = &st.doc;
+        let vp_scale = st.anno_view();
+        let mut out = Vec::new();
+        for h in st.selection.iter().take(MAX_ANNO_OTHERS) {
+            match vp_scale {
+                Some(f) => {
+                    if let Some(e) = d.model.get(*h) {
+                        out.extend(cadcraft_doc::anno_others(e, f, d.anno_all_visible()));
+                    }
+                }
+                None => {
+                    if let Some(e) = d.entity(*h) {
+                        out.extend(d.anno_others(e));
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// Whether selected objects show grips while `selected` objects are selected (GRIPS,

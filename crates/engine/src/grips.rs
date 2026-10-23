@@ -4,7 +4,7 @@
 //! The UI calls [`Session::grip_edit`]; every edit runs through a `grip.*` command so it is
 //! undoable and reachable from scripts, the control channel and MCP.
 
-use cadcraft_doc::{DimKind, EntityKind, Handle, LwPolyline};
+use cadcraft_doc::{DimKind, Drawing, Entity, EntityKind, Handle, LwPolyline};
 use cadcraft_geom::{Arc, EPS, Mat3, Polyline, Vec2, Vec3, norm_angle};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -528,8 +528,57 @@ impl Session {
 
     /// Grip points of an object (the indices `grip_edit` takes).
     pub fn grips_of(&self, handle: Handle) -> Result<Vec<Vec2>> {
-        self.doc()?.entity(handle).map(|e| e.kind.grips()).ok_or_else(|| EngineError::Other("no such object".into()))
+        let d = self.doc()?;
+        d.entity(handle).map(|e| shown_grips(d, e, self.anno_view())).ok_or_else(|| EngineError::Other("no such object".into()))
     }
+}
+
+/// The grip points of `e` as it shows (the indices `grip_edit` takes): an annotative object's at
+/// the annotation scale it shows at and its position there. `view`: the active viewport's scale
+/// in MSPACE ([`crate::DocState::anno_view`]), else the current annotation scale applies.
+pub fn shown_grips(d: &Drawing, e: &Entity, view: Option<f64>) -> Vec<Vec2> {
+    d.anno_shown_in(e, view).grips()
+}
+
+/// `e` with grip `index` of [`shown_grips`] moved to `to`, or `None` when that grip can't move
+/// there. An annotative object's position grip moves it at the scale it shows at only when it
+/// supports several scales; its other grips change its shape at every scale (the edit is taken
+/// back to paper size).
+pub fn stretch_shown(d: &Drawing, e: &Entity, index: usize, to: Vec2, view: Option<f64>) -> Option<Entity> {
+    let with = |kind: EntityKind| Some(Entity { kind, ..e.clone() });
+    let (Some(scale), cadcraft_doc::AnnoDraw::Scaled { factor, by }) = (d.anno_shown_scale_in(e, view), d.anno_draw_in(e, view)) else {
+        return with(stretch_grip(&e.kind, index, to)?);
+    };
+    let shown = cadcraft_doc::anno_placed(e, factor, by).kind;
+    let from = *shown.grips().get(index)?;
+    let delta = to - from;
+    if !delta.is_finite() {
+        return None;
+    }
+    if cadcraft_doc::is_position_grip(&e.kind, index) {
+        if e.common.anno_scales.len() > 1 {
+            let mut out = e.clone();
+            out.common.move_at(&scale.name, delta);
+            return Some(out);
+        }
+        let stored = *e.kind.grips().get(index)?;
+        return with(stretch_grip(&e.kind, index, stored + delta)?);
+    }
+    // A shape grip: stretch the object as it shows, then take it back to paper size.
+    let mut k = stretch_grip(&shown, index, to)?;
+    cadcraft_doc::shift_position(&mut k, -by);
+    let k = match (k, &e.kind) {
+        (EntityKind::Dimension(mut dm), EntityKind::Dimension(old)) => {
+            // A dimension's geometry isn't scaled: only its style scale was.
+            dm.overrides = old.overrides.clone();
+            if by != Vec2::ZERO {
+                dm.user_text_pos = old.user_text_pos;
+            }
+            EntityKind::Dimension(dm)
+        }
+        (k, _) => cadcraft_doc::anno_scaled(&Entity { kind: k, ..e.clone() }, 1.0 / factor).kind,
+    };
+    with(k)
 }
 
 /// Polyline helper kept public for the UI: segment midpoints are grips too.

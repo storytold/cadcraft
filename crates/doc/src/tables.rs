@@ -686,6 +686,9 @@ pub struct Block {
     pub explodable: bool,
     #[serde(default)]
     pub units: u8,
+    /// References to this block scale uniformly (the BLOCK_RECORD's group 281).
+    #[serde(default)]
+    pub scale_uniformly: bool,
     /// The parameters of an associative array when this is an array block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub array: Option<crate::ArrayParams>,
@@ -734,6 +737,7 @@ impl Block {
             xref_path: None,
             explodable: true,
             units: 0,
+            scale_uniformly: false,
             array: None,
         }
     }

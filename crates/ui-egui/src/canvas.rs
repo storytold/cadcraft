@@ -79,6 +79,8 @@ pub struct CanvasState {
     /// The selection and hover highlights inside the active MSPACE viewport (see [`VpHighlight`]).
     vp_sel: VpHighlight,
     vp_hover: VpHighlight,
+    /// Selected annotative objects at their other scales (see [`AnnoOthers`]).
+    anno_others: AnnoOthers,
     /// Model space seen through the active MSPACE viewport (see [`VpContent`]).
     vp: VpContent,
     /// Indices of infinite-line primitives in `list` (drawn on the CPU in GPU mode).
@@ -663,6 +665,51 @@ impl VpHighlight {
             self.key = Some(key);
             self.list_gen = self.list_gen.wrapping_add(1);
         }
+    }
+}
+
+/// The selected annotative objects at their other scales (SELECTIONANNODISPLAY), tessellated in
+/// model units from [`cadcraft_engine::Session::selection_anno_others`]; rebuilt only when the
+/// drawing, the selection, the setting, the active viewport or the zoom band change.
+#[derive(Default)]
+struct AnnoOthers {
+    key: Option<u64>,
+    list: DisplayList,
+}
+
+impl AnnoOthers {
+    fn update(&mut self, session: &cadcraft_engine::Session, sel: &[Handle], scale: f64) -> &DisplayList {
+        let tolerance = viewport_highlight_tolerance(scale);
+        let key = session.state().ok().map(|st| {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            let on = session.settings.selectionannodisplay;
+            // An unlocked viewport's zoom changes its scale without a new revision.
+            let vp_scale = st.anno_view().map(f64::to_bits);
+            (st.uid, st.revision, std::sync::Arc::as_ptr(&st.doc) as usize, tolerance.to_bits(), sel, on, st.mspace, vp_scale).hash(&mut h);
+            h.finish()
+        });
+        if self.key != key {
+            let others = session.selection_anno_others();
+            self.list = match session.state() {
+                Ok(st) if !others.is_empty() => {
+                    cadcraft_render::build_entities(&st.doc, others.iter(), &cadcraft_render::Options { tolerance, ..Default::default() })
+                }
+                _ => DisplayList::default(),
+            };
+            self.key = key;
+        }
+        &self.list
+    }
+}
+
+/// Draw the selected annotative objects' other scales faded (SELECTIONANNODISPLAY), under the
+/// selection highlight; `xf` maps model units to the screen.
+fn draw_anno_others(others: &mut AnnoOthers, session: &cadcraft_engine::Session, p: &egui::Painter, xf: &Xf, sel: &[Handle], look: Look) {
+    let list = others.update(session, sel, xf.scale);
+    if !list.prims.is_empty() {
+        let all: Vec<usize> = (0..list.prims.len()).collect();
+        draw_highlight(p, xf, list, &all, Tokens::get().selection_faded, Look { width: 1.0, ..look });
     }
 }
 
@@ -1842,6 +1889,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             if let Some(look) = selection_look
                 && !sel.is_empty()
             {
+                draw_anno_others(&mut c.anno_others, &app.session, &clipped, &xf, &sel, look);
                 c.vp_sel.update(st, &sel, scale);
                 let list = &c.vp_sel.list;
                 let all = || (0..list.prims.len()).collect::<Vec<_>>();
@@ -1858,13 +1906,18 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
                 }
             }
         }
-    } else if let CanvasState { list: Some(list), list_gen, prim_index, hover, gpu, hl_key, hl_slot, hl_origin, hl_infinite, .. } = &mut app.canvas {
+    } else if let CanvasState { list: Some(list), list_gen, prim_index, hover, gpu, hl_key, hl_slot, hl_origin, hl_infinite, anno_others, .. } =
+        &mut app.canvas
+    {
         if let Some(h) = *hover
             && !sel.contains(&h)
         {
             draw_highlight(&painter, &xf, list, &prim_index.prims(*list_gen, list, &[h]), t.hover, preview_look);
         }
         if let Some(look) = selection_look {
+            if !sel.is_empty() {
+                draw_anno_others(anno_others, &app.session, &painter, &xf, &sel, look);
+            }
             if gpu.is_some() && !sel.is_empty() {
                 let list_id = *list_gen;
                 let hl = (hl_key, &*hl_slot, hl_origin, &mut *hl_infinite);
@@ -1918,7 +1971,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         let gs = app.session.settings.gripsize as f32;
         for h in sel.iter().take(200) {
             if let Some(e) = st.doc.entity(*h) {
-                for (gi, g) in e.kind.grips().into_iter().enumerate() {
+                for (gi, g) in cadcraft_engine::grips::shown_grips(&st.doc, e, st.anno_view()).into_iter().enumerate() {
                     let sp = xf.to_screen(g);
                     if rect.contains(sp) {
                         let r = Rect::from_center_size(sp, vec2(gs * 2.0, gs * 2.0));
@@ -2650,7 +2703,7 @@ fn grip_at(app: &CadApp, xf: &Xf, hover: Option<Pos2>) -> Option<(Handle, usize)
         if st.doc.layer(&e.common.layer).is_some_and(|l| l.locked) {
             continue;
         }
-        for (i, g) in e.kind.grips().into_iter().enumerate() {
+        for (i, g) in cadcraft_engine::grips::shown_grips(&st.doc, e, st.anno_view()).into_iter().enumerate() {
             let sp = xf.to_screen(g);
             if (sp.x - hp.x).abs() <= gs && (sp.y - hp.y).abs() <= gs {
                 return Some((*h, i));
@@ -2674,6 +2727,33 @@ pub(crate) mod tests {
 
     fn hs(v: &[u64]) -> Vec<Handle> {
         v.iter().map(|&h| Handle(h)).collect()
+    }
+
+    /// Zooming an unlocked viewport (no new revision) changes its scale: the faded other scales
+    /// of the selection are built again.
+    #[test]
+    fn anno_others_follow_a_viewport_zoom() {
+        use serde_json::json;
+        let mut s = cadcraft_engine::Session::new();
+        s.execute("style", &json!({ "name": "Notes", "annotative": true, "current": true })).unwrap();
+        let r = s.execute("text", &json!({ "at": [0, 0], "text": "NOTE", "height": 0.25 })).unwrap();
+        let h = r["handle"].as_str().unwrap().to_string();
+        s.execute("objectscale", &json!({ "handles": [h], "add": "1:50" })).unwrap();
+        s.execute("layout.set", &json!({ "name": "Layout1" })).unwrap();
+        let vp = s.execute("mview", &json!({ "p1": [0, 0], "p2": [200, 100] })).unwrap();
+        let vh = vp["viewports"][0].as_str().unwrap().to_string();
+        s.execute("viewport.set", &json!({ "handle": vh, "scale": "1:50", "center": [0, 0] })).unwrap();
+        s.execute("mspace", &json!({ "handle": vh })).unwrap();
+        s.execute("select", &json!({ "handles": [h] })).unwrap();
+        let sel = s.selection();
+        let mut others = AnnoOthers::default();
+        others.update(&s, &sel, 1.0);
+        let before = others.key;
+        let v = s.state().unwrap().view();
+        s.state_mut().unwrap().set_view_quiet(cadcraft_engine::View { height: v.height / 50.0, ..v });
+        assert!((s.anno_view().unwrap() - 1.0).abs() < 1e-9, "{:?}", s.anno_view());
+        others.update(&s, &sel, 1.0);
+        assert_ne!(others.key, before);
     }
 
     /// A dragged object keeps its transparency in the GPU preview when TRANSPARENCYDISPLAY is

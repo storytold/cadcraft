@@ -88,6 +88,9 @@ pub struct Tokens {
     pub icon_point: Color32,
     pub accent: Color32,
     pub selection: Color32,
+    /// A selected annotative object at its other scales (SELECTIONANNODISPLAY): the selection
+    /// colour, faded.
+    pub selection_faded: Color32,
     pub hover: Color32,
     pub grip: Color32,
     pub grip_hot: Color32,
@@ -148,6 +151,7 @@ impl Tokens {
         icon_point: Color32::from_rgb(0xf0, 0x7a, 0x3a),
         accent: Color32::from_rgb(0x3d, 0x8b, 0xfd),
         selection: Color32::from_rgb(0x4a, 0x8f, 0xff),
+        selection_faded: Color32::from_rgba_premultiplied(0x21, 0x40, 0x72, 0x73),
         hover: Color32::from_rgb(0x9c, 0xc6, 0xff),
         grip: Color32::from_rgb(0x2f, 0x6b, 0xff),
         grip_hot: Color32::from_rgb(0xff, 0x3b, 0x3b),
@@ -248,6 +252,9 @@ pub struct Canvas {
     pub selection: Option<Color32>,
 }
 
+/// How opaque [`Tokens::selection_faded`] is next to the selection colour.
+const SELECTION_FADE: f32 = 0.45;
+
 /// The default object snap marker size.
 pub const SNAP_MARKER: f32 = 11.0;
 
@@ -263,7 +270,11 @@ impl Canvas {
             Some(bg) => t.with_model_background(bg),
             None => t,
         };
-        Tokens { paper: self.paper.unwrap_or(t.paper), selection: self.selection.unwrap_or(t.selection), ..t }
+        let (selection, selection_faded) = match self.selection {
+            Some(c) => (c, c.gamma_multiply(SELECTION_FADE)),
+            None => (t.selection, t.selection_faded),
+        };
+        Tokens { paper: self.paper.unwrap_or(t.paper), selection, selection_faded, ..t }
     }
 }
 
