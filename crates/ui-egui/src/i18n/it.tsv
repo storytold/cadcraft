@@ -1259,3 +1259,7 @@ menu	Modify	Edita
 	Discard	Scarta
 	Customize	Personalizza
 	Edit Command Aliases (PGP)...	Modifica alias dei comandi (PGP)...
+	Minimize	Riduci a icona
+	Maximize	Ingrandisci
+	Use system title bar	Usa la barra del titolo di sistema
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	Mostra una semplice barra del titolo con i pulsanti della finestra sopra quella di CADCraft. GNOME non disegna barre del titolo per le app, quindi questa non segue il suo tema.

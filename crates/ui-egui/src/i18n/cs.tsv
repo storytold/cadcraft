@@ -1218,3 +1218,7 @@ menu	Modify	Modifikace
 	Not a number or distance: {text}	Není číslo ani vzdálenost: {text}
 	Query Texts	Dotaz na texty
 	Analyze Shapes	Analyzovat tvary
+	Minimize	Minimalizovat
+	Maximize	Maximalizovat
+	Use system title bar	Použít systémové záhlaví okna
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	Zobrazí nad záhlavím CADCraftu jednoduché záhlaví s tlačítky okna. GNOME aplikacím záhlaví nekreslí, takže toto nesleduje jeho motiv.

@@ -47,6 +47,7 @@ pub mod shortcut_menus;
 pub mod theme;
 pub mod viewcube;
 pub mod vpscale;
+pub mod window_controls;
 
 pub mod exchange;
 
@@ -109,6 +110,11 @@ pub struct UiState {
     pub save_version: String,
     /// Drawings opened from a path, newest first (File ▸ Open Recent and the Start page).
     pub recent_files: Vec<String>,
+    /// Options ▸ Display ▸ Use system title bar: where the desktop leaves the window frame to the
+    /// app ([`CadApp::window_controls`], GNOME on Wayland), keep winit's frame instead of drawing
+    /// the window buttons in a title row. Kept in the desktop workspace file, which is read before
+    /// the window opens.
+    pub system_title_bar: bool,
 }
 
 /// A DXF/DWG file version (2000 … 2018).
@@ -180,6 +186,7 @@ impl Default for UiState {
             save_format: SaveFormat::default(),
             save_version: SaveVersion::default().year().to_string(),
             recent_files: Vec::new(),
+            system_title_bar: false,
         }
     }
 }
@@ -209,6 +216,12 @@ pub struct CadApp {
     /// Drawings being read on worker threads ([`opening`]).
     pub opening: opening::Opening,
     pub integrated_titlebar: bool,
+    /// Set when the desktop leaves the window frame to the app (GNOME on Wayland): a title row
+    /// carries these window buttons and the window's edges resize it.
+    pub window_controls: Option<window_controls::Layout>,
+    /// Whether the window currently has the app's frame rather than winit's (`None` until the
+    /// desktop app says how the window opened, or the first frame).
+    pub app_frame_shown: Option<bool>,
     control_rx: Option<Receiver<ControlRequest>>,
     pending_shots: Vec<(u64, Option<String>, std::sync::mpsc::Sender<Value>, f64)>,
     queued_shots: Vec<(u64, f64, u32)>,
@@ -265,6 +278,8 @@ impl CadApp {
             status: None,
             opening: opening::Opening::default(),
             integrated_titlebar: false,
+            window_controls: None,
+            app_frame_shown: None,
             control_rx: None,
             pending_shots: Vec::new(),
             queued_shots: Vec::new(),
@@ -623,6 +638,35 @@ impl CadApp {
         raw.events.extend(self.synthetic.drain(..n));
     }
 
+    /// Whether the app draws the window buttons and resize edges: the desktop leaves the frame to
+    /// the app and Use system title bar is off.
+    pub fn draws_window_frame(&self) -> bool {
+        self.window_controls.is_some() && !self.ui.system_title_bar
+    }
+
+    /// The window buttons to draw this frame: none where the desktop draws the frame, and none in
+    /// full screen.
+    pub(crate) fn shown_window_controls(&self, ctx: &egui::Context) -> Option<window_controls::Layout> {
+        let fullscreen = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
+        self.window_controls.clone().filter(|_| self.draws_window_frame() && !fullscreen)
+    }
+
+    /// Follow Use system title bar at once: the window opens without winit's frame wherever the
+    /// app may draw its own (the desktop app's `main`), and gets it back, or loses it again, when
+    /// the setting changes.
+    fn sync_window_frame(&mut self, ctx: &egui::Context) {
+        if self.window_controls.is_none() {
+            return;
+        }
+        let app_frame = self.draws_window_frame();
+        if self.app_frame_shown != Some(app_frame) {
+            if self.app_frame_shown.is_some() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(!app_frame));
+            }
+            self.app_frame_shown = Some(app_frame);
+        }
+    }
+
     /// Lay out the whole window.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         i18n::with_language(self.language(), || self.draw(ui));
@@ -632,6 +676,7 @@ impl CadApp {
         let t0 = now_ms();
         control::begin_frame(ui.ctx());
         let t = theme::Tokens::get();
+        self.sync_window_frame(ui.ctx());
         chrome::title_and_toolbar(self, ui);
         if self.ui.in_window_menu {
             menus::menu_bar(self, ui);
@@ -658,6 +703,10 @@ impl CadApp {
         closing::prompt(self, ui.ctx());
         autosave::show(self, ui.ctx());
         autosave::gpu_notice(self, ui.ctx());
+        // Last, so the edges' resize cursors win over the drawing area's.
+        if self.draws_window_frame() {
+            window_controls::resize_edges(ui.ctx());
+        }
         self.frame_ms = now_ms() - t0;
     }
 
