@@ -1,6 +1,6 @@
 # Target-app parity: CADCraft vs AutoCAD 2027
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Block Editor for static blocks; blocks evidence updated, numbers not re-measured) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-18 · **Change:** minor (historical DWG save-version claim clarified; numbers not re-measured) · **Target:** Autodesk AutoCAD 2027
 
 The authoritative assessment of how close CADCraft is to AutoCAD, and how much Opus 5.5 work
 remains. [ROADMAP.md](../ROADMAP.md) summarises it, [gaps.md](gaps.md) lists every shortfall,
@@ -198,11 +198,16 @@ tail factor for verification against AutoCAD.
 **Why the total went up.** The 2026-10-07 roadmap put full parity at ≈ 29% with ≈ 570 h left,
 from agent-reported milestone percentages. This pass audited behaviour instead of presence and
 found new evidence: object snap tracking, extension, parallel and apparent snaps are toggles;
-dynamic input is read-only; saves drop every entity the reader doesn't model; DWG always saves as
-R2000; tolerances are absolute; and the old estimate had no rows for localization, ecosystem,
-platforms, stability or AI. The weighted figure rose (29% → 41% features) because breadth and
+dynamic input is read-only; saves drop every entity the reader doesn't model; DWG saves were
+limited to R2000 (since #421, 2000–2018 with 2018 for new drawings; see
+[file formats](file-format-parity.md)); tolerances are absolute; and the old estimate had no
+rows for localization, ecosystem, platforms, stability or AI. The weighted figure rose
+(29% → 41% features) because breadth and
 depth both grew since 2026-10-07 and the weights are now written down; the hours rose because
 the remaining work is depth and 3D.
+In the app's Save dialog, File ▸ Default Save Format (also Options ▸ Open and Save,
+`saveVersion`, default 2018) sets the version for untitled drawings; drawings with a file keep
+their own version, subject to supported-version mapping and the DWG minimum.
 
 **Parallelism.** About 70% of the work splits across 4–6 agents by area (each feature area,
 file formats, UI precision, localization per language), so elapsed time is roughly a quarter of
@@ -223,6 +228,7 @@ DWG/DXF corpus (files from people who own them); black-box checks in AutoCAD of 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-18 | minor | Mark the R2000-only DWG save limitation as historical and link current version-selection rules; percentages and hours not re-measured |
 | 2026-10-12 | minor | Hatch row evidence: Hatch and Gradient / Hatch Edit dialogs; percentages and hours not re-measured |
 | 2026-10-12 | minor | Blocks row evidence: Block Editor for static blocks (BEDIT, BSAVE, BSAVEAS, BCLOSE); percentages and hours not re-measured |
 | 2026-10-11 | minor | Evidence text of the feature-area rows refreshed for merged work (#397, #406, #408, #417, #420, #433, #448, #451, #453, #459, #468, #507, #510, #525, #534, #546, #547, #558, #563, #564, #567, #571); parity percentages and hours not re-measured |
