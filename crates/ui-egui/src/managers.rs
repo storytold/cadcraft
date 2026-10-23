@@ -1,5 +1,5 @@
 //! Style and settings dialogs opened from the menus: Linetype Manager, Point Style, Text Style,
-//! Table Style, Multileader Style, Page Setup Manager, Plot and Constraint Settings.
+//! Dimension Style, Table Style, Multileader Style, Page Setup Manager, Plot and Constraint Settings.
 //!
 //! Typed or chosen from a menu (no parameters) these commands open their dialog; JSON calls run
 //! the command. The dialogs read the drawing and change it only through the same commands
@@ -28,6 +28,7 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
         "linetype" | "lt" | "ltype" => "linetype",
         "ddptype" | "ptype" => "ptype",
         "style" | "st" => "textstyle",
+        "dimstyle" | "dimstyle.dimension" | "d" | "dst" | "ddim" => "dimstyle",
         "tablestyle" | "ts" => "tablestyle",
         "mleaderstyle" | "mls" => "mleaderstyle",
         "pagesetup" => "pagesetup",
@@ -49,6 +50,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
         "linetype" => linetype(app, ctx, open),
         "ptype" => point_style(app, ctx, open),
         "textstyle" => text_style(app, ctx, open),
+        "dimstyle" => dim_style(app, ctx, open),
         "tablestyle" => table_style(app, ctx, open),
         "mleaderstyle" => mleader_style(app, ctx, open),
         "pagesetup" => page_setup(app, ctx, open),
@@ -61,7 +63,14 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
     };
     if let Some((cmd, p)) = action {
         // Errors are echoed on the command line by `run`.
-        let _ = app.run(cmd, p);
+        let r = app.run(cmd, p);
+        if let Ok(v) = r
+            && let Some(ignored) = v.get("ignored").and_then(Value::as_array)
+            && !ignored.is_empty()
+        {
+            let names: Vec<_> = ignored.iter().filter_map(Value::as_str).collect();
+            set_temp(ctx, &format!("{cmd}_err"), Some(format!("Ignored invalid value for: {}", names.join(", "))));
+        }
     }
 }
 
@@ -73,9 +82,13 @@ fn fmt_num(v: f64) -> String {
     if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s }
 }
 
+fn parse_num_field(ui: &mut egui::Ui, id: impl egui::AsId, v: f64) -> Option<Result<f64, ()>> {
+    expr_field(ui, egui::Id::new(id), &fmt_num(v)).map(|t| t.parse::<f64>().ok().filter(|v| v.is_finite()).ok_or(()))
+}
+
 /// A number field that commits on Enter or focus loss.
 fn num_field(ui: &mut egui::Ui, id: impl egui::AsId, v: f64) -> Option<f64> {
-    expr_field(ui, egui::Id::new(id), &fmt_num(v)).and_then(|t| t.parse::<f64>().ok()).filter(|v| v.is_finite())
+    parse_num_field(ui, id, v).and_then(Result::ok)
 }
 
 fn temp<T: Clone + Send + Sync + 'static>(ctx: &egui::Context, id: &str) -> Option<T> {
@@ -293,9 +306,37 @@ fn point_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action
 
 // ---------- Text Style, Table Style and Multileader Style ----------
 
+/// Numerical validation rule for style properties.
+#[derive(Clone, Copy)]
+enum NumRule {
+    /// Values must be 0 or greater (default for dimensions and sizes).
+    NonNegative,
+    /// Values must be strictly greater than 0 (e.g. text height).
+    Positive,
+    /// Dimension precision (DIMDEC): integer 0 to 8.
+    Decimals,
+}
+
+impl NumRule {
+    fn validate(self, v: f64) -> Result<f64, &'static str> {
+        match self {
+            NumRule::NonNegative if v < 0.0 => Err("must be 0 or greater"),
+            NumRule::Positive if v <= 0.0 => Err("must be greater than 0"),
+            NumRule::Decimals => {
+                if v < 0.0 {
+                    return Err("precision must be between 0 and 8");
+                }
+                let r = v.round();
+                if (0.0..=8.0).contains(&r) { Ok(r) } else { Err("precision must be between 0 and 8") }
+            }
+            _ => Ok(v),
+        }
+    }
+}
+
 /// One editable style property.
 enum Field {
-    Num(&'static str, &'static str, f64),
+    Num(&'static str, &'static str, f64, NumRule),
     Bool(&'static str, &'static str, bool),
     Choice(&'static str, &'static str, String, Vec<String>),
 }
@@ -316,8 +357,8 @@ fn text_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
         .map(|s| Style {
             name: s.name.clone(),
             fields: vec![
-                Field::Num("height", "Height (0 = ask)", s.height),
-                Field::Num("widthFactor", "Width factor", s.width_factor),
+                Field::Num("height", "Height (0 = ask)", s.height, NumRule::NonNegative),
+                Field::Num("widthFactor", "Width factor", s.width_factor, NumRule::Positive),
                 Field::Bool("backwards", "Backwards", s.backwards),
                 Field::Bool("upsideDown", "Upside down", s.upside_down),
             ],
@@ -331,6 +372,45 @@ fn text_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
     style_manager(ctx, open, "Text Style", "style", &current, &styles)
 }
 
+fn dim_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
+    let Ok(d) = app.session.doc() else {
+        no_drawing(ctx, "Dimension Style", open);
+        return None;
+    };
+    let text_styles: Vec<String> = d.text_styles.iter().map(|s| s.name.clone()).collect();
+    let mut styles: Vec<Style> = d
+        .dim_styles
+        .iter()
+        .map(|s| Style {
+            name: s.name.clone(),
+            fields: vec![
+                Field::Num("scale", "Overall scale (DIMSCALE)", s.scale, NumRule::NonNegative),
+                Field::Num("arrowSize", "Arrow size (DIMASZ)", s.arrow_size, NumRule::NonNegative),
+                Field::Num("textHeight", "Text height (DIMTXT)", s.text_height, NumRule::Positive),
+                Field::Num("extExtend", "Extension line extend (DIMEXE)", s.ext_extend, NumRule::NonNegative),
+                Field::Num("extOffset", "Extension line offset (DIMEXO)", s.ext_offset, NumRule::NonNegative),
+                Field::Num("textGap", "Text gap (DIMGAP)", s.text_gap, NumRule::NonNegative),
+                Field::Num("baselineSpacing", "Baseline spacing (DIMDLI)", s.baseline_spacing, NumRule::NonNegative),
+                Field::Num("decimals", "Precision decimals (DIMDEC)", s.decimals as f64, NumRule::Decimals),
+                Field::Choice("textStyle", "Text style", s.text_style.clone(), text_styles.clone()),
+                Field::Bool("annotative", "Annotative", s.annotative),
+                Field::Bool("suppressExt1", "Suppress ext line 1", s.suppress_ext1),
+                Field::Bool("suppressExt2", "Suppress ext line 2", s.suppress_ext2),
+                Field::Bool("suppressDim1", "Suppress dim line 1", s.suppress_dim1),
+                Field::Bool("suppressDim2", "Suppress dim line 2", s.suppress_dim2),
+                Field::Bool("textInsideHorizontal", "Text inside horizontal", s.text_inside_horizontal),
+                Field::Bool("textOutsideHorizontal", "Text outside horizontal", s.text_outside_horizontal),
+            ],
+        })
+        .collect();
+    if styles.is_empty() {
+        let s = cadcraft_doc::DimStyle::default();
+        styles.push(Style { name: s.name, fields: Vec::new() });
+    }
+    let current = d.header.str("DIMSTYLE", "Standard");
+    style_manager(ctx, open, "Dimension Style", "dimstyle", &current, &styles)
+}
+
 fn table_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
     let Ok(d) = app.session.doc() else {
         no_drawing(ctx, "Table Style", open);
@@ -342,8 +422,8 @@ fn table_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action
         .map(|s| Style {
             name: s.name.clone(),
             fields: vec![
-                Field::Num("textHeight", "Text height", s.text_height),
-                Field::Num("margin", "Cell margin", s.margin),
+                Field::Num("textHeight", "Text height", s.text_height, NumRule::Positive),
+                Field::Num("margin", "Cell margin", s.margin, NumRule::NonNegative),
                 Field::Bool("title", "Title row", s.title),
                 Field::Bool("header", "Header row", s.header),
             ],
@@ -369,10 +449,10 @@ fn mleader_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Acti
         .map(|s| Style {
             name: s.name.clone(),
             fields: vec![
-                Field::Num("arrowSize", "Arrowhead size", s.arrow_size),
-                Field::Num("textHeight", "Text height", s.text_height),
-                Field::Num("landingGap", "Landing gap", s.landing_gap),
-                Field::Num("dogleg", "Landing length", s.dogleg),
+                Field::Num("arrowSize", "Arrowhead size", s.arrow_size, NumRule::NonNegative),
+                Field::Num("textHeight", "Text height", s.text_height, NumRule::Positive),
+                Field::Num("landingGap", "Landing gap", s.landing_gap, NumRule::NonNegative),
+                Field::Num("dogleg", "Landing length", s.dogleg, NumRule::NonNegative),
                 Field::Choice("textStyle", "Text style", s.text_style.clone(), text_styles.clone()),
             ],
         })
@@ -391,16 +471,18 @@ fn style_manager(ctx: &egui::Context, open: &mut bool, title: &str, cmd: &'stati
     let t = Tokens::get();
     let sel_key = format!("{cmd}_sel");
     let new_key = format!("{cmd}_new");
+    let err_key = format!("{cmd}_err");
     let mut sel = temp::<String>(ctx, &sel_key).filter(|s| styles.iter().any(|x| x.name == *s)).unwrap_or_else(|| current.to_string());
     let mut new_name = temp::<String>(ctx, &new_key).unwrap_or_default();
+    let mut err_msg = temp::<Option<String>>(ctx, &err_key).flatten().or_else(|| temp::<String>(ctx, &err_key));
     let mut action = None;
-    egui::Window::new(title).open(open).default_size(vec2(520.0, 280.0)).resizable(true).show(ctx, |ui| {
+    egui::Window::new(title).open(open).default_size(vec2(540.0, 320.0)).resizable(true).show(ctx, |ui| {
         ui.label(RichText::new(format!("Current style: {current}")).color(t.text_dim));
         ui.separator();
         ui.columns(2, |cols| {
             let [left, right] = cols else { return };
             left.label(RichText::new("Styles").strong());
-            egui::ScrollArea::vertical().id_salt((cmd, "list")).max_height(160.0).auto_shrink([false, true]).show(left, |ui| {
+            egui::ScrollArea::vertical().id_salt((cmd, "list")).max_height(200.0).auto_shrink([false, true]).show(left, |ui| {
                 for s in styles {
                     let mut label = RichText::new(&s.name);
                     if s.name.eq_ignore_ascii_case(current) {
@@ -408,11 +490,13 @@ fn style_manager(ctx: &egui::Context, open: &mut bool, title: &str, cmd: &'stati
                     }
                     if ui.selectable_label(s.name == sel, label).clicked() {
                         sel = s.name.clone();
+                        err_msg = None;
                     }
                 }
             });
             if left.add_enabled(!sel.eq_ignore_ascii_case(current), egui::Button::new("Set Current")).clicked() {
                 action = Some((cmd, json!({ "name": sel })));
+                err_msg = None;
             }
             left.horizontal(|ui| {
                 ui.add(egui::TextEdit::singleline(&mut new_name).hint_text("New style name").desired_width(120.0));
@@ -422,45 +506,77 @@ fn style_manager(ctx: &egui::Context, open: &mut bool, title: &str, cmd: &'stati
                     action = Some((cmd, json!({ "name": name, "current": false })));
                     sel = name;
                     new_name.clear();
+                    err_msg = None;
                 }
             });
             right.label(RichText::new(format!("Properties of {sel}")).strong());
+            if let Some(err) = &err_msg {
+                right.colored_label(t.warn, err);
+            }
             let Some(style) = styles.iter().find(|s| s.name == sel) else { return };
-            egui::Grid::new((cmd, "props")).num_columns(2).spacing(vec2(10.0, 6.0)).show(right, |ui| {
-                for f in &style.fields {
-                    let change = match f {
-                        Field::Num(key, label, v) => {
-                            ui.label(*label);
-                            num_field(ui, (cmd, &style.name, *key), *v).filter(|v| *v >= 0.0).map(|v| (*key, json!(v)))
-                        }
-                        Field::Bool(key, label, v) => {
-                            ui.label("");
-                            let mut b = *v;
-                            ui.checkbox(&mut b, *label).changed().then(|| (*key, json!(b)))
-                        }
-                        Field::Choice(key, label, v, choices) => {
-                            ui.label(*label);
-                            let mut picked = None;
-                            egui::ComboBox::from_id_salt((cmd, *key)).selected_text(v.as_str()).show_ui(ui, |ui| {
-                                for c in choices {
-                                    if ui.selectable_label(c == v, c).clicked() && c != v {
-                                        picked = Some(c.clone());
+            egui::ScrollArea::vertical().id_salt((cmd, "props_scroll")).max_height(200.0).auto_shrink([false, true]).show(right, |right| {
+                egui::Grid::new((cmd, "props")).num_columns(2).spacing(vec2(10.0, 6.0)).show(right, |ui| {
+                    for f in &style.fields {
+                        let change = match f {
+                            Field::Num(key, label, v, rule) => {
+                                ui.label(*label);
+                                if let Some(parsed) = parse_num_field(ui, (cmd, &style.name, *key), *v) {
+                                    match parsed {
+                                        Ok(raw) => match rule.validate(raw) {
+                                            Ok(valid) => {
+                                                err_msg = None;
+                                                Some((*key, json!(valid)))
+                                            }
+                                            Err(why) => {
+                                                err_msg = Some(format!("{label}: {why}"));
+                                                None
+                                            }
+                                        },
+                                        Err(()) => {
+                                            err_msg = Some(format!("{label}: Enter a valid number"));
+                                            None
+                                        }
                                     }
+                                } else {
+                                    None
                                 }
-                            });
-                            picked.map(|c| (*key, json!(c)))
+                            }
+                            Field::Bool(key, label, v) => {
+                                ui.label("");
+                                let mut b = *v;
+                                ui.checkbox(&mut b, *label).changed().then(|| {
+                                    err_msg = None;
+                                    (*key, json!(b))
+                                })
+                            }
+                            Field::Choice(key, label, v, choices) => {
+                                ui.label(*label);
+                                let mut picked = None;
+                                egui::ComboBox::from_id_salt((cmd, *key)).selected_text(v.as_str()).show_ui(ui, |ui| {
+                                    for c in choices {
+                                        if ui.selectable_label(c == v, c).clicked() && c != v {
+                                            picked = Some(c.clone());
+                                        }
+                                    }
+                                });
+                                picked.map(|c| {
+                                    err_msg = None;
+                                    (*key, json!(c))
+                                })
+                            }
+                        };
+                        if let Some((key, v)) = change {
+                            action = Some((cmd, json!({ "name": style.name, key: v, "current": false })));
                         }
-                    };
-                    if let Some((key, v)) = change {
-                        action = Some((cmd, json!({ "name": style.name, key: v, "current": false })));
+                        ui.end_row();
                     }
-                    ui.end_row();
-                }
+                });
             });
         });
     });
     set_temp(ctx, &sel_key, sel);
     set_temp(ctx, &new_key, new_name);
+    set_temp(ctx, &err_key, err_msg);
     action
 }
 
@@ -1254,5 +1370,23 @@ mod plot_dialog_tests {
         plot_window_resume(&mut app, &ctx);
         assert_eq!(app.ui.dialog.as_deref(), Some("plot"));
         assert_eq!(temp::<PlotState>(&ctx, "plot_state").unwrap().window, [2.0, 3.0, 12.0, 9.0]);
+    }
+
+    #[test]
+    fn num_rule_validates_ranges_and_precision() {
+        assert_eq!(NumRule::NonNegative.validate(0.0), Ok(0.0));
+        assert_eq!(NumRule::NonNegative.validate(1.5), Ok(1.5));
+        assert!(NumRule::NonNegative.validate(-0.01).is_err());
+
+        assert_eq!(NumRule::Positive.validate(0.1), Ok(0.1));
+        assert!(NumRule::Positive.validate(0.0).is_err());
+        assert!(NumRule::Positive.validate(-1.0).is_err());
+
+        assert_eq!(NumRule::Decimals.validate(0.0), Ok(0.0));
+        assert_eq!(NumRule::Decimals.validate(4.4), Ok(4.0));
+        assert_eq!(NumRule::Decimals.validate(8.0), Ok(8.0));
+        assert!(NumRule::Decimals.validate(-0.1).is_err());
+        assert!(NumRule::Decimals.validate(-1.0).is_err());
+        assert!(NumRule::Decimals.validate(8.5).is_err());
     }
 }

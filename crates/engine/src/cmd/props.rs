@@ -744,7 +744,8 @@ fn run_dimstyle(s: &mut Session, p: &Value) -> Result<Value> {
     if !rejected.is_empty()
         && let Some(o) = out.as_object_mut()
     {
-        o.insert("ignored".into(), json!(rejected));
+        o.insert("ignored".into(), json!(rejected.clone()));
+        o.insert("message".into(), json!(format!("Ignored invalid value for: {}", rejected.join(", "))));
     }
     Ok(out)
 }

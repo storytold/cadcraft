@@ -472,6 +472,7 @@ impl DimStyle {
                 (Value::Object(_), Value::String(t)) => Color::parse(t).and_then(|c| serde_json::to_value(c).ok()).unwrap_or_else(|| v.clone()),
                 _ => v.clone(),
             };
+            let decimal_below_minimum = matches!(field, "decimals" | "altDecimals" | "tolDecimals") && coerced.as_f64().is_some_and(|x| x < 0.0);
             // Integers stored in u8 fields: round floats.
             let coerced = match (&old, &coerced) {
                 // Lineweights (i16): whole hundredths of a mm or -1/-2/-3.
@@ -485,15 +486,17 @@ impl DimStyle {
             };
             // Sizes that can't be negative (text height and tolerance scale: not zero either).
             let x = coerced.as_f64();
-            let out_of_range = match field {
-                "textHeight" | "tolScale" => x.is_some_and(|x| x <= 0.0),
-                "scale" | "arrowSize" | "tickSize" | "fixedExtLength" => x.is_some_and(|x| x < 0.0),
-                "fit" | "angularZeroSuppression" => x.is_some_and(|x| x > 3.0),
-                "textMove" | "tolJust" | "arcSymbol" => x.is_some_and(|x| x > 2.0),
-                "dimLineweight" | "extLineweight" => x.is_some_and(|x| !(-3.0..=211.0).contains(&x)),
-                "jogAngle" => x.is_some_and(|x| !(5.0..=90.0).contains(&x)),
-                _ => false,
-            };
+            let out_of_range = decimal_below_minimum
+                || match field {
+                    "textHeight" | "tolScale" => x.is_some_and(|x| x <= 0.0),
+                    "scale" | "arrowSize" | "tickSize" | "fixedExtLength" => x.is_some_and(|x| x < 0.0),
+                    "decimals" | "altDecimals" | "tolDecimals" => x.is_some_and(|x| !(0.0..=8.0).contains(&x)),
+                    "fit" | "angularZeroSuppression" => x.is_some_and(|x| x > 3.0),
+                    "textMove" | "tolJust" | "arcSymbol" => x.is_some_and(|x| x > 2.0),
+                    "dimLineweight" | "extLineweight" => x.is_some_and(|x| !(-3.0..=211.0).contains(&x)),
+                    "jogAngle" => x.is_some_and(|x| !(5.0..=90.0).contains(&x)),
+                    _ => false,
+                };
             if out_of_range {
                 rejected.push(k.clone());
                 continue;
