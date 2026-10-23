@@ -802,4 +802,9 @@ fn the_current_scale_is_autocad_s_and_saving_keeps_it_current() {
     let var = recs.iter().find(|(k, _)| k == "DICTIONARYVAR").unwrap();
     assert_eq!(get(&var.1, 1), Some("1:2"));
     assert_eq!(recs.iter().filter(|(k, _)| k == "DICTIONARYVAR").count(), 1);
+    // Naming no scale of the drawing's, it is the 1:1 the contexts are written at.
+    d.header.set_str("CANNOSCALE", "1:999");
+    let recs = records(&save(&d));
+    let var = recs.iter().find(|(k, _)| k == "DICTIONARYVAR").unwrap();
+    assert_eq!(get(&var.1, 1), Some("1:1"));
 }

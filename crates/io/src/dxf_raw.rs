@@ -1133,8 +1133,9 @@ fn reconcile(
 
 /// AutoCAD's current annotation scale, kept with its variable dictionary (the named object
 /// dictionary's `AcDbVariableDictionary`, a DICTIONARYVAR `CANNOSCALE` with the scale's name in
-/// group 1), brought up to date with the drawing's: AutoCAD opens the drawing at that scale.
-/// `None` when the file had none.
+/// group 1), brought up to date with the drawing's: AutoCAD opens the drawing at that scale. It
+/// names the scale the contexts are written at ([`Drawing::current_anno_scale`]), 1:1 when the
+/// drawing's names none of its scales. `None` when the file had none.
 fn current_scale(f: &Foreign, d: &Drawing) -> Option<(String, ForeignObject)> {
     let vars = f.dictionary.iter().find(|(k, _)| k.trim().eq_ignore_ascii_case("AcDbVariableDictionary"))?.1;
     let object = |h: &str| f.objects.iter().find(|o| o.handle.hex() == norm(h));
@@ -1142,7 +1143,7 @@ fn current_scale(f: &Foreign, d: &Drawing) -> Option<(String, ForeignObject)> {
     let at = dict.tags.iter().position(|t| t.code == 3 && t.value.trim().eq_ignore_ascii_case("CANNOSCALE"))?;
     let var = dict.tags.get(at + 1).filter(|t| matches!(t.code, 350 | 360))?;
     let mut o = object(&var.value)?.clone();
-    let name = d.header.str("CANNOSCALE", "1:1");
+    let name = d.current_anno_scale().name;
     let value = o.tags.iter_mut().find(|t| t.code == 1)?;
     value.value = name;
     Some((o.handle.hex(), o))
