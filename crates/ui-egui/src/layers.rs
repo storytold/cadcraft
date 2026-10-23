@@ -403,6 +403,8 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     }
 }
 
+/// Render a Layer Manager row without mutating the drawing. Selection and rename UI state update
+/// immediately in `st`; the caller executes queued `actions` after rendering the rows.
 #[allow(clippy::too_many_arguments)]
 fn row(
     ui: &mut egui::Ui,

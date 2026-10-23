@@ -5,9 +5,8 @@
 /// Show a list inside a popup. Callers must use `CloseOnClickOutside` and close explicitly on
 /// selection so scrollbar clicks don't dismiss the popup.
 ///
-/// The popup may move to fit the viewport, so use the viewport's
-/// height rather than only the space below its anchor. Reset the maximum height each frame so
-/// a popup can grow again after a window resize instead of retaining its previous small size.
+/// Popups may move around their anchor, so use the full viewport height. Reset the maximum
+/// height each frame so a popup can grow again after a window resize.
 pub(crate) fn list<R>(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui) -> R) -> egui::scroll_area::ScrollAreaOutput<R> {
     let margin = egui::Frame::popup(ui.style()).total_margin().sum().y;
     let height = (ui.ctx().content_rect().height() - margin).clamp(0.0, 300.0);
@@ -47,6 +46,8 @@ mod tests {
         }
     }
 
+    /// Keep rows and popup configuration identical in both modes so comparisons with the plain
+    /// menu isolate the scroll area's sizing effects, rather than differences in layout or controls.
     fn harness(bounded: bool, count: usize, size: Vec2, scale: f32) -> Harness<'static, State> {
         Harness::builder().with_size(size).with_pixels_per_point(scale).build_ui_state(
             |ui, state: &mut State| {

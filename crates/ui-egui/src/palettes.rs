@@ -140,6 +140,8 @@ fn command_known(id: &str) -> bool {
     cadcraft_engine::find_command(id).is_some() || crate::menus::is_ui_command(id)
 }
 
+/// Render command groups: tool clicks start interactive commands, while visibility and collapse
+/// settings are UI preferences, not drawing edits. Gear-menu changes leave the options open.
 pub fn toolsets(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     egui::Frame::NONE.fill(t.panel).show(ui, |ui| {
@@ -374,6 +376,8 @@ pub fn right_palettes(app: &mut CadApp, ui: &mut egui::Ui) {
     });
 }
 
+/// Edit drawing-wide layer state, not the selected entities' layer assignments. Popup row toggles
+/// leave the list open so several flags can be changed without reopening it.
 pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     section_header(ui, "Layers");
@@ -713,6 +717,8 @@ fn properties_header(app: &mut CadApp, ui: &mut egui::Ui) {
     }
 }
 
+/// With no selection, edit new-object defaults and current-layout plot settings; otherwise edit
+/// the selected entities through commands. Entity edits must not change the drawing defaults.
 pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     properties_header(app, ui);

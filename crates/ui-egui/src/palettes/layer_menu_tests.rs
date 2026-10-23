@@ -63,6 +63,7 @@ fn selected_entity_layer_menu_scrolls_to_its_last_layer() {
     assert!(h.query_by_label("Property Layer 01").is_none(), "selection closes the menu");
 }
 
+/// Hide the inline layer list so label queries identify popup rows, not duplicate palette controls.
 fn many_layers() -> CadApp {
     let mut app = CadApp::new(Session::default(), Services::default());
     for i in 0..60 {
@@ -73,6 +74,8 @@ fn many_layers() -> CadApp {
     app
 }
 
+/// Require text fully inside its paint clip, not merely present in the accessibility tree:
+/// offscreen scroll-area entries remain queryable even when they cannot be seen or clicked.
 fn painted_rect(h: &Harness<'_, CadApp>, text: &str) -> Rect {
     let mut painted = Vec::new();
     for shape in &h.output().shapes {
@@ -81,6 +84,8 @@ fn painted_rect(h: &Harness<'_, CadApp>, text: &str) -> Rect {
     painted.iter().find(|(t, at, clip)| t == text && clip.contains_rect(*at)).unwrap_or_else(|| panic!("{text} is not visible: {painted:?}")).1
 }
 
+/// Queue a complete primary click for painter-drawn controls without an accessible button.
+/// The caller must advance the harness to process the queued events.
 fn click_at<State>(h: &Harness<'_, State>, pos: egui::Pos2) {
     h.hover_at(pos);
     for pressed in [true, false] {
@@ -88,7 +93,8 @@ fn click_at<State>(h: &Harness<'_, State>, pos: egui::Pos2) {
     }
 }
 
-/// Exercise real popup callers, not just the list-body harness. Solid bars give a stable hit target.
+/// Exercise real popup callers, not just the list-body harness. Requires exactly one foreground
+/// popup and switches the harness to solid scrollbars for deterministic hit testing.
 fn click_menu_scrollbar<State>(h: &mut Harness<'_, State>, last: &str) {
     h.ctx.global_style_mut(|style| style.spacing.scroll = egui::style::ScrollStyle::solid());
     h.run_steps(6);
