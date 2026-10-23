@@ -1622,8 +1622,9 @@ fn attdef_tag(e: &Entity, tag: &str) -> bool {
 }
 
 /// The overall scale of a leader drawn with dimension style `st`: its DIMSCALE, else the
-/// drawing's.
-fn leader_scale(d: &Drawing, st: Option<&cadcraft_doc::DimStyle>) -> f64 {
+/// drawing's. Leader arrows (render) and leader annotation text (engine) both use it, so a
+/// LEADER's text and arrows always keep the size AutoCAD gives them.
+pub fn leader_scale(d: &Drawing, st: Option<&cadcraft_doc::DimStyle>) -> f64 {
     let dimscale = d.header.f64("DIMSCALE", 1.0);
     st.map(|s| s.effective_scale(dimscale)).unwrap_or_else(|| cadcraft_doc::DimStyle::default().effective_scale(dimscale))
 }
