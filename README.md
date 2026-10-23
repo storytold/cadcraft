@@ -118,7 +118,7 @@ numbers):
 | Layouts & plotting | Paper-space layouts, viewports (scale, lock, per-viewport layer freeze), MSPACE/PSPACE through viewports, page setups, PLOT and EXPORTPDF |
 | Parametric | Geometric and dimensional constraints, AUTOCONSTRAIN, PARAMETERS with expressions, conflict detection; constraints re-solve after every edit |
 | Grips | Hot grips with Space to cycle Stretch, Move, Rotate, Scale and Mirror |
-| Interface languages | English, Ukrainian (Українська), Brazilian Portuguese (Português (Brasil)), German (Deutsch), Spanish (Español), Czech (Čeština), Russian (Русский), French (Français), Simplified Chinese (简体中文, with an installed CJK font), Italian (Italiano), Korean (한국어, with an installed Hangul font), Swedish (Svenska), Arabic (العربية, with an installed Arabic font), Hungarian (Magyar) and Turkish (Türkçe), live switching and a remembered Auto/system-language choice; [details](docs/localization.md) |
+| Interface languages | English, Ukrainian (Українська), Brazilian Portuguese (Português (Brasil)), German (Deutsch), Spanish (Español), Czech (Čeština), Russian (Русский), French (Français), Simplified Chinese (简体中文, with an installed CJK font), Thai (ไทย, with an installed Thai font), Italian (Italiano), Korean (한국어, with an installed Hangul font), Swedish (Svenska), Arabic (العربية, with an installed Arabic font), Hungarian (Magyar) and Turkish (Türkçe), live switching and a remembered Auto/system-language choice; [details](docs/localization.md) |
 | Automation | MCP server, JSON control channel, `cadcraft-cli` (info, convert, run, commands, mcp) |
 
 ## Quick start
@@ -151,19 +151,25 @@ input (`CRAFT_FONTS_DIR=<absolute path to a checkout> cargo build --release`) al
 fonts: BIZ UDPGothic, BIZ UDMincho and Shippori Mincho (Japanese) and Noto Sans Arabic (the web
 build, which has no system fonts, only BIZ UDPGothic Regular and Noto Sans Arabic). A text style
 can use them by family name, and they draw characters a text's font lacks when no installed
-wide-coverage CJK font has them. Without `CRAFT_FONTS_DIR` nothing is embedded. SHX
-fonts (including big fonts such as `chineset.shx`) aren't read yet: text in an SHX style is drawn
-with our own stroke font, and any character a text's font lacks (CJK, for example) is drawn from
-an installed font that has it, preferring wide-coverage fonts such as Noto Sans CJK, Source Han
-Sans, WenQuanYi, PingFang or Microsoft JhengHei. Two settings, set with `SETVAR` or (for every
-run) an environment variable, steer this:
+wide-coverage CJK font has them. Without `CRAFT_FONTS_DIR` nothing is embedded.
+
+SHX shape fonts are read from your own files: a text style naming `romans.shx` (or an MTEXT `\F`
+switch to it) is drawn with that file when it is in one of the `FONTPATH` folders. Compiled shape
+fonts (`shapes 1.0` / `1.1`) and Unicode shape fonts (`unifont 1.0`) are read; CADCraft ships no
+SHX files. Big fonts (such as `chineset.shx`), vertical SHX text and SHX shapes in linetypes
+aren't read yet. Text whose SHX file isn't found is drawn with our own stroke font, and any
+character a text's font lacks (CJK, for example) is drawn from an installed font that has it,
+preferring wide-coverage fonts such as Noto Sans CJK, Source Han Sans, WenQuanYi, PingFang or
+Microsoft JhengHei. Three settings, set with `SETVAR` or (for every run) an environment
+variable, steer this:
 
 | Variable | Environment | Meaning |
 |---|---|---|
 | `FONTALT` | `CADCRAFT_FONTALT` | Font used instead of a text style font that can't be found (an SHX file, a missing TTF), by file or family name, e.g. `Noto Sans CJK TC`. Empty (default) = our stroke font. |
 | `FONTFALLBACK` | `CADCRAFT_FONTFALLBACK` | Fonts tried first for characters a text's font lacks, comma-separated, e.g. `Noto Sans CJK TC, msjh.ttc`. |
+| `FONTPATH` | `CADCRAFT_FONTPATH` | Folders searched for SHX fonts, `;` separated, e.g. `C:\cad\fonts;D:\project\fonts`. Empty (default) = SHX fonts aren't looked for. |
 
-`.` clears either one.
+`.` clears any of them.
 
 **Your own fonts.** Any `.ttf`, `.otf` or `.ttc` font works: install it in the system font folder
 (Windows `C:\Windows\Fonts` or per-user fonts, macOS `/Library/Fonts` or `~/Library/Fonts`,

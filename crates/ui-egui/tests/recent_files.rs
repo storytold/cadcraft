@@ -42,7 +42,7 @@ fn open_recent(app: &CadApp) -> Vec<(String, String)> {
         .into_iter()
         .filter_map(|e| match e {
             Entry::Item { label, id, .. } => Some((label, id)),
-            Entry::Sub { .. } => None,
+            Entry::Sub { .. } | Entry::Separator => None,
         })
         .collect()
 }

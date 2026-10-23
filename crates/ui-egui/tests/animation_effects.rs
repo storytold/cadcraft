@@ -169,7 +169,7 @@ fn the_menu_offers_the_three_choices_and_they_reach_the_setting() {
     let view = menus::tree(&a).into_iter().find(|(m, _)| m == "View").map(|(_, e)| e).unwrap();
     let sub = |entries: &[menus::Entry], name: &str| {
         entries.iter().find_map(|e| match e {
-            menus::Entry::Sub { label, children } if label == name => Some(children.clone()),
+            menus::Entry::Sub { label, children, .. } if label == name => Some(children.clone()),
             _ => None,
         })
     };
@@ -178,7 +178,7 @@ fn the_menu_offers_the_three_choices_and_they_reach_the_setting() {
         .iter()
         .filter_map(|e| match e {
             menus::Entry::Item { label, id, .. } => Some((label.clone(), id.clone())),
-            menus::Entry::Sub { .. } => None,
+            menus::Entry::Sub { .. } | menus::Entry::Separator => None,
         })
         .collect();
     let expected = [("Use System Setting", "ui.animations.system"), ("On", "ui.animations.on"), ("Off", "ui.animations.off")];

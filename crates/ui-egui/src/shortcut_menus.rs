@@ -22,12 +22,19 @@ fn item(app: &CadApp, id: &str, label: Option<&str>) -> Option<Entry> {
     let spec = find_command(id).map(|s| (s.label, s.shortcut, (s.enabled)(&app.session).is_ok()));
     let ui = crate::menus::UI_COMMANDS.iter().find(|c| c.0 == id).map(|c| (c.1, c.3, true));
     let (default, shortcut, enabled) = spec.or(ui)?;
-    Some(Entry::Item { label: label.unwrap_or(default).to_string(), id: id.to_string(), shortcut: shortcut.map(str::to_string), enabled })
+    Some(Entry::Item {
+        label: label.unwrap_or(default).to_string(),
+        id: id.to_string(),
+        shortcut: shortcut.map(str::to_string),
+        enabled,
+        icon: None,
+        mark: None,
+    })
 }
 
 /// An item that is not a command of its own (it runs one with parameters, or acts on a tab).
 fn action(label: &str, id: String, enabled: bool) -> Entry {
-    Entry::Item { label: label.into(), id, shortcut: None, enabled }
+    Entry::Item { label: label.into(), id, shortcut: None, enabled, icon: None, mark: None }
 }
 
 /// An item running `command` with `params`, when the command exists.
@@ -51,15 +58,22 @@ pub fn command_line_entries(app: &CadApp) -> Vec<Vec<Entry>> {
         .recent_commands(RECENT)
         .iter()
         .filter_map(|id| find_command(id))
-        .map(|c| Entry::Item { label: c.id.to_ascii_uppercase(), id: c.id.to_string(), shortcut: None, enabled: (c.enabled)(&app.session).is_ok() })
+        .map(|c| Entry::Item {
+            label: c.id.to_ascii_uppercase(),
+            id: c.id.to_string(),
+            shortcut: None,
+            enabled: (c.enabled)(&app.session).is_ok(),
+            icon: None,
+            mark: None,
+        })
         .collect();
     if !recent.is_empty() {
-        groups.push(vec![Entry::Sub { label: "Recent Commands".into(), children: recent }]);
+        groups.push(vec![Entry::Sub { label: "Recent Commands".into(), children: recent, icon: None }]);
     }
     push(&mut groups, ["dynmode", "ui.toggle.history"].iter().filter_map(|id| item(app, id, None)).collect());
     let lines: Vec<Entry> = LINES.iter().filter_map(|n| run(&n.to_string(), "ui.cmdline.lines", json!({ "lines": n }))).collect();
     if !lines.is_empty() {
-        groups.push(vec![Entry::Sub { label: "Lines of Command History".into(), children: lines }]);
+        groups.push(vec![Entry::Sub { label: "Lines of Command History".into(), children: lines, icon: None }]);
     }
     let mut edit = vec![action("Copy History", "cmdline:copy".into(), !app.session.log.is_empty())];
     edit.extend(item(app, "ui.cmdline.clear", None));
@@ -231,7 +245,7 @@ fn layout_action(app: &mut CadApp, op: &str, name: &str) {
 /// Show `groups` as the context menu of `resp` and run the chosen item.
 pub fn attach(app: &mut CadApp, resp: &egui::Response, groups: impl FnOnce(&CadApp) -> Vec<Vec<Entry>>) {
     let mut clicked = None;
-    resp.context_menu(|ui| crate::context_menu::groups_ui(ui, &groups(app), &mut clicked));
+    crate::menus::context_popup(resp, |ui| crate::context_menu::groups_ui(ui, &groups(app), &mut clicked));
     if let Some(id) = clicked {
         choose(app, &resp.ctx, &id);
     }

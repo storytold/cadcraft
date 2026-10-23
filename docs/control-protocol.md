@@ -52,7 +52,7 @@ field. `engine.commands` returns a separate command catalog, not a list of addit
 | `drawing.inspect` | `{entities?, limit?}` | Drawing summary (counts, extents, layers, styles, blocks, layouts, selection, undo) and entities with handles and geometry. |
 | `ui.inspect` | | UI state, canvas rect, view, cursor and snap, performance counters; `closePrompt`: the drawing a "Save changes?" prompt is asking about (null when none); and actual egui keyboard focus (`focus.id`, `focus.label`, `focus.role`). |
 | `ui.elements` | `{label?, role?, focused?}` | Observed toolbar, tab, drafting and layer-palette controls from the latest UI frame. Filters match exactly. Each entry has its real egui `id`, label, role, rectangle `[x,y,width,height]`, enabled/visible/selected state and current focus. |
-| `ui.menu.list` / `ui.menu.invoke` | `{command}` | The menu tree; invoke an item like a click (interactive). |
+| `ui.menu.list` / `ui.menu.invoke` | `{command}` | The menu tree, in the order shown: items (`label`, `command`, `shortcut`, `enabled`, and `checked` for rows with a radio dot or a checkmark, else null), submenus (`label`, `children`) and `{"separator": true}` between groups; invoke an item like a click (interactive). |
 | `ui.pointer` | `{x, y, space?: "world"\|"screen", button?, action?: "click"\|"move"}` | Click in the drawing area (world coordinates by default). Right button = Enter. |
 | `ui.click` / `ui.move` | `{x, y, button?, shift?, ctrl?}` | Real egui pointer events in screen points (reach every widget). |
 | `ui.drag` | `{x, y, to: [x, y], button?}` | Real press, move and release (drag the command line's top edge, the ViewCube ring…). |
@@ -182,8 +182,8 @@ Select a language with `engine.execute` and the UI command `ui.language`:
 {"id":1,"method":"engine.execute","params":{"command":"ui.language","params":{"lang":"uk"}}}
 ```
 
-Supported values are `auto`, `en`, `uk`, `pt-BR`, `de`, `es`, `cs`, `ru`, `fr`, `zh`, `it`, `ko`, `sv`, `ar` and `hu`.
-Chinese needs an installed CJK font, Arabic an installed Arabic font; Korean needs a font covering the Korean interface from the
+Supported values are `auto`, `en`, `uk`, `pt-BR`, `de`, `es`, `cs`, `ru`, `fr`, `zh`, `th`, `it`, `ko`, `sv`, `ar` and `hu`.
+Chinese needs an installed CJK font, Thai an installed Thai font, Arabic an installed Arabic font; Korean needs a font covering the Korean interface from the
 optional craft-fonts input or the operating system. Without a suitable font, the saved choice is
 retained and the result's `shown` is `en`. `ui.set` also accepts
 `{"interfaceLanguage":"uk"}`; `ui.inspect` reports the saved choice in its UI state.

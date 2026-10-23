@@ -1,10 +1,11 @@
 //! CADCraft text layout.
 //!
 //! Turns TEXT and MTEXT into stroke polylines with the built-in single-stroke font
-//! ("CADCraft Stroke") or glyph outlines of installed TrueType fonts ([`ttf`]), with a
-//! per-character fallback to installed fonts for characters the chosen font lacks. Handles the
-//! `%%` control codes, alignment modes, width factor, obliquing, MTEXT inline formatting
-//! (paragraphs, stacking, height changes), word wrap and attachment points.
+//! ("CADCraft Stroke") or the user's SHX shape fonts ([`shx`]), or glyph outlines of installed
+//! TrueType fonts ([`ttf`]), with a per-character fallback to installed fonts for characters
+//! the chosen font lacks. Handles the `%%` control codes, alignment modes, width factor,
+//! obliquing, MTEXT inline formatting (paragraphs, stacking, height changes), word wrap and
+//! attachment points.
 //!
 //! Right-to-left lines (Persian, Arabic, Urdu, Hebrew) go through [`bidi`] (the Unicode
 //! Bidirectional Algorithm, Arabic joining) and `complex` (OpenType shaping with `harfrust`):
@@ -16,6 +17,7 @@
 pub mod bidi;
 mod complex;
 mod mtext;
+pub mod shx;
 mod stroke;
 pub mod subset;
 pub mod ttf;
@@ -125,13 +127,16 @@ fn draws_fallback(c: char) -> bool {
     stroke::glyph(c).is_none() && !c.is_whitespace() && ttf::fallback_glyph(c).is_some()
 }
 
-/// Advance of `c` in the stroke font at height `h` and width factor `wf`; characters the
-/// stroke font lacks take a fallback font's advance when one has them.
-fn stroke_advance(c: char, h: f64, wf: f64) -> f64 {
+/// Advance of `c` in a stroke font (`shx`, or the built-in one) at height `h` and width factor
+/// `wf`; characters the font lacks take a fallback font's advance when one has them.
+fn stroke_advance(shx: Option<&shx::Font>, c: char, h: f64, wf: f64) -> f64 {
     if bidi::is_format_control(c) {
         return 0.0;
     }
-    if stroke::glyph(c).is_none()
+    if let Some(g) = shx.and_then(|f| f.glyph(c)) {
+        return g.advance * h / shx.map_or(1.0, shx::Font::above) * wf;
+    }
+    if (shx.is_some() || stroke::glyph(c).is_none())
         && !c.is_whitespace()
         && let Some(g) = ttf::fallback_glyph(c)
     {
@@ -144,6 +149,12 @@ fn stroke_advance(c: char, h: f64, wf: f64) -> f64 {
 /// (radians). Characters the stroke font lacks are drawn from an installed font that has them
 /// (glyph outlines, sized like TrueType text), else as a missing-glyph box.
 pub fn shape_stroke(s: &str, height: f64, width_factor: f64, oblique: f64) -> Shaped {
+    shape_strokes(None, s, height, width_factor, oblique)
+}
+
+/// [`shape_stroke`] in SHX font `shx` (text height = the font's height above the baseline), or
+/// in the built-in stroke font.
+fn shape_strokes(shx: Option<&shx::Font>, s: &str, height: f64, width_factor: f64, oblique: f64) -> Shaped {
     let h = if height.is_finite() && height > 0.0 { height } else { 1.0 };
     let wf = if width_factor.is_finite() && width_factor.abs() > 1e-6 { width_factor } else { 1.0 };
     let sc = h / stroke::CAP;
@@ -163,8 +174,17 @@ pub fn shape_stroke(s: &str, height: f64, width_factor: f64, oblique: f64) -> Sh
             continue;
         }
         let mut adv = char_advance(c) * h * wf;
-        gap = stroke::GAP * sc * wf;
-        match stroke::glyph(c) {
+        // An SHX font's text ends where its pen does; the built-in font's advances end with the
+        // gap to the next character.
+        gap = if shx.is_some() { 0.0 } else { stroke::GAP * sc * wf };
+        let shx_glyph = shx.and_then(|f| f.glyph(c).map(|g| (g, h / f.above())));
+        if let Some((g, unit)) = &shx_glyph {
+            out.strokes
+                .extend(g.strokes.iter().map(|st| st.iter().map(|(gx, gy)| Vec2::new(x + gx * unit * wf + gy * unit * shear, gy * unit)).collect()));
+            adv = g.advance * unit * wf;
+        }
+        match stroke::glyph(c).filter(|_| shx.is_none()) {
+            _ if shx_glyph.is_some() => {}
             Some((_, spec)) => draw_stroke_glyph(&mut out, spec, x, sc, wf, shear),
             None if !c.is_whitespace() => match ttf::fallback_glyph(c) {
                 Some(g) => {
@@ -199,8 +219,8 @@ pub fn shape_stroke(s: &str, height: f64, width_factor: f64, oblique: f64) -> Sh
         }
         x += adv;
     }
-    // The stroke font's gap after the last character isn't part of the line; a fallback glyph
-    // has none.
+    // The gap after the last character isn't part of the line (an SHX font's text and a
+    // fallback glyph have none).
     let end = (x - gap).max(0.0);
     if let Some(sx) = under_start {
         out.strokes.push(vec![Vec2::new(sx, -h * 0.2), Vec2::new(end, -h * 0.2)]);
@@ -244,6 +264,10 @@ pub fn layout_line(s: &str, height: f64, width_factor: f64, oblique: f64) -> Run
 
 /// Width of a line without building strokes.
 pub fn line_width(s: &str, height: f64, width_factor: f64) -> f64 {
+    stroke_line_width(None, s, height, width_factor)
+}
+
+fn stroke_line_width(shx: Option<&shx::Font>, s: &str, height: f64, width_factor: f64) -> f64 {
     if bidi::has_rtl(s) {
         let h = if height.is_finite() && height > 0.0 { height } else { 1.0 };
         let wf = if width_factor.is_finite() && width_factor.abs() > 1e-6 { width_factor } else { 1.0 };
@@ -252,7 +276,10 @@ pub fn line_width(s: &str, height: f64, width_factor: f64) -> f64 {
         }
     }
     let chars = decode_controls(s);
-    let n: f64 = chars.iter().map(|(c, _, _)| stroke_advance(*c, height, width_factor)).sum();
+    let n: f64 = chars.iter().map(|(c, _, _)| stroke_advance(shx, *c, height, width_factor)).sum();
+    if shx.is_some() {
+        return n.max(0.0);
+    }
     // The stroke font's gap after the last character isn't part of the line; a fallback glyph
     // has none.
     let last = chars.iter().rev().map(|(c, _, _)| *c).find(|c| !bidi::is_format_control(*c));
@@ -268,25 +295,34 @@ pub fn space_width(font: &TextFont, height: f64, width_factor: f64) -> f64 {
     {
         return w;
     }
-    stroke_advance(' ', height, width_factor) + stroke::GAP / stroke::CAP * height * width_factor
+    // An SHX font's advances carry no trailing gap to add back.
+    if let TextFont::Shx(f) = font {
+        return stroke_advance(Some(f), ' ', height, width_factor);
+    }
+    stroke_advance(None, ' ', height, width_factor) + stroke::GAP / stroke::CAP * height * width_factor
 }
 
-/// The font a piece of text is set in: the built-in stroke font or an installed TrueType /
-/// OpenType face (outlines). Either way, characters the font lacks come from a fallback font.
+/// The font a piece of text is set in: the built-in stroke font, an SHX shape font (strokes) or
+/// an installed TrueType / OpenType face (outlines). In each, characters the font lacks come
+/// from a fallback font.
 #[derive(Clone, Debug, Default)]
 pub enum TextFont {
     #[default]
     Stroke,
+    Shx(std::sync::Arc<shx::Font>),
     Outline(ttf::Face),
 }
 
 impl TextFont {
-    /// Resolve a text style font name: an installed TTF/OTF/TTC when found; else, for a font we
-    /// can't find (an SHX file, a missing TTF), the FONTALT font ([`ttf::font_alt`]) when set;
-    /// else the stroke font.
+    /// Resolve a text style font name: an installed TTF/OTF/TTC when found, or an SHX font in
+    /// a FONTPATH folder ([`shx::find`]); else, for a font we can't find (a missing SHX file or
+    /// TTF), the FONTALT font ([`ttf::font_alt`]) when set; else the stroke font.
     pub fn resolve(name: &str) -> TextFont {
         if let Some(f) = ttf::find(name) {
             return TextFont::Outline(f);
+        }
+        if let Some(f) = shx::find(name) {
+            return TextFont::Shx(f);
         }
         let n = name.trim();
         if n.is_empty() || n.eq_ignore_ascii_case(BUILTIN_FONT) {
@@ -419,7 +455,8 @@ pub fn shape_line(font: &TextFont, s: &str, height: f64, width_factor: f64, obli
     {
         return sh;
     }
-    shape_stroke(s, height, width_factor, oblique)
+    let shx = if let TextFont::Shx(f) = font { Some(f.as_ref()) } else { None };
+    shape_strokes(shx, s, height, width_factor, oblique)
 }
 
 /// Width of one line in `font`.
@@ -429,7 +466,8 @@ pub fn text_width(font: &TextFont, s: &str, height: f64, width_factor: f64) -> f
     {
         return w;
     }
-    line_width(s, height, width_factor)
+    let shx = if let TextFont::Shx(f) = font { Some(f.as_ref()) } else { None };
+    stroke_line_width(shx, s, height, width_factor)
 }
 
 /// Horizontal / vertical alignment for single-line text (matches DXF 72/73 semantics).
@@ -681,6 +719,75 @@ mod tests {
         let (_, bb) = place_text("ABC", Vec2::ZERO, Some(Vec2::new(10.0, 0.0)), 1.0, 0.0, 1.0, 0.0, Align::Fit, VAlign::Baseline);
         assert!((bb.width() - 10.0).abs() < 1e-6);
         assert!((bb.max.y - 1.0).abs() < 1e-9);
+    }
+}
+
+#[cfg(test)]
+mod shx_tests {
+    use super::*;
+
+    fn font() -> TextFont {
+        shx::register("shxtest-layout.shx", &shx::testfont::sample()).unwrap();
+        TextFont::resolve("ShxTest-Layout.shx")
+    }
+
+    #[test]
+    fn a_text_style_naming_an_shx_file_is_set_in_it() {
+        let font = font();
+        assert!(matches!(font, TextFont::Shx(_)) && !font.is_outline());
+        // Height 3 over a font 6 units tall: half a unit per font unit. "IL" = advances 2 + 6.
+        let sh = shape_line(&font, "IL", 3.0, 1.0, 0.0);
+        assert_eq!(
+            sh.strokes,
+            vec![vec![Vec2::new(0.0, 0.0), Vec2::new(0.0, 3.0)], vec![Vec2::new(1.0, 3.0), Vec2::new(1.0, 0.0), Vec2::new(3.0, 0.0)]]
+        );
+        assert_eq!(sh.width, 4.0);
+        assert!(sh.glyphs.is_empty());
+        assert_eq!(text_width(&font, "IL", 3.0, 1.0), 4.0);
+        // A missing SHX file still falls back to the built-in font.
+        assert!(matches!(TextFont::resolve("shxtest-not-there.shx"), TextFont::Stroke));
+    }
+
+    #[test]
+    fn width_factor_oblique_and_control_codes_apply() {
+        let font = font();
+        let wide = shape_line(&font, "L", 6.0, 2.0, 0.0);
+        assert_eq!(wide.strokes, vec![vec![Vec2::new(0.0, 6.0), Vec2::new(0.0, 0.0), Vec2::new(8.0, 0.0)]]);
+        assert_eq!(wide.width, 12.0);
+        let slanted = shape_line(&font, "I", 6.0, 1.0, std::f64::consts::FRAC_PI_4);
+        let top = slanted.strokes[0][1];
+        assert!((top.x - 6.0).abs() < 1e-9 && top.y == 6.0);
+        // %%d draws the font's shape 127; %%u underlines the run it spans.
+        let deg = shape_line(&font, "%%d", 6.0, 1.0, 0.0);
+        assert_eq!((deg.strokes.len(), deg.width), (1, 2.0));
+        let under = shape_line(&font, "%%uII%%u-", 6.0, 1.0, 0.0);
+        assert!(under.strokes.iter().any(|st| st.len() == 2 && st[0].dist(Vec2::new(0.0, -1.2)) < 1e-9 && st[1].dist(Vec2::new(4.0, -1.2)) < 1e-9));
+    }
+
+    #[test]
+    fn placed_text_and_measured_width_agree() {
+        let font = font();
+        for s in ["I-L O", "", " ", "LLL%%d", "I?I"] {
+            let sh = shape_line(&font, s, 2.5, 0.8, 0.2);
+            assert!((sh.width - text_width(&font, s, 2.5, 0.8)).abs() < 1e-9, "{s:?}");
+        }
+        let p = TextParams { h: Align::Right, align_pt: Some(Vec2::new(10.0, 0.0)), ..TextParams::new(Vec2::ZERO, 6.0) };
+        let (sh, bb) = place(&font, "IL", &p);
+        assert!((bb.max.x - 10.0).abs() < 1e-9 && (bb.min.x - 2.0).abs() < 1e-9);
+        assert!(sh.strokes.iter().flatten().all(|q| q.x >= 2.0 - 1e-9 && q.x <= 10.0 + 1e-9));
+    }
+
+    #[test]
+    fn mtext_font_switch_reaches_shx_fonts() {
+        let _ = font();
+        let p = MTextParams::new(Vec2::ZERO, 6.0);
+        let plain = layout_mtext_with("II", &p);
+        let switched = layout_mtext_with("{\\Fshxtest-layout.shx;II}", &p);
+        assert_ne!(plain.strokes, switched.strokes);
+        // Two vertical bars of the font, a pen advance of 2 apart.
+        let xs: Vec<f64> = switched.strokes.iter().map(|st| st[0].x).collect();
+        assert_eq!(switched.strokes.len(), 2);
+        assert!((xs[1] - xs[0] - 2.0).abs() < 1e-9, "{xs:?}");
     }
 }
 

@@ -59,6 +59,7 @@
 	Apply true color	Aplicar cor verdadeira
 	Arc	Arco
 	Arc Length	Comprimento do arco
+	Architecture	Arquitetura
 	Area	Área
 	Arrange Panel	Organizar painel
 	Array	Matriz
@@ -101,6 +102,7 @@
 	Bring Above Objects	Trazer acima dos objetos
 	Bring Annotations to Front	Trazer anotações para frente
 	Bring to Front	Trazer para a frente
+	Built	Compilação
 	Bulleted list	Lista com marcas
 	ByBlock	PorBloco
 	ByColor	PorCor
@@ -157,6 +159,7 @@
 	Command line history	Histórico da linha de comando
 	Commits	Commits
 	Company	Empresa
+	Computer-aided design and drafting. An open-source, clean-room CAD application written in pure Rust.	Projeto e desenho assistidos por computador. Um aplicativo CAD de código aberto, desenvolvido em clean-room e escrito em Rust puro.
 	Compare Drawings...	Comparar desenhos...
 	Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust.	Projeto e desenho assistidos por computador: um aplicativo CAD de código aberto, desenvolvido em clean-room e escrito em Rust puro.
 	Concentric	Concêntrico
@@ -240,6 +243,7 @@
 	Dimensional Constraint Parameters	Parâmetros de restrição dimensional
 	Dimensional Constraints	Restrições dimensionais
 	Disassociate Dimensions	Desassociar cotas
+	Discord	Discord
 	Display	Exibição
 	Display name	Nome de exibição
 	Distance	Distância
@@ -371,6 +375,7 @@
 	Geometry	Geometria
 	Get Variable	Obter variável
 	Get View	Obter vista
+	GitHub	GitHub
 	Get from the Drawing	Obter do desenho
 	Global	Global
 	Global width	Largura global
@@ -488,6 +493,7 @@
 	Length X	Comprimento X
 	Length Y	Comprimento Y
 	Lengthen	Alongar
+	License	Licença
 	Light	Claro
 	Line	Linha
 	Line delta	Delta da linha
@@ -520,7 +526,6 @@
 	Lock Layer	Bloquear camada
 	Lock/Unlock	Bloquear/desbloquear
 	Loft	Loft
-	MIT OR Apache-2.0. Not affiliated with Autodesk, Inc.	MIT OU Apache-2.0. Sem afiliação com a Autodesk, Inc.
 	MODEL	MODELO
 	MText	MText
 	Magenta	Magenta
@@ -535,6 +540,7 @@
 	Measure	Medir
 	Measure Distance	Medir distância
 	Measure Geometry	Medir geometria
+	Menu Access Keys	Teclas de acesso do menu
 	Merge Cells	Mesclar células
 	Merged PRs	PRs mesclados
 	Mid Between 2 Points	Ponto médio entre 2 pontos
@@ -587,6 +593,7 @@
 	No selection	Nenhuma seleção
 	Node	Nó
 	None	Nenhum
+	Not affiliated with Autodesk, Inc.	Sem afiliação com a Autodesk, Inc.
 	Not Found	Não encontrado
 	Not available	Não disponível
 	Not available yet	Ainda não disponível
@@ -1164,6 +1171,7 @@
 	Version 2013	Versão 2013
 	Version 2018	Versão 2018
 	Version {version}	Versão {version}
+	Version {version} ({hash})	Versão {version} ({hash})
 	Vertical	Vertical
 	VerticalDistance	DistânciaVertical
 	View	Exibir
@@ -1178,6 +1186,7 @@
 	Volume	Volume
 	W	O
 	WCS	SCM
+	Website	Site
 	White	Branco
 	Width factor	Fator de largura
 	Window	Janela
@@ -1206,6 +1215,8 @@
 	{kind} (constraint {id})	{kind} (restrição {id})
 	{kind} constraint {name} = {expression}  (double-click to edit)	Restrição {kind} {name} = {expression}  (clique duas vezes para editar)
 	{name}: {distance} < {angle}°	{name}: {distance} < {angle}°
+	© ArtCraft Team and the CADCraft contributors	© Equipe ArtCraft e colaboradores do CADCraft
+	© {year} ArtCraft Team and the CADCraft contributors	© {year} Equipe ArtCraft e colaboradores do CADCraft
 	ƒx  New User Parameter	ƒx  Novo parâmetro do usuário
 	ΔLOC	Δlinhas
 	−Bin	−bin.

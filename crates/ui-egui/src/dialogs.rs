@@ -303,41 +303,143 @@ fn units(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     }
 }
 
+/// Outer width of the About window, in points.
+const ABOUT_WIDTH: f32 = 400.0;
+
 fn about(ctx: &egui::Context, open: &mut bool) {
     let t = Tokens::get();
-    let tab_id = egui::Id::new("about_tab");
+    let style = ctx.global_style();
+    let margin = style.spacing.window_margin;
+    // The window's border is drawn outside its margin, on both sides.
+    let width = ABOUT_WIDTH - f32::from(margin.left) - f32::from(margin.right) - 2.0 * style.visuals.window_stroke.width;
+    let mut close = false;
     egui::Window::new(crate::tl!("About CADCraft"))
         .id(egui::Id::new("About CADCraft"))
         .open(open)
-        .default_size(vec2(640.0, 420.0))
         .collapsible(false)
+        .resizable(false)
+        .pivot(egui::Align2::CENTER_CENTER)
+        .default_pos(ctx.content_rect().center())
         .show(ctx, |ui| {
-            let mut tab = ui.data_mut(|d| d.get_temp::<u8>(tab_id)).unwrap_or(0);
-            ui.horizontal(|ui| {
-                for (i, l) in ["About", "Contributors", "Models"].iter().enumerate() {
-                    if ui.selectable_label(tab == i as u8, crate::i18n::t(l)).clicked() {
-                        tab = i as u8;
-                    }
+            ui.set_width(width);
+            // Consumed, so the command line does not also cancel the active command.
+            close = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+            ui.vertical_centered(|ui| {
+                if let Some(icon) = about_icon(ui.ctx()) {
+                    ui.add(egui::Image::new((icon.id(), vec2(64.0, 64.0))));
                 }
+                ui.add_space(6.0);
+                ui.label(RichText::new(crate::tl!("CADCraft")).size(18.0).strong().color(t.text));
+                let version = env!("CARGO_PKG_VERSION");
+                let line = if crate::credits::CREDITS_HEAD.is_empty() {
+                    crate::tf!("Version {version}", version = version)
+                } else {
+                    crate::tf!("Version {version} ({hash})", version = version, hash = crate::credits::CREDITS_HEAD)
+                };
+                ui.label(RichText::new(line).font(crate::theme::small()).color(t.text_dim));
+                ui.allocate_ui_with_layout(vec2(300.0, 0.0), egui::Layout::top_down(egui::Align::Center), |ui| {
+                    let text = crate::tl!("Computer-aided design and drafting. An open-source, clean-room CAD application written in pure Rust.");
+                    ui.add(egui::Label::new(RichText::new(text).font(crate::theme::body()).color(t.text_dim)).wrap());
+                });
             });
-            ui.data_mut(|d| d.insert_temp(tab_id, tab));
-            ui.separator();
-            match tab {
-                1 => crate::credits::contributors_ui(ui),
-                2 => crate::credits::models_ui(ui),
-                _ => {
-                    ui.heading(crate::tl!("CADCraft"));
-                    ui.label(crate::tf!("Version {version}", version = env!("CARGO_PKG_VERSION")));
-                    ui.label(crate::tl!("Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust."));
-                    ui.add_space(6.0);
-                    ui.label(RichText::new(crate::tl!("One of the Crafting Apps by the ArtCraft team and community.")).color(t.text_dim));
-                    ui.hyperlink_to("getartcraft.com/apps/cadcraft", "https://getartcraft.com/apps/cadcraft");
-                    ui.hyperlink_to(crate::tl!("Join us on Discord"), "https://discord.gg/artcraft");
-                    ui.add_space(6.0);
-                    ui.label(RichText::new(crate::tl!("MIT OR Apache-2.0. Not affiliated with Autodesk, Inc.")).small().color(t.text_faint));
-                }
-            }
+            ui.add_space(10.0);
+            egui::Frame::NONE.inner_margin(egui::Margin::symmetric(14, 0)).show(ui, |ui| about_details(ui, &t));
+            ui.add_space(8.0);
+            // The footer rule runs from edge to edge of the window, across its margin.
+            let (rule, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), egui::Sense::hover());
+            let across = (rule.left() - f32::from(margin.left))..=(rule.right() + f32::from(margin.right));
+            ui.painter().with_clip_rect(ui.clip_rect().expand2(vec2(f32::from(margin.left.max(margin.right)), 0.0))).hline(
+                across,
+                rule.center().y,
+                egui::Stroke::new(1.0, t.border),
+            );
+            ui.vertical_centered(|ui| {
+                let line = match crate::credits::CREDITS_HEAD_DATE.get(..4).filter(|y| !y.is_empty()) {
+                    Some(year) => crate::tf!("© {year} ArtCraft Team and the CADCraft contributors", year = year),
+                    None => crate::tl!("© ArtCraft Team and the CADCraft contributors").to_string(),
+                };
+                ui.add_space(4.0);
+                ui.label(RichText::new(line).font(crate::theme::small()).color(t.text_faint));
+                ui.add_space(4.0);
+            });
         });
+    if close {
+        *open = false;
+    }
+}
+
+/// What this copy is, where to find the project, and the legal line.
+fn about_details(ui: &mut egui::Ui, t: &Tokens) {
+    let date = crate::credits::CREDITS_HEAD_DATE;
+    let built = if date.is_empty() { "Rust · egui".to_string() } else { format!("{date} · Rust · egui") };
+    let rows = [
+        (crate::tl!("Architecture"), architecture().to_string()),
+        (crate::tl!("Built"), built),
+        (crate::tl!("License"), "MIT OR Apache-2.0".to_string()),
+    ];
+    egui::Grid::new("about_build").num_columns(2).min_col_width(96.0).spacing([10.0, 3.0]).show(ui, |ui| {
+        for (label, value) in rows {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(RichText::new(label).size(12.0).color(t.text_faint));
+            });
+            ui.label(RichText::new(value).size(12.0).color(t.text));
+            ui.end_row();
+        }
+    });
+    ui.add_space(8.0);
+    centered_row(ui, "about_links", |ui| {
+        ui.spacing_mut().item_spacing.x = 16.0;
+        for (label, url) in [
+            (crate::tl!("Website"), "https://getartcraft.com/apps/cadcraft"),
+            (crate::tl!("Discord"), crate::menus::DISCORD_URL),
+            (crate::tl!("GitHub"), "https://github.com/storytold/cadcraft"),
+        ] {
+            ui.hyperlink_to(RichText::new(label).size(12.0).color(ui.visuals().hyperlink_color), url);
+        }
+    });
+    ui.add_space(4.0);
+    ui.vertical_centered(|ui| {
+        ui.label(RichText::new(crate::tl!("Not affiliated with Autodesk, Inc.")).font(crate::theme::small()).color(t.text_faint));
+    });
+}
+
+/// What the running copy was built for.
+fn architecture() -> &'static str {
+    if cfg!(target_arch = "wasm32") { "WebAssembly" } else { std::env::consts::ARCH }
+}
+
+/// A row centred in the available width, placed with the width it measured the frame before.
+fn centered_row(ui: &mut egui::Ui, salt: &str, add: impl FnOnce(&mut egui::Ui)) {
+    let id = ui.id().with(salt);
+    let last = ui.data(|d| d.get_temp::<f32>(id));
+    // Unmeasured on the first frame: no padding, or the row would overflow and widen the window.
+    let pad = last.map_or(0.0, |w| ((ui.available_width() - w) / 2.0).max(0.0));
+    let width = ui
+        .horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            ui.add_space(pad);
+            ui.scope(add).response.rect.width()
+        })
+        .inner;
+    if last.is_none_or(|w| (width - w).abs() > 0.5) {
+        ui.data_mut(|d| d.insert_temp(id, width));
+        ui.ctx().request_repaint();
+    }
+}
+
+/// The app icon as a texture, decoded once and kept in egui's temporary data. `None` (no icon
+/// drawn) when the embedded PNG cannot be decoded.
+pub(crate) fn about_icon(ctx: &egui::Context) -> Option<egui::TextureHandle> {
+    let id = egui::Id::new("about_icon_tex");
+    if let Some(t) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)) {
+        return Some(t);
+    }
+    let bytes = include_bytes!("../../../assets/app-icon/cadcraft-256.png");
+    let img = image::load_from_memory_with_format(bytes, image::ImageFormat::Png).ok()?.to_rgba8();
+    let size = [img.width() as usize, img.height() as usize];
+    let tex = ctx.load_texture("about-icon", egui::ColorImage::from_rgba_unmultiplied(size, img.as_raw()), egui::TextureOptions::LINEAR);
+    ctx.data_mut(|d| d.insert_temp(id, tex.clone()));
+    Some(tex)
 }
 
 fn commands(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {

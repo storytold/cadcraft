@@ -47,6 +47,7 @@
 	Apply true color	True Color anwenden
 	Arc	Bogen
 	Arc Length	Bogenlänge
+	Architecture	Architektur
 	Area	Fläche
 	Arrange Panel	Panel anordnen
 	Array	Reihe
@@ -80,6 +81,7 @@
 	Break	Umbrechen
 	Break At Point	An Punkt umbrechen
 	Bring to Front	In den Vordergrund
+	Built	Erstellt
 	ByBlock	VonBlock
 	ByColor	VonFarbe
 	ByLayer	VonLayer
@@ -122,7 +124,7 @@
 	Command Reference	Befehlsreferenz
 	Commits	Commits
 	Company	Firma
-	Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust.	Rechnergestütztes Konstruieren und Zeichnen: eine quelloffene, unabhängig entwickelte CAD-Anwendung in reinem Rust.
+	Computer-aided design and drafting. An open-source, clean-room CAD application written in pure Rust.	Rechnergestütztes Konstruieren und Zeichnen. Eine quelloffene, unabhängig entwickelte CAD-Anwendung in reinem Rust.
 	Concentric	Konzentrisch
 	Cone	Kegel
 	Constraint Bars	Abhängigkeitsleisten
@@ -182,6 +184,7 @@
 	Dimensional Constraint Parameters	Parameter der Bemaßungsabhängigkeiten
 	Dimensional Constraints	Bemaßungsabhängigkeiten
 	Disassociate Dimensions	Assoziativität der Bemaßungen aufheben
+	Discord	Discord
 	Display name	Anzeigename
 	Distance	Abstand
 	Divide	Teilen
@@ -297,6 +300,7 @@
 	Geometry	Geometrie
 	Get Variable	Variable abrufen
 	Get View	Ansicht abrufen
+	GitHub	GitHub
 	Global	Global
 	Global width	Globale Breite
 	Grab bag	Sammelsurium
@@ -362,7 +366,6 @@
 	Isometric Drafting	Isometrisches Zeichnen
 	Join	Verbinden
 	Join the ArtCraft Discord…	Dem ArtCraft-Discord beitreten…
-	Join us on Discord	Treten Sie uns auf Discord bei
 	Language	Sprache
 	Last	Letzter
 	Last commit	Letzter Commit
@@ -390,6 +393,7 @@
 	Length X	Länge X
 	Length Y	Länge Y
 	Lengthen	Länge ändern
+	License	Lizenz
 	Light	Hell
 	Line	Linie
 	Line delta	Zeilenänderung
@@ -419,7 +423,6 @@
 	Lock Layer	Layer sperren
 	Lock/Unlock	Sperren/Entsperren
 	Loft	Erhebung
-	MIT OR Apache-2.0. Not affiliated with Autodesk, Inc.	MIT OR Apache-2.0. Keine Verbindung zu Autodesk, Inc.
 	MODEL	MODELL
 	MText	Mehrzeiliger Text
 	Magenta	Magenta
@@ -432,6 +435,7 @@
 	Measure	Messen
 	Measure Distance	Abstand messen
 	Measure Geometry	Geometrie messen
+	Menu Access Keys	Menü-Zugriffstasten
 	Merge Cells	Zellen verbinden
 	Merged PRs	Gemergte PRs
 	Mid Between 2 Points	Mitte zwischen 2 Punkten
@@ -476,6 +480,7 @@
 	No selection	Keine Auswahl
 	Node	Knoten
 	None	Keine
+	Not affiliated with Autodesk, Inc.	Keine Verbindung zu Autodesk, Inc.
 	Not available	Nicht verfügbar
 	Not available yet	Noch nicht verfügbar
 	OK	OK
@@ -490,7 +495,6 @@
 	Offset	Versatz
 	On	Ein
 	On/Off	Ein/Aus
-	One of the Crafting Apps by the ArtCraft team and community.	Eine der Crafting Apps vom ArtCraft-Team und seiner Community.
 	Open (⌘O)	Öffnen (⌘O)
 	Open Sample Drawing	Beispielzeichnung öffnen
 	Open sample drawing	Beispielzeichnung öffnen
@@ -958,6 +962,7 @@
 	Value:	Wert:
 	Version	Version
 	Version {version}	Version {version}
+	Version {version} ({hash})	Version {version} ({hash})
 	Vertical	Vertikal
 	VerticalDistance	Vertikaler Abstand
 	View	Ansicht
@@ -969,6 +974,7 @@
 	Viewports	Ansichtsfenster
 	W	W
 	WCS	WKS
+	Website	Website
 	White	Weiß
 	Width factor	Breitenfaktor
 	Window	Fenster
@@ -991,6 +997,8 @@
 	{kind} (constraint {id})	{kind} (Abhängigkeit {id})
 	{kind} constraint {name} = {expression}  (double-click to edit)	Abhängigkeit {kind} {name} = {expression}  (Doppelklick zum Bearbeiten)
 	{name}: {distance} < {angle}°	{name}: {distance} < {angle}°
+	© ArtCraft Team and the CADCraft contributors	© ArtCraft-Team und die Mitwirkenden an CADCraft
+	© {year} ArtCraft Team and the CADCraft contributors	© {year} ArtCraft-Team und die Mitwirkenden an CADCraft
 	ƒx  New User Parameter	ƒx  Neuer Benutzerparameter
 	ΔLOC	ΔZeilen
 	−Bin	−Binär

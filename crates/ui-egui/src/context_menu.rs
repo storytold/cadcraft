@@ -61,6 +61,8 @@ fn item(app: &CadApp, id: &str, label: Option<&str>) -> Option<Entry> {
         id: id.to_string(),
         shortcut: spec.shortcut.map(str::to_string),
         enabled: (spec.enabled)(&app.session).is_ok(),
+        icon: None,
+        mark: None,
     })
 }
 
@@ -70,7 +72,7 @@ fn items(app: &CadApp, ids: &[&str]) -> Vec<Entry> {
 
 /// A submenu, left out when none of its commands exist.
 fn sub(label: &str, children: Vec<Entry>) -> Option<Entry> {
-    (!children.is_empty()).then(|| Entry::Sub { label: label.into(), children })
+    (!children.is_empty()).then(|| Entry::Sub { label: label.into(), children, icon: None })
 }
 
 /// Push a group unless it is empty.
@@ -86,14 +88,28 @@ pub fn entries(app: &CadApp) -> Vec<Vec<Entry>> {
     let mut first = Vec::new();
     if let Some(last) = app.session.last_command.as_deref().and_then(find_command) {
         let label = crate::tf!("Repeat {command}", command = last.id.to_ascii_uppercase());
-        first.push(Entry::Item { label, id: last.id.to_string(), shortcut: None, enabled: (last.enabled)(&app.session).is_ok() });
+        first.push(Entry::Item {
+            label,
+            id: last.id.to_string(),
+            shortcut: None,
+            enabled: (last.enabled)(&app.session).is_ok(),
+            icon: None,
+            mark: None,
+        });
     }
     let recent: Vec<Entry> = app
         .session
         .recent_commands(RECENT)
         .iter()
         .filter_map(|id| find_command(id))
-        .map(|c| Entry::Item { label: c.id.to_ascii_uppercase(), id: c.id.to_string(), shortcut: None, enabled: (c.enabled)(&app.session).is_ok() })
+        .map(|c| Entry::Item {
+            label: c.id.to_ascii_uppercase(),
+            id: c.id.to_string(),
+            shortcut: None,
+            enabled: (c.enabled)(&app.session).is_ok(),
+            icon: None,
+            mark: None,
+        })
         .collect();
     first.extend(sub("Recent Commands", recent));
     push(&mut groups, first);
@@ -162,7 +178,7 @@ pub fn object_entries(app: &CadApp) -> Vec<Entry> {
 /// the prompt's options, Snap Overrides at point prompts, Pan and Zoom.
 pub fn command_entries(app: &CadApp) -> Option<Vec<Vec<Entry>>> {
     let prompt = app.session.current_prompt()?;
-    let typed = |label: &str, id: String| Entry::Item { label: label.into(), id, shortcut: None, enabled: true };
+    let typed = |label: &str, id: String| Entry::Item { label: label.into(), id, shortcut: None, enabled: true, icon: None, mark: None };
     let mut groups = vec![vec![typed("Enter", ENTER.into()), typed("Cancel", CANCEL.into())]];
     let recent: Vec<Entry> = app.cmd.recent_input.iter().rev().take(RECENT).map(|t| typed(t, format!("{TYPE}{t}"))).collect();
     push(&mut groups, sub("Recent Input", recent).into_iter().collect());
@@ -189,8 +205,9 @@ pub fn command_entries(app: &CadApp) -> Option<Vec<Vec<Entry>>> {
 
 fn prefix_ids(e: Entry, prefix: &str) -> Entry {
     match e {
-        Entry::Item { label, id, shortcut, enabled } => Entry::Item { label, id: format!("{prefix}{id}"), shortcut, enabled },
-        Entry::Sub { label, children } => Entry::Sub { label, children: children.into_iter().map(|c| prefix_ids(c, prefix)).collect() },
+        Entry::Item { label, id, shortcut, enabled, icon, mark } => Entry::Item { label, id: format!("{prefix}{id}"), shortcut, enabled, icon, mark },
+        Entry::Sub { label, children, icon } => Entry::Sub { label, children: children.into_iter().map(|c| prefix_ids(c, prefix)).collect(), icon },
+        Entry::Separator => Entry::Separator,
     }
 }
 
@@ -250,17 +267,24 @@ const OSNAP_SETTINGS: &str = "dsettings";
 /// types; the modifiers are only available at a point prompt.
 pub fn snap_entries(app: &CadApp) -> Vec<Vec<Entry>> {
     let on = app.session.current_prompt().is_some_and(|p| cadcraft_engine::pointmod::accepts(&p));
-    let typed = |label: &str, id: &str| Entry::Item { label: label.into(), id: id.into(), shortcut: None, enabled: on };
+    let typed = |label: &str, id: &str| Entry::Item { label: label.into(), id: id.into(), shortcut: None, enabled: on, icon: None, mark: None };
     let name = |m: u32| mode::ALL.iter().find(|(b, _)| *b == m).map_or("", |(_, n)| *n);
     let mut groups = vec![vec![
         typed("Temporary track point", "_tt"),
         typed("From", "_from"),
         typed("Mid Between 2 Points", "_m2p"),
-        Entry::Sub { label: "Point Filters".into(), children: FILTERS.iter().map(|f| typed(f, &f.to_ascii_lowercase())).collect() },
+        Entry::Sub { label: "Point Filters".into(), children: FILTERS.iter().map(|f| typed(f, &f.to_ascii_lowercase())).collect(), icon: None },
     ]];
     groups.extend(SNAP_GROUPS.iter().map(|g| g.iter().map(|(m, id)| typed(name(*m), id)).collect()));
     groups.push(vec![typed("None", "_non")]);
-    groups.push(vec![Entry::Item { label: "Osnap Settings...".into(), id: OSNAP_SETTINGS.into(), shortcut: None, enabled: true }]);
+    groups.push(vec![Entry::Item {
+        label: "Osnap Settings...".into(),
+        id: OSNAP_SETTINGS.into(),
+        shortcut: None,
+        enabled: true,
+        icon: None,
+        mark: None,
+    }]);
     groups
 }
 
@@ -275,9 +299,10 @@ pub fn choose_snap(app: &mut CadApp, id: &str) {
 
 /// Lay out menu groups, separated by lines; the chosen item's id lands in `clicked`.
 pub fn groups_ui(ui: &mut egui::Ui, groups: &[Vec<Entry>], clicked: &mut Option<String>) {
+    crate::menus::set_menu_width(ui, groups.iter().flatten(), 0.0);
     for (i, group) in groups.iter().enumerate() {
         if i > 0 {
-            ui.separator();
+            crate::menus::menu_separator(ui);
         }
         for e in group {
             entry_ui(ui, e, clicked);
@@ -290,7 +315,7 @@ pub fn groups_ui(ui: &mut egui::Ui, groups: &[Vec<Entry>], clicked: &mut Option<
 pub fn show(app: &mut CadApp, resp: &egui::Response) {
     let mut clicked = None;
     let snap = app.canvas.snap_menu;
-    resp.context_menu(|ui| {
+    crate::menus::context_popup(resp, |ui| {
         let groups = if snap { snap_entries(app) } else { entries(app) };
         groups_ui(ui, &groups, &mut clicked);
     });
@@ -340,7 +365,7 @@ pub fn in_command(app: &mut CadApp, ui: &egui::Ui, inside: bool, right_clicked: 
     let popup = egui::Popup::new(popup_id, ctx, egui::PopupAnchor::PointerFixed, ui.layer_id())
         .kind(egui::PopupKind::Menu)
         .layout(egui::Layout::top_down_justified(egui::Align::Min))
-        .style(egui::containers::menu::menu_style)
+        .style(crate::menus::popup_style)
         .open_memory(open.then_some(egui::SetOpenCommand::Bool(true)));
     popup.show(|ui| {
         if let Some(groups) = command_entries(app) {

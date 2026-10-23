@@ -149,11 +149,66 @@ pub enum Icon {
     PickAdd,
     SelectObjects,
     QuickSelect,
+    Template,
+    Pdf,
+    Wrench,
+    Quit,
+    Cut,
+    ClipCopy,
+    Paste,
+    SelectAll,
+    Globe,
+    Regen,
+    NamedViews,
+    Viewports,
+    Ucs,
+    Theme,
+    Accessibility,
+    Xref,
+    DataLink,
+    Layout,
+    LayerState,
+    ColorWheel,
+    Linetype,
+    TextStyle,
+    DimStyle,
+    Units,
+    Rename,
+    Script,
+    Compare,
+    Group,
+    DrawOrder,
+    Mouse3d,
+    Polyline3d,
+    Multiline,
+    Helix,
+    CenterMark,
+    CenterLine,
+    Dimension,
+    DimJogged,
+    DimSpace,
+    DimBreak,
+    Tolerance,
+    Inspection,
+    Oblique,
+    AlignText,
+    DimOverride,
+    Object,
+    Clip,
+    Solid,
+    Flatten,
+    Overkill,
+    Sample,
+    Chat,
+    Info,
 }
 
+#[derive(Clone, Copy)]
 struct Pen<'a> {
     p: &'a Painter,
     r: Rect,
+    /// The side of the grid the coordinates are on: 24 for the tool icons, 20 for the menu icons.
+    g: f32,
     w: f32,
     base: Color32,
     acc: Color32,
@@ -162,11 +217,11 @@ struct Pen<'a> {
 
 impl Pen<'_> {
     fn at(&self, x: f32, y: f32) -> Pos2 {
-        let s = self.r.width() / 24.0;
+        let s = self.sc();
         pos2(self.r.min.x + x * s, self.r.min.y + y * s)
     }
     fn sc(&self) -> f32 {
-        self.r.width() / 24.0
+        self.r.width() / self.g
     }
     fn st(&self, c: Color32) -> Stroke {
         Stroke::new(self.w, c)
@@ -226,9 +281,25 @@ impl Pen<'_> {
 
 /// Paint `icon` into `rect` (square), with `dim` for disabled.
 pub fn paint(p: &Painter, rect: Rect, icon: Icon, dim: bool) {
+    paint_tinted(p, rect, icon, dim, None);
+}
+
+/// [`paint`] in the one colour `tint` (an icon on a highlighted row), or in its own colours.
+pub fn paint_tinted(p: &Painter, rect: Rect, icon: Icon, dim: bool, tint: Option<Color32>) {
     let t = Tokens::get();
-    let alpha = |c: Color32| if dim { c.gamma_multiply(0.4) } else { c };
-    let pen = Pen { p, r: rect, w: (rect.width() / 16.0).clamp(1.0, 1.6), base: alpha(t.icon), acc: alpha(t.icon_accent), pt: alpha(t.icon_point) };
+    let alpha = |c: Color32| {
+        let c = tint.unwrap_or(c);
+        if dim { c.gamma_multiply(0.4) } else { c }
+    };
+    let pen = Pen {
+        p,
+        r: rect,
+        g: 24.0,
+        w: (rect.width() / 16.0).clamp(1.0, 1.6),
+        base: alpha(t.icon),
+        acc: alpha(t.icon_accent),
+        pt: alpha(t.icon_point),
+    };
     let (b, a) = (pen.base, pen.acc);
     use Icon::*;
     match icon {
@@ -938,6 +1009,377 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, dim: bool) {
             pen.poly(&[(3.0, 4.0), (19.0, 4.0), (13.0, 11.0), (13.0, 19.0), (9.0, 17.0), (9.0, 11.0)], true, b);
             pen.poly(&[(20.0, 10.0), (16.5, 15.5), (20.0, 15.5), (17.0, 21.0)], false, a);
         }
+        Template | Pdf | Wrench | Quit | Cut | ClipCopy | Paste | SelectAll | Globe => menu_icon(&Pen { g: 20.0, ..pen }, icon),
+        Regen | NamedViews | Viewports | Ucs | Theme | Accessibility | Xref | DataLink | Layout | LayerState | ColorWheel | Linetype | TextStyle
+        | DimStyle | Units | Rename => menu_icon(&Pen { g: 20.0, ..pen }, icon),
+        Script | Compare | Group | DrawOrder | Mouse3d => menu_icon(&Pen { g: 20.0, ..pen }, icon),
+        Polyline3d | Multiline | Helix | CenterMark | CenterLine | Dimension | DimJogged | DimSpace | DimBreak | Tolerance | Inspection | Oblique
+        | AlignText | DimOverride => menu_icon(&Pen { g: 20.0, ..pen }, icon),
+        Object | Clip | Solid | Flatten | Overkill | Sample | Chat | Info => menu_icon(&Pen { g: 20.0, ..pen }, icon),
+    }
+}
+
+/// The icons that only menu rows use, drawn on a 20-unit grid.
+fn menu_icon(m: &Pen, icon: Icon) {
+    let (b, a) = (m.base, m.acc);
+    use Icon::*;
+    match icon {
+        Template => {
+            // A sheet with ruled lines.
+            m.rect(5.0, 3.0, 10.0, 14.0, b);
+            m.la(8.0, 7.0, 12.0, 7.0);
+            m.l(8.0, 10.0, 12.0, 10.0);
+            m.l(8.0, 13.0, 10.0, 13.0);
+        }
+        Pdf => {
+            // A page with a folded corner and two lines of text.
+            m.poly(&[(5.0, 3.0), (12.0, 3.0), (15.0, 6.0), (15.0, 17.0), (5.0, 17.0)], true, b);
+            m.la(8.0, 11.0, 12.0, 11.0);
+            m.la(8.0, 14.0, 12.0, 14.0);
+        }
+        Wrench => {
+            // A wrench: an open jaw on a slanted handle.
+            m.arc(13.0, 7.0, 4.0, 80.0, 200.0, b);
+            m.arc(13.0, 7.0, 4.0, 250.0, 370.0, b);
+            m.poly(&[(13.7, 3.05), (12.5, 7.5), (16.95, 6.3)], false, b);
+            m.poly(&[(9.25, 8.35), (3.9, 13.7), (6.3, 16.1), (11.65, 10.75)], false, b);
+        }
+        Quit => {
+            // A power symbol.
+            m.arc(10.0, 10.0, 6.0, 132.0, 408.0, b);
+            m.la(10.0, 3.0, 10.0, 10.0);
+        }
+        Cut => {
+            // Scissors.
+            m.c(6.0, 15.0, 2.0, b);
+            m.c(14.0, 15.0, 2.0, b);
+            m.la(7.3, 13.4, 14.0, 3.0);
+            m.la(12.7, 13.4, 6.0, 3.0);
+        }
+        ClipCopy => {
+            // Two overlapping sheets.
+            m.rect(3.0, 3.0, 10.0, 10.0, b);
+            m.rect(7.0, 7.0, 10.0, 10.0, a);
+        }
+        Paste => {
+            // A clipboard.
+            m.rect(6.0, 4.0, 8.0, 13.0, b);
+            m.rect(8.0, 3.0, 4.0, 2.0, a);
+        }
+        SelectAll => {
+            // A dashed selection box.
+            m.poly(&[(3.0, 6.0), (3.0, 3.0), (6.0, 3.0)], false, b);
+            m.poly(&[(14.0, 3.0), (17.0, 3.0), (17.0, 6.0)], false, b);
+            m.poly(&[(17.0, 14.0), (17.0, 17.0), (14.0, 17.0)], false, b);
+            m.poly(&[(6.0, 17.0), (3.0, 17.0), (3.0, 14.0)], false, b);
+            m.la(9.0, 3.0, 11.0, 3.0);
+            m.la(17.0, 9.0, 17.0, 11.0);
+            m.la(11.0, 17.0, 9.0, 17.0);
+            m.la(3.0, 11.0, 3.0, 9.0);
+        }
+        Globe => {
+            // A globe with its equator and two meridians.
+            m.c(10.0, 10.0, 7.0, b);
+            m.l(3.0, 10.0, 17.0, 10.0);
+            for s in [-1.0, 1.0] {
+                let side: Vec<(f32, f32)> = [(0.0, 3.0), (1.6, 4.9), (2.5, 7.2), (2.8, 10.0), (2.5, 12.8), (1.6, 15.1), (0.0, 17.0)]
+                    .iter()
+                    .map(|(x, y)| (10.0 + s * x, *y))
+                    .collect();
+                m.poly(&side, false, a);
+            }
+        }
+        Regen => {
+            // A circular arrow.
+            m.arc(9.8, 10.0, 6.0, 30.0, 332.0, b);
+            m.poly(&[(16.0, 3.0), (16.0, 7.0), (12.0, 7.0)], false, a);
+        }
+        NamedViews => {
+            // A camera.
+            m.rect(3.0, 6.0, 10.0, 8.0, b);
+            m.poly(&[(13.0, 9.0), (17.0, 7.0), (17.0, 13.0), (13.0, 11.0)], false, a);
+        }
+        Viewports => {
+            // A window split in four.
+            m.rect(3.0, 4.0, 14.0, 12.0, b);
+            m.la(10.0, 4.0, 10.0, 16.0);
+            m.la(3.0, 10.0, 17.0, 10.0);
+        }
+        Ucs => {
+            // The X and Y axes with arrowheads.
+            m.l(4.0, 16.0, 4.0, 5.0);
+            m.poly(&[(2.5, 7.0), (4.0, 5.0), (5.5, 7.0)], false, b);
+            m.la(4.0, 16.0, 15.0, 16.0);
+            m.poly(&[(13.0, 14.5), (15.0, 16.0), (13.0, 17.5)], false, a);
+        }
+        Theme => {
+            // A disc, half shaded.
+            m.c(10.0, 10.0, 7.0, b);
+            m.l(10.0, 3.0, 10.0, 17.0);
+            m.la(12.5, 3.6, 12.5, 16.4);
+            m.la(15.0, 5.2, 15.0, 14.8);
+        }
+        Accessibility => {
+            // A figure with open arms.
+            m.c(10.0, 4.5, 1.0, a);
+            m.l(5.0, 7.0, 15.0, 7.0);
+            m.l(10.0, 7.0, 10.0, 11.5);
+            m.l(10.0, 11.5, 7.0, 16.5);
+            m.l(10.0, 11.5, 13.0, 16.5);
+        }
+        Xref => {
+            // Two chain links.
+            m.poly(&[(7.0, 9.0), (5.0, 11.0), (4.3, 12.5), (4.6, 14.2), (5.8, 15.4), (7.5, 15.7), (9.0, 15.0), (11.0, 13.0)], false, b);
+            m.poly(&[(13.0, 11.0), (15.0, 9.0), (15.7, 7.5), (15.4, 5.8), (14.2, 4.6), (12.5, 4.3), (11.0, 5.0), (9.0, 7.0)], false, b);
+            m.la(8.0, 12.0, 12.0, 8.0);
+        }
+        DataLink => {
+            // A sheet of cells.
+            m.rect(4.0, 4.0, 12.0, 12.0, b);
+            m.la(4.0, 8.0, 16.0, 8.0);
+            m.l(4.0, 12.0, 16.0, 12.0);
+            m.l(9.0, 4.0, 9.0, 16.0);
+        }
+        Layout => {
+            // A sheet with a viewport and a title line.
+            m.rect(3.0, 4.0, 14.0, 12.0, b);
+            m.rect(12.0, 6.0, 3.0, 4.0, a);
+            m.l(5.0, 13.0, 10.0, 13.0);
+        }
+        LayerState => {
+            // Stacked layers with a plus.
+            m.poly(&[(10.0, 3.0), (17.0, 7.0), (10.0, 11.0), (3.0, 7.0)], true, b);
+            m.poly(&[(3.0, 11.0), (10.0, 15.0), (12.5, 13.6)], false, b);
+            m.la(14.0, 15.5, 18.0, 15.5);
+            m.la(16.0, 13.5, 16.0, 17.5);
+        }
+        ColorWheel => {
+            // A wheel in three sectors.
+            m.c(10.0, 10.0, 7.0, b);
+            m.l(10.0, 3.0, 10.0, 10.0);
+            m.l(10.0, 10.0, 3.95, 13.5);
+            m.la(10.0, 10.0, 16.05, 13.5);
+        }
+        Linetype => {
+            // A continuous, a dashed and a dotted line.
+            m.l(3.0, 6.0, 17.0, 6.0);
+            for (x0, x1) in [(3.0, 6.0), (8.0, 12.0), (14.0, 17.0)] {
+                m.la(x0, 10.0, x1, 10.0);
+            }
+            for x in [3.0, 6.0, 9.0, 12.0, 15.0] {
+                m.l(x, 14.0, x + 1.0, 14.0);
+            }
+        }
+        TextStyle => {
+            // A letter on a baseline.
+            m.poly(&[(5.0, 15.0), (10.0, 3.0), (15.0, 15.0)], false, b);
+            m.l(7.0, 11.0, 13.0, 11.0);
+            m.la(4.0, 18.0, 16.0, 18.0);
+        }
+        DimStyle => {
+            // A dimension line with open arrowheads.
+            m.l(3.0, 6.0, 3.0, 14.0);
+            m.l(17.0, 6.0, 17.0, 14.0);
+            m.la(3.0, 10.0, 17.0, 10.0);
+            m.poly(&[(5.0, 8.0), (3.0, 10.0), (5.0, 12.0)], false, a);
+            m.poly(&[(15.0, 8.0), (17.0, 10.0), (15.0, 12.0)], false, a);
+        }
+        Units => {
+            // A ruler.
+            m.rect(3.0, 8.0, 14.0, 5.0, b);
+            for (x, y) in [(6.0, 10.0), (9.0, 11.0), (12.0, 10.0), (15.0, 11.0)] {
+                m.la(x, 8.0, x, y);
+            }
+        }
+        Rename => {
+            // A name field with a text cursor.
+            m.rect(3.0, 7.0, 11.0, 6.0, b);
+            m.la(16.0, 5.0, 16.0, 15.0);
+            m.la(15.0, 5.0, 17.0, 5.0);
+            m.la(15.0, 15.0, 17.0, 15.0);
+        }
+        Script => {
+            // A sheet with a command prompt.
+            m.rect(5.0, 3.0, 10.0, 14.0, b);
+            m.poly(&[(7.5, 8.0), (9.5, 10.0), (7.5, 12.0)], false, a);
+            m.la(11.0, 12.0, 13.0, 12.0);
+        }
+        Compare => {
+            // Two sheets side by side, one line apart.
+            m.rect(3.0, 4.0, 6.0, 12.0, b);
+            m.rect(11.0, 4.0, 6.0, 12.0, b);
+            m.l(5.0, 8.0, 7.0, 8.0);
+            m.l(13.0, 8.0, 15.0, 8.0);
+            m.l(5.0, 11.0, 7.0, 11.0);
+            m.la(13.0, 12.0, 15.0, 12.0);
+        }
+        Group => {
+            // Four boxes held together.
+            for (x, y) in [(3.0, 3.0), (12.0, 12.0)] {
+                m.rect(x, y, 5.0, 5.0, b);
+            }
+            for (x, y) in [(3.0, 12.0), (12.0, 3.0)] {
+                m.rect(x, y, 5.0, 5.0, a);
+            }
+        }
+        DrawOrder => {
+            // One box in front of another.
+            m.rect(4.0, 4.0, 8.0, 8.0, b);
+            m.rect(8.0, 8.0, 8.0, 8.0, a);
+        }
+        Mouse3d => {
+            // A 3D mouse: a cap on a round base.
+            let base: Vec<(f32, f32)> =
+                (0..24).map(|i| (i as f32 * 15.0f32).to_radians()).map(|t| (10.0 + 6.0 * t.cos(), 13.0 + 3.0 * t.sin())).collect();
+            m.poly(&base, true, b);
+            m.la(7.0, 12.0, 7.0, 7.0);
+            m.arc(10.0, 7.0, 3.0, 0.0, 180.0, a);
+            m.la(13.0, 7.0, 13.0, 12.0);
+        }
+        Polyline3d => {
+            // A polyline climbing off its base line.
+            m.l(3.0, 15.0, 6.0, 15.0);
+            m.poly(&[(3.0, 15.0), (7.0, 9.0), (11.0, 12.0), (17.0, 5.0)], false, a);
+            m.fill_c(7.0, 9.0, 1.3, m.pt);
+            m.fill_c(11.0, 12.0, 1.3, m.pt);
+        }
+        Multiline => {
+            // Two parallel lines, capped.
+            m.la(3.0, 8.0, 17.0, 8.0);
+            m.la(3.0, 12.0, 17.0, 12.0);
+            m.l(3.0, 8.0, 3.0, 12.0);
+            m.l(17.0, 8.0, 17.0, 12.0);
+        }
+        Helix => {
+            // A spring seen from the side.
+            let coil: Vec<(f32, f32)> = (0..=54)
+                .map(|i| i as f32 * 20.0f32.to_radians())
+                .map(|t| (10.0 + 5.0 * t.cos(), 4.0 + t * 12.0 / (6.0 * std::f32::consts::PI)))
+                .collect();
+            m.poly(&coil, false, a);
+        }
+        CenterMark => {
+            // A cross with a gap round its centre.
+            m.l(10.0, 3.0, 10.0, 7.0);
+            m.l(10.0, 13.0, 10.0, 17.0);
+            m.l(3.0, 10.0, 7.0, 10.0);
+            m.l(13.0, 10.0, 17.0, 10.0);
+            m.la(9.0, 10.0, 11.0, 10.0);
+            m.la(10.0, 9.0, 10.0, 11.0);
+        }
+        CenterLine => {
+            // A dashed line midway between two lines.
+            m.l(5.0, 4.0, 5.0, 16.0);
+            m.l(15.0, 4.0, 15.0, 16.0);
+            for (y0, y1) in [(2.0, 5.0), (7.0, 9.0), (11.0, 13.0), (15.0, 18.0)] {
+                m.la(10.0, y0, 10.0, y1);
+            }
+        }
+        Dimension => {
+            // A dimension line between two extension lines.
+            m.l(3.0, 6.0, 3.0, 14.0);
+            m.l(17.0, 6.0, 17.0, 14.0);
+            m.la(3.0, 10.0, 17.0, 10.0);
+        }
+        DimJogged => {
+            // An arc with a jogged radius line.
+            m.arc(15.0, 15.0, 12.0, 180.0, 90.0, b);
+            m.poly(&[(15.0, 15.0), (12.0, 11.0), (14.0, 10.0), (10.0, 6.0)], false, a);
+        }
+        DimSpace => {
+            // Evenly spaced dimension lines.
+            for y in [6.0, 10.0, 14.0] {
+                m.l(3.0, y, 14.0, y);
+            }
+            m.la(17.0, 4.0, 17.0, 16.0);
+            m.la(16.0, 6.0, 18.0, 6.0);
+            m.la(16.0, 10.0, 18.0, 10.0);
+            m.la(16.0, 14.0, 18.0, 14.0);
+        }
+        DimBreak => {
+            // A dimension line broken where another line crosses.
+            m.l(3.0, 10.0, 8.0, 10.0);
+            m.l(12.0, 10.0, 17.0, 10.0);
+            m.la(9.0, 6.0, 11.0, 14.0);
+        }
+        Tolerance => {
+            // A feature control frame.
+            m.rect(3.0, 6.0, 14.0, 8.0, b);
+            m.l(8.0, 6.0, 8.0, 14.0);
+            m.l(12.0, 6.0, 12.0, 14.0);
+            m.c(5.5, 10.0, 1.3, a);
+        }
+        Inspection => {
+            // An inspection frame with round ends.
+            m.l(6.0, 7.0, 14.0, 7.0);
+            m.l(6.0, 13.0, 14.0, 13.0);
+            m.arc(6.0, 10.0, 3.0, 90.0, 270.0, b);
+            m.arc(14.0, 10.0, 3.0, -90.0, 90.0, b);
+            m.la(8.0, 7.0, 8.0, 13.0);
+            m.la(12.0, 7.0, 12.0, 13.0);
+        }
+        Oblique => {
+            // Slanted extension lines.
+            m.l(5.0, 4.0, 3.0, 16.0);
+            m.l(17.0, 4.0, 15.0, 16.0);
+            m.la(4.0, 10.0, 16.0, 10.0);
+        }
+        AlignText => {
+            // Text centred between two lines.
+            m.l(3.0, 6.0, 17.0, 6.0);
+            m.la(6.0, 10.0, 14.0, 10.0);
+            m.l(3.0, 14.0, 17.0, 14.0);
+        }
+        DimOverride => {
+            // A pencil.
+            m.poly(&[(4.0, 13.0), (11.0, 6.0), (14.0, 9.0), (7.0, 16.0), (4.0, 16.0)], true, b);
+            m.la(12.0, 5.0, 15.0, 8.0);
+        }
+        Object => {
+            // A box inside a frame.
+            m.rect(4.0, 4.0, 12.0, 12.0, b);
+            m.rect(8.0, 8.0, 4.0, 4.0, a);
+        }
+        Clip => {
+            // A frame cut by a diagonal.
+            m.rect(4.0, 4.0, 12.0, 12.0, b);
+            m.la(8.0, 8.0, 16.0, 16.0);
+        }
+        Solid => {
+            // A cube.
+            m.poly(&[(10.0, 3.0), (16.0, 6.5), (16.0, 13.5), (10.0, 17.0), (4.0, 13.5), (4.0, 6.5)], true, b);
+            m.poly(&[(4.0, 6.5), (10.0, 10.0), (16.0, 6.5)], false, a);
+            m.la(10.0, 10.0, 10.0, 17.0);
+        }
+        Flatten => {
+            // A shape pressed onto a plane.
+            m.l(3.0, 14.0, 17.0, 14.0);
+            m.poly(&[(6.0, 10.0), (10.0, 5.0), (14.0, 10.0)], false, a);
+        }
+        Overkill => {
+            // Two overlapping boxes with a line struck out.
+            m.rect(3.0, 3.0, 10.0, 10.0, b);
+            m.rect(7.0, 7.0, 10.0, 10.0, b);
+            m.la(9.0, 12.0, 15.0, 12.0);
+        }
+        Sample => {
+            // A drawing sheet with a view and a title line.
+            m.rect(4.0, 3.0, 12.0, 14.0, b);
+            m.rect(7.0, 7.0, 6.0, 4.0, a);
+            m.l(7.0, 14.0, 13.0, 14.0);
+        }
+        Chat => {
+            // A speech bubble.
+            m.poly(&[(4.0, 5.0), (16.0, 5.0), (16.0, 13.0), (9.0, 13.0), (5.0, 16.0), (5.0, 13.0), (4.0, 13.0)], true, b);
+            m.la(7.0, 9.0, 13.0, 9.0);
+        }
+        Info => {
+            // An i in a circle.
+            m.c(10.0, 10.0, 7.0, b);
+            m.la(10.0, 9.0, 10.0, 14.0);
+            m.fill_c(10.0, 6.5, 0.9, a);
+        }
+        _ => {}
     }
 }
 

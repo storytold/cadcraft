@@ -6,14 +6,21 @@
 # Keep command IDs, keywords, technology/product names and user data unchanged.
 # External References palette (#525).
 	Apply	Застосувати
+	Architecture	Архітектура
 	Attach DWG...	Приєднати DWG...
 	Bind	Вбудувати
+	Built	Зібрано
+	Computer-aided design and drafting. An open-source, clean-room CAD application written in pure Rust.	Автоматизоване проєктування та креслення. CAD-програма з відкритим кодом, незалежно розроблена мовою Rust.
 	Detach	Від'єднати
+	Discord	Discord
+	GitHub	GitHub
+	License	Ліцензія
 	Loaded	Завантажено
 	Make it a block of this drawing, keeping its layer names	Зробити блоком цього креслення зі збереженням назв шарів
 	Make it a block of this drawing; its layers become NAME$0$LAYER	Зробити блоком цього креслення; його шари стануть NAME$0$LAYER
 	No external references are attached.	Зовнішні посилання не приєднано.
 	Not Found	Не знайдено
+	Not affiliated with Autodesk, Inc.	Не пов'язано з Autodesk, Inc.
 	Not loaded	Не завантажено
 	Open	Відкрити
 	Overlay	Накладення
@@ -162,7 +169,6 @@
 	Commits	Коміти
 	Company	Компанія
 	Compare Drawings...	Порівняти креслення...
-	Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust.	Автоматизоване проєктування та креслення: CAD-програма з відкритим кодом, незалежно розроблена мовою Rust.
 	Concentric	Концентричність
 	Cone	Конус
 	Constraint Bars	Панелі обмежень
@@ -448,7 +454,6 @@
 	Jogged Linear	Лінійний зі зламом
 	Join	Об'єднати
 	Join the ArtCraft Discord…	Приєднатися до Discord ArtCraft…
-	Join us on Discord	Приєднуйтеся до нас у Discord
 	Isometric Plane	Ізометрична площина
 	Isometric snap	Ізометрична крокова прив'язка
 	Language	Мова
@@ -512,7 +517,6 @@
 	Lock viewport	Заблокувати видовий екран
 	Lock/Unlock	Заблокувати/розблокувати
 	Loft	Тіло за перерізами
-	MIT OR Apache-2.0. Not affiliated with Autodesk, Inc.	MIT OR Apache-2.0. Не пов'язано з Autodesk, Inc.
 	MODEL	МОДЕЛЬ
 	MText	Багаторядковий текст
 	Magenta	Пурпуровий
@@ -525,6 +529,7 @@
 	Measure	Розмітити
 	Measure Distance	Виміряти відстань
 	Measure Geometry	Виміряти геометрію
+	Menu Access Keys	Клавіші доступу до меню
 	Merge Cells	Об'єднати комірки
 	Merged PRs	Об'єднані PR
 	Mid Between 2 Points	Середина між 2 точками
@@ -590,7 +595,6 @@
 	Offset	Зміщення
 	On	Увімкнено
 	On/Off	Увімкнути/вимкнути
-	One of the Crafting Apps by the ArtCraft team and community.	Одна з програм Crafting Apps від команди та спільноти ArtCraft.
 	Only in this drawing: {n}	Лише в цьому кресленні: {n}
 	Only in {name}: {n}	Лише в {name}: {n}
 	Open (⌘O)	Відкрити (⌘O)
@@ -996,6 +1000,8 @@
 	Tables	Таблиці
 	The aperture is how near the cursor must come to a point for an object snap to find it.	Апертура — це наскільки близько курсор має підійти до точки, щоб об'єктна прив'язка її знайшла.
 	User Preferences	Налаштування користувача
+	Version {version} ({hash})	Версія {version} ({hash})
+	Website	Вебсайт
 	Visual Effect Settings	Параметри візуальних ефектів
 	Visual Effect Settings...	Параметри візуальних ефектів...
 	When a command is active	Коли команда активна
@@ -1209,6 +1215,8 @@
 	{kind} (constraint {id})	{kind} (обмеження {id})
 	{kind} constraint {name} = {expression}  (double-click to edit)	Обмеження «{kind}» {name} = {expression}  (двічі клацніть для редагування)
 	{name}: {distance} < {angle}°	{name}: {distance} < {angle}°
+	© ArtCraft Team and the CADCraft contributors	© Команда ArtCraft та учасники проєкту CADCraft
+	© {year} ArtCraft Team and the CADCraft contributors	© {year} Команда ArtCraft та учасники проєкту CADCraft
 	ƒx  New User Parameter	ƒx  Новий параметр користувача
 	ΔLOC	Δрядків
 	−Bin	−двійк.

@@ -302,6 +302,8 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
             }
             egui::Event::Key { key, pressed: true, repeat, modifiers, .. } => match key {
                 Key::Enter => submit(app),
+                // The About window closes on Escape; the running command keeps going.
+                Key::Escape if app.ui.dialog.as_deref() == Some("about") => {}
                 Key::Escape => {
                     app.cmd.buffer.clear();
                     app.session.cancel();

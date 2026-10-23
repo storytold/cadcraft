@@ -47,6 +47,7 @@
 	Apply true color	应用真彩色
 	Arc	圆弧
 	Arc Length	弧长
+	Architecture	架构
 	Area	面积
 	Arrange Panel	排列面板
 	Array	阵列
@@ -80,6 +81,7 @@
 	Break	打断
 	Break At Point	于点打断
 	Bring to Front	置于顶层
+	Built	构建
 	ByBlock	ByBlock
 	ByColor	ByColor
 	ByLayer	ByLayer
@@ -122,7 +124,7 @@
 	Command Reference	命令参考
 	Commits	提交
 	Company	公司
-	Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust.	计算机辅助设计与绘图：一个用纯 Rust 编写的开源、自主实现的 CAD 应用程序。
+	Computer-aided design and drafting. An open-source, clean-room CAD application written in pure Rust.	计算机辅助设计与绘图。一个用纯 Rust 编写的开源、自主实现的 CAD 应用程序。
 	Concentric	同心
 	Cone	圆锥体
 	Constraint Bars	约束栏
@@ -182,6 +184,7 @@
 	Dimensional Constraint Parameters	尺寸约束参数
 	Dimensional Constraints	尺寸约束
 	Disassociate Dimensions	取消标注关联
+	Discord	Discord
 	Display name	显示名称
 	Distance	距离
 	Divide	定数等分
@@ -297,6 +300,7 @@
 	Geometry	几何图形
 	Get Variable	获取变量
 	Get View	获取视图
+	GitHub	GitHub
 	Global	全局
 	Global width	全局宽度
 	Grab bag	杂项
@@ -358,7 +362,6 @@
 	Isometric Drafting	等轴测制图
 	Join	合并
 	Join the ArtCraft Discord…	加入 ArtCraft Discord…
-	Join us on Discord	在 Discord 上加入我们
 	Language	语言
 	Last	最后
 	Last commit	最后提交
@@ -386,6 +389,7 @@
 	Length X	长度 X
 	Length Y	长度 Y
 	Lengthen	拉长
+	License	许可证
 	Light	浅色
 	Line	直线
 	Line delta	直线增量
@@ -415,7 +419,6 @@
 	Lock Layer	锁定图层
 	Lock/Unlock	锁定/解锁
 	Loft	放样
-	MIT OR Apache-2.0. Not affiliated with Autodesk, Inc.	MIT 或 Apache-2.0。与 Autodesk, Inc. 无关。
 	MODEL	模型
 	MText	多行文字
 	Magenta	品红
@@ -428,6 +431,7 @@
 	Measure	度量
 	Measure Distance	测量距离
 	Measure Geometry	测量几何图形
+	Menu Access Keys	菜单访问键
 	Merge Cells	合并单元格
 	Merged PRs	已合并的 PR
 	Mid Between 2 Points	两点之间的中点
@@ -472,6 +476,7 @@
 	No selection	未选择
 	Node	节点
 	None	无
+	Not affiliated with Autodesk, Inc.	与 Autodesk, Inc. 无关。
 	Not available	不可用
 	Not available yet	暂不可用
 	OK	确定
@@ -486,7 +491,6 @@
 	Offset	偏移
 	On	开启
 	On/Off	开/关
-	One of the Crafting Apps by the ArtCraft team and community.	由 ArtCraft 团队和社区打造的 Crafting 系列应用之一。
 	Open (⌘O)	打开 (⌘O)
 	Open Sample Drawing	打开示例图形
 	Open sample drawing	打开示例图形
@@ -953,6 +957,7 @@
 	Value:	值:
 	Version	版本
 	Version {version}	版本 {version}
+	Version {version} ({hash})	版本 {version} ({hash})
 	Vertical	垂直
 	VerticalDistance	垂直距离
 	View	视图
@@ -964,6 +969,7 @@
 	Viewports	视口
 	W	W
 	WCS	WCS
+	Website	网站
 	White	白色
 	Width factor	宽度因子
 	Window	窗口
@@ -986,6 +992,8 @@
 	{kind} (constraint {id})	{kind} (约束 {id})
 	{kind} constraint {name} = {expression}  (double-click to edit)	{kind} 约束 {name} = {expression}  (双击编辑)
 	{name}: {distance} < {angle}°	{name}: {distance} < {angle}°
+	© ArtCraft Team and the CADCraft contributors	© ArtCraft 团队与 CADCraft 贡献者
+	© {year} ArtCraft Team and the CADCraft contributors	© {year} ArtCraft 团队与 CADCraft 贡献者
 	ƒx  New User Parameter	ƒx  新建用户参数
 	ΔLOC	ΔLOC
 	−Bin	−Bin

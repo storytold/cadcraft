@@ -47,6 +47,7 @@
 	Apply true color	Appliquer la couleur RGB
 	Arc	Arc
 	Arc Length	Longueur d'arc
+	Architecture	Architecture
 	Area	Aire
 	Arrange Panel	Réorganiser le panneau
 	Array	Réseau
@@ -80,6 +81,7 @@
 	Break	Rupture
 	Break At Point	Rupture en un point
 	Bring to Front	Mettre au premier plan
+	Built	Compilation
 	ByBlock	DuBloc
 	ByColor	Par couleur
 	ByLayer	DuCalque
@@ -121,7 +123,7 @@
 	Command Reference	Référence des commandes
 	Commits	Révisions
 	Company	Société
-	Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust.	Conception et dessin assistés par ordinateur : application de CAO open source, développée de manière indépendante en pur Rust.
+	Computer-aided design and drafting. An open-source, clean-room CAD application written in pure Rust.	Conception et dessin assistés par ordinateur. Application de CAO open source, développée de manière indépendante en pur Rust.
 	Concentric	Concentricité
 	Cone	Cône
 	Constraint Bars	Barres de contraintes
@@ -181,6 +183,7 @@
 	Dimensional Constraint Parameters	Paramètres de contraintes dimensionnelles
 	Dimensional Constraints	Contraintes dimensionnelles
 	Disassociate Dimensions	Dissocier les cotations
+	Discord	Discord
 	Display name	Nom d'affichage
 	Distance	Distance
 	Divide	Diviser
@@ -296,6 +299,7 @@
 	Geometry	Géométrie
 	Get Variable	Obtenir la variable
 	Get View	Obtenir la vue
+	GitHub	GitHub
 	Global	Global
 	Global width	Largeur globale
 	Grab bag	Liste
@@ -357,7 +361,6 @@
 	Isometric Drafting	Dessin isométrique
 	Join	Rejoindre
 	Join the ArtCraft Discord…	Rejoindre le Discord d'ArtCraft…
-	Join us on Discord	Rejoignez-nous sur Discord
 	Language	Langue
 	Last	Dernier
 	Last commit	Dernière révision
@@ -385,6 +388,7 @@
 	Length X	Longueur X
 	Length Y	Longueur Y
 	Lengthen	Modifier la longueur
+	License	Licence
 	Light	Clair
 	Line	Ligne
 	Line delta	Variation de lignes
@@ -414,7 +418,6 @@
 	Lock Layer	Verrouiller le calque
 	Lock/Unlock	Verrouiller/Déverrouiller
 	Loft	Loft
-	MIT OR Apache-2.0. Not affiliated with Autodesk, Inc.	MIT OR Apache-2.0. Non affilié à Autodesk, Inc.
 	MODEL	MODÈLE
 	MText	Texte multiligne
 	Magenta	Magenta
@@ -427,6 +430,7 @@
 	Measure	Mesurer
 	Measure Distance	Mesurer la distance
 	Measure Geometry	Mesurer la géométrie
+	Menu Access Keys	Touches d'accès du menu
 	Merge Cells	Fusionner les cellules
 	Merged PRs	PR fusionnés
 	Mid Between 2 Points	Milieu entre 2 points
@@ -471,6 +475,7 @@
 	No selection	Aucune sélection
 	Node	Nœud
 	None	Aucun
+	Not affiliated with Autodesk, Inc.	Non affilié à Autodesk, Inc.
 	Not available	Non disponible
 	Not available yet	Pas encore disponible
 	OK	OK
@@ -485,7 +490,6 @@
 	Offset	Décalage
 	On	Activé
 	On/Off	Activer/Désactiver
-	One of the Crafting Apps by the ArtCraft team and community.	L'une des applications Crafting Apps de l'équipe et de la communauté ArtCraft.
 	Open (⌘O)	Ouvrir (⌘O)
 	Open Sample Drawing	Ouvrir un dessin d'exemple
 	Open sample drawing	Ouvrir un dessin d'exemple
@@ -952,6 +956,7 @@
 	Value:	Valeur :
 	Version	Version
 	Version {version}	Version {version}
+	Version {version} ({hash})	Version {version} ({hash})
 	Vertical	Vertical
 	VerticalDistance	VerticalDistance
 	View	Vue
@@ -963,6 +968,7 @@
 	Viewports	Fenêtres
 	W	O
 	WCS	SCG
+	Website	Site web
 	White	Blanc
 	Width factor	Facteur de largeur
 	Window	Fenêtre
@@ -985,6 +991,8 @@
 	{kind} (constraint {id})	{kind} (contrainte {id})
 	{kind} constraint {name} = {expression}  (double-click to edit)	Contrainte {kind} {name} = {expression}  (double-cliquez pour modifier)
 	{name}: {distance} < {angle}°	{name} : {distance} < {angle}°
+	© ArtCraft Team and the CADCraft contributors	© L'équipe ArtCraft et les contributeurs de CADCraft
+	© {year} ArtCraft Team and the CADCraft contributors	© {year} L'équipe ArtCraft et les contributeurs de CADCraft
 	ƒx  New User Parameter	ƒx  Nouveau paramètre utilisateur
 	ΔLOC	ΔLOC
 	−Bin	−Bin

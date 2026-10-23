@@ -232,10 +232,12 @@ pub fn all_commands(app: &CadApp) -> Value {
 
 fn menu_json(e: &crate::menus::Entry) -> Value {
     match e {
-        crate::menus::Entry::Item { label, id, shortcut, enabled } => {
-            json!({"label": label, "command": id, "shortcut": shortcut, "enabled": enabled})
+        crate::menus::Entry::Item { label, id, shortcut, enabled, mark, .. } => {
+            let checked = mark.map(|m| m.on());
+            json!({"label": label, "command": id, "shortcut": shortcut, "enabled": enabled, "checked": checked})
         }
-        crate::menus::Entry::Sub { label, children } => json!({"label": label, "children": children.iter().map(menu_json).collect::<Vec<_>>()}),
+        crate::menus::Entry::Sub { label, children, .. } => json!({"label": label, "children": children.iter().map(menu_json).collect::<Vec<_>>()}),
+        crate::menus::Entry::Separator => json!({"separator": true}),
     }
 }
 

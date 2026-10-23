@@ -57,6 +57,7 @@ fn snapshot(ui: &UiState) -> Result<Value, String> {
         "collapsedGroups": ui.collapsed_groups,
         "propertiesAll": ui.properties_all,
         "inWindowMenu": ui.in_window_menu,
+        "menuAccessKeys": ui.menu_access_keys,
         "historyLines": ui.history_lines,
     }))
 }

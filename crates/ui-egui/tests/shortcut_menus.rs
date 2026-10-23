@@ -12,7 +12,8 @@ fn flatten(groups: &[Vec<Entry>]) -> Vec<(String, String, bool)> {
         for e in es {
             match e {
                 Entry::Item { label, id, enabled, .. } => out.push((format!("{prefix}{label}"), id.clone(), *enabled)),
-                Entry::Sub { label, children } => walk(&format!("{prefix}{label}/"), children, out),
+                Entry::Sub { label, children, .. } => walk(&format!("{prefix}{label}/"), children, out),
+                Entry::Separator => {}
             }
         }
     }

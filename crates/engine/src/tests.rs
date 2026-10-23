@@ -550,6 +550,12 @@ fn sysvars_roundtrip() {
     assert!(s.execute("setvar", &json!({"name": "FONTALT", "value": 3})).is_err());
     s.execute("setvar", &json!({"name": "FONTALT", "value": "."})).unwrap();
     assert_eq!(sysvars::get(&s, "FONTALT"), Some(json!("")));
+    // FONTPATH (the folders searched for SHX fonts) is one too.
+    let before = sysvars::get(&s, "FONTPATH").unwrap();
+    s.execute("setvar", &json!({"name": "FONTPATH", "value": "no-such-folder-shx"})).unwrap();
+    assert_eq!(sysvars::get(&s, "fontpath"), Some(json!("no-such-folder-shx")));
+    assert!(s.execute("setvar", &json!({"name": "FONTPATH", "value": 3})).is_err());
+    s.execute("setvar", &json!({"name": "FONTPATH", "value": before})).unwrap();
 }
 
 #[test]

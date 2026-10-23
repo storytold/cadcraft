@@ -4,14 +4,21 @@
 # UTF-8: context<TAB>English source<TAB>Czech translation.
 # @plural = one|few|other forms for integer counts.
 	Apply	Použít
+	Architecture	Architektura
 	Attach DWG...	Připojit DWG...
 	Bind	Svázat
+	Built	Sestavení
+	Computer-aided design and drafting. An open-source, clean-room CAD application written in pure Rust.	Počítačem podporované navrhování a kreslení. CAD aplikace s otevřeným zdrojovým kódem, napsaná nezávisle v čistém Rustu.
 	Detach	Odpojit
+	Discord	Discord
+	GitHub	GitHub
+	License	Licence
 	Loaded	Načteno
 	Make it a block of this drawing, keeping its layer names	Převést na blok tohoto výkresu a zachovat názvy hladin
 	Make it a block of this drawing; its layers become NAME$0$LAYER	Převést na blok tohoto výkresu; názvy hladin budou NAME$0$LAYER
 	No external references are attached.	Nejsou připojeny žádné externí reference.
 	Not Found	Nenalezeno
+	Not affiliated with Autodesk, Inc.	Bez spojení se společností Autodesk, Inc.
 	Not loaded	Nenačteno
 	Open	Otevřít
 	Overlay	Překrytí
@@ -158,7 +165,6 @@
 	Commits	Commity
 	Company	Společnost
 	Compare Drawings...	Porovnat výkresy...
-	Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust.	Počítačem podporované navrhování a kreslení: CAD aplikace s otevřeným zdrojovým kódem, napsaná nezávisle v čistém Rustu.
 	Concentric	Soustřednost
 	Cone	Kužel
 	Constraint Bars	Lišty vazeb
@@ -435,7 +441,6 @@
 	Jogged Linear	Zalomená lineární
 	Join	Spojit
 	Join the ArtCraft Discord…	Připojit se na Discord ArtCraft…
-	Join us on Discord	Připojte se k nám na Discordu
 	Isometric Plane	Izometrická rovina
 	Isometric snap	Izometrické uchopení
 	Language	Jazyk
@@ -498,7 +503,6 @@
 	Lock viewport	Zamknout výřez
 	Lock/Unlock	Zamknout/Odemknout
 	Loft	Šablonovat
-	MIT OR Apache-2.0. Not affiliated with Autodesk, Inc.	MIT OR Apache-2.0. Bez spojení se společností Autodesk, Inc.
 	MODEL	MODEL
 	MText	Víceřádkový text
 	Magenta	Purpurová
@@ -511,6 +515,7 @@
 	Measure	Rozdělit podle délky
 	Measure Distance	Změřit vzdálenost
 	Measure Geometry	Změřit geometrii
+	Menu Access Keys	Přístupové klávesy nabídky
 	Merge Cells	Sloučit buňky
 	Merged PRs	Sloučené PR
 	Mid Between 2 Points	Střed mezi 2 body
@@ -575,7 +580,6 @@
 	Offset	Ekvidistanta
 	On	Zapnuto
 	On/Off	Zapnout/Vypnout
-	One of the Crafting Apps by the ArtCraft team and community.	Jedna z aplikací Crafting Apps od týmu ArtCraft a komunity.
 	Only in this drawing: {n}	Pouze v tomto výkresu: {n}
 	Only in {name}: {n}	Pouze v {name}: {n}
 	Open (⌘O)	Otevřít (⌘O)
@@ -957,6 +961,8 @@
 	Snap, grid, polar tracking and Dynamic Input:	Uchopení, rastr, polární trasování a dynamické zadávání:
 	The aperture is how near the cursor must come to a point for an object snap to find it.	Dosah určuje, jak blízko se kurzor musí přiblížit k bodu, aby jej uchopení objektu nalezlo.
 	User Preferences	Uživatelské předvolby
+	Version {version} ({hash})	Verze {version} ({hash})
+	Website	Web
 	objects	objektů
 	Specify inside diameter of donut	Určete vnitřní průměr prstence
 	Specify leader arrowhead location	Určete polohu šipky odkazu
@@ -1164,6 +1170,8 @@
 	{kind} (constraint {id})	{kind} (vazba {id})
 	{kind} constraint {name} = {expression}  (double-click to edit)	Vazba {kind} {name} = {expression}  (dvojitým kliknutím upravíte)
 	{name}: {distance} < {angle}°	{name}: {distance} < {angle}°
+	© ArtCraft Team and the CADCraft contributors	© Tým ArtCraft a přispěvatelé projektu CADCraft
+	© {year} ArtCraft Team and the CADCraft contributors	© {year} Tým ArtCraft a přispěvatelé projektu CADCraft
 	ƒx  New User Parameter	ƒx  Nový uživatelský parametr
 	ΔLOC	ΔLOC
 	−Bin	−Bin

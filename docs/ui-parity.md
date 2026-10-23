@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (stable dash anchors on filled-object highlights) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (in-window menu bar redesign, menu icons and keyboard access; stable dash anchors on filled-object highlights) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
 
 How CADCraft's interaction compares with AutoCAD's: point entry, object snaps, tracking, dynamic
 input, grips, selection, the command line, chrome and navigation. A drafter's speed in AutoCAD
@@ -156,7 +156,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 
 | Feature | AutoCAD for Mac | CADCraft |
 |---|---|---|
-| Menu bar | 11 menus, 491 leaf items | same 11 menus; 245/491 items covered (233 by `cargo xtask parity`, which counts engine commands only, plus 12 UI-only items: see [parity-checklist.md](parity-checklist.md)); once a menu is open, pointing at another title opens that menu (#1567) |
+| Menu bar | 11 menus, 491 leaf items | same 11 menus; 245/491 items covered (233 by `cargo xtask parity`, which counts engine commands only, plus 12 UI-only items: see [parity-checklist.md](parity-checklist.md)). Once a menu is open, pointing at another title opens that menu (#1567). Order, groups and separators come from one layout table (`menu_layout.rs`), shared by the native macOS menu bar; a command the table does not name is appended to its menu. The in-window bar (off by default on macOS) has popups with an icon column, right-aligned shortcuts, radio dots and checkmarks for state, and scrolling when a menu is taller than the window. Every row the design gives an icon has one, drawn in `icons.rs`. The bar works from the keyboard: Alt and a menu's underlined letter opens it and Alt alone focuses the bar (off by default on macOS, where Option and a letter types a character; View ▸ Accessibility ▸ Menu Access Keys turns them on or off), the arrows, Home, End, Enter and Esc move through menus and submenus, and a row's letter chooses it (rows that share a letter are stepped through). F10 stays the Polar toggle, as in AutoCAD, so it does not focus the bar. Not yet: checkmarks in the native macOS menu |
 | Tool Bar, File tabs, Start tab, layout tabs | yes | yes |
 | Tool Sets palette (Drafting, Modeling, … with flyouts) | yes | yes for 2D groups |
 | Properties Inspector, Quick Properties | yes | yes (every control acts or is visibly unavailable, #182); block references show read-only Position X/Y/Z from their stored insertion point; coordinate editing is still missing |
@@ -169,6 +169,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 | Options / Preferences dialog | many tabs | **no** (issue #23) |
 | Customisation (CUI, aliases editor, tool palettes) | yes | Command Aliases dialog (ALIASEDIT, #1381); no CUI or tool palettes |
 | Themes | Dark, Light | Dark, Light, System (#179) |
+| About window | compact, fixed size | compact 400 pt window: app icon, version with build id, architecture, licence, project links; Escape closes it without cancelling the running command |
 | Accessibility | VoiceOver basics | AccessKit through eframe; screen-reader coverage untested; magnifier issue #39; animation effects follow the OS setting (View ▸ Accessibility ▸ Animation Effects: System, On, Off) |
 
 ## Navigation (≈ 55%)
@@ -203,6 +204,11 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Menu access keys are off by default on macOS (Option and a letter types there); View ▸ Accessibility ▸ Menu Access Keys (`menuAccessKeys`) turns them on or off; the first Down arrow in a pointer-opened menu no longer skips a row; type-ahead works for non-Latin labels |
+| 2026-10-13 | minor | Menu bar keyboard access: Alt+letter and Alt alone, underlined access keys, arrow, Home, End, Enter and Esc navigation through menus and submenus, letters choose rows; an open menu takes typed keys instead of the command line |
+| 2026-10-13 | minor | Menu icons: 52 more drawn in code (clipboard, views, styles, dimension tools and others), so no menu row the design gives an icon is left with an empty slot |
+| 2026-10-13 | minor | In-window menu bar redesigned (30 pt bar, dark rounded popups with icons, shortcuts, separators, radio dots and checkmarks); menus grouped by a layout table that the native macOS menu shares; the right-click menus use the same rows; clicking a disabled row no longer closes a menu |
+| 2026-10-13 | minor | About window redesigned: compact and fixed at 400 pt, app icon, version with build id, architecture, licence and project links; the Contributors and Models tabs are no longer shown there |
 | 2026-10-13 | minor | Filled-region highlight boundaries are traversed in deterministic coordinate order, fixing dash-phase jumps on CPU hover/selection redraws and GPU highlight rebuilds; CPU dash-position, pixel and GPU mesh regressions |
 | 2026-10-14 | minor | Selection cycling (#1143): the list and badge of SELECTIONCYCLING, Shift+Space through overlapping objects (#1145) |
 | 2026-10-14 | minor | Hatch Edit dialog adds boundaries from picked points or closed objects and removes selected loops |

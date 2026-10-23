@@ -1,9 +1,13 @@
 //! Menus (in-window menu bar; the native macOS menu is built from the same tree), UI-only
 //! commands and keyboard shortcuts.
 
+use std::collections::HashMap;
+
 use serde_json::{Value, json};
 
 use crate::CadApp;
+use crate::icons::Icon;
+use crate::menu_layout::{FLAT, MENU_LAYOUT, Row, menu_key, row_keys};
 
 /// The top-level menus, in order.
 pub const MENUS: &[&str] = &["File", "Edit", "View", "Insert", "Format", "Tools", "Draw", "Dimension", "Modify", "Window", "Help"];
@@ -29,6 +33,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.panel.layers", "Layers Palette", &["Window", "Layers Palette"], None),
     ("ui.panel.quickcalc", "QuickCalc", &["Window", "QuickCalc"], Some("Cmd+8")),
     ("ui.toggle.systemcursor", "Show System Cursor", &["View", "Accessibility", "Show System Cursor"], None),
+    ("ui.toggle.accesskeys", "Menu Access Keys", &["View", "Accessibility", "Menu Access Keys"], None),
     ("ui.animations.system", "Use System Setting", &["View", "Accessibility", "Animation Effects", "Use System Setting"], None),
     ("ui.animations.on", "On", &["View", "Accessibility", "Animation Effects", "On"], None),
     ("ui.animations.off", "Off", &["View", "Accessibility", "Animation Effects", "Off"], None),
@@ -63,6 +68,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.dialog.parameters", "Parameters Manager", &["Window", "Parameters Manager"], None),
     ("ui.dialog.dsettings", "Drafting Settings...", &[], None),
     ("ui.dialog.about", "About CADCraft", &["Help", "About CADCraft"], None),
+    ("ui.discord", "Join the ArtCraft Discord…", &[], None),
     ("ui.dialog.commands", "Command Reference", &["Help", "CADCraft Help"], Some("F1")),
     ("ui.toggle.history", "Command History", &["Window", "Command History"], Some("F2")),
     ("ui.cmdline.lines", "Command Line History Lines", &[], None),
@@ -72,6 +78,9 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.noop", "", &[], None),
     ("ui.quit", "Quit CADCraft", &[], Some("Cmd+Q")),
 ];
+
+/// Where Help ▸ Join the ArtCraft Discord goes.
+pub const DISCORD_URL: &str = "https://discord.gg/artcraft";
 
 pub fn is_ui_command(id: &str) -> bool {
     UI_COMMANDS.iter().any(|c| c.0 == id)
@@ -137,7 +146,9 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             app.ui.interface_language = preference;
             let shown = app.language();
             if shown != preference.resolve(&app.system_languages) {
-                app.set_status(if preference.resolve(&app.system_languages) == "ko" {
+                app.set_status(if preference.resolve(&app.system_languages) == "th" {
+                    "No Thai font is installed, so the interface stays in English. Install one (Noto Sans Thai, for example) to use Thai."
+                } else if preference.resolve(&app.system_languages) == "ko" {
                     "No font covers the Korean interface, so it stays in English. Install a Hangul font (Malgun Gothic or Nanum Gothic), or build with a Hang/Kore craft-fonts face."
                 } else {
                     "No Chinese font is installed, so the interface stays in English. Install one (Noto Sans CJK, for example) to use Chinese."
@@ -234,6 +245,12 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             toggle(&mut app.ui.system_cursor, params);
             Ok(Value::Null)
         }
+        "ui.toggle.accesskeys" => {
+            let mut on = app.menu_access_keys();
+            toggle(&mut on, params);
+            app.ui.menu_access_keys = Some(on);
+            Ok(json!({ "on": on }))
+        }
         "ui.toggle.viewcube" => {
             toggle(&mut app.ui.show_viewcube, params);
             Ok(Value::Null)
@@ -310,7 +327,17 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         "ui.resetpalettes" => {
             let (menu, theme, interface_language, save_format) = (app.ui.in_window_menu, app.ui.theme, app.ui.interface_language, app.ui.save_format);
             let (animations, save_version) = (app.ui.animations, std::mem::take(&mut app.ui.save_version));
-            app.ui = crate::UiState { in_window_menu: menu, theme, animations, interface_language, save_format, save_version, ..Default::default() };
+            let menu_access_keys = app.ui.menu_access_keys;
+            app.ui = crate::UiState {
+                in_window_menu: menu,
+                menu_access_keys,
+                theme,
+                animations,
+                interface_language,
+                save_format,
+                save_version,
+                ..Default::default()
+            };
             Ok(Value::Null)
         }
         "ui.start" => {
@@ -347,6 +374,10 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         }
         "ui.dialog.close" => {
             app.ui.dialog = None;
+            Ok(Value::Null)
+        }
+        "ui.discord" => {
+            app.open_url = Some(DISCORD_URL.to_string());
             Ok(Value::Null)
         }
         "ui.quit" => {
@@ -444,6 +475,59 @@ fn theme_json(app: &CadApp) -> Value {
     json!({ "theme": app.ui.theme.as_str(), "shown": if shown == egui::Theme::Light { "light" } else { "dark" } })
 }
 
+/// The state a menu row shows in its icon slot: one choice of a group, or an on/off setting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mark {
+    Radio(bool),
+    Check(bool),
+}
+
+impl Mark {
+    pub fn on(self) -> bool {
+        match self {
+            Mark::Radio(on) | Mark::Check(on) => on,
+        }
+    }
+}
+
+/// The mark of command `id`, read from the app's settings and the current drawing.
+fn mark_for(app: &CadApp, id: &str) -> Option<Mark> {
+    use crate::docking::Panel;
+    let ui = &app.ui;
+    let panel = |p: Panel| Mark::Check(ui.docking.layout.contains(&p));
+    if let Some(format) = id.strip_prefix("ui.saveformat.") {
+        return Some(Mark::Radio(crate::SaveFormat::parse(format) == Some(ui.save_format)));
+    }
+    if let Some(version) = id.strip_prefix("ui.saveversion.") {
+        let year = |name: &str| crate::SaveVersion::parse(name).map(|v| v.year());
+        return Some(Mark::Radio(year(version).is_some() && year(version) == year(&ui.save_version)));
+    }
+    if let Some(animations) = id.strip_prefix("ui.animations.") {
+        return Some(Mark::Radio(crate::animation::AnimationPref::parse(animations) == Some(ui.animations)));
+    }
+    if let Some(theme) = id.strip_prefix("ui.theme.") {
+        return Some(Mark::Radio(crate::theme::ThemePref::parse(theme) == Some(ui.theme)));
+    }
+    Some(match id {
+        "annovisible.all" | "annovisible.current" => Mark::Radio(app.session.doc().ok()?.anno_all_visible() == (id == "annovisible.all")),
+        "ui.toggle.ucsicon" => Mark::Check(ui.show_ucs_icon),
+        "ui.toggle.viewcube" => Mark::Check(ui.show_viewcube),
+        "ui.toggle.systemcursor" => Mark::Check(ui.system_cursor),
+        "ui.toggle.accesskeys" => Mark::Check(app.menu_access_keys()),
+        "ui.toggle.toolbar" => Mark::Check(ui.show_toolbar),
+        "ui.toggle.filetabs" => Mark::Check(ui.show_file_tabs),
+        "ui.toggle.statusbar" => Mark::Check(ui.show_status_bar),
+        "ui.toggle.cmdline" => Mark::Check(ui.show_command_line),
+        "ui.toggle.menubar" => Mark::Check(ui.in_window_menu),
+        "ui.toggle.toolsets" => panel(Panel::ToolSets),
+        "ui.panel.properties" => panel(Panel::Properties),
+        "ui.panel.layers" => panel(Panel::Layers),
+        "ui.panel.quickcalc" => panel(Panel::QuickCalc),
+        "xref" => panel(Panel::ExternalRefs),
+        _ => return None,
+    })
+}
+
 fn set_animations(app: &mut CadApp, pref: crate::animation::AnimationPref) -> Value {
     app.ui.animations = pref;
     let shown = if app.shows_animations() { "on" } else { "off" };
@@ -463,55 +547,169 @@ fn animations_json(app: &CadApp) -> Value {
 /// A menu entry.
 #[derive(Clone, Debug)]
 pub enum Entry {
-    Item { label: String, id: String, shortcut: Option<String>, enabled: bool },
-    Sub { label: String, children: Vec<Entry> },
+    Item { label: String, id: String, shortcut: Option<String>, enabled: bool, icon: Option<Icon>, mark: Option<Mark> },
+    Sub { label: String, children: Vec<Entry>, icon: Option<Icon> },
+    Separator,
 }
 
-/// The full menu tree from the command registry plus UI commands, in registration order.
+/// A command as the menus see it.
+struct Known {
+    id: &'static str,
+    label: &'static str,
+    menu: &'static [&'static str],
+    shortcut: Option<&'static str>,
+    enabled: bool,
+}
+
+impl Known {
+    /// The label a menu shows: the last segment of the menu path, else the command's label.
+    fn menu_label(&self) -> &'static str {
+        self.menu.last().copied().filter(|s| !s.is_empty()).unwrap_or(self.label)
+    }
+
+    fn item(&self, label: Option<&str>, icon: Option<Icon>, mark: Option<Mark>) -> Entry {
+        Entry::Item {
+            label: label.unwrap_or(self.menu_label()).to_string(),
+            id: self.id.to_string(),
+            shortcut: self.shortcut.map(str::to_string),
+            enabled: self.enabled,
+            icon,
+            mark,
+        }
+    }
+}
+
+/// The full menu tree: the rows of [`MENU_LAYOUT`] in its order, then, after a separator, every
+/// command with a menu path that the layout does not name (in registration order).
 pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
-    let mut out: Vec<(String, Vec<Entry>)> = MENUS.iter().map(|m| (m.to_string(), Vec::new())).collect();
-    let mut add = |path: &[&str], label: &str, id: &str, shortcut: Option<&str>, enabled: bool| {
-        let Some((top, rest)) = path.split_first() else { return };
-        let Some((_, entries)) = out.iter_mut().find(|(m, _)| m == top) else { return };
-        let mut cur = entries;
-        let n = rest.len();
-        for (i, seg) in rest.iter().enumerate() {
-            if i + 1 == n {
-                cur.push(Entry::Item {
-                    label: if seg.is_empty() { label.to_string() } else { seg.to_string() },
-                    id: id.to_string(),
-                    shortcut: shortcut.map(str::to_string),
-                    enabled,
-                });
-            } else {
-                let pos = cur.iter().position(|e| matches!(e, Entry::Sub { label, .. } if label == seg));
-                let idx = match pos {
-                    Some(p) => p,
-                    None => {
-                        cur.push(Entry::Sub { label: seg.to_string(), children: Vec::new() });
-                        cur.len() - 1
-                    }
-                };
-                let Some(Entry::Sub { children, .. }) = cur.get_mut(idx) else { return };
-                cur = children;
-            }
-        }
-    };
-    for c in cadcraft_engine::command_specs() {
-        if !c.menu.is_empty() {
-            add(c.menu, c.label, c.id, c.shortcut, (c.enabled)(&app.session).is_ok());
-        }
+    let mut known: Vec<Known> = cadcraft_engine::command_specs()
+        .iter()
+        .map(|c| Known { id: c.id, label: c.label, menu: c.menu, shortcut: c.shortcut, enabled: (c.enabled)(&app.session).is_ok() })
+        .collect();
+    known.extend(UI_COMMANDS.iter().map(|&(id, label, menu, shortcut)| Known { id, label, menu, shortcut, enabled: true }));
+    let index: HashMap<&str, usize> = known.iter().enumerate().map(|(i, k)| (k.id, i)).collect();
+    let mut placed = vec![false; known.len()];
+    let mut out: Vec<(String, Vec<Entry>)> = MENUS
+        .iter()
+        .map(|m| {
+            let rows = MENU_LAYOUT.iter().find(|(name, _)| name == m).map_or(&[][..], |(_, rows)| rows);
+            (m.to_string(), layout_entries(app, rows, &known, &index, &mut placed))
+        })
+        .collect();
+    for (_, entries) in &mut out {
+        *entries = tidy(std::mem::take(entries));
     }
-    for (id, label, menu, sc) in UI_COMMANDS {
-        if !menu.is_empty() {
-            add(menu, label, id, *sc, true);
-        }
-    }
+    // File ▸ Open Recent is built from the recent files, not from commands: it follows Open.
     if let Some((_, file)) = out.iter_mut().find(|(m, _)| m == "File") {
         let at = file.iter().position(|e| matches!(e, Entry::Item { id, .. } if id == "open")).map_or(0, |i| i + 1);
-        file.insert(at, Entry::Sub { label: OPEN_RECENT.into(), children: recent_entries(app) });
+        file.insert(at, Entry::Sub { label: OPEN_RECENT.into(), children: recent_entries(app), icon: None });
+    }
+    let mut separated = vec![false; out.len()];
+    for (k, _) in known.iter().zip(&placed).filter(|(k, placed)| !**placed && !k.menu.is_empty()) {
+        let Some((top, rest)) = k.menu.split_first() else { continue };
+        let Some(at) = out.iter().position(|(m, _)| m == top) else { continue };
+        let (Some((_, entries)), Some(separated)) = (out.get_mut(at), separated.get_mut(at)) else { continue };
+        append(entries, rest, k, mark_for(app, k.id), separated);
     }
     out
+}
+
+/// The entries of layout `rows`; ids the registry no longer has are left out.
+fn layout_entries(app: &CadApp, rows: &[Row], known: &[Known], index: &HashMap<&str, usize>, placed: &mut [bool]) -> Vec<Entry> {
+    let mut out = Vec::new();
+    for row in rows {
+        match *row {
+            Row::Cmd { id, icon, label } => {
+                let Some((i, k)) = index.get(id).and_then(|i| Some((*i, known.get(*i)?))) else { continue };
+                if let Some(p) = placed.get_mut(i) {
+                    *p = true;
+                }
+                out.push(k.item(label, icon, mark_for(app, id)));
+            }
+            Row::Sub { label, icon, rows } => {
+                out.push(Entry::Sub { label: label.to_string(), children: layout_entries(app, rows, known, index, placed), icon });
+            }
+            Row::Sep => out.push(Entry::Separator),
+        }
+    }
+    out
+}
+
+/// Drop empty submenus and the separators that would open or close a menu or follow another.
+fn tidy(entries: Vec<Entry>) -> Vec<Entry> {
+    let mut out: Vec<Entry> = Vec::new();
+    for e in entries {
+        match e {
+            Entry::Sub { label, children, icon } => {
+                let children = tidy(children);
+                if !children.is_empty() {
+                    out.push(Entry::Sub { label, children, icon });
+                }
+            }
+            Entry::Separator => {
+                if !matches!(out.last(), None | Some(Entry::Separator)) {
+                    out.push(Entry::Separator);
+                }
+            }
+            item => out.push(item),
+        }
+    }
+    if matches!(out.last(), Some(Entry::Separator)) {
+        out.pop();
+    }
+    out
+}
+
+/// `entries` without the commands `ids` (the native macOS menu has its own Quit, for one).
+pub fn without(entries: Vec<Entry>, ids: &[&str]) -> Vec<Entry> {
+    fn strip(entries: Vec<Entry>, ids: &[&str]) -> Vec<Entry> {
+        entries
+            .into_iter()
+            .filter_map(|e| match e {
+                Entry::Item { ref id, .. } if ids.contains(&id.as_str()) => None,
+                Entry::Sub { label, children, icon } => Some(Entry::Sub { label, children: strip(children, ids), icon }),
+                e => Some(e),
+            })
+            .collect()
+    }
+    tidy(strip(entries, ids))
+}
+
+/// Add a command the layout does not name at its menu path: inside the submenu of that name when
+/// there is one, else at the end of the top menu, after one separator.
+fn append(entries: &mut Vec<Entry>, path: &[&str], k: &Known, mark: Option<Mark>, separated: &mut bool) {
+    let mut cur = entries;
+    let mut top = true;
+    for (i, seg) in path.iter().enumerate() {
+        let last = i + 1 == path.len();
+        let found = if last { None } else { cur.iter().position(|e| matches!(e, Entry::Sub { label, .. } if label == seg)) };
+        let at = match found {
+            Some(at) => at,
+            None => {
+                if top && !*separated && !cur.is_empty() {
+                    cur.push(Entry::Separator);
+                }
+                *separated |= top;
+                cur.push(if last { k.item(None, None, mark) } else { Entry::Sub { label: seg.to_string(), children: Vec::new(), icon: None } });
+                cur.len() - 1
+            }
+        };
+        if last {
+            return;
+        }
+        let Some(Entry::Sub { children, .. }) = cur.get_mut(at) else { return };
+        cur = children;
+        top = false;
+    }
+}
+
+/// An entry's label in `language`. A flattened row ("Constraint Bars › Show All") is translated
+/// part by part, so it needs no catalog entry of its own.
+pub fn entry_label(language: &str, label: &str) -> String {
+    match label.split_once(FLAT) {
+        Some((heading, item)) => format!("{}{FLAT}{}", crate::i18n::tr_menu(language, heading), crate::i18n::tr(language, item)),
+        None => crate::i18n::tr(language, label).to_string(),
+    }
 }
 
 /// The items of File ▸ Open Recent: the recent files by name, newest first, then Clear Recent Files.
@@ -521,10 +719,17 @@ pub fn recent_entries(app: &CadApp) -> Vec<Entry> {
         .recent_files
         .iter()
         .enumerate()
-        .map(|(i, path)| Entry::Item { label: file_name(path), id: format!("{RECENT_ITEM}{i}"), shortcut: None, enabled: true })
+        .map(|(i, path)| Entry::Item {
+            label: file_name(path),
+            id: format!("{RECENT_ITEM}{i}"),
+            shortcut: None,
+            enabled: true,
+            icon: None,
+            mark: None,
+        })
         .collect();
     let enabled = !app.ui.recent_files.is_empty();
-    entries.push(Entry::Item { label: "Clear Recent Files".into(), id: RECENT_CLEAR.into(), shortcut: None, enabled });
+    entries.push(Entry::Item { label: "Clear Recent Files".into(), id: RECENT_CLEAR.into(), shortcut: None, enabled, icon: None, mark: None });
     entries
 }
 
@@ -544,63 +749,656 @@ pub(crate) fn shortcut_label(s: &str, mac: bool) -> String {
     format!("{shift}{cmd}{}", s.replace("Cmd+", "").replace("Shift+", ""))
 }
 
-pub(crate) fn entry_ui(ui: &mut egui::Ui, e: &Entry, clicked: &mut Option<String>) {
-    match e {
-        Entry::Item { label, id, shortcut, enabled } => {
-            let mut b = egui::Button::new(crate::i18n::t(label));
-            if let Some(s) = shortcut {
-                b = b.shortcut_text(shortcut_label(s, ui.ctx().os().is_mac()));
+/// The measurements of a menu row.
+const ROW_HEIGHT: f32 = 26.0;
+const ROW_ICON: f32 = 18.0;
+const ROW_GAP: f32 = 10.0;
+const ROW_PAD_LEFT: f32 = 8.0;
+const ROW_PAD_RIGHT: f32 = 10.0;
+const ROW_SHORTCUT_MIN: f32 = 64.0;
+const ROW_ARROW: egui::Vec2 = egui::vec2(8.0, 10.0);
+const SEPARATOR_HEIGHT: f32 = 9.0;
+/// The least width of the rows of a menu opened from the bar, and of a submenu (316 and 300
+/// with the popup's padding and border).
+const MENU_ROW_WIDTH: f32 = 306.0;
+const SUBMENU_ROW_WIDTH: f32 = 290.0;
+/// How far a submenu overlaps the menu it opens from.
+const SUBMENU_OVERLAP: f32 = 4.0;
+
+/// The style of menu popups: dark rounded panels whose rows touch.
+pub(crate) fn popup_style(style: &mut egui::Style) {
+    let t = crate::theme::Tokens::get();
+    egui::containers::menu::menu_style(style);
+    style.visuals.window_fill = t.menu_bg;
+    style.visuals.window_stroke = egui::Stroke::new(1.0, t.list_row);
+    style.visuals.menu_corner_radius = egui::CornerRadius::same(8);
+    style.visuals.popup_shadow = crate::theme::menu_shadow();
+    style.spacing.menu_margin = egui::Margin::same(4);
+    style.spacing.item_spacing = egui::vec2(0.0, 0.0);
+}
+
+/// Menus close when a row is chosen (`entry_ui`) or on a click outside them; a click on a
+/// disabled row or a separator leaves them open.
+fn menu_config() -> egui::containers::menu::MenuConfig {
+    egui::containers::menu::MenuConfig::new().style(popup_style).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+}
+
+fn row_font() -> egui::FontId {
+    egui::FontId::proportional(13.0)
+}
+
+fn shortcut_font() -> egui::FontId {
+    egui::FontId::proportional(12.0)
+}
+
+/// The width a row needs for a label and a shortcut of these widths.
+fn row_width(label: f32, shortcut: Option<f32>) -> f32 {
+    let shortcut = shortcut.map_or(ROW_SHORTCUT_MIN, |w| w.max(ROW_SHORTCUT_MIN));
+    ROW_PAD_LEFT + ROW_ICON + ROW_GAP + label + ROW_GAP + shortcut + ROW_GAP + ROW_ARROW.x + ROW_PAD_RIGHT
+}
+
+/// Make the menu as wide as its widest row needs, and at least `min`.
+pub(crate) fn set_menu_width<'a>(ui: &mut egui::Ui, entries: impl Iterator<Item = &'a Entry>, min: f32) {
+    let mac = ui.ctx().os().is_mac();
+    let text_width = |text: String, font| ui.painter().layout_no_wrap(text, font, egui::Color32::PLACEHOLDER).size().x;
+    let width = entries
+        .map(|e| match e {
+            Entry::Item { label, shortcut, .. } => row_width(
+                text_width(entry_label(crate::i18n::current(), label), row_font()),
+                shortcut.as_ref().map(|s| text_width(shortcut_label(s, mac), shortcut_font())),
+            ),
+            Entry::Sub { label, .. } => row_width(text_width(crate::i18n::menu(label).to_string(), row_font()), None),
+            Entry::Separator => 0.0,
+        })
+        .fold(min, f32::max);
+    ui.set_width(width.ceil());
+}
+
+/// What a menu row shows.
+struct RowSpec<'a> {
+    icon: Option<Icon>,
+    label: &'a str,
+    shortcut: Option<String>,
+    submenu: bool,
+    enabled: bool,
+    mark: Option<Mark>,
+    /// The access key to underline in the label.
+    key: Option<char>,
+}
+
+/// One row of a menu: icon slot, label, shortcut and submenu arrow. The row is highlighted under
+/// the pointer, with keyboard focus, and while `open` (its submenu shows).
+fn menu_row(ui: &mut egui::Ui, row: &RowSpec, open: impl FnOnce(&egui::Ui, &egui::Response) -> bool) -> egui::Response {
+    let t = crate::theme::Tokens::get();
+    let label = ui.painter().layout_no_wrap(row.label.to_string(), row_font(), t.text);
+    let shortcut = row.shortcut.as_ref().map(|s| ui.painter().layout_no_wrap(s.clone(), shortcut_font(), t.text_faint));
+    let needed = row_width(label.size().x, shortcut.as_ref().map(|g| g.size().x));
+    let sense = if row.enabled { egui::Sense::click() } else { egui::Sense::hover() };
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(needed.max(ui.available_width()), ROW_HEIGHT), sense);
+    // While the keyboard drives the menus the pointer's row is not highlighted as well.
+    let pointed = resp.hovered() && !access(ui.ctx()).keyboard;
+    let hot = row.enabled && (pointed || resp.has_focus() || open(ui, &resp));
+    if ui.is_rect_visible(rect) {
+        let p = ui.painter();
+        if hot {
+            p.rect_filled(rect, 4.0, t.accent);
+        }
+        let ink = |normal| {
+            if !row.enabled {
+                t.text_faint
+            } else if hot {
+                t.on_accent
+            } else {
+                normal
             }
-            if ui.add_enabled(*enabled, b).clicked() {
+        };
+        let slot = egui::Rect::from_min_size(egui::pos2(rect.left() + ROW_PAD_LEFT, rect.center().y - ROW_ICON / 2.0), egui::Vec2::splat(ROW_ICON));
+        match (row.mark, row.icon) {
+            (Some(Mark::Radio(true)), _) => {
+                p.circle_filled(slot.center(), 4.0, if hot { t.on_accent } else { t.accent });
+            }
+            (Some(Mark::Radio(false)), _) => {
+                p.circle_stroke(slot.center(), 3.25, egui::Stroke::new(1.5, ink(t.control_hover)));
+            }
+            (Some(Mark::Check(true)), _) => {
+                let at = |x: f32, y: f32| slot.min + egui::vec2(x, y) * (ROW_ICON / 20.0);
+                p.line(vec![at(4.5, 10.5), at(8.0, 14.0), at(15.5, 6.0)], egui::Stroke::new(1.5, ink(t.text)));
+            }
+            (Some(Mark::Check(false)), _) | (None, None) => {}
+            (None, Some(icon)) => crate::icons::paint_tinted(p, slot, icon, false, (hot || !row.enabled).then(|| ink(t.icon))),
+        }
+        let at = egui::pos2(slot.right() + ROW_GAP, rect.center().y - label.size().y / 2.0);
+        match row.key {
+            Some(key) => p.galley(at, key_galley(ui, row.label, key, row_font(), ink(t.text)), ink(t.text)),
+            None => p.galley_with_override_text_color(at, label, ink(t.text)),
+        }
+        let arrow = egui::Rect::from_min_size(egui::pos2(rect.right() - ROW_PAD_RIGHT - ROW_ARROW.x, rect.center().y - ROW_ARROW.y / 2.0), ROW_ARROW);
+        if let Some(g) = shortcut {
+            let at = egui::pos2(arrow.left() - ROW_GAP - g.size().x, rect.center().y - g.size().y / 2.0);
+            p.galley_with_override_text_color(at, g, if hot { t.on_accent.gamma_multiply(0.85) } else { t.text_faint });
+        }
+        if row.submenu {
+            let points = vec![
+                arrow.left_top() + egui::vec2(1.0, 1.0),
+                arrow.right_center() - egui::vec2(1.0, 0.0),
+                arrow.left_bottom() + egui::vec2(1.0, -1.0),
+            ];
+            p.add(egui::Shape::convex_polygon(points, ink(t.text_faint), egui::Stroke::NONE));
+        }
+    }
+    let enabled = row.enabled;
+    let on = row.mark.map(Mark::on);
+    resp.widget_info(|| match on {
+        Some(on) => egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, on, row.label),
+        None => egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, row.label),
+    });
+    crate::control::record_widget(ui, &resp, row.label, "button", on);
+    resp
+}
+
+/// The line between two groups of a menu.
+pub(crate) fn menu_separator(ui: &mut egui::Ui) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), SEPARATOR_HEIGHT), egui::Sense::hover());
+    ui.painter().hline(rect.shrink2(egui::vec2(6.0, 0.0)).x_range(), rect.center().y, egui::Stroke::new(1.0, crate::theme::Tokens::get().list_row));
+}
+
+pub(crate) fn entry_ui(ui: &mut egui::Ui, e: &Entry, clicked: &mut Option<String>) {
+    let _ = entry_row(ui, e, &[], clicked);
+}
+
+/// Keyboard use of the menu bar, kept from frame to frame.
+#[derive(Clone, Copy, Default)]
+struct Access {
+    /// Alt is down, and nothing else was pressed since it went down.
+    alt_down: bool,
+    alt_alone: bool,
+    /// Alt and a letter opens a menu (`CadApp::menu_access_keys`): the letters may be underlined.
+    letters: bool,
+    /// The keyboard drives the menus: access keys are underlined.
+    keyboard: bool,
+    /// A menu of the bar was open on the last frame.
+    any_open: bool,
+    /// The menu (a popup or a submenu) whose first row takes the focus when it shows.
+    focus_first: Option<egui::Id>,
+}
+
+fn access(ctx: &egui::Context) -> Access {
+    ctx.data(|d| d.get_temp(egui::Id::new("cc_menubar_access"))).unwrap_or_default()
+}
+
+fn access_mut<R>(ctx: &egui::Context, change: impl FnOnce(&mut Access) -> R) -> R {
+    ctx.data_mut(|d| change(d.get_temp_mut_or_default(egui::Id::new("cc_menubar_access"))))
+}
+
+/// `text` with the first `key` in it underlined (as it is when `key` is not in `text`: a
+/// translated label need not hold the letter).
+fn key_galley(ui: &egui::Ui, text: &str, key: char, font: egui::FontId, color: egui::Color32) -> std::sync::Arc<egui::Galley> {
+    let plain = egui::TextFormat::simple(font, color);
+    let mut job = egui::text::LayoutJob::default();
+    job.wrap.max_width = f32::INFINITY;
+    match text.char_indices().find(|(_, c)| c.eq_ignore_ascii_case(&key)) {
+        Some((at, c)) => {
+            let end = at + c.len_utf8();
+            job.append(text.get(..at).unwrap_or_default(), 0.0, plain.clone());
+            job.append(text.get(at..end).unwrap_or_default(), 0.0, egui::TextFormat { underline: egui::Stroke::new(1.0, color), ..plain.clone() });
+            job.append(text.get(end..).unwrap_or_default(), 0.0, plain);
+        }
+        None => job.append(text, 0.0, plain),
+    }
+    ui.painter().layout_job(job)
+}
+
+/// The arrow keys belong to the menus while `resp` has the focus (egui would move the focus to
+/// whatever widget lies that way).
+fn keep_arrows(ui: &egui::Ui, resp: &egui::Response) {
+    if resp.has_focus() {
+        let filter = egui::EventFilter { tab: false, horizontal_arrows: true, vertical_arrows: true, escape: false };
+        ui.memory_mut(|m| m.set_focus_lock_filter(resp.id, filter));
+    }
+}
+
+fn pressed(ui: &egui::Ui, key: egui::Key) -> bool {
+    take_key(ui.ctx(), key)
+}
+
+/// Whether `key` was pressed; the menus then answer it. egui moves the focus on an arrow key by
+/// itself when the focused widget has not claimed the arrows yet (`keep_arrows` takes a frame),
+/// which would carry the focus a second step: that move is called off.
+fn take_key(ctx: &egui::Context, key: egui::Key) -> bool {
+    let taken = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, key));
+    if taken {
+        ctx.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
+    }
+    taken
+}
+
+/// Open the submenu of the row `row`, its first row focused.
+fn open_submenu(ui: &egui::Ui, row: egui::Id) {
+    use egui::containers::menu::{MenuState, SubMenu};
+    let id = SubMenu::id_from_widget_id(row);
+    MenuState::from_ui(ui, |state, _| state.open_item = Some(id));
+    // egui forgets an open submenu that did not show on the last frame; a letter opens this
+    // one after its row was drawn, so it shows on the next.
+    MenuState::mark_shown(ui.ctx(), id);
+    access_mut(ui.ctx(), |a| a.focus_first = Some(id));
+}
+
+/// A typed character as rows are matched by: letters without their case.
+fn fold(c: char) -> Option<char> {
+    c.to_uppercase().next()
+}
+
+/// A row as the keyboard sees it.
+struct Shown<'a> {
+    id: egui::Id,
+    entry: &'a Entry,
+    key: Option<char>,
+    initial: Option<char>,
+    enabled: bool,
+}
+
+/// Draw `e`; `keys` are the access keys of the menu it is in.
+fn entry_row<'a>(ui: &mut egui::Ui, e: &'a Entry, keys: &[(&str, char)], clicked: &mut Option<String>) -> Option<Shown<'a>> {
+    use egui::containers::menu::{MenuState, SubMenu};
+    let key_of = |name: &str| keys.iter().find(|(target, _)| *target == name).map(|(_, key)| *key);
+    let a = access(ui.ctx());
+    let underline = a.letters && (a.keyboard || ui.input(|i| i.modifiers.alt));
+    let initial = |label: &str| label.chars().next().and_then(fold);
+    match e {
+        Entry::Item { label, id, shortcut, enabled, icon, mark } => {
+            let key = key_of(id);
+            let label = entry_label(crate::i18n::current(), label);
+            let shortcut = shortcut.as_ref().map(|s| shortcut_label(s, ui.ctx().os().is_mac()));
+            let row =
+                RowSpec { icon: *icon, label: &label, shortcut, submenu: false, enabled: *enabled, mark: *mark, key: key.filter(|_| underline) };
+            let resp = menu_row(ui, &row, |_, _| false);
+            keep_arrows(ui, &resp);
+            if resp.clicked() {
                 *clicked = Some(id.clone());
                 ui.close();
             }
+            Some(Shown { id: resp.id, entry: e, key, initial: initial(&label), enabled: *enabled })
         }
-        Entry::Sub { label, children } => {
-            ui.menu_button(crate::i18n::menu(label), |ui| {
-                for c in children {
-                    entry_ui(ui, c, clicked);
+        Entry::Sub { label, children, icon } => {
+            let key = key_of(label);
+            let label = crate::i18n::menu(label);
+            let row = RowSpec { icon: *icon, label, shortcut: None, submenu: true, enabled: true, mark: None, key: key.filter(|_| underline) };
+            let id = |row: egui::Id| SubMenu::id_from_widget_id(row);
+            let resp = menu_row(ui, &row, |ui, resp| MenuState::from_ui(ui, |state, _| state.open_item == Some(id(resp.id))));
+            keep_arrows(ui, &resp);
+            let open = MenuState::from_ui(ui, |state, _| state.open_item == Some(id(resp.id)));
+            if resp.has_focus() && !open {
+                if pressed(ui, egui::Key::ArrowRight) {
+                    open_submenu(ui, resp.id);
+                } else if resp.clicked() && !resp.clicked_by(egui::PointerButton::Primary) {
+                    // Enter: egui opens the submenu.
+                    access_mut(ui.ctx(), |a| a.focus_first = Some(id(resp.id)));
                 }
-            });
+            }
+            // egui puts a submenu beside the row it opens from; a narrower anchor makes it
+            // overlap this menu, its first row level with this one.
+            let mut anchor = resp.clone();
+            anchor.interact_rect.max.x -= SUBMENU_OVERLAP + 2.0;
+            SubMenu::new().config(menu_config()).show(ui, &anchor, |ui| menu_rows(ui, children, SUBMENU_ROW_WIDTH, false, &[], id(resp.id), clicked));
+            // The submenu's own rows had the first say about the left arrow.
+            if open && pressed(ui, egui::Key::ArrowLeft) {
+                MenuState::from_ui(ui, |state, _| state.open_item = None);
+                resp.request_focus();
+            }
+            Some(Shown { id: resp.id, entry: e, key, initial: initial(label), enabled: true })
         }
+        Entry::Separator => {
+            menu_separator(ui);
+            None
+        }
+    }
+}
+
+/// The rows of the menu `menu`, scrolling when the window is too short for them all. A menu
+/// `below` the bar has the room under it; a submenu, which egui moves to fit, has the height of
+/// the window.
+fn menu_rows(ui: &mut egui::Ui, entries: &[Entry], min_width: f32, below: bool, keys: &[(&str, char)], menu: egui::Id, clicked: &mut Option<String>) {
+    set_menu_width(ui, entries.iter(), min_width);
+    let window = ui.ctx().content_rect();
+    let room = if below { window.bottom() - ui.cursor().top() - 20.0 } else { window.height() - 24.0 }.max(ROW_HEIGHT * 4.0);
+    let height: f32 = entries.iter().map(|e| if matches!(e, Entry::Separator) { SEPARATOR_HEIGHT } else { ROW_HEIGHT }).sum();
+    let mut shown = Vec::new();
+    let mut rows = |ui: &mut egui::Ui| {
+        for e in entries {
+            shown.extend(entry_row(ui, e, keys, clicked));
+        }
+    };
+    if height <= room {
+        rows(ui);
+    } else {
+        ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), room), egui::Layout::top_down_justified(egui::Align::Min), |ui| {
+            egui::ScrollArea::vertical().auto_shrink(false).show(ui, rows);
+        });
+    }
+    menu_keys(ui, &shown, menu, clicked);
+}
+
+/// The keyboard in an open menu: the arrows, Home and End move the highlight, and a letter
+/// chooses the row with that access key (or steps through the rows that share it or start
+/// with it). Only the innermost open menu listens.
+fn menu_keys(ui: &mut egui::Ui, shown: &[Shown], menu: egui::Id, clicked: &mut Option<String>) {
+    use egui::containers::menu::MenuState;
+    let rows: Vec<&Shown> = shown.iter().filter(|s| s.enabled).collect();
+    let focus = |row: Option<&&Shown>| {
+        if let Some(row) = row {
+            ui.memory_mut(|m| m.request_focus(row.id));
+        }
+    };
+    if access(ui.ctx()).focus_first == Some(menu) {
+        access_mut(ui.ctx(), |a| a.focus_first = None);
+        focus(rows.first());
+        return;
+    }
+    // Keys typed into a text field are that field's.
+    if rows.is_empty() || ui.ctx().text_edit_focused() || MenuState::from_ui(ui, |state, _| state.open_item.is_some()) {
+        return;
+    }
+    let focused = ui.memory(|m| m.focused());
+    let at = rows.iter().position(|s| Some(s.id) == focused);
+    let n = rows.len();
+    if pressed(ui, egui::Key::ArrowDown) {
+        focus(rows.get(at.map_or(0, |i| (i + 1) % n)));
+    } else if pressed(ui, egui::Key::ArrowUp) {
+        focus(rows.get(at.map_or(n - 1, |i| (i + n - 1) % n)));
+    } else if pressed(ui, egui::Key::Home) {
+        focus(rows.first());
+    } else if pressed(ui, egui::Key::End) {
+        focus(rows.last());
+    }
+    // A key names a Latin letter or a digit; a letter of another script arrives as typed text.
+    let typed: Vec<char> = ui.input(|i| {
+        let letter = |e: &egui::Event| match e {
+            egui::Event::Key { key, pressed: true, modifiers, .. } if !modifiers.ctrl && !modifiers.command => {
+                let mut name = key.name().chars();
+                name.next().filter(|c| c.is_ascii_alphanumeric() && name.next().is_none())
+            }
+            egui::Event::Text(text) => text.chars().next().filter(|c| !c.is_ascii()).and_then(fold),
+            _ => None,
+        };
+        i.events.iter().filter_map(letter).collect()
+    });
+    for letter in typed {
+        let with_key: Vec<usize> = rows.iter().enumerate().filter(|(_, s)| s.key == Some(letter)).map(|(i, _)| i).collect();
+        let matches =
+            if with_key.is_empty() { rows.iter().enumerate().filter(|(_, s)| s.initial == Some(letter)).map(|(i, _)| i).collect() } else { with_key };
+        let only = rows.iter().filter(|s| s.key == Some(letter)).count() == 1;
+        match (matches.as_slice(), only) {
+            ([one], true) => match rows.get(*one).map(|s| (s.id, s.entry)) {
+                Some((_, Entry::Item { id, .. })) => {
+                    *clicked = Some(id.clone());
+                    ui.close();
+                }
+                Some((row, Entry::Sub { .. })) => open_submenu(ui, row),
+                _ => {}
+            },
+            (several, _) => {
+                let next = several.iter().find(|i| at.is_none_or(|at| **i > at)).or(several.first());
+                focus(next.and_then(|i| rows.get(*i)));
+            }
+        }
+    }
+    if let Some(row) = shown.iter().find(|s| Some(s.id) == ui.memory(|m| m.focused())) {
+        ui.ctx().read_response(row.id).filter(|r| r.gained_focus()).inspect(|r| r.scroll_to_me(None));
+    }
+}
+
+/// Show `content` as the context menu of `resp`, in the look of the other menus.
+pub(crate) fn context_popup(resp: &egui::Response, content: impl FnOnce(&mut egui::Ui)) {
+    let config = menu_config();
+    egui::Popup::context_menu(resp)
+        .close_behavior(config.close_behavior)
+        .style(config.style.clone())
+        .info(egui::UiStackInfo::new(egui::UiKind::Menu).with_tag_value(egui::containers::menu::MenuConfig::MENU_CONFIG_TAG, config))
+        .show(content);
+}
+
+/// The height of the in-window menu bar and of its buttons.
+pub const BAR_HEIGHT: f32 = 30.0;
+const BAR_BUTTON_HEIGHT: f32 = 24.0;
+
+/// A button of the menu bar: `paint` draws its content inside the rounded background.
+fn bar_button(
+    ui: &mut egui::Ui,
+    width: f32,
+    open: impl FnOnce(&egui::Response) -> bool,
+    paint: impl FnOnce(&egui::Ui, egui::Rect, bool),
+) -> egui::Response {
+    let t = crate::theme::Tokens::get();
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, BAR_BUTTON_HEIGHT), egui::Sense::click());
+    let open = open(&resp);
+    if ui.is_rect_visible(rect) {
+        if open {
+            ui.painter().rect_filled(rect, 5.0, t.tab_active);
+        } else if resp.hovered() || resp.has_focus() {
+            ui.painter().rect_filled(rect, 5.0, t.control.gamma_multiply(0.6));
+        }
+        paint(ui, rect, open);
+    }
+    resp
+}
+
+/// What the Alt key asks of the bar this frame.
+#[derive(Default)]
+struct AltKey {
+    /// Alt and this menu's letter were pressed: open it.
+    open: Option<usize>,
+    /// Alt was pressed and released alone: put the focus on the bar,
+    focus_bar: bool,
+    /// or, with the keyboard already in charge, leave the bar.
+    leave: bool,
+}
+
+fn access_keys(ctx: &egui::Context, alt: bool, tree: &[(String, Vec<Entry>)]) -> AltKey {
+    // Not while a text field has the focus: there Alt and a letter types a character.
+    let mut asked = AltKey::default();
+    if !access(ctx).letters || ctx.text_edit_focused() {
+        access_mut(ctx, |a| (a.alt_down, a.alt_alone) = (alt, false));
+        return asked;
+    }
+    ctx.input_mut(|i| {
+        for (n, (name, _)) in tree.iter().enumerate() {
+            let key = menu_key(name).and_then(|key| egui::Key::from_name(key.encode_utf8(&mut [0; 4])));
+            if key.is_some_and(|key| i.consume_key(egui::Modifiers::ALT, key)) {
+                asked.open = Some(n);
+            }
+        }
+    });
+    let busy = asked.open.is_some()
+        || ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Key { .. } | egui::Event::Text(_) | egui::Event::PointerButton { .. })));
+    let tapped = access_mut(ctx, |a| {
+        if alt && !a.alt_down {
+            a.alt_alone = true;
+        }
+        if busy {
+            a.alt_alone = false;
+        }
+        let tapped = !alt && a.alt_down && a.alt_alone;
+        a.alt_down = alt;
+        tapped
+    });
+    // On macOS the Option key alone does nothing.
+    if tapped && !ctx.os().is_mac() {
+        if access(ctx).keyboard {
+            asked.leave = true;
+        } else {
+            access_mut(ctx, |a| a.keyboard = true);
+            asked.focus_bar = true;
+        }
+    }
+    asked
+}
+
+/// Give up the focus the menus held, so typing reaches the command line again.
+fn release_focus(ctx: &egui::Context) {
+    access_mut(ctx, |a| (a.keyboard, a.focus_first) = (false, None));
+    ctx.memory_mut(|m| {
+        if let Some(id) = m.focused() {
+            m.surrender_focus(id);
+        }
+    });
+}
+
+/// The keyboard on the bar: left and right step along the menu names, or to the neighbouring
+/// menu when one is open; down opens the focused name's menu. `buttons` are the names' widget
+/// and popup ids; `starting` when this frame put the keyboard in charge.
+fn bar_keys(ctx: &egui::Context, buttons: &[(egui::Id, egui::Id)], starting: bool) {
+    let key = |key| take_key(ctx, key);
+    let focused = ctx.memory(|m| m.focused());
+    let on_bar = buttons.iter().position(|(id, _)| Some(*id) == focused);
+    let open = buttons.iter().position(|(_, popup)| egui::Popup::is_id_open(ctx, *popup));
+    let n = buttons.len();
+    let show = |at: usize| {
+        if let Some((_, popup)) = buttons.get(at) {
+            egui::Popup::open_id(ctx, *popup);
+            access_mut(ctx, |a| (a.keyboard, a.focus_first) = (true, Some(*popup)));
+        }
+    };
+    if let Some(at) = open.or(on_bar) {
+        let to = if key(egui::Key::ArrowRight) {
+            Some((at + 1) % n)
+        } else if key(egui::Key::ArrowLeft) {
+            Some((at + n - 1) % n)
+        } else {
+            None
+        };
+        match (to, open) {
+            (Some(to), Some(_)) => show(to),
+            (Some(to), None) => {
+                if let Some((id, _)) = buttons.get(to) {
+                    ctx.memory_mut(|m| m.request_focus(*id));
+                }
+            }
+            (None, _) => {}
+        }
+    }
+    if let (Some(at), None) = (on_bar, open) {
+        if key(egui::Key::ArrowDown) {
+            show(at);
+        } else if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            release_focus(ctx);
+        }
+    }
+    let keyboard = access(ctx).keyboard;
+    // The pointer takes over as soon as it moves or presses; a menu that closed gives the
+    // focus back, so typing reaches the command line again.
+    let pointer = ctx.input(|i| i.pointer.delta() != egui::Vec2::ZERO || i.pointer.any_pressed());
+    let idle = open.is_none() && on_bar.is_none() && !buttons.iter().any(|(_, popup)| egui::Popup::is_id_open(ctx, *popup));
+    if keyboard && !starting && (pointer || idle) {
+        release_focus(ctx);
+    }
+    let any_open = buttons.iter().any(|(_, popup)| egui::Popup::is_id_open(ctx, *popup));
+    access_mut(ctx, |a| a.any_open = any_open);
+    if any_open && !ctx.text_edit_focused() {
+        // An open menu takes the keys: nothing typed reaches the command line (a text field
+        // with the focus keeps its own). Escape stays, for egui to close the menu with.
+        ctx.input_mut(|i| {
+            i.events.retain(|e| !matches!(e, egui::Event::Text(_)) && !matches!(e, egui::Event::Key { key, .. } if *key != egui::Key::Escape))
+        });
     }
 }
 
 pub fn menu_bar(app: &mut CadApp, ui: &mut egui::Ui) {
+    use egui::containers::menu::MenuConfig;
     let t = crate::theme::Tokens::get();
     let tree = tree(app);
+    let letters = app.menu_access_keys();
     let mut clicked = None;
-    egui::Panel::top("cc_menubar").exact_size(22.0).frame(egui::Frame::NONE.fill(t.chrome_dark).inner_margin(egui::Margin::symmetric(6, 0))).show(
-        ui,
-        |ui| {
-            egui::MenuBar::new().ui(ui, |ui| {
-                // Titles first, so a hovered title can take over before any menu is drawn.
-                let titles: Vec<egui::Response> = tree.iter().map(|(name, _)| ui.add(egui::Button::new(crate::i18n::menu(name)))).collect();
-                switch_on_hover(ui.ctx(), &titles);
-                for ((_, entries), title) in tree.iter().zip(&titles) {
-                    egui::Popup::menu(title).show(|ui| {
-                        for e in entries {
-                            entry_ui(ui, e, &mut clicked);
-                        }
-                    });
+    egui::Panel::top("cc_menubar").exact_size(BAR_HEIGHT).frame(egui::Frame::NONE.fill(t.list_bg)).show(ui, |ui| {
+        let bar = ui.max_rect();
+        let inner = bar.shrink2(egui::vec2(8.0, 0.0));
+        let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::left_to_right(egui::Align::Center)));
+        let ui = &mut ui;
+        ui.spacing_mut().item_spacing.x = 2.0;
+
+        let about = bar_button(
+            ui,
+            30.0,
+            |_| false,
+            |ui, rect, _| {
+                let icon = egui::Rect::from_center_size(rect.center(), egui::vec2(18.0, 18.0));
+                match crate::dialogs::about_icon(ui.ctx()) {
+                    Some(tex) => {
+                        egui::Image::new((tex.id(), icon.size())).paint_at(ui, icon);
+                    }
+                    None => crate::icons::paint(ui.painter(), icon, Icon::Switcher, false),
                 }
-            });
-        },
-    );
+            },
+        );
+        crate::icons::describe_control(ui, &about, "About CADCraft", None, false);
+        if about.on_hover_text(crate::tl!("About CADCraft")).clicked() {
+            clicked = Some("ui.dialog.about".to_string());
+        }
+        ui.add_space(2.0);
+
+        let ctx = ui.ctx().clone();
+        let alt = ctx.input(|i| i.modifiers.alt && !i.modifiers.ctrl && !i.modifiers.command);
+        access_mut(&ctx, |a| a.letters = letters);
+        let asked = access_keys(&ctx, alt, &tree);
+        // With one menu open, pointing at another name opens that menu instead.
+        let was_open = access(&ctx).any_open;
+        let underline = letters && (alt || access(&ctx).keyboard);
+        let font = egui::FontId::proportional(13.0);
+        let mut buttons = Vec::new();
+        for (n, (name, entries)) in tree.iter().enumerate() {
+            let label = crate::i18n::menu(name);
+            let key = menu_key(name).filter(|_| underline);
+            let galley = ui.painter().layout_no_wrap(label.to_string(), font.clone(), t.text);
+            let resp = bar_button(
+                ui,
+                galley.size().x + 18.0,
+                |resp| egui::Popup::is_id_open(&resp.ctx, egui::Popup::default_response_id(resp)),
+                |ui, rect, open| {
+                    // White reads on the dark theme's open fill; the light theme's is pale.
+                    let color = if open && crate::theme::luminance(t.tab_active) < 0.6 { t.on_accent } else { t.text };
+                    let at = rect.center() - galley.size() / 2.0;
+                    match key {
+                        Some(key) => ui.painter().galley(at, key_galley(ui, label, key, font.clone(), color), color),
+                        None => ui.painter().galley_with_override_text_color(at, galley.clone(), color),
+                    }
+                },
+            );
+            keep_arrows(ui, &resp);
+            let popup = egui::Popup::default_response_id(&resp);
+            let open = egui::Popup::is_id_open(&ctx, popup);
+            if asked.leave && open {
+                egui::Popup::close_id(&ctx, popup);
+            }
+            if asked.open == Some(n) {
+                egui::Popup::open_id(&ctx, popup);
+                access_mut(&ctx, |a| (a.keyboard, a.focus_first) = (true, Some(popup)));
+            } else if was_open && !open && resp.hovered() && !access(&ctx).keyboard {
+                egui::Popup::open_id(&ctx, popup);
+            }
+            if asked.focus_bar && n == 0 {
+                resp.request_focus();
+            }
+            if resp.has_focus() && !open && resp.clicked() && !resp.clicked_by(egui::PointerButton::Primary) {
+                // Enter on the name: egui opens the menu.
+                access_mut(&ctx, |a| a.focus_first = Some(popup));
+            }
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, open, label));
+            crate::control::record_widget(ui, &resp, label, "button", Some(open));
+            buttons.push((resp.id, popup));
+            let config = menu_config();
+            egui::Popup::menu(&resp)
+                .gap(1.0)
+                .close_behavior(config.close_behavior)
+                .style(config.style.clone())
+                .info(egui::UiStackInfo::new(egui::UiKind::Menu).with_tag_value(MenuConfig::MENU_CONFIG_TAG, config))
+                .show(|ui| menu_rows(ui, entries, MENU_ROW_WIDTH, true, row_keys(name), popup, &mut clicked));
+        }
+        if asked.leave {
+            release_focus(&ctx);
+        }
+        bar_keys(&ctx, &buttons, asked.open.is_some() || asked.focus_bar);
+    });
     if let Some(id) = clicked {
         activate(app, &id);
-    }
-}
-
-/// While one menu of the bar is open, pointing at another title opens that menu instead.
-fn switch_on_hover(ctx: &egui::Context, titles: &[egui::Response]) {
-    let is_open = |title: &egui::Response| egui::Popup::is_id_open(ctx, egui::Popup::default_response_id(title));
-    if !titles.iter().any(is_open) {
-        return;
-    }
-    // A click on a title toggles its menu by itself.
-    if let Some(title) = titles.iter().find(|t| t.hovered() && !t.clicked() && !is_open(t)) {
-        egui::Popup::open_id(ctx, egui::Popup::default_response_id(title));
     }
 }
 
@@ -757,11 +1555,68 @@ mod tests {
     }
 
     #[test]
+    fn discord_link_opens_on_the_next_frame() {
+        let (mut app, _) = app_with_picker(None);
+        app.start("ui.discord");
+        assert_eq!(app.open_url.as_deref(), Some(super::DISCORD_URL));
+        app.logic(&egui::Context::default());
+        assert!(app.open_url.is_none());
+    }
+
+    #[test]
     fn cancelled_export_writes_nothing() {
         let (mut app, asked) = app_with_picker(None);
         app.start("exportpdf");
         assert_eq!(asked.borrow().len(), 1);
         assert!(app.session.running.is_none());
+    }
+}
+
+#[cfg(test)]
+mod tree_tests {
+    use super::{Entry, Known, append, tidy, without};
+
+    fn labels(entries: &[Entry]) -> Vec<String> {
+        entries
+            .iter()
+            .map(|e| match e {
+                Entry::Item { label, .. } => label.clone(),
+                Entry::Sub { label, children, .. } => format!("{label}[{}]", labels(children).join(",")),
+                Entry::Separator => "-".into(),
+            })
+            .collect()
+    }
+
+    fn known(id: &'static str, menu: &'static [&'static str]) -> Known {
+        Known { id, label: id, menu, shortcut: None, enabled: true }
+    }
+
+    #[test]
+    fn unplaced_commands_follow_one_separator_or_join_their_submenu() {
+        let mut entries =
+            vec![known("a", &["Tools", "A"]).item(None, None, None), Entry::Sub { label: "Sub".into(), children: Vec::new(), icon: None }];
+        let mut separated = false;
+        for k in [known("b", &["Tools", "B"]), known("c", &["Tools", "Sub", "C"]), known("d", &["Tools", "New", "D"]), known("e", &["Tools", ""])] {
+            append(&mut entries, k.menu.get(1..).unwrap_or_default(), &k, None, &mut separated);
+        }
+        assert_eq!(labels(&entries), ["A", "Sub[C]", "-", "B", "New[D]", "e"]);
+    }
+
+    #[test]
+    fn separators_never_lead_trail_or_double() {
+        let item = |id| known(id, &[]).item(None, None, None);
+        let sub = |children| Entry::Sub { label: "S".into(), children, icon: None };
+        let entries = vec![
+            Entry::Separator,
+            item("a"),
+            Entry::Separator,
+            Entry::Separator,
+            sub(vec![Entry::Separator]),
+            sub(vec![item("b"), Entry::Separator]),
+            Entry::Separator,
+        ];
+        assert_eq!(labels(&tidy(entries.clone())), ["a", "-", "S[b]"]);
+        assert_eq!(labels(&without(entries, &["b"])), ["a"]);
     }
 }
 

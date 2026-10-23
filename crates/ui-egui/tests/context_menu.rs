@@ -12,7 +12,8 @@ fn items(app: &CadApp) -> Vec<(String, String, bool)> {
         for e in es {
             match e {
                 Entry::Item { label, id, enabled, .. } => out.push((format!("{prefix}{label}"), id.clone(), *enabled)),
-                Entry::Sub { label, children } => walk(&format!("{prefix}{label}/"), children, out),
+                Entry::Sub { label, children, .. } => walk(&format!("{prefix}{label}/"), children, out),
+                Entry::Separator => {}
             }
         }
     }
@@ -102,13 +103,14 @@ fn snap_items(app: &CadApp) -> Vec<(String, String, bool)> {
         for e in g {
             match e {
                 Entry::Item { label, id, enabled, .. } => out.push((label, id, enabled)),
-                Entry::Sub { label, children } => {
+                Entry::Sub { label, children, .. } => {
                     for c in children {
                         if let Entry::Item { label: l, id, enabled, .. } = c {
                             out.push((format!("{label}/{l}"), id, enabled));
                         }
                     }
                 }
+                Entry::Separator => {}
             }
         }
     }

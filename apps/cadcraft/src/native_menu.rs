@@ -61,6 +61,8 @@ impl NativeMenu {
         let _ = menu.append(&app_menu);
         for (title, entries) in menus::tree(app) {
             let sub = Submenu::new(i18n::tr_menu(language, &title), true);
+            // The CADCraft menu above already has Quit and the Discord link.
+            let entries = menus::without(entries, &["ui.quit", "ui.discord"]);
             build(&sub, &entries, &mut items, &mut submenus, &mut counter, language);
             let _ = menu.append(&sub);
             submenus.push((title, sub));
@@ -90,11 +92,7 @@ impl NativeMenu {
     pub fn poll(&mut self, app: &mut CadApp, ctx: &egui::Context) {
         while let Ok(ev) = MenuEvent::receiver().try_recv() {
             if let Some((cmd, _, _)) = self.items.get(ev.id.as_ref()) {
-                if cmd == "ui.discord" {
-                    ctx.open_url(egui::OpenUrl::new_tab("https://discord.gg/artcraft"));
-                } else {
-                    menus::activate(app, &cmd.clone());
-                }
+                menus::activate(app, &cmd.clone());
                 ctx.request_repaint();
             }
         }
@@ -103,7 +101,7 @@ impl NativeMenu {
         if self.language != language {
             self.language = language;
             for (_, label, item) in self.items.values() {
-                item.set_text(i18n::tr(language, label));
+                item.set_text(menus::entry_label(language, label));
             }
             for (label, item) in &self.predefined {
                 item.set_text(i18n::tr(language, label));
@@ -134,18 +132,21 @@ fn build(
 ) {
     for e in entries {
         match e {
-            Entry::Sub { label, children } => {
+            Entry::Sub { label, children, .. } => {
                 let sub = Submenu::new(i18n::tr_menu(language, label), true);
                 build(&sub, children, items, submenus, counter, language);
                 let _ = parent.append(&sub);
                 submenus.push((label.clone(), sub));
             }
-            Entry::Item { label, id, shortcut, enabled } => {
+            Entry::Item { label, id, shortcut, enabled, .. } => {
                 *counter += 1;
                 let mid = format!("cc{counter}");
-                let i = MenuItem::with_id(mid.clone(), i18n::tr(language, label), *enabled, shortcut.as_deref().and_then(accel));
+                let i = MenuItem::with_id(mid.clone(), menus::entry_label(language, label), *enabled, shortcut.as_deref().and_then(accel));
                 let _ = parent.append(&i);
                 items.insert(mid, (id.clone(), label.clone(), i));
+            }
+            Entry::Separator => {
+                let _ = parent.append(&PredefinedMenuItem::separator());
             }
         }
     }

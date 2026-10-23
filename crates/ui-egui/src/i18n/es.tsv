@@ -59,6 +59,7 @@
 	Apply true color	Aplicar color verdadero
 	Arc	Arco
 	Arc Length	Longitud de arco
+	Architecture	Arquitectura
 	Area	Área
 	Arrange Panel	Organizar panel
 	Array	Matriz
@@ -102,6 +103,7 @@
 	Bring Above Objects	Traer por encima de objetos
 	Bring Annotations to Front	Traer las anotaciones al frente
 	Bring to Front	Traer al frente
+	Built	Compilación
 	Bulleted list	Lista con viñetas
 	ByBlock	PorBloque
 	ByColor	PorColor
@@ -159,7 +161,7 @@
 	Commits	Commits
 	Company	Empresa
 	Compare Drawings...	Comparar dibujos...
-	Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust.	Diseño y dibujo asistidos por computadora: una aplicación CAD de código abierto, desarrollada de forma independiente y escrita íntegramente en Rust.
+	Computer-aided design and drafting. An open-source, clean-room CAD application written in pure Rust.	Diseño y dibujo asistidos por computadora. Una aplicación CAD de código abierto, desarrollada de forma independiente y escrita íntegramente en Rust.
 	Concentric	Concéntrica
 	Cone	Cono
 	Constraint Bars	Barras de restricciones
@@ -242,6 +244,7 @@
 	Dimensional Constraint Parameters	Parámetros de restricciones dimensionales
 	Dimensional Constraints	Restricciones dimensionales
 	Disassociate Dimensions	Desasociar cotas
+	Discord	Discord
 	Display	Visualización
 	Display name	Nombre visible
 	Distance	Distancia
@@ -374,6 +377,7 @@
 	Get Variable	Consultar variable
 	Get View	Consultar vista
 	Get from the Drawing	Obtener del dibujo
+	GitHub	GitHub
 	Global	Global
 	Global width	Anchura global
 	Grab bag	Miscelánea
@@ -458,7 +462,6 @@
 	Jogged Linear	Lineal con recodo
 	Join	Unir
 	Join the ArtCraft Discord…	Únete al Discord de ArtCraft…
-	Join us on Discord	Únete a nosotros en Discord
 	Keep the system cursor visible over the drawing area	Mantener visible el cursor del sistema sobre el área de dibujo
 	Language	Idioma
 	Largest array	Matriz más grande
@@ -490,6 +493,7 @@
 	Length X	Longitud X
 	Length Y	Longitud Y
 	Lengthen	Longitud
+	License	Licencia
 	Light	Claro
 	Line	Línea
 	Line delta	Diferencia de líneas
@@ -522,7 +526,6 @@
 	Lock Layer	Bloquear capa
 	Lock/Unlock	Bloquear/desbloquear
 	Loft	Solevación
-	MIT OR Apache-2.0. Not affiliated with Autodesk, Inc.	MIT OR Apache-2.0. Sin afiliación con Autodesk, Inc.
 	MODEL	MODELO
 	MText	Texto multilínea
 	Magenta	Magenta
@@ -537,6 +540,7 @@
 	Measure	Medir
 	Measure Distance	Medir distancia
 	Measure Geometry	Medir geometría
+	Menu Access Keys	Teclas de acceso del menú
 	Merge Cells	Combinar celdas
 	Merged PRs	PR integradas
 	Mid Between 2 Points	Punto medio entre 2 puntos
@@ -590,6 +594,7 @@
 	Node	Nodo
 	None	Ninguno
 	Not Found	No encontrada
+	Not affiliated with Autodesk, Inc.	Sin afiliación con Autodesk, Inc.
 	Not available	No disponible
 	Not available yet	Aún no disponible
 	Not loaded	No cargada
@@ -610,7 +615,6 @@
 	Offset	Desfase
 	On	Activado
 	On/Off	Activar/desactivar
-	One of the Crafting Apps by the ArtCraft team and community.	Una de las Crafting Apps del equipo y la comunidad de ArtCraft.
 	Only in this drawing: {n}	Solo en este dibujo: {n}
 	Only in {name}: {n}	Solo en {name}: {n}
 	Open	Abrir
@@ -1167,6 +1171,7 @@
 	Version 2013	Versión 2013
 	Version 2018	Versión 2018
 	Version {version}	Versión {version}
+	Version {version} ({hash})	Versión {version} ({hash})
 	Vertical	Vertical
 	VerticalDistance	Distancia vertical
 	View	Vista
@@ -1181,6 +1186,7 @@
 	Volume	Volumen
 	W	O
 	WCS	SCU
+	Website	Sitio web
 	White	Blanco
 	Width factor	Factor de anchura
 	Window	Ventana
@@ -1209,6 +1215,8 @@
 	{kind} (constraint {id})	{kind} (restricción {id})
 	{kind} constraint {name} = {expression}  (double-click to edit)	Restricción {kind} {name} = {expression}  (doble clic para editar)
 	{name}: {distance} < {angle}°	{name}: {distance} < {angle}°
+	© ArtCraft Team and the CADCraft contributors	© Equipo de ArtCraft y colaboradores de CADCraft
+	© {year} ArtCraft Team and the CADCraft contributors	© {year} Equipo de ArtCraft y colaboradores de CADCraft
 	ƒx  New User Parameter	ƒx  Nuevo parámetro de usuario
 	ΔLOC	ΔLíneas
 	−Bin	−Bin

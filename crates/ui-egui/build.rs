@@ -58,6 +58,11 @@ fn rows(json: &Value, k: &str) -> Vec<Value> {
 fn generate(json: &Value, people: &toml::Table) -> String {
     let mut o = String::new();
     let _ = writeln!(o, "pub static TOTAL_COMMITS: u64 = {};", n(json, "commits"));
+    // The commit the credits were counted at: short hash and day. Empty when the file has neither.
+    let head = json.get("head").and_then(Value::as_str).unwrap_or("");
+    let head_date = json.get("head_date").and_then(Value::as_str).unwrap_or("");
+    let _ = writeln!(o, "pub static CREDITS_HEAD: &str = {:?};", head.get(..7).unwrap_or(""));
+    let _ = writeln!(o, "pub static CREDITS_HEAD_DATE: &str = {:?};", head_date.get(..10).unwrap_or(""));
     let _ = writeln!(o, "pub static CONTRIBUTORS: &[Contributor] = &[");
     for c in rows(json, "contributors") {
         let login = c.get("login").and_then(Value::as_str).unwrap_or("");

@@ -118,6 +118,10 @@ pub struct Tokens {
     /// The command-line AutoComplete list: background and the highlighted first row.
     pub list_bg: Color32,
     pub list_row: Color32,
+    /// Menu popups.
+    pub menu_bg: Color32,
+    /// Text and icons on an `accent` or `tab_active` fill (the highlighted menu row).
+    pub on_accent: Color32,
     /// Transient warnings (status bar messages).
     pub warn: Color32,
     /// The drawing-area crosshair cursor and its pick box.
@@ -169,6 +173,8 @@ impl Tokens {
         cmd_keyword_hover: Color32::from_rgb(0x2f, 0x5e, 0xa8),
         list_bg: Color32::from_rgb(0x2b, 0x31, 0x3b),
         list_row: Color32::from_rgb(0x3a, 0x42, 0x50),
+        menu_bg: Color32::from_rgb(0x1f, 0x24, 0x2b),
+        on_accent: Color32::WHITE,
         warn: Color32::from_rgb(0xff, 0xd0, 0x80),
         crosshair: Color32::from_rgb(0xe8, 0xe8, 0xe8),
         paper: Color32::WHITE,
@@ -201,6 +207,7 @@ impl Tokens {
         cmd_keyword_hover: Color32::from_rgb(0xcf, 0xe0, 0xfa),
         list_bg: Color32::from_rgb(0xfb, 0xfc, 0xfd),
         list_row: Color32::from_rgb(0xe3, 0xe8, 0xef),
+        menu_bg: Color32::from_rgb(0xff, 0xff, 0xff),
         warn: Color32::from_rgb(0x8a, 0x53, 0x00),
         ..Tokens::DARK
     };
@@ -292,6 +299,12 @@ fn mix(a: Color32, b: Color32, f: f32) -> Color32 {
     Color32::from_rgb(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()))
 }
 
+/// The shadow under a menu popup.
+pub fn menu_shadow() -> egui::Shadow {
+    let alpha = if active() == Theme::Dark { 140 } else { 46 };
+    egui::Shadow { offset: [0, 14], blur: 32, spread: 0, color: Color32::from_black_alpha(alpha) }
+}
+
 pub fn small() -> FontId {
     FontId::new(11.5, FontFamily::Proportional)
 }
@@ -352,6 +365,12 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
                 .enumerate()
                 .map(|(i, bytes)| (format!("system-cjk-{i}"), std::sync::Arc::new(egui::FontData::from_owned(bytes)))),
         );
+        // Thai: file names and drawing text show in any interface language, and the fonts are small.
+        added.extend(
+            thai_font()
+                .and_then(|p| read_capped(p, MAX_UI_FONT_BYTES))
+                .map(|bytes| ("system-thai".to_string(), std::sync::Arc::new(egui::FontData::from_owned(bytes)))),
+        );
         // العربية: an installed Arabic face after the Latin ones (egui's bundled faces carry no
         // Arabic glyphs), for the Arabic interface.
         if language == "ar"
@@ -384,6 +403,44 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
         }
     }
     ctx.set_fonts(fonts);
+}
+
+/// An installed font with Thai characters, so Thai file names and text read in the interface;
+/// fonts are never bundled (only looked for where the OS or common packages put them). Checked once.
+pub fn thai_font() -> Option<&'static std::path::Path> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        static FOUND: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+        FOUND
+            .get_or_init(|| {
+                let candidates: &[&str] = if cfg!(target_os = "macos") {
+                    &[
+                        "/System/Library/Fonts/ThonburiUI.ttc",
+                        "/System/Library/Fonts/Supplemental/Thonburi.ttc",
+                        "/System/Library/Fonts/Supplemental/SukhumvitSet.ttc",
+                        "/System/Library/Fonts/Supplemental/Ayuthaya.ttf",
+                    ]
+                } else if cfg!(windows) {
+                    &["C:\\Windows\\Fonts\\LeelawUI.ttf", "C:\\Windows\\Fonts\\leelawad.ttf", "C:\\Windows\\Fonts\\tahoma.ttf"]
+                } else {
+                    &[
+                        "/usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf",
+                        "/usr/share/fonts/noto/NotoSansThai-Regular.ttf",
+                        "/usr/share/fonts/google-noto/NotoSansThai-Regular.ttf",
+                        "/usr/share/fonts/google-noto-vf/NotoSansThai[wght].ttf",
+                        "/usr/local/share/fonts/noto/NotoSansThai-Regular.ttf",
+                        "/usr/share/fonts/truetype/tlwg/Loma.ttf",
+                        "/usr/share/fonts/thai-scalable/Loma.ttf",
+                        "/usr/share/fonts/truetype/tlwg/Garuda.ttf",
+                        "/usr/share/fonts/truetype/thai/Garuda.ttf",
+                    ]
+                };
+                candidates.iter().map(std::path::PathBuf::from).find(|p| p.is_file())
+            })
+            .as_deref()
+    }
+    #[cfg(target_arch = "wasm32")]
+    None
 }
 
 /// The faces `build.rs` embedded from craft-fonts that the interface loads, in order: every CJK
@@ -636,10 +693,11 @@ pub fn shows_hangul(language: &str) -> bool {
 
 /// Whether the interface can show `language` without missing-glyph boxes: Chinese needs a font
 /// with its glyphs (installed, or the CJK face this build embedded from craft-fonts), Korean a
-/// font with Hangul, العربية an installed Arabic font or the embedded Arabic face.
+/// font with Hangul, Thai an installed Thai font, العربية an installed Arabic font or the embedded Arabic face.
 pub fn can_show(language: &str) -> bool {
     match language {
         "ko" => shows_hangul("ko"),
+        "th" => thai_font().is_some() || embedded_script("Thai"),
         "ar" => arabic_font().is_some() || embedded_script("Arab"),
         l if l.starts_with("zh") => cjk_font().is_some() || embedded_script("Hans") || embedded_script("Hant"),
         _ => true,

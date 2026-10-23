@@ -65,6 +65,7 @@ const SESSION_VARS: &[&str] = &[
     "LASTPOINT",
     "FONTALT",
     "FONTFALLBACK",
+    "FONTPATH",
     "SAVETIME",
     "SAVEFILEPATH",
 ];
@@ -143,6 +144,8 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         // Process-wide font substitution (profile settings, not saved in the drawing).
         "FONTALT" => json!(cadcraft_fonts::ttf::font_alt()),
         "FONTFALLBACK" => json!(cadcraft_fonts::ttf::fallback_fonts()),
+        // The folders searched for SHX fonts.
+        "FONTPATH" => json!(cadcraft_fonts::shx::font_path()),
         // Autosave (profile settings too).
         "SAVETIME" => json!(crate::autosave::savetime()),
         "SAVEFILEPATH" => json!(crate::autosave::savefilepath()),
@@ -311,6 +314,7 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         "ZOOMFACTOR" => st.zoomfactor = as_i(v).filter(|z| (3..=100).contains(z)).ok_or_else(bad)? as u32,
         "FONTALT" => cadcraft_fonts::ttf::set_font_alt(v.as_str().ok_or_else(bad)?),
         "FONTFALLBACK" => cadcraft_fonts::ttf::set_fallback_fonts(v.as_str().ok_or_else(bad)?),
+        "FONTPATH" => cadcraft_fonts::shx::set_font_path(v.as_str().ok_or_else(bad)?),
         "SAVETIME" => crate::autosave::set_savetime(
             as_f64(v).filter(|m| *m >= 0.0 && *m <= f64::from(crate::autosave::MAX_SAVETIME)).ok_or_else(bad)?.round() as u32,
         ),

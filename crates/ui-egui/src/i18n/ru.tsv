@@ -47,6 +47,7 @@
 	Apply true color	Применить цвет RGB
 	Arc	Дуга
 	Arc Length	Длина дуги
+	Architecture	Архитектура
 	Area	Площадь
 	Arrange Panel	Расположить панель
 	Array	Массив
@@ -80,6 +81,7 @@
 	Break	Разорвать
 	Break At Point	Разорвать в точке
 	Bring to Front	На передний план
+	Built	Собрано
 	ByBlock	Поблоку
 	ByColor	ПоЦвету
 	ByLayer	Послою
@@ -121,7 +123,7 @@
 	Command Reference	Справочник команд
 	Commits	Коммиты
 	Company	Организация
-	Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust.	Автоматизированное проектирование и черчение: CAD-приложение с открытым кодом, независимо разработанное на Rust.
+	Computer-aided design and drafting. An open-source, clean-room CAD application written in pure Rust.	Автоматизированное проектирование и черчение. CAD-приложение с открытым кодом, независимо разработанное на Rust.
 	Concentric	Концентричность
 	Cone	Конус
 	Constraint Bars	Панели ограничений
@@ -181,6 +183,7 @@
 	Dimensional Constraint Parameters	Параметры размерных ограничений
 	Dimensional Constraints	Размерные ограничения
 	Disassociate Dimensions	Разъединить размеры
+	Discord	Discord
 	Display name	Отображаемое имя
 	Distance	Расстояние
 	Divide	Поделить
@@ -296,6 +299,7 @@
 	Geometry	Геометрия
 	Get Variable	Получить переменную
 	Get View	Получить вид
+	GitHub	GitHub
 	Global	Глобально
 	Global width	Общая ширина
 	Grab bag	Список
@@ -357,7 +361,6 @@
 	Isometric Drafting	Изометрическое черчение
 	Join	Объединить
 	Join the ArtCraft Discord…	Присоединяйтесь к Discord ArtCraft…
-	Join us on Discord	Присоединяйтесь к нам в Discord
 	Language	Язык
 	Last	Последний
 	Last commit	Последний коммит
@@ -385,6 +388,7 @@
 	Length X	Длина X
 	Length Y	Длина Y
 	Lengthen	Изменить длину
+	License	Лицензия
 	Light	Светлая
 	Line	Отрезок
 	Line delta	Изменение количества строк
@@ -414,7 +418,6 @@
 	Lock Layer	Заблокировать слой
 	Lock/Unlock	Заблокировать/разблокировать
 	Loft	Тело по сечениям
-	MIT OR Apache-2.0. Not affiliated with Autodesk, Inc.	MIT OR Apache-2.0. Не аффилировано с Autodesk, Inc.
 	MODEL	МОДЕЛЬ
 	MText	Многострочный текст
 	Magenta	Пурпурный
@@ -427,6 +430,7 @@
 	Measure	Разметить
 	Measure Distance	Измерить расстояние
 	Measure Geometry	Измерить геометрию
+	Menu Access Keys	Клавиши доступа к меню
 	Merge Cells	Объединить ячейки
 	Merged PRs	Принятые PR
 	Mid Between 2 Points	Середина между двумя точками
@@ -471,6 +475,7 @@
 	No selection	Ничего не выделено
 	Node	Узел
 	None	Нет
+	Not affiliated with Autodesk, Inc.	Не аффилировано с Autodesk, Inc.
 	Not available	Недоступно
 	Not available yet	Пока недоступно
 	OK	ОК
@@ -485,7 +490,6 @@
 	Offset	Смещение
 	On	Включено
 	On/Off	Включить/выключить
-	One of the Crafting Apps by the ArtCraft team and community.	Одна из программ Crafting Apps от команды и сообщества ArtCraft.
 	Open (⌘O)	Открыть (⌘O)
 	Open Sample Drawing	Открыть образец чертежа
 	Open sample drawing	Открыть образец чертежа
@@ -952,6 +956,7 @@
 	Value:	Значение:
 	Version	Версия
 	Version {version}	Версия {version}
+	Version {version} ({hash})	Версия {version} ({hash})
 	Vertical	Вертикальность
 	VerticalDistance	ВертикальноеРасстояние
 	View	Вид
@@ -963,6 +968,7 @@
 	Viewports	Видовые экраны
 	W	З
 	WCS	МСК
+	Website	Веб-сайт
 	White	Белый
 	Width factor	Коэффициент ширины
 	Window	Окно
@@ -985,6 +991,8 @@
 	{kind} (constraint {id})	{kind} (ограничение {id})
 	{kind} constraint {name} = {expression}  (double-click to edit)	Ограничение «{kind}» {name} = {expression}  (дважды щелкните для редактирования)
 	{name}: {distance} < {angle}°	{name}: {distance} < {angle}°
+	© ArtCraft Team and the CADCraft contributors	© Команда ArtCraft и участники проекта CADCraft
+	© {year} ArtCraft Team and the CADCraft contributors	© {year} Команда ArtCraft и участники проекта CADCraft
 	ƒx  New User Parameter	ƒx  Новый пользовательский параметр
 	ΔLOC	Δстрок
 	−Bin	−двоич.

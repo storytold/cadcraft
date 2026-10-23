@@ -100,7 +100,7 @@ fn clicking_the_open_title_closes_it() {
 fn submenus_open_and_close_with_their_menu() {
     let mut harness = harness();
     click_title(&mut harness, "View");
-    harness.get_by_label("Zoom ⏵").hover();
+    harness.get_by_label("Zoom").hover();
     harness.run_steps(3);
     assert!(shown(&harness, IN_ZOOM), "pointing at Zoom opens its submenu");
 
