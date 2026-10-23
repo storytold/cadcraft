@@ -267,6 +267,12 @@ pub fn tr<'a>(language: &str, source: &'a str) -> &'a str {
     catalog(language).and_then(|c| c.get(&("", source))).copied().unwrap_or(source)
 }
 
+/// A Ribbon label: the catalog's `ribbon` row (the wording Windows CAD ribbons use in that
+/// language), else the ordinary translation.
+pub fn ribbon(source: &str) -> &str {
+    CURRENT.with(|l| catalog(l.get()).and_then(|c| c.get(&("ribbon", source))).copied().unwrap_or_else(|| tr(l.get(), source)))
+}
+
 pub fn t(source: &str) -> &str {
     CURRENT.with(|l| tr(l.get(), source))
 }

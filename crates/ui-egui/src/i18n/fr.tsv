@@ -1008,3 +1008,177 @@
 	Not a number or distance: {text}	Ni un nombre ni une distance : {text}
 	Query Texts	Interroger les textes
 	Analyze Shapes	Analyser les formes
+# Ribbon labels (context `ribbon`): the French wording drafting users know from Windows CAD ribbons (observed black-box, 2026-10-13).
+ribbon	Home	Début
+ribbon	Tab: Insert	Insertion
+ribbon	Insert	Insérer
+ribbon	Annotate	Annoter
+ribbon	Parametric	Paramétrique
+ribbon	View	Vue
+ribbon	Manage	Gérer
+ribbon	Output	Sortie
+ribbon	Collaborate	Collaborer
+ribbon	Draw	Dessin
+ribbon	Modify	Modification
+ribbon	Annotation	Annotation
+ribbon	Layers	Calques
+ribbon	Block	Bloc
+ribbon	Properties	Propriétés
+ribbon	Groups	Groupes
+ribbon	Utilities	Utilitaires
+ribbon	Clipboard	Presse-papiers
+ribbon	Block Definition	Définition de bloc
+ribbon	Reference	Référence
+ribbon	Import	Importer
+ribbon	Data	Données
+ribbon	Linking & Extraction	Liaison et extraction
+ribbon	Location	Position
+ribbon	Text	Texte
+ribbon	Dimensions	Cotes
+ribbon	Centerlines	Traits d'axe
+ribbon	Leaders	Lignes de repère
+ribbon	Tables	Tableaux
+ribbon	Markup	Annotation
+ribbon	Annotation Scaling	Echelle d'annotation
+ribbon	Geometric	Géométrique
+ribbon	Dimensional	Dimensionnelle
+ribbon	Viewport Tools	Outils de fenêtre
+ribbon	Named Views	Vues existantes
+ribbon	Model Viewports	Fenêtres d'espace objet
+ribbon	Review	Vérifier
+ribbon	History	Historique
+ribbon	Palettes	Palettes
+ribbon	Interface	Interface
+ribbon	Customization	Personnalisation
+ribbon	Applications	Applications
+ribbon	Cleanup	Nettoyer
+ribbon	Plot	Traceur
+ribbon	Export to DWF/PDF	Exporter au format DWF/PDF
+ribbon	Share	Partager
+ribbon	Compare	Comparer
+ribbon	Line	Ligne
+ribbon	Polyline	Polyligne
+ribbon	Circle	Cercle
+ribbon	Arc	Arc
+ribbon	Rectangle	Rectangle
+ribbon	Ellipse	Ellipse
+ribbon	Hatch	Hachures
+ribbon	Move	Déplacer
+ribbon	Copy	Copier
+ribbon	Stretch	Etirer
+ribbon	Rotate	Rotation
+ribbon	Mirror	Miroir
+ribbon	Scale	Echelle
+ribbon	Trim	Ajuster
+ribbon	Fillet	Raccord
+ribbon	Array	Réseau
+ribbon	Erase	Effacer
+ribbon	Explode	Décomposer
+ribbon	Offset	Décaler
+ribbon	Dimension	Cote
+ribbon	Linear	Linéaire
+ribbon	Leader	Ligne de repère
+ribbon	Table	Tableau
+ribbon	Layer Properties	Propriétés des calques
+ribbon	Make Current	Rendre courant
+ribbon	Match Layer	Faire correspondre le calque
+ribbon	Copy to Layer	Copier le calque
+ribbon	Create	Créer
+ribbon	Edit	Modifier
+ribbon	Edit Attributes	Modifier attributs
+ribbon	Match Properties	Copier les propriétés
+ribbon	Group	Grouper
+ribbon	Measure	Mesurer
+ribbon	Paste	Coller
+ribbon	Edit Attribute	Editer les attributs
+ribbon	Retain Attribute Display	Conserver l'affichage des attributs
+ribbon	Create Block	Créer un bloc
+ribbon	Define Attributes	Définir des attributs
+ribbon	Manage Attributes	Gérer les attributs
+ribbon	Block Editor	Editeur de blocs
+ribbon	Attach	Attacher
+ribbon	Clip	Délimiter
+ribbon	Adjust	Ajuster
+ribbon	External References	Références externes
+ribbon	Frames vary	Variation de cadres
+ribbon	Snap to Underlays	Accrochage aux fonds de plan
+ribbon	PDF Import	Importer en PDF
+ribbon	Recognize SHX Text	Reconnaître le texte SHX
+ribbon	Recognition Settings	Paramètres de reconnaissance
+ribbon	Combine Text	Combiner le texte
+ribbon	Field	Champ
+ribbon	Update Fields	Mettre à jour les champs
+ribbon	OLE Object	Objet OLE
+ribbon	Hyperlink	Hyperlien
+ribbon	Data Link	Liaison de données
+ribbon	Set Location	Définir l'emplacement
+ribbon	Multiline Text	Texte multiligne
+ribbon	Quick	Rapide
+ribbon	Continue	Continuer
+ribbon	Center Mark	Marque centrale
+ribbon	Centerline	Trait d'axe
+ribbon	Multileader	Ligne de repère multiple
+ribbon	Add Leader	Ajouter une ligne de repère
+ribbon	Remove Leader	Supprimer une ligne de repère
+ribbon	Link Data	Liaison de données
+ribbon	Wipeout	Masque
+ribbon	Revision Cloud	Nuage de révision
+ribbon	Add Current Scale	Ajouter échelle courante
+ribbon	Scale List	Liste d'échelles
+ribbon	Auto Constrain	Contrainte auto
+ribbon	Show/Hide	Afficher/Masquer
+ribbon	Show All	Tout afficher
+ribbon	Hide All	Tout masquer
+ribbon	Delete Constraints	Supprimer les contraintes
+ribbon	Parameters Manager	Gestionnaire des paramètres
+ribbon	UCS Icon	Icône du SCU
+ribbon	Navigation Cube	Cube de navigation
+ribbon	Navigation Bar	Barre de navigation
+ribbon	New View	Nouvelle vue
+ribbon	View Manager	Gestionnaire des vues
+ribbon	Viewport Configuration	Configuration de la fenêtre
+ribbon	Named	Nommé
+ribbon	Join	Joindre
+ribbon	Restore	Restaurer
+ribbon	DWG Compare	Comparaison de fichiers DWG
+ribbon	Activity Insights	Informations sur l'activité
+ribbon	Tool Palettes	Palettes d'outils
+ribbon	Blocks	Blocs
+ribbon	Count	Quantité
+ribbon	Sheet Set Manager	Gestionnaire du jeu de feuilles
+ribbon	Switch Windows	Basculer les fenêtres
+ribbon	File Tabs	Onglets Fichier
+ribbon	Layout Tabs	Onglets de présentation
+ribbon	Tile Horizontally	Mosaïque horizontale
+ribbon	Tile Vertically	Mosaïque verticale
+ribbon	Cascade	Cascade
+ribbon	User Interface	Interface utilisateur
+ribbon	Export	Exporter
+ribbon	Edit Aliases	Modifier les alias
+ribbon	Load Application	Charger une application
+ribbon	Run Script	Exécuter le script
+ribbon	Find Non-Purgeable Items	Rechercher des éléments ne pouvant pas être purgés
+ribbon	Purge	Purger
+ribbon	Overkill	Epurer
+ribbon	Audit	Contrôler
+ribbon	Batch Plot	Tracé par lot
+ribbon	Preview	Aperçu
+ribbon	Page Setup Manager	Gestionnaire des mises en page
+ribbon	View Details	Afficher les détails
+ribbon	Plotter Manager	Gestionnaire de traçage
+ribbon	Share Drawing	Partager le dessin
+ribbon	Shared Views	Vues partagées
+ribbon	Off	Désactiver
+ribbon	Isolate	Isoler
+ribbon	Freeze	Geler
+ribbon	Lock	Verrouiller
+ribbon	Unlock	Déverrouiller
+ribbon	Previous	Précédent
+ribbon	Turn All Layers On	Activer tous les calques
+ribbon	Unisolate	Annuler l'isolement
+ribbon	Thaw All Layers	Libérer tous les calques
+ribbon	Quick Select	Sélection rapide
+ribbon	Command Line	Ligne de commande
+	Ribbon	Ruban
+	Windows Layout (Ribbon)	Disposition Windows (ruban)
+	Mac Layout (Tool Sets)	Disposition Mac (palettes)

@@ -43,6 +43,7 @@ pub mod palettes;
 pub mod parametric;
 pub mod plotstyles;
 pub mod quick;
+pub mod ribbon;
 pub mod shortcut_menus;
 pub mod theme;
 pub mod viewcube;
@@ -92,6 +93,15 @@ pub struct UiState {
     /// menu puts them back.
     pub hidden_tools: Vec<String>,
     pub properties_all: bool,
+    /// The Ribbon above the drawing (the Windows layout).
+    pub show_ribbon: bool,
+    /// The Ribbon tab shown (`ribbon::TABS` ids).
+    pub ribbon_tab: String,
+    /// Ribbon reduced to its tab row (double-click a tab).
+    pub ribbon_minimized: bool,
+    /// The desktop app has set up the Windows layout once (Ribbon, Properties docked
+    /// left, no Tool Sets); later choices of layout are the user's (`ui.layout.pc` / `.mac`).
+    pub pc_layout_applied: bool,
     /// Show an in-window menu bar (platforms without a native menu bar, or on request).
     pub in_window_menu: bool,
     pub start_tab: bool,
@@ -171,6 +181,10 @@ impl Default for UiState {
             collapsed_groups: Vec::new(),
             hidden_tools: Vec::new(),
             properties_all: true,
+            show_ribbon: false,
+            ribbon_tab: "home".into(),
+            ribbon_minimized: false,
+            pc_layout_applied: false,
             in_window_menu: !cfg!(target_os = "macos"),
             start_tab: false,
             dialog: None,
@@ -633,8 +647,12 @@ impl CadApp {
         control::begin_frame(ui.ctx());
         let t = theme::Tokens::get();
         chrome::title_and_toolbar(self, ui);
+        // Top panels stack in call order: the menu bar sits above the Ribbon, as on Windows.
         if self.ui.in_window_menu {
             menus::menu_bar(self, ui);
+        }
+        if self.ui.show_ribbon {
+            ribbon::ribbon(self, ui);
         }
         if self.ui.show_status_bar {
             chrome::status_bar(self, ui);
@@ -643,7 +661,8 @@ impl CadApp {
             chrome::file_tabs(self, ui);
         }
         let has_doc = !self.session.docs.is_empty() && !self.ui.start_tab;
-        if has_doc && !self.ui.show_toolsets {
+        // With the Ribbon the tools are in it: no collapsed Tool Sets strip.
+        if has_doc && !self.ui.show_toolsets && !self.ui.show_ribbon {
             palettes::toolsets_strip(self, ui);
         }
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.canvas)).show(ui, |ui| {

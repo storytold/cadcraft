@@ -105,6 +105,19 @@ impl Default for Workspace {
 }
 
 impl Workspace {
+    /// The Windows layout: the Properties palette docked on the left of the
+    /// drawing, no Tool Sets (the Ribbon holds the tools) and no Layers palette (the Ribbon's
+    /// Layers panel holds the layer list).
+    pub fn pc() -> Self {
+        Self {
+            layout: Layout {
+                root: Some(split(SplitAxis::Horizontal, SplitSize::FixedFirst(300.0), tabs(Panel::Properties), tabs(Panel::Canvas))),
+                floating: Vec::new(),
+            },
+            hidden: Vec::new(),
+        }
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         self.layout.validate().map_err(|error| error.to_string())?;
         if !self.layout.contains(&Panel::Canvas) || self.hidden.len() > Panel::ALL.len() + Panel::ON_DEMAND.len() {
@@ -297,7 +310,7 @@ fn sync(workspace: &mut Workspace, app: &crate::CadApp) -> Result<(), String> {
     Ok(())
 }
 
-fn publish_visibility(app: &mut crate::CadApp, workspace: &Workspace) {
+pub(crate) fn publish_visibility(app: &mut crate::CadApp, workspace: &Workspace) {
     app.ui.show_toolsets = workspace.layout.contains(&Panel::ToolSets);
     app.ui.show_palettes = workspace.layout.contains(&Panel::Layers) || workspace.layout.contains(&Panel::Properties);
 }

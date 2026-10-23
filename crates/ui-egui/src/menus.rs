@@ -34,6 +34,9 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.animations.off", "Off", &["View", "Accessibility", "Animation Effects", "Off"], None),
     ("ui.animations", "Animation Effects", &[], None),
     ("ui.toggle.toolbar", "Tool Bar", &["Window", "Tool Bar"], None),
+    ("ui.toggle.ribbon", "Ribbon", &["Window", "Ribbon"], None),
+    ("ui.layout.pc", "Windows Layout (Ribbon)", &["Window", "Windows Layout (Ribbon)"], None),
+    ("ui.layout.mac", "Mac Layout (Tool Sets)", &["Window", "Mac Layout (Tool Sets)"], None),
     ("ui.toggle.filetabs", "File Tab", &["Window", "File Tab"], None),
     ("ui.toggle.statusbar", "Status Bar", &["Window", "Status Bar"], None),
     ("ui.toggle.cmdline", "Command Line", &["Window", "Command Line"], Some("Cmd+9")),
@@ -212,6 +215,18 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         }
         "ui.toggle.toolbar" => {
             toggle(&mut app.ui.show_toolbar, params);
+            Ok(Value::Null)
+        }
+        "ui.toggle.ribbon" => {
+            toggle(&mut app.ui.show_ribbon, params);
+            Ok(Value::Null)
+        }
+        "ui.layout.pc" => {
+            crate::ribbon::apply_pc_layout(app);
+            Ok(Value::Null)
+        }
+        "ui.layout.mac" => {
+            crate::ribbon::apply_mac_layout(app);
             Ok(Value::Null)
         }
         "ui.toggle.filetabs" => {
