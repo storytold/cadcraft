@@ -1572,7 +1572,8 @@ fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rg
         // The reference's transparency; each attribute draws with its own.
         let reference = b.transparency;
         for a in &ins.attribs {
-            if attmode == 0 || (a.invisible && attmode != 2) {
+            // Hidden by a visibility state: hidden whatever ATTDISP says, as its definition is.
+            if attmode == 0 || a.modes.hidden || (a.invisible && attmode != 2) {
                 continue;
             }
             // A multiline attribute is drawn as its multiline text.

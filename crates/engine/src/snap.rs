@@ -381,7 +381,7 @@ fn gather_in(
                 EntityKind::Tolerance(t) => cands.push((mode::INS, t.insert.xy())),
                 EntityKind::Insert(i) => {
                     cands.push((mode::INS, i.insert.xy()));
-                    cands.extend(i.attribs.iter().filter(|a| !a.invisible).map(|a| (mode::INS, a.text.justify_point())));
+                    cands.extend(i.attribs.iter().filter(|a| a.shown()).map(|a| (mode::INS, a.text.justify_point())));
                 }
                 EntityKind::AttDef(a) => cands.push((mode::INS, a.text.justify_point())),
                 // A multileader: its text's insertion point, or its block content's.

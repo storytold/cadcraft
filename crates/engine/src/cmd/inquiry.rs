@@ -513,7 +513,7 @@ fn run_texts(s: &mut Session, p: &Value) -> Result<Value> {
             EntityKind::Text(t) => push("Text", t.value.clone(), t.insert, t.height, t.rotation, &t.style, None),
             EntityKind::MText(t) => push("MText", cadcraft_fonts::plain_mtext(&t.contents), t.insert, t.height, t.rotation, &t.style, None),
             EntityKind::Insert(i) => {
-                for a in i.attribs.iter().filter(|a| !a.invisible) {
+                for a in i.attribs.iter().filter(|a| a.shown()) {
                     push("Attribute", a.text.value.clone(), a.text.insert, a.text.height, a.text.rotation, &a.text.style, Some(&a.tag));
                 }
             }

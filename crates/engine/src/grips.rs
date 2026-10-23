@@ -225,13 +225,16 @@ pub fn stretch_grip(kind: &EntityKind, index: usize, to: Vec2) -> Option<EntityK
             if index == 0 {
                 return Some(translated(kind, delta));
             }
-            let a = i.attribs.get_mut(index - 1)?;
+            let k = i.grip_attribs().nth(index - 1).map(|(k, _)| k)?;
+            let a = i.attribs.get_mut(k)?;
             let ip = a.text.insert.xy() + delta;
             set_xy(&mut a.text.insert, ip);
             if let Some(al) = &mut a.text.align_pt {
                 let q = al.xy() + delta;
                 set_xy(al, q);
             }
+            // A multiline attribute is drawn from its multiline text: it moves too.
+            a.transform_multiline(&Mat3::translate(delta));
         }
         EntityKind::Dimension(d) => {
             match index {
