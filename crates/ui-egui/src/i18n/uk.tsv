@@ -1358,3 +1358,73 @@
 	Discard	Скасувати зміни
 	Customize	Налаштування інтерфейсу
 	Edit Command Aliases (PGP)...	Редагувати псевдоніми команд (PGP)...
+	List Xdata	Список розширених даних (XData)
+	Edit Xdata	Редагувати розширені дані (XData)
+	Edit Xdata (XDEDIT)	Редагувати розширені дані (XDEDIT)
+	✏ Edit XData (XDEDIT)	✏ Редагувати XData (XDEDIT)
+	Open visual XData Editor dialog	Відкрити діалог редактора XData
+	📋 Copy Values	📋 Копіювати значення
+	Copy XData values (Key,Value) to clipboard	Копіювати значення XData (Ключ,Значення) до буфера обміну
+	Click to copy value to clipboard	Натисніть, щоб скопіювати значення до буфера обміну
+	✓ XData values copied to clipboard	✓ Значення XData скопійовано до буфера обміну
+	Selection canceled — previous object kept.	Вибір скасовано — попередній об’єкт збережено.
+	Drag left or right to resize this column	Перетягніть ліворуч або праворуч, щоб змінити ширину стовпця
+	XDATA Editor (XDEDIT)	Редактор XDATA (XDEDIT)
+	No object selected.	Об’єкт не вибрано.
+	🎯 Select object in drawing	🎯 Вибрати об’єкт на кресленні
+	Object: {kind}	Об’єкт: {kind}
+	Layer: {layer}	Шар: {layer}
+	Handle: {handle}	Мітка: {handle}
+	🎯 Select Another Object	🎯 Вибрати інший об’єкт
+	Hide editor temporarily, pick another object in the drawing, and open it in XDEDIT	Тимчасово сховати редактор, вибрати інший об’єкт на кресленні та відкрити його в XDEDIT
+	Next ▶	Далі ▶
+	Step to the next object with XData in the selection or drawing	Перейти до наступного об’єкта з XData у виборі або на кресленні
+	◀ Previous	◀ Назад
+	Step to the previous object with XData in the selection or drawing	Перейти до попереднього об’єкта з XData у виборі або на кресленні
+	📋 Copy JSON	📋 Копіювати JSON
+	Copy all XData as structured JSON to clipboard	Копіювати всі XData як структурований JSON до буфера обміну
+	✓ JSON copied to clipboard	✓ JSON скопійовано до буфера обміну
+	📋 Copy Text	📋 Копіювати текст
+	Copy all XData as text to clipboard	Копіювати всі XData як текст до буфера обміну
+	✓ XData text copied to clipboard	✓ Текст XData скопійовано до буфера обміну
+	AppID (1001):	AppID (1001):
+	New AppID (e.g. Lumi_KLIC)	Новий AppID (напр. Lumi_KLIC)
+	+ Add AppID	+ Додати AppID
+	🗑 Delete AppID	🗑 Видалити AppID
+	Remove this Application and its XData from the entity	Видалити цей застосунок та його XData з об’єкта
+	Application removed (click Apply to save)	Застосунок видалено (натисніть Застосувати для збереження)
+	🔍 Filter:	🔍 Фільтр:
+	Search key or value (e.g. THEMA, DIEPTE)...	Пошук за ключем або значенням (напр. THEMA, DIEPTE)...
+	Key width:	Ширина ключа:
+	Drag this value or the column divider ⇔ to resize the Key column	Перетягніть це значення або межу стовпця ⇔, щоб змінити ширину стовпця ключа
+	Value width:	Ширина значення:
+	Drag this value or the column divider ⇔ to resize the Value column	Перетягніть це значення або межу стовпця ⇔, щоб змінити ширину стовпця значення
+	Smart Key=Value Columns	Розумні стовпці Ключ=Значення
+	Split 'KEY=VALUE' or 'Key: Value' into separate editable Key and Value fields	Розділяти 'KEY=VALUE' або 'Key: Value' на окремі поля ключа та значення
+	This object currently has no user XData.	Цей об’єкт наразі не має користувацьких XData.
+	+ Create Lumi_KLIC Application	+ Створити застосунок Lumi_KLIC
+	DXF Code	Код DXF
+	Property / Key ⇔	Властивість / Ключ ⇔
+	Value (Selectable & Editable) ⇔	Значення (доступне для вибору та редагування) ⇔
+	Raw Value (Selectable & Editable) ⇔	Сире значення (доступне для вибору та редагування) ⇔
+	Actions	Дії
+	Copy value to clipboard	Копіювати значення до буфера обміну
+	✓ Copied: {val}	✓ Скопійовано: {val}
+	Move row up	Перемістити рядок вище
+	Move row down	Перемістити рядок нижче
+	Delete this XData row	Видалити цей рядок XData
+	Add Row:	Додати рядок:
+	Key (e.g. OPMERKING)	Ключ (напр. OPMERKING)
+	+ Add Property	+ Додати властивість
+	● Unsaved changes	● Незбережені зміни
+	Ready — click '🎯 Select Next Object' or '◀ Previous / Next ▶' to switch objects.	Готово — натисніть '🎯 Вибрати наступний об’єкт' або '◀ Назад / Далі ▶' для перемикання.
+	↺ Revert	↺ Відновити
+	✔ Apply / Save XData	✔ Застосувати / Зберегти XData
+	Write modified XData to the entity (Undoable with Ctrl+Z)	Записати змінені XData в об’єкт (можна скасувати через Ctrl+Z)
+	✔ Save & Select Next Object	✔ Зберегти й вибрати наступний об’єкт
+	🎯 Select Next Object	🎯 Вибрати наступний об’єкт
+	Save any changes and directly pick the next object in the drawing	Зберегти зміни та одразу вибрати наступний об’єкт на кресленні
+	Object {idx1}/{total} loaded ({kind} — {handle})	Об’єкт {idx1}/{total} завантажено ({kind} — {handle})
+	↺ Reverted to saved entity XData	↺ Відновлено збережені XData об’єкта
+	✔ XData saved to entity (Undoable)	✔ XData збережено в об’єкті (доступне скасування)
+	Error: {err}	Помилка: {err}

@@ -130,6 +130,8 @@ fn services() -> Services {
     Services {
         pick_open: Some(Box::new(|| {
             rfd::FileDialog::new()
+                .add_filter(i18n::t("Drawing (DWG)"), &["dwg"])
+                .add_filter(i18n::t("Drawing (DXF)"), &["dxf"])
                 .add_filter(i18n::t("Drawings (DWG, DXF)"), &["dwg", "dxf", "dwt"])
                 .add_filter(i18n::t("SVG drawings (SVG, SVGZ)"), &["svg", "svgz"])
                 .add_filter(i18n::t("All files"), &["*"])
@@ -148,11 +150,11 @@ fn services() -> Services {
 
 /// File types for the Save dialog, the suggested name's type first: Windows adds the first
 /// filter's extension, and macOS accepts only listed extensions, replacing any other with the
-/// first one. DWG must be listed for a `.dwg` name to survive, and a drawing opened from DWG
-/// then defaults to DWG; other names keep DXF first.
+/// first one. DWG is listed first so new or untitled drawings default to DWG; names with an
+/// explicit extension (such as `.dxf`, `.pdf`, or `.dwt`) put that filter first.
 fn filters_for_save(name: &str) -> [(&'static str, &'static str); 6] {
     let mut filters =
-        [("Drawing (DXF)", "dxf"), ("Drawing (DWG)", "dwg"), ("Drawing Template (DWT)", "dwt"), ("SVG", "svg"), ("PNG", "png"), ("PDF", "pdf")];
+        [("Drawing (DWG)", "dwg"), ("Drawing (DXF)", "dxf"), ("Drawing Template (DWT)", "dwt"), ("SVG", "svg"), ("PNG", "png"), ("PDF", "pdf")];
     let lower = name.to_ascii_lowercase();
     filters.sort_by_key(|(_, ext)| !lower.ends_with(&format!(".{ext}")));
     filters
@@ -392,9 +394,9 @@ mod tests {
         let first = |name: &str| filters_for_save(name)[0].1;
         assert_eq!(first("Waco Winnelson Floorplan.dwg"), "dwg");
         assert_eq!(first("FLOORPLAN.DWG"), "dwg");
-        // New drawings and DXF files keep DXF first.
+        // DXF files put DXF first; untitled drawings default to DWG.
         assert_eq!(first("Drawing1.dxf"), "dxf");
-        assert_eq!(first("Drawing1"), "dxf");
+        assert_eq!(first("Drawing1"), "dwg");
         assert_eq!(first("plan.pdf"), "pdf");
         assert_eq!(first("office.dwt"), "dwt");
         for name in ["a.dwg", "b.dxf", "c"] {
