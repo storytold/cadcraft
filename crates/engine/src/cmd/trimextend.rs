@@ -479,6 +479,8 @@ impl Interactive for TrimM {
                         self.stage = Stage::Crossing(Some(p));
                         return Ok(Step::Continue);
                     };
+                    // Shift-select does the other one: extend in TRIM, trim in EXTEND.
+                    let extending = extending != s.shift_pick;
                     let r = self.step(s, |m, s| apply(s, h, p, extending, m.edges(quick, implied), quick).map(|_| ()));
                     if let Err(e) = r {
                         s.echo(e.to_string());

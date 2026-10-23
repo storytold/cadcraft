@@ -1656,10 +1656,11 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
                 app.cmd.buffer.clear();
             }
             // Preserve a snap's viewport origin for DIST, and its deferred curve where needed.
-            let result = match app.canvas.snap {
-                Some(hit) => app.session.input_snapped(hit),
-                None => app.session.input(Input::Point(p)),
-            };
+            let snap = app.canvas.snap;
+            let result = app.session.with_shift(mods.shift, |s| match snap {
+                Some(hit) => s.input_snapped(hit),
+                None => s.input(Input::Point(p)),
+            });
             if let Err(e) = result {
                 app.session.echo(e.to_string());
             }
@@ -2950,5 +2951,53 @@ mod hatch_pick_tests {
         assert_eq!(app.hatch_dlg.as_ref().map(|s| s.edit.iter().map(|h| h.hex()).collect::<Vec<_>>()), Some(vec![hx]));
         // The double-click (at the hatch's centre grip) only opens the dialog: no grip edit.
         assert!(app.session.running.is_none(), "{:?}", app.session.running.as_ref().map(|r| r.machine.name()));
+    }
+}
+
+#[cfg(test)]
+mod trim_shift_tests {
+    use cadcraft_doc::EntityKind;
+    use cadcraft_engine::Session;
+    use cadcraft_geom::Vec2;
+    use serde_json::json;
+
+    use crate::{CadApp, Services};
+
+    /// Run `cmd` over a boundary at x = 10 and the line `line` (along y = 0), Shift+click the line
+    /// at `at` and return where it ends up.
+    fn shift_click(cmd: &str, line: [[f64; 2]; 2], at: Vec2) -> Option<(Vec2, Vec2)> {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        app.session.execute("line", &json!({ "points": line })).unwrap();
+        app.session.execute("line", &json!({ "points": [[10, -10], [10, 10]] })).unwrap();
+        let _ = app.session.zoom_extents();
+        let ctx = egui::Context::default();
+        let screen = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0)));
+        let frame = |app: &mut CadApp, mut events: Vec<egui::Event>, time: f64| {
+            app.logic(&ctx);
+            events.insert(0, egui::Event::ModifiersChanged(egui::Modifiers::SHIFT));
+            let input = egui::RawInput { screen_rect: screen, events, time: Some(time), ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| app.ui(ui));
+            out.textures_delta.clear();
+        };
+        frame(&mut app, Vec::new(), 0.0);
+        app.session.cmdline(cmd).unwrap();
+        let pos = app.canvas.xf.unwrap().to_screen(at);
+        let button = |pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::SHIFT };
+        frame(&mut app, vec![egui::Event::PointerMoved(pos)], 0.1);
+        frame(&mut app, vec![button(true), button(false)], 0.2);
+        // A trim may replace the line with a new piece: find what lies along y = 0.
+        app.session.doc().unwrap().model.iter().find_map(|e| match &e.kind {
+            EntityKind::Line(l) if l.a.y == 0.0 && l.b.y == 0.0 => Some((l.a.xy(), l.b.xy())),
+            _ => None,
+        })
+    }
+
+    /// TRIM's "shift-select to extend" and EXTEND's "shift-select to trim" (#1091).
+    #[test]
+    fn shift_click_switches_between_trim_and_extend() {
+        let (a, b) = shift_click("trim", [[0.0, 0.0], [5.0, 0.0]], Vec2::new(4.0, 0.0)).expect("the line is still there");
+        assert!(a.near(Vec2::ZERO, 1e-9) && b.near(Vec2::new(10.0, 0.0), 1e-9), "TRIM with Shift extends: {a:?} {b:?}");
+        let (a, b) = shift_click("extend", [[0.0, 0.0], [15.0, 0.0]], Vec2::new(14.0, 0.0)).expect("the line is still there");
+        assert!(a.near(Vec2::ZERO, 1e-9) && b.near(Vec2::new(10.0, 0.0), 1e-9), "EXTEND with Shift trims: {a:?} {b:?}");
     }
 }

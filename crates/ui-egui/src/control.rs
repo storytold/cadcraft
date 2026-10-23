@@ -372,10 +372,11 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
                 }
                 return ok(json!({"world": [wp.x, wp.y]}));
             }
+            let shift = p.get("shift").and_then(Value::as_bool).unwrap_or(false);
             let r = match s("button").unwrap_or("left") {
                 "right" => app.session.input(Input::Enter),
-                _ if app.session.prompting() => app.session.input(Input::Point(wp)),
-                _ => app.session.idle_click(wp, p.get("shift").and_then(Value::as_bool).unwrap_or(false)),
+                _ if app.session.prompting() => app.session.with_shift(shift, |s| s.input(Input::Point(wp))),
+                _ => app.session.idle_click(wp, shift),
             };
             match r {
                 Ok(()) => ok(json!({"world": [wp.x, wp.y], "state": cmdline_state(app)})),
