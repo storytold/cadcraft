@@ -4,7 +4,7 @@
 //! fixed-length extension lines (DIMFXL/DIMFXLON), text placement (DIMTAD, DIMTVP, DIMJUST,
 //! DIMTIH/DIMTOH, DIMGAP, DIMTMOVE) and text formatting (DIMLUNIT, DIMDEC, DIMZIN, DIMRND,
 //! DIMPOST, DIMTOL/DIMLIM with DIMTZIN and DIMTOLJ, DIMALT with DIMALTU/DIMALTZ/DIMALTRND,
-//! DIMAZIN, DIMARCSYM).
+//! DIMAZIN, DIMARCSYM). DIMPOST wraps angles as well, as AutoCAD does (#1653).
 
 use cadcraft_doc::{DimKind, DimStyle, Dimension};
 use cadcraft_fonts::{MTextParams, TextFont};
@@ -875,8 +875,9 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
             g.measurement = sweep;
             // DIMAZIN 1 / 2 suppress leading / trailing zeros (DIMZIN's bits 4 / 8).
             let azin = (st.angular_zero_suppression & 3) * 4;
-            let txt = format_angle(sweep, st.angular_unit, st.angular_decimals, azin);
-            // DIMPOST is a linear-dimension prefix/suffix; angles have their own format only.
+            // DIMPOST wraps the angle too, as AutoCAD 2026 does to its own 2-line and 3-point
+            // angular dimensions ("36.9° m" for a style with "<> m"; issue #1653, after #376).
+            let txt = post(&st.post, &format_angle(sweep, st.angular_unit, st.angular_decimals, azin));
             g.mtext = inspected(apply_override(&txt, d), d);
             let mut pts = Vec::new();
             arc.tessellate(r * 1e-3, &mut pts);

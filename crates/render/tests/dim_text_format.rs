@@ -1,5 +1,5 @@
 //! Dimension text formatting (issue #373): DIMRND rounds the measurement only, tolerances use
-//! DIMTZIN, alternate units DIMALTRND/DIMALTU/DIMALTZ, and DIMPOST is not added to angles.
+//! DIMTZIN, alternate units DIMALTRND/DIMALTU/DIMALTZ, and DIMPOST wraps angles too (#1653).
 
 use cadcraft_doc::{DimKind, DimStyle, Dimension};
 use cadcraft_geom::Vec3;
@@ -59,16 +59,21 @@ fn dimrnd_rounds_neither_tolerances_nor_alternate_units() {
 }
 
 #[test]
-fn dimpost_is_not_added_to_angular_dimensions() {
+fn dimpost_applies_to_angular_dimensions_too() {
     let mut a = linear(0.0);
     a.kind = DimKind::Angular3P;
     a.p15 = Vec3::ZERO;
     a.p13 = Vec3::new(10.0, 0.0, 0.0);
     a.p14 = Vec3::new(0.0, 10.0, 0.0);
     a.defpt = Vec3::new(3.0, 3.0, 0.0);
-    assert_eq!(text(&a, serde_json::json!({"DIMPOST": "<>mm"})), "90°");
-    // Linear dimensions keep it, and an angular text override still wraps the angle.
+    // AutoCAD 2026 applies the style's DIMPOST to angular dimensions it builds: with "<> m"
+    // its own 2-line and 3-point dimensions read "36.9° m" (#1653, follow-up to #373/#376).
+    assert_eq!(text(&a, serde_json::json!({"DIMPOST": "<>mm"})), "90°mm");
+    // A prefix before `<>` works as on a linear dimension.
+    assert_eq!(text(&a, serde_json::json!({"DIMPOST": "A=<>"})), "A=90°");
+    // Linear dimensions keep it, and an angular text override wraps the posted angle, as for
+    // a linear dimension.
     assert_eq!(text(&linear(10.0), serde_json::json!({"DIMPOST": "<>mm", "DIMDEC": 1})), "10.0mm");
     a.text = "<> TYP".into();
-    assert_eq!(text(&a, serde_json::json!({"DIMPOST": "<>mm"})), "90° TYP");
+    assert_eq!(text(&a, serde_json::json!({"DIMPOST": "<>mm"})), "90°mm TYP");
 }

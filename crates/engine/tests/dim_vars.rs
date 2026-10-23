@@ -240,6 +240,23 @@ fn tolerance_justification_angular_zeros_and_arc_symbol() {
     assert_eq!(dim_lines(&g1).len(), dim_lines(&g2).len() + 1, "the symbol drawn over the text");
 }
 
+/// DIMPOST frames the angle too, as AutoCAD 2026 does to its own angular dimensions (#1653).
+#[test]
+fn dimpost_applies_to_angular_dimensions() {
+    let mut s = Session::new();
+    set(&mut s, "DIMPOST", json!("<> m"));
+    set(&mut s, "DIMADEC", json!(1));
+    // Vertex and two points.
+    s.execute("dimangular", &json!({ "vertex": [0, 0], "p1": [10, 0], "p2": [0, 10], "at": [3, 3] })).unwrap();
+    assert_eq!(last_dim(&s).1.value, "90.0° m");
+    // Two lines picked: the same suffix.
+    s.execute("line", &json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+    s.execute("line", &json!({ "points": [[0, 0], [5, 8.660254037844387]] })).unwrap();
+    let h: Vec<String> = s.doc().unwrap().model.iter().filter(|e| matches!(e.kind, EntityKind::Line(_))).map(|e| e.handle.hex()).collect();
+    s.execute("dimangular", &json!({ "lines": h, "at": [4, 1] })).unwrap();
+    assert_eq!(last_dim(&s).1.value, "60.0° m");
+}
+
 #[test]
 fn linetypes_and_lineweights_of_dimension_and_extension_lines() {
     let mut s = Session::new();
