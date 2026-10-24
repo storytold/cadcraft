@@ -305,7 +305,7 @@ fn keep_option_moves_the_other_entity() {
     let mut d = Drawing::default();
     let a = line(&mut d, (0.0, 0.0), (10.0, 0.0));
     let b = line(&mut d, (0.0, 2.0), (10.0, 4.0));
-    add(&mut d, con(ConstraintKind::Parallel, &[w(a), w(b)]), &SolveOptions { keep: vec![a], prefer_move: vec![b] }).unwrap();
+    add(&mut d, con(ConstraintKind::Parallel, &[w(a), w(b)]), &SolveOptions { keep: vec![a], prefer_move: vec![b], ..Default::default() }).unwrap();
     let (a0, a1) = ln(&d, a);
     assert!(a0.near(Vec2::new(0.0, 0.0), 1e-3) && a1.near(Vec2::new(10.0, 0.0), 1e-3), "{a0:?} {a1:?}");
 }
@@ -412,7 +412,7 @@ fn glyphs_and_residuals() {
     })
     .unwrap();
     assert!(!all_satisfied(&d));
-    let r = solve(&mut d, &SolveOptions { keep: vec![], prefer_move: vec![] }).unwrap();
+    let r = solve(&mut d, &SolveOptions::default()).unwrap();
     assert_eq!(r.moved, vec![a]);
     assert!(all_satisfied(&d));
 }

@@ -477,6 +477,18 @@ impl Model {
         }
     }
 
+    /// The points of an object a Fix locks directly (ends, centre, vertices, insertion point).
+    pub fn point_refs(&self, h: Handle) -> Vec<GeomRef> {
+        let Some(s) = self.slot(h) else { return Vec::new() };
+        let at = |sub: Sub| GeomRef { handle: h, sub };
+        match s.shape {
+            Shape::Line => vec![at(Sub::Start), at(Sub::End)],
+            Shape::Point => vec![at(Sub::Whole)],
+            Shape::Circle | Shape::Arc | Shape::Ellipse { .. } | Shape::Insert { .. } => vec![at(Sub::Center)],
+            Shape::Poly { n, .. } | Shape::Spline { n, .. } => (0..n).filter_map(|i| u32::try_from(i).ok()).map(|i| at(Sub::Vertex(i))).collect(),
+        }
+    }
+
     /// Parameters a Fix on this reference locks directly. `None` when the reference is a derived
     /// point (fixed through a residual instead).
     pub fn lock_indices(&self, r: &GeomRef) -> Option<Vec<usize>> {

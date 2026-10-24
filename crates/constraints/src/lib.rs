@@ -81,6 +81,12 @@ pub struct SolveOptions {
     pub keep: Vec<Handle>,
     /// Entities that should take up the change.
     pub prefer_move: Vec<Handle>,
+    /// Points held where they are for this solve, as a Fix would hold them (the grip an edit
+    /// just put down): see [`edited_points`].
+    pub hold: Vec<GeomRef>,
+    /// Where a Fix on a derived point (by constraint id) holds it, instead of where the point is
+    /// now: see [`moved_anchors`].
+    pub anchors: Vec<(u32, Vec2)>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -205,12 +211,19 @@ pub(crate) struct Comp {
     pub(crate) model: Model,
     pub(crate) built: Vec<Built>,
     weights: Vec<f64>,
+    /// Parameters of the points held by [`SolveOptions::hold`].
+    held: Vec<usize>,
     tol: f64,
 }
 
 impl Comp {
     fn locks(&self, skip: Option<usize>) -> Vec<bool> {
         let mut locked = vec![false; self.model.x0.len()];
+        for &j in &self.held {
+            if let Some(l) = locked.get_mut(j) {
+                *l = true;
+            }
+        }
         for (i, b) in self.built.iter().enumerate() {
             if Some(i) == skip || b.form != Form::Lock {
                 continue;
@@ -346,7 +359,14 @@ pub(crate) fn build_budgeted(
         for c in group {
             let target = if c.kind.is_dimensional() { constraint_value(&mut e, c)? } else { 0.0 };
             match interpret(c, &mut model, target) {
-                Ok(b) => built.push(b),
+                Ok(mut b) => {
+                    if let Form::Anchor(_) = b.form
+                        && let Some(&(_, a)) = opts.anchors.iter().find(|(id, _)| *id == c.id)
+                    {
+                        b.form = Form::Anchor(a);
+                    }
+                    built.push(b);
+                }
                 Err(msg) => skipped.push((c.id, msg)),
             }
         }
@@ -393,8 +413,9 @@ pub(crate) fn build_budgeted(
         for w in weights.iter_mut().skip(geo) {
             *w = 1e-3;
         }
+        let held = opts.hold.iter().filter_map(|r| model.lock_indices(r)).flatten().collect();
         let tol = scale_tol(&model.x0);
-        comps.push(Comp { model, built, weights, tol });
+        comps.push(Comp { model, built, weights, held, tol });
     }
     Ok((comps, skipped))
 }
@@ -445,6 +466,9 @@ pub fn residuals(d: &Drawing) -> Vec<(u32, Option<f64>)> {
 /// A Fix keeps no position of its own: the solver locks the parameters at their current values.
 /// Without this, an edit that moves a fixed point (a grip drag) would carry the lock along with
 /// it. Only Fixes that already existed in `before`, on objects of the same shape, are restored.
+/// An object held by a Fix on a derived point (a line's midpoint, an arc's end) has nothing to
+/// lock: when the edit only moved it (MOVE), it is put back whole, so it is not reshaped to bring
+/// the point back.
 pub fn restore_fixed(d: &mut Drawing, before: &Drawing) -> bool {
     let refs: Vec<GeomRef> = d
         .constraints
@@ -461,10 +485,21 @@ pub fn restore_fixed(d: &mut Drawing, before: &Drawing) -> bool {
     let mut changed = false;
     for r in &refs {
         let same_shape = matches!((now.slot(r.handle), old.slot(r.handle)), (Some(a), Some(b)) if a.shape == b.shape);
-        let (Some(i), Some(j)) = (now.lock_indices(r), old.lock_indices(r)) else { continue };
         if !same_shape {
             continue;
         }
+        let (Some(i), Some(j)) = (now.lock_indices(r), old.lock_indices(r)) else {
+            if let (Some(a), Some(b)) = (now.slot(r.handle), old.slot(r.handle))
+                && translated(&now, &old, r.handle)
+                && let (Some(dst), Some(src)) = (x.get_mut(a.off..a.off + a.len), old.x0.get(b.off..b.off + b.len))
+            {
+                for (v, &w) in dst.iter_mut().zip(src) {
+                    *v = w;
+                }
+                changed = true;
+            }
+            continue;
+        };
         for (i, j) in i.into_iter().zip(j) {
             if let (Some(slot), Some(&v)) = (x.get_mut(i), old.x0.get(j))
                 && *slot != v
@@ -478,6 +513,88 @@ pub fn restore_fixed(d: &mut Drawing, before: &Drawing) -> bool {
         now.write_back(d, &x);
     }
     changed
+}
+
+/// The parameters of `h`'s points (see [`Model::point_refs`]) in `m`, as (x, y) pairs.
+fn point_params(m: &Model, h: Handle) -> Vec<(usize, usize)> {
+    m.point_refs(h)
+        .iter()
+        .filter_map(|r| m.lock_indices(r))
+        .flat_map(|ix| ix.as_chunks::<2>().0.iter().map(|&[x, y]| (x, y)).collect::<Vec<_>>())
+        .collect()
+}
+
+/// Is `h` in `now` its shape in `old` moved by one vector, and nothing else?
+fn translated(now: &Model, old: &Model, h: Handle) -> bool {
+    let (Some(a), Some(b)) = (now.slot(h), old.slot(h)) else { return false };
+    let (Some(xa), Some(xb)) = (now.x0.get(a.off..a.off + a.len), old.x0.get(b.off..b.off + b.len)) else { return false };
+    let tol = scale_tol(xb) * 10.0;
+    let pts: Vec<(usize, usize)> =
+        point_params(old, h).into_iter().filter_map(|(i, j)| Some((i.checked_sub(b.off)?, j.checked_sub(b.off)?))).collect();
+    let delta = |(i, j): (usize, usize)| Some(Vec2::new(xa.get(i)? - xb.get(i)?, xa.get(j)? - xb.get(j)?));
+    let Some(v) = pts.first().and_then(|&p| delta(p)) else { return false };
+    if v.len() <= tol || !pts.iter().all(|&p| delta(p).is_some_and(|d| d.near(v, tol))) {
+        return false;
+    }
+    (0..xb.len())
+        .filter(|k| !pts.iter().any(|&(i, j)| *k == i || *k == j))
+        .all(|k| matches!((xa.get(k), xb.get(k)), (Some(p), Some(q)) if (p - q).abs() <= tol))
+}
+
+/// The points of `h` (its ends, centre or vertices) the edit from `before` to `d` moved, when it
+/// moved some of them but not all: the grip that was dragged, to pass as [`SolveOptions::hold`] so
+/// it stays where it was put and the rest of the object takes up the constraints. Empty when the
+/// object kept its points or moved them all.
+pub fn edited_points(d: &Drawing, before: &Drawing, h: Handle) -> Vec<GeomRef> {
+    let (now, old) = (Model::build(d, &[h]), Model::build(before, &[h]));
+    if !matches!((now.slot(h), old.slot(h)), (Some(a), Some(b)) if a.shape == b.shape) {
+        return Vec::new();
+    }
+    let tol = scale_tol(&old.x0) * 10.0;
+    let refs = now.point_refs(h);
+    let moved: Vec<GeomRef> = refs
+        .iter()
+        .filter(|r| matches!((now.lock_indices(r), old.lock_indices(r)), (Some(i), Some(j)) if i.iter().zip(&j).any(|(&i, &j)| matches!((now.x0.get(i), old.x0.get(j)), (Some(p), Some(q)) if (p - q).abs() > tol))))
+        .copied()
+        .collect();
+    if moved.len() == refs.len() { Vec::new() } else { moved }
+}
+
+/// Where `before` had each derived point held by a Fix (a line's midpoint, an arc's end), for the
+/// Fixes whose point has moved since, to pass as [`SolveOptions::anchors`].
+///
+/// A Fix on a derived point anchors it where it is when the system is built, and
+/// [`restore_fixed`] has no parameters to put back: without this, an edit that moves the point
+/// would leave the Fix satisfied at the new place.
+pub fn moved_anchors(d: &Drawing, before: &Drawing) -> Vec<(u32, Vec2)> {
+    let fixes: Vec<(u32, GeomRef)> = d
+        .constraints
+        .iter()
+        .filter(|c| c.kind == ConstraintKind::Fix && before.constraints.contains(c))
+        .filter_map(|c| match c.refs.as_slice() {
+            [r] => Some((c.id, *r)),
+            _ => None,
+        })
+        .collect();
+    if fixes.is_empty() {
+        return Vec::new();
+    }
+    let handles: Vec<Handle> = fixes.iter().map(|(_, r)| r.handle).collect();
+    let (now, old) = (Model::build(d, &handles), Model::build(before, &handles));
+    let tol = scale_tol(&old.x0);
+    let mut out = Vec::new();
+    for (id, r) in fixes {
+        let same_shape = matches!((now.slot(r.handle), old.slot(r.handle)), (Some(a), Some(b)) if a.shape == b.shape);
+        if !same_shape || now.lock_indices(&r).is_some() {
+            continue;
+        }
+        if let (Some(p), Some(a)) = (now.point(&now.x0, &r), old.point(&old.x0, &r))
+            && !p.near(a, tol)
+        {
+            out.push((id, a));
+        }
+    }
+    out
 }
 
 /// True when every interpretable constraint holds at the current geometry.
