@@ -1206,3 +1206,17 @@ fn tolerance_short_text_resolves_font_from_style() {
     let layout = tolerance_in(&d, &tol);
     assert!(!layout.texts.is_empty());
 }
+
+#[test]
+fn dimension_inspection_transcodes_label_and_rate() {
+    let mut d = Drawing::new_imperial();
+    d.text_styles.push(cadcraft_doc::TextStyle { name: "CustomDimStyle".into(), font: ".VnTime".into(), ..Default::default() });
+    if let Some(st) = d.dim_styles.first_mut() {
+        st.text_style = "CustomDimStyle".into();
+    }
+    let mut dim = lin_dim();
+    dim.marks.inspect = Some(cadcraft_doc::Inspection { shape: 0, label: "KiÓm tra".into(), rate: "100% (®¹t)".into() });
+    let g = dimension_in(&d, &dim);
+    assert!(g.mtext.contains("Kiểm tra"), "Expected transcoded label, got: {}", g.mtext);
+    assert!(g.mtext.contains("100% (đạt)"), "Expected transcoded rate, got: {}", g.mtext);
+}

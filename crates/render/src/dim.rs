@@ -413,13 +413,17 @@ fn linear_text(meas: f64, d: &Dimension, st: &DimStyle, prefix: &str, hint: Opti
         let alt = format_linear(v * st.alt_factor, &af).1;
         s += &format!(" [{}]", post(&st.alt_post, &alt, hint));
     }
-    inspected(apply_override(&s, d, st, hint), d)
+    inspected(apply_override(&s, d, st, hint), d, hint)
 }
 
 /// DIMINSPECT: the label and the rate either side of the value, two spaces apart.
-fn inspected(value: String, d: &Dimension) -> String {
+fn inspected(value: String, d: &Dimension, hint: Option<&str>) -> String {
     match &d.marks.inspect {
-        Some(ins) => [ins.label.as_str(), value.as_str(), ins.rate.as_str()].iter().filter(|p| !p.is_empty()).copied().collect::<Vec<_>>().join("  "),
+        Some(ins) => {
+            let label = cadcraft_fonts::legacy_encoding::transcode(&ins.label, hint);
+            let rate = cadcraft_fonts::legacy_encoding::transcode(&ins.rate, hint);
+            [label.as_ref(), value.as_str(), rate.as_ref()].into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join("  ")
+        }
         None => value,
     }
 }
@@ -911,7 +915,7 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
             let azin = (st.angular_zero_suppression & 3) * 4;
             let txt = format_angle_with_separator(sweep, st.angular_unit, st.angular_decimals, azin, &st.decimal_separator);
             // DIMPOST is a linear-dimension prefix/suffix; angles have their own format only.
-            g.mtext = inspected(apply_override(&txt, d, st, hint), d);
+            g.mtext = inspected(apply_override(&txt, d, st, hint), d, hint);
             let mut pts = Vec::new();
             arc.tessellate(r * 1e-3, &mut pts);
             g.dim(pts);
@@ -1017,16 +1021,18 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
         // Widths of the label, value and rate as laid out: the two spaces between parts measured
         // in "x  x", the value is what the rest leaves.
         let gap2 = (measure("x  x").0 - 2.0 * measure("x").0).max(0.0);
-        let (wl, wr) = (measure(&ins.label).0, measure(&ins.rate).0);
-        let seps = usize::from(!ins.label.is_empty()) + usize::from(!ins.rate.is_empty());
+        let label = cadcraft_fonts::legacy_encoding::transcode(&ins.label, hint);
+        let rate = cadcraft_fonts::legacy_encoding::transcode(&ins.rate, hint);
+        let (wl, wr) = (measure(&label).0, measure(&rate).0);
+        let seps = usize::from(!label.is_empty()) + usize::from(!rate.is_empty());
         let wv = (w - wl - wr - gap2 * seps as f64).max(0.0);
         let mut left = -w / 2.0;
-        if !ins.label.is_empty() {
+        if !label.is_empty() {
             left += wl;
             g.dim(vec![at(left + gap2 / 2.0, -hh), at(left + gap2 / 2.0, hh)]);
             left += gap2;
         }
-        if !ins.rate.is_empty() {
+        if !rate.is_empty() {
             left += wv;
             g.dim(vec![at(left + gap2 / 2.0, -hh), at(left + gap2 / 2.0, hh)]);
         }
