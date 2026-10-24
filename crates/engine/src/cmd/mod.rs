@@ -292,20 +292,45 @@ pub(crate) fn point_req(cmd: &str, p: &Value, key: &str) -> Result<Vec2> {
 pub(crate) fn points_param(p: &Value, key: &str) -> Option<Vec<Vec2>> {
     p.get(key)?.as_array()?.iter().map(point_value).collect()
 }
-/// Handles from `handles` (hex strings or numbers), `handle`, or else the current selection. A
-/// `handle`/`handles` that can't be read is an error, never a silent fall back to the selection.
+/// Handles from `handles` (hex strings or numbers), `handle`, or else the current selection. See
+/// [`explicit_handles`] for what makes a given `handle`/`handles` an error.
 pub(crate) fn targets(s: &Session, p: &Value) -> Result<Vec<Handle>> {
+    Ok(explicit_handles(s, p)?.unwrap_or_else(|| s.selection()))
+}
+
+/// The objects named by `handles` (an array of hex strings or numbers) or else `handle`; `None`
+/// when neither is given (or both are `null`), so the caller picks its default. A handle that can't
+/// be read is an error, never a silent fall back, and so is one that names no object in the
+/// drawing (never made, or erased): the command changes nothing instead of acting on the rest. An
+/// explicit empty `handles: []` is no objects.
+pub(crate) fn explicit_handles(s: &Session, p: &Value) -> Result<Option<Vec<Handle>>> {
     let handle = |v: &Value| v.as_str().and_then(Handle::parse_hex).or_else(|| v.as_u64().map(Handle));
     let not_handle = |key: &str, v: &Value| EngineError::Other(format!("`{key}`: {v} is not an object handle (a hex string such as \"1A2\")"));
-    match p.get("handles") {
-        None | Some(Value::Null) => {}
-        Some(Value::Array(a)) => return a.iter().map(|v| handle(v).ok_or_else(|| not_handle("handles", v))).collect(),
-        Some(v) => return Err(EngineError::Other(format!("`handles` must be an array of object handles, got {v}"))),
+    let hs = match (p.get("handles"), p.get("handle")) {
+        (Some(Value::Array(a)), _) => a.iter().map(|v| handle(v).ok_or_else(|| not_handle("handles", v))).collect::<Result<Vec<_>>>()?,
+        (Some(v), _) if !v.is_null() => return Err(EngineError::Other(format!("`handles` must be an array of object handles, got {v}"))),
+        (_, None | Some(Value::Null)) => return Ok(None),
+        (_, Some(v)) => vec![handle(v).ok_or_else(|| not_handle("handle", v))?],
+    };
+    existing(s, hs).map(Some)
+}
+
+/// `hs` unchanged when every handle names an object in the drawing, else an error that lists the
+/// ones that don't (each once, in the order given).
+pub(crate) fn existing(s: &Session, hs: Vec<Handle>) -> Result<Vec<Handle>> {
+    let Ok(d) = s.doc() else { return Ok(hs) };
+    let mut unknown: Vec<Handle> = Vec::new();
+    for h in &hs {
+        if d.entity(*h).is_none() && !unknown.contains(h) {
+            unknown.push(*h);
+        }
     }
-    match p.get("handle") {
-        None | Some(Value::Null) => Ok(s.selection()),
-        Some(v) => Ok(vec![handle(v).ok_or_else(|| not_handle("handle", v))?]),
+    if unknown.is_empty() {
+        return Ok(hs);
     }
+    let list = unknown.iter().map(|h| h.hex()).collect::<Vec<_>>().join(", ");
+    let what = if unknown.len() == 1 { "handle" } else { "handles" };
+    Err(EngineError::Other(format!("unknown {what}: {list} (no such object in the drawing, or it was erased)")))
 }
 pub(crate) fn ok() -> Result<Value> {
     Ok(Value::Null)

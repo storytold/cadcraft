@@ -55,13 +55,17 @@ impl SelectPhase {
     pub fn feed(&mut self, s: &mut Session, i: &Input) -> Result<SelOutcome> {
         match i {
             Input::Pick(hs) => {
+                // An object erased since it was picked (Previous, a Lisp selection set) drops out
+                // silently, as in a selection; the command then gets only handles that exist.
+                let d = s.doc()?;
+                let hs: Vec<Handle> = hs.iter().copied().filter(|h| d.entity(*h).is_some()).collect();
                 let changed: Vec<Handle> = if self.removing {
                     let gone: Vec<Handle> = self.picked.iter().copied().filter(|h| hs.contains(h)).collect();
                     self.picked.retain(|h| !hs.contains(h));
                     gone
                 } else {
                     let mut added = Vec::new();
-                    for h in hs {
+                    for h in &hs {
                         if !self.picked.contains(h) {
                             self.picked.push(*h);
                             added.push(*h);

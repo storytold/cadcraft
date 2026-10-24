@@ -331,11 +331,7 @@ fn run_datalink(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn run_update(s: &mut Session, p: &Value) -> Result<Value> {
-    let given: Option<Vec<Handle>> = p
-        .get("handles")
-        .and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(|v| v.as_str().and_then(Handle::parse_hex)).collect())
-        .or_else(|| p.get("handle").and_then(Value::as_str).and_then(Handle::parse_hex).map(|h| vec![h]));
+    let given = crate::cmd::explicit_handles(s, p)?;
     let hs: Vec<Handle> = {
         let d = s.doc()?;
         match given {

@@ -746,3 +746,18 @@ fn a_panic_inside_a_routine_ends_it_with_an_error() {
     assert!(s.log.iter().any(|l| l.contains("internal error")), "{:?}", s.log);
     assert_eq!(ok(&mut s, "(+ 1 2)"), "3");
 }
+
+/// A selection set member deleted with `entdel` drops out when the set is passed to a command;
+/// the command acts on the rest instead of failing on the deleted handle.
+#[test]
+fn command_with_a_selection_set_skips_deleted_members() {
+    let mut s = session();
+    ok(&mut s, "(command \"_.CIRCLE\" '(0 0) 1) (command \"_.CIRCLE\" '(10 0) 2) (command \"_.CIRCLE\" '(20 0) 3)");
+    ok(&mut s, "(setq ss (ssget \"X\" '((0 . \"CIRCLE\")))) (entdel (ssname ss 0))");
+    assert_eq!(s.doc().unwrap().model.iter().count(), 2);
+    // HIDEOBJECTS passes the picked objects on as `handles`, which must all exist.
+    ok(&mut s, "(command \"_.HIDEOBJECTS\" ss \"\")");
+    assert_eq!(s.doc().unwrap().hidden_objects.len(), 2, "HIDEOBJECTS hides the members that are left");
+    ok(&mut s, "(command \"_.ERASE\" ss \"\")");
+    assert_eq!(s.doc().unwrap().model.iter().count(), 0, "ERASE removes the members that are left");
+}

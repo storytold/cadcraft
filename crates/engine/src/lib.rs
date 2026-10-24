@@ -825,8 +825,11 @@ impl Session {
     pub fn layout_space(&self) -> Space {
         self.state().map(|s| s.space.clone()).unwrap_or_default()
     }
+    /// The selected objects that are still in the drawing: an object erased while selected (by
+    /// another command, a script or an agent) drops out, so commands that act on the selection
+    /// never see a handle that names nothing.
     pub fn selection(&self) -> Vec<Handle> {
-        self.state().map(|s| s.selection.clone()).unwrap_or_default()
+        self.state().map(|s| s.selection.iter().copied().filter(|h| s.doc.entity(*h).is_some()).collect()).unwrap_or_default()
     }
     pub fn set_selection(&mut self, sel: Vec<Handle>) {
         if let Ok(st) = self.state_mut() {

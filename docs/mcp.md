@@ -38,7 +38,7 @@ Example client configuration (Claude Code / Claude Desktop):
 |---|---|
 | `command_line {text}` | Type at the command line exactly like a person: `line 0,0 @10,0 @0,5 c`, `circle 5,2 1`, `offset 0.5`, `zoom e`. Spaces act as Enter; empty text is Enter. Returns the new prompt, keywords and output. |
 | `script {text}` | A multi-line script (like `.scr` files). |
-| `execute {command, params}` | Any command with JSON parameters, never a dialog. `list_commands` shows ids and parameter docs. |
+| `execute {command, params}` | Any command with JSON parameters, never a dialog. `list_commands` shows ids and parameter docs. Commands that act on objects take `handles` (or `handle`); without either they use the current selection. A handle that is malformed or names no object in the drawing (never made, or erased) is an error that lists it, and the command changes nothing. `handles: []` is no objects. |
 | `list_commands {filter?}` | The command catalog; `filter` matches part of a command's id, label or an alias. |
 | `inspect_drawing {entities?, limit?}` | Counts, extents, layers, styles, blocks, layouts, selection, undo history and entities. |
 | `query_entities {type?, layer?, window?, crossing?, limit?, offset?}` | Filtered entities with handles and geometry. `window` `[[x0,y0],[x1,y1]]` finds objects whose geometry is inside it or crosses it (`crossing: false`: entirely inside). `count` is every match, `returned` the page (`offset`, `limit`, default 500). |
