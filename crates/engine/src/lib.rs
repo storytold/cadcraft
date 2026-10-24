@@ -704,6 +704,10 @@ pub struct Session {
     lisp_last: Option<std::result::Result<lisp::value::Value, String>>,
     /// What the last HATCHPICK kept (the Hatch and Gradient dialog's picks).
     pub hatch_picks: Option<cmd::hatch::HatchPicks>,
+    /// The window's menu bar and tool bar as the UI shows them (it reports them every frame).
+    pub bars_shown: cmd::interface::InterfaceBars,
+    /// A change MENUBAR or TOOLBAR asked for, for the UI to apply.
+    pub bars_request: Option<cmd::interface::InterfaceBars>,
 }
 
 impl Default for Session {
@@ -753,6 +757,8 @@ impl Session {
             lisp: lisp::LispState::default(),
             lisp_last: None,
             hatch_picks: None,
+            bars_shown: Default::default(),
+            bars_request: None,
         }
     }
     pub fn new_drawing(&mut self, metric: bool) -> usize {

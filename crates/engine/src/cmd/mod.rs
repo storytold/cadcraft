@@ -19,6 +19,7 @@ mod griphot;
 pub(crate) mod groups;
 pub(crate) mod hatch;
 mod inquiry;
+pub mod interface;
 mod layer;
 mod layout;
 mod lisp;
@@ -201,6 +202,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(inquiry::specs());
         v.extend(settings::specs());
         v.extend(options::specs());
+        v.extend(interface::specs());
         v.extend(utility::specs());
         v.extend(table::specs());
         v.extend(tolerance::specs());
