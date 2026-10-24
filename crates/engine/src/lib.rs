@@ -144,6 +144,10 @@ pub struct DocState {
     pub uid: u64,
     /// The drawing is saved as binary DXF (it was opened from one, or last saved as one).
     pub binary_dxf: bool,
+    /// Version selected by a completed background Save As while newer edits remained in memory.
+    /// The next save uses this version; applying it to a large edited drawing here would clone it
+    /// on the UI thread.
+    pub save_version_override: Option<cadcraft_dxf::Version>,
     /// The Block Editor (BEDIT), when it is open: `doc` is then the editor's drawing, and the
     /// drawing itself waits in it ([`DocState::drawing`]).
     pub block_edit: Option<blockedit::BlockEdit>,
@@ -172,6 +176,7 @@ impl DocState {
             view_history: Vec::new(),
             uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             binary_dxf: false,
+            save_version_override: None,
             block_edit: None,
         }
     }

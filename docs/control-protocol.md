@@ -62,9 +62,13 @@ field. `engine.commands` returns a separate command catalog, not a list of addit
 | `ui.focus` | | Activate the native window. Does not assign focus to a widget. |
 | `ui.screenshot` | `{path?}` | PNG of the window (needs a presented frame). |
 | `ui.render` | `{path?, width?, height?, fit?}` | Headless render. `fit` (default true) frames the whole drawing; `false` uses the current view. Replies `{pngBase64, width, height, bytes, path?}`. |
-| `app.open` / `app.save` / `app.quit` | `{path}` | File operations. |
+| `app.open` / `app.save` / `app.quit` | `{path}` | File operations. On desktop `app.save` starts a background DWG/DXF job and returns `{jobId, state: "running", path}`. |
+| `save.status` | `{jobId?}` | Get the active or latest save job status (`running`, `cancelling`, `completed`, `cancelled`, or `failed`). |
+| `save.cancel` | `{jobId}` | Request cancellation before the file is committed. A write already committed reports `completed`. |
 | `control.methods` | | Every method this server answers: `{method, params, description}`. Headless (`cadcraft-cli mcp`) lists only the methods it serves. |
 | `ping` | | Replies `"pong"`. A cheap health check. |
+
+On desktop, `engine.execute` for `saveas` or `qsave` also returns `{jobId, state: "running", path}` for DWG/DXF drawing files. Poll `save.status` for the final `result` or `error`; only one drawing save runs at a time. Cancellation is checked around serialization and before replacing the destination. CLI, scripts, and the web keep their synchronous save behavior. PDF export remains synchronous.
 
 To run a command listed by `engine.commands`, put its id in `params.command` and its arguments
 in the nested `params.params` object, using `engine.execute` as the top-level method. This

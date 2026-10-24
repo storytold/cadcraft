@@ -34,6 +34,7 @@ pub struct Closing {
     queue: VecDeque<u64>,
     /// The drawing the prompt is asking about (always the front of `queue`).
     asking: Option<u64>,
+    waiting_save: Option<u64>,
     /// Quit the app once the queue is done (the window was closed).
     quit: bool,
 }
@@ -68,12 +69,16 @@ impl CadApp {
     /// about each drawing first and quit once all are dealt with. Returns whether the close has to
     /// wait (the caller then cancels the window close).
     pub fn request_quit(&mut self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.saving.busy() {
+            return true;
+        }
         if self.quit_confirmed || !self.session.docs.iter().any(|d| d.is_dirty()) {
             return false;
         }
         if self.closing.is_none() {
             let uids = self.session.docs.iter().map(|d| d.uid).collect();
-            self.closing = Some(Closing { queue: uids, asking: None, quit: true });
+            self.closing = Some(Closing { queue: uids, asking: None, waiting_save: None, quit: true });
             self.advance_close();
         }
         true
@@ -115,6 +120,13 @@ impl CadApp {
                 // drawing is saved with them.
                 let r = if self.session.state().is_ok_and(|st| st.block_unsaved()) { self.run("bsave", json!({})) } else { Ok(Value::Null) };
                 let r = r.and_then(|_| self.run("qsave", Value::Null));
+                if r.as_ref().ok().and_then(|v| v.get("jobId")).is_some() {
+                    if let Some(c) = &mut self.closing {
+                        c.waiting_save = Some(uid);
+                        c.asking = None;
+                    }
+                    return;
+                }
                 let saved = r.is_ok() && self.doc_index(uid).and_then(|i| self.session.docs.get(i)).is_some_and(|d| !d.is_dirty());
                 match (saved, self.doc_index(uid)) {
                     (true, Some(i)) => {
@@ -143,7 +155,7 @@ impl CadApp {
             // A prompt is already open; it has to be answered first.
             return;
         }
-        self.closing = Some(Closing { queue: uids.into(), asking: None, quit: false });
+        self.closing = Some(Closing { queue: uids.into(), asking: None, waiting_save: None, quit: false });
         self.advance_close();
     }
 
@@ -158,6 +170,23 @@ impl CadApp {
             c.asking = None;
         }
         let _ = self.run("close", json!({ "index": i }));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn finish_close_save(&mut self, uid: u64, success: bool) {
+        if self.closing.as_ref().and_then(|c| c.waiting_save) != Some(uid) {
+            return;
+        }
+        let index = self.doc_index(uid);
+        if success && index.and_then(|i| self.session.docs.get(i)).is_some_and(|d| !d.is_dirty()) {
+            if let Some(i) = index {
+                self.close_front(i);
+                self.advance_close();
+            }
+        } else {
+            self.closing = None;
+            self.session.echo("The drawing remains open because its save did not complete or it changed while saving.");
+        }
     }
 
     /// Close queued drawings until one has unsaved changes (then ask) or the queue is empty.
@@ -196,6 +225,9 @@ impl CadApp {
 /// The "Save changes to …?" modal while a close request waits for an answer.
 pub fn prompt(app: &mut CadApp, ctx: &egui::Context) {
     if app.closing.is_none() {
+        return;
+    }
+    if app.closing.as_ref().and_then(|c| c.waiting_save).is_some() {
         return;
     }
     let Some(title) = app.close_prompt().map(str::to_string) else {

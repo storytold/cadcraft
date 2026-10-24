@@ -17,7 +17,7 @@
 //! - `ui.set {...UiState fields}`, `ui.resize {width, height}`
 //! - `ui.screenshot {path?}`: PNG of the window; `ui.render {path?, width?, height?, fit?}`: headless
 //!   render of the drawing (no window needed; fits the drawing unless `fit` is false; replies `pngBase64`)
-//! - `app.open {path}`, `app.save {path?}`, `app.quit`
+//! - `app.open {path}`, `app.save {path?}`, `save.status {jobId?}`, `save.cancel {jobId}`, `app.quit`
 //! - `control.methods`: this list, with params and a description; `ping`: replies `"pong"`
 
 use std::sync::Arc;
@@ -213,6 +213,8 @@ const METHODS: &[(&str, &str, &str)] = &[
     ("ui.render", "{path?, width?, height?, fit?}", "Headless render of the drawing; replies pngBase64."),
     ("app.open", "{path}", "Open a drawing."),
     ("app.save", "{path?}", "Save the drawing (Save As with a path)."),
+    ("save.status", "{jobId?}", "Status of a desktop drawing save job."),
+    ("save.cancel", "{jobId}", "Request cancellation of a desktop drawing save job."),
     ("app.quit", "", "Quit without the unsaved-changes prompt."),
     ("control.methods", "", "This list."),
     ("ping", "", "Replies \"pong\"."),
@@ -499,7 +501,12 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
             wrap(app.run("open", json!({"path": path})))
         }
         "app.save" => wrap(app.run(if s("path").is_some() { "saveas" } else { "qsave" }, p.clone())),
+        "save.status" | "save.cancel" => wrap(app.run(&req.method, p.clone())),
         "app.quit" => {
+            #[cfg(not(target_arch = "wasm32"))]
+            if app.saving.busy() {
+                return err("a drawing is being saved; wait or cancel before quitting");
+            }
             // Programmatic calls never open dialogs: quit without the unsaved-changes prompt.
             app.quit_confirmed = true;
             app.quit_requested = true;

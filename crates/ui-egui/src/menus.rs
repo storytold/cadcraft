@@ -199,7 +199,7 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             let title = app.session.state().map(|s| s.title.clone()).ok();
             let name = app.ui.save_format.suggested_name(title.as_deref());
             if let Some(p) = app.services.pick_save.as_ref().and_then(|f| f(&name)) {
-                return Some(app.session.execute("saveas", &saveas_params(&app.ui, &app.session, &p)).map_err(|e| e.to_string()));
+                return Some(app.run("saveas", saveas_params(&app.ui, &app.session, &p)));
             }
             Ok(Value::Null)
         }

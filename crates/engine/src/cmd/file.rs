@@ -6,6 +6,11 @@ mod pgp;
 mod template;
 
 use std::sync::OnceLock;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use cadcraft_doc::Drawing;
 pub use cadcraft_dxf::Version;
@@ -137,6 +142,119 @@ fn save_options(cmd: &str, p: &Value) -> Result<SaveAs> {
 fn is_dxf(path: &str) -> bool {
     let ext = std::path::Path::new(path).extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
     matches!(ext.as_str(), "dxf" | "")
+}
+
+/// Immutable drawing captured before a desktop save starts. The writer never borrows `Session`.
+#[cfg(not(target_arch = "wasm32"))]
+pub struct PreparedSave {
+    pub uid: u64,
+    pub path: String,
+    drawing: Arc<Drawing>,
+    opts: SaveAs,
+    version: Version,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub struct CompletedSave {
+    pub bytes: usize,
+    pub result: Value,
+    original: Arc<Drawing>,
+    drawing: Arc<Drawing>,
+    requested_version: Option<Version>,
+}
+
+/// Validate the request and capture the drawing while on the UI thread. Serialization and disk
+/// I/O happen later, without holding the session or preventing edits.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn prepare_save(s: &Session, cmd: &str, p: &Value) -> Result<PreparedSave> {
+    let st = s.state()?;
+    if s.doc()?.refedit.is_some() {
+        return Err(bad(cmd, "A block reference is being edited in place: finish with REFCLOSE (Save or Discard) before saving."));
+    }
+    let path = match str_param(p, "path") {
+        Some(path) => path.to_string(),
+        None if cmd == "qsave" => st.path.clone().ok_or_else(|| bad("qsave", "drawing has no file name yet; use saveas {path}"))?,
+        None => return Err(bad(cmd, "`path` is required")),
+    };
+    if !is_drawing_file(&path) {
+        return Err(bad(cmd, "background save supports DXF and DWG drawing files"));
+    }
+    let opts =
+        if cmd == "qsave" { SaveAs { version: st.save_version_override, binary: st.binary_dxf && is_dxf(&path) } } else { save_options(cmd, p)? };
+    if opts.binary && !is_dxf(&path) {
+        return Err(bad(cmd, "binary applies to DXF files only"));
+    }
+    if io().is_none() || (opts != SaveAs::default() && write_as().is_none()) {
+        return Err(bad(cmd, "file formats are not available in this build"));
+    }
+    let version = opts.version.unwrap_or_else(|| drawing_version(s, &path));
+    Ok(PreparedSave { uid: st.uid, path, drawing: st.drawing().clone(), opts, version })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl PreparedSave {
+    /// Write to a unique adjacent file, then replace the destination only when still wanted.
+    /// A cancelled or failed save leaves the destination untouched.
+    pub fn perform(self, cancelled: &AtomicBool) -> std::result::Result<CompletedSave, String> {
+        if cancelled.load(Ordering::Acquire) {
+            return Err("save cancelled".into());
+        }
+        let path = &self.path;
+        let hooks = io().ok_or("file formats are not available in this build")?;
+        let bytes = if self.opts == SaveAs::default() {
+            (hooks.write)(&self.drawing, path)
+        } else {
+            let write = write_as().ok_or("saving with these options is not available")?;
+            write(&self.drawing, path, &self.opts)
+        }
+        .map_err(|e| format!("save: {e}"))?;
+        if cancelled.load(Ordering::Acquire) {
+            return Err("save cancelled".into());
+        }
+        let parent = std::path::Path::new(path).parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| std::path::Path::new("."));
+        let mut staged = tempfile::Builder::new().prefix(".cadcraft-save-").tempfile_in(parent).map_err(|e| format!("save: {path}: {e}"))?;
+        use std::io::Write;
+        staged.write_all(&bytes).map_err(|e| format!("save: {path}: {e}"))?;
+        staged.as_file().sync_all().map_err(|e| format!("save: {path}: {e}"))?;
+        if cancelled.load(Ordering::Acquire) {
+            return Err("save cancelled".into());
+        }
+        staged.persist(path).map_err(|e| format!("save: {path}: {}", e.error))?;
+        let mut result = saved(path, bytes.len());
+        result["version"] = json!(self.version.year());
+        result["binary"] = json!(self.opts.binary);
+        let lost = not_saved_as(&self.drawing, self.version);
+        if drops_unknown(path) && !lost.is_empty() {
+            result["notSaved"] = json!(lost);
+        }
+        let original = self.drawing.clone();
+        let mut drawing = self.drawing;
+        if let Some(version) = self.opts.version
+            && drawing.header.get("ACADVER").and_then(cadcraft_doc::HVal::as_str) != Some(version.code())
+        {
+            Arc::make_mut(&mut drawing).header.set_str("ACADVER", version.code());
+        }
+        Ok(CompletedSave { bytes: bytes.len(), result, original, drawing, requested_version: self.opts.version })
+    }
+}
+
+/// Apply a finished save only to the drawing that started it. Edits made while the worker ran
+/// remain dirty. If the drawing was closed, the file still exists but no other tab is renamed.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn finish_save(s: &mut Session, uid: u64, path: &str, completed: CompletedSave) -> Value {
+    if let Some(st) = s.docs.iter_mut().find(|st| st.uid == uid) {
+        let unchanged = Arc::ptr_eq(st.drawing(), &completed.original);
+        if unchanged && !Arc::ptr_eq(st.drawing(), &completed.drawing) {
+            *st.drawing_arc_mut() = completed.drawing.clone();
+        }
+        st.saved = completed.drawing;
+        st.path = Some(path.to_string());
+        st.title = file_name(path);
+        st.binary_dxf = completed.result.get("binary").and_then(Value::as_bool).unwrap_or(false);
+        st.save_version_override = if unchanged { None } else { completed.requested_version };
+        st.end_undo_group();
+    }
+    completed.result
 }
 
 /// The drawing written to `path` with `opts`: through [`IoHooks::write`] when no option is set,
@@ -387,7 +505,7 @@ fn run_closeall(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 pub(crate) fn save_to(s: &mut Session, path: &str) -> Result<usize> {
-    let opts = SaveAs { version: None, binary: s.state()?.binary_dxf && is_dxf(path) };
+    let opts = SaveAs { version: s.state()?.save_version_override, binary: s.state()?.binary_dxf && is_dxf(path) };
     save_as(s, "save", path, &opts)
 }
 
@@ -402,6 +520,7 @@ fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<usiz
     if is_drawing_file(path) {
         let st = s.state_mut()?;
         st.binary_dxf = opts.binary;
+        st.save_version_override = None;
         if let Some(v) = opts.version
             && st.drawing().header.get("ACADVER").and_then(cadcraft_doc::HVal::as_str) != Some(v.code())
         {
@@ -482,6 +601,9 @@ fn run_saveas(s: &mut Session, p: &Value) -> Result<Value> {
 /// The version a drawing is saved in at `path` when none is asked for: its `$ACADVER` (2018 by
 /// default), and for DWG at least 2004 (the io layer's rule: R2000 DWG has no true colours).
 fn drawing_version(s: &Session, path: &str) -> Version {
+    if let Some(v) = s.state().ok().and_then(|st| st.save_version_override) {
+        return if is_dxf(path) { v } else { v.max(Version::R2004) };
+    }
     let v =
         s.doc().ok().and_then(|d| d.header.get("ACADVER").and_then(cadcraft_doc::HVal::as_str).and_then(Version::for_acadver)).unwrap_or_default();
     if is_dxf(path) { v } else { v.max(Version::R2004) }
@@ -558,7 +680,7 @@ pub fn drops_unknown(path: &str) -> bool {
 }
 
 /// Whether `path` is saved as a drawing (DXF, DWG) rather than exported as an image.
-fn is_drawing_file(path: &str) -> bool {
+pub fn is_drawing_file(path: &str) -> bool {
     let ext = std::path::Path::new(path).extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
     matches!(ext.as_str(), "dxf" | "dwg" | "dwt" | "")
 }

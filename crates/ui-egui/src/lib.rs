@@ -43,6 +43,8 @@ pub mod palettes;
 pub mod parametric;
 pub mod plotstyles;
 pub mod quick;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod saving;
 pub mod shortcut_menus;
 pub mod theme;
 pub mod viewcube;
@@ -218,6 +220,8 @@ pub struct CadApp {
     pub status: Option<(String, f64)>,
     /// Drawings being read on worker threads ([`opening`]).
     pub opening: opening::Opening,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub saving: saving::Saving,
     pub integrated_titlebar: bool,
     control_rx: Option<Receiver<ControlRequest>>,
     pending_shots: Vec<(u64, Option<String>, std::sync::mpsc::Sender<Value>, f64)>,
@@ -274,6 +278,8 @@ impl CadApp {
             cmd: cmdline::CmdLine::default(),
             status: None,
             opening: opening::Opening::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            saving: saving::Saving::default(),
             integrated_titlebar: false,
             control_rx: None,
             pending_shots: Vec::new(),
@@ -327,6 +333,21 @@ impl CadApp {
         if let Some(r) = menus::run_ui_command(self, id, &params) {
             return r;
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        if matches!(id, "saveas" | "qsave" | "save") {
+            let path = params.get("path").and_then(Value::as_str).or_else(|| self.session.state().ok().and_then(|st| st.path.as_deref()));
+            if path.is_none_or(cadcraft_engine::cmd::file::is_drawing_file) {
+                return self.start_save(if id == "save" { "qsave" } else { id }, &params);
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if id == "save.status" {
+            return Ok(self.saving.status(params.get("jobId").and_then(Value::as_u64)));
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if id == "save.cancel" {
+            return self.saving.cancel(params.get("jobId").and_then(Value::as_u64).ok_or("`jobId` is required")?);
+        }
         let r = self.session.execute(id, &params).map_err(|e| e.to_string());
         if let Ok(v) = &r
             && let Some(m) = v.get("message").and_then(Value::as_str)
@@ -346,6 +367,13 @@ impl CadApp {
         if menus::run_ui_command(self, name, &Value::Null).is_some() {
             return;
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        if matches!(name, "qsave" | "save") {
+            if let Err(e) = self.run("qsave", Value::Null) {
+                self.session.echo(e);
+            }
+            return;
+        }
         if let Err(e) = self.session.start(name) {
             self.session.echo(e.to_string());
         }
@@ -358,6 +386,14 @@ impl CadApp {
             let first = text.split_whitespace().next().unwrap_or("");
             // `cmd {json}` is a programmatic call: the engine runs it with those parameters.
             let json_form = text.trim_start().get(first.len()..).is_some_and(|rest| rest.trim_start().starts_with('{'));
+            #[cfg(not(target_arch = "wasm32"))]
+            if json_form
+                && matches!(first.to_ascii_lowercase().as_str(), "saveas" | "qsave" | "save")
+                && let Some(rest) = text.trim_start().get(first.len()..)
+                && let Ok(params) = serde_json::from_str::<Value>(rest.trim())
+            {
+                return self.run(&first.to_ascii_lowercase(), params).err();
+            }
             if !first.is_empty() && !json_form && menus::run_ui_command(self, &first.to_ascii_lowercase(), &Value::Null).is_some() {
                 return None;
             }
@@ -555,6 +591,8 @@ impl CadApp {
         if self.session.lisp_busy() {
             ctx.request_repaint();
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.finish_saving();
         // Closing the window (title bar, File ▸ Exit, Cmd+Q) with unsaved changes asks first.
         if ctx.input(|i| i.viewport().close_requested()) && self.request_quit() {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -594,6 +632,8 @@ impl CadApp {
         self.drain_control(ctx);
         self.finish_opening();
         self.opening.show(ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.saving.show(ctx);
         if !self.synthetic.is_empty() {
             ctx.request_repaint();
         }
@@ -675,6 +715,40 @@ impl CadApp {
         autosave::show(self, ui.ctx());
         autosave::gpu_notice(self, ui.ctx());
         self.frame_ms = now_ms() - t0;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn start_save(&mut self, cmd: &str, params: &Value) -> Result<Value, String> {
+        if self.saving.busy() {
+            return Err("a drawing is already being saved; wait for it to finish".into());
+        }
+        let prepared = cadcraft_engine::cmd::file::prepare_save(&self.session, cmd, params).map_err(|e| e.to_string())?;
+        let result = self.saving.start(prepared)?;
+        self.session.echo(format!("Saving {}...", result["path"].as_str().unwrap_or_default()));
+        Ok(result)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn finish_saving(&mut self) {
+        let Some((uid, path, outcome)) = self.saving.poll() else { return };
+        match outcome {
+            Ok(done) => {
+                let result = cadcraft_engine::cmd::file::finish_save(&mut self.session, uid, &path, done);
+                if let Some(lost) = result.get("notSaved") {
+                    self.session.echo(format!("Some entities were not saved: {lost}"));
+                }
+                let msg = format!("Saved {path}");
+                self.session.echo(msg.clone());
+                self.set_status(msg);
+                self.finish_close_save(uid, true);
+            }
+            Err(error) => {
+                let msg = format!("{path} was not saved ({error})");
+                self.session.echo(msg.clone());
+                self.set_status(msg);
+                self.finish_close_save(uid, false);
+            }
+        }
     }
 
     fn drain_control(&mut self, ctx: &egui::Context) {
