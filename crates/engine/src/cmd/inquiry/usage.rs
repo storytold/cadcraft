@@ -8,8 +8,9 @@ use std::collections::{HashMap, HashSet};
 use cadcraft_doc::{Drawing, Entity, EntityKind};
 use serde_json::{Value, json};
 
+use super::super::bad;
 use super::super::blocks::purge;
-use super::super::*;
+
 use crate::{Result, Session};
 
 const CMD: &str = "usage";

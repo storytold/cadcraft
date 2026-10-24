@@ -6,7 +6,8 @@ use cadcraft_doc::{Entity, EntityKind};
 use cadcraft_geom::{Bounds2, Polyline, Vec2, intersect_segments};
 use serde_json::{Value, json};
 
-use super::super::*;
+use super::super::bad;
+
 use super::{SelfCheck, area_of, object_area};
 use crate::{Result, Session};
 
