@@ -1155,6 +1155,58 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     }
 }
 
+/// The block reference the Attributes panel edits: the one selected object, when it has attributes.
+pub(crate) fn attributes_target(app: &CadApp) -> Option<cadcraft_engine::doc::Handle> {
+    let sel = app.session.selection();
+    if sel.len() != 1 {
+        return None;
+    }
+    let h = *sel.first()?;
+    match &app.session.doc().ok()?.entity(h)?.kind {
+        EntityKind::Insert(i) if !i.attribs.is_empty() => Some(h),
+        _ => None,
+    }
+}
+
+/// The Attributes panel: the selected block reference's attributes as tag / value rows, edited in
+/// place through ATTEDIT. Constant attributes can't be edited. A tag used twice in one block
+/// stays read-only too, because ATTEDIT addresses an attribute by its tag.
+pub(crate) fn attributes_section(app: &mut CadApp, ui: &mut egui::Ui) {
+    let Some(h) = attributes_target(app) else {
+        ui.add_space(8.0);
+        ui.horizontal_wrapped(|ui| ui.colored_label(Tokens::get().text_dim, crate::tl!("Select a block reference that has attributes.")));
+        return;
+    };
+    let Ok(d) = app.session.doc() else { return };
+    let Some(EntityKind::Insert(i)) = d.entity(h).map(|e| &e.kind) else { return };
+    let block = i.block.clone();
+    let rows: Vec<(String, String, bool)> = i
+        .attribs
+        .iter()
+        .map(|a| {
+            let unique = i.attribs.iter().filter(|o| o.tag.eq_ignore_ascii_case(&a.tag)).count() == 1;
+            (a.tag.clone(), a.text.value.clone(), unique && !a.constant)
+        })
+        .collect();
+    ui.add_space(4.0);
+    prop_row(ui, "Block", |ui| read_only(ui, &block));
+    let mut set: Option<Value> = None;
+    for (tag, value, editable) in &rows {
+        prop_row(ui, tag, |ui| {
+            if *editable {
+                if let Some(v) = edit_field(ui, ui.id().with(("attrib", h, tag)), value.clone()) {
+                    set = Some(json!({ "handle": h.hex(), "values": { tag.clone(): v } }));
+                }
+            } else {
+                read_only(ui, value);
+            }
+        });
+    }
+    if let Some(p) = set {
+        let _ = app.run("attedit", p);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1187,5 +1239,54 @@ mod tests {
             output.textures_delta.clear();
         }
         assert!(painted_blue, "a ByLayer entity on a blue layer needs a blue Properties swatch");
+    }
+
+    fn collect_text(shape: &Shape, out: &mut Vec<String>) {
+        match shape {
+            Shape::Text(t) => out.push(t.galley.text().to_string()),
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_text(s, out)),
+            _ => {}
+        }
+    }
+
+    /// Everything the Properties palette paints for the current selection, one string per text.
+    fn painted_texts(app: &mut CadApp, section: fn(&mut CadApp, &mut egui::Ui)) -> Vec<String> {
+        let ctx = egui::Context::default();
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 1200.0))), ..Default::default() };
+        let mut texts = Vec::new();
+        for _ in 0..2 {
+            app.logic(&ctx);
+            let mut output = ctx.run_ui(input.clone(), |ui| section(app, ui));
+            texts.clear();
+            output.shapes.iter().for_each(|s| collect_text(&s.shape, &mut texts));
+            output.textures_delta.clear();
+        }
+        texts
+    }
+
+    #[test]
+    fn attributes_panel_lists_the_selected_block_reference_attributes() {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        app.run("attdef", json!({ "tag": "CODICE", "default": "8231", "at": [0, 1] })).unwrap();
+        app.run("attdef", json!({ "tag": "REV", "default": "A", "at": [0, 2] })).unwrap();
+        let line = app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+        let mut handles: Vec<String> = app.session.doc().unwrap().model.iter().map(|e| e.handle.hex()).collect();
+        handles.push(line["handles"][0].as_str().unwrap_or_default().to_string());
+        handles.sort();
+        handles.dedup();
+        app.run("block", json!({ "name": "B", "base": [0, 0], "handles": handles, "keep": "delete" })).unwrap();
+        let ins = app.run("insert", json!({ "name": "B", "at": [5, 0] })).unwrap();
+        app.run("select", json!({ "handles": [ins["handle"].clone()] })).unwrap();
+
+        assert_eq!(attributes_target(&app).map(|h| h.hex()), ins["handle"].as_str().map(str::to_string));
+        let texts = painted_texts(&mut app, attributes_section);
+        for want in ["CODICE", "REV"] {
+            assert!(texts.iter().any(|t| t == want), "the panel shows `{want}`; painted: {texts:?}");
+        }
+
+        // Anything else selected, or nothing, leaves the panel with just its hint.
+        app.run("select", json!({ "handles": [] })).unwrap();
+        assert_eq!(attributes_target(&app), None);
+        assert!(!painted_texts(&mut app, attributes_section).iter().any(|t| t == "CODICE"));
     }
 }
