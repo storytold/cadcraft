@@ -165,6 +165,9 @@ fn locale_and_saved_preference_resolution() {
         ("hu", &["hu", "hu-HU", "hu_HU.UTF-8", "HU-hu", " hu-HU "]),
         ("tr", &["tr", "tr-TR", "tr_TR.UTF-8", "TR-tr", " tr-TR ", "tr-CY"]),
         ("el", &["el", "el-GR", "el_GR.UTF-8", "EL-cy"]),
+        // Norwegian arrives as `nb` from browsers and Windows/macOS, but as `no` or `nn` from
+        // POSIX locales; all three select the same Bokmal catalog.
+        ("nb", &["nb", "nb-NO", "nb_NO.UTF-8", "NO-no", "no", "no_NO.UTF-8", "nn-NO", "nn"]),
         ("zh", &["zh", "zh-CN"]),
     ] {
         for tag in tags {
