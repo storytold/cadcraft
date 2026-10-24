@@ -318,7 +318,11 @@ pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 2)?;
     let h = ename(&a[0])?;
     let Ok(d) = ctx.s.doc() else { return Ok(Flow::Value(Value::Nil)) };
-    let Some(e) = d.entity(h) else { return Ok(Flow::Value(Value::Nil)) };
+    let Some(e) = d.entity(h) else {
+        // A table record, layout, dictionary or other object (#1661).
+        let recs = object_records(ctx)?;
+        return Ok(Flow::Value(object_by_handle(&recs, h).map(object_list).unwrap_or_default()));
+    };
     let (kind, mut tags) = (codec()?.groups)(d, e);
     convert_angles(&kind, &mut tags, f64::to_radians);
     let layout = match space_of(d, h) {
@@ -476,8 +480,13 @@ pub fn entnext(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 pub fn handent(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 1)?;
     let s = string(&a[0])?;
-    let h = Handle::parse_hex(&s).filter(|h| ctx.s.doc().is_ok_and(|d| d.entity(*h).is_some()));
-    Ok(Flow::Value(h.map(Value::Ename).unwrap_or_default()))
+    let Some(h) = Handle::parse_hex(&s) else { return Ok(Flow::Value(Value::Nil)) };
+    if ctx.s.doc().is_ok_and(|d| d.entity(h).is_some()) {
+        return Ok(Flow::Value(Value::Ename(h)));
+    }
+    // Table records, layouts, dictionaries and other objects have handles too (#1661).
+    let recs = object_records(ctx)?;
+    Ok(Flow::Value(object_by_handle(&recs, h).map(|r| Value::Ename(r.0)).unwrap_or_default()))
 }
 
 // ---------------- selection sets ----------------
@@ -911,6 +920,122 @@ pub fn tblnext(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     let i = if rewind { 0 } else { ctx.env.tblnext.get(&table).copied().unwrap_or(0) };
     ctx.env.tblnext.insert(table, i + 1);
     Ok(Flow::Value(records.get(i).cloned().unwrap_or_default()))
+}
+
+// ---------------- non-graphic objects ----------------
+//
+// CADCraft keeps no handles for table records, layouts, dictionaries and other objects: a save
+// numbers them as it writes them. LISP sees them as a save would write them now, so their handles
+// are the file's and hold while the drawing doesn't change (#1661, #1659). Permanent handles for
+// them are gaps.md FF7.
+
+/// The drawing's non-graphic records as a save writes them, cached until the drawing changes.
+fn object_records(ctx: &mut Ctx<'_>) -> Result<Arc<super::ObjectRecords>, LispError> {
+    let objects = codec()?.objects;
+    let Ok(st) = ctx.s.state() else { return Ok(Arc::default()) };
+    let key = (Arc::as_ptr(&st.doc) as usize, st.revision);
+    if let Some((k, v)) = &ctx.env.objects
+        && *k == key
+    {
+        return Ok(v.clone());
+    }
+    let v = Arc::new(objects(&st.doc));
+    ctx.env.objects = Some((key, v.clone()));
+    Ok(v)
+}
+
+fn object_by_handle(recs: &super::ObjectRecords, h: Handle) -> Option<&(Handle, String, Vec<Tag>)> {
+    recs.iter().find(|r| r.0 == h)
+}
+
+/// An object's list as `entget` gives it: its name (-1), type (0), then its groups.
+fn object_list(r: &(Handle, String, Vec<Tag>)) -> Value {
+    let (h, kind, tags) = r;
+    let mut tags = tags.clone();
+    convert_angles(kind, &mut tags, f64::to_radians);
+    let mut items = vec![Value::cons(Value::Int(-1), Value::Ename(*h)), Value::cons(Value::Int(0), Value::str(kind))];
+    items.extend(groups_to_list(&tags));
+    Value::list(items)
+}
+
+/// A dictionary's entries in order: (key, the entry's handle) from its 3 and 350/360 groups.
+fn dict_entries(tags: &[Tag]) -> Vec<(String, Handle)> {
+    let mut out = Vec::new();
+    let mut key: Option<String> = None;
+    for t in tags {
+        match t.code {
+            3 => key = Some(t.str()),
+            350 | 360 => {
+                if let Some(k) = key.take()
+                    && let Some(h) = Handle::parse_hex(t.str().trim())
+                {
+                    out.push((k, h));
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The entries of the dictionary record `v` names.
+fn dictionary(recs: &super::ObjectRecords, v: &Value) -> Result<Option<Vec<(String, Handle)>>, LispError> {
+    let h = ename(v)?;
+    Ok(object_by_handle(recs, h).filter(|r| is_dictionary(&r.1)).map(|r| dict_entries(&r.2)))
+}
+
+/// A dictionary record: a DICTIONARY, or one with a default entry (the plot style names'
+/// ACDBDICTIONARYWDFLT), as the DXF reader takes them.
+fn is_dictionary(kind: &str) -> bool {
+    kind == "DICTIONARY" || kind == "ACDBDICTIONARYWDFLT"
+}
+
+/// `(tblobjname table name)`: the entity name of a table record (a block's BLOCK record).
+pub fn tblobjname(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
+    arity(&a, 2, 2)?;
+    let table = string(&a[0])?.to_ascii_uppercase();
+    let name = string(&a[1])?;
+    let recs = object_records(ctx)?;
+    let found =
+        recs.iter().find(|(_, kind, tags)| *kind == table && tags.iter().find(|t| t.code == 2).is_some_and(|t| t.str().eq_ignore_ascii_case(&name)));
+    Ok(Flow::Value(found.map(|r| Value::Ename(r.0)).unwrap_or_default()))
+}
+
+/// `(namedobjdict)`: the named object dictionary, the root of the drawing's objects.
+pub fn namedobjdict(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
+    arity(&a, 0, 0)?;
+    let recs = object_records(ctx)?;
+    // It is the first object a DXF file writes.
+    Ok(Flow::Value(recs.iter().find(|r| r.1 == "DICTIONARY").map(|r| Value::Ename(r.0)).unwrap_or_default()))
+}
+
+/// `(dictsearch dict key [setnext])`: the list of the entry `key` (any case) of a dictionary;
+/// with setnext, `dictnext` continues after it.
+pub fn dictsearch(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
+    arity(&a, 2, 3)?;
+    let key = string(&a[1])?;
+    let recs = object_records(ctx)?;
+    let Some(entries) = dictionary(&recs, &a[0])? else { return Ok(Flow::Value(Value::Nil)) };
+    let Some(i) = entries.iter().position(|(k, _)| k.eq_ignore_ascii_case(&key)) else { return Ok(Flow::Value(Value::Nil)) };
+    if a.get(2).is_some_and(|v| !v.is_nil()) {
+        ctx.env.dictnext.insert(ename(&a[0])?, i + 1);
+    }
+    let entry = entries.get(i).and_then(|(_, h)| object_by_handle(&recs, *h));
+    Ok(Flow::Value(entry.map(object_list).unwrap_or_default()))
+}
+
+/// `(dictnext dict [rewind])`: the list of a dictionary's next entry (the first with rewind),
+/// nil after the last.
+pub fn dictnext(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
+    arity(&a, 1, 2)?;
+    let dict = ename(&a[0])?;
+    let rewind = a.get(1).is_some_and(|v| !v.is_nil());
+    let recs = object_records(ctx)?;
+    let Some(entries) = dictionary(&recs, &a[0])? else { return Ok(Flow::Value(Value::Nil)) };
+    let i = if rewind { 0 } else { ctx.env.dictnext.get(&dict).copied().unwrap_or(0) };
+    ctx.env.dictnext.insert(dict, i.saturating_add(1));
+    let entry = entries.get(i).and_then(|(_, h)| object_by_handle(&recs, *h));
+    Ok(Flow::Value(entry.map(object_list).unwrap_or_default()))
 }
 
 // ---------------- units ----------------

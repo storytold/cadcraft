@@ -134,7 +134,7 @@ pub fn run(_root: &Path, exact: bool) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Counts, count_tests, walk};
+    use super::{Counts, count_tests};
 
     #[test]
     fn counts_attributes_and_proptest_blocks() {
@@ -146,6 +146,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn walk_does_not_follow_directory_symlinks() {
+        use super::walk;
         use std::os::unix::fs::symlink;
         let base = std::env::temp_dir().join(format!("cadcraft-xtask-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);

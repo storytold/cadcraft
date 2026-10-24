@@ -71,7 +71,9 @@ reached", malformed source is a reader error, and every built-in checks its argu
   next call, and `(command)` to cancel; `getvar setvar`; `entget entmake entmod entdel entlast
   entnext entupd handent`; `ssget` (modes X, L, P, I, W, C, F, WP, CP, a point, or the user
   selecting; filters with wildcards and `-4` operators) `ssadd ssdel sslength ssname ssmemb
-  sssetfirst ssgetfirst`; `tblsearch tblnext` (LAYER, LTYPE, STYLE, BLOCK, DIMSTYLE, APPID)
+  sssetfirst ssgetfirst`; `tblsearch tblnext` (LAYER, LTYPE, STYLE, BLOCK, DIMSTYLE, APPID);
+  `tblobjname namedobjdict dictsearch dictnext`, and `handent`/`entget` on table records,
+  layouts, dictionaries and other objects (see below)
 - **Input:** `initget getpoint getcorner getdist getangle getorient getreal getint getstring
   getkword entsel nentsel`
 - **Units:** `rtos angtos distof angtof`
@@ -81,6 +83,13 @@ Entity lists use the DXF group codes of CADCraft's DXF files: what `entget` retu
 DXF file holds for the object, plus `-1` (its name) and `410` (its layout). Angles (groups 50–58)
 are in radians, as in AutoCAD, where the file holds degrees; `entmake`, `entmod` and `ssget`
 filters take radians too.
+
+Non-graphic objects (table records, BLOCK records, layouts, dictionaries and the other objects of
+a DXF file's OBJECTS section) are listed as a save writes them, with the handles the file gets:
+`handent` of a handle read from a file CADCraft saved finds the object, and `entget` lists it.
+CADCraft doesn't keep handles for these objects between saves: they are numbered when the drawing
+is written, so they hold while the drawing is unchanged but can move once objects are added
+(permanent handles for them are gaps.md FF7). `entmod` and `entdel` don't change them.
 
 ## Testing against the corpus
 

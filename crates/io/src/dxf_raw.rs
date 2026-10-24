@@ -618,6 +618,30 @@ fn written_records(tags: &[Tag]) -> Vec<Rec> {
     out
 }
 
+/// The non-graphic records of written DXF `tags` (table records, the BLOCK record that starts
+/// each block definition, and objects): handle, type and groups after the `0` group. A DIMSTYLE
+/// names its handle in group 105.
+pub(crate) fn object_records(tags: &[Tag]) -> Vec<(Handle, String, Vec<Tag>)> {
+    let mut out = Vec::new();
+    for r in written_records(tags) {
+        let wanted = match r.sec.as_str() {
+            "TABLES" => r.kind != "TABLE" && r.kind != "ENDTAB",
+            "BLOCKS" => r.kind == "BLOCK",
+            "OBJECTS" => true,
+            _ => false,
+        };
+        if !wanted || r.kind == "SECTION" || r.kind == "ENDSEC" {
+            continue;
+        }
+        let body = tags.get(r.start + 1..r.end).unwrap_or(&[]);
+        let code = if r.kind == "DIMSTYLE" { 105 } else { 5 };
+        if let Some(h) = val(body, code).and_then(|v| Handle::parse_hex(v.trim())) {
+            out.push((h, r.kind, body.to_vec()));
+        }
+    }
+    out
+}
+
 /// Remaps the kept data's handles onto a written file.
 struct Map<'a> {
     f: &'a Foreign,

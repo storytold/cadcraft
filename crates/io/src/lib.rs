@@ -188,6 +188,15 @@ pub fn write_dxf(d: &Drawing) -> String {
     dxf_write::write(d)
 }
 
+/// The drawing's non-graphic records as a DXF save writes them, at the version it is saved in:
+/// table records, BLOCK records and objects (dictionaries, layouts…), each with its handle, type
+/// and groups after the `0` group. CADCraft keeps no handles for these: they are the handles the
+/// file gets, the same as long as the drawing doesn't change (AutoLISP's `handent`, `entget`,
+/// `tblobjname` and the dictionary functions use them).
+pub fn object_records(d: &Drawing) -> Vec<(cadcraft_doc::Handle, String, Vec<cadcraft_dxf::Tag>)> {
+    dxf_raw::object_records(&dxf_write::tags(d, save_version(d)))
+}
+
 /// Regions, written as closed polylines.
 mod dxf_region;
 
