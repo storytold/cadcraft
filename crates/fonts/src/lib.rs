@@ -80,6 +80,18 @@ pub fn decode_controls(s: &str) -> Vec<(char, bool, bool)> {
     out
 }
 
+/// Characters a font may show in place of `c` when it lacks it, best first: the diameter sign
+/// (`%%c`, U+2300), which many TrueType fonts lack, as the empty set (U+2205, what some files
+/// store it as) or Ø (U+00D8, in every Latin font). All three read as the diameter sign in
+/// drawing text, and any of them beats the font's missing-glyph box (#1608).
+pub fn substitutes(c: char) -> &'static [char] {
+    match c {
+        '⌀' => &['∅', 'Ø'],
+        '∅' => &['⌀', 'Ø'],
+        _ => &[],
+    }
+}
+
 /// Advance width of one character at height 1 and width factor 1.
 pub fn char_advance(c: char) -> f64 {
     match stroke::glyph(c) {
@@ -213,7 +225,7 @@ pub fn shape_stroke(s: &str, height: f64, width_factor: f64, oblique: f64) -> Sh
 }
 
 /// Draw stroke-font glyph `spec` with its left edge at `x` (`sc` = text height / cap height).
-fn draw_stroke_glyph(out: &mut Shaped, spec: &str, x: f64, sc: f64, wf: f64, shear: f64) {
+pub(crate) fn draw_stroke_glyph(out: &mut Shaped, spec: &str, x: f64, sc: f64, wf: f64, shear: f64) {
     for st in stroke::strokes(spec) {
         let pts: Vec<Vec2> = st.iter().map(|(gx, gy)| Vec2::new(x + (gx * sc * wf) + gy * sc * shear, gy * sc)).collect();
         if pts.len() == 1 {
@@ -641,6 +653,32 @@ mod tests {
         assert_eq!(decode_controls("%%").len(), 2);
     }
 
+    /// #1608: the diameter sign a font lacks is shown as its empty set or Ø, in that order; no
+    /// other character has substitutes.
+    #[test]
+    fn diameter_sign_substitutes_in_order() {
+        assert_eq!(substitutes('⌀'), &['∅', 'Ø']);
+        assert_eq!(substitutes('∅'), &['⌀', 'Ø']);
+        for c in ['Ø', 'ø', 'A', '°', '\u{E000}'] {
+            assert!(substitutes(c).is_empty(), "{c:?}");
+        }
+        let has = |c: char| c == 'Ø';
+        assert_eq!(substitutes('⌀').iter().copied().find(|&s| has(s)), Some('Ø'));
+        let has = |c: char| c == '∅' || c == 'Ø';
+        assert_eq!(substitutes('⌀').iter().copied().find(|&s| has(s)), Some('∅'));
+    }
+
+    /// The stroke font draws U+2205 (what some files store `%%c` as) as its diameter sign, not
+    /// as a missing-glyph box or a fallback font's glyph.
+    #[test]
+    fn empty_set_is_the_stroke_diameter_sign() {
+        let a = shape_stroke("\u{2205}50", 1.0, 1.0, 0.0);
+        assert_eq!(a, shape_stroke("\u{2300}50", 1.0, 1.0, 0.0));
+        assert_eq!(a, shape_stroke("%%c50", 1.0, 1.0, 0.0));
+        assert!(a.glyphs.is_empty(), "no fallback glyphs");
+        assert!((line_width("\u{2205}50", 1.0, 1.0) - a.width).abs() < 1e-9);
+    }
+
     #[test]
     fn line_metrics_scale_with_height() {
         let a = layout_line("HELLO", 1.0, 1.0, 0.0);
@@ -697,6 +735,47 @@ mod ttf_tests {
         assert!(run.width > 1.5 && run.width < 4.0, "width {}", run.width);
         let maxy = run.strokes.iter().flatten().map(|p| p.y).fold(f64::MIN, f64::max);
         assert!((maxy - 1.0).abs() < 0.1, "cap height ~ text height, got {maxy}");
+    }
+
+    /// #1608: `%%c` in a text style whose TrueType font has neither U+2300 nor U+2205 (Arial,
+    /// Liberation Sans, Times...) is that font's Ø, not its missing-glyph box; so is U+2205,
+    /// which some files store the symbol as. Skips cleanly when no such font is installed.
+    #[test]
+    fn diameter_sign_in_a_font_without_it_is_its_o_slash() {
+        let fonts = ["LiberationSans-Regular", "Arial", "Helvetica", "Verdana", "Times New Roman", "LiberationSerif-Regular"];
+        let Some(face) =
+            fonts.iter().filter_map(|n| crate::ttf::find(n)).find(|f| !f.has_glyph('\u{2300}') && !f.has_glyph('\u{2205}') && f.has_glyph('Ø'))
+        else {
+            return;
+        };
+        let o_slash = crate::ttf::shape(&face, "Ø50", 1.0, 1.0, 0.0).unwrap();
+        for s in ["%%c50", "\u{2300}50", "\u{2205}50"] {
+            let sh = crate::ttf::shape(&face, s, 1.0, 1.0, 0.0).unwrap();
+            assert_eq!(sh.glyphs, o_slash.glyphs, "{s}");
+            assert_eq!(sh.text.first().map(|t| (t.gid, t.ch)), o_slash.text.first().map(|t| (t.gid, t.ch)), "{s}: the PDF glyph");
+            assert!((crate::ttf::width(&face, s, 1.0, 1.0).unwrap() - o_slash.width).abs() < 1e-9, "{s}");
+        }
+        // The same on a line with right-to-left text (the shaped path): the face's Ø, not the
+        // stroke font's last resort, at the same width. The line keeps the order its own text
+        // gives it: "⌀50 א" reads right to left (⌀ is bidi-neutral, Ø left-to-right), so the Ø
+        // is its rightmost glyph, where a font with ⌀ puts the sign; "Ø50 א" reads left to right.
+        let rtl = crate::complex::shape(Some(&face), "\u{2300}50 \u{5D0}", 1.0, 1.0, 0.0).unwrap();
+        let o_rtl = crate::complex::shape(Some(&face), "Ø50 \u{5D0}", 1.0, 1.0, 0.0).unwrap();
+        let x0 = |g: &[Vec<cadcraft_geom::Vec2>]| g.iter().flatten().map(|p| p.x).fold(f64::MAX, f64::min);
+        let same_shape = |a: &[Vec<cadcraft_geom::Vec2>], b: &[Vec<cadcraft_geom::Vec2>]| {
+            let (ax, bx) = (x0(a), x0(b));
+            a.len() == b.len()
+                && a.iter().zip(b).all(|(c, d)| {
+                    c.len() == d.len() && c.iter().zip(d).all(|(p, q)| (p.x - ax - (q.x - bx)).abs() < 1e-9 && (p.y - q.y).abs() < 1e-9)
+                })
+        };
+        // Empty glyphs (the space) keep a slot for text export but have no position to compare.
+        let rightmost = rtl.glyphs.iter().filter(|g| !g.is_empty()).max_by(|a, b| x0(a).total_cmp(&x0(b))).unwrap();
+        assert!(same_shape(rightmost, o_slash.glyphs.first().unwrap()), "the face's Ø at the right end");
+        assert!(same_shape(o_rtl.glyphs.first().unwrap(), o_slash.glyphs.first().unwrap()), "Ø at the left end of a left-to-right line");
+        assert_eq!(rtl.glyphs.len(), o_rtl.glyphs.len());
+        assert!((rtl.width - o_rtl.width).abs() < 1e-9);
+        assert!(rtl.strokes.is_empty(), "no stroke-font glyphs");
     }
 
     #[test]

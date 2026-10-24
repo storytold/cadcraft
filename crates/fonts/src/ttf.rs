@@ -789,13 +789,32 @@ pub(crate) fn fallback_glyph(c: char) -> Option<Arc<GlyphOutline>> {
     Some(glyph(&f, c)).filter(|g| g.mapped)
 }
 
-/// The glyph of `c` in `face`, or from a fallback font when `face` lacks it.
-fn glyph_or_fallback(face: &Face, c: char) -> Arc<GlyphOutline> {
+/// The glyph of `c` in `face`, or from a fallback font when `face` lacks it, and the character
+/// it shows: a character the face lacks is one of its [`crate::substitutes`] in the face when it
+/// has one, before a fallback font is tried.
+fn glyph_or_fallback(face: &Face, c: char) -> (Arc<GlyphOutline>, char) {
     let g = glyph(face, c);
     if g.mapped || c.is_whitespace() {
-        return g;
+        return (g, c);
     }
-    fallback_glyph(c).unwrap_or(g)
+    if let Some(s) = crate::substitutes(c).iter().copied().find(|&s| face.has_glyph(s)) {
+        return (glyph(face, s), s);
+    }
+    (fallback_glyph(c).unwrap_or(g), c)
+}
+
+/// The stroke font's glyph of `c`, when no font has it (`g` is a missing-glyph shape): drawn in
+/// place of the face's box.
+fn stroke_glyph(g: &GlyphOutline, c: char) -> Option<&'static str> {
+    if g.mapped || c.is_whitespace() {
+        return None;
+    }
+    crate::stroke::glyph(c).map(|(_, spec)| spec)
+}
+
+/// Advance of `c` drawn as `g`, or by the stroke font when no font has it.
+fn advance(g: &GlyphOutline, c: char, h: f64, wf: f64) -> f64 {
+    if stroke_glyph(g, c).is_some() { crate::char_advance(c) * h * wf } else { g.advance * h / g.cap * wf }
 }
 
 /// The [`crate::TextGlyph`] of a glyph placed like [`place_glyph`] does (its outline index is
@@ -851,7 +870,9 @@ pub(crate) fn place_glyph_at(g: &GlyphOutline, origin: Vec2, scale: f64, wf: f64
 
 /// Shape one line with a TrueType face: closed glyph contours grouped per glyph (baseline at
 /// y = 0, x from 0) plus `%%u`/`%%o` decorations as strokes. Text height = cap height.
-/// Characters the face lacks come from a fallback font, scaled to its own cap height.
+/// Characters the face lacks come from a fallback font, scaled to its own cap height; those no
+/// font has are drawn by the stroke font when it has them (as strokes), else as the face's
+/// missing-glyph shape.
 pub fn shape(face: &Face, s: &str, height: f64, width_factor: f64, oblique: f64) -> Option<Shaped> {
     face.font()?;
     if crate::bidi::has_rtl(s)
@@ -873,14 +894,16 @@ pub fn shape(face: &Face, s: &str, height: f64, width_factor: f64, oblique: f64)
         if crate::bidi::is_format_control(c) {
             continue;
         }
-        let g = glyph_or_fallback(face, c);
-        if !c.is_whitespace()
+        let (g, shown) = glyph_or_fallback(face, c);
+        if let Some(spec) = stroke_glyph(&g, c) {
+            crate::draw_stroke_glyph(&mut out, spec, x, h / crate::stroke::CAP, wf, shear);
+        } else if !c.is_whitespace()
             && let Some(contours) = place_glyph_budgeted(&g, x, h, wf, shear, &mut points_left)
         {
             // Even an empty mapped glyph needs a valid outline slot for text export.
-            out.push_glyph(contours, text_glyph(&g, c, x, h, wf, shear));
+            out.push_glyph(contours, text_glyph(&g, shown, x, h, wf, shear));
         }
-        let adv = g.advance * h / g.cap * wf;
+        let adv = advance(&g, c, h, wf);
         spans.push((x, x + adv, under, over));
         x += adv;
     }
@@ -902,10 +925,7 @@ pub fn width(face: &Face, s: &str, height: f64, width_factor: f64) -> Option<f64
         crate::decode_controls(s)
             .iter()
             .filter(|(c, _, _)| !crate::bidi::is_format_control(*c))
-            .map(|(c, _, _)| {
-                let g = glyph_or_fallback(face, *c);
-                g.advance * height / g.cap * wf
-            })
+            .map(|(c, _, _)| advance(&glyph_or_fallback(face, *c).0, *c, height, wf))
             .sum(),
     )
 }
@@ -916,6 +936,24 @@ pub fn layout_line(face: &Face, s: &str, height: f64, width_factor: f64, oblique
     let mut strokes: Vec<Vec<Vec2>> = sh.glyphs.into_iter().flatten().collect();
     strokes.extend(sh.strokes);
     Some(Run { strokes, width: sh.width })
+}
+
+#[cfg(test)]
+mod missing_glyph_tests {
+    use super::*;
+
+    /// A character no font has is drawn by the stroke font when it has it (with the stroke
+    /// font's advance), else as the face's missing-glyph shape.
+    #[test]
+    fn stroke_font_draws_what_no_font_has() {
+        let missing = GlyphOutline { advance: 500.0, cap: 700.0, ..Default::default() };
+        assert!(stroke_glyph(&missing, '\u{2300}').is_some());
+        assert!((advance(&missing, '\u{2300}', 2.0, 0.5) - crate::char_advance('\u{2300}')).abs() < 1e-9);
+        assert!(stroke_glyph(&missing, '\u{E000}').is_none() && stroke_glyph(&missing, ' ').is_none());
+        assert!((advance(&missing, '\u{E000}', 2.0, 0.5) - 500.0 * 2.0 / 700.0 * 0.5).abs() < 1e-9);
+        let mapped = GlyphOutline { mapped: true, ..missing };
+        assert!(stroke_glyph(&mapped, '\u{2300}').is_none());
+    }
 }
 
 #[cfg(test)]

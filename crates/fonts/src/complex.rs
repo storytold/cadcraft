@@ -67,7 +67,19 @@ fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64
     let wf = if width_factor.is_finite() && width_factor.abs() > 1e-6 { width_factor } else { 1.0 };
     let shear = oblique.tan().clamp(-10.0, 10.0);
     let sc = h / stroke::CAP;
-    let cs: Vec<char> = chars.iter().map(|c| c.0).collect();
+    // A character the text's face lacks is one of its substitutes when it has one, as in the
+    // left-to-right path. The bidi runs come from the text as decoded, before substitution: a
+    // substitute may be of another bidi class (⌀ and ∅ are neutral, Ø is left-to-right), and
+    // the line keeps the direction its own text gives it; the substitute is drawn at the same
+    // logical index.
+    let decoded: Vec<char> = chars.iter().map(|c| c.0).collect();
+    let cs: Vec<char> = decoded
+        .iter()
+        .map(|&c| match primary {
+            Some(p) if !c.is_whitespace() && !p.has_glyph(c) => crate::substitutes(c).iter().copied().find(|&s| p.has_glyph(s)).unwrap_or(c),
+            _ => c,
+        })
+        .collect();
     let flags = |i: usize| chars.get(i).map(|c| (c.1, c.2)).unwrap_or((false, false));
     let mut out = Shaped::default();
     let mut points_left = ttf::MAX_SHAPED_POINTS;
@@ -75,7 +87,7 @@ fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64
     let mut x = 0.0;
     // Whether the rightmost glyph so far is a stroke-font glyph.
     let mut stroke_last = false;
-    for (run, rtl) in bidi::visual_runs(&cs, None) {
+    for (run, rtl) in bidi::visual_runs(&decoded, None) {
         let mut pieces = itemize(&cs, run, primary);
         if rtl {
             pieces.reverse();
@@ -122,9 +134,9 @@ fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64
         }
     }
     out.strokes.extend(crate::decorations(&spans, h));
-    // A stroke-font glyph at the right end: the width leaves out its trailing gap, like
-    // `shape_stroke`.
-    out.width = if stroke_last { (x - stroke::GAP * sc * wf).max(0.0) } else { x };
+    // A stroke-font glyph at the right end of a stroke-font line: the width leaves out its
+    // trailing gap, like `shape_stroke`. A TrueType line keeps it, like `ttf::shape`.
+    out.width = if stroke_last && primary.is_none() { (x - stroke::GAP * sc * wf).max(0.0) } else { x };
     out
 }
 
@@ -150,7 +162,9 @@ fn itemize(cs: &[char], run: Range<usize>, primary: Option<&Face>) -> Vec<(Src, 
 }
 
 /// What draws `c`: the text's face when it has the character, else the previous fallback face,
-/// else the first fallback font that has it (FONTFALLBACK, FONTALT, installed fonts).
+/// else the first fallback font that has it (FONTFALLBACK, FONTALT, installed fonts), else the
+/// stroke font when it has it; what no font has is the text's face's missing-glyph shape (a box
+/// in the stroke font).
 fn resolve(c: char, primary: Option<&Face>, prev: Option<&Face>) -> Src {
     if let Some(p) = primary
         && (c.is_whitespace() || p.has_glyph(c))
@@ -165,6 +179,8 @@ fn resolve(c: char, primary: Option<&Face>, prev: Option<&Face>) -> Src {
     }
     match (ttf::fallback_for(c), primary) {
         (Some(f), _) => Src::Face(f),
+        // No font has it: the stroke font's glyph, as in the left-to-right path.
+        (None, _) if stroke::glyph(c).is_some() => Src::Stroke,
         // The text's font draws its own missing-glyph shape.
         (None, Some(p)) => Src::Face(p.clone()),
         (None, None) => Src::Missing,
@@ -258,6 +274,30 @@ mod tests {
         assert!(!sh.strokes.iter().any(|s| s.len() == 5 && s.first() == s.last()), "no boxes for marks");
     }
 
+    #[test]
+    fn a_face_lacking_what_no_font_has_gets_the_stroke_glyph() {
+        // A face that maps no character stands in for the text's font lacking one. What no
+        // installed font has either is the stroke font's glyph when it has one, as in the
+        // left-to-right path; what the stroke font lacks too, and whitespace, stay the face's.
+        let junk = Face { bytes: std::sync::Arc::new(b"not a font".to_vec()), index: 0 };
+        let c = '\u{2300}';
+        match ttf::fallback_for(c) {
+            None => assert!(matches!(resolve(c, Some(&junk), None), Src::Stroke), "the stroke font's glyph"),
+            Some(f) => assert!(matches!(resolve(c, Some(&junk), None), Src::Face(g) if g.same(&f)), "the fallback font's"),
+        }
+        assert!(matches!(resolve('\u{E000}', Some(&junk), None), Src::Face(_)), "the face's missing-glyph shape");
+        assert!(matches!(resolve(' ', Some(&junk), None), Src::Face(_)));
+        assert!(matches!(resolve(c, None, None), Src::Stroke));
+        if ttf::fallback_for(c).is_none() {
+            // Drawn as strokes, not a box, with the stroke font's advance; the trailing gap
+            // stays in the width, as `ttf::shape` keeps it.
+            let sh = shape(Some(&junk), "\u{05D0}\u{2300}", 1.0, 1.0, 0.0).unwrap_or_default();
+            assert!(sh.strokes.iter().any(|s| s.len() == 2), "the slash of the diameter sign");
+            assert!(!sh.strokes.iter().any(|s| s.len() == 5 && s.first() == s.last()), "no missing-glyph box");
+            assert!(sh.width >= crate::char_advance(c) - 1e-9, "{}", sh.width);
+        }
+    }
+
     /// An installed font that shapes Arabic (Persian), or `None` (the test then skips).
     fn arabic_face() -> Option<Face> {
         ttf::fallback_for('\u{0633}').filter(|f| f.has_glyph('\u{06CC}') && f.has_glyph('\u{067E}'))
@@ -330,5 +370,79 @@ mod tests {
         let long = "\u{05D0}b ".repeat(MAX_CHARS);
         assert!(shape(None, &long, 1.0, 1.0, 0.0).is_none());
         assert!(crate::shape_stroke(&long, 1.0, 1.0, 0.0).width > 0.0);
+    }
+
+    /// A TrueType font that maps `chars` to glyphs 1, 2, ... in code point order (each with the
+    /// same advance) and nothing else: a character map and metrics, no outlines. Enough for
+    /// `has_glyph` and the shaper, with a coverage the test chooses, whatever fonts are installed.
+    fn font_mapping(chars: &[char]) -> Face {
+        // Big-endian fields: (width in bytes, value).
+        fn table(fields: &[(usize, i64)]) -> Vec<u8> {
+            fields.iter().flat_map(|&(w, x)| x.to_be_bytes()[8 - w..].to_vec()).collect()
+        }
+        let mut chars = chars.to_vec();
+        chars.sort_unstable();
+        chars.dedup();
+        let n = i64::try_from(chars.len() + 1).unwrap();
+        // head: version 1.0, revision, checksum adjustment, magic, flags, units per em; created,
+        // modified and bounds (zero); mac style, lowest ppem, direction hint, loca format, glyph
+        // data format.
+        let mut head = table(&[(2, 1), (2, 0), (4, 0x1_0000), (4, 0), (4, 0x5F0F_3CF5), (2, 0), (2, 1000)]);
+        head.extend(table(&[(8, 0), (8, 0), (8, 0), (2, 0), (2, 8), (2, 2), (2, 0), (2, 0)]));
+        // hhea: version 1.0, ascender, descender, line gap, max advance, min side bearings,
+        // max extent, caret slope and offset, reserved, metric format, number of h metrics.
+        let hhea =
+            table(&[(2, 1), (2, 0), (2, 800), (2, -200), (2, 0), (2, 500), (2, 0), (2, 0), (2, 500), (2, 1), (2, 0), (2, 0), (8, 0), (2, 0), (2, n)]);
+        let maxp = table(&[(4, 0x5000), (2, n)]);
+        let hmtx = table(&[(2, 500), (2, 0)].repeat(chars.len() + 1));
+        // cmap: one (3, 10) format 12 subtable, one group per character, in code point order.
+        let groups: Vec<(usize, i64)> = chars
+            .iter()
+            .enumerate()
+            .flat_map(|(i, c)| [(4, i64::from(u32::from(*c))), (4, i64::from(u32::from(*c))), (4, i64::try_from(i + 1).unwrap())])
+            .collect();
+        let count = i64::try_from(chars.len()).unwrap();
+        let mut cmap = table(&[(2, 0), (2, 1), (2, 3), (2, 10), (4, 12), (2, 12), (2, 0), (4, 16 + 12 * count), (4, 0), (4, count)]);
+        cmap.extend(table(&groups));
+        let tables = [(b"cmap", cmap), (b"head", head), (b"hhea", hhea), (b"hmtx", hmtx), (b"maxp", maxp)];
+        let mut font = table(&[(4, 0x1_0000), (2, 5), (2, 64), (2, 2), (2, 16)]);
+        let mut offset = 12 + 16 * tables.len();
+        for (tag, t) in &tables {
+            font.extend_from_slice(*tag);
+            font.extend(table(&[(4, 0), (4, i64::try_from(offset).unwrap()), (4, i64::try_from(t.len()).unwrap())]));
+            offset += t.len().next_multiple_of(4);
+        }
+        for (_, t) in &tables {
+            font.extend_from_slice(t);
+            font.resize(font.len().next_multiple_of(4), 0);
+        }
+        Face { bytes: std::sync::Arc::new(font), index: 0 }
+    }
+
+    #[test]
+    fn a_substitute_does_not_change_the_direction_of_the_line() {
+        // ⌀ and ∅ are bidi-neutral; Ø, drawn for them in a font that lacks both, is
+        // left-to-right. "⌀50 אב" reads right to left (its first strong character is Hebrew),
+        // so "50⌀" sits at the right end of the line. A font without ⌀ lays the line out the
+        // same way: the runs come from the text as decoded, not from the characters
+        // substituted for it, which would make Ø the first strong character and flip the line.
+        let s = "%%u\u{2300}50%%u \u{05D0}\u{05D1}";
+        assert_eq!(bidi::base_rtl(&crate::decode_controls(s).iter().map(|c| c.0).collect::<String>()), Some(true));
+        let shared: Vec<char> = "Ø50 \u{05D0}\u{05D1}".chars().collect();
+        let has = font_mapping(&[&['\u{2300}'][..], &shared].concat());
+        let lacks = font_mapping(&shared);
+        assert!(has.has_glyph('\u{2300}') && !lacks.has_glyph('\u{2300}') && !lacks.has_glyph('\u{2205}') && lacks.has_glyph('Ø'));
+        let with = shape(Some(&has), s, 1.0, 1.0, 0.0).unwrap();
+        let without = shape(Some(&lacks), s, 1.0, 1.0, 0.0).unwrap();
+        // The underline follows "⌀50" wherever the line puts it; nothing else is a stroke.
+        let underline = |sh: &Shaped| {
+            assert_eq!(sh.strokes.len(), 1, "{:?}", sh.strokes);
+            (sh.strokes[0][0].x, sh.strokes[0][1].x)
+        };
+        let (x0, x1) = underline(&with);
+        assert!(x0 > 0.3 * with.width && (x1 - with.width).abs() < 1e-9, "at the right end: {x0}..{x1} of {}", with.width);
+        let (y0, y1) = underline(&without);
+        assert!((y0 - x0).abs() < 1e-9 && (y1 - x1).abs() < 1e-9, "{y0}..{y1}, not {x0}..{x1}");
+        assert!((without.width - with.width).abs() < 1e-9);
     }
 }

@@ -107,7 +107,7 @@ pub(crate) fn glyph(c: char) -> Option<(f64, &'static str)> {
         '~' => (4.0, "0g1h3f4g"),
         '°' => (2.0, "1i0h1g2h1i"),
         '±' => (4.0, "2e2i 0g4g 0d4d"),
-        'Ø' | 'ø' | '⌀' => (4.0, "1c0d0h1i3i4h4d3c1c 0c4i"),
+        'Ø' | 'ø' | '⌀' | '∅' => (4.0, "1c0d0h1i3i4h4d3c1c 0c4i"),
         // List bullet: a small crossed diamond at mid x-height.
         '•' => (2.0, "1d0e1f2e1d 0e2e 1d1f"),
         _ => return None,
