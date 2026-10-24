@@ -60,6 +60,7 @@ mod layer_merge_delete;
 mod layoff_repeat;
 mod layout_prompts;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod leader_text_scale;
 mod lisp_corpus;
 mod malformed_handles;
 mod matchprop;
