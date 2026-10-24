@@ -5,10 +5,15 @@ use cadcraft_doc::{EntityKind, HAlign, MText, Point, RayLine, Text, VAlign};
 use cadcraft_geom::{Arc, Circle, Ellipse, PolyVertex, Polyline, Spline, Vec2, arc_to_bulge, bulge_to_arc};
 use serde_json::{Value, json};
 
-use super::helpers::*;
+use super::helpers::{arc, circle, line, lwpoly, polygon_from_edge, polygon_typed_radius_point, polygon_vertices, v3};
+
 use super::machines::number;
 use super::pline_opts::{Outcome, PlineAsk};
-use super::*;
+use super::{
+    CommandSpec, bad, bool_or, distinct_points, f64_or, f64_req, find_command, point_param, point_req, point_value, points_param, size_param,
+    str_param,
+};
+
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step, snap};
 
 /// Every draw command's spec: JSON parameters, menu path, aliases and the interactive prompt

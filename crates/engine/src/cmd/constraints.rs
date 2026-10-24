@@ -14,7 +14,8 @@ use cadcraft_geom::{Line, Vec2};
 use serde_json::{Value, json};
 
 use super::machines::{SelOutcome, SelectPhase};
-use super::*;
+use super::{CommandSpec, bad, bool_or, f64_or, point_value, str_param, targets};
+
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 macro_rules! gc {

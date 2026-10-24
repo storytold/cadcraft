@@ -7,9 +7,11 @@ use cadcraft_geom::{Arc, Circle, Ellipse, Line, PolyVertex, Polyline, Spline, TA
 use serde_json::{Value, json};
 
 use super::curves::{self, Chain, MAX_GEN, TanObj};
-use super::helpers::*;
+use super::helpers::{arc, circle, line, lwpoly, rect_vertices, rect_with_corners, v3};
+
 use super::machines::number;
-use super::*;
+use super::{CommandSpec, bad, bool_or, f64_or, f64_req, point_param, point_req, point_value, points_param, size_param, str_param, targets};
+
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 pub(crate) mod breakline;
