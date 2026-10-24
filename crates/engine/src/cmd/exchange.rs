@@ -171,6 +171,7 @@ fn import_drawing(s: &mut Session, src: &Drawing, at: Vec2, scale: f64, file: &s
             nb.entities.push(e);
         }
         d.blocks.insert(to.clone(), Arc::new(nb));
+        adopt_block_record_extras(d, src, from, to);
     }
     let mut handles = Vec::new();
     for e in src.model.iter() {
@@ -253,6 +254,53 @@ fn block_names(d: &Drawing, src: &Drawing) -> BTreeMap<String, String> {
         out.insert(name.clone(), to);
     }
     out
+}
+
+/// Carry a source block record's extension dictionary (where dynamic blocks keep their
+/// parameters) and extended data over to the copied block `to`: the objects reachable from the
+/// dictionary are copied with fresh handles and their references renumbered.
+fn adopt_block_record_extras(d: &mut Drawing, src: &Drawing, from: &str, to: &str) {
+    let key = |n: &str| ("BLOCK_RECORD".to_string(), n.to_ascii_uppercase());
+    let Some(extra) = src.foreign.records.get(&key(from)) else { return };
+    let mut extra = extra.clone();
+    extra.reactors.clear();
+    // The objects reachable from the extension dictionary, in discovery order.
+    let mut map: BTreeMap<cadcraft_doc::Handle, cadcraft_doc::Handle> = BTreeMap::new();
+    let mut queue: Vec<cadcraft_doc::Handle> = extra.xdict.into_iter().collect();
+    while let Some(h) = queue.pop() {
+        if map.contains_key(&h) {
+            continue;
+        }
+        let Some(o) = src.foreign.objects.iter().find(|o| o.handle == h) else { continue };
+        map.insert(h, d.new_handle());
+        for t in &o.tags {
+            if (350..=369).contains(&t.code) {
+                queue.extend(cadcraft_doc::Handle::parse_hex(t.value.trim()));
+            }
+        }
+    }
+    let mut copies = Vec::new();
+    for o in src.foreign.objects.iter().filter(|o| map.contains_key(&o.handle)) {
+        let mut o = o.clone();
+        o.handle = map[&o.handle];
+        // Owners outside the copied set (the source block record) are dropped, not left dangling.
+        o.tags.retain(|t| t.code != 330 || cadcraft_doc::Handle::parse_hex(t.value.trim()).is_some_and(|h| map.contains_key(&h)));
+        for t in &mut o.tags {
+            if (330..=369).contains(&t.code)
+                && let Some(n) = cadcraft_doc::Handle::parse_hex(t.value.trim()).and_then(|h| map.get(&h))
+            {
+                t.value = n.hex();
+            }
+        }
+        copies.push(o);
+    }
+    extra.xdict = extra.xdict.and_then(|h| map.get(&h).copied());
+    if extra.is_empty() {
+        return;
+    }
+    let f = Arc::make_mut(&mut d.foreign);
+    f.objects.extend(copies);
+    f.records.insert(key(to), extra);
 }
 
 /// A copy of a source entity for this drawing: a fresh handle, block references renamed, and
@@ -649,6 +697,43 @@ mod tests {
             col_spacing: 0.0,
             row_spacing: 0.0,
         })
+    }
+
+    #[test]
+    fn import_keeps_the_block_records_extension_dictionary() {
+        use cadcraft_doc::RawTag;
+        use cadcraft_doc::foreign::{ForeignExtra, ForeignObject};
+        let tag = |code: i32, value: &str| RawTag { code, value: value.into() };
+        let mut src = Drawing::new_imperial();
+        src.blocks.insert("SYM".into(), block("SYM", 1.0));
+        src.add(&Space::Model, Common::default(), insert("SYM")).unwrap();
+        Arc::make_mut(&mut src.foreign).objects.push(ForeignObject {
+            handle: Handle(0xF00),
+            kind: "DICTIONARY".into(),
+            tags: vec![tag(330, "B10"), tag(3, "OTTO_TEST"), tag(350, "F01")],
+        });
+        Arc::make_mut(&mut src.foreign).objects.push(ForeignObject {
+            handle: Handle(0xF01),
+            kind: "XRECORD".into(),
+            tags: vec![tag(330, "E00"), tag(1, "kept?")],
+        });
+        Arc::make_mut(&mut src.foreign).objects.push(ForeignObject { handle: Handle(0xE00), kind: "DICTIONARY".into(), tags: vec![tag(350, "F01")] });
+        let key = ("BLOCK_RECORD".to_string(), "SYM".to_string());
+        Arc::make_mut(&mut src.foreign).records.insert(key.clone(), ForeignExtra { xdict: Some(Handle(0xF00)), ..ForeignExtra::default() });
+
+        let mut s = session();
+        import_drawing(&mut s, &src, Vec2::ZERO, 1.0, "lib.dxf").unwrap();
+        let d = s.doc().unwrap();
+        let x = d.foreign.records.get(&key).and_then(|r| r.xdict).expect("the block record keeps its extension dictionary");
+        let dict = d.foreign.objects.iter().find(|o| o.handle == x).expect("the dictionary object is copied");
+        let entry = dict.tags.iter().find(|t| t.code == 350).and_then(|t| Handle::parse_hex(&t.value)).unwrap();
+        assert!(d.foreign.objects.iter().any(|o| o.handle == entry && o.kind == "XRECORD"), "its entries are copied too");
+        assert!(dict.tags.iter().all(|t| t.code != 330 || t.value != "B10"), "the owner is not the source block record");
+        assert!(
+            d.foreign.objects.iter().all(|o| o.handle != Handle(0xE00) && o.handle != Handle(0xB10)),
+            "unrelated source dictionaries are not copied"
+        );
+        assert_eq!(d.foreign.objects.iter().filter(|o| o.kind == "DICTIONARY").count(), 1);
     }
 
     #[test]
