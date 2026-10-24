@@ -46,6 +46,15 @@ fn array_of(d: &Drawing, h: Handle) -> Result<(Insert, Arc<Block>, ArrayParams)>
     Ok((ins.clone(), blk, p))
 }
 
+/// Resolve an array for editing before allocating replacement blocks or source objects.
+fn editable_array_of(s: &Session, h: Handle) -> Result<(Insert, Arc<Block>, ArrayParams)> {
+    let array = array_of(s.doc()?, h)?;
+    if super::super::curves::is_locked(s, h) {
+        return Err(other("The array is on a locked layer."));
+    }
+    Ok(array)
+}
+
 /// The open ARRAYEDIT Source, if any: the array block holding it and the state.
 fn open_edit(d: &Drawing) -> Option<(String, SourceEdit)> {
     d.blocks.iter().find_map(|(n, b)| b.array.as_ref().and_then(|a| a.editing.clone()).map(|e| (n.clone(), e)))
@@ -116,8 +125,8 @@ fn rebuild(s: &mut Session, h: Handle, p: ArrayParams, insert: Option<Vec2>) -> 
     if !p.is_valid() {
         return Err(other("The array parameters are not valid."));
     }
+    let (old_ins, _, old) = editable_array_of(s, h)?;
     let d = s.doc()?;
-    let (old_ins, _, old) = array_of(d, h)?;
     let objs = d.block(&p.source).map(|b| b.entities.len()).ok_or_else(|| other("The array's source block is missing."))?;
     check_size(s, p.item_count(), objs)?;
     let d = s.doc_mut()?;
@@ -148,7 +157,7 @@ fn rebuild(s: &mut Session, h: Handle, p: ArrayParams, insert: Option<Vec2>) -> 
 /// at world point `base`. The objects stay in the drawing.
 fn block_from(s: &mut Session, h: Handle, hs: &[Handle], base: Vec2) -> Result<String> {
     let d = s.doc()?;
-    let (ins, blk, p) = array_of(d, h)?;
+    let (ins, blk, p) = editable_array_of(s, h)?;
     let inv = ins.transform(blk.base.xy()).inverse().ok_or_else(|| other("The array's scale is zero."))?;
     let ents: Vec<Entity> = hs.iter().filter(|x| **x != h).filter_map(|x| d.entity(*x).map(|e| (**e).clone())).collect();
     if ents.is_empty() {
@@ -216,7 +225,7 @@ fn item_at(d: &Drawing, h: Handle, at: Vec2, tol: f64) -> Option<(u32, u32, u32)
 /// Move the base point of array `h` to world point `base` without moving the items.
 fn rebase(s: &mut Session, h: Handle, base: Vec2) -> Result<()> {
     let d = s.doc()?;
-    let (ins, blk, mut p) = array_of(d, h)?;
+    let (ins, blk, mut p) = editable_array_of(s, h)?;
     let w = ins.transform(blk.base.xy());
     let b = w.inverse().ok_or_else(|| other("The array's scale is zero."))?.apply(base);
     if !b.is_finite() {
@@ -240,7 +249,7 @@ fn rebase(s: &mut Session, h: Handle, base: Vec2) -> Result<()> {
 fn open_source(s: &mut Session, h: Handle, item: (u32, u32, u32)) -> Result<Vec<Handle>> {
     refuse_while_editing(s)?;
     let d = s.doc()?;
-    let (ins, blk, p) = array_of(d, h)?;
+    let (ins, blk, p) = editable_array_of(s, h)?;
     let src = d.block(&p.source).cloned().ok_or_else(|| other("The array's source block is missing."))?;
     let m = ins.transform(blk.base.xy()).then_before(item_place(&p, item)?).then_before(Mat3::translate(-src.base.xy()));
     let space = d.space_of(h).unwrap_or_default();
@@ -291,6 +300,14 @@ fn close_source(s: &mut Session, save: bool) -> Result<Value> {
     let live = d.entity(ed.array).is_some_and(|e| matches!(&e.kind, EntityKind::Insert(i) if i.block.eq_ignore_ascii_case(&blk_name)));
     if save && live && objs.is_empty() {
         return Err(other("The source would have no objects; enter ARRAYCLOSE No to discard the changes, or erase the array."));
+    }
+    if save && live {
+        editable_array_of(s, ed.array)?;
+    }
+    // Saving a live array and discarding both remove the temporary source objects. A source
+    // layer may have been locked after editing began; refuse before clearing the edit state.
+    if (!save || live) && objs.iter().any(|h| super::super::curves::is_locked(s, *h)) {
+        return Err(other("A source object is on a locked layer."));
     }
     let d = s.doc_mut()?;
     if let Some(b) = d.blocks.get_mut(&blk_name) {
@@ -447,7 +464,7 @@ fn fill_from_between(b: f64, items: u32) -> Result<f64> {
 fn run_arrayedit(s: &mut Session, p: &Value) -> Result<Value> {
     let h = super::super::curves::handle_param(p, "handle").ok_or_else(|| bad("arrayedit", "`handle` (the array) is required"))?;
     refuse_while_editing(s)?;
-    let (ins, blk, _) = array_of(s.doc()?, h)?;
+    let (ins, blk, _) = editable_array_of(s, h)?;
     let w = ins.transform(blk.base.xy());
     let to_local = w.inverse().ok_or_else(|| other("The array's scale is zero."))?;
     if bool_or(p, "reset", false) {
@@ -550,7 +567,7 @@ impl EditM {
     /// Apply `f` to the array's parameters and rebuild it.
     fn change(&self, s: &mut Session, f: impl FnOnce(&mut ArrayParams) -> Result<()>) -> Result<()> {
         let h = self.array.ok_or_else(|| other("No array selected."))?;
-        let (_, _, mut p) = array_of(s.doc()?, h)?;
+        let (_, _, mut p) = editable_array_of(s, h)?;
         f(&mut p)?;
         rebuild(s, h, p, None)
     }
@@ -624,6 +641,7 @@ impl Interactive for EditM {
         if let [h] = pre.as_slice()
             && s.doc().ok().and_then(|d| d.entity(*h).and_then(|e| d.array_params(e))).is_some()
         {
+            editable_array_of(s, *h)?;
             self.array = Some(*h);
             self.stage = Stage::Main;
         }
@@ -698,6 +716,7 @@ impl Interactive for EditM {
                     let d = s.doc()?;
                     match hs.iter().copied().find(|h| d.entity(*h).and_then(|e| d.array_params(e)).is_some()) {
                         Some(h) => {
+                            editable_array_of(s, h)?;
                             self.array = Some(h);
                             self.stage = Main;
                             Ok(Step::Continue)

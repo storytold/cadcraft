@@ -154,6 +154,9 @@ fn edit(s: &mut Session, p: &Value, id: &str, f: impl FnOnce(&mut Table) -> std:
         Some(EntityKind::Table(t)) => t.clone(),
         _ => return Err(bad(id, "object is not a table")),
     };
+    if super::curves::is_locked(s, h) {
+        return Err(bad(id, "the table is on a locked layer"));
+    }
     normalize(&mut t);
     f(&mut t).map_err(|m| bad(id, m))?;
     let st = cadcraft_render::table_style_of(s.doc()?, &t);

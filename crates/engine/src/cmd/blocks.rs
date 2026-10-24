@@ -153,6 +153,11 @@ pub(crate) fn make_block(s: &mut Session, name: &str, base: Vec2, hs: &[Handle],
     if ents.is_empty() {
         return Err(bad("block", "no objects selected"));
     }
+    // Retain copies the sources; conversion and deletion remove them. Check every source
+    // before defining the block, allocating handles or removing any selected object.
+    if keep != "retain" && hs.iter().any(|h| super::curves::is_locked(s, *h)) {
+        return Err(bad("block", "an object is on a locked layer"));
+    }
     if references_block(d, &ents, name) {
         return Err(bad("block", format!("Block \"{name}\" references itself.")));
     }

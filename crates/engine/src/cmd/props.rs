@@ -181,6 +181,10 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
     if hs.is_empty() {
         return Err(bad("properties.set", "nothing selected"));
     }
+    // Validate the whole source selection before creating layers or changing any object.
+    if hs.iter().any(|h| super::curves::is_locked(s, *h)) {
+        return Err(bad("properties.set", "an object is on a locked layer"));
+    }
     let color = p.get("color").map(|c| parse_color(c).ok_or_else(|| bad("properties.set", "bad colour"))).transpose()?;
     let transparency = p
         .get("transparency")
