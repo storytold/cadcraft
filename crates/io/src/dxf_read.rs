@@ -1356,8 +1356,12 @@ fn header(tags: &[Tag], d: &mut Drawing) {
                     Some(c) => HVal::Str(c.to_string()),
                     None => continue,
                 },
-                // $DIMJOGANG is in radians; the variable (like the style) holds degrees.
-                HVal::Real(r) if name == "DIMJOGANG" => HVal::Real((r.to_degrees() * 1e9).round() / 1e9),
+                // $DIMJOGANG is in radians (degrees are taken too); the variable, like the style,
+                // holds degrees. A value no style takes is dropped.
+                HVal::Real(r) if name == "DIMJOGANG" => match crate::dxf_ext::jog_degrees(r) {
+                    Some(deg) => HVal::Real(deg),
+                    None => continue,
+                },
                 // $ANGBASE is in degrees (a drawing measured from north has 90.0); the variable
                 // holds radians.
                 HVal::Real(r) if name == "ANGBASE" => HVal::Real(r.to_radians()),
@@ -1593,7 +1597,18 @@ fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                         fields.insert(field.to_string(), v);
                     }
                 }
-                fields.extend(crate::dxf_ext::read_newer_dimvars(&tg, &rx.styles, &rx.brs, &rx.ltypes));
+                // A group value the style can't take leaves its variable to the xdata below.
+                let refused = DimStyle::default().apply_fields(&fields);
+                fields.retain(|k, _| !refused.contains(k));
+                // Then what the groups leave out (R2000 has no groups for the newer variables):
+                // AutoCAD's jog angle xdata first, since AutoCAD keeps its own xdata current but
+                // leaves CADCraft's as it was, then CADCraft's.
+                if let Some(jog) = crate::dxf_ext::read_jog_xdata(&tg) {
+                    fields.entry("jogAngle").or_insert(serde_json::json!(jog));
+                }
+                for (k, v) in crate::dxf_ext::read_newer_dimvars(&tg, &rx.styles, &rx.brs, &rx.ltypes) {
+                    fields.entry(k).or_insert(v);
+                }
                 let mut st = DimStyle { name: name.clone(), annotative: annotative(&tg), ..DimStyle::default() };
                 st.apply_fields(&fields);
                 match d.dim_styles.iter_mut().find(|s| s.name.eq_ignore_ascii_case(&name)) {

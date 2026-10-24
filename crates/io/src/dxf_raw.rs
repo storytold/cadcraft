@@ -42,7 +42,8 @@ const MODELLED_KEYS: &[&str] = &[
 const MODELLED_XDICT_KEYS: &[&str] = &["ACAD_DIMASSOC", "ACAD_SORTENTS", "ACDBCONTEXTDATAMANAGER"];
 
 /// Applications whose xdata CADCraft reads and writes itself. `ACAD` holds dimension overrides
-/// (DSTYLE) on dimensions and dimension styles; elsewhere it is kept.
+/// (DSTYLE) on dimensions and dimension styles, and AutoCAD's jog angle app
+/// ([`crate::dxf_ext::JOG_APP`]) the angle of R2000 dimension styles; elsewhere both are kept.
 const OWN_APPS: &[&str] = &["CADCRAFT", "ACADANNOTATIVE", "ACCMTRANSPARENCY", "ACAECLAYERSTANDARD"];
 
 /// Most objects kept from one file.
@@ -234,7 +235,9 @@ fn foreign_xdata(kind: &str, tags: &[Tag]) -> Vec<RawTag> {
         let chunk = rest.get(i..i + 1 + len).unwrap_or(&[]);
         i += 1 + len;
         let app = up(&first.str());
-        let own = OWN_APPS.contains(&app.as_str()) || (app == "ACAD" && matches!(kind, "DIMENSION" | "DIMSTYLE"));
+        let own = OWN_APPS.contains(&app.as_str())
+            || (app == "ACAD" && matches!(kind, "DIMENSION" | "DIMSTYLE"))
+            || (app.eq_ignore_ascii_case(crate::dxf_ext::JOG_APP) && kind == "DIMSTYLE");
         if app.is_empty() || own || out.len() + chunk.len() > MAX_XDATA_GROUPS {
             continue;
         }
