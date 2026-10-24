@@ -172,6 +172,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{path} | {data: base64, name} → {index, entities?, warnings: what reading left out}")
             .enabled(always)
             .noundo(),
+        CommandSpec::new("whohas", "Who Has", run_whohas)
+            .params("{path?: a drawing file (default: the current drawing's)} → {path, holder: {user, host, instance, opened} | null}")
+            .enabled(always)
+            .noundo(),
         CommandSpec::new("close", "Close", run_close).menu(&["File", "Close"]).key("Cmd+W").params("{index?}").noundo(),
         CommandSpec::new("closeall", "Close All", run_closeall).menu(&["File", "Close All"]).enabled(always).noundo(),
         CommandSpec::new("qsave", "Save", run_qsave_reporting).menu(&["File", "Save"]).key("Cmd+S").alias(&["save"]).params("{path?}").noundo(),
@@ -359,6 +363,25 @@ fn run_open(s: &mut Session, p: &Value) -> Result<Value> {
     let i = open_bytes(s, &bytes, name, None)?;
     super::blocks::xref::after_open(s, i);
     Ok(opened(s, i, false))
+}
+
+/// WHOHAS: who has a drawing open, from its lock file ([`crate::drawlock`]): the current
+/// drawing's, or the file `path`.
+fn run_whohas(s: &mut Session, p: &Value) -> Result<Value> {
+    let path = match str_param(p, "path") {
+        Some(p) => p.to_string(),
+        None => s.state()?.path.clone().ok_or_else(|| bad("whohas", "the drawing has no file yet; pass `path`"))?,
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let holder = crate::drawlock::holder(std::path::Path::new(&path));
+    #[cfg(target_arch = "wasm32")]
+    let holder: Option<crate::drawlock::Holder> = None;
+    let msg = match &holder {
+        Some(h) => format!("{} is open by {}.", file_name(&path), h.describe()),
+        None => format!("Nobody has {} open (no current lock).", file_name(&path)),
+    };
+    s.echo(msg);
+    Ok(json!({ "path": path, "holder": holder }))
 }
 
 fn run_close(s: &mut Session, p: &Value) -> Result<Value> {

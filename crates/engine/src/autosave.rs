@@ -132,6 +132,9 @@ pub struct Autosaver {
     start: std::time::Instant,
     #[cfg(not(target_arch = "wasm32"))]
     last_beat: Option<f64>,
+    /// Who-has-it-open locks of the drawings open from files ([`crate::drawlock`]).
+    #[cfg(not(target_arch = "wasm32"))]
+    locks: crate::drawlock::Locks,
 }
 
 impl Autosaver {
@@ -146,6 +149,8 @@ impl Autosaver {
             start: std::time::Instant::now(),
             #[cfg(not(target_arch = "wasm32"))]
             last_beat: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            locks: crate::drawlock::Locks::default(),
         }
     }
 
@@ -367,7 +372,13 @@ mod native {
             let jobs = self.plan(s, now, minutes, &dir);
             self.perform(jobs);
             self.heartbeat(&dir, now);
+            self.locks.sync(s, &self.instance);
             self.next_due(now, minutes).map(Duration::from_secs_f64)
+        }
+
+        /// What the drawing locks have to tell the user (someone else has a drawing open).
+        pub fn take_lock_notes(&mut self) -> Vec<String> {
+            self.locks.take_notes()
         }
 
         /// Autosave every drawing with changes not yet autosaved right away, without waiting for
@@ -459,6 +470,7 @@ mod native {
                 let _ = h.join();
             }
             self.busy.clear();
+            self.locks.release_all(&self.instance);
             for path in self.files() {
                 discard(&path);
             }

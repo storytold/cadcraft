@@ -81,11 +81,17 @@ impl CadApp {
         }
     }
 
-    /// Every frame: autosave what is due, and wake up when the next one is.
+    /// Every frame: autosave what is due, and wake up when the next one is; keep the drawing locks.
     pub fn autosave_tick(&mut self, _ctx: &egui::Context) {
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(wait) = self.autosave.as_mut().and_then(|s| s.tick(&self.session)) {
             _ctx.request_repaint_after(wait);
+        }
+        // A drawing someone else has open (its lock, `cadcraft_engine::drawlock`): say so.
+        #[cfg(not(target_arch = "wasm32"))]
+        for note in self.autosave.as_mut().map(|s| s.take_lock_notes()).unwrap_or_default() {
+            self.session.echo(note.clone());
+            self.set_status(note);
         }
     }
 
