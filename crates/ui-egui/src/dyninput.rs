@@ -385,6 +385,24 @@ mod tests {
         ]
     }
 
+    /// Off the drawing area the tooltip is not drawn, so last frame's option rows cannot be clicked.
+    #[test]
+    fn option_rows_are_dropped_when_the_tooltip_is_not_drawn() {
+        let mut app = crate::CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+        let ctx = egui::Context::default();
+        run_frame(&mut app, &ctx, Vec::new());
+        let center = app.canvas.rect.map_or(egui::pos2(700.0, 450.0), |r| r.center());
+        app.cmdline("circle");
+        run_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(center)]);
+        run_frame(&mut app, &ctx, key(egui::Key::ArrowDown));
+        run_frame(&mut app, &ctx, Vec::new());
+        assert!(!app.cmd.option_rows.is_empty(), "the menu is drawn at the cursor");
+        let outside = egui::pos2(1.0, 1.0);
+        assert!(app.canvas.rect.is_some_and(|r| !r.contains(outside)));
+        run_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(outside)]);
+        assert!(app.cmd.option_rows.is_empty(), "{:?}", app.cmd.option_rows);
+    }
+
     #[test]
     fn down_arrow_lists_the_options_and_enter_or_a_click_picks_one() {
         let mut app = crate::CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
