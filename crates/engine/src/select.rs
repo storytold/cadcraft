@@ -434,7 +434,7 @@ impl SelectMode {
         };
         match last {
             None => Prompt::new(first, Accept::POINT),
-            Some(p) if self.is_box() => Prompt::new(next, Accept::POINT).base(p),
+            Some(p) if self.is_box() => Prompt::new(next, Accept::POINT).corner(p),
             Some(p) => Prompt::new(next, Accept::POINT).kw(&["Undo"]).base(p),
         }
     }

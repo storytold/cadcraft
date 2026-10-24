@@ -279,7 +279,7 @@ impl Interactive for ViewM {
             Stage::Restore => Prompt::new("Enter view name to restore", Accept::TEXT),
             Stage::Save | Stage::WindowName => Prompt::new("Enter view name to save", Accept::TEXT),
             Stage::WindowFirst => Prompt::new("Specify first corner", Accept::POINT),
-            Stage::WindowSecond(a) => Prompt::new("Specify opposite corner", Accept::POINT).base(a),
+            Stage::WindowSecond(a) => Prompt::new("Specify opposite corner", Accept::POINT).corner(a),
             Stage::Settings => Prompt::new("Enter an option", Accept::TEXT).kw(&["Layer snapshot"]),
             Stage::Snapshot => {
                 let on = if s.settings.view_layer_snapshot { "Yes" } else { "No" };

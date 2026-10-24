@@ -365,7 +365,7 @@ impl Interactive for PlotWindowM {
     fn prompt(&self, _s: &Session) -> Prompt {
         match self.first {
             None => Prompt::new("Specify first corner", Accept::POINT),
-            Some(a) => Prompt::new("Specify opposite corner", Accept::POINT).base(a),
+            Some(a) => Prompt::new("Specify opposite corner", Accept::POINT).corner(a),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
