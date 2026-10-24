@@ -554,8 +554,9 @@ fn computed_text_insert(d: &Drawing, t: &Text) -> Vec3 {
         oblique: t.oblique,
         h,
         v,
-        backwards: ts.backwards,
-        upside_down: ts.upside_down,
+        // The text's own flags, as it's drawn and as group 71 says.
+        backwards: t.backwards,
+        upside_down: t.upside_down,
     };
     let q = cadcraft_fonts::baseline_start(&cadcraft_fonts::TextFont::resolve(&ts.font), &t.value, &p);
     if q.is_finite() { Vec3::new(q.x, q.y, a.z) } else { t.insert }
@@ -575,6 +576,11 @@ fn text_tags(w: &mut W, d: &Drawing, t: &Text, attrib: Option<(&Attrib, Version)
         w.f(51, t.oblique.to_degrees());
     }
     w.s(7, &t.style);
+    // Text generation flags: 2 backwards, 4 upside down.
+    let generation = if t.backwards { 2 } else { 0 } | if t.upside_down { 4 } else { 0 };
+    if generation != 0 {
+        w.i(71, generation);
+    }
     let h = match t.halign {
         HAlign::Left => 0,
         HAlign::Center => 1,

@@ -131,6 +131,23 @@ fn hatch_uses_a_pattern_from_a_pat_file_and_keeps_its_definition() {
 }
 
 #[test]
+fn properties_pattern_edits_keep_a_pat_files_definition() {
+    let mut s = Session::new();
+    s.execute("rectang", &json!({ "p1": [0, 0], "p2": [10, 10] })).unwrap();
+    s.execute("hatch", &json!({ "points": [[5, 5]], "pattern": "ANSI31", "patternText": PAT })).unwrap();
+    let hx = s.doc().unwrap().model.iter().find(|e| matches!(e.kind, EntityKind::Hatch(_))).unwrap().handle.hex();
+    // As HATCHEDIT: a loaded pattern brings its lines, and they stay.
+    s.execute("properties.set", &json!({ "handles": [hx], "pattern": "MYSTEPS" })).unwrap();
+    let h = hatches(&s).pop().unwrap();
+    assert_eq!((h.pattern.as_str(), h.pattern_lines.len()), ("MYSTEPS", 1));
+    // The same name again keeps them, and a library pattern drops them.
+    s.execute("properties.set", &json!({ "handles": [hx], "pattern": "mysteps" })).unwrap();
+    assert_eq!(hatches(&s).pop().unwrap().pattern_lines[0].dashes, [0.25, -0.25]);
+    s.execute("properties.set", &json!({ "handles": [hx], "pattern": "ANSI37" })).unwrap();
+    assert!(hatches(&s).pop().unwrap().pattern_lines.is_empty());
+}
+
+#[test]
 fn hatch_pattern_prompt_takes_a_pat_file_name() {
     let path = file("MYSTAIRS.pat", "*MYOTHER\n0,0,0,0,1\n*MYSTAIRS,Stairs\n0,0,0,.5,.5,.5,-.5\n90,.5,0,.5,.5,.5,-.5\n");
     let mut s = Session::new();

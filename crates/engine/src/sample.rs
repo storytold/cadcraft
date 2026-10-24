@@ -47,6 +47,8 @@ fn text(at: Vec2, h: f64, s: &str) -> EntityKind {
         style: "Standard".into(),
         halign: Default::default(),
         valign: Default::default(),
+        backwards: false,
+        upside_down: false,
     })
 }
 

@@ -31,6 +31,8 @@ fn text(value: &str, at: Vec3, h: HAlign, v: VAlign) -> EntityKind {
         style: "Standard".into(),
         halign: h,
         valign: v,
+        backwards: false,
+        upside_down: false,
     })
 }
 
@@ -217,6 +219,8 @@ fn justified_text_made_here_writes_its_baseline_start_for_every_justification() 
                 style: "Standard".into(),
                 halign: h,
                 valign: v,
+                backwards: false,
+                upside_down: false,
             };
             d.add(&Space::Model, Common::default(), EntityKind::Text(t.clone())).unwrap();
             made.push(t);

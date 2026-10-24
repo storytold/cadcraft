@@ -169,6 +169,8 @@ fn text(d: &mut Drawing, space: &Space, style: &str, at: (f64, f64), value: &str
         style: style.into(),
         halign: Default::default(),
         valign: Default::default(),
+        backwards: false,
+        upside_down: false,
     };
     d.add(space, Common::default(), EntityKind::Text(t)).unwrap();
 }
@@ -364,6 +366,8 @@ fn hostile_text_never_panics() {
             style: "Real".into(),
             halign: Default::default(),
             valign: Default::default(),
+            backwards: false,
+            upside_down: false,
         };
         d.add(&Space::Model, Common::default(), EntityKind::Text(t)).unwrap();
     }

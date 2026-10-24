@@ -29,7 +29,9 @@ fn text_box(t: &crate::Text, len: usize) -> Bounds2 {
         (_, VAlign::Top) => -t.height,
     };
     let local = [Vec2::new(dx, dy), Vec2::new(dx + w, dy), Vec2::new(dx + w, dy + t.height), Vec2::new(dx, dy + t.height)];
-    Bounds2::from_points(local.map(|p| origin + p.rotate(t.rotation)))
+    // Backwards and upside-down text is mirrored about the point it is placed by.
+    let (mx, my) = (if t.backwards { -1.0 } else { 1.0 }, if t.upside_down { -1.0 } else { 1.0 });
+    Bounds2::from_points(local.map(|p| origin + Vec2::new(p.x * mx, p.y * my).rotate(t.rotation)))
 }
 
 /// Whether an entity inside a block definition shows: its own invisible flag and its layer count,
@@ -302,11 +304,22 @@ mod tests {
             style: "Standard".into(),
             halign,
             valign,
+            backwards: false,
+            upside_down: false,
         }
     }
 
     fn bounds(kind: EntityKind) -> Bounds2 {
         entity_bounds(&Drawing::default(), &Entity::new(crate::Handle(1), kind), 0)
+    }
+
+    #[test]
+    fn mirrored_text_extends_the_other_way() {
+        let plain = bounds(EntityKind::Text(text(HAlign::Left, VAlign::Baseline)));
+        assert!(plain.min.x >= -1e-9 && plain.min.y >= -1e-9);
+        let back = bounds(EntityKind::Text(Text { backwards: true, upside_down: true, ..text(HAlign::Left, VAlign::Baseline) }));
+        assert!(back.max.x <= 1e-9 && back.max.y <= 1e-9, "{back:?}");
+        assert!((back.width() - plain.width()).abs() < 1e-9);
     }
 
     #[test]
