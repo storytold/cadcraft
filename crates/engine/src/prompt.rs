@@ -66,6 +66,27 @@ pub struct Prompt {
     /// the routine writes, so it cannot be read for the word "Select" (#1598).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub picks_one: bool,
+    /// The prompt asks for the opposite corner of a selection window ([`Prompt::window`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window: Option<SelectWindow>,
+}
+
+/// A selection window waiting for its opposite corner ([`Prompt::window`],
+/// [`crate::Session::selection_window`]).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectWindow {
+    pub corner: Vec2,
+    /// `Some(true)`: always a crossing (TRIM's Crossing, a typed `C`), `Some(false)`: always a
+    /// window (a typed `W`), `None`: a window to the right of the corner, a crossing to its left.
+    pub crossing: Option<bool>,
+}
+
+impl SelectWindow {
+    /// Whether the window from the corner to `p` selects as a crossing.
+    pub fn crossing_to(&self, p: Vec2) -> bool {
+        self.crossing.unwrap_or(p.x < self.corner.x)
+    }
 }
 
 /// Parse `@distance<angle` (relative polar), returning `(distance, angle in radians)`.
@@ -118,6 +139,14 @@ impl Prompt {
         self.corner = true;
         self
     }
+    /// Asks for the opposite corner of a selection window from `corner` (the `window` field):
+    /// the UI draws it as a selection area, and a drag that opened it closes it where the button
+    /// comes up (PICKDRAG). It picks objects, so object snaps and Dynamic Input stay off.
+    pub fn window(mut self, corner: Vec2, crossing: Option<bool>) -> Self {
+        self.base = Some(corner);
+        self.window = Some(SelectWindow { corner, crossing });
+        self
+    }
     /// Asks for a distance from the base (the `distance` field).
     pub fn distance(mut self) -> Self {
         self.distance = true;
@@ -133,13 +162,13 @@ impl Prompt {
         self
     }
     /// The prompt picks objects: a "Select objects" prompt, one that says it picks a single object
-    /// ([`Prompt::picks_one`]), or a point prompt whose click selects one ("Select object to
+    /// ([`Prompt::picks_one`]), a selection window's opposite corner ([`Prompt::window`]), or a point prompt whose click selects one ("Select object to
     /// offset", "Select first line"…, the commands that pick a single object themselves). The UI
     /// shows the pick box there. The wording is only read where the engine wrote it: a routine
     /// writes its own message (`raw`), which may open with "Select" and still ask for a point,
     /// and says through `picks_one` when it picks instead (#1635 review).
     pub fn picks_objects(&self) -> bool {
-        self.picks_one || self.accept.select || (self.accept.point && !self.raw && self.message.starts_with("Select"))
+        self.picks_one || self.accept.select || self.window.is_some() || (self.accept.point && !self.raw && self.message.starts_with("Select"))
     }
     /// "Specify next point or [Undo/Close] <default>:".
     pub fn display(&self) -> String {

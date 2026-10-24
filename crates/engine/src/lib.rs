@@ -47,7 +47,7 @@ pub use cadcraft_geom as geom;
 pub use cadcraft_render as render;
 pub use cmd::hatch::{HatchPicks, PatternChoice, PickMode, pattern_choices};
 pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command};
-pub use prompt::{Accept, Drag, Input, Interactive, Picker, Prompt, Step};
+pub use prompt::{Accept, Drag, Input, Interactive, Picker, Prompt, SelectWindow, Step};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
@@ -408,9 +408,10 @@ pub struct Settings {
     /// FILEDIA: kept for routines that switch file dialogs off around a script; no command reads it yet.
     pub filedia: bool,
     pub pickadd: bool,
-    /// PICKDRAG: false = two-click windows (0), true = clicks or dragging (2).
-    /// Drag-only mode (1) is not supported yet.
-    pub pickdrag: bool,
+    /// PICKDRAG: how a selection window's second corner is given: 0 by a second click, 1 where
+    /// the button that set the first corner comes up (drag), 2 either way (a drag held past the
+    /// press tolerance closes it on release, a click leaves it for the next click).
+    pub pickdrag: u8,
     /// PICKSTYLE: bit 1 picks whole selectable groups ([`cmd::groups`]), bit 2 associative hatches
     /// with their boundaries (stored, not used yet).
     pub pickstyle: u8,
@@ -502,7 +503,7 @@ impl Default for Settings {
             cmdecho: true,
             filedia: true,
             pickadd: true,
-            pickdrag: true,
+            pickdrag: 2,
             pickstyle: 1,
             gripsize: 5.0,
             cursorsize: 5.0,
@@ -689,6 +690,9 @@ pub struct Session {
     pub clipboard: Vec<Entity>,
     pub clipboard_base: Vec2,
     pub pending_window: Option<PendingWindow>,
+    /// The window or polygon the last pick at a command's "Select objects" was made with (`None`
+    /// for single picks, fences, All, Last…); see [`Session::take_pick_area`].
+    pick_area: Option<select::PickArea>,
     /// A selection mode typed at "Select objects" (W, C, F, WP, CP) collecting its points.
     pub select_mode: Option<select::SelectMode>,
     /// SIngle typed at "Select objects": the next selection ends the prompt.
@@ -747,6 +751,7 @@ impl Session {
             clipboard: Vec::new(),
             clipboard_base: Vec2::ZERO,
             pending_window: None,
+            pick_area: None,
             select_mode: None,
             select_single: false,
             untitled_counter: 0,
@@ -1118,6 +1123,7 @@ impl Session {
         if !prompt.accept.select {
             return Ok(Some(input));
         }
+        self.pick_area = None;
         if self.select_mode.is_some() {
             return self.select_mode_input(input);
         }
@@ -1153,7 +1159,9 @@ impl Session {
                 let ap = self.pixel_size() * self.settings.pickbox.max(1.0) * 1.5;
                 if let Some(pw) = self.pending_window.take() {
                     let crossing = p.x < pw.corner.x;
-                    let hs = select::select_window(self.doc()?, &space, Bounds2::new(pw.corner, p), crossing);
+                    let bx = Bounds2::new(pw.corner, p);
+                    let hs = select::select_window(self.doc()?, &space, bx, crossing);
+                    self.pick_area = Some(select::PickArea { area: select::SelectArea::Box(bx), crossing });
                     return Ok(Some(Input::Pick(cmd::groups::expand(self, hs))));
                 }
                 match select::pick(self.doc()?, &space, p, ap) {
@@ -1213,6 +1221,7 @@ impl Session {
         match input {
             Input::Point(p) => {
                 if mode.push(p) {
+                    self.pick_area = mode.area();
                     return Ok(mode.select(self.doc()?, &self.space()).map(Input::Pick));
                 }
             }
@@ -1220,7 +1229,10 @@ impl Session {
                 mode.pts.pop();
             }
             // Enter ends a fence or polygon; with too few points the mode is dropped.
-            Input::Enter => return Ok(mode.select(self.doc()?, &self.space()).map(Input::Pick)),
+            Input::Enter => {
+                self.pick_area = mode.area();
+                return Ok(mode.select(self.doc()?, &self.space()).map(Input::Pick));
+            }
             Input::Cancel | Input::Pick(_) => return Ok(Some(input)),
             _ => self.echo("Invalid point."),
         }
@@ -1446,6 +1458,8 @@ impl Session {
         let mut common = self.current_common();
         let (kinds, mut out) = match (self.lisp_preview(cursor), &self.running) {
             (Some(k), _) => (k, Vec::new()),
+            // A typed fence or polygon at any command's "Select objects" shows its lines so far.
+            (None, Some(_)) if let Some(m) = &self.select_mode => (m.preview(cursor), Vec::new()),
             (None, Some(r)) => (r.machine.preview(self, cursor), r.machine.preview_objects(self, cursor)),
             (None, None) => (Vec::new(), Vec::new()),
         };
@@ -1675,7 +1689,7 @@ impl Session {
     /// command running, or a command asking for objects. Returns whether a window was opened.
     pub fn begin_window(&mut self, corner: Vec2) -> bool {
         let during_command = self.running.is_some();
-        if !self.settings.pickdrag || !corner.is_finite() || (during_command && !self.current_prompt().is_some_and(|p| p.accept.select)) {
+        if self.settings.pickdrag == 0 || !corner.is_finite() || (during_command && !self.current_prompt().is_some_and(|p| p.accept.select)) {
             return false;
         }
         self.pending_window = Some(PendingWindow { corner, during_command });
@@ -1727,6 +1741,24 @@ impl Session {
 
     /// Whether a click at `p` selects objects by picking: no command running, or a command at
     /// "Select objects" with no selection window or typed mode under way.
+    /// The window or polygon the pick just handed to the running command was made with, taken
+    /// so it is read once: STRETCH moves the vertices inside it (#1116). `None` for a single
+    /// pick, a fence, All, Last or Previous.
+    pub fn take_pick_area(&mut self) -> Option<select::PickArea> {
+        self.pick_area.take()
+    }
+
+    /// The selection window waiting for its opposite corner: the one a click on empty space
+    /// opened (with or without a command), or one a command opened itself and asks for the corner
+    /// of ([`Prompt::window`]: TRIM's Crossing, a typed `W` or `C`). The UI draws them all alike
+    /// and lets a drag close them (PICKDRAG).
+    pub fn selection_window(&self) -> Option<SelectWindow> {
+        match self.pending_window {
+            Some(pw) => Some(SelectWindow { corner: pw.corner, crossing: None }),
+            None => self.current_prompt().and_then(|p| p.window),
+        }
+    }
+
     pub fn click_picks(&self) -> bool {
         self.pending_window.is_none()
             && match self.running.as_ref() {

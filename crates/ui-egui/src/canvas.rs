@@ -119,8 +119,8 @@ pub struct CanvasState {
     hover_at: Option<Pos2>,
     /// Constraint glyphs for the parametric overlay (cached per drawing revision).
     pub param: crate::parametric::Cache,
-    /// A selection window opened by a press-and-drag, to close where the button is let go.
-    drag_window: bool,
+    /// The primary-button press being held, when it was acted on (see [`press`]).
+    press: Option<press::Press>,
     /// The right-click that opened the shortcut menu held Shift or Ctrl: it is the object snap
     /// menu ([`crate::context_menu`]).
     pub snap_menu: bool,
@@ -1516,12 +1516,12 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         if !in_active {
             app.canvas.hot_grips.clear();
             app.session.pending_window = None;
-            app.canvas.drag_window = false;
+            app.canvas.press = None;
             if app.run("mspace", serde_json::json!({"at": [pp.x, pp.y]})).is_err() && active_vp.is_some() {
                 let _ = app.run("pspace", serde_json::json!({}));
             }
             app.session.pending_window = None;
-            app.canvas.drag_window = false;
+            app.canvas.press = None;
             app.canvas.list = None;
             return;
         }
@@ -1550,77 +1550,89 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         hatch_dialog = true;
     }
 
-    // While a command asks for a point, every click places one, however fast the drafting (#815).
-    // egui drops a click whose button comes up a few pixels from where it went down (a drag to it),
-    // and eframe hands a slow frame's clicks over together, which egui reports as one.
-    let point_prompt = app.session.current_prompt().is_some_and(|p| cadcraft_engine::pointmod::accepts(&p))
-        && app.session.pending_window.is_none()
-        && !app.session.realtime_zoom_active();
-    let pressed_primary = pressed_primary || (point_prompt && resp.drag_stopped_by(egui::PointerButton::Primary));
-    if point_prompt && inside && pressed_primary && !middle_down && app.cmd.options.is_none() && app.cmd.buffer.is_empty() {
-        let releases: Vec<egui::Pos2> = ui.input(|i| {
-            i.events
-                .iter()
-                .filter_map(|e| match e {
-                    egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: false, .. } => Some(*pos),
-                    _ => None,
-                })
-                .collect()
-        });
-        // The last one is placed below, at the cursor, like any click.
-        if let Some((_, earlier)) = releases.split_last() {
-            for pos in earlier.iter().filter(|p| rect.contains(**p)) {
-                let w = effective_point(app, xf.to_world(*pos), &xf, ui.ctx());
-                let result = match app.canvas.snap {
-                    Some(hit) => app.session.input_snapped(hit),
-                    None => app.session.input(Input::Point(w)),
+    // Clicks count when the button goes down, where it went down, however fast the mouse moves
+    // (#1001, #815): each press among this frame's events places its point, picks its object or
+    // sets a selection window's corner at once. What the pointer does while the button is held
+    // only decides whether the press becomes a drag ([`press`]): a drag closes the window its
+    // press opened where the button comes up; after a click the window waits for the next press.
+    // Presses on grips (idle) and while ZOOM Realtime runs are left to the clicks further down.
+    // Selection cycling's list closes when the prompt, the drawing or the view changes.
+    let key: CycleKey = (
+        app.session.running.as_ref().map(|r| r.id.clone()),
+        app.session.current_prompt().map(|p| p.message),
+        app.session.state().map_or(0, |st| st.uid),
+        app.session.state().map_or(0, |st| st.revision),
+        xf.center,
+        xf.scale,
+    );
+    if app.canvas.cycle_key.as_ref() != Some(&key) {
+        app.canvas.cycle = None;
+        app.canvas.hover_cycle = None;
+        app.canvas.cycle_key = Some(key);
+    }
+    let (steps, now, primary_down) = ui.input(|i| (press::steps(&i.events), i.time, i.pointer.primary_down()));
+    let mut click_used = false;
+    for step in steps {
+        match step {
+            press::Step::Down(pos, m) => {
+                app.canvas.press = None;
+                if !inside || !rect.contains(pos) || middle_down {
+                    continue;
+                }
+                // A press on the Dynamic Input options menu is the menu's (picked on release);
+                // elsewhere it closes the menu and counts as usual.
+                if app.cmd.options.is_some() {
+                    if app.cmd.option_at(pos).is_some() {
+                        continue;
+                    }
+                    app.cmd.options = None;
+                }
+                // Selection cycling: the press picks a row of the open list, or opens the list over
+                // overlapping objects (#1149). Its release must not count again below.
+                if cycle_click(app, &xf, Some(pos), Some(xf.to_world(pos)), m.shift) {
+                    app.canvas.press = Some(press::Press::new(pos, false));
+                    continue;
+                }
+                if press_takes(app, &xf, pos) {
+                    let opened = press_at(app, &xf, ui.ctx(), pos, m);
+                    app.canvas.press = Some(press::Press::new(pos, opened));
+                }
+            }
+            press::Step::Move(pos) => {
+                if let Some(p) = &mut app.canvas.press {
+                    p.moved(pos, now);
+                }
+            }
+            press::Step::Up(pos) => {
+                let Some(mut p) = app.canvas.press.take() else { continue };
+                click_used = true;
+                // The release closes the selection window its press opened: always with PICKDRAG 1,
+                // after a drag with 2; with 0 a window takes two clicks (#1032). Any selection
+                // window closes so: the session's, or a command's own (TRIM's Crossing, a typed
+                // W or C).
+                let closes = match app.session.settings.pickdrag {
+                    1 => true,
+                    2 => p.released_as_drag(pos, now),
+                    _ => false,
                 };
-                if let Err(e) = result {
-                    app.session.echo(e.to_string());
+                if closes && p.opened_window && app.session.selection_window().is_some() {
+                    let end = xf.to_world(pos);
+                    let done = if app.session.prompting() { app.session.input(Input::Point(end)) } else { app.session.idle_click(end, mods.shift) };
+                    if let Err(e) = done {
+                        app.session.echo(e.to_string());
+                    }
                 }
             }
         }
     }
+    if !primary_down {
+        // The button came up where we didn't see it (outside the window, say).
+        app.canvas.press = None;
+    }
 
     let raw_world = hover_pos.filter(|_| inside).map(|p| xf.to_world(p));
     let dyn_frame = crate::cmdline::dyn_frame(app);
-    if let Some(w) = raw_world {
-        let mut eff = effective_point(app, w, &xf, ui.ctx());
-        // A locked Dynamic Input value (`40,` or `40<` typed) holds the cursor and overrides snaps.
-        if let Some(f) = dyn_frame
-            && let Some(e) = crate::dyninput::parse(&app.cmd.buffer, &f)
-            && e.first_locked().is_some()
-        {
-            eff = crate::dyninput::constrain(&e, &f, eff, app.cmd.second_locked());
-            app.canvas.snap = None;
-            app.canvas.track = None;
-        }
-        // Grip dimensional input: typed lengths and angles hold the grip and override snaps.
-        let grip_held = crate::grip_dyn::constrain(app, eff);
-        if let Some(q) = grip_held {
-            eff = q;
-            app.canvas.snap = None;
-            app.canvas.track = None;
-        }
-        app.canvas.cursor = Some(eff);
-        app.session.cursor = eff;
-        app.session.cursor_deferred = app.canvas.snap.and_then(|h| h.deferred);
-        // Typed or menu snap overrides (END, NON…) and Tab cycling; a locked Dynamic Input value wins.
-        if dyn_frame.and_then(|f| crate::dyninput::parse(&app.cmd.buffer, &f)).is_none_or(|e| e.first_locked().is_none()) {
-            override_cursor(app, w, &xf);
-        }
-        // Typed grip dimensions win over snap overrides too.
-        if let Some(q) = grip_held {
-            app.canvas.cursor = Some(q);
-            app.session.cursor = q;
-            app.canvas.snap = None;
-            app.session.cursor_deferred = None;
-        }
-    } else {
-        app.canvas.cursor = None;
-        app.canvas.snap = None;
-        app.session.cursor_deferred = None;
-    }
+    track_cursor(app, raw_world, &xf, ui.ctx(), dyn_frame);
 
     // A click on the Dynamic Input options menu picks the keyword; elsewhere it closes the menu.
     let mut picked = false;
@@ -1638,26 +1650,14 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     let idle_dbl = dbl_primary && app.session.running.is_none();
     if idle_dbl {
         app.session.pending_window = None;
-        app.canvas.drag_window = false;
+        app.canvas.press = None;
     }
     let pressed_primary = pressed_primary && !picked && !hatch_dialog && !idle_dbl;
-    let key: CycleKey = (
-        app.session.running.as_ref().map(|r| r.id.clone()),
-        app.session.current_prompt().map(|p| p.message),
-        app.session.state().map_or(0, |st| st.uid),
-        app.session.state().map_or(0, |st| st.revision),
-        xf.center,
-        xf.scale,
-    );
-    if app.canvas.cycle_key.as_ref() != Some(&key) {
-        app.canvas.cycle = None;
-        app.canvas.hover_cycle = None;
-        app.canvas.cycle_key = Some(key);
-    }
-    let cycled = pressed_primary && !middle_down && cycle_click(app, &xf, hover_pos, raw_world.filter(|_| inside), mods.shift);
-    // Clicks.
+    let cycled = pressed_primary && !click_used && !middle_down && cycle_click(app, &xf, hover_pos, raw_world.filter(|_| inside), mods.shift);
+    // Clicks the presses above left alone: on grips, and during ZOOM Realtime.
     if inside
         && pressed_primary
+        && !click_used
         && !middle_down
         && !cycled
         && let Some(p) = app.canvas.cursor
@@ -1689,36 +1689,6 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             app.session.echo(e.to_string());
         }
     }
-    // Press-and-drag selection window (PICKDRAG = 2; click-click still works): a drag
-    // that starts while objects are being selected opens a window where the button went down,
-    // and letting go closes it. Drags on grips and drags while drawing are left alone.
-    if !app.session.settings.pickdrag {
-        app.canvas.drag_window = false;
-    }
-    if app.session.settings.pickdrag
-        && resp.drag_started_by(egui::PointerButton::Primary)
-        && !middle_down
-        && app.canvas.cycle.is_none()
-        && app.session.pending_window.is_none()
-        && let Some(origin) = ui.input(|i| i.pointer.press_origin())
-        && rect.contains(origin)
-        && grip_at(app, &xf, Some(origin)).is_none()
-        && crate::dyngrips::at(app, &xf, Some(origin)).is_none()
-    {
-        app.canvas.drag_window = app.session.begin_window(xf.to_world(origin));
-    }
-    if app.canvas.drag_window && resp.drag_stopped_by(egui::PointerButton::Primary) {
-        app.canvas.drag_window = false;
-        if app.session.pending_window.is_some()
-            && let Some(end) = ui.input(|i| i.pointer.interact_pos())
-        {
-            let end = xf.to_world(end);
-            let done = if app.session.prompting() { app.session.input(Input::Point(end)) } else { app.session.idle_click(end, mods.shift) };
-            if let Err(e) = done {
-                app.session.echo(e.to_string());
-            }
-        }
-    }
     // Right-click acts as Enter while a command runs (the classic CAD default; held, it opens the
     // command menu); otherwise it opens the shortcut menu (Repeat, Clipboard, …).
     // Shift/Ctrl+right-click opens the object snap menu.
@@ -1744,7 +1714,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     // The cursor picks objects (pick box, rollover highlight): "Select objects" and single-object
     // prompts, or no command with PICKFIRST on; SELECTIONPREVIEW says in which of those it shows.
     let selecting = app.session.previews_selection();
-    if inside && selecting && app.session.pending_window.is_none() {
+    if inside && selecting && app.session.selection_window().is_none() {
         if hover_pos != app.canvas.hover_at
             && let (Some(w), Ok(st)) = (raw_world, app.session.state())
         {
@@ -1986,12 +1956,12 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             draw_list(&painter, &xf, &list, bg, false);
         }
     }
-    // Pending selection window.
-    if let (Some(pw), Some(c)) = (app.session.pending_window, raw_world) {
-        let a = xf.to_screen(pw.corner);
+    // The selection window waiting for its opposite corner, whoever opened it.
+    if let (Some(w), Some(c)) = (app.session.selection_window(), raw_world) {
+        let a = xf.to_screen(w.corner);
         let b = xf.to_screen(c);
         let r = Rect::from_two_pos(a, b);
-        let crossing = c.x < pw.corner.x;
+        let crossing = w.crossing_to(c);
         if let Some(fill) = selection_area_fill(&app.session.settings, crossing) {
             painter.rect_filled(r, 0.0, fill);
         }
@@ -2056,6 +2026,95 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     // No continuous repaint while hovering: input events repaint by themselves. Repainting every
     // frame kept a vsync swapchain's queue full (every frame waited behind queued ones) and would
     // spin the CPU with the low-latency present mode (`gpu::surface_config`).
+}
+
+/// Put the cursor at `raw` (world, `None` off the canvas): snaps, ortho and polar, a locked
+/// Dynamic Input value and typed grip dimensions applied (`app.canvas.cursor`, `.snap`, `.track`).
+fn track_cursor(app: &mut CadApp, raw: Option<Vec2>, xf: &Xf, ctx: &egui::Context, dyn_frame: Option<crate::dyninput::Frame>) {
+    if let Some(w) = raw {
+        let mut eff = effective_point(app, w, xf, ctx);
+        // A locked Dynamic Input value (`40,` or `40<` typed) holds the cursor and overrides snaps.
+        if let Some(f) = dyn_frame
+            && let Some(e) = crate::dyninput::parse(&app.cmd.buffer, &f)
+            && e.first_locked().is_some()
+        {
+            eff = crate::dyninput::constrain(&e, &f, eff, app.cmd.second_locked());
+            app.canvas.snap = None;
+            app.canvas.track = None;
+        }
+        // Grip dimensional input: typed lengths and angles hold the grip and override snaps.
+        let grip_held = crate::grip_dyn::constrain(app, eff);
+        if let Some(q) = grip_held {
+            eff = q;
+            app.canvas.snap = None;
+            app.canvas.track = None;
+        }
+        app.canvas.cursor = Some(eff);
+        app.session.cursor = eff;
+        app.session.cursor_deferred = app.canvas.snap.and_then(|h| h.deferred);
+        // Typed or menu snap overrides (END, NON…) and Tab cycling; a locked Dynamic Input value wins.
+        if dyn_frame.and_then(|f| crate::dyninput::parse(&app.cmd.buffer, &f)).is_none_or(|e| e.first_locked().is_none()) {
+            override_cursor(app, w, xf);
+        }
+        // Typed grip dimensions win over snap overrides too.
+        if let Some(q) = grip_held {
+            app.canvas.cursor = Some(q);
+            app.session.cursor = q;
+            app.canvas.snap = None;
+            app.session.cursor_deferred = None;
+        }
+    } else {
+        app.canvas.cursor = None;
+        app.canvas.snap = None;
+        app.session.cursor_deferred = None;
+    }
+}
+
+/// Whether the press at `pos` is acted on when the button goes down ([`press_at`]): at any prompt
+/// and on the drawing with no command running. Grips (with no command running) and ZOOM Realtime
+/// keep their clicks.
+fn press_takes(app: &mut CadApp, xf: &Xf, pos: Pos2) -> bool {
+    if app.session.realtime_zoom_active() {
+        return false;
+    }
+    if app.session.prompting() {
+        return true;
+    }
+    crate::dyngrips::at(app, xf, Some(pos)).is_none() && grip_at(app, xf, Some(pos)).is_none()
+}
+
+/// Act on a press at `pos`: at a prompt the point goes in (snapped as the cursor would be there);
+/// with no command running it picks the object there or sets a selection window's corner.
+/// Returns whether the press opened a selection window ([`cadcraft_engine::Session::selection_window`]).
+fn press_at(app: &mut CadApp, xf: &Xf, ctx: &egui::Context, pos: Pos2, mods: egui::Modifiers) -> bool {
+    let had_window = app.session.selection_window().is_some();
+    let raw = xf.to_world(pos);
+    let dyn_frame = crate::cmdline::dyn_frame(app);
+    track_cursor(app, Some(raw), xf, ctx, dyn_frame);
+    let Some(p) = app.canvas.cursor else { return false };
+    if app.session.prompting() {
+        // Ctrl held while picking the point of a grip edit makes copies (the Copy option).
+        if mods.ctrl && app.session.running.as_ref().is_some_and(|r| r.id == "grip") {
+            let _ = app.session.input(Input::Keyword("Copy".into()));
+        }
+        // Clicking places the point; a value typed into the Dynamic Input boxes is used up.
+        if let Some(f) = dyn_frame
+            && crate::dyninput::parse(&app.cmd.buffer, &f).is_some()
+        {
+            app.cmd.buffer.clear();
+        }
+        // Preserve a snap's viewport origin for DIST, and its deferred curve where needed.
+        let result = match app.canvas.snap {
+            Some(hit) => app.session.input_snapped(hit),
+            None => app.session.input(Input::Point(p)),
+        };
+        if let Err(e) = result {
+            app.session.echo(e.to_string());
+        }
+    } else if let Err(e) = app.session.idle_click(raw, mods.shift) {
+        app.session.echo(e.to_string());
+    }
+    !had_window && app.session.selection_window().is_some()
 }
 
 /// The model space tiles on screen (none without tiling): each tile's rectangle in `full`.
@@ -2946,6 +3005,7 @@ mod blockedit;
 mod compare;
 
 /// Background rebuilds of the display list for a new view.
+mod press;
 mod rebuild;
 
 #[cfg(test)]

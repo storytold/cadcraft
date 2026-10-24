@@ -11,15 +11,20 @@ fn pickdrag_is_saved_reset_and_validated() {
     let saved = options::profile(&s);
     let mut restored = Session::new();
     options::restore(&mut restored, &saved);
-    assert!(!restored.settings.pickdrag);
-    for value in [json!(1), json!(-1), json!(3), json!("bad"), json!(null), json!([0]), json!(1e300)] {
+    assert_eq!(restored.settings.pickdrag, 0);
+    for value in [json!(-1), json!(3), json!("bad"), json!(null), json!([0]), json!(1e300)] {
         assert!(s.execute("options", &json!({"PICKDRAG":value})).is_err());
         assert_eq!(options::profile(&s), saved);
     }
     s.execute("options", &json!({"reset":true})).unwrap();
-    assert!(s.settings.pickdrag);
-    options::restore(&mut restored, &json!({"PICKDRAG":1}));
-    assert!(!restored.settings.pickdrag, "unsupported saved modes are ignored");
+    assert_eq!(s.settings.pickdrag, 2);
+    // Drag-only (1) is a mode like the others.
+    s.execute("options", &json!({"PICKDRAG":1})).unwrap();
+    assert_eq!(options::profile(&s)["PICKDRAG"], 1);
+    options::restore(&mut restored, &options::profile(&s));
+    assert_eq!(restored.settings.pickdrag, 1);
+    options::restore(&mut restored, &json!({"PICKDRAG":7}));
+    assert_eq!(restored.settings.pickdrag, 1, "unsupported saved modes are ignored");
 }
 
 #[test]

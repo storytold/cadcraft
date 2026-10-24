@@ -376,6 +376,32 @@ pub fn select_group(d: &Drawing, space: &Space, name: &str) -> Option<Vec<Handle
     Some(g.members.iter().copied().filter(|h| store.get(*h).is_some_and(|e| d.is_visible(e))).collect())
 }
 
+/// The area a selection was made with: a window's box, or a polygon closed back to its first
+/// point. STRETCH moves the vertices inside it ([`crate::Session::take_pick_area`]).
+#[derive(Clone, Debug, PartialEq)]
+pub enum SelectArea {
+    Box(Bounds2),
+    Polygon(Vec<Vec2>),
+}
+
+impl SelectArea {
+    pub fn contains(&self, p: Vec2) -> bool {
+        match self {
+            SelectArea::Box(bx) => bx.contains(p),
+            SelectArea::Polygon(poly) => point_in_polygon(poly, p),
+        }
+    }
+}
+
+/// The area a pick at a command's "Select objects" was made with, and whether it selected as a
+/// crossing (objects inside or crossing it) or a window (objects inside it):
+/// [`crate::Session::take_pick_area`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct PickArea {
+    pub area: SelectArea,
+    pub crossing: bool,
+}
+
 /// A selection mode typed at "Select objects", collecting its points before it selects.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectKind {
@@ -434,7 +460,14 @@ impl SelectMode {
         };
         match last {
             None => Prompt::new(first, Accept::POINT),
-            Some(p) if self.is_box() => Prompt::new(next, Accept::POINT).base(p),
+            Some(p) if self.is_box() => Prompt::new(next, Accept::POINT).window(
+                p,
+                match self.kind {
+                    SelectKind::Window => Some(false),
+                    SelectKind::Crossing => Some(true),
+                    _ => None,
+                },
+            ),
             Some(p) => Prompt::new(next, Accept::POINT).kw(&["Undo"]).base(p),
         }
     }
@@ -444,6 +477,39 @@ impl SelectMode {
             self.pts.push(p);
         }
         self.is_box() && self.pts.len() >= 2
+    }
+    /// The fence or polygon so far, on to the cursor `c`; a polygon closes back to its start. A
+    /// window's corners are drawn by the UI as a selection area ([`Prompt::window`]).
+    pub fn preview(&self, c: Vec2) -> Vec<EntityKind> {
+        use crate::cmd::helpers::line;
+        let Some(first) = self.pts.first().copied() else { return Vec::new() };
+        if !matches!(self.kind, SelectKind::Fence | SelectKind::WPolygon | SelectKind::CPolygon) {
+            return Vec::new();
+        }
+        let mut out: Vec<EntityKind> = self.pts.windows(2).filter_map(|w| Some(line(*w.first()?, *w.get(1)?))).collect();
+        out.extend(self.pts.last().map(|l| line(*l, c)));
+        if self.kind != SelectKind::Fence && self.pts.len() >= 2 {
+            out.push(line(c, first));
+        }
+        out
+    }
+    /// The area the mode selects with once it has its points; a fence or a group marks none.
+    pub fn area(&self) -> Option<PickArea> {
+        let (area, crossing) = match (self.kind, self.pts.as_slice()) {
+            (SelectKind::Window | SelectKind::Crossing | SelectKind::Box, [a, b, ..]) => {
+                let crossing = match self.kind {
+                    SelectKind::Crossing => true,
+                    SelectKind::Box => b.x < a.x,
+                    _ => false,
+                };
+                (SelectArea::Box(Bounds2::new(*a, *b)), crossing)
+            }
+            (SelectKind::WPolygon | SelectKind::CPolygon, pts) if pts.len() >= 3 => {
+                (SelectArea::Polygon(pts.to_vec()), self.kind == SelectKind::CPolygon)
+            }
+            _ => return None,
+        };
+        Some(PickArea { area, crossing })
     }
     /// The objects the mode selects, or `None` while it has too few points.
     pub fn select(&self, d: &Drawing, space: &Space) -> Option<Vec<Handle>> {

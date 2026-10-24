@@ -1,6 +1,6 @@
 # Where CADCraft falls short of AutoCAD
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-16 · **Change:** minor (Command Aliases dialog for ALIASEDIT: U12 and E5 narrowed) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-23 · **Change:** minor (PICKDRAG 1; STRETCH and TRIM share the selection windows: U6 narrowed) · **Target:** Autodesk AutoCAD 2027
 
 Every known shortfall, one row each, ranked within each section by user impact. This is the work
 list: agents pick from here (top of a section first), and remove or update a row in the same PR
@@ -55,7 +55,8 @@ Outlined fill highlights now keep deterministic contour starts and directions ac
 repaints and GPU rebuilds, preventing the dashed preview from appearing to flicker (U6).
 
 Options ▸ Selection can now require two separate clicks for a selection window (PICKDRAG 0)
-or allow clicks and drag (2, default), saved in the user profile. Drag-only mode (1) remains unavailable.
+or allow clicks and drag (2, default), or drag only (1), saved in the user profile. STRETCH and TRIM's
+crossing use the same selection windows as every other command.
 | # | Gap | User impact | Est. |
 |---|---|---|---|
 | U4 | Tab snap cycling offers the closest snap of each mode, not every candidate. Typed snap overrides (`END`, `MID` … `NON`), the Shift/Ctrl+right-click snap menu and Tab cycling landed (#393), the menu's Temporary track point in #441 | Low | 1 |
@@ -161,6 +162,7 @@ Detail: [localization-parity.md](localization-parity.md).
 | 2026-10-15 | minor | BREAKLINE (Tools ▸ Express Tools ▸ Break-line Symbol): one polyline between two points with a break symbol, Block/Size/Extension options, size times DIMSCALE: E3 narrowed |
 | 2026-10-15 | minor | TXT2MTXT (Tools ▸ Express Tools ▸ Convert Text to Mtext): selected TEXT, and MTEXT, combined into one MTEXT top-down or in selection order with optional word wrap, or one MTEXT per TEXT; SEttings remembered for the session: E3 narrowed |
 | 2026-10-13 | minor | Selection window gesture preference (PICKDRAG 0/2) added to Options ▸ Selection and saved in the profile (U6), with Portuguese and Ukrainian labels |
+| 2026-10-23 | minor | PICKDRAG 1 (drag only); STRETCH selects through the session's "Select objects", TRIM's crossing and typed W/C corners are selection windows like the session's (U6 narrowed) |
 | 2026-10-12 | minor | Object transparency (entity, ByLayer, ByBlock) is drawn: on screen (TRANSPARENCYDISPLAY, on by default), in PNG/SVG exports, and in plots when the page setup's "Plot transparency" is on (PDF alpha, PNG blending, SVG opacity; PLOTTRANSPARENCYOVERRIDE): F14 narrowed |
 | 2026-10-12 | minor | Hatch and Gradient dialog (HATCH, GRADIENT; HPDLGMODE) and Hatch Edit dialog (HATCHEDIT, right-click, double-click a hatch): F13 narrowed to Preview, Inherit Properties and boundary add/remove in edit mode |
 | 2026-10-12 | minor | A bare system variable name typed at the command line (ORTHOMODE, GRIDMODE…) runs SETVAR on that variable, as in AutoCAD; U10 narrowed |

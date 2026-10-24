@@ -334,7 +334,7 @@ fn selection(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) 
             changes.insert("PICKADD".into(), json!(i32::from(!shift_adds)));
         }
         let mut grouping = st.pickstyle & 1 != 0;
-        let mut two_clicks = !st.pickdrag;
+        let mut two_clicks = st.pickdrag == 0;
         if left
             .checkbox(&mut two_clicks, crate::tl!("Select using two clicks only"))
             .on_hover_text(crate::tl!("Define each corner of the selection window with a separate click."))
