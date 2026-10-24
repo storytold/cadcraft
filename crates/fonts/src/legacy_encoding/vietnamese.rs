@@ -990,4 +990,30 @@ mod adversarial_tests {
             assert_eq!(transcode_vietnamese(w, Some("Standard")), w, "Failed Standard font transcoding on {w}");
         }
     }
+
+    #[test]
+    fn test_multilingual_european_languages_never_transcoded_without_hint() {
+        // French (CAD terms & common words)
+        let french = ["FAÇADE", "BÉTON", "où", "maïs", "côté", "hôtel", "être", "bâtiment", "aéronef"];
+        // Spanish (CAD terms & common words)
+        let spanish = ["CIMENTACIÓN", "AÑO", "DISEÑO", "Uña", "señal", "niño", "SEÑOR", "plano"];
+        // German
+        let german = ["GRÖSSE", "ÜBERGANG", "MÜLLER", "Straße", "Fläche", "Höhe"];
+        // Portuguese
+        let portuguese = ["SÃO", "CONEXÃO", "CÔNCAVO", "ORÇAMENTO", "seção", "construção"];
+        // Romanian, Polish, Czech, Hungarian, Turkish, Scandinavian
+        let other_european = [
+            "ăsta", "România", "clădire", "mój", "błąd", "część", "rysunek", "výkres", "čára", "půdorys", "méret", "terv", "épület", "kâğıt",
+            "sağlam", "MÆRSK", "Jökull",
+        ];
+
+        let all_cases = french.iter().chain(spanish.iter()).chain(german.iter()).chain(portuguese.iter()).chain(other_european.iter());
+
+        for &text in all_cases {
+            assert_eq!(detect_vietnamese_encoding(text), None, "False positive detection on European text: {text}");
+            assert_eq!(transcode_vietnamese(text, None), text, "Failed to preserve unhinted European text: {text}");
+            assert_eq!(transcode_vietnamese(text, Some("Standard")), text, "Failed to preserve Standard font text: {text}");
+            assert_eq!(transcode_vietnamese(text, Some("Arial")), text, "Failed to preserve Arial font text: {text}");
+        }
+    }
 }
