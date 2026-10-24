@@ -136,10 +136,15 @@ fn described_row(
             Kind::Number | Kind::Distance => picked = number(edit_field(ui, id, shown), bad).map(|v| json!(v)),
             Kind::Angle | Kind::Direction => {
                 if let Some(typed) = edit_field(ui, id, shown) {
-                    match angles.amount(&typed) {
-                        // A direction is typed as shown (from ANGBASE, in the ANGDIR sense);
-                        // properties.set takes it from +X counterclockwise.
-                        Some(a) if row.kind == Kind::Direction => picked = Some(json!(angles.unshown(a).to_degrees())),
+                    // A direction is typed as the drawing measures directions (from ANGBASE in the
+                    // ANGDIR sense; bearings and `<<` overrides absolute); properties.set takes it
+                    // from +X counterclockwise.
+                    let parsed = if row.kind == Kind::Direction {
+                        angles.direction(&typed).map(|a| a.rem_euclid(std::f64::consts::TAU))
+                    } else {
+                        angles.amount(&typed)
+                    };
+                    match parsed {
                         Some(a) => picked = Some(json!(a.to_degrees())),
                         None => *bad = Some(typed),
                     }
@@ -182,7 +187,10 @@ fn described_row(
                         ("White", 7),
                     ] {
                         if ui.button(crate::i18n::t(n)).clicked() {
-                            picked = Some(json!(c));
+                            // The row shows a color by name: picking the one it has is no edit.
+                            if row.varies || row.value != json!(n) {
+                                picked = Some(json!(c));
+                            }
                             ui.close();
                         }
                     }

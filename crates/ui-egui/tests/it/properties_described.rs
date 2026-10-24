@@ -92,6 +92,30 @@ fn several_texts_edit_together() {
 }
 
 #[test]
+fn a_rotation_is_typed_as_the_drawing_measures_directions() {
+    let rotation = |app: &CadApp| {
+        app.session
+            .doc()
+            .unwrap()
+            .model
+            .iter()
+            .find_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.rotation.to_degrees()) } else { None })
+            .unwrap()
+    };
+    let mut h = palettes(|app| {
+        // Directions measured from north: a text along +X shows 270.
+        app.run("setvar", json!({ "name": "ANGBASE", "value": 90 })).unwrap();
+        app.run("text", json!({ "at": [0, 0], "text": "Note", "height": 1 })).unwrap();
+    });
+    // A bearing is absolute: north 45° east is 45° from +X.
+    type_into(&mut h, "270", "N45dE");
+    assert!((rotation(h.state()) - 45.0).abs() < 1e-9, "{}", rotation(h.state()));
+    // `<<` measures from +X counterclockwise, whatever ANGBASE says.
+    type_into(&mut h, "315", "<<10");
+    assert!((rotation(h.state()) - 10.0).abs() < 1e-9, "{}", rotation(h.state()));
+}
+
+#[test]
 fn an_mtext_style_is_picked_from_the_drawing_styles() {
     let mut h = palettes(|app| {
         app.run("style", json!({ "name": "Notes", "current": false })).unwrap();
