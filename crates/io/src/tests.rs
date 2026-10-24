@@ -2329,6 +2329,15 @@ fn svgz_gunzips_to_the_same_drawing() {
 }
 
 #[test]
+fn svg_percentage_root_width_is_ignored() {
+    let body = "<line x1=\"0\" y1=\"0\" x2=\"1000\" y2=\"0\"/></svg>";
+    let with = read(format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100%\" viewBox=\"0 0 1000 500\">{body}").as_bytes(), "a.svg").unwrap();
+    let without = read(format!("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1000 500\">{body}").as_bytes(), "b.svg").unwrap();
+    assert_eq!(with.model.iter().map(|e| &e.kind).collect::<Vec<_>>(), without.model.iter().map(|e| &e.kind).collect::<Vec<_>>());
+    assert_eq!(with.model.len(), 1);
+}
+
+#[test]
 fn svg_read_dispatches_by_extension() {
     let svg = format!("{SVG_PAGE}<circle cx=\"5\" cy=\"5\" r=\"1\"/></svg>");
     assert!(read(svg.as_bytes(), "a.svg").is_ok());
