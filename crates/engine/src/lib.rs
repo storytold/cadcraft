@@ -963,6 +963,22 @@ impl Session {
 
     // ---------------- interactive commands ----------------
 
+    /// Whether `name`, typed at the command line, already names something [`Session::start`] runs:
+    /// a command or its alias, a LISP `c:` command or a system variable. AutoComplete leaves such
+    /// a name as typed instead of taking its first suggestion.
+    pub fn knows_command(&self, name: &str) -> bool {
+        let name = name.trim().trim_start_matches('\'');
+        let lower = name.trim_start_matches(['_', '.', '-']).to_ascii_lowercase();
+        if lower.is_empty() {
+            return false;
+        }
+        let dashed = cmd::resolve_alias(&name.trim_start_matches(['_', '.']).to_ascii_lowercase());
+        find_command(&dashed).is_some()
+            || find_command(&cmd::resolve_alias(&lower)).is_some()
+            || self.lisp_command(&lower).is_some()
+            || sysvars::get(self, &lower.to_ascii_uppercase()).is_some()
+    }
+
     /// Start a command by name or alias as if typed at the command line.
     pub fn start(&mut self, name: &str) -> Result<()> {
         self.last_polar = None;

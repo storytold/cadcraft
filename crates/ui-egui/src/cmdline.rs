@@ -18,6 +18,8 @@ pub struct CmdLine {
     typed_since_selection: bool,
     pub history: Vec<String>,
     pub history_pos: Option<usize>,
+    /// The AutoComplete row Enter takes (Up/Down move it; typing puts it back on the first).
+    pub suggestion: usize,
     /// What was typed at command prompts (not command names), oldest first: the in-command
     /// shortcut menu's Recent Input.
     pub recent_input: Vec<String>,
@@ -298,6 +300,9 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
                     submit(app);
                 } else {
                     app.cmd.buffer.push_str(&t);
+                    app.cmd.suggestion = 0;
+                    // Editing a recalled command leaves the history: AutoComplete applies again.
+                    app.cmd.history_pos = None;
                 }
             }
             egui::Event::Key { key, pressed: true, repeat, modifiers, .. } => match key {
@@ -320,7 +325,16 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
                         let _ = app.run("erase.selection", serde_json::json!({}));
                     } else {
                         app.cmd.buffer.pop();
+                        app.cmd.suggestion = 0;
+                        app.cmd.history_pos = None;
                     }
+                }
+                Key::ArrowUp if !modifiers.any() && suggesting(app) => {
+                    app.cmd.suggestion = app.cmd.suggestion.saturating_sub(1);
+                }
+                Key::ArrowDown if !modifiers.any() && suggesting(app) => {
+                    let n = suggestions(&app.cmd.buffer).len();
+                    app.cmd.suggestion = (app.cmd.suggestion + 1).min(n.saturating_sub(1));
                 }
                 Key::ArrowUp if !modifiers.any() => {
                     if !app.cmd.history.is_empty() {
@@ -371,7 +385,9 @@ pub fn submit(app: &mut CadApp) {
             app.cmd.buffer = text;
         }
     }
+    complete_command(app);
     let text = std::mem::take(&mut app.cmd.buffer);
+    app.cmd.suggestion = 0;
     app.cmd.locked_second = None;
     app.cmd.history_pos = None;
     if !text.trim().is_empty() && !app.session.prompting() {
@@ -388,6 +404,31 @@ pub fn submit(app: &mut CadApp) {
         return;
     }
     app.cmdline(&text);
+}
+
+/// Enter (or Space) on a partly typed command name runs the AutoComplete row shown as chosen (the
+/// first unless Up/Down moved it), as CAD command lines usually do: `HA` + Enter is HATCH. A
+/// name that already is a command, an alias, a LISP command or a system variable runs as typed,
+/// unless Up/Down chose another row.
+fn complete_command(app: &mut CadApp) {
+    if app.session.prompting() || app.cmd.history_pos.is_some() {
+        return;
+    }
+    let typed = app.cmd.buffer.trim();
+    // A row chosen with Up/Down wins over an exact name or alias (`pol`, Down: the next row).
+    let chosen = app.cmd.suggestion > 0;
+    if typed.is_empty() || (!chosen && app.session.knows_command(typed)) {
+        return;
+    }
+    let sug = suggestions(typed);
+    if let Some(s) = sug.get(app.cmd.suggestion).or(sug.first()) {
+        app.cmd.buffer = s.id.clone();
+    }
+}
+
+/// The AutoComplete list is showing (a command name is being typed).
+fn suggesting(app: &CadApp) -> bool {
+    !app.session.prompting() && app.cmd.history_pos.is_none() && !suggestions(&app.cmd.buffer).is_empty()
 }
 
 fn visible_lines(app: &CadApp, canvas: Rect, bar: Rect) -> usize {
@@ -524,7 +565,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
             for (i, s) in sug.iter().enumerate() {
                 let r = Rect::from_min_size(pos2(lr.left(), lr.top() + rh * i as f32), vec2(lr.width(), rh));
                 let resp = ui.interact(r, ui.id().with(("sug", i)), Sense::click());
-                if resp.hovered() || i == 0 {
+                if resp.hovered() || i == app.cmd.suggestion.min(sug.len() - 1) {
                     p.rect_filled(r.shrink(1.0), 2.0, if resp.hovered() { t.cmd_keyword_hover } else { t.list_row });
                 }
                 p.text(Pos2::new(r.left() + 8.0, r.center().y), egui::Align2::LEFT_CENTER, &s.display, crate::theme::body(), t.text);
