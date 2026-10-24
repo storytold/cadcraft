@@ -417,9 +417,18 @@ fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<usiz
 fn store(path: &str, bytes: &[u8]) -> Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        // The version being replaced is kept as a backup (`durable::backup_path`) when it is a
+        // readable drawing. A backup that can't be made never stops the save.
+        if is_drawing_file(path) {
+            let name = file_name(path);
+            let valid = |old: &[u8]| io().is_some_and(|h| (h.read)(old, &name).is_ok());
+            if let Err(e) = crate::durable::backup_previous(path, valid) {
+                log::warn!("{path}: backup failed: {e}");
+            }
+        }
         // Exclusively create a fresh temporary file and rename it over `path`, so a planted
         // `<path>.cadcraft-tmp` symlink cannot redirect the write onto another file (CWE-59).
-        crate::atomic_write::write_atomic(std::path::Path::new(path), bytes).map_err(|e| bad("save", format!("{path}: {e}")))
+        crate::durable::write_durable(std::path::Path::new(path), bytes).map_err(|e| bad("save", format!("{path}: {e}")))
     }
     #[cfg(target_arch = "wasm32")]
     {

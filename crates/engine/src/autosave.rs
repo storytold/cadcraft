@@ -353,7 +353,7 @@ mod native {
         }
         // Create a fresh temporary file exclusively and rename it into place, so a planted
         // `<path>.tmp` symlink in a shared autosave directory cannot redirect the write (CWE-59).
-        crate::atomic_write::write_atomic(Path::new(path), &bytes).map_err(|e| e.to_string())
+        crate::durable::write_durable(Path::new(path), &bytes).map_err(|e| e.to_string())
     }
 
     impl Autosaver {

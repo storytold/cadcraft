@@ -18,6 +18,8 @@ pub mod blockedit;
 pub mod capped_read;
 pub mod cmd;
 pub mod doc_path;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod durable;
 mod finite;
 pub mod grip_dims;
 pub mod grips;
