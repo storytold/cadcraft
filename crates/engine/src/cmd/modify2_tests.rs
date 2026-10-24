@@ -659,6 +659,28 @@ fn textedit_json_and_command_line() {
     assert!(matches!(kind(&s, &t), EntityKind::Text(x) if x.value == "hello world"));
 }
 
+/// Picking an MTEXT in TEXTEDIT (double-click) hands it to the in-place editor, contents and
+/// formatting as they are; the editor's text replaces them. A TEXT is edited at the prompt.
+#[test]
+fn textedit_opens_the_text_editor_on_mtext() {
+    let mut s = Session::new();
+    let m = h(&s.execute("mtext", &json!({"at": [0, 5], "text": "a", "height": 1})).unwrap());
+    s.execute("textedit", &json!({"handle": m, "text": "{\\fArial|b1;bold}\nplain"})).unwrap();
+    s.cmdline("textedit 0.2,4.6").unwrap();
+    let ed = s.editing_mtext().expect("the editor opens on the MTEXT");
+    assert_eq!(ed.contents, "{\\fArial|b1;bold}\\Pplain");
+    s.input(crate::Input::Text("new\\Ptext".into())).unwrap();
+    assert!(s.editing_mtext().is_none());
+    assert!(matches!(kind(&s, &m), EntityKind::MText(x) if x.contents == "new\\Ptext"));
+    s.cmdline("").unwrap();
+    assert!(s.running.is_none());
+    s.undo().unwrap();
+    assert!(matches!(kind(&s, &m), EntityKind::MText(x) if x.contents.ends_with("plain")));
+    let t = h(&s.execute("text", &json!({"at": [20, 0], "text": "old", "height": 1})).unwrap());
+    s.cmdline("textedit 20.2,0.3").unwrap();
+    assert!(s.editing_mtext().is_none(), "TEXT {t} is edited at the prompt");
+}
+
 #[test]
 fn explode_polyline3d_keeps_elevations() {
     let mut s = Session::new();

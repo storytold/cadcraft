@@ -36,6 +36,8 @@ struct State {
     sel: (usize, usize),
     /// A caret position to set on the text box in the next frame (after a toolbar insertion).
     caret: Option<usize>,
+    /// The text box takes the keyboard on the editor's first frame (also when it opens with text).
+    focus: bool,
 }
 
 fn state_id() -> egui::Id {
@@ -55,7 +57,8 @@ fn color32(c: MTextColor) -> Color32 {
     Color32::from_rgb(rgb.0, rgb.1, rgb.2)
 }
 
-/// Show the editor while MTEXT collects its text; clears its state when it isn't running.
+/// Show the editor while MTEXT collects its text or TEXTEDIT edits an MTEXT's; clears its state
+/// when neither is running.
 pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     let mtext = app.session.editing_mtext();
     let asking = app.session.current_prompt().is_some_and(|p| p.accept.text && !p.accept.point);
@@ -66,14 +69,16 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     let t = Tokens::get();
     let (rect, scale) = app.canvas.xf.map_or((ctx.content_rect(), 20.0), |x| (x.rect, x.scale.max(1e-6)));
     let mut st = ctx.data_mut(|d| d.get_temp::<State>(state_id())).unwrap_or_else(|| {
-        let mut fmt = Formatted::default();
+        // An existing MTEXT's contents (TEXTEDIT) are edited; MTEXT starts empty.
+        let mut fmt = if mt.contents.is_empty() { Formatted::default() } else { Formatted::from_contents(&mt.contents) };
         if let Some(f) = app.session.doc().ok().and_then(|d| d.text_style(&mt.style).map(|s| s.font.clone())) {
             // A family name, not a font file (`txt.shx`, `arial.ttf`).
             if !f.is_empty() && !f.contains('.') {
                 fmt.base_font = f;
             }
         }
-        State { fmt, typing: CharFmt::default(), typing_at: 0, top: 70.0, sel: (0, 0), caret: None }
+        let end = fmt.len();
+        State { fmt, typing: CharFmt::default(), typing_at: 0, top: 70.0, sel: (end, end), caret: Some(end), focus: true }
     });
     let base_h = if mt.height > 0.0 { mt.height } else { 0.2 };
     let px = ((base_h * scale) as f32).clamp(MIN_PX, MAX_PX);
@@ -124,6 +129,9 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
             // The editor holds the whole contents: one input, then Enter ends MTEXT's text entry.
             if !st.fmt.is_empty() {
                 let _ = app.session.input(cadcraft_engine::Input::Text(st.fmt.to_contents()));
+            } else if app.session.running.as_ref().is_some_and(|r| r.id == "textedit") {
+                // Emptied: TEXTEDIT keeps the old text, as Enter at its prompt does.
+                let _ = app.session.input(cadcraft_engine::Input::Enter);
             }
             if app.session.running.as_ref().is_some_and(|r| r.id == "mtext") {
                 let _ = app.session.input(cadcraft_engine::Input::Enter);
@@ -376,11 +384,13 @@ fn ruler(ui: &mut egui::Ui, st: &mut State, px: f32, width: f32, base_h: f64) {
 
 fn text_box(ui: &mut egui::Ui, st: &mut State, base_h: f64, px: f32, width: f32, t: &Tokens) {
     let id = edit_id();
-    if let Some(at) = st.caret.take()
+    // Kept until the text box has a state to put it in (an opened MTEXT's: after its end).
+    if let Some(at) = st.caret
         && let Some(mut s) = egui::TextEdit::load_state(ui.ctx(), id)
     {
         s.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(at))));
         s.store(ui.ctx(), id);
+        st.caret = None;
     }
     let fmt = st.fmt.clone();
     let default_color = t.text;
@@ -436,9 +446,10 @@ fn text_box(ui: &mut egui::Ui, st: &mut State, base_h: f64, px: f32, width: f32,
         .char_limit(cadcraft_engine::mtext_edit::MAX_CHARS)
         .layouter(&mut layouter)
         .show(ui);
-    if !out.response.has_focus() && buf.is_empty() && st.fmt.is_empty() {
+    if !out.response.has_focus() && (st.focus || (buf.is_empty() && st.fmt.is_empty())) {
         out.response.request_focus();
     }
+    st.focus = false;
     if out.response.changed() {
         let typing = st.typing.clone();
         st.fmt.set_text(&buf, &typing);

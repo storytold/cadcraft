@@ -2215,11 +2215,16 @@ struct TextEditM {
     single: bool,
     /// Asking for the edit mode.
     mode: bool,
+    /// The picked MTEXT, edited in the in-place text editor.
+    mtext: Option<cadcraft_doc::MText>,
 }
 
 impl Interactive for TextEditM {
     fn name(&self) -> &'static str {
         "TEXTEDIT"
+    }
+    fn editing_mtext(&self) -> Option<cadcraft_doc::MText> {
+        self.mtext.clone()
     }
     fn prompt(&self, _s: &Session) -> Prompt {
         if self.mode {
@@ -2245,7 +2250,9 @@ impl Interactive for TextEditM {
         match (&self.h, i) {
             (None, Input::Point(p)) => {
                 let h = curves::pick_at(s, p).ok_or_else(|| other("*Invalid selection*"))?;
-                let old = text_of(&curves::entity(s, h)?.kind).ok_or_else(|| other("Select a text, mtext, attribute definition or dimension."))?;
+                let kind = curves::entity(s, h)?.kind;
+                let old = text_of(&kind).ok_or_else(|| other("Select a text, mtext, attribute definition or dimension."))?;
+                self.mtext = if let EntityKind::MText(m) = kind { Some(m) } else { None };
                 self.h = Some((h, old));
                 Ok(Step::Continue)
             }
@@ -2255,10 +2262,12 @@ impl Interactive for TextEditM {
                 set_text(s, h, &t)?;
                 self.edits.push((h, before));
                 self.h = None;
+                self.mtext = None;
                 Ok(if self.single { Step::Done } else { Step::Continue })
             }
             (Some(_), Input::Enter) => {
                 self.h = None;
+                self.mtext = None;
                 Ok(if self.single { Step::Done } else { Step::Continue })
             }
             (None, Input::Enter) => Ok(Step::Done),
