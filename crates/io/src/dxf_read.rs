@@ -734,7 +734,7 @@ fn hatch(tags: &[Tag], t: &T) -> Option<EntityKind> {
                         while let Some(x) = get(i).filter(|x| matches!(x.code, 94 | 73 | 74 | 95 | 96)) {
                             let n = x.i64().clamp(0, 100_000) as usize;
                             match x.code {
-                                94 => degree = n,
+                                94 => degree = n.clamp(1, 10), // same cap as the SPLINE reader
                                 95 => nk = n,
                                 96 => nc = n,
                                 _ => {}
