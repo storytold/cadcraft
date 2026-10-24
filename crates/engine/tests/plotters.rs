@@ -190,3 +190,14 @@ fn plotwindow_keeps_the_picked_window_for_the_plot_dialog() {
     assert_eq!(r["window"], json!([[0.0, 0.0], [3.0, 4.0]]));
     assert!(s.execute("plotwindow", &json!({"p1": [0, 0], "p2": [3, 0]})).is_err());
 }
+
+#[test]
+fn paper_margins_are_checked_against_their_own_axis() {
+    let mut s = session();
+    s.execute("plottermanager", &json!({"action": "new", "name": "Banner Printer", "output": "png"})).unwrap();
+    let paper = |margins: Value| json!({"action": "set", "name": "Banner Printer", "paper": {"name": "Banner", "width": 400, "height": 200, "margins": margins}});
+    // 250 mm of bottom + top margin leaves no printable height on a 200 mm paper.
+    assert!(s.execute("plottermanager", &paper(json!([0, 250, 0, 0]))).is_err());
+    // 300 mm of left + right margin still leaves 100 mm of printable width on a 400 mm paper.
+    assert!(s.execute("plottermanager", &paper(json!([150, 0, 150, 0]))).is_ok());
+}

@@ -493,9 +493,7 @@ fn edit_device(cmd: &str, c: &mut PlotterConfig, p: &Value) -> Result<()> {
             Some(m) => {
                 let a: Vec<f64> = m.as_array().map(|a| a.iter().filter_map(Value::as_f64).collect()).unwrap_or_default();
                 match a[..] {
-                    [l, b, r, t] if a.iter().all(|v| v.is_finite() && (0.0..=1000.0).contains(v)) && l + r < w.min(h) && b + t < w.max(h) => {
-                        [l, b, r, t]
-                    }
+                    [l, b, r, t] if a.iter().all(|v| v.is_finite() && (0.0..=1000.0).contains(v)) && l + r < w && b + t < h => [l, b, r, t],
                     _ => return Err(bad(cmd, "`paper.margins` must be [left, bottom, right, top] in mm, leaving a printable area")),
                 }
             }
