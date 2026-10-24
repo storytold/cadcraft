@@ -2,7 +2,7 @@
 //! drawing). Objects are matched by geometry and properties first (preferring the same handle),
 //! then by handle: the same handle with other geometry or properties is a change. What is left
 //! is only in this drawing or only in the other. The comparison stays on the session for the
-//! canvas overlay and next/previous navigation until COMPARECLOSE.
+//! canvas overlay, next/previous navigation and COMPAREEXPORT until COMPARECLOSE.
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -15,6 +15,8 @@ use serde_json::{Value, json};
 use super::super::*;
 use super::{base64_decode, io};
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
+
+mod export;
 
 /// Objects compared per drawing; more are left out (and the result says so).
 pub const MAX_OBJECTS: usize = 200_000;
@@ -36,6 +38,9 @@ pub struct Comparison {
     pub other_name: String,
     /// The other drawing (its objects are drawn where they differ).
     pub other: Arc<Drawing>,
+    /// The other drawing's file, when it has one: COMPAREEXPORT resolves its relative xref
+    /// paths from that file's folder.
+    pub other_path: Option<String>,
     /// Only in this drawing (handles here).
     pub added: Vec<Handle>,
     /// Only in the other drawing (handles there).
@@ -71,6 +76,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("compare.next", "Next Change", |s, _| step(s, 1)).params("→ {region, of}: zoom to the next area with changes").noundo(),
         CommandSpec::new("compare.previous", "Previous Change", |s, _| step(s, -1)).params("→ {region, of}").noundo(),
         CommandSpec::new("compareclose", "Close Comparison", run_close).params("{}: end the comparison and its overlay").noundo(),
+        export::spec(),
     ]
 }
 
@@ -311,6 +317,7 @@ fn listed(d: &Drawing, hs: &[Handle]) -> Vec<Value> {
 
 fn run_compare(s: &mut Session, p: &Value) -> Result<Value> {
     let (other, name) = other_drawing(s, p)?;
+    let other_path = export::source_path(s, p, &other);
     let st = s.state()?;
     let (uid, space, cur) = (st.uid, st.space.clone(), st.doc.clone());
     if Arc::ptr_eq(&cur, &other) {
@@ -361,7 +368,7 @@ fn run_compare(s: &mut Session, p: &Value) -> Result<Value> {
         "message": message,
     });
     let changed = changed.into_iter().map(|(a, b, _, _)| (a, b)).collect();
-    s.compare = Some(Comparison { uid, space, other_name: name, other, added, removed, changed, common, truncated, regions, at: None });
+    s.compare = Some(Comparison { uid, space, other_name: name, other, other_path, added, removed, changed, common, truncated, regions, at: None });
     s.touch();
     Ok(out)
 }

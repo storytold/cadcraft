@@ -85,6 +85,9 @@ pub(super) fn paint(app: &mut CadApp, ctx: &egui::Context, p: &egui::Painter, xf
                 if ui.button("▶").on_hover_text(crate::tl!("Next Change")).clicked() {
                     action = Some("compare.next");
                 }
+                if ui.button(crate::tl!("Export")).on_hover_text(crate::tl!("Export Comparison")).clicked() {
+                    action = Some("compareexport");
+                }
                 if ui.button("×").on_hover_text(crate::tl!("Close Comparison")).clicked() {
                     action = Some("compareclose");
                 }
