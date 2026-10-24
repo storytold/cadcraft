@@ -168,6 +168,7 @@ pub const MAX_TAGS: usize = 50_000_000;
 
 mod codepage;
 pub use codepage::decode_code_page;
+mod dos_tables;
 
 /// Parse a DXF file (ASCII or binary).
 pub fn parse(bytes: &[u8]) -> Result<Vec<Tag>> {
@@ -224,36 +225,68 @@ fn mif_escape_at(chars: &[char], i: usize) -> Option<char> {
 /// escapes), and the `\M+nXXXX` sequences for double-byte East Asian characters. Malformed
 /// escapes, unpaired surrogates and unknown `\M+` code pages are kept as literal text.
 fn unescape_unicode(s: &str) -> String {
-    if !s.contains("\\U+") && !s.contains("\\M+") {
+    if !has_escape(s) {
         return s.to_string();
     }
+    unescape_found(s)
+}
+
+/// [`unescape_unicode`] for a string the caller owns: without escapes (nearly always) it is
+/// returned as it is, with no copy.
+fn unescape_owned(s: String) -> String {
+    if has_escape(&s) { unescape_found(&s) } else { s }
+}
+
+fn has_escape(s: &str) -> bool {
+    s.contains("\\U+") || s.contains("\\M+")
+}
+
+/// The longest escape: a surrogate pair of two `\U+XXXX` (14 characters).
+const MAX_ESCAPE_CHARS: usize = 14;
+
+fn unescape_found(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
-    let chars: Vec<char> = s.chars().collect();
-    let mut i = 0;
-    while let Some(&c) = chars.get(i) {
-        if let Some(ch) = mif_escape_at(&chars, i) {
-            out.push(ch);
-            i += 8;
-            continue;
+    let mut rest = s;
+    // Everything up to the next backslash is copied as it is; an escape is looked for in a window
+    // of the next few characters only, so no copy of the whole string (4 bytes a character) is made.
+    while let Some(at) = rest.find('\\') {
+        let (plain, tail) = rest.split_at(at);
+        out.push_str(plain);
+        let mut buf = ['\0'; MAX_ESCAPE_CHARS];
+        let mut n = 0;
+        for (slot, c) in buf.iter_mut().zip(tail.chars()) {
+            *slot = c;
+            n += 1;
         }
-        if let Some(unit) = escape_at(&chars, i) {
+        let window = buf.get(..n).unwrap_or_default();
+        let (ch, used) = if let Some(ch) = mif_escape_at(window, 0) {
+            (Some(ch), 8)
+        } else if let Some(unit) = escape_at(window, 0) {
             if let Some(ch) = char::from_u32(unit) {
-                out.push(ch);
-                i += 7;
-                continue;
-            }
-            if (0xD800..0xDC00).contains(&unit)
-                && let Some(low) = escape_at(&chars, i + 7).filter(|u| (0xDC00..0xE000).contains(u))
-                && let Some(ch) = char::from_u32(0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00))
+                (Some(ch), 7)
+            } else if (0xD800..0xDC00).contains(&unit)
+                && let Some(low) = escape_at(window, 7).filter(|u| (0xDC00..0xE000).contains(u))
             {
+                (char::from_u32(0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00)), 14)
+            } else {
+                (None, 0)
+            }
+        } else {
+            (None, 0)
+        };
+        match ch {
+            Some(ch) => {
                 out.push(ch);
-                i += 14;
-                continue;
+                // Every escape character is ASCII, so `used` characters are `used` bytes.
+                rest = tail.get(used..).unwrap_or_default();
+            }
+            None => {
+                out.push('\\');
+                rest = tail.get(1..).unwrap_or_default();
             }
         }
-        out.push(c);
-        i += 1;
     }
+    out.push_str(rest);
     out
 }
 
@@ -275,7 +308,7 @@ fn parse_ascii_with_limit(text: &str, max_tags: usize) -> Result<Vec<Tag>> {
         let Some((_, val)) = lines.next() else { return Err(DxfError::Eof) };
         let v = typed(code, val);
         let v = match v {
-            Value::Str(s) => Value::Str(unescape_unicode(&s)),
+            Value::Str(s) => Value::Str(unescape_owned(s)),
             o => o,
         };
         tags.push(Tag { code, value: v });
@@ -329,18 +362,14 @@ impl<'a> Cur<'a> {
     }
     /// The bytes of a zero-terminated string (without the zero), decoded by the caller.
     fn cstr(&mut self) -> Result<&'a [u8]> {
-        let start = self.p;
-        while self.p < self.b.len() && self.b.get(self.p) != Some(&0) {
-            self.p += 1;
-        }
-        let s = self.b.get(start..self.p).unwrap_or(&[]);
-        if self.p >= self.b.len() {
-            return Err(DxfError::Eof);
-        }
-        self.p += 1;
-        Ok(s)
+        let rest = self.b.get(self.p..).unwrap_or(&[]);
+        let len = rest.iter().position(|&b| b == 0).ok_or(DxfError::Eof)?;
+        self.p += len + 1;
+        Ok(rest.get(..len).unwrap_or(&[]))
     }
 }
+
+const HEX_DIGITS: &[u8; 16] = b"0123456789ABCDEF";
 
 /// Binary DXF (R13+: 2-byte group codes).
 pub fn parse_binary(b: &[u8]) -> Result<Vec<Tag>> {
@@ -352,10 +381,7 @@ fn parse_binary_with_limit(b: &[u8], max_tags: usize) -> Result<Vec<Tag>> {
     let mut text = codepage::BinaryText::default();
     let mut tags = Vec::new();
     while c.p < b.len() {
-        let mut code = i32::from(c.i16()?);
-        if code == 255 {
-            code = i32::from(c.i16()?);
-        }
+        let code = i32::from(c.i16()?);
         let v = match kind_of(code) {
             Kind::Str => Value::Str(unescape_unicode(&text.string(code, c.cstr()?))),
             Kind::Real => Value::Real(c.f64()?),
@@ -367,8 +393,9 @@ fn parse_binary_with_limit(b: &[u8], max_tags: usize) -> Result<Vec<Tag>> {
                 let n = usize::from(c.u8()?);
                 let bytes = c.take(n)?;
                 let mut s = String::with_capacity(n * 2);
-                for x in bytes {
-                    let _ = write!(s, "{x:02X}");
+                for &x in bytes {
+                    s.push(char::from(HEX_DIGITS[usize::from(x >> 4)]));
+                    s.push(char::from(HEX_DIGITS[usize::from(x & 15)]));
                 }
                 Value::Hex(s)
             }
@@ -393,8 +420,9 @@ pub fn format_real(v: f64) -> String {
     if !v.is_finite() {
         return "0.0".into();
     }
+    // `{v}` of a finite f64 is plain decimal (never an exponent): only the point can be missing.
     let s = format!("{v}");
-    if s.contains('.') || s.contains('e') || s.contains("inf") || s.contains("NaN") { s } else { format!("{s}.0") }
+    if s.contains('.') { s } else { format!("{s}.0") }
 }
 
 /// Write tags as ASCII DXF (CRLF line ends, codes right-aligned to 3 as is conventional).

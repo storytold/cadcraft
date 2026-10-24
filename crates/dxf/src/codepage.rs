@@ -6,14 +6,17 @@
 //! Asian code page) escapes, which [`crate::parse`] decodes after the bytes.
 //!
 //! The Windows, ISO and East Asian code pages are decoded with `encoding_rs`; DOS 437, 850 and
-//! 852 with the tables below (the upper halves of the IBM PC code pages; the lower halves are
-//! ASCII). Decoding never fails: a byte sequence that is invalid in the code page (a truncated
+//! 852 with the tables below and the other DOS pages with those of `dos_tables.rs` (the upper
+//! halves of the IBM PC code pages; the lower halves are ASCII). Decoding never fails: a byte sequence that is invalid in the code page (a truncated
 //! double-byte character, an unassigned byte) becomes U+FFFD and the bytes after it decode
 //! normally, so line ends and the group structure survive.
 
 use std::borrow::Cow;
 
 use encoding_rs::Encoding;
+
+use crate::Version;
+use crate::dos_tables as dos;
 
 /// How the bytes of a code page become text.
 #[derive(Clone, Copy, Debug)]
@@ -52,11 +55,23 @@ pub(crate) fn decoder(code_page: &str) -> Option<Decoder> {
         "ISO8859_6" | "ISO_8859_6" => e::ISO_8859_6,
         "ISO8859_7" | "ISO_8859_7" => e::ISO_8859_7,
         "ISO8859_8" | "ISO_8859_8" => e::ISO_8859_8,
+        "ISO8859_15" | "ISO_8859_15" => e::ISO_8859_15,
         "DOS866" => e::IBM866,
         "MACINTOSH" | "MAC_ROMAN" => e::MACINTOSH,
         "DOS437" => return Some(Decoder::Table(&DOS437)),
         "DOS850" => return Some(Decoder::Table(&DOS850)),
         "DOS852" => return Some(Decoder::Table(&DOS852)),
+        "DOS720" => return Some(Decoder::Table(&dos::DOS720)),
+        "DOS737" => return Some(Decoder::Table(&dos::DOS737)),
+        "DOS775" => return Some(Decoder::Table(&dos::DOS775)),
+        "DOS855" => return Some(Decoder::Table(&dos::DOS855)),
+        "DOS857" => return Some(Decoder::Table(&dos::DOS857)),
+        "DOS860" => return Some(Decoder::Table(&dos::DOS860)),
+        "DOS861" => return Some(Decoder::Table(&dos::DOS861)),
+        "DOS863" => return Some(Decoder::Table(&dos::DOS863)),
+        "DOS864" => return Some(Decoder::Table(&dos::DOS864)),
+        "DOS865" => return Some(Decoder::Table(&dos::DOS865)),
+        "DOS869" => return Some(Decoder::Table(&dos::DOS869)),
         _ => return None,
     };
     Some(Decoder::Encoding(enc))
@@ -161,7 +176,7 @@ impl BinaryText {
                     _ => None,
                 }
             }
-            (1, Some(HeaderVar::AcadVer)) => self.utf8 = is_utf8_version(&s),
+            (1, Some(HeaderVar::AcadVer)) => self.utf8 = Version::for_acadver(&s).is_some_and(Version::utf8),
             (3, Some(HeaderVar::CodePage)) => {
                 self.code_page = decoder(&s);
                 if self.code_page.is_none() {
@@ -172,11 +187,6 @@ impl BinaryText {
         }
         s
     }
-}
-
-/// True for an `$ACADVER` of R2007 (AC1021) or later, whose text is UTF-8.
-fn is_utf8_version(acadver: &str) -> bool {
-    acadver.trim().strip_prefix("AC").and_then(|n| n.parse::<u32>().ok()).is_some_and(|n| n >= 1021)
 }
 
 /// The double-byte code page of a `\M+n` escape: 1 Japanese (Shift-JIS), 2 Traditional Chinese
@@ -277,8 +287,9 @@ mod tests {
         // Wrong group code, or the file ends early.
         assert_eq!(ascii_code_page(b"9\n$DWGCODEPAGE\n1\nANSI_1251\n"), None);
         assert_eq!(ascii_code_page(b"9\n$DWGCODEPAGE\n3"), None);
-        assert!(is_utf8_version("AC1021") && is_utf8_version(" AC1032 "));
-        assert!(!is_utf8_version("AC1018") && !is_utf8_version("AC1009") && !is_utf8_version("garbage"));
+        let utf8 = |v: &str| Version::for_acadver(v).is_some_and(Version::utf8);
+        assert!(utf8("AC1021") && utf8(" AC1032 "));
+        assert!(!utf8("AC1018") && !utf8("AC1009") && !utf8("garbage"));
     }
 
     #[test]
