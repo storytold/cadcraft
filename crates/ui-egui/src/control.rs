@@ -267,7 +267,7 @@ pub fn inspect(app: &CadApp, ctx: &egui::Context) -> Value {
         "snap": app.canvas.snap.map(|s| json!({"point": [s.point.x, s.point.y], "mode": s.name})),
         "session": app.session.summary(),
         "closePrompt": app.close_prompt(),
-        "perf": {"frameMs": app.frame_ms, "buildMs": app.canvas.build_ms, "drawMs": app.canvas.draw_ms, "meshMs": app.canvas.mesh_ms, "building": app.canvas.building(), "renderer": if app.canvas.gpu.is_some() { "gpu" } else { "cpu" }, "prims": app.canvas.list.as_ref().map(|l| l.prims.len())},
+        "perf": {"frameMs": app.frame_ms, "buildMs": app.canvas.build_ms, "drawMs": app.canvas.draw_ms, "meshMs": app.canvas.mesh_ms, "building": app.canvas.building(), "renderer": if app.canvas.gpu.is_some() { "gpu" } else { "cpu" }, "prims": app.canvas.list.as_ref().map(|l| l.prims.len()), "truncated": app.canvas.list.as_ref().map(|l| l.truncated)},
     })
 }
 
@@ -490,9 +490,9 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
                 if let Err(e) = std::fs::write(path, &png) {
                     return err(e);
                 }
-                return ok(render_reply(&png, w, h, Some(path)));
+                return ok(render_reply(&png, w, h, Some(path), list.truncated));
             }
-            ok(render_reply(&png, w, h, None))
+            ok(render_reply(&png, w, h, None, list.truncated))
         }
         "app.open" => {
             let Some(path) = s("path") else { return err("missing path") };
@@ -534,9 +534,11 @@ fn render_view(bounds: &cadcraft_geom::Bounds2, center: Vec2, height: f64, fit: 
     }
 }
 
-/// The `ui.render` reply, matching the headless backend (`pngBase64`, `width`, `height`), plus `bytes` and `path`.
-fn render_reply(png: &[u8], w: u32, h: u32, path: Option<&str>) -> Value {
-    let mut v = json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(png), "width": w, "height": h, "bytes": png.len()});
+/// The `ui.render` reply, matching the headless backend (`pngBase64`, `width`, `height`), plus
+/// `bytes`, `path` and `truncated` (the build left block contents out, see #1070).
+fn render_reply(png: &[u8], w: u32, h: u32, path: Option<&str>, truncated: bool) -> Value {
+    let mut v =
+        json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(png), "width": w, "height": h, "bytes": png.len(), "truncated": truncated});
     if let (Some(path), Some(o)) = (path, v.as_object_mut()) {
         o.insert("path".to_string(), json!(path));
     }
@@ -612,12 +614,14 @@ mod tests {
 
     #[test]
     fn render_reply_has_base64_width_height_and_keeps_old_keys() {
-        let r = render_reply(b"abc", 7, 5, Some("x.png"));
+        let r = render_reply(b"abc", 7, 5, Some("x.png"), false);
         assert_eq!(r["pngBase64"], "YWJj");
         assert_eq!(r["width"], 7);
         assert_eq!(r["height"], 5);
         assert_eq!(r["bytes"], 3);
         assert_eq!(r["path"], "x.png");
-        assert!(render_reply(b"abc", 7, 5, None).get("path").is_none());
+        assert_eq!(r["truncated"], false);
+        assert!(render_reply(b"abc", 7, 5, None, true).get("path").is_none());
+        assert_eq!(render_reply(b"abc", 7, 5, None, true)["truncated"], true);
     }
 }

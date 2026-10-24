@@ -95,6 +95,10 @@ pub struct DisplayList {
     pub sheet: Option<Sheet>,
     /// Block contents expanded while building (see [`MAX_BLOCK_EXPANSION`]).
     pub expanded: usize,
+    /// The expansion budget was spent: block contents past it are not in the list. The screen,
+    /// plots and exports draw what is here; the CLI and the control channel report this, so an
+    /// output that leaves contents out is never silent (#1070).
+    pub truncated: bool,
     /// Plot style end, join and fill style per primitive (parallel to `prims`; missing entries
     /// are "use object"), turned into geometry by [`pen::apply`].
     pub pens: Vec<Pen>,
@@ -477,10 +481,14 @@ impl Builder<'_> {
     /// Take one unit of the block-expansion budget; false once it is spent.
     fn expand(&mut self) -> bool {
         self.list.expanded = self.list.expanded.saturating_add(1);
-        match self.shared_budget {
+        let ok = match self.shared_budget {
             Some(spent) => spent.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < MAX_BLOCK_EXPANSION,
             None => self.list.expanded <= MAX_BLOCK_EXPANSION,
+        };
+        if !ok {
+            self.list.truncated = true;
         }
+        ok
     }
 }
 
@@ -608,6 +616,7 @@ fn append(dst: &mut DisplayList, src: DisplayList) {
     dst.pens.extend(src.pens);
     dst.bounds = dst.bounds.union(&src.bounds);
     dst.expanded = dst.expanded.saturating_add(src.expanded);
+    dst.truncated |= src.truncated;
 }
 
 /// The plot style table a build draws with: the one in `opts`, else (on screen) the layout's
@@ -704,7 +713,11 @@ pub fn viewport_content(d: &Drawing, space: &Space, handle: Handle, area: Bounds
 /// Model space seen through `vp`, in paper units, appended to `b`'s list clipped to `clip`;
 /// `area` (the clip's bounds on paper) picks the model objects to draw.
 fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bounds2, clip: &Clip, unit_mm: f64) {
-    if b.list.expanded >= MAX_BLOCK_EXPANSION || !vp.on {
+    if !vp.on {
+        return;
+    }
+    if b.list.expanded > MAX_BLOCK_EXPANSION {
+        b.list.truncated = true;
         return;
     }
     let center = vp.center.xy();
@@ -802,6 +815,7 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
     // The contents are in paper units now: draw their pens before clipping.
     pen::apply(&mut sub.list, unit_mm);
     b.list.expanded = b.list.expanded.saturating_add(sub.list.expanded);
+    b.list.truncated |= sub.list.truncated;
     append_clipped(&mut b.list, &sub.list, clip);
 }
 
@@ -872,6 +886,7 @@ fn append_clipped(dst: &mut DisplayList, src: &DisplayList, clip: &Clip) {
             }
         }
     }
+    dst.truncated |= src.truncated;
 }
 
 fn push_raw(dst: &mut DisplayList, p: &DPrim, kind: Kind, pts: &[Vec2]) {

@@ -235,6 +235,19 @@ fn export_framed(s: &Session, out: &str, window: Option<Bounds2>) -> Result<(), 
     let bytes = cadcraft_io::write_framed(d, out, window).map_err(|e| e.to_string())?;
     std::fs::write(out, &bytes).map_err(|e| format!("{out}: {e}"))?;
     eprintln!("wrote {out} ({} bytes)", bytes.len());
+    // An image export draws a display list of its own: when the block-expansion budget is spent,
+    // it leaves contents out — say so instead of writing a quietly incomplete image (#1070).
+    if cadcraft_io::is_image(out) {
+        use cadcraft_engine::doc::Space;
+        use cadcraft_engine::render::{MAX_BLOCK_EXPANSION, Options, build, build_plot};
+        let opts = Options::default();
+        let list = if out.to_ascii_lowercase().ends_with(".pdf") { build_plot(d, &Space::Model, &opts) } else { build(d, &Space::Model, &opts) };
+        if list.truncated {
+            eprintln!(
+                "note: the drawing expands more block contents than one display list holds ({MAX_BLOCK_EXPANSION} units); the image leaves the rest out"
+            );
+        }
+    }
     if cadcraft_engine::cmd::file::drops_unknown(out) {
         let lost = cadcraft_engine::cmd::file::not_saved(d);
         if let Some(m) = cadcraft_engine::cmd::file::not_saved_message(&lost) {
@@ -612,6 +625,7 @@ fn perf_file(path: &str) -> Result<(), String> {
     outln!("open {open_ms:.0} ms, {} entities, extents {:.1} x {:.1}", d.entity_count(), ext.width(), ext.height());
     outln!("{:>8} {:>10} {:>10}", "zoom", "build ms", "prims");
     let mut finest = Options::default();
+    let mut truncated = false;
     for k in 0..5 {
         let zoom = 4f64.powi(k);
         let h = size / zoom;
@@ -620,14 +634,24 @@ fn perf_file(path: &str) -> Result<(), String> {
         let visible = Bounds2::new(ext.center() - half, ext.center() + half);
         let screen = Options { tolerance: pixel * 0.5, min_dash: pixel * 2.0, view: Some(visible.expand(h * 0.8)), ..Default::default() };
         let t = Instant::now();
-        let n = build(d, space, &screen).prims.len();
-        outln!("{:>7}x {:>10.1} {n:>10}", zoom, ms(t));
+        let list = build(d, space, &screen);
+        truncated |= list.truncated;
+        outln!("{:>7}x {:>10.1} {:>10}", zoom, ms(t), list.prims.len());
         finest = screen;
     }
     // Plots: every pattern line, everywhere (last, so its large list doesn't weigh on the above).
     let t = Instant::now();
-    let n = build(d, space, &Options { min_dash: 0.0, view: None, ..finest }).prims.len();
-    outln!("{:>8} {:>10.1} {n:>10}", "full", ms(t));
+    let list = build(d, space, &Options { min_dash: 0.0, view: None, ..finest });
+    truncated |= list.truncated;
+    outln!("{:>8} {:>10.1} {:>10}", "full", ms(t), list.prims.len());
+    if truncated {
+        // The expansion budget bounds hostile block references; past it, contents are left out.
+        // Never silently: say the list is incomplete (#1070).
+        eprintln!(
+            "note: the drawing has more block contents than one display list expands ({} units); builds past the budget leave the rest out",
+            cadcraft_engine::render::MAX_BLOCK_EXPANSION
+        );
+    }
     Ok(())
 }
 
