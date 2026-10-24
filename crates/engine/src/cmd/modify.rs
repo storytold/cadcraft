@@ -1155,6 +1155,19 @@ pub(crate) fn extend(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Re
             }
             lwpoly(vs, false)
         }
+        // A ray's only end is its base: extending moves the base back to the nearest edge behind it.
+        EntityKind::Ray(r) => {
+            let base = r.base.xy();
+            let back = -r.dir.xy().normalized();
+            let ray = Segment::Line(Line::new(base, base + back * 1e8));
+            let np = cut
+                .iter()
+                .flat_map(|c| intersect_ext(&ray, c, false))
+                .filter(|x| (*x - base).dot(back) > 1e-9)
+                .min_by(|x, y| x.dist(base).total_cmp(&y.dist(base)))
+                .ok_or_else(|| EngineError::Other("Object does not intersect an edge.".into()))?;
+            EntityKind::Ray(cadcraft_doc::RayLine { base: v3(np), dir: r.dir })
+        }
         k => super::modify2::extend_other(k, &cut, pick)?,
     };
     s.doc_mut()?.modify_entity(h, |e| e.kind = new_kind)?;

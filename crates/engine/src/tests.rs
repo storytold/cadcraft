@@ -241,6 +241,20 @@ fn extend_line_to_boundary() {
 }
 
 #[test]
+fn extend_ray_moves_base_back_to_boundary() {
+    // Issue #1236: EXTEND takes a ray and moves its base (its only end) back to the edge.
+    let mut s = Session::new();
+    s.execute("ray", &json!({"base": [5, 0], "through": [10, 0]})).unwrap();
+    s.execute("line", &json!({"points": [[1, -2], [1, 2]]})).unwrap();
+    s.execute("line", &json!({"points": [[8, -2], [8, 2]]})).unwrap();
+    let h = s.doc().unwrap().model.iter().next().unwrap().handle;
+    s.execute("extend", &json!({"handle": h.hex(), "pick": [6, 0]})).unwrap();
+    let EntityKind::Ray(r) = &s.doc().unwrap().entity(h).unwrap().kind else { panic!("not a ray") };
+    assert!(r.base.xy().near(Vec2::new(1.0, 0.0), 1e-9));
+    assert!(r.dir.xy().near(Vec2::new(1.0, 0.0), 1e-9));
+}
+
+#[test]
 fn properties_set_circle_size_and_dim_style() {
     // Issue #6: the Properties palette edits a circle's circumference/area and a dimension's style.
     let mut s = Session::new();
