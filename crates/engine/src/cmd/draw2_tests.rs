@@ -352,6 +352,35 @@ fn revcloud_json() {
 }
 
 #[test]
+fn revcloud_saves_revcloudprops_xdata() {
+    let mut s = Session::new();
+    let props = |s: &Session| {
+        let xd = s.doc().unwrap().model.last().unwrap().common.xdata.clone();
+        xd.iter().map(|t| (t.code, t.value.clone())).collect::<Vec<_>>()
+    };
+    let want = vec![(1001, "RevcloudProps".to_string()), (1070, "0".to_string()), (1040, "2".to_string())];
+    s.execute("revcloud", &json!({"p1": [0, 0], "p2": [100, 50], "arcLength": 2})).unwrap();
+    assert_eq!(props(&s), want);
+    let dxf = cadcraft_io::write_dxf(s.doc().unwrap());
+    let lines: Vec<&str> = dxf.lines().map(str::trim).collect();
+    let groups: Vec<(&str, &str)> = lines.chunks(2).filter_map(|c| Some((*c.first()?, *c.get(1)?))).collect();
+    assert!(groups.contains(&("1001", "RevcloudProps")), "no RevcloudProps xdata in the DXF");
+    let appid = groups
+        .iter()
+        .enumerate()
+        .any(|(i, g)| *g == ("0", "APPID") && groups[i + 1..].iter().take_while(|g| g.0 != "0").any(|g| *g == ("2", "RevcloudProps")));
+    assert!(appid, "no RevcloudProps APPID record");
+    // Made from an object: the object's properties are kept, the cloud is still a revision cloud.
+    let c = h(&s.execute("circle", &json!({"center": [10, 10], "radius": 1})).unwrap());
+    s.execute("revcloud", &json!({"handle": c, "arcLength": 2})).unwrap();
+    assert_eq!(props(&s), want);
+    // Interactive.
+    s.cmdline("revcloud a 2").unwrap();
+    s.cmdline("0,0 4,2").unwrap();
+    assert_eq!(props(&s), want);
+}
+
+#[test]
 fn revcloud_command_line() {
     let mut s = Session::new();
     s.cmdline("revcloud a 1").unwrap();
