@@ -107,7 +107,7 @@ pub fn hex(c: Color32) -> String {
 /// Parse `"#rrggbb"` (the `#` is optional).
 pub fn parse_hex(s: &str) -> Option<Color32> {
     let h = s.trim().trim_start_matches('#');
-    if h.len() != 6 || !h.is_ascii() {
+    if h.len() != 6 || !h.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     let byte = |i: usize| h.get(i..i + 2).and_then(|b| u8::from_str_radix(b, 16).ok());
@@ -387,7 +387,7 @@ mod tests {
         let c = Color32::from_rgb(0x12, 0xab, 0xff);
         assert_eq!(parse_hex(&hex(c)), Some(c));
         assert_eq!(parse_hex("FFFFFF"), Some(Color32::WHITE));
-        for bad in ["", "#fff", "#gggggg", "#12345678", "#ééé", "#1234567"] {
+        for bad in ["#+f+0+0", "", "#fff", "#gggggg", "#12345678", "#ééé", "#1234567"] {
             assert_eq!(parse_hex(bad), None, "{bad}");
         }
     }

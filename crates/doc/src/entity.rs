@@ -18,7 +18,11 @@ impl Handle {
         format!("{:X}", self.0)
     }
     pub fn parse_hex(s: &str) -> Option<Handle> {
-        u64::from_str_radix(s.trim(), 16).ok().map(Handle)
+        let s = s.trim();
+        if !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        u64::from_str_radix(s, 16).ok().map(Handle)
     }
 }
 
@@ -1476,6 +1480,15 @@ fn transform_text(t: &mut Text, m: &Mat3, s: f64, rot: f64, mirror: bool) {
 mod grip_tests {
     use super::*;
     use cadcraft_geom::PolyVertex;
+
+    #[test]
+    fn handle_parse_hex_accepts_only_hex_digits() {
+        assert_eq!(Handle::parse_hex("1a"), Some(Handle(0x1A)));
+        assert_eq!(Handle::parse_hex(" 1A "), Some(Handle(0x1A)));
+        for bad in ["+1A", "-1A", "", "+", "1 A"] {
+            assert_eq!(Handle::parse_hex(bad), None, "{bad}");
+        }
+    }
 
     #[test]
     fn polyline_grips_are_vertices_and_midpoints() {
