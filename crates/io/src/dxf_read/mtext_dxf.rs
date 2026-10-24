@@ -1,7 +1,9 @@
 //! MTEXT specifics of DXF (DXF Reference, MTEXT): control characters in the contents written
 //! as a caret and a letter (`^I` a tab, `^J` a line feed, `^ ` a caret), and the column groups
 //! 75 (type), 76 (count), 78 (flow reversed), 79 (auto height), 48 (width), 49 (gutter) and
-//! 50 (column heights, after the column type; before it, 50 is the rotation).
+//! 50 (column heights, after the column type; before it, 50 is the rotation). TEXT, ATTDEF,
+//! ATTRIB and DIMENSION strings use the same caret encoding: AutoCAD reads a bare `^2` in
+//! `10^2` as a control character.
 
 use cadcraft_doc::{MText, MTextColumnType, MTextColumns};
 use cadcraft_dxf::Tag;

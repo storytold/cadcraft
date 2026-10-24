@@ -198,7 +198,7 @@ fn text_from(t: &T) -> Text {
         insert: t.p(10),
         align_pt: if h == HAlign::Left && v == VAlign::Baseline { None } else { align },
         height: t.fd(40, 0.2).max(1e-9),
-        value: t.s(1).unwrap_or_default(),
+        value: mtext_dxf::decode_contents(&t.s(1).unwrap_or_default()),
         rotation: t.fd(50, 0.0).to_radians(),
         width_factor: t.fd(41, 1.0),
         oblique: t.fd(51, 0.0).to_radians(),
@@ -386,7 +386,7 @@ fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_left: &mut usi
                 text,
                 invisible: own.i(70).unwrap_or(0) & 1 != 0,
                 constant: own.i(70).unwrap_or(0) & 2 != 0,
-                prompt: own.s(3).unwrap_or_default(),
+                prompt: mtext_dxf::decode_contents(&own.s(3).unwrap_or_default()),
                 props: Default::default(),
                 multiline,
                 modes: attrib_modes(own.0),
@@ -445,7 +445,7 @@ fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_left: &mut usi
                 p14: t.p(14),
                 p15: t.p(15),
                 p16: t.p(16),
-                text: t.s(1).unwrap_or_default(),
+                text: mtext_dxf::decode_contents(&t.s(1).unwrap_or_default()),
                 style: t.s(3).unwrap_or_else(|| "Standard".into()),
                 measurement: t.fd(42, 0.0),
                 text_rotation: t.fd(53, 0.0).to_radians(),
@@ -994,7 +994,7 @@ struct Rx {
     pstyles: HashMap<String, String>,
     /// Upper-case block name → associative array parameters from its BLOCK_RECORD.
     block_arrays: HashMap<String, cadcraft_doc::ArrayParams>,
-    /// LAYER record handle (upper case) → layer name (VIEWPORT group 341 frozen layers).
+    /// LAYER record handle (upper case) → layer name (VIEWPORT group 331 frozen layers).
     layers: HashMap<String, String>,
 }
 
@@ -1094,14 +1094,16 @@ fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityKind, rx: &m
             }
             rx.mleader_fix.push((h, pending));
         }
-        // CADCraft's VPFROZEN xdata wins; otherwise AutoCAD's group 341 layer handles.
+        // CADCraft's VPFROZEN xdata wins; otherwise the layer handles of group 331 (DXF 2004 and
+        // later) or 341 (DXF 2000).
         ("VIEWPORT", EntityKind::Viewport(v)) if v.frozen_layers.is_empty() => {
-            v.frozen_layers = tags
-                .iter()
-                .take_while(|t| t.code < 1000)
-                .filter(|t| t.code == 341)
-                .filter_map(|t| rx.layers.get(&t.str().trim().to_ascii_uppercase()).cloned())
-                .collect();
+            for t in tags.iter().take_while(|t| t.code < 1000).filter(|t| t.code == 331 || t.code == 341) {
+                if let Some(name) = rx.layers.get(&t.str().trim().to_ascii_uppercase())
+                    && !v.frozen_layers.contains(name)
+                {
+                    v.frozen_layers.push(name.clone());
+                }
+            }
         }
         _ => {}
     }

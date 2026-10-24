@@ -17,7 +17,7 @@ struct W {
     next: u64,
     /// Upper-case plot style name → its `ACDBPLACEHOLDER` handle (group 390 of layers and objects).
     pstyles: HashMap<String, String>,
-    /// Upper-case layer name → its LAYER table record handle (group 341 of viewports).
+    /// Upper-case layer name → its LAYER table record handle (group 331 of viewports).
     layers: HashMap<String, String>,
     /// Persistent reactors of boundary objects: each source object of an associative hatch →
     /// the hatches (groups `{ACAD_REACTORS 330 …}`), from [`hatch_reactors`].
@@ -564,7 +564,7 @@ fn computed_text_insert(d: &Drawing, t: &Text) -> Vec3 {
 fn text_tags(w: &mut W, d: &Drawing, t: &Text, attrib: Option<(&Attrib, Version)>, attdef_prompt: Option<&str>) {
     w.p(10, text_insert(d, t));
     w.f(40, t.height);
-    w.s(1, &t.value);
+    w.s(1, t.value.replace('^', "^ "));
     if t.rotation != 0.0 {
         w.f(50, t.rotation.to_degrees());
     }
@@ -602,7 +602,7 @@ fn text_tags(w: &mut W, d: &Drawing, t: &Text, attrib: Option<(&Attrib, Version)
                 w.i(280, 0);
             }
             if let Some(prompt) = attdef_prompt {
-                w.s(3, prompt);
+                w.s(3, prompt.replace('^', "^ "));
             }
             w.s(2, &a.tag);
             w.i(70, attrib_flags(a));
@@ -916,7 +916,7 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
             // The actual measurement (read-only in DXF): AutoLISP's entget shows it.
             w.f(42, g.measurement);
             if !dm.text.is_empty() {
-                w.s(1, &dm.text);
+                w.s(1, dm.text.replace('^', "^ "));
             }
             w.s(3, &dm.style);
             if dm.text_rotation != 0.0 {
@@ -1170,11 +1170,11 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
             if let Some(h) = clip {
                 w.s(340, h.hex());
             }
-            // AutoCAD's frozen-layer list: one soft pointer per layer, to its LAYER record. Other
-            // programs read only this; CADCraft prefers its own xdata below when present.
+            // AutoCAD's frozen-layer list (group 331): one soft pointer per layer, to its LAYER
+            // record. Other programs read only this; CADCraft prefers its own xdata below when present.
             for name in &v.frozen_layers {
                 if let Some(h) = w.layers.get(&name.to_ascii_uppercase()).cloned() {
-                    w.s(341, h);
+                    w.s(331, h);
                 }
             }
             // One CADCraft xdata group holds both lists: readers stop at the first group of an app.
