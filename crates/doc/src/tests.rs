@@ -581,3 +581,32 @@ fn space_names_its_tab() {
     assert_eq!(p.layout(), Some("Sheet A"));
     assert_eq!(p.tab_name(), "Sheet A");
 }
+
+#[test]
+fn rotating_a_gradient_hatch_turns_its_gradient() {
+    let mut k = EntityKind::Hatch(Hatch {
+        pattern: "SOLID".into(),
+        solid: true,
+        loops: vec![],
+        scale: 1.0,
+        angle: 0.0,
+        associative: false,
+        style: 0,
+        elevation: 0.0,
+        gradient: Some(Gradient {
+            name: "LINEAR".into(),
+            color1: crate::color::Color::Index(5),
+            color2: crate::color::Color::Index(7),
+            angle: std::f64::consts::FRAC_PI_4,
+            centered: true,
+        }),
+        origin: Vec2::ZERO,
+        background: None,
+        pattern_lines: vec![],
+    });
+    k.transform(&Mat3::rotate(std::f64::consts::FRAC_PI_2));
+    let EntityKind::Hatch(h) = k else { panic!("a hatch") };
+    let g = h.gradient.expect("the gradient");
+    assert!((g.angle - 3.0 * std::f64::consts::FRAC_PI_4).abs() < 1e-9, "the gradient angle follows the rotation: {:?}", g.angle);
+    assert!((h.angle - std::f64::consts::FRAC_PI_2).abs() < 1e-9, "the pattern angle too: {:?}", h.angle);
+}

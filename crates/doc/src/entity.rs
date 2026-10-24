@@ -1337,6 +1337,10 @@ impl EntityKind {
                 }
                 h.scale *= s;
                 h.angle = cadcraft_geom::norm_angle(h.angle + rot);
+                // The gradient fill's direction is its own angle: it follows the hatch.
+                if let Some(g) = &mut h.gradient {
+                    g.angle = cadcraft_geom::norm_angle(g.angle + rot);
+                }
                 h.origin = m.apply(h.origin);
             }
             EntityKind::Solid(so) | EntityKind::Trace(so) => so.corners.iter_mut().for_each(t3),
