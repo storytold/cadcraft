@@ -44,6 +44,18 @@ fn same_content(a: &ListKey, b: &ListKey) -> bool {
     (a.0, a.1, a.4, a.5, a.6, a.7) == (b.0, b.1, b.4, b.5, b.6, b.7)
 }
 
+/// A press-and-drag let go sooner than this (seconds) is a click made while the mouse moved,
+/// not a selection window drawn by dragging (#1001): drafting fast, the hand is already moving
+/// when the button goes down. A drag meant as a window takes longer than this.
+const FLICK_SECS: f64 = 0.3;
+
+/// Where the button went down, when the primary drag that just ended was let go within
+/// [`FLICK_SECS`] (a click made while the mouse moved); `None` for a real drag. Forgets the press.
+fn flick_origin(app: &mut CadApp, ui: &egui::Ui) -> Option<Pos2> {
+    let (origin, since) = app.canvas.drag_press.take()?;
+    (ui.input(|i| i.time) - since < FLICK_SECS).then_some(origin)
+}
+
 #[derive(Default)]
 pub struct CanvasState {
     pub list: Option<DisplayList>,
@@ -121,6 +133,9 @@ pub struct CanvasState {
     pub param: crate::parametric::Cache,
     /// A selection window opened by a press-and-drag, to close where the button is let go.
     drag_window: bool,
+    /// Where (screen) and when (egui time) the button went down for the current primary drag: a
+    /// drag let go within [`FLICK_SECS`] is a click made while the mouse moved (#1001).
+    drag_press: Option<(Pos2, f64)>,
     /// The right-click that opened the shortcut menu held Shift or Ctrl: it is the object snap
     /// menu ([`crate::context_menu`]).
     pub snap_menu: bool,
@@ -1557,6 +1572,22 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         && app.session.pending_window.is_none()
         && !app.session.realtime_zoom_active();
     let pressed_primary = pressed_primary || (point_prompt && resp.drag_stopped_by(egui::PointerButton::Primary));
+    // A prompt that picks objects with points (STRETCH's "Select objects", "Select object to
+    // trim", "Select first object"…): a click made while the mouse moves counts where the button
+    // went down, on the object aimed at (#1001); egui saw a drag and nothing picked anything.
+    let pick_prompt = app.session.current_prompt().is_some_and(|p| p.accept.point && p.picks_objects())
+        && app.session.pending_window.is_none()
+        && !app.session.realtime_zoom_active();
+    if pick_prompt
+        && resp.drag_stopped_by(egui::PointerButton::Primary)
+        && inside
+        && !middle_down
+        && app.cmd.options.is_none()
+        && let Some(origin) = flick_origin(app, ui).filter(|o| rect.contains(*o))
+        && let Err(e) = app.session.input(Input::Point(xf.to_world(origin)))
+    {
+        app.session.echo(e.to_string());
+    }
     if point_prompt && inside && pressed_primary && !middle_down && app.cmd.options.is_none() && app.cmd.buffer.is_empty() {
         let releases: Vec<egui::Pos2> = ui.input(|i| {
             i.events
@@ -1689,6 +1720,14 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             app.session.echo(e.to_string());
         }
     }
+    // Where and when any primary drag on the canvas started (egui forgets both once the button is
+    // up), to tell a click made while the mouse moved from a real drag (#1001).
+    if resp.drag_started_by(egui::PointerButton::Primary)
+        && let Some(origin) = ui.input(|i| i.pointer.press_origin())
+    {
+        let since = ui.input(|i| i.pointer.press_start_time().unwrap_or(i.time));
+        app.canvas.drag_press = Some((origin, since));
+    }
     // Press-and-drag selection window (PICKDRAG = 2; click-click still works): a drag
     // that starts while objects are being selected opens a window where the button went down,
     // and letting go closes it. Drags on grips and drags while drawing are left alone.
@@ -1709,7 +1748,20 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     }
     if app.canvas.drag_window && resp.drag_stopped_by(egui::PointerButton::Primary) {
         app.canvas.drag_window = false;
-        if app.session.pending_window.is_some()
+        if let Some(origin) = flick_origin(app, ui) {
+            // Let go at once: a click made while the mouse was moving, not a drag (#1001). It
+            // counts where the button went down, as a click: it picks the object there or starts
+            // a click-click window, instead of closing a tiny window that selects nothing.
+            app.session.pending_window = None;
+            let at = xf.to_world(origin);
+            // Over overlapping objects it offers selection cycling's list, as a still click does.
+            if !cycle_click(app, &xf, Some(origin), Some(at), mods.shift) {
+                let done = if app.session.prompting() { app.session.input(Input::Point(at)) } else { app.session.idle_click(at, mods.shift) };
+                if let Err(e) = done {
+                    app.session.echo(e.to_string());
+                }
+            }
+        } else if app.session.pending_window.is_some()
             && let Some(end) = ui.input(|i| i.pointer.interact_pos())
         {
             let end = xf.to_world(end);
