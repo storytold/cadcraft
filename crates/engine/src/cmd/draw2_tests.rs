@@ -354,7 +354,7 @@ fn revcloud_json() {
 #[test]
 fn revcloud_command_line() {
     let mut s = Session::new();
-    s.cmdline("revcloud a 1").unwrap();
+    s.cmdline("revcloud a 1 1").unwrap();
     s.cmdline("0,0 4,2").unwrap();
     assert!(s.running.is_none(), "{}", s.prompt_text());
     assert!(matches!(last(&s), EntityKind::LwPolyline(p) if p.vertices.len() == 12));
@@ -367,9 +367,26 @@ fn revcloud_command_line() {
     assert_eq!(kinds(&s).len(), 3);
     // Object option converts a closed polyline.
     s.execute("rectang", &json!({"p1": [10, 10], "p2": [12, 12]})).unwrap();
-    s.cmdline("revcloud o 10,11").unwrap();
+    s.cmdline("revcloud o 10,11 n").unwrap();
     assert!(s.running.is_none());
     assert_eq!(kinds(&s).len(), 4);
+}
+
+#[test]
+fn revcloud_arc_length_asks_max_and_object_asks_reverse() {
+    let mut s = Session::new();
+    s.execute("rectang", &json!({"p1": [10, 10], "p2": [12, 12]})).unwrap();
+    s.cmdline("revcloud a 200 800").unwrap();
+    assert!(s.prompt_text().contains("first corner"), "{}", s.prompt_text());
+    s.cmdline("0,0 2000,1000").unwrap();
+    assert!(s.running.is_none());
+    s.cmdline("revcloud").unwrap();
+    assert!(s.log.iter().any(|l| l.contains("Minimum arc length: 200.0000   Maximum arc length: 800.0000")), "{:?}", s.log);
+    s.cmdline("o").unwrap();
+    s.cmdline("10,11").unwrap();
+    assert!(s.running.is_some() && s.prompt_text().contains("Reverse direction"), "{}", s.prompt_text());
+    s.cmdline("n").unwrap();
+    assert!(s.running.is_none());
 }
 
 // ---------------- BREAKLINE ----------------

@@ -918,6 +918,11 @@ fn default_arc_len(s: &Session) -> f64 {
     d.map(|d| d.header.f64("REVCLOUDARCLEN", if metric { 15.0 } else { 0.5 })).unwrap_or(0.5).max(1e-6)
 }
 
+/// Maximum arc length remembered between REVCLOUD runs (CADCraft-only state, not an AutoCAD variable); never below `min`.
+fn default_max_arc_len(s: &Session, min: f64) -> f64 {
+    s.doc().ok().map_or(min, |d| d.header.f64("CADCRAFT_REVCLOUDMAXARCLEN", min)).max(min)
+}
+
 /// Bulged closed polyline vertices for a revision cloud around `boundary`.
 pub(crate) fn cloud_vertices(boundary: &[Vec2], arc_len: f64, per_edge: bool, reverse: bool) -> Option<Vec<PolyVertex>> {
     let mut pts: Vec<Vec2> = Vec::new();
@@ -1024,15 +1029,31 @@ struct RevcloudM {
     kind: CloudKind,
     pts: Vec<Vec2>,
     arc_len: f64,
+    max_arc_len: f64,
     asking_arc: bool,
+    asking_max: bool,
     object: bool,
+    /// Outline of the picked object while "Reverse direction" is being asked.
+    picked: Option<(Handle, Vec<Vec2>)>,
     calligraphy: bool,
     asking_style: bool,
 }
 
 impl RevcloudM {
     fn new(s: &Session, kind: CloudKind) -> Self {
-        RevcloudM { kind, pts: Vec::new(), arc_len: default_arc_len(s), asking_arc: false, object: false, calligraphy: false, asking_style: false }
+        let arc_len = default_arc_len(s);
+        RevcloudM {
+            kind,
+            pts: Vec::new(),
+            arc_len,
+            max_arc_len: default_max_arc_len(s, arc_len),
+            asking_arc: false,
+            asking_max: false,
+            object: false,
+            picked: None,
+            calligraphy: false,
+            asking_style: false,
+        }
     }
     fn boundary(&self, extra: Option<Vec2>) -> Vec<Vec2> {
         let mut pts = self.pts.clone();
@@ -1067,12 +1088,18 @@ impl Interactive for RevcloudM {
             CloudKind::Poly => "Polygonal",
             CloudKind::Free => "Freehand",
         };
-        s.echo(format!("Minimum arc length: {0:.4}   Maximum arc length: {0:.4}   Style: Normal   Type: {t}", self.arc_len));
+        s.echo(format!("Minimum arc length: {0:.4}   Maximum arc length: {1:.4}   Style: Normal   Type: {t}", self.arc_len, self.max_arc_len));
         Ok(Step::Continue)
     }
     fn prompt(&self, _s: &Session) -> Prompt {
+        if self.picked.is_some() {
+            return Prompt::new("Reverse direction", curves::KW).kw(&["Yes", "No"]).default("No");
+        }
         if self.asking_arc {
             return Prompt::new("Specify minimum length of arc", Accept::NUMBER).default(format!("{:.4}", self.arc_len));
+        }
+        if self.asking_max {
+            return Prompt::new("Specify maximum length of arc", Accept::NUMBER).default(format!("{:.4}", self.max_arc_len));
         }
         if self.asking_style {
             return Prompt::new("Select arc style", curves::KW).kw(&["Normal", "Calligraphy"]).default("Normal");
@@ -1092,13 +1119,38 @@ impl Interactive for RevcloudM {
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if let Some((h, pts)) = self.picked.take() {
+            let reverse = matches!(&i, Input::Keyword(k) | Input::Text(k) if k.to_ascii_lowercase().starts_with('y'));
+            let vs = cloud_vertices(&pts, self.arc_len, false, reverse).ok_or_else(|| other("The object has no area."))?;
+            let nh = s.add_entity(cloud_entity(vs, self.calligraphy, self.arc_len))?;
+            let common = curves::entity(s, h)?.common;
+            let d = s.doc_mut()?;
+            d.modify_entity(nh, |e| e.common = common)?;
+            d.remove_entity(h);
+            s.echo("Revision cloud finished.");
+            return Ok(Step::Done);
+        }
         if self.asking_arc {
             if let Input::Text(t) = &i {
                 let v = number(t).filter(|v| *v > 0.0).ok_or_else(|| other("Requires a positive value."))?;
                 self.arc_len = v;
-                s.doc_mut()?.header.set_f64("REVCLOUDARCLEN", v);
+                self.max_arc_len = self.max_arc_len.max(v);
+                let max = self.max_arc_len;
+                let d = s.doc_mut()?;
+                d.header.set_f64("REVCLOUDARCLEN", v);
+                d.header.set_f64("CADCRAFT_REVCLOUDMAXARCLEN", max);
             }
             self.asking_arc = false;
+            self.asking_max = true;
+            return Ok(Step::Continue);
+        }
+        if self.asking_max {
+            if let Input::Text(t) = &i {
+                let v = number(t).filter(|v| *v >= self.arc_len).ok_or_else(|| other("Requires a value not less than the minimum arc length."))?;
+                self.max_arc_len = v;
+                s.doc_mut()?.header.set_f64("CADCRAFT_REVCLOUDMAXARCLEN", v);
+            }
+            self.asking_max = false;
             return Ok(Step::Continue);
         }
         if self.asking_style {
@@ -1112,14 +1164,12 @@ impl Interactive for RevcloudM {
             let Input::Point(p) = i else { return if i == Input::Enter { Ok(Step::Cancel) } else { Ok(Step::Continue) } };
             let h = curves::pick_at(s, p).ok_or_else(|| other("*Invalid selection*"))?;
             let pts = object_outline(s, h)?;
-            let vs = cloud_vertices(&pts, self.arc_len, false, false).ok_or_else(|| other("The object has no area."))?;
-            let nh = s.add_entity(cloud_entity(vs, self.calligraphy, self.arc_len))?;
-            let common = curves::entity(s, h)?.common;
-            let d = s.doc_mut()?;
-            d.modify_entity(nh, |e| e.common = common)?;
-            d.remove_entity(h);
-            s.echo("Revision cloud finished.");
-            return Ok(Step::Done);
+            if cloud_vertices(&pts, self.arc_len, false, false).is_none() {
+                return Err(other("The object has no area."));
+            }
+            self.object = false;
+            self.picked = Some((h, pts));
+            return Ok(Step::Continue);
         }
         match i {
             Input::Keyword(k) => {
