@@ -1267,10 +1267,19 @@ pub(crate) fn explode_kind(d: &cadcraft_doc::Drawing, e: &Entity) -> Option<Vec<
                 pl.segments()
                     .into_iter()
                     .map(|s| {
-                        let k = match s {
+                        let mut k = match s {
                             Segment::Line(l) => line(l.a, l.b),
                             Segment::Arc { arc: a, .. } => arc(&a),
                         };
+                        // The pieces stay on the polyline's elevation plane.
+                        match &mut k {
+                            EntityKind::Line(l) => {
+                                l.a.z = p.elevation;
+                                l.b.z = p.elevation;
+                            }
+                            EntityKind::Arc(a) => a.center.z = p.elevation,
+                            _ => {}
+                        }
                         Entity { handle: Handle(0), common: e.common.clone(), kind: k }
                     })
                     .collect(),
