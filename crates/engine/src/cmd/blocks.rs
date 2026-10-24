@@ -41,7 +41,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("attdef", "Define Attributes...", run_attdef)
             .menu(&["Draw", "Block", "Define Attributes..."])
             .alias(&["att", "-attdef"])
-            .params("{tag, prompt?, default?, at, height?, invisible?}")
+            .params("{tag, prompt?, default?, at, height?, invisible?, justify?: L|C|R|M|TL|TC|TR|ML|MC|MR|BL|BC|BR, style? (default the current text style)}")
             .interactive(|_| Ok(Box::new(AttdefM::default()))),
         attedit::attedit_spec(),
         attedit::dash_attedit_spec(),
@@ -296,21 +296,30 @@ fn run_insert(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(attedit::with_unknown_tags(s, h, &vals, json!({ "handle": h.hex() })))
 }
 
-fn attdef_kind(s: &Session, tag: &str, prompt: &str, default: &str, at: Vec2, height: f64, invisible: bool) -> EntityKind {
-    let style = s.doc().map(|d| d.header.str("TEXTSTYLE", "Standard")).unwrap_or_else(|_| "Standard".into());
+/// The current text style (TEXTSTYLE).
+fn current_text_style(s: &Session) -> String {
+    s.doc().map(|d| d.header.str("TEXTSTYLE", "Standard")).unwrap_or_else(|_| "Standard".into())
+}
+
+/// An attribute definition at `at` with justification `j` (as TEXT: any but Left keeps `at` as
+/// its alignment point) in text style `style`.
+#[allow(clippy::too_many_arguments)]
+fn attdef_kind(tag: &str, prompt: &str, default: &str, at: Vec2, height: f64, invisible: bool, j: (HAlign, VAlign), style: String) -> EntityKind {
+    let (halign, valign) = j;
+    let left = halign == HAlign::Left && valign == VAlign::Baseline;
     EntityKind::AttDef(Attrib {
         tag: tag.to_ascii_uppercase(),
         text: Text {
             insert: v3(at),
-            align_pt: None,
+            align_pt: if left { None } else { Some(v3(at)) },
             height,
             value: default.into(),
             rotation: 0.0,
             width_factor: 1.0,
             oblique: 0.0,
             style,
-            halign: HAlign::Left,
-            valign: VAlign::Baseline,
+            halign,
+            valign,
         },
         invisible,
         constant: false,
@@ -328,7 +337,18 @@ fn run_attdef(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let at = point_req("attdef", p, "at")?;
     let h = f64_or(p, "height", s.doc()?.header.f64("TEXTSIZE", 0.2));
-    let k = attdef_kind(s, tag, str_param(p, "prompt").unwrap_or(tag), str_param(p, "default").unwrap_or(""), at, h, bool_or(p, "invisible", false));
+    // Justification and text style as TEXT and MTEXT take them (#1658).
+    let j = super::draw::justify(str_param(p, "justify").unwrap_or("L")).ok_or_else(|| bad("attdef", "unknown justification"))?;
+    // Align and Fit run between two baseline points; `attdef` has one, so it can't express them.
+    if matches!(j.0, HAlign::Aligned | HAlign::Fit) {
+        return Err(bad("attdef", "Align and Fit need two points, which attdef doesn't take yet; use L, C, R, M or TL … BR"));
+    }
+    let style = match str_param(p, "style") {
+        Some(n) => s.doc()?.text_style(n).map(|t| t.name.clone()).ok_or_else(|| bad("attdef", format!("no text style \"{n}\"")))?,
+        None => current_text_style(s),
+    };
+    let (prompt, default) = (str_param(p, "prompt").unwrap_or(tag), str_param(p, "default").unwrap_or(""));
+    let k = attdef_kind(tag, prompt, default, at, h, bool_or(p, "invisible", false), j, style);
     Ok(json!({ "handle": s.add_entity(k)?.hex() }))
 }
 
@@ -866,7 +886,7 @@ impl Interactive for AttdefM {
             (Some(tag), Some(pr), Some(def)) => {
                 if let Input::Point(p) = i {
                     let h = s.doc()?.header.f64("TEXTSIZE", 0.2);
-                    let k = attdef_kind(s, tag, pr, def, p, h, false);
+                    let k = attdef_kind(tag, pr, def, p, h, false, (HAlign::Left, VAlign::Baseline), current_text_style(s));
                     s.add_entity(k)?;
                     return Ok(Step::Done);
                 }
