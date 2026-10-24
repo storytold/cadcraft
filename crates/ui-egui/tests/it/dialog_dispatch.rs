@@ -5,6 +5,9 @@ use std::rc::Rc;
 
 use cadcraft_engine::Session;
 use cadcraft_ui_egui::{CadApp, Services, menus};
+use egui::{PointerButton, vec2};
+use egui_kittest::Harness;
+use egui_kittest::kittest::Queryable;
 use serde_json::json;
 
 /// An app whose file pickers count their calls and cancel.
@@ -94,5 +97,28 @@ fn print_opens_the_plot_dialog_but_json_plot_never_does() {
     let _ = app.run("plot", json!({ "layout": "Model", "plotArea": "extents" }));
     app.cmdline(r#"plot {"layout": "Model"}"#);
     assert!(app.ui.dialog.is_none());
+    assert_eq!(picks.get(), 0);
+}
+
+#[test]
+fn canceling_plot_dialog_preserves_drawing_and_does_not_open_picker() {
+    let (mut app, picks) = app();
+    menus::activate(&mut app, "plot");
+    let drawing = app.session.doc().unwrap().clone();
+    let mut harness = Harness::builder().with_size(vec2(1280.0, 800.0)).build_ui_state(
+        |ui, app: &mut CadApp| {
+            app.logic(&ui.ctx().clone());
+            app.ui(ui);
+        },
+        app,
+    );
+    harness.run_steps(4);
+    assert_eq!(harness.state().ui.dialog.as_deref(), Some("plot"));
+    assert_eq!(harness.state().session.doc().unwrap(), &drawing);
+
+    harness.get_by_label("Cancel").click_button(PointerButton::Primary);
+    harness.run_steps(3);
+    assert!(harness.state().ui.dialog.is_none());
+    assert_eq!(harness.state().session.doc().unwrap(), &drawing);
     assert_eq!(picks.get(), 0);
 }
