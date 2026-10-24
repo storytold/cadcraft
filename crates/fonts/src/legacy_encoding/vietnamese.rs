@@ -269,12 +269,27 @@ pub fn detect_vietnamese_encoding(s: &str) -> Option<VietnameseEncoding> {
         if let Some(&next_c) = chars.peek() {
             let mut matched_composite = false;
             let is_diameter = c.eq_ignore_ascii_case(&'O') && next_c == 'Ø';
-            if !is_diameter && match_vni_composite(c, next_c).is_some() {
+            let is_ambiguous_western_pair = matches!(
+                (c, next_c),
+                ('A', 'É')
+                    | ('a', 'é')
+                    | ('O', 'Ù')
+                    | ('o', 'ù')
+                    | ('A', 'Ï')
+                    | ('a', 'ï')
+                    | ('O', 'Ï')
+                    | ('o', 'ï')
+                    | ('U', 'ñ')
+                    | ('u', 'ñ')
+                    | ('E', 'Ñ')
+                    | ('e', 'ñ')
+            );
+            if !is_diameter && !is_ambiguous_western_pair && match_vni_composite(c, next_c).is_some() {
                 vni_score += 2;
                 vni_composite_found = true;
                 matched_composite = true;
             }
-            if match_tcvn3_composite(c, next_c).is_some() {
+            if !is_ambiguous_western_pair && match_tcvn3_composite(c, next_c).is_some() {
                 tcvn_score += 2;
                 tcvn_composite_found = true;
                 matched_composite = true;
@@ -963,6 +978,16 @@ mod adversarial_tests {
         for w in safe {
             assert_eq!(transcode_vietnamese(w, None), w, "Failed on {w}");
             assert_eq!(detect_vietnamese_encoding(w), None, "Failed on {w}");
+        }
+    }
+
+    #[test]
+    fn test_western_european_ambiguous_pairs_never_transcoded() {
+        let words = ["AÉROPORT", "aéré", "où", "d'où", "maïs", "naïf", "coïncidence", "Uña", "uña", "SEÑOR", "señor"];
+        for w in words {
+            assert_eq!(detect_vietnamese_encoding(w), None, "Failed detection on {w}");
+            assert_eq!(transcode_vietnamese(w, None), w, "Failed unhinted transcoding on {w}");
+            assert_eq!(transcode_vietnamese(w, Some("Standard")), w, "Failed Standard font transcoding on {w}");
         }
     }
 }

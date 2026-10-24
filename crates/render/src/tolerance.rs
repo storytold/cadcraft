@@ -12,7 +12,11 @@ use crate::{Builder, Ctx, Ink, ink};
 pub fn tolerance_in(d: &Drawing, t: &Tolerance) -> GdtLayout {
     let st = d.dim_style(&t.style).cloned().unwrap_or_default();
     let dt = crate::dim_text(d, &st);
-    t.layout(d, &|s, h| cadcraft_fonts::text_width(&dt.font, s, h, dt.width_factor))
+    let hint = cadcraft_fonts::legacy_encoding::font_hint(&[&st.text_style]);
+    t.layout(d, &|s, h| {
+        let transcoded = cadcraft_fonts::legacy_encoding::transcode(s, hint);
+        cadcraft_fonts::text_width(&dt.font, &transcoded, h, dt.width_factor)
+    })
 }
 
 /// Points of a frame primitive, tessellated at `tol` (a fill's triangle as is).
@@ -57,6 +61,7 @@ pub(crate) fn draw(b: &mut Builder, ctx: &Ctx, e: &Entity, t: &Tolerance, lw: f3
         }
     }
     let dt = crate::dim_text(d, &st);
+    let hint = cadcraft_fonts::legacy_encoding::font_hint(&[&st.text_style]);
     for tx in &g.texts {
         let p = cadcraft_fonts::TextParams {
             rotation: tx.rotation,
@@ -64,7 +69,7 @@ pub(crate) fn draw(b: &mut Builder, ctx: &Ctx, e: &Entity, t: &Tolerance, lw: f3
             oblique: dt.oblique,
             ..cadcraft_fonts::TextParams::new(tx.pos, tx.height)
         };
-        let transcoded = cadcraft_fonts::legacy_encoding::transcode(&tx.value, None);
+        let transcoded = cadcraft_fonts::legacy_encoding::transcode(&tx.value, hint);
         let (sh, _) = cadcraft_fonts::place(&dt.font, &transcoded, &p);
         b.shaped(ctx, text_rgb, lw, &sh);
     }

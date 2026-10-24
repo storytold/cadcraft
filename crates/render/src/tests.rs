@@ -1155,3 +1155,28 @@ fn dimension_override_transcodes_vietnamese() {
     let g = dimension_in(&d, &dim);
     assert!(g.mtext.contains("Bản vẽ chi tiết"));
 }
+
+#[test]
+fn dimension_post_transcodes_vietnamese() {
+    let mut d = Drawing::new_imperial();
+    d.text_styles.push(cadcraft_doc::TextStyle { name: ".VnTime".into(), font: ".VnTime".into(), ..Default::default() });
+    if let Some(st) = d.dim_styles.first_mut() {
+        st.text_style = ".VnTime".into();
+        st.post = "<> mm (kÕt cÊu)".into();
+    }
+    let dim = cadcraft_doc::Dimension { text: "".into(), ..lin_dim() };
+    let g = dimension_in(&d, &dim);
+    assert!(g.mtext.contains("mm (kết cấu)"), "expected transcoded suffix, got {}", g.mtext);
+}
+
+#[test]
+fn tolerance_transcodes_vietnamese() {
+    let mut d = Drawing::new_imperial();
+    d.text_styles.push(cadcraft_doc::TextStyle { name: ".VnTime".into(), font: ".VnTime".into(), ..Default::default() });
+    if let Some(st) = d.dim_styles.first_mut() {
+        st.text_style = ".VnTime".into();
+    }
+    let tol = cadcraft_doc::Tolerance { insert: Vec3::ZERO, dir: Vec3::new(1.0, 0.0, 0.0), style: "Standard".into(), text: "kÕt cÊu".into() };
+    let layout = tolerance_in(&d, &tol);
+    assert!(!layout.texts.is_empty());
+}

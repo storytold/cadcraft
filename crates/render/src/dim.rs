@@ -382,16 +382,18 @@ fn linear_text(meas: f64, d: &Dimension, st: &DimStyle, prefix: &str) -> String 
     } else {
         format!("{prefix}{}", format_linear(v, &nf).1)
     };
-    let mut s = post(&st.post, &main);
+    let hint = cadcraft_fonts::legacy_encoding::font_hint(&[&st.text_style]);
+    let mut s = post(&st.post, &main, hint);
     if st.tolerance && !st.limits {
         let tf = NumFormat { decimals: st.tol_decimals, zin: st.tol_zero_suppression, round: 0.0, ..nf.clone() };
         // DIMPOST's suffix (what follows `<>`, or all of it) also goes on the tolerance values.
-        let suffix = st.post.split_once("<>").map_or(st.post.as_str(), |(_, after)| after);
+        let raw_suffix = st.post.split_once("<>").map_or(st.post.as_str(), |(_, after)| after);
+        let suffix = cadcraft_fonts::legacy_encoding::transcode(raw_suffix, hint);
         if (st.tol_plus - st.tol_minus).abs() < 1e-12 {
             s += &format!("%%p{}{suffix}", format_linear(st.tol_plus, &tf).1);
         } else {
-            let plus = format_linear(st.tol_plus, &tf).1 + suffix;
-            let minus = format_linear(st.tol_minus, &tf).1 + suffix;
+            let plus = format_linear(st.tol_plus, &tf).1 + &suffix;
+            let minus = format_linear(st.tol_minus, &tf).1 + &suffix;
             let sign = |x: &str, pos: char| if x.trim_start_matches(['0', '.', ',']).is_empty() { x.to_string() } else { format!("{pos}{x}") };
             let (plus, minus) =
                 (sign(&plus, '+'), if st.tol_minus < 0.0 { format!("+{}", minus.trim_start_matches('-')) } else { sign(&minus, '-') });
@@ -410,7 +412,7 @@ fn linear_text(meas: f64, d: &Dimension, st: &DimStyle, prefix: &str) -> String 
         };
         let af = NumFormat { unit, decimals: st.alt_decimals, zin: st.alt_zero_suppression, round: st.alt_round, frac, ..nf };
         let alt = format_linear(v * st.alt_factor, &af).1;
-        s += &format!(" [{}]", post(&st.alt_post, &alt));
+        s += &format!(" [{}]", post(&st.alt_post, &alt, hint));
     }
     inspected(apply_override(&s, d, st), d)
 }
@@ -430,8 +432,8 @@ fn tol_height_code(st: &DimStyle) -> String {
 }
 
 /// Apply measurement placeholders or append a dimension suffix, bounding the resulting UTF-8 text.
-fn post(template: &str, meas: &str) -> String {
-    let t = cadcraft_fonts::legacy_encoding::transcode(template, None);
+fn post(template: &str, meas: &str, hint: Option<&str>) -> String {
+    let t = cadcraft_fonts::legacy_encoding::transcode(template, hint);
     if t.contains("<>") {
         bounded_replace(&t, meas)
     } else {
@@ -1480,7 +1482,7 @@ mod text_budget_tests {
     /// A dimension suffix without placeholders still obeys the total text limit.
     #[test]
     fn bounds_post_without_markers() {
-        let text = post(&"x".repeat(MAX_DIM_TEXT * 2), "12");
+        let text = post(&"x".repeat(MAX_DIM_TEXT * 2), "12", None);
         assert_eq!(text.len(), MAX_DIM_TEXT);
         assert!(text.starts_with("12x"));
     }
