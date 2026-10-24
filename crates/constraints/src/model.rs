@@ -32,6 +32,8 @@ pub const MAX_RIGID_POINTS: usize = 256;
 const MAX_RIGID_MEMBERS: usize = 100_000;
 /// Shared across every model built for one analysis request.
 pub(crate) const MAX_RIGID_WORK: usize = 1_000_000;
+/// How far past 1 a solved ellipse ratio may land by rounding and still be stored as 1.
+const RATIO_TOL: f64 = 1e-9;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Shape {
@@ -504,6 +506,57 @@ impl Model {
         Some(v)
     }
 
+    /// Can `write_back` store `x` as it is? An ellipse keeps 0 < ratio <= 1, its major axis the
+    /// longer one: a solution past that is stored with its axes swapped or its minor axis
+    /// mirrored (see [`Model::stored_form`]), which renumbers the axis ends.
+    pub fn storable(&self, x: &[f64]) -> bool {
+        self.slots.iter().all(|s| match s.shape {
+            Shape::Ellipse { .. } => x.get(s.off + 4).is_some_and(|r| *r > 0.0 && *r <= 1.0 + RATIO_TOL),
+            _ => true,
+        })
+    }
+
+    /// `x` with every ellipse re-expressed as [`Model::write_back`] stores it (the same curve with
+    /// the major axis the longer one, a full ellipse's negative ratio made positive), so the
+    /// constraints can be checked against what would be stored. `None` when an elliptical arc has
+    /// a negative ratio or an ellipse a zero one.
+    pub fn stored_form(&self, x: &[f64]) -> Option<Vec<f64>> {
+        let mut xc = x.to_vec();
+        for s in &self.slots {
+            let Shape::Ellipse { arc } = s.shape else { continue };
+            let o = s.off;
+            let mut ratio = *x.get(o + 4)?;
+            if ratio < 0.0 && !arc {
+                ratio = -ratio;
+            }
+            if ratio <= 0.0 {
+                return None;
+            }
+            if ratio > 1.0 + RATIO_TOL {
+                let major = p2(x, o + 2)?.perp() * ratio;
+                *xc.get_mut(o + 2)? = major.x;
+                *xc.get_mut(o + 3)? = major.y;
+                ratio = 1.0 / ratio;
+                if arc {
+                    *xc.get_mut(o + 5)? -= std::f64::consts::FRAC_PI_2;
+                    *xc.get_mut(o + 6)? -= std::f64::consts::FRAC_PI_2;
+                }
+            }
+            *xc.get_mut(o + 4)? = ratio;
+        }
+        Some(xc)
+    }
+
+    /// The parameter `stored_form` gives the point at parameter `t` on ellipse `h` (unchanged for
+    /// any other object): `-t` where a negative ratio was made positive, a quarter turn back where
+    /// the axes were swapped.
+    pub fn stored_t(&self, x: &[f64], h: Handle, t: f64) -> f64 {
+        let Some(s) = self.slot(h) else { return t };
+        let (Shape::Ellipse { .. }, Some(&ratio)) = (s.shape, x.get(s.off + 4)) else { return t };
+        let (t, ratio) = if ratio < 0.0 { (-t, -ratio) } else { (t, ratio) };
+        if ratio > 1.0 + RATIO_TOL { t - std::f64::consts::FRAC_PI_2 } else { t }
+    }
+
     /// Write solved parameters back. Returns the handles that moved.
     pub fn write_back(&self, d: &mut Drawing, x: &[f64]) -> Vec<Handle> {
         let mut moved = Vec::new();
@@ -572,8 +625,9 @@ impl Model {
                             [a, b] if arc => (*a, *b),
                             _ => (el.start, el.end),
                         };
-                        // Keep the stored form: the major axis is the longer one.
-                        if ratio > 1.0 {
+                        // Keep the stored form: the major axis is the longer one. `storable` lets a
+                        // solved ratio exceed 1 only by rounding: that is a circle, not a swap.
+                        if ratio > 1.0 + RATIO_TOL {
                             major = major.perp() * ratio;
                             ratio = 1.0 / ratio;
                             if arc {

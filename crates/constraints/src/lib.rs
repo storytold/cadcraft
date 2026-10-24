@@ -245,7 +245,30 @@ impl Comp {
             return Err(SolveError::TooLarge);
         }
         let f = |x: &[f64], out: &mut Vec<f64>| self.eval(x, out, skip);
-        Ok(lm::solve(&f, &self.model.x0, &free, &self.weights, self.tol, MAX_ITER))
+        let mut o = lm::solve(&f, &self.model.x0, &free, &self.weights, self.tol, MAX_ITER);
+        // A solution the ellipses would be stored differently from (axes swapped, minor axis
+        // mirrored) holds only if the constraints still hold on the stored form: a constraint on
+        // an axis end by index does not.
+        if o.converged && !self.model.storable(&o.x) {
+            let mut out = Vec::new();
+            match self.model.stored_form(&o.x) {
+                Some(mut xc) => {
+                    // Contact parameters are positions along the curves: they follow the stored form.
+                    for b in self.built.iter().filter(|b| b.form == Form::Contact) {
+                        for (k, r) in b.refs.iter().enumerate() {
+                            if let (Some(&t), Some(slot)) = (o.x.get(b.aux + k), xc.get_mut(b.aux + k)) {
+                                *slot = self.model.stored_t(&o.x, r.handle, t);
+                            }
+                        }
+                    }
+                    self.eval(&xc, &mut out, skip);
+                    o.converged = lm::max_abs(&out) <= self.tol;
+                    o.x = xc;
+                }
+                None => o.converged = false,
+            }
+        }
+        Ok(o)
     }
     /// Constraint ids in conflict (each one whose removal makes the rest solvable).
     fn conflicts(&self, x_failed: &[f64]) -> Vec<u32> {
