@@ -437,6 +437,10 @@ pub(super) fn layout(contents: &str, p: &MTextParams, base: &Fmt) -> MTextLayout
     };
     let mut line = PLine { width: first_start(0), ..Default::default() };
     let mut pending_space: Option<usize> = None;
+    // Width of the spaces beyond the first of a run, and of those that start a paragraph's first
+    // line (a soft-wrapped line drops them).
+    let mut extra = 0.0f64;
+    let mut soft_wrapped = false;
     let mut last_fmt = 0usize;
     let finish = |lines: &mut Vec<PLine>, line: &mut PLine, f: &Fmt, k: usize, para_end: bool, next_start: f64| {
         if line.items.is_empty() {
@@ -454,12 +458,19 @@ pub(super) fn layout(contents: &str, p: &MTextParams, base: &Fmt) -> MTextLayout
         match a {
             Atom::Space(f) => {
                 if !line.items.is_empty() || pending_space.is_some() {
+                    if pending_space.is_some() {
+                        extra += space_w(*f);
+                    }
                     pending_space = Some(*f);
+                } else if !soft_wrapped {
+                    extra += space_w(*f);
                 }
                 last_fmt = *f;
             }
             Atom::Para(f) => {
                 pending_space = None;
+                extra = 0.0;
+                soft_wrapped = false;
                 finish(&mut lines, &mut line, fmt(*f), k, true, first_start(k + 1));
                 k += 1;
                 last_fmt = *f;
@@ -470,6 +481,7 @@ pub(super) fn layout(contents: &str, p: &MTextParams, base: &Fmt) -> MTextLayout
                     match part {
                         Part::Tab => {
                             pending_space = None;
+                            extra = 0.0;
                             let (stop, kind) = next_tab(line.width, pp, h);
                             let next_w: f64 = match parts.get(pi + 1) {
                                 Some(Part::Text(s)) => s.iter().map(|(sg, f)| seg_width(sg, fmt(*f))).sum(),
@@ -482,6 +494,7 @@ pub(super) fn layout(contents: &str, p: &MTextParams, base: &Fmt) -> MTextLayout
                             };
                             if x > avail + 1e-9 && !line.items.is_empty() {
                                 finish(&mut lines, &mut line, fmt(last_fmt), k, false, left);
+                                soft_wrapped = true;
                             } else {
                                 line.width = x;
                                 line.text.push(' ');
@@ -489,10 +502,11 @@ pub(super) fn layout(contents: &str, p: &MTextParams, base: &Fmt) -> MTextLayout
                         }
                         Part::Text(segs) => {
                             let ww: f64 = segs.iter().map(|(sg, f)| seg_width(sg, fmt(*f))).sum();
-                            let sw = if pi == 0 { pending_space.map(space_w).unwrap_or(0.0) } else { 0.0 };
+                            let sw = if pi == 0 { pending_space.map(space_w).unwrap_or(0.0) + extra } else { 0.0 };
                             if width > 0.0 && !line.items.is_empty() && line.width + sw + ww > avail + 1e-9 {
                                 finish(&mut lines, &mut line, fmt(last_fmt), k, false, left);
-                            } else if pi == 0 && (!line.items.is_empty() || pending_space.is_some()) {
+                                soft_wrapped = true;
+                            } else if pi == 0 && (!line.items.is_empty() || pending_space.is_some() || extra > 0.0) {
                                 line.width += sw;
                                 if pending_space.is_some() {
                                     line.text.push(' ');
@@ -500,6 +514,7 @@ pub(super) fn layout(contents: &str, p: &MTextParams, base: &Fmt) -> MTextLayout
                                 }
                             }
                             pending_space = None;
+                            extra = 0.0;
                             for (sg, f) in segs {
                                 let fw = seg_width(sg, fmt(*f));
                                 line.max_h = line.max_h.max(fmt(*f).height);
