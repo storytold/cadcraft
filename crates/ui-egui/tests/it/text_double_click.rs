@@ -76,3 +76,45 @@ fn double_click_elsewhere_starts_no_command() {
         assert_eq!(h.state().session.running.as_ref().map(|r| r.id.as_str()), None, "{at:?}");
     }
 }
+
+#[test]
+fn double_click_on_a_multileader_edits_its_text() {
+    let mut h = harness();
+    h.state_mut().session.execute("mleader", &json!({"points": [[10, 5], [0, 0]], "text": "example text"})).unwrap();
+    h.run_steps(2);
+    // The multileader's text sits at the end of its landing.
+    double_click(&mut h, Vec2::new(-0.45, 0.05));
+    let s = &h.state().session;
+    assert_eq!(s.running.as_ref().map(|r| r.id.as_str()), Some("textedit"), "the clicked multileader is already picked");
+    let p = s.current_prompt().unwrap();
+    assert_eq!(p.message, "Enter new text");
+    assert_eq!(p.default.as_deref(), Some("example text"));
+    h.state_mut().session.input(Input::Text("changed text".into())).unwrap();
+    h.run_steps(2);
+    let got = h
+        .state()
+        .session
+        .doc()
+        .unwrap()
+        .model
+        .iter()
+        .find_map(|e| match &e.kind {
+            EntityKind::MLeader(m) => m.text.as_ref().map(|t| t.contents.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(got, "changed text");
+}
+
+#[test]
+fn double_click_on_a_block_multileader_starts_no_text_edit() {
+    let mut h = harness();
+    let s = &mut h.state_mut().session;
+    let sq = s.execute("pline", &json!({"vertices": [[-1, -1], [1, -1], [1, 1], [-1, 1]], "closed": true})).unwrap();
+    s.execute("block", &json!({"name": "TAG", "base": [-1, -1], "handles": [sq["handle"].as_str().or_else(|| sq["handles"][0].as_str()).unwrap()], "keep": "delete"})).unwrap();
+    s.execute("mleader", &json!({"points": [[10, 5], [0, 0]], "block": "TAG"})).unwrap();
+    h.run_steps(2);
+    // On the leader line, halfway along.
+    double_click(&mut h, Vec2::new(5.0, 2.5));
+    assert_ne!(h.state().session.running.as_ref().map(|r| r.id.as_str()), Some("textedit"), "a block multileader has no text");
+}

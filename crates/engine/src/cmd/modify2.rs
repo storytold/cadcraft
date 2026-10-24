@@ -2173,6 +2173,7 @@ fn text_of(k: &EntityKind) -> Option<String> {
         EntityKind::Text(t) => Some(t.value.clone()),
         EntityKind::AttDef(a) => Some(a.text.value.clone()),
         EntityKind::MText(t) => Some(t.contents.replace("\\P", "\n")),
+        EntityKind::MLeader(m) => m.text.as_ref().map(|t| t.contents.replace("\\P", "\n")),
         EntityKind::Dimension(d) => Some(if d.text.is_empty() { "<>".into() } else { d.text.clone() }),
         _ => None,
     }
@@ -2187,11 +2188,16 @@ pub(crate) fn set_text(s: &mut Session, h: Handle, text: &str) -> Result<()> {
         EntityKind::Text(t) => t.value = text.to_string(),
         EntityKind::AttDef(a) => a.text.value = text.to_string(),
         EntityKind::MText(t) => t.contents = text.replace('\n', "\\P"),
+        EntityKind::MLeader(m) => match &mut m.text {
+            Some(t) => t.contents = text.replace('\n', "\\P"),
+            // A multileader carrying a block has no text to change (MLEADEREDIT moves that).
+            None => return Err(other("This multileader carries a block, not text.")),
+        },
         EntityKind::Dimension(d) => {
             d.text = if text == "<>" { String::new() } else { text.to_string() };
             d.block = None;
         }
-        _ => return Err(other("Select a text, mtext, attribute definition or dimension.")),
+        _ => return Err(other("Select a text, mtext, attribute definition, dimension or multileader.")),
     }
     set_kind(s, h, k)
 }
@@ -2245,7 +2251,8 @@ impl Interactive for TextEditM {
         match (&self.h, i) {
             (None, Input::Point(p)) => {
                 let h = curves::pick_at(s, p).ok_or_else(|| other("*Invalid selection*"))?;
-                let old = text_of(&curves::entity(s, h)?.kind).ok_or_else(|| other("Select a text, mtext, attribute definition or dimension."))?;
+                let old = text_of(&curves::entity(s, h)?.kind)
+                    .ok_or_else(|| other("Select a text, mtext, attribute definition, dimension or multileader."))?;
                 self.h = Some((h, old));
                 Ok(Step::Continue)
             }

@@ -660,6 +660,24 @@ fn textedit_json_and_command_line() {
 }
 
 #[test]
+fn textedit_edits_a_multileader() {
+    let mut s = Session::new();
+    let m = h(&s.execute("mleader", &json!({"points": [[10, 5], [0, 0]], "text": "example text"})).unwrap());
+    s.execute("textedit", &json!({"handle": m, "text": "changed"})).unwrap();
+    assert!(matches!(kind(&s, &m), EntityKind::MLeader(x) if x.text.as_ref().unwrap().contents == "changed"));
+    // The Properties palette's Contents and Text height go through properties.set.
+    s.execute("properties.set", &json!({"handles": [m], "text": "via the palette", "height": 0.5})).unwrap();
+    assert!(
+        matches!(kind(&s, &m), EntityKind::MLeader(x) if x.text.as_ref().map(|t| (t.contents.as_str(), t.height)) == Some(("via the palette", 0.5)))
+    );
+    // A block multileader has no text to edit.
+    let sq = h(&s.execute("pline", &json!({"vertices": [[-1, -1], [1, -1], [1, 1], [-1, 1]], "closed": true})).unwrap());
+    s.execute("block", &json!({"name": "TAG", "base": [-1, -1], "handles": [sq], "keep": "delete"})).unwrap();
+    let b = h(&s.execute("mleader", &json!({"points": [[10, 5], [0, 0]], "block": "TAG"})).unwrap());
+    assert!(s.execute("textedit", &json!({"handle": b, "text": "x"})).is_err());
+}
+
+#[test]
 fn explode_polyline3d_keeps_elevations() {
     let mut s = Session::new();
     let p = h(&s.execute("3dpoly", &json!({"points": [[0, 0, 5], [1, 0, 6], [1, 1, 7]]})).unwrap());
