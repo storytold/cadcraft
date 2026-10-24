@@ -219,13 +219,49 @@ pub fn transcode_vni(s: &str) -> Cow<'_, str> {
     if changed { Cow::Owned(out) } else { Cow::Borrowed(s) }
 }
 
+fn is_tcvn3_all_caps(s: &str) -> bool {
+    let mut has_upper = false;
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '%' && chars.peek() == Some(&'%') {
+            chars.next();
+            if let Some(&next) = chars.peek() {
+                if next.is_ascii_alphabetic() {
+                    chars.next();
+                    continue;
+                }
+                if next.is_ascii_digit() {
+                    for _ in 0..3 {
+                        if let Some(&d) = chars.peek() {
+                            if d.is_ascii_digit() {
+                                chars.next();
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    continue;
+                }
+            }
+            continue;
+        }
+        if c.is_ascii_lowercase() {
+            return false;
+        }
+        if c.is_ascii_uppercase() {
+            has_upper = true;
+        }
+    }
+    has_upper
+}
+
 /// Transcode a TCVN3 (ABC) standard string to Unicode NFC.
 pub fn transcode_tcvn3(s: &str) -> Cow<'_, str> {
     if s.is_ascii() || is_already_unicode_vietnamese(s) {
         return Cow::Borrowed(s);
     }
 
-    let all_caps = s.bytes().any(|b| b.is_ascii_uppercase()) && !s.bytes().any(|b| b.is_ascii_lowercase());
+    let all_caps = is_tcvn3_all_caps(s);
     let mut out = String::with_capacity(s.len());
     let mut changed = false;
     let mut chars = s.chars().peekable();
@@ -699,6 +735,8 @@ mod tests {
     #[test]
     fn test_tcvn3_cad_controls() {
         assert_eq!(transcode_tcvn3("%%c20 thÐp gèi"), "%%c20 thép gối");
+        assert_eq!(transcode_tcvn3("%%c20 B¶N VÏ"), "%%c20 BẢN VẼ");
+        assert_eq!(transcode_tcvn3("%%d45 GãC NGHI£NG"), "%%d45 GÓC NGHIÊNG");
     }
 
     #[test]
