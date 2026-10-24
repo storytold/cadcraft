@@ -260,6 +260,26 @@ pub struct CadApp {
     pub bedit: bedit::State,
 }
 
+/// The numeric keypad's decimal key types a point, whatever the system's language: with a German
+/// (or any decimal-comma) layout it sends a comma, and a comma separates coordinates here (`10,20`),
+/// so `2,5` typed on the keypad would be a point instead of a number. The main keyboard's comma stays.
+/// The keypad key is told apart by its physical key: egui-winit maps no physical key for it (the
+/// main comma key has one), so a comma key event without one, followed by a comma typed, is it.
+pub fn numpad_decimal_point(events: &mut [egui::Event]) {
+    let mut keypad = false;
+    for e in events.iter_mut() {
+        match e {
+            egui::Event::Key { key: egui::Key::Comma, physical_key: None, pressed: true, .. } => keypad = true,
+            egui::Event::Key { .. } => keypad = false,
+            egui::Event::Text(t) if keypad && t == "," => {
+                *t = ".".into();
+                keypad = false;
+            }
+            _ => {}
+        }
+    }
+}
+
 impl CadApp {
     pub fn new(session: Session, services: Services) -> Self {
         CadApp {
@@ -615,6 +635,7 @@ impl CadApp {
 
     /// Wait for the frame cap (if any), then inject synthetic events (one pointer event per frame).
     pub fn raw_input_hook(&mut self, raw: &mut egui::RawInput) {
+        numpad_decimal_point(&mut raw.events);
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(cap) = &mut self.frame_cap {
             cap.wait();
