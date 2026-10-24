@@ -833,7 +833,18 @@ fn apply_page_change(page: &mut cadcraft_doc::PageSetup, key: &str, v: &Value) {
     use cadcraft_engine::cmd::plotters::page_device;
     match key {
         "device" => {
+            let had_device = device_label(page) != "None";
             let _ = page_device("plot", &json!({ "device": v }), page);
+            // No device: the previous device's printable area no longer applies, so the page
+            // takes the no-device margins and, for a standard paper, its size.
+            if had_device && device_label(page) == "None" {
+                page.margins_mm = cadcraft_doc::PageSetup::default().margins_mm;
+                if let Some(ps) = cadcraft_render::paper_size(&page.paper) {
+                    page.paper = ps.name.into();
+                    page.width_mm = ps.width_mm;
+                    page.height_mm = ps.height_mm;
+                }
+            }
         }
         "paper" => {
             // A device's paper, else a standard size (no device).
@@ -1717,6 +1728,16 @@ mod plot_dialog_tests {
         assert_eq!(params["paper"], json!(st.page.paper));
         assert_eq!(params["plotStyleTable"], json!("monochrome.ctb"));
         assert_eq!(params["margins"], json!(st.page.margins_mm));
+
+        // Back to no device: the device's printable area is not saved with the layout.
+        st.page.margins_mm = [1.0, 2.0, 3.0, 4.0];
+        apply_page_change(&mut st.page, "device", &json!("None"));
+        let params = apply_to_layout_params(&st);
+        assert_eq!(params["device"], json!("None"));
+        assert_eq!(params["margins"], json!(cadcraft_doc::PageSetup::default().margins_mm));
+        let mut s = Session::new();
+        s.execute("pagesetup", &params).unwrap();
+        assert_eq!(plot_page(s.doc().unwrap(), "Layout1").margins_mm, cadcraft_doc::PageSetup::default().margins_mm);
     }
 
     #[test]
