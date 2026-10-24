@@ -1,4 +1,5 @@
-//! AREA's Object / Add area / Subtract area and DIST's Multiple points, typed as at the command line.
+//! AREA's Object / Add area / Subtract area, MEASUREGEOM's Volume and DIST's Multiple points, typed as
+//! at the command line.
 
 use cadcraft_engine::Session;
 use serde_json::json;
@@ -102,4 +103,54 @@ fn area_of_an_ellipse_reports_its_exact_perimeter() {
     }
     let (_, log) = run(&["ellipse c 0,0 10,0 4", "area", "o", "10,0"]);
     assert!(has(&log, "Perimeter = 46.0262"), "{log:?}");
+}
+
+#[test]
+fn measuregeom_volume_multiplies_an_area_by_a_height() {
+    // Points: a 4 x 3 triangle's area is 6, times a height of 10.
+    let (s, log) = run(&["measuregeom", "v", "0,0", "4,0", "4,3", "", "10"]);
+    assert!(has(&log, "Volume = 60.0000"), "{log:?}");
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+
+    // Object (the default): a 10 x 10 square polyline, height 2.
+    let (s, log) = run(&["rectang 0,0 10,10", "measuregeom", "v", "", "10,5", "2"]);
+    assert!(has(&log, "Volume = 200.0000"), "{log:?}");
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+
+    // A height that is not a distance is asked for again.
+    let (s, log) = run(&["measuregeom", "v", "0,0", "4,0", "4,3", "", "tall"]);
+    assert!(has(&log, "Requires a distance."), "{log:?}");
+    assert!(s.prompt_text().contains("Specify height"), "{}", s.prompt_text());
+
+    // The JSON forms, by points and by handle.
+    let mut s = Session::new();
+    let r = s.execute("measuregeom", &json!({"mode": "volume", "points": [[0, 0], [4, 0], [4, 3]], "height": 10})).unwrap();
+    assert_eq!(r["volume"], json!(60.0));
+    let c = s.execute("circle", &json!({"center": [0, 0], "radius": 1})).unwrap();
+    let r = s.execute("volume.measure", &json!({"handle": c["handle"], "height": -3})).unwrap();
+    assert!((r["volume"].as_f64().unwrap() - 3.0 * std::f64::consts::PI).abs() < 1e-12, "{r}");
+    assert!(s.execute("volume.measure", &json!({"points": [[0, 0], [1, 0]], "height": 1})).is_err());
+    assert!(s.execute("volume.measure", &json!({"points": [[0, 0], [1, 0], [1, 1]]})).is_err());
+}
+
+#[test]
+fn tools_inquiry_volume_adds_and_subtracts_a_running_total() {
+    let spec = cadcraft_engine::find_command("volume.measure").expect("no command volume.measure");
+    assert_eq!(spec.menu, ["Tools", "Inquiry", "Volume"]);
+
+    // Add a 10 x 10 square by points at height 3, subtract a 2 x 2 square object at height 5.
+    let mut s = Session::new();
+    s.cmdline("rectang 20,0 22,2").unwrap();
+    s.start("volume.measure").unwrap();
+    for l in ["a", "0,0", "10,0", "10,10", "0,10", "", "3", "s", "o", "21,0", "5", "", ""] {
+        s.cmdline(l).unwrap();
+    }
+    assert!(has(&s.log, "Total volume = 300.0000"), "{:?}", s.log);
+    assert!(has(&s.log, "Total volume = 280.0000"), "{:?}", s.log);
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+
+    // Architectural units show the volume as a number, not as a feet-and-inches length.
+    let (_, log) = run(&["setvar lunits 4", "measuregeom", "v", "0,0", "10,0", "10,10", "0,10", "", "12"]);
+    assert!(has(&log, "Volume = 1200"), "{log:?}");
+    assert!(!has(&log, "'-"), "{log:?}");
 }

@@ -27,11 +27,16 @@ pub fn specs() -> Vec<CommandSpec> {
             .interactive(|_| Ok(Box::<PickM>::default())),
         CommandSpec::new("find", "Find...", run_find).menu(&["Edit", "Find..."]).params("{find, replace?, matchCase?: bool, wholeWord?: bool}"),
         CommandSpec::new("measuregeom", "Measure Geometry", run_measuregeom)
-            .params("{mode: distance|radius|angle|area, ...}")
+            .params("{mode: distance|radius|angle|area|volume, ...}")
             .noundo()
             .interactive(|_| Ok(Box::<MeasureM>::default())),
         CommandSpec::new("radius.measure", "Radius", run_radius).menu(&["Tools", "Inquiry", "Radius"]).params("{handle}").noundo(),
         CommandSpec::new("angle.measure", "Angle", run_angle).menu(&["Tools", "Inquiry", "Angle"]).params("{vertex, p1, p2} | {h1, h2}").noundo(),
+        CommandSpec::new("volume.measure", "Volume", super::inquiry::run_volume)
+            .menu(&["Tools", "Inquiry", "Volume"])
+            .params("{points: [[x,y],...] (3 or more) | handle (a closed 2D object), height} → {volume, area, height}")
+            .noundo()
+            .interactive(|_| Ok(Box::new(super::inquiry::AreaM::volume()))),
     ]
 }
 
@@ -318,7 +323,8 @@ fn run_measuregeom(s: &mut Session, p: &Value) -> Result<Value> {
         "radius" | "r" => run_radius(s, p),
         "angle" | "a" => run_angle(s, p),
         "area" | "ar" => s.execute("area", p),
-        _ => Err(bad("measuregeom", "mode must be distance, radius, angle or area")),
+        "volume" | "v" => super::inquiry::run_volume(s, p),
+        _ => Err(bad("measuregeom", "mode must be distance, radius, angle, area or volume")),
     }
 }
 
@@ -339,7 +345,7 @@ impl Interactive for MeasureM {
             Some(m) => m.prompt(s),
             None if self.radius => Prompt::new("Select arc or circle", Accept::POINT),
             None => Prompt::new("Enter an option", Accept { point: false, number: false, text: false, select: false, enter: true })
-                .kw(&["Distance", "Radius", "ARea"])
+                .kw(&["Distance", "Radius", "ARea", "Volume"])
                 .default("Distance"),
         }
     }
@@ -366,6 +372,7 @@ impl Interactive for MeasureM {
             Input::Keyword(k) => match k.as_str() {
                 "Radius" => self.radius = true,
                 "ARea" => self.inner = Some(Box::new(super::inquiry::AreaM::default())),
+                "Volume" => self.inner = Some(Box::new(super::inquiry::AreaM::volume())),
                 _ => self.inner = Some(Box::new(super::inquiry::DistM::default())),
             },
             _ => {}
