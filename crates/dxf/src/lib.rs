@@ -203,7 +203,7 @@ fn escape_at(chars: &[char], i: usize) -> Option<u32> {
 
 /// The character of a `\M+nXXXX` escape starting at `chars[i]`, if there is one: `n` names a
 /// double-byte code page and `XXXX` is the character's two bytes in hex.
-fn mif_escape_at(chars: &[char], i: usize) -> Option<char> {
+pub fn mif_escape_at(chars: &[char], i: usize) -> Option<char> {
     if chars.get(i) != Some(&'\\') || chars.get(i + 1) != Some(&'M') || chars.get(i + 2) != Some(&'+') {
         return None;
     }

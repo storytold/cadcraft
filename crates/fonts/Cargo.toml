@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 cadcraft-geom = { workspace = true }
+cadcraft-dxf = { workspace = true }
 skrifa = { workspace = true }
 harfrust = { workspace = true }
 unicode-bidi = { workspace = true }

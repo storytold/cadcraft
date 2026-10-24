@@ -264,6 +264,7 @@ pub struct Paragraphs {
 
 impl Paragraphs {
     pub fn scan(contents: &str) -> Paragraphs {
+        let contents = super::unescape_codes(contents);
         let chars: Vec<char> = contents.chars().collect();
         let mut out = Paragraphs { states: vec![ParaProps::default()], ..Default::default() };
         let mut cur = 0usize;
@@ -303,10 +304,12 @@ impl Paragraphs {
                                 cur = out.states.len() - 1;
                             }
                         }
-                        _ => {
+                        _ if super::takes_arg(code) => {
                             let (_, n) = arg(&chars, i);
                             i = n;
                         }
+                        // An unknown code has no argument: only the backslash and the code go.
+                        _ => {}
                     }
                 }
                 '\n' => {
@@ -517,7 +520,7 @@ pub(super) fn layout(contents: &str, p: &MTextParams, base: &Fmt) -> MTextLayout
     finish(&mut lines, &mut line, fmt(last_fmt), k, true, 0.0);
 
     // Vertical placement: baselines below the top of each line's column.
-    let ls = if p.line_spacing > 0.0 && p.line_spacing.is_finite() { p.line_spacing } else { 1.0 };
+    let ls = super::sane_line_spacing(p.line_spacing);
     let cols = p.columns.as_ref().filter(|_| width > 0.0);
     let max_cols = match cols {
         Some(c) if c.dynamic => MAX_COLUMNS,
