@@ -18,6 +18,9 @@ use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 /// Caps for hostile parameters.
 const MAX_ROWS: usize = 2000;
 const MAX_COLS: usize = 200;
+/// Cell budget for editing an existing table (an imported one may exceed the caps above);
+/// the DXF reader's.
+const MAX_EDIT_CELLS: usize = 1_000_000;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -154,7 +157,7 @@ fn edit(s: &mut Session, p: &Value, id: &str, f: impl FnOnce(&mut Table) -> std:
         Some(EntityKind::Table(t)) => t.clone(),
         _ => return Err(bad(id, "object is not a table")),
     };
-    normalize(&mut t);
+    normalize(&mut t).map_err(|m| bad(id, m))?;
     f(&mut t).map_err(|m| bad(id, m))?;
     let st = cadcraft_render::table_style_of(s.doc()?, &t);
     formula::recalc(&mut t, &st);
@@ -162,16 +165,17 @@ fn edit(s: &mut Session, p: &Value, id: &str, f: impl FnOnce(&mut Table) -> std:
     Ok(json!({ "handle": h.hex() }))
 }
 
-/// Make the cell grid rows × cols.
-fn normalize(t: &mut Table) {
-    let rows = t.row_heights.len().min(MAX_ROWS);
-    let cols = t.col_widths.len().min(MAX_COLS);
-    t.row_heights.truncate(rows);
-    t.col_widths.truncate(cols);
+/// Make the cell grid rows × cols, keeping every row and column the table has.
+fn normalize(t: &mut Table) -> std::result::Result<(), String> {
+    let (rows, cols) = (t.row_heights.len(), t.col_widths.len());
+    if rows.saturating_mul(cols) > MAX_EDIT_CELLS {
+        return Err(format!("the {rows}×{cols} table is too large to edit"));
+    }
     t.cells.resize_with(rows, Vec::new);
     for r in &mut t.cells {
         r.resize_with(cols, TableCell::default);
     }
+    Ok(())
 }
 
 /// Merge anchors: (row, col, rows, cols).
