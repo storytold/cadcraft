@@ -127,13 +127,13 @@ annotation styles, exchange edge cases and everything excluded above.
 | Pan, zoom, picking and window selection | 5% | 65% | 3.3 |
 | Undo, redo | 3% | 85% | 2.6 |
 | Save and reopen own drawings | 4% | 75% | 3.0 |
-| Print or export to PDF | 3% | 45% | 1.4 |
+| Plot or export to PDF | 3% | 45% | 1.4 |
 | **Average depth** | 100% | | **≈ 65%** |
 
 | Discount | Factor | Evidence |
 |---|---:|---|
 | Launch and stability | ×0.90 | startup crash on Intel UHD graphics (#33, fixed in 0.4.0), lines not visible (#44), Linux mouse delay (#25), web open/save broken (#55, #133) |
-| Discoverability and UI clarity | ×0.92 | no right-click menus (dynamic input got real pointer boxes in #60, which raised this from ×0.90), Print has no plot dialog (#160), some menu items only recently got dialogs (#126) |
+| Discoverability and UI clarity | ×0.92 | no right-click menus (dynamic input got real pointer boxes in #60, which raised this from ×0.90), Plot has no plot dialog (#160), some menu items only recently got dialogs (#126) |
 | Opening files people send them | ×0.85 | DWGs from others untested on real files; a 10 MB DWG failed (#57); `.dxf` from Finder fails (#158); pre-2007 CJK/Cyrillic DXF garbled (no code pages) |
 
 **Essentials user ≈ 65% × 0.90 × 0.92 × 0.85 ≈ 46%** (estimated).
