@@ -481,3 +481,215 @@ fn korean_ui_fonts_cover_the_language_picker_in_both_families() {
     });
     assert!(missing.is_empty(), "missing Korean picker glyphs: {}", missing.join(", "));
 }
+
+#[test]
+fn traditional_chinese_locale_selection_respects_script_and_region() {
+    for tag in ["zh-Hant", "zh-Hant-TW", "zh_Hant_HK.UTF-8", "zh-TW", "ZH-hk", "zh-MO", "zh-Hant-CN", "zh-Hant-TW-u-nu-latn"] {
+        assert_eq!(locale_language(tag), Some("zh-Hant"), "{tag}");
+    }
+    for tag in ["zh", "zh-CN", "zh-SG", "zh-Hans", "zh_Hans_TW", "zh-Hans-TW"] {
+        assert_eq!(locale_language(tag), Some("zh"), "{tag}");
+    }
+    for tag in ["zh-Latn-TW", "zh-Hant-Hans", "zh--TW"] {
+        assert_eq!(locale_language(tag), None, "{tag}");
+    }
+    let locales = vec!["zh-TW".into(), "zh-Hans-CN".into(), "en-US".into()];
+    assert_eq!(Preference::Auto.resolve(&locales), "zh-Hant");
+    assert_eq!(Preference::English.resolve(&locales), "en");
+    assert_eq!(Preference::TraditionalChinese.resolve(&["en-US".into()]), "zh-Hant");
+    assert_eq!(Preference::restore(Some("zh-Hant")), Preference::TraditionalChinese);
+    assert_eq!(Preference::restore(Some("zh-Hans")), Preference::Auto);
+    let mut saved = CadApp::new(Session::new(), Services::default());
+    saved.ui.interface_language = Preference::TraditionalChinese;
+    let mut restored = CadApp::new(Session::new(), Services::default());
+    restored.load_prefs(&saved.prefs_json());
+    assert_eq!(restored.ui.interface_language, Preference::TraditionalChinese);
+    restored.load_prefs(r#"{"interfaceLanguage":"unsupported"}"#);
+    assert_eq!(restored.ui.interface_language, Preference::TraditionalChinese);
+}
+
+#[test]
+fn duplicate_chinese_regions_are_not_locale_candidates() {
+    for tag in
+        ["zh-TW-CN", "zh-CN-TW", "zh-HK-MO", "zh-TW-TW", "zh-419-TW", "zh-TW-419", "zh-419-001", "zh-Hant-TW-CN", "zh-Hans-CN-TW", "ZH_tw_cn.UTF-8"]
+    {
+        assert_eq!(locale_language(tag), None, "{tag}");
+    }
+}
+
+#[test]
+fn auto_skips_duplicate_regions_and_preserves_valid_locale_priority() {
+    for invalid in ["zh-TW-CN", "zh-Hans-CN-TW", "zh-419-TW", "zh-TW-419"] {
+        for (later, expected) in [("de-DE", "de"), ("zh-Hant-HK", "zh-Hant"), ("zh-Hans-TW", "zh"), ("xx-XX", "en")] {
+            let locales = [invalid.into(), later.into(), "en-US".into()];
+            assert_eq!(Preference::Auto.resolve(&locales), expected, "{invalid}, {later}");
+        }
+        let locales = [invalid.into(), "zz-ZZ".into(), "zh-TW".into(), "de-DE".into()];
+        assert_eq!(Preference::Auto.resolve(&locales), "zh-Hant");
+        assert_eq!(Preference::Auto.resolve(&[invalid.into()]), "en");
+    }
+    for (tag, expected) in [
+        ("zh-419", "zh"),
+        ("zh-Hant-419", "zh-Hant"),
+        ("zh-Hans-HK", "zh"),
+        ("zh-Hant-TW-variant", "zh-Hant"),
+        ("zh-TW-u-rg-cnzzzz", "zh-Hant"),
+        ("zh-TW-x-cn", "zh-Hant"),
+    ] {
+        assert_eq!(locale_language(tag), Some(expected), "{tag}");
+    }
+    assert_eq!(Preference::Auto.resolve(&["de-DE".into(), "zh-TW".into()]), "de");
+}
+
+#[test]
+fn traditional_chinese_counts_and_user_values_are_preserved() {
+    with_language("zh-Hant", || {
+        for n in [0, 1, 2, 11, 21, 100, u64::MAX] {
+            assert_eq!(plural_zh(n), 0);
+            assert_eq!(count(n, "{n} contributor", "{n} contributors"), format!("{n} 位貢獻者"));
+            assert_eq!(count(n, "{n} commit", "{n} commits"), format!("{n} 次提交"));
+        }
+        assert_eq!(t("Layers"), "圖層");
+        assert_eq!(t("uncatalogued text"), "uncatalogued text");
+        assert_eq!(format("Current: {color}", &[("color", "{n} Open".into())]), "目前：{n} Open");
+        with_language("en", || assert_eq!(t("Layers"), "Layers"));
+        assert_eq!(t("Layers"), "圖層");
+    });
+    assert_eq!(t("Layers"), "Layers");
+}
+
+#[test]
+fn traditional_chinese_live_switch_preserves_english_automation_and_user_data() {
+    if !crate::theme::can_show("zh-Hant") {
+        eprintln!("SKIP: no installed or embedded CJK font; Chinese render remains unverified");
+        return;
+    }
+    let mut app = CadApp::new(Session::new(), Services::default());
+    app.ui.in_window_menu = true;
+    app.session.state_mut().unwrap().title = "Layers {n}".into();
+    let ctx = egui::Context::default();
+    app.logic(&ctx);
+    assert!(render(&mut app, &ctx).contains("Properties"));
+    let commands = crate::control::all_commands(&app);
+    let (menu_request, _) = crate::ControlRequest::new("ui.menu.list", json!({}));
+    let crate::control::Outcome::Done(menu_before) = crate::control::handle(&mut app, &ctx, &menu_request) else { panic!("expected menu reply") };
+    app.start("line");
+    let prompt = crate::control::cmdline_state(&app);
+    app.run("ui.language", json!({"lang":"zh-Hant"})).unwrap();
+    let text = render(&mut app, &ctx);
+    assert!(text.contains("性質"), "{text}");
+    assert!(text.contains("檔案"), "{text}");
+    assert!(text.contains("指定第一點"), "{text}");
+    assert!(text.contains("Layers {n}"), "user title must remain unchanged");
+    assert_eq!(crate::control::cmdline_state(&app), prompt);
+    assert_eq!(crate::control::all_commands(&app), commands);
+    let crate::control::Outcome::Done(menu_after) = crate::control::handle(&mut app, &ctx, &menu_request) else { panic!("expected menu reply") };
+    assert_eq!(menu_before, menu_after);
+    assert_eq!(app.session.state().unwrap().title, "Layers {n}");
+    assert_eq!(t("Properties"), "Properties");
+    app.run("ui.resetpalettes", json!({})).unwrap();
+    assert_eq!(app.language(), "zh-Hant");
+    app.run("ui.language", json!({"lang":"en"})).unwrap();
+    assert!(render(&mut app, &ctx).contains("Properties"));
+}
+
+#[test]
+fn available_fonts_cover_traditional_chinese_catalog() {
+    if !crate::theme::can_show("zh-Hant") {
+        eprintln!("SKIP: no installed or embedded CJK font; glyph coverage remains unverified");
+        return;
+    }
+    let ctx = egui::Context::default();
+    crate::theme::install_fonts(&ctx, "zh-Hant");
+    let mut output = ctx.run_ui(Default::default(), |_| {});
+    output.textures_delta.clear();
+    let letters: BTreeSet<_> = include_str!("zh-Hant.tsv").chars().filter(|c| !c.is_ascii() && !c.is_whitespace()).collect();
+    ctx.fonts_mut(|view| {
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            let mut font = view.fonts.font(&family);
+            for c in &letters {
+                assert!(font.characters().contains_key(c), "missing {c} in {family:?}");
+            }
+        }
+    });
+}
+
+#[test]
+fn traditional_chinese_rule_is_registered_without_changing_other_languages() {
+    let language = LANGUAGES.iter().find(|language| language.code == "zh-Hant").unwrap();
+    assert_eq!(language.plural_forms, 1);
+    for n in [0, 1, 2, 11, 21, 100, u64::MAX] {
+        assert_eq!((language.plural)(n), 0);
+    }
+    for (code, forms) in [("en", 2), ("uk", 3), ("pt-BR", 2), ("de", 2), ("es", 2), ("cs", 3), ("ru", 3), ("fr", 2)] {
+        assert_eq!(LANGUAGES.iter().find(|language| language.code == code).unwrap().plural_forms, forms);
+    }
+    assert_eq!(Preference::BrazilianPortuguese.resolve(&["zh-TW".into()]), "pt-BR");
+    assert_eq!(Preference::Auto.resolve(&["pt-PT".into()]), "pt-BR");
+    assert_eq!(Preference::Auto.resolve(&["de-DE".into()]), "de");
+    assert_eq!(Preference::Auto.resolve(&["es-MX".into()]), "es");
+}
+
+#[test]
+fn traditional_chinese_shares_cjk_availability_and_keeps_saved_choice() {
+    let mut app = CadApp::new(Session::new(), Services::default());
+    let reply = app.run("ui.language", json!({"lang": "zh-Hant"})).unwrap();
+    assert_eq!(reply["interfaceLanguage"], "zh-Hant");
+    assert_eq!(app.ui.interface_language, Preference::TraditionalChinese);
+    assert_eq!(app.language(), if crate::theme::can_show("zh-Hant") { "zh-Hant" } else { "en" });
+    assert_eq!(reply["shown"], app.language());
+    if !crate::theme::can_show("zh-Hant") {
+        assert!(app.status.as_ref().is_some_and(|(text, _)| text.contains("No Chinese font")));
+    }
+    let mut restored = CadApp::new(Session::new(), Services::default());
+    restored.load_prefs(&app.prefs_json());
+    assert_eq!(restored.ui.interface_language, Preference::TraditionalChinese);
+    assert_eq!(restored.language(), app.language());
+}
+
+#[test]
+fn chinese_font_cache_tracks_tc_sc_and_other_language_switches() {
+    let mut app = CadApp::new(Session::new(), Services::default());
+    let ctx = egui::Context::default();
+    for choice in [Preference::Chinese, Preference::TraditionalChinese, Preference::Chinese, Preference::English, Preference::TraditionalChinese] {
+        app.ui.interface_language = choice;
+        app.logic(&ctx);
+        assert_eq!(app.fonts_language, Some(app.language()));
+        assert_eq!(app.ui.interface_language, choice);
+    }
+    app.ui.interface_language = Preference::Auto;
+    for tag in ["zh-TW", "zh-CN", "zh-HK", "it-IT"] {
+        app.system_languages = vec![tag.into()];
+        app.logic(&ctx);
+        assert_eq!(app.fonts_language, Some(app.language()));
+    }
+}
+
+fn assert_no_stale_catalog_keys(reference_source: &str, translated_source: &str) {
+    let (reference, reference_errors) = parse(reference_source);
+    let (translated, translated_errors) = parse(translated_source);
+    assert!(reference_errors.is_empty() && translated_errors.is_empty());
+    let reference_keys: BTreeSet<_> = reference.keys().copied().collect();
+    let translated_keys: BTreeSet<_> = translated.keys().copied().collect();
+    let stale: Vec<_> = translated_keys.difference(&reference_keys).collect();
+    assert!(stale.is_empty(), "catalog keys absent from reference: {stale:?}");
+}
+
+#[test]
+fn traditional_chinese_has_no_stale_reference_keys() {
+    // Coverage gaps stay non-fatal and are listed by translation_gaps for every catalog.
+    assert_no_stale_catalog_keys(include_str!("uk.tsv"), include_str!("zh-Hant.tsv"));
+}
+
+#[test]
+fn traditional_chinese_gaps_are_reported_not_required() {
+    assert!(translated().any(|language| language.code == "zh-Hant"));
+    assert_no_stale_catalog_keys("\tExisting\tExisting\n\tNew command\tNew command\n", "\tExisting\t現有\n");
+    assert_eq!(tr("zh-Hant", "a future untranslated label"), "a future untranslated label");
+}
+
+#[test]
+#[should_panic(expected = "catalog keys absent from reference")]
+fn traditional_chinese_stale_keys_are_rejected() {
+    assert_no_stale_catalog_keys("\tExisting\tExisting\n", "\tRemoved command\t已移除的指令\n");
+}

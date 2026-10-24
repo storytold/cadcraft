@@ -348,14 +348,14 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
         if !chinese {
             paths.extend(japanese_font());
         }
-        paths.extend(cjk_font());
+        paths.extend(cjk_font_for(language));
         paths.dedup();
         added.extend(
             paths
                 .into_iter()
-                .filter_map(|p| read_capped(p, MAX_UI_FONT_BYTES))
+                .filter_map(|p| cjk_font_data(p, language))
                 .enumerate()
-                .map(|(i, bytes)| (format!("system-cjk-{i}"), std::sync::Arc::new(egui::FontData::from_owned(bytes)))),
+                .map(|(i, data)| (format!("system-cjk-{i}"), std::sync::Arc::new(data))),
         );
         // العربية: an installed Arabic face after the Latin ones (egui's bundled faces carry no
         // Arabic glyphs), for the Arabic interface.
@@ -402,7 +402,8 @@ fn embedded_ui_faces<'a>(faces: &[&'a cadcraft_fonts::CraftFont], language: &str
     let mut out: Vec<_> = faces.iter().copied().filter(cjk).collect();
     out.sort_by_key(|f| !f.family.contains("Gothic") && !f.family.contains("Sans"));
     if language.starts_with("zh") {
-        out.sort_by_key(|f| !f.scripts.contains(&"Hans"));
+        let script = if language == "zh-Hant" { "Hant" } else { "Hans" };
+        out.sort_by_key(|f| !f.scripts.contains(&script));
     }
     if language == "ar" {
         out.extend(faces.iter().copied().filter(|f| f.style == "Regular" && f.scripts.contains(&"Arab")));
@@ -452,7 +453,7 @@ pub fn cjk_font() -> Option<&'static std::path::Path> {
                         "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
                     ]
                 };
-                candidates.iter().map(std::path::PathBuf::from).find(|p| p.is_file())
+                first_readable_ui_font(candidates)
             })
             .as_deref()
     }
@@ -646,7 +647,7 @@ pub fn can_show(language: &str) -> bool {
     match language {
         "ko" => shows_hangul("ko"),
         "ar" => arabic_font().is_some() || embedded_script("Arab"),
-        l if l.starts_with("zh") => cjk_font().is_some() || embedded_script("Hans") || embedded_script("Hant"),
+        l if l.starts_with("zh") => cjk_font_for(l).is_some() || embedded_script("Hans") || embedded_script("Hant"),
         _ => true,
     }
 }
@@ -717,6 +718,110 @@ pub fn apply(ctx: &egui::Context, theme: Theme, follow_system: bool) {
     });
 }
 
+/// Only the Traditional interface may prefer an installed Traditional face.
+fn prefer_traditional<'a>(
+    language: &str,
+    traditional: Option<&'a std::path::Path>,
+    generic: Option<&'a std::path::Path>,
+) -> Option<&'a std::path::Path> {
+    if language == "zh-Hant" { traditional.or(generic) } else { generic }
+}
+
+pub fn cjk_font_for(language: &str) -> Option<&'static std::path::Path> {
+    #[cfg(not(target_arch = "wasm32"))]
+    if language == "zh-Hant"
+        && cfg!(target_os = "macos")
+        && let Some((path, _)) = macos_traditional_font()
+    {
+        return Some(path);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    let traditional = if language == "zh-Hant" {
+        static FOUND: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+        FOUND.get_or_init(|| first_readable_ui_font(traditional_cjk_candidates())).as_deref()
+    } else {
+        None
+    };
+    #[cfg(target_arch = "wasm32")]
+    let traditional = None;
+    prefer_traditional(language, traditional, cjk_font())
+}
+
+/// Preserve a collection's selected face when handing its bytes to egui.
+#[cfg(not(target_arch = "wasm32"))]
+fn font_data_for_face(face: &cadcraft_fonts::ttf::Face) -> egui::FontData {
+    let mut data = egui::FontData::from_owned(face.bytes.as_ref().clone());
+    data.index = face.index;
+    data
+}
+
+/// Inspect metadata instead of assuming that PingFang TC occupies any particular TTC slot.
+#[cfg(not(target_arch = "wasm32"))]
+fn traditional_collection_face(bytes: std::sync::Arc<Vec<u8>>) -> Option<cadcraft_fonts::ttf::Face> {
+    cadcraft_fonts::ttf::faces(&bytes).into_iter().find(|face| face.has_family_name("PingFang TC"))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn load_traditional_collection(candidates: &[&str]) -> Option<(std::path::PathBuf, cadcraft_fonts::ttf::Face)> {
+    candidates.iter().find_map(|path| {
+        let bytes = read_capped(std::path::Path::new(path), MAX_UI_FONT_BYTES)?;
+        let face = traditional_collection_face(std::sync::Arc::new(bytes))?;
+        Some((std::path::PathBuf::from(path), face))
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn macos_traditional_font() -> Option<&'static (std::path::PathBuf, cadcraft_fonts::ttf::Face)> {
+    static FOUND: std::sync::OnceLock<Option<(std::path::PathBuf, cadcraft_fonts::ttf::Face)>> = std::sync::OnceLock::new();
+    FOUND
+        .get_or_init(|| load_traditional_collection(&["/System/Library/Fonts/PingFang.ttc", "/System/Library/Fonts/Supplemental/PingFang.ttc"]))
+        .as_ref()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn cjk_font_data(path: &std::path::Path, language: &str) -> Option<egui::FontData> {
+    let selected = if language == "zh-Hant" && cfg!(target_os = "macos") { macos_traditional_font() } else { None };
+    cjk_font_data_for_selection(path, selected)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn cjk_font_data_for_selection(path: &std::path::Path, selected: Option<&(std::path::PathBuf, cadcraft_fonts::ttf::Face)>) -> Option<egui::FontData> {
+    if let Some((selected_path, face)) = selected
+        && path == selected_path
+    {
+        return Some(font_data_for_face(face));
+    }
+    read_capped(path, MAX_UI_FONT_BYTES).map(egui::FontData::from_owned)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn traditional_cjk_candidates() -> &'static [&'static str] {
+    if cfg!(windows) {
+        &["C:\\Windows\\Fonts\\msjh.ttc"]
+    } else if cfg!(target_os = "macos") {
+        // Collections are selected by family and loaded with their actual index separately.
+        &[]
+    } else {
+        &[
+            "/usr/share/fonts/opentype/noto/NotoSansCJKtc-Regular.otf",
+            "/usr/share/fonts/noto-cjk/NotoSansCJKtc-Regular.otf",
+            "/usr/share/fonts/google-noto-cjk/NotoSansCJKtc-Regular.otf",
+            "/usr/local/share/fonts/noto/NotoSansCJKtc-Regular.otf",
+        ]
+    }
+}
+
+/// Skip unusable candidates in preference order, using the same cap as font installation.
+#[cfg(not(target_arch = "wasm32"))]
+fn first_readable_ui_font(candidates: &[&str]) -> Option<std::path::PathBuf> {
+    first_readable_font(candidates, |path| read_capped(path, MAX_UI_FONT_BYTES).is_some())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn first_readable_font(candidates: &[&str], mut readable: impl FnMut(&std::path::Path) -> bool) -> Option<std::path::PathBuf> {
+    candidates.iter().map(std::path::PathBuf::from).find(|path| readable(path))
+}
+
 #[cfg(test)]
 mod tests {
     use cadcraft_fonts::CraftFont;
@@ -742,6 +847,10 @@ mod tests {
     fn embedded_faces_lead_with_the_interfaces_own_script() {
         let japanese = face("BIZ UDPGothic", &["Jpan", "Latn"]);
         let chinese = face("Han Test Face", &["Hans", "Latn"]);
+        let traditional = face("Traditional Han", &["Hant"]);
+        let chinese_faces = [&japanese, &chinese, &traditional];
+        assert_eq!(families(&super::embedded_ui_faces(&chinese_faces, "zh-Hant")), ["Traditional Han", "BIZ UDPGothic", "Han Test Face"]);
+        assert_eq!(families(&super::embedded_ui_faces(&chinese_faces, "zh")), ["Han Test Face", "BIZ UDPGothic", "Traditional Han"]);
         let arabic = face("Noto Sans Arabic", &["Arab"]);
         let faces = [&japanese, &chinese, &arabic];
         // Every interface reads CJK names, so both CJK faces load, the sans-serif face first.
@@ -768,5 +877,224 @@ mod tests {
         assert!(!super::any_script(&[bold], "Hans") && !super::any_script(&faces, "Ara"));
         assert!(!super::embedded_script("Hans") || super::can_show("zh"));
         assert!(super::can_show("en") && super::can_show("uk"));
+    }
+    #[test]
+    fn tc_priority_does_not_leak_into_other_languages() {
+        let tc = std::path::Path::new("traditional.ttc");
+        let sc = std::path::Path::new("generic.ttc");
+        assert_eq!(super::prefer_traditional("zh-Hant", Some(tc), Some(sc)), Some(tc));
+        for language in ["zh", "en", "ja", "it"] {
+            assert_eq!(super::prefer_traditional(language, Some(tc), Some(sc)), Some(sc));
+            assert_eq!(super::prefer_traditional(language, Some(tc), None), None);
+        }
+    }
+    #[test]
+    fn missing_tc_uses_generic_and_missing_both_returns_none() {
+        let sc = std::path::Path::new("generic.ttc");
+        assert_eq!(super::prefer_traditional("zh-Hant", None, Some(sc)), Some(sc));
+        assert_eq!(super::prefer_traditional("zh-Hant", None, None), None);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn unreadable_tc_candidates_try_the_next_font_and_then_generic() {
+        let tc = std::path::Path::new("readable-tc.otf");
+        let generic = std::path::Path::new("generic.ttc");
+        let candidates = ["unreadable-msjh.ttc", "readable-tc.otf"];
+        let mut attempted = Vec::new();
+        let found = super::first_readable_font(&candidates, |path| {
+            attempted.push(path.to_path_buf());
+            path == tc
+        });
+        assert_eq!(found.as_deref(), Some(tc));
+        assert_eq!(attempted, candidates.map(std::path::PathBuf::from));
+        let unavailable = super::first_readable_font(&candidates, |_| false);
+        assert_eq!(super::prefer_traditional("zh-Hant", unavailable.as_deref(), Some(generic)), Some(generic));
+        assert_eq!(super::prefer_traditional("zh-Hant", unavailable.as_deref(), None), None);
+        assert_eq!(super::prefer_traditional("zh", found.as_deref(), Some(generic)), Some(generic));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn generic_cjk_candidates_skip_invalid_files_and_keep_readable_order() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-generic-cjk-{}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let missing = dir.join("missing.ttf");
+        let empty = dir.join("empty.ttf");
+        let oversized = dir.join("oversized.ttf");
+        let first = dir.join("first.ttf");
+        let second = dir.join("second.ttf");
+        std::fs::write(&empty, []).unwrap();
+        // Set length past the actual production cap without writing the contents.
+        std::fs::File::create(&oversized).unwrap().set_len(super::MAX_UI_FONT_BYTES + 1).unwrap();
+        std::fs::write(&first, [1, 2, 3]).unwrap();
+        std::fs::write(&second, [4, 5, 6]).unwrap();
+        let paths: Vec<_> = [&missing, &empty, &dir, &oversized, &first, &second].iter().map(|p| p.to_str().unwrap()).collect();
+        assert!(super::first_readable_ui_font(&paths[..4]).is_none());
+        let found = super::first_readable_ui_font(&paths).unwrap();
+        assert_eq!(found, first);
+        assert_eq!(super::cjk_font_data(&found, "zh").unwrap().font.as_ref(), [1, 2, 3]);
+        assert_eq!(super::prefer_traditional("zh-Hant", None, Some(&found)), Some(found.as_path()));
+        let tc = std::path::Path::new("preferred-tc.otf");
+        assert_eq!(super::prefer_traditional("zh-Hant", Some(tc), Some(&found)), Some(tc));
+        std::fs::write(&first, []).unwrap();
+        assert_eq!(super::first_readable_ui_font(&paths), Some(second.clone()));
+        std::fs::write(&second, []).unwrap();
+        assert!(super::first_readable_ui_font(&paths).is_none());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(all(unix, not(target_arch = "wasm32")))]
+    #[test]
+    fn generic_cjk_candidates_skip_permission_denied_files() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = std::env::temp_dir().join(format!("cadcraft-generic-permissions-{}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let denied = dir.join("denied.ttf");
+        let readable = dir.join("readable.ttf");
+        std::fs::write(&denied, [1, 2, 3]).unwrap();
+        std::fs::write(&readable, [4, 5, 6]).unwrap();
+        std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::File::open(&denied).is_err() {
+            let paths = [denied.to_str().unwrap(), readable.to_str().unwrap()];
+            assert!(denied.is_file(), "existence alone must not select this candidate");
+            assert!(super::read_capped(&denied, super::MAX_UI_FONT_BYTES).is_none());
+            assert_eq!(super::first_readable_ui_font(&paths), Some(readable.clone()));
+        } else {
+            eprintln!("SKIP permission-denied branch: process can bypass mode bits");
+        }
+        std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn native_tc_candidates_preserve_platform_and_single_face_constraints() {
+        let candidates = super::traditional_cjk_candidates();
+        if cfg!(windows) {
+            assert_eq!(candidates, ["C:\\Windows\\Fonts\\msjh.ttc"]);
+        } else if cfg!(target_os = "macos") {
+            assert!(candidates.is_empty(), "macOS collections use the separate family-aware selector");
+        } else {
+            assert_eq!(candidates.len(), 4);
+            assert!(candidates.iter().all(|path| path.ends_with("NotoSansCJKtc-Regular.otf")));
+        }
+    }
+
+    /// Original metadata-only TTC: no installed/proprietary font or glyph artwork.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn named_collection(families: &[&str], name_id: u16) -> Vec<u8> {
+        let mut bytes = b"ttcf".to_vec();
+        bytes.extend(0x0001_0000_u32.to_be_bytes());
+        bytes.extend((families.len() as u32).to_be_bytes());
+        bytes.resize(12 + 4 * families.len(), 0);
+        for (i, family) in families.iter().enumerate() {
+            let offset = bytes.len() as u32;
+            bytes[12 + i * 4..16 + i * 4].copy_from_slice(&offset.to_be_bytes());
+            bytes.extend(0x0001_0000_u32.to_be_bytes());
+            for value in [1_u16, 16, 0, 0] {
+                bytes.extend(value.to_be_bytes());
+            }
+            bytes.extend(b"name");
+            bytes.extend(0_u32.to_be_bytes()); // checksum: metadata parser does not need it
+            bytes.extend((offset + 28).to_be_bytes());
+            bytes.extend((18 + family.len() as u32 * 2).to_be_bytes());
+            for value in [0_u16, 1, 18, 3, 1, 0x0409, name_id, family.len() as u16 * 2, 0] {
+                bytes.extend(value.to_be_bytes());
+            }
+            for c in family.encode_utf16() {
+                bytes.extend(c.to_be_bytes());
+            }
+            while !bytes.len().is_multiple_of(4) {
+                bytes.push(0);
+            }
+        }
+        bytes
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn traditional_collection_uses_named_face_and_preserves_egui_index() {
+        for families in [
+            ["PingFang TC", "PingFang SC", "PingFang HK"],
+            ["PingFang SC", "PingFang TC", "PingFang HK"],
+            ["PingFang HK", "PingFang SC", "PingFang TC"],
+        ] {
+            for name_id in [1, 16] {
+                // legacy and typographic family names
+                let bytes = named_collection(&families, name_id);
+                let face = super::traditional_collection_face(std::sync::Arc::new(bytes.clone())).unwrap();
+                assert_eq!(face.index as usize, families.iter().position(|name| *name == "PingFang TC").unwrap());
+                let data = super::font_data_for_face(&face);
+                assert_eq!(data.index, face.index);
+                assert_eq!(data.font.as_ref(), bytes);
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn traditional_collection_rejects_unknown_malformed_and_full_name_only() {
+        for bytes in [
+            vec![],
+            vec![0xff; 32],
+            named_collection(&["PingFang SC", "PingFang HK"], 1),
+            named_collection(&["Not PingFang TC", "PingFang TC Extra"], 1),
+            named_collection(&["PingFang TC"], 4),
+        ] {
+            assert!(super::traditional_collection_face(std::sync::Arc::new(bytes)).is_none());
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn traditional_collection_truncation_and_bad_offsets_do_not_panic() {
+        let bytes = named_collection(&["PingFang SC", "PingFang TC"], 1);
+        for end in 0..bytes.len() {
+            let _ = super::traditional_collection_face(std::sync::Arc::new(bytes[..end].to_vec()));
+        }
+        let mut corrupt = bytes;
+        corrupt[12..20].fill(0xff);
+        assert!(super::traditional_collection_face(std::sync::Arc::new(corrupt)).is_none());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn traditional_collection_file_chain_skips_failures() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-tc-collection-{}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let missing = dir.join("missing.ttc");
+        let malformed = dir.join("malformed.ttc");
+        let sc = dir.join("sc.ttc");
+        let tc = dir.join("tc.ttc");
+        std::fs::write(&malformed, [0xff; 32]).unwrap();
+        std::fs::write(&sc, named_collection(&["PingFang SC"], 1)).unwrap();
+        std::fs::write(&tc, named_collection(&["PingFang SC", "PingFang TC"], 1)).unwrap();
+        let paths: Vec<_> = [&missing, &malformed, &sc, &tc].iter().map(|p| p.to_str().unwrap()).collect();
+        let selected = super::load_traditional_collection(&paths).unwrap();
+        assert_eq!(selected.0, tc);
+        assert_eq!(selected.1.index, 1);
+        assert_eq!(super::cjk_font_data_for_selection(&tc, Some(&selected)).unwrap().index, 1);
+        assert_eq!(super::cjk_font_data_for_selection(&sc, Some(&selected)).unwrap().index, 0);
+        assert_eq!(super::cjk_font_data_for_selection(&tc, None).unwrap().index, 0);
+        assert!(super::cjk_font_data_for_selection(&missing, Some(&selected)).is_none());
+        assert!(super::load_traditional_collection(&paths[..3]).is_none());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn capped_font_reads_reject_missing_empty_and_oversized_files() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-font-read-{}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let font = dir.join("candidate.otf");
+        assert!(super::read_capped(&font, 4).is_none());
+        std::fs::write(&font, []).unwrap();
+        assert!(super::read_capped(&font, 4).is_none());
+        std::fs::write(&font, [1, 2, 3, 4, 5]).unwrap();
+        assert!(super::read_capped(&font, 4).is_none());
+        std::fs::write(&font, [1, 2, 3, 4]).unwrap();
+        assert_eq!(super::read_capped(&font, 4), Some(vec![1, 2, 3, 4]));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

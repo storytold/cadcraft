@@ -1,0 +1,1359 @@
+# CADCraft Traditional Chinese (zh-Hant) display catalog — original translations.
+# License: MIT OR Apache-2.0 (the repository LICENSE-MIT and LICENSE-APACHE).
+# Written from the meaning of pinned CADCraft English strings, not proprietary translations.
+# UTF-8: context<TAB>English source<TAB>Traditional Chinese display text.
+# Empty context = ordinary label; @plural = one form with {n}.
+# Retain English command IDs, accepted keywords, APIs, format names and user data.
+# Same-as-source entries intentionally retain identifiers/directions or a value-only template.
+	  Cancel  	取消
+	  OK  	確定
+	 or [	或 [
+	% of all commits	占所有提交的百分比
+	* Wildcard Match	* 萬用字元比對
+	*VARIES*	*多種值*
+	+  |  Top  |  2D Wireframe	+  |  俯視  |  2D 線架
+	+Bin	+二進位資產
+	+LOC	+程式碼行數
+	1 Viewport	1 個視埠
+	2 Points	兩點
+	2 Viewports	2 個視埠
+	2D Solid	2D 實體填滿
+	3 Points	三點
+	3 Viewports	3 個視埠
+	3D Face	3D 面
+	3D Operations	3D 操作
+	3D Polyline	3D 聚合線
+	4 Viewports	4 個視埠
+	< Less than	< 小於
+	<> Not Equal	<> 不等於
+	= Equals	= 等於
+	> Greater than	> 大於
+	About	關於
+	About CADCraft	關於 CADCraft
+	Absolute	絕對
+	Accessibility	輔助功能
+	Add Leader	新增引線
+	Align	對齊
+	Align Text	對齊文字
+	Aligned	對齊式
+	All	全部
+	All Used Layers	所有已使用的圖層
+	All files	所有檔案
+	Angle	角度
+	Angular	角度
+	Annotation Visibility	註解可見性
+	Annotation scale	註解比例
+	Apparent Intersection	外觀交點
+	Append to current selection set	加入目前選取集
+	Apply to:	套用至：
+	Apply true color	套用全彩
+	Arc	圓弧
+	Arc Length	弧長
+	Area	面積
+	Array	陣列
+	Attach	附加
+	Attribute	屬性
+	Attribute Definition	屬性定義
+	Attribute Display	屬性顯示
+	Auto (system language)	自動（系統語言）
+	Auto Constrain	自動約束
+	AutoConstrain	自動約束
+	Axis, End	軸、端點
+	Base	基準點
+	Baseline	基線式
+	Batch Publish	批次發佈
+	Binary assets added	新增的二進位資產
+	Binary assets removed	移除的二進位資產
+	Blend	混接
+	Block	圖塊
+	Block Attribute Manager...	圖塊屬性管理員...
+	Block Editor	圖塊編輯器
+	Block Reference	圖塊參考
+	Block...	圖塊...
+	Blocks	圖塊
+	Blue	藍色
+	Bold	粗體
+	Boolean	布林
+	Boundary	邊界
+	Boundary...	邊界...
+	Box	方盒
+	Break	斷開
+	Break At Point	於點斷開
+	Bring to Front	移至最上層
+	ByBlock	依圖塊
+	ByColor	依顏色
+	ByLayer	依圖層
+	CADCraft Help	CADCraft 說明
+	Cancel	取消
+	Cartesian (x, y)	直角座標（x, y）
+	Center	中心
+	Center Line	中心線
+	Center Mark	中心標記
+	Center X	中心 X
+	Center Y	中心 Y
+	Center Z	中心 Z
+	Center, Diameter	圓心、直徑
+	Center, Radius	圓心、半徑
+	Center, Start, Angle	圓心、起點、角度
+	Center, Start, End	圓心、起點、終點
+	Center, Start, Length	圓心、起點、長度
+	Chamfer	倒角
+	Change Space	變更空間
+	Change to Current Layer	改為目前圖層
+	Circle	圓
+	Circumference	圓周長
+	Clear	清除
+	Clipboard	剪貼簿
+	Close	關閉
+	Close All	全部關閉
+	Closed	封閉
+	Coincident	重合
+	Collapse Tool Sets	收合工具組
+	Collinear	共線
+	Color	顏色
+	Color 8	顏色 8
+	Color 9	顏色 9
+	Color Index	顏色索引
+	Color...	顏色...
+	Command History	指令歷程
+	Command Line	指令列
+	Command Line History Lines	指令列歷程行數
+	Command Reference	指令參考
+	Commits	提交
+	Company	公司
+	Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust.	電腦輔助設計與製圖：以純 Rust 獨立開發的開放原始碼 CAD 應用程式。
+	Concentric	同心
+	Cone	圓錐
+	Constraint Bars	約束列
+	Constraint Settings	約束設定
+	Construction Line	建構線
+	Contents	內容
+	Continue	連續式
+	Contributors	貢獻者
+	Control Vertices	控制頂點
+	Copy	複製
+	Copy Layout	複製配置
+	Copy Nested Objects	複製巢狀物件
+	Copy Selection	複製選取項目
+	Copy with Base Point	以基準點複製
+	Count	計數
+	Create Block	建立圖塊
+	Creates a user parameter	建立使用者參數
+	Ctrl+Enter to finish	按 Ctrl+Enter 完成
+	Current layer	目前圖層
+	Current selection	目前選取項目
+	Current: {color}	目前：{color}
+	Cut	剪下
+	Cyan	青色
+	Cylinder	圓柱
+	DWG	DWG
+	DXF	DXF
+	Dark	深色
+	Default	預設
+	Default Save Format	預設儲存格式
+	Define Attributes	定義屬性
+	Define Attributes...	定義屬性...
+	Defined width	定義寬度
+	Degree	次數
+	Delete	刪除
+	Delete Column	刪除欄
+	Delete Constraints	刪除約束
+	Delete Dimension Style	刪除標註樣式
+	Delete Duplicate Objects	刪除重複物件
+	Delete Layer	刪除圖層
+	Delete Layer State	刪除圖層狀態
+	Delete Layout	刪除配置
+	Delete Row	刪除列
+	Delete Text Style	刪除文字樣式
+	Delta X	X 增量
+	Delta Y	Y 增量
+	Description	描述
+	Deselect All	全部取消選取
+	Diameter	直徑
+	Dim style	標註樣式
+	Dimension	標註
+	Dimension Space	標註間距
+	Dimension Style Override	標註樣式取代
+	Dimension Style...	標註樣式...
+	Dimension Text Edit	編輯標註文字
+	Dimension style	標註樣式
+	Dimensional Constraint	尺寸約束
+	Dimensional Constraint Parameters	尺寸約束參數
+	Dimensional Constraints	尺寸約束
+	Disassociate Dimensions	解除標註關聯
+	Display name	顯示名稱
+	Distance	距離
+	Divide	等分
+	Do not plot (click: plot)	不出圖（按一下：出圖）
+	Donut	圓環
+	Double-click to edit the description	按兩下編輯描述
+	Down	向下
+	Drafting	製圖
+	Drafting Settings	繪圖設定
+	Drafting Settings...	繪圖設定...
+	Draw	繪圖
+	Draw Order	繪製順序
+	Drawing (DWG)	圖面（DWG）
+	Drawing (DXF)	圖面（DXF）
+	Drawing Limits	圖面界限
+	Drawing as bytes	圖面位元組
+	Drawings (DWG, DXF)	圖面（DWG、DXF）
+	Dynamic Dimensions	動態標註
+	Dynamic Input	動態輸入
+	Dynamic Input (F12)	動態輸入（F12）
+	E	E
+	Edit	編輯
+	Edit Text...	編輯文字...
+	Elevation	高程
+	Ellipse	橢圓
+	Elliptical Arc	橢圓弧
+	Enable Dynamic Input (F12)	啟用動態輸入（F12）
+	End Width	終點寬度
+	End X	終點 X
+	End Y	終點 Y
+	End angle	終止角度
+	Endpoint	端點
+	Enter Top, Zero or Bottom.	輸入 Top、Zero 或 Bottom。
+	Enter a fit data option	輸入擬合資料選項
+	Enter a pattern name	輸入樣式名稱
+	Enter a vertex editing option	輸入頂點編輯選項
+	Enter an option	輸入選項
+	Enter angle of xline	輸入建構線角度
+	Enter angle of xline (0) or	輸入建構線角度（0），或
+	Enter area of rectangle in current units	以目前單位輸入矩形面積
+	Enter attribute prompt	輸入屬性提示
+	Enter attribute tag name	輸入屬性標籤名稱
+	Enter attribute value	輸入屬性值
+	Enter block name	輸入圖塊名稱
+	Enter constraint type	輸入約束類型
+	Enter continuity	輸入連續性
+	Enter default attribute value	輸入預設屬性值
+	Enter degree of spline	輸入雲形線次數
+	Enter delta angle	輸入角度增量
+	Enter delta length or	輸入長度增量，或
+	Enter dimension text	輸入標註文字
+	Enter dimension text (<> = measurement)	輸入標註文字（<> = 量測值）
+	Enter dimension value or [name=expression]	輸入標註值，或 [name=expression]
+	Enter dimension variable name to override	輸入要取代的標註變數名稱
+	Enter justification type	輸入對正方式
+	Enter leader text	輸入引線文字
+	Enter mline scale	輸入多重線比例
+	Enter mode	輸入模式
+	Enter name of block to insert	輸入要插入的圖塊名稱
+	Enter new text	輸入新文字
+	Enter next point	輸入下一點
+	Enter number of columns	輸入欄數
+	Enter number of data rows	輸入資料列數
+	Enter number of items	輸入項目數量
+	Enter number of items along path	輸入沿路徑的項目數量
+	Enter number of sides	輸入邊數
+	Enter number of turns	輸入圈數
+	Enter percentage length	輸入長度百分比
+	Enter rectangle length	輸入矩形長度
+	Enter rectangle width	輸入矩形寬度
+	Enter scale factor	輸入比例係數
+	Enter text	輸入文字
+	Enter text (use \P for new paragraphs)	輸入文字（使用 \P 開始新段落）
+	Enter the number of segments	輸入分段數
+	Enter twist direction of helix	輸入螺旋線旋轉方向
+	Entire drawing	整份圖面
+	Equal	相等
+	Erase	刪除
+	Exclude from new selection set	從新選取集排除
+	Explode	分解
+	Export	匯出
+	Export to PDF...	匯出至 PDF...
+	Expression	運算式
+	Extend	延伸
+	Extension	延伸
+	Extents	範圍
+	Extrude	擠出
+	File	檔案
+	File Tab	檔案分頁
+	Fillet	圓角
+	Filter	篩選
+	Filters	篩選條件
+	Find and Replace	尋找與取代
+	Find...	尋找...
+	First	最早
+	First commit	首次提交
+	Fit Points	擬合點
+	Fix	固定
+	Flatten Objects	平面化物件
+	Format	格式
+	Freehand	徒手繪圖
+	Freeze	凍結
+	Freeze Layer	凍結圖層
+	Freeze in new viewports	在新視埠中凍結
+	Freeze/Thaw	凍結／解凍
+	Freeze/Thaw in all viewports	在所有視埠中凍結／解凍
+	Freeze/Thaw in the current viewport	在目前視埠中凍結／解凍
+	From	參考點偏移
+	General	一般
+	Geometric Center	幾何中心
+	Geometric Constraint	幾何約束
+	Geometric Constraints	幾何約束
+	Geometry	幾何
+	Get Variable	取得變數
+	Get View	取得視圖
+	Global	全域
+	Global width	整體寬度
+	Grab bag	其他工具
+	Gradient	漸層
+	Gradient...	漸層...
+	Green	綠色
+	Grid (F7)	格線（F7）
+	Grid Display	格線顯示
+	Grid On (F7)	開啟格線（F7）
+	Grid spacing	格線間距
+	Grip Mirror	掣點鏡射
+	Grip Rotate	掣點旋轉
+	Grip Scale	掣點縮放
+	Grip Stretch	掣點拉伸
+	Hatch	剖面線
+	Hatch Edit	編輯剖面線
+	Hatch...	剖面線...
+	Height	高度
+	Height: {height}	高度：{height}
+	Helix	螺旋線
+	Help	說明
+	Hide All	全部隱藏
+	Hide All Constraint Bars	隱藏所有約束列
+	Hide All Dynamic Dimensions	隱藏所有動態標註
+	Hide CADCraft	隱藏 CADCraft
+	Hide Layer List	隱藏圖層清單
+	Hide Others	隱藏其他項目
+	Hide Palettes	隱藏面板
+	Home	原位
+	Horizontal	水平
+	HorizontalDistance	水平距離
+	How to apply:	套用方式：
+	ID Point	查詢點座標
+	Import	匯入
+	In	放大
+	In-window Menu Bar	視窗內選單列
+	Include in new selection set	包含於新選取集
+	Increment angle	角度增量
+	Index Color	索引色
+	Index color: {index}	索引色：{index}
+	Inquiry	查詢
+	Insert	插入
+	Insert Block	插入圖塊
+	Insert Column	插入欄
+	Insert Row	插入列
+	Insert this block	插入此圖塊
+	Insertion	插入
+	Insertion X	插入點 X
+	Insertion Y	插入點 Y
+	Insertion Z	插入點 Z
+	Inspect Constraints	檢查約束
+	Inspect Drawing	檢查圖面
+	Interface Language	介面語言
+	Interface Theme	介面佈景主題
+	Intersect	交集
+	Intersection	交點
+	Isolate	隔離
+	Isolate Layer	隔離圖層
+	Isometric Drafting	等角製圖
+	Join	接合
+	Join the ArtCraft Discord…	加入 ArtCraft Discord…
+	Join us on Discord	加入我們的 Discord
+	Language	語言
+	Last	最近
+	Last commit	最近提交
+	Layer	圖層
+	Layer Delete	刪除圖層
+	Layer Match	圖層比對
+	Layer Merge	合併圖層
+	Layer Off	關閉圖層
+	Layer Properties	圖層性質
+	Layer Properties Manager	圖層性質管理員
+	Layer Properties Manager — current viewport	圖層性質管理員 — 目前視埠
+	Layer State	圖層狀態
+	Layer States Manager...	圖層狀態管理員...
+	Layer Tools	圖層工具
+	Layer contains objects (double-click to make current)	圖層含有物件（按兩下設為目前圖層）
+	Layer is empty (double-click to make current)	圖層為空（按兩下設為目前圖層）
+	Layers	圖層
+	Layers displayed: {shown} of {total}.   Current layer: {layer}	顯示圖層：{shown}／{total}。   目前圖層：{layer}
+	Layout	配置
+	Layout list	配置清單
+	Leader	引線
+	Left	左側
+	Length	長度
+	Length X	X 向長度
+	Length Y	Y 向長度
+	Lengthen	調整長度
+	Light	淺色
+	Line	直線
+	Line delta	程式碼行數增減
+	Linear	線性
+	Lines +/−	行數 +/−
+	Lines added	新增行數
+	Lines deleted	刪除行數
+	Linetype	線型
+	Linetype Scale	線型比例
+	Linetype scale	線型比例
+	Linetype...	線型...
+	Lineweight	線粗
+	Lineweight...	線粗...
+	List	列示
+	List Blocks	列出圖塊
+	List Dimension Styles	列出標註樣式
+	List Layer States	列出圖層狀態
+	List Layouts	列出配置
+	List System Variables	列出系統變數
+	List Text Styles	列出文字樣式
+	Load all	全部載入
+	Load...	載入...
+	Loaded linetypes	已載入的線型
+	Lock	鎖定
+	Lock Layer	鎖定圖層
+	Lock/Unlock	鎖定／解鎖
+	Loft	斷面混成
+	Ltscale	Ltscale
+	MIT OR Apache-2.0. Not affiliated with Autodesk, Inc.	MIT OR Apache-2.0。與 Autodesk, Inc. 無關。
+	MODEL	MODEL
+	MText	多行文字
+	Magenta	洋紅色
+	Major line every	主格線間隔
+	Make Current	設為目前項目
+	Make Object's Layer Current	將物件所屬圖層設為目前圖層
+	Make...	建立...
+	Match Layer	比對圖層
+	Match Properties	複製性質
+	Measure	定距等分
+	Measure Distance	測量距離
+	Measure Geometry	量測幾何
+	Merge Cells	合併儲存格
+	Merged PRs	已合併的 PR
+	Mid Between 2 Points	兩點間中點
+	Midpoint	中點
+	Mirror	鏡射
+	Model	模型
+	Model Space (in viewport)	模型空間（視埠內）
+	Modeling	建模
+	Models	模型
+	Modify	修改
+	Move	移動
+	Multileader	多重引線
+	Multileader Style...	多重引線樣式...
+	Multileader style	多重引線樣式
+	Multiline	多重線
+	Multiline Text	多行文字
+	Multiline Text...	多行文字...
+	Multiple	多個
+	Multiple Point	多點
+	My	我的
+	My properties: not available yet	我的性質：尚未提供
+	N	N
+	Name	名稱
+	Name (A–Z)	名稱（A–Z）
+	Nearest	最近點
+	New	新增
+	New (metric)	新增（公制）
+	New Drawing	新增圖面
+	New Drawing (⌘N)	新增圖面（⌘N）
+	New Drawing...	新增圖面...
+	New Layer	新增圖層
+	New Layout	新增配置
+	New VP Freeze	新視埠凍結
+	New Viewports...	新增視埠...
+	New layout	新增配置
+	New state name	新狀態名稱
+	No	否
+	No blocks defined in this drawing.	此圖面尚未定義圖塊。
+	No contributor data was built into this copy.	此版本未內建貢獻者資料。
+	No model credits were built into this copy.	此版本未內建模型致謝資料。
+	No saved layer states	沒有已儲存的圖層狀態
+	No selection	尚未選取
+	Node	節點
+	None	無
+	Not available	無法使用
+	Not available yet	尚未提供
+	OK	確定
+	Object	物件
+	Object Snap	物件鎖點
+	Object Snap (F3)	物件鎖點（F3）
+	Object Snap On (F3)	開啟物件鎖點（F3）
+	Object Snap Tracking	物件鎖點追蹤
+	Object Snap Tracking (F11)	物件鎖點追蹤（F11）
+	Object type:	物件類型：
+	Off	關閉
+	Offset	偏移
+	On	開啟
+	On/Off	開啟／關閉
+	One of the Crafting Apps by the ArtCraft team and community.	由 ArtCraft 團隊與社群打造的 Crafting Apps 系列之一。
+	Open (⌘O)	開啟（⌘O）
+	Open Sample Drawing	開啟範例圖面
+	Open sample drawing	開啟範例圖面
+	Open...	開啟...
+	Operator:	運算子：
+	Orbit	環轉
+	Ordinate	座標式
+	Ortho (F8)	正交（F8）
+	Ortho Mode	正交模式
+	Ortho Mode (F8)	正交模式（F8）
+	Osnap Settings...	物件鎖點設定...
+	Out	縮小
+	Override	取代
+	PAPER	PAPER
+	PRs	PR
+	Page Setup Manager	頁面設置管理員
+	Page Setup Manager...	頁面設置管理員...
+	Pan	平移
+	Pan Down	向下平移
+	Pan Left	向左平移
+	Pan Right	向右平移
+	Pan Up	向上平移
+	Paper Space	圖紙空間
+	Parallel	平行
+	Parameters Manager	參數管理員
+	Parametric	參數式
+	Paste	貼上
+	Paste as Block	貼為圖塊
+	Paste to Original Coordinates	貼至原始座標
+	Path Array	路徑陣列
+	Pattern	樣式
+	Percent	百分比
+	Perpendicular	垂直
+	Plot	出圖
+	Plot (click: do not plot)	出圖（按一下：不出圖）
+	Plot Preview	出圖預覽
+	Plot style	出圖型式
+	Plot style attached to	出圖型式附加至
+	Plot style table	出圖型式表
+	Plot table type	出圖型式表類型
+	Plus/minus	正負號
+	Point	點
+	Point Filters	點座標篩選
+	Point Style...	點型式...
+	Polar (distance < angle)	極座標（distance < angle）
+	Polar Array	環形陣列
+	Polar Tracking	極座標追蹤
+	Polar Tracking (F10)	極座標追蹤（F10）
+	Polar Tracking On (F10)	開啟極座標追蹤（F10）
+	Polar: {distance} < {angle}°	極座標：{distance} < {angle}°
+	Polygon	多邊形
+	Polygonal	多邊形
+	Polyline	聚合線
+	Position X	位置 X
+	Position Y	位置 Y
+	Position Z	位置 Z
+	Previous	上一個
+	Previous Layer	上一個圖層
+	Primitives	基本幾何體
+	Print	列印
+	Print...	列印...
+	Properties	性質
+	Properties Inspector	性質檢查器
+	Properties:	性質：
+	Proxy	代理物件
+	Purge	清理
+	Pyramid	角錐
+	Quadrant	象限點
+	Query Entities	查詢圖元
+	Quick	快速
+	Quick Dimension	快速標註
+	Quick Properties	快速性質
+	Quick Select	快速選取
+	Quick Select Properties	快速選取性質
+	Quick Select...	快速選取...
+	QuickCalc	快速計算
+	Quit CADCraft	結束 CADCraft
+	Radius	半徑
+	Raster Image	點陣影像
+	Ray	射線
+	Read-only	唯讀
+	Real name	真實姓名
+	Realtime	即時
+	Reassociate Dimensions	重新建立標註關聯
+	Recent	最近使用
+	Rectangle	矩形
+	Rectangular	矩形
+	Rectangular Array	矩形陣列
+	Red	紅色
+	Redo	重做
+	Redo (⇧⌘Z)	重做（⇧⌘Z）
+	Redraw	重繪
+	Regen	重新產生
+	Regen All	全部重新產生
+	Region	面域
+	Region/Mass Properties	面域／質量性質
+	Relative	相對
+	Remove Leader	移除引線
+	Remove the viewport override	移除視埠取代設定
+	Rename Dimension Style	重新命名標註樣式
+	Rename Layer	重新命名圖層
+	Rename Layer State	重新命名圖層狀態
+	Rename Layout	重新命名配置
+	Rename Text Style	重新命名文字樣式
+	Rename...	重新命名...
+	Repeat {command}	重複 {command}
+	Requires a point (x,y, @dx,dy or @d<a).	需要一個點（x,y、@dx,dy 或 @d<a）。
+	Reset Palettes	重設面板
+	Restore	還原
+	Restore Layer State	還原圖層狀態
+	Reverse	反轉
+	Reverse the order	反轉順序
+	Revision Cloud	修訂雲形
+	Revolve	迴轉
+	Right	右側
+	Rotate	旋轉
+	Rotation	旋轉角度
+	S	S
+	Save	儲存
+	Save (⌘S)	儲存（⌘S）
+	Save As	另存新檔
+	Save As...	另存新檔...
+	Save Layer State	儲存圖層狀態
+	Save State	儲存狀態
+	Scale	縮放
+	Search for layer	搜尋圖層
+	Search for parameter	搜尋參數
+	Second and next points:	第二點及後續各點：
+	Select	選取
+	Select 2D polyline	選取 2D 聚合線
+	Select All	全選
+	Select Objects	選取物件
+	Select a 2D polyline.	選取一條 2D 聚合線。
+	Select a block reference.	選取一個圖塊參考。
+	Select a circle or arc.	選取圓或圓弧。
+	Select a closed polyline	選取封閉聚合線
+	Select a closed polyline, circle, ellipse or closed spline.	選取封閉聚合線、圓、橢圓或封閉雲形線。
+	Select a closed polyline.	選取一條封閉聚合線。
+	Select a curve as the path.	選取曲線作為路徑。
+	Select a dimension constraint type	選取尺寸約束類型
+	Select a line object	選取直線物件
+	Select a line object.	選取一個直線物件。
+	Select a line or an arc.	選取直線或圓弧。
+	Select a line or polyline segment	選取直線或聚合線線段
+	Select a line, arc or open polyline.	選取直線、圓弧或開放聚合線。
+	Select a line, arc, circle, polyline, ellipse or spline as the path.	選取直線、圓弧、圓、聚合線、橢圓或雲形線作為路徑。
+	Select a line, circle, arc or polyline segment.	選取直線、圓、圓弧或聚合線線段。
+	Select a line.	選取一條直線。
+	Select a polyline.	選取一條聚合線。
+	Select a text, mtext, attribute definition or dimension.	選取單行文字、多行文字、屬性定義或標註。
+	Select an annotation object	選取註解物件
+	Select an arc or circle	選取圓弧或圓
+	Select an arc.	選取一條圓弧。
+	Select an object	選取物件
+	Select an object to change or	選取要變更的物件，或
+	Select an object to measure or	選取要量測的物件，或
+	Select an object.	選取一個物件。
+	Select an open curve.	選取一條開放曲線。
+	Select an open line, arc, polyline, ellipse arc or spline.	選取開放的直線、圓弧、聚合線、橢圓弧或雲形線。
+	Select arc or circle	選取圓弧或圓
+	Select arc or polyline arc segment	選取圓弧或聚合線的弧段
+	Select arc style	選取圓弧型式
+	Select arc, circle, line	選取圓弧、圓或直線
+	Select at least two objects to join.	至少選取兩個要接合的物件。
+	Select circle or arc to add center mark	選取要加入中心標記的圓或圓弧
+	Select closed objects (regions, closed polylines, circles).	選取封閉物件（面域、封閉聚合線、圓）。
+	Select first line	選取第一條直線
+	Select first line or arc	選取第一條直線或圓弧
+	Select first object	選取第一個物件
+	Select first object or	選取第一個物件，或
+	Select first point	選取第一點
+	Select nested objects to copy or	選取要複製的巢狀物件，或
+	Select object	選取物件
+	Select object to dimension	選取要標註的物件
+	Select object to divide	選取要等分的物件
+	Select object to extend or shift-select to trim	選取要延伸的物件，或按住 Shift 選取以修剪
+	Select object to measure	選取要定距等分的物件
+	Select object to offset	選取要偏移的物件
+	Select object to trim or shift-select to extend	選取要修剪的物件，或按住 Shift 選取以延伸
+	Select objects	選取物件
+	Select objects (crossing window first corner)	選取物件（交叉視窗第一角點）
+	Select objects to array.	選取要建立陣列的物件。
+	Select objects to stretch by crossing-window or crossing-polygon...	以交叉視窗或交叉多邊形選取要拉伸的物件...
+	Select objects:	選取物件：
+	Select one polyline (Multiple is available through the JSON form).	選取一條聚合線（Multiple 可透過 JSON 形式使用）。
+	Select path curve	選取路徑曲線
+	Select point or object	選取點或物件
+	Select polyline or	選取聚合線，或
+	Select second line	選取第二條直線
+	Select second line or shift-select to apply corner	選取第二條直線，或按住 Shift 選取以套用尖角
+	Select second object	選取第二個物件
+	Select second object or shift-select to apply corner	選取第二個物件，或按住 Shift 選取以套用尖角
+	Select second point	選取第二點
+	Select spline	選取雲形線
+	Select symmetry line	選取對稱線
+	Select two points	選取兩點
+	Selection Cycling	循環選取
+	Send to Back	移至最下層
+	Services	服務
+	Set Current	設為目前項目
+	Set Current Dimension Style	設定目前標註樣式
+	Set Current Text Style	設定目前文字樣式
+	Set Layer Properties	設定圖層性質
+	Set Properties	設定性質
+	Set Table Cell	設定表格儲存格
+	Set Variable	設定變數
+	Set View	設定視圖
+	Share	分享
+	Show	顯示
+	Show All	全部顯示
+	Show All Constraint Bars	顯示所有約束列
+	Show All Dynamic Dimensions	顯示所有動態標註
+	Show Layer List	顯示圖層清單
+	Show System Cursor	顯示系統游標
+	Show/Hide Lineweight	顯示／隱藏線粗
+	Show/Hide Transparency	顯示／隱藏透明度
+	Single Line Text	單行文字
+	Single Point	單點
+	Single...	單行...
+	Smooth	平滑
+	Snap	鎖點
+	Snap Mode	鎖點模式
+	Snap Mode (F9)	鎖點模式（F9）
+	Snap On (F9)	開啟鎖點（F9）
+	Snap X spacing	X 向鎖點間距
+	Snap and Grid	鎖點與格線
+	Solid	實體
+	Sort	排序
+	Specify a point	指定一點
+	Specify a scale for the hatch pattern	指定剖面線樣式比例
+	Specify a second extension line origin	指定第二條延伸線起點
+	Specify an angle for the hatch pattern	指定剖面線樣式角度
+	Specify angle end point	指定角度終點
+	Specify angle of dimension line	指定標註線角度
+	Specify angle of dimension text	指定標註文字角度
+	Specify angle start point	指定角度起點
+	Specify angle vertex	指定角度頂點
+	Specify angle vertex point	指定角度頂點
+	Specify arc length dimension location	指定弧長標註位置
+	Specify axis endpoint of ellipse	指定橢圓軸端點
+	Specify base diameter	指定底面直徑
+	Specify base point	指定基準點
+	Specify base point or	指定基準點，或
+	Specify base point or displacement (drag with the middle mouse button for realtime pan)	指定基準點或位移（拖曳滑鼠中鍵以即時平移）
+	Specify base radius or	指定底面半徑，或
+	Specify center of donut	指定圓環中心
+	Specify center of ellipse	指定橢圓中心
+	Specify center of polygon	指定多邊形中心
+	Specify center point for circle	指定圓心
+	Specify center point of arc	指定圓弧中心
+	Specify center point of array	指定陣列中心點
+	Specify center point of base	指定底面中心點
+	Specify corner of viewport	指定視埠角點
+	Specify corner of window, enter a scale factor (nX or nXP)	指定視窗角點，或輸入比例係數（nX 或 nXP）
+	Specify diameter of circle	指定圓直徑
+	Specify dimension arc line location	指定角度標註弧線位置
+	Specify dimension line location	指定標註線位置
+	Specify distance between turns	指定圈距
+	Specify distance to other axis	指定至另一軸的距離
+	Specify end angle	指定終止角度
+	Specify end point of arc	指定圓弧終點
+	Specify end point of arc (hold Ctrl to switch direction)	指定圓弧終點（按住 Ctrl 切換方向）
+	Specify ending width	指定終點寬度
+	Specify ending width for next segment	指定下一段終點寬度
+	Specify endpoint of arc	指定圓弧端點
+	Specify endpoint of axis	指定軸端點
+	Specify endpoint of line	指定直線端點
+	Specify feature location	指定特徵位置
+	Specify fillet radius	指定圓角半徑
+	Specify fillet radius for rectangles	指定矩形圓角半徑
+	Specify first angle endpoint	指定第一個角度端點
+	Specify first chamfer distance	指定第一個倒角距離
+	Specify first chamfer distance for rectangles	指定矩形第一個倒角距離
+	Specify first constraint point	指定第一個約束點
+	Specify first corner	指定第一角點
+	Specify first corner point	指定第一角點
+	Specify first destination point	指定第一個目標點
+	Specify first end point of circle's diameter	指定圓直徑第一端點
+	Specify first endpoint of edge	指定邊的第一端點
+	Specify first extension line origin	指定第一條延伸線起點
+	Specify first point	指定第一點
+	Specify first point of mirror line	指定鏡射線第一點
+	Specify first point on circle	指定圓上第一點
+	Specify first point on circle: _tan to	指定圓上第一點：_tan 至
+	Specify first source point	指定第一個來源點
+	Specify height	指定高度
+	Specify helix height or	指定螺旋線高度，或
+	Specify included angle	指定夾角
+	Specify insertion base point	指定插入基準點
+	Specify insertion point	指定插入點
+	Specify inside diameter of donut	指定圓環內徑
+	Specify leader arrowhead location	指定引線箭頭位置
+	Specify leader endpoint	指定引線端點
+	Specify leader landing location	指定引線接點位置
+	Specify length for rectangles	指定矩形長度
+	Specify length of chord	指定弦長
+	Specify length of segment	指定線段長度
+	Specify line width for rectangles	指定矩形線寬
+	Specify location for new vertex	指定新頂點位置
+	Specify minimum length of arc	指定最小弧長
+	Specify new end point	指定新終點
+	Specify new location for marked vertex	指定已標記頂點的新位置
+	Specify new width for all segments	指定所有線段的新寬度
+	Specify next point	指定下一點
+	Specify offset distance	指定偏移距離
+	Specify offset distance or	指定偏移距離，或
+	Specify opposite corner	指定對角點
+	Specify other corner point	指定另一角點
+	Specify other endpoint of axis	指定軸的另一端點
+	Specify outside diameter of donut	指定圓環外徑
+	Specify point	指定點
+	Specify point on object for first tangent of circle	指定物件上作為圓第一條切線的點
+	Specify point on object for second tangent of circle	指定物件上作為圓第二條切線的點
+	Specify point on side to offset	指定要偏移側的點
+	Specify radius of arc	指定圓弧半徑
+	Specify radius of circle	指定圓半徑
+	Specify rotation angle	指定旋轉角度
+	Specify rotation angle of text	指定文字旋轉角度
+	Specify rotation angle or	指定旋轉角度，或
+	Specify scale factor	指定比例係數
+	Specify second angle endpoint	指定第二個角度端點
+	Specify second break point	指定第二個斷開點
+	Specify second chamfer distance for rectangles	指定矩形第二個倒角距離
+	Specify second constraint point	指定第二個約束點
+	Specify second destination point	指定第二個目標點
+	Specify second end point of circle's diameter	指定圓直徑第二端點
+	Specify second endpoint of edge	指定邊的第二端點
+	Specify second extension line origin	指定第二條延伸線起點
+	Specify second point	指定第二點
+	Specify second point of arc	指定圓弧第二點
+	Specify second point of mirror line	指定鏡射線第二點
+	Specify second point on circle	指定圓上第二點
+	Specify second point on circle: _tan to	指定圓上第二點：_tan 至
+	Specify second point or <use first point as displacement>	指定第二點，或 <use first point as displacement>
+	Specify second source point	指定第二個來源點
+	Specify side to offset	指定要偏移的一側
+	Specify start angle	指定起始角度
+	Specify start point	指定起點
+	Specify start point of arc	指定圓弧起點
+	Specify start point of polyline	指定聚合線起點
+	Specify start point of text	指定文字起點
+	Specify starting width	指定起點寬度
+	Specify starting width for next segment	指定下一段起點寬度
+	Specify tangent direction for the start point of arc	指定圓弧起點的切線方向
+	Specify the elevation for rectangles	指定矩形高程
+	Specify thickness for rectangles	指定矩形厚度
+	Specify third point on circle	指定圓上第三點
+	Specify third point on circle: _tan to	指定圓上第三點：_tan 至
+	Specify third source point or <continue>	指定第三個來源點，或 <continue>
+	Specify through point	指定通過點
+	Specify top diameter	指定頂面直徑
+	Specify top radius or	指定頂面半徑，或
+	Specify total angle	指定總角度
+	Specify total length or	指定總長度，或
+	Specify width for rectangles	指定矩形寬度
+	Sphere	球體
+	Spline	雲形線
+	Stack (type 1/2 then select)	堆疊（輸入 1/2 後選取）
+	Standard	Standard
+	Start	開始
+	Start Width	起點寬度
+	Start X	起點 X
+	Start Y	起點 Y
+	Start angle	起始角度
+	Start, Center, Angle	起點、圓心、角度
+	Start, Center, End	起點、圓心、終點
+	Start, Center, Length	起點、圓心、長度
+	Start, End, Angle	起點、終點、角度
+	Start, End, Direction	起點、終點、方向
+	Start, End, Radius	起點、終點、半徑
+	Status	狀態
+	Status Bar	狀態列
+	Stretch	拉伸
+	Style: Standard	樣式：Standard
+	Subtract	差集
+	Sweep	掃掠
+	Switch Drawing	切換圖面
+	Switch Layout	切換配置
+	Switch between model space in a viewport and paper space	切換視埠內的模型空間與圖紙空間
+	Symmetric	對稱
+	Synchronize Attributes	同步屬性
+	TOP	TOP
+	Table	表格
+	Table Style...	表格樣式...
+	Table style	表格樣式
+	Table...	表格...
+	Tan, Tan, Radius	相切、相切、半徑
+	Tan, Tan, Tan	相切、相切、相切
+	Tangent	切點
+	Text	文字
+	Text Editor	文字編輯器
+	Text Height	文字高度
+	Text Style...	文字樣式...
+	Text height	文字高度
+	Text override	文字取代
+	Text style	文字樣式
+	Thaw All Layers	解凍所有圖層
+	There is nothing here yet.	這裡尚無內容。
+	Thickness	厚度
+	Time	時間
+	To get started, create or open a drawing.	請先建立或開啟圖面。
+	Toggle PICKADD (off: each pick replaces the selection)	切換 PICKADD（關閉：每次選取會取代原選取集）
+	Toggle PICKADD (on: picks add to the selection)	切換 PICKADD（開啟：選取項目加入原選取集）
+	Tool Bar	工具列
+	Tool Sets	工具組
+	Tools	工具
+	Torus	環面
+	Trace	軌跡線
+	Transparency	透明度
+	Trim	修剪
+	True Color	全彩
+	Turn All Layers On	開啟所有圖層
+	Turn Off Layer	關閉圖層
+	Turn Quick Properties off (QPMODE)	關閉快速性質（QPMODE）
+	Type	類型
+	Type a command	輸入指令
+	Type text; Enter starts a new paragraph	輸入文字；按 Enter 開始新段落
+	UCS Icon	UCS 圖示
+	Undo	復原
+	Undo (⌘Z)	復原（⌘Z）
+	Union	聯集
+	Unisolate Layer	解除圖層隔離
+	Units...	單位...
+	Unlock Layer	解鎖圖層
+	Unmerge Cells	取消合併儲存格
+	Unsaved Layer State	未儲存的圖層狀態
+	Up	向上
+	Update	更新
+	Use System Setting	使用系統設定
+	User	使用者
+	User Parameters	使用者參數
+	Username	使用者名稱
+	VP Color	視埠顏色
+	VP Freeze	視埠凍結
+	Value	值
+	Value:	值：
+	Version	版本
+	Version {version}	版本 {version}
+	Vertical	垂直
+	VerticalDistance	垂直距離
+	View	檢視
+	ViewCube	視角方塊
+	Viewport	視埠
+	Viewport Layer Freeze	視埠圖層凍結
+	Viewport Properties	視埠性質
+	Viewport {id}	視埠 {id}
+	Viewports	視埠
+	W	W
+	White	白色
+	Width factor	寬度係數
+	Window	視窗
+	Wipeout	遮蔽
+	Workspace Switching	切換工作區
+	Write Block	寫出圖塊
+	Xline	建構線
+	Yellow	黃色
+	Yes	是
+	Zoom	縮放視圖
+	Zoom All	縮放至全部
+	Zoom Extents	縮放至範圍
+	Zoom In	放大視圖
+	Zoom Object	縮放至物件
+	Zoom Out	縮小視圖
+	Zoom Previous	上一個縮放視圖
+	Zoom Window	視窗縮放
+	error	錯誤
+	{contributors} · {commits}	{contributors} · {commits}
+	{kind} (constraint {id})	{kind}（約束 {id}）
+	{kind} constraint {name} = {expression}  (double-click to edit)	{kind} 約束 {name} = {expression}  （按兩下編輯）
+	{name}: {distance} < {angle}°	{name}：{distance} < {angle}°
+	ƒx  New User Parameter	ƒx  新增使用者參數
+	ΔLOC	Δ程式碼行數
+	−Bin	−二進位資產
+	−LOC	−程式碼行數
+	⌘↩ to finish	按 ⌘↩ 完成
+@plural	{n} commit	{n} 次提交
+@plural	{n} contributor	{n} 位貢獻者
+	Apply	套用
+	Attach DWG...	附加 DWG...
+	Bind	合併參考
+	Detach	分離
+	Loaded	已載入
+	Make it a block of this drawing, keeping its layer names	轉為此圖面的圖塊，保留其圖層名稱
+	Make it a block of this drawing; its layers become NAME$0$LAYER	轉為此圖面的圖塊；其圖層改為 NAME$0$LAYER
+	No external references are attached.	未附加外部參考。
+	Not Found	找不到
+	Not loaded	未載入
+	Open	開啟
+	Overlay	覆疊
+	Reference Manager	參考管理員
+	Reference Name	參考名稱
+	References: {n}	參考：{n}
+	Reload	重新載入
+	Reload All	全部重新載入
+	Saved Path	儲存路徑
+	Unload	卸載
+	Unloaded	已卸載
+	Unreferenced	未被參考
+	Unresolved	未解析
+	A variable name starts with a letter and has only letters, digits and _	變數名稱須以字母開頭，且僅能包含字母、數字與 _
+	Additional angles	附加角度
+	All Annotation Objects	所有註解物件
+	Arrange Panel	排列面板
+	Audit	檢核圖面
+	Bind...	合併參考...
+	Bring Above Objects	移至物件上方
+	Bring Annotations to Front	將註解移至最上層
+	Bulleted list	項目符號清單
+	Changed: {n}	已變更：{n}
+	Clear History	清除歷程
+	Clip	裁剪
+	Clip Viewport	裁剪視埠
+	Close All Other Drawings	關閉其他所有圖面
+	Close Comparison	關閉比較
+	Command Aliases	指令別名
+	Clear Command History	清除指令歷程
+	Compare Drawings...	比較圖面...
+	Convert	轉換
+	Copy Full File Path	複製完整檔案路徑
+	Copy History	複製歷程
+	Count List	計數清單
+	Count Table	計數表格
+	DWG Reference...	DWG 參考...
+	Data Extraction...	資料萃取...
+	Data Link...	資料連結...
+	Default Save Version	預設儲存版本
+	Degrees of Freedom	自由度
+	Degrees of freedom: {n}	自由度：{n}
+	Dimension Break	標註斷開
+	Dimension Edit	編輯標註
+	Dimension Objects Only	僅標註物件
+	Drawing Template (DWT)	圖面樣板 (DWT)
+	Drawing Utilities	圖面公用程式
+	Dynamic	動態
+	Edit Attributes...	編輯屬性...
+	Edit Table Cell	編輯表格儲存格
+	End Object Isolation	結束物件隔離
+	Enter	輸入
+	Evaluate	計算
+	Export Table	匯出表格
+	External Reference	外部參考
+	External References	外部參考
+	From Template...	從樣板...
+	Get from the Drawing	從圖面取得
+	Grid snap	格點鎖點
+	Grip Edit	掣點編輯
+	Grip Option	掣點選項
+	Group	群組
+	Group Edit	編輯群組
+	Group Options	群組選項
+	Group Selection	群組選取
+	Hatch Patterns	填充線樣式
+	Hide Objects	隱藏物件
+	History	歷程
+	Infer Constraints	推斷約束
+	Insert tab	插入定位字元
+	Insert Table Formula	插入表格公式
+	Inspection	檢驗
+	Isolate Objects	隔離物件
+	Jogged	折彎
+	Jogged Linear	折彎線性標註
+	Isometric Plane	等角平面
+	Isometric snap	等角鎖點
+	Layers Palette	圖層選項板
+	Hide Palette	隱藏選項板
+	Leaders Only	僅引線
+	Lines of Command History	指令歷程行數
+	List Groups	列出群組
+	Lock viewport	鎖定視埠
+	Named Views...	具名視圖...
+	New from Template...	從樣板新增...
+	Next Change	下一個變更
+	Numbered list	編號清單
+	Object Snap Tracking Settings	物件鎖點追蹤設定
+	Oblique	傾斜
+	Only in this drawing: {n}	僅在此圖面中：{n}
+	Only in {name}: {n}	僅在 {name} 中：{n}
+	Open Xref	開啟外部參考
+	Over-constrained	過度約束
+	Paste to Command Line	貼至指令行
+	Plot Style...	出圖型式...
+	Plot Style Manager	出圖型式管理員
+	Plot Style Manager...	出圖型式管理員...
+	Plot Styles...	出圖型式...
+	Plotter Manager	出圖機管理員
+	Plotter Manager...	出圖機管理員...
+	New CTB	新增 CTB
+	New STB	新增 STB
+	New style	新增型式
+	Reset Panel Layout	重設面板配置
+	Send Hatches to Back	將填充線移至最下層
+	Send Under Objects	移至物件下方
+	Text Objects Only	僅文字物件
+	Use for this layout	用於此配置
+	Display plot styles	顯示出圖型式
+	No plot style tables.	沒有出圖型式表。
+	A built-in table: editing it keeps an edited copy in the drawing.	內建表格：編輯後會將修改的副本保留在圖面中。
+	Keep an editable copy of this table in the drawing	在圖面中保留此表格的可編輯副本
+	Layout {name}: {table}	配置 {name}：{table}
+	Grayscale	灰階
+	Screening	篩選強度
+	Use object linetype	使用物件線型
+	Use object lineweight	使用物件線寬
+	Remove	移除
+	Add	新增
+	Open a drawing first.	請先開啟圖面。
+	Color-dependent	依顏色
+	Named	具名
+	Polar angle measurement	極座標角度測量
+	Polar distance	極座標距離
+	PolarSnap	極座標鎖點
+	Polygonal Viewport	多邊形視埠
+	Polyline Edit	編輯聚合線
+	Previous Change	上一個變更
+	QuickCalc Pick	快速計算取值
+	Recent Commands	最近使用的指令
+	Recent Input	最近輸入
+	Recover...	復原圖面...
+	Recalculate Table Formulas	重新計算表格公式
+	Rectangular snap	矩形鎖點
+	Reinitialize	重新初始化
+	Relative to last segment	相對於上一段
+	Select Similar	選取相似物件
+	Set Current Viewport	設定目前視埠
+	Set Table Cell Style	設定表格儲存格型式
+	Show command prompting near the crosshairs	在十字游標附近顯示指令提示
+	Snap Overrides	鎖點暫時取代
+	Snap type	鎖點類型
+	A drawing opened from a file keeps that file's format.	從檔案開啟的圖面會保留該檔案的格式。
+	An array that would create more objects than this is refused.	若陣列產生的物件數超過此值，將拒絕建立。
+	CADCraft keeps these preferences, object snap modes and drafting toggles for your user account and restores them when it starts.	CADCraft 會為您的使用者帳號保留這些偏好設定、物件鎖點模式與製圖開關，並在啟動時還原。
+	Changes apply at once and are kept for next time.	變更立即生效，並保留至下次使用。
+	Command line history	指令行歷程
+	Copy as JSON	複製為 JSON
+	Crosshair size	十字游標大小
+	Display	顯示
+	Grip size	掣點大小
+	Hold Shift to add to the selection	按住 Shift 以加入選取集
+	Interface language	介面語言
+	Interface theme	介面主題
+	Keep the system cursor visible over the drawing area	在繪圖區保留系統游標
+	Largest array	陣列物件數上限
+	Layout paper	配置紙張
+	Model background	模型背景
+	Object snap aperture	物件鎖點靶框
+	Object snap marker size	物件鎖點標記大小
+	Open and Save	開啟與儲存
+	Options	選項
+	Options...	選項...
+	Pickbox size	選取框大小
+	Profiles	設定檔
+	Reset keeps the interface language.	重設時會保留介面語言。
+	Reset to Defaults	重設為預設值
+	Save new drawings as	新圖面的儲存格式
+	Screen magnifiers, screen readers and recorders follow the system cursor.	螢幕放大工具、螢幕閱讀器與錄影工具會追蹤系統游標。
+	Select objects first, then choose a command	先選取物件，再選擇指令
+	Selection	選取
+	Settings...	設定...
+	Show Quick Properties for selected objects	顯示選取物件的快速性質
+	Snap, grid, polar tracking and Dynamic Input:	鎖點、格線、極座標追蹤與動態輸入：
+	The aperture is how near the cursor must come to a point for an object snap to find it.	靶框決定游標須多靠近某個點，物件鎖點才會找到該點。
+	User Preferences	使用者偏好設定
+	objects	物件
+	Spline Edit	編輯雲形線
+	To	至
+	Table Breaks	表格分割
+	Table Cell Style	表格儲存格型式
+	Temporary track point	暫時追蹤點
+	Thaw Layer	解凍圖層
+	Track orthogonally only	僅正交追蹤
+	Track using all polar angle settings	使用所有極座標角度設定追蹤
+	Turn On Layer	開啟圖層
+	Ungroup	取消群組
+	Units Conversion	單位轉換
+	Unlock viewport	解除視埠鎖定
+	Update Data Links	更新資料連結
+	Volume	體積
+	Variables	變數
+	Version 2000	版本 2000
+	Version 2004	版本 2004
+	Version 2007	版本 2007
+	Version 2010	版本 2010
+	Version 2013	版本 2013
+	Version 2018	版本 2018
+	Viewport is locked	視埠已鎖定
+	Viewport scale	視埠比例
+	Zoom Dynamic	動態縮放
+	Zoom Realtime	即時縮放
+	Import...	匯入...
+	Export...	匯出...
+	Batch Publish...	批次發佈...
+	Scale List...	比例清單...
+	Annotative Object Scale	註解物件比例
+	Add Current Scale	加入目前比例
+	Delete Current Scale	刪除目前比例
+	Add/Delete Scales...	加入／刪除比例...
+	Synchronize Multiple-scale Positions	同步多比例位置
+	Annotative Update	更新註解
+	Show Annotative Objects	顯示註解物件
+	Current Scale Only	僅目前比例
+	All Scales	所有比例
+	Drawing Recovery Manager...	圖面復原管理員...
+	Tolerance...	公差...
+	Add Vertex	加入頂點
+	Remove Vertex	移除頂點
+	Convert to Arc	轉換為弧
+	Convert to Line	轉換為線
+	Stretch Vertex	拉伸頂點
+	Edit Array	編輯陣列
+	Close Array Editing	關閉陣列編輯
+	Multiline...	多線...
+	Multiline Style...	多線型式...
+	Solid Editing	實體編輯
+	Collapse Palettes	摺疊選項板
+	SVG drawings (SVG, SVGZ)	SVG 圖面 (SVG, SVGZ)
+	Show and hide the tools of this category	顯示或隱藏此類別的工具
+	Show in Tool Sets	在工具集中顯示
+	3D Mouse...	3D 滑鼠...
+	3D Mouse	3D 滑鼠
+	Calibrate 3D Mouse	校正 3D 滑鼠
+	3D Mouse Navigation	3D 滑鼠導覽
+	3D mouse input is unavailable on this platform	此平台不支援 3D 滑鼠輸入
+	No supported 3D mouse found	找不到支援的 3D 滑鼠
+	Release the 3D mouse to calibrate its resting position	放開 3D 滑鼠以校正其靜止位置
+	3D mouse connected	3D 滑鼠已連線
+	3D mouse busy, possibly 3DxWare or missing device permissions	3D 滑鼠忙碌中，可能由 3DxWare 使用或缺少裝置權限
+	3D mouse disconnected	3D 滑鼠已中斷連線
+	3D mouse input could not be started	無法啟動 3D 滑鼠輸入
+	Enable 3D mouse navigation	啟用 3D 滑鼠導覽
+	Pan sensitivity	平移靈敏度
+	Zoom sensitivity	縮放靈敏度
+	Reverse zoom direction	反轉縮放方向
+	Calibrate	校正
+	Move sideways to pan; push/pull or twist to zoom.	橫向移動以平移；推拉或扭轉以縮放。
+	Left device button: zoom extents. Right device button: calibrate.	裝置左鍵：縮放至圖面範圍。裝置右鍵：校正。
+	More toolbar commands	更多工具列指令
+	Default save version	預設儲存版本
+	Automatic save every	自動儲存間隔
+	min	分鐘
+	Automatic save file location	自動儲存檔案位置
+	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	尚無檔案的圖面會以預設版本儲存。設為 0 分鐘會關閉自動儲存。
+	Time-sensitive right-click: a quick click is Enter, holding opens the menu	依按住時間決定右鍵動作：快速點擊為 Enter，按住則開啟功能表
+	Turned off, a right-click while a command runs always opens the shortcut menu.	關閉時，在指令執行中按右鍵一律開啟快顯功能表。
+	Plot Window	出圖視窗
+	Hatch Pattern	填充線樣式
+	Search for pattern	搜尋樣式
+	Run Script...	執行腳本...
+	Align Multileaders	對齊多重引線
+	Collect	收集
+	Collect Multileaders	收集多重引線
+	Edit Multileader	編輯多重引線
+	Open Recent	開啟最近檔案
+	Clear Recent Files	清除最近檔案
+	Add to Working Set	加入工作集
+	Edit Reference In-Place	就地編輯參考
+	Save Reference Edits	儲存參考編輯
+	Working Set	工作集
+	Xref and Block In-place Editing	外部參考與圖塊就地編輯
+	Hatch Pick	選取填充線
+	Hatch and Gradient	填充線與漸層
+	Color 1	顏色 1
+	Color 2	顏色 2
+	Shape	形狀
+	Curved	曲線
+	Spherical	球形
+	Hemispherical	半球形
+	Inverted	反轉
+	Centered	置中
+	Hatch origin	填充線原點
+	Use current origin	使用目前原點
+	Specified origin	指定原點
+	Click to set new origin	按一下以設定新原點
+	Default to boundary extents	預設採用邊界範圍
+	Bottom left	左下
+	Bottom right	右下
+	Top left	左上
+	Top right	右上
+	Boundaries	邊界
+	Add: Pick points	加入：點選點
+	Add: Select objects	加入：選取物件
+	Boundaries picked: {n}	已選取邊界：{n}
+	Associative	關聯式
+	Create separate hatches	建立獨立填充線
+	Island detection	孤島偵測
+	Normal	一般
+	Outer	外部
+	Ignore	忽略
+	Origin: {x}, {y}	原點：{x}, {y}
+	Sheet Books to PDF...	圖紙集轉為 PDF...
+	Evaluate LISP	執行 LISP 求值
+	Load Application...	載入應用程式...
+	Crossing selection color:	交叉選取顏色：
+	Exclude:	排除：
+	Grips	掣點
+	Groups	群組
+	Hatches	填充線
+	Indicate selection area	顯示選取區域
+	Multiline text	多行文字
+	Object grouping	物件群組
+	Object selection limit for display of grips	顯示掣點的物件選取數上限
+	Objects on locked layers	鎖定圖層上的物件
+	Preview	預覽
+	Selection Area Effect	選取區域效果
+	Selection Preview Filter	選取預覽篩選器
+	Selection area opacity:	選取區域不透明度：
+	Selection effect color	選取效果顏色
+	Selection modes	選取模式
+	Selection preview	選取預覽
+	Show grips	顯示掣點
+	Tables	表格
+	Visual Effect Settings	視覺效果設定
+	Visual Effect Settings...	視覺效果設定...
+	When a command is active	執行指令時
+	When no command is active	未執行指令時
+	Window selection color:	視窗選取顏色：
+	Xrefs	外部參考
+	Animation Effects	動畫效果
+	Animation effects	動畫效果
+	Query Texts	查詢文字
+	Not a number or distance: {text}	不是數字或距離：{text}
+	Dynamic Block Data	動態圖塊資料
+	Custom	自訂
+	Dynamic Block Reference	動態圖塊參考
+	Set Dynamic Property	設定動態性質
+	Dynamic Block Grips	動態圖塊掣點
+	Drag Dynamic Grip	拖曳動態掣點
+	Save Block	儲存圖塊
+	Save Block As	另存圖塊
+	Close Block Editor	關閉圖塊編輯器
+	Unsaved changes	未儲存的變更
+	Edit Block Definition	編輯圖塊定義
+	Block to create or edit	要建立或編輯的圖塊
+	Open in Block Editor	在圖塊編輯器中開啟
+	This drawing	此圖面
+	contains authoring elements. Open in Block Editor?	包含編寫元素。要在圖塊編輯器中開啟嗎？
+	New block	新增圖塊
+	Italic	斜體
+	Underline	底線
+	Overline	上劃線
+	Justify	對齊
+	Text color	文字顏色
+	Click the ruler to add a tab stop, right-click to remove one	按一下尺規以加入定位點，按右鍵以移除
+
+# Mainline integration: Express Tools, selection, scaling and command aliases.
+	Break-line Symbol	折斷線符號
+	Convert Text to Mtext	將文字轉換為多行文字
+	Explode Attributes to Text	將屬性分解為文字
+	Express Tools	Express 工具
+	Move/Copy/Rotate	移動／複製／旋轉
+	WCS	WCS
+	Interface scale	介面縮放比例
+	Analyze Shapes	分析形狀
+	Select boundaries to remove	選取要移除的邊界
+	Island	孤島
+	Select using two clicks only	僅以兩次點選進行選取
+	Define each corner of the selection window with a separate click.	分別點選以指定選取視窗的兩個角點。
+	Type an alias name.	輸入別名。
+	Choose the command the alias starts.	選擇此別名要執行的指令。
+	{command} is an unknown command.	未知的指令：{command}。
+	{alias} is already defined; select it and use Edit.	{alias} 已定義；請選取後使用「編輯」。
+	More than {n} aliases.	別名超過 {n} 個。
+	Alias file: {file}	別名檔案：{file}
+	No alias file loaded. REINIT replaces these aliases with a file's.	尚未載入別名檔案。REINIT 會以檔案中的別名取代目前的別名。
+	Alias	別名
+	Command	指令
+	overrides built-in	覆寫內建別名
+	built-in	內建
+	Add…	新增…
+	Edit…	編輯…
+	Save alias	儲存別名
+	Discard	捨棄
+	Customize	自訂
+	Edit Command Aliases (PGP)...	編輯指令別名 (PGP)...

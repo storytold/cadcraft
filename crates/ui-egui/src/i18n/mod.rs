@@ -33,6 +33,8 @@ pub enum Preference {
     French,
     #[serde(rename = "zh")]
     Chinese,
+    #[serde(rename = "zh-Hant")]
+    TraditionalChinese,
     #[serde(rename = "it")]
     Italian,
     #[serde(rename = "ko")]
@@ -48,7 +50,7 @@ pub enum Preference {
 }
 
 impl Preference {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::Auto,
         Self::English,
         Self::Greek,
@@ -60,6 +62,7 @@ impl Preference {
         Self::Russian,
         Self::French,
         Self::Chinese,
+        Self::TraditionalChinese,
         Self::Italian,
         Self::Korean,
         Self::Swedish,
@@ -107,6 +110,7 @@ impl Preference {
             Self::Russian => "ru",
             Self::French => "fr",
             Self::Chinese => "zh",
+            Self::TraditionalChinese => "zh-Hant",
             Self::Italian => "it",
             Self::Korean => "ko",
             Self::Swedish => "sv",
@@ -129,6 +133,7 @@ impl Preference {
             Self::Russian => "Русский",
             Self::French => "Français",
             Self::Chinese => "简体中文",
+            Self::TraditionalChinese => "繁體中文",
             Self::Italian => "Italiano",
             Self::Korean => {
                 if crate::theme::shows_hangul(CURRENT.with(Cell::get)) {
@@ -165,6 +170,7 @@ impl Preference {
             Self::Russian => "ru",
             Self::French => "fr",
             Self::Chinese => "zh",
+            Self::TraditionalChinese => "zh-Hant",
             Self::Italian => "it",
             Self::Korean => "ko",
             Self::Swedish => "sv",
@@ -187,7 +193,7 @@ pub struct Language {
     catalog: OnceLock<Catalog<'static>>,
 }
 
-pub static LANGUAGES: [Language; 16] = [
+pub static LANGUAGES: [Language; 17] = [
     Language { code: "en", name: "English", source: "", plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     // Greek: one for exactly 1; other for zero and all other integer counts.
     Language { code: "el", name: "Ελληνικά", source: include_str!("el.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
@@ -224,6 +230,9 @@ pub static LANGUAGES: [Language; 16] = [
     // covers its glyphs, and the shell keeps egui's left-to-right run order. Six plural
     // forms: zero, one, two, few, many, other.
     Language { code: "ar", name: "العربية", source: include_str!("ar.tsv"), plural: plural_arabic, plural_forms: 6, catalog: OnceLock::new() },
+    Language {
+        code: "zh-Hant", name: "繁體中文", source: include_str!("zh-Hant.tsv"), plural: plural_zh, plural_forms: 1, catalog: OnceLock::new()
+    },
     // Hungarian uses the singular after a numeral, so one form covers every count (the Korean rule).
     Language { code: "hu", name: "Magyar", source: include_str!("hu.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new() },
     // Turkish keeps a noun singular after a number ("3 commit"), so like Korean it has one form.
@@ -233,8 +242,45 @@ pub static LANGUAGES: [Language; 16] = [
 /// BCP 47 and POSIX locale tags, including `uk-UA`, `uk_UA.UTF-8` and `pt_BR.UTF-8`.
 /// A catalog is chosen by the tag's primary language, so any `pt-*` tag selects `pt-BR`.
 pub fn locale_language(tag: &str) -> Option<&'static str> {
-    let primary = tag.trim().split(['-', '_', '.', '@']).next()?;
-    LANGUAGES.iter().find(|l| l.code.split('-').next().is_some_and(|p| p.eq_ignore_ascii_case(primary))).map(|l| l.code)
+    let locale = tag.trim().split(['.', '@']).next()?;
+    let mut subtags = locale.split(['-', '_']);
+    let primary = subtags.next()?;
+    if !primary.eq_ignore_ascii_case("zh") {
+        return LANGUAGES.iter().find(|l| l.code.split('-').next().is_some_and(|p| p.eq_ignore_ascii_case(primary))).map(|l| l.code);
+    }
+    // Explicit script wins over region. Hant and Traditional regions precede the generic Simplified catalog.
+    let mut script = None;
+    let mut traditional_region = false;
+    let mut region_seen = false;
+    for subtag in subtags {
+        if subtag.is_empty() || !subtag.bytes().all(|c| c.is_ascii_alphanumeric()) {
+            return None;
+        }
+        if subtag.len() == 1 {
+            break; // BCP 47 extensions and private-use subtags do not change the script.
+        }
+        if subtag.len() == 4 && subtag.bytes().all(|c| c.is_ascii_alphabetic()) {
+            if script.is_some() {
+                return None;
+            }
+            script = Some(subtag);
+        } else if (subtag.len() == 2 && subtag.bytes().all(|c| c.is_ascii_alphabetic()))
+            || (subtag.len() == 3 && subtag.bytes().all(|c| c.is_ascii_digit()))
+        {
+            if region_seen {
+                return None;
+            }
+            region_seen = true;
+            traditional_region = ["TW", "HK", "MO"].iter().any(|r| r.eq_ignore_ascii_case(subtag));
+        }
+    }
+    match script {
+        Some(s) if s.eq_ignore_ascii_case("Hant") => Some("zh-Hant"),
+        Some(s) if s.eq_ignore_ascii_case("Hans") => Some("zh"),
+        Some(_) => None,
+        None if traditional_region => Some("zh-Hant"),
+        None => Some("zh"),
+    }
 }
 
 thread_local! {
@@ -355,6 +401,10 @@ pub fn plural_arabic(n: u64) -> usize {
         (_, 11..=99) => 4,
         _ => 5,
     }
+}
+
+fn plural_zh(_: u64) -> usize {
+    0
 }
 
 fn plural_en(n: u64) -> usize {
