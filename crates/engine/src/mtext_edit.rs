@@ -322,8 +322,23 @@ impl Formatted {
             self.edit_paras(range, |p| {
                 p.first = first.clamp(-left, MAX_INDENT);
                 p.left = left;
+                p.absolute_units |= 0b11;
             });
         }
+    }
+
+    /// Resolve imported height-relative indents and tabs before a ruler edits drawing units.
+    pub fn paragraph_lengths_to_drawing_units(&mut self, range: std::ops::Range<usize>, height: f64) {
+        if !height.is_finite() || height <= 0.0 {
+            return;
+        }
+        self.edit_paras(range, |p| {
+            p.first = p.length(p.first, 0, height);
+            p.left = p.length(p.left, 1, height);
+            p.right = p.length(p.right, 2, height);
+            p.tabs = p.tabs.iter().map(|(v, k)| (p.length(*v, 3, height), *k)).collect();
+            p.absolute_units |= 0b1111;
+        });
     }
 
     /// Add a tab stop at `pos` drawing units to the paragraphs `range` touches.
@@ -537,12 +552,24 @@ mod tests {
         f.set_indents(0..0, -2.0, 4.0);
         f.add_tab(0..3, 4.0, TabKind::Left);
         let c = f.to_contents();
-        assert!(c.starts_with("\\pxi-2,l4,t4;one"), "{c}");
+        assert!(c.starts_with("\\pi-2,l4,t4;one"), "{c}");
         f.make_list(0..f.len(), ListStyle::Number, 3.0);
         assert_eq!(f.text(), "1.\tone\n2.\ttwo");
-        assert_eq!(f.to_contents(), "\\pxi-3,l3,t3;1.\tone\\P2.\ttwo");
+        assert_eq!(f.to_contents(), "\\pi-3,l3,t3;1.\tone\\P2.\ttwo");
         f.remove_tab(0..f.len(), 3.0, 0.1);
         assert!(!f.to_contents().contains("t3"));
+    }
+
+    #[test]
+    fn imported_relative_tabs_keep_their_position_when_the_ruler_adds_a_stop() {
+        let mut f = Formatted::from_contents("\\pxi-1,l2,t2;one");
+        f.paragraph_lengths_to_drawing_units(0..0, 2.0);
+        f.paragraph_lengths_to_drawing_units(0..0, 2.0);
+        f.add_tab(0..0, 6.0, TabKind::Left);
+        let p = f.para(0);
+        assert_eq!((p.first, p.left), (-2.0, 4.0));
+        assert_eq!(p.tabs, vec![(4.0, TabKind::Left), (6.0, TabKind::Left)]);
+        assert!(f.to_contents().starts_with("\\pi-2,l4,t4,6;"));
     }
 
     #[test]

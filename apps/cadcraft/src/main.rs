@@ -21,6 +21,8 @@ mod graphics;
 mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
+#[cfg(target_os = "macos")]
+mod native_open;
 mod spacemouse;
 mod system_animations;
 mod workspace;
@@ -39,6 +41,8 @@ struct App {
     workspace_error: Option<String>,
     #[cfg(target_os = "macos")]
     native_menu: Option<native_menu::NativeMenu>,
+    #[cfg(target_os = "macos")]
+    native_open: native_open::NativeOpen,
 }
 
 impl App {
@@ -68,6 +72,7 @@ impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(target_os = "macos")]
         {
+            self.native_open.poll(&mut self.cad);
             if self.native_menu.is_none() && std::env::var_os("CADCRAFT_NO_NATIVE_MENU").is_none() {
                 self.native_menu = Some(native_menu::NativeMenu::install(&mut self.cad));
             }
@@ -311,10 +316,16 @@ fn main() -> eframe::Result {
             b.with_x11();
         }));
     }
+    // Register before the run loop dispatches the launch's Open Documents event. The bridge
+    // leaves winit's application delegate in place, including its launch/termination handling.
+    #[cfg(target_os = "macos")]
+    let native_open = native_open::NativeOpen::install();
     eframe::run_native(
         "CADCraft",
         options,
         Box::new(move |cc| {
+            #[cfg(target_os = "macos")]
+            native_open.set_context(cc.egui_ctx.clone());
             let mut app = CadApp::new(Session::empty(), services());
             let (workspace, restored, workspace_error) = workspace::Workspace::load();
             if let Some(ui) = restored {
@@ -381,6 +392,8 @@ fn main() -> eframe::Result {
                 workspace_error,
                 #[cfg(target_os = "macos")]
                 native_menu: None,
+                #[cfg(target_os = "macos")]
+                native_open,
             }))
         }),
     )

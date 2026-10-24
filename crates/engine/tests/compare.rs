@@ -186,10 +186,10 @@ fn derived_dimension_fields_are_not_differences() {
         marks: Default::default(),
     };
     let mut s = Session::new();
-    s.doc_mut().unwrap().add(&Space::Model, Common::default(), EntityKind::Dimension(dim(30.0, 7.0))).unwrap();
+    s.doc_mut().unwrap().add(&Space::Model, Common::default(), EntityKind::Dimension(Box::new(dim(30.0, 7.0)))).unwrap();
     let mut other = s.doc().unwrap().clone();
     let h = other.model.iter().next().unwrap().handle;
-    other.modify_entity(h, |e| e.kind = EntityKind::Dimension(Dimension { block: Some("*D1".into()), ..dim(0.0, 15.0) })).unwrap();
+    other.modify_entity(h, |e| e.kind = EntityKind::Dimension(Box::new(Dimension { block: Some("*D1".into()), ..dim(0.0, 15.0) }))).unwrap();
     s.open_drawing(other, "B", None);
     let r = s.execute("compare", &json!({"document": 0})).unwrap();
     assert_eq!(counts(&r), (0, 0, 0, 1), "{r}");

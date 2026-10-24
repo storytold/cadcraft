@@ -288,14 +288,33 @@ impl TextFont {
         if let Some(f) = ttf::find(name) {
             return TextFont::Outline(f);
         }
-        let n = name.trim();
+        let n = ttf::file_name(name);
         if n.is_empty() || n.eq_ignore_ascii_case(BUILTIN_FONT) {
             return TextFont::Stroke;
         }
-        ttf::find(&ttf::font_alt()).map(TextFont::Outline).unwrap_or(TextFont::Stroke)
+        if let Some(f) = ttf::find(&ttf::font_alt()) {
+            return TextFont::Outline(f);
+        }
+        // ISOCP outline fonts are often only installed inside another CAD application's
+        // private resources. Never search those bundles. Use an installed narrow sans face
+        // when available, retaining the italic variant and the source font name in the file.
+        // This is a substitution, not an implementation of the proprietary ISOCP glyphs.
+        iso_substitutes(n).iter().find_map(|name| ttf::find(name)).map(TextFont::Outline).unwrap_or(TextFont::Stroke)
     }
     pub fn is_outline(&self) -> bool {
         matches!(self, TextFont::Outline(_))
+    }
+}
+
+fn iso_substitutes(name: &str) -> &'static [&'static str] {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "isocpeur bold italic" => &["Arial Narrow Bold Italic", "Liberation Sans Narrow Bold Italic", "Noto Sans Condensed Bold Italic"],
+        "isocpeur bold" => &["Arial Narrow Bold", "Liberation Sans Narrow Bold", "Noto Sans Condensed Bold"],
+        "isocpeui.ttf" | "isocp2i.ttf" | "isocpi.ttf" | "isocpeur italic" => {
+            &["Arial Narrow Italic", "Liberation Sans Narrow Italic", "Noto Sans Condensed Italic"]
+        }
+        "isocpeur.ttf" | "isocp2.ttf" | "isocp.ttf" | "isocpeur" => &["Arial Narrow", "Liberation Sans Narrow", "Noto Sans Condensed"],
+        _ => &[],
     }
 }
 

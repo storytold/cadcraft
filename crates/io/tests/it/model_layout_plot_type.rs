@@ -65,3 +65,20 @@ fn model_layout_plot_type_survives_the_dwg_bridge() {
     assert_eq!(model.1, Some(1), "{p:?}");
     assert_ne!(p.iter().find(|(n, _, _)| !n.eq_ignore_ascii_case("Model")).and_then(|l| l.1), None);
 }
+
+/// PageSetup lengths are millimetres even in an inch-based model drawing. Native plot
+/// units must agree with the 1:1 layout scale, both in DXF and in the saved DWG itself.
+#[test]
+fn native_layout_plot_units_are_millimetres_through_both_formats() {
+    for d in [Drawing::new_metric(), Drawing::new_imperial()] {
+        let dwg = cadcraft_io::write(&d, "sheet.dwg").unwrap();
+        let native = String::from_utf8(cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).unwrap();
+        for text in [cadcraft_io::write_dxf(&d), native] {
+            for rec in records(&text, "LAYOUT") {
+                let marker = rec.iter().position(|(c, v)| c == "100" && v == "AcDbLayout").unwrap();
+                let units = rec[..marker].iter().find(|(c, _)| c == "72");
+                assert_eq!(units.map(|(_, v)| v.as_str()), Some("1"));
+            }
+        }
+    }
+}

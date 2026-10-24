@@ -314,7 +314,12 @@ fn insert(st: &mut State, s: &str) {
 fn ruler(ui: &mut egui::Ui, st: &mut State, px: f32, width: f32, base_h: f64) {
     let t = Tokens::get();
     let range = st.sel.0.min(st.sel.1)..st.sel.0.max(st.sel.1);
-    let p = st.fmt.para(st.fmt.paragraph_of(range.start));
+    // Drawing the ruler must not convert imported relative units into absolute ones.
+    let mut p = st.fmt.para(st.fmt.paragraph_of(range.start)).clone();
+    p.first = p.length(p.first, 0, base_h);
+    p.left = p.length(p.left, 1, base_h);
+    p.right = p.length(p.right, 2, base_h);
+    p.tabs = p.tabs.iter().map(|(v, k)| (p.length(*v, 3, base_h), *k)).collect();
     let (rect, bg) = ui.allocate_exact_size(vec2(width, 20.0), Sense::click());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, t.control);
@@ -357,6 +362,7 @@ fn ruler(ui: &mut egui::Ui, st: &mut State, px: f32, width: f32, base_h: f64) {
         }
     }
     if let Some((k, u)) = drag {
+        st.fmt.paragraph_lengths_to_drawing_units(range.clone(), base_h);
         if k == 0 {
             st.fmt.set_indents(range.clone(), u - p.left, p.left);
         } else {
@@ -365,10 +371,12 @@ fn ruler(ui: &mut egui::Ui, st: &mut State, px: f32, width: f32, base_h: f64) {
     } else if bg.clicked()
         && let Some(m) = hover
     {
+        st.fmt.paragraph_lengths_to_drawing_units(range.clone(), base_h);
         st.fmt.add_tab(range.clone(), to_units(m.x), TabKind::Left);
     } else if bg.secondary_clicked()
         && let Some(m) = hover
     {
+        st.fmt.paragraph_lengths_to_drawing_units(range.clone(), base_h);
         st.fmt.remove_tab(range, to_units(m.x), 0.6 * base_h);
     }
     bg.on_hover_text(crate::tl!("Click the ruler to add a tab stop, right-click to remove one"));

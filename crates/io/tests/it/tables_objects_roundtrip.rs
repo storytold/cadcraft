@@ -87,6 +87,7 @@ fn layout_page_setup_and_paper_view_round_trip() {
     let mut d = Drawing::new_imperial();
     let first = d.layouts.get_mut(0).expect("Layout1");
     first.page.scale = 0.5;
+    first.page.offset_mm = [3.0, -2.0];
     first.page.plot_style_table = "monochrome.ctb".into();
     first.page.center = true;
     first.page.plot_area = "extents".into();
@@ -94,6 +95,7 @@ fn layout_page_setup_and_paper_view_round_trip() {
     let second = d.layouts.get_mut(1).expect("Layout2");
     second.page.scale_to_fit = true;
     second.page.scale = 0.25;
+    second.page.offset_mm = [-1.0, 4.0];
     second.page.lineweights = false;
     second.page.plot_area = "window".into();
     second.page.device = "DWG To PDF.pc3".into();

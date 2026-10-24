@@ -51,7 +51,7 @@ fn mleader_drawing() -> (Drawing, MLeader) {
         spline: false,
         block: None,
     };
-    d.add(&Space::Model, Common { layer: "0".into(), ..Common::default() }, EntityKind::MLeader(m.clone())).unwrap();
+    d.add(&Space::Model, Common { layer: "0".into(), ..Common::default() }, EntityKind::MLeader(Box::new(m.clone()))).unwrap();
     (d, m)
 }
 
@@ -83,7 +83,8 @@ fn multileader_from_2007_is_native() {
         assert_eq!(records(&text, "MULTILEADER"), 1, "{v:?}");
         assert_eq!(records(&text, "LEADER"), 0, "{v:?}");
         let back = cadcraft_io::read_dxf(text.as_bytes()).unwrap();
-        let got: Vec<&MLeader> = back.model.iter().filter_map(|e| if let EntityKind::MLeader(m) = &e.kind { Some(m) } else { None }).collect();
+        let got: Vec<&MLeader> =
+            back.model.iter().filter_map(|e| if let EntityKind::MLeader(m) = &e.kind { Some(m.as_ref()) } else { None }).collect();
         assert_eq!(got, vec![&m], "{v:?}");
     }
 }

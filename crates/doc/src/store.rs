@@ -92,9 +92,10 @@ impl EntityStore {
         Arc::new(Chunk { id, items: Vec::with_capacity(64) })
     }
     /// Append on top of the draw order. Replaces an entity with the same handle in place.
-    pub fn push(&mut self, e: Entity) {
+    pub fn push(&mut self, e: impl Into<Arc<Entity>>) {
+        let e = e.into();
         if self.contains(e.handle) {
-            self.replace(e);
+            self.replace(Arc::unwrap_or_clone(e));
             return;
         }
         let needs_new = self.chunks.last().is_none_or(|c| c.items.len() >= CHUNK_MAX);
@@ -105,7 +106,7 @@ impl EntityStore {
         let h = e.handle;
         let Some(last) = self.chunks.last_mut() else { return };
         let chunk = Arc::make_mut(last);
-        chunk.items.push(Arc::new(e));
+        chunk.items.push(e);
         let id = chunk.id;
         self.set_index(h, Some(id));
         self.len += 1;
@@ -292,6 +293,21 @@ mod tests {
         assert!(s.get(Handle(1500)).is_none());
         assert_eq!(s.len(), 2999);
         assert_eq!(s.iter().count(), 2999);
+    }
+
+    #[test]
+    fn shared_entities_are_not_copied_and_snapshots_stay_independent() {
+        let e = Arc::new(ent(1));
+        let mut s = EntityStore::new();
+        s.push(e.clone());
+        assert!(Arc::ptr_eq(s.get(Handle(1)).unwrap(), &e));
+        let snapshot = s.clone();
+        s.modify(Handle(1), |e| e.common.layer = "Edited".into());
+        assert_eq!(snapshot.get(Handle(1)).unwrap().common.layer, "0");
+        assert_eq!(e.common.layer, "0");
+        s.push(e.clone());
+        assert_eq!(s.len(), 1);
+        assert_eq!(s.get(Handle(1)).unwrap().common.layer, "0");
     }
 
     #[test]

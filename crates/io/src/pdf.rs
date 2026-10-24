@@ -544,7 +544,7 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
         let (from, to) = placement(space, &b, fit, &sheet, o);
         Map { from, s, to, k }
     } else {
-        Map { from: Vec2::ZERO, s, to: Vec2::ZERO, k }
+        Map { from: sheet.origin, s, to: Vec2::ZERO, k }
     };
     // Plot style ends, joins and fill patterns at the plot scale (a layout's are already drawn).
     let mut list = list;

@@ -339,7 +339,7 @@ mod tests {
             multiline: None,
             modes: Default::default(),
         };
-        let b = bounds(EntityKind::AttDef(a));
+        let b = bounds(EntityKind::AttDef(Box::new(a)));
         assert!(b.min.x <= -4.4 && b.max.x < 1.0);
     }
 
@@ -367,11 +367,11 @@ mod tests {
             spline: false,
             block: None,
         };
-        let b = bounds(EntityKind::MLeader(ml.clone()));
+        let b = bounds(EntityKind::MLeader(Box::new(ml.clone())));
         // The glyph spans x 25.45..28.78, y -2.5..2.5.
         assert!(b.min.x <= 0.0 && b.max.x >= 28.79 && b.min.y <= -2.5 && b.max.y >= 2.5);
         let mut empty = ml;
         empty.text = Some(crate::MText { contents: " ".into(), ..mtext });
-        assert!(bounds(EntityKind::MLeader(empty)).max.x < 26.0);
+        assert!(bounds(EntityKind::MLeader(Box::new(empty))).max.x < 26.0);
     }
 }

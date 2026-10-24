@@ -48,7 +48,7 @@ fn sample() -> Drawing {
     d.add(&Space::Model, fancy, EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(10.0, 5.0, 0.0) })).unwrap();
     d.add(&Space::Model, Common::default(), EntityKind::Circle(Circle { center: Vec3::new(3.0, 4.0, 0.0), radius: 2.0 })).unwrap();
     d.add(&Space::Model, Common::default(), text(INTL)).unwrap();
-    d.add(&Space::Model, Common::default(), EntityKind::Table(table())).unwrap();
+    d.add(&Space::Model, Common::default(), EntityKind::Table(Box::new(table()))).unwrap();
     d.table_styles.push(sched());
     d
 }
@@ -71,7 +71,7 @@ fn first_text(d: &Drawing) -> Option<String> {
 }
 
 fn first_table(d: &Drawing) -> Option<Table> {
-    d.model.iter().find_map(|e| if let EntityKind::Table(t) = &e.kind { Some(t.clone()) } else { None })
+    d.model.iter().find_map(|e| if let EntityKind::Table(t) = &e.kind { Some((**t).clone()) } else { None })
 }
 
 /// ASCII and binary DXF at every version declare it, encode text the version's way and read

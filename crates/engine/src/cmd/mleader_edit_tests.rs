@@ -10,7 +10,7 @@ fn hd(v: &Value) -> Handle {
 
 fn ml(s: &Session, h: Handle) -> MLeader {
     match s.doc().unwrap().entity(h).map(|e| e.kind.clone()) {
-        Some(EntityKind::MLeader(m)) => m,
+        Some(EntityKind::MLeader(m)) => *m,
         other => panic!("not a multileader: {other:?}"),
     }
 }

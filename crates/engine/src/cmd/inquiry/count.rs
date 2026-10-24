@@ -436,7 +436,7 @@ pub(super) fn run_counttable(s: &mut Session, p: &Value) -> Result<Value> {
     let cells: Vec<Vec<String>> = t.blocks.iter().map(|(name, n)| vec![name.clone(), n.to_string()]).collect();
     let header = Some(vec!["Name".to_string(), "Count".to_string()]);
     let table = super::super::table::make_table(&table_style(s), at, cells.len(), 2, None, None, Some("Block Count"), header, &cells);
-    let h = s.add_entity(EntityKind::Table(table))?;
+    let h = s.add_entity(EntityKind::Table(Box::new(table)))?;
     Ok(json!({
         "handle": h.hex(),
         "rows": cells.len(),

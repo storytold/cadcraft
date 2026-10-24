@@ -19,7 +19,7 @@ fn session() -> (Session, String) {
 fn table(s: &Session, h: &str) -> Table {
     let h = cadcraft_engine::doc::Handle::parse_hex(h).unwrap();
     match &s.doc().unwrap().entity(h).unwrap().kind {
-        EntityKind::Table(t) => t.clone(),
+        EntityKind::Table(t) => (**t).clone(),
         _ => panic!("not a table"),
     }
 }

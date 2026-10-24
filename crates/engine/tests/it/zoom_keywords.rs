@@ -51,7 +51,8 @@ fn zoom_center_scale_dynamic_and_paper_space_all() {
     // Paper space: All and Extents (no paper objects) fit the sheet, not the model limits.
     s.execute("layout.set", &json!({ "name": "Layout1" })).unwrap();
     let sheet = s.zoom_limits().unwrap();
-    assert!(sheet.min == Vec2::ZERO && !near(sheet.max.x, 420.0), "the sheet, not the limits: {sheet:?}");
+    assert_eq!(sheet, cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap().bounds());
+    assert!(sheet.min == Vec2::new(-0.25, -0.25) && !near(sheet.max.x, 420.0), "the sheet, not the limits: {sheet:?}");
     s.cmdline("ZOOM E").unwrap();
     assert!(view(&s).center.near(sheet.center(), 1e-9), "{:?} vs {sheet:?}", view(&s));
     s.cmdline("ZOOM A").unwrap();

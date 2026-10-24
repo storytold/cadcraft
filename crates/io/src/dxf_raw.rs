@@ -13,7 +13,7 @@
 //! owner is gone go with it.
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use cadcraft_doc::foreign::{Foreign, ForeignExtra, ForeignKey, ForeignObject};
@@ -77,10 +77,10 @@ fn tag(r: &RawTag) -> Tag {
         Kind::Real => v.parse::<f64>().ok().filter(|x| x.is_finite()).map(Value::Real),
         Kind::Int16 | Kind::Int32 | Kind::Int64 => v.parse::<i64>().ok().map(Value::Int),
         Kind::Bool => v.parse::<i64>().ok().map(|x| Value::Bool(x != 0)),
-        Kind::Hex => Some(Value::Hex(v.to_string())),
+        Kind::Hex => Some(Value::Hex(v.into())),
         Kind::Str => None,
     };
-    Tag::new(r.code, value.unwrap_or_else(|| Value::Str(r.value.clone())))
+    Tag::new(r.code, value.unwrap_or_else(|| Value::Str(r.value.clone().into_boxed_str())))
 }
 
 /// A handle value we believe: hexadecimal and not null. DXF handles are up to 16 hex digits and
@@ -324,13 +324,13 @@ fn put_xdata(d: &mut Drawing, mut xdata: HashMap<Handle, Vec<RawTag>>) {
 }
 
 /// Keep what `secs` holds that the reader did not model in `d.foreign`.
-pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
-    let get = |name: &str| secs.iter().find(|s| s.name == name).map(|s| split(&s.tags)).unwrap_or_default();
+pub(crate) fn read(secs: &[Section<&[Tag]>], d: &mut Drawing) {
+    let get = |name: &str| secs.iter().find(|s| s.name == name).map(|s| split(s.tags)).unwrap_or_default();
     let (classes, tables, blocks, entities, objects) = (get("CLASSES"), get("TABLES"), get("BLOCKS"), get("ENTITIES"), get("OBJECTS"));
     // The drawing's entities by handle: whether each is of a type CADCraft doesn't model.
-    let mut ents: HashMap<String, bool> = HashMap::new();
+    let mut ents: HashMap<Handle, bool> = HashMap::new();
     for e in all_entities(d) {
-        ents.entry(e.handle.hex()).or_insert(matches!(e.kind, EntityKind::Unknown(_)));
+        ents.entry(e.handle).or_insert(matches!(e.kind, EntityKind::Unknown(_)));
     }
     let ids = identities(&tables, &blocks, &objects);
     // Extension dictionaries of entities and records: owner → dictionary.
@@ -347,7 +347,7 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
     // Objects by handle: the first of each, and none that has an entity's handle.
     let mut by_handle: HashMap<String, usize> = HashMap::new();
     for (i, (_, _, t)) in objects.iter().enumerate() {
-        if let Some(h) = head(t).handle.filter(|h| handle(h).is_some() && !ents.contains_key(h)) {
+        if let Some(h) = head(t).handle.filter(|h| handle(h).is_some_and(|h| !ents.contains_key(&h))) {
             by_handle.entry(h).or_insert(i);
         }
     }
@@ -359,7 +359,7 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
         let Some((_, _, t)) = objects.get(k) else { return false };
         let hd = head(t);
         let (Some(h), Some(o)) = (hd.handle, hd.owner) else { return false };
-        !by_handle.contains_key(&o) && xdict_of.get(&o) == Some(&h) && (ents.contains_key(&o) || ids.contains_key(&o))
+        !by_handle.contains_key(&o) && xdict_of.get(&o) == Some(&h) && (handle(&o).is_some_and(|h| ents.contains_key(&h)) || ids.contains_key(&o))
     };
     let modelled_entry = |t: &[Tag], h: &str| entries(t).iter().any(|(k, eh)| eh == h && MODELLED_XDICT_KEYS.contains(&up(k).as_str()));
     // Which objects to keep: those under a named object dictionary entry CADCraft doesn't model,
@@ -397,7 +397,7 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
             if is_xdict(cur) {
                 break entries(t).iter().any(|(k, _)| !MODELLED_XDICT_KEYS.contains(&up(k).as_str()));
             }
-            break ents.get(&o) == Some(&true);
+            break handle(&o).is_some_and(|h| ents.get(&h) == Some(&true));
         };
         for p in path {
             memo.insert(p, verdict);
@@ -429,9 +429,9 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
             continue;
         }
         let Some(h) = head(t).handle else { continue };
-        let Some(&unknown) = ents.get(&h) else { continue };
-        let mut x = extra(kind, t, true, unknown, &kept);
         let Some(hh) = handle(&h) else { continue };
+        let Some(&unknown) = ents.get(&hh) else { continue };
+        let mut x = extra(kind, t, true, unknown, &kept);
         // Xdata belongs to the entity itself (it follows the entity's copies).
         let xd = std::mem::take(&mut x.xdata);
         if !xd.is_empty() {
@@ -686,7 +686,7 @@ struct Map<'a> {
     /// Role → handle in the written file.
     roles: HashMap<ForeignKey, String>,
     /// Entities in the written file.
-    entities: HashSet<String>,
+    entities: HashSet<Handle>,
 }
 
 impl Map<'_> {
@@ -704,7 +704,7 @@ impl Map<'_> {
         if let Some(role) = self.f.targets.get(&h) {
             return self.roles.get(role).cloned();
         }
-        self.entities.contains(&v).then_some(v)
+        self.entities.contains(&h).then_some(v)
     }
 
     /// A kept group with its handle remapped (a dangling one becomes null).
@@ -844,7 +844,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
     }
     let renumber = |old: Option<i64>| class_index(old).and_then(|i| f.class_order.get(i)).and_then(|n| numbers.get(n).copied());
     // Entities of types CADCraft doesn't model, placed among the written ones.
-    let mut planned = plan_unknown(d, &recs, tags, &roles);
+    let mut planned = if unknown.is_empty() { HashMap::new() } else { plan_unknown(d, &recs, tags, &roles) };
     for list in planned.values_mut() {
         list.retain_mut(|(_, t)| {
             if !t.first().is_some_and(|z| is_proxy(&z.str())) {
@@ -929,12 +929,35 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
         alive.insert(o.handle.hex(), format!("{next:X}"));
         next = next.saturating_add(1);
     }
-    let entities: HashSet<String> = all_entities(d).map(|e| e.handle.hex()).filter(|h| written.contains(h)).collect();
+    let entities: HashSet<Handle> = all_entities(d).map(|e| e.handle).filter(|h| written.contains(&h.hex())).collect();
     let map = Map { f, alive, raw: objs.keys().cloned().collect(), roles, entities };
-    let mut out: Vec<Tag> = Vec::with_capacity(tags.len() + f.objects.iter().map(|o| o.tags.len() + 1).sum::<usize>());
+    // Include retained groups up front: even one added xdata group would otherwise double
+    // the entire drawing's tag buffer when it crosses the initial capacity.
+    let extra = |x: &ForeignExtra| {
+        x.xdata.len()
+            + x.props.len()
+            + x.reactors.len()
+            + 2 * usize::from(!x.reactors.is_empty())
+            + 3 * usize::from(x.xdict.is_some())
+            + usize::from(x.color_book.is_some())
+    };
+    let added = f.objects.iter().map(|o| o.tags.len() + 1).sum::<usize>()
+        + f.classes.iter().map(|c| c.len() + 1).sum::<usize>()
+        + 2 * f.dictionary.len()
+        + f.entities.values().chain(f.records.values()).map(extra).sum::<usize>()
+        + xd.values().map(|x| x.len()).sum::<usize>()
+        + planned.values().flatten().map(|(_, t)| t.len()).sum::<usize>();
+    // Reuse the input allocation as a ring: unread records stay at the front, finished
+    // records go to the back. Only the current record needs a separate scratch buffer.
+    let mut queue = VecDeque::from(std::mem::take(tags));
+    queue.drain(..recs.first().map_or(queue.len(), |r| r.start));
+    queue.reserve_exact(added);
+    let mut out = Vec::new();
+    let mut current = Vec::new();
     let mut block = String::new();
     for r in &recs {
-        let b = body(r);
+        current.extend(queue.drain(..(r.end - r.start).min(queue.len())));
+        let b = current.get(1..).unwrap_or_default();
         if r.kind == "BLOCK" {
             block = up(&val(b, 2).unwrap_or_default());
         }
@@ -942,6 +965,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
             for c in f.classes.iter().filter(|c| c.iter().find(|t| t.code == 1).is_some_and(|n| !class_names.contains(&up(&n.value)))) {
                 out.push(Tag::s(0, "CLASS"));
                 out.extend(c.iter().map(tag));
+                queue.extend(out.drain(..));
             }
         }
         if r.kind == "ENDSEC" && r.sec == "OBJECTS" {
@@ -949,13 +973,14 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
                 let number = is_proxy(&o.kind).then(|| renumber(class_number(o.tags.iter().map(|r| (r.code, r.value.as_str()))))).flatten();
                 match number {
                     Some(n) => {
-                        let mut tags: Vec<Tag> = o.tags.iter().map(tag).collect();
-                        set_class_number(&mut tags, n);
-                        let o = ForeignObject { tags: tags.iter().map(raw).collect(), ..o.clone() };
+                        let mut ts: Vec<Tag> = o.tags.iter().map(tag).collect();
+                        set_class_number(&mut ts, n);
+                        let o = ForeignObject { tags: ts.iter().map(raw).collect(), ..o.clone() };
                         map.object(&o, &mut out);
                     }
                     None => map.object(o, &mut out),
                 }
+                queue.extend(out.drain(..));
             }
         }
         for (sec, t) in planned.get(&r.start).into_iter().flatten() {
@@ -964,14 +989,21 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
             let x = head(ub).handle.and_then(|h| handle(&h)).and_then(|h| entity_extra(f, &xd, h));
             out.push(zero.clone());
             record(&map, &ur, ub, x.as_deref(), true, false, &mut out);
+            queue.extend(out.drain(..));
         }
-        out.extend(tags.get(r.start).cloned());
         let x = extra_for(f, &xd, r, b, &block);
         if x.is_none() && Some(r.start) != root {
-            out.extend(b.iter().cloned());
-            continue;
+            queue.extend(current.drain(..));
+        } else {
+            out.extend(current.first().cloned());
+            record(&map, r, b, x.as_deref(), false, Some(r.start) == root, &mut out);
+            current.clear();
         }
-        record(&map, r, b, x.as_deref(), false, Some(r.start) == root, &mut out);
+        queue.extend(out.drain(..));
+    }
+    let mut out = Vec::from(queue);
+    if out.capacity() > out.len() + out.len() / 10 {
+        out.shrink_to_fit();
     }
     add_appids(&mut out);
     let top = max_handle(&out).saturating_add(1);
@@ -1148,7 +1180,15 @@ fn xdata(map: &Map, x: &ForeignExtra, own: &HashSet<String>, out: &mut Vec<Tag>)
 /// APPID records for every application with xdata in the file, added to the APPID table.
 fn add_appids(out: &mut Vec<Tag>) {
     let used: BTreeMap<String, String> = out.iter().filter(|t| t.code == 1001).map(|t| (up(&t.str()), t.str().trim().to_string())).collect();
-    let recs = written_records(out);
+    if used.is_empty() {
+        return;
+    }
+    // Only inspect the TABLES section: entities need no APPID metadata.
+    let Some(start) = out.windows(2).position(|w| matches!(w, [a, b] if a.code == 0 && a.str() == "SECTION" && b.code == 2 && b.str() == "TABLES")) else {
+        return;
+    };
+    let end = out.iter().enumerate().skip(start + 2).find(|(_, t)| t.code == 0 && t.str() == "ENDSEC").map_or(out.len(), |(i, _)| i + 1);
+    let recs = written_records(out.get(..end).unwrap_or_default());
     let Some(table) = recs.iter().position(|r| {
         r.sec == "TABLES" && r.kind == "TABLE" && val(out.get(r.start + 1..r.end).unwrap_or(&[]), 2).is_some_and(|n| up(&n) == "APPID")
     }) else {
@@ -1187,6 +1227,7 @@ fn add_appids(out: &mut Vec<Tag>) {
     if let Some(count) = out.get_mut(t.start + 1..t.end).and_then(|b| b.iter_mut().find(|x| x.code == 70)) {
         *count = Tag::i(70, count.i64().saturating_add(i64::try_from(missing.len()).unwrap_or(0)));
     }
+    out.reserve_exact(add.len());
     out.splice(end_at..end_at, add);
 }
 
@@ -1203,4 +1244,47 @@ fn seed(tags: &[Tag]) -> u64 {
 /// The largest handle of a record (groups 5 and 105).
 fn max_handle(tags: &[Tag]) -> u64 {
     tags.iter().filter(|t| t.code == 5 || t.code == 105).filter_map(|t| Handle::parse_hex(&t.str())).map(|h| h.0).max().unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_foreign_data_keeps_the_written_tags_and_their_allocation() {
+        let d = Drawing::new_metric();
+        let mut tags = crate::dxf_write::tags(&d, cadcraft_dxf::Version::R2018);
+        let expected = tags.clone();
+        let allocation = tags.as_ptr();
+        finish(&mut tags, &d);
+        assert_eq!(tags, expected);
+        assert_eq!(tags.as_ptr(), allocation);
+    }
+
+    #[test]
+    fn sparse_xdata_does_not_double_the_whole_drawing_buffer() {
+        let mut d = Drawing::new_metric();
+        let mut last = Handle(0);
+        for i in 0..4096 {
+            last = d
+                .add(
+                    &cadcraft_doc::Space::Model,
+                    Default::default(),
+                    EntityKind::Point(cadcraft_doc::Point { p: cadcraft_geom::Vec3::new(f64::from(i), 0.0, 0.0), angle: 0.0 }),
+                )
+                .unwrap();
+        }
+        let xdata = vec![RawTag { code: 1001, value: "EXTERNAL".into() }, RawTag { code: 1000, value: "keep me".into() }];
+        d.modify_entity(last, |e| e.common.xdata = xdata.clone()).unwrap();
+        let tags = crate::dxf_write::tags(&d, cadcraft_dxf::Version::R2018);
+        assert!(tags.capacity() <= tags.len() + tags.len() / 10, "spare tags: {}", tags.capacity() - tags.len());
+        let mut tags = tags;
+        tags.reserve_exact(64);
+        let allocation = tags.as_ptr();
+        finish(&mut tags, &d);
+        assert_eq!(tags.as_ptr(), allocation, "foreign-data merge must reuse the full-file buffer");
+        let back = crate::read_dxf(cadcraft_dxf::write_ascii(&tags).as_bytes()).unwrap();
+        assert_eq!(back.model, d.model);
+        assert_eq!(back.entity(last).unwrap().common.xdata, xdata);
+    }
 }

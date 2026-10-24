@@ -32,7 +32,7 @@ fn drawing() -> Drawing {
     let mut b = Block::new("TAG");
     for a in [attrib("A", ALL), attrib("B", AttribModes::default())] {
         let h = d.new_handle();
-        b.entities.push(Entity::new(h, EntityKind::AttDef(a)));
+        b.entities.push(Entity::new(h, EntityKind::AttDef(Box::new(a))));
     }
     d.blocks.insert("TAG".into(), Arc::new(b));
     let ins = Insert {

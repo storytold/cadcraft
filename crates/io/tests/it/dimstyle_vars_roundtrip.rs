@@ -43,7 +43,7 @@ fn drawing() -> Drawing {
 }
 
 fn dimension(overrides: serde_json::Value) -> EntityKind {
-    EntityKind::Dimension(Dimension {
+    EntityKind::Dimension(Box::new(Dimension {
         kind: DimKind::Linear { rotation: 0.0 },
         defpt: Vec3::new(0.0, 3.0, 0.0),
         text_mid: Vec3::ZERO,
@@ -60,7 +60,7 @@ fn dimension(overrides: serde_json::Value) -> EntityKind {
         overrides: overrides.as_object().cloned().unwrap_or_default(),
         assoc: Vec::new(),
         marks: Default::default(),
-    })
+    }))
 }
 
 #[test]

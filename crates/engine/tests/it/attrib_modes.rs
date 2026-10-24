@@ -36,7 +36,7 @@ fn references_take_lock_position_from_the_definition() {
     };
     let mut b = Block::new("TAG");
     let h = d.new_handle();
-    b.entities.push(Entity::new(h, EntityKind::AttDef(def)));
+    b.entities.push(Entity::new(h, EntityKind::AttDef(Box::new(def))));
     d.blocks.insert("TAG".into(), Arc::new(b));
     let mut s = Session::empty();
     s.open_drawing(d, "tags", None);

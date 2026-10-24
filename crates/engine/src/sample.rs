@@ -15,7 +15,7 @@ fn on(layer: &str) -> Common {
 }
 
 fn dim(kind: DimKind, p13: Vec2, p14: Vec2, defpt: Vec2) -> EntityKind {
-    EntityKind::Dimension(Dimension {
+    EntityKind::Dimension(Box::new(Dimension {
         kind,
         defpt: v3(defpt),
         text_mid: Vec3::ZERO,
@@ -32,7 +32,7 @@ fn dim(kind: DimKind, p13: Vec2, p14: Vec2, defpt: Vec2) -> EntityKind {
         overrides: Default::default(),
         assoc: Vec::new(),
         marks: Default::default(),
-    })
+    }))
 }
 
 fn text(at: Vec2, h: f64, s: &str) -> EntityKind {
@@ -165,7 +165,7 @@ pub fn bracket() -> Drawing {
     add(on("Dimensions"), dim(DimKind::Linear { rotation: 0.0 }, Vec2::new(sx, y0 + h), Vec2::new(sx + 2.0, c.y + 1.5), Vec2::new(sx + 1.0, 6.6)));
     add(
         on("Dimensions"),
-        EntityKind::Dimension(Dimension {
+        EntityKind::Dimension(Box::new(Dimension {
             kind: DimKind::Diameter,
             defpt: v3(c + Vec2::from_angle(0.8) * 1.5),
             text_mid: Vec3::ZERO,
@@ -182,11 +182,11 @@ pub fn bracket() -> Drawing {
             overrides: Default::default(),
             assoc: Vec::new(),
             marks: Default::default(),
-        }),
+        })),
     );
     add(
         on("Dimensions"),
-        EntityKind::Dimension(Dimension {
+        EntityKind::Dimension(Box::new(Dimension {
             kind: DimKind::Radius,
             defpt: v3(Vec2::new(8.0, 2.0)),
             text_mid: Vec3::ZERO,
@@ -203,7 +203,7 @@ pub fn bracket() -> Drawing {
             overrides: Default::default(),
             assoc: Vec::new(),
             marks: Default::default(),
-        }),
+        })),
     );
 
     // ---- Notes and title block.

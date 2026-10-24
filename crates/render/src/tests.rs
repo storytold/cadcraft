@@ -347,7 +347,7 @@ fn truetype_mtext_and_dimension_text() {
     assert!(l.prims.iter().any(|p| p.kind == Kind::Tris && p.color != Rgb(255, 0, 0)));
     let mut d = Drawing::new_imperial();
     d.text_styles.iter_mut().for_each(|s| s.font = font.into());
-    d.add(&Space::Model, Common::default(), EntityKind::Dimension(lin_dim())).unwrap();
+    d.add(&Space::Model, Common::default(), EntityKind::Dimension(Box::new(lin_dim()))).unwrap();
     let l = build(&d, &Space::Model, &Options::default());
     assert!(l.prims.iter().filter(|p| p.kind == Kind::Tris).count() > 2, "arrows plus filled glyphs");
 }
@@ -381,7 +381,7 @@ fn dimension_colours_by_role() {
         st.ext_line_color = Color::Index(3);
         st.text_color = Color::Index(5);
     }
-    d.add(&Space::Model, Common::default(), EntityKind::Dimension(lin_dim())).unwrap();
+    d.add(&Space::Model, Common::default(), EntityKind::Dimension(Box::new(lin_dim()))).unwrap();
     let l = build(&d, &Space::Model, &Options::default());
     let has = |c: Rgb, k: Kind| l.prims.iter().any(|p| p.color == c && p.kind == k);
     assert!(has(Rgb(255, 0, 0), Kind::Polyline) && has(Rgb(255, 0, 0), Kind::Tris), "dimension line and arrows red");
@@ -389,7 +389,7 @@ fn dimension_colours_by_role() {
     assert!(has(Rgb(0, 0, 255), Kind::Polyline), "text blue");
     // ByBlock (the default) takes the dimension's own colour.
     let mut d = Drawing::new_imperial();
-    d.add(&Space::Model, Common { color: Color::Index(6), ..Default::default() }, EntityKind::Dimension(lin_dim())).unwrap();
+    d.add(&Space::Model, Common { color: Color::Index(6), ..Default::default() }, EntityKind::Dimension(Box::new(lin_dim()))).unwrap();
     let l = build(&d, &Space::Model, &Options::default());
     assert!(l.prims.iter().all(|p| p.color == Rgb(255, 0, 255)));
 }
@@ -411,7 +411,7 @@ fn table_title_is_centred_and_merged() {
         header: false,
         ..Default::default()
     };
-    d.add(&Space::Model, Common::default(), EntityKind::Table(t)).unwrap();
+    d.add(&Space::Model, Common::default(), EntityKind::Table(Box::new(t))).unwrap();
     let l = build(&d, &Space::Model, &Options::default());
     // No vertical cell borders cross the merged title row (y in 0..-1) except the outer ones.
     let inner_vertical_in_title = l.prims.iter().filter(|p| p.kind == Kind::Polyline).any(|p| {
@@ -791,7 +791,7 @@ fn attributed(def: Common, reference: Common) -> Drawing {
     let mut blk = cadcraft_doc::Block::new("B");
     let (c, k) = line_common(Common::default());
     blk.entities.push(block_entity(1, c, k));
-    blk.entities.push(block_entity(2, def, EntityKind::AttDef(attrib("TAG"))));
+    blk.entities.push(block_entity(2, def, EntityKind::AttDef(Box::new(attrib("TAG")))));
     d.blocks.insert("B".into(), std::sync::Arc::new(blk));
     let EntityKind::Insert(mut ins) = insert_of("B") else { panic!("an insert") };
     ins.attribs.push(attrib("TAG"));

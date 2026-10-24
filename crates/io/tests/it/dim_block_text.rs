@@ -35,7 +35,7 @@ fn height_written(style_scale: f64, overrides: serde_json::Value) -> f64 {
         assoc: Vec::new(),
         marks: Default::default(),
     };
-    d.add(&Space::Model, Common::default(), EntityKind::Dimension(dm)).unwrap();
+    d.add(&Space::Model, Common::default(), EntityKind::Dimension(Box::new(dm))).unwrap();
     block_mtext_height(&cadcraft_io::write_dxf(&d))
 }
 

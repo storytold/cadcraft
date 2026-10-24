@@ -13,7 +13,7 @@ use crate::CadApp;
 use crate::theme::Tokens;
 
 /// World ↔ screen transform for the canvas rect.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Xf {
     pub rect: Rect,
     pub center: Vec2,
@@ -100,6 +100,7 @@ pub struct CanvasState {
     /// Hot grips (object, grip index): the ones Shift+clicked while idle, then the ones the
     /// running GRIP edit works on (the engine's grip modes take them from there).
     pub hot_grips: Vec<(Handle, usize)>,
+    grips: grips::Cache,
     /// Grip dimensional input: the value fields of the grip being stretched.
     pub grip_dyn: crate::grip_dyn::GripDyn,
     /// A GRIP edit was running last frame (its grips go cold when it ends).
@@ -1789,8 +1790,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         Some(sh) => {
             // Paper space: grey surround, the sheet with a shadow, the printable area dashed.
             painter.rect_filled(rect, 0.0, surround);
-            let a = xf_paper.to_screen(Vec2::new(0.0, sh.size.y));
-            let b = xf_paper.to_screen(Vec2::new(sh.size.x, 0.0));
+            let bounds = sh.bounds();
+            let a = xf_paper.to_screen(Vec2::new(bounds.min.x, bounds.max.y));
+            let b = xf_paper.to_screen(Vec2::new(bounds.max.x, bounds.min.y));
             let paper = Rect::from_two_pos(a, b);
             painter.rect_filled(paper.translate(vec2(5.0, 5.0)), 0.0, Color32::from_black_alpha(110));
             painter.rect_filled(paper, 0.0, t.paper);
@@ -1935,33 +1937,10 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         && let Ok(st) = app.session.state()
     {
         let gs = app.session.settings.gripsize as f32;
-        for h in sel.iter().take(200) {
-            if let Some(e) = st.doc.entity(*h) {
-                let grips = e.kind.grips();
-                let count = grips.len();
-                for (gi, g) in grips.into_iter().enumerate() {
-                    let sp = xf.to_screen(g);
-                    if rect.contains(sp) {
-                        let r = grip_rect(&e.kind, count, gi, sp, gs);
-                        let hot = app.canvas.hot_grips.contains(&(*h, gi));
-                        let warm = !hot && hover_pos.is_some_and(|hp| r.expand(2.0).contains(hp));
-                        painter.rect_filled(
-                            r,
-                            0.0,
-                            if hot {
-                                t.grip_hot
-                            } else if warm {
-                                Color32::from_rgb(0xff, 0x7f, 0x9f)
-                            } else {
-                                t.grip
-                            },
-                        );
-                        painter.rect_stroke(r, 0.0, Stroke::new(1.0, Color32::from_rgb(0x10, 0x30, 0x80)), egui::StrokeKind::Middle);
-                    }
-                }
-            }
-        }
+        app.canvas.grips.paint(&st.doc, st.uid, st.revision, &sel, xf, gs, &painter, &app.canvas.hot_grips, hover_pos);
         crate::dyngrips::draw(app, &painter, &xf, rect, hover_pos);
+    } else {
+        app.canvas.grips = grips::Cache::default();
     }
     // Rubber band preview of the active command.
     // `xf` is the space being edited: paper space, or model space inside the active viewport.
@@ -2944,6 +2923,9 @@ pub(crate) mod tests {
 mod blockedit;
 /// The COMPARE overlay.
 mod compare;
+
+/// Cached grip meshes; generated geometry retains upstream midpoint hit shapes.
+mod grips;
 
 /// Background rebuilds of the display list for a new view.
 mod rebuild;

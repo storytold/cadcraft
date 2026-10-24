@@ -56,10 +56,10 @@ pub enum ParaAlign {
     Distributed,
 }
 
-/// Paragraph properties set by `\p…;`. Indents and tab stops are in drawing units (as in
-/// AutoCAD files: `\pi4.86;` indents the first line by 4.86 units), space before and after in
-/// text heights. They stay in effect for the following paragraphs until another `\p` changes them.
-#[derive(Clone, Debug, Default, PartialEq)]
+/// Paragraph properties set by `\p…;`. With `x`, lengths multiply the initial text height;
+/// without `x`, they are in drawing units. Properties stay in
+/// effect for the following paragraphs until another `\p` changes them.
+#[derive(Clone, Debug, PartialEq)]
 pub struct ParaProps {
     /// `i`: first-line indent, relative to the left indent (negative: a hanging indent).
     pub first: f64,
@@ -75,6 +75,15 @@ pub struct ParaProps {
     pub before: f64,
     /// `a`: space after the paragraph.
     pub after: f64,
+    /// Lengths in drawing units: bits 0..5 = first, left, right, tabs, before, after.
+    /// Other lengths multiply the initial text height (the `\px` form used by our commands).
+    pub absolute_units: u8,
+}
+
+impl Default for ParaProps {
+    fn default() -> Self {
+        DEFAULT_PROPS.clone()
+    }
 }
 
 /// Upper bound on tab stops per paragraph (hostile contents).
@@ -100,6 +109,7 @@ impl ParaProps {
     /// properties. Unknown items are ignored.
     pub fn apply(&mut self, arg: &str) {
         let a = arg.trim();
+        let relative = a.starts_with('x');
         let a = a.strip_prefix('x').unwrap_or(a);
         let mut in_tabs = false;
         for item in a.split(',').map(str::trim) {
@@ -124,11 +134,19 @@ impl ParaProps {
                 in_tabs = false;
             }
             match key {
-                'i' => self.first = units(rest).unwrap_or(self.first),
-                'l' => self.left = units(rest).unwrap_or(self.left).max(0.0),
-                'r' => self.right = units(rest).unwrap_or(self.right).max(0.0),
-                'b' => self.before = units(rest).unwrap_or(self.before).max(0.0),
-                'a' => self.after = units(rest).unwrap_or(self.after).max(0.0),
+                'i' | 'l' | 'r' | 'b' | 'a' => {
+                    if let Some(v) = units(rest) {
+                        let (value, bit) = match key {
+                            'i' => (&mut self.first, 0),
+                            'l' => (&mut self.left, 1),
+                            'r' => (&mut self.right, 2),
+                            'b' => (&mut self.before, 4),
+                            _ => (&mut self.after, 5),
+                        };
+                        *value = if key == 'i' { v } else { v.max(0.0) };
+                        self.set_units(bit, relative);
+                    }
+                }
                 'q' => {
                     self.align = match rest.chars().next() {
                         Some('l') => ParaAlign::Left,
@@ -141,6 +159,7 @@ impl ParaProps {
                     }
                 }
                 't' => {
+                    self.set_units(3, relative);
                     self.tabs.clear();
                     in_tabs = true;
                     let rest = rest.trim();
@@ -161,6 +180,19 @@ impl ParaProps {
         }
     }
 
+    fn set_units(&mut self, bit: u8, relative: bool) {
+        if relative {
+            self.absolute_units &= !(1 << bit);
+        } else {
+            self.absolute_units |= 1 << bit;
+        }
+    }
+
+    /// Resolve a paragraph length to drawing units (bits: first, left, right, tabs, before, after).
+    pub fn length(&self, value: f64, bit: u8, height: f64) -> f64 {
+        if 1u8.checked_shl(u32::from(bit)).is_some_and(|mask| self.absolute_units & mask != 0) { value } else { value * height }
+    }
+
     fn push_tab(&mut self, t: (f64, TabKind)) {
         if self.tabs.len() < MAX_TABS && t.0 >= 0.0 {
             let at = self.tabs.partition_point(|(p, _)| *p < t.0);
@@ -176,10 +208,12 @@ impl ParaProps {
             let s = s.trim_end_matches('0').trim_end_matches('.');
             if s == "-0" { "0".to_string() } else { s.to_string() }
         };
-        let mut items = vec![format!("i{}", n(self.first)), format!("l{}", n(self.left))];
-        for (key, v) in [('r', self.right), ('b', self.before), ('a', self.after)] {
-            if v > 0.0 {
-                items.push(format!("{key}{}", n(v)));
+        let mut relative = Vec::new();
+        let mut absolute = Vec::new();
+        for (key, value, bit) in [('i', self.first, 0), ('l', self.left, 1), ('r', self.right, 2), ('b', self.before, 4), ('a', self.after, 5)] {
+            if matches!(key, 'i' | 'l') || value > 0.0 {
+                let items = if self.absolute_units & (1 << bit) != 0 { &mut absolute } else { &mut relative };
+                items.push(format!("{key}{}", n(value)));
             }
         }
         let q = match self.align {
@@ -190,7 +224,12 @@ impl ParaProps {
             ParaAlign::Justify => Some("qj"),
             ParaAlign::Distributed => Some("qd"),
         };
-        items.extend(q.map(String::from));
+        if absolute.is_empty() {
+            relative.extend(q.map(String::from));
+        } else {
+            absolute.extend(q.map(String::from));
+        }
+        let items = if self.absolute_units & 8 != 0 { &mut absolute } else { &mut relative };
         for (i, (p, k)) in self.tabs.iter().enumerate() {
             let kind = match k {
                 TabKind::Left => "",
@@ -200,7 +239,14 @@ impl ParaProps {
             };
             items.push(format!("{}{kind}{}", if i == 0 { "t" } else { "" }, n(*p)));
         }
-        format!("\\px{};", items.join(","))
+        let mut out = String::new();
+        if !relative.is_empty() {
+            out.push_str(&format!("\\px{};", relative.join(",")));
+        }
+        if !absolute.is_empty() {
+            out.push_str(&format!("\\p{};", absolute.join(",")));
+        }
+        out
     }
 }
 
@@ -340,7 +386,7 @@ impl Paragraphs {
 }
 
 static DEFAULT_PROPS: ParaProps =
-    ParaProps { first: 0.0, left: 0.0, right: 0.0, align: ParaAlign::Default, tabs: Vec::new(), before: 0.0, after: 0.0 };
+    ParaProps { first: 0.0, left: 0.0, right: 0.0, align: ParaAlign::Default, tabs: Vec::new(), before: 0.0, after: 0.0, absolute_units: 0b1111 };
 
 /// Contents or columns that need the paragraph layout.
 pub(super) fn needed(contents: &str, p: &MTextParams) -> bool {
@@ -406,8 +452,8 @@ fn split_tabs(segs: &[(Seg, usize)]) -> Vec<Part> {
 /// then every [`DEFAULT_TAB`] text heights.
 fn next_tab(x: f64, pp: &ParaProps, h: f64) -> (f64, TabKind) {
     let eps = 1e-9;
-    let mut best: Option<(f64, TabKind)> = pp.tabs.iter().map(|(p, k)| (*p, *k)).find(|(p, _)| *p > x + eps);
-    let hang = pp.left;
+    let mut best: Option<(f64, TabKind)> = pp.tabs.iter().map(|(p, k)| (pp.length(*p, 3, h), *k)).find(|(p, _)| *p > x + eps);
+    let hang = pp.length(pp.left, 1, h);
     if hang > x + eps && best.is_none_or(|(p, _)| hang < p) {
         best = Some((hang, TabKind::Left));
     }
@@ -433,7 +479,7 @@ pub(super) fn layout(contents: &str, p: &MTextParams, base: &Fmt) -> MTextLayout
     let mut k = 0usize;
     let first_start = |k: usize| {
         let pp = paras.props(k);
-        (pp.left + pp.first).max(0.0)
+        (pp.length(pp.left, 1, h) + pp.length(pp.first, 0, h)).max(0.0)
     };
     let mut line = PLine { width: first_start(0), ..Default::default() };
     let mut pending_space: Option<usize> = None;
@@ -449,8 +495,8 @@ pub(super) fn layout(contents: &str, p: &MTextParams, base: &Fmt) -> MTextLayout
     };
     for a in &atoms {
         let pp = paras.props(k);
-        let avail = if width > 0.0 { (width - pp.right).max(0.0) } else { f64::INFINITY };
-        let left = pp.left.max(0.0);
+        let avail = if width > 0.0 { (width - pp.length(pp.right, 2, h)).max(0.0) } else { f64::INFINITY };
+        let left = (pp.length(pp.left, 1, h)).max(0.0);
         match a {
             Atom::Space(f) => {
                 if !line.items.is_empty() || pending_space.is_some() {
@@ -536,7 +582,7 @@ pub(super) fn layout(contents: &str, p: &MTextParams, base: &Fmt) -> MTextLayout
     for l in &lines {
         let lh = if l.max_h > 0.0 { l.max_h } else { h };
         let new_para = prev_para != Some(l.para);
-        let before = if new_para && prev_para.is_some() { paras.props(l.para).before * h } else { 0.0 };
+        let before = if new_para && prev_para.is_some() { paras.props(l.para).length(paras.props(l.para).before, 4, h) } else { 0.0 };
         let step_h = if p.line_spacing_exact { h } else { lh };
         let pitch = |first: bool| if first { lh } else { step_h * 5.0 / 3.0 * ls + before };
         let hc = col_height(c);
@@ -554,7 +600,7 @@ pub(super) fn layout(contents: &str, p: &MTextParams, base: &Fmt) -> MTextLayout
             *b = y;
         }
         if l.para_end {
-            y += paras.props(l.para).after * h;
+            y += paras.props(l.para).length(paras.props(l.para).after, 5, h);
             force = paras.column_break(l.para);
         }
         prev_para = Some(l.para);
@@ -568,7 +614,11 @@ pub(super) fn layout(contents: &str, p: &MTextParams, base: &Fmt) -> MTextLayout
         Some(_) => (0..n_cols).map(col_height).fold(content_h, f64::max),
         None => content_h,
     };
-    let col_w = if width > 0.0 { width } else { lines.iter().map(|l| l.width + paras.props(l.para).right).fold(0.0, f64::max) };
+    let col_w = if width > 0.0 {
+        width
+    } else {
+        lines.iter().map(|l| l.width + paras.props(l.para).length(paras.props(l.para).right, 2, h)).fold(0.0, f64::max)
+    };
     let gutter = cols.map(|s| s.gutter).filter(|g| g.is_finite() && *g >= 0.0).unwrap_or(0.0);
     let total_w = col_w * n_cols as f64 + gutter * n_cols.saturating_sub(1) as f64;
     let attach = p.attach.clamp(1, 9) - 1;
@@ -591,7 +641,7 @@ pub(super) fn layout(contents: &str, p: &MTextParams, base: &Fmt) -> MTextLayout
         let pp = paras.props(l.para);
         let slot = if reversed { n_cols.saturating_sub(1).saturating_sub(c) } else { c };
         let col_x = box_x0 + slot as f64 * (col_w + gutter);
-        let right_edge = col_w - pp.right;
+        let right_edge = col_w - pp.length(pp.right, 2, h);
         let free = right_edge - l.width;
         let align = match pp.align {
             ParaAlign::Default => [ParaAlign::Left, ParaAlign::Center, ParaAlign::Right].get(usize::from(acol)).copied().unwrap_or_default(),
@@ -657,7 +707,7 @@ mod tests {
         assert_eq!(ListStyle::LowerLetter.label(0), "a.");
         assert_eq!(ListStyle::LowerLetter.label(26), "aa.");
         assert_eq!(ListStyle::UpperLetter.label(27), "AB.");
-        assert_eq!(list_contents(&["one", "two"], ListStyle::Number, 2.0), "\\pxi-2,l2,t2;1.\tone\\P2.\ttwo");
+        assert_eq!(list_contents(&["one", "two"], ListStyle::Number, 2.0), "\\pi-2,l2,t2;1.\tone\\P2.\ttwo");
     }
 
     #[test]
@@ -674,8 +724,7 @@ mod tests {
         assert_eq!(pp.tabs, vec![(2.0, TabKind::Left), (4.0, TabKind::Center), (6.0, TabKind::Right), (8.0, TabKind::Decimal)]);
         assert_eq!(pp.align, ParaAlign::Center);
         assert_eq!(pp.before, 0.5);
-        let mut back = ParaProps::default();
-        back.apply(pp.code().trim_start_matches("\\p").trim_end_matches(';'));
-        assert_eq!(back, pp);
+        let back = Paragraphs::scan(&format!("{}a", pp.code()));
+        assert_eq!(back.props(0), &pp);
     }
 }

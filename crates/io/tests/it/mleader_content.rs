@@ -30,7 +30,7 @@ fn spline_leader_and_block_content_are_written() {
             row_spacing: 0.0,
         }),
     };
-    d.add(&Space::Model, Common::default(), EntityKind::MLeader(m)).unwrap();
+    d.add(&Space::Model, Common::default(), EntityKind::MLeader(Box::new(m))).unwrap();
     let bytes = cadcraft_io::write(&d, "a.dxf").unwrap();
     let back = cadcraft_io::read(&bytes, "a.dxf").unwrap();
     assert!(back.model.iter().any(|e| matches!(&e.kind, EntityKind::MLeader(m) if m.spline

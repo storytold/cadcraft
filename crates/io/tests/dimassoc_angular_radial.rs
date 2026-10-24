@@ -10,7 +10,7 @@ use cadcraft_io::{Version, read, read_dxf, write_dxf};
 /// adding straight to a drawing; the style and text are left at defaults since only the
 /// geometry and associations are under test.
 fn dim(kind: DimKind, defpt: Vec3, p13: Vec3, p14: Vec3, p15: Vec3, p16: Vec3, assoc: Vec<DimAssoc>) -> EntityKind {
-    EntityKind::Dimension(Dimension {
+    EntityKind::Dimension(Box::new(Dimension {
         kind,
         defpt,
         text_mid: Vec3::ZERO,
@@ -27,7 +27,7 @@ fn dim(kind: DimKind, defpt: Vec3, p13: Vec3, p14: Vec3, p15: Vec3, p16: Vec3, a
         overrides: Default::default(),
         assoc,
         marks: Default::default(),
-    })
+    }))
 }
 
 /// The drawing of the issue's repro: a circle with a diameter and a radius dimension, two lines

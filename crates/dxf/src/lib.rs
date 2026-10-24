@@ -28,21 +28,22 @@ pub enum DxfError {
 
 pub type Result<T> = std::result::Result<T, DxfError>;
 
-/// A typed group value.
+/// A typed group value. Text is immutable and has no spare capacity, keeping the tag
+/// stream compact while it coexists with the drawing during import and export.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
-    Str(String),
+    Str(Box<str>),
     Real(f64),
     Int(i64),
     Bool(bool),
     /// Binary chunk (310–319, 1004) as hex text.
-    Hex(String),
+    Hex(Box<str>),
 }
 
 impl Value {
     pub fn as_str(&self) -> String {
         match self {
-            Value::Str(s) | Value::Hex(s) => s.clone(),
+            Value::Str(s) | Value::Hex(s) => s.to_string(),
             Value::Real(r) => format_real(*r),
             Value::Int(i) => i.to_string(),
             Value::Bool(b) => i64::from(*b).to_string(),
@@ -79,7 +80,7 @@ impl Tag {
         Tag { code, value }
     }
     pub fn s(code: i32, v: impl Into<String>) -> Self {
-        Tag { code, value: Value::Str(v.into()) }
+        Tag { code, value: Value::Str(v.into().into_boxed_str()) }
     }
     pub fn f(code: i32, v: f64) -> Self {
         Tag { code, value: Value::Real(if v.is_finite() { v } else { 0.0 }) }
@@ -156,13 +157,13 @@ fn typed(code: i32, text: &str) -> Value {
             t.parse::<i64>().map(Value::Int).unwrap_or_else(|_| Value::Int(t.parse::<f64>().map(|f| f as i64).unwrap_or(0)))
         }
         Kind::Bool => Value::Bool(t.parse::<i64>().unwrap_or(0) != 0),
-        Kind::Hex => Value::Hex(t.to_string()),
-        Kind::Str => Value::Str(text.trim_end_matches(['\r', '\n']).to_string()),
+        Kind::Hex => Value::Hex(t.into()),
+        Kind::Str => Value::Str(unescape_unicode(text.trim_end_matches(['\r', '\n']))),
     }
 }
 
 const BINARY_SENTINEL: &[u8] = b"AutoCAD Binary DXF\r\n\x1a\0";
-/// Most group codes read from one file. A `Tag` takes 40 bytes plus its text, so this bounds the
+/// Most group codes read from one file. A `Tag` takes 32 bytes on 64-bit targets plus its text, so this bounds the
 /// tag list to a few GB; real drawings stay far below (a 10 MB DWG is typically a few million).
 pub const MAX_TAGS: usize = 50_000_000;
 
@@ -223,9 +224,9 @@ fn mif_escape_at(chars: &[char], i: usize) -> Option<char> {
 /// page (four hex digits, one UTF-16 code unit; characters above U+FFFF are a surrogate pair of
 /// escapes), and the `\M+nXXXX` sequences for double-byte East Asian characters. Malformed
 /// escapes, unpaired surrogates and unknown `\M+` code pages are kept as literal text.
-fn unescape_unicode(s: &str) -> String {
+fn unescape_unicode(s: &str) -> Box<str> {
     if !s.contains("\\U+") && !s.contains("\\M+") {
-        return s.to_string();
+        return s.into();
     }
     let mut out = String::with_capacity(s.len());
     let chars: Vec<char> = s.chars().collect();
@@ -254,7 +255,7 @@ fn unescape_unicode(s: &str) -> String {
         out.push(c);
         i += 1;
     }
-    out
+    out.into_boxed_str()
 }
 
 pub fn parse_ascii(text: &str) -> Result<Vec<Tag>> {
@@ -263,7 +264,22 @@ pub fn parse_ascii(text: &str) -> Result<Vec<Tag>> {
 
 #[allow(clippy::while_let_loop)]
 fn parse_ascii_with_limit(text: &str, max_tags: usize) -> Result<Vec<Tag>> {
-    let mut tags = Vec::new();
+    // Count actual pairs without allocating, respecting blank code lines and early EOF.
+    // Geometric growth leaves millions of spare slots alive alongside the drawing.
+    let mut pairs = text.lines();
+    let mut count = 0;
+    while count < max_tags {
+        let Some(code) = pairs.next() else { break };
+        if code.trim().is_empty() {
+            continue;
+        }
+        let Some(value) = pairs.next() else { break };
+        count += 1;
+        if value == "EOF" && code.trim().parse::<i32>() == Ok(0) {
+            break;
+        }
+    }
+    let mut tags = Vec::with_capacity(count);
     let mut lines = text.lines().enumerate();
     loop {
         let Some((ln, code_line)) = lines.next() else { break };
@@ -274,10 +290,6 @@ fn parse_ascii_with_limit(text: &str, max_tags: usize) -> Result<Vec<Tag>> {
         let code: i32 = ct.parse().map_err(|_| DxfError::BadCode { line: ln + 1, text: ct.chars().take(40).collect() })?;
         let Some((_, val)) = lines.next() else { return Err(DxfError::Eof) };
         let v = typed(code, val);
-        let v = match v {
-            Value::Str(s) => Value::Str(unescape_unicode(&s)),
-            o => o,
-        };
         tags.push(Tag { code, value: v });
         if tags.len() > max_tags {
             return Err(DxfError::TooLarge { tags: tags.len(), limit: max_tags });
@@ -370,10 +382,10 @@ fn parse_binary_with_limit(b: &[u8], max_tags: usize) -> Result<Vec<Tag>> {
                 for x in bytes {
                     let _ = write!(s, "{x:02X}");
                 }
-                Value::Hex(s)
+                Value::Hex(s.into_boxed_str())
             }
         };
-        let eof = code == 0 && matches!(&v, Value::Str(s) if s == "EOF");
+        let eof = code == 0 && matches!(&v, Value::Str(s) if s.as_ref() == "EOF");
         tags.push(Tag { code, value: v });
         if tags.len() > max_tags {
             return Err(DxfError::TooLarge { tags: tags.len(), limit: max_tags });
@@ -442,8 +454,8 @@ pub fn write_binary(tags: &[Tag], utf8: bool) -> Vec<u8> {
             Kind::Str => {
                 out.extend_from_slice(&code_bytes);
                 let s = match &t.value {
-                    Value::Str(s) => s.clone(),
-                    v => v.as_str(),
+                    Value::Str(s) => std::borrow::Cow::Borrowed(s.as_ref()),
+                    v => std::borrow::Cow::Owned(v.as_str()),
                 };
                 let mut text = String::with_capacity(s.len());
                 if utf8 {
@@ -525,13 +537,18 @@ fn escape_unicode(s: &str, out: &mut String) {
 
 /// A section: `0 SECTION / 2 NAME ... 0 ENDSEC`.
 #[derive(Clone, Debug, Default)]
-pub struct Section {
+pub struct Section<T = Vec<Tag>> {
     pub name: String,
-    pub tags: Vec<Tag>,
+    pub tags: T,
 }
 
 /// Split a tag stream into sections.
 pub fn sections(tags: &[Tag]) -> Vec<Section> {
+    section_slices(tags).into_iter().map(|s| Section { name: s.name, tags: s.tags.to_vec() }).collect()
+}
+
+/// Sections borrowing their group data. Large drawings need only one copy of the tag stream.
+pub fn section_slices(tags: &[Tag]) -> Vec<Section<&[Tag]>> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < tags.len() {
@@ -543,7 +560,7 @@ pub fn sections(tags: &[Tag]) -> Vec<Section> {
             while j < tags.len() && !(tags.get(j).is_some_and(|t| t.code == 0 && t.str() == "ENDSEC")) {
                 j += 1;
             }
-            out.push(Section { name, tags: tags.get(start..j).unwrap_or(&[]).to_vec() });
+            out.push(Section { name, tags: tags.get(start..j).unwrap_or(&[]) });
             i = j + 1;
         } else {
             i += 1;
@@ -554,13 +571,24 @@ pub fn sections(tags: &[Tag]) -> Vec<Section> {
 
 /// Split a run of tags into records starting at each code-0 tag: (type, tags after the 0).
 pub fn records(tags: &[Tag]) -> Vec<(String, Vec<Tag>)> {
-    let mut out: Vec<(String, Vec<Tag>)> = Vec::new();
-    for t in tags {
-        if t.code == 0 {
-            out.push((t.str(), Vec::new()));
-        } else if let Some(last) = out.last_mut() {
-            last.1.push(t.clone());
+    record_slices(tags).into_iter().map(|(kind, tags)| (kind, tags.to_vec())).collect()
+}
+
+/// Records borrowing their group data, including empty and unterminated final records.
+pub fn record_slices(tags: &[Tag]) -> Vec<(String, &[Tag])> {
+    let mut out = Vec::new();
+    let mut open = None;
+    for (i, t) in tags.iter().enumerate() {
+        if t.code != 0 {
+            continue;
         }
+        if let Some((kind, start)) = open.take() {
+            out.push((kind, tags.get(start..i).unwrap_or(&[])));
+        }
+        open = Some((t.str(), i + 1));
+    }
+    if let Some((kind, start)) = open {
+        out.push((kind, tags.get(start..).unwrap_or(&[])));
     }
     out
 }
@@ -568,6 +596,61 @@ pub fn records(tags: &[Tag]) -> Vec<(String, Vec<Tag>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tag_memory_budget() {
+        // A million group pairs must fit in 32 MB before their text allocations.
+        assert!(std::mem::size_of::<Tag>() <= 32);
+    }
+
+    #[test]
+    fn large_ascii_input_bounds_spare_tag_memory() {
+        let text = format!("{}0\nEOF\n", "0\nCIRCLE\n10\n1\n20\n2\n40\n3\n".repeat(20_000));
+        let tags = parse(text.as_bytes()).unwrap();
+        assert_eq!(tags.len(), 80_001);
+        assert!(tags.capacity() <= tags.len() + tags.len() / 10, "spare tag slots: {}", tags.capacity() - tags.len());
+    }
+
+    #[test]
+    fn blank_code_lines_and_data_after_eof_do_not_reserve_tags() {
+        let tags = parse_ascii(&format!("{}0\nEOF\n{}", "\n".repeat(100_000), "0\nCIRCLE\n".repeat(100_000))).unwrap();
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags.capacity(), 1);
+    }
+
+    #[test]
+    fn borrowed_sections_and_records_preserve_boundaries_without_copying_tags() {
+        let tags = vec![
+            Tag::s(9, "outside"),
+            Tag::s(0, "SECTION"),
+            Tag::s(2, "ENTITIES"),
+            Tag::s(8, "before a record"),
+            Tag::s(0, "LINE"),
+            Tag::f(10, 3.0),
+            Tag::s(0, "EMPTY"),
+            Tag::s(0, "UNKNOWN"),
+            Tag::s(1000, "foreign data"),
+            Tag::s(0, "ENDSEC"),
+            Tag::s(0, "SECTION"),
+            Tag::s(2, "BLOCKS"),
+            Tag::s(0, "BLOCK"),
+            Tag::s(2, "unterminated"),
+        ];
+        let borrowed = section_slices(&tags);
+        let owned = sections(&tags);
+        assert_eq!(borrowed.len(), 2);
+        assert!(std::ptr::eq(borrowed[0].tags.as_ptr(), tags[3..].as_ptr()));
+        for (b, o) in borrowed.iter().zip(&owned) {
+            assert_eq!(b.name, o.name);
+            assert_eq!(b.tags, o.tags);
+            let recs = record_slices(b.tags);
+            assert_eq!(records(b.tags), recs.iter().map(|(k, t)| (k.clone(), t.to_vec())).collect::<Vec<_>>());
+        }
+        let recs = record_slices(borrowed[0].tags);
+        assert_eq!(recs.iter().map(|(k, t)| (k.as_str(), t.len())).collect::<Vec<_>>(), [("LINE", 1), ("EMPTY", 0), ("UNKNOWN", 1)]);
+        assert!(std::ptr::eq(recs[0].1.as_ptr(), tags[5..].as_ptr()));
+        assert_eq!(record_slices(borrowed[1].tags)[0].1, &tags[13..]);
+    }
 
     #[test]
     fn ascii_roundtrip() {

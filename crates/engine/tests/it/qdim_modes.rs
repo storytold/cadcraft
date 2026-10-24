@@ -13,7 +13,7 @@ fn dims(s: &Session, r: &Value) -> Vec<Dimension> {
         .unwrap()
         .iter()
         .map(|h| match &d.entity(Handle::parse_hex(h.as_str().unwrap()).unwrap()).unwrap().kind {
-            EntityKind::Dimension(dm) => dm.clone(),
+            EntityKind::Dimension(dm) => (**dm).clone(),
             k => panic!("not a dimension: {k:?}"),
         })
         .collect()
@@ -123,7 +123,7 @@ fn qdim_prompts() {
         .iter()
         .skip(before)
         .filter_map(|e| match &e.kind {
-            EntityKind::Dimension(dm) => Some(dm.clone()),
+            EntityKind::Dimension(dm) => Some((**dm).clone()),
             _ => None,
         })
         .collect();

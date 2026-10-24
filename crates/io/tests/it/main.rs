@@ -67,3 +67,6 @@ mod user_lin_pat_roundtrip;
 mod view_tables_roundtrip;
 mod viewport_clip_roundtrip;
 mod xref_roundtrip;
+#[cfg(not(target_arch = "wasm32"))]
+mod native_cad_layout;
+mod unvisited_layout;

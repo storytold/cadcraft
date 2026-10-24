@@ -222,6 +222,12 @@ fn font_switch(a: &str) -> Option<TextFont> {
                 return Some(TextFont::Outline(f));
             }
         }
+        if let Some(f) = crate::ttf::find(&crate::ttf::font_alt()) {
+            return Some(TextFont::Outline(f));
+        }
+        if let Some(f) = crate::iso_substitutes(&format!("{name} {st}")).iter().find_map(|n| crate::ttf::find(n)) {
+            return Some(TextFont::Outline(f));
+        }
     }
     Some(TextFont::resolve(name))
 }

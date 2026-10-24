@@ -10,7 +10,7 @@ use serde_json::json;
 fn last_dim(s: &Session) -> (Dimension, DimGeometry) {
     let d = s.doc().unwrap();
     match &d.model.last().unwrap().kind {
-        EntityKind::Dimension(dm) => (dm.clone(), cadcraft_engine::render::dimension_in(d, dm)),
+        EntityKind::Dimension(dm) => ((**dm).clone(), cadcraft_engine::render::dimension_in(d, dm)),
         other => panic!("not a dimension: {other:?}"),
     }
 }

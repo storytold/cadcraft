@@ -490,8 +490,13 @@ pub(crate) fn register_static(name: &str, bytes: &'static [u8]) {
 
 /// Normalise a style font name ("arial.ttf", "Arial", "ARIALBD.TTF") to a lookup key.
 fn key(name: &str) -> String {
-    let n = name.trim().to_ascii_lowercase();
+    let n = file_name(name).to_ascii_lowercase();
     n.trim_end_matches(".ttf").trim_end_matches(".otf").trim_end_matches(".ttc").trim_end_matches(".otc").to_string()
+}
+
+/// Drawings travel between platforms; use the installed file name, never an imported path.
+pub(crate) fn file_name(name: &str) -> &str {
+    name.trim().rsplit(['/', '\\']).next().unwrap_or("")
 }
 
 /// Names that mean a stroke font: never looked up as TrueType.

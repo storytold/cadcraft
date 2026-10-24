@@ -34,6 +34,20 @@ fn left_indent_moves_every_line() {
 }
 
 #[test]
+fn native_absolute_indents_are_independent_of_text_height() {
+    for height in [2.0, 4.0] {
+        let params = MTextParams::new(Vec2::ZERO, height);
+        let plain = layout_mtext_with("LABEL", &params);
+        for (code, offset) in [("\\pi10;", 10.0), ("\\pxi10;", 10.0 * height), ("\\pxl2;\\pi3;", 2.0 * height + 3.0)] {
+            let indented = layout_mtext_with(&format!("{code}LABEL"), &params);
+            assert!((min_x(&indented) - min_x(&plain) - offset).abs() < 1e-9, "height={height}, {code}");
+        }
+        let absolute_tab = layout_mtext_with("\\pt10;a\tb", &params);
+        assert!(xs(&absolute_tab).iter().any(|x| (*x - 10.0).abs() < 0.3));
+    }
+}
+
+#[test]
 fn hanging_indent_list_aligns_wrapped_lines_after_the_label() {
     // Label at 0, text at the tab stop 3, wrapped lines at the left indent 3.
     let l = lay("\\pxi-3,l3,t3;1.\tthe quick brown fox jumps over the lazy dog", 12.0, None);
@@ -111,6 +125,7 @@ fn reversed_columns_run_right_to_left() {
 
 #[test]
 fn hostile_paragraph_codes_do_not_panic() {
+    assert_eq!(cadcraft_fonts::ParaProps::default().length(2.0, u8::MAX, 3.0), 6.0);
     let huge_tabs = format!("\\pt{};a\tb", (0..100_000).map(|i| i.to_string()).collect::<Vec<_>>().join(","));
     let many = "\\pl1;x\\P".repeat(20_000);
     for s in [

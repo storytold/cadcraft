@@ -11,7 +11,7 @@ fn the_dim(s: &Session) -> Dimension {
         .model
         .iter()
         .find_map(|e| match &e.kind {
-            EntityKind::Dimension(d) => Some(d.clone()),
+            EntityKind::Dimension(d) => Some((**d).clone()),
             _ => None,
         })
         .unwrap()

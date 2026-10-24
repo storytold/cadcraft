@@ -38,6 +38,9 @@ sys-locale = "0.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "0.21", default-features = false }
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSObject", "NSString", "NSData", "NSAppleEventDescriptor", "NSAppleEventManager", "NSNotification", "objc2-core-services"] }
+url = "2.5"
 # View ▸ Accessibility ▸ Animation Effects ▸ Use System Setting: the system's Reduce motion
 # (system_animations.rs). Already in Cargo.lock through muda.
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "NSAccessibility"] }

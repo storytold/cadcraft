@@ -54,7 +54,7 @@ fn handle_of(p: &Value, key: &str) -> Option<Handle> {
 
 fn get_mleader(s: &Session, h: Handle) -> Option<MLeader> {
     match s.doc().ok()?.entity(h).map(|e| &e.kind) {
-        Some(EntityKind::MLeader(m)) => Some(m.clone()),
+        Some(EntityKind::MLeader(m)) => Some((**m).clone()),
         _ => None,
     }
 }
@@ -668,7 +668,7 @@ fn collect(s: &mut Session, hs: &[Handle], at: Vec2, layout: Layout, spacing: Op
     let common = s.doc()?.entity(first_h).map(|e| e.common.clone());
     {
         let d = s.doc_mut()?;
-        d.modify_entity(first_h, |e| e.kind = EntityKind::MLeader(merged))?;
+        d.modify_entity(first_h, |e| e.kind = EntityKind::MLeader(Box::new(merged)))?;
         for (h, _) in items.iter().skip(1) {
             d.remove_entity(*h);
         }

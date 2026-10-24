@@ -120,7 +120,7 @@ fn style(s: &Session) -> String {
 }
 
 fn dim(s: &Session, kind: DimKind, defpt: Vec2, p13: Vec2, p14: Vec2, p15: Vec2, p16: Vec2, text: &str) -> EntityKind {
-    EntityKind::Dimension(Dimension {
+    EntityKind::Dimension(Box::new(Dimension {
         kind,
         defpt: v3(defpt),
         text_mid: Vec3::ZERO,
@@ -137,7 +137,7 @@ fn dim(s: &Session, kind: DimKind, defpt: Vec2, p13: Vec2, p14: Vec2, p15: Vec2,
         overrides: s.doc().map(|d| d.dim_overrides()).unwrap_or_default(),
         assoc: Vec::new(),
         marks: Default::default(),
-    })
+    }))
 }
 
 /// Horizontal (0) or vertical (90°) from where the dimension line is placed (AutoCAD's rule).
@@ -345,7 +345,7 @@ fn run_ordinate(s: &mut Session, p: &Value) -> Result<Value> {
 fn last_linear(s: &Session) -> Option<Dimension> {
     let h = s.last_dim?;
     match &s.doc().ok()?.entity(h)?.kind {
-        EntityKind::Dimension(d) if matches!(d.kind, DimKind::Linear { .. } | DimKind::Aligned) => Some(d.clone()),
+        EntityKind::Dimension(d) if matches!(d.kind, DimKind::Linear { .. } | DimKind::Aligned) => Some((**d).clone()),
         _ => None,
     }
 }
@@ -375,7 +375,7 @@ fn chained(s: &Session, prev: &Dimension, next: Vec2, baseline: bool) -> EntityK
         let side = if (defpt - prev.p13.xy()).dot(n) >= 0.0 { 1.0 } else { -1.0 };
         defpt += n * (spacing * side);
     }
-    EntityKind::Dimension(Dimension {
+    EntityKind::Dimension(Box::new(Dimension {
         p13: v3(first),
         p14: v3(next),
         defpt: v3(defpt),
@@ -385,7 +385,7 @@ fn chained(s: &Session, prev: &Dimension, next: Vec2, baseline: bool) -> EntityK
         marks: Default::default(),
         user_text_pos: false,
         ..prev.clone()
-    })
+    }))
 }
 
 /// Most dimensions one DIMCONTINUE/DIMBASELINE call adds.
@@ -439,7 +439,7 @@ fn mleader_kind(s: &Session, pts: &[Vec2], text: &str, landing: bool) -> Option<
     let attach = if dir > 0.0 { 4 } else { 6 };
     let dogleg = if landing { st.dogleg } else { 0.0 };
     let tpos = *landing_pt + Vec2::new((dogleg + st.landing_gap) * dir, 0.0);
-    Some(EntityKind::MLeader(MLeader {
+    Some(EntityKind::MLeader(Box::new(MLeader {
         leaders: vec![arrow_pts.iter().map(|p| v3(*p)).collect()],
         landing: v3(*landing_pt),
         dogleg,
@@ -459,7 +459,7 @@ fn mleader_kind(s: &Session, pts: &[Vec2], text: &str, landing: bool) -> Option<
         arrow_size: st.arrow_size,
         spline: false,
         block: None,
-    }))
+    })))
 }
 
 fn run_mleader(s: &mut Session, p: &Value) -> Result<Value> {

@@ -81,7 +81,7 @@ fn sample() -> Drawing {
     d.add(
         &Space::Model,
         c("0"),
-        EntityKind::Dimension(Dimension {
+        EntityKind::Dimension(Box::new(Dimension {
             kind: DimKind::Linear { rotation: 0.0 },
             defpt: Vec3::new(0.0, -1.0, 0.0),
             text_mid: Vec3::ZERO,
@@ -98,7 +98,7 @@ fn sample() -> Drawing {
             overrides: Default::default(),
             assoc: Vec::new(),
             marks: Default::default(),
-        }),
+        })),
     )
     .unwrap();
     d.add(
@@ -280,7 +280,7 @@ fn block_definition_properties_and_constant_attdefs_roundtrip() {
         modes: Default::default(),
     };
     for (i, a) in [attdef("COMPANY", false, true), attdef("SECRET", true, true), attdef("SHEET", false, false)].into_iter().enumerate() {
-        b.entities.push(Entity::new(Handle(0x500 + i as u64), EntityKind::AttDef(a)));
+        b.entities.push(Entity::new(Handle(0x500 + i as u64), EntityKind::AttDef(Box::new(a))));
     }
     d.blocks.insert("Title".into(), std::sync::Arc::new(b));
     d.blocks.insert("Plain".into(), std::sync::Arc::new(Block::new("Plain")));
@@ -488,8 +488,8 @@ fn pdf_layout_one_to_one_with_viewport() {
     let content = check_pdf(&bytes);
     // ANSI A landscape (inches → points).
     assert_eq!(media_box(&bytes), (792.0, 612.0));
-    // Viewport border at 1:1: x from 1in to 9in = 72pt..648pt.
-    let corner = |o: &pdf_read::Op| matches!(o.op.as_str(), "m" | "l") && (o.nums[0] - 72.0).abs() < 1e-6 && (o.nums[1] - 72.0).abs() < 1e-6;
+    // Viewport border at 1:1, accounting for the quarter-inch printable margin: 90 pt.
+    let corner = |o: &pdf_read::Op| matches!(o.op.as_str(), "m" | "l") && (o.nums[0] - 90.0).abs() < 1e-6 && (o.nums[1] - 90.0).abs() < 1e-6;
     assert!(pdf_read::drawn(&content).iter().any(corner), "{content}");
     // Lineweights on: default 0.25 mm = 0.709 pt.
     assert!(widths(&content).iter().any(|w| (w - 0.709).abs() < 0.001), "{content}");
@@ -928,7 +928,7 @@ fn dimension_overrides_roundtrip_as_dstyle_xdata() {
         "altFactor": 25.4,
     });
     dm.overrides = raw.as_object().unwrap().clone();
-    d.add(&Space::Model, Common::default(), EntityKind::Dimension(dm.clone())).unwrap();
+    d.add(&Space::Model, Common::default(), EntityKind::Dimension(Box::new(dm.clone()))).unwrap();
     let text = write_dxf(&d);
     assert!(text.contains("DSTYLE"));
     let back = read_dxf(text.as_bytes()).unwrap();
@@ -1088,9 +1088,9 @@ fn dimension_associativity_roundtrips() {
     ];
     let mut rad = dim(DimKind::Radius, Vec3::new(20.0, 0.0, 0.0), Vec3::ZERO);
     rad.assoc = vec![DimAssoc { point: "defpt".into(), handle: ci, snap: AssocSnap::Center }];
-    let hl = d.add(&Space::Model, c(), EntityKind::Dimension(lin.clone())).unwrap();
-    let ha = d.add(&Space::Model, c(), EntityKind::Dimension(ali.clone())).unwrap();
-    let hr = d.add(&Space::Model, c(), EntityKind::Dimension(rad.clone())).unwrap();
+    let hl = d.add(&Space::Model, c(), EntityKind::Dimension(Box::new(lin.clone()))).unwrap();
+    let ha = d.add(&Space::Model, c(), EntityKind::Dimension(Box::new(ali.clone()))).unwrap();
+    let hr = d.add(&Space::Model, c(), EntityKind::Dimension(Box::new(rad.clone()))).unwrap();
     let text = write_dxf(&d);
     assert!(text.contains("DIMASSOC") && text.contains("ACAD_DIMASSOC") && text.contains("AcDbOsnapPointRef"));
     let back = read_dxf(text.as_bytes()).unwrap();
@@ -1371,16 +1371,16 @@ fn tables_roundtrip_with_title_header_and_merges() {
     let mut d = Drawing::new_imperial();
     d.table_styles.push(TableStyle { name: "Schedule".into(), text_height: 0.25, margin: 0.1, title: false, header: true, ..TableStyle::default() });
     let t = table_sample();
-    d.add(&Space::Model, Common::default(), EntityKind::Table(t.clone())).unwrap();
+    d.add(&Space::Model, Common::default(), EntityKind::Table(Box::new(t.clone()))).unwrap();
     let text = write_dxf(&d);
     assert!(text.contains("ACAD_TABLE") && text.contains("TABLESTYLE") && text.contains("*T1"));
     let back = read_dxf(text.as_bytes()).unwrap();
-    let got = first(&back, |k| if let EntityKind::Table(x) = k { Some(x.clone()) } else { None });
+    let got = first(&back, |k| if let EntityKind::Table(x) = k { Some((**x).clone()) } else { None });
     assert_eq!(got, t);
     assert_eq!(back.table_styles, d.table_styles);
     assert!(back.block("*T1").is_none(), "table blocks are regenerated, not imported");
     let again = roundtrip(&back);
-    assert_eq!(first(&again, |k| if let EntityKind::Table(x) = k { Some(x.clone()) } else { None }), t);
+    assert_eq!(first(&again, |k| if let EntityKind::Table(x) = k { Some((**x).clone()) } else { None }), t);
     assert_eq!(again.blocks.len(), back.blocks.len());
 }
 
@@ -1481,7 +1481,7 @@ fn intl_sample() -> Drawing {
         modes: Default::default(),
     };
     let mut b = Block::new(&block);
-    b.entities.push(Entity::new(Handle(0x50), EntityKind::AttDef(def)));
+    b.entities.push(Entity::new(Handle(0x50), EntityKind::AttDef(Box::new(def))));
     d.blocks.insert(block.clone(), std::sync::Arc::new(b));
     let att = Attrib {
         tag: "图号".into(),
@@ -1630,7 +1630,7 @@ fn extension_sample() -> Drawing {
     d.text_styles.push(TextStyle { name: "Romans".into(), font: "romans.shx".into(), backwards: true, annotative: true, ..TextStyle::default() });
     d.dim_styles.push(full_dim_style());
     d.table_styles.push(TableStyle { name: "Schedule".into(), text_height: 0.25, margin: 0.1, title: true, header: true, ..TableStyle::default() });
-    d.add(&Space::Model, Common::default(), EntityKind::Table(table_sample())).unwrap();
+    d.add(&Space::Model, Common::default(), EntityKind::Table(Box::new(table_sample()))).unwrap();
     let l1 = d.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::new(0.0, 30.0, 0.0), b: Vec3::new(0.0, 35.0, 0.0) })).unwrap();
     let l2 = d.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::new(8.0, 30.0, 0.0), b: Vec3::new(8.0, 35.0, 0.0) })).unwrap();
     let mut dm = dim(DimKind::Linear { rotation: 0.0 }, Vec3::new(0.0, 30.0, 0.0), Vec3::new(8.0, 30.0, 0.0));
@@ -1640,14 +1640,14 @@ fn extension_sample() -> Drawing {
         DimAssoc { point: "p14".into(), handle: l2, snap: AssocSnap::Start },
     ];
     dm.overrides = serde_json::json!({"arrowBlock2": "_BoxFilled", "textColor": 2, "decimals": 1}).as_object().unwrap().clone();
-    d.add(&Space::Model, Common::default(), EntityKind::Dimension(dm)).unwrap();
+    d.add(&Space::Model, Common::default(), EntityKind::Dimension(Box::new(dm))).unwrap();
     let ci = d.add(&Space::Model, Common::default(), EntityKind::Circle(Circle { center: Vec3::new(20.0, 30.0, 0.0), radius: 2.0 })).unwrap();
     let mut al = dim(DimKind::Aligned, Vec3::new(22.0, 30.0, 0.0), Vec3::new(8.0, 35.0, 0.0));
     al.assoc = vec![
         DimAssoc { point: "p13".into(), handle: ci, snap: AssocSnap::OnCircle { angle: 0.0 } },
         DimAssoc { point: "p14".into(), handle: l2, snap: AssocSnap::Intersection { other: l1 } },
     ];
-    d.add(&Space::Model, Common::default(), EntityKind::Dimension(al)).unwrap();
+    d.add(&Space::Model, Common::default(), EntityKind::Dimension(Box::new(al))).unwrap();
     parametric_sample(&mut d);
     d
 }
@@ -1689,7 +1689,7 @@ fn dwg_roundtrip_keeps_extension_data() {
         let st = DimStyle::default();
         assert_eq!(st.with_overrides(&x.overrides), st.with_overrides(&y.overrides));
     }
-    assert_eq!(first(&back, |k| if let EntityKind::Table(x) = k { Some(x.clone()) } else { None }), table_sample());
+    assert_eq!(first(&back, |k| if let EntityKind::Table(x) = k { Some((**x).clone()) } else { None }), table_sample());
     let r = back.text_style("Romans").unwrap();
     assert!(r.backwards && r.annotative);
 }
@@ -1719,12 +1719,12 @@ fn mleader_is_written_as_multileader() {
         spline: false,
         block: None,
     };
-    d.add(&Space::Model, Default::default(), EntityKind::MLeader(m.clone())).unwrap();
+    d.add(&Space::Model, Default::default(), EntityKind::MLeader(Box::new(m.clone()))).unwrap();
     // MULTILEADER is a 2007 entity (R2000/2004 files get LEADER + MTEXT).
     let back =
         crate::read(&crate::write_with(&d, "x.dxf", &crate::SaveOptions { version: Some(crate::Version::R2007), binary: false }).unwrap(), "x.dxf")
             .unwrap();
-    assert!(back.model.iter().any(|e| matches!(&e.kind, EntityKind::MLeader(x) if *x == m)));
+    assert!(back.model.iter().any(|e| matches!(&e.kind, EntityKind::MLeader(x) if **x == m)));
     assert!(!back.model.iter().any(|e| matches!(e.kind, EntityKind::Leader(_) | EntityKind::MText(_))));
 }
 
@@ -1744,7 +1744,7 @@ fn attdef_prompt_survives_dxf_roundtrip() {
         valign: VAlign::Baseline,
     };
     let attdef = |prompt: &str| {
-        EntityKind::AttDef(Attrib {
+        EntityKind::AttDef(Box::new(Attrib {
             tag: "TAG1".into(),
             text: text.clone(),
             invisible: false,
@@ -1753,7 +1753,7 @@ fn attdef_prompt_survives_dxf_roundtrip() {
             props: Default::default(),
             multiline: None,
             modes: Default::default(),
-        })
+        }))
     };
     d.add(&Space::Model, Default::default(), attdef("Enter value")).unwrap();
     d.add(&Space::Model, Default::default(), attdef("")).unwrap();
@@ -1768,7 +1768,7 @@ fn dimension_text_rotation_roundtrips() {
     let mut d = Drawing::new_imperial();
     let mut dm = dim(DimKind::Linear { rotation: 0.0 }, Vec3::ZERO, Vec3::new(10.0, 0.0, 0.0));
     dm.text_rotation = 30.0_f64.to_radians();
-    let h = d.add(&Space::Model, Common::default(), EntityKind::Dimension(dm.clone())).unwrap();
+    let h = d.add(&Space::Model, Common::default(), EntityKind::Dimension(Box::new(dm.clone()))).unwrap();
     let back = roundtrip(&d);
     let EntityKind::Dimension(x) = &back.entity(h).unwrap().kind else { panic!("dimension expected") };
     assert!((x.text_rotation - dm.text_rotation).abs() < 1e-9, "got {}", x.text_rotation);
@@ -1810,7 +1810,7 @@ fn arc_length_dimension_keeps_its_kind_and_centre_on_roundtrip() {
     // Arc of radius 10 centred off the origin, so a missing centre would read back as zero.
     let mut al = dim(DimKind::ArcLength, Vec3::new(15.0, 5.0, 0.0), Vec3::new(5.0, 15.0, 0.0));
     al.p15 = Vec3::new(5.0, 5.0, 0.0);
-    let h = d.add(&Space::Model, Default::default(), EntityKind::Dimension(al)).unwrap();
+    let h = d.add(&Space::Model, Default::default(), EntityKind::Dimension(Box::new(al))).unwrap();
     let text = write_dxf(&d);
     // A standard aligned DIMENSION record (type 1 | 32), so other programs can read it.
     let lines: Vec<&str> = text.lines().map(str::trim).collect();
@@ -2569,14 +2569,14 @@ fn foreign_table_reads_cell_text_height_and_keeps_style_scale() {
         171\n1\n140\n150\n301\nCELL_VALUE\n1\nA\n304\nACVALUE_END\n\
         171\n1\n301\nCELL_VALUE\n140\n42\n1\nB\n304\nACVALUE_END\n0\nENDSEC\n0\nEOF\n";
     let d = read_dxf(dxf.as_bytes()).unwrap();
-    let t = first(&d, |k| if let EntityKind::Table(x) = k { Some(x.clone()) } else { None });
+    let t = first(&d, |k| if let EntityKind::Table(x) = k { Some((**x).clone()) } else { None });
     assert_eq!(t.cells[0][0].text_height, Some(150.0));
     assert_eq!(t.cells[0][1].text_height, None);
     // No scale of its own: the table takes its style's height.
     assert_eq!(t.text_height, TableStyle::default().text_height);
     // Written back and read again.
     let back = roundtrip(&d);
-    let t2 = first(&back, |k| if let EntityKind::Table(x) = k { Some(x.clone()) } else { None });
+    let t2 = first(&back, |k| if let EntityKind::Table(x) = k { Some((**x).clone()) } else { None });
     assert_eq!(t2.cells[0][0].text_height, Some(150.0));
     assert_eq!(t2.cells[0][1].text_height, None);
 }

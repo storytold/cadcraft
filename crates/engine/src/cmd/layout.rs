@@ -198,6 +198,31 @@ fn default_page(d: &Drawing) -> PageSetup {
     p
 }
 
+/// AutoCAD initializes an unvisited native layout on its first activation. Imported
+/// layouts with existing content or a configured page must never acquire extra viewports.
+pub(super) fn initialize(s: &mut Session, name: &str) -> Result<()> {
+    let Some(l) = s.doc()?.layout(name).filter(|l| l.needs_initialization) else { return Ok(()) };
+    if !l.entities.is_empty() {
+        if let Some(l) = s.doc_mut()?.layouts.iter_mut().find(|l| l.name == name) {
+            l.needs_initialization = false;
+        }
+        return Ok(());
+    }
+    let page = default_page(s.doc()?);
+    if let Some(l) = s.doc_mut()?.layouts.iter_mut().find(|l| l.name == name) {
+        l.page = page;
+    }
+    let printable = printable(s, name)?;
+    // The initial viewport occupies 80% of the printable rectangle, centred on the sheet.
+    let half = (printable.max - printable.min) * 0.4;
+    let rect = Bounds2::new(printable.center() - half, printable.center() + half);
+    add_viewports(s, &Space::Paper(name.into()), rect, 1, "")?;
+    if let Some(l) = s.doc_mut()?.layouts.iter_mut().find(|l| l.name == name) {
+        l.needs_initialization = false;
+    }
+    Ok(())
+}
+
 /// LAYOUT.NEW from the menu or command line: asks for the name (Enter takes the next free one).
 struct NewLayoutM;
 
@@ -309,7 +334,14 @@ fn run_copy(s: &mut Session, p: &Value) -> Result<Value> {
         let h = d.new_handle();
         store.push(Entity { handle: h, ..Entity::clone(e) });
     }
-    d.layouts.push(Layout { name: to.clone(), tab_order: order, page: src.page, entities: store, view: src.view });
+    d.layouts.push(Layout {
+        name: to.clone(),
+        tab_order: order,
+        page: src.page,
+        entities: store,
+        view: src.view,
+        needs_initialization: src.needs_initialization,
+    });
     Ok(json!({ "name": to }))
 }
 
@@ -728,6 +760,7 @@ fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
     if changes {
         if let Some(l) = s.doc_mut()?.layouts.iter_mut().find(|l| l.name == name) {
             l.page = page.clone();
+            l.needs_initialization = false;
         }
         s.touch();
     }

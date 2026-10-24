@@ -438,7 +438,7 @@ fn block_entity_on_undefined_layer_counts() {
 fn attdef_in_block_is_ignored_in_insert_extents() {
     let attdef = Entity::new(
         Handle(2),
-        EntityKind::AttDef(Attrib {
+        EntityKind::AttDef(Box::new(Attrib {
             tag: "TAG".into(),
             text: Text {
                 insert: Vec3::new(5000.0, 5000.0, 0.0),
@@ -458,7 +458,7 @@ fn attdef_in_block_is_ignored_in_insert_extents() {
             props: Default::default(),
             multiline: None,
             modes: Default::default(),
-        }),
+        })),
     );
     let d = drawing_with_block(attdef);
     assert_eq!(extents_pair(&d), (Vec2::ZERO, Vec2::new(1.0, 1.0)));
@@ -531,7 +531,7 @@ fn invisible_dimblock_entity_is_ignored_in_dimension_extents() {
         d.add(
             &Space::Model,
             Common::default(),
-            EntityKind::Dimension(Dimension {
+            EntityKind::Dimension(Box::new(Dimension {
                 kind: DimKind::Linear { rotation: 0.0 },
                 defpt: Vec3::new(1.0, 1.0, 0.0),
                 text_mid: Vec3::new(0.5, 1.0, 0.0),
@@ -548,7 +548,7 @@ fn invisible_dimblock_entity_is_ignored_in_dimension_extents() {
                 overrides: Default::default(),
                 assoc: vec![],
                 marks: Default::default(),
-            }),
+            })),
         )
         .unwrap();
     };
@@ -580,4 +580,11 @@ fn space_names_its_tab() {
     assert!(p.is_paper());
     assert_eq!(p.layout(), Some("Sheet A"));
     assert_eq!(p.tab_name(), "Sheet A");
+}
+
+#[test]
+fn entity_memory_budget() {
+    // One million simple entities should need less than 400 MB for their inline data.
+    // Large annotation variants must not inflate every entity in a dense drawing.
+    assert!(std::mem::size_of::<Entity>() <= 400);
 }

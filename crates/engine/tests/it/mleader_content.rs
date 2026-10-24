@@ -8,7 +8,7 @@ use serde_json::json;
 
 fn last_mleader(s: &Session) -> MLeader {
     match &s.doc().unwrap().model.last().unwrap().kind {
-        EntityKind::MLeader(m) => m.clone(),
+        EntityKind::MLeader(m) => (**m).clone(),
         other => panic!("not a multileader: {other:?}"),
     }
 }

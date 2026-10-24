@@ -314,7 +314,7 @@ fn annotative_mtext_columns_follow_the_scale() {
         k => panic!("{k:?}"),
     };
     let ml = Entity {
-        kind: EntityKind::MLeader(cadcraft_engine::doc::MLeader {
+        kind: EntityKind::MLeader(Box::new(cadcraft_engine::doc::MLeader {
             leaders: Vec::new(),
             landing: Default::default(),
             dogleg: 1.0,
@@ -323,7 +323,7 @@ fn annotative_mtext_columns_follow_the_scale() {
             arrow_size: 1.0,
             spline: false,
             block: None,
-        }),
+        })),
         ..e.clone()
     };
     for e in [e, ml] {

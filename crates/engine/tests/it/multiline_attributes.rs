@@ -47,7 +47,7 @@ fn session() -> Session {
     };
     let mut b = Block::new("TAG");
     let h = d.new_handle();
-    b.entities.push(Entity { handle: h, common: Common::default(), kind: EntityKind::AttDef(def) });
+    b.entities.push(Entity { handle: h, common: Common::default(), kind: EntityKind::AttDef(Box::new(def)) });
     d.blocks.insert("TAG".into(), Arc::new(b));
     let mut s = Session::empty();
     s.open_drawing(d, "tags", None);

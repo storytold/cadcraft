@@ -38,7 +38,7 @@ fn defs(b: &Block) -> Vec<(Handle, &Attrib, &str)> {
     b.entities
         .iter()
         .filter_map(|e| match &e.kind {
-            EntityKind::AttDef(a) => Some((e.handle, a, e.common.layer.as_str())),
+            EntityKind::AttDef(a) => Some((e.handle, a.as_ref(), e.common.layer.as_str())),
             _ => None,
         })
         .collect()

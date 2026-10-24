@@ -100,15 +100,15 @@ fn check_cycles(d: &Drawing, dims: usize) {
 #[test]
 fn one_dimension_keeps_one_block_over_three_cycles() {
     let mut d = Drawing::new_metric();
-    d.add(&Space::Model, Common::default(), EntityKind::Dimension(linear([0.0, 0.0], [10.0, 0.0], [5.0, 3.0]))).unwrap();
+    d.add(&Space::Model, Common::default(), EntityKind::Dimension(Box::new(linear([0.0, 0.0], [10.0, 0.0], [5.0, 3.0])))).unwrap();
     check_cycles(&d, 1);
 }
 
 #[test]
 fn two_dimensions_and_a_user_block_keep_their_blocks() {
     let mut d = Drawing::new_metric();
-    d.add(&Space::Model, Common::default(), EntityKind::Dimension(linear([0.0, 0.0], [10.0, 0.0], [5.0, 3.0]))).unwrap();
-    d.add(&Space::Model, Common::default(), EntityKind::Dimension(linear([0.0, 5.0], [20.0, 5.0], [10.0, 9.0]))).unwrap();
+    d.add(&Space::Model, Common::default(), EntityKind::Dimension(Box::new(linear([0.0, 0.0], [10.0, 0.0], [5.0, 3.0])))).unwrap();
+    d.add(&Space::Model, Common::default(), EntityKind::Dimension(Box::new(linear([0.0, 5.0], [20.0, 5.0], [10.0, 9.0])))).unwrap();
     let mut b = Block::new("Mark");
     let h = d.new_handle();
     b.entities.push(Entity::new(h, EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(1.0, 1.0, 0.0) })));
@@ -126,7 +126,7 @@ fn two_dimensions_and_a_user_block_keep_their_blocks() {
 #[test]
 fn stale_dimension_blocks_are_dropped_and_referenced_ones_kept() {
     let mut d = Drawing::new_metric();
-    d.add(&Space::Model, Common::default(), EntityKind::Dimension(linear([0.0, 0.0], [10.0, 0.0], [5.0, 3.0]))).unwrap();
+    d.add(&Space::Model, Common::default(), EntityKind::Dimension(Box::new(linear([0.0, 0.0], [10.0, 0.0], [5.0, 3.0])))).unwrap();
     // What older versions left behind: copies nothing references, and one an INSERT uses.
     for name in ["*D7", "*D8"] {
         let mut b = Block::new(name);
@@ -145,7 +145,7 @@ fn stale_dimension_blocks_are_dropped_and_referenced_ones_kept() {
 #[test]
 fn reopened_dimension_reuses_its_block_name_and_handles() {
     let mut d = Drawing::new_metric();
-    let h = d.add(&Space::Model, Common::default(), EntityKind::Dimension(linear([0.0, 0.0], [10.0, 0.0], [5.0, 3.0]))).unwrap();
+    let h = d.add(&Space::Model, Common::default(), EntityKind::Dimension(Box::new(linear([0.0, 0.0], [10.0, 0.0], [5.0, 3.0])))).unwrap();
     let back = cadcraft_io::read_dxf(cadcraft_io::write_dxf(&d).as_bytes()).unwrap();
     let Some(EntityKind::Dimension(dm)) = back.entity(h).map(|e| &e.kind) else { panic!("dimension lost") };
     let name = dm.block.clone().unwrap();
@@ -161,7 +161,7 @@ fn reopened_dimension_reuses_its_block_name_and_handles() {
 #[test]
 fn hostile_handle_seed_does_not_panic() {
     let mut d = Drawing::new_metric();
-    d.add(&Space::Model, Common::default(), EntityKind::Dimension(linear([0.0, 0.0], [10.0, 0.0], [5.0, 3.0]))).unwrap();
+    d.add(&Space::Model, Common::default(), EntityKind::Dimension(Box::new(linear([0.0, 0.0], [10.0, 0.0], [5.0, 3.0])))).unwrap();
     let p = pairs(&cadcraft_io::write_dxf(&d));
     // The dictionary entry names the XRECORD; its group 1 holds the seed.
     let key = p.iter().position(|(c, v)| *c == 3 && v == "CADCRAFT_HANDSEED").unwrap();
@@ -182,7 +182,7 @@ fn hostile_handle_seed_does_not_panic() {
 #[test]
 fn dwg_reopen_and_save_keeps_one_block_per_dimension() {
     let mut d = Drawing::new_metric();
-    d.add(&Space::Model, Common::default(), EntityKind::Dimension(linear([0.0, 0.0], [10.0, 0.0], [5.0, 3.0]))).unwrap();
+    d.add(&Space::Model, Common::default(), EntityKind::Dimension(Box::new(linear([0.0, 0.0], [10.0, 0.0], [5.0, 3.0])))).unwrap();
     let mut bytes = cadcraft_io::write(&d, "a.dwg").unwrap();
     let mut saves = Vec::new();
     for _ in 0..3 {
@@ -214,7 +214,7 @@ fn an_unedited_dimension_keeps_the_block_it_was_read_with() {
     d.blocks.insert("*D3".into(), Arc::new(b));
     let mut dm = linear([0.0, 0.0], [10.0, 0.0], [5.0, 3.0]);
     dm.block = Some("*D3".into());
-    let h = d.add(&Space::Model, Common::default(), EntityKind::Dimension(dm)).unwrap();
+    let h = d.add(&Space::Model, Common::default(), EntityKind::Dimension(Box::new(dm))).unwrap();
 
     // Saved untouched: the same block, entity for entity, over a DXF and a DWG round trip.
     let circles = |d: &Drawing| {

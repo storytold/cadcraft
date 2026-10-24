@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 fn dim_of(s: &Session, h: &str) -> (Dimension, DimGeometry) {
     let d = s.doc().unwrap();
     match &d.entity(Handle::parse_hex(h).unwrap()).unwrap().kind {
-        EntityKind::Dimension(dm) => (dm.clone(), cadcraft_engine::render::dimension_in(d, dm)),
+        EntityKind::Dimension(dm) => ((**dm).clone(), cadcraft_engine::render::dimension_in(d, dm)),
         k => panic!("not a dimension: {k:?}"),
     }
 }

@@ -52,7 +52,7 @@ fn drawing(attribs: Vec<Attrib>) -> (Drawing, Handle) {
     .into_iter()
     .enumerate()
     {
-        let e = Entity::new(Handle(0x100 + i as u64), EntityKind::AttDef(attrib(tag, 0.0, AttribProps::default())));
+        let e = Entity::new(Handle(0x100 + i as u64), EntityKind::AttDef(Box::new(attrib(tag, 0.0, AttribProps::default()))));
         blk.entities.push(Entity { common, ..e });
     }
     d.blocks.insert(blk.name.clone(), Arc::new(blk));

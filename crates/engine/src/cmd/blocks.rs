@@ -298,7 +298,7 @@ fn run_insert(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn attdef_kind(s: &Session, tag: &str, prompt: &str, default: &str, at: Vec2, height: f64, invisible: bool) -> EntityKind {
     let style = s.doc().map(|d| d.header.str("TEXTSTYLE", "Standard")).unwrap_or_else(|_| "Standard".into());
-    EntityKind::AttDef(Attrib {
+    EntityKind::AttDef(Box::new(Attrib {
         tag: tag.to_ascii_uppercase(),
         text: Text {
             insert: v3(at),
@@ -318,7 +318,7 @@ fn attdef_kind(s: &Session, tag: &str, prompt: &str, default: &str, at: Vec2, he
         props: Default::default(),
         multiline: None,
         modes: Default::default(),
-    })
+    }))
 }
 
 fn run_attdef(s: &mut Session, p: &Value) -> Result<Value> {

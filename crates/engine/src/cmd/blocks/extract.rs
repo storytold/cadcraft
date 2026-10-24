@@ -231,7 +231,7 @@ fn insert_table(s: &mut Session, at: Vec2, title: Option<&str>, columns: &[Strin
             .clamp(1, 80);
         *w = chars as f64 * st.text_height * 0.9 + 2.0 * st.margin + st.text_height;
     }
-    Ok(s.add_entity(EntityKind::Table(t))?.hex())
+    Ok(s.add_entity(EntityKind::Table(Box::new(t)))?.hex())
 }
 
 /// Extract; write `file` and insert a table at `at` when given.

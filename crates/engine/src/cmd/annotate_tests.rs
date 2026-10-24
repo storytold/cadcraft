@@ -10,7 +10,7 @@ fn h(v: &Value) -> Handle {
 
 fn dim(s: &Session, hd: Handle) -> Dimension {
     match &s.doc().unwrap().entity(hd).unwrap().kind {
-        EntityKind::Dimension(d) => d.clone(),
+        EntityKind::Dimension(d) => (**d).clone(),
         other => panic!("not a dimension: {other:?}"),
     }
 }

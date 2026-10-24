@@ -989,12 +989,12 @@ pub enum EntityKind {
     XLine(RayLine),
     Text(Text),
     MText(MText),
-    AttDef(Attrib),
+    AttDef(Box<Attrib>),
     Insert(Insert),
-    Dimension(Dimension),
+    Dimension(Box<Dimension>),
     MLine(MLine),
     Leader(Leader),
-    MLeader(MLeader),
+    MLeader(Box<MLeader>),
     Hatch(Hatch),
     Solid(Solid),
     Trace(Solid),
@@ -1003,7 +1003,7 @@ pub enum EntityKind {
     Viewport(Viewport),
     Image(Image),
     Wipeout(Wipeout),
-    Table(Table),
+    Table(Box<Table>),
     Tolerance(crate::Tolerance),
     Unknown(Unknown),
 }
@@ -1406,11 +1406,11 @@ impl EntityKind {
                 vec![c, c + mj, c + mn, c - mj, c - mn]
             }
             EntityKind::LwPolyline(p) => {
-                let mut g: Vec<Vec2> = Vec::new();
                 let pl = Polyline { vertices: p.vertices.clone(), closed: p.closed };
                 // Compute the segments once, not once per vertex: rebuilding the whole segment
                 // vector inside the loop is quadratic in the vertex count (CWE-407).
                 let segs = pl.segments();
+                let mut g = Vec::with_capacity(p.vertices.len().saturating_add(segs.len()));
                 for (i, v) in p.vertices.iter().enumerate() {
                     g.push(v.p);
                     if let Some(s) = segs.get(i) {

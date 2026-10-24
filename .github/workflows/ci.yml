@@ -4,7 +4,7 @@ name: CI
 # suite's shared gate workflow in craft-common-actions.
 on:
   push:
-    branches: [main]
+    branches: [main, 'integration/pr-1086-upstream-20261024']
   pull_request:
   workflow_dispatch:
 

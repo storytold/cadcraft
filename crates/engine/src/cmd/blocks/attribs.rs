@@ -177,7 +177,7 @@ pub(super) fn sync(s: &mut Session, name: &str) -> Result<(String, usize)> {
         .entities
         .iter()
         .filter_map(|e| match &e.kind {
-            EntityKind::AttDef(a) if !a.constant => Some(a),
+            EntityKind::AttDef(a) if !a.constant => Some(a.as_ref()),
             _ => None,
         })
         .collect();

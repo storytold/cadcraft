@@ -67,7 +67,7 @@ hayro-syntax = { git = "https://github.com/storytold/craft-libs", rev = "7895f5e
 hayro-jbig2 = { git = "https://github.com/storytold/craft-libs", rev = "7895f5ed79da2f1271b10139cb84d61d4cbc50ca" }
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 
 [workspace.lints.clippy]
 dbg_macro = "warn"

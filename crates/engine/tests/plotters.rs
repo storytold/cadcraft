@@ -87,7 +87,8 @@ fn page_setup_takes_a_device_and_its_papers() {
     let sheet = cadcraft_render::sheet(s.doc().unwrap(), "Layout1").unwrap();
     let mm = |v: f64| v * sheet.unit_mm;
     let got = [mm(sheet.printable.min.x), mm(sheet.printable.min.y), mm(sheet.printable.max.x), mm(sheet.printable.max.y)];
-    assert!(got.iter().zip([10.0, 20.0, 190.0, 580.0]).all(|(a, b)| (a - b).abs() < 1e-9), "{got:?}");
+    assert!(got.iter().zip([0.0, 0.0, 180.0, 560.0]).all(|(a, b)| (a - b).abs() < 1e-9), "{got:?}");
+    assert!((mm(sheet.origin.x) + 10.0).abs() < 1e-9 && (mm(sheet.origin.y) + 20.0).abs() < 1e-9);
 
     // Switching to a built-in device keeps a paper it has, else takes its default (A4).
     s.execute("pagesetup", &json!({"layout": "Layout1", "device": "CADCraft PDF"})).unwrap();

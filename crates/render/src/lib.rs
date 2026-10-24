@@ -522,6 +522,15 @@ fn build_space(d: &Drawing, space: &Space, opts: &Options, plotting: bool) -> Di
     }
     if let Some(store) = d.space(space) {
         let paper = matches!(space, Space::Paper(_));
+        // The overall paper viewport's frozen layers apply to this entire sheet.
+        let paper_frozen = if paper {
+            store.iter().find_map(|e| match &e.kind {
+                EntityKind::Viewport(v) if v.id == 1 => Some(v.frozen_layers.as_slice()),
+                _ => None,
+            }).unwrap_or(&[])
+        } else {
+            &[]
+        };
         #[cfg(not(target_arch = "wasm32"))]
         if !paper && !plotting && b.styles.is_none() && store.len() >= 2 * PARALLEL_CHUNK {
             build_parallel(&mut b, d, store);
@@ -539,7 +548,7 @@ fn build_space(d: &Drawing, space: &Space, opts: &Options, plotting: bool) -> Di
                 }
                 continue;
             }
-            entity(&mut b, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
+            entity(&mut b, &top_ctx(d, Mat3::IDENTITY, e.handle, paper_frozen, &[]), e);
         }
     }
     // A layout is drawn in paper units, so its pens become geometry now.

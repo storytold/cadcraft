@@ -10,14 +10,14 @@ fn last(s: &Session) -> EntityKind {
 
 fn last_dim(s: &Session) -> Dimension {
     match last(s) {
-        EntityKind::Dimension(d) => d,
+        EntityKind::Dimension(d) => *d,
         other => panic!("not a dimension: {other:?}"),
     }
 }
 
 fn last_mleader(s: &Session) -> MLeader {
     match last(s) {
-        EntityKind::MLeader(m) => m,
+        EntityKind::MLeader(m) => *m,
         other => panic!("not a multileader: {other:?}"),
     }
 }

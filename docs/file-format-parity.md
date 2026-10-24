@@ -31,11 +31,28 @@ below, and ≈ 20–40 h for 3D exchange formats that wait for 3D modelling.
 
 AutoCAD 2027 opens every DWG version from R2.0 onward and saves 2018 (AC1032, still the current
 DWG format), 2013, 2010, 2007, 2004, 2000 and R14. CADCraft reads DWG by converting it to DXF
-with the `acadrust` 0.6.3 crate and reading that DXF; it saves by writing its own R2000 DXF and
+with the `acadrust` 0.6.4 crate and reading that DXF; it saves by writing DXF labelled with the source version and
 converting it to a DWG of the chosen version (#421): SAVEAS `version`, else the drawing's own
 version (the file's `$ACADVER`, 2018 for a new drawing), at least 2004 unless 2000 is asked for.
 The bridge repairs two acadrust 0.6.3 gaps in 2010+ DWG: merged table cells and table-style
 title/header suppression.
+
+Large native imports reserve ASCII tags from the bounded input pair count, build entities in
+shared allocations reused by the document store, and release the converted DXF bytes before
+building the drawing. Foreign-data handle indexes use numeric handles. Saves move unchanged
+records, skip unknown-entity planning when none exist, reserve retained groups before merging,
+and inspect only TABLES when adding APPIDs. The DWG writer consumes its intermediate DXF
+instead of copying it. Foreign records, xdata and document snapshots keep their existing
+semantics. The complete DWG→DXF intermediate and full tag list still exist; this is not a
+streaming importer. Synthetic allocation/snapshot/xdata regressions supplement the existing
+round-trip tests. The PR records measurements of the public 47.8 MB sample from #1076/#1077;
+reference-machine desktop targets and staged progress remain unverified.
+
+On macOS the app accepts both its fallback DWG type and `com.autodesk.autocad.dwg`, the
+type AutoCAD registers for the extension, so Finder's Open With can offer CADCraft even
+when AutoCAD is installed. Open Documents Apple events are queued during launch and handled
+through the same OPEN command as the dialog, including when the app is already running. The
+handler remains an alternate; it does not change the default app.
 
 | DWG version | Code | AutoCAD 2027 | CADCraft read | CADCraft write | Tested how |
 |---|---|---|---|---|---|
@@ -75,7 +92,7 @@ on read with a note, so such files no longer exceed the DXF limit (#1482). **DWG
 |---|---|---|---|
 | LINE, POINT, CIRCLE, ARC, ELLIPSE, LWPOLYLINE (widths, bulges, elevation), SPLINE, RAY, XLINE | yes | yes | round-trip tests |
 | POLYLINE 2D/3D | yes | yes (as LWPOLYLINE / 3D POLYLINE) | polyface and polygon meshes flattened: lossy |
-| TEXT, MTEXT, ATTDEF, INSERT + ATTRIB | yes; multiline attributes (embedded MTEXT) read and drawn | yes; multiline attributes written as embedded MTEXT (DXF 2007 and later; older versions: one line) | ATTDEF prompt kept (#137) |
+| TEXT, MTEXT, ATTDEF, INSERT + ATTRIB | yes; multiline attributes (embedded MTEXT) read and drawn | yes; multiline attributes written as embedded MTEXT (DXF 2007 and later; older versions: one line) | ATTDEF prompt kept (#137); attributes use vertical group 74 independently of field-length group 73; MTEXT distinguishes absolute `\pi` and height-relative `\pxi` indents |
 | DIMENSION (all 7 kinds) | yes | yes, with anonymous `*D` blocks | a reopened dimension's `*D` block is regenerated under its name, unreferenced ones dropped (#495); DIMASSOC objects written for every associated kind — linear/aligned, angular, radial/diametric, ordinate and arc length — and read back without CADCraft's xdata (#1651) |
 | DIMENSION (all 7 kinds) | yes | yes, with anonymous `*D` blocks | a reopened dimension's `*D` block is regenerated under its name, unreferenced ones dropped (#495); DIMASSOC objects written; angular block text honors DIMDSEP, including per-dimension overrides (#1646) |
 | DIMENSION (all 7 kinds) | yes | yes, with anonymous `*D` blocks; their text keeps the diameter sign as `%%c`, so SHX styles plot it (#1645) | a reopened dimension's `*D` block is regenerated under its name, unreferenced ones dropped (#495); DIMASSOC objects written |
@@ -94,7 +111,7 @@ on read with a note, so such files no longer exceed the DXF limit (#1482). **DWG
 | Header variables | all read | 36 written | AutoCAD writes about 280 |
 | Tables: LAYER (+ transparency, description), LTYPE, STYLE, DIMSTYLE, BLOCK_RECORD | yes | yes | |
 | Tables: VPORT, VIEW, UCS, APPID | yes | yes: saved viewport configurations (#504), named views, UCSs | UCS elevation lost |
-| Objects: LAYOUT, DICTIONARY, XRECORD, TABLESTYLE, DIMASSOC | yes | yes | |
+| Objects: LAYOUT, DICTIONARY, XRECORD, TABLESTYLE, DIMASSOC | yes; unsized, unvisited native layouts get a default landscape page and model viewport on first activation | yes; unvisited layouts remain uninitialized until activated | configured or populated layouts are left alone; default paper views fit the whole sheet, including custom media and narrow drawing areas |
 | Objects: GROUP, MLINESTYLE, MLEADERSTYLE, IMAGEDEF, SCALE | yes | yes (groups #417, scale list #468) | |
 | Objects: VISUALSTYLE, PLOTSETTINGS, materials, field objects and other unmodelled objects | kept raw (#528) | written back as read; a proxy object (ACAD_PROXY_OBJECT) keeps its class: its group 91 is renumbered to the written CLASSES, which keep the class it names, and one whose number names no class is dropped (#1812) | not editable |
 | Foreign xdata, extension dictionaries, reactors, unmodelled objects, colour books | kept raw (#528); an entity's xdata is part of the entity, so COPY, MIRROR, ARRAY and paste keep it on the copies (EXPLODE pieces don't) | written back, handles remapped, references to deleted objects dropped | through DWG: xdata on table records and blocks, entity colour books and reactors, custom-class objects lost (acadrust) |
@@ -136,6 +153,65 @@ external validator runs in CI (ezdxf's audit was run by hand once, 2026-10-06). 
 a licensed real-file corpus with an open → save → re-open → compare test per file, and checking
 our output in AutoCAD black-box.
 
+Manual check on 2026-10-13: a user-provided R2013 DWG with 24,675 model entities and two
+unvisited, unsized layouts reproduced the empty-sheet discrepancy. The corrected desktop
+app shows the model in the initialized landscape presentation. The user file and reference
+screenshots remain outside the repository; regression tests use synthetic drawings.
+
+Manual checks on 2026-10-13 also covered a user-provided R2013 drawing template and synthetic
+text in AutoCAD 2026. The corrected import keeps attributes vertically centred, uses the WCS
+view target for untwisted top views, restores viewport ids in inactive DWG layouts, and reads
+native viewport-frozen layer handles (including the overall paper view). Absolute `\pi`
+indents and height-relative `\pxi` were compared at text heights 2 and 4 in AutoCAD. ISOCP
+outline fonts missing from system font directories can use installed narrow sans regular,
+italic and bold faces, after FONTALT; this is an approximation, not exact proprietary glyphs.
+Original font names remain in saved files. Private application bundles are never searched.
+The source template's missing externally referenced image remains unresolved. No reference
+files, fonts or screenshots are committed.
+
+Font lookup now accepts Windows and Unix file paths from imported styles, resolving only the
+file name against installed/registered fonts. The source path is retained in DXF/DWG; imported
+paths do not trigger reads outside the font directories. ISOCP substitution also uses the file
+name. Synthetic font tests prove identical font selection and PDF placement through a DXF
+round trip, including rotation, width factor and obliquing.
+
+A font can map several Unicode characters to the same glyph. PDF subsets still retain glyph
+ids and their canonical ToUnicode map; alias occurrences now carry a Span ActualText string
+([PDF Reference 1.7, §10.8.3](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.7old.pdf)),
+so copying them preserves their original characters without changing rendering. A synthetic
+font deliberately maps A and B to one outline: Poppler extracts `ABBA` from the local exported
+PDF, and embedded-text and geometry exports were rendered for visual comparison. No font
+files, PDFs or user drawings are repository fixtures. Missing SHX fonts and external images
+remain unsupported; these fixes do not claim complete font/plot parity.
+
+The DWG bridge now declares the drawing's source version while decoding retained foreign
+records, before converting to the requested output version. Labelling R2013 render-setting
+records as R2000 shifted their class versions twice; AutoCAD rejected those objects when
+opening the saved DWG. PageSetup writes millimetres as native plot units (PLOTSETTINGS 72),
+and each populated layout links its overall paper viewport (LAYOUT 331), including implicit
+viewports generated by CADCraft. Synthetic tests check native saved fields and foreign class
+versions across R2013/R2018. The class-version and viewport-link regressions fail before the
+fix. A local 40.9 MB topographic copy now opens in AutoCAD 2026 without the former two-error
+warning, and AUDIT reports zero errors. No drawing or audit output is committed.
+
+Layout sheets now use the printable origin, with landscape margins rotated into drawing
+coordinates, instead of fixing the physical paper corner at zero. PLOTSETTINGS 46/47
+offsets survive DXF/DWG saving. The canvas, initial paper view, implicit overall viewport,
+PDF/PNG/SVG plots and preview share that origin without translating drawing entities.
+Synthetic two-layout round trips and PDF/PNG coordinate checks cover distinct margins and
+positive/negative offsets. A local two-layout drawing resaved by AutoCAD reproduces the
+previous displacement; no reference drawing is committed.
+
+DXF tag values use immutable owned text: the tag stream occupies 32 rather than 40 bytes
+per pair on 64-bit targets, and ordinary ASCII strings are allocated once during parsing.
+Foreign-data merging consumes records from the front of a reused ring buffer and appends
+finished records at the back, avoiding simultaneous full input/output tag arrays when the
+existing allocation has room for retained groups. Scratch buffers hold individual records;
+large spare capacity is released after merging. Unicode/code-page handling, binary chunks,
+entity order, xdata, classes and handle remapping retain their existing semantics. Synthetic
+regressions check the tag-size budget, allocation reuse and every entity in a sparse-xdata
+round trip. This is not full streaming; the DWG document and DXF bridge still materialize.
+
 ## Revision history
 
 | Date | Change | Summary |
@@ -146,6 +222,14 @@ our output in AutoCAD black-box.
 | 2026-10-20 | minor | DIMENSION: the `*D` block's MTEXT, and the MTEXT EXPLODE leaves, hold the diameter sign as `%%c` instead of the decoded U+2300, which no SHX font has, so other programs plotted diameter dimensions in an SHX style without the sign (#1645) |
 | 2026-10-21 | minor | Proxy objects and entities keep their class through a save: group 91 renumbered to the written CLASSES (the class it names is kept), a proxy whose number names no class dropped (#1812) |
 | 2026-10-17 | minor | DWG read: DGN line style components no line style definition reaches are left out before the DXF bridge, with a read note; an 83 MB site plan with 888,483 of them (1.2 GB of DXF, over the limit) now opens (#1482) |
+| 2026-10-15 | minor | Compact immutable tag text and one-allocation foreign-data merge with bounded record scratch space; size/allocation/order regressions. File-format semantics and import limits unchanged |
+| 2026-10-14 | minor | Large imports reuse shared entity allocations and bound spare tag capacity; foreign-data saves move unchanged records, reserve retained groups and avoid whole-file APPID metadata. Public heavy-drawing equivalence/round-trip checks and allocation regressions; streaming/progress remain open |
+| 2026-10-14 | minor | Layout paper and printable origins agree with rotated device margins; per-layout plot offsets survive DXF/DWG, with shared screen/plot placement and synthetic two-layout/PDF/PNG regressions |
+| 2026-10-14 | minor | Source-version DWG bridge preserves foreign class semantics; native sheet units are millimetres and layouts reference their overall viewport. Synthetic regressions and zero-error AutoCAD opening/audit of a local topographic copy |
+| 2026-10-14 | minor | Imported font paths resolve to installed file names while the stored style remains intact; PDF glyph aliases retain original Unicode through ActualText, with synthetic font/round-trip tests and local Poppler extraction |
+| 2026-10-14 | minor | Top-view direction checks are scale invariant: a long vertical vector with numerical noise still applies the WCS target. A local 40.9 MB topographic drawing's whole model is correctly centred in its layout; synthetic direction-length cases survive DXF/DWG saving. No reference files committed |
+| 2026-10-13 | minor | Native Finder document delivery (cold and running), attribute group 74, absolute/relative MTEXT paragraph lengths, ISOCP system-font substitution, top-view targets, native viewport freeze lists and inactive-layout viewport ids; synthetic regressions and manual template/AutoCAD checks; exact missing-font glyphs and absent external images remain limitations |
+| 2026-10-13 | minor | First activation initializes imported, unsized empty layouts with landscape media and a model viewport; configured or populated sheets and erased viewports stay unchanged. Unvisited state survives DXF/DWG save; paper framing fits custom media and narrow drawing areas. Synthetic regression tests and a local user-DWG check added; weighted percentages not re-measured |
 | 2026-10-12 | minor | PDF output: object transparency plotted as PDF alpha (`/ExtGState` `/ca` `/CA`) when the page setup's or the plot's "Plot transparency" is on; PNG plots blend it, SVG uses `opacity`; plots without it are unchanged byte for byte |
 | 2026-10-12 | minor | DXF/DWG save: the Model layout's plot settings are written as CADCraft plots model space, drawing extents scaled to fit (PLOTSETTINGS 74 = 1, 75 = 0), instead of plot type 5 "Layout information", which other programs' Plot dialogs can't use for model space |
 | 2026-10-12 | minor | VIEWPORT frozen layers also written and read as AutoCAD's group 341 layer handles, so third-party viewers honour per-viewport freezing in DXF (DWG converter gap noted) |

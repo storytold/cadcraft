@@ -12,6 +12,7 @@ use cadcraft_geom::{Bounds2, Vec2, Vec3};
 
 use crate::dxf_ext::{self, DimVal, K};
 
+#[derive(Default)]
 struct W {
     t: Vec<Tag>,
     next: u64,
@@ -22,6 +23,8 @@ struct W {
     /// Persistent reactors of boundary objects: each source object of an associative hatch →
     /// the hatches (groups `{ACAD_REACTORS 330 …}`), from [`hatch_reactors`].
     reactors: HashMap<Handle, Vec<String>>,
+    /// Paper-space block record → overall sheet viewport (LAYOUT group 331).
+    paper_viewports: HashMap<String, String>,
 }
 
 impl W {
@@ -204,7 +207,7 @@ fn annotative_xdata(w: &mut W) {
 
 /// Override (`ACAD` DSTYLE) and associativity (`CADCRAFT` ASSOC) xdata of a dimension.
 fn dim_xdata(w: &mut W, dm: &Dimension, cx: &Ctx) {
-    let mut ov = W { t: Vec::new(), next: 0, pstyles: HashMap::new(), layers: HashMap::new(), reactors: HashMap::new() };
+    let mut ov = W::default();
     let mut sah = false;
     for (k, v) in &dm.overrides {
         let Some(field) = DimStyle::field_name(k) else { continue };
@@ -1151,6 +1154,9 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
             hatch_xdata(w, h);
         }
         EntityKind::Viewport(v) => {
+            if v.id == 1 {
+                w.paper_viewports.insert(owner.into(), e.handle.hex());
+            }
             paper_view(w, d, e, owner, cx);
             w.s(0, "VIEWPORT");
             common(w, e, owner, paper, "AcDbViewport");
@@ -1167,6 +1173,11 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
             let clip = v.clip.filter(|h| *h != e.handle && d.entity(*h).is_some());
             let flags = 32768 | if v.locked { 16384 } else { 0 } | if clip.is_some() { 65536 } else { 0 } | if v.on { 0 } else { 131072 };
             w.i(90, flags);
+            for name in &v.frozen_layers {
+                if let Some(h) = w.layers.get(&name.to_ascii_uppercase()).cloned() {
+                    w.s(331, h);
+                }
+            }
             if let Some(h) = clip {
                 w.s(340, h.hex());
             }
@@ -1681,9 +1692,11 @@ fn sheet_first(l: &Layout) -> Vec<&Entity> {
 /// leaves it implicit again.
 fn paper_view(w: &mut W, d: &Drawing, e: &Entity, owner: &str, cx: &Ctx) {
     let Some(l) = cx.paper_views.get(&e.handle).and_then(|i| d.layouts.get(*i)) else { return };
-    let size = cadcraft_render::paper::sheet(d, &l.name).map(|s| s.size).unwrap_or(Vec2::new(12.0, 9.0));
-    let center = size * 0.5;
+    let sheet = cadcraft_render::paper::sheet(d, &l.name);
+    let size = sheet.map(|s| s.size).unwrap_or(Vec2::new(12.0, 9.0));
+    let center = sheet.map(|s| s.bounds().center()).unwrap_or(size * 0.5);
     let h = w.h();
+    w.paper_viewports.insert(owner.into(), h.clone());
     w.s(0, "VIEWPORT");
     w.s(5, h);
     w.s(330, owner);
@@ -1774,10 +1787,11 @@ pub fn tags(d: &Drawing, version: Version) -> Vec<Tag> {
     tags_for(d, version, version)
 }
 
-/// The R2000 DXF the DWG bridge converts to a `dwg` version DWG: its entity types are the DWG
-/// version's (MULTILEADER from 2007).
+/// The DXF the DWG bridge converts to a `dwg` version DWG. Keep the source version so
+/// preserved foreign records are decoded with their original version-specific semantics;
+/// generated entity types still follow the requested DWG version (MULTILEADER from 2007).
 pub(crate) fn dwg_bridge(d: &Drawing, dwg: Version) -> String {
-    let mut tags = tags_for(d, Version::R2000, dwg);
+    let mut tags = tags_for(d, crate::save_version(d), dwg);
     bridge_markers(&mut tags);
     cadcraft_dxf::write_ascii(&tags)
 }
@@ -1801,13 +1815,7 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
     let committed = d.committed();
     let d: &Drawing = &committed;
     // Structural handles start above every entity handle.
-    let mut w = W {
-        t: Vec::new(),
-        next: d.handseed.max(0x100).saturating_add(0x1000),
-        pstyles: HashMap::new(),
-        layers: HashMap::new(),
-        reactors: hatch_reactors(d),
-    };
+    let mut w = W { next: d.handseed.max(0x100).saturating_add(0x1000), reactors: hatch_reactors(d), ..W::default() };
     // Pre-allocate handles for block records.
     let paper_layouts = d.paper_space_layouts();
     let ms_br = w.h();
@@ -2273,7 +2281,7 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
         w.i(70, 0);
         let v = serde_json::to_value(s).unwrap_or_default();
         let defaults = serde_json::to_value(DimStyle::default()).unwrap_or_default();
-        let mut newer = W { t: Vec::new(), next: 0, pstyles: HashMap::new(), layers: HashMap::new(), reactors: HashMap::new() };
+        let mut newer = W::default();
         for (field, code, kind) in dxf_ext::DIM_CODES {
             let Some(enc) = v.get(*field).and_then(|x| cx.encode(*kind, x)) else { continue };
             // DIMPOST is written even when empty: a reader that defaults a missing one to "<>"
@@ -2622,8 +2630,8 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
             (43, page.margins_mm[3]),
             (44, page.width_mm),
             (45, page.height_mm),
-            (46, 0.0),
-            (47, 0.0),
+            (46, page.offset_mm[0]),
+            (47, page.offset_mm[1]),
             (48, page.plot_window[0]),
             (49, page.plot_window[1]),
             (140, page.plot_window[2]),
@@ -2658,6 +2666,9 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
         w.p(17, Vec3::new(0.0, 1.0, 0.0));
         w.i(76, 0);
         w.s(330, brh);
+        if let Some(viewport) = w.paper_viewports.get(brh).cloned() {
+            w.s(331, viewport);
+        }
         // The saved paper-space view (centre, height) as CADCraft xdata.
         if let Some((c, height)) = view.filter(|(c, v)| c.x.is_finite() && c.y.is_finite() && v.is_finite()) {
             w.s(1001, dxf_ext::APP);
@@ -2676,8 +2687,17 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
     layout_obj(&mut w, &model_layout, "Model", 0, &ms_br, 1, &model_page, None);
     for (i, (_, brh, l)) in ps_brs.iter().enumerate() {
         let h = layout_handles.get(i).cloned().unwrap_or_default();
-        layout_obj(&mut w, &h, &l.name, i64::from(l.tab_order.max(1)), brh, 1, &l.page, l.view);
+        // Keep an unvisited, unsized layout uninitialized through DXF and DWG saves.
+        // Writing the fallback paper dimensions would turn it into an intentionally blank sheet.
+        let mut page = l.page.clone();
+        if l.needs_initialization && l.entities.is_empty() {
+            page.paper.clear();
+            page.width_mm = 0.0;
+            page.height_mm = 0.0;
+        }
+        layout_obj(&mut w, &h, &l.name, i64::from(l.tab_order.max(1)), brh, 1, &page, l.view);
     }
+    tags.reserve_exact(classes);
     // Raster image definitions.
     w.t.extend(crate::dxf_image::objects(&cx.images, &root_dict));
     w.s(0, "ENDSEC");
@@ -2697,9 +2717,12 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
 /// restores foreign classes and objects so every class gets its actual instance count.
 fn add_class_instance_counts(tags: &mut Vec<Tag>) {
     let mut counts: HashMap<String, i64> = HashMap::new();
+    let mut classes = 0;
     for t in tags.iter().filter(|t| t.code == 0) {
         let kind = t.str();
-        if kind != "CLASS" {
+        if kind == "CLASS" {
+            classes += 1;
+        } else {
             *counts.entry(kind.to_ascii_uppercase()).or_default() += 1;
         }
     }
@@ -2894,13 +2917,7 @@ fn cadcraft_fonts_name() -> &'static str {
 /// VERTEXes, gives its first). Handles of objects outside the entity (owner, styles) are left
 /// out. AutoLISP's `entget` is built on it.
 pub fn entity_groups(d: &Drawing, e: &Entity) -> (String, Vec<Tag>) {
-    let mut w = W {
-        t: Vec::new(),
-        next: d.handseed.max(0x100).saturating_add(0x1000),
-        pstyles: HashMap::new(),
-        layers: HashMap::new(),
-        reactors: HashMap::new(),
-    };
+    let mut w = W { next: d.handseed.max(0x100).saturating_add(0x1000), ..W::default() };
     let cx = Ctx { target: Version::R2018, ..Ctx::default() };
     let paper = d.space_of(e.handle).is_some_and(|s| !matches!(s, cadcraft_doc::Space::Model));
     entity(&mut w, d, e, "0", paper, &cx);

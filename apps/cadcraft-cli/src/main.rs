@@ -594,6 +594,7 @@ fn synthetic(n: usize, side: f64) -> Result<cadcraft_engine::doc::Drawing, Strin
 /// drawing's centre: tolerance, dash level of detail and view window from the zoom band), at
 /// zoom extents and zoomed in 4x at a time, next to the full-detail build plots use.
 fn perf_file(path: &str) -> Result<(), String> {
+    use cadcraft_engine::doc::EntityKind;
     use cadcraft_engine::geom::{Bounds2, Vec2};
     use cadcraft_engine::render::{Options, build};
     use std::time::Instant;
@@ -610,6 +611,22 @@ fn perf_file(path: &str) -> Result<(), String> {
         return Err("perf: the drawing is empty".into());
     }
     outln!("open {open_ms:.0} ms, {} entities, extents {:.1} x {:.1}", d.entity_count(), ext.width(), ext.height());
+    // Dense contours may have few entities but many vertices. Measure their editable grips
+    // separately from the display list: this work also runs while a selected object is idle.
+    if let Some((e, vertices)) = d
+        .space(space)
+        .into_iter()
+        .flat_map(|s| s.iter())
+        .filter_map(|e| match &e.kind {
+            EntityKind::LwPolyline(p) => Some((e, p.vertices.len())),
+            _ => None,
+        })
+        .max_by_key(|(_, n)| *n)
+    {
+        let t = Instant::now();
+        let grips = std::hint::black_box(e.kind.grips()).len();
+        outln!("grips {}: {vertices} vertices, {grips} grips, {:.3} ms", e.handle.hex(), ms(t));
+    }
     outln!("{:>8} {:>10} {:>10}", "zoom", "build ms", "prims");
     let mut finest = Options::default();
     for k in 0..5 {

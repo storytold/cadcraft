@@ -749,6 +749,8 @@ pub struct PageSetup {
     pub width_mm: f64,
     pub height_mm: f64,
     pub margins_mm: [f64; 4],
+    /// Plot origin offset from the printable area's lower-left corner, in millimetres.
+    pub offset_mm: [f64; 2],
     pub landscape: bool,
     /// "layout" | "extents" | "display" | "window" | "limits".
     pub plot_area: String,
@@ -779,6 +781,7 @@ impl Default for PageSetup {
             width_mm: 215.9,
             height_mm: 279.4,
             margins_mm: [6.35, 6.35, 6.35, 6.35],
+            offset_mm: [0.0; 2],
             landscape: true,
             plot_area: "layout".into(),
             plot_window: [0.0; 4],
@@ -805,11 +808,15 @@ pub struct Layout {
     /// Saved paper-space view (centre, height).
     #[serde(default)]
     pub view: Option<(Vec2, f64)>,
+    /// An imported, unsized layout that has never been activated. Its first activation
+    /// supplies a default page and viewport; an intentionally empty layout stays empty.
+    #[serde(default)]
+    pub needs_initialization: bool,
 }
 
 impl Layout {
     pub fn new(name: &str, tab_order: u32) -> Self {
-        Layout { name: name.into(), tab_order, page: PageSetup::default(), entities: EntityStore::new(), view: None }
+        Layout { name: name.into(), tab_order, page: PageSetup::default(), entities: EntityStore::new(), view: None, needs_initialization: false }
     }
 }
 

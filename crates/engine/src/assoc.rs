@@ -311,11 +311,11 @@ pub fn update(after: &mut Arc<Drawing>, before: &Drawing) -> usize {
                     continue;
                 }
                 let prev = match before.entity(e.handle).map(|x| &x.kind) {
-                    Some(EntityKind::Dimension(p)) => Some(p),
+                    Some(EntityKind::Dimension(p)) => Some(p.as_ref()),
                     _ => None,
                 };
                 let nd = recompute(dm, prev, before, d);
-                if nd != *dm {
+                if nd != **dm {
                     changes.push((e.handle, nd));
                 }
             }
@@ -327,7 +327,7 @@ pub fn update(after: &mut Arc<Drawing>, before: &Drawing) -> usize {
     let d = Arc::make_mut(after);
     let n = changes.len();
     for (h, nd) in changes {
-        let _ = d.modify_entity(h, |e| e.kind = EntityKind::Dimension(nd));
+        let _ = d.modify_entity(h, |e| e.kind = EntityKind::Dimension(Box::new(nd)));
     }
     n
 }

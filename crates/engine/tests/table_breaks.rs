@@ -9,7 +9,7 @@ use serde_json::json;
 
 fn table(s: &Session, h: &str) -> Table {
     match &s.doc().unwrap().entity(Handle::parse_hex(h).unwrap()).unwrap().kind {
-        EntityKind::Table(t) => t.clone(),
+        EntityKind::Table(t) => (**t).clone(),
         _ => panic!("not a table"),
     }
 }
@@ -69,7 +69,7 @@ fn breaking_draws_parts_with_repeated_labels() {
 fn part_grips_move_parts() {
     let (mut s, h) = session();
     s.execute("table.break", &json!({ "handle": h, "height": 6.0, "spacing": 1.0 })).unwrap();
-    let k = EntityKind::Table(table(&s, &h));
+    let k = EntityKind::Table(Box::new(table(&s, &h)));
     let grips = k.grips();
     assert_eq!(grips, vec![Vec2::new(0.0, 0.0), Vec2::new(7.0, 0.0)]);
     // Drag the second part's grip; the first part stays.

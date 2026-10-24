@@ -79,14 +79,14 @@ fn has_images(store: &EntityStore) -> bool {
 }
 
 /// Fill in each image's definition (path, name, pixel size) from the IMAGEDEF it points to.
-pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
+pub(crate) fn resolve(secs: &[Section<&[Tag]>], d: &mut Drawing) {
     if !has_images(&d.model) && !d.layouts.iter().any(|l| has_images(&l.entities)) && !d.blocks.values().any(|b| has_images(&b.entities)) {
         return;
     }
     // IMAGE handle → IMAGEDEF handle.
     let mut refs: HashMap<Handle, String> = HashMap::new();
     for s in secs.iter().filter(|s| s.name == "ENTITIES" || s.name == "BLOCKS") {
-        each_record(&s.tags, |kind, tags| {
+        each_record(s.tags, |kind, tags| {
             if kind != "IMAGE" {
                 return;
             }
@@ -101,7 +101,7 @@ pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
     let mut defs: HashMap<String, Def> = HashMap::new();
     let mut names: HashMap<String, String> = HashMap::new();
     for s in secs.iter().filter(|s| s.name == "OBJECTS") {
-        each_record(&s.tags, |kind, tags| match kind {
+        each_record(s.tags, |kind, tags| match kind {
             "IMAGEDEF" => {
                 let Some(h) = tags.iter().find(|t| t.code == 5).map(|t| key(&t.str())) else { return };
                 let start = tags.iter().position(|t| t.code == 100 && t.str() == "AcDbRasterImageDef").unwrap_or(0);

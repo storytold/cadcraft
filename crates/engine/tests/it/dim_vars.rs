@@ -19,7 +19,7 @@ fn last_dim(s: &Session) -> (Dimension, DimGeometry) {
         .model
         .iter()
         .filter_map(|e| match &e.kind {
-            EntityKind::Dimension(dm) => Some(dm.clone()),
+            EntityKind::Dimension(dm) => Some((**dm).clone()),
             _ => None,
         })
         .last()

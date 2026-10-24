@@ -48,7 +48,7 @@ fn dimensions_take_the_viewport_layer_colour() {
         assoc: Vec::new(),
         marks: Default::default(),
     };
-    d.add(&Space::Model, on("A"), EntityKind::Dimension(dim)).unwrap();
+    d.add(&Space::Model, on("A"), EntityKind::Dimension(Box::new(dim))).unwrap();
     d.add(&Space::Model, on("A"), EntityKind::Line(Line { a: Vec3::new(0.0, -1.0, 0.0), b: Vec3::new(10.0, -1.0, 0.0) })).unwrap();
     let vp = Viewport {
         center: Vec3::new(10.0, 10.0, 0.0),
@@ -123,7 +123,7 @@ fn attdef(handle: u64, tag: &str, x: f64, common: Common) -> Entity {
         multiline: None,
         modes: Default::default(),
     };
-    Entity { common, ..Entity::new(Handle(handle), EntityKind::AttDef(a)) }
+    Entity { common, ..Entity::new(Handle(handle), EntityKind::AttDef(Box::new(a))) }
 }
 
 /// Colour and lineweight of the attribute text drawn between x0 and x0 + 5 (none = not drawn).

@@ -14,6 +14,10 @@ Standards and learnings shared across the crafting apps live in `../../craftrule
 ## Never crash
 People trust CADCraft with their drawings; a crash loses their work. **This outranks feature work.** Standard: [`craftrules/standards/never-crash.md`](https://github.com/storytold/craftrules/blob/main/standards/never-crash.md).
 - **No panics in non-test code:** no `unwrap()`, `expect()`, `panic!`, `unreachable!`, `todo!`, `unimplemented!`; no `unsafe` (`unsafe_code = "forbid"`).
+- Owner-authorized exception (2026-10-13): only `apps/cadcraft/src/native_open.rs` may use
+  the documented Objective-C boundary to receive Finder's Open Documents event. The workspace
+  lint is `deny` so that module can allow it; existing core crates retain `forbid`. Do not
+  extend this exception to other modules or replace winit's application delegate.
 - **Errors are `Result<T, E>`** through the crate's error type and `?`. An unfinished feature returns an error or reports "not available yet"; it never panics.
 - **Input-derived numbers are hostile** (DXF/DWG files, command-line text, MCP/control params): `get()` not `[i]`, checked arithmetic, no NaN casts, cap input-sized allocations and loop counts.
 - **Bound recursion** (nested/cyclic block references: `MAX_BLOCK_DEPTH`).
