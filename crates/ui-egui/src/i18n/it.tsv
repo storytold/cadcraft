@@ -1154,6 +1154,20 @@ menu	Modify	Edita
 	Wipeout	Copertura
 	Workspace Switching	Cambio area di lavoro
 	Write Block	Scrivi blocco
+	Write Block Pick	Selezione per Scrivi blocco
+	Source	Sorgente
+	Objects	Oggetti
+	Base point	Punto base
+	Pick point	Scegli punto
+	No objects selected	Nessun oggetto selezionato
+	object(s) selected	oggetto/i selezionato/i
+	Destination	Destinazione
+	File name and path	Nome file e percorso
+	(select)	(seleziona)
+	A file path is required.	Il percorso del file è obbligatorio.
+	Invalid base X coordinate.	Coordinata X del punto base non valida.
+	Invalid base Y coordinate.	Coordinata Y del punto base non valida.
+	Select a block.	Selezionare un blocco.
 	Xline	Xlinea
 	Yellow	Giallo
 	Yes	Sì

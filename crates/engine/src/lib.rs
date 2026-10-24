@@ -45,6 +45,7 @@ use serde_json::Value;
 pub use cadcraft_doc as doc;
 pub use cadcraft_geom as geom;
 pub use cadcraft_render as render;
+pub use cmd::blocks::WblockPicks;
 pub use cmd::hatch::{HatchPicks, PatternChoice, PickMode, pattern_choices};
 pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command};
 pub use prompt::{Accept, Drag, Input, Interactive, Picker, Prompt, Step};
@@ -708,6 +709,8 @@ pub struct Session {
     lisp_last: Option<std::result::Result<lisp::value::Value, String>>,
     /// What the last HATCHPICK kept (the Hatch and Gradient dialog's picks).
     pub hatch_picks: Option<cmd::hatch::HatchPicks>,
+    /// What the last WBLOCKPICK kept (the Write Block dialog's picks).
+    pub wblock_picks: Option<cmd::blocks::WblockPicks>,
 }
 
 impl Default for Session {
@@ -757,6 +760,7 @@ impl Session {
             lisp: lisp::LispState::default(),
             lisp_last: None,
             hatch_picks: None,
+            wblock_picks: None,
         }
     }
     pub fn new_drawing(&mut self, metric: bool) -> usize {

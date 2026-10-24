@@ -1196,6 +1196,21 @@
 	Wipeout	Маскування
 	Workspace Switching	Перемикання робочого простору
 	Write Block	Записати блок у файл
+	Write Block Pick	Вибір для запису блока
+	Source	Джерело
+	Objects	Об'єкти
+	Base point	Базова точка
+	Pick point	Вказати точку
+	No objects selected	Жодного об'єкта не вибрано
+	object(s) selected	об'єкт(ів) вибрано
+	Select objects	Вибрати об'єкти
+	Destination	Призначення
+	File name and path	Ім'я файлу та шлях
+	(select)	(оберіть)
+	A file path is required.	Необхідно вказати шлях до файлу.
+	Invalid base X coordinate.	Неприпустима координата X базової точки.
+	Invalid base Y coordinate.	Неприпустима координата Y базової точки.
+	Select a block.	Виберіть блок.
 	Xline	Допоміжна пряма
 	Yellow	Жовтий
 	Yes	Так

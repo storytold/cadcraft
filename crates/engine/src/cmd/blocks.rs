@@ -46,6 +46,9 @@ pub fn specs() -> Vec<CommandSpec> {
         attedit::attedit_spec(),
         attedit::dash_attedit_spec(),
         CommandSpec::new("wblock", "Write Block", run_wblock).alias(&["w"]).params("{path, name? | handles?, base?}"),
+        CommandSpec::new("wblockpick", "Write Block Pick", run_wblockpick)
+            .params("{mode: \"objects\"|\"base\"}")
+            .interactive(|_| Ok(Box::new(WblockPickM::default()))),
         CommandSpec::new("base", "Base", run_base).menu(&["Draw", "Block", "Base"]).params("{at: [x,y]}"),
         CommandSpec::new("blocks.dynamic", "Dynamic Block Data", run_dynamic)
             .params("{name (a block, or \"*Model_Space\" for a drawing that is a dynamic block's own)} → {parameters, actions, other} | null (not a dynamic block)")
@@ -334,6 +337,18 @@ fn run_attdef(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn run_wblock(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").ok_or_else(|| bad("wblock", "`path` is required"))?.to_string();
+    let hooks = super::file::io().ok_or_else(|| bad("wblock", "file formats are not available in this build"))?;
+
+    // Whole-drawing mode (name "*"): clone as-is — all layouts, paper space, INSBASE preserved.
+    if str_param(p, "name") == Some("*") {
+        let d = s.doc()?.clone();
+        let bytes = (hooks.write)(&d, &path).map_err(|e| bad("wblock", e))?;
+        #[cfg(not(target_arch = "wasm32"))]
+        std::fs::write(&path, &bytes).map_err(|e| bad("wblock", format!("{path}: {e}")))?;
+        let count = d.model.len() + d.layouts.iter().map(|l| l.entities.len()).sum::<usize>();
+        return Ok(json!({ "path": path, "entities": count, "bytes": bytes.len() }));
+    }
+
     let src = s.doc()?;
     let mut d = cadcraft_doc::Drawing::new_imperial();
     d.layers = src.layers.clone();
@@ -372,7 +387,6 @@ fn run_wblock(s: &mut Session, p: &Value) -> Result<Value> {
         e.handle = d.new_handle();
         d.model.push(e);
     }
-    let hooks = super::file::io().ok_or_else(|| bad("wblock", "file formats are not available in this build"))?;
     let bytes = (hooks.write)(&d, &path).map_err(|e| bad("wblock", e))?;
     #[cfg(not(target_arch = "wasm32"))]
     std::fs::write(&path, &bytes).map_err(|e| bad("wblock", format!("{path}: {e}")))?;
@@ -537,6 +551,88 @@ impl BlockM {
         }
         s.echo(format!("Block \"{name}\" defined with {} object(s).", hs.len()));
         Ok(Step::Done)
+    }
+}
+
+// ── WBLOCKPICK ────────────────────────────────────────────────────────────────
+
+/// The result kept for the Write Block dialog after a WBLOCKPICK session ends.
+pub struct WblockPicks {
+    /// Selected handles (mode "objects") — empty for a "base" pick.
+    pub handles: Vec<Handle>,
+    /// Base point picked (mode "base") — `None` for an "objects" pick.
+    pub base: Option<Vec2>,
+}
+
+fn run_wblockpick(_s: &mut Session, _p: &Value) -> Result<Value> {
+    ok()
+}
+
+/// Which pick session WBLOCKPICK is running.
+#[derive(Default)]
+enum WblockPickMode {
+    /// Waiting for the mode keyword ("objects" or "base").
+    #[default]
+    Waiting,
+    Objects(SelectPhase),
+    Base,
+}
+
+#[derive(Default)]
+struct WblockPickM {
+    mode: WblockPickMode,
+}
+
+impl Interactive for WblockPickM {
+    fn name(&self) -> &'static str {
+        "WBLOCKPICK"
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        match &self.mode {
+            WblockPickMode::Waiting => Prompt::new("Enter pick mode", Accept::TEXT).kw(&["Objects", "Base"]),
+            WblockPickMode::Objects(sel) => sel.prompt(),
+            WblockPickMode::Base => Prompt::new("Specify insertion base point", Accept::POINT),
+        }
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        match &mut self.mode {
+            WblockPickMode::Waiting => {
+                match &i {
+                    Input::Keyword(k) | Input::Text(k) => {
+                        let k = k.to_ascii_lowercase();
+                        if k.starts_with('o') {
+                            self.mode = WblockPickMode::Objects(SelectPhase::default());
+                        } else {
+                            self.mode = WblockPickMode::Base;
+                        }
+                    }
+                    Input::Cancel | Input::Enter => return Ok(Step::Cancel),
+                    _ => {}
+                }
+                Ok(Step::Continue)
+            }
+            WblockPickMode::Objects(sel) => {
+                if matches!(i, Input::Cancel) {
+                    return Ok(Step::Cancel);
+                }
+                match sel.feed(s, &i)? {
+                    SelOutcome::More => Ok(Step::Continue),
+                    SelOutcome::Empty => Ok(Step::Cancel),
+                    SelOutcome::Done(hs) => {
+                        s.wblock_picks = Some(WblockPicks { handles: hs, base: None });
+                        Ok(Step::Done)
+                    }
+                }
+            }
+            WblockPickMode::Base => match i {
+                Input::Cancel => Ok(Step::Cancel),
+                Input::Point(p) => {
+                    s.wblock_picks = Some(WblockPicks { handles: Vec::new(), base: Some(p) });
+                    Ok(Step::Done)
+                }
+                _ => Ok(Step::Continue),
+            },
+        }
     }
 }
 
