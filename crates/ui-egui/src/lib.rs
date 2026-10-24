@@ -216,6 +216,8 @@ pub struct CadApp {
     pub spacemouse: spacemouse::State,
     pub cmd: cmdline::CmdLine,
     pub status: Option<(String, f64)>,
+    /// Why the last drawing could not be opened, until [`CadApp::take_open_error`] reads it.
+    open_error: Option<String>,
     /// Drawings being read on worker threads ([`opening`]).
     pub opening: opening::Opening,
     pub integrated_titlebar: bool,
@@ -273,6 +275,7 @@ impl CadApp {
             spacemouse: spacemouse::State::default(),
             cmd: cmdline::CmdLine::default(),
             status: None,
+            open_error: None,
             opening: opening::Opening::default(),
             integrated_titlebar: false,
             control_rx: None,
@@ -513,13 +516,24 @@ impl CadApp {
     /// OPEN is reported: on the command line and in the status bar.
     pub fn open_failed(&mut self, e: impl Into<String>) {
         let e = e.into();
+        self.open_error = Some(e.clone());
         self.session.echo(e.clone());
         self.set_status(e);
     }
 
+    /// Why the last drawing could not be opened, once. A shell that is driven from outside -- the
+    /// web build in a page that sent the drawing (#1603) -- reports it to whoever sent it; the
+    /// status bar and command line are no use to them.
+    pub fn take_open_error(&mut self) -> Option<String> {
+        self.open_error.take()
+    }
+
     fn opened(&mut self, r: Result<Value, String>) {
         match r {
-            Err(e) => self.set_status(e),
+            Err(e) => {
+                self.open_error = Some(e.clone());
+                self.set_status(e);
+            }
             Ok(v) => {
                 self.ui.start_tab = false;
                 self.canvas.zoom_pending = true;

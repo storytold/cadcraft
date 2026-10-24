@@ -43,6 +43,11 @@ mod web {
         fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
             self.1.take_dropped(ctx);
             self.1.drain(&mut self.0);
+            // A drawing the page sent that could not be opened: it hears why, instead of having
+            // to read the console or guess from a Start tab that never went away (#1603).
+            if let (Some((bridge, _)), Some(e)) = (&self.2, self.0.take_open_error()) {
+                bridge.post_failed(&e);
+            }
             self.0.system_animations = self.3.as_ref().map(|reduced| !reduced.matches());
             self.0.logic(ctx);
             let drawing = self.0.session.state().ok();
