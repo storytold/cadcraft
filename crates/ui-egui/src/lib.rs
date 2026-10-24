@@ -219,6 +219,11 @@ pub struct CadApp {
     pub frame_cap: Option<gpu::FrameCap>,
     /// Language whose interface fonts are installed (`None` until the first frame).
     fonts_language: Option<&'static str>,
+    /// The scripts of the names shown the fonts were installed for, and the name-font loads they
+    /// include (`None` until the first frame): a Korean layer name, a Thai drawing name.
+    fonts_names: Option<(theme::Scripts, u64)>,
+    /// The names last scanned for their scripts (a fingerprint), and those scripts.
+    font_names: Option<(u64, theme::Scripts)>,
     /// The theme last installed into egui (`None` until the first frame).
     shown_theme: Option<egui::Theme>,
     /// Whether the last applied theme was handed to egui as the System preference.
@@ -273,6 +278,8 @@ impl CadApp {
             #[cfg(not(target_arch = "wasm32"))]
             frame_cap: None,
             fonts_language: None,
+            fonts_names: None,
+            font_names: None,
             shown_theme: None,
             shown_follows_system: false,
             shown_animations: None,
@@ -532,6 +539,32 @@ impl CadApp {
         recent.truncate(RECENT_FILES);
     }
 
+    /// The scripts of the names the interface shows (drawing titles and their layers, layouts and
+    /// blocks) that need a font beyond the interface language's. The names are scanned again only
+    /// when a drawing changes, opens or closes.
+    fn name_scripts(&mut self) -> theme::Scripts {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for d in &self.session.docs {
+            (d.uid, std::sync::Arc::as_ptr(&d.doc) as usize, &d.title).hash(&mut h);
+        }
+        let key = h.finish();
+        if let Some((k, s)) = self.font_names
+            && k == key
+        {
+            return s;
+        }
+        let mut s = theme::Scripts::NONE;
+        for d in &self.session.docs {
+            s |= theme::Scripts::of(&d.title);
+            for name in d.doc.layers.iter().map(|l| &l.name).chain(d.doc.layouts.iter().map(|l| &l.name)).chain(d.doc.blocks.keys()) {
+                s |= theme::Scripts::of(name);
+            }
+        }
+        self.font_names = Some((key, s));
+        s
+    }
+
     /// Per-frame logic before layout.
     pub fn logic(&mut self, ctx: &egui::Context) {
         // A long LISP routine runs a slice per frame, so the window stays live (and Esc stops it).
@@ -544,9 +577,11 @@ impl CadApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
         let language = self.language();
-        if self.fonts_language != Some(language) {
-            theme::install_fonts(ctx, language);
+        let names = (self.name_scripts(), theme::fonts_generation());
+        if self.fonts_language != Some(language) || self.fonts_names != Some(names) {
+            theme::install_fonts_for(ctx, language, names.0);
             self.fonts_language = Some(language);
+            self.fonts_names = Some(names);
         }
         // Resolved every frame, so a System choice follows the OS appearance live (winit and the
         // browser report changes as input); the saved choice itself never changes here.
@@ -773,6 +808,61 @@ mod tests {
         let raw = egui::RawInput { system_theme: system, ..Default::default() };
         let mut out = ctx.run_ui(raw, |ui| app.logic(ui.ctx()));
         out.textures_delta.clear();
+    }
+
+    /// Frames until the interface fonts have every glyph of `text` (faces for names load off the
+    /// UI thread), at most about five seconds.
+    fn fonts_show(a: &mut CadApp, ctx: &egui::Context, text: &str) -> bool {
+        for _ in 0..500 {
+            frame(a, ctx, None);
+            if ctx.fonts_mut(|f| f.has_glyphs(&theme::body(), text)) {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        false
+    }
+
+    /// A Latin-named drawing in an English interface with a Korean layer name: the scan finds
+    /// Hangul and a font that shows it is installed (when one is installed on this machine);
+    /// renaming it away drops the need. Names are scanned again only when the drawings change.
+    #[test]
+    fn a_layer_name_brings_the_font_its_script_needs() {
+        let mut a = app();
+        a.session.new_drawing(false);
+        let ctx = egui::Context::default();
+        frame(&mut a, &ctx, None);
+        assert_eq!(a.fonts_names.map(|f| f.0), Some(theme::Scripts::NONE), "English interface, Latin names");
+        let rename = |a: &mut CadApp, name: &str| {
+            if let Some(d) = a.session.docs.first_mut() {
+                let mut doc = (*d.doc).clone();
+                if let Some(l) = doc.layers.first_mut() {
+                    l.name = name.into();
+                }
+                d.doc = std::sync::Arc::new(doc);
+            }
+        };
+        rename(&mut a, "도면 레이어");
+        frame(&mut a, &ctx, None);
+        assert_eq!(a.fonts_names.map(|f| f.0), Some(theme::Scripts::HANGUL), "the Layers palette needs Hangul");
+        if cadcraft_fonts::ttf::fallback_for('한').is_some() {
+            assert!(fonts_show(&mut a, &ctx, "도면"), "the layer name shows its characters, not boxes");
+        }
+        let scanned = a.font_names;
+        frame(&mut a, &ctx, None);
+        assert_eq!(a.font_names, scanned, "no change, no new scan");
+        // Installing again for a name's script (and when its face arrives) reuses the language's
+        // fonts read before: the UI and CJK font files aren't read on the UI thread again.
+        let reads = theme::LANGUAGE_FONT_READS.with(std::cell::Cell::get);
+        rename(&mut a, "แผนผัง");
+        frame(&mut a, &ctx, None);
+        frame(&mut a, &ctx, None);
+        assert_eq!(theme::LANGUAGE_FONT_READS.with(std::cell::Cell::get), reads, "the language's fonts are reused");
+        rename(&mut a, "도면 레이어");
+        frame(&mut a, &ctx, None);
+        rename(&mut a, "Walls");
+        frame(&mut a, &ctx, None);
+        assert_eq!(a.fonts_names.map(|f| f.0), Some(theme::Scripts::NONE));
     }
 
     #[test]

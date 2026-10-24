@@ -54,6 +54,10 @@ impl Face {
         FontRef::from_index(&bytes, index).ok()?;
         Some(Face { bytes, index })
     }
+    /// The font file's bytes and this face's index in it (a collection holds several faces).
+    pub fn data(&self) -> (&Arc<Vec<u8>>, u32) {
+        (&self.bytes, self.index)
+    }
     pub(crate) fn font(&self) -> Option<FontRef<'_>> {
         FontRef::from_index(&self.bytes, self.index).ok()
     }
