@@ -27,6 +27,15 @@ winresource = "0.1"
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 winit = { version = "0.30", default-features = false, features = ["x11"] }
+# Checks that the X11 libraries are installed before choosing XWayland (see main.rs). Already in
+# the build through winit, at this version.
+x11-dl = "2.21"
+# Checks for libxkbcommon-x11 too, which winit's X11 backend needs for the keyboard and panics
+# without. Already in the build through winit, at this version and with this feature.
+xkbcommon-dl = { version = "0.4.2", features = ["x11"] }
+# Asks the Wayland compositor whether it draws window frames (`decorations.rs`). Already in the
+# build through winit, at this version.
+wayland-client = "0.31"
 # View ▸ Theme ▸ System: the desktop's light/dark choice from the XDG desktop portal
 # (desktop_theme.rs). Already in Cargo.lock through accesskit; pinned to that version so nothing
 # is built twice.

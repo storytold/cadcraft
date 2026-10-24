@@ -1233,3 +1233,7 @@ menu	Modify	تعديل
 menu	View	عرض
 @plural	{n} commit	{n} إيداع|{n} إيداع|{n} إيداعان|{n} إيداعات|{n} إيداعاً|{n} إيداع
 @plural	{n} contributor	{n} مساهم|{n} مساهم|{n} مساهمان|{n} مساهمين|{n} مساهماً|{n} مساهم
+	Minimize	تصغير
+	Maximize	تكبير
+	Use system title bar	استخدام شريط عنوان النظام
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	يعرض شريط عنوان بسيطاً لأزرار النافذة فوق شريط CADCraft نفسه. لا يرسم GNOME أشرطة العناوين للتطبيقات، لذا لا يتبع هذا الشريط سمته.

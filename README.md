@@ -343,6 +343,20 @@ and web backend defaults are unchanged.
 
 RISC-V (riscv64): `cadcraft-<ver>-linux-riscv64.tar.gz`, cross-compiled; needs glibc 2.39 or newer (Ubuntu 24.04+, Debian 13+).
 
+**Wayland:** on a Wayland desktop the app uses the native Wayland backend, which is sharp at
+fractional scales and works with input methods; files dragged from the file manager drop into the
+window there too. To run the app through XWayland instead, set `CADCRAFT_X11=1` (this needs the X11
+libraries: libX11, libX11-xcb, libXcursor, libXi and libxkbcommon-x11):
+
+```sh
+CADCRAFT_X11=1 cadcraft
+```
+
+GNOME on Wayland draws no window frames, so there CADCraft draws a title row with the window
+buttons in GNOME's order and resizes from the window's edges. **Options ▸ Display ▸ Use system
+title bar** shows a basic frame instead. `CADCRAFT_TITLEBAR=app` or `CADCRAFT_TITLEBAR=system`
+overrides the detection.
+
 ### FreeBSD
 
 | Build | File |

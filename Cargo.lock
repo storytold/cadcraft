@@ -563,9 +563,12 @@ dependencies = [
  "rfd",
  "serde_json",
  "sys-locale",
+ "wayland-client",
  "windows",
  "winit",
  "winresource",
+ "x11-dl",
+ "xkbcommon-dl",
  "zbus",
 ]
 
@@ -1080,6 +1083,11 @@ checksum = "75b325c5dbd37f80359721ad39aca5a29fb04c89279657cffdda8736d0c0b9d2"
 
 [[package]]
 name = "dpi"
+version = "0.1.1"
+source = "git+https://github.com/crmne/winit?rev=7a962fd46470a137d9a7a1945bf5b5d0b95a002c#7a962fd46470a137d9a7a1945bf5b5d0b95a002c"
+
+[[package]]
+name = "dpi"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
@@ -1177,8 +1185,6 @@ dependencies = [
 [[package]]
 name = "egui-winit"
 version = "0.36.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "98466000559d66ba4db786a30448b01483946add4188e7f10f522a27b4fb89cc"
 dependencies = [
  "accesskit_winit",
  "arboard",
@@ -2288,7 +2294,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4340e89c178916e62879c5c36b7f699019369be413e496178a6983ce91b8bc03"
 dependencies = [
  "crossbeam-channel",
- "dpi",
+ "dpi 0.1.2",
  "keyboard-types",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
@@ -4616,8 +4622,7 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 [[package]]
 name = "winit"
 version = "0.30.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6755fa58a9f8350bd1e472d4c3fcc25f824ec358933bba33306d0b63df5978d"
+source = "git+https://github.com/crmne/winit?rev=7a962fd46470a137d9a7a1945bf5b5d0b95a002c#7a962fd46470a137d9a7a1945bf5b5d0b95a002c"
 dependencies = [
  "ahash",
  "android-activity",
@@ -4631,7 +4636,7 @@ dependencies = [
  "core-foundation",
  "core-graphics",
  "cursor-icon",
- "dpi",
+ "dpi 0.1.1",
  "js-sys",
  "libc",
  "memmap2",

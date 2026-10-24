@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "apps/*", "xtask"]
+exclude = ["patches/egui-winit"]
 # default-members
 
 [workspace.package]
@@ -80,3 +81,13 @@ opt-level = 3
 lto = "thin"
 codegen-units = 16
 debug = 0
+
+# Wayland file drag-and-drop until eframe moves to a winit with it (winit 0.31 has it upstream).
+# winit 0.30.13 reports dropped files only on X11. rust-windowing/winit#4729 adds them on Wayland
+# and moves the clipboard onto winit's own data device; patches/egui-winit is egui-winit 0.36.2
+# with emilk/egui#8657 ported, so egui's clipboard uses that device rather than a second one
+# (Hyprland serves the selection to a client's first data device only, so paste would fail).
+# Both go away once winit and egui release them.
+[patch.crates-io]
+winit = { git = "https://github.com/crmne/winit", rev = "7a962fd46470a137d9a7a1945bf5b5d0b95a002c" }
+egui-winit = { path = "patches/egui-winit" }

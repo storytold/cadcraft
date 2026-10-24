@@ -1247,3 +1247,7 @@
 	Not a number or distance: {text}	No es un número ni una distancia: {text}
 	Query Texts	Consultar textos
 	Analyze Shapes	Analizar formas
+	Minimize	Minimizar
+	Maximize	Maximizar
+	Use system title bar	Usar la barra de título del sistema
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	Muestra una barra de título básica con los botones de la ventana encima de la de CADCraft. GNOME no dibuja barras de título para las aplicaciones, así que esta no sigue su tema.

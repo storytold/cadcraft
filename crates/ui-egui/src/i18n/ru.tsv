@@ -1009,3 +1009,7 @@
 	Not a number or distance: {text}	Не число и не расстояние: {text}
 	Query Texts	Запрос текстов
 	Analyze Shapes	Анализ фигур
+	Minimize	Свернуть
+	Maximize	Развернуть
+	Use system title bar	Использовать системный заголовок окна
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	Показывает простой заголовок окна с кнопками над заголовком CADCraft. GNOME не рисует заголовки для приложений, поэтому этот не следует его теме.
