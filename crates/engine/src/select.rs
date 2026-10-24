@@ -241,7 +241,7 @@ fn seg_hits_box(a: Vec2, b: Vec2, bx: &Bounds2) -> bool {
         return true;
     }
     let c = bx.corners();
-    (0..4).any(|i| cadcraft_geom::line_line(&Line::new(a, b), &Line::new(c[i], c[(i + 1) % 4])).is_some())
+    (0..4).any(|i| cadcraft_geom::line_line_capped(&Line::new(a, b), &Line::new(c[i], c[(i + 1) % 4])).is_some())
 }
 
 /// Window selection (entirely inside) or crossing selection (inside or touching).
@@ -319,7 +319,8 @@ pub(crate) fn select_fence_with(d: &Drawing, space: &Space, ix: &Option<std::syn
             let (Some(a), Some(b)) = (f.first(), f.get(1)) else { return false };
             let fl = Line::new(*a, *b);
             polys.iter().any(|pl| {
-                pl.windows(2).any(|w| w.first().zip(w.get(1)).is_some_and(|(p, q)| cadcraft_geom::line_line(&fl, &Line::new(*p, *q)).is_some()))
+                pl.windows(2)
+                    .any(|w| w.first().zip(w.get(1)).is_some_and(|(p, q)| cadcraft_geom::line_line_capped(&fl, &Line::new(*p, *q)).is_some()))
             })
         });
         if hit {
@@ -352,7 +353,7 @@ pub fn select_polygon(d: &Drawing, space: &Space, poly: &[Vec2], crossing: bool)
         let polys = hit_polylines(d, e, tol);
         let crosses = polys.iter().any(|pl| {
             pl.windows(2).any(|w| {
-                w.first().zip(w.get(1)).is_some_and(|(p, q)| edges.iter().any(|f| cadcraft_geom::line_line(f, &Line::new(*p, *q)).is_some()))
+                w.first().zip(w.get(1)).is_some_and(|(p, q)| edges.iter().any(|f| cadcraft_geom::line_line_capped(f, &Line::new(*p, *q)).is_some()))
             })
         });
         let mut pts = polys.iter().flatten();
@@ -485,6 +486,21 @@ mod tests {
         assert_eq!(fence_hits(EntityKind::Ray(line.clone()), [(-5.0, -5.0), (-5.0, 5.0)]), 0);
         assert_eq!(fence_hits(EntityKind::XLine(line.clone()), [(0.0, 1.0), (0.0, 5.0)]), 0);
         assert_eq!(fence_hits(EntityKind::Ray(line), [(5.0, 1.0), (5.0, 5.0)]), 0);
+    }
+
+    #[test]
+    fn fence_and_crossing_window_ignore_ray_behind_its_base() {
+        let line = RayLine { base: Vec3::new(0.0, 0.0, 0.0), dir: Vec3::new(1.0, 0.0, 0.0) };
+        for x in [-0.5, -0.9] {
+            assert_eq!(fence_hits(EntityKind::Ray(line.clone()), [(x, -5.0), (x, 5.0)]), 0, "fence at x={x}");
+        }
+        assert_eq!(fence_hits(EntityKind::Ray(line.clone()), [(0.5, -5.0), (0.5, 5.0)]), 1);
+        let mut d = Drawing::new_metric();
+        d.add(&Space::Model, Common::default(), EntityKind::Ray(line)).unwrap();
+        let behind = Bounds2::new(Vec2::new(-0.9, -0.5), Vec2::new(-0.5, 0.5));
+        assert!(select_window(&d, &Space::Model, behind, true).is_empty(), "crossing window behind the base");
+        let ahead = Bounds2::new(Vec2::new(0.5, -0.5), Vec2::new(0.9, 0.5));
+        assert_eq!(select_window(&d, &Space::Model, ahead, true).len(), 1);
     }
 }
 
