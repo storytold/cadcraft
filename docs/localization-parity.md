@@ -31,8 +31,8 @@ shaping and right-to-left text through TrueType, vertical SHX text styles.
   English. For scale: about 1,160 unique capitalised string literals exist in `crates/engine`
   and `crates/ui-egui` (grep, 2026-10-10).
 - **Drawing text:** TrueType/OpenType/`.ttc` through `skrifa` with per-character font fallback
-  and FONTALT, so CJK characters render (#173). DXF text is written with `\U+` escapes so
-  non-ASCII survives in R2000 files (#169). Lines with right-to-left text get the Unicode
+  and FONTALT, so CJK characters render (#173). Pre-2007 DXF text is written in the file's code page,
+  with `\U+` escapes for characters outside it, so non-ASCII survives in R2000 files (#169). Lines with right-to-left text get the Unicode
   Bidirectional Algorithm and OpenType shaping with `harfrust` (Arabic, Persian and Urdu joining,
   lam-alef, ZWNJ, marks; Hebrew), in TEXT and MTEXT including wrapping (#287). Left-to-right lines
   are still placed one glyph per code point: **no shaping** for Devanagari and other Indic
