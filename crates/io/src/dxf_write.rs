@@ -557,9 +557,7 @@ fn computed_text_insert(d: &Drawing, t: &Text) -> Vec3 {
         backwards: ts.backwards,
         upside_down: ts.upside_down,
     };
-    let hint = cadcraft_fonts::legacy_encoding::font_hint(&[&ts.font, &t.style]);
-    let transcoded = cadcraft_fonts::legacy_encoding::transcode(&t.value, hint);
-    let q = cadcraft_fonts::baseline_start(&cadcraft_fonts::TextFont::resolve(hint.unwrap_or(&ts.font)), &transcoded, &p);
+    let q = cadcraft_fonts::baseline_start(&cadcraft_fonts::TextFont::resolve_raw(&ts.font), &t.value, &p);
     if q.is_finite() { Vec3::new(q.x, q.y, a.z) } else { t.insert }
 }
 

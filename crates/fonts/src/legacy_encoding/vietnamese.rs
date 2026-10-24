@@ -259,8 +259,9 @@ pub fn detect_vietnamese_encoding(s: &str) -> Option<VietnameseEncoding> {
 
     let mut vni_score = 0;
     let mut tcvn_score = 0;
-    let mut composite_found = false;
-    let all_caps = is_tcvn3_all_caps(s);
+    let mut vni_composite_found = false;
+    let mut tcvn_composite_found = false;
+    let mut tcvn_inversion_found = false;
 
     let mut prev: Option<char> = None;
     let mut chars = s.chars().peekable();
@@ -270,12 +271,12 @@ pub fn detect_vietnamese_encoding(s: &str) -> Option<VietnameseEncoding> {
             let is_diameter = c.eq_ignore_ascii_case(&'O') && next_c == 'Ø';
             if !is_diameter && match_vni_composite(c, next_c).is_some() {
                 vni_score += 2;
-                composite_found = true;
+                vni_composite_found = true;
                 matched_composite = true;
             }
             if match_tcvn3_composite(c, next_c).is_some() {
                 tcvn_score += 2;
-                composite_found = true;
+                tcvn_composite_found = true;
                 matched_composite = true;
             }
             if matched_composite {
@@ -285,42 +286,57 @@ pub fn detect_vietnamese_encoding(s: &str) -> Option<VietnameseEncoding> {
             }
         }
 
-        // Unhinted VNI single-byte characters: only count uppercase VNI letters in all-caps/composite
-        // contexts so lowercase European letters ('ñ' in Piñón, 'ö' in Größe) never false-trigger.
-        if match_vni_single(c).is_some() && !matches!(c, 'Ô' | 'ô' | 'Ò' | 'ò' | 'Ó' | 'ó') && (composite_found || (all_caps && c.is_uppercase()))
-        {
+        // Unhinted VNI single-byte characters:
+        // Standalone Latin-1 letters (like 'Ñ' in NIÑO or 'ö' in Größe) must never trigger VNI
+        // transcoding unless at least one genuine VNI composite has been identified in the string.
+        if vni_composite_found && match_vni_single(c).is_some() && !matches!(c, 'Ô' | 'ô' | 'Ò' | 'ò' | 'Ó' | 'ó') {
             vni_score += 1;
         }
 
         // Unhinted TCVN3 single-byte characters:
-        // 1. Bytes in 0xA1..=0xBF, 0xAD, '×', '÷' repurpose punctuation/math symbols as Vietnamese
-        //    vowels and never occur inside normal European words.
-        // 2. Bytes in 0xC0..=0xDE (uppercase Latin-1 diacritics) represent lowercase Vietnamese
-        //    vowels in TCVN3; in unhinted text we only score them when preceded by a letter
-        //    (e.g. 'vÏ', 'tiÕt', 'kÕt', 'cÊu', 'thÐp') or when 'Æ'/'Ð'/'Þ' is followed by a letter
-        //    ('MÆt', 'ÐƯỜNG'), avoiding word-initial German umlauts like 'Übergang' or 'Österreich'.
-        if match_tcvn3_single(c).is_some() && !matches!(c, 'á' | 'â' | 'ã' | 'è' | 'é' | 'ê' | 'ì' | 'í' | 'ò' | 'ó' | 'ô' | 'õ' | 'ù' | 'ú' | 'ý')
+        // Exclude CAD symbols, punctuation, and currency marks:
+        // ©, ®, §, ¶, ·, µ, ¼, ½, ¾, °, ±, ², ³, ¿, ¡, ¢, £, ¤, ¥
+        // In unhinted text, standalone symbols like "© 2026 ACME ®" or "1½ x ¾" must NEVER
+        // trigger TCVN3 transcoding.
+        // For uppercase Latin-1 characters (0x00C0..=0x00DE) representing lowercase TCVN3 vowels,
+        // require a mid-word case inversion (preceded by ASCII lowercase, e.g. 'vÏ', 'tiÕt', 'kÕt',
+        // 'cÊu', 'thÐp').
+        // This ensures unhinted European words ("NIÑO", "ÉCOLE", "Übergang") are never falsely detected.
+        let is_excluded_symbol =
+            matches!(c, '©' | '®' | '§' | '¶' | '·' | 'µ' | '¼' | '½' | '¾' | '°' | '±' | '²' | '³' | '¿' | '¡' | '¢' | '£' | '¤' | '¥');
+
+        if !is_excluded_symbol
+            && match_tcvn3_single(c).is_some()
+            && !matches!(c, 'á' | 'â' | 'ã' | 'è' | 'é' | 'ê' | 'ì' | 'í' | 'ò' | 'ó' | 'ô' | 'õ' | 'ù' | 'ú' | 'ý')
         {
             let code = c as u32;
-            let is_symbol_slot = (0x00A1..=0x00BF).contains(&code) || code == 0x00AD || c == '×' || c == '÷';
-            let is_midword_or_viet_upper = (0x00C0..=0x00DE).contains(&code)
-                && (prev.is_some_and(|p| p.is_ascii_alphabetic())
-                    || (matches!(c, 'Æ' | 'Ð' | 'Þ') && chars.peek().is_some_and(|n| n.is_ascii_alphabetic())));
-            if is_symbol_slot {
+            let is_midword_inversion = prev.is_some_and(|p| p.is_ascii_lowercase()) && (0x00C0..=0x00DE).contains(&code);
+            if is_midword_inversion {
+                tcvn_inversion_found = true;
                 tcvn_score += 2;
-            } else if is_midword_or_viet_upper {
-                tcvn_score += 2;
+            } else if tcvn_composite_found {
+                tcvn_score += 1;
             }
         }
 
         prev = Some(c);
     }
 
-    let threshold = if composite_found { 2 } else { 4 };
+    let vni_threshold = if vni_composite_found { 2 } else { usize::MAX };
+    let tcvn_threshold = if tcvn_composite_found {
+        2
+    } else if tcvn_inversion_found {
+        4
+    } else {
+        usize::MAX
+    };
 
-    if vni_score >= threshold && vni_score > tcvn_score {
+    let vni_valid = vni_score >= vni_threshold;
+    let tcvn_valid = tcvn_score >= tcvn_threshold;
+
+    if vni_valid && vni_score > tcvn_score {
         Some(VietnameseEncoding::Vni)
-    } else if tcvn_score >= threshold && tcvn_score > vni_score {
+    } else if tcvn_valid && tcvn_score > vni_score {
         Some(VietnameseEncoding::Tcvn3)
     } else {
         None
@@ -819,6 +835,16 @@ mod tests {
             assert_eq!(detect_vietnamese_encoding(sym), None, "diameter false positive on {sym}");
             assert_eq!(transcode_vietnamese(sym, None), sym);
             assert_eq!(transcode_vietnamese(sym, Some("Standard")), sym);
+        }
+    }
+
+    #[test]
+    fn test_cad_symbols_and_uppercase_european_never_transcoded() {
+        let cases = ["© 2026 ACME ®", "1½ x ¾", "§ 5 ¶ 2", "NIÑO", "ÉCOLE", "100° ± 0.5°", "AREA: 50 m² ± 2 m²"];
+        for s in cases {
+            assert_eq!(detect_vietnamese_encoding(s), None, "failed detection on {s}");
+            assert_eq!(transcode_vietnamese(s, None), s, "failed unhinted transcoding on {s}");
+            assert_eq!(transcode_vietnamese(s, Some("Standard")), s, "failed Standard font transcoding on {s}");
         }
     }
 

@@ -283,9 +283,23 @@ pub enum TextFont {
 }
 
 impl TextFont {
-    /// Resolve a text style font name: an installed TTF/OTF/TTC when found; else, for a font we
-    /// can't find (an SHX file, a missing TTF), the FONTALT font ([`ttf::font_alt`]) when set;
-    /// else the stroke font.
+    /// Resolve a text style font name without applying legacy-encoding face substitutions:
+    /// an installed TTF/OTF/TTC when found; else, for a font we can't find (an SHX file, a missing TTF),
+    /// the FONTALT font ([`ttf::font_alt`]) when set; else the stroke font.
+    pub fn resolve_raw(name: &str) -> TextFont {
+        if let Some(f) = ttf::find(name) {
+            return TextFont::Outline(f);
+        }
+        let n = name.trim();
+        if n.is_empty() || n.eq_ignore_ascii_case(BUILTIN_FONT) {
+            return TextFont::Stroke;
+        }
+        ttf::find(&ttf::font_alt()).map(TextFont::Outline).unwrap_or(TextFont::Stroke)
+    }
+
+    /// Resolve a text style font name: substitutes a modern Unicode outline face matching the profile's
+    /// FontClass if the font is identified as a legacy-encoded font (e.g. TCVN3, VNI);
+    /// otherwise delegates to [`Self::resolve_raw`].
     pub fn resolve(name: &str) -> TextFont {
         let n = name.trim();
         if n.is_empty() || n.eq_ignore_ascii_case(BUILTIN_FONT) {
@@ -305,10 +319,7 @@ impl TextFont {
                 return TextFont::Outline(f);
             }
         }
-        if let Some(f) = ttf::find(name) {
-            return TextFont::Outline(f);
-        }
-        ttf::find(&ttf::font_alt()).map(TextFont::Outline).unwrap_or(TextFont::Stroke)
+        Self::resolve_raw(name)
     }
     pub fn is_outline(&self) -> bool {
         matches!(self, TextFont::Outline(_))
