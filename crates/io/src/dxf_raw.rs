@@ -588,6 +588,101 @@ pub(crate) fn data_store(tags: &mut Vec<Tag>, d: &Drawing, modern: bool) {
     tags.splice(at..at, out);
 }
 
+/// Most constraint nodes, and connections per node, looked at in one constraint group.
+const MAX_CONSTRAINT_NODES: usize = 100_000;
+
+/// Put the status of every node of the kept 2D constraint groups (`ACDBASSOC2DCONSTRAINTGROUP`)
+/// where a DXF of the written version has it: AutoCAD 2013 and later (`modern`) write it after
+/// the node's connections, earlier versions right after its id. The groups are kept as read, so a
+/// 2013+ drawing written as an older DXF (the DWG bridge's R2000 DXF) had them in the wrong order,
+/// and the bridge read every node's status from somewhere else: AutoCAD refused the DWG ("Error
+/// Decrypting Data"). A group whose nodes can't all be found is left as it is.
+pub(crate) fn constraint_node_order(tags: &mut [Tag], modern: bool) {
+    let mut i = 0;
+    while i < tags.len() {
+        let end = tags.iter().skip(i + 1).position(|t| t.code == 0).map_or(tags.len(), |k| i + 1 + k);
+        if tags.get(i).is_some_and(|t| t.code == 0 && t.str().trim().eq_ignore_ascii_case("ACDBASSOC2DCONSTRAINTGROUP"))
+            && let Some(rec) = tags.get_mut(i + 1..end)
+        {
+            constraint_group_order(rec, modern);
+        }
+        i = end;
+    }
+}
+
+/// [`constraint_node_order`] for one group's groups after its type.
+fn constraint_group_order(rec: &mut [Tag], modern: bool) {
+    let Some(start) = rec.iter().position(|t| t.code == 100 && t.str().trim().eq_ignore_ascii_case("AcDbAssoc2dConstraintGroup")) else {
+        return;
+    };
+    let end = rec.iter().skip(start + 1).position(|t| t.code == 100 || t.code >= 1000).map_or(rec.len(), |k| start + 1 + k);
+    let Some(sec) = rec.get_mut(start + 1..end) else { return };
+    let Some(nodes) = constraint_nodes(sec) else { return };
+    for (at, len, old) in nodes {
+        // Old order: id, status, count, connections; modern: id, count, connections, status.
+        if let Some(head) = sec.get_mut(at + 1..at + len) {
+            match (old, modern) {
+                (true, true) => head.rotate_left(1),
+                (false, false) => head.rotate_right(1),
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Where each non-root node of a constraint group section starts: (index of its id, length of its
+/// id, status and connections, whether its status comes right after the id). `None` unless every
+/// node the group lists is found.
+fn constraint_nodes(sec: &[Tag]) -> Option<Vec<(usize, usize, bool)>> {
+    let int = |p: usize, code: i32| sec.get(p).filter(|t| t.code == code).and_then(|t| t.str().trim().parse::<i64>().ok());
+    let count = |p: usize| int(p, 90).and_then(|n| usize::try_from(n).ok()).filter(|n| *n <= MAX_CONSTRAINT_NODES);
+    // Version, flag and work plane, then the dependency and the actions.
+    let mut p = sec.iter().position(|t| t.code == 360)? + 1;
+    p += count(p)? + 1;
+    // The next node id, then the root node: id, connections, status (290).
+    int(p, 90)?;
+    int(p + 1, 90)?;
+    p += count(p + 2)? + 3;
+    int(p, 290)?;
+    p += 1;
+    // The registry: class name and id of each node.
+    let n = count(p)?;
+    p += 1;
+    let mut ids = Vec::with_capacity(n);
+    for _ in 0..n {
+        sec.get(p).filter(|t| t.code == 1)?;
+        ids.push(int(p + 1, 90)?);
+        p += 2;
+    }
+    let known: HashSet<i64> = ids.iter().copied().collect();
+    // Groups looked at while searching for headers, capped so a hostile group can't take long.
+    let budget = std::cell::Cell::new(MAX_CONSTRAINT_NODES.saturating_mul(100));
+    // A node header at `q`: its length and whether it is in the old order. Connections are ids of
+    // nodes (or of the root, 0), which keeps a node's data from passing for the next header.
+    let header = |q: usize, id: i64| -> Option<(usize, bool)> {
+        int(q, 90).filter(|v| *v == id)?;
+        let old = sec.get(q + 1)?.code == 70;
+        let c = q + 1 + usize::from(old);
+        let n = count(c).filter(|n| *n <= known.len())?;
+        budget.set(budget.get().checked_sub(n + 1)?);
+        for k in 0..n {
+            int(c + 1 + k, 90).filter(|v| *v == 0 || known.contains(v))?;
+        }
+        if !old {
+            int(c + 1 + n, 70)?;
+        }
+        Some((n + 3, old))
+    };
+    let mut out = Vec::with_capacity(ids.len());
+    for id in ids {
+        let at = (p..sec.len()).find(|q| header(*q, id).is_some())?;
+        let (len, old) = header(at, id)?;
+        out.push((at, len, old));
+        p = at + len;
+    }
+    Some(out)
+}
+
 /// Drop a dictionary's modelled entries (key and handle) from its groups.
 fn strip_entries(tags: &mut Vec<RawTag>) {
     let mut out = Vec::with_capacity(tags.len());
