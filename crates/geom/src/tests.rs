@@ -331,3 +331,13 @@ fn long_secant_keeps_both_intersections() {
     assert!(hits[0].0.near(Vec2::new(-2.0, 0.0), 1e-8), "{hits:?}");
     assert!(hits[1].0.near(Vec2::new(2.0, 0.0), 1e-8), "{hits:?}");
 }
+
+#[test]
+fn open_polyline_centroid_ignores_last_bulge() {
+    let pts = [Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(10.0, 10.0)];
+    let mut pl = Polyline::from_points(&pts, false);
+    let before = pl.centroid().unwrap();
+    pl.vertices[2].bulge = 1.0;
+    let after = pl.centroid().unwrap();
+    assert!(before.near(after, 1e-9), "{before:?} -> {after:?}");
+}
