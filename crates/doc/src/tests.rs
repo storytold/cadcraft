@@ -162,6 +162,45 @@ fn transform_arc_mirror_keeps_shape() {
 }
 
 #[test]
+fn mirroring_a_rotated_dimension_reflects_its_direction() {
+    let dim = |kind: DimKind, marks: DimMarks| {
+        EntityKind::Dimension(Dimension {
+            kind,
+            defpt: Vec3::ZERO,
+            text_mid: Vec3::ZERO,
+            p13: Vec3::ZERO,
+            p14: Vec3::new(7.071_067_811_865_475, 7.071_067_811_865_475, 0.0),
+            p15: Vec3::ZERO,
+            p16: Vec3::ZERO,
+            text: String::new(),
+            style: "Standard".into(),
+            measurement: 10.0,
+            text_rotation: 0.0,
+            user_text_pos: false,
+            block: None,
+            overrides: Default::default(),
+            assoc: vec![],
+            marks,
+        })
+    };
+    // A dimension line at 45° mirrored across the X axis runs at -45° (315°) and still measures 10.
+    let mut k = dim(DimKind::Linear { rotation: std::f64::consts::FRAC_PI_4 }, DimMarks::default());
+    k.transform(&Mat3::mirror(Vec2::ZERO, Vec2::X));
+    let EntityKind::Dimension(d) = k else { panic!("a dimension") };
+    let DimKind::Linear { rotation } = d.kind else { panic!("a linear dimension") };
+    assert!((rotation - 7.0 * std::f64::consts::FRAC_PI_4).abs() < 1e-9, "{rotation}");
+    let p2 = Vec2::new(7.071_067_811_865_475, -7.071_067_811_865_475);
+    assert!((p2.dot(Vec2::from_angle(rotation)).abs() - 10.0).abs() < 1e-9, "the mirrored measurement");
+
+    // Oblique extension lines reflect about the mirror line too (a 45° line here) instead of
+    // being double-reflected (120° rather than 30°).
+    let mut k = dim(DimKind::Aligned, DimMarks { oblique: Some(std::f64::consts::FRAC_PI_3), ..DimMarks::default() });
+    k.transform(&Mat3::mirror(Vec2::ZERO, Vec2::new(1.0, 1.0)));
+    let EntityKind::Dimension(d) = k else { panic!("a dimension") };
+    assert!((d.marks.oblique.unwrap_or(0.0) - (std::f64::consts::FRAC_PI_2 - std::f64::consts::FRAC_PI_3)).abs() < 1e-9, "{:?}", d.marks.oblique);
+}
+
+#[test]
 fn insert_bounds_with_cyclic_block_terminate() {
     let mut d = Drawing::new_imperial();
     let mut b = Block::new("A");

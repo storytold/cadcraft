@@ -601,7 +601,9 @@ impl DimMarks {
     /// Transform the points and angles (part of [`EntityKind::transform`]).
     fn transform(&mut self, t3: &dyn Fn(&mut Vec3), rot: f64, s: f64, mirror: bool) {
         if let Some(a) = &mut self.oblique {
-            *a = cadcraft_geom::norm_angle(if mirror { rot - (*a - rot) } else { *a + rot });
+            // A mirror reflects a direction about the mirror line: `rot` is the transformed X
+            // axis (twice the mirror line's angle), so a direction `a` lands at `rot - a`.
+            *a = cadcraft_geom::norm_angle(if mirror { rot - *a } else { *a + rot });
         }
         if let Some(j) = &mut self.jog_line {
             t3(j);
@@ -1292,7 +1294,9 @@ impl EntityKind {
                     t3(p);
                 }
                 if let DimKind::Linear { rotation } = &mut d.kind {
-                    *rotation = cadcraft_geom::norm_angle(*rotation + rot);
+                    // A mirror reflects the dimension line's direction about the mirror line:
+                    // `rot` is twice the mirror line's angle, so `a` lands at `rot - a`.
+                    *rotation = cadcraft_geom::norm_angle(if mirror { rot - *rotation } else { *rotation + rot });
                 }
                 d.marks.transform(&t3, rot, s, mirror);
                 d.block = None;
