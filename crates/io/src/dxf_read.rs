@@ -1235,11 +1235,13 @@ fn parse_entities(
         }
         if let Some((c, mut k)) = kindent {
             let h = match handle {
-                Some(h) => {
+                // A handle at the top of the range (a hostile or damaged file) can't be followed:
+                // take a fresh one instead, so new objects don't replace this one (#913).
+                Some(h) if h.0 < cadcraft_doc::HANDLE_LIMIT => {
                     d.bump_handseed(h);
                     h
                 }
-                None => d.new_handle(),
+                _ => d.new_handle(),
             };
             entity_extras(kind, tags, h, &mut k, rx);
             let more: Vec<_> =

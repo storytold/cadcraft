@@ -35,6 +35,13 @@ pub use refedit::{RefEdit, WorkItem};
 pub use store::EntityStore;
 pub use tables::*;
 
+/// Handles at or above this are not followed or handed out: a hostile or damaged file naming one
+/// (an object's handle, or its `$HANDSEED`) would leave nothing above it to allocate, and a new
+/// object given that same handle would replace the object that has it (#913). Objects read with
+/// such a handle get a fresh one; the four billion handles above the limit stay free for the
+/// drawing's own growth.
+pub const HANDLE_LIMIT: u64 = u64::MAX - 0xFFFF_FFFF;
+
 /// File data CADCraft doesn't model, kept for saving (#528).
 pub mod dynblock;
 pub mod foreign;
@@ -200,8 +207,8 @@ impl Drawing {
     }
     /// Make sure future handles don't collide with `h` (after loading a file).
     pub fn bump_handseed(&mut self, h: Handle) {
-        if h.0 >= self.handseed {
-            self.handseed = h.0.saturating_add(1);
+        if h.0 >= self.handseed && h.0 < HANDLE_LIMIT {
+            self.handseed = h.0 + 1;
         }
     }
 
