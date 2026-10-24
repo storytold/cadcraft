@@ -124,6 +124,7 @@ fn a_dimension_drawn_from_its_block_is_picked_on_the_block_text() {
     assert_eq!(pick(d, &Space::Model, Vec2::new(50.0, 33.0), 0.01), None, "not where the dimension would have set it");
 }
 
+/// Clicking in the empty wrap width of an MText does not select it.
 #[test]
 fn mtext_empty_wrap_width_is_not_picked() {
     let mut s = Session::new();
@@ -149,6 +150,7 @@ fn mtext_empty_wrap_width_is_not_picked() {
     assert_eq!(pick(d, &Space::Model, Vec2::new(50.0, -2.5), 0.5), None, "clicking in empty space of wrap width must not pick");
 }
 
+/// An MText's unused wrap width does not mask underlying geometry from being picked.
 #[test]
 fn mtext_empty_wrap_does_not_mask_other_entities() {
     let mut s = Session::new();
@@ -180,6 +182,7 @@ fn mtext_empty_wrap_does_not_mask_other_entities() {
     assert_eq!(pick(d, &Space::Model, Vec2::new(50.0, 0.0), 0.5), Some(line_h), "should pick the line, not the MText phantom box");
 }
 
+/// A rotated MText is picked on its rotated glyphs and not in its rotated unused wrap width.
 #[test]
 fn mtext_rotated_empty_wrap_does_not_pick() {
     let mut s = Session::new();
@@ -206,17 +209,19 @@ fn mtext_rotated_empty_wrap_does_not_pick() {
     assert_eq!(pick(d, &Space::Model, Vec2::new(2.5, 50.0), 0.5), None, "clicking in empty space of rotated wrap width must not pick");
 }
 
+/// Multiline MText uses per-line hit bounds so the ragged-right gap beside shorter lines is not picked.
 #[test]
 fn mtext_multiline_empty_wrap_does_not_pick() {
     let mut s = Session::new();
-    // Multi-line MText with \P: line 1 and line 2, but wrap width is 100 extending far to the right
+    // Multi-line MText with \P and unequal line lengths: line 1 extends past x=80,
+    // line 2 is short, and wrap width is 200 extending far to the right.
     s.execute(
         "mtext",
         &json!({
             "at": [0, 0],
-            "text": "LINE 1\\PLINE 2",
+            "text": "DÒNG THỨ NHẤT RẤT DÀI CON ĐƯỜNG\\PDòng 2 ngắn",
             "height": 5.0,
-            "width": 100.0,
+            "width": 200.0,
             "attach": 1,
         }),
     )
@@ -224,13 +229,21 @@ fn mtext_multiline_empty_wrap_does_not_pick() {
     let d = s.doc().unwrap();
     let mtext_h = d.model.last().unwrap().handle;
 
-    // Inside the actual text on line 1: should be picked
-    assert_eq!(pick(d, &Space::Model, Vec2::new(5.0, -2.5), 0.5), Some(mtext_h), "clicking on multi-line text should pick");
+    // Inside the actual text on line 1 (including at x=80.0): should be picked
+    assert_eq!(pick(d, &Space::Model, Vec2::new(5.0, -2.5), 0.5), Some(mtext_h), "clicking on line 1 start should pick");
+    assert_eq!(pick(d, &Space::Model, Vec2::new(80.0, -2.5), 0.5), Some(mtext_h), "x=80 is within longer line 1's horizontal extent");
 
-    // In the empty space of wrap width (e.g. at x=80.0): should NOT be picked
-    assert_eq!(pick(d, &Space::Model, Vec2::new(80.0, -2.5), 0.5), None, "clicking in empty space of multi-line wrap width must not pick");
+    // Inside the actual text on shorter line 2: should be picked
+    assert_eq!(pick(d, &Space::Model, Vec2::new(10.0, -10.5), 0.5), Some(mtext_h), "clicking on line 2 glyphs should pick");
+
+    // Beside shorter line 2, but within longer line 1's horizontal extent (x=80.0): must NOT be picked
+    assert_eq!(pick(d, &Space::Model, Vec2::new(80.0, -10.5), 0.5), None, "clicking in ragged-right gap beside shorter line 2 must not pick");
+
+    // In the empty wrap width beyond both lines: must NOT be picked
+    assert_eq!(pick(d, &Space::Model, Vec2::new(150.0, -2.5), 0.5), None, "clicking in empty wrap width beyond both lines must not pick");
 }
 
+/// Clicking directly on MText glyphs selects the MText entity.
 #[test]
 fn mtext_glyph_hit_picks_successfully() {
     let mut s = Session::new();
@@ -252,6 +265,7 @@ fn mtext_glyph_hit_picks_successfully() {
     assert_eq!(pick(d, &Space::Model, Vec2::new(15.0, 18.0), 0.5), Some(mtext_h), "direct hit on MText glyphs should pick");
 }
 
+/// An MText with empty contents does not panic or get picked.
 #[test]
 fn mtext_empty_content_does_not_panic_or_pick() {
     let mut s = Session::new();

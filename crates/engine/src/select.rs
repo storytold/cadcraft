@@ -10,15 +10,14 @@ use crate::{Accept, Prompt};
 pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
     match &e.kind {
         EntityKind::MText(t) => {
-            let pts = cadcraft_render::layout_mtext_entity(d, t).strokes.into_iter().flatten();
-            let turn = |q: Vec2| q.rotate(-t.rotation);
-            let b = Bounds2::from_points(pts.filter(|q| q.is_finite()).map(turn));
-            if b.is_empty() {
-                return Vec::new();
-            }
             let unturn = |q: Vec2| q.rotate(t.rotation);
-            let c = b.corners().map(unturn);
-            vec![vec![c[0], c[1], c[2], c[3], c[0]]]
+            mtext_line_bounds(d, t)
+                .into_iter()
+                .map(|b| {
+                    let c = b.corners().map(unturn);
+                    vec![c[0], c[1], c[2], c[3], c[0]]
+                })
+                .collect()
         }
         EntityKind::Text(_)
         | EntityKind::Insert(_)
@@ -127,7 +126,7 @@ fn in_text(d: &Drawing, e: &Entity, p: Vec2) -> bool {
         // the text there, not the text the dimension's own geometry would place.
         EntityKind::Dimension(dm) => match dm.block.as_ref().and_then(|n| d.block(n)) {
             Some(blk) => blk.entities.iter().any(|be| match &be.kind {
-                EntityKind::MText(t) => in_box(cadcraft_render::layout_mtext_entity(d, t).strokes.into_iter().flatten(), t.rotation, p),
+                EntityKind::MText(t) => in_mtext(d, t, p),
                 EntityKind::Text(_) => entity_bounds(d, be, 0).contains(p),
                 _ => false,
             }),
@@ -136,12 +135,38 @@ fn in_text(d: &Drawing, e: &Entity, p: Vec2) -> bool {
                 in_box(g.text.iter().flatten().chain(g.text_glyphs.iter().flatten().flatten()).copied(), g.text_angle, p)
             }
         },
-        EntityKind::MLeader(m) => {
-            m.text.as_ref().is_some_and(|t| in_box(cadcraft_render::layout_mtext_entity(d, t).strokes.into_iter().flatten(), t.rotation, p))
-        }
-        EntityKind::MText(t) => in_box(cadcraft_render::layout_mtext_entity(d, t).strokes.into_iter().flatten(), t.rotation, p),
+        EntityKind::MLeader(m) => m.text.as_ref().is_some_and(|t| in_mtext(d, t, p)),
+        EntityKind::MText(t) => in_mtext(d, t, p),
         _ => false,
     }
+}
+
+/// Tight bounds of each laid-out line of `t` in its unrotated (`-t.rotation`) frame.
+fn mtext_line_bounds(d: &Drawing, t: &cadcraft_doc::MText) -> Vec<Bounds2> {
+    let turn = |q: Vec2| q.rotate(-t.rotation);
+    let mut boxes: Vec<Bounds2> = cadcraft_render::layout_mtext_entity(d, t)
+        .strokes
+        .into_iter()
+        .map(|s| Bounds2::from_points(s.into_iter().filter(|q| q.is_finite()).map(turn)))
+        .filter(|b| !b.is_empty())
+        .collect();
+    boxes.sort_by(|a, b| b.max.y.total_cmp(&a.max.y));
+    let pad = (t.height.abs() * 0.25).max(1e-6);
+    let mut lines: Vec<Bounds2> = Vec::new();
+    for b in boxes {
+        if let Some(line) = lines.iter_mut().find(|l| b.max.y >= l.min.y - pad && b.min.y <= l.max.y + pad) {
+            *line = line.union(&b);
+        } else {
+            lines.push(b);
+        }
+    }
+    lines
+}
+
+/// Whether `p` lies inside any laid-out line box of `t`.
+fn in_mtext(d: &Drawing, t: &cadcraft_doc::MText, p: Vec2) -> bool {
+    let tp = p.rotate(-t.rotation);
+    mtext_line_bounds(d, t).into_iter().any(|b| b.contains(tp))
 }
 
 /// Whether `p` is inside the box around `pts` turned by `angle` (the box of text set at `angle`).
@@ -291,7 +316,10 @@ pub(crate) fn in_window(d: &Drawing, e: &Entity, known: Option<Bounds2>, bx: &Bo
         }
     });
     // A crossing box entirely inside a text/block bounding rectangle also selects it.
-    if hit || (eb.contains_box(bx) && matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::Insert(_))) {
+    if hit
+        || (eb.contains_box(bx) && matches!(e.kind, EntityKind::Text(_) | EntityKind::Insert(_)))
+        || matches!(&e.kind, EntityKind::MText(t) if in_mtext(d, t, bx.center()))
+    {
         return true;
     }
     // SOLID/TRACE are filled polygons. A crossing window wholly within the
