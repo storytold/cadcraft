@@ -1,6 +1,6 @@
 //! DXF → Drawing.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use cadcraft_color::{Color, Rgb};
 use cadcraft_doc::*;
@@ -1107,6 +1107,17 @@ fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityKind, rx: &m
     }
 }
 
+/// Allocate an entity handle that is unique within the DXF, including against handles assigned
+/// to earlier malformed or generated entities.
+fn fresh_entity_handle(d: &mut Drawing, seen: &mut HashSet<Handle>, reserved: &HashSet<Handle>) -> Handle {
+    loop {
+        let h = d.new_handle();
+        if !reserved.contains(&h) && seen.insert(h) {
+            return h;
+        }
+    }
+}
+
 /// Parse a run of entity records (ENTITIES section or a block's body) into entities. Records that
 /// can't be placed are counted in `skipped`.
 fn parse_entities(
@@ -1115,6 +1126,8 @@ fn parse_entities(
     rx: &mut Rx,
     skipped: &mut usize,
     table_cells_left: &mut usize,
+    seen_handles: &mut HashSet<Handle>,
+    reserved_handles: &HashSet<Handle>,
 ) -> Vec<(Option<String>, bool, Entity)> {
     let mut out = Vec::new();
     let mut i = 0;
@@ -1237,27 +1250,23 @@ fn parse_entities(
             let h = match handle {
                 Some(h) => {
                     d.bump_handseed(h);
-                    h
+                    if !reserved_handles.contains(&h) && seen_handles.insert(h) { h } else { fresh_entity_handle(d, seen_handles, reserved_handles) }
                 }
-                None => d.new_handle(),
+                None => fresh_entity_handle(d, seen_handles, reserved_handles),
             };
             entity_extras(kind, tags, h, &mut k, rx);
-            let more: Vec<_> =
-                extra.into_iter().map(|f| (owner.clone(), paper, Entity { handle: d.new_handle(), common: c.clone(), kind: f })).collect();
+            let more: Vec<_> = extra
+                .into_iter()
+                .map(|f| {
+                    (owner.clone(), paper, Entity { handle: fresh_entity_handle(d, seen_handles, reserved_handles), common: c.clone(), kind: f })
+                })
+                .collect();
             out.push((owner, paper, Entity { handle: h, common: c, kind: k }));
             out.extend(more);
         } else if kind == "HATCH" {
             // Without boundary data. The other records `entity` returns nothing for are read
             // elsewhere (the writer's paper viewport, the loops of a region).
             *skipped = skipped.saturating_add(1);
-        }
-    }
-    // Assign fresh handles to duplicates (hostile files).
-    let mut seen = std::collections::HashSet::new();
-    for (_, _, e) in &mut out {
-        if !seen.insert(e.handle) {
-            e.handle = d.new_handle();
-            seen.insert(e.handle);
         }
     }
     out
@@ -1698,6 +1707,18 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
     let mut blocks: Vec<(String, Vec3, String, Vec<(Option<String>, bool, Entity)>, i64)> = Vec::new();
     let mut layout_objs: Vec<(String, u32, String, PageSetup)> = Vec::new();
     let mut entities = Vec::new();
+    let mut seen_block_handles = HashSet::new();
+    let mut seen_entity_handles = HashSet::new();
+    let no_reserved_handles = HashSet::new();
+    // Model/paper-space handles retain priority if an in-memory drawing or damaged DXF also
+    // assigns one to a block entity. This preserves top-level references while letting block
+    // handles be repaired before their deferred fixups are recorded.
+    let reserved_entity_handles: HashSet<Handle> = secs
+        .iter()
+        .filter(|s| s.name == "ENTITIES")
+        .flat_map(|s| records(&s.tags))
+        .filter_map(|(_, tags)| T(&tags).s(5).and_then(|h| Handle::parse_hex(&h)))
+        .collect();
     let mut objs = Objects::default();
     // Every handle another program's file already uses is taken before anything gets a new one:
     // its $HANDSEED can be lower than its handles, and entities made while reading (the faces of
@@ -1739,7 +1760,8 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
                             j += 1;
                         }
                         let body = recs.get(i + 1..j).unwrap_or(&[]);
-                        let ents = parse_entities(body, &mut d, &mut rx, &mut n, &mut table_cells_left);
+                        let ents =
+                            parse_entities(body, &mut d, &mut rx, &mut n, &mut table_cells_left, &mut seen_block_handles, &reserved_entity_handles);
                         blocks.push((name, base, description, ents, xref));
                         i = j + 1;
                     } else {
@@ -1755,7 +1777,15 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
             // A damaged file may split its entities over several ENTITIES sections (#865).
             "ENTITIES" => {
                 let mut n = 0;
-                entities.extend(parse_entities(&records(&s.tags), &mut d, &mut rx, &mut n, &mut table_cells_left));
+                entities.extend(parse_entities(
+                    &records(&s.tags),
+                    &mut d,
+                    &mut rx,
+                    &mut n,
+                    &mut table_cells_left,
+                    &mut seen_entity_handles,
+                    &no_reserved_handles,
+                ));
                 count_skipped(&mut skipped, "ENTITIES", n);
             }
             "OBJECTS" => {
