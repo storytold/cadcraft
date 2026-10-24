@@ -103,6 +103,7 @@ mod refedit;
 mod region;
 mod rename_cmdline;
 mod rotate_reference;
+mod rotation_grip_input;
 mod select_keywords;
 mod select_similar;
 mod select_underscore_keywords;
