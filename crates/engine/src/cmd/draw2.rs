@@ -1109,8 +1109,12 @@ impl Interactive for RevcloudM {
             return Ok(Step::Continue);
         }
         if self.object {
-            let Input::Point(p) = i else { return if i == Input::Enter { Ok(Step::Cancel) } else { Ok(Step::Continue) } };
-            let h = curves::pick_at(s, p).ok_or_else(|| other("*Invalid selection*"))?;
+            let h = match i {
+                Input::Point(p) => curves::pick_at(s, p).ok_or_else(|| other("*Invalid selection*"))?,
+                Input::Pick(hs) => hs.first().copied().ok_or_else(|| other("*Invalid selection*"))?,
+                Input::Enter => return Ok(Step::Cancel),
+                _ => return Ok(Step::Continue),
+            };
             let pts = object_outline(s, h)?;
             let vs = cloud_vertices(&pts, self.arc_len, false, false).ok_or_else(|| other("The object has no area."))?;
             let nh = s.add_entity(cloud_entity(vs, self.calligraphy, self.arc_len))?;

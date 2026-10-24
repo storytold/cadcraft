@@ -372,6 +372,18 @@ fn revcloud_command_line() {
     assert_eq!(kinds(&s).len(), 4);
 }
 
+#[test]
+fn revcloud_object_accepts_entity_name() {
+    let mut s = Session::new();
+    s.execute("rectang", &json!({"p1": [0, 0], "p2": [4, 4]})).unwrap();
+    let h = s.doc().unwrap().model.last().unwrap().handle;
+    s.cmdline("revcloud o").unwrap();
+    s.input(Input::Pick(vec![h])).unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(kinds(&s).len(), 1);
+    assert!(matches!(last(&s), EntityKind::LwPolyline(p) if p.vertices.len() > 4));
+}
+
 // ---------------- BREAKLINE ----------------
 
 fn breakline_points(s: &Session) -> Vec<(f64, f64)> {
