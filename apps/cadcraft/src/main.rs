@@ -119,6 +119,12 @@ pub fn install_io() {
     cadcraft_engine::cmd::file::set_write_as(|d, name, o| {
         cadcraft_io::write_with(d, name, &cadcraft_io::SaveOptions { version: o.version, binary: o.binary }).map_err(|e| e.to_string())
     });
+    // System printers: CUPS on macOS and Linux.
+    #[cfg(unix)]
+    cadcraft_engine::cmd::plotters::set_system_printers(cadcraft_engine::cmd::plotters::SystemPrinters {
+        list: cadcraft_io::cups::printers,
+        print: |j| cadcraft_io::cups::print(j.printer, j.paper, j.copies, j.title, j.pdf),
+    });
     // AutoLISP's entget, entmake and entmod see entities as DXF groups.
     cadcraft_engine::cmd::file::set_entity_codec(cadcraft_engine::cmd::file::EntityCodec {
         groups: cadcraft_io::entity_groups,

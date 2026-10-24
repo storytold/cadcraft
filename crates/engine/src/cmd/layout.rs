@@ -80,7 +80,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["File", "Print..."])
             .key("Cmd+P")
             .alias(&["print"])
-            .params("{path? (else returns base64 `data`), layout?: current|\"Model\", paper?, landscape?, fit?: bool, scale?: number | \"1:50\", center?: bool (Model, default true), offset?: [x,y] mm (Model, when center is false; each within ±100000), lineweights?: bool, plotTransparency?: bool (default: the page setup's; PLOTTRANSPARENCYOVERRIDE 0/2 overrides it), plotArea?: extents|display|limits|window (Model) | layout, window?: [[x1,y1],[x2,y2]]} (typed or from the menu: the Plot dialog)")
+            .params("{path? (else returns base64 `data`), device?: plotter or system printer (then printed, `copies`?: 1..999, and the reply is the `job`), layout?: current|\"Model\", paper?, landscape?, fit?: bool, scale?: number | \"1:50\", center?: bool (Model, default true), offset?: [x,y] mm (Model, when center is false; each within ±100000), lineweights?: bool, plotTransparency?: bool (default: the page setup's; PLOTTRANSPARENCYOVERRIDE 0/2 overrides it), plotArea?: extents|display|limits|window (Model) | layout, window?: [[x1,y1],[x2,y2]]} (typed or from the menu: the Plot dialog)")
             .noundo(),
         CommandSpec::new("exportpdf", "Export to PDF...", |s, p| run_plot(s, &super::plotters::plot_options(s, p, "exportpdf")?, "exportpdf"))
             .menu(&["File", "Export to PDF..."])
@@ -782,6 +782,7 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
         Some(n) => Space::Paper(layout_name(cmd, s.doc()?, n)?),
         None => s.space(),
     };
+    let printer = str_param(p, "printer").map(str::trim).filter(|n| !n.is_empty());
     let mut opts = if p.is_object() { p.clone() } else { json!({}) };
     if let Some(raw) = p.get("offset") {
         let values = raw
@@ -798,6 +799,14 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
         }) {
             return Err(bad(cmd, "`offset` must contain exactly two finite millimetre values within ±100000"));
         }
+    }
+    // A printer takes the PDF (before the output's own checks: an SVG asked for is not what prints).
+    if printer.is_some()
+        && let Some(o) = opts.as_object_mut()
+    {
+        o.insert("output".into(), json!("pdf"));
+        // Printers feed portrait sheets: a landscape plot comes already turned.
+        o.insert("portraitMedia".into(), json!(true));
     }
     if matches!(space, Space::Model)
         && opts.get("output").and_then(Value::as_str).is_some_and(|output| output.eq_ignore_ascii_case("svg"))
@@ -825,6 +834,15 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
         None => space.tab_name().to_string(),
     };
     let pages = sheets.as_ref().map_or(1, Vec::len);
+    if let Some(printer) = printer {
+        let copies = p.get("copies").and_then(Value::as_u64).unwrap_or(1);
+        let title = format!("{} - {layout}", s.state()?.title);
+        let paper = str_param(p, "printerPaper").or_else(|| str_param(p, "paper")).unwrap_or_default();
+        let job = super::plotters::print_pdf(cmd, printer, paper, copies, &title, &bytes)?;
+        return Ok(
+            json!({ "printer": printer, "job": job, "copies": copies.clamp(1, super::plotters::MAX_COPIES), "bytes": bytes.len(), "layout": layout, "pages": pages }),
+        );
+    }
     match str_param(p, "path") {
         Some(_path) => {
             #[cfg(not(target_arch = "wasm32"))]

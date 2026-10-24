@@ -113,6 +113,10 @@ pub struct PlotterConfig {
     /// Name of the paper chosen when a page setup switches to this device.
     pub default_paper: String,
     pub papers: Vec<DevicePaper>,
+    /// A printer of the operating system (listed by the host, never read from or written to a
+    /// file): a plot to it is a PDF the host prints rather than a file.
+    #[serde(skip)]
+    pub system: bool,
 }
 
 impl Default for PlotterConfig {
@@ -125,6 +129,7 @@ impl Default for PlotterConfig {
             orientation: Orientation::Landscape,
             default_paper: String::new(),
             papers: Vec::new(),
+            system: false,
         }
     }
 }
