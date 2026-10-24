@@ -162,16 +162,31 @@ fn typed(code: i32, text: &str) -> Value {
 }
 
 const BINARY_SENTINEL: &[u8] = b"AutoCAD Binary DXF\r\n\x1a\0";
-/// Most group codes read from one file. A `Tag` takes 40 bytes plus its text, so this bounds the
-/// tag list to a few GB; real drawings stay far below (a 10 MB DWG is typically a few million).
-pub const MAX_TAGS: usize = 50_000_000;
+/// Most group codes read from one file by default. A `Tag` takes 40 bytes plus its text, so this
+/// bounds the tag list to roughly 6 GB plus text. It matches the 1 GB DXF rendition a DWG may
+/// convert to (a 1 GB DXF holds well over 50 million group codes, so a lower cap rejected large
+/// DWGs that converted fine, issue #1948). Set `CADCRAFT_MAX_DXF_TAGS` to raise or lower it.
+pub const MAX_TAGS: usize = 150_000_000;
+
+/// Environment variable overriding [`MAX_TAGS`] (a positive integer).
+pub const MAX_TAGS_ENV: &str = "CADCRAFT_MAX_DXF_TAGS";
+
+/// The group-code limit in effect: [`MAX_TAGS_ENV`] when set to a positive integer, else
+/// [`MAX_TAGS`].
+pub fn max_tags() -> usize {
+    max_tags_from(std::env::var(MAX_TAGS_ENV).ok().as_deref())
+}
+
+fn max_tags_from(v: Option<&str>) -> usize {
+    v.and_then(|s| s.trim().replace('_', "").parse::<usize>().ok()).filter(|&n| n > 0).unwrap_or(MAX_TAGS)
+}
 
 mod codepage;
 pub use codepage::decode_code_page;
 
 /// Parse a DXF file (ASCII or binary).
 pub fn parse(bytes: &[u8]) -> Result<Vec<Tag>> {
-    parse_with_limit(bytes, MAX_TAGS)
+    parse_with_limit(bytes, max_tags())
 }
 
 /// [`parse`] with an explicit group-code limit. For ASCII DXF the limit is checked up front from
@@ -258,7 +273,7 @@ fn unescape_unicode(s: &str) -> String {
 }
 
 pub fn parse_ascii(text: &str) -> Result<Vec<Tag>> {
-    parse_ascii_with_limit(text, MAX_TAGS)
+    parse_ascii_with_limit(text, max_tags())
 }
 
 #[allow(clippy::while_let_loop)]
@@ -344,7 +359,7 @@ impl<'a> Cur<'a> {
 
 /// Binary DXF (R13+: 2-byte group codes).
 pub fn parse_binary(b: &[u8]) -> Result<Vec<Tag>> {
-    parse_binary_with_limit(b, MAX_TAGS)
+    parse_binary_with_limit(b, max_tags())
 }
 
 fn parse_binary_with_limit(b: &[u8], max_tags: usize) -> Result<Vec<Tag>> {
@@ -681,5 +696,21 @@ mod tests {
         b.extend_from_slice(&0i16.to_le_bytes());
         b.extend_from_slice(b"EOF\0");
         assert_eq!(parse(&b).unwrap()[0].str(), "图号");
+    }
+}
+
+#[cfg(test)]
+mod limit_tests {
+    use super::*;
+
+    #[test]
+    fn tag_limit_defaults_and_env_override() {
+        assert_eq!(max_tags_from(None), MAX_TAGS);
+        assert_eq!(max_tags_from(Some("")), MAX_TAGS);
+        assert_eq!(max_tags_from(Some("0")), MAX_TAGS);
+        assert_eq!(max_tags_from(Some("abc")), MAX_TAGS);
+        assert_eq!(max_tags_from(Some(" 400_000_000 ")), 400_000_000);
+        // Issue #1948: the default must admit a DXF rendition well above 50 million group codes.
+        const { assert!(MAX_TAGS >= 100_000_000) };
     }
 }
