@@ -38,7 +38,7 @@ pub mod units;
 use std::sync::Arc;
 
 use cadcraft_doc::{Common, Drawing, Entity, EntityKind, Handle, Space};
-use cadcraft_geom::{Bounds2, Vec2};
+use cadcraft_geom::{Bounds2, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -353,6 +353,9 @@ pub struct Settings {
     pub snapunit: Vec2,
     /// OSNAPHATCH: object snaps find hatch objects (off by default, as in AutoCAD).
     pub osnaphatch: bool,
+    /// OSNAPZ: an object snap gives the point the current elevation (on) instead of the Z of the
+    /// object it snapped to (off, the default, as in AutoCAD).
+    pub osnapz: bool,
     /// GRIDUNIT in a drafting settings snapshot; zero components follow SNAPUNIT.
     pub gridunit: Vec2,
     /// Major grid line every N minor lines (GRIDMAJOR).
@@ -477,6 +480,7 @@ impl Default for Settings {
             snapmode: false,
             snapunit: Vec2::new(0.5, 0.5),
             osnaphatch: false,
+            osnapz: false,
             gridunit: Vec2::new(0.5, 0.5),
             gridmajor: 5,
             zoomfactor: 60,
@@ -658,6 +662,12 @@ pub struct Session {
     pub last_command: Option<String>,
     /// LASTPOINT.
     pub last_point: Vec2,
+    /// LASTPOINT's Z, as `(last_point, z)`: it holds only while `last_point` is still that point
+    /// (whatever sets `last_point` without a Z puts it back on z = 0). See [`Session::last_point3`].
+    last_point_z: (Vec2, f64),
+    /// The Z of the point being entered: the third number of a typed point
+    /// ([`prompt::parse_point3_with`]), 0 for a picked one. See [`Session::point_z`].
+    point_z: f64,
     /// The last segment given at a point prompt (its base point and the point): polar angles
     /// relative to the last segment (POLARMODE bit 1) are measured from it.
     pub last_segment: Option<(Vec2, Vec2)>,
@@ -734,6 +744,8 @@ impl Session {
             log: Vec::new(),
             last_command: None,
             last_point: Vec2::ZERO,
+            last_point_z: (Vec2::ZERO, 0.0),
+            point_z: 0.0,
             last_segment: None,
             last_polar: None,
             point_mods: Vec::new(),
@@ -1061,9 +1073,35 @@ impl Session {
     pub fn input_snapped(&mut self, hit: snap::SnapHit) -> Result<()> {
         let source = hit.viewport.filter(|_| self.point_mods.iter().all(|f| matches!(f, pointmod::Frame::Snap { mode } if *mode != 0)));
         let previous = std::mem::replace(&mut self.picked_viewport, source);
+        // An object snap gives the Z of what it snapped to, as in AutoCAD: a survey point's
+        // level, a contour's elevation (OSNAPZ 1 uses the current elevation instead). A point
+        // picked through a layout viewport stays at z = 0.
+        self.point_z = if hit.viewport.is_none() && hit.mode != 0 { self.snap_z(hit.point) } else { 0.0 };
         let result = self.input(hit.input());
+        self.point_z = 0.0;
         self.picked_viewport = previous;
         result
+    }
+
+    /// The Z an object snap at `p` gives a point: the Z of the object there ([`cmd::inquiry::z_at`]),
+    /// or ELEVATION with OSNAPZ on.
+    fn snap_z(&self, p: Vec2) -> f64 {
+        let elevation = self.doc().map(|d| d.header.f64("ELEVATION", 0.0)).unwrap_or(0.0);
+        let z = if self.settings.osnapz { elevation } else { cmd::inquiry::z_at(self, p) };
+        if z.is_finite() { z } else { 0.0 }
+    }
+
+    /// LASTPOINT with its Z (z = 0 unless the last point was typed with one, or relative to one).
+    pub fn last_point3(&self) -> Vec3 {
+        let (p, z) = self.last_point_z;
+        self.last_point.to3(if p == self.last_point { z } else { 0.0 })
+    }
+
+    /// The Z of the point a command is being given ([`Input::Point`] carries only X and Y): the
+    /// third number of a typed `x,y,z` or `@dx,dy,dz` (relative forms add to LASTPOINT's Z), 0
+    /// for a picked point. Commands that build 3D geometry (3DPOLY) read it with the point.
+    pub fn point_z(&self) -> f64 {
+        self.point_z
     }
 
     /// Give an input to the running command. With no command running, `Enter` repeats the last
@@ -1239,6 +1277,7 @@ impl Session {
             Some(i) => {
                 if let Input::Point(p) = &i {
                     self.last_point = *p;
+                    self.last_point_z = (*p, self.point_z);
                     if let Some(b) = base.filter(|b| b.is_finite() && p.is_finite() && b.dist(*p) > 1e-12) {
                         self.last_segment = Some((b, *p));
                     }
@@ -1568,7 +1607,13 @@ impl Session {
                 lisp::value::Value::Real(r) => self.typed(&format!("{r}")),
                 lisp::value::Value::Str(s) => self.typed(&s),
                 other => match other.as_point() {
-                    Some(p) => self.input(Input::Point(Vec2::new(p[0], p[1]))),
+                    // A 3D point keeps its Z, as a typed `x,y,z` does.
+                    Some(p) => {
+                        self.point_z = p.get(2).copied().filter(|z| z.is_finite()).unwrap_or(0.0);
+                        let r = self.input(Input::Point(Vec2::new(p[0], p[1])));
+                        self.point_z = 0.0;
+                        r
+                    }
                     None => {
                         self.echo(format!("Invalid input: {}", lisp::value::to_text(&other, true)));
                         Ok(())
@@ -1590,9 +1635,12 @@ impl Session {
             return self.input(Input::Keyword(k));
         }
         if prompt.accept.point {
-            if let Some(p) = prompt::parse_point_with(tt, self.last_point, &self.angle_settings()) {
+            if let Some(p) = prompt::parse_point3_with(tt, self.last_point3(), &self.angle_settings()) {
                 self.last_polar = prompt::parse_polar_text(tt, &self.angle_settings());
-                return self.input(Input::Point(p));
+                self.point_z = p.z;
+                let r = self.input(Input::Point(p.xy()));
+                self.point_z = 0.0;
+                return r;
             }
             // Direct distance entry along the tracking path the cursor is on, from the point it
             // comes from (an acquired or temporary tracking point needs no base point).

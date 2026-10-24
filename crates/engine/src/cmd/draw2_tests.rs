@@ -1,5 +1,5 @@
 use cadcraft_doc::EntityKind;
-use cadcraft_geom::{Arc, Vec2};
+use cadcraft_geom::{Arc, Vec2, Vec3};
 use serde_json::json;
 
 use crate::{Input, Session};
@@ -740,6 +740,40 @@ fn poly3d_json_and_command_line() {
     assert!(s.running.is_none());
     assert!(matches!(last(&s), EntityKind::Polyline3d(p) if p.points.len() == 3 && p.closed));
     assert_eq!(s.state().unwrap().undo.len(), 2);
+}
+
+#[test]
+fn poly3d_typed_points_keep_their_z() {
+    // A typed third number reaches the polyline (#1409, #1410): absolute `x,y,z`, relative
+    // `@dx,dy,dz`, and `@dx,dy`, which keeps the last point's Z, as in AutoCAD.
+    let mut s = Session::new();
+    s.cmdline("3dpoly 0,0,0 10,0,5 @0,10,-2 @5,0 #1,2,3").unwrap();
+    // A picked point lies on the XY plane.
+    s.input(Input::Point(Vec2::new(20.0, 20.0))).unwrap();
+    s.input(Input::Enter).unwrap();
+    assert!(s.running.is_none());
+    let EntityKind::Polyline3d(p) = last(&s) else { panic!("{:?}", last(&s)) };
+    let got: Vec<[f64; 3]> = p.points.iter().map(|v| [v.x, v.y, v.z]).collect();
+    assert_eq!(got, vec![[0.0, 0.0, 0.0], [10.0, 0.0, 5.0], [10.0, 10.0, 3.0], [15.0, 10.0, 3.0], [1.0, 2.0, 3.0], [20.0, 20.0, 0.0]]);
+    // LASTPOINT carries the Z of a typed point.
+    s.cmdline("3dpoly 0,0,0 4,5,6").unwrap();
+    assert_eq!(crate::sysvars::get(&s, "LASTPOINT"), Some(json!([4.0, 5.0, 6.0])));
+    s.input(Input::Enter).unwrap();
+}
+
+#[test]
+fn poly3d_flat_and_vertical_segments() {
+    // Two numbers still give z = 0.
+    let mut s = Session::new();
+    s.cmdline("3dpoly 0,0 1,0 1,1 ").unwrap();
+    assert!(matches!(last(&s), EntityKind::Polyline3d(p) if p.points.len() == 3 && p.points.iter().all(|v| v.z == 0.0)));
+    // A point straight above the last one is a new vertex, not a repeat.
+    s.cmdline("3dpoly 0,0,0 0,0,5 ").unwrap();
+    assert!(matches!(last(&s), EntityKind::Polyline3d(p) if p.points.len() == 2 && p.points[1].z == 5.0));
+    // Undo drops the Z with its point.
+    s.cmdline("3dpoly 0,0,1 1,0,2 u 0,1,3 ").unwrap();
+    let EntityKind::Polyline3d(p) = last(&s) else { panic!("{:?}", last(&s)) };
+    assert_eq!(p.points, vec![Vec3::new(0.0, 0.0, 1.0), Vec3::new(0.0, 1.0, 3.0)]);
 }
 
 #[test]

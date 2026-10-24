@@ -68,8 +68,8 @@ impl Axes {
 pub enum Frame {
     /// `FROM`: the base point once given, then the offset point.
     From { base: Option<Vec2> },
-    /// `M2P`/`MTP`: the first point once given, then the second.
-    Mid { first: Option<Vec2> },
+    /// `M2P`/`MTP`: the first point once given (with its Z), then the second.
+    Mid { first: Option<Vec2>, z: f64 },
     /// A point filter: the point to take `keep` from once given, then the rest.
     Filter { keep: Axes, first: Option<Vec2> },
     /// `<a`: the next point lies on the line through `base` in direction `dir` (a unit vector).
@@ -155,8 +155,8 @@ impl Session {
         self.point_mods.iter().fold(cmd, |p, f| match *f {
             Frame::From { base: None } => Prompt::new("Base point", point),
             Frame::From { base: Some(b) } => Prompt::new("<Offset>", point).base(b),
-            Frame::Mid { first: None } => Prompt::new("First point of mid", point),
-            Frame::Mid { first: Some(f) } => Prompt::new("Second point of mid", point).base(f),
+            Frame::Mid { first: None, .. } => Prompt::new("First point of mid", point),
+            Frame::Mid { first: Some(f), .. } => Prompt::new("Second point of mid", point).base(f),
             Frame::Filter { keep, first: None } => Prompt::new(format!("{} of", keep.name()), point).base_opt(p.base),
             Frame::Filter { keep, first: Some(_) } => Prompt::new(format!("(need {})", keep.need()), point).base_opt(p.base),
             Frame::TempTrack => Prompt::new("Specify temporary OTRACK point", point),
@@ -202,7 +202,7 @@ impl Session {
         let b = b.to_ascii_lowercase();
         match b.as_str() {
             "from" | "fro" => Some(Frame::From { base: None }),
-            "m2p" | "mtp" => Some(Frame::Mid { first: None }),
+            "m2p" | "mtp" => Some(Frame::Mid { first: None, z: 0.0 }),
             "tt" => Some(Frame::TempTrack),
             // TK, or TRACKING from three letters (TRA, TRACK).
             "tk" => Some(Frame::Track { last: None }),
@@ -299,7 +299,16 @@ impl Session {
 
     /// A point given while modifiers are pending: complete the top frame, and when it has its
     /// point, hand that to the frame (or command) below.
-    pub(crate) fn modifier_point(&mut self, mut p: Vec2) -> Result<()> {
+    pub(crate) fn modifier_point(&mut self, p: Vec2) -> Result<()> {
+        // The frames below may give the point another Z (a snap's, a midpoint's); the next
+        // point starts from the Z it comes with.
+        let z = self.point_z;
+        let result = self.modifier_point_frames(p);
+        self.point_z = z;
+        result
+    }
+
+    fn modifier_point_frames(&mut self, mut p: Vec2) -> Result<()> {
         if !p.is_finite() {
             self.echo("Invalid point.");
             return Ok(());
@@ -312,8 +321,8 @@ impl Session {
                     self.last_point = p;
                     return Ok(());
                 }
-                Frame::Mid { first: None } => {
-                    self.point_mods.push(Frame::Mid { first: Some(p) });
+                Frame::Mid { first: None, .. } => {
+                    self.point_mods.push(Frame::Mid { first: Some(p), z: self.point_z });
                     self.last_point = p;
                     return Ok(());
                 }
@@ -335,7 +344,11 @@ impl Session {
                 }
                 // The offset point is already measured from the base (`@` reads the last point).
                 Frame::From { base: Some(_) } => {}
-                Frame::Mid { first: Some(f) } => p = (f + p) * 0.5,
+                Frame::Mid { first: Some(f), z } => {
+                    p = (f + p) * 0.5;
+                    // Midway in Z too: between two snapped levels, or typed `x,y,z` points.
+                    self.point_z = (z + self.point_z) * 0.5;
+                }
                 Frame::Filter { keep, first: Some(f) } => p = keep.combine(f, p),
                 Frame::Angle { base, dir } => p = base + dir * (p - base).dot(dir),
                 Frame::Snap { mode: 0 } => {}
@@ -350,7 +363,11 @@ impl Session {
                     let hit = crate::snap::osnap(self.doc()?, &space, p, aperture, mode | hatch, base, deferred);
                     match hit {
                         Some(h) if self.point_mods.is_empty() => return self.input_snapped(h),
-                        Some(h) => p = h.point,
+                        Some(h) => {
+                            // The Z of what it snapped to, as for a snapped pick (OSNAPZ-aware).
+                            self.point_z = if h.viewport.is_none() { self.snap_z(h.point) } else { 0.0 };
+                            p = h.point;
+                        }
                         None => {
                             self.echo(format!("No {} found for specified point.", snap_name(mode)));
                             return Ok(());

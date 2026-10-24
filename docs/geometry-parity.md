@@ -51,7 +51,7 @@ constraints 10%.
 | Spline: closed/periodic | periodic | "closed" appends the first point and refits; **not periodic** (`modify2.rs:647`) |
 | Spline editing: knot insertion, split, refine, rebuild, convert to polyline | SPLINEDIT, grips | knot insertion and splitting (`curves.rs:539-622`); refine/rebuild partial |
 | Helix | yes | **no** |
-| 3D polyline | yes | stored and drawn; no 3D operations |
+| 3D polyline | yes | stored and drawn; typed vertices keep their Z (#1410); no 3D operations |
 | Regions, 3D solids, surfaces, meshes (ACIS/B-rep, NURBS surfaces, subdivision) | yes | **no** (M11) |
 
 ## Intersections (≈ 40%)

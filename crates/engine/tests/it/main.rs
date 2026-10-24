@@ -118,6 +118,7 @@ mod snap_intersections_aperture;
 mod snap_nearest;
 mod snap_overrides;
 mod snap_tracking;
+mod snap_z;
 mod snaps_more;
 mod space_is_enter;
 mod spline_degree;

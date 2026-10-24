@@ -1,7 +1,7 @@
 //! Interactive commands: prompts, inputs and the command-line coordinate grammar.
 
 use cadcraft_doc::{EntityKind, Handle};
-use cadcraft_geom::{Mat3, Vec2};
+use cadcraft_geom::{Mat3, Vec2, Vec3};
 use serde::Serialize;
 
 use crate::{Result, Session};
@@ -267,8 +267,16 @@ pub fn parse_point(text: &str, last: Vec2) -> Option<Vec2> {
 }
 
 /// `parse_point` with polar angles read per `angles` (AUNITS, ANGBASE, ANGDIR); `d<<a` and
-/// `d<<<a` measure from +X counterclockwise (in degrees and in AUNITS).
+/// `d<<<a` measure from +X counterclockwise (in degrees and in AUNITS). A third number is
+/// accepted and dropped; [`parse_point3_with`] keeps it.
 pub fn parse_point_with(text: &str, last: Vec2, angles: &crate::units::AngleSettings) -> Option<Vec2> {
+    parse_point3_with(text, last.to3(0.0), angles).map(Vec3::xy)
+}
+
+/// [`parse_point_with`] keeping Z: `x,y,z` and `#x,y,z` give that Z, `x,y` and `d<a` lie at
+/// z = 0, and the relative forms add to `last`'s Z (`@dx,dy,dz`; `@dx,dy` and `@d<a` keep it,
+/// as in AutoCAD).
+pub fn parse_point3_with(text: &str, last: Vec3, angles: &crate::units::AngleSettings) -> Option<Vec3> {
     let t = text.trim();
     if t.is_empty() {
         return None;
@@ -289,7 +297,7 @@ pub fn parse_point_with(text: &str, last: Vec2, angles: &crate::units::AngleSett
         let dist = crate::units::parse_distance(d)?;
         // `d<<a` / `d<<<a`: the override prefixes keep their `<<` / `<<<`.
         let ang = if a.starts_with('<') { angles.direction(&format!("<{a}"))? } else { angles.direction(a)? };
-        Vec2::from_angle(ang) * dist
+        (Vec2::from_angle(ang) * dist).to3(0.0)
     } else {
         let parts: Vec<&str> = body.split(',').collect();
         if parts.len() < 2 || parts.len() > 3 {
@@ -297,10 +305,11 @@ pub fn parse_point_with(text: &str, last: Vec2, angles: &crate::units::AngleSett
         }
         let x = crate::units::parse_distance(parts.first()?)?;
         let y = crate::units::parse_distance(parts.get(1)?)?;
-        if let Some(z) = parts.get(2) {
-            crate::units::parse_distance(z)?;
-        }
-        Vec2::new(x, y)
+        let z = match parts.get(2) {
+            Some(z) => crate::units::parse_distance(z)?,
+            None => 0.0,
+        };
+        Vec3::new(x, y, z)
     };
     let r = if rel { last + p } else { p };
     r.is_finite().then_some(r)
@@ -327,6 +336,30 @@ mod tests {
         assert_eq!(parse_point("1", last), None);
         assert_eq!(parse_point("a,b", last), None);
         assert_eq!(parse_point("1,2,3,4", last), None);
+    }
+
+    #[test]
+    fn points_with_z() {
+        let last = Vec3::new(10.0, 10.0, 1.0);
+        let p3 = |t: &str| parse_point3_with(t, last, &crate::units::AngleSettings::default());
+        assert_eq!(p3("1,2"), Some(Vec3::new(1.0, 2.0, 0.0)));
+        assert_eq!(p3("1,2,3"), Some(Vec3::new(1.0, 2.0, 3.0)));
+        assert_eq!(p3("#10,20,30"), Some(Vec3::new(10.0, 20.0, 30.0)));
+        assert_eq!(p3("*1,2,3"), Some(Vec3::new(1.0, 2.0, 3.0)));
+        // Relative input adds to the last point's Z; without a third number Z stays.
+        assert_eq!(p3("@0,0,5"), Some(Vec3::new(10.0, 10.0, 6.0)));
+        assert_eq!(p3("@1,2"), Some(Vec3::new(11.0, 12.0, 1.0)));
+        assert_eq!(p3("@"), Some(last));
+        assert!(p3("@5<90").is_some_and(|p| (p - Vec3::new(10.0, 15.0, 1.0)).len() < 1e-9));
+        assert!(p3("5<0").is_some_and(|p| (p - Vec3::new(5.0, 0.0, 0.0)).len() < 1e-9));
+        // Hostile forms: rejected, no panic.
+        for t in ["1,2,3,4", "1,2,", "1,2,z", "1,2,inf", "1,2,NaN", ",,", "@,,1"] {
+            assert_eq!(p3(t), None, "{t}");
+        }
+        let far = Vec3::new(0.0, 0.0, f64::MAX);
+        assert_eq!(parse_point3_with("@0,0,1e308", far, &crate::units::AngleSettings::default()), None);
+        // The 2D form is unchanged.
+        assert_eq!(parse_point("3,4,5", Vec2::new(10.0, 10.0)), Some(Vec2::new(3.0, 4.0)));
     }
 
     #[test]
