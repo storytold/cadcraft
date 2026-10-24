@@ -34,10 +34,52 @@ impl FileRef {
         !self.explicit && s.doc().is_ok_and(|d| d.block(&self.name).is_some())
     }
 
-    /// Read the file and (re)define its block. Returns the block's name.
-    pub fn define(&self, s: &mut Session) -> Result<String> {
+    /// Read the file and (re)define its block. Returns the block's name and the factor that
+    /// converts the file's `$INSUNITS` to this drawing's (1 when either declares no units).
+    pub fn define(&self, s: &mut Session) -> Result<(String, f64)> {
         let src = read_drawing(&self.path)?;
-        define_from(s, &src, &self.name)
+        let name = define_from(s, &src, &self.name)?;
+        Ok((name, unit_factor(&src, s.doc()?)))
+    }
+}
+
+/// Metres in one `$INSUNITS` unit (DXF Reference); `None` for 0 (unitless) and unknown codes.
+fn unit_metres(code: i64) -> Option<f64> {
+    Some(match code {
+        1 => 0.0254,
+        2 => 0.3048,
+        3 => 1609.344,
+        4 => 0.001,
+        5 => 0.01,
+        6 => 1.0,
+        7 => 1000.0,
+        8 => 2.54e-8,
+        9 => 2.54e-5,
+        10 => 0.9144,
+        11 => 1e-10,
+        12 => 1e-9,
+        13 => 1e-6,
+        14 => 0.1,
+        15 => 10.0,
+        16 => 100.0,
+        17 => 1e9,
+        18 => 1.495_978_707e11,
+        19 => 9.460_730_472_580_8e15,
+        20 => 3.085_677_581_491_4e16,
+        21 => 1200.0 / 3937.0,
+        22 => 1.0 / 39.37,
+        23 => 3600.0 / 3937.0,
+        24 => 6_336_000.0 / 3937.0,
+        _ => return None,
+    })
+}
+
+/// The scale that brings a file drawn in `src`'s units into `target`'s, as AutoCAD does (1 inch
+/// file into a metre drawing: 0.0254). A drawing without units is taken as is.
+fn unit_factor(src: &Drawing, target: &Drawing) -> f64 {
+    match (unit_metres(src.header.i64("INSUNITS", 0)), unit_metres(target.header.i64("INSUNITS", 0))) {
+        (Some(from), Some(to)) => from / to,
+        _ => 1.0,
     }
 }
 
@@ -231,7 +273,15 @@ pub(super) fn json_params(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if let Some(path) = str_param(&p, "file").map(str::to_string) {
         let n = name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| stem(&path));
-        name = Some(FileRef { name: n, path, explicit: true }.define(s)?);
+        let (defined, factor) = FileRef { name: n, path, explicit: true }.define(s)?;
+        name = Some(defined);
+        if factor != 1.0 {
+            // The file's units to this drawing's, on top of the scale asked for.
+            p["scale"] = match p.get("scale") {
+                Some(Value::Array(a)) => Value::Array(a.iter().map(|v| v.as_f64().map_or_else(|| v.clone(), |x| json!(x * factor))).collect()),
+                other => json!(other.and_then(Value::as_f64).unwrap_or(1.0) * factor),
+            };
+        }
     }
     if let Some(n) = name {
         p["name"] = json!(n);

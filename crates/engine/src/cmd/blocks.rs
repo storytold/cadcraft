@@ -36,7 +36,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("insert", "Block...", run_insert)
             .menu(&["Insert", "Block..."])
             .alias(&["i", "-insert", "ddinsert"])
-            .params("{name (\"*NAME\": exploded), file?: DXF/DWG path (defines or redefines block `name`, default the file name, from its model space; base point $INSBASE), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y] (block coordinates), attribs?: {TAG: value}, explode?: bool}")
+            .params("{name (\"*NAME\": exploded), file?: DXF/DWG path (defines or redefines block `name`, default the file name, from its model space; base point $INSBASE; its $INSUNITS converted to this drawing's on top of `scale`), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y] (block coordinates), attribs?: {TAG: value}, explode?: bool}")
             .interactive(|_| Ok(Box::new(InsertM::default()))),
         CommandSpec::new("attdef", "Define Attributes...", run_attdef)
             .menu(&["Draw", "Block", "Define Attributes..."])
@@ -341,6 +341,8 @@ fn run_wblock(s: &mut Session, p: &Value) -> Result<Value> {
     d.text_styles = src.text_styles.clone();
     d.dim_styles = src.dim_styles.clone();
     d.blocks = src.blocks.clone();
+    // The file keeps the units of the drawing it came from, so INSERT can convert them back (#1996).
+    d.header.set_i64("INSUNITS", src.header.i64("INSUNITS", 1));
     // The base point becomes the written drawing's origin, its insertion base: by default 0,0 for
     // objects and the block's base point for a block (`base` is then in block coordinates).
     let base = point_param(p, "base");
@@ -579,6 +581,8 @@ struct InsertM {
     explode: bool,
     /// The file waiting for the Redefine answer.
     file: Option<insert_file::FileRef>,
+    /// A file's units converted to this drawing's, applied to the scale (None: not from a file).
+    unit_factor: Option<f64>,
 }
 
 impl InsertM {
@@ -595,7 +599,7 @@ impl InsertM {
             && self.values.len() >= self.attdefs.len()
             && let (Some(n), Some(a), Some(sc), Some(r)) = (self.name.clone(), self.at, self.scale, self.rotation)
         {
-            let h = insert_with(s, &n, a, sc, r, self.base, &self.values)?;
+            let h = insert_with(s, &n, a, sc * self.unit_factor.unwrap_or(1.0), r, self.base, &self.values)?;
             if self.explode {
                 insert_file::explode_insert(s, h)?;
             }
@@ -606,6 +610,7 @@ impl InsertM {
 
     /// Block `name` chosen: collect its attribute prompts and ask for the insertion point.
     fn choose(&mut self, s: &mut Session, name: &str) -> Result<()> {
+        self.unit_factor = None;
         let Some(b) = s.doc()?.block(name).cloned() else {
             s.echo(format!("Block \"{name}\" not found."));
             return Ok(());
@@ -633,7 +638,11 @@ impl InsertM {
     /// Define the block from a file, then choose it; a file that can't be read is reported.
     fn choose_file(&mut self, s: &mut Session, f: &insert_file::FileRef) -> Result<()> {
         match f.define(s) {
-            Ok(name) => self.choose(s, &name),
+            Ok((name, factor)) => {
+                self.choose(s, &name)?;
+                self.unit_factor = Some(factor);
+                Ok(())
+            }
             Err(e) => {
                 s.echo(e.to_string());
                 Ok(())
