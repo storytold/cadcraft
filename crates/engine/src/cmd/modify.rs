@@ -308,7 +308,9 @@ enum StretchPhase {
 /// STRETCH: "Select objects" repeats until Enter. Crossing windows (implied right to left, or after
 /// `C`), windows (left to right, or after `W`) and polygons (`CP`, `WP`) select objects and mark
 /// the area whose vertices move; objects picked one at a time (or by a fence, `F`, or
-/// All/Last/Previous) move whole. Then the base point or Displacement, and the second point.
+/// All/Last/Previous) move whole. A pickfirst selection skips "Select objects": the windows that
+/// selected it with no command running mark the area, and its picked objects move whole. Then
+/// the base point or Displacement, and the second point.
 #[derive(Default)]
 struct StretchM {
     phase: StretchPhase,
@@ -317,6 +319,9 @@ struct StretchM {
     whole: Vec<Handle>,
     /// The selection windows and polygons: vertices inside any of them move.
     windows: Vec<StretchArea>,
+    /// For a pickfirst selection, the windows that selected each object: only those move its
+    /// vertices (another window over it that did not select it leaves them).
+    own_windows: std::collections::HashMap<Handle, Vec<StretchArea>>,
     removing: bool,
     /// `C`, `W`, `BOX`, `CP`, `WP` or `F` was typed: the next points are that kind of selection.
     mode: Option<SelectMode>,
@@ -326,6 +331,11 @@ struct StretchM {
 }
 
 impl StretchM {
+    /// The areas whose vertices of `h` move.
+    fn areas(&self, h: Handle) -> &[StretchArea] {
+        self.own_windows.get(&h).map_or(&self.windows, Vec::as_slice)
+    }
+
     fn add(&mut self, s: &mut Session, hs: Vec<Handle>, whole: bool) {
         let n = hs.len();
         for h in hs {
@@ -466,7 +476,7 @@ impl StretchM {
         for h in self.objs.iter().filter(|h| !self.whole.contains(h)) {
             let locked = doc.entity(*h).and_then(|e| doc.layer(&e.common.layer)).is_some_and(|l| l.locked);
             if !locked {
-                doc.modify_entity(*h, |e| stretch_entity(e, &self.windows, d))?;
+                doc.modify_entity(*h, |e| stretch_entity(e, self.areas(*h), d))?;
             }
         }
         s.set_selection(Vec::new());
@@ -479,6 +489,22 @@ impl Interactive for StretchM {
         "STRETCH"
     }
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        // A pickfirst selection is stretched at once: the vertices inside the windows that
+        // selected its objects move, and objects picked one at a time move whole (#832).
+        let pre = s.selection();
+        if !pre.is_empty() && s.settings.pickfirst {
+            for (bx, hs) in s.selection_windows() {
+                for h in hs {
+                    self.own_windows.entry(h).or_default().push(StretchArea::Box(bx));
+                }
+            }
+            self.whole = pre.iter().copied().filter(|h| !self.own_windows.contains_key(h)).collect();
+            self.objs = pre;
+            s.remember_selection(&self.objs);
+            s.echo(format!("{} found", self.objs.len()));
+            self.phase = StretchPhase::Base;
+            return Ok(Step::Continue);
+        }
         s.set_selection(Vec::new());
         s.echo("Select objects to stretch by crossing-window or crossing-polygon...");
         Ok(Step::Continue)
@@ -551,7 +577,8 @@ impl Interactive for StretchM {
                         if self.whole.contains(&e.handle) {
                             e.kind.transform(&m);
                         } else {
-                            stretch_entity(&mut e, &self.windows, c - base);
+                            let h = e.handle;
+                            stretch_entity(&mut e, self.areas(h), c - base);
                         }
                         e.kind
                     })

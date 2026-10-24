@@ -129,6 +129,10 @@ pub struct DocState {
     /// UNDO marks, BEgin/End group and Control (see [`undoctl`]).
     pub undo_ctl: undoctl::UndoCtl,
     pub selection: Vec<Handle>,
+    /// The selection windows that picked objects of [`DocState::selection`] with no command
+    /// running, with the selected objects each picked: STRETCH with this selection moves the
+    /// vertices inside them, as when its own crossing window picks the objects.
+    pub selection_windows: Vec<(Bounds2, Vec<Handle>)>,
     pub previous_selection: Vec<Handle>,
     pub path: Option<String>,
     pub title: String,
@@ -161,6 +165,7 @@ impl DocState {
             redo: Vec::new(),
             undo_ctl: undoctl::UndoCtl::default(),
             selection: Vec::new(),
+            selection_windows: Vec::new(),
             previous_selection: Vec::new(),
             path,
             title: title.into(),
@@ -838,7 +843,19 @@ impl Session {
         if let Ok(st) = self.state_mut() {
             let mut seen = std::collections::HashSet::new();
             st.selection = sel.into_iter().filter(|h| seen.insert(*h)).collect();
+            // Windows keep only the objects still selected.
+            let kept: std::collections::HashSet<Handle> = st.selection.iter().copied().collect();
+            st.selection_windows.retain_mut(|(_, hs)| {
+                hs.retain(|h| kept.contains(h));
+                !hs.is_empty()
+            });
         }
+    }
+
+    /// The selection windows that picked the current selection's objects (see
+    /// [`DocState::selection_windows`]).
+    pub fn selection_windows(&self) -> Vec<(Bounds2, Vec<Handle>)> {
+        self.state().map(|s| s.selection_windows.clone()).unwrap_or_default()
     }
 
     /// Message on the command line history.
@@ -1647,6 +1664,7 @@ impl Session {
         st.doc = snap.doc;
         st.follow_layout(&cur.doc);
         st.selection = Vec::new();
+        st.selection_windows.clear();
         st.redo.push(cur);
         st.revision += 1;
         Ok(Some(snap.label))
@@ -1658,6 +1676,7 @@ impl Session {
         st.doc = snap.doc;
         st.follow_layout(&cur.doc);
         st.selection = Vec::new();
+        st.selection_windows.clear();
         st.undo.push(cur);
         st.revision += 1;
         Ok(Some(snap.label))
@@ -1687,13 +1706,24 @@ impl Session {
         let pickadd = self.settings.pickadd;
         if let Some(pw) = self.pending_window.take() {
             let crossing = p.x < pw.corner.x;
-            let hs = select::select_window(self.doc()?, &space, Bounds2::new(pw.corner, p), crossing);
+            let bx = Bounds2::new(pw.corner, p);
+            let hs = select::select_window(self.doc()?, &space, bx, crossing);
             let hs = cmd::groups::expand(self, hs);
-            let mut sel = if pickadd || shift { self.selection() } else { Vec::new() };
-            if shift && pickadd {
+            let adding = pickadd || shift;
+            let mut sel = if adding { self.selection() } else { Vec::new() };
+            let removing = shift && pickadd;
+            if removing {
                 sel.retain(|h| !hs.contains(h));
             } else {
-                sel.extend(hs);
+                sel.extend(hs.iter().copied());
+            }
+            if let Ok(st) = self.state_mut() {
+                if !adding {
+                    st.selection_windows.clear();
+                }
+                if !removing && !hs.is_empty() {
+                    st.selection_windows.push((bx, hs));
+                }
             }
             self.set_selection(sel);
             return Ok(());
@@ -1712,6 +1742,11 @@ impl Session {
         // With group selection the object's selectable groups come (or go) with it.
         let hs = cmd::groups::expand(self, vec![h]);
         let mut sel = if pickadd || shift { self.selection() } else { Vec::new() };
+        if !(pickadd || shift)
+            && let Ok(st) = self.state_mut()
+        {
+            st.selection_windows.clear();
+        }
         let had = sel.contains(&h);
         if shift && (pickadd || had) {
             sel.retain(|x| !hs.contains(x));
