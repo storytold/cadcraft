@@ -10,7 +10,8 @@ use crate::{Accept, Prompt};
 pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
     match &e.kind {
         EntityKind::MText(t) => {
-            let unturn = |q: Vec2| q.rotate(t.rotation);
+            let insert = t.insert.xy();
+            let unturn = |q: Vec2| insert + q.rotate(t.rotation);
             mtext_line_bounds(d, t)
                 .into_iter()
                 .map(|b| {
@@ -141,31 +142,60 @@ fn in_text(d: &Drawing, e: &Entity, p: Vec2) -> bool {
     }
 }
 
-/// Tight bounds of each laid-out line of `t` in its unrotated (`-t.rotation`) frame.
+/// Tight bounds of each laid-out line of `t` in its local (`t.insert`, `-t.rotation`) frame.
 fn mtext_line_bounds(d: &Drawing, t: &cadcraft_doc::MText) -> Vec<Bounds2> {
-    let turn = |q: Vec2| q.rotate(-t.rotation);
-    let mut boxes: Vec<Bounds2> = cadcraft_render::layout_mtext_entity(d, t)
+    let insert = t.insert.xy();
+    let turn = |q: Vec2| (q - insert).rotate(-t.rotation);
+    let boxes: Vec<Bounds2> = cadcraft_render::layout_mtext_entity(d, t)
         .strokes
         .into_iter()
         .map(|s| Bounds2::from_points(s.into_iter().filter(|q| q.is_finite()).map(turn)))
         .filter(|b| !b.is_empty())
         .collect();
-    boxes.sort_by(|a, b| b.max.y.total_cmp(&a.max.y));
+    if boxes.is_empty() {
+        return Vec::new();
+    }
     let pad = (t.height.abs() * 0.25).max(1e-6);
-    let mut lines: Vec<Bounds2> = Vec::new();
-    for b in boxes {
-        if let Some(line) = lines.iter_mut().find(|l| b.max.y >= l.min.y - pad && b.min.y <= l.max.y + pad) {
+    let col_info = t.columns.as_ref().filter(|_| t.width.is_finite() && t.width > 0.0).map(|c| {
+        let gutter = if c.gutter.is_finite() && c.gutter >= 0.0 { c.gutter } else { 0.0 };
+        let step = (t.width + gutter).max(1e-9);
+        let acol = (t.attach.clamp(1, 9) - 1) % 3;
+        let n_cols = if c.kind == cadcraft_doc::MTextColumnType::Static {
+            usize::from(c.count.clamp(1, 100))
+        } else {
+            let all = Bounds2::from_points(boxes.iter().flat_map(|b| [b.min, b.max]));
+            ((all.width() + gutter) / step).ceil().clamp(1.0, 100.0) as usize
+        };
+        let total_w = t.width * n_cols as f64 + gutter * n_cols.saturating_sub(1) as f64;
+        let box_x0 = match acol {
+            0 => 0.0,
+            1 => -total_w / 2.0,
+            _ => -total_w,
+        };
+        (box_x0, step)
+    });
+    let mut by_col: Vec<(usize, Bounds2)> = boxes
+        .into_iter()
+        .map(|b| {
+            let col = col_info.map(|(x0, step)| ((b.center().x - x0) / step).floor().clamp(0.0, 100.0) as usize).unwrap_or(0);
+            (col, b)
+        })
+        .collect();
+    by_col.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.max.y.total_cmp(&a.1.max.y)));
+    let mut lines: Vec<(usize, Bounds2)> = Vec::new();
+    for (col, b) in by_col {
+        if let Some((_, line)) = lines.iter_mut().find(|(c, l)| *c == col && b.max.y >= l.min.y - pad && b.min.y <= l.max.y + pad) {
             *line = line.union(&b);
         } else {
-            lines.push(b);
+            lines.push((col, b));
         }
     }
-    lines
+    lines.into_iter().map(|(_, b)| b).collect()
 }
 
 /// Whether `p` lies inside any laid-out line box of `t`.
 fn in_mtext(d: &Drawing, t: &cadcraft_doc::MText, p: Vec2) -> bool {
-    let tp = p.rotate(-t.rotation);
+    let tp = (p - t.insert.xy()).rotate(-t.rotation);
     mtext_line_bounds(d, t).into_iter().any(|b| b.contains(tp))
 }
 
