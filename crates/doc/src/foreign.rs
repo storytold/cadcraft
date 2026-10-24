@@ -84,8 +84,84 @@ impl Foreign {
             && self.data_store.is_empty()
     }
 
+    /// Re-key what is kept for the record named `from` under each of `kinds` (e.g. `["LAYER"]`, or
+    /// `["BLOCK_RECORD", "BLOCK", "ENDBLK"]` for a block) to the name `to`, after a rename: its
+    /// extras ([`Foreign::records`]) and the roles of its file handles ([`Foreign::targets`]), so
+    /// saving writes its xdata, extension dictionary and reactors on the renamed record. Names
+    /// compare trimmed and upper-case, as the reader keys them, so a rename that only changes case
+    /// changes nothing.
+    pub fn rename(&mut self, kinds: &[&str], from: &str, to: &str) {
+        let (from, to) = (from.trim().to_ascii_uppercase(), to.trim().to_ascii_uppercase());
+        if from == to {
+            return;
+        }
+        for kind in kinds {
+            let old: ForeignKey = ((*kind).to_string(), from.clone());
+            let new: ForeignKey = ((*kind).to_string(), to.clone());
+            if let Some(extra) = self.records.remove(&old) {
+                self.records.insert(new.clone(), extra);
+            }
+            self.targets.values_mut().filter(|k| **k == old).for_each(|k| *k = new.clone());
+        }
+    }
+
+    /// Whether anything is kept for the record named `from` under one of `kinds`: what
+    /// [`Foreign::rename`] would re-key.
+    pub fn names(&self, kinds: &[&str], from: &str) -> bool {
+        let from = from.trim().to_ascii_uppercase();
+        let hit = |k: &ForeignKey| k.1 == from && kinds.contains(&k.0.as_str());
+        self.records.keys().any(hit) || self.targets.values().any(hit)
+    }
+
+    /// [`Foreign::rename`] on a drawing's shared copy, which is cloned only when it keeps
+    /// something for the renamed record and the name really changes (not only its case).
+    pub fn rename_shared(this: &mut std::sync::Arc<Foreign>, kinds: &[&str], from: &str, to: &str) {
+        if !from.trim().eq_ignore_ascii_case(to.trim()) && this.names(kinds, from) {
+            std::sync::Arc::make_mut(this).rename(kinds, from, to);
+        }
+    }
+
     /// The entities the data store has records for (their 320 handles).
     pub fn data_store_entities(&self) -> std::collections::BTreeSet<Handle> {
         self.data_store.iter().filter(|t| t.code == 320).filter_map(|t| Handle::parse_hex(t.value.trim())).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(k: &str, n: &str) -> ForeignKey {
+        (k.to_string(), n.to_string())
+    }
+
+    #[test]
+    fn rename_rekeys_records_and_targets_of_the_given_kinds_only() {
+        let mut f = Foreign::default();
+        let xdict = ForeignExtra { xdict: Some(Handle(0x40)), ..ForeignExtra::default() };
+        f.records.insert(key("BLOCK_RECORD", "DOOR"), xdict.clone());
+        f.records.insert(key("LAYER", "DOOR"), ForeignExtra { reactors: vec![Handle(0x41)], ..ForeignExtra::default() });
+        f.targets.insert(Handle(0x10), key("BLOCK_RECORD", "DOOR"));
+        f.targets.insert(Handle(0x11), key("BLOCK", "DOOR"));
+        f.targets.insert(Handle(0x12), key("LAYER", "DOOR"));
+        f.rename(&["BLOCK_RECORD", "BLOCK", "ENDBLK"], "Door", "Gate");
+        assert_eq!(f.records.get(&key("BLOCK_RECORD", "GATE")), Some(&xdict));
+        assert!(!f.records.contains_key(&key("BLOCK_RECORD", "DOOR")));
+        assert!(f.records.contains_key(&key("LAYER", "DOOR")), "another kind with the same name stays");
+        assert_eq!(f.targets.get(&Handle(0x10)), Some(&key("BLOCK_RECORD", "GATE")));
+        assert_eq!(f.targets.get(&Handle(0x11)), Some(&key("BLOCK", "GATE")));
+        assert_eq!(f.targets.get(&Handle(0x12)), Some(&key("LAYER", "DOOR")));
+    }
+
+    #[test]
+    fn rename_shared_leaves_an_unrelated_drawing_shared() {
+        let mut f = Foreign::default();
+        f.records.insert(key("LAYER", "A"), ForeignExtra { xdict: Some(Handle(0x40)), ..ForeignExtra::default() });
+        let mut a = std::sync::Arc::new(f);
+        let snapshot = a.clone();
+        Foreign::rename_shared(&mut a, &["LAYER"], "B", "C");
+        assert!(std::sync::Arc::ptr_eq(&a, &snapshot));
+        Foreign::rename_shared(&mut a, &["LAYER"], "a", "c");
+        assert!(a.records.contains_key(&key("LAYER", "C")) && snapshot.records.contains_key(&key("LAYER", "A")));
     }
 }

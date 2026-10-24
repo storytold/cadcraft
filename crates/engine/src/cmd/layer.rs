@@ -239,6 +239,7 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
     *l = updated;
     if let Some(nn) = new_name {
         l.name = nn.clone();
+        cadcraft_doc::foreign::Foreign::rename_shared(&mut d.foreign, &["LAYER"], &old, &nn);
         // Re-point entities in model space, every layout and every block definition.
         repoint(&mut d.model, &old, &nn);
         for layout in &mut d.layouts {

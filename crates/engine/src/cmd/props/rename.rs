@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use cadcraft_doc::foreign::Foreign;
 use cadcraft_doc::{Drawing, EntityKind, EntityStore, Handle};
 use serde_json::json;
 
@@ -54,6 +55,7 @@ pub(super) fn block(s: &mut Session, from: &str, to: &str) -> Result<()> {
     let mut b = d.blocks.remove(&key).ok_or_else(|| bad("rename", "no such block"))?;
     Arc::make_mut(&mut b).name = to.clone();
     d.blocks.insert(to.clone(), b);
+    Foreign::rename_shared(&mut d.foreign, &["BLOCK_RECORD", "BLOCK", "ENDBLK"], &key, &to);
     let uses = |k: &EntityKind| match k {
         EntityKind::Insert(i) => i.block.eq_ignore_ascii_case(&key),
         EntityKind::MLeader(m) => m.block.as_ref().is_some_and(|b| b.block.eq_ignore_ascii_case(&key)),
@@ -100,6 +102,13 @@ pub(super) fn simple(s: &mut Session, table: &str, from: &str, to: &str) -> Resu
     }
     let n = names.iter_mut().find(|n| n.eq_ignore_ascii_case(from)).ok_or_else(|| bad("rename", format!("no {table} `{from}`")))?;
     let old = std::mem::replace(&mut **n, to.clone());
+    let kind = match table {
+        "mleaderstyle" => "NOD/ACAD_MLEADERSTYLE",
+        "tablestyle" => "NOD/ACAD_TABLESTYLE",
+        "view" => "VIEW",
+        _ => "UCS",
+    };
+    Foreign::rename_shared(&mut d.foreign, &[kind], &old, &to);
     let current = match table {
         "mleaderstyle" => "CMLEADERSTYLE",
         "tablestyle" => "CTABLESTYLE",
