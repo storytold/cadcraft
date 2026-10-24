@@ -60,6 +60,21 @@ struct Graph {
     edge_src: HashMap<(usize, usize), usize>,
 }
 
+/// Records the crossing of segments `i` and `j`, if any, as split parameters on both.
+fn split_pair(segs: &[(Vec2, Vec2)], splits: &mut [Vec<f64>], i: usize, j: usize) {
+    let (Some(si), Some(sj)) = (segs.get(i), segs.get(j)) else { return };
+    let li = Line::new(si.0, si.1);
+    let lj = Line::new(sj.0, sj.1);
+    if let Some(x) = line_line(&li, &lj) {
+        if let Some(v) = splits.get_mut(i) {
+            v.push(li.param_of(x).clamp(0.0, 1.0));
+        }
+        if let Some(v) = splits.get_mut(j) {
+            v.push(lj.param_of(x).clamp(0.0, 1.0));
+        }
+    }
+}
+
 fn build(polys: &[Vec<Vec2>], tol: f64) -> Option<Graph> {
     let mut segs: Vec<(Vec2, Vec2)> = Vec::new();
     let mut owner: Vec<usize> = Vec::new();
@@ -94,16 +109,13 @@ fn build(polys: &[Vec<Vec2>], tol: f64) -> Option<Graph> {
         )
     };
     let mut grid: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+    let mut long: Vec<usize> = Vec::new();
     for (i, (a, b)) in segs.iter().enumerate() {
         let (x0, y0) = cell(a.min(*b));
         let (x1, y1) = cell(a.max(*b));
         if (x1 - x0 + 1) * (y1 - y0 + 1) > 4096 {
-            // Very long segment: register in a coarse band.
-            for gx in (x0..=x1).step_by(((x1 - x0) / 64).max(1)) {
-                for gy in (y0..=y1).step_by(((y1 - y0) / 64).max(1)) {
-                    grid.entry((gx, gy)).or_default().push(i);
-                }
-            }
+            // Very long segment: too many cells to register in; it is tested against every segment below.
+            long.push(i);
             continue;
         }
         for gx in x0..=x1 {
@@ -130,20 +142,21 @@ fn build(polys: &[Vec<Vec2>], tol: f64) -> Option<Graph> {
                 if i == j || !tested.insert((i.min(j), i.max(j))) {
                     continue;
                 }
-                let (Some(si), Some(sj)) = (segs.get(i), segs.get(j)) else { continue };
-                let li = Line::new(si.0, si.1);
-                let lj = Line::new(sj.0, sj.1);
-                if let Some(x) = line_line(&li, &lj) {
-                    if let Some(v) = splits.get_mut(i) {
-                        v.push(li.param_of(x).clamp(0.0, 1.0));
-                    }
-                    if let Some(v) = splits.get_mut(j) {
-                        v.push(lj.param_of(x).clamp(0.0, 1.0));
-                    }
-                }
+                split_pair(&segs, &mut splits, i, j);
                 if tested.len() > 20_000_000 {
                     return None;
                 }
+            }
+        }
+    }
+    for &i in &long {
+        for j in 0..n {
+            if i == j || !tested.insert((i.min(j), i.max(j))) {
+                continue;
+            }
+            split_pair(&segs, &mut splits, i, j);
+            if tested.len() > 20_000_000 {
+                return None;
             }
         }
     }
@@ -525,6 +538,20 @@ mod tests {
 
     fn square(x0: f64, y0: f64, s: f64) -> Vec<Vec2> {
         vec![Vec2::new(x0, y0), Vec2::new(x0 + s, y0), Vec2::new(x0 + s, y0 + s), Vec2::new(x0, y0 + s), Vec2::new(x0, y0)]
+    }
+
+    #[test]
+    fn long_segment_crossing_in_unsampled_cell_is_split() {
+        // A diagonal long enough to skip the grid, and a short segment crossing it in a cell the old coarse sampling missed.
+        let mut polys = vec![vec![Vec2::new(0.0, 0.0), Vec2::new(1000.0, 1000.0)], vec![Vec2::new(11.0, 12.0), Vec2::new(12.0, 11.0)]];
+        for i in 0..17_000usize {
+            let x = 600.0 + (i % 130) as f64 * 2.0;
+            let y = 100.0 + (i / 130) as f64 * 2.0;
+            polys.push(vec![Vec2::new(x, y), Vec2::new(x + 1.0, y)]);
+        }
+        let g = build(&polys, 1e-6).unwrap();
+        let hit = g.pts.iter().position(|p| p.near(Vec2::new(11.5, 11.5), 1e-6)).unwrap();
+        assert_eq!(g.adj[hit].len(), 4);
     }
 
     #[test]
