@@ -852,6 +852,7 @@
 	Set Current Viewport	Зробити видовий екран поточним
 	Set Layer Properties	Задати властивості шару
 	Set Properties	Задати властивості
+	Describe Properties	Описати властивості
 	Set Table Cell	Задати комірку таблиці
 	Set Table Cell Style	Задати стиль комірки таблиці
 	Set Variable	Задати змінну
@@ -1365,3 +1366,146 @@
 	Discard	Скасувати зміни
 	Customize	Налаштування інтерфейсу
 	Edit Command Aliases (PGP)...	Редагувати псевдоніми команд (PGP)...
+# Properties palette: text, mtext and dimension rows (properties.describe)
+	Overrides the dimension style. Right-click to use the style's value.	Перевизначає розмірний стиль. Клацніть правою кнопкою, щоб використати значення стилю.
+	Use the style's value	Використати значення стилю
+	Set by text style "{style}", which has a fixed height. Give the style a height of 0 to use the dimension text height.	Задано текстовим стилем «{style}» із фіксованою висотою. Задайте стилю висоту 0, щоб використовувати висоту тексту розміру.
+	Some of these dimensions take their text height from a fixed-height text style.	Деякі з цих розмірів беруть висоту тексту з текстового стилю з фіксованою висотою.
+	{property}: that value can't be used here.	{property}: це значення тут не можна використати.
+	Misc	Інше
+	Lines & Arrows	Лінії та стрілки
+	Fit	Вписування
+	Primary Units	Основні одиниці
+	Alternate Units	Альтернативні одиниці
+	Tolerances	Допуски
+	Style	Стиль
+	Annotative	Анотативний
+	Justification	Вирівнювання
+	Obliquing	Кут нахилу
+	Text alignment X	Точка вирівнювання X
+	Text alignment Y	Точка вирівнювання Y
+	Columns	Стовпці
+	Line space factor	Коефіцієнт міжрядкового інтервалу
+	Line space distance	Міжрядковий інтервал
+	Line space style	Тип міжрядкового інтервалу
+	At least	Не менше
+	Exactly	Точно
+	Middle	Посередині
+	Top center	Угорі по центру
+	Middle left	Посередині ліворуч
+	Middle center	Посередині по центру
+	Middle right	Посередині праворуч
+	Bottom center	Унизу по центру
+	Top	Угорі
+	Bottom	Унизу
+	Arrow 1	Стрілка 1
+	Arrow 2	Стрілка 2
+	Arrow size	Розмір стрілки
+	Tick size	Розмір засічки
+	Dim line color	Колір розмірної лінії
+	Dim line linetype	Тип розмірної лінії
+	Dim line lineweight	Товщина розмірної лінії
+	Dim line ext	Подовження розмірної лінії
+	Hide dim line 1	Приховати розмірну лінію 1
+	Hide dim line 2	Приховати розмірну лінію 2
+	Ext line color	Колір виносної лінії
+	Ext line 1 linetype	Тип виносної лінії 1
+	Ext line 2 linetype	Тип виносної лінії 2
+	Ext line lineweight	Товщина виносної лінії
+	Ext line ext	Подовження виносної лінії
+	Ext line offset	Відступ виносної лінії
+	Ext line fixed	Фіксована виносна лінія
+	Ext line length	Довжина виносної лінії
+	Hide ext line 1	Приховати виносну лінію 1
+	Hide ext line 2	Приховати виносну лінію 2
+	Center mark size	Розмір маркера центру
+	Jog angle	Кут зламу
+	Arc length symbol	Символ довжини дуги
+	Before text	Перед текстом
+	Above text	Над текстом
+	Text offset	Відступ тексту
+	Text outside align	Вирівнювання тексту зовні
+	Text pos hor	Положення тексту по горизонталі
+	Text pos vert	Положення тексту по вертикалі
+	Text inside align	Вирівнювання тексту всередині
+	Text position X	Положення тексту X
+	Text position Y	Положення тексту Y
+	Text rotation	Поворот тексту
+	Measurement	Вимір
+	At Ext Line 1	Біля виносної лінії 1
+	At Ext Line 2	Біля виносної лінії 2
+	Over Ext Line 1	Над виносною лінією 1
+	Over Ext Line 2	Над виносною лінією 2
+	Above	Над лінією
+	Below	Під лінією
+	Outside	Зовні
+	JIS	JIS
+	Dim line forced	Примусова розмірна лінія
+	Suppress arrows	Приховувати стрілки, що не вміщуються
+	Dim scale overall	Загальний масштаб розміру
+	Text inside	Текст усередині
+	Text movement	Переміщення тексту
+	Text and arrows	Текст і стрілки
+	Arrows	Стрілки
+	Best fit	Найкраще вписування
+	Keep dim line with text	Розмірна лінія рухається з текстом
+	Move text, add leader	Перемістити текст і додати виноску
+	Move text, no leader	Перемістити текст без виноски
+	Decimal separator	Десятковий роздільник
+	Period	Крапка
+	Comma	Кома
+	Space	Пробіл
+	Dim prefix	Префікс розміру
+	Dim roundoff	Округлення розміру
+	Dim scale linear	Лінійний масштаб розміру
+	Dim suffix	Суфікс розміру
+	Dim units	Одиниці розміру
+	Scientific	Науковий
+	Decimal	Десятковий
+	Engineering	Інженерний
+	Architectural	Архітектурний
+	Fractional	Дробовий
+	Windows desktop	Як у Windows
+	Architectural stacked	Архітектурний (дріб стовпчиком)
+	Fractional stacked	Дробовий (дріб стовпчиком)
+	Precision	Точність
+	Fraction format	Формат дробу
+	Horizontal stacking	Горизонтальний дріб
+	Diagonal stacking	Діагональний дріб
+	Not stacked	Дріб у рядок
+	Angle format	Формат кута
+	Decimal degrees	Десяткові градуси
+	Degrees Minutes Seconds	Градуси, мінути, секунди
+	Gradians	Гради
+	Radians	Радіани
+	Angle precision	Точність кута
+	Alt enabled	Альтернативні одиниці ввімкнено
+	Alt format	Формат альтернативних одиниць
+	Alt precision	Точність альтернативних одиниць
+	Alt scale factor	Коефіцієнт альтернативних одиниць
+	Alt round	Округлення альтернативних одиниць
+	Alt prefix	Префікс альтернативних одиниць
+	Alt suffix	Суфікс альтернативних одиниць
+	Limits	Граничні розміри
+	Upper tolerance	Верхнє відхилення
+	Lower tolerance	Нижнє відхилення
+	Tolerance precision	Точність допуску
+	Tolerance height	Висота допуску
+	Tolerance pos vert	Вертикальне положення допуску
+	Closed filled	Замкнена зафарбована
+	Closed blank	Замкнена порожня
+	Dot	Точка
+	Architectural tick	Архітектурна засічка
+	Open arrow	Відкрита стрілка
+	Origin indicator	Позначка початку
+	Origin indicator 2	Позначка початку 2
+	Right angle	Прямий кут
+	Open 30	Відкрита 30
+	Dot small	Мала точка
+	Dot blank	Порожня точка
+	Small	Мала
+	Box blank	Порожній квадрат
+	Box filled	Зафарбований квадрат
+	Datum triangle	Базовий трикутник
+	Datum triangle filled	Зафарбований базовий трикутник
+	Integral	Інтеграл
