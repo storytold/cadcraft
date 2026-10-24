@@ -963,6 +963,19 @@ impl Session {
 
     // ---------------- interactive commands ----------------
 
+    /// Whether [`Session::start`] knows `name` as typed: a command or alias, a command defined in
+    /// LISP, or a system variable.
+    pub fn knows_command(&self, name: &str) -> bool {
+        let name = name.trim();
+        let name = name.strip_prefix('\'').unwrap_or(name);
+        let lower = name.trim_start_matches(['_', '.', '-']).to_ascii_lowercase();
+        let dashed = cmd::resolve_alias(&name.trim_start_matches(['_', '.']).to_ascii_lowercase());
+        find_command(&dashed).is_some()
+            || find_command(&cmd::resolve_alias(&lower)).is_some()
+            || self.lisp_command(&lower).is_some()
+            || (!name.starts_with(['_', '.', '-']) && sysvars::get(self, &lower.to_ascii_uppercase()).is_some())
+    }
+
     /// Start a command by name or alias as if typed at the command line.
     pub fn start(&mut self, name: &str) -> Result<()> {
         self.last_polar = None;

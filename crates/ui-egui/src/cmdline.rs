@@ -372,6 +372,7 @@ pub fn submit(app: &mut CadApp) {
         }
     }
     let text = std::mem::take(&mut app.cmd.buffer);
+    let text = autocompleted(app, text);
     app.cmd.locked_second = None;
     app.cmd.history_pos = None;
     if !text.trim().is_empty() && !app.session.prompting() {
@@ -388,6 +389,15 @@ pub fn submit(app: &mut CadApp) {
         return;
     }
     app.cmdline(&text);
+}
+
+/// AutoComplete on Enter or Space at `Command:`: a word that is no command, alias, LISP command or
+/// system variable runs the top suggestion, the highlighted row of the list (`LAYIS` runs LAYISO).
+fn autocompleted(app: &CadApp, text: String) -> String {
+    if app.session.prompting() || app.session.knows_command(&text) {
+        return text;
+    }
+    suggestions(&text).into_iter().next().map_or(text, |s| s.id)
 }
 
 fn visible_lines(app: &CadApp, canvas: Rect, bar: Rect) -> usize {
@@ -821,5 +831,44 @@ mod autocomplete_tests {
         app.cmd.buffer = "rec".to_string();
         tab(&mut app);
         assert_eq!(app.cmd.buffer, "RECTANG");
+    }
+
+    fn enter(app: &mut CadApp, typed: &str) -> Vec<String> {
+        let before = app.session.log.len();
+        app.cmd.buffer = typed.to_string();
+        submit(app);
+        app.session.log.iter().skip(before).cloned().collect()
+    }
+
+    #[test]
+    fn enter_runs_the_top_suggestion_for_a_partial_name() {
+        let mut app = CadApp::new(cadcraft_engine::Session::empty(), crate::Services::default());
+        app.start("ui.sample");
+        assert_eq!(suggestions("layis")[0].id, "LAYISO");
+        let out = enter(&mut app, "layis");
+        assert!(out.iter().any(|l| l == "Command: LAYISO"), "{out:?}");
+        assert!(!out.iter().any(|l| l.contains("unknown command")), "{out:?}");
+        assert_eq!(app.cmd.history.last().map(String::as_str), Some("LAYISO"));
+    }
+
+    #[test]
+    fn enter_keeps_what_runs_as_typed() {
+        let mut app = CadApp::new(cadcraft_engine::Session::empty(), crate::Services::default());
+        app.start("ui.sample");
+        // A LISP command whose name is also the start of LINE runs, not LINE.
+        enter(&mut app, "(defun c:lin () (princ \"lisp lin\"))");
+        assert!(!suggestions("lin").is_empty());
+        let out = enter(&mut app, "lin");
+        assert!(out.iter().any(|l| l == "Command: LIN"), "{out:?}");
+        assert!(!out.iter().any(|l| l == "Command: LINE"), "{out:?}");
+        // Nothing to suggest: the typed text is reported as it was.
+        let out = enter(&mut app, "zzqq");
+        assert!(out.iter().any(|l| l.contains("unknown command") && l.contains("zzqq")), "{out:?}");
+        // At a command's prompt the text is that command's input, not a command name.
+        app.session.cancel();
+        enter(&mut app, "line");
+        let out = enter(&mut app, "layis");
+        assert!(!out.iter().any(|l| l == "Command: LAYISO"), "{out:?}");
+        assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("line"));
     }
 }
