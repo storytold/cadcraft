@@ -19,6 +19,7 @@ mod mtext;
 mod stroke;
 pub mod subset;
 pub mod ttf;
+pub mod vietnamese;
 
 use cadcraft_geom::{Bounds2, Vec2};
 
@@ -285,12 +286,28 @@ impl TextFont {
     /// can't find (an SHX file, a missing TTF), the FONTALT font ([`ttf::font_alt`]) when set;
     /// else the stroke font.
     pub fn resolve(name: &str) -> TextFont {
-        if let Some(f) = ttf::find(name) {
-            return TextFont::Outline(f);
-        }
         let n = name.trim();
         if n.is_empty() || n.eq_ignore_ascii_case(BUILTIN_FONT) {
             return TextFont::Stroke;
+        }
+        // Legacy 8-bit Vietnamese fonts (VNI, TCVN3) lack proper Unicode CMAP tables.
+        // Once text is transcoded to Unicode NFC, we map them to their modern Unicode
+        // equivalents (Arial / Times New Roman) so letters like 'Á', 'Ố', 'Đ' use correct
+        // Unicode glyphs rather than legacy 8-bit tone marks.
+        if vietnamese::is_vietnamese_font(n).is_some() {
+            let lower = n.to_ascii_lowercase();
+            let is_serif = lower.contains("time") || lower.contains("century") || lower.contains("roman");
+            let face = if is_serif {
+                ttf::find("times new roman").or_else(|| ttf::find("times")).or_else(|| ttf::find("liberation serif")).or_else(|| ttf::find("arial"))
+            } else {
+                ttf::find("arial").or_else(|| ttf::find("segoe ui")).or_else(|| ttf::find("dejavu sans"))
+            };
+            if let Some(f) = face {
+                return TextFont::Outline(f);
+            }
+        }
+        if let Some(f) = ttf::find(name) {
+            return TextFont::Outline(f);
         }
         ttf::find(&ttf::font_alt()).map(TextFont::Outline).unwrap_or(TextFont::Stroke)
     }
@@ -639,6 +656,14 @@ mod tests {
         assert!(u[0].1 && u[1].1 && !u[2].1);
         assert_eq!(decode_controls("%%065")[0].0, 'A');
         assert_eq!(decode_controls("%%").len(), 2);
+    }
+
+    #[test]
+    fn test_shape_hinh_dang() {
+        let sh = shape_stroke("HÌNH DÁNG", 1.0, 1.0, 0.0);
+        assert!(sh.width > 5.0);
+        let font = TextFont::resolve("VHELVCN.TTF");
+        assert!(font.is_outline());
     }
 
     #[test]

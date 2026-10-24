@@ -1,0 +1,574 @@
+//! Legacy Vietnamese encoding transcoding for CAD text.
+//!
+//! In Vietnamese AEC CAD workflows, legacy drawings frequently use 8-bit encodings:
+//! - **TCVN 5712 / TCVN3 (ABC)**: Paired with fonts starting with `.Vn` or `vn` (e.g. `.VnTime`,
+//!   `.VnArial`, `.VnTimeH`, `vnsimli.shx`).
+//! - **VNI Windows**: Paired with fonts starting with `VNI-` (e.g. `VNI-Helve`, `VNI-Times`).
+//!
+//! When CAD files store these strings under `$DWGCODEPAGE ANSI_1252`, characters become mojibake
+//! unless transcoded to Unicode NFC. This module provides zero-allocation heuristics and linear-time
+//! deterministic transcoding with zero third-party dependencies.
+
+use std::borrow::Cow;
+
+/// Detected or specified legacy Vietnamese encoding.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VietnameseEncoding {
+    /// TCVN3 (ABC) single-byte lowercase / composite uppercase encoding.
+    Tcvn3,
+    /// TCVN3H all-uppercase font encoding (where lowercase byte slots display capital letters).
+    Tcvn3H,
+    /// VNI Windows composite and extended byte encoding.
+    Vni,
+}
+
+/// Detect whether a font name indicates a legacy Vietnamese encoding.
+pub fn is_vietnamese_font(font: &str) -> Option<VietnameseEncoding> {
+    let lower = font.trim().to_ascii_lowercase();
+    let stem = lower.strip_suffix(".ttf").or_else(|| lower.strip_suffix(".shx")).or_else(|| lower.strip_suffix(".otf")).unwrap_or(&lower);
+
+    if stem.starts_with("vni")
+        || stem.starts_with("vni-")
+        || stem.starts_with("vni_")
+        || stem.starts_with("vhelv")
+        || stem.starts_with("vtime")
+        || stem.starts_with("vavon")
+        || stem.starts_with("vapto")
+        || stem.starts_with("vcomm")
+        || stem.starts_with("vkorin")
+    {
+        Some(VietnameseEncoding::Vni)
+    } else if stem.starts_with(".vn") || stem.starts_with("vn") {
+        if stem.ends_with('h') { Some(VietnameseEncoding::Tcvn3H) } else { Some(VietnameseEncoding::Tcvn3) }
+    } else {
+        None
+    }
+}
+
+/// Check if a string already contains genuine Unicode Vietnamese diacritic characters
+/// that exist outside the single-byte 0x00..=0xFF Windows-1252 range (U+1EA0..=U+1EF9, Đ, đ, Ă, ă, Ơ, ơ, Ư, ư).
+/// If true, the text MUST NOT be transcoded, preserving existing modern Unicode text.
+pub fn is_already_unicode_vietnamese(s: &str) -> bool {
+    s.chars().any(|c| {
+        let code = c as u32;
+        (0x1EA0..=0x1EF9).contains(&code) || matches!(c, 'Đ' | 'đ' | 'Ă' | 'ă' | 'Ơ' | 'ơ' | 'Ư' | 'ư')
+    })
+}
+
+/// Detect if a text string has unambiguous characteristic byte signatures of VNI or TCVN3.
+pub fn detect_vietnamese_encoding(s: &str) -> Option<VietnameseEncoding> {
+    if s.is_ascii() || is_already_unicode_vietnamese(s) {
+        return None;
+    }
+
+    let chars: Vec<char> = s.chars().collect();
+    let mut vni_score = 0;
+    let mut tcvn_score = 0;
+
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars.get(i).copied().unwrap_or(' ');
+        if chars.get(i + 1).and_then(|&next| match_vni_composite(c, next)).is_some() {
+            vni_score += 3;
+        }
+        if chars.get(i + 1).and_then(|&next| match_tcvn3_composite(c, next)).is_some() {
+            tcvn_score += 3;
+        }
+        if match_vni_single(c).is_some() {
+            vni_score += 1;
+        }
+        if match_tcvn3_single(c).is_some() {
+            tcvn_score += 1;
+        }
+        i += 1;
+    }
+
+    if vni_score >= 2 && vni_score >= tcvn_score {
+        Some(VietnameseEncoding::Vni)
+    } else if tcvn_score >= 2 {
+        Some(VietnameseEncoding::Tcvn3)
+    } else {
+        None
+    }
+}
+
+/// Transcode a VNI Windows string to Unicode NFC.
+pub fn transcode_vni(s: &str) -> Cow<'_, str> {
+    if s.is_ascii() || is_already_unicode_vietnamese(s) {
+        return Cow::Borrowed(s);
+    }
+
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    let mut changed = false;
+
+    while i < chars.len() {
+        let c = chars.get(i).copied().unwrap_or(' ');
+        if let Some(comp) = chars.get(i + 1).and_then(|&next| match_vni_composite(c, next)) {
+            out.push_str(comp);
+            i += 2;
+            changed = true;
+            continue;
+        }
+        if let Some(single) = match_vni_single(c) {
+            out.push(single);
+            changed = true;
+        } else {
+            out.push(c);
+        }
+        i += 1;
+    }
+
+    if changed { Cow::Owned(out) } else { Cow::Borrowed(s) }
+}
+
+/// Transcode a TCVN3 (ABC) standard string to Unicode NFC.
+pub fn transcode_tcvn3(s: &str) -> Cow<'_, str> {
+    if s.is_ascii() || is_already_unicode_vietnamese(s) {
+        return Cow::Borrowed(s);
+    }
+
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    let mut changed = false;
+
+    while i < chars.len() {
+        let c = chars.get(i).copied().unwrap_or(' ');
+        if let Some(comp) = chars.get(i + 1).and_then(|&next| match_tcvn3_composite(c, next)) {
+            out.push_str(comp);
+            i += 2;
+            changed = true;
+            continue;
+        }
+        if let Some(single) = match_tcvn3_single(c) {
+            out.push(single);
+            changed = true;
+        } else {
+            out.push(c);
+        }
+        i += 1;
+    }
+
+    if changed { Cow::Owned(out) } else { Cow::Borrowed(s) }
+}
+
+/// Transcode a TCVN3H all-uppercase string to Unicode NFC uppercase.
+pub fn transcode_tcvn3_h(s: &str) -> Cow<'_, str> {
+    if s.is_ascii() {
+        let upper = s.to_uppercase();
+        if upper == s { Cow::Borrowed(s) } else { Cow::Owned(upper) }
+    } else {
+        let transcoded = transcode_tcvn3(s);
+        let upper = transcoded.to_uppercase();
+        Cow::Owned(upper)
+    }
+}
+
+/// Transcode text using an optional font hint, falling back to signature detection.
+pub fn transcode_vietnamese<'a>(s: &'a str, font_hint: Option<&str>) -> Cow<'a, str> {
+    if s.is_ascii() || is_already_unicode_vietnamese(s) {
+        return Cow::Borrowed(s);
+    }
+
+    let encoding = font_hint.and_then(is_vietnamese_font).or_else(|| detect_vietnamese_encoding(s));
+
+    match encoding {
+        Some(VietnameseEncoding::Vni) => transcode_vni(s),
+        Some(VietnameseEncoding::Tcvn3) => transcode_tcvn3(s),
+        Some(VietnameseEncoding::Tcvn3H) => transcode_tcvn3_h(s),
+        None => Cow::Borrowed(s),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// VNI Windows lookup tables
+// ---------------------------------------------------------------------------
+
+fn match_vni_composite(c1: char, c2: char) -> Option<&'static str> {
+    match (c1, c2) {
+        ('A', 'Ø') => Some("À"),
+        ('A', 'Ù') => Some("Á"),
+        ('A', 'Â') => Some("Â"),
+        ('A', 'Õ') => Some("Ã"),
+        ('A', 'Ï') => Some("Ạ"),
+        ('A', 'Û') => Some("Ả"),
+        ('A', 'Á') => Some("Ấ"),
+        ('A', 'À') => Some("Ầ"),
+        ('A', 'Å') => Some("Ẩ"),
+        ('A', 'Ã') => Some("Ẫ"),
+        ('A', 'Ä') => Some("Ậ"),
+        ('A', 'Ê') => Some("Ă"),
+        ('A', 'É') => Some("Ắ"),
+        ('A', 'È') => Some("Ằ"),
+        ('A', 'Ú') => Some("Ẳ"),
+        ('A', 'Ü') => Some("Ẵ"),
+        ('A', 'Ë') => Some("Ặ"),
+        ('E', 'Ø') => Some("È"),
+        ('E', 'Ù') => Some("É"),
+        ('E', 'Â') => Some("Ê"),
+        ('E', 'Õ') => Some("Ẽ"),
+        ('E', 'Ï') => Some("Ẹ"),
+        ('E', 'Û') => Some("Ẻ"),
+        ('E', 'Á') => Some("Ế"),
+        ('E', 'À') => Some("Ề"),
+        ('E', 'Å') => Some("Ể"),
+        ('E', 'Ã') => Some("Ễ"),
+        ('E', 'Ä') => Some("Ệ"),
+        ('I', 'Ø') => Some("Ì"),
+        ('I', 'Ù') => Some("Í"),
+        ('I', 'Û') => Some("Ỉ"),
+        ('I', 'Õ') => Some("Ĩ"),
+        ('I', 'Ï') => Some("Ị"),
+        ('O', 'Ø') => Some("Ò"),
+        ('O', 'Ù') => Some("Ó"),
+        ('O', 'Â') => Some("Ô"),
+        ('O', 'Õ') => Some("Õ"),
+        ('O', 'Ï') => Some("Ọ"),
+        ('O', 'Û') => Some("Ỏ"),
+        ('O', 'Á') => Some("Ố"),
+        ('O', 'À') => Some("Ồ"),
+        ('O', 'Å') => Some("Ổ"),
+        ('O', 'Ã') => Some("Ỗ"),
+        ('O', 'Ä') => Some("Ộ"),
+        ('Ô', 'Ù') => Some("Ớ"),
+        ('Ô', 'Ø') => Some("Ờ"),
+        ('Ô', 'Û') => Some("Ở"),
+        ('Ô', 'Õ') => Some("Ỡ"),
+        ('Ô', 'Ï') => Some("Ợ"),
+        ('U', 'Ø') => Some("Ù"),
+        ('U', 'Ù') => Some("Ú"),
+        ('U', 'Õ') => Some("Ũ"),
+        ('U', 'Ï') => Some("Ụ"),
+        ('U', 'Û') => Some("Ủ"),
+        ('Ö', 'Ù') => Some("Ứ"),
+        ('Ö', 'Ø') => Some("Ừ"),
+        ('Ö', 'Û') => Some("Ử"),
+        ('Ö', 'Õ') => Some("Ữ"),
+        ('Ö', 'Ï') => Some("Ự"),
+        ('Y', 'Ø') => Some("Ỳ"),
+        ('Y', 'Ù') => Some("Ý"),
+        ('Y', 'Õ') => Some("Ỹ"),
+        ('Y', 'Û') => Some("Ỷ"),
+        ('a', 'ø') => Some("à"),
+        ('a', 'ù') => Some("á"),
+        ('a', 'â') => Some("â"),
+        ('a', 'õ') => Some("ã"),
+        ('a', 'ï') => Some("ạ"),
+        ('a', 'û') => Some("ả"),
+        ('a', 'á') => Some("ấ"),
+        ('a', 'à') => Some("ầ"),
+        ('a', 'å') => Some("ẩ"),
+        ('a', 'ã') => Some("ẫ"),
+        ('a', 'ä') => Some("ậ"),
+        ('a', 'ê') => Some("ă"),
+        ('a', 'é') => Some("ắ"),
+        ('a', 'è') => Some("ằ"),
+        ('a', 'ú') => Some("ẳ"),
+        ('a', 'ü') => Some("ẵ"),
+        ('a', 'ë') => Some("ặ"),
+        ('e', 'ø') => Some("è"),
+        ('e', 'ù') => Some("é"),
+        ('e', 'â') => Some("ê"),
+        ('e', 'õ') => Some("ẽ"),
+        ('e', 'ï') => Some("ẹ"),
+        ('e', 'û') => Some("ẻ"),
+        ('e', 'á') => Some("ế"),
+        ('e', 'à') => Some("ề"),
+        ('e', 'å') => Some("ể"),
+        ('e', 'ã') => Some("ễ"),
+        ('e', 'ä') => Some("ệ"),
+        ('i', 'ø') => Some("ì"),
+        ('i', 'ù') => Some("í"),
+        ('i', 'û') => Some("ỉ"),
+        ('i', 'õ') => Some("ĩ"),
+        ('i', 'ï') => Some("ị"),
+        ('o', 'ø') => Some("ò"),
+        ('o', 'ù') => Some("ó"),
+        ('o', 'â') => Some("ô"),
+        ('o', 'õ') => Some("õ"),
+        ('o', 'ï') => Some("ọ"),
+        ('o', 'û') => Some("ỏ"),
+        ('o', 'á') => Some("ố"),
+        ('o', 'à') => Some("ồ"),
+        ('o', 'å') => Some("ổ"),
+        ('o', 'ã') => Some("ỗ"),
+        ('o', 'ä') => Some("ộ"),
+        ('ô', 'ù') => Some("ớ"),
+        ('ô', 'ø') => Some("ờ"),
+        ('ô', 'û') => Some("ở"),
+        ('ô', 'õ') => Some("ỡ"),
+        ('ô', 'ï') => Some("ợ"),
+        ('u', 'ø') => Some("ù"),
+        ('u', 'ù') => Some("ú"),
+        ('u', 'õ') => Some("ũ"),
+        ('u', 'ï') => Some("ụ"),
+        ('u', 'û') => Some("ủ"),
+        ('ö', 'ù') => Some("ứ"),
+        ('ö', 'ø') => Some("ừ"),
+        ('ö', 'û') => Some("ử"),
+        ('ö', 'õ') => Some("ữ"),
+        ('ö', 'ï') => Some("ự"),
+        ('y', 'ø') => Some("ỳ"),
+        ('y', 'ù') => Some("ý"),
+        ('y', 'õ') => Some("ỹ"),
+        ('y', 'û') => Some("ỷ"),
+        _ => None,
+    }
+}
+
+fn match_vni_single(c: char) -> Option<char> {
+    match c {
+        'Ñ' => Some('Đ'),
+        'ñ' => Some('đ'),
+        'Ô' => Some('Ơ'),
+        'ô' => Some('ơ'),
+        'Ö' => Some('Ư'),
+        'ö' => Some('ư'),
+        'Æ' => Some('Ỉ'),
+        'æ' => Some('ỉ'),
+        'Ò' => Some('Ị'),
+        'ò' => Some('ị'),
+        'Î' => Some('Ỵ'),
+        'î' => Some('ỵ'),
+        'Ó' => Some('Ĩ'),
+        'ó' => Some('ĩ'),
+        _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TCVN3 (ABC) lookup tables
+// ---------------------------------------------------------------------------
+
+fn match_tcvn3_composite(c1: char, c2: char) -> Option<&'static str> {
+    match (c1, c2) {
+        ('A', 'µ') => Some("À"),
+        ('A', '¸') => Some("Á"),
+        ('A', '·') => Some("Ã"),
+        ('A', '¹') => Some("Ạ"),
+        ('A', '¶') => Some("Ả"),
+        ('E', 'Ì') => Some("È"),
+        ('E', 'Ð') => Some("É"),
+        ('E', 'Ñ') => Some("Ẹ"),
+        ('E', 'Î') => Some("Ẻ"),
+        ('E', 'Ï') => Some("Ẽ"),
+        ('I', '×') => Some("Ì"),
+        ('I', 'Ý') => Some("Í"),
+        ('I', 'Ü') => Some("Ĩ"),
+        ('I', 'Ø') => Some("Ỉ"),
+        ('I', 'Þ') => Some("Ị"),
+        ('O', 'ß') => Some("Ò"),
+        ('O', 'ã') => Some("Ó"),
+        ('O', 'â') => Some("Õ"),
+        ('O', 'ä') => Some("Ọ"),
+        ('O', 'á') => Some("Ỏ"),
+        ('U', 'ï') => Some("Ù"),
+        ('U', 'ó') => Some("Ú"),
+        ('U', 'ò') => Some("Ũ"),
+        ('U', 'ô') => Some("Ụ"),
+        ('U', 'ñ') => Some("Ủ"),
+        ('Y', 'ý') => Some("Ý"),
+        ('Y', 'ú') => Some("Ỳ"),
+        ('Y', 'þ') => Some("Ỵ"),
+        ('Y', 'û') => Some("Ỷ"),
+        ('Y', 'ü') => Some("Ỹ"),
+        ('¢', 'Ê') => Some("Ấ"),
+        ('¢', 'Ç') => Some("Ầ"),
+        ('¢', 'È') => Some("Ẩ"),
+        ('¢', 'É') => Some("Ẫ"),
+        ('¢', 'Ë') => Some("Ậ"),
+        ('¡', '¾') => Some("Ắ"),
+        ('¡', '»') => Some("Ằ"),
+        ('¡', '¼') => Some("Ẳ"),
+        ('¡', '½') => Some("Ẵ"),
+        ('¡', 'Æ') => Some("Ặ"),
+        ('£', 'Õ') => Some("Ế"),
+        ('£', 'Ò') => Some("Ề"),
+        ('£', 'Ó') => Some("Ể"),
+        ('£', 'Ô') => Some("Ễ"),
+        ('£', 'Ö') => Some("Ệ"),
+        ('¤', 'è') => Some("Ố"),
+        ('¤', 'å') => Some("Ồ"),
+        ('¤', 'æ') => Some("Ổ"),
+        ('¤', 'ç') => Some("Ỗ"),
+        ('¤', 'é') => Some("Ộ"),
+        ('¥', 'í') => Some("Ớ"),
+        ('¥', 'ê') => Some("Ờ"),
+        ('¥', 'ë') => Some("Ở"),
+        ('¥', 'ì') => Some("Ỡ"),
+        ('¥', 'î') => Some("Ợ"),
+        ('¦', 'ø') => Some("Ứ"),
+        ('¦', 'õ') => Some("Ừ"),
+        ('¦', 'ö') => Some("Ử"),
+        ('¦', '÷') => Some("Ữ"),
+        ('¦', 'ù') => Some("Ự"),
+        _ => None,
+    }
+}
+
+fn match_tcvn3_single(c: char) -> Option<char> {
+    match c {
+        '¢' => Some('Â'),
+        '£' => Some('Ê'),
+        '¤' => Some('Ô'),
+        '¥' => Some('Ơ'),
+        '¦' => Some('Ư'),
+        '§' => Some('Đ'),
+        '¡' => Some('Ă'),
+        'µ' => Some('à'),
+        '¸' => Some('á'),
+        '¶' => Some('ả'),
+        '·' => Some('ã'),
+        '¹' => Some('ạ'),
+        '¨' => Some('ă'),
+        '»' => Some('ằ'),
+        '¾' => Some('ắ'),
+        '¼' => Some('ẳ'),
+        '½' => Some('ẵ'),
+        'Æ' => Some('ặ'),
+        '©' => Some('â'),
+        'Ç' => Some('ầ'),
+        'Ê' => Some('ấ'),
+        'È' => Some('ẩ'),
+        'É' => Some('ẫ'),
+        'Ë' => Some('ậ'),
+        '®' => Some('đ'),
+        'Ì' => Some('è'),
+        'Ð' => Some('é'),
+        'Î' => Some('ẻ'),
+        'Ï' => Some('ẽ'),
+        'Ñ' => Some('ẹ'),
+        'ª' => Some('ê'),
+        'Ò' => Some('ề'),
+        'Õ' => Some('ế'),
+        'Ó' => Some('ể'),
+        'Ô' => Some('ễ'),
+        'Ö' => Some('ệ'),
+        '×' => Some('ì'),
+        'Ý' => Some('í'),
+        'Ø' => Some('ỉ'),
+        'Ü' => Some('ĩ'),
+        'Þ' => Some('ị'),
+        'ß' => Some('ò'),
+        'ã' => Some('ó'),
+        'á' => Some('ỏ'),
+        'â' => Some('õ'),
+        'ä' => Some('ọ'),
+        '«' => Some('ô'),
+        'å' => Some('ồ'),
+        'è' => Some('ố'),
+        'æ' => Some('ổ'),
+        'ç' => Some('ỗ'),
+        'é' => Some('ộ'),
+        '¬' => Some('ơ'),
+        'ê' => Some('ờ'),
+        'í' => Some('ớ'),
+        'ë' => Some('ở'),
+        'ì' => Some('ỡ'),
+        'î' => Some('ợ'),
+        'ï' => Some('ù'),
+        'ó' => Some('ú'),
+        'ñ' => Some('ủ'),
+        'ò' => Some('ũ'),
+        'ô' => Some('ụ'),
+        '­' => Some('ư'),
+        'õ' => Some('ừ'),
+        'ø' => Some('ứ'),
+        'ö' => Some('ử'),
+        '÷' => Some('ữ'),
+        'ù' => Some('ự'),
+        'ú' => Some('ỳ'),
+        'ý' => Some('ý'),
+        'û' => Some('ỷ'),
+        'ü' => Some('ỹ'),
+        'þ' => Some('ỵ'),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_vni_nhom_day() {
+        assert_eq!(transcode_vni("NHOÂM 3003 DAØY 2MM"), "NHÔM 3003 DÀY 2MM");
+    }
+
+    #[test]
+    fn test_vni_tong_khoi_luong() {
+        assert_eq!(transcode_vni("TOÅNG KHOÁI LÖÔÏNG"), "TỔNG KHỐI LƯỢNG");
+    }
+
+    #[test]
+    fn test_vni_quy_cach() {
+        assert_eq!(transcode_vni("QUY CAÙCH"), "QUY CÁCH");
+    }
+
+    #[test]
+    fn test_vni_dang_hinh_dung() {
+        assert_eq!(transcode_vni("DAÙNG"), "DÁNG");
+        assert_eq!(transcode_vni("ÑÖÙNG"), "ĐỨNG");
+        assert_eq!(transcode_vni("HIØNH ÑÖÙNG"), "HÌNH ĐỨNG");
+    }
+
+    #[test]
+    fn test_already_unicode_never_transcoded() {
+        let unicode = "HÌNH CHIẾU ĐỨNG";
+        assert!(is_already_unicode_vietnamese(unicode));
+        assert_eq!(transcode_vietnamese(unicode, Some("VNI-Helve")), unicode);
+        assert_eq!(transcode_vietnamese(unicode, None), unicode);
+    }
+
+    #[test]
+    fn test_hinh_dang_unicode() {
+        println!("Result of HÌNH DÁNG: {:?}", transcode_vietnamese("HÌNH DÁNG", None));
+        assert_eq!(transcode_vietnamese("HÌNH DÁNG", None), "HÌNH DÁNG");
+    }
+
+    #[test]
+    fn test_generic_font_transcodes_when_vietnamese_detected() {
+        assert_eq!(transcode_vietnamese("THOÂNG SOÁ", Some("Standard")), "THÔNG SỐ");
+        assert_eq!(transcode_vietnamese("NHOÂM 3003 DAØY 2MM", Some("simplex.shx")), "NHÔM 3003 DÀY 2MM");
+        assert_eq!(transcode_vietnamese("TOÅNG KHOÁI LÖÔÏNG", Some("Arial")), "TỔNG KHỐI LƯỢNG");
+        assert_eq!(transcode_vietnamese("QUY CAÙCH", None), "QUY CÁCH");
+    }
+
+    #[test]
+    fn test_tcvn3_ban_ve_chi_tiet() {
+        assert_eq!(transcode_tcvn3("B¶n vÏ chi tiÕt"), "Bản vẽ chi tiết");
+    }
+
+    #[test]
+    fn test_tcvn3_mat_bang_ket_cau() {
+        assert_eq!(transcode_tcvn3("MÆt b»ng kÕt cÊu"), "Mặt bằng kết cấu");
+    }
+
+    #[test]
+    fn test_tcvn3_cad_controls() {
+        assert_eq!(transcode_tcvn3("%%c20 thÐp gèi"), "%%c20 thép gối");
+    }
+
+    #[test]
+    fn test_is_vietnamese_font() {
+        assert_eq!(is_vietnamese_font(".VnTime"), Some(VietnameseEncoding::Tcvn3));
+        assert_eq!(is_vietnamese_font(".VnArialH"), Some(VietnameseEncoding::Tcvn3H));
+        assert_eq!(is_vietnamese_font("vnsimli.shx"), Some(VietnameseEncoding::Tcvn3));
+        assert_eq!(is_vietnamese_font("VNI-Helve"), Some(VietnameseEncoding::Vni));
+        assert_eq!(is_vietnamese_font("VNI-Times.ttf"), Some(VietnameseEncoding::Vni));
+        assert_eq!(is_vietnamese_font("arial.ttf"), None);
+    }
+
+    #[test]
+    fn test_transcode_vietnamese_with_font_hint() {
+        assert_eq!(transcode_vietnamese("NHOÂM 3003 DAØY 2MM", Some("VNI-Helve")), "NHÔM 3003 DÀY 2MM");
+        assert_eq!(transcode_vietnamese("B¶n vÏ chi tiÕt", Some(".VnTime")), "Bản vẽ chi tiết");
+        let ascii = "SIMPLE TEXT 123";
+        match transcode_vietnamese(ascii, Some(".VnTime")) {
+            Cow::Borrowed(b) => assert_eq!(b, ascii),
+            Cow::Owned(_) => panic!("expected borrowed string for ascii"),
+        }
+    }
+}
