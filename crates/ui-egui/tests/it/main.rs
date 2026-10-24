@@ -15,6 +15,7 @@ mod hidden_command_line;
 mod lisp_files;
 mod measure_distance_snapping;
 mod menubar_hover;
+mod moving_clicks;
 mod mspace_viewport_view;
 mod options_dialog;
 mod parameters_rename;

@@ -121,6 +121,9 @@ pub struct CanvasState {
     pub param: crate::parametric::Cache,
     /// A selection window opened by a press-and-drag, to close where the button is let go.
     drag_window: bool,
+    /// The primary drag began on a grip (or a dynamic block's grip): its release is the grip's
+    /// own gesture, not a click made while the mouse was moving (#1546).
+    drag_from_grip: bool,
     /// The right-click that opened the shortcut menu held Shift or Ctrl: it is the object snap
     /// menu ([`crate::context_menu`]).
     pub snap_menu: bool,
@@ -1538,7 +1541,37 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     let point_prompt = app.session.current_prompt().is_some_and(|p| cadcraft_engine::pointmod::accepts(&p))
         && app.session.pending_window.is_none()
         && !app.session.realtime_zoom_active();
-    let pressed_primary = pressed_primary || (point_prompt && resp.drag_stopped_by(egui::PointerButton::Primary));
+    // A drag that began on a grip (or a dynamic block's grip) belongs to that grip: remembered so
+    // its release is never taken for a click made while the mouse was moving (#1546). Decided before
+    // the release is classified, since a slow frame can start and stop a drag at once (the press is
+    // then only in this frame's events).
+    if resp.drag_started_by(egui::PointerButton::Primary) {
+        let origin = ui.input(|i| {
+            i.pointer.press_origin().or_else(|| {
+                i.events.iter().find_map(|e| match e {
+                    egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, .. } => Some(*pos),
+                    _ => None,
+                })
+            })
+        });
+        app.canvas.drag_from_grip =
+            origin.is_some_and(|origin| grip_at(app, &xf, Some(origin)).is_some() || crate::dyngrips::at(app, &xf, Some(origin)).is_some());
+    }
+    // Selecting works the same way (#1546): idle, or a command at "Select objects", a click made
+    // while the mouse is moving still picks, or opens a window at the corner it lands on. A window
+    // already pending is only ever closed by real clicks (PICKDRAG = 0 leaves it for the second
+    // click), a PICKDRAG press-drag closes below where its drag ends, and a drag that began on a
+    // grip belongs to the grip.
+    let selecting = app.session.running.is_none() || app.session.current_prompt().is_some_and(|p| p.accept.select);
+    let pressed_primary = pressed_primary
+        || (point_prompt && resp.drag_stopped_by(egui::PointerButton::Primary))
+        || (selecting
+            && !point_prompt
+            && !app.canvas.drag_window
+            && !app.canvas.drag_from_grip
+            && app.session.pending_window.is_none()
+            && !app.session.realtime_zoom_active()
+            && resp.drag_stopped_by(egui::PointerButton::Primary));
     if point_prompt && inside && pressed_primary && !middle_down && app.cmd.options.is_none() && app.cmd.buffer.is_empty() {
         let releases: Vec<egui::Pos2> = ui.input(|i| {
             i.events
@@ -1670,6 +1703,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         } else if let Err(e) = app.session.idle_click(raw_world.unwrap_or(p), mods.shift) {
             app.session.echo(e.to_string());
         }
+    }
+    if resp.drag_stopped_by(egui::PointerButton::Primary) {
+        app.canvas.drag_from_grip = false;
     }
     // Press-and-drag selection window (PICKDRAG = 2; click-click still works): a drag
     // that starts while objects are being selected opens a window where the button went down,
