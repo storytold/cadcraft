@@ -207,4 +207,15 @@ mod tests {
         let e = app.run("share", json!({})).unwrap_err();
         assert!(e.contains("not available yet"), "{e}");
     }
+
+    #[test]
+    fn typed_wblock_asks_for_the_file() {
+        let (mut app, asked) = app();
+        app.start("wblock");
+        app.cmdline("w");
+        assert_eq!(*asked.borrow(), ["Drawing1.dwg", "Drawing1.dwg"]);
+        let e = app.run("wblock", json!({})).unwrap_err();
+        assert!(e.contains("`path` is required"), "{e}");
+        assert_eq!(asked.borrow().len(), 2, "JSON calls never open a file dialog");
+    }
 }

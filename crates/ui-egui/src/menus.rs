@@ -219,6 +219,19 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             });
             r
         }
+        // WBLOCK from the menu or typed: ask where to write the file, then write the selection (or
+        // the `name` block) there. JSON calls carry `path` and never open a dialog.
+        "wblock" | "w" if params.is_null() && app.session.state().is_ok() => {
+            let pick = app.services.pick_save.as_ref()?;
+            let title = app.session.state().map(|s| s.title.clone()).unwrap_or_default();
+            let stem = std::path::Path::new(&title).file_stem().map(|s| s.to_string_lossy().to_string()).filter(|s| !s.is_empty());
+            let Some(path) = pick(&format!("{}.dwg", stem.unwrap_or_else(|| "Drawing".into()))) else { return Some(Ok(Value::Null)) };
+            let r = app.run("wblock", json!({ "path": path }));
+            if let Ok(v) = &r {
+                app.session.echo(format!("Wrote {} objects to {path}", v["entities"]));
+            }
+            r
+        }
         "ui.sample" => {
             let d = cadcraft_engine::sample::default_sample();
             app.session.open_drawing(d, "Bracket", None);
