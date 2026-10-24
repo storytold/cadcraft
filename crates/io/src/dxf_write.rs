@@ -1016,7 +1016,8 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
                         w.f(140, h);
                     }
                     // Long text: 250-character code-2 chunks, the rest in code 1.
-                    let chars: Vec<char> = cell.map(|x| x.text.chars().collect()).unwrap_or_default();
+                    // Line breaks as `\P` (the tag writer flattens raw ones to spaces).
+                    let chars: Vec<char> = cell.map(|x| mtext_literal(&x.text).chars().collect()).unwrap_or_default();
                     let chunks: Vec<String> = chars.chunks(250).map(|c| c.iter().collect()).collect();
                     let n = chunks.len();
                     for (i, ch) in chunks.into_iter().enumerate() {

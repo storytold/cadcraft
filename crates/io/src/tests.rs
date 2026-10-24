@@ -1326,6 +1326,19 @@ fn table_sample() -> Table {
 }
 
 #[test]
+fn table_cell_line_breaks_survive_a_dxf_roundtrip() {
+    let texts = ["line1\nline2", "C:\\dir\\Pname {a}", "a\\\nb\\", &format!("{}\n{}", "x".repeat(249), "y".repeat(10))];
+    let mut t = Table { col_widths: vec![1.0; texts.len()], row_heights: vec![0.4], ..Table::default() };
+    t.cells = vec![texts.iter().map(|s| TableCell { text: (*s).into(), ..Default::default() }).collect()];
+    let mut d = Drawing::new_imperial();
+    d.add(&Space::Model, Common::default(), EntityKind::Table(t.clone())).unwrap();
+    let back = read_dxf(write_dxf(&d).as_bytes()).unwrap();
+    let got = first(&back, |k| if let EntityKind::Table(x) = k { Some(x.clone()) } else { None });
+    let read: Vec<&str> = got.cells[0].iter().map(|c| c.text.as_str()).collect();
+    assert_eq!(read, texts);
+}
+
+#[test]
 fn tables_roundtrip_with_title_header_and_merges() {
     let mut d = Drawing::new_imperial();
     d.table_styles.push(TableStyle { name: "Schedule".into(), text_height: 0.25, margin: 0.1, title: false, header: true, ..TableStyle::default() });

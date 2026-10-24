@@ -575,6 +575,7 @@ fn acad_table(tags: &[Tag], table_cells_left: &mut usize) -> Table {
         let c = T(cell);
         let mut text: String = cell.iter().filter(|x| x.code == 2 || x.code == 3).map(Tag::str).collect();
         text.push_str(&c.s(1).unwrap_or_default());
+        let text = cell_text(&text);
         let span = |code: i32| c.i(code).and_then(|v| u32::try_from(v).ok());
         // A merge starts at the cell whose span (rows 176, columns 175) is more than one cell.
         // Its own merged flag (173) varies by writer: CADCraft sets it, while AutoCAD-style
@@ -614,6 +615,29 @@ fn acad_table(tags: &[Tag], table_cells_left: &mut usize) -> Table {
     let mut t = Table { insert: T(tags).p(10), col_widths, row_heights, cells, style, text_height, title, header, ..Table::default() };
     crate::dxf_table::read_table_xdata(tags, &mut t);
     t
+}
+
+/// A table cell's text with its paragraph breaks (`\P`) as line breaks and its escaped
+/// backslashes and braces as themselves; other formatting codes are kept as written.
+fn cell_text(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.clone().next() {
+            Some('P') => out.push('\n'),
+            Some(e @ ('\\' | '{' | '}')) => out.push(e),
+            _ => {
+                out.push('\\');
+                continue;
+            }
+        }
+        chars.next();
+    }
+    out
 }
 
 fn hatch(tags: &[Tag], t: &T) -> Option<EntityKind> {
