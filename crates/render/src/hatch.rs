@@ -487,7 +487,13 @@ impl Family<'_> {
             hi = Vec2::new(hi.x.min(vb.max.x), hi.y.min(vb.max.y));
             span_cut = Some((vb.min.x, vb.max.x));
         }
-        let shift_per_line = self.delta.rotate(-self.ang).x;
+        // Lines are swept at y = k × spacing (spacing = |delta y|). The pattern's n-th line sits at
+        // n × delta, so with a negative delta y (as in the AR-CONC and AR-SAND patterns of many
+        // drawings) the line at y = k × spacing is n = −k and its dashes shift by −k × delta x.
+        // Ignoring the sign moved every other line's dashes and broke the shapes families draw
+        // together (triangles, dots).
+        let local_delta = self.delta.rotate(-self.ang);
+        let shift_per_line = if local_delta.y < 0.0 { -local_delta.x } else { local_delta.x };
         let k0 = (lo.y / self.spacing).floor() as i64;
         let k1 = (hi.y / self.spacing).ceil() as i64;
         let max_lines = if view.is_some() { MAX_VIEW_FAMILY_LINES } else { MAX_FAMILY_LINES };
@@ -570,6 +576,45 @@ mod tests {
     use super::*;
     use cadcraft_doc::{Hatch, HatchLoop};
     use cadcraft_geom::PolyVertex;
+
+    /// A line family with offset (dx, dy) and one with (−dx, −dy) are the same set of lines: the
+    /// n-th line of one is the −n-th of the other. Patterns read from DWG and DXF files often
+    /// have a negative dy (AR-CONC, AR-SAND); drawing them as if dx kept its sign scattered their
+    /// dashes (the triangles of AR-CONC came apart).
+    #[test]
+    fn a_negative_line_offset_draws_the_same_lines() {
+        let square = vec![Vec2::new(0.0, 0.0), Vec2::new(20.0, 0.0), Vec2::new(20.0, 20.0), Vec2::new(0.0, 20.0)];
+        let runs_for = |delta: (f64, f64)| {
+            let h = Hatch {
+                origin: Vec2::ZERO,
+                pattern: "TEST".into(),
+                solid: false,
+                loops: vec![],
+                scale: 1.0,
+                angle: 0.0,
+                associative: false,
+                style: 0,
+                elevation: 0.0,
+                gradient: None,
+                background: None,
+                pattern_lines: vec![PatternLine { angle: 30.0, origin: (0.3, 0.1), delta, dashes: vec![1.0, -2.0] }],
+            };
+            let mut keys: Vec<(i64, i64, i64, i64)> = pattern_lines(&Drawing::default(), &h, std::slice::from_ref(&square), 0.0, None)
+                .iter()
+                .filter_map(|r| {
+                    let (a, b) = (r.first()?, r.last()?);
+                    let (a, b) = if (a.x, a.y) <= (b.x, b.y) { (a, b) } else { (b, a) };
+                    let q = |v: f64| (v * 1e6).round() as i64;
+                    Some((q(a.x), q(a.y), q(b.x), q(b.y)))
+                })
+                .collect();
+            keys.sort_unstable();
+            keys
+        };
+        let positive = runs_for((0.7, 1.3));
+        assert!(positive.len() > 50, "the pattern draws dashes: {}", positive.len());
+        assert_eq!(positive, runs_for((-0.7, -1.3)));
+    }
 
     #[test]
     fn fill_loops_deduplicates_coincident_loops() {
