@@ -1,7 +1,7 @@
 //! Utilities: CAL (expression calculator), FIND (find and replace text), MASSPROP, MEASUREGEOM.
 
 use cadcraft_doc::{EntityKind, Handle};
-use cadcraft_geom::Vec2;
+use cadcraft_geom::{Segment, Vec2};
 use serde_json::{Value, json};
 
 use super::*;
@@ -31,7 +31,11 @@ pub fn specs() -> Vec<CommandSpec> {
             .noundo()
             .interactive(|_| Ok(Box::<MeasureM>::default())),
         CommandSpec::new("radius.measure", "Radius", run_radius).menu(&["Tools", "Inquiry", "Radius"]).params("{handle}").noundo(),
-        CommandSpec::new("angle.measure", "Angle", run_angle).menu(&["Tools", "Inquiry", "Angle"]).params("{vertex, p1, p2} | {h1, h2}").noundo(),
+        CommandSpec::new("angle.measure", "Angle", run_angle)
+            .menu(&["Tools", "Inquiry", "Angle"])
+            .params("{vertex, p1, p2} | {h1, h2}")
+            .noundo()
+            .interactive(|_| Ok(Box::<AngleM>::default())),
     ]
 }
 
@@ -299,17 +303,29 @@ fn run_angle(s: &mut Session, p: &Value) -> Result<Value> {
             Some(EntityKind::Line(l)) => Some((l.a.xy(), l.b.xy())),
             _ => None,
         };
-        let ((a1, a2), (b1, b2)) =
+        let (l1, l2) =
             (line(h1).ok_or_else(|| bad("angle.measure", "h1 is not a line"))?, line(h2).ok_or_else(|| bad("angle.measure", "h2 is not a line"))?);
-        let (x, _, _) = cadcraft_geom::line_line_infinite(a1, a2, b1, b2).ok_or_else(|| bad("angle.measure", "lines are parallel"))?;
-        let far = |p: Vec2, q: Vec2| if p.dist(x) > q.dist(x) { p } else { q };
-        (x, far(a1, a2), far(b1, b2))
+        lines_vertex(l1, l2).ok_or_else(|| bad("angle.measure", "lines are parallel"))?
     };
-    let mut ang = (cadcraft_geom::norm_angle(v.angle_to(b) - v.angle_to(a))).to_degrees();
-    if ang > 180.0 {
-        ang = 360.0 - ang;
-    }
-    Ok(json!({ "angle": ang, "message": format!("Angle = {ang:.4}°") }))
+    let ang = vertex_angle(v, a, b);
+    Ok(json!({ "angle": ang, "message": angle_text(ang) }))
+}
+
+/// The point where two lines (extended) meet and the end of each line farther from it; `None` when they are parallel.
+fn lines_vertex((a1, a2): (Vec2, Vec2), (b1, b2): (Vec2, Vec2)) -> Option<(Vec2, Vec2, Vec2)> {
+    let (x, _, _) = cadcraft_geom::line_line_infinite(a1, a2, b1, b2)?;
+    let far = |p: Vec2, q: Vec2| if p.dist(x) > q.dist(x) { p } else { q };
+    Some((x, far(a1, a2), far(b1, b2)))
+}
+
+/// The angle at `v` between the directions to `a` and `b`, in degrees from 0 to 180.
+fn vertex_angle(v: Vec2, a: Vec2, b: Vec2) -> f64 {
+    let ang = (cadcraft_geom::norm_angle(v.angle_to(b) - v.angle_to(a))).to_degrees();
+    if ang > 180.0 { 360.0 - ang } else { ang }
+}
+
+fn angle_text(ang: f64) -> String {
+    format!("Angle = {ang:.4}°")
 }
 
 fn run_measuregeom(s: &mut Session, p: &Value) -> Result<Value> {
@@ -322,7 +338,7 @@ fn run_measuregeom(s: &mut Session, p: &Value) -> Result<Value> {
     }
 }
 
-/// MEASUREGEOM typed or picked: choose what to measure, then continue as DIST, AREA or a radius pick.
+/// MEASUREGEOM typed or picked: choose what to measure, then continue as DIST, AREA, a radius pick or an angle pick.
 #[derive(Default)]
 struct MeasureM {
     inner: Option<Box<dyn Interactive>>,
@@ -339,7 +355,7 @@ impl Interactive for MeasureM {
             Some(m) => m.prompt(s),
             None if self.radius => Prompt::new("Select arc or circle", Accept::POINT),
             None => Prompt::new("Enter an option", Accept { point: false, number: false, text: false, select: false, enter: true })
-                .kw(&["Distance", "Radius", "ARea"])
+                .kw(&["Distance", "Radius", "Angle", "ARea"])
                 .default("Distance"),
         }
     }
@@ -365,6 +381,7 @@ impl Interactive for MeasureM {
             Input::Enter => self.inner = Some(Box::new(super::inquiry::DistM::default())),
             Input::Keyword(k) => match k.as_str() {
                 "Radius" => self.radius = true,
+                "Angle" => self.inner = Some(Box::<AngleM>::default()),
                 "ARea" => self.inner = Some(Box::new(super::inquiry::AreaM::default())),
                 _ => self.inner = Some(Box::new(super::inquiry::DistM::default())),
             },
@@ -374,6 +391,103 @@ impl Interactive for MeasureM {
     }
     fn preview(&self, s: &Session, cursor: Vec2) -> Vec<EntityKind> {
         self.inner.as_ref().map(|m| m.preview(s, cursor)).unwrap_or_default()
+    }
+}
+
+/// MEASUREGEOM's Angle option and Tools > Inquiry > Angle: the angle of an arc, of two points on a
+/// circle about its center, between two lines or polyline line segments, or (Enter) at a vertex
+/// between two endpoints.
+#[derive(Default)]
+struct AngleM {
+    /// The first line picked.
+    first: Option<(Vec2, Vec2)>,
+    /// The vertex and endpoints given so far (Enter, or a circle's center and the point picked on it).
+    vertex: Option<Vec<Vec2>>,
+}
+
+impl AngleM {
+    fn finish(s: &mut Session, ang: f64) -> Result<Step> {
+        s.echo(angle_text(ang));
+        Ok(Step::Done)
+    }
+}
+
+impl Interactive for AngleM {
+    fn name(&self) -> &'static str {
+        "MEASUREGEOM"
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        if let Some(pts) = &self.vertex {
+            let msg = ["Specify angle vertex", "Specify first angle endpoint", "Specify second angle endpoint"].get(pts.len()).copied().unwrap_or("");
+            return Prompt::new(msg, Accept::POINT).base_opt(pts.first().copied());
+        }
+        match self.first {
+            None => Prompt::new("Select arc, circle, line", Accept::POINT).default("specify vertex"),
+            Some(_) => Prompt::new("Select second line", Accept::POINT),
+        }
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if let Some(pts) = &mut self.vertex {
+            return match i {
+                Input::Point(p) => {
+                    pts.push(p);
+                    match pts.as_slice() {
+                        [v, a, b] => Self::finish(s, vertex_angle(*v, *a, *b)),
+                        _ => Ok(Step::Continue),
+                    }
+                }
+                Input::Enter => Ok(Step::Cancel),
+                _ => Ok(Step::Continue),
+            };
+        }
+        let p = match i {
+            Input::Enter if self.first.is_none() => {
+                self.vertex = Some(Vec::new());
+                return Ok(Step::Continue);
+            }
+            Input::Point(p) => p,
+            Input::Enter => return Ok(Step::Cancel),
+            _ => return Ok(Step::Continue),
+        };
+        let Some(h) = super::curves::pick_at(s, p) else {
+            s.echo("*Invalid selection*");
+            return Ok(Step::Continue);
+        };
+        let circle = s
+            .doc()?
+            .entity(h)
+            .and_then(|e| if let EntityKind::Circle(c) = &e.kind { Some(cadcraft_geom::Circle::new(c.center.xy(), c.radius)) } else { None });
+        if let Some(c) = circle.filter(|_| self.first.is_none()) {
+            self.vertex = Some(vec![c.center, c.closest(p)]);
+            return Ok(Step::Continue);
+        }
+        match super::annotate::segment_at(s, h, p) {
+            Some(Segment::Arc { arc, .. }) if self.first.is_none() => Self::finish(s, arc.sweep().to_degrees()),
+            Some(Segment::Line(l)) => match self.first {
+                None => {
+                    self.first = Some((l.a, l.b));
+                    Ok(Step::Continue)
+                }
+                Some(first) => match lines_vertex(first, (l.a, l.b)) {
+                    Some((v, a, b)) => Self::finish(s, vertex_angle(v, a, b)),
+                    None => {
+                        s.echo("The lines are parallel.");
+                        Ok(Step::Done)
+                    }
+                },
+            },
+            _ => {
+                s.echo(if self.first.is_none() { "Select an arc, circle or line." } else { "Select a line." });
+                Ok(Step::Continue)
+            }
+        }
+    }
+    fn preview(&self, _s: &Session, c: Vec2) -> Vec<EntityKind> {
+        match self.vertex.as_deref() {
+            Some([v]) => vec![super::helpers::line(*v, c)],
+            Some([v, a]) => vec![super::helpers::line(*v, *a), super::helpers::line(*v, c)],
+            _ => Vec::new(),
+        }
     }
 }
 

@@ -1,4 +1,4 @@
-//! AREA's Object / Add area / Subtract area and DIST's Multiple points, typed as at the command line.
+//! AREA's Object / Add area / Subtract area, DIST's Multiple points and MEASUREGEOM's Angle, typed as at the command line.
 
 use cadcraft_engine::Session;
 use serde_json::json;
@@ -86,6 +86,63 @@ fn measuregeom_typed_asks_for_the_option_then_the_points() {
 
     let (_, log) = run(&["measuregeom", "ar", "0,0", "4,0", "4,3", ""]);
     assert!(has(&log, "Area = 6.0000"), "{log:?}");
+}
+
+#[test]
+fn measuregeom_angle_measures_an_arc_a_circle_two_lines_and_a_vertex() {
+    let typed = |s: &mut Session, lines: &[&str]| {
+        for l in lines {
+            s.cmdline(l).unwrap();
+        }
+        assert!(s.running.is_none(), "{}", s.prompt_text());
+        s.log.clone()
+    };
+
+    // Arc: the angle between its endpoints about its center.
+    let mut s = Session::new();
+    s.execute("arc", &json!({"center": [0, 0], "radius": 2, "start": 0, "end": 270})).unwrap();
+    assert!(has(&typed(&mut s, &["measuregeom", "a", "-2,0"]), "Angle = 270.0000°"));
+
+    // Circle: the pick on the circle and a second point, about the center.
+    let log = typed(&mut Session::new(), &["circle 0,0 2", "measuregeom", "a", "2,0", "0,5"]);
+    assert!(has(&log, "Angle = 90.0000°"), "{log:?}");
+
+    // Two lines that do not meet, and two segments of one polyline.
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[1, 0], [10, 0]]})).unwrap();
+    s.execute("line", &json!({"points": [[0, 1], [5, 6]]})).unwrap();
+    assert!(has(&typed(&mut s, &["measuregeom", "a", "5,0", "2,3"]), "Angle = 45.0000°"), "{:?}", s.log);
+    let mut s = Session::new();
+    s.execute("pline", &json!({"vertices": [[0, 0], [10, 0], [10, 10]]})).unwrap();
+    assert!(has(&typed(&mut s, &["measuregeom", "a", "5,0", "10,5"]), "Angle = 90.0000°"), "{:?}", s.log);
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    s.execute("line", &json!({"points": [[0, 5], [10, 5]]})).unwrap();
+    assert!(has(&typed(&mut s, &["measuregeom", "a", "5,0", "5,5"]), "The lines are parallel."), "{:?}", s.log);
+
+    // Enter: a vertex and two endpoints.
+    let log = typed(&mut Session::new(), &["measuregeom", "a", "", "0,0", "1,0", "-1,1"]);
+    assert!(has(&log, "Angle = 135.0000°"), "{log:?}");
+
+    // Empty space is not an object, and the prompt stays.
+    let (s, log) = run(&["measuregeom", "a", "50,50"]);
+    assert!(has(&log, "*Invalid selection*"), "{log:?}");
+    assert!(s.prompt_text().contains("Select arc, circle, line"), "{}", s.prompt_text());
+}
+
+#[test]
+fn tools_inquiry_angle_asks_for_the_objects() {
+    let spec = cadcraft_engine::find_command("angle.measure").expect("no command angle.measure");
+    assert_eq!(spec.menu, ["Tools", "Inquiry", "Angle"]);
+    let mut s = Session::new();
+    s.cmdline("circle 0,0 2").unwrap();
+    s.start("angle.measure").unwrap();
+    assert!(s.prompt_text().contains("Select arc, circle, line"), "{}", s.prompt_text());
+    for l in ["0,2", "-3,0"] {
+        s.cmdline(l).unwrap();
+    }
+    assert!(has(&s.log, "Angle = 90.0000°"), "{:?}", s.log);
+    assert!(s.running.is_none(), "{}", s.prompt_text());
 }
 
 #[test]
