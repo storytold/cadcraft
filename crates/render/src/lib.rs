@@ -1106,7 +1106,9 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             if !b.opts.text {
                 return;
             }
-            let (sh, _) = place_text_entity(ctx.d, t, &t.value);
+            let shown = cadcraft_doc::fields::display(&t.value);
+            field_text_background(b, ctx, t, &shown);
+            let (sh, _) = place_text_entity(ctx.d, t, &shown);
             b.shaped(ctx, rgb, lw, &sh);
         }
         EntityKind::AttDef(a) => {
@@ -1379,10 +1381,63 @@ fn mtext_color(c: Option<cadcraft_fonts::MTextColor>, rgb: Ink) -> Ink {
 }
 
 fn mtext(b: &mut Builder, ctx: &Ctx, t: &cadcraft_doc::MText, rgb: Ink, lw: f32) {
+    let shown;
+    let t = if cadcraft_doc::fields::has_fields(&t.contents) {
+        if field_display(b, ctx) {
+            // The fields' glyphs, found by colouring them with a marker colour.
+            let marked =
+                cadcraft_doc::fields::display_with(&t.contents, |v| format!("{{\\c{FIELD_MARK};{}}}", cadcraft_doc::fields::mtext_escape(v)));
+            let probe = cadcraft_doc::MText { contents: marked.into_owned(), ..t.clone() };
+            let l = layout_mtext_entity(ctx.d, &probe);
+            for p in l.pieces.iter().filter(|p| p.color == Some(cadcraft_fonts::MTextColor::Rgb(FIELD_MARK))) {
+                field_background(b, ctx, &p.shaped.outlines(), t.insert.xy(), t.rotation, t.height);
+            }
+        }
+        shown = cadcraft_doc::MText { contents: cadcraft_doc::fields::display_mtext(&t.contents).into_owned(), ..t.clone() };
+        &shown
+    } else {
+        t
+    };
     let l = layout_mtext_entity(ctx.d, t);
     for p in &l.pieces {
         b.shaped(ctx, mtext_color(p.color, rgb), lw, &p.shaped);
     }
+}
+
+/// An inline colour that marks field values while their background is measured.
+const FIELD_MARK: u32 = 0x0F_1E2D;
+/// FIELDDISPLAY's grey behind field values.
+const FIELD_GREY: Ink = Ink { rgb: Rgb(128, 128, 128), aci7: false, aci: 8 };
+
+/// FIELDDISPLAY: field values get a grey background on screen (never on paper).
+fn field_display(b: &Builder, ctx: &Ctx) -> bool {
+    !b.plotting && b.opts.fill && ctx.d.header.i64("FIELDDISPLAY", 1) != 0
+}
+
+/// A grey box behind `pts` (geometry of text turned by `rotation` about `origin`), padded by a
+/// sixth of the text height.
+fn field_background(b: &mut Builder, ctx: &Ctx, strokes: &[Vec<Vec2>], origin: Vec2, rotation: f64, height: f64) {
+    let rot = if rotation.is_finite() { rotation } else { 0.0 };
+    let local = Bounds2::from_points(strokes.iter().flatten().map(|p| (*p - origin).rotate(-rot)));
+    if local.is_empty() {
+        return;
+    }
+    let pad = if height.is_finite() && height > 0.0 { height / 6.0 } else { 0.0 };
+    let (x0, y0, x1, y1) = (local.min.x - pad, local.min.y - pad, local.max.x + pad, local.max.y + pad);
+    let c = [Vec2::new(x0, y0), Vec2::new(x1, y0), Vec2::new(x1, y1), Vec2::new(x0, y1)].map(|q| origin + q.rotate(rot));
+    let [p0, p1, p2, p3] = c;
+    b.tris(ctx, FIELD_GREY, &[p0, p1, p2, p0, p2, p3]);
+}
+
+/// FIELDDISPLAY for a TEXT or attribute with fields: a grey box behind the whole text.
+fn field_text_background(b: &mut Builder, ctx: &Ctx, t: &cadcraft_doc::Text, shown: &str) {
+    if !field_display(b, ctx) || !cadcraft_doc::fields::has_fields(&t.value) {
+        return;
+    }
+    // Shaped unturned, then turned about the justification point with the text.
+    let flat = cadcraft_doc::Text { rotation: 0.0, ..t.clone() };
+    let (sh, _) = place_text_entity(ctx.d, &flat, shown);
+    field_background(b, ctx, &sh.outlines(), t.justify_point(), t.rotation, t.height);
 }
 
 /// The font settings of a dimension style's text style.
@@ -1579,7 +1634,8 @@ fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rg
             }
             // A multiline attribute is drawn as its multiline text.
             let multiline = a.multiline_text();
-            let sh = if multiline.is_none() { Some(place_text_entity(ctx.d, &a.text, &a.text.value).0) } else { None };
+            let value = cadcraft_doc::fields::display(&a.text.value);
+            let sh = if multiline.is_none() { Some(place_text_entity(ctx.d, &a.text, &value).0) } else { None };
             // Properties of the attribute's definition (as AutoCAD copies them to the attribute
             // on insertion), except those set on the attribute itself: ByBlock = the reference's,
             // layer 0 = the reference's layer.
@@ -1598,7 +1654,10 @@ fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc::Insert, rg
                 let lw = if b.opts.lineweights { lw } else { 0.0 };
                 match (&multiline, &sh) {
                     (Some(m), _) => mtext(b, ctx, m, ink, lw),
-                    (None, Some(sh)) => b.shaped(ctx, ink, lw, sh),
+                    (None, Some(sh)) => {
+                        field_text_background(b, ctx, &a.text, &value);
+                        b.shaped(ctx, ink, lw, sh);
+                    }
                     (None, None) => {}
                 }
             }

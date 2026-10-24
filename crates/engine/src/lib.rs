@@ -418,6 +418,9 @@ pub struct Settings {
     pub cursorsize: f64,
     /// MAXARRAY: the most objects one array command creates (items × selected objects).
     pub maxarray: u64,
+    /// SPELLDICTIONARY: the user dictionary file SPELL reads and adds words to. A user
+    /// setting, never taken from a drawing (empty: `user.dic` in the settings folder).
+    pub spelldictionary: String,
     /// SNAPSTYL 1: isometric snap and grid, ortho and crosshair along the isometric plane's axes.
     pub isodraft: bool,
     /// SNAPISOPAIR: the current isometric plane (ISOPLANE, F5).
@@ -507,6 +510,7 @@ impl Default for Settings {
             gripsize: 5.0,
             cursorsize: 5.0,
             maxarray: 100_000,
+            spelldictionary: String::new(),
             isodraft: false,
             isoplane: snap::iso::IsoPlane::Left,
             annoallvisible: true,

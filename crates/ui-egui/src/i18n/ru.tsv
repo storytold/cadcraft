@@ -146,6 +146,7 @@
 	Cut	Вырезать
 	Cyan	Голубой
 	Cylinder	Цилиндр
+	Drawing Properties...	Свойства чертежа...
 	DWG	DWG
 	DXF	DXF
 	Dark	Темная
@@ -213,6 +214,14 @@
 	End Y	Конец Y
 	End angle	Конечный угол
 	Endpoint	Конечная точка
+	Enter author	Введите автора
+	Enter comments	Введите комментарии
+	Enter field name or system variable	Введите имя поля или системную переменную
+	Enter keywords	Введите ключевые слова
+	Enter property	Введите свойство
+	Enter property to change	Введите изменяемое свойство
+	Enter subject	Введите тему
+	Enter title	Введите заголовок
 	Enter Top, Zero or Bottom.	Введите Top, Zero или Bottom.
 	Enter a fit data option	Введите параметр аппроксимации
 	Enter a pattern name	Введите имя шаблона
@@ -268,6 +277,7 @@
 	Extension	Продолжение
 	Extents	Границы
 	Extrude	Выдавить
+	Field...	Поле...
 	File	Файл
 	File Tab	Вкладка файла
 	Fillet	Сопряжение
@@ -534,6 +544,8 @@
 	New STB	Новая STB
 	New style	Новый стиль
 	Reset Panel Layout	Сбросить расположение панелей
+	Spelling	Орфография
+	Update Fields	Обновить поля
 	Use for this layout	Использовать для этого листа
 	Display plot styles	Показывать стили печати
 	No plot style tables.	Нет таблиц стилей печати.

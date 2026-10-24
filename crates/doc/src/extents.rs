@@ -50,8 +50,9 @@ fn blank(s: &str) -> bool {
 
 /// Approximate box of an MTEXT, from its attachment point, width and line count.
 fn mtext_box(t: &crate::MText) -> Bounds2 {
-    let lines = t.contents.split("\\P").count().max(1);
-    let longest = t.contents.split("\\P").map(|l| l.chars().count()).max().unwrap_or(1);
+    let shown = crate::fields::display_mtext(&t.contents);
+    let lines = shown.split("\\P").count().max(1);
+    let longest = shown.split("\\P").map(|l| l.chars().count()).max().unwrap_or(1);
     let mut w = if t.width > 0.0 { t.width } else { t.height * 0.8 * longest as f64 };
     let mut h = t.height * 1.66 * lines as f64;
     if let Some(c) = t.columns.as_ref().filter(|_| t.width > 0.0) {
@@ -96,9 +97,9 @@ pub fn entity_bounds(d: &Drawing, e: &Entity, depth: usize) -> Bounds2 {
 fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<(&'a str, usize), Bounds2>) -> Bounds2 {
     match &e.kind {
         EntityKind::Table(t) if t.is_broken() => t.bounds(),
-        EntityKind::Text(t) if blank(&t.value) => Bounds2::EMPTY,
-        EntityKind::MText(t) if blank(&t.contents) => Bounds2::EMPTY,
-        EntityKind::Text(t) => text_box(t, t.value.chars().count()),
+        EntityKind::Text(t) if blank(&crate::fields::display(&t.value)) => Bounds2::EMPTY,
+        EntityKind::MText(t) if blank(&crate::fields::display_mtext(&t.contents)) => Bounds2::EMPTY,
+        EntityKind::Text(t) => text_box(t, crate::fields::display(&t.value).chars().count()),
         EntityKind::AttDef(a) => text_box(&a.text, a.tag.chars().count()),
         EntityKind::MText(t) => mtext_box(t),
         EntityKind::Insert(ins) => {
@@ -134,7 +135,7 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
                 if !a.invisible {
                     b = b.union(&match a.multiline_text() {
                         Some(m) => mtext_box(&m),
-                        None => text_box(&a.text, a.text.value.chars().count()),
+                        None => text_box(&a.text, crate::fields::display(&a.text.value).chars().count()),
                     });
                 }
             }

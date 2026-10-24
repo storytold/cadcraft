@@ -7,6 +7,16 @@
 	Attach DWG...	Připojit DWG...
 	Bind	Svázat
 	Detach	Odpojit
+	Drawing Properties...	Vlastnosti výkresu...
+	Enter author	Zadejte autora
+	Enter comments	Zadejte komentáře
+	Enter field name or system variable	Zadejte název pole nebo systémovou proměnnou
+	Enter keywords	Zadejte klíčová slova
+	Enter property	Zadejte vlastnost
+	Enter property to change	Zadejte vlastnost ke změně
+	Enter subject	Zadejte předmět
+	Enter title	Zadejte název
+	Field...	Pole...
 	Loaded	Načteno
 	Make it a block of this drawing, keeping its layer names	Převést na blok tohoto výkresu a zachovat názvy hladin
 	Make it a block of this drawing; its layers become NAME$0$LAYER	Převést na blok tohoto výkresu; názvy hladin budou NAME$0$LAYER
@@ -21,6 +31,7 @@
 	Reload	Znovu načíst
 	Reload All	Znovu načíst vše
 	Saved Path	Uložená cesta
+	Spelling	Pravopis
 	Unload	Uvolnit
 	Unloaded	Uvolněno
 	Unreferenced	Bez odkazu
@@ -635,6 +646,7 @@
 	Send Hatches to Back	Přenést šrafy dozadu
 	Send Under Objects	Přenést pod objekty
 	Text Objects Only	Pouze textové objekty
+	Update Fields	Aktualizovat pole
 	Use for this layout	Použít pro toto rozvržení
 	Display plot styles	Zobrazit tiskové styly
 	No plot style tables.	Žádné tabulky tiskových stylů.

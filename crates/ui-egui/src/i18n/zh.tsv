@@ -147,6 +147,7 @@
 	Cut	剪切
 	Cyan	青色
 	Cylinder	圆柱体
+	Drawing Properties...	图形特性...
 	DWG	DWG
 	DXF	DXF
 	Dark	深色
@@ -214,6 +215,14 @@
 	End Y	终点 Y
 	End angle	端点角度
 	Endpoint	端点
+	Enter author	输入作者
+	Enter comments	输入注释
+	Enter field name or system variable	输入字段名称或系统变量
+	Enter keywords	输入关键字
+	Enter property	输入特性
+	Enter property to change	输入要更改的特性
+	Enter subject	输入主题
+	Enter title	输入标题
 	Enter Top, Zero or Bottom.	输入 Top、Zero 或 Bottom。
 	Enter a fit data option	输入拟合数据选项
 	Enter a pattern name	输入图案名称
@@ -269,6 +278,7 @@
 	Extension	延伸线
 	Extents	范围
 	Extrude	拉伸
+	Field...	字段...
 	File	文件
 	File Tab	文件选项卡
 	Fillet	圆角
@@ -535,6 +545,8 @@
 	New STB	新 STB
 	New style	新样式
 	Reset Panel Layout	重置面板布局
+	Spelling	拼写检查
+	Update Fields	更新字段
 	Use for this layout	用于此布局
 	Display plot styles	显示打印样式
 	No plot style tables.	没有打印样式表。

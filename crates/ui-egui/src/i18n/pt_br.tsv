@@ -193,6 +193,7 @@
 	Cut	Recortar
 	Cyan	Ciano
 	Cylinder	Cilindro
+	Drawing Properties...	Propriedades do desenho...
 	DWG	DWG
 	DWG Reference...	Referência DWG...
 	DXF	DXF
@@ -282,6 +283,14 @@
 	End angle	Ângulo final
 	Endpoint	Extremidade
 	Enter	Enter
+	Enter author	Digite o autor
+	Enter comments	Digite os comentários
+	Enter field name or system variable	Digite o nome do campo ou a variável de sistema
+	Enter keywords	Digite as palavras-chave
+	Enter property	Digite a propriedade
+	Enter property to change	Digite a propriedade a alterar
+	Enter subject	Digite o assunto
+	Enter title	Digite o título
 	Enter Top, Zero or Bottom.	Digite Top, Zero ou Bottom.
 	Enter a fit data option	Digite uma opção de dados de ajuste
 	Enter a pattern name	Digite o nome de um padrão
@@ -342,6 +351,7 @@
 	External Reference	Referência externa
 	External References	Referências externas
 	Extrude	Extrudar
+	Field...	Campo...
 	File	Arquivo
 	File Tab	Guia de arquivo
 	Fillet	Concordância
@@ -693,6 +703,7 @@
 	Reset Panel Layout	Redefinir layout dos painéis
 	Reset keeps the interface language.	A redefinição mantém o idioma da interface.
 	Reset to Defaults	Redefinir para os padrões
+	Spelling	Ortografia
 	SVG drawings (SVG, SVGZ)	Desenhos SVG (SVG, SVGZ)
 	Save new drawings as	Salvar novos desenhos como
 	Saved Path	Caminho salvo
@@ -738,6 +749,7 @@
 	Unreferenced	Sem referência
 	Unresolved	Não resolvida
 	Update Data Links	Atualizar vínculos de dados
+	Update Fields	Atualizar campos
 	Use for this layout	Usar neste layout
 	Display plot styles	Exibir estilos de plotagem
 	No plot style tables.	Nenhuma tabela de estilos de plotagem.

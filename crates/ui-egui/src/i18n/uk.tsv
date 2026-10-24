@@ -9,6 +9,14 @@
 	Attach DWG...	Приєднати DWG...
 	Bind	Вбудувати
 	Detach	Від'єднати
+	Enter author	Введіть автора
+	Enter comments	Введіть коментарі
+	Enter field name or system variable	Введіть назву поля або системну змінну
+	Enter keywords	Введіть ключові слова
+	Enter property	Введіть властивість
+	Enter property to change	Введіть властивість для зміни
+	Enter subject	Введіть тему
+	Enter title	Введіть заголовок
 	Loaded	Завантажено
 	Make it a block of this drawing, keeping its layer names	Зробити блоком цього креслення зі збереженням назв шарів
 	Make it a block of this drawing; its layers become NAME$0$LAYER	Зробити блоком цього креслення; його шари стануть NAME$0$LAYER
@@ -193,6 +201,7 @@
 	Cut	Вирізати
 	Cyan	Блакитний
 	Cylinder	Циліндр
+	Drawing Properties...	Властивості креслення...
 	DWG	DWG
 	DWG Reference...	Посилання на DWG...
 	DXF	DXF
@@ -339,6 +348,7 @@
 	External Reference	Зовнішнє посилання
 	External References	Зовнішні посилання
 	Extrude	Видавити
+	Field...	Поле...
 	File	Файл
 	File Tab	Вкладка файлу
 	Fillet	Спряження
@@ -1073,6 +1083,7 @@
 	Specify total angle	Укажіть загальний кут
 	Specify total length or	Укажіть загальну довжину або
 	Specify width for rectangles	Укажіть ширину прямокутників
+	Spelling	Орфографія
 	Sphere	Сфера
 	Spline	Сплайн
 	Spline Edit	Редагувати сплайн
@@ -1159,6 +1170,7 @@
 	Up	Угору
 	Update Data Links	Оновити зв’язки з даними
 	Update	Оновити
+	Update Fields	Оновити поля
 	Use System Setting	Як у системі
 	User	Користувач
 	User Parameters	Параметри користувача

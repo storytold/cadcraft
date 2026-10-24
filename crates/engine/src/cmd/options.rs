@@ -52,6 +52,7 @@ pub const PROFILE_VARS: &[&str] = &[
     "PICKADD",
     "PICKDRAG",
     "MAXARRAY",
+    "SPELLDICTIONARY",
     "MEASUREINIT",
 ];
 
@@ -145,6 +146,7 @@ pub fn reset(s: &mut Session) {
     st.pickadd = d.pickadd;
     st.pickdrag = d.pickdrag;
     st.maxarray = d.maxarray;
+    st.spelldictionary = d.spelldictionary;
 }
 
 fn run_options(s: &mut Session, p: &Value) -> Result<Value> {

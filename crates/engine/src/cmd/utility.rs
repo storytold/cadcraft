@@ -1,4 +1,5 @@
-//! Utilities: CAL (expression calculator), FIND (find and replace text), MASSPROP, MEASUREGEOM.
+//! Utilities: CAL (expression calculator), FIND (find and replace text), MASSPROP, MEASUREGEOM;
+//! FIELD, UPDATEFIELD and DWGPROPS ([`fields`]); SPELL ([`spell`]).
 
 use cadcraft_doc::{EntityKind, Handle};
 use cadcraft_geom::Vec2;
@@ -7,8 +8,11 @@ use serde_json::{Value, json};
 use super::*;
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
+pub(crate) mod fields;
+mod spell;
+
 pub fn specs() -> Vec<CommandSpec> {
-    vec![
+    let mut v = vec![
         CommandSpec::new("cal", "QuickCalc", run_cal)
             .menu(&["Tools", "Inquiry", "Quick"])
             .alias(&["quickcalc", "qc"])
@@ -32,7 +36,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .interactive(|_| Ok(Box::<MeasureM>::default())),
         CommandSpec::new("radius.measure", "Radius", run_radius).menu(&["Tools", "Inquiry", "Radius"]).params("{handle}").noundo(),
         CommandSpec::new("angle.measure", "Angle", run_angle).menu(&["Tools", "Inquiry", "Angle"]).params("{vertex, p1, p2} | {h1, h2}").noundo(),
-    ]
+    ];
+    v.extend(fields::specs());
+    v.extend(spell::specs());
+    v
 }
 
 // ---------------- CAL ----------------

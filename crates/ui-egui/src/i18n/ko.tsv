@@ -7,6 +7,16 @@
 	Attach DWG...	DWG 부착...
 	Bind	결합
 	Detach	분리
+	Drawing Properties...	도면 특성...
+	Enter author	작성자 입력
+	Enter comments	설명 입력
+	Enter field name or system variable	필드 이름 또는 시스템 변수 입력
+	Enter keywords	키워드 입력
+	Enter property	특성 입력
+	Enter property to change	변경할 특성 입력
+	Enter subject	주제 입력
+	Enter title	제목 입력
+	Field...	필드...
 	Loaded	로드됨
 	Make it a block of this drawing, keeping its layer names	도면층 이름을 유지하여 이 도면의 블록으로 만들기
 	Make it a block of this drawing; its layers become NAME$0$LAYER	이 도면의 블록으로 만들기; 도면층 이름은 NAME$0$LAYER로 변경됨
@@ -21,6 +31,7 @@
 	Reload	다시 로드
 	Reload All	모두 다시 로드
 	Saved Path	저장된 경로
+	Spelling	맞춤법 검사
 	Unload	언로드
 	Unloaded	언로드됨
 	Unreferenced	참조되지 않음
@@ -637,6 +648,7 @@
 	Send Hatches to Back	해치를 맨 뒤로 보내기
 	Send Under Objects	객체 아래로 보내기
 	Text Objects Only	문자 객체만
+	Update Fields	필드 업데이트
 	Use for this layout	이 배치에 사용
 	Display plot styles	플롯 스타일 표시
 	No plot style tables.	플롯 스타일 테이블이 없습니다.

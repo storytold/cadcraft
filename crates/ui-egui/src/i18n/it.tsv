@@ -12,6 +12,16 @@ menu	Modify	Edita
 	Attach DWG...	Associa DWG...
 	Bind	Unisci
 	Detach	Scollega
+	Drawing Properties...	Proprietà del disegno...
+	Enter author	Immettere l'autore
+	Enter comments	Immettere i commenti
+	Enter field name or system variable	Immettere il nome del campo o la variabile di sistema
+	Enter keywords	Immettere le parole chiave
+	Enter property	Immettere la proprietà
+	Enter property to change	Immettere la proprietà da modificare
+	Enter subject	Immettere l'oggetto
+	Enter title	Immettere il titolo
+	Field...	Campo...
 	Loaded	Caricato
 	Make it a block of this drawing, keeping its layer names	Lo rende un blocco di questo disegno, conservando i nomi dei layer
 	Make it a block of this drawing; its layers become NAME$0$LAYER	Lo rende un blocco di questo disegno; i suoi layer diventano NOME$0$LAYER
@@ -26,6 +36,7 @@ menu	Modify	Edita
 	Reload	Ricarica
 	Reload All	Ricarica tutto
 	Saved Path	Percorso salvato
+	Spelling	Controllo ortografico
 	Unload	Scarica
 	Unloaded	Scaricato
 	Unreferenced	Senza riferimenti
@@ -647,6 +658,7 @@ menu	Modify	Edita
 	Send Hatches to Back	Porta i tratteggi in secondo piano
 	Send Under Objects	Porta sotto gli oggetti
 	Text Objects Only	Solo oggetti testo
+	Update Fields	Aggiorna campi
 	Use for this layout	Usa per questo layout
 	Display plot styles	Mostra stili di stampa
 	No plot style tables.	Nessuna tabella stili di stampa.

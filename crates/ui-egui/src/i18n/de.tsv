@@ -147,6 +147,7 @@
 	Cut	Ausschneiden
 	Cyan	Cyan
 	Cylinder	Zylinder
+	Drawing Properties...	Zeichnungseigenschaften...
 	DWG	DWG
 	DXF	DXF
 	Dark	Dunkel
@@ -214,6 +215,14 @@
 	End Y	Ende Y
 	End angle	Endwinkel
 	Endpoint	Endpunkt
+	Enter author	Geben Sie den Autor ein
+	Enter comments	Geben Sie die Kommentare ein
+	Enter field name or system variable	Geben Sie den Feldnamen oder die Systemvariable ein
+	Enter keywords	Geben Sie die Schlüsselwörter ein
+	Enter property	Geben Sie die Eigenschaft ein
+	Enter property to change	Geben Sie die zu ändernde Eigenschaft ein
+	Enter subject	Geben Sie das Thema ein
+	Enter title	Geben Sie den Titel ein
 	Enter Top, Zero or Bottom.	Geben Sie Top, Zero oder Bottom ein.
 	Enter a fit data option	Geben Sie eine Option für die Anpassungsdaten ein
 	Enter a pattern name	Geben Sie einen Musternamen ein
@@ -269,6 +278,7 @@
 	Extension	Verlängerung
 	Extents	Grenzen
 	Extrude	Extrudieren
+	Field...	Feld...
 	File	Datei
 	File Tab	Dateireiter
 	Fillet	Abrunden
@@ -540,6 +550,8 @@
 	New STB	Neue STB
 	New style	Neuer Stil
 	Reset Panel Layout	Panel-Anordnung zurücksetzen
+	Spelling	Rechtschreibung
+	Update Fields	Felder aktualisieren
 	Use for this layout	Für dieses Layout verwenden
 	Display plot styles	Plotstile anzeigen
 	No plot style tables.	Keine Plotstiltabellen.

@@ -146,6 +146,7 @@
 	Cut	Couper
 	Cyan	Cyan
 	Cylinder	Cylindre
+	Drawing Properties...	Propriétés du dessin...
 	DWG	DWG
 	DXF	DXF
 	Dark	Sombre
@@ -213,6 +214,14 @@
 	End Y	Extrémité Y
 	End angle	Angle final
 	Endpoint	Extrémité
+	Enter author	Entrez l'auteur
+	Enter comments	Entrez les commentaires
+	Enter field name or system variable	Entrez le nom du champ ou la variable système
+	Enter keywords	Entrez les mots-clés
+	Enter property	Entrez la propriété
+	Enter property to change	Entrez la propriété à modifier
+	Enter subject	Entrez le sujet
+	Enter title	Entrez le titre
 	Enter Top, Zero or Bottom.	Entrez Top, Zero ou Bottom.
 	Enter a fit data option	Entrez une option de données d'ajustage
 	Enter a pattern name	Entrez un nom de motif
@@ -268,6 +277,7 @@
 	Extension	Prolongement
 	Extents	Étendue
 	Extrude	Extruder
+	Field...	Champ...
 	File	Fichier
 	File Tab	Onglet Fichier
 	Fillet	Congé
@@ -534,6 +544,8 @@
 	New STB	Nouvelle STB
 	New style	Nouveau style
 	Reset Panel Layout	Réinitialiser la disposition des panneaux
+	Spelling	Orthographe
+	Update Fields	Mettre à jour les champs
 	Use for this layout	Utiliser pour cet espace
 	Display plot styles	Afficher les styles de tracé
 	No plot style tables.	Aucune table de styles de tracé.
