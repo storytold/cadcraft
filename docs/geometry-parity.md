@@ -109,8 +109,11 @@ Where line and arc are supported the results are exact.
 `geom/src/region.rs`: curves are polygonised, crossings split on a grid, vertices merged at
 `tol`, a ray picks the edge and the face is traced by sharpest left turn; islands by
 connectivity (including islands made of separate lines, #163). Caps: 60,000 segments, 4,096
-islands. Missing: **gap tolerance (HPGAPTOL)**, true arcs and curves in boundaries (boundaries
-come out tessellated, so a hatched circle's boundary is a polygon), island detection modes
+islands. Each traced edge keeps the input polyline it came from, so the circular runs of a
+loop traced around a point become arcs again with their corners on the exact curves
+(`engine/src/cmd/hatch/arcs.rs`, #1167): a hatched circle is two half circles and its area is
+exact. Missing: **gap tolerance (HPGAPTOL)**, ellipses and splines in traced boundaries (they
+stay tessellated), island detection modes
 beyond the default, boundary sets, and retained associative boundaries for every case. Pattern
 lines are scanline families clipped against the tessellated loops (`render/src/hatch.rs`).
 
@@ -166,3 +169,4 @@ Total ≈ 90–140 h; items 1–6 parallelise across two or three agents.
 | 2026-10-11 | minor | FILLET with elliptical arcs and splines; trim/extend section 55% → 65% (#466) |
 | 2026-10-11 | minor | FILLET/CHAMFER with polyline segments (same polyline, end segment with a line); section 65% → 70% (#466) |
 | 2026-10-11 | minor | Constraint solver (#546): DOF report, G2 Smooth, ellipse/spline/block geometry, CONSTRAINTINFER |
+| 2026-10-16 | minor | Hatch by internal point keeps exact arcs: circles, arcs and polyline arc segments in traced outer loops and open-curve islands, also after an associative refill (#1167) |

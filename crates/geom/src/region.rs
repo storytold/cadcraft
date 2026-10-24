@@ -33,6 +33,9 @@ pub struct Boundary {
     pub islands: Vec<Island>,
     /// Indices into the input polylines that make up `outer`, ascending.
     pub outer_sources: Vec<usize>,
+    /// The input polyline of each edge of `outer` (`outer[i]` to the next vertex), `None` for a
+    /// gap bridged with HPGAPTOL.
+    pub outer_edges: Vec<Option<usize>>,
 }
 
 /// One island: the outside outline of a connected group of curves.
@@ -42,6 +45,8 @@ pub struct Island {
     pub outline: Vec<Vec2>,
     /// Indices into the input polylines that make up the group, ascending.
     pub sources: Vec<usize>,
+    /// The input polyline of each edge of `outline`, as [`Boundary::outer_edges`].
+    pub edges: Vec<Option<usize>>,
 }
 
 fn key(p: Vec2, origin: Vec2, q: f64) -> (i64, i64) {
@@ -58,6 +63,8 @@ struct Graph {
     src: Vec<(usize, usize)>,
     /// The input polyline of every edge (lower vertex index first).
     edge_src: HashMap<(usize, usize), usize>,
+    /// Edges that bridge a gap between curve ends (HPGAPTOL), lower vertex index first.
+    gap: std::collections::HashSet<(usize, usize)>,
 }
 
 fn build(polys: &[Vec<Vec2>], tol: f64) -> Option<Graph> {
@@ -147,7 +154,7 @@ fn build(polys: &[Vec<Vec2>], tol: f64) -> Option<Graph> {
             }
         }
     }
-    let mut g = Graph { pts: Vec::new(), adj: Vec::new(), src: Vec::with_capacity(n), edge_src: HashMap::new() };
+    let mut g = Graph { pts: Vec::new(), adj: Vec::new(), src: Vec::with_capacity(n), edge_src: HashMap::new(), gap: Default::default() };
     let mut index: HashMap<(i64, i64), usize> = HashMap::new();
     let mut vid = |p: Vec2, g: &mut Graph| -> usize {
         let k = key(p, bb.min, tol);
@@ -232,6 +239,7 @@ fn build_gap(polys: &[Vec<Vec2>], tol: f64, gap: f64) -> Option<Graph> {
         if let Some(k) = owner {
             g.edge_src.insert((u.min(v), u.max(v)), k);
         }
+        g.gap.insert((u.min(v), u.max(v)));
         if let Some(f) = joined.get_mut(i) {
             *f = true;
         }
@@ -277,6 +285,17 @@ fn trace(g: &Graph, u0: usize, v0: usize, max_steps: usize) -> Option<Vec<usize>
 
 fn points(g: &Graph, ids: &[usize]) -> Option<Vec<Vec2>> {
     ids.iter().map(|&i| g.pts.get(i).copied()).collect()
+}
+
+/// The input polyline of each edge of the closed loop `ids` (`None` for a bridged gap).
+fn edge_owners(g: &Graph, ids: &[usize]) -> Vec<Option<usize>> {
+    ids.iter()
+        .zip(ids.iter().cycle().skip(1))
+        .map(|(&u, &v)| {
+            let k = (u.min(v), u.max(v));
+            if g.gap.contains(&k) { None } else { g.edge_src.get(&k).copied() }
+        })
+        .collect()
 }
 
 /// The face around `p`, as vertex indices (counter-clockwise).
@@ -356,12 +375,12 @@ fn prune(g: &Graph) -> Graph {
             }
         }
     }
-    Graph { pts: g.pts.clone(), adj, src: Vec::new(), edge_src: HashMap::new() }
+    Graph { pts: g.pts.clone(), adj, src: Vec::new(), edge_src: g.edge_src.clone(), gap: g.gap.clone() }
 }
 
 /// The outline of the outside of a group of curves on cycles, traced counter-clockwise from its
 /// leftmost (then lowest) vertex `u`, giving up after `steps` edges.
-fn outside(core: &Graph, u: usize, steps: usize) -> Option<Vec<Vec2>> {
+fn outside(core: &Graph, u: usize, steps: usize) -> Option<(Vec<Vec2>, Vec<Option<usize>>)> {
     let pu = *core.pts.get(u)?;
     // Every neighbour lies to the right of the leftmost vertex; the one turned furthest
     // counter-clockwise has the outside of the group on its left.
@@ -372,9 +391,9 @@ fn outside(core: &Graph, u: usize, steps: usize) -> Option<Vec<Vec2>> {
         })
     };
     let w = core.adj.get(u).into_iter().flatten().filter_map(|w| Some((signed(w)?, *w))).max_by(|a, b| a.0.total_cmp(&b.0)).map(|(_, w)| w)?;
-    let mut lp = trace(core, u, w, steps).and_then(|ids| points(core, &ids))?;
-    lp.reverse();
-    Some(lp)
+    let mut ids = trace(core, u, w, steps)?;
+    ids.reverse();
+    Some((points(core, &ids)?, edge_owners(core, &ids)))
 }
 
 /// Outlines of the groups of curves inside the face `outer` (vertex indices into `g`).
@@ -420,7 +439,7 @@ fn islands(g: &Graph, outer: &[usize], p: Vec2) -> Vec<Island> {
             continue;
         }
         let steps = edges.get(&c).copied().unwrap_or(0).saturating_add(4);
-        let Some(lp) = outside(&core, u, steps) else { continue };
+        let Some((lp, edges)) = outside(&core, u, steps) else { continue };
         let area = shoelace(&lp);
         let ib = Bounds2::from_points(lp.iter().copied());
         if lp.len() < 3 || !area.is_finite() || area <= 0.0 || !ob.contains_box(&ib) || point_in_polygon(&lp, p) {
@@ -429,7 +448,7 @@ fn islands(g: &Graph, outer: &[usize], p: Vec2) -> Vec<Island> {
         let mut src = sources.remove(&c).unwrap_or_default();
         src.sort_unstable();
         src.dedup();
-        out.push(Island { outline: lp, sources: src });
+        out.push(Island { outline: lp, sources: src, edges });
     }
     out
 }
@@ -523,8 +542,14 @@ pub fn enclosing_loop(polys: &[Vec<Vec2>], p: Vec2, tol: f64) -> Option<Vec<Vec2
 
 /// [`enclosing_loop`], with gaps of up to `gap` between curve ends closed (HPGAPTOL).
 pub fn enclosing_loop_gap(polys: &[Vec<Vec2>], p: Vec2, tol: f64, gap: f64) -> Option<Vec<Vec2>> {
+    enclosing_loop_edges_gap(polys, p, tol, gap).map(|(lp, _)| lp)
+}
+
+/// [`enclosing_loop_gap`] with the input polyline of each edge, as [`Boundary::outer_edges`].
+pub fn enclosing_loop_edges_gap(polys: &[Vec<Vec2>], p: Vec2, tol: f64, gap: f64) -> Option<(Vec<Vec2>, Vec<Option<usize>>)> {
     let g = build_gap(polys, tol, gap)?;
-    points(&g, &outer_face(&g, p)?)
+    let ids = outer_face(&g, p)?;
+    Some((points(&g, &ids)?, edge_owners(&g, &ids)))
 }
 
 /// The closed loop enclosing `p` plus the islands inside it, or `None` when `p` isn't enclosed.
@@ -542,13 +567,19 @@ pub fn boundary_at_gap(polys: &[Vec<Vec2>], p: Vec2, tol: f64, gap: f64) -> Opti
         ids.iter().zip(ids.iter().cycle().skip(1)).filter_map(|(&u, &v)| g.edge_src.get(&(u.min(v), u.max(v))).copied()).collect();
     outer_sources.sort_unstable();
     outer_sources.dedup();
-    Some(Boundary { outer, islands, outer_sources })
+    let outer_edges = edge_owners(&g, &ids);
+    Some(Boundary { outer, islands, outer_sources, outer_edges })
 }
 
 /// The outside outline of curves that together enclose an area (counter-clockwise, dangling
 /// ends removed), or `None` when they enclose nothing or form more than one separate group.
 /// Gaps of up to `gap` between curve ends are closed (HPGAPTOL).
 pub fn outline(polys: &[Vec<Vec2>], tol: f64, gap: f64) -> Option<Vec<Vec2>> {
+    outline_edges(polys, tol, gap).map(|(lp, _)| lp)
+}
+
+/// [`outline`] with the input polyline of each edge, as [`Boundary::outer_edges`].
+pub fn outline_edges(polys: &[Vec<Vec2>], tol: f64, gap: f64) -> Option<(Vec<Vec2>, Vec<Option<usize>>)> {
     let g = build_gap(polys, tol, gap)?;
     let core = prune(&g);
     let comp = components(&core);
@@ -570,8 +601,8 @@ pub fn outline(polys: &[Vec<Vec2>], tol: f64, gap: f64) -> Option<Vec<Vec2>> {
             start = Some(u);
         }
     }
-    let lp = outside(&core, start?, edges.saturating_add(4))?;
-    (lp.len() >= 3 && shoelace(&lp) > 0.0).then_some(lp)
+    let (lp, owners) = outside(&core, start?, edges.saturating_add(4))?;
+    (lp.len() >= 3 && shoelace(&lp) > 0.0).then_some((lp, owners))
 }
 
 /// A point strictly inside a closed polygon (either orientation), for re-finding the face a
@@ -780,6 +811,34 @@ mod tests {
         assert!(point_in_polygon(&rev, interior_point(&rev).unwrap()));
         assert!(interior_point(&[Vec2::ZERO, Vec2::new(1.0, 0.0)]).is_none());
         assert!(interior_point(&[Vec2::new(f64::NAN, 0.0); 4]).is_none());
+    }
+
+    #[test]
+    fn edges_name_their_input_polyline_and_bridged_gaps_none() {
+        // A square of four separate sides; the right side stops short of the top (a gap).
+        let sides = vec![
+            vec![Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0)],
+            vec![Vec2::new(10.0, 0.0), Vec2::new(10.0, 9.9)],
+            vec![Vec2::new(10.0, 10.0), Vec2::new(0.0, 10.0)],
+            vec![Vec2::new(0.0, 10.0), Vec2::new(0.0, 0.0)],
+        ];
+        let b = boundary_at_gap(&sides, Vec2::new(5.0, 5.0), 1e-9, 0.5).unwrap();
+        assert_eq!(b.outer_edges.len(), b.outer.len());
+        // Each edge names the side it lies on; the bridged gap names none.
+        for (i, e) in b.outer_edges.iter().enumerate() {
+            let (a, c) = (b.outer[i], b.outer[(i + 1) % b.outer.len()]);
+            match e {
+                Some(k) => {
+                    let s = &sides[*k];
+                    let on = |q: Vec2| crate::Line::new(s[0], s[1]).closest(q).dist(q) < 1e-9;
+                    assert!(on(a) && on(c), "edge {i} not on side {k}");
+                }
+                None => assert!(a.dist(c) < 0.5 + 1e-9, "only the gap is unnamed"),
+            }
+        }
+        assert_eq!(b.outer_edges.iter().filter(|e| e.is_none()).count(), 1);
+        let (lp, edges) = outline_edges(&sides, 1e-9, 0.5).unwrap();
+        assert_eq!(lp.len(), edges.len());
     }
 
     #[test]

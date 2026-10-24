@@ -13,6 +13,7 @@ use super::helpers::lwpoly;
 use super::*;
 use crate::{Accept, EngineError, Input, Interactive, Picker, Prompt, Result, Session, Step};
 
+mod arcs;
 mod assoc;
 mod edit;
 mod pick;
@@ -40,13 +41,15 @@ pub(super) fn outline_tol(ext: Bounds2) -> f64 {
 }
 
 /// Tessellated outlines of every visible curve in the space (hatch boundary candidates), each
-/// with the handle of the object it came from.
-fn outlines(d: &Drawing, space: &Space, near: Option<Bounds2>) -> (Vec<Vec<Vec2>>, Vec<Handle>) {
-    let Some(store) = d.space(space) else { return (Vec::new(), Vec::new()) };
+/// with the handle of the object it came from and its exact piece ([`arcs::pieces_of`]), and
+/// the flattening tolerance.
+fn outlines(d: &Drawing, space: &Space, near: Option<Bounds2>) -> (Vec<Vec<Vec2>>, Vec<Handle>, Vec<Option<arcs::Piece>>, f64) {
     let ext = d.extents(space);
     let tol = outline_tol(ext);
+    let Some(store) = d.space(space) else { return (Vec::new(), Vec::new(), Vec::new(), tol) };
     let mut out = Vec::new();
     let mut owners = Vec::new();
+    let mut pieces = Vec::new();
     for e in store.iter() {
         if !d.is_visible(e) || matches!(e.kind, EntityKind::Hatch(_) | EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::Dimension(_)) {
             continue;
@@ -59,9 +62,10 @@ fn outlines(d: &Drawing, space: &Space, near: Option<Bounds2>) -> (Vec<Vec<Vec2>
         }
         let polys = object_polys(d, e, tol, ext);
         owners.extend(std::iter::repeat_n(e.handle, polys.len()));
+        pieces.extend(arcs::pieces_of(e, polys.len()));
         out.extend(polys);
     }
-    (out, owners)
+    (out, owners, pieces, tol)
 }
 
 /// An object's outline as polylines (tolerance `tol`), infinite lines clipped to a generous
@@ -179,7 +183,7 @@ impl OriginMode {
     }
     /// The origin for loops: `current` when the mode keeps it.
     pub(crate) fn origin(self, loops: &[HatchLoop], current: Vec2) -> Vec2 {
-        let b = Bounds2::from_points(loops.iter().flat_map(|l| l.vertices.iter().map(|v| v.p)).filter(|p| p.is_finite()));
+        let b = loops_bounds(loops);
         if b.is_empty() {
             return current;
         }
@@ -192,6 +196,25 @@ impl OriginMode {
             OriginMode::Center => b.center(),
         }
     }
+}
+
+/// The extents of hatch loops with their arcs: a bulged edge reaches past its vertices (a circle
+/// kept as two half-circle vertices spans its whole height).
+fn loops_bounds(loops: &[HatchLoop]) -> Bounds2 {
+    let mut b = Bounds2::from_points(loops.iter().flat_map(|l| l.vertices.iter().map(|v| v.p)).filter(|p| p.is_finite()));
+    for l in loops {
+        let vs = &l.vertices;
+        for (i, v) in vs.iter().enumerate() {
+            let Some(next) = vs.get((i + 1) % vs.len()) else { continue };
+            if let Some((arc, _)) = cadcraft_geom::bulge_to_arc(v.p, next.p, v.bulge) {
+                let ab = arc.bounds();
+                if ab.min.is_finite() && ab.max.is_finite() {
+                    b = b.union(&ab);
+                }
+            }
+        }
+    }
+    b
 }
 
 /// Island detection style by name (HPISLANDDETECTION 0 normal, 1 outer, 2 ignore).
@@ -210,15 +233,16 @@ pub(crate) fn loops_at(s: &Session, p: Vec2) -> Result<Vec<HatchLoop>> {
     let space = s.space();
     let ext = d.extents(&space);
     let tol = ((ext.width() + ext.height()) * 1e-9).max(1e-9);
-    let (polys, owners) = outlines(d, &space, None);
+    let (polys, owners, pieces, ftol) = outlines(d, &space, None);
     // A line that ends on a flattened curve (an ellipse) can stop short of its chords.
-    let polys = cadcraft_geom::region::snap_ends(&polys, outline_tol(ext), tol);
+    let polys = cadcraft_geom::region::snap_ends(&polys, ftol, tol);
     let found = cadcraft_geom::region::boundary_at_gap(&polys, p, tol, gap_tolerance(d))
         .ok_or_else(|| EngineError::Other("Valid hatch boundary not found.".into()))?;
     let outer = found.outer;
     let ob = Bounds2::from_points(outer.iter().copied());
     let sources = handles_of(&owners, &found.outer_sources);
-    let mut loops = vec![HatchLoop { vertices: outer.iter().map(|q| PolyVertex::new(*q)).collect(), outer: true, sources }];
+    // The traced outline is flattened: circular runs become arcs again (#1167).
+    let mut loops = vec![HatchLoop { vertices: arcs::with_arcs(&outer, &found.outer_edges, &pieces, ftol), outer: true, sources }];
     // Islands: closed objects entirely inside the outer loop that don't contain the pick point.
     if let Some(store) = d.space(&space) {
         for e in store.iter() {
@@ -246,7 +270,7 @@ pub(crate) fn loops_at(s: &Session, p: Vec2) -> Result<Vec<HatchLoop>> {
             && island.sources.iter().all(|&i| owners.get(i).and_then(|h| d.entity(*h)).is_some_and(|e| island_curve(d, e)));
         if open_curves {
             let sources = handles_of(&owners, &island.sources);
-            loops.push(HatchLoop { vertices: island.outline.into_iter().map(PolyVertex::new).collect(), outer: false, sources });
+            loops.push(HatchLoop { vertices: arcs::with_arcs(&island.outline, &island.edges, &pieces, ftol), outer: false, sources });
         }
     }
     Ok(loops)
@@ -255,7 +279,9 @@ pub(crate) fn loops_at(s: &Session, p: Vec2) -> Result<Vec<HatchLoop>> {
 pub(crate) fn loops_from_handles(s: &Session, hs: &[Handle]) -> Result<Vec<HatchLoop>> {
     let d = s.doc()?;
     let mut loops = Vec::new();
-    for h in hs {
+    let mut seen = std::collections::HashSet::new();
+    // An object selected twice is one boundary.
+    for h in hs.iter().filter(|h| seen.insert(**h)) {
         if let Some(vs) = d.entity(*h).and_then(|e| closed_loop(d, e)) {
             loops.push(HatchLoop { vertices: vs, outer: loops.is_empty(), sources: vec![*h] });
         }
@@ -410,17 +436,18 @@ fn same_loop(a: &HatchLoop, b: &HatchLoop) -> bool {
         })
 }
 
-/// Deduplicate boundary loops that describe the same boundary.
+/// Deduplicate boundary loops that describe the same boundary in the same role. A loop that is
+/// one pick's outer loop and another's island (a pick inside a circle and one around it) stays
+/// twice: merged, the island would be gone and the even-odd fill would leave the circle empty.
 fn dedup_loops(loops: &mut Vec<HatchLoop>) {
     let mut unique: Vec<HatchLoop> = Vec::with_capacity(loops.len());
     for l in loops.drain(..) {
-        if let Some(existing) = unique.iter_mut().find(|u| same_loop(u, &l)) {
+        if let Some(existing) = unique.iter_mut().find(|u| u.outer == l.outer && same_loop(u, &l)) {
             for s in l.sources {
                 if !existing.sources.contains(&s) {
                     existing.sources.push(s);
                 }
             }
-            existing.outer = existing.outer || l.outer;
         } else {
             unique.push(l);
         }

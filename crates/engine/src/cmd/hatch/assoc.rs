@@ -87,8 +87,14 @@ fn refill(before: &Drawing, after: &Drawing, l: &HatchLoop) -> Refill {
         return Refill::Open;
     }
     let tol = super::outline_tol(nb);
+    let mut polys: Vec<Vec<Vec2>> = Vec::new();
+    let mut pieces = Vec::new();
+    for e in live.iter().filter_map(|h| after.entity(*h)) {
+        let ps = object_polys(after, e, tol, nb);
+        pieces.extend(super::arcs::pieces_of(e, ps.len()));
+        polys.extend(ps);
+    }
     let snap = ((nb.width() + nb.height()) * 1e-9).max(1e-9);
-    let polys: Vec<Vec<Vec2>> = live.iter().filter_map(|h| after.entity(*h)).flat_map(|e| object_polys(after, e, tol, nb)).collect();
     let polys = region::snap_ends(&polys, tol, snap);
     let gap = gap_tolerance(after);
     let found = if l.outer {
@@ -97,13 +103,14 @@ fn refill(before: &Drawing, after: &Drawing, l: &HatchLoop) -> Refill {
         let ob = if ob.is_empty() { nb } else { ob };
         let old = outline_of(&l.vertices, (ob.width() + ob.height()).max(1e-9) / 20000.0);
         region::interior_point(&old)
-            .and_then(|q| region::enclosing_loop_gap(&polys, map_point(q, &ob, &nb), snap, gap))
-            .or_else(|| region::outline(&polys, snap, gap))
+            .and_then(|q| region::enclosing_loop_edges_gap(&polys, map_point(q, &ob, &nb), snap, gap))
+            .or_else(|| region::outline_edges(&polys, snap, gap))
     } else {
-        region::outline(&polys, snap, gap)
+        region::outline_edges(&polys, snap, gap)
     };
     match found {
-        Some(pts) => Refill::Loop(pts.into_iter().map(PolyVertex::new).collect()),
+        // Traced again from flattened curves: circular runs become arcs again (#1167).
+        Some((pts, edges)) => Refill::Loop(super::arcs::with_arcs(&pts, &edges, &pieces, tol)),
         None => Refill::Open,
     }
 }
