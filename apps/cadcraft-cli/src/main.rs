@@ -58,6 +58,9 @@ fn stdout_failed(e: std::io::Error) {
 const USAGE: &str = "usage:
   cadcraft-cli info FILE.dxf
   cadcraft-cli convert IN.dxf OUT.(dxf|dwg|svg|png|pdf) [FRAMING]
+  cadcraft-cli convert IN.dxf OUT.pdf --layout NAME [--layout NAME2]... | --layout all
+                           plot paper-space layouts at their page setup (paper, scale, plot
+                           area); several layouts write OUT-<layout>.pdf each.
   cadcraft-cli run [FILE | --sample | --metric] [--script TEXT] [--script-file F.scr] [--cmd 'id {json}']... [--save OUT.dxf] [--export OUT.(png|svg|pdf)] [FRAMING]
   cadcraft-cli commands [FILTER]
   cadcraft-cli mcp [--connect HOST:PORT [--lazy] [--launch]]
@@ -267,17 +270,35 @@ fn check_framed_output(framing: Framing, out: Option<&str>) -> Result<(), String
     }
 }
 
+/// `--layout` checks: a PDF output and no model-space framing.
+fn check_layout_output(layouts: &[String], framing: Framing, out: &str) -> Result<(), String> {
+    if layouts.is_empty() {
+        return Ok(());
+    }
+    if !out.to_ascii_lowercase().ends_with(".pdf") {
+        return Err(format!("--layout only applies to PDF output, not `{out}`"));
+    }
+    if framing != Framing::Auto {
+        return Err("--layout plots the layout's page setup; it cannot be combined with --window/--view".into());
+    }
+    Ok(())
+}
+
 fn convert(args: &[String]) -> Result<(), String> {
     let mut framing = Framing::Auto;
+    let mut layouts: Vec<String> = Vec::new();
     let mut files = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
-        if !framing_option(a, &mut it, &mut framing)? {
+        if a == "--layout" {
+            layouts.push(it.next().ok_or("--layout needs a layout name (or `all`)")?.clone());
+        } else if !framing_option(a, &mut it, &mut framing)? {
             files.push(a);
         }
     }
     let [i, o] = files.as_slice() else { return Err(USAGE.into()) };
     check_framed_output(framing, Some(o))?;
+    check_layout_output(&layouts, framing, o)?;
     let mut s = Session::empty();
     open(&mut s, i)?;
     if let Some(m) = skipped_message(s.doc().map_err(|e| e.to_string())?, i) {
@@ -287,6 +308,9 @@ fn convert(args: &[String]) -> Result<(), String> {
         && let Some(m) = undrawn_message(s.doc().map_err(|e| e.to_string())?, i)
     {
         eprintln!("{m}");
+    }
+    if !layouts.is_empty() {
+        return convert_layouts(&mut s, &layouts, o);
     }
     let window = export_window(&s, framing, None)?;
     export_framed(&s, o, window)
@@ -309,6 +333,35 @@ fn undrawn_message(d: &cadcraft_engine::doc::Drawing, path: &str) -> Option<Stri
     let list: Vec<String> = types.iter().map(|(t, n)| format!("{t}: {n}")).collect();
     let entities = if n == 1 { "entity" } else { "entities" };
     Some(format!("{path}: {n} {entities} not drawn ({})", list.join(", ")))
+}
+
+/// Plot layouts at their page setup. One layout writes `OUT.pdf`; several (or `all`) write
+/// `OUT-<layout>.pdf` each, as `publish` does.
+fn convert_layouts(s: &mut Session, layouts: &[String], out: &str) -> Result<(), String> {
+    if let [one] = layouts
+        && !one.eq_ignore_ascii_case("all")
+    {
+        let r = s.execute("exportpdf", &json!({ "path": out, "layout": one })).map_err(|e| e.to_string())?;
+        eprintln!("wrote {out} ({} bytes, layout {one})", r["bytes"].as_u64().unwrap_or(0));
+        return Ok(());
+    }
+    if layouts.len() > 1 && layouts.iter().any(|l| l.eq_ignore_ascii_case("all")) {
+        return Err("--layout all cannot be combined with layout names".into());
+    }
+    let mut q = json!({ "path": out });
+    if !layouts[0].eq_ignore_ascii_case("all") {
+        q["layouts"] = json!(layouts);
+    }
+    let r = s.execute("publish", &q).map_err(|e| e.to_string())?;
+    for sheet in r["sheets"].as_array().into_iter().flatten() {
+        eprintln!(
+            "wrote {} ({} bytes, layout {})",
+            sheet["path"].as_str().unwrap_or("?"),
+            sheet["bytes"].as_u64().unwrap_or(0),
+            sheet["layout"].as_str().unwrap_or("?")
+        );
+    }
+    Ok(())
 }
 
 /// The warning for the records of `path` the reader could not place, or `None` when there are none.
@@ -1047,6 +1100,43 @@ mod tests {
         let bad: Vec<String> = ["--sample", "--window", "0,0,NaN,1", "--export", &path("bad.png")].iter().map(|a| a.to_string()).collect();
         assert!(run(&bad).unwrap_err().contains("--window"));
         assert!(!dir.join("bad.png").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn convert_plots_named_layouts_to_pdf() {
+        install_io();
+        let dir = std::env::temp_dir().join(format!("cadcraft-cli-layout-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = |n: &str| dir.join(n).to_string_lossy().to_string();
+        let a = |v: &[&str]| -> Vec<String> { v.iter().map(|s| s.to_string()).collect() };
+        run(&a(&["--sample", "--cmd", r#"layout.new {"name":"SHEET A"}"#, "--cmd", r#"layout.new {"name":"SHEET B"}"#, "--save", &path("in.dxf")]))
+            .unwrap();
+
+        // One layout: OUT.pdf itself.
+        convert(&a(&[&path("in.dxf"), &path("one.pdf"), "--layout", "SHEET A"])).unwrap();
+        assert!(std::fs::read(path("one.pdf")).unwrap().starts_with(b"%PDF"));
+
+        // Several: OUT-<layout>.pdf each, as publish names them.
+        convert(&a(&[&path("in.dxf"), &path("two.pdf"), "--layout", "SHEET A", "--layout", "SHEET B"])).unwrap();
+        for n in ["two-SHEET A.pdf", "two-SHEET B.pdf"] {
+            assert!(std::fs::read(path(n)).unwrap().starts_with(b"%PDF"), "{n}");
+        }
+
+        // `all`: Model (it has objects) and every layout, in tab order.
+        convert(&a(&[&path("in.dxf"), &path("all.pdf"), "--layout", "all"])).unwrap();
+        for n in ["all-Model.pdf", "all-SHEET A.pdf", "all-SHEET B.pdf"] {
+            assert!(dir.join(n).exists(), "{n}");
+        }
+
+        // Misuse is an error and writes nothing.
+        let err = |v: &[&str]| convert(&a(v)).unwrap_err();
+        assert!(err(&[&path("in.dxf"), &path("x.png"), "--layout", "SHEET A"]).contains("PDF"));
+        assert!(err(&[&path("in.dxf"), &path("x.pdf"), "--layout", "SHEET A", "--view", "extents"]).contains("--window/--view"));
+        assert!(err(&[&path("in.dxf"), &path("x.pdf"), "--layout", "all", "--layout", "SHEET A"]).contains("all"));
+        assert!(err(&[&path("in.dxf"), &path("x.pdf"), "--layout"]).contains("--layout needs"));
+        assert!(convert(&a(&[&path("in.dxf"), &path("x.pdf"), "--layout", "NOPE"])).is_err());
+        assert!(!dir.join("x.pdf").exists() && !dir.join("x.png").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

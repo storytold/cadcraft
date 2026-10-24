@@ -416,13 +416,30 @@ fn run_publish(s: &mut Session, p: &Value) -> Result<Value> {
         let stem = pb.file_stem().map(|s| s.to_string_lossy().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| "Drawing".into());
         (pb.parent().map(std::path::Path::to_path_buf).unwrap_or_default(), stem)
     });
+    if base.is_some() {
+        // `file_part` maps `A+` and `A_` to the same name, and some file systems ignore case.
+        let mut files: BTreeMap<String, &String> = BTreeMap::new();
+        for name in &sheets {
+            if let Some(other) = files.insert(file_part(name).to_lowercase(), name) {
+                return Err(bad(
+                    "publish",
+                    if other == name {
+                        format!("`{name}` is listed twice")
+                    } else {
+                        format!("`{other}` and `{name}` would be published to the same file; rename one of them")
+                    },
+                ));
+            }
+        }
+    }
     let mut out = Vec::new();
     for name in &sheets {
         let mut q = json!({ "layout": name });
         if let Some((dir, stem)) = &base {
             q["path"] = json!(dir.join(format!("{stem}-{}.pdf", file_part(name))).to_string_lossy());
         }
-        let mut r = s.execute("plot", &q).map_err(|e| bad("publish", format!("{name}: {e}")))?;
+        // EXPORTPDF, not PLOT: a page setup's PNG or SVG device must not write into a `.pdf`.
+        let mut r = s.execute("exportpdf", &q).map_err(|e| bad("publish", format!("{name}: {e}")))?;
         if let Some(o) = r.as_object_mut() {
             o.insert("layout".into(), json!(name));
         }
@@ -790,6 +807,34 @@ mod tests {
         for p in [json!({ "layouts": [] }), json!({ "layouts": ["Nope"] }), json!({ "layouts": "Layout1" }), json!({ "layouts": [1] })] {
             assert!(s.execute("publish", &p).is_err(), "{p}");
         }
+    }
+
+    #[test]
+    fn publish_writes_pdf_and_refuses_sheets_that_share_a_file() {
+        our_hooks();
+        let mut s = session();
+        if io().and_then(|h| h.plot).is_none() {
+            return;
+        }
+        // A PNG page setup still publishes PDF: the sheet files are named `.pdf`.
+        s.execute("pagesetup", &json!({ "layout": "Layout1", "device": "CADCraft PNG" })).unwrap();
+        s.execute("publish", &json!({ "path": temp("dev.pdf").to_string_lossy(), "layouts": ["Layout1"] })).unwrap();
+        let path = temp("dev-Layout1.pdf");
+        let text = String::from_utf8(std::fs::read(&path).unwrap()).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(text.contains("\"output\":\"pdf\""), "{text}");
+        // A layout listed twice would be written twice to one file.
+        let twice = json!({ "path": temp("twice.pdf").to_string_lossy(), "layouts": ["Layout2", "layout2"] });
+        let e = s.execute("publish", &twice).unwrap_err().to_string();
+        assert!(e.contains("`Layout2` is listed twice"), "{e}");
+        // `Sheet A+` and `Sheet A_` would both be written to `clash-Sheet A_.pdf`: refused before plotting.
+        s.execute("layout", &json!({ "option": "rename", "name": "Layout1", "to": "Sheet A+" })).unwrap();
+        s.execute("layout", &json!({ "option": "rename", "name": "Layout2", "to": "Sheet A_" })).unwrap();
+        let e = s.execute("publish", &json!({ "path": temp("clash.pdf").to_string_lossy() })).unwrap_err().to_string();
+        assert!(e.contains("`Sheet A+` and `Sheet A_`"), "{e}");
+        assert!(!temp("clash-Model.pdf").exists(), "nothing is plotted");
+        // Returned as data, the sheets have no files to share.
+        assert_eq!(s.execute("publish", &json!({})).unwrap()["sheets"].as_array().map(Vec::len), Some(3));
     }
 
     #[test]
