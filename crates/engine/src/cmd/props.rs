@@ -426,12 +426,30 @@ fn run_color(s: &mut Session, p: &Value) -> Result<Value> {
 pub(crate) fn set_current_color_value(s: &mut Session, v: &Value) -> Option<()> {
     // An out-of-range index is refused here, where `color` folds it to ByLayer.
     let c = match v {
-        Value::String(t) => Color::parse(t),
+        // "RGB:r,g,b" is how `getvar` reads a true colour back, so a saved value can be restored.
+        Value::String(t) => match t.trim().get(..4).filter(|p| p.eq_ignore_ascii_case("rgb:")).and_then(|_| t.trim().get(4..)) {
+            Some(triple) => Color::parse(triple).filter(|c| matches!(c, Color::True(_))),
+            None => Color::parse(t),
+        },
         Value::Number(n) => n.as_i64().and_then(|i| Color::parse(&i.to_string())),
         _ => None,
     }?;
     set_current_color(s.doc_mut().ok()?, c);
     Some(())
+}
+
+/// `getvar CECOLOR` as AutoCAD gives it, always text: "BYLAYER", "BYBLOCK", the index ("1" for
+/// red) or "RGB:r,g,b".
+pub(crate) fn current_color_value(d: &cadcraft_doc::Drawing) -> String {
+    if let Some(rgb) = d.header.get("CECOLOR_RGB").and_then(|v| v.as_i64()).and_then(|v| u32::try_from(v).ok()) {
+        let cadcraft_color::Rgb(r, g, b) = cadcraft_color::Rgb::from_u32(rgb);
+        return format!("RGB:{r},{g},{b}");
+    }
+    match Color::from_aci(d.header.i64("CECOLOR", 256) as i16) {
+        Color::ByLayer => "BYLAYER".into(),
+        Color::ByBlock => "BYBLOCK".into(),
+        other => other.to_aci().to_string(),
+    }
 }
 
 /// A true colour keeps its RGB in CECOLOR_RGB (which wins for new objects); any other colour must

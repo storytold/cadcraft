@@ -455,6 +455,15 @@ fn getvar_drawing_and_session_variables() {
     assert_eq!(ok(&mut s, "(getvar \"DWGTITLED\")"), "1");
 }
 
+/// CECOLOR is a string in AutoCAD, whatever it was set from (#1999).
+#[test]
+fn getvar_cecolor_is_a_string() {
+    let mut s = session();
+    assert_eq!(ok(&mut s, "(list (getvar \"CECOLOR\") (type (getvar \"CECOLOR\")))"), "(\"BYLAYER\" STR)");
+    assert_eq!(ok(&mut s, "(setvar \"CECOLOR\" \"red\") (getvar \"CECOLOR\")"), "\"1\"");
+    assert_eq!(ok(&mut s, "(setvar \"CECOLOR\" \"10,20,30\") (getvar \"CECOLOR\")"), "\"RGB:10,20,30\"");
+}
+
 #[test]
 fn input_functions_take_supplied_answers() {
     let mut s = session();

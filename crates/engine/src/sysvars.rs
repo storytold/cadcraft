@@ -146,6 +146,8 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         // Held in radians (`$ANGBASE` in DXF is in degrees); reported in degrees, like POLARANG.
         "ANGBASE" => json!(s.doc().ok()?.header.f64("ANGBASE", 0.0).to_degrees()),
         "CONSTRAINTINFER" => json!(i32::from(s.doc().ok()?.parametric.settings.infer)),
+        // Text, as AutoCAD reads it back; the header keeps the index (and CECOLOR_RGB) for DXF.
+        "CECOLOR" => json!(crate::cmd::current_color_value(s.doc().ok()?)),
         // Process-wide font substitution (profile settings, not saved in the drawing).
         "FONTALT" => json!(cadcraft_fonts::ttf::font_alt()),
         "FONTFALLBACK" => json!(cadcraft_fonts::ttf::fallback_fonts()),
@@ -440,7 +442,7 @@ pub fn list(s: &Session) -> Value {
     }
     if let Ok(d) = s.doc() {
         for (k, v) in &d.header.vars {
-            if matches!(k.as_str(), "ANGBASE" | "SNAPUNIT" | "GRIDUNIT") {
+            if matches!(k.as_str(), "ANGBASE" | "SNAPUNIT" | "GRIDUNIT" | "CECOLOR") {
                 m.insert(k.clone(), get(s, k).unwrap_or(Value::Null));
             } else if !k.starts_with("CADCRAFT_") {
                 m.insert(k.clone(), serde_json::to_value(v).unwrap_or(Value::Null));
