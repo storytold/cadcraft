@@ -17,6 +17,7 @@ mod measure_distance_snapping;
 mod menubar_hover;
 mod mspace_viewport_view;
 mod options_dialog;
+mod pagesetup_multi;
 mod parameters_rename;
 mod pickdrag;
 mod properties_units;
