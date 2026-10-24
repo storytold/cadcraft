@@ -71,9 +71,20 @@ fn mtext_box(t: &crate::MText) -> Bounds2 {
         7..=9 => h,
         _ => 0.0,
     };
+    // A background mask reaches past the text by its border offset, as it's drawn.
+    let m = t.background.as_ref().map_or(0.0, |k| {
+        let scale = if k.scale.is_finite() { k.scale.clamp(1.0, 5.0) } else { crate::MASK_SCALE };
+        let m = (scale - 1.0) * t.height.abs() / 2.0;
+        if m.is_finite() { m } else { 0.0 }
+    });
     let o = t.insert.xy();
-    let pts = [Vec2::new(dx, top + dy), Vec2::new(dx + w, top + dy), Vec2::new(dx + w, top - h + dy), Vec2::new(dx, top - h + dy)]
-        .map(|p| o + p.rotate(t.rotation));
+    let pts = [
+        Vec2::new(dx - m, top + dy + m),
+        Vec2::new(dx + w + m, top + dy + m),
+        Vec2::new(dx + w + m, top - h + dy - m),
+        Vec2::new(dx - m, top - h + dy - m),
+    ]
+    .map(|p| o + p.rotate(t.rotation));
     Bounds2::from_points(pts)
 }
 
