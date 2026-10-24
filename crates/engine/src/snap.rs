@@ -7,7 +7,7 @@ mod viewport;
 
 pub use viewport::ViewportPoint;
 
-use cadcraft_doc::{Drawing, EntityKind, Insert, MAX_BLOCK_DEPTH, Prim, Space};
+use cadcraft_doc::{Drawing, EntityKind, Handle, Insert, MAX_BLOCK_DEPTH, Prim, Space};
 use cadcraft_geom::{Bounds2, Circle, EPS, Ellipse, Mat3, PI, Segment, Vec2, intersect_ext};
 use serde::Serialize;
 
@@ -308,7 +308,7 @@ fn osnap_in_with_prims(
     frozen: &[String],
     clip: Option<Bounds2>,
 ) -> Option<(Option<SnapHit>, Vec<Prim>)> {
-    let (mut cands, near_prims) = gather_in(d, space, ix, cursor, aperture, osmode, frozen)?;
+    let (mut cands, near_prims) = gather_in(d, space, ix, cursor, aperture, osmode, frozen, None)?;
     // Intersections between nearby primitives; Apparent Intersection also where their extensions
     // meet (lines extended, arcs as full circles: in 2D, the "apparent" crossing of objects
     // that don't reach each other).
@@ -398,7 +398,47 @@ pub(crate) fn gather(
     aperture: f64,
     osmode: u32,
 ) -> Option<(Vec<(u32, Vec2)>, Vec<Prim>)> {
-    gather_in(d, space, ix, cursor, aperture, osmode, &[])
+    gather_in(d, space, ix, cursor, aperture, osmode, &[], None)
+}
+
+/// The point nearest `cursor` within `aperture` on the visible objects of `space` other than
+/// `skip` (and on the objects inside block references), with the object's direction there (a unit
+/// vector; a circle's or arc's runs counterclockwise): what an alignment grip aligns a dynamic
+/// block reference with.
+pub(crate) fn nearest_with_direction(d: &Drawing, space: &Space, cursor: Vec2, aperture: f64, skip: Handle) -> Option<(Vec2, Vec2)> {
+    let ix = crate::spatial::index(d, space);
+    let (_, prims) = gather_in(d, space, &ix, cursor, aperture, 0, &[], Some(skip))?;
+    let mut best: Option<(f64, Vec2, Vec2)> = None;
+    let mut consider = |at: Vec2, dir: Vec2| {
+        let dd = at.dist(cursor);
+        if at.is_finite() && dir.len() > 1e-12 && dir.is_finite() && dd <= aperture && best.is_none_or(|(bd, _, _)| dd < bd) {
+            best = Some((dd, at, dir * (1.0 / dir.len())));
+        }
+    };
+    for p in prims.iter().take(2000) {
+        if let Prim::Circle(c) = p {
+            let at = c.closest(cursor);
+            consider(at, (at - c.center).perp());
+            continue;
+        }
+        if let Prim::Infinite { base, dir, .. } = p {
+            let len = dir.len();
+            if len > 1e-12 {
+                let u = *dir * (1.0 / len);
+                consider(*base + u * (cursor - *base).dot(u), u);
+            }
+            continue;
+        }
+        for seg in prim_segments(p) {
+            let seg = fix_circle(&seg);
+            let at = seg.closest(cursor);
+            match seg {
+                Segment::Line(l) => consider(at, l.b - l.a),
+                Segment::Arc { arc, .. } => consider(at, (at - arc.center).perp()),
+            }
+        }
+    }
+    best.map(|(_, at, dir)| (at, dir))
 }
 
 fn gather_in(
@@ -409,6 +449,7 @@ fn gather_in(
     aperture: f64,
     osmode: u32,
     frozen: &[String],
+    skip: Option<Handle>,
 ) -> Option<(Vec<(u32, Vec2)>, Vec<Prim>)> {
     let probe = Bounds2::new(cursor, cursor).expand(aperture);
     let mut cands: Vec<(u32, Vec2)> = Vec::new();
@@ -416,7 +457,7 @@ fn gather_in(
     let mut count = 0usize;
     let mut budget = MAX_BLOCK_LEAVES;
     for (e, known) in crate::select::candidates(d, space, ix, &probe.expand(aperture), true, false)? {
-        if !d.is_visible(e) || frozen.iter().any(|l| l.eq_ignore_ascii_case(&e.common.layer)) {
+        if !d.is_visible(e) || frozen.iter().any(|l| l.eq_ignore_ascii_case(&e.common.layer)) || Some(e.handle) == skip {
             continue;
         }
         let inf = crate::select::is_infinite(e);
