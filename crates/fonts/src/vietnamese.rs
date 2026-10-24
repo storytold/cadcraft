@@ -543,6 +543,19 @@ mod tests {
     }
 
     #[test]
+    fn test_vni_composites() {
+        assert_eq!(transcode_vni("OÂ"), "Ô");
+        assert_eq!(transcode_vni("AÙ"), "Á");
+        assert_eq!(transcode_vni("OÅ"), "Ổ");
+        assert_eq!(transcode_vni("OÃ"), "Ỗ");
+        assert_eq!(transcode_vni("EÂ"), "Ê");
+        assert_eq!(transcode_vni("ÖÔÏ"), "ƯỢ");
+        assert_eq!(transcode_vni("oâ"), "ô");
+        assert_eq!(transcode_vni("aù"), "á");
+        assert_eq!(transcode_vni("öôï"), "ượ");
+    }
+
+    #[test]
     fn test_already_unicode_never_transcoded() {
         for unicode in ["HÌNH CHIẾU ĐỨNG", "HÌNH DÁNG", "TÒA NHÀ", "CHÚNG TÔI", "BÁO CÁO"] {
             assert!(is_already_unicode_vietnamese(unicode), "failed on {unicode}");
