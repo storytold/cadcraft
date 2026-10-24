@@ -138,6 +138,38 @@ fn style_overrides_are_set_in_one_step() {
     assert_eq!((o.len(), o.get("textGap")), (1, Some(&json!(0.05))));
     s.execute("dimstyle.overrides", &json!({ "clear": true })).unwrap();
     assert!(s.doc().unwrap().dim_overrides().is_empty());
+    // A lineweight by name goes in as the number the header variable holds.
+    s.execute("dimstyle.overrides", &json!({ "clear": true, "DIMLWD": "bylayer" })).unwrap();
+    assert_eq!(s.doc().unwrap().header.i64("DIMLWD", 0), -1);
+}
+
+#[test]
+fn refused_calls_leave_no_undo_step() {
+    let mut s = Session::new();
+    s.execute("-dimstyle", &json!({ "option": "save", "name": "Plan" })).unwrap();
+    assert!(s.execute("-dimstyle", &json!({ "option": "save", "name": "plan" })).is_err());
+    assert!(s.execute("-dimstyle", &json!({ "option": "restore", "name": "Nope" })).is_err());
+    // Apply to objects none of which is a dimension changes nothing, and makes no step either.
+    s.execute("line", &json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+    let line = s.doc().unwrap().model.last().unwrap().handle.hex();
+    assert_eq!(s.execute("-dimstyle", &json!({ "option": "apply", "handles": [line] })).unwrap()["changed"], 0);
+    // The undo steps are the line and the save: none for the refused calls or that Apply.
+    s.undo().unwrap();
+    assert!(s.doc().unwrap().dim_style("Plan").is_some(), "the first undo is the line's");
+    s.undo().unwrap();
+    assert!(s.doc().unwrap().dim_style("Plan").is_none());
+}
+
+#[test]
+fn new_and_renamed_styles_take_the_names_dimstyle_takes() {
+    let mut s = Session::new();
+    for name in ["~Plan", "a*b", "x?"] {
+        assert!(s.execute("dimstyle", &json!({ "name": name })).is_err(), "{name}");
+    }
+    s.execute("dimstyle", &json!({ "name": "Plan", "current": false })).unwrap();
+    assert!(s.execute("dimstyle.rename", &json!({ "from": "Plan", "to": "~Plan" })).is_err());
+    s.execute("dimstyle.rename", &json!({ "from": "Plan", "to": "Site" })).unwrap();
+    assert!(s.doc().unwrap().dim_style("Site").is_some());
 }
 
 #[test]
@@ -182,10 +214,12 @@ fn hostile_requests_never_panic() {
         json!({ "option": "list", "pattern": "*".repeat(100_000) }),
         json!({ "option": 5 }),
     ] {
-        let _ = s.execute("-dimstyle", &p);
+        let r = s.execute("-dimstyle", &p);
+        assert!(!matches!(r, Err(cadcraft_engine::EngineError::Internal(..))), "{p}: {r:?}");
     }
     for p in [json!({ "DIMTXT": "x" }), json!({ "DIMBLK": [1] }), json!({ "DIMCLRT": { "a": 1 } }), json!({ "clear": "yes" })] {
-        let _ = s.execute("dimstyle.overrides", &p);
+        let r = s.execute("dimstyle.overrides", &p);
+        assert!(!matches!(r, Err(cadcraft_engine::EngineError::Internal(..))), "{p}: {r:?}");
     }
     for line in ["-DIMSTYLE", "?", "", "-DIMSTYLE", "V", "", "-DIMSTYLE", "AN", "N", "?", "Bad/Name", "Good"] {
         let _ = s.cmdline(line);

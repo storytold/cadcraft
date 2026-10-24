@@ -148,6 +148,38 @@ fn override_drops_a_value_set_back_to_the_styles() {
 }
 
 #[test]
+fn a_refused_value_keeps_the_editor_and_its_edits() {
+    let mut h = manager(|_| {});
+    click(&mut h, "Override...");
+    click(&mut h, "Text");
+    type_into(&mut h, "0.1800", "-1");
+    click(&mut h, "OK");
+    // dimstyle.overrides refuses a negative text height: the page stays, with what was typed.
+    assert!(h.state().session.doc().unwrap().dim_overrides().is_empty());
+    field(&h, "-1.0000");
+}
+
+#[test]
+fn a_new_style_takes_a_name_dimstyle_takes() {
+    let mut h = manager(|_| {});
+    click(&mut h, "New...");
+    // `~` is -DIMSTYLE Restore's "compare with".
+    type_into(&mut h, "Copy of Standard", "~Plan");
+    assert!(!enabled(&h, "Continue"));
+}
+
+#[test]
+fn the_style_overrides_compare_with_their_style() {
+    let mut h = manager(|app| {
+        app.run("dimstyle.overrides", json!({ "textHeight": 0.3 })).unwrap();
+    });
+    click(&mut h, "<style overrides>");
+    click(&mut h, "Compare...");
+    // The current settings against the style they override: the one difference.
+    h.get_by_label("1 differences");
+}
+
+#[test]
 fn set_current_compare_and_delete() {
     let mut h = manager(|app| {
         app.run("dimstyle", json!({ "name": "Temp", "DIMASZ": 0.5, "current": false })).unwrap();
@@ -207,6 +239,12 @@ fn shortcut_menus_save_or_discard_overrides_and_rename() {
     type_into(&mut h, "Plan", "Site");
     let d = h.state().session.doc().unwrap();
     assert!(d.dim_style("Plan").is_none() && d.dim_style("Site").is_some());
+    // A name another style has isn't offered: Site keeps its name.
+    right_click(&mut h, "Site");
+    click(&mut h, "Rename");
+    type_into(&mut h, "Site", "Standard");
+    assert!(!enabled(&h, "OK"));
+    assert!(h.state().session.doc().unwrap().dim_style("Site").is_some());
 }
 
 /// With `CADCRAFT_DIMSTYLE_SHOTS=<directory>`, pictures of the manager's pages to look at.

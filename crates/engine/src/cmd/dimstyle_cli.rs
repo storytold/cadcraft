@@ -104,15 +104,26 @@ fn styles_matching(d: &Drawing, pattern: &str) -> Vec<String> {
 /// which Restore reads as "compare with".
 pub(super) fn check_name(name: &str) -> Result<String> {
     let name = name.trim();
-    if name.is_empty() || name.len() > 255 || name.contains(['<', '>', '/', '\\', '"', ':', ';', '?', '*', '|', ',', '=', '`', '~']) {
+    if !usable_dim_style_name(name) {
         return Err(bad(CMD, "bad style name"));
     }
     Ok(name.to_string())
 }
 
+/// Whether `name` (trimmed) is one a new dimension style can have: what -DIMSTYLE,
+/// `dimstyle.saveas`, `dimstyle` and `dimstyle.rename` take, for dialogs to check before OK.
+pub fn usable_dim_style_name(name: &str) -> bool {
+    let name = name.trim();
+    !(name.is_empty() || name.len() > 255 || name.contains(['<', '>', '/', '\\', '"', ':', ';', '?', '*', '|', ',', '=', '`', '~']))
+}
+
 /// Save the current settings as style `name` and make it current.
 fn save(s: &mut Session, name: &str, annotative: Option<bool>, replace: bool) -> Result<Value> {
     let name = check_name(name)?;
+    // Refused before the drawing is touched: a failed call leaves no (empty) undo step.
+    if !replace && s.doc()?.dim_style(&name).is_some() {
+        return Err(bad(CMD, format!("a dimension style `{name}` already exists")));
+    }
     let d = s.doc_mut()?;
     let mut st = current_settings(d);
     if let Some(a) = annotative {
@@ -139,8 +150,8 @@ fn save(s: &mut Session, name: &str, annotative: Option<bool>, replace: bool) ->
 
 /// Make style `name` current (its overrides go).
 fn restore(s: &mut Session, name: &str) -> Result<Value> {
+    let n = s.doc()?.dim_style(name).map(|t| t.name.clone()).ok_or_else(|| bad(CMD, format!("no dimension style `{name}`")))?;
     let d = s.doc_mut()?;
-    let n = d.dim_style(name).map(|t| t.name.clone()).ok_or_else(|| bad(CMD, format!("no dimension style `{name}`")))?;
     d.header.set_str("DIMSTYLE", &n);
     d.sync_dim_vars();
     Ok(json!({ "current": n }))
@@ -148,15 +159,18 @@ fn restore(s: &mut Session, name: &str) -> Result<Value> {
 
 /// Give dimensions the current settings: the current style and its overrides.
 fn apply(s: &mut Session, hs: &[Handle]) -> Result<Value> {
+    // The dimensions among them, found before the drawing is touched: none leaves no undo step.
+    let d = s.doc()?;
+    let dims: Vec<Handle> = hs.iter().copied().filter(|h| matches!(d.entity(*h).map(|e| &e.kind), Some(EntityKind::Dimension(_)))).collect();
+    if dims.is_empty() {
+        return Ok(json!({ "changed": 0 }));
+    }
     let d = s.doc_mut()?;
     let style = d.header.str("DIMSTYLE", "Standard");
     let overrides = d.dim_overrides();
     let mut n = 0;
-    for h in hs {
-        if !matches!(d.entity(*h).map(|e| &e.kind), Some(EntityKind::Dimension(_))) {
-            continue;
-        }
-        d.modify_entity(*h, |e| {
+    for h in dims {
+        d.modify_entity(h, |e| {
             if let EntityKind::Dimension(dm) = &mut e.kind {
                 dm.style.clone_from(&style);
                 dm.overrides.clone_from(&overrides);
@@ -240,11 +254,15 @@ fn run_overrides(s: &mut Session, p: &Value) -> Result<Value> {
     if !rejected.is_empty() {
         return Err(bad("dimstyle.overrides", format!("unusable values for {}", rejected.join(", "))));
     }
+    // The values as the style took them (a lineweight named ByLayer is -1, ...): what the
+    // header variables hold, so writing them can't fail halfway.
+    let taken = serde_json::to_value(&base).unwrap_or(Value::Null);
     if clear {
         s.doc_mut()?.sync_dim_vars();
     }
     for (field, v) in &given {
         let Some((var, _)) = cadcraft_doc::DIMVARS.iter().find(|(_, f)| f == field) else { continue };
+        let v = taken.get(field.as_str()).unwrap_or(v);
         // Colors are stored as color numbers in the header.
         let v = match serde_json::from_value::<cadcraft_color::Color>(v.clone()).ok().or_else(|| v.as_str().and_then(cadcraft_color::Color::parse)) {
             Some(c) if field.ends_with("Color") => json!(c.to_aci()),
