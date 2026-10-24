@@ -62,7 +62,8 @@ pub(crate) enum K {
     Block,
     /// Handle of an LTYPE record (DIMLTYPE, DIMLTEX1, DIMLTEX2); "" (ByBlock) isn't written.
     Linetype,
-    /// An angle: degrees in the style, radians in the file (DIMJOGANG).
+    /// The jog angle (DIMJOGANG): degrees in the style and in DIMSTYLE groups, radians in xdata.
+    /// Read in either unit ([`jog_degrees`]).
     Angle,
 }
 
@@ -174,10 +175,14 @@ pub(crate) fn canonical(field: &str, v: &Value) -> Option<Value> {
     serde_json::to_value(&st).ok()?.get(field).cloned()
 }
 
-/// A dimension variable encoded for a group: real, integer, string or handle.
+/// A dimension variable encoded for a group: real, angle, integer, string or handle.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum DimVal {
     Real(f64),
+    /// Degrees. A DIMSTYLE group holds degrees (AutoCAD and the DWG bridge read group 50 so);
+    /// xdata holds radians, like the xdata of AutoCAD's own R2000 DIMSTYLE records and every
+    /// CADCraft version so far.
+    Angle(f64),
     Int(i64),
     Str(String),
     Handle(String),
@@ -201,8 +206,22 @@ pub(crate) fn encode(kind: K, v: &Value, style: Lookup, block: Lookup, ltype: Lo
             DimVal::Handle(if name.trim().is_empty() { "0".to_string() } else { block(name)? })
         }
         K::Linetype => DimVal::Handle(ltype(v.as_str().filter(|n| !n.trim().is_empty())?)?),
-        K::Angle => DimVal::Real(v.as_f64().filter(|x| x.is_finite())?.to_radians()),
+        K::Angle => DimVal::Angle(v.as_f64().filter(|x| x.is_finite())?),
     })
+}
+
+/// The jog angles (degrees) a [`DimStyle`] takes.
+const JOG_DEGREES: std::ops::RangeInclusive<f64> = 5.0..=90.0;
+
+/// A DIMJOGANG value from a file in degrees, or `None` when it is no jog angle a style takes.
+/// The DIMSTYLE group (50) holds degrees (AutoCAD and the DWG bridge, acadrust, read and write it
+/// so), but CADCraft 0.7.0 and earlier wrote radians there, and xdata and `$DIMJOGANG` hold
+/// radians. Usable angles don't overlap in the two units (5 to 90 degrees, 0.087 to 1.571
+/// radians), so the value says which it is. NaN and infinities are in neither range.
+pub(crate) fn jog_degrees(x: f64) -> Option<f64> {
+    // Rounded so that whole degrees come back whole from either unit.
+    let round = |deg: f64| (deg * 1e9).round() / 1e9;
+    [round(x), round(x.to_degrees())].into_iter().find(|deg| JOG_DEGREES.contains(deg))
 }
 
 /// Decode a group value into the JSON a [`DimStyle`] field takes. `styles` / `blocks` /
@@ -236,14 +255,7 @@ pub(crate) fn decode(
             let h = t.str().trim().to_ascii_uppercase();
             if h.is_empty() || h == "0" { Value::String(String::new()) } else { Value::String(ltypes.get(&h)?.clone()) }
         }
-        K::Angle => {
-            // Rounded so that whole degrees come back whole.
-            let x = (t.f64().to_degrees() * 1e9).round() / 1e9;
-            if !x.is_finite() {
-                return None;
-            }
-            serde_json::json!(x)
-        }
+        K::Angle => serde_json::json!(jog_degrees(t.f64())?),
     })
 }
 
@@ -877,6 +889,24 @@ mod tests {
         for (_, field) in cadcraft_doc::DIMVARS {
             assert!(dim_code(field).is_some(), "{field} has no DXF group code");
         }
+    }
+
+    #[test]
+    fn jog_angle_in_either_unit() {
+        use std::f64::consts::FRAC_PI_4;
+        // Degrees (a round trip through radians comes back whole), then radians.
+        let degrees = [(45.0, 45.0), (5.0, 5.0), (90.0, 90.0), (37.5, 37.5), (30f64.to_radians().to_degrees(), 30.0)];
+        let radians = [(FRAC_PI_4, 45.0), (5f64.to_radians(), 5.0), (90f64.to_radians(), 90.0)];
+        for (file, deg) in degrees.into_iter().chain(radians) {
+            assert_eq!(jog_degrees(file), Some(deg), "{file}");
+        }
+        for file in [0.0, 0.05, 2.0, 4.99, 90.01, -45.0, -0.5, 1e300, f64::MAX, f64::MIN_POSITIVE, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(jog_degrees(file), None, "{file}");
+        }
+        // The range is the one the style takes.
+        let takes = |deg: f64| canonical("jogAngle", &serde_json::json!(deg)).is_some();
+        assert!(takes(*JOG_DEGREES.start()) && takes(*JOG_DEGREES.end()));
+        assert!(!takes(JOG_DEGREES.start() - 1e-6) && !takes(JOG_DEGREES.end() + 1e-6));
     }
 
     #[test]

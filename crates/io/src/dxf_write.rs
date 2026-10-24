@@ -60,6 +60,8 @@ impl W {
     fn dimval(&mut self, code: i32, v: DimVal, xdata: bool) {
         match v {
             DimVal::Real(x) => self.f(if xdata { 1040 } else { code }, x),
+            DimVal::Angle(a) if xdata => self.f(1040, a.to_radians()),
+            DimVal::Angle(a) => self.f(code, a),
             DimVal::Int(i) => self.i(if xdata { 1070 } else { code }, i),
             DimVal::Str(t) => {
                 if xdata || !t.is_empty() {
@@ -323,6 +325,11 @@ fn dim_header_vars(w: &mut W, d: &Drawing) {
                 Some(DimVal::Real(x)) => {
                     w.s(9, format!("${var}"));
                     w.f(40, x);
+                }
+                // $DIMJOGANG holds radians (the DIMSTYLE group holds degrees).
+                Some(DimVal::Angle(a)) => {
+                    w.s(9, format!("${var}"));
+                    w.f(40, a.to_radians());
                 }
                 Some(DimVal::Int(i)) if i16::try_from(i).is_ok() => {
                     w.s(9, format!("${var}"));

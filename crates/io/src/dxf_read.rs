@@ -1356,8 +1356,12 @@ fn header(tags: &[Tag], d: &mut Drawing) {
                     Some(c) => HVal::Str(c.to_string()),
                     None => continue,
                 },
-                // $DIMJOGANG is in radians; the variable (like the style) holds degrees.
-                HVal::Real(r) if name == "DIMJOGANG" => HVal::Real((r.to_degrees() * 1e9).round() / 1e9),
+                // $DIMJOGANG is in radians (degrees are taken too); the variable, like the style,
+                // holds degrees. A value no style takes is dropped.
+                HVal::Real(r) if name == "DIMJOGANG" => match crate::dxf_ext::jog_degrees(r) {
+                    Some(deg) => HVal::Real(deg),
+                    None => continue,
+                },
                 // $ANGBASE is in degrees (a drawing measured from north has 90.0); the variable
                 // holds radians.
                 HVal::Real(r) if name == "ANGBASE" => HVal::Real(r.to_radians()),
