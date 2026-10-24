@@ -8,7 +8,8 @@
 
 use serde_json::{Map, Value, json};
 
-use super::*;
+use super::{CommandSpec, bad};
+
 use crate::{Result, Session, Settings};
 
 /// The profile variables, in the order [`profile`] lists them.
@@ -177,7 +178,7 @@ fn run_options(s: &mut Session, p: &Value) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{CommandSpec, bad};
 
     #[test]
     fn every_profile_var_round_trips_through_restore() {
