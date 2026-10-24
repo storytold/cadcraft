@@ -1,15 +1,85 @@
-//! Legacy Vietnamese encoding transcoding for CAD text.
+//! Legacy Vietnamese encoding profile (TCVN3, TCVN3H, VNI Windows).
 //!
 //! In Vietnamese AEC CAD workflows, legacy drawings frequently use 8-bit encodings:
-//! - **TCVN 5712 / TCVN3 (ABC)**: Paired with fonts starting with `.Vn` or `vn` (e.g. `.VnTime`,
-//!   `.VnArial`, `.VnTimeH`, `vnsimli.shx`).
-//! - **VNI Windows**: Paired with fonts starting with `VNI-` (e.g. `VNI-Helve`, `VNI-Times`).
+//! - **TCVN 5712 / TCVN3 (ABC)**: Paired with fonts starting with `.Vn` or known `vn` stems
+//!   (e.g. `.VnTime`, `.VnArial`, `.VnTimeH`, `vnsimli.shx`).
+//! - **VNI Windows**: Paired with fonts starting with `VNI-` or 8.3 VNI stems
+//!   (e.g. `VNI-Helve`, `VNI-Times`, `VHELVCN.TTF`).
 //!
-//! When CAD files store these strings under `$DWGCODEPAGE ANSI_1252`, characters become mojibake
-//! unless transcoded to Unicode NFC. This module provides zero-allocation heuristics and linear-time
-//! deterministic transcoding with zero third-party dependencies.
+//! This module implements [`super::LegacyProfile`] as the first profile in
+//! [`crate::legacy_encoding`], while preserving the public `vietnamese` API.
 
+use super::{FontClass, LegacyProfile, ProfileHit};
 use std::borrow::Cow;
+
+const VARIANT_TCVN3: u8 = 1;
+const VARIANT_TCVN3H: u8 = 2;
+const VARIANT_VNI: u8 = 3;
+
+/// Legacy encoding profile for Vietnamese CAD fonts (TCVN3, TCVN3H, and VNI Windows).
+pub struct Vietnamese;
+
+impl VietnameseEncoding {
+    fn to_hit(self) -> ProfileHit {
+        let variant = match self {
+            VietnameseEncoding::Tcvn3 => VARIANT_TCVN3,
+            VietnameseEncoding::Tcvn3H => VARIANT_TCVN3H,
+            VietnameseEncoding::Vni => VARIANT_VNI,
+        };
+        ProfileHit { profile: "vietnamese", variant }
+    }
+
+    fn from_hit(hit: ProfileHit) -> Option<Self> {
+        if hit.profile != "vietnamese" {
+            return None;
+        }
+        match hit.variant {
+            VARIANT_TCVN3 => Some(VietnameseEncoding::Tcvn3),
+            VARIANT_TCVN3H => Some(VietnameseEncoding::Tcvn3H),
+            VARIANT_VNI => Some(VietnameseEncoding::Vni),
+            _ => None,
+        }
+    }
+}
+
+impl LegacyProfile for Vietnamese {
+    fn name(&self) -> &'static str {
+        "vietnamese"
+    }
+
+    fn match_font(&self, font: &str) -> Option<ProfileHit> {
+        is_vietnamese_font(font).map(VietnameseEncoding::to_hit)
+    }
+
+    fn detect(&self, s: &str) -> Option<ProfileHit> {
+        detect_vietnamese_encoding(s).map(VietnameseEncoding::to_hit)
+    }
+
+    fn decode<'a>(&self, s: &'a str, hit: ProfileHit) -> Cow<'a, str> {
+        let Some(enc) = VietnameseEncoding::from_hit(hit) else {
+            return Cow::Borrowed(s);
+        };
+        if (s.is_ascii() && enc != VietnameseEncoding::Tcvn3H) || is_already_unicode_vietnamese(s) {
+            return Cow::Borrowed(s);
+        }
+        match enc {
+            VietnameseEncoding::Vni => transcode_vni(s),
+            VietnameseEncoding::Tcvn3 => transcode_tcvn3(s),
+            VietnameseEncoding::Tcvn3H => transcode_tcvn3_h(s),
+        }
+    }
+
+    fn substitute(&self, font: &str) -> FontClass {
+        let lower = font.trim().to_ascii_lowercase();
+        let is_serif = lower.contains("time")
+            || lower.contains("century")
+            || lower.contains("roman")
+            || lower.contains("book")
+            || lower.contains("cambria")
+            || lower.contains("palatin");
+        if is_serif { FontClass::Serif } else { FontClass::Sans }
+    }
+}
 
 /// Detected or specified legacy Vietnamese encoding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,24 +92,66 @@ pub enum VietnameseEncoding {
     Vni,
 }
 
+const VNI_PREFIXES: &[&str] = &[
+    "vni", "vhelv", "vtime", "vavon", "vapto", "vcomm", "vkorin", "vpres", "vrevu", "vsouv", "vtekn", "vuniv", "vbaham", "vbook", "vcent", "vcoop",
+    "vcour", "vfree", "vgoud", "vpark", "vscri",
+];
+
+const TCVN3_DOTLESS_PREFIXES: &[&str] = &[
+    "vntime",
+    "vnarial",
+    "vnuniverse",
+    "vnavant",
+    "vncourier",
+    "vncentury",
+    "vngothic",
+    "vnhelvet",
+    "vnsouthern",
+    "vnteknical",
+    "vnvogue",
+    "vnpresent",
+    "vnrevue",
+    "vnfree",
+    "vncooper",
+    "vnpark",
+    "vnlincoln",
+    "vnlinus",
+    "vnkoala",
+    "vnmemorandum",
+    "vnmystical",
+    "vnstamp",
+    "vnsim",
+    "vnroman",
+    "vntxt",
+    "vnmono",
+    "vn-",
+    "vn_",
+    "tcvn",
+];
+
 /// Detect whether a font name indicates a legacy Vietnamese encoding.
 pub fn is_vietnamese_font(font: &str) -> Option<VietnameseEncoding> {
     let lower = font.trim().to_ascii_lowercase();
-    let stem = lower.strip_suffix(".ttf").or_else(|| lower.strip_suffix(".shx")).or_else(|| lower.strip_suffix(".otf")).unwrap_or(&lower);
+    let stem = lower.strip_suffix(".ttf").or_else(|| lower.strip_suffix(".shx")).or_else(|| lower.strip_suffix(".otf")).unwrap_or(&lower).trim();
 
-    if stem.starts_with("vni")
-        || stem.starts_with("vni-")
-        || stem.starts_with("vni_")
-        || stem.starts_with("vhelv")
-        || stem.starts_with("vtime")
-        || stem.starts_with("vavon")
-        || stem.starts_with("vapto")
-        || stem.starts_with("vcomm")
-        || stem.starts_with("vkorin")
-    {
-        Some(VietnameseEncoding::Vni)
-    } else if stem.starts_with(".vn") || stem.starts_with("vn") {
-        if stem.ends_with('h') { Some(VietnameseEncoding::Tcvn3H) } else { Some(VietnameseEncoding::Tcvn3) }
+    if stem.is_empty() {
+        return None;
+    }
+
+    if VNI_PREFIXES.iter().any(|p| stem.starts_with(p)) {
+        return Some(VietnameseEncoding::Vni);
+    }
+
+    let is_tcvn = (stem.starts_with(".vn") && stem.len() > 3) || stem == "vn" || TCVN3_DOTLESS_PREFIXES.iter().any(|p| stem.starts_with(p));
+
+    if is_tcvn {
+        let is_header = stem.ends_with('h')
+            && !stem.ends_with("tech")
+            && !stem.ends_with("math")
+            && !stem.ends_with("graph")
+            && !stem.ends_with("flash")
+            && !stem.ends_with("brush");
+        if is_header { Some(VietnameseEncoding::Tcvn3H) } else { Some(VietnameseEncoding::Tcvn3) }
     } else {
         None
     }
@@ -148,7 +260,9 @@ pub fn detect_vietnamese_encoding(s: &str) -> Option<VietnameseEncoding> {
     let mut vni_score = 0;
     let mut tcvn_score = 0;
     let mut composite_found = false;
+    let all_caps = is_tcvn3_all_caps(s);
 
+    let mut prev: Option<char> = None;
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
         if let Some(&next_c) = chars.peek() {
@@ -165,17 +279,41 @@ pub fn detect_vietnamese_encoding(s: &str) -> Option<VietnameseEncoding> {
                 matched_composite = true;
             }
             if matched_composite {
+                prev = Some(next_c);
                 chars.next();
                 continue;
             }
         }
-        if match_vni_single(c).is_some() && !matches!(c, 'Ô' | 'ô' | 'Ò' | 'ò' | 'Ó' | 'ó') {
+
+        // Unhinted VNI single-byte characters: only count uppercase VNI letters in all-caps/composite
+        // contexts so lowercase European letters ('ñ' in Piñón, 'ö' in Größe) never false-trigger.
+        if match_vni_single(c).is_some() && !matches!(c, 'Ô' | 'ô' | 'Ò' | 'ò' | 'Ó' | 'ó') && (composite_found || (all_caps && c.is_uppercase()))
+        {
             vni_score += 1;
         }
+
+        // Unhinted TCVN3 single-byte characters:
+        // 1. Bytes in 0xA1..=0xBF, 0xAD, '×', '÷' repurpose punctuation/math symbols as Vietnamese
+        //    vowels and never occur inside normal European words.
+        // 2. Bytes in 0xC0..=0xDE (uppercase Latin-1 diacritics) represent lowercase Vietnamese
+        //    vowels in TCVN3; in unhinted text we only score them when preceded by a letter
+        //    (e.g. 'vÏ', 'tiÕt', 'kÕt', 'cÊu', 'thÐp') or when 'Æ'/'Ð'/'Þ' is followed by a letter
+        //    ('MÆt', 'ÐƯỜNG'), avoiding word-initial German umlauts like 'Übergang' or 'Österreich'.
         if match_tcvn3_single(c).is_some() && !matches!(c, 'á' | 'â' | 'ã' | 'è' | 'é' | 'ê' | 'ì' | 'í' | 'ò' | 'ó' | 'ô' | 'õ' | 'ù' | 'ú' | 'ý')
         {
-            tcvn_score += 1;
+            let code = c as u32;
+            let is_symbol_slot = (0x00A1..=0x00BF).contains(&code) || code == 0x00AD || c == '×' || c == '÷';
+            let is_midword_or_viet_upper = (0x00C0..=0x00DE).contains(&code)
+                && (prev.is_some_and(|p| p.is_ascii_alphabetic())
+                    || (matches!(c, 'Æ' | 'Ð' | 'Þ') && chars.peek().is_some_and(|n| n.is_ascii_alphabetic())));
+            if is_symbol_slot {
+                tcvn_score += 2;
+            } else if is_midword_or_viet_upper {
+                tcvn_score += 2;
+            }
         }
+
+        prev = Some(c);
     }
 
     let threshold = if composite_found { 2 } else { 4 };
@@ -302,20 +440,11 @@ pub fn transcode_tcvn3_h(s: &str) -> Cow<'_, str> {
     }
 }
 
-/// Transcode text using an optional font hint, falling back to signature detection.
+/// Main entry point: transcode legacy Vietnamese text to Unicode NFC.
+///
+/// Thin wrapper delegating to [`super::transcode`].
 pub fn transcode_vietnamese<'a>(s: &'a str, font_hint: Option<&str>) -> Cow<'a, str> {
-    let encoding = font_hint.and_then(is_vietnamese_font).or_else(|| detect_vietnamese_encoding(s));
-
-    if (s.is_ascii() && encoding != Some(VietnameseEncoding::Tcvn3H)) || is_already_unicode_vietnamese(s) {
-        return Cow::Borrowed(s);
-    }
-
-    match encoding {
-        Some(VietnameseEncoding::Vni) => transcode_vni(s),
-        Some(VietnameseEncoding::Tcvn3) => transcode_tcvn3(s),
-        Some(VietnameseEncoding::Tcvn3H) => transcode_tcvn3_h(s),
-        None => Cow::Borrowed(s),
-    }
+    super::transcode_with(&[&Vietnamese], s, font_hint)
 }
 
 // ---------------------------------------------------------------------------
@@ -747,6 +876,9 @@ mod tests {
         assert_eq!(is_vietnamese_font("VNI-Helve"), Some(VietnameseEncoding::Vni));
         assert_eq!(is_vietnamese_font("VNI-Times.ttf"), Some(VietnameseEncoding::Vni));
         assert_eq!(is_vietnamese_font("arial.ttf"), None);
+        assert_eq!(is_vietnamese_font("vnext.ttf"), None);
+        assert_eq!(is_vietnamese_font("vnorth"), None);
+        assert_eq!(is_vietnamese_font(".VnTech"), Some(VietnameseEncoding::Tcvn3));
     }
 
     #[test]

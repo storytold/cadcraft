@@ -44,3 +44,44 @@ fn left_justified_text_is_placed_by_its_alignment_point() {
     let (r, _) = boxes(&dxf(3, (-10.0, 4.0), (-10.0, 5.0), "210\n0\n220\n0\n230\n-1\n"));
     assert!(near(r[2], 10.0) && near(r[3], 5.0), "mirrored TL drawn at {r:?}");
 }
+
+#[test]
+fn dxf_export_baseline_uses_transcoded_legacy_text() {
+    use cadcraft_doc::{Drawing, Entity, HAlign, Handle, Text, TextStyle, VAlign};
+    use cadcraft_geom::Vec3;
+
+    let mut d = Drawing::new_metric();
+    d.text_styles.push(TextStyle { name: "VNI".into(), font: "VNI-Helve".into(), ..TextStyle::default() });
+
+    let make_text = |val: &str| {
+        let t = Text {
+            insert: Vec3::new(-999.0, -999.0, 0.0),
+            align_pt: Some(Vec3::new(100.0, 20.0, 0.0)),
+            height: 2.5,
+            value: val.into(),
+            rotation: 0.0,
+            width_factor: 1.0,
+            oblique: 0.0,
+            style: "VNI".into(),
+            halign: HAlign::Right,
+            valign: VAlign::Baseline,
+        };
+        Entity { handle: Handle(10), common: Default::default(), kind: EntityKind::Text(t) }
+    };
+
+    let (_, legacy_tags) = cadcraft_io::entity_groups(&d, &make_text("NHOÂM 3003 DAØY 2MM"));
+    let (_, unicode_tags) = cadcraft_io::entity_groups(&d, &make_text("NHÔM 3003 DÀY 2MM"));
+    let (_, raw_len_tags) = cadcraft_io::entity_groups(&d, &make_text("NHOAM 3003 DAOY 2MM"));
+
+    let x_of = |tags: &[cadcraft_dxf::Tag]| -> f64 { tags.iter().find(|t| t.code == 10).map(|t| t.value.as_f64()).unwrap() };
+
+    let x_legacy = x_of(&legacy_tags);
+    let x_unicode = x_of(&unicode_tags);
+    let x_raw_len = x_of(&raw_len_tags);
+
+    assert!((x_legacy - x_unicode).abs() < 1e-9, "legacy baseline x ({x_legacy}) should match transcoded Unicode baseline x ({x_unicode})");
+    assert!(
+        (x_legacy - x_raw_len).abs() > 0.5,
+        "17-char transcoded baseline x ({x_legacy}) should differ from 19-char untranscoded width ({x_raw_len})"
+    );
+}

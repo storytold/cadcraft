@@ -15,11 +15,12 @@
 
 pub mod bidi;
 mod complex;
+pub mod legacy_encoding;
 mod mtext;
 mod stroke;
 pub mod subset;
 pub mod ttf;
-pub mod vietnamese;
+pub use legacy_encoding::vietnamese;
 
 use cadcraft_geom::{Bounds2, Vec2};
 
@@ -290,17 +291,15 @@ impl TextFont {
         if n.is_empty() || n.eq_ignore_ascii_case(BUILTIN_FONT) {
             return TextFont::Stroke;
         }
-        // Legacy 8-bit Vietnamese fonts (VNI, TCVN3) lack proper Unicode CMAP tables.
-        // Once text is transcoded to Unicode NFC, we map them to their modern Unicode
-        // equivalents (Arial / Times New Roman) so letters like 'Á', 'Ố', 'Đ' use correct
-        // Unicode glyphs rather than legacy 8-bit tone marks.
-        if vietnamese::is_vietnamese_font(n).is_some() {
-            let lower = n.to_ascii_lowercase();
-            let is_serif = lower.contains("time") || lower.contains("century") || lower.contains("roman");
-            let face = if is_serif {
-                ttf::find("times new roman").or_else(|| ttf::find("times")).or_else(|| ttf::find("liberation serif")).or_else(|| ttf::find("arial"))
-            } else {
-                ttf::find("arial").or_else(|| ttf::find("segoe ui")).or_else(|| ttf::find("dejavu sans"))
+        // Legacy 8-bit fonts lack Unicode CMAP tables. Once text is transcoded to Unicode NFC,
+        // substitute a modern Unicode outline face matching the profile's FontClass.
+        if let Some(class) = legacy_encoding::substitute_face(n) {
+            let face = match class {
+                legacy_encoding::FontClass::Serif => ttf::find("times new roman")
+                    .or_else(|| ttf::find("times"))
+                    .or_else(|| ttf::find("liberation serif"))
+                    .or_else(|| ttf::find("arial")),
+                legacy_encoding::FontClass::Sans => ttf::find("arial").or_else(|| ttf::find("segoe ui")).or_else(|| ttf::find("dejavu sans")),
             };
             if let Some(f) = face {
                 return TextFont::Outline(f);

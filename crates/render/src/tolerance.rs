@@ -64,7 +64,7 @@ pub(crate) fn draw(b: &mut Builder, ctx: &Ctx, e: &Entity, t: &Tolerance, lw: f3
             oblique: dt.oblique,
             ..cadcraft_fonts::TextParams::new(tx.pos, tx.height)
         };
-        let transcoded = cadcraft_fonts::vietnamese::transcode_vietnamese(&tx.value, None);
+        let transcoded = cadcraft_fonts::legacy_encoding::transcode(&tx.value, None);
         let (sh, _) = cadcraft_fonts::place(&dt.font, &transcoded, &p);
         b.shaped(ctx, text_rgb, lw, &sh);
     }

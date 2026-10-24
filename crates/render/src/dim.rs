@@ -431,7 +431,7 @@ fn tol_height_code(st: &DimStyle) -> String {
 
 /// Apply measurement placeholders or append a dimension suffix, bounding the resulting UTF-8 text.
 fn post(template: &str, meas: &str) -> String {
-    let t = cadcraft_fonts::vietnamese::transcode_vietnamese(template, None);
+    let t = cadcraft_fonts::legacy_encoding::transcode(template, None);
     if t.contains("<>") {
         bounded_replace(&t, meas)
     } else {
@@ -449,8 +449,8 @@ fn apply_override(base: &str, d: &Dimension, st: &DimStyle) -> String {
     } else if d.text.trim().is_empty() {
         String::new()
     } else {
-        let hint = if !st.text_style.is_empty() { Some(st.text_style.as_str()) } else { None };
-        let text = cadcraft_fonts::vietnamese::transcode_vietnamese(&d.text, hint);
+        let hint = cadcraft_fonts::legacy_encoding::font_hint(&[&st.text_style]);
+        let text = cadcraft_fonts::legacy_encoding::transcode(&d.text, hint);
         bounded_replace(&text, base)
     }
 }
