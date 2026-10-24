@@ -272,7 +272,8 @@ fn convert(args: &[String]) -> Result<(), String> {
     check_framed_output(framing, Some(o))?;
     let mut s = Session::empty();
     open(&mut s, i)?;
-    if let Some(m) = skipped_message(s.doc().map_err(|e| e.to_string())?, i) {
+    let d = s.doc().map_err(|e| e.to_string())?;
+    for m in read_note_messages(d, i).into_iter().chain(skipped_message(d, i)) {
         eprintln!("{m}");
     }
     if cadcraft_io::is_image(o)
@@ -312,6 +313,12 @@ fn skipped_message(d: &cadcraft_engine::doc::Drawing, path: &str) -> Option<Stri
     let list: Vec<String> = d.skipped_records.iter().map(|(section, n)| format!("{section}: {n}")).collect();
     let records = if n == 1 { "record" } else { "records" };
     Some(format!("{path}: {n} {records} could not be read and are left out ({})", list.join(", ")))
+}
+
+/// The reader's notes on what it left out of `path` (a damaged DWG's unreadable object records,
+/// #859), one warning line each; empty for a complete read.
+fn read_note_messages(d: &cadcraft_engine::doc::Drawing, path: &str) -> Vec<String> {
+    d.read_notes.iter().map(|note| format!("{path}: {note}")).collect()
 }
 
 fn run(args: &[String]) -> Result<(), String> {
@@ -865,6 +872,18 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).into()).collect()
+    }
+
+    #[test]
+    fn read_notes_become_one_warning_each() {
+        let mut d = cadcraft_engine::doc::Drawing::new_imperial();
+        assert!(read_note_messages(&d, "a.dwg").is_empty());
+        d.read_notes =
+            vec!["DWG: 3 of 10 object records couldn't be read and were left out (LINE × 3); saving over the original file would lose them".into()];
+        assert_eq!(
+            read_note_messages(&d, "a.dwg"),
+            vec!["a.dwg: DWG: 3 of 10 object records couldn't be read and were left out (LINE × 3); saving over the original file would lose them"]
+        );
     }
 
     #[test]
