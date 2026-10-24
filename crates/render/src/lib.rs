@@ -1408,7 +1408,14 @@ fn mtext(b: &mut Builder, ctx: &Ctx, t: &cadcraft_doc::MText, rgb: Ink, lw: f32)
 /// The font settings of a dimension style's text style.
 pub fn dim_text(d: &Drawing, st: &cadcraft_doc::DimStyle) -> DimText {
     let ts = text_style(d, &st.text_style);
-    DimText { font: cadcraft_fonts::TextFont::resolve(&ts.font), fixed_height: ts.height, width_factor: ts.width_factor, oblique: ts.oblique }
+    let font_name = if cadcraft_fonts::vietnamese::is_vietnamese_font(&ts.font).is_some() {
+        &ts.font
+    } else if cadcraft_fonts::vietnamese::is_vietnamese_font(&st.text_style).is_some() {
+        &st.text_style
+    } else {
+        &ts.font
+    };
+    DimText { font: cadcraft_fonts::TextFont::resolve(font_name), fixed_height: ts.height, width_factor: ts.width_factor, oblique: ts.oblique }
 }
 
 /// Geometry of a dimension in a drawing: its style, overrides and text font.

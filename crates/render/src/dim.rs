@@ -412,7 +412,7 @@ fn linear_text(meas: f64, d: &Dimension, st: &DimStyle, prefix: &str) -> String 
         let alt = format_linear(v * st.alt_factor, &af).1;
         s += &format!(" [{}]", post(&st.alt_post, &alt));
     }
-    inspected(apply_override(&s, d), d)
+    inspected(apply_override(&s, d, st), d)
 }
 
 /// DIMINSPECT: the label and the rate either side of the value, two spaces apart.
@@ -431,24 +431,27 @@ fn tol_height_code(st: &DimStyle) -> String {
 
 /// Apply measurement placeholders or append a dimension suffix, bounding the resulting UTF-8 text.
 fn post(template: &str, meas: &str) -> String {
-    if template.contains("<>") {
-        bounded_replace(template, meas)
+    let t = cadcraft_fonts::vietnamese::transcode_vietnamese(template, None);
+    if t.contains("<>") {
+        bounded_replace(&t, meas)
     } else {
         let mut out = String::new();
         append_dim_text(&mut out, meas);
-        append_dim_text(&mut out, template);
+        append_dim_text(&mut out, &t);
         out
     }
 }
 
 /// Apply dimension text overrides: empty uses the base, whitespace suppresses text, and other text substitutes it.
-fn apply_override(base: &str, d: &Dimension) -> String {
+fn apply_override(base: &str, d: &Dimension, st: &DimStyle) -> String {
     if d.text.is_empty() {
         base.to_string()
     } else if d.text.trim().is_empty() {
         String::new()
     } else {
-        bounded_replace(&d.text, base)
+        let hint = if !st.text_style.is_empty() { Some(st.text_style.as_str()) } else { None };
+        let text = cadcraft_fonts::vietnamese::transcode_vietnamese(&d.text, hint);
+        bounded_replace(&text, base)
     }
 }
 
@@ -905,7 +908,7 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
             let azin = (st.angular_zero_suppression & 3) * 4;
             let txt = format_angle_with_separator(sweep, st.angular_unit, st.angular_decimals, azin, &st.decimal_separator);
             // DIMPOST is a linear-dimension prefix/suffix; angles have their own format only.
-            g.mtext = inspected(apply_override(&txt, d), d);
+            g.mtext = inspected(apply_override(&txt, d, st), d);
             let mut pts = Vec::new();
             arc.tessellate(r * 1e-3, &mut pts);
             g.dim(pts);

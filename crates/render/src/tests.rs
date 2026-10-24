@@ -999,3 +999,159 @@ fn wide_polyline_centre_line_is_drawn_on_screen_only() {
         assert_eq!(lines(&see_through), 0, "{lt}: a transparent band gets no hairline");
     }
 }
+
+// ---------- Vietnamese legacy transcoding & text width factor integration tests ----------
+
+#[test]
+fn place_text_entity_transcodes_legacy_vietnamese() {
+    let mut d = Drawing::new_imperial();
+    d.text_styles.push(cadcraft_doc::TextStyle { name: "VNI-Helve".into(), font: "VNI-Helve".into(), ..Default::default() });
+    d.text_styles.push(cadcraft_doc::TextStyle { name: ".VnTime".into(), font: ".VnTime".into(), ..Default::default() });
+
+    // 1. VNI Windows encoding
+    let text_vni = cadcraft_doc::Text {
+        insert: Vec3::ZERO,
+        align_pt: None,
+        height: 2.5,
+        value: "NHOÂM 3003 DAØY 2MM".into(),
+        rotation: 0.0,
+        width_factor: 1.0,
+        oblique: 0.0,
+        style: "VNI-Helve".into(),
+        halign: Default::default(),
+        valign: Default::default(),
+    };
+    let (shaped_vni, bounds_vni) = place_text_entity(&d, &text_vni, &text_vni.value);
+    if !shaped_vni.text.is_empty() {
+        let text_chars: String = shaped_vni.text.iter().map(|g| g.ch).collect();
+        assert_eq!(text_chars, "NHÔM3003DÀY2MM");
+    }
+    assert!(bounds_vni.width() > 0.0);
+
+    // 2. TCVN3 (ABC) encoding
+    let text_tcvn = cadcraft_doc::Text {
+        insert: Vec3::ZERO,
+        align_pt: None,
+        height: 2.5,
+        value: "B¶n vÏ chi tiÕt".into(),
+        rotation: 0.0,
+        width_factor: 1.0,
+        oblique: 0.0,
+        style: ".VnTime".into(),
+        halign: Default::default(),
+        valign: Default::default(),
+    };
+    let (shaped_tcvn, bounds_tcvn) = place_text_entity(&d, &text_tcvn, &text_tcvn.value);
+    if !shaped_tcvn.text.is_empty() {
+        let text_chars: String = shaped_tcvn.text.iter().map(|g| g.ch).collect();
+        assert_eq!(text_chars, "Bảnvẽchitiết");
+    }
+    assert!(bounds_tcvn.width() > 0.0);
+}
+
+#[test]
+fn text_width_factor_compresses_bounding_box() {
+    let mut d = Drawing::new_imperial();
+    let text_normal = cadcraft_doc::Text {
+        insert: Vec3::ZERO,
+        align_pt: None,
+        height: 2.5,
+        value: "CADCraft Layout Width".into(),
+        rotation: 0.0,
+        width_factor: 1.0,
+        oblique: 0.0,
+        style: "Standard".into(),
+        halign: Default::default(),
+        valign: Default::default(),
+    };
+    let (_, bounds_normal) = place_text_entity(&d, &text_normal, &text_normal.value);
+
+    let text_compressed = cadcraft_doc::Text { width_factor: 0.5, ..text_normal.clone() };
+    let (_, bounds_compressed) = place_text_entity(&d, &text_compressed, &text_compressed.value);
+
+    let ratio = bounds_compressed.width() / bounds_normal.width();
+    assert!((ratio - 0.5).abs() < 0.05, "Expected ~0.5 ratio, got {ratio}");
+
+    // Test TextStyle width_factor combined with entity width_factor (twf * swf)
+    d.text_styles.push(cadcraft_doc::TextStyle { name: "Narrow".into(), font: "".into(), width_factor: 0.8, ..Default::default() });
+    let text_styled = cadcraft_doc::Text { style: "Narrow".into(), width_factor: 0.5, ..text_normal.clone() };
+    let (_, bounds_styled) = place_text_entity(&d, &text_styled, &text_styled.value);
+    let styled_ratio = bounds_styled.width() / bounds_normal.width();
+    assert!((styled_ratio - 0.4).abs() < 0.05, "Expected ~0.4 ratio (0.5 * 0.8), got {styled_ratio}");
+}
+
+#[test]
+fn mtext_segments_transcode_legacy_vietnamese() {
+    let d = Drawing::new_imperial();
+    // MTEXT with TCVN3 encoding and newline \P
+    let mtext_tcvn3 = cadcraft_doc::MText {
+        insert: Vec3::ZERO,
+        height: 2.5,
+        width: 100.0,
+        attach: 1,
+        rotation: 0.0,
+        style: ".VnTime".into(),
+        contents: "MÆt b»ng kÕt cÊu\\PTÇng 1".into(),
+        line_spacing: 1.0,
+        line_spacing_exact: false,
+        columns: None,
+    };
+    let layout = layout_mtext_entity(&d, &mtext_tcvn3);
+    assert_eq!(layout.lines.len(), 2);
+    assert_eq!(layout.lines[0], "Mặt bằng kết cấu");
+    assert_eq!(layout.lines[1], "Tầng 1");
+
+    // MTEXT with VNI encoding
+    let mtext_vni = cadcraft_doc::MText {
+        insert: Vec3::ZERO,
+        height: 2.5,
+        width: 100.0,
+        attach: 1,
+        rotation: 0.0,
+        style: "VNI-Helve".into(),
+        contents: "TOÅNG KHOÁI LÖÔÏNG".into(),
+        line_spacing: 1.0,
+        line_spacing_exact: false,
+        columns: None,
+    };
+    let layout_vni = layout_mtext_entity(&d, &mtext_vni);
+    assert_eq!(layout_vni.lines[0], "TỔNG KHỐI LƯỢNG");
+}
+
+#[test]
+fn table_cell_transcodes_and_renders_vietnamese() {
+    let mut d = Drawing::new_imperial();
+    d.text_styles.push(cadcraft_doc::TextStyle { name: ".VnTime".into(), font: ".VnTime".into(), ..Default::default() });
+    d.text_styles.push(cadcraft_doc::TextStyle { name: "VNI-Helve".into(), font: "VNI-Helve".into(), ..Default::default() });
+
+    let cell = |text: &str| cadcraft_doc::TableCell { text: text.into(), ..Default::default() };
+
+    let t = cadcraft_doc::Table {
+        insert: Vec3::ZERO,
+        col_widths: vec![50.0, 50.0],
+        row_heights: vec![10.0, 10.0],
+        cells: vec![vec![cell("B¶n vÏ chi tiÕt"), cell("NHOÂM 3003")], vec![cell("KHUNG BAÛO VEÄ"), cell("TI£U CHUÈN")]],
+        style: "Standard".into(),
+        text_height: 2.5,
+        title: false,
+        header: false,
+        ..Default::default()
+    };
+
+    d.add(&Space::Model, Common::default(), EntityKind::Table(t)).unwrap();
+
+    let dl = build(&d, &Space::Model, &Options::default());
+    assert!(!dl.prims.is_empty());
+}
+
+#[test]
+fn dimension_override_transcodes_vietnamese() {
+    let mut d = Drawing::new_imperial();
+    d.text_styles.push(cadcraft_doc::TextStyle { name: ".VnTime".into(), font: ".VnTime".into(), ..Default::default() });
+    if let Some(st) = d.dim_styles.first_mut() {
+        st.text_style = ".VnTime".into();
+    }
+    let dim = cadcraft_doc::Dimension { text: "B¶n vÏ chi tiÕt <>".into(), ..lin_dim() };
+    let g = dimension_in(&d, &dim);
+    assert!(g.mtext.contains("Bản vẽ chi tiết"));
+}

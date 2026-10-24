@@ -83,7 +83,14 @@ fn elements(d: &Drawing, lt: &Linetype, scale: f64) -> Vec<Element> {
         if !(height.is_finite() && height > 0.0) {
             continue;
         }
-        let font = TextFont::resolve(&ts.font);
+        let font_name = if cadcraft_fonts::vietnamese::is_vietnamese_font(&ts.font).is_some() {
+            &ts.font
+        } else if el.style.as_deref().and_then(cadcraft_fonts::vietnamese::is_vietnamese_font).is_some() {
+            el.style.as_deref().unwrap_or(&ts.font)
+        } else {
+            &ts.font
+        };
+        let font = TextFont::resolve(font_name);
         let params = TextParams {
             width_factor: if ts.width_factor.is_finite() && ts.width_factor > 0.0 { ts.width_factor } else { 1.0 },
             oblique: if ts.oblique.is_finite() { ts.oblique } else { 0.0 },
@@ -91,7 +98,9 @@ fn elements(d: &Drawing, lt: &Linetype, scale: f64) -> Vec<Element> {
             upside_down: ts.upside_down,
             ..TextParams::new(Vec2::ZERO, height)
         };
-        let (local, _) = cadcraft_fonts::place(&font, text, &params);
+        let hint = if !ts.font.is_empty() { Some(ts.font.as_str()) } else { el.style.as_deref() };
+        let transcoded = cadcraft_fonts::vietnamese::transcode_vietnamese(text, hint);
+        let (local, _) = cadcraft_fonts::place(&font, &transcoded, &params);
         let finite = |v: f64| if v.is_finite() { v } else { 0.0 };
         out.push(Element {
             at,
