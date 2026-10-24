@@ -504,3 +504,20 @@ fn saved_xref_paths_are_followed_beside_the_host_or_on_this_computer_only() {
     s.execute("-xref", &json!({ "option": "path", "names": "unc", "path": far.to_str().unwrap() })).unwrap();
     assert_eq!(status(&s, "unc"), Some(XrefStatus::Loaded));
 }
+
+/// A reference saved on Windows with different letter case (`..\XR\PLAN.DWG` for
+/// `../xr/plan.dxf`) is still found on case-sensitive file systems.
+#[test]
+fn saved_xref_paths_ignore_letter_case() {
+    hooks();
+    let base = folder("case");
+    std::fs::create_dir_all(base.join("host")).unwrap();
+    std::fs::create_dir_all(base.join("Xr")).unwrap();
+    save(&site(), &base.join("Xr").join("Plan.dxf"));
+    let host = base.join("host").join("host.dxf");
+    save(&host_with_paths(&[("plan", r"..\XR\PLAN.DXF")]), &host);
+    let mut s = Session::new();
+    open(&mut s, &host);
+    assert_eq!(status(&s, "plan"), Some(XrefStatus::Loaded), "{:?}", s.log);
+    assert!(objects(&s, "plan") > 0);
+}
