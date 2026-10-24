@@ -305,13 +305,13 @@ fn run_json(app: &mut CadApp, params: &Value) -> Result<Value, String> {
 
 /// The interface preferences back to their defaults (the interface language stays).
 fn reset_ui(app: &mut CadApp) {
-    let d = crate::UiState::default();
-    app.ui.theme = d.theme;
-    app.ui.animations = d.animations;
-    app.ui.save_format = d.save_format;
-    app.ui.save_version = d.save_version;
-    app.ui.system_cursor = d.system_cursor;
-    app.ui.history_lines = d.history_lines;
+    // Everything interface, back to its defaults: a hidden menu bar, tool bar, palettes or
+    // panels and a rearranged panel layout come back — once the menu bar is hidden there may be
+    // no other way to reach the toggles (#1240). The interface language stays; the open dialog,
+    // the start tab and the recent files are state, not preferences, and stay too.
+    let (language, dialog, start_tab) = (app.ui.interface_language, app.ui.dialog.take(), app.ui.start_tab);
+    let recent_files = std::mem::take(&mut app.ui.recent_files);
+    app.ui = crate::UiState { interface_language: language, dialog, start_tab, recent_files, ..Default::default() };
     app.options = UiOptions::default();
 }
 

@@ -880,4 +880,21 @@ mod tests {
         let ui: UiState = serde_json::from_value(json!({ "saveFormat": "dwg" })).unwrap_or_default();
         assert_eq!(ui.save_format, SaveFormat::Dwg);
     }
+
+    #[test]
+    fn options_reset_brings_the_interface_back() {
+        // Hiding the interface (View/Window toggles) can leave no way back — on Windows the
+        // in-window menu bar is the only menu there is. Options > Reset must restore it (#1240).
+        let mut a = app();
+        a.run("ui.toggle.toolbar", json!({ "on": false })).unwrap();
+        a.run("ui.toggle.menubar", json!({ "on": cfg!(target_os = "macos") })).unwrap();
+        a.start("ui.hidepalettes");
+        assert!(!a.ui.show_toolbar && !a.ui.show_palettes && !a.ui.show_toolsets);
+        assert_eq!(a.ui.in_window_menu, cfg!(target_os = "macos"), "the test did not hide the menu bar");
+        a.run("options", json!({ "reset": true })).unwrap();
+        assert!(a.ui.show_toolbar, "the tool bar is still hidden");
+        assert!(a.ui.show_palettes, "the palettes are still hidden");
+        assert!(a.ui.show_toolsets);
+        assert_eq!(a.ui.in_window_menu, !cfg!(target_os = "macos"), "the menu bar did not come back");
+    }
 }
