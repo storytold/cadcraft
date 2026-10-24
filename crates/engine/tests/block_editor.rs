@@ -217,7 +217,7 @@ fn a_file_save_writes_the_drawing_outside_the_editor() {
     s.execute("bedit", &json!({ "name": "Door" })).unwrap();
     line(&mut s, [0.0, 0.0], [0.0, 3.0]);
     // Autosave keeps the editor's unsaved change in the block.
-    let rec = s.state().unwrap().recovery_drawing();
+    let rec = s.state().unwrap().recovery_drawing().unwrap();
     assert_eq!(rec.block("Door").unwrap().entities.len(), 2);
     assert_eq!(rec.model.len(), 2);
 

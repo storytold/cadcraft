@@ -195,12 +195,13 @@ impl DocState {
         self.block_edit.as_ref().is_some_and(|b| !Arc::ptr_eq(&b.saved, &self.doc))
     }
     /// The drawing to keep for recovery (autosave): with the Block Editor's unsaved changes in the
-    /// block, so a crash doesn't lose them.
-    pub fn recovery_drawing(&self) -> Arc<Drawing> {
+    /// block, so a crash doesn't lose them. An error when the editor's changes can't be put in the
+    /// block (it would contain itself): the host drawing alone would lose them.
+    pub fn recovery_drawing(&self) -> Result<Arc<Drawing>> {
         match &self.block_edit {
-            Some(be) if self.block_unsaved() => be.compose(&self.doc, &be.name).map(Arc::new).unwrap_or_else(|_| be.host.doc.clone()),
-            Some(be) => be.host.doc.clone(),
-            None => self.doc.clone(),
+            Some(be) if self.block_unsaved() => be.compose(&self.doc, &be.name).map(Arc::new),
+            Some(be) => Ok(be.host.doc.clone()),
+            None => Ok(self.doc.clone()),
         }
     }
 
