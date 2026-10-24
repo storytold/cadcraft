@@ -80,8 +80,7 @@ fn same_polyline(
     s: &mut Session,
     h: Handle,
     pl: &LwPolyline,
-    p1: Vec2,
-    p2: Vec2,
+    (p1, p2): (Vec2, Vec2),
     r: f64,
     chamfer: Option<ChamferDistances>,
     trim: bool,
@@ -223,7 +222,7 @@ pub(crate) fn fillet_pline(
         _ => None,
     };
     let made = match (&e1.kind, &e2.kind) {
-        (EntityKind::LwPolyline(pl), _) if h1 == h2 => same_polyline(s, h1, pl, p1, p2, r, chamfer, trim)?,
+        (EntityKind::LwPolyline(pl), _) if h1 == h2 => same_polyline(s, h1, pl, (p1, p2), r, chamfer, trim)?,
         (EntityKind::LwPolyline(pl), k) if as_line(k).is_some() => {
             let ln = as_line(k).ok_or_else(|| other("Select a line."))?;
             polyline_and_line(s, (h1, pl, p1), (h2, ln, p2), true, r, chamfer, trim)?

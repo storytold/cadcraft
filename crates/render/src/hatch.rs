@@ -528,14 +528,14 @@ impl Family<'_> {
                 if solid_line {
                     out.push(vec![self.to_world(Vec2::new(x0, y)), self.to_world(Vec2::new(x1, y))]);
                 } else {
-                    self.dash(x0, x1, y, offset, pat_len, out, work);
+                    self.dash((x0, x1), y, offset, pat_len, out, work);
                 }
             }
         }
     }
 
     /// The dashes and dots of the span `x0..x1` of the line at `y`, phase anchored at x = `offset`.
-    fn dash(&self, x0: f64, x1: f64, y: f64, offset: f64, pat_len: f64, out: &mut Vec<Vec<Vec2>>, work: &mut u64) {
+    fn dash(&self, (x0, x1): (f64, f64), y: f64, offset: f64, pat_len: f64, out: &mut Vec<Vec<Vec2>>, work: &mut u64) {
         let start_rep = ((x0 - offset) / pat_len).floor();
         let mut x = offset + start_rep * pat_len;
         let mut guard = 0;

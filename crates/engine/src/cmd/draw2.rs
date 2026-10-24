@@ -1570,7 +1570,7 @@ impl Interactive for XlineM2 {
 // RECTANG with Area / Dimensions / Rotation / Width / Elevation / Thickness
 // =====================================================================================
 
-fn rect_kind(first: Vec2, w: f64, h: f64, rot: f64, fillet: f64, chamfer: (f64, f64), width: f64, elevation: f64) -> EntityKind {
+fn rect_kind(first: Vec2, (w, h): (f64, f64), rot: f64, fillet: f64, chamfer: (f64, f64), width: f64, elevation: f64) -> EntityKind {
     let local = rect_with_corners(Vec2::ZERO, Vec2::new(w, h), fillet, chamfer);
     let vs = local.into_iter().map(|v| PolyVertex { p: first + v.p.rotate(rot), ..v }).collect();
     let mut k = lwpoly(vs, true);
@@ -1629,7 +1629,7 @@ pub(crate) fn run_rectang2(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("rectang", "rectangle has no area"));
     }
     let first = if centered { a - Vec2::new(w / 2.0, h / 2.0).rotate(rot) } else { a };
-    let k = rect_kind(first, w, h, rot, fillet, ch, width, f64_or(p, "elevation", 0.0));
+    let k = rect_kind(first, (w, h), rot, fillet, ch, width, f64_or(p, "elevation", 0.0));
     let hd = s.add_entity(k)?;
     let th = f64_or(p, "thickness", 0.0);
     if th != 0.0 {
@@ -1682,7 +1682,7 @@ impl RectM2 {
             return Err(other("The rectangle has no area."));
         }
         let first = self.origin(w, h).unwrap_or(a);
-        let hd = s.add_entity(rect_kind(first, w, h, self.rotation, self.fillet, self.chamfer, self.width, self.elevation))?;
+        let hd = s.add_entity(rect_kind(first, (w, h), self.rotation, self.fillet, self.chamfer, self.width, self.elevation))?;
         if self.thickness != 0.0 {
             let t = self.thickness;
             s.doc_mut()?.modify_entity(hd, |e| e.common.thickness = t)?;
@@ -1862,7 +1862,7 @@ impl Interactive for RectM2 {
         }
         match self.other_corner(c).and_then(|(w, h)| self.origin(w, h).map(|a| (a, w, h))) {
             Some((a, w, h)) if w.abs() > 1e-12 && h.abs() > 1e-12 => {
-                vec![rect_kind(a, w, h, self.rotation, self.fillet, self.chamfer, self.width, self.elevation)]
+                vec![rect_kind(a, (w, h), self.rotation, self.fillet, self.chamfer, self.width, self.elevation)]
             }
             _ => Vec::new(),
         }
