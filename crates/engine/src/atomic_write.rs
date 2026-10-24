@@ -36,13 +36,20 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => None,
         Err(e) => return Err(e),
     };
+    write_atomic_with(path, permissions, |file| file.write_all(bytes))
+}
+
+/// [`write_atomic`] filling the temporary file through `fill` (streamed rather than one buffer),
+/// with `permissions` given to it from its creation (`None`: the usual creation mode). A symlink
+/// at `path` is replaced by the new file, never written through.
+pub fn write_atomic_with(path: &Path, permissions: Option<Permissions>, fill: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
     let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).map_or_else(|| PathBuf::from("."), Path::to_path_buf);
     let (mut file, tmp) = create_temp(&dir, permissions.as_ref())?;
     let write = (|| {
         if let Some(permissions) = permissions {
             file.set_permissions(permissions)?;
         }
-        file.write_all(bytes)?;
+        fill(&mut file)?;
         file.flush()?;
         file.sync_all()
     })();
@@ -55,7 +62,20 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         let _ = std::fs::remove_file(&tmp);
         return Err(e);
     }
+    sync_dir(&dir);
     Ok(())
+}
+
+/// Flush `dir` so a rename just made in it survives a crash or power loss (POSIX records a
+/// rename in the directory, not in the file). Best effort: some file systems (network shares)
+/// refuse to sync a directory, and the file itself is already on disk.
+fn sync_dir(dir: &Path) {
+    #[cfg(unix)]
+    if let Ok(d) = File::open(dir) {
+        let _ = d.sync_all();
+    }
+    #[cfg(not(unix))]
+    let _ = dir;
 }
 
 /// Create a fresh, exclusively-owned temporary file inside `dir`, returning its handle and path.
@@ -113,6 +133,18 @@ mod tests {
         let leftovers: Vec<_> =
             std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name()).filter(|n| n.to_string_lossy().starts_with(".cadcraft-tmp")).collect();
         assert!(leftovers.is_empty(), "left temp files: {leftovers:?}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A write into a folder whose entries can be listed syncs that folder without failing, and
+    /// a folder that can't be opened (gone) is no error for the sync itself.
+    #[test]
+    fn the_folder_is_synced_after_the_rename() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-aw-sync-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
+        std::fs::create_dir_all(&dir).unwrap();
+        write_atomic(&dir.join("a.bin"), b"x").unwrap();
+        assert_eq!(std::fs::read(dir.join("a.bin")).unwrap(), b"x");
+        sync_dir(&dir.join("missing"));
         std::fs::remove_dir_all(&dir).ok();
     }
 

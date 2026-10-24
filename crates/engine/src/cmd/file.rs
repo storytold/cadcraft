@@ -411,11 +411,20 @@ fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<usiz
     Ok(n)
 }
 
-/// Put saved bytes where the user gets them: natively the file at `path` (written atomically); on
-/// the web, which has no file system, a browser download named after `path` via [`deliver`].
+/// Put saved bytes where the user gets them: natively the file at `path`; on the web, which has
+/// no file system, a browser download named after `path` via [`deliver`].
+///
+/// Natively the file is replaced atomically ([`crate::atomic_write`]: a fresh temporary file
+/// beside it, renamed over it), so a crash leaves either the old file or the new one, never a
+/// truncated one. Saving over a drawing first keeps the previous file as `<name>.bak` (ISAVEBAK,
+/// #540).
 fn store(path: &str, bytes: &[u8]) -> Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        if is_drawing_file(path) && crate::autosave::isavebak() {
+            backup(std::path::Path::new(path))
+                .map_err(|e| bad("save", format!("{path}: the backup copy could not be written ({e}); nothing was saved")))?;
+        }
         // Exclusively create a fresh temporary file and rename it over `path`, so a planted
         // `<path>.cadcraft-tmp` symlink cannot redirect the write onto another file (CWE-59).
         crate::atomic_write::write_atomic(std::path::Path::new(path), bytes).map_err(|e| bad("save", format!("{path}: {e}")))
@@ -426,6 +435,75 @@ fn store(path: &str, bytes: &[u8]) -> Result<()> {
         let deliver = deliver().ok_or_else(|| bad("save", "saving files is not available in this build; use document.bytes"))?;
         deliver(&name, "application/octet-stream", bytes).map_err(|e| bad("save", format!("{name}: {e}")))
     }
+}
+
+/// The backup of the drawing file `path`: `<name>.bak` beside it, as AutoCAD names it.
+pub fn backup_path(path: &std::path::Path) -> std::path::PathBuf {
+    path.with_extension("bak")
+}
+
+/// Whether `bytes` read as a DWG or a DXF (ASCII or binary) by their start: what a save keeps as
+/// the backup. A file that doesn't (truncated, overwritten by another program) never replaces a
+/// good `.bak`.
+pub fn looks_like_drawing(bytes: &[u8]) -> bool {
+    // DWG: a version tag like `AC1032` (R12 is `AC1009`).
+    let dwg = bytes.len() >= 6 && bytes.starts_with(b"AC") && bytes[2..6].iter().all(|b| b.is_ascii_digit());
+    if dwg || cadcraft_dxf::is_binary(bytes) {
+        return true;
+    }
+    // ASCII DXF: optional comments (999), then group 0 SECTION.
+    let text = String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]);
+    let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
+    loop {
+        match (lines.next(), lines.next()) {
+            (Some("999"), Some(_)) => continue,
+            (Some("0"), Some(v)) => return v.eq_ignore_ascii_case("SECTION"),
+            _ => return false,
+        }
+    }
+}
+
+/// Before `path` is replaced: copy it to its `.bak`, streamed and written atomically too
+/// ([`crate::atomic_write::write_atomic_with`]). Nothing
+/// to keep when there is no file yet. A file that doesn't look like a drawing
+/// ([`looks_like_drawing`]) is not backed up, and the `.bak` already there is left alone.
+#[cfg(not(target_arch = "wasm32"))]
+fn backup(path: &std::path::Path) -> std::io::Result<()> {
+    use std::io::Read;
+    let mut src = match std::fs::File::open(path) {
+        Ok(f) if f.metadata()?.is_file() => f,
+        Ok(_) => return Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    let mut head = Vec::with_capacity(4096);
+    (&mut src).take(4096).read_to_end(&mut head)?;
+    if !looks_like_drawing(&head) {
+        log::warn!("save: {} doesn't look like a drawing; its backup is left as it was", path.display());
+        return Ok(());
+    }
+    let bak = backup_path(path);
+    // The backup is no more readable than the drawing, nor than the .bak it replaces (a private
+    // 0600 drawing or .bak stays private). The mode is set as the new file is created, so a
+    // failed write leaves the old .bak as it was; a symlink at the .bak is replaced, never
+    // written through.
+    #[cfg(unix)]
+    let permissions = {
+        use std::os::unix::fs::PermissionsExt;
+        let mut mode = src.metadata()?.permissions().mode() & 0o777;
+        if let Ok(m) = std::fs::symlink_metadata(&bak)
+            && m.is_file()
+        {
+            mode &= m.permissions().mode();
+        }
+        Some(std::fs::Permissions::from_mode(mode))
+    };
+    #[cfg(not(unix))]
+    let permissions = None;
+    crate::atomic_write::write_atomic_with(&bak, permissions, |out| {
+        std::io::Write::write_all(out, &head)?;
+        std::io::copy(&mut src, out).map(|_| ())
+    })
 }
 
 /// Store the bytes, then mark the drawing saved under `path`. If storing fails the drawing keeps

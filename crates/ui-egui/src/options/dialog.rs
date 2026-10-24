@@ -241,6 +241,13 @@ fn files(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
         }
         ui.end_row();
 
+        ui.label(crate::tl!("Backup copy"));
+        let mut bak = cadcraft_engine::autosave::isavebak();
+        if ui.checkbox(&mut bak, crate::tl!("Create backup copy with each save")).changed() {
+            changes.insert("ISAVEBAK".into(), json!(i32::from(bak)));
+        }
+        ui.end_row();
+
         ui.label(crate::tl!("Automatic save file location"));
         // Edited as text; the folder changes when the field loses focus.
         let id = egui::Id::new("cc_options_savefilepath");

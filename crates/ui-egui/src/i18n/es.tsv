@@ -74,6 +74,8 @@
 	AutoConstrain	Restricciones automáticas
 	Automatic save every	Guardado automático cada
 	Automatic save file location	Ubicación de los archivos de guardado automático
+	Backup copy	Copia de seguridad
+	Create backup copy with each save	Crear una copia de seguridad en cada guardado
 	Axis, End	Eje, extremo
 	B	N
 	Base	Base
