@@ -67,9 +67,10 @@ point, an unknown command) returns a result with `isError: true` and the message
 4. `inspect_drawing {}` — verify counts and geometry.
 5. `render {}` — look at it.
 
-To change properties the way the Properties palette does, `execute {"command":
-"properties.describe", "params": {"handles": ["2F"]}}` lists the palette's rows for those
-objects: each row's `key` (what `properties.set` takes), its value (or `varies`), the value as
+To change properties the way the Properties palette does, find the object's handle first, for
+example the dimension from step 3 with `query_entities {"type": "Dimension"}` (say its `handle`
+is `"2F"`). Then `execute {"command": "properties.describe", "params": {"handles": ["2F"]}}`
+lists the palette's rows for those objects: each row's `key` (what `properties.set` takes), its value (or `varies`), the value as
 shown in the drawing's units, and whether it can be edited (with a `note` when not). Then
 `execute {"command": "properties.set", "params": {"handles": ["2F"], "textHeight": 0.25}}`
 changes it; on a dimension, style variables such as `textHeight` (or `DIMTXT`) become overrides of
