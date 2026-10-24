@@ -324,12 +324,17 @@ pub fn command(app: &mut crate::CadApp, reset: bool, params: &Value) -> Result<V
 
 /// Opens the Attributes panel when a block reference with attributes becomes the selection and
 /// closes it when the selection stops being one. Closing it by hand sticks until the selection
-/// changes, so it never fights the user.
+/// changes, so it never fights the user. The target is the drawing and the handle, so a block with
+/// the same handle in another drawing counts as a new selection. A panel restored open with no
+/// target to show is closed.
 fn follow_selection(workspace: &mut Workspace, app: &crate::CadApp, ui: &egui::Ui) {
     let id = egui::Id::new("attributes-panel-target");
-    let target = if app.ui.show_palettes { crate::palettes::attributes_target(app) } else { None };
-    let last = ui.data(|d| d.get_temp::<Option<cadcraft_engine::doc::Handle>>(id)).flatten();
+    let target = if app.ui.show_palettes { crate::palettes::attributes_key(app) } else { None };
+    let last = ui.data(|d| d.get_temp::<Option<(u64, cadcraft_engine::doc::Handle)>>(id)).flatten();
     if target == last {
+        if target.is_none() && workspace.layout.contains(&Panel::Attributes) {
+            let _ = workspace.set_visible(Panel::Attributes, false);
+        }
         return;
     }
     ui.data_mut(|d| d.insert_temp(id, target));
@@ -424,4 +429,70 @@ fn panel_limits(panel: &Panel) -> PanelLimits {
         Panel::Layers | Panel::Properties | Panel::ExternalRefs | Panel::Attributes => (egui::vec2(220.0, 100.0), 720.0),
     };
     PanelLimits { min, max: egui::vec2(max_width, 1_000_000.0) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{CadApp, Services};
+    use cadcraft_engine::Session;
+
+    /// One frame of the selection tracking, as `show` runs it.
+    fn frame(app: &mut CadApp, ctx: &egui::Context, workspace: &mut Workspace) {
+        let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))), ..Default::default() };
+        let mut output = ctx.run_ui(input, |ui| follow_selection(workspace, app, ui));
+        output.textures_delta.clear();
+    }
+
+    /// A drawing with one block reference that has an attribute; returns its handle.
+    fn app_with_block_reference() -> (CadApp, String) {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        app.run("attdef", json!({ "tag": "REV", "default": "A", "at": [0, 1] })).unwrap();
+        let line = app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+        let mut handles: Vec<String> = app.session.doc().unwrap().model.iter().map(|e| e.handle.hex()).collect();
+        handles.push(line["handles"][0].as_str().unwrap_or_default().to_string());
+        handles.sort();
+        handles.dedup();
+        app.run("block", json!({ "name": "B", "base": [0, 0], "handles": handles, "keep": "delete" })).unwrap();
+        let ins = app.run("insert", json!({ "name": "B", "at": [5, 0] })).unwrap();
+        let handle = ins["handle"].as_str().unwrap().to_string();
+        (app, handle)
+    }
+
+    #[test]
+    fn attributes_panel_follows_the_selection_and_respects_a_manual_close() {
+        let (mut app, handle) = app_with_block_reference();
+        let (ctx, mut workspace) = (egui::Context::default(), Workspace::default());
+
+        app.run("select", json!({ "handles": [handle.clone()] })).unwrap();
+        frame(&mut app, &ctx, &mut workspace);
+        assert!(workspace.layout.contains(&Panel::Attributes), "selecting the block opens the panel");
+
+        // Closed by hand: it stays closed while the same block stays selected.
+        workspace.set_visible(Panel::Attributes, false).unwrap();
+        frame(&mut app, &ctx, &mut workspace);
+        assert!(!workspace.layout.contains(&Panel::Attributes));
+
+        // Another selection and back: it opens again.
+        app.run("select", json!({ "handles": [] })).unwrap();
+        frame(&mut app, &ctx, &mut workspace);
+        app.run("select", json!({ "handles": [handle] })).unwrap();
+        frame(&mut app, &ctx, &mut workspace);
+        assert!(workspace.layout.contains(&Panel::Attributes));
+
+        // Nothing selected: it closes.
+        app.run("select", json!({ "handles": [] })).unwrap();
+        frame(&mut app, &ctx, &mut workspace);
+        assert!(!workspace.layout.contains(&Panel::Attributes));
+    }
+
+    #[test]
+    fn a_restored_attributes_panel_with_nothing_to_show_is_closed() {
+        let (mut app, _) = app_with_block_reference();
+        let (ctx, mut workspace) = (egui::Context::default(), Workspace::default());
+        workspace.reveal_panel(Panel::Attributes).unwrap();
+        assert!(workspace.layout.contains(&Panel::Attributes));
+        frame(&mut app, &ctx, &mut workspace);
+        assert!(!workspace.layout.contains(&Panel::Attributes));
+    }
 }
