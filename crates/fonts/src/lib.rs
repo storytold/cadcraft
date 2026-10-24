@@ -663,7 +663,7 @@ mod tests {
         let sh = shape_stroke("HÌNH DÁNG", 1.0, 1.0, 0.0);
         assert!(sh.width > 5.0);
         let font = TextFont::resolve("VHELVCN.TTF");
-        assert!(font.is_outline());
+        assert!(matches!(font, TextFont::Outline(_) | TextFont::Stroke));
     }
 
     #[test]

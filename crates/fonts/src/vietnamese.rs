@@ -46,12 +46,12 @@ pub fn is_vietnamese_font(font: &str) -> Option<VietnameseEncoding> {
 }
 
 /// Check if a string already contains genuine Unicode Vietnamese diacritic characters
-/// that exist outside the single-byte 0x00..=0xFF Windows-1252 range (U+1EA0..=U+1EF9, Đ, đ, Ă, ă, Ơ, ơ, Ư, ư).
+/// that exist outside the single-byte 0x00..=0xFF Windows-1252 range (U+0100..=U+024F, U+1E00..=U+1EFF).
 /// If true, the text MUST NOT be transcoded, preserving existing modern Unicode text.
 pub fn is_already_unicode_vietnamese(s: &str) -> bool {
     s.chars().any(|c| {
         let code = c as u32;
-        (0x1EA0..=0x1EF9).contains(&code) || matches!(c, 'Đ' | 'đ' | 'Ă' | 'ă' | 'Ơ' | 'ơ' | 'Ư' | 'ư')
+        (0x0100..=0x024F).contains(&code) || (0x1E00..=0x1EFF).contains(&code) || matches!(c, 'Đ' | 'đ' | 'Ă' | 'ă' | 'Ơ' | 'ơ' | 'Ư' | 'ư')
     })
 }
 
@@ -61,18 +61,28 @@ pub fn detect_vietnamese_encoding(s: &str) -> Option<VietnameseEncoding> {
         return None;
     }
 
-    let chars: Vec<char> = s.chars().collect();
     let mut vni_score = 0;
     let mut tcvn_score = 0;
+    let mut composite_found = false;
 
-    let mut i = 0;
-    while i < chars.len() {
-        let c = chars.get(i).copied().unwrap_or(' ');
-        if chars.get(i + 1).and_then(|&next| match_vni_composite(c, next)).is_some() {
-            vni_score += 3;
-        }
-        if chars.get(i + 1).and_then(|&next| match_tcvn3_composite(c, next)).is_some() {
-            tcvn_score += 3;
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if let Some(&next_c) = chars.peek() {
+            let mut matched_composite = false;
+            if match_vni_composite(c, next_c).is_some() {
+                vni_score += 2;
+                composite_found = true;
+                matched_composite = true;
+            }
+            if match_tcvn3_composite(c, next_c).is_some() {
+                tcvn_score += 2;
+                composite_found = true;
+                matched_composite = true;
+            }
+            if matched_composite {
+                chars.next();
+                continue;
+            }
         }
         if match_vni_single(c).is_some() {
             vni_score += 1;
@@ -80,12 +90,13 @@ pub fn detect_vietnamese_encoding(s: &str) -> Option<VietnameseEncoding> {
         if match_tcvn3_single(c).is_some() {
             tcvn_score += 1;
         }
-        i += 1;
     }
 
-    if vni_score >= 2 && vni_score >= tcvn_score {
+    let threshold = if composite_found { 2 } else { 4 };
+
+    if vni_score >= threshold && vni_score > tcvn_score {
         Some(VietnameseEncoding::Vni)
-    } else if tcvn_score >= 2 {
+    } else if tcvn_score >= threshold && tcvn_score > vni_score {
         Some(VietnameseEncoding::Tcvn3)
     } else {
         None
@@ -98,16 +109,16 @@ pub fn transcode_vni(s: &str) -> Cow<'_, str> {
         return Cow::Borrowed(s);
     }
 
-    let chars: Vec<char> = s.chars().collect();
     let mut out = String::with_capacity(s.len());
-    let mut i = 0;
     let mut changed = false;
+    let mut chars = s.chars().peekable();
 
-    while i < chars.len() {
-        let c = chars.get(i).copied().unwrap_or(' ');
-        if let Some(comp) = chars.get(i + 1).and_then(|&next| match_vni_composite(c, next)) {
+    while let Some(c) = chars.next() {
+        if let Some(&next) = chars.peek()
+            && let Some(comp) = match_vni_composite(c, next)
+        {
             out.push_str(comp);
-            i += 2;
+            chars.next();
             changed = true;
             continue;
         }
@@ -117,7 +128,6 @@ pub fn transcode_vni(s: &str) -> Cow<'_, str> {
         } else {
             out.push(c);
         }
-        i += 1;
     }
 
     if changed { Cow::Owned(out) } else { Cow::Borrowed(s) }
@@ -129,16 +139,16 @@ pub fn transcode_tcvn3(s: &str) -> Cow<'_, str> {
         return Cow::Borrowed(s);
     }
 
-    let chars: Vec<char> = s.chars().collect();
     let mut out = String::with_capacity(s.len());
-    let mut i = 0;
     let mut changed = false;
+    let mut chars = s.chars().peekable();
 
-    while i < chars.len() {
-        let c = chars.get(i).copied().unwrap_or(' ');
-        if let Some(comp) = chars.get(i + 1).and_then(|&next| match_tcvn3_composite(c, next)) {
+    while let Some(c) = chars.next() {
+        if let Some(&next) = chars.peek()
+            && let Some(comp) = match_tcvn3_composite(c, next)
+        {
             out.push_str(comp);
-            i += 2;
+            chars.next();
             changed = true;
             continue;
         }
@@ -148,7 +158,6 @@ pub fn transcode_tcvn3(s: &str) -> Cow<'_, str> {
         } else {
             out.push(c);
         }
-        i += 1;
     }
 
     if changed { Cow::Owned(out) } else { Cow::Borrowed(s) }
@@ -520,6 +529,15 @@ mod tests {
         assert!(is_already_unicode_vietnamese(unicode));
         assert_eq!(transcode_vietnamese(unicode, Some("VNI-Helve")), unicode);
         assert_eq!(transcode_vietnamese(unicode, None), unicode);
+    }
+
+    #[test]
+    fn test_false_positives_never_transcoded() {
+        for word in ["Hòa Bình", "Chúng tôi", "Piñón", "Café"] {
+            assert_eq!(detect_vietnamese_encoding(word), None);
+            assert_eq!(transcode_vietnamese(word, None), word);
+            assert_eq!(transcode_vietnamese(word, Some("Standard")), word);
+        }
     }
 
     #[test]
