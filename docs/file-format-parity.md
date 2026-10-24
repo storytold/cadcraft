@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-22 · **Change:** minor (DIMASSOC objects for angular, diametric and radial dimensions) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-24 · **Last updated:** 2026-10-24 · **Change:** minor (re-audit against main 41d9b5e95: acadrust 0.6.5, ACIS data, dynamic block, SCRIPT and SHX rows, io test count; previously: DIMASSOC objects for angular, diametric and radial dimensions) · **Target:** Autodesk AutoCAD 2027
 
 Every format AutoCAD 2027 reads or writes, with CADCraft's support, fidelity and tests. Work
 items are in [gaps.md](gaps.md#file-formats); the weighted score feeds
@@ -31,10 +31,10 @@ below, and ≈ 20–40 h for 3D exchange formats that wait for 3D modelling.
 
 AutoCAD 2027 opens every DWG version from R2.0 onward and saves 2018 (AC1032, still the current
 DWG format), 2013, 2010, 2007, 2004, 2000 and R14. CADCraft reads DWG by converting it to DXF
-with the `acadrust` 0.6.3 crate and reading that DXF; it saves by writing its own R2000 DXF and
+with the `acadrust` 0.6.5 crate (failsafe mode since 0.6.4: a damaged DWG opens with the unreadable records left out and a note saying so, #859) and reading that DXF; it saves by writing its own R2000 DXF and
 converting it to a DWG of the chosen version (#421): SAVEAS `version`, else the drawing's own
 version (the file's `$ACADVER`, 2018 for a new drawing), at least 2004 unless 2000 is asked for.
-The bridge repairs two acadrust 0.6.3 gaps in 2010+ DWG: merged table cells and table-style
+The bridge repairs two acadrust gaps in 2010+ DWG (measured with 0.6.3): merged table cells and table-style
 title/header suppression.
 
 | DWG version | Code | AutoCAD 2027 | CADCraft read | CADCraft write | Tested how |
@@ -75,7 +75,7 @@ on read with a note, so such files no longer exceed the DXF limit (#1482). **DWG
 |---|---|---|---|
 | LINE, POINT, CIRCLE, ARC, ELLIPSE, LWPOLYLINE (widths, bulges, elevation), SPLINE, RAY, XLINE | yes | yes | round-trip tests |
 | POLYLINE 2D/3D | yes | yes (as LWPOLYLINE / 3D POLYLINE) | polyface and polygon meshes flattened: lossy |
-| TEXT, MTEXT, ATTDEF, INSERT + ATTRIB | yes; multiline attributes (embedded MTEXT) read and drawn | yes; multiline attributes written as embedded MTEXT (DXF 2007 and later; older versions: one line) | ATTDEF prompt kept (#137) |
+| TEXT, MTEXT, ATTDEF, INSERT + ATTRIB | yes; multiline attributes (embedded MTEXT) read and drawn | yes; multiline attributes written as embedded MTEXT (DXF 2007 and later; older versions: one line) | ATTDEF prompt kept (#137); Verify, Preset and Lock position modes kept (#876) |
 | DIMENSION (all 7 kinds) | yes | yes, with anonymous `*D` blocks | a reopened dimension's `*D` block is regenerated under its name, unreferenced ones dropped (#495); DIMASSOC objects written for every associated kind — linear/aligned, angular, radial/diametric, ordinate and arc length — and read back without CADCraft's xdata (#1651) |
 | DIMENSION (all 7 kinds) | yes | yes, with anonymous `*D` blocks | a reopened dimension's `*D` block is regenerated under its name, unreferenced ones dropped (#495); DIMASSOC objects written; angular block text honors DIMDSEP, including per-dimension overrides (#1646) |
 | DIMENSION (all 7 kinds) | yes | yes, with anonymous `*D` blocks; their text keeps the diameter sign as `%%c`, so SHX styles plot it (#1645) | a reopened dimension's `*D` block is regenerated under its name, unreferenced ones dropped (#495); DIMASSOC objects written |
@@ -84,13 +84,13 @@ on read with a note, so such files no longer exceed the DXF limit (#1482). **DWG
 | HATCH pattern / solid | yes | yes; associative hatches keep their boundary objects in blocks too, and the boundary carries the hatch reactor (stretched dynamic blocks drag the fill in AutoCAD) | |
 | HATCH gradient | yes | yes (#162, fixes #80) | |
 | SOLID, TRACE, 3DFACE | yes | yes | |
-| ACAD_TABLE | yes | yes (entity + block) | |
+| ACAD_TABLE | yes; cell text from AutoCAD files is readable (cell height, style scale, MTEXT; #806) | yes (entity + block) | |
 | VIEWPORT | yes | yes; frozen-layer lists kept (#150), also as standard group 341 layer handles that other programs read | DWG: the DXF→DWG converter does not yet write group 341 (frozen layers survive a CADCraft round trip via xdata); VP layer colour overrides lost (#99, PR #197) |
 | IMAGE | yes, with IMAGEDEF | yes, with IMAGEDEF and IMAGEDEF_REACTOR | no attach command or display of the picture yet (FF10) |
 | WIPEOUT | yes | yes (#147, fixes #79) | |
 | MLINE (+ MLINESTYLE), HELIX, TOLERANCE | yes (#510, #420) | yes | |
-| REGION | other programs' REGIONs (ACIS data) kept as Unknown | our regions are written as closed polylines tagged with CADCraft xdata (#510; ACIS has no public spec) | |
-| 3DSOLID, BODY, SURFACE, MESH, SHAPE, UNDERLAY, OLE2FRAME, LIGHT, CAMERA, SECTION, POINTCLOUD, proxy entities | kept as Unknown (raw tags) | written back as read, with their CLASS records (#528); a proxy entity's class number (group 91) is renumbered to its class's place in the written CLASSES (#1812); **dropped by DWG save** (acadrust) | only their layer follows edits |
+| REGION | other programs' REGIONs (ACIS data) kept as Unknown; the ACIS data of 2013+ files (`ACDSDATA`) is kept with them (#781) | our regions are written as closed polylines tagged with CADCraft xdata (#510; ACIS has no public spec) | |
+| 3DSOLID, BODY, SURFACE, MESH, SHAPE, UNDERLAY, OLE2FRAME, LIGHT, CAMERA, SECTION, POINTCLOUD, proxy entities | kept as Unknown (raw tags) | written back as read, with their CLASS records (#528); 3DSOLID, REGION and BODY keep their ACIS data (`ACDSDATA`) in files of 2013 and later, in DXF and DWG (#781); a proxy entity's class number (group 91) is renumbered to its class's place in the written CLASSES (#1812); the other kinds are **dropped by DWG save** (acadrust) | only their layer follows edits |
 | Header variables | all read | 36 written | AutoCAD writes about 280 |
 | Tables: LAYER (+ transparency, description), LTYPE, STYLE, DIMSTYLE, BLOCK_RECORD | yes | yes | |
 | Tables: VPORT, VIEW, UCS, APPID | yes | yes: saved viewport configurations (#504), named views, UCSs | UCS elevation lost |
@@ -98,7 +98,7 @@ on read with a note, so such files no longer exceed the DXF limit (#1482). **DWG
 | Objects: GROUP, MLINESTYLE, MLEADERSTYLE, IMAGEDEF, SCALE | yes | yes (groups #417, scale list #468) | |
 | Objects: VISUALSTYLE, PLOTSETTINGS, materials, field objects and other unmodelled objects | kept raw (#528) | written back as read; a proxy object (ACAD_PROXY_OBJECT) keeps its class: its group 91 is renumbered to the written CLASSES, which keep the class it names, and one whose number names no class is dropped (#1812) | not editable |
 | Foreign xdata, extension dictionaries, reactors, unmodelled objects, colour books | kept raw (#528); an entity's xdata is part of the entity, so COPY, MIRROR, ARRAY and paste keep it on the copies (EXPLODE pieces don't) | written back, handles remapped, references to deleted objects dropped | through DWG: xdata on table records and blocks, entity colour books and reactors, custom-class objects lost (acadrust) |
-| Objects: dynamic block data (ACAD_EVALUATION_GRAPH, BLOCK…PARAMETER, BLOCK…ACTION, grips) | read into a model (`dynblock`, `blocks.dynamic`): parameters, visibility states, value sets, stretch and lookup actions; references: their dynamic block, values and custom properties (`blocks.reference`, Properties ▸ Custom, read-only); kept raw (#528) | written back as read; a changed visibility state is written as AutoCAD writes it (a new anonymous block with its `AcDbBlockRepBTag`, the objects' `AcDbBlockRepETag`, the reference's representation data) | visibility states (and lookups that set only them) can be changed (`blocks.reference.set`, Properties ▸ Custom); distances, positions and the actions they drive not yet; DWG open and save keep it too (checked with an AutoCAD dynamic block) |
+| Objects: dynamic block data (ACAD_EVALUATION_GRAPH, BLOCK…PARAMETER, BLOCK…ACTION, grips) | read into a model (`dynblock`, `blocks.dynamic`): parameters, visibility states, value sets, stretch and lookup actions; references: their dynamic block, values and custom properties (`blocks.reference`, Properties ▸ Custom); kept raw (#528) | written back as read; a changed reference is written as AutoCAD writes it (a new anonymous block with its `AcDbBlockRepBTag`, the objects' `AcDbBlockRepETag`, the reference's representation data) | visibility states, lookups (both ways), distances and positions can be changed (`blocks.reference.set`, Properties ▸ Custom, #860, #878), running the stretch and move actions that follow, and their grips show and drag (#883); polar, XY, rotation, alignment and flip parameters and the scale, rotate, flip, array and polar stretch actions are read but not applied (`dynblock/apply.rs`); no authoring; DWG open and save keep it too (checked with an AutoCAD dynamic block; open PR #1000 keeps the C++ class names the file gives) |
 | Handles and owners | entity handles kept; others regenerated | consistent | stable across CADCraft re-saves (#495); other programs' table and object handles renumbered once |
 
 **DXF ≈ 50% read, ≈ 30% write** (estimated; weights: common 2D entities 50%, annotation objects
@@ -117,10 +117,10 @@ on read with a note, so such files no longer exceed the DXF limit (#1482). **DWG
 | DWF/DWFx export, DWF underlay | yes | no | 10–15 |
 | DGN import/export/underlay | yes | no (needs a public spec; owner decision) | 25–40 |
 | WMF, EPS, ACIS SAT, STL, FBX, IGES/STEP (Windows), 3DS | various | no; most are 3D and wait for M11 | 20–40 |
-| SHX fonts (`.shx`, big fonts) | read | **not parsed**: our stroke font or FONTALT stands in, so text metrics differ from AutoCAD | 8–12 |
+| SHX fonts (`.shx`, big fonts) | read | **not parsed**: our stroke font or FONTALT stands in, so text metrics differ from AutoCAD (wide East Asian characters fill square big-font cells, #861) | 8–12 |
 | Linetype (`.lin`) and hatch pattern (`.pat`) files | load user files | user files load (#552); linetype shape (SHX) elements are skipped | 1–2 |
 | Plot styles (`.ctb`, `.stb`), plotter configs (`.pc3`), `.pmp` | yes | plot style tables in our own JSON format ([plot-styles.md](plot-styles.md)) and kept in the drawing; plotter devices with papers and printable areas in our own JSON format ([plotters.md](plotters.md), #564); binary `.ctb`/`.stb`/`.pc3`/`.pmp` not read (no public spec) | 4–8 |
-| Scripts (`.scr`) | SCRIPT | script text through the CLI, MCP and control channel; no SCRIPT command reading a `.scr` file | 1–2 |
+| Scripts (`.scr`) | SCRIPT | the SCRIPT command runs a `.scr` file (#693), as do the CLI, MCP and control channel | 0–1 |
 | Aliases (`.pgp`), CUI(x), workspaces | yes | user alias files and ALIASEDIT (#552); no CUI(x) or workspaces | 4–8 |
 | SVG import (`.svg`, `.svgz`) | yes (via scripts) | OPEN reads shapes, paths, groups and Inkscape layers into entities (#636); no CSS classes, `use`, fills, text or images (what the drawing loses is named in a note on open, #627) | 2–4 |
 | AutoLISP (`.lsp`, `.fas`, `.vlx`), `.dll`/`.arx` plug-ins | yes | `.lsp` loads (APPLOAD, `(load)`, a dropped file; #758); no Visual LISP ActiveX (`vlax-`), DCL dialogs or reactors; `.fas`/`.vlx` are compiled and undocumented; no `.dll`/`.arx` | see [gaps.md](gaps.md) (E1) |
@@ -129,7 +129,7 @@ on read with a note, so such files no longer exceed the DXF limit (#1482). **DWG
 
 ## Tests
 
-`crates/io/src/tests.rs` has 36 tests (round trips of entities, styles, associativity, tables,
+`crates/io/src/tests.rs` has 86 tests (`#[test]` count, 2026-10-24) (round trips of entities, styles, associativity, tables,
 constraints, non-ASCII text, DWG round trips, hostile input). **All inputs are synthetic**:
 inline strings or our own writer's output. No test opens a file made by another program, and no
 external validator runs in CI (ezdxf's audit was run by hand once, 2026-10-06). The next step is
@@ -140,6 +140,7 @@ our output in AutoCAD black-box.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-24 | minor | Re-audit against main 41d9b5e95: acadrust 0.6.5, ACIS data, dynamic block, SCRIPT and SHX rows, io test count |
 | 2026-10-22 | minor | DXF/DWG save: angular, diametric and radial dimensions get standard DIMASSOC objects (one centre reference to the circle for radial/diametric, the definition points for angular), so AutoCAD follows their geometry; the standard objects of those kinds are read back too, without CADCraft's xdata (#1651) |
 | 2026-10-19 | minor | DXF/DWG save: angular dimension block text honors DIMDSEP, including per-dimension overrides (#1646) |
 | 2026-10-19 | minor | A file's own arrowhead blocks with standard names (AutoCAD's `_Dot`, `_DotSmall`), named only by a dimension style, are kept and saved as they were instead of being replaced by CADCraft's solids; PURGE keeps arrowhead blocks dimension styles name |

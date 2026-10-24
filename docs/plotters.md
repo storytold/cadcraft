@@ -108,9 +108,8 @@ In the file name, characters other than letters, digits, spaces and `-_()+,` bec
     an active offset is rejected rather than ignored. Layout plots do not use model offsets.
   - `exportpdf` takes the same options and always writes PDF.
 
-Model-space PDF plots don't apply the paper's margins yet. They fit the drawing inside the
-default margins. PNG plots apply them. SVG plots show a layout's whole sheet, or the
-model-space extents.
+Model-space PDF plots apply the device paper's margins as the printable area (#633; `io/src/pdf.rs`),
+as PNG plots do. SVG plots show a layout's whole sheet, or the model-space extents.
 
 ## Plot transparency
 

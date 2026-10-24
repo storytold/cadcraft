@@ -33,8 +33,8 @@ dialogs, and the About window's controls. The command reference can be searched 
 command ID, English label, or translated label. A missing entry falls back to English and
 never fails a build; `cargo xtask i18n` (a step of `cargo xtask ci`) lists each language's.
 
-Czech has 1,202 catalog rows, covering the reference catalog and every marked UI
-literal, including Options. Four `menu` entries distinguish menu headings from object/command
+Czech has 1,215 catalog rows (counted 2026-10-24), covering the reference catalog and every marked UI
+literal when it landed, including Options. Four `menu` entries distinguish menu headings from object/command
 labels: **Zobrazení / Pohled**, **Kreslení / Kreslit**, **Kótování / Kóta**, and **Modifikace / Upravit**.
 The translation is AI-assisted work by @Losminek, reviewed against Czech desktop and CAD UI
 conventions and an independent review pass; it has not yet been proofread by a native speaker.
@@ -46,9 +46,9 @@ The translations are original, AI-assisted Korean CAD terminology (for example, 
 치수, 모깎기, 모따기, 간격띄우기 and 객체 스냅). Independent native proofreading and
 platform-specific layout/IME validation remain follow-up work.
 
-Brazilian Portuguese has 1,231 catalog rows and also covers the reference catalog and every marked UI
-literal: commands, menus, tool groups and tooltips, object snaps, drafting prompts, dialogs and
-Preferences; its gaps are now zero. Its plural rule is `one|other` (0 and 1 are `one`), as CLDR defines
+Brazilian Portuguese has 1,243 catalog rows and also covered the reference catalog and every marked UI
+literal when it landed (#791): commands, menus, tool groups and tooltips, object snaps, drafting prompts, dialogs and
+Preferences. Its plural rule is `one|other` (0 and 1 are `one`), as CLDR defines
 for `pt`, and the catalog's accented letters (`Á Â Í Ó Ú à á â ã ç é ê í ó ô õ ú`) render in the
 bundled fonts. The original catalog was contributed by @WladmirJunior; the remaining rows were completed
 by @RicSchonfelder with AI assistance. A native-speaker terminology pass by @ffishman (2026-10-19) fixed

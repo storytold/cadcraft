@@ -1,6 +1,6 @@
 # Where CADCraft falls short of AutoCAD
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-16 · **Change:** minor (Command Aliases dialog for ALIASEDIT: U12 and E5 narrowed) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-24 · **Last updated:** 2026-10-24 · **Change:** minor (re-audit against main 41d9b5e95: CI gate (#6, S1), MVIEW Restore (F15, U11), open-PR and catalog counts, file-test count; previously: Command Aliases dialog for ALIASEDIT: U12 and E5 narrowed) · **Target:** Autodesk AutoCAD 2027
 
 Every known shortfall, one row each, ranked within each section by user impact. This is the work
 list: agents pick from here (top of a section first), and remove or update a row in the same PR
@@ -13,12 +13,12 @@ do them first.
 
 | # | Gap | Why it ranks here | Est. | Doc |
 |---|---|---|---|---|
-| 1 | **[alpha blocker]** **Saving DWG drops what we don't model** (DXF now writes back unknown entities and objects, foreign xdata, extension dictionaries, reactors, layer states and colour books, #528, and native MULTILEADERs, #459 (not yet tested through DWG); through DWG, acadrust drops custom-class entities and objects, xdata on table records and blocks, entity colour books and reactors) | Opening a colleague's DWG and saving it still deletes some content: the one thing a CAD user can't forgive | 6–10 | [file formats](file-format-parity.md) |
-| 2 | **[alpha blocker]** **No real-file test corpus and no check in AutoCAD** | All 36 file tests are synthetic; nobody has verified a CADCraft DWG/DXF opens cleanly in AutoCAD | 10–15 + human | [file formats](file-format-parity.md#tests) |
-| 3 | **Ellipse and spline geometry is tessellated** (intersections, offsets, closest points; polyline offset ignores bulges) | Coordinates are subtly wrong; offsets of ellipses come out as polylines | 30–50 | [geometry](geometry-parity.md) |
-| 4 | **[alpha blocker]** **No dynamic blocks or REFEDIT; xrefs can't be edited in place or clipped** (xrefs, #525, groups, #417, and the Block Editor for static blocks landed) | Most production drawings use them | 55–90 | [features](#features) |
+| 1 | **[alpha blocker]** **Saving DWG drops what we don't model** (DXF now writes back unknown entities and objects, foreign xdata, extension dictionaries, reactors, layer states and colour books, #528, and native MULTILEADERs, #459 (not yet tested through DWG); through DWG, acadrust drops custom-class entities and objects, xdata on table records and blocks, entity colour books and reactors; the ACIS data of 3D solids, regions and bodies is kept, #781) | Opening a colleague's DWG and saving it still deletes some content: the one thing a CAD user can't forgive | 6–10 | [file formats](file-format-parity.md) |
+| 2 | **[alpha blocker]** **No real-file test corpus and no check in AutoCAD** | All 86 file tests (`crates/io/src/tests.rs`) use synthetic data (the real-file runs in PRs #781 and #859 were manual and are not committed); nobody has verified a CADCraft DWG/DXF opens cleanly in AutoCAD | 10–15 + human | [file formats](file-format-parity.md#tests) |
+| 3 | **Ellipse and spline geometry is tessellated** (intersections, offsets, closest points; polyline offset recomputes arc bulges since #825 but has no loop cleanup) | Coordinates are subtly wrong; offsets of ellipses come out as polylines | 30–50 | [geometry](geometry-parity.md) |
+| 4 | **[alpha blocker]** **No dynamic-block authoring or XCLIP; xrefs can't be edited in place** (REFEDIT, REFSET and REFCLOSE edit block references in place, #818; dynamic block references are read and edited, #838–#883; xrefs, #525, groups, #417, and the Block Editor for static blocks landed) | Most production drawings use them | 55–90 | [features](#features) |
 | 5 | **No autosave in the web build** (the desktop app has SAVETIME autosave, Drawing Recovery, AUDIT and RECOVER since #406) | Browser users lose unsaved work when the tab or the browser goes down | 3–5 | [features](#features) |
-| 6 | **No CI runs the Rust tests on pull requests** (`cargo fmt` on main is fixed) | open PRs land without a gate; regressions go unseen | 2–3 | [stability](#stability) |
+| 6 | ~~**No CI runs the Rust tests on pull requests**~~ fixed: `.github/workflows/ci.yml` runs `cargo xtask ci` on every pull request and push to main through the shared gate workflow (#1987); `cargo fmt` on main is fixed. PR #847, which proposed the same workflow, is still open | — | 0 | [stability](#stability) |
 
 ## Features
 
@@ -31,15 +31,15 @@ do them first.
 | F5 | Associative arrays (ASsociative, Levels, polar ROWs, ARRAYEDIT, ARRAYCLOSE) landed (#448); left: grip editing of arrays (count/spacing grips), ARRAYPATH is not associative, ARRAYEDIT has no item deletion (CTRL+click) and no Key point base points, levels only shift Z (no 3D view) | `cmd/array.rs`, `cmd/array/edit.rs` | Medium | 4–6 |
 | F7 | Dimensions: no DIMSTYLE manager dialog; no smart DIM; DIMTFILL/DIMTFILLCLR, DIMALTTD/DIMALTTZ, DIMUPT and DIMTXTDIRECTION not modelled; jog height and break size not style settings; DIMBREAK breaks don't follow moved objects (style variables, DIMJOGGED, DIMJOGLINE, DIMBREAK, DIMEDIT, DIMINSPECT and QDIM modes done, #507) | `doc/src/tables.rs`, `cmd/annotate_dimedit.rs`, `cmd/annotate_qdim.rs` | Medium | 10–15 |
 | F8 | TOLERANCE leftovers (feature control frames landed, #420: model, our own symbol drawing, DXF, command-line prompts, explode, grips): no Geometric Tolerance dialog, no LEADER/QLEADER tolerance annotation, no in-place editing of a frame's contents | `cmd/tolerance.rs` | Low-medium (mechanical) | 2–4 |
-| F10 | MLEADEREDIT (add/remove leader), MLEADERALIGN and MLEADERCOLLECT landed, but a multileader has one landing and one block (a collection keeps the other blocks as block references beside it; MLEADERALIGN has no Options-menu preview); MLEADERSTYLE has 5 fields (block content and spline/no-leader types are per command, not in the style; block content has no attributes) | `annotate.rs`, `cmd/mleader_content.rs`, `tables.rs:417` | Medium | 8–12 |
-| F9 | MTEXT is typed in an on-canvas editor with a formatting toolbar (font, height, bold, italic, underline, overline, colour, alignment, lists, tab and special characters) and a ruler for indents and tab stops (#532); left: the box does not lay the text out by the indents, tabs, columns or font weights while typing (bold shows wider, overline is not drawn), no justification (attachment) or columns controls in the editor, existing MTEXT cannot be edited (no DDEDIT/MTEDIT), stacked fractions and other codes show as placeholders; no fields (FIELD, UPDATEFIELD) and no spell check (SPELL): open PR #551. Paragraph indents, tabs, bullets, numbering and columns landed (#547) | `ui-egui/mtext_editor.rs`, `engine/mtext_edit.rs` | Medium | 10–18 |
+| F10 | MLEADEREDIT (add/remove leader), MLEADERALIGN and MLEADERCOLLECT landed, but a multileader has one landing and one block (a collection keeps the other blocks as block references beside it; MLEADERALIGN has no Options-menu preview); MLEADERSTYLE has 6 settings (arrow size, text height, landing gap, dogleg, text style, annotative; block content and spline/no-leader types are per command, not in the style; block content has no attributes) | `annotate.rs`, `cmd/mleader_content.rs`, `cmd/mleader_edit.rs`, `doc/src/tables.rs` | Medium | 8–12 |
+| F9 | MTEXT is typed in an on-canvas editor with a formatting toolbar (font, height, bold, italic, underline, overline, colour, alignment, lists, tab and special characters) and a ruler for indents and tab stops (#532); left: the box does not lay the text out by the indents, tabs, columns or font weights while typing (bold shows wider, overline is not drawn), no justification (attachment) or columns controls in the editor, existing TEXT and MTEXT are edited as plain text on the command line with TEXTEDIT (alias DDEDIT; a double-click starts it, #868), and the in-place editor for existing MTEXT is open PR #1002; stacked fractions and other codes show as placeholders; no fields (FIELD, UPDATEFIELD) and no spell check (SPELL): open PR #551. Paragraph indents, tabs, bullets, numbering and columns landed (#547) | `ui-egui/mtext_editor.rs`, `engine/mtext_edit.rs` | Medium | 10–18 |
 | F11 | Tables (cell styles, formulas, TABLEDIT, TABLEEXPORT, table breaking and CSV data links landed, #534): formulas aren't read from or written as AutoCAD FIELD objects (other programs see values); number formats apply to formula results only; cell text doesn't wrap; custom cell styles, breaks and data links travel as CADCraft xdata (not through DWG); data links read CSV only (no Excel ranges, no write-back, not on the web); no cell-style tab in the Table Style dialog | `cmd/table/*`, `io/dxf_table.rs` | Low-medium | 6–10 |
 | F12 | Annotative scaling done (#468): scale list (SCALELISTEDIT), CANNOSCALE, OBJECTSCALE, ANNOALLVISIBLE/ANNOAUTOSCALE, viewport scale, DXF, status bar list. Left: per-scale positions (ANNORESET is a no-op), a viewport annotation scale apart from its viewport scale, annotative objects inside blocks and old LEADERs, AutoCAD files' per-object scale contexts (read as not annotative) | `cmd/annoscale.rs`, `doc/src/anno.rs` | Low-medium | 4–8 |
-| F14 | **[alpha blocker]** Plotting leftovers: binary `.ctb`/`.stb`/`.pc3` files can't be read; model-space PDF plots keep the default margins (a device paper's margins apply to layouts and PNG plots); no system printers (H3); the page setup's "Plot transparency" is not saved in DXF/DWG (the public DXF Reference has no plot layout flag for it), so it lasts for the session and in JSON only. The Plot dialog (#160), Plot Preview and PUBLISH (#186), plot styles (CTB and STB, [plot-styles.md](plot-styles.md), #410) with their end, join and fill styles, plotter devices with paper sizes and printable areas ([plotters.md](plotters.md), #564), and plotted transparency (page setup and Plot dialog option, PLOTTRANSPARENCYOVERRIDE) landed | `io/src/plotter.rs`, `cmd/plotters.rs` | Medium | 4–8 |
+| F14 | **[alpha blocker]** Plotting leftovers: binary `.ctb`/`.stb`/`.pc3` files can't be read; no system printers (H3); the page setup's "Plot transparency" is not saved in DXF/DWG (the public DXF Reference has no plot layout flag for it), so it lasts for the session and in JSON only. The Plot dialog (#160), Plot Preview and PUBLISH (#186), plot styles (CTB and STB, [plot-styles.md](plot-styles.md), #410) with their end, join and fill styles, plotter devices with paper sizes and printable areas ([plotters.md](plotters.md), #564), and plotted transparency (page setup and Plot dialog option, PLOTTRANSPARENCYOVERRIDE) landed | `io/src/plotter.rs`, `cmd/plotters.rs` | Medium | 4–8 |
 | F13 | Hatch: 23 patterns (AutoCAD ~85; ours must stay original); the Hatch and Gradient and Hatch Edit dialogs have no Preview or Inherit Properties (HPDLGMODE 0 keeps HATCH on the command line); no MPolygon; HATCHEDIT and -HATCHEDIT add boundaries from picked points or closed objects and remove chosen loops, but a hatch copied with its boundary isn't linked to the copy; HPGAPTOL closes gaps between curve ends only | `doc/src/library.rs`, `cmd/hatch.rs`, `cmd/hatch/edit.rs` | Medium | 6–10 |
-| F15 | Viewports: MVIEW Restore prints "not available yet" (named viewport configurations into a layout, see U11); a clipped viewport and its clip boundary move and scale separately. Polygonal, object and clipped viewports, VPCLIP, MVIEW ON/OFF/Lock/2/3/4 and the status-bar scale list landed (#453) | `cmd/layout/viewports.rs` | Low | 2–4 |
+| F15 | Viewports: a clipped viewport and its clip boundary move and scale separately. Polygonal, object and clipped viewports, VPCLIP, MVIEW ON/OFF/Lock/2/3/4 and the status-bar scale list landed (#453), and MVIEW Restore puts a saved viewport configuration into a layout (#633) | `cmd/layout/viewports.rs` | Low | 2–4 |
 | F16 | Groups: no group bounding box or single grip when a group is selected (GROUPDISPLAYMODE), copying a whole group does not make a new group, no Object Grouping dialog (GROUP, GROUPEDIT, UNGROUP, -GROUP, PICKSTYLE group selection and the DXF/DWG round trip landed, #417); PICKSTYLE's associative-hatch bit is stored but unused | `cmd/groups.rs` | Low | 2–4 |
-| F17 | Attributes (ATTSYNC, global -ATTEDIT, BATTMAN editing and DATAEXTRACTION/EATTEXT landed, #433): no verify, preset or lock-position modes, and multiline attributes (read, drawn and saved since 2026-10-12) can't be created or switched in BATTMAN; data extraction covers block references and attribute values (CSV or a table) only — no wizard, nested blocks, other objects' properties, `.dxe` templates or spreadsheet output | `cmd/blocks/battman.rs`, `cmd/blocks/extract.rs` | Low | 4–6 |
+| F17 | Attributes (ATTSYNC, global -ATTEDIT, BATTMAN editing and DATAEXTRACTION/EATTEXT landed, #433): the Verify, Preset and Lock position modes are kept in files and Lock position is applied by INSERT and ATTSYNC (#876), but INSERT doesn't act on Verify or Preset, and multiline attributes (read, drawn and saved since 2026-10-12) can't be created or switched in BATTMAN; data extraction covers block references and attribute values (CSV or a table) only — no wizard, nested blocks, other objects' properties, `.dxe` templates or spreadsheet output | `cmd/blocks/battman.rs`, `cmd/blocks/extract.rs` | Low | 4–6 |
 | F19 | MATCHPROP Settings is a keyword prompt (no dialog) and has no material, shadow or centre-object settings; TEXTTOFRONT and HATCHTOBACK act on the current space only; OVERKILL doesn't compare polyline segments with other objects (picker and Settings, DRAWORDER Above/Under, TEXTTOFRONT, HATCHTOBACK, OVERKILL tolerance/ignore/overlap/end-to-end options landed, #439) | `props/matchprop.rs`, `draworder.rs`, `overkill.rs` | Low | 2–4 |
 | F20 | OPTIONS dialog done (#23): Display, Open and Save, Drafting, Selection, User Preferences and Profiles tabs, and the user profile (object snap modes, drafting toggles, Dynamic Input, PICKBOX, APERTURE, GRIPSIZE, CURSORSIZE, PICKFIRST, PICKADD, QPMODE, model and paper background, snap marker size, system cursor) survives restarts. Left: right-click customization, the autosave interval and default save version on Open and Save (the features themselves landed, #406, #421), AutoSnap magnet and tooltip toggles, colours of the other drawing-area elements, named profiles with import and export | `ui-egui/src/options/` | Low | 2–4 |
 | F21 | MLINE, REGION and HELIX are objects since #510, with gaps: MLEDIT tees trim square; UNION/SUBTRACT/INTERSECT only combine regions whose boundaries don't meet; regions are saved as closed polylines (no ACIS data); PURGE skips multiline styles | `draw2/mline.rs`, `inquiry/regions.rs`, `dxf_region.rs` | Low | 6–10 |
@@ -63,7 +63,7 @@ or allow clicks and drag (2, default), saved in the user profile. Drag-only mode
 | U6 | Selection: lasso; the CLass keyword; isolation saved with the drawing (OBJECTISOLATIONMODE 1) and the status-bar isolate button. Press-drag windows (#63), the W, C, F, WP and CP keywords (#226), BOX, AUto, SIngle, Multiple, Group, Add, Remove and Undo, SELECTSIMILAR, ISOLATEOBJECTS/HIDEOBJECTS/UNISOLATEOBJECTS (#428) and selection cycling (#1143) landed | Medium | 3–5 |
 | U7 | Right-click menus: no in-place layout tab rename or Move or Copy dialog, no Select All Layouts, no Paste to command line; palette menus are on the Layers rows and the Properties background only. The command menu (held right-click: Enter, Cancel, Recent Input, options, Snap Overrides, Pan/Zoom), the selection menu with object edits, command line, drawing tab, layout tab and palette menus landed (#512) | Low | 1–2 |
 | U10 | SETVAR covers about 150 of ~1,000 variables (UNDO options, MREDO and UNDOCTL, and header variables such as CIRCLERAD, OFFSETDIST, POLYSIDES, HPNAME and the dimension variables in SETVAR ? landed, #461; typing a bare variable name as a command runs SETVAR on it) | Low-medium | 3–5 |
-| U11 | MVIEW Restore (a saved viewport configuration into a layout); VIEW Orthographic, UCS and background settings; view twist is kept but not shown (Zoom Realtime and Dynamic, ZOOMFACTOR, named views (VIEW) and tiled model viewports with saved configurations (VPORTS) landed in #463) | Low | 1–2 |
+| U11 | VIEW Orthographic, UCS and background settings; view twist is kept but not shown (Zoom Realtime and Dynamic, ZOOMFACTOR, named views (VIEW) and tiled model viewports with saved configurations (VPORTS) landed in #463; MVIEW Restore, #633) | Low | 1–2 |
 | U12 | Workspaces, navigation bar, CUI customisation, ViewCube drag (#7) (the Command Aliases dialog landed, #1381) | Low-medium | 13–23 |
 | U13 | `.dxf` from Finder fails to open on macOS (#158) (window controls fixed, #161) | Medium | 1–2 |
 
@@ -94,11 +94,11 @@ Detail: [hardware-parity.md](hardware-parity.md).
 
 | # | Gap | Est. |
 |---|---|---|
-| H1 | 3Dconnexion SpaceMouse (needs the device and 3D views) | 6–10 + human |
-| H2 | Multi-monitor: floating palettes on other screens, per-monitor DPI (PR #110 for Windows 11 DPI) | 4–6 |
-| H3 | Plotters and system printers (PC3 devices) beyond PDF files | 6–10 |
+| H1 | 3Dconnexion SpaceMouse: 2D pan and zoom through raw HID on Windows and Linux landed (#650, Tools ▸ 3D Mouse; PR #983 open); none on macOS or the web, no 3D navigation (needs 3D views), not yet checked on a physical device in #650 | 6–10 + human |
+| H2 | Multi-monitor: floating palettes on other screens, per-monitor DPI (the Windows 11 DPI fix is in open PR #668, which replaced the closed PR #110) | 4–6 |
+| H3 | System printers (PC3 devices) beyond PDF, PNG and SVG plotter devices (CUPS printing on macOS and Linux is open PR #755) | 6–10 |
 | H4 | Pen tablets / digitizer (TABLET) | 3–5 + human |
-| H5 | Screen magnifier tracking (#39, PR #187) | 1–2 |
+| H5 | Screen magnifier tracking: the system-cursor option landed (PR #187); issue #39 is still open | 1–2 |
 
 ## Localization
 
@@ -106,28 +106,28 @@ Detail: [localization-parity.md](localization-parity.md).
 
 | # | Gap | Est. |
 |---|---|---|
-| L1 | Catalog covers the UI (989 rows, #36) but not engine diagnostics, CLI/MCP replies or command history | 4–6 |
-| L2 | AutoCAD for Mac's other languages (zh-Hans, es, fr, ja, ko, it; de landed 2026-10-11) plus pt, hi, ar, id, vi from the standard's list | 35–55 + native review |
-| L3 | Complex-script shaping for Devanagari and other Indic scripts in drawing text; RTL (mirrored) UI. Arabic-script shaping and bidi in drawing text landed (#287) | 20–30 |
-| L4 | IME fixes on every platform (PRs #110–#119); vertical text styles | 6–10 |
+| L1 | Catalog covers the UI (Ukrainian reference catalog: 1,357 rows, #36) but not engine diagnostics, CLI/MCP replies or command history | 4–6 |
+| L2 | Japanese from AutoCAD for Mac's list, plus hi, id and vi from the standard's list (de, el, es, fr, hu, it, ko, tr, zh-Hans, pt-BR, ar, cs, ru, sv, uk landed: 15 catalogs in `crates/ui-egui/src/i18n/`); the landed catalogs still need native review | 13–21 + native review |
+| L3 | Complex-script shaping for Devanagari and other Indic scripts in drawing text; RTL (mirrored) UI (the Arabic catalog shipped without mirroring; reading its labels right to left is open PR #996). Arabic-script shaping and bidi in drawing text landed (#287) | 20–30 |
+| L4 | IME fixes on every platform (PRs #110–#119 were closed unmerged; the consolidated winit PR #668 is open); vertical text styles | 6–10 |
 
 ## Stability
 
 | # | Gap | Evidence | Est. |
 |---|---|---|---|
-| S1 | No CI runs `cargo xtask ci` on pull requests (only packaging lint and release builds) | `.github/workflows/` | 2–3 |
+| S1 | ~~No CI runs `cargo xtask ci` on pull requests~~ fixed: `ci.yml` runs it on every pull request and push to main (#1987; PR #847 is still open) | `.github/workflows/ci.yml` | 0 |
 | S2 | ~~`cargo fmt --check` fails on main~~ fixed on main (8fceaaf) | — | 0 |
-| S3 | 40 open PRs, many community bug fixes awaiting review | `gh pr list` | 10–20 |
+| S3 | 450 open PRs (2026-10-24), many community bug fixes awaiting review | `gh pr list` | 10–20 |
 | S4 | Open correctness issues: extents union far-apart geometry (#166), lines not visible mid-command (#44), browser plot shows raw PDF bytes (#134) (closing a tab and browser saves fixed, #76, #133) | issues | 4–6 |
-| S5 | No smoke test of every command through the UI (PR #42 proposes one) | — | 6–10 |
+| S5 | No smoke test of every command through the UI (open PR #42 proposes one) | — | 6–10 |
 
 ## Platforms
 
 | # | Gap | Est. |
 |---|---|---|
 | P1 | Web build: plot shows raw PDF bytes (#134), no DWG (File > Open and save downloads fixed, #55, #133) | 3–5 |
-| P2 | Windows and Linux get little runtime testing; Linux Mint mouse delay (#25); Windows magnifier (#39) | 6–10 |
-| P3 | macOS file associations: opening `.dxf` from Finder fails (#158) | 1–2 |
+| P2 | Windows and Linux get little runtime testing; Linux Mint mouse delay (#25: the vsync fix landed, #183, the issue is open); Windows magnifier (#39: system-cursor option landed, #187, the issue is open) | 6–10 |
+| P3 | macOS file associations: opening `.dxf` from Finder fails (#158; open PRs #683 and #899) | 1–2 |
 
 ## Ecosystem and automation
 
@@ -150,6 +150,7 @@ Detail: [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-24 | minor | Re-audit against main 41d9b5e95: CI gate (rows 6 and S1, #1987), MVIEW Restore (F15, U11, #633), PDF margins (F14), open-PR, catalog and file-test counts re-checked against main 41d9b5e95 |
 | 2026-10-22 | minor | APPLOAD typed or from Tools ▸ Load Application opens a `.lsp` file browser starting in the last-used folder (kept in the preferences); a picked file loads interactively like a typed name (routines that ask for input wait), the web says to drop the file (no file system), and the JSON form `{path}` reads the path as given and returns the commands the file defined, never opening a dialog (#1820): E1 narrowed |
 | 2026-10-16 | minor | ALIASEDIT typed or from Tools ▸ Customize opens the Command Aliases dialog (user aliases next to the built-in ones; Add, Edit, Remove; OK, Cancel, Apply), #1381: U12 and E5 narrowed |
 | 2026-10-16 | minor | MOCORO (Tools ▸ Express Tools ▸ Move/Copy/Rotate): select objects and a base point once, then Move, Copy, Rotate, Scale, Base and Undo until eXit, one undo step; JSON form `{base, ops}`: E3 narrowed |

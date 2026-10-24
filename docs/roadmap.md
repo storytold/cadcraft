@@ -1,6 +1,6 @@
 # CADCraft roadmap detail
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Block Editor for static blocks: "Use blocks" evidence updated) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-24 · **Last updated:** 2026-10-24 · **Change:** minor (re-audit against main 41d9b5e95: alpha-gate evidence, CI gate, beta checklist states, open-PR and catalog counts; percentages and hours not re-scored; previously: re-audit against main e707ab4d: alpha-gate evidence, beta checklist states and milestone notes; percentages and hours not re-scored) · **Target:** Autodesk AutoCAD 2027
 
 Forward-looking plan: milestones with status, the current focus, and what comes next with
 estimates. The summary is [ROADMAP.md](../ROADMAP.md); the work items behind every line are in
@@ -9,20 +9,20 @@ Opus 5.5 agent-hours.
 
 ## Current focus
 
-1. **Gate and land.** (`cargo fmt` on main is fixed.) Add a PR workflow that runs
-   `cargo xtask ci`, then review and land the 47 open PRs, most of them community bug fixes
-   (S1–S3). ≈ 15–25 h.
+1. **Gate and land.** (`cargo fmt` on main is fixed, and `ci.yml` runs `cargo xtask ci` on every
+   pull request since #1987.) Review and land the 450 open PRs (2026-10-24), most of them community bug fixes
+   (S3). ≈ 15–25 h.
 2. **Stop losing data on save** (FF1, FF2, FF7) and save DWG/DXF at a chosen version (FF3).
    ≈ 30–45 h.
 3. **A real-file corpus** and a check of our output in AutoCAD (FF5, needs the owner).
-4. **Precision input:** object snap tracking, extension/parallel snaps, FROM/M2P/TK, typed snap
-   overrides, editable dynamic input (U1–U4). ≈ 25–35 h.
-5. **Unstub the prompt options** of the most-used commands (F1). ≈ 15–25 h.
-6. **Autosave, recovery, AUDIT, RECOVER** (F4). ≈ 10–15 h.
-7. **The rest of the alpha gate:** block editor and REFEDIT, xref attach (F2, F3), and plot styles
-   with a plot dialog and preview (F14). ≈ 50–80 h.
+4. ~~**Precision input:** object snap tracking, extension/parallel snaps, FROM/M2P/TK, typed snap
+   overrides, editable dynamic input (U1–U4).~~ Done (#379, #393, #441, #60, #519); U4 and the grip and selection leftovers (U5, U6) remain.
+5. ~~**Unstub the prompt options** of the most-used commands (F1).~~ Done (#397, #408, #547, #558, #559); the stubs left are listed in F1.
+6. ~~**Autosave, recovery, AUDIT, RECOVER** (F4).~~ Done on the desktop (#406, #416); F4 lists the web-build leftovers.
+7. **The rest of the alpha gate:** ~~block editor and REFEDIT, xref attach (F2, F3), and plot styles
+   with a plot dialog and preview (F14)~~ landed (#824, #818, #525, #410, #160, #186); left: dynamic-block authoring, XCLIP, editing an xref in place (F2, F3), and printing beyond files (F14, H3). ≈ 50–80 h.
 
-Items 2–5 and 7 are the [alpha gate](#alpha-gate) rows.
+Items 2 and 7 are the open [alpha gate](#alpha-gate) rows.
 
 ## Alpha gate
 
@@ -32,11 +32,11 @@ the alpha checklist. Main platform: macOS.
 
 | Core workflow | Works end to end? | Evidence | Hours to pass |
 |---|---|---|---|
-| Draw and modify precisely with object snaps and tracking | **partial, blocking** | Running snaps, polar, ortho and coordinate entry work; object snap tracking, extension and parallel snaps are toggles with no behaviour; no FROM/M2P/TK or typed snap overrides; TRIM/EXTEND standard mode, OFFSET Erase/Layer/Multiple, ROTATE Reference print "not available yet"; ellipse/spline intersections approximate ([ui-parity.md](ui-parity.md), [gaps.md](gaps.md) U1, U3, U4, F1) | 35–50 |
-| Dimension and annotate | partial, not blocking | All core DIM types, associativity, DIMSTYLE variables (43 of ~80), TEXT/MTEXT, MLEADER, tables work; no DIMSTYLE dialog, MTEXT editor not in place, MLEADER thin (F7, F9, F10). A drafter can dimension a sheet end to end | 0 for the gate (beta work) |
-| Use blocks (insert library blocks, edit them, attributes, xrefs) | **partial, blocking** | Static BLOCK/INSERT/attributes, ATTSYNC, BATTMAN editing, xrefs (#525) and the Block Editor (BEDIT/BSAVE/BCLOSE: every reference updates) work; no REFEDIT, so a block can't be edited in place in the drawing; no XCLIP; dynamic blocks from other drawings lose their behaviour (F2, F3) | 35–55 |
+| Draw and modify precisely with object snaps and tracking | **partial, blocking** | Running snaps, polar, ortho, coordinate entry, object snap tracking, extension, parallel and apparent snaps (#379), FROM/M2P/TK and typed snap overrides, TRIM/EXTEND, OFFSET and ROTATE options (#397) work; ellipse/spline intersections approximate; a few prompt options still print "not available yet" ([ui-parity.md](ui-parity.md), [gaps.md](gaps.md) U4, F1) | 35–50 |
+| Dimension and annotate | partial, not blocking | All core DIM types, associativity, DIMSTYLE variables (43 of ~80), TEXT/MTEXT, MLEADER (with MLEADEREDIT/ALIGN/COLLECT, #816), tables and the in-place MTEXT editor (#792) work; no DIMSTYLE dialog, MLEADER styles thin, no fields (F7, F9, F10). A drafter can dimension a sheet end to end | 0 for the gate (beta work) |
+| Use blocks (insert library blocks, edit them, attributes, xrefs) | **partial, blocking** | Static BLOCK/INSERT/attributes, ATTSYNC, BATTMAN editing, xrefs (#525), the Block Editor (BEDIT/BSAVE/BCLOSE: every reference updates), REFEDIT (#818: a block reference is edited in place) and dynamic block references (visibility, distances, stretch and move actions, lookups, grips; #838–#883) work; no XCLIP, an xref can't be edited in place, no dynamic-block authoring (F2, F3) | 35–55 |
 | Layers, layouts and plotting a sheet | **partial, blocking** | Layers, layouts, viewports, page setups, PDF output, plot styles (CTB/STB, #410), the Plot dialog (#160), Plot Preview and PUBLISH (#186) and plotter devices (#564) work; printers only via PDF/PNG/SVG files (F14, H3) | 15–25 |
-| Save DWG that AutoCAD opens without loss, and reopen others' DWGs | **no** | DXF keeps what we don't model (#528) and writes native MULTILEADERs (#459, not yet tested through DWG); through DWG, acadrust drops custom-class entities and objects and some foreign data; never checked in AutoCAD; no real-file tests; a 10 MB DWG failed after ~2 min (#57) (FF1–FF6) | 40–60 + owner (real-file corpus, AutoCAD check) |
+| Save DWG that AutoCAD opens without loss, and reopen others' DWGs | **no** | DXF keeps what we don't model (#528) and writes native MULTILEADERs (#459, not yet tested through DWG); through DWG, acadrust drops custom-class entities and objects and some foreign data (ACIS data of solids is kept, #781; damaged DWGs open partially, #859); never checked in AutoCAD; no real-file tests; a 10 MB DWG failed after ~2 min (#57) (FF1–FF6) | 40–60 + owner (real-file corpus, AutoCAD check) |
 | **To alpha** | | | **≈ 125–190** |
 
 Ready for real work is ≈ 38%, also under the ~40% alpha bar; closing the gate rows lifts it past
@@ -49,16 +49,16 @@ remaining gaps are known bugs and edge features (≈ 75% ready for real work).
 
 | Item | State | Est. |
 |---|---|---|
-| DWG/DXF: nothing lost on save; MULTILEADER native; version choice; code pages; real-file corpus green; verified in AutoCAD | not started | 50–75 |
+| DWG/DXF: nothing lost on save; MULTILEADER native; version choice; code pages; real-file corpus green; verified in AutoCAD | partial (DXF lossless #528, MULTILEADER #459, version choice #421, code pages #505 landed; corpus and AutoCAD check not started) | 50–75 |
 | 2D geometry exact for ellipses and splines; polyline offset correct; relative tolerances | not started | 50–80 |
 | Precision input at AutoCAD level (tracking, dynamic input, overrides, point modifiers, grips, selection keywords, context menus) | partial | 90–140 |
 | Every Draw/Modify prompt option works; associative arrays | partial | 40–60 |
 | Annotation depth: DIMSTYLE manager and variables, missing DIM commands, in-place MTEXT, fields, MLEADER editing, annotative scaling, tables | partial | 90–130 |
-| Xrefs, block editor, dynamic blocks, groups, attribute tools | not started | 90–135 |
+| Xrefs, block editor, dynamic blocks, groups, attribute tools | partial (xrefs, Block Editor, REFEDIT, groups, attribute tools and dynamic block references landed; authoring, XCLIP and in-place xref editing not started) | 90–135 |
 | Plot styles, plot preview, PUBLISH, non-rectangular viewports | partial | 30–45 |
 | Autosave, recovery, AUDIT/RECOVER, Options dialog, templates, SHX, user `.lin`/`.pat` | partial | 40–60 |
 | AutoLISP core subset and SCRIPT | done (AutoLISP #758, SCRIPT #693); Visual LISP, DCL and reactors to come | 30–50 |
-| Catalog plus AutoCAD for Mac's languages | not started | 30–45 |
+| Catalog plus AutoCAD for Mac's languages | partial (fifteen catalogs shipped, six of AutoCAD for Mac's seven other languages; Japanese and the catalog extension not started) | 30–45 |
 | Stability: CI gate, issue backlog, command smoke sweep, geometry fuzzing | partial | 30–50 |
 | Platforms: web open/save, Windows/Linux runtime checks; performance at 1M entities and large DWG | partial | 20–35 |
 | **Total to beta** | | **≈ 600–930** |
@@ -74,7 +74,7 @@ agents that built each milestone, are in the progress log of [ROADMAP.md](../ROA
 | # | Milestone | Status | Remaining (h) |
 |---|---|---|---|
 | M0 | Skeleton and vertical slice: workspace, AutoCAD-style UI, command line, draw/modify basics, DXF, CLI, MCP, web | done | — |
-| M1 | Drafting core: every 2D Draw command and option, dynamic input, object snap tracking, snap overrides | ≈ 55% (Draw breadth strong; tracking, dynamic input, overrides missing) | 35–55 |
+| M1 | Drafting core: every 2D Draw command and option, dynamic input, object snap tracking, snap overrides | ≈ 55% (percentage from 2026-10-10 and not re-scored: tracking, dynamic input and overrides have landed since) | 35–55 |
 | M2 | Modify: grips, PEDIT, SPLINEDIT, LENGTHEN, BLEND, ALIGN, associative arrays, trim/extend for all curves, MATCHPROP UI | ≈ 50% | 45–70 |
 | M3 | Layers and properties | ≈ 70% (open layer bugs #71–#75, #87) | 10–15 |
 | M4 | Annotation: DIM*, DIMSTYLE manager, MLEADER, in-place MTEXT, fields, tables, annotative scaling, SHX | ≈ 40% | 90–130 |
@@ -85,8 +85,8 @@ agents that built each milestone, are in the progress log of [ROADMAP.md](../ROA
 | M9 | Parametric | ≈ 50% | 20–30 |
 | M10 | Performance: 1M entities at 60 fps, large DWG loads | ≈ 60% (internal numbers only) | 20–40 |
 | M11 | 3D: UCS, orbit, visual styles, solids, surfaces, meshes, sections, rendering | ≈ 2% | 300–450 |
-| M12 | Automation: AutoLISP, SCRIPT, action recorder, sheet sets, Express Tools | ≈ 15% (MCP, CLI, control channel done) | 130–220 |
-| M13 | 1.0 polish: preferences, workspaces, localisation, accessibility, signed packages, docs | ≈ 15% (signed packages for every platform exist; themes done; string catalog with Ukrainian and German, live language switching, #36) | 110–170 |
+| M12 | Automation: AutoLISP, SCRIPT, action recorder, sheet sets, Express Tools | ≈ 15% (percentage from 2026-10-10 and not re-scored; MCP, CLI, control channel, AutoLISP core #855 and SCRIPT #693 done) | 130–220 |
+| M13 | 1.0 polish: preferences, workspaces, localisation, accessibility, signed packages, docs | ≈ 15% (signed packages for every platform exist; themes done; string catalog with fifteen languages, live language switching, #36; percentage from 2026-10-10 and not re-scored) | 110–170 |
 | — | Geometry precision (cross-cutting, see [geometry-parity.md](geometry-parity.md)) | ≈ 40% | 70–110 |
 | — | AI features | ≈ 0% in-app | 40–80 |
 | | **Remaining to full parity** | | **≈ 1,300–2,100** |
@@ -103,6 +103,8 @@ AutoLISP surface, AI features with openly licensed local models, and every remai
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-24 | minor | Re-audit against main 41d9b5e95: alpha-gate evidence, CI gate (#1987), beta-checklist states, open-PR and catalog counts re-checked against main 41d9b5e95; percentages and hours not re-scored |
+| 2026-10-13 | minor | Re-audit against main e707ab4d: alpha-gate evidence for drafting, annotation, blocks and DWG rows; beta-checklist states for DWG/DXF, blocks and languages; current-focus items 4–7; milestone notes M1, M12, M13; percentages and hours not re-scored |
 | 2026-10-12 | minor | Block Editor for static blocks landed: "Use blocks" evidence updated; status and hours unchanged (REFEDIT and dynamic blocks remain) |
 | 2026-10-11 | minor | Alpha-gate evidence refreshed for merged work (#459, #525, #528, #160, #186, #564); statuses and hours unchanged |
 | 2026-10-10 | minor | Merged main: fmt fixed, Ukrainian catalog noted in M13, ready for real work 38% |

@@ -1,17 +1,19 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-22 · **Change:** minor (distinct polyline midpoint grips) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
+> **Last reviewed:** 2026-10-24 · **Last updated:** 2026-10-24 · **Change:** minor (re-audit of the evidence text against main 41d9b5e95: point entry, tracking, Dynamic Input, grips, scripts, views; percentages not re-measured; previously: distinct polyline midpoint grips) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
 
 How CADCraft's interaction compares with AutoCAD's: point entry, object snaps, tracking, dynamic
 input, grips, selection, the command line, chrome and navigation. A drafter's speed in AutoCAD
 comes from these, so "the command exists" isn't enough: it has to accept the same input, snap to
 the same points and respond to the same keys. Work items: [gaps.md](gaps.md#uiux).
 
-**Headline (estimated): UI/UX fidelity ≈ 48%.** The command line, point syntax, the common
-running snaps, polar/ortho, object snap tracking and the palettes are real, and so are the
-Extension, Parallel and Apparent Intersection snaps (#379); dynamic input is a read-only
-tooltip; FROM, M2P, TK and point filters don't exist; hot-grip options are advertised but
-ignored; there are no context menus. Remaining: **≈ 110–170 Opus 5.5 hours**.
+**Headline (estimated): UI/UX fidelity ≈ 48%.** The command line, point syntax (FROM, M2P, TK,
+point filters, typed snap overrides), the common running snaps, polar/ortho, PolarSnap, object snap
+tracking, Dynamic Input (pointer boxes, grip dimensional input, DYNPROMPT), hot-grip options with
+several hot grips, shortcut menus and the palettes are real, and so are the Extension, Parallel and
+Apparent Intersection snaps (#379). Selection cycling landed (#1143). Missing: lasso selection, grip hover menus,
+multifunctional grips on dimensions and text, workspaces and the navigation bar. The 48% and the area
+percentages below are from 2026-10-11 and were not re-measured. Remaining: **≈ 110–170 Opus 5.5 hours**.
 
 ## How this was measured
 
@@ -49,7 +51,7 @@ ignored; there are no context menus. Remaining: **≈ 110–170 Opus 5.5 hours**
 | Architectural/engineering distances `5'6-1/2"` | yes | yes | `units.rs:93-140` |
 | `FROM` (base point + offset) | yes | yes: "Base point:", "<Offset>:" with `@` measured from the base; nests with M2P and filters | `pointmod.rs` |
 | `M2P` / `MTP` (midpoint between two points) | yes | yes | `pointmod.rs` |
-| `TK` (tracking) | yes | **no** | |
+| `TK` (tracking) | yes | yes (`TK`, or `TRACKING` from three letters; `TT` is the temporary track point) | `pointmod.rs` |
 | Point filters `.x`, `.y`, `.xy`, `.z` | yes | yes (`.x` … `.yz`, "(need YZ):"); Z is asked for and dropped (no 3D) | `pointmod.rs` |
 | Angle override `<45` | yes | yes: `<a`, `<<a`, `<<<a`; a typed distance or a pick follows the angle, typed coordinates win | `pointmod.rs` |
 | Object snap overrides (`END`, `MID`, `INT` … `NON`) | yes | yes, every mode and `NON`, with long names and `_`/`'` prefixes, for the next pick only; a typed point is snapped within the aperture; a command's own keyword wins (`_cen` always snaps); also from the snap menu | `pointmod.rs` |
@@ -73,8 +75,8 @@ ignored; there are no context menus. Remaining: **≈ 110–170 Opus 5.5 hours**
 | Nearest | every curve | yes |
 | Apparent intersection | projected intersection | yes in 2D: where objects near the cursor would meet if extended; an object rested on sends its whole extension, so its crossing with another object snaps too (`snap.rs` `osnap_with`, `snap/tracking.rs`) |
 | Parallel | yes, with parallel path | yes: rest on a line, then a path parallel to it runs through the base point (`snap/tracking.rs`) |
-| Temporary overrides typed at a prompt (`END`, `MID`, `INT` …) | yes | **no**: the text arrives as plain input |
-| Shift/Ctrl+right-click snap menu | yes | yes: From, Mid Between 2 Points, Point Filters, the snap modes, None, Osnap Settings; no Temporary track point yet (`context_menu.rs`) |
+| Temporary overrides typed at a prompt (`END`, `MID`, `INT` …) | yes | yes, see Point entry above (`pointmod.rs`) |
+| Shift/Ctrl+right-click snap menu | yes | yes: From, Mid Between 2 Points, Point Filters, Temporary track point, the snap modes, None, Osnap Settings (`context_menu.rs`) |
 | Tab to cycle candidate snaps | yes | yes, through the closest snap of each running mode under the cursor (`pointmod::snap_candidates`) |
 | AutoSnap marker, tooltip, magnet, aperture box | yes | marker per mode and name label; aperture from APERTURE; no magnet, no aperture box |
 | OSNAPZ, 3D object snaps | yes | no |
@@ -85,8 +87,8 @@ ignored; there are no context menus. Remaining: **≈ 110–170 Opus 5.5 hours**
 |---|---|---|
 | Ortho (F8) | yes, Shift overrides it while held | yes; holding Shift turns it on or off while held (`Session::snap_cursor`, `snap/tracking.rs`) |
 | Polar tracking increment | yes | yes, measured from ANGBASE; dotted path and "Polar: d < a°" tooltip (`snap/tracking.rs`, `canvas.rs` `draw_tracking`) |
-| Additional polar angles, relative to last segment | yes | additional angles yes (POLARADDANG with POLARMODE 4); **relative to the last segment no** |
-| Polar distance snap (PolarSnap) | yes | **no** |
+| Additional polar angles, relative to last segment | yes | additional angles yes (POLARADDANG); relative to the last segment with POLARMODE bit 4 (`snap/tracking.rs`, #450) |
+| Polar distance snap (PolarSnap) | yes | yes: SNAPTYPE 1 steps along the tracking paths by POLARDIST (#450; also over the isometric snap, #633) (`snap/tracking.rs` `polar_snap`) |
 | **Object snap tracking** (acquire points, alignment paths, intersections of paths) | yes, F11 | yes (#379): resting on a snap point acquires it (`+`), resting again releases it, seven at most; horizontal/vertical paths, or every polar angle with POLARMODE 2; Shift to acquire with POLARMODE 8; crossings of two paths, a path and an object, and a path and a polar path snap; tooltip names each path; a typed distance (direct distance entry) runs along the path the cursor is on, measured from the point the path comes from. Engine: `Session::snap_cursor`, `snap/tracking.rs`; AUTOSNAP bits 8 and 16 |
 | Grid (rectangular, major lines, adaptive, limits) | yes | rectangular and isometric (30°, 90° and 150° lines), major lines, adaptive display |
 | Snap (rectangular, isometric, polar snap) | yes | rectangular and isometric (SNAPSTYL 1: the snap Y spacing along the isometric axes), from SNAPBASE turned by SNAPANG |
@@ -103,9 +105,11 @@ CADCraft has pointer input boxes since #60 (`crates/ui-egui/src/dyninput.rs`): v
 beside the cursor while a command asks for a point; second and later points default to polar
 distance and angle (DYNPIFORMAT = 1 for Cartesian); `,` and `<` lock a value and move to the next
 box; Tab types the separator; Enter sends a relative entry (DYNPICOORDS = 1 for absolute) and
-fills an empty box from the cursor; a plain number stays direct distance entry. Missing:
-dimensional input on grips (length/angle fields while stretching), lock icons, the prompt with a
-down-arrow options menu (DYNPROMPT), and DYNDIM.
+fills an empty box from the cursor; a plain number stays direct distance entry. Since then: grip
+dimensional input (length and angle fields while a grip is stretched, DYNDIVIS, DYNDIGRIP), lock
+indicators on locked values, and DYNPROMPT (the prompt beside the cursor, Down Arrow for its
+options); distances show in the drawing's UNITS (#867). Missing: DYNDIM (dimension display while
+dimensions are edited).
 
 ## Grips (≈ 40%)
 
@@ -114,11 +118,11 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 | Stretch grips per object type | yes | lines (midpoint moves), arcs (start/mid/end), ellipses (axes), polylines (vertices; segment midpoints move or reshape the bulge), dimensions (text and definition points), MLEADER, viewport, wipeout, spline (`grips.rs:79-270`) |
 | Text/MText grips | position, width, column grips | move the whole object |
 | Hot-grip modes with Space/Enter cycling | Stretch, Move, Rotate, Scale, Mirror | yes (`canvas.rs:58-67`) |
-| Hot-grip options: Base point, Copy, Undo, Reference, eXit | yes | **advertised in the prompt but not parsed**; the engine's JSON grip commands accept `copy`, the UI never passes it |
-| Several hot grips at once (Shift-click) | yes | **no** (one handle) |
-| Multifunctional grip hover menus (Add Vertex, Remove Vertex, Convert to Arc, Lengthen …) | yes | **no** |
-| Grip dimensional input (length/angle fields) | yes | no |
-| Dynamic block grips | yes | no (no dynamic blocks) |
+| Hot-grip options: Base point, Copy, Undo, Reference, eXit | yes | yes (`cmd/griphot.rs`, #425) |
+| Several hot grips at once (Shift-click) | yes | yes; STRETCH moves them together (`cmd/griphot.rs`) |
+| Multifunctional grip hover menus (Add Vertex, Remove Vertex, Convert to Arc, Lengthen …) | yes | on right-click only, not on hover (`grips.rs`, #425); none on dimensions, MLEADER, hatches or text |
+| Grip dimensional input (length/angle fields) | yes | yes while one grip is stretched: DYNDIVIS and DYNDIGRIP choose the fields (`grip_dims.rs`) |
+| Dynamic block grips | yes | yes: arrows, squares and list triangles per visibility state, dragged to change the parameter (#883) |
 | Grip appearance (GRIPSIZE, colours, hover) | yes | GRIPSIZE, GRIPS and GRIPOBJLIMIT honoured (Options ▸ Selection); polyline segment midpoints use rectangles, vertices use squares; no grip colours |
 
 ## Selection (≈ 40%)
@@ -148,8 +152,8 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 | Enter/Space repeats last command | yes | yes |
 | Clickable keywords in the prompt | yes | yes (`cmdline.rs:253-267`) |
 | UNDO with Mark, Back, BEgin, End, Auto, Control | yes | count only, whole-document snapshots capped at 2,000 (`lib.rs:477`, `edit.rs:56`) |
-| SETVAR for every system variable | ~1,000 sysvars | about 60 session/header variables by name (`sysvars.rs`) |
-| Scripts (SCRIPT, `.scr`) | yes | script text via CLI/MCP/control; no `.scr` file command |
+| SETVAR for every system variable | ~1,000 sysvars | about 60 session/header variables by name (`sysvars.rs`, counted 2026-10-10); [gaps.md](gaps.md) U10 counts about 150 with the dimension variables; not recounted |
+| Scripts (SCRIPT, `.scr`) | yes | the SCRIPT command runs a `.scr` file (#693); script text via CLI/MCP/control too |
 | Floating/docked command window, transparency, lines of history | yes | floating overlay, history lines setting |
 
 ## Chrome and palettes (≈ 45%)
@@ -159,7 +163,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 | Menu bar | 11 menus, 491 leaf items | same 11 menus; 245/491 items covered (233 by `cargo xtask parity`, which counts engine commands only, plus 12 UI-only items: see [parity-checklist.md](parity-checklist.md)); once a menu is open, pointing at another title opens that menu (#1567) |
 | Tool Bar, File tabs, Start tab, layout tabs | yes | yes |
 | Tool Sets palette (Drafting, Modeling, … with flyouts) | yes | yes for 2D groups |
-| Properties Inspector, Quick Properties | yes | yes (every control acts or is visibly unavailable, #182); block references show read-only Position X/Y/Z from their stored insertion point; coordinate editing is still missing |
+| Properties Inspector, Quick Properties | yes | yes (every control acts or is visibly unavailable, #182); block references show read-only Position X/Y/Z from their stored insertion point; coordinate editing is still missing; numeric fields take feet and inches and show lengths in the drawing's units (#870) |
 | Layer Properties Manager (filters, states, VP overrides) | yes | yes |
 | Blocks palette, Content | yes | Blocks window (click to insert, #28) |
 | Status bar toggles | ~25 | most toggles; Annotation Visibility and Workspace do nothing |
@@ -176,12 +180,12 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 | Feature | AutoCAD | CADCraft |
 |---|---|---|
 | ZOOM Extents, All, Window, Previous, In/Out, Center, Scale, Object | yes | yes, 50-entry history (`cmd/view.rs:107-149`) |
-| ZOOM Realtime (drag), Dynamic | yes | **no** |
-| Wheel zoom about cursor, ZOOMFACTOR, ZOOMWHEEL | yes | fixed factor (no ZOOMFACTOR) |
+| ZOOM Realtime (drag), Dynamic | yes | yes (`zoom.realtime`, `zoom.dynamic`, `cmd/view.rs`) |
+| Wheel zoom about cursor, ZOOMFACTOR, ZOOMWHEEL | yes | ZOOMFACTOR is a setting (`Session::zoomfactor`, 3–100, default 60); ZOOMWHEEL not checked |
 | Middle-drag pan, double-middle-click extents | yes | yes (`canvas.rs:538-583`) |
 | Trackpad two-finger pan, pinch zoom (macOS) | yes | yes (#58) |
-| Named views (VIEW) | yes | **no** (VIEW table not read or written) |
-| Tiled model-space viewports (VPORTS) | yes | not confirmed: VPORTS maps to paper-space MVIEW |
+| Named views (VIEW) | yes | yes (`cmd/view/named_views.rs`; the VIEW table is read and written); Orthographic views print "not available yet" |
+| Tiled model-space viewports (VPORTS) | yes | yes, with saved configurations and the DXF VPORT table (#504); MVIEW Restore puts one into a layout (#633) |
 | 3D orbit, ViewCube drag, SteeringWheels | yes | no (M11) |
 
 ## Keyboard and context menus (≈ 25%)
@@ -203,6 +207,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-24 | minor | Re-audit against main 41d9b5e95: evidence text for TK and typed snap overrides, PolarSnap, Dynamic Input, hot-grip options, dynamic block grips, SCRIPT, ZOOM Realtime/Dynamic, named views and VPORTS; headline no longer lists selection cycling as missing; the 48% and the area percentages are not re-measured |
 | 2026-10-22 | minor | Polyline segment midpoint grips use rectangles, distinct from square vertex grips, with matching hover and pick bounds (#1950) |
 | 2026-10-13 | minor | Filled-region highlight boundaries are traversed in deterministic coordinate order, fixing dash-phase jumps on CPU hover/selection redraws and GPU highlight rebuilds; CPU dash-position, pixel and GPU mesh regressions |
 | 2026-10-14 | minor | Selection cycling (#1143): the list and badge of SELECTIONCYCLING, Shift+Space through overlapping objects (#1145) |
