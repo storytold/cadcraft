@@ -657,18 +657,20 @@ pub fn run_transparent(app: &mut CadApp, id: &str) {
     }
 }
 
-/// Keyboard shortcuts and function keys.
-pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
+/// CADCraft's keyboard shortcuts and function keys, each with the command it runs. Every shortcut a
+/// command shows (its registry `key`, or a UI command's) must be here, or pressing it does nothing.
+pub(crate) fn builtin_shortcuts() -> Vec<(egui::KeyboardShortcut, &'static str)> {
     use egui::{Key, KeyboardShortcut, Modifiers};
     let sc = |m: Modifiers, k: Key| KeyboardShortcut::new(m, k);
     let cmd = Modifiers::COMMAND;
     let cmd_shift = Modifiers::COMMAND | Modifiers::SHIFT;
-    let pairs: &[(KeyboardShortcut, &str)] = &[
+    vec![
         (sc(cmd_shift, Key::A), "pickstyle"),
         (sc(cmd_shift, Key::Z), "redo"),
         (sc(cmd, Key::Z), "u"),
         (sc(cmd, Key::Y), "redo"),
         (sc(cmd, Key::N), "new"),
+        (sc(cmd, Key::W), "close"),
         (sc(cmd, Key::O), "ui.open"),
         (sc(cmd_shift, Key::S), "ui.saveas"),
         (sc(cmd, Key::S), "qsave"),
@@ -693,7 +695,15 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
         (sc(Modifiers::NONE, Key::F10), "polar"),
         (sc(Modifiers::NONE, Key::F11), "otrack"),
         (sc(Modifiers::NONE, Key::F12), "dynmode"),
-    ];
+    ]
+}
+
+/// Keyboard shortcuts and function keys.
+pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
+    use egui::{Key, KeyboardShortcut, Modifiers};
+    let sc = |m: Modifiers, k: Key| KeyboardShortcut::new(m, k);
+    let cmd = Modifiers::COMMAND;
+    let pairs = builtin_shortcuts();
     crate::clipboard::mirror(app, ctx);
     if app.closing.is_some() {
         return;
@@ -708,7 +718,7 @@ pub fn shortcuts(app: &mut CadApp, ctx: &egui::Context) {
     // Cmd/Ctrl+C, X and V arrive as clipboard events, not key presses.
     let mut fire = crate::clipboard::shortcut_commands(app, ctx);
     ctx.input_mut(|i| {
-        for (s, id) in pairs {
+        for (s, id) in &pairs {
             if i.consume_shortcut(s) && !fire.contains(id) {
                 fire.push(*id);
             }
@@ -760,6 +770,46 @@ mod tests {
             ..Services::default()
         };
         (CadApp::new(Session::new(), services), asked)
+    }
+
+    /// A registry shortcut ("Cmd+Shift+Z", "F8") as egui reads it.
+    fn parse_shortcut(s: &str) -> Option<egui::KeyboardShortcut> {
+        let mut m = egui::Modifiers::NONE;
+        let (mods, key) = s.rsplit_once('+').unwrap_or(("", s));
+        for part in mods.split('+').filter(|p| !p.is_empty()) {
+            match part {
+                "Cmd" => m = m | egui::Modifiers::COMMAND,
+                "Shift" => m = m | egui::Modifiers::SHIFT,
+                "Alt" => m = m | egui::Modifiers::ALT,
+                _ => return None,
+            }
+        }
+        Some(egui::KeyboardShortcut::new(m, egui::Key::from_name(key)?))
+    }
+
+    #[test]
+    fn every_shown_shortcut_runs_its_command() {
+        // Handled outside the table: Delete by the command line (it erases the selection only when
+        // the line is empty), Cmd+8 before it (QuickCalc's own field keeps focus), Cmd+Q by the
+        // macOS app menu, the only place that shows it.
+        let elsewhere = [("Delete", "erase.selection"), ("Cmd+8", "ui.toggle.quickcalc"), ("Cmd+Q", "ui.quit")];
+        let table = super::builtin_shortcuts();
+        let shown = cadcraft_engine::command_specs()
+            .iter()
+            .filter_map(|c| Some((c.shortcut?, c.id)))
+            .chain(super::UI_COMMANDS.iter().filter_map(|(id, _, _, sc)| Some(((*sc)?, *id))));
+        let mut missing = Vec::new();
+        for (key, id) in shown {
+            if elsewhere.contains(&(key, id)) {
+                continue;
+            }
+            let sc = parse_shortcut(key).unwrap_or_else(|| panic!("{id}: unreadable shortcut {key}"));
+            // The table may run a command's UI form (`ui.open` for `open`), which does the same.
+            if !table.iter().any(|(s, i)| *s == sc && (*i == id || i.strip_prefix("ui.") == Some(id))) {
+                missing.push(format!("{key} {id}"));
+            }
+        }
+        assert!(missing.is_empty(), "shown but not run: {missing:?}");
     }
 
     #[test]
