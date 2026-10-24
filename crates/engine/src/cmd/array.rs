@@ -17,7 +17,8 @@ use serde_json::{Value, json};
 use super::helpers::{line, v3};
 use super::machines::{SelOutcome, SelectPhase, number};
 use super::modify::transform_entities;
-use super::*;
+use super::{CommandSpec, bad, bool_or, f64_or, find_command, point_param, point_req, str_param, targets};
+
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 mod edit;
@@ -1171,7 +1172,7 @@ impl Interactive for PolarM {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{CommandSpec, bad, bool_or, f64_or, find_command, point_param, point_req, str_param, targets};
 
     fn polar(n: u32, fill: f64) -> ArrayParams {
         let kind = ArrayKind::Polar(PolarArray { center: -Vec2::X, items: n, fill, rotate: true, rows: 1, row_spacing: 0.0, row_elevation: 0.0 });

@@ -6,7 +6,8 @@ use cadcraft_geom::{Segment, Vec2};
 use serde_json::{Value, json};
 
 use super::machines::{SelOutcome, SelectPhase};
-use super::*;
+use super::{CommandSpec, bad, bool_or, point_param, point_req, size_param, str_param, targets};
+
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 /// Most objects DIMBREAK Auto looks at, and most breaks it adds to one dimension.
