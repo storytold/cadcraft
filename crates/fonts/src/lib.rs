@@ -662,8 +662,13 @@ mod tests {
     fn test_shape_hinh_dang() {
         let sh = shape_stroke("HÌNH DÁNG", 1.0, 1.0, 0.0);
         assert!(sh.width > 5.0);
+        let fallback_available = ["arial", "segoe ui", "dejavu sans"].into_iter().any(|name| crate::ttf::find(name).is_some());
         let font = TextFont::resolve("VHELVCN.TTF");
-        assert!(matches!(font, TextFont::Outline(_) | TextFont::Stroke));
+        if fallback_available {
+            assert!(font.is_outline());
+        } else {
+            assert!(matches!(font, TextFont::Stroke));
+        }
     }
 
     #[test]

@@ -46,13 +46,23 @@ pub fn is_vietnamese_font(font: &str) -> Option<VietnameseEncoding> {
 }
 
 /// Check if a string already contains genuine Unicode Vietnamese diacritic characters
-/// that exist outside the single-byte 0x00..=0xFF Windows-1252 range (U+0100..=U+024F, U+1E00..=U+1EFF).
+/// that exist outside the single-byte 0x00..=0xFF Windows-1252 range (U+0100..=U+024F, U+1E00..=U+1EFF),
+/// or precomposed Latin-1 Vietnamese vowels in positions that cannot be VNI or TCVN3 encodings.
 /// If true, the text MUST NOT be transcoded, preserving existing modern Unicode text.
 pub fn is_already_unicode_vietnamese(s: &str) -> bool {
-    s.chars().any(|c| {
+    let mut prev: Option<char> = None;
+    for c in s.chars() {
         let code = c as u32;
-        (0x0100..=0x024F).contains(&code) || (0x1E00..=0x1EFF).contains(&code) || matches!(c, 'Đ' | 'đ' | 'Ă' | 'ă' | 'Ơ' | 'ơ' | 'Ư' | 'ư')
-    })
+        if (0x0100..=0x024F).contains(&code) || (0x1E00..=0x1EFF).contains(&code) || matches!(c, 'Đ' | 'đ' | 'Ă' | 'ă' | 'Ơ' | 'ơ' | 'Ư' | 'ư')
+        {
+            return true;
+        }
+        if matches!(c, 'À' | 'Á' | 'Ã' | 'Í' | 'Ù' | 'Ú' | 'à') && prev.is_none_or(|p| match_vni_composite(p, c).is_none()) {
+            return true;
+        }
+        prev = Some(c);
+    }
+    false
 }
 
 /// Detect if a text string has unambiguous characteristic byte signatures of VNI or TCVN3.
@@ -69,7 +79,8 @@ pub fn detect_vietnamese_encoding(s: &str) -> Option<VietnameseEncoding> {
     while let Some(c) = chars.next() {
         if let Some(&next_c) = chars.peek() {
             let mut matched_composite = false;
-            if match_vni_composite(c, next_c).is_some() {
+            let is_diameter = c.eq_ignore_ascii_case(&'O') && next_c == 'Ø';
+            if !is_diameter && match_vni_composite(c, next_c).is_some() {
                 vni_score += 2;
                 composite_found = true;
                 matched_composite = true;
@@ -84,10 +95,11 @@ pub fn detect_vietnamese_encoding(s: &str) -> Option<VietnameseEncoding> {
                 continue;
             }
         }
-        if match_vni_single(c).is_some() {
+        if match_vni_single(c).is_some() && !matches!(c, 'Ô' | 'ô' | 'Ò' | 'ò' | 'Ó' | 'ó') {
             vni_score += 1;
         }
-        if match_tcvn3_single(c).is_some() {
+        if match_tcvn3_single(c).is_some() && !matches!(c, 'á' | 'â' | 'ã' | 'è' | 'é' | 'ê' | 'ì' | 'í' | 'ò' | 'ó' | 'ô' | 'õ' | 'ù' | 'ú' | 'ý')
+        {
             tcvn_score += 1;
         }
     }
@@ -139,6 +151,7 @@ pub fn transcode_tcvn3(s: &str) -> Cow<'_, str> {
         return Cow::Borrowed(s);
     }
 
+    let all_caps = s.bytes().any(|b| b.is_ascii_uppercase()) && !s.bytes().any(|b| b.is_ascii_lowercase());
     let mut out = String::with_capacity(s.len());
     let mut changed = false;
     let mut chars = s.chars().peekable();
@@ -153,7 +166,11 @@ pub fn transcode_tcvn3(s: &str) -> Cow<'_, str> {
             continue;
         }
         if let Some(single) = match_tcvn3_single(c) {
-            out.push(single);
+            if all_caps {
+                out.extend(single.to_uppercase());
+            } else {
+                out.push(single);
+            }
             changed = true;
         } else {
             out.push(c);
@@ -171,17 +188,17 @@ pub fn transcode_tcvn3_h(s: &str) -> Cow<'_, str> {
     } else {
         let transcoded = transcode_tcvn3(s);
         let upper = transcoded.to_uppercase();
-        Cow::Owned(upper)
+        if upper == s { Cow::Borrowed(s) } else { Cow::Owned(upper) }
     }
 }
 
 /// Transcode text using an optional font hint, falling back to signature detection.
 pub fn transcode_vietnamese<'a>(s: &'a str, font_hint: Option<&str>) -> Cow<'a, str> {
-    if s.is_ascii() || is_already_unicode_vietnamese(s) {
+    let encoding = font_hint.and_then(is_vietnamese_font).or_else(|| detect_vietnamese_encoding(s));
+
+    if (s.is_ascii() && encoding != Some(VietnameseEncoding::Tcvn3H)) || is_already_unicode_vietnamese(s) {
         return Cow::Borrowed(s);
     }
-
-    let encoding = font_hint.and_then(is_vietnamese_font).or_else(|| detect_vietnamese_encoding(s));
 
     match encoding {
         Some(VietnameseEncoding::Vni) => transcode_vni(s),
@@ -260,6 +277,7 @@ fn match_vni_composite(c1: char, c2: char) -> Option<&'static str> {
         ('Y', 'Ù') => Some("Ý"),
         ('Y', 'Õ') => Some("Ỹ"),
         ('Y', 'Û') => Some("Ỷ"),
+        ('Y', 'Ï') => Some("Ỵ"),
         ('a', 'ø') => Some("à"),
         ('a', 'ù') => Some("á"),
         ('a', 'â') => Some("â"),
@@ -323,6 +341,7 @@ fn match_vni_composite(c1: char, c2: char) -> Option<&'static str> {
         ('y', 'ù') => Some("ý"),
         ('y', 'õ') => Some("ỹ"),
         ('y', 'û') => Some("ỷ"),
+        ('y', 'ï') => Some("ỵ"),
         _ => None,
     }
 }
@@ -525,24 +544,50 @@ mod tests {
 
     #[test]
     fn test_already_unicode_never_transcoded() {
-        let unicode = "HÌNH CHIẾU ĐỨNG";
-        assert!(is_already_unicode_vietnamese(unicode));
-        assert_eq!(transcode_vietnamese(unicode, Some("VNI-Helve")), unicode);
-        assert_eq!(transcode_vietnamese(unicode, None), unicode);
+        for unicode in ["HÌNH CHIẾU ĐỨNG", "HÌNH DÁNG", "TÒA NHÀ", "CHÚNG TÔI", "BÁO CÁO"] {
+            assert!(is_already_unicode_vietnamese(unicode), "failed on {unicode}");
+            assert_eq!(transcode_vietnamese(unicode, Some("VNI-Helve")), unicode);
+            assert_eq!(transcode_vietnamese(unicode, Some(".VnTime")), unicode);
+            assert_eq!(transcode_vietnamese(unicode, None), unicode);
+        }
     }
 
     #[test]
     fn test_false_positives_never_transcoded() {
-        for word in ["Hòa Bình", "Chúng tôi", "Piñón", "Café"] {
-            assert_eq!(detect_vietnamese_encoding(word), None);
+        for word in ["Hòa Bình", "Chúng tôi", "Báo cáo công tác quý II", "Bê tông mác 200, cát vàng", "Piñón", "Café"] {
+            assert_eq!(detect_vietnamese_encoding(word), None, "false positive on {word}");
             assert_eq!(transcode_vietnamese(word, None), word);
             assert_eq!(transcode_vietnamese(word, Some("Standard")), word);
         }
     }
 
     #[test]
+    fn test_diameter_symbols_never_transcoded() {
+        for sym in ["Ø20", "OØ20", "oØ20", "2OØ25"] {
+            assert_eq!(detect_vietnamese_encoding(sym), None, "diameter false positive on {sym}");
+            assert_eq!(transcode_vietnamese(sym, None), sym);
+            assert_eq!(transcode_vietnamese(sym, Some("Standard")), sym);
+        }
+    }
+
+    #[test]
+    fn test_tcvn3h_ascii_and_legacy() {
+        assert_eq!(transcode_vietnamese("ban ve chi tiet", Some(".VnTimeH")), "BAN VE CHI TIET");
+        assert_eq!(transcode_vietnamese("B¶n vÏ chi tiÕt", Some(".VnTimeH")), "BẢN VẼ CHI TIẾT");
+        match transcode_vietnamese("BAN VE", Some(".VnTimeH")) {
+            Cow::Borrowed(b) => assert_eq!(b, "BAN VE"),
+            Cow::Owned(_) => panic!("expected borrowed string for already-uppercase ASCII"),
+        }
+    }
+
+    #[test]
+    fn test_tcvn3_all_caps() {
+        assert_eq!(transcode_tcvn3("MÆT B»NG KÕT CÊU"), "MẶT BẰNG KẾT CẤU");
+        assert_eq!(transcode_tcvn3("B¶N VÏ CHI TIÕT"), "BẢN VẼ CHI TIẾT");
+    }
+
+    #[test]
     fn test_hinh_dang_unicode() {
-        println!("Result of HÌNH DÁNG: {:?}", transcode_vietnamese("HÌNH DÁNG", None));
         assert_eq!(transcode_vietnamese("HÌNH DÁNG", None), "HÌNH DÁNG");
     }
 
