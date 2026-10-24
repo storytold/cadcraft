@@ -362,10 +362,12 @@ impl Interactive for PlotWindowM {
     fn name(&self) -> &'static str {
         "PLOTWINDOW"
     }
+    /// Ask for the first corner, then for the opposite one marked as a rectangle corner
+    /// (`Prompt::corner`), so ORTHO does not bend the pick and the window keeps its area.
     fn prompt(&self, _s: &Session) -> Prompt {
         match self.first {
             None => Prompt::new("Specify first corner", Accept::POINT),
-            Some(a) => Prompt::new("Specify opposite corner", Accept::POINT).base(a),
+            Some(a) => Prompt::new("Specify opposite corner", Accept::POINT).corner(a),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
