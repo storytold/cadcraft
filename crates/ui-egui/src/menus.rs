@@ -597,7 +597,13 @@ pub fn menu_bar(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = crate::theme::Tokens::get();
     let tree = tree(app);
     let mut clicked = None;
-    egui::Panel::top("cc_menubar").exact_size(22.0).frame(egui::Frame::NONE.fill(t.chrome_dark).inner_margin(egui::Margin::symmetric(6, 0))).show(
+    // `MenuBar` makes its row exactly `interact_size.y` tall and centres the buttons in it.
+    // The desktop theme keeps that at 20 pt, which fits the 22 pt bar, but the Android touch
+    // shell raises it to 40 pt: a fixed 22 pt bar then centres the text below its own bottom
+    // edge and the lower half of every label is clipped. Keep the desktop height and grow with
+    // the style (this frame has no vertical inner margin).
+    let bar_height = 22.0_f32.max(ui.spacing().interact_size.y);
+    egui::Panel::top("cc_menubar").exact_size(bar_height).frame(egui::Frame::NONE.fill(t.chrome_dark).inner_margin(egui::Margin::symmetric(6, 0))).show(
         ui,
         |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
