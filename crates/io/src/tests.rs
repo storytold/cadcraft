@@ -537,6 +537,27 @@ fn dxf_roundtrips_page_setup() {
     assert_eq!(p.paper, a3.name);
 }
 
+#[test]
+fn dxf_writes_landscape_page_like_autocad() {
+    // #1649: AutoCAD stores a landscape A3 as 420 x 297 with plot rotation 0, not 297 x 420 with 90.
+    let mut d = sample();
+    {
+        let p = &mut d.layouts[0].page;
+        p.width_mm = 297.0;
+        p.height_mm = 420.0;
+        p.landscape = true;
+    }
+    let text = write_dxf(&d);
+    // Group values of the last (paper space) AcDbPlotSettings block.
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    let start = lines.iter().rposition(|l| *l == "AcDbPlotSettings").unwrap();
+    let group = |code: &str| lines[start - 1..].chunks(2).find(|c| c[0] == code).map(|c| c[1].parse::<f64>().unwrap());
+    assert_eq!((group("44"), group("45"), group("73")), (Some(420.0), Some(297.0), Some(0.0)));
+    let back = read_dxf(text.as_bytes()).unwrap();
+    let p = &back.layout("Layout1").unwrap().page;
+    assert_eq!((p.width_mm, p.height_mm, p.landscape), (297.0, 420.0, true));
+}
+
 // ---------------------------------------------------------------------------------------------
 // Round trips of styles, overrides, associativity, constraints and tables.
 
