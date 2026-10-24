@@ -52,6 +52,10 @@ pub struct DynamicBlock {
     /// the grips shown in them by object).
     #[serde(skip)]
     pub grip_objects: Vec<(i32, Handle)>,
+    /// Where each grip object is in the dynamic block, by graph id (a flip grip's place along its
+    /// reflection line).
+    #[serde(skip)]
+    pub grip_points: Vec<(i32, Vec3)>,
 }
 
 /// One parameter: a property a reference to the block can change.
@@ -91,12 +95,14 @@ pub enum ParameterKind {
     Polar { base: Vec3, end: Vec3 },
     /// Horizontal and vertical distances from a base point.
     Xy { base: Vec3, end: Vec3 },
-    /// An angle about a base point.
-    Rotation { base: Vec3, end: Vec3 },
+    /// An angle about a base point (Angle1): the end point turns about the base. The angle is
+    /// measured from the direction the dynamic block has from base to end.
+    Rotation { base: Vec3, end: Vec3, label: String, description: String, values: ValueSet },
     /// Aligns the reference with nearby geometry.
     Alignment { base: Vec3, end: Vec3 },
-    /// Mirrors the objects about a reflection line.
-    Flip { base: Vec3, end: Vec3 },
+    /// Mirrors the objects about the reflection line from base to end (Flip state1); the names
+    /// of its two states, not flipped and flipped.
+    Flip { base: Vec3, end: Vec3, label: String, description: String, states: [String; 2] },
     /// A position (Position1).
     Point { at: Vec3, label: String, description: String },
     /// Named sets of visible objects.
@@ -122,6 +128,8 @@ impl ParameterKind {
         match self {
             ParameterKind::Linear { label, .. }
             | ParameterKind::Point { label, .. }
+            | ParameterKind::Rotation { label, .. }
+            | ParameterKind::Flip { label, .. }
             | ParameterKind::Visibility { label, .. }
             | ParameterKind::Lookup { label, .. } => Some(label),
             _ => None,
@@ -213,7 +221,11 @@ pub enum ActionKind {
         angle_offset: f64,
     },
     Scale,
-    Rotate,
+    /// Turns the objects about its base point by the change of a rotation parameter's angle.
+    Rotate {
+        base: ActionBase,
+    },
+    /// Mirrors the objects across a flip parameter's reflection line when its state changes.
     Flip,
     Array,
     PolarStretch,
@@ -221,6 +233,16 @@ pub enum ActionKind {
     Other {
         dxf_type: String,
     },
+}
+
+/// Where an action that turns or scales its objects has its base point.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActionBase {
+    /// It follows the parameter's base point, at `offset` from it; else it stays at `at`.
+    pub dependent: bool,
+    pub offset: Vec3,
+    pub at: Vec3,
 }
 
 /// A lookup table column: the parameter value it reads or sets.
@@ -361,6 +383,7 @@ pub fn dynamic_block(d: &Drawing, name: &str) -> Option<DynamicBlock> {
         } else {
             if kind.ends_with("GRIP") {
                 out.grip_objects.push((node, o.handle));
+                out.grip_points.push((node, Cursor::new(section(&secs, "AcDbBlockGrip")).point(1010)));
             }
             out.other.push(o.kind.clone());
         }
@@ -409,14 +432,28 @@ fn parameter(kind: &str, secs: &[(&str, &[RawTag])]) -> ParameterKind {
             ParameterKind::Lookup { at: one(), label: c.string(303), description: c.string(304) }
         }
         "BLOCKBASEPOINTPARAMETER" => ParameterKind::BasePoint { at: one() },
-        "BLOCKPOLARPARAMETER" | "BLOCKXYPARAMETER" | "BLOCKROTATIONPARAMETER" | "BLOCKALIGNMENTPARAMETER" | "BLOCKFLIPPARAMETER" => {
+        // Its name and description (305, 306), the base angle point (1011) and angle (140), then
+        // the value set.
+        "BLOCKROTATIONPARAMETER" => {
+            let (base, end) = two();
+            let mut c = Cursor::new(section(secs, "AcDbBlockRotationParameter"));
+            let (label, description) = (c.string(305), c.string(306));
+            ParameterKind::Rotation { base, end, label, description, values: value_set(&mut c) }
+        }
+        // Its name and description (305, 306) and its states' names (307 not flipped, 308 flipped).
+        "BLOCKFLIPPARAMETER" => {
+            let (base, end) = two();
+            let mut c = Cursor::new(section(secs, "AcDbBlockFlipParameter"));
+            let (label, description) = (c.string(305), c.string(306));
+            let states = [c.string(307), c.string(308)];
+            ParameterKind::Flip { base, end, label, description, states }
+        }
+        "BLOCKPOLARPARAMETER" | "BLOCKXYPARAMETER" | "BLOCKALIGNMENTPARAMETER" => {
             let (base, end) = two();
             match kind {
                 "BLOCKPOLARPARAMETER" => ParameterKind::Polar { base, end },
                 "BLOCKXYPARAMETER" => ParameterKind::Xy { base, end },
-                "BLOCKROTATIONPARAMETER" => ParameterKind::Rotation { base, end },
-                "BLOCKALIGNMENTPARAMETER" => ParameterKind::Alignment { base, end },
-                _ => ParameterKind::Flip { base, end },
+                _ => ParameterKind::Alignment { base, end },
             }
         }
         other => ParameterKind::Other { dxf_type: other.to_string() },
@@ -471,13 +508,35 @@ fn action(handle: Handle, node: i32, name: String, kind: &str, secs: &[(&str, &[
             (two_connections(tags), ActionKind::Move { multiplier, angle_offset })
         }
         "BLOCKSCALEACTION" => (Vec::new(), ActionKind::Scale),
-        "BLOCKROTATEACTION" => (Vec::new(), ActionKind::Rotate),
-        "BLOCKFLIPACTION" => (Vec::new(), ActionKind::Flip),
+        "BLOCKROTATEACTION" => {
+            let mut connections = two_connections(section(secs, "AcDbBlockActionWithBasePt"));
+            let mut c = Cursor::new(section(secs, "AcDbBlockRotationAction"));
+            connections.push((c.int(94), c.string(303)));
+            (connections, ActionKind::Rotate { base: action_base(section(secs, "AcDbBlockActionWithBasePt")) })
+        }
+        // Its four connections: the parameter (92-95) and the values it reads (301-304).
+        "BLOCKFLIPACTION" => {
+            let tags = section(secs, "AcDbBlockFlipAction");
+            let first = |code: i32| Cursor::new(tags).next(code).unwrap_or_default().to_string();
+            let connections = (0..4).map(|i| (first(92 + i).trim().parse().unwrap_or(0), first(301 + i))).collect();
+            (connections, ActionKind::Flip)
+        }
         "BLOCKARRAYACTION" => (Vec::new(), ActionKind::Array),
         "BLOCKPOLARSTRETCHACTION" => (Vec::new(), ActionKind::PolarStretch),
         other => (Vec::new(), ActionKind::Other { dxf_type: other.to_string() }),
     };
     Action { node, handle, name, at, selection, connections, kind }
+}
+
+/// The base point of an action that has one: after its two connections (92/93, 301/302), the
+/// offset from the parameter's base point (1011), whether it follows that point (280), and the
+/// point it stays at when it doesn't (1012).
+fn action_base(tags: &[RawTag]) -> ActionBase {
+    let mut c = Cursor::new(tags);
+    c.next(302);
+    let offset = c.point(1011);
+    let dependent = c.int(280) != 0;
+    ActionBase { dependent, offset, at: c.point(1012) }
 }
 
 /// Two connections: parameter ids (92, 93) and the values they read (301, 302). Writers order

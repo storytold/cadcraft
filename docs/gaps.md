@@ -161,6 +161,7 @@ Detail: [localization-parity.md](localization-parity.md).
 | 2026-10-15 | minor | BREAKLINE (Tools ▸ Express Tools ▸ Break-line Symbol): one polyline between two points with a break symbol, Block/Size/Extension options, size times DIMSCALE: E3 narrowed |
 | 2026-10-15 | minor | TXT2MTXT (Tools ▸ Express Tools ▸ Convert Text to Mtext): selected TEXT, and MTEXT, combined into one MTEXT top-down or in selection order with optional word wrap, or one MTEXT per TEXT; SEttings remembered for the session: E3 narrowed |
 | 2026-10-13 | minor | Selection window gesture preference (PICKDRAG 0/2) added to Options ▸ Selection and saved in the profile (U6), with Portuguese and Ukrainian labels |
+| 2026-10-13 | minor | F3: dynamic block rotation and flip parameters (Angle1, Flip state1) with their rotate and flip actions, Properties and grips; checked against AutoCAD's output |
 | 2026-10-12 | minor | Object transparency (entity, ByLayer, ByBlock) is drawn: on screen (TRANSPARENCYDISPLAY, on by default), in PNG/SVG exports, and in plots when the page setup's "Plot transparency" is on (PDF alpha, PNG blending, SVG opacity; PLOTTRANSPARENCYOVERRIDE): F14 narrowed |
 | 2026-10-12 | minor | Hatch and Gradient dialog (HATCH, GRADIENT; HPDLGMODE) and Hatch Edit dialog (HATCHEDIT, right-click, double-click a hatch): F13 narrowed to Preview, Inherit Properties and boundary add/remove in edit mode |
 | 2026-10-12 | minor | A bare system variable name typed at the command line (ORTHOMODE, GRIDMODE…) runs SETVAR on that variable, as in AutoCAD; U10 narrowed |
