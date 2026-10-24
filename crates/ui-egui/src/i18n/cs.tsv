@@ -74,6 +74,7 @@
 	Area	Plocha
 	Arrange Panel	Uspořádat panel
 	Array	Pole
+	Arrow size	Velikost šipky
 	Attach	Připojit
 	Attribute	Atribut
 	Attribute Definition	Definice atributu
@@ -104,6 +105,7 @@
 	Box	Kvádr
 	Break	Přerušit
 	Break At Point	Přerušit v bodě
+	Break-line Symbol	Značka přerušení čáry
 	Bring Above Objects	Přenést nad objekty
 	Bring Annotations to Front	Přenést popisy dopředu
 	Bring to Front	Přenést dopředu
@@ -142,6 +144,7 @@
 	Closed	Uzavřeno
 	Close Comparison	Zavřít porovnání
 	Coincident	Totožnost
+	Collapse Palettes	Sbalit palety
 	Collapse Tool Sets	Sbalit sady nástrojů
 	Collinear	Kolinearita
 	Color	Barva
@@ -169,6 +172,7 @@
 	Contributors	Přispěvatelé
 	Control Vertices	Řídicí vrcholy
 	Convert	Převést
+	Convert Text to Mtext	Převést text na víceřádkový text
 	Copy	Kopírovat
 	Copy Full File Path	Kopírovat úplnou cestu k souboru
 	Copy History	Kopírovat historii
@@ -218,6 +222,7 @@
 	Description	Popis
 	Deselect All	Zrušit celý výběr
 	Diameter	Průměr
+	Dim scale overall	Celkové měřítko kót
 	Dim style	Kótovací styl
 	Dimension Break	Přerušení kóty
 	Dimension Edit	Upravit kótu
@@ -317,11 +322,14 @@
 	Equal	Shodnost
 	Erase	Vymazat objekty
 	Evaluate	Vyhodnotit
+	Evaluate LISP	Vyhodnotit LISP
 	Exclude from new selection set	Vyloučit z nové výběrové množiny
 	Explode	Rozložit
+	Explode Attributes to Text	Rozložit atributy na text
 	Export	Exportovat
 	Export Table	Exportovat tabulku
 	Export to PDF...	Exportovat do PDF...
+	Express Tools	Doplňkové nástroje
 	Expression	Výraz
 	Extend	Prodloužit
 	Extension	Prodloužení
@@ -401,6 +409,10 @@
 	How to apply:	Způsob použití:
 	ID Point	Souřadnice bodu
 	Import	Importovat
+	Align Multileaders	Srovnat multiodkazy
+	Collect	Shromáždit
+	Collect Multileaders	Shromáždit multiodkazy
+	Edit Multileader	Upravit multiodkaz
 	In	Přiblížit pohled
 	In-window Menu Bar	Nabídka v okně
 	Include in new selection set	Zahrnout do nové výběrové množiny
@@ -492,6 +504,10 @@
 	List Text Styles	Vypsat styly textu
 	Load all	Načíst vše
 	Load...	Načíst...
+	Load Application...	Načíst aplikaci...
+	Enter name of LISP file to load	Zadejte název souboru LISP k načtení
+	Enter geometric characteristic	Zadejte geometrickou charakteristiku
+	Enter block names to extract	Zadejte názvy bloků pro extrakci dat
 	Loaded linetypes	Načtené typy čar
 	Lock	Zamknout
 	Lock Layer	Zamknout hladinu
@@ -522,6 +538,7 @@
 	Models	Modely
 	Modify	Upravit
 	Move	Posunout
+	Move/Copy/Rotate	Posunout/Kopírovat/Otočit
 	Multileader	Multiodkaz
 	Multileader Style...	Styl multiodkazu...
 	Multileader style	Styl multiodkazů
@@ -583,6 +600,8 @@
 	Open sample drawing	Otevřít ukázku výkresu
 	Open Xref	Otevřít externí referenci
 	Open...	Otevřít...
+	Open Recent	Otevřít nedávné
+	Clear Recent Files	Vymazat seznam nedávných souborů
 	Operator:	Operátor:
 	Orbit	Orbit
 	Ordinate	Souřadnicová
@@ -671,6 +690,7 @@
 	Position X	Poloha X
 	Position Y	Poloha Y
 	Position Z	Poloha Z
+	Precision	Přesnost
 	Previous	Předchozí
 	Previous Change	Předchozí změna
 	Previous Layer	Předchozí hladina
@@ -843,6 +863,8 @@
 	Show All	Zobrazit vše
 	Show All Constraint Bars	Zobrazit všechny lišty vazeb
 	Show All Dynamic Dimensions	Zobrazit všechny dynamické kóty
+	Show and hide the tools of this category	Zobrazit nebo skrýt nástroje této kategorie
+	Show in Tool Sets	Zobrazit v sadách nástrojů
 	Show command prompting near the crosshairs	Zobrazovat výzvy příkazů u nitkového kříže
 	Show Layer List	Zobrazit seznam hladin
 	Show/Hide Lineweight	Zobrazit/Skrýt tloušťku čáry
@@ -930,21 +952,32 @@
 	Command line history	Historie příkazového řádku
 	Copy as JSON	Kopírovat jako JSON
 	Crosshair size	Velikost nitkového kříže
+	Crossing selection color:	Barva výběru křížícím oknem:
 	Display	Zobrazení
+	Exclude:	Vyloučit:
 	Grip size	Velikost uzlů
+	Grips	Uzly
+	Groups	Skupiny
+	Hatches	Šrafy
 	Hold Shift to add to the selection	Podržením klávesy Shift přidáte objekty k výběru
+	Indicate selection area	Zobrazovat oblast výběru
 	Interface language	Jazyk uživatelského rozhraní
 	Interface theme	Motiv uživatelského rozhraní
 	Keep the system cursor visible over the drawing area	Ponechat systémový kurzor viditelný nad kreslicí plochou
 	Largest array	Největší pole
 	Layout paper	Papír rozvržení
 	Model background	Pozadí modelu
+	Multiline text	Víceřádkový text
+	Object grouping	Výběr skupin objektů
+	Object selection limit for display of grips	Limit vybraných objektů pro zobrazení uzlů
 	Object snap aperture	Dosah uchopení objektu
 	Object snap marker size	Velikost značky uchopení objektu
+	Objects on locked layers	Objekty na zamčených hladinách
 	Open and Save	Otevírání a ukládání
 	Options	Možnosti
 	Options...	Možnosti...
 	Pickbox size	Velikost výběrového terčíku
+	Preview	Náhled
 	Profiles	Profily
 	Reset keeps the interface language.	Obnovení výchozího nastavení zachová jazyk rozhraní.
 	Reset to Defaults	Obnovit výchozí nastavení
@@ -952,11 +985,25 @@
 	Screen magnifiers, screen readers and recorders follow the system cursor.	Lupy, čtečky obrazovky a záznamové nástroje sledují systémový kurzor.
 	Select objects first, then choose a command	Nejprve vybrat objekty, potom zvolit příkaz
 	Selection	Výběr
+	Selection Area Effect	Efekt oblasti výběru
+	Selection Preview Filter	Filtr náhledu výběru
+	Selection area opacity:	Krytí oblasti výběru:
+	Selection effect color	Barva efektu výběru
+	Selection modes	Režimy výběru
+	Selection preview	Náhled výběru
 	Settings...	Nastavení...
 	Show Quick Properties for selected objects	Zobrazovat rychlé vlastnosti vybraných objektů
+	Show grips	Zobrazovat uzly
 	Snap, grid, polar tracking and Dynamic Input:	Uchopení, rastr, polární trasování a dynamické zadávání:
+	Tables	Tabulky
 	The aperture is how near the cursor must come to a point for an object snap to find it.	Dosah určuje, jak blízko se kurzor musí přiblížit k bodu, aby jej uchopení objektu nalezlo.
 	User Preferences	Uživatelské předvolby
+	Visual Effect Settings	Nastavení vizuálních efektů
+	Visual Effect Settings...	Nastavení vizuálních efektů...
+	When a command is active	Při aktivním příkazu
+	When no command is active	Bez aktivního příkazu
+	Window selection color:	Barva výběru oknem:
+	Xrefs	Externí reference
 	objects	objektů
 	Specify inside diameter of donut	Určete vnitřní průměr prstence
 	Specify leader arrowhead location	Určete polohu šipky odkazu
@@ -1179,6 +1226,7 @@
 	Show System Cursor	Zobrazit systémový kurzor
 	Animation Effects	Efekty animace
 	Animation effects	Efekty animace
+	Interface scale	Měřítko uživatelského rozhraní
 	Import...	Importovat...
 	Export...	Exportovat...
 	Batch Publish...	Dávkově publikovat...
@@ -1204,17 +1252,124 @@
 	Multiline...	Multičára...
 	Multiline Style...	Styl multičáry...
 	Solid Editing	Úpravy těles
+	3D Mouse...	3D myš...
+	3D Mouse	3D myš
+	Calibrate 3D Mouse	Kalibrovat 3D myš
+	3D Mouse Navigation	Ovládání pohledu 3D myší
+	3D mouse input is unavailable on this platform	Vstup z 3D myši není na této platformě dostupný
+	No supported 3D mouse found	Nebyla nalezena žádná podporovaná 3D myš
+	Release the 3D mouse to calibrate its resting position	Uvolněte 3D myš pro kalibraci její klidové polohy
+	3D mouse connected	3D myš je připojena
+	3D mouse busy, possibly 3DxWare or missing device permissions	3D myš je obsazena, příčinou může být 3DxWare nebo chybějící oprávnění k zařízení
+	3D mouse disconnected	3D myš je odpojena
+	3D mouse input could not be started	Příjem vstupu z 3D myši se nepodařilo spustit
+	Enable 3D mouse navigation	Zapnout ovládání pohledu 3D myší
+	Pan sensitivity	Citlivost posunu pohledu
+	Zoom sensitivity	Citlivost změny přiblížení
+	Reverse zoom direction	Obrátit směr změny přiblížení
+	Calibrate	Kalibrovat
+	Move sideways to pan; push/pull or twist to zoom.	Pohybem do stran posunete pohled; zatlačením, přitažením nebo otočením změníte přiblížení.
+	Left device button: zoom extents. Right device button: calibrate.	Levým tlačítkem zařízení přiblížíte na rozsah. Pravým tlačítkem spustíte kalibraci.
 	X	X
 	Y	Y
 	B	B
 	CADCraft	CADCraft
 	More toolbar commands	Další příkazy panelu nástrojů
+	Default save version	Výchozí verze formátu pro ukládání
+	Automatic save every	Interval automatického ukládání
+	min	min
+	Automatic save file location	Umístění souborů automatického ukládání
+	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	Výkresy, které ještě nemají soubor, se ukládají ve výchozí verzi formátu. Hodnota 0 minut vypíná automatické ukládání.
+	Time-sensitive right-click: a quick click is Enter, holding opens the menu	Rozlišovat délku stisku pravého tlačítka: krátké kliknutí odpovídá klávese Enter, podržení otevře místní nabídku
+	Turned off, a right-click while a command runs always opens the shortcut menu.	Při vypnuté volbě kliknutí pravým tlačítkem během příkazu vždy otevře místní nabídku.
 menu	View	Zobrazení
 menu	Draw	Kreslení
 menu	Dimension	Kótování
 menu	Modify	Modifikace
 	Hatch Pattern	Vzor šrafy
 	Search for pattern	Hledat vzor
+	Run Script...	Spustit skript...
 	Not a number or distance: {text}	Není číslo ani vzdálenost: {text}
+	Dynamic Block Data	Data dynamického bloku
+	Custom	Vlastní
+	Dynamic Block Reference	Reference dynamického bloku
+	Set Dynamic Property	Nastavit dynamickou vlastnost
+	Dynamic Block Grips	Uzly dynamického bloku
+	Drag Dynamic Grip	Přetáhnout dynamický uzel
+	Save Block	Uložit blok
+	Save Block As	Uložit blok jako
+	Close Block Editor	Zavřít editor bloků
+	Unsaved changes	Neuložené změny
+	Edit Block Definition	Upravit definici bloku
+	Block to create or edit	Blok k vytvoření nebo úpravě
+	Open in Block Editor	Otevřít v editoru bloků
+	This drawing	Tento výkres
+	contains authoring elements. Open in Block Editor?	obsahuje prvky pro tvorbu dynamického bloku. Chcete jej otevřít v editoru bloků?
+	New block	Nový blok
+	Italic	Kurzíva
+	Underline	Podtržení
+	Overline	Nadtržení
+	Justify	Do bloku
+	Text color	Barva textu
+	Click the ruler to add a tab stop, right-click to remove one	Kliknutím na pravítko přidáte zarážku tabulátoru, kliknutím pravým tlačítkem ji odeberete
+	Select using two clicks only	Vybírat pouze dvěma kliknutími
+	Define each corner of the selection window with a separate click.	Každý roh výběrového okna určete samostatným kliknutím.
+	Type an alias name.	Zadejte název aliasu.
+	Choose the command the alias starts.	Zvolte příkaz, který alias spouští.
+	{command} is an unknown command.	{command} je neznámý příkaz.
+	{alias} is already defined; select it and use Edit.	Alias {alias} je již definován; vyberte jej a použijte tlačítko „Upravit…“.
+	More than {n} aliases.	Byl překročen limit {n} aliasů.
+	Alias file: {file}	Soubor aliasů: {file}
+	No alias file loaded. REINIT replaces these aliases with a file's.	Není načten žádný soubor aliasů. Příkaz REINIT nahradí tyto aliasy aliasy ze souboru.
+	Alias	Alias
+	Command	Příkaz
+	overrides built-in	nahrazuje vestavěný alias
+	built-in	vestavěný
+	Add…	Přidat…
+	Edit…	Upravit…
+	Save alias	Uložit alias
+	Discard	Zahodit úpravy
+	Customize	Přizpůsobit
+	Edit Command Aliases (PGP)...	Upravit aliasy příkazů (PGP)...
 	Query Texts	Dotaz na texty
 	Analyze Shapes	Analyzovat tvary
+	Hatch Pick	Výběr pro šrafy
+	Hatch and Gradient	Šrafy a přechod
+	Color 1	Barva 1
+	Color 2	Barva 2
+	Shape	Tvar
+	Curved	Zakřivený
+	Spherical	Kulový
+	Hemispherical	Polokulový
+	Inverted	Obrácený
+	Centered	Vystředěný
+	Hatch origin	Počátek šraf
+	Use current origin	Použít aktuální počátek
+	Specified origin	Zadaný počátek
+	Click to set new origin	Zadat nový počátek kliknutím
+	Default to boundary extents	Použít rozsah hranic
+	Bottom left	Vlevo dole
+	Bottom right	Vpravo dole
+	Top left	Vlevo nahoře
+	Top right	Vpravo nahoře
+	Boundaries	Hranice
+	Add: Pick points	Přidat: vybrat body
+	Add: Select objects	Přidat: vybrat objekty
+	Boundaries picked: {n}	Počet vybraných hranic: {n}
+	Select boundaries to remove	Vyberte hranice k odebrání
+	Island	Ostrov
+	Associative	Asociativní
+	Create separate hatches	Vytvářet samostatné šrafy
+	Island detection	Detekce ostrovů
+	Normal	Normální
+	Outer	Vnější
+	Ignore	Ignorovat
+	Origin: {x}, {y}	Počátek: {x}, {y}
+	Sheet Books to PDF...	Exportovat sady listů do PDF...
+	Analyze Usage	Analýza využití
+	AutoLISP (LSP)	AutoLISP (LSP)
+	Imperial (inches)	Imperiální (palce)
+	Implied Loops	Odvozené smyčky
+	Metric (millimetres)	Metrické (milimetry)
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	Příkaz Nový i první výkres po spuštění používají tyto jednotky, pokud není nastavena výchozí šablona (QNEWTEMPLATE).
+	Units of new drawings	Jednotky nových výkresů
