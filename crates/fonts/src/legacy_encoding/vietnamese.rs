@@ -1016,4 +1016,39 @@ mod adversarial_tests {
             assert_eq!(transcode_vietnamese(text, Some("Arial")), text, "Failed to preserve Arial font text: {text}");
         }
     }
+    #[test]
+    fn test_cad_symbols_and_scientific_notation_with_mixed_text() {
+        let cad_terms = [
+            "Ø25 ±0.5",
+            "⌀ 10 H7",
+            "1½\" x ¾\"",
+            "100 m²",
+            "5°C",
+            "§ 5 ¶ 2",
+            "© 2026 ACME ®",
+            "€ 200.00",
+            "MATH GRAPH TECH FLASH BRUSH",
+            "VISA SOFA DATA AUTO",
+        ];
+
+        for &text in &cad_terms {
+            assert_eq!(detect_vietnamese_encoding(text), None, "CAD/Sci text false positive: {text}");
+            assert_eq!(transcode_vietnamese(text, None), text, "CAD/Sci text corrupted: {text}");
+            assert_eq!(transcode_vietnamese(text, Some("Standard")), text, "Standard font corrupted: {text}");
+        }
+    }
+
+    #[test]
+    fn test_punctuation_and_whitespaces_do_not_trigger_false_positives() {
+        let punctuated = ["(TÒA NHÀ)", "\"où\"", "« attention »", "TÒA, TÔI, CÔ", "FAÇADE, BÉTON", "où est la gare?", "O Ù", "A É"];
+
+        for &text in &punctuated {
+            assert_eq!(detect_vietnamese_encoding(text), None, "Punctuated text false positive: {text}");
+            assert_eq!(transcode_vietnamese(text, None), text, "Punctuated text corrupted: {text}");
+        }
+
+        // Bracketed genuine legacy text still transcodes as expected
+        assert_eq!(transcode_vietnamese("[NHOÂM]", Some("VNI-Helve")), "[NHÔM]");
+        assert_eq!(transcode_vietnamese("[B¶n vÏ]", Some(".VnTime")), "[Bản vẽ]");
+    }
 }
