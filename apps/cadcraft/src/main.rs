@@ -98,7 +98,7 @@ impl eframe::App for App {
         self.persist_workspace(true);
         self.cad.shutdown_autosave();
     }
-    /// Preferences (the interface theme) survive restarts; window and egui state are not kept.
+    /// Preferences (the interface theme) and the window size and position survive restarts; egui state is not kept.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         storage.set_string(cadcraft_ui_egui::options::PROFILE_KEY, self.cad.profile_json());
         storage.set_string(cadcraft_ui_egui::PREFS_KEY, self.cad.prefs_json());
@@ -232,6 +232,28 @@ fn control_flag(current: Option<u16>, value: Option<String>) -> Option<u16> {
     current
 }
 
+/// The main window's options (the icon and the Windows graphics backend are added by `main`).
+fn native_options(wgpu_options: eframe::egui_wgpu::WgpuConfiguration) -> eframe::NativeOptions {
+    eframe::NativeOptions {
+        wgpu_options,
+        viewport: egui::ViewportBuilder::default()
+            .with_title("CADCraft")
+            .with_inner_size([1600.0, 1000.0])
+            .with_min_inner_size([900.0, 560.0])
+            .with_drag_and_drop(true)
+            .with_fullsize_content_view(true)
+            .with_titlebar_shown(false)
+            .with_title_shown(false)
+            .with_app_id(APP_ID),
+        // The window size and position are saved with the preferences and restored at the next
+        // launch (eframe's "persistence" feature).
+        persist_window: true,
+        // A stencil buffer clips the contents of clipped layout viewports on the GPU.
+        stencil_buffer: STENCIL_BITS,
+        ..Default::default()
+    }
+}
+
 fn main() -> eframe::Result {
     // First, so every start-up record is captured; see `logging`.
     let logger = logging::install();
@@ -266,24 +288,9 @@ fn main() -> eframe::Result {
     }
     install_io();
     let surface = cadcraft_ui_egui::gpu::surface_config(std::env::var("CADCRAFT_VSYNC").ok().as_deref(), cfg!(all(unix, not(target_os = "macos"))));
-    let mut options = eframe::NativeOptions {
-        // The crosshair is drawn by the app: present without a queue on Linux/BSD, where X11
-        // swapchains hold two frames back under vsync (`CADCRAFT_VSYNC=1` restores vsync).
-        wgpu_options: eframe::egui_wgpu::WgpuConfiguration::default().with_surface_config(surface),
-        viewport: egui::ViewportBuilder::default()
-            .with_title("CADCraft")
-            .with_inner_size([1600.0, 1000.0])
-            .with_min_inner_size([900.0, 560.0])
-            .with_drag_and_drop(true)
-            .with_fullsize_content_view(true)
-            .with_titlebar_shown(false)
-            .with_title_shown(false)
-            .with_app_id(APP_ID),
-        persist_window: false,
-        // A stencil buffer clips the contents of clipped layout viewports on the GPU.
-        stencil_buffer: STENCIL_BITS,
-        ..Default::default()
-    };
+    // The crosshair is drawn by the app: present without a queue on Linux/BSD, where X11
+    // swapchains hold two frames back under vsync (`CADCRAFT_VSYNC=1` restores vsync).
+    let mut options = native_options(eframe::egui_wgpu::WgpuConfiguration::default().with_surface_config(surface));
     if let Some(icon) = app_icon() {
         options.viewport = options.viewport.with_icon(icon);
     }
@@ -388,12 +395,18 @@ fn main() -> eframe::Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{config_dir_from, control_flag, control_port_from, filters_for_save, follow_desktop};
+    use super::{config_dir_from, control_flag, control_port_from, filters_for_save, follow_desktop, native_options};
     use std::ffi::OsString;
     use std::path::PathBuf;
 
     fn env<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<OsString> + 'a {
         move |k| vars.iter().find(|(n, _)| *n == k).map(|(_, v)| OsString::from(v))
+    }
+
+    #[test]
+    fn the_main_window_size_and_position_are_remembered() {
+        // With `persist_window: false` every launch opened at the default size and position (#1295).
+        assert!(native_options(eframe::egui_wgpu::WgpuConfiguration::default()).persist_window);
     }
 
     #[test]
