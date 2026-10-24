@@ -233,6 +233,14 @@ pub fn resolve_alias(name: &str) -> String {
 pub(crate) fn bad(cmd: &str, msg: impl Into<String>) -> EngineError {
     EngineError::BadParams { cmd: cmd.into(), msg: msg.into() }
 }
+/// Refuse a parameter name the command does not take, naming it, so a misspelt option is not
+/// silently dropped. Non-object params carry no names and pass.
+pub(crate) fn reject_unknown_params(cmd: &str, p: &Value, allowed: &[&str]) -> Result<()> {
+    match p.as_object().and_then(|o| o.keys().find(|k| !allowed.contains(&k.as_str()))) {
+        Some(k) => Err(bad(cmd, format!("unknown parameter `{k}` (takes {})", allowed.join(", ")))),
+        None => Ok(()),
+    }
+}
 pub(crate) fn f64_or(p: &Value, key: &str, default: f64) -> f64 {
     p.get(key).and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(default)
 }

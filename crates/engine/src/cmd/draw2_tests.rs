@@ -574,6 +574,18 @@ fn rect_pts(s: &Session) -> Vec<Vec2> {
 }
 
 #[test]
+fn rectang_unknown_parameter_is_refused() {
+    let mut s = Session::new();
+    for (key, val) in [("widht", json!(5)), ("bogus", json!(true))] {
+        let mut p = json!({"p1": [0, 0], "p2": [100, 50]});
+        p[key] = val;
+        let e = s.execute("rectang", &p).expect_err("an unknown parameter must be an error").to_string();
+        assert!(e.contains(key), "the error names `{key}`: {e}");
+    }
+    assert!(s.doc().unwrap().model.is_empty(), "nothing was drawn");
+}
+
+#[test]
 fn rectang_options_json() {
     let mut s = Session::new();
     s.execute("rectang", &json!({"p1": [0, 0], "p2": [4, 3]})).unwrap();

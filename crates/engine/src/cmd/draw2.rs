@@ -1582,6 +1582,11 @@ fn rect_kind(first: Vec2, w: f64, h: f64, rot: f64, fillet: f64, chamfer: (f64, 
 }
 
 pub(crate) fn run_rectang2(s: &mut Session, p: &Value) -> Result<Value> {
+    reject_unknown_params(
+        "rectang",
+        p,
+        &["p1", "p2", "dimensions", "area", "length", "breadth", "rotation", "fillet", "chamfer", "width", "elevation", "thickness"],
+    )?;
     let a = point_req("rectang", p, "p1")?;
     let rot = f64_or(p, "rotation", 0.0).to_radians();
     let ch = p
