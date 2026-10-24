@@ -286,3 +286,38 @@ fn mtext_empty_content_does_not_panic_or_pick() {
     assert_eq!(pick(d, &Space::Model, Vec2::new(0.0, 0.0), 0.5), None);
     assert_eq!(pick(d, &Space::Model, Vec2::new(50.0, -2.5), 0.5), None);
 }
+
+/// Two-column MText keeps each column's lines in separate hit boxes so clicking the gutter does not pick it.
+#[test]
+fn mtext_multicolumn_gutter_does_not_pick() {
+    let mut s = Session::new();
+    // Two static columns of width 40 with a 20-unit gutter (column 1 at x in [0, 40],
+    // gutter at x in (40, 60), column 2 at x in [60, 100]). Height 6 fits one line per column,
+    // so both lines sit at the same vertical band y in [-5, 0].
+    s.execute(
+        "mtext",
+        &json!({
+            "at": [0, 0],
+            "text": "COLUMN ONE\\PCOLUMN TWO",
+            "height": 5.0,
+            "width": 40.0,
+            "attach": 1,
+            "columns": {
+                "type": "static",
+                "count": 2,
+                "gutter": 20.0,
+                "height": 6.0,
+            },
+        }),
+    )
+    .unwrap();
+    let d = s.doc().unwrap();
+    let mtext_h = d.model.last().unwrap().handle;
+
+    // Clicking on column 1 text (x=10, y=-2.5) and column 2 text (x=70, y=-2.5) should pick the MText
+    assert_eq!(pick(d, &Space::Model, Vec2::new(10.0, -2.5), 0.5), Some(mtext_h), "column 1 text should pick");
+    assert_eq!(pick(d, &Space::Model, Vec2::new(70.0, -2.5), 0.5), Some(mtext_h), "column 2 text should pick");
+
+    // Clicking in the empty gutter between the two columns at the same y=-2.5 must NOT pick the MText
+    assert_eq!(pick(d, &Space::Model, Vec2::new(50.0, -2.5), 0.5), None, "gutter between columns must not pick MText");
+}
