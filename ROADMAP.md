@@ -150,3 +150,8 @@ Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md)
 ## Shared UI workspace integration
 
 Tool Sets, Layers and Properties use shared docking with persisted layouts, keyboard focus and compact toolbar overflow. No milestone percentage change.
+
+
+### Windows installer unification — release preparation, 2026-10-12
+
+The shared craft-installer UI preserves this revision's install options and provides persistent installation, repair and Windows Settings removal completion screens. Silent modes stay unattended. Earlier Windows acceptance is recorded in packaging/windows/README.md; normal CI and production-profile upgrade qualification against pinned current releases are in progress. No release or PR has been published.
