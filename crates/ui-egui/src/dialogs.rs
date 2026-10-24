@@ -149,8 +149,9 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
 }
 
 /// The polar and object snap tracking options of Drafting Settings: additional angles
-/// (POLARMODE bit 4, POLARADDANG), tracking on every polar angle (bit 2) and angles relative to
-/// the last segment (bit 1).
+/// (POLARMODE bit 4, POLARADDANG), tracking on every polar angle (bit 2), angles relative to
+/// the last segment (bit 1) and points acquired by holding Shift instead of resting on them
+/// (bit 8).
 fn tracking_options(ui: &mut egui::Ui, s: &mut cadcraft_engine::Settings) {
     use cadcraft_engine::snap::tracking::polarmode;
     /// A radio button for POLARMODE `bit` being `on`.
@@ -189,6 +190,11 @@ fn tracking_options(ui: &mut egui::Ui, s: &mut cadcraft_engine::Settings) {
     ui.horizontal(|ui| {
         flag(ui, &mut s.polar_flags, polarmode::RELATIVE, false, crate::tl!("Absolute"));
         flag(ui, &mut s.polar_flags, polarmode::RELATIVE, true, crate::tl!("Relative to last segment"));
+    });
+    ui.label(crate::tl!("Alignment Point Acquisition"));
+    ui.horizontal(|ui| {
+        flag(ui, &mut s.polar_flags, polarmode::SHIFT_ACQUIRE, false, crate::tl!("Automatic"));
+        flag(ui, &mut s.polar_flags, polarmode::SHIFT_ACQUIRE, true, crate::tl!("Shift to Acquire"));
     });
 }
 
