@@ -503,6 +503,12 @@ fn preferences(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>
         changes.insert("timeSensitiveRightClick".into(), json!(timed));
     }
     hint(ui, crate::tl!("Turned off, a right-click while a command runs always opens the shortcut menu."));
+    ui.add_space(6.0);
+    let mut wheel_zoom = app.options.wheel_zoom;
+    if ui.checkbox(&mut wheel_zoom, crate::tl!("Mouse wheel zooms (instead of scrolling)")).changed() {
+        changes.insert("wheelZoom".into(), json!(wheel_zoom));
+    }
+    hint(ui, crate::tl!("By default on macOS, trackpad and Magic Mouse scrolling pans the drawing. Enable this to make the wheel always zoom."));
 }
 
 fn profiles(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {

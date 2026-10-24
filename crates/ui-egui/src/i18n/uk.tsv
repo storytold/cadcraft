@@ -537,6 +537,8 @@
 	Models	Моделі
 	Modify	Модифікація
 	Move	Перемістити
+	Mouse wheel zooms (instead of scrolling)	Коліщатко миші масштабує (замість прокручування)
+	By default on macOS, trackpad and Magic Mouse scrolling pans the drawing. Enable this to make the wheel always zoom.	Типово в macOS прокручування трекпадом і Magic Mouse панорамує креслення. Увімкніть, щоб коліщатко завжди масштабувало.
 	Move/Copy/Rotate	Перемістити/Копіювати/Повернути
 	Multileader	Мультивиноска
 	Multileader Style...	Стиль мультивиносок...

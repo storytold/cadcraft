@@ -533,6 +533,8 @@ menu	Modify	Edita
 	Models	Modelli
 	Modify	Modifica
 	Move	Sposta
+	Mouse wheel zooms (instead of scrolling)	La rotellina del mouse fa zoom (invece di scorrere)
+	By default on macOS, trackpad and Magic Mouse scrolling pans the drawing. Enable this to make the wheel always zoom.	Su macOS, per impostazione predefinita, lo scorrimento con trackpad e Magic Mouse sposta il disegno. Attivare questa opzione perché la rotellina faccia sempre zoom.
 	Move/Copy/Rotate	Sposta/Copia/Ruota
 	Multileader	Multidirettrice
 	Multileader Style...	Stile multidirettrice...
