@@ -1969,9 +1969,26 @@ struct Objects {
     layout_views: Vec<(String, (Vec2, f64))>,
     /// SORTENTSTABLE objects: (owning block record handle, entity handle → sort handle).
     sortents: Vec<(String, HashMap<Handle, u64>)>,
+    /// DICTIONARY handle (upper case) → the handle of its owner (an MTEXT's extension dictionary).
+    dict_owner: HashMap<String, String>,
+}
+
+/// The owner (group 330 outside the `{ACAD_REACTORS` list) of an object, upper case.
+fn owner_of(tags: &[Tag]) -> Option<String> {
+    let mut in_list = false;
+    for t in tags {
+        match (t.code, t.str().trim()) {
+            (102, v) => in_list = v.starts_with('{') && !v.starts_with("{ACAD_XDICTIONARY"),
+            (330, v) if !in_list => return Some(v.to_ascii_uppercase()),
+            _ => {}
+        }
+    }
+    None
 }
 
 const MAX_OBJECTS: usize = 1_000_000;
+/// The extension dictionary entry holding an MTEXT's real contents.
+const MTEXT_RT_KEY: &str = "ACAD_MTEXT_2008_RT";
 
 impl Objects {
     fn add(&mut self, kind: &str, tags: &[Tag]) {
@@ -1985,6 +2002,9 @@ impl Objects {
                 }
             }
             "DICTIONARY" => {
+                if let Some(o) = owner_of(tags).filter(|_| self.dict_owner.len() < MAX_OBJECTS) {
+                    self.dict_owner.insert(h.clone(), o);
+                }
                 let mut name: Option<String> = None;
                 for t in tags {
                     match t.code {
@@ -2022,6 +2042,41 @@ impl Objects {
         }
     }
 
+    /// MTEXT with an `ACAD_MTEXT_2008_RT` entry in its extension dictionary: AutoCAD keeps the
+    /// real contents there (paragraph alignment such as `\\pxqc;`) and writes an approximation
+    /// for older readers in the entity itself (a `\\pi` indent instead of centring). AutoCAD
+    /// shows the XRECORD's contents, so they replace the entity's.
+    fn apply_mtext_contents(&self, d: &mut Drawing) {
+        for (xh, tags) in &self.xrecords {
+            if self.names.get(xh).map(String::as_str) != Some(MTEXT_RT_KEY) {
+                continue;
+            }
+            let Some(mtext) = owner_of(tags).and_then(|dict| self.dict_owner.get(&dict)).and_then(|h| Handle::parse_hex(h)) else { continue };
+            let mut text = String::new();
+            for t in tags.iter().filter(|t| t.code == 1 || t.code == 3) {
+                if text.len() > crate::dxf_ext::MAX_PAYLOAD {
+                    break;
+                }
+                text.push_str(&t.str());
+            }
+            if text.trim().is_empty() {
+                continue;
+            }
+            let set = |e: &mut Entity| {
+                if let EntityKind::MText(m) = &mut e.kind {
+                    m.contents = text.clone();
+                }
+            };
+            if d.modify_entity(mtext, set).is_err() {
+                for b in d.blocks.values_mut() {
+                    if std::sync::Arc::make_mut(b).entities.modify(mtext, set) {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     /// The text of the CADCraft XRECORD stored under `key` in a dictionary (its 1/3 strings).
     fn xrecord_text(&self, key: &str) -> Option<String> {
         let h = self.names.iter().find(|(_, n)| n.as_str() == key).map(|(h, _)| h)?;
@@ -2037,6 +2092,7 @@ impl Objects {
     }
 
     fn apply(self, d: &mut Drawing, rx: &Rx) {
+        self.apply_mtext_contents(d);
         if let Some(style) = self.xrecord_text(crate::dxf_ext::MLEADER_STYLE_KEY).filter(|s| !s.trim().is_empty()) {
             d.header.set_str("CMLEADERSTYLE", &style);
         }
