@@ -16,6 +16,8 @@ use crate::theme::Tokens;
 
 /// The Block Attribute Manager (BATTMAN).
 mod battman;
+/// The Dimension Style Manager (DIMSTYLE).
+mod dimstyle;
 
 /// Open the dialog for a typed or menu-invoked command. `None` if `id` has no dialog here or the
 /// call carries parameters.
@@ -28,6 +30,7 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
         "linetype" | "lt" | "ltype" => "linetype",
         "ddptype" | "ptype" => "ptype",
         "style" | "st" => "textstyle",
+        "dimstyle" | "dimstyle.dimension" | "d" | "dst" | "ddim" => "dimstyle",
         "tablestyle" | "ts" => "tablestyle",
         "mleaderstyle" | "mls" => "mleaderstyle",
         "pagesetup" => "pagesetup",
@@ -49,6 +52,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
         "linetype" => linetype(app, ctx, open),
         "ptype" => point_style(app, ctx, open),
         "textstyle" => text_style(app, ctx, open),
+        "dimstyle" => dimstyle::dialog(app, ctx, open),
         "tablestyle" => table_style(app, ctx, open),
         "mleaderstyle" => mleader_style(app, ctx, open),
         "pagesetup" => page_setup(app, ctx, open),
