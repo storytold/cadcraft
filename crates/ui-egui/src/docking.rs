@@ -16,6 +16,8 @@ pub enum Panel {
     Properties,
     #[serde(rename = "externalReferences")]
     ExternalRefs,
+    /// The selected block reference's attributes, opened when one is selected.
+    Attributes,
 }
 
 impl Panel {
@@ -28,6 +30,7 @@ impl Panel {
             Self::Layers => "layers",
             Self::Properties => "properties",
             Self::ExternalRefs => "externalReferences",
+            Self::Attributes => "attributes",
         }
     }
     fn label(self) -> &'static str {
@@ -38,6 +41,7 @@ impl Panel {
             Self::Layers => "Layers",
             Self::Properties => "Properties",
             Self::ExternalRefs => "External References",
+            Self::Attributes => "Attributes",
         }
     }
     fn default_side(self) -> Zone {
@@ -48,10 +52,12 @@ impl Panel {
             Self::Layers => Zone::Right,
             Self::Properties => Zone::Right,
             Self::ExternalRefs => Zone::Right,
+            Self::Attributes => Zone::Right,
         }
     }
-    /// Palettes outside the default arrangement, opened on request (QUICKCALC).
-    pub const ON_DEMAND: &[Self] = &[Self::QuickCalc];
+    /// Palettes outside the default arrangement, opened on request (QUICKCALC) or by the selection
+    /// (the Attributes panel, when a block reference with attributes is selected).
+    pub const ON_DEMAND: &[Self] = &[Self::QuickCalc, Self::Attributes];
     fn parse(id: &str) -> Result<Self, String> {
         Self::ALL.iter().chain(Self::ON_DEMAND).copied().find(|panel| panel.id() == id).ok_or_else(|| format!("Unknown panel: {id}"))
     }
@@ -195,12 +201,13 @@ impl Workspace {
         }
         let restored = location.as_ref().is_some_and(|location| next.layout.restore(panel, location).is_ok());
         if !restored {
-            next.layout
-                .apply_with_permissions(
-                    Action::OpenAt { panel, anchor: Panel::Canvas, placement: Placement::Split(panel.default_side()) },
-                    permissions,
-                )
-                .map_err(|error| error.to_string())?;
+            // The Attributes panel first opens in the palette column, right after Layers.
+            let (anchor, placement) = if panel == Panel::Attributes && next.layout.contains(&Panel::Layers) {
+                (Panel::Layers, Placement::Split(Zone::Center))
+            } else {
+                (Panel::Canvas, Placement::Split(panel.default_side()))
+            };
+            next.layout.apply_with_permissions(Action::OpenAt { panel, anchor, placement }, permissions).map_err(|error| error.to_string())?;
         }
         next.validate()?;
         *self = next;
@@ -315,6 +322,25 @@ pub fn command(app: &mut crate::CadApp, reset: bool, params: &Value) -> Result<V
     Ok(json!({"docking": app.ui.docking}))
 }
 
+/// Opens the Attributes panel when a block reference with attributes becomes the selection and
+/// closes it when the selection stops being one. Closing it by hand sticks until the selection
+/// changes, so it never fights the user. The target is the drawing and the handle, so a block with
+/// the same handle in another drawing counts as a new selection. A panel restored open with no
+/// target to show is closed.
+fn follow_selection(workspace: &mut Workspace, app: &crate::CadApp, ui: &egui::Ui) {
+    let id = egui::Id::new("attributes-panel-target");
+    let target = if app.ui.show_palettes { crate::palettes::attributes_key(app) } else { None };
+    let last = ui.data(|d| d.get_temp::<Option<(u64, cadcraft_engine::doc::Handle)>>(id)).flatten();
+    if target == last {
+        if target.is_none() && workspace.layout.contains(&Panel::Attributes) {
+            let _ = workspace.set_visible(Panel::Attributes, false);
+        }
+        return;
+    }
+    ui.data_mut(|d| d.insert_temp(id, target));
+    let _ = if target.is_some() { workspace.reveal_panel(Panel::Attributes) } else { workspace.set_visible(Panel::Attributes, false) };
+}
+
 pub fn show(app: &mut crate::CadApp, ui: &mut egui::Ui) {
     let t = crate::theme::Tokens::get();
     let mut workspace = app.ui.docking.clone();
@@ -323,6 +349,7 @@ pub fn show(app: &mut crate::CadApp, ui: &mut egui::Ui) {
         workspace = Workspace::default();
         let _ = sync(&mut workspace, app);
     }
+    follow_selection(&mut workspace, app, ui);
     // Bodies can dispatch commands (including the drawing's typed command line).
     // Keep the canonical workspace accessible while rendering an immutable snapshot.
     app.ui.docking = workspace.clone();
@@ -361,6 +388,12 @@ pub fn show(app: &mut crate::CadApp, ui: &mut egui::Ui) {
                     crate::shortcut_menus::palette(app, ui, crate::palettes::properties_section, crate::shortcut_menus::properties_entries)
                 });
             }
+            Panel::Attributes => {
+                egui::ScrollArea::vertical()
+                    .id_salt("dock-attributes")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| crate::palettes::attributes_section(app, ui));
+            }
             Panel::ExternalRefs => {
                 egui::ScrollArea::both().id_salt("dock-xrefs").auto_shrink([false, false]).show(ui, |ui| crate::xrefs::section(app, ui));
             }
@@ -393,7 +426,73 @@ fn panel_limits(panel: &Panel) -> PanelLimits {
         Panel::Canvas => (egui::vec2(300.0, 180.0), 1_000_000.0),
         Panel::QuickCalc => (egui::vec2(240.0, 160.0), 600.0),
         Panel::ToolSets => (egui::vec2(220.0, 150.0), 480.0),
-        Panel::Layers | Panel::Properties | Panel::ExternalRefs => (egui::vec2(220.0, 100.0), 720.0),
+        Panel::Layers | Panel::Properties | Panel::ExternalRefs | Panel::Attributes => (egui::vec2(220.0, 100.0), 720.0),
     };
     PanelLimits { min, max: egui::vec2(max_width, 1_000_000.0) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{CadApp, Services};
+    use cadcraft_engine::Session;
+
+    /// One frame of the selection tracking, as `show` runs it.
+    fn frame(app: &mut CadApp, ctx: &egui::Context, workspace: &mut Workspace) {
+        let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))), ..Default::default() };
+        let mut output = ctx.run_ui(input, |ui| follow_selection(workspace, app, ui));
+        output.textures_delta.clear();
+    }
+
+    /// A drawing with one block reference that has an attribute; returns its handle.
+    fn app_with_block_reference() -> (CadApp, String) {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        app.run("attdef", json!({ "tag": "REV", "default": "A", "at": [0, 1] })).unwrap();
+        let line = app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+        let mut handles: Vec<String> = app.session.doc().unwrap().model.iter().map(|e| e.handle.hex()).collect();
+        handles.push(line["handles"][0].as_str().unwrap_or_default().to_string());
+        handles.sort();
+        handles.dedup();
+        app.run("block", json!({ "name": "B", "base": [0, 0], "handles": handles, "keep": "delete" })).unwrap();
+        let ins = app.run("insert", json!({ "name": "B", "at": [5, 0] })).unwrap();
+        let handle = ins["handle"].as_str().unwrap().to_string();
+        (app, handle)
+    }
+
+    #[test]
+    fn attributes_panel_follows_the_selection_and_respects_a_manual_close() {
+        let (mut app, handle) = app_with_block_reference();
+        let (ctx, mut workspace) = (egui::Context::default(), Workspace::default());
+
+        app.run("select", json!({ "handles": [handle.clone()] })).unwrap();
+        frame(&mut app, &ctx, &mut workspace);
+        assert!(workspace.layout.contains(&Panel::Attributes), "selecting the block opens the panel");
+
+        // Closed by hand: it stays closed while the same block stays selected.
+        workspace.set_visible(Panel::Attributes, false).unwrap();
+        frame(&mut app, &ctx, &mut workspace);
+        assert!(!workspace.layout.contains(&Panel::Attributes));
+
+        // Another selection and back: it opens again.
+        app.run("select", json!({ "handles": [] })).unwrap();
+        frame(&mut app, &ctx, &mut workspace);
+        app.run("select", json!({ "handles": [handle] })).unwrap();
+        frame(&mut app, &ctx, &mut workspace);
+        assert!(workspace.layout.contains(&Panel::Attributes));
+
+        // Nothing selected: it closes.
+        app.run("select", json!({ "handles": [] })).unwrap();
+        frame(&mut app, &ctx, &mut workspace);
+        assert!(!workspace.layout.contains(&Panel::Attributes));
+    }
+
+    #[test]
+    fn a_restored_attributes_panel_with_nothing_to_show_is_closed() {
+        let (mut app, _) = app_with_block_reference();
+        let (ctx, mut workspace) = (egui::Context::default(), Workspace::default());
+        workspace.reveal_panel(Panel::Attributes).unwrap();
+        assert!(workspace.layout.contains(&Panel::Attributes));
+        frame(&mut app, &ctx, &mut workspace);
+        assert!(!workspace.layout.contains(&Panel::Attributes));
+    }
 }

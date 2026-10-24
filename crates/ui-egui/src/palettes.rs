@@ -515,9 +515,14 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
 }
 
 fn prop_row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
+    prop_row_literal(ui, crate::i18n::t(label), add);
+}
+
+/// A property row whose label comes from the drawing (an attribute tag): shown as it is.
+fn prop_row_literal(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
     let t = Tokens::get();
     ui.horizontal(|ui| {
-        let mut job = egui::text::LayoutJob::simple(crate::i18n::t(label).to_string(), crate::theme::body(), t.text_dim, 106.0);
+        let mut job = egui::text::LayoutJob::simple(label.to_string(), crate::theme::body(), t.text_dim, 106.0);
         job.halign = egui::Align::RIGHT;
         let galley = ui.painter().layout_job(job);
         let (lr, _) = ui.allocate_exact_size(vec2(118.0, galley.size().y.max(22.0)), Sense::hover());
@@ -623,7 +628,12 @@ fn custom_properties(ui: &egui::Ui, app: &CadApp, h: cadcraft_engine::doc::Handl
 
 /// A greyed value computed from the geometry.
 fn read_only(ui: &mut egui::Ui, text: &str) {
-    value_box(ui, crate::i18n::t(text), false, false).on_hover_text(crate::tl!("Read-only"));
+    read_only_literal(ui, crate::i18n::t(text));
+}
+
+/// A greyed value that comes from the drawing (a block name, an attribute value): shown as it is.
+fn read_only_literal(ui: &mut egui::Ui, text: &str) {
+    value_box(ui, text, false, false).on_hover_text(crate::tl!("Read-only"));
 }
 
 /// The Properties header: All/My, the selection-type filter and the PICKADD / Select Objects /
@@ -1155,6 +1165,74 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     }
 }
 
+/// The block reference the Attributes panel edits: the one selected object, when it has attributes.
+pub(crate) fn attributes_target(app: &CadApp) -> Option<cadcraft_engine::doc::Handle> {
+    let sel = app.session.selection();
+    if sel.len() != 1 {
+        return None;
+    }
+    let h = *sel.first()?;
+    match &app.session.doc().ok()?.entity(h)?.kind {
+        EntityKind::Insert(i) if !i.attribs.is_empty() => Some(h),
+        _ => None,
+    }
+}
+
+/// The Attributes panel's target with the drawing it belongs to (its uid), so the same handle in
+/// another open drawing is told apart.
+pub(crate) fn attributes_key(app: &CadApp) -> Option<(u64, cadcraft_engine::doc::Handle)> {
+    let h = attributes_target(app)?;
+    Some((app.session.state().ok()?.uid, h))
+}
+
+/// Set attribute `tag` of block reference `h` to `value` through ATTEDIT, which changes only the
+/// attributes of that reference and goes through undo like any other edit.
+fn set_attribute(app: &mut CadApp, h: cadcraft_engine::doc::Handle, tag: &str, value: String) {
+    let _ = app.run("attedit", json!({ "handle": h.hex(), "values": { tag: value } }));
+}
+
+/// The Attributes panel: the selected block reference's attributes as tag / value rows, edited in
+/// place through ATTEDIT. Constant attributes can't be edited. A tag used twice in one block
+/// stays read-only too, because ATTEDIT addresses an attribute by its tag. Block names, tags and
+/// values come from the drawing, so they are shown as they are, never translated.
+pub(crate) fn attributes_section(app: &mut CadApp, ui: &mut egui::Ui) {
+    let Some((uid, h)) = attributes_key(app) else {
+        ui.add_space(8.0);
+        ui.horizontal_wrapped(|ui| ui.colored_label(Tokens::get().text_dim, crate::tl!("Select a block reference that has attributes.")));
+        return;
+    };
+    // A dynamic block reference shows its dynamic block's name, as Properties does.
+    let dynamic_name = custom_properties(ui, app, h).map(|(name, _)| name);
+    let Ok(d) = app.session.doc() else { return };
+    let Some(EntityKind::Insert(i)) = d.entity(h).map(|e| &e.kind) else { return };
+    let block = dynamic_name.unwrap_or_else(|| i.block.clone());
+    let rows: Vec<(String, String, bool)> = i
+        .attribs
+        .iter()
+        .map(|a| {
+            let unique = i.attribs.iter().filter(|o| o.tag.eq_ignore_ascii_case(&a.tag)).count() == 1;
+            (a.tag.clone(), a.text.value.clone(), unique && !a.constant)
+        })
+        .collect();
+    ui.add_space(4.0);
+    prop_row(ui, "Block", |ui| read_only_literal(ui, &block));
+    let mut set: Option<(String, String)> = None;
+    for (tag, value, editable) in &rows {
+        prop_row_literal(ui, tag, |ui| {
+            if *editable {
+                if let Some(v) = edit_field(ui, ui.id().with(("attrib", uid, h, tag)), value.clone()) {
+                    set = Some((tag.clone(), v));
+                }
+            } else {
+                read_only_literal(ui, value);
+            }
+        });
+    }
+    if let Some((tag, value)) = set {
+        set_attribute(app, h, &tag, value);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1187,5 +1265,109 @@ mod tests {
             output.textures_delta.clear();
         }
         assert!(painted_blue, "a ByLayer entity on a blue layer needs a blue Properties swatch");
+    }
+
+    fn collect_text(shape: &Shape, out: &mut Vec<String>) {
+        match shape {
+            Shape::Text(t) => out.push(t.galley.text().to_string()),
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_text(s, out)),
+            _ => {}
+        }
+    }
+
+    /// Everything the Properties palette paints for the current selection, one string per text.
+    fn painted_texts(app: &mut CadApp, section: fn(&mut CadApp, &mut egui::Ui)) -> Vec<String> {
+        let ctx = egui::Context::default();
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 1200.0))), ..Default::default() };
+        let mut texts = Vec::new();
+        for _ in 0..2 {
+            app.logic(&ctx);
+            let mut output = ctx.run_ui(input.clone(), |ui| section(app, ui));
+            texts.clear();
+            output.shapes.iter().for_each(|s| collect_text(&s.shape, &mut texts));
+            output.textures_delta.clear();
+        }
+        texts
+    }
+
+    /// Block `B`: a line with the attributes `(tag, default)`.
+    fn app_with_block(attribs: &[(&str, &str)]) -> CadApp {
+        app_with_named_block("B", attribs)
+    }
+
+    /// Block `name`: a line with the attributes `(tag, default)`.
+    fn app_with_named_block(name: &str, attribs: &[(&str, &str)]) -> CadApp {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        for (n, (tag, default)) in attribs.iter().enumerate() {
+            app.run("attdef", json!({ "tag": tag, "default": default, "at": [0, n + 1] })).unwrap();
+        }
+        let line = app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+        let mut handles: Vec<String> = app.session.doc().unwrap().model.iter().map(|e| e.handle.hex()).collect();
+        handles.push(line["handles"][0].as_str().unwrap_or_default().to_string());
+        handles.sort();
+        handles.dedup();
+        app.run("block", json!({ "name": name, "base": [0, 0], "handles": handles, "keep": "delete" })).unwrap();
+        app
+    }
+
+    /// Insert block `B` at `x` and return the reference's handle.
+    fn insert_block(app: &mut CadApp, x: i32) -> cadcraft_engine::doc::Handle {
+        insert_named_block(app, "B", x)
+    }
+
+    /// Insert block `name` at `x` and return the reference's handle.
+    fn insert_named_block(app: &mut CadApp, name: &str, x: i32) -> cadcraft_engine::doc::Handle {
+        let r = app.run("insert", json!({ "name": name, "at": [x, 0] })).unwrap();
+        cadcraft_engine::doc::Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap()
+    }
+
+    /// The value of attribute `tag` on block reference `h`.
+    fn attribute_value(app: &CadApp, h: cadcraft_engine::doc::Handle, tag: &str) -> String {
+        let EntityKind::Insert(i) = &app.session.doc().unwrap().entity(h).unwrap().kind else { panic!("not a block reference") };
+        i.attribs.iter().find(|a| a.tag == tag).unwrap().text.value.clone()
+    }
+
+    const CODICE_REV: [(&str, &str); 2] = [("CODICE", "8231"), ("REV", "A")];
+
+    #[test]
+    fn editing_an_attribute_changes_only_the_selected_block_reference() {
+        let mut app = app_with_block(&CODICE_REV);
+        let (first, second) = (insert_block(&mut app, 5), insert_block(&mut app, 50));
+        set_attribute(&mut app, first, "REV", "B".into());
+        assert_eq!(attribute_value(&app, first, "REV"), "B");
+        assert_eq!(attribute_value(&app, first, "CODICE"), "8231");
+        assert_eq!(attribute_value(&app, second, "REV"), "A");
+        assert_eq!(attribute_value(&app, second, "CODICE"), "8231");
+    }
+
+    #[test]
+    fn block_names_from_the_drawing_are_shown_untranslated() {
+        // A block named like an interface word ("Color" is "Colore" in Italian) must not be taken for one.
+        let mut app = app_with_named_block("Color", &CODICE_REV);
+        let h = insert_named_block(&mut app, "Color", 5);
+        app.run("select", json!({ "handles": [h.hex()] })).unwrap();
+        let texts = crate::i18n::with_language("it", || painted_texts(&mut app, attributes_section));
+        assert!(texts.iter().any(|t| t == "Blocco"), "the fixed label is translated: {texts:?}");
+        assert!(texts.iter().any(|t| t == "Color"), "the block name stays as the drawing has it: {texts:?}");
+        assert!(!texts.iter().any(|t| t == "Colore"), "the block name was translated: {texts:?}");
+    }
+
+    #[test]
+    fn attributes_panel_lists_the_selected_block_reference_attributes() {
+        let mut app = app_with_block(&CODICE_REV);
+        let ins = insert_block(&mut app, 5);
+        app.run("select", json!({ "handles": [ins.hex()] })).unwrap();
+
+        assert_eq!(attributes_target(&app), Some(ins));
+        assert_eq!(attributes_key(&app).map(|(_, h)| h), Some(ins));
+        let texts = painted_texts(&mut app, attributes_section);
+        for want in ["CODICE", "REV"] {
+            assert!(texts.iter().any(|t| t == want), "the panel shows `{want}`; painted: {texts:?}");
+        }
+
+        // Anything else selected, or nothing, leaves the panel with just its hint.
+        app.run("select", json!({ "handles": [] })).unwrap();
+        assert_eq!(attributes_target(&app), None);
+        assert!(!painted_texts(&mut app, attributes_section).iter().any(|t| t == "CODICE"));
     }
 }
