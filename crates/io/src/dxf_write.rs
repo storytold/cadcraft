@@ -2349,7 +2349,7 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
     // ---------------- BLOCKS ----------------
     w.s(0, "SECTION");
     w.s(2, "BLOCKS");
-    let block = |w: &mut W, name: &str, desc: &str, brh: &str, base: Vec3, flags: i64, ents: &mut dyn Iterator<Item = &Entity>, paper: bool| {
+    let block = |w: &mut W, (name, desc): (&str, &str), brh: &str, base: Vec3, flags: i64, ents: &mut dyn Iterator<Item = &Entity>, paper: bool| {
         let bh = w.h();
         w.s(0, "BLOCK");
         w.s(5, bh);
@@ -2382,16 +2382,16 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
         w.s(8, "0");
         w.s(100, "AcDbBlockEnd");
     };
-    block(&mut w, "*Model_Space", "", &ms_br, Vec3::ZERO, 0, &mut std::iter::empty(), false);
+    block(&mut w, ("*Model_Space", ""), &ms_br, Vec3::ZERO, 0, &mut std::iter::empty(), false);
     for (i, (n, h, l)) in ps_brs.iter().enumerate() {
         if i == 0 {
-            block(&mut w, n, "", h, Vec3::ZERO, 0, &mut std::iter::empty(), true);
+            block(&mut w, (n, ""), h, Vec3::ZERO, 0, &mut std::iter::empty(), true);
         } else {
-            block(&mut w, n, "", h, Vec3::ZERO, 0, &mut sheet_first(l).into_iter(), true);
+            block(&mut w, (n, ""), h, Vec3::ZERO, 0, &mut sheet_first(l).into_iter(), true);
         }
     }
     for (n, h, b) in &user_blocks {
-        block(&mut w, n, &b.description, h, b.base, if b.anonymous { 1 } else { 0 }, &mut b.entities.iter().map(|e| e.as_ref()), false);
+        block(&mut w, (n, &b.description), h, b.base, if b.anonymous { 1 } else { 0 }, &mut b.entities.iter().map(|e| e.as_ref()), false);
     }
     // Generated geometry entities (dimension, arrowhead and table blocks) need handles.
     for (_, _, ents) in dim_defs.iter_mut().chain(arrow_defs.iter_mut()).chain(table_defs.iter_mut()) {
@@ -2401,13 +2401,13 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
         }
     }
     for (n, h, ents) in &dim_defs {
-        block(&mut w, n, "", h, Vec3::ZERO, 1, &mut ents.iter(), false);
+        block(&mut w, (n, ""), h, Vec3::ZERO, 1, &mut ents.iter(), false);
     }
     for (n, h, ents) in &arrow_defs {
-        block(&mut w, n, "", h, Vec3::ZERO, 0, &mut ents.iter(), false);
+        block(&mut w, (n, ""), h, Vec3::ZERO, 0, &mut ents.iter(), false);
     }
     for (n, h, ents) in &table_defs {
-        block(&mut w, n, "", h, Vec3::ZERO, 1, &mut ents.iter(), false);
+        block(&mut w, (n, ""), h, Vec3::ZERO, 1, &mut ents.iter(), false);
     }
     w.s(0, "ENDSEC");
 
@@ -2588,7 +2588,7 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
         w.s(3, &l.name);
         w.s(350, layout_handles.get(i).cloned().unwrap_or_default());
     }
-    let layout_obj = |w: &mut W, h: &str, name: &str, tab: i64, brh: &str, flags: i64, page: &PageSetup, view: Option<(Vec2, f64)>| {
+    let layout_obj = |w: &mut W, h: &str, (name, tab): (&str, i64), brh: &str, flags: i64, page: &PageSetup, view: Option<(Vec2, f64)>| {
         // Plot scale: a standard scale when fitting or 1:1, otherwise custom (142 paper units
         // per 143 drawing units).
         let scale = if page.scale.is_finite() && page.scale > 0.0 { page.scale } else { 1.0 };
@@ -2673,10 +2673,10 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
     // plot type 5, "Layout information" (DXF Reference, PLOTSETTINGS group 74), which means
     // nothing for model space: another program's Plot dialog then shows no plot area or scale.
     let model_page = PageSetup { plot_area: "extents".into(), scale_to_fit: true, ..PageSetup::default() };
-    layout_obj(&mut w, &model_layout, "Model", 0, &ms_br, 1, &model_page, None);
+    layout_obj(&mut w, &model_layout, ("Model", 0), &ms_br, 1, &model_page, None);
     for (i, (_, brh, l)) in ps_brs.iter().enumerate() {
         let h = layout_handles.get(i).cloned().unwrap_or_default();
-        layout_obj(&mut w, &h, &l.name, i64::from(l.tab_order.max(1)), brh, 1, &l.page, l.view);
+        layout_obj(&mut w, &h, (&l.name, i64::from(l.tab_order.max(1))), brh, 1, &l.page, l.view);
     }
     // Raster image definitions.
     w.t.extend(crate::dxf_image::objects(&cx.images, &root_dict));

@@ -157,7 +157,7 @@ fn style(d: &mut Drawing, name: &str, font: &str) {
     d.text_styles.push(TextStyle { name: name.into(), font: font.into(), ..TextStyle::default() });
 }
 
-fn text(d: &mut Drawing, space: &Space, style: &str, at: (f64, f64), value: &str, rotation: f64, width_factor: f64, oblique: f64) {
+fn text(d: &mut Drawing, space: &Space, style: &str, at: (f64, f64), value: &str, (rotation, width_factor, oblique): (f64, f64, f64)) {
     let t = Text {
         insert: Vec3::new(at.0, at.1, 0.0),
         align_pt: None,
@@ -229,7 +229,7 @@ fn font_file(pdf: &str, bytes_of: &[u8]) -> Vec<u8> {
 #[test]
 fn truetype_text_is_embedded_as_text() {
     let mut d = drawing();
-    text(&mut d, &Space::Model, "Real", (0.0, 0.0), "ABBA", 0.0, 1.0, 0.0);
+    text(&mut d, &Space::Model, "Real", (0.0, 0.0), "ABBA", (0.0, 1.0, 0.0));
     let p = pdf(&d, &Space::Model, json!({}));
     // A Type0 font over a CIDFontType2 subset with a ToUnicode map.
     assert!(p.contains("/Subtype /Type0") && p.contains("/Encoding /Identity-H") && p.contains("/Subtype /CIDFontType2"), "{p}");
@@ -257,7 +257,7 @@ fn truetype_text_is_embedded_as_text() {
 #[test]
 fn the_subset_is_a_valid_truetype_font() {
     let mut d = drawing();
-    text(&mut d, &Space::Model, "Real", (0.0, 0.0), "A", 0.0, 1.0, 0.0);
+    text(&mut d, &Space::Model, "Real", (0.0, 0.0), "A", (0.0, 1.0, 0.0));
     let bytes = plot(&d, &Space::Model, &json!({"compress": false})).unwrap();
     let p: String = bytes.iter().map(|b| if b.is_ascii() { char::from(*b) } else { '?' }).collect();
     let file = font_file(&p, &bytes);
@@ -279,9 +279,9 @@ fn the_subset_is_a_valid_truetype_font() {
 fn rotation_width_factor_and_obliquing_go_into_the_text_matrix() {
     let mut d = drawing();
     let quarter = std::f64::consts::FRAC_PI_2;
-    text(&mut d, &Space::Model, "Real", (0.0, 0.0), "A", quarter, 1.0, 0.0);
-    text(&mut d, &Space::Model, "Real", (0.0, 50.0), "A", 0.0, 2.0, 0.0);
-    text(&mut d, &Space::Model, "Real", (0.0, 100.0), "A", 0.0, 1.0, 15f64.to_radians());
+    text(&mut d, &Space::Model, "Real", (0.0, 0.0), "A", (quarter, 1.0, 0.0));
+    text(&mut d, &Space::Model, "Real", (0.0, 50.0), "A", (0.0, 2.0, 0.0));
+    text(&mut d, &Space::Model, "Real", (0.0, 100.0), "A", (0.0, 1.0, 15f64.to_radians()));
     let m = matrices(&pdf(&d, &Space::Model, json!({})));
     assert_eq!(m.len(), 3);
     // Rotated a quarter turn: the baseline points up, "up" points left.
@@ -300,16 +300,16 @@ fn rotation_width_factor_and_obliquing_go_into_the_text_matrix() {
 #[test]
 fn fonts_that_forbid_embedding_and_the_geometry_option_draw_outlines() {
     let mut d = drawing();
-    text(&mut d, &Space::Model, "Locked", (0.0, 0.0), "AB", 0.0, 1.0, 0.0);
+    text(&mut d, &Space::Model, "Locked", (0.0, 0.0), "AB", (0.0, 1.0, 0.0));
     let p = pdf(&d, &Space::Model, json!({}));
     assert!(!p.contains("/FontFile2") && !p.contains("BT\n") && p.contains("h\nf\n"), "restricted licence: outlines");
     let mut d = drawing();
-    text(&mut d, &Space::Model, "Real", (0.0, 0.0), "AB", 0.0, 1.0, 0.0);
+    text(&mut d, &Space::Model, "Real", (0.0, 0.0), "AB", (0.0, 1.0, 0.0));
     let p = pdf(&d, &Space::Model, json!({"text": "geometry"}));
     assert!(!p.contains("/FontFile2") && !p.contains("BT\n") && p.contains("h\nf\n"), "text as geometry");
     // The stroke font is always geometry.
     let mut d = drawing();
-    text(&mut d, &Space::Model, "Standard", (0.0, 0.0), "AB", 0.0, 1.0, 0.0);
+    text(&mut d, &Space::Model, "Standard", (0.0, 0.0), "AB", (0.0, 1.0, 0.0));
     let p = pdf(&d, &Space::Model, json!({}));
     assert!(!p.contains("BT\n") && p.contains(" S\n") || p.contains("\nS\n"));
 }
@@ -319,8 +319,8 @@ fn text_seen_through_a_viewport_and_on_layers() {
     let mut d = drawing();
     let paper = Space::Paper("Layout1".into());
     // Model: one word well inside the viewport, one cut by its right edge.
-    text(&mut d, &Space::Model, "Real", (0.0, 0.0), "AB", 0.0, 1.0, 0.0);
-    text(&mut d, &Space::Model, "Real", (88.0, 0.0), "BA", 0.0, 1.0, 0.0);
+    text(&mut d, &Space::Model, "Real", (0.0, 0.0), "AB", (0.0, 1.0, 0.0));
+    text(&mut d, &Space::Model, "Real", (88.0, 0.0), "BA", (0.0, 1.0, 0.0));
     let vp = Viewport {
         center: Vec3::new(150.0, 100.0, 0.0),
         width: 100.0,
@@ -335,7 +335,7 @@ fn text_seen_through_a_viewport_and_on_layers() {
         on: true,
     };
     d.add(&paper, Common::default(), EntityKind::Viewport(vp)).unwrap();
-    text(&mut d, &paper, "Real", (20.0, 20.0), "B", 0.0, 1.0, 0.0);
+    text(&mut d, &paper, "Real", (20.0, 20.0), "B", (0.0, 1.0, 0.0));
     let p = pdf(&d, &paper, json!({}));
     let tj = p.lines().filter(|l| l.ends_with(" Tj")).count();
     // "AB" inside, the paper-space "B", and the glyph of "BA" left of the edge: real text. The
