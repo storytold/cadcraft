@@ -6,6 +6,7 @@
 mod dxf_raw;
 
 mod dxf_ext;
+mod dxf_fields;
 mod dxf_image;
 mod dxf_mleader;
 mod dxf_read;
@@ -13,6 +14,7 @@ mod dxf_table;
 mod dxf_write;
 mod dxf_xref;
 pub mod pdf;
+pub mod pia;
 pub mod plotter;
 pub mod svg;
 mod svg_read;

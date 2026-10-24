@@ -375,6 +375,27 @@ pub fn pdf_items(d: &Drawing, items: &[(Space, PdfOptions)], o: &PdfOptions) -> 
     Ok(assemble(d, &pages, &fonts, o, &title))
 }
 
+/// Write a vector PDF of sheets from several drawings, one page per `(drawing, space)` in order
+/// (at most [`MAX_PAGES`]). Each drawing has its own layers, so none become PDF layers.
+pub fn pdf_book(items: &[(&Drawing, Space)], o: &PdfOptions) -> Result<Vec<u8>> {
+    let Some((first, _)) = items.first() else { return Err(IoError::Format("there are no sheets to plot".into())) };
+    if items.len() > MAX_PAGES {
+        return Err(IoError::Format(format!("at most {MAX_PAGES} sheets fit in one PDF")));
+    }
+    let mut po = o.clone();
+    po.layers = false;
+    let pages = items
+        .iter()
+        .map(|(d, s)| {
+            let links = all_links(d, &po);
+            sheet(d, s, &po, &links)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let title = if po.title.is_empty() { pages.first().map(|p| p.label.clone()).unwrap_or_default() } else { po.title.clone() };
+    let fonts = if po.text_as_geometry { fonts::Fonts::default() } else { fonts::Fonts::collect(pages.iter().map(|p| &p.list)) };
+    Ok(assemble(first, &pages, &fonts, &po, &title))
+}
+
 /// One plotted sheet, ready to be written as a page.
 struct SheetPage {
     /// Page size in points.

@@ -48,6 +48,9 @@ fn text_produces_strokes() {
         &Space::Model,
         Common::default(),
         EntityKind::Text(cadcraft_doc::Text {
+            formula: None,
+            backwards: false,
+            upside_down: false,
             insert: Vec3::ZERO,
             align_pt: None,
             height: 1.0,
@@ -255,6 +258,9 @@ fn text_doc(style_font: &str, value: &str) -> Drawing {
         &Space::Model,
         Common::default(),
         EntityKind::Text(cadcraft_doc::Text {
+            formula: None,
+            backwards: false,
+            upside_down: false,
             insert: Vec3::ZERO,
             align_pt: None,
             height: 1.0,
@@ -309,13 +315,22 @@ fn backwards_and_upside_down_mirror_text() {
     let mut d = text_doc("CADCraft Stroke", "ABC");
     let normal = build(&d, &Space::Model, &Options::default()).bounds;
     assert!(normal.min.x >= -1e-9 && normal.min.y >= -1e-9);
+    // The text's own flags mirror it (as AutoCAD: the style's only seed new text).
+    let flags = |d: &mut Drawing, b: bool, u: bool| {
+        let h = d.model.iter().next().map(|e| e.handle).unwrap();
+        let _ = d.modify_entity(h, |e| {
+            if let EntityKind::Text(t) = &mut e.kind {
+                (t.backwards, t.upside_down) = (b, u);
+            }
+        });
+    };
     d.text_styles.iter_mut().for_each(|s| s.backwards = true);
+    let styled = build(&d, &Space::Model, &Options::default()).bounds;
+    assert!((styled.min.x - normal.min.x).abs() < 1e-9, "a backwards style alone does not mirror existing text");
+    flags(&mut d, true, false);
     let back = build(&d, &Space::Model, &Options::default()).bounds;
     assert!(back.max.x <= 1e-9 && (back.width() - normal.width()).abs() < 1e-9, "mirrored to the left");
-    d.text_styles.iter_mut().for_each(|s| {
-        s.backwards = false;
-        s.upside_down = true;
-    });
+    flags(&mut d, false, true);
     let up = build(&d, &Space::Model, &Options::default()).bounds;
     assert!(up.max.y <= 1e-9 && up.min.y < -0.9, "mirrored below the baseline");
 }
@@ -329,6 +344,8 @@ fn truetype_mtext_and_dimension_text() {
         &Space::Model,
         Common::default(),
         EntityKind::MText(cadcraft_doc::MText {
+            formula: None,
+            frame: false,
             insert: Vec3::ZERO,
             height: 1.0,
             width: 0.0,
@@ -764,6 +781,9 @@ fn attrib(tag: &str) -> cadcraft_doc::Attrib {
     cadcraft_doc::Attrib {
         tag: tag.into(),
         text: cadcraft_doc::Text {
+            formula: None,
+            backwards: false,
+            upside_down: false,
             insert: Vec3::new(1.0, 1.0, 0.0),
             align_pt: None,
             height: 1.0,
@@ -861,6 +881,8 @@ fn attributes_follow_the_reference_layer_and_have_no_definition() {
 fn mtext_exact_spacing_ignores_taller_lines() {
     // #711: a doubled middle line pushes the next baseline down with At least, not with Exactly.
     let mtext = |contents: &str, line_spacing: f64, line_spacing_exact: bool| cadcraft_doc::MText {
+        formula: None,
+        frame: false,
         insert: Vec3::ZERO,
         height: 1.0,
         width: 10.0,

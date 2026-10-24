@@ -1008,4 +1008,603 @@
 	Sheet Books to PDF...	Книги листов в PDF...
 	Not a number or distance: {text}	Не число и не расстояние: {text}
 	Query Texts	Запрос текстов
+	Add Separator	Добавить разделитель
+	Add to Tool Bar	Добавить на панель инструментов
+	Alias:	Псевдоним:
+	Command:	Команда:
+	Commands	Команды
+	Customize Tool Bar	Настройка панели инструментов
+	Customize Tool Bar...	Настроить панель инструментов...
+	Dock Tool Bar	Закрепить панель инструментов
+	Dock at Left	Закрепить слева
+	Dock at Top	Закрепить сверху
+	Drag buttons along the Tool Bar to reorder them, or its handle to dock it.	Перетаскивайте кнопки вдоль панели, чтобы изменить их порядок, а маркер панели — чтобы закрепить её.
+	Drag to dock the Tool Bar at the top or on the left	Перетащите, чтобы закрепить панель инструментов сверху или слева
+	Hide Tool Bar	Скрыть панель инструментов
+	Left (column)	Слева (столбец)
+	More toolbar commands	Другие команды панели инструментов
+	Move Down	Вниз
+	Move Tool Bar Button	Переместить кнопку панели инструментов
+	Move Up	Вверх
+	Position:	Положение:
+	Remove from Tool Bar	Убрать с панели инструментов
+	Reset Tool Bar	Сбросить панель инструментов
+	Reset to Default	По умолчанию
+	Search:	Поиск:
+	Separator	Разделитель
+	Shortcut:	Клавиши:
+	Show Tool Bar	Показывать панель инструментов
+	Tool Bar Position	Положение панели инструментов
+	Tool Bar buttons	Кнопки панели инструментов
+	Top	Сверху
+	Top (row)	Сверху (строка)
+	Standard Tool Bar	Стандартная панель
+	Tool Sets Tool Bar	Панель «Наборы инструментов»
+	Layers Tool Bar	Панель «Слои»
+	More Tool Sets bar commands	Другие команды панели «Наборы инструментов»
+	More Layers bar commands	Другие команды панели «Слои»
+	Current layer:	Текущий слой:
+	Tool Bar:	Панель:
+	Tool Bars	Панели инструментов
+	Show on Tool Bar	Показывать на панели
+	Current Layer	Текущий слой
+	Options	Параметры
+	Options...	Параметры...
+	Display	Экран
+	Open and Save	Открытие и сохранение
+	Selection	Выбор
+	User Preferences	Пользовательские настройки
+	Profiles	Профили
+	Changes apply at once and are kept for next time.	Изменения применяются сразу и сохраняются до следующего запуска.
+	Fonts	Шрифты
+	Font folders	Папки шрифтов
+	Put TrueType or OpenType fonts (.ttf, .otf, .ttc) in a folder and add it here. These folders are searched before the system fonts; a folder higher in the list wins.	Положите шрифты TrueType или OpenType (.ttf, .otf, .ttc) в папку и добавьте её сюда. Эти папки просматриваются раньше системных шрифтов; папка выше в списке имеет приоритет.
+	No font folders yet	Папок шрифтов пока нет
+	This folder does not exist	Такой папки нет
+	Add Folder...	Добавить папку...
+	Folder path	Путь к папке
+	Look for Fonts Again	Найти шрифты заново
+	After adding or removing font files in a folder	После добавления или удаления файлов шрифтов в папке
+	Fonts found in these folders:	Шрифтов найдено в этих папках:
+	Every font this drawing uses was found.	Все шрифты этого чертежа найдены.
+	Fonts this drawing uses that were not found:	Шрифты чертежа, которые не найдены:
+	style	стиль
+	Fonts not found:	Не найдены шрифты:
+	Text in them is drawn with	Текст в них рисуется шрифтом
+	Add a font folder in Tools ▸ Options ▸ Fonts.	Добавьте папку шрифтов: Инструменты ▸ Параметры ▸ Шрифты.
+	Cell	Ячейка
+	Tab: next cell · Shift+Tab: previous · Alt+↑↓: cell above, below	Tab — следующая ячейка · Shift+Tab — предыдущая · Alt+↑↓ — ячейка выше, ниже
+	Tab: next cell	Tab — следующая ячейка
+	Previous cell (Shift+Tab)	Предыдущая ячейка (Shift+Tab)
+	Next cell (Tab)	Следующая ячейка (Tab)
+	Enter to finish	Enter — завершить
+	the measured value	измеренное значение
+	Insert <>	Вставить <>
+	Insert the measured value at the cursor	Вставить измеренное значение в позицию курсора
+	Measured Value Only	Только измеренное
+	Replace the text with the measured value	Заменить текст измеренным значением
+	Missing Fonts	Отсутствующие шрифты
+	List Fonts	Список шрифтов
+	Edit Text	Редактировать текст
+	Edit Table Cells	Редактировать ячейки таблицы
+	Dimension Text	Текст размера
+	Align left	По левому краю
+	Align right	По правому краю
+	Justify	По ширине
+	Additional symbols	Дополнительные символы
+	Close (same as Cancel)	Закрыть (то же, что «Отмена»)
+	Center line	Осевая линия
+	Almost equal	Приблизительно равно
+	Not equal	Не равно
+	Less than or equal	Меньше или равно
+	Greater than or equal	Больше или равно
+	Multiplication	Умножение
+	Division	Деление
+	Square root	Квадратный корень
+	Infinity	Бесконечность
+	Delta	Дельта
+	Ohm	Ом
+	Micro	Микро
+	Pi	Пи
+	Alpha	Альфа
+	Beta	Бета
+	Gamma	Гамма
+	Phi	Фи
+	Squared	В квадрате
+	Cubed	В кубе
+	One half	Одна вторая
+	One quarter	Одна четвёртая
+	Three quarters	Три четверти
+	Per mille	Промилле
+	Bullet	Маркер
+	Number sign	Знак номера
+	Insert tab	Вставить табуляцию
+	Text color	Цвет текста
+	Application menu	Меню приложения
+	Batch Print...	Пакетная печать...
+	A style with this name already exists.	Стиль с таким именем уже есть.
+	Above	Над линией
+	Above Dim Line	Над размерной линией
+	Above dimension text	Над текстом размера
+	Aligned with dimension line	Вдоль размерной линии
+	Alignment	Ориентация
+	All styles	Все стили
+	Alt enabled	Альт. единицы
+	Alt format	Альт. формат
+	Alt multiplier	Альт. множитель
+	Alt precision	Альт. точность
+	Alt prefix	Альт. префикс
+	Alt round	Альт. округление
+	Alt suffix	Альт. суффикс
+	Alternate Units	Альтернативные единицы
+	Alternate units	Альтернативные единицы
+	Always keep text between ext lines	Всегда помещать текст между выносными
+	Angle format	Формат углов
+	Angle precision	Точность углов
+	Angular dimensions	Угловые размеры
+	Annotative	Аннотативный
+	Arc length symbol	Символ длины дуги
+	Architectural	Архитектурные
+	Architectural Stacked	Архитектурные (дробь)
+	Architectural tick	Архитектурная засечка
+	Arrow 1	Стрелка 1
+	Arrow 2	Стрелка 2
+	Arrow size	Размер стрелки
+	Arrowheads	Стрелки
+	Arrows	Стрелки
+	At Ext Line 1	У 1-й выносной
+	At Ext Line 2	У 2-й выносной
+	Baseline spacing	Шаг в базовых размерах
+	Basic	Номинальный
+	Below	Под линией
+	Beside the dimension line	Рядом с размерной линией
+	Both text and arrows	Текст и стрелки
+	Bottom	Снизу
+	Box filled	Квадрат залитый
+	Center Vertically	По центру по вертикали
+	Center marks	Маркеры центра
+	Centered	По центру
+	Closed blank	Замкнутая пустая
+	Closed filled	Замкнутая залитая
+	Compare Dimension Styles	Сравнение размерных стилей
+	Compare...	Сравнить...
+	Compare:	Сравнить:
+	Copy of	Копия
+	Create New Dimension Style	Новый размерный стиль
+	Current dimension style:	Текущий размерный стиль:
+	Datum triangle	Треугольник базы
+	Datum triangle filled	Треугольник базы залитый
+	Decimal	Десятичные
+	Decimal Degrees	Десятичные градусы
+	Decimal separator	Десятичный разделитель
+	Degrees Minutes Seconds	Градусы/минуты/секунды
+	Deviation	Отклонения
+	Diagonal	Диагональная
+	Differences found:	Найдено отличий:
+	Dim line 1	Разм. линия 1 скрыта
+	Dim line 2	Разм. линия 2 скрыта
+	Dim line color	Цвет разм. линии
+	Dim line inside	Разм. линия внутри
+	Dim line lineweight	Вес разм. линии
+	Dim prefix	Префикс
+	Dim roundoff	Округление
+	Dim scale linear	Масштаб измерений
+	Dim scale overall	Глобальный масштаб
+	Dim suffix	Суффикс
+	Dim units	Единицы
+	Dimension Style Manager	Диспетчер размерных стилей
+	Dimension lines	Размерные линии
+	Display alternate units	Показывать альтернативные единицы
+	Dot	Точка
+	Dot blank	Точка пустая
+	Dot small	Точка малая
+	Dot small blank	Точка малая пустая
+	Draw dim line between ext lines	Размерная линия между выносными
+	Draw frame around text	Рамка вокруг текста
+	Either text or arrows (best fit)	Текст или стрелки (оптимально)
+	Engineering	Инженерные
+	Ext line 1	Выносная 1 скрыта
+	Ext line 2	Выносная 2 скрыта
+	Ext line color	Цвет выносных
+	Ext line ext	Удлинение выносных
+	Ext line fixed	Фикс. длина выносных
+	Ext line fixed length	Длина выносных
+	Ext line lineweight	Вес выносных
+	Ext line offset	Отступ выносных
+	Extend beyond dim lines	Удлинение за размерные
+	Extend beyond ticks	Удлинение за засечки
+	Extension lines	Выносные линии
+	Fine tuning	Подгонка элементов
+	Fit	Размещение
+	Fit options	Опции размещения
+	Fixed length extension lines	Выносные линии фикс. длины
+	Fraction format	Формат дробей
+	Fraction height scale	Масштаб высоты дробей
+	Fractional	Дробные
+	Fractional Stacked	Дробные (дробь)
+	Gradians	Грады
+	ISO standard	Согласно ISO
+	Integral	Интеграл
+	JIS	JIS
+	Jog angle	Угол излома
+	Limits	Предельные размеры
+	Linear dimensions	Линейные размеры
+	Lines	Линии
+	Lines & Arrows	Линии и стрелки
+	Linetype ext line 1	Тип выносной 1
+	Linetype ext line 2	Тип выносной 2
+	List:	Показать:
+	Lower value	Нижнее значение
+	Mark	Маркер
+	Measurement scale factor	Масштаб измерений
+	Method	Способ
+	Middle	Посередине
+	Modify Dimension Style:	Изменение размерного стиля:
+	Modify...	Изменить...
+	Move Text Only	Переместить только текст
+	Move outside the extension lines	Выносить за выносные линии
+	Move with Dim Line	Переместить с размерной линией
+	Move with Leader	Переместить с выноской
+	Multiplier for alt units	Множитель альт. единиц
+	New Dimension Style:	Новый размерный стиль:
+	New Style Name:	Имя нового стиля:
+	New...	Новый...
+	Not Stacked	Не в столбик
+	Oblique	Наклонная
+	Offset from dim line	Отступ от размерной линии
+	Offset from origin	Отступ от объекта
+	Open	Разомкнутая
+	Open 30	Разомкнутая 30
+	Origin indicator	Начало отсчёта
+	Origin indicator 2	Начало отсчёта 2
+	Outside	Снаружи
+	Over Ext Line 1	Над 1-й выносной
+	Over Ext Line 2	Над 2-й выносной
+	Over dimension line, with leader	Над размерной линией, с выноской
+	Over dimension line, without leader	Над размерной линией, без выноски
+	Override Current Style:	Переопределение текущего стиля:
+	Override...	Переопределить...
+	Overrides apply to new dimensions in the current style.	Переопределения применяются к новым размерам текущего стиля.
+	Overrides apply to the current style	Переопределения задаются для текущего стиля
+	Preceding dimension text	Перед текстом размера
+	Precision	Точность
+	Prefix	Префикс
+	Preview of:	Образец:
+	Primary Units	Основные единицы
+	Radians	Радианы
+	Radius jog dimension	Радиус с изломом
+	Rename	Переименовать
+	Reset Text Position	Восстановить положение текста
+	Right angle	Прямой угол
+	Round distances to	Округлять до
+	Round off	Округление
+	Scale for dimension features	Масштаб размерных элементов
+	Scaling for height	Масштаб высоты
+	Scientific	Научные
+	Second	Вторая
+	Size	Размер
+	Start With:	На основе:
+	Styles in use	Используемые стили
+	Styles:	Стили:
+	Suffix	Суффикс
+	Suppress arrows if they don't fit inside	Подавлять стрелки, если не помещаются
+	Suppress dim line 1	Скрыть размерную линию 1
+	Suppress dim line 2	Скрыть размерную линию 2
+	Suppress ext line 1	Скрыть выносную 1
+	Suppress ext line 2	Скрыть выносную 2
+	Suppress leading zeros	Подавлять ведущие нули
+	Suppress trailing zeros	Подавлять хвостовые нули
+	Symbols and Arrows	Символы и стрелки
+	Symmetrical	Симметрично
+	Text alignment	Ориентация текста
+	Text appearance	Свойства текста
+	Text frame	Рамка текста
+	Text inside	Текст внутри
+	Text movement	Перемещение текста
+	Text offset	Отступ текста
+	Text placement	Выравнивание текста
+	Text pos hor	Текст по горизонтали
+	Text pos vert	Текст по вертикали
+	The two styles are the same.	Стили совпадают.
+	Tick size	Размер засечки
+	Tolerance display	Отображение допуска
+	Tolerance format	Формат допусков
+	Tolerance limit lower	Нижний допуск
+	Tolerance limit upper	Верхний допуск
+	Tolerance pos vert	Положение допуска
+	Tolerance precision	Точность допуска
+	Tolerance text height	Высота текста допуска
+	Tolerances	Допуски
+	Unit format	Формат единиц
+	Units format	Формат единиц
+	Upper value	Верхнее значение
+	Use overall scale of	Глобальный масштаб
+	Variable	Переменная
+	Vertical position	Положение по вертикали
+	When text is not in the default position	Если текст не в стандартном положении
+	Windows Desktop	Как в Windows
+	With:	С:
+	overrides	переопределений
+	Measurement	Значение
+	User Arrow:	Пользовательская:
+	Leaders	Выноски
+	Leader type	Тип выноски
+	Arrowhead	Стрелка
+	Arrowhead size	Размер стрелки
+	Landing distance	Длина полки
+	Straight	Прямая
+	Annotate	Аннотации
+	3D Modeling	3D-моделирование
+	Float Panel	Плавающая панель
+	Pin to Left	Закрепить слева
+	Transform to Ribbon	Превратить в ленту
+	Move to Group	Переместить в группу
+	Close Panel	Закрыть панель
+	Custom Patterns	Свои образцы
+	Folder with hatch pattern files (.pat):	Папка с файлами образцов штриховки (.pat):
+	Browse...	Обзор...
+	Reload	Обновить
+	Read the folder again	Прочитать папку заново
+	No hatch patterns (.pat files) in this folder	В этой папке нет образцов штриховки (файлов .pat)
+	Preview	Предпросмотр
+	Black	Чёрная
+	Light Blue	Светло-голубая
+	Current Text Style	Текущий текстовый стиль
+	Current Dimension Style	Текущий размерный стиль
+	Current Linetype	Текущий тип линий
+	Block Manager	Диспетчер блоков
+	Search blocks	Поиск блоков
+	blocks	блоков
+	Create...	Создать...
+	Make a block from objects (BLOCK)	Создать блок из объектов (БЛОК)
+	Double-click to insert	Двойной щелчок — вставить
+	No blocks match the search.	Нет блоков, подходящих под поиск.
+	The block is empty	Блок пуст
+	Objects	Объекты
+	References	Вхождения
+	Base point	Базовая точка
+	External reference	Внешняя ссылка
+	Edit Block	Редактировать блок
+	Open in the Block Editor	Открыть в редакторе блоков
+	Delete a block that no object uses	Удалить блок, который не используется
+	Save to File...	Сохранить в файл...
+	Write the block as a drawing (WBLOCK)	Записать блок как отдельный чертёж (ПБЛОК)
+	The block is in use and can't be deleted	Блок используется, удалить его нельзя
+	The drawing is closed	Чертёж закрыт
+	closed	закрыт
+	Batch Plot	Пакетная печать
+	Sheets to plot, in order	Листы для печати, по порядку
+	Duplicate	Дублировать
+	No sheets. Add sheets below.	Листов нет. Добавьте листы ниже.
+	Move to Top	Переместить в самый верх
+	Move to Bottom	Переместить в самый низ
+	Clear List	Очистить список
+	Add sheets from	Добавить листы из
+	Add All	Добавить все
+	Add this sheet to the end of the list	Добавить этот лист в конец списка
+	One PDF file with all sheets	Один файл PDF со всеми листами
+	A separate PDF file for each sheet	Отдельный файл PDF для каждого листа
+	Plot...	Печать...
+	There is no file dialog here	Здесь нет окна выбора файла
+	sheets	листов
+	Zoom to Fit	Показать целиком
+	Move Higher	Переместить выше
+	Move Lower	Переместить ниже
+	Float as a window	Открепить как окно
+	Pin as a panel on the right	Закрепить панелью справа
+	Text Style	Текстовый стиль
+	Dimension Style	Размерный стиль
+	Style	Стиль
+	Sheet	Лист
+	Drawing	Чертёж
+	Paper	Бумага
+	Ctrl and Shift pick several sheets; drag in the empty space to pick with a rectangle.	Ctrl и Shift выбирают несколько листов; протяните рамку в пустом месте списка, чтобы выбрать прямоугольником.
+	Undo several steps	Отменить несколько шагов
+	Redo several steps	Повторить несколько шагов
+	Nothing to undo	Нечего отменять
+	Nothing to redo	Нечего повторять
+	Change	Изменение
+	Background color	Цвет фона
+	Other color	Другой цвет
+	Current Lineweight	Текущий вес линий
+	Snap the crosshair to grips	Привязывать перекрестие к ручкам
+	With no command running, the crosshair locks onto a grip of the selected objects under it.	Когда команда не выполняется, перекрестие притягивается к ручке выбранного объекта под курсором.
+	Grid with previews	Сетка с эскизами
+	File not found	Файл не найден
+	Making a preview...	Создаётся эскиз...
+	Backwards	Справа налево (зеркально)
+	Upside down	Вверх ногами
+	Top left	Вверху слева
+	Top center	Вверху по центру
+	Top right	Вверху справа
+	Middle left	Посередине слева
+	Middle center	Посередине по центру
+	Middle right	Посередине справа
+	Bottom left	Внизу слева
+	Bottom center	Внизу по центру
+	Bottom right	Внизу справа
+	Text Formulas	Формулы в тексте
+	Update Fields	Обновить поля
+	Tab or Enter: insert · Esc: close	Tab или Enter: вставить · Esc: закрыть
+	A text that starts with = shows the result of a formula, as in a spreadsheet: =2400-2*18, =ROUND(PI()*125^2/1000000;3), =TEXT(TODAY();"dd.mm.yyyy"). The formula stays with the text: editing the text edits the formula. Dates and times follow the computer's clock and are worked out again when the drawing is opened (Tools ▸ Update Fields does it at once). Date fields in AutoCAD drawings are updated the same way.	Текст, который начинается со знака =, показывает результат формулы, как в электронной таблице: =2400-2*18, =ROUND(PI()*125^2/1000000;3), =TEXT(TODAY();"dd.mm.yyyy"). Формула хранится вместе с текстом: при редактировании текста редактируется формула. Даты и время берутся из часов компьютера и пересчитываются при открытии чертежа (Сервис ▸ Обновить поля делает это сразу). Поля даты в чертежах AutoCAD обновляются так же.
+	Operators: + - * / ^ (power), % (percent), & (joins texts), = <> < > <= >= (compare). Texts in double quotes. Arguments are separated by commas or semicolons. While typing a formula, a list of functions appears: the arrows choose, Tab or Enter inserts.	Операции: + - * / ^ (степень), % (процент), & (соединяет тексты), = <> < > <= >= (сравнение). Тексты пишутся в двойных кавычках. Аргументы разделяются запятыми или точками с запятой. Пока вы набираете формулу, появляется список функций: стрелки выбирают, Tab или Enter вставляет.
+	The number without its sign.	Число без знака.
+	Arccosine, in radians.	Арккосинус в радианах.
+	TRUE when all arguments are true.	TRUE, если все аргументы истинны.
+	Arcsine, in radians.	Арксинус в радианах.
+	Arctangent, in radians.	Арктангенс в радианах.
+	The average of the numbers.	Среднее значение чисел.
+	Joins texts (as the & operator).	Соединяет тексты (как операция &).
+	Cosine of an angle in radians.	Косинус угла в радианах.
+	A date.	Дата.
+	The day of the month of a date.	День месяца даты.
+	Radians to degrees.	Радианы в градусы.
+	e raised to a power.	Число e в степени.
+	The drawing's file name.	Имя файла чертежа.
+	A number as text with that many decimals.	Число как текст с заданным числом знаков после запятой.
+	The hour of a time.	Час времени.
+	One of two values, by a condition.	Одно из двух значений, в зависимости от условия.
+	Rounds down to an integer.	Округляет вниз до целого.
+	The first characters of a text.	Первые символы текста.
+	The number of characters of a text.	Число символов в тексте.
+	Natural logarithm.	Натуральный логарифм.
+	Base-10 logarithm.	Десятичный логарифм.
+	A text in lower case.	Текст строчными буквами.
+	The largest number.	Наибольшее число.
+	Characters from the middle of a text (start = 1 for the first).	Символы из середины текста (start = 1 — первый символ).
+	The smallest number.	Наименьшее число.
+	The minutes of a time.	Минуты времени.
+	The remainder of a division.	Остаток от деления.
+	The month of a date (1 to 12).	Месяц даты (от 1 до 12).
+	The opposite of a logical value.	Противоположное логическое значение.
+	The current date and time (worked out again when the drawing is opened).	Текущие дата и время (пересчитываются при открытии чертежа).
+	TRUE when any argument is true.	TRUE, если хотя бы один аргумент истинен.
+	The number π.	Число π.
+	A number raised to a power (as ^).	Число в степени (как ^).
+	Degrees to radians.	Градусы в радианы.
+	The last characters of a text.	Последние символы текста.
+	Rounds to that many decimals.	Округляет до заданного числа знаков после запятой.
+	Rounds toward zero.	Округляет к нулю.
+	Rounds away from zero.	Округляет от нуля.
+	The name of the current layout ("Model" in model space).	Имя текущего листа ("Model" в пространстве модели).
+	Sine of an angle in radians.	Синус угла в радианах.
+	Square root.	Квадратный корень.
+	Adds the numbers.	Сумма чисел.
+	Tangent of an angle in radians.	Тангенс угла в радианах.
+	A value as text in a format: "0.00", "#,##0", "0%", "dd.mm.yyyy", "hh:mm"...	Значение как текст в формате: "0.00", "#,##0", "0%", "dd.mm.yyyy", "hh:mm"...
+	Today's date (worked out again when the drawing is opened).	Сегодняшняя дата (пересчитывается при открытии чертежа).
+	A text without spaces at its ends and double spaces.	Текст без пробелов по краям и двойных пробелов.
+	A text in capitals.	Текст прописными буквами.
+	The year of a date.	Год даты.
+	Starts a new drawing from the default template.	Создаёт новый чертёж по шаблону по умолчанию.
+	Opens a drawing (DWG, DXF) from a file.	Открывает чертёж (DWG, DXF) из файла.
+	Saves the drawing to its file (asks for a name the first time).	Сохраняет чертёж в его файл (при первом сохранении спрашивает имя).
+	Saves the drawing under a new name, format or version.	Сохраняет чертёж под новым именем, в другом формате или версии.
+	Undoes the last action. The arrow beside it undoes several at once.	Отменяет последнее действие. Стрелка рядом отменяет сразу несколько.
+	Redoes what was undone. The arrow beside it redoes several at once.	Возвращает отменённое действие. Стрелка рядом возвращает сразу несколько.
+	Prints the current layout or model space to a printer or a PDF file.	Печатает текущий лист или пространство модели на принтер или в PDF.
+	Prints several sheets at once, to separate files or one PDF.	Печатает сразу несколько листов: в отдельные файлы или в один PDF.
+	Sets the paper, printer and plot settings of layouts.	Задаёт бумагу, принтер и параметры печати листов.
+	Shows the page as it will be printed.	Показывает страницу так, как она будет напечатана.
+	Brings another file's contents (DXF, SVG...) into this drawing.	Добавляет в чертёж содержимое другого файла (DXF, SVG...).
+	Saves the drawing or part of it as PDF, SVG, PNG or another format.	Сохраняет чертёж или его часть в PDF, SVG, PNG или другой формат.
+	Attaches an external reference: a drawing, image or PDF shown in this one.	Прикрепляет внешнюю ссылку: чертёж, изображение или PDF, которые показываются в этом чертеже.
+	Shares the drawing with others.	Отправляет чертёж другим людям.
+	Zooms to a rectangle you draw.	Увеличивает область, которую вы обведёте рамкой.
+	Moves the view without changing its scale.	Сдвигает вид, не меняя масштаб.
+	Turns the view around the drawing in 3D.	Поворачивает вид вокруг чертежа в 3D.
+	Zooms to show the whole drawing.	Показывает весь чертёж целиком.
+	Shows or hides the Properties and Layers palettes.	Показывает или прячет палитры «Свойства» и «Слои».
+	Opens the Layer Properties Manager: create layers, set their colour, linetype and state.	Открывает диспетчер слоёв: создание слоёв, их цвет, тип линий и состояние.
+	Opens the block manager: insert, edit and manage blocks.	Открывает диспетчер блоков: вставка, редактирование и управление блоками.
+	Measures the distance and angle between two points.	Измеряет расстояние и угол между двумя точками.
+	Lists everything about the selected objects in the command history.	Выводит в историю команд все сведения о выбранных объектах.
+	Measures the area and perimeter of an object or of points you pick.	Измеряет площадь и периметр объекта или указанных точек.
+	About CADCraft and help.	О программе CADCraft и справка.
+	Creates and changes text styles: font, height, width factor.	Создаёт и изменяет текстовые стили: шрифт, высота, коэффициент ширины.
+	Creates and changes dimension styles: arrows, text, lines, units.	Создаёт и изменяет размерные стили: стрелки, текст, линии, единицы.
+	Opens the program's settings.	Открывает настройки программы.
+	The current layer: new objects are drawn on it. Pick another from the list.	Текущий слой: на нём рисуются новые объекты. Выберите другой из списка.
+	Makes the layer of the object you pick the current layer.	Делает текущим слой выбранного объекта.
+	Moves the selected objects to the layer of another object.	Переносит выбранные объекты на слой другого объекта.
+	Undoes the last change to layer settings.	Отменяет последнее изменение настроек слоёв.
+	Hides or locks every layer except those of the selected objects.	Скрывает или блокирует все слои, кроме слоёв выбранных объектов.
+	Turns off the layer of the object you pick.	Отключает слой выбранного объекта.
+	Freezes the layer of the object you pick: hidden and not regenerated.	Замораживает слой выбранного объекта: он скрыт и не пересчитывается.
+	Locks the layer of the object you pick: its objects can't be changed.	Блокирует слой выбранного объекта: его объекты нельзя изменить.
+	Unlocks the layer of the object you pick.	Разблокирует слой выбранного объекта.
+	The current text style, used by new text.	Текущий текстовый стиль для нового текста.
+	The current dimension style, used by new dimensions.	Текущий размерный стиль для новых размеров.
+	The linetype of new objects.	Тип линий новых объектов.
+	The lineweight of new objects.	Вес линий новых объектов.
+	Draws straight line segments, one after another.	Рисует прямые отрезки, один за другим.
+	Draws a polyline: connected straight and arc segments that form one object.	Рисует полилинию: связанные прямые и дуговые сегменты, образующие один объект.
+	Draws a circle by its centre and radius, or by points.	Рисует окружность по центру и радиусу или по точкам.
+	Draws a rectangle by two corners, or by its width and height.	Рисует прямоугольник по двум углам или по ширине и высоте.
+	Draws an arc through three points, or by centre, start and end.	Рисует дугу по трём точкам или по центру, началу и концу.
+	Draws a smooth curve through or near the points you pick.	Рисует плавную кривую через указанные точки или рядом с ними.
+	Draws an infinite construction line, for alignment.	Рисует бесконечную вспомогательную прямую для выравнивания.
+	Draws a line that starts at a point and runs on without end.	Рисует луч: линию, которая начинается в точке и уходит в бесконечность.
+	Draws an ellipse or an elliptical arc.	Рисует эллипс или эллиптическую дугу.
+	Draws a regular polygon with as many sides as you like.	Рисует правильный многоугольник с любым числом сторон.
+	Places points, one after another.	Ставит точки, одну за другой.
+	Draws a filled ring or a filled circle.	Рисует закрашенное кольцо или закрашенный круг.
+	Draws a revision cloud around something to mark a change.	Рисует облако вокруг объекта, чтобы отметить изменение.
+	Turns closed shapes into regions (areas you can combine and measure).	Превращает замкнутые контуры в области (их можно объединять и измерять).
+	Covers what is behind an area with the background colour.	Закрывает то, что под областью, цветом фона.
+	Fills an enclosed area with a pattern or a solid colour.	Заполняет замкнутую область штриховкой или сплошным цветом.
+	Fills an enclosed area with a colour gradient.	Заполняет замкнутую область градиентом.
+	Draws a polyline around an enclosed area you click inside.	Рисует полилинию по контуру замкнутой области, внутри которой вы щёлкнули.
+	Groups selected objects into a block that can be inserted again and again.	Объединяет выбранные объекты в блок, который можно вставлять много раз.
+	Inserts a block (opens the block manager).	Вставляет блок (открывает диспетчер блоков).
+	Opens a block to change what it contains.	Открывает блок, чтобы изменить его содержимое.
+	Defines an attribute: text asked for each time the block is inserted.	Определяет атрибут: текст, который запрашивается при каждой вставке блока.
+	Moves objects by a distance, from a base point to another point.	Перемещает объекты от базовой точки к другой точке.
+	Copies objects to other places.	Копирует объекты в другие места.
+	Turns objects around a base point.	Поворачивает объекты вокруг базовой точки.
+	Cuts off the parts of objects that cross other objects. Hover to see what goes.	Отрезает части объектов, пересекающие другие объекты. Наведите курсор, чтобы увидеть, что будет удалено.
+	Rounds the corner between two objects with an arc.	Скругляет угол между двумя объектами дугой.
+	Copies objects in rows and columns.	Копирует объекты рядами и столбцами.
+	Makes a mirror copy of objects across a line (and can erase the originals).	Создаёт зеркальную копию объектов относительно линии (и может удалить исходные).
+	Makes objects larger or smaller from a base point.	Увеличивает или уменьшает объекты относительно базовой точки.
+	Lengthens objects to meet other objects. Hover to see the extension.	Удлиняет объекты до других объектов. Наведите курсор, чтобы увидеть удлинение.
+	Makes a parallel copy of a line, curve or outline at a distance.	Создаёт параллельную копию линии, кривой или контура на заданном расстоянии.
+	Copies objects around a centre point.	Копирует объекты по кругу вокруг центра.
+	Stretches objects crossed by a selection window, moving their points inside it.	Растягивает объекты, пересечённые рамкой: точки внутри рамки сдвигаются.
+	Bevels the corner between two lines.	Срезает угол между двумя линиями фаской.
+	Breaks a compound object (block, polyline, dimension) into its parts.	Разбивает составной объект (блок, полилинию, размер) на части.
+	Breaks an object in two, or removes a part between two points.	Разрывает объект на два или удаляет часть между двумя точками.
+	Joins lines, arcs and polylines that touch into one object.	Соединяет касающиеся линии, дуги и полилинии в один объект.
+	Deletes the selected objects.	Удаляет выбранные объекты.
+	Changes the length of lines and arcs.	Изменяет длину отрезков и дуг.
+	Copies the properties of one object (layer, colour, style...) to others.	Копирует свойства одного объекта (слой, цвет, стиль...) на другие.
+	Writes single-line text. A text starting with = shows a formula's result.	Создаёт однострочный текст. Текст, начинающийся с =, показывает результат формулы.
+	Writes multiline text in a box, with formatting.	Создаёт многострочный текст в рамке, с форматированием.
+	Inserts a table of rows and columns.	Вставляет таблицу из строк и столбцов.
+	Finds text in the drawing and replaces it.	Ищет текст в чертеже и заменяет его.
+	A horizontal or vertical dimension between two points.	Горизонтальный или вертикальный размер между двумя точками.
+	A dimension parallel to the line between two points.	Размер, параллельный линии между двумя точками.
+	The radius of a circle or arc.	Радиус окружности или дуги.
+	The diameter of a circle or arc.	Диаметр окружности или дуги.
+	The angle between two lines, or of an arc.	Угол между двумя линиями или угол дуги.
+	The length along an arc.	Длина дуги.
+	The X or Y coordinate of a point.	Координата X или Y точки.
+	More dimensions from the same base line as the last one.	Новые размеры от той же базы, что и последний.
+	More dimensions continuing from the end of the last one.	Новые размеры, продолжающие последний (цепочкой).
+	Dimensions several objects at once.	Проставляет размеры сразу для нескольких объектов.
+	A note with an arrow pointing at something (multileader).	Выноска: текст со стрелкой, указывающей на объект.
+	Adds another leader line to a multileader.	Добавляет ещё одну линию к выноске.
+	Removes a leader line from a multileader.	Удаляет линию выноски.
+	Lines up several multileaders.	Выравнивает несколько выносок.
+	Adds geometric constraints to the selected objects automatically.	Автоматически накладает геометрические зависимости на выбранные объекты.
+	Keeps two points together.	Удерживает две точки вместе.
+	Keeps two lines parallel.	Удерживает две линии параллельными.
+	Keeps two lines at right angles.	Удерживает две линии под прямым углом.
+	Keeps a line horizontal.	Удерживает линию горизонтальной.
+	Keeps a line vertical.	Удерживает линию вертикальной.
+	Keeps a curve tangent to another object.	Удерживает кривую касательной к другому объекту.
+	Keeps circles and arcs on one centre.	Удерживает окружности и дуги на общем центре.
+	Keeps two lines the same length, or two circles the same size.	Удерживает равными длины двух линий или размеры двух окружностей.
+	Draws a 3D box.	Создаёт 3D-параллелепипед.
+	Draws a 3D cylinder.	Создаёт 3D-цилиндр.
+	Draws a 3D pyramid.	Создаёт 3D-пирамиду.
+	Draws a 3D sphere.	Создаёт 3D-шар.
+	Draws a 3D torus (a ring).	Создаёт 3D-тор (кольцо).
+	Draws a 3D cone.	Создаёт 3D-конус.
+	Pulls a closed shape into a 3D solid.	Вытягивает замкнутый контур в 3D-тело.
+	Turns a shape around an axis into a 3D solid.	Вращает контур вокруг оси и создаёт 3D-тело.
+	Sweeps a shape along a path into a 3D solid.	Протягивает контур вдоль траектории и создаёт 3D-тело.
+	Makes a 3D solid through several cross sections.	Создаёт 3D-тело по нескольким сечениям.
+	Joins 3D solids or regions into one.	Объединяет 3D-тела или области в одно.
+	Cuts 3D solids or regions out of others.	Вычитает одни 3D-тела или области из других.
+	Keeps only the part 3D solids or regions share.	Оставляет только общую часть 3D-тел или областей.
+	Undo (Ctrl+Z)	Отменить (Ctrl+Z)
+	Redo (Ctrl+Y)	Вернуть (Ctrl+Y)
+	Hatch - Boundary Definition Error	Штриховка — ошибка определения контура
+	There are too many objects in the view to find the boundary. Zoom in closer to the area to hatch and pick again.	На экране слишком много объектов, чтобы найти контур. Увеличьте область, которую нужно заштриховать, и укажите точку ещё раз.
+	Valid hatch boundary not found: the area around the picked point is not closed. Close the gaps in its boundary and pick again.	Не найден правильный контур штриховки: область вокруг указанной точки не замкнута. Закройте разрывы в её границе и укажите точку ещё раз.
+	The boundary around the picked point reaches far outside the visible area. The area is probably not closed: check its boundary for gaps, or zoom out to show the whole area and pick again.	Контур вокруг указанной точки уходит далеко за пределы видимой области. Скорее всего, область не замкнута: проверьте, нет ли разрывов в её границе, или уменьшите масштаб, чтобы область была видна целиком, и укажите точку ещё раз.
+	The selected objects don't enclose an area: together they must form a closed boundary. Select the missing objects or close the gaps.	Выбранные объекты не ограничивают область: вместе они должны образовывать замкнутый контур. Выберите недостающие объекты или закройте разрывы.
+	No boundary objects selected: select closed objects, or objects that together enclose an area.	Не выбраны объекты контура: выберите замкнутые объекты или объекты, которые вместе ограничивают область.
+	Some of the selected objects don't enclose an area and were left out of the hatch. Together, objects must form a closed boundary.	Некоторые выбранные объекты не ограничивают область и не вошли в штриховку. Вместе объекты должны образовывать замкнутый контур.
 	Analyze Shapes	Анализ фигур

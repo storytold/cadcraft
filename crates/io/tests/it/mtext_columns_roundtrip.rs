@@ -7,6 +7,8 @@ use cadcraft_io::{read_dxf, write_dxf};
 
 fn mtext(contents: &str, rotation: f64, columns: Option<MTextColumns>) -> MText {
     MText {
+        formula: None,
+        frame: false,
         insert: Vec3::new(1.0, 2.0, 0.0),
         height: 0.5,
         width: 6.0,

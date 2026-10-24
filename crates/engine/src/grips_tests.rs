@@ -135,7 +135,9 @@ fn spline_text_insert_and_dimension_grips() {
     let g = s.grips_of(d).unwrap();
     assert_eq!(g.len(), 4);
     s.grip_edit(d, 3, v(5.0, 6.0), GripMode::Stretch).unwrap();
-    assert!(matches!(kind(&s, d), EntityKind::Dimension(x) if x.user_text_pos && near(x.text_mid.xy(), 5.0, 6.0)));
+    assert!(matches!(kind(&s, d), EntityKind::Dimension(x) if !x.user_text_pos));
+    let shown = s.grips_of(d).unwrap()[3];
+    assert!(near(shown, 5.0, 6.0), "{shown:?}");
     s.grip_edit(d, 1, v(12.0, 0.0), GripMode::Stretch).unwrap();
     assert!(matches!(kind(&s, d), EntityKind::Dimension(x) if near(x.p14.xy(), 12.0, 0.0)));
 }
@@ -221,4 +223,78 @@ fn grips_on_locked_layers_and_hostile_values() {
             }
         }
     }
+}
+
+#[test]
+fn a_dimensions_text_grip_sits_on_its_text_and_has_the_text_options() {
+    use cadcraft_doc::EntityKind;
+    let mut s = Session::new();
+    let h = s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, 3] })).unwrap()["handle"].as_str().unwrap().to_string();
+    let handle = cadcraft_doc::Handle::parse_hex(&h).unwrap();
+    let g = s.grips_of(handle).unwrap();
+    assert!((g[3] - Vec2::new(5.0, 3.0)).len() < 1.0, "on the drawn text: {:?}", g[3]);
+    let kind = |s: &Session| s.doc().unwrap().entity(handle).unwrap().kind.clone();
+    let labels: Vec<&str> = grip_actions(&kind(&s), 3).iter().map(|a| a.label()).collect();
+    assert_eq!(labels, ["Move with Dim Line", "Move Text Only", "Move with Leader", "Above Dim Line", "Center Vertically", "Reset Text Position"]);
+    // Move Text Only: the text alone, DIMTMOVE 2 for this dimension.
+    s.execute("grip.option", &json!({ "handle": h, "index": 3, "option": "moveTextOnly", "to": [5, 8] })).unwrap();
+    let EntityKind::Dimension(d) = kind(&s) else { panic!() };
+    assert!(d.user_text_pos && d.text_mid.xy() == Vec2::new(5.0, 8.0) && d.defpt.y == 3.0);
+    assert_eq!(d.overrides.get("textMove"), Some(&json!(2)));
+    assert!((s.grips_of(handle).unwrap()[3] - Vec2::new(5.0, 8.0)).len() < 1e-9);
+    // Reset Text Position, then Above Dim Line.
+    s.execute("grip.option", &json!({ "handle": h, "index": 3, "option": "resetTextPosition" })).unwrap();
+    let EntityKind::Dimension(d) = kind(&s) else { panic!() };
+    assert!(!d.user_text_pos);
+    s.execute("grip.option", &json!({ "handle": h, "index": 3, "option": "aboveDimLine" })).unwrap();
+    let EntityKind::Dimension(d) = kind(&s) else { panic!() };
+    assert_eq!(d.overrides.get("textAbove"), Some(&json!(1)));
+    // Move with Dim Line: the dimension line goes through the point, the text along it there.
+    s.execute("grip.option", &json!({ "handle": h, "index": 3, "option": "moveWithDimLine", "to": [7, 6] })).unwrap();
+    let EntityKind::Dimension(d) = kind(&s) else { panic!() };
+    assert!((d.defpt.y - 6.0).abs() < 1e-9, "{:?}", d.defpt);
+    assert!(d.user_text_pos && (d.text_mid.x - 7.0).abs() < 1e-9, "{:?}", d.text_mid);
+    // At the hot-grip prompt the options are keywords too.
+    s.set_selection(vec![handle]);
+    s.start_grip_edit(&[(handle, 3)]).unwrap();
+    s.input(crate::Input::Keyword("center Vertically".into())).unwrap();
+    let EntityKind::Dimension(d) = kind(&s) else { panic!() };
+    assert_eq!(d.overrides.get("textAbove"), Some(&json!(0)));
+}
+
+#[test]
+fn stretching_the_text_grip_moves_the_dimension_line_and_keeps_the_text_by_the_arrows() {
+    use cadcraft_doc::EntityKind;
+    let mut s = Session::new();
+    s.execute("dimstyle", &json!({ "name": "Free", "textMove": 2, "current": true })).unwrap();
+    let r = s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, 3] })).unwrap();
+    let handle = h(&r);
+    let shown = s.grips_of(handle).unwrap()[3];
+    s.execute("grip.stretch", &json!({ "handle": handle.hex(), "index": 3, "to": [shown.x - 2.0, shown.y + 5.0] })).unwrap();
+    let EntityKind::Dimension(d) = kind(&s, handle) else { panic!() };
+    assert!((d.defpt.y - 8.0).abs() < 1e-9, "the line follows the text across: {:?}", d.defpt);
+    assert!(!d.user_text_pos, "the text keeps its place between the arrows");
+    let now = s.grips_of(handle).unwrap()[3];
+    assert!((now.x - shown.x).abs() < 1e-9 && (now.y - shown.y - 5.0).abs() < 1e-9, "{shown:?} -> {now:?}");
+    // Text placed along the line keeps that place too.
+    s.execute("grip.option", &json!({ "handle": handle.hex(), "index": 3, "option": "moveWithDimLine", "to": [2, 8] })).unwrap();
+    let before = s.grips_of(handle).unwrap()[3];
+    s.execute("grip.stretch", &json!({ "handle": handle.hex(), "index": 3, "to": [before.x + 4.0, before.y + 2.0] })).unwrap();
+    let EntityKind::Dimension(d) = kind(&s, handle) else { panic!() };
+    assert!((d.defpt.y - 10.0).abs() < 1e-9 && (d.text_mid.x - before.x).abs() < 1e-9, "{d:?}");
+}
+
+#[test]
+fn move_with_dim_line_takes_the_text_past_the_arrows_and_the_line_out_to_it() {
+    use cadcraft_doc::EntityKind;
+    let mut s = Session::new();
+    s.execute("dimstyle", &json!({ "name": "Free", "textMove": 2, "current": true })).unwrap();
+    let r = s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, 3] })).unwrap();
+    let handle = h(&r);
+    s.execute("grip.option", &json!({ "handle": handle.hex(), "index": 3, "option": "moveWithDimLine", "to": [16, 6] })).unwrap();
+    let EntityKind::Dimension(d) = kind(&s, handle) else { panic!() };
+    assert!((d.defpt.y - 6.0).abs() < 1e-9 && (d.text_mid.x - 16.0).abs() < 1e-9, "{d:?}");
+    let g = cadcraft_render::dimension_in(s.doc().unwrap(), &d);
+    let reach = g.lines.iter().flatten().filter(|p| (p.y - 6.0).abs() < 1e-9).map(|p| p.x).fold(f64::MIN, f64::max);
+    assert!(reach > 16.0, "the dimension line runs out under the text: {reach}");
 }

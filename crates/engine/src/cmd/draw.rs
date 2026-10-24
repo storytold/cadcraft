@@ -329,9 +329,14 @@ pub(crate) fn justify(j: &str) -> Option<(HAlign, VAlign)> {
 
 pub(crate) fn make_text(s: &Session, at: Vec2, value: &str, height: f64, rotation: f64, j: (HAlign, VAlign)) -> EntityKind {
     let style = s.doc().map(|d| d.header.str("TEXTSTYLE", "Standard")).unwrap_or_else(|_| "Standard".into());
+    // New text takes its style's Backwards and Upside down, as AutoCAD.
+    let (backwards, upside_down) = s.doc().ok().and_then(|d| d.text_style(&style).map(|st| (st.backwards, st.upside_down))).unwrap_or((false, false));
     let (h, v) = j;
     let left = h == HAlign::Left && v == VAlign::Baseline;
     EntityKind::Text(Text {
+        formula: None,
+        backwards,
+        upside_down,
         insert: v3(at),
         align_pt: if left { None } else { Some(v3(at)) },
         height,
@@ -374,6 +379,8 @@ fn run_mtext(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let width = f64_or(p, "width", 0.0).max(0.0);
     let k = EntityKind::MText(MText {
+        formula: None,
+        frame: false,
         insert: v3(at),
         height,
         width,
@@ -1446,6 +1453,11 @@ struct TextM {
     /// Run by a LISP routine (`command`): one line of text ends the command, as AutoLISP's
     /// `command` runs TEXT; typed and in scripts each line asks for the next.
     single_line: bool,
+    /// The in-place editor's box for the line being typed (once point, height and angle are known).
+    editor: Option<MText>,
+    /// TEXTSIZE when the command started: the default height and the size of the frame shown
+    /// before the height is given.
+    size: f64,
 }
 
 impl TextM {
@@ -1458,7 +1470,41 @@ impl TextM {
             asking_justify: false,
             line: 0,
             single_line: s.lisp_running(),
+            editor: None,
+            size: s.doc().map(|d| d.header.f64("TEXTSIZE", 0.2)).unwrap_or(0.2),
         }
+    }
+    /// Where line `line` starts: one line spacing (5/3 of the height) below the one before.
+    fn line_at(a: Vec2, h: f64, r: f64, line: usize) -> Vec2 {
+        a + Vec2::from_angle(r - std::f64::consts::FRAC_PI_2) * (h * 5.0 / 3.0 * line as f64)
+    }
+    /// The editor's box once the start point, height and angle are known.
+    fn refresh_editor(&mut self, s: &Session) {
+        self.editor = match (self.at, self.height, self.rotation, self.asking_justify) {
+            (Some(a), Some(h), Some(r), false) => match make_text(s, Self::line_at(a, h, r, self.line), "", h, r, self.justify) {
+                EntityKind::Text(t) => Some(super::modify2::line_box(&t)),
+                _ => None,
+            },
+            _ => None,
+        };
+    }
+    /// The outline of a line of text `h` high at `a`, turned by `r`, placed by the justification:
+    /// what the text will cover before it is typed (four characters wide).
+    fn frame(&self, a: Vec2, h: f64, r: f64) -> EntityKind {
+        let w = h * 3.2;
+        let x0 = match self.justify.0 {
+            HAlign::Left | HAlign::Aligned | HAlign::Fit => 0.0,
+            HAlign::Center | HAlign::Middle => -w / 2.0,
+            HAlign::Right => -w,
+        };
+        let y0 = match (self.justify.0, self.justify.1) {
+            (HAlign::Middle, _) | (_, VAlign::Middle) => -h / 2.0,
+            (_, VAlign::Top) => -h,
+            (_, VAlign::Bottom) => -h / 3.0,
+            _ => 0.0,
+        };
+        let corners = [Vec2::new(x0, y0), Vec2::new(x0 + w, y0), Vec2::new(x0 + w, y0 + h), Vec2::new(x0, y0 + h)];
+        lwpoly(corners.iter().map(|q| PolyVertex::new(a + q.rotate(r))).collect(), true)
     }
 }
 
@@ -1489,6 +1535,29 @@ impl Interactive for TextM {
         Ok(Step::Continue)
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        let step = self.answer(s, i);
+        self.refresh_editor(s);
+        step
+    }
+    fn text_editor(&self) -> Option<crate::TextEditor> {
+        let mtext = self.editor.clone()?;
+        Some(crate::TextEditor { mtext, kind: crate::EditorKind::Line, key: format!("new-text:{}", self.line) })
+    }
+    fn preview(&self, _s: &Session, c: Vec2) -> Vec<EntityKind> {
+        if self.asking_justify {
+            return Vec::new();
+        }
+        match (self.at, self.height, self.rotation) {
+            (None, _, _) => vec![self.frame(c, self.size, 0.0)],
+            (Some(a), None, _) => vec![self.frame(a, a.dist(c).max(1e-9), 0.0)],
+            (Some(a), Some(h), None) if a.dist(c) > 1e-12 => vec![self.frame(a, h, a.angle_to(c))],
+            _ => Vec::new(),
+        }
+    }
+}
+
+impl TextM {
+    fn answer(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         if self.asking_justify {
             let code = match &i {
                 Input::Keyword(k) | Input::Text(k) => k.clone(),
@@ -1514,8 +1583,10 @@ impl Interactive for TextM {
             (Some(_), Some(_), None, Input::Text(t)) => {
                 self.rotation = Some(s.angle_settings().direction(&t).ok_or_else(|| crate::EngineError::Other("Requires an angle.".into()))?)
             }
+            // An empty line (the editor finished with nothing typed) ends the command.
+            (Some(_), Some(_), Some(_), Input::Text(t)) if t.is_empty() => return Ok(Step::Done),
             (Some(a), Some(h), Some(r), Input::Text(t)) => {
-                let at = a + Vec2::from_angle(r - std::f64::consts::FRAC_PI_2) * (h * 5.0 / 3.0 * self.line as f64);
+                let at = Self::line_at(a, h, r, self.line);
                 let k = make_text(s, at, &t, h, r, self.justify);
                 s.add_entity(k)?;
                 self.line += 1;

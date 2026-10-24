@@ -21,13 +21,13 @@ pub use pick::{HatchPicks, PickMode};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        CommandSpec::new("hatch", "Hatch...", run_hatch).menu(&["Draw", "Hatch..."]).alias(&["h", "bh", "-hatch"]).params("{points?: [[x,y]] (internal points) and/or handles?: [hex] (closed objects), pattern?: \"ANSI31\" (built in, or defined by patternFile | patternText), patternFile?: path to a .pat file | patternText?: its contents (loads the patterns it defines), scale?, angle? (degrees), associative? (HPASSOC), separate? (HPSEPARATE: a hatch per point/object), origin?: [x,y] (HPORIGIN) | originMode?: \"current\"|\"bottomLeft\"|\"bottomRight\"|\"topLeft\"|\"topRight\"|\"center\" (HPORIGINMODE), style?: \"normal\"|\"outer\"|\"ignore\" (HPISLANDDETECTION)} — gaps up to HPGAPTOL close").interactive(|s| Ok(Box::new(HatchM::new(s, false)))),
+        CommandSpec::new("hatch", "Hatch...", run_hatch).menu(&["Draw", "Hatch..."]).alias(&["h", "bh", "-hatch"]).params("{points?: [[x,y]] (internal points) and/or handles?: [hex] (closed objects, or objects that together enclose an area), pattern?: \"ANSI31\" (built in, or defined by patternFile | patternText), patternFile?: path to a .pat file | patternText?: its contents (loads the patterns it defines), scale?, angle? (degrees), associative? (HPASSOC), separate? (HPSEPARATE: a hatch per point/object), origin?: [x,y] (HPORIGIN) | originMode?: \"current\"|\"bottomLeft\"|\"bottomRight\"|\"topLeft\"|\"topRight\"|\"center\" (HPORIGINMODE), style?: \"normal\"|\"outer\"|\"ignore\" (HPISLANDDETECTION), background?: colour | \"None\"} — gaps up to HPGAPTOL close").interactive(|s| Ok(Box::new(HatchM::new(s, false)))),
         CommandSpec::new("gradient", "Gradient...", run_gradient).menu(&["Draw", "Gradient..."]).alias(&["gd"]).params("{points? and/or handles?, name?: \"LINEAR\"|\"CYLINDER\"|\"CURVED\"|\"SPHERICAL\"|\"HEMISPHERICAL\" or INV… (colours swapped), color1?, color2?, angle? (degrees), centered? (default true)}").interactive(|s| Ok(Box::new(HatchM::new(s, true)))),
         CommandSpec::new("boundary", "Boundary...", run_boundary).menu(&["Draw", "Boundary..."]).alias(&["bo", "bpoly"]).params("{points: [[x,y]]}").interactive(|_| Ok(Box::new(BoundaryM { region: false }))),
         CommandSpec::new("region", "Region", run_region).menu(&["Draw", "Region"]).alias(&["reg"]).params("{handles?}"),
-        CommandSpec::new("hatchedit", "Hatch Edit", edit::run_hatchedit).menu(&["Modify", "Object", "Hatch..."]).alias(&["he", "-hatchedit"]).params("{handles?, pattern?, scale?, angle?, gradient?: {name?, color1?, color2?, angle? (degrees), centered?} (makes or changes a gradient fill; `pattern` turns it back), associative?: bool (false unlinks; true links each loop to a closed object of the same shape, or to `boundary` objects), boundary?: [hex], addPoints?: [[x,y]], addBoundary?: [hex], removeLoops?: [zero-based index] (geometry edits require one hatch), style?, origin? | originMode?, separate?: true, recreate?: \"polyline\"|\"region\", associate?: bool (link to the recreated boundary)}").interactive(|s| Ok(Box::new(edit::HatchEditM::new(s)))),
+        CommandSpec::new("hatchedit", "Hatch Edit", edit::run_hatchedit).menu(&["Modify", "Object", "Hatch..."]).alias(&["he", "-hatchedit"]).params("{handles?, pattern?, scale?, angle?, gradient?: {name?, color1?, color2?, angle? (degrees), centered?} (makes or changes a gradient fill; `pattern` turns it back), associative?: bool (false unlinks; true links each loop to a closed object of the same shape, or to `boundary` objects), boundary?: [hex], addPoints?: [[x,y]], addBoundary?: [hex], removeLoops?: [zero-based index] (geometry edits require one hatch), style?, background?: colour | \"None\", origin? | originMode?, separate?: true, recreate?: \"polyline\"|\"region\", associate?: bool (link to the recreated boundary)}").interactive(|s| Ok(Box::new(edit::HatchEditM::new(s)))),
         CommandSpec::new("hatchpick", "Hatch Pick", pick::run_hatchpick)
-            .params("{points?: [[x,y]] (internal points), handles?: [hex] (closed objects)} (typed: Points, Objects, oRigin or Hatch, then the picks): the Hatch and Gradient dialog's picks, kept in the session; changes nothing")
+            .params("{points?: [[x,y]] (internal points), handles?: [hex] (closed objects, or objects that together enclose an area)} (typed: Points, Objects, oRigin or Hatch, then the picks): the Hatch and Gradient dialog's picks, kept in the session; changes nothing")
             .enabled(has_doc)
             .noundo()
             .interactive(|_| Ok(Box::new(pick::HatchPickM::default()))),
@@ -40,11 +40,12 @@ pub(super) fn outline_tol(ext: Bounds2) -> f64 {
 }
 
 /// Tessellated outlines of every visible curve in the space (hatch boundary candidates), each
-/// with the handle of the object it came from.
+/// with the handle of the object it came from: only the objects reaching into `near` when given,
+/// tessellated finely enough for that area.
 fn outlines(d: &Drawing, space: &Space, near: Option<Bounds2>) -> (Vec<Vec<Vec2>>, Vec<Handle>) {
     let Some(store) = d.space(space) else { return (Vec::new(), Vec::new()) };
     let ext = d.extents(space);
-    let tol = outline_tol(ext);
+    let tol = near.map_or_else(|| outline_tol(ext), outline_tol);
     let mut out = Vec::new();
     let mut owners = Vec::new();
     for e in store.iter() {
@@ -67,7 +68,27 @@ fn outlines(d: &Drawing, space: &Space, near: Option<Bounds2>) -> (Vec<Vec<Vec2>
 /// An object's outline as polylines (tolerance `tol`), infinite lines clipped to a generous
 /// box around the extents `ext`.
 fn object_polys(d: &Drawing, e: &Entity, tol: f64, ext: Bounds2) -> Vec<Vec<Vec2>> {
-    let mut polys = crate::select::hit_polylines(d, e, tol);
+    let mut polys = match &e.kind {
+        // Text and annotation never bound a hatch: their boxes would cut areas in two.
+        EntityKind::Text(_)
+        | EntityKind::MText(_)
+        | EntityKind::AttDef(_)
+        | EntityKind::Dimension(_)
+        | EntityKind::Tolerance(_)
+        | EntityKind::Hatch(_)
+        | EntityKind::Image(_) => return Vec::new(),
+        // Blocks, multileaders and tables bound by the lines they draw, not by the box around
+        // them, and not by their text.
+        EntityKind::Insert(_) | EntityKind::MLeader(_) | EntityKind::Table(_) => {
+            let list = cadcraft_render::build_entities(
+                d,
+                std::iter::once(e),
+                &cadcraft_render::Options { tolerance: tol, text: false, fill: false, ..Default::default() },
+            );
+            return list.prims.iter().filter(|p| matches!(p.kind, cadcraft_render::Kind::Polyline)).map(|p| list.points(p).to_vec()).collect();
+        }
+        _ => crate::select::hit_polylines(d, e, tol),
+    };
     if matches!(e.kind, EntityKind::XLine(_) | EntityKind::Ray(_)) {
         let r = (ext.width() + ext.height()).max(1.0) * 4.0;
         for pl in &mut polys {
@@ -204,19 +225,62 @@ pub(crate) fn island_style(t: &str) -> Option<u8> {
     }
 }
 
-/// Boundary loops (outer + islands) around an internal point.
+/// The title of the window that explains why a boundary wasn't found.
+pub(crate) const BOUNDARY_ERROR: &str = "Hatch - Boundary Definition Error";
+
+/// Boundary loops (outer + islands) around an internal point. With a view on screen around the
+/// point, the boundary is looked for among the objects in and near the view (as AutoCAD does),
+/// and a boundary reaching far outside it is refused: it is almost always a gap that let the
+/// area run out into the rest of the drawing.
 pub(crate) fn loops_at(s: &Session, p: Vec2) -> Result<Vec<HatchLoop>> {
+    loops_near(s, p, false)
+}
+
+/// [`loops_at`] for a pick on screen (`picked`): a boundary reaching far outside the view is
+/// refused. Otherwise (scripts, JSON) the whole space is searched when the boundary runs out of
+/// the area around the view.
+pub(crate) fn loops_picked(s: &Session, p: Vec2) -> Result<Vec<HatchLoop>> {
+    loops_near(s, p, true)
+}
+
+fn loops_near(s: &Session, p: Vec2, picked: bool) -> Result<Vec<HatchLoop>> {
+    let near = s.view_box().filter(|v| v.contains(p)).map(|v| v.expand(v.width().max(v.height()) * 0.5));
+    match loops_in(s, p, near) {
+        Err(e) if !picked && near.is_some() => loops_in(s, p, None).map_err(|_| e),
+        r => r,
+    }
+}
+
+/// Boundary loops around `p` among the objects reaching into `near` (all objects when `None`).
+fn loops_in(s: &Session, p: Vec2, near: Option<Bounds2>) -> Result<Vec<HatchLoop>> {
     let d = s.doc()?;
     let space = s.space();
     let ext = d.extents(&space);
     let tol = ((ext.width() + ext.height()) * 1e-9).max(1e-9);
-    let (polys, owners) = outlines(d, &space, None);
+    let (polys, owners) = outlines(d, &space, near);
+    let segments: usize = polys.iter().map(|pl| pl.len().saturating_sub(1)).sum();
+    if segments > cadcraft_geom::region::MAX_SEGMENTS {
+        return Err(EngineError::Other(
+            "There are too many objects in the view to find the boundary. Zoom in closer to the area to hatch and pick again.".into(),
+        ));
+    }
     // A line that ends on a flattened curve (an ellipse) can stop short of its chords.
-    let polys = cadcraft_geom::region::snap_ends(&polys, outline_tol(ext), tol);
-    let found = cadcraft_geom::region::boundary_at_gap(&polys, p, tol, gap_tolerance(d))
-        .ok_or_else(|| EngineError::Other("Valid hatch boundary not found.".into()))?;
+    let polys = cadcraft_geom::region::snap_ends(&polys, outline_tol(near.unwrap_or(ext)), tol);
+    let found = cadcraft_geom::region::boundary_at_gap(&polys, p, tol, gap_tolerance(d)).ok_or_else(|| {
+        EngineError::Other(
+            "Valid hatch boundary not found: the area around the picked point is not closed. Close the gaps in its boundary and pick again.".into(),
+        )
+    })?;
     let outer = found.outer;
     let ob = Bounds2::from_points(outer.iter().copied());
+    if let Some(n) = near
+        && !n.contains_box(&ob)
+    {
+        return Err(EngineError::Other(
+            "The boundary around the picked point reaches far outside the visible area. The area is probably not closed: check its boundary for gaps, or zoom out to show the whole area and pick again."
+                .into(),
+        ));
+    }
     let sources = handles_of(&owners, &found.outer_sources);
     let mut loops = vec![HatchLoop { vertices: outer.iter().map(|q| PolyVertex::new(*q)).collect(), outer: true, sources }];
     // Islands: closed objects entirely inside the outer loop that don't contain the pick point.
@@ -252,18 +316,132 @@ pub(crate) fn loops_at(s: &Session, p: Vec2) -> Result<Vec<HatchLoop>> {
     Ok(loops)
 }
 
+/// Most open objects whose shared boundary is traced in one selection.
+const MAX_OPEN_OBJECTS: usize = 2000;
+
+/// Boundary loops from selected objects: each closed object is a loop; open objects (lines,
+/// arcs, open polylines…) that together enclose an area make a loop of their outline, as many
+/// as there are separate groups of them. Groups that enclose nothing are left out; when nothing
+/// at all encloses an area, the selection is refused.
 pub(crate) fn loops_from_handles(s: &Session, hs: &[Handle]) -> Result<Vec<HatchLoop>> {
+    loops_from_selection(s, hs).map(|(l, _)| l)
+}
+
+/// [`loops_from_handles`] with the selected objects that were left out (enclosing nothing).
+pub(crate) fn loops_from_selection(s: &Session, hs: &[Handle]) -> Result<(Vec<HatchLoop>, Vec<Handle>)> {
     let d = s.doc()?;
     let mut loops = Vec::new();
+    let mut open: Vec<Handle> = Vec::new();
+    let mut left_out: Vec<Handle> = Vec::new();
     for h in hs {
-        if let Some(vs) = d.entity(*h).and_then(|e| closed_loop(d, e)) {
+        let Some(e) = d.entity(*h) else { continue };
+        if let Some(vs) = closed_loop(d, e) {
             loops.push(HatchLoop { vertices: vs, outer: loops.is_empty(), sources: vec![*h] });
+        } else if island_curve(d, e) {
+            if !open.contains(h) {
+                open.push(*h);
+            }
+        } else if !left_out.contains(h) {
+            left_out.push(*h);
+        }
+    }
+    if open.len() > MAX_OPEN_OBJECTS {
+        return Err(EngineError::Other(format!("Select at most {MAX_OPEN_OBJECTS} open objects for one boundary.")));
+    }
+    if !open.is_empty() {
+        let space = s.space();
+        let ext = d.extents(&space);
+        let b = open.iter().filter_map(|h| d.entity(*h)).fold(Bounds2::EMPTY, |b, e| b.union(&entity_bounds(d, e, 0)));
+        let size = (b.width() + b.height()).max(1e-9);
+        let ttol = size / 20000.0;
+        let polys: Vec<(Handle, Vec<Vec2>)> =
+            open.iter().filter_map(|h| d.entity(*h)).flat_map(|e| object_polys(d, e, ttol, ext).into_iter().map(move |pl| (e.handle, pl))).collect();
+        let tol = (size * 1e-9).max(1e-9);
+        let gap = gap_tolerance(d);
+        for group in touching_groups(&polys, (tol * 100.0).max(gap)) {
+            let pls: Vec<Vec<Vec2>> = group.iter().filter_map(|&i| polys.get(i).map(|(_, pl)| pl.clone())).collect();
+            let mut sources: Vec<Handle> = group.iter().filter_map(|&i| polys.get(i).map(|(h, _)| *h)).collect();
+            sources.sort_unstable();
+            sources.dedup();
+            match cadcraft_geom::region::outline(&pls, tol, gap).filter(|o| o.len() >= 3) {
+                Some(outline) => {
+                    loops.push(HatchLoop { vertices: outline.into_iter().map(PolyVertex::new).collect(), outer: loops.is_empty(), sources })
+                }
+                None => left_out.extend(sources),
+            }
         }
     }
     if loops.is_empty() {
-        return Err(EngineError::Other("No closed boundary objects selected.".into()));
+        let msg = if left_out.is_empty() {
+            "No boundary objects selected: select closed objects, or objects that together enclose an area."
+        } else {
+            "The selected objects don't enclose an area: together they must form a closed boundary. Select the missing objects or close the gaps."
+        };
+        return Err(EngineError::Other(msg.into()));
     }
-    Ok(loops)
+    Ok((loops, left_out))
+}
+
+/// The warning for selected objects left out of a hatch because they enclose nothing.
+pub(crate) const LEFT_OUT: &str =
+    "Some of the selected objects don't enclose an area and were left out of the hatch. Together, objects must form a closed boundary.";
+
+/// Groups of polylines that touch or cross each other (directly or through others), as indices.
+fn touching_groups(polys: &[(Handle, Vec<Vec2>)], tol: f64) -> Vec<Vec<usize>> {
+    let n = polys.len();
+    let mut parent: Vec<usize> = (0..n).collect();
+    fn root(parent: &mut [usize], mut i: usize) -> usize {
+        while let Some(&p) = parent.get(i) {
+            if p == i {
+                break;
+            }
+            let gp = parent.get(p).copied().unwrap_or(p);
+            if let Some(slot) = parent.get_mut(i) {
+                *slot = gp;
+            }
+            i = p;
+        }
+        i
+    }
+    let bounds: Vec<Bounds2> = polys.iter().map(|(_, pl)| Bounds2::from_points(pl.iter().copied()).expand(tol)).collect();
+    let touch = |a: &[Vec2], b: &[Vec2]| {
+        a.windows(2).any(|wa| {
+            let (Some(a0), Some(a1)) = (wa.first(), wa.get(1)) else { return false };
+            let la = cadcraft_geom::Line::new(*a0, *a1);
+            b.windows(2).any(|wb| {
+                let (Some(b0), Some(b1)) = (wb.first(), wb.get(1)) else { return false };
+                let lb = cadcraft_geom::Line::new(*b0, *b1);
+                cadcraft_geom::line_line(&la, &lb).is_some()
+                    || la.dist(*b0) <= tol
+                    || la.dist(*b1) <= tol
+                    || lb.dist(*a0) <= tol
+                    || lb.dist(*a1) <= tol
+            })
+        })
+    };
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let (Some(bi), Some(bj)) = (bounds.get(i), bounds.get(j)) else { continue };
+            if !bi.intersects(bj) {
+                continue;
+            }
+            let (Some((_, pi)), Some((_, pj))) = (polys.get(i), polys.get(j)) else { continue };
+            if touch(pi, pj) {
+                let (ri, rj) = (root(&mut parent, i), root(&mut parent, j));
+                if ri != rj
+                    && let Some(slot) = parent.get_mut(ri)
+                {
+                    *slot = rj;
+                }
+            }
+        }
+    }
+    let mut groups: std::collections::BTreeMap<usize, Vec<usize>> = std::collections::BTreeMap::new();
+    for i in 0..n {
+        let r = root(&mut parent, i);
+        groups.entry(r).or_default().push(i);
+    }
+    groups.into_values().collect()
 }
 
 /// Gradient fills by name: the shapes the renderer draws (`render/src/hatch.rs`); the INV forms
@@ -289,6 +467,19 @@ struct HatchSettings {
     origin: Vec2,
     origin_mode: OriginMode,
     style: u8,
+    /// Background colour under the pattern (`background`; none by default).
+    background: Option<cadcraft_color::Color>,
+}
+
+/// A `background` parameter: a colour name, ACI number or `r,g,b`; `"None"`, `""` or null for
+/// none. `None` when absent or not a colour.
+pub(crate) fn background_param(p: &Value) -> Option<Option<cadcraft_color::Color>> {
+    match p.get("background")? {
+        Value::Null => Some(None),
+        Value::String(t) if t.trim().is_empty() || t.trim().eq_ignore_ascii_case("none") || t.trim() == "." => Some(None),
+        Value::String(t) => cadcraft_color::Color::parse(t.trim()).map(Some),
+        v => v.as_i64().and_then(|i| i16::try_from(i).ok()).map(|i| Some(cadcraft_color::Color::from_aci(i))),
+    }
 }
 
 impl HatchSettings {
@@ -326,6 +517,7 @@ impl HatchSettings {
             style: str_param(p, "style")
                 .and_then(island_style)
                 .unwrap_or_else(|| s.doc().map_or(0, |d| d.header.i64("HPISLANDDETECTION", 0).clamp(0, 2) as u8)),
+            background: background_param(p).flatten(),
         }
     }
     fn hatch(&self, mut loops: Vec<HatchLoop>) -> EntityKind {
@@ -344,7 +536,7 @@ impl HatchSettings {
             style: self.style,
             elevation: 0.0,
             gradient: self.gradient.clone(),
-            background: None,
+            background: if solid { None } else { self.background },
             pattern_lines: patfile::lines_for(&self.pattern),
         })
     }
@@ -550,6 +742,11 @@ struct HatchM {
     asking: Option<HatchAsk>,
     /// "Select objects" mode instead of "Pick internal point"; the next HATCH starts in it again.
     selecting: bool,
+    /// The boundary objects selected so far (highlighted): their loops are traced together, so
+    /// lines selected one by one can close an area between them.
+    objects: Vec<Handle>,
+    /// The loops of `objects`, when they enclose an area yet (for the preview).
+    object_loops: Vec<HatchLoop>,
 }
 
 impl HatchM {
@@ -560,6 +757,8 @@ impl HatchM {
             loops: Vec::new(),
             asking: None,
             selecting: s.last_used.hatch_select,
+            objects: Vec::new(),
+            object_loops: Vec::new(),
         }
     }
     fn set_mode(&mut self, s: &mut Session, selecting: bool) {
@@ -567,8 +766,39 @@ impl HatchM {
         s.last_used.hatch_select = selecting;
     }
     fn finish(&mut self, s: &mut Session) -> Result<Step> {
+        if !self.objects.is_empty() {
+            match loops_from_selection(s, &self.objects) {
+                Ok((l, left_out)) => {
+                    if !left_out.is_empty() {
+                        s.notice(BOUNDARY_ERROR, LEFT_OUT);
+                    }
+                    if self.settings.separate {
+                        self.loops.extend(l.into_iter().map(|l| vec![HatchLoop { outer: true, ..l }]));
+                    } else {
+                        self.loops.push(l);
+                    }
+                }
+                Err(e) => {
+                    // Stay: more objects can still close the area.
+                    s.notice(BOUNDARY_ERROR, e.to_string());
+                    return Ok(Step::Continue);
+                }
+            }
+        }
+        s.set_selection(Vec::new());
         add_hatches(s, &self.settings, std::mem::take(&mut self.loops))?;
         Ok(Step::Done)
+    }
+    /// Add selected boundary objects: they show highlighted, and their loops are traced again.
+    fn add_objects(&mut self, s: &mut Session, hs: Vec<Handle>) {
+        for h in hs {
+            if !self.objects.contains(&h) {
+                self.objects.push(h);
+            }
+        }
+        s.set_selection(self.objects.clone());
+        self.object_loops = loops_from_handles(s, &self.objects).unwrap_or_default();
+        s.echo(format!("{} object(s) selected{}", self.objects.len(), if self.object_loops.is_empty() { ", not enclosing an area yet" } else { "" }));
     }
     fn set_origin(&mut self, s: &mut Session, origin: Option<Vec2>, mode: OriginMode) -> Result<()> {
         let h = &mut s.doc_mut()?.header;
@@ -693,34 +923,33 @@ impl Interactive for HatchM {
         }
         match i {
             Input::Point(p) if !self.selecting => {
-                match loops_at(s, p) {
+                match loops_picked(s, p) {
                     Ok(l) => {
                         s.echo(format!("Analyzing the selected data... {} loop(s)", l.len()));
                         self.loops.push(l);
                     }
-                    Err(e) => s.echo(e.to_string()),
+                    Err(e) => s.notice(BOUNDARY_ERROR, e.to_string()),
                 }
                 Ok(Step::Continue)
             }
             Input::Pick(hs) => {
-                match loops_from_handles(s, &hs) {
-                    Ok(l) => {
-                        s.echo(format!("{} found", hs.len()));
-                        if self.settings.separate {
-                            self.loops.extend(l.into_iter().map(|l| vec![HatchLoop { outer: true, ..l }]));
-                        } else {
-                            self.loops.push(l);
-                        }
-                    }
-                    Err(e) => s.echo(e.to_string()),
-                }
+                self.add_objects(s, hs);
                 Ok(Step::Continue)
+            }
+            Input::Cancel => {
+                s.set_selection(Vec::new());
+                Ok(Step::Cancel)
             }
             Input::Keyword(k) => {
                 match k.as_str() {
                     "Select objects" => self.set_mode(s, true),
                     "picK internal point" => self.set_mode(s, false),
-                    "Undo" => self.loops.clear(),
+                    "Undo" => {
+                        self.loops.clear();
+                        self.objects.clear();
+                        self.object_loops.clear();
+                        s.set_selection(Vec::new());
+                    }
                     "Pattern" | "seTtings" => self.asking = Some(HatchAsk::Pattern),
                     "sCale" => self.asking = Some(HatchAsk::Scale),
                     "Angle" => self.asking = Some(HatchAsk::Angle),
@@ -745,10 +974,11 @@ impl Interactive for HatchM {
         }
     }
     fn preview(&self, _s: &Session, _c: Vec2) -> Vec<EntityKind> {
-        if self.loops.is_empty() {
+        let loops: Vec<HatchLoop> = self.loops.iter().flatten().chain(self.object_loops.iter()).cloned().collect();
+        if loops.is_empty() {
             return Vec::new();
         }
-        vec![self.settings.hatch(self.loops.iter().flatten().cloned().collect())]
+        vec![self.settings.hatch(loops)]
     }
 }
 
@@ -934,5 +1164,110 @@ mod tests {
         s.execute("gradient", &json!({ "points": [[2, 2], [8, 8]], "color1": "1", "color2": "3" })).unwrap();
         let (_, hg) = only_hatch(&s);
         assert_eq!(hg.loops.len(), 1, "gradient with repeated picks in same region must deduplicate loops");
+    }
+
+    fn line(s: &mut Session, a: [f64; 2], b: [f64; 2]) -> Handle {
+        let r = s.execute("line", &json!({ "points": [a, b] })).unwrap();
+        Handle::parse_hex(r["handles"][0].as_str().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn selected_lines_that_close_an_area_bound_a_hatch() {
+        let mut s = Session::new();
+        // A square of four lines running past each other at the corners.
+        let hs = vec![
+            line(&mut s, [-2.0, 0.0], [12.0, 0.0]),
+            line(&mut s, [10.0, -2.0], [10.0, 12.0]),
+            line(&mut s, [12.0, 10.0], [-2.0, 10.0]),
+            line(&mut s, [0.0, 12.0], [0.0, -2.0]),
+        ];
+        let hex: Vec<String> = hs.iter().map(|h| h.hex()).collect();
+        s.execute("hatch", &json!({ "handles": hex, "pattern": "SOLID" })).unwrap();
+        let (_, h) = only_hatch(&s);
+        assert_eq!(h.loops.len(), 1);
+        let b = Bounds2::from_points(h.loops[0].vertices.iter().map(|v| v.p));
+        assert!(b.min.near(Vec2::new(0.0, 0.0), 1e-6) && b.max.near(Vec2::new(10.0, 10.0), 1e-6), "{b:?}");
+        let mut src = h.loops[0].sources.clone();
+        src.sort_unstable();
+        let mut want = hs.clone();
+        want.sort_unstable();
+        assert_eq!(src, want);
+    }
+
+    #[test]
+    fn selected_lines_that_leave_a_gap_are_refused() {
+        let mut s = Session::new();
+        let hs = [line(&mut s, [0.0, 0.0], [10.0, 0.0]), line(&mut s, [10.0, 0.0], [10.0, 10.0]), line(&mut s, [10.0, 10.0], [0.0, 10.0])];
+        let hex: Vec<String> = hs.iter().map(|h| h.hex()).collect();
+        let e = s.execute("hatch", &json!({ "handles": hex })).unwrap_err().to_string();
+        assert!(e.contains("don't enclose an area"), "{e}");
+    }
+
+    #[test]
+    fn select_objects_highlights_them_and_warns_when_they_dont_close() {
+        let mut s = Session::new();
+        let a = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
+        let b = line(&mut s, [10.0, 0.0], [10.0, 10.0]);
+        let c = line(&mut s, [10.0, 10.0], [0.0, 10.0]);
+        let d = line(&mut s, [0.0, 10.0], [0.0, 0.0]);
+        s.cmdline("-HATCH").unwrap();
+        s.input(Input::Keyword("Select objects".into())).unwrap();
+        s.input(Input::Pick(vec![a])).unwrap();
+        s.input(Input::Pick(vec![b, c])).unwrap();
+        assert_eq!(s.selection(), &[a, b, c]);
+        // Three lines: Enter warns in a window and the command waits for more.
+        s.input(Input::Enter).unwrap();
+        assert!(s.running.is_some());
+        assert_eq!(s.notices.len(), 1);
+        assert_eq!(s.notices[0].title, BOUNDARY_ERROR);
+        s.notices.clear();
+        s.input(Input::Pick(vec![d])).unwrap();
+        s.input(Input::Enter).unwrap();
+        assert!(s.running.is_none());
+        assert!(s.selection().is_empty());
+        let (_, h) = only_hatch(&s);
+        assert_eq!(h.loops.len(), 1);
+    }
+
+    #[test]
+    fn a_pick_in_an_open_area_warns_and_creates_nothing() {
+        let mut s = Session::new();
+        line(&mut s, [0.0, 0.0], [10.0, 0.0]);
+        line(&mut s, [10.0, 0.0], [10.0, 10.0]);
+        s.cmdline("-HATCH").unwrap();
+        s.input(Input::Point(Vec2::new(5.0, 5.0))).unwrap();
+        assert_eq!(s.notices.len(), 1);
+        assert!(s.notices[0].message.contains("not closed"), "{}", s.notices[0].message);
+    }
+
+    #[test]
+    fn a_boundary_far_outside_the_view_is_refused() {
+        let mut s = Session::new();
+        s.execute("rectang", &json!({ "p1": [0, 0], "p2": [10000, 10000] })).unwrap();
+        // A small window on screen inside the big rectangle.
+        s.execute("zoom", &json!({ "mode": "window", "p1": [100, 100], "p2": [110, 110] })).unwrap();
+        s.cmdline("-HATCH").unwrap();
+        s.input(Input::Point(Vec2::new(105.0, 105.0))).unwrap();
+        assert!(s.notices.first().is_some_and(|n| n.message.contains("far outside the visible area")), "{:?}", s.notices);
+        s.cancel();
+        // Zoomed out to show it, the same pick hatches; a script's pick isn't refused.
+        s.execute("zoom", &json!({ "mode": "extents" })).unwrap();
+        s.execute("hatch", &json!({ "points": [[105, 105]] })).unwrap();
+        s.execute("zoom", &json!({ "mode": "window", "p1": [100, 100], "p2": [110, 110] })).unwrap();
+        s.execute("hatch", &json!({ "points": [[105, 105]] })).unwrap();
+    }
+
+    #[test]
+    fn text_and_block_boxes_do_not_bound_a_hatch() {
+        let mut s = Session::new();
+        s.execute("rectang", &json!({ "p1": [0, 0], "p2": [100, 50] })).unwrap();
+        // A multileader whose text box crosses the room.
+        s.execute("mleader", &json!({ "points": [[50, 25], [130, 25]], "text": "Glass glass glass glass" })).unwrap();
+        s.execute("text", &json!({ "at": [-20, 20], "text": "A very long label running into the room", "height": 5.0 })).unwrap();
+        s.execute("zoom", &json!({ "mode": "extents" })).unwrap();
+        s.execute("hatch", &json!({ "points": [[20, 10]], "pattern": "SOLID" })).unwrap();
+        let (_, h) = only_hatch(&s);
+        let b = Bounds2::from_points(h.loops.iter().flat_map(|l| l.vertices.iter().map(|v| v.p)));
+        assert!(b.min.near(Vec2::new(0.0, 0.0), 1e-6) && b.max.near(Vec2::new(100.0, 50.0), 1e-6), "{b:?}");
     }
 }

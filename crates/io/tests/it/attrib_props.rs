@@ -10,6 +10,9 @@ use cadcraft_io::{read_dxf, write_dxf};
 
 fn text(x: f64, value: &str) -> Text {
     Text {
+        formula: None,
+        backwards: false,
+        upside_down: false,
         insert: Vec3::new(x, 0.0, 0.0),
         align_pt: None,
         height: 1.0,

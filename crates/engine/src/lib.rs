@@ -19,6 +19,7 @@ pub mod capped_read;
 pub mod cmd;
 pub mod doc_path;
 mod finite;
+pub mod formula;
 pub mod grip_dims;
 pub mod grips;
 mod guard;
@@ -32,6 +33,7 @@ pub mod select;
 pub mod snap;
 pub mod spatial;
 pub mod sysvars;
+pub mod textformula;
 pub mod undoctl;
 pub mod units;
 
@@ -47,7 +49,7 @@ pub use cadcraft_geom as geom;
 pub use cadcraft_render as render;
 pub use cmd::hatch::{HatchPicks, PatternChoice, PickMode, pattern_choices};
 pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command};
-pub use prompt::{Accept, Drag, Input, Interactive, Picker, Prompt, Step};
+pub use prompt::{Accept, Drag, EditorKind, Glow, Input, Interactive, Picker, Prompt, Step, TextEditor};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
@@ -415,6 +417,9 @@ pub struct Settings {
     /// with their boundaries (stored, not used yet).
     pub pickstyle: u8,
     pub gripsize: f64,
+    /// GRIPSNAP (CADCraft): with no command running, the crosshair locks onto a grip of the
+    /// selection under it, as onto a snap point.
+    pub gripsnap: bool,
     pub cursorsize: f64,
     /// MAXARRAY: the most objects one array command creates (items × selected objects).
     pub maxarray: u64,
@@ -505,6 +510,7 @@ impl Default for Settings {
             pickdrag: true,
             pickstyle: 1,
             gripsize: 5.0,
+            gripsnap: true,
             cursorsize: 5.0,
             maxarray: 100_000,
             isodraft: false,
@@ -708,6 +714,16 @@ pub struct Session {
     lisp_last: Option<std::result::Result<lisp::value::Value, String>>,
     /// What the last HATCHPICK kept (the Hatch and Gradient dialog's picks).
     pub hatch_picks: Option<cmd::hatch::HatchPicks>,
+    /// Warnings a command shows in a window (a hatch boundary that isn't closed): the UI shows
+    /// the first one and takes it off when it is closed.
+    pub notices: Vec<Notice>,
+}
+
+/// A warning shown in a window ([`Session::notices`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Notice {
+    pub title: String,
+    pub message: String,
 }
 
 impl Default for Session {
@@ -757,6 +773,7 @@ impl Session {
             lisp: lisp::LispState::default(),
             lisp_last: None,
             hatch_picks: None,
+            notices: Vec::new(),
         }
     }
     pub fn new_drawing(&mut self, metric: bool) -> usize {
@@ -846,6 +863,15 @@ impl Session {
     }
 
     /// Message on the command line history.
+    /// Show a warning in a window (and on the command line).
+    pub fn notice(&mut self, title: impl Into<String>, message: impl Into<String>) {
+        let message = message.into();
+        self.echo(message.clone());
+        if self.notices.len() < 8 {
+            self.notices.push(Notice { title: title.into(), message });
+        }
+    }
+
     pub fn echo(&mut self, msg: impl Into<String>) {
         let m = msg.into();
         log::debug!("{m}");
@@ -872,6 +898,12 @@ impl Session {
 
     /// Add an entity to the current space with current properties.
     pub fn add_entity(&mut self, kind: EntityKind) -> Result<Handle> {
+        // Text starting with `=` is a formula: it keeps the formula and shows the result.
+        let mut kind = kind;
+        if matches!(kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_)) {
+            let env = textformula::env(self);
+            textformula::apply(&mut kind, &env, true);
+        }
         let common = self.current_common();
         let space = self.space();
         let true_color = self.doc()?.header.get("CECOLOR_RGB").and_then(|v| v.as_i64());
@@ -890,6 +922,16 @@ impl Session {
     }
 
     /// World units per pixel at the current view.
+    /// The area of the space being edited shown on screen (the canvas, or the active viewport's
+    /// model view), or `None` without a drawing.
+    pub fn view_box(&self) -> Option<cadcraft_geom::Bounds2> {
+        let v = self.state().ok()?.view();
+        let h = v.height;
+        let w = h * self.viewport_px.0.max(1.0) / self.viewport_px.1.max(1.0);
+        let b = cadcraft_geom::Bounds2::new(v.center - Vec2::new(w, h) * 0.5, v.center + Vec2::new(w, h) * 0.5);
+        (w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0).then_some(b)
+    }
+
     pub fn pixel_size(&self) -> f64 {
         let v = self.state().map(|s| s.view()).unwrap_or_default();
         v.height / self.viewport_px.1.max(1.0)
@@ -1311,6 +1353,11 @@ impl Session {
         }
         self.pending_window = None;
         self.select_mode = None;
+        // TRIM and EXTEND keep their edges selected (highlighted) while they run, and HATCH its
+        // boundary objects; they stay selected no longer than the command, however it ends.
+        if matches!(run.id.as_str(), "trim" | "extend" | "hatch" | "gradient" | "hatchpick") {
+            self.set_selection(Vec::new());
+        }
         let label = find_command(&run.id).map(|c| c.label).unwrap_or("Command");
         let _ = cancelled;
         if let Some(m) = cmd::blocks::refedit::after_command(self, &run.before, &run.id) {
@@ -1389,6 +1436,11 @@ impl Session {
         self.running.as_ref().and_then(|r| r.machine.editing_mtext())
     }
 
+    /// The text the running command edits in place ([`Interactive::text_editor`]).
+    pub fn text_editor(&self) -> Option<TextEditor> {
+        self.running.as_ref().and_then(|r| r.machine.text_editor())
+    }
+
     pub fn current_prompt(&self) -> Option<Prompt> {
         if let Some(p) = self.lisp_prompt() {
             return Some(p);
@@ -1454,6 +1506,18 @@ impl Session {
         }
         out.extend(kinds.into_iter().map(|k| Entity { handle: Handle(0), common: common.clone(), kind: k }));
         out
+    }
+
+    /// What the active command shows glowing under the cursor ([`Interactive::glow`]), as
+    /// entities with the current properties, and whether it is what a pick would take away.
+    pub fn glow(&self, cursor: Vec2) -> Option<(Vec<Entity>, bool)> {
+        if self.lisp_prompt().is_some() {
+            return None;
+        }
+        let r = self.running.as_ref()?;
+        let g = r.machine.glow(self, cursor)?;
+        let common = self.current_common();
+        Some((g.kinds.into_iter().map(|k| Entity { handle: Handle(0), common: common.clone(), kind: k }).collect(), g.removing))
     }
 
     /// The active command's preview as a transform of existing objects (see
@@ -1546,6 +1610,22 @@ impl Session {
         // Transparent command.
         if tt.starts_with('\'') {
             return self.start(tt);
+        }
+        // A formula (`=1200+350*2`) where a distance or number is asked: its value is the answer.
+        if (prompt.accept.number || prompt.accept.point)
+            && let Some(r) = formula::eval(tt)
+        {
+            return match r {
+                Ok(v) => {
+                    let v = if v.fract() == 0.0 && v.abs() < 1e15 { format!("{v:.0}") } else { format!("{v}") };
+                    self.echo(format!("{tt} = {v}"));
+                    self.typed(&v)
+                }
+                Err(e) => {
+                    self.echo(e);
+                    Ok(())
+                }
+            };
         }
         // A LISP expression typed at a command's prompt: its value is the answer.
         // Not at a free-text prompt: there the text is the answer (CAL takes "(3+4)*2").

@@ -35,6 +35,16 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.animations.off", "Off", &["View", "Accessibility", "Animation Effects", "Off"], None),
     ("ui.animations", "Animation Effects", &[], None),
     ("ui.toggle.toolbar", "Tool Bar", &["Window", "Tool Bar"], None),
+    ("ui.toolbar.top", "Top", &["Window", "Tool Bar Position", "Top"], None),
+    ("ui.toolbar.left", "Left", &["Window", "Tool Bar Position", "Left"], None),
+    ("ui.toggle.toolbar.toolsets", "Tool Sets Tool Bar", &["Window", "Tool Sets Tool Bar"], None),
+    ("ui.toggle.toolbar.layers", "Layers Tool Bar", &["Window", "Layers Tool Bar"], None),
+    ("ui.dialog.toolbar", "Customize Tool Bar...", &["Window", "Customize Tool Bar..."], None),
+    ("ui.toolbar.dock", "Dock Tool Bar", &[], None),
+    ("ui.toolbar.add", "Add to Tool Bar", &[], None),
+    ("ui.toolbar.remove", "Remove from Tool Bar", &[], None),
+    ("ui.toolbar.move", "Move Tool Bar Button", &[], None),
+    ("ui.toolbar.reset", "Reset Tool Bar", &[], None),
     ("ui.toggle.filetabs", "File Tab", &["Window", "File Tab"], None),
     ("ui.toggle.statusbar", "Status Bar", &["Window", "Status Bar"], None),
     ("ui.toggle.cmdline", "Command Line", &["Window", "Command Line"], Some("Cmd+9")),
@@ -43,6 +53,8 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.theme.system", "Use System Setting", &["View", "Interface Theme", "Use System Setting"], None),
     ("ui.theme.light", "Light", &["View", "Interface Theme", "Light"], None),
     ("ui.theme.dark", "Dark", &["View", "Interface Theme", "Dark"], None),
+    ("ui.theme.black", "Black", &["View", "Interface Theme", "Black"], None),
+    ("ui.theme.lightblue", "Light Blue", &["View", "Interface Theme", "Light Blue"], None),
     ("ui.theme", "Interface Theme", &[], None),
     ("ui.saveformat.dxf", "DXF", &["File", "Default Save Format", "DXF"], None),
     ("ui.saveformat.dwg", "DWG", &["File", "Default Save Format", "DWG"], None),
@@ -65,6 +77,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.dialog.dsettings", "Drafting Settings...", &[], None),
     ("ui.dialog.about", "About CADCraft", &["Help", "About CADCraft"], None),
     ("ui.dialog.commands", "Command Reference", &["Help", "CADCraft Help"], Some("F1")),
+    ("ui.dialog.formulas", "Text Formulas", &["Help", "Text Formulas"], None),
     ("ui.toggle.history", "Command History", &["Window", "Command History"], Some("F2")),
     ("ui.cmdline.lines", "Command Line History Lines", &[], None),
     ("ui.cmdline.clear", "Clear Command History", &[], None),
@@ -87,6 +100,9 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
     if let Some(result) = crate::spacemouse::route(app, id, params) {
         return Some(result);
     }
+    if let Some(r) = crate::toolbar::route(app, id, params) {
+        return Some(r);
+    }
     if let Some(r) = crate::xrefs::route(app, id, params) {
         return Some(r);
     }
@@ -102,6 +118,11 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
     if matches!(id, "ui.panel.properties" | "ui.panel.layers") {
         let panel = if id == "ui.panel.properties" { "properties" } else { "layers" };
         return Some(crate::docking::command(app, false, &json!({"operation":"open", "panel":panel})));
+    }
+    // The Blocks button and INSERT typed or from a menu open the Block Manager (as AutoCAD's
+    // INSERT opens its Blocks palette); -INSERT and calls with parameters run the command.
+    if id == "ui.dialog.blocks" || (matches!(id, "insert" | "i" | "ddinsert") && params.is_null()) {
+        return Some(crate::blockmgr::open(app));
     }
     if id == "ui.toggle.quickcalc" {
         return Some(crate::palettes::quickcalc::toggle(app));
@@ -273,7 +294,7 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             toggle(&mut app.ui.in_window_menu, params);
             Ok(Value::Null)
         }
-        "ui.theme.system" | "ui.theme.light" | "ui.theme.dark" => {
+        "ui.theme.system" | "ui.theme.light" | "ui.theme.dark" | "ui.theme.black" | "ui.theme.lightblue" => {
             let pref = crate::theme::ThemePref::parse(id.trim_start_matches("ui.theme.")).unwrap_or_default();
             set_theme(app, pref)
         }
@@ -281,7 +302,7 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         "ui.theme" => match params.get("theme").and_then(Value::as_str) {
             Some(name) => match crate::theme::ThemePref::parse(name) {
                 Some(pref) => set_theme(app, pref),
-                None => Err(format!("unknown theme \"{name}\" (system, light or dark)")),
+                None => Err(format!("unknown theme \"{name}\" (system, light, dark, black or lightblue)")),
             },
             None => Ok(theme_json(app)),
         },
@@ -366,7 +387,9 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         | "ui.dialog.blocks"
         | "ui.dialog.dsettings"
         | "ui.dialog.about"
+        | "ui.dialog.toolbar"
         | "ui.dialog.commands"
+        | "ui.dialog.formulas"
         | "ui.dialog.qselect"
         | "ui.dialog.parameters" => {
             app.ui.dialog = Some(id.trim_start_matches("ui.dialog.").to_string());
@@ -468,7 +491,12 @@ fn theme_json(app: &CadApp) -> Value {
         crate::theme::ThemePref::System => app.shown_theme(),
         p => p.resolve(None),
     };
-    json!({ "theme": app.ui.theme.as_str(), "shown": if shown == egui::Theme::Light { "light" } else { "dark" } })
+    let shown = match app.ui.theme {
+        crate::theme::ThemePref::Black | crate::theme::ThemePref::LightBlue => app.ui.theme.as_str(),
+        _ if shown == egui::Theme::Light => "light",
+        _ => "dark",
+    };
+    json!({ "theme": app.ui.theme.as_str(), "shown": shown })
 }
 
 fn set_animations(app: &mut CadApp, pref: crate::animation::AnimationPref) -> Value {
@@ -574,7 +602,7 @@ pub(crate) fn shortcut_label(s: &str, mac: bool) -> String {
 pub(crate) fn entry_ui(ui: &mut egui::Ui, e: &Entry, clicked: &mut Option<String>) {
     match e {
         Entry::Item { label, id, shortcut, enabled } => {
-            let mut b = egui::Button::new(crate::i18n::t(label));
+            let mut b = egui::Button::new(crate::i18n::widget(ui, crate::i18n::t(label), egui::TextStyle::Button));
             if let Some(s) = shortcut {
                 b = b.shortcut_text(shortcut_label(s, ui.ctx().os().is_mac()));
             }

@@ -22,6 +22,10 @@ pub(crate) const ORIGIN_MODES: [&str; 5] = ["bottomLeft", "bottomRight", "topRig
 #[derive(Clone, Debug, PartialEq)]
 pub struct Fill {
     pub gradient: bool,
+    /// The Custom Patterns tab is open (a pattern from a `.pat` file in the user's folder).
+    pub custom: bool,
+    /// The `.pat` file of a custom pattern: loaded when OK is pressed.
+    pub pattern_file: Option<String>,
     pub pattern: String,
     pub scale: f64,
     /// Pattern or gradient angle, degrees.
@@ -41,6 +45,8 @@ pub struct Fill {
     pub associative: bool,
     /// Island detection: 0 normal, 1 outer, 2 ignore.
     pub style: u8,
+    /// Background colour under a pattern (none: the drawing shows through).
+    pub background: Option<Color>,
 }
 
 /// The dialog while open (and while a pick it started runs).
@@ -80,6 +86,8 @@ pub fn create_state(d: &Drawing, uid: u64, gradient: bool) -> HatchDlgState {
     let origin_mode = mode.checked_sub(1).and_then(|i| usize::try_from(i).ok()).and_then(|i| ORIGIN_MODES.get(i)).copied().unwrap_or("bottomLeft");
     let fill = Fill {
         gradient,
+        custom: false,
+        pattern_file: None,
         pattern: h.str("HPNAME", "ANSI31"),
         scale,
         angle,
@@ -94,6 +102,7 @@ pub fn create_state(d: &Drawing, uid: u64, gradient: bool) -> HatchDlgState {
         origin_mode: origin_mode.into(),
         associative: h.i64("HPASSOC", 1) != 0,
         style: u8::try_from(h.i64("HPISLANDDETECTION", 0).clamp(0, 2)).unwrap_or(0),
+        background: None,
     };
     HatchDlgState {
         opened: fill.clone(),
@@ -128,6 +137,7 @@ pub fn edit_state(d: &Drawing, uid: u64, handles: Vec<Handle>) -> Option<HatchDl
     f.angle = Some(first.angle.to_degrees()).filter(|a| a.is_finite()).unwrap_or(0.0);
     f.associative = first.associative;
     f.style = first.style.min(2);
+    f.background = first.background;
     f.specified = false;
     f.origin = None;
     if let Some(g) = &first.gradient {
@@ -196,6 +206,9 @@ pub fn ok_call(st: &HatchDlgState) -> Option<(&'static str, Value)> {
         p.insert("associative".into(), json!(f.associative));
         p.insert("separate".into(), json!(st.separate));
         p.insert("style".into(), json!(style_name(f.style)));
+        if let (Some(c), false) = (f.background, f.gradient) {
+            p.insert("background".into(), json!(c.name()));
+        }
         match (f.specified, f.origin) {
             (true, Some(o)) => p.insert("origin".into(), json!(o)),
             (true, None) => p.insert("originMode".into(), json!(f.origin_mode)),
@@ -243,6 +256,9 @@ pub fn ok_call(st: &HatchDlgState) -> Option<(&'static str, Value)> {
     }
     if f.style != o.style {
         p.insert("style".into(), json!(style_name(f.style)));
+    }
+    if f.background != o.background && !f.gradient {
+        p.insert("background".into(), json!(f.background.map_or_else(|| "None".to_string(), |c| c.name())));
     }
     if f.specified {
         match f.origin {
@@ -365,6 +381,16 @@ pub fn resume(app: &mut CadApp) {
 /// OK: run the dialog's command. True when the dialog closes; a failed command keeps it open
 /// with the error (the drawing is unchanged).
 pub fn ok(app: &mut CadApp) -> bool {
+    // A custom pattern joins the pattern list from its file first.
+    let file = app.hatch_dlg.as_ref().filter(|st| st.fill.custom && !st.fill.gradient).and_then(|st| st.fill.pattern_file.clone());
+    if let Some(file) = file
+        && let Err(e) = app.run("hatch.patterns", json!({ "file": file }))
+    {
+        if let Some(st) = app.hatch_dlg.as_mut() {
+            st.error = Some(e);
+        }
+        return false;
+    }
     let Some(call) = app.hatch_dlg.as_ref().map(ok_call) else { return true };
     let Some((cmd, p)) = call else {
         app.hatch_dlg = None;
@@ -389,6 +415,68 @@ enum Action {
     Ok,
     Cancel,
     Pick(PickMode),
+    /// Choose the Custom Patterns folder.
+    BrowseFolder,
+}
+
+/// The hatch background colour picker: None, ByLayer/ByBlock, the standard colours and any
+/// colour; the choice as HATCH takes it (a colour name or `"None"`).
+pub fn background_menu(ui: &mut egui::Ui, current: Option<Color>) -> Option<String> {
+    let shown = match current {
+        None => crate::tl!("None").to_string(),
+        Some(c) => crate::i18n::t(&c.name()).to_string(),
+    };
+    let mut out = None;
+    ui.horizontal(|ui| {
+        let (r, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+        match current {
+            Some(c) => {
+                let rgb = c.resolve(Color::Index(7), Color::Index(7));
+                ui.painter().rect_filled(r, 2.0, egui::Color32::from_rgb(rgb.0, rgb.1, rgb.2));
+            }
+            None => {
+                ui.painter().rect_stroke(r, 2.0, egui::Stroke::new(1.0, crate::theme::Tokens::get().text_dim), egui::StrokeKind::Inside);
+            }
+        }
+        ui.menu_button(shown, |ui| {
+            if ui.button(crate::tl!("None")).clicked() {
+                out = Some("None".to_string());
+                ui.close();
+            }
+            ui.separator();
+            for (n, c) in [
+                ("ByLayer", Color::ByLayer),
+                ("ByBlock", Color::ByBlock),
+                ("Red", Color::Index(1)),
+                ("Yellow", Color::Index(2)),
+                ("Green", Color::Index(3)),
+                ("Cyan", Color::Index(4)),
+                ("Blue", Color::Index(5)),
+                ("Magenta", Color::Index(6)),
+                ("White", Color::Index(7)),
+                ("Color 8", Color::Index(8)),
+                ("Color 9", Color::Index(9)),
+            ] {
+                if ui.button(crate::i18n::t(n)).clicked() {
+                    out = Some(c.name());
+                    ui.close();
+                }
+            }
+            ui.separator();
+            // Any colour.
+            let mut rgb = match current {
+                Some(Color::True(c)) => [c.0, c.1, c.2],
+                _ => [255, 255, 255],
+            };
+            ui.horizontal(|ui| {
+                ui.label(crate::tl!("Other color"));
+                if ui.color_edit_button_srgb(&mut rgb).changed() {
+                    out = Some(Color::True(cadcraft_color::Rgb(rgb[0], rgb[1], rgb[2])).name());
+                }
+            });
+        });
+    });
+    out
 }
 
 fn shape_label(name: &str) -> &'static str {
@@ -430,11 +518,13 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     };
     let title = if st.edit.is_empty() { crate::tl!("Hatch and Gradient") } else { crate::tl!("Hatch Edit") };
     let mut action = Action::None;
+    let mut folder = app.ui.pattern_folder.clone();
+    let can_browse = app.services.pick_folder.is_some();
     egui::Window::new(title).id(egui::Id::new("hatch_dialog")).open(open).collapsible(false).resizable(false).show(ctx, |ui| {
         ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
-                ui.set_width(340.0);
-                fill_ui(ui, &mut st.fill, &mut action);
+                ui.set_width(if st.fill.custom { 400.0 } else { 340.0 });
+                fill_ui(ui, &mut st.fill, &mut action, &mut folder, can_browse);
             });
             // Space, not a vertical separator: a separator takes the height available, and the
             // window grew by it every frame until the buttons left the screen.
@@ -459,6 +549,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         });
     });
     app.hatch_dlg = Some(st);
+    app.ui.pattern_folder = folder;
     match action {
         Action::Ok => {
             if ok(app) {
@@ -470,6 +561,12 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             *open = false;
         }
         Action::Pick(mode) => start_pick(app, mode),
+        Action::BrowseFolder => {
+            if let Some(dir) = app.services.pick_folder.as_ref().and_then(|pick| pick()) {
+                app.ui.pattern_folder = dir;
+                crate::custom_patterns::reload();
+            }
+        }
         Action::None => {
             if !*open {
                 app.hatch_dlg = None;
@@ -478,13 +575,37 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     }
 }
 
-fn fill_ui(ui: &mut egui::Ui, f: &mut Fill, action: &mut Action) {
+fn fill_ui(ui: &mut egui::Ui, f: &mut Fill, action: &mut Action, folder: &mut String, can_browse: bool) {
     ui.horizontal(|ui| {
-        ui.selectable_value(&mut f.gradient, false, crate::tl!("Pattern"));
-        ui.selectable_value(&mut f.gradient, true, crate::tl!("Gradient"));
+        if ui.selectable_label(!f.gradient && !f.custom, crate::tl!("Pattern")).clicked() {
+            f.gradient = false;
+            f.custom = false;
+        }
+        if ui.selectable_label(f.gradient, crate::tl!("Gradient")).clicked() {
+            f.gradient = true;
+            f.custom = false;
+        }
+        if ui.selectable_label(!f.gradient && f.custom, crate::tl!("Custom Patterns")).clicked() {
+            f.gradient = false;
+            f.custom = true;
+        }
     });
     ui.separator();
-    if f.gradient {
+    if f.custom && !f.gradient {
+        if let crate::custom_patterns::TabAction::Browse = crate::custom_patterns::tab_ui(ui, folder, &mut f.pattern, &mut f.pattern_file, can_browse)
+        {
+            *action = Action::BrowseFolder;
+        }
+        ui.add_space(4.0);
+        egui::Grid::new("hatch_custom_pattern").num_columns(2).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
+            ui.label(crate::tl!("Angle"));
+            ui.add(egui::DragValue::new(&mut f.angle).speed(1.0).range(-360.0..=360.0).clamp_existing_to_range(false).suffix("°"));
+            ui.end_row();
+            ui.label(crate::tl!("Scale"));
+            ui.add(egui::DragValue::new(&mut f.scale).speed(0.05).range(0.0001..=1.0e6).clamp_existing_to_range(false));
+            ui.end_row();
+        });
+    } else if f.gradient {
         egui::Grid::new("hatch_gradient").num_columns(2).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
             ui.label(crate::tl!("Color 1"));
             if let Some(c) = crate::layers::color_button(ui, egui::Id::new("hatch_color1"), f.color1, false, 160.0) {
@@ -592,6 +713,14 @@ fn options_ui(ui: &mut egui::Ui, st: &mut HatchDlgState, action: &mut Action) {
     ui.checkbox(&mut st.fill.associative, crate::tl!("Associative"));
     if st.edit.is_empty() {
         ui.checkbox(&mut st.separate, crate::tl!("Create separate hatches"));
+    }
+    if !st.fill.gradient {
+        ui.horizontal(|ui| {
+            ui.label(crate::tl!("Background color"));
+            if let Some(v) = background_menu(ui, st.fill.background) {
+                st.fill.background = if v == "None" { None } else { Color::parse(&v) };
+            }
+        });
     }
     ui.label(crate::tl!("Island detection"));
     ui.radio_value(&mut st.fill.style, 0, crate::tl!("Normal"));

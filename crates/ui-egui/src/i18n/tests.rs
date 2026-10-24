@@ -87,6 +87,7 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
         include_str!("../xrefs.rs"),
         include_str!("../canvas.rs"),
         include_str!("../chrome.rs"),
+        include_str!("../toolbar.rs"),
         include_str!("../cmdline.rs"),
         include_str!("../credits.rs"),
         include_str!("../palettes/quickcalc.rs"),

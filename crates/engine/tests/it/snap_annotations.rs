@@ -44,6 +44,9 @@ fn justified_text_snaps_and_grips_at_its_alignment_point() {
     let mut s = Session::new();
     // As read from DXF: a right-justified text keeps group 10 (start) and group 11 (alignment).
     let t = Text {
+        formula: None,
+        backwards: false,
+        upside_down: false,
         insert: Vec3::new(0.0, 0.0, 0.0),
         align_pt: Some(Vec3::new(10.0, 0.0, 0.0)),
         height: 1.0,

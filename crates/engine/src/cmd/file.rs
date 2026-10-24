@@ -41,6 +41,81 @@ pub struct IoHooks {
 
 static IO: OnceLock<IoHooks> = OnceLock::new();
 
+/// Plot sheets of several drawings into one PDF, one page each in order, with JSON options for
+/// the whole file (installed by the app; PUBLISH with `combine` across open drawings).
+pub type PlotBookHook = fn(&[(&Drawing, cadcraft_doc::Space)], &Value) -> std::result::Result<Vec<u8>, String>;
+
+static PLOT_BOOK: OnceLock<PlotBookHook> = OnceLock::new();
+
+/// Read an AutoCAD plot style table file (`.ctb`/`.stb` bytes, the file name) into a table
+/// (installed by the app; the io layer reads the format).
+pub type PlotStyleReader = fn(&[u8], &str) -> std::result::Result<cadcraft_doc::PlotStyleTable, String>;
+
+static PLOT_STYLE_READER: OnceLock<PlotStyleReader> = OnceLock::new();
+
+pub fn set_plot_style_reader(h: PlotStyleReader) {
+    let _ = PLOT_STYLE_READER.set(h);
+}
+pub fn plot_style_reader() -> Option<PlotStyleReader> {
+    PLOT_STYLE_READER.get().copied()
+}
+
+/// Whether `bytes` are an AutoCAD plot style table file.
+pub fn is_pia(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"PIAFILEVERSION")
+}
+
+/// The folders a missing plot style table is looked for in: `extra` (the drawing's folder), then
+/// AutoCAD's plot style folders of this user (Windows: under `%APPDATA%\Autodesk`).
+#[cfg(not(target_arch = "wasm32"))]
+fn plot_style_dirs(extra: Vec<std::path::PathBuf>) -> Vec<std::path::PathBuf> {
+    let mut dirs = extra;
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        // Autodesk\<product>\<release>\<language>\Plotters\Plot Styles
+        let list = |p: &std::path::Path| -> Vec<std::path::PathBuf> {
+            std::fs::read_dir(p).map(|r| r.flatten().map(|e| e.path()).filter(|p| p.is_dir()).take(64).collect()).unwrap_or_default()
+        };
+        for product in list(&std::path::Path::new(&appdata).join("Autodesk")) {
+            for release in list(&product) {
+                for lang in list(&release) {
+                    let ps = lang.join("Plotters").join("Plot Styles");
+                    if ps.is_dir() {
+                        dirs.push(ps);
+                    }
+                }
+            }
+        }
+    }
+    dirs
+}
+
+/// Find the table file `name` (case-insensitive) in `dirs` and read it.
+#[cfg(not(target_arch = "wasm32"))]
+fn find_plot_style(name: &str, dirs: &[std::path::PathBuf]) -> Option<cadcraft_doc::PlotStyleTable> {
+    let reader = plot_style_reader()?;
+    for dir in dirs {
+        let Ok(rd) = std::fs::read_dir(dir) else { continue };
+        for e in rd.flatten().take(5000) {
+            let p = e.path();
+            if p.file_name().is_some_and(|f| f.to_string_lossy().eq_ignore_ascii_case(name.trim()))
+                && std::fs::metadata(&p).is_ok_and(|m| m.len() <= cadcraft_doc::MAX_TABLE_FILE as u64)
+                && let Ok(bytes) = std::fs::read(&p)
+                && let Ok(t) = reader(&bytes, name.trim())
+            {
+                return Some(t);
+            }
+        }
+    }
+    None
+}
+
+pub fn set_plot_book(h: PlotBookHook) {
+    let _ = PLOT_BOOK.set(h);
+}
+pub fn plot_book() -> Option<PlotBookHook> {
+    PLOT_BOOK.get().copied()
+}
+
 pub fn set_io(h: IoHooks) {
     let _ = IO.set(h);
 }
@@ -271,6 +346,13 @@ pub struct ReadFile {
     path: Option<String>,
 }
 
+impl ReadFile {
+    /// The drawing read (for a preview of it before, or without, opening it).
+    pub fn drawing(&self) -> &Drawing {
+        &self.drawing
+    }
+}
+
 /// Read and decode `path` (the slow half of `OPEN {path}`). Needs no session; runs anywhere.
 pub fn read_file(path: &str) -> std::result::Result<ReadFile, String> {
     #[cfg(not(target_arch = "wasm32"))]
@@ -297,6 +379,7 @@ pub fn finish_open(s: &mut Session, f: ReadFile) -> Result<Value> {
     let ReadFile { drawing, binary_dxf, name, path } = f;
     let i = add_read(s, drawing, binary_dxf, &name, path);
     super::blocks::xref::after_open(s, i);
+    find_plot_styles(s, i);
     Ok(opened(s, i, true))
 }
 
@@ -309,7 +392,11 @@ fn read_bytes(bytes: &[u8], name: &str, path: Option<String>) -> Result<ReadFile
     Ok(ReadFile { drawing, binary_dxf: cadcraft_dxf::is_binary(bytes), name: name.to_string(), path })
 }
 
-fn add_read(s: &mut Session, drawing: Drawing, binary_dxf: bool, name: &str, path: Option<String>) -> usize {
+fn add_read(s: &mut Session, mut drawing: Drawing, binary_dxf: bool, name: &str, path: Option<String>) -> usize {
+    crate::grips::adopt_file_dim_text(&mut drawing);
+    // Formulas and fields (dates) worked out for today.
+    let env = crate::textformula::Env { now: crate::textformula::local_now(), file: file_name(name), sheet: "Model".into(), measured: None };
+    crate::textformula::refresh(&mut drawing, &env);
     let notes = drawing.read_notes.clone();
     let i = s.open_drawing(drawing, &file_name(name), path);
     if let Some(st) = s.docs.get_mut(i) {
@@ -349,6 +436,7 @@ fn run_open(s: &mut Session, p: &Value) -> Result<Value> {
                 crate::capped_read::read_capped(std::path::Path::new(path), MAX_DRAWING_BYTES).map_err(|e| bad("open", format!("{path}: {e}")))?;
             let i = open_bytes(s, &bytes, path, Some(path.to_string()))?;
             super::blocks::xref::after_open(s, i);
+            find_plot_styles(s, i);
             return Ok(opened(s, i, true));
         }
         #[cfg(target_arch = "wasm32")]
@@ -360,6 +448,52 @@ fn run_open(s: &mut Session, p: &Value) -> Result<Value> {
     let i = open_bytes(s, &bytes, name, None)?;
     super::blocks::xref::after_open(s, i);
     Ok(opened(s, i, false))
+}
+
+/// The plot style tables the drawing's layouts name that it doesn't hold and CADCraft doesn't
+/// have built in (`SIVAN.ctb`): read from the drawing's folder or AutoCAD's plot style folders,
+/// so the layouts plot with their colours and lineweights.
+pub(crate) fn find_plot_styles(s: &mut Session, i: usize) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let Some(st) = s.docs.get_mut(i) else { return };
+        let mut wanted: Vec<String> = Vec::new();
+        for l in &st.doc.layouts {
+            let n = l.page.plot_style_table.trim();
+            if !cadcraft_doc::no_plot_style_table(n)
+                && cadcraft_doc::plot_style_table(&st.doc, n).is_none()
+                && !wanted.iter().any(|w| w.eq_ignore_ascii_case(n))
+            {
+                wanted.push(n.to_string());
+            }
+        }
+        if wanted.is_empty() {
+            return;
+        }
+        let mut extra = Vec::new();
+        if let Some(dir) = st.path.as_deref().and_then(|p| std::path::Path::new(p).parent()) {
+            extra.push(dir.to_path_buf());
+        }
+        let dirs = plot_style_dirs(extra);
+        let found: Vec<cadcraft_doc::PlotStyleTable> = wanted.iter().filter_map(|n| find_plot_style(n, &dirs)).collect();
+        let missing: Vec<&String> = wanted.iter().filter(|n| !found.iter().any(|t| t.name.eq_ignore_ascii_case(n))).collect();
+        let names: Vec<String> = found.iter().map(|t| t.name.clone()).collect();
+        if !found.is_empty() {
+            let d = std::sync::Arc::make_mut(&mut st.doc);
+            d.plot_style_tables.extend(found);
+            st.saved = st.doc.clone();
+        }
+        for n in names {
+            s.echo(format!("Plot style table {n} found and used for plotting."));
+        }
+        for n in missing {
+            s.echo(format!(
+                "Plot style table {n} not found: layouts plot with the objects' own colours and lineweights. Put the file next to the drawing or load it in the Plot Style Manager."
+            ));
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = (s, i);
 }
 
 fn run_close(s: &mut Session, p: &Value) -> Result<Value> {

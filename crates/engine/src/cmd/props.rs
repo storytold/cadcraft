@@ -16,7 +16,7 @@ use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("properties", "Properties", run_get).menu(&["Modify", "Properties"]).alias(&["pr", "props", "ch"]).params("{handles?} → properties of the selection").noundo(),
-        CommandSpec::new("properties.set", "Set Properties", run_set).params("{handles?, layer?, color?, linetype?, lineweight?, ltscale?, thickness?, transparency?: \"ByLayer\" | \"ByBlock\" | 0..90, visible?, <geometry fields: radius, center, start, end, text, height, rotation…>; dimensions: textOverride, dimStyle, textHeight, arrowSize, dimScale, precision (per-dimension overrides)}"),
+        CommandSpec::new("properties.set", "Set Properties", run_set).params("{handles?, layer?, color?, linetype?, lineweight?, ltscale?, thickness?, transparency?: \"ByLayer\" | \"ByBlock\" | 0..90, visible?, <geometry fields: radius, center, start, end, text, height, rotation…>; dimensions: textOverride, dimStyle, textHeight, arrowSize, dimScale, precision (per-dimension overrides); textStyle (text, multiline text, multileaders); text: justify (L C R A M F TL TC TR ML MC MR BL BC BR; the letters stay in place), backwards, upsideDown; multiline text: justify (TL..BR), frame; hatches: pattern, scale, angle, background (colour | \"None\"); multileaders: mleaderStyle, arrow (arrowhead name or block; \"\" = the style's), arrowSize, leaderType: straight|spline|none, dogleg (landing distance; 0 = no landing), textHeight}"),
         CommandSpec::new("matchprop", "Match Properties", matchprop::run_matchprop)
             .menu(&["Modify", "Match Properties"])
             .alias(&["ma", "painter"])
@@ -38,6 +38,15 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["st"])
             .params("{name, font?, bigFont?, height?, widthFactor?, oblique? (degrees), backwards?, upsideDown?, vertical?, annotative?, current?} → styles"),
         CommandSpec::new("style.list", "List Text Styles", run_style_list).params("{} → text styles").noundo(),
+        CommandSpec::new("fonts.missing", "Missing Fonts", run_fonts_missing)
+            .params("{} → [{style, font, substitute}]: text style fonts CADCraft can't find, and what it draws them with")
+            .noundo(),
+        CommandSpec::new("fonts.rescan", "Look for Fonts Again", run_fonts_rescan)
+            .params("{} → fonts.list: look again for fonts added to or removed from the font folders")
+            .noundo(),
+        CommandSpec::new("fonts.list", "List Fonts", run_fonts_list)
+            .params("{} → {folders, fonts: [{name, family?, user}]}: the fonts text styles can use, the user's font folders' first")
+            .noundo(),
         CommandSpec::new("style.rename", "Rename Text Style", run_style_rename).params("{from, to}"),
         CommandSpec::new("style.delete", "Delete Text Style", run_style_delete).params("{name} (not Standard, the current style or one in use)"),
         CommandSpec::new("style.current", "Set Current Text Style", run_style_current).params("{name}"),
@@ -208,10 +217,49 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
     let dim_style = str_param(p, "dimStyle")
         .map(|n| d.dim_style(n).map(|st| st.name.clone()).ok_or_else(|| bad("properties.set", format!("dimension style `{n}` not found"))))
         .transpose()?;
+    let mleader_style = str_param(p, "mleaderStyle")
+        .map(|n| {
+            d.mleader_styles
+                .iter()
+                .find(|st| st.name.eq_ignore_ascii_case(n))
+                .map(|st| st.name.clone())
+                .or_else(|| n.eq_ignore_ascii_case("Standard").then(|| "Standard".to_string()))
+                .ok_or_else(|| bad("properties.set", format!("multileader style `{n}` not found")))
+        })
+        .transpose()?;
+    let text_style = str_param(p, "textStyle")
+        .map(|n| d.text_style(n).map(|st| st.name.clone()).ok_or_else(|| bad("properties.set", format!("text style `{n}` not found"))))
+        .transpose()?;
+    // Justification (text: L C R A M F TL..BR; multiline text: TL..BR), and the text styles it
+    // lays text out with to keep the letters in place.
+    let justify = str_param(p, "justify");
+    let text_justify = justify.and_then(super::draw::justify);
+    let mtext_justify = justify.and_then(mtext_attach);
+    if let Some(j) = justify
+        && text_justify.is_none()
+        && mtext_justify.is_none()
+    {
+        return Err(bad("properties.set", format!("unknown justification `{j}`")));
+    }
+    let style_doc = justify.map(|_| cadcraft_doc::Drawing { text_styles: d.text_styles.clone(), header: d.header.clone(), ..Default::default() });
     let dim_over = dim_overrides(p)?;
     let anno_scale = d.current_anno_scale();
     for h in &hs {
         d.modify_entity(*h, |e| {
+            // The text style of text, multiline text and a multileader's text.
+            if let Some(st) = &text_style {
+                match &mut e.kind {
+                    EntityKind::Text(t) => t.style.clone_from(st),
+                    EntityKind::MText(t) => t.style.clone_from(st),
+                    EntityKind::MLeader(m) => {
+                        if let Some(t) = &mut m.text {
+                            t.style.clone_from(st);
+                        }
+                    }
+                    EntityKind::AttDef(a) => a.text.style.clone_from(st),
+                    _ => {}
+                }
+            }
             // Annotative: Yes supports the current annotation scale; No drops every scale.
             if let Some(a) = p.get("annotative").and_then(Value::as_bool) {
                 cadcraft_doc::set_annotative(e, a, &anno_scale);
@@ -305,6 +353,15 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
                     if let Some(x) = num("widthFactor").filter(|x| *x > 0.0) {
                         t.width_factor = x;
                     }
+                    if let Some(f) = p.get("backwards").and_then(Value::as_bool) {
+                        t.backwards = f;
+                    }
+                    if let Some(f) = p.get("upsideDown").and_then(Value::as_bool) {
+                        t.upside_down = f;
+                    }
+                    if let (Some((h, v)), Some(sd)) = (text_justify, &style_doc) {
+                        rejustify_text(sd, t, h, v);
+                    }
                     // The position is the point the text is placed by: moving it moves the text.
                     if let Some(to) = p.get("position").and_then(point_value) {
                         let d = to - t.justify_point();
@@ -326,6 +383,12 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
                     }
                     if let Some(x) = num("rotation") {
                         t.rotation = x.to_radians();
+                    }
+                    if let Some(f) = p.get("frame").and_then(Value::as_bool) {
+                        t.frame = f;
+                    }
+                    if let (Some(a), Some(sd)) = (mtext_justify, &style_doc) {
+                        rejustify_mtext(sd, t, a);
                     }
                 }
                 EntityKind::LwPolyline(pl) => {
@@ -388,6 +451,39 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
                         dm.block = None;
                     }
                 }
+                EntityKind::MLeader(m) => {
+                    if let Some(st) = &mleader_style {
+                        m.style.clone_from(st);
+                    }
+                    if let Some(v) = str_param(p, "arrow") {
+                        m.arrow = v.trim().to_string();
+                    }
+                    if let Some(x) = num("arrowSize").filter(|x| *x >= 0.0) {
+                        m.arrow_size = x;
+                    }
+                    match str_param(p, "leaderType").map(str::to_ascii_lowercase).as_deref() {
+                        Some("spline") => (m.spline, m.no_leader) = (true, false),
+                        Some("straight") => (m.spline, m.no_leader) = (false, false),
+                        Some("none") => m.no_leader = true,
+                        _ => {}
+                    }
+                    if let Some(x) = num("dogleg").filter(|x| *x >= 0.0) {
+                        // The content stays at the end of the landing.
+                        let land = m.landing.x;
+                        let side = |x: f64| if x >= land { 1.0 } else { -1.0 };
+                        let shift = x - m.dogleg;
+                        if let Some(t) = &mut m.text {
+                            t.insert.x += shift * side(t.insert.x);
+                        }
+                        if let Some(b) = &mut m.block {
+                            b.insert.x += shift * side(b.insert.x);
+                        }
+                        m.dogleg = x;
+                    }
+                    if let (Some(x), Some(t)) = (num("textHeight").filter(|x| *x > 0.0), &mut m.text) {
+                        t.height = x;
+                    }
+                }
                 EntityKind::Hatch(h) => {
                     if let Some(v) = str_param(p, "pattern") {
                         if !h.pattern.eq_ignore_ascii_case(v) {
@@ -407,6 +503,17 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
                     }
                     if let Some(x) = num("angle") {
                         h.angle = x.to_radians();
+                    }
+                    // Background colour: a colour fills the area under the pattern; "None" none.
+                    match p.get("background") {
+                        Some(Value::Null) => h.background = None,
+                        Some(v) if v.as_str().is_some_and(|s| s.trim().eq_ignore_ascii_case("none") || s.trim().is_empty()) => h.background = None,
+                        Some(v) => {
+                            if let Some(c) = parse_color(v) {
+                                h.background = Some(c);
+                            }
+                        }
+                        None => {}
                     }
                 }
                 _ => {}
@@ -627,6 +734,41 @@ fn run_style(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn run_style_list(s: &mut Session, _p: &Value) -> Result<Value> {
     Ok(styles_json(s.doc()?))
+}
+
+/// The font a style font that can't be found is drawn with: FONTALT when it is found, else the
+/// built-in stroke font.
+pub fn substitute_font() -> String {
+    let alt = cadcraft_fonts::ttf::font_alt();
+    if !alt.is_empty() && cadcraft_fonts::ttf::find(&alt).is_some() { alt } else { cadcraft_fonts::BUILTIN_FONT.to_string() }
+}
+
+/// Text style fonts (and big fonts) of `d` that CADCraft can't find, once each.
+pub fn missing_fonts(d: &cadcraft_doc::Drawing) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for st in &d.text_styles {
+        let font = st.font.trim();
+        if !cadcraft_fonts::ttf::available(font) && !out.iter().any(|(_, f)| f.eq_ignore_ascii_case(font)) {
+            out.push((st.name.clone(), font.to_string()));
+        }
+    }
+    out
+}
+
+fn run_fonts_missing(s: &mut Session, _p: &Value) -> Result<Value> {
+    let sub = substitute_font();
+    Ok(json!(missing_fonts(s.doc()?).into_iter().map(|(style, font)| json!({ "style": style, "font": font, "substitute": sub })).collect::<Vec<_>>()))
+}
+
+fn run_fonts_rescan(s: &mut Session, p: &Value) -> Result<Value> {
+    cadcraft_fonts::ttf::rescan();
+    run_fonts_list(s, p)
+}
+
+fn run_fonts_list(_s: &mut Session, _p: &Value) -> Result<Value> {
+    let fonts: Vec<Value> =
+        cadcraft_fonts::ttf::installed().into_iter().map(|f| json!({ "name": f.name, "family": f.family, "user": f.user })).collect();
+    Ok(json!({ "folders": cadcraft_fonts::ttf::font_dirs(), "fonts": fonts }))
 }
 
 fn run_style_current(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1100,6 +1242,84 @@ fn run_rename(s: &mut Session, p: &Value) -> Result<Value> {
         _ => return Err(bad("rename", "unsupported table")),
     }
     ok()
+}
+
+/// An MTEXT attachment (1..=9) from a justification code: TL TC TR ML MC MR BL BC BR (or 1..9).
+fn mtext_attach(j: &str) -> Option<u8> {
+    let u = j.trim().to_ascii_uppercase();
+    ["TL", "TC", "TR", "ML", "MC", "MR", "BL", "BC", "BR"]
+        .iter()
+        .position(|c| *c == u)
+        .and_then(|i| u8::try_from(i + 1).ok())
+        .or_else(|| u.parse::<u8>().ok().filter(|a| (1..=9).contains(a)))
+}
+
+/// Give text another justification without moving it: the point it is placed by moves so the
+/// letters stay where they are (aligned and fit text span the text's own width).
+fn rejustify_text(d: &cadcraft_doc::Drawing, t: &mut cadcraft_doc::Text, h: cadcraft_doc::HAlign, v: cadcraft_doc::VAlign) {
+    use cadcraft_doc::{HAlign, VAlign};
+    let before = cadcraft_render::place_text_entity(d, t, &t.value).1;
+    // The baseline's start: where left-baseline text at the same spot would begin.
+    let mut left = t.clone();
+    (left.halign, left.valign, left.align_pt) = (HAlign::Left, VAlign::Baseline, None);
+    let at = t.justify_point();
+    left.insert = cadcraft_geom::Vec3::new(at.x, at.y, t.insert.z);
+    let lb = cadcraft_render::place_text_entity(d, &left, &t.value).1;
+    let start = if before.is_empty() || lb.is_empty() { t.insert.xy() } else { at + (before.min - lb.min) };
+    let width = match t.halign {
+        HAlign::Aligned | HAlign::Fit => t.align_pt.map_or(0.0, |a| a.xy().dist(t.insert.xy())),
+        _ => {
+            let font = d.text_style(&t.style).map(|st| cadcraft_fonts::TextFont::resolve_style(&st.font, &st.big_font)).unwrap_or_default();
+            cadcraft_fonts::text_width(&font, &t.value, t.height, t.width_factor)
+        }
+    };
+    let z = t.insert.z;
+    let v3 = |p: Vec2| cadcraft_geom::Vec3::new(p.x, p.y, z);
+    t.halign = h;
+    t.valign = v;
+    t.insert = v3(start);
+    match (h, v) {
+        (HAlign::Left, VAlign::Baseline) => t.align_pt = None,
+        (HAlign::Aligned | HAlign::Fit, _) => {
+            t.valign = VAlign::Baseline;
+            t.align_pt = Some(v3(start + Vec2::from_angle(t.rotation) * width.max(t.height * 0.1)));
+        }
+        _ => {
+            // Place by the start, then shift by how far the letters moved.
+            t.align_pt = Some(v3(start));
+            let after = cadcraft_render::place_text_entity(d, t, &t.value).1;
+            if !before.is_empty() && !after.is_empty() {
+                let shift = before.min - after.min;
+                if shift.is_finite() {
+                    for q in std::iter::once(&mut t.insert).chain(t.align_pt.as_mut()) {
+                        q.x += shift.x;
+                        q.y += shift.y;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Give multiline text another attachment without moving it: the insertion point moves to the
+/// matching point of the text's box.
+fn rejustify_mtext(d: &cadcraft_doc::Drawing, t: &mut cadcraft_doc::MText, attach: u8) {
+    // Laid out unrotated, at the same insertion point: the letters' shift between the two
+    // attachments, turned back by the rotation.
+    let mut flat = t.clone();
+    flat.rotation = 0.0;
+    let before = cadcraft_render::layout_mtext_entity(d, &flat).bounds;
+    flat.attach = attach;
+    let after = cadcraft_render::layout_mtext_entity(d, &flat).bounds;
+    t.attach = attach;
+    if before.is_empty() || after.is_empty() {
+        return;
+    }
+    let shift = (before.min - after.min).rotate(t.rotation);
+    if shift.is_finite() {
+        t.insert.x += shift.x;
+        t.insert.y += shift.y;
+    }
 }
 
 #[cfg(test)]

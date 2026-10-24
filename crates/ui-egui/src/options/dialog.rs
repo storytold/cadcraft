@@ -12,17 +12,19 @@ use crate::animation::AnimationPref;
 use crate::theme::{ThemePref, Tokens};
 
 /// The tabs: (id in the dialog name, label).
-pub(super) const TABS: [(&str, &str); 6] = [
+pub(super) const TABS: [(&str, &str); 7] = [
     ("display", "Display"),
     ("files", "Open and Save"),
+    ("fonts", "Fonts"),
     ("drafting", "Drafting"),
     ("selection", "Selection"),
     ("preferences", "User Preferences"),
     ("profiles", "Profiles"),
 ];
 
-const WIDTH: f32 = 580.0;
-const MIN_TAB_HEIGHT: f32 = 200.0;
+const WIDTH: f32 = 610.0;
+/// Height of every tab's page.
+const TAB_HEIGHT: f32 = 340.0;
 
 /// Show the Options dialog (`name` is `"options"` or `"options:<tab>"`).
 pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool) {
@@ -50,17 +52,21 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
             });
             ui.separator();
             ui.add_space(4.0);
-            let top = ui.cursor().top();
-            match tab {
-                "files" => files(app, ui, &mut changes),
-                "drafting" => drafting(app, ui, &mut changes, &mut start),
-                "selection" => selection(app, ui, &mut changes),
-                "preferences" => preferences(app, ui, &mut changes),
-                "profiles" => profiles(app, ui, &mut changes),
-                _ => display(app, ui, &mut changes),
-            }
-            // The same height on every tab, so switching tabs doesn't move the buttons.
-            ui.add_space((MIN_TAB_HEIGHT - (ui.cursor().top() - top)).max(8.0));
+            // Every tab is the same height (a taller one scrolls), so switching tabs neither
+            // resizes the dialog nor moves it.
+            egui::ScrollArea::vertical().id_salt(("options_tab", tab)).max_height(TAB_HEIGHT).auto_shrink([false, false]).show(ui, |ui| {
+                ui.set_min_height(TAB_HEIGHT);
+                match tab {
+                    "files" => files(app, ui, &mut changes),
+                    "fonts" => fonts(app, ui, &mut changes),
+                    "drafting" => drafting(app, ui, &mut changes, &mut start),
+                    "selection" => selection(app, ui, &mut changes),
+                    "preferences" => preferences(app, ui, &mut changes),
+                    "profiles" => profiles(app, ui, &mut changes),
+                    _ => display(app, ui, &mut changes),
+                }
+            });
+            ui.add_space(4.0);
             ui.separator();
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -98,6 +104,8 @@ fn theme_label(t: ThemePref) -> &'static str {
         ThemePref::System => crate::tl!("Use System Setting"),
         ThemePref::Light => crate::tl!("Light"),
         ThemePref::Dark => crate::tl!("Dark"),
+        ThemePref::Black => crate::tl!("Black"),
+        ThemePref::LightBlue => crate::tl!("Light Blue"),
     }
 }
 
@@ -273,6 +281,152 @@ fn files(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
     hint(ui, crate::tl!("New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE)."));
     hint(ui, crate::tl!("A drawing opened from a file keeps that file's format."));
     hint(ui, crate::tl!("Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off."));
+}
+
+/// The fonts found in the user's font folders, kept while the font set is unchanged.
+#[derive(Clone, Default)]
+struct FontsSeen {
+    generation: Option<u64>,
+    fonts: Vec<(String, Option<String>)>,
+}
+
+/// Options ▸ Fonts: the folders searched for fonts before the system's, the fonts found there and
+/// the current drawing's fonts that can't be found.
+fn fonts(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
+    let t = Tokens::get();
+    let folders = cadcraft_fonts::ttf::font_dirs();
+    let sel_id = egui::Id::new("cc_options_font_sel");
+    let typed_id = egui::Id::new("cc_options_font_typed");
+    let mut sel: Option<usize> = ui.data(|d| d.get_temp(sel_id)).filter(|i: &usize| *i < folders.len());
+    let mut typed: String = ui.data(|d| d.get_temp(typed_id)).unwrap_or_default();
+    let mut next = folders.clone();
+    let mut changed = false;
+
+    ui.label(RichText::new(crate::tl!("Font folders")).strong());
+    hint(
+        ui,
+        crate::tl!(
+            "Put TrueType or OpenType fonts (.ttf, .otf, .ttc) in a folder and add it here. These folders are searched before the system fonts; a folder higher in the list wins."
+        ),
+    );
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        egui::Frame::NONE.stroke(Stroke::new(1.0, t.border)).inner_margin(4.0).show(ui, |ui| {
+            ui.set_width(400.0);
+            ui.set_min_height(92.0);
+            egui::ScrollArea::vertical().id_salt("cc_options_font_dirs").max_height(92.0).auto_shrink([false, true]).show(ui, |ui| {
+                if folders.is_empty() {
+                    ui.label(RichText::new(crate::tl!("No font folders yet")).color(t.text_faint).italics());
+                }
+                for (i, f) in folders.iter().enumerate() {
+                    let exists = cfg!(target_arch = "wasm32") || std::path::Path::new(f).is_dir();
+                    let mut text = RichText::new(f.as_str());
+                    if !exists {
+                        text = text.color(t.text_faint).strikethrough();
+                    }
+                    let r = ui.selectable_label(sel == Some(i), text);
+                    let r = if exists { r } else { r.on_hover_text(crate::tl!("This folder does not exist")) };
+                    if r.clicked() {
+                        sel = Some(i);
+                    }
+                }
+            });
+        });
+        ui.vertical(|ui| {
+            let full = folders.len() >= cadcraft_fonts::ttf::MAX_FONT_DIRS;
+            if let Some(pick) = app.services.pick_folder.as_ref()
+                && ui.add_enabled(!full, egui::Button::new(crate::tl!("Add Folder..."))).clicked()
+                && let Some(dir) = pick()
+            {
+                next.push(dir);
+                sel = Some(next.len() - 1);
+                changed = true;
+            }
+            if ui.add_enabled(sel.is_some(), egui::Button::new(crate::tl!("Remove"))).clicked()
+                && let Some(i) = sel
+            {
+                next.remove(i);
+                sel = None;
+                changed = true;
+            }
+            if ui.add_enabled(sel.is_some_and(|i| i > 0), egui::Button::new(crate::tl!("Move Up"))).clicked()
+                && let Some(i) = sel
+            {
+                next.swap(i, i - 1);
+                sel = Some(i - 1);
+                changed = true;
+            }
+            if ui.add_enabled(sel.is_some_and(|i| i + 1 < folders.len()), egui::Button::new(crate::tl!("Move Down"))).clicked()
+                && let Some(i) = sel
+            {
+                next.swap(i, i + 1);
+                sel = Some(i + 1);
+                changed = true;
+            }
+        });
+    });
+    ui.horizontal(|ui| {
+        let r = ui.add(egui::TextEdit::singleline(&mut typed).hint_text(crate::tl!("Folder path")).desired_width(330.0));
+        let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let ok = !typed.trim().is_empty() && folders.len() < cadcraft_fonts::ttf::MAX_FONT_DIRS;
+        if (ui.add_enabled(ok, egui::Button::new(crate::tl!("Add"))).clicked() || (enter && ok)) && !next.iter().any(|f| f == typed.trim()) {
+            next.push(typed.trim().to_string());
+            sel = Some(next.len() - 1);
+            typed.clear();
+            changed = true;
+        }
+        if ui.button(crate::tl!("Look for Fonts Again")).on_hover_text(crate::tl!("After adding or removing font files in a folder")).clicked() {
+            cadcraft_fonts::ttf::rescan();
+        }
+    });
+    ui.data_mut(|d| {
+        d.insert_temp(typed_id, typed);
+        if let Some(i) = sel {
+            d.insert_temp(sel_id, i);
+        } else {
+            d.remove::<usize>(sel_id);
+        }
+    });
+    if changed {
+        changes.insert("fontFolders".into(), json!(next));
+    }
+
+    // The fonts found there.
+    ui.add_space(8.0);
+    let seen_id = egui::Id::new("cc_options_fonts_seen");
+    let generation = cadcraft_fonts::ttf::generation();
+    let mut seen: FontsSeen = ui.data(|d| d.get_temp(seen_id)).unwrap_or_default();
+    if seen.generation != Some(generation) {
+        let fonts = cadcraft_fonts::ttf::installed().into_iter().filter(|f| f.user).map(|f| (f.name, f.family)).collect();
+        seen = FontsSeen { generation: Some(generation), fonts };
+        ui.data_mut(|d| d.insert_temp(seen_id, seen.clone()));
+    }
+    ui.label(RichText::new(format!("{} {}", crate::tl!("Fonts found in these folders:"), seen.fonts.len())).strong());
+    egui::ScrollArea::vertical().id_salt("cc_options_fonts_found").max_height(90.0).auto_shrink([false, true]).show(ui, |ui| {
+        for (name, family) in &seen.fonts {
+            ui.horizontal(|ui| {
+                ui.label(name.as_str());
+                if let Some(family) = family {
+                    ui.label(RichText::new(format!("— {family}")).color(t.text_dim));
+                }
+            });
+        }
+    });
+
+    // The current drawing's fonts that can't be found.
+    if let Ok(d) = app.session.doc() {
+        let missing = cadcraft_engine::cmd::missing_fonts(d);
+        ui.add_space(8.0);
+        if missing.is_empty() {
+            hint(ui, crate::tl!("Every font this drawing uses was found."));
+        } else {
+            ui.label(RichText::new(crate::tl!("Fonts this drawing uses that were not found:")).strong());
+            let sub = cadcraft_engine::cmd::substitute_font();
+            for (style, font) in missing.iter().take(12) {
+                ui.label(format!("{font}  ({} {style})  → {sub}", crate::tl!("style")));
+            }
+        }
+    }
 }
 
 fn drafting(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>, start: &mut Option<&'static str>) {

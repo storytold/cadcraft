@@ -85,6 +85,8 @@ fn scale_scales_multileader_text_width_and_columns() {
     // #709: SCALE 2 on a multileader's text doubles its width and column lengths like it does
     // for a standalone MTEXT, not only its height.
     let text = MText {
+        formula: None,
+        frame: false,
         insert: Default::default(),
         height: 2.0,
         width: 10.0,
@@ -112,7 +114,9 @@ fn scale_scales_multileader_text_width_and_columns() {
         text: Some(text),
         style: "Standard".into(),
         arrow_size: 1.0,
+        arrow: String::new(),
         spline: false,
+        no_leader: false,
         block: None,
     };
     let h = s.add_entity(EntityKind::MLeader(ml)).unwrap();

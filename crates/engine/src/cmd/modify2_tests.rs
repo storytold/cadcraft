@@ -2,7 +2,7 @@ use cadcraft_doc::{EntityKind, Handle, Space};
 use cadcraft_geom::{Arc, Polyline, Vec2};
 use serde_json::{Value, json};
 
-use crate::Session;
+use crate::{Input, Session};
 
 fn last(s: &Session) -> EntityKind {
     s.doc().unwrap().model.last().unwrap().kind.clone()
@@ -753,6 +753,85 @@ fn offset_polyline_arc_bulge_follows_joined_endpoints() {
     assert!(ccw);
     assert!(near(arc.center, 10.0, 5.0), "arc centre drifted to {:?}", arc.center);
     assert!((arc.radius - 4.0).abs() < 1e-6, "radius {}", arc.radius);
+}
+
+/// Start `cmd` and pick the object at `at`: what the in-place editor gets.
+fn pick_for_editor(s: &mut Session, cmd: &str, at: Vec2) -> crate::TextEditor {
+    s.start(cmd).unwrap();
+    s.input(Input::Point(at)).unwrap();
+    s.text_editor().unwrap_or_else(|| panic!("no editor: {}", s.prompt_text()))
+}
+
+#[test]
+fn double_click_editing_describes_each_kind_and_applies_the_text() {
+    use crate::EditorKind;
+    let mut s = Session::new();
+    // Multiline text: the editor starts from its contents, with formatting codes.
+    let m = h(&s.execute("mtext", &json!({"at": [0, 0], "text": "{\\fArial|b1;Bold}\\Pline"})).unwrap());
+    let e = pick_for_editor(&mut s, "textedit.object", Vec2::new(0.05, -0.05));
+    assert_eq!(e.kind, EditorKind::MText);
+    assert_eq!(e.key, m);
+    assert!(e.mtext.contents.contains("Bold"), "{}", e.mtext.contents);
+    s.input(Input::Text("new\\Ptext".into())).unwrap();
+    assert!(s.running.is_none(), "one object only");
+    assert!(matches!(kind(&s, &m), EntityKind::MText(x) if x.contents == "new\\Ptext"));
+
+    // One line of text: plain, no formatting.
+    let t = h(&s.execute("text", &json!({"at": [20, 0], "text": "single"})).unwrap());
+    let e = pick_for_editor(&mut s, "textedit.object", Vec2::new(20.05, 0.05));
+    assert_eq!((e.kind, e.mtext.contents.as_str()), (EditorKind::Line, "single"));
+    s.input(Input::Text("changed".into())).unwrap();
+    assert!(matches!(kind(&s, &t), EntityKind::Text(x) if x.value == "changed"));
+
+    // A dimension: `<>` is the measured value, which the editor is told.
+    let d = h(&s.execute("dimlinear", &json!({"p1": [0, 10], "p2": [8, 10], "at": [4, 12]})).unwrap());
+    let EntityKind::Dimension(dm) = kind(&s, &d) else { panic!() };
+    let at = cadcraft_render::dimension_in(s.doc().unwrap(), &dm).text_pos;
+    let e = pick_for_editor(&mut s, "textedit.object", at);
+    let EditorKind::Dimension { measured } = &e.kind else { panic!("{:?}", e.kind) };
+    assert!(measured.contains('8'), "{measured}");
+    assert_eq!(e.mtext.contents, "<>");
+    s.input(Input::Text("L=<> mm".into())).unwrap();
+    assert!(matches!(kind(&s, &d), EntityKind::Dimension(x) if x.text == "L=<> mm"));
+
+    // A multileader's text.
+    let ml = h(&s.execute("mleader", &json!({"points": [[40, 0], [44, 4]], "text": "note"})).unwrap());
+    let EntityKind::MLeader(mm) = kind(&s, &ml) else { panic!() };
+    let at = mm.text.as_ref().unwrap().insert.xy();
+    s.start("textedit.object").unwrap();
+    s.input(Input::Point(at + Vec2::new(0.05, -0.05))).unwrap();
+    let e = s.text_editor().expect("the multileader's text");
+    assert_eq!(e.kind, EditorKind::MText);
+    s.input(Input::Text("new note".into())).unwrap();
+    assert!(matches!(kind(&s, &ml), EntityKind::MLeader(x) if x.text.as_ref().is_some_and(|t| t.contents == "new note")));
+}
+
+#[test]
+fn table_cells_are_edited_in_place_and_tab_moves_on() {
+    use crate::EditorKind;
+    let mut s = Session::new();
+    let t = h(&s.execute("table", &json!({"at": [0, 0], "rows": 2, "cols": 2, "colWidth": 3, "rowHeight": 1})).unwrap());
+    let EntityKind::Table(tb) = kind(&s, &t) else { panic!() };
+    let (corner, w, hgt) = tb.cell_rect(tb.row_heights.len() - 1, 0).unwrap();
+    let e = pick_for_editor(&mut s, "tabledit.cell", corner + Vec2::new(w / 2.0, -hgt / 2.0));
+    assert!(matches!(&e.kind, EditorKind::TableCell { name } if name.starts_with('A')), "{:?}", e.kind);
+    assert!(e.mtext.width > 0.0 && e.mtext.width < w);
+    let first = e.key.clone();
+    s.input(Input::Text("left".into())).unwrap();
+    s.input(Input::Keyword("Next".into())).unwrap();
+    let e2 = s.text_editor().unwrap();
+    assert_ne!(e2.key, first);
+    s.input(Input::Text("right".into())).unwrap();
+    s.input(Input::Enter).unwrap();
+    assert!(s.running.is_none());
+    let EntityKind::Table(tb) = kind(&s, &t) else { panic!() };
+    let last = tb.cells.last().unwrap();
+    assert_eq!((last[0].text.as_str(), last[1].text.as_str()), ("left", "right"));
+    // Up from the first row ends, as Tab past the last cell does.
+    s.start("tabledit.cell").unwrap();
+    s.input(Input::Point(tb.cell_rect(0, 0).map(|(c, w, h)| c + Vec2::new(w / 2.0, -h / 2.0)).unwrap())).unwrap();
+    s.input(Input::Keyword("Up".into())).unwrap();
+    assert!(s.running.is_none());
 }
 
 #[test]

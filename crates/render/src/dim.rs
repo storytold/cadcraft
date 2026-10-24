@@ -441,8 +441,25 @@ fn post(template: &str, meas: &str) -> String {
     }
 }
 
+/// The first number in a formatted measurement (`R12.5` → 12.5, `1 250,5` → 1250.5).
+fn measured_number(base: &str) -> Option<f64> {
+    let s: String = base
+        .chars()
+        .skip_while(|c| !c.is_ascii_digit() && *c != '-' && *c != '.')
+        .take_while(|c| c.is_ascii_digit() || matches!(c, '.' | ',' | '-' | ' '))
+        .collect();
+    s.replace(' ', "").replace(',', ".").parse().ok()
+}
+
 /// Apply dimension text overrides: empty uses the base, whitespace suppresses text, and other text substitutes it.
 fn apply_override(base: &str, d: &Dimension) -> String {
+    // A formula: worked out with `<>` as the measurement (shown as the dimension shows it).
+    if let Some(f) = d.marks.formula.as_deref().filter(|f| crate::textformula::is_formula(f)) {
+        let env = crate::textformula::Env { measured: measured_number(base), now: crate::textformula::local_now(), ..Default::default() };
+        if let Some(v) = crate::textformula::evaluate(f, &env) {
+            return v;
+        }
+    }
     if d.text.is_empty() {
         base.to_string()
     } else if d.text.trim().is_empty() {
@@ -517,6 +534,53 @@ pub struct DimText {
     pub fixed_height: f64,
     pub width_factor: f64,
     pub oblique: f64,
+    /// User arrowheads: blocks of the drawing named by DIMBLK / DIMBLK1 / DIMBLK2, by name, as
+    /// unit-size geometry with the tip at the origin pointing along +x.
+    pub user_arrows: Vec<(String, ArrowGeom)>,
+}
+
+/// An end marker: one of the arrowheads drawn in code, or a user arrowhead block.
+#[derive(Clone, Copy)]
+enum Head<'a> {
+    Std(Arrowhead),
+    User(&'a ArrowGeom),
+}
+
+impl Head<'_> {
+    fn is_tick(self) -> bool {
+        match self {
+            Head::Std(a) => a.is_tick(),
+            Head::User(_) => false,
+        }
+    }
+    fn geom(self, tip: Vec2, dir: Vec2, size: f64) -> ArrowGeom {
+        match self {
+            Head::Std(a) => arrowhead(a, tip, dir, size),
+            Head::User(g) => {
+                let dir = if dir == Vec2::ZERO || !dir.is_finite() { Vec2::X } else { dir };
+                let size = if size.is_finite() { size.abs() } else { 0.0 };
+                let n = dir.perp();
+                let at = |p: &Vec2| tip + dir * (p.x * size) + n * (p.y * size);
+                ArrowGeom { lines: g.lines.iter().map(|l| l.iter().map(at).collect()).collect(), tris: g.tris.iter().map(at).collect() }
+            }
+        }
+    }
+    fn inset(self, size: f64) -> f64 {
+        match self {
+            Head::Std(a) => a.inset(size),
+            Head::User(_) => 0.0,
+        }
+    }
+}
+
+/// The end marker a DIMBLK name gives: a user arrowhead block when the drawing has one by that
+/// name, else the built-in arrowhead.
+fn head<'a>(name: &str, font: &'a DimText) -> Head<'a> {
+    let n = name.trim();
+    match font.user_arrows.iter().find(|(k, _)| !n.is_empty() && k.eq_ignore_ascii_case(n)) {
+        Some((_, g)) => Head::User(g),
+        None => Head::Std(Arrowhead::parse(n)),
+    }
 }
 
 /// Generate the geometry of a dimension with the stroke font.
@@ -533,8 +597,8 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
     let gap = st.text_gap.abs() * k;
     let tsz = st.tick_size * k;
     let ticks = tsz > 0.0;
-    let blk1 = Arrowhead::parse(if st.arrow_block1.is_empty() { &st.arrow_block } else { &st.arrow_block1 });
-    let blk2 = Arrowhead::parse(if st.arrow_block2.is_empty() { &st.arrow_block } else { &st.arrow_block2 });
+    let blk1 = head(if st.arrow_block1.is_empty() { &st.arrow_block } else { &st.arrow_block1 }, font);
+    let blk2 = head(if st.arrow_block2.is_empty() { &st.arrow_block } else { &st.arrow_block2 }, font);
     let mut g = DimGeometry { text_height: th, ..Default::default() };
     // Measure the text: lay it out once at the origin, centred.
     let wf = if font.width_factor > 0.0 && font.width_factor.is_finite() { font.width_factor } else { 1.0 };
@@ -556,12 +620,12 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
     let mut text_angle = 0.0;
     let mut text_mid = d.text_mid.xy();
     // Place an end marker: tick or arrowhead. Returns how far the dimension line stops short.
-    let end = |g: &mut DimGeometry, kind: Arrowhead, tip: Vec2, dir: Vec2| -> f64 {
+    let end = |g: &mut DimGeometry, kind: Head<'_>, tip: Vec2, dir: Vec2| -> f64 {
         if ticks {
             g.dim(tick(tip, dir, tsz));
             0.0
         } else {
-            g.add_arrow(arrowhead(kind, tip, dir, asz));
+            g.add_arrow(kind.geom(tip, dir, asz));
             kind.inset(asz)
         }
     };
@@ -749,13 +813,30 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
                 }
                 to_text(&mut g, if outside_arrows { f2 + u * stub } else { f2 });
             }
+            // DIMTMOVE 0: text the user moved along the line past an extension line takes the
+            // dimension line with it, out to its far end.
+            if d.user_text_pos && st.text_move == 0 && has_text && text_in {
+                let len = (f2 - f1).dot(u);
+                let t = (text_mid - f1).dot(u);
+                if t.is_finite() && len.is_finite() {
+                    if t + half > len + 1e-9 {
+                        seg(&mut g, f2, f1 + u * (t + half));
+                    }
+                    if t - half < -1e-9 {
+                        seg(&mut g, f1 + u * (t - half), f1);
+                    }
+                }
+            }
             // DIMTMOVE 1: a leader from the dimension line to text moved off it.
             if (d.user_text_pos || moved) && st.text_move == 1 && has_text {
                 let base = f1.mid(f2);
                 let off = (text_mid - base).dot(n).abs();
-                if off > tht / 2.0 + gap + 1e-9 {
-                    let side = if (base - text_mid).dot(tr) >= 0.0 { tr } else { -tr };
-                    g.dim(vec![base, text_mid + side * (tw / 2.0 + gap)]);
+                if off > tht + gap {
+                    let under = text_mid - tr.perp() * (tht / 2.0 + gap / 2.0);
+                    let (a, b) = (under - tr * (tw / 2.0 + gap / 2.0), under + tr * (tw / 2.0 + gap / 2.0));
+                    let near = if a.dist(base) <= b.dist(base) { a } else { b };
+                    g.dim(vec![base, near]);
+                    g.dim(vec![a, b]);
                 }
             }
             // DIMJOGLINE: a zigzag in the dimension line, 1.5 text heights tall.
@@ -1448,6 +1529,37 @@ mod tests {
         assert!(g.lines.is_empty() && g.fills.is_empty(), "{:?}", g.lines);
     }
 
+    #[test]
+    fn a_user_arrowhead_block_is_drawn_at_each_end_and_a_moved_text_sits_on_a_landing() {
+        let cross = ArrowGeom {
+            lines: vec![vec![Vec2::new(-1.0, 0.0), Vec2::new(1.0, 0.0)], vec![Vec2::new(0.0, -1.0), Vec2::new(0.0, 1.0)]],
+            tris: Vec::new(),
+        };
+        let font = DimText { width_factor: 1.0, user_arrows: vec![("Hatz".into(), cross)], ..Default::default() };
+        let st = st_with(|s| {
+            s.arrow_block = "HATZ".into();
+            s.arrow_size = 0.5;
+        });
+        let d = lin((0.0, 0.0), (10.0, 0.0), (5.0, 3.0), 0.0);
+        let g = dimension_geometry_with(&d, &st, 1.0, &font);
+        // The cross's vertical stroke at both ends of the dimension line, half a unit each way.
+        for x in [0.0, 10.0] {
+            assert!(
+                g.lines.iter().any(|l| l.len() == 2 && (l[0] - Vec2::new(x, 2.5)).len() < 1e-9 && (l[1] - Vec2::new(x, 3.5)).len() < 1e-9)
+                    || g.lines.iter().any(|l| l.len() == 2 && (l[1] - Vec2::new(x, 2.5)).len() < 1e-9 && (l[0] - Vec2::new(x, 3.5)).len() < 1e-9),
+                "{x}: {:?}",
+                g.lines
+            );
+        }
+        assert!(g.fills.is_empty(), "no closed filled arrows");
+        // DIMTMOVE 1, text moved well off the line: a leader and a landing under the text.
+        let st = st_with(|s| s.text_move = 1);
+        let moved = Dimension { user_text_pos: true, text_mid: cadcraft_geom::Vec3::new(14.0, 8.0, 0.0), ..d };
+        let g = dimension_geometry_with(&moved, &st, 1.0, &font);
+        let landing =
+            g.lines.iter().find(|l| l.len() == 2 && (l[0].y - l[1].y).abs() < 1e-9 && l[0].y < 8.0 && l[0].y > 7.0 && (l[0].x - l[1].x).abs() > 0.2);
+        assert!(landing.is_some(), "a landing under the text: {:?}", g.lines);
+    }
     /// #1645: the MTEXT contents give back the dimension's text when decoded, with the diameter
     /// sign as `%%c` (no SHX font has U+2300) and a `%` that would start a code escaped.
     #[test]

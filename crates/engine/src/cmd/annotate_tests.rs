@@ -575,3 +575,17 @@ fn linetype_rename_updates_references() {
     assert!(s.execute("rename", &json!({ "table": "linetype", "from": "ByLayer", "to": "X" })).is_err());
     assert_eq!(s.doc().unwrap().entity(by_layer).unwrap().common.linetype, "ByLayer");
 }
+
+#[test]
+fn missing_fonts_name_the_style_and_the_substitute() {
+    let mut s = Session::new();
+    s.execute("style", &json!({ "name": "Gost", "font": "gost_cadcraft_missing.shx" })).unwrap();
+    s.execute("style", &json!({ "name": "Gost2", "font": "GOST_CADCRAFT_MISSING.SHX" })).unwrap();
+    let missing = s.execute("fonts.missing", &json!({})).unwrap();
+    let list = missing.as_array().unwrap();
+    assert_eq!(list.len(), 1, "one entry per font: {missing}");
+    assert_eq!(list[0]["style"], "Gost");
+    assert!(list[0]["substitute"].as_str().is_some_and(|s| !s.is_empty()));
+    let fonts = s.execute("fonts.list", &json!({})).unwrap();
+    assert!(fonts["folders"].is_array() && fonts["fonts"].is_array());
+}

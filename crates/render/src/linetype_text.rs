@@ -83,7 +83,7 @@ fn elements(d: &Drawing, lt: &Linetype, scale: f64) -> Vec<Element> {
         if !(height.is_finite() && height > 0.0) {
             continue;
         }
-        let font = TextFont::resolve(&ts.font);
+        let font = TextFont::resolve_style(&ts.font, &ts.big_font);
         let params = TextParams {
             width_factor: if ts.width_factor.is_finite() && ts.width_factor > 0.0 { ts.width_factor } else { 1.0 },
             oblique: if ts.oblique.is_finite() { ts.oblique } else { 0.0 },

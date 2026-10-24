@@ -21,6 +21,7 @@ mod plotstyle;
 mod point;
 pub mod raster;
 mod text;
+pub mod textformula;
 mod tolerance;
 pub mod units;
 mod wide;
@@ -34,6 +35,7 @@ pub use dim::{ArrowGeom, Arrowhead, DimGeometry, DimText, LineRole, arrowhead, d
 pub use fill::triangulate_evenodd;
 pub use hatch::{fill_loops as hatch_fill_loops, pattern_swatch};
 pub use paper::{PAPER_SIZES, PaperSize, Sheet, paper_size, sheet};
+pub use text::triangulate_placed as triangulate_glyph;
 pub use tolerance::{gdt_points, tolerance_in};
 
 /// Handle carried by model-space geometry drawn inside a paper-space viewport (it belongs to no
@@ -421,7 +423,7 @@ impl Builder<'_> {
                     self.tris_at(ctx, color, &mesh.triangles, xf);
                     mesh.triangles.len()
                 } else {
-                    let tris = fill::triangulate_evenodd(g);
+                    let tris = crate::text::triangulate_placed(g);
                     self.tris(ctx, color, &tris);
                     tris.len()
                 };
@@ -1240,9 +1242,8 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 let st = ctx.d.dim_style(&l.style);
                 // DIMASZ × DIMSCALE of the leader's style (the drawing's DIMSCALE when it is 0).
                 let size = st.map(|s| s.arrow_size).unwrap_or(0.18) * leader_scale(ctx.d, st);
-                // DIMLDRBLK ("" = closed filled).
-                let kind = dim::Arrowhead::parse(st.map(|s| s.leader_arrow_block.as_str()).unwrap_or(""));
-                let g = dim::arrowhead(kind, *a, (*a - *n).normalized(), size);
+                // DIMLDRBLK ("" = closed filled), or a user arrowhead block.
+                let g = named_arrow(ctx.d, st.map(|s| s.leader_arrow_block.as_str()).unwrap_or(""), *a, (*a - *n).normalized(), size);
                 for l in &g.lines {
                     b.polyline(ctx, rgb, lw, l);
                 }
@@ -1254,17 +1255,23 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             for pts in m.leader_paths() {
                 b.polyline(ctx, rgb, lw, &pts);
                 if let (Some(a), Some(n)) = (pts.first(), pts.get(1)) {
-                    b.tris(ctx, rgb, &dim::arrow(*a, (*a - *n).normalized(), m.arrow_size));
+                    let g = named_arrow(ctx.d, m.arrow_in(ctx.d), *a, (*a - *n).normalized(), m.arrow_size);
+                    for l in &g.lines {
+                        b.polyline(ctx, rgb, lw, l);
+                    }
+                    b.tris(ctx, rgb, &g.tris);
                 }
             }
             if let Some(t) = &m.text {
-                let land = m.landing.xy();
-                let dir = if t.insert.x >= land.x { 1.0 } else { -1.0 };
-                b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);
+                if !m.no_leader {
+                    let land = m.landing.xy();
+                    let dir = if t.insert.x >= land.x { 1.0 } else { -1.0 };
+                    b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);
+                }
                 mtext(b, ctx, t, rgb, lw);
             }
             if let Some(ins) = &m.block {
-                if m.dogleg > 0.0 && !m.leaders.is_empty() {
+                if m.dogleg > 0.0 && !m.leaderless() {
                     let land = m.landing.xy();
                     let dir = if ins.insert.x >= land.x { 1.0 } else { -1.0 };
                     b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);
@@ -1323,7 +1330,7 @@ fn text_style(d: &Drawing, name: &str) -> cadcraft_doc::TextStyle {
 /// Shape a TEXT / ATTRIB / ATTDEF with its style's font and generation flags.
 pub fn place_text_entity(d: &Drawing, t: &cadcraft_doc::Text, value: &str) -> (cadcraft_fonts::Shaped, Bounds2) {
     let ts = text_style(d, &t.style);
-    let font = cadcraft_fonts::TextFont::resolve(&ts.font);
+    let font = cadcraft_fonts::TextFont::resolve_style(&ts.font, &ts.big_font);
     let (h, v) = align(t.halign, t.valign);
     let p = cadcraft_fonts::TextParams {
         insert: t.insert.xy(),
@@ -1334,8 +1341,9 @@ pub fn place_text_entity(d: &Drawing, t: &cadcraft_doc::Text, value: &str) -> (c
         oblique: t.oblique,
         h,
         v,
-        backwards: ts.backwards,
-        upside_down: ts.upside_down,
+        // The text's own generation flags (set from its style when it was made), as AutoCAD.
+        backwards: t.backwards,
+        upside_down: t.upside_down,
     };
     cadcraft_fonts::place(&font, value, &p)
 }
@@ -1351,7 +1359,7 @@ pub fn layout_mtext_entity(d: &Drawing, t: &cadcraft_doc::MText) -> cadcraft_fon
         rotation: t.rotation,
         line_spacing: t.line_spacing,
         line_spacing_exact: t.line_spacing_exact,
-        font: cadcraft_fonts::TextFont::resolve(&ts.font),
+        font: cadcraft_fonts::TextFont::resolve_style(&ts.font, &ts.big_font),
         width_factor: ts.width_factor,
         oblique: ts.oblique,
         columns: t.columns.as_ref().map(|c| cadcraft_fonts::MTextColumnSpec {
@@ -1383,12 +1391,188 @@ fn mtext(b: &mut Builder, ctx: &Ctx, t: &cadcraft_doc::MText, rgb: Ink, lw: f32)
     for p in &l.pieces {
         b.shaped(ctx, mtext_color(p.color, rgb), lw, &p.shaped);
     }
+    if t.frame
+        && let Some(r) = mtext_frame(ctx.d, t)
+    {
+        b.polyline(ctx, rgb, lw, &r);
+    }
+}
+
+/// The Text frame of multiline text: its box (the defined width, the text's height) with a margin
+/// of a quarter of the text height (border offset factor 1.5), turned with the text; closed.
+pub fn mtext_frame(d: &Drawing, t: &cadcraft_doc::MText) -> Option<Vec<Vec2>> {
+    let mut flat = t.clone();
+    flat.rotation = 0.0;
+    let bb = layout_mtext_entity(d, &flat).bounds;
+    if bb.is_empty() {
+        return None;
+    }
+    let ins = t.insert.xy();
+    let col = f64::from((t.attach.clamp(1, 9) - 1) % 3);
+    let (x0, x1) = if t.width > 0.0 {
+        let left = ins.x - col * t.width / 2.0;
+        (left.min(bb.min.x), (left + t.width).max(bb.max.x))
+    } else {
+        (bb.min.x, bb.max.x)
+    };
+    let m = t.height * 0.25;
+    let corners =
+        [Vec2::new(x0 - m, bb.min.y - m), Vec2::new(x1 + m, bb.min.y - m), Vec2::new(x1 + m, bb.max.y + m), Vec2::new(x0 - m, bb.max.y + m)];
+    let mut pts: Vec<Vec2> = corners.iter().map(|c| ins + (*c - ins).rotate(t.rotation)).collect();
+    pts.push(*pts.first()?);
+    pts.iter().all(|p| p.is_finite()).then_some(pts)
 }
 
 /// The font settings of a dimension style's text style.
 pub fn dim_text(d: &Drawing, st: &cadcraft_doc::DimStyle) -> DimText {
     let ts = text_style(d, &st.text_style);
-    DimText { font: cadcraft_fonts::TextFont::resolve(&ts.font), fixed_height: ts.height, width_factor: ts.width_factor, oblique: ts.oblique }
+    let mut user_arrows: Vec<(String, ArrowGeom)> = Vec::new();
+    for name in [&st.arrow_block, &st.arrow_block1, &st.arrow_block2] {
+        let n = name.trim();
+        if n.is_empty() || user_arrows.iter().any(|(k, _)| k.eq_ignore_ascii_case(n)) {
+            continue;
+        }
+        if let Some(g) = user_arrow(d, n) {
+            user_arrows.push((n.to_string(), g));
+        }
+    }
+    DimText {
+        font: cadcraft_fonts::TextFont::resolve_style(&ts.font, &ts.big_font),
+        fixed_height: ts.height,
+        width_factor: ts.width_factor,
+        oblique: ts.oblique,
+        user_arrows,
+    }
+}
+
+/// The block a DIMBLK name refers to, if the drawing has one (names compare without case).
+pub fn arrow_block<'a>(d: &'a Drawing, name: &str) -> Option<&'a cadcraft_doc::Block> {
+    let n = name.trim();
+    if n.is_empty() {
+        return None;
+    }
+    d.blocks.get(n).or_else(|| d.blocks.iter().find(|(k, _)| k.eq_ignore_ascii_case(n)).map(|(_, b)| b)).map(|b| b.as_ref())
+}
+
+/// The arrowhead `name` names (a DIMBLK-style name, or a user arrowhead block of `d`) at `tip`,
+/// pointing along `dir`, `size` long.
+pub fn named_arrow(d: &Drawing, name: &str, tip: Vec2, dir: Vec2, size: f64) -> ArrowGeom {
+    let dir = if dir == Vec2::ZERO || !dir.is_finite() { Vec2::X } else { dir };
+    match user_arrow(d, name.trim()) {
+        Some(g) => {
+            let size = if size.is_finite() { size.abs() } else { 0.0 };
+            let n = dir.perp();
+            let at = |p: &Vec2| tip + dir * (p.x * size) + n * (p.y * size);
+            ArrowGeom { lines: g.lines.iter().map(|l| l.iter().map(at).collect()).collect(), tris: g.tris.iter().map(at).collect() }
+        }
+        None => dim::arrowhead(dim::Arrowhead::parse(name), tip, dir, size),
+    }
+}
+
+/// A user arrowhead: the block's lines, arcs, circles and polylines as strokes, its solids,
+/// solid hatches and wide polylines as fills, relative to the block base (the arrow's tip,
+/// the arrow pointing along +x at unit size). Built-in arrowhead blocks (`_Oblique`…) are
+/// drawn in code instead, so they are left out.
+fn user_arrow(d: &Drawing, name: &str) -> Option<ArrowGeom> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock, PoisonError};
+    if name.starts_with('_') {
+        return None;
+    }
+    let b = arrow_block(d, name)?;
+    static CACHE: OnceLock<Mutex<HashMap<(usize, usize, String), Option<ArrowGeom>>>> = OnceLock::new();
+    let key = (b as *const cadcraft_doc::Block as usize, b.entities.len(), name.to_string());
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(g) = cache.lock().unwrap_or_else(PoisonError::into_inner).get(&key) {
+        return g.clone();
+    }
+    let g = arrow_geometry(b);
+    let mut c = cache.lock().unwrap_or_else(PoisonError::into_inner);
+    if c.len() > 512 {
+        c.clear();
+    }
+    c.insert(key, g.clone());
+    g
+}
+
+fn arrow_geometry(b: &cadcraft_doc::Block) -> Option<ArrowGeom> {
+    use cadcraft_doc::EntityKind as K;
+    const SEGS: usize = 32;
+    let base = b.base.xy();
+    let mut g = ArrowGeom::default();
+    let arc_pts = |c: Vec2, r: f64, a0: f64, sweep: f64| -> Vec<Vec2> {
+        (0..=SEGS).map(|i| c - base + Vec2::from_angle(a0 + sweep * i as f64 / SEGS as f64) * r).collect()
+    };
+    // A polyline's points, its arcs sampled.
+    let poly_pts = |vs: &[cadcraft_geom::PolyVertex], closed: bool| -> Vec<Vec2> {
+        let mut out = Vec::new();
+        let n = vs.len();
+        let segs = if closed { n } else { n.saturating_sub(1) };
+        for i in 0..segs {
+            let (Some(a), Some(c)) = (vs.get(i), vs.get((i + 1) % n.max(1))) else { break };
+            out.push(a.p - base);
+            if a.bulge.abs() > 1e-9 {
+                let theta = 4.0 * a.bulge.atan();
+                let chord = c.p - a.p;
+                if chord.len() > 1e-12 {
+                    // The centre sits off the chord's midpoint by (1 - b²) / 4b chords, to its left.
+                    let center = a.p.mid(c.p) + chord.perp() * ((1.0 - a.bulge * a.bulge) / (4.0 * a.bulge));
+                    let r = (a.p - center).len();
+                    let a0 = (a.p - center).angle();
+                    for k in 1..SEGS {
+                        out.push(center - base + Vec2::from_angle(a0 + theta * k as f64 / SEGS as f64) * r);
+                    }
+                }
+            }
+        }
+        if let Some(last) = if closed { vs.first() } else { vs.last() } {
+            out.push(last.p - base);
+        }
+        out
+    };
+    for e in b.entities.iter().take(512) {
+        match &e.kind {
+            K::Line(l) => g.lines.push(vec![l.a.xy() - base, l.b.xy() - base]),
+            K::Circle(c) => g.lines.push(arc_pts(c.center.xy(), c.radius, 0.0, std::f64::consts::TAU)),
+            K::Arc(a) => {
+                let sweep = cadcraft_geom::ccw_sweep(a.start, a.end);
+                g.lines.push(arc_pts(a.center.xy(), a.radius, a.start, sweep));
+            }
+            K::LwPolyline(p) => {
+                let pts = poly_pts(&p.vertices, p.closed);
+                let w = p.const_width.max(p.vertices.iter().map(|v| v.start_width.max(v.end_width)).fold(0.0, f64::max));
+                if w > 1e-12 {
+                    // A wide polyline: each piece a filled band.
+                    for s in pts.windows(2) {
+                        let (a, c) = (s[0], s[1]);
+                        let n = (c - a).perp().normalized() * (w / 2.0);
+                        g.tris.extend([a - n, c - n, c + n, a - n, c + n, a + n]);
+                    }
+                } else {
+                    g.lines.push(pts);
+                }
+            }
+            K::Solid(s) | K::Trace(s) => {
+                let c: Vec<Vec2> = s.corners.iter().map(|p| p.xy() - base).collect();
+                if let [a, b2, c2, d2] = c[..] {
+                    g.tris.extend([a, b2, c2, b2, d2, c2]);
+                }
+            }
+            K::Hatch(h) if h.solid => {
+                for l in &h.loops {
+                    let pts = poly_pts(&l.vertices, true);
+                    if let Some((&first, rest)) = pts.split_first() {
+                        for s in rest.windows(2) {
+                            g.tris.extend([first, s[0], s[1]]);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let ok = g.lines.iter().flatten().chain(&g.tris).all(|p| p.is_finite());
+    (ok && !(g.lines.is_empty() && g.tris.is_empty())).then_some(g)
 }
 
 /// Geometry of a dimension in a drawing: its style, overrides and text font.

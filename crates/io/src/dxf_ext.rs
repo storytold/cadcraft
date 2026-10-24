@@ -20,6 +20,50 @@ use serde_json::Value;
 
 /// Registered application name of CADCraft's extended data.
 pub(crate) const APP: &str = "CADCRAFT";
+/// AutoCAD's hatch background colour xdata application (one `1071` colour value).
+pub(crate) const HATCH_BACKGROUND_APP: &str = "HATCHBACKGROUNDCOLOR";
+/// Extended data of a text's formula (`=...`), in 1000 strings of at most 250 characters.
+pub(crate) const FORMULA_APP: &str = "CADCRAFTFORMULA";
+
+/// A text's formula from its `CADCRAFTFORMULA` extended data.
+pub(crate) fn formula(tags: &[Tag]) -> Option<String> {
+    let x = xdata(tags, FORMULA_APP);
+    let s: String = x.iter().filter(|t| t.code == 1000).map(|t| t.str()).collect();
+    (!s.is_empty()).then_some(s)
+}
+
+/// A formula as 1000 strings of at most 250 characters (whole characters).
+pub(crate) fn formula_chunks(f: &str) -> Vec<String> {
+    let chars: Vec<char> = f.chars().take(4000).collect();
+    chars.chunks(250).map(|c| c.iter().collect()).collect()
+}
+
+/// An AutoCAD colour value (`1071`/`420`-style, top byte the method): 0xC2 RGB, 0xC3 an index
+/// colour in the low byte, 0xC0 ByLayer, 0xC1 ByBlock; `None` for none or anything else.
+pub(crate) fn acad_color(v: i64) -> Option<cadcraft_color::Color> {
+    let v = v as u32;
+    match v >> 24 {
+        0xC2 => Some(cadcraft_color::Color::True(cadcraft_color::Rgb((v >> 16) as u8, (v >> 8) as u8, v as u8))),
+        0xC3 => match (v & 0xFF) as u8 {
+            0 => None,
+            i => Some(cadcraft_color::Color::Index(i)),
+        },
+        0xC0 => Some(cadcraft_color::Color::ByLayer),
+        0xC1 => Some(cadcraft_color::Color::ByBlock),
+        _ => None,
+    }
+}
+
+/// [`acad_color`] the other way.
+pub(crate) fn acad_color_value(c: cadcraft_color::Color) -> i64 {
+    let v: u32 = match c {
+        cadcraft_color::Color::True(cadcraft_color::Rgb(r, g, b)) => 0xC200_0000 | (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b),
+        cadcraft_color::Color::Index(i) => 0xC300_0000 | u32::from(i),
+        cadcraft_color::Color::ByLayer => 0xC000_0000,
+        cadcraft_color::Color::ByBlock => 0xC100_0000,
+    };
+    i64::from(v as i32)
+}
 /// Named-object-dictionary key of the constraint XRECORD.
 pub(crate) const CONSTRAINTS_KEY: &str = "CADCRAFT_CONSTRAINTS";
 /// Named-object-dictionary key of the saved layer states XRECORD.

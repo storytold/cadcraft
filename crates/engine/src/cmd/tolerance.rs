@@ -296,6 +296,9 @@ pub(crate) fn explode(d: &Drawing, e: &Entity, t: &Tolerance) -> Vec<Entity> {
     }
     for tx in &g.texts {
         v.push(mk(EntityKind::Text(cadcraft_doc::Text {
+            formula: None,
+            backwards: false,
+            upside_down: false,
             insert: v3(tx.pos),
             align_pt: None,
             height: tx.height,

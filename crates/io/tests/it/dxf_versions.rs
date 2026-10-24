@@ -9,6 +9,9 @@ const INTL: &str = "图号 Café Ø 😀";
 
 fn text(value: &str) -> EntityKind {
     EntityKind::Text(Text {
+        formula: None,
+        backwards: false,
+        upside_down: false,
         insert: Vec3::new(1.0, 1.0, 0.0),
         align_pt: None,
         height: 2.5,

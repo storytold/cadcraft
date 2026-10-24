@@ -39,6 +39,10 @@ fn snapshot(ui: &UiState) -> Result<Value, String> {
     if ui.collapsed_groups.len() > 64 || ui.collapsed_groups.iter().any(|name| name.len() > 256) {
         return Err("collapsedGroups exceeds the workspace size limit".into());
     }
+    let bars = [&ui.toolbar_items, &ui.toolsets_bar.items, &ui.layers_bar.items];
+    if bars.iter().any(|items| items.len() > 256 || items.iter().any(|item| item.len() > 64)) {
+        return Err("toolbarItems exceeds the workspace size limit".into());
+    }
     if ui.history_lines > 12 {
         return Err("historyLines must be between 0 and 12".into());
     }
@@ -47,6 +51,10 @@ fn snapshot(ui: &UiState) -> Result<Value, String> {
         "showToolsets": ui.show_toolsets,
         "showPalettes": ui.show_palettes,
         "showToolbar": ui.show_toolbar,
+        "toolbarDock": ui.toolbar_dock,
+        "toolbarItems": ui.toolbar_items,
+        "toolsetsBar": ui.toolsets_bar,
+        "layersBar": ui.layers_bar,
         "showFileTabs": ui.show_file_tabs,
         "showStatusBar": ui.show_status_bar,
         "showCommandLine": ui.show_command_line,
@@ -211,6 +219,13 @@ mod tests {
             show_command_line: false,
             toolset_tab: "Modeling".into(),
             collapsed_groups: vec!["Solid".into()],
+            toolbar_dock: cadcraft_ui_egui::toolbar::Dock::Left,
+            toolbar_items: vec!["line".into(), "|".into(), "circle".into()],
+            layers_bar: cadcraft_ui_egui::toolbar::BarState {
+                show: false,
+                dock: cadcraft_ui_egui::toolbar::Dock::Left,
+                items: vec!["layoff".into(), cadcraft_ui_egui::toolbar::LAYER_COMBO.into()],
+            },
             history_lines: 5,
             dialog: Some("layers".into()),
             start_tab: true,

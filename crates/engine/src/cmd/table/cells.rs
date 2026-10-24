@@ -29,6 +29,10 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("tabledit", "Edit Table Cell", run_tabledit)
             .params("{handle?, at: [x,y] | row+col, text (=… for a formula)}")
             .interactive(|_| Ok(Box::new(TableEditM::default()))),
+        // Double-clicking a table cell: the in-place editor, which moves between cells.
+        CommandSpec::new("tabledit.cell", "Edit Table Cells", run_tabledit)
+            .params("same as tabledit")
+            .interactive(|_| Ok(Box::new(TableEditM { stay: true, ..TableEditM::default() }))),
         CommandSpec::new("tableexport", "Export Table", run_export)
             .params("{handle, path? (.csv), separator?: \",\" | \"\\t\"} → {csv, rows, cols, path?}")
             .interactive(|_| Ok(Box::new(ExportM::default()))),
@@ -426,10 +430,103 @@ fn run_tabledit(s: &mut Session, p: &Value) -> Result<Value> {
     super::run_set(s, &q)
 }
 
-/// TABLEDIT at the command line: pick a cell, type its text (or `=formula`).
+/// TABLEDIT at the command line: pick a cell, type its text (or `=formula`). In the in-place
+/// editor (`stay`), the text keeps the cell open: `Next`, `Previous`, `Up` and `Down` move to
+/// another cell and Enter ends.
 #[derive(Default)]
 struct TableEditM {
     cell: Option<(Handle, usize, usize)>,
+    stay: bool,
+    /// The in-place editor's box for the current cell (`stay` only).
+    editor: Option<crate::TextEditor>,
+}
+
+impl TableEditM {
+    fn open(&mut self, s: &Session, cell: (Handle, usize, usize)) {
+        self.cell = Some(cell);
+        self.editor = if self.stay { cell_editor(s, cell.0, cell.1, cell.2) } else { None };
+    }
+}
+
+/// The cell's text to edit: its formula, or its text.
+fn cell_source(t: &Table, r: usize, c: usize) -> String {
+    t.cells.get(r).and_then(|row| row.get(c)).map(|c| c.formula.clone().unwrap_or_else(|| c.text.clone())).unwrap_or_default()
+}
+
+/// The cell `dir` of (r, c) that is not covered by a merge: Next and Previous run along the rows
+/// and wrap; Up and Down stay in the column. `None` at the table's edge.
+fn neighbour(t: &Table, r: usize, c: usize, dir: &str) -> Option<(usize, usize)> {
+    let rows = t.row_heights.len().min(t.cells.len()).min(MAX_ROWS);
+    let cols = t.col_widths.len().min(MAX_COLS);
+    if rows == 0 || cols == 0 {
+        return None;
+    }
+    let covered = cadcraft_render::table_covered(t);
+    let free = |r: usize, c: usize| !covered.get(r).and_then(|v| v.get(c)).copied().unwrap_or(false);
+    let (mut r, mut c) = (r.min(rows - 1), c.min(cols - 1));
+    for _ in 0..rows.saturating_mul(cols) {
+        match dir {
+            "Next" => {
+                c += 1;
+                if c >= cols {
+                    c = 0;
+                    r += 1;
+                }
+                if r >= rows {
+                    return None;
+                }
+            }
+            "Previous" => {
+                if c == 0 {
+                    if r == 0 {
+                        return None;
+                    }
+                    r -= 1;
+                    c = cols - 1;
+                } else {
+                    c -= 1;
+                }
+            }
+            "Up" => r = r.checked_sub(1)?,
+            "Down" => {
+                r += 1;
+                if r >= rows {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+        if free(r, c) {
+            return Some((r, c));
+        }
+    }
+    None
+}
+
+/// The in-place editor's box for cell (r, c) of table `h`.
+fn cell_editor(s: &Session, h: Handle, r: usize, c: usize) -> Option<crate::TextEditor> {
+    let d = s.doc().ok()?;
+    let EntityKind::Table(t) = &d.entity(h)?.kind else { return None };
+    let (corner, w, _) = t.cell_rect(r, c)?;
+    let height = t.cells.get(r).and_then(|row| row.get(c)).and_then(|c| c.text_height).unwrap_or(t.text_height);
+    let height = if height.is_finite() && height > 0.0 { height } else { 0.18 };
+    let margin = d.table_styles.iter().find(|st| st.name.eq_ignore_ascii_case(&t.style)).map_or(0.06, |st| st.margin);
+    let margin = if margin.is_finite() && margin >= 0.0 { margin.min(w * 0.25) } else { 0.0 };
+    let mtext = cadcraft_doc::MText {
+        formula: None,
+        frame: false,
+        insert: (corner + Vec2::new(margin, -margin)).to3(t.insert.z),
+        height,
+        width: (w - 2.0 * margin).max(height),
+        attach: 1,
+        rotation: 0.0,
+        style: "Standard".into(),
+        contents: cell_source(t, r, c),
+        line_spacing: 1.0,
+        line_spacing_exact: false,
+        columns: None,
+    };
+    Some(crate::TextEditor { mtext, kind: crate::EditorKind::TableCell { name: cell_name(r, c) }, key: format!("{}:{r}:{c}", h.hex()) })
 }
 
 impl Interactive for TableEditM {
@@ -457,13 +554,38 @@ impl Interactive for TableEditM {
             (_, Input::Cancel) => Ok(Step::Cancel),
             (None, Input::Point(p)) => {
                 match cell_under(s, p) {
-                    Some(c) => self.cell = Some(c),
+                    Some(c) => self.open(s, c),
                     None => s.echo("No table cell there."),
                 }
                 Ok(Step::Continue)
             }
             (None, Input::Enter) => Ok(Step::Cancel),
             (Some(_), Input::Enter) => Ok(Step::Done),
+            (Some((h, r, c)), Input::Keyword(k)) if self.stay && matches!(k.as_str(), "Next" | "Previous" | "Up" | "Down") => {
+                let (h, r, c) = (*h, *r, *c);
+                let next = s
+                    .doc()
+                    .ok()
+                    .and_then(|d| d.entity(h))
+                    .and_then(|e| if let EntityKind::Table(t) = &e.kind { neighbour(t, r, c, &k) } else { None });
+                match next {
+                    Some((r, c)) => {
+                        self.open(s, (h, r, c));
+                        Ok(Step::Continue)
+                    }
+                    // Past the table's edge: done, as the last cell's Tab is in AutoCAD.
+                    None => Ok(Step::Done),
+                }
+            }
+            (Some((h, r, c)), Input::Text(t)) if self.stay => {
+                let q = json!({ "handle": h.hex(), "row": r, "col": c, "text": t });
+                let cell = (*h, *r, *c);
+                if let Err(e) = super::run_set(s, &q) {
+                    s.echo(e.to_string());
+                }
+                self.open(s, cell);
+                Ok(Step::Continue)
+            }
             (Some((h, r, c)), Input::Text(t) | Input::Keyword(t)) => {
                 let q = json!({ "handle": h.hex(), "row": r, "col": c, "text": t });
                 match super::run_set(s, &q) {
@@ -476,6 +598,9 @@ impl Interactive for TableEditM {
             }
             _ => Ok(Step::Continue),
         }
+    }
+    fn text_editor(&self) -> Option<crate::TextEditor> {
+        self.cell.and(self.editor.clone())
     }
 }
 

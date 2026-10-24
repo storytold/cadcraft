@@ -888,8 +888,9 @@ fn hatch_pick_point_keeps_island_of_separate_lines() {
             }
         }
     }
-    // The interactive form finds the same island.
+    // The interactive form finds the same island (picked on screen, with the area in view).
     let mut s = square_hole_fixture(true);
+    s.execute("zoom", &json!({"mode": "extents"})).unwrap();
     s.cmdline("hatch 2,2").unwrap();
     s.cmdline("").unwrap();
     let e = only_hatch(&s);

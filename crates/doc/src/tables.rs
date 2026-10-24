@@ -594,6 +594,9 @@ impl DimStyle {
 pub struct MLeaderStyle {
     pub name: String,
     pub arrow_size: f64,
+    /// Arrowhead (a DIMBLK-style name or a user block); empty for closed filled.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub arrow_block: String,
     pub text_height: f64,
     pub landing_gap: f64,
     pub dogleg: f64,
@@ -607,6 +610,7 @@ impl Default for MLeaderStyle {
         MLeaderStyle {
             name: "Standard".into(),
             arrow_size: 0.18,
+            arrow_block: String::new(),
             text_height: 0.18,
             landing_gap: 0.09,
             dogleg: 0.36,

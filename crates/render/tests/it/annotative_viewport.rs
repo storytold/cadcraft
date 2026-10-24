@@ -25,6 +25,9 @@ fn drawing(scale: f64, all_visible: bool) -> Drawing {
     d.header.set_i64("ANNOALLVISIBLE", i64::from(all_visible));
     let anno = Common { anno_scales: vec![AnnoScale::new("1:50", 1.0, 50.0), AnnoScale::new("1:100", 1.0, 100.0)], ..Default::default() };
     let text = Text {
+        formula: None,
+        backwards: false,
+        upside_down: false,
         insert: Vec3::ZERO,
         align_pt: None,
         height: 2.5,

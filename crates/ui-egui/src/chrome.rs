@@ -9,37 +9,6 @@ use crate::theme::Tokens;
 
 pub mod annoscale;
 
-const TOOLBAR: &[&[(Icon, &str, &str, Option<&str>)]] = &[
-    &[
-        (Icon::New, "new", "New Drawing", Some("Cmd+N")),
-        (Icon::Open, "open", "Open", Some("Cmd+O")),
-        (Icon::Save, "qsave", "Save", Some("Cmd+S")),
-        (Icon::SaveAs, "saveas", "Save As", None),
-    ],
-    &[(Icon::Undo, "u", "Undo", Some("Cmd+Z")), (Icon::Redo, "redo", "Redo", Some("Cmd+Shift+Z"))],
-    &[
-        (Icon::Plot, "plot", "Print", None),
-        (Icon::Publish, "publish", "Batch Publish", None),
-        (Icon::PageSetup, "pagesetup", "Page Setup Manager", None),
-        (Icon::Preview, "preview", "Plot Preview", None),
-    ],
-    &[
-        (Icon::Import, "import", "Import", None),
-        (Icon::Export, "export", "Export", None),
-        (Icon::Attach, "attach", "Attach", None),
-        (Icon::Share, "share", "Share", None),
-    ],
-    &[(Icon::ZoomWindow, "zoom.window", "Zoom Window", None), (Icon::Pan, "pan", "Pan", None), (Icon::Orbit, "3dorbit", "Orbit", None)],
-    &[
-        (Icon::ZoomExtents, "zoom.extents", "Zoom Extents", None),
-        (Icon::Properties, "ui.toggle.palettes", "Properties", None),
-        (Icon::Layers, "ui.dialog.layers", "Layer Properties Manager", None),
-        (Icon::Blocks, "ui.dialog.blocks", "Blocks", None),
-    ],
-    &[(Icon::Measure, "dist", "Measure Distance", None), (Icon::List, "list", "List", None), (Icon::Area, "area", "Area", None)],
-    &[(Icon::Help, "ui.dialog.about", "Help", None)],
-];
-
 /// Height of the macOS integrated title row (#161). AppKit draws the traffic lights itself,
 /// centred in the standard 28 pt title-bar band at the top of the window; moving them would take
 /// AppKit calls (`unsafe`, which the workspace forbids). So the title row is that band, and what
@@ -65,17 +34,20 @@ fn title_left(left: f32, width: f32, text_w: f32) -> f32 {
 pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let title_h = if app.integrated_titlebar { MAC_TITLE_BAR } else { 0.0 };
-    let tb_h = if app.ui.show_toolbar { 34.0 } else { 0.0 };
+    let tb_h = if app.ui.show_toolbar && app.ui.toolbar_dock == crate::toolbar::Dock::Top { crate::toolbar::THICKNESS } else { 0.0 };
     egui::Panel::top("cc_title_toolbar").exact_size(title_h + tb_h).frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
         let r = ui.max_rect();
         if title_h > 0.0 {
             let title = match app.session.state() {
-                Ok(st) if !app.ui.start_tab => format!("CADCraft      {}{}", st.title, if st.title.contains('.') { "" } else { ".dwg" }),
+                Ok(st) if !app.ui.start_tab => {
+                    let name = format!("{}{}", st.title, if st.title.contains('.') { "" } else { ".dwg" });
+                    format!("CADCraft      {name}")
+                }
                 _ => format!("CADCraft      {}", crate::tl!("Start")),
             };
             // Centred on the traffic lights' centre line (the row's middle): with the system font
             // the capitals' middle is the text box's middle, so no optical nudge.
-            let galley = ui.painter().layout_no_wrap(title, egui::FontId::proportional(13.0), t.text_dim);
+            let galley = ui.painter().layout_job(crate::i18n::job(&title, egui::FontId::proportional(13.0), t.text_dim));
             let x = title_left(r.left(), r.width(), galley.size().x);
             ui.painter().galley(pos2(x, r.top() + (title_h - galley.size().y) / 2.0), galley, t.text_dim);
             // Allow dragging the window by the title row.
@@ -91,85 +63,8 @@ pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
         }
         if tb_h > 0.0 {
             let row = Rect::from_min_size(pos2(r.left(), r.top() + title_h), vec2(r.width(), tb_h));
-            let mut x = r.left() + if app.integrated_titlebar { 120.0 } else { 12.0 };
-            let size = 26.0;
-            let mut clicked = None;
-            let mac = ui.ctx().os().is_mac();
-            let widths: Vec<_> = TOOLBAR.iter().map(|group| group.len() as f32 * (size + 6.0) - 6.0).collect();
-            let available = (row.right() - 12.0 - x).max(0.0);
-            let Some(fit) = craft_ui::layout::fit_toolbar(&widths, available, 24.0, 30.0) else {
-                // Very small windows still expose the complete command row by scrolling.
-                ui.scope_builder(egui::UiBuilder::new().max_rect(row.shrink2(vec2(4.0, 0.0))), |ui| {
-                    egui::ScrollArea::horizontal().id_salt("toolbar_small").show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            for group in TOOLBAR {
-                                for (icon, cmd, tip, _) in *group {
-                                    if icons::button(ui, *icon, size, tip, false).clicked() {
-                                        clicked = Some(*cmd);
-                                    }
-                                }
-                                ui.add_space(18.0);
-                            }
-                        });
-                    });
-                });
-                if let Some(command) = clicked {
-                    app.start(command);
-                }
-                return;
-            };
-            for (index, _) in &fit.shown {
-                let Some(group) = TOOLBAR.get(*index) else { continue };
-                for (icon, cmd, label, shortcut) in group.iter() {
-                    let br = Rect::from_min_size(pos2(x, row.center().y - size / 2.0), vec2(size, size));
-                    let resp = ui.interact(br, ui.id().with(("tb", *cmd)), Sense::click());
-                    if resp.hovered() {
-                        ui.painter().rect_filled(br, 3.0, t.control_hover.gamma_multiply(0.6));
-                    }
-                    icons::paint(ui.painter(), br.shrink(4.0), *icon, false);
-                    let tip = match shortcut {
-                        Some(sc) => format!("{} ({})", crate::i18n::t(label), crate::menus::shortcut_label(sc, mac)),
-                        None => crate::i18n::t(label).to_string(),
-                    };
-                    icons::describe_control(ui, &resp, &tip, None, false);
-                    if resp.on_hover_text(tip).clicked() {
-                        clicked = Some(*cmd);
-                    }
-                    x += size + 6.0;
-                }
-                x += 18.0;
-            }
-            if !fit.overflow.is_empty() {
-                let br = Rect::from_min_size(pos2(x, row.center().y - size / 2.0), vec2(fit.overflow_width, size));
-                let response = ui.interact(br, ui.id().with("toolbar_more"), Sense::click());
-                if response.hovered() {
-                    ui.painter().rect_filled(br, 3.0, t.control_hover.gamma_multiply(0.6));
-                }
-                for offset in [-5.0, 0.0, 5.0] {
-                    ui.painter().circle_filled(br.center() + vec2(offset, 0.0), 1.5, t.text);
-                }
-                icons::describe_control(ui, &response, "More toolbar commands", None, false);
-                egui::Popup::menu(&response).show(|ui| {
-                    for (position, index) in fit.overflow.iter().enumerate() {
-                        let Some(group) = TOOLBAR.get(*index) else { continue };
-                        if position > 0 {
-                            ui.separator();
-                        }
-                        for (_, command, label, _) in *group {
-                            let response = ui.button(crate::i18n::t(label));
-                            crate::control::record_widget(ui, &response, label, "button", None);
-                            if response.clicked() {
-                                clicked = Some(*command);
-                                ui.close();
-                            }
-                        }
-                    }
-                });
-                response.on_hover_text(crate::tl!("More toolbar commands"));
-            }
-            if let Some(c) = clicked {
-                app.start(c);
-            }
+            let left = r.left() + if app.integrated_titlebar { 120.0 } else { 12.0 };
+            crate::toolbar::top(app, ui, Rect::from_min_max(pos2(left, row.top()), row.max));
         }
     });
 }
@@ -269,7 +164,7 @@ pub fn file_tabs(app: &mut CadApp, ui: &mut egui::Ui) {
 /// `text` laid out on one line no wider than `max_width`, ending in "…" when it had to be cut;
 /// and whether it was.
 fn elided(p: &egui::Painter, text: &str, font: egui::FontId, color: egui::Color32, max_width: f32) -> (std::sync::Arc<egui::Galley>, bool) {
-    let mut job = egui::text::LayoutJob::simple_singleline(text.to_string(), font, color);
+    let mut job = crate::i18n::job(text, font, color);
     job.wrap = egui::text::TextWrapping { max_width: max_width.max(0.0), max_rows: 1, break_anywhere: true, overflow_character: Some('…') };
     let galley = p.layout_job(job);
     let cut = galley.elided;
@@ -521,6 +416,83 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
     });
 }
 
+/// Recent files as cards: a preview of the drawing (or the "file not found" picture), its name
+/// and folder. A click opens it.
+fn recent_grid(ui: &mut egui::Ui, files: &[String], recent: &mut Option<String>) {
+    let t = Tokens::get();
+    let card = vec2(crate::thumbs::W as f32 + 16.0, crate::thumbs::H as f32 + 58.0);
+    let per_row = ((ui.available_width() + 12.0) / (card.x + 12.0)).floor().max(1.0) as usize;
+    let ctx = ui.ctx().clone();
+    for chunk in files.chunks(per_row) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 12.0;
+            for path in chunk {
+                let (r, resp) = ui.allocate_exact_size(card, Sense::click());
+                let p = ui.painter();
+                p.rect_filled(r, 4.0, if resp.hovered() { t.control_hover } else { t.chrome_dark });
+                let img = Rect::from_min_size(r.min + vec2(8.0, 8.0), vec2(crate::thumbs::W as f32, crate::thumbs::H as f32));
+                let thumb = crate::thumbs::get(&ctx, path);
+                match &thumb {
+                    crate::thumbs::Thumb::Ready(tex) => {
+                        // Kept in proportion (a file's own preview has its own size).
+                        let [tw, th] = tex.size();
+                        let k = (img.width() / tw.max(1) as f32).min(img.height() / th.max(1) as f32);
+                        let fit = Rect::from_center_size(img.center(), vec2(tw as f32 * k, th as f32 * k));
+                        p.rect_filled(img, 2.0, egui::Color32::BLACK);
+                        p.image(tex.id(), fit, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), egui::Color32::WHITE);
+                    }
+                    crate::thumbs::Thumb::Missing => {
+                        p.rect_filled(img, 2.0, t.chrome);
+                        crate::thumbs::paint_missing(p, img.shrink(14.0), t.text_dim);
+                    }
+                    crate::thumbs::Thumb::Pending => {
+                        p.rect_filled(img, 2.0, t.chrome);
+                        p.text(img.center(), egui::Align2::CENTER_CENTER, crate::tl!("Making a preview..."), crate::theme::small(), t.text_faint);
+                    }
+                    crate::thumbs::Thumb::Failed => {
+                        p.rect_filled(img, 2.0, t.chrome);
+                        icons::paint(p, Rect::from_center_size(img.center(), vec2(48.0, 48.0)), Icon::Open, true);
+                    }
+                }
+                p.rect_stroke(img, 2.0, Stroke::new(1.0, t.border), egui::StrokeKind::Outside);
+                let missing = matches!(thumb, crate::thumbs::Thumb::Missing);
+                let clip = p.with_clip_rect(Rect::from_min_max(pos2(r.left() + 6.0, img.bottom()), pos2(r.right() - 6.0, r.bottom())));
+                let name_color = if missing { t.text_faint } else { t.text };
+                crate::i18n::paint(
+                    &clip,
+                    pos2(img.left(), img.bottom() + 16.0),
+                    egui::Align2::LEFT_CENTER,
+                    &crate::menus::file_name(path),
+                    crate::theme::body(),
+                    name_color,
+                );
+                let second = if missing {
+                    crate::tl!("File not found").to_string()
+                } else {
+                    std::path::Path::new(path).parent().map(|d| d.display().to_string()).unwrap_or_default()
+                };
+                crate::i18n::paint(
+                    &clip,
+                    pos2(img.left(), img.bottom() + 34.0),
+                    egui::Align2::LEFT_CENTER,
+                    &second,
+                    crate::theme::small(),
+                    t.text_faint,
+                );
+                if resp
+                    .on_hover_ui(|ui| {
+                        ui.label(crate::i18n::widget(ui, path, egui::TextStyle::Body));
+                    })
+                    .clicked()
+                {
+                    *recent = Some(path.clone());
+                }
+            }
+        });
+        ui.add_space(12.0);
+    }
+}
+
 /// The Start page (no drawing open, or the Start tab).
 pub fn start_page(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
@@ -533,7 +505,7 @@ pub fn start_page(app: &mut CadApp, ui: &mut egui::Ui) {
     p.text(
         pos2(left.left() + 34.0, left.top() + 98.0),
         egui::Align2::LEFT_CENTER,
-        crate::tf!("Version {version}", version = env!("CARGO_PKG_VERSION")),
+        crate::tf!("Version {version}", version = crate::VERSION),
         crate::theme::small(),
         t.text_faint,
     );
@@ -551,23 +523,73 @@ pub fn start_page(app: &mut CadApp, ui: &mut egui::Ui) {
     }
     let main = Rect::from_min_max(pos2(left.right() + 36.0, r.top() + 40.0), r.max);
     p.text(main.min, egui::Align2::LEFT_TOP, crate::tl!("Recent"), egui::FontId::proportional(22.0), t.text);
-    let mut recent = None;
-    let mut y = main.top() + 44.0;
-    for (i, path) in app.ui.recent_files.iter().enumerate() {
-        let row = Rect::from_min_size(pos2(main.left(), y), vec2((r.right() - main.left() - 36.0).clamp(0.0, 640.0), 42.0));
-        let resp = ui.interact(row, ui.id().with(("recent", i)), Sense::click());
-        if resp.hovered() {
-            p.rect_filled(row, 2.0, t.control_hover.gamma_multiply(0.5));
+    // List or grid of previews: two toggle buttons right of the heading.
+    if !app.ui.recent_files.is_empty() {
+        for (i, (grid, icon, tip)) in
+            [(false, Icon::List, crate::tl!("List")), (true, Icon::Grid, crate::tl!("Grid with previews"))].into_iter().enumerate()
+        {
+            let br = Rect::from_min_size(pos2(main.left() + 110.0 + i as f32 * 30.0, main.top() + 1.0), vec2(26.0, 26.0));
+            let resp = ui.interact(br, ui.id().with(("recent_view", i)), Sense::click()).on_hover_text(tip);
+            let on = app.ui.recent_grid == grid;
+            if on || resp.hovered() {
+                p.rect_filled(br, 3.0, if on { t.accent.gamma_multiply(0.45) } else { t.control_hover });
+            }
+            icons::paint(&p, br.shrink(4.0), icon, false);
+            if resp.clicked() {
+                app.ui.recent_grid = grid;
+            }
         }
-        let dir = std::path::Path::new(path).parent().map(|d| d.display().to_string()).unwrap_or_default();
-        let clip = p.with_clip_rect(row.shrink(2.0));
-        clip.text(pos2(row.left() + 10.0, row.top() + 13.0), egui::Align2::LEFT_CENTER, crate::menus::file_name(path), crate::theme::body(), t.text);
-        clip.text(pos2(row.left() + 10.0, row.top() + 30.0), egui::Align2::LEFT_CENTER, dir, crate::theme::small(), t.text_faint);
-        if resp.on_hover_text(path).clicked() {
-            recent = Some(path.clone());
-        }
-        y += 46.0;
     }
+    let mut recent = None;
+    let body = Rect::from_min_max(pos2(main.left(), main.top() + 44.0), pos2(r.right() - 12.0, r.bottom() - 8.0));
+    let files = app.ui.recent_files.clone();
+    let grid = app.ui.recent_grid;
+    let now = ui.input(|i| i.time);
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body).layout(egui::Layout::top_down(egui::Align::Min)));
+    egui::ScrollArea::vertical().id_salt("cc_recent").auto_shrink([false, false]).show(&mut child, |ui| {
+        if grid {
+            recent_grid(ui, &files, &mut recent);
+        } else {
+            for (i, path) in files.iter().enumerate() {
+                let w = (ui.available_width() - 24.0).clamp(0.0, 640.0);
+                let (row, resp) = ui.allocate_exact_size(vec2(w, 42.0), Sense::click());
+                ui.add_space(4.0);
+                let _ = i;
+                let p = ui.painter();
+                if resp.hovered() {
+                    p.rect_filled(row, 2.0, t.control_hover.gamma_multiply(0.5));
+                }
+                let there = crate::thumbs::exists(path, now);
+                let dir = std::path::Path::new(path).parent().map(|d| d.display().to_string()).unwrap_or_default();
+                let clip = p.with_clip_rect(row.shrink(2.0));
+                let name_color = if there { t.text } else { t.text_faint };
+                let x = if there {
+                    row.left() + 10.0
+                } else {
+                    crate::thumbs::paint_missing(&clip, Rect::from_min_size(pos2(row.left() + 4.0, row.top() + 3.0), vec2(30.0, 36.0)), t.text_dim);
+                    row.left() + 42.0
+                };
+                crate::i18n::paint(
+                    &clip,
+                    pos2(x, row.top() + 13.0),
+                    egui::Align2::LEFT_CENTER,
+                    &crate::menus::file_name(path),
+                    crate::theme::body(),
+                    name_color,
+                );
+                let second = if there { dir } else { format!("{} — {dir}", crate::tl!("File not found")) };
+                crate::i18n::paint(&clip, pos2(x, row.top() + 30.0), egui::Align2::LEFT_CENTER, &second, crate::theme::small(), t.text_faint);
+                if resp
+                    .on_hover_ui(|ui| {
+                        ui.label(crate::i18n::widget(ui, path, egui::TextStyle::Body));
+                    })
+                    .clicked()
+                {
+                    recent = Some(path.clone());
+                }
+            }
+        }
+    });
     if let Some(path) = recent {
         app.open_path(&path);
     } else if app.ui.recent_files.is_empty() {

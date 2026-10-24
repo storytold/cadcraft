@@ -43,7 +43,7 @@ const MODELLED_XDICT_KEYS: &[&str] = &["ACAD_DIMASSOC", "ACAD_SORTENTS", "ACDBCO
 
 /// Applications whose xdata CADCraft reads and writes itself. `ACAD` holds dimension overrides
 /// (DSTYLE) on dimensions and dimension styles; elsewhere it is kept.
-const OWN_APPS: &[&str] = &["CADCRAFT", "ACADANNOTATIVE", "ACCMTRANSPARENCY", "ACAECLAYERSTANDARD"];
+const OWN_APPS: &[&str] = &["CADCRAFT", "ACADANNOTATIVE", "ACCMTRANSPARENCY", "ACAECLAYERSTANDARD", "CADCRAFTFORMULA"];
 
 /// Most objects kept from one file.
 const MAX_OBJECTS: usize = 1_000_000;

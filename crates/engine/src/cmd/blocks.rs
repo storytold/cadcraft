@@ -298,9 +298,13 @@ fn run_insert(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn attdef_kind(s: &Session, tag: &str, prompt: &str, default: &str, at: Vec2, height: f64, invisible: bool) -> EntityKind {
     let style = s.doc().map(|d| d.header.str("TEXTSTYLE", "Standard")).unwrap_or_else(|_| "Standard".into());
+    let (backwards, upside_down) = s.doc().ok().and_then(|d| d.text_style(&style).map(|st| (st.backwards, st.upside_down))).unwrap_or((false, false));
     EntityKind::AttDef(Attrib {
         tag: tag.to_ascii_uppercase(),
         text: Text {
+            formula: None,
+            backwards,
+            upside_down,
             insert: v3(at),
             align_pt: None,
             height,

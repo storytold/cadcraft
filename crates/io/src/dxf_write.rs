@@ -505,9 +505,15 @@ fn attrib_flags(a: &Attrib) -> i64 {
     i64::from(a.invisible) | if a.constant { 2 } else { 0 } | if a.modes.verify { 4 } else { 0 } | if a.modes.preset { 8 } else { 0 }
 }
 
-/// A TEXT's groups, or an attribute's (`attrib`, in a file of version `target`) with its
-/// subclass: the subclass version (`280 0`, 2010 and later), prompt, tag, flags and alignment,
-/// then Lock position (`280`, 2007 and later; readers take the 280 after the tag as it).
+/// A text's own formula (`=...`) as extended data; AutoCAD fields stay in their own objects.
+fn formula_xdata(w: &mut W, f: Option<&str>) {
+    let Some(f) = f.filter(|f| f.trim_start().starts_with('=')) else { return };
+    w.s(1001, dxf_ext::FORMULA_APP);
+    for c in dxf_ext::formula_chunks(f) {
+        w.s(1000, c);
+    }
+}
+
 /// The insertion point (group 10) to write for `t`. A justified text is placed by its alignment
 /// point (group 11), and its insertion point is the start of its baseline, which AutoCAD reads
 /// from DWG as is (it recomputes it only for DXF): writing the alignment point there drew centred
@@ -554,13 +560,16 @@ fn computed_text_insert(d: &Drawing, t: &Text) -> Vec3 {
         oblique: t.oblique,
         h,
         v,
-        backwards: ts.backwards,
-        upside_down: ts.upside_down,
+        backwards: t.backwards,
+        upside_down: t.upside_down,
     };
     let q = cadcraft_fonts::baseline_start(&cadcraft_fonts::TextFont::resolve(&ts.font), &t.value, &p);
     if q.is_finite() { Vec3::new(q.x, q.y, a.z) } else { t.insert }
 }
 
+/// A TEXT's groups, or an attribute's (`attrib`, in a file of version `target`) with its
+/// subclass: the subclass version (`280 0`, 2010 and later), prompt, tag, flags and alignment,
+/// then Lock position (`280`, 2007 and later; readers take the 280 after the tag as it).
 fn text_tags(w: &mut W, d: &Drawing, t: &Text, attrib: Option<(&Attrib, Version)>, attdef_prompt: Option<&str>) {
     w.p(10, text_insert(d, t));
     w.f(40, t.height);
@@ -575,6 +584,10 @@ fn text_tags(w: &mut W, d: &Drawing, t: &Text, attrib: Option<(&Attrib, Version)
         w.f(51, t.oblique.to_degrees());
     }
     w.s(7, &t.style);
+    let generation = i64::from(t.backwards) * 2 + i64::from(t.upside_down) * 4;
+    if generation != 0 {
+        w.i(71, generation);
+    }
     let h = match t.halign {
         HAlign::Left => 0,
         HAlign::Center => 1,
@@ -796,6 +809,7 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
             common(w, e, owner, paper, "AcDbText");
             thickness(w, e);
             text_tags(w, d, t, None, None);
+            formula_xdata(w, t.formula.as_deref());
         }
         // Closed polylines, one per loop (`dxf_region`): REGION's own data is ACIS.
         EntityKind::Region(r) => {
@@ -845,7 +859,13 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
             // Line spacing style: 1 = at least, 2 = exactly.
             w.i(73, if t.line_spacing_exact { 2 } else { 1 });
             w.f(44, t.line_spacing);
+            if t.frame {
+                // Background flags: a text frame, no fill (border offset factor 1.5).
+                w.i(90, 16);
+                w.f(45, 1.5);
+            }
             w.t.extend(crate::dxf_read::mtext_dxf::column_tags(t));
+            formula_xdata(w, t.formula.as_deref());
         }
         EntityKind::Insert(i) => {
             w.s(0, "INSERT");
@@ -969,6 +989,7 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
                 }
             }
             dim_xdata(w, dm, cx);
+            formula_xdata(w, dm.marks.formula.as_deref());
         }
         EntityKind::Table(t) => {
             // Tables without a generated block (none expected) are not written.
@@ -1045,6 +1066,7 @@ fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx
                 style: cx.mleader_style(&m.style),
                 text_style: m.text.as_ref().and_then(|t| cx.style(&t.style)),
                 block: m.block.as_ref().and_then(|b| cx.block_records.get(&b.block.to_ascii_uppercase()).cloned()),
+                arrow: Some(m.arrow.trim()).filter(|a| !a.is_empty()).and_then(|a| cx.arrow(a)),
             };
             w.t.extend(crate::dxf_mleader::entity_tags(d, m, &refs));
         }
@@ -1321,6 +1343,11 @@ fn hatch_xdata(w: &mut W, h: &Hatch) {
     w.s(1000, "HATCH");
     w.p(1011, h.origin.to3(0.0));
     w.s(1000, h.background.map(Color::name).unwrap_or_default());
+    // As AutoCAD keeps it, so AutoCAD shows the background too.
+    if let Some(c) = h.background {
+        w.s(1001, dxf_ext::HATCH_BACKGROUND_APP);
+        w.i(1071, dxf_ext::acad_color_value(c));
+    }
 }
 
 /// What happens to the anonymous `*D` blocks read from a file (#495): a dimension that still
@@ -1418,6 +1445,8 @@ fn dim_block_entities(d: &Drawing, dm: &Dimension, layer: &str) -> Vec<Entity> {
             handle: Handle(0),
             common: text_c,
             kind: EntityKind::MText(MText {
+                formula: None,
+                frame: false,
                 insert: g.text_pos.to3(0.0),
                 height: g.text_height,
                 width: 0.0,
@@ -1472,6 +1501,8 @@ pub(crate) fn table_block_entities(d: &Drawing, t: &Table, layer: &str) -> Vec<E
                 handle: Handle(0),
                 common: Common { color: cell.color, ..c.clone() },
                 kind: EntityKind::MText(MText {
+                    formula: None,
+                    frame: false,
                     insert: cell.at.to3(0.0),
                     height: cell.height,
                     width: 0.0,
@@ -1884,7 +1915,11 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
     for s in &d.dim_styles {
         arrow_names.extend([s.arrow_block.clone(), s.arrow_block1.clone(), s.arrow_block2.clone(), s.leader_arrow_block.clone()]);
     }
+    arrow_names.extend(d.mleader_styles.iter().map(|s| s.arrow_block.clone()));
     for e in &every {
+        if let EntityKind::MLeader(m) = &e.kind {
+            arrow_names.push(m.arrow.clone());
+        }
         if let EntityKind::Dimension(dm) = &e.kind {
             for (k, v) in &dm.overrides {
                 let Some(f) = DimStyle::field_name(k).filter(|f| f.starts_with("arrowBlock") || *f == "leaderArrowBlock") else { continue };
@@ -2246,7 +2281,15 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
         w.f(146, 0.0);
     }
     w.s(0, "ENDTAB");
-    let apps = ["ACAD", dxf_ext::APP, "AcadAnnotative", dxf_ext::LAYER_TRANSPARENCY_APP, dxf_ext::LAYER_DESCRIPTION_APP];
+    let apps = [
+        "ACAD",
+        dxf_ext::APP,
+        "AcadAnnotative",
+        dxf_ext::LAYER_TRANSPARENCY_APP,
+        dxf_ext::LAYER_DESCRIPTION_APP,
+        dxf_ext::HATCH_BACKGROUND_APP,
+        dxf_ext::FORMULA_APP,
+    ];
     let th = table_head(&mut w, "APPID", apps.len());
     for app in apps {
         record_head(&mut w, "APPID", &th, "AcDbRegAppTableRecord");
@@ -2486,7 +2529,8 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
     }
     let byblock_ltype = ltype_handles.get("BYBLOCK").cloned();
     for (s, h) in mleader_styles.iter().zip(&mleader_handles) {
-        mleader_style_obj(&mut w, s, h, &mleader_dict, byblock_ltype.as_deref(), cx.style(&s.text_style));
+        let arrow = Some(s.arrow_block.trim()).filter(|a| !a.is_empty()).and_then(|a| cx.arrow(a));
+        mleader_style_obj(&mut w, s, h, &mleader_dict, byblock_ltype.as_deref(), cx.style(&s.text_style), arrow);
     }
     // Multiline styles.
     w.t.extend(crate::dxf_mline::objects(&cx.mlines, &root_dict));
@@ -2801,7 +2845,15 @@ fn group_obj(w: &mut W, g: &Group, h: &str, dict: &str, written: &std::collectio
 /// A MLEADERSTYLE object (DXF Reference, OBJECTS: MLEADERSTYLE): MText content and straight
 /// ByBlock leaders with the style's landing gap, dogleg length, arrow size, text style and
 /// text height.
-fn mleader_style_obj(w: &mut W, s: &MLeaderStyle, h: &str, dict: &str, byblock_ltype: Option<&str>, text_style: Option<String>) {
+fn mleader_style_obj(
+    w: &mut W,
+    s: &MLeaderStyle,
+    h: &str,
+    dict: &str,
+    byblock_ltype: Option<&str>,
+    text_style: Option<String>,
+    arrow: Option<String>,
+) {
     // ByBlock as a 32-bit colour value (0xC1000000).
     const BYBLOCK: i64 = -1_056_964_608;
     w.s(0, "MLEADERSTYLE");
@@ -2827,6 +2879,9 @@ fn mleader_style_obj(w: &mut W, s: &MLeaderStyle, h: &str, dict: &str, byblock_l
     w.i(291, 1);
     w.f(43, s.dogleg);
     w.s(3, "");
+    if let Some(a) = arrow {
+        w.s(341, &a);
+    }
     w.f(44, s.arrow_size);
     w.s(300, "");
     if let Some(ts) = text_style {

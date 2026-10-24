@@ -425,6 +425,9 @@ pub(super) fn run_hatchedit(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(st) = style {
             h.style = st;
         }
+        if let Some(bg) = super::background_param(p) {
+            h.background = bg;
+        }
         if origin.is_some() || mode.is_some() {
             h.origin = mode.unwrap_or_default().origin(&h.loops, origin.unwrap_or(h.origin));
         }

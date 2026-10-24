@@ -22,32 +22,59 @@ pub enum ThemePref {
     /// The default: CADCraft's original look.
     #[default]
     Dark,
+    /// Near-black chrome over a black drawing area.
+    Black,
+    /// Light blue chrome (#85abf6) with dark text.
+    #[serde(rename = "lightblue", alias = "light-blue")]
+    LightBlue,
+}
+
+/// The palette a theme draws with: the light and dark themes' own, or one of the extra palettes
+/// built on them (egui's light / dark look underneath).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Palette {
+    #[default]
+    Standard,
+    Black,
+    LightBlue,
 }
 
 /// The theme `System` uses when the OS (or browser) reports no appearance.
 pub const SYSTEM_FALLBACK: Theme = Theme::Dark;
 
 impl ThemePref {
-    pub const ALL: [ThemePref; 3] = [ThemePref::System, ThemePref::Light, ThemePref::Dark];
+    pub const ALL: [ThemePref; 5] = [ThemePref::System, ThemePref::Light, ThemePref::Dark, ThemePref::Black, ThemePref::LightBlue];
 
     pub fn as_str(self) -> &'static str {
         match self {
             ThemePref::System => "system",
             ThemePref::Light => "light",
             ThemePref::Dark => "dark",
+            ThemePref::Black => "black",
+            ThemePref::LightBlue => "lightblue",
         }
     }
 
     pub fn parse(s: &str) -> Option<ThemePref> {
-        ThemePref::ALL.into_iter().find(|t| t.as_str().eq_ignore_ascii_case(s.trim()))
+        let s = s.trim().replace(['-', '_', ' '], "");
+        ThemePref::ALL.into_iter().find(|t| t.as_str().eq_ignore_ascii_case(&s))
+    }
+
+    /// The palette this choice draws with.
+    pub fn palette(self) -> Palette {
+        match self {
+            ThemePref::Black => Palette::Black,
+            ThemePref::LightBlue => Palette::LightBlue,
+            _ => Palette::Standard,
+        }
     }
 
     /// The theme to show, given what the OS reports (`ctx.system_theme()`).
     pub fn resolve(self, system: Option<Theme>) -> Theme {
         match self {
             ThemePref::System => system.unwrap_or(SYSTEM_FALLBACK),
-            ThemePref::Light => Theme::Light,
-            ThemePref::Dark => Theme::Dark,
+            ThemePref::Light | ThemePref::LightBlue => Theme::Light,
+            ThemePref::Dark | ThemePref::Black => Theme::Dark,
         }
     }
 }
@@ -64,6 +91,20 @@ pub fn active() -> Theme {
 
 pub fn set_active(theme: Theme) {
     ACTIVE.with(|a| a.set(theme));
+}
+
+thread_local! {
+    /// The palette in use on the UI thread (set by [`set_palette`] each frame).
+    static PALETTE: Cell<Palette> = const { Cell::new(Palette::Standard) };
+}
+
+/// The palette [`Tokens::get`] returns colours from.
+pub fn palette() -> Palette {
+    PALETTE.with(Cell::get)
+}
+
+pub fn set_palette(p: Palette) {
+    PALETTE.with(|a| a.set(p));
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -94,6 +135,8 @@ pub struct Tokens {
     /// Grips of dynamic block references (AutoCAD's GRIPDYNCOLOR).
     pub grip_dyn: Color32,
     pub snap: Color32,
+    /// The warning sign of notice windows.
+    pub warning: Color32,
     /// COMPARE: objects only in this drawing, only in the other one, and the areas of change.
     pub compare_this: Color32,
     pub compare_other: Color32,
@@ -153,6 +196,7 @@ impl Tokens {
         grip_hot: Color32::from_rgb(0xff, 0x3b, 0x3b),
         grip_dyn: Color32::from_rgb(0x26, 0xc6, 0xe8),
         snap: Color32::from_rgb(0x2f, 0xd0, 0x62),
+        warning: Color32::from_rgb(0xf2, 0xb2, 0x33),
         compare_this: Color32::from_rgb(0x4c, 0xd9, 0x7b),
         compare_other: Color32::from_rgb(0xff, 0x5c, 0x5c),
         compare_area: Color32::from_rgb(0xff, 0xb4, 0x3c),
@@ -205,6 +249,61 @@ impl Tokens {
         ..Tokens::DARK
     };
 
+    /// Near-black chrome and a black drawing area, in [`Tokens::DARK`]'s accents.
+    pub const BLACK: Tokens = Tokens {
+        chrome: Color32::from_rgb(0x1a, 0x1a, 0x1a),
+        chrome_dark: Color32::from_rgb(0x10, 0x10, 0x10),
+        panel: Color32::from_rgb(0x1c, 0x1c, 0x1c),
+        tab_active: Color32::from_rgb(0x33, 0x33, 0x33),
+        control: Color32::from_rgb(0x2a, 0x2a, 0x2a),
+        control_hover: Color32::from_rgb(0x3a, 0x3a, 0x3a),
+        border: Color32::from_rgb(0x30, 0x30, 0x30),
+        canvas: Color32::from_rgb(0x00, 0x00, 0x00),
+        grid_minor: Color32::from_rgb(0x12, 0x12, 0x12),
+        grid_major: Color32::from_rgb(0x20, 0x20, 0x20),
+        text: Color32::from_rgb(0xe6, 0xe6, 0xe6),
+        text_dim: Color32::from_rgb(0xa8, 0xa8, 0xa8),
+        text_faint: Color32::from_rgb(0x80, 0x80, 0x80),
+        icon: Color32::from_rgb(0xd8, 0xd8, 0xd8),
+        cmd_bg: Color32::from_rgba_unmultiplied_const(0x14, 0x14, 0x14, 0xf0),
+        field: Color32::from_rgb(0x0c, 0x0c, 0x0c),
+        cmd_history: Color32::from_rgba_unmultiplied_const(0x0a, 0x0a, 0x0a, 170),
+        cmd_border: Color32::from_rgb(0x3a, 0x3a, 0x3a),
+        list_bg: Color32::from_rgb(0x14, 0x14, 0x14),
+        list_row: Color32::from_rgb(0x2a, 0x2a, 0x2a),
+        ..Tokens::DARK
+    };
+
+    /// Light blue chrome (#85abf6) with dark blue text; the drawing area as in [`Tokens::LIGHT`].
+    pub const LIGHT_BLUE: Tokens = Tokens {
+        chrome: Color32::from_rgb(0x85, 0xab, 0xf6),
+        chrome_dark: Color32::from_rgb(0x72, 0x99, 0xe6),
+        panel: Color32::from_rgb(0x9d, 0xbc, 0xf8),
+        tab_active: Color32::from_rgb(0xc4, 0xd7, 0xfb),
+        control: Color32::from_rgb(0xae, 0xc8, 0xf9),
+        control_hover: Color32::from_rgb(0xc2, 0xd6, 0xfb),
+        border: Color32::from_rgb(0x5f, 0x86, 0xd3),
+        text: Color32::from_rgb(0x0f, 0x1c, 0x33),
+        text_dim: Color32::from_rgb(0x26, 0x3a, 0x5c),
+        text_faint: Color32::from_rgb(0x41, 0x55, 0x78),
+        icon: Color32::from_rgb(0x15, 0x24, 0x40),
+        icon_accent: Color32::from_rgb(0x0d, 0x45, 0xb5),
+        icon_point: Color32::from_rgb(0xc2, 0x44, 0x0c),
+        accent: Color32::from_rgb(0x16, 0x56, 0xcf),
+        cmd_bg: Color32::from_rgba_unmultiplied_const(0xe3, 0xec, 0xfd, 0xf0),
+        toggle_on: Color32::from_rgb(0x16, 0x56, 0xcf),
+        field: Color32::from_rgb(0xf0, 0xf5, 0xff),
+        select_bg: Color32::from_rgb(0xc6, 0xda, 0xfd),
+        cmd_history: Color32::from_rgba_unmultiplied_const(0xd6, 0xe4, 0xfc, 0xdc),
+        cmd_border: Color32::from_rgb(0x5f, 0x86, 0xd3),
+        cmd_keyword: Color32::from_rgb(0x0b, 0x46, 0xb0),
+        cmd_keyword_hover: Color32::from_rgb(0xc4, 0xd7, 0xfb),
+        list_bg: Color32::from_rgb(0xf2, 0xf7, 0xff),
+        list_row: Color32::from_rgb(0xd4, 0xe3, 0xfd),
+        warn: Color32::from_rgb(0x7a, 0x43, 0x00),
+        ..Tokens::LIGHT
+    };
+
     /// The palette of `theme`.
     pub fn of(theme: Theme) -> Tokens {
         match theme {
@@ -213,9 +312,18 @@ impl Tokens {
         }
     }
 
+    /// The colours of `palette` over `theme` (an extra palette replaces the theme's own).
+    pub fn of_palette(theme: Theme, palette: Palette) -> Tokens {
+        match palette {
+            Palette::Standard => Tokens::of(theme),
+            Palette::Black => Tokens::BLACK,
+            Palette::LightBlue => Tokens::LIGHT_BLUE,
+        }
+    }
+
     /// The palette of the theme in use, with the user's drawing-area colours ([`set_canvas`]).
     pub fn get() -> Tokens {
-        CANVAS.with(Cell::get).over(Tokens::of(active()))
+        CANVAS.with(Cell::get).over(Tokens::of_palette(active(), palette()))
     }
 
     /// These tokens with `bg` as the model-space background: the grid, axes, crosshair and the
@@ -357,6 +465,18 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
                 .enumerate()
                 .map(|(i, bytes)| (format!("system-cjk-{i}"), std::sync::Arc::new(egui::FontData::from_owned(bytes)))),
         );
+        // Drafting symbols (⌀ ∠ ⊥ ℄ …) that the interface face lacks: an installed symbol font
+        // after the others, so the text editor and its symbol menu never show empty boxes.
+        let symbols: &[&str] = if cfg!(target_os = "macos") {
+            &["/System/Library/Fonts/Apple Symbols.ttf", "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"]
+        } else if cfg!(windows) {
+            &["C:\\Windows\\Fonts\\seguisym.ttf", "C:\\Windows\\Fonts\\cambria.ttc"]
+        } else {
+            &["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/TTF/DejaVuSans.ttf"]
+        };
+        if let Some(bytes) = symbols.iter().find_map(|p| read_capped(std::path::Path::new(p), MAX_UI_FONT_BYTES)) {
+            added.push(("system-symbols".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes))));
+        }
         // العربية: an installed Arabic face after the Latin ones (egui's bundled faces carry no
         // Arabic glyphs), for the Arabic interface.
         if language == "ar"
@@ -667,7 +787,14 @@ fn any_script(faces: &[cadcraft_fonts::CraftFont], script: &str) -> bool {
 
 /// egui's visuals for `theme`, from its tokens.
 fn visuals(theme: Theme) -> Visuals {
-    let t = Tokens::of(theme);
+    // The extra palettes stand on their own look (light blue on egui's light one, black on dark).
+    let p = palette();
+    let base = match p {
+        Palette::Black => Theme::Dark,
+        Palette::LightBlue => Theme::Light,
+        Palette::Standard => theme,
+    };
+    let t = if base == theme { Tokens::of_palette(theme, p) } else { Tokens::of(theme) };
     let mut v = match theme {
         Theme::Dark => Visuals::dark(),
         Theme::Light => Visuals::light(),
@@ -728,6 +855,20 @@ mod tests {
 
     fn families<'a>(faces: &[&'a CraftFont]) -> Vec<&'a str> {
         faces.iter().map(|f| f.family).collect()
+    }
+
+    #[test]
+    fn black_and_light_blue_themes_have_their_own_palettes() {
+        use super::{Palette, ThemePref, Tokens};
+        assert_eq!(ThemePref::parse("light-blue"), Some(ThemePref::LightBlue));
+        assert_eq!(ThemePref::parse("Black"), Some(ThemePref::Black));
+        assert_eq!(ThemePref::LightBlue.resolve(None), egui::Theme::Light);
+        assert_eq!(ThemePref::Black.resolve(None), egui::Theme::Dark);
+        assert_eq!(Tokens::of_palette(egui::Theme::Light, Palette::LightBlue).chrome, egui::Color32::from_rgb(0x85, 0xab, 0xf6));
+        assert_eq!(Tokens::of_palette(egui::Theme::Dark, Palette::Black).canvas, egui::Color32::BLACK);
+        assert_eq!(ThemePref::LightBlue.palette(), Palette::LightBlue);
+        let json = serde_json::to_string(&ThemePref::LightBlue).unwrap_or_default();
+        assert_eq!(json, "\"lightblue\"");
     }
 
     #[test]

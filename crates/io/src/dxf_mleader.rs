@@ -78,6 +78,9 @@ struct Parsed {
     dogleg_on: Option<bool>,
     dogleg: Option<f64>,
     arrow: Option<f64>,
+    /// Arrowhead BLOCK_RECORD (342 on the entity, else 341 of a leader line).
+    arrow_block: Option<String>,
+    line_arrow_block: Option<String>,
     content: Option<i64>,
     text_style: Option<String>,
     block: Option<String>,
@@ -148,6 +151,7 @@ fn parse(tags: &[Tag]) -> Parsed {
                 291 => p.dogleg_on = Some(t.i64() != 0),
                 41 => p.dogleg = finite(f),
                 42 => p.arrow = finite(f),
+                342 => p.arrow_block = handle(t),
                 172 => p.content = Some(t.i64()),
                 343 => p.text_style = handle(t),
                 344 => p.block = handle(t),
@@ -253,6 +257,7 @@ fn parse(tags: &[Tag]) -> Parsed {
                         }
                     }
                 }
+                341 => p.line_arrow_block = p.line_arrow_block.take().or_else(|| handle(t)),
                 _ => {}
             },
         }
@@ -300,6 +305,8 @@ pub(crate) fn read(tags: &[Tag]) -> MLeader {
             _ => p.text_rotation.unwrap_or(0.0),
         };
         MText {
+            formula: None,
+            frame: false,
             insert: text_location.unwrap_or(landing),
             height: pos(p.text_height).unwrap_or(def.text_height),
             width: p.text_width.unwrap_or(0.0).max(0.0),
@@ -327,6 +334,7 @@ pub(crate) fn read(tags: &[Tag]) -> MLeader {
             row_spacing: 0.0,
         }
     });
+    let no_leader = p.leader_type == Some(0) && !leaders.is_empty();
     MLeader {
         leaders,
         landing,
@@ -334,7 +342,9 @@ pub(crate) fn read(tags: &[Tag]) -> MLeader {
         text,
         style: def.name,
         arrow_size: pos(p.arrow_ctx).or(pos(p.arrow)).unwrap_or(def.arrow_size),
+        arrow: String::new(),
         spline: p.leader_type == Some(2),
+        no_leader,
         block,
     }
 }
@@ -360,6 +370,10 @@ pub(crate) fn resolve(tags: &[Tag], m: &mut MLeader, styles: &HashMap<String, St
         && let Some(n) = p.text_style_ctx.iter().chain(&p.text_style).find_map(|h| styles.get(h)).filter(|n| !n.is_empty())
     {
         t.style = n.clone();
+    }
+    // The arrowhead: a BLOCK_RECORD (`_DotSmall`, or a user block); none means the style's.
+    if let Some(n) = p.arrow_block.iter().chain(&p.line_arrow_block).find_map(|h| brs.get(h)).filter(|n| !n.trim().is_empty()) {
+        m.arrow = n.clone();
     }
     if m.block.is_some() {
         match p.block_ctx.iter().chain(&p.block).find_map(|h| brs.get(h)).filter(|n| !n.is_empty()) {
@@ -459,6 +473,8 @@ pub(crate) struct Refs {
     pub text_style: Option<String>,
     /// BLOCK_RECORD handle of the content block.
     pub block: Option<String>,
+    /// BLOCK_RECORD handle of its own arrowhead.
+    pub arrow: Option<String>,
 }
 
 /// The groups of a MULTILEADER record after its `AcDbMLeader` marker.
@@ -572,11 +588,12 @@ pub(crate) fn entity_tags(d: &Drawing, m: &MLeader, r: &Refs) -> Vec<Tag> {
     s(&mut t, 340, &r.style);
     // Overridden properties: leader type, landing and dogleg, arrowhead size, content type,
     // text style and height, block content (the entity holds its own values).
-    i(&mut t, 90, 0x1 | 0x10 | 0x40 | 0x80 | 0x200 | 0x400 | 0x800 | 0x1_0000 | 0x8_0000);
+    let arrow_flag = if r.arrow.is_some() { 0x100 } else { 0 };
+    i(&mut t, 90, 0x1 | 0x10 | 0x40 | 0x80 | arrow_flag | 0x200 | 0x400 | 0x800 | 0x1_0000 | 0x8_0000);
     i(
         &mut t,
         170,
-        if m.leaders.is_empty() {
+        if m.leaderless() {
             0
         } else if m.spline {
             2
@@ -589,6 +606,9 @@ pub(crate) fn entity_tags(d: &Drawing, m: &MLeader, r: &Refs) -> Vec<Tag> {
     i(&mut t, 290, 1);
     i(&mut t, 291, i64::from(m.dogleg > 0.0));
     f(&mut t, 41, m.dogleg);
+    if let Some(a) = &r.arrow {
+        s(&mut t, 342, a);
+    }
     f(&mut t, 42, m.arrow_size);
     i(
         &mut t,

@@ -116,6 +116,8 @@ pub fn install_io() {
         write: |d, name| cadcraft_io::write(d, name).map_err(|e| e.to_string()),
         plot: Some(|d, space, opts| cadcraft_io::plotter::plot(d, space, opts).map_err(|e| e.to_string())),
     });
+    cadcraft_engine::cmd::file::set_plot_style_reader(cadcraft_io::pia::read);
+    cadcraft_engine::cmd::file::set_plot_book(|items, opts| cadcraft_io::plotter::plot_book(items, opts).map_err(|e| e.to_string()));
     cadcraft_engine::cmd::file::set_write_as(|d, name, o| {
         cadcraft_io::write_with(d, name, &cadcraft_io::SaveOptions { version: o.version, binary: o.binary }).map_err(|e| e.to_string())
     });
@@ -143,6 +145,7 @@ fn services() -> Services {
                 .save_file()
                 .map(|p| p.to_string_lossy().to_string())
         })),
+        pick_folder: Some(Box::new(|| rfd::FileDialog::new().pick_folder().map(|p| p.to_string_lossy().to_string()))),
         // APPLOAD: AutoLISP routines only, starting where the last one was loaded from.
         pick_lisp: Some(Box::new(|dir: &str| {
             let dialog = rfd::FileDialog::new().add_filter(i18n::t("AutoLISP (LSP)"), &["lsp"]).add_filter(i18n::t("All files"), &["*"]);
@@ -205,7 +208,7 @@ fn app_icon() -> Option<egui::IconData> {
 
 fn version_string() -> String {
     let sha = option_env!("CADCRAFT_BUILD_SHA").unwrap_or("dev");
-    format!("cadcraft {} ({sha})", env!("CARGO_PKG_VERSION"))
+    format!("cadcraft {} ({sha})", cadcraft_ui_egui::VERSION)
 }
 
 /// The control port from `--control <port>` or `CADCRAFT_CONTROL_PORT` (`source`); a value that is

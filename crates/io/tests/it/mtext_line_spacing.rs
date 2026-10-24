@@ -8,6 +8,8 @@ fn line_spacing_style_roundtrips() {
     for exact in [false, true] {
         let mut d = Drawing::new_metric();
         let t = MText {
+            formula: None,
+            frame: false,
             insert: Vec3::new(1.0, 2.0, 0.0),
             height: 2.5,
             width: 40.0,

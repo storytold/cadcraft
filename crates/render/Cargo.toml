@@ -19,6 +19,9 @@ lyon_tessellation = { workspace = true }
 # Display lists of large drawings are built on all cores (not on the web, which has no threads).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rayon = { workspace = true }
+# The local date and time for date formulas and fields in text (MIT OR Unlicense); the web build
+# uses UTC.
+jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-bundle-platform", "tzdb-zoneinfo"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }

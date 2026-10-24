@@ -10,6 +10,8 @@ fn harness() -> Harness<'static, CadApp> {
     let mut app = CadApp::new(Session::default(), Services::default());
     app.integrated_titlebar = true;
     app.ui.in_window_menu = false;
+    // These tests drive the Tool Sets palette; its tools also sit on the Tool Sets bar.
+    app.ui.toolsets_bar.show = false;
     let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).build_ui_state(
         |ui, app: &mut CadApp| {
             ui.ctx().set_os(egui::os::OperatingSystem::Mac);
@@ -38,7 +40,10 @@ fn toolbar_tab_and_shift_tab_skip_title_drag_and_activate_once() {
     let mut h = harness();
     h.key_press(Key::Tab);
     h.run_steps(2);
-    assert!(h.get_by_label("New Drawing (⌘N)").is_focused(), "the title drag region is not a keyboard control");
+    assert!(h.get_by_label("CADCraft").is_focused(), "the title drag region is not a keyboard control; the application button comes first");
+    h.key_press(Key::Tab);
+    h.run_steps(2);
+    assert!(h.get_by_label("New Drawing (⌘N)").is_focused());
     h.key_press(Key::Tab);
     h.run_steps(2);
     assert!(h.get_by_label("Open (⌘O)").is_focused());

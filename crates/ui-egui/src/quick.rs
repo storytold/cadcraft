@@ -154,7 +154,7 @@ pub fn qselect_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 ui.horizontal(|ui| {
                     ui.add(egui::TextEdit::singleline(&mut st.value).desired_width(if choices.is_empty() { 220.0 } else { 190.0 }));
                     if !choices.is_empty() {
-                        ui.menu_button("▼", |ui| {
+                        crate::palettes::menu_list(ui, "▼", |ui| {
                             egui::ScrollArea::vertical().max_height(240.0).show(ui, |ui| {
                                 for c in &choices {
                                     if ui

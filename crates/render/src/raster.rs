@@ -155,6 +155,20 @@ pub fn render(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Pixm
     Some(pm)
 }
 
+/// Decode a PNG to (width, height, premultiplied RGBA). `None` for bytes that aren't a PNG or
+/// an image larger than 4096 on a side.
+pub fn decode_png(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    let pm = Pixmap::decode_png(bytes).ok()?;
+    (pm.width() <= 4096 && pm.height() <= 4096).then(|| (pm.width(), pm.height(), pm.data().to_vec()))
+}
+
+/// Encode premultiplied RGBA pixels as a PNG.
+pub fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
+    let size = tiny_skia::IntSize::from_wh(width, height)?;
+    let pm = Pixmap::from_vec(rgba.to_vec(), size)?;
+    pm.encode_png().ok()
+}
+
 /// Render and encode as PNG.
 pub fn render_png(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Vec<u8>> {
     render(list, view, o)?.encode_png().ok()

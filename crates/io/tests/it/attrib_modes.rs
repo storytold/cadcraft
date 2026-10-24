@@ -9,6 +9,9 @@ use cadcraft_io::{read_dxf, write_dxf};
 
 fn attrib(tag: &str, modes: AttribModes) -> Attrib {
     let text = Text {
+        formula: None,
+        backwards: false,
+        upside_down: false,
         insert: Vec3::ZERO,
         align_pt: None,
         height: 1.0,

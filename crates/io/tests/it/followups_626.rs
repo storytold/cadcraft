@@ -35,6 +35,8 @@ fn mleader_drawing() -> (Drawing, MLeader) {
         landing: Vec3::new(5.0, 4.0, 0.0),
         dogleg: 0.75,
         text: Some(MText {
+            formula: None,
+            frame: false,
             insert: Vec3::new(5.9, 4.0, 0.0),
             height: 0.4,
             width: 6.0,
@@ -48,7 +50,9 @@ fn mleader_drawing() -> (Drawing, MLeader) {
         }),
         style: "Standard".into(),
         arrow_size: 1.0,
+        arrow: String::new(),
         spline: false,
+        no_leader: false,
         block: None,
     };
     d.add(&Space::Model, Common { layer: "0".into(), ..Common::default() }, EntityKind::MLeader(m.clone())).unwrap();
@@ -162,6 +166,9 @@ fn code_page_is_kept_before_2007() {
         &Space::Model,
         Common::default(),
         EntityKind::Text(Text {
+            formula: None,
+            backwards: false,
+            upside_down: false,
             insert: Vec3::ZERO,
             align_pt: None,
             height: 2.5,

@@ -232,6 +232,16 @@ pub struct Text {
     pub halign: HAlign,
     #[serde(default)]
     pub valign: VAlign,
+    /// Mirrored left to right (DXF 71 bit 2; set from the style when the text is made).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub backwards: bool,
+    /// Mirrored top to bottom (DXF 71 bit 4).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub upside_down: bool,
+    /// The formula the text shows the result of: `=...` (CADCraft text formulas) or an AutoCAD
+    /// field code (`%<\AcVar date \f "dd.MM.yyyy">%`). `value` holds the last result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub formula: Option<String>,
 }
 impl Text {
     /// The point the text is placed by, as the Insertion snap and the grip show it: the alignment
@@ -280,6 +290,13 @@ pub struct MText {
     /// one column.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub columns: Option<MTextColumns>,
+    /// A frame drawn around the text (DXF 90 bit 16, "Text frame").
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub frame: bool,
+    /// The formula the text shows the result of (see [`Text::formula`]); `contents` holds the
+    /// last result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub formula: Option<String>,
 }
 fn attach_tl() -> u8 {
     1
@@ -591,6 +608,10 @@ pub struct DimMarks {
     /// Inspection frame, label and rate (DIMINSPECT).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inspect: Option<Inspection>,
+    /// A formula for the dimension text (`=<>/2`, `=TEXT(<>,"0.0")&" mm"`; `<>` is the
+    /// measurement); `Dimension::text` holds the last result.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub formula: Option<String>,
 }
 
 impl DimMarks {
@@ -710,18 +731,99 @@ pub struct MLeader {
     pub style: String,
     #[serde(default = "one")]
     pub arrow_size: f64,
+    /// Arrowhead of the leader lines: a DIMBLK-style name (`_DotSmall`, `_Open30`, `_None`…) or a
+    /// user arrowhead block of the drawing; empty for the style's (closed filled by default).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub arrow: String,
     /// Leader lines are smooth curves through their points (leader type Spline). An empty
     /// `leaders` is a multileader without a leader line (leader type None).
     #[serde(default)]
     pub spline: bool,
+    /// Leader type None set on a multileader that has leader lines: they are kept (to come back
+    /// with Straight or Spline) but not drawn, nor the landing.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_leader: bool,
     /// Block content in place of the text: a block reference placed at the landing.
     #[serde(default)]
     pub block: Option<Insert>,
 }
 
 impl MLeader {
+    /// The grip index of the text (after the leader points and the landing), when it has text.
+    pub fn text_grip(&self) -> Option<usize> {
+        self.text.as_ref().map(|_| self.leaders.iter().map(Vec::len).sum::<usize>() + 1)
+    }
+
+    /// The gap between the end of the landing and the text, as placed now (never negative).
+    fn text_gap(&self) -> f64 {
+        self.text.as_ref().map_or(0.0, |t| ((t.insert.x - self.landing.x).abs() - self.dogleg).max(0.0))
+    }
+
+    /// The side of the landing the text is on: 1 to the right, -1 to the left.
+    fn text_side(&self) -> f64 {
+        match &self.text {
+            Some(t) if t.insert.x < self.landing.x => -1.0,
+            _ => 1.0,
+        }
+    }
+
+    /// Move with Leader: the text goes to `to` and the landing follows it (next to the text,
+    /// at its height), so the leader runs from its last point to the new landing.
+    pub fn move_with_leader(&mut self, to: Vec2) {
+        let gap = self.text_gap();
+        let last = self.leaders.iter().filter_map(|l| l.last()).map(|v| v.xy()).next().unwrap_or(self.landing.xy());
+        let side = if to.x >= last.x { 1.0 } else { -1.0 };
+        let old = self.landing.xy();
+        self.landing.x = to.x - side * (self.dogleg + gap);
+        self.landing.y = to.y;
+        if let Some(t) = &mut self.text {
+            t.insert.x = to.x;
+            t.insert.y = to.y;
+            // Attached at its left edge on the right of the landing, its right edge on the left.
+            let row = (t.attach.clamp(1, 9) - 1) / 3;
+            t.attach = row * 3 + if side > 0.0 { 1 } else { 3 };
+        }
+        if let Some(b) = &mut self.block {
+            let d = self.landing.xy() - old;
+            b.insert.x += d.x;
+            b.insert.y += d.y;
+        }
+    }
+
+    /// Reset Text Position: the text back beside the landing, on the side it is on.
+    pub fn reset_text(&mut self) {
+        let side = self.text_side();
+        let (lx, ly) = (self.landing.x, self.landing.y);
+        let dogleg = self.dogleg;
+        if let Some(t) = &mut self.text {
+            // The usual landing gap: half the text height.
+            let gap = t.height.abs() * 0.5;
+            t.insert.x = lx + side * (dogleg + gap);
+            t.insert.y = ly;
+            let row = (t.attach.clamp(1, 9) - 1) / 3;
+            t.attach = row * 3 + if side > 0.0 { 1 } else { 3 };
+        }
+    }
+
+    /// It draws no leader line (leader type None).
+    pub fn leaderless(&self) -> bool {
+        self.no_leader || self.leaders.is_empty()
+    }
+
+    /// The arrowhead it draws: its own, else its style's (in `d`).
+    pub fn arrow_in<'a>(&'a self, d: &'a crate::Drawing) -> &'a str {
+        if self.arrow.trim().is_empty() {
+            d.mleader_styles.iter().find(|s| s.name.eq_ignore_ascii_case(&self.style)).map_or("", |s| s.arrow_block.as_str())
+        } else {
+            &self.arrow
+        }
+    }
+
     /// Each leader line as drawn: through its points to the landing, smoothed for spline leaders.
     pub fn leader_paths(&self) -> Vec<Vec<Vec2>> {
+        if self.no_leader {
+            return Vec::new();
+        }
         self.leaders
             .iter()
             .map(|l| {
@@ -1436,7 +1538,14 @@ impl EntityKind {
             EntityKind::Dimension(d) => vec![d.p13.xy(), d.p14.xy(), d.defpt.xy(), d.text_mid.xy()],
             EntityKind::MLine(m) => m.points(),
             EntityKind::Leader(l) => l.vertices.iter().map(|v| v.xy()).collect(),
-            EntityKind::MLeader(m) => m.leaders.iter().flat_map(|l| l.iter().map(|v| v.xy())).chain(std::iter::once(m.landing.xy())).collect(),
+            // Leader points, the landing, then the text.
+            EntityKind::MLeader(m) => m
+                .leaders
+                .iter()
+                .flat_map(|l| l.iter().map(|v| v.xy()))
+                .chain(std::iter::once(m.landing.xy()))
+                .chain(m.text.as_ref().map(|t| t.insert.xy()))
+                .collect(),
             EntityKind::Hatch(h) => {
                 let b = Bounds2::from_points(h.loops.iter().flat_map(|l| l.vertices.iter().map(|v| v.p)));
                 vec![b.center()]

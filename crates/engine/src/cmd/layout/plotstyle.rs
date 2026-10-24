@@ -306,7 +306,21 @@ fn run_stylesmanager(s: &mut Session, p: &Value) -> Result<Value> {
                         if meta.len() > cadcraft_doc::MAX_TABLE_FILE as u64 {
                             return Err(bad(cmd, format!("{_path}: the plot style table file is too large")));
                         }
-                        std::fs::read_to_string(_path).map_err(|e| bad(cmd, format!("{_path}: {e}")))?
+                        let bytes = std::fs::read(_path).map_err(|e| bad(cmd, format!("{_path}: {e}")))?;
+                        // AutoCAD's own .ctb/.stb files, read as they are.
+                        if super::super::file::is_pia(&bytes) {
+                            let reader = super::super::file::plot_style_reader()
+                                .ok_or_else(|| bad(cmd, "AutoCAD plot style table files can't be read in this build"))?;
+                            let file = std::path::Path::new(_path).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+                            let mut t = reader(&bytes, &file).map_err(|e| bad(cmd, format!("{_path}: {e}")))?;
+                            if let Some(n) = str_param(p, "name").map(str::trim).filter(|n| !n.is_empty()) {
+                                t.name = n.chars().take(255).collect();
+                            }
+                            let out = table_summary(s.doc()?, &t);
+                            store(s.doc_mut()?, t);
+                            return Ok(out);
+                        }
+                        String::from_utf8(bytes).map_err(|_| bad(cmd, format!("{_path}: not a plot style table file")))?
                     }
                     #[cfg(target_arch = "wasm32")]
                     return Err(bad(cmd, "files can't be read here: pass `text`"));

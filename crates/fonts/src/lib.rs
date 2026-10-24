@@ -16,6 +16,7 @@
 pub mod bidi;
 mod complex;
 mod mtext;
+pub mod shx;
 mod stroke;
 pub mod subset;
 pub mod ttf;
@@ -212,6 +213,62 @@ pub fn shape_stroke(s: &str, height: f64, width_factor: f64, oblique: f64) -> Sh
     out
 }
 
+/// Shape one line in an SHX font: each character's shape program scaled so the font's capital
+/// height is the text height; characters the font (and its big font) lack come from the stroke
+/// font. A line with right-to-left letters (Hebrew) is laid out in display order: its
+/// right-to-left runs reversed, brackets mirrored, the base direction from its first letter.
+fn shape_shx(font: &TextFont, s: &str, height: f64, width_factor: f64, oblique: f64) -> Shaped {
+    let TextFont::Shx { font, big } = font else { return shape_stroke(s, height, width_factor, oblique) };
+    let h = if height.is_finite() && height > 0.0 { height } else { 1.0 };
+    let wf = if width_factor.is_finite() && width_factor.abs() > 1e-6 { width_factor } else { 1.0 };
+    let shear = oblique.tan().clamp(-10.0, 10.0);
+    let mut out = Shaped::default();
+    let mut x = 0.0;
+    let mut spans: Vec<(f64, f64, bool, bool)> = Vec::new();
+    let decoded = decode_controls(s);
+    let ordered: Vec<(char, bool, bool)> = if decoded.iter().any(|(c, _, _)| bidi::has_rtl(&c.to_string())) {
+        let chars: Vec<char> = decoded.iter().map(|(c, _, _)| *c).collect();
+        let mut v = Vec::with_capacity(decoded.len());
+        for (r, rtl) in bidi::visual_runs(&chars, None) {
+            let run = decoded.get(r).unwrap_or_default();
+            if rtl {
+                v.extend(run.iter().rev().map(|(c, u, o)| (bidi::mirror(*c), *u, *o)));
+            } else {
+                v.extend(run.iter().copied());
+            }
+        }
+        v
+    } else {
+        decoded
+    };
+    for (c, under, over) in ordered {
+        if bidi::is_format_control(c) {
+            continue;
+        }
+        let x0 = x;
+        let from = |f: &shx::ShxFont| f.code_for(c).and_then(|code| f.glyph(code)).map(|g| (g, h / f.above));
+        match from(font).or_else(|| big.as_deref().and_then(from)) {
+            Some((g, sc)) => {
+                for st in &g.strokes {
+                    out.strokes.push(st.iter().map(|p| Vec2::new(x + p.x * sc * wf + p.y * sc * shear, p.y * sc)).collect());
+                }
+                x += g.advance * sc * wf;
+            }
+            None => {
+                let mut piece = shape_stroke(&c.to_string(), h, wf, oblique);
+                piece.map(|p| p + Vec2::new(x, 0.0));
+                let adv = stroke_advance(c, h, wf);
+                out.extend(piece);
+                x += adv;
+            }
+        }
+        spans.push((x0, x, under, over));
+    }
+    out.strokes.extend(decorations(&spans, h));
+    out.width = x.max(0.0);
+    out
+}
+
 /// Draw stroke-font glyph `spec` with its left edge at `x` (`sc` = text height / cap height).
 fn draw_stroke_glyph(out: &mut Shaped, spec: &str, x: f64, sc: f64, wf: f64, shear: f64) {
     for st in stroke::strokes(spec) {
@@ -263,6 +320,9 @@ pub fn line_width(s: &str, height: f64, width_factor: f64) -> f64 {
 /// Width of the gap MTEXT leaves between two words. Words are measured without their trailing
 /// letter gap, so the stroke font's gap is added on both sides of the space, as TEXT lays it out.
 pub fn space_width(font: &TextFont, height: f64, width_factor: f64) -> f64 {
+    if let TextFont::Shx { .. } = font {
+        return shape_shx(font, " ", height, width_factor, 0.0).width;
+    }
     if let TextFont::Outline(face) = font
         && let Some(w) = ttf::width(face, " ", height, width_factor)
     {
@@ -278,13 +338,36 @@ pub enum TextFont {
     #[default]
     Stroke,
     Outline(ttf::Face),
+    /// An SHX shape font from the user's font folders, with the style's big font when it has one.
+    Shx {
+        font: std::sync::Arc<shx::ShxFont>,
+        big: Option<std::sync::Arc<shx::ShxFont>>,
+    },
+}
+
+/// Whether a style font name means an SHX file: `.shx`, or no extension at all (`romans`).
+fn names_shx(name: &str) -> bool {
+    let n = name.trim();
+    let file = n.rsplit(['\\', '/']).next().unwrap_or(n);
+    file.to_ascii_lowercase().ends_with(".shx") || !file.contains('.')
 }
 
 impl TextFont {
-    /// Resolve a text style font name: an installed TTF/OTF/TTC when found; else, for a font we
-    /// can't find (an SHX file, a missing TTF), the FONTALT font ([`ttf::font_alt`]) when set;
-    /// else the stroke font.
+    /// Resolve a text style font name: an SHX font in the user's font folders for an SHX name;
+    /// an installed TTF/OTF/TTC when found; else, for a font we can't find (an SHX file, a
+    /// missing TTF), the FONTALT font ([`ttf::font_alt`]) when set; else the stroke font.
     pub fn resolve(name: &str) -> TextFont {
+        Self::resolve_style(name, "")
+    }
+
+    /// [`TextFont::resolve`] with the style's big font (for an SHX font).
+    pub fn resolve_style(name: &str, big_font: &str) -> TextFont {
+        if names_shx(name)
+            && let Some(font) = shx::find(name)
+        {
+            let big = Some(big_font).filter(|b| !b.trim().is_empty()).and_then(shx::find);
+            return TextFont::Shx { font, big };
+        }
         if let Some(f) = ttf::find(name) {
             return TextFont::Outline(f);
         }
@@ -300,7 +383,8 @@ impl TextFont {
 }
 
 /// Shaped text in local or world coordinates: open strokes (stroke-font glyphs, underlines,
-/// fraction bars) and closed glyph outlines grouped per glyph (fill each group even-odd).
+/// fraction bars) and closed glyph outlines grouped per glyph (fill each group by the non-zero rule, as
+/// TrueType does).
 /// Outline glyphs also come as [`TextGlyph`]s, for output that keeps text as text (PDF).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Shaped {
@@ -414,6 +498,9 @@ pub(crate) fn decorations(spans: &[(f64, f64, bool, bool)], h: f64) -> Vec<Vec<V
 /// Shape one line in `font` (baseline at y = 0, x from 0). TrueType fonts that fail to parse
 /// fall back to the stroke font.
 pub fn shape_line(font: &TextFont, s: &str, height: f64, width_factor: f64, oblique: f64) -> Shaped {
+    if let TextFont::Shx { .. } = font {
+        return shape_shx(font, s, height, width_factor, oblique);
+    }
     if let TextFont::Outline(face) = font
         && let Some(sh) = ttf::shape(face, s, height, width_factor, oblique)
     {
@@ -424,6 +511,9 @@ pub fn shape_line(font: &TextFont, s: &str, height: f64, width_factor: f64, obli
 
 /// Width of one line in `font`.
 pub fn text_width(font: &TextFont, s: &str, height: f64, width_factor: f64) -> f64 {
+    if let TextFont::Shx { .. } = font {
+        return shape_shx(font, s, height, width_factor, 0.0).width;
+    }
     if let TextFont::Outline(face) = font
         && let Some(w) = ttf::width(face, s, height, width_factor)
     {

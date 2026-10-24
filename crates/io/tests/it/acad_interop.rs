@@ -21,6 +21,9 @@ fn tags(dxf: &str) -> Vec<(i32, String)> {
 
 fn text(value: &str, at: Vec3, h: HAlign, v: VAlign) -> EntityKind {
     EntityKind::Text(Text {
+        upside_down: false,
+        backwards: false,
+        formula: None,
         insert: at,
         align_pt: Some(at),
         height: 5.0,
@@ -207,6 +210,9 @@ fn justified_text_made_here_writes_its_baseline_start_for_every_justification() 
             let at = Vec3::new(100.0, 400.0 - 22.0 * i as f64, 0.0);
             let left = h == Left && v == Baseline;
             let t = Text {
+                backwards: false,
+                formula: None,
+                upside_down: false,
                 insert: at,
                 align_pt: if left { None } else { Some(at) },
                 height: 5.0,

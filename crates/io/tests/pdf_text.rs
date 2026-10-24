@@ -159,6 +159,9 @@ fn style(d: &mut Drawing, name: &str, font: &str) {
 
 fn text(d: &mut Drawing, space: &Space, style: &str, at: (f64, f64), value: &str, rotation: f64, width_factor: f64, oblique: f64) {
     let t = Text {
+        formula: None,
+        backwards: false,
+        upside_down: false,
         insert: Vec3::new(at.0, at.1, 0.0),
         align_pt: None,
         height: 10.0,
@@ -354,6 +357,9 @@ fn hostile_text_never_panics() {
         [("A".repeat(5000), 10.0, 0.0), ("AB".into(), 1e300, 0.0), ("AB".into(), 1e-300, 1e300), ("\u{0}A\u{FFFF}B".into(), 5.0, f64::NAN)]
     {
         let t = Text {
+            formula: None,
+            backwards: false,
+            upside_down: false,
             insert: Vec3::new(0.0, 0.0, 0.0),
             align_pt: None,
             height: h,

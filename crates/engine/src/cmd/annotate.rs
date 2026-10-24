@@ -444,6 +444,8 @@ fn mleader_kind(s: &Session, pts: &[Vec2], text: &str, landing: bool) -> Option<
         landing: v3(*landing_pt),
         dogleg,
         text: (!text.is_empty()).then(|| MText {
+            formula: None,
+            frame: false,
             insert: v3(tpos),
             height: th,
             width: 0.0,
@@ -457,7 +459,9 @@ fn mleader_kind(s: &Session, pts: &[Vec2], text: &str, landing: bool) -> Option<
         }),
         style: st.name.clone(),
         arrow_size: st.arrow_size,
+        arrow: String::new(),
         spline: false,
+        no_leader: false,
         block: None,
     }))
 }
@@ -491,6 +495,8 @@ fn run_leader(s: &mut Session, p: &Value) -> Result<Value> {
         let th = s.doc()?.dim_style(&style(s)).map(|d| d.text_height).unwrap_or(0.18);
         out.push(
             s.add_entity(EntityKind::MText(MText {
+                formula: None,
+                frame: false,
                 insert: v3(*last + Vec2::new(th * 0.5, th * 0.5)),
                 height: th,
                 width: 0.0,
@@ -1558,6 +1564,8 @@ struct MLeaderM {
     block: bool,
     block_name: String,
     block_center: bool,
+    /// The in-place editor's box while the text is asked for.
+    editor: Option<MText>,
 }
 
 impl MLeaderM {
@@ -1580,7 +1588,20 @@ impl MLeaderM {
             block: o.block && s.doc().is_ok_and(|d| d.block(&s.last_used.mleader_block).is_some()),
             block_name: s.last_used.mleader_block.clone(),
             block_center: o.block_center,
+            editor: None,
         }
+    }
+    /// Where the text goes while it is asked for: next to the landing, as the multileader will
+    /// place it.
+    fn refresh_editor(&mut self, s: &Session) {
+        self.editor = if self.wants_text() && self.opt.is_none() {
+            mleader_kind(s, &self.leader(None), "X", self.landing).and_then(|k| match k {
+                EntityKind::MLeader(m) => m.text.map(|t| MText { contents: String::new(), ..t }),
+                _ => None,
+            })
+        } else {
+            None
+        };
     }
     /// Keep the order and Options for the next MLEADER.
     fn remember(&self, s: &mut Session) {
@@ -1781,6 +1802,30 @@ impl Interactive for MLeaderM {
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        let step = self.answer(s, i);
+        self.refresh_editor(s);
+        step
+    }
+    fn editing_mtext(&self) -> Option<MText> {
+        self.editor.clone()
+    }
+    fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
+        if self.opt.is_some() || self.wants_text() || self.leader_done || self.pts.is_empty() {
+            return Vec::new();
+        }
+        let text = self.text.as_deref().unwrap_or("");
+        let next = self.constrained(c);
+        let shape = mleader_kind(s, &self.leader(Some(next)), text, self.landing)
+            .and_then(|k| super::mleader_content::apply(s, k, &self.content_spec()).ok());
+        // The segment being placed, drawn as well in case the multileader preview hides it.
+        let mut out = vec![EntityKind::Line(cadcraft_doc::Line { a: v3(*self.pts.last().unwrap_or(&next)), b: v3(next) })];
+        out.extend(shape);
+        out
+    }
+}
+
+impl MLeaderM {
+    fn answer(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         if let Some(o) = self.opt {
             self.opt = self.option(s, o, i);
             self.remember(s);
@@ -1814,16 +1859,6 @@ impl Interactive for MLeaderM {
             _ => {}
         }
         if self.leader_done && !self.wants_text() { self.finish(s) } else { Ok(Step::Continue) }
-    }
-    fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
-        if self.opt.is_some() || self.wants_text() || self.leader_done || self.pts.is_empty() {
-            return Vec::new();
-        }
-        let text = self.text.as_deref().unwrap_or("");
-        mleader_kind(s, &self.leader(Some(self.constrained(c))), text, self.landing)
-            .and_then(|k| super::mleader_content::apply(s, k, &self.content_spec()).ok())
-            .into_iter()
-            .collect()
     }
 }
 

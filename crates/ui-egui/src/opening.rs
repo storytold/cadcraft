@@ -67,7 +67,7 @@ impl Opening {
     /// The text of the card: the file and how long it has taken, or how many files are queued.
     fn label(&self) -> Option<String> {
         let first = self.jobs.first()?;
-        let name = std::path::Path::new(&first.path).file_name().map_or_else(|| first.path.clone(), |n| n.to_string_lossy().to_string());
+        let name = crate::menus::file_name(&first.path);
         let secs = first.started.elapsed().as_secs_f32();
         let more = self.jobs.len() - 1;
         Some(if more == 0 { format!("Opening {name}... {secs:.0} s") } else { format!("Opening {name} and {more} more... {secs:.0} s") })

@@ -162,6 +162,9 @@ fn mtext_from(tags: &[Tag], c: &Common) -> MText {
         };
     }
     MText {
+        // Background flags (90): 16 = a frame around the text.
+        frame: own.i(90).is_some_and(|f| f & 16 != 0),
+        formula: crate::dxf_ext::formula(tags),
         insert: t.p(10),
         height: t.fd(40, 0.2).max(1e-9),
         width: match &columns {
@@ -194,6 +197,9 @@ fn text_from(t: &T) -> Text {
         _ => VAlign::Baseline,
     };
     let align = if t.f(11).is_some() { Some(t.p(11)) } else { None };
+    // Text generation flags (71: 2 backwards, 4 upside down), from the text's own groups (an
+    // attribute's embedded multiline text, after 101, has a 71 of its own).
+    let generation = t.0.iter().take_while(|g| g.code != 101).find(|g| g.code == 71).map_or(0, |g| g.i64());
     let mut text = Text {
         insert: t.p(10),
         align_pt: if h == HAlign::Left && v == VAlign::Baseline { None } else { align },
@@ -205,6 +211,9 @@ fn text_from(t: &T) -> Text {
         style: t.s(7).unwrap_or_else(|| "Standard".into()),
         halign: h,
         valign: v,
+        backwards: generation & 2 != 0,
+        upside_down: generation & 4 != 0,
+        formula: crate::dxf_ext::formula(t.0),
     };
     let n = Vec3::new(t.fd(210, 0.0), t.fd(220, 0.0), t.fd(230, 1.0));
     if n.z < 0.0 {
@@ -490,7 +499,13 @@ fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_left: &mut usi
             center: t.p(10),
             width: t.fd(40, 1.0),
             height: t.fd(41, 1.0),
-            view_center: Vec2::new(t.fd(12, 0.0), t.fd(22, 0.0)),
+            // The view centre (12/22) is relative to the view target (17/27): AutoCAD often keeps
+            // the centre near zero and the target where the drawing is.
+            view_center: {
+                let target = Vec2::new(t.fd(17, 0.0), t.fd(27, 0.0));
+                let target = if target.is_finite() { target } else { Vec2::ZERO };
+                Vec2::new(t.fd(12, 0.0), t.fd(22, 0.0)) + target
+            },
             view_height: t.fd(45, 1.0),
             id: t.i(69).unwrap_or(0) as u32,
             locked: t.i(90).unwrap_or(0) & 16384 != 0,
@@ -895,12 +910,21 @@ fn pattern_definition(tags: &[Tag], scale: f64, angle: f64, origin: Vec2) -> Vec
 fn hatch_xdata(tags: &[Tag]) -> (Vec2, Option<Color>) {
     let x = crate::dxf_ext::xdata(tags, crate::dxf_ext::APP);
     let Some(at) = x.windows(2).position(|w| matches!(w, [m, o] if m.code == 1000 && m.str() == "HATCH" && o.code == 1011)) else {
-        return (Vec2::ZERO, None);
+        return (Vec2::ZERO, acad_background(tags));
     };
     let val = |k: usize, code: i32| x.get(at + k).filter(|t| t.code == code);
     let coord = |k: usize, code: i32| val(k, code).map(Tag::f64).filter(|v| v.is_finite()).unwrap_or(0.0);
     let origin = Vec2::new(coord(1, 1011), coord(2, 1021));
-    (origin, val(4, 1000).and_then(|t| Color::parse(&t.str())))
+    (origin, val(4, 1000).and_then(|t| Color::parse(&t.str())).or_else(|| acad_background(tags)))
+}
+
+/// The background colour AutoCAD keeps in `HATCHBACKGROUNDCOLOR` xdata (`1071`).
+fn acad_background(tags: &[Tag]) -> Option<Color> {
+    crate::dxf_ext::xdata(tags, crate::dxf_ext::HATCH_BACKGROUND_APP)
+        .iter()
+        .find(|t| t.code == 1071 || t.code == 1070)
+        .and_then(|t| t.str().trim().parse::<i64>().ok())
+        .and_then(crate::dxf_ext::acad_color)
 }
 
 /// Gradient values missing from a file fall back to the GRADIENT command's defaults.
@@ -1064,6 +1088,7 @@ fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityKind, rx: &m
                 dm.p15 = center;
             }
             dm.marks = crate::dxf_ext::read_marks(tags);
+            dm.marks.formula = crate::dxf_ext::formula(tags);
             // Group 52: the extension lines' angle relative to the dimension line (DIMEDIT Oblique).
             let base = match dm.kind {
                 DimKind::Linear { rotation } => Some(rotation),
@@ -1549,7 +1574,9 @@ fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 if name.is_empty() || !(h.is_finite() && w.is_finite() && h > 0.0 && w > 0.0) || d.views.len() >= MAX_OBJECTS {
                     continue;
                 }
-                let center = t.p(10).xy();
+                // The centre is relative to the view target (12).
+                let target = t.p(12).xy();
+                let center = t.p(10).xy() + if target.is_finite() { target } else { Vec2::ZERO };
                 if !(center.x.is_finite() && center.y.is_finite()) {
                     continue;
                 }
@@ -1616,7 +1643,9 @@ const MAX_VPORT_TILES: usize = 64;
 /// are fractions of the drawing area; unusable tiles are skipped.
 fn vport_record(d: &mut Drawing, t: &T) {
     let name = t.s(2).map(|n| n.trim().to_string()).unwrap_or_default();
-    let (min, max, center) = (t.p(10).xy(), t.p(11).xy(), t.p(12).xy());
+    // The view centre (12) is relative to the view target (17).
+    let target = t.p(17).xy();
+    let (min, max, center) = (t.p(10).xy(), t.p(11).xy(), t.p(12).xy() + if target.is_finite() { target } else { Vec2::ZERO });
     let height = t.fd(40, 0.0);
     let unit = |v: f64| v.is_finite() && (-1e-9..=1.0 + 1e-9).contains(&v);
     let ok = [min.x, min.y, max.x, max.y].into_iter().all(unit)
@@ -1879,6 +1908,7 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
         d.layers.insert(0, Layer::default());
     }
     crate::dxf_raw::read(&secs, &mut d);
+    crate::dxf_fields::resolve(&secs, &mut d);
     d.skipped_records = skipped;
     Ok(d)
 }
@@ -2112,6 +2142,7 @@ impl Objects {
             let st = MLeaderStyle {
                 name: name.clone(),
                 arrow_size: num(44, def.arrow_size, 0.0),
+                arrow_block: t.s(341).and_then(|h| rx.brs.get(&h.trim().to_ascii_uppercase()).cloned()).unwrap_or_default(),
                 text_height: t.f(45).filter(|v| v.is_finite() && *v > 0.0).unwrap_or(def.text_height),
                 landing_gap: num(42, def.landing_gap, 0.0),
                 dogleg: num(43, def.dogleg, 0.0),

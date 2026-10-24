@@ -15,7 +15,7 @@ use super::gripcmds::stretch_grips;
 use super::helpers::line;
 use super::machines::number;
 use super::modify::transform_entities;
-use crate::grips::{GripAction, GripMode, grip_action, grip_actions, mode_matrix};
+use crate::grips::{GripAction, GripMode, grip_actions, mode_matrix};
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Running, Session, Step};
 
 /// At most this many grips are hot at once (input-derived: a cap on the work per edit).
@@ -114,7 +114,7 @@ impl GripEdit {
                 continue;
             }
             let Some(e) = d.entity(h) else { continue };
-            let gs = e.kind.grips();
+            let gs = crate::grips::grip_points(d, &e.kind);
             // The nearest grip of this object within the tolerance.
             let best = gs
                 .iter()
@@ -174,7 +174,7 @@ impl GripEdit {
     fn acted(&self, s: &Session, action: GripAction, to: Option<Vec2>, value: Option<f64>) -> Option<(Handle, EntityKind)> {
         let &(h, i) = self.hot.first()?;
         let e = s.doc().ok()?.entity(h)?;
-        grip_action(&e.kind, i, action, to, value).map(|k| (h, k))
+        crate::grips::grip_action_in(s.doc().ok()?, &e.kind, i, action, to, value).map(|k| (h, k))
     }
 
     /// Apply a multifunctional option; the grip edit ends.
@@ -357,7 +357,14 @@ impl Interactive for GripEdit {
                     GripAction::ToArc => ("Specify a point on the arc", Accept::POINT),
                     GripAction::Lengthen => ("Specify end point or length change", Accept::POINT_OR_NUMBER),
                     GripAction::Radius => ("Specify radius", Accept::POINT_OR_NUMBER),
-                    GripAction::RemoveVertex | GripAction::ToLine => ("", Accept::POINT),
+                    GripAction::MoveWithDimLine | GripAction::MoveTextOnly | GripAction::MoveWithLeader => {
+                        ("Specify new location for dimension text", Accept::POINT)
+                    }
+                    GripAction::RemoveVertex
+                    | GripAction::ToLine
+                    | GripAction::AboveDimLine
+                    | GripAction::CenterVertically
+                    | GripAction::ResetTextPosition => ("", Accept::POINT),
                 };
                 Prompt::new(format!("{} {msg}", a.title()), accept).kw(&["eXit"]).base(base)
             }

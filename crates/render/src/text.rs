@@ -163,10 +163,13 @@ fn simplify(contour: &[Vec2], tolerance: f64) -> Vec<Vec2> {
     if result.len() >= 4 { result } else { contour.to_vec() }
 }
 
-/// Monotone tessellation with even-odd holes and intersections. Work in font units so f32
-/// precision is independent of drawing coordinates; the placement stays f64. The existing
-/// slab filler remains the fallback when tessellation fails (including its u16 vertex limit).
-fn triangulate(contours: &[Vec<Vec2>]) -> Vec<Vec2> {
+/// Glyph contours filled by the non-zero winding rule, as TrueType and OpenType define it: a
+/// glyph drawn from overlapping contours (AutoCAD's TrueType versions of its stroke fonts, many
+/// modern fonts) is solid where they overlap, not hollow as the even-odd rule would leave it.
+/// Work in font units so f32 precision is independent of drawing coordinates; the placement
+/// stays f64. The slab filler (even-odd) remains the fallback when tessellation fails
+/// (including its u16 vertex limit).
+pub(crate) fn triangulate(contours: &[Vec<Vec2>]) -> Vec<Vec2> {
     let mut path = Path::builder();
     for contour in contours {
         let Some(&first) = contour.first().filter(|_| contour.len() >= 3) else { continue };
@@ -179,7 +182,7 @@ fn triangulate(contours: &[Vec<Vec2>]) -> Vec<Vec2> {
     let mut buffers: VertexBuffers<Vec2, u16> = VertexBuffers::new();
     let result = FillTessellator::new().tessellate_path(
         &path.build(),
-        &FillOptions::even_odd(),
+        &FillOptions::non_zero(),
         &mut BuffersBuilder::new(&mut buffers, |v: FillVertex<'_>| {
             let p = v.position();
             Vec2::new(f64::from(p.x), f64::from(p.y))
@@ -189,4 +192,49 @@ fn triangulate(contours: &[Vec<Vec2>]) -> Vec<Vec2> {
         return crate::fill::triangulate_evenodd(contours);
     }
     buffers.indices.into_iter().filter_map(|i| buffers.vertices.get(usize::from(i)).copied()).collect()
+}
+
+/// [`triangulate`] for contours placed in drawing coordinates (glyphs shaped without a font
+/// glyph reference, such as right-to-left runs): tessellated about their own corner so large
+/// coordinates keep their precision.
+pub fn triangulate_placed(contours: &[Vec<Vec2>]) -> Vec<Vec2> {
+    let Some(o) = contours.iter().flatten().copied().find(|p| p.is_finite()) else { return Vec::new() };
+    let local: Vec<Vec<Vec2>> = contours.iter().map(|c| c.iter().map(|p| *p - o).collect()).collect();
+    triangulate(&local).into_iter().map(|p| p + o).collect()
+}
+
+#[cfg(test)]
+mod fill_rule_tests {
+    use cadcraft_geom::Vec2;
+
+    fn area(tris: &[Vec2]) -> f64 {
+        tris.chunks(3)
+            .map(|t| match t {
+                [a, b, c] => ((*b - *a).x * (*c - *a).y - (*b - *a).y * (*c - *a).x).abs() / 2.0,
+                _ => 0.0,
+            })
+            .sum()
+    }
+
+    fn square(x: f64, y: f64, s: f64) -> Vec<Vec2> {
+        vec![Vec2::new(x, y), Vec2::new(x + s, y), Vec2::new(x + s, y + s), Vec2::new(x, y + s)]
+    }
+
+    /// Two overlapping contours drawn the same way round (how many fonts build a glyph): the
+    /// overlap is ink, not a hole.
+    #[test]
+    fn overlapping_glyph_contours_fill_solid() {
+        let a = area(&super::triangulate(&[square(0.0, 0.0, 10.0), square(5.0, 0.0, 10.0)]));
+        assert!((a - 150.0).abs() < 1e-3, "union area, got {a}");
+        // A counter (the hole of an "o") is drawn the other way round and stays a hole.
+        let mut hole = square(2.0, 2.0, 6.0);
+        hole.reverse();
+        let a = area(&super::triangulate(&[square(0.0, 0.0, 10.0), hole]));
+        assert!((a - 64.0).abs() < 1e-3, "ring area, got {a}");
+        // Far from the origin, as right-to-left glyphs are placed.
+        let far: Vec<Vec<Vec2>> =
+            [square(0.0, 0.0, 10.0), square(5.0, 0.0, 10.0)].iter().map(|c| c.iter().map(|p| *p + Vec2::new(-38653.0, 147552.0)).collect()).collect();
+        let a = area(&super::triangulate_placed(&far));
+        assert!((a - 150.0).abs() < 1e-2, "placed union area, got {a}");
+    }
 }

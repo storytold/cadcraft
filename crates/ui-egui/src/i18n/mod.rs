@@ -395,6 +395,114 @@ macro_rules! tf {
 #[cfg(test)]
 mod tests;
 
+/// Whether `c` is written right to left (Hebrew, Arabic).
+fn is_rtl(c: char) -> bool {
+    matches!(u32::from(c), 0x0590..=0x08FF | 0xFB1D..=0xFDFF | 0xFE70..=0xFEFF)
+}
+
+/// Whether `s` holds right-to-left letters, so it needs [`job`] to be drawn in reading order.
+pub fn has_rtl(s: &str) -> bool {
+    s.chars().any(is_rtl)
+}
+
+/// Whether `c` attaches to the letter before it (combining marks, Hebrew points, joiners).
+fn is_mark(c: char) -> bool {
+    matches!(u32::from(c), 0x0300..=0x036F | 0x0591..=0x05BD | 0x05BF | 0x05C1..=0x05C2 | 0x05C4..=0x05C5 | 0x05C7 | 0x0610..=0x061A | 0x064B..=0x065F | 0x0670 | 0x200C..=0x200D | 0xFE00..=0xFE0F | 0xFE20..=0xFE2F)
+}
+
+/// The pieces of `s` in display order for a left-to-right line, each to be shaped on its own:
+/// left-to-right runs whole, right-to-left runs letter by letter (with their marks) reversed and
+/// brackets mirrored. The text shaper turns any piece holding a right-to-left letter around, and
+/// with a font that covers Latin and Hebrew alike (Segoe UI) it would turn the whole name
+/// (extension included) around; one letter per piece leaves nothing to turn.
+fn display_pieces(s: &str) -> Vec<String> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = Vec::new();
+    for (r, rtl) in cadcraft_fonts::bidi::visual_runs(&chars, Some(false)) {
+        let run = chars.get(r).unwrap_or_default();
+        if !rtl {
+            out.push(run.iter().collect());
+            continue;
+        }
+        let mut clusters: Vec<String> = Vec::new();
+        for c in run {
+            match clusters.last_mut() {
+                Some(last) if is_mark(*c) => last.push(*c),
+                _ => clusters.push(cadcraft_fonts::bidi::mirror(*c).to_string()),
+            }
+        }
+        out.extend(clusters.into_iter().rev());
+    }
+    out
+}
+
+/// `s` (a file, drawing, block or layer name…) laid out on one line in reading order: right-to-left
+/// runs read as they do in the file manager, `שלום.dwg` with the extension on the right.
+pub fn job(s: &str, font: egui::FontId, color: egui::Color32) -> egui::text::LayoutJob {
+    if !has_rtl(s) {
+        return egui::text::LayoutJob::simple_singleline(s.to_string(), font, color);
+    }
+    // Sections pushed one by one: `append` would merge them back into one (same format), and the
+    // shaper works section by section.
+    let mut job = egui::text::LayoutJob::default();
+    for piece in display_pieces(s) {
+        let start = job.text.len();
+        job.text.push_str(&piece);
+        job.sections.push(egui::text::LayoutSection {
+            leading_space: 0.0,
+            byte_range: egui::text::ByteIndex(start)..egui::text::ByteIndex(job.text.len()),
+            format: egui::TextFormat::simple(font.clone(), color),
+        });
+    }
+    job
+}
+
+/// `s` as widget text (button, label, menu item) in reading order; the widget's own colour.
+pub fn widget(ui: &egui::Ui, s: &str, style: egui::TextStyle) -> egui::WidgetText {
+    if !has_rtl(s) {
+        return s.to_string().into();
+    }
+    egui::WidgetText::from(job(s, style.resolve(ui.style()), egui::Color32::PLACEHOLDER))
+}
+
+/// Paints `s` in reading order, anchored like [`egui::Painter::text`]; returns its rectangle.
+pub fn paint(p: &egui::Painter, pos: egui::Pos2, anchor: egui::Align2, s: &str, font: egui::FontId, color: egui::Color32) -> egui::Rect {
+    let galley = p.layout_job(job(s, font, color));
+    let rect = anchor.anchor_size(pos, galley.size());
+    p.galley(rect.min, galley, color);
+    rect
+}
+
+/// `s` in display order as one plain string, for tests and logs (what [`job`] shows).
+pub fn ltr(s: &str) -> std::borrow::Cow<'_, str> {
+    if !has_rtl(s) {
+        return std::borrow::Cow::Borrowed(s);
+    }
+    std::borrow::Cow::Owned(display_pieces(s).concat())
+}
+
+#[cfg(test)]
+mod ltr_tests {
+    #[test]
+    fn hebrew_file_names_keep_the_extension_on_the_right() {
+        assert_eq!(super::ltr("שלום.dwg"), "םולש.dwg");
+        assert_eq!(super::ltr("plan 2.dwg"), "plan 2.dwg");
+        assert_eq!(super::ltr("תוכנית קומה 1.dwg"), "1 המוק תינכות.dwg");
+    }
+
+    #[test]
+    fn every_right_to_left_letter_is_shaped_alone() {
+        // Pieces: each Hebrew letter by itself, the extension whole, so the shaper (which turns
+        // any piece holding Hebrew around) cannot reverse the name or its extension.
+        assert_eq!(super::display_pieces("שלום.dwg"), ["ם", "ו", "ל", "ש", ".dwg"]);
+        assert_eq!(super::display_pieces("plan.dwg"), ["plan.dwg"]);
+        // Points stay on their letter.
+        assert_eq!(super::display_pieces("שָׁלוֹם"), ["ם", "וֹ", "ל", "שָׁ"]);
+        let job = super::job("שלום.dwg", egui::FontId::proportional(12.0), egui::Color32::WHITE);
+        assert_eq!(job.sections.len(), 5);
+    }
+}
+
 /// `name` lowercased with the Latin accents that occur in language names folded away, so a
 /// byte-wise sort reads alphabetically. Other scripts are left as they are.
 fn name_sort_key(name: &str) -> String {
