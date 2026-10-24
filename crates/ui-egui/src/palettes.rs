@@ -15,6 +15,8 @@ mod layer_menu_tests;
 pub mod patterns;
 /// The QuickCalc palette.
 pub mod quickcalc;
+#[cfg(test)]
+mod several_tests;
 
 type Tool = (Icon, &'static str, &'static str);
 
@@ -1137,6 +1139,125 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                 }
             }
             _ => {}
+        }
+    } else {
+        // Several objects of one type: what they all have, set for all at once. A value they
+        // don't share shows *VARIES*. Positions and contents stay per object (one centre or one
+        // text for all would wreck the drawing). Checked before anything is copied (a large
+        // selection is looked at every frame).
+        let kind0 = std::mem::discriminant(&e.kind);
+        let same = sel.iter().all(|h| d.entity(*h).is_some_and(|x| std::mem::discriminant(&x.kind) == kind0));
+        let ents: Vec<cadcraft_doc::Entity> =
+            if same { sel.iter().filter_map(|h| d.entity(*h)).map(|x| (**x).clone()).collect() } else { Vec::new() };
+        if !ents.is_empty() {
+            let refs: Vec<&cadcraft_doc::Entity> = ents.iter().collect();
+            let real = |v: f64| format!("{v:.4}");
+            let angles = app.session.angle_settings();
+            let each = |f: &dyn Fn(&EntityKind) -> Option<String>| -> Vec<String> { refs.iter().filter_map(|x| f(&x.kind)).collect() };
+            let shared = |vals: &[String]| -> String {
+                match vals.first() {
+                    Some(v0) if vals.iter().all(|v| v == v0) => v0.clone(),
+                    _ => "*VARIES*".into(),
+                }
+            };
+            let row = |ui: &mut egui::Ui, label: &str, key: &str, vals: Vec<String>, set: &mut Option<Value>, bad: &mut Option<String>| {
+                prop_row(ui, label, |ui| {
+                    if let Some(f) = number(edit_field(ui, ui.id().with((key, &ids, "several")), shared(&vals)), bad) {
+                        *set = Some(json!({ "handles": ids, key: f }));
+                    }
+                });
+            };
+            match &e.kind {
+                EntityKind::Line(_) => {
+                    group(ui, "Geometry");
+                    let seg = |k: &EntityKind| if let EntityKind::Line(l) = k { Some(l.b.xy() - l.a.xy()) } else { None };
+                    row(ui, "Length", "length", each(&|k| seg(k).map(|v| len(v.len()))), &mut set, &mut bad);
+                    row(ui, "Angle", "angle", each(&|k| seg(k).map(|v| real(v.angle().to_degrees()))), &mut set, &mut bad);
+                }
+                EntityKind::Circle(_) => {
+                    group(ui, "Geometry");
+                    let r = |k: &EntityKind| if let EntityKind::Circle(c) = k { Some(c.radius) } else { None };
+                    row(ui, "Radius", "radius", each(&|k| r(k).map(len)), &mut set, &mut bad);
+                    row(ui, "Diameter", "diameter", each(&|k| r(k).map(|r| len(2.0 * r))), &mut set, &mut bad);
+                    row(ui, "Circumference", "circumference", each(&|k| r(k).map(|r| len(r * std::f64::consts::TAU))), &mut set, &mut bad);
+                    row(ui, "Area", "area", each(&|k| r(k).map(|r| real(r * r * std::f64::consts::PI))), &mut set, &mut bad);
+                }
+                EntityKind::Arc(_) => {
+                    group(ui, "Geometry");
+                    let a = |k: &EntityKind| if let EntityKind::Arc(a) = k { Some((a.radius, a.start, a.end)) } else { None };
+                    row(ui, "Radius", "radius", each(&|k| a(k).map(|x| len(x.0))), &mut set, &mut bad);
+                    row(ui, "Start angle", "startAngle", each(&|k| a(k).map(|x| real(x.1.to_degrees()))), &mut set, &mut bad);
+                    row(ui, "End angle", "endAngle", each(&|k| a(k).map(|x| real(x.2.to_degrees()))), &mut set, &mut bad);
+                }
+                EntityKind::Text(_) => {
+                    group(ui, "Text");
+                    let t = |k: &EntityKind| if let EntityKind::Text(t) = k { Some((t.height, t.rotation, t.width_factor)) } else { None };
+                    row(ui, "Height", "height", each(&|k| t(k).map(|x| len(x.0))), &mut set, &mut bad);
+                    row(ui, "Rotation", "rotation", each(&|k| t(k).map(|x| real(angles.shown(x.1).to_degrees()))), &mut set, &mut bad);
+                    row(ui, "Width factor", "widthFactor", each(&|k| t(k).map(|x| real(x.2))), &mut set, &mut bad);
+                }
+                EntityKind::MText(_) => {
+                    group(ui, "Text");
+                    let t = |k: &EntityKind| if let EntityKind::MText(t) = k { Some((t.height, t.width)) } else { None };
+                    row(ui, "Text height", "height", each(&|k| t(k).map(|x| len(x.0))), &mut set, &mut bad);
+                    row(ui, "Defined width", "width", each(&|k| t(k).map(|x| len(x.1))), &mut set, &mut bad);
+                }
+                EntityKind::LwPolyline(_) => {
+                    group(ui, "Geometry");
+                    let pl = |k: &EntityKind| if let EntityKind::LwPolyline(p) = k { Some((p.const_width, p.closed)) } else { None };
+                    row(ui, "Global width", "width", each(&|k| pl(k).map(|x| len(x.0))), &mut set, &mut bad);
+                    let closed: Vec<bool> = refs.iter().filter_map(|x| pl(&x.kind).map(|p| p.1)).collect();
+                    let (all, any) = (closed.iter().all(|c| *c), closed.iter().any(|c| *c));
+                    prop_row(ui, "Closed", |ui| {
+                        let mut c = all;
+                        if ui.add(egui::Checkbox::new(&mut c, "").indeterminate(any && !all)).changed() {
+                            set = Some(json!({ "handles": ids, "closed": c }));
+                        }
+                    });
+                }
+                EntityKind::Hatch(_) => {
+                    group(ui, "Pattern");
+                    let h = |k: &EntityKind| if let EntityKind::Hatch(h) = k { Some((h.pattern.clone(), h.scale, h.angle)) } else { None };
+                    let pats = each(&|k| h(k).map(|x| x.0));
+                    let current = shared(&pats);
+                    prop_row(ui, "Pattern", |ui| {
+                        ui.menu_button(current.clone(), |ui| {
+                            if let Some(name) = patterns::menu(ui, &current) {
+                                set = Some(json!({ "handles": ids, "pattern": name }));
+                                ui.close();
+                            }
+                        });
+                    });
+                    row(ui, "Scale", "scale", each(&|k| h(k).map(|x| real(x.1))), &mut set, &mut bad);
+                    row(ui, "Angle", "angle", each(&|k| h(k).map(|x| real(x.2.to_degrees()))), &mut set, &mut bad);
+                }
+                EntityKind::Dimension(_) => {
+                    group(ui, "Dimension");
+                    let st = |k: &EntityKind| {
+                        if let EntityKind::Dimension(dm) = k {
+                            Some((dm.style.clone(), d.dim_style(&dm.style).cloned().unwrap_or_default().with_overrides(&dm.overrides)))
+                        } else {
+                            None
+                        }
+                    };
+                    let styles = each(&|k| st(k).map(|x| x.0));
+                    prop_row(ui, "Dim style", |ui| {
+                        if let Some(n) = pick_menu(ui, &shared(&styles), d.dim_styles.iter().map(|st| st.name.clone())) {
+                            set = Some(json!({ "handles": ids, "dimStyle": n }));
+                        }
+                    });
+                    row(ui, "Text height", "textHeight", each(&|k| st(k).map(|x| len(x.1.text_height))), &mut set, &mut bad);
+                    row(ui, "Arrow size", "arrowSize", each(&|k| st(k).map(|x| len(x.1.arrow_size))), &mut set, &mut bad);
+                    row(ui, "Dim scale overall", "dimScale", each(&|k| st(k).map(|x| real(x.1.scale))), &mut set, &mut bad);
+                }
+                EntityKind::Insert(_) => {
+                    group(ui, "Geometry");
+                    let i = |k: &EntityKind| if let EntityKind::Insert(i) = k { Some((i.rotation, i.scale.x)) } else { None };
+                    row(ui, "Rotation", "rotation", each(&|k| i(k).map(|x| real(angles.shown(x.0).to_degrees()))), &mut set, &mut bad);
+                    row(ui, "Scale", "scale", each(&|k| i(k).map(|x| real(x.1))), &mut set, &mut bad);
+                }
+                _ => {}
+            }
         }
     }
     if let Some(mut p) = set {
