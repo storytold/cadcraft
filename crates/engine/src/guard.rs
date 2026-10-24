@@ -102,6 +102,15 @@ impl Interactive for Guarded {
             None
         })
     }
+    fn typing(&self, s: &Session, typed: &str) -> Vec<EntityKind> {
+        if self.broken.get().is_some() {
+            return Vec::new();
+        }
+        catch_unwind(AssertUnwindSafe(|| self.inner.typing(s, typed))).unwrap_or_else(|_| {
+            self.broken.set(Some("panic in preview"));
+            Vec::new()
+        })
+    }
 }
 
 #[cfg(test)]

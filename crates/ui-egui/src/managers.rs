@@ -16,6 +16,10 @@ use crate::theme::Tokens;
 
 /// The Block Attribute Manager (BATTMAN).
 mod battman;
+/// The Dimension Style Manager (DIMSTYLE).
+mod dimstyle;
+/// The Text Style dialog (STYLE).
+mod textstyle;
 
 /// Open the dialog for a typed or menu-invoked command. `None` if `id` has no dialog here or the
 /// call carries parameters.
@@ -28,6 +32,7 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
         "linetype" | "lt" | "ltype" => "linetype",
         "ddptype" | "ptype" => "ptype",
         "style" | "st" => "textstyle",
+        "dimstyle" | "dimstyle.dimension" | "d" | "dst" | "ddim" => "dimstyle",
         "tablestyle" | "ts" => "tablestyle",
         "mleaderstyle" | "mls" => "mleaderstyle",
         "pagesetup" => "pagesetup",
@@ -48,7 +53,8 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
         "battman" => battman::dialog(app, ctx, open),
         "linetype" => linetype(app, ctx, open),
         "ptype" => point_style(app, ctx, open),
-        "textstyle" => text_style(app, ctx, open),
+        "textstyle" => textstyle::dialog(app, ctx, open),
+        "dimstyle" => dimstyle::dialog(app, ctx, open),
         "tablestyle" => table_style(app, ctx, open),
         "mleaderstyle" => mleader_style(app, ctx, open),
         "pagesetup" => page_setup(app, ctx, open),
@@ -303,32 +309,6 @@ enum Field {
 struct Style {
     name: String,
     fields: Vec<Field>,
-}
-
-fn text_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
-    let Ok(d) = app.session.doc() else {
-        no_drawing(ctx, "Text Style", open);
-        return None;
-    };
-    let mut styles: Vec<Style> = d
-        .text_styles
-        .iter()
-        .map(|s| Style {
-            name: s.name.clone(),
-            fields: vec![
-                Field::Num("height", "Height (0 = ask)", s.height),
-                Field::Num("widthFactor", "Width factor", s.width_factor),
-                Field::Bool("backwards", "Backwards", s.backwards),
-                Field::Bool("upsideDown", "Upside down", s.upside_down),
-            ],
-        })
-        .collect();
-    if styles.is_empty() {
-        let s = cadcraft_doc::TextStyle::default();
-        styles.push(Style { name: s.name, fields: Vec::new() });
-    }
-    let current = d.header.str("TEXTSTYLE", "Standard");
-    style_manager(ctx, open, "Text Style", "style", &current, &styles)
 }
 
 fn table_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
