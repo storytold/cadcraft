@@ -399,11 +399,13 @@ fn blocks(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         if names.is_empty() {
             ui.label(crate::tl!("No blocks defined in this drawing."));
         }
-        for n in names {
-            if ui.button(n).on_hover_text(crate::tl!("Insert this block")).clicked() {
-                pick = Some(n.clone());
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            for n in names {
+                if ui.button(n).on_hover_text(crate::tl!("Insert this block")).clicked() {
+                    pick = Some(n.clone());
+                }
             }
-        }
+        });
     });
     if let Some(n) = pick {
         insert_block(app, &n);
