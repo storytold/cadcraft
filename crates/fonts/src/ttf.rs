@@ -789,11 +789,33 @@ pub(crate) fn fallback_glyph(c: char) -> Option<Arc<GlyphOutline>> {
     Some(glyph(&f, c)).filter(|g| g.mapped)
 }
 
+/// Characters that draw the same mark as `c` and are in far more fonts, tried in the text style's
+/// own face before another font is searched for `c` itself. `%%c` becomes U+2300 `⌀`, which
+/// belongs to Miscellaneous Technical and is missing from Arial, Times and most text faces, while
+/// `∅` and `Ø` are in all of them -- a drawing that says a diameter showed a missing-glyph box
+/// instead (#1608). The character the drawing holds is unchanged; only the outline drawn for it
+/// comes from a sibling mark, so text extraction and export still see `⌀`.
+fn equivalent_marks(c: char) -> &'static [char] {
+    match c {
+        '⌀' => &['∅', 'Ø'],
+        '∅' => &['⌀', 'Ø'],
+        _ => &[],
+    }
+}
+
 /// The glyph of `c` in `face`, or from a fallback font when `face` lacks it.
 fn glyph_or_fallback(face: &Face, c: char) -> Arc<GlyphOutline> {
     let g = glyph(face, c);
     if g.mapped || c.is_whitespace() {
         return g;
+    }
+    // The style's own typeface with a mark that means the same is a better answer than another
+    // typeface with the exact character.
+    for alt in equivalent_marks(c) {
+        let alt = glyph(face, *alt);
+        if alt.mapped {
+            return alt;
+        }
     }
     fallback_glyph(c).unwrap_or(g)
 }
@@ -921,6 +943,24 @@ pub fn layout_line(face: &Face, s: &str, height: f64, width_factor: f64, oblique
 #[cfg(test)]
 mod family_tests {
     use super::*;
+
+    /// `%%c` is U+2300 `⌀`, which most text faces do not have: the drawing's own font draws the
+    /// same mark as `∅` or `Ø` rather than a missing-glyph box (#1608). Skipped on a machine with
+    /// no installed font carrying `Ø`, since there is then nothing to draw with either.
+    #[test]
+    fn a_diameter_sign_is_drawn_by_a_mark_the_face_has() {
+        let Some(face) = fallback_for('Ø') else { return };
+        let used = glyph_or_fallback(&face, '⌀');
+        assert!(used.mapped, "the diameter sign draws something");
+        if !glyph(&face, '⌀').mapped {
+            // This face's own Ø, rather than another typeface that happens to have U+2300.
+            assert_eq!(used.gid, glyph(&face, 'Ø').gid);
+            assert_eq!(used.face.as_ref(), Some(&face), "drawn by the style's own font");
+        }
+        // A character with no sibling mark is unaffected: it still goes to the font search.
+        assert!(equivalent_marks('A').is_empty());
+        assert_eq!(equivalent_marks('⌀'), &['∅', 'Ø']);
+    }
 
     #[test]
     fn a_family_is_looked_for_in_files_starting_with_its_first_word() {
