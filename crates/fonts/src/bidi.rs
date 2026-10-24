@@ -21,10 +21,10 @@ pub fn has_rtl(s: &str) -> bool {
     s.chars().any(is_rtl)
 }
 
-/// Invisible formatting characters: joiners, directional marks, embeddings and isolates. They
-/// take no space and draw nothing (a shaper still sees the joiners).
+/// Unicode controls and invisible formatting characters: joiners, directional marks, embeddings
+/// and isolates. They take no space and draw nothing (a shaper still sees the joiners).
 pub(crate) fn is_format_control(c: char) -> bool {
-    matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}' | '\u{061C}')
+    c.is_control() || matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}' | '\u{061C}')
 }
 
 /// A combining mark (drawn on the preceding character).

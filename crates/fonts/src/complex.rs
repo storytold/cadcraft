@@ -102,7 +102,12 @@ fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64
                 }
                 Src::Face(face) => {
                     for g in shape_run(face, &cs, r, rtl) {
+                        if cs.get(g.cluster).is_some_and(|c| bidi::is_format_control(*c)) {
+                            continue;
+                        }
+                        let unresolved = g.gid == 0 && cs.get(g.cluster).is_some_and(|c| !c.is_whitespace());
                         let outline = ttf::glyph_by_id(face, g.gid);
+                        let outline = if unresolved { ttf::missing_glyph_box(&outline) } else { outline };
                         let k = h / outline.cap * wf;
                         let dy = g.dy * h / outline.cap;
                         if let Some(mut contours) = ttf::place_glyph_budgeted(&outline, x + g.dx * k, h, wf, shear, &mut points_left) {
@@ -165,7 +170,7 @@ fn resolve(c: char, primary: Option<&Face>, prev: Option<&Face>) -> Src {
     }
     match (ttf::fallback_for(c), primary) {
         (Some(f), _) => Src::Face(f),
-        // The text's font draws its own missing-glyph shape.
+        // Keep the text font's missing-glyph metrics; placement substitutes a visible box.
         (None, Some(p)) => Src::Face(p.clone()),
         (None, None) => Src::Missing,
     }
@@ -188,6 +193,8 @@ fn shape_run(face: &Face, cs: &[char], r: Range<usize>, rtl: bool) -> Vec<Glyph>
     let Some(font) = harfrust::Font::new(bytes, face.index) else { return Vec::new() };
     let shaper = harfrust::ShaperFont::new(&font);
     let mut buf = harfrust::Buffer::new();
+    // Separate source scalars so missing-glyph handling uses the right character category.
+    buf.set_cluster_level(harfrust::ClusterLevel::Characters);
     let arabic = run.iter().any(|c| matches!(*c, '\u{0600}'..='\u{08FF}'));
     if arabic && !face.has_joining_features() {
         for (c, i) in bidi::presentation_forms(run, |p| face.has_glyph(p)) {
@@ -303,13 +310,13 @@ mod tests {
         let Some(ka) = nominal(&face, '\u{0915}') else { return };
         // "कि" after two other characters of the line: the vowel sign i is drawn before the
         // consonant (Indic reordering, which needs the script the shaper guesses from the text),
-        // both glyphs carry the cluster of the consonant's index in the line, not in the run.
+        // and each glyph keeps its own source character's index in the line, not in the run.
         let cs: Vec<char> = "ab\u{0915}\u{093F}".chars().collect();
         let gs = shape_run(&face, &cs, 2..4, false);
         let gids: Vec<u32> = gs.iter().map(|g| g.gid).collect();
         assert_eq!(gids.len(), 2, "{gids:?}");
         assert!(gids.first() != Some(&ka) && gids.last() == Some(&ka), "vowel sign before ka: {gids:?}");
-        assert!(gs.iter().all(|g| g.cluster == 2), "{:?}", gs.iter().map(|g| g.cluster).collect::<Vec<_>>());
+        assert_eq!(gs.iter().map(|g| g.cluster).collect::<Vec<_>>(), vec![3, 2], "source character indices");
         // Advances come out at 1000 units per em, whatever the font's own em. A font that is
         // already at 1000 per em could not tell a missing scale apart, so it checks nothing here.
         let Some(font) = face.font() else { return };

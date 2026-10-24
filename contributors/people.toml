@@ -74,6 +74,10 @@ sync_github_name = false
 [people.gurparvez]
 real_name = "Gurparvez"
 
+[people.yupoet]
+display_name = "Paris Yu"
+sync_github_name = false
+
 [people.nicholasgower]
 sync_github_name = true
 

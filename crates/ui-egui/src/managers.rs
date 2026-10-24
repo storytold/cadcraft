@@ -28,6 +28,7 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
         "linetype" | "lt" | "ltype" => "linetype",
         "ddptype" | "ptype" => "ptype",
         "style" | "st" => "textstyle",
+        "dimstyle" | "d" | "dst" | "ddim" | "dimstyle.dimension" => "dimstyle",
         "tablestyle" | "ts" => "tablestyle",
         "mleaderstyle" | "mls" => "mleaderstyle",
         "pagesetup" => "pagesetup",
@@ -49,6 +50,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
         "linetype" => linetype(app, ctx, open),
         "ptype" => point_style(app, ctx, open),
         "textstyle" => text_style(app, ctx, open),
+        "dimstyle" => dim_style(app, ctx, open),
         "tablestyle" => table_style(app, ctx, open),
         "mleaderstyle" => mleader_style(app, ctx, open),
         "pagesetup" => page_setup(app, ctx, open),
@@ -298,6 +300,8 @@ enum Field {
     Num(&'static str, &'static str, f64),
     Bool(&'static str, &'static str, bool),
     Choice(&'static str, &'static str, String, Vec<String>),
+    /// A choice whose shown labels differ from the values sent (unit formats, numeric codes).
+    Pick(&'static str, &'static str, String, Vec<(String, String)>),
 }
 
 struct Style {
@@ -329,6 +333,87 @@ fn text_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
     }
     let current = d.header.str("TEXTSTYLE", "Standard");
     style_manager(ctx, open, "Text Style", "style", &current, &styles)
+}
+
+/// The standard arrowhead names (DIMBLK) with the labels the list shows; "" is closed filled.
+fn arrowheads() -> Vec<(String, String)> {
+    [
+        ("Closed Filled", ""),
+        ("Closed Blank", "_CLOSEDBLANK"),
+        ("Closed", "_CLOSED"),
+        ("Dot", "_DOT"),
+        ("Dot Small", "_DOTSMALL"),
+        ("Dot Blank", "_DOTBLANK"),
+        ("Oblique", "_OBLIQUE"),
+        ("Architectural Tick", "_ARCHTICK"),
+        ("Open", "_OPEN"),
+        ("Open 90", "_OPEN90"),
+        ("Open 30", "_OPEN30"),
+        ("Origin Indicator", "_ORIGIN"),
+        ("Origin Indicator 2", "_ORIGIN2"),
+        ("Small", "_SMALL"),
+        ("Box Filled", "_BOXFILLED"),
+        ("Box Blank", "_BOXBLANK"),
+        ("Datum Filled", "_DATUMFILLED"),
+        ("Datum Blank", "_DATUMBLANK"),
+        ("Integral", "_INTEGRAL"),
+        ("None", "_NONE"),
+    ]
+    .into_iter()
+    .map(|(l, v)| (l.to_string(), v.to_string()))
+    .collect()
+}
+
+/// DIMLUNIT values with their labels.
+fn linear_units() -> Vec<(String, String)> {
+    [("Scientific", "1"), ("Decimal", "2"), ("Engineering", "3"), ("Architectural", "4"), ("Fractional", "5"), ("Windows", "6")]
+        .into_iter()
+        .map(|(l, v)| (l.to_string(), v.to_string()))
+        .collect()
+}
+
+fn dim_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
+    let Ok(d) = app.session.doc() else {
+        no_drawing(ctx, "Dimension Style Manager", open);
+        return None;
+    };
+    let text_styles: Vec<String> = d.text_styles.iter().map(|s| s.name.clone()).collect();
+    let mut styles: Vec<Style> = d
+        .dim_styles
+        .iter()
+        .map(|s| Style {
+            name: s.name.clone(),
+            fields: vec![
+                Field::Num("scale", "Overall scale", s.scale),
+                Field::Num("arrowSize", "Arrowhead size", s.arrow_size),
+                Field::Pick("arrowBlock", "Arrowhead", s.arrow_block.clone(), arrowheads()),
+                Field::Num("tickSize", "Tick size", s.tick_size),
+                Field::Num("textHeight", "Text height", s.text_height),
+                Field::Num("textGap", "Offset from dimension line", s.text_gap),
+                Field::Pick(
+                    "textAbove",
+                    "Text placement",
+                    s.text_above.to_string(),
+                    vec![("Centered".to_string(), "0".to_string()), ("Above the line".to_string(), "1".to_string())],
+                ),
+                Field::Choice("textStyle", "Text style", s.text_style.clone(), text_styles.clone()),
+                Field::Pick("linearUnit", "Unit format", s.linear_unit.to_string(), linear_units()),
+                Field::Num("decimals", "Decimal places", f64::from(s.decimals)),
+                Field::Num("linearFactor", "Measurement scale", s.linear_factor),
+                Field::Num("extOffset", "Extension line offset", s.ext_offset),
+                Field::Num("extExtend", "Extension beyond dim line", s.ext_extend),
+                Field::Num("baselineSpacing", "Baseline spacing", s.baseline_spacing),
+                Field::Bool("tolerance", "Tolerances", s.tolerance),
+                Field::Bool("annotative", "Annotative", s.annotative),
+            ],
+        })
+        .collect();
+    if styles.is_empty() {
+        let s = cadcraft_doc::DimStyle::default();
+        styles.push(Style { name: s.name, fields: Vec::new() });
+    }
+    let current = d.header.str("DIMSTYLE", "Standard");
+    style_manager(ctx, open, "Dimension Style Manager", "dimstyle", &current, &styles)
 }
 
 fn table_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
@@ -445,6 +530,19 @@ fn style_manager(ctx: &egui::Context, open: &mut bool, title: &str, cmd: &'stati
                                 for c in choices {
                                     if ui.selectable_label(c == v, c).clicked() && c != v {
                                         picked = Some(c.clone());
+                                    }
+                                }
+                            });
+                            picked.map(|c| (*key, json!(c)))
+                        }
+                        Field::Pick(key, label, v, choices) => {
+                            ui.label(*label);
+                            let shown = choices.iter().find(|(_, val)| val == v).map(|(l, _)| l).unwrap_or(v);
+                            let mut picked = None;
+                            egui::ComboBox::from_id_salt((cmd, *key)).selected_text(shown).show_ui(ui, |ui| {
+                                for (l, val) in choices {
+                                    if ui.selectable_label(l == shown, l).clicked() && val != v {
+                                        picked = Some(val.clone());
                                     }
                                 }
                             });
@@ -1137,6 +1235,84 @@ fn constraint_settings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -
         });
     });
     action
+}
+
+#[cfg(test)]
+mod dimstyle_dialog_tests {
+    use super::*;
+    use crate::Services;
+    use cadcraft_engine::Session;
+    use serde_json::json;
+
+    /// Format ▸ Dimension Style (DIMSTYLE and its aliases, the Dimension menu entry) opens the
+    /// manager; before it fell through to the JSON form, which only errors on the missing `name`
+    /// and the click appeared to do nothing.
+    #[test]
+    fn dimstyle_from_menu_or_command_line_opens_its_manager() {
+        for id in ["dimstyle", "d", "dst", "ddim", "dimstyle.dimension"] {
+            let mut app = CadApp::new(Session::new(), Services::default());
+            app.start(id);
+            assert_eq!(app.ui.dialog.as_deref(), Some("dimstyle"), "{id} opens the manager");
+        }
+        // With parameters (scripts, control channel, MCP) the JSON form still runs.
+        let mut app = CadApp::new(Session::new(), Services::default());
+        assert!(crate::menus::run_ui_command(&mut app, "dimstyle", &json!({ "name": "X" })).is_none());
+    }
+
+    /// The fields the dialog edits are names the `dimstyle` command accepts, with the values it
+    /// stores (string codes for the numeric and named choices included).
+    #[test]
+    fn dialog_field_names_and_values_round_trip_through_the_command() {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        let r = app
+            .run(
+                "dimstyle",
+                json!({ "name": "ISO", "current": false, "arrowSize": 0.5, "tickSize": 0.25, "arrowBlock": "_ARCHTICK",
+                        "textHeight": 3.5, "textGap": 0.8, "textAbove": "1", "textStyle": "Standard",
+                        "linearUnit": "4", "decimals": 1, "scale": 2.0, "linearFactor": 1.25,
+                        "extOffset": 0.125, "extExtend": 0.375, "baselineSpacing": 0.75,
+                        "tolerance": true, "annotative": false }),
+            )
+            .unwrap();
+        assert!(r.get("ignored").is_none(), "every field recognised: {r}");
+        let d = app.session.doc().unwrap();
+        let st = d.dim_style("ISO").unwrap();
+        assert!((st.scale - 2.0).abs() < 1e-9);
+        assert!((st.arrow_size - 0.5).abs() < 1e-9);
+        assert_eq!(st.arrow_block, "_ARCHTICK");
+        assert!((st.tick_size - 0.25).abs() < 1e-9);
+        assert!((st.text_height - 3.5).abs() < 1e-9);
+        assert!((st.text_gap - 0.8).abs() < 1e-9);
+        assert_eq!(st.text_above, 1);
+        assert_eq!(st.text_style, "Standard");
+        assert_eq!(st.linear_unit, 4);
+        assert_eq!(st.decimals, 1);
+        assert!((st.linear_factor - 1.25).abs() < 1e-9);
+        assert!((st.ext_offset - 0.125).abs() < 1e-9);
+        assert!((st.ext_extend - 0.375).abs() < 1e-9);
+        assert!((st.baseline_spacing - 0.75).abs() < 1e-9);
+        assert!(st.tolerance);
+        assert!(!st.annotative);
+    }
+
+    /// The dialog draws over a drawing with and without dimension styles without panicking.
+    #[test]
+    fn dialog_draws() {
+        let mut session = Session::new();
+        session.execute("dimstyle", &json!({ "name": "ISO", "arrowSize": 0.5 })).unwrap();
+        let mut app = CadApp::new(session, Services::default());
+        app.ui.dialog = Some("dimstyle".into());
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(1600.0, 1000.0));
+        for _ in 0..3 {
+            let input = egui::RawInput { screen_rect: Some(screen), ..Default::default() };
+            let mut out = ctx.run_ui(input, |ui| {
+                let mut open = true;
+                dialog(&mut app, ui.ctx(), "dimstyle", &mut open);
+            });
+            out.textures_delta.clear();
+        }
+    }
 }
 
 #[cfg(test)]

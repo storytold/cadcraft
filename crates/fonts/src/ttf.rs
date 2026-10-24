@@ -789,13 +789,33 @@ pub(crate) fn fallback_glyph(c: char) -> Option<Arc<GlyphOutline>> {
     Some(glyph(&f, c)).filter(|g| g.mapped)
 }
 
-/// The glyph of `c` in `face`, or from a fallback font when `face` lacks it.
+/// The glyph of `c` in `face`, or from a fallback font when `face` lacks it. A character no
+/// available font has draws a hollow box: the face's own missing-glyph shape is empty in many
+/// fonts, which made whole runs of text (CJK in a Latin-only style, say) look absent instead
+/// of wrong.
 fn glyph_or_fallback(face: &Face, c: char) -> Arc<GlyphOutline> {
     let g = glyph(face, c);
     if g.mapped || c.is_whitespace() {
         return g;
     }
-    fallback_glyph(c).unwrap_or(g)
+    fallback_glyph(c).unwrap_or_else(|| missing_glyph_box(&g))
+}
+
+/// A hollow missing-glyph box in the face's font units (1000 per em): baseline to cap height,
+/// the face's own `.notdef` advance wide, as two rectangles so even-odd fill leaves the middle
+/// open like the stroke font's missing-glyph box.
+pub(crate) fn missing_glyph_box(g: &GlyphOutline) -> Arc<GlyphOutline> {
+    let cap = if g.cap.is_finite() && g.cap > 1.0 { g.cap } else { f64::from(UPEM) * 0.7 };
+    let w = if g.advance.is_finite() && g.advance > 1.0 { g.advance } else { f64::from(UPEM) * 0.5 };
+    let t = (f64::from(UPEM) * 0.05).min(w / 4.0).min(cap / 4.0);
+    let rect = |min: Vec2, max: Vec2| vec![min, Vec2::new(max.x, min.y), max, Vec2::new(min.x, max.y), min];
+    let contours = if t >= 1.0 {
+        vec![rect(Vec2::new(0.0, 0.0), Vec2::new(w, cap)), rect(Vec2::new(t, t), Vec2::new(w - t, cap - t))]
+    } else {
+        vec![rect(Vec2::new(0.0, 0.0), Vec2::new(w, cap))]
+    };
+    let points = contours.iter().map(Vec::len).sum();
+    Arc::new(GlyphOutline { points, contours: contours.into(), advance: w, cap, mapped: false, gid: g.gid, face: g.face.clone() })
 }
 
 /// The [`crate::TextGlyph`] of a glyph placed like [`place_glyph`] does (its outline index is
@@ -851,7 +871,8 @@ pub(crate) fn place_glyph_at(g: &GlyphOutline, origin: Vec2, scale: f64, wf: f64
 
 /// Shape one line with a TrueType face: closed glyph contours grouped per glyph (baseline at
 /// y = 0, x from 0) plus `%%u`/`%%o` decorations as strokes. Text height = cap height.
-/// Characters the face lacks come from a fallback font, scaled to its own cap height.
+/// Characters the face lacks use a fallback font scaled to its own cap height, or a hollow box
+/// when no available font has them.
 pub fn shape(face: &Face, s: &str, height: f64, width_factor: f64, oblique: f64) -> Option<Shaped> {
     face.font()?;
     if crate::bidi::has_rtl(s)
@@ -916,6 +937,134 @@ pub fn layout_line(face: &Face, s: &str, height: f64, width_factor: f64, oblique
     let mut strokes: Vec<Vec<Vec2>> = sh.glyphs.into_iter().flatten().collect();
     strokes.extend(sh.strokes);
     Some(Run { strokes, width: sh.width })
+}
+
+#[cfg(test)]
+mod missing_glyph_tests {
+    use super::*;
+
+    /// The box a font without the character draws: hollow (two rectangles, so even-odd fill
+    /// leaves the middle open), cap height tall, the `.notdef` advance wide.
+    #[test]
+    fn a_missing_glyph_draws_a_hollow_box() {
+        let g = GlyphOutline { advance: 500.0, cap: 700.0, gid: 0, ..Default::default() };
+        let b = missing_glyph_box(&g);
+        assert_eq!(b.contours.len(), 2, "outer and inner rectangle");
+        let outer = &b.contours[0];
+        assert!((outer[2].x - 500.0).abs() < 1e-9 && (outer[2].y - 700.0).abs() < 1e-9, "cap height tall, advance wide");
+        assert!(!b.mapped && b.advance > 0.0 && b.advance.is_finite());
+        // A degenerate cap or advance still yields one visible rectangle.
+        let flat = missing_glyph_box(&GlyphOutline { advance: 3.0, cap: 3.0, ..Default::default() });
+        assert_eq!(flat.contours.len(), 1, "too small to hollow out");
+        assert!(flat.contours[0].len() == 5 && flat.advance > 0.0);
+    }
+
+    fn latin_faces_without(c: char) -> impl Iterator<Item = Face> {
+        ["dejavusans", "liberationsans", "liberationsans-bolditalic", "liberationserif-regular", "arial", "helvetica", "notosans"]
+            .into_iter()
+            .filter_map(move |n| find(n).filter(move |f| !f.has_glyph(c) && f.font().is_some()))
+    }
+
+    fn assert_visible_box(g: &[Vec<Vec2>]) {
+        assert_eq!(g.len(), 2, "outer and inner rectangles");
+        for contour in g {
+            assert_eq!(contour.len(), 5, "closed rectangle");
+            assert_eq!(contour.first(), contour.last());
+        }
+        let max_y = g[0].iter().map(|p| p.y).fold(f64::MIN, f64::max);
+        assert!(max_y > 0.5, "taller than the baseline");
+    }
+
+    /// End to end: a private-use character never takes a fallback font, so a Latin-only face
+    /// with an empty `.notdef` must draw the shared box instead of disappearing.
+    #[test]
+    fn unmapped_ltr_glyph_is_shaped_as_a_visible_box() {
+        let missing = '\u{E000}';
+        let Some(face) = latin_faces_without(missing).find(|f| glyph_by_id(f, 0).contours.is_empty()) else { return };
+        assert!(fallback_for(missing).is_none());
+        let text = "A\u{E000}B";
+        let sh = shape(&face, text, 1.0, 1.0, 0.0).unwrap();
+        assert_eq!(sh.glyphs.len(), 3, "one outline per character, the missing one included");
+        assert_visible_box(&sh.glyphs[1]);
+        assert!((width(&face, text, 1.0, 1.0).unwrap() - sh.width).abs() < 1e-9);
+    }
+
+    /// RLI/PDI force the complex path. Only the unresolved printable character gets a box;
+    /// whitespace and formatting controls stay invisible and the shaped advance is unchanged.
+    #[test]
+    fn unmapped_complex_glyph_is_shaped_as_one_visible_box() {
+        let missing = '\u{E000}';
+        let Some(face) =
+            latin_faces_without(missing).find(|f| !f.has_glyph('\u{2067}') && !f.has_glyph('\u{2069}') && glyph_by_id(f, 0).contours.is_empty())
+        else {
+            return;
+        };
+        assert!(fallback_for(missing).is_none());
+        let text = "\u{2067} \u{E000}\u{2069}";
+        assert!(crate::bidi::has_rtl(text));
+        let sh = shape(&face, text, 1.0, 1.0, 0.0).unwrap();
+        let visible: Vec<_> = sh.glyphs.iter().filter(|g| !g.is_empty()).collect();
+        assert_eq!(visible.len(), 1, "only the missing character draws a box");
+        assert_visible_box(visible[0]);
+        assert!((width(&face, text, 1.0, 1.0).unwrap() - sh.width).abs() < 1e-9);
+    }
+
+    fn face_with_empty_notdef_without(c: char) -> Option<Face> {
+        latin_faces_without(c)
+            .find(|f| f.has_glyph('q') && !f.has_glyph('\u{2067}') && !f.has_glyph('\u{2069}') && glyph_by_id(f, 0).contours.is_empty())
+    }
+
+    fn assert_combining_box(face: &Face, mark: char) {
+        let base = shape(face, "\u{2067}q\u{2069}", 1.0, 1.0, 0.0).unwrap();
+        let marked = shape(face, &format!("\u{2067}q{mark}\u{2069}"), 1.0, 1.0, 0.0).unwrap();
+        let points = |sh: &Shaped| sh.glyphs.iter().flatten().map(Vec::len).sum::<usize>();
+        assert_eq!(points(&marked), points(&base) + 10, "the unresolved combining character adds one box");
+        let boxy = marked.glyphs.iter().find(|g| g.len() == 2 && g.iter().all(|c| c.len() == 5)).expect("visible missing-glyph box");
+        assert_visible_box(boxy);
+    }
+
+    /// Non-spacing combining marks are printable too: if no font has one, it gets a box even
+    /// when its base character is mapped.
+    #[test]
+    fn unmapped_complex_nsm_draws_a_box() {
+        let mark = '\u{11F36}';
+        assert!(crate::bidi::is_mark(mark));
+        if fallback_for(mark).is_some() {
+            return;
+        }
+        let Some(face) = face_with_empty_notdef_without(mark) else { return };
+        assert_combining_box(&face, mark);
+    }
+
+    /// A visible combining continuation (Mc) likewise gets a box, independently of its base.
+    #[test]
+    fn unmapped_visible_continuation_draws_a_box() {
+        let mark = '\u{11F34}';
+        assert!(!crate::bidi::is_mark(mark));
+        if fallback_for(mark).is_some() {
+            return;
+        }
+        let Some(face) = face_with_empty_notdef_without(mark) else { return };
+        assert_combining_box(&face, mark);
+    }
+
+    /// Unicode controls never add geometry or an advance in either the ordinary or complex path.
+    #[test]
+    fn control_characters_add_no_geometry_or_advance() {
+        let control = '\u{0001}';
+        assert!(fallback_for(control).is_none());
+        let Some(face) = face_with_empty_notdef_without(control) else { return };
+        let points = |sh: &Shaped| sh.glyphs.iter().flatten().map(Vec::len).sum::<usize>();
+        for (plain, controlled) in
+            [("AB".to_string(), "A\u{0001}B".to_string()), ("\u{2067}q\u{2069}".to_string(), "\u{2067}q\u{0001}\u{2069}".to_string())]
+        {
+            let base = shape(&face, &plain, 1.0, 1.0, 0.0).unwrap();
+            let sh = shape(&face, &controlled, 1.0, 1.0, 0.0).unwrap();
+            assert_eq!(points(&sh), points(&base), "no control glyph geometry: {controlled:?}");
+            assert!((sh.width - base.width).abs() < 1e-9, "no control advance: {controlled:?}");
+            assert!((width(&face, &controlled, 1.0, 1.0).unwrap() - sh.width).abs() < 1e-9);
+        }
+    }
 }
 
 #[cfg(test)]
