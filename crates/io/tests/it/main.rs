@@ -58,6 +58,7 @@ mod spline_fit_data;
 mod split_entities_section;
 mod style_typeface;
 mod svg_arc_budget;
+mod svg_ellipse_transform_axis;
 mod svg_tiny_extents;
 mod table_cellstyle_roundtrip;
 mod tables_objects_roundtrip;

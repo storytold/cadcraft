@@ -400,9 +400,10 @@ impl Parser {
         if lbx.is_finite() && lby.is_finite() && (lbx - lby).abs() <= 1e-9 * (lbx + lby) && dot.abs() <= 1e-9 * lbx * lby {
             return self.add(EntityKind::Circle(Circle { center: v3(center), radius: lbx }));
         }
-        let xx = bx.x * bx.x + bx.y * bx.y;
-        let yy = by.x * by.x + by.y * by.y;
-        let xy = bx.x * by.x + bx.y * by.y;
+        // `B·Bᵀ` (B = [bx by]) lives in the output plane, so its eigenvectors are the axes.
+        let xx = bx.x * bx.x + by.x * by.x;
+        let yy = bx.y * bx.y + by.y * by.y;
+        let xy = bx.x * bx.y + by.x * by.y;
         let trace = xx + yy;
         let disc = (trace * trace - 4.0 * (xx * yy - xy * xy)).max(0.0).sqrt();
         let l_max = 0.5 * (trace + disc);
