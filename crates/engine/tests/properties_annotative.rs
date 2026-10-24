@@ -157,3 +157,15 @@ fn anno_scales_leave_plain_objects_plain() {
     s.execute("properties.set", &json!({ "handles": [plain], "annotative": true, "annoScales": ["1:2", "1:10"] })).unwrap();
     assert_eq!(row(&describe(&mut s, &[&plain]), "Text", "annoScales")["value"], json!(["1:2", "1:10"]));
 }
+
+#[test]
+fn a_solid_pattern_replaces_a_gradient() {
+    let mut s = Session::new();
+    s.execute("rectang", &json!({ "p1": [0, 0], "p2": [10, 10] })).unwrap();
+    let h = handle(&s.execute("gradient", &json!({ "points": [[5, 5]] })).unwrap());
+    s.execute("properties.set", &json!({ "handles": [h], "pattern": "SOLID" })).unwrap();
+    let d = s.doc().unwrap();
+    let e = d.entity(cadcraft_engine::doc::Handle::parse_hex(&h).unwrap()).unwrap();
+    let cadcraft_engine::doc::EntityKind::Hatch(hatch) = &e.kind else { panic!("hatch") };
+    assert!(hatch.solid && hatch.gradient.is_none() && hatch.pattern_lines.is_empty(), "{hatch:?}");
+}
