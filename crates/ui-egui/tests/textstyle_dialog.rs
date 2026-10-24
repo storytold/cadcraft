@@ -165,6 +165,23 @@ fn new_copies_the_chosen_style() {
 }
 
 #[test]
+fn a_rename_keeps_the_edits_waiting_for_apply() {
+    let mut h = dialog(|app| {
+        app.run("style", json!({ "name": "Spare", "current": false })).unwrap();
+    });
+    click(&mut h, "Spare");
+    check(&mut h, "Backwards");
+    h.get(by().label("Spare").role(Role::Button)).click_secondary();
+    h.run_steps(3);
+    click(&mut h, "Rename");
+    type_into(&mut h, "Spare", "Extra");
+    // The edit stays with the style under its new name; undone, nothing waits for Apply.
+    assert!(enabled(&h, "Apply"));
+    check(&mut h, "Backwards");
+    assert!(!enabled(&h, "Apply"));
+}
+
+#[test]
 fn set_current_rename_and_delete() {
     let mut h = dialog(|app| {
         app.run("style", json!({ "name": "Spare", "current": false })).unwrap();

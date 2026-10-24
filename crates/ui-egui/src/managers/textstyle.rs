@@ -120,7 +120,8 @@ fn face_of<'a>(font: &str, fonts: &'a [FontEntry]) -> Option<&'a FontEntry> {
     if f.is_empty() || is_shx(&f) {
         return None;
     }
-    let stem = |s: &str| s.rsplit_once('.').map_or(s.to_string(), |(a, _)| a.to_string());
+    // Any case: font files are often named in capitals (ARIALN.TTF), and the renderer finds them so.
+    let stem = |s: &str| s.rsplit_once('.').map_or(s, |(a, _)| a).to_ascii_lowercase();
     fonts
         .iter()
         .find(|e| e.file.eq_ignore_ascii_case(&f) || stem(&e.file) == stem(&f))
@@ -397,6 +398,10 @@ fn style_list(
                 if name != from {
                     actions.push(("style.rename", json!({ "from": from, "to": name })));
                     if st.selected == from {
+                        // Edits waiting for Apply belong to the style under its new name.
+                        if let Some(e) = &mut st.edit {
+                            e.name.clone_from(&name);
+                        }
                         st.selected = name;
                     }
                 }
@@ -561,13 +566,15 @@ fn preview(ui: &mut egui::Ui, d: &Drawing, style: &TextStyle, size: egui::Vec2) 
     let (w, h) = (size.x.max(16.0) as u32, size.y.max(16.0) as u32);
     let mut hasher = std::hash::DefaultHasher::new();
     serde_json::to_string(style).unwrap_or_default().hash(&mut hasher);
-    (w, h, ui.visuals().dark_mode).hash(&mut hasher);
+    // The drawing area's color, as the theme and the user's model background give it.
+    let bg = Tokens::get().canvas;
+    (w, h, bg.to_array()).hash(&mut hasher);
     let key = hasher.finish();
     let id = egui::Id::new(("textstyle_preview", w, h));
     let cached = ui.data(|m| m.get_temp::<(u64, egui::TextureHandle)>(id)).filter(|(k, _)| *k == key).map(|(_, t)| t);
     let tex = match cached {
         Some(t) => Some(t),
-        None => sample(d, style, w, h, ui.visuals().dark_mode).map(|img| {
+        None => sample(d, style, w, h, bg).map(|img| {
             let t = ui.ctx().load_texture("textstyle_preview", img, egui::TextureOptions::LINEAR);
             ui.data_mut(|m| m.insert_temp(id, (key, t.clone())));
             t
@@ -583,7 +590,7 @@ fn preview(ui: &mut egui::Ui, d: &Drawing, style: &TextStyle, size: egui::Vec2) 
     }
 }
 
-fn sample(d: &Drawing, style: &TextStyle, w: u32, h: u32, dark: bool) -> Option<egui::ColorImage> {
+fn sample(d: &Drawing, style: &TextStyle, w: u32, h: u32, bg: egui::Color32) -> Option<egui::ColorImage> {
     let mut s = cadcraft_engine::Session::new();
     {
         let doc = s.doc_mut().ok()?;
@@ -606,7 +613,7 @@ fn sample(d: &Drawing, style: &TextStyle, w: u32, h: u32, dark: bool) -> Option<
     let doc = s.doc().ok()?;
     let list = cadcraft_engine::render::build(doc, &Space::Model, &cadcraft_engine::render::Options::default());
     let view = cadcraft_engine::render::raster::View::fit(&list.bounds, w, h, 0.12);
-    let background = if dark { cadcraft_engine::render::raster::RasterOptions::default().background } else { cadcraft_color::Rgb(255, 255, 255) };
+    let background = cadcraft_color::Rgb(bg.r(), bg.g(), bg.b());
     let png = cadcraft_engine::render::raster::render_png(
         &list,
         &view,
@@ -614,4 +621,18 @@ fn sample(d: &Drawing, style: &TextStyle, w: u32, h: u32, dark: bool) -> Option<
     )?;
     let img = image::load_from_memory(&png).ok()?.to_rgba8();
     Some(egui::ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], img.as_raw()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_font_named_without_its_extension_is_found_in_any_case() {
+        let fonts = [FontEntry { family: "Arial Narrow".into(), style: "Regular".into(), file: "ARIALN.TTF".into() }];
+        for name in ["arialn", "ARIALN", "arialn.ttf", "Arial Narrow"] {
+            assert_eq!(face_of(name, &fonts).map(|e| e.file.as_str()), Some("ARIALN.TTF"), "{name}");
+        }
+        assert!(face_of("arial", &fonts).is_none());
+    }
 }
