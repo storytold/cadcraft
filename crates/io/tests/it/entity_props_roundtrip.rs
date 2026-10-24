@@ -39,6 +39,8 @@ fn thickness_roundtrips_on_every_entity_that_has_one() {
         style: "Standard".into(),
         halign: HAlign::Left,
         valign: VAlign::Baseline,
+        backwards: false,
+        upside_down: false,
     };
     let kinds = vec![
         EntityKind::Line(Line { a: p(0.0, 0.0), b: p(10.0, 0.0) }),

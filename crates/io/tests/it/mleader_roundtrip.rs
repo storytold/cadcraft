@@ -32,6 +32,8 @@ fn text_mleader() -> MLeader {
             line_spacing: 1.25,
             line_spacing_exact: true,
             columns: None,
+            direction: Default::default(),
+            background: None,
         }),
         style: "Callout".into(),
         arrow_size: 0.3,
@@ -88,6 +90,8 @@ fn spline_leader_with_block_content_and_attributes() {
         style: "Standard".into(),
         halign: HAlign::default(),
         valign: VAlign::default(),
+        backwards: false,
+        upside_down: false,
     };
     blk.entities.push(Entity::new(
         Handle(0x201),

@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-22 · **Change:** minor (distinct polyline midpoint grips) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (MTEXT background mask rows) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
 
 How CADCraft's interaction compares with AutoCAD's: point entry, object snaps, tracking, dynamic
 input, grips, selection, the command line, chrome and navigation. A drafter's speed in AutoCAD
@@ -151,6 +151,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 | SETVAR for every system variable | ~1,000 sysvars | about 60 session/header variables by name (`sysvars.rs`) |
 | Scripts (SCRIPT, `.scr`) | yes | script text via CLI/MCP/control; no `.scr` file command |
 | Floating/docked command window, transparency, lines of history | yes | floating overlay, history lines setting |
+| TEXT typed in place on the canvas | yes | the line typed on the command line is drawn where it goes as it is typed; Enter places it and starts the next line (no caret or editing within the line on the canvas; #1121) |
 
 ## Chrome and palettes (≈ 45%)
 
@@ -159,8 +160,10 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 | Menu bar | 11 menus, 491 leaf items | same 11 menus; 245/491 items covered (233 by `cargo xtask parity`, which counts engine commands only, plus 12 UI-only items: see [parity-checklist.md](parity-checklist.md)); once a menu is open, pointing at another title opens that menu (#1567) |
 | Tool Bar, File tabs, Start tab, layout tabs | yes | yes |
 | Tool Sets palette (Drafting, Modeling, … with flyouts) | yes | yes for 2D groups |
-| Properties Inspector, Quick Properties | yes | yes (every control acts or is visibly unavailable, #182); block references show read-only Position X/Y/Z from their stored insertion point; coordinate editing is still missing |
+| Properties Inspector, Quick Properties | yes | yes (every control acts or is visibly unavailable, #182); text, mtext and dimensions show the rows `properties.describe` gives — every dimension style setting in AutoCAD's groups (Misc, Lines & Arrows, Text, Fit, Primary Units, Alternate Units, Tolerances) as an override of the dimension, overridden rows marked and reset from their label, style, justification, obliquing and line spacing rows, several objects of one type at once with *VARIES*, and a fixed-height text style's height read-only with the reason; block references show read-only Position X/Y/Z from their stored insertion point; coordinate editing of other objects is still missing; Quick Properties shows AutoCAD's default rows for text, mtext and dimensions from the same description (Layer, Contents, Style, Annotative, Justification, Height, Rotation; Layer, Dim style, Annotative, Measurement, Text override) and its own rows for other objects (#1128) |
 | Layer Properties Manager (filters, states, VP overrides) | yes | yes |
+| Text Style dialog (STYLE) | yes | yes: the styles (all or in use, annotative ones marked) with a preview; Font Name and Font Style from the installed fonts by family and style, with a search; Use Big Font for SHX fonts; Annotative and Height (Paper Text Height); Upside down, Backwards, Width Factor, Oblique Angle; Set Current, New, Rename, Delete; edits wait for Apply and leaving them asks first. Match text orientation to layout and Vertical are shown unavailable (not modeled or drawn); SHX fonts aren't listed (#1083) |
+| Dimension Style Manager (DIMSTYLE) | yes | yes: the styles (all or in use) with the current style's `<style overrides>`, a preview drawn with the settings, Set Current, New, Modify, Override, Compare, Rename and Delete; Modify, Override and New edit every modeled style variable on AutoCAD's seven tabs (Lines, Symbols and Arrows, Text, Fit, Primary Units, Alternate Units, Tolerances), as AutoCAD's Properties labels rather than its dialog's grouped controls and pictures |
 | Blocks palette, Content | yes | Blocks window (click to insert, #28) |
 | Status bar toggles | ~25 | most toggles; Annotation Visibility and Workspace do nothing |
 | ViewCube | interactive 3D | clickable for 2D (Top/Home → extents); dragging does nothing (#7) |
@@ -195,6 +198,8 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
   options, Snap Overrides, Pan/Zoom. Otherwise it opens a shortcut menu (Repeat, Recent Commands,
   Clipboard ▸, Isolate ▸, the selection's editing commands, Draw Order ▸, Group, the selected
   object type's edit commands, Select Similar, Deselect All, Undo/Redo, Pan/Zoom; #325, #512).
+  Selected dimensions add AutoCAD's dimension items: Align Text ▸, Dimension Style ▸ (the
+  drawing's styles, Save as New Style), Precision ▸ and Remove Style Overrides.
   The command line, drawing tabs, layout tabs, Layers palette rows and the Properties palette
   have menus too (#512). Still missing: in-place layout tab rename, Move or Copy, Select All
   Layouts.
@@ -203,6 +208,13 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | Properties Inspector: MTEXT Background mask, Mask fill, Mask color, Border offset and a read-only Direction (#1152) |
+| 2026-10-13 | minor | Quick Properties: AutoCAD's default text, mtext and dimension rows; the described rows' labels reach screen readers |
+| 2026-10-13 | minor | TEXT: the line being typed is drawn on the canvas where it goes |
+| 2026-10-13 | minor | Text Style dialog (STYLE): fonts by family and style, preview, effects, Set Current, New, Rename, Delete, Apply (#1083) |
+| 2026-10-13 | minor | Dimension Style Manager (DIMSTYLE): styles, overrides, preview, Set Current, New, Modify, Override, Compare, Rename, Delete and the seven tabs |
+| 2026-10-13 | minor | Dimension shortcut menu: Align Text, Dimension Style (styles, Save as New Style), Precision, Remove Style Overrides |
+| 2026-10-13 | minor | Properties Inspector shows the text, mtext and dimension rows `properties.describe` gives (dimension style settings as overrides, *VARIES* for several objects, fixed-height note) |
 | 2026-10-22 | minor | Polyline segment midpoint grips use rectangles, distinct from square vertex grips, with matching hover and pick bounds (#1950) |
 | 2026-10-13 | minor | Filled-region highlight boundaries are traversed in deterministic coordinate order, fixing dash-phase jumps on CPU hover/selection redraws and GPU highlight rebuilds; CPU dash-position, pixel and GPU mesh regressions |
 | 2026-10-14 | minor | Selection cycling (#1143): the list and badge of SELECTIONCYCLING, Shift+Space through overlapping objects (#1145) |

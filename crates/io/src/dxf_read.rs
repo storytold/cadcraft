@@ -175,6 +175,8 @@ fn mtext_from(tags: &[Tag], c: &Common) -> MText {
         line_spacing: t.fd(44, 1.0),
         line_spacing_exact: t.i(73) == Some(2),
         columns: columns.map(|(c, _)| c),
+        direction: cadcraft_doc::MTextDirection::from_code(own.i(72).unwrap_or(1)),
+        background: mtext_dxf::read_mask(tags),
     }
 }
 
@@ -194,6 +196,10 @@ fn text_from(t: &T) -> Text {
         _ => VAlign::Baseline,
     };
     let align = if t.f(11).is_some() { Some(t.p(11)) } else { None };
+    // Text generation flags (AcDbText's 71): 2 backwards, 4 upside down. An attribute's own
+    // subclass has a 71 of its own (its multiline flag), so only the groups before it count.
+    let text_groups = t.0.iter().position(|g| g.code == 100 && g.str().trim().starts_with("AcDbAttribute")).and_then(|i| t.0.get(..i));
+    let generation = T(text_groups.unwrap_or(t.0)).i(71).unwrap_or(0);
     let mut text = Text {
         insert: t.p(10),
         align_pt: if h == HAlign::Left && v == VAlign::Baseline { None } else { align },
@@ -205,6 +211,8 @@ fn text_from(t: &T) -> Text {
         style: t.s(7).unwrap_or_else(|| "Standard".into()),
         halign: h,
         valign: v,
+        backwards: generation & 2 != 0,
+        upside_down: generation & 4 != 0,
     };
     let n = Vec3::new(t.fd(210, 0.0), t.fd(220, 0.0), t.fd(230, 1.0));
     if n.z < 0.0 {

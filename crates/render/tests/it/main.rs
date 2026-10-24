@@ -6,6 +6,7 @@ mod dim_text_format;
 mod hatch_fill;
 mod linetype_text;
 mod lwdefault;
+mod mtext_mask;
 mod plot_line_styles;
 mod plot_styles;
 mod point_style;

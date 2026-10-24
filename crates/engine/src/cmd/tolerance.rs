@@ -306,6 +306,8 @@ pub(crate) fn explode(d: &Drawing, e: &Entity, t: &Tolerance) -> Vec<Entity> {
             style: st.text_style.clone(),
             halign: Default::default(),
             valign: Default::default(),
+            backwards: false,
+            upside_down: false,
         })));
     }
     v

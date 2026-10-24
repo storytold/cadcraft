@@ -243,6 +243,11 @@ pub trait Interactive: Send {
     fn editing_mtext(&self) -> Option<cadcraft_doc::MText> {
         None
     }
+    /// What the command would place for `typed`, the line being typed at its text prompt, so the
+    /// UI can draw it in place (TEXT); empty when nothing is placed from typing.
+    fn typing(&self, _s: &Session, _typed: &str) -> Vec<EntityKind> {
+        Vec::new()
+    }
 }
 
 /// See [`Interactive::drag`].

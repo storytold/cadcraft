@@ -1,9 +1,12 @@
 //! MTEXT specifics of DXF (DXF Reference, MTEXT): control characters in the contents written
-//! as a caret and a letter (`^I` a tab, `^J` a line feed, `^ ` a caret), and the column groups
+//! as a caret and a letter (`^I` a tab, `^J` a line feed, `^ ` a caret), the column groups
 //! 75 (type), 76 (count), 78 (flow reversed), 79 (auto height), 48 (width), 49 (gutter) and
-//! 50 (column heights, after the column type; before it, 50 is the rotation).
+//! 50 (column heights, after the column type; before it, 50 is the rotation), and the
+//! background mask: 90 (fill setting: 1 a color, 2 the drawing's background), 63 / 421 (the
+//! color) and 45 (fill box scale, the border offset factor).
 
-use cadcraft_doc::{MText, MTextColumnType, MTextColumns};
+use cadcraft_color::{Color, Rgb};
+use cadcraft_doc::{MASK_SCALE, MText, MTextColumnType, MTextColumns, MTextMask};
 use cadcraft_dxf::Tag;
 
 /// Upper bound on column heights read from a file.
@@ -99,6 +102,40 @@ pub(crate) fn read_columns(tags: &[Tag]) -> Option<(MTextColumns, f64)> {
         flow_reversed: first(78).map(Tag::i64).unwrap_or(0) != 0,
     };
     Some((c, first(48).map(|t| finite(t.f64()).max(0.0)).unwrap_or(0.0)))
+}
+
+/// The border offset factors AutoCAD's Background Mask takes.
+const MASK_SCALES: std::ops::RangeInclusive<f64> = 1.0..=5.0;
+
+/// An MTEXT's background mask, from its own groups (`None` when group 90 turns it off).
+pub(crate) fn read_mask(tags: &[Tag]) -> Option<MTextMask> {
+    let tags = own(tags);
+    let first = |code: i32| tags.iter().find(|t| t.code == code);
+    let setting = first(90).map(Tag::i64).unwrap_or(0);
+    if setting & 3 == 0 {
+        return None;
+    }
+    let mut color = first(63).map(|t| Color::from_aci(i16::try_from(t.i64()).unwrap_or(256))).unwrap_or(Color::ByLayer);
+    if let Some(tc) = first(421) {
+        color = Color::True(Rgb::from_u32(u32::try_from(tc.i64() & 0xff_ffff).unwrap_or(0)));
+    }
+    let scale = first(45).map(|t| finite(t.f64())).filter(|s| MASK_SCALES.contains(s)).unwrap_or(MASK_SCALE);
+    Some(MTextMask { use_background: setting & 2 != 0, color, scale })
+}
+
+/// The background mask groups of an MTEXT with one.
+pub(crate) fn mask_tags(t: &MText) -> Vec<Tag> {
+    let Some(m) = &t.background else { return Vec::new() };
+    let mut v = vec![Tag::i(90, if m.use_background { 2 } else { 1 })];
+    match m.color {
+        Color::True(rgb) => {
+            v.push(Tag::i(63, i64::from(cadcraft_color::nearest_aci(rgb))));
+            v.push(Tag::i(421, i64::from(rgb.to_u32())));
+        }
+        c => v.push(Tag::i(63, i64::from(c.to_aci()))),
+    }
+    v.push(Tag::f(45, if MASK_SCALES.contains(&m.scale) { m.scale } else { MASK_SCALE }));
+    v
 }
 
 /// The column groups of an MTEXT with columns.

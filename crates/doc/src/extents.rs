@@ -29,7 +29,9 @@ fn text_box(t: &crate::Text, len: usize) -> Bounds2 {
         (_, VAlign::Top) => -t.height,
     };
     let local = [Vec2::new(dx, dy), Vec2::new(dx + w, dy), Vec2::new(dx + w, dy + t.height), Vec2::new(dx, dy + t.height)];
-    Bounds2::from_points(local.map(|p| origin + p.rotate(t.rotation)))
+    // Backwards and upside-down text is mirrored about the point it is placed by.
+    let (mx, my) = (if t.backwards { -1.0 } else { 1.0 }, if t.upside_down { -1.0 } else { 1.0 });
+    Bounds2::from_points(local.map(|p| origin + Vec2::new(p.x * mx, p.y * my).rotate(t.rotation)))
 }
 
 /// Whether an entity inside a block definition shows: its own invisible flag and its layer count,
@@ -69,9 +71,20 @@ fn mtext_box(t: &crate::MText) -> Bounds2 {
         7..=9 => h,
         _ => 0.0,
     };
+    // A background mask reaches past the text by its border offset, as it's drawn.
+    let m = t.background.as_ref().map_or(0.0, |k| {
+        let scale = if k.scale.is_finite() { k.scale.clamp(1.0, 5.0) } else { crate::MASK_SCALE };
+        let m = (scale - 1.0) * t.height.abs() / 2.0;
+        if m.is_finite() { m } else { 0.0 }
+    });
     let o = t.insert.xy();
-    let pts = [Vec2::new(dx, top + dy), Vec2::new(dx + w, top + dy), Vec2::new(dx + w, top - h + dy), Vec2::new(dx, top - h + dy)]
-        .map(|p| o + p.rotate(t.rotation));
+    let pts = [
+        Vec2::new(dx - m, top + dy + m),
+        Vec2::new(dx + w + m, top + dy + m),
+        Vec2::new(dx + w + m, top - h + dy - m),
+        Vec2::new(dx - m, top - h + dy - m),
+    ]
+    .map(|p| o + p.rotate(t.rotation));
     Bounds2::from_points(pts)
 }
 
@@ -302,11 +315,22 @@ mod tests {
             style: "Standard".into(),
             halign,
             valign,
+            backwards: false,
+            upside_down: false,
         }
     }
 
     fn bounds(kind: EntityKind) -> Bounds2 {
         entity_bounds(&Drawing::default(), &Entity::new(crate::Handle(1), kind), 0)
+    }
+
+    #[test]
+    fn mirrored_text_extends_the_other_way() {
+        let plain = bounds(EntityKind::Text(text(HAlign::Left, VAlign::Baseline)));
+        assert!(plain.min.x >= -1e-9 && plain.min.y >= -1e-9);
+        let back = bounds(EntityKind::Text(Text { backwards: true, upside_down: true, ..text(HAlign::Left, VAlign::Baseline) }));
+        assert!(back.max.x <= 1e-9 && back.max.y <= 1e-9, "{back:?}");
+        assert!((back.width() - plain.width()).abs() < 1e-9);
     }
 
     #[test]
@@ -356,6 +380,8 @@ mod tests {
             line_spacing: 1.0,
             line_spacing_exact: false,
             columns: None,
+            direction: Default::default(),
+            background: None,
         };
         let ml = crate::MLeader {
             leaders: vec![vec![Vec3::new(0.0, 0.0, 0.0)]],

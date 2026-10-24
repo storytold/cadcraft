@@ -48,6 +48,7 @@ fn translation_gaps() {
     for language in translated() {
         let mut missing: BTreeSet<String> = missing_commands_menus_tools_and_snap_labels(language.code).into_iter().collect();
         missing.extend(missing_marked_ui_literals(language.code));
+        missing.extend(missing_property_labels(language.code));
         if missing.is_empty() {
             println!("{}: nothing missing", language.code);
             continue;
@@ -57,6 +58,52 @@ fn translation_gaps() {
             println!("  {source}");
         }
     }
+}
+
+/// The labels the engine gives the Properties palette (`properties.describe`) for text, fit
+/// text, mtext and dimensions: group names, row labels and the labels of choices. Part of the
+/// report above.
+fn missing_property_labels(language: &str) -> Vec<String> {
+    use cadcraft_engine::properties::{Kind, describe};
+    let catalog = catalog(language).unwrap();
+    let mut s = Session::new();
+    for (cmd, p) in [
+        ("text", json!({ "at": [0, 0], "text": "A", "height": 1 })),
+        ("text", json!({ "at": [0, 5], "text": "B", "height": 1, "justify": "Fit" })),
+        ("mtext", json!({ "at": [0, 10], "text": "C", "height": 1 })),
+        ("dimlinear", json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, 3] })),
+    ] {
+        s.execute(cmd, &p).unwrap();
+    }
+    // The mtext's background mask rows show while it has one.
+    let mtext = s.doc().unwrap().model.iter().find(|e| matches!(e.kind, cadcraft_engine::doc::EntityKind::MText(_))).map(|e| e.handle.hex());
+    s.execute("properties.set", &json!({ "handles": [mtext], "backgroundMask": true })).unwrap();
+    let d = s.doc().unwrap();
+    let mut labels = BTreeSet::new();
+    for e in d.model.iter() {
+        for g in describe(d, &[e.handle], None).groups {
+            labels.insert(g.name.to_string());
+            for r in g.rows {
+                labels.insert(r.label.to_string());
+                labels.extend(r.note.clone());
+                if r.kind == Kind::Choice {
+                    labels.extend(r.options.into_iter().map(|o| o.label));
+                }
+            }
+        }
+    }
+    labels.extend(["Yes", "No"].map(String::from));
+    // The Dimension Style dialog edits every dimension variable, the style's own ones too.
+    for p in cadcraft_engine::properties::DIM_PROPS {
+        labels.insert(p.label.to_string());
+        labels.extend(p.kind.options().into_iter().map(|o| o.label));
+    }
+    // Numbers (precisions, lineweights in mm) aren't words to translate.
+    labels
+        .into_iter()
+        .filter(|l| l.chars().any(char::is_alphabetic) && !l.ends_with(" mm"))
+        .filter(|l| !catalog.contains_key(&("", l.as_str())))
+        .collect()
 }
 
 fn missing_commands_menus_tools_and_snap_labels(language: &str) -> Vec<String> {
@@ -100,6 +147,9 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
         include_str!("../canvas/blockedit.rs"),
         include_str!("../bedit.rs"),
         include_str!("../palettes.rs"),
+        include_str!("../palettes/described.rs"),
+        include_str!("../managers/dimstyle.rs"),
+        include_str!("../managers/textstyle.rs"),
         include_str!("../parametric.rs"),
         include_str!("../quick.rs"),
         include_str!("../vpscale.rs"),
