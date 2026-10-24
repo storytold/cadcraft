@@ -10,7 +10,8 @@ use cadcraft_doc::{EntityKind, Lineweight, Transparency};
 use cadcraft_geom::Vec3;
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, bad, bool_or, f64_req, ok, point_req, point_value, str_param, targets};
+
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 pub fn specs() -> Vec<CommandSpec> {

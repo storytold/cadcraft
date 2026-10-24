@@ -7,7 +7,8 @@ use serde_json::{Value, json};
 
 use super::super::helpers::support_text;
 use super::super::qselect::wildcard;
-use super::*;
+use super::{Result, Session, bad, bool_or, str_param};
+
 use crate::{Accept, Input, Interactive, Prompt, Step};
 
 /// Names no file may define: they are not linetype definitions.
