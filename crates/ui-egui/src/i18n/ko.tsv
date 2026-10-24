@@ -1238,3 +1238,151 @@ menu	View	보기
 menu	Draw	그리기
 menu	Dimension	치수
 menu	Modify	수정
+	Analyze Shapes	도형 분석
+	Arrow size	화살표 크기
+	Dim scale overall	전체 치수 축척
+	Precision	정밀도
+	Type an alias name.	별칭 이름을 입력하세요.
+	Choose the command the alias starts.	별칭으로 실행할 명령을 선택하세요.
+	{command} is an unknown command.	{command}은(는) 알 수 없는 명령입니다.
+	{alias} is already defined; select it and use Edit.	{alias}은(는) 이미 정의되어 있습니다. 선택한 뒤 편집을 사용하세요.
+	More than {n} aliases.	별칭이 {n}개를 초과합니다.
+	Alias file: {file}	별칭 파일: {file}
+	No alias file loaded. REINIT replaces these aliases with a file's.	불러온 별칭 파일이 없습니다. REINIT은 현재 별칭을 파일의 별칭으로 교체합니다.
+	Alias	별칭
+	Command	명령
+	overrides built-in	기본값 재정의
+	built-in	기본 제공
+	Add…	추가…
+	Edit…	편집…
+	Save alias	별칭 저장
+	Discard	버리기
+	Select using two clicks only	두 번 클릭으로만 선택
+	Define each corner of the selection window with a separate click.	선택 창의 각 모서리를 한 번씩 클릭하여 지정합니다.
+	Interface scale	인터페이스 배율
+	Select boundaries to remove	제거할 경계 선택
+	Island	내부 영역
+	Layouts	배치
+	Printer/plotter	프린터/플로터
+	Paper size	용지 크기
+	Orientation	방향
+	Portrait	세로
+	Landscape	가로
+	Plot area	출력 영역
+	Fit to paper	용지에 맞추기
+	Center the plot	출력 가운데 배치
+	Plot object lineweights	개체 선가중치 출력
+	Plot transparency	투명도 출력
+	Apply to Layout	배치에 적용
+	Enter name of LISP file to load	불러올 LISP 파일 이름 입력
+	Enter geometric characteristic	기하학적 특성 입력
+	Enter block names to extract	추출할 블록 이름 입력
+	Limits	한계
+	Plot offset	출력 오프셋
+	X offset (mm)	X 오프셋(mm)
+	Y offset (mm)	Y 오프셋(mm)
+	First corner	첫 번째 모서리
+	Opposite corner	반대쪽 모서리
+	Window <	윈도우 <
+	Add to Working Set	작업 세트에 추가
+	Edit Reference In-Place	참조 제자리 편집
+	Save Reference Edits	참조 편집 저장
+	Working Set	작업 세트
+	Xref and Block In-place Editing	외부 참조 및 블록 제자리 편집
+	Animation Effects	애니메이션 효과
+	Animation effects	애니메이션 효과
+	Not a number or distance: {text}	숫자나 거리가 아닙니다: {text}
+	Query Texts	텍스트 조회
+	Align Multileaders	다중 지시선 정렬
+	Collect	모으기
+	Collect Multileaders	다중 지시선 모으기
+	Edit Multileader	다중 지시선 편집
+	Italic	기울임꼴
+	Underline	밑줄
+	Overline	윗줄
+	Justify	정렬
+	Text color	텍스트 색상
+	Click the ruler to add a tab stop, right-click to remove one	눈금자를 클릭하면 탭 정지점을 추가하고, 마우스 오른쪽 버튼으로 클릭하면 제거합니다.
+	Add: Pick points	추가: 점 지정
+	Add: Select objects	추가: 개체 선택
+	Associative	연관
+	Block to create or edit	만들거나 편집할 블록
+	Bottom left	왼쪽 아래
+	Bottom right	오른쪽 아래
+	Boundaries	경계
+	Boundaries picked: {n}	지정한 경계: {n}개
+	Centered	가운데
+	Clear Recent Files	최근 파일 목록 지우기
+	Click to set new origin	클릭하여 새 원점 지정
+	Close Block Editor	블록 편집기 닫기
+	Color 1	색상 1
+	Color 2	색상 2
+	contains authoring elements. Open in Block Editor?	작성 요소가 포함되어 있습니다. 블록 편집기에서 열까요?
+	Create separate hatches	별도 해치 만들기
+	Crossing selection color:	교차 선택 색상:
+	Curved	곡선
+	Custom	사용자 지정
+	Default to boundary extents	기본값으로 경계 범위 사용
+	Drag Dynamic Grip	동적 그립 드래그
+	Dynamic Block Data	동적 블록 데이터
+	Dynamic Block Grips	동적 블록 그립
+	Dynamic Block Reference	동적 블록 참조
+	Edit Block Definition	블록 정의 편집
+	Evaluate LISP	LISP 실행
+	Exclude:	제외:
+	Grips	그립
+	Groups	그룹
+	Hatch and Gradient	해치 및 그레이디언트
+	Hatch origin	해치 원점
+	Hatch Pick	해치 지정
+	Hatches	해치
+	Hemispherical	반구형
+	Ignore	무시
+	Indicate selection area	선택 영역 표시
+	Inverted	반전됨
+	Island detection	내부 영역 감지
+	Load Application...	응용프로그램 로드...
+	Multiline text	여러 줄 텍스트
+	New block	새 블록
+	Normal	보통
+	Object grouping	개체 그룹화
+	Object selection limit for display of grips	그립을 표시할 최대 선택 개체 수
+	Objects on locked layers	잠긴 레이어의 개체
+	Open in Block Editor	블록 편집기에서 열기
+	Open Recent	최근 파일 열기
+	Origin: {x}, {y}	원점: {x}, {y}
+	Outer	외부
+	Preview	미리 보기
+	Save Block	블록 저장
+	Save Block As	다른 이름으로 블록 저장
+	Selection Area Effect	선택 영역 효과
+	Selection area opacity:	선택 영역 불투명도:
+	Selection effect color	선택 효과 색상
+	Selection modes	선택 모드
+	Selection preview	선택 미리 보기
+	Selection Preview Filter	선택 미리 보기 필터
+	Set Dynamic Property	동적 속성 설정
+	Shape	도형
+	Sheet Books to PDF...	시트 모음을 PDF로...
+	Show grips	그립 표시
+	Specified origin	지정한 원점
+	Spherical	구형
+	Tables	표
+	This drawing	현재 도면
+	Top left	왼쪽 위
+	Top right	오른쪽 위
+	Unsaved changes	저장하지 않은 변경 사항
+	Use current origin	현재 원점 사용
+	Visual Effect Settings	시각 효과 설정
+	Visual Effect Settings...	시각 효과 설정...
+	When a command is active	명령 실행 중
+	When no command is active	명령을 실행하지 않을 때
+	Window selection color:	윈도우 선택 색상:
+	Xrefs	외부 참조
+	Break-line Symbol	절단선 기호
+	Convert Text to Mtext	텍스트를 여러 줄 텍스트로 변환
+	Explode Attributes to Text	속성을 텍스트로 분해
+	Express Tools	Express Tools
+	Move/Copy/Rotate	이동/복사/회전
+	Customize	사용자 지정
+	Edit Command Aliases (PGP)...	명령 별칭 편집(PGP)...
