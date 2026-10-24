@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-22 · **Change:** minor (distinct polyline midpoint grips) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-23 · **Change:** minor (clicks count on press, even while the mouse moves) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
 
 How CADCraft's interaction compares with AutoCAD's: point entry, object snaps, tracking, dynamic
 input, grips, selection, the command line, chrome and navigation. A drafter's speed in AutoCAD
@@ -127,7 +127,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 |---|---|---|
 | Pick, implied window (left→right) and crossing (right→left) | yes | yes, coloured and dashed rectangles (`lib.rs:576-589`, `canvas.rs:823-836`), filled as SELECTIONAREA, WINDOWAREACOLOR, CROSSINGAREACOLOR and SELECTIONAREAOPACITY say (Visual Effect Settings) |
 | Keywords W, C, WP, CP, F, BOX, AU, SI, M, G (group), CL (class) | yes | yes except CLass: W, C, F, WP, CP (#226); BOX, AUto, SIngle, Multiple, Group, Add, Remove, Undo (#428); ALL, Last, Previous |
-| Press-drag selection windows (PICKDRAG) | yes | clicks or drag (2, default), or two clicks only (0); Options ▸ Selection ▸ Select using two clicks only, saved in the profile; drag-only mode (1) is unavailable |
+| Press-drag selection windows (PICKDRAG) | yes | clicks or drag (2, default), or two clicks only (0); Options ▸ Selection ▸ Select using two clicks only, saved in the profile; drag-only mode (1) is unavailable. Clicks count when the button goes down, even while the mouse moves, and a press held after the pointer leaves a 6-point tolerance for 0.25 s is a drag; a press on an object picks it, and a drag from it does not open a window (#1001) |
 | Lasso | yes | **no** |
 | Selection cycling (SELECTIONCYCLING) | yes | yes (#1143): SELECTIONCYCLING 2 lists the objects under a click (type, layer; the row under the pointer highlights its object), 1 the badge; Shift+Space steps the highlight through them (#1145); no Ctrl+W |
 | Selection preview, hover highlight | yes | selected and hovered objects redrawn in the selection colour, fills half see-through (SELECTIONEFFECT 1; 0 dashed), selection effect color; HIGHLIGHT (not saved), SELECTIONPREVIEW, PREVIEWEFFECT, PREVIEWFILTER (Visual Effect Settings) |
@@ -211,6 +211,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 | 2026-10-16 | minor | ALIASEDIT opens the Command Aliases dialog (#1381) |
 | 2026-10-18 | minor | In-window menu bar: once a menu is open, pointing at another title closes it and opens that one (#1567) |
 | 2026-10-13 | minor | Options ▸ Selection adds Select using two clicks only; PICKDRAG 0 disables drag-window creation/completion, 2 preserves clicks or drag, and the preference survives restart; UI pointer and profile regressions |
+| 2026-10-23 | minor | Clicks on the drawing count when the button goes down, at that spot, even while the mouse moves: points (base points too), object picks, both corners of a click-click window and polygon points; holding the button after the pointer leaves a 6-point tolerance for 0.25 s drags a window (PICKDRAG 2); a press on an object picks it, and a drag from it no longer opens a window; selection cycling opens and picks on the press too (#1001) |
 | 2026-10-12 | minor | Selected and hovered objects redrawn in the selection colour (text and arrowheads included); Options ▸ Selection laid out as AutoCAD's: Object grouping, Show grips, grip object limit, selection preview, Visual Effect Settings (selection area, preview filter) |
 | 2026-10-12 | minor | Animation effects (dialog and menu fades, smoothed wheel scrolling and ⌘/Ctrl+wheel zoom) follow the operating system's setting; View ▸ Accessibility ▸ Animation Effects chooses System, On or Off |
 | 2026-10-12 | minor | Hatch and Gradient / Hatch Edit dialogs (HATCH, GRADIENT, HATCHEDIT, double-click a hatch; HPDLGMODE) |

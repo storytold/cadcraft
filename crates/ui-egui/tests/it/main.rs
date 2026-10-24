@@ -19,6 +19,7 @@ mod mspace_viewport_view;
 mod options_dialog;
 mod parameters_rename;
 mod pickdrag;
+mod press_first_clicks;
 mod properties_units;
 mod rapid_clicks;
 mod selection_cycling;
