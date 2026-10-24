@@ -55,6 +55,8 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.saveversion.2000", "Version 2000", &["File", "Default Save Format", "Version 2000"], None),
     ("ui.saveversion", "Default Save Version", &[], None),
     ("ui.toggle.menubar", "In-window Menu Bar", &["Window", "In-window Menu Bar"], None),
+    // Typeable without a dot: the way back when the menu bar (and its Window menu) is hidden.
+    ("menubar", "In-window Menu Bar", &[], None),
     ("ui.hidepalettes", "Hide Palettes", &["Window", "Hide Palettes"], None),
     ("ui.resetpalettes", "Reset Palettes", &["Window", "Reset Palettes"], None),
     ("ui.start", "Start", &["Window", "Start"], None),
@@ -269,7 +271,7 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             toggle(&mut app.ui.show_ucs_icon, params);
             Ok(Value::Null)
         }
-        "ui.toggle.menubar" => {
+        "ui.toggle.menubar" | "menubar" => {
             toggle(&mut app.ui.in_window_menu, params);
             Ok(Value::Null)
         }

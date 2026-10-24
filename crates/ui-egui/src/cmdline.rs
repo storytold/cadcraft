@@ -160,6 +160,13 @@ fn suggestions(prefix: &str) -> Vec<Suggestion> {
         }
     }
 
+    // 4. UI-only commands with a plain name (the dotted ones are menu plumbing).
+    for (id, label, _, _) in crate::menus::UI_COMMANDS {
+        if !id.contains('.') && id.starts_with(&p) && !seen_ids.contains(id) {
+            out.push(Suggestion { id: id.to_ascii_uppercase(), display: id.to_ascii_uppercase(), label });
+        }
+    }
+
     out.truncate(8);
     out
 }
@@ -648,6 +655,17 @@ mod tests {
     use super::*;
     use cadcraft_engine::Session;
     use egui::{Event, PointerButton};
+
+    #[test]
+    fn menubar_is_typeable_and_suggested() {
+        assert!(suggestions("menu").iter().any(|s| s.id == "MENUBAR"));
+        let mut app = CadApp::new(Session::empty(), crate::Services::default());
+        let shown = app.ui.in_window_menu;
+        assert_eq!(app.cmdline("MENUBAR"), None);
+        assert_ne!(app.ui.in_window_menu, shown);
+        assert_eq!(app.cmdline("menubar"), None);
+        assert_eq!(app.ui.in_window_menu, shown);
+    }
 
     #[test]
     fn compact_canvas_contains_history_controls_without_changing_line_preference() {
