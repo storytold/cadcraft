@@ -90,3 +90,18 @@ fn hostile_masks_never_panic() {
         let _ = mask_box(&t, &l);
     }
 }
+
+#[test]
+fn the_mask_border_counts_in_the_extents() {
+    let bounds = |mask: Option<MTextMask>| {
+        let mut d = Drawing::new_imperial();
+        let h = d.add(&Space::Model, Common::default(), EntityKind::MText(mtext(mask, 0.0, 1))).unwrap();
+        cadcraft_doc::entity_bounds(&d, d.entity(h).unwrap(), 0)
+    };
+    let plain = bounds(None);
+    let wide = bounds(Some(MTextMask { use_background: true, color: Color::ByBlock, scale: 3.0 }));
+    // Out by (3 - 1) / 2 text heights on every side, so ZOOM Extents and selection reach the box.
+    let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
+    assert!(near(wide.min.x, plain.min.x - 1.0) && near(wide.max.x, plain.max.x + 1.0), "{plain:?} {wide:?}");
+    assert!(near(wide.min.y, plain.min.y - 1.0) && near(wide.max.y, plain.max.y + 1.0), "{plain:?} {wide:?}");
+}
