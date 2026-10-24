@@ -4,7 +4,8 @@ use cadcraft_doc::{EntityKind, Handle};
 use cadcraft_geom::Vec2;
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, bad, bool_or, point_param, points_param, str_param, targets};
+
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -379,7 +380,7 @@ impl Interactive for MeasureM {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{CommandSpec, bad, bool_or, point_param, points_param, str_param, targets};
 
     #[test]
     fn calculator() {

@@ -12,7 +12,8 @@ use cadcraft_geom::Vec2;
 use serde_json::{Value, json};
 
 use super::helpers::v3;
-use super::*;
+use super::{CommandSpec, bad, point_req, size_param, str_param};
+
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 /// Caps for hostile parameters.
