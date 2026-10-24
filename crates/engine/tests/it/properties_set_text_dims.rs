@@ -161,6 +161,104 @@ fn dimension_text_rows() {
     // A suffix alone keeps the prefix.
     set(&mut s, &dm, json!({ "suffix": "" }));
     assert_eq!(dim(&s, &dm).overrides.get("post"), Some(&json!("~<>")));
+    // Together with other edits, the prefix goes into what those leave: here no suffix override.
+    set(&mut s, &dm, json!({ "suffix": " mm" }));
+    set(&mut s, &dm, json!({ "clearOverrides": true, "prefix": "=" }));
+    assert_eq!(dim(&s, &dm).overrides.get("post"), Some(&json!("=<>")));
+    // The prefix and suffix rows are DIMPOST's halves: overridden with it, reset with it.
+    let rows = s.execute("properties.describe", &json!({ "handles": [dm] })).unwrap();
+    let prefix =
+        rows["groups"].as_array().unwrap().iter().flat_map(|g| g["rows"].as_array().unwrap()).find(|r| r["key"] == "prefix").unwrap().clone();
+    assert_eq!(prefix["overridden"], true, "{prefix}");
+    set(&mut s, &dm, json!({ "clear": ["prefix"] }));
+    assert!(dim(&s, &dm).overrides.get("post").is_none());
+}
+
+#[test]
+fn rotating_aligned_text_turns_its_baseline() {
+    let mut s = Session::new();
+    let t = handle(&s.execute("text", &json!({ "at": [0, 0], "text": "Wide", "height": 1 })).unwrap());
+    set(&mut s, &t, json!({ "justify": "Align" }));
+    let long = text(&s, &t).align_pt.unwrap().x;
+    assert!(long > 0.0);
+    set(&mut s, &t, json!({ "rotation": 90 }));
+    let end = text(&s, &t).align_pt.unwrap();
+    assert!(near(end.x, 0.0) && near(end.y, long), "{end:?}");
+}
+
+#[test]
+fn justify_in_one_call_with_other_edits_takes_them_in() {
+    // Fit with new contents measures the new text; with a rotation, the baseline runs along it.
+    let mut s = Session::new();
+    let short = handle(&s.execute("text", &json!({ "at": [0, 0], "text": "A", "height": 1 })).unwrap());
+    let long = handle(&s.execute("text", &json!({ "at": [0, 5], "text": "Much longer", "height": 1 })).unwrap());
+    set(&mut s, &long, json!({ "justify": "Fit" }));
+    set(&mut s, &short, json!({ "text": "Much longer", "justify": "Fit", "rotation": 90 }));
+    let (a, b) = (text(&s, &short), text(&s, &long));
+    let len = |t: &Text| t.insert.xy().dist(t.align_pt.unwrap().xy());
+    assert!(near(len(&a), len(&b)), "{} {}", len(&a), len(&b));
+    let end = a.align_pt.unwrap();
+    assert!(near(end.x, 0.0) && end.y > 0.0, "{end:?}");
+}
+
+#[test]
+fn scale_is_no_dimension_override() {
+    // `scale` is an insert's or hatch's; a dimension's overall scale is `dimScale`.
+    let mut s = Session::new();
+    s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, 3] })).unwrap();
+    let dm = last(&s);
+    assert_eq!(set(&mut s, &dm, json!({ "scale": 2 }))["ignored"], json!(["scale"]));
+    assert!(dim(&s, &dm).overrides.is_empty());
+}
+
+#[test]
+fn making_a_style_current_keeps_the_dimensions_read_from_a_file() {
+    let mut s = Session::new();
+    s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, 3] })).unwrap();
+    let back = cadcraft_io::read_dxf(cadcraft_io::write_dxf(s.doc().unwrap()).as_bytes()).unwrap();
+    s.open_drawing(back, "dims", None);
+    let dm = last(&s);
+    assert!(dim(&s, &dm).block.is_some());
+    // No field changes: the geometry the file stored stays.
+    s.execute("dimstyle", &json!({ "name": "Standard" })).unwrap();
+    s.execute("style", &json!({ "name": "Standard" })).unwrap();
+    assert!(dim(&s, &dm).block.is_some());
+    // A change redraws it.
+    s.execute("dimstyle", &json!({ "name": "Standard", "DIMTXT": 0.3 })).unwrap();
+    assert!(dim(&s, &dm).block.is_none());
+}
+
+#[test]
+fn hatch_pattern_edits_go_as_hatchedits_do() {
+    let mut s = Session::new();
+    s.execute("rectang", &json!({ "p1": [0, 0], "p2": [10, 10] })).unwrap();
+    s.execute("gradient", &json!({ "points": [[5, 5]], "color1": "1", "color2": "3" })).unwrap();
+    let h = s.doc().unwrap().model.iter().find(|e| matches!(e.kind, EntityKind::Hatch(_))).unwrap().handle.hex();
+    let hatch = |s: &Session| match &s.doc().unwrap().entity(Handle::parse_hex(&h).unwrap()).unwrap().kind {
+        EntityKind::Hatch(x) => x.clone(),
+        k => panic!("not a hatch: {k:?}"),
+    };
+    assert!(hatch(&s).gradient.is_some());
+    // SOLID is a plain fill, not the gradient.
+    set(&mut s, &h, json!({ "pattern": "SOLID" }));
+    assert!(hatch(&s).solid && hatch(&s).gradient.is_none());
+    // A blank name changes nothing.
+    assert_eq!(set(&mut s, &h, json!({ "pattern": "  " }))["ignored"], json!(["pattern"]));
+    assert_eq!(hatch(&s).pattern, "SOLID");
+    // A name no pattern has is refused, as HATCHEDIT refuses it; a defined one is taken.
+    assert!(s.execute("properties.set", &json!({ "handles": [h], "pattern": "ANSI3" })).is_err());
+    assert_eq!(hatch(&s).pattern, "SOLID");
+    set(&mut s, &h, json!({ "pattern": "ansi31" }));
+    assert_eq!(hatch(&s).pattern, "ANSI31");
+}
+
+#[test]
+fn an_object_that_is_not_there_refuses_the_whole_call() {
+    let mut s = Session::new();
+    let t = handle(&s.execute("text", &json!({ "at": [0, 0], "text": "A", "height": 1 })).unwrap());
+    assert!(s.execute("properties.set", &json!({ "handles": [t, "FFFFF"], "height": 3, "layer": "Notes" })).is_err());
+    assert_eq!(text(&s, &t).height, 1.0);
+    assert!(s.doc().unwrap().layer("Notes").is_none());
 }
 
 #[test]
@@ -222,6 +320,8 @@ fn renaming_a_text_style_follows_dimension_overrides() {
     set(&mut s, &dm, json!({ "textStyle": "Old" }));
     s.execute("style.rename", &json!({ "from": "Old", "to": "New" })).unwrap();
     assert_eq!(dim(&s, &dm).overrides.get("textStyle"), Some(&json!("New")));
+    // A style only a dimension override names is in use: it can't be deleted.
+    assert!(s.execute("style.delete", &json!({ "name": "New" })).is_err());
 }
 
 #[test]

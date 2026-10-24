@@ -95,6 +95,10 @@ impl Row {
         self.editable = false;
         self
     }
+    fn overridden_if(mut self, overridden: bool) -> Self {
+        self.overridden = overridden;
+        self
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -713,15 +717,18 @@ fn dimension_groups(c: &Ctx, ents: &[&Entity], dims: &[&Dimension]) -> Vec<Group
             "Primary Units" => {
                 let (pre, suf): (Vec<Value>, Vec<Value>) = styles.iter().map(|st| split_post(&st.post)).map(|(p, s)| (json!(p), json!(s))).unzip();
                 let at = rows.iter().position(|r| r.key == "round").unwrap_or(rows.len());
-                rows.insert(at, c.row("prefix", "Dim prefix", Kind::Text, pre));
+                // Prefix and suffix are DIMPOST's two halves: overridden with it, and reset with it.
+                let posted = dims.iter().any(|dm| overrides(dm, "post"));
+                rows.insert(at, c.row("prefix", "Dim prefix", Kind::Text, pre).overridden_if(posted));
                 let at = rows.iter().position(|r| r.key == "linearUnit").unwrap_or(rows.len());
-                rows.insert(at, c.row("suffix", "Dim suffix", Kind::Text, suf));
+                rows.insert(at, c.row("suffix", "Dim suffix", Kind::Text, suf).overridden_if(posted));
             }
             "Alternate Units" => {
                 let (pre, suf): (Vec<Value>, Vec<Value>) =
                     styles.iter().map(|st| split_post(&st.alt_post)).map(|(p, s)| (json!(p), json!(s))).unzip();
-                rows.push(c.row("altPrefix", "Alt prefix", Kind::Text, pre));
-                rows.push(c.row("altSuffix", "Alt suffix", Kind::Text, suf));
+                let posted = dims.iter().any(|dm| overrides(dm, "altPost"));
+                rows.push(c.row("altPrefix", "Alt prefix", Kind::Text, pre).overridden_if(posted));
+                rows.push(c.row("altSuffix", "Alt suffix", Kind::Text, suf).overridden_if(posted));
             }
             _ => {}
         }
