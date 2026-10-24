@@ -1,6 +1,6 @@
 # Where CADCraft falls short of AutoCAD
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-16 · **Change:** minor (Command Aliases dialog for ALIASEDIT: U12 and E5 narrowed) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-20 · **Change:** minor (installed fonts found where fontconfig looks on Linux: P2 narrowed) · **Target:** Autodesk AutoCAD 2027
 
 Every known shortfall, one row each, ranked within each section by user impact. This is the work
 list: agents pick from here (top of a section first), and remove or update a row in the same PR
@@ -126,7 +126,7 @@ Detail: [localization-parity.md](localization-parity.md).
 | # | Gap | Est. |
 |---|---|---|
 | P1 | Web build: plot shows raw PDF bytes (#134), no DWG (File > Open and save downloads fixed, #55, #133) | 3–5 |
-| P2 | Windows and Linux get little runtime testing; Linux Mint mouse delay (#25); Windows magnifier (#39) | 6–10 |
+| P2 | Windows and Linux get little runtime testing; Linux Mint mouse delay (#25); Windows magnifier (#39). Fonts outside /usr/share/fonts (NixOS, Guix, Flatpak) are found since 2026-10-20 (#674) | 6–10 |
 | P3 | macOS file associations: opening `.dxf` from Finder fails (#158) | 1–2 |
 
 ## Ecosystem and automation
@@ -151,6 +151,7 @@ Detail: [localization-parity.md](localization-parity.md).
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-22 | minor | APPLOAD typed or from Tools ▸ Load Application opens a `.lsp` file browser starting in the last-used folder (kept in the preferences); a picked file loads interactively like a typed name (routines that ask for input wait), the web says to drop the file (no file system), and the JSON form `{path}` reads the path as given and returns the commands the file defined, never opening a dialog (#1820): E1 narrowed |
+| 2026-10-20 | minor | Installed fonts are found where fontconfig looks (XDG font directories, fontconfig `<dir>` entries, Flatpak host mounts), so NixOS, Guix and Flatpak get the CJK fallback and a system UI font (#674): P2 narrowed, hours unchanged |
 | 2026-10-16 | minor | ALIASEDIT typed or from Tools ▸ Customize opens the Command Aliases dialog (user aliases next to the built-in ones; Add, Edit, Remove; OK, Cancel, Apply), #1381: U12 and E5 narrowed |
 | 2026-10-16 | minor | MOCORO (Tools ▸ Express Tools ▸ Move/Copy/Rotate): select objects and a base point once, then Move, Copy, Rotate, Scale, Base and Undo until eXit, one undo step; JSON form `{base, ops}`: E3 narrowed |
 | 2026-10-16 | minor | MLEDIT Merged Tee (MT): the first multiline's outer elements stop at the second one's near side, which opens, and its inner elements run on to the second one's inner element: F21 narrowed, hours unchanged |

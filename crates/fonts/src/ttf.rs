@@ -14,7 +14,7 @@
 //! On native builds both start from the `CADCRAFT_FONTALT` / `CADCRAFT_FONTFALLBACK`
 //! environment variables.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, RwLock};
 
@@ -26,6 +26,9 @@ use skrifa::raw::types::Tag;
 use skrifa::{FontRef, GlyphId, MetadataProvider};
 
 use crate::{Run, Shaped};
+
+#[cfg(not(target_arch = "wasm32"))]
+mod dirs;
 
 /// One face of a font file (a TrueType collection holds several).
 #[derive(Clone)]
@@ -112,7 +115,9 @@ const MAX_CACHED_CHARS: usize = 50_000;
 pub(crate) const MAX_SHAPED_POINTS: usize = 8_000_000;
 
 /// Fonts known to cover many scripts (CJK first), tried first for missing glyphs. Matched as
-/// substrings of the normalised file stem.
+/// substrings of the normalised file stem. Unifont (every BMP character, as bitmap-like
+/// outlines) comes last: a last resort before the alphabetical rest, which the bounded search
+/// never gets through, and the only CJK-capable font of NixOS's default font set.
 const PREFERRED_FALLBACK: &[&str] = &[
     "notosanscjk",
     "sourcehansans",
@@ -136,6 +141,7 @@ const PREFERRED_FALLBACK: &[&str] = &[
     "dejavusans",
     "segoeui",
     "arial",
+    "unifont",
 ];
 /// Fonts known to cover a right-to-left script, tried before the general search for its
 /// characters (the general search loads a bounded number of files, and wide-coverage CJK fonts
@@ -221,9 +227,10 @@ fn lock() -> MutexGuard<'static, Db> {
     g
 }
 
+/// Installed font files by lower-case stem, from the platform's font directories (on Linux and
+/// the BSDs, wherever fontconfig looks: [`dirs`]).
 #[cfg(not(target_arch = "wasm32"))]
 fn scan() -> HashMap<String, PathBuf> {
-    let mut out = HashMap::new();
     let mut dirs: Vec<PathBuf> = Vec::new();
     if cfg!(target_os = "macos") {
         dirs.extend(["/System/Library/Fonts", "/System/Library/Fonts/Supplemental", "/Library/Fonts"].map(Into::into));
@@ -236,15 +243,37 @@ fn scan() -> HashMap<String, PathBuf> {
             dirs.push(PathBuf::from(l).join("Microsoft\\Windows\\Fonts"));
         }
     } else {
-        dirs.extend(["/usr/share/fonts", "/usr/local/share/fonts"].map(Into::into));
-        if let Some(h) = std::env::var_os("HOME") {
-            dirs.push(PathBuf::from(&h).join(".fonts"));
-            dirs.push(PathBuf::from(h).join(".local/share/fonts"));
+        // Where fontconfig looks: NixOS, Guix and Flatpak keep fonts outside /usr/share/fonts
+        // (#674). Later directories take precedence (the stack pops them first), so the
+        // resolver's priority order is reversed; symlinked directories resolve so none is
+        // walked twice.
+        let mut found: Vec<PathBuf> = Vec::new();
+        for d in dirs::font_dirs(|k| std::env::var_os(k), dirs::read_config) {
+            if let Ok(c) = std::fs::canonicalize(&d)
+                && !found.contains(&c)
+            {
+                found.push(c);
+            }
         }
+        dirs.extend(found.into_iter().rev());
     }
+    walk_font_dirs(dirs)
+}
+
+/// Font files by lower-case stem under `dirs`, the last directory first. Each directory is read
+/// once by its resolved path, so a symlink back up the tree cannot use up the entry budget
+/// before the other directories are reached.
+#[cfg(not(target_arch = "wasm32"))]
+fn walk_font_dirs(dirs: Vec<PathBuf>) -> HashMap<String, PathBuf> {
+    let mut out = HashMap::new();
     let mut stack = dirs;
+    let mut visited: HashSet<PathBuf> = HashSet::new();
     let mut seen = 0usize;
     while let Some(d) = stack.pop() {
+        let Ok(c) = std::fs::canonicalize(&d) else { continue };
+        if !visited.insert(c) {
+            continue;
+        }
         let Ok(rd) = std::fs::read_dir(&d) else { continue };
         for e in rd.flatten() {
             seen += 1;
@@ -516,6 +545,16 @@ pub fn find(name: &str) -> Option<Face> {
     }
     g.resolved.insert(k, r.clone());
     r
+}
+
+/// The installed font file with this stem (`DejaVuSans`, `NotoSansCJK-Regular`; case and an
+/// extension don't matter), wherever the system keeps its fonts. A font compiled in from
+/// craft-fonts is no file and gives `None`.
+pub fn installed_font_path(stem: &str) -> Option<PathBuf> {
+    match lock().paths.get(&key(stem))? {
+        Source::File(p) => Some(p.clone()),
+        Source::Static(_) => None,
+    }
 }
 
 struct Prefs {
@@ -997,5 +1036,30 @@ mod geometry_budget_tests {
         assert!(!shaped.is_empty());
         assert_eq!(shaped.glyphs, vec![contours]);
         assert!(shaped.text.is_empty());
+    }
+}
+
+#[cfg(all(test, unix))]
+mod scan_tests {
+    use super::*;
+
+    #[test]
+    fn a_symlink_back_up_the_tree_does_not_hide_the_other_font_directories() {
+        let root = std::env::temp_dir().join(format!("cadcraft-font-walk-{}", std::process::id()));
+        let (looped, other) = (root.join("looped"), root.join("other"));
+        std::fs::create_dir_all(&looped).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(looped.join("a.ttf"), b"").unwrap();
+        // The kernel gives up on a symlink chain after about 40 hops; with this many entries,
+        // reading the directory at every hop would still run past the 20 000 entry budget.
+        for i in 0..600 {
+            std::fs::write(looped.join(format!("readme{i}.txt")), b"").unwrap();
+        }
+        std::fs::write(other.join("b.ttf"), b"").unwrap();
+        std::os::unix::fs::symlink(&looped, looped.join("again")).unwrap();
+        // The looped directory is walked first.
+        let found = walk_font_dirs(vec![other.clone(), looped.clone()]);
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(found.contains_key("a") && found.contains_key("b"), "{found:?}");
     }
 }

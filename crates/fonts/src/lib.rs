@@ -710,13 +710,14 @@ mod ttf_tests {
     #[test]
     fn fallback_ranking_prefers_wide_coverage_regular_fonts() {
         let stems: Vec<String> =
-            ["zapfino", "dejavusans", "notosanscjk-bold", "notosanscjk-regular", "wqy-zenhei", "notosansarabic-regular", "arial"]
+            ["zapfino", "dejavusans", "notosanscjk-bold", "notosanscjk-regular", "wqy-zenhei", "notosansarabic-regular", "arial", "unifont"]
                 .map(String::from)
                 .to_vec();
         let r = crate::ttf::rank_fallback(&stems);
         assert_eq!(r.first().map(String::as_str), Some("notosanscjk-regular"));
         assert_eq!(r.get(1).map(String::as_str), Some("notosanscjk-bold"));
         assert_eq!(r.get(2).map(String::as_str), Some("wqy-zenhei"));
+        assert_eq!(r.get(r.len().wrapping_sub(2)).map(String::as_str), Some("unifont"), "a last resort, but ahead of unknown fonts");
         assert_eq!(r.last().map(String::as_str), Some("zapfino"));
         assert_eq!(r.len(), stems.len());
     }
