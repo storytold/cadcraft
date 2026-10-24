@@ -5,6 +5,7 @@
 use cadcraft_doc::EntityKind;
 use cadcraft_engine::Session;
 use cadcraft_engine::geom::Vec2;
+use cadcraft_engine::pointmod::Frame;
 use cadcraft_engine::snap;
 use cadcraft_engine::snap::tracking::{Acquired, CursorQuery, DWELL, PathKind, PathShape};
 use serde_json::json;
@@ -222,5 +223,110 @@ fn extension_runs_around_an_elliptical_arc_and_off_a_spline_end() {
             &CursorQuery { base: Some(v(x, 0.0)), deferred: false, corner: false, aperture: 0.5, tol: 0.1, now: x, shift: false },
         );
         assert!(r.track.is_none_or(|t| t.point.is_finite()));
+    }
+}
+
+// TK's two rules this PR added: the run never acquires a `+` (unlike TT), and the pending
+// axis switches while the cursor is near the anchor and locks once it is dragged away.
+
+/// The `axis` of the pending TK run, or `None` when no TK is running.
+fn tk_axis(s: &Session) -> Option<Option<bool>> {
+    match s.point_mods.last() {
+        Some(Frame::Track { axis, .. }) => Some(*axis),
+        _ => None,
+    }
+}
+
+fn query(base: Vec2) -> CursorQuery {
+    CursorQuery { base: Some(base), deferred: false, corner: false, aperture: 0.5, tol: 0.1, now: 100.0, shift: false }
+}
+
+#[test]
+fn tk_never_acquires_a_plus_marker() {
+    let mut s = Session::new();
+    setvar(&mut s, "OSMODE", json!(0));
+    s.cmdline("line 0,0 tk").unwrap();
+    s.cmdline("5,5").unwrap();
+    assert!(s.tracking.acquired.is_empty(), "TK carries no + (unlike TT)");
+    // Hovering around the run acquires nothing either: TK sends no alignment path.
+    let px = s.pixel_size();
+    let q = query(v(5.0, 5.0));
+    for (dx, dy) in [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0), (30.0, 30.0)] {
+        s.snap_cursor(v(5.0 + dx * px, 5.0 + dy * px), &q);
+        assert!(s.tracking.acquired.is_empty(), "TK must not acquire at ({dx}, {dy}) px");
+    }
+}
+
+#[test]
+fn tk_axis_switches_near_the_anchor_and_locks_beyond_the_aperture() {
+    let mut s = Session::new();
+    setvar(&mut s, "OSMODE", json!(0));
+    s.cmdline("line 0,0 tk").unwrap();
+    s.cmdline("10,10").unwrap();
+    assert_eq!(tk_axis(&s), Some(None), "no axis after only the first pick");
+    let px = s.pixel_size();
+    let q = query(v(10.0, 10.0));
+    let at = |dx: f64, dy: f64| v(10.0 + dx * px, 10.0 + dy * px);
+
+    // 10 px right, 3 up: horizontal wins, so the first segment's axis is horizontal.
+    s.snap_cursor(at(10.0, 3.0), &q);
+    assert_eq!(tk_axis(&s), Some(Some(true)), "first segment: the nearer axis");
+    // 10 right, 13 up: past the 20% deadband, the run switches to vertical.
+    s.snap_cursor(at(10.0, 13.0), &q);
+    assert_eq!(tk_axis(&s), Some(Some(false)), "vertical wins by more than 20%");
+    // 13 right, 10 up: back to horizontal.
+    s.snap_cursor(at(13.0, 10.0), &q);
+    assert_eq!(tk_axis(&s), Some(Some(true)), "horizontal wins by more than 20%");
+    // 10 right, 11 up: inside the deadband, the axis holds (no flicker near 45°).
+    s.snap_cursor(at(10.0, 11.0), &q);
+    assert_eq!(tk_axis(&s), Some(Some(true)), "deadband: the axis holds");
+    // 10 right, 75 up (about 76 px away): still switchable inside the 80 px radius.
+    s.snap_cursor(at(10.0, 75.0), &q);
+    assert_eq!(tk_axis(&s), Some(Some(false)), "inside the 80 px radius");
+
+    // Dragged past 80 px with no axis yet, a fresh run locks to the nearer axis and stays.
+    let mut s = Session::new();
+    setvar(&mut s, "OSMODE", json!(0));
+    s.cmdline("line 0,0 tk").unwrap();
+    s.cmdline("10,10").unwrap();
+    let px = s.pixel_size();
+    let q = query(v(10.0, 10.0));
+    s.snap_cursor(v(10.0 + 90.0 * px, 10.0 + 20.0 * px), &q);
+    assert_eq!(tk_axis(&s), Some(Some(true)), "beyond 80 px the nearer axis locks");
+    // A far cursor the other way round changes nothing.
+    s.snap_cursor(v(10.0 + 20.0 * px, 10.0 + 90.0 * px), &q);
+    assert_eq!(tk_axis(&s), Some(Some(true)), "locked: far cursors do not switch it");
+}
+
+#[test]
+fn tk_axis_flips_from_the_axis_used_even_on_a_zero_length_segment() {
+    // A pick that lands on the anchor has no displacement to read an axis from. The flip must
+    // come from the axis the segment actually used, or a zero-length leg misaligns the run.
+    let mut s = Session::new();
+    setvar(&mut s, "OSMODE", json!(0));
+    s.cmdline("line 0,0 tk").unwrap();
+    s.cmdline("10,10").unwrap();
+    assert_eq!(tk_axis(&s), Some(None));
+    // A horizontal leg: the next one is vertical.
+    s.cmdline("20,10").unwrap();
+    assert_eq!(tk_axis(&s), Some(Some(false)), "horizontal used, next is vertical");
+    // A pick back on the anchor: zero length, but the leg still used the vertical axis,
+    // so the run must flip to horizontal rather than hold on the displacement (0, 0).
+    s.cmdline("20,10").unwrap();
+    assert_eq!(tk_axis(&s), Some(Some(true)), "zero-length vertical leg must still flip");
+}
+
+#[test]
+fn tk_axis_survives_a_non_finite_cursor() {
+    // A non-finite cursor has no axis to read; the pending run must be left untouched.
+    let mut s = Session::new();
+    setvar(&mut s, "OSMODE", json!(0));
+    s.cmdline("line 0,0 tk").unwrap();
+    s.cmdline("10,10").unwrap();
+    assert_eq!(tk_axis(&s), Some(None), "no axis after the first pick");
+    let q = query(v(10.0, 10.0));
+    for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        s.snap_cursor(v(bad, bad), &q);
+        assert_eq!(tk_axis(&s), Some(None), "a non-finite cursor must not set the axis ({bad})");
     }
 }

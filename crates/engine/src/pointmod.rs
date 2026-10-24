@@ -81,8 +81,11 @@ pub enum Frame {
     /// the prompt below asks again.
     TempTrack,
     /// `TK` (tracking): a run of points, each straight across or up from the one before; Enter
-    /// ends it and hands down the last.
-    Track { last: Option<Vec2> },
+    /// ends it and hands down the last. `axis` is the axis the *next* segment runs along — the
+    /// run alternates, so it is set to the opposite of the segment just placed (`Some(true)`
+    /// horizontal, `Some(false)` vertical); `None` until a segment has been placed, when the
+    /// cursor's nearer axis still steers it.
+    Track { last: Option<Vec2>, axis: Option<bool> },
 }
 
 /// The object snap overrides and the words they are typed as: any start of a word of three
@@ -160,8 +163,8 @@ impl Session {
             Frame::Filter { keep, first: None } => Prompt::new(format!("{} of", keep.name()), point).base_opt(p.base),
             Frame::Filter { keep, first: Some(_) } => Prompt::new(format!("(need {})", keep.need()), point).base_opt(p.base),
             Frame::TempTrack => Prompt::new("Specify temporary OTRACK point", point),
-            Frame::Track { last: None } => Prompt::new("First tracking point", point),
-            Frame::Track { last: Some(l) } => Prompt::new("Next point (Press ENTER to end tracking)", point).base(l),
+            Frame::Track { last: None, .. } => Prompt::new("First tracking point", point),
+            Frame::Track { last: Some(l), .. } => Prompt::new("Next point (Press ENTER to end tracking)", point).base(l),
             Frame::Angle { .. } | Frame::Snap { mode: 0 } => p,
             // "Endpoint of:", keeping the base and deferral PER/TAN need.
             Frame::Snap { mode } => Prompt { message: format!("{} of", snap_name(mode)), keywords: Vec::new(), default: None, ..p },
@@ -205,8 +208,8 @@ impl Session {
             "m2p" | "mtp" => Some(Frame::Mid { first: None }),
             "tt" => Some(Frame::TempTrack),
             // TK, or TRACKING from three letters (TRA, TRACK).
-            "tk" => Some(Frame::Track { last: None }),
-            _ if b.len() >= 3 && "tracking".starts_with(&b) => Some(Frame::Track { last: None }),
+            "tk" => Some(Frame::Track { last: None, axis: None }),
+            _ if b.len() >= 3 && "tracking".starts_with(&b) => Some(Frame::Track { last: None, axis: None }),
             _ => None,
         }
     }
@@ -233,14 +236,19 @@ impl Session {
             self.point_mods.push(f);
             return Some(Ok(()));
         }
-        // A distance at "Next point" of TK: straight across or up from the last tracking point,
-        // the way the cursor lies from it.
-        if let Some(Frame::Track { last: Some(l) }) = self.point_mods.last().copied()
+        // A distance at "Next point" of TK: along the axis the run alternates to. The first
+        // distance picks the nearer of x / y; every later one takes the other axis, so the run
+        // goes straight across, then up, then across, the sign following the cursor.
+        if let Some(Frame::Track { last: Some(l), axis }) = self.point_mods.last().copied()
             && crate::prompt::parse_point_with(t, self.last_point, &self.angle_settings()).is_none()
             && let Some(d) = crate::units::parse_distance(t)
         {
-            let dir = (crate::snap::ortho(l, self.cursor) - l).normalized();
-            let dir = if dir == Vec2::ZERO || !dir.is_finite() { Vec2::X } else { dir };
+            let (dx, dy) = (self.cursor.x - l.x, self.cursor.y - l.y);
+            // The run alternates: an axis set by the segment just placed wins; without one
+            // (the first segment) the cursor's nearer axis steers it.
+            let horizontal = axis.unwrap_or_else(|| dx.abs() >= dy.abs());
+            let dir =
+                if horizontal { Vec2::new(if dx >= 0.0 { 1.0 } else { -1.0 }, 0.0) } else { Vec2::new(0.0, if dy >= 0.0 { 1.0 } else { -1.0 }) };
             return Some(self.modifier_point(l + dir * d));
         }
         if let Some(Frame::Angle { base, dir }) = self.point_mods.last().copied() {
@@ -277,7 +285,7 @@ impl Session {
             // Enter ends tracking with its last point; otherwise it drops the modifiers and
             // returns to the command's prompt.
             Input::Enter => match self.point_mods.last().copied() {
-                Some(Frame::Track { last: Some(l) }) => {
+                Some(Frame::Track { last: Some(l), .. }) => {
                     self.point_mods.pop();
                     self.modifier_point(l)
                 }
@@ -326,10 +334,26 @@ impl Session {
                     self.last_point = p;
                     return Ok(());
                 }
-                Frame::Track { last } => {
-                    // Each point after the first goes straight across or up from the last one.
-                    let q = last.map_or(p, |l| crate::snap::ortho(l, p));
-                    self.point_mods.push(Frame::Track { last: Some(q) });
+                Frame::Track { last, axis } => {
+                    // The first pick sits where it was taken. Every later point lies on the axis
+                    // the run alternates to, on the cursor's side. The flip is taken from the axis
+                    // the segment actually used, not from the placed displacement: a zero-length
+                    // segment (a typed distance of 0, or a pick on the anchor) has no displacement
+                    // to read an axis from.
+                    let mut used_h = None;
+                    let q = match last {
+                        None => p,
+                        Some(l) => {
+                            let (dx, dy) = (p.x - l.x, p.y - l.y);
+                            let horizontal = axis.unwrap_or_else(|| dx.abs() >= dy.abs());
+                            used_h = Some(horizontal);
+                            if horizontal { Vec2::new(p.x, l.y) } else { Vec2::new(l.x, p.y) }
+                        }
+                    };
+                    let new_axis = used_h.map(|h| !h);
+                    // TK never carries a `+` marker (unlike TT).
+                    self.tracking.clear();
+                    self.point_mods.push(Frame::Track { last: Some(q), axis: new_axis });
                     self.last_point = q;
                     return Ok(());
                 }
