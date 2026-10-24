@@ -692,6 +692,18 @@ fn adaptive(unit: f64, scale: f64, min_px: f64) -> f64 {
     u
 }
 
+/// Index ranges of the grid lines inside `wb` for line spacing `minor`, or `None` when there would be
+/// 2000 lines or more along an axis. The span is computed with checked arithmetic: a huge view
+/// saturates the float-to-integer casts at the i64 limits, and subtracting those would overflow.
+fn grid_index_ranges(wb: &Bounds2, minor: f64) -> Option<((i64, i64), (i64, i64))> {
+    let range = |lo: f64, hi: f64| {
+        let a = (lo / minor).floor() as i64;
+        let b = (hi / minor).ceil() as i64;
+        b.checked_sub(a).filter(|n| *n < 2000).map(|_| (a, b))
+    };
+    Some((range(wb.min.x, wb.max.x)?, range(wb.min.y, wb.max.y)?))
+}
+
 fn draw_grid(app: &CadApp, p: &egui::Painter, xf: &Xf) {
     let t = Tokens::get();
     let s = app.session.drafting_settings();
@@ -704,11 +716,7 @@ fn draw_grid(app: &CadApp, p: &egui::Painter, xf: &Xf) {
         let minor = adaptive(unit, xf.scale, 8.0);
         let major = minor * major_n;
         let mut lines = Vec::new();
-        let x0 = (wb.min.x / minor).floor() as i64;
-        let x1 = (wb.max.x / minor).ceil() as i64;
-        let y0 = (wb.min.y / minor).floor() as i64;
-        let y1 = (wb.max.y / minor).ceil() as i64;
-        if (x1 - x0) < 2000 && (y1 - y0) < 2000 {
+        if let Some(((x0, x1), (y0, y1))) = grid_index_ranges(&wb, minor) {
             for i in x0..=x1 {
                 let x = i as f64 * minor;
                 let is_major = (x / major).round() * major - x == 0.0 || ((x / major) - (x / major).round()).abs() < 1e-6;
@@ -2993,5 +3001,18 @@ mod hatch_pick_tests {
         assert_eq!(app.hatch_dlg.as_ref().map(|s| s.edit.iter().map(|h| h.hex()).collect::<Vec<_>>()), Some(vec![hx]));
         // The double-click (at the hatch's centre grip) only opens the dialog: no grip edit.
         assert!(app.session.running.is_none(), "{:?}", app.session.running.as_ref().map(|r| r.machine.name()));
+    }
+}
+
+#[cfg(test)]
+mod grid_range_tests {
+    use cadcraft_geom::{Bounds2, Vec2};
+
+    #[test]
+    fn grid_index_ranges_survive_extreme_views() {
+        let huge = Bounds2::new(Vec2::new(-1e300, -1e300), Vec2::new(1e300, 1e300));
+        assert_eq!(super::grid_index_ranges(&huge, 1.0), None);
+        let normal = Bounds2::new(Vec2::new(-5.0, 0.0), Vec2::new(5.0, 10.0));
+        assert_eq!(super::grid_index_ranges(&normal, 1.0), Some(((-5, 5), (0, 10))));
     }
 }
