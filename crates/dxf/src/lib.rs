@@ -413,8 +413,7 @@ pub fn write_ascii_as(tags: &[Tag], utf8: bool) -> String {
     for t in tags {
         let _ = write!(out, "{:>3}\r\n", t.code);
         match &t.value {
-            Value::Str(s) if utf8 => out.extend(s.chars().map(|c| if matches!(c, '\r' | '\n') { ' ' } else { c })),
-            Value::Str(s) => escape_unicode(s, &mut out),
+            Value::Str(s) => escape_unicode(s, utf8, &mut out),
             Value::Real(r) => out.push_str(&format_real(*r)),
             Value::Int(i) => out.push_str(&i.to_string()),
             Value::Bool(b) => out.push_str(&i64::from(*b).to_string()),
@@ -446,11 +445,7 @@ pub fn write_binary(tags: &[Tag], utf8: bool) -> Vec<u8> {
                     v => v.as_str(),
                 };
                 let mut text = String::with_capacity(s.len());
-                if utf8 {
-                    text.extend(s.chars().map(|c| if matches!(c, '\r' | '\n') { ' ' } else { c }));
-                } else {
-                    escape_unicode(&s, &mut text);
-                }
+                escape_unicode(&s, utf8, &mut text);
                 out.extend(text.bytes().filter(|&b| b != 0));
                 out.push(0);
             }
@@ -507,12 +502,16 @@ pub fn is_binary(bytes: &[u8]) -> bool {
 
 /// Escape a string for a pre-R2007 DXF, whose text is in the `$DWGCODEPAGE` code page: ASCII
 /// stays as it is and every other character becomes `\U+XXXX` (a surrogate pair of escapes
-/// above U+FFFF), so the bytes are valid in any code page. Line breaks become spaces.
-fn escape_unicode(s: &str, out: &mut String) {
-    for c in s.chars() {
+/// above U+FFFF), so the bytes are valid in any code page; with `utf8` they stay as they are.
+/// A backslash that would start a `\U+` or `\M+` sequence is written as `\U+005C` so the reader
+/// gives back the literal text. Line breaks become spaces.
+fn escape_unicode(s: &str, utf8: bool, out: &mut String) {
+    let chars: Vec<char> = s.chars().collect();
+    for (i, &c) in chars.iter().enumerate() {
         match c {
             '\r' | '\n' => out.push(' '),
-            c if c.is_ascii() => out.push(c),
+            '\\' if matches!(chars.get(i + 1), Some('U' | 'M')) && chars.get(i + 2) == Some(&'+') => out.push_str("\\U+005C"),
+            c if utf8 || c.is_ascii() => out.push(c),
             c => {
                 let mut units = [0u16; 2];
                 for u in c.encode_utf16(&mut units) {
@@ -568,6 +567,19 @@ pub fn records(tags: &[Tag]) -> Vec<(String, Vec<Tag>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn literal_escape_text_roundtrips() {
+        for utf8 in [false, true] {
+            for text in ["\\U+00E9", "\\M+183A4F", "a\\nb \\P", "\\\\U+00E9", "\\U+005C"] {
+                let tags = vec![Tag::s(8, text)];
+                let back = parse_ascii(&write_ascii_as(&tags, utf8)).unwrap();
+                assert_eq!(back, tags, "utf8={utf8} {text}");
+                let back = parse_binary(&write_binary(&tags, utf8)).unwrap();
+                assert_eq!(back[1..], tags[..], "binary utf8={utf8} {text}");
+            }
+        }
+    }
 
     #[test]
     fn ascii_roundtrip() {
