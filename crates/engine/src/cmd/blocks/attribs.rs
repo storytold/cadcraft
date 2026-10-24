@@ -16,6 +16,22 @@ pub(super) fn attdisp_spec() -> CommandSpec {
     CommandSpec::new("attdisp", "Attribute Display", run_attdisp)
         .params("{mode: \"normal\" | \"on\" | \"off\"} (sets ATTMODE to 1 / 2 / 0) → {attmode}")
         .interactive(|_| Ok(Box::new(AttdispM)))
+        .transparent()
+}
+
+/// Returns the View > Attribute Display > Normal, On and Off commands, which set ATTMODE as the matching ATTDISP option does.
+pub(super) fn attdisp_menu_specs() -> Vec<CommandSpec> {
+    vec![
+        CommandSpec::new("attdisp.normal", "Normal", |s, _| set_attmode(s, 1))
+            .menu(&["View", "Attribute Display", "Normal"])
+            .params("{} (ATTDISP Normal: ATTMODE 1) → {attmode}"),
+        CommandSpec::new("attdisp.on", "On", |s, _| set_attmode(s, 2))
+            .menu(&["View", "Attribute Display", "On"])
+            .params("{} (ATTDISP ON: ATTMODE 2) → {attmode}"),
+        CommandSpec::new("attdisp.off", "Off", |s, _| set_attmode(s, 0))
+            .menu(&["View", "Attribute Display", "Off"])
+            .params("{} (ATTDISP OFF: ATTMODE 0) → {attmode}"),
+    ]
 }
 
 pub(super) fn attsync_spec() -> CommandSpec {
