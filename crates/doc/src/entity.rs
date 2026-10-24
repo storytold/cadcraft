@@ -399,8 +399,13 @@ impl MultilineAttrib {
     /// This text placed by `m` (a block reference's transform, for its attribute made from a
     /// definition).
     pub fn transformed(&self, m: &Mat3) -> MultilineAttrib {
+        self.transformed_dz(m, 0.0)
+    }
+
+    /// [`MultilineAttrib::transformed`] with an additional translation along Z.
+    pub fn transformed_dz(&self, m: &Mat3, dz: f64) -> MultilineAttrib {
         let mut k = EntityKind::MText(self.mtext.clone());
-        k.transform(m);
+        k.transform_dz(m, dz);
         let mtext = if let EntityKind::MText(t) = k { t } else { self.mtext.clone() };
         MultilineAttrib { mtext, read_as: self.read_as.clone() }
     }
@@ -409,8 +414,13 @@ impl MultilineAttrib {
 impl Attrib {
     /// Move a multiline attribute's text by `m` along with the attribute (nothing for others).
     pub fn transform_multiline(&mut self, m: &Mat3) {
+        self.transform_multiline_dz(m, 0.0);
+    }
+
+    /// [`Attrib::transform_multiline`] with an additional translation along Z.
+    pub fn transform_multiline_dz(&mut self, m: &Mat3, dz: f64) {
         if let Some(ml) = &mut self.multiline {
-            *ml = ml.transformed(m);
+            *ml = ml.transformed_dz(m, dz);
         }
     }
 
@@ -1177,11 +1187,19 @@ impl EntityKind {
 
     /// Apply a 2D affine transform (move/rotate/uniform scale/mirror). Non-uniform scale turns
     /// circles into ellipses only where the kind supports it; otherwise radii use the mean scale.
+    /// Z coordinates pass through untouched; for a translation along Z see `transform_dz`.
     pub fn transform(&mut self, m: &Mat3) {
+        self.transform_dz(m, 0.0);
+    }
+
+    /// [`EntityKind::transform`] with an additional translation along Z (MOVE/COPY with a Z
+    /// delta). Planar operations (ROTATE/SCALE/MIRROR) pass 0 and leave Z untouched.
+    pub fn transform_dz(&mut self, m: &Mat3, dz: f64) {
         let t3 = |p: &mut Vec3| {
             let q = m.apply(p.xy());
             p.x = q.x;
             p.y = q.y;
+            p.z += dz;
         };
         let s = m.scale_factor();
         let rot = m.rotation();
@@ -1239,6 +1257,7 @@ impl EntityKind {
                     }
                 }
                 p.const_width *= s;
+                p.elevation += dz;
             }
             EntityKind::Polyline3d(p) => p.points.iter_mut().for_each(t3),
             EntityKind::Spline(sp) => sp.transform(m),
@@ -1256,10 +1275,10 @@ impl EntityKind {
                 t3(&mut r.base);
                 r.dir = m.apply_vec(r.dir.xy()).normalized().to3(0.0);
             }
-            EntityKind::Text(t) => transform_text(t, m, s, rot, mirror),
+            EntityKind::Text(t) => transform_text(t, m, s, rot, mirror, dz),
             EntityKind::AttDef(a) => {
-                transform_text(&mut a.text, m, s, rot, mirror);
-                a.transform_multiline(m);
+                transform_text(&mut a.text, m, s, rot, mirror, dz);
+                a.transform_multiline_dz(m, dz);
             }
             EntityKind::MText(t) => {
                 t3(&mut t.insert);
@@ -1281,8 +1300,8 @@ impl EntityKind {
                     i.rotation = cadcraft_geom::norm_angle(rot - (i.rotation - rot));
                 }
                 for a in &mut i.attribs {
-                    transform_text(&mut a.text, m, s, rot, false);
-                    a.transform_multiline(m);
+                    transform_text(&mut a.text, m, s, rot, false, dz);
+                    a.transform_multiline_dz(m, dz);
                 }
                 i.col_spacing *= s;
                 i.row_spacing *= s;
@@ -1320,7 +1339,7 @@ impl EntityKind {
                 if let Some(b) = &mut ml.block {
                     // Transformed exactly like a block reference.
                     let mut k = EntityKind::Insert(b.clone());
-                    k.transform(m);
+                    k.transform_dz(m, dz);
                     if let EntityKind::Insert(nb) = k {
                         *b = nb;
                     }
@@ -1338,6 +1357,7 @@ impl EntityKind {
                 h.scale *= s;
                 h.angle = cadcraft_geom::norm_angle(h.angle + rot);
                 h.origin = m.apply(h.origin);
+                h.elevation += dz;
             }
             EntityKind::Solid(so) | EntityKind::Trace(so) => so.corners.iter_mut().for_each(t3),
             EntityKind::Face3d(f) => f.corners.iter_mut().for_each(t3),
@@ -1458,14 +1478,16 @@ impl EntityKind {
     }
 }
 
-fn transform_text(t: &mut Text, m: &Mat3, s: f64, rot: f64, mirror: bool) {
+fn transform_text(t: &mut Text, m: &Mat3, s: f64, rot: f64, mirror: bool, dz: f64) {
     let q = m.apply(t.insert.xy());
     t.insert.x = q.x;
     t.insert.y = q.y;
+    t.insert.z += dz;
     if let Some(a) = &mut t.align_pt {
         let q = m.apply(a.xy());
         a.x = q.x;
         a.y = q.y;
+        a.z += dz;
     }
     t.height *= s;
     // MIRRTEXT = 0 (the default): mirrored text keeps reading left to right.
