@@ -56,6 +56,8 @@ fn the_options_menu_hides_a_tool_and_remembers_the_choice() {
 
     harness.get_by_label("Draw options").click();
     harness.run_steps(5);
+    harness.get_by_role_and_label(egui::accesskit::Role::CheckBox, HIDDEN).scroll_to_me();
+    harness.run_steps(5);
     harness.get_by_role_and_label(egui::accesskit::Role::CheckBox, HIDDEN).click();
     harness.run_steps(5);
 
@@ -71,6 +73,8 @@ fn a_hidden_tool_leaves_the_palette_and_show_all_puts_it_back() {
     assert!(harness.query_by_label("Construction Line").is_some(), "the rest of the category stays");
 
     harness.get_by_label("Draw options").click();
+    harness.run_steps(5);
+    harness.get_by_label("Show All").scroll_to_me();
     harness.run_steps(5);
     harness.get_by_label("Show All").click();
     harness.run_steps(5);

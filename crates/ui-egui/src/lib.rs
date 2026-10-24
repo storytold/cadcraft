@@ -22,6 +22,7 @@ pub mod control;
 pub mod credits;
 pub mod dialogs;
 pub mod docking;
+mod dropdown;
 pub mod hatchdlg;
 mod mtext_editor;
 pub mod spacemouse;
