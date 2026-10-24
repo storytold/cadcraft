@@ -1,7 +1,8 @@
 //! Paper sizes and the layout sheet (paper rectangle, printable area) for paper space.
 //!
-//! Paper-space units are millimetres in metric drawings (`MEASUREMENT` = 1) and on layouts whose
-//! page setup is in millimetres, and inches otherwise. The sheet's lower-left corner is the paper-space origin.
+//! Paper-space units are millimetres in metric drawings (metric `INSUNITS`, else `MEASUREMENT`
+//! = 1) and on layouts whose page setup is in millimetres, and inches otherwise. The sheet's
+//! lower-left corner is the paper-space origin.
 
 use cadcraft_doc::{Drawing, PageSetup};
 use cadcraft_geom::{Bounds2, Vec2};
@@ -77,13 +78,28 @@ pub fn paper_size(name: &str) -> Option<&'static PaperSize> {
 }
 
 /// Millimetres per paper-space unit for a drawing (1 for metric, 25.4 for imperial).
+///
+/// The drawing's length unit (INSUNITS) decides; a unitless drawing (`INSUNITS` 0 or absent,
+/// as files without `$INSUNITS` are read, #1209) falls back to MEASUREMENT. MEASUREMENT only
+/// chooses the imperial or ISO hatch and linetype libraries (#1649, #1826), so a metric drawing
+/// with MEASUREMENT 0 — what UNITS leaves when the user picks millimetres, and what AutoCAD
+/// writes for many metric drawings — plotted everything 25.4 times too large (#1828).
 pub fn paper_unit_mm(d: &Drawing) -> f64 {
-    if d.header.i64("MEASUREMENT", 0) == 1 { 1.0 } else { 25.4 }
+    match d.header.i64("INSUNITS", 0) {
+        // Inches, feet, miles, microinches, mils, yards and US survey units.
+        1 | 2 | 3 | 8 | 9 | 10 | 21 | 22 | 23 | 24 => 25.4,
+        // Millimetres, centimetres, metres, kilometres, angstroms, nanometres, microns,
+        // decimetres to gigametres, astronomical units, light years and parsecs.
+        4..=7 | 11..=20 => 1.0,
+        // Unitless: as MEASUREMENT says.
+        _ if d.header.i64("MEASUREMENT", 0) == 1 => 1.0,
+        _ => 25.4,
+    }
 }
 
 /// Millimetres per paper-space unit on a layout with page setup `page`: millimetres when the
-/// page says so (plot paper units mm), else as the drawing's MEASUREMENT says. Drawings from
-/// AutoCAD often have MEASUREMENT 0 with layouts in millimetres (#1058).
+/// page says so (plot paper units mm), else as the drawing's length unit (else MEASUREMENT)
+/// says. Drawings from AutoCAD often have MEASUREMENT 0 with layouts in millimetres (#1058).
 pub fn page_unit_mm(d: &Drawing, page: &PageSetup) -> f64 {
     if page.paper_mm { 1.0 } else { paper_unit_mm(d) }
 }
@@ -138,6 +154,25 @@ pub fn sheet(d: &Drawing, layout: &str) -> Option<Sheet> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paper_units_follow_the_length_unit() {
+        let mut m = Drawing::new_metric();
+        assert_eq!(paper_unit_mm(&m), 1.0);
+        m.header.set_i64("MEASUREMENT", 0);
+        assert_eq!(paper_unit_mm(&m), 1.0, "the metric length unit wins over MEASUREMENT");
+        let mut i = Drawing::new_imperial();
+        assert_eq!(paper_unit_mm(&i), 25.4);
+        i.header.set_i64("INSUNITS", 0);
+        assert_eq!(paper_unit_mm(&i), 25.4, "unitless falls back to MEASUREMENT 0");
+        i.header.set_i64("MEASUREMENT", 1);
+        assert_eq!(paper_unit_mm(&i), 1.0, "unitless falls back to MEASUREMENT 1");
+        i.header.set_i64("INSUNITS", 6);
+        assert_eq!(paper_unit_mm(&i), 1.0, "metres are metric");
+        i.header.set_i64("INSUNITS", 2);
+        i.header.set_i64("MEASUREMENT", 1);
+        assert_eq!(paper_unit_mm(&i), 25.4, "feet are imperial");
+    }
 
     #[test]
     fn lookup_and_sheet() {
