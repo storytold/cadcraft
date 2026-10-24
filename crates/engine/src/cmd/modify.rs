@@ -127,13 +127,9 @@ pub(crate) fn transform_entities(s: &mut Session, hs: &[Handle], m: &Mat3, copy:
 
 fn erase(s: &mut Session, hs: &[Handle]) -> Result<usize> {
     let d = s.doc_mut()?;
-    let mut n = 0;
-    for h in hs {
-        let locked = d.entity(*h).and_then(|e| d.layer(&e.common.layer)).is_some_and(|l| l.locked);
-        if !locked && d.remove_entity(*h).is_some() {
-            n += 1;
-        }
-    }
+    let editable: Vec<Handle> =
+        hs.iter().copied().filter(|h| !d.entity(*h).and_then(|e| d.layer(&e.common.layer)).is_some_and(|l| l.locked)).collect();
+    let n = d.remove_entities(&editable);
     s.set_selection(Vec::new());
     Ok(n)
 }

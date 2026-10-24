@@ -331,6 +331,17 @@ impl Drawing {
         self.space_mut(&sp)?.remove(h)
     }
 
+    /// Batch deletion across spaces, preserving the draw order of every surviving object.
+    pub fn remove_entities(&mut self, handles: &[Handle]) -> usize {
+        let mut spaces: std::collections::HashMap<Space, Vec<Handle>> = std::collections::HashMap::new();
+        for h in handles {
+            if let Some(space) = self.space_of(*h) {
+                spaces.entry(space).or_default().push(*h);
+            }
+        }
+        spaces.into_iter().filter_map(|(space, hs)| self.space_mut(&space).map(|store| store.remove_many(&hs).len())).sum()
+    }
+
     /// Add an entity to a space with a new handle, using the given common properties.
     pub fn add(&mut self, space: &Space, common: Common, kind: EntityKind) -> Result<Handle> {
         let h = self.new_handle();

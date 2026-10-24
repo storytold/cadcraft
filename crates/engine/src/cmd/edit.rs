@@ -462,9 +462,7 @@ fn run_cut(s: &mut Session, p: &Value) -> Result<Value> {
     hs.retain(|h| !super::curves::is_locked(s, *h));
     let n = copy_to_clip(s, &hs, None)?;
     let d = s.doc_mut()?;
-    for h in &hs {
-        d.remove_entity(*h);
-    }
+    d.remove_entities(&hs);
     s.set_selection(Vec::new());
     Ok(json!({ "cut": n }))
 }
@@ -506,12 +504,7 @@ fn run_clear(s: &mut Session, _p: &Value) -> Result<Value> {
     let mut hs = s.selection();
     hs.retain(|h| !super::curves::is_locked(s, *h));
     let d = s.doc_mut()?;
-    let mut n = 0;
-    for h in hs {
-        if d.remove_entity(h).is_some() {
-            n += 1;
-        }
-    }
+    let n = d.remove_entities(&hs);
     s.set_selection(Vec::new());
     Ok(json!({ "erased": n }))
 }

@@ -299,7 +299,7 @@ pub fn update(after: &mut Arc<Drawing>, before: &Drawing) -> usize {
         let d: &Drawing = after;
         let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities));
         for store in stores {
-            for e in store.iter() {
+            for e in store.associated_dimensions() {
                 let EntityKind::Dimension(dm) = &e.kind else { continue };
                 if dm.assoc.is_empty() {
                     continue;
