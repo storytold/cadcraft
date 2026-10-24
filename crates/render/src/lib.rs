@@ -410,10 +410,20 @@ impl Builder<'_> {
         // Plots note which filled outlines are font glyphs (see `DisplayList::texts`).
         let mut text = sh.text.iter().peekable();
         let pixel = if self.plotting { 0.0 } else { self.opts.min_dash * 0.5 };
+        // On screen, glyphs outside the area being looked at are left out, as hatch patterns
+        // are: a text-heavy drawing zoomed in otherwise filled every glyph of every text at the
+        // detail of that zoom (tens of millions of triangles, drawn every frame), and the canvas
+        // builds again when the view leaves the area (#666).
+        let view = if self.plotting { None } else { self.opts.view };
         for (i, g) in sh.glyphs.iter().enumerate() {
             if fill {
                 while text.next_if(|t| t.outline < i).is_some() {}
                 let glyph = text.next_if(|t| t.outline == i);
+                if let (Some(t), Some(v)) = (glyph, view)
+                    && !crate::text::may_show(crate::text::placement(t, ctx.xf), &v)
+                {
+                    continue;
+                }
                 let at = self.list.prims.len();
                 let len = if let Some(t) = glyph {
                     let xf = crate::text::placement(t, ctx.xf);

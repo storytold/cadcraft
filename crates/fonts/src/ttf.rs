@@ -14,8 +14,10 @@
 //! On native builds both start from the `CADCRAFT_FONTALT` / `CADCRAFT_FONTFALLBACK`
 //! environment variables.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, RwLock};
 
 use cadcraft_geom::Vec2;
@@ -474,6 +476,7 @@ pub fn register(name: &str, bytes: Vec<u8>) {
     g.files.insert(key(name), Arc::new(bytes));
     g.resolved.clear();
     g.fallback = Fallback::default();
+    changed();
 }
 
 /// Register font bytes that live for the whole process under a name; they are copied only when
@@ -486,6 +489,7 @@ pub(crate) fn register_static(name: &str, bytes: &'static [u8]) {
     g.paths.insert(k, Source::Static(bytes));
     g.resolved.clear();
     g.fallback = Fallback::default();
+    changed();
 }
 
 /// Normalise a style font name ("arial.ttf", "Arial", "ARIALBD.TTF") to a lookup key.
@@ -499,9 +503,98 @@ fn is_stroke_name(k: &str) -> bool {
     k.is_empty() || k.ends_with(".shx") || k == crate::BUILTIN_FONT.to_ascii_lowercase() || k == "txt" || k == "simplex" || k == "romans"
 }
 
+/// Bumped whenever a font lookup can answer differently (a font registered, FONTALT or
+/// FONTFALLBACK changed), so the per-thread caches start over.
+static GENERATION: AtomicU64 = AtomicU64::new(0);
+
+fn changed() {
+    // Release: a thread that sees the new generation also sees what changed.
+    GENERATION.fetch_add(1, Ordering::Release);
+}
+
+/// The generation now, taken before a lookup whose answer [`keep`] may cache.
+fn generation() -> u64 {
+    GENERATION.load(Ordering::Acquire)
+}
+
+/// `f` on this thread's cache, only when lookups haven't changed since `seen` ([`generation`]
+/// before the lookup): an answer found while a font was being registered may be the old one, and
+/// is used once but not kept.
+fn keep(seen: u64, f: impl FnOnce(&mut Local)) {
+    LOCAL.with(|l| {
+        let mut l = l.borrow_mut();
+        // Kept under `seen` itself: should lookups change after this check, the next lookup
+        // finds a newer generation and starts over without it.
+        if generation() != seen {
+            return;
+        }
+        if l.generation != seen {
+            *l = Local { generation: seen, ..Local::default() };
+        }
+        f(&mut l);
+    });
+}
+
+/// Most entries each per-thread cache holds before it starts over.
+const MAX_LOCAL: usize = 8192;
+
+/// Per-thread answers of [`find`] (by the name as given) and [`fallback_for`]. Display lists are
+/// built on all cores and look a font up for every text and a fallback for every character a
+/// text's font lacks (all of a CJK text's): through the shared tables each lookup took global
+/// locks, so text-heavy drawings spent most of their build waiting on them (#662, #666).
+#[derive(Default)]
+struct Local {
+    generation: u64,
+    find: HashMap<String, Option<Face>>,
+    fallback: HashMap<char, Option<Face>>,
+    /// FONTALT, asked for every text whose font isn't installed.
+    alt: Option<String>,
+    /// Glyph outlines, in front of the shared [`glyph_cache`] (whose lock every core reads).
+    glyphs: HashMap<GlyphCacheKey, Arc<GlyphOutline>>,
+    /// The points of the outlines in `glyphs`, held within [`MAX_LOCAL_GLYPH_POINTS`].
+    glyph_points: usize,
+}
+
+/// Most outline points each thread keeps in front of the shared cache: a part of its budget, since
+/// every core has its own and they keep outlines alive after the shared cache lets them go. An
+/// outline above a quarter of it is read from the shared cache each time.
+const MAX_LOCAL_GLYPH_POINTS: usize = MAX_SHAPED_POINTS / 16;
+
+thread_local! {
+    static LOCAL: RefCell<Local> = RefCell::new(Local::default());
+}
+
+/// `f` on this thread's cache, emptied first when lookups changed since it was filled.
+fn local<R>(f: impl FnOnce(&mut Local) -> R) -> R {
+    LOCAL.with(|l| {
+        let mut l = l.borrow_mut();
+        let generation = generation();
+        if l.generation != generation {
+            *l = Local { generation, ..Local::default() };
+        }
+        f(&mut l)
+    })
+}
+
 /// A face of an installed (or registered) font by file name or family name. Stroke-font names
 /// (".shx", empty) return `None`.
 pub fn find(name: &str) -> Option<Face> {
+    if let Some(r) = local(|l| l.find.get(name).cloned()) {
+        return r;
+    }
+    let seen = generation();
+    let r = find_shared(name);
+    keep(seen, |l| {
+        if l.find.len() >= MAX_LOCAL {
+            l.find.clear();
+        }
+        l.find.insert(name.to_string(), r.clone());
+    });
+    r
+}
+
+/// [`find`] through the shared table.
+fn find_shared(name: &str) -> Option<Face> {
     let k = key(name);
     if is_stroke_name(&k) {
         return None;
@@ -549,12 +642,19 @@ fn split_list(s: &str) -> Vec<String> {
 /// FONTALT: the font used for a text style font that can't be found. Empty = the built-in
 /// stroke font.
 pub fn font_alt() -> String {
-    prefs().alt.clone()
+    if let Some(a) = local(|l| l.alt.clone()) {
+        return a;
+    }
+    let seen = generation();
+    let a = prefs().alt.clone();
+    keep(seen, |l| l.alt = Some(a.clone()));
+    a
 }
 
 /// Set FONTALT ("" or "." clears it).
 pub fn set_font_alt(name: &str) {
     prefs().alt = clean_name(name);
+    changed();
 }
 
 /// FONTFALLBACK: fonts tried first for characters a text's font lacks, comma-separated.
@@ -565,6 +665,7 @@ pub fn fallback_fonts() -> String {
 /// Set FONTFALLBACK from a comma- or semicolon-separated list ("" or "." clears it).
 pub fn set_fallback_fonts(list: &str) {
     prefs().fallback = split_list(list);
+    changed();
 }
 
 /// Characters worth a fallback search (not spaces, controls or private-use code points).
@@ -579,6 +680,22 @@ pub fn fallback_for(c: char) -> Option<Face> {
     if !wants_fallback(c) {
         return None;
     }
+    if let Some(r) = local(|l| l.fallback.get(&c).cloned()) {
+        return r;
+    }
+    let seen = generation();
+    let r = fallback_shared(c);
+    keep(seen, |l| {
+        if l.fallback.len() >= MAX_LOCAL {
+            l.fallback.clear();
+        }
+        l.fallback.insert(c, r.clone());
+    });
+    r
+}
+
+/// [`fallback_for`] through the shared tables.
+fn fallback_shared(c: char) -> Option<Face> {
     let (list, alt) = {
         let p = prefs();
         (p.fallback.clone(), p.alt.clone())
@@ -618,9 +735,10 @@ enum GlyphKey {
 /// Cached glyph outlines keyed by (font bytes address, length, face, glyph). Fonts live for the
 /// whole process in the font table, so the address identifies them. A read-write lock: display
 /// lists are built on all cores and nearly every lookup is a hit, which a mutex serialized.
+type GlyphCacheKey = (usize, usize, u32, GlyphKey);
 #[derive(Default)]
 struct GlyphCache {
-    glyphs: HashMap<(usize, usize, u32, GlyphKey), Arc<GlyphOutline>>,
+    glyphs: HashMap<GlyphCacheKey, Arc<GlyphOutline>>,
     points: usize,
 }
 
@@ -753,6 +871,35 @@ pub fn glyph_contours(face: &Face, gid: u16) -> Arc<[Vec<Vec2>]> {
 /// Cache insertion clears existing entries when the glyph-count or aggregate point allowance would be exceeded.
 fn outline(face: &Face, k: GlyphKey) -> Arc<GlyphOutline> {
     let key = (face.bytes.as_ptr() as usize, face.bytes.len(), face.index, k);
+    if let Some(g) = local(|l| l.glyphs.get(&key).cloned()) {
+        return g;
+    }
+    let g = outline_shared(face, key);
+    local(|l| l.keep_glyph(key, &g));
+    g
+}
+
+impl Local {
+    /// Keep an outline in front of the shared cache, within [`MAX_LOCAL`] entries and
+    /// [`MAX_LOCAL_GLYPH_POINTS`] points (started over when either would be passed); an outline
+    /// above a quarter of the points isn't kept.
+    fn keep_glyph(&mut self, key: GlyphCacheKey, g: &Arc<GlyphOutline>) {
+        if g.points > MAX_LOCAL_GLYPH_POINTS / 4 {
+            return;
+        }
+        if self.glyphs.len() >= MAX_LOCAL || self.glyph_points.saturating_add(g.points) > MAX_LOCAL_GLYPH_POINTS {
+            self.glyphs.clear();
+            self.glyph_points = 0;
+        }
+        if self.glyphs.insert(key, g.clone()).is_none() {
+            self.glyph_points = self.glyph_points.saturating_add(g.points);
+        }
+    }
+}
+
+/// [`outline`] through the shared cache.
+fn outline_shared(face: &Face, key: GlyphCacheKey) -> Arc<GlyphOutline> {
+    let k = key.3;
     if let Some(g) = glyph_cache().read().unwrap_or_else(PoisonError::into_inner).glyphs.get(&key) {
         return g.clone();
     }
@@ -997,5 +1144,45 @@ mod geometry_budget_tests {
         assert!(!shaped.is_empty());
         assert_eq!(shaped.glyphs, vec![contours]);
         assert!(shaped.text.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod local_cache_tests {
+    use super::*;
+
+    /// An answer looked up while lookups changed (a font registered meanwhile) is not kept: the
+    /// thread asks again instead of keeping a stale "not found".
+    #[test]
+    fn a_lookup_overtaken_by_a_change_is_not_kept() {
+        let seen = generation();
+        changed();
+        keep(seen, |l| l.alt = Some("stale".into()));
+        assert_ne!(local(|l| l.alt.clone()), Some("stale".to_string()));
+        let now = generation();
+        keep(now, |l| l.alt = Some("fresh".into()));
+        // Kept unless yet another change came in between (other tests may register fonts).
+        let cached = local(|l| l.alt.clone());
+        if generation() == now {
+            assert_eq!(cached, Some("fresh".to_string()));
+        }
+    }
+
+    /// Each thread's outlines stay within [`MAX_LOCAL_GLYPH_POINTS`], and an outline too large
+    /// for it isn't kept.
+    #[test]
+    fn a_threads_outlines_stay_within_their_point_budget() {
+        let mut l = Local::default();
+        let key = |i: u32| (0usize, 0usize, 0u32, GlyphKey::Id(i));
+        let big = MAX_LOCAL_GLYPH_POINTS / 8;
+        let g = Arc::new(GlyphOutline { points: big, cap: 1.0, ..Default::default() });
+        for i in 0..100 {
+            l.keep_glyph(key(i), &g);
+            assert!(l.glyph_points <= MAX_LOCAL_GLYPH_POINTS, "{}", l.glyph_points);
+            assert_eq!(l.glyph_points, l.glyphs.len() * big);
+        }
+        let huge = Arc::new(GlyphOutline { points: MAX_LOCAL_GLYPH_POINTS / 2, cap: 1.0, ..Default::default() });
+        l.keep_glyph(key(500), &huge);
+        assert!(!l.glyphs.contains_key(&key(500)), "an outline above a quarter of the budget isn't kept");
     }
 }

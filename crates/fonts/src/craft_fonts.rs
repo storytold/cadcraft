@@ -65,6 +65,14 @@ mod tests {
     }
 
     #[test]
+    fn lookups_cached_per_thread_see_a_font_registered_later() {
+        // Asked before it exists (cached as missing), then registered: found.
+        assert!(crate::ttf::find("CADCraft Late Test").is_none());
+        crate::ttf::register_static("cadcraftlatetest-regular", &TINY_SFNT);
+        assert!(crate::ttf::find("CADCraft Late Test").is_some());
+    }
+
+    #[test]
     fn no_barred_family_is_embedded() {
         // AGENTS.md: no Adobe fonts. Noto Sans CJK is Source Han Sans; `build.rs` skips them.
         const BARRED: [&str; 5] = ["Source Han", "Source Serif", "Source Sans", "Noto Sans CJK", "Noto Serif CJK"];
