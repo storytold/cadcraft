@@ -732,6 +732,7 @@
 	Rename Text Style	문자 스타일 이름 바꾸기
 	Rename...	이름 바꾸기...
 	Repeat {command}	{command} 반복
+	Replace Block...	블록 바꾸기...
 	Requires a point (x,y, @dx,dy or @d<a).	점이 필요합니다(x,y, @dx,dy 또는 @d<a).
 	Reset Palettes	팔레트 초기화
 	Restore	복원

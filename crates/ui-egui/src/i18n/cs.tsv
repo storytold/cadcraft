@@ -730,6 +730,7 @@
 	Rename Text Style	Přejmenovat styl textu
 	Rename...	Přejmenovat...
 	Repeat {command}	Opakovat {command}
+	Replace Block...	Nahradit blok...
 	Requires a point (x,y, @dx,dy or @d<a).	Je vyžadován bod (x,y, @dx,dy nebo @d<a).
 	Reset Palettes	Obnovit palety
 	Restore	Obnovit

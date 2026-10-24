@@ -862,6 +862,7 @@
 	Rename Text Style	Metin Stilini Yeniden Adlandır
 	Rename...	Yeniden Adlandır...
 	Repeat {command}	Yinele: {command}
+	Replace Block...	Bloğu Değiştir...
 	Requires a point (x,y, @dx,dy or @d<a).	Bir nokta gerekir (x,y, @dx,dy veya @d<a).
 	Reset Palettes	Paletleri Sıfırla
 	Reset Panel Layout	Panel Düzenini Sıfırla

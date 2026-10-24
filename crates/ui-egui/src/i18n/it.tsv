@@ -742,6 +742,7 @@ menu	Modify	Edita
 	Rename Text Style	Rinomina stile di testo
 	Rename...	Rinomina...
 	Repeat {command}	Ripeti {command}
+	Replace Block...	Sostituisci blocco...
 	Requires a point (x,y, @dx,dy or @d<a).	Richiede un punto (x,y, @dx,dy o @d<a).
 	Reset Palettes	Reimposta tavolozze
 	Restore	Ripristina

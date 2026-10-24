@@ -617,6 +617,7 @@
 	Rename Text Style	重命名文字样式
 	Rename...	重命名...
 	Repeat {command}	重复 {command}
+	Replace Block...	替换块...
 	Requires a point (x,y, @dx,dy or @d<a).	需要一个点 (x,y, @dx,dy 或 @d<a)。
 	Reset Palettes	重置选项板
 	Restore	恢复

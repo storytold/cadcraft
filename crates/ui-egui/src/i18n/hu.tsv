@@ -861,6 +861,7 @@
 	Rename Text Style	Szövegstílus átnevezése
 	Rename...	Átnevezés...
 	Repeat {command}	Ismétlés: {command}
+	Replace Block...	Blokk cseréje...
 	Requires a point (x,y, @dx,dy or @d<a).	Pontot kell megadni (x,y, @dx,dy vagy @d<a).
 	Reset Palettes	Paletták visszaállítása
 	Reset Panel Layout	Panelelrendezés visszaállítása

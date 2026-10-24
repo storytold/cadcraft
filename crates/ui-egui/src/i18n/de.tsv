@@ -622,6 +622,7 @@
 	Rename Text Style	Textstil umbenennen
 	Rename...	Umbenennen...
 	Repeat {command}	{command} wiederholen
+	Replace Block...	Block ersetzen...
 	Requires a point (x,y, @dx,dy or @d<a).	Erfordert einen Punkt (x,y, @dx,dy oder @d<a).
 	Reset Palettes	Paletten zurücksetzen
 	Restore	Wiederherstellen

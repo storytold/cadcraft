@@ -824,6 +824,7 @@
 	Rename Text Style	Byt namn på textstil
 	Rename...	Byt namn...
 	Repeat {command}	Upprepa {command}
+	Replace Block...	Ersätt block...
 	Requires a point (x,y, @dx,dy or @d<a).	Kräver en punkt (x,y, @dx,dy eller @d<a).
 	Reset Palettes	Återställ paletter
 	Restore	Återställ

@@ -616,6 +616,7 @@
 	Rename Text Style	Переименовать текстовый стиль
 	Rename...	Переименовать...
 	Repeat {command}	Повторить {command}
+	Replace Block...	Заменить блок...
 	Requires a point (x,y, @dx,dy or @d<a).	Требуется точка (x,y, @dx,dy или @d<a).
 	Reset Palettes	Сбросить палитры
 	Restore	Восстановить

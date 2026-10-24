@@ -785,6 +785,7 @@
 	Rename Text Style	إعادة تسمية نمط النص
 	Rename...	إعادة تسمية...
 	Repeat {command}	تكرار {command}
+	Replace Block...	استبدال الكتلة...
 	Requires a point (x,y, @dx,dy or @d<a).	يتطلب نقطة (x,y أو @dx,dy أو @d<a).
 	Reset Palettes	إعادة تعيين اللوحات
 	Reset Panel Layout	إعادة تعيين تخطيط اللوحات

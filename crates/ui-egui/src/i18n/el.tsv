@@ -852,6 +852,7 @@
 	Rename Text Style	Μετονομασία στυλ κειμένου
 	Rename...	Μετονομασία...
 	Repeat {command}	Επανάληψη εντολής {command}
+	Replace Block...	Αντικατάσταση μπλοκ...
 	Requires a point (x,y, @dx,dy or @d<a).	Απαιτείται σημείο (x,y, @dx,dy ή @d<a).
 	Reset keeps the interface language.	Η επαναφορά διατηρεί τη γλώσσα του περιβάλλοντος.
 	Reset Palettes	Επαναφορά παλετών

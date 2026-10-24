@@ -828,6 +828,7 @@
 	Rename Text Style	Renombrar estilo de texto
 	Rename...	Renombrar...
 	Repeat {command}	Repetir {command}
+	Replace Block...	Reemplazar bloque...
 	Requires a point (x,y, @dx,dy or @d<a).	Se requiere un punto (x,y, @dx,dy o @d<a).
 	Reset Palettes	Restablecer paletas
 	Restore	Restaurar
