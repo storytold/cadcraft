@@ -15,10 +15,12 @@
 
 pub mod bidi;
 mod complex;
+pub mod legacy_encoding;
 mod mtext;
 mod stroke;
 pub mod subset;
 pub mod ttf;
+pub use legacy_encoding::vietnamese;
 
 use cadcraft_geom::{Bounds2, Vec2};
 
@@ -281,10 +283,10 @@ pub enum TextFont {
 }
 
 impl TextFont {
-    /// Resolve a text style font name: an installed TTF/OTF/TTC when found; else, for a font we
-    /// can't find (an SHX file, a missing TTF), the FONTALT font ([`ttf::font_alt`]) when set;
-    /// else the stroke font.
-    pub fn resolve(name: &str) -> TextFont {
+    /// Resolve a text style font name without applying legacy-encoding face substitutions:
+    /// an installed TTF/OTF/TTC when found; else, for a font we can't find (an SHX file, a missing TTF),
+    /// the FONTALT font ([`ttf::font_alt`]) when set; else the stroke font.
+    pub fn resolve_raw(name: &str) -> TextFont {
         if let Some(f) = ttf::find(name) {
             return TextFont::Outline(f);
         }
@@ -293,6 +295,31 @@ impl TextFont {
             return TextFont::Stroke;
         }
         ttf::find(&ttf::font_alt()).map(TextFont::Outline).unwrap_or(TextFont::Stroke)
+    }
+
+    /// Resolve a text style font name: substitutes a modern Unicode outline face matching the profile's
+    /// FontClass if the font is identified as a legacy-encoded font (e.g. TCVN3, VNI);
+    /// otherwise delegates to [`Self::resolve_raw`].
+    pub fn resolve(name: &str) -> TextFont {
+        let n = name.trim();
+        if n.is_empty() || n.eq_ignore_ascii_case(BUILTIN_FONT) {
+            return TextFont::Stroke;
+        }
+        // Legacy 8-bit fonts lack Unicode CMAP tables. Once text is transcoded to Unicode NFC,
+        // substitute a modern Unicode outline face matching the profile's FontClass.
+        if let Some(class) = legacy_encoding::substitute_face(n) {
+            let face = match class {
+                legacy_encoding::FontClass::Serif => ttf::find("times new roman")
+                    .or_else(|| ttf::find("times"))
+                    .or_else(|| ttf::find("liberation serif"))
+                    .or_else(|| ttf::find("arial")),
+                legacy_encoding::FontClass::Sans => ttf::find("arial").or_else(|| ttf::find("segoe ui")).or_else(|| ttf::find("dejavu sans")),
+            };
+            if let Some(f) = face {
+                return TextFont::Outline(f);
+            }
+        }
+        Self::resolve_raw(name)
     }
     pub fn is_outline(&self) -> bool {
         matches!(self, TextFont::Outline(_))
@@ -639,6 +666,19 @@ mod tests {
         assert!(u[0].1 && u[1].1 && !u[2].1);
         assert_eq!(decode_controls("%%065")[0].0, 'A');
         assert_eq!(decode_controls("%%").len(), 2);
+    }
+
+    #[test]
+    fn test_shape_hinh_dang() {
+        let sh = shape_stroke("HÌNH DÁNG", 1.0, 1.0, 0.0);
+        assert!(sh.width > 5.0);
+        let fallback_available = ["arial", "segoe ui", "dejavu sans"].into_iter().any(|name| crate::ttf::find(name).is_some());
+        let font = TextFont::resolve("VHELVCN.TTF");
+        if fallback_available {
+            assert!(font.is_outline());
+        } else {
+            assert!(matches!(font, TextFont::Stroke));
+        }
     }
 
     #[test]

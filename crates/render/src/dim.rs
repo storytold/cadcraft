@@ -372,7 +372,7 @@ pub fn format_linear_value(v: f64, st: &DimStyle) -> String {
 /// alternate units, then the user's override text (`<>` = the measurement). DIMRND rounds the
 /// measurement (and so the limits) only: tolerances are never rounded and alternate units
 /// round by DIMALTRND.
-fn linear_text(meas: f64, d: &Dimension, st: &DimStyle, prefix: &str) -> String {
+fn linear_text(meas: f64, d: &Dimension, st: &DimStyle, prefix: &str, hint: Option<&str>) -> String {
     let v = meas * st.linear_factor;
     let nf = NumFormat::from_style(st);
     let main = if st.limits {
@@ -382,16 +382,17 @@ fn linear_text(meas: f64, d: &Dimension, st: &DimStyle, prefix: &str) -> String 
     } else {
         format!("{prefix}{}", format_linear(v, &nf).1)
     };
-    let mut s = post(&st.post, &main);
+    let mut s = post(&st.post, &main, hint);
     if st.tolerance && !st.limits {
         let tf = NumFormat { decimals: st.tol_decimals, zin: st.tol_zero_suppression, round: 0.0, ..nf.clone() };
         // DIMPOST's suffix (what follows `<>`, or all of it) also goes on the tolerance values.
-        let suffix = st.post.split_once("<>").map_or(st.post.as_str(), |(_, after)| after);
+        let raw_suffix = st.post.split_once("<>").map_or(st.post.as_str(), |(_, after)| after);
+        let suffix = cadcraft_fonts::legacy_encoding::transcode(raw_suffix, hint);
         if (st.tol_plus - st.tol_minus).abs() < 1e-12 {
             s += &format!("%%p{}{suffix}", format_linear(st.tol_plus, &tf).1);
         } else {
-            let plus = format_linear(st.tol_plus, &tf).1 + suffix;
-            let minus = format_linear(st.tol_minus, &tf).1 + suffix;
+            let plus = format_linear(st.tol_plus, &tf).1 + &suffix;
+            let minus = format_linear(st.tol_minus, &tf).1 + &suffix;
             let sign = |x: &str, pos: char| if x.trim_start_matches(['0', '.', ',']).is_empty() { x.to_string() } else { format!("{pos}{x}") };
             let (plus, minus) =
                 (sign(&plus, '+'), if st.tol_minus < 0.0 { format!("+{}", minus.trim_start_matches('-')) } else { sign(&minus, '-') });
@@ -410,15 +411,19 @@ fn linear_text(meas: f64, d: &Dimension, st: &DimStyle, prefix: &str) -> String 
         };
         let af = NumFormat { unit, decimals: st.alt_decimals, zin: st.alt_zero_suppression, round: st.alt_round, frac, ..nf };
         let alt = format_linear(v * st.alt_factor, &af).1;
-        s += &format!(" [{}]", post(&st.alt_post, &alt));
+        s += &format!(" [{}]", post(&st.alt_post, &alt, hint));
     }
-    inspected(apply_override(&s, d), d)
+    inspected(apply_override(&s, d, st, hint), d, hint)
 }
 
 /// DIMINSPECT: the label and the rate either side of the value, two spaces apart.
-fn inspected(value: String, d: &Dimension) -> String {
+fn inspected(value: String, d: &Dimension, hint: Option<&str>) -> String {
     match &d.marks.inspect {
-        Some(ins) => [ins.label.as_str(), value.as_str(), ins.rate.as_str()].iter().filter(|p| !p.is_empty()).copied().collect::<Vec<_>>().join("  "),
+        Some(ins) => {
+            let label = cadcraft_fonts::legacy_encoding::transcode(&ins.label, hint);
+            let rate = cadcraft_fonts::legacy_encoding::transcode(&ins.rate, hint);
+            [label.as_ref(), value.as_str(), rate.as_ref()].into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join("  ")
+        }
         None => value,
     }
 }
@@ -430,25 +435,28 @@ fn tol_height_code(st: &DimStyle) -> String {
 }
 
 /// Apply measurement placeholders or append a dimension suffix, bounding the resulting UTF-8 text.
-fn post(template: &str, meas: &str) -> String {
-    if template.contains("<>") {
-        bounded_replace(template, meas)
+fn post(template: &str, meas: &str, hint: Option<&str>) -> String {
+    let t = cadcraft_fonts::legacy_encoding::transcode(template, hint);
+    if t.contains("<>") {
+        bounded_replace(&t, meas)
     } else {
         let mut out = String::new();
         append_dim_text(&mut out, meas);
-        append_dim_text(&mut out, template);
+        append_dim_text(&mut out, &t);
         out
     }
 }
 
 /// Apply dimension text overrides: empty uses the base, whitespace suppresses text, and other text substitutes it.
-fn apply_override(base: &str, d: &Dimension) -> String {
+fn apply_override(base: &str, d: &Dimension, st: &DimStyle, hint: Option<&str>) -> String {
     if d.text.is_empty() {
         base.to_string()
     } else if d.text.trim().is_empty() {
         String::new()
     } else {
-        bounded_replace(&d.text, base)
+        let hint = hint.or_else(|| cadcraft_fonts::legacy_encoding::font_hint(&[&st.text_style]));
+        let text = cadcraft_fonts::legacy_encoding::transcode(&d.text, hint);
+        bounded_replace(&text, base)
     }
 }
 
@@ -517,6 +525,7 @@ pub struct DimText {
     pub fixed_height: f64,
     pub width_factor: f64,
     pub oblique: f64,
+    pub font_hint: Option<String>,
 }
 
 /// Generate the geometry of a dimension with the stroke font.
@@ -527,6 +536,7 @@ pub fn dimension_geometry(d: &Dimension, st: &DimStyle, dimscale: f64) -> DimGeo
 /// Generate the geometry of a dimension. The dimension's own overrides are applied to `st`.
 pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font: &DimText) -> DimGeometry {
     let st = &st.with_overrides(&d.overrides);
+    let hint = font.font_hint.as_deref().or_else(|| cadcraft_fonts::legacy_encoding::font_hint(&[&st.text_style]));
     let k = st.effective_scale(dimscale);
     let asz = st.arrow_size * k;
     let th = if font.fixed_height > 0.0 { font.fixed_height } else { st.text_height * k };
@@ -585,7 +595,7 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
             let f2 = foot(p2);
             // The measurement is along the dimension direction whatever the extension lines do.
             let meas = (p2 - p1).dot(dir).abs();
-            g.mtext = linear_text(meas, d, st, "");
+            g.mtext = linear_text(meas, d, st, "", hint);
             g.measurement = meas;
             // From here on: the length drawn between the extension lines.
             let meas = f1.dist(f2);
@@ -777,7 +787,7 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
             let r = center.dist(tip);
             let j = d.marks.jogged.clone().unwrap_or_default();
             let (o, jp) = (j.center.xy(), j.jog.xy());
-            g.mtext = linear_text(r, d, st, "R");
+            g.mtext = linear_text(r, d, st, "R", hint);
             // A NaN or infinite radius leaves no line to draw (and NaN is no bound for `clamp`).
             if !r.is_finite() {
                 break 'jogged;
@@ -810,7 +820,7 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
             let radius = matches!(d.kind, DimKind::Radius);
             let (center, r) = if radius { (a, a.dist(b)) } else { (a.mid(b), a.dist(b) / 2.0) };
             let meas = if radius { r } else { 2.0 * r };
-            g.mtext = linear_text(meas, d, st, if radius { "R" } else { "%%c" });
+            g.mtext = linear_text(meas, d, st, if radius { "R" } else { "%%c" }, hint);
             g.measurement = meas;
             let (tw, tht) = measure(&g.mtext);
             let u = (b - center).normalized();
@@ -905,7 +915,7 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
             let azin = (st.angular_zero_suppression & 3) * 4;
             let txt = format_angle_with_separator(sweep, st.angular_unit, st.angular_decimals, azin, &st.decimal_separator);
             // DIMPOST is a linear-dimension prefix/suffix; angles have their own format only.
-            g.mtext = inspected(apply_override(&txt, d), d);
+            g.mtext = inspected(apply_override(&txt, d, st, hint), d, hint);
             let mut pts = Vec::new();
             arc.tessellate(r * 1e-3, &mut pts);
             g.dim(pts);
@@ -940,7 +950,7 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
             let leader_end = d.p14.xy();
             let origin = d.defpt.xy();
             let meas = if x_type { (feature.x - origin.x).abs() } else { (feature.y - origin.y).abs() };
-            g.mtext = linear_text(meas, d, st, "");
+            g.mtext = linear_text(meas, d, st, "", hint);
             g.measurement = meas;
             let (tw, _) = measure(&g.mtext);
             g.dim(vec![feature, leader_end]);
@@ -959,7 +969,7 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
             let arc = Arc::new(c, c.dist(d.defpt.xy()).max(1e-9), c.angle_to(d.p13.xy()), c.angle_to(d.p14.xy()));
             let meas = r * arc.sweep();
             // DIMARCSYM: the arc symbol before the text (0), over it (1) or none (2).
-            g.mtext = linear_text(meas, d, st, if st.arc_symbol == 0 { "⌒" } else { "" });
+            g.mtext = linear_text(meas, d, st, if st.arc_symbol == 0 { "⌒" } else { "" }, hint);
             g.measurement = meas;
             let mut pts = Vec::new();
             arc.tessellate(arc.radius * 1e-3, &mut pts);
@@ -1011,16 +1021,18 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
         // Widths of the label, value and rate as laid out: the two spaces between parts measured
         // in "x  x", the value is what the rest leaves.
         let gap2 = (measure("x  x").0 - 2.0 * measure("x").0).max(0.0);
-        let (wl, wr) = (measure(&ins.label).0, measure(&ins.rate).0);
-        let seps = usize::from(!ins.label.is_empty()) + usize::from(!ins.rate.is_empty());
+        let label = cadcraft_fonts::legacy_encoding::transcode(&ins.label, hint);
+        let rate = cadcraft_fonts::legacy_encoding::transcode(&ins.rate, hint);
+        let (wl, wr) = (measure(&label).0, measure(&rate).0);
+        let seps = usize::from(!label.is_empty()) + usize::from(!rate.is_empty());
         let wv = (w - wl - wr - gap2 * seps as f64).max(0.0);
         let mut left = -w / 2.0;
-        if !ins.label.is_empty() {
+        if !label.is_empty() {
             left += wl;
             g.dim(vec![at(left + gap2 / 2.0, -hh), at(left + gap2 / 2.0, hh)]);
             left += gap2;
         }
-        if !ins.rate.is_empty() {
+        if !rate.is_empty() {
             left += wv;
             g.dim(vec![at(left + gap2 / 2.0, -hh), at(left + gap2 / 2.0, hh)]);
         }
@@ -1477,7 +1489,7 @@ mod text_budget_tests {
     /// A dimension suffix without placeholders still obeys the total text limit.
     #[test]
     fn bounds_post_without_markers() {
-        let text = post(&"x".repeat(MAX_DIM_TEXT * 2), "12");
+        let text = post(&"x".repeat(MAX_DIM_TEXT * 2), "12", None);
         assert_eq!(text.len(), MAX_DIM_TEXT);
         assert!(text.starts_with("12x"));
     }
