@@ -375,7 +375,14 @@ pub(crate) fn draw(b: &mut Builder, ctx: &Ctx, t: &Table, rgb: Ink, lw: f32) {
     }
     for tx in &g.texts {
         let ts = crate::text_style(ctx.d, &tx.style);
-        let font = cadcraft_fonts::TextFont::resolve(&ts.font);
+        let font_name = if cadcraft_fonts::vietnamese::is_vietnamese_font(&ts.font).is_some() {
+            &ts.font
+        } else if cadcraft_fonts::vietnamese::is_vietnamese_font(&tx.style).is_some() {
+            &tx.style
+        } else {
+            &ts.font
+        };
+        let font = cadcraft_fonts::TextFont::resolve(font_name);
         // Cell content is MTEXT (`\P`, `{\Q15;…}`, `\F…;`): laid out as such, at the cell's
         // alignment point (its numbering is MTEXT's attachment).
         let mp = cadcraft_fonts::MTextParams {
@@ -385,7 +392,9 @@ pub(crate) fn draw(b: &mut Builder, ctx: &Ctx, t: &Table, rgb: Ink, lw: f32) {
             oblique: ts.oblique,
             ..cadcraft_fonts::MTextParams::new(tx.at, tx.height)
         };
-        let layout = cadcraft_fonts::layout_mtext_with(&tx.text, &mp);
+        let hint = if !ts.font.is_empty() { Some(ts.font.as_str()) } else { Some(tx.style.as_str()) };
+        let transcoded = cadcraft_fonts::vietnamese::transcode_vietnamese(&tx.text, hint);
+        let layout = cadcraft_fonts::layout_mtext_with(&transcoded, &mp);
         for piece in &layout.pieces {
             b.shaped(ctx, style_ink(tx.color, rgb), lw, &piece.shaped);
         }

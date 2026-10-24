@@ -1323,26 +1323,44 @@ fn text_style(d: &Drawing, name: &str) -> cadcraft_doc::TextStyle {
 /// Shape a TEXT / ATTRIB / ATTDEF with its style's font and generation flags.
 pub fn place_text_entity(d: &Drawing, t: &cadcraft_doc::Text, value: &str) -> (cadcraft_fonts::Shaped, Bounds2) {
     let ts = text_style(d, &t.style);
-    let font = cadcraft_fonts::TextFont::resolve(&ts.font);
+    let hint = if !ts.font.is_empty() { Some(ts.font.as_str()) } else { Some(t.style.as_str()) };
+    let transcoded = cadcraft_fonts::vietnamese::transcode_vietnamese(value, hint);
+    let font_name = if cadcraft_fonts::vietnamese::is_vietnamese_font(&ts.font).is_some() {
+        &ts.font
+    } else if cadcraft_fonts::vietnamese::is_vietnamese_font(&t.style).is_some() {
+        &t.style
+    } else {
+        &ts.font
+    };
+    let font = cadcraft_fonts::TextFont::resolve(font_name);
     let (h, v) = align(t.halign, t.valign);
+    let twf = if t.width_factor.is_finite() && t.width_factor > 0.0 { t.width_factor } else { 1.0 };
+    let swf = if ts.width_factor.is_finite() && ts.width_factor > 0.0 { ts.width_factor } else { 1.0 };
     let p = cadcraft_fonts::TextParams {
         insert: t.insert.xy(),
         align_pt: t.align_pt.map(|p| p.xy()),
         height: t.height,
         rotation: t.rotation,
-        width_factor: t.width_factor,
-        oblique: t.oblique,
+        width_factor: twf * swf,
+        oblique: t.oblique + ts.oblique,
         h,
         v,
         backwards: ts.backwards,
         upside_down: ts.upside_down,
     };
-    cadcraft_fonts::place(&font, value, &p)
+    cadcraft_fonts::place(&font, &transcoded, &p)
 }
 
 /// Lay out an MTEXT with its style's font.
 pub fn layout_mtext_entity(d: &Drawing, t: &cadcraft_doc::MText) -> cadcraft_fonts::MTextLayout {
     let ts = text_style(d, &t.style);
+    let font_name = if cadcraft_fonts::vietnamese::is_vietnamese_font(&ts.font).is_some() {
+        &ts.font
+    } else if cadcraft_fonts::vietnamese::is_vietnamese_font(&t.style).is_some() {
+        &t.style
+    } else {
+        &ts.font
+    };
     let params = cadcraft_fonts::MTextParams {
         insert: t.insert.xy(),
         height: t.height,
@@ -1351,7 +1369,7 @@ pub fn layout_mtext_entity(d: &Drawing, t: &cadcraft_doc::MText) -> cadcraft_fon
         rotation: t.rotation,
         line_spacing: t.line_spacing,
         line_spacing_exact: t.line_spacing_exact,
-        font: cadcraft_fonts::TextFont::resolve(&ts.font),
+        font: cadcraft_fonts::TextFont::resolve(font_name),
         width_factor: ts.width_factor,
         oblique: ts.oblique,
         columns: t.columns.as_ref().map(|c| cadcraft_fonts::MTextColumnSpec {
@@ -1363,7 +1381,9 @@ pub fn layout_mtext_entity(d: &Drawing, t: &cadcraft_doc::MText) -> cadcraft_fon
             reversed: c.flow_reversed,
         }),
     };
-    cadcraft_fonts::layout_mtext_with(&t.contents, &params)
+    let hint = if !ts.font.is_empty() { Some(ts.font.as_str()) } else { Some(t.style.as_str()) };
+    let transcoded = cadcraft_fonts::vietnamese::transcode_vietnamese(&t.contents, hint);
+    cadcraft_fonts::layout_mtext_with(&transcoded, &params)
 }
 
 fn mtext_color(c: Option<cadcraft_fonts::MTextColor>, rgb: Ink) -> Ink {
