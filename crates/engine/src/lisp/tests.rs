@@ -136,6 +136,10 @@ fn lists_and_strings() {
     assert_eq!(ok(&mut s, "(wcmatch \"abc\" \"x*,a?c\")"), "T");
     assert_eq!(ok(&mut s, "(wcmatch \"abc\" \"~a*\")"), "nil");
     assert_eq!(ok(&mut s, "(wcmatch \"b\" \"[a-c]\")"), "T");
+    let many = format!("(wcmatch \"{}\" \"{}\")", "a".repeat(80), "*a".repeat(80));
+    assert_eq!(ok(&mut s, &many), "T");
+    let too_deep = format!("(wcmatch \"{}\" \"{}\")", "a".repeat(400), "*a".repeat(400));
+    assert!(eval(&mut s, &too_deep).is_err());
     assert_eq!(ok(&mut s, "(vl-string-subst \"X\" \"b\" \"abcb\")"), "\"aXcb\"");
     assert_eq!(ok(&mut s, "(vl-string-search \"c\" \"abc\")"), "2");
     assert_eq!(ok(&mut s, "(read \"(1 2)\")"), "(1 2)");

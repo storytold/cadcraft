@@ -797,8 +797,8 @@ fn glob_inner(
         return Err(());
     }
     *budget -= 1;
-    if depth > 64 {
-        return Ok(false);
+    if depth > 256 {
+        return Err(());
     }
     let (mut t, mut p) = (0usize, 0usize);
     while p < pat.len() {
