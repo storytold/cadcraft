@@ -8,6 +8,7 @@ mod audit;
 pub(crate) mod blocks;
 pub mod clipboard;
 pub mod constraints;
+mod dimstyles;
 mod draw;
 mod draw2;
 mod draworder;
@@ -182,6 +183,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(draw::specs());
         v.extend(draw2::specs());
         v.extend(annotate::specs());
+        v.extend(dimstyles::specs());
         v.extend(mleader_edit::specs());
         v.extend(annoscale::specs());
         v.extend(hatch::specs());
