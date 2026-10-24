@@ -9,8 +9,18 @@ use crate::{Accept, Prompt};
 /// Polylines approximating an entity for hit testing, tessellated at `tol`.
 pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
     match &e.kind {
+        EntityKind::MText(t) => {
+            let insert = t.insert.xy();
+            let unturn = |q: Vec2| insert + q.rotate(t.rotation);
+            mtext_line_bounds(d, t)
+                .into_iter()
+                .map(|b| {
+                    let c = b.corners().map(unturn);
+                    vec![c[0], c[1], c[2], c[3], c[0]]
+                })
+                .collect()
+        }
         EntityKind::Text(_)
-        | EntityKind::MText(_)
         | EntityKind::Insert(_)
         | EntityKind::Dimension(_)
         | EntityKind::AttDef(_)
@@ -88,8 +98,7 @@ fn dist_to_polyline(pts: &[Vec2], p: Vec2) -> f64 {
 pub fn entity_distance(d: &Drawing, e: &Entity, p: Vec2, tol: f64) -> f64 {
     let polys = hit_polylines(d, e, tol);
     let mut best = polys.iter().map(|pl| dist_to_polyline(pl, p)).fold(f64::INFINITY, f64::min);
-    let filled = matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) | EntityKind::Table(_))
-        || matches!(e.kind, EntityKind::Tolerance(_));
+    let filled = matches!(e.kind, EntityKind::Text(_) | EntityKind::AttDef(_) | EntityKind::Table(_)) || matches!(e.kind, EntityKind::Tolerance(_));
     if (filled && entity_bounds(d, e, 0).contains(p)) || in_text(d, e, p) {
         best = 0.0;
     }
@@ -118,7 +127,7 @@ fn in_text(d: &Drawing, e: &Entity, p: Vec2) -> bool {
         // the text there, not the text the dimension's own geometry would place.
         EntityKind::Dimension(dm) => match dm.block.as_ref().and_then(|n| d.block(n)) {
             Some(blk) => blk.entities.iter().any(|be| match &be.kind {
-                EntityKind::MText(t) => in_box(cadcraft_render::layout_mtext_entity(d, t).strokes.into_iter().flatten(), t.rotation, p),
+                EntityKind::MText(t) => in_mtext(d, t, p),
                 EntityKind::Text(_) => entity_bounds(d, be, 0).contains(p),
                 _ => false,
             }),
@@ -127,11 +136,67 @@ fn in_text(d: &Drawing, e: &Entity, p: Vec2) -> bool {
                 in_box(g.text.iter().flatten().chain(g.text_glyphs.iter().flatten().flatten()).copied(), g.text_angle, p)
             }
         },
-        EntityKind::MLeader(m) => {
-            m.text.as_ref().is_some_and(|t| in_box(cadcraft_render::layout_mtext_entity(d, t).strokes.into_iter().flatten(), t.rotation, p))
-        }
+        EntityKind::MLeader(m) => m.text.as_ref().is_some_and(|t| in_mtext(d, t, p)),
+        EntityKind::MText(t) => in_mtext(d, t, p),
         _ => false,
     }
+}
+
+/// Tight bounds of each laid-out line of `t` in its local (`t.insert`, `-t.rotation`) frame.
+fn mtext_line_bounds(d: &Drawing, t: &cadcraft_doc::MText) -> Vec<Bounds2> {
+    let insert = t.insert.xy();
+    let turn = |q: Vec2| (q - insert).rotate(-t.rotation);
+    let boxes: Vec<Bounds2> = cadcraft_render::layout_mtext_entity(d, t)
+        .strokes
+        .into_iter()
+        .map(|s| Bounds2::from_points(s.into_iter().filter(|q| q.is_finite()).map(turn)))
+        .filter(|b| !b.is_empty())
+        .collect();
+    if boxes.is_empty() {
+        return Vec::new();
+    }
+    let pad = (t.height.abs() * 0.25).max(1e-6);
+    let col_info = t.columns.as_ref().filter(|_| t.width.is_finite() && t.width > 0.0).map(|c| {
+        let gutter = if c.gutter.is_finite() && c.gutter >= 0.0 { c.gutter } else { 0.0 };
+        let step = (t.width + gutter).max(1e-9);
+        let acol = (t.attach.clamp(1, 9) - 1) % 3;
+        let n_cols = if c.kind == cadcraft_doc::MTextColumnType::Static {
+            usize::from(c.count.clamp(1, 100))
+        } else {
+            let all = Bounds2::from_points(boxes.iter().flat_map(|b| [b.min, b.max]));
+            ((all.width() + gutter) / step).ceil().clamp(1.0, 100.0) as usize
+        };
+        let total_w = t.width * n_cols as f64 + gutter * n_cols.saturating_sub(1) as f64;
+        let box_x0 = match acol {
+            0 => 0.0,
+            1 => -total_w / 2.0,
+            _ => -total_w,
+        };
+        (box_x0, step)
+    });
+    let mut by_col: Vec<(usize, Bounds2)> = boxes
+        .into_iter()
+        .map(|b| {
+            let col = col_info.map(|(x0, step)| ((b.center().x - x0) / step).floor().clamp(0.0, 100.0) as usize).unwrap_or(0);
+            (col, b)
+        })
+        .collect();
+    by_col.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.max.y.total_cmp(&a.1.max.y)));
+    let mut lines: Vec<(usize, Bounds2)> = Vec::new();
+    for (col, b) in by_col {
+        if let Some((_, line)) = lines.iter_mut().find(|(c, l)| *c == col && b.max.y >= l.min.y - pad && b.min.y <= l.max.y + pad) {
+            *line = line.union(&b);
+        } else {
+            lines.push((col, b));
+        }
+    }
+    lines.into_iter().map(|(_, b)| b).collect()
+}
+
+/// Whether `p` lies inside any laid-out line box of `t`.
+fn in_mtext(d: &Drawing, t: &cadcraft_doc::MText, p: Vec2) -> bool {
+    let tp = (p - t.insert.xy()).rotate(-t.rotation);
+    mtext_line_bounds(d, t).into_iter().any(|b| b.contains(tp))
 }
 
 /// Whether `p` is inside the box around `pts` turned by `angle` (the box of text set at `angle`).
@@ -281,7 +346,10 @@ pub(crate) fn in_window(d: &Drawing, e: &Entity, known: Option<Bounds2>, bx: &Bo
         }
     });
     // A crossing box entirely inside a text/block bounding rectangle also selects it.
-    if hit || (eb.contains_box(bx) && matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::Insert(_))) {
+    if hit
+        || (eb.contains_box(bx) && matches!(e.kind, EntityKind::Text(_) | EntityKind::Insert(_)))
+        || matches!(&e.kind, EntityKind::MText(t) if in_mtext(d, t, bx.center()))
+    {
         return true;
     }
     // SOLID/TRACE are filled polygons. A crossing window wholly within the
