@@ -179,6 +179,40 @@ fn json_execute_and_errors() {
     assert_eq!(s.state().unwrap().undo.len(), 1);
 }
 
+/// A drawing is opened on the view it was saved at, as every other reader opens it. Fitting the
+/// extents instead showed a drawing whose extents are dominated by far-off geometry at a view
+/// hundreds of thousands of times its content: sub-pixel, and `ZOOM Extents` fits the same box
+/// (#1602). The extents are still the fallback for a drawing that stores no view.
+#[test]
+fn a_drawing_opens_on_the_view_it_was_saved_at() {
+    let mut d = cadcraft_doc::Drawing::new_metric();
+    for (a, b) in [([0.0, 0.0], [100.0, 60.0]), ([5e6, 5e6], [5e6 + 100.0, 5e6 + 60.0])] {
+        let line = cadcraft_doc::Line { a: cadcraft_geom::Vec3::new(a[0], a[1], 0.0), b: cadcraft_geom::Vec3::new(b[0], b[1], 0.0) };
+        d.add(&Space::Model, cadcraft_doc::Common::default(), EntityKind::Line(line)).unwrap();
+    }
+    d.header.set_saved_view(Vec2::new(50.0, 50.0), 20.0);
+
+    let mut s = Session::new();
+    s.open_drawing(d.clone(), "saved-view.dxf", None);
+    assert_eq!(s.state().unwrap().view(), View { center: Vec2::new(50.0, 50.0), height: 20.0 });
+
+    // No stored view: the extents, as before. They are what makes this drawing unusable without
+    // the stored one -- the fit is more than a hundred thousand times taller than the detail.
+    let mut plain = d.clone();
+    plain.header.vars.remove("VIEWCTR");
+    plain.header.vars.remove("VIEWSIZE");
+    let mut s = Session::new();
+    s.open_drawing(plain, "no-view.dxf", None);
+    assert!(s.state().unwrap().view().height > 5e6, "{:?}", s.state().unwrap().view());
+
+    // A stored view that cannot be shown is no view at all.
+    let mut broken = d;
+    broken.header.set("VIEWSIZE", cadcraft_doc::HVal::Real(0.0));
+    let mut s = Session::new();
+    s.open_drawing(broken, "broken-view.dxf", None);
+    assert!(s.state().unwrap().view().height > 5e6, "{:?}", s.state().unwrap().view());
+}
+
 #[test]
 fn move_with_pickfirst_and_window_selection() {
     let mut s = Session::new();

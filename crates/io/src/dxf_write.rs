@@ -292,6 +292,10 @@ const HEADER_VARS: &[(&str, i32)] = &[
     ("INSUNITS", 70),
     ("MEASUREMENT", 70),
     ("PSLTSCALE", 70),
+    // The model view the drawing is saved at, as DXF keeps it in HEADER (the `*ACTIVE` VPORT
+    // record below repeats it). Written so a drawing opened on its saved view saves it back.
+    ("VIEWCTR", -2),
+    ("VIEWSIZE", 40),
 ];
 
 /// The current dimension style's variables as header variables (`$DIMTXT`, `$DIMDEC`…), after
@@ -1706,13 +1710,17 @@ fn paper_view(w: &mut W, d: &Drawing, e: &Entity, owner: &str, cx: &Ctx) {
 /// The VPORT table: the `*Active` model space tiles (one viewport on the extents when there is no
 /// tiled configuration) and the saved configurations, each tile a record, the current one first.
 fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
-    let single = VportTile {
-        min: Vec2::ZERO,
-        max: Vec2::new(1.0, 1.0),
-        center: if ext.is_empty() { Vec2::new(6.0, 4.5) } else { ext.center() },
-        height: if ext.is_empty() { 9.0 } else { (ext.height() * 1.1).max(1e-6) },
-        aspect: 1.6,
+    // The view the drawing is saved at, so that reading a drawing and writing it back keeps it;
+    // a drawing that stores none is written on its extents. The fallback fits the width as well,
+    // through the aspect the record is written with: a drawing 100 wide and 10 tall otherwise got
+    // a view 11 tall, which shows a sliver of it, and a horizontal line got 1e-6 (#1602).
+    const ASPECT: f64 = 1.6;
+    let (center, height) = match d.header.saved_view() {
+        Some(v) => v,
+        None if ext.is_empty() => (Vec2::new(6.0, 4.5), 9.0),
+        None => (ext.center(), (ext.height().max(ext.width() / ASPECT) * 1.1).max(1e-6)),
     };
+    let single = VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center, height, aspect: ASPECT };
     let tiled = d.vports.iter().find(|c| c.is_active() && c.tiles.len() > 1);
     let mut records: Vec<(&str, &VportTile)> = match tiled {
         Some(c) => c.tiles.iter().map(|t| (VportConfig::ACTIVE, t)).collect(),

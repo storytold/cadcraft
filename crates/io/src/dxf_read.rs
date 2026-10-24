@@ -1605,7 +1605,8 @@ fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
             _ => {}
         }
     }
-    // One *Active viewport is no tiling: the view is the editor's (it zooms to the extents).
+    // One *Active viewport is no tiling: its single tile is not a configuration to switch to.
+    // Its view was kept in the HEADER pair as it was read (see `vport_record`).
     d.vports.retain(|c| c.tiles.len() > usize::from(c.is_active()));
 }
 
@@ -1617,6 +1618,12 @@ const MAX_VPORT_TILES: usize = 64;
 fn vport_record(d: &mut Drawing, t: &T) {
     let name = t.s(2).map(|n| n.trim().to_string()).unwrap_or_default();
     let (min, max, center) = (t.p(10).xy(), t.p(11).xy(), t.p(12).xy());
+    // A modern file keeps the view it was saved at in the first `*ACTIVE` record (12/22 centre,
+    // 40 height) as well as in the HEADER pair, and as with the snap and grid spacing the record
+    // is the newer of the two and wins (#1602). A record that leaves the centre out has no view
+    // to give -- `p` reads a missing coordinate as zero -- so the header pair stays.
+    let first_active = name.eq_ignore_ascii_case(VportConfig::ACTIVE) && !d.vports.iter().any(|c| c.is_active());
+    let centred = t.f(12).is_some() && t.f(22).is_some();
     let height = t.fd(40, 0.0);
     let unit = |v: f64| v.is_finite() && (-1e-9..=1.0 + 1e-9).contains(&v);
     let ok = [min.x, min.y, max.x, max.y].into_iter().all(unit)
@@ -1627,6 +1634,9 @@ fn vport_record(d: &mut Drawing, t: &T) {
         && height > 0.0;
     if name.is_empty() || !ok {
         return;
+    }
+    if first_active && centred {
+        d.header.set_saved_view(center, height);
     }
     let aspect = t.f(41).filter(|a| a.is_finite() && *a > 0.0).unwrap_or(0.0);
     let clamp = |p: Vec2| Vec2::new(p.x.clamp(0.0, 1.0), p.y.clamp(0.0, 1.0));
