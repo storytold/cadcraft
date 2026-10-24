@@ -112,6 +112,34 @@ fn join_keeps_selected_objects_outside_the_chain() {
 }
 
 #[test]
+fn join_takes_a_polyline_whole_or_leaves_it() {
+    // A line meeting an open polyline at an interior vertex: whichever order they are selected
+    // in, no part of the polyline may disappear.
+    for line_first in [true, false] {
+        let mut s = Session::new();
+        let l = h(&s.execute("line", &json!({"points": [[1, 0], [1, 1]]})).unwrap());
+        let p = pline(&mut s, json!([[0, 0], [1, 0], [2, 0]]), false);
+        let hs = if line_first { [l, p] } else { [p, l] };
+        let _ = s.execute("join", &json!({ "handles": hs }));
+        let d = s.doc().unwrap();
+        let has_horizontal = d.model.iter().any(|e| match &e.kind {
+            EntityKind::LwPolyline(q) => q.vertices.iter().any(|v| near(v.p, 0.0, 0.0)) && q.vertices.iter().any(|v| near(v.p, 2.0, 0.0)),
+            _ => false,
+        });
+        assert!(has_horizontal, "line first: {line_first}: the polyline's far segment is gone");
+    }
+    // A whole polyline still joins end to end, attached by its last vertex.
+    let mut s = Session::new();
+    let l = h(&s.execute("line", &json!({"points": [[2, 1], [2, 0]]})).unwrap());
+    let p = pline(&mut s, json!([[0, 0], [1, 0], [2, 0]]), false);
+    let r = s.execute("join", &json!({"handles": [l, p]})).unwrap();
+    let j = poly(&kind(&s, r["handle"].as_str().unwrap()));
+    let pts: Vec<_> = j.vertices.iter().map(|v| (v.p.x, v.p.y)).collect();
+    assert_eq!(pts, [(2.0, 1.0), (2.0, 0.0), (1.0, 0.0), (0.0, 0.0)]);
+    assert_eq!(s.doc().unwrap().model.len(), 1);
+}
+
+#[test]
 fn pedit_command_line() {
     let mut s = Session::new();
     pline(&mut s, json!([[0, 0], [10, 0], [10, 10]]), false);

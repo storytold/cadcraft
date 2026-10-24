@@ -1587,46 +1587,51 @@ pub(crate) fn join(s: &mut Session, hs: &[Handle]) -> Result<Option<Handle>> {
         return Err(EngineError::Other("An object is on a locked layer.".into()));
     }
     let d = s.doc()?;
-    let mut segs: Vec<Segment> = Vec::new();
-    // Source entity of each segment in `segs`, so only entities that end up in the chain are removed.
-    let mut owners: Vec<Handle> = Vec::new();
+    // Each source entity is one piece: a polyline joins whole or not at all, so removing the
+    // entities in the chain never drops a part of one that did not fit.
+    let mut pieces: Vec<(Handle, Vec<Segment>)> = Vec::new();
     let mut common = None;
     for h in hs {
         let Some(e) = d.entity(*h) else { continue };
         common.get_or_insert_with(|| e.common.clone());
-        match &e.kind {
-            EntityKind::Line(l) => segs.push(Segment::Line(Line::new(l.a.xy(), l.b.xy()))),
-            EntityKind::Arc(a) => segs.push(Segment::Arc { arc: Arc::new(a.center.xy(), a.radius, a.start, a.end), ccw: true }),
-            EntityKind::LwPolyline(p) if !p.closed => segs.extend(Polyline { vertices: p.vertices.clone(), closed: false }.segments()),
-            _ => {}
+        let segs = match &e.kind {
+            EntityKind::Line(l) => vec![Segment::Line(Line::new(l.a.xy(), l.b.xy()))],
+            EntityKind::Arc(a) => vec![Segment::Arc { arc: Arc::new(a.center.xy(), a.radius, a.start, a.end), ccw: true }],
+            EntityKind::LwPolyline(p) if !p.closed => Polyline { vertices: p.vertices.clone(), closed: false }.segments(),
+            _ => Vec::new(),
+        };
+        if !segs.is_empty() {
+            pieces.push((*h, segs));
         }
-        owners.resize(segs.len(), *h);
     }
-    if segs.len() < 2 {
+    if pieces.iter().map(|(_, segs)| segs.len()).sum::<usize>() < 2 {
         return Err(EngineError::Other("Select at least two objects to join.".into()));
     }
-    // Chain greedily from the first segment.
-    let mut chain = vec![segs.remove(0)];
-    let mut used = vec![owners.remove(0)];
+    let ends = |segs: &[Segment]| (segs.first().map(Segment::start).unwrap_or_default(), segs.last().map(Segment::end).unwrap_or_default());
+    // Chain greedily from the first piece.
+    let (first, mut chain) = pieces.remove(0);
+    let mut used = vec![first];
     let tol = 1e-6;
     loop {
-        let start = chain.first().map(Segment::start).unwrap_or_default();
-        let end = chain.last().map(Segment::end).unwrap_or_default();
-        let Some(i) =
-            segs.iter().position(|s| s.start().near(end, tol) || s.end().near(end, tol) || s.start().near(start, tol) || s.end().near(start, tol))
-        else {
+        let (start, end) = ends(&chain);
+        let Some(i) = pieces.iter().position(|(_, segs)| {
+            let (a, b) = ends(segs);
+            a.near(end, tol) || b.near(end, tol) || a.near(start, tol) || b.near(start, tol)
+        }) else {
             break;
         };
-        let s0 = segs.remove(i);
-        used.push(owners.remove(i));
-        if s0.start().near(end, tol) {
-            chain.push(s0);
-        } else if s0.end().near(end, tol) {
-            chain.push(s0.reversed());
-        } else if s0.end().near(start, tol) {
-            chain.insert(0, s0);
+        let (h, segs) = pieces.remove(i);
+        used.push(h);
+        let (a, b) = ends(&segs);
+        let rev = || segs.iter().rev().map(Segment::reversed).collect::<Vec<_>>();
+        if a.near(end, tol) {
+            chain.extend(segs);
+        } else if b.near(end, tol) {
+            chain.extend(rev());
+        } else if b.near(start, tol) {
+            chain.splice(0..0, segs);
         } else {
-            chain.insert(0, s0.reversed());
+            chain.splice(0..0, rev());
         }
     }
     if chain.len() < 2 {
