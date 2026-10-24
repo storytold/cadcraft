@@ -297,7 +297,8 @@ fn visible_tabs(widths: &[f32], active: Option<usize>, room: f32) -> std::ops::R
     start..active + 1
 }
 
-/// Status bar: layout tabs on the left, coordinates and drafting toggles on the right.
+/// Status bar: layout tabs follow the left-hand layout actions, independent of palette docking.
+/// Coordinates and drafting toggles remain on the right.
 pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     egui::Panel::bottom("cc_status").exact_size(26.0).frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
@@ -327,7 +328,7 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
             }
             x += 22.0;
         }
-        x = x.max(r.left() + if app.ui.show_toolsets { 232.0 } else { 60.0 });
+        x += 8.0;
         // Right side: toggles, right-aligned.
         let s = app.session.settings.clone();
         let anno_all = app.session.doc().is_ok_and(|d| d.anno_all_visible());
