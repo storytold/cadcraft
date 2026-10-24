@@ -55,6 +55,9 @@ pub struct EntityCodec {
     pub groups: fn(&Drawing, &cadcraft_doc::Entity) -> (String, Vec<cadcraft_dxf::Tag>),
     /// An entity from a type name and groups.
     pub entity: fn(&str, &[cadcraft_dxf::Tag]) -> Option<(cadcraft_doc::Common, cadcraft_doc::EntityKind)>,
+    /// The drawing's non-graphic records as written (tables, BLOCK records, objects): each one's
+    /// type, groups after the type and role (see [`cadcraft_doc::foreign::ForeignKey`]).
+    pub objects: fn(&Drawing) -> Vec<(String, Vec<cadcraft_dxf::Tag>, Option<cadcraft_doc::foreign::ForeignKey>)>,
 }
 
 static CODEC: OnceLock<EntityCodec> = OnceLock::new();

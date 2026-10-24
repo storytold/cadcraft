@@ -506,7 +506,9 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
     if let Some(ds) = secs.iter().find(|s| s.name.eq_ignore_ascii_case("ACDSDATA")) {
         f.data_store = ds.tags.iter().take(MAX_DATA_STORE_GROUPS).map(raw).collect();
     }
-    if !f.is_empty() {
+    // The file's handles of the objects CADCraft writes itself (AutoLISP's `handent`).
+    f.handles = ids.iter().filter(|(h, _)| !ents.contains_key(*h)).filter_map(|(h, k)| Some((handle(h)?, k.clone()))).take(MAX_OBJECTS).collect();
+    if !f.is_empty() || !f.handles.is_empty() {
         d.foreign = Arc::new(f);
     }
 }
@@ -674,6 +676,33 @@ fn written_records(tags: &[Tag]) -> Vec<Rec> {
         }
     }
     out
+}
+
+/// A non-graphic record as written: its type, its groups after the type (its handle in group 5)
+/// and its role when it has one.
+pub type ObjectRecord = (String, Vec<Tag>, Option<ForeignKey>);
+
+/// The drawing's non-graphic records as a DXF file of it holds them: the tables and their
+/// records, the BLOCK records and the objects, in file order, each with its role (a table record,
+/// a block, the named object dictionary or one of its entries) when it has one. Their handles are
+/// the written file's: the same for the same drawing. AutoLISP's dictionary and table functions
+/// (`namedobjdict`, `dictsearch`, `tblobjname`, `entget` of a non-graphic object) read it.
+pub fn object_records(d: &Drawing) -> Vec<ObjectRecord> {
+    let tags = crate::dxf_write::tags(d, cadcraft_dxf::Version::R2018);
+    let recs = written_records(&tags);
+    let body = |r: &Rec| tags.get(r.start + 1..r.end).unwrap_or(&[]);
+    let by_sec = |name: &str| -> Recs {
+        recs.iter().filter(|r| r.sec == name && r.kind != "SECTION" && r.kind != "ENDSEC").map(|r| (r.kind.clone(), r.start, body(r))).collect()
+    };
+    let (tables, blocks, objects) = (by_sec("TABLES"), by_sec("BLOCKS"), by_sec("OBJECTS"));
+    let ids = identities(&tables, &blocks, &objects);
+    let tables = tables.iter().filter(|(k, _, _)| k != "ENDTAB");
+    let blocks = blocks.iter().filter(|(k, _, _)| k == "BLOCK");
+    tables
+        .chain(blocks)
+        .chain(objects.iter())
+        .map(|(kind, _, t)| (kind.clone(), t.to_vec(), head(t).handle.and_then(|h| ids.get(&h).cloned())))
+        .collect()
 }
 
 /// Remaps the kept data's handles onto a written file.

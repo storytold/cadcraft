@@ -184,6 +184,7 @@ fn install_io() {
     cadcraft_engine::cmd::file::set_entity_codec(cadcraft_engine::cmd::file::EntityCodec {
         groups: cadcraft_io::entity_groups,
         entity: cadcraft_io::entity_from_groups,
+        objects: cadcraft_io::object_records,
     });
 }
 

@@ -192,8 +192,13 @@ impl Drawing {
         }
     }
 
-    /// Allocate a fresh handle.
+    /// Allocate a fresh handle. It skips the handles the drawing's file gave the objects CADCraft
+    /// writes itself ([`foreign::Foreign::handles`]): AutoLISP names those objects by them, and a
+    /// file CADCraft wrote numbers them above its `$HANDSEED` (#495).
     pub fn new_handle(&mut self) -> Handle {
+        while self.foreign.handles.contains_key(&Handle(self.handseed)) && self.handseed < u64::MAX {
+            self.handseed = self.handseed.saturating_add(1);
+        }
         let h = Handle(self.handseed);
         self.handseed = self.handseed.saturating_add(1);
         h

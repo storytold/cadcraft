@@ -581,3 +581,14 @@ fn space_names_its_tab() {
     assert_eq!(p.layout(), Some("Sheet A"));
     assert_eq!(p.tab_name(), "Sheet A");
 }
+
+#[test]
+fn new_handles_skip_the_files_object_handles() {
+    let mut d = Drawing::new_metric();
+    let next = d.handseed;
+    let f = std::sync::Arc::make_mut(&mut d.foreign);
+    f.handles.insert(Handle(next), ("LAYER".into(), "0".into()));
+    f.handles.insert(Handle(next + 1), ("NOD".into(), String::new()));
+    assert_eq!(d.new_handle(), Handle(next + 2));
+    assert_eq!(d.new_handle(), Handle(next + 3));
+}

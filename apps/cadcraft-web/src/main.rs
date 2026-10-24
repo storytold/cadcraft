@@ -111,6 +111,7 @@ mod web {
         cadcraft_engine::cmd::file::set_entity_codec(cadcraft_engine::cmd::file::EntityCodec {
             groups: cadcraft_io::entity_groups,
             entity: cadcraft_io::entity_from_groups,
+            objects: cadcraft_io::object_records,
         });
         // `?host=parent`: a same-origin page framing CADCraft (such as a Nextcloud app) opens
         // drawings in it and stores what it saves. Otherwise there is no file system here: saved
