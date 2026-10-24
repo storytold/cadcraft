@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "apps/*", "xtask"]
+exclude = ["vendor"]
 # default-members
 
 [workspace.package]
@@ -80,3 +81,7 @@ opt-level = 3
 lto = "thin"
 codegen-units = 16
 debug = 0
+
+# Vendored, patched winit (see vendor/README.md): hands the launcher's activation token back.
+[patch.crates-io]
+winit = { path = "vendor/winit" }
