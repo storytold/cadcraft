@@ -45,21 +45,95 @@ pub fn is_vietnamese_font(font: &str) -> Option<VietnameseEncoding> {
     }
 }
 
+#[inline]
+fn is_latin1_vietnamese_vowel(c: char) -> bool {
+    matches!(
+        c,
+        'À' | 'Á'
+            | 'Â'
+            | 'Ã'
+            | 'È'
+            | 'É'
+            | 'Ê'
+            | 'Ì'
+            | 'Í'
+            | 'Ò'
+            | 'Ó'
+            | 'Ô'
+            | 'Õ'
+            | 'Ù'
+            | 'Ú'
+            | 'Ý'
+            | 'à'
+            | 'á'
+            | 'â'
+            | 'ã'
+            | 'è'
+            | 'é'
+            | 'ê'
+            | 'ì'
+            | 'í'
+            | 'ò'
+            | 'ó'
+            | 'ô'
+            | 'õ'
+            | 'ù'
+            | 'ú'
+            | 'ý'
+    )
+}
+
 /// Check if a string already contains genuine Unicode Vietnamese diacritic characters
 /// that exist outside the single-byte 0x00..=0xFF Windows-1252 range (U+0100..=U+024F, U+1E00..=U+1EFF),
 /// or precomposed Latin-1 Vietnamese vowels in positions that cannot be VNI or TCVN3 encodings.
 /// If true, the text MUST NOT be transcoded, preserving existing modern Unicode text.
 pub fn is_already_unicode_vietnamese(s: &str) -> bool {
     let mut prev: Option<char> = None;
-    for c in s.chars() {
+    let mut chars = s.chars().peekable();
+
+    while let Some(c) = chars.next() {
         let code = c as u32;
         if (0x0100..=0x024F).contains(&code) || (0x1E00..=0x1EFF).contains(&code) || matches!(c, 'Đ' | 'đ' | 'Ă' | 'ă' | 'Ơ' | 'ơ' | 'Ư' | 'ư')
         {
             return true;
         }
-        if matches!(c, 'À' | 'Á' | 'Ã' | 'Í' | 'Ù' | 'Ú' | 'à') && prev.is_none_or(|p| match_vni_composite(p, c).is_none()) {
-            return true;
+
+        if is_latin1_vietnamese_vowel(c) {
+            let next_c = chars.peek().copied();
+
+            // Case A: Unicode "TÒA", "TÒA ÁN" ('Ò' before 'A')
+            if matches!(c, 'Ò' | 'ò') && matches!(next_c, Some('A' | 'a')) {
+                return true;
+            }
+
+            // Case B: Unicode diphthong OÁ, OÀ, OÃ followed by a final ASCII consonant (TOÁN, HOÀN, KHOÁC, HOÃN)
+            if matches!(prev, Some('O' | 'o'))
+                && matches!(c, 'Á' | 'á' | 'À' | 'à' | 'Ã' | 'ã')
+                && next_c.is_some_and(|post| post.is_ascii_alphabetic() && !matches!(post.to_ascii_uppercase(), 'A' | 'E' | 'I' | 'O' | 'U' | 'Y'))
+            {
+                return true;
+            }
+
+            // Case C: Standalone Latin-1 vowel not forming a VNI composite with `prev` or `next_c`
+            let is_vni_prev = prev.is_some_and(|p| match_vni_composite(p, c).is_some());
+            let is_vni_next = next_c.is_some_and(|n| match_vni_composite(c, n).is_some());
+
+            if !is_vni_prev && !is_vni_next {
+                if matches!(c, 'Ô' | 'ô' | 'Ò' | 'ò' | 'Ó' | 'ó') {
+                    // Protect Unicode words like "TÔI", "CÔNG", "CÔ" when preceded by uppercase or followed by vowel/NG
+                    if next_c.is_some_and(|post| matches!(post, 'A' | 'a' | 'I' | 'i' | 'N' | 'n'))
+                        || (c.is_uppercase() && prev.is_some_and(|p| p.is_ascii_uppercase()) && next_c.is_none_or(|n| n.is_whitespace()))
+                    {
+                        return true;
+                    }
+                } else if matches!(c, 'À' | 'Á' | 'Ã' | 'Ì' | 'Í' | 'Ù' | 'Ú' | 'Ý' | 'à')
+                    && prev.is_none_or(|p| !p.is_ascii_lowercase() || c.is_lowercase())
+                {
+                    return true;
+                }
+            }
         }
+
         prev = Some(c);
     }
     false
@@ -645,6 +719,54 @@ mod tests {
         match transcode_vietnamese(ascii, Some(".VnTime")) {
             Cow::Borrowed(b) => assert_eq!(b, ascii),
             Cow::Owned(_) => panic!("expected borrowed string for ascii"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod adversarial_tests {
+    use super::*;
+
+    #[test]
+    fn test_unicode_latin1_standalone_never_corrupted() {
+        let words = ["TÒA NHÀ", "TÒA ÁN", "TÔI ĐI", "CÔ GÁI", "BÁO CÁO", "CHÚ Ý", "LÝ DO", "ĐỒNG HỒ", "GIA ĐÌNH", "TÓM TẮT"];
+        for w in words {
+            assert_eq!(transcode_vietnamese(w, Some("VNI-Helve")), w, "Failed on {w}");
+            assert_eq!(transcode_vietnamese(w, None), w, "Failed on {w}");
+        }
+    }
+
+    #[test]
+    fn test_unicode_diphthongs_never_corrupted() {
+        let words = ["DỰ TOÁN", "THANH TOÁN", "HOÀN CÔNG", "BẢN VẼ HOÀN CÔNG", "AN TOÀN LAO ĐỘNG", "ÁO KHOÁC", "THOÁT HIỂM", "HOÀ BÌNH", "TRÌ HOÃN"];
+        for w in words {
+            assert_eq!(transcode_vietnamese(w, Some("VNI-Helve")), w, "Failed on {w}");
+            assert_eq!(transcode_vietnamese(w, None), w, "Failed on {w}");
+        }
+    }
+
+    #[test]
+    fn test_genuine_vni_still_transcodes() {
+        let tests = [
+            ("SOÁ LIEÄU", "SỐ LIỆU"),
+            ("PHOÁ COÅ", "PHỐ CỔ"),
+            ("MOÃI NGAØY", "MỖI NGÀY"),
+            ("NHOÂM 6063", "NHÔM 6063"),
+            ("TOÅNG COÄNG", "TỔNG CỘNG"),
+            ("QUY CAÙCH", "QUY CÁCH"),
+        ];
+        for (input, expected) in tests {
+            assert_eq!(transcode_vietnamese(input, Some("VNI-Helve")), expected, "Failed on {input}");
+            assert_eq!(transcode_vietnamese(input, None), expected, "Failed on {input}");
+        }
+    }
+
+    #[test]
+    fn test_technical_and_foreign_strings() {
+        let safe = ["Ø20", "OØ20", "Café", "Piñón", "Château", "%%c25"];
+        for w in safe {
+            assert_eq!(transcode_vietnamese(w, None), w, "Failed on {w}");
+            assert_eq!(detect_vietnamese_encoding(w), None, "Failed on {w}");
         }
     }
 }
