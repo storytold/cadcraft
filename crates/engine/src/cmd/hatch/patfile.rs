@@ -13,7 +13,7 @@ use cadcraft_doc::library::{PatternLine, pattern, standard_patterns};
 use serde_json::{Value, json};
 
 use super::super::helpers::support_text;
-use super::*;
+use super::{Result, Session, bad, bool_or};
 
 /// Most user patterns held at once.
 pub const MAX_USER_PATTERNS: usize = 4096;

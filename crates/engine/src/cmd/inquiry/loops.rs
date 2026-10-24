@@ -13,7 +13,8 @@ use cadcraft_doc::{EntityKind, Handle};
 use cadcraft_geom::{Arc as GeoArc, EPS, Vec2};
 use serde_json::{Value, json};
 
-use super::super::*;
+use super::super::bad;
+
 use crate::{Result, Session};
 
 const CMD: &str = "loops";
