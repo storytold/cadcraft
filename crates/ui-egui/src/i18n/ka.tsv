@@ -1,0 +1,1405 @@
+# CADCraft Georgian (ქართული) interface catalog — original translations by the CADCraft contributors.
+# License: MIT OR Apache-2.0 (the repository LICENSE-MIT and LICENSE-APACHE).
+# Written from CADCraft's English strings; no proprietary translations were copied.
+# Clean room: every entry is written from the plain meaning of the English label in ordinary
+# Georgian computing and technical-drawing (ხაზვა) vocabulary (შრე, ზომა, დაშტრიხვა, მომრგვალება,
+# ფასკა, წანაცვლება, მოკვეთა, ობიექტზე მიბმა, ხედვის არე, განლაგება). No other product's Georgian
+# interface, string table or terminology database was consulted, and no other catalog is used as a source.
+# UTF-8: context<TAB>English source<TAB>Georgian translation.
+# Empty context = ordinary label; @plural = one form with {n} (a Georgian noun stays singular after
+# a numeral: "5 კომიტი"); menu = a menu heading where it differs from the label.
+# Commands are verbal nouns (შენახვა, შემობრუნება); prompts read "მიუთითეთ …" for Specify,
+# "შეიყვანეთ …" for Enter and "მონიშნეთ …" for Select. Georgian has no letter case: nothing is
+# capitalised and Mtavruli is never used.
+# Keep command IDs, keywords (Top, Zero, Bottom, _tan to, nX/nXP, Multiple, PICKADD, QPMODE),
+# technology/product names and user data unchanged.
+
+	Apply	გამოყენება
+	Attach DWG...	DWG-ის მიმაგრება...
+	Bind	მიბმა
+	Detach	მოხსნა
+	Loaded	ჩატვირთულია
+	Make it a block of this drawing, keeping its layer names	ამ ნახაზის ბლოკად ქცევა, შრეების სახელების შენარჩუნებით
+	Make it a block of this drawing; its layers become NAME$0$LAYER	ამ ნახაზის ბლოკად ქცევა; შრეების სახელები გახდება NAME$0$LAYER
+	No external references are attached.	გარე მიმართვები მიმაგრებული არ არის.
+	Not Found	ვერ მოიძებნა
+	Not loaded	არ არის ჩატვირთული
+	Open	გახსნა
+	Overlay	ზედდება
+	Reference Manager	მიმართვების მენეჯერი
+	Reference Name	მიმართვის სახელი
+	References: {n}	მიმართვა: {n}
+	Reload	ხელახლა ჩატვირთვა
+	Reload All	ყველას ხელახლა ჩატვირთვა
+	Saved Path	შენახული გზა
+	Unload	განტვირთვა
+	Unloaded	განტვირთულია
+	Unreferenced	მიმართვის გარეშე
+	Unresolved	გადაუჭრელი
+	  Cancel  	  გაუქმება  
+	  OK  	  OK  
+	 or [	 ან [
+	% of all commits	ყველა კომიტის %
+	* Wildcard Match	* შაბლონით დამთხვევა
+	*VARIES*	*სხვადასხვა*
+	+  |  Top  |  2D Wireframe	+  |  ზედა  |  2D კარკასი
+	+Bin	+Bin
+	+LOC	+LOC
+	1 Viewport	1 ხედვის არე
+	2 Points	2 წერტილი
+	2 Viewports	2 ხედვის არე
+	2D Solid	2D შევსებული არე
+	3 Points	3 წერტილი
+	3 Viewports	3 ხედვის არე
+	3D Face	3D წახნაგი
+	3D Operations	3D ოპერაციები
+	3D Polyline	3D ტეხილი
+	4 Viewports	4 ხედვის არე
+	< Less than	< ნაკლებია
+	<> Not Equal	<> არ უდრის
+	= Equals	= უდრის
+	> Greater than	> მეტია
+	A variable name starts with a letter and has only letters, digits and _	ცვლადის სახელი ასოთი იწყება და მხოლოდ ასოებს, ციფრებსა და _-ს შეიცავს
+	About	პროგრამის შესახებ
+	About CADCraft	CADCraft-ის შესახებ
+	Absolute	აბსოლუტური
+	Add Leader	მიმთითებლის დამატება
+	Additional angles	დამატებითი კუთხეები
+	Align	სწორება
+	Align Text	ტექსტის სწორება
+	Aligned	გასწორებული
+	All	ყველა
+	All Annotation Objects	ყველა ანოტაციური ობიექტი
+	All Used Layers	ყველა გამოყენებული შრე
+	All files	ყველა ფაილი
+	Angle	კუთხე
+	Angular	კუთხური
+	Annotation Visibility	ანოტაციის ხილვადობა
+	Annotation scale	ანოტაციის მასშტაბი
+	Apparent Intersection	ხილული გადაკვეთა
+	Append to current selection set	მიმდინარე მონიშნულზე დამატება
+	Apply to:	გამოყენება:
+	Apply true color	ნამდვილი ფერის გამოყენება
+	Arc	რკალი
+	Arc Length	რკალის სიგრძე
+	Area	ფართობი
+	Arrange Panel	პანელის დალაგება
+	Array	მასივი
+	Attach	მიმაგრება
+	Attribute	ატრიბუტი
+	Attribute Definition	ატრიბუტის განსაზღვრა
+	Attribute Display	ატრიბუტების ჩვენება
+	Audit	აუდიტი
+	Auto (system language)	ავტომატური (სისტემის ენა)
+	Auto Constrain	ავტომატური შეზღუდვა
+	AutoConstrain	ავტოშეზღუდვა
+	Axis, End	ღერძი, ბოლო
+	Base	ბაზა
+	Baseline	საბაზისო ხაზი
+	Batch Publish	პაკეტური გამოქვეყნება
+	Binary assets added	დამატებული ბინარული ფაილები
+	Binary assets removed	წაშლილი ბინარული ფაილები
+	Bind...	მიბმა...
+	Blend	გადასვლა
+	Block	ბლოკი
+	Block Attribute Manager...	ბლოკის ატრიბუტების მენეჯერი...
+	Block Editor	ბლოკის რედაქტორი
+	Block Reference	ბლოკის ჩასმა
+	Block...	ბლოკი...
+	Blocks	ბლოკები
+	Blue	ლურჯი
+	Bold	მუქი
+	Boolean	ლოგიკური
+	Boundary	საზღვარი
+	Boundary...	საზღვარი...
+	Box	პარალელეპიპედი
+	Break	გაწყვეტა
+	Break At Point	წერტილში გაწყვეტა
+	Break-line Symbol	წყვეტის ხაზის სიმბოლო
+	Bring Above Objects	ობიექტებზე ზემოთ გადატანა
+	Bring Annotations to Front	ანოტაციების წინა პლანზე გადმოტანა
+	Bring to Front	წინა პლანზე გადმოტანა
+	Bulleted list	ბურთულებიანი სია
+	ByBlock	ბლოკის მიხედვით
+	ByColor	ფერის მიხედვით
+	ByLayer	შრის მიხედვით
+	CADCraft Help	CADCraft-ის დახმარება
+	Cancel	გაუქმება
+	Cartesian (x, y)	დეკარტული (x, y)
+	Center	ცენტრი
+	Center Line	ღერძული ხაზი
+	Center Mark	ცენტრის ნიშანი
+	Center X	ცენტრი X
+	Center Y	ცენტრი Y
+	Center Z	ცენტრი Z
+	Center, Diameter	ცენტრი, დიამეტრი
+	Center, Radius	ცენტრი, რადიუსი
+	Center, Start, Angle	ცენტრი, დასაწყისი, კუთხე
+	Center, Start, End	ცენტრი, დასაწყისი, ბოლო
+	Center, Start, Length	ცენტრი, დასაწყისი, სიგრძე
+	Chamfer	ფასკა
+	Change Space	სივრცის შეცვლა
+	Change to Current Layer	მიმდინარე შრეზე გადატანა
+	Changed: {n}	შეცვლილი: {n}
+	Circle	წრე
+	Circumference	წრეწირის სიგრძე
+	Clear History	ისტორიის გასუფთავება
+	Clear	გასუფთავება
+	Clip	მოჭრა
+	Clip Viewport	ხედვის არის მოჭრა
+	Clipboard	გაცვლის ბუფერი
+	Close	დახურვა
+	Close All	ყველას დახურვა
+	Close All Other Drawings	ყველა სხვა ნახაზის დახურვა
+	Closed	შეკრული
+	Close Comparison	შედარების დახურვა
+	Coincident	დამთხვევა
+	Collapse Palettes	პალიტრების ჩაკეცვა
+	Collapse Tool Sets	ხელსაწყოთა ნაკრებების ჩაკეცვა
+	Collinear	კოლინეარობა
+	Color	ფერი
+	Color 8	ფერი 8
+	Color 9	ფერი 9
+	Color Index	ფერის ინდექსი
+	Color...	ფერი...
+	Command Aliases	ბრძანებების ფსევდონიმები
+	Command History	ბრძანებების ისტორია
+	Clear Command History	ბრძანებების ისტორიის გასუფთავება
+	Command Line	ბრძანების სტრიქონი
+	Command Line History Lines	ბრძანების სტრიქონის ისტორიის სტრიქონები
+	Command Reference	ბრძანებების ცნობარი
+	Commits	კომიტები
+	Company	კომპანია
+	Compare Drawings...	ნახაზების შედარება...
+	Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust.	კომპიუტერული დაპროექტება და ხაზვა: ღია კოდის CAD აპლიკაცია, შექმნილი „სუფთა ოთახის“ მეთოდით და დაწერილი სუფთა Rust-ზე.
+	Concentric	კონცენტრულობა
+	Cone	კონუსი
+	Constraint Bars	შეზღუდვების ზოლები
+	Constraint Settings	შეზღუდვების პარამეტრები
+	Construction Line	დამხმარე ხაზი
+	Contents	შიგთავსი
+	Continue	გაგრძელება
+	Contributors	მონაწილეები
+	Control Vertices	მართვის წვეროები
+	Convert	გარდაქმნა
+	Convert Text to Mtext	ტექსტის Mtext-ად გარდაქმნა
+	Copy	კოპირება
+	Copy Full File Path	ფაილის სრული გზის კოპირება
+	Copy History	ისტორიის კოპირება
+	Copy Layout	განლაგების კოპირება
+	Copy Nested Objects	ჩადგმული ობიექტების კოპირება
+	Copy Selection	მონიშნულის კოპირება
+	Copy with Base Point	კოპირება საბაზო წერტილით
+	Count	დათვლა
+	Count List	დათვლის სია
+	Count Table	დათვლის ცხრილი
+	Create Block	ბლოკის შექმნა
+	Creates a user parameter	ქმნის მომხმარებლის პარამეტრს
+	Ctrl+Enter to finish	დასასრულებლად: Ctrl+Enter
+	Current layer	მიმდინარე შრე
+	Current selection	მიმდინარე მონიშნული
+	Current: {color}	მიმდინარე: {color}
+	Cut	ამოჭრა
+	Cyan	ცისფერი
+	Cylinder	ცილინდრი
+	DWG	DWG
+	DWG Reference...	DWG მიმართვა...
+	DXF	DXF
+	Dark	ბნელი
+	Data Extraction...	მონაცემების ამოღება...
+	Default	ნაგულისხმევი
+	Data Link...	მონაცემთა კავშირი...
+	Default Save Format	შენახვის ნაგულისხმევი ფორმატი
+	Default Save Version	შენახვის ნაგულისხმევი ვერსია
+	Define Attributes	ატრიბუტების განსაზღვრა
+	Define Attributes...	ატრიბუტების განსაზღვრა...
+	Defined width	განსაზღვრული სიგანე
+	Degree	გრადუსი
+	Degrees of Freedom	თავისუფლების ხარისხები
+	Degrees of freedom: {n}	თავისუფლების ხარისხი: {n}
+	Delete	წაშლა
+	Delete Column	სვეტის წაშლა
+	Delete Constraints	შეზღუდვების წაშლა
+	Delete Dimension Style	ზომის სტილის წაშლა
+	Delete Duplicate Objects	დუბლიკატი ობიექტების წაშლა
+	Delete Layer	შრის წაშლა
+	Delete Layer State	შრეების მდგომარეობის წაშლა
+	Delete Layout	განლაგების წაშლა
+	Delete Row	სტრიქონის წაშლა
+	Delete Text Style	ტექსტის სტილის წაშლა
+	Delta X	დელტა X
+	Delta Y	დელტა Y
+	Description	აღწერა
+	Deselect All	ყველა მონიშვნის მოხსნა
+	Diameter	დიამეტრი
+	Dim style	ზომის სტილი
+	Dimension Break	ზომის გაწყვეტა
+	Dimension Edit	ზომის რედაქტირება
+	Dimension	ზომა
+	Dimension Objects Only	მხოლოდ ზომის ობიექტები
+	Dimension Space	ზომების დაშორება
+	Dimension Style Override	ზომის სტილის ლოკალური ცვლილება
+	Dimension Style...	ზომის სტილი...
+	Dimension Text Edit	ზომის ტექსტის რედაქტირება
+	Dimension style	ზომის სტილი
+	Dimensional Constraint	ზომითი შეზღუდვა
+	Dimensional Constraint Parameters	ზომითი შეზღუდვის პარამეტრები
+	Dimensional Constraints	ზომითი შეზღუდვები
+	Disassociate Dimensions	ზომების ასოციაციის მოხსნა
+	Display name	საჩვენებელი სახელი
+	Distance	მანძილი
+	Divide	დაყოფა
+	Do not plot (click: plot)	არ იბეჭდება (დაწკაპეთ: ბეჭდვა)
+	Donut	რგოლი
+	Double-click to edit the description	ორჯერ დაწკაპეთ აღწერის რედაქტირებისთვის
+	Down	ქვემოთ
+	Drafting	ხაზვა
+	Drafting Settings	ხაზვის პარამეტრები
+	Drafting Settings...	ხაზვის პარამეტრები...
+	Draw	ხატვა
+	Draw Order	ხატვის რიგი
+	Drawing (DWG)	ნახაზი (DWG)
+	Drawing (DXF)	ნახაზი (DXF)
+	Drawing Limits	ნახაზის ზღვრები
+	Drawing Template (DWT)	ნახაზის შაბლონი (DWT)
+	Drawing Utilities	ნახაზის უტილიტები
+	Drawings (DWG, DXF)	ნახაზები (DWG, DXF)
+	SVG drawings (SVG, SVGZ)	SVG ნახაზები (SVG, SVGZ)
+	Dynamic	დინამიკური
+	Dynamic Dimensions	დინამიკური ზომები
+	Dynamic Input	დინამიკური შეყვანა
+	Dynamic Input (F12)	დინამიკური შეყვანა (F12)
+	E	E
+	Edit	რედაქტირება
+	Edit Attributes...	ატრიბუტების რედაქტირება...
+	Edit Text...	ტექსტის რედაქტირება...
+	Edit Table Cell	ცხრილის უჯრის რედაქტირება
+	Elevation	დონე
+	Ellipse	ელიფსი
+	Elliptical Arc	ელიფსური რკალი
+	Enable Dynamic Input (F12)	დინამიკური შეყვანის ჩართვა (F12)
+	End Object Isolation	ობიექტების იზოლირების დასრულება
+	End Width	ბოლო სიგანე
+	End X	ბოლო X
+	End Y	ბოლო Y
+	End angle	ბოლო კუთხე
+	Endpoint	ბოლო წერტილი
+	Enter	შეყვანა
+	Enter Top, Zero or Bottom.	შეიყვანეთ Top, Zero ან Bottom.
+	Enter a fit data option	შეიყვანეთ მისადაგების მონაცემების ვარიანტი
+	Enter a pattern name	შეიყვანეთ ნიმუშის სახელი
+	Enter a vertex editing option	შეიყვანეთ წვეროს რედაქტირების ვარიანტი
+	Enter an option	შეიყვანეთ ვარიანტი
+	Enter angle of xline	შეიყვანეთ დამხმარე ხაზის კუთხე
+	Enter angle of xline (0) or	შეიყვანეთ დამხმარე ხაზის კუთხე (0) ან
+	Enter area of rectangle in current units	შეიყვანეთ მართკუთხედის ფართობი მიმდინარე ერთეულებში
+	Enter attribute prompt	შეიყვანეთ ატრიბუტის მოთხოვნა
+	Enter attribute tag name	შეიყვანეთ ატრიბუტის ტეგის სახელი
+	Enter attribute value	შეიყვანეთ ატრიბუტის მნიშვნელობა
+	Enter block name	შეიყვანეთ ბლოკის სახელი
+	Enter constraint type	შეიყვანეთ შეზღუდვის ტიპი
+	Enter continuity	შეიყვანეთ უწყვეტობის ტიპი
+	Enter default attribute value	შეიყვანეთ ატრიბუტის ნაგულისხმევი მნიშვნელობა
+	Enter degree of spline	შეიყვანეთ სპლაინის ხარისხი
+	Enter delta angle	შეიყვანეთ კუთხის ნამატი
+	Enter delta length or	შეიყვანეთ სიგრძის ნამატი ან
+	Enter dimension text	შეიყვანეთ ზომის ტექსტი
+	Enter dimension text (<> = measurement)	შეიყვანეთ ზომის ტექსტი (<> = გაზომილი მნიშვნელობა)
+	Enter dimension value or [name=expression]	შეიყვანეთ ზომის მნიშვნელობა ან [name=expression]
+	Enter dimension variable name to override	შეიყვანეთ გადასაფარავი ზომის ცვლადის სახელი
+	Enter justification type	შეიყვანეთ სწორების ტიპი
+	Enter leader text	შეიყვანეთ მიმთითებლის ტექსტი
+	Enter mline scale	შეიყვანეთ მულტიხაზის მასშტაბი
+	Enter mode	შეიყვანეთ რეჟიმი
+	Enter name of block to insert	შეიყვანეთ ჩასასმელი ბლოკის სახელი
+	Enter new text	შეიყვანეთ ახალი ტექსტი
+	Enter next point	შეიყვანეთ შემდეგი წერტილი
+	Enter number of columns	შეიყვანეთ სვეტების რაოდენობა
+	Enter number of data rows	შეიყვანეთ მონაცემების სტრიქონების რაოდენობა
+	Enter number of items	შეიყვანეთ ელემენტების რაოდენობა
+	Enter number of items along path	შეიყვანეთ ელემენტების რაოდენობა ტრაექტორიის გასწვრივ
+	Enter number of sides	შეიყვანეთ გვერდების რაოდენობა
+	Enter number of turns	შეიყვანეთ ხვიების რაოდენობა
+	Enter percentage length	შეიყვანეთ სიგრძე პროცენტებში
+	Enter rectangle length	შეიყვანეთ მართკუთხედის სიგრძე
+	Enter rectangle width	შეიყვანეთ მართკუთხედის სიგანე
+	Enter scale factor	შეიყვანეთ მასშტაბის კოეფიციენტი
+	Enter text	შეიყვანეთ ტექსტი
+	Enter text (use \P for new paragraphs)	შეიყვანეთ ტექსტი (ახალი აბზაცისთვის გამოიყენეთ \P)
+	Enter the number of segments	შეიყვანეთ სეგმენტების რაოდენობა
+	Enter twist direction of helix	შეიყვანეთ სპირალის დახვევის მიმართულება
+	Entire drawing	მთელი ნახაზი
+	Equal	ტოლობა
+	Erase	წაშლა
+	Evaluate	გამოთვლა
+	Evaluate LISP	LISP-ის გამოთვლა
+	Exclude from new selection set	ახალი მონიშნულიდან გამორიცხვა
+	Explode	დაშლა
+	Explode Attributes to Text	ატრიბუტების ტექსტად დაშლა
+	Export	ექსპორტი
+	Export Table	ცხრილის ექსპორტი
+	Export to PDF...	PDF-ად ექსპორტი...
+	Express Tools	Express Tools
+	Expression	გამოსახულება
+	Extend	გაგრძელება
+	Extension	გაგრძელება
+	Extents	საზღვრები
+	External Reference	გარე მიმართვა
+	External References	გარე მიმართვები
+	Extrude	ამოწევა
+	File	ფაილი
+	File Tab	ფაილის ჩანართი
+	Fillet	მომრგვალება
+	Filter	ფილტრი
+	Filters	ფილტრები
+	Find and Replace	ძებნა და ჩანაცვლება
+	Find...	ძებნა...
+	First	პირველი
+	First commit	პირველი კომიტი
+	Fit Points	მისადაგების წერტილები
+	Fix	ფიქსაცია
+	Flatten Objects	ობიექტების სიბრტყეზე დაგეგმილება
+	Format	ფორმატი
+	Freehand	ხელით ხაზვა
+	Freeze	გაყინვა
+	Freeze Layer	შრის გაყინვა
+	Freeze in new viewports	გაყინვა ახალ ხედვის არეებში
+	Freeze/Thaw	გაყინვა/გალღობა
+	Freeze/Thaw in all viewports	გაყინვა/გალღობა ყველა ხედვის არეში
+	Freeze/Thaw in the current viewport	გაყინვა/გალღობა მიმდინარე ხედვის არეში
+	From	წერტილიდან
+	From Template...	შაბლონიდან...
+	General	ზოგადი
+	Geometric Center	გეომეტრიული ცენტრი
+	Geometric Constraint	გეომეტრიული შეზღუდვა
+	Geometric Constraints	გეომეტრიული შეზღუდვები
+	Geometry	გეომეტრია
+	Get from the Drawing	ნახაზიდან აღება
+	Get Variable	ცვლადის მიღება
+	Get View	ხედის მიღება
+	Global	გლობალური
+	Global width	საერთო სიგანე
+	Grab bag	სხვადასხვა
+	Gradient	გრადიენტი
+	Gradient...	გრადიენტი...
+	Green	მწვანე
+	Grid (F7)	ბადე (F7)
+	Grid Display	ბადის ჩვენება
+	Grid On (F7)	ბადის ჩართვა (F7)
+	Grid snap	ბადეზე მიბმა
+	Grid spacing	ბადის ბიჯი
+	Grip Edit	სახელურით რედაქტირება
+	Grip Mirror	სახელურით არეკვლა
+	Grip Option	სახელურის პარამეტრი
+	Grip Rotate	სახელურით შემობრუნება
+	Grip Scale	სახელურით მასშტაბირება
+	Grip Stretch	სახელურით გაწელვა
+	Group	დაჯგუფება
+	Group Edit	ჯგუფის რედაქტირება
+	Group Options	დაჯგუფების პარამეტრები
+	Group Selection	ჯგუფის მონიშვნა
+	Hatch	დაშტრიხვა
+	Hatch Edit	დაშტრიხვის რედაქტირება
+	Hatch Patterns	დაშტრიხვის ნიმუშები
+	Hatch...	დაშტრიხვა...
+	Height	სიმაღლე
+	Height: {height}	სიმაღლე: {height}
+	Helix	სპირალი
+	Help	დახმარება
+	Hide All	ყველას დამალვა
+	Hide All Constraint Bars	შეზღუდვების ყველა ზოლის დამალვა
+	Hide All Dynamic Dimensions	ყველა დინამიკური ზომის დამალვა
+	Hide Layer List	შრეების სიის დამალვა
+	Hide Objects	ობიექტების დამალვა
+	Hide Palettes	პალიტრების დამალვა
+	History	ისტორია
+	Home	საწყისი ხედი
+	Horizontal	ჰორიზონტალური
+	HorizontalDistance	ჰორიზონტალური მანძილი
+	How to apply:	გამოყენების წესი:
+	ID Point	წერტილის კოორდინატები
+	Import	იმპორტი
+	Align Multileaders	მულტიმიმთითებლების სწორება
+	Collect	შეგროვება
+	Collect Multileaders	მულტიმიმთითებლების შეგროვება
+	Edit Multileader	მულტიმიმთითებლის რედაქტირება
+	In	მოახლოება
+	In-window Menu Bar	მენიუს ზოლი ფანჯარაში
+	Include in new selection set	ახალ მონიშნულ ნაკრებში ჩართვა
+	Increment angle	კუთხის ბიჯი
+	Index Color	ინდექსური ფერი
+	Index color: {index}	ინდექსური ფერი: {index}
+	Infer Constraints	შეზღუდვების ავტომატური დადგენა
+	Inquiry	მოთხოვნა
+	Insert	ჩასმა
+	Insert Block	ბლოკის ჩასმა
+	Insert Column	სვეტის ჩასმა
+	Insert Row	სტრიქონის ჩასმა
+	Insert tab	ტაბულაციის ჩასმა
+	Insert this block	ამ ბლოკის ჩასმა
+	Insert Table Formula	ცხრილში ფორმულის ჩასმა
+	Insertion	ჩასმის წერტილი
+	Insertion X	ჩასმის წერტილი X
+	Insertion Y	ჩასმის წერტილი Y
+	Insertion Z	ჩასმის წერტილი Z
+	Inspect Constraints	შეზღუდვების შემოწმება
+	Inspect Drawing	ნახაზის შემოწმება
+	Inspection	შემოწმება
+	Interface Language	ინტერფეისის ენა
+	Interface Theme	ინტერფეისის თემა
+	Intersect	გადაკვეთა
+	Intersection	გადაკვეთა
+	Isolate	იზოლირება
+	Isolate Layer	შრის იზოლირება
+	Isolate Objects	ობიექტების იზოლირება
+	Isometric Drafting	იზომეტრიული ხაზვა
+	Jogged	გატეხილი
+	Jogged Linear	გატეხილი წრფივი
+	Join	შეერთება
+	Join the ArtCraft Discord…	შემოუერთდით ArtCraft-ის Discord-ს…
+	Join us on Discord	შემოგვიერთდით Discord-ზე
+	Isometric Plane	იზომეტრიული სიბრტყე
+	Isometric snap	იზომეტრიული მიბმა
+	Language	ენა
+	Last	ბოლო
+	Last commit	ბოლო კომიტი
+	Layer	შრე
+	Layer Delete	შრის წაშლა
+	Layer Match	შრის მისადაგება
+	Layer Merge	შრეების შერწყმა
+	Layer Off	შრის გამორთვა
+	Layer Properties	შრის თვისებები
+	Layer Properties Manager	შრის თვისებების მენეჯერი
+	Layer Properties Manager — current viewport	შრის თვისებების მენეჯერი — მიმდინარე ხედვის არე
+	Layer State	შრის მდგომარეობა
+	Layer States Manager...	შრის მდგომარეობების მენეჯერი...
+	Layer Tools	შრის ხელსაწყოები
+	Layer contains objects (double-click to make current)	შრეში ობიექტებია (მიმდინარედ გასახდომად ორჯერ დაწკაპეთ)
+	Layer is empty (double-click to make current)	შრე ცარიელია (მიმდინარედ გასახდომად ორჯერ დაწკაპეთ)
+	Layers	შრეები
+	Layers Palette	შრეების პალიტრა
+	Hide Palette	პალიტრის დამალვა
+	Layers displayed: {shown} of {total}.   Current layer: {layer}	ნაჩვენები შრეები: {shown} / {total}.   მიმდინარე შრე: {layer}
+	Layout	განლაგება
+	Layout list	განლაგებების სია
+	Leader	მიმთითებელი
+	Leaders Only	მხოლოდ მიმთითებლები
+	Left	მარცხნივ
+	Length	სიგრძე
+	Length X	სიგრძე X
+	Length Y	სიგრძე Y
+	Lengthen	დაგრძელება
+	Light	ღია
+	Line	ხაზი
+	Line delta	სტრიქონების სხვაობა
+	Linear	წრფივი
+	Lines +/−	სტრიქონები +/−
+	Lines added	დამატებული სტრიქონები
+	Lines deleted	წაშლილი სტრიქონები
+	Lines of Command History	ბრძანებების ისტორიის სტრიქონები
+	Linetype	ხაზის ტიპი
+	Linetype Scale	ხაზის ტიპის მასშტაბი
+	Linetype scale	ხაზის ტიპის მასშტაბი
+	Ltscale	ხაზის ტიპის მასშტაბი
+	Linetype...	ხაზის ტიპი...
+	Lineweight	ხაზის სისქე
+	Lineweight...	ხაზის სისქე...
+	List	სია
+	List Blocks	ბლოკების სია
+	List Dimension Styles	ზომის სტილების სია
+	List Groups	ჯგუფების სია
+	List Layer States	შრის მდგომარეობების სია
+	List Layouts	განლაგებების სია
+	List System Variables	სისტემის ცვლადების სია
+	List Text Styles	ტექსტის სტილების სია
+	Load all	ყველას ჩატვირთვა
+	Load...	ჩატვირთვა...
+	Load Application...	აპლიკაციის ჩატვირთვა...
+	Loaded linetypes	ჩატვირთული ხაზის ტიპები
+	Lock	ჩაკეტვა
+	Lock Layer	შრის ჩაკეტვა
+	Lock viewport	ხედვის არის ჩაკეტვა
+	Lock/Unlock	ჩაკეტვა/განბლოკვა
+	Loft	კვეთებით აგება
+	MIT OR Apache-2.0. Not affiliated with Autodesk, Inc.	MIT OR Apache-2.0. Autodesk, Inc.-თან კავშირი არ აქვს.
+	MODEL	მოდელი
+	MText	MText
+	Magenta	მეწამული
+	Major line every	ყოველი N-ე ხაზი მთავარია
+	Make Current	მიმდინარედ დაყენება
+	Make Object's Layer Current	ობიექტის შრის მიმდინარედ დაყენება
+	Make...	შექმნა...
+	Match Layer	შრის მისადაგება
+	Match Properties	თვისებების გადატანა
+	Measure	გაზომვა
+	Measure Distance	მანძილის გაზომვა
+	Measure Geometry	გეომეტრიის გაზომვა
+	Merge Cells	უჯრების შერწყმა
+	Merged PRs	გაერთიანებული PR-ები
+	Mid Between 2 Points	შუა 2 წერტილს შორის
+	Midpoint	შუა წერტილი
+	Mirror	არეკვლა
+	Model	მოდელი
+	Model Space (in viewport)	მოდელის სივრცე (ხედვის არეში)
+	Modeling	მოდელირება
+	Models	მოდელები
+	Modify	შეცვლა
+	Move	გადაადგილება
+	Move/Copy/Rotate	გადაადგილება/კოპირება/შემობრუნება
+	Multileader	მულტიმიმთითებელი
+	Multileader Style...	მულტიმიმთითებლის სტილი...
+	Multileader style	მულტიმიმთითებლის სტილი
+	Multiline	მულტიხაზი
+	Multiline Text	მრავალსტრიქონიანი ტექსტი
+	Multiline Text...	მრავალსტრიქონიანი ტექსტი...
+	Multiple	რამდენიმე
+	Multiple Point	რამდენიმე წერტილი
+	My	ჩემი
+	My properties: not available yet	ჩემი თვისებები: ჯერ ხელმისაწვდომი არ არის
+	N	N
+	Name	სახელი
+	Name (A–Z)	სახელი (ა–ჰ)
+	Named Views...	დასახელებული ხედები...
+	Nearest	უახლოესი
+	New	ახალი
+	New (metric)	ახალი (მეტრული)
+	New Drawing	ახალი ნახაზი
+	New Drawing (⌘N)	ახალი ნახაზი (⌘N)
+	New Drawing...	ახალი ნახაზი...
+	New Layer	ახალი შრე
+	New Layout	ახალი განლაგება
+	New VP Freeze	გაყინვა ახალ ხედვის არეებში
+	New Viewports...	ახალი ხედვის არეები...
+	New from Template...	ახალი შაბლონიდან...
+	New layout	ახალი განლაგება
+	New state name	მდგომარეობის ახალი სახელი
+	Next Change	შემდეგი ცვლილება
+	No	არა
+	No blocks defined in this drawing.	ამ ნახაზში ბლოკები არ არის განსაზღვრული.
+	No contributor data was built into this copy.	ამ ასლში მონაწილეების მონაცემები არ არის ჩაშენებული.
+	No model credits were built into this copy.	ამ ასლში მოდელების მონაცემები არ არის ჩაშენებული.
+	No saved layer states	შრის შენახული მდგომარეობები არ არის
+	No selection	მონიშნული არაფერია
+	Node	კვანძი
+	None	არცერთი
+	Not available	მიუწვდომელია
+	Not available yet	ჯერ ხელმისაწვდომი არ არის
+	Numbered list	დანომრილი სია
+	OK	OK
+	Object	ობიექტი
+	Object Snap	ობიექტზე მიბმა
+	Object Snap (F3)	ობიექტზე მიბმა (F3)
+	Object Snap On (F3)	ობიექტზე მიბმის ჩართვა (F3)
+	Object Snap Tracking	მიბმის მიდევნება
+	Object Snap Tracking (F11)	მიბმის მიდევნება (F11)
+	Object Snap Tracking Settings	მიბმის მიდევნების პარამეტრები
+	Object type:	ობიექტის ტიპი:
+	Oblique	დახრა
+	Off	გამორთული
+	Offset	წანაცვლება
+	On	ჩართული
+	On/Off	ჩართვა/გამორთვა
+	One of the Crafting Apps by the ArtCraft team and community.	ArtCraft-ის გუნდისა და საზოგადოების ერთ-ერთი Crafting App.
+	Only in this drawing: {n}	მხოლოდ ამ ნახაზში: {n}
+	Only in {name}: {n}	მხოლოდ ფაილში {name}: {n}
+	Open (⌘O)	გახსნა (⌘O)
+	Open Sample Drawing	სანიმუშო ნახაზის გახსნა
+	Open sample drawing	სანიმუშო ნახაზის გახსნა
+	Open Xref	გარე მიმართვის გახსნა
+	Open...	გახსნა...
+	Open Recent	ბოლოს გახსნილი ფაილების გახსნა
+	Clear Recent Files	ბოლოს გახსნილი ფაილების სიის გასუფთავება
+	Operator:	ოპერატორი:
+	Orbit	ორბიტა
+	Ordinate	ორდინატა
+	Ortho (F8)	ორთო (F8)
+	Ortho Mode	ორთო რეჟიმი
+	Ortho Mode (F8)	ორთო რეჟიმი (F8)
+	Osnap Settings...	ობიექტზე მიბმის პარამეტრები...
+	Out	დაშორება
+	Over-constrained	ზედმეტად შეზღუდული
+	Override	გადაფარვა
+	PAPER	ფურცელი
+	Percent	პროცენტი
+	Polar (distance < angle)	პოლარული (მანძილი < კუთხე)
+	PRs	PR-ები
+	Page Setup Manager	გვერდის პარამეტრების მენეჯერი
+	Page Setup Manager...	გვერდის პარამეტრების მენეჯერი...
+	Pan	პანორამა
+	Pan Down	პანორამა ქვემოთ
+	Pan Left	პანორამა მარცხნივ
+	Pan Right	პანორამა მარჯვნივ
+	Pan Up	პანორამა ზემოთ
+	Paper Space	ფურცლის სივრცე
+	Parallel	პარალელური
+	Parameters Manager	პარამეტრების მენეჯერი
+	Parametric	პარამეტრული
+	Paste	ჩასმა
+	Paste as Block	ბლოკად ჩასმა
+	Paste to Command Line	ბრძანების სტრიქონში ჩასმა
+	Paste to Original Coordinates	საწყის კოორდინატებზე ჩასმა
+	Path Array	ტრაექტორიული მასივი
+	Pattern	ნიმუში
+	Perpendicular	მართობი
+	Plot	დაბეჭდვა
+	Plot (click: do not plot)	იბეჭდება (დაწკაპეთ, რომ არ დაიბეჭდოს)
+	Plot Preview	ნახვა ამობეჭდვამდე
+	Plot Window	ბეჭდვის ფანჯარა
+	Plot style	ბეჭდვის სტილი
+	Plot style attached to	ბეჭდვის სტილი მიმაგრებულია
+	Plot style table	ბეჭდვის სტილების ცხრილი
+	Plot Style...	ბეჭდვის სტილი...
+	Plot Style Manager	ბეჭდვის სტილების მენეჯერი
+	Plot Style Manager...	ბეჭდვის სტილების მენეჯერი...
+	Plot Styles...	ბეჭდვის სტილები...
+	Plotter Manager	პლოტერების მენეჯერი
+	Plotter Manager...	პლოტერების მენეჯერი...
+	New CTB	ახალი CTB
+	New STB	ახალი STB
+	New style	ახალი სტილი
+	Reset Panel Layout	პანელების განლაგების ჩამოყრა
+	Send Hatches to Back	დაშტრიხვების უკანა პლანზე გადატანა
+	Send Under Objects	ობიექტების ქვეშ გადატანა
+	Text Objects Only	მხოლოდ ტექსტური ობიექტები
+	Use for this layout	ამ განლაგებისთვის გამოყენება
+	Display plot styles	ბეჭდვის სტილების ჩვენება
+	No plot style tables.	ბეჭდვის სტილების ცხრილები არ არის.
+	A built-in table: editing it keeps an edited copy in the drawing.	ჩაშენებული ცხრილი: რედაქტირებისას შეცვლილი ასლი ნახაზში ინახება.
+	Keep an editable copy of this table in the drawing	ამ ცხრილის რედაქტირებადი ასლის ნახაზში შენახვა
+	Layout {name}: {table}	განლაგება {name}: {table}
+	Grayscale	ნაცრისფერი ტონები
+	Screening	ტონირება
+	Use object linetype	ობიექტის ხაზის ტიპის გამოყენება
+	Use object lineweight	ობიექტის ხაზის სისქის გამოყენება
+	Remove	წაშლა
+	Add	დამატება
+	Open a drawing first.	ჯერ გახსენით ნახაზი.
+	Plot table type	ბეჭდვის ცხრილის ტიპი
+	Color-dependent	ფერზე დამოკიდებული
+	Named	დასახელებული
+	Plus/minus	პლუს/მინუს
+	Point	წერტილი
+	Point Filters	წერტილის ფილტრები
+	Point Style...	წერტილის სტილი...
+	Polar Array	პოლარული მასივი
+	Polar Tracking	პოლარული მიდევნება
+	Polar Tracking (F10)	პოლარული მიდევნება (F10)
+	Polar Tracking On (F10)	პოლარული მიდევნების ჩართვა (F10)
+	Polar angle measurement	პოლარული კუთხის ათვლა
+	Polar distance	პოლარული მანძილი
+	Polar: {distance} < {angle}°	პოლარული: {distance} < {angle}°
+	PolarSnap	პოლარული მიბმა
+	Polygon	მრავალკუთხედი
+	Polygonal	მრავალკუთხა
+	Polygonal Viewport	მრავალკუთხა ხედვის არე
+	Polyline	ტეხილი
+	Polyline Edit	ტეხილის რედაქტირება
+	Position X	პოზიცია X
+	Position Y	პოზიცია Y
+	Position Z	პოზიცია Z
+	Previous	წინა
+	Previous Change	წინა ცვლილება
+	Previous Layer	წინა შრე
+	Primitives	პრიმიტივები
+	Print	დაბეჭდვა
+	Print...	დაბეჭდვა...
+	Properties	თვისებები
+	Properties Inspector	თვისებების ინსპექტორი
+	Properties:	თვისებები:
+	Proxy	პროქსი
+	Purge	გაწმენდა
+	Pyramid	პირამიდა
+	Quadrant	კვადრანტი
+	Query Entities	ობიექტების გამოთხოვნა
+	Quick	სწრაფი
+	Quick Dimension	სწრაფი ზომა
+	Quick Properties	სწრაფი თვისებები
+	Quick Select	სწრაფი მონიშვნა
+	Quick Select Properties	სწრაფი მონიშვნის თვისებები
+	Quick Select...	სწრაფი მონიშვნა...
+	QuickCalc	სწრაფი კალკულატორი
+	QuickCalc Pick	სწრაფი კალკულატორი: არჩევა
+	Quit CADCraft	CADCraft-იდან გასვლა
+	Radius	რადიუსი
+	Raster Image	რასტრული გამოსახულება
+	Ray	სხივი
+	Read-only	მხოლოდ წასაკითხი
+	Real name	ნამდვილი სახელი
+	Realtime	რეალურ დროში
+	Reassociate Dimensions	ზომების ხელახლა ასოცირება
+	Recent	ბოლოდროინდელი
+	Recent Commands	ბოლოდროინდელი ბრძანებები
+	Recent Input	ბოლოდროინდელი შეყვანა
+	Recover...	აღდგენა...
+	Rectangle	მართკუთხედი
+	Recalculate Table Formulas	ცხრილის ფორმულების გადათვლა
+	Rectangular	მართკუთხა
+	Rectangular snap	მართკუთხა მიბმა
+	Rectangular Array	მართკუთხა მასივი
+	Red	წითელი
+	Redo	ხელახლა შესრულება
+	Redo (⇧⌘Z)	ხელახლა შესრულება (⇧⌘Z)
+	Redraw	გადახატვა
+	Regen	რეგენერაცია
+	Regen All	ყველაფრის რეგენერაცია
+	Region	რეგიონი
+	Region/Mass Properties	რეგიონის/მასის თვისებები
+	Reinitialize	ხელახლა ინიციალიზება
+	Relative	ფარდობითი
+	Relative to last segment	ბოლო სეგმენტის მიმართ
+	Remove Leader	მიმთითებლის მოცილება
+	Remove the viewport override	ხედვის არის ცალკე პარამეტრის მოცილება
+	Rename Dimension Style	ზომის სტილის სახელის შეცვლა
+	Rename Layer	შრის სახელის შეცვლა
+	Rename Layer State	შრეების მდგომარეობის სახელის შეცვლა
+	Rename Layout	განლაგების სახელის შეცვლა
+	Rename Text Style	ტექსტის სტილის სახელის შეცვლა
+	Rename...	სახელის შეცვლა...
+	Repeat {command}	გამეორება: {command}
+	Requires a point (x,y, @dx,dy or @d<a).	საჭიროა წერტილი (x,y, @dx,dy ან @d<a).
+	Reset Palettes	პალიტრების ჩამოყრა
+	Restore	აღდგენა
+	Restore Layer State	შრეების მდგომარეობის აღდგენა
+	Reverse	შებრუნება
+	Reverse the order	რიგის შებრუნება
+	Revision Cloud	შესწორების ღრუბელი
+	Revolve	ბრუნვით აგება
+	Right	მარჯვნივ
+	Rotate	შემობრუნება
+	Rotation	შემობრუნება
+	S	S
+	Save	შენახვა
+	Save (⌘S)	შენახვა (⌘S)
+	Save As	შენახვა როგორც
+	Save As...	შენახვა როგორც...
+	Save Layer State	შრეების მდგომარეობის შენახვა
+	Save State	მდგომარეობის შენახვა
+	Scale	მასშტაბირება
+	Search for layer	შრის ძიება
+	Search for parameter	პარამეტრის ძიება
+	Second and next points:	მეორე და შემდეგი წერტილები:
+	Select	მონიშვნა
+	Select 2D polyline	მონიშნეთ 2D ტეხილი
+	Select All	ყველაფრის მონიშვნა
+	Select Objects	ობიექტების მონიშვნა
+	Select Similar	მსგავსის მონიშვნა
+	Select a 2D polyline.	მონიშნეთ 2D ტეხილი.
+	Select a block reference.	მონიშნეთ ბლოკის ჩასმა.
+	Select a circle or arc.	მონიშნეთ წრე ან რკალი.
+	Select a closed polyline	მონიშნეთ შეკრული ტეხილი
+	Select a closed polyline, circle, ellipse or closed spline.	მონიშნეთ შეკრული ტეხილი, წრე, ელიფსი ან შეკრული სპლაინი.
+	Select a closed polyline.	მონიშნეთ შეკრული ტეხილი.
+	Select a curve as the path.	მონიშნეთ მრუდი ტრაექტორიად.
+	Select a dimension constraint type	აირჩიეთ ზომითი შეზღუდვის ტიპი
+	Select a line object	მონიშნეთ ხაზი
+	Select a line object.	მონიშნეთ ხაზი.
+	Select a line or an arc.	მონიშნეთ ხაზი ან რკალი.
+	Select a line or polyline segment	მონიშნეთ ხაზი ან ტეხილის სეგმენტი
+	Select a line, arc or open polyline.	მონიშნეთ ხაზი, რკალი ან ღია ტეხილი.
+	Select a line, arc, circle, polyline, ellipse or spline as the path.	მონიშნეთ ხაზი, რკალი, წრე, ტეხილი, ელიფსი ან სპლაინი ტრაექტორიად.
+	Select a line, circle, arc or polyline segment.	მონიშნეთ ხაზი, წრე, რკალი ან ტეხილის სეგმენტი.
+	Select a line.	მონიშნეთ ხაზი.
+	Select a polyline.	მონიშნეთ ტეხილი.
+	Select a text, mtext, attribute definition or dimension.	მონიშნეთ ტექსტი, მრავალსტრიქონიანი ტექსტი, ატრიბუტის განსაზღვრა ან ზომა.
+	Select an annotation object	მონიშნეთ ანოტაციის ობიექტი
+	Select an arc or circle	მონიშნეთ რკალი ან წრე
+	Select an arc.	მონიშნეთ რკალი.
+	Select an object	მონიშნეთ ობიექტი
+	Select an object to change or	მონიშნეთ შესაცვლელი ობიექტი ან
+	Select an object to measure or	მონიშნეთ გასაზომი ობიექტი ან
+	Select an object.	მონიშნეთ ობიექტი.
+	Select an open curve.	მონიშნეთ ღია მრუდი.
+	Select an open line, arc, polyline, ellipse arc or spline.	მონიშნეთ ღია ხაზი, რკალი, ტეხილი, ელიფსური რკალი ან სპლაინი.
+	Select arc or circle	მონიშნეთ რკალი ან წრე
+	Select arc or polyline arc segment	მონიშნეთ რკალი ან ტეხილის რკალისებრი სეგმენტი
+	Select arc style	აირჩიეთ რკალის სტილი
+	Select arc, circle, line	მონიშნეთ რკალი, წრე, ხაზი
+	Select at least two objects to join.	შესაერთებლად მონიშნეთ ორი ობიექტი მაინც.
+	Select circle or arc to add center mark	მონიშნეთ წრე ან რკალი ცენტრის ნიშნის დასამატებლად
+	Select closed objects (regions, closed polylines, circles).	მონიშნეთ შეკრული ობიექტები (რეგიონები, შეკრული ტეხილები, წრეები).
+	Select first line	მონიშნეთ პირველი ხაზი
+	Select first line or arc	მონიშნეთ პირველი ხაზი ან რკალი
+	Select first object	მონიშნეთ პირველი ობიექტი
+	Select first object or	მონიშნეთ პირველი ობიექტი ან
+	Select first point	მონიშნეთ პირველი წერტილი
+	Select nested objects to copy or	მონიშნეთ ჩადგმული ობიექტები კოპირებისთვის ან
+	Select object	მონიშნეთ ობიექტი
+	Select object to dimension	მონიშნეთ ობიექტი ზომის დასატანად
+	Select object to divide	მონიშნეთ დასაყოფი ობიექტი
+	Select object to extend or shift-select to trim	მონიშნეთ ობიექტი გასაგრძელებლად, ან Shift-ით მონიშნეთ მოსაკვეთად
+	Select object to measure	მონიშნეთ გასაზომი ობიექტი
+	Select object to offset	მონიშნეთ ობიექტი წასანაცვლებლად
+	Select object to trim or shift-select to extend	მონიშნეთ ობიექტი მოსაკვეთად, ან Shift-ით მონიშნეთ გასაგრძელებლად
+	Select objects	მონიშნეთ ობიექტები
+	Select objects (crossing window first corner)	მონიშნეთ ობიექტები (გადამკვეთი ფანჯრის პირველი კუთხე)
+	Select objects to array.	მონიშნეთ ობიექტები მასივისთვის.
+	Select objects to stretch by crossing-window or crossing-polygon...	მონიშნეთ გასაწელი ობიექტები გადამკვეთი ფანჯრით ან გადამკვეთი მრავალკუთხედით...
+	Select objects:	მონიშნეთ ობიექტები:
+	Add to Working Set	სამუშაო ნაკრებში დამატება
+	Edit Reference In-Place	მიმართვის ადგილზე რედაქტირება
+	Save Reference Edits	მიმართვის ცვლილებების შენახვა
+	Working Set	სამუშაო ნაკრები
+	Xref and Block In-place Editing	გარე მიმართვისა და ბლოკის ადგილზე რედაქტირება
+	Select one polyline (Multiple is available through the JSON form).	მონიშნეთ ერთი ტეხილი (Multiple ხელმისაწვდომია JSON ფორმით).
+	Select path curve	მონიშნეთ ტრაექტორიის მრუდი
+	Select point or object	მონიშნეთ წერტილი ან ობიექტი
+	Select polyline or	მონიშნეთ ტეხილი ან
+	Select second line	მონიშნეთ მეორე ხაზი
+	Select second line or shift-select to apply corner	მონიშნეთ მეორე ხაზი, ან Shift-ით მონიშნეთ კუთხის შესაქმნელად
+	Select second object	მონიშნეთ მეორე ობიექტი
+	Select second object or shift-select to apply corner	მონიშნეთ მეორე ობიექტი, ან Shift-ით მონიშნეთ კუთხის შესაქმნელად
+	Select second point	მონიშნეთ მეორე წერტილი
+	Select spline	მონიშნეთ სპლაინი
+	Select symmetry line	მონიშნეთ სიმეტრიის ხაზი
+	Select two points	მონიშნეთ ორი წერტილი
+	Selection Cycling	მონიშვნის ციკლური გადართვა
+	Send to Back	უკანა პლანზე გადატანა
+	Set Current	მიმდინარედ დაყენება
+	Set Current Dimension Style	ზომის მიმდინარე სტილის დაყენება
+	Set Current Text Style	ტექსტის მიმდინარე სტილის დაყენება
+	Set Current Viewport	მიმდინარე ხედვის არის დაყენება
+	Set Layer Properties	შრის თვისებების დაყენება
+	Set Properties	თვისებების დაყენება
+	Set Table Cell	ცხრილის უჯრის დაყენება
+	Set Table Cell Style	ცხრილის უჯრის სტილის დაყენება
+	Set Variable	ცვლადის დაყენება
+	Set View	ხედის დაყენება
+	Share	გაზიარება
+	Show	ჩვენება
+	Show All	ყველაფრის ჩვენება
+	Show All Constraint Bars	შეზღუდვების ყველა ზოლის ჩვენება
+	Show All Dynamic Dimensions	ყველა დინამიკური ზომის ჩვენება
+	Show and hide the tools of this category	ამ კატეგორიის ხელსაწყოების ჩვენება და დამალვა
+	Show in Tool Sets	ხელსაწყოების ნაკრებებში ჩვენება
+	Show command prompting near the crosshairs	ბრძანების მოთხოვნების ჩვენება კურსორთან ახლოს
+	Show Layer List	შრეების სიის ჩვენება
+	Show/Hide Lineweight	ხაზის სისქის ჩვენება/დამალვა
+	Show/Hide Transparency	გამჭვირვალობის ჩვენება/დამალვა
+	Single Line Text	ერთსტრიქონიანი ტექსტი
+	Single Point	ერთი წერტილი
+	Single...	ცალკეული...
+	Smooth	დაგლუვება
+	Snap	მიბმა
+	Snap Mode	მიბმის რეჟიმი
+	Snap Mode (F9)	მიბმის რეჟიმი (F9)
+	Snap On (F9)	მიბმა ჩართულია (F9)
+	Snap Overrides	მიბმის გადაფარვები
+	Snap X spacing	მიბმის ბიჯი X-ით
+	Snap and Grid	მიბმა და ბადე
+	Snap type	მიბმის ტიპი
+	Solid	სხეული
+	Sort	სორტირება
+	Specify a point	მიუთითეთ წერტილი
+	Specify a scale for the hatch pattern	მიუთითეთ დაშტრიხვის ნიმუშის მასშტაბი
+	Specify a second extension line origin	მიუთითეთ მეორე გამოსატანი ხაზის სათავე
+	Specify an angle for the hatch pattern	მიუთითეთ დაშტრიხვის ნიმუშის კუთხე
+	Specify angle end point	მიუთითეთ კუთხის ბოლო წერტილი
+	Specify angle of dimension line	მიუთითეთ ზომის ხაზის კუთხე
+	Specify angle of dimension text	მიუთითეთ ზომის ტექსტის კუთხე
+	Specify angle start point	მიუთითეთ კუთხის საწყისი წერტილი
+	Specify angle vertex	მიუთითეთ კუთხის წვერო
+	Specify angle vertex point	მიუთითეთ კუთხის წვეროს წერტილი
+	Specify arc length dimension location	მიუთითეთ რკალის სიგრძის ზომის მდებარეობა
+	Specify axis endpoint of ellipse	მიუთითეთ ელიფსის ღერძის ბოლო წერტილი
+	Specify base diameter	მიუთითეთ ფუძის დიამეტრი
+	Specify base point	მიუთითეთ საბაზო წერტილი
+	Specify base point or	მიუთითეთ საბაზო წერტილი ან
+	Specify base point or displacement (drag with the middle mouse button for realtime pan)	მიუთითეთ საბაზო წერტილი ან წანაცვლება (რეალურ დროში პანორამისთვის გადაათრიეთ მაუსის შუა ღილაკით)
+	Specify base radius or	მიუთითეთ ფუძის რადიუსი ან
+	Specify center of donut	მიუთითეთ რგოლის ცენტრი
+	Specify center of ellipse	მიუთითეთ ელიფსის ცენტრი
+	Specify center of polygon	მიუთითეთ მრავალკუთხედის ცენტრი
+	Specify center point for circle	მიუთითეთ წრის ცენტრის წერტილი
+	Specify center point of arc	მიუთითეთ რკალის ცენტრის წერტილი
+	Specify center point of array	მიუთითეთ მასივის ცენტრის წერტილი
+	Specify center point of base	მიუთითეთ ფუძის ცენტრის წერტილი
+	Specify corner of viewport	მიუთითეთ ხედვის არის კუთხე
+	Specify corner of window, enter a scale factor (nX or nXP)	მიუთითეთ ფანჯრის კუთხე, შეიყვანეთ მასშტაბის კოეფიციენტი (nX ან nXP)
+	Specify diameter of circle	მიუთითეთ წრის დიამეტრი
+	Specify dimension arc line location	მიუთითეთ ზომის რკალის ხაზის მდებარეობა
+	Specify dimension line location	მიუთითეთ ზომის ხაზის მდებარეობა
+	Specify distance between turns	მიუთითეთ მანძილი ხვიებს შორის
+	Specify distance to other axis	მიუთითეთ მანძილი მეორე ღერძამდე
+	Specify end angle	მიუთითეთ ბოლო კუთხე
+	Specify end point of arc	მიუთითეთ რკალის ბოლო წერტილი
+	Specify end point of arc (hold Ctrl to switch direction)	მიუთითეთ რკალის ბოლო წერტილი (მიმართულების შესაცვლელად დააჭირეთ Ctrl-ს)
+	Specify ending width	მიუთითეთ ბოლო სიგანე
+	Specify ending width for next segment	მიუთითეთ ბოლო სიგანე შემდეგი სეგმენტისთვის
+	Specify endpoint of arc	მიუთითეთ რკალის ბოლო წერტილი
+	Specify endpoint of axis	მიუთითეთ ღერძის ბოლო წერტილი
+	Specify endpoint of line	მიუთითეთ ხაზის ბოლო წერტილი
+	Specify feature location	მიუთითეთ ელემენტის მდებარეობა
+	Specify fillet radius	მიუთითეთ მომრგვალების რადიუსი
+	Specify fillet radius for rectangles	მიუთითეთ მართკუთხედების მომრგვალების რადიუსი
+	Specify first angle endpoint	მიუთითეთ კუთხის პირველი ბოლო წერტილი
+	Specify first chamfer distance	მიუთითეთ ფასკის პირველი მანძილი
+	Specify first chamfer distance for rectangles	მიუთითეთ მართკუთხედების ფასკის პირველი მანძილი
+	Specify first constraint point	მიუთითეთ შეზღუდვის პირველი წერტილი
+	Specify first corner	მიუთითეთ პირველი კუთხე
+	Specify first corner point	მიუთითეთ პირველი კუთხის წერტილი
+	Specify first destination point	მიუთითეთ დანიშნულების პირველი წერტილი
+	Specify first end point of circle's diameter	მიუთითეთ წრის დიამეტრის პირველი ბოლო წერტილი
+	Specify first endpoint of edge	მიუთითეთ წიბოს პირველი ბოლო წერტილი
+	Specify first extension line origin	მიუთითეთ პირველი გამოსატანი ხაზის სათავე
+	Specify first point	მიუთითეთ პირველი წერტილი
+	Specify first point of mirror line	მიუთითეთ არეკვლის ხაზის პირველი წერტილი
+	Specify first point on circle	მიუთითეთ პირველი წერტილი წრეზე
+	Specify first point on circle: _tan to	მიუთითეთ პირველი წერტილი წრეზე: _tan to
+	Specify first source point	მიუთითეთ პირველი საწყისი წერტილი
+	Specify height	მიუთითეთ სიმაღლე
+	Specify helix height or	მიუთითეთ სპირალის სიმაღლე ან
+	Specify included angle	მიუთითეთ შიგა კუთხე
+	Specify insertion base point	მიუთითეთ ჩასმის საბაზო წერტილი
+	Specify insertion point	მიუთითეთ ჩასმის წერტილი
+	A drawing opened from a file keeps that file's format.	ფაილიდან გახსნილი ნახაზი ინარჩუნებს ამ ფაილის ფორმატს.
+	An array that would create more objects than this is refused.	მასივი, რომელიც ამაზე მეტ ობიექტს შექმნიდა, უარყოფილია.
+	CADCraft keeps these preferences, object snap modes and drafting toggles for your user account and restores them when it starts.	CADCraft ინახავს ამ პარამეტრებს, ობიექტზე მიბმის რეჟიმებს და ხაზვის გადამრთველებს თქვენი მომხმარებლის ანგარიშისთვის და აღადგენს მათ გაშვებისას.
+	Changes apply at once and are kept for next time.	ცვლილებები მაშინვე მოქმედებს და შემდეგი ჯერისთვისაც ინახება.
+	Command line history	ბრძანების სტრიქონის ისტორია
+	Copy as JSON	კოპირება JSON-ად
+	Crosshair size	ჯვარედინი კურსორის ზომა
+	Crossing selection color:	გადამკვეთი მონიშვნის ფერი:
+	Display	ეკრანი
+	Exclude:	გამორიცხვა:
+	Grip size	სახელურის ზომა
+	Grips	სახელურები
+	Groups	ჯგუფები
+	Hatches	დაშტრიხვები
+	Hold Shift to add to the selection	მონიშნულში დასამატებლად დააჭირეთ Shift-ს
+	Indicate selection area	მიუთითეთ მონიშვნის არე
+	Interface language	ინტერფეისის ენა
+	Interface theme	ინტერფეისის თემა
+	Keep the system cursor visible over the drawing area	სისტემის კურსორი ნახაზის არეზე ხილული დარჩეს
+	Largest array	ყველაზე დიდი მასივი
+	Layout paper	განლაგების ფურცელი
+	Model background	მოდელის ფონი
+	Multiline text	მრავალსტრიქონიანი ტექსტი
+	Object grouping	ობიექტების დაჯგუფება
+	Object selection limit for display of grips	მონიშნული ობიექტების ზღვრული რაოდენობა სახელურების საჩვენებლად
+	Object snap aperture	ობიექტზე მიბმის აპერტურა
+	Object snap marker size	ობიექტზე მიბმის მარკერის ზომა
+	Objects on locked layers	ობიექტები ჩაკეტილ შრეებზე
+	Open and Save	გახსნა და შენახვა
+	Options	პარამეტრები
+	Options...	პარამეტრები...
+	Pickbox size	არჩევის კვადრატის ზომა
+	Preview	წინასწარი ნახვა
+	Profiles	პროფილები
+	Reset keeps the interface language.	ჩამოყრის შემდეგ ინტერფეისის ენა უცვლელი რჩება.
+	Reset to Defaults	ნაგულისხმევზე დაბრუნება
+	Save new drawings as	ახალი ნახაზების შენახვა როგორც
+	Units of new drawings	ახალი ნახაზების ერთეულები
+	Imperial (inches)	იმპერიული (დუიმები)
+	Metric (millimetres)	მეტრული (მილიმეტრები)
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	ახალი ნახაზი და გაშვებისას გახსნილი პირველი ნახაზი ამ ერთეულებს იყენებს, თუ ნაგულისხმევი შაბლონი არ არის მითითებული (QNEWTEMPLATE).
+	Screen magnifiers, screen readers and recorders follow the system cursor.	ეკრანის გამადიდებლები, ეკრანის წამკითხველები და ჩამწერები სისტემის კურსორს მიჰყვება.
+	Select objects first, then choose a command	ჯერ მონიშნეთ ობიექტები, შემდეგ აირჩიეთ ბრძანება
+	Selection	მონიშვნა
+	Selection Area Effect	მონიშვნის არის ეფექტი
+	Selection Preview Filter	მონიშვნის წინასწარი ნახვის ფილტრი
+	Selection area opacity:	მონიშვნის არის გაუმჭვირვალობა:
+	Selection effect color	მონიშვნის ეფექტის ფერი
+	Selection modes	მონიშვნის რეჟიმები
+	Selection preview	მონიშვნის წინასწარი ნახვა
+	Settings...	პარამეტრები...
+	Show Quick Properties for selected objects	მონიშნული ობიექტებისთვის სწრაფი თვისებების ჩვენება
+	Show grips	სახელურების ჩვენება
+	Snap, grid, polar tracking and Dynamic Input:	მიბმა, ბადე, პოლარული მიდევნება და დინამიკური შეყვანა:
+	Tables	ცხრილები
+	The aperture is how near the cursor must come to a point for an object snap to find it.	აპერტურა განსაზღვრავს, რამდენად ახლოს უნდა მივიდეს კურსორი წერტილთან, რომ ობიექტზე მიბმამ ის იპოვოს.
+	User Preferences	მომხმარებლის პარამეტრები
+	Visual Effect Settings	ვიზუალური ეფექტის პარამეტრები
+	Visual Effect Settings...	ვიზუალური ეფექტის პარამეტრები...
+	When a command is active	როცა ბრძანება აქტიურია
+	When no command is active	როცა არცერთი ბრძანება არ არის აქტიური
+	Window selection color:	ფანჯრით მონიშვნის ფერი:
+	Xrefs	გარე მიმართვები
+	objects	ობიექტი
+	Specify inside diameter of donut	მიუთითეთ რგოლის შიგა დიამეტრი
+	Specify leader arrowhead location	მიუთითეთ მიმთითებლის ისრის წვერის მდებარეობა
+	Specify leader endpoint	მიუთითეთ მიმთითებლის ბოლო წერტილი
+	Specify leader landing location	მიუთითეთ მიმთითებლის თაროს მდებარეობა
+	Specify length for rectangles	მიუთითეთ მართკუთხედების სიგრძე
+	Specify length of chord	მიუთითეთ ქორდის სიგრძე
+	Specify length of segment	მიუთითეთ სეგმენტის სიგრძე
+	Specify line width for rectangles	მიუთითეთ მართკუთხედების ხაზის სიგანე
+	Specify location for new vertex	მიუთითეთ ახალი წვეროს მდებარეობა
+	Specify minimum length of arc	მიუთითეთ რკალის მინიმალური სიგრძე
+	Specify new end point	მიუთითეთ ახალი ბოლო წერტილი
+	Specify new location for marked vertex	მიუთითეთ მონიშნული წვეროს ახალი მდებარეობა
+	Specify new width for all segments	მიუთითეთ ახალი სიგანე ყველა სეგმენტისთვის
+	Specify next point	მიუთითეთ შემდეგი წერტილი
+	Specify offset distance	მიუთითეთ წანაცვლების მანძილი
+	Specify offset distance or	მიუთითეთ წანაცვლების მანძილი ან
+	Specify opposite corner	მიუთითეთ მოპირდაპირე კუთხე
+	Specify other corner point	მიუთითეთ მეორე კუთხის წერტილი
+	Specify other endpoint of axis	მიუთითეთ ღერძის მეორე ბოლო წერტილი
+	Specify outside diameter of donut	მიუთითეთ რგოლის გარე დიამეტრი
+	Specify point	მიუთითეთ წერტილი
+	Specify point on object for first tangent of circle	მიუთითეთ წერტილი ობიექტზე წრის პირველი მხებისთვის
+	Specify point on object for second tangent of circle	მიუთითეთ წერტილი ობიექტზე წრის მეორე მხებისთვის
+	Specify point on side to offset	მიუთითეთ წერტილი წანაცვლების მხარეს
+	Specify radius of arc	მიუთითეთ რკალის რადიუსი
+	Specify radius of circle	მიუთითეთ წრის რადიუსი
+	Specify rotation angle	მიუთითეთ შემობრუნების კუთხე
+	Specify rotation angle of text	მიუთითეთ ტექსტის შემობრუნების კუთხე
+	Specify rotation angle or	მიუთითეთ შემობრუნების კუთხე ან
+	Specify scale factor	მიუთითეთ მასშტაბის კოეფიციენტი
+	Specify second angle endpoint	მიუთითეთ კუთხის მეორე ბოლო წერტილი
+	Specify second break point	მიუთითეთ გაწყვეტის მეორე წერტილი
+	Specify second chamfer distance for rectangles	მიუთითეთ მართკუთხედების ფასკის მეორე მანძილი
+	Specify second constraint point	მიუთითეთ შეზღუდვის მეორე წერტილი
+	Specify second destination point	მიუთითეთ დანიშნულების მეორე წერტილი
+	Specify second end point of circle's diameter	მიუთითეთ წრის დიამეტრის მეორე ბოლო წერტილი
+	Specify second endpoint of edge	მიუთითეთ წიბოს მეორე ბოლო წერტილი
+	Specify second extension line origin	მიუთითეთ მეორე გამოსატანი ხაზის სათავე
+	Specify second point	მიუთითეთ მეორე წერტილი
+	Specify second point of arc	მიუთითეთ რკალის მეორე წერტილი
+	Specify second point of mirror line	მიუთითეთ არეკვლის ხაზის მეორე წერტილი
+	Specify second point on circle	მიუთითეთ წრის მეორე წერტილი
+	Specify second point on circle: _tan to	მიუთითეთ წრის მეორე წერტილი: _tan to
+	Specify second point or <use first point as displacement>	მიუთითეთ მეორე წერტილი ან <პირველი წერტილი გამოიყენეთ წანაცვლებად>
+	Specify second source point	მიუთითეთ მეორე საწყისი წერტილი
+	Specify side to offset	მიუთითეთ წანაცვლების მხარე
+	Specify start angle	მიუთითეთ საწყისი კუთხე
+	Specify start point	მიუთითეთ საწყისი წერტილი
+	Specify start point of arc	მიუთითეთ რკალის საწყისი წერტილი
+	Specify start point of polyline	მიუთითეთ ტეხილის საწყისი წერტილი
+	Specify start point of text	მიუთითეთ ტექსტის საწყისი წერტილი
+	Specify starting width	მიუთითეთ საწყისი სიგანე
+	Specify starting width for next segment	მიუთითეთ შემდეგი სეგმენტის საწყისი სიგანე
+	Specify tangent direction for the start point of arc	მიუთითეთ მხების მიმართულება რკალის საწყის წერტილში
+	Specify the elevation for rectangles	მიუთითეთ მართკუთხედების დონე
+	Specify thickness for rectangles	მიუთითეთ მართკუთხედების სისქე
+	Specify third point on circle	მიუთითეთ წრის მესამე წერტილი
+	Specify third point on circle: _tan to	მიუთითეთ წრის მესამე წერტილი: _tan to
+	Specify third source point or <continue>	მიუთითეთ მესამე საწყისი წერტილი ან <გაგრძელება>
+	Specify through point	მიუთითეთ გავლის წერტილი
+	Specify top diameter	მიუთითეთ ზედა დიამეტრი
+	Specify top radius or	მიუთითეთ ზედა რადიუსი ან
+	Specify total angle	მიუთითეთ სრული კუთხე
+	Specify total length or	მიუთითეთ სრული სიგრძე ან
+	Specify width for rectangles	მიუთითეთ მართკუთხედების სიგანე
+	Sphere	სფერო
+	Spline	სპლაინი
+	Spline Edit	სპლაინის რედაქტირება
+	Stack (type 1/2 then select)	დასტად დალაგება (აკრიფეთ 1/2 და მონიშნეთ)
+	Standard	სტანდარტული
+	Start	დასაწყისი
+	Start Width	საწყისი სიგანე
+	Start X	საწყისი X
+	Start Y	საწყისი Y
+	Start angle	საწყისი კუთხე
+	Start, Center, Angle	დასაწყისი, ცენტრი, კუთხე
+	Start, Center, End	დასაწყისი, ცენტრი, ბოლო
+	Start, Center, Length	დასაწყისი, ცენტრი, სიგრძე
+	Start, End, Angle	დასაწყისი, ბოლო, კუთხე
+	Start, End, Direction	დასაწყისი, ბოლო, მიმართულება
+	Start, End, Radius	დასაწყისი, ბოლო, რადიუსი
+	Status	სტატუსი
+	Status Bar	სტატუსის ზოლი
+	Stretch	გაწელვა
+	Style: Standard	სტილი: Standard
+	Subtract	გამოკლება
+	Sweep	ტრაექტორიით აგება
+	Switch Drawing	ნახაზის გადართვა
+	Switch Layout	განლაგების გადართვა
+	Switch between model space in a viewport and paper space	გადართვა ხედვის არეში მოდელის სივრცესა და ფურცლის სივრცეს შორის
+	Symmetric	სიმეტრია
+	Synchronize Attributes	ატრიბუტების სინქრონიზაცია
+	To	სადამდე
+	Toggle PICKADD (off: each pick replaces the selection)	PICKADD-ის გადართვა (გამორთული: ყოველი არჩევა ცვლის მონიშნულს)
+	Toggle PICKADD (on: picks add to the selection)	PICKADD-ის გადართვა (ჩართული: არჩეული ემატება მონიშნულს)
+	TOP	ზედა
+	Table	ცხრილი
+	Table Breaks	ცხრილის გაწყვეტა
+	Table Cell Style	ცხრილის უჯრის სტილი
+	Table Style...	ცხრილის სტილი...
+	Table style	ცხრილის სტილი
+	Table...	ცხრილი...
+	Tan, Tan, Radius	მხები, მხები, რადიუსი
+	Tan, Tan, Tan	მხები, მხები, მხები
+	Tangent	მხები
+	Temporary track point	დროებითი მიდევნების წერტილი
+	Text	ტექსტი
+	Text Editor	ტექსტის რედაქტორი
+	Text Height	ტექსტის სიმაღლე
+	Text Style...	ტექსტის სტილი...
+	Text height	ტექსტის სიმაღლე
+	Text override	ტექსტის ჩანაცვლება
+	Text style	ტექსტის სტილი
+	Thaw All Layers	ყველა შრის გალღობა
+	Thaw Layer	შრის გალღობა
+	There is nothing here yet.	აქ ჯერ არაფერია.
+	Thickness	სისქე
+	Time	დრო
+	To get started, create or open a drawing.	დასაწყებად შექმენით ან გახსენით ნახაზი.
+	Tool Bar	ხელსაწყოთა ზოლი
+	Tool Sets	ხელსაწყოთა ნაკრებები
+	Tools	ხელსაწყოები
+	Torus	ტორი
+	Trace	სქელი ხაზი
+	Track orthogonally only	მიდევნება მხოლოდ ორთოგონალურად
+	Track using all polar angle settings	მიდევნება პოლარული კუთხის ყველა პარამეტრით
+	Transparency	გამჭვირვალობა
+	Trim	მოკვეთა
+	True Color	ნამდვილი ფერი
+	Turn All Layers On	ყველა შრის ჩართვა
+	Turn Off Layer	შრის გამორთვა
+	Turn On Layer	შრის ჩართვა
+	Turn Quick Properties off (QPMODE)	სწრაფი თვისებების გამორთვა (QPMODE)
+	Type	ტიპი
+	Type a command	აკრიფეთ ბრძანება
+	Type text; Enter starts a new paragraph	აკრიფეთ ტექსტი; Enter იწყებს ახალ აბზაცს
+	UCS Icon	UCS-ის ხატულა
+	Undo	დაბრუნება
+	Undo (⌘Z)	დაბრუნება (⌘Z)
+	Ungroup	დაჯგუფების მოხსნა
+	Union	გაერთიანება
+	Unisolate Layer	შრის იზოლირების მოხსნა
+	Units Conversion	ერთეულების გარდაქმნა
+	Units...	ერთეულები...
+	Unlock Layer	შრის განბლოკვა
+	Unlock viewport	ხედვის არის განბლოკვა
+	Unmerge Cells	უჯრების შერწყმის გაუქმება
+	Unsaved Layer State	შრეების შეუნახავი მდგომარეობა
+	Up	ზემოთ
+	Update Data Links	მონაცემთა ბმულების განახლება
+	Update	განახლება
+	Use System Setting	სისტემის პარამეტრის გამოყენება
+	User	მომხმარებელი
+	User Parameters	მომხმარებლის პარამეტრები
+	Username	მომხმარებლის სახელი
+	Volume	მოცულობა
+	VP Color	ხედვის არის ფერი
+	VP Freeze	ხედვის არეში გაყინვა
+	Value	მნიშვნელობა
+	Value:	მნიშვნელობა:
+	Variables	ცვლადები
+	Version	ვერსია
+	Version 2000	ვერსია 2000
+	Version 2004	ვერსია 2004
+	Version 2007	ვერსია 2007
+	Version 2010	ვერსია 2010
+	Version 2013	ვერსია 2013
+	Version 2018	ვერსია 2018
+	Version {version}	ვერსია {version}
+	Vertical	ვერტიკალური
+	VerticalDistance	ვერტიკალური მანძილი
+	View	ხედი
+	ViewCube	ViewCube
+	Viewport	ხედვის არე
+	Viewport Layer Freeze	შრის გაყინვა ხედვის არეში
+	Viewport Properties	ხედვის არის თვისებები
+	Viewport is locked	ხედვის არე ჩაკეტილია
+	Viewport scale	ხედვის არის მასშტაბი
+	Viewport {id}	ხედვის არე {id}
+	Viewports	ხედვის არეები
+	W	W
+	WCS	WCS
+	White	თეთრი
+	Width factor	სიგანის კოეფიციენტი
+	Window	ფანჯარა
+	Wipeout	მასკირება
+	Workspace Switching	სამუშაო სივრცის გადართვა
+	Write Block	ბლოკის ჩაწერა
+	Xline	დამხმარე ხაზი
+	Yellow	ყვითელი
+	Yes	დიახ
+	Zoom	მასშტაბი
+	Zoom All	მასშტაბი: ყველაფერი
+	Zoom Dynamic	მასშტაბი: დინამიკური
+	Zoom Extents	მასშტაბი: საზღვრები
+	Zoom In	მოახლოება
+	Zoom Object	მასშტაბი: ობიექტი
+	Zoom Out	დაშორება
+	Zoom Previous	მასშტაბი: წინა
+	Zoom Realtime	მასშტაბი: რეალურ დროში
+	Zoom Window	მასშტაბი: ფანჯარა
+	error	შეცდომა
+	{contributors} · {commits}	{contributors} · {commits}
+	{kind} (constraint {id})	{kind} (შეზღუდვა {id})
+	{kind} constraint {name} = {expression}  (double-click to edit)	{kind} შეზღუდვა {name} = {expression}  (ორმაგი დაწკაპება — რედაქტირება)
+	{name}: {distance} < {angle}°	{name}: {distance} < {angle}°
+	ƒx  New User Parameter	ƒx  ახალი მომხმარებლის პარამეტრი
+	ΔLOC	ΔLOC
+	−Bin	−Bin
+	−LOC	−LOC
+	⌘↩ to finish	⌘↩ — დასრულება
+@plural	{n} commit	{n} კომიტი
+@plural	{n} contributor	{n} მონაწილე
+	Drawing as bytes	ნახაზი ბაიტებად
+	Services	სერვისები
+	Hide CADCraft	CADCraft-ის დამალვა
+	Hide Others	სხვების დამალვა
+	Accessibility	ხელმისაწვდომობა
+	Show System Cursor	სისტემის კურსორის ჩვენება
+	Animation Effects	ანიმაციის ეფექტები
+	Animation effects	ანიმაციის ეფექტები
+	Interface scale	ინტერფეისის მასშტაბი
+	Import...	იმპორტი...
+	Export...	ექსპორტი...
+	Batch Publish...	პაკეტური გამოქვეყნება...
+	Scale List...	მასშტაბების სია...
+	Annotative Object Scale	ანოტაციური ობიექტის მასშტაბი
+	Add Current Scale	მიმდინარე მასშტაბის დამატება
+	Delete Current Scale	მიმდინარე მასშტაბის წაშლა
+	Add/Delete Scales...	მასშტაბების დამატება/წაშლა...
+	Synchronize Multiple-scale Positions	მრავალმასშტაბიანი პოზიციების სინქრონიზაცია
+	Annotative Update	ანოტაციური განახლება
+	Show Annotative Objects	ანოტაციური ობიექტების ჩვენება
+	Current Scale Only	მხოლოდ მიმდინარე მასშტაბი
+	All Scales	ყველა მასშტაბი
+	Drawing Recovery Manager...	ნახაზების აღდგენის მენეჯერი...
+	Tolerance...	დაშვება...
+	Add Vertex	წვეროს დამატება
+	Remove Vertex	წვეროს მოშორება
+	Convert to Arc	რკალად გარდაქმნა
+	Convert to Line	ხაზად გარდაქმნა
+	Stretch Vertex	წვეროს გაწელვა
+	Edit Array	მასივის რედაქტირება
+	Close Array Editing	მასივის რედაქტირების დახურვა
+	Multiline...	მულტიხაზი...
+	Multiline Style...	მულტიხაზის სტილი...
+	Solid Editing	სხეულის რედაქტირება
+	3D Mouse...	3D მაუსი...
+	3D Mouse	3D მაუსი
+	Calibrate 3D Mouse	3D მაუსის კალიბრაცია
+	3D Mouse Navigation	3D მაუსით ნავიგაცია
+	3D mouse input is unavailable on this platform	3D მაუსის შეყვანა ამ პლატფორმაზე მიუწვდომელია
+	No supported 3D mouse found	მხარდაჭერილი 3D მაუსი ვერ მოიძებნა
+	Release the 3D mouse to calibrate its resting position	გაუშვით 3D მაუსი ხელიდან, რომ მისი უძრავი მდგომარეობა დაკალიბრდეს
+	3D mouse connected	3D მაუსი დაკავშირებულია
+	3D mouse busy, possibly 3DxWare or missing device permissions	3D მაუსი დაკავებულია: შესაძლოა, 3DxWare-ის ან მოწყობილობის ნებართვების არქონის გამო
+	3D mouse disconnected	3D მაუსი გათიშულია
+	3D mouse input could not be started	3D მაუსის შეყვანა ვერ ჩაირთო
+	Enable 3D mouse navigation	3D მაუსით ნავიგაციის ჩართვა
+	Pan sensitivity	პანორამის მგრძნობელობა
+	Zoom sensitivity	მასშტაბის მგრძნობელობა
+	Reverse zoom direction	მასშტაბის მიმართულების შებრუნება
+	Calibrate	კალიბრაცია
+	Move sideways to pan; push/pull or twist to zoom.	გვერდზე გაწევით — პანორამა; მიწევით/გამოწევით ან მობრუნებით — მასშტაბი.
+	Left device button: zoom extents. Right device button: calibrate.	მოწყობილობის მარცხენა ღილაკი: მასშტაბი საზღვრებით. მარჯვენა ღილაკი: კალიბრაცია.
+	More toolbar commands	ხელსაწყოთა ზოლის სხვა ბრძანებები
+	Default save version	შენახვის ნაგულისხმევი ვერსია
+	Automatic save every	ავტომატური შენახვა ყოველ
+	min	წთ
+	Automatic save file location	ავტომატური შენახვის ფაილის მდებარეობა
+	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	ჯერ ფაილის არმქონე ნახაზები ნაგულისხმევ ვერსიაში ინახება. 0 წუთი ავტომატურ შენახვას გამორთავს.
+	Time-sensitive right-click: a quick click is Enter, holding opens the menu	დროზე დამოკიდებული მარჯვენა დაწკაპება: მოკლე დაწკაპება Enter-ია, დაჭერით გაიხსნება მენიუ
+	Turned off, a right-click while a command runs always opens the shortcut menu.	გამორთვისას ბრძანების შესრულების დროს მარჯვენა დაწკაპება ყოველთვის კონტექსტურ მენიუს ხსნის.
+	Hatch Pattern	დაშტრიხვის ნიმუში
+	Search for pattern	ნიმუშის ძიება
+	Run Script...	სკრიპტის გაშვება...
+	Query Texts	ტექსტების გამოთხოვნა
+	Analyze Shapes	ფიგურების ანალიზი
+	Analyze Usage	გამოყენების ანალიზი
+	Implied Loops	არაცხადი შეკრული კონტურები
+	Hatch Pick	დაშტრიხვის არჩევა
+	Hatch and Gradient	დაშტრიხვა და გრადიენტი
+	Color 1	ფერი 1
+	Color 2	ფერი 2
+	Shape	ფიგურა
+	Curved	მრუდი
+	Spherical	სფერული
+	Hemispherical	ნახევარსფერული
+	Inverted	შებრუნებული
+	Centered	ცენტრში
+	Hatch origin	დაშტრიხვის საწყისი წერტილი
+	Use current origin	მიმდინარე საწყისი წერტილის გამოყენება
+	Specified origin	მითითებული საწყისი წერტილი
+	Click to set new origin	დაწკაპეთ ახალი საწყისი წერტილის დასაყენებლად
+	Default to boundary extents	ნაგულისხმევად საზღვრის გაბარიტები
+	Bottom left	ქვედა მარცხენა
+	Bottom right	ქვედა მარჯვენა
+	Top left	ზედა მარცხენა
+	Top right	ზედა მარჯვენა
+	Boundaries	საზღვრები
+	Add: Pick points	დამატება: წერტილების არჩევა
+	Add: Select objects	დამატება: ობიექტების მონიშვნა
+	Boundaries picked: {n}	არჩეული საზღვრები: {n}
+	Select boundaries to remove	მონიშნეთ მოსაშორებელი საზღვრები
+	Island	კუნძული
+	Associative	ასოციაციური
+	Create separate hatches	ცალკეული დაშტრიხვების შექმნა
+	Island detection	კუნძულების აღმოჩენა
+	Normal	ჩვეულებრივი
+	Outer	გარე
+	Ignore	უგულებელყოფა
+	Origin: {x}, {y}	საწყისი წერტილი: {x}, {y}
+	Sheet Books to PDF...	ფურცლების წიგნები PDF-ში...
+	Not a number or distance: {text}	არც რიცხვია და არც მანძილი: {text}
+	Dynamic Block Data	დინამიკური ბლოკის მონაცემები
+	Custom	მორგებული
+	Dynamic Block Reference	დინამიკური ბლოკის ჩასმა
+	Set Dynamic Property	დინამიკური თვისების დაყენება
+	Dynamic Block Grips	დინამიკური ბლოკის სახელურები
+	Drag Dynamic Grip	დინამიკური სახელურის გადათრევა
+	Save Block	ბლოკის შენახვა
+	Save Block As	ბლოკის შენახვა როგორც
+	Close Block Editor	ბლოკის რედაქტორის დახურვა
+	Unsaved changes	შეუნახავი ცვლილებები
+	Edit Block Definition	ბლოკის განსაზღვრების რედაქტირება
+	Block to create or edit	შესაქმნელი ან დასარედაქტირებელი ბლოკი
+	Open in Block Editor	ბლოკის რედაქტორში გახსნა
+	This drawing	ეს ნახაზი
+	contains authoring elements. Open in Block Editor?	შეიცავს ბლოკის აგების ელემენტებს. გაიხსნას ბლოკის რედაქტორში?
+	New block	ახალი ბლოკი
+	Italic	დახრილი
+	Underline	ხაზგასმული
+	Overline	ზედა ხაზი
+	Justify	ორმხრივი სწორება
+	Text color	ტექსტის ფერი
+	Click the ruler to add a tab stop, right-click to remove one	დაწკაპეთ სახაზავზე ტაბულაციის პოზიციის დასამატებლად, მარჯვენა დაწკაპებით — წასაშლელად
+	Select using two clicks only	მონიშვნა მხოლოდ ორი დაწკაპებით
+	Define each corner of the selection window with a separate click.	მონიშვნის ფანჯრის თითოეული კუთხე ცალკე დაწკაპებით განისაზღვრება.
+	Type an alias name.	აკრიფეთ ფსევდონიმის სახელი.
+	Choose the command the alias starts.	აირჩიეთ ბრძანება, რომელსაც ფსევდონიმი გაუშვებს.
+	{command} is an unknown command.	{command} უცნობი ბრძანებაა.
+	{alias} is already defined; select it and use Edit.	{alias} უკვე განსაზღვრულია; მონიშნეთ და გამოიყენეთ „რედაქტირება“.
+	More than {n} aliases.	{n}-ზე მეტი ფსევდონიმი.
+	Alias file: {file}	ფსევდონიმების ფაილი: {file}
+	No alias file loaded. REINIT replaces these aliases with a file's.	ფსევდონიმების ფაილი არ არის ჩატვირთული. REINIT ამ ფსევდონიმებს ფაილიდან წაკითხულით ჩაანაცვლებს.
+	Alias	ფსევდონიმი
+	Command	ბრძანება
+	overrides built-in	ჩაშენებულს ჩაანაცვლებს
+	built-in	ჩაშენებული
+	Add…	დამატება…
+	Edit…	რედაქტირება…
+	Save alias	ფსევდონიმის შენახვა
+	Discard	მოშორება
+	Customize	მორგება
+	Edit Command Aliases (PGP)...	ბრძანებების ფსევდონიმების რედაქტირება (PGP)...
+	B	B
+	CADCraft	CADCraft
+	X	X
+	Y	Y
+menu	Dimension	ზომების დატანა
+menu	Draw	ხატვა
+menu	Modify	შეცვლა
+menu	View	ხედი
+	Arrow size	ისრის ზომა
+	Dim scale overall	ზომის საერთო მასშტაბი
+	Precision	სიზუსტე
+	Layouts	განლაგებები
+	Printer/plotter	პრინტერი/პლოტერი
+	Paper size	ფურცლის ზომა
+	Orientation	ორიენტაცია
+	Portrait	ვერტიკალური
+	Landscape	ჰორიზონტალური
+	Plot area	ბეჭდვის არე
+	Fit to paper	ფურცელში ჩატევა
+	Center the plot	ნაბეჭდის ცენტრირება
+	Plot object lineweights	ობიექტების ხაზის სისქეების ბეჭდვა
+	Plot transparency	გამჭვირვალობის ბეჭდვა
+	Apply to Layout	განლაგებაზე გამოყენება
+	Enter name of LISP file to load	შეიყვანეთ ჩასატვირთი LISP ფაილის სახელი
+	Enter geometric characteristic	შეიყვანეთ გეომეტრიული მახასიათებელი
+	Enter block names to extract	შეიყვანეთ ამოსაღები ბლოკების სახელები
+	Limits	ზღვრები
+	Plot offset	ბეჭდვის წანაცვლება
+	X offset (mm)	X წანაცვლება (მმ)
+	Y offset (mm)	Y წანაცვლება (მმ)
+	First corner	პირველი კუთხე
+	Opposite corner	საპირისპირო კუთხე
+	Window <	ფანჯარა <

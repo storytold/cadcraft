@@ -1,7 +1,7 @@
 # Interface languages
 
 Choose **Edit → Interface Language** and select **Auto (system language)**, **English**,
-**Українська**, **Português (Brasil)**, **Deutsch**, **Español**, **Čeština** (Czech), **Русский**, **Français**, **简体中文**, **Italiano**, **한국어** (Korean), **Svenska** (Swedish), **العربية** (Arabic), **Magyar** (Hungarian), **Türkçe** (Turkish), or **Ελληνικά** (Greek).
+**Українська**, **Português (Brasil)**, **Deutsch**, **Español**, **Čeština** (Czech), **Русский**, **Français**, **简体中文**, **Italiano**, **한국어** (Korean), **Svenska** (Swedish), **العربية** (Arabic), **Magyar** (Hungarian), **Türkçe** (Turkish), **Ελληνικά** (Greek), or **ქართული** (Georgian).
 The interface updates without restarting, including the native macOS menus.
 The choice is saved with the other interface preferences (`cadcraft.prefs`, beside the theme):
 eframe storage on the desktop, browser local storage on the web. Installations without a saved
@@ -11,7 +11,7 @@ Auto uses the first supported language in the operating system's preferred local
 browser's `navigator.languages` on the web. BCP 47 and POSIX tags select their primary language:
 `uk-UA` → `uk`, `de_AT.UTF-8` → `de`, `es-MX` → `es`, `pt_BR.UTF-8` → `pt-BR`,
 `cs-CZ` and `cs_CZ.UTF-8` → `cs`, `it-IT` and `it_CH.UTF-8` → `it`, `ko-KR` and `ko_KR.UTF-8` → `ko`,
-`sv-SE`, `sv-FI` and `sv_SE.UTF-8` → `sv`, `hu-HU` and `hu_HU.UTF-8` → `hu`, `tr-TR` and `tr_TR.UTF-8` → `tr`. Unsupported languages fall back to English.
+`sv-SE`, `sv-FI` and `sv_SE.UTF-8` → `sv`, `hu-HU` and `hu_HU.UTF-8` → `hu`, `tr-TR` and `tr_TR.UTF-8` → `tr`, `ka-GE` and `ka_GE.UTF-8` → `ka`. Unsupported languages fall back to English.
 Set `CADCRAFT_LOCALE=cs-CZ` to override the desktop's locale for a launch.
 An explicit saved language choice takes precedence over that override.
 
@@ -22,7 +22,7 @@ Automation can select the language through the existing control channel:
 ```
 
 The `ui.set` method also accepts `{"interfaceLanguage":"cs"}`. Supported values are `auto`,
-`en`, `uk`, `pt-BR`, `de`, `es`, `cs`, `ru`, `fr`, `zh`, `it`, `ko`, `sv`, `ar`, `hu`, `tr`, and `el`; invalid values are rejected without changing the current
+`en`, `uk`, `pt-BR`, `de`, `es`, `cs`, `ru`, `fr`, `zh`, `it`, `ko`, `sv`, `ar`, `hu`, `tr`, `el`, and `ka`; invalid values are rejected without changing the current
 selection. Resetting palettes keeps the language choice.
 
 ## Translation coverage
@@ -117,6 +117,20 @@ drawing content, names of user objects and file formats remain unchanged. The tr
 original AI-assisted work contributed by @Camthalion77 with language review; it is not sourced
 from Autodesk localization files. Independent native proofreading and visual checks remain
 follow-up work.
+
+## Georgian (`ka`) interface
+
+Georgian has **1,383 rows**: 1,377 ordinary labels, four contextual menu headings (**ზომების
+დატანა** for the Dimension menu, **ზომა** for the object; **ხატვა** for Draw) and two single-form
+count templates, since a Georgian noun stays singular after a numeral ("5 კომიტი"). It covers the
+union of the existing catalogs, and no marked UI literal falls back to English. Commands are verbal
+nouns (**შენახვა**, **შემობრუნება**); prompts read "მიუთითეთ …" for Specify, "შეიყვანეთ …" for
+Enter and "მონიშნეთ …" for Select, and clickable keywords keep the spelling the engine accepts.
+Georgian has no letter case, so nothing is capitalised, and Mtavruli (a display style, not upper
+case) never appears; a test checks that. The translation is original: written with Claude Code from
+the meaning of each English string, with Georgian technical-drawing vocabulary (შრე, დაშტრიხვა,
+მომრგვალება, ფასკა, წანაცვლება, ობიექტზე მიბმა, ხედვის არე); terminology and doubtful strings
+were decided by a native Georgian speaker (@devius). No other product's localization was consulted.
 
 ## Adding translations
 
