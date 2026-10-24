@@ -537,6 +537,58 @@ fn dxf_roundtrips_page_setup() {
     assert_eq!(p.paper, a3.name);
 }
 
+/// Groups 44, 45 and 73 of a layout's AcDbPlotSettings in DXF text.
+fn plot_paper_groups(dxf: &str, layout: &str) -> (f64, f64, i64) {
+    let lines: Vec<&str> = dxf.lines().map(str::trim).collect();
+    let pairs: Vec<(&str, &str)> = lines.chunks(2).filter(|c| c.len() == 2).map(|c| (c[0], c[1])).collect();
+    let name = pairs.windows(2).position(|w| w[0] == ("100", "AcDbLayout") && w[1] == ("1", layout)).unwrap_or_else(|| panic!("no LAYOUT {layout}"));
+    let start = pairs[..name].iter().rposition(|p| *p == ("100", "AcDbPlotSettings")).unwrap();
+    let get = |code: &str| pairs[start..name].iter().find(|p| p.0 == code).map(|p| p.1).unwrap();
+    (get("44").parse().unwrap(), get("45").parse().unwrap(), get("73").parse().unwrap())
+}
+
+#[test]
+fn landscape_media_keeps_its_size_order_and_rotation() {
+    // A media defined wider than tall, as ZWCAD and AutoCAD name it (#1463).
+    let media = "ISO full bleed A3 (420.00 x 297.00 MM)";
+    for (landscape, rotation) in [(true, 0), (false, 1)] {
+        let mut d = sample();
+        {
+            let p = &mut d.layouts[0].page;
+            p.paper = media.into();
+            p.width_mm = 297.0;
+            p.height_mm = 420.0;
+            p.landscape = landscape;
+        }
+        let dxf = write_dxf(&d);
+        assert_eq!(plot_paper_groups(&dxf, "Layout1"), (420.0, 297.0, rotation), "DXF, landscape {landscape}");
+        let r = read_dxf(dxf.as_bytes()).unwrap();
+        let p = &r.layout("Layout1").unwrap().page;
+        assert_eq!((p.width_mm, p.height_mm, p.landscape), (297.0, 420.0, landscape), "DXF read back");
+        assert_eq!(p.paper, media);
+
+        let dwg = write(&d, "t.dwg").unwrap();
+        let back = String::from_utf8_lossy(&cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).into_owned();
+        assert_eq!(plot_paper_groups(&back, "Layout1"), (420.0, 297.0, rotation), "DWG, landscape {landscape}");
+        let r = read(&dwg, "t.dwg").unwrap();
+        let p = &r.layout("Layout1").unwrap().page;
+        assert_eq!((p.width_mm, p.height_mm, p.landscape), (297.0, 420.0, landscape), "DWG read back");
+    }
+}
+
+#[test]
+fn portrait_media_is_written_as_before() {
+    let mut d = sample();
+    {
+        let p = &mut d.layouts[0].page;
+        p.paper = "ISO A3 (297.00 x 420.00 MM)".into();
+        p.width_mm = 297.0;
+        p.height_mm = 420.0;
+        p.landscape = true;
+    }
+    assert_eq!(plot_paper_groups(&write_dxf(&d), "Layout1"), (297.0, 420.0, 1));
+}
+
 // ---------------------------------------------------------------------------------------------
 // Round trips of styles, overrides, associativity, constraints and tables.
 

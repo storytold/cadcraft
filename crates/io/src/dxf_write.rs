@@ -2615,13 +2615,14 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
         w.s(2, if device.is_empty() || device.eq_ignore_ascii_case("None") { "none_device" } else { device });
         w.s(4, page.paper.replace(' ', "_"));
         w.s(6, "");
+        let (paper_w, paper_h, rotation) = plot_paper(page);
         for (c, v) in [
             (40, page.margins_mm[0]),
             (41, page.margins_mm[1]),
             (42, page.margins_mm[2]),
             (43, page.margins_mm[3]),
-            (44, page.width_mm),
-            (45, page.height_mm),
+            (44, paper_w),
+            (45, paper_h),
             (46, 0.0),
             (47, 0.0),
             (48, page.plot_window[0]),
@@ -2636,7 +2637,7 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
         w.i(70, plot_flags);
         // Plot paper units: 1 millimetres, 0 inches (#1058).
         w.i(72, i64::from(cadcraft_render::paper::page_unit_mm(d, page) == 1.0));
-        w.i(73, i64::from(page.landscape));
+        w.i(73, rotation);
         w.i(74, plot_type);
         w.s(7, &page.plot_style_table);
         w.i(75, if page.scale_to_fit { 0 } else { 16 });
@@ -2695,6 +2696,33 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
 
 /// Write DXF Reference group 91 on every CLASS record. Count records after `dxf_raw::finish`
 /// restores foreign classes and objects so every class gets its actual instance count.
+/// Paper size (groups 44, 45) and plot rotation (group 73) for a LAYOUT object. Page setups
+/// keep a portrait size and a landscape flag. A media whose name makes it wider than tall, such
+/// as `ISO_full_bleed_A3_(420.00_x_297.00_MM)`, gets its size in that order and the rotation
+/// relative to it, so readers that take the media's size from its name agree with groups 44 and
+/// 45 (#1463). Other media are written as before.
+fn plot_paper(page: &PageSetup) -> (f64, f64, i64) {
+    if media_is_landscape(&page.paper) {
+        let (short, long) = (page.width_mm.min(page.height_mm), page.width_mm.max(page.height_mm));
+        (long, short, i64::from(!page.landscape))
+    } else {
+        (page.width_mm, page.height_mm, i64::from(page.landscape))
+    }
+}
+
+/// Whether a media name ends in a size wider than tall, like `… (420.00 x 297.00 MM)`.
+fn media_is_landscape(paper: &str) -> bool {
+    let name = paper.replace('_', " ");
+    let Some(open) = name.rfind('(') else { return false };
+    let mut sides = name[open + 1..].splitn(2, ['x', 'X', '×']);
+    let num = |s: Option<&str>| {
+        let s = s?.trim_start();
+        let end = s.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(s.len());
+        s[..end].parse::<f64>().ok()
+    };
+    matches!((num(sides.next()), num(sides.next())), (Some(w), Some(h)) if w > h)
+}
+
 fn add_class_instance_counts(tags: &mut Vec<Tag>) {
     let mut counts: HashMap<String, i64> = HashMap::new();
     for t in tags.iter().filter(|t| t.code == 0) {
