@@ -161,6 +161,7 @@ fn locale_and_saved_preference_resolution() {
         ("cs", &["cs", "cs-CZ", "cs_CZ.UTF-8", "CS-cz", " cs-CZ ", "cs_CZ@euro"][..]),
         ("it", &["it", "it-IT", "it_IT.UTF-8", "IT-ch", " it-CH ", "it_IT@euro"]),
         ("ko", &["ko", "ko-KR", "ko_KR.UTF-8", "KO-kr", " ko-KR ", "ko_KR@euro"]),
+        ("ja", &["ja", "ja-JP", "ja_JP.UTF-8", "JA-jp", " ja-JP ", "ja_JP@euro"]),
         ("sv", &["sv", "sv-SE", "sv_SE.UTF-8", "SV-se", " sv-SE ", "sv-FI"]),
         ("hu", &["hu", "hu-HU", "hu_HU.UTF-8", "HU-hu", " hu-HU "]),
         ("tr", &["tr", "tr-TR", "tr_TR.UTF-8", "TR-tr", " tr-TR ", "tr-CY"]),
@@ -386,7 +387,7 @@ fn dialogs_render_in_every_language_and_keep_their_source_ids() {
 #[test]
 fn interface_fonts_cover_every_letter_in_each_catalog() {
     for language in translated() {
-        let extra_font = ["ko", "zh", "ar"].contains(&language.code);
+        let extra_font = ["ko", "zh", "ja", "ar"].contains(&language.code);
         if extra_font && !crate::theme::can_show(language.code) {
             continue;
         }

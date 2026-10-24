@@ -2,7 +2,7 @@
 
 **Stage: pre-alpha** · next: alpha, ~2 points (38% → 40% ready for real work) and ~125–190 Opus 5.5 hours away (the four failing core workflows of the [alpha gate](docs/roadmap.md#alpha-gate))
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-14 · **Change:** minor (HATCHEDIT boundary add/remove progress) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-22 · **Change:** minor (Japanese interface, first step: 856-row catalog, `ja` preference and font gate; previously: minor, HATCHEDIT boundary add/remove progress) · **Target:** Autodesk AutoCAD 2027
 
 CADCraft targets full parity with AutoCAD (2D drafting first, then annotation, layouts and
 plotting, DWG, parametrics and 3D), plus what AutoCAD doesn't have: agent control over MCP, a
@@ -80,8 +80,9 @@ Hours are Opus 5.5 agent wall-clock hours, calibrated on this repo's own build: 
 
 ## Languages
 
-AutoCAD 2027 for Mac ships 8 interface languages; CADCraft ships English plus partial
-Ukrainian and German. Detail: [localization-parity.md](docs/localization-parity.md).
+AutoCAD 2027 for Mac ships 8 interface languages; CADCraft ships English plus several partial
+catalogs (Ukrainian, German, Korean, Japanese and others). Detail:
+[localization-parity.md](docs/localization-parity.md).
 
 | Language | Status | UI translated |
 |---|---|---:|
@@ -93,13 +94,13 @@ Ukrainian and German. Detail: [localization-parity.md](docs/localization-parity.
 | French | none | 0% |
 | Portuguese | none | 0% |
 | Indonesian | none | 0% |
-| Japanese | none | 0% |
+| Japanese | partial (first step) | 856 rows: menus, command labels, tools, object snaps, status and property labels, dialogs and Options |
 | Greek | complete current catalog | 1,330 current source keys; independent proofreading pending |
 | German | partial | ≈ 100% of the catalog (989 rows) |
 | Korean | none | 0% |
 | Vietnamese | none | 0% |
 
-Other languages shipped: Ukrainian and German (989 catalog rows each; Ukrainian landed with #36), Brazilian Portuguese, Spanish, Czech, Russian, French, Simplified Chinese and Italian (1,227 rows, 2026-10-12); engine messages stay English.
+Other languages shipped: Ukrainian and German (989 catalog rows each; Ukrainian landed with #36), Brazilian Portuguese, Spanish, Czech, Russian, French, Simplified Chinese and Italian (1,227 rows, 2026-10-12), Japanese (856 rows, 2026-10-22); engine messages stay English.
 
 ## Upcoming
 
@@ -119,6 +120,7 @@ Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md)
 
 | Date | Entry |
 |---|---|
+| 2026-10-22 | Japanese interface, first step: an 856-row `ja` catalog (the collected command, menu, tool, object-snap and marked-UI strings, Options tab labels and two single count templates), the `ja` interface-language preference with Auto (system locale) resolution and a single count form, and a font gate that keeps the interface English when neither an installed Japanese face nor the CJK face covers the catalog. Locale, saved-preference, live-switch, dialog and font tests added; command prompts, engine diagnostics and uncatalogued text remain English; no readiness number change. |
 | 2026-10-14 | HATCHEDIT adds boundaries from internal points or closed objects and removes selected loops in the dialog, command line and JSON command; associative links and undo are covered by tests. |
 | 2026-10-12 | TRIM: a pick after a closed polyline's last cut keeps only the complementary run instead of an extra circuit of the outline (#726) |
 | 2026-10-12 | HATCHEDIT refuses an explicit bad `scale` or `angle` before it edits anything, so a rejected request leaves the drawing, undo and redo as they were (#724) |
@@ -135,6 +137,7 @@ Ranked; detail and the full beta checklist in [docs/roadmap.md](docs/roadmap.md)
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-22 | minor | Japanese interface, first step: 856-row catalog, `ja` preference with locale resolution and single count form, Japanese/CJK font gate |
 | 2026-10-14 | minor | Progress log: HATCHEDIT boundary add/remove |
 | 2026-10-12 | trivial | Progress log: closed-polyline TRIM (#726) |
 | 2026-10-12 | trivial | Progress log: HATCHEDIT numeric validation (#724) |

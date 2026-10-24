@@ -1,7 +1,7 @@
 # Interface languages
 
 Choose **Edit → Interface Language** and select **Auto (system language)**, **English**,
-**Українська**, **Português (Brasil)**, **Deutsch**, **Español**, **Čeština** (Czech), **Русский**, **Français**, **简体中文**, **Italiano**, **한국어** (Korean), **Svenska** (Swedish), **العربية** (Arabic), **Magyar** (Hungarian), **Türkçe** (Turkish), or **Ελληνικά** (Greek).
+**Українська**, **Português (Brasil)**, **Deutsch**, **Español**, **Čeština** (Czech), **Русский**, **Français**, **简体中文**, **Italiano**, **한국어** (Korean), **Svenska** (Swedish), **العربية** (Arabic), **Magyar** (Hungarian), **Türkçe** (Turkish), **日本語** (Japanese), or **Ελληνικά** (Greek).
 The interface updates without restarting, including the native macOS menus.
 The choice is saved with the other interface preferences (`cadcraft.prefs`, beside the theme):
 eframe storage on the desktop, browser local storage on the web. Installations without a saved
@@ -10,7 +10,7 @@ choice use Auto.
 Auto uses the first supported language in the operating system's preferred locales, or the
 browser's `navigator.languages` on the web. BCP 47 and POSIX tags select their primary language:
 `uk-UA` → `uk`, `de_AT.UTF-8` → `de`, `es-MX` → `es`, `pt_BR.UTF-8` → `pt-BR`,
-`cs-CZ` and `cs_CZ.UTF-8` → `cs`, `it-IT` and `it_CH.UTF-8` → `it`, `ko-KR` and `ko_KR.UTF-8` → `ko`,
+`cs-CZ` and `cs_CZ.UTF-8` → `cs`, `it-IT` and `it_CH.UTF-8` → `it`, `ko-KR` and `ko_KR.UTF-8` → `ko`, `ja-JP` and `ja_JP.UTF-8` → `ja`,
 `sv-SE`, `sv-FI` and `sv_SE.UTF-8` → `sv`, `hu-HU` and `hu_HU.UTF-8` → `hu`, `tr-TR` and `tr_TR.UTF-8` → `tr`. Unsupported languages fall back to English.
 Set `CADCRAFT_LOCALE=cs-CZ` to override the desktop's locale for a launch.
 An explicit saved language choice takes precedence over that override.
@@ -22,7 +22,7 @@ Automation can select the language through the existing control channel:
 ```
 
 The `ui.set` method also accepts `{"interfaceLanguage":"cs"}`. Supported values are `auto`,
-`en`, `uk`, `pt-BR`, `de`, `es`, `cs`, `ru`, `fr`, `zh`, `it`, `ko`, `sv`, `ar`, `hu`, `tr`, and `el`; invalid values are rejected without changing the current
+`en`, `uk`, `pt-BR`, `de`, `es`, `cs`, `ru`, `fr`, `zh`, `it`, `ko`, `ja`, `sv`, `ar`, `hu`, `tr`, and `el`; invalid values are rejected without changing the current
 selection. Resetting palettes keeps the language choice.
 
 ## Translation coverage
@@ -38,6 +38,16 @@ literal, including Options. Four `menu` entries distinguish menu headings from o
 labels: **Zobrazení / Pohled**, **Kreslení / Kreslit**, **Kótování / Kóta**, and **Modifikace / Upravit**.
 The translation is AI-assisted work by @Losminek, reviewed against Czech desktop and CAD UI
 conventions and an independent review pass; it has not yet been proofread by a native speaker.
+
+Japanese has **856 rows** in its first step: the collected menu, command-label, tool,
+object-snap and marked-UI strings (848 rows), the two single-form count templates, and six labels
+for the Options tabs that the UI reads dynamically. Command prompts, engine diagnostics and
+uncatalogued text remain English, so this is not yet the full union the older catalogs carry.
+Terminology follows general Japanese desktop-CAD vocabulary rather than any product's wording:
+レイヤ (layer), 寸法 (dimension), 拘束 (constraint), スナップ (snap), ハッチ (hatch), 線種
+(linetype), 尺度 (scale) and 印刷 (plot). The translation is original, AI-assisted work written
+from the English strings; independent native proofreading and platform IME testing remain
+follow-up work.
 
 Korean has **1,235 rows**: 1,229 ordinary labels, four contextual menu headings, and
 two single-form count templates. It covers the union of the existing catalogs, including
@@ -92,6 +102,16 @@ then installed fonts: Malgun Gothic/Gulim on Windows, Apple SD Gothic Neo/AppleG
 and Nanum Gothic or Noto CJK on Linux/FreeBSD. Collection faces are checked individually, and
 file reads/face scans are bounded. No system fonts or new font assets are redistributed.
 
+Japanese needs a font that covers **every kana, kanji and Japanese punctuation mark in its
+catalog** and the picker label. A Japanese interface first tries the installed Japanese faces it
+already uses for drawing names (`japanese_fonts`: Hiragino on macOS, Yu Gothic/Meiryo/MS Gothic on
+Windows, IPA Gothic on Linux/FreeBSD), then the CJK face loaded in every language; when either
+covers the catalog the interface switches, otherwise it stays English, the saved `ja` preference
+is kept, and the language command says a font is needed. An English interface uses the readable
+label **Japanese** wherever kana can't be shown. Web builds cannot read installed fonts: without a
+`CRAFT_FONTS_DIR` face carrying `Jpan`, the web interface stays English. No font assets are
+redistributed, and platform IME behaviour is not changed here.
+
 Web builds cannot read installed fonts and embed no Korean face (to stay within hosting size
 limits), so the web interface stays English when Korean is chosen. Without a font covering the
 catalog, the saved `ko` preference is kept but the interface falls back to English; the language
@@ -129,7 +149,7 @@ The implementation follows the display-time catalog pattern used by
 - `@plural` entries hold the language's forms for integer counts: Ukrainian `one|few|many`,
   German and Spanish `one|other`, Brazilian Portuguese `one|other` (0 and 1 are `one`),
   Czech `one|few|other` (1; 2–4; everything else, including 0, 11, 21 and 22).
-  Korean and Hungarian have one form (`other`) for all integer counts.
+  Korean, Hungarian, Turkish and Japanese have one form (`other`) for all integer counts.
   The API takes `u64`, so fractional counts are not accepted.
 - Register a new catalog in `i18n::LANGUAGES`, add its preference variant and code/name,
   and set its integer plural rule and form count on the `Language` row.

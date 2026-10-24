@@ -339,19 +339,12 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
                 break;
             }
         }
-        let mut paths: Vec<&std::path::Path> = Vec::new();
-        if !chinese {
-            paths.extend(japanese_font());
+        if !chinese && let Some(face) = installed_japanese_face() {
+            added.push(("system-japanese".into(), std::sync::Arc::new(face_font_data(face))));
         }
-        paths.extend(cjk_font());
-        paths.dedup();
-        added.extend(
-            paths
-                .into_iter()
-                .filter_map(|p| read_capped(p, MAX_UI_FONT_BYTES))
-                .enumerate()
-                .map(|(i, bytes)| (format!("system-cjk-{i}"), std::sync::Arc::new(egui::FontData::from_owned(bytes)))),
-        );
+        if let Some(bytes) = cjk_font().and_then(|p| read_capped(p, MAX_UI_FONT_BYTES)) {
+            added.push(("system-cjk".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes))));
+        }
         // العربية: an installed Arabic face after the Latin ones (egui's bundled faces carry no
         // Arabic glyphs), for the Arabic interface.
         if language == "ar"
@@ -371,9 +364,7 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
         && !cjk_covers_hangul()
         && let Some(face) = korean_font()
     {
-        let mut data = egui::FontData::from_owned(face.bytes.as_ref().clone());
-        data.index = face.index;
-        added.push(("korean-ui".into(), std::sync::Arc::new(data)));
+        added.push(("korean-ui".into(), std::sync::Arc::new(face_font_data(face))));
     }
     for (name, data) in added {
         fonts.font_data.insert(name.clone(), data);
@@ -384,6 +375,14 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
         }
     }
     ctx.set_fonts(fonts);
+}
+
+/// egui font data for `face`, with its collection index: without the index egui draws face 0,
+/// which need not be the face the gate checked.
+fn face_font_data(face: &cadcraft_fonts::ttf::Face) -> egui::FontData {
+    let mut data = egui::FontData::from_owned(face.bytes.as_ref().clone());
+    data.index = face.index;
+    data
 }
 
 /// The faces `build.rs` embedded from craft-fonts that the interface loads, in order: every CJK
@@ -398,6 +397,9 @@ fn embedded_ui_faces<'a>(faces: &[&'a cadcraft_fonts::CraftFont], language: &str
     out.sort_by_key(|f| !f.family.contains("Gothic") && !f.family.contains("Sans"));
     if language.starts_with("zh") {
         out.sort_by_key(|f| !f.scripts.contains(&"Hans"));
+    }
+    if language == "ja" {
+        out.sort_by_key(|f| !f.scripts.contains(&"Jpan"));
     }
     if language == "ar" {
         out.extend(faces.iter().copied().filter(|f| f.style == "Regular" && f.scripts.contains(&"Arab")));
@@ -498,32 +500,28 @@ pub fn arabic_font() -> Option<&'static std::path::Path> {
     None
 }
 
-/// An installed Japanese font, for Japanese names in a non-Chinese interface. Checked once.
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-fn japanese_font() -> Option<&'static std::path::Path> {
+/// Japanese font files to try, in order, for Japanese names in a non-Chinese interface: Hiragino
+/// on macOS, Yu Gothic/Meiryo/MS Gothic on Windows, IPA Gothic on Linux/FreeBSD.
+fn japanese_fonts() -> &'static [&'static str] {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        static FOUND: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
-        FOUND
-            .get_or_init(|| {
-                let candidates: &[&str] = if cfg!(target_os = "macos") {
-                    &["/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc", "/System/Library/Fonts/Hiragino Sans GB.ttc"]
-                } else if cfg!(windows) {
-                    &["C:\\Windows\\Fonts\\YuGothR.ttc", "C:\\Windows\\Fonts\\meiryo.ttc", "C:\\Windows\\Fonts\\msgothic.ttc"]
-                } else {
-                    &[
-                        "/usr/share/fonts/opentype/ipafont-gothic/ipagp.ttf",
-                        "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf",
-                        "/usr/share/fonts/ipa-pgothic/ipagp.ttf",
-                        "/usr/share/fonts/vl-gothic/VL-PGothic-Regular.ttf",
-                    ]
-                };
-                candidates.iter().map(std::path::PathBuf::from).find(|p| p.is_file())
-            })
-            .as_deref()
+        if cfg!(target_os = "macos") {
+            &["/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc", "/System/Library/Fonts/Hiragino Sans GB.ttc"]
+        } else if cfg!(windows) {
+            &["C:\\Windows\\Fonts\\YuGothR.ttc", "C:\\Windows\\Fonts\\meiryo.ttc", "C:\\Windows\\Fonts\\msgothic.ttc"]
+        } else {
+            &[
+                "/usr/share/fonts/opentype/ipafont-gothic/ipagp.ttf",
+                "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf",
+                "/usr/share/fonts/ipa-pgothic/ipagp.ttf",
+                "/usr/share/fonts/vl-gothic/VL-PGothic-Regular.ttf",
+            ]
+        }
     }
     #[cfg(target_arch = "wasm32")]
-    None
+    {
+        &[]
+    }
 }
 
 /// The Hangul letters the Korean interface shows: its catalog and its own name.
@@ -573,6 +571,98 @@ pub fn cjk_covers_hangul() -> bool {
             .iter()
             .filter(|f| f.style == "Regular" && f.scripts.iter().any(|s| matches!(*s, "Jpan" | "Hans" | "Hant")))
             .any(|f| cadcraft_fonts::ttf::faces(&std::sync::Arc::new(f.bytes.to_vec())).first().is_some_and(covers_hangul))
+    })
+}
+
+/// Whether `c` is a character in a Japanese script (kana, kanji, Japanese punctuation or
+/// full-width forms). The catalog's few Latin symbols (`⌘`, `ƒ`) are not the Japanese font's job.
+pub(crate) fn is_japanese_ui_char(c: char) -> bool {
+    matches!(c, '\u{3000}'..='\u{30ff}' | '\u{3400}'..='\u{4dbf}' | '\u{4e00}'..='\u{9fff}' | '\u{f900}'..='\u{faff}' | '\u{ff00}'..='\u{ffef}')
+}
+
+/// The Japanese letters the Japanese interface shows: its catalog and its own name.
+fn japanese_letters() -> &'static std::collections::BTreeSet<char> {
+    static LETTERS: std::sync::OnceLock<std::collections::BTreeSet<char>> = std::sync::OnceLock::new();
+    LETTERS.get_or_init(|| {
+        include_str!("i18n/ja.tsv")
+            .lines()
+            .filter_map(|line| line.split('\t').nth(2))
+            .flat_map(str::chars)
+            .chain("日本語".chars())
+            .filter(|c| is_japanese_ui_char(*c))
+            .collect()
+    })
+}
+
+/// Whether `face` has every Japanese letter the Japanese interface shows (rejects Latin-only
+/// faces and faces with kanji but no kana).
+fn covers_japanese(face: &cadcraft_fonts::ttf::Face) -> bool {
+    japanese_letters().iter().all(|c| face.has_glyph(*c))
+}
+
+/// The first face of a font file (the one egui installs without an index) when it covers the
+/// Japanese interface.
+fn first_japanese_face(bytes: std::sync::Arc<Vec<u8>>) -> Option<cadcraft_fonts::ttf::Face> {
+    cadcraft_fonts::ttf::faces(&bytes).into_iter().next().filter(covers_japanese)
+}
+
+/// The face of a Japanese font file that [`install_fonts`] loads: the first face covering the
+/// interface if a collection has one, else the first face (as before, for names it can still
+/// draw).
+fn installed_japanese_face_from(bytes: std::sync::Arc<Vec<u8>>) -> Option<cadcraft_fonts::ttf::Face> {
+    let faces = cadcraft_fonts::ttf::faces(&bytes);
+    let matched = faces.iter().find(|face| covers_japanese(face)).cloned();
+    matched.or_else(|| faces.into_iter().next())
+}
+
+/// The face of the first installed Japanese font [`japanese_fonts`] that covers the interface,
+/// else the first face that parses. Its collection index is kept so egui draws the face the gate
+/// checked. Checked once; collections are scanned with the fonts crate's face-count cap and reads
+/// are capped.
+fn installed_japanese_face() -> Option<&'static cadcraft_fonts::ttf::Face> {
+    static FOUND: std::sync::OnceLock<Option<cadcraft_fonts::ttf::Face>> = std::sync::OnceLock::new();
+    FOUND
+        .get_or_init(|| {
+            let mut fallback = None;
+            for path in japanese_fonts() {
+                let Some(bytes) = read_capped(std::path::Path::new(path), MAX_UI_FONT_BYTES) else { continue };
+                let Some(face) = installed_japanese_face_from(std::sync::Arc::new(bytes)) else { continue };
+                if covers_japanese(&face) {
+                    return Some(face);
+                }
+                if fallback.is_none() {
+                    fallback = Some(face);
+                }
+            }
+            fallback
+        })
+        .as_ref()
+}
+
+/// Whether the installed Japanese font covers the interface.
+pub fn japanese_font_covers() -> bool {
+    installed_japanese_face().is_some_and(covers_japanese)
+}
+
+/// Whether the CJK fonts [`install_fonts`] loads in every language already show Japanese
+/// (Noto Sans CJK's first face is Japanese; PingFang and Microsoft YaHei carry kana too). The
+/// CJK file is installed without a collection index, so only its first face counts. Only
+/// asked about Japanese, so other interfaces never read the font twice. Checked once.
+pub fn cjk_covers_japanese() -> bool {
+    static COVERS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *COVERS.get_or_init(|| {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if cjk_font()
+                .is_some_and(|path| read_capped(path, MAX_UI_FONT_BYTES).and_then(|bytes| first_japanese_face(std::sync::Arc::new(bytes))).is_some())
+            {
+                return true;
+            }
+        }
+        cadcraft_fonts::CRAFT_FONTS
+            .iter()
+            .filter(|f| f.style == "Regular" && f.scripts.iter().any(|s| matches!(*s, "Jpan" | "Hans" | "Hant")))
+            .any(|f| cadcraft_fonts::ttf::faces(&std::sync::Arc::new(f.bytes.to_vec())).first().is_some_and(covers_japanese))
     })
 }
 
@@ -634,12 +724,21 @@ pub fn shows_hangul(language: &str) -> bool {
     cjk_covers_hangul() || (language == "ko" && korean_font().is_some())
 }
 
+/// Whether the interface in `language` shows Japanese (the Japanese name in the language
+/// picker): in every language but Chinese when the installed Japanese or CJK fonts cover it, in a
+/// Chinese interface only while the CJK font does (it skips the Japanese face).
+pub fn shows_japanese(language: &str) -> bool {
+    cjk_covers_japanese() || (!language.starts_with("zh") && japanese_font_covers())
+}
+
 /// Whether the interface can show `language` without missing-glyph boxes: Chinese needs a font
-/// with its glyphs (installed, or the CJK face this build embedded from craft-fonts), Korean a
-/// font with Hangul, العربية an installed Arabic font or the embedded Arabic face.
+/// with its glyphs (installed, or the CJK face this build embedded from craft-fonts), Japanese and
+/// Korean a font with their kana/kanji and Hangul, العربية an installed Arabic font or the
+/// embedded Arabic face.
 pub fn can_show(language: &str) -> bool {
     match language {
         "ko" => shows_hangul("ko"),
+        "ja" => shows_japanese("ja"),
         "ar" => arabic_font().is_some() || embedded_script("Arab"),
         l if l.starts_with("zh") => cjk_font().is_some() || embedded_script("Hans") || embedded_script("Hant"),
         _ => true,
@@ -723,6 +822,129 @@ mod tests {
 
     fn families<'a>(faces: &[&'a CraftFont]) -> Vec<&'a str> {
         faces.iter().map(|f| f.family).collect()
+    }
+
+    /// A Windows Unicode BMP `cmap` table with one format 4 subtable mapping `pairs`
+    /// (sorted code points to nonzero glyph ids).
+    fn cmap_table(pairs: &[(u16, u16)]) -> Vec<u8> {
+        assert!(pairs.windows(2).all(|w| w[0].0 < w[1].0) && pairs.iter().all(|&(_, g)| g != 0));
+        let seg_count = pairs.len() + 1; // the 0xFFFF terminator
+        let mut subtable = Vec::new();
+        subtable.extend_from_slice(&4u16.to_be_bytes());
+        subtable.extend_from_slice(&u16::try_from(16 + 8 * seg_count).unwrap().to_be_bytes());
+        subtable.extend_from_slice(&0u16.to_be_bytes());
+        subtable.extend_from_slice(&u16::try_from(2 * seg_count).unwrap().to_be_bytes());
+        let mut power = 1u16;
+        let mut entry_selector = 0u16;
+        while power * 2 <= u16::try_from(seg_count).unwrap() {
+            power *= 2;
+            entry_selector += 1;
+        }
+        subtable.extend_from_slice(&(2 * power).to_be_bytes());
+        subtable.extend_from_slice(&entry_selector.to_be_bytes());
+        subtable.extend_from_slice(&(u16::try_from(2 * seg_count).unwrap() - 2 * power).to_be_bytes());
+        for (code, _) in pairs {
+            subtable.extend_from_slice(&code.to_be_bytes());
+        }
+        subtable.extend_from_slice(&0xffffu16.to_be_bytes());
+        subtable.extend_from_slice(&0u16.to_be_bytes());
+        for (code, _) in pairs {
+            subtable.extend_from_slice(&code.to_be_bytes());
+        }
+        subtable.extend_from_slice(&0xffffu16.to_be_bytes());
+        for (code, glyph) in pairs {
+            subtable.extend_from_slice(&glyph.wrapping_sub(*code).to_be_bytes());
+        }
+        subtable.extend_from_slice(&1u16.to_be_bytes()); // 0xFFFF wraps to glyph 0.
+        for _ in 0..seg_count {
+            subtable.extend_from_slice(&0u16.to_be_bytes());
+        }
+        let mut table = Vec::new();
+        table.extend_from_slice(&0u16.to_be_bytes());
+        table.extend_from_slice(&1u16.to_be_bytes());
+        table.extend_from_slice(&3u16.to_be_bytes()); // Windows
+        table.extend_from_slice(&1u16.to_be_bytes()); // Unicode BMP
+        table.extend_from_slice(&12u32.to_be_bytes());
+        table.extend_from_slice(&subtable);
+        table
+    }
+
+    /// A TrueType collection with one face per entry; a `None` face has no tables.
+    fn collection(cmaps: &[Option<Vec<u8>>]) -> Vec<u8> {
+        let mut dir_offsets = Vec::with_capacity(cmaps.len());
+        let mut cursor = 12 + 4 * cmaps.len();
+        for cmap in cmaps {
+            dir_offsets.push(cursor);
+            cursor += 12 + if cmap.is_some() { 16 } else { 0 };
+        }
+        let mut tables = Vec::with_capacity(cmaps.len());
+        for cmap in cmaps {
+            if let Some(bytes) = cmap {
+                cursor = (cursor + 3) & !3;
+                tables.push(Some((cursor, bytes.len())));
+                cursor += bytes.len();
+            } else {
+                tables.push(None);
+            }
+        }
+        let mut out = Vec::with_capacity(cursor);
+        out.extend_from_slice(b"ttcf");
+        out.extend_from_slice(&0x0001_0000u32.to_be_bytes());
+        out.extend_from_slice(&(cmaps.len() as u32).to_be_bytes());
+        for offset in &dir_offsets {
+            out.extend_from_slice(&(*offset as u32).to_be_bytes());
+        }
+        for (cmap, table) in cmaps.iter().zip(&tables) {
+            out.extend_from_slice(&0x0001_0000u32.to_be_bytes());
+            out.extend_from_slice(&u16::from(cmap.is_some()).to_be_bytes());
+            out.extend_from_slice(&(if cmap.is_some() { 16u16 } else { 0 }).to_be_bytes());
+            out.extend_from_slice(&0u16.to_be_bytes());
+            out.extend_from_slice(&0u16.to_be_bytes());
+            if let (Some(_), Some((offset, length))) = (cmap, table) {
+                out.extend_from_slice(b"cmap");
+                out.extend_from_slice(&0u32.to_be_bytes());
+                out.extend_from_slice(&(*offset as u32).to_be_bytes());
+                out.extend_from_slice(&(*length as u32).to_be_bytes());
+            }
+        }
+        for (cmap, table) in cmaps.iter().zip(&tables) {
+            if let (Some(bytes), Some((offset, _))) = (cmap, table) {
+                out.resize(*offset, 0);
+                out.extend_from_slice(bytes);
+            }
+        }
+        out
+    }
+
+    fn japanese_cmap() -> Vec<u8> {
+        let pairs: Vec<_> = super::japanese_letters()
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (u16::try_from(u32::from(*c)).expect("Japanese catalog is BMP"), u16::try_from(i + 1).unwrap()))
+            .collect();
+        cmap_table(&pairs)
+    }
+
+    /// A collection whose face 0 is Latin-only and face 1 covers the Japanese catalog: the
+    /// Japanese install selects and installs face 1, while the shared CJK path, installed at
+    /// face 0, must not accept the nonzero face.
+    #[test]
+    fn japanese_gate_installs_the_face_it_accepts_from_a_collection() {
+        let bytes = std::sync::Arc::new(collection(&[Some(cmap_table(&[(u16::from(b'A'), 1)])), Some(japanese_cmap())]));
+        let selected = super::installed_japanese_face_from(bytes.clone()).expect("the collection parses");
+        assert_eq!(selected.index, 1, "the install selects the face covering Japanese");
+        assert!(super::covers_japanese(&selected));
+        let installed = super::face_font_data(&selected);
+        assert_eq!(installed.index, selected.index, "egui must draw the face the gate checked");
+        assert!(super::first_japanese_face(bytes.clone()).is_none(), "face 0 alone does not cover Japanese");
+        let first = cadcraft_fonts::ttf::faces(&bytes).into_iter().next().expect("face 0 parses");
+        assert_eq!(first.index, 0);
+        assert!(!super::covers_japanese(&first));
+        // With no covering face the install keeps face 0, and the gate asks that same face.
+        let latin_only = std::sync::Arc::new(collection(&[Some(cmap_table(&[(u16::from(b'A'), 1)])), None]));
+        let fallback = super::installed_japanese_face_from(latin_only).expect("face 0 parses");
+        assert_eq!(fallback.index, 0);
+        assert!(!super::covers_japanese(&fallback), "an unvalidated face is not accepted");
     }
 
     #[test]

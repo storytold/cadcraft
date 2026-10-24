@@ -37,6 +37,8 @@ pub enum Preference {
     Italian,
     #[serde(rename = "ko")]
     Korean,
+    #[serde(rename = "ja")]
+    Japanese,
     #[serde(rename = "sv")]
     Swedish,
     #[serde(rename = "ar")]
@@ -48,7 +50,7 @@ pub enum Preference {
 }
 
 impl Preference {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::Auto,
         Self::English,
         Self::Greek,
@@ -62,6 +64,7 @@ impl Preference {
         Self::Chinese,
         Self::Italian,
         Self::Korean,
+        Self::Japanese,
         Self::Swedish,
         Self::Arabic,
         Self::Hungarian,
@@ -92,6 +95,7 @@ impl Preference {
             Self::Chinese => "zh",
             Self::Italian => "it",
             Self::Korean => "ko",
+            Self::Japanese => "ja",
             Self::Swedish => "sv",
             Self::Arabic => "ar",
             Self::Hungarian => "hu",
@@ -118,6 +122,13 @@ impl Preference {
                     "한국어"
                 } else {
                     "Korean"
+                }
+            }
+            Self::Japanese => {
+                if crate::theme::shows_japanese(CURRENT.with(Cell::get)) {
+                    "日本語"
+                } else {
+                    "Japanese"
                 }
             }
             Self::Swedish => "Svenska",
@@ -150,6 +161,7 @@ impl Preference {
             Self::Chinese => "zh",
             Self::Italian => "it",
             Self::Korean => "ko",
+            Self::Japanese => "ja",
             Self::Swedish => "sv",
             Self::Arabic => "ar",
             Self::Hungarian => "hu",
@@ -170,7 +182,7 @@ pub struct Language {
     catalog: OnceLock<Catalog<'static>>,
 }
 
-pub static LANGUAGES: [Language; 16] = [
+pub static LANGUAGES: [Language; 17] = [
     Language { code: "en", name: "English", source: "", plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     // Greek: one for exactly 1; other for zero and all other integer counts.
     Language { code: "el", name: "Ελληνικά", source: include_str!("el.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
@@ -201,6 +213,9 @@ pub static LANGUAGES: [Language; 16] = [
     Language { code: "it", name: "Italiano", source: include_str!("it.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     // Korean has one integer plural form and needs a Hangul-capable interface font.
     Language { code: "ko", name: "한국어", source: include_str!("ko.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new() },
+    // Japanese has no grammatical plural (one `@plural` form) and needs a Japanese-capable
+    // interface font (Hiragino, Noto Sans CJK JP…); without one the interface stays English.
+    Language { code: "ja", name: "日本語", source: include_str!("ja.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new() },
     // Swedish plurals follow the English rule: one (1), other.
     Language { code: "sv", name: "Svenska", source: include_str!("sv.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     // العربية (Arabic) is right-to-left; an installed Arabic font (`theme::arabic_font`)
