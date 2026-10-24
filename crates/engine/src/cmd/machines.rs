@@ -14,6 +14,9 @@ pub struct SelectPhase {
     pub removing: bool,
     /// What each selection so far changed, for Undo: (handles, whether they were removed).
     pub history: Vec<(Vec<Handle>, bool)>,
+    /// For commands that edit the objects in place (ERASE, MOVE...): objects on locked layers are
+    /// left out of the selection, and the command line says how many, as AutoCAD does.
+    pub skip_locked: bool,
 }
 
 /// Most selection steps Undo remembers.
@@ -55,13 +58,14 @@ impl SelectPhase {
     pub fn feed(&mut self, s: &mut Session, i: &Input) -> Result<SelOutcome> {
         match i {
             Input::Pick(hs) => {
+                let locked = if self.skip_locked && !self.removing { on_locked_layers(s, hs)? } else { Vec::new() };
                 let changed: Vec<Handle> = if self.removing {
                     let gone: Vec<Handle> = self.picked.iter().copied().filter(|h| hs.contains(h)).collect();
                     self.picked.retain(|h| !hs.contains(h));
                     gone
                 } else {
                     let mut added = Vec::new();
-                    for h in hs {
+                    for h in hs.iter().filter(|h| !locked.contains(h)) {
                         if !self.picked.contains(h) {
                             self.picked.push(*h);
                             added.push(*h);
@@ -81,6 +85,7 @@ impl SelectPhase {
                 } else {
                     s.echo("0 found");
                 }
+                say_locked(s, locked.len());
                 s.set_selection(self.picked.clone());
                 if self.single && !self.picked.is_empty() {
                     return Ok(self.finish(s));
@@ -118,6 +123,21 @@ impl SelectPhase {
             SelOutcome::Done(self.picked.clone())
         }
     }
+}
+
+/// Tell how many objects were left out for being on a locked layer, as AutoCAD does.
+pub(crate) fn say_locked(s: &mut Session, n: usize) {
+    match n {
+        0 => {}
+        1 => s.echo("1 was on a locked layer."),
+        n => s.echo(format!("{n} were on a locked layer.")),
+    }
+}
+
+/// The objects among `hs` whose layer is locked.
+pub(crate) fn on_locked_layers(s: &Session, hs: &[Handle]) -> Result<Vec<Handle>> {
+    let d = s.doc()?;
+    Ok(hs.iter().copied().filter(|h| d.entity(*h).and_then(|e| d.layer(&e.common.layer)).is_some_and(|l| l.locked)).collect())
 }
 
 /// "Select objects:", then run a JSON command on them as `{handles}`. With a pickfirst selection it
