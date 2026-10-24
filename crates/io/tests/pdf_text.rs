@@ -333,6 +333,7 @@ fn text_seen_through_a_viewport_and_on_layers() {
         layer_colors: Vec::new(),
         clip: None,
         on: true,
+        twist: 0.0,
     };
     d.add(&paper, Common::default(), EntityKind::Viewport(vp)).unwrap();
     text(&mut d, &paper, "Real", (20.0, 20.0), "B", 0.0, 1.0, 0.0);

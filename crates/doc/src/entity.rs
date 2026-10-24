@@ -822,6 +822,10 @@ pub struct Viewport {
     /// Display on (MVIEW ON/OFF). An off viewport shows its border but no model space.
     #[serde(default = "yes")]
     pub on: bool,
+    /// View twist (DXF group 51; radians, counterclockwise): kept through files, not yet applied
+    /// to the display or plots.
+    #[serde(default)]
+    pub twist: f64,
 }
 impl Default for Viewport {
     fn default() -> Self {
@@ -837,6 +841,7 @@ impl Default for Viewport {
             layer_colors: Vec::new(),
             clip: None,
             on: true,
+            twist: 0.0,
         }
     }
 }
