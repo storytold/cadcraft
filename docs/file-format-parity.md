@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-22 · **Change:** minor (DIMASSOC objects for angular, diametric and radial dimensions) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-23 · **Change:** minor (acadrust 0.6.6: DWGs with dynamic block scale actions open in AutoCAD, multi-layout DWGs in other readers) · **Target:** Autodesk AutoCAD 2027
 
 Every format AutoCAD 2027 reads or writes, with CADCraft's support, fidelity and tests. Work
 items are in [gaps.md](gaps.md#file-formats); the weighted score feeds
@@ -31,11 +31,13 @@ below, and ≈ 20–40 h for 3D exchange formats that wait for 3D modelling.
 
 AutoCAD 2027 opens every DWG version from R2.0 onward and saves 2018 (AC1032, still the current
 DWG format), 2013, 2010, 2007, 2004, 2000 and R14. CADCraft reads DWG by converting it to DXF
-with the `acadrust` 0.6.3 crate and reading that DXF; it saves by writing its own R2000 DXF and
+with the `acadrust` 0.6.6 crate and reading that DXF; it saves by writing its own R2000 DXF and
 converting it to a DWG of the chosen version (#421): SAVEAS `version`, else the drawing's own
 version (the file's `$ACADVER`, 2018 for a new drawing), at least 2004 unless 2000 is asked for.
 The bridge repairs two acadrust 0.6.3 gaps in 2010+ DWG: merged table cells and table-style
-title/header suppression.
+title/header suppression. Since 0.6.5 it keeps the byte AutoCAD's DWG scale action (BLOCKSCALEACTION)
+ends with, which DXF doesn't carry; before, AutoCAD refused every DWG CADCraft wrote with a dynamic
+block that scales ("Error Decrypting Data").
 
 | DWG version | Code | AutoCAD 2027 | CADCraft read | CADCraft write | Tested how |
 |---|---|---|---|---|---|
@@ -140,6 +142,7 @@ our output in AutoCAD black-box.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-23 | minor | acadrust 0.6.6: a DWG with more than one layout gets unique `*Paper_SpaceN` names, so ACadSharp opens it (hakanaktt/acadrust#143); a dynamic block scale action keeps the DWG-only byte after its connections, so AutoCAD opens CADCraft's DWG of a drawing with one and its references still scale; dimension text-position flags now mapped by acadrust itself |
 | 2026-10-22 | minor | DXF/DWG save: angular, diametric and radial dimensions get standard DIMASSOC objects (one centre reference to the circle for radial/diametric, the definition points for angular), so AutoCAD follows their geometry; the standard objects of those kinds are read back too, without CADCraft's xdata (#1651) |
 | 2026-10-19 | minor | DXF/DWG save: angular dimension block text honors DIMDSEP, including per-dimension overrides (#1646) |
 | 2026-10-19 | minor | A file's own arrowhead blocks with standard names (AutoCAD's `_Dot`, `_DotSmall`), named only by a dimension style, are kept and saved as they were instead of being replaced by CADCraft's solids; PURGE keeps arrowhead blocks dimension styles name |
