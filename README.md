@@ -343,6 +343,20 @@ and web backend defaults are unchanged.
 
 RISC-V (riscv64): `cadcraft-<ver>-linux-riscv64.tar.gz`, cross-compiled; needs glibc 2.39 or newer (Ubuntu 24.04+, Debian 13+).
 
+#### Community packages
+
+These packages are maintained by community members, not by the CADCraft team.
+
+On Gentoo, the [::snakebyte overlay](https://github.com/switch87/snakebyte-overlay) packages the
+Linux release as `media-gfx/cadcraft-bin` (prebuilt) and `media-gfx/cadcraft` (built from source):
+
+```sh
+eselect repository add snakebyte git https://github.com/switch87/snakebyte-overlay.git
+emaint sync -r snakebyte
+echo 'media-gfx/cadcraft-bin ~amd64' >> /etc/portage/package.accept_keywords/cadcraft
+emerge --ask media-gfx/cadcraft-bin
+```
+
 ### FreeBSD
 
 | Build | File |
