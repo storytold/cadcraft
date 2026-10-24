@@ -1400,6 +1400,7 @@ pub fn dim_text(d: &Drawing, st: &cadcraft_doc::DimStyle) -> DimText {
         fixed_height: ts.height,
         width_factor: ts.width_factor,
         oblique: ts.oblique,
+        font_hint: hint.map(str::to_string),
     }
 }
 

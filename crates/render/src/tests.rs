@@ -1180,3 +1180,29 @@ fn tolerance_transcodes_vietnamese() {
     let layout = tolerance_in(&d, &tol);
     assert!(!layout.texts.is_empty());
 }
+
+#[test]
+fn dimension_short_text_resolves_font_from_style() {
+    let mut d = Drawing::new_imperial();
+    d.text_styles.push(cadcraft_doc::TextStyle { name: "CustomDimStyle".into(), font: ".VnTime".into(), ..Default::default() });
+    if let Some(st) = d.dim_styles.first_mut() {
+        st.text_style = "CustomDimStyle".into();
+    }
+    // 'Õ' is 'ế' in TCVN3. A single character does not trigger unhinted auto-detection,
+    // so it verifies that the TextStyle's underlying font (.VnTime) was resolved as a hint.
+    let dim = cadcraft_doc::Dimension { text: "Õ <>".into(), ..lin_dim() };
+    let g = dimension_in(&d, &dim);
+    assert!(g.mtext.contains('ế'), "Expected transcoded 'ế', got: {}", g.mtext);
+}
+
+#[test]
+fn tolerance_short_text_resolves_font_from_style() {
+    let mut d = Drawing::new_imperial();
+    d.text_styles.push(cadcraft_doc::TextStyle { name: "CustomTolStyle".into(), font: ".VnTime".into(), ..Default::default() });
+    if let Some(st) = d.dim_styles.first_mut() {
+        st.text_style = "CustomTolStyle".into();
+    }
+    let tol = cadcraft_doc::Tolerance { insert: Vec3::ZERO, dir: Vec3::new(1.0, 0.0, 0.0), style: "Standard".into(), text: "Õ".into() };
+    let layout = tolerance_in(&d, &tol);
+    assert!(!layout.texts.is_empty());
+}

@@ -12,7 +12,8 @@ use crate::{Builder, Ctx, Ink, ink};
 pub fn tolerance_in(d: &Drawing, t: &Tolerance) -> GdtLayout {
     let st = d.dim_style(&t.style).cloned().unwrap_or_default();
     let dt = crate::dim_text(d, &st);
-    let hint = cadcraft_fonts::legacy_encoding::font_hint(&[&st.text_style]);
+    let ts = d.text_style(&st.text_style).cloned().unwrap_or_default();
+    let hint = dt.font_hint.as_deref().or_else(|| cadcraft_fonts::legacy_encoding::font_hint(&[&ts.font, &st.text_style]));
     t.layout(d, &|s, h| {
         let transcoded = cadcraft_fonts::legacy_encoding::transcode(s, hint);
         cadcraft_fonts::text_width(&dt.font, &transcoded, h, dt.width_factor)
@@ -61,7 +62,8 @@ pub(crate) fn draw(b: &mut Builder, ctx: &Ctx, e: &Entity, t: &Tolerance, lw: f3
         }
     }
     let dt = crate::dim_text(d, &st);
-    let hint = cadcraft_fonts::legacy_encoding::font_hint(&[&st.text_style]);
+    let ts = d.text_style(&st.text_style).cloned().unwrap_or_default();
+    let hint = dt.font_hint.as_deref().or_else(|| cadcraft_fonts::legacy_encoding::font_hint(&[&ts.font, &st.text_style]));
     for tx in &g.texts {
         let p = cadcraft_fonts::TextParams {
             rotation: tx.rotation,

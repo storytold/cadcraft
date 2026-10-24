@@ -372,7 +372,7 @@ pub fn format_linear_value(v: f64, st: &DimStyle) -> String {
 /// alternate units, then the user's override text (`<>` = the measurement). DIMRND rounds the
 /// measurement (and so the limits) only: tolerances are never rounded and alternate units
 /// round by DIMALTRND.
-fn linear_text(meas: f64, d: &Dimension, st: &DimStyle, prefix: &str) -> String {
+fn linear_text(meas: f64, d: &Dimension, st: &DimStyle, prefix: &str, hint: Option<&str>) -> String {
     let v = meas * st.linear_factor;
     let nf = NumFormat::from_style(st);
     let main = if st.limits {
@@ -382,7 +382,6 @@ fn linear_text(meas: f64, d: &Dimension, st: &DimStyle, prefix: &str) -> String 
     } else {
         format!("{prefix}{}", format_linear(v, &nf).1)
     };
-    let hint = cadcraft_fonts::legacy_encoding::font_hint(&[&st.text_style]);
     let mut s = post(&st.post, &main, hint);
     if st.tolerance && !st.limits {
         let tf = NumFormat { decimals: st.tol_decimals, zin: st.tol_zero_suppression, round: 0.0, ..nf.clone() };
@@ -414,7 +413,7 @@ fn linear_text(meas: f64, d: &Dimension, st: &DimStyle, prefix: &str) -> String 
         let alt = format_linear(v * st.alt_factor, &af).1;
         s += &format!(" [{}]", post(&st.alt_post, &alt, hint));
     }
-    inspected(apply_override(&s, d, st), d)
+    inspected(apply_override(&s, d, st, hint), d)
 }
 
 /// DIMINSPECT: the label and the rate either side of the value, two spaces apart.
@@ -445,13 +444,13 @@ fn post(template: &str, meas: &str, hint: Option<&str>) -> String {
 }
 
 /// Apply dimension text overrides: empty uses the base, whitespace suppresses text, and other text substitutes it.
-fn apply_override(base: &str, d: &Dimension, st: &DimStyle) -> String {
+fn apply_override(base: &str, d: &Dimension, st: &DimStyle, hint: Option<&str>) -> String {
     if d.text.is_empty() {
         base.to_string()
     } else if d.text.trim().is_empty() {
         String::new()
     } else {
-        let hint = cadcraft_fonts::legacy_encoding::font_hint(&[&st.text_style]);
+        let hint = hint.or_else(|| cadcraft_fonts::legacy_encoding::font_hint(&[&st.text_style]));
         let text = cadcraft_fonts::legacy_encoding::transcode(&d.text, hint);
         bounded_replace(&text, base)
     }
@@ -522,6 +521,7 @@ pub struct DimText {
     pub fixed_height: f64,
     pub width_factor: f64,
     pub oblique: f64,
+    pub font_hint: Option<String>,
 }
 
 /// Generate the geometry of a dimension with the stroke font.
@@ -532,6 +532,7 @@ pub fn dimension_geometry(d: &Dimension, st: &DimStyle, dimscale: f64) -> DimGeo
 /// Generate the geometry of a dimension. The dimension's own overrides are applied to `st`.
 pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font: &DimText) -> DimGeometry {
     let st = &st.with_overrides(&d.overrides);
+    let hint = font.font_hint.as_deref().or_else(|| cadcraft_fonts::legacy_encoding::font_hint(&[&st.text_style]));
     let k = st.effective_scale(dimscale);
     let asz = st.arrow_size * k;
     let th = if font.fixed_height > 0.0 { font.fixed_height } else { st.text_height * k };
@@ -590,7 +591,7 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
             let f2 = foot(p2);
             // The measurement is along the dimension direction whatever the extension lines do.
             let meas = (p2 - p1).dot(dir).abs();
-            g.mtext = linear_text(meas, d, st, "");
+            g.mtext = linear_text(meas, d, st, "", hint);
             g.measurement = meas;
             // From here on: the length drawn between the extension lines.
             let meas = f1.dist(f2);
@@ -782,7 +783,7 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
             let r = center.dist(tip);
             let j = d.marks.jogged.clone().unwrap_or_default();
             let (o, jp) = (j.center.xy(), j.jog.xy());
-            g.mtext = linear_text(r, d, st, "R");
+            g.mtext = linear_text(r, d, st, "R", hint);
             // A NaN or infinite radius leaves no line to draw (and NaN is no bound for `clamp`).
             if !r.is_finite() {
                 break 'jogged;
@@ -815,7 +816,7 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
             let radius = matches!(d.kind, DimKind::Radius);
             let (center, r) = if radius { (a, a.dist(b)) } else { (a.mid(b), a.dist(b) / 2.0) };
             let meas = if radius { r } else { 2.0 * r };
-            g.mtext = linear_text(meas, d, st, if radius { "R" } else { "%%c" });
+            g.mtext = linear_text(meas, d, st, if radius { "R" } else { "%%c" }, hint);
             g.measurement = meas;
             let (tw, tht) = measure(&g.mtext);
             let u = (b - center).normalized();
@@ -910,7 +911,7 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
             let azin = (st.angular_zero_suppression & 3) * 4;
             let txt = format_angle_with_separator(sweep, st.angular_unit, st.angular_decimals, azin, &st.decimal_separator);
             // DIMPOST is a linear-dimension prefix/suffix; angles have their own format only.
-            g.mtext = inspected(apply_override(&txt, d, st), d);
+            g.mtext = inspected(apply_override(&txt, d, st, hint), d);
             let mut pts = Vec::new();
             arc.tessellate(r * 1e-3, &mut pts);
             g.dim(pts);
@@ -945,7 +946,7 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
             let leader_end = d.p14.xy();
             let origin = d.defpt.xy();
             let meas = if x_type { (feature.x - origin.x).abs() } else { (feature.y - origin.y).abs() };
-            g.mtext = linear_text(meas, d, st, "");
+            g.mtext = linear_text(meas, d, st, "", hint);
             g.measurement = meas;
             let (tw, _) = measure(&g.mtext);
             g.dim(vec![feature, leader_end]);
@@ -964,7 +965,7 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
             let arc = Arc::new(c, c.dist(d.defpt.xy()).max(1e-9), c.angle_to(d.p13.xy()), c.angle_to(d.p14.xy()));
             let meas = r * arc.sweep();
             // DIMARCSYM: the arc symbol before the text (0), over it (1) or none (2).
-            g.mtext = linear_text(meas, d, st, if st.arc_symbol == 0 { "⌒" } else { "" });
+            g.mtext = linear_text(meas, d, st, if st.arc_symbol == 0 { "⌒" } else { "" }, hint);
             g.measurement = meas;
             let mut pts = Vec::new();
             arc.tessellate(arc.radius * 1e-3, &mut pts);
