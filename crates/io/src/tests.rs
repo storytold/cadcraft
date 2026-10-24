@@ -1012,6 +1012,26 @@ fn ac1024_dwg_with_many_entities_opens() {
     assert_eq!(d.entity_count(), n);
 }
 
+/// Issue #1076: a DWG opens through its rendition streamed into the tag parser, never held as a
+/// whole. The drawing is the one the text rendition gives, the file's version is kept, and the
+/// header variables the bridge leaves out arrive.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn dwg_opens_through_its_streamed_rendition() {
+    for version in ["AC1015", "AC1024", "AC1032"] {
+        let dxf = write_dxf(&many_entities(200)).replacen("AC1015", version, 1);
+        let dwg = cadcraft_dwg::dxf_to_dwg_as(dxf.as_bytes(), version).unwrap();
+        let streamed = read(&dwg, "x.dwg").unwrap();
+        let text = read_dxf(&cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).unwrap();
+        assert_eq!(streamed.entity_count(), 200, "{version}");
+        assert_eq!(streamed.header.get("ACADVER").and_then(HVal::as_str), Some(version));
+        assert_eq!(save_version(&streamed), save_version(&text), "{version}");
+        assert_eq!(streamed.header.f64("ANGBASE", -1.0), text.header.f64("ANGBASE", -2.0), "{version}");
+        assert_eq!(streamed.header.i64("ANGDIR", -1), text.header.i64("ANGDIR", -2), "{version}");
+        assert_eq!(write_dxf(&streamed), write_dxf(&text), "{version}");
+    }
+}
+
 /// Issue #57: oversized input is rejected early, with a message naming the limit, never a panic.
 /// A conversion that runs away (a damaged or misread DWG can make the reader produce a drawing
 /// thousands of times larger than the file) stops at the DXF size limit instead of filling memory

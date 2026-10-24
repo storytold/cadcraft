@@ -153,6 +153,25 @@ impl BinaryText {
     pub(crate) fn string(&mut self, code: i32, raw: &[u8]) -> String {
         let d = if self.utf8 { Decoder::Utf8 } else { self.code_page.unwrap_or(Decoder::Utf8) };
         let s = decode(raw, d).into_owned();
+        self.note(code, &s);
+        s
+    }
+
+    /// Decode one line of an ASCII file the way [`decode_ascii_file`] treats a whole file: valid
+    /// UTF-8 as UTF-8 (R2007+ files, pure-ASCII text, writers that ignored the code page), else
+    /// in the declared code page. Updates the state like [`Self::string`].
+    pub(crate) fn ascii_string(&mut self, code: i32, raw: &[u8]) -> String {
+        match std::str::from_utf8(raw) {
+            Ok(s) => {
+                self.note(code, s);
+                s.to_string()
+            }
+            Err(_) => self.string(code, raw),
+        }
+    }
+
+    /// Learn `$ACADVER` and `$DWGCODEPAGE` from the decoded value `s` of group `code`.
+    fn note(&mut self, code: i32, s: &str) {
         match (code, self.var.take()) {
             (9, _) => {
                 self.var = match s.trim() {
@@ -161,16 +180,15 @@ impl BinaryText {
                     _ => None,
                 }
             }
-            (1, Some(HeaderVar::AcadVer)) => self.utf8 = is_utf8_version(&s),
+            (1, Some(HeaderVar::AcadVer)) => self.utf8 = is_utf8_version(s),
             (3, Some(HeaderVar::CodePage)) => {
-                self.code_page = decoder(&s);
+                self.code_page = decoder(s);
                 if self.code_page.is_none() {
                     log::warn!("DXF: unknown code page `{}`; reading the text as ANSI_1252", s.trim());
                 }
             }
             _ => {}
         }
-        s
     }
 }
 

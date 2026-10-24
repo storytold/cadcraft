@@ -5,6 +5,10 @@
 //! goes the other way. Keeping the dependency behind this byte-level API isolates it: nothing
 //! else in CADCraft depends on its types. Native targets only (it memory-maps files).
 //!
+//! Opening uses [`dwg_to_dxf_stream_noted`]: the rendition is written straight into a sink (the
+//! DXF crate's streaming tag parser) instead of being held as text, which for a large drawing
+//! is several times the DWG's size (#1076). [`dwg_to_dxf`] still gives the text as bytes.
+//!
 //! # Guardrails around the third-party decoder
 //!
 //! The decoder allocates tables and section buffers from sizes a (possibly damaged or hostile)
@@ -64,12 +68,36 @@ fn mb(n: u64) -> String {
     if m >= 100.0 { format!("{m:.0} MB") } else { format!("{m:.1} MB") }
 }
 
+/// A header variable the DWG reader fills in but the DXF rendition leaves out: name (`$ANGBASE`),
+/// group code and value (an integer for group 70).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HeaderVar {
+    pub name: &'static str,
+    pub code: i32,
+    pub value: f64,
+}
+
+/// What [`dwg_to_dxf_stream_noted`] produced.
+#[derive(Debug)]
+pub struct Rendition<W> {
+    /// The sink, after the whole rendition went through it.
+    pub sink: W,
+    /// How many bytes of rendition the sink got.
+    pub bytes: usize,
+    /// What the read left out (see [`dwg_to_dxf_noted`]).
+    pub notes: Vec<String>,
+    /// The file's version code (`AC1024`).
+    pub version: String,
+    /// Header variables the rendition leaves out, to add to its HEADER section.
+    pub header_vars: Vec<HeaderVar>,
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
     use std::io::{Cursor, Write};
     use std::panic::AssertUnwindSafe;
 
-    use super::{Limits, mb};
+    use super::{HeaderVar, Limits, Rendition, mb};
 
     /// Read DWG bytes and return an ASCII DXF rendition, within [`Limits::DEFAULT`].
     pub fn dwg_to_dxf(bytes: &[u8]) -> Result<Vec<u8>, String> {
@@ -88,6 +116,66 @@ mod native {
     /// file, and the notes say how many were skipped and of which types, so a partial read never
     /// passes for a complete one.
     pub fn dwg_to_dxf_noted(bytes: &[u8], limits: Limits) -> Result<(Vec<u8>, Vec<String>), String> {
+        let (doc, notes) = read_document(bytes, limits)?;
+        let mut out = CappedWriter { inner: Vec::new(), written: 0, limit: limits.max_dxf_bytes, exceeded: false };
+        let written = std::panic::catch_unwind(AssertUnwindSafe(|| acadrust::DxfWriter::new(&doc).write_to_writer(&mut out)))
+            .map_err(|_| "the DWG→DXF conversion failed on this file".to_string())?;
+        if out.exceeded {
+            return Err(rendition_too_large(bytes, limits));
+        }
+        written.map_err(|e| format!("DWG→DXF: {e}"))?;
+        Ok((add_header_vars(out.inner, &doc.header), notes))
+    }
+
+    /// A DWG's DXF rendition written straight into `sink` as it is produced, and what the DWG
+    /// reader knows that the rendition leaves out. The sink gets the bytes [`dwg_to_dxf_noted`]
+    /// would return, within `limits.max_dxf_bytes`, except the header variables below; the whole
+    /// rendition never exists in memory here, which is the point: a 48 MB DWG renders to 300 MB
+    /// of text (#1076). The DWG document itself is dropped before this returns.
+    ///
+    /// The rendition is ASCII DXF, not binary: acadrust's binary writer sizes many integer groups
+    /// by its own field types rather than by the group code (code 171 as four bytes, 70–79 as
+    /// four, 90–99 as two), which a reader following the DXF reference can't follow.
+    ///
+    /// [`Rendition::header_vars`] are the header variables the writer leaves out, which the text
+    /// of [`dwg_to_dxf_noted`] gets spliced in; the caller adds them to what it parsed.
+    /// [`Rendition::version`] is the file's version code, as the rendition's `$ACADVER` says.
+    pub fn dwg_to_dxf_stream_noted<W: Write>(bytes: &[u8], limits: Limits, sink: W) -> Result<Rendition<W>, String> {
+        let (doc, notes) = read_document(bytes, limits)?;
+        let capped = CappedWriter { inner: sink, written: 0, limit: limits.max_dxf_bytes, exceeded: false };
+        // acadrust's text writer writes every group on its own, so the sink sees whole chunks
+        // instead of millions of small writes.
+        let mut out = std::io::BufWriter::with_capacity(1 << 16, capped);
+        let written = std::panic::catch_unwind(AssertUnwindSafe(|| acadrust::DxfWriter::new(&doc).write_to_writer(&mut out)))
+            .map_err(|_| "the DWG→DXF conversion failed on this file".to_string())?;
+        let version = doc.version.to_dxf_string().to_string();
+        let header_vars = unwritten_header_vars(&doc.header).to_vec();
+        drop(doc);
+        // The buffer's tail reaches the sink here; a sink that fails on it (a full disk, a parser
+        // that rejects the last chunk) must fail the rendition, not pass as a short one.
+        let flushed = out.flush();
+        let (capped, _) = out.into_parts();
+        if capped.exceeded {
+            return Err(rendition_too_large(bytes, limits));
+        }
+        written.map_err(|e| format!("DWG→DXF: {e}"))?;
+        flushed.map_err(|e| format!("DWG→DXF: {e}"))?;
+        Ok(Rendition { sink: capped.inner, bytes: capped.written, notes, version, header_vars })
+    }
+
+    /// The error for a rendition that ran past `limits.max_dxf_bytes`.
+    fn rendition_too_large(bytes: &[u8], limits: Limits) -> String {
+        format!(
+            "DWG: converting this {} file produced more than {} of drawing data (the limit); \
+             the file is probably damaged, or uses objects the DWG reader misreads",
+            mb(bytes.len() as u64),
+            mb(limits.max_dxf_bytes as u64)
+        )
+    }
+
+    /// The DWG read and the fixes applied to what acadrust read, shared by the text and the
+    /// binary renditions. The input size is checked before the reader runs.
+    fn read_document(bytes: &[u8], limits: Limits) -> Result<(acadrust::CadDocument, Vec<String>), String> {
         if bytes.len() > limits.max_dwg_bytes {
             return Err(format!("DWG: the file is {}, larger than the {} CADCraft opens", mb(bytes.len() as u64), mb(limits.max_dwg_bytes as u64)));
         }
@@ -112,19 +200,7 @@ mod native {
             let (s, were) = if orphans == 1 { ("", "was") } else { ("s", "were") };
             notes.push(format!("DWG: {orphans} DGN line style component{s} that no line style definition uses {were} left out"));
         }
-        let mut out = CappedWriter { buf: Vec::new(), limit: limits.max_dxf_bytes, exceeded: false };
-        let written = std::panic::catch_unwind(AssertUnwindSafe(|| acadrust::DxfWriter::new(&doc).write_to_writer(&mut out)))
-            .map_err(|_| "the DWG→DXF conversion failed on this file".to_string())?;
-        if out.exceeded {
-            return Err(format!(
-                "DWG: converting this {} file produced more than {} of drawing data (the limit); \
-                 the file is probably damaged, or uses objects the DWG reader misreads",
-                mb(bytes.len() as u64),
-                mb(limits.max_dxf_bytes as u64)
-            ));
-        }
-        written.map_err(|e| format!("DWG→DXF: {e}"))?;
-        Ok((add_header_vars(out.buf, &doc.header), notes))
+        Ok((doc, notes))
     }
 
     /// Most record types named in the skipped-records note.
@@ -396,17 +472,18 @@ mod native {
     }
 
     /// Header variables the DWG reader fills in but acadrust's DXF writer (0.6.3) leaves out of
-    /// the HEADER section: (name, group code, value).
-    fn unwritten_header_vars(h: &acadrust::document::HeaderVariables) -> [(&'static str, i32, String); 7] {
+    /// the HEADER section.
+    fn unwritten_header_vars(h: &acadrust::document::HeaderVariables) -> [HeaderVar; 7] {
+        let var = |name, code, value| HeaderVar { name, code, value };
         [
             // DWG holds radians; `$ANGBASE` is in degrees.
-            ("$ANGBASE", 50, h.angle_base.to_degrees().to_string()),
-            ("$ANGDIR", 70, h.angle_direction.to_string()),
-            ("$FILLETRAD", 40, h.fillet_radius.to_string()),
-            ("$CHAMFERA", 40, h.chamfer_distance_a.to_string()),
-            ("$CHAMFERB", 40, h.chamfer_distance_b.to_string()),
-            ("$ELEVATION", 40, h.elevation.to_string()),
-            ("$THICKNESS", 40, h.thickness.to_string()),
+            var("$ANGBASE", 50, h.angle_base.to_degrees()),
+            var("$ANGDIR", 70, f64::from(h.angle_direction)),
+            var("$FILLETRAD", 40, h.fillet_radius),
+            var("$CHAMFERA", 40, h.chamfer_distance_a),
+            var("$CHAMFERB", 40, h.chamfer_distance_b),
+            var("$ELEVATION", 40, h.elevation),
+            var("$THICKNESS", 40, h.thickness),
         ]
     }
 
@@ -422,9 +499,9 @@ mod native {
         let Some(end) = dxf.windows(END.len()).position(|w| w == END).map(|p| p + 2) else { return dxf };
         let section = dxf.get(..end).unwrap_or_default();
         let mut add = String::new();
-        for (name, code, value) in unwritten_header_vars(h) {
+        for HeaderVar { name, code, value } in unwritten_header_vars(h) {
             let written = section.windows(name.len() + 2).any(|w| w.starts_with(name.as_bytes()) && w.ends_with(b"\r\n"));
-            if !written && value.parse::<f64>().is_ok_and(f64::is_finite) {
+            if !written && value.is_finite() {
                 add.push_str(&format!("  9\r\n{name}\r\n{code:>3}\r\n{value}\r\n"));
             }
         }
@@ -432,25 +509,27 @@ mod native {
         dxf
     }
 
-    /// Collects the DXF text and fails the write once it would grow past `limit`.
-    struct CappedWriter {
-        buf: Vec<u8>,
+    /// Passes the rendition on to `inner` and fails the write once it would grow past `limit`.
+    struct CappedWriter<W> {
+        inner: W,
+        written: usize,
         limit: usize,
         exceeded: bool,
     }
 
-    impl Write for CappedWriter {
+    impl<W: Write> Write for CappedWriter<W> {
         fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
             // Sticky: once over, every later write fails too.
-            if self.exceeded || self.buf.len().saturating_add(b.len()) > self.limit {
+            if self.exceeded || self.written.saturating_add(b.len()) > self.limit {
                 self.exceeded = true;
                 return Err(std::io::Error::other("DXF size limit reached"));
             }
-            self.buf.extend_from_slice(b);
+            self.inner.write_all(b)?;
+            self.written = self.written.saturating_add(b.len());
             Ok(b.len())
         }
         fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
+            self.inner.flush()
         }
     }
 
@@ -642,7 +721,7 @@ mod native {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use native::{dwg_to_dxf, dwg_to_dxf_noted, dwg_to_dxf_with, dxf_to_dwg, dxf_to_dwg_as};
+pub use native::{dwg_to_dxf, dwg_to_dxf_noted, dwg_to_dxf_stream_noted, dwg_to_dxf_with, dxf_to_dwg, dxf_to_dwg_as};
 
 /// The error for a DWG version CADCraft can't write.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
@@ -661,6 +740,10 @@ pub fn dwg_to_dxf_noted(_bytes: &[u8], _limits: Limits) -> Result<(Vec<u8>, Vec<
 }
 #[cfg(target_arch = "wasm32")]
 pub fn dwg_to_dxf_with(_bytes: &[u8], _limits: Limits) -> Result<Vec<u8>, String> {
+    Err("DWG files can't be opened in the web build yet; save as DXF".into())
+}
+#[cfg(target_arch = "wasm32")]
+pub fn dwg_to_dxf_stream_noted<W: std::io::Write>(_bytes: &[u8], _limits: Limits, _sink: W) -> Result<Rendition<W>, String> {
     Err("DWG files can't be opened in the web build yet; save as DXF".into())
 }
 #[cfg(target_arch = "wasm32")]
@@ -776,6 +859,45 @@ mod tests {
         }
         assert_eq!(flags.len(), 8, "{flags:?}");
         assert!(flags.iter().all(|(l, f)| (*f == 128) == (*l == "MOVED")), "{flags:?}");
+    }
+
+    /// Issue #1076: the rendition goes straight into the sink, the same text as `dwg_to_dxf`
+    /// gives before its header variables are spliced in, with those variables and the file's
+    /// version beside it. The same limit stops it with the same message as the text one.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn rendition_streams_into_the_sink_with_what_it_leaves_out() {
+        let linear: &[(i32, [f64; 2])] = &[(13, [0.0, 0.0]), (14, [100.0, 0.0])];
+        let dxf = dims_dxf(&[("HOME", 32, "AcDbAlignedDimension", linear)]);
+        let new = dxf_to_dwg(dxf.as_bytes()).unwrap();
+        let old = dxf_to_dwg_as(dxf.as_bytes(), "AC1015").unwrap();
+        for (dwg, version) in [(&new, "AC1032"), (&old, "AC1015")] {
+            let r = dwg_to_dxf_stream_noted(dwg, Limits::DEFAULT, Vec::new()).unwrap();
+            assert!(r.sink.starts_with(b"  0\r\nSECTION\r\n  2\r\nHEADER\r\n"), "{version}");
+            assert_eq!(r.bytes, r.sink.len());
+            assert_eq!(r.version, version);
+            let declares = format!("  9\r\n$ACADVER\r\n  1\r\n{version}\r\n");
+            assert!(r.sink.windows(declares.len()).any(|w| w == declares.as_bytes()), "{version}");
+            let names: Vec<&str> = r.header_vars.iter().map(|v| v.name).collect();
+            assert_eq!(names, ["$ANGBASE", "$ANGDIR", "$FILLETRAD", "$CHAMFERA", "$CHAMFERB", "$ELEVATION", "$THICKNESS"]);
+            assert!(r.header_vars.iter().all(|v| v.value.is_finite()));
+            // The same text, once the header variables the writer left out are in (as the text
+            // path splices them): same notes too.
+            let (text, notes) = dwg_to_dxf_noted(dwg, Limits::DEFAULT).unwrap();
+            assert_eq!(r.notes, notes);
+            let mut spliced = String::from_utf8(r.sink).unwrap();
+            let endsec = spliced.find("\r\n  0\r\nENDSEC\r\n").unwrap() + 2;
+            let mut vars = String::new();
+            for v in r.header_vars.iter().filter(|v| !spliced[..endsec].contains(&format!("{}\r\n", v.name))) {
+                vars.push_str(&format!("  9\r\n{}\r\n{:>3}\r\n{}\r\n", v.name, v.code, v.value));
+            }
+            spliced.insert_str(endsec, &vars);
+            assert_eq!(spliced.as_bytes(), text.as_slice(), "{version}");
+        }
+        let limits = Limits { max_dxf_bytes: 2000, ..Limits::DEFAULT };
+        let e = dwg_to_dxf_stream_noted(&new, limits, Vec::new()).unwrap_err();
+        assert_eq!(e, dwg_to_dxf_with(&new, limits).unwrap_err());
+        assert!(e.contains("produced more than 0.0 MB of drawing data (the limit)"), "{e}");
     }
 
     /// The handles a DXF text refers to or gives its records (groups 5, 105 and 330–369).

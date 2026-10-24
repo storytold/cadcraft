@@ -1678,15 +1678,28 @@ fn ltype_pattern(tags: &[Tag], styles: &HashMap<String, String>) -> Vec<DashElem
     out
 }
 
+/// Table cells one file may materialize, across its blocks and entity sections.
+const TABLE_CELL_BUDGET: usize = 4_000_000;
+
 /// Read a DXF file into a drawing.
 pub fn read(bytes: &[u8]) -> Result<Drawing> {
-    read_budgeted(bytes, 4_000_000)
+    read_budgeted(bytes, TABLE_CELL_BUDGET)
 }
 
 /// Import DXF sections while sharing one materialized-table-cell budget across blocks and entity sections.
-fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
+fn read_budgeted(bytes: &[u8], table_cells_left: usize) -> Result<Drawing> {
     let tags = cadcraft_dxf::parse(bytes).map_err(|e| IoError::Format(e.to_string()))?;
-    let secs = sections(&tags);
+    read_tags_budgeted(&tags, table_cells_left)
+}
+
+/// [`read`] from the parsed tags (a DWG's rendition arrives as tags, never as text).
+pub fn read_tags(tags: &[Tag]) -> Result<Drawing> {
+    read_tags_budgeted(tags, TABLE_CELL_BUDGET)
+}
+
+/// [`read_budgeted`] from the parsed tags.
+fn read_tags_budgeted(tags: &[Tag], mut table_cells_left: usize) -> Result<Drawing> {
+    let secs = sections(tags);
     if secs.is_empty() {
         return Err(IoError::Format("no sections found".into()));
     }
@@ -1711,7 +1724,7 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
         }
     }
     let mut skipped = std::collections::BTreeMap::new();
-    count_skipped(&mut skipped, "(no section)", outside_sections(&tags));
+    count_skipped(&mut skipped, "(no section)", outside_sections(tags));
     for s in &secs {
         match s.name.as_str() {
             "HEADER" => header(&s.tags, &mut d),

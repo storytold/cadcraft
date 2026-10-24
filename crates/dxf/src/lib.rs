@@ -24,6 +24,9 @@ pub enum DxfError {
     /// limit was reached), `limit` the maximum.
     #[error("drawing too large: {tags} DXF group codes, more than the {limit} CADCraft reads")]
     TooLarge { tags: usize, limit: usize },
+    /// A streamed rendition ([`TagStream`]) longer than its byte limit.
+    #[error("drawing too large: {bytes} bytes of DXF, more than the {limit} CADCraft reads")]
+    TooLong { bytes: usize, limit: usize },
 }
 
 pub type Result<T> = std::result::Result<T, DxfError>;
@@ -347,34 +350,72 @@ pub fn parse_binary(b: &[u8]) -> Result<Vec<Tag>> {
     parse_binary_with_limit(b, MAX_TAGS)
 }
 
-fn parse_binary_with_limit(b: &[u8], max_tags: usize) -> Result<Vec<Tag>> {
+/// The record at the front of `b`: its tag and the bytes it took, or `None` when `b` ends before
+/// the record does (nothing is consumed and `text` is left as it was, so the caller can try again
+/// with more bytes). A record never spans more than [`MAX_RECORD`] bytes.
+fn binary_record(b: &[u8], text: &mut codepage::BinaryText) -> Result<Option<(Tag, usize)>> {
     let mut c = Cur { b, p: 0 };
+    let Ok(mut code) = c.i16().map(i32::from) else { return Ok(None) };
+    if code == 255 {
+        let Ok(ext) = c.i16() else { return Ok(None) };
+        code = i32::from(ext);
+    }
+    let v = match kind_of(code) {
+        Kind::Str => {
+            let Ok(raw) = c.cstr() else {
+                // No terminator yet: a string that long is not a DXF record at all.
+                return if b.len() > MAX_RECORD { Err(DxfError::Eof) } else { Ok(None) };
+            };
+            Value::Str(unescape_unicode(&text.string(code, raw)))
+        }
+        Kind::Real => {
+            let Ok(v) = c.f64() else { return Ok(None) };
+            Value::Real(v)
+        }
+        Kind::Int16 => {
+            let Ok(v) = c.i16() else { return Ok(None) };
+            Value::Int(i64::from(v))
+        }
+        Kind::Int32 => {
+            let Ok(v) = c.i32() else { return Ok(None) };
+            Value::Int(i64::from(v))
+        }
+        Kind::Int64 => {
+            let Ok(v) = c.i64() else { return Ok(None) };
+            Value::Int(v)
+        }
+        Kind::Bool => {
+            let Ok(v) = c.u8() else { return Ok(None) };
+            Value::Bool(v != 0)
+        }
+        Kind::Hex => {
+            let Ok(n) = c.u8().map(usize::from) else { return Ok(None) };
+            let Ok(bytes) = c.take(n) else { return Ok(None) };
+            let mut s = String::with_capacity(n * 2);
+            for x in bytes {
+                let _ = write!(s, "{x:02X}");
+            }
+            Value::Hex(s)
+        }
+    };
+    Ok(Some((Tag { code, value: v }, c.p)))
+}
+
+/// Longest binary record: a string of this many bytes without its terminator is an error, not a
+/// record still waiting for the rest (DXF strings are at most a few thousand bytes; this bounds
+/// what a streaming parse holds back for a hostile stream).
+const MAX_RECORD: usize = 1 << 20;
+
+fn parse_binary_with_limit(b: &[u8], max_tags: usize) -> Result<Vec<Tag>> {
     let mut text = codepage::BinaryText::default();
     let mut tags = Vec::new();
-    while c.p < b.len() {
-        let mut code = i32::from(c.i16()?);
-        if code == 255 {
-            code = i32::from(c.i16()?);
-        }
-        let v = match kind_of(code) {
-            Kind::Str => Value::Str(unescape_unicode(&text.string(code, c.cstr()?))),
-            Kind::Real => Value::Real(c.f64()?),
-            Kind::Int16 => Value::Int(i64::from(c.i16()?)),
-            Kind::Int32 => Value::Int(i64::from(c.i32()?)),
-            Kind::Int64 => Value::Int(c.i64()?),
-            Kind::Bool => Value::Bool(c.u8()? != 0),
-            Kind::Hex => {
-                let n = usize::from(c.u8()?);
-                let bytes = c.take(n)?;
-                let mut s = String::with_capacity(n * 2);
-                for x in bytes {
-                    let _ = write!(s, "{x:02X}");
-                }
-                Value::Hex(s)
-            }
-        };
-        let eof = code == 0 && matches!(&v, Value::Str(s) if s == "EOF");
-        tags.push(Tag { code, value: v });
+    let mut p = 0;
+    while p < b.len() {
+        let rest = b.get(p..).unwrap_or(&[]);
+        let Some((tag, n)) = binary_record(rest, &mut text)? else { return Err(DxfError::Eof) };
+        p = p.saturating_add(n);
+        let eof = tag.code == 0 && matches!(&tag.value, Value::Str(s) if s == "EOF");
+        tags.push(tag);
         if tags.len() > max_tags {
             return Err(DxfError::TooLarge { tags: tags.len(), limit: max_tags });
         }
@@ -386,6 +427,228 @@ fn parse_binary_with_limit(b: &[u8], max_tags: usize) -> Result<Vec<Tag>> {
         return Err(DxfError::NotDxf);
     }
     Ok(tags)
+}
+
+/// A DXF parser fed through [`std::io::Write`], for a file that is produced in chunks (a DWG
+/// converted to DXF): the tags are built as the bytes arrive, so the text never exists in memory
+/// as a whole. The result is what [`parse`] gives for the same bytes, ASCII or binary (the
+/// binary sentinel at the start decides).
+///
+/// Limits: `max_tags` group codes (as [`parse`]'s), and `max_bytes` of input in all; past either
+/// the stream fails, and stays failed. A line or record cut by a chunk boundary is held back
+/// until the rest arrives (at most [`MAX_RECORD`] bytes); everything after the `0`/`EOF` tag is
+/// ignored.
+///
+/// Strings of an ASCII stream are decoded line by line: valid UTF-8 as UTF-8, anything else in
+/// the `$DWGCODEPAGE` the header declared (Windows-1252 without one), which is what [`parse`]
+/// does for a whole file except that it decides from the whole text at once.
+pub struct TagStream {
+    tags: Vec<Tag>,
+    text: codepage::BinaryText,
+    /// Bytes not yet parsed: the first bytes until the form is known, then a cut line or record.
+    carry: Vec<u8>,
+    seen: usize,
+    max_tags: usize,
+    max_bytes: usize,
+    form: Option<Form>,
+    /// ASCII: the group code whose value line comes next, and the line count for messages.
+    pending: Option<i32>,
+    line: usize,
+    done: bool,
+    failed: Option<DxfError>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Form {
+    Ascii,
+    Binary,
+}
+
+impl TagStream {
+    pub fn new(max_tags: usize, max_bytes: usize) -> Self {
+        TagStream {
+            tags: Vec::new(),
+            text: codepage::BinaryText::default(),
+            carry: Vec::new(),
+            seen: 0,
+            max_tags,
+            max_bytes,
+            form: None,
+            pending: None,
+            line: 0,
+            done: false,
+            failed: None,
+        }
+    }
+
+    /// The tags so far (complete records only).
+    pub fn tags(&self) -> &[Tag] {
+        &self.tags
+    }
+
+    /// Bytes fed so far.
+    pub fn bytes_seen(&self) -> usize {
+        self.seen
+    }
+
+    /// The tags, once the whole file has been written: an error if the stream failed, ends
+    /// inside a record, or holds no tags at all.
+    pub fn finish(mut self) -> Result<Vec<Tag>> {
+        if let Some(e) = self.failed {
+            return Err(e);
+        }
+        if !self.done && !self.carry.is_empty() {
+            match self.form {
+                // A last line without its newline, as `str::lines` would give it.
+                Some(Form::Ascii) => {
+                    let last = std::mem::take(&mut self.carry);
+                    self.ascii_line(&last)?;
+                }
+                Some(Form::Binary) => return Err(DxfError::Eof),
+                None => return Err(DxfError::NotDxf),
+            }
+        }
+        if !self.done && self.pending.is_some() {
+            return Err(DxfError::Eof);
+        }
+        if self.tags.is_empty() {
+            return Err(DxfError::NotDxf);
+        }
+        Ok(self.tags)
+    }
+
+    fn fail(&mut self, e: DxfError) -> std::io::Error {
+        let msg = e.to_string();
+        self.failed = Some(e);
+        std::io::Error::other(msg)
+    }
+
+    fn push(&mut self, tag: Tag) -> Result<()> {
+        self.done = tag.code == 0 && matches!(&tag.value, Value::Str(s) if s == "EOF");
+        self.tags.push(tag);
+        if self.tags.len() > self.max_tags {
+            return Err(DxfError::TooLarge { tags: self.tags.len(), limit: self.max_tags });
+        }
+        Ok(())
+    }
+
+    /// Parse every complete binary record at the front of `b`; the bytes taken.
+    fn binary_records(&mut self, b: &[u8]) -> Result<usize> {
+        let mut p = 0;
+        while !self.done {
+            let rest = b.get(p..).unwrap_or(&[]);
+            if rest.is_empty() {
+                break;
+            }
+            let Some((tag, n)) = binary_record(rest, &mut self.text)? else { break };
+            p = p.saturating_add(n);
+            self.push(tag)?;
+        }
+        Ok(if self.done { b.len() } else { p })
+    }
+
+    /// One ASCII line (without its newline): a group code, or the value of the pending one.
+    fn ascii_line(&mut self, raw: &[u8]) -> Result<()> {
+        if self.done {
+            return Ok(());
+        }
+        self.line = self.line.saturating_add(1);
+        let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
+        match self.pending.take() {
+            None => {
+                let code_line = String::from_utf8_lossy(raw);
+                let ct = code_line.trim();
+                if ct.is_empty() {
+                    return Ok(());
+                }
+                let code: i32 = ct.parse().map_err(|_| DxfError::BadCode { line: self.line, text: ct.chars().take(40).collect() })?;
+                self.pending = Some(code);
+            }
+            Some(code) => {
+                let v = match kind_of(code) {
+                    Kind::Str => Value::Str(unescape_unicode(&self.text.ascii_string(code, raw))),
+                    Kind::Hex => Value::Hex(self.text.ascii_string(code, raw).trim().to_string()),
+                    _ => typed(code, &String::from_utf8_lossy(raw)),
+                };
+                self.push(Tag { code, value: v })?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Parse every complete ASCII line at the front of `b`; the bytes taken.
+    fn ascii_lines(&mut self, b: &[u8]) -> Result<usize> {
+        let mut p = 0;
+        while !self.done {
+            let rest = b.get(p..).unwrap_or(&[]);
+            let Some(i) = rest.iter().position(|&c| c == b'\n') else { break };
+            self.ascii_line(rest.get(..i).unwrap_or(&[]))?;
+            p = p.saturating_add(i + 1);
+        }
+        Ok(if self.done { b.len() } else { p })
+    }
+
+    fn take(&mut self, b: &[u8]) -> Result<usize> {
+        match self.form {
+            Some(Form::Binary) => self.binary_records(b),
+            _ => self.ascii_lines(b),
+        }
+    }
+
+    fn feed(&mut self, buf: &[u8]) -> Result<()> {
+        if self.done {
+            return Ok(());
+        }
+        self.seen = self.seen.saturating_add(buf.len());
+        if self.seen > self.max_bytes {
+            return Err(DxfError::TooLong { bytes: self.seen, limit: self.max_bytes });
+        }
+        if self.form.is_none() {
+            // The form is known once the first bytes are here: binary files start with the
+            // sentinel, ASCII files can't (a group code line is digits).
+            self.carry.extend_from_slice(buf);
+            let head: &[u8] = self.carry.get(..BINARY_SENTINEL.len().min(self.carry.len())).unwrap_or(&[]);
+            if self.carry.len() < BINARY_SENTINEL.len() && BINARY_SENTINEL.starts_with(head) {
+                return Ok(());
+            }
+            if head == BINARY_SENTINEL {
+                self.form = Some(Form::Binary);
+                self.carry.drain(..BINARY_SENTINEL.len());
+            } else {
+                self.form = Some(Form::Ascii);
+            }
+            let carry = std::mem::take(&mut self.carry);
+            let n = self.take(&carry)?;
+            self.carry.extend_from_slice(carry.get(n..).unwrap_or(&[]));
+        } else if self.carry.is_empty() {
+            let n = self.take(buf)?;
+            self.carry.extend_from_slice(buf.get(n..).unwrap_or(&[]));
+        } else {
+            self.carry.extend_from_slice(buf);
+            let carry = std::mem::take(&mut self.carry);
+            let n = self.take(&carry)?;
+            self.carry.extend_from_slice(carry.get(n..).unwrap_or(&[]));
+        }
+        if self.carry.len() > MAX_RECORD {
+            return Err(DxfError::Eof);
+        }
+        Ok(())
+    }
+}
+
+impl std::io::Write for TagStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if let Some(e) = &self.failed {
+            return Err(std::io::Error::other(e.to_string()));
+        }
+        if let Err(e) = self.feed(buf) {
+            return Err(self.fail(e));
+        }
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 /// Format a real the way DXF writers usually do (shortest round-trip, with a decimal point).
@@ -681,5 +944,239 @@ mod tests {
         b.extend_from_slice(&0i16.to_le_bytes());
         b.extend_from_slice(b"EOF\0");
         assert_eq!(parse(&b).unwrap()[0].str(), "图号");
+    }
+
+    /// Every value kind, a header with a code page (a pre-2007 version when the strings are
+    /// escaped, R2018 when they are UTF-8), and strings the decoding has to get right.
+    fn stream_sample(utf8: bool) -> Vec<Tag> {
+        vec![
+            Tag::s(0, "SECTION"),
+            Tag::s(2, "HEADER"),
+            Tag::s(9, "$ACADVER"),
+            Tag::s(1, if utf8 { "AC1032" } else { "AC1015" }),
+            Tag::s(9, "$DWGCODEPAGE"),
+            Tag::s(3, "ANSI_1252"),
+            Tag::s(0, "ENDSEC"),
+            Tag::s(0, "SECTION"),
+            Tag::s(2, "ENTITIES"),
+            Tag::s(0, "TEXT"),
+            Tag::s(5, "1F"),
+            Tag::f(10, -3.25),
+            Tag::i(62, 5),
+            Tag::i(90, 70_000),
+            Tag::i(160, 1 << 40),
+            Tag::new(290, Value::Bool(true)),
+            Tag::new(310, Value::Hex("00FFA5".into())),
+            Tag::s(1, "图号 Café"),
+            Tag::i(1071, -2),
+            Tag::s(0, "ENDSEC"),
+            Tag::s(0, "EOF"),
+        ]
+    }
+
+    fn stream_in_chunks(bytes: &[u8], sizes: &[usize]) -> Result<Vec<Tag>> {
+        use std::io::Write;
+        let mut s = TagStream::new(MAX_TAGS, usize::MAX);
+        let mut p = 0;
+        let mut k = 0;
+        while p < bytes.len() {
+            let n = sizes[k % sizes.len()].max(1).min(bytes.len() - p);
+            s.write_all(&bytes[p..p + n]).map_err(|_| DxfError::Eof)?;
+            p += n;
+            k += 1;
+        }
+        s.finish()
+    }
+
+    #[test]
+    fn streamed_binary_matches_the_batch_parse_whatever_the_chunking() {
+        for utf8 in [false, true] {
+            let bytes = write_binary(&stream_sample(utf8), utf8);
+            let expected = parse(&bytes).unwrap();
+            assert_eq!(expected, stream_sample(utf8));
+            for sizes in [&[bytes.len()][..], &[1], &[2], &[3, 1, 7, 2, 5], &[13], &[64 * 1024]] {
+                assert_eq!(stream_in_chunks(&bytes, sizes).unwrap(), expected, "utf8 = {utf8}, chunks {sizes:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn streamed_binary_decodes_the_code_page_across_a_split_record() {
+        use std::io::Write;
+        // The code page (ANSI_1252) comes from the header; the string "Café" is one Latin-1 byte
+        // for the é, with the terminator in the next chunk.
+        let mut b = BINARY_SENTINEL.to_vec();
+        let push_str = |b: &mut Vec<u8>, code: i16, s: &[u8]| {
+            b.extend_from_slice(&code.to_le_bytes());
+            b.extend_from_slice(s);
+            b.push(0);
+        };
+        push_str(&mut b, 9, b"$ACADVER");
+        push_str(&mut b, 1, b"AC1015");
+        push_str(&mut b, 9, b"$DWGCODEPAGE");
+        push_str(&mut b, 3, b"ANSI_1252");
+        let cut = b.len() + 2 + 4;
+        push_str(&mut b, 1, b"Caf\xe9");
+        push_str(&mut b, 0, b"EOF");
+        let mut s = TagStream::new(MAX_TAGS, usize::MAX);
+        s.write_all(&b[..cut]).unwrap();
+        assert_eq!(s.tags().len(), 4, "the cut string is held back");
+        s.write_all(&b[cut..]).unwrap();
+        let tags = s.finish().unwrap();
+        assert_eq!(tags, parse(&b).unwrap());
+        assert_eq!(tags[4].str(), "Café");
+    }
+
+    #[test]
+    fn streamed_binary_limits_and_malformed_input() {
+        use std::io::Write;
+        let bytes = write_binary(&stream_sample(true), true);
+        // Group-code limit: the write past it fails, and so does everything after.
+        let mut s = TagStream::new(3, usize::MAX);
+        assert!(s.write_all(&bytes).is_err());
+        assert!(s.write_all(b"x").is_err());
+        assert!(matches!(s.finish(), Err(DxfError::TooLarge { tags: 4, limit: 3 })));
+        // Byte limit.
+        let mut s = TagStream::new(MAX_TAGS, 40);
+        assert!(s.write_all(&bytes).is_err());
+        assert!(matches!(s.finish(), Err(DxfError::TooLong { limit: 40, .. })));
+        // A stream that ends inside a record.
+        let mut s = TagStream::new(MAX_TAGS, usize::MAX);
+        s.write_all(&bytes[..bytes.len() - 2]).unwrap();
+        assert!(matches!(s.finish(), Err(DxfError::Eof)));
+        // Not DXF at all, and nothing at all.
+        let mut s = TagStream::new(MAX_TAGS, usize::MAX);
+        assert!(s.write_all(b"hello\nworld\n").is_err());
+        assert!(matches!(s.finish(), Err(DxfError::BadCode { line: 1, .. })));
+        assert!(matches!(TagStream::new(MAX_TAGS, usize::MAX).finish(), Err(DxfError::NotDxf)));
+        let mut s = TagStream::new(MAX_TAGS, usize::MAX);
+        s.write_all(&BINARY_SENTINEL[..5]).unwrap();
+        assert!(matches!(s.finish(), Err(DxfError::NotDxf)));
+        // Bytes after EOF are ignored, as the batch parser ignores them.
+        let mut s = TagStream::new(MAX_TAGS, usize::MAX);
+        s.write_all(&bytes).unwrap();
+        s.write_all(b"trailing garbage").unwrap();
+        assert_eq!(s.finish().unwrap(), stream_sample(true));
+        // A string record with no terminator in sight is an error, not a record to wait for.
+        let mut s = TagStream::new(MAX_TAGS, usize::MAX);
+        let mut long = BINARY_SENTINEL.to_vec();
+        long.extend_from_slice(&1i16.to_le_bytes());
+        long.extend(std::iter::repeat_n(b'a', MAX_RECORD + 1));
+        assert!(s.write_all(&long).is_err());
+        assert!(matches!(s.finish(), Err(DxfError::Eof)));
+    }
+
+    /// ASCII text: a pre-2007 header with a code page, Windows-1252 bytes, `\U+` escapes, CRLF
+    /// and LF line ends, blank lines, and a value that is only whitespace.
+    fn ascii_sample(crlf: bool) -> Vec<u8> {
+        let nl = if crlf { "\r\n" } else { "\n" };
+        let lines: &[&[u8]] = &[
+            b"  0",
+            b"SECTION",
+            b"  2",
+            b"HEADER",
+            b"  9",
+            b"$ACADVER",
+            b"  1",
+            b"AC1015",
+            b"  9",
+            b"$DWGCODEPAGE",
+            b"  3",
+            b"ANSI_1252",
+            b"  0",
+            b"ENDSEC",
+            b"",
+            b"  0",
+            b"SECTION",
+            b"  2",
+            b"ENTITIES",
+            b"  0",
+            b"TEXT",
+            b"  5",
+            b"1F",
+            b" 10",
+            b"-3.25",
+            b" 62",
+            b"5",
+            b" 90",
+            b"70000",
+            b"290",
+            b"1",
+            b"310",
+            b"00FFA5",
+            b"  1",
+            b"Caf\xe9 \\U+56FE",
+            b"  3",
+            b"   ",
+            b"1071",
+            b"-2",
+            b"  0",
+            b"ENDSEC",
+            b"  0",
+            b"EOF",
+        ];
+        let mut out = Vec::new();
+        for l in lines {
+            out.extend_from_slice(l);
+            out.extend_from_slice(nl.as_bytes());
+        }
+        out
+    }
+
+    #[test]
+    fn streamed_ascii_matches_the_batch_parse_whatever_the_chunking() {
+        for crlf in [false, true] {
+            let bytes = ascii_sample(crlf);
+            let expected = parse(&bytes).unwrap();
+            assert_eq!(expected.iter().rev().find(|t| t.code == 1).map(Tag::str).as_deref(), Some("Café 图"));
+            assert_eq!(expected.iter().rev().find(|t| t.code == 3).map(Tag::str).as_deref(), Some("   "), "a string value keeps its spaces");
+            assert_eq!(expected.iter().find(|t| t.code == 310).map(Tag::str).as_deref(), Some("00FFA5"));
+            for sizes in [&[bytes.len()][..], &[1], &[2], &[3, 1, 7, 2, 5], &[13], &[64 * 1024]] {
+                assert_eq!(stream_in_chunks(&bytes, sizes).unwrap(), expected, "crlf = {crlf}, chunks {sizes:?}");
+            }
+            // UTF-8 text with the same header (a writer that ignored the code page) reads as UTF-8,
+            // as `parse` reads it.
+            let utf8 = String::from_utf8(bytes.iter().map(|&b| if b == 0xe9 { b'e' } else { b }).collect()).unwrap().replace("Cafe", "Café 😀");
+            assert_eq!(stream_in_chunks(utf8.as_bytes(), &[5]).unwrap(), parse(utf8.as_bytes()).unwrap());
+        }
+    }
+
+    #[test]
+    fn streamed_ascii_ends_and_fails_like_the_batch_parse() {
+        use std::io::Write;
+        // A last line without its newline still counts.
+        let text = b"  0\nSECTION\n  2\nENTITIES\n  0\nENDSEC\n  0\nEOF";
+        assert_eq!(stream_in_chunks(text, &[4]).unwrap(), parse(text).unwrap());
+        // A code line without its value: unexpected end of file.
+        let cut = b"  0\nSECTION\n  2\n";
+        assert!(matches!(parse(cut), Err(DxfError::Eof)));
+        assert!(matches!(stream_in_chunks(cut, &[3]), Err(DxfError::Eof)));
+        // A bad group code, reported with its line number.
+        let bad = b"  0\nSECTION\n\nabc\nx\n";
+        let want = parse(bad).unwrap_err().to_string();
+        assert_eq!(want, "line 4: bad group code `abc`");
+        let mut s = TagStream::new(MAX_TAGS, usize::MAX);
+        assert!(s.write_all(bad).is_err());
+        assert_eq!(s.finish().unwrap_err().to_string(), want);
+        // Nothing after EOF matters; a limit on group codes or bytes applies as in binary.
+        let mut s = TagStream::new(MAX_TAGS, usize::MAX);
+        s.write_all(b"  0\nEOF\n  0\nSECTION\n").unwrap();
+        assert_eq!(s.finish().unwrap(), vec![Tag::s(0, "EOF")]);
+        let mut s = TagStream::new(2, usize::MAX);
+        assert!(s.write_all(b"  0\nSECTION\n  2\nENTITIES\n  0\nENDSEC\n").is_err());
+        assert!(matches!(s.finish(), Err(DxfError::TooLarge { tags: 3, limit: 2 })));
+        // A line that never ends is not a line to wait for.
+        let mut s = TagStream::new(MAX_TAGS, usize::MAX);
+        let mut long = b"  0\n".to_vec();
+        long.extend(std::iter::repeat_n(b'a', MAX_RECORD + 1));
+        assert!(s.write_all(&long).is_err());
+        assert!(matches!(s.finish(), Err(DxfError::Eof)));
+        // A binary record with no terminator in sight, likewise.
+        let mut s = TagStream::new(MAX_TAGS, usize::MAX);
+        let mut long = BINARY_SENTINEL.to_vec();
+        long.extend_from_slice(&1i16.to_le_bytes());
+        long.extend(std::iter::repeat_n(b'a', MAX_RECORD + 1));
+        assert!(s.write_all(&long).is_err());
+        assert!(matches!(s.finish(), Err(DxfError::Eof)));
     }
 }

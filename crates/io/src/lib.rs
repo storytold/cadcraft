@@ -23,6 +23,7 @@ mod dxf_mline;
 use cadcraft_doc::{Drawing, Space};
 use cadcraft_geom::Bounds2;
 
+use cadcraft_dxf::Tag;
 pub use cadcraft_dxf::Version;
 pub use dxf_read::entity_from_groups;
 pub use dxf_write::entity_groups;
@@ -61,10 +62,7 @@ fn ext(name: &str) -> String {
 /// (SVG and gzip-compressed SVGZ).
 pub fn read(bytes: &[u8], name: &str) -> Result<Drawing> {
     if cadcraft_dwg::is_dwg(bytes) {
-        let (dxf, notes) = cadcraft_dwg::dwg_to_dxf_noted(bytes, cadcraft_dwg::Limits::DEFAULT).map_err(IoError::Format)?;
-        let mut d = dxf_read::read(&dxf).map_err(|e| IoError::Format(format!("{e} (in the DXF converted from this DWG)")))?;
-        d.read_notes = notes;
-        return Ok(d);
+        return read_dwg(bytes, cadcraft_dwg::Limits::DEFAULT);
     }
     match ext(name).as_str() {
         "svg" | "svgz" => svg_read::read(bytes),
@@ -72,6 +70,44 @@ pub fn read(bytes: &[u8], name: &str) -> Result<Drawing> {
         e if bytes.len() > 4 => dxf_read::read(bytes).map_err(|_| IoError::Unsupported(e.to_string())),
         e => Err(IoError::Unsupported(e.to_string())),
     }
+}
+
+/// Read a DWG: its DXF rendition is parsed into tags as the DWG bridge writes it, so the
+/// rendition (several times the DWG's size, #1076) never exists in memory as a whole.
+fn read_dwg(bytes: &[u8], limits: cadcraft_dwg::Limits) -> Result<Drawing> {
+    let in_dwg = |e: String| IoError::Format(format!("{e} (in the DXF converted from this DWG)"));
+    let sink = cadcraft_dxf::TagStream::new(cadcraft_dxf::MAX_TAGS, limits.max_dxf_bytes);
+    let r = cadcraft_dwg::dwg_to_dxf_stream_noted(bytes, limits, sink).map_err(IoError::Format)?;
+    let mut tags = r.sink.finish().map_err(|e| in_dwg(e.to_string()))?;
+    dwg_header(&mut tags, &r.version, &r.header_vars);
+    let mut d = dxf_read::read_tags(&tags).map_err(|e| in_dwg(e.to_string()))?;
+    d.read_notes = r.notes;
+    Ok(d)
+}
+
+/// Complete the HEADER section of a DWG's rendition: `$ACADVER` set to the file's own `version`
+/// (what [`save_version`] reads), and the header variables the bridge's writer leaves out added
+/// before the section's ENDSEC, each unless the section already has it. Tags without a HEADER
+/// section are left alone.
+fn dwg_header(tags: &mut Vec<Tag>, version: &str, vars: &[cadcraft_dwg::HeaderVar]) {
+    let is = |t: &Tag, code: i32, s: &str| t.code == code && matches!(&t.value, cadcraft_dxf::Value::Str(v) if v == s);
+    let Some(start) = tags.windows(2).position(|w| matches!(w, [a, b] if is(a, 0, "SECTION") && is(b, 2, "HEADER"))) else { return };
+    let Some(end) = tags.iter().skip(start).position(|t| is(t, 0, "ENDSEC")).map(|i| i + start) else { return };
+    let header = start..end;
+    if let Some(i) = tags.get(header.clone()).and_then(|h| h.iter().position(|t| is(t, 9, "$ACADVER")))
+        && let Some(t) = tags.get_mut(start + i + 1).filter(|t| t.code == 1)
+    {
+        t.value = cadcraft_dxf::Value::Str(version.to_string());
+    }
+    let mut add = Vec::new();
+    for v in vars.iter().filter(|v| v.value.is_finite()) {
+        let written = tags.get(header.clone()).is_some_and(|h| h.iter().any(|t| is(t, 9, v.name)));
+        if !written {
+            add.push(Tag::s(9, v.name));
+            add.push(if v.code == 70 { Tag::i(v.code, v.value as i64) } else { Tag::f(v.code, v.value) });
+        }
+    }
+    tags.splice(end..end, add);
 }
 
 /// Write a drawing in the format chosen by the name's extension. Images (PNG, SVG, PDF) show
