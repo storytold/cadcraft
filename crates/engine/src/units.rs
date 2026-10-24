@@ -136,9 +136,13 @@ pub fn format_angle(a: f64, aunits: i64, auprec: i64) -> String {
     }
 }
 
-/// `v` (in `[0, full)`), or 0 when it rounds at `prec` decimals to the same value as a full turn.
+/// `v` (in `[0, full)`), or 0 when it rounds at `prec` decimals to the printed full-turn value (only when that value is exact).
 fn wrap_full_turn(v: f64, full: f64, prec: usize) -> f64 {
-    if format!("{v:.prec$}") == format!("{full:.prec$}") { 0.0 } else { v }
+    let full_text = format!("{full:.prec$}");
+    // A full turn that cannot be printed exactly (2π) only wraps when `v` is numerically that value.
+    let exact = full_text.parse::<f64>().is_ok_and(|f| f == full);
+    let reached = exact || full - v < 1e-6;
+    if reached && format!("{v:.prec$}") == full_text { 0.0 } else { v }
 }
 
 /// Parse a distance typed by the user: decimal, `1'6"`, `1'-6 1/2"`, `6 1/2`, `3/4`, `1e3`.
@@ -506,5 +510,12 @@ mod tests {
         assert_eq!(format_angle(angle, 4, 2), "S 73d42' E");
         assert_eq!(format_angle(angle, 4, 0), "S 74d E");
         assert_eq!(format_angle(angle, 4, 6), "S 73d41'51.00\" E");
+    }
+
+    #[test]
+    fn angle_radians_low_precision_not_wrapped() {
+        assert_eq!(format_angle(6.2, 3, 0), "6r");
+        assert_eq!(format_angle(6.26, 3, 1), "6.3r");
+        assert_eq!(format_angle(0.0, 3, 1), "0.0r");
     }
 }
