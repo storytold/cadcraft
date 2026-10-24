@@ -1,7 +1,9 @@
 //! OFFSET Erase/Layer/Multiple/Undo and the MOVE/COPY Displacement option at the command line.
 
+use cadcraft_engine::Input;
 use cadcraft_engine::Session;
 use cadcraft_engine::doc::EntityKind;
+use cadcraft_engine::geom::Vec2;
 use serde_json::json;
 
 /// Every line as ((ax, ay), (bx, by), layer), sorted by the first y.
@@ -60,6 +62,27 @@ fn offset_multiple_and_undo() {
     s.script("OFFSET 2 5,0 M 5,1 5,3 5,5 U\n\n\n").unwrap();
     assert!(s.running.is_none(), "{}", s.prompt_text());
     assert_eq!(lines(&s), vec![l((0.0, 0.0), (10.0, 0.0), "0"), l((0.0, 2.0), (10.0, 2.0), "0"), l((0.0, 4.0), (10.0, 4.0), "0")]);
+}
+
+// Regression test for #618: OFFSET's distance prompt took only a typed number; clicking two points
+// (the distance between them) was rejected, and the second click had no distance guide.
+#[test]
+fn offset_distance_from_two_clicked_points() {
+    let mut s = one_line();
+    s.start("offset").unwrap();
+    s.input(Input::Point(Vec2::new(20.0, 20.0))).unwrap();
+    let p = s.current_prompt().unwrap();
+    assert!(p.message.contains("second point"), "{}", s.prompt_text());
+    assert!(p.base.is_some_and(|b| b.near(Vec2::new(20.0, 20.0), 1e-9)), "the second click is measured from the first");
+    // The guide from the first click to the cursor is the previewed distance.
+    let guide = s.preview(Vec2::new(20.0, 22.5));
+    assert!(matches!(guide.first().map(|e| &e.kind), Some(EntityKind::Line(g)) if g.a.xy().near(Vec2::new(20.0, 20.0), 1e-9)), "{guide:?}");
+    s.input(Input::Point(Vec2::new(20.0, 22.5))).unwrap();
+    assert!(s.current_prompt().unwrap().message.contains("Select object"), "{}", s.prompt_text());
+    assert_eq!(s.doc().unwrap().header.f64("OFFSETDIST", -1.0), 2.5);
+    s.script("5,0 5,1\n\n").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(lines(&s), vec![l((0.0, 0.0), (10.0, 0.0), "0"), l((0.0, 2.5), (10.0, 2.5), "0")]);
 }
 
 #[test]

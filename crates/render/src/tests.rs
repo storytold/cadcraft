@@ -297,6 +297,31 @@ fn truetype_text_is_filled_or_outlined() {
     assert!(l.prims.len() >= 3, "O has two contours, H one");
 }
 
+// Regression test for #651: filled TrueType text was triangulated at full outline detail at every
+// zoom, so a page of small text on screen produced millions of triangles and froze the canvas.
+#[test]
+fn small_filled_text_on_screen_is_simplified_but_plots_keep_full_detail() {
+    let Some(font) = system_font() else { return };
+    let d = text_doc(font, "OOOO");
+    let tris = |l: &DisplayList| l.prims.iter().filter(|p| p.kind == Kind::Tris).map(|p| l.points(p).len() / 3).sum::<usize>();
+    let plot = build_plot(&d, &Space::Model, &Options::default());
+    let full = tris(&plot);
+    assert!(full > 100, "full-detail O glyphs are many triangles: {full}");
+    // One pixel is a tenth of the cap height: the outlines are simplified, the shapes stay.
+    let reduced = build(&d, &Space::Model, &screen(0.1, None));
+    assert!(tris(&reduced) < full / 2, "{} triangles at 10 px per cap height, {full} in a plot", tris(&reduced));
+    assert!(tris(&reduced) > 0 && reduced.bounds.width() > plot.bounds.width() * 0.9, "{:?} vs {:?}", reduced.bounds, plot.bounds);
+    // An em under two pixels is drawn as the ink's box: two triangles a glyph, same extent.
+    let tiny = build(&d, &Space::Model, &screen(1.0, None));
+    assert_eq!(tris(&tiny), 2 * 4, "one box per glyph");
+    assert!(
+        tiny.bounds.width() > plot.bounds.width() * 0.9 && tiny.bounds.height() > plot.bounds.height() * 0.9,
+        "{:?} vs {:?}",
+        tiny.bounds,
+        plot.bounds
+    );
+}
+
 #[test]
 fn missing_font_falls_back_to_stroke() {
     let d = text_doc("NoSuchFontAnywhere.ttf", "OH");
