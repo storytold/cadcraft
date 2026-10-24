@@ -50,4 +50,7 @@ hidapi = { version = "2.6.7", default-features = false, features = ["windows-nat
 windows = { version = "0.62", features = ["UI_ViewManagement"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+# Font-free client-side window controls on GNOME/Wayland.
+winit = { version = "0.30", default-features = false, features = ["wayland-csd-adwaita-notitle"] }
+
 hidapi = { version = "2.6.7", default-features = false, features = ["linux-native-basic-udev"] }

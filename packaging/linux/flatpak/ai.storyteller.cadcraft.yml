@@ -46,6 +46,7 @@ modules:
     build-commands:
       - cargo --offline build --release --locked -p cadcraft -p cadcraft-cli
       - install -Dm755 target/release/cadcraft /app/bin/cadcraft
+      - install -Dm644 NOTICE /app/share/doc/cadcraft/NOTICE
       - install -Dm755 target/release/cadcraft-cli /app/bin/cadcraft-cli
       - install -Dm644 packaging/linux/ai.storyteller.cadcraft.desktop /app/share/applications/ai.storyteller.cadcraft.desktop
       - install -Dm644 packaging/linux/ai.storyteller.cadcraft.mime.xml /app/share/mime/packages/ai.storyteller.cadcraft.xml
