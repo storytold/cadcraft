@@ -25,8 +25,8 @@ pub fn specs() -> Vec<CommandSpec> {
             .interactive(|_| Ok(Box::new(prompts::LayoutM::default()))),
         CommandSpec::new("layout.new", "New Layout", run_new)
             .menu(&["Insert", "Layout", "New Layout"])
-            .params("{name?, viewport?: bool (default true)} → {name, viewport}")
-            .interactive(|_| Ok(Box::new(NewLayoutM))),
+            .params("{name?, viewport?: bool (default true), window?: [[x1,y1],[x2,y2]] (the model area the viewport shows; default the model extents)} → {name, viewport} (typed: asks the name, then the area)")
+            .interactive(|_| Ok(Box::new(NewLayoutM::default()))),
         CommandSpec::new("layout.delete", "Delete Layout", run_delete).params("{name}"),
         CommandSpec::new("layout.rename", "Rename Layout", run_rename).params("{from?: current layout, to}"),
         CommandSpec::new("layout.copy", "Copy Layout", run_copy).params("{from, to?}"),
@@ -198,30 +198,127 @@ fn default_page(d: &Drawing) -> PageSetup {
     p
 }
 
-/// LAYOUT.NEW from the menu or command line: asks for the name (Enter takes the next free one).
-struct NewLayoutM;
+/// LAYOUT.NEW from the menu or command line: asks for the name (Enter takes the next free one),
+/// then for the part of the model the new layout shows. The Model tab is shown for that, so it
+/// can be zoomed and panned first; two corners pick the area (Enter takes the whole drawing). The
+/// new layout is then shown, zoomed to that area.
+#[derive(Default)]
+struct NewLayoutM {
+    /// The checked name, once it has been asked.
+    name: Option<String>,
+    /// The first corner of the model area.
+    first: Option<Vec2>,
+    /// The tab the command started in, put back when it is cancelled.
+    from: Option<Space>,
+}
+
+impl NewLayoutM {
+    /// Show tab `space` (`layout.set`).
+    fn show(s: &mut Session, space: &Space) -> Result<()> {
+        let set = find_command("layout.set").ok_or_else(|| crate::EngineError::UnknownCommand("layout.set".into()))?;
+        (set.run)(s, &json!({ "name": space.tab_name() }))?;
+        Ok(())
+    }
+}
 
 impl Interactive for NewLayoutM {
     fn name(&self) -> &'static str {
         "LAYOUT"
     }
     fn prompt(&self, s: &Session) -> Prompt {
-        let next = s.doc().map(next_layout_name).unwrap_or_else(|_| "Layout1".into());
-        Prompt::new("Enter name of new layout", Accept::TEXT).default(next)
+        match (&self.name, self.first) {
+            (None, _) => {
+                let next = s.doc().map(next_layout_name).unwrap_or_else(|_| "Layout1".into());
+                Prompt::new("Enter name of new layout", Accept::TEXT).default(next)
+            }
+            (Some(_), None) => {
+                Prompt::new("Specify first corner of the model area to show in the layout, or press ENTER for the whole drawing", Accept::POINT)
+            }
+            // A window's first corner: with ortho on, the opposite corner is not bent onto it.
+            (Some(_), Some(a)) => Prompt::new("Specify opposite corner", Accept::POINT).corner(a),
+        }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
-        let p = match i {
-            Input::Text(t) if !t.trim().is_empty() => json!({ "name": t.trim() }),
-            Input::Text(_) | Input::Enter => json!({}),
+        let Some(name) = self.name.clone() else {
+            let name = match i {
+                Input::Text(t) if !t.trim().is_empty() => t.trim().to_string(),
+                Input::Text(_) | Input::Enter => next_layout_name(s.doc()?),
+                _ => return Ok(Step::Continue),
+            };
+            // A taken or invalid name is an error: the session reports it and asks again.
+            let name = check_name("layout.new", s.doc()?, &name, None)?;
+            // The area is picked in the Model tab, where the drawing can be zoomed and panned.
+            self.from = Some(s.layout_space());
+            Self::show(s, &Space::Model)?;
+            self.name = Some(name);
+            return Ok(Step::Continue);
+        };
+        // The corners are model points. If another tab was shown meanwhile (a tab click, `layout.set`),
+        // a point would be read in that space, so the command ends and leaves that choice alone.
+        if s.layout_space() != Space::Model {
+            self.from = None;
+            return Ok(Step::Cancel);
+        }
+        let window = match (i, self.first) {
+            (Input::Point(p), None) => {
+                self.first = Some(p);
+                return Ok(Step::Continue);
+            }
+            (Input::Point(p), Some(a)) => Some([a, p]),
+            (Input::Enter, None) => None,
             _ => return Ok(Step::Continue),
         };
-        // A taken or invalid name is an error: the session reports it and asks again.
+        let mut p = json!({ "name": name });
+        if let (Some([a, b]), Some(o)) = (window, p.as_object_mut()) {
+            o.insert("window".into(), json!([[a.x, a.y], [b.x, b.y]]));
+        }
+        // A window without width or height is an error, reported before any layout is added:
+        // the session asks for the first corner again.
+        self.first = None;
         run_new(s, &p)?;
+        Self::show(s, &Space::Paper(name))?;
         Ok(Step::Done)
+    }
+    fn cancelled(&mut self, s: &mut Session) {
+        if let Some(from) = self.from.take()
+            && let Err(e) = Self::show(s, &from)
+        {
+            s.echo(e.to_string());
+        }
+    }
+    fn preview(&self, _s: &Session, c: Vec2) -> Vec<EntityKind> {
+        let Some(a) = self.first else { return Vec::new() };
+        let corners = [a, Vec2::new(c.x, a.y), c, Vec2::new(a.x, c.y), a];
+        corners
+            .windows(2)
+            .filter_map(|w| match w {
+                [p, q] => Some(super::helpers::line(*p, *q)),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+/// The model-space window of a `layout.new`, when it has one: `window: [[x1, y1], [x2, y2]]`.
+fn window_param(p: &Value) -> Result<Option<Bounds2>> {
+    let Some(raw) = p.get("window").filter(|w| !w.is_null()) else { return Ok(None) };
+    let corners = raw.as_array();
+    let a = corners.and_then(|c| c.first()).and_then(point_value);
+    let b = corners.and_then(|c| c.get(1)).and_then(point_value);
+    let (Some(a), Some(b)) = (a, b) else {
+        return Err(bad("layout.new", "`window` needs two corners: [[x1, y1], [x2, y2]]"));
+    };
+    let w = Bounds2::new(a, b);
+    if w.min.is_finite() && w.max.is_finite() && w.width() > 1e-9 && w.height() > 1e-9 && w.width() < 1e12 && w.height() < 1e12 {
+        Ok(Some(w))
+    } else {
+        Err(bad("layout.new", "the window needs a width and a height"))
     }
 }
 
 fn run_new(s: &mut Session, p: &Value) -> Result<Value> {
+    // Checked before anything is added, so a bad window leaves no layout behind.
+    let window = window_param(p)?;
     let d = s.doc()?;
     let name = match str_param(p, "name") {
         Some(n) => check_name("layout.new", d, n, None)?,
@@ -232,14 +329,28 @@ fn run_new(s: &mut Session, p: &Value) -> Result<Value> {
     s.doc_mut()?.layouts.push(Layout { page, ..Layout::new(&name, order) });
     let mut vp = Value::Null;
     if bool_or(p, "viewport", true) {
-        // AutoCAD behaviour: one viewport over the printable area, zoomed to the model extents.
+        // AutoCAD behaviour: one viewport over the printable area, zoomed to the model extents,
+        // or to the `window` when it has one.
         let space = Space::Paper(name.clone());
         let rect = printable(s, &name)?;
         if let Some(h) = add_viewports(s, &space, rect, 1, "")?.first() {
+            if let Some(w) = window {
+                show_window(s, *h, w)?;
+            }
             vp = json!(h.hex());
         }
     }
     Ok(json!({ "name": name, "viewport": vp }))
+}
+
+/// Zoom viewport `h` to the model area `w`.
+fn show_window(s: &mut Session, h: Handle, w: Bounds2) -> Result<()> {
+    s.doc_mut()?.modify_entity(h, |e| {
+        if let EntityKind::Viewport(v) = &mut e.kind {
+            (v.view_center, v.view_height) = fit_bounds(w, v.width, v.height);
+        }
+    })?;
+    Ok(())
 }
 
 fn run_delete(s: &mut Session, p: &Value) -> Result<Value> {
@@ -420,6 +531,11 @@ fn fit_view(d: &Drawing, w: f64, h: f64) -> (Vec2, f64) {
         let hi = d.header.point("LIMMAX").map(|p| p.xy()).unwrap_or(Vec2::new(12.0, 9.0));
         ext = Bounds2::new(lo, hi);
     }
+    fit_bounds(ext, w, h)
+}
+
+/// The view centre and height that show the model area `ext` in a viewport of size `w` × `h`.
+fn fit_bounds(ext: Bounds2, w: f64, h: f64) -> (Vec2, f64) {
     let aspect = (w / h.max(1e-12)).max(1e-12);
     let vh = (ext.height().max(ext.width() / aspect) * 1.02).max(1e-9);
     let c = ext.center();
@@ -974,11 +1090,120 @@ mod tests {
         s.cmdline("Layout1").unwrap();
         assert!(s.running.is_some(), "a taken name asks again");
         s.cmdline("Sheet A").unwrap();
+        // The name is taken; the model area to show is asked next. Enter takes the whole drawing.
+        assert!(s.running.is_some() && s.current_prompt().is_some_and(|p| p.message.contains("first corner of the model area")));
+        s.cmdline("").unwrap();
         assert!(s.running.is_none());
         s.start("layout.new").unwrap();
         s.cmdline("").unwrap();
+        s.cmdline("").unwrap();
         let d = s.doc().unwrap();
         assert!(d.layout("Sheet A").is_some() && d.layout("Layout3").is_some(), "Enter takes the default name");
+    }
+
+    /// The viewport of layout `name`.
+    fn only_viewport(s: &Session, name: &str) -> Viewport {
+        let v = viewports(s, name);
+        assert_eq!(v.len(), 1, "one viewport");
+        v.into_iter().next().map(|(_, v)| v).unwrap()
+    }
+
+    #[test]
+    fn a_new_layout_can_show_a_window_of_the_model() {
+        let mut s = session_with_model();
+        s.execute("layout.new", &json!({"name": "Sheet W", "window": [[10, 10], [30, 20]]})).unwrap();
+        let v = only_viewport(&s, "Sheet W");
+        assert!(v.view_center.dist(Vec2::new(20.0, 15.0)) < 1e-9, "centred on the window: {:?}", v.view_center);
+        let aspect = v.width / v.height;
+        assert!(v.view_height >= 10.0 && v.view_height * aspect >= 20.0, "the whole window is in view");
+        assert!(v.view_height <= (10.0_f64).max(20.0 / aspect) * 1.02 + 1e-9, "and not much more: {}", v.view_height);
+        // Without a window the viewport shows the model extents, as before.
+        s.execute("layout.new", &json!({"name": "Sheet E"})).unwrap();
+        let e = only_viewport(&s, "Sheet E");
+        assert!(e.view_height > v.view_height * 2.0, "extents are larger than the window");
+    }
+
+    #[test]
+    fn a_bad_layout_window_adds_no_layout() {
+        let mut s = session_with_model();
+        let before = s.doc().unwrap().layouts.len();
+        for w in [
+            json!([[1, 1], [1, 9]]),
+            json!([[1, 1], [9, 1]]),
+            json!([[1, 1]]),
+            json!("all"),
+            json!([[1, 1], ["a", 2]]),
+            json!([[f64::MAX, 0], [-f64::MAX, 1]]),
+        ] {
+            assert!(s.execute("layout.new", &json!({"name": "Bad", "window": w})).is_err(), "{w}");
+        }
+        assert_eq!(s.doc().unwrap().layouts.len(), before, "no layout is left behind");
+    }
+
+    #[test]
+    fn new_layout_picks_the_model_area_in_the_model_tab() {
+        let mut s = session_with_model();
+        s.execute("layout.set", &json!({"name": "Layout1"})).unwrap();
+        s.start("layout.new").unwrap();
+        s.cmdline("Sheet P").unwrap();
+        assert_eq!(s.space(), Space::Model, "the Model tab is shown to pick the area");
+        s.cmdline("10,10").unwrap();
+        assert!(s.current_prompt().is_some_and(|p| p.message == "Specify opposite corner"));
+        // A window without width re-asks for the first corner and adds nothing.
+        s.cmdline("10,30").unwrap();
+        assert!(s.current_prompt().is_some_and(|p| p.message.contains("first corner")), "{:?}", s.current_prompt().map(|p| p.message));
+        assert!(s.doc().unwrap().layout("Sheet P").is_none());
+        s.cmdline("10,10").unwrap();
+        s.cmdline("30,20").unwrap();
+        assert!(s.running.is_none());
+        assert_eq!(s.space(), Space::Paper("Sheet P".into()), "the new layout is shown");
+        let v = only_viewport(&s, "Sheet P");
+        assert!(v.view_center.dist(Vec2::new(20.0, 15.0)) < 1e-9, "{:?}", v.view_center);
+        s.undo().unwrap();
+        assert!(s.doc().unwrap().layout("Sheet P").is_none(), "one undo step");
+    }
+
+    #[test]
+    fn new_layout_ends_if_another_tab_is_shown_while_picking() {
+        let mut s = session_with_model();
+        let before = s.doc().unwrap().layouts.len();
+        s.start("layout.new").unwrap();
+        s.cmdline("Sheet T").unwrap();
+        assert_eq!(s.space(), Space::Model);
+        // A tab shown meanwhile: the next point must not be taken for a model corner.
+        s.execute("layout.set", &json!({"name": "Layout1"})).unwrap();
+        s.cmdline("10,10").unwrap();
+        assert!(s.running.is_none(), "the command ended");
+        assert_eq!(s.layout_space(), Space::Paper("Layout1".into()), "the tab that was shown stays");
+        assert_eq!(s.doc().unwrap().layouts.len(), before, "no layout was added");
+    }
+
+    #[test]
+    fn the_opposite_corner_is_not_bent_by_ortho() {
+        let mut s = session_with_model();
+        s.start("layout.new").unwrap();
+        s.cmdline("Sheet O").unwrap();
+        s.cmdline("10,10").unwrap();
+        let p = s.current_prompt().unwrap();
+        assert!(p.corner && p.base == Some(Vec2::new(10.0, 10.0)), "a window's opposite corner prompt");
+    }
+
+    #[test]
+    fn cancelling_new_layout_puts_the_tab_back() {
+        let mut s = session_with_model();
+        s.execute("layout.set", &json!({"name": "Layout2"})).unwrap();
+        let before = s.doc().unwrap().layouts.len();
+        s.start("layout.new").unwrap();
+        s.cmdline("Sheet C").unwrap();
+        assert_eq!(s.space(), Space::Model);
+        s.cancel();
+        assert!(s.running.is_none());
+        assert_eq!(s.space(), Space::Paper("Layout2".into()), "back in the tab it started in: {:?}", s.log);
+        assert_eq!(s.doc().unwrap().layouts.len(), before);
+        // Esc at the name prompt changes nothing either.
+        s.start("layout.new").unwrap();
+        s.cancel();
+        assert_eq!(s.space(), Space::Paper("Layout2".into()));
     }
 
     #[test]
