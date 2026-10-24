@@ -1631,10 +1631,9 @@ pub(crate) fn run_rectang2(s: &mut Session, p: &Value) -> Result<Value> {
     let first = if centered { a - Vec2::new(w / 2.0, h / 2.0).rotate(rot) } else { a };
     let k = rect_kind(first, w, h, rot, fillet, ch, width, f64_or(p, "elevation", 0.0));
     let hd = s.add_entity(k)?;
+    // A rectangle has its own thickness option and does not take THICKNESS.
     let th = f64_or(p, "thickness", 0.0);
-    if th != 0.0 {
-        s.doc_mut()?.modify_entity(hd, |e| e.common.thickness = th)?;
-    }
+    s.doc_mut()?.modify_entity(hd, |e| e.common.thickness = th)?;
     added(hd)
 }
 
@@ -1683,10 +1682,8 @@ impl RectM2 {
         }
         let first = self.origin(w, h).unwrap_or(a);
         let hd = s.add_entity(rect_kind(first, w, h, self.rotation, self.fillet, self.chamfer, self.width, self.elevation))?;
-        if self.thickness != 0.0 {
-            let t = self.thickness;
-            s.doc_mut()?.modify_entity(hd, |e| e.common.thickness = t)?;
-        }
+        let t = self.thickness;
+        s.doc_mut()?.modify_entity(hd, |e| e.common.thickness = t)?;
         Ok(Step::Done)
     }
     /// The rectangle's local origin (the corner `rect_kind` draws from) for a size: the first

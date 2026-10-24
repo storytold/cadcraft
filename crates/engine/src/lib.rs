@@ -885,6 +885,19 @@ impl Session {
         if d.annotative_by_style(&kind) {
             common.anno_scales = vec![d.current_anno_scale()];
         }
+        // Lines, arcs, circles, points, polylines and 2D solids take the current 3D thickness
+        // (THICKNESS). RECTANG sets its own, and text never takes it.
+        if matches!(
+            kind,
+            EntityKind::Line(_)
+                | EntityKind::Arc(_)
+                | EntityKind::Circle(_)
+                | EntityKind::Point(_)
+                | EntityKind::LwPolyline(_)
+                | EntityKind::Solid(_)
+        ) {
+            common.thickness = Some(d.header.f64("THICKNESS", 0.0)).filter(|t| t.is_finite()).unwrap_or(0.0);
+        }
         let h = self.doc_mut()?.add(&space, common, kind)?;
         Ok(h)
     }
