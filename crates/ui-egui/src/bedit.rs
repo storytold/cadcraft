@@ -117,29 +117,35 @@ fn preview(app: &mut CadApp, name: &str) -> Option<Arc<DisplayList>> {
     {
         return Some(list.clone());
     }
-    // The drawing itself shows its model space.
-    let entities = if name.eq_ignore_ascii_case(CURRENT_DRAWING) { &st.doc.model } else { &st.doc.block(name)?.entities };
-    let rough = cadcraft_render::build_entities(&st.doc, entities.iter().map(|e| e.as_ref()), &cadcraft_render::Options::default());
-    let size = rough.bounds.width().max(rough.bounds.height());
-    // About half a pixel of the preview's 200 points.
-    let opts = cadcraft_render::Options { tolerance: (size / 400.0).max(1e-9), ..Default::default() };
-    let list =
-        Arc::new(if rough.bounds.is_empty() { rough } else { cadcraft_render::build_entities(&st.doc, entities.iter().map(|e| e.as_ref()), &opts) });
+    let list = Arc::new(build_preview(&st.doc, name, 200.0)?);
     app.bedit.preview = Some((key, list.clone()));
     Some(list)
 }
 
-/// Draw `list` fitted into `rect`, or `note` when there is nothing to draw.
-fn draw_preview(ui: &mut egui::Ui, list: Option<&DisplayList>, note: &str) {
+/// The display list of block `name` in `d` for a preview `px` points across: a rough build for
+/// the extents, then one at about half a pixel's tolerance. [`CURRENT_DRAWING`] is model space.
+pub(crate) fn build_preview(d: &Drawing, name: &str, px: f64) -> Option<DisplayList> {
+    let entities = if name.eq_ignore_ascii_case(CURRENT_DRAWING) { &d.model } else { &d.block(name)?.entities };
+    let rough = cadcraft_render::build_entities(d, entities.iter().map(|e| e.as_ref()), &cadcraft_render::Options::default());
+    if rough.bounds.is_empty() {
+        return Some(rough);
+    }
+    let size = rough.bounds.width().max(rough.bounds.height());
+    let opts = cadcraft_render::Options { tolerance: (size / (2.0 * px.max(1.0))).max(1e-9), ..Default::default() };
+    Some(cadcraft_render::build_entities(d, entities.iter().map(|e| e.as_ref()), &opts))
+}
+
+/// Draw `list` fitted into a box of `size`, or `note` when there is nothing to draw.
+pub(crate) fn draw_preview(ui: &mut egui::Ui, list: Option<&DisplayList>, note: &str, size: egui::Vec2) {
     let t = Tokens::get();
-    let (rect, _) = ui.allocate_exact_size(vec2(220.0, 170.0), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     let p = ui.painter_at(rect);
     p.rect_filled(rect, 4.0, t.canvas);
     p.rect_stroke(rect, 4.0, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
     match list.filter(|l| !l.bounds.is_empty() && !l.prims.is_empty()) {
         Some(l) => {
             let b = l.bounds;
-            let inner = rect.shrink(12.0);
+            let inner = rect.shrink(12.0_f32.min(size.min_elem() / 10.0));
             let (w, h) = (b.width().max(1e-9), b.height().max(1e-9));
             let scale = (f64::from(inner.width()) / w).min(f64::from(inner.height()) / h);
             let xf = Xf { rect, center: Vec2::new((b.min.x + b.max.x) / 2.0, (b.min.y + b.max.y) / 2.0), scale };
@@ -209,7 +215,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                     } else {
                         String::new()
                     };
-                    draw_preview(ui, list.as_deref(), &note);
+                    draw_preview(ui, list.as_deref(), &note, vec2(220.0, 170.0));
                     ui.add_space(4.0);
                     ui.label(RichText::new(crate::tl!("Description")).color(t.text_dim));
                     let text = if description.is_empty() { "—".to_string() } else { description.clone() };

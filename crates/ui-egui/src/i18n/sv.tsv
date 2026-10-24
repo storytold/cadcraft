@@ -1245,6 +1245,7 @@ menu	View	Visa
 menu	Draw	Rita
 menu	Dimension	Måttsättning
 menu	Modify	Ändra
+	Empty	Tom
 
 # Strings added upstream after the first Swedish catalog (Ukrainian reference order, then menus).
 	Hatch and Gradient	Skraffering och gradient

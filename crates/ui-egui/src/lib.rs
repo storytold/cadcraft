@@ -248,6 +248,8 @@ pub struct CadApp {
     pub hatch_dlg: Option<hatchdlg::HatchDlgState>,
     /// The Edit Block Definition dialog ([`bedit`]).
     pub bedit: bedit::State,
+    /// The Blocks window's previews.
+    pub block_previews: dialogs::BlockPreviews,
 }
 
 impl CadApp {
@@ -288,6 +290,7 @@ impl CadApp {
             alias_dlg: None,
             hatch_dlg: None,
             bedit: bedit::State::default(),
+            block_previews: dialogs::BlockPreviews::default(),
         }
     }
 
