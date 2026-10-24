@@ -67,6 +67,7 @@ mod measure_distance_snapping;
 mod metric_linetypes;
 mod mleader_content;
 mod mleader_remember;
+mod mleader_text_edit;
 mod mline;
 mod mocoro;
 mod modify_curves;

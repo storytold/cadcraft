@@ -328,6 +328,17 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
                         t.rotation = x.to_radians();
                     }
                 }
+                // A multileader's text: its contents (#1081) and height.
+                EntityKind::MLeader(m) => {
+                    if let Some(t) = &mut m.text {
+                        if let Some(v) = str_param(p, "text") {
+                            t.contents = v.replace('\n', "\\P");
+                        }
+                        if let Some(x) = num("height").filter(|x| *x > 0.0) {
+                            t.height = x;
+                        }
+                    }
+                }
                 EntityKind::LwPolyline(pl) => {
                     if let Some(x) = num("width").filter(|x| *x >= 0.0) {
                         pl.const_width = x;

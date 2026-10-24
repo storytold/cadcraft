@@ -2059,12 +2059,16 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
 }
 
 /// The model space tiles on screen (none without tiling): each tile's rectangle in `full`.
-/// Start TEXTEDIT on the text, mtext or attribute definition at `p` (the objects its shortcut menu
-/// offers Edit Text for); false when there is none.
+/// Start TEXTEDIT on the text, mtext, attribute definition or multileader text at `p` (the objects
+/// its shortcut menu offers Edit Text for, and multileaders, #1081); false when there is none.
 fn edit_text_at(app: &mut CadApp, p: Vec2) -> bool {
     use cadcraft_engine::doc::EntityKind;
     let is_text = cadcraft_engine::cmd::curves::pick_at(&app.session, p).and_then(|h| {
-        app.session.doc().ok()?.entity(h).map(|e| matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_)))
+        app.session.doc().ok()?.entity(h).map(|e| match &e.kind {
+            EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) => true,
+            EntityKind::MLeader(m) => m.text.is_some(),
+            _ => false,
+        })
     });
     if is_text != Some(true) {
         return false;
