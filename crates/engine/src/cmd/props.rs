@@ -447,6 +447,8 @@ fn run_style(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("style", "bad style name"));
     }
     let d = s.doc_mut()?;
+    // As it was (none for a new style), so dimensions are redrawn only when it changes.
+    let before = d.text_style(&name).cloned();
     let idx = match d.text_styles.iter().position(|t| t.name.eq_ignore_ascii_case(&name)) {
         Some(i) => i,
         None => {
@@ -482,11 +484,13 @@ fn run_style(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
     }
-    // Dimensions whose text uses the style drop the geometry they were read with: their text
-    // changes with it.
-    let text_style_of: std::collections::HashMap<String, String> =
-        d.dim_styles.iter().map(|st| (st.name.to_ascii_lowercase(), st.text_style.clone())).collect();
-    regen_dims(d, |dm| dim_text_style(dm, &text_style_of).eq_ignore_ascii_case(&name))?;
+    // Dimensions whose text uses the style drop the geometry they were read with when it
+    // changed: their text changes with it. Only making it current keeps that geometry.
+    if before.as_ref() != d.text_styles.get(idx) {
+        let text_style_of: std::collections::HashMap<String, String> =
+            d.dim_styles.iter().map(|st| (st.name.to_ascii_lowercase(), st.text_style.clone())).collect();
+        regen_dims(d, |dm| dim_text_style(dm, &text_style_of).eq_ignore_ascii_case(&name))?;
+    }
     if bool_or(p, "current", true) {
         d.header.set_str("TEXTSTYLE", &name);
     }
@@ -518,6 +522,13 @@ pub(super) fn text_styles_in_use(d: &cadcraft_doc::Drawing) -> Vec<String> {
                 EntityKind::AttDef(a) => out.push(a.text.style.clone()),
                 EntityKind::Insert(i) => out.extend(i.attribs.iter().map(|a| a.text.style.clone())),
                 EntityKind::MLeader(m) => out.extend(m.text.iter().map(|t| t.style.clone())),
+                // A dimension's own text style (a DIMTXSTY override), which a rename follows too.
+                EntityKind::Dimension(dm) => out.extend(
+                    dm.overrides
+                        .iter()
+                        .filter(|(k, _)| cadcraft_doc::DimStyle::field_name(k) == Some("textStyle"))
+                        .filter_map(|(_, v)| v.as_str().map(str::to_string)),
+                ),
                 _ => {}
             }
         }
@@ -615,6 +626,8 @@ fn run_dimstyle(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("dimstyle", "bad style name"));
     }
     let d = s.doc_mut()?;
+    // As it was (none for a new style), so dimensions are redrawn only when it changes.
+    let before = d.dim_style(&name).cloned();
     let base = d.dim_style(&d.header.str("DIMSTYLE", "Standard")).cloned().unwrap_or_default();
     let idx = match d.dim_styles.iter().position(|t| t.name.eq_ignore_ascii_case(&name)) {
         Some(i) => i,
@@ -629,9 +642,12 @@ fn run_dimstyle(s: &mut Session, p: &Value) -> Result<Value> {
             src.iter().filter(|(k, _)| !matches!(k.as_str(), "name" | "current")).map(|(k, v)| (k.clone(), v.clone())).collect();
         rejected = st.apply_fields(&fields);
     }
-    // Dimensions with the style drop the geometry they were read with, so they show the edit
-    // (as AutoCAD updates every dimension that uses a style; their overrides still win).
-    regen_dims(d, |dm| dm.style.eq_ignore_ascii_case(&name))?;
+    // Dimensions with the style drop the geometry they were read with when it changed, so they
+    // show the edit (as AutoCAD updates every dimension that uses a style; their overrides still
+    // win). Only making it current keeps that geometry.
+    if before.as_ref() != d.dim_styles.get(idx) {
+        regen_dims(d, |dm| dm.style.eq_ignore_ascii_case(&name))?;
+    }
     if bool_or(p, "current", true) {
         d.header.set_str("DIMSTYLE", &name);
     }

@@ -41,6 +41,8 @@ const SET_KEYS: &[&str] = &[
     "suffix",
     "altPrefix",
     "altSuffix",
+    // An insert's or hatch's scale; a dimension's overall scale is `dimScale` (or DIMSCALE).
+    "scale",
 ];
 
 /// The dimension style variables of a call, checked once: canonical field names with their
@@ -108,8 +110,9 @@ struct Prepared {
     ends: HashMap<Handle, Vec2>,
     /// Dimensions: where their text is drawn now.
     text_pos: HashMap<Handle, Vec2>,
-    /// Dimensions: the DIMPOST and DIMAPOST templates they draw with.
-    posts: HashMap<Handle, (String, String)>,
+    /// The DIMPOST and DIMAPOST templates of each dimension style (by lowercase name), when a
+    /// prefix or suffix is edited: a dimension's are worked out after its other edits.
+    posts: Option<HashMap<String, (String, String)>>,
 }
 
 impl Prepared {
@@ -125,22 +128,27 @@ impl Prepared {
             let Some(e) = d.entity(*h) else { continue };
             match &e.kind {
                 EntityKind::Text(t) if two_points => {
-                    let font = cadcraft_fonts::TextFont::resolve(&d.text_style(&t.style).cloned().unwrap_or_default().font);
-                    let w = cadcraft_fonts::text_width(&font, &t.value, t.height, t.width_factor);
-                    let w = if w.is_finite() && w > 1e-9 { w } else { t.height.max(1e-9) };
-                    out.ends.insert(*h, Vec2::polar(t.justify_point(), w, t.rotation));
+                    // The text as this call leaves it: its contents, style, height, width factor
+                    // and rotation, where the call sets them too.
+                    let num = |k: &str| p.get(k).and_then(Value::as_f64).filter(|v| v.is_finite());
+                    let style = str_param(p, "style").and_then(|n| d.text_style(n)).map_or(t.style.as_str(), |s| s.name.as_str());
+                    let value = str_param(p, "text").unwrap_or(&t.value);
+                    let height = num("height").filter(|x| *x > 0.0).unwrap_or(t.height);
+                    let width_factor = num("widthFactor").filter(|x| *x > 0.0).unwrap_or(t.width_factor);
+                    let rotation = num("rotation").map_or(t.rotation, f64::to_radians);
+                    let font = cadcraft_fonts::TextFont::resolve(&d.text_style(style).cloned().unwrap_or_default().font);
+                    let w = cadcraft_fonts::text_width(&font, value, height, width_factor);
+                    let w = if w.is_finite() && w > 1e-9 { w } else { height.max(1e-9) };
+                    out.ends.insert(*h, Vec2::polar(t.justify_point(), w, rotation));
                 }
-                EntityKind::Dimension(dm) => {
-                    if moves_text {
-                        out.text_pos.insert(*h, cadcraft_render::dimension_in(d, dm).text_pos);
-                    }
-                    if posts {
-                        let st = d.dim_style(&dm.style).cloned().unwrap_or_default().with_overrides(&dm.overrides);
-                        out.posts.insert(*h, (st.post, st.alt_post));
-                    }
+                EntityKind::Dimension(dm) if moves_text => {
+                    out.text_pos.insert(*h, cadcraft_render::dimension_in(d, dm).text_pos);
                 }
                 _ => {}
             }
+        }
+        if posts {
+            out.posts = Some(d.dim_styles.iter().map(|st| (st.name.to_ascii_lowercase(), (st.post.clone(), st.alt_post.clone()))).collect());
         }
         out
     }
@@ -218,8 +226,17 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         .map(|n| d.text_style(n).map(|st| st.name.clone()).ok_or_else(|| bad("properties.set", format!("text style `{n}` not found"))))
         .transpose()?;
     let dim_vars = DimVars::new(d, p)?;
+    if let Some(h) = hs.iter().find(|h| d.entity(**h).is_none()) {
+        return Err(bad("properties.set", format!("no object {}", h.hex())));
+    }
+    // A pattern must be one each hatch can take, as HATCHEDIT refuses others.
+    if let Some(v) = str_param(p, "pattern").filter(|v| !v.trim().is_empty())
+        && hs.iter().any(|h| matches!(d.entity(*h).map(|e| &e.kind), Some(EntityKind::Hatch(x)) if !crate::cmd::hatch::takes_pattern(x, v)))
+    {
+        return Err(bad("properties.set", format!("unknown pattern {}", v.trim().to_ascii_uppercase())));
+    }
     // A failed call changes nothing (a command's error doesn't undo what it did), so the layer
-    // comes after every check.
+    // comes after every check, and every object is there before any is edited.
     if let Some(l) = str_param(p, "layer") {
         d.ensure_layer(l);
     }
@@ -356,6 +373,13 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
                     }
                     if let Some(x) = num("rotation") {
                         t.rotation = x.to_radians();
+                        // Aligned and fit text run along their baseline's two ends: it turns too.
+                        if matches!(t.halign, HAlign::Aligned | HAlign::Fit)
+                            && let Some(end) = t.align_pt
+                        {
+                            let e = Vec2::polar(t.insert.xy(), t.insert.xy().dist(end.xy()), t.rotation);
+                            t.align_pt = Some(Vec3::new(e.x, e.y, end.z));
+                        }
                         used.insert("rotation");
                     }
                     if let Some(x) = num("widthFactor").filter(|x| *x > 0.0) {
@@ -527,7 +551,13 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
                         used.insert("clearOverrides");
                     }
                     if let Some(names) = p.get("clear").and_then(Value::as_array) {
-                        for f in names.iter().filter_map(Value::as_str).filter_map(DimStyle::field_name) {
+                        // Prefix and suffix rows reset DIMPOST (DIMAPOST), the variable they're halves of.
+                        let field = |n: &str| match n {
+                            "prefix" | "suffix" => Some("post"),
+                            "altPrefix" | "altSuffix" => Some("altPost"),
+                            n => DimStyle::field_name(n),
+                        };
+                        for f in names.iter().filter_map(Value::as_str).filter_map(field) {
                             dm.overrides.retain(|k, _| DimStyle::field_name(k) != Some(f));
                         }
                         used.insert("clear");
@@ -548,8 +578,14 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
                         dm.user_text_pos = true;
                         used.extend(["textPositionX", "textPositionY"].into_iter().filter(|k| num(k).is_some()));
                     }
-                    if let Some((post, alt)) = prep.posts.get(&h) {
-                        for (field, template, keys) in [("post", post, ["prefix", "suffix"]), ("altPost", alt, ["altPrefix", "altSuffix"])] {
+                    if let Some(styles) = &prep.posts {
+                        // The templates the dimension draws with after the edits above (its style,
+                        // cleared and new overrides), which the prefix or suffix edit goes into.
+                        let (post, alt) = styles.get(&dm.style.to_ascii_lowercase()).cloned().unwrap_or_default();
+                        let st = DimStyle { post, alt_post: alt, ..DimStyle::default() }.with_overrides(&dm.overrides);
+                        for (field, template, keys) in
+                            [("post", &st.post, ["prefix", "suffix"]), ("altPost", &st.alt_post, ["altPrefix", "altSuffix"])]
+                        {
                             let (pre, suf) = (str_param(p, keys[0]), str_param(p, keys[1]));
                             if pre.is_some() || suf.is_some() {
                                 let (pre0, suf0) = split_post(template);
@@ -564,20 +600,10 @@ pub(super) fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
                     }
                 }
                 EntityKind::Hatch(h) => {
-                    if let Some(v) = str_param(p, "pattern") {
-                        h.pattern = v.to_ascii_uppercase();
-                        h.solid = h.pattern == "SOLID";
-                        if !h.solid {
-                            // A named pattern replaces the gradient fill; the renderer draws the gradient first when it is set.
-                            h.gradient = None;
-                            // As HATCHEDIT: a library pattern is drawn from the library, a loaded .pat
-                            // pattern brings its lines, and any other name is the hatch's own and keeps them.
-                            if cadcraft_doc::library::pattern(&h.pattern).is_some() {
-                                h.pattern_lines.clear();
-                            } else if let Some(user) = crate::cmd::hatch::user_pattern(&h.pattern) {
-                                h.pattern_lines = user.lines;
-                            }
-                        }
+                    // HATCHEDIT's pattern edit (a blank name changes nothing, so it's ignored).
+                    if let Some(v) = str_param(p, "pattern")
+                        && crate::cmd::hatch::set_pattern(h, v)
+                    {
                         used.insert("pattern");
                     }
                     if let Some(x) = num("scale").filter(|x| *x > 0.0) {
