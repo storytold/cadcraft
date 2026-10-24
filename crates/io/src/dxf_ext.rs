@@ -352,6 +352,14 @@ pub(crate) fn xdata_list<'a>(x: &'a [Tag], name: &str) -> &'a [Tag] {
     body
 }
 
+/// A group's text, borrowed: a string or the hex of a binary chunk (what [`Tag::str`] clones).
+pub(crate) fn text(t: &Tag) -> Option<&str> {
+    match &t.value {
+        cadcraft_dxf::Value::Str(s) | cadcraft_dxf::Value::Hex(s) => Some(s),
+        _ => None,
+    }
+}
+
 /// Owner handle of a record: the first 330 outside `102 {…}` groups.
 pub(crate) fn owner(tags: &[Tag]) -> Option<String> {
     let mut in_group = false;

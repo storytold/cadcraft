@@ -7,6 +7,7 @@ use cadcraft_doc::*;
 use cadcraft_dxf::{Tag, records, sections};
 use cadcraft_geom::{PolyVertex, Spline, Vec2, Vec3};
 
+use crate::dxf_ext::text;
 use crate::{IoError, Result};
 
 pub(crate) mod mtext_dxf;
@@ -1044,9 +1045,9 @@ fn entity_plot_style(tags: &[Tag], rx: &Rx) -> Option<String> {
             if in_entity {
                 return None;
             }
-            in_entity = t.str() == "AcDbEntity";
+            in_entity = text(t) == Some("AcDbEntity");
         } else if t.code == 390 && in_entity {
-            return rx.pstyles.get(&t.str().trim().to_ascii_uppercase()).cloned();
+            return rx.pstyles.get(&text(t).unwrap_or_default().trim().to_ascii_uppercase()).cloned();
         }
     }
     None
@@ -1116,13 +1117,15 @@ fn parse_entities(
     skipped: &mut usize,
     table_cells_left: &mut usize,
 ) -> Vec<(Option<String>, bool, Entity)> {
-    let mut out = Vec::new();
+    // Nearly every record becomes an entity (`recs` is already in memory, bounded by the tag
+    // limit), so the list is sized once rather than moved at every doubling.
+    let mut out = Vec::with_capacity(recs.len());
     let mut i = 0;
     while let Some((kind, tags)) = recs.get(i) {
         let t = T(tags);
         let owner = crate::dxf_ext::owner(tags);
         let paper = t.i(67) == Some(1);
-        let handle = t.s(5).and_then(|h| Handle::parse_hex(&h));
+        let handle = tags.iter().find(|t| t.code == 5).and_then(text).and_then(Handle::parse_hex);
         let mut kindent = entity_with_table_budget(kind, tags, table_cells_left);
         if let Some((c, _)) = kindent.as_mut()
             && let Some(n) = entity_plot_style(tags, rx)
@@ -1704,9 +1707,9 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
     // a polyface mesh) would otherwise get handles that records further on still have. A file
     // CADCraft wrote names its own next handle, above which its rebuilt records are numbered
     // (#495), so it is left to that.
-    let ours = secs.iter().any(|s| s.name == "OBJECTS" && s.tags.iter().any(|t| t.code == 3 && t.str() == crate::dxf_ext::HANDSEED_KEY));
+    let ours = secs.iter().any(|s| s.name == "OBJECTS" && s.tags.iter().any(|t| t.code == 3 && text(t) == Some(crate::dxf_ext::HANDSEED_KEY)));
     for t in secs.iter().filter(|_| !ours).flat_map(|s| s.tags.iter()).filter(|t| t.code == 5 || t.code == 105) {
-        if let Some(h) = Handle::parse_hex(t.str().trim()) {
+        if let Some(h) = text(t).and_then(Handle::parse_hex) {
             d.bump_handseed(h);
         }
     }

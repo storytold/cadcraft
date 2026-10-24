@@ -162,6 +162,9 @@ fn typed(code: i32, text: &str) -> Value {
 }
 
 const BINARY_SENTINEL: &[u8] = b"AutoCAD Binary DXF\r\n\x1a\0";
+/// Fewest bytes an ASCII group takes: a code line and a value line of one byte each, with their
+/// newlines.
+const MIN_GROUP_BYTES: usize = 4;
 /// Most group codes read from one file. A `Tag` takes 40 bytes plus its text, so this bounds the
 /// tag list to a few GB; real drawings stay far below (a 10 MB DWG is typically a few million).
 pub const MAX_TAGS: usize = 50_000_000;
@@ -186,7 +189,7 @@ pub fn parse_with_limit(bytes: &[u8], max_tags: usize) -> Result<Vec<Tag>> {
     if tags > max_tags {
         return Err(DxfError::TooLarge { tags, limit: max_tags });
     }
-    parse_ascii_with_limit(&codepage::decode_ascii_file(bytes), max_tags)
+    parse_ascii_with_limit(&codepage::decode_ascii_file(bytes), max_tags, tags)
 }
 
 /// The four hex digits of a `\U+XXXX` escape starting at `chars[i]`, if there is one.
@@ -258,12 +261,18 @@ fn unescape_unicode(s: &str) -> String {
 }
 
 pub fn parse_ascii(text: &str) -> Result<Vec<Tag>> {
-    parse_ascii_with_limit(text, MAX_TAGS)
+    let tags = text.bytes().filter(|&b| b == b'\n').count().div_ceil(2);
+    parse_ascii_with_limit(text, MAX_TAGS, tags)
 }
 
+/// `expect` is the number of groups the line count promises: it sizes the tag list once instead
+/// of letting it double its way up (every doubling moves all the tags read so far, and the last
+/// one holds old and new lists at once). Never trusted beyond `max_tags`, nor beyond what a text
+/// of this length can hold (a group is two lines of at least two bytes each), so a sparse file of
+/// blank lines cannot reserve more than a dense one of the same size would fill.
 #[allow(clippy::while_let_loop)]
-fn parse_ascii_with_limit(text: &str, max_tags: usize) -> Result<Vec<Tag>> {
-    let mut tags = Vec::new();
+fn parse_ascii_with_limit(text: &str, max_tags: usize, expect: usize) -> Result<Vec<Tag>> {
+    let mut tags = Vec::with_capacity(expect.min(max_tags).min(text.len() / MIN_GROUP_BYTES));
     let mut lines = text.lines().enumerate();
     loop {
         let Some((ln, code_line)) = lines.next() else { break };
@@ -273,16 +282,17 @@ fn parse_ascii_with_limit(text: &str, max_tags: usize) -> Result<Vec<Tag>> {
         }
         let code: i32 = ct.parse().map_err(|_| DxfError::BadCode { line: ln + 1, text: ct.chars().take(40).collect() })?;
         let Some((_, val)) = lines.next() else { return Err(DxfError::Eof) };
-        let v = typed(code, val);
-        let v = match v {
-            Value::Str(s) => Value::Str(unescape_unicode(&s)),
+        let v = match typed(code, val) {
+            // Only text with a backslash can hold an escape; the rest moves in as it is.
+            Value::Str(s) if s.contains('\\') => Value::Str(unescape_unicode(&s)),
             o => o,
         };
+        let eof = code == 0 && matches!(&v, Value::Str(s) if s == "EOF");
         tags.push(Tag { code, value: v });
         if tags.len() > max_tags {
             return Err(DxfError::TooLarge { tags: tags.len(), limit: max_tags });
         }
-        if code == 0 && tags.last().is_some_and(|t| t.str() == "EOF") {
+        if eof {
             break;
         }
     }
