@@ -522,6 +522,11 @@ fn run_dimstyle(s: &mut Session, p: &Value) -> Result<Value> {
     if name.is_empty() || name.len() > 255 {
         return Err(bad("dimstyle", "bad style name"));
     }
+    // A new style's name is one -DIMSTYLE takes (no `~`, which its Restore reads as compare, or
+    // wildcards); a style read from a file keeps the name it has.
+    if s.doc()?.dim_style(&name).is_none() {
+        super::dimstyle_cli::check_name(&name).map_err(|_| bad("dimstyle", "bad style name"))?;
+    }
     let d = s.doc_mut()?;
     let base = d.dim_style(&d.header.str("DIMSTYLE", "Standard")).cloned().unwrap_or_default();
     let idx = match d.dim_styles.iter().position(|t| t.name.eq_ignore_ascii_case(&name)) {
@@ -662,6 +667,7 @@ fn block_dims_using(d: &cadcraft_doc::Drawing, name: &str) -> Vec<(String, cadcr
 fn run_dimstyle_rename(s: &mut Session, p: &Value) -> Result<Value> {
     let from = str_param(p, "from").ok_or_else(|| bad("dimstyle.rename", "`from` is required"))?.to_string();
     let to = str_param(p, "to").map(str::trim).filter(|t| !t.is_empty()).ok_or_else(|| bad("dimstyle.rename", "`to` is required"))?.to_string();
+    let to = super::dimstyle_cli::check_name(&to).map_err(|_| bad("dimstyle.rename", "bad style name"))?;
     let d = s.doc_mut()?;
     if from.eq_ignore_ascii_case("Standard") {
         return Err(bad("dimstyle.rename", "the Standard style cannot be renamed"));

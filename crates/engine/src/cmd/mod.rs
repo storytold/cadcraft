@@ -33,6 +33,7 @@ mod overkill;
 mod pline_opts;
 pub mod plotters;
 mod props;
+pub use dimstyle_cli::usable_dim_style_name;
 pub use draw2::breakline::BreaklineOptions;
 pub use props::MatchProps;
 pub(crate) use props::set_current_color_value;

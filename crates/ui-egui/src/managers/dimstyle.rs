@@ -70,6 +70,9 @@ struct State {
     compare_with: String,
     /// (style, new name) while renaming.
     renaming: Option<(String, String)>,
+    /// OK was clicked on an editing page: the entry the list chooses once its commands succeed
+    /// (a refused value keeps the page open with every edit).
+    after_ok: Option<String>,
 }
 
 /// The tab a variable is edited on.
@@ -159,13 +162,22 @@ pub(super) fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> 
             Page::Compare => compare_page(ui, d, &mut st, &current, &overrides),
         },
     );
-    super::set_temp(ctx, STATE, st);
     // Errors are echoed on the command line by `run`; a failed step stops the rest.
+    let mut ok = true;
     for (cmd, p) in actions {
         if app.run(cmd, p).is_err() {
+            ok = false;
             break;
         }
     }
+    if let Some(selected) = st.after_ok.take()
+        && ok
+    {
+        st.selected = selected;
+        st.page = Page::List;
+    }
+    // Closed (the title bar's X), it opens on the list next time, not on a page left open.
+    super::set_temp(ctx, STATE, if *open { st } else { State::default() });
     None
 }
 
@@ -250,7 +262,7 @@ fn list_page(
                 ui.horizontal(|ui| {
                     let r = ui.add(egui::TextEdit::singleline(to).desired_width(120.0));
                     if ui.button(crate::tl!("OK")).clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
-                        if !to.trim().is_empty() && *to != from {
+                        if !bad_name(to.trim()) && *to != from {
                             actions.push(("dimstyle.rename", json!({ "from": from, "to": to.trim() })));
                             if st.selected == from {
                                 st.selected = to.trim().to_string();
@@ -318,6 +330,12 @@ fn list_page(
             }
         });
     });
+}
+
+/// A name no new dimension style can have: the engine's rule (-DIMSTYLE's; `~` is its Restore's
+/// "compare with").
+fn bad_name(name: &str) -> bool {
+    !cadcraft_engine::cmd::usable_dim_style_name(name)
 }
 
 /// Whether style `name` can be deleted: not Standard, the current style or a style in use.
@@ -392,7 +410,7 @@ fn new_page(ui: &mut egui::Ui, d: &Drawing, st: &mut State) {
     }
     ui.add_space(8.0);
     ui.horizontal(|ui| {
-        if ui.add_enabled(!name.is_empty() && !taken, egui::Button::new(crate::tl!("Continue"))).clicked() {
+        if ui.add_enabled(!bad_name(&name) && !taken, egui::Button::new(crate::tl!("Continue"))).clicked() {
             let mut values = d.dim_style(&st.start_with).map(style_json).unwrap_or_default();
             values.insert("name".into(), json!(name));
             values.insert("annotative".into(), json!(st.new_annotative));
@@ -457,12 +475,7 @@ fn edit_page(ui: &mut egui::Ui, d: &Drawing, st: &mut State, actions: &mut Vec<(
                 }
                 _ => {}
             }
-            if st.target == Target::Override {
-                st.selected = OVERRIDES.into();
-            } else {
-                st.selected = st.editing.clone();
-            }
-            st.page = Page::List;
+            st.after_ok = Some(if st.target == Target::Override { OVERRIDES.into() } else { st.editing.clone() });
         }
         if ui.button(crate::tl!("Cancel")).clicked() {
             st.page = Page::List;
@@ -623,7 +636,11 @@ fn combo(ui: &mut egui::Ui, id: egui::Id, cur: &Value, options: Vec<(Value, Stri
 }
 
 fn compare_page(ui: &mut egui::Ui, d: &Drawing, st: &mut State, current: &str, overrides: &Map<String, Value>) {
-    let names: Vec<String> = d.dim_styles.iter().map(|s| s.name.clone()).collect();
+    let mut names: Vec<String> = d.dim_styles.iter().map(|s| s.name.clone()).collect();
+    // The current settings can be compared too: the current style with its overrides.
+    if !overrides.is_empty() {
+        names.push(OVERRIDES.to_string());
+    }
     if !names.contains(&st.selected) {
         st.selected = current.to_string();
     }
@@ -641,8 +658,14 @@ fn compare_page(ui: &mut egui::Ui, d: &Drawing, st: &mut State, current: &str, o
             }
         });
     });
-    let _ = (current, overrides);
-    let style = |n: &str| Value::Object(style_json(&d.dim_style(n).cloned().unwrap_or_default()));
+    let style = |n: &str| {
+        let st = if n == OVERRIDES {
+            d.dim_style(current).cloned().unwrap_or_default().with_overrides(overrides)
+        } else {
+            d.dim_style(n).cloned().unwrap_or_default()
+        };
+        Value::Object(style_json(&st))
+    };
     let (a, b) = (style(&st.selected), style(&st.compare_with));
     let same = st.selected == st.compare_with;
     let rows: Vec<&DimProp> = DIM_PROPS.iter().filter(|p| same || dim_value(p, &a) != dim_value(p, &b)).collect();
@@ -680,13 +703,15 @@ fn preview(ui: &mut egui::Ui, d: &Drawing, style: &DimStyle, size: egui::Vec2) {
     let mut hasher = std::hash::DefaultHasher::new();
     serde_json::to_string(style).unwrap_or_default().hash(&mut hasher);
     serde_json::to_string(&d.text_styles).unwrap_or_default().hash(&mut hasher);
-    (w, h, ui.visuals().dark_mode).hash(&mut hasher);
+    // The drawing area's color, as the theme and the user's model background give it.
+    let bg = Tokens::get().canvas;
+    (w, h, bg.to_array()).hash(&mut hasher);
     let key = hasher.finish();
     let id = egui::Id::new(("dimstyle_preview", size.x as u32, size.y as u32));
     let cached = ui.data(|m| m.get_temp::<(u64, egui::TextureHandle)>(id)).filter(|(k, _)| *k == key).map(|(_, t)| t);
     let tex = match cached {
         Some(t) => Some(t),
-        None => sample(d, style, w, h, ui.visuals().dark_mode).map(|img| {
+        None => sample(d, style, w, h, bg).map(|img| {
             let t = ui.ctx().load_texture("dimstyle_preview", img, egui::TextureOptions::LINEAR);
             ui.data_mut(|m| m.insert_temp(id, (key, t.clone())));
             t
@@ -702,7 +727,7 @@ fn preview(ui: &mut egui::Ui, d: &Drawing, style: &DimStyle, size: egui::Vec2) {
     }
 }
 
-fn sample(d: &Drawing, style: &DimStyle, w: u32, h: u32, dark: bool) -> Option<egui::ColorImage> {
+fn sample(d: &Drawing, style: &DimStyle, w: u32, h: u32, bg: egui::Color32) -> Option<egui::ColorImage> {
     let mut s = cadcraft_engine::Session::new();
     {
         let doc = s.doc_mut().ok()?;
@@ -728,7 +753,7 @@ fn sample(d: &Drawing, style: &DimStyle, w: u32, h: u32, dark: bool) -> Option<e
     let doc = s.doc().ok()?;
     let list = cadcraft_engine::render::build(doc, &cadcraft_engine::doc::Space::Model, &cadcraft_engine::render::Options::default());
     let view = cadcraft_engine::render::raster::View::fit(&list.bounds, w, h, 0.06);
-    let background = if dark { cadcraft_engine::render::raster::RasterOptions::default().background } else { cadcraft_color::Rgb(255, 255, 255) };
+    let background = cadcraft_color::Rgb(bg.r(), bg.g(), bg.b());
     let png = cadcraft_engine::render::raster::render_png(
         &list,
         &view,
