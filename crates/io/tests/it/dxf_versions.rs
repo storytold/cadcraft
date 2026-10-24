@@ -99,6 +99,31 @@ fn dxf_at_every_version_reads_back_the_same() {
     }
 }
 
+/// CLASS records (DXF Reference, CLASSES): group 91, the instance count, came with the 2004
+/// format and follows the proxy flags. AutoCAD LT 2026 stops responding on an R2000 file whose
+/// CLASS records carry a 91, and AutoCAD rejects a 2004+ file without it (#635).
+#[test]
+fn class_records_follow_the_version() {
+    let d = sample();
+    for v in Version::ALL {
+        for binary in [false, true] {
+            let tags = cadcraft_dxf::parse(&write_with(&d, "x.dxf", &opts(v, binary)).unwrap()).unwrap();
+            let classes: Vec<Vec<i32>> = cadcraft_dxf::sections(&tags)
+                .into_iter()
+                .filter(|s| s.name == "CLASSES")
+                .flat_map(|s| cadcraft_dxf::records(&s.tags))
+                .filter(|(kind, _)| kind == "CLASS")
+                .map(|(_, t)| t.iter().map(|x| x.code).collect())
+                .collect();
+            assert!(!classes.is_empty(), "{v} binary={binary}");
+            let want: &[i32] = if v >= Version::R2004 { &[1, 2, 3, 90, 91, 280, 281] } else { &[1, 2, 3, 90, 280, 281] };
+            for codes in classes {
+                assert_eq!(codes, want, "{v} binary={binary}");
+            }
+        }
+    }
+}
+
 /// R2000 ASCII is exactly the R2000 DXF CADCraft always wrote.
 #[test]
 fn r2000_ascii_is_unchanged() {
