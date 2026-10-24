@@ -568,6 +568,144 @@ fn fillet_and_chamfer_a_line_into_a_polyline() {
 }
 
 #[test]
+fn a_line_crossing_a_polyline_end_segment_keeps_the_picked_side() {
+    // An L whose end segment a line crosses. Picked right of the crossing, the polyline keeps that
+    // part and drops the rest past the crossing, the line's picked part joining it (as AutoCAD).
+    let mut s = Session::new();
+    let p = pline(&mut s, &[[0.0, 1.0], [0.0, 0.0], [4.0, 0.0]], false);
+    let l = h(&s.execute("line", &json!({ "points": [[2, -1], [2, 1.5]] })).unwrap());
+    s.execute("fillet", &json!({ "h1": l, "p1": [2, 1], "h2": p, "p2": [3, 0], "radius": 0 })).unwrap();
+    assert_eq!(verts(&s, &p), vec![(2.0, 1.5, 0.0), (2.0, 0.0, 0.0), (4.0, 0.0, 0.0)]);
+    assert_eq!(count(&s), 1);
+    // Picked left of it, the L stays and the line's lower part joins.
+    let mut s = Session::new();
+    let p = pline(&mut s, &[[0.0, 1.0], [0.0, 0.0], [4.0, 0.0]], false);
+    let _ = h(&s.execute("line", &json!({ "points": [[2, -1], [2, 1.5]] })).unwrap());
+    s.script("FILLET R 0 1,0 2,-0.5\n").unwrap();
+    assert_eq!(verts(&s, &p), vec![(0.0, 1.0, 0.0), (0.0, 0.0, 0.0), (2.0, 0.0, 0.0), (2.0, -1.0, 0.0)]);
+}
+
+#[test]
+fn fillet_joins_two_polylines_at_their_end_segments() {
+    // A wall line short of the corner and an open outline ending under it: one polyline, as AutoCAD.
+    let mut s = Session::new();
+    let a = pline(&mut s, &[[0.0, 8.55], [0.0, 1.25]], false);
+    let b = pline(&mut s, &[[0.15, 0.15], [1.0, 0.15], [1.0, 0.0], [0.0, 0.0]], false);
+    s.execute("fillet", &json!({ "h1": a, "p1": [0, 5], "h2": b, "p2": [0.5, 0], "radius": 0 })).unwrap();
+    assert_eq!(verts(&s, &a), vec![(0.0, 8.55, 0.0), (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.0, 0.15, 0.0), (0.15, 0.15, 0.0)]);
+    assert_eq!(count(&s), 1);
+    // The other picked first keeps its direction; a radius rounds the corner.
+    let mut s = Session::new();
+    let a = pline(&mut s, &[[0.0, 8.0], [0.0, 2.0]], false);
+    let b = pline(&mut s, &[[5.0, 5.0], [5.0, 0.0], [1.0, 0.0]], false);
+    s.execute("fillet", &json!({ "h1": b, "p1": [3, 0], "h2": a, "p2": [0, 5], "radius": 1 })).unwrap();
+    assert_eq!(verts(&s, &b), vec![(5.0, 5.0, 0.0), (5.0, 0.0, 0.0), (1.0, 0.0, -quarter()), (0.0, 1.0, 0.0), (0.0, 8.0, 0.0)]);
+    assert_eq!(count(&s), 1);
+}
+
+#[test]
+fn fillet_joins_a_polyline_end_segment_crossing_another_polylines_middle_segment() {
+    // As AutoCAD: each keeps its picked side of the crossing, the rest past it goes (here the
+    // stub below the crossing, and the middle segment's left part with the leg after it).
+    let mut s = Session::new();
+    let a = pline(&mut s, &[[0.0, -0.4], [0.0, 0.15], [1.4, 0.15], [1.4, 1.9], [1.2, 1.9]], false);
+    let b = pline(&mut s, &[[3.4, -0.5], [3.4, 0.0], [-0.7, 0.0], [-0.7, -3.0]], false);
+    s.execute("fillet", &json!({ "h1": a, "p1": [0, 0.1], "h2": b, "p2": [2, 0], "radius": 0 })).unwrap();
+    assert_eq!(
+        verts(&s, &a),
+        vec![(3.4, -0.5, 0.0), (3.4, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.15, 0.0), (1.4, 0.15, 0.0), (1.4, 1.9, 0.0), (1.2, 1.9, 0.0)]
+    );
+    assert_eq!(count(&s), 1);
+}
+
+/// A closed polyline filleted with a line opens at its first vertex, as AutoCAD does: the picked
+/// side of the picked segment joins the line, either side, and the result is open. AutoCAD's
+/// results for these shapes (a 4 x 3 RECTANG with a line short of it, crossing it, and level
+/// with its right side).
+#[test]
+fn a_closed_polyline_opens_at_its_first_vertex_to_join_a_line() {
+    let rect = |s: &mut Session, x: f64| pline(s, &[[x, 0.0], [x + 4.0, 0.0], [x + 4.0, 3.0], [x, 3.0]], true);
+    let line = |s: &mut Session, a: [f64; 2], b: [f64; 2]| h(&s.execute("line", &json!({ "points": [a, b] })).unwrap());
+    let open = |s: &Session, p: &str| match kind(s, p) {
+        EntityKind::LwPolyline(pl) => !pl.closed,
+        _ => false,
+    };
+    // A line short of the top side, the top's left part picked.
+    let mut s = Session::new();
+    let p = rect(&mut s, 0.0);
+    let l = line(&mut s, [2.0, 4.5], [2.0, 3.6]);
+    s.execute("fillet", &json!({ "h1": l, "p1": [2, 4.2], "h2": p, "p2": [1, 3], "radius": 0 })).unwrap();
+    assert_eq!(verts(&s, &p), vec![(2.0, 4.5, 0.0), (2.0, 3.0, 0.0), (0.0, 3.0, 0.0), (0.0, 0.0, 0.0)]);
+    assert!(open(&s, &p));
+    assert_eq!(count(&s), 1);
+    // Its right part: the other way round the rectangle.
+    let mut s = Session::new();
+    let p = rect(&mut s, 0.0);
+    let l = line(&mut s, [2.0, 4.5], [2.0, 3.6]);
+    s.execute("fillet", &json!({ "h1": l, "p1": [2, 4.2], "h2": p, "p2": [3, 3], "radius": 0 })).unwrap();
+    assert_eq!(verts(&s, &p), vec![(0.0, 0.0, 0.0), (4.0, 0.0, 0.0), (4.0, 3.0, 0.0), (2.0, 3.0, 0.0), (2.0, 4.5, 0.0)]);
+    // A line crossing the top side, its inner part picked.
+    let mut s = Session::new();
+    let p = rect(&mut s, 9.0);
+    let l = line(&mut s, [11.0, 1.8], [11.0, 4.5]);
+    s.execute("fillet", &json!({ "h1": l, "p1": [11, 2.2], "h2": p, "p2": [10, 3], "radius": 0 })).unwrap();
+    assert_eq!(verts(&s, &p), vec![(11.0, 1.8, 0.0), (11.0, 3.0, 0.0), (9.0, 3.0, 0.0), (9.0, 0.0, 0.0)]);
+    // A line level with the right side, below it or above it.
+    for (pick, want) in [
+        ([22.0, 1.0], vec![(18.0, 0.0, 0.0), (22.0, 0.0, 0.0), (22.0, 2.5, 0.0), (23.5, 2.5, 0.0)]),
+        ([22.0, 2.8], vec![(23.5, 2.5, 0.0), (22.0, 2.5, 0.0), (22.0, 3.0, 0.0), (18.0, 3.0, 0.0), (18.0, 0.0, 0.0)]),
+    ] {
+        let mut s = Session::new();
+        let p = rect(&mut s, 18.0);
+        let l = line(&mut s, [23.5, 2.5], [22.6, 2.5]);
+        s.execute("fillet", &json!({ "h1": l, "p1": [23.2, 2.5], "h2": p, "p2": pick, "radius": 0 })).unwrap();
+        assert_eq!(verts(&s, &p), want, "{pick:?}");
+    }
+}
+
+/// An arc segment crossed by a line is cut where they cross (radius 0), keeping its picked side,
+/// with the bulge of what is left of it: AutoCAD's result for this shape. A line that misses
+/// the arc, or a radius, is refused, as AutoCAD refuses them.
+#[test]
+fn an_arc_segment_crossed_by_a_line_is_cut_there() {
+    let shape = |s: &mut Session| {
+        let p =
+            h(&s.execute("pline", &json!({ "vertices": [[45, 0], { "p": [47, 0], "bulge": -0.4 }, [49, 0], [49, -1.5]], "closed": false })).unwrap());
+        let l = h(&s.execute("line", &json!({ "points": [[48, -0.5], [48, 2.2]] })).unwrap());
+        (p, l)
+    };
+    let half = ((-4.0 * 0.4f64.atan() / 2.0 / 4.0).tan() * 1e9).round() / 1e9;
+    let mut s = Session::new();
+    let (p, l) = shape(&mut s);
+    s.execute("fillet", &json!({ "h1": l, "p1": [48, 1.5], "h2": p, "p2": [48.8, 0.25], "radius": 0 })).unwrap();
+    assert_eq!(verts(&s, &p), vec![(48.0, 2.2, 0.0), (48.0, 0.4, half), (49.0, 0.0, 0.0), (49.0, -1.5, 0.0)]);
+    assert_eq!(count(&s), 1);
+    // The other side of the arc.
+    let mut s = Session::new();
+    let (p, l) = shape(&mut s);
+    s.execute("fillet", &json!({ "h1": l, "p1": [48, 1.5], "h2": p, "p2": [47.2, 0.25], "radius": 0 })).unwrap();
+    assert_eq!(verts(&s, &p), vec![(45.0, 0.0, 0.0), (47.0, 0.0, half), (48.0, 0.4, 0.0), (48.0, 2.2, 0.0)]);
+    // A pick a little before the arc's start (within the pick box) keeps the start side.
+    let mut s = Session::new();
+    let p = h(&s.execute("pline", &json!({ "vertices": [{ "p": [47, 0], "bulge": -0.4 }, [49, 0], [49, -1.5]], "closed": false })).unwrap());
+    let l = h(&s.execute("line", &json!({ "points": [[48, -0.5], [48, 2.2]] })).unwrap());
+    // On the arc's circle (centre 48,-1.05, radius 1.45), 2.4° before its start.
+    let a = (1.05f64).atan2(-1.0) + 2.4f64.to_radians();
+    let pick = [48.0 + 1.45 * a.cos(), -1.05 + 1.45 * a.sin()];
+    s.execute("fillet", &json!({ "h1": l, "p1": [48, 1.5], "h2": p, "p2": pick, "radius": 0 })).unwrap();
+    assert_eq!(verts(&s, &p), vec![(47.0, 0.0, half), (48.0, 0.4, 0.0), (48.0, 2.2, 0.0)]);
+    // An end arc the line doesn't reach, at radius 0 or not: refused, nothing changed.
+    for r in [0.0, 0.3] {
+        let mut s = Session::new();
+        let p = h(&s.execute("pline", &json!({ "vertices": [[27, 0], { "p": [29, 0], "bulge": 0.3 }, [30.2, 1.2]], "closed": false })).unwrap());
+        let l = h(&s.execute("line", &json!({ "points": [[31.2, -0.5], [31.2, 3]] })).unwrap());
+        let before = verts(&s, &p);
+        assert!(s.execute("fillet", &json!({ "h1": p, "p1": [29.8, 0.6], "h2": l, "p2": [31.2, 2.5], "radius": r })).is_err());
+        assert_eq!(verts(&s, &p), before);
+    }
+}
+
+#[test]
 fn polyline_fillets_at_the_command_line_and_with_no_trim() {
     let mut s = Session::new();
     let p = pline(&mut s, &[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]], false);
@@ -592,7 +730,7 @@ fn polyline_fillet_refusals_leave_it_alone() {
     let c = h(&s.execute("circle", &json!({ "center": [30, 0], "radius": 1 })).unwrap());
     let l = h(&s.execute("line", &json!({ "points": [[20, -5], [20, 5]] })).unwrap());
     for q in [
-        // Segments too far apart, the same segment, a circle, a middle segment with a line, too big.
+        // Segments too far apart, the same segment, a circle, a segment parallel to a line, too big.
         json!({ "h1": p, "p1": [5, 0], "h2": p, "p2": [0, 15], "radius": 1 }),
         json!({ "h1": p, "p1": [5, 0], "h2": p, "p2": [6, 0], "radius": 1 }),
         json!({ "h1": p, "p1": [5, 0], "h2": c, "p2": [31, 0], "radius": 1 }),
