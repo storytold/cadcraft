@@ -64,7 +64,6 @@ fn mb(n: u64) -> String {
     if m >= 100.0 { format!("{m:.0} MB") } else { format!("{m:.1} MB") }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 mod native {
     use std::io::{Cursor, Write};
     use std::panic::AssertUnwindSafe;
@@ -641,7 +640,6 @@ mod native {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub use native::{dwg_to_dxf, dwg_to_dxf_noted, dwg_to_dxf_with, dxf_to_dwg, dxf_to_dwg_as};
 
 /// The error for a DWG version CADCraft can't write.
@@ -651,26 +649,6 @@ fn unsupported(version: &str) -> String {
     format!("DWG version `{version}` can't be written (CADCraft writes {})", list.join(", "))
 }
 
-#[cfg(target_arch = "wasm32")]
-pub fn dwg_to_dxf(_bytes: &[u8]) -> Result<Vec<u8>, String> {
-    Err("DWG files can't be opened in the web build yet; save as DXF".into())
-}
-#[cfg(target_arch = "wasm32")]
-pub fn dwg_to_dxf_noted(_bytes: &[u8], _limits: Limits) -> Result<(Vec<u8>, Vec<String>), String> {
-    Err("DWG files can't be opened in the web build yet; save as DXF".into())
-}
-#[cfg(target_arch = "wasm32")]
-pub fn dwg_to_dxf_with(_bytes: &[u8], _limits: Limits) -> Result<Vec<u8>, String> {
-    Err("DWG files can't be opened in the web build yet; save as DXF".into())
-}
-#[cfg(target_arch = "wasm32")]
-pub fn dxf_to_dwg(_dxf: &[u8]) -> Result<Vec<u8>, String> {
-    Err("DWG files can't be written in the web build yet; save as DXF".into())
-}
-#[cfg(target_arch = "wasm32")]
-pub fn dxf_to_dwg_as(_dxf: &[u8], _version: &str) -> Result<Vec<u8>, String> {
-    Err("DWG files can't be written in the web build yet; save as DXF".into())
-}
 
 #[cfg(test)]
 mod tests {
