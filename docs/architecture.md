@@ -68,7 +68,8 @@ DXF is the native path: `dxf` parses tags, `io::dxf_read` maps them to the docum
 version-specific groups and UTF-8 text from 2007. New drawings default to 2018 (AC1032).
 In the app's Save dialog, File ▸ Default Save Format (also Options ▸ Open and Save,
 `saveVersion`, default 2018) sets the version for untitled drawings; drawings with a file keep
-their own version, subject to supported-version mapping and the DWG minimum.
+their own version, subject to supported-version mapping and the DWG minimum. SAVEAS `version`
+overrides this choice and is remembered for later saves.
 Without an explicit save version, `io::save_version` uses the drawing's `$ACADVER`, keeping
 supported versions, mapping older files to 2000 and newer files to 2018 (missing or invalid
 codes also default to 2018). DWG is converted to DXF in memory by `acadrust` and read through

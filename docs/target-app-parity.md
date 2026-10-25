@@ -206,7 +206,8 @@ depth both grew since 2026-10-07 and the weights are now written down; the hours
 the remaining work is depth and 3D.
 In the app's Save dialog, File ▸ Default Save Format (also Options ▸ Open and Save,
 `saveVersion`, default 2018) sets the version for untitled drawings; drawings with a file keep
-their own version, subject to supported-version mapping and the DWG minimum.
+their own version, subject to supported-version mapping and the DWG minimum. SAVEAS `version`
+overrides this choice and is remembered for later saves.
 
 **Parallelism.** About 70% of the work splits across 4–6 agents by area (each feature area,
 file formats, UI precision, localization per language), so elapsed time is roughly a quarter of
