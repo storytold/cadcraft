@@ -14,18 +14,19 @@ use serde_json::Value;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TextMode {
     /// As `<text>` elements: searchable and editable, with their font, size, position and
-    /// rotation (the default). Stroke-font text is always geometry.
-    #[default]
+    /// rotation. Opt in with the export option `text: "text"`; stroke-font text is always
+    /// geometry.
     Text,
-    /// As glyph outlines: exactly as plotted, with no text elements.
+    /// As glyph outlines: exactly as plotted, with no text elements (the default).
+    #[default]
     Geometry,
 }
 
 impl TextMode {
-    /// The `text` option of an export or plot: `"geometry"` keeps glyph outlines; anything else
-    /// (or no option) writes text.
+    /// The `text` option of an export or plot: `"text"` (in any case) writes `<text>` elements;
+    /// anything else, or no option, keeps the glyph outlines.
     pub fn from_json(v: &Value) -> TextMode {
-        if v.get("text").and_then(Value::as_str).is_some_and(|t| t.eq_ignore_ascii_case("geometry")) { TextMode::Geometry } else { TextMode::Text }
+        if v.get("text").and_then(Value::as_str).is_some_and(|t| t.eq_ignore_ascii_case("text")) { TextMode::Text } else { TextMode::Geometry }
     }
 }
 
@@ -36,14 +37,15 @@ pub fn export(d: &Drawing, space: &Space) -> String {
 
 /// Export showing exactly `window` (the `viewBox`; geometry outside it is clipped by the viewer),
 /// or the extents with a 2% margin when `window` is `None`. Objects are drawn with their
-/// transparency, as on screen; outline-font text is written as text.
+/// transparency, as on screen; outline-font text is drawn as glyph outlines (pass
+/// [`TextMode::Text`] to [`export_window_with_text`] for `<text>` elements).
 pub fn export_window(d: &Drawing, space: &Space, window: Option<Bounds2>) -> String {
     export_window_with(d, space, window, true)
 }
 
 /// [`export_window`], drawing transparency only when `transparency` is on (plots).
 pub fn export_window_with(d: &Drawing, space: &Space, window: Option<Bounds2>, transparency: bool) -> String {
-    export_window_with_text(d, space, window, transparency, TextMode::Text)
+    export_window_with_text(d, space, window, transparency, TextMode::Geometry)
 }
 
 /// [`export_window_with`], writing text or its glyph outlines per `text`.
@@ -61,13 +63,13 @@ fn opacity(p: &cadcraft_render::DPrim) -> String {
     format!(r#" opacity="{:.2}""#, f64::from(p.alpha()) / 255.0)
 }
 
-/// Write a display list (as [`export_window`] does for a space's own), writing text.
+/// Write a display list (as [`export_window`] does for a space's own), drawing glyph outlines.
 pub fn export_list(list: &DisplayList, window: Option<Bounds2>) -> String {
-    export_list_with(list, window, TextMode::Text)
+    export_list_with(list, window, TextMode::Geometry)
 }
 
 /// [`export_list`], writing outline-font text as `<text>` (`text` = [`TextMode::Text`]) or as
-/// the glyph outlines the list holds.
+/// the glyph outlines the list holds ([`TextMode::Geometry`], the default).
 pub fn export_list_with(list: &DisplayList, window: Option<Bounds2>, text: TextMode) -> String {
     let window = window.filter(|w| !w.is_empty());
     let b = window.unwrap_or(list.bounds);
@@ -186,7 +188,8 @@ struct TextRun {
     first: u32,
     /// The primitives of all the run's glyphs, whose outlines are left out once it is written.
     prims: Vec<u32>,
-    /// The run's characters, in drawing order (spaces restored from the gaps between glyphs).
+    /// The run's characters, in drawing order: the source's whitespace (from each glyph's
+    /// [`TextGlyph::spaces_before`]) plus one inferred space for a gap that had none.
     text: String,
     /// The baseline origin of the first glyph, in world coordinates.
     origin: Vec2,
@@ -200,8 +203,8 @@ struct TextRun {
     em: f64,
 }
 
-/// Most glyphs written in one `<text>` run (a run's characters stay below twice this, with the
-/// inferred spaces); a longer run continues in another element.
+/// Most characters written in one `<text>` run, the source's spaces included; a longer run
+/// continues in another element, so a hostile line can't build a huge string.
 const MAX_RUN_CHARS: usize = 100_000;
 /// Largest text em (world units) written as text; a hostile height stays outlines.
 const MAX_TEXT_EM: f64 = 1.0e12;
@@ -222,16 +225,16 @@ fn text_runs(list: &DisplayList) -> Vec<TextRun> {
             i += 1;
             continue;
         };
-        let mut run = TextRun {
-            first: t.prim,
-            prims: vec![t.prim],
-            text: String::from(first_char),
-            origin: glyph.origin,
-            x: glyph.x,
-            y: glyph.y,
-            face: glyph.face.clone(),
-            em,
-        };
+        // Whitespace before the line's first glyph belongs to the text too.
+        let mut text = String::new();
+        if !push_spaces(&mut text, glyph.spaces_before, 1) {
+            // More leading spaces than a run holds: the glyph stays an outline.
+            i += 1;
+            continue;
+        }
+        text.push(first_char);
+        let mut run =
+            TextRun { first: t.prim, prims: vec![t.prim], text, origin: glyph.origin, x: glyph.x, y: glyph.y, face: glyph.face.clone(), em };
         let mut prev = t;
         let mut j = i + 1;
         while let Some(n) = list.texts.get(j) {
@@ -247,13 +250,15 @@ fn text_runs(list: &DisplayList) -> Vec<TextRun> {
             {
                 break;
             }
-            // O(1): the glyph count, not a rescan of the run's characters (which made a long
-            // TEXT quadratic). A run's text holds at most twice its glyphs (inferred spaces).
-            if run.prims.len() >= MAX_RUN_CHARS {
+            let Some(c) = text_char(n.glyph.ch) else { break };
+            // The source's own spaces are part of the run's text, so they must fit in it; when
+            // they don't, the run ends here and the glyph continues in the next one (or stays an
+            // outline when even a fresh run can't hold its spaces).
+            if !push_spaces(&mut run.text, n.glyph.spaces_before, 1) {
                 break;
             }
-            let Some(c) = text_char(n.glyph.ch) else { break };
-            if space_between(prev, n, em) {
+            // A gap that the source's whitespace already explains needs no inferred space.
+            if n.glyph.spaces_before == 0 && space_between(prev, n, em) {
                 run.text.push(' ');
             }
             run.text.push(c);
@@ -316,21 +321,36 @@ fn on_line(prev: &PlotText, next: &PlotText, em: f64) -> bool {
 }
 
 /// Whether the gap between two glyphs is a space (a gap wider than the previous glyph's own
-/// advance). Whitespace has no outline glyph, so the gap is where the space was drawn.
+/// advance). Only asked when the source recorded no whitespace before `next` (see
+/// [`TextGlyph::spaces_before`]); whitespace has no outline glyph, so a gap is all that's left of
+/// it in the display list.
 fn space_between(prev: &PlotText, next: &PlotText, em: f64) -> bool {
     let x = prev.glyph.x;
     let width = x.len();
     if !(width.is_finite() && width > 0.0) {
         return false;
     }
-    let advance = cadcraft_fonts::subset::advance(&prev.glyph.face, prev.glyph.gid);
-    if !advance.is_finite() {
+    let Some(advance) = cadcraft_fonts::ttf::advance(&prev.glyph.face, prev.glyph.gid) else {
         return false;
-    }
+    };
     let expected = advance / 1000.0 * width;
     let along = (next.glyph.origin - prev.glyph.origin).dot(x) / width;
     let extra = along - expected;
     extra > 0.15 * em && extra <= MAX_TEXT_EM
+}
+
+/// Append `count` ASCII spaces to `text` when they fit, together with `extra` more characters,
+/// in one run (`MAX_RUN_CHARS`). A count too large for the run leaves `text` untouched (and
+/// spends no memory): the caller ends the run instead, so a hostile line of spaces can't build
+/// an enormous element.
+fn push_spaces(text: &mut String, count: u32, extra: usize) -> bool {
+    let count = usize::try_from(count).unwrap_or(usize::MAX);
+    let room = MAX_RUN_CHARS.saturating_sub(text.len());
+    if count.saturating_add(extra) > room {
+        return false;
+    }
+    text.extend(std::iter::repeat_n(' ', count));
+    true
 }
 
 /// A character SVG text may hold: not a control character or an XML noncharacter.
@@ -370,7 +390,7 @@ fn write_run(s: &mut String, list: &DisplayList, run: &TextRun, white: Rgb, dp: 
     }
     let _ = write!(
         s,
-        r#"<text x="0" y="0" transform="matrix({a:.dp$} {b:.dp$} {c:.dp$} {d:.dp$} {e:.dp$} {f:.dp$})" font-family="{family}" font-size="{em:.dp$}" text-anchor="start" fill="{color}"{op}>"#
+        r#"<text x="0" y="0" xml:space="preserve" transform="matrix({a:.dp$} {b:.dp$} {c:.dp$} {d:.dp$} {e:.dp$} {f:.dp$})" font-family="{family}" font-size="{em:.dp$}" text-anchor="start" fill="{color}"{op}>"#
     );
     escape_into(s, &run.text);
     s.push_str("</text>");

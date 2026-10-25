@@ -123,7 +123,7 @@ fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
 
 /// Plot `space` to SVG: a layout shows its sheet, model space goes through the plot style table,
 /// lineweights and the scale that fits the paper; `text` selects `<text>` elements or the glyph
-/// outlines the list holds.
+/// outlines the list holds (the default, as on paper).
 fn svg(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let o = PdfOptions::from_json(opts);
     let text = crate::svg::TextMode::from_json(opts);

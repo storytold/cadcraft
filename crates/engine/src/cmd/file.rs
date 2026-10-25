@@ -115,7 +115,7 @@ pub type ExportWithHook = fn(&Drawing, &str, &Value) -> std::result::Result<Vec<
 
 static EXPORT_WITH: OnceLock<ExportWithHook> = OnceLock::new();
 
-/// Install the host's exporter for JSON options (SVG `text` mode, and the like).
+/// Install the host's exporter for JSON options (SVG's `text: "text"` opt-in and the like).
 pub fn set_export_with(h: ExportWithHook) {
     let _ = EXPORT_WITH.set(h);
 }

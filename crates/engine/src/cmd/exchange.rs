@@ -41,7 +41,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("export", "Export...", run_export)
             .menu(&["File", "Export..."])
             .alias(&["exp"])
-            .params("{path? (else returns base64 `data`), format?: dxf|dwg|svg|png|pdf (default: the path's extension), text?: \"text\" | \"geometry\" (SVG: write TEXT/MTEXT as <text> elements, the default, or as glyph outlines)} → {format, bytes, path? | data}")
+            .params("{path? (else returns base64 `data`), format?: dxf|dwg|svg|png|pdf (default: the path's extension), text?: \"text\" | \"geometry\" (SVG: glyph outlines by default; `text: \"text\"` opts in to TEXT/MTEXT as <text> elements)} → {format, bytes, path? | data}")
             .noundo(),
         CommandSpec::new("preview", "Plot Preview", run_preview)
             .menu(&["File", "Plot Preview"])

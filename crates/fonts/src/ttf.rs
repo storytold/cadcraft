@@ -837,6 +837,14 @@ fn outline(face: &Face, k: GlyphKey) -> Arc<GlyphOutline> {
     g
 }
 
+/// The advance width of glyph `gid` of `face`, in font units (1000 per em, the scale of a
+/// [`crate::TextGlyph`]'s axes); `None` when it can't be measured. Output that writes text uses
+/// it to tell a kerning gap from a space.
+pub fn advance(face: &Face, gid: u16) -> Option<f64> {
+    let advance = glyph_by_id(face, u32::from(gid)).advance;
+    advance.is_finite().then_some(advance)
+}
+
 /// The outline of `c` from a fallback font, if any installed font has it.
 pub(crate) fn fallback_glyph(c: char) -> Option<Arc<GlyphOutline>> {
     let f = fallback_for(c)?;
@@ -853,14 +861,23 @@ fn glyph_or_fallback(face: &Face, c: char) -> Arc<GlyphOutline> {
 }
 
 /// The [`crate::TextGlyph`] of a glyph placed like [`place_glyph`] does (its outline index is
-/// set when it is added). `None` for the missing-glyph shape.
-pub(crate) fn text_glyph(g: &GlyphOutline, c: char, x: f64, h: f64, wf: f64, shear: f64) -> Option<crate::TextGlyph> {
+/// set when it is added), with `spaces_before` whitespace characters of the source before it.
+/// `None` for the missing-glyph shape.
+pub(crate) fn text_glyph(g: &GlyphOutline, c: char, x: f64, h: f64, wf: f64, shear: f64, spaces_before: u32) -> Option<crate::TextGlyph> {
     // Font units at 1000 per em scale by h / cap.
-    text_glyph_at(g, c, Vec2::new(x, 0.0), h / g.cap, wf, shear)
+    text_glyph_at(g, c, Vec2::new(x, 0.0), h / g.cap, wf, shear, spaces_before)
 }
 
 /// [`text_glyph`] with the glyph's origin at `origin` and font units scaled by `scale`.
-pub(crate) fn text_glyph_at(g: &GlyphOutline, c: char, origin: Vec2, scale: f64, wf: f64, shear: f64) -> Option<crate::TextGlyph> {
+pub(crate) fn text_glyph_at(
+    g: &GlyphOutline,
+    c: char,
+    origin: Vec2,
+    scale: f64,
+    wf: f64,
+    shear: f64,
+    spaces_before: u32,
+) -> Option<crate::TextGlyph> {
     let gid = u16::try_from(g.gid).ok().filter(|_| g.mapped)?;
     let face = g.face.clone()?;
     let em = 1000.0 * scale;
@@ -872,6 +889,7 @@ pub(crate) fn text_glyph_at(g: &GlyphOutline, c: char, origin: Vec2, scale: f64,
         origin,
         x: Vec2::new(em * wf, 0.0),
         y: Vec2::new(em * shear, em),
+        spaces_before,
     })
 }
 
@@ -923,16 +941,23 @@ pub fn shape(face: &Face, s: &str, height: f64, width_factor: f64, oblique: f64)
     // outline, and a short repeated string copies it per occurrence, so cap the total geometry
     // kept in the Shaped result (CWE-400). Advances still accumulate so the width stays sensible.
     let mut points_left: usize = MAX_SHAPED_POINTS;
+    // Whitespace characters since the last visible one: whitespace has no outline, so its count
+    // travels to the next glyph (an output writing text restores every space, not just one).
+    let mut spaces = 0u32;
     for (c, under, over) in crate::decode_controls(s) {
         if crate::bidi::is_format_control(c) {
             continue;
         }
         let g = glyph_or_fallback(face, c);
-        if !c.is_whitespace()
-            && let Some(contours) = place_glyph_budgeted(&g, x, h, wf, shear, &mut points_left)
-        {
-            // Even an empty mapped glyph needs a valid outline slot for text export.
-            out.push_glyph(contours, text_glyph(&g, c, x, h, wf, shear));
+        if c.is_whitespace() {
+            spaces = spaces.saturating_add(1);
+        } else {
+            if let Some(contours) = place_glyph_budgeted(&g, x, h, wf, shear, &mut points_left) {
+                // Even an empty mapped glyph needs a valid outline slot for text export.
+                out.push_glyph(contours, text_glyph(&g, c, x, h, wf, shear, spaces));
+            }
+            // Only the whitespace immediately before a glyph is its own; never carry it on.
+            spaces = 0;
         }
         let adv = g.advance * h / g.cap * wf;
         spans.push((x, x + adv, under, over));
@@ -1059,7 +1084,7 @@ mod geometry_budget_tests {
         let glyph = GlyphOutline { cap: 1.0, mapped: true, gid: 1, face: Some(Face { bytes: Arc::new(Vec::new()), index: 0 }), ..Default::default() };
         let contours = place_glyph_budgeted(&glyph, 0.0, 1.0, 1.0, 0.0, &mut 0).unwrap();
         let mut shaped = Shaped::default();
-        shaped.push_glyph(contours, text_glyph(&glyph, 'x', 0.0, 1.0, 1.0, 0.0));
+        shaped.push_glyph(contours, text_glyph(&glyph, 'x', 0.0, 1.0, 1.0, 0.0, 0));
         assert_eq!(shaped.text.len(), 1);
         assert_eq!(shaped.text[0].outline, 0);
         assert!(shaped.glyphs[shaped.text[0].outline].is_empty());
@@ -1071,7 +1096,7 @@ mod geometry_budget_tests {
         let glyph = GlyphOutline { cap: 1.0, ..Default::default() };
         let contours = place_glyph_budgeted(&glyph, 0.0, 1.0, 1.0, 0.0, &mut 0).unwrap();
         let mut shaped = Shaped::default();
-        shaped.push_glyph(contours, text_glyph(&glyph, 'x', 0.0, 1.0, 1.0, 0.0));
+        shaped.push_glyph(contours, text_glyph(&glyph, 'x', 0.0, 1.0, 1.0, 0.0, 0));
         assert!(shaped.is_empty());
         assert!(shaped.text.is_empty());
     }

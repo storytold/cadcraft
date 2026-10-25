@@ -1,5 +1,6 @@
 //! SVG export writes TEXT and MTEXT in installed outline fonts as `<text>` (searchable and
-//! editable) by default, with `text: "geometry"` keeping the exact glyph outlines (#1876).
+//! editable) when the export asks for it with `text: "text"`; glyph outlines stay the default
+//! (#1876).
 //!
 //! The font is a tiny synthetic TrueType file built here (no font files in the repository).
 
@@ -341,18 +342,115 @@ fn hostile_text_never_panics() {
     assert!(s.starts_with("<svg") && s.ends_with("</svg>"), "{s}");
 }
 
-/// Guards that `export_with` reads the `text` option for SVG (text by default, glyph outlines for
-/// `"geometry"`) and that formats such as DXF ignore it.
+/// Guards that `export_with` keeps glyph outlines unless `text: "text"` asks for `<text>`
+/// elements, that the default output is byte-identical to an explicit `"geometry"` export, and
+/// that an unknown value falls back to geometry; other formats ignore the option.
 #[test]
 fn the_export_json_option_selects_the_mode() {
     let mut d = drawing();
     text(&mut d, (0.0, 0.0), "ABBA", 10.0);
-    let plain = cadcraft_io::export_with(&d, "a.svg", &json!({})).unwrap();
-    assert!(String::from_utf8_lossy(&plain).contains("<text"));
+    let default = cadcraft_io::export_with(&d, "a.svg", &json!({})).unwrap();
+    assert!(!String::from_utf8_lossy(&default).contains("<text"), "geometry is the default");
     let outlines = cadcraft_io::export_with(&d, "a.svg", &json!({ "text": "geometry" })).unwrap();
-    assert!(!String::from_utf8_lossy(&outlines).contains("<text"));
+    assert_eq!(default, outlines, "the default export is the geometry export");
+    let unknown = cadcraft_io::export_with(&d, "a.svg", &json!({ "text": "kludge" })).unwrap();
+    assert_eq!(default, unknown, "an unknown value falls back to geometry");
+    let as_text = cadcraft_io::export_with(&d, "a.svg", &json!({ "text": "text" })).unwrap();
+    assert!(String::from_utf8_lossy(&as_text).contains("<text"), "text: \"text\" opts in");
+    let upper = cadcraft_io::export_with(&d, "a.svg", &json!({ "text": "TEXT" })).unwrap();
+    assert_eq!(as_text, upper, "the option is case-insensitive");
     // Other formats ignore the option.
-    assert!(cadcraft_io::export_with(&d, "a.dxf", &json!({ "text": "geometry" })).is_ok());
+    assert!(cadcraft_io::export_with(&d, "a.dxf", &json!({ "text": "text" })).is_ok());
+}
+
+/// Guards that repeated source spaces survive: they are neither collapsed to one nor lost, and
+/// every `<text>` element preserves them with `xml:space="preserve"`.
+#[test]
+fn repeated_spaces_are_kept() {
+    let mut d = drawing();
+    text(&mut d, (0.0, 0.0), "A  B", 10.0);
+    text(&mut d, (0.0, 20.0), "A   B", 10.0);
+    text(&mut d, (0.0, 40.0), " AB", 10.0);
+    text(&mut d, (0.0, 60.0), "A B", 10.0);
+    let s = svg::export_window_with_text(&d, &Space::Model, None, true, TextMode::Text);
+
+    assert!(s.contains(">A  B</text>"), "two spaces stay two: {s}");
+    assert!(s.contains(">A   B</text>"), "three spaces stay three: {s}");
+    assert!(s.contains("> AB</text>"), "a leading space stays: {s}");
+    assert!(s.contains(">A B</text>"), "one space is unchanged: {s}");
+    assert_eq!(s.matches("<text").count(), 4, "one run per line: {s}");
+    assert_eq!(s.matches("xml:space=\"preserve\"").count(), 4, "every text element preserves spaces: {s}");
+}
+
+/// Guards that a gap with no source whitespace is not turned into a space when it is a kern,
+/// and that a gap explained by a source space is not also given an inferred one.
+#[test]
+fn a_gap_without_source_whitespace_does_not_double_count() {
+    fonts();
+    let Some(face) = cadcraft_fonts::ttf::Face::new(std::sync::Arc::new(test_font()), 0) else { panic!("the test font parses") };
+    let glyph = |i: u32, at: f64, spaces_before: u32| PlotText {
+        prim: i,
+        verts: 3,
+        bounds: Bounds2::EMPTY,
+        glyph: TextGlyph {
+            face: face.clone(),
+            gid: 1,
+            ch: 'A',
+            outline: 0,
+            // The glyph's own advance is 0.6 em, so 0.1 em past it is a kern, not a space.
+            origin: Vec2::new(at, 0.0),
+            x: Vec2::new(1.0, 0.0),
+            y: Vec2::new(0.0, 1.0),
+            spaces_before,
+        },
+    };
+    let mut list = DisplayList::default();
+    list.tris = vec![Vec2::ZERO, Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0)];
+    list.bounds = Bounds2::from_points(list.tris.iter().copied());
+    for (i, at) in [0.0, 0.7].into_iter().enumerate() {
+        list.prims.push(DPrim {
+            handle: cadcraft_doc::Handle(0),
+            color: Rgb(0, 0, 0),
+            aci7: false,
+            lw: 0.0,
+            transparency: 0,
+            kind: Kind::Tris,
+            start: 0,
+            len: 3,
+        });
+        list.texts.push(glyph(i as u32, at, 0));
+    }
+    let s = svg::export_list_with(&list, None, TextMode::Text);
+    assert!(s.contains(">AA</text>"), "a kern adds no space: {s}");
+    assert_eq!(s.matches("<text").count(), 1, "{s}");
+
+    // A gap explained by the source's own space gets exactly that one space, not two.
+    list.texts[1] = glyph(1, 0.7, 1);
+    let s = svg::export_list_with(&list, None, TextMode::Text);
+    assert!(s.contains(">A A</text>"), "one source space, one space: {s}");
+    assert!(!s.contains(">A  A</text>"), "not doubled by the inferred space: {s}");
+
+    // Without a recorded space, a gap wide enough to be one still falls back to an inferred space
+    // (text positioned glyph by glyph, which other shapers record no counts for).
+    list.texts[1] = glyph(1, 1.0, 0);
+    let s = svg::export_list_with(&list, None, TextMode::Text);
+    assert!(s.contains(">A A</text>"), "a wide gap is still a space: {s}");
+}
+
+/// Guards that a hostile number of spaces stays bounded: no huge element, no enormous
+/// allocation, and the glyph whose spaces don't fit stays an outline (its primitive is written),
+/// so the drawing keeps every glyph.
+#[test]
+fn a_very_long_run_of_spaces_is_bounded() {
+    let mut d = drawing();
+    text(&mut d, (0.0, 0.0), &format!("A{}B", " ".repeat(300_000)), 10.0);
+    let s = svg::export_window_with_text(&d, &Space::Model, None, true, TextMode::Text);
+    assert!(s.starts_with("<svg") && s.ends_with("</svg>"), "still a complete document");
+    let chars: usize = s.split("<text").skip(1).filter_map(|p| p.split("</text>").next()).map(str::len).sum();
+    assert!(chars <= 100_000, "the text of the runs stays bounded: {chars}");
+    assert!(s.contains(">A</text>"), "the first glyph is still text: {s}");
+    assert!(s.contains("<path"), "the glyph whose spaces don't fit stays geometry: {s}");
+    assert!(s.len() < 100_000, "no huge element: {}", s.len());
 }
 
 /// Guards that a family name that isn't a sequence of CSS identifiers (such as
@@ -399,9 +497,9 @@ fn an_ill_conditioned_glyph_stays_geometry() {
     assert!(s.contains("<path"), "the glyph outline stays geometry: {s}");
 }
 
-/// Guards that a long text run is split at `MAX_RUN_CHARS` glyphs: the run-length check counts
-/// glyphs (O(1)) instead of rescanning the run's characters (which made a long TEXT quadratic),
-/// and every glyph is still written.
+/// Guards that a long text run is split at `MAX_RUN_CHARS`: the run-length check uses the run's
+/// character count (O(1)) instead of rescanning it (which made a long TEXT quadratic), and every
+/// glyph is still written.
 #[test]
 fn a_long_text_run_is_bounded() {
     fonts();
@@ -435,6 +533,7 @@ fn a_long_text_run_is_bounded() {
                 origin: Vec2::new(f64::from(i) * 0.6, 0.0),
                 x: Vec2::new(1.0, 0.0),
                 y: Vec2::new(0.0, 1.0),
+                spaces_before: 0,
             },
         });
     }

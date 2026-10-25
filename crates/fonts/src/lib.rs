@@ -174,7 +174,8 @@ pub fn shape_stroke(s: &str, height: f64, width_factor: f64, oblique: f64) -> Sh
                     let (y, scale) = stroke_fallback_metrics(&g, c, h);
                     let contours = ttf::place_glyph_at(&g, Vec2::new(x, y), scale, wf, shear);
                     if !contours.is_empty() {
-                        out.push_glyph(contours, ttf::text_glyph_at(&g, c, Vec2::new(x + y * shear, y), scale, wf, shear));
+                        // The stroke font does not count spaces; its fallbacks write none.
+                        out.push_glyph(contours, ttf::text_glyph_at(&g, c, Vec2::new(x + y * shear, y), scale, wf, shear, 0));
                     }
                     adv = g.advance * scale * wf;
                     gap = 0.0;
@@ -333,6 +334,17 @@ pub struct TextGlyph {
     pub x: Vec2,
     /// One em up (obliquing applied).
     pub y: Vec2,
+    /// How many whitespace characters of the source text immediately preceded this glyph.
+    ///
+    /// Whitespace has no outline glyph, so it is not in [`Shaped::glyphs`]; an output that writes
+    /// the text back (SVG `<text>`) would otherwise have to infer a space from the gap
+    /// between two glyphs and could only ever write one, collapsing `A  B` to `A B`.
+    ///
+    /// Right-to-left text shaped by the complex shaper records no [`TextGlyph`]s at all, so it
+    /// carries no space count; a fallback outline glyph in the stroke font passes 0. Repeated
+    /// spaces around those glyphs are therefore not restored. Whitespace at the end of a line has
+    /// no following glyph to carry it, so it is not recorded either.
+    pub spaces_before: u32,
 }
 
 impl Shaped {

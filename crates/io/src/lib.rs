@@ -114,7 +114,8 @@ pub fn write_with(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> Re
 }
 
 /// Like [`write`], with the export command's JSON options. SVG honours `text?: "text" |
-/// "geometry"` ([`svg::TextMode`], default text); other formats ignore it.
+/// "geometry"` ([`svg::TextMode`]: glyph outlines by default, `<text>` elements for `"text"`);
+/// other formats ignore it.
 pub fn export_with(d: &Drawing, name: &str, opts: &serde_json::Value) -> Result<Vec<u8>> {
     match ext(name).as_str() {
         "svg" => Ok(svg::export_window_with_text(d, &Space::Model, None, true, svg::TextMode::from_json(opts)).into_bytes()),
