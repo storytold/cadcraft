@@ -210,7 +210,7 @@ fn tessellate_spans_measures_narrow_knot_spans() {
     let control = vec![Vec2::ZERO, Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0), Vec2::ZERO];
     let s = Spline { degree: 1, knots: vec![0.0, 0.0, 1e-9, 2e-9, 1.0, 1.0], control, ..Spline::default() };
     assert!(s.is_valid());
-    assert!(crate::shoelace(&s.tessellate(1e-3)).abs() < 1e-6);
+    assert!((crate::shoelace(&s.tessellate(1e-3)).abs() - 0.5).abs() < 1e-6);
     let pts = s.tessellate_spans(1e-3);
     assert!(pts.iter().any(|p| p.near(Vec2::new(1.0, 0.0), 1e-12)), "{pts:?}");
     assert!((crate::shoelace(&pts).abs() - 0.5).abs() < 1e-12);
@@ -462,6 +462,52 @@ fn banded_solve_matches_the_dense_sweep_bit_for_bit() {
     }
 }
 
+/// A 20 × 12 rectangle as one closed cubic with triple internal knots at irrational
+/// parameters (#2055): every corner is a C0 knot no uniform parameter grid hits.
+fn rectangle(scale: f64) -> Spline {
+    let (a, b, c) = (2f64.sqrt() / 100.0, 3f64.sqrt() / 50.0, 5f64.sqrt() / 40.0);
+    let mut knots = vec![0.0; 4];
+    for k in [a, b, c] {
+        knots.extend([k; 3]);
+    }
+    knots.extend([1.0; 4]);
+    let pts = [
+        (0.0, 0.0),
+        (20.0 / 3.0, 0.0),
+        (40.0 / 3.0, 0.0),
+        (20.0, 0.0),
+        (20.0, 4.0),
+        (20.0, 8.0),
+        (20.0, 12.0),
+        (40.0 / 3.0, 12.0),
+        (20.0 / 3.0, 12.0),
+        (0.0, 12.0),
+        (0.0, 8.0),
+        (0.0, 4.0),
+        (0.0, 0.0),
+    ];
+    let control = pts.iter().map(|&(x, y)| Vec2::new(x * scale, y * scale)).collect();
+    Spline { degree: 3, knots, control, weights: vec![1.0; 13], closed: true, ..Spline::default() }
+}
+
+#[test]
+fn tessellation_keeps_repeated_knot_corners() {
+    for scale in [1.0, 1000.0] {
+        let s = rectangle(scale);
+        assert!(s.is_valid());
+        let corners = [(0.0, 0.0), (20.0, 0.0), (20.0, 12.0), (0.0, 12.0)].map(|(x, y)| Vec2::new(x * scale, y * scale));
+        for tol in [0.1, 0.01, 0.001, 1e-6] {
+            let pts = s.tessellate(tol * scale);
+            assert!(pts.len() <= MAX_SAMPLES + 1, "{} points", pts.len());
+            for c in corners {
+                let near = pts.iter().map(|p| p.dist(c)).fold(f64::INFINITY, f64::min);
+                assert!(near <= 1e-9 * scale, "corner {c:?} missing at tol {tol}, nearest vertex {near}");
+            }
+            assert!(pts.windows(2).all(|w| w[0] != w[1]), "zero-length join at tol {tol}");
+        }
+    }
+}
+
 #[test]
 fn solve_handles_negative_zeros_signed_zero_sums_and_hostile_values() {
     let mut seed = 77_u64;
@@ -571,5 +617,25 @@ fn the_cyclic_matrix_of_a_closed_fit_keeps_the_full_sweep() {
         a[n - 1][0] = -0.3;
         let b: Vec<f64> = (0..n).map(|_| noise(&mut seed)).collect();
         assert_same_solution(&a, &b, &format!("cyclic n={n}"));
+    }
+}
+
+#[test]
+fn tessellation_of_a_smooth_rational_span_stays_within_tolerance() {
+    // A quarter circle as a rational quadratic Bezier.
+    let h = std::f64::consts::FRAC_1_SQRT_2;
+    let s = Spline {
+        degree: 2,
+        knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        control: vec![Vec2::new(10.0, 0.0), Vec2::new(10.0, 10.0), Vec2::new(0.0, 10.0)],
+        weights: vec![1.0, h, 1.0],
+        ..Spline::default()
+    };
+    for tol in [0.1, 0.01, 0.001] {
+        let pts = s.tessellate(tol);
+        for w in pts.windows(2) {
+            let mid = (w[0] + w[1]) * 0.5;
+            assert!(10.0 - mid.dist(Vec2::ZERO) <= tol, "chord sag over {tol}");
+        }
     }
 }
