@@ -2,7 +2,9 @@
 //! multileader styles, layout page setups, named views, UCSs and groups.
 
 use cadcraft_doc::geom::{Vec2, Vec3};
-use cadcraft_doc::{Common, DashElement, Drawing, EntityKind, Group, Line, Linetype, MLeaderStyle, NamedView, Space, TextStyle, Ucs, library};
+use cadcraft_doc::{
+    Common, DashElement, Drawing, EntityKind, Group, Line, Linetype, MLeaderStyle, NamedView, Space, TableStyle, TextStyle, Ucs, library,
+};
 use cadcraft_io::{read_dxf, write_dxf};
 
 fn round_trip(d: &Drawing) -> Drawing {
@@ -80,6 +82,15 @@ fn multileader_styles_and_current_style_round_trip() {
     let r = read_dxf(text.as_bytes()).expect("reopen");
     assert_eq!(r.mleader_styles, d.mleader_styles);
     assert_eq!(r.header.str("CMLEADERSTYLE", ""), "Callout");
+}
+
+#[test]
+fn current_table_style_round_trips() {
+    let mut d = Drawing::new_imperial();
+    d.table_styles.push(TableStyle { name: "TS".into(), ..TableStyle::default() });
+    d.header.set_str("CTABLESTYLE", "TS");
+    let r = round_trip(&d);
+    assert_eq!(r.header.str("CTABLESTYLE", ""), "TS");
 }
 
 #[test]

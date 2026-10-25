@@ -19,6 +19,7 @@ const HEADER_VARS: &[(&str, i32)] = &[
     ("CMLJUST", 70),
     ("CMLSCALE", 40),
     ("TEXTSTYLE", 7),
+    ("CTABLESTYLE", 7),
     ("CLAYER", 8),
     ("CELTYPE", 6),
     ("CECOLOR", 62),
