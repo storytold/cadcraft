@@ -18,6 +18,18 @@ fn hooks() {
             if page > 3 { Err(format!("the PDF has no page {page} (it has 3)")) } else { Ok((3, 297.0, 210.0, measure)) }
         },
         render: |_, _, side| Ok((side, side, vec![255; (side * side * 4) as usize])),
+        // A diagonal and a horizontal line crossing it at the page's middle.
+        lines: |bytes, _| {
+            let off = |n: &str| bytes.windows(5 + n.len()).any(|w| w == format!("%OFF:{n}").as_bytes());
+            let mut l = Vec::new();
+            if !off("MURS") {
+                l.push(vec![(0.2, 0.2), (0.6, 0.6)]);
+            }
+            if !off("COTES") {
+                l.push(vec![(0.1, 0.5), (0.9, 0.5)]);
+            }
+            Ok(l)
+        },
         region: |_, _, _, w, h| Ok((w, h, vec![255; (w * h * 4) as usize])),
         layers: |_| Ok(vec![("MURS".into(), true), ("COTES".into(), true)]),
         with_layers: |bytes, v| {
@@ -574,4 +586,428 @@ fn an_underlay_goes_on_the_current_layer_and_follows_it() {
     assert_eq!(pages(&s), (0, 0), "layer frozen: no page");
     s.execute("layer.set", &json!({"name": "IMPORT", "frozen": false, "plot": false})).unwrap();
     assert_eq!(pages(&s), (1, 0), "layer not plotted: shown, not plotted");
+}
+
+/// A drawing opened before its PDF is reachable: once the PDF is back, the page gets its size
+/// and object snaps find its lines, without reopening the drawing.
+#[test]
+fn object_snaps_find_the_page_lines_once_the_pdf_is_back() {
+    use cadcraft_engine::cmd::underlay::retry_sizes;
+    use cadcraft_engine::snap::{mode, osnap};
+    hooks();
+    real_io();
+    let dir = std::env::temp_dir().join(format!("cadcraft-pdf-snap-later-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let pdf = dir.join("Later.pdf");
+    let dxf = dir.join("Later.dxf");
+    // Written straight to the file, so this PDF's lines were never read (they are kept per file,
+    // page and PDF layers for the whole process).
+    let mut d = cadcraft_engine::doc::Drawing::new_metric();
+    let u = cadcraft_engine::doc::PdfUnderlay {
+        insert: cadcraft_geom::Vec3::new(3000.0, 0.0, 0.0),
+        scale: 25.4,
+        path: pdf.to_string_lossy().to_string(),
+        ..cadcraft_engine::doc::PdfUnderlay::default()
+    };
+    d.add(&Space::Model, cadcraft_engine::doc::Common::default(), EntityKind::PdfUnderlay(u)).unwrap();
+    std::fs::write(&dxf, cadcraft_io::write(&d, "Later.dxf").unwrap()).unwrap();
+    let mut s = Session::empty();
+    s.execute("open", &json!({"path": dxf.to_string_lossy()})).unwrap();
+    let at = |fx: f64, fy: f64| cadcraft_geom::Vec2::new(3000.0 + fx * 297.0, fy * 210.0);
+    let snap = |s: &Session| osnap(s.doc().unwrap(), &Space::Model, at(0.5, 0.5) + cadcraft_geom::Vec2::new(0.7, -0.4), 3.0, mode::INT, None, false);
+    assert!(snap(&s).is_none(), "no PDF: no lines");
+    std::fs::write(&pdf, b"%PDF-1.7 fake").unwrap();
+    assert!(retry_sizes(&mut s));
+    let hit = snap(&s).map(|h| (h.mode, h.point));
+    assert!(hit.is_some_and(|(m, p)| m == mode::INT && p.dist(at(0.5, 0.5)) < 1e-6), "{hit:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The canvas's way: the size read on a worker (`page_size`), set on the UI thread
+/// (`set_sizes`), and the page's lines read in the background, then found by object snaps.
+#[test]
+fn object_snaps_find_the_page_lines_read_in_the_background() {
+    use cadcraft_engine::cmd::underlay::{SizeRead, page_size, set_sizes, unsized_pages};
+    use cadcraft_engine::snap::{mode, osnap};
+    hooks();
+    real_io();
+    let dir = std::env::temp_dir().join(format!("cadcraft-pdf-snap-bg-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let pdf = dir.join("Background.pdf");
+    let dxf = dir.join("Background.dxf");
+    let mut d = cadcraft_engine::doc::Drawing::new_metric();
+    let u = cadcraft_engine::doc::PdfUnderlay {
+        insert: cadcraft_geom::Vec3::new(5000.0, 0.0, 0.0),
+        scale: 25.4,
+        path: pdf.to_string_lossy().to_string(),
+        ..cadcraft_engine::doc::PdfUnderlay::default()
+    };
+    d.add(&Space::Model, cadcraft_engine::doc::Common::default(), EntityKind::PdfUnderlay(u)).unwrap();
+    std::fs::write(&dxf, cadcraft_io::write(&d, "Background.dxf").unwrap()).unwrap();
+    let mut s = Session::empty();
+    s.execute("open", &json!({"path": dxf.to_string_lossy()})).unwrap();
+    std::fs::write(&pdf, b"%PDF-1.7 fake").unwrap();
+    let todo = unsized_pages(&s);
+    assert_eq!(todo.pages.len(), 1);
+    let sizes: std::collections::HashMap<(String, u32), cadcraft_geom::Vec2> = todo
+        .pages
+        .into_iter()
+        .filter_map(|(stored, page)| match page_size(&stored, todo.document.as_deref(), page, None) {
+            SizeRead::Found(size) => Some(((stored, page), size)),
+            _ => None,
+        })
+        .collect();
+    assert!(set_sizes(&mut s, todo.drawing, todo.document.as_deref(), &sizes));
+    let at = cadcraft_geom::Vec2::new(5000.0 + 0.5 * 297.0, 0.5 * 210.0);
+    let mut hit = None;
+    for _ in 0..200 {
+        hit = osnap(s.doc().unwrap(), &Space::Model, at + cadcraft_geom::Vec2::new(0.7, -0.4), 3.0, mode::INT, None, false).map(|h| h.point);
+        if hit.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(hit.is_some_and(|p| p.dist(at) < 1e-6), "{hit:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn object_snaps_find_the_lines_drawn_on_the_page() {
+    use cadcraft_engine::snap::{mode, osnap};
+    hooks();
+    let path = pdf_file("Snap.pdf", b"%PDF-1.7 fake");
+    let mut s = Session::empty();
+    s.new_drawing(true);
+    s.execute("pdfattach", &json!({"path": path, "at": [1000, 0], "scale": 2})).unwrap();
+    let d = s.doc().unwrap();
+    let (w, h) = (297.0 * 2.0, 210.0 * 2.0);
+    let at = |fx: f64, fy: f64| cadcraft_geom::Vec2::new(1000.0 + fx * w, fy * h);
+    let near = |p: cadcraft_geom::Vec2| p + cadcraft_geom::Vec2::new(0.7, -0.4);
+    let snap = |p, m| osnap(d, &Space::Model, near(p), 3.0, m, None, false).map(|h| (h.mode, h.point));
+    let close = |a: cadcraft_geom::Vec2, b: cadcraft_geom::Vec2| a.dist(b) < 1e-6;
+
+    let (m, p) = snap(at(0.2, 0.2), mode::END).unwrap();
+    assert!(m == mode::END && close(p, at(0.2, 0.2)), "{p:?}");
+    let (m, p) = snap(at(0.4, 0.4), mode::MID).unwrap();
+    assert!(m == mode::MID && close(p, at(0.4, 0.4)), "{p:?}");
+    let (m, p) = snap(at(0.5, 0.5), mode::INT).unwrap();
+    assert!(m == mode::INT && close(p, at(0.5, 0.5)), "{p:?}");
+    // Far from any line of the page: nothing.
+    assert!(snap(at(0.8, 0.2), mode::END | mode::MID | mode::INT).is_none());
+}
+
+#[test]
+fn object_snaps_find_the_page_lines_through_a_layout_viewport() {
+    use cadcraft_engine::snap::{mode, osnap};
+    hooks();
+    let path = pdf_file("Snap-layout.pdf", b"%PDF-1.7 fake");
+    let mut s = Session::empty();
+    s.new_drawing(true);
+    s.execute("pdfattach", &json!({"path": path, "at": [1000, 0], "scale": 2})).unwrap();
+    s.execute("layout", &json!({"option": "set", "name": "Layout1"})).unwrap();
+    s.execute("mview", &json!({"p1": [10, 10], "p2": [200, 150]})).unwrap();
+    s.execute("zoom", &json!({"extents": true})).unwrap();
+    let d = s.doc().unwrap();
+    let paper = Space::Paper("Layout1".into());
+    let vp = d
+        .space(&paper)
+        .unwrap()
+        .iter()
+        .find_map(|e| match &e.kind {
+            EntityKind::Viewport(v) if v.id != 1 => Some(v.clone()),
+            _ => None,
+        })
+        .unwrap();
+    // Model point → paper through the viewport.
+    let k = vp.height / vp.view_height;
+    let (w, h) = (297.0 * 2.0, 210.0 * 2.0);
+    let on_paper = |fx: f64, fy: f64| vp.center.xy() + (cadcraft_geom::Vec2::new(1000.0 + fx * w, fy * h) - vp.view_center) * k;
+    let near = |p: cadcraft_geom::Vec2| p + cadcraft_geom::Vec2::new(0.3, -0.2);
+    let snap = |p, m| osnap(d, &paper, near(p), 2.0, m, None, false).map(|h| (h.mode, h.point));
+    let close = |a: cadcraft_geom::Vec2, b: cadcraft_geom::Vec2| a.dist(b) < 1e-6;
+
+    let (m, p) = snap(on_paper(0.2, 0.2), mode::END).unwrap();
+    assert!(m == mode::END && close(p, on_paper(0.2, 0.2)), "{p:?} vs {:?}", on_paper(0.2, 0.2));
+    let (m, p) = snap(on_paper(0.5, 0.5), mode::INT).unwrap();
+    assert!(m == mode::INT && close(p, on_paper(0.5, 0.5)), "{p:?}");
+    assert!(snap(on_paper(0.8, 0.2), mode::END | mode::MID | mode::INT).is_none());
+}
+
+#[test]
+fn pdfclip_clips_to_a_rectangle_or_polygon_and_follows_the_underlay() {
+    use cadcraft_geom::Vec2;
+    hooks();
+    let path = pdf_file("Clip.pdf", b"%PDF-1.7 fake");
+    let mut s = Session::empty();
+    s.new_drawing(true);
+    let h = s.execute("pdfattach", &json!({"path": path})).unwrap()["handle"].as_str().unwrap().to_string();
+    let bounds = |s: &Session| {
+        let d = s.doc().unwrap();
+        let e = d.space(&Space::Model).into_iter().flat_map(|st| st.iter()).find(|e| matches!(e.kind, EntityKind::PdfUnderlay(_))).unwrap();
+        let b = entity_bounds(d, e, 0);
+        (b.min, b.max)
+    };
+    let close = |a: Vec2, b: Vec2| a.dist(b) < 1e-6;
+
+    s.execute("pdfclip", &json!({"handle": h, "rect": [[150, 40], [50, 100]]})).unwrap();
+    let u = the_underlay(&s);
+    assert!(u.clipping && u.clip.len() == 4);
+    let (lo, hi) = bounds(&s);
+    assert!(close(lo, Vec2::new(50.0, 40.0)) && close(hi, Vec2::new(150.0, 100.0)), "the frame is the boundary: {lo:?} {hi:?}");
+
+    // The boundary moves, turns and scales with the underlay.
+    s.execute("move", &json!({"handles": [h], "from": [0, 0], "to": [1000, 500]})).unwrap();
+    let (lo, hi) = bounds(&s);
+    assert!(close(lo, Vec2::new(1050.0, 540.0)) && close(hi, Vec2::new(1150.0, 600.0)), "{lo:?} {hi:?}");
+    s.execute("scale", &json!({"handles": [h], "base": [1000, 500], "factor": 2})).unwrap();
+    let (lo, hi) = bounds(&s);
+    assert!(close(lo, Vec2::new(1100.0, 580.0)) && close(hi, Vec2::new(1300.0, 700.0)), "{lo:?} {hi:?}");
+
+    // OFF shows the whole page again, keeping the boundary; ON applies it again.
+    s.execute("pdfclip", &json!({"handle": h, "on": false})).unwrap();
+    let u = the_underlay(&s);
+    assert!(!u.clipping && u.clip.len() == 4);
+    let (lo, hi) = bounds(&s);
+    assert!(close(lo, Vec2::new(1000.0, 500.0)) && close(hi - lo, Vec2::new(594.0, 420.0)), "{lo:?} {hi:?}");
+    s.execute("pdfclip", &json!({"handle": h, "on": true})).unwrap();
+    assert!(the_underlay(&s).clipping);
+
+    s.execute("pdfclip", &json!({"handle": h, "polygon": [[1100, 600], [1300, 600], [1200, 800]]})).unwrap();
+    assert_eq!(the_underlay(&s).clip.len(), 3);
+    s.execute("undo", &json!({})).unwrap();
+    assert_eq!(the_underlay(&s).clip.len(), 4, "undone like any change");
+    s.execute("pdfclip", &json!({"handle": h, "delete": true})).unwrap();
+    let u = the_underlay(&s);
+    assert!(!u.clipping && u.clip.is_empty());
+
+    for bad in [
+        json!({"handle": h}),
+        json!({"handle": h, "rect": [[0, 0], [10, 0]]}),
+        json!({"handle": h, "rect": [[0, 0]]}),
+        json!({"handle": h, "polygon": [[0, 0], [1, 1]]}),
+        json!({"handle": h, "polygon": [[0, 0], [1, 1], [2, 2]]}),
+        json!({"handle": h, "rect": [[0, 0], [1, 1]], "delete": true}),
+        json!({"handle": h, "on": "yes"}),
+        json!({"handle": h, "delete": false}),
+    ] {
+        assert!(s.execute("pdfclip", &bad).is_err(), "{bad}");
+    }
+    let line = s.execute("line", &json!({"points": [[0, 0], [1, 1]]})).unwrap()["handles"][0].as_str().unwrap().to_string();
+    assert!(s.execute("pdfclip", &json!({"handle": line, "delete": true})).is_err(), "not an underlay");
+    s.execute("layer.set", &json!({"name": "0", "locked": true})).unwrap();
+    assert!(s.execute("pdfclip", &json!({"handle": h, "rect": [[0, 0], [10, 10]]})).is_err(), "locked layer");
+}
+
+#[test]
+fn pdfclip_typed_rectangle_and_polygon() {
+    hooks();
+    let path = pdf_file("Clip-typed.pdf", b"%PDF-1.7 fake");
+    let mut s = Session::empty();
+    s.new_drawing(true);
+    s.execute("pdfattach", &json!({"path": path})).unwrap();
+    for line in ["pdfclip", "l", "", "", "", "10,10", "60,40"] {
+        s.cmdline(line).unwrap();
+    }
+    let u = the_underlay(&s);
+    assert!(u.clipping && u.clip.len() == 4, "{:?}", s.log);
+    for line in ["pdfclip", "l", "", "off"] {
+        s.cmdline(line).unwrap();
+    }
+    assert!(!the_underlay(&s).clipping);
+    // Polygonal, with a point taken back.
+    for line in ["pdfclip", "l", "", "n", "p", "0,0", "100,0", "500,500", "u", "100,100", "0,100", ""] {
+        s.cmdline(line).unwrap();
+    }
+    let u = the_underlay(&s);
+    assert!(u.clipping && u.clip.len() == 4, "{:?}", u.clip);
+    for line in ["pdfclip", "l", "", "d"] {
+        s.cmdline(line).unwrap();
+    }
+    assert!(the_underlay(&s).clip.is_empty());
+}
+
+#[test]
+fn object_snaps_find_page_lines_only_inside_the_clip_boundary() {
+    use cadcraft_engine::snap::{mode, osnap};
+    hooks();
+    let path = pdf_file("Clip-snap.pdf", b"%PDF-1.7 fake");
+    let mut s = Session::empty();
+    s.new_drawing(true);
+    let h = s.execute("pdfattach", &json!({"path": path})).unwrap()["handle"].as_str().unwrap().to_string();
+    let (w, hh) = (297.0, 210.0);
+    let at = |fx: f64, fy: f64| cadcraft_geom::Vec2::new(fx * w, fy * hh);
+    // Keep the page's right half: the diagonal's lower end (0.2, 0.2) is cut away, the lines'
+    // crossing (0.5, 0.5) kept.
+    s.execute("pdfclip", &json!({"handle": h, "rect": [[0.45 * w, 0.0], [w, hh]]})).unwrap();
+    let d = s.doc().unwrap();
+    let snap =
+        |p: cadcraft_geom::Vec2, m| osnap(d, &Space::Model, p + cadcraft_geom::Vec2::new(0.7, -0.4), 3.0, m, None, false).map(|h| (h.mode, h.point));
+    assert!(snap(at(0.2, 0.2), mode::END).is_none(), "outside the boundary");
+    let (m, p) = snap(at(0.5, 0.5), mode::INT).unwrap();
+    assert!(m == mode::INT && p.dist(at(0.5, 0.5)) < 1e-6, "{p:?}");
+    // The diagonal now ends on the boundary.
+    let (m, p) = snap(at(0.45, 0.45), mode::END).unwrap();
+    assert!(m == mode::END && p.dist(at(0.45, 0.45)) < 1e-6, "{p:?}");
+}
+
+#[test]
+fn pdfclip_inverted_hides_the_inside() {
+    use cadcraft_engine::snap::{mode, osnap};
+    hooks();
+    let path = pdf_file("Clip-invert.pdf", b"%PDF-1.7 fake");
+    let mut s = Session::empty();
+    s.new_drawing(true);
+    let h = s.execute("pdfattach", &json!({"path": path})).unwrap()["handle"].as_str().unwrap().to_string();
+    let (w, hh) = (297.0, 210.0);
+    let at = |fx: f64, fy: f64| cadcraft_geom::Vec2::new(fx * w, fy * hh);
+    // Hide the middle of the page: the lines' crossing (0.5, 0.5) goes, the diagonal's lower end
+    // (0.2, 0.2) stays.
+    s.execute("pdfclip", &json!({"handle": h, "rect": [[0.4 * w, 0.4 * hh], [0.7 * w, 0.7 * hh]], "invert": true})).unwrap();
+    let u = the_underlay(&s);
+    assert!(u.clipping && u.clip_inverted);
+    {
+        let d = s.doc().unwrap();
+        let e = d.space(&Space::Model).into_iter().flat_map(|st| st.iter()).find(|e| matches!(e.kind, EntityKind::PdfUnderlay(_))).unwrap();
+        let b = entity_bounds(d, e, 0);
+        assert!(b.min.dist(at(0.0, 0.0)) < 1e-6 && b.max.dist(at(1.0, 1.0)) < 1e-6, "inverted: the whole page's extents");
+        let snap = |p: cadcraft_geom::Vec2, m| {
+            osnap(d, &Space::Model, p + cadcraft_geom::Vec2::new(0.7, -0.4), 3.0, m, None, false).map(|h| (h.mode, h.point))
+        };
+        assert!(snap(at(0.5, 0.5), mode::INT).is_none(), "hidden inside the boundary");
+        let (m, p) = snap(at(0.2, 0.2), mode::END).unwrap();
+        assert!(m == mode::END && p.dist(at(0.2, 0.2)) < 1e-6, "{p:?}");
+        // The diagonal is cut where it enters the boundary.
+        let (m, p) = snap(at(0.4, 0.4), mode::END).unwrap();
+        assert!(m == mode::END && p.dist(at(0.4, 0.4)) < 1e-6, "{p:?}");
+    }
+    s.execute("pdfclip", &json!({"handle": h, "invert": false})).unwrap();
+    assert!(!the_underlay(&s).clip_inverted);
+    assert!(s.execute("pdfclip", &json!({"handle": h, "invert": "yes"})).is_err());
+    assert!(s.execute("pdfclip", &json!({"handle": h, "on": true, "invert": true})).is_err());
+
+    // Typed: "Invert clip" before the boundary.
+    for line in ["pdfclip", "l", "", "", "i", "r", "10,10", "60,40"] {
+        s.cmdline(line).unwrap();
+    }
+    let u = the_underlay(&s);
+    assert!(u.clipping && u.clip_inverted, "{:?}", s.log);
+}
+
+#[test]
+fn an_underlay_in_a_block_is_drawn_and_snapped_through_each_reference() {
+    use cadcraft_engine::snap::{mode, osnap};
+    use cadcraft_geom::Vec2;
+    hooks();
+    let path = pdf_file("Block.pdf", b"%PDF-1.7 fake");
+    let mut s = Session::empty();
+    s.new_drawing(true);
+    let h = s.execute("pdfattach", &json!({"path": path})).unwrap()["handle"].as_str().unwrap().to_string();
+    s.execute("block", &json!({"name": "PLAN", "base": [0, 0], "handles": [h], "keep": "delete"})).unwrap();
+    s.execute("insert", &json!({"name": "PLAN", "at": [1000, 0]})).unwrap();
+    s.execute("insert", &json!({"name": "PLAN", "at": [0, 1000], "scale": 2, "rotation": 90})).unwrap();
+    let d = s.doc().unwrap();
+    let list = cadcraft_render::build(d, &Space::Model, &cadcraft_render::Options::default());
+    let mut origins: Vec<Vec2> = list.underlays.iter().map(|u| u.origin).collect();
+    origins.sort_by(|a, b| a.x.total_cmp(&b.x));
+    assert_eq!(origins.len(), 2, "one page per reference");
+    assert!(origins[0].dist(Vec2::new(0.0, 1000.0)) < 1e-6 && origins[1].dist(Vec2::new(1000.0, 0.0)) < 1e-6, "{origins:?}");
+    for lu in &list.underlays {
+        assert!(cadcraft_render::pdf_underlay(d, lu.handle).is_some(), "its file is found in the block");
+    }
+    let turned = list.underlays.iter().find(|u| u.origin.x < 1.0).unwrap();
+    assert!(turned.u.dist(Vec2::new(0.0, 594.0)) < 1e-6, "scaled and turned with the reference: {:?}", turned.u);
+
+    // Snaps on the page lines, through the first reference.
+    let at = |fx: f64, fy: f64| Vec2::new(1000.0 + fx * 297.0, fy * 210.0);
+    let (m, p) = osnap(d, &Space::Model, at(0.5, 0.5) + Vec2::new(0.7, -0.4), 3.0, mode::INT, None, false).map(|h| (h.mode, h.point)).unwrap();
+    assert!(m == mode::INT && p.dist(at(0.5, 0.5)) < 1e-6, "{p:?}");
+}
+
+/// A rectangle on a page attached at 500,0, scale 50.8 (2 on paper), rotation 30°, corners
+/// given at 400,100 and 800,400: aligned with the page and cut to its edges, it keeps page
+/// corners (0, 3.86634) and (9.05133, 2.68903), a band whose extents are 401.79,118.30 -
+/// 829.90,400.
+#[test]
+fn a_rectangle_on_a_turned_page_is_aligned_with_the_page_and_cut_to_it() {
+    use cadcraft_geom::Vec2;
+    hooks();
+    let path = pdf_file("Clip-turned.pdf", b"%PDF-1.7 fake");
+    let mut s = Session::empty();
+    s.new_drawing(true);
+    let h =
+        s.execute("pdfattach", &json!({"path": path, "at": [500, 0], "scale": 2, "rotation": 30})).unwrap()["handle"].as_str().unwrap().to_string();
+    s.execute("pdfclip", &json!({"handle": h, "rect": [[400, 100], [800, 400]]})).unwrap();
+    let u = the_underlay(&s);
+    let (lo, hi) = u.clip.iter().fold((Vec2::new(f64::MAX, f64::MAX), Vec2::new(f64::MIN, f64::MIN)), |(lo, hi), p| {
+        (Vec2::new(lo.x.min(p.x), lo.y.min(p.y)), Vec2::new(hi.x.max(p.x), hi.y.max(p.y)))
+    });
+    assert!(lo.dist(Vec2::new(0.0, 2.68903)) < 1e-4 && hi.dist(Vec2::new(9.05133, 3.86634)) < 1e-4, "{lo:?} {hi:?}");
+    let d = s.doc().unwrap();
+    let e = d.space(&Space::Model).into_iter().flat_map(|st| st.iter()).find(|e| matches!(e.kind, EntityKind::PdfUnderlay(_))).unwrap();
+    let b = entity_bounds(d, e, 0);
+    assert!(b.min.dist(Vec2::new(401.79, 118.30)) < 0.01 && b.max.dist(Vec2::new(829.90, 400.0)) < 0.01, "{b:?}");
+    // Wholly off the page: refused.
+    assert!(s.execute("pdfclip", &json!({"handle": h, "rect": [[-900, -900], [-800, -800]]})).is_err());
+}
+
+#[test]
+fn pdfframe_and_pdfosnap_switch_the_frame_and_the_snaps() {
+    use cadcraft_engine::snap::{mode, osnap};
+    hooks();
+    let path = pdf_file("Frame.pdf", b"%PDF-1.7 fake");
+    let mut s = Session::empty();
+    s.new_drawing(true);
+    s.execute("pdfattach", &json!({"path": path})).unwrap();
+    let prims = |s: &Session| {
+        let d = s.doc().unwrap();
+        let o = cadcraft_render::Options::default();
+        (cadcraft_render::build(d, &Space::Model, &o).prims.len(), cadcraft_render::build_plot(d, &Space::Model, &o).prims.len())
+    };
+    let (screen, plot) = prims(&s);
+    assert!(screen > 0 && plot > 0, "frame shown and plotted by default (PDFFRAME 1)");
+    s.execute("setvar", &json!({"name": "PDFFRAME", "value": 0})).unwrap();
+    assert_eq!(prims(&s), (0, 0), "PDFFRAME 0: no frame");
+    s.execute("setvar", &json!({"name": "PDFFRAME", "value": 2})).unwrap();
+    assert_eq!(prims(&s), (screen, 0), "PDFFRAME 2: shown, not plotted");
+    assert!(s.execute("setvar", &json!({"name": "PDFFRAME", "value": 3})).is_err());
+    // The page itself stays whatever the frame.
+    assert_eq!(cadcraft_render::build_plot(s.doc().unwrap(), &Space::Model, &cadcraft_render::Options::default()).underlays.len(), 1);
+
+    let at = cadcraft_geom::Vec2::new(0.5 * 297.0, 0.5 * 210.0) + cadcraft_geom::Vec2::new(0.7, -0.4);
+    assert!(osnap(s.doc().unwrap(), &Space::Model, at, 3.0, mode::INT, None, false).is_some());
+    s.execute("setvar", &json!({"name": "PDFOSNAP", "value": 0})).unwrap();
+    let off = mode::INT | s.settings.snap_extras();
+    assert!(osnap(s.doc().unwrap(), &Space::Model, at, 3.0, off, None, false).is_none(), "PDFOSNAP 0: no snaps on the page");
+    assert!(s.execute("setvar", &json!({"name": "PDFOSNAP", "value": 2})).is_err());
+    // A session setting: another drawing follows it, and no drawing saves it.
+    s.new_drawing(true);
+    assert_eq!(s.execute("getvar", &json!({"name": "PDFOSNAP"})).unwrap()["value"], json!(0));
+    assert!(s.doc().unwrap().header.get("PDFOSNAP").is_none());
+}
+
+#[test]
+fn pdfclip_takes_a_polyline_as_its_boundary() {
+    hooks();
+    let path = pdf_file("Clip-pline.pdf", b"%PDF-1.7 fake");
+    let mut s = Session::empty();
+    s.new_drawing(true);
+    let h = s.execute("pdfattach", &json!({"path": path})).unwrap()["handle"].as_str().unwrap().to_string();
+    let pl = s.execute("pline", &json!({"vertices": [[10, 10], [100, 10], [100, 80], [10, 80]], "closed": true})).unwrap();
+    let pl = pl["handle"].as_str().or(pl["handles"][0].as_str()).unwrap().to_string();
+    s.execute("pdfclip", &json!({"handle": h, "polyline": pl})).unwrap();
+    let u = the_underlay(&s);
+    assert!(u.clipping && u.clip.len() == 4, "{:?}", u.clip);
+    let line = s.execute("line", &json!({"points": [[0, 0], [1, 1]]})).unwrap()["handles"][0].as_str().unwrap().to_string();
+    assert!(s.execute("pdfclip", &json!({"handle": h, "polyline": line})).is_err(), "not a polyline");
+    assert!(s.execute("pdfclip", &json!({"handle": h, "polyline": pl, "rect": [[0, 0], [1, 1]]})).is_err());
+
+    // Typed: the underlay preselected, Select polyline, then the polyline (the last object).
+    s.execute("pdfclip", &json!({"handle": h, "delete": true})).unwrap();
+    s.execute("erase", &json!({"handles": [line]})).unwrap();
+    s.set_selection(vec![cadcraft_engine::doc::Handle::parse_hex(&h).unwrap()]);
+    for t in ["pdfclip", "", "s", "l"] {
+        s.cmdline(t).unwrap();
+    }
+    let u = the_underlay(&s);
+    assert!(u.clipping && u.clip.len() == 4, "{:?} {:?}", u.clip, s.log);
 }

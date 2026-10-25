@@ -1,5 +1,5 @@
-//! PDF underlays: PDFATTACH puts one page of a PDF file under the drawing, at its size on paper.
-//! PDFADJUST fades it, sets its contrast, shows it in greys and adapts its colours to a dark background.
+//! PDF underlays: PDFATTACH puts one page of a PDF file under the drawing, at its size on paper;
+//! PDFCLIP clips it ([`clip`]). PDFADJUST fades it, sets its contrast, shows it in greys and adapts its colours to a dark background.
 //!
 //! The PDF reader belongs to a lower layer (io); the host installs it as [`PdfHooks`], so the
 //! engine stays I/O-agnostic and builds without it report "not available".
@@ -10,6 +10,8 @@ use std::sync::{Arc, OnceLock};
 use cadcraft_doc::{Drawing, EntityKind, Handle, PdfUnderlay, UNDERLAY_MAX_FADE};
 use cadcraft_geom::{Vec2, Vec3};
 use serde_json::{Value, json};
+
+mod clip;
 
 use super::machines::{SelOutcome, SelectPhase};
 use super::{CommandSpec, bad, point_value, str_param, targets};
@@ -23,6 +25,9 @@ pub struct PdfHooks {
     /// Page `page` drawn on white with its longest side `max_side` pixels: width, height and
     /// straight RGBA pixels, rows top to bottom.
     pub render: fn(&[u8], u32, u32) -> std::result::Result<(u32, u32, Vec<u8>), String>,
+    /// The lines drawn on page `page`, as polylines in page fractions (0..1 from the left along
+    /// the width, from the bottom along the height): what object snaps find on an underlay.
+    pub lines: fn(&[u8], u32) -> std::result::Result<Vec<Vec<(f64, f64)>>, String>,
     /// The part `[left, bottom, right, top]` (page fractions) of page `page` drawn on white at
     /// `width` × `height` pixels: width, height and straight RGBA pixels.
     pub region: fn(&[u8], u32, [f64; 4], u32, u32) -> std::result::Result<(u32, u32, Vec<u8>), String>,
@@ -41,6 +46,56 @@ fn underlay_bytes(hooks: &PdfHooks, stored: &str, document: Option<&str>, layers
         return Ok(bytes);
     }
     (hooks.with_layers)(&bytes, layers).map_err(|e| bad("pdfattach", format!("{stored}: {e}")))
+}
+
+/// The key of a set of layer visibilities in the caches.
+fn layers_key(layers: &[(String, bool)]) -> String {
+    layers.iter().map(|(n, on)| format!("{}{n}\u{1f}", if *on { '+' } else { '-' })).collect()
+}
+
+/// A page's lines in page fractions, shared by every underlay showing it.
+pub type PageLines = Arc<Vec<Vec<Vec2>>>;
+
+/// Pages' lines read so far, by stored path and page. Object snaps see the drawing only, so the
+/// lines are read when an underlay is attached or its drawing opened.
+/// Each page's lines are kept with when they were read: past [`MAX_LINE_PAGES`] the oldest go
+/// first (not all at once, which took every underlay's snaps away together).
+static LINES: std::sync::Mutex<Option<HashMap<(String, u32, String), (u64, PageLines)>>> = std::sync::Mutex::new(None);
+/// When the last page's lines were read (a counter).
+static LINES_READ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Most pages whose lines are kept.
+const MAX_LINE_PAGES: usize = 128;
+
+/// The lines of page `page` of the PDF `stored` with `layers` shown or hidden (see
+/// [`cadcraft_doc::PdfUnderlay::layers_key`]), if they have been read.
+pub fn page_lines(stored: &str, page: u32, layers: &str) -> Option<PageLines> {
+    let g = LINES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    g.as_ref()?.get(&(stored.to_string(), page, layers.to_string())).map(|(_, l)| l.clone())
+}
+
+/// Read and keep the lines of page `page` of the PDF `stored` (in the drawing saved at
+/// `document`), unless they are kept already. A file that can't be read gives no lines.
+pub(crate) fn load_lines(stored: &str, document: Option<&str>, page: u32, layers: &[(String, bool)]) {
+    let key = layers_key(layers);
+    if page_lines(stored, page, &key).is_some() {
+        return;
+    }
+    let Some(hooks) = pdf() else { return };
+    let Ok(bytes) = underlay_bytes(hooks, stored, document, layers) else { return };
+    let Ok(lines) = (hooks.lines)(&bytes, page) else { return };
+    let lines: Vec<Vec<Vec2>> = lines
+        .into_iter()
+        .map(|l| l.into_iter().map(|(x, y)| Vec2::new(x, y)).filter(|p| p.is_finite()).collect::<Vec<_>>())
+        .filter(|l| l.len() >= 2)
+        .collect();
+    let mut g = LINES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let map = g.get_or_insert_with(HashMap::new);
+    while map.len() >= MAX_LINE_PAGES {
+        let Some(oldest) = map.iter().min_by_key(|(_, (t, _))| *t).map(|(k, _)| k.clone()) else { break };
+        map.remove(&oldest);
+    }
+    let read = LINES_READ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    map.insert((stored.to_string(), page, key), (read, Arc::new(lines)));
 }
 
 /// Part `region` (`[left, bottom, right, top]` in page fractions) of page `page` of the PDF
@@ -82,6 +137,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["Modify", "Object", "PDF Underlay", "Adjust"])
             .params("{handles?: PDF underlays (default the selection), fade?: 0..80, contrast?: 0..100, monochrome?: bool, adjustColors?: bool (on a dark background, white paper shows dark and dark lines light)} → {adjusted}")
             .interactive(|_| Ok(Box::new(AdjustM::default()))),
+        clip::spec(),
     ]
 }
 
@@ -147,6 +203,7 @@ fn run_pdfattach(s: &mut Session, p: &Value) -> Result<Value> {
         };
         adjust.apply(&mut u);
         handles.push(s.add_entity(EntityKind::PdfUnderlay(u))?.hex());
+        load_lines(&stored, document.as_deref(), page, &[]);
         let step = size.x * scale * 1.05;
         origin += Vec2::new(cos * step, sin * step);
         first.get_or_insert((page, pages, size, scale, w_mm, h_mm));
@@ -738,10 +795,12 @@ pub fn underlay_pixels(stored: &str, document: Option<&str>, page: u32, max_side
     (hooks.render)(&bytes, page, max_side).map_err(|e| bad("pdfattach", format!("{stored}: {e}")))
 }
 
-/// Give the PDF underlays of drawing `i`, just opened, their page sizes (a file stores none):
+/// Read the lines of the PDF underlays of drawing `i`, just opened, for object snaps, and give
+/// them their page sizes (a file stores none):
 /// read from each PDF, in the drawing's units. Underlays whose file can't be read keep no size
 /// and are reported. The opened state counts as saved.
 pub(crate) fn after_open(s: &mut Session, i: usize) {
+    load_all_lines(s, i, false);
     fill_sizes(s, i, true);
 }
 
@@ -821,7 +880,19 @@ pub fn page_size(stored: &str, document: Option<&str>, page: u32, unreadable_sin
 /// is still saved at `document` (relative paths would name other PDFs otherwise). The drawing
 /// is redrawn (a new revision) and stays unmodified if it was. Returns whether a size was set.
 pub fn set_sizes(s: &mut Session, drawing: u64, document: Option<&str>, sizes: &HashMap<(String, u32), Vec2>) -> bool {
-    s.docs.iter_mut().find(|st| st.uid == drawing && st.path.as_deref() == document).is_some_and(|st| set_sizes_in(st, sizes, false))
+    // Their lines, for object snaps: a whole PDF read, so not on the caller's (UI) thread.
+    set_sizes_of(s, drawing, document, sizes, true)
+}
+
+/// [`set_sizes`], then the lines of the drawing's pages read on a worker thread when
+/// `background`, at once otherwise.
+fn set_sizes_of(s: &mut Session, drawing: u64, document: Option<&str>, sizes: &HashMap<(String, u32), Vec2>, background: bool) -> bool {
+    let Some(i) = s.docs.iter().position(|st| st.uid == drawing && st.path.as_deref() == document) else { return false };
+    let set = s.docs.get_mut(i).is_some_and(|st| set_sizes_in(st, sizes, false));
+    if set {
+        load_all_lines(s, i, background);
+    }
+    set
 }
 
 /// [`set_sizes`] on one drawing; `opened`: it was just opened, so its state counts as saved.
@@ -874,7 +945,37 @@ pub fn retry_sizes(s: &mut Session) -> bool {
             _ => None,
         })
         .collect();
-    set_sizes(s, todo.drawing, todo.document.as_deref(), &sizes)
+    set_sizes_of(s, todo.drawing, todo.document.as_deref(), &sizes, false)
+}
+
+/// Read the lines of drawing `i`'s PDF underlays' pages, for object snaps (those read already
+/// are kept; a PDF that can't be read gives none, and is read again next time); on a worker
+/// thread when `background` (at once on the web, which has no threads).
+fn load_all_lines(s: &Session, i: usize, background: bool) {
+    let Some(st) = s.docs.get(i) else { return };
+    let d = &st.doc;
+    let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(d.blocks.values().map(|b| &b.entities));
+    let pages: std::collections::BTreeSet<(String, u32, Vec<(String, bool)>)> = stores
+        .flat_map(|s| s.iter())
+        .filter_map(|e| match &e.kind {
+            EntityKind::PdfUnderlay(u) => Some((u.path.clone(), u.page, u.layer_visibility())),
+            _ => None,
+        })
+        .collect();
+    let document = st.path.clone();
+    let job = move || {
+        for (stored, page, layers) in pages {
+            load_lines(&stored, document.as_deref(), page, &layers);
+        }
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    if background {
+        // A thread that can't start (very rare): no lines this time, read on the next opening.
+        let _ = std::thread::Builder::new().name("cadcraft-pdf-lines".into()).spawn(job);
+        return;
+    }
+    let _ = background;
+    job();
 }
 
 /// The page sizes of drawing `i`'s PDF underlays that have none, read from their PDFs; the PDFs

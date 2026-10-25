@@ -17,6 +17,7 @@ fn hooks() {
             if page > 3 { Err(format!("the PDF has no page {page} (it has 3)")) } else { Ok((3, 297.0, 210.0, None)) }
         },
         render: |_, _, side| Ok((side, side, vec![255; (side * side * 4) as usize])),
+        lines: |_, _| Ok(Vec::new()),
         region: |_, _, _, w, h| Ok((w, h, vec![255; (w * h * 4) as usize])),
         layers: |_| Ok(Vec::new()),
         with_layers: |bytes, _| Ok(bytes.to_vec()),
