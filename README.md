@@ -90,8 +90,9 @@
   direct distance entry, window and crossing selection, grips, and right-click-to-repeat behave
   the way decades of drafting habit expect.
 - **Open files.** DXF is read natively (R12 through 2018, with binary support from R13) and
-  written as 2000 through 2018 (ASCII and binary). DWG files (R13 through 2018) open through
-  the open-source acadrust library and save as 2000 through 2018. New drawings default to
+  written as 2000 through 2018 (ASCII and binary). DWG files (R13 through 2018; R13 and R14
+  untested, 2018 tested only on synthetic files) open through the open-source acadrust library
+  and save as 2000 through 2018. New drawings default to
   2018 (AC1032) in both formats. In the app's Save dialog, File ▸ Default Save Format
   (also Options ▸ Open and Save, `saveVersion`, default 2018) sets the version for untitled
   drawings; drawings with a file keep their own version, subject to supported-version mapping
@@ -119,7 +120,7 @@ numbers):
 | Layers & properties | Layers palette and Layer Properties Manager (on/off, freeze, lock, plot, colour, linetype), layer tools (isolate, freeze, off, lock, match, previous), Properties palette with per-object editing, linetypes, lineweights, colour index and true colour |
 | Annotation | All DIM* commands with full DIMSTYLE variables, overrides and every arrowhead, associative dimensions that follow geometry, MLEADER, TABLE, TrueType fonts (`.ttf`, `.otf`, `.ttc` collections), MTEXT formatting codes (fonts, heights, colours, stacked fractions), our own single-stroke drafting font |
 | Hatch & blocks | Pick-point hatch boundaries with islands, pattern, solid and gradient fills from our own pattern library, BLOCK/INSERT, attributes and nested blocks |
-| Files | DXF read (R12–2018, binary from R13) and write (2000–2018, ASCII and binary), including dimension styles, associativity, tables and constraints; DWG read (via the acadrust library) and write (2000–2018). New drawings save as 2018 (AC1032); opened drawings keep their supported version, except DWG defaults to at least 2004. In the app's Save dialog, File ▸ Default Save Format (also Options ▸ Open and Save, `saveVersion`, default 2018) sets the version for untitled drawings; drawings with a file keep their own version, subject to supported-version mapping and the DWG minimum. SAVEAS `version` overrides this choice and is remembered for later saves. DXF uses R2000 structure with the chosen `$ACADVER`. PDF plotting, SVG and PNG export. Entities CADCraft doesn't model yet are not kept on save: see [file-format parity](docs/file-format-parity.md) for version selection and fidelity |
+| Files | DXF read (R12–2018, binary from R13) and write (2000–2018, ASCII and binary), including dimension styles, associativity, tables and constraints; DWG read (via the acadrust library; R13 and R14 untested, 2018 tested only on synthetic files) and write (2000–2018). New drawings save as 2018 (AC1032); opened drawings keep their supported version, except DWG defaults to at least 2004. In the app's Save dialog, File ▸ Default Save Format (also Options ▸ Open and Save, `saveVersion`, default 2018) sets the version for untitled drawings; drawings with a file keep their own version, subject to supported-version mapping and the DWG minimum. SAVEAS `version` overrides this choice and is remembered for later saves. DXF uses R2000 structure with the chosen `$ACADVER`. PDF plotting, SVG and PNG export. Entities CADCraft doesn't model yet are not kept on save: see [file-format parity](docs/file-format-parity.md) for version selection and fidelity |
 | Layouts & plotting | Paper-space layouts, viewports (scale, lock, per-viewport layer freeze), MSPACE/PSPACE through viewports, page setups, PLOT and EXPORTPDF |
 | Parametric | Geometric and dimensional constraints, AUTOCONSTRAIN, PARAMETERS with expressions, conflict detection; constraints re-solve after every edit |
 | Grips | Hot grips with Space to cycle Stretch, Move, Rotate, Scale and Mirror |
