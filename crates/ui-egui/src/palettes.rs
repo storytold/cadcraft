@@ -1171,7 +1171,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                                 } else {
                                     crate::tl!("Constant")
                                 });
-                            } else if let Some(v) = edit_field(ui, ui.id().with(("attval", e.handle, &a.tag)), a.value.clone()) {
+                            } else if let Some(v) = edit_field(ui, ui.scope_id().with(("attval", e.handle, &a.tag)), a.value.clone()) {
                                 att_set = Some(json!({ "handle": e.handle.hex(), "values": { a.tag.clone(): v } }));
                             }
                         });
