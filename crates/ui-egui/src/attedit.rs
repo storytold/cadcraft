@@ -155,7 +155,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let mut choice: Option<&str> = None;
     let st = &mut app.attedit;
     egui::Window::new(crate::tl!("Enhanced Attribute Editor"))
-        .id(egui::Id::new("Enhanced Attribute Editor"))
+        .id(egui::Id::unique("Enhanced Attribute Editor"))
         .open(open)
         .collapsible(false)
         .resizable(true)
