@@ -94,8 +94,9 @@ pub fn allowed(s: &KeyboardShortcut) -> bool {
     }
     let m = s.modifiers;
     let command = m.command || m.ctrl || m.mac_cmd;
-    // Shift+Cmd+C and Shift+Cmd+V are clipboard events too (Copy with Base Point, Paste as Block).
-    let reserved = command && !m.alt && ([Key::C, Key::X, Key::V].contains(&k) || k == Key::Q && !m.shift);
+    // Cmd+C, X and V arrive as clipboard events whatever else is held (Shift+Cmd+C is Copy with
+    // Base Point, Shift+Cmd+V Paste as Block).
+    let reserved = command && ([Key::C, Key::X, Key::V].contains(&k) || k == Key::Q && !m.shift && !m.alt);
     let alone_ok = matches!(k, Key::PageUp | Key::PageDown | Key::Home | Key::End) || k.name().starts_with('F') && k.name().len() > 1;
     !reserved && (command || m.alt || alone_ok)
 }
@@ -222,17 +223,30 @@ pub fn assign(user: &mut UserKeys, id: &str, key: &str) -> Result<Vec<String>, S
     Ok(replaced)
 }
 
-/// The user's shortcuts from saved preferences: unknown commands, bad strings and anything past
-/// [`MAX_KEYS`] are dropped.
+/// The user's shortcuts from saved preferences: unknown commands, bad strings, a shortcut an
+/// earlier command already has (it would show on both, run one) and anything past [`MAX_KEYS`]
+/// are dropped.
 pub fn from_prefs(v: &Value) -> UserKeys {
     let Some(m) = v.as_object() else { return UserKeys::new() };
-    m.iter()
-        .filter_map(|(id, k)| Some((id, k.as_str()?)))
-        .filter(|(id, k)| id.len() <= MAX_LEN && k.len() <= MAX_LEN && known(id) && !FIXED.contains(&id.as_str()))
-        .filter(|(_, k)| k.is_empty() || parse(k).is_some_and(|s| allowed(&s)))
-        .take(MAX_KEYS)
-        .map(|(id, k)| (id.clone(), k.to_string()))
-        .collect()
+    let mut out = UserKeys::new();
+    let mut taken: Vec<KeyboardShortcut> = Vec::new();
+    for (id, k) in m.iter().filter_map(|(id, k)| Some((id, k.as_str()?))) {
+        if out.len() >= MAX_KEYS {
+            break;
+        }
+        if id.len() > MAX_LEN || k.len() > MAX_LEN || !known(id) || FIXED.contains(&id.as_str()) {
+            continue;
+        }
+        if !k.is_empty() {
+            let Some(s) = parse(k).filter(allowed) else { continue };
+            if taken.iter().any(|o| same(o, &s)) {
+                continue;
+            }
+            taken.push(s);
+        }
+        out.insert(id.clone(), k.to_string());
+    }
+    out
 }
 
 /// `ui.shortcuts`: from a menu or typed, the Keyboard Shortcuts dialog; with parameters
@@ -468,7 +482,24 @@ mod tests {
 
     #[test]
     fn typing_keys_clipboard_keys_and_quit_are_never_user_shortcuts() {
-        for s in ["L", "Shift+L", "Space", "Enter", "Escape", "Cmd+C", "Cmd+V", "Cmd+X", "Cmd+Shift+C", "Cmd+Shift+V", "Cmd+Q", "ArrowUp", "Delete"] {
+        for s in [
+            "L",
+            "Shift+L",
+            "Space",
+            "Enter",
+            "Escape",
+            "Cmd+C",
+            "Cmd+V",
+            "Cmd+X",
+            "Cmd+Shift+C",
+            "Cmd+Shift+V",
+            "Cmd+Alt+C",
+            "Cmd+Alt+X",
+            "Cmd+Alt+V",
+            "Cmd+Q",
+            "ArrowUp",
+            "Delete",
+        ] {
             assert!(!allowed(&key(s)), "{s}");
         }
         for s in ["Cmd+L", "Alt+L", "F4", "PageDown", "Cmd+Shift+Q", "Ctrl+K"] {
@@ -576,6 +607,9 @@ mod tests {
         c.load_prefs(&json!({ "shortcuts": many }).to_string());
         assert!(c.ui.shortcuts.len() <= MAX_KEYS);
         c.load_prefs(r#"{"shortcuts": "Cmd+K"}"#);
+        // One key for two commands (an edited file): the first keeps it, the other is dropped.
+        c.load_prefs(r#"{"shortcuts": {"arc": "Cmd+K", "line": "Cmd+K", "circle": "Cmd+J"}}"#);
+        assert_eq!(c.ui.shortcuts, UserKeys::from([("arc".to_string(), "Cmd+K".to_string()), ("circle".to_string(), "Cmd+J".to_string())]));
     }
 
     #[test]
