@@ -21,8 +21,18 @@ pub fn export_window(d: &Drawing, space: &Space, window: Option<Bounds2>) -> Str
 
 /// [`export_window`], drawing transparency only when `transparency` is on (plots).
 pub fn export_window_with(d: &Drawing, space: &Space, window: Option<Bounds2>, transparency: bool) -> String {
+    export_window_from(d, space, window, transparency, None)
+}
+
+/// [`export_window_with`] for the drawing saved at `document` (PDF underlays' relative paths
+/// are found from its folder). PDF underlays' pages are drawn as images, about 3200 pixels
+/// across the view.
+pub(crate) fn export_window_from(d: &Drawing, space: &Space, window: Option<Bounds2>, transparency: bool, document: Option<&str>) -> String {
     let list = cadcraft_render::build(d, space, &cadcraft_render::Options { transparency, ..cadcraft_render::Options::default() });
-    export_list(&list, window)
+    let b = window.filter(|w| !w.is_empty()).unwrap_or(list.bounds);
+    let px_per_unit = 3200.0 / b.width().max(b.height()).max(1e-9);
+    let images = crate::underlay_plot::images(d, &list, document, px_per_unit);
+    export_list_over(&list, window, &images)
 }
 
 /// ` opacity="…"` for a transparent primitive (none for an opaque one or a wipeout's mask).
@@ -35,6 +45,12 @@ fn opacity(p: &cadcraft_render::DPrim) -> String {
 
 /// Write a display list (as [`export_window`] does for a space's own).
 pub fn export_list(list: &cadcraft_render::DisplayList, window: Option<Bounds2>) -> String {
+    export_list_over(list, window, &[])
+}
+
+/// [`export_list`] with PDF underlays' pages `images`, each drawn before the primitive it comes
+/// before.
+pub(crate) fn export_list_over(list: &cadcraft_render::DisplayList, window: Option<Bounds2>, images: &[crate::underlay_plot::PlotImage]) -> String {
     let window = window.filter(|w| !w.is_empty());
     let b = window.unwrap_or(list.bounds);
     // A single point (or a zero-size window) has no extent: show a unit box centred on it.
@@ -69,7 +85,47 @@ pub fn export_list(list: &cadcraft_render::DisplayList, window: Option<Bounds2>)
     let white = Rgb(255, 255, 255);
     let tx = |x: f64| x - x0;
     let ty = |y: f64| y1 - y;
-    for p in &list.prims {
+    let mut images: Vec<&crate::underlay_plot::PlotImage> = images.iter().collect();
+    images.sort_by_key(|im| im.at);
+    let mut images = images.into_iter().enumerate().peekable();
+    let image = |s: &mut String, n: usize, im: &crate::underlay_plot::PlotImage| {
+        let Some(png) = cadcraft_render::raster::pixels_png(im.width, im.height, &im.rgb, &im.alpha) else { return };
+        // The unit square (its top row at y = 0) onto the page's parallelogram, in SVG units.
+        let top = im.origin + im.v;
+        let m = [im.u.x, -im.u.y, -im.v.x, im.v.y, tx(top.x), ty(top.y)];
+        if m.iter().any(|v| !v.is_finite()) {
+            return;
+        }
+        // Seen through a viewport: clipped to it.
+        let clipped = !im.clip.is_empty();
+        if clipped {
+            let _ = write!(s, r#"<clipPath id="cc-underlay-{n}"><path d=""#);
+            for t in im.clip.chunks(3) {
+                if let [a, b2, cc] = t {
+                    let _ = write!(s, "M{:.dp$} {:.dp$}L{:.dp$} {:.dp$}L{:.dp$} {:.dp$}Z", tx(a.x), ty(a.y), tx(b2.x), ty(b2.y), tx(cc.x), ty(cc.y));
+                }
+            }
+            let _ = write!(s, r#""/></clipPath><g clip-path="url(#cc-underlay-{n})">"#);
+        }
+        let _ = write!(
+            s,
+            r#"<image width="1" height="1" preserveAspectRatio="none" transform="matrix({:.dp$} {:.dp$} {:.dp$} {:.dp$} {:.dp$} {:.dp$})" href="data:image/png;base64,{}"/>"#,
+            m[0],
+            m[1],
+            m[2],
+            m[3],
+            m[4],
+            m[5],
+            base64(&png)
+        );
+        if clipped {
+            s.push_str("</g>");
+        }
+    };
+    for (i, p) in list.prims.iter().enumerate() {
+        while let Some((n, im)) = images.next_if(|(_, im)| im.at <= i) {
+            image(&mut s, n, im);
+        }
         let c = p.display_rgb(white).hex();
         let op = opacity(p);
         let pts = list.points(p);
@@ -119,6 +175,25 @@ pub fn export_list(list: &cadcraft_render::DisplayList, window: Option<Bounds2>)
             }
         }
     }
+    for (n, im) in images {
+        image(&mut s, n, im);
+    }
     s.push_str("</svg>");
     s
+}
+
+/// `bytes` in base64 (RFC 4648, with padding), for a data URL.
+fn base64(bytes: &[u8]) -> String {
+    const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let sym = |i: u32| char::from(ABC.get((i & 63) as usize).copied().unwrap_or(b'A'));
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = |k: usize| u32::from(chunk.get(k).copied().unwrap_or(0));
+        let n = (b(0) << 16) | (b(1) << 8) | b(2);
+        out.push(sym(n >> 18));
+        out.push(sym(n >> 12));
+        out.push(if chunk.len() > 1 { sym(n >> 6) } else { '=' });
+        out.push(if chunk.len() > 2 { sym(n) } else { '=' });
+    }
+    out
 }
