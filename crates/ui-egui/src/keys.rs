@@ -23,9 +23,9 @@ pub const MAX_KEYS: usize = 1000;
 const MAX_LEN: usize = 64;
 
 /// Commands whose built-in key is handled outside the shortcut table and stays as it is: the
-/// clipboard keys arrive as clipboard events, Delete belongs to the command line, Cmd+Q to the
-/// macOS app menu.
-const FIXED: &[&str] = &["copyclip", "cutclip", "pasteclip", "erase.selection", "ui.quit"];
+/// clipboard keys, Shift ones included, arrive as clipboard events, Delete belongs to the command
+/// line, Cmd+Q to the macOS app menu.
+const FIXED: &[&str] = &["copyclip", "cutclip", "pasteclip", "copybase", "pasteblock", "erase.selection", "ui.quit"];
 
 /// The dialog name in `UiState::dialog`.
 pub const DIALOG: &str = "shortcuts";
@@ -35,7 +35,8 @@ fn same(a: &KeyboardShortcut, b: &KeyboardShortcut) -> bool {
 }
 
 /// A registry shortcut string ("Cmd+Shift+G", "Alt+4", "F3") as a shortcut; `None` when empty or
-/// not understood.
+/// not understood. Cmd is the command key (Ctrl on Windows and Linux); Ctrl alone is the Control
+/// key of macOS, and Cmd+Ctrl both macOS keys.
 pub fn parse(s: &str) -> Option<KeyboardShortcut> {
     let mut m = Modifiers::NONE;
     let mut key = None;
@@ -50,17 +51,20 @@ pub fn parse(s: &str) -> Option<KeyboardShortcut> {
             _ => return None,
         }
     }
+    if m.command && m.ctrl {
+        m.mac_cmd = true;
+    }
     key.map(|k| KeyboardShortcut::new(m, k))
 }
 
-/// A shortcut as a registry string: "Cmd+Shift+G". `mac`: Command is Cmd and Control is Ctrl;
-/// elsewhere Control is the command key, Cmd.
-pub fn format(m: Modifiers, k: Key, mac: bool) -> String {
+/// A shortcut as a registry string ("Cmd+Shift+G"), the same on every platform: Cmd for the
+/// command key, Ctrl for a Control that isn't it (macOS), so [`parse`] gives it back.
+pub fn format(m: Modifiers, k: Key) -> String {
     let mut s = String::new();
-    if (mac && m.mac_cmd) || (!mac && (m.command || m.ctrl)) || (mac && m.command && !m.ctrl) {
+    if m.command || m.mac_cmd {
         s.push_str("Cmd+");
     }
-    if mac && m.ctrl {
+    if m.ctrl && (m.mac_cmd || !m.command) {
         s.push_str("Ctrl+");
     }
     if m.shift {
@@ -90,7 +94,8 @@ pub fn allowed(s: &KeyboardShortcut) -> bool {
     }
     let m = s.modifiers;
     let command = m.command || m.ctrl || m.mac_cmd;
-    let reserved = command && !m.shift && !m.alt && [Key::C, Key::X, Key::V, Key::Q].contains(&k);
+    // Shift+Cmd+C and Shift+Cmd+V are clipboard events too (Copy with Base Point, Paste as Block).
+    let reserved = command && !m.alt && ([Key::C, Key::X, Key::V].contains(&k) || k == Key::Q && !m.shift);
     let alone_ok = matches!(k, Key::PageUp | Key::PageDown | Key::Home | Key::End) || k.name().starts_with('F') && k.name().len() > 1;
     !reserved && (command || m.alt || alone_ok)
 }
@@ -100,7 +105,7 @@ pub fn allowed(s: &KeyboardShortcut) -> bool {
 pub fn by_specificity<T>(pairs: &mut [(KeyboardShortcut, T)]) {
     let weight = |s: &KeyboardShortcut| {
         let m = s.modifiers;
-        u8::from(m.shift) + u8::from(m.alt) + u8::from(m.ctrl && !m.command) + u8::from(m.command || m.mac_cmd)
+        u8::from(m.shift) + u8::from(m.alt) + u8::from(m.ctrl && (m.mac_cmd || !m.command)) + u8::from(m.command || m.mac_cmd)
     };
     pairs.sort_by_key(|(s, _)| std::cmp::Reverse(weight(s)));
 }
@@ -213,7 +218,7 @@ pub fn assign(user: &mut UserKeys, id: &str, key: &str) -> Result<Vec<String>, S
             replaced.push(other.to_string());
         }
     }
-    user.insert(id.to_string(), format(s.modifiers, s.logical_key, false));
+    user.insert(id.to_string(), format(s.modifiers, s.logical_key));
     Ok(replaced)
 }
 
@@ -315,7 +320,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         });
         if let Some((k, m)) = pressed {
             if k != Key::Escape {
-                note = Some(match assign(&mut app.ui.shortcuts, &id, &format(m, k, mac)) {
+                note = Some(match assign(&mut app.ui.shortcuts, &id, &format(m, k)) {
                     Ok(lost) if lost.is_empty() => (String::new(), false),
                     Ok(lost) => {
                         let names: Vec<String> = lost.iter().map(|l| label_of(l)).collect();
@@ -446,19 +451,27 @@ mod tests {
 
     #[test]
     fn shortcut_strings_round_trip() {
-        for s in ["Cmd+Shift+G", "Cmd+4", "F3", "Alt+PageUp", "Cmd+Plus", "Cmd+Minus"] {
+        for s in ["Cmd+Shift+G", "Cmd+4", "F3", "Alt+PageUp", "Cmd+Plus", "Cmd+Minus", "Ctrl+K", "Cmd+Ctrl+K"] {
             let k = key(s);
-            assert_eq!(format(k.modifiers, k.logical_key, false), s);
+            assert_eq!(format(k.modifiers, k.logical_key), s);
         }
+        // Keys as egui reports them: Ctrl on Linux and Windows is the command key; macOS Control
+        // and Command+Control keep their Control.
+        let linux_ctrl = Modifiers { ctrl: true, command: true, ..Modifiers::NONE };
+        let mac_ctrl = Modifiers { ctrl: true, ..Modifiers::NONE };
+        let mac_cmd_ctrl = Modifiers { ctrl: true, command: true, mac_cmd: true, ..Modifiers::NONE };
+        assert_eq!(format(linux_ctrl, Key::K), "Cmd+K");
+        assert_eq!(format(mac_ctrl, Key::K), "Ctrl+K");
+        assert_eq!(format(mac_cmd_ctrl, Key::K), "Cmd+Ctrl+K");
         assert!(parse("").is_none() && parse("Cmd+").is_none() && parse("Cmd+G+H").is_none() && parse("Hyper+G").is_none());
     }
 
     #[test]
     fn typing_keys_clipboard_keys_and_quit_are_never_user_shortcuts() {
-        for s in ["L", "Shift+L", "Space", "Enter", "Escape", "Cmd+C", "Cmd+V", "Cmd+X", "Cmd+Q", "ArrowUp", "Delete"] {
+        for s in ["L", "Shift+L", "Space", "Enter", "Escape", "Cmd+C", "Cmd+V", "Cmd+X", "Cmd+Shift+C", "Cmd+Shift+V", "Cmd+Q", "ArrowUp", "Delete"] {
             assert!(!allowed(&key(s)), "{s}");
         }
-        for s in ["Cmd+L", "Alt+L", "F4", "PageDown", "Cmd+Shift+C"] {
+        for s in ["Cmd+L", "Alt+L", "F4", "PageDown", "Cmd+Shift+Q", "Ctrl+K"] {
             assert!(allowed(&key(s)), "{s}");
         }
     }
@@ -471,6 +484,22 @@ mod tests {
         // The built-in ones are untouched.
         assert_eq!(runs(&user, "Cmd+S").as_deref(), Some("qsave"));
         assert_eq!(runs(&UserKeys::new(), "Cmd+L"), None);
+    }
+
+    #[test]
+    fn control_and_command_control_shortcuts_keep_their_control() {
+        let mut user = UserKeys::new();
+        assert_eq!(assign(&mut user, "line", "Ctrl+K"), Ok(vec![]));
+        assert_eq!(assign(&mut user, "circle", "Cmd+Ctrl+K"), Ok(vec![]));
+        assert_eq!(user.get("line").map(String::as_str), Some("Ctrl+K"));
+        assert_eq!(user.get("circle").map(String::as_str), Some("Cmd+Ctrl+K"));
+        let eff = effective(&user);
+        let of = |id: &str| eff.iter().find(|(_, i)| i == id).map(|(s, _)| s.modifiers);
+        assert_eq!(of("line"), Some(Modifiers::CTRL));
+        assert_eq!(of("circle"), Some(Modifiers { ctrl: true, command: true, mac_cmd: true, ..Modifiers::NONE }));
+        // Command+Control+K is tried before Control+K, which it holds too.
+        let at = |id: &str| eff.iter().position(|(_, i)| i == id);
+        assert!(at("circle") < at("line"));
     }
 
     #[test]
@@ -511,6 +540,7 @@ mod tests {
         assert!(assign(&mut user, "line", "Cmd+Nothing").is_err());
         assert!(assign(&mut user, "line", &"Cmd+".repeat(1000)).is_err());
         assert!(assign(&mut user, "copyclip", "Cmd+K").is_err(), "the clipboard keys stay");
+        assert!(assign(&mut user, "pasteblock", "Cmd+K").is_err(), "Shift+Cmd+V is a clipboard event too");
         assert!(user.is_empty());
     }
 
