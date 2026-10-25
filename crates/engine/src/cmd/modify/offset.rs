@@ -137,22 +137,55 @@ fn offset_points(pts: &[Vec2], d: f64, closed: bool) -> Vec<Vec2> {
 
 /// Offset a polyline: offset each segment, then join neighbours at their intersections.
 pub(crate) fn offset_polyline(pl: &Polyline, d: f64) -> Option<Vec<PolyVertex>> {
-    let segs: Vec<Segment> = pl.segments().iter().filter_map(|s| s.offset(d)).collect();
-    if segs.is_empty() {
-        return None;
-    }
-    let n = segs.len();
-    // Where each offset segment starts after joining it to the previous one.
-    let mut starts: Vec<Vec2> = Vec::with_capacity(n);
-    for i in 0..n {
-        let s = segs.get(i)?;
-        starts.push(if i == 0 && !pl.closed {
-            s.start()
-        } else {
-            let prev = segs.get((i + n - 1) % n)?;
-            join_point(prev, s).unwrap_or(s.start())
+    let mut segs: Vec<Segment> = pl.segments().iter().filter_map(|s| s.offset(d)).collect();
+    // Each pass drops at most one collapsed segment, so this bounds the loop.
+    let mut removals = segs.len();
+    let starts = loop {
+        let n = segs.len();
+        if n == 0 || (pl.closed && n < 2) {
+            return None;
+        }
+        // Where each offset segment starts after joining it to the previous one (`None`: they don't meet).
+        let mut joins: Vec<Option<Vec2>> = Vec::with_capacity(n);
+        for i in 0..n {
+            let s = segs.get(i)?;
+            joins.push(if i == 0 && !pl.closed { Some(s.start()) } else { join_point(segs.get((i + n - 1) % n)?, s) });
+        }
+        let start_of = |i: usize| joins.get(i).copied().flatten().or_else(|| segs.get(i).map(Segment::start));
+        // A segment that collapsed: a line whose joined ends turned around, or an arc whose circle no
+        // longer meets a neighbour or shrank to a point between its joins. Drop it and join its neighbours.
+        let collapsed = (0..n).position(|i| {
+            let Some(s) = segs.get(i) else { return false };
+            let (start_join, end_join) = if i + 1 < n {
+                (joins.get(i).copied().flatten(), joins.get(i + 1).copied().flatten())
+            } else if pl.closed {
+                (joins.get(i).copied().flatten(), joins.first().copied().flatten())
+            } else {
+                (joins.get(i).copied().flatten(), Some(s.end()))
+            };
+            let start = start_of(i).unwrap_or(s.start());
+            let end = if i + 1 < n {
+                start_of(i + 1)
+            } else if pl.closed {
+                start_of(0)
+            } else {
+                Some(s.end())
+            }
+            .unwrap_or(s.end());
+            match s {
+                Segment::Line(l) => (end - start).dot(l.dir()) <= 1e-9,
+                Segment::Arc { .. } => start_join.is_none() || end_join.is_none() || start.near(end, 1e-9),
+            }
         });
-    }
+        match collapsed {
+            Some(i) if removals > 0 => {
+                segs.remove(i);
+                removals -= 1;
+            }
+            _ => break (0..n).map(start_of).collect::<Option<Vec<Vec2>>>()?,
+        }
+    };
+    let n = segs.len();
     let mut verts: Vec<PolyVertex> = Vec::new();
     for i in 0..n {
         let s = segs.get(i)?;

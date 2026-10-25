@@ -763,6 +763,41 @@ fn offset_polyline_arc_bulge_follows_joined_endpoints() {
 }
 
 #[test]
+fn offset_closed_niche_polyline_repeatedly_stays_valid() {
+    // A square with a small semicircular niche (centre (5, 10), radius 2) on its top edge, offset
+    // inward 0.5 five times, each time from the previous result.
+    let mut s = Session::new();
+    let mut src = pline(&mut s, json!([[0, 0], [10, 0], [10, 10], {"p": [7, 10], "bulge": 1}, [3, 10], [0, 10]]), true);
+    for n in 1..=5 {
+        let r = s.execute("offset", &json!({"handle": src, "distance": 0.5, "side": [5, 5]})).unwrap();
+        src = h(&r);
+        let p = poly(&kind(&s, &src));
+        assert!(p.closed);
+        let (lo, hi) = (0.5 * n as f64, 10.0 - 0.5 * n as f64);
+        let count = p.vertices.len();
+        let mut arcs = 0;
+        for (i, v) in p.vertices.iter().enumerate() {
+            let next = p.vertices[(i + 1) % count];
+            assert!(v.p.x > lo - 1e-6 && v.p.x < hi + 1e-6 && v.p.y > lo - 1e-6, "offset {n}: vertex {:?} outside", v.p);
+            assert!(!v.p.near(next.p, 1e-9), "offset {n}: zero-length segment at {:?}: {:?}", v.p, p.vertices);
+            if v.bulge != 0.0 {
+                arcs += 1;
+                let (arc, _) = cadcraft_geom::bulge_to_arc(v.p, next.p, v.bulge).unwrap();
+                assert!(near(arc.center, 5.0, 10.0), "offset {n}: arc centre {:?}", arc.center);
+                assert!((arc.radius - (2.0 - 0.5 * n as f64)).abs() < 1e-6, "offset {n}: radius {}", arc.radius);
+            } else {
+                let d = next.p - v.p;
+                assert!(d.x.abs() < 1e-6 || d.y.abs() < 1e-6, "offset {n}: diagonal {:?} -> {:?}: {:?}", v.p, next.p, p.vertices);
+                assert!(v.p.y < hi + 1e-6 && next.p.y < hi + 1e-6, "offset {n}: line above the top edge");
+            }
+        }
+        if n == 1 {
+            assert_eq!(arcs, 1, "offset 1 keeps the niche arc: {:?}", p.vertices);
+        }
+    }
+}
+
+#[test]
 fn offset_elliptical_arc_follows_picked_side() {
     let max_x = |side: Value| {
         let mut s = Session::new();
