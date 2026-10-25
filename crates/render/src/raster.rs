@@ -70,17 +70,46 @@ impl Default for RasterOptions {
     }
 }
 
+/// A picture drawn among the display list's primitives (a PDF underlay's page): before
+/// primitive `at` (see [`crate::DisplayList::underlays`]), its lower-left corner and
+/// width/height vectors in drawing units, its RGB pixels and their alpha, rows top to bottom, and
+/// the triangles (drawing units) it is clipped to, if any.
+pub struct Underlay<'a> {
+    pub at: usize,
+    pub clip: &'a [Vec2],
+    pub origin: Vec2,
+    pub u: Vec2,
+    pub v: Vec2,
+    pub width: u32,
+    pub height: u32,
+    pub rgb: &'a [u8],
+    pub alpha: &'a [u8],
+}
+
 /// Render to a pixmap. Returns `None` for zero or absurd sizes.
 pub fn render(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Pixmap> {
+    render_over(list, view, o, &[])
+}
+
+/// [`render`] with the pictures `under` drawn among the primitives.
+pub fn render_over(list: &DisplayList, view: &View, o: &RasterOptions, under: &[Underlay]) -> Option<Pixmap> {
     if view.width == 0 || view.height == 0 || view.width > 16384 || view.height > 16384 {
         return None;
     }
     let mut pm = Pixmap::new(view.width, view.height)?;
     pm.fill(tiny_skia::Color::from_rgba8(o.background.0, o.background.1, o.background.2, 255));
+    let mut pictures: Vec<&Underlay> = under.iter().collect();
+    pictures.sort_by_key(|im| im.at);
+    let mut pictures = pictures.into_iter().peekable();
     let vis = view.world_bounds();
     let mut hairlines = Hairlines::default();
     let mut screen: Vec<(f32, f32)> = Vec::new();
-    for p in &list.prims {
+    for (i, p) in list.prims.iter().enumerate() {
+        while let Some(im) = pictures.next_if(|im| im.at <= i) {
+            // The hairlines gathered so far are under the picture.
+            hairlines.flush(&mut pm, o.antialias);
+            draw_underlay(&mut pm, view, im);
+        }
         let c = p.display_rgb(o.background);
         let mut paint = Paint::default();
         // A transparent object blends with what is drawn under it.
@@ -164,6 +193,9 @@ pub fn render(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Pixm
         }
     }
     hairlines.flush(&mut pm, o.antialias);
+    for im in pictures {
+        draw_underlay(&mut pm, view, im);
+    }
     Some(pm)
 }
 
@@ -225,4 +257,73 @@ impl Hairlines {
 /// Render and encode as PNG.
 pub fn render_png(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Vec<u8>> {
     render(list, view, o)?.encode_png().ok()
+}
+
+/// [`render_png`] over `under`.
+pub fn render_png_over(list: &DisplayList, view: &View, o: &RasterOptions, under: &[Underlay]) -> Option<Vec<u8>> {
+    render_over(list, view, o, under)?.encode_png().ok()
+}
+
+/// Straight RGB pixels and their alpha (rows top to bottom) as a PNG file: a PDF underlay's page
+/// for an SVG export.
+pub fn pixels_png(width: u32, height: u32, rgb: &[u8], alpha: &[u8]) -> Option<Vec<u8>> {
+    let n = (width as usize).checked_mul(height as usize)?;
+    if rgb.len() != n.checked_mul(3)? || alpha.len() != n {
+        return None;
+    }
+    let mut pm = Pixmap::new(width, height)?;
+    for (px, ([r, g, b], a)) in pm.pixels_mut().iter_mut().zip(rgb.as_chunks::<3>().0.iter().zip(alpha)) {
+        *px = tiny_skia::ColorU8::from_rgba(*r, *g, *b, *a).premultiply();
+    }
+    pm.encode_png().ok()
+}
+
+/// Draw one picture onto `pm`, mapped onto its parallelogram.
+fn draw_underlay(pm: &mut Pixmap, view: &View, im: &Underlay) {
+    let n = (im.width as usize).checked_mul(im.height as usize);
+    if n.and_then(|n| n.checked_mul(3)) != Some(im.rgb.len()) || n != Some(im.alpha.len()) {
+        return;
+    }
+    // Premultiplied, as tiny-skia draws.
+    let pre = |c: u8, a: u8| ((u16::from(c) * u16::from(a) + 127) / 255) as u8;
+    let rgba: Vec<u8> =
+        im.rgb.as_chunks::<3>().0.iter().zip(im.alpha).flat_map(|([r, g, b], a)| [pre(*r, *a), pre(*g, *a), pre(*b, *a), *a]).collect();
+    let Some(src) = tiny_skia::IntSize::from_wh(im.width, im.height).and_then(|size| Pixmap::from_vec(rgba, size)) else { return };
+    let s = |p: Vec2| view.to_screen(p);
+    let top_left = s(im.origin + im.v);
+    let right = s(im.origin + im.v + im.u);
+    let bottom = s(im.origin);
+    let (w, h) = (im.width as f32, im.height as f32);
+    let t = Transform::from_row(
+        (right.0 - top_left.0) / w,
+        (right.1 - top_left.1) / w,
+        (bottom.0 - top_left.0) / h,
+        (bottom.1 - top_left.1) / h,
+        top_left.0,
+        top_left.1,
+    );
+    if [t.sx, t.ky, t.kx, t.sy, t.tx, t.ty].iter().all(|v| v.is_finite()) {
+        let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
+        let mask = clip_mask(pm.width(), pm.height(), view, im.clip);
+        if im.clip.is_empty() || mask.is_some() {
+            pm.draw_pixmap(0, 0, src.as_ref(), &paint, t, mask.as_ref());
+        }
+    }
+}
+
+/// A mask covering triangles `tris` (drawing units) seen through `view`; `None` when there are
+/// none or they cover nothing.
+fn clip_mask(width: u32, height: u32, view: &View, tris: &[Vec2]) -> Option<tiny_skia::Mask> {
+    let mut pb = PathBuilder::new();
+    for t in tris.as_chunks::<3>().0 {
+        let [a, b, c] = t.map(|p| view.to_screen(p));
+        pb.move_to(a.0, a.1);
+        pb.line_to(b.0, b.1);
+        pb.line_to(c.0, c.1);
+        pb.close();
+    }
+    let path = pb.finish()?;
+    let mut mask = tiny_skia::Mask::new(width, height)?;
+    mask.fill_path(&path, FillRule::Winding, true, Transform::identity());
+    Some(mask)
 }

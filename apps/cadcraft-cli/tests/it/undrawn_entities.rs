@@ -7,8 +7,8 @@ fn cli(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_cadcraft-cli")).args(args).output().unwrap()
 }
 
-/// A line, two foreign REGIONs, kept as unknown entities, and a PDF underlay, whose page an image
-/// doesn't draw yet.
+/// A line, two foreign REGIONs, kept as unknown entities, and a PDF underlay without its PDF,
+/// whose page an image can't draw.
 const PROXIES: &str = "0\nSECTION\n2\nENTITIES\n\
 0\nLINE\n8\n0\n10\n0\n20\n0\n11\n5\n21\n5\n\
 0\nREGION\n8\n0\n70\n1\n1\nabc\n\

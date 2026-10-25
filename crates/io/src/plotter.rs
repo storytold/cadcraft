@@ -103,7 +103,23 @@ fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     };
     let px_per_mm = if lineweights { (k / sheet.unit_mm) as f32 } else { 0.0 };
     let ro = raster::RasterOptions { background: Rgb(255, 255, 255), hairline: 1.0, px_per_mm, antialias: true };
-    raster::render_png(&list, &view, &ro).ok_or_else(|| IoError::Format("render failed".into()))
+    // PDF underlays' pages at the image's resolution.
+    let images = crate::underlay_plot::images(d, &list, o.document.as_deref(), view.scale);
+    let under: Vec<raster::Underlay> = images
+        .iter()
+        .map(|im| raster::Underlay {
+            at: im.at,
+            clip: &im.clip,
+            origin: im.origin,
+            u: im.u,
+            v: im.v,
+            width: im.width,
+            height: im.height,
+            rgb: &im.rgb,
+            alpha: &im.alpha,
+        })
+        .collect();
+    raster::render_png_over(&list, &view, &ro, &under).ok_or_else(|| IoError::Format("render failed".into()))
 }
 
 fn svg(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
@@ -111,7 +127,7 @@ fn svg(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let Space::Model = space else {
         let (sheet, page) = sheet(d, space, &o)?;
         let transparency = o.plot_transparency.unwrap_or(page.plot_transparency);
-        return Ok(crate::svg::export_window_with(d, space, Some(sheet.bounds()), transparency).into_bytes());
+        return Ok(crate::svg::export_window_from(d, space, Some(sheet.bounds()), transparency, o.document.as_deref()).into_bytes());
     };
     // Model space as plotted: the plot style table, lineweights, and the table's ends, joins and
     // fills at the scale that fits the window (or the extents) on the device's paper.
@@ -128,7 +144,9 @@ fn svg(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let mut list = cadcraft_render::build_plot(d, space, &ropts);
     let s = fit_scale(&window.unwrap_or(list.bounds), &sheet, &o);
     cadcraft_render::pen::apply(&mut list, s * sheet.unit_mm);
-    Ok(crate::svg::export_list(&list, window).into_bytes())
+    // PDF underlays' pages at the plot resolution on paper.
+    let images = crate::underlay_plot::images(d, &list, o.document.as_deref(), s * sheet.unit_mm / 25.4 * crate::underlay_plot::DPI);
+    Ok(crate::svg::export_list_over(&list, window, &images).into_bytes())
 }
 
 #[cfg(test)]

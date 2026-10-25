@@ -101,6 +101,8 @@ pub struct PdfOptions {
     /// Plot objects with their transparency (PDF alpha). `None` = the page setup's "Plot
     /// transparency" (off for model space).
     pub plot_transparency: Option<bool>,
+    /// The drawing's file, which relative PDF underlay paths are found from.
+    pub document: Option<String>,
 }
 
 impl Default for PdfOptions {
@@ -125,6 +127,7 @@ impl Default for PdfOptions {
             margins: None,
             hyperlinks: true,
             plot_transparency: None,
+            document: None,
         }
     }
 }
@@ -140,6 +143,7 @@ impl PdfOptions {
             _ => None,
         };
         PdfOptions {
+            document: v.get("document").and_then(Value::as_str).filter(|d| !d.is_empty()).map(|d| d.chars().take(4096).collect()),
             // `layers?` (default on), `offLayers?`, `links?: [{handle, url}]`, `text?: "text" |
             // "geometry"`.
             text_as_geometry: v.get("text").and_then(Value::as_str).is_some_and(|t| t.eq_ignore_ascii_case("geometry")),
@@ -240,6 +244,7 @@ pub fn plot(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
                 po.window = Some(w);
                 po.fit = Some(true);
                 po.compress = o.compress;
+                po.document = o.document.clone();
                 Ok((Space::Model, po))
             })
             .collect::<Result<Vec<_>>>()?;
@@ -506,6 +511,9 @@ struct SheetPage {
     links: Vec<(Bounds2, String)>,
     /// Page label: the layout name.
     label: String,
+    /// PDF underlays' pages: pixels and their placement on the page in points (`cm` matrix
+    /// mapping the unit square, its top row first, onto the page's parallelogram).
+    images: Vec<(crate::underlay_plot::PlotImage, [f64; 6])>,
 }
 
 /// Plot one space.
@@ -566,7 +574,17 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
         }
     }
     let links = links(&list, &map, &clip_pt, links_to);
-    Ok(SheetPage { media, list, map, clip_pt, layers, links, label: sheet_name(space) })
+    // Underlays at the plot resolution: drawing units → points → pixels.
+    let px_per_unit = map.s * map.k / 72.0 * crate::underlay_plot::DPI;
+    let images = crate::underlay_plot::images(d, &list, o.document.as_deref(), px_per_unit)
+        .into_iter()
+        .map(|im| {
+            let o = map.pt(im.origin);
+            let (u, v) = (map.pt(im.origin + im.u) - o, map.pt(im.origin + im.v) - o);
+            (im, [u.x, u.y, v.x, v.y, o.x, o.y])
+        })
+        .collect();
+    Ok(SheetPage { media, list, map, clip_pt, layers, links, label: sheet_name(space), images })
 }
 
 /// Source and destination origins for the shared model-space PDF/PNG placement behavior.
@@ -813,7 +831,17 @@ fn marks(s: &mut Surface<'_>, p: &SheetPage, groups: &Groups, fonts: &mut fonts:
     let white = Rgb(255, 255, 255);
     let mut batch: Option<(StrokeStyle, PathBuilder)> = None;
     let mut layer: Option<OcgId> = None;
+    // PDF underlays' pages, each before the primitive it comes before.
+    let mut images: Vec<&(crate::underlay_plot::PlotImage, [f64; 6])> = p.images.iter().collect();
+    images.sort_by_key(|(im, _)| im.at);
+    let mut images = images.into_iter().peekable();
     for (i, prim) in list.prims.iter().enumerate() {
+        // A page is drawn outside the marks' layer.
+        while let Some((im, m)) = images.next_if(|(im, _)| im.at <= i) {
+            flush(s, &mut batch);
+            layer_changed(s, layer.take(), None)?;
+            underlay(s, im, m, &p.map);
+        }
         let want = list.prim_layers.get(i).and_then(|l| groups.ids.get(l)).copied();
         if want != layer {
             flush(s, &mut batch);
@@ -847,7 +875,51 @@ fn marks(s: &mut Surface<'_>, p: &SheetPage, groups: &Groups, fonts: &mut fonts:
         }
     }
     flush(s, &mut batch);
-    layer_changed(s, layer, None)
+    layer_changed(s, layer, None)?;
+    for (im, m) in images {
+        underlay(s, im, m, &p.map);
+    }
+    Ok(())
+}
+
+/// A PDF underlay's page: its pixels on the parallelogram `m` maps the unit square onto (its
+/// top row first, as a PDF image's `cm`), clipped to the viewport it is seen through. The
+/// paper is transparent: the page's alpha goes with it.
+fn underlay(s: &mut Surface<'_>, im: &crate::underlay_plot::PlotImage, m: &[f64; 6], map: &Map) {
+    let rgba: Vec<u8> =
+        im.rgb.as_chunks::<3>().0.iter().zip(im.alpha.iter().chain(std::iter::repeat(&255))).flat_map(|([r, g, b], a)| [*r, *g, *b, *a]).collect();
+    let n = (im.width as usize).saturating_mul(im.height as usize);
+    let Some(size) = kr::geom::Size::from_wh(1.0, 1.0) else { return };
+    if n == 0 || rgba.len() != n * 4 || m.iter().any(|v| !v.is_finite()) {
+        return;
+    }
+    let mut clipped = false;
+    if !im.clip.is_empty() {
+        let mut pb = PathBuilder::new();
+        for tri in im.clip.as_chunks::<3>().0 {
+            let Some(v) = tri.iter().map(|q| coord(map.pt(*q))).collect::<Option<Vec<_>>>() else { continue };
+            for (j, (x, y)) in v.iter().enumerate() {
+                if j == 0 {
+                    pb.move_to(*x, *y);
+                } else {
+                    pb.line_to(*x, *y);
+                }
+            }
+            pb.close();
+        }
+        // Seen through nothing: not drawn.
+        let Some(path) = pb.finish() else { return };
+        s.push_clip_path(&path, &FillRule::NonZero);
+        clipped = true;
+    }
+    // The writer draws an image's top row at y = 0 of the unit square.
+    let [ux, uy, vx, vy, ox, oy] = m.map(|v| v as f32);
+    s.push_transform(&Transform::from_row(ux, uy, -vx, -vy, ox + vx, oy + vy));
+    s.draw_image(kr::image::Image::from_rgba8(rgba, im.width, im.height), size);
+    s.pop();
+    if clipped {
+        s.pop();
+    }
 }
 
 /// How a primitive is painted: colour, transparency (percent) and lineweight (points).

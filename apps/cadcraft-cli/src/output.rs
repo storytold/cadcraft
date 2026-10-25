@@ -147,15 +147,15 @@ pub(crate) fn export_framed(s: &Session, out: &Path, window: Option<Bounds2>, io
 }
 
 /// The warning for the model-space entities of `path` an image can't show, by type (those kept
-/// as unknown objects, `Proxy` in `info`, and PDF underlays, whose page isn't plotted), or `None`
-/// when there are none.
+/// as unknown objects, `Proxy` in `info`, and PDF underlays whose PDF wasn't found: only their
+/// frame is drawn), or `None` when there are none.
 pub(crate) fn undrawn_message(d: &cadcraft_engine::doc::Drawing, path: &str) -> Option<String> {
     let mut types: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
     for e in d.model.iter() {
-        // PDF underlays' pages aren't plotted yet: only their frame is.
+        // An underlay whose PDF wasn't found on opening has no page size, and no page to draw.
         let undrawn = match &e.kind {
             cadcraft_engine::doc::EntityKind::Unknown(u) => Some(u.dxf_type.as_str()),
-            cadcraft_engine::doc::EntityKind::PdfUnderlay(_) => Some("PDFUNDERLAY"),
+            cadcraft_engine::doc::EntityKind::PdfUnderlay(u) if u.size.x <= 0.0 => Some("PDFUNDERLAY"),
             _ => None,
         };
         if let Some(t) = undrawn {
