@@ -23,6 +23,8 @@ pub mod plotter;
 pub mod roundtrip;
 pub mod svg;
 mod svg_read;
+/// PDF underlays drawn on plots.
+mod underlay_plot;
 
 /// Multilines and their styles (MLINE, MLINESTYLE).
 mod dxf_mline;

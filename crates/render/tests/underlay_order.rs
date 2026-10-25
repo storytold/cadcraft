@@ -91,3 +91,51 @@ fn a_layout_viewport_shows_the_page_clipped_to_it() {
     let (far, ..) = layout_with_viewport(Some(Vec2::new(-1e4, -1e4)));
     assert!(build(&far, &paper, &Options::default()).underlays.iter().all(|u| u.shown().is_none()));
 }
+
+/// PNG plots: thin lines drawn before an underlay's page in the drawing order are under it (the
+/// rasteriser gathers consecutive thin lines into one path; the page is drawn after them, not
+/// before), and over it once DRAWORDER sends the page back.
+#[test]
+fn png_plots_put_thin_lines_under_or_over_the_page_by_the_drawing_order() {
+    use cadcraft_render::raster::{RasterOptions, Underlay, View, render_over};
+    let mut d = Drawing::new_metric();
+    let red = Common { color: cadcraft_color::Color::Index(1), ..Common::default() };
+    // Two thin lines in a row, gathered into one path, then the underlay.
+    d.add(&Space::Model, red.clone(), line(5.05)).unwrap();
+    d.add(&Space::Model, red.clone(), line(6.05)).unwrap();
+    let u = PdfUnderlay { size: Vec2::new(10.0, 10.0), path: "plan.pdf".into(), ..PdfUnderlay::default() };
+    let h = d.add(&Space::Model, Common::default(), EntityKind::PdfUnderlay(u)).unwrap();
+    // A third one after the page, which the rasteriser would gather with the first two.
+    d.add(&Space::Model, red, line(8.05)).unwrap();
+    let view = View { center: Vec2::new(5.0, 5.0), scale: 10.0, width: 120, height: 120 };
+    let (rgb, alpha) = ([0u8, 0, 255].repeat(4), vec![255u8; 4]);
+    let pixel = |d: &Drawing, y: f64| {
+        let list = build(d, &Space::Model, &Options::default());
+        let at = list.underlays.first().map(|u| u.at as usize).unwrap();
+        let page = Underlay {
+            at,
+            clip: &[],
+            origin: Vec2::ZERO,
+            u: Vec2::new(10.0, 0.0),
+            v: Vec2::new(0.0, 10.0),
+            width: 2,
+            height: 2,
+            rgb: &rgb,
+            alpha: &alpha,
+        };
+        // One pixel wide (thin lines are gathered only up to that), each line along the middle of
+        // a row of pixels, so the pixel tested is fully on it.
+        let o = RasterOptions { hairline: 1.0, ..RasterOptions::default() };
+        let pm = render_over(&list, &view, &o, &[page]).unwrap();
+        let (x, y) = view.to_screen(Vec2::new(5.0, y));
+        let p = pm.pixel(x as u32, y as u32).unwrap();
+        (p.red(), p.blue())
+    };
+    let (r, b) = pixel(&d, 5.05);
+    assert!(b > 200 && r < 50, "the page covers the lines drawn before it: red {r}, blue {b}");
+    let (r, b) = pixel(&d, 8.05);
+    assert!(r > 200 && b < 50, "the line drawn after the page is over it: red {r}, blue {b}");
+    d.model.send_to_back(h);
+    let (r, b) = pixel(&d, 5.05);
+    assert!(r > 200 && b < 50, "lines drawn after the page are over it: red {r}, blue {b}");
+}
