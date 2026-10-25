@@ -835,7 +835,7 @@ fn plot_page(d: &cadcraft_doc::Drawing, target: &str) -> cadcraft_doc::PageSetup
         return page;
     }
     let mut page = cadcraft_doc::PageSetup { plot_area: "extents".into(), scale_to_fit: true, ..Default::default() };
-    if cadcraft_render::paper::paper_unit_mm(d) == 1.0
+    if cadcraft_render::paper::metric_length_unit(d)
         && let Some(a4) = cadcraft_render::paper_size("A4")
     {
         page.paper = a4.name.into();
