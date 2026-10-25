@@ -1017,3 +1017,10 @@
 	Check for Updates…	Rechercher des mises à jour…
 	CADCraft is up to date.	CADCraft est à jour.
 	Could not check for updates.	Impossible de rechercher les mises à jour.
+	Keyboard Shortcuts...	Raccourcis clavier...
+	Keyboard Shortcuts	Raccourcis clavier
+	Replaces the shortcut of {commands}	Remplace le raccourci de : {commands}
+	Needs Ctrl, Alt or a function key	Il faut Ctrl, Alt ou une touche de fonction
+	Press the keys	Appuyez sur les touches
+	Back to CADCraft's shortcut	Revenir au raccourci de CADCraft
+	A shortcut you give wins over CADCraft's own. Changes apply at once and are kept for next time.	Un raccourci que vous définissez l'emporte sur celui de CADCraft. Les modifications s'appliquent tout de suite et sont conservées.
