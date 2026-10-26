@@ -3,6 +3,7 @@
 //! objects show (ANNOALLVISIBLE) and the current annotation scale (CANNOSCALE with
 //! ANNOAUTOSCALE).
 
+use cadcraft_doc::geom::Vec2;
 use cadcraft_doc::{AnnoScale, Drawing, EntityKind, Handle, MAX_SCALES, is_annotative};
 use serde_json::{Value, json};
 

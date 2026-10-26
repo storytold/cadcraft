@@ -202,8 +202,21 @@ fn entity(expected: &Entity, actual: &Entity, context: &str) {
 
 fn common(expected: &Common, actual: &Common, context: &str) {
     // No `..`: adding a field requires deciding its preservation contract here.
-    let Common { layer, color, linetype, lineweight, ltscale, transparency, visible, thickness, extrusion, plot_style, anno_scales, xdata } =
-        expected;
+    let Common {
+        layer,
+        color,
+        linetype,
+        lineweight,
+        ltscale,
+        transparency,
+        visible,
+        thickness,
+        extrusion,
+        plot_style,
+        anno_scales,
+        anno_moves,
+        xdata,
+    } = expected;
     equal(layer, &actual.layer, context, "layer");
     equal(color, &actual.color, context, "color");
     equal(linetype, &actual.linetype, context, "linetype");
@@ -215,6 +228,7 @@ fn common(expected: &Common, actual: &Common, context: &str) {
     equal(extrusion, &actual.extrusion, context, "extrusion");
     equal(plot_style, &actual.plot_style, context, "plot_style");
     equal(anno_scales, &actual.anno_scales, context, "anno_scales");
+    equal(anno_moves, &actual.anno_moves, context, "anno_moves");
     equal(xdata, &actual.xdata, context, "xdata");
 }
 
