@@ -5,7 +5,7 @@ use cadcraft_engine::Session;
 use cadcraft_engine::doc::{EntityKind, Handle, Space};
 use cadcraft_engine::geom::{Bounds2, Vec2};
 use cadcraft_engine::render;
-use cadcraft_engine::select::pick;
+use cadcraft_engine::select::{pick, select_polygon, select_window};
 use serde_json::json;
 
 /// The last entity of `kind` and the box (centre, half size along the text, angle) of its words.
@@ -320,4 +320,69 @@ fn mtext_multicolumn_gutter_does_not_pick() {
 
     // Clicking in the empty gutter between the two columns at the same y=-2.5 must NOT pick the MText
     assert_eq!(pick(d, &Space::Model, Vec2::new(50.0, -2.5), 0.5), None, "gutter between columns must not pick MText");
+}
+
+/// Normal window and window-polygon selection use tight MText line bounds rather than the unused wrap width.
+#[test]
+fn mtext_normal_window_uses_tight_line_bounds() {
+    let mut s = Session::new();
+    s.execute(
+        "mtext",
+        &json!({
+            "at": [0, 0],
+            "text": "HI",
+            "height": 5.0,
+            "width": 100.0,
+            "attach": 1,
+        }),
+    )
+    .unwrap();
+    let d = s.doc().unwrap();
+    let mtext_h = d.model.last().unwrap().handle;
+
+    // A normal window tightly enclosing "HI" (without spanning the 100-unit wrap width) selects the MText.
+    let tight_win = Bounds2::new(Vec2::new(-2.0, -10.0), Vec2::new(15.0, 5.0));
+    assert_eq!(select_window(d, &Space::Model, tight_win, false), vec![mtext_h], "normal window around glyphs should select MText");
+
+    // A window polygon around the glyphs also selects the MText.
+    let poly = [Vec2::new(-2.0, -10.0), Vec2::new(15.0, -10.0), Vec2::new(15.0, 5.0), Vec2::new(-2.0, 5.0)];
+    assert_eq!(select_polygon(d, &Space::Model, &poly, false), vec![mtext_h], "window polygon around glyphs should select MText");
+
+    // A window in the unused wrap area does not select the MText.
+    let empty_win = Bounds2::new(Vec2::new(30.0, -10.0), Vec2::new(90.0, 5.0));
+    assert!(select_window(d, &Space::Model, empty_win, false).is_empty(), "normal window in empty wrap space must not select");
+    assert!(select_window(d, &Space::Model, empty_win, true).is_empty(), "crossing window in empty wrap space must not select");
+}
+
+/// Word-wrapped MText requires a normal window to enclose all wrapped lines and allows picking/crossing on lower lines.
+#[test]
+fn mtext_wrapped_lines_window_and_pick() {
+    let mut s = Session::new();
+    // Text without \P that wraps onto two lines because width=50 fits only one phrase per line at height=5.
+    s.execute(
+        "mtext",
+        &json!({
+            "at": [0, 0],
+            "text": "FIRST LINE SECOND LINE",
+            "height": 5.0,
+            "width": 50.0,
+            "attach": 1,
+        }),
+    )
+    .unwrap();
+    let d = s.doc().unwrap();
+    let mtext_h = d.model.last().unwrap().handle;
+
+    // A normal window enclosing only the first line (y in [-7, 2]) must NOT select the 2-line MText.
+    let first_line_only = Bounds2::new(Vec2::new(-5.0, -7.0), Vec2::new(60.0, 2.0));
+    assert!(select_window(d, &Space::Model, first_line_only, false).is_empty(), "normal window covering only line 1 must not select");
+
+    // A normal window enclosing both wrapped lines (y in [-25, 2]) selects the MText.
+    let both_lines = Bounds2::new(Vec2::new(-5.0, -25.0), Vec2::new(60.0, 2.0));
+    assert_eq!(select_window(d, &Space::Model, both_lines, false), vec![mtext_h], "normal window covering all wrapped lines should select");
+
+    // Picking and crossing-window selection on the second wrapped line (around y=-11) select the MText.
+    assert_eq!(pick(d, &Space::Model, Vec2::new(5.0, -11.0), 0.5), Some(mtext_h), "picking second wrapped line should select");
+    let second_line_cross = Bounds2::new(Vec2::new(2.0, -15.0), Vec2::new(10.0, -9.0));
+    assert_eq!(select_window(d, &Space::Model, second_line_cross, true), vec![mtext_h], "crossing window on second wrapped line should select");
 }
