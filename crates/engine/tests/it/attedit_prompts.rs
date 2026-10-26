@@ -153,3 +153,33 @@ fn attedit_leaves_constant_attributes_and_locked_references_alone() {
     assert!(e.contains("locked"), "{e}");
     assert_eq!(value(&s, h, "T"), "one");
 }
+
+#[test]
+fn attedit_at_changes_one_of_two_attributes_sharing_a_tag() {
+    let mut s = with_block();
+    let h = handle(&insert(&mut s, 100.0, json!({})));
+    // As a DXF reference may carry them: the second attribute's tag is T too.
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(h, |e| {
+            if let EntityKind::Insert(i) = &mut e.kind {
+                i.attribs[1].tag = "T".into();
+            }
+        })
+        .unwrap();
+    let values = |s: &Session| -> Vec<String> {
+        let EntityKind::Insert(i) = &s.doc().unwrap().entity(h).unwrap().kind else { panic!("not an insert") };
+        i.attribs.iter().map(|a| a.text.value.clone()).collect()
+    };
+    let r = s.execute("attedit", &json!({"handle": h.hex(), "at": {"1": "second"}})).unwrap();
+    assert_eq!(r, json!({"changed": 1}));
+    assert_eq!(values(&s), ["one", "second"]);
+    // By tag, every attribute with it, as before.
+    s.execute("attedit", &json!({"handle": h.hex(), "values": {"t": "both"}})).unwrap();
+    assert_eq!(values(&s), ["both", "both"]);
+    // Hostile places are refused and change nothing.
+    for at in [json!({"2": "x"}), json!({"-1": "x"}), json!({"one": "x"}), json!({"0": [1]}), json!([1]), json!({"18446744073709551616": "x"})] {
+        assert!(s.execute("attedit", &json!({"handle": h.hex(), "at": at})).is_err(), "{at}");
+    }
+    assert_eq!(values(&s), ["both", "both"]);
+}

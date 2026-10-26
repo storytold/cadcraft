@@ -19,7 +19,7 @@ pub(super) fn attedit_spec() -> CommandSpec {
     CommandSpec::new("attedit", "Single...", run)
         .menu(&["Modify", "Object", "Attribute", "Single..."])
         .alias(&["ate", "eattedit"])
-        .params("{handle, values: {TAG: value} (tags in any case; constant attributes are left alone)} → {changed, unknownTags?, constantTags?}")
+        .params("{handle, values?: {TAG: value} (tags in any case; every attribute with the tag), at?: {index: value} (one attribute, by its place in the reference, for repeated tags); constant attributes are left alone} → {changed, unknownTags?, constantTags?}")
         .interactive(|_| Ok(Box::new(AtteditM::default())))
 }
 
@@ -34,7 +34,11 @@ pub(super) fn dash_attedit_spec() -> CommandSpec {
 /// The value `values` gives for `tag`, matching the tag in any case. Numbers and booleans count
 /// as their text.
 pub(super) fn value_for(values: &Map<String, Value>, tag: &str) -> Option<String> {
-    let v = values.get(tag).or_else(|| values.iter().find(|(k, _)| k.eq_ignore_ascii_case(tag)).map(|(_, v)| v))?;
+    text_of(values.get(tag).or_else(|| values.iter().find(|(k, _)| k.eq_ignore_ascii_case(tag)).map(|(_, v)| v))?)
+}
+
+/// A value given for an attribute as its text (numbers and booleans count as their text).
+fn text_of(v: &Value) -> Option<String> {
     match v {
         Value::String(t) => Some(t.clone()),
         Value::Number(n) => Some(n.to_string()),
@@ -68,16 +72,33 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
     if super::super::curves::is_locked(s, h) {
         return Err(bad("attedit", "the reference is on a locked layer"));
     }
+    // Values by place (`at`): one attribute each, where a tag repeats (a DXF reference may carry
+    // two attributes with one tag; `values` changes both).
+    let mut at: Vec<(usize, String)> = Vec::new();
+    if let Some(m) = p.get("at").filter(|v| !v.is_null()) {
+        let m = m.as_object().ok_or_else(|| bad("attedit", "`at` must be an object of {index: value}"))?;
+        for (k, v) in m {
+            let i = k
+                .trim()
+                .parse::<usize>()
+                .ok()
+                .filter(|i| *i < ins.attribs.len())
+                .ok_or_else(|| bad("attedit", format!("`at`: {k} is not the index of one of the reference's attributes")))?;
+            at.push((i, text_of(v).ok_or_else(|| bad("attedit", format!("`at`: the value for {k} must be text")))?));
+        }
+    }
+    let given = |i: usize, tag: &str| at.iter().find(|(j, _)| *j == i).map(|(_, v)| v.clone()).or_else(|| value_for(&vals, tag));
     // Constant attributes keep their definition's value.
-    let constant: Vec<String> = ins.attribs.iter().filter(|a| a.constant && value_for(&vals, &a.tag).is_some()).map(|a| a.tag.clone()).collect();
-    if let Some(a) = ins.attribs.iter().find(|a| value_for(&vals, &a.tag).is_some_and(|v| v.len() > MAX_VALUE)) {
+    let constant: Vec<String> =
+        ins.attribs.iter().enumerate().filter(|(i, a)| a.constant && given(*i, &a.tag).is_some()).map(|(_, a)| a.tag.clone()).collect();
+    if let Some((_, a)) = ins.attribs.iter().enumerate().find(|(i, a)| given(*i, &a.tag).is_some_and(|v| v.len() > MAX_VALUE)) {
         return Err(bad("attedit", format!("the value for {} is longer than {MAX_VALUE} bytes", a.tag)));
     }
     let mut n = 0;
     s.doc_mut()?.modify_entity(h, |e| {
         if let EntityKind::Insert(i) = &mut e.kind {
-            for a in i.attribs.iter_mut().filter(|a| !a.constant) {
-                if let Some(v) = value_for(&vals, &a.tag) {
+            for (j, a) in i.attribs.iter_mut().enumerate().filter(|(_, a)| !a.constant) {
+                if let Some(v) = given(j, &a.tag) {
                     set_value(&mut a.text, v);
                     n += 1;
                 }
