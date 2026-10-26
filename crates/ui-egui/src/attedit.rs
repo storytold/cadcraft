@@ -1,6 +1,6 @@
 //! The Edit Attributes dialog (Enhanced Attribute Editor): ATTEDIT / EATTEDIT typed or started
 //! from a menu while one block reference with attributes is selected. It lists each attribute's
-//! tag, prompt and value; Apply and OK run `attedit {handle, values}` with the values changed (one
+//! tag, prompt and value; Apply and OK run `attedit {handle, at}` with the values changed (one
 //! undo step each). With nothing suitable selected ATTEDIT asks at the command line instead, and
 //! JSON calls never open the dialog.
 
@@ -120,9 +120,10 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
     open(app, h, None).then_some(Ok(Value::Null))
 }
 
-/// The values typed that differ from the drawing's, as `attedit`'s `values`.
+/// The values typed that differ from the drawing's, as `attedit`'s `at` (by row, so attributes
+/// sharing a tag stay apart).
 fn changed(rows: &[Row]) -> Map<String, Value> {
-    rows.iter().filter(|r| r.editable && r.typed != r.value).map(|r| (r.tag.clone(), Value::String(r.typed.clone()))).collect()
+    rows.iter().enumerate().filter(|(_, r)| r.editable && r.typed != r.value).map(|(i, r)| (i.to_string(), Value::String(r.typed.clone()))).collect()
 }
 
 /// Apply: run `attedit` with the changed values; true when it went through (or nothing changed).
@@ -132,7 +133,7 @@ pub fn apply(app: &mut CadApp) -> bool {
     if values.is_empty() {
         return true;
     }
-    match app.run("attedit", json!({ "handle": h.hex(), "values": values })) {
+    match app.run("attedit", json!({ "handle": h.hex(), "at": values })) {
         Ok(_) => {
             load(app, h);
             true
@@ -245,6 +246,6 @@ mod tests {
         let rows = [row("A", "1", "1", true), row("B", "2", "3", true), row("C", "x", "y", false)];
         let v = changed(&rows);
         assert_eq!(v.len(), 1);
-        assert_eq!(v.get("B"), Some(&json!("3")));
+        assert_eq!(v.get("1"), Some(&json!("3")));
     }
 }
