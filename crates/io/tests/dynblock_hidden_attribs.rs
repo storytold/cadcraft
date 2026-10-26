@@ -97,3 +97,23 @@ fn a_state_that_hides_the_definition_hides_the_attribute() {
     let groups = attrib_groups(&write_dxf(&d), "SWING");
     assert!(!groups.is_empty() && !groups.iter().any(|(c, _)| c == "60"), "{groups:?}");
 }
+
+#[test]
+fn an_attribute_hidden_on_its_own_stays_hidden_when_another_property_changes() {
+    // SWING hidden on its own (group 60 as read) while the Open state shows its definition: a
+    // change of Width, which no visibility state follows, leaves it hidden.
+    let (mut d, r) = door();
+    d.modify_entity(r, |e| {
+        if let EntityKind::Insert(i) = &mut e.kind {
+            for a in &mut i.attribs {
+                a.modes.hidden = true;
+            }
+        }
+    })
+    .unwrap();
+    let width = cadcraft_doc::dynblock::custom_properties(&d, r).unwrap().1.into_iter().find(|p| p.name == "Width").unwrap().value;
+    let wider = format!("{}", width.parse::<f64>().unwrap() + 2.0);
+    set_property(&mut d, r, "Width", &wider).unwrap();
+    assert!(swing(&d, r).0, "still hidden after Width {width} → {wider}");
+    assert!(attrib_groups(&write_dxf(&d), "SWING").contains(&("60".to_string(), "1".to_string())));
+}

@@ -624,16 +624,20 @@ fn apply(
         f.targets.insert(h, ("BLOCK_RECORD".to_string(), definition.to_ascii_uppercase()));
         h
     }));
-    // Whether each attribute definition is shown in the new block: the reference's attribute of
-    // that tag is hidden with it (a visibility state).
-    let def_shown: HashMap<String, bool> = b
-        .entities
-        .iter()
-        .filter_map(|e| match &e.kind {
-            EntityKind::AttDef(ad) => Some((ad.tag.to_ascii_uppercase(), e.common.visible)),
-            _ => None,
-        })
-        .collect();
+    // The attribute definitions a visibility state showed or hid in the new block (shown or not
+    // there, by tag): the reference's attribute of that tag is hidden with it. Any other keeps
+    // its own hidden state (group 60, as read), whatever else changed.
+    let shown_in = |blk: &Block| -> HashMap<String, bool> {
+        blk.entities
+            .iter()
+            .filter_map(|e| match &e.kind {
+                EntityKind::AttDef(ad) => Some((ad.tag.to_ascii_uppercase(), e.common.visible)),
+                _ => None,
+            })
+            .collect()
+    };
+    let was_shown = shown_in(&src);
+    let def_shown: HashMap<String, bool> = shown_in(&b).into_iter().filter(|(tag, now)| was_shown.get(tag) != Some(now)).collect();
     let old = ins.block.clone();
     d.blocks.insert(name.clone(), std::sync::Arc::new(b));
     let f = std::sync::Arc::make_mut(&mut d.foreign);
