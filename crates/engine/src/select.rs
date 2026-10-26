@@ -210,6 +210,21 @@ fn in_mtext(d: &Drawing, t: &cadcraft_doc::MText, p: Vec2) -> bool {
     mtext_line_bounds(d, t).into_iter().any(|b| b.contains(tp))
 }
 
+/// Tight world-space bounding box of all laid-out lines of `t`.
+fn mtext_world_bounds(d: &Drawing, t: &cadcraft_doc::MText) -> Bounds2 {
+    let insert = t.insert.xy();
+    let unturn = |q: Vec2| insert + q.rotate(t.rotation);
+    Bounds2::from_points(mtext_line_bounds(d, t).into_iter().flat_map(|b| b.corners().map(unturn)))
+}
+
+/// Tight selection bounds for `e` (using laid-out line boxes for `MText`).
+fn select_bounds(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
+    match &e.kind {
+        EntityKind::MText(t) => mtext_world_bounds(d, t),
+        _ => bounds_of(d, e, known),
+    }
+}
+
 /// Whether `p` is inside the box around `pts` turned by `angle` (the box of text set at `angle`).
 fn in_box(pts: impl Iterator<Item = Vec2>, angle: f64, p: Vec2) -> bool {
     let turn = |q: Vec2| q.rotate(-angle);
@@ -273,7 +288,7 @@ pub(crate) fn pick_with(d: &Drawing, space: &Space, ix: &Option<std::sync::Arc<S
             continue;
         }
         let infinite = is_infinite(e);
-        if !infinite && !bounds_of(d, e, known).expand(aperture).intersects(&probe) {
+        if !infinite && !select_bounds(d, e, known).expand(aperture).intersects(&probe) {
             continue;
         }
         if entity_distance(d, e, p, aperture / 4.0) <= aperture {
@@ -290,7 +305,7 @@ pub fn pick_all(d: &Drawing, space: &Space, p: Vec2, aperture: f64) -> Vec<Handl
     let probe = Bounds2::new(p, p).expand(aperture);
     let Some(cands) = candidates(d, space, &ix, &probe.expand(aperture), true, true) else { return Vec::new() };
     cands
-        .filter(|(e, known)| selectable(d, e) && (is_infinite(e) || bounds_of(d, e, *known).expand(aperture).intersects(&probe)))
+        .filter(|(e, known)| selectable(d, e) && (is_infinite(e) || select_bounds(d, e, *known).expand(aperture).intersects(&probe)))
         .filter(|(e, _)| entity_distance(d, e, p, aperture / 4.0) <= aperture)
         .map(|(e, _)| e.handle)
         .collect()
@@ -337,7 +352,7 @@ pub(crate) fn window_tol(bx: &Bounds2) -> f64 {
 /// touching its geometry, not just its bounding box) selects `e`.
 pub(crate) fn in_window(d: &Drawing, e: &Entity, known: Option<Bounds2>, bx: &Bounds2, crossing: bool, tol: f64) -> bool {
     let infinite = is_infinite(e);
-    let eb = bounds_of(d, e, known);
+    let eb = select_bounds(d, e, known);
     if !infinite && bx.contains_box(&eb) {
         return true;
     }
@@ -386,7 +401,7 @@ pub(crate) fn select_fence_with(d: &Drawing, space: &Space, ix: &Option<std::syn
     let mut out = Vec::new();
     for (e, known) in cands {
         // Infinite objects have no useful bounds; like window selection, test their geometry directly.
-        if !selectable(d, e) || (!is_infinite(e) && !bounds_of(d, e, known).intersects(&probe)) {
+        if !selectable(d, e) || (!is_infinite(e) && !select_bounds(d, e, known).intersects(&probe)) {
             continue;
         }
         let polys = hit_polylines(d, e, tol);
@@ -420,7 +435,7 @@ pub fn select_polygon(d: &Drawing, space: &Space, poly: &[Vec2], crossing: bool)
         if !selectable(d, e) || (infinite && !crossing) {
             continue;
         }
-        let eb = bounds_of(d, e, known);
+        let eb = select_bounds(d, e, known);
         if !infinite && if crossing { !eb.intersects(&pb) } else { !pb.contains_box(&eb) } {
             continue;
         }
@@ -432,7 +447,7 @@ pub fn select_polygon(d: &Drawing, space: &Space, poly: &[Vec2], crossing: bool)
         });
         let mut pts = polys.iter().flatten();
         let hit = if crossing {
-            crosses || pts.any(|p| point_in_polygon(poly, *p))
+            crosses || pts.any(|p| point_in_polygon(poly, *p)) || matches!(&e.kind, EntityKind::MText(t) if in_mtext(d, t, *first))
         } else {
             !crosses && !polys.is_empty() && pts.all(|p| point_in_polygon(poly, *p))
         };
