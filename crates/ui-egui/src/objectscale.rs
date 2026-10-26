@@ -175,7 +175,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let mut cancel = false;
     // Modal: the drawing behind takes no clicks or keys while it is open (see
     // `cmdline::keyboard`), so Escape doesn't cancel or deselect there.
-    egui::Modal::new(egui::Id::new("Annotation Object Scale")).show(ctx, |ui| {
+    egui::Modal::new(egui::Id::unique("Annotation Object Scale")).show(ctx, |ui| {
         ui.heading(crate::tl!("Annotation Object Scale"));
         ui.add_space(4.0);
         ui.label(egui::RichText::new(crate::tl!("Object Scale List")).color(t.text_dim));
@@ -229,7 +229,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     // Add Scales to Object: the drawing's other scales, several at a time.
     if let Some(mut picks) = s.adding.clone() {
         let mut done = false;
-        egui::Modal::new(egui::Id::new("Add Scales to Object")).show(ctx, |ui| {
+        egui::Modal::new(egui::Id::unique("Add Scales to Object")).show(ctx, |ui| {
             ui.heading(crate::tl!("Add Scales to Object"));
             ui.add_space(4.0);
             ui.label(egui::RichText::new(crate::tl!("Scale List")).color(t.text_dim));
