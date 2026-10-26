@@ -484,16 +484,22 @@ mod native {
     /// [`file_class_names`] from a DXF's groups.
     fn class_names(groups: impl Iterator<Item = (i32, String)>) -> std::collections::HashMap<String, String> {
         let mut out = std::collections::HashMap::new();
-        let (mut in_class, mut name, mut seen) = (false, None::<String>, false);
+        // Only the CLASSES section's records count: acadrust reads that section on its own, so a
+        // CLASS record anywhere else names nothing.
+        let (mut in_classes, mut section_name, mut in_class, mut name) = (false, false, false, None::<String>);
         for (code, value) in groups {
+            let naming = std::mem::take(&mut section_name);
             match (code, value.as_str()) {
-                (0, "CLASS") => {
+                (0, "SECTION") => {
+                    (in_classes, in_class, section_name) = (false, false, true);
+                }
+                (2, s) if naming => in_classes = s.eq_ignore_ascii_case("CLASSES"),
+                // The CLASSES section is over.
+                (0, "ENDSEC") if in_classes => break,
+                (0, "CLASS") if in_classes => {
                     in_class = true;
-                    seen = true;
                     name = None;
                 }
-                // The CLASSES section is over.
-                (0, "ENDSEC") if seen => break,
                 (0, _) => in_class = false,
                 (1, n) if in_class => name = Some(n.to_ascii_uppercase()),
                 (2, cpp) if in_class => {
@@ -982,6 +988,80 @@ EOF
             for n in 0..b.len() {
                 let _ = file_class_names(&b[..n]);
             }
+        }
+
+        /// A CLASS record outside the CLASSES section (here in the HEADER, ahead of it) names
+        /// nothing: acadrust reads only the section's, so the false name isn't put on its class.
+        #[test]
+        fn a_class_outside_the_classes_section_names_nothing() {
+            let class = |cpp: &str| {
+                format!(
+                    "0
+CLASS
+1
+BLOCKROTATEACTION
+2
+{cpp}
+3
+ObjectDBX Classes
+90
+1153
+91
+0
+280
+0
+281
+0
+"
+                )
+            };
+            let dxf = format!(
+                "0
+SECTION
+2
+HEADER
+9
+$ACADVER
+1
+AC1015
+{}0
+ENDSEC
+0
+SECTION
+2
+CLASSES
+{}0
+ENDSEC
+0
+EOF
+",
+                class("AcDbFalseName"),
+                class("AcDbBlockRotateAction"),
+            );
+            let names = file_class_names(dxf.as_bytes());
+            assert_eq!(names.get("BLOCKROTATEACTION").map(String::as_str), Some("AcDbBlockRotateAction"), "{names:?}");
+            assert_eq!(names.len(), 1);
+            // Without a CLASSES section, none.
+            assert!(
+                file_class_names(
+                    b"0
+SECTION
+2
+ENTITIES
+0
+CLASS
+1
+X
+2
+AcDbX
+0
+ENDSEC
+0
+EOF
+"
+                )
+                .is_empty()
+            );
         }
 
         /// A DXF name listed twice: acadrust's DXF reader keeps the first entry, and so does the
