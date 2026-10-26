@@ -1160,7 +1160,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                 let atts = cadcraft_engine::attributes(d, e.handle);
                 if !atts.is_empty() {
                     group(ui, "Attributes");
-                    for a in &atts {
+                    for (i, a) in atts.iter().enumerate() {
                         prop_row(ui, &a.tag, |ui| {
                             // A value with line breaks is edited in the Edit Attributes dialog;
                             // a single-line field would join its lines.
@@ -1171,8 +1171,9 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                                 } else {
                                     crate::tl!("Constant")
                                 });
-                            } else if let Some(v) = edit_field(ui, ui.scope_id().with(("attval", e.handle, &a.tag)), a.value.clone()) {
-                                att_set = Some(json!({ "handle": e.handle.hex(), "values": { a.tag.clone(): v } }));
+                            } else if let Some(v) = edit_field(ui, ui.scope_id().with(("attval", e.handle, i)), a.value.clone()) {
+                                // By place: another attribute may share the tag.
+                                att_set = Some(json!({ "handle": e.handle.hex(), "at": { i.to_string(): v } }));
                             }
                         });
                     }
