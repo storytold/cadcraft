@@ -84,7 +84,7 @@ pub(super) fn extra_groups(ui: &mut egui::Ui, d: &Drawing, desc: &Description, i
 
 /// Whether a row's "…" asked for the Annotation Object Scale dialog this frame (and forget it).
 pub(super) fn take_open_scales(ui: &egui::Ui) -> bool {
-    ui.data_mut(|m| m.remove_temp::<bool>(egui::Id::new(OPEN_SCALES))).unwrap_or(false)
+    ui.data_mut(|m| m.remove_temp::<bool>(egui::Id::unique(OPEN_SCALES))).unwrap_or(false)
 }
 
 const OPEN_SCALES: &str = "properties-open-objectscale";
@@ -242,7 +242,7 @@ fn described_row(ui: &mut egui::Ui, rows: &Rows<'_>, row: &Row, edit: &mut Optio
                 let boxed = ui.allocate_ui(vec2((w - 30.0).max(40.0), 22.0), |ui| value_box(ui, &shown, false, true)).inner;
                 let dots = ui.small_button("…");
                 if boxed.on_hover_text(crate::tl!("Add or delete annotation scales")).clicked() || dots.clicked() {
-                    ui.data_mut(|m| m.insert_temp(egui::Id::new(OPEN_SCALES), true));
+                    ui.data_mut(|m| m.insert_temp(egui::Id::unique(OPEN_SCALES), true));
                 }
             }
             // General's own kinds (layer, lineweight, transparency) aren't in the typed groups.
