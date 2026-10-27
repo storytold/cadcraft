@@ -57,9 +57,12 @@ AutoCAD Taiwan's official vocabulary (**圖面**, **圖塊**, **標註**, **圖�
 Taiwan's, then common Taiwan usage. The translation was written from CADCraft's English strings;
 the Simplified catalog, converted with OpenCC, served only as a starting point. It uses Taiwan
 standard glyphs (台, 群, 里) and keeps clickable command keywords in English (`Top`, `Zero`,
-`_tan to`, `nX`/`nXP`). It renders like Simplified Chinese, with an installed CJK font (PingFang
-on macOS) or an embedded CJK face. The work is AI-assisted and has not yet been proofread line by
-line by a native speaker.
+`_tan to`, `nX`/`nXP`). It renders like Simplified Chinese, with an installed CJK font or an
+embedded CJK face: PingFang on macOS, Microsoft JhengHei (微軟正黑體) on Windows, Noto Sans CJK TC
+on Linux/FreeBSD, each falling back to the Simplified faces (Microsoft YaHei, Noto Sans CJK SC,
+WenQuanYi) when the Traditional one is missing. The embedded craft-fonts faces follow the same
+order, the `Hant` face first. The work is AI-assisted and has not yet been proofread line by line
+by a native speaker.
 
 Brazilian Portuguese has 1,447 catalog rows and also covers the reference catalog, every marked UI
 literal and the strings the sibling catalogs translate: commands, menus, tool groups and tooltips, object snaps, drafting prompts, dialogs and
