@@ -1343,3 +1343,107 @@ fn dimension_inspection_transcodes_label_and_rate() {
     assert!(g.mtext.contains("Kiểm tra"), "Expected transcoded label, got: {}", g.mtext);
     assert!(g.mtext.contains("100% (đạt)"), "Expected transcoded rate, got: {}", g.mtext);
 }
+
+#[test]
+fn mtext_transcodes_text_while_preserving_truecolor_and_formatting() {
+    let mut d = Drawing::new_imperial();
+    d.text_styles.push(cadcraft_doc::TextStyle { name: "VNI-Helve".into(), font: "VNI-Helve".into(), ..Default::default() });
+
+    let mtext = cadcraft_doc::MText {
+        insert: Vec3::ZERO,
+        height: 2.5,
+        width: 100.0,
+        attach: 1,
+        rotation: 0.0,
+        style: "VNI-Helve".into(),
+        contents: r"\c16711680;NHOÂM 3003".into(),
+        line_spacing: 1.0,
+        line_spacing_exact: false,
+        columns: None,
+    };
+    let layout = layout_mtext_entity(&d, &mtext);
+    assert_eq!(layout.lines.len(), 1);
+    assert_eq!(layout.lines[0], "NHÔM 3003");
+    assert_eq!(layout.pieces.len(), 1);
+    assert_eq!(layout.pieces[0].color, Some(cadcraft_fonts::MTextColor::Rgb(16711680)));
+}
+
+#[test]
+fn mtext_tcvn3h_preserves_lowercase_control_codes_and_underline() {
+    let mut d = Drawing::new_imperial();
+    d.text_styles.push(cadcraft_doc::TextStyle { name: ".VnTimeH".into(), font: ".VnTimeH".into(), ..Default::default() });
+
+    let mtext = cadcraft_doc::MText {
+        insert: Vec3::ZERO,
+        height: 2.5,
+        width: 100.0,
+        attach: 1,
+        rotation: 0.0,
+        style: ".VnTimeH".into(),
+        contents: r"\c16711680;\Ltiªu chuÈn\l\P\C1;b¶n vÏ".into(),
+        line_spacing: 1.0,
+        line_spacing_exact: false,
+        columns: None,
+    };
+    let layout = layout_mtext_entity(&d, &mtext);
+    assert_eq!(layout.lines.len(), 2);
+    assert_eq!(layout.lines[0], "TIÊU CHUẨN");
+    assert_eq!(layout.lines[1], "BẢN VẼ");
+    assert_eq!(layout.pieces[0].color, Some(cadcraft_fonts::MTextColor::Rgb(16711680)));
+    assert_eq!(layout.pieces[1].color, Some(cadcraft_fonts::MTextColor::Aci(1)));
+}
+
+#[test]
+fn mtext_stacked_fraction_transcodes_inner_text() {
+    let mut d = Drawing::new_imperial();
+    d.text_styles.push(cadcraft_doc::TextStyle { name: ".VnTime".into(), font: ".VnTime".into(), ..Default::default() });
+
+    let mtext = cadcraft_doc::MText {
+        insert: Vec3::ZERO,
+        height: 2.5,
+        width: 100.0,
+        attach: 1,
+        rotation: 0.0,
+        style: ".VnTime".into(),
+        contents: r"\S®iÓm a/®iÓm b; mÐt vu«ng".into(),
+        line_spacing: 1.0,
+        line_spacing_exact: false,
+        columns: None,
+    };
+    let layout = layout_mtext_entity(&d, &mtext);
+    assert!(layout.lines[0].contains("mét vuông"));
+    assert!(layout.lines[0].contains("điểm a"));
+    assert!(layout.lines[0].contains("điểm b"));
+}
+
+#[test]
+fn mtext_inline_font_switch_and_group_scope_transcode() {
+    let d = Drawing::new_imperial();
+    let mtext = cadcraft_doc::MText {
+        insert: Vec3::ZERO,
+        height: 2.5,
+        width: 100.0,
+        attach: 1,
+        rotation: 0.0,
+        style: "Standard".into(),
+        contents: r"{\f.VnTime;\c16711680;B¶n vÏ} \fArial;\C7;English text".into(),
+        line_spacing: 1.0,
+        line_spacing_exact: false,
+        columns: None,
+    };
+    let layout = layout_mtext_entity(&d, &mtext);
+    assert!(layout.lines[0].contains("Bản vẽ"));
+    assert!(layout.lines[0].contains("English text"));
+}
+
+#[test]
+fn dimension_override_preserves_mtext_truecolor_and_formatting() {
+    let mut d = Drawing::new_imperial();
+    d.text_styles.push(cadcraft_doc::TextStyle { name: "VNI-Helve".into(), font: "VNI-Helve".into(), ..Default::default() });
+    if let Some(st) = d.dim_styles.first_mut() {
+        st.text_style = "VNI-Helve".into();
+    }
+    let dim = cadcraft_doc::Dimension { text: r"\c16711680;NHOÂM <>".into(), ..lin_dim() };
+    let g = dimension_in(&d, &dim);
+    assert!(g.mtext.starts_with(r"\c16711680;NHÔM"));
+}

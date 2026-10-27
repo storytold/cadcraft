@@ -53,7 +53,7 @@ pub fn layout_mtext_entity(d: &Drawing, t: &cadcraft_doc::MText) -> cadcraft_fon
             reversed: c.flow_reversed,
         }),
     };
-    let transcoded = cadcraft_fonts::legacy_encoding::transcode(&t.contents, hint);
+    let transcoded = transcode_mtext(&t.contents, hint);
     cadcraft_fonts::layout_mtext_with(&transcoded, &params)
 }
 
@@ -98,4 +98,144 @@ fn align(h: cadcraft_doc::HAlign, v: cadcraft_doc::VAlign) -> (cadcraft_fonts::A
         cadcraft_doc::VAlign::Top => V::Top,
     };
     (ha, va)
+}
+
+/// Transcode an MTEXT string preserving formatting and control codes (e.g. `\c16711680;`, `\C1;`,
+/// `\H2.5;`, `\P`, `\L`, `\l`, `\S...;`). Only text runs between markup codes are transcoded.
+pub fn transcode_mtext(contents: &str, hint: Option<&str>) -> String {
+    if !contents.contains('\\') && !contents.contains('{') && !contents.contains('}') {
+        return cadcraft_fonts::legacy_encoding::transcode(contents, hint).into_owned();
+    }
+
+    let mut out = String::with_capacity(contents.len());
+    let chars: Vec<char> = contents.chars().collect();
+    let mut i = 0;
+    let mut text_run = String::new();
+    let mut current_hint: Option<String> = hint.map(|s| s.to_string());
+    let mut hint_stack: Vec<Option<String>> = Vec::new();
+
+    let flush_text = |run: &mut String, out: &mut String, h: Option<&str>| {
+        if !run.is_empty() {
+            out.push_str(&cadcraft_fonts::legacy_encoding::transcode(run, h));
+            run.clear();
+        }
+    };
+
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            '\\' => {
+                let code = chars.get(i + 1).copied().unwrap_or(' ');
+                match code {
+                    // Paragraph and column breaks
+                    'P' | 'N' => {
+                        flush_text(&mut text_run, &mut out, current_hint.as_deref());
+                        out.push('\\');
+                        out.push(code);
+                        i += 2;
+                    }
+                    // Non-breaking space
+                    '~' => {
+                        flush_text(&mut text_run, &mut out, current_hint.as_deref());
+                        out.push('\\');
+                        out.push('~');
+                        i += 2;
+                    }
+                    // Escaped literal characters: \\, \{, \}
+                    '\\' | '{' | '}' => {
+                        flush_text(&mut text_run, &mut out, current_hint.as_deref());
+                        out.push('\\');
+                        out.push(code);
+                        i += 2;
+                    }
+                    // 2-character toggles without arguments or semicolons
+                    'L' | 'l' | 'O' | 'o' | 'K' | 'k' => {
+                        flush_text(&mut text_run, &mut out, current_hint.as_deref());
+                        out.push('\\');
+                        out.push(code);
+                        i += 2;
+                    }
+                    // Stacked fraction: \S <top> <sep> <bottom> ;
+                    'S' => {
+                        flush_text(&mut text_run, &mut out, current_hint.as_deref());
+                        out.push('\\');
+                        out.push('S');
+                        let mut j = i + 2;
+                        let mut stack_content = String::new();
+                        while let Some(&ch) = chars.get(j) {
+                            j += 1;
+                            if ch == ';' {
+                                break;
+                            }
+                            stack_content.push(ch);
+                        }
+                        if let Some(sep_idx) = stack_content.find(['^', '/', '#']) {
+                            let sep = &stack_content[sep_idx..=sep_idx];
+                            let top = &stack_content[..sep_idx];
+                            let bottom = &stack_content[sep_idx + 1..];
+                            let t_top = cadcraft_fonts::legacy_encoding::transcode(top, current_hint.as_deref());
+                            let t_bottom = cadcraft_fonts::legacy_encoding::transcode(bottom, current_hint.as_deref());
+                            out.push_str(&t_top);
+                            out.push_str(sep);
+                            out.push_str(&t_bottom);
+                        } else {
+                            out.push_str(&cadcraft_fonts::legacy_encoding::transcode(&stack_content, current_hint.as_deref()));
+                        }
+                        out.push(';');
+                        i = j;
+                    }
+                    // Codes with arguments terminated by ';' (\c, \C, \H, \W, \Q, \A, \f, \F, \T, \p, etc.)
+                    _ => {
+                        flush_text(&mut text_run, &mut out, current_hint.as_deref());
+                        let start = i;
+                        let mut j = i + 2;
+                        while let Some(&ch) = chars.get(j) {
+                            j += 1;
+                            if ch == ';' {
+                                break;
+                            }
+                        }
+                        // Check if this is an in-line font switch \f<font_name>...;
+                        if (code == 'f' || code == 'F') && j > start + 3 {
+                            let font_spec: String = chars[start + 2..j.saturating_sub(1)].iter().collect();
+                            let font_name = font_spec.split('|').next().unwrap_or("").trim();
+                            if cadcraft_fonts::legacy_encoding::font_hint(&[font_name]).is_some() {
+                                current_hint = Some(font_name.to_string());
+                            } else if !font_name.is_empty() {
+                                current_hint = None;
+                            }
+                        }
+                        for k in start..j {
+                            if let Some(&ch) = chars.get(k) {
+                                out.push(ch);
+                            }
+                        }
+                        i = j;
+                    }
+                }
+            }
+            '{' => {
+                flush_text(&mut text_run, &mut out, current_hint.as_deref());
+                if hint_stack.len() < 256 {
+                    hint_stack.push(current_hint.clone());
+                }
+                out.push('{');
+                i += 1;
+            }
+            '}' => {
+                flush_text(&mut text_run, &mut out, current_hint.as_deref());
+                if let Some(h) = hint_stack.pop() {
+                    current_hint = h;
+                }
+                out.push('}');
+                i += 1;
+            }
+            _ => {
+                text_run.push(c);
+                i += 1;
+            }
+        }
+    }
+    flush_text(&mut text_run, &mut out, current_hint.as_deref());
+    out
 }
