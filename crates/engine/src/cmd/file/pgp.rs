@@ -63,8 +63,8 @@ pub fn alias_name(a: &str) -> std::result::Result<String, String> {
 }
 
 /// The aliases of a `.pgp` file's text, and its problems.
-fn parse(text: &str) -> (Vec<(String, String)>, Vec<String>) {
-    let mut out: Vec<(String, String)> = Vec::new();
+fn parse(text: &str) -> (BTreeMap<String, String>, Vec<String>) {
+    let mut out = BTreeMap::new();
     let mut warnings = Vec::new();
     let mut warn = |no: usize, msg: String| {
         if warnings.len() < MAX_WARNINGS {
@@ -100,13 +100,13 @@ fn parse(text: &str) -> (Vec<(String, String)>, Vec<String>) {
             warn(no, format!("{}: unknown command {}; skipped", alias.trim(), target.trim()));
             continue;
         };
+        // Once full, stop at the next valid definition, even if it repeats an alias.
         if out.len() >= MAX_ALIASES {
             warn(no, format!("more than {MAX_ALIASES} aliases; the rest are skipped"));
             break;
         }
-        // A later line for the same alias wins, as it would when typed into the file twice.
-        out.retain(|(a, _)| *a != name);
-        out.push((name, id));
+        // A later definition wins without scanning all the aliases accumulated so far.
+        out.insert(name, id);
     }
     (out, warnings)
 }
@@ -120,7 +120,7 @@ fn listing(warnings: &[String], added: usize) -> Value {
 fn load(text: &str, path: Option<String>) -> (usize, Vec<String>) {
     let (aliases, warnings) = parse(text);
     let mut st = store();
-    st.map = aliases.into_iter().collect();
+    st.map = aliases;
     if path.is_some() {
         st.file = path;
     }
