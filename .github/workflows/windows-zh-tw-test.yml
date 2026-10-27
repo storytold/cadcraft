@@ -106,11 +106,13 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          Get-ChildItem dist/release -File | Where-Object { $_.Extension -in '.msi', '.zip' } | ForEach-Object {
-            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
-            "$h  $($_.Name)"
-          } | Set-Content dist/release/SHA256SUMS.txt -Encoding ascii
-          Get-Content dist/release/SHA256SUMS.txt
+          $lines = Get-ChildItem dist/release -File | Where-Object { $_.Extension -in '.msi', '.zip' } | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          }
+          # LF line endings, so `shasum -a 256 -c SHA256SUMS.txt` works on macOS and Linux too.
+          $out = Join-Path (Resolve-Path dist/release).Path 'SHA256SUMS.txt'
+          [System.IO.File]::WriteAllText($out, (($lines -join "`n") + "`n"), [System.Text.UTF8Encoding]::new($false))
+          Get-Content $out
 
       - uses: actions/upload-artifact@v4
         with:
