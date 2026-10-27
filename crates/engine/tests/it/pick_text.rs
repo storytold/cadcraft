@@ -386,3 +386,43 @@ fn mtext_wrapped_lines_window_and_pick() {
     let second_line_cross = Bounds2::new(Vec2::new(2.0, -15.0), Vec2::new(10.0, -9.0));
     assert_eq!(select_window(d, &Space::Model, second_line_cross, true), vec![mtext_h], "crossing window on second wrapped line should select");
 }
+
+/// Word-wrapped MText in a large scene (> 256 entities) where the spatial index is active
+/// correctly indexes lower wrapped lines for picking and crossing/window selection.
+#[test]
+fn mtext_wrapped_lines_in_large_scene_spatial_index() {
+    let mut s = Session::new();
+    // Create enough entities to activate the spatial index (MIN_INDEXED = 256).
+    for i in 0..260 {
+        s.execute("point", &json!({"at": [i * 10, 500]})).unwrap();
+    }
+    s.execute(
+        "mtext",
+        &json!({
+            "at": [0, 0],
+            "text": "FIRST LINE SECOND LINE",
+            "height": 5.0,
+            "width": 50.0,
+            "attach": 1,
+        }),
+    )
+    .unwrap();
+    let d = s.doc().unwrap();
+    let mtext_h = d.model.last().unwrap().handle;
+
+    // Verify spatial index is indeed populated and active.
+    assert!(cadcraft_engine::spatial::index(d, &Space::Model).is_some());
+
+    // Normal window enclosing only line 1 must not select the 2-line MText.
+    let first_line_only = Bounds2::new(Vec2::new(-5.0, -7.0), Vec2::new(60.0, 2.0));
+    assert!(select_window(d, &Space::Model, first_line_only, false).is_empty());
+
+    // Normal window enclosing both lines selects the MText.
+    let both_lines = Bounds2::new(Vec2::new(-5.0, -25.0), Vec2::new(60.0, 2.0));
+    assert_eq!(select_window(d, &Space::Model, both_lines, false), vec![mtext_h]);
+
+    // Picking and crossing-window on the second wrapped line (y = -11) select via spatial index.
+    assert_eq!(pick(d, &Space::Model, Vec2::new(5.0, -11.0), 0.5), Some(mtext_h));
+    let second_line_cross = Bounds2::new(Vec2::new(2.0, -15.0), Vec2::new(10.0, -9.0));
+    assert_eq!(select_window(d, &Space::Model, second_line_cross, true), vec![mtext_h]);
+}
