@@ -60,9 +60,10 @@ standard glyphs (台, 群, 里) and keeps clickable command keywords in English 
 `_tan to`, `nX`/`nXP`). It renders like Simplified Chinese, with an installed CJK font or an
 embedded CJK face: PingFang on macOS, Microsoft JhengHei (微軟正黑體) on Windows, Noto Sans CJK TC
 on Linux/FreeBSD, each falling back to the Simplified faces (Microsoft YaHei, Noto Sans CJK SC,
-WenQuanYi) when the Traditional one is missing. The embedded craft-fonts faces follow the same
-order, the `Hant` face first. The work is AI-assisted and has not yet been proofread line by line
-by a native speaker.
+WenQuanYi) when the Traditional one is missing. A build that embeds Traditional Chinese faces from
+`CRAFT_FONTS_DIR` (the Windows test package ships 源流明體 TW) puts them ahead of the installed
+fonts; the embedded `Hant` face comes first among them. The work is AI-assisted and has not yet
+been proofread line by line by a native speaker.
 
 Brazilian Portuguese has 1,447 catalog rows and also covers the reference catalog, every marked UI
 literal and the strings the sibling catalogs translate: commands, menus, tool groups and tooltips, object snaps, drafting prompts, dialogs and

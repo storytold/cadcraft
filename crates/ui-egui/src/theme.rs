@@ -307,6 +307,13 @@ pub fn mono() -> FontId {
     FontId::new(12.0, FontFamily::Monospace)
 }
 
+/// Whether the interface takes a face this build embedded ahead of the installed fonts: a
+/// Traditional Chinese interface with an embedded `Hant` face (a font pack built with
+/// `CRAFT_FONTS_DIR`, e.g. 源流明體 TW), whose glyph forms the interface is written in.
+fn embedded_leads(faces: &[&cadcraft_fonts::CraftFont], language: &str) -> bool {
+    language == "zh-TW" && faces.first().is_some_and(|f| f.scripts.contains(&"Hant"))
+}
+
 /// Load a system UI font at run time when one is installed (not bundled), else keep egui's
 /// bundled bounded Latin/icon faces (`default_fonts` + `monochrome_emoji_fonts`, enabled in the
 /// workspace manifest for native and web); then CJK fonts after the Latin ones, so Latin text
@@ -316,13 +323,21 @@ pub fn mono() -> FontId {
 /// Japanese one, so names take their own glyph forms; in an Arabic interface an installed
 /// Arabic font follows. The embedded Georgian face loads in every language, so the language
 /// picker can show ქართული. A font embedded from craft-fonts comes
-/// last, for systems without any (and the web build, which has no system fonts). A Korean
+/// last, for systems without any (and the web build, which has no system fonts) — except in a
+/// Traditional Chinese interface, where an embedded `Hant` face leads the installed CJK fonts
+/// ([`embedded_leads`]). A Korean
 /// interface adds a Hangul font only when the CJK font found doesn't cover Hangul
 /// ([`korean_font`]).
 pub fn install_fonts(ctx: &egui::Context, language: &str) {
     crate::mtext_editor::install_diameter_glyph(ctx);
     let mut fonts = egui::FontDefinitions::default();
     let mut added: Vec<(String, std::sync::Arc<egui::FontData>)> = Vec::new();
+    let embedded: Vec<_> = cadcraft_fonts::CRAFT_FONTS.iter().collect();
+    let ui_faces = embedded_ui_faces(&embedded, language);
+    let embedded_first = embedded_leads(&ui_faces, language);
+    if embedded_first {
+        added.extend(ui_faces.iter().map(|f| (format!("craft-{}", f.stem()), std::sync::Arc::new(egui::FontData::from_static(f.bytes)))));
+    }
     #[cfg(not(target_arch = "wasm32"))]
     let chinese = language.starts_with("zh");
     #[cfg(not(target_arch = "wasm32"))]
@@ -366,12 +381,9 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
             added.push(("system-arabic".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes))));
         }
     }
-    let embedded: Vec<_> = cadcraft_fonts::CRAFT_FONTS.iter().collect();
-    added.extend(
-        embedded_ui_faces(&embedded, language)
-            .into_iter()
-            .map(|f| (format!("craft-{}", f.stem()), std::sync::Arc::new(egui::FontData::from_static(f.bytes)))),
-    );
+    if !embedded_first {
+        added.extend(ui_faces.iter().map(|f| (format!("craft-{}", f.stem()), std::sync::Arc::new(egui::FontData::from_static(f.bytes)))));
+    }
     // Korean: Noto Sans CJK and most CJK fonts above already cover Hangul; else a Hangul font.
     if language == "ko"
         && !cjk_covers_hangul()
@@ -912,6 +924,24 @@ mod tests {
             // face comes before it for a Traditional Chinese interface.
             assert!(at(&traditional, "CJKtc").is_some_and(|tc| at(&traditional, "CJK-Regular").is_some_and(|neutral| tc < neutral)));
         }
+    }
+
+    /// A Traditional Chinese interface takes the build's own `Hant` face ahead of the installed
+    /// fonts (a font pack such as 源流明體 TW); other interfaces keep embedded faces as fallback.
+    #[test]
+    fn embedded_traditional_face_leads_only_for_traditional_chinese() {
+        let hant = face("GenRyuMin2 TW", &["Hant", "Latn"]);
+        let hans = face("Han Test Face", &["Hans", "Latn"]);
+        let faces = super::embedded_ui_faces(&[&hant, &hans], "zh-TW");
+        assert_eq!(families(&faces), ["GenRyuMin2 TW", "Han Test Face"]);
+        assert!(super::embedded_leads(&faces, "zh-TW"));
+        assert!(!super::embedded_leads(&faces, "zh") && !super::embedded_leads(&faces, "en"));
+        let simplified = super::embedded_ui_faces(&[&hant, &hans], "zh");
+        assert_eq!(families(&simplified), ["Han Test Face", "GenRyuMin2 TW"]);
+        // Without an embedded Traditional face the installed font keeps the lead.
+        let hans_only = super::embedded_ui_faces(&[&hans], "zh-TW");
+        assert!(!super::embedded_leads(&hans_only, "zh-TW"));
+        assert!(!super::embedded_leads(&[], "zh-TW"));
     }
 
     /// The interface's own script leads the embedded faces it loads, and العربية adds its face.
