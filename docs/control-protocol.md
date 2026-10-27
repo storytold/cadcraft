@@ -188,7 +188,7 @@ Select a language with `engine.execute` and the UI command `ui.language`:
 {"id":1,"method":"engine.execute","params":{"command":"ui.language","params":{"lang":"uk"}}}
 ```
 
-Supported values are `auto`, `en`, `uk`, `pt-BR`, `de`, `es`, `cs`, `ru`, `fr`, `zh`, `it`, `ko`, `sv`, `ar`, `hu`, `tr`, `bs`, `el` and `ka`.
+Supported values are `auto`, `en`, `uk`, `pt-BR`, `de`, `es`, `cs`, `ru`, `fr`, `zh`, `zh-TW`, `it`, `ko`, `sv`, `ar`, `hu`, `tr`, `bs`, `el` and `ka`.
 Chinese needs an installed CJK font, Arabic an installed Arabic font; Korean needs a font covering the Korean interface from the
 optional craft-fonts input or the operating system; Georgian needs the `Geor` face from craft-fonts (an installed font
 does not count). Without a suitable font, the saved choice is

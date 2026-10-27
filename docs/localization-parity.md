@@ -1,6 +1,6 @@
 # Localization parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-30 · **Change:** minor (Bosnian added; previously minor: the command line enables the OS IME and handles composition/commit, so single-line TEXT edits accept CJK input; previously: Brazilian Portuguese row updated and terminology reviewed; previously: Swedish catalog completed with the 95 strings added since; previously: Swedish catalog added: complete catalog, menu headings, native-speaker terminology review; previously: complete current Korean catalog with Hangul font coverage) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-11-07 · **Change:** minor (Traditional Chinese (Taiwan) catalog added: 1,440 rows, the union of every catalog, AutoCAD Taiwan and Microsoft Taiwan terminology, `zh-TW`/`zh-Hant`/`zh-HK`/`zh-MO` locale tags; previously: Bosnian added; previously minor: the command line enables the OS IME and handles composition/commit, so single-line TEXT edits accept CJK input; previously: Brazilian Portuguese row updated and terminology reviewed; previously: Swedish catalog completed with the 95 strings added since; previously: Swedish catalog added: complete catalog, menu headings, native-speaker terminology review; previously: complete current Korean catalog with Hangul font coverage) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
 
 How far CADCraft's interface and drawing text are from AutoCAD's languages. Summarised in
 [ROADMAP.md](../ROADMAP.md#languages); work items in [gaps.md](gaps.md#localization).
@@ -55,7 +55,8 @@ plus native review by a human; extending the catalog to the remaining English-on
 | Language | Code | UI strings translated | Dialogs / tooltips / help | Script support | Native review | Status | Estimate to `full` |
 |---|---|---|---|---|---|---|---|
 | English | en | source (100%) | 100% (help is a command reference, not AutoCAD-sized help) | Latin: yes | n/a | full | — |
-| Simplified Chinese | zh-Hans | 0 (0%) | 0% | CJK glyphs render via fallback; IME fixes pending (#110–#119); no vertical text | no | none | 8–12 h (includes extending the catalog, 4–6 h) |
+| Simplified Chinese | zh | 1,343 catalog rows; every marked UI literal covered, 96 newer strings fall back to English | dialogs and tooltips yes; contextual menu headings; command reference searchable in Chinese | CJK glyphs render via fallback; IME fixes pending (#110–#119); no vertical text | AI-assisted catalog by @mayloglog; no native review | complete current catalog; English-only interface gaps remain | native review + shared English-only UI work |
+| Traditional Chinese (Taiwan) | zh-TW | 1,440 catalog rows; every catalog key and marked UI literal covered (no gaps reported) | dialogs and tooltips yes; four contextual menu headings; command reference searchable in Traditional Chinese | CJK glyphs render via fallback (installed PingFang or an embedded CJK face); IME fixes pending (#110–#119); no vertical text | AI-assisted, written from the English strings with AutoCAD Taiwan and Microsoft Taiwan vocabulary; no native proofreading pass yet | complete current catalog; English-only interface gaps remain | line-by-line proofreading + shared English-only UI work |
 | Spanish | es | 0 (0%) | 0% | Latin: yes | no | none | 3–5 h |
 | Hindi | hi | 0 (0%) | 0% | Devanagari: no shaping | no | none | 3–5 h + 15–25 h shaping (shared with Arabic) |
 | Arabic | ar | 0 (0%) | 0% | Drawing text shaped and laid out right to left (#287); the UI is not mirrored | no | none | 3–5 h + 15–25 h RTL UI |
@@ -76,8 +77,8 @@ plus native review by a human; extending the catalog to the remaining English-on
 | Turkish | tr | 1,330 catalog rows; reference catalog, marked UI literals and menu headings covered (no gaps reported) | dialogs and tooltips yes; contextual menu headings (Ölçülendirme / Ölçü); command reference searchable in Turkish | Latin: yes (bundled egui proportional and monospace fonts; Ç Ğ İ Ö Ş Ü ç ğ ı ö ş ü tested) | AI-assisted by @ogzhnklvz, written from the English strings with Turkish desktop-CAD vocabulary; the running app reviewed by a native speaker | complete current catalog; English-only interface gaps remain | line-by-line proofreading + shared English-only UI work |
 | Bosnian | bs | 1,442 catalog rows; reference catalog and marked UI literals covered | dialogs and tooltips yes | Latin: yes (bundled egui fonts) | AI-assisted; independent native proofreading pending | complete current catalog; English-only interface gaps remain | native proofreading + shared English-only UI work |
 
-Other languages shipped: Ukrainian, Brazilian Portuguese, German, Czech, Russian, French, Italian, Korean, Swedish, Hungarian, Turkish and Bosnian.
-Czech, Swedish, Hungarian, Brazilian Portuguese and Bosnian (1,442 rows, AI-assisted, not yet native-reviewed) cover the reference catalog and every marked UI literal; engine diagnostics and uncatalogued text
+Other languages shipped: Ukrainian, Brazilian Portuguese, German, Czech, Russian, French, Italian, Korean, Swedish, Hungarian, Turkish, Bosnian and Traditional Chinese (Taiwan).
+Czech, Swedish, Hungarian, Brazilian Portuguese, Bosnian (1,442 rows, AI-assisted, not yet native-reviewed) and Traditional Chinese (Taiwan) cover the reference catalog and every marked UI literal; engine diagnostics and uncatalogued text
 remain English. AutoCAD for Mac ships 7
 non-English languages (zh-Hans, es, fr, ja, de, ko, it); of those, CADCraft now ships German and Korean,
 and additionally Ukrainian, which AutoCAD for Mac doesn't ship.
@@ -90,6 +91,7 @@ each language, which needs humans. Translations parallelise fully once the catal
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-07 | minor | Traditional Chinese (Taiwan) added: 1,440 rows (1,434 labels, four `menu` headings, two count templates), the union of every catalog including the 96 strings Simplified Chinese lacks; `zh-TW` preference and catalog, `zh-Hant`/`zh-HK`/`zh-MO` locale resolution, Traditional face priority, locale/preference/font/live-switch/dialog tests; AutoCAD Taiwan terminology, AI-assisted, native proofreading pending |
 | 2026-10-30 | minor | Bosnian (`bs`, Latin, Ijekavian) added: 1,442 rows, one/few/other plurals, `bs-*` locales; AI-assisted, native proofreading pending |
 | 2026-10-22 | minor | Command line IME: enabled while a prompt collects text, composition shown but not saved, commit inserted once; single-line TEXT edits accept CJK input (#1761) |
 | 2026-10-19 | minor | Brazilian Portuguese: row brought up to date (it still read 0%); native-speaker terminology pass on 69 rows (Bind as Integrar, prompt keywords and SPDX kept in English, Thaw Layer, Snap type, Revolve fixed; snap, viewport, grip, offset, layer on/off and multiline wording made consistent with Brazilian usage) |

@@ -205,7 +205,8 @@ fn assert_additional_locale_aliases() {
         ("vi", &["vi", "vi-VN", "vi_VN.UTF-8", "VI-vn", " vi-VN "]),
         ("el", &["el", "el-GR", "el_GR.UTF-8", "EL-cy"]),
         ("ka", &["ka", "ka-GE", "ka_GE.UTF-8", "KA-ge", " ka-GE "]),
-        ("zh", &["zh", "zh-CN"]),
+        ("zh", &["zh", "zh-CN", "zh-Hans", "zh-SG", "zh_CN.UTF-8", "zh-Hans-HK", "zh-Hans-TW"]),
+        ("zh-TW", &["zh-TW", "zh_TW.UTF-8", "zh-Hant", "zh_Hant", "ZH-hant", " zh-TW ", "zh-HK", "zh-HK.UTF-8", "zh-MO", "zh-Hant-CN"]),
     ] {
         for tag in tags {
             assert_eq!(locale_language(tag), Some(code), "{tag}");
@@ -226,6 +227,8 @@ fn assert_auto_locale_precedence() {
     assert_eq!(Preference::Auto.resolve(&["pl-PL".into(), "pt-BR".into()]), "pt-BR");
     assert_eq!(Preference::Auto.resolve(&["fr-FR".into(), "pt-BR".into()]), "fr");
     assert_eq!(Preference::Auto.resolve(&["es-ES".into(), "pt-BR".into()]), "es");
+    assert_eq!(Preference::Auto.resolve(&["zh-Hant".into()]), "zh-TW");
+    assert_eq!(Preference::Auto.resolve(&["zh-CN".into()]), "zh");
     let locales = vec!["pl-PL".into(), "uk-UA".into(), "en-US".into()];
     assert_eq!(Preference::Auto.resolve(&locales), "uk");
     assert_eq!(Preference::English.resolve(&locales), "en");
@@ -484,7 +487,7 @@ fn dialogs_render_in_every_language_and_keep_their_source_ids() {
 #[test]
 fn interface_fonts_cover_every_letter_in_each_catalog() {
     for language in translated() {
-        let extra_font = ["ko", "zh", "ar", "vi", "ka"].contains(&language.code);
+        let extra_font = language.code.starts_with("zh") || ["ko", "ar", "vi", "ka"].contains(&language.code);
         if extra_font && !crate::theme::can_show(language.code) {
             continue;
         }
@@ -526,16 +529,21 @@ fn interface_fonts_cover_every_letter_in_each_catalog() {
 #[test]
 fn chinese_needs_a_cjk_font() {
     assert_eq!(locale_language("zh-CN"), Some("zh"));
+    assert_eq!(locale_language("zh-TW"), Some("zh-TW"));
     let mut app = CadApp::new(Session::new(), Services::default());
-    let r = app.run("ui.language", json!({"lang": "zh"})).unwrap();
-    assert_eq!(r["interfaceLanguage"], "zh");
-    let shown = crate::theme::can_show("zh");
-    assert_eq!(app.language(), if shown { "zh" } else { "en" });
-    assert_eq!(r["shown"], app.language());
-    assert!(crate::theme::can_show("uk") && crate::theme::can_show("en"));
-    if !shown {
-        assert!(app.status.as_ref().is_some_and(|(s, _)| s.contains("No Chinese font")));
+    for code in ["zh", "zh-TW"] {
+        let r = app.run("ui.language", json!({ "lang": code })).unwrap();
+        assert_eq!(r["interfaceLanguage"], code);
+        let shown = crate::theme::can_show(code);
+        assert_eq!(app.language(), if shown { code } else { "en" });
+        assert_eq!(r["shown"], app.language());
+        assert!(crate::theme::can_show("uk") && crate::theme::can_show("en"));
+        if !shown {
+            assert!(app.status.as_ref().is_some_and(|(s, _)| s.contains("No Chinese font")), "{code}");
+        }
     }
+    // Both Chinese catalogs share the CJK font rule; only their glyph forms differ.
+    assert_eq!(crate::theme::can_show("zh-TW"), crate::theme::can_show("zh"));
 }
 
 #[test]
