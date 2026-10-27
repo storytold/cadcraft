@@ -29,7 +29,7 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
         | EntityKind::MLeader(_)
         | EntityKind::Image(_) => {
             // Text-like objects are hit inside their box.
-            let b = entity_bounds(d, e, 0);
+            let b = select_bounds(d, e, None);
             if b.is_empty() {
                 return Vec::new();
             }
@@ -211,16 +211,27 @@ fn in_mtext(d: &Drawing, t: &cadcraft_doc::MText, p: Vec2) -> bool {
 }
 
 /// Tight world-space bounding box of all laid-out lines of `t`.
-fn mtext_world_bounds(d: &Drawing, t: &cadcraft_doc::MText) -> Bounds2 {
+pub(crate) fn mtext_world_bounds(d: &Drawing, t: &cadcraft_doc::MText) -> Bounds2 {
     let insert = t.insert.xy();
     let unturn = |q: Vec2| insert + q.rotate(t.rotation);
-    Bounds2::from_points(mtext_line_bounds(d, t).into_iter().flat_map(|b| b.corners().map(unturn)))
+    let lines = mtext_line_bounds(d, t);
+    if lines.is_empty() {
+        return entity_bounds(d, &Entity::new(Handle(0), EntityKind::MText(t.clone())), 0);
+    }
+    Bounds2::from_points(lines.into_iter().flat_map(|b| b.corners().map(unturn)))
 }
 
 /// Tight selection bounds for `e` (using laid-out line boxes for `MText`).
-fn select_bounds(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
+pub(crate) fn select_bounds(d: &Drawing, e: &Entity, known: Option<Bounds2>) -> Bounds2 {
     match &e.kind {
         EntityKind::MText(t) => mtext_world_bounds(d, t),
+        EntityKind::MLeader(m) => {
+            let mut b = bounds_of(d, e, known);
+            if let Some(t) = &m.text {
+                b = b.union(&mtext_world_bounds(d, t));
+            }
+            b
+        }
         _ => bounds_of(d, e, known),
     }
 }
