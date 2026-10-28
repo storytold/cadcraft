@@ -20,7 +20,7 @@ use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, St
 mod attedit;
 mod burst;
 mod description;
-mod dyngrip;
+pub(crate) mod dyngrip;
 mod extract;
 pub(crate) mod refedit;
 

@@ -1334,6 +1334,8 @@
 	Set Dynamic Property	Задати динамічну властивість
 	Dynamic Block Grips	Ручки динамічного блока
 	Drag Dynamic Grip	Перетягнути ручку динамічного блока
+	Array Grips	Ручки масиву
+	Drag Array Grip	Перетягнути ручку масиву
 # Block Editor (BEDIT).
 	Save Block	Зберегти блок
 	Save Block As	Зберегти блок як

@@ -15,6 +15,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Common, Drawing, Entity, EntityKind, Insert, Lineweight};
 
+mod grips;
+pub use grips::{ArrayGrip, ArrayGripInput, ArrayGripKind};
+
 /// Most items one array may have (items × rows × levels), whatever MAXARRAY says.
 pub const MAX_ARRAY_ITEMS: u64 = 10_000_000;
 

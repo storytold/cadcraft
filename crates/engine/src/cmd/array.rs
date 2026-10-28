@@ -22,6 +22,7 @@ use super::{CommandSpec, bad, bool_or, f64_or, find_command, point_param, point_
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 mod edit;
+mod grips;
 
 /// Most preview entities drawn while the array is edited.
 const PREVIEW_LIMIT: usize = 2000;
@@ -51,6 +52,7 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
     .into_iter()
     .chain(edit::specs())
+    .chain(grips::specs())
     .collect()
 }
 

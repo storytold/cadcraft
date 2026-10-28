@@ -40,7 +40,7 @@ pub(super) fn cycle_click(app: &mut CadApp, xf: &Xf, hover: Option<Pos2>, world:
         return true;
     }
     let (Some(hp), Some(w)) = (hover, world) else { return false };
-    if crate::dyngrips::at(app, xf, hover).is_some() || grip_at(app, xf, hover).is_some() {
+    if crate::dyngrips::at(app, xf, hover).is_some() || crate::arraygrips::at(app, xf, hover).is_some() || grip_at(app, xf, hover).is_some() {
         return false;
     }
     let hs = app.session.cycling_candidates(w);

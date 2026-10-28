@@ -39,7 +39,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
 
 /// The array block reference `h`, its array block and parameters (with the block names its items
 /// use).
-fn array_of(d: &Drawing, h: Handle) -> Result<(Insert, Arc<Block>, ArrayParams)> {
+pub(super) fn array_of(d: &Drawing, h: Handle) -> Result<(Insert, Arc<Block>, ArrayParams)> {
     let e = d.entity(h).ok_or_else(|| other("No such object."))?;
     let p = d.array_params(e).ok_or_else(|| other("The object is not an associative array."))?;
     let EntityKind::Insert(ins) = &e.kind else { return Err(other("The object is not an associative array.")) };
@@ -52,7 +52,7 @@ fn open_edit(d: &Drawing) -> Option<(String, SourceEdit)> {
     d.blocks.iter().find_map(|(n, b)| b.array.as_ref().and_then(|a| a.editing.clone()).map(|e| (n.clone(), e)))
 }
 
-fn refuse_while_editing(s: &Session) -> Result<()> {
+pub(super) fn refuse_while_editing(s: &Session) -> Result<()> {
     if open_edit(s.doc()?).is_some() {
         return Err(other("An array's source objects are being edited; enter ARRAYCLOSE first."));
     }
@@ -113,7 +113,7 @@ fn drop_unused(d: &mut Drawing, names: &[String]) {
 
 /// Rebuild array `h` with parameters `p` (and its block reference moved to `insert` when
 /// given): a new array block for this reference, old blocks removed when unused.
-fn rebuild(s: &mut Session, h: Handle, p: ArrayParams, insert: Option<Vec2>) -> Result<()> {
+pub(super) fn rebuild(s: &mut Session, h: Handle, p: ArrayParams, insert: Option<Vec2>) -> Result<()> {
     if !p.is_valid() {
         return Err(other("The array parameters are not valid."));
     }

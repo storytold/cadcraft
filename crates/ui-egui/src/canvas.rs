@@ -140,6 +140,9 @@ pub struct CanvasState {
     pub(crate) dyn_hot: Option<(Handle, i32, cadcraft_engine::doc::dynblock::GripPart)>,
     pub(crate) dyn_menu: Option<(Handle, cadcraft_engine::doc::dynblock::DynGrip)>,
     pub(crate) dyn_menu_fresh: bool,
+    /// Associative array grips of the selection (cached), and the one being dragged.
+    pub(crate) array_grips: crate::arraygrips::Cache,
+    pub array_hot: Option<(Handle, cadcraft_engine::doc::ArrayGripKind)>,
     /// Zoom to extents once the canvas size is known (after opening a drawing).
     pub zoom_pending: bool,
     pub build_ms: f64,
@@ -859,6 +862,8 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             }
         } else if let Some(g) = crate::dyngrips::at(app, &xf, hover_pos) {
             crate::dyngrips::click(app, g);
+        } else if let Some(g) = crate::arraygrips::at(app, &xf, hover_pos) {
+            crate::arraygrips::click(app, g);
         } else if let Some(g) = grip_at(app, &xf, hover_pos) {
             click_grip(app, g, mods.shift);
         } else if let Err(e) = app.session.idle_click(raw_world.unwrap_or(p), mods.shift) {
@@ -880,6 +885,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         && rect.contains(origin)
         && grip_at(app, &xf, Some(origin)).is_none()
         && crate::dyngrips::at(app, &xf, Some(origin)).is_none()
+        && crate::arraygrips::at(app, &xf, Some(origin)).is_none()
     {
         app.canvas.drag_window = app.session.begin_window(xf.to_world(origin));
     }
@@ -1043,6 +1049,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
     }
     if !grip_edit {
         app.canvas.dyn_hot = None;
+        app.canvas.array_hot = None;
     }
     app.canvas.grip_editing = grip_edit;
     if (!app.session.prompting() || grip_edit)
@@ -1077,6 +1084,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
             }
         }
         crate::dyngrips::draw(app, painter, &xf, rect, hover_pos);
+        crate::arraygrips::draw(app, painter, &xf, rect, hover_pos);
     }
     // Rubber band preview of the active command.
     // `xf` is the space being edited: paper space, or model space inside the active viewport.

@@ -1,4 +1,5 @@
 mod animation_effects;
+mod array_grips;
 mod block_description_palette;
 mod chrome_geometry;
 mod context_menu;

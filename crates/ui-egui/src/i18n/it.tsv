@@ -1346,6 +1346,8 @@ menu	Modify	Edita
 	Set Dynamic Property	Imposta proprietà dinamica
 	Dynamic Block Grips	Grip del blocco dinamico
 	Drag Dynamic Grip	Trascina grip dinamico
+	Array Grips	Grip della serie
+	Drag Array Grip	Trascina grip della serie
 	Save Block	Salva blocco
 	Save Block As	Salva blocco con nome
 	Close Block Editor	Chiudi editor blocchi

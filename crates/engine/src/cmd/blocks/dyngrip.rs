@@ -54,7 +54,7 @@ fn drag(s: &mut Session, h: Handle, node: i32, part: GripPart, to: Vec2) -> std:
 /// The properties an object of a block draws with in reference `r`: on layer 0 it is on the
 /// reference's layer, and its ByBlock colour, linetype, lineweight and transparency are the
 /// reference's (as the renderer draws a block's contents).
-fn under(c: &Common, r: &Common) -> Common {
+pub(crate) fn under(c: &Common, r: &Common) -> Common {
     let mut c = c.clone();
     if c.layer == "0" {
         c.layer.clone_from(&r.layer);
