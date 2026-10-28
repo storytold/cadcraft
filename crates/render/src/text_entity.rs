@@ -184,6 +184,19 @@ pub fn transcode_mtext(contents: &str, hint: Option<&str>) -> String {
                         out.push(';');
                         i = j;
                     }
+                    // Unterminated escapes: \U+XXXX (4 hex digits) and \M+NXXXX (5 hex digits)
+                    'U' | 'M' if chars.get(i + 2) == Some(&'+') => {
+                        flush_text(&mut text_run, &mut out, current_hint.as_deref());
+                        let digits = if code == 'U' { 4 } else { 5 };
+                        let mut j = i + 3;
+                        while j < i + 3 + digits && chars.get(j).is_some_and(|c| c.is_ascii_hexdigit()) {
+                            j += 1;
+                        }
+                        for &ch in &chars[i..j] {
+                            out.push(ch);
+                        }
+                        i = j;
+                    }
                     // Codes with arguments terminated by ';' (\c, \C, \H, \W, \Q, \A, \f, \F, \T, \p, etc.)
                     _ => {
                         flush_text(&mut text_run, &mut out, current_hint.as_deref());

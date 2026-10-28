@@ -1447,3 +1447,15 @@ fn dimension_override_preserves_mtext_truecolor_and_formatting() {
     let g = dimension_in(&d, &dim);
     assert!(g.mtext.starts_with(r"\c16711680;NHÔM"));
 }
+
+#[test]
+fn mtext_unterminated_unicode_escape_does_not_swallow_legacy_text() {
+    let transcoded = crate::transcode_mtext(r"\U+00B1tiªu chuÈn", Some(".VnTimeH"));
+    assert_eq!(transcoded, r"\U+00B1TIÊU CHUẨN");
+
+    let transcoded_mif = crate::transcode_mtext(r"\M+1ABCDtiªu chuÈn", Some(".VnTimeH"));
+    assert_eq!(transcoded_mif, r"\M+1ABCDTIÊU CHUẨN");
+
+    let text_with_escape = crate::transcode_mtext(r"tiªu chuÈn \U+00B1 0.5", Some(".VnTimeH"));
+    assert_eq!(text_with_escape, r"TIÊU CHUẨN \U+00B1 0.5");
+}

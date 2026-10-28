@@ -386,7 +386,7 @@ pub(crate) fn draw(b: &mut Builder, ctx: &Ctx, t: &Table, rgb: Ink, lw: f32) {
             oblique: ts.oblique,
             ..cadcraft_fonts::MTextParams::new(tx.at, tx.height)
         };
-        let transcoded = cadcraft_fonts::legacy_encoding::transcode(&tx.text, hint);
+        let transcoded = crate::transcode_mtext(&tx.text, hint);
         let layout = cadcraft_fonts::layout_mtext_with(&transcoded, &mp);
         for piece in &layout.pieces {
             b.shaped(ctx, style_ink(tx.color, rgb), lw, &piece.shaped);
