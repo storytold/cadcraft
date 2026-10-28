@@ -150,7 +150,13 @@ impl ListUnderlay {
     /// The part of the page drawn, as page fractions `[left, bottom, right, top]`; `None` when
     /// none of it is.
     pub fn shown(&self) -> Option<[f64; 4]> {
-        let fr: Vec<Vec2> = self.triangles().into_iter().filter_map(|p| self.fraction(p)).collect();
+        self.shown_of(&self.triangles())
+    }
+
+    /// [`ListUnderlay::shown`] from the page's [`ListUnderlay::triangles`] already computed, so a
+    /// caller that has them doesn't clip the page a second time.
+    pub fn shown_of(&self, tris: &[Vec2]) -> Option<[f64; 4]> {
+        let fr: Vec<Vec2> = tris.iter().filter_map(|p| self.fraction(*p)).collect();
         let b = Bounds2::from_points(fr);
         let r = [b.min.x.max(0.0), b.min.y.max(0.0), b.max.x.min(1.0), b.max.y.min(1.0)];
         (!b.is_empty() && r.iter().all(|x| x.is_finite()) && r[2] > r[0] && r[3] > r[1]).then_some(r)
