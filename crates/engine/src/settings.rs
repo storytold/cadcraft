@@ -127,6 +127,30 @@ pub struct Settings {
     pub polardist: f64,
     /// AUDITCTL: 1 creates an audit report (.adt) file when AUDIT is run (default: 0).
     pub auditctl: bool,
+    /// PEDITACCEPT: PEDIT turns a selected line or arc into a polyline without asking.
+    pub peditaccept: bool,
+    /// ARRAYTYPE: the array type ARRAY offers first (0 rectangular, 1 path, 2 polar); ARRAY
+    /// sets it to the type chosen. Read through [`Settings::array_type`].
+    pub arraytype: u8,
+    /// TSPACEFAC: the line spacing factor new multiline text starts with (0.25-4); MTEXT's
+    /// Line spacing answers set it. Read through [`Settings::line_spacing`].
+    pub tspacefac: f64,
+    /// TSPACETYPE 2: new multiline text spacing is exact; 1 (false): at least.
+    pub tspace_exact: bool,
+}
+
+/// TSPACEFAC's range.
+pub const TSPACEFAC_RANGE: std::ops::RangeInclusive<f64> = 0.25..=4.0;
+
+impl Settings {
+    /// ARRAYTYPE, a valid type whatever a settings file held.
+    pub fn array_type(&self) -> u8 {
+        self.arraytype.min(2)
+    }
+    /// TSPACEFAC, inside its range whatever a settings file held.
+    pub fn line_spacing(&self) -> f64 {
+        if TSPACEFAC_RANGE.contains(&self.tspacefac) { self.tspacefac } else { 1.0 }
+    }
 }
 
 impl Default for Settings {
@@ -191,6 +215,10 @@ impl Default for Settings {
             polarsnap: false,
             polardist: 0.0,
             auditctl: false,
+            peditaccept: false,
+            arraytype: 0,
+            tspacefac: 1.0,
+            tspace_exact: false,
         }
     }
 }

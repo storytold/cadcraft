@@ -333,6 +333,23 @@ impl PeditM {
     }
 }
 
+impl PeditM {
+    /// Turn the selected line or arc into a polyline and go on to the options.
+    fn convert(&mut self, s: &mut Session) -> Result<()> {
+        let h = self.h.ok_or_else(|| other("No object."))?;
+        let k = curves::entity(s, h)?.kind;
+        let pl = as_lwpoly(&k).ok_or_else(|| other("Cannot convert."))?;
+        self.original = Some(pl.vertices.clone());
+        set_kind(s, h, EntityKind::LwPolyline(pl))?;
+        self.phase = PPhase::Main;
+        Ok(())
+    }
+    /// PEDITACCEPT 1: a line or arc becomes a polyline without the question.
+    fn accept(&mut self, s: &mut Session) -> Result<()> {
+        if self.phase == PPhase::Convert && s.settings.peditaccept { self.convert(s) } else { Ok(()) }
+    }
+}
+
 impl Interactive for PeditM {
     fn name(&self) -> &'static str {
         "PEDIT"
@@ -350,6 +367,7 @@ impl Interactive for PeditM {
                 EntityKind::Line(_) | EntityKind::Arc(_) => {
                     self.h = Some(*h);
                     self.phase = PPhase::Convert;
+                    self.accept(s)?;
                 }
                 _ => {}
             }
@@ -415,6 +433,7 @@ impl Interactive for PeditM {
                         }
                     }
                     s.set_selection(vec![h]);
+                    self.accept(s)?;
                     Ok(Step::Continue)
                 }
                 Input::Keyword(_) => Err(other("Select one polyline (Multiple is available through the JSON form).")),
@@ -426,12 +445,7 @@ impl Interactive for PeditM {
                 if no {
                     return Ok(Step::Done);
                 }
-                let h = self.h.ok_or_else(|| other("No object."))?;
-                let k = curves::entity(s, h)?.kind;
-                let pl = as_lwpoly(&k).ok_or_else(|| other("Cannot convert."))?;
-                self.original = Some(pl.vertices.clone());
-                set_kind(s, h, EntityKind::LwPolyline(pl))?;
-                self.phase = PPhase::Main;
+                self.convert(s)?;
                 Ok(Step::Continue)
             }
             PPhase::Main => {

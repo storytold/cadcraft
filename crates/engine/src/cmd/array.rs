@@ -384,6 +384,9 @@ fn run_arraypolar(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// ARRAY: select objects, choose the array type, then continue as ARRAYRECT, ARRAYPATH or
 /// ARRAYPOLAR with those objects.
+/// ARRAY's types, in ARRAYTYPE order (0 rectangular, 1 path, 2 polar).
+const ARRAY_TYPES: [&str; 3] = ["Rectangular", "PAth", "POlar"];
+
 #[derive(Default)]
 struct ArrayM {
     sel: SelectPhase,
@@ -406,7 +409,10 @@ impl Interactive for ArrayM {
         match &self.inner {
             Some(m) => m.prompt(s),
             None if !self.sel.done => self.sel.prompt(),
-            None => Prompt::new("Enter array type", KEYWORDS).kw(&["Rectangular", "PAth", "POlar"]).default("Rectangular"),
+            // The type offered is the last one chosen (ARRAYTYPE).
+            None => Prompt::new("Enter array type", KEYWORDS)
+                .kw(&ARRAY_TYPES)
+                .default(ARRAY_TYPES.get(usize::from(s.settings.array_type())).copied().unwrap_or("Rectangular")),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
@@ -424,10 +430,13 @@ impl Interactive for ArrayM {
             };
         }
         let kind = match &i {
-            Input::Enter => "Rectangular",
+            Input::Enter => ARRAY_TYPES.get(usize::from(s.settings.array_type())).copied().unwrap_or("Rectangular"),
             Input::Keyword(k) => k.as_str(),
             _ => return Err(other("Invalid option keyword.")),
         };
+        if let Some(t) = ARRAY_TYPES.iter().position(|t| *t == kind).and_then(|t| u8::try_from(t).ok()) {
+            s.settings.arraytype = t;
+        }
         let objs = self.objs.clone();
         let (m, step): (Box<dyn Interactive>, Step) = match kind {
             "PAth" => (Box::new(super::modify2::PathArrayM::with_objects(objs)), Step::Continue),

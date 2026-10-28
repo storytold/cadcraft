@@ -70,6 +70,9 @@ const SESSION_VARS: &[&str] = &[
     "FONTFALLBACK",
     "SAVETIME",
     "SAVEFILEPATH",
+    "ARRAYTYPE",
+    "TSPACEFAC",
+    "TSPACETYPE",
 ];
 
 pub fn get(s: &Session, name: &str) -> Option<Value> {
@@ -142,6 +145,9 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "MAXARRAY" => json!(st.maxarray),
         "ZOOMFACTOR" => json!(st.zoomfactor),
         "MEASUREINIT" => json!(i32::from(st.measureinit)),
+        "ARRAYTYPE" => json!(st.array_type()),
+        "TSPACEFAC" => json!(st.line_spacing()),
+        "TSPACETYPE" => json!(if st.tspace_exact { 2 } else { 1 }),
         "LASTPOINT" => json!([s.last_point.x, s.last_point.y, 0.0]),
         // Held in radians (`$ANGBASE` in DXF is in degrees); reported in degrees, like POLARANG.
         "ANGBASE" => json!(s.doc().ok()?.header.f64("ANGBASE", 0.0).to_degrees()),
@@ -360,6 +366,9 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         "MAXARRAY" => st.maxarray = as_f64(v).ok_or_else(bad)?.clamp(100.0, 10_000_000.0) as u64,
         "ZOOMFACTOR" => st.zoomfactor = as_i(v).filter(|z| (3..=100).contains(z)).ok_or_else(bad)? as u32,
         "MEASUREINIT" => st.measureinit = small(v, 1).ok_or_else(bad)? == 1,
+        "ARRAYTYPE" => st.arraytype = small(v, 2).ok_or_else(bad)?,
+        "TSPACEFAC" => st.tspacefac = as_f64(v).filter(|f| crate::settings::TSPACEFAC_RANGE.contains(f)).ok_or_else(bad)?,
+        "TSPACETYPE" => st.tspace_exact = as_i(v).filter(|t| matches!(t, 1 | 2)).ok_or_else(bad)? == 2,
         "FONTALT" => cadcraft_fonts::ttf::set_font_alt(v.as_str().ok_or_else(bad)?),
         "FONTFALLBACK" => cadcraft_fonts::ttf::set_fallback_fonts(v.as_str().ok_or_else(bad)?),
         "SAVETIME" => crate::autosave::set_savetime(

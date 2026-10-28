@@ -514,18 +514,25 @@ fn run_boundary(s: &mut Session, p: &Value) -> Result<Value> {
 /// REGION: each closed object becomes a region bounded by it (and replaces it).
 fn run_region(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
+    // DELOBJ 0 keeps the objects a region is made from; otherwise the region replaces them.
+    let keep = s.doc()?.header.i64("DELOBJ", 3) == 0;
     let mut n = 0;
     for h in hs {
         let vs = {
             let d = s.doc()?;
-            d.entity(h).and_then(|e| closed_loop(d, e).map(|v| (v, e.common.clone())))
+            d.entity(h).and_then(|e| Some((closed_loop(d, e)?, e.common.clone(), d.space_of(h)?)))
         };
-        if let Some((vs, common)) = vs {
+        if let Some((vs, common, space)) = vs {
             let d = s.doc_mut()?;
-            d.modify_entity(h, |e| {
-                e.kind = EntityKind::Region(cadcraft_doc::Region::from_loop(vs));
-                e.common = common;
-            })?;
+            let region = EntityKind::Region(cadcraft_doc::Region::from_loop(vs));
+            if keep {
+                d.add(&space, common, region)?;
+            } else {
+                d.modify_entity(h, |e| {
+                    e.kind = region;
+                    e.common = common;
+                })?;
+            }
             n += 1;
         }
     }

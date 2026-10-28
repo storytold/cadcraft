@@ -51,6 +51,8 @@ const HEADER: &[(&str, Kind, Def)] = &[
     ("CMLSCALE", Kind::AnyReal, Def::Units(1.0, 20.0)),
     ("CPLOTSTYLE", Kind::ReadOnlyStr, Def::Str("ByLayer")),
     ("DIMASSOC", Kind::Choice(&[0, 1, 2]), Def::Int(2)),
+    // What REGION does with the objects it is made from: 0 keeps them, 1-3 delete them.
+    ("DELOBJ", Kind::Choice(&[0, 1, 2, 3]), Def::Int(3)),
     ("DONUTID", Kind::Real { min: 0.0, strict: false }, Def::Real(0.5)),
     ("DONUTOD", Kind::Real { min: 0.0, strict: true }, Def::Real(1.0)),
     ("EDGEMODE", Kind::Choice(&[0, 1]), Def::Int(0)),
@@ -81,8 +83,11 @@ const LINEWEIGHTS: [i64; 24] = [0, 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53,
 
 /// On/off session settings: name, read, write.
 type Toggle = (&'static str, fn(&Settings) -> bool, fn(&mut Settings, bool));
-const SETTINGS: &[Toggle] =
-    &[("AUDITCTL", |s| s.auditctl, |s, v| s.auditctl = v), ("TRANSPARENCYDISPLAY", |s| s.transparency_display, |s, v| s.transparency_display = v)];
+const SETTINGS: &[Toggle] = &[
+    ("AUDITCTL", |s| s.auditctl, |s, v| s.auditctl = v),
+    ("TRANSPARENCYDISPLAY", |s| s.transparency_display, |s, v| s.transparency_display = v),
+    ("PEDITACCEPT", |s| s.peditaccept, |s, v| s.peditaccept = v),
+];
 
 fn header_var(name: &str) -> Option<&'static (&'static str, Kind, Def)> {
     HEADER.iter().find(|(n, _, _)| *n == name)

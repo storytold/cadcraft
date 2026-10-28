@@ -58,7 +58,9 @@ impl MTextOpts {
     pub(super) fn new(s: &Session) -> Self {
         let (height, style) =
             s.doc().map(|d| (d.header.f64("TEXTSIZE", 0.2), d.header.str("TEXTSTYLE", "Standard"))).unwrap_or((0.2, "Standard".into()));
-        MTextOpts { height, style, ..MTextOpts::default() }
+        // The line spacing new multiline text gets (TSPACEFAC, TSPACETYPE).
+        let (spacing, exact) = (s.settings.line_spacing(), s.settings.tspace_exact);
+        MTextOpts { height, style, spacing, exact, ..MTextOpts::default() }
     }
 
     /// The text box from the first corner and either the opposite corner or the Width answer:
@@ -200,6 +202,7 @@ impl MTextAsk {
                     "exactly" | "e" => true,
                     _ => return Err(other("Invalid option keyword.")),
                 };
+                s.settings.tspace_exact = o.exact;
                 Ok(Outcome::Ask(MTextAsk::SpacingFactor))
             }
             (MTextAsk::SpacingFactor, Input::Text(t)) => {
@@ -211,7 +214,10 @@ impl MTextAsk {
                 };
                 o.spacing = f
                     .filter(|f| (0.25 - 1e-9..=4.0 + 1e-9).contains(f))
-                    .ok_or_else(|| other("Requires a factor between 0.25x and 4x, or a distance."))?;
+                    .ok_or_else(|| other("Requires a factor between 0.25x and 4x, or a distance."))?
+                    .clamp(0.25, 4.0);
+                // The next multiline text starts with it too.
+                s.settings.tspacefac = o.spacing;
                 Ok(Outcome::Back)
             }
             (MTextAsk::Rotation, Input::Point(p)) => {
