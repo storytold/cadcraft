@@ -26,7 +26,7 @@ mod widgets;
 use cursor::{draw_crosshair, draw_snap_marker, draw_tracking, effective_point, override_cursor};
 use cycle::{CycleList, cycle_badge, cycle_click, cycle_list, over_canvas_menu, shift_space_cycle};
 pub(crate) use draw::{Look, draw_highlight, draw_list};
-use draw::{dashed_rect, draw_drag_gpu, draw_highlight_gpu, draw_list_gpu, list_mesh_key, selection_area_fill};
+use draw::{dashed_rect, draw_drag_gpu, draw_highlight_gpu, draw_list_gpu, draw_list_with_pages, list_mesh_key, selection_area_fill};
 use dyn_boxes::dynamic_input;
 pub(crate) use dyn_boxes::length_units;
 use grid::draw_grid;
@@ -165,6 +165,8 @@ pub struct CanvasState {
     hover_cycle: Option<(Pos2, Vec<Handle>, usize)>,
     /// What the cycling list and the Shift+Space highlight were made for (see [`CycleKey`]).
     cycle_key: Option<CycleKey>,
+    /// PDF underlay pages read for the canvas.
+    pub(crate) underlays: underlay::Cache,
 }
 
 /// The command, prompt, drawing (and its revision) and view that the objects under the cursor
@@ -365,13 +367,25 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
     if let Some(f) = ensure_vp_content(app, &xf_paper, ui.ctx()) {
         let gpu = app.canvas.gpu.is_some();
         let clipped = painter.with_clip_rect(f.on_screen.intersect(rect));
-        draw_vp_content(&mut app.canvas.vp, gpu, &clipped, &f, &xf_paper, bg, app.session.settings.lwdisplay);
+        // Its PDF underlays' pages, clipped to a clipped viewport's outline (in list units: the
+        // list moves with the viewport's view, see `vp_motion`).
+        let lus = app.canvas.vp.list.underlays.clone();
+        let outline = f.outline.as_ref().and_then(|o| {
+            let (k, b) = app.canvas.vp.motion.unwrap_or((1.0, Vec2::ZERO));
+            let pts: Vec<Vec2> = o.iter().map(|q| (*q - b) / k).collect();
+            cadcraft_render::clip::PolyClip::new(&pts)
+        });
+        let pages = underlay::shapes(app, &clipped, &f.xf, &lus, outline.as_ref(), bg);
+        draw_vp_content(&mut app.canvas.vp, gpu, &clipped, &f, &xf_paper, pages, bg, app.session.settings.lwdisplay);
         masked = gpu && f.outline.is_some();
     }
+    // PDF underlays' pages, each at its place in the drawing order.
+    let lus = app.canvas.list.as_ref().map(|l| l.underlays.clone()).unwrap_or_default();
+    let pages = underlay::shapes(app, painter, &xf_paper, &lus, None, bg);
     if app.canvas.gpu.is_some() {
-        draw_list_gpu(&mut app.canvas, painter, &xf_paper, bg, app.session.settings.lwdisplay);
+        draw_list_gpu(&mut app.canvas, painter, &xf_paper, pages, bg, app.session.settings.lwdisplay);
     } else if let Some(list) = &app.canvas.list {
-        draw_list(painter, &xf_paper, list, bg, app.session.settings.lwdisplay);
+        draw_list_with_pages(painter, &xf_paper, list, pages, bg, app.session.settings.lwdisplay);
     }
     if let Some(vp) = &active_vp {
         // The active viewport: a heavy border, highlights in model units clipped to it.
@@ -1153,3 +1167,6 @@ mod compare;
 
 /// Background rebuilds of the display list for a new view.
 mod rebuild;
+
+/// PDF underlays' pages under the drawing.
+mod underlay;
