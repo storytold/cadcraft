@@ -10,6 +10,8 @@ mod dxf_image;
 mod dxf_mleader;
 mod dxf_read;
 mod dxf_table;
+/// PDF underlays (PDFUNDERLAY, PDFDEFINITION).
+mod dxf_underlay;
 mod dxf_write;
 mod dxf_xref;
 pub mod pdf;
