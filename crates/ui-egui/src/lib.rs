@@ -206,6 +206,12 @@ pub struct Services {
     /// The host has no file system to read a path from (the browser): a dropped file's contents
     /// are what it loads, and APPLOAD says so instead of asking for a name it cannot read.
     pub no_file_system: bool,
+    /// Choose a file to read: (file type description, extensions without the dot). Options ▸
+    /// Profiles ▸ Import... shows only with one.
+    pub pick_file: Option<Box<dyn Fn(&str, &[&str]) -> Option<String>>>,
+    /// Choose a file to write: (suggested name, file type description, extensions). Options ▸
+    /// Profiles ▸ Export... shows only with one.
+    pub pick_save_file: Option<Box<dyn Fn(&str, &str, &[&str]) -> Option<String>>>,
 }
 
 pub struct CadApp {
@@ -219,6 +225,8 @@ pub struct CadApp {
     pub ui: UiState,
     /// The interface's own preferences from the Options dialog ([`options`]).
     pub options: options::UiOptions,
+    /// The named profiles (Options ▸ Profiles, `options.profile`).
+    pub profiles: options::Profiles,
     pub services: Services,
     pub canvas: canvas::CanvasState,
     /// Desktop HID status and navigation preferences; the web host supplies no HID backend.
@@ -304,6 +312,7 @@ impl CadApp {
             session,
             ui: UiState::default(),
             options: options::UiOptions::default(),
+            profiles: options::Profiles::default(),
             services,
             canvas: canvas::CanvasState::default(),
             spacemouse: spacemouse::State::default(),

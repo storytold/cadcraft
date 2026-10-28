@@ -28,11 +28,13 @@
 //!
 //! The profile variables and the interface preferences survive restarts: the host saves
 //! [`CadApp::profile_json`] under [`PROFILE_KEY`] next to the interface prefs and restores it with
-//! [`CadApp::load_profile`].
+//! [`CadApp::load_profile`]. It also keeps the named profiles ([`profiles`]: `options.profile`).
 
 mod dialog;
+mod profiles;
 
 pub use dialog::dialog;
+pub use profiles::{MAX_PROFILES, Profiles, UNNAMED};
 
 use egui::Color32;
 use serde_json::{Map, Value, json};
@@ -44,8 +46,8 @@ use crate::theme::{self, ThemePref};
 /// The host storage key for [`CadApp::profile_json`].
 pub const PROFILE_KEY: &str = "cadcraft.profile";
 
-/// The largest saved profile [`CadApp::load_profile`] reads.
-const MAX_PROFILE_BYTES: usize = 64 * 1024;
+/// The largest saved profile [`CadApp::load_profile`] reads (it holds the named profiles too).
+const MAX_PROFILE_BYTES: usize = 512 * 1024;
 
 /// The longest SAVEFILEPATH the JSON form accepts.
 const MAX_PATH_CHARS: usize = 1024;
@@ -119,8 +121,11 @@ fn color_json(c: Option<Color32>) -> Value {
 }
 
 /// Open the dialog for a typed or menu-invoked OPTIONS; run the JSON form for a call with
-/// parameters. `None` if `id` isn't OPTIONS.
+/// parameters; `options.profile` manages the named profiles. `None` if `id` isn't one of them.
 pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    if id == profiles::COMMAND {
+        return Some(profiles::run(app, params));
+    }
     if !matches!(id, "options" | "op" | "preferences") {
         return None;
     }
@@ -319,7 +324,7 @@ impl CadApp {
     /// The user profile kept across restarts, as JSON for the host's storage ([`PROFILE_KEY`]):
     /// the engine's profile variables and the interface preferences the interface prefs
     /// ([`CadApp::prefs_json`]) and the desktop workspace file (panels, command line) do not
-    /// already keep.
+    /// already keep, the current profile's name and the other named profiles ([`profiles`]).
     pub fn profile_json(&self) -> String {
         json!({
             "version": 1,
@@ -331,6 +336,8 @@ impl CadApp {
             "snapMarkerSize": self.options.snap_marker_size,
             "timeSensitiveRightClick": self.options.time_sensitive_right_click,
             "interfaceScale": self.options.interface_scale,
+            "profileName": self.profiles.current,
+            "profiles": self.profiles.saved_json(),
         })
         .to_string()
     }
@@ -375,6 +382,7 @@ impl CadApp {
         if let Some(n) = c.interface_scale {
             self.options.interface_scale = n;
         }
+        self.profiles.load(&v);
     }
 }
 

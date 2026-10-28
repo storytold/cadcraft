@@ -1367,3 +1367,13 @@ menu	Modify	Edita
 	Check for Updates…	Verifica aggiornamenti…
 	CADCraft is up to date.	CADCraft è aggiornato.
 	Could not check for updates.	Impossibile verificare gli aggiornamenti.
+	Current profile:	Profilo corrente:
+	<<Unnamed Profile>>	<<Profilo senza nome>>
+	Available profiles:	Profili disponibili:
+	Add to List...	Aggiungi all'elenco...
+	Reset	Ripristina
+	New profile name:	Nome del nuovo profilo:
+	New name:	Nuovo nome:
+	CADCraft profile	Profilo CADCraft
+	Exported to {path}	Esportato in {path}
+	Imported as "{name}"	Importato come "{name}"

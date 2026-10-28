@@ -1373,3 +1373,13 @@
 	Check for Updates…	Перевірити оновлення…
 	CADCraft is up to date.	Встановлено найновішу версію CADCraft.
 	Could not check for updates.	Не вдалося перевірити оновлення.
+	Current profile:	Поточний профіль:
+	<<Unnamed Profile>>	<<Профіль без назви>>
+	Available profiles:	Доступні профілі:
+	Add to List...	Додати до списку...
+	Reset	Скинути
+	New profile name:	Ім'я нового профілю:
+	New name:	Нове ім'я:
+	CADCraft profile	Профіль CADCraft
+	Exported to {path}	Експортовано до {path}
+	Imported as "{name}"	Імпортовано як «{name}»

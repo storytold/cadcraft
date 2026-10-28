@@ -179,6 +179,12 @@ fn services() -> Services {
             dialog.pick_file().map(|p| p.to_string_lossy().to_string())
         })),
         no_file_system: false,
+        pick_file: Some(Box::new(|label: &str, exts: &[&str]| {
+            rfd::FileDialog::new().add_filter(label, exts).pick_file().map(|p| p.to_string_lossy().to_string())
+        })),
+        pick_save_file: Some(Box::new(|name: &str, label: &str, exts: &[&str]| {
+            rfd::FileDialog::new().set_file_name(name).add_filter(label, exts).save_file().map(|p| p.to_string_lossy().to_string())
+        })),
     }
 }
 

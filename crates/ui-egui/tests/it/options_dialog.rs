@@ -138,7 +138,7 @@ fn hostile_saved_profiles_are_ignored() {
         "[]".into(),
         r#"{"sysvars": "PICKBOX"}"#.into(),
         r#"{"sysvars": {"PICKBOX": "x", "LUNITS": 4, "FONTALT": "evil.ttf"}, "modelBackground": "red", "snapMarkerSize": -1}"#.into(),
-        format!(r#"{{"sysvars": {{"PICKBOX": 5}}, "pad": "{}"}}"#, "x".repeat(70_000)),
+        format!(r#"{{"sysvars": {{"PICKBOX": 5}}, "pad": "{}"}}"#, "x".repeat(600_000)),
     ] {
         let mut b = app();
         b.load_profile(&bad);

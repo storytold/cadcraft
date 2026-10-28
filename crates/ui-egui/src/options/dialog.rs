@@ -30,6 +30,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
     let mut changes = Map::new();
     let mut next_tab = None;
     let mut start = None;
+    let mut profile = None;
     let mut close = false;
     let center = ctx.content_rect().center();
     egui::Window::new(crate::tl!("Options"))
@@ -41,6 +42,11 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
         .default_pos(center)
         .show(ctx, |ui| {
             ui.set_width(WIDTH);
+            // The current profile, as AutoCAD shows it above the tabs.
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(crate::tl!("Current profile:")).color(Tokens::get().text_dim));
+                ui.label(super::profiles::display_name(&app.profiles.current));
+            });
             ui.horizontal_wrapped(|ui| {
                 for (id, label) in TABS {
                     if ui.selectable_label(tab == id, crate::i18n::t(label)).clicked() {
@@ -56,7 +62,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
                 "drafting" => drafting(app, ui, &mut changes, &mut start),
                 "selection" => selection(app, ui, &mut changes),
                 "preferences" => preferences(app, ui, &mut changes),
-                "profiles" => profiles(app, ui, &mut changes),
+                "profiles" => profiles(app, ui, &mut changes, &mut profile),
                 _ => display(app, ui, &mut changes),
             }
             // The same height on every tab, so switching tabs doesn't move the buttons.
@@ -79,6 +85,9 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
     }
     if !changes.is_empty() {
         let _ = app.run("options", Value::Object(changes));
+    }
+    if let Some(p) = profile {
+        profile_action(app, ctx, p);
     }
     if let Some(id) = start {
         app.start(id);
@@ -562,11 +571,110 @@ fn preferences(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>
     hint(ui, crate::tl!("Turned off, a right-click while a command runs always opens the shortcut menu."));
 }
 
-fn profiles(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
+/// What the Profiles tab asks for, done after the dialog is drawn.
+enum ProfileAction {
+    /// Run `options.profile` with these parameters.
+    Run(Value),
+    /// Export this profile to a file the host's picker chooses.
+    Export(String),
+    /// Import a profile file the host's picker chooses.
+    Import,
+}
+
+/// The Profiles tab's own state (egui temp data): the selected profile, a name being typed for
+/// Add to List (`true`) or Rename (`false`), and what the last action did (`true`: an error).
+#[derive(Clone, Default)]
+struct ProfilesUi {
+    selected: Option<String>,
+    naming: Option<(bool, String)>,
+    message: Option<(String, bool)>,
+}
+
+const PROFILES_UI: &str = "cc_options_profiles";
+
+/// Profiles tab: the named profiles with Set Current, Add to List, Rename, Delete, Export,
+/// Import and Reset, and the current profile reset or copied as JSON.
+fn profiles(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>, action: &mut Option<ProfileAction>) {
+    let t = Tokens::get();
+    let state_id = egui::Id::unique(PROFILES_UI);
+    let mut st = ui.ctx().data(|d| d.get_temp::<ProfilesUi>(state_id)).unwrap_or_default();
+    let names = app.profiles.names();
+    let current = app.profiles.current.clone();
+    let sel = st.selected.clone().filter(|s| names.contains(s)).unwrap_or_else(|| current.clone());
+    ui.label(crate::tl!("Available profiles:"));
+    ui.horizontal_top(|ui| {
+        egui::Frame::NONE.fill(t.field).inner_margin(egui::Margin::same(4)).show(ui, |ui| {
+            ui.set_width(340.0);
+            ui.set_min_height(150.0);
+            egui::ScrollArea::vertical().id_salt("cc_opt_profiles").max_height(170.0).show(ui, |ui| {
+                // One profile per row, whatever the layout around the list.
+                ui.vertical(|ui| {
+                    for n in &names {
+                        let shown = super::profiles::display_name(n);
+                        let label = if *n == current { RichText::new(shown).strong() } else { RichText::new(shown) };
+                        if ui.selectable_label(*n == sel, label).clicked() {
+                            st.selected = Some(n.clone());
+                            st.naming = None;
+                        }
+                    }
+                });
+            });
+        });
+        ui.vertical(|ui| {
+            let w = vec2(170.0, 0.0);
+            if ui.add_enabled(sel != current, egui::Button::new(crate::tl!("Set Current")).min_size(w)).clicked() {
+                *action = Some(ProfileAction::Run(json!({"action": "set", "name": sel})));
+            }
+            if ui.add(egui::Button::new(crate::tl!("Add to List...")).min_size(w)).clicked() {
+                st.naming = Some((true, String::new()));
+            }
+            if ui.add(egui::Button::new(crate::tl!("Rename...")).min_size(w)).clicked() {
+                st.naming = Some((false, sel.clone()));
+            }
+            if ui.add_enabled(sel != current, egui::Button::new(crate::tl!("Delete")).min_size(w)).clicked() {
+                *action = Some(ProfileAction::Run(json!({"action": "delete", "name": sel})));
+            }
+            if app.services.pick_save_file.is_some() && ui.add(egui::Button::new(crate::tl!("Export...")).min_size(w)).clicked() {
+                *action = Some(ProfileAction::Export(sel.clone()));
+            }
+            if app.services.pick_file.is_some() && ui.add(egui::Button::new(crate::tl!("Import...")).min_size(w)).clicked() {
+                *action = Some(ProfileAction::Import);
+            }
+            if ui.add(egui::Button::new(crate::tl!("Reset")).min_size(w)).clicked() {
+                *action = Some(ProfileAction::Run(json!({"action": "reset", "name": sel})));
+            }
+        });
+    });
+    if let Some((add, mut name)) = st.naming.take() {
+        let mut keep = true;
+        ui.horizontal(|ui| {
+            let caption = ui.label(if add { crate::tl!("New profile name:") } else { crate::tl!("New name:") });
+            let r = ui.add(egui::TextEdit::singleline(&mut name).desired_width(240.0)).labelled_by(caption.id);
+            let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let ok = ui.add_enabled(!name.trim().is_empty(), egui::Button::new(crate::tl!("OK"))).clicked();
+            if (ok || enter) && !name.trim().is_empty() {
+                let params = if add { json!({"action": "add", "name": name}) } else { json!({"action": "rename", "name": sel, "newName": name}) };
+                *action = Some(ProfileAction::Run(params));
+                // The new or renamed profile stays selected.
+                st.selected = Some(name.trim().to_string());
+                keep = false;
+            }
+            if ui.button(crate::tl!("Cancel")).clicked() {
+                keep = false;
+            }
+        });
+        if keep {
+            st.naming = Some((add, name));
+        }
+    }
+    if let Some((m, error)) = &st.message {
+        ui.label(RichText::new(m).color(if *error { t.warn } else { t.text_dim }));
+    }
+    ui.add_space(6.0);
     ui.label(crate::tl!(
         "CADCraft keeps these preferences, object snap modes and drafting toggles for your user account and restores them when it starts."
     ));
-    ui.add_space(8.0);
+    ui.add_space(4.0);
     ui.horizontal(|ui| {
         if ui.button(crate::tl!("Reset to Defaults")).clicked() {
             changes.insert("reset".into(), json!(true));
@@ -576,4 +684,42 @@ fn profiles(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
         }
     });
     hint(ui, crate::tl!("Reset keeps the interface language."));
+    ui.ctx().data_mut(|d| d.insert_temp(state_id, st));
+}
+
+/// Do what the Profiles tab asked for and keep what came of it for the tab to show.
+fn profile_action(app: &mut CadApp, ctx: &egui::Context, action: ProfileAction) {
+    let params = match action {
+        ProfileAction::Run(p) => Some(p),
+        ProfileAction::Export(name) => app
+            .services
+            .pick_save_file
+            .as_ref()
+            .and_then(|pick| pick(&format!("{name}.json"), crate::tl!("CADCraft profile"), &["json"]))
+            .map(|path| json!({"action": "export", "name": name, "path": path})),
+        ProfileAction::Import => app
+            .services
+            .pick_file
+            .as_ref()
+            .and_then(|pick| pick(crate::tl!("CADCraft profile"), &["json"]))
+            .map(|path| json!({"action": "import", "path": path})),
+    };
+    let Some(params) = params else { return };
+    let what = params.get("action").and_then(Value::as_str).unwrap_or_default().to_string();
+    let state_id = egui::Id::unique(PROFILES_UI);
+    let mut st = ctx.data(|d| d.get_temp::<ProfilesUi>(state_id)).unwrap_or_default();
+    match app.run(super::profiles::COMMAND, params) {
+        Ok(v) => {
+            st.message = match what.as_str() {
+                "export" => v.get("path").and_then(Value::as_str).map(|p| (crate::tf!("Exported to {path}", path = p), false)),
+                "import" => v.get("name").and_then(Value::as_str).map(|n| (crate::tf!("Imported as \"{name}\"", name = n), false)),
+                _ => None,
+            };
+            if what == "import" {
+                st.selected = v.get("name").and_then(Value::as_str).map(str::to_string);
+            }
+        }
+        Err(e) => st.message = Some((e, true)),
+    }
+    ctx.data_mut(|d| d.insert_temp(state_id, st));
 }
