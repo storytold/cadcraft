@@ -76,20 +76,38 @@ enum Page {
     Read(Result<TextureHandle, String>),
 }
 
-/// Pages by drawing and stored file, page number and how they are shown.
+/// Which of a frame's two calls of [`shapes`] draws: the active viewport's list (model space
+/// seen through it) or the layout's (or model space's) own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Scope {
+    Viewport,
+    Main,
+}
+
+/// A sharper part's key: the underlay, the list it is drawn from and its place there, then the
+/// file, page and look it shows.
+type DetailKey = (Handle, Scope, usize, String, u32, Look);
+
+/// Pages by drawing and stored file, page number and how they are shown, each with when (egui
+/// time) it was last drawn.
 #[derive(Default)]
 pub(crate) struct Cache {
-    pages: HashMap<(String, u32, Look), Page>,
-    /// Sharper parts, by underlay and its place in the list (and the file, page and look they show).
-    details: HashMap<(Handle, usize, String, u32, Look), Detail>,
-    /// The view last drawn and since when (egui time) it hasn't moved.
-    view: Option<(Bounds2, f64)>,
+    pages: HashMap<(String, u32, Look), (Page, f64)>,
+    /// Sharper parts.
+    details: HashMap<DetailKey, Detail>,
+    /// Per list, the view last drawn and since when (egui time) it hasn't moved: the two lists
+    /// are drawn through different transforms, so one view would never settle.
+    views: HashMap<Scope, (Bounds2, f64)>,
 }
 
 impl Cache {
     /// The page's texture once it has been read. The first call starts reading it on a worker
     /// thread (at once on the web, which has no threads), so the canvas doesn't stop while a big
-    /// page is drawn: until then the underlay shows its frame only.
+    /// page is drawn: until then the underlay shows its frame only. At most [`MAX_PAGES`] are
+    /// kept: a new one replaces the one drawn longest ago, never one drawn at egui time `now`
+    /// (this frame), so more pages on screen than that don't read each other out every frame;
+    /// those over the limit show their frame until one is free.
+    #[allow(clippy::too_many_arguments)]
     fn texture(
         &mut self,
         ctx: &egui::Context,
@@ -98,13 +116,20 @@ impl Cache {
         page: u32,
         look: Look,
         layers: &[(String, bool)],
+        now: f64,
     ) -> Result<&TextureHandle, &str> {
         // A relative path means a different file in another drawing's folder; the PDF's layers
         // shown or hidden make another picture of the page.
         let key = (format!("{}|{path}|{}", document.unwrap_or(""), layers_key(layers)), page, look);
         if !self.pages.contains_key(&key) {
             if self.pages.len() >= MAX_PAGES {
-                self.pages.clear();
+                let oldest = self.pages.iter().filter(|(_, (_, used))| *used < now).min_by(|a, b| a.1.1.total_cmp(&b.1.1)).map(|(k, _)| k.clone());
+                match oldest {
+                    Some(k) => {
+                        self.pages.remove(&k);
+                    }
+                    None => return Err("too many pages on screen"),
+                }
             }
             let (path_owned, doc, layers_owned) = (path.to_string(), document.map(str::to_string), layers.to_vec());
             let (tx, rx) = std::sync::mpsc::channel::<Pixels>();
@@ -125,9 +150,12 @@ impl Cache {
                 true
             };
             let state = if started { Page::Reading(rx) } else { Page::Read(Err("the page could not be read".to_string())) };
-            self.pages.insert(key.clone(), state);
+            self.pages.insert(key.clone(), (state, now));
         }
-        if let Some(Page::Reading(rx)) = self.pages.get(&key) {
+        if let Some((_, used)) = self.pages.get_mut(&key) {
+            *used = now;
+        }
+        if let Some((Page::Reading(rx), _)) = self.pages.get(&key) {
             let read = match rx.try_recv() {
                 Ok(r) => r.and_then(|(w, h, rgba)| {
                     let size = [usize::try_from(w).unwrap_or(0), usize::try_from(h).unwrap_or(0)];
@@ -146,11 +174,11 @@ impl Cache {
             if let Err(e) = &read {
                 log::warn!("PDF underlay {path} page {page}: {e}");
             }
-            self.pages.insert(key.clone(), Page::Read(read));
+            self.pages.insert(key.clone(), (Page::Read(read), now));
         }
         match self.pages.get(&key) {
-            Some(Page::Read(Ok(t))) => Ok(t),
-            Some(Page::Read(Err(e))) => Err(e.as_str()),
+            Some((Page::Read(Ok(t)), _)) => Ok(t),
+            Some((Page::Read(Err(e)), _)) => Err(e.as_str()),
             _ => Err("being read"),
         }
     }
@@ -190,11 +218,13 @@ impl Item {
 /// The pages of PDF underlays `pages` (a display list's, seen through `xf`) on background `bg`,
 /// each with its index in `pages`, for the canvas to draw at its place among the objects.
 /// `outline`: a clipped viewport's outline in list units, which the pages are clipped to too
-/// (the GPU's stencil doesn't reach them).
+/// (the GPU's stencil doesn't reach them). `scope`: which list `pages` comes from.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn shapes(
     app: &mut CadApp,
     painter: &egui::Painter,
     xf: &Xf,
+    scope: Scope,
     pages: &[ListUnderlay],
     outline: Option<&PolyClip>,
     bg: Rgb,
@@ -210,13 +240,14 @@ pub(crate) fn shapes(
     for (index, lu) in pages.iter().enumerate() {
         let Some(u) = cadcraft_render::pdf_underlay(&st.doc, lu.handle) else { continue };
         let mut tris = lu.triangles();
+        // The part of the page shown, before a viewport's outline clips it.
+        let Some(shown) = lu.shown_of(&tris) else { continue };
         if let Some(c) = outline {
             tris = c.clip_triangles(&tris);
         }
         if tris.is_empty() || !Bounds2::from_points(tris.iter().copied()).intersects(&view) {
             continue;
         }
-        let Some(shown) = lu.shown() else { continue };
         items.push(Item {
             index,
             handle: lu.handle,
@@ -235,24 +266,19 @@ pub(crate) fn shapes(
     let ctx = painter.ctx().clone();
     let now = ctx.input(|i| i.time);
     let cache = &mut app.canvas.underlays;
-    let settled = match cache.view {
-        Some((v, since)) if v == view => now - since >= SETTLE_S,
-        _ => {
-            cache.view = Some((view, now));
-            false
-        }
-    };
+    let settled = cache.settled(scope, view, now);
     let ppp = f64::from(ctx.pixels_per_point());
     // A page wants a sharper part: one more frame once the view has settled draws it.
     let mut want_sharp = false;
     for it in &items {
-        let Ok(tex) = cache.texture(&ctx, &it.path, document.as_deref(), it.page, it.look, &it.layers) else { continue };
+        let Ok(tex) = cache.texture(&ctx, &it.path, document.as_deref(), it.page, it.look, &it.layers, now) else { continue };
         let base = (tex.id(), f64::from(tex.size()[0].max(1) as u32));
         // Faded: the page's content shows through to the background (its paper is transparent).
         let tint = Color32::WHITE.gamma_multiply(1.0 - it.fade);
         // Screen pixels per page width: away from the texture's own, draw the visible part at it.
         let density = it.axes.0.len() * xf.scale * ppp;
-        let key = (it.handle, it.index, format!("{}|{}|{}", document.as_deref().unwrap_or(""), it.path, layers_key(&it.layers)), it.page, it.look);
+        let key =
+            (it.handle, scope, it.index, format!("{}|{}|{}", document.as_deref().unwrap_or(""), it.path, layers_key(&it.layers)), it.page, it.look);
         let mut sharp = None;
         if redrawn(density, base.1) {
             if let Some(region) = visible_region(it, &view, 0.25) {
@@ -311,6 +337,18 @@ fn visible_region(it: &Item, view: &Bounds2, margin: f64) -> Option<[f64; 4]> {
 }
 
 impl Cache {
+    /// Whether the view of list `scope` has stayed `view` for [`SETTLE_S`] seconds at egui time
+    /// `now`.
+    fn settled(&mut self, scope: Scope, view: Bounds2, now: f64) -> bool {
+        match self.views.get(&scope) {
+            Some((v, since)) if *v == view => now - since >= SETTLE_S,
+            _ => {
+                self.views.insert(scope, (view, now));
+                false
+            }
+        }
+    }
+
     /// Drop the sharper parts not drawn for [`DETAIL_KEEP_S`] seconds at egui time `now`.
     fn forget_details(&mut self, now: f64) {
         self.details.retain(|_, d| now - d.used < DETAIL_KEEP_S);
@@ -322,7 +360,7 @@ impl Cache {
     fn detail(
         &mut self,
         ctx: &egui::Context,
-        key: &(Handle, usize, String, u32, Look),
+        key: &DetailKey,
         it: &Item,
         document: Option<&str>,
         want: [f64; 4],
@@ -335,8 +373,7 @@ impl Cache {
         if let Some((rx, region, drawn_at)) = &d.pending {
             let (region, drawn_at) = (*region, *drawn_at);
             let ok = match rx.try_recv() {
-                Ok(Ok((w, h, mut rgba))) => {
-                    shade(it.look, &mut rgba);
+                Ok(Ok((w, h, rgba))) => {
                     let size = [w as usize, h as usize];
                     // The part and density go with the texture drawn for them.
                     let fits = size[0].checked_mul(size[1]).and_then(|n| n.checked_mul(4)) == Some(rgba.len());
@@ -381,11 +418,16 @@ impl Cache {
         let k = (f64::from(DETAIL_PX) / w.max(h)).min(1.0);
         w = (w * k).round().max(1.0);
         h = (h * k).round().max(1.0);
-        let (path, doc, page, layers) = (it.path.clone(), document.map(str::to_string), it.page, it.layers.clone());
+        let (path, doc, page, layers, look) = (it.path.clone(), document.map(str::to_string), it.page, it.layers.clone(), it.look);
         let (tx, rx) = std::sync::mpsc::channel::<Pixels>();
+        // Shaded on the worker too: a part can be 4096 pixels square.
         let job = move || {
             let r = cadcraft_engine::cmd::underlay::underlay_region_pixels(&path, doc.as_deref(), page, want, w as u32, h as u32, &layers)
-                .map_err(|e| e.to_string());
+                .map_err(|e| e.to_string())
+                .map(|(w, h, mut rgba)| {
+                    shade(look, &mut rgba);
+                    (w, h, rgba)
+                });
             let _ = tx.send(r);
         };
         #[cfg(not(target_arch = "wasm32"))]
@@ -442,7 +484,7 @@ mod tests {
     fn a_part_being_drawn_leaves_the_part_shown_with_its_own_region() {
         let ctx = egui::Context::default();
         let mut cache = Cache::default();
-        let key = (Handle(1), 0, "plan.pdf".to_string(), 1, (false, 0, false));
+        let key = (Handle(1), Scope::Main, 0, "plan.pdf".to_string(), 1, (false, 0, false));
         let old = [0.0, 0.0, 0.2, 0.2];
         cache
             .details
@@ -458,7 +500,7 @@ mod tests {
     fn a_part_that_failed_is_not_asked_for_again_every_frame() {
         let ctx = egui::Context::default();
         let mut cache = Cache::default();
-        let key = (Handle(1), 0, "plan.pdf".to_string(), 1, (false, 0, false));
+        let key = (Handle(1), Scope::Main, 0, "plan.pdf".to_string(), 1, (false, 0, false));
         let want = [0.6, 0.6, 0.8, 0.8];
         let (tx, rx) = std::sync::mpsc::channel::<Pixels>();
         tx.send(Err("unreadable".into())).unwrap();
@@ -483,11 +525,11 @@ mod tests {
         let mut cache = Cache::default();
         let look = (false, 100, false);
         // The first frame starts the reading and goes on without the page.
-        assert_eq!(cache.texture(&ctx, "/nowhere/plan.pdf", None, 1, look, &[]).err(), Some("being read"));
+        assert_eq!(cache.texture(&ctx, "/nowhere/plan.pdf", None, 1, look, &[], 0.0).err(), Some("being read"));
         // A later frame gets what the worker read (here an error: this test has no PDF reader).
         let mut got = Err("being read".to_string());
         for _ in 0..200 {
-            got = cache.texture(&ctx, "/nowhere/plan.pdf", None, 1, look, &[]).map(|_| ()).map_err(str::to_string);
+            got = cache.texture(&ctx, "/nowhere/plan.pdf", None, 1, look, &[], 0.0).map(|_| ()).map_err(str::to_string);
             if got.as_ref().err().is_none_or(|e| e != "being read") {
                 break;
             }
@@ -501,10 +543,98 @@ mod tests {
         let ctx = egui::Context::default();
         let mut cache = Cache::default();
         let detail = |used| Detail { region: [0.0, 0.0, 1.0, 1.0], density: 1.0, shown: Some(texture(&ctx)), pending: None, used, failed: None };
-        cache.details.insert((Handle(1), 0, String::new(), 1, (false, 0, false)), detail(0.0));
-        cache.details.insert((Handle(2), 0, String::new(), 1, (false, 0, false)), detail(9.0));
+        cache.details.insert((Handle(1), Scope::Main, 0, String::new(), 1, (false, 0, false)), detail(0.0));
+        cache.details.insert((Handle(2), Scope::Main, 0, String::new(), 1, (false, 0, false)), detail(9.0));
         cache.forget_details(10.0);
         assert_eq!(cache.details.keys().map(|k| k.0).collect::<Vec<_>>(), vec![Handle(2)]);
+    }
+
+    /// The page keys kept, sorted.
+    fn kept(cache: &Cache) -> Vec<String> {
+        let mut k: Vec<String> = cache.pages.keys().map(|k| k.0.clone()).collect();
+        k.sort();
+        k
+    }
+
+    #[test]
+    fn more_pages_on_screen_than_kept_do_not_read_each_other_out_every_frame() {
+        let ctx = egui::Context::default();
+        let mut cache = Cache::default();
+        let look = (false, 100, false);
+        let paths: Vec<String> = (0..=MAX_PAGES).map(|i| format!("/nowhere/p{i}.pdf")).collect();
+        let frame = |cache: &mut Cache, now: f64, which: &[String]| {
+            for p in which {
+                let _ = cache.texture(&ctx, p, None, 1, look, &[], now);
+            }
+        };
+        frame(&mut cache, 1.0, &paths);
+        let first = kept(&cache);
+        assert_eq!(first.len(), MAX_PAGES);
+        // The page over the limit waits; it doesn't throw out the pages already read.
+        assert_eq!(cache.texture(&ctx, paths.last().unwrap(), None, 1, look, &[], 1.0).err(), Some("too many pages on screen"));
+        for now in [1.02, 1.04, 1.06, 2.0] {
+            frame(&mut cache, now, &paths);
+            assert_eq!(kept(&cache), first, "frame at {now} s");
+        }
+        // Once a page is no longer drawn, the waiting one takes its place, and only it.
+        let mut fewer = paths.clone();
+        let gone = fewer.remove(3);
+        frame(&mut cache, 3.0, &fewer);
+        let now_kept = kept(&cache);
+        assert_eq!(now_kept.len(), MAX_PAGES);
+        assert!(!now_kept.iter().any(|k| k.contains(&format!("|{gone}|"))), "the page not drawn is dropped");
+        assert!(now_kept.iter().any(|k| k.contains(&format!("|{}|", paths.last().unwrap()))), "the waiting page is read");
+    }
+
+    #[test]
+    fn a_page_drawn_long_ago_makes_room_for_a_new_one() {
+        let ctx = egui::Context::default();
+        let mut cache = Cache::default();
+        let look = (false, 100, false);
+        for i in 0..MAX_PAGES {
+            let _ = cache.texture(&ctx, &format!("/nowhere/p{i}.pdf"), None, 1, look, &[], f64::from(u32::try_from(i).unwrap()));
+        }
+        let _ = cache.texture(&ctx, "/nowhere/new.pdf", None, 1, look, &[], 100.0);
+        let k = kept(&cache);
+        assert_eq!(k.len(), MAX_PAGES);
+        assert!(!k.iter().any(|k| k.contains("|/nowhere/p0.pdf|")), "the oldest goes");
+        assert!(k.iter().any(|k| k.contains("|/nowhere/p1.pdf|")));
+        assert!(k.iter().any(|k| k.contains("|/nowhere/new.pdf|")));
+    }
+
+    #[test]
+    fn each_list_s_view_settles_on_its_own() {
+        // The active viewport's list and the layout's are drawn through different transforms,
+        // so their views differ every frame; each still settles once it stops moving.
+        let mut cache = Cache::default();
+        let a = Bounds2::new(Vec2::ZERO, Vec2::new(10.0, 10.0));
+        let b = Bounds2::new(Vec2::new(-5.0, -5.0), Vec2::new(50.0, 40.0));
+        let mut now = 0.0;
+        let mut last = (true, true);
+        while now < 1.0 {
+            last = (cache.settled(Scope::Viewport, a, now), cache.settled(Scope::Main, b, now));
+            if now == 0.0 {
+                assert_eq!(last, (false, false));
+            }
+            now += 0.05;
+        }
+        assert_eq!(last, (true, true));
+        // Panning the viewport doesn't unsettle the layout.
+        let moved = Bounds2::new(Vec2::new(1.0, 0.0), Vec2::new(11.0, 10.0));
+        assert_eq!((cache.settled(Scope::Viewport, moved, now), cache.settled(Scope::Main, b, now)), (false, true));
+    }
+
+    #[test]
+    fn one_underlay_in_both_lists_keeps_a_sharper_part_for_each() {
+        let ctx = egui::Context::default();
+        let mut cache = Cache::default();
+        let key = |scope| (Handle(1), scope, 0, "plan.pdf".to_string(), 1, (false, 0, false));
+        let (vp, main) = ([0.1, 0.1, 0.2, 0.2], [0.0, 0.0, 1.0, 1.0]);
+        cache.detail(&ctx, &key(Scope::Viewport), &item(), None, vp, 4000.0, true, 1.0);
+        cache.detail(&ctx, &key(Scope::Main), &item(), None, main, 800.0, true, 1.0);
+        let part = |scope| cache.details.get(&key(scope)).and_then(|d| d.pending.as_ref().map(|p| (p.1, p.2)));
+        assert_eq!(part(Scope::Viewport), Some((vp, 4000.0)));
+        assert_eq!(part(Scope::Main), Some((main, 800.0)));
     }
 
     #[test]

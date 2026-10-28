@@ -375,13 +375,13 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
             let pts: Vec<Vec2> = o.iter().map(|q| (*q - b) / k).collect();
             cadcraft_render::clip::PolyClip::new(&pts)
         });
-        let pages = underlay::shapes(app, &clipped, &f.xf, &lus, outline.as_ref(), bg);
+        let pages = underlay::shapes(app, &clipped, &f.xf, underlay::Scope::Viewport, &lus, outline.as_ref(), bg);
         draw_vp_content(&mut app.canvas.vp, gpu, &clipped, &f, &xf_paper, pages, bg, app.session.settings.lwdisplay);
         masked = gpu && f.outline.is_some();
     }
     // PDF underlays' pages, each at its place in the drawing order.
     let lus = app.canvas.list.as_ref().map(|l| l.underlays.clone()).unwrap_or_default();
-    let pages = underlay::shapes(app, painter, &xf_paper, &lus, None, bg);
+    let pages = underlay::shapes(app, painter, &xf_paper, underlay::Scope::Main, &lus, None, bg);
     if app.canvas.gpu.is_some() {
         draw_list_gpu(&mut app.canvas, painter, &xf_paper, pages, bg, app.session.settings.lwdisplay);
     } else if let Some(list) = &app.canvas.list {

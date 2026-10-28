@@ -83,6 +83,7 @@ fn a_layout_viewport_shows_the_page_clipped_to_it() {
     assert!((lu.origin + (lu.u + lu.v) * 0.5 - Vec2::new(100.0, 80.0)).len() < 1e-6);
     assert!(matches!(lu.clip, PageClip::Rect(_)));
     let shown = lu.shown().unwrap();
+    assert_eq!(lu.shown_of(&lu.triangles()), Some(shown), "from triangles already computed: the same part");
     for (got, want) in shown.iter().zip([1.0 / 3.0, 1.0 / 3.0, 2.0 / 3.0, 2.0 / 3.0]) {
         assert!((got - want).abs() < 1e-6, "{shown:?}");
     }
