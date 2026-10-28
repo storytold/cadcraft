@@ -6,6 +6,7 @@ mod annotative_roundtrip;
 mod assoc_array_roundtrip;
 mod attrib_modes;
 mod attrib_props;
+mod attribute_vertical_alignment;
 mod block_expansion;
 mod closed_spline;
 mod codepages;

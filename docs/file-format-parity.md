@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-25 · **Change:** minor (LAYOUT SAveas writes a layout as a DWT template) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-28 · **Change:** minor (attribute alignment regression matrix) · **Target:** Autodesk AutoCAD 2027
 
 Every format AutoCAD 2027 reads or writes, with CADCraft's support, fidelity and tests. Work
 items are in [gaps.md](gaps.md#file-formats); the weighted score feeds
@@ -136,10 +136,25 @@ external validator runs in CI (ezdxf's audit was run by hand once, 2026-10-06). 
 a licensed real-file corpus with an open → save → re-open → compare test per file, and checking
 our output in AutoCAD black-box.
 
+## Attribute alignment regression coverage
+
+CC-003 covers 210 synthetic TEXT/ATTRIB/ATTDEF combinations across left/center/right alignment,
+attribute field lengths 0/1/3/80, TEXT group 73 missing or 0/1/2/3/80, and group 74 missing or 0–3. Each combination is
+checked after import and DXF save/reopen, including the retained alignment point and value.
+This contribution adapts the existing #910 reader correction to the current reader helpers
+and adds regression coverage. The original reader correction remains a separately credited
+prerequisite; the new matrix can be reverted independently.
+It reproduced ATTRIB group 73=0 / 74=1 being read as Baseline instead of Bottom on d3ae8a6,
+and passes with #910 adapted to the current extracted reader helpers. No private or
+AutoCAD-produced drawing is included. This does not establish full drawing fidelity or cover
+multiline subclass collisions (the separate #1942 proposal).
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-26 | minor | CC-003 review follow-up: extend the matrix to 210 combinations with TEXT Middle and omitted group 73; no production change |
+| 2026-10-26 | minor | CC-003 attribute alignment: adapted #910 reader correction plus 180 import/save/reopen combinations; clarified prerequisite scope after review |
 | 2026-10-25 | minor | LAYOUT SAveas (`layout.saveas`) writes a layout as a drawing template: its page setup and paper space objects, no model space objects or other layouts, and only the named objects they use |
 | 2026-10-22 | minor | DXF/DWG save: angular, diametric and radial dimensions get standard DIMASSOC objects (one centre reference to the circle for radial/diametric, the definition points for angular), so AutoCAD follows their geometry; the standard objects of those kinds are read back too, without CADCraft's xdata (#1651) |
 | 2026-10-19 | minor | DXF/DWG save: angular dimension block text honors DIMDSEP, including per-dimension overrides (#1646) |

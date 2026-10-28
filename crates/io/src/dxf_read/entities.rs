@@ -133,7 +133,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
         "HELIX" => EntityKind::Helix(helix(tags)),
         "RAY" => EntityKind::Ray(RayLine { base: t.p(10), dir: t.p(11) }),
         "XLINE" => EntityKind::XLine(RayLine { base: t.p(10), dir: t.p(11) }),
-        "TEXT" => EntityKind::Text(text_from(&t)),
+        "TEXT" => EntityKind::Text(text_from(&t, false)),
         "MTEXT" => EntityKind::MText(mtext_from(tags, &c)),
         "ATTDEF" => EntityKind::AttDef(attdef(tags, &c)),
         "INSERT" => {
@@ -531,7 +531,7 @@ pub(super) fn insert_attribs(recs: &[(String, Vec<Tag>)], i: &mut usize, ins_lay
             let (own, embedded) = split_embedded(t2);
             let multiline = multiline_attrib(embedded, &common(&tt));
             let own = T(own);
-            let mut text = text_from(&own);
+            let mut text = text_from(&own, true);
             if let Some(m) = &multiline {
                 text.value.clone_from(&m.read_as);
             }
