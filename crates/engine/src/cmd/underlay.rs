@@ -938,15 +938,36 @@ impl PageSize {
 /// Millimetres per PDF point.
 const MM_PER_POINT: f64 = 25.4 / 72.0;
 
-/// Millimetres per drawing unit: the drawing's INSUNITS, or its MEASUREMENT when unitless.
+/// Millimetres per drawing unit: the drawing's INSUNITS (the DXF reference's values; the survey
+/// units are the US survey foot's, 1200/3937 m), or its MEASUREMENT when unitless or unknown.
 pub fn mm_per_unit(d: &Drawing) -> f64 {
+    const SURVEY_FOOT: f64 = 1_200_000.0 / 3937.0;
     match d.header.i64("INSUNITS", 0) {
         1 => 25.4,
         2 => 304.8,
+        3 => 1_609_344.0,
         4 => 1.0,
         5 => 10.0,
         6 => 1000.0,
+        7 => 1e6,
+        8 => 25.4e-6,
+        9 => 0.0254,
+        10 => 914.4,
+        11 => 1e-7,
+        12 => 1e-6,
+        13 => 1e-3,
         14 => 100.0,
+        15 => 1e4,
+        16 => 1e5,
+        17 => 1e12,
+        // Astronomical unit, light year, parsec.
+        18 => 1.495_978_707e14,
+        19 => 9.460_730_472_580_8e18,
+        20 => 3.085_677_581_491_367e19,
+        21 => SURVEY_FOOT,
+        22 => SURVEY_FOOT / 12.0,
+        23 => SURVEY_FOOT * 3.0,
+        24 => SURVEY_FOOT * 5280.0,
         _ if d.header.i64("MEASUREMENT", 0) == 1 => 1.0,
         _ => 25.4,
     }

@@ -63,6 +63,49 @@ fn a_page_is_attached_at_its_size_on_paper() {
     assert!(!s.doc().unwrap().space(&Space::Model).into_iter().flat_map(|st| st.iter()).any(|e| matches!(e.kind, EntityKind::PdfUnderlay(_))));
 }
 
+/// Every INSUNITS value sizes the page at its size on paper in that unit (DXF reference values;
+/// the survey units are the US survey foot's, 1200/3937 m).
+#[test]
+fn every_drawing_unit_gets_the_page_at_its_size_on_paper() {
+    hooks();
+    let path = pdf_file("Units.pdf", b"%PDF-1.7 fake");
+    let survey_ft = 1_200_000.0 / 3937.0;
+    let units: [(i64, f64); 24] = [
+        (1, 25.4),
+        (2, 304.8),
+        (3, 1_609_344.0),
+        (4, 1.0),
+        (5, 10.0),
+        (6, 1000.0),
+        (7, 1e6),
+        (8, 25.4e-6),
+        (9, 0.0254),
+        (10, 914.4),
+        (11, 1e-7),
+        (12, 1e-6),
+        (13, 1e-3),
+        (14, 100.0),
+        (15, 1e4),
+        (16, 1e5),
+        (17, 1e12),
+        (18, 1.495_978_707e14),
+        (19, 9.460_730_472_580_8e18),
+        (20, 3.085_677_581_491_367e19),
+        (21, survey_ft),
+        (22, survey_ft / 12.0),
+        (23, survey_ft * 3.0),
+        (24, survey_ft * 5280.0),
+    ];
+    for (insunits, mm) in units {
+        let mut s = Session::empty();
+        s.new_drawing(true);
+        s.doc_mut().unwrap().header.set_i64("INSUNITS", insunits);
+        let r = s.execute("pdfattach", &json!({"path": path})).unwrap();
+        let w = r["width"].as_f64().unwrap();
+        assert!((w * mm / 297.0 - 1.0).abs() < 1e-9, "INSUNITS {insunits}: {w} units wide for 297 mm");
+    }
+}
+
 #[test]
 fn an_inch_drawing_gets_the_page_in_inches_and_scale_and_rotation_apply() {
     hooks();
