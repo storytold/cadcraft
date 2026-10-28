@@ -217,6 +217,7 @@ fn run_dist(s: &mut Session, p: &Value) -> Result<Value> {
     let a = point3_req(s, "dist", p, "p1")?;
     let b = point3_req(s, "dist", p, "p2")?;
     let d = b - a;
+    s.measured.set_distance(d.len());
     Ok(json!({
         "distance": d.len(),
         "angle": d.xy().angle().to_degrees(),
@@ -422,6 +423,7 @@ fn run_area(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(what) = too_large(a, per) {
         return Err(bad("area", format!("the {what} is too large")));
     }
+    s.measured.set_area(a, per);
     Ok(json!({ "area": a, "perimeter": per, "message": area_text(s, a, per) }))
 }
 
@@ -874,7 +876,9 @@ impl Interactive for DistM {
                     _ => (a, b),
                 };
                 let (za, zb) = if self.first_source.is_some() || s.picked_viewport.is_some() { (0.0, 0.0) } else { (z_at(s, a), z_at(s, b)) };
-                let t = dist_text(s, Vec3::new(a.x, a.y, za), Vec3::new(b.x, b.y, zb));
+                let (a, b) = (Vec3::new(a.x, a.y, za), Vec3::new(b.x, b.y, zb));
+                s.measured.set_distance((b - a).len());
+                let t = dist_text(s, a, b);
                 for l in t.lines() {
                     s.echo(l.to_string());
                 }
@@ -905,6 +909,7 @@ impl DistM {
             .as_deref()
             .or(self.multi.as_deref())
             .map_or(0.0, |pts| if closed { arcs::polyline(pts, &self.bulges, true).len() } else { path_len(pts, &self.bulges) });
+        s.measured.set_distance(d);
         s.echo(format!("Distance = {}", fmt_d(s, d)));
         Ok(Step::Done)
     }
@@ -1118,6 +1123,7 @@ impl AreaM {
             s.echo(format!("The {what} is too large."));
             return if self.mode == AreaMode::Single { Step::Done } else { Step::Continue };
         }
+        s.measured.set_area(a, per);
         s.echo(area_text(s, a, per));
         if self.mode == AreaMode::Single {
             return Step::Done;

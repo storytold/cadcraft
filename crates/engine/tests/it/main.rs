@@ -114,6 +114,7 @@ mod selection_cycling;
 mod selection_modes;
 mod setvar_cecolor;
 mod setvar_coverage;
+mod setvar_state;
 mod shapes;
 mod snap_annotations;
 mod snap_blocks;

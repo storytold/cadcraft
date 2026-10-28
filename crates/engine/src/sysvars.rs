@@ -2,6 +2,8 @@
 
 use serde_json::{Value, json};
 
+use cadcraft_doc::Space;
+
 use crate::{EngineError, Result, Session};
 
 mod table;
@@ -70,7 +72,74 @@ const SESSION_VARS: &[&str] = &[
     "FONTFALLBACK",
     "SAVETIME",
     "SAVEFILEPATH",
+    "AREA",
+    "PERIMETER",
+    "DISTANCE",
+    "LASTPROMPT",
+    "LOGINNAME",
+    "TEMPPREFIX",
+    "PRODUCT",
+    "PROGRAM",
+    "VERNUM",
+    "SCREENSIZE",
+    "USERS1",
+    "USERS2",
+    "USERS3",
+    "USERS4",
+    "USERS5",
+    "TILEMODE",
 ];
+
+/// The last area, perimeter and distance AREA, DIST and MEASUREGEOM measured (0 until then).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Measured {
+    pub area: f64,
+    pub perimeter: f64,
+    pub distance: f64,
+}
+
+impl Measured {
+    /// Keep an area and its perimeter (only finite ones).
+    pub fn set_area(&mut self, area: f64, perimeter: f64) {
+        if area.is_finite() && perimeter.is_finite() {
+            (self.area, self.perimeter) = (area, perimeter);
+        }
+    }
+    /// Keep a distance (only a finite one).
+    pub fn set_distance(&mut self, d: f64) {
+        if d.is_finite() {
+            self.distance = d;
+        }
+    }
+}
+
+/// The longest text a USERS variable keeps.
+const MAX_USERS_LEN: usize = 4096;
+
+/// USERS1-USERS5: the index (0-4) of `name`.
+fn users_index(name: &str) -> Option<usize> {
+    let i = name.strip_prefix("USERS")?.parse::<usize>().ok()?;
+    (1..=5).contains(&i).then(|| i - 1)
+}
+
+/// LOGINNAME: the name the user signed in to the computer with ("" when it isn't known).
+fn login_name() -> String {
+    ["USERNAME", "USER", "LOGNAME"].iter().find_map(|k| std::env::var(k).ok().filter(|v| !v.trim().is_empty())).unwrap_or_default()
+}
+
+/// TEMPPREFIX: the folder for temporary files, with a trailing separator ("" on the web).
+fn temp_prefix() -> String {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut t = std::env::temp_dir().to_string_lossy().into_owned();
+        if !t.is_empty() && !t.ends_with(std::path::MAIN_SEPARATOR) {
+            t.push(std::path::MAIN_SEPARATOR);
+        }
+        t
+    }
+    #[cfg(target_arch = "wasm32")]
+    String::new()
+}
 
 pub fn get(s: &Session, name: &str) -> Option<Value> {
     let n = name.trim().to_ascii_uppercase();
@@ -142,6 +211,22 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "MAXARRAY" => json!(st.maxarray),
         "ZOOMFACTOR" => json!(st.zoomfactor),
         "MEASUREINIT" => json!(i32::from(st.measureinit)),
+        "AREA" => json!(s.measured.area),
+        "PERIMETER" => json!(s.measured.perimeter),
+        "DISTANCE" => json!(s.measured.distance),
+        // The last line the command line showed.
+        "LASTPROMPT" => json!(s.log.last().cloned().unwrap_or_default()),
+        "LOGINNAME" => json!(login_name()),
+        "TEMPPREFIX" => json!(temp_prefix()),
+        "PRODUCT" => json!("CADCraft"),
+        "PROGRAM" => json!("cadcraft"),
+        "VERNUM" => json!(env!("CARGO_PKG_VERSION")),
+        // The drawing area in pixels (width, height).
+        "SCREENSIZE" => {
+            let px = |v: f64| if v.is_finite() { v } else { 0.0 };
+            json!([px(s.viewport_px.0), px(s.viewport_px.1)])
+        }
+        "USERS1" | "USERS2" | "USERS3" | "USERS4" | "USERS5" => json!(users_index(&n).and_then(|i| s.users.get(i)).cloned().unwrap_or_default()),
         "LASTPOINT" => json!([s.last_point.x, s.last_point.y, 0.0]),
         // Held in radians (`$ANGBASE` in DXF is in degrees); reported in degrees, like POLARANG.
         "ANGBASE" => json!(s.doc().ok()?.header.f64("ANGBASE", 0.0).to_degrees()),
@@ -240,8 +325,17 @@ const READ_ONLY: &[&str] = &[
     "DWGPREFIX",
     "DWGTITLED",
     "CMDACTIVE",
-    "TILEMODE",
     "PLATFORM",
+    "AREA",
+    "PERIMETER",
+    "DISTANCE",
+    "LASTPROMPT",
+    "LOGINNAME",
+    "TEMPPREFIX",
+    "PRODUCT",
+    "PROGRAM",
+    "VERNUM",
+    "SCREENSIZE",
     "DBMOD",
     "BLOCKEDITOR",
     "CTAB",
@@ -360,6 +454,33 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         "MAXARRAY" => st.maxarray = as_f64(v).ok_or_else(bad)?.clamp(100.0, 10_000_000.0) as u64,
         "ZOOMFACTOR" => st.zoomfactor = as_i(v).filter(|z| (3..=100).contains(z)).ok_or_else(bad)? as u32,
         "MEASUREINIT" => st.measureinit = small(v, 1).ok_or_else(bad)? == 1,
+        "USERS1" | "USERS2" | "USERS3" | "USERS4" | "USERS5" => {
+            let t = match v {
+                Value::String(t) => t.clone(),
+                Value::Number(x) => x.to_string(),
+                _ => return Err(bad()),
+            };
+            if t.chars().count() > MAX_USERS_LEN {
+                return Err(bad());
+            }
+            let slot = users_index(&n).and_then(|i| s.users.get_mut(i)).ok_or_else(bad)?;
+            *slot = t;
+        }
+        // 1 the Model tab; 0 the first layout (as clicking its tab).
+        "TILEMODE" => {
+            let model = small(v, 1).ok_or_else(bad)? == 1;
+            let name = if model {
+                "Model".to_string()
+            } else if let Space::Paper(n) = s.layout_space() {
+                n
+            } else {
+                let mut layouts: Vec<_> = s.doc()?.layouts.iter().map(|l| (l.tab_order, l.name.clone())).collect();
+                layouts.sort();
+                layouts.into_iter().next().map(|(_, n)| n).ok_or_else(|| EngineError::Other("The drawing has no layout.".into()))?
+            };
+            let set = crate::cmd::find_command("layout.set").ok_or_else(bad)?;
+            (set.run)(s, &json!({ "name": name }))?;
+        }
         "FONTALT" => cadcraft_fonts::ttf::set_font_alt(v.as_str().ok_or_else(bad)?),
         "FONTFALLBACK" => cadcraft_fonts::ttf::set_fallback_fonts(v.as_str().ok_or_else(bad)?),
         "SAVETIME" => crate::autosave::set_savetime(
