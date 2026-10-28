@@ -72,6 +72,8 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.cmdline.clear", "Clear Command History", &[], None),
     ("ui.dialog.language", "Interface Language", &["Edit", "Interface Language"], None),
     ("ui.language", "Language", &[], None),
+    ("ui.status.item", "Status Bar Item", &[], None),
+    ("ui.status.reset", "Show All Status Items", &["Window", "Show All Status Items"], None),
     ("ui.noop", "", &[], None),
     ("ui.quit", "Quit CADCraft", &[], Some("Cmd+Q")),
 ];
@@ -86,6 +88,9 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
 }
 
 fn route_ui_subsystems(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    if let Some(result) = crate::chrome::status::route(app, id, params) {
+        return Some(result);
+    }
     if let Some(result) = crate::spacemouse::route(app, id, params) {
         return Some(result);
     }
@@ -404,6 +409,7 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         "ui.resetpalettes" => {
             let (menu, theme, interface_language, save_format) = (app.ui.in_window_menu, app.ui.theme, app.ui.interface_language, app.ui.save_format);
             let (animations, save_version) = (app.ui.animations, std::mem::take(&mut app.ui.save_version));
+            let hidden_status_items = std::mem::take(&mut app.ui.hidden_status_items);
             let system_cursor = app.system_cursor_default;
             app.ui = crate::UiState {
                 in_window_menu: menu,
@@ -412,6 +418,7 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
                 interface_language,
                 save_format,
                 save_version,
+                hidden_status_items,
                 system_cursor,
                 ..Default::default()
             };

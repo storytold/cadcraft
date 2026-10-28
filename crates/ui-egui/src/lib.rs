@@ -83,6 +83,7 @@ pub struct UiState {
     pub show_toolbar: bool,
     pub show_file_tabs: bool,
     pub show_status_bar: bool,
+    pub hidden_status_items: Vec<String>,
     pub show_command_line: bool,
     pub show_viewcube: bool,
     pub show_ucs_icon: bool,
@@ -171,6 +172,7 @@ impl Default for UiState {
             show_toolbar: true,
             show_file_tabs: true,
             show_status_bar: true,
+            hidden_status_items: Vec::new(),
             show_command_line: true,
             show_viewcube: true,
             show_ucs_icon: true,
@@ -442,12 +444,21 @@ impl CadApp {
         if let Some(dir) = &self.ui.last_lisp_dir {
             prefs["lispDir"] = json!(dir);
         }
+        if !self.ui.hidden_status_items.is_empty() {
+            prefs["hiddenStatusItems"] = json!(self.ui.hidden_status_items);
+        }
         prefs.to_string()
     }
 
     /// Restore preferences saved by [`Self::prefs_json`]; unknown or malformed values are ignored.
     pub fn load_prefs(&mut self, json: &str) {
         let Ok(v) = serde_json::from_str::<Value>(json) else { return };
+        if let Some(value) = v.get("hiddenStatusItems")
+            && let Ok(hidden) = serde_json::from_value::<Vec<String>>(value.clone())
+            && chrome::status::validate(&hidden).is_ok()
+        {
+            self.ui.hidden_status_items = hidden;
+        }
         if let Some(prefs) = v.get("spacemouse") {
             let _ = self.spacemouse.load_settings(prefs);
         }

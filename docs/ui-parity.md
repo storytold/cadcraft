@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-22 · **Change:** minor (distinct polyline midpoint grips) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-26 · **Change:** minor (status item customization) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
 
 How CADCraft's interaction compares with AutoCAD's: point entry, object snaps, tracking, dynamic
 input, grips, selection, the command line, chrome and navigation. A drafter's speed in AutoCAD
@@ -199,10 +199,30 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
   have menus too (#512). Still missing: in-place layout tab rename, Move or Copy, Select All
   Layouts.
 
+## Status item customization
+
+The status-bar customization menu shows or hides individual readouts and drafting controls.
+Visibility is an application preference: hiding Grid does not disable the drawing grid, change
+system variables, dirty the drawing, or cancel an active command. The customization button
+remains accessible when all items are hidden; Window > Show All Status Items also restores them.
+Unknown, duplicate or malformed saved item lists are ignored atomically.
+Both customization entry points keep the menu open when an item is toggled. Reset Palettes
+preserves status-item visibility; Show All Status Items is the dedicated recovery action.
+
+AutoCAD 2027 on Windows was observed black-box on 2026-10-26: toggling Coordinates in its
+customization menu updates the status bar while keeping the menu open. CADCraft's customization
+button follows that interaction. Native restart and browser reload preserve visibility; Windows
+right-click on the status readout also opens customization. Browser right-click was not confirmed.
+Actual release browser bundles were exercised with the default GPU backend and forced WebGL2;
+these runtime checks are separate from the WASM compilation gate.
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-26 | patch | Reject invalid status visibility through ui.set before changing any UI state; regression covers duplicates, unknown identifiers, oversized lists and malformed values (CC-037 review follow-up) |
+| 2026-10-26 | patch | Keep right-click status customization open for consecutive toggles and preserve hidden status items through Reset Palettes (CC-037 review corrections) |
+| 2026-10-26 | minor | Status item visibility, persistent application preferences, recovery command and command-isolation regressions (CC-037); no ribbon dependency |
 | 2026-10-22 | minor | Polyline segment midpoint grips use rectangles, distinct from square vertex grips, with matching hover and pick bounds (#1950) |
 | 2026-10-13 | minor | Filled-region highlight boundaries are traversed in deterministic coordinate order, fixing dash-phase jumps on CPU hover/selection redraws and GPU highlight rebuilds; CPU dash-position, pixel and GPU mesh regressions |
 | 2026-10-14 | minor | Selection cycling (#1143): the list and badge of SELECTIONCYCLING, Shift+Space through overlapping objects (#1145) |
