@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use cadcraft_doc::{Block, DimStyle, Drawing, Entity, EntityKind, EntityStore, Space, entity_bounds};
+use cadcraft_doc::{Block, DimStyle, Drawing, Entity, EntityKind, EntityStore, Space};
 use cadcraft_geom::Bounds2;
 use rstar::primitives::{GeomWithData, Rectangle};
 use rstar::{AABB, RTree};
@@ -51,7 +51,7 @@ impl ChunkIx {
                 if matches!(e.kind, EntityKind::XLine(_) | EntityKind::Ray(_)) {
                     infinite.push(u32::try_from(i).unwrap_or(u32::MAX));
                 }
-                entity_bounds(d, e, 0)
+                crate::select::select_bounds(d, e, None)
             })
             .collect();
         let serial = NEXT_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -561,5 +561,48 @@ mod tests {
             }
             prev = inc;
         }
+    }
+
+    #[test]
+    fn spatial_index_indexes_wrapped_lines_of_mtext() {
+        let mut d = Drawing::new_imperial();
+        for i in 0..MIN_INDEXED {
+            d.add(&Space::Model, Common::default(), EntityKind::Point(cadcraft_doc::Point { p: v3(i as f64 * 10.0 + 1000.0, 1000.0), angle: 0.0 }))
+                .unwrap();
+        }
+        let mtext = cadcraft_doc::MText {
+            insert: v3(0.0, 0.0),
+            height: 5.0,
+            width: 50.0,
+            contents: "FIRST LINE SECOND LINE".into(),
+            attach: 1,
+            rotation: 0.0,
+            style: "Standard".into(),
+            line_spacing: 1.0,
+            line_spacing_exact: false,
+            columns: None,
+        };
+        let mtext_h = d.add(&Space::Model, Common::default(), EntityKind::MText(mtext)).unwrap();
+        assert!(index(&d, &Space::Model).is_some(), "spatial index must be active with > 256 entities");
+
+        // The second wrapped line is around y = -11. It must be found in picking through the spatial index.
+        let pick_line2 = select::pick(&d, &Space::Model, Vec2::new(5.0, -11.0), 0.5);
+        assert_eq!(pick_line2, Some(mtext_h), "picking second wrapped line must find MText via spatial index");
+
+        // Crossing window on the second wrapped line must select the MText.
+        let cross_line2 = Bounds2::new(Vec2::new(2.0, -15.0), Vec2::new(10.0, -9.0));
+        assert_eq!(
+            select::select_window(&d, &Space::Model, cross_line2, true),
+            vec![mtext_h],
+            "crossing window on second line must select via spatial index"
+        );
+
+        // Normal window covering only the first line must not select the 2-line MText.
+        let line1_only = Bounds2::new(Vec2::new(-5.0, -7.0), Vec2::new(60.0, 2.0));
+        assert!(select::select_window(&d, &Space::Model, line1_only, false).is_empty(), "normal window covering only line 1 must not select");
+
+        // Normal window covering both lines must select the MText.
+        let both_lines = Bounds2::new(Vec2::new(-5.0, -25.0), Vec2::new(60.0, 2.0));
+        assert_eq!(select::select_window(&d, &Space::Model, both_lines, false), vec![mtext_h], "normal window covering all lines must select");
     }
 }
