@@ -130,9 +130,11 @@ fn run_pdfattach(s: &mut Session, p: &Value) -> Result<Value> {
         let size = PageSize::new(w_mm, h_mm, per_point).ok_or_else(|| bad(ID, format!("{path}: page {page} has no usable size")))?;
         sized.push((page, pages, w_mm, h_mm, size));
     }
-    let d = s.doc()?.clone();
-    for (page, pages, w_mm, h_mm, page_size) in sized {
-        let (size, scale) = (page_size.native, page_size.file_scale(&d, scale));
+    // The file's scale needs only the drawing's units: read before any underlay is added.
+    let d = s.doc()?;
+    let sized: Vec<_> =
+        sized.into_iter().map(|(page, pages, w_mm, h_mm, size)| (page, pages, w_mm, h_mm, size.native, size.file_scale(d, scale))).collect();
+    for (page, pages, w_mm, h_mm, size, scale) in sized {
         let mut u = PdfUnderlay {
             insert: Vec3::new(origin.x, origin.y, 0.0),
             size,
