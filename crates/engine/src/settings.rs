@@ -115,6 +115,12 @@ pub struct Settings {
     pub crossingareacolor: u8,
     /// SELECTIONAREAOPACITY: their opacity, 0-100.
     pub selectionareaopacity: u8,
+    /// GRIPCOLOR, GRIPHOVER, GRIPHOT, GRIPCONTOUR: unselected, hovered and selected grips and
+    /// their outline (ACI 1-255).
+    pub gripcolor: u8,
+    pub griphover: u8,
+    pub griphot: u8,
+    pub gripcontour: u8,
     /// POLARMODE bits ([`snap::tracking::polarmode`]); polar tracking itself is on while
     /// `polarmode` is (AUTOSNAP bit 8, F10).
     pub polar_flags: u32,
@@ -186,6 +192,10 @@ impl Default for Settings {
             windowareacolor: 150,
             crossingareacolor: 100,
             selectionareaopacity: 25,
+            gripcolor: 150,
+            griphover: 11,
+            griphot: 12,
+            gripcontour: 251,
             polar_flags: 0,
             polaraddang: Vec::new(),
             polarsnap: false,

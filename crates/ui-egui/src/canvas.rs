@@ -30,6 +30,7 @@ use draw::{draw_drag_gpu, draw_highlight_gpu, draw_list_gpu, list_mesh_key, sele
 use dyn_boxes::dynamic_input;
 pub(crate) use dyn_boxes::length_units;
 use grid::draw_grid;
+pub(crate) use grips::grip_colors;
 use grips::{click_grip, grip_at, grip_menu, grip_options, grip_rect};
 use list::{PrimIndex, ensure_list, rebuilt_preview};
 #[cfg(test)]
@@ -1050,6 +1051,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         && let Ok(st) = app.session.state()
     {
         let gs = app.session.settings.gripsize as f32;
+        let gc = grip_colors(&app.session.settings);
         for h in sel.iter().take(200) {
             if let Some(e) = st.doc.entity(*h) {
                 let grips = e.kind.grips();
@@ -1064,14 +1066,14 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
                             r,
                             0.0,
                             if hot {
-                                t.grip_hot
+                                gc.hot
                             } else if warm {
-                                Color32::from_rgb(0xff, 0x7f, 0x9f)
+                                gc.hover
                             } else {
-                                t.grip
+                                gc.unselected
                             },
                         );
-                        painter.rect_stroke(r, 0.0, Stroke::new(1.0, Color32::from_rgb(0x10, 0x30, 0x80)), egui::StrokeKind::Middle);
+                        painter.rect_stroke(r, 0.0, Stroke::new(1.0, gc.contour), egui::StrokeKind::Middle);
                     }
                 }
             }

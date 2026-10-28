@@ -346,6 +346,7 @@ fn selection(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) 
     let t = Tokens::get();
     let st = &app.session.settings;
     let mut effects = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::unique(VISUAL_EFFECTS)).unwrap_or(false));
+    let mut grip_colors_clicked = false;
     ui.columns(2, |cols| {
         let [left, right] = cols else { return };
         // Left: how objects are picked.
@@ -405,7 +406,7 @@ fn selection(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) 
             if slider.changed() || field.changed() {
                 changes.insert("GRIPSIZE".into(), json!(grip));
             }
-            preview_square(ui, (grip * 2.0) as f32, t.grip);
+            preview_square(ui, (grip * 2.0) as f32, crate::canvas::grip_colors(st).unselected);
         });
         right.add_space(8.0);
         heading(right, crate::tl!("Grips"));
@@ -421,6 +422,7 @@ fn selection(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) 
                 changes.insert("GRIPOBJLIMIT".into(), json!(limit));
             }
         });
+        grip_colors_clicked = right.button(crate::tl!("Grip Colors...")).clicked();
         right.add_space(8.0);
         heading(right, crate::tl!("Preview"));
         right.label(crate::tl!("Selection preview"));
@@ -438,6 +440,50 @@ fn selection(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) 
         visual_effects(ui.ctx(), st, &mut effects, changes);
     }
     ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique(VISUAL_EFFECTS), effects));
+    grip_colors_window(ui.ctx(), st, grip_colors_clicked, changes);
+}
+
+/// Whether the Grip Colors window is open (egui temp data).
+const GRIP_COLORS: &str = "cc_options_grip_colors";
+
+/// The Grip Colors window, opened by Selection ▸ Grip Colors... (`clicked`): the unselected,
+/// hover, selected and contour grip colours (GRIPCOLOR, GRIPHOVER, GRIPHOT, GRIPCONTOUR). Changes
+/// apply at once, as on the Options tabs.
+fn grip_colors_window(ctx: &egui::Context, st: &cadcraft_engine::Settings, clicked: bool, changes: &mut Map<String, Value>) {
+    let id = egui::Id::unique(GRIP_COLORS);
+    let mut open = clicked || ctx.data(|d| d.get_temp::<bool>(id).unwrap_or(false));
+    if open {
+        let mut close = false;
+        egui::Window::new(crate::tl!("Grip Colors"))
+            .id(egui::Id::unique("cc_grip_colors"))
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.content_rect().center())
+            .show(ctx, |ui| {
+                grid(ui, "options_grip_colors", |ui| {
+                    for (key, current, label) in [
+                        ("GRIPCOLOR", st.gripcolor, crate::tl!("Unselected grip color:")),
+                        ("GRIPHOVER", st.griphover, crate::tl!("Hover grip color:")),
+                        ("GRIPHOT", st.griphot, crate::tl!("Selected grip color:")),
+                        ("GRIPCONTOUR", st.gripcontour, crate::tl!("Grip contour color:")),
+                    ] {
+                        let caption = ui.label(label);
+                        aci_row(ui, current, key, changes, caption.id);
+                        ui.end_row();
+                    }
+                });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        close = ui.button(crate::tl!("Close")).clicked();
+                    });
+                });
+            });
+        open &= !close;
+    }
+    ctx.data_mut(|d| d.insert_temp(id, open));
 }
 
 /// Whether the Visual Effect Settings window is open (egui temp data).

@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use egui::{Color32, Painter, Pos2, Rect, Shape, Stroke, vec2};
+use egui::{Painter, Pos2, Rect, Shape, Stroke, vec2};
 use serde_json::json;
 
 use crate::CadApp;
@@ -76,6 +76,7 @@ fn hit(xf: &Xf, g: &DynGrip, gs: f32, p: Pos2) -> bool {
 pub(crate) fn draw(app: &mut CadApp, painter: &Painter, xf: &Xf, rect: Rect, hover: Option<Pos2>) {
     let t = Tokens::get();
     let gs = app.session.settings.gripsize as f32;
+    let gc = crate::canvas::grip_colors(&app.session.settings);
     let hot = app.canvas.dyn_hot;
     for (h, g) in of_selection(app).iter() {
         if !rect.contains(xf.to_screen(g.at)) {
@@ -85,13 +86,13 @@ pub(crate) fn draw(app: &mut CadApp, painter: &Painter, xf: &Xf, rect: Rect, hov
         let is_hot = hot.as_ref().is_some_and(|(hh, n, p)| hh == h && *n == g.node && *p == g.part);
         let warm = !is_hot && hover.is_some_and(|p| hit(xf, g, gs, p));
         let fill = if is_hot {
-            t.grip_hot
+            gc.hot
         } else if warm {
-            Color32::from_rgb(0xff, 0x7f, 0x9f)
+            gc.hover
         } else {
             t.grip_dyn
         };
-        painter.add(Shape::convex_polygon(pts, fill, Stroke::new(1.0, Color32::from_rgb(0x10, 0x30, 0x80))));
+        painter.add(Shape::convex_polygon(pts, fill, Stroke::new(1.0, gc.contour)));
     }
 }
 

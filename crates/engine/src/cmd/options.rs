@@ -39,6 +39,10 @@ pub const PROFILE_VARS: &[&str] = &[
     "PREVIEWFILTER",
     "GRIPS",
     "GRIPOBJLIMIT",
+    "GRIPCOLOR",
+    "GRIPHOVER",
+    "GRIPHOT",
+    "GRIPCONTOUR",
     "SELECTIONAREA",
     "WINDOWAREACOLOR",
     "CROSSINGAREACOLOR",
@@ -140,6 +144,10 @@ pub fn reset(s: &mut Session) {
     st.pickbox = d.pickbox;
     st.aperture = d.aperture;
     st.gripsize = d.gripsize;
+    st.gripcolor = d.gripcolor;
+    st.griphover = d.griphover;
+    st.griphot = d.griphot;
+    st.gripcontour = d.gripcontour;
     st.cursorsize = d.cursorsize;
     st.pickfirst = d.pickfirst;
     st.pickadd = d.pickadd;

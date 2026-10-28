@@ -150,6 +150,48 @@ fn selection_tab_variables_have_autocads_defaults_ranges_and_are_saved() {
 }
 
 #[test]
+fn grip_colors_have_autocads_defaults_ranges_and_are_saved() {
+    let mut s = Session::new();
+    for (name, v) in [("GRIPCOLOR", 150), ("GRIPHOVER", 11), ("GRIPHOT", 12), ("GRIPCONTOUR", 251)] {
+        assert_eq!(getvar(&mut s, name), json!(v), "{name}");
+    }
+    s.execute("options", &json!({"GRIPCOLOR": 3, "GRIPHOVER": 4, "GRIPHOT": 1, "GRIPCONTOUR": 255})).unwrap();
+    assert_eq!((s.settings.gripcolor, s.settings.griphover, s.settings.griphot, s.settings.gripcontour), (3, 4, 1, 255));
+
+    // ACI 1-255 only; a bad value changes nothing, not even the good ones beside it.
+    for (name, value) in [
+        ("GRIPCOLOR", json!(0)),
+        ("GRIPHOVER", json!(256)),
+        ("GRIPHOT", json!(-1)),
+        ("GRIPCONTOUR", json!("red")),
+        ("GRIPCOLOR", json!(1.5)),
+        ("GRIPHOT", json!(f64::NAN)),
+        ("GRIPCOLOR", json!(null)),
+        ("GRIPHOVER", json!([1])),
+        ("GRIPCONTOUR", json!(u64::MAX)),
+    ] {
+        assert!(s.execute("setvar", &json!({"name": name, "value": value})).is_err(), "{name} {value}");
+        assert!(s.execute("options", &json!({"GRIPCOLOR": 7, name: value})).is_err(), "{name} {value}");
+    }
+    assert_eq!((s.settings.gripcolor, s.settings.griphover, s.settings.griphot, s.settings.gripcontour), (3, 4, 1, 255));
+
+    // Kept with the profile; hostile saved values are skipped.
+    let mut t = Session::new();
+    restore(&mut t, &profile(&s));
+    assert_eq!((t.settings.gripcolor, t.settings.griphover, t.settings.griphot, t.settings.gripcontour), (3, 4, 1, 255));
+    let mut u = Session::new();
+    restore(&mut u, &json!({"GRIPCOLOR": 0, "GRIPHOVER": "x", "GRIPHOT": 9999, "GRIPCONTOUR": 8}));
+    assert_eq!((u.settings.gripcolor, u.settings.griphover, u.settings.griphot, u.settings.gripcontour), (150, 11, 12, 8));
+
+    // Reset restores AutoCAD's colours.
+    let r = s.execute("options", &json!({"reset": true})).unwrap();
+    assert_eq!(
+        (r["GRIPCOLOR"].clone(), r["GRIPHOVER"].clone(), r["GRIPHOT"].clone(), r["GRIPCONTOUR"].clone()),
+        (json!(150), json!(11), json!(12), json!(251))
+    );
+}
+
+#[test]
 fn grips_show_up_to_the_object_limit() {
     let mut s = Session::new();
     assert!(s.shows_grips(100) && !s.shows_grips(101), "GRIPOBJLIMIT 100");

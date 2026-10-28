@@ -1,4 +1,4 @@
-use super::{CadApp, Handle, Input, Pos2, Rect, Xf, vec2};
+use super::{CadApp, Color32, Handle, Input, Pos2, Rect, Xf, vec2};
 
 /// A click on grip `g` (idle): Shift+click makes it hot or cold again; a plain click starts
 /// editing it, with the other hot grips when it is one of them.
@@ -65,6 +65,24 @@ pub(super) fn grip_menu(app: &mut CadApp, resp: &egui::Response) {
         app.canvas.hot_grips.clear();
         app.session.echo(e.to_string());
     }
+}
+
+/// The grip colours: GRIPCOLOR (unselected), GRIPHOVER (under the cursor), GRIPHOT (selected)
+/// and GRIPCONTOUR (the outline), each an AutoCAD colour index.
+pub(crate) struct GripColors {
+    pub unselected: Color32,
+    pub hover: Color32,
+    pub hot: Color32,
+    pub contour: Color32,
+}
+
+/// The grip colours the settings name.
+pub(crate) fn grip_colors(s: &cadcraft_engine::Settings) -> GripColors {
+    let c = |aci: u8| {
+        let c = cadcraft_color::aci_rgb(aci);
+        Color32::from_rgb(c.0, c.1, c.2)
+    };
+    GripColors { unselected: c(s.gripcolor), hover: c(s.griphover), hot: c(s.griphot), contour: c(s.gripcontour) }
 }
 
 /// Polyline segment midpoint grips are rectangular; vertex grips remain square.
