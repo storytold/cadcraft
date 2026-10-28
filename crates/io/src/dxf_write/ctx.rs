@@ -20,6 +20,8 @@ pub(super) struct OsnapRef {
     pub(super) param: f64,
     pub(super) point: Vec3,
     pub(super) other: Option<Handle>,
+    /// What the file held for this reference, while the link is still the one read.
+    pub(super) read: Option<cadcraft_doc::OsnapRead>,
 }
 
 /// Handles and names the entity writer needs from the rest of the file.

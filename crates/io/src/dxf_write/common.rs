@@ -1,7 +1,7 @@
 use super::ctx::{AssocObj, Ctx};
 use super::{
-    Attrib, Color, Common, DimKind, DimStyle, Dimension, Drawing, Entity, EntityKind, HAlign, HashMap, Insert, Lineweight, Text, Transparency,
-    VAlign, Vec3, Version, W, dxf_ext,
+    Attrib, Color, Common, DimKind, DimStyle, Dimension, Drawing, Entity, EntityKind, HAlign, Insert, Lineweight, Text, Transparency, VAlign, Vec3,
+    Version, W, dxf_ext,
 };
 
 /// `AcadAnnotative` xdata marking an annotative style.
@@ -16,7 +16,7 @@ pub(super) fn annotative_xdata(w: &mut W) {
 
 /// Override (`ACAD` DSTYLE) and associativity (`CADCRAFT` ASSOC) xdata of a dimension.
 pub(super) fn dim_xdata(w: &mut W, dm: &Dimension, cx: &Ctx) {
-    let mut ov = W { t: Vec::new(), next: 0, pstyles: HashMap::new(), layers: HashMap::new(), reactors: HashMap::new() };
+    let mut ov = W::scratch(0);
     let mut sah = false;
     for (k, v) in &dm.overrides {
         let Some(field) = DimStyle::field_name(k) else { continue };
@@ -253,7 +253,9 @@ pub(super) fn text_tags(w: &mut W, d: &Drawing, t: &Text, attrib: Option<(&Attri
     if t.oblique != 0.0 {
         w.f(51, t.oblique.to_degrees());
     }
-    w.s(7, &t.style);
+    if !t.style.trim().eq_ignore_ascii_case("Standard") {
+        w.s(7, &t.style);
+    }
     let h = match t.halign {
         HAlign::Left => 0,
         HAlign::Center => 1,

@@ -106,6 +106,7 @@ fn define_from(s: &mut Session, src: &Drawing, name: &str) -> Result<String> {
     for (from, to) in &renames {
         let Some(b) = src.blocks.get(from) else { continue };
         let mut nb = (**b).clone();
+        cadcraft_doc::KeepsHandle::forget_handle(&mut nb);
         nb.name = to.clone();
         nb.entities = Default::default();
         for e in b.entities.iter() {
@@ -134,12 +135,15 @@ fn define_from(s: &mut Session, src: &Drawing, name: &str) -> Result<String> {
 }
 
 /// Add the source's layers, linetypes and styles that this drawing doesn't have (a name that
-/// exists keeps this drawing's definition).
+/// exists keeps this drawing's definition). A copied record drops the handle it had in the source
+/// file: it gets one of this drawing's when the drawing is written.
 fn merge_tables(d: &mut Drawing, src: &Drawing) {
-    fn merge<T: Clone>(ours: &mut Vec<T>, theirs: &[T], name: fn(&T) -> &str) {
+    fn merge<T: Clone + cadcraft_doc::KeepsHandle>(ours: &mut Vec<T>, theirs: &[T], name: fn(&T) -> &str) {
         for t in theirs {
             if !ours.iter().any(|o| name(o).eq_ignore_ascii_case(name(t))) {
-                ours.push(t.clone());
+                let mut copy = t.clone();
+                copy.forget_handle();
+                ours.push(copy);
             }
         }
     }
@@ -255,6 +259,30 @@ mod tests {
         assert_eq!((f.name.as_str(), f.path.as_str()), ("bolt", "bolt"));
         assert_eq!(file_ref(&s, "C:\\parts\\bolt.dxf").map(|f| f.name), Some("bolt".into()));
         assert!(file_ref(&s, "BOLT").is_none());
+    }
+
+    /// A layer or style copied from the inserted file drops the handle it had there; one this
+    /// drawing already has keeps its own.
+    #[test]
+    fn copied_table_records_drop_their_source_handles() {
+        use cadcraft_doc::{KeptHandle, Layer, TextStyle};
+        let mut d = Drawing::new_imperial();
+        let mut ours = Layer::new("WALLS");
+        ours.handle = KeptHandle(Handle(0x2A));
+        d.layers.push(ours);
+        let mut src = Drawing::new_imperial();
+        for (name, h) in [("WALLS", 0x2A), ("DOORS", 0x2B)] {
+            let mut l = Layer::new(name);
+            l.handle = KeptHandle(Handle(h));
+            src.layers.push(l);
+        }
+        let st = TextStyle { name: "NOTES".into(), handle: KeptHandle(Handle(0x2C)), ..TextStyle::default() };
+        src.text_styles.push(st);
+        merge_tables(&mut d, &src);
+        let handle = |name: &str| d.layers.iter().find(|l| l.name == name).map(|l| l.handle.get());
+        assert_eq!(handle("WALLS"), Some(Handle(0x2A)));
+        assert_eq!(handle("DOORS"), Some(Handle(0)));
+        assert!(d.text_styles.iter().find(|t| t.name == "NOTES").is_some_and(|t| t.handle.is_none()));
     }
 
     #[test]

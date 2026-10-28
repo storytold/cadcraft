@@ -12,8 +12,8 @@ fn groups_survive_dwg_round_trip() {
         d.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::new(x, 0.0, 0.0), b: Vec3::new(x, 10.0, 0.0) })).expect("line")
     };
     let (a, b) = (line(0.0), line(5.0));
-    d.groups.push(Group { name: "Doors".into(), description: "front".into(), selectable: false, members: vec![b, a] });
-    d.groups.push(Group { name: "*A1".into(), description: String::new(), selectable: true, members: vec![a] });
+    d.groups.push(Group { handle: Default::default(), name: "Doors".into(), description: "front".into(), selectable: false, members: vec![b, a] });
+    d.groups.push(Group { handle: Default::default(), name: "*A1".into(), description: String::new(), selectable: true, members: vec![a] });
     let bytes = cadcraft_io::write(&d, "groups.dwg").expect("write dwg");
     let r = cadcraft_io::read(&bytes, "groups.dwg").expect("read dwg");
     let got: Vec<(&str, &str, bool, Vec<f64>)> = r

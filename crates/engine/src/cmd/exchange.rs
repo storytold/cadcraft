@@ -165,6 +165,7 @@ fn import_drawing(s: &mut Session, src: &Drawing, at: Vec2, scale: f64, file: &s
     for (from, to) in &renames {
         let Some(b) = src.blocks.get(from) else { continue };
         let mut nb = (**b).clone();
+        cadcraft_doc::KeepsHandle::forget_handle(&mut nb);
         nb.name = to.clone();
         nb.entities = Default::default();
         for e in b.entities.iter() {
@@ -208,11 +209,13 @@ fn read_file(_path: &str) -> Result<Vec<u8>> {
 /// Add the source's layers, linetypes and styles that this drawing doesn't have (a name that
 /// exists keeps this drawing's definition). Returns how many layers and how many other records were added.
 fn merge_tables(d: &mut Drawing, src: &Drawing) -> (usize, usize) {
-    fn merge<T: Clone>(ours: &mut Vec<T>, theirs: &[T], name: fn(&T) -> &str) -> usize {
+    fn merge<T: Clone + cadcraft_doc::KeepsHandle>(ours: &mut Vec<T>, theirs: &[T], name: fn(&T) -> &str) -> usize {
         let mut n = 0;
         for t in theirs {
             if !ours.iter().any(|o| name(o).eq_ignore_ascii_case(name(t))) {
-                ours.push(t.clone());
+                let mut t = t.clone();
+                t.forget_handle();
+                ours.push(t);
                 n += 1;
             }
         }

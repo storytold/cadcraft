@@ -6,6 +6,9 @@ pub(super) fn style(s: &Session) -> String {
 
 pub(super) fn dim(s: &Session, kind: DimKind, defpt: Vec2, p13: Vec2, p14: Vec2, p15: Vec2, text: &str) -> EntityKind {
     EntityKind::Dimension(Dimension {
+        attachment: Default::default(),
+        flag_73: Default::default(),
+        flip_arrows: Default::default(),
         kind,
         defpt: v3(defpt),
         text_mid: Vec3::ZERO,

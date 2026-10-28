@@ -11,6 +11,9 @@ use cadcraft_io::{Version, read, read_dxf, write_dxf};
 /// geometry and associations are under test.
 fn dim(kind: DimKind, defpt: Vec3, p13: Vec3, p14: Vec3, p15: Vec3, p16: Vec3, assoc: Vec<DimAssoc>) -> EntityKind {
     EntityKind::Dimension(Dimension {
+        flag_73: Default::default(),
+        flip_arrows: Default::default(),
+        attachment: Default::default(),
         kind,
         defpt,
         text_mid: Vec3::ZERO,
@@ -52,7 +55,8 @@ fn case() -> Case {
     let l2 = d.add(&Space::Model, c(), EntityKind::Line(Line { a: Vec3::new(100.0, 0.0, 0.0), b: Vec3::new(180.0, 60.0, 0.0) })).unwrap();
     let l3 = d.add(&Space::Model, c(), EntityKind::Line(Line { a: Vec3::new(0.0, -80.0, 0.0), b: Vec3::new(100.0, -80.0, 0.0) })).unwrap();
 
-    let on = |point: &str, angle: f64| DimAssoc { point: point.into(), handle: circle, snap: AssocSnap::OnCircle { angle } };
+    let on =
+        |point: &str, angle: f64| DimAssoc { read: Default::default(), point: point.into(), handle: circle, snap: AssocSnap::OnCircle { angle } };
     let diameter = dim(
         DimKind::Diameter,
         Vec3::new(30.0, 0.0, 0.0),
@@ -70,7 +74,7 @@ fn case() -> Case {
         Vec3::ZERO,
         Vec3::new(-side, -side, 0.0),
         Vec3::ZERO,
-        vec![DimAssoc { point: "defpt".into(), handle: circle, snap: AssocSnap::Center }, on("p15", 225f64.to_radians())],
+        vec![DimAssoc { read: Default::default(), point: "defpt".into(), handle: circle, snap: AssocSnap::Center }, on("p15", 225f64.to_radians())],
     );
     let angular = dim(
         DimKind::Angular3P,
@@ -80,9 +84,9 @@ fn case() -> Case {
         Vec3::new(100.0, 0.0, 0.0),
         Vec3::ZERO,
         vec![
-            DimAssoc { point: "p13".into(), handle: l1, snap: AssocSnap::End },
-            DimAssoc { point: "p14".into(), handle: l2, snap: AssocSnap::End },
-            DimAssoc { point: "p15".into(), handle: l1, snap: AssocSnap::Intersection { other: l2 } },
+            DimAssoc { read: Default::default(), point: "p13".into(), handle: l1, snap: AssocSnap::End },
+            DimAssoc { read: Default::default(), point: "p14".into(), handle: l2, snap: AssocSnap::End },
+            DimAssoc { read: Default::default(), point: "p15".into(), handle: l1, snap: AssocSnap::Intersection { other: l2 } },
         ],
     );
     let linear = dim(
@@ -93,8 +97,8 @@ fn case() -> Case {
         Vec3::ZERO,
         Vec3::ZERO,
         vec![
-            DimAssoc { point: "p13".into(), handle: l3, snap: AssocSnap::Start },
-            DimAssoc { point: "p14".into(), handle: l3, snap: AssocSnap::End },
+            DimAssoc { read: Default::default(), point: "p13".into(), handle: l3, snap: AssocSnap::Start },
+            DimAssoc { read: Default::default(), point: "p14".into(), handle: l3, snap: AssocSnap::End },
         ],
     );
     let hd = d.add(&Space::Model, Common::default(), diameter).unwrap();

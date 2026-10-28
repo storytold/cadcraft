@@ -1,4 +1,4 @@
-use super::{DimVal, Drawing, HVal, K, Version, W, dxf_ext};
+use super::{DimVal, Drawing, HVal, Handle, HashSet, K, Version, W, dxf_ext};
 
 /// Header variables we write, with their group codes (DXF Reference, HEADER section).
 /// `P2`/`P3` = 2D/3D point.
@@ -131,6 +131,67 @@ pub(super) fn header_vars(w: &mut W, d: &Drawing) {
         }
     }
     dim_header_vars(w, d);
+}
+
+/// Header variables the writer doesn't write by name ([`HEADER_VARS`], the current dimension
+/// style's, the version, code page, extents and handle seed): every other variable read from a
+/// file, with the group code it was read with ([`cadcraft_doc::Header::codes`]), in name order.
+/// A variable that points at another object by handle is written while that object keeps the
+/// handle it was read with.
+pub(super) fn kept_header_vars(w: &mut W, d: &Drawing, start: usize) {
+    let written: HashSet<String> =
+        w.t.get(start..).unwrap_or(&[]).iter().filter(|t| t.code == 9).map(|t| t.str().trim_start_matches('$').to_ascii_uppercase()).collect();
+    // Converted on reading (or written elsewhere), so their codes no longer fit the value.
+    const SKIP: &[&str] = &["ACADVER", "DWGCODEPAGE", "HANDSEED", "EXTMIN", "EXTMAX", "ANGBASE", "DIMDSEP", "DIMJOGANG"];
+    for (name, v) in &d.header.vars {
+        if written.contains(name) || SKIP.contains(&name.as_str()) {
+            continue;
+        }
+        let Some(code) = d.header.code(name) else { continue };
+        // A reference to another object by handle: written while that object keeps its handle.
+        if matches!(code, 5 | 105 | 320..=369 | 390..=399 | 480 | 481) {
+            let target = v.as_str().and_then(Handle::parse_hex);
+            if !target.is_some_and(|h| w.reserved.contains(&h.0) || w.used.contains(&h.0)) {
+                continue;
+            }
+        }
+        match (code, v) {
+            (cadcraft_doc::POINT_2D, HVal::Point(p)) => {
+                w.s(9, format!("${name}"));
+                w.f(10, p.x);
+                w.f(20, p.y);
+            }
+            (cadcraft_doc::POINT_3D, HVal::Point(p)) => {
+                w.s(9, format!("${name}"));
+                w.p(10, *p);
+            }
+            (_, HVal::Point(_)) => {}
+            (c, v) => match cadcraft_dxf::kind_of(c) {
+                cadcraft_dxf::Kind::Real => {
+                    if let Some(f) = v.as_f64().filter(|f| f.is_finite()) {
+                        w.s(9, format!("${name}"));
+                        w.f(c, f);
+                    }
+                }
+                cadcraft_dxf::Kind::Int16 | cadcraft_dxf::Kind::Int32 | cadcraft_dxf::Kind::Int64 | cadcraft_dxf::Kind::Bool => {
+                    if let Some(i) = v.as_i64() {
+                        w.s(9, format!("${name}"));
+                        w.i(c, i);
+                    }
+                }
+                cadcraft_dxf::Kind::Str | cadcraft_dxf::Kind::Hex => {
+                    let t = match v {
+                        HVal::Str(t) => t.clone(),
+                        HVal::Int(i) => i.to_string(),
+                        HVal::Real(r) => cadcraft_dxf::format_real(*r),
+                        HVal::Point(_) => continue,
+                    };
+                    w.s(9, format!("${name}"));
+                    w.s(c, t);
+                }
+            },
+        }
+    }
 }
 
 /// `$DWGCODEPAGE`: before 2007 the code page read from the file when CADCraft knows it (the text

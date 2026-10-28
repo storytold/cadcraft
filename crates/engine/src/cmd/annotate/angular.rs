@@ -33,10 +33,10 @@ fn angular_from_lines(s: &Session, h1: Handle, h2: Handle, at: Vec2) -> Option<E
     let mut assoc = Vec::new();
     if assoc_enabled(s) {
         assoc = vec![
-            DimAssoc { point: "p13".into(), handle: h1, snap: t1 },
-            DimAssoc { point: "p14".into(), handle: h1, snap: s1 },
-            DimAssoc { point: "defpt".into(), handle: h2, snap: t2 },
-            DimAssoc { point: "p15".into(), handle: h2, snap: s2 },
+            DimAssoc { read: Default::default(), point: "p13".into(), handle: h1, snap: t1 },
+            DimAssoc { read: Default::default(), point: "p14".into(), handle: h1, snap: s1 },
+            DimAssoc { read: Default::default(), point: "defpt".into(), handle: h2, snap: t2 },
+            DimAssoc { read: Default::default(), point: "p15".into(), handle: h2, snap: s2 },
         ];
     }
     Some(with_assoc(k, assoc))

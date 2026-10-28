@@ -52,7 +52,16 @@ impl HVal {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Header {
     pub vars: BTreeMap<String, HVal>,
+    /// The DXF group code each variable was read with ([`POINT_2D`] or [`POINT_3D`] for points),
+    /// so a writer can write back a variable CADCraft doesn't know by name with its own code.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub codes: BTreeMap<String, i32>,
 }
+
+/// [`Header::codes`] of a 2D point variable (groups 10 and 20).
+pub const POINT_2D: i32 = -2;
+/// [`Header::codes`] of a 3D point variable (groups 10, 20 and 30).
+pub const POINT_3D: i32 = -3;
 
 impl Header {
     pub fn get(&self, name: &str) -> Option<&HVal> {
@@ -60,6 +69,13 @@ impl Header {
     }
     pub fn set(&mut self, name: &str, v: HVal) {
         self.vars.insert(name.trim_start_matches('$').to_ascii_uppercase(), v);
+    }
+    /// The DXF group code `name` was read with, if it was read from a file.
+    pub fn code(&self, name: &str) -> Option<i32> {
+        self.codes.get(&name.trim_start_matches('$').to_ascii_uppercase()).copied()
+    }
+    pub fn set_code(&mut self, name: &str, code: i32) {
+        self.codes.insert(name.trim_start_matches('$').to_ascii_uppercase(), code);
     }
     pub fn f64(&self, name: &str, default: f64) -> f64 {
         self.get(name).and_then(HVal::as_f64).filter(|v| v.is_finite()).unwrap_or(default)

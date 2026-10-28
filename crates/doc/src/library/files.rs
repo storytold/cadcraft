@@ -123,7 +123,7 @@ pub fn parse_lin(text: &str) -> Parsed<Linetype> {
             continue;
         }
         match lin_pattern(line, no, &name, &mut out) {
-            Ok(pattern) => out.items.push(Linetype { name, description, pattern }),
+            Ok(pattern) => out.items.push(Linetype { handle: Default::default(), name, description, pattern }),
             Err(e) => out.warn(no, format!("linetype {name}: {e}; skipped")),
         }
     }

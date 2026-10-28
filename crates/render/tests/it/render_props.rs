@@ -31,6 +31,9 @@ fn dimensions_take_the_viewport_layer_colour() {
     let mut d = Drawing::new_imperial();
     layer(&mut d, "A", 1, Lineweight::ByLayer);
     let dim = Dimension {
+        flag_73: Default::default(),
+        flip_arrows: Default::default(),
+        attachment: Default::default(),
         kind: DimKind::Linear { rotation: 0.0 },
         defpt: Vec3::new(0.0, 2.0, 0.0),
         text_mid: Vec3::ZERO,

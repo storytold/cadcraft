@@ -4,9 +4,79 @@ use super::{Color, Deserialize, Serialize, Vec3};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Handle(pub u64);
 
+/// The handle a table record, block, layout or style had in the file it was read from. It is the object's identity in files, not part of what it is: two
+/// layers that differ only in it are equal.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct KeptHandle(pub Handle);
+
+impl KeptHandle {
+    /// No handle kept: one is given when the drawing is written.
+    pub fn is_none(&self) -> bool {
+        self.0.is_none()
+    }
+    pub fn get(self) -> Handle {
+        self.0
+    }
+}
+
+impl PartialEq for KeptHandle {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl From<KeptHandle> for Handle {
+    fn from(h: KeptHandle) -> Self {
+        h.0
+    }
+}
+
+impl From<Handle> for KeptHandle {
+    fn from(h: Handle) -> Self {
+        KeptHandle(h)
+    }
+}
+
+/// Values a file held that CADCraft turns into its own (a page's paper name and size, a
+/// dimension link's snap data): kept so that saving writes the file's own values back while what
+/// CADCraft made of them is unchanged. Like [`KeptHandle`] it is not part of the value: two
+/// objects that differ only in it are equal.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AsRead<T>(pub Option<Box<T>>);
+
+impl<T> Default for AsRead<T> {
+    fn default() -> Self {
+        AsRead(None)
+    }
+}
+
+impl<T> AsRead<T> {
+    pub fn new(v: T) -> Self {
+        AsRead(Some(Box::new(v)))
+    }
+    pub fn get(&self) -> Option<&T> {
+        self.0.as_deref()
+    }
+    pub fn is_none(&self) -> bool {
+        self.0.is_none()
+    }
+}
+
+impl<T> PartialEq for AsRead<T> {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
 impl Handle {
     pub fn hex(self) -> String {
         format!("{:X}", self.0)
+    }
+    /// No handle (0): one is given when the drawing is written.
+    pub fn is_none(&self) -> bool {
+        self.0 == 0
     }
     pub fn parse_hex(s: &str) -> Option<Handle> {
         let s = s.trim();

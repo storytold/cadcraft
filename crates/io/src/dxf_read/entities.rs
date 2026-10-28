@@ -181,10 +181,13 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
                 _ => DimKind::Aligned,
             };
             EntityKind::Dimension(Dimension {
+                flag_73: t.i(73).is_some_and(|v| v != 0),
+                flip_arrows: [t.i(74).is_some_and(|v| v != 0), t.i(75).is_some_and(|v| v != 0)],
                 kind,
                 defpt: t.p(10),
                 // The text midpoint is the one OCS point of a DIMENSION.
                 text_mid: if c.extrusion.z < 0.0 { ocs(&c, t.p(11)) } else { t.p(11) },
+                attachment: t.i(71).and_then(|v| u8::try_from(v).ok()).filter(|v| (1..=9).contains(v)).unwrap_or(0),
                 p13: t.p(13),
                 p14: t.p(14),
                 p15: t.p(15),

@@ -12,13 +12,29 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Common, Drawing, Entity, EntityKind};
 
-/// A named annotation scale: `paper_units` on paper show `drawing_units` of the drawing.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// A named annotation scale: `paper_units` on paper show `drawing_units` of the drawing. Two
+/// scales are equal when their names and units are: the handle and unit flag are what a file
+/// said about it.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnnoScale {
     pub name: String,
+    /// The handle it was read with (0: none yet): written back, so other objects and other
+    /// programs keep pointing at it.
+    #[serde(default, skip_serializing_if = "crate::KeptHandle::is_none")]
+    pub handle: crate::KeptHandle,
     pub paper_units: f64,
     pub drawing_units: f64,
+    /// Whether the file marked it the unit scale (SCALE group 290); `None` when made here, then
+    /// a 1:1 ratio is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit_scale: Option<bool>,
+}
+
+impl PartialEq for AnnoScale {
+    fn eq(&self, o: &Self) -> bool {
+        self.name == o.name && self.paper_units == o.paper_units && self.drawing_units == o.drawing_units
+    }
 }
 
 /// The most scales a drawing's list or one object holds (hostile files and parameters).
@@ -26,7 +42,7 @@ pub const MAX_SCALES: usize = 1000;
 
 impl AnnoScale {
     pub fn new(name: &str, paper_units: f64, drawing_units: f64) -> Self {
-        AnnoScale { name: name.to_string(), paper_units, drawing_units }
+        AnnoScale { handle: Default::default(), name: name.to_string(), paper_units, drawing_units, unit_scale: None }
     }
     /// The 1:1 scale.
     pub fn unit() -> Self {
@@ -158,6 +174,7 @@ pub fn anno_scaled(e: &Entity, f: f64) -> Entity {
         EntityKind::Text(t) => t.height *= f,
         EntityKind::MText(t) => {
             t.height *= f;
+            t.defined_height *= f;
             t.width *= f;
             if let Some(c) = &mut t.columns {
                 c.scale(f);
@@ -174,6 +191,7 @@ pub fn anno_scaled(e: &Entity, f: f64) -> Entity {
             if let Some(t) = &mut m.text {
                 t.insert = land + (t.insert - land) * f;
                 t.height *= f;
+                t.defined_height *= f;
                 t.width *= f;
                 if let Some(c) = &mut t.columns {
                     c.scale(f);

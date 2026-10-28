@@ -211,7 +211,7 @@ fn tables(d: &mut Drawing, out: &mut Vec<Issue>) {
     for name in ["ByBlock", "ByLayer"] {
         if d.linetype(name).is_none() {
             missing("linetype", name, out);
-            d.linetypes.push(Linetype { name: name.into(), description: String::new(), pattern: Vec::new() });
+            d.linetypes.push(Linetype { handle: Default::default(), name: name.into(), description: String::new(), pattern: Vec::new() });
         }
     }
     if d.linetype("Continuous").is_none() {

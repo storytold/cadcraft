@@ -277,12 +277,15 @@ fn defs_for(src: &Drawing, ents: &[Entity]) -> Drawing {
 }
 
 /// Add `defs`' table records and blocks that `d` doesn't have. Returns the blocks copied, from
-/// their name in `defs` to their name in `d`.
+/// their name in `defs` to their name in `d`. Copied records and blocks drop the handles they had
+/// in `defs`' file: they get this drawing's when it is written.
 fn merge(d: &mut Drawing, defs: &Drawing) -> BTreeMap<String, String> {
-    fn add<T: Clone>(ours: &mut Vec<T>, theirs: &[T], name: fn(&T) -> &str) {
+    fn add<T: Clone + cadcraft_doc::KeepsHandle>(ours: &mut Vec<T>, theirs: &[T], name: fn(&T) -> &str) {
         for t in theirs {
             if !ours.iter().any(|o| name(o).eq_ignore_ascii_case(name(t))) {
-                ours.push(t.clone());
+                let mut copy = t.clone();
+                copy.forget_handle();
+                ours.push(copy);
             }
         }
     }
@@ -296,6 +299,7 @@ fn merge(d: &mut Drawing, defs: &Drawing) -> BTreeMap<String, String> {
     for (from, to) in &renames {
         let Some(b) = defs.blocks.get(from) else { continue };
         let mut nb = (**b).clone();
+        cadcraft_doc::KeepsHandle::forget_handle(&mut nb);
         nb.name = to.clone();
         nb.entities = Default::default();
         for e in b.entities.iter() {
@@ -356,4 +360,30 @@ fn adopt(d: &mut Drawing, e: &Entity, renames: &BTreeMap<String, String>) -> Ent
         _ => {}
     }
     e
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cadcraft_doc::{KeptHandle, Layer};
+
+    /// Pasting adds the copied drawing's layers this drawing lacks without the handles they had
+    /// in their own file; a layer this drawing has keeps its own.
+    #[test]
+    fn pasted_table_records_drop_their_source_handles() {
+        let mut d = Drawing::new_imperial();
+        let mut ours = Layer::new("WALLS");
+        ours.handle = KeptHandle(Handle(0x2A));
+        d.layers.push(ours);
+        let mut defs = Drawing::new_imperial();
+        for (name, h) in [("WALLS", 0x30), ("DOORS", 0x2A)] {
+            let mut l = Layer::new(name);
+            l.handle = KeptHandle(Handle(h));
+            defs.layers.push(l);
+        }
+        merge(&mut d, &defs);
+        let handle = |name: &str| d.layers.iter().find(|l| l.name == name).map(|l| l.handle.get());
+        assert_eq!(handle("WALLS"), Some(Handle(0x2A)));
+        assert_eq!(handle("DOORS"), Some(Handle(0)), "the copy must not claim this drawing's 2A");
+    }
 }

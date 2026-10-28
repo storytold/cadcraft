@@ -44,6 +44,9 @@ fn drawing() -> Drawing {
 
 fn dimension(overrides: serde_json::Value) -> EntityKind {
     EntityKind::Dimension(Dimension {
+        flag_73: Default::default(),
+        flip_arrows: Default::default(),
+        attachment: Default::default(),
         kind: DimKind::Linear { rotation: 0.0 },
         defpt: Vec3::new(0.0, 3.0, 0.0),
         text_mid: Vec3::ZERO,

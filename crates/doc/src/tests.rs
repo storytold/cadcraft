@@ -481,6 +481,7 @@ fn text_kind(value: &str) -> EntityKind {
 
 fn mtext_kind(contents: &str) -> EntityKind {
     EntityKind::MText(MText {
+        defined_height: Default::default(),
         insert: Vec3::new(10.0, 10.0, 0.0),
         height: 2.0,
         width: 0.0,
@@ -532,6 +533,9 @@ fn invisible_dimblock_entity_is_ignored_in_dimension_extents() {
             &Space::Model,
             Common::default(),
             EntityKind::Dimension(Dimension {
+                flag_73: Default::default(),
+                flip_arrows: Default::default(),
+                attachment: Default::default(),
                 kind: DimKind::Linear { rotation: 0.0 },
                 defpt: Vec3::new(1.0, 1.0, 0.0),
                 text_mid: Vec3::new(0.5, 1.0, 0.0),

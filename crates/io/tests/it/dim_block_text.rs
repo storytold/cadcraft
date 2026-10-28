@@ -18,6 +18,9 @@ fn height_written(style_scale: f64, overrides: serde_json::Value) -> f64 {
     let mut d = Drawing::new_imperial();
     d.dim_styles.iter_mut().for_each(|s| s.scale = style_scale);
     let dm = Dimension {
+        flag_73: Default::default(),
+        flip_arrows: Default::default(),
+        attachment: Default::default(),
         kind: DimKind::Linear { rotation: 0.0 },
         defpt: Vec3::new(15.0, 5.0, 0.0),
         text_mid: Vec3::ZERO,
@@ -57,6 +60,9 @@ fn angular_drawing(separator_override: Option<&str>) -> Drawing {
     d.dim_styles.push(DimStyle { name: "Comma".into(), decimal_separator: ",".into(), angular_decimals: 1, ..DimStyle::default() });
     let angle = 39.4_f64.to_radians();
     let mut dm = Dimension {
+        attachment: Default::default(),
+        flag_73: Default::default(),
+        flip_arrows: Default::default(),
         kind: DimKind::Angular3P,
         defpt: Vec3::new(50.0 * (angle / 2.0).cos(), 50.0 * (angle / 2.0).sin(), 0.0),
         text_mid: Vec3::ZERO,

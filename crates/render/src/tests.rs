@@ -329,6 +329,7 @@ fn truetype_mtext_and_dimension_text() {
         &Space::Model,
         Common::default(),
         EntityKind::MText(cadcraft_doc::MText {
+            defined_height: Default::default(),
             insert: Vec3::ZERO,
             height: 1.0,
             width: 0.0,
@@ -354,6 +355,9 @@ fn truetype_mtext_and_dimension_text() {
 
 fn lin_dim() -> cadcraft_doc::Dimension {
     cadcraft_doc::Dimension {
+        flag_73: Default::default(),
+        flip_arrows: Default::default(),
+        attachment: Default::default(),
         kind: cadcraft_doc::DimKind::Linear { rotation: 0.0 },
         defpt: Vec3::new(0.0, 2.0, 0.0),
         text_mid: Vec3::ZERO,
@@ -861,6 +865,7 @@ fn attributes_follow_the_reference_layer_and_have_no_definition() {
 fn mtext_exact_spacing_ignores_taller_lines() {
     // #711: a doubled middle line pushes the next baseline down with At least, not with Exactly.
     let mtext = |contents: &str, line_spacing: f64, line_spacing_exact: bool| cadcraft_doc::MText {
+        defined_height: Default::default(),
         insert: Vec3::ZERO,
         height: 1.0,
         width: 10.0,

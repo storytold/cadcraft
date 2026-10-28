@@ -81,13 +81,19 @@ fn corrupt(d: &mut Drawing) -> (Handle, Handle) {
     // The same handle in model space and in a layout.
     let dup = d.model.iter().nth(2).unwrap().handle;
     d.space_mut(&Space::Paper("Layout1".into())).unwrap().push(Entity { handle: dup, common: on("0"), kind: line((0.0, 0.0), (1.0, 1.0)) });
-    d.groups.push(Group { name: "G".into(), description: String::new(), selectable: true, members: vec![good, Handle(0xDEAD)] });
+    d.groups.push(Group {
+        handle: Default::default(),
+        name: "G".into(),
+        description: String::new(),
+        selectable: true,
+        members: vec![good, Handle(0xDEAD)],
+    });
     d.header.set("CLAYER", HVal::Str("Gone".into()));
     d.header.set_str("DIMSTYLE", "Lost");
     let dim = d.model.iter().find(|e| matches!(e.kind, EntityKind::Dimension(_))).map(|e| e.handle).unwrap();
     d.modify_entity(dim, |e| {
         if let EntityKind::Dimension(dm) = &mut e.kind {
-            dm.assoc.push(DimAssoc { point: "p13".into(), handle: Handle(0xBEEF), snap: AssocSnap::Start });
+            dm.assoc.push(DimAssoc { read: Default::default(), point: "p13".into(), handle: Handle(0xBEEF), snap: AssocSnap::Start });
         }
     })
     .unwrap();

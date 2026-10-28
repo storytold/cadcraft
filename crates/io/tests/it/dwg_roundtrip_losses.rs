@@ -99,7 +99,10 @@ fn dwg_keeps_table_styles() {
     let sched = TableStyle { name: "Sched".into(), text_height: 2.5, margin: 1.0, title: false, header: true, ..TableStyle::default() };
     d.table_styles.push(sched.clone());
     let back = through_dwg(&d);
-    assert_eq!(back.table_styles.iter().find(|s| s.name == "Sched"), Some(&sched));
+    // The style's own settings; the rest of its record (flags, handle) is the DWG's.
+    let got = back.table_styles.iter().find(|s| s.name == "Sched").expect("style");
+    assert_eq!((got.text_height, got.margin, got.title, got.header), (sched.text_height, sched.margin, sched.title, sched.header));
+    assert_eq!(got.cell_styles, sched.cell_styles);
 }
 
 /// DWG doesn't store viewport ids; readers number a layout's viewports in order, and id 1 is the

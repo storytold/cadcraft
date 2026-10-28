@@ -346,6 +346,7 @@ mod tests {
     #[test]
     fn multileader_text_is_inside_its_bounds() {
         let mtext = crate::MText {
+            defined_height: Default::default(),
             insert: Vec3::new(25.45, 0.0, 0.0),
             height: 5.0,
             width: 0.0,

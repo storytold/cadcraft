@@ -47,6 +47,7 @@ fn fenceline_draws_a_circle_in_every_gap() {
 
 fn gas(absolute: bool) -> Linetype {
     Linetype {
+        handle: Default::default(),
         name: "GAS".into(),
         description: "Gas line ---- GAS ---- GAS ----".into(),
         pattern: vec![

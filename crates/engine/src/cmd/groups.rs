@@ -93,7 +93,7 @@ pub(crate) fn create(s: &mut Session, name: Option<&str>, description: &str, hs:
         Some(n) => n.to_string(),
         None => next_unnamed(d),
     };
-    s.doc_mut()?.groups.push(Group { name: name.clone(), description: description.to_string(), selectable, members });
+    s.doc_mut()?.groups.push(Group { handle: Default::default(), name: name.clone(), description: description.to_string(), selectable, members });
     Ok(name)
 }
 

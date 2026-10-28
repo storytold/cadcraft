@@ -1,6 +1,7 @@
 use super::common::T;
 use super::entities::{entity_extras, entity_plot_style, entity_with_table_budget, insert_attribs, polyline_entity};
-use super::objects::{MAX_OBJECTS, Objects, page_setup};
+use super::objects::{MAX_OBJECTS, Objects, layout_record, page_setup};
+use super::tables::rec_handle;
 use super::{Block, BlockDef, Drawing, Entity, EntityKind, Handle, HashMap, Layout, LayoutDef, Rx, Tag, records};
 
 pub(super) fn parse_entities(
@@ -114,7 +115,8 @@ pub(super) fn read_blocks(
             }
             let body = recs.get(i + 1..j).unwrap_or(&[]);
             let ents = parse_entities(body, d, rx, &mut n, table_cells_left);
-            blocks.push((name, base, description, ents, xref));
+            let end = recs.get(j).map_or(cadcraft_doc::KeptHandle::default(), |(_, et)| rec_handle(&T(et), 5));
+            blocks.push((name, base, description, ents, xref, (rec_handle(&t, 5), end)));
             i = j + 1;
         } else {
             // A record outside any BLOCK ... ENDBLK pair.
@@ -140,7 +142,10 @@ pub(super) fn read_objects(tags: &[Tag], objs: &mut Objects, layout_objs: &mut V
             // LAYOUT has two 330s: owner dict and the block record; take the last.
             let br = tg.iter().rfind(|x| x.code == 330).map(Tag::str).unwrap_or_default();
             let plot = T(tg.get(..start).unwrap_or(&[]));
-            layout_objs.push((t.s(1).unwrap_or_default(), t.i(71).unwrap_or(0) as u32, br.to_ascii_uppercase(), page_setup(&plot)));
+            let own = rec_handle(&T(&tg), 5);
+            let after_br = tg.iter().rposition(|x| x.code == 330).map_or(&[][..], |i| tg.get(i + 1..).unwrap_or(&[]));
+            let rec = layout_record(&t, after_br);
+            layout_objs.push((t.s(1).unwrap_or_default(), t.i(71).unwrap_or(0) as u32, br.to_ascii_uppercase(), page_setup(&plot), own, rec));
         }
     }
 }
@@ -150,11 +155,15 @@ pub(super) fn read_objects(tags: &[Tag], objs: &mut Objects, layout_objs: &mut V
 pub(super) fn setup_layouts(d: &mut Drawing, layout_objs: &mut [LayoutDef], rx: &Rx) -> (HashMap<String, String>, String) {
     let mut paper_block_for: HashMap<String, String> = HashMap::new();
     layout_objs.sort_by_key(|l| l.1);
-    for (name, order, br, page) in layout_objs.iter() {
+    for (name, order, br, page, own, record) in layout_objs.iter() {
+        let block_handle = Handle::parse_hex(br).unwrap_or_default().into();
         if name.eq_ignore_ascii_case("Model") {
+            // Model space's own page setup and layout data (its handles are the file's roles), and
+            // its block record, which names model space when the record's own name doesn't.
+            d.model_layout = Some(Box::new(Layout { page: page.clone(), record: record.clone(), block_handle, ..Layout::new("Model", 0) }));
             continue;
         }
-        d.layouts.push(Layout { page: page.clone(), ..Layout::new(name, *order) });
+        d.layouts.push(Layout { page: page.clone(), handle: *own, block_handle, record: record.clone(), ..Layout::new(name, *order) });
         if let Some(bname) = rx.brs.get(br) {
             paper_block_for.insert(bname.to_ascii_uppercase(), name.clone());
         }
@@ -175,9 +184,14 @@ pub(super) fn setup_layouts(d: &mut Drawing, layout_objs: &mut [LayoutDef], rx: 
 /// Place the BLOCKS entities: model and paper space blocks go to their space, the rest become
 /// block definitions.
 pub(super) fn place_blocks(d: &mut Drawing, blocks: Vec<BlockDef>, rx: &mut Rx, paper_block_for: &HashMap<String, String>, first_layout: &str) {
-    for (name, base, description, ents, xref) in blocks {
+    // Block record handles by upper-case block name.
+    let br_of: HashMap<String, Handle> = rx.brs.iter().filter_map(|(h, n)| Some((n.to_ascii_uppercase(), Handle::parse_hex(h)?))).collect();
+    // Model space's block record, by the Model layout's pointer: a damaged file can garble the
+    // record's name, and its entities are still model space's.
+    let model_br = d.model_layout.as_ref().map(|l| l.block_handle.get()).filter(|h| h.0 != 0);
+    for (name, base, description, ents, xref, (begin, end)) in blocks {
         let up = name.to_ascii_uppercase();
-        if up == "*MODEL_SPACE" {
+        if up == "*MODEL_SPACE" || (model_br.is_some() && br_of.get(&up).copied() == model_br) {
             for (_, _, e) in ents {
                 d.ensure_layer(&e.common.layer);
                 d.model.push(e);
@@ -187,6 +201,10 @@ pub(super) fn place_blocks(d: &mut Drawing, blocks: Vec<BlockDef>, rx: &mut Rx, 
         if up.starts_with("*PAPER_SPACE") {
             let lname = paper_block_for.get(&up).cloned().unwrap_or_else(|| first_layout.to_string());
             if let Some(l) = d.layouts.iter_mut().find(|l| l.name == lname) {
+                (l.begin_handle, l.end_handle) = (begin, end);
+                if l.block_handle.is_none() {
+                    l.block_handle = br_of.get(&up).copied().unwrap_or_default().into();
+                }
                 for (_, _, e) in ents {
                     l.entities.push(e);
                 }
@@ -204,10 +222,12 @@ pub(super) fn place_blocks(d: &mut Drawing, blocks: Vec<BlockDef>, rx: &mut Rx, 
             continue;
         }
         let mut b = Block::new(&name);
+        b.handle = br_of.get(&up).copied().unwrap_or_default().into();
+        (b.begin_handle, b.end_handle) = (begin, end);
         b.base = base;
         b.description = description;
-        if let Some(&(units, explodable)) = rx.block_props.get(&up) {
-            (b.units, b.explodable) = (units, explodable);
+        if let Some(&(units, explodable, uniform)) = rx.block_props.get(&up) {
+            (b.units, b.explodable, b.scale_uniformly) = (units, explodable, uniform);
         }
         if xref & 4 != 0 {
             b.xref_path = Some(String::new());

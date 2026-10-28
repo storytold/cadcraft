@@ -24,6 +24,7 @@ mod constraint_infer;
 mod count;
 mod dash_block;
 mod data_extraction;
+mod dim_assoc_read;
 mod dim_baseline_spacing;
 mod dim_chain;
 mod dim_commands;

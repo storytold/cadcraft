@@ -29,6 +29,17 @@ pub struct Dimension {
     pub kind: DimKind,
     pub defpt: Vec3,
     pub text_mid: Vec3,
+    /// The first and second arrowheads are flipped (ODA DWG specification, DIMENSION common data,
+    /// 2007 and later; DXF groups 74 and 75).
+    #[serde(default)]
+    pub flip_arrows: [bool; 2],
+    /// The flag before them (ODA: "unknown"; DXF group 73), kept as read.
+    #[serde(default)]
+    pub flag_73: bool,
+    /// The text's attachment point as read (DXF group 71: 1 top left … 9 bottom right), 0 when
+    /// not known (made here).
+    #[serde(default)]
+    pub attachment: u8,
     #[serde(default)]
     pub p13: Vec3,
     #[serde(default)]
@@ -153,6 +164,9 @@ pub struct DimAssoc {
     /// The object it is attached to.
     pub handle: Handle,
     pub snap: AssocSnap,
+    /// The DIMASSOC point reference it was read from (another program's file).
+    #[serde(default, skip_serializing_if = "super::common::AsRead::is_none")]
+    pub read: super::common::AsRead<crate::OsnapRead>,
 }
 
 /// Where on the object an associative definition point sits.

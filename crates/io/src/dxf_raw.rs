@@ -330,8 +330,9 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
     // The drawing's entities by handle: whether each is of a type CADCraft doesn't model.
     let ents = entity_types(d);
     let ids = identities(&tables, &blocks, &objects);
-    // Extension dictionaries of entities and records: owner → dictionary.
-    let xdict_of = extension_dictionaries(&tables, &blocks, &entities);
+    // Extension dictionaries of entities, records and the objects CADCraft writes itself (those
+    // with a role, such as a table style): owner → dictionary.
+    let xdict_of = extension_dictionaries(&tables, &blocks, &entities, &objects, &ids);
     // Objects by handle: the first of each, and none that has an entity's handle.
     let mut by_handle: HashMap<String, usize> = HashMap::new();
     for (i, (_, _, t)) in objects.iter().enumerate() {
@@ -347,10 +348,11 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
         let Some((_, _, t)) = objects.get(k) else { return false };
         let hd = head(t);
         let (Some(h), Some(o)) = (hd.handle, hd.owner) else { return false };
-        !by_handle.contains_key(&o) && xdict_of.get(&o) == Some(&h) && (ents.contains_key(&o) || ids.contains_key(&o))
+        (!by_handle.contains_key(&o) || ids.contains_key(&o)) && xdict_of.get(&o) == Some(&h) && (ents.contains_key(&o) || ids.contains_key(&o))
     };
     let memo = retained_objects(&objects, &ents, &ids, &by_handle, root.as_deref(), &root_entries, &xdict_of);
     let mut f = Foreign::default();
+    kept_role_handles(&mut f, &ids, &xdict_of, &objects);
     let mut kept: HashSet<String> = HashSet::new();
     for (i, (kind, _, t)) in objects.iter().enumerate() {
         if memo.get(&i) != Some(&true) || f.objects.len() >= MAX_OBJECTS {
@@ -396,6 +398,7 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
             f.records.entry(key).or_insert(x);
         }
     }
+    role_object_extras(&mut f, &objects, &ids, &kept);
     // The classes of kept objects and of entities of types CADCraft doesn't model.
     let mut types: HashSet<String> = f.objects.iter().map(|o| up(&o.kind)).collect();
     types.extend(all_entities(d).filter_map(|e| match &e.kind {
@@ -470,9 +473,12 @@ fn extension_dictionaries(
     tables: &[(String, usize, &[Tag])],
     blocks: &[(String, usize, &[Tag])],
     entities: &[(String, usize, &[Tag])],
+    objects: &[(String, usize, &[Tag])],
+    ids: &HashMap<String, ForeignKey>,
 ) -> HashMap<String, String> {
     let mut dictionaries = HashMap::new();
-    for (kind, _, tags) in tables.iter().chain(blocks).chain(entities) {
+    let role_objects = objects.iter().filter(|(_, _, tags)| head(tags).handle.is_some_and(|h| ids.contains_key(&h)));
+    for (kind, _, tags) in tables.iter().chain(blocks).chain(entities).chain(role_objects) {
         if kind == "ENDBLK" {
             continue;
         }
@@ -482,6 +488,69 @@ fn extension_dictionaries(
         }
     }
     dictionaries
+}
+
+/// The handle each role had in the file (S1): every table record, block and object with a role
+/// (the lowest when two records share one), the extension dictionary of each entity or record,
+/// and the DIMASSOC objects in them, which CADCraft writes itself for dimensions.
+fn kept_role_handles(f: &mut Foreign, ids: &HashMap<String, ForeignKey>, xdict_of: &HashMap<String, String>, objects: &[(String, usize, &[Tag])]) {
+    for (h, k) in ids {
+        if let Some(hh) = handle(h)
+            && f.handles.len() < MAX_OBJECTS
+        {
+            f.handles.entry(k.clone()).and_modify(|x| *x = (*x).min(hh)).or_insert(hh);
+        }
+    }
+    let owner_of_xdict: HashMap<&String, &String> = xdict_of.iter().map(|(o, x)| (x, o)).collect();
+    for (o, x) in xdict_of {
+        if let (Some(oh), Some(xh)) = (handle(o), handle(x)) {
+            f.handles.entry(("XDICT".into(), oh.hex())).or_insert(xh);
+        }
+    }
+    for (kind, _, t) in objects {
+        let hd = head(t);
+        if kind == "DIMASSOC"
+            && let (Some(h), Some(x)) = (hd.handle.as_deref().and_then(handle), hd.owner.as_ref())
+            && let Some(dim) = owner_of_xdict.get(x).and_then(|o| handle(o))
+        {
+            f.handles.entry(("DIMASSOC".into(), dim.hex())).or_insert(h);
+        }
+    }
+}
+
+/// Extras of the objects CADCraft writes itself (a table style's extension dictionary…), by role.
+fn role_object_extras(f: &mut Foreign, objects: &[(String, usize, &[Tag])], ids: &HashMap<String, ForeignKey>, kept: &HashSet<String>) {
+    for (kind, _, t) in objects {
+        let Some(h) = head(t).handle else { continue };
+        if kept.contains(&h) || is_dictionary(kind) {
+            continue;
+        }
+        let Some(key) = ids.get(&h).cloned() else { continue };
+        let x = extra(kind, t, false, false, kept);
+        if !x.is_empty() {
+            f.records.entry(key).or_insert(x);
+        }
+    }
+}
+
+/// The handle each written kept object gets: its own, unless the written file already uses it;
+/// then a new one from `next` on, above every written handle and the seed.
+fn kept_object_handles(f: &Foreign, alive_memo: &HashMap<String, bool>, written: &HashSet<String>, mut next: u64) -> HashMap<String, String> {
+    let mut alive: HashMap<String, String> = HashMap::new();
+    let mut taken: HashSet<String> = written.clone();
+    for o in f.objects.iter().filter(|o| alive_memo.get(&o.handle.hex()) == Some(&true)) {
+        let own = o.handle.hex();
+        if !o.handle.is_none() && taken.insert(own.clone()) {
+            alive.insert(own.clone(), own);
+            continue;
+        }
+        next = free_handle(&taken, next);
+        let new = format!("{next:X}");
+        taken.insert(new.clone());
+        alive.insert(own, new);
+        next = next.saturating_add(1);
+    }
+    alive
 }
 
 /// Determine which objects belong to unmodelled dictionary entries or owners.
@@ -499,7 +568,9 @@ fn retained_objects(
         let Some((_, _, tags)) = objects.get(index) else { return false };
         let header = head(tags);
         let (Some(handle), Some(owner)) = (header.handle, header.owner) else { return false };
-        !by_handle.contains_key(&owner) && xdict_of.get(&owner) == Some(&handle) && (entities.contains_key(&owner) || records.contains_key(&owner))
+        (!by_handle.contains_key(&owner) || records.contains_key(&owner))
+            && xdict_of.get(&owner) == Some(&handle)
+            && (entities.contains_key(&owner) || records.contains_key(&owner))
     };
     let modelled_entry = |tags: &[Tag], handle: &str| {
         entries(tags).iter().any(|(key, entry_handle)| entry_handle == handle && MODELLED_XDICT_KEYS.contains(&up(key).as_str()))
@@ -524,6 +595,10 @@ fn retained_objects(
             }
             if root == Some(owner.as_str()) {
                 break root_key(&handle).is_some_and(|key| !modelled_key(key));
+            }
+            // The extension dictionary of an object CADCraft writes itself (a table style's).
+            if records.contains_key(&owner) && by_handle.contains_key(&owner) && is_xdict(current) {
+                break entries(tags).iter().any(|(key, _)| !MODELLED_XDICT_KEYS.contains(&up(key).as_str()));
             }
             if let Some(&parent) = by_handle.get(&owner) {
                 if is_xdict(parent) && objects.get(parent).is_some_and(|object| modelled_entry(object.2, &handle)) {
@@ -813,8 +888,17 @@ impl Map<'_> {
 }
 
 /// The extras of a written record, if the drawing keeps any for it.
-fn extra_for<'a>(f: &'a Foreign, xd: &XdataOf, rec: &Rec, body: &[Tag], block: &str) -> Option<Cow<'a, ForeignExtra>> {
+fn extra_for<'a>(
+    f: &'a Foreign,
+    xd: &XdataOf,
+    rec: &Rec,
+    body: &[Tag],
+    block: &str,
+    ids: &HashMap<String, ForeignKey>,
+) -> Option<Cow<'a, ForeignExtra>> {
     match (rec.sec.as_str(), rec.kind.as_str()) {
+        // Objects CADCraft writes itself (styles, layouts, scales…), by the role of their handle.
+        ("OBJECTS", _) => f.records.get(ids.get(&head(body).handle?)?).map(Cow::Borrowed),
         ("BLOCKS", "BLOCK") => f.records.get(&("BLOCK".to_string(), block.to_string())).map(Cow::Borrowed),
         ("BLOCKS", "ENDBLK") => None,
         ("ENTITIES" | "BLOCKS", _) => entity_extra(f, xd, handle(&head(body).handle?)?),
@@ -862,8 +946,9 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
     };
     let (tables, blocks, objects) = (by_sec("TABLES"), by_sec("BLOCKS"), by_sec("OBJECTS"));
     let mut roles: HashMap<ForeignKey, String> = HashMap::new();
-    for (h, k) in identities(&tables, &blocks, &objects) {
-        roles.entry(k).or_insert(h);
+    let written_ids = identities(&tables, &blocks, &objects);
+    for (h, k) in &written_ids {
+        roles.entry(k.clone()).or_insert(h.clone());
     }
     let mut written: HashSet<String> = recs.iter().filter_map(|r| head(body(r)).handle).collect();
     // The written CLASSES as numbered (500 for the first): the writer's own, then the kept ones it
@@ -903,7 +988,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
         if r.kind == "BLOCK" {
             block = up(&val(body(r), 2).unwrap_or_default());
         }
-        if let Some(x) = extra_for(f, &xd, r, body(r), &block)
+        if let Some(x) = extra_for(f, &xd, r, body(r), &block, &written_ids)
             && let Some(xd) = x.xdict
             && head(body(r)).xdict.is_none()
         {
@@ -955,13 +1040,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
             alive_memo.insert(p, verdict);
         }
     }
-    // New handles for the written kept objects, above every written handle and the seed.
-    let mut next = seed(tags).max(max_handle(tags).saturating_add(1));
-    let mut alive: HashMap<String, String> = HashMap::new();
-    for o in f.objects.iter().filter(|o| alive_memo.get(&o.handle.hex()) == Some(&true)) {
-        alive.insert(o.handle.hex(), format!("{next:X}"));
-        next = next.saturating_add(1);
-    }
+    let alive = kept_object_handles(f, &alive_memo, &written, seed(tags).max(max_handle(tags).saturating_add(1)));
     let entities: HashSet<String> = all_entities(d).map(|e| e.handle.hex()).filter(|h| written.contains(h)).collect();
     let map = Map { f, alive, raw: objs.keys().cloned().collect(), roles, entities };
     let mut out: Vec<Tag> = Vec::with_capacity(tags.len() + f.objects.iter().map(|o| o.tags.len() + 1).sum::<usize>());
@@ -999,14 +1078,14 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
             record(&map, &ur, ub, x.as_deref(), true, false, &mut out);
         }
         out.extend(tags.get(r.start).cloned());
-        let x = extra_for(f, &xd, r, b, &block);
+        let x = extra_for(f, &xd, r, b, &block, &written_ids);
         if x.is_none() && Some(r.start) != root {
             out.extend(b.iter().cloned());
             continue;
         }
         record(&map, r, b, x.as_deref(), false, Some(r.start) == root, &mut out);
     }
-    add_appids(&mut out);
+    add_appids(&mut out, f);
     let top = max_handle(&out).saturating_add(1);
     if let Some(t) = seed_index(&out).and_then(|i| out.get_mut(i))
         && Handle::parse_hex(&t.str()).is_none_or(|h| h.0 < top)
@@ -1081,6 +1160,7 @@ fn plan_unknown(d: &Drawing, recs: &[Rec], tags: &[Tag], roles: &HashMap<Foreign
 /// A written record with its kept extras, remapped references (unknown entities) and kept
 /// dictionary entries (the named object dictionary).
 fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: bool, root: bool, out: &mut Vec<Tag>) {
+    let start = out.len();
     let h = head(b);
     let entity = matches!(r.sec.as_str(), "ENTITIES" | "BLOCKS") && r.kind != "BLOCK";
     let xdata_at = b.iter().position(|t| t.code == 1001).unwrap_or(b.len());
@@ -1162,6 +1242,25 @@ fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: bool
                 out.push(Tag::s(350, nh.clone()));
             }
         }
+        sort_entries(out.get_mut(start..).unwrap_or(&mut []));
+    }
+}
+
+/// A dictionary's entries (`3` key, `350`/`360` handle pairs) in key order, as AutoCAD writes
+/// the named object dictionary; every other group stays where it is.
+fn sort_entries(rec: &mut [Tag]) {
+    let at: Vec<usize> = (0..rec.len().saturating_sub(1))
+        .filter(|&i| rec.get(i).is_some_and(|t| t.code == 3) && rec.get(i + 1).is_some_and(|t| matches!(t.code, 350 | 360)))
+        .collect();
+    let mut pairs: Vec<(Tag, Tag)> = at.iter().filter_map(|&i| Some((rec.get(i)?.clone(), rec.get(i + 1)?.clone()))).collect();
+    pairs.sort_by_key(|p| p.0.str());
+    for (&i, (k, v)) in at.iter().zip(pairs) {
+        if let Some(t) = rec.get_mut(i) {
+            *t = k;
+        }
+        if let Some(t) = rec.get_mut(i + 1) {
+            *t = v;
+        }
     }
 }
 
@@ -1179,8 +1278,14 @@ fn xdata(map: &Map, x: &ForeignExtra, own: &HashSet<String>, out: &mut Vec<Tag>)
 }
 
 /// APPID records for every application with xdata in the file, added to the APPID table.
-fn add_appids(out: &mut Vec<Tag>) {
-    let used: BTreeMap<String, String> = out.iter().filter(|t| t.code == 1001).map(|t| (up(&t.str()), t.str().trim().to_string())).collect();
+fn add_appids(out: &mut Vec<Tag>, f: &Foreign) {
+    let mut used: BTreeMap<String, String> = out.iter().filter(|t| t.code == 1001).map(|t| (up(&t.str()), t.str().trim().to_string())).collect();
+    // The applications the file registered, used or not.
+    for (kind, name) in f.handles.keys() {
+        if kind == "APPID" && !name.is_empty() {
+            used.entry(name.clone()).or_insert_with(|| name.clone());
+        }
+    }
     let recs = written_records(out);
     let Some(table) = recs.iter().position(|r| {
         r.sec == "TABLES" && r.kind == "TABLE" && val(out.get(r.start + 1..r.end).unwrap_or(&[]), 2).is_some_and(|n| up(&n) == "APPID")
@@ -1201,26 +1306,45 @@ fn add_appids(out: &mut Vec<Tag>) {
     if missing.is_empty() {
         return;
     }
-    // New handles above the seed, which is then moved past them.
+    // Each its handle in the file when that is free, else a new one above
+    // the seed, which is then moved past them.
+    let mut taken: HashSet<String> = out.iter().filter(|t| matches!(t.code, 5 | 105)).map(|t| norm(&t.str())).collect();
     let mut next = seed(out).max(max_handle(out).saturating_add(1));
     let mut add = Vec::new();
     for app in &missing {
+        let kept = f.handles.get(&("APPID".to_string(), up(app))).map(|h| h.hex()).filter(|h| !taken.contains(h));
+        let h = match kept {
+            Some(h) => h,
+            None => {
+                next = free_handle(&taken, next);
+                format!("{next:X}")
+            }
+        };
+        taken.insert(h.clone());
         add.extend([
             Tag::s(0, "APPID"),
-            Tag::s(5, format!("{next:X}")),
+            Tag::s(5, h),
             Tag::s(330, table_h.clone()),
             Tag::s(100, "AcDbSymbolTableRecord"),
             Tag::s(100, "AcDbRegAppTableRecord"),
             Tag::s(2, (*app).clone()),
             Tag::i(70, 0),
         ]);
-        next = next.saturating_add(1);
     }
     let end_at = end.start;
     if let Some(count) = out.get_mut(t.start + 1..t.end).and_then(|b| b.iter_mut().find(|x| x.code == 70)) {
         *count = Tag::i(70, count.i64().saturating_add(i64::try_from(missing.len()).unwrap_or(0)));
     }
     out.splice(end_at..end_at, add);
+}
+
+/// The first handle from `from` on (from 1 past the top of the range) that `taken` doesn't hold.
+/// Among `taken.len() + 1` values one is free, so this ends.
+fn free_handle(taken: &HashSet<String>, mut from: u64) -> u64 {
+    while from == 0 || from == u64::MAX || taken.contains(&format!("{from:X}")) {
+        from = if from >= u64::MAX - 1 { 1 } else { from + 1 };
+    }
+    from
 }
 
 /// The index of the `$HANDSEED` value in the header.

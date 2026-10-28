@@ -300,6 +300,7 @@ pub(crate) fn read(tags: &[Tag]) -> MLeader {
             _ => p.text_rotation.unwrap_or(0.0),
         };
         MText {
+            defined_height: Default::default(),
             insert: text_location.unwrap_or(landing),
             height: pos(p.text_height).unwrap_or(def.text_height),
             width: p.text_width.unwrap_or(0.0).max(0.0),

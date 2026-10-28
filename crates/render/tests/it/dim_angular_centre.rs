@@ -7,6 +7,9 @@ use cadcraft_render::{LineRole, dimension_geometry};
 
 fn dim(kind: DimKind) -> Dimension {
     Dimension {
+        flag_73: Default::default(),
+        flip_arrows: Default::default(),
+        attachment: Default::default(),
         kind,
         defpt: Vec3::ZERO,
         text_mid: Vec3::ZERO,

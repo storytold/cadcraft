@@ -8,6 +8,9 @@ use cadcraft_io::{read_dxf, write_dxf};
 
 fn dim(kind: DimKind, marks: DimMarks) -> EntityKind {
     EntityKind::Dimension(Dimension {
+        flag_73: Default::default(),
+        flip_arrows: Default::default(),
+        attachment: Default::default(),
         kind,
         defpt: Vec3::new(0.0, 3.0, 0.0),
         text_mid: Vec3::ZERO,

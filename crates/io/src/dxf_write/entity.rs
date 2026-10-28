@@ -3,7 +3,8 @@ use super::common::{attrib_common, common, common_x, dim_xdata, layer_and_props,
 use super::ctx::Ctx;
 use super::layout::paper_view;
 use super::{
-    Bounds2, Color, DimKind, Drawing, Entity, EntityKind, Gradient, Handle, HashMap, Hatch, Leader, MLeader, Point, Vec2, Vec3, Version, W, dxf_ext,
+    Bounds2, Color, DimKind, Dimension, Drawing, Entity, EntityKind, Gradient, Handle, HashMap, Hatch, Leader, MLeader, Point, Vec2, Vec3, Version,
+    W, dxf_ext,
 };
 
 /// The persistent reactors of boundary objects: each source object of an associative hatch in
@@ -255,6 +256,10 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
             w.p(10, t.insert);
             w.f(40, t.height);
             w.f(41, t.width);
+            // Defined annotation height (DXF 2010 and later).
+            if cx.target >= Version::R2010 {
+                w.f(46, if t.defined_height.is_finite() { t.defined_height.max(0.0) } else { 0.0 });
+            }
             w.i(71, i64::from(t.attach));
             w.i(72, 1);
             // Long contents go in 250-char 3-chunks, the remainder in 1.
@@ -267,7 +272,10 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
             if n == 0 {
                 w.s(1, "");
             }
-            w.s(7, &t.style);
+            // The DXF default style is STANDARD: written only when it is another (as AutoCAD does).
+            if !t.style.trim().eq_ignore_ascii_case("Standard") {
+                w.s(7, &t.style);
+            }
             if t.rotation != 0.0 {
                 w.f(50, t.rotation.to_degrees());
             }
@@ -328,10 +336,24 @@ fn write_insert_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: b
     }
 }
 
+/// The flag before the arrowhead flips (73), and the flips (74, 75): written from 2007, and
+/// before when the dimension has them.
+fn arrow_flips(w: &mut W, dm: &Dimension, cx: &Ctx) {
+    if cx.target >= Version::R2007 || dm.flag_73 || dm.flip_arrows.iter().any(|f| *f) {
+        w.i(73, i64::from(dm.flag_73));
+        w.i(74, i64::from(dm.flip_arrows[0]));
+        w.i(75, i64::from(dm.flip_arrows[1]));
+    }
+}
+
 fn write_dimension_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {
     if let EntityKind::Dimension(dm) = &e.kind {
         w.s(0, "DIMENSION");
         common_x(w, e, owner, paper, "AcDbDimension", cx.assoc.get(&e.handle));
+        // The subclass's version (DXF 2010 and later).
+        if cx.target >= Version::R2010 {
+            w.i(280, 0);
+        }
         let bname = cx.dim_blocks.get(&e.handle).cloned().or_else(|| dm.block.clone()).unwrap_or_default();
         w.s(2, bname);
         w.p(10, dm.defpt);
@@ -350,8 +372,12 @@ fn write_dimension_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper
             DimKind::ArcLength => 1,
         };
         w.i(70, ty | 32 | if dm.user_text_pos { 128 } else { 0 });
+        if dm.attachment != 0 {
+            w.i(71, i64::from(dm.attachment));
+        }
         // The actual measurement (read-only in DXF): AutoLISP's entget shows it.
         w.f(42, g.measurement);
+        arrow_flips(w, dm, cx);
         if !dm.text.is_empty() {
             w.s(1, &dm.text);
         }
@@ -364,7 +390,10 @@ fn write_dimension_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper
                 w.s(100, "AcDbAlignedDimension");
                 w.p(13, dm.p13);
                 w.p(14, dm.p14);
-                w.f(50, rotation.to_degrees());
+                // 0 is the default (a horizontal dimension), left out as AutoCAD does.
+                if rotation != 0.0 {
+                    w.f(50, rotation.to_degrees());
+                }
                 oblique_52(w, dm, rotation);
                 w.s(100, "AcDbRotatedDimension");
             }

@@ -35,6 +35,7 @@ fn mleader_drawing() -> (Drawing, MLeader) {
         landing: Vec3::new(5.0, 4.0, 0.0),
         dogleg: 0.75,
         text: Some(MText {
+            defined_height: Default::default(),
             insert: Vec3::new(5.9, 4.0, 0.0),
             height: 0.4,
             width: 6.0,

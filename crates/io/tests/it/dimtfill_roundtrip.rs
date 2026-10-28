@@ -158,6 +158,9 @@ fn reopened_inspection_frame_stays_over_the_background() {
 /// A linear dimension from (0, 0) to (10, 0) with its line at y = 5.
 fn linear() -> Dimension {
     Dimension {
+        attachment: Default::default(),
+        flag_73: Default::default(),
+        flip_arrows: Default::default(),
         kind: DimKind::Linear { rotation: 0.0 },
         defpt: Vec3::new(0.0, 5.0, 0.0),
         text_mid: Vec3::ZERO,

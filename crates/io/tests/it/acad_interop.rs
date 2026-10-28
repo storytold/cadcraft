@@ -82,6 +82,9 @@ fn s25(kind: DimKind, p13: Vec3, p14: Vec3, defpt: Vec3) -> Drawing {
     });
     d.header.set_str("DIMSTYLE", "S25");
     let dm = Dimension {
+        flag_73: Default::default(),
+        flip_arrows: Default::default(),
+        attachment: Default::default(),
         kind,
         defpt,
         text_mid: Vec3::ZERO,

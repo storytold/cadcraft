@@ -9,8 +9,8 @@ use std::collections::HashMap;
 
 use cadcraft_color::Color;
 use cadcraft_doc::{
-    Drawing, Entity, EntityKind, EntityStore, MAX_MLINE_CUTS, MAX_MLINE_ELEMENTS, MAX_MLINE_VERTICES, MLine, MLineCaps, MLineCut, MLineElement,
-    MLineJust, MLineStyle, MLineVertex, STANDARD_MLINE_STYLE,
+    Drawing, Entity, EntityKind, EntityStore, Handle, MAX_MLINE_CUTS, MAX_MLINE_ELEMENTS, MAX_MLINE_VERTICES, MLine, MLineCaps, MLineCut,
+    MLineElement, MLineJust, MLineStyle, MLineVertex, STANDARD_MLINE_STYLE,
 };
 use cadcraft_dxf::{Section, Tag};
 use cadcraft_geom::{Vec2, Vec3};
@@ -339,8 +339,9 @@ pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
         each_record(&s.tags, |kind, tags| {
             if kind == "MLINESTYLE"
                 && styles.len() < MAX_STYLES
-                && let Some(st) = read_style(tags)
+                && let Some(mut st) = read_style(tags)
             {
+                st.handle = tags.iter().find(|t| t.code == 5).and_then(|t| Handle::parse_hex(&t.str())).unwrap_or_default().into();
                 styles.push(st);
             }
         });
@@ -395,7 +396,12 @@ impl Plan {
 }
 
 /// The drawing's multiline styles, STANDARD and the style of every multiline in `every`.
-pub(crate) fn plan<'a>(d: &Drawing, every: impl Iterator<Item = &'a Entity>, mut new_handle: impl FnMut() -> String) -> Plan {
+/// `new_handle(kept, role)` gives each object a handle: its own if it has one, else its role's.
+pub(crate) fn plan<'a>(
+    d: &Drawing,
+    every: impl Iterator<Item = &'a Entity>,
+    mut new_handle: impl FnMut(cadcraft_doc::KeptHandle, (&str, &str)) -> String,
+) -> Plan {
     let mut list: Vec<MLineStyle> = d.mline_styles.clone();
     if !list.iter().any(|s| s.name.eq_ignore_ascii_case(STANDARD_MLINE_STYLE)) {
         list.insert(0, MLineStyle::default());
@@ -407,13 +413,30 @@ pub(crate) fn plan<'a>(d: &Drawing, every: impl Iterator<Item = &'a Entity>, mut
             list.push(MLineStyle { name: m.style.trim().to_string(), ..m.def.clone() });
         }
     }
-    let dict = new_handle();
-    Plan { dict, styles: list.into_iter().filter(|s| !s.name.trim().is_empty()).map(|s| (s, new_handle())).collect() }
+    let dict = new_handle(cadcraft_doc::KeptHandle::default(), ("NOD", "ACAD_MLINESTYLE"));
+    let styles = list
+        .into_iter()
+        .filter(|s| !s.name.trim().is_empty())
+        .map(|s| {
+            let h = new_handle(s.handle, ("NOD/ACAD_MLINESTYLE", s.name.trim()));
+            (s, h)
+        })
+        .collect();
+    Plan { dict, styles }
 }
 
 /// The `ACAD_MLINESTYLE` dictionary (owned by the root dictionary `root`) and its styles.
 pub(crate) fn objects(plan: &Plan, root: &str) -> Vec<Tag> {
-    let mut t = vec![Tag::s(0, "DICTIONARY"), Tag::s(5, plan.dict.clone()), Tag::s(330, root), Tag::s(100, "AcDbDictionary"), Tag::i(281, 1)];
+    let mut t = vec![
+        Tag::s(0, "DICTIONARY"),
+        Tag::s(5, plan.dict.clone()),
+        Tag::s(102, "{ACAD_REACTORS"),
+        Tag::s(330, root),
+        Tag::s(102, "}"),
+        Tag::s(330, root),
+        Tag::s(100, "AcDbDictionary"),
+        Tag::i(281, 1),
+    ];
     for (s, h) in &plan.styles {
         t.push(Tag::s(3, s.name.trim()));
         t.push(Tag::s(350, h.clone()));

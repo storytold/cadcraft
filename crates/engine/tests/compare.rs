@@ -192,6 +192,9 @@ fn hostile_inputs_are_errors() {
 fn derived_dimension_fields_are_not_differences() {
     use cadcraft_engine::doc::{DimKind, Dimension};
     let dim = |measurement: f64, text_x: f64| Dimension {
+        flag_73: Default::default(),
+        flip_arrows: Default::default(),
+        attachment: Default::default(),
         kind: DimKind::Linear { rotation: 0.0 },
         defpt: Vec3::new(15.0, 5.0, 0.0),
         text_mid: Vec3::new(text_x, 5.0, 0.0),

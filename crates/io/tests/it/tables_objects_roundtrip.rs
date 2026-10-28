@@ -15,6 +15,7 @@ fn linetype_text_and_shape_elements_round_trip() {
     let fence = library::standard_linetypes().into_iter().find(|l| l.name == "FENCELINE1").expect("FENCELINE1");
     d.linetypes.push(fence.clone());
     let gas = Linetype {
+        handle: Default::default(),
         name: "GAS".into(),
         description: "Gas line ----GAS----".into(),
         pattern: vec![
@@ -31,6 +32,7 @@ fn linetype_text_and_shape_elements_round_trip() {
     };
     // A shape from a shape file (not a text style), with an absolute rotation.
     let shape = Linetype {
+        handle: Default::default(),
         name: "BATTING".into(),
         description: String::new(),
         pattern: vec![
@@ -63,6 +65,8 @@ fn multileader_styles_and_current_style_round_trip() {
     let mut d = Drawing::new_imperial();
     d.text_styles.push(TextStyle { name: "Slanted".into(), oblique: 0.2, ..TextStyle::default() });
     let callout = MLeaderStyle {
+        props: Default::default(),
+        handle: Default::default(),
         name: "Callout".into(),
         arrow_size: 2.0,
         text_height: 3.0,
@@ -118,11 +122,17 @@ fn named_views_ucss_and_groups_round_trip() {
         layer_state: Some("Plan".into()),
         ..Default::default()
     });
-    d.ucss.push(Ucs { name: "Tilted".into(), origin: Vec3::new(1.0, 2.0, 0.0), x_axis: Vec3::new(0.6, 0.8, 0.0), y_axis: Vec3::new(-0.8, 0.6, 0.0) });
-    d.groups.push(Group { name: "G1".into(), description: "grp".into(), selectable: false, members: vec![line] });
+    d.ucss.push(Ucs {
+        handle: Default::default(),
+        name: "Tilted".into(),
+        origin: Vec3::new(1.0, 2.0, 0.0),
+        x_axis: Vec3::new(0.6, 0.8, 0.0),
+        y_axis: Vec3::new(-0.8, 0.6, 0.0),
+    });
+    d.groups.push(Group { handle: Default::default(), name: "G1".into(), description: "grp".into(), selectable: false, members: vec![line] });
     // A member that no longer exists is not written.
     let gone = d.new_handle();
-    d.groups.push(Group { name: "*A1".into(), description: String::new(), selectable: true, members: vec![line, gone] });
+    d.groups.push(Group { handle: Default::default(), name: "*A1".into(), description: String::new(), selectable: true, members: vec![line, gone] });
     let r = round_trip(&d);
     assert_eq!(r.views, d.views);
     assert_eq!(r.ucss, d.ucss);

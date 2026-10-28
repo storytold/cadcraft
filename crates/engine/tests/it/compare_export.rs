@@ -298,6 +298,9 @@ fn a_named_block_whose_dimension_draws_another_block_shows_the_other_definition(
     // PART holds a dimension with the same parameters in both drawings; the block it draws, `*D1`,
     // holds a line of another length in the other drawing.
     let dim = Dimension {
+        attachment: Default::default(),
+        flag_73: Default::default(),
+        flip_arrows: Default::default(),
         kind: DimKind::Linear { rotation: 0.0 },
         defpt: Vec3::new(15.0, 5.0, 0.0),
         text_mid: Vec3::new(7.0, 5.0, 0.0),
@@ -384,6 +387,9 @@ fn a_named_block_whose_dimension_block_has_another_generated_name_keeps_this_dra
     // is named `*D1` here and `*D3` in the other drawing.
     let blocks = |drawn_name: &str, first: u64| {
         let dim = Dimension {
+            attachment: Default::default(),
+            flag_73: Default::default(),
+            flip_arrows: Default::default(),
             kind: DimKind::Linear { rotation: 0.0 },
             defpt: Vec3::new(15.0, 5.0, 0.0),
             text_mid: Vec3::new(7.0, 5.0, 0.0),
@@ -498,6 +504,9 @@ fn a_dimension_block_copy_keeps_its_geometry_when_the_snapshot_is_saved() {
     use cadcraft_engine::doc::{DimKind, Dimension};
     // The dimension's block holds a line its parameters would not draw: a block read from a file.
     let dim = Dimension {
+        attachment: Default::default(),
+        flag_73: Default::default(),
+        flip_arrows: Default::default(),
         kind: DimKind::Linear { rotation: 0.0 },
         defpt: Vec3::new(15.0, 5.0, 0.0),
         text_mid: Vec3::new(7.0, 5.0, 0.0),
@@ -817,6 +826,9 @@ fn a_dimension_whose_block_is_past_the_nesting_limit_is_drawn_again() {
     drawn.entities.push(Entity::new(Handle(0x600), line(30.0)));
     d.blocks.insert("*D1".into(), Arc::new(drawn));
     let dim = Dimension {
+        attachment: Default::default(),
+        flag_73: Default::default(),
+        flip_arrows: Default::default(),
         kind: DimKind::Linear { rotation: 0.0 },
         defpt: Vec3::new(15.0, 5.0, 0.0),
         text_mid: Vec3::new(7.0, 5.0, 0.0),

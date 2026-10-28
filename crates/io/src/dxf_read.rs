@@ -44,7 +44,7 @@ struct Rx {
     /// LTYPE record handle (upper case) → linetype name (DIMLTYPE, DIMLTEX1, DIMLTEX2).
     ltypes: HashMap<String, String>,
     /// Upper-case block name → (insertion units, explodable) from its BLOCK_RECORD.
-    block_props: HashMap<String, (u8, bool)>,
+    block_props: HashMap<String, (u8, bool, bool)>,
     /// Upper-case names of anonymous `*T` blocks drawn by ACAD_TABLE entities.
     table_blocks: std::collections::HashSet<String>,
     /// Upper-case block names used by INSERTs.
@@ -69,11 +69,12 @@ pub fn read(bytes: &[u8]) -> Result<Drawing> {
 }
 
 /// A block definition read from BLOCKS: name, base point, description, entities (owner, paper
-/// flag, entity) and block flags.
-type BlockDef = (String, Vec3, String, Vec<(Option<String>, bool, Entity)>, i64);
+/// flag, entity), block flags, and the handles of its BLOCK and ENDBLK records.
+type BlockDef = (String, Vec3, String, Vec<(Option<String>, bool, Entity)>, i64, (cadcraft_doc::KeptHandle, cadcraft_doc::KeptHandle));
 
-/// A layout read from OBJECTS: name, tab order, paper block handle and page setup.
-type LayoutDef = (String, u32, String, PageSetup);
+/// A layout read from OBJECTS: name, tab order, paper block handle, page setup, the LAYOUT's own
+/// handle and its layout data.
+type LayoutDef = (String, u32, String, PageSetup, cadcraft_doc::KeptHandle, cadcraft_doc::LayoutRecord);
 
 /// Import DXF sections while sharing one materialized-table-cell budget across blocks and entity sections.
 fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
@@ -138,6 +139,10 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
         d.layers.insert(0, Layer::default());
     }
     crate::dxf_raw::read(&secs, &mut d);
+    // New objects never take a handle kept for a table, block, layout, style or kept object.
+    if let Some(top) = d.kept_handles().into_iter().max() {
+        d.bump_handseed(Handle(top));
+    }
     d.skipped_records = skipped;
     Ok(d)
 }

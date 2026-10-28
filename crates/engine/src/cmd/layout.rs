@@ -313,7 +313,18 @@ fn run_copy(s: &mut Session, p: &Value) -> Result<Value> {
         let h = d.new_handle();
         store.push(Entity { handle: h, ..Entity::clone(e) });
     }
-    d.layouts.push(Layout { name: to.clone(), tab_order: order, page: src.page, entities: store, view: src.view });
+    d.layouts.push(Layout {
+        record: Default::default(),
+        handle: Default::default(),
+        begin_handle: Default::default(),
+        block_handle: Default::default(),
+        end_handle: Default::default(),
+        name: to.clone(),
+        tab_order: order,
+        page: src.page,
+        entities: store,
+        view: src.view,
+    });
     Ok(json!({ "name": to }))
 }
 

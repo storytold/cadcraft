@@ -75,6 +75,11 @@ pub struct Foreign {
     /// surfaces, which from 2013 on those entities don't carry themselves: each `ACDSRECORD`
     /// names its entity with a 320 handle (see [`Foreign::data_store_entities`]).
     pub data_store: Vec<RawTag>,
+    /// The handle each role had in the file: every table and its records,
+    /// blocks with their BLOCK and ENDBLK, the named object dictionary, its entries and their
+    /// entries (`("NOD/ACAD_LAYOUT", "LAYOUT1")`). The writer gives the object that now has the
+    /// role the same handle, unless the model holds one for it ([`crate::Layer::handle`]…).
+    pub handles: BTreeMap<ForeignKey, Handle>,
 }
 
 impl Foreign {
@@ -87,6 +92,7 @@ impl Foreign {
             && self.targets.is_empty()
             && self.class_order.is_empty()
             && self.data_store.is_empty()
+            && self.handles.is_empty()
     }
 
     /// The entities the data store has records for (their 320 handles).

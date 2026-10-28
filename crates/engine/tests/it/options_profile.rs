@@ -180,7 +180,13 @@ fn preview_filter_excludes_each_kind_it_names() {
         l.locked = true;
     }
     d.model.modify(line.handle, |e| e.common.layer = "LOCKED".into());
-    d.groups.push(cadcraft_engine::doc::Group { name: "G".into(), description: String::new(), selectable: true, members: vec![mtext.handle] });
+    d.groups.push(cadcraft_engine::doc::Group {
+        handle: Default::default(),
+        name: "G".into(),
+        description: String::new(),
+        selectable: true,
+        members: vec![mtext.handle],
+    });
     let d = s.doc().unwrap();
     let line = d.entity(line.handle).unwrap();
     assert!(preview_filtered(d, line, 1) && !preview_filtered(d, line, 62));

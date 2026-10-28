@@ -31,6 +31,7 @@ pub fn standard_linetypes() -> Vec<Linetype> {
         s("PHANTOM", "Phantom ______  __  __  ______", &[1.25, -0.25, 0.25, -0.25, 0.25, -0.25]),
         s("PHANTOM2", "Phantom (.5x) ___ _ _ ___", &[0.625, -0.125, 0.125, -0.125, 0.125, -0.125]),
         Linetype {
+            handle: Default::default(),
             name: "FENCELINE1".into(),
             description: "Fenceline circle ----0-----0----".into(),
             pattern: vec![

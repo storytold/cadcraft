@@ -12,6 +12,7 @@ use cadcraft_io::{read_dxf, write_dxf};
 fn with_embedded_object(rotation: f64, dir: (f64, f64)) -> String {
     let mut d = Drawing::new_metric();
     let t = MText {
+        defined_height: Default::default(),
         insert: Vec3::new(30.0, 17.0, 0.0),
         height: 0.5,
         width: 6.0,

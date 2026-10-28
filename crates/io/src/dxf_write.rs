@@ -3,7 +3,7 @@
 //! `$ACADVER`, from 2004 in the newer DIMSTYLE groups, and from 2007 in UTF-8 text (the caller
 //! picks the text encoding) and MULTILEADER entities (older files get LEADER + MTEXT).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use cadcraft_color::Color;
 use cadcraft_doc::{
@@ -45,9 +45,29 @@ struct W {
     /// Persistent reactors of boundary objects: each source object of an associative hatch →
     /// the hatches (groups `{ACAD_REACTORS 330 …}`), from [`hatch_reactors`].
     reactors: HashMap<Handle, Vec<String>>,
+    /// Handles already given in the file being written (entities' own, and every one handed out).
+    used: HashSet<u64>,
+    /// Handles kept from the file the drawing was read from: new handles
+    /// skip them, so each goes back to the object that had it.
+    reserved: HashSet<u64>,
+    /// Role → the handle it had when read ([`cadcraft_doc::foreign::Foreign::handles`]).
+    roles: HashMap<(String, String), Handle>,
 }
 
 impl W {
+    /// A writer for groups only: no handles are kept or reserved.
+    fn scratch(next: u64) -> W {
+        W {
+            t: Vec::new(),
+            next,
+            pstyles: HashMap::new(),
+            layers: HashMap::new(),
+            reactors: HashMap::new(),
+            used: HashSet::new(),
+            reserved: HashSet::new(),
+            roles: HashMap::new(),
+        }
+    }
     fn s(&mut self, c: i32, v: impl Into<String>) {
         self.t.push(Tag::s(c, v));
     }
@@ -66,10 +86,29 @@ impl W {
         self.f(c, p.x);
         self.f(c + 10, p.y);
     }
+    /// A new handle, never one that is used or kept for another object.
     fn h(&mut self) -> String {
-        let h = format!("{:X}", self.next);
+        // A hostile file can put handles at the top of the range: past it, look for a free one
+        // from the bottom. Among `taken + 1` values one is free, so this ends.
+        while self.next == 0 || self.next == u64::MAX || self.used.contains(&self.next) || self.reserved.contains(&self.next) {
+            self.next = if self.next >= u64::MAX - 1 { 1 } else { self.next + 1 };
+        }
+        let n = self.next;
+        self.used.insert(n);
         self.next = self.next.saturating_add(1);
-        h
+        format!("{n:X}")
+    }
+    /// The handle `kept` (an object's own, else the one its role had when read), if it is set
+    /// and not given yet; otherwise a new one.
+    fn keep(&mut self, kept: impl Into<Handle>, role: (&str, &str)) -> String {
+        let kept: Handle = kept.into();
+        let role_handle = || self.roles.get(&(role.0.to_string(), role.1.to_ascii_uppercase())).copied();
+        let h = if kept.is_none() { role_handle().unwrap_or(Handle(0)) } else { kept };
+        if !h.is_none() && !self.used.contains(&h.0) {
+            self.used.insert(h.0);
+            return h.hex();
+        }
+        self.h()
     }
     /// A `102 {NAME` … `102 }` group of handles.
     fn group(&mut self, name: &str, code: i32, handles: &[&str]) {
@@ -139,13 +178,7 @@ fn bridge_markers(tags: &mut [Tag]) {
 /// VERTEXes, gives its first). Handles of objects outside the entity (owner, styles) are left
 /// out. AutoLISP's `entget` is built on it.
 pub fn entity_groups(d: &Drawing, e: &Entity) -> (String, Vec<Tag>) {
-    let mut w = W {
-        t: Vec::new(),
-        next: d.handseed.max(0x100).saturating_add(0x1000),
-        pstyles: HashMap::new(),
-        layers: HashMap::new(),
-        reactors: HashMap::new(),
-    };
+    let mut w = W::scratch(d.handseed.max(0x100).saturating_add(0x1000));
     let cx = Ctx { target: Version::R2018, ..Ctx::default() };
     let paper = d.space_of(e.handle).is_some_and(|s| !matches!(s, cadcraft_doc::Space::Model));
     entity(&mut w, d, e, "0", paper, &cx);

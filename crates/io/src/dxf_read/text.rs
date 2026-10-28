@@ -73,6 +73,7 @@ pub(super) fn mtext_from(tags: &[Tag], c: &Common) -> MText {
     MText {
         insert: t.p(10),
         height: t.fd(40, 0.2).max(1e-9),
+        defined_height: own.f(46).filter(|h| h.is_finite() && *h >= 0.0).unwrap_or(0.0),
         width: match &columns {
             Some((_, w)) if t.fd(41, 0.0) <= 0.0 => *w,
             _ => t.fd(41, 0.0).max(0.0),

@@ -8,7 +8,9 @@
 //! row and cell styles and the formulas go into CADCraft xdata (`TABLEX`, JSON).
 
 use cadcraft_color::Color;
-use cadcraft_doc::{CellBorder, CellStyle, DataLink, Lineweight, MAX_CELL_STYLES, MAX_TABLE_PARTS, Table, TableBreak, TableStyle};
+use cadcraft_doc::{
+    CellBorder, CellStyle, DataLink, Lineweight, MAX_CELL_STYLES, MAX_TABLE_PARTS, Table, TableBreak, TableCellData, TableStyle, TableStyleProps,
+};
 use cadcraft_dxf::Tag;
 use serde::{Deserialize, Serialize};
 
@@ -87,6 +89,9 @@ pub(crate) fn read_table_style(name: &str, tags: &[Tag]) -> TableStyle {
     let body = body.get(..body.iter().position(|t| t.code >= 1000).unwrap_or(body.len())).unwrap_or(&[]);
     let head_end = body.iter().position(|t| t.code == 7).unwrap_or(body.len());
     let head = body.get(..head_end).unwrap_or(&[]);
+    // The version group 280 comes before the description (3); the title and header switches after.
+    let desc_at = head.iter().position(|t| t.code == 3).unwrap_or(0);
+    let own = head.get(desc_at..).unwrap_or(&[]);
     // Each cell type starts at a code 7 group.
     let mut blocks: Vec<&[Tag]> = Vec::new();
     let mut i = head_end;
@@ -97,12 +102,30 @@ pub(crate) fn read_table_style(name: &str, tags: &[Tag]) -> TableStyle {
     }
     let data_h = blocks.first().and_then(|b| first(140, b)).filter(|h| *h > 0.0);
     let mut st = TableStyle {
+        props: Default::default(),
+        handle: Default::default(),
         name: name.to_string(),
         text_height: data_h.unwrap_or(def.text_height),
         margin: first(40, head).filter(|m| *m >= 0.0).unwrap_or(def.margin),
-        title: head.iter().find(|t| t.code == 280).map(Tag::i64).unwrap_or(0) == 0,
-        header: head.iter().find(|t| t.code == 281).map(Tag::i64).unwrap_or(0) == 0,
+        title: own.iter().find(|t| t.code == 280).map(Tag::i64).unwrap_or(0) == 0,
+        header: own.iter().find(|t| t.code == 281).map(Tag::i64).unwrap_or(0) == 0,
         cell_styles: Vec::new(),
+    };
+    st.props = TableStyleProps {
+        version: head.get(..desc_at).and_then(|h| h.iter().find(|t| t.code == 280)).and_then(|t| i16::try_from(t.i64()).ok()),
+        description: head.iter().find(|t| t.code == 3).map(Tag::str).unwrap_or_default(),
+        flow_up: head.iter().find(|t| t.code == 70).is_some_and(|t| t.i64() != 0),
+        flags: head.iter().find(|t| t.code == 71).and_then(|t| i16::try_from(t.i64()).ok()).unwrap_or(0),
+        cells: std::array::from_fn(|i| {
+            let b = blocks.get(i).copied().unwrap_or(&[]);
+            let n = |c: i32, d: i32| b.iter().find(|t| t.code == c).and_then(|t| i32::try_from(t.i64()).ok()).unwrap_or(d);
+            let def = TableCellData::default();
+            TableCellData {
+                data_type: n(90, def.data_type),
+                unit_type: n(91, def.unit_type),
+                format: b.iter().find(|t| t.code == 1).map(Tag::str).unwrap_or_default(),
+            }
+        }),
     };
     let margin_v = first(41, head).filter(|m| *m >= 0.0);
     for (kind, block) in CELL_TYPES.iter().zip(&blocks) {
@@ -153,7 +176,7 @@ pub(crate) fn read_table_style(name: &str, tags: &[Tag]) -> TableStyle {
 }
 
 /// The groups of one documented cell type of a TABLESTYLE, in file order.
-pub(crate) fn cell_type_tags(cs: &CellStyle, text_style: &str) -> Vec<Tag> {
+pub(crate) fn cell_type_tags(cs: &CellStyle, text_style: &str, data: &TableCellData) -> Vec<Tag> {
     let mut out = vec![
         Tag::s(7, text_style),
         Tag::f(140, cs.text_height),
@@ -161,6 +184,9 @@ pub(crate) fn cell_type_tags(cs: &CellStyle, text_style: &str) -> Vec<Tag> {
         Tag::i(62, i64::from(cs.text_color.to_aci())),
         Tag::i(63, i64::from(cs.fill.unwrap_or(Color::Index(7)).to_aci())),
         Tag::i(283, i64::from(cs.fill.is_some())),
+        Tag::i(90, i64::from(data.data_type)),
+        Tag::i(91, i64::from(data.unit_type)),
+        Tag::s(1, data.format.clone()),
     ];
     let b: [CellBorder; 6] = cs.borders.as_array();
     out.extend(b.iter().enumerate().map(|(k, x)| Tag::i(274 + k as i32, i64::from(x.lineweight.to_dxf()))));

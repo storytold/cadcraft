@@ -1,4 +1,5 @@
 use super::common::T;
+use super::tables::{ffin, n16};
 use super::{Arc, AssocSnap, Circle, DimAssoc, DimKind, Dimension, Drawing, EntityKind, Handle, Tag, Vec2, Vec3};
 
 /// Associativity from a DIMASSOC object (files from other writers). The dimension kind decides
@@ -50,7 +51,17 @@ pub(super) fn dimassoc(d: &mut Drawing, tags: &[Tag]) {
         // A polyline's segment (subentity type 73 = 2, edge; 91 its 1-based index).
         let segment = r.i(91).filter(|k| *k >= 1 && r.i(73) == Some(2));
         if let Some(snap) = infer_snap(d, r.i(72).unwrap_or(0), main, other, at, segment) {
-            links.push(DimAssoc { point: (*point).to_string(), handle: main, snap });
+            let read = cadcraft_doc::OsnapRead {
+                handle: main,
+                snap: Some(snap.clone()),
+                osnap: n16(&r, 72, 0),
+                subent: n16(&r, 73, 0),
+                gs_marker: r.i(91).unwrap_or(0),
+                xref: r.s(301),
+                param: ffin(&r, 40, 0.0),
+                other: other.unwrap_or_default(),
+            };
+            links.push(DimAssoc { read: cadcraft_doc::AsRead::new(read), point: (*point).to_string(), handle: main, snap });
         }
     }
     if !links.is_empty() {
@@ -77,10 +88,12 @@ fn radial_links(d: &Drawing, dm: &Dimension, tail: &[Tag]) -> Vec<DimAssoc> {
         let Some(centre) = circle_centre(d, handle) else { continue };
         let on = |point: &str, p: Vec3| {
             let angle = centre.angle_to(p.xy());
-            angle.is_finite().then(|| DimAssoc { point: point.into(), handle, snap: AssocSnap::OnCircle { angle } })
+            angle.is_finite().then(|| DimAssoc { read: Default::default(), point: point.into(), handle, snap: AssocSnap::OnCircle { angle } })
         };
         let links = match dm.kind {
-            DimKind::Radius => on("p15", dm.p15).map(|p15| vec![DimAssoc { point: "defpt".into(), handle, snap: AssocSnap::Center }, p15]),
+            DimKind::Radius => {
+                on("p15", dm.p15).map(|p15| vec![DimAssoc { read: Default::default(), point: "defpt".into(), handle, snap: AssocSnap::Center }, p15])
+            }
             DimKind::Diameter => [on("defpt", dm.defpt), on("p15", dm.p15)].into_iter().collect::<Option<Vec<_>>>(),
             _ => None,
         };

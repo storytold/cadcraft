@@ -79,6 +79,7 @@ impl MTextOpts {
             (None, w) => (first, w.unwrap_or(0.0)),
         };
         MText {
+            defined_height: Default::default(),
             insert: Vec3::new(insert.x, insert.y, 0.0),
             height: self.height,
             width,

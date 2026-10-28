@@ -20,6 +20,7 @@ fn mlines(d: &Drawing) -> Vec<MLine> {
 
 fn wall() -> MLineStyle {
     MLineStyle {
+        handle: Default::default(),
         name: "Wall".into(),
         description: "outer wall".into(),
         elements: vec![

@@ -24,6 +24,7 @@ fn session() -> Session {
         valign: Default::default(),
     };
     let mtext = MText {
+        defined_height: Default::default(),
         insert: Vec3::new(10.0, 3.0, 0.0),
         height: 2.0,
         width: 0.0,

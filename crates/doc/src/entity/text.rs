@@ -61,6 +61,10 @@ impl Text {
 pub struct MText {
     pub insert: Vec3,
     pub height: f64,
+    /// The defined annotation height (DXF group 46, AutoCAD 2011 and later): the height of the
+    /// text frame when it was set by hand, 0 when it follows the text.
+    #[serde(default)]
+    pub defined_height: f64,
     /// Reference rectangle width (0 = no wrapping).
     #[serde(default)]
     pub width: f64,

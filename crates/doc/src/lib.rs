@@ -16,6 +16,7 @@ mod header;
 pub mod library;
 mod plotstyle;
 mod plotter;
+mod records;
 mod refedit;
 mod store;
 mod tables;
@@ -30,9 +31,10 @@ pub use entity::*;
 pub use extents::{MAX_BLOCK_DEPTH, entity_bounds};
 pub use format::Format;
 pub use gdt::*;
-pub use header::{HVal, Header};
+pub use header::{HVal, Header, POINT_2D, POINT_3D};
 pub use plotstyle::*;
 pub use plotter::*;
+pub use records::*;
 pub use refedit::{RefEdit, WorkItem};
 pub use store::EntityStore;
 pub use tables::*;
@@ -118,6 +120,15 @@ pub struct Drawing {
     pub parametric: Parametric,
     /// The annotation scale list (SCALELISTEDIT).
     pub scales: Vec<AnnoScale>,
+    /// Registered applications (the APPID table) as the file had them; the ones whose extended
+    /// data the drawing carries are added when it is written.
+    pub appids: Vec<AppId>,
+    /// The Model layout object's page setup and layout data, when a file had them (model space's
+    /// entities are [`Drawing::model`]).
+    pub model_layout: Option<Box<Layout>>,
+    /// The one `*Active` model space viewport a file held (no tiling): its handle, window shape
+    /// and view settings. The view itself is the editor's, so only these are kept.
+    pub active_vport: Option<Box<VportTile>>,
     /// Next free handle.
     pub handseed: u64,
     /// Objects hidden for this session by ISOLATEOBJECTS / HIDEOBJECTS. Never written to a file:
@@ -164,8 +175,8 @@ impl Drawing {
             foreign: std::sync::Arc::default(),
             layers: vec![Layer::default(), Layer { name: "Defpoints".into(), plot: false, ..Layer::default() }],
             linetypes: vec![
-                Linetype { name: "ByBlock".into(), description: String::new(), pattern: Vec::new() },
-                Linetype { name: "ByLayer".into(), description: String::new(), pattern: Vec::new() },
+                Linetype { handle: Default::default(), name: "ByBlock".into(), description: String::new(), pattern: Vec::new() },
+                Linetype { handle: Default::default(), name: "ByLayer".into(), description: String::new(), pattern: Vec::new() },
                 Linetype::continuous(),
             ],
             text_styles: vec![TextStyle::default()],
@@ -186,6 +197,9 @@ impl Drawing {
             constraints: Vec::new(),
             parametric: Parametric::default(),
             scales: imperial_scales(),
+            appids: Vec::new(),
+            model_layout: None,
+            active_vport: None,
             handseed: 0x100,
             hidden_objects: BTreeSet::new(),
             read_notes: Vec::new(),
@@ -201,6 +215,29 @@ impl Drawing {
         h
     }
     /// Make sure future handles don't collide with `h` (after loading a file).
+    /// Every handle the drawing keeps for its tables, blocks, layouts, styles and kept objects:
+    /// written back to the same objects.
+    pub fn kept_handles(&self) -> std::collections::HashSet<u64> {
+        let mut out: std::collections::HashSet<u64> = self.foreign.handles.values().map(|h| h.0).collect();
+        out.extend(self.foreign.objects.iter().map(|o| o.handle.0));
+        out.extend(self.layers.iter().map(|x| x.handle.0.0));
+        out.extend(self.linetypes.iter().map(|x| x.handle.0.0));
+        out.extend(self.text_styles.iter().map(|x| x.handle.0.0));
+        out.extend(self.dim_styles.iter().map(|x| x.handle.0.0));
+        out.extend(self.mleader_styles.iter().map(|x| x.handle.0.0));
+        out.extend(self.table_styles.iter().map(|x| x.handle.0.0));
+        out.extend(self.mline_styles.iter().map(|x| x.handle.0.0));
+        out.extend(self.views.iter().map(|x| x.handle.0.0));
+        out.extend(self.ucss.iter().map(|x| x.handle.0.0));
+        out.extend(self.groups.iter().map(|x| x.handle.0.0));
+        out.extend(self.scales.iter().map(|x| x.handle.0.0));
+        out.extend(self.vports.iter().flat_map(|v| v.tiles.iter().map(|t| t.handle.0.0)));
+        out.extend(self.blocks.values().flat_map(|b| [b.handle.0.0, b.begin_handle.0.0, b.end_handle.0.0]));
+        out.extend(self.layouts.iter().flat_map(|l| [l.handle.0.0, l.block_handle.0.0, l.begin_handle.0.0, l.end_handle.0.0]));
+        out.remove(&0);
+        out
+    }
+
     pub fn bump_handseed(&mut self, h: Handle) {
         if h.0 >= self.handseed {
             self.handseed = h.0.saturating_add(1);

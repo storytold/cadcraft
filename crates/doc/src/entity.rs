@@ -46,7 +46,7 @@ mod layout;
 mod text;
 
 pub use block::{Attrib, AttribModes, AttribProps, Insert, MultilineAttrib, mtext_literal};
-pub use common::{Common, Handle, Lineweight, RawTag, Transparency};
+pub use common::{AsRead, Common, Handle, KeptHandle, Lineweight, RawTag, Transparency};
 pub use curves::{Arc, Circle, Ellipse, Face3d, Line, LwPolyline, Point, Polyline3d, RayLine, Solid};
 pub use dim::{AssocSnap, DimAssoc, DimBreak, DimKind, DimMarks, Dimension, Inspection, JoggedRadius, Leader, MLeader};
 pub use fill::{Gradient, Hatch, HatchLoop, Wipeout};
@@ -349,6 +349,7 @@ impl EntityKind {
             EntityKind::MText(t) => {
                 t3(&mut t.insert);
                 t.height *= s;
+                t.defined_height *= s;
                 t.width *= s;
                 if let Some(c) = &mut t.columns {
                     c.scale(s);
@@ -397,6 +398,7 @@ impl EntityKind {
                 if let Some(t) = &mut ml.text {
                     t3(&mut t.insert);
                     t.height *= s;
+                    t.defined_height *= s;
                     t.width *= s;
                     if let Some(c) = &mut t.columns {
                         c.scale(s);

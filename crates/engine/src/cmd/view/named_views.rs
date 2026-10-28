@@ -139,7 +139,7 @@ fn save(s: &mut Session, name: &str, window: Option<Bounds2>, snapshot: bool) ->
         }
         d.views.retain(|v| !v.name.eq_ignore_ascii_case(old));
     }
-    d.views.push(NamedView { name: name.to_string(), center, height, width, layer_state, twist: 0.0, layout });
+    d.views.push(NamedView { handle: Default::default(), name: name.to_string(), center, height, width, layer_state, twist: 0.0, layout });
     let msg = if replaced.is_some() { format!("View \"{name}\" replaced.") } else { format!("View \"{name}\" saved.") };
     Ok(json!({ "name": name, "center": [center.x, center.y], "height": height, "width": width, "message": msg }))
 }

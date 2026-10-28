@@ -39,6 +39,11 @@ pub(crate) fn polyline_vertex_ref(p: &LwPolyline, index: usize) -> Option<(i64, 
 /// origins of linear/aligned dimensions, both ends of both lines of an angular dimension, the
 /// feature point of ordinate dimensions and the circle of a radial/diametric dimension, linked
 /// to objects that exist ([`whole_object_ref`]). CADCraft's exact links travel in xdata as well.
+/// The reference data the file held for `a`, while `a` is still the link that was read.
+fn kept_read(a: &DimAssoc) -> Option<cadcraft_doc::OsnapRead> {
+    a.read.0.as_deref().filter(|r| r.handle == a.handle && r.snap.as_ref() == Some(&a.snap)).cloned()
+}
+
 pub(super) fn std_assoc_refs(d: &Drawing, dm: &Dimension) -> (i64, Vec<OsnapRef>) {
     if matches!(dm.kind, DimKind::Radius | DimKind::Diameter) {
         return radial_ref(d, &dm.assoc);
@@ -73,7 +78,7 @@ pub(super) fn std_assoc_refs(d: &Drawing, dm: &Dimension) -> (i64, Vec<OsnapRef>
             };
             let Some((osnap, param, segment)) = index.and_then(|i| polyline_vertex_ref(p, i)) else { continue };
             flags |= 1 << slot;
-            refs.push(OsnapRef { osnap, main: a.handle, segment, param, point, other: None });
+            refs.push(OsnapRef { osnap, main: a.handle, segment, param, point, other: None, read: kept_read(a) });
             continue;
         }
         if !whole_object_ref(&ent.kind) {
@@ -95,7 +100,7 @@ pub(super) fn std_assoc_refs(d: &Drawing, dm: &Dimension) -> (i64, Vec<OsnapRef>
             }
         };
         flags |= 1 << slot;
-        refs.push(OsnapRef { osnap, main: a.handle, segment: 0, param, point, other });
+        refs.push(OsnapRef { osnap, main: a.handle, segment: 0, param, point, other, read: kept_read(a) });
     }
     (flags, refs)
 }
@@ -116,7 +121,10 @@ fn radial_ref(d: &Drawing, assoc: &[DimAssoc]) -> (i64, Vec<OsnapRef>) {
         if !centre.is_finite() {
             continue;
         }
-        return (2, vec![OsnapRef { osnap: 3, main: a.handle, segment: 0, param: 0.0, point: centre.to3(0.0), other: None }]);
+        return (
+            2,
+            vec![OsnapRef { read: Default::default(), osnap: 3, main: a.handle, segment: 0, param: 0.0, point: centre.to3(0.0), other: None }],
+        );
     }
     (0, Vec::new())
 }

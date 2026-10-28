@@ -1,7 +1,8 @@
 use super::common::T;
 use super::dimassoc::dimassoc;
 use super::document::sortents_table;
-use super::{Drawing, EntityKind, Group, Handle, HashMap, MLeaderStyle, PageSetup, Rx, Tag, Vec2};
+use super::tables::mleader_props;
+use super::{Drawing, EntityKind, Group, Handle, HashMap, MLeaderStyle, PageSetup, Rx, Tag, Vec2, Vec3};
 
 /// Non-graphical objects applied once every entity is placed.
 #[derive(Default)]
@@ -35,9 +36,10 @@ impl Objects {
         let h = T(tags).s(5).map(|h| h.trim().to_ascii_uppercase()).unwrap_or_default();
         match kind {
             "SCALE" if self.scales.len() < cadcraft_doc::MAX_SCALES => {
-                if let Some(s) = crate::dxf_ext::read_scale(tags)
+                if let Some(mut s) = crate::dxf_ext::read_scale(tags)
                     && !self.scales.iter().any(|x| x.name.eq_ignore_ascii_case(&s.name))
                 {
+                    s.handle = Handle::parse_hex(&h).unwrap_or_default().into();
                     self.scales.push(s);
                 }
             }
@@ -98,7 +100,8 @@ impl Objects {
         // Table styles (named by their ACAD_TABLESTYLE dictionary entries).
         for (h, tags) in &self.table_styles {
             let Some(name) = self.names.get(h).filter(|n| !n.is_empty()) else { continue };
-            let st = crate::dxf_table::read_table_style(name, tags);
+            let mut st = crate::dxf_table::read_table_style(name, tags);
+            st.handle = Handle::parse_hex(h).unwrap_or_default().into();
             match d.table_styles.iter_mut().find(|s| s.name.eq_ignore_ascii_case(name)) {
                 Some(x) => *x = st,
                 None => d.table_styles.push(st),
@@ -138,6 +141,8 @@ impl Objects {
             let num = |code: i32, d: f64, min: f64| t.f(code).filter(|v| v.is_finite() && *v >= min).unwrap_or(d);
             let text_style = t.s(342).and_then(|sh| rx.styles.get(&sh.trim().to_ascii_uppercase()).cloned()).filter(|n| !n.is_empty());
             let st = MLeaderStyle {
+                props: mleader_props(&t, rx),
+                handle: Handle::parse_hex(h).unwrap_or_default().into(),
                 name: name.clone(),
                 arrow_size: num(44, def.arrow_size, 0.0),
                 text_height: t.f(45).filter(|v| v.is_finite() && *v > 0.0).unwrap_or(def.text_height),
@@ -165,7 +170,13 @@ impl Objects {
                 .filter(|m| d.entity(*m).is_some())
                 .take(MAX_OBJECTS)
                 .collect();
-            let g = Group { name: name.clone(), description: t.s(300).unwrap_or_default(), selectable: t.i(71).unwrap_or(1) != 0, members };
+            let g = Group {
+                handle: Handle::parse_hex(h).unwrap_or_default().into(),
+                name: name.clone(),
+                description: t.s(300).unwrap_or_default(),
+                selectable: t.i(71).unwrap_or(1) != 0,
+                members,
+            };
             match d.groups.iter_mut().find(|x| x.name.eq_ignore_ascii_case(name)) {
                 Some(x) => *x = g,
                 None => d.groups.push(g),
@@ -274,7 +285,77 @@ pub(super) fn page_setup(t: &T) -> PageSetup {
     .into();
     p.plot_window = [t.fd(48, 0.0), t.fd(49, 0.0), t.fd(140, 0.0), t.fd(141, 0.0)].map(|v| if v.is_finite() { v } else { 0.0 });
     p.plot_style_table = t.s(7).unwrap_or_default();
+    p.settings = plot_settings(t);
+    // The record's own values, written back while the page is as read.
+    if t.i(70).is_some() && t.f(44).is_some() && t.f(45).is_some() {
+        let n = |code: i32, d: i64| i16::try_from(t.i(code).unwrap_or(d)).unwrap_or(0);
+        let fin = |code: i32, d: f64| Some(t.fd(code, d)).filter(|v| v.is_finite()).unwrap_or(d);
+        p.read = cadcraft_doc::AsRead::new(cadcraft_doc::PlotRead {
+            basis: p.clone(),
+            device: t.s(2).unwrap_or_default(),
+            paper: t.s(4).unwrap_or_default(),
+            size: [fin(44, 0.0), fin(45, 0.0)],
+            flags: t.i(70).unwrap_or(0),
+            paper_units: n(72, 0),
+            rotation: n(73, 0),
+            scale: [fin(142, 1.0), fin(143, 1.0)],
+            standard_scale: n(75, 16),
+            factor: fin(147, 1.0),
+            plot_type: n(74, 5),
+        });
+    }
     p
+}
+
+/// The rest of a plot settings record: its name, view, plot and image origin, shade plot
+/// settings.
+fn plot_settings(t: &T) -> cadcraft_doc::PlotSettings {
+    let d = cadcraft_doc::PlotSettings::default();
+    let n = |code: i32, v: i16| i16::try_from(t.i(code).unwrap_or(i64::from(v))).unwrap_or(v);
+    let fin = |code: i32| Some(t.fd(code, 0.0)).filter(|v| v.is_finite()).unwrap_or(0.0);
+    cadcraft_doc::PlotSettings {
+        name: t.s(1).unwrap_or_default(),
+        view_name: t.s(6).unwrap_or_default(),
+        origin: [fin(46), fin(47)],
+        image_origin: [fin(148), fin(149)],
+        shade_mode: n(76, d.shade_mode),
+        shade_resolution: n(77, d.shade_resolution),
+        shade_dpi: n(78, d.shade_dpi),
+        shade_plot: handle_of(t, 333),
+    }
+}
+
+/// A handle-valued group, `Handle(0)` when missing or not a handle.
+pub(super) fn handle_of(t: &T, code: i32) -> Handle {
+    t.s(code).and_then(|s| Handle::parse_hex(s.trim())).unwrap_or_default()
+}
+
+/// A LAYOUT object's own data (the groups after its AcDbLayout marker).
+pub(super) fn layout_record(t: &T, extra: &[Tag]) -> cadcraft_doc::LayoutRecord {
+    let d = cadcraft_doc::LayoutRecord::default();
+    let fin = |c: i32, v: f64| Some(t.fd(c, v)).filter(|v| v.is_finite()).unwrap_or(v);
+    let pt = |c: i32, v: Vec3| {
+        let p = Vec3::new(fin(c, v.x), fin(c + 10, v.y), fin(c + 20, v.z));
+        if p.is_finite() { p } else { v }
+    };
+    let n = |c: i32, v: i16| i16::try_from(t.i(c).unwrap_or(i64::from(v))).unwrap_or(v);
+    let x = T(extra);
+    cadcraft_doc::LayoutRecord {
+        flags: n(70, d.flags),
+        limits_min: Vec2::new(fin(10, d.limits_min.x), fin(20, d.limits_min.y)),
+        limits_max: Vec2::new(fin(11, d.limits_max.x), fin(21, d.limits_max.y)),
+        insbase: pt(12, d.insbase),
+        extents_min: pt(14, d.extents_min),
+        extents_max: pt(15, d.extents_max),
+        elevation: fin(146, 0.0),
+        ucs_origin: pt(13, d.ucs_origin),
+        ucs_x: pt(16, d.ucs_x),
+        ucs_y: pt(17, d.ucs_y),
+        ortho_type: n(76, 0),
+        last_viewport: handle_of(&x, 331),
+        named_ucs: handle_of(&x, 345),
+        base_ucs: handle_of(&x, 346),
+    }
 }
 
 /// A layout's saved paper-space view (centre, height) from CADCraft xdata.

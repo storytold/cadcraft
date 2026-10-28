@@ -117,7 +117,18 @@ fn live(st: &DocState, px: (f64, f64)) -> (Vec<VportTile>, usize) {
     let now = st.views.iter().find(|(sp, _)| *sp == Space::Model).map(|(_, v)| *v).unwrap_or_default();
     let Some(cfg) = active_config(&st.doc) else {
         let aspect = px.0 / px.1.max(1.0);
-        return (vec![VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), center: now.center, height: now.height, aspect }], 0);
+        return (
+            vec![VportTile {
+                settings: Default::default(),
+                handle: Default::default(),
+                min: Vec2::ZERO,
+                max: Vec2::new(1.0, 1.0),
+                center: now.center,
+                height: now.height,
+                aspect,
+            }],
+            0,
+        );
     };
     let mut tiles = cfg.tiles.clone();
     let synced =
@@ -132,7 +143,7 @@ fn live(st: &DocState, px: (f64, f64)) -> (Vec<VportTile>, usize) {
         (t.center, t.height) = (now.center, now.height);
     }
     // Screen aspects from the current tile's size in pixels.
-    if let Some(cur) = tiles.get(active).copied() {
+    if let Some(cur) = tiles.get(active).cloned() {
         let (fw, fh) = ((cur.max.x - cur.min.x).max(EPS), (cur.max.y - cur.min.y).max(EPS));
         let (w, h) = (px.0 / fw, px.1.max(1.0) / fh);
         for t in tiles.iter_mut() {
@@ -149,6 +160,7 @@ fn apply(s: &mut Session, mut tiles: Vec<VportTile>, current: usize) -> Result<(
         return Err(EngineError::Other("A viewport configuration needs a viewport.".into()));
     }
     let cur = tiles.remove(current.min(tiles.len() - 1));
+    let cur_view = view_of(&cur);
     tiles.insert(0, cur);
     let st = s.state_mut()?;
     let d = Arc::make_mut(&mut st.doc);
@@ -160,7 +172,7 @@ fn apply(s: &mut Session, mut tiles: Vec<VportTile>, current: usize) -> Result<(
         st.tiles = ModelTiles::default();
     }
     if st.space == Space::Model && st.mspace.is_none() {
-        st.set_view_quiet(view_of(&cur));
+        st.set_view_quiet(cur_view);
     }
     s.touch();
     Ok(())
@@ -276,14 +288,14 @@ fn run_vports(s: &mut Session, p: &Value) -> Result<Value> {
     match option.as_str() {
         "single" | "si" | "1" => {
             model_only(s)?;
-            let cur = tiles.get(current).copied().ok_or(EngineError::NoDocument)?;
+            let cur = tiles.get(current).cloned().ok_or(EngineError::NoDocument)?;
             apply(s, vec![VportTile { min: Vec2::ZERO, max: Vec2::new(1.0, 1.0), ..cur }], 0)?;
         }
         "2" | "3" | "4" => {
             model_only(s)?;
             let count = option.parse::<usize>().unwrap_or(2);
             let display = str_param(p, "applyTo").is_some_and(|a| a.eq_ignore_ascii_case("display"));
-            let cur = tiles.get(current).copied().ok_or(EngineError::NoDocument)?;
+            let cur = tiles.get(current).cloned().ok_or(EngineError::NoDocument)?;
             let area = if display { (Vec2::ZERO, Vec2::new(1.0, 1.0)) } else { rect(&cur) };
             let arrangement = str_param(p, "arrangement").unwrap_or("");
             let parts = split(area, count, arrangement)
@@ -292,19 +304,19 @@ fn run_vports(s: &mut Session, p: &Value) -> Result<Value> {
                 return Err(EngineError::Other("The current viewport is too small to divide.".into()));
             }
             let mut out: Vec<VportTile> =
-                if display { Vec::new() } else { tiles.iter().enumerate().filter(|(i, _)| *i != current).map(|(_, t)| *t).collect() };
+                if display { Vec::new() } else { tiles.iter().enumerate().filter(|(i, _)| *i != current).map(|(_, t)| t.clone()).collect() };
             if out.len() + parts.len() > MAX_TILES {
                 return Err(EngineError::Other(format!("At most {MAX_TILES} viewports can be shown.")));
             }
             let first = out.len();
-            out.extend(parts.into_iter().map(|(min, max)| VportTile { min, max, ..cur }));
+            out.extend(parts.into_iter().map(|(min, max)| VportTile { min, max, ..cur.clone() }));
             apply(s, out, first)?;
         }
         "join" | "j" => {
             model_only(s)?;
             let dominant = tile_param(p, "dominant", n)?.unwrap_or(current);
             let other = tile_param(p, "join", n)?.ok_or_else(|| bad("-vports", "`join` (the viewport to join) is required"))?;
-            let (Some(a), Some(b)) = (tiles.get(dominant).copied(), tiles.get(other).copied()) else {
+            let (Some(a), Some(b)) = (tiles.get(dominant).cloned(), tiles.get(other).cloned()) else {
                 return Err(EngineError::Other("There is only one viewport.".into()));
             };
             if dominant == other {
@@ -312,7 +324,7 @@ fn run_vports(s: &mut Session, p: &Value) -> Result<Value> {
             }
             let (min, max) =
                 joined(rect(&a), rect(&b)).ok_or_else(|| EngineError::Other("The selected viewports do not form a rectangle.".into()))?;
-            let mut out: Vec<VportTile> = tiles.iter().enumerate().filter(|(i, _)| *i != dominant && *i != other).map(|(_, t)| *t).collect();
+            let mut out: Vec<VportTile> = tiles.iter().enumerate().filter(|(i, _)| *i != dominant && *i != other).map(|(_, t)| t.clone()).collect();
             out.push(VportTile { min, max, ..a });
             let current = out.len() - 1;
             apply(s, out, current)?;

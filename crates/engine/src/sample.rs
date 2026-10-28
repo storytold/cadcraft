@@ -16,6 +16,9 @@ fn on(layer: &str) -> Common {
 
 fn dim(kind: DimKind, p13: Vec2, p14: Vec2, defpt: Vec2) -> EntityKind {
     EntityKind::Dimension(Dimension {
+        flag_73: Default::default(),
+        flip_arrows: Default::default(),
+        attachment: Default::default(),
         kind,
         defpt: v3(defpt),
         text_mid: Vec3::ZERO,
@@ -166,6 +169,9 @@ pub fn bracket() -> Drawing {
     add(
         on("Dimensions"),
         EntityKind::Dimension(Dimension {
+            flag_73: Default::default(),
+            flip_arrows: Default::default(),
+            attachment: Default::default(),
             kind: DimKind::Diameter,
             defpt: v3(c + Vec2::from_angle(0.8) * 1.5),
             text_mid: Vec3::ZERO,
@@ -187,6 +193,9 @@ pub fn bracket() -> Drawing {
     add(
         on("Dimensions"),
         EntityKind::Dimension(Dimension {
+            flag_73: Default::default(),
+            flip_arrows: Default::default(),
+            attachment: Default::default(),
             kind: DimKind::Radius,
             defpt: v3(Vec2::new(8.0, 2.0)),
             text_mid: Vec3::ZERO,
@@ -211,7 +220,7 @@ pub fn bracket() -> Drawing {
     add(on("Notes"), text(Vec2::new(4.1, -0.3), 0.16, "FRONT VIEW"));
     add(
         on("Notes"),
-        EntityKind::MText(MText { insert: v3(Vec2::new(14.2, 6.2)), height: 0.12, width: 3.4, attach: 1, rotation: 0.0, style: "Standard".into(), contents: "NOTES:\\P1. MATERIAL: 6061-T6 ALUMINUM.\\P2. BREAK ALL SHARP EDGES 0.02 MAX.\\P3. BORE %%c1.750 THRU, H7.\\P4. FINISH: CLEAR ANODIZE.".into(), line_spacing: 1.0, line_spacing_exact: false, columns: None }),
+        EntityKind::MText(MText { defined_height: Default::default(), insert: v3(Vec2::new(14.2, 6.2)), height: 0.12, width: 3.4, attach: 1, rotation: 0.0, style: "Standard".into(), contents: "NOTES:\\P1. MATERIAL: 6061-T6 ALUMINUM.\\P2. BREAK ALL SHARP EDGES 0.02 MAX.\\P3. BORE %%c1.750 THRU, H7.\\P4. FINISH: CLEAR ANODIZE.".into(), line_spacing: 1.0, line_spacing_exact: false, columns: None }),
     );
     let tb0 = Vec2::new(14.0, -0.5);
     add(on("Title"), lwpoly(rect_vertices(tb0, tb0 + Vec2::new(4.0, 2.0)), true));

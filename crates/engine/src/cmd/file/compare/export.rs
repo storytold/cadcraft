@@ -262,7 +262,7 @@ fn add_group(d: &mut Drawing, name: &str, objs: &[(&Entity, Color)], renames: &R
     }
     let name = free_name(name, d.groups.len(), |n| d.groups.iter().any(|g| g.name.eq_ignore_ascii_case(n)));
     if !members.is_empty() {
-        d.groups.push(Group { name: name.clone(), description: String::new(), selectable: true, members });
+        d.groups.push(Group { handle: Default::default(), name: name.clone(), description: String::new(), selectable: true, members });
     }
     name
 }

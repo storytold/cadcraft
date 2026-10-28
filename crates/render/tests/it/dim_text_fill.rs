@@ -10,6 +10,9 @@ use cadcraft_render::{DisplayList, Kind, Options, build, dimension_geometry};
 /// A linear dimension from (0, 0) to (10, 0) with its line at y = 5, in style "Fill".
 fn dimension() -> Dimension {
     Dimension {
+        attachment: Default::default(),
+        flag_73: Default::default(),
+        flip_arrows: Default::default(),
         kind: DimKind::Linear { rotation: 0.0 },
         defpt: Vec3::new(0.0, 5.0, 0.0),
         text_mid: Vec3::ZERO,
@@ -138,6 +141,7 @@ fn a_dimension_read_with_its_block_keeps_the_block_and_gets_the_background() {
     let circle = EntityKind::Circle(Circle { center: Vec3::new(5.0, 5.0, 0.0), radius: 3.0 });
     blk.entities.push(Entity::new(Handle(1), circle));
     let text = MText {
+        defined_height: Default::default(),
         insert: Vec3::new(20.0, 20.0, 0.0),
         height: 0.18,
         width: 0.0,
@@ -170,6 +174,7 @@ fn every_text_of_a_block_gets_a_background() {
     let mut blk = Block::new("*D1");
     for (i, (y, s)) in [(20.0, "10.0000"), (22.0, "+0.1")].into_iter().enumerate() {
         let text = MText {
+            defined_height: Default::default(),
             insert: Vec3::new(20.0, y, 0.0),
             height: 0.18,
             width: 0.0,
@@ -200,6 +205,7 @@ fn a_block_that_holds_its_background_gets_no_second_one() {
         let solid = cadcraft_doc::Solid { corners: solid.map(|(x, y)| Vec3::new(x, y, 0.0)) };
         blk.entities.push(Entity::new(Handle(1), EntityKind::Solid(solid)));
         let text = MText {
+            defined_height: Default::default(),
             insert: Vec3::new(20.0, 20.0, 0.0),
             height: 0.18,
             width: 0.0,

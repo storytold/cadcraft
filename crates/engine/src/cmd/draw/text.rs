@@ -72,6 +72,7 @@ pub(super) fn run_mtext(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let width = f64_or(p, "width", 0.0).max(0.0);
     let k = EntityKind::MText(MText {
+        defined_height: Default::default(),
         insert: v3(at),
         height,
         width,

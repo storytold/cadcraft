@@ -59,6 +59,10 @@ impl Default for MLineCaps {
 #[serde(default, rename_all = "camelCase")]
 pub struct MLineStyle {
     pub name: String,
+    /// The handle it was read with (0: none yet): written back, so other objects and other
+    /// programs keep pointing at it.
+    #[serde(default, skip_serializing_if = "crate::KeptHandle::is_none")]
+    pub handle: crate::KeptHandle,
     pub description: String,
     /// Elements from the largest offset down.
     pub elements: Vec<MLineElement>,
@@ -74,6 +78,7 @@ impl Default for MLineStyle {
     /// The STANDARD style: two lines one unit apart, no caps, no fill.
     fn default() -> Self {
         MLineStyle {
+            handle: Default::default(),
             name: STANDARD_MLINE_STYLE.into(),
             description: String::new(),
             elements: vec![MLineElement { offset: 0.5, ..Default::default() }, MLineElement { offset: -0.5, ..Default::default() }],

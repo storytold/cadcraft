@@ -47,6 +47,7 @@ fn sample() -> Drawing {
         &Space::Model,
         c("0"),
         EntityKind::MText(MText {
+            defined_height: Default::default(),
             insert: Vec3::new(5.0, 5.0, 0.0),
             height: 0.2,
             width: 3.0,
@@ -82,6 +83,9 @@ fn sample() -> Drawing {
         &Space::Model,
         c("0"),
         EntityKind::Dimension(Dimension {
+            attachment: Default::default(),
+            flag_73: Default::default(),
+            flip_arrows: Default::default(),
             kind: DimKind::Linear { rotation: 0.0 },
             defpt: Vec3::new(0.0, -1.0, 0.0),
             text_mid: Vec3::ZERO,
@@ -542,6 +546,9 @@ fn dxf_roundtrips_page_setup() {
 
 fn dim(kind: DimKind, p13: Vec3, p14: Vec3) -> Dimension {
     Dimension {
+        attachment: Default::default(),
+        flag_73: Default::default(),
+        flip_arrows: Default::default(),
         kind,
         defpt: Vec3::new(p13.x, p13.y - 2.0, 0.0),
         text_mid: Vec3::ZERO,
@@ -1077,17 +1084,17 @@ fn dimension_associativity_roundtrips() {
         .unwrap();
     let mut lin = dim(DimKind::Linear { rotation: 0.0 }, Vec3::ZERO, Vec3::new(10.0, 0.0, 0.0));
     lin.assoc = vec![
-        DimAssoc { point: "p13".into(), handle: l1, snap: AssocSnap::Start },
-        DimAssoc { point: "p14".into(), handle: l2, snap: AssocSnap::Start },
+        DimAssoc { read: Default::default(), point: "p13".into(), handle: l1, snap: AssocSnap::Start },
+        DimAssoc { read: Default::default(), point: "p14".into(), handle: l2, snap: AssocSnap::Start },
     ];
     let mut ali = dim(DimKind::Aligned, Vec3::new(22.0, 0.0, 0.0), Vec3::new(32.0, 3.0, 0.0));
     ali.assoc = vec![
-        DimAssoc { point: "p13".into(), handle: ci, snap: AssocSnap::OnCircle { angle: 0.0 } },
-        DimAssoc { point: "p14".into(), handle: pl, snap: AssocSnap::Vertex { index: 2 } },
-        DimAssoc { point: "defpt".into(), handle: l1, snap: AssocSnap::Intersection { other: l2 } },
+        DimAssoc { read: Default::default(), point: "p13".into(), handle: ci, snap: AssocSnap::OnCircle { angle: 0.0 } },
+        DimAssoc { read: Default::default(), point: "p14".into(), handle: pl, snap: AssocSnap::Vertex { index: 2 } },
+        DimAssoc { read: Default::default(), point: "defpt".into(), handle: l1, snap: AssocSnap::Intersection { other: l2 } },
     ];
     let mut rad = dim(DimKind::Radius, Vec3::new(20.0, 0.0, 0.0), Vec3::ZERO);
-    rad.assoc = vec![DimAssoc { point: "defpt".into(), handle: ci, snap: AssocSnap::Center }];
+    rad.assoc = vec![DimAssoc { read: Default::default(), point: "defpt".into(), handle: ci, snap: AssocSnap::Center }];
     let hl = d.add(&Space::Model, c(), EntityKind::Dimension(lin.clone())).unwrap();
     let ha = d.add(&Space::Model, c(), EntityKind::Dimension(ali.clone())).unwrap();
     let hr = d.add(&Space::Model, c(), EntityKind::Dimension(rad.clone())).unwrap();
@@ -1191,8 +1198,8 @@ fn polyline_vertex_dimensions_round_trip_by_segment() {
         .unwrap();
     let mut on_pl = dim(DimKind::Linear { rotation: std::f64::consts::FRAC_PI_2 }, Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.0, 210.0, 0.0));
     on_pl.assoc = vec![
-        DimAssoc { point: "p13".into(), handle: pl, snap: AssocSnap::Vertex { index: 0 } },
-        DimAssoc { point: "p14".into(), handle: pl, snap: AssocSnap::Vertex { index: 3 } },
+        DimAssoc { read: Default::default(), point: "p13".into(), handle: pl, snap: AssocSnap::Vertex { index: 0 } },
+        DimAssoc { read: Default::default(), point: "p14".into(), handle: pl, snap: AssocSnap::Vertex { index: 3 } },
     ];
     let hp = d.add(&Space::Model, c(), EntityKind::Dimension(on_pl.clone())).unwrap();
     let text = write_dxf(&d);
@@ -1405,6 +1412,7 @@ fn table_block_is_relative_to_the_insertion_point() {
 fn text_style_flags_roundtrip() {
     let mut d = Drawing::new_imperial();
     let st = TextStyle {
+        handle: Default::default(),
         name: "Mirror".into(),
         font: "romans.shx".into(),
         big_font: "bigfont.shx".into(),
@@ -1457,6 +1465,7 @@ fn intl_sample() -> Drawing {
         &Space::Model,
         on.clone(),
         EntityKind::MText(MText {
+            defined_height: Default::default(),
             insert: Vec3::new(5.0, 5.0, 0.0),
             height: 2.5,
             width: 30.0,
@@ -1636,16 +1645,16 @@ fn extension_sample() -> Drawing {
     let mut dm = dim(DimKind::Linear { rotation: 0.0 }, Vec3::new(0.0, 30.0, 0.0), Vec3::new(8.0, 30.0, 0.0));
     dm.style = "Mech".into();
     dm.assoc = vec![
-        DimAssoc { point: "p13".into(), handle: l1, snap: AssocSnap::Start },
-        DimAssoc { point: "p14".into(), handle: l2, snap: AssocSnap::Start },
+        DimAssoc { read: Default::default(), point: "p13".into(), handle: l1, snap: AssocSnap::Start },
+        DimAssoc { read: Default::default(), point: "p14".into(), handle: l2, snap: AssocSnap::Start },
     ];
     dm.overrides = serde_json::json!({"arrowBlock2": "_BoxFilled", "textColor": 2, "decimals": 1}).as_object().unwrap().clone();
     d.add(&Space::Model, Common::default(), EntityKind::Dimension(dm)).unwrap();
     let ci = d.add(&Space::Model, Common::default(), EntityKind::Circle(Circle { center: Vec3::new(20.0, 30.0, 0.0), radius: 2.0 })).unwrap();
     let mut al = dim(DimKind::Aligned, Vec3::new(22.0, 30.0, 0.0), Vec3::new(8.0, 35.0, 0.0));
     al.assoc = vec![
-        DimAssoc { point: "p13".into(), handle: ci, snap: AssocSnap::OnCircle { angle: 0.0 } },
-        DimAssoc { point: "p14".into(), handle: l2, snap: AssocSnap::Intersection { other: l1 } },
+        DimAssoc { read: Default::default(), point: "p13".into(), handle: ci, snap: AssocSnap::OnCircle { angle: 0.0 } },
+        DimAssoc { read: Default::default(), point: "p14".into(), handle: l2, snap: AssocSnap::Intersection { other: l1 } },
     ];
     d.add(&Space::Model, Common::default(), EntityKind::Dimension(al)).unwrap();
     parametric_sample(&mut d);
@@ -1698,6 +1707,7 @@ fn dwg_roundtrip_keeps_extension_data() {
 fn mleader_is_written_as_multileader() {
     let mut d = Drawing::new_metric();
     let text = cadcraft_doc::MText {
+        defined_height: Default::default(),
         insert: Vec3::new(12.0, 5.0, 0.0),
         height: 2.5,
         width: 0.0,
@@ -2826,4 +2836,25 @@ fn non_unicode_names_pick_the_format_by_extension() {
     assert!(read(&bytes, name("dxf")).is_ok());
     assert!(write(&d, name("png")).unwrap().starts_with(b"\x89PNG"));
     assert!(write(&d, name("dwt")).is_ok(), "a template is written as DWG");
+}
+
+/// A DWG whose model space block record has a damaged name (the bytes of `*Model_Space`
+/// garbled) still opens with its entities in model space: the Model layout names that record by
+/// handle. They used to land in an ordinary block of the garbled name, leaving model space empty
+/// without a note.
+#[test]
+fn a_garbled_model_space_name_keeps_model_space() {
+    let mut dxf = String::from("0\nSECTION\n2\nENTITIES\n");
+    for i in 0..20 {
+        dxf += &format!("0\nLINE\n8\n0\n10\n{i}\n20\n0\n11\n{i}\n21\n10\n");
+    }
+    dxf += "0\nENDSEC\n0\nEOF\n";
+    let d = read(dxf.as_bytes(), "lines.dxf").unwrap();
+    let mut dwg = crate::write_with(&d, "lines.dwg", &crate::SaveOptions { version: Some(crate::Version::R2000), binary: false }).unwrap();
+    let name = b"*Model_Space";
+    let at = dwg.windows(name.len()).position(|w| w.eq_ignore_ascii_case(name)).expect("the record's name");
+    dwg[at + 2..at + 6].iter_mut().for_each(|x| *x ^= 0xA5);
+    let back = read(&dwg, "damaged.dwg").unwrap();
+    assert_eq!(back.model.len(), 20, "blocks: {:?}", back.blocks.keys().collect::<Vec<_>>());
+    assert!(back.blocks.keys().all(|n| !n.to_ascii_uppercase().ends_with("SPACE")));
 }

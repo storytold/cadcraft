@@ -141,6 +141,7 @@ mod tests {
 
     fn gas() -> Linetype {
         Linetype {
+            handle: Default::default(),
             name: "GAS".into(),
             description: String::new(),
             pattern: vec![

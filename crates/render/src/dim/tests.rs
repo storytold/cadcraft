@@ -3,6 +3,9 @@ use cadcraft_geom::Vec3;
 
 fn lin(p1: (f64, f64), p2: (f64, f64), on: (f64, f64), rot: f64) -> Dimension {
     Dimension {
+        attachment: Default::default(),
+        flag_73: Default::default(),
+        flip_arrows: Default::default(),
         kind: DimKind::Linear { rotation: rot },
         defpt: Vec3::new(on.0, on.1, 0.0),
         text_mid: Vec3::ZERO,
