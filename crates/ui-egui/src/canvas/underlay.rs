@@ -102,6 +102,8 @@ pub(crate) struct Cache {
     /// Per list, the view last drawn and since when (egui time) it hasn't moved: the two lists
     /// are drawn through different transforms, so one view would never settle.
     views: HashMap<Scope, (Bounds2, f64)>,
+    /// When (egui time) the sizes of underlays without one were last looked for.
+    size_retry: Option<f64>,
 }
 
 impl Cache {
@@ -245,7 +247,20 @@ pub(crate) fn shapes(
 ) -> Vec<(usize, Shape)> {
     let mut out = Vec::new();
     if pages.is_empty() {
+        // The last underlay deleted, or a drawing without any: its sharper parts go too (each
+        // can hold up to `DETAIL_PX` squared pixels).
+        let now = painter.ctx().input(|i| i.time);
+        app.canvas.underlays.forget_details(now);
         return out;
+    }
+    // Underlays shown without a page size (their PDF couldn't be read when the drawing opened):
+    // their PDF is looked for again once in a while, and the drawing redrawn when it is back.
+    if pages.iter().any(|lu| lu.u == Vec2::ZERO || lu.v == Vec2::ZERO) {
+        let now = painter.ctx().input(|i| i.time);
+        if app.canvas.underlays.size_retry_due(now) {
+            cadcraft_engine::cmd::underlay::retry_sizes(&mut app.session);
+        }
+        painter.ctx().request_repaint_after(std::time::Duration::from_secs_f64(PAGE_RETRY_S));
     }
     let dark = u32::from(bg.0) * 299 + u32::from(bg.1) * 587 + u32::from(bg.2) * 114 < 128_000;
     let Ok(st) = app.session.state() else { return out };
@@ -351,6 +366,17 @@ fn visible_region(it: &Item, view: &Bounds2, margin: f64) -> Option<[f64; 4]> {
 }
 
 impl Cache {
+    /// Whether it is time, at egui time `now`, to look again for the page size of underlays
+    /// that have none (their PDF couldn't be read when the drawing opened): at once the first
+    /// time, then every [`PAGE_RETRY_S`] seconds.
+    fn size_retry_due(&mut self, now: f64) -> bool {
+        if self.size_retry.is_some_and(|at| now - at < PAGE_RETRY_S) {
+            return false;
+        }
+        self.size_retry = Some(now);
+        true
+    }
+
     /// Whether the view of list `scope` has stayed `view` for [`SETTLE_S`] seconds at egui time
     /// `now`.
     fn settled(&mut self, scope: Scope, view: Bounds2, now: f64) -> bool {
@@ -577,6 +603,30 @@ mod tests {
         }
         // After a while it is read again.
         assert_eq!(cache.texture(&ctx, path, None, 1, (false, 100, false), &[], 1.0 + PAGE_RETRY_S).err(), Some("being read"));
+    }
+
+    #[test]
+    fn page_sizes_are_looked_for_again_every_few_seconds() {
+        let mut cache = Cache::default();
+        assert!(cache.size_retry_due(10.0), "at once the first time");
+        assert!(!cache.size_retry_due(10.05));
+        assert!(!cache.size_retry_due(10.0 + PAGE_RETRY_S - 0.01));
+        assert!(cache.size_retry_due(10.0 + PAGE_RETRY_S));
+    }
+
+    #[test]
+    fn sharper_parts_go_when_no_underlay_is_left() {
+        // The last underlay deleted, or a drawing without any: the canvas still calls `shapes`
+        // with no pages, and the parts kept are dropped once their time is up.
+        let ctx = egui::Context::default();
+        let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+        let tex = texture(&ctx);
+        let old = Detail { region: [0.0, 0.0, 1.0, 1.0], density: 1.0, shown: Some(tex), pending: None, used: -DETAIL_KEEP_S - 1.0, failed: None };
+        app.canvas.underlays.details.insert((Handle(1), Scope::Main, 0, String::new(), 1, (false, 0, false)), old);
+        let painter = egui::Painter::new(ctx.clone(), egui::LayerId::background(), egui::Rect::EVERYTHING);
+        let xf = Xf { rect: egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(100.0, 100.0)), center: Vec2::ZERO, scale: 1.0 };
+        assert!(shapes(&mut app, &painter, &xf, Scope::Main, &[], None, Rgb(0, 0, 0)).is_empty());
+        assert!(app.canvas.underlays.details.is_empty(), "the sharper part is dropped");
     }
 
     #[test]

@@ -93,6 +93,46 @@ fn an_opened_underlay_gets_its_size_from_its_pdf_and_finds_it_beside_the_drawing
 }
 
 #[test]
+fn an_underlay_whose_pdf_comes_back_gets_its_size_without_reopening() {
+    use cadcraft_engine::cmd::underlay::retry_sizes;
+    hooks();
+    real_io();
+    let dir = std::env::temp_dir().join(format!("cadcraft-pdf-later-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let pdf = dir.join("Later.pdf");
+    let dxf = dir.join("Later.dxf");
+    let mut d = Drawing::new_metric();
+    let u = PdfUnderlay { scale: 25.4, path: pdf.to_string_lossy().to_string(), ..PdfUnderlay::default() };
+    d.add(&Space::Model, Common::default(), EntityKind::PdfUnderlay(u)).unwrap();
+    std::fs::write(&dxf, cadcraft_io::write(&d, "Later.dxf").unwrap()).unwrap();
+    // Opened before its PDF is there (a network share not yet reachable): no size.
+    let mut s = Session::empty();
+    s.execute("open", &json!({"path": dxf.to_string_lossy()})).unwrap();
+    assert_eq!(the_underlay(&s).size.x, 0.0);
+    let revision = s.state().unwrap().revision;
+    // Still missing: nothing changes, nothing is reported again.
+    let lines = s.log.len();
+    assert!(!retry_sizes(&mut s));
+    assert_eq!((s.state().unwrap().revision, s.log.len()), (revision, lines));
+    // The PDF arrives: the size is read, the drawing is redrawn (a new revision) and isn't modified.
+    std::fs::write(&pdf, b"%PDF-1.7 fake").unwrap();
+    assert!(retry_sizes(&mut s));
+    assert!((the_underlay(&s).size.x - 297.0 / 25.4).abs() < 1e-12, "{:?}", the_underlay(&s));
+    assert!(s.state().unwrap().revision > revision);
+    assert!(!s.state().unwrap().is_dirty(), "reading the size is no change");
+    assert!(!retry_sizes(&mut s), "nothing left to size");
+    // A drawing edited meanwhile stays edited.
+    std::fs::remove_file(&pdf).unwrap();
+    let mut s = Session::empty();
+    s.execute("open", &json!({"path": dxf.to_string_lossy()})).unwrap();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    std::fs::write(&pdf, b"%PDF-1.7 fake").unwrap();
+    assert!(retry_sizes(&mut s));
+    assert!(s.state().unwrap().is_dirty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn turning_the_lightness_over_keeps_hues() {
     let mut px = vec![255, 255, 255, 255, 0, 0, 0, 255, 255, 0, 0, 255, 200, 200, 200, 255];
     turn_lightness(&mut px);

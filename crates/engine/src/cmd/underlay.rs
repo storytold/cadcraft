@@ -145,8 +145,22 @@ pub fn underlay_pixels(stored: &str, document: Option<&str>, page: u32, max_side
 /// read from each PDF, in the drawing's units. Underlays whose file can't be read keep no size
 /// and are reported. The opened state counts as saved.
 pub(crate) fn after_open(s: &mut Session, i: usize) {
-    let Some(hooks) = pdf() else { return };
-    let Some(st) = s.docs.get_mut(i) else { return };
+    fill_sizes(s, i, true);
+}
+
+/// Give the PDF underlays of the active drawing that have no page size (their PDF couldn't be
+/// read when it opened) their size, when their PDF can be read now; nothing is reported. The
+/// drawing is redrawn (a new revision) and stays unmodified if it was. Returns whether a size
+/// was found. The canvas calls it once in a while while such an underlay is shown.
+pub fn retry_sizes(s: &mut Session) -> bool {
+    fill_sizes(s, s.active, false)
+}
+
+/// The page sizes of drawing `i`'s PDF underlays that have none, read from their PDFs; the PDFs
+/// that can't be read are reported when `report`. Returns whether a size was found.
+fn fill_sizes(s: &mut Session, i: usize, report: bool) -> bool {
+    let Some(hooks) = pdf() else { return false };
+    let Some(st) = s.docs.get_mut(i) else { return false };
     let missing_size = |e: &cadcraft_doc::Entity| matches!(&e.kind, EntityKind::PdfUnderlay(u) if u.size == Vec2::ZERO);
     let d = &st.doc;
     let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(d.blocks.values().map(|b| &b.entities));
@@ -161,7 +175,7 @@ pub(crate) fn after_open(s: &mut Session, i: usize) {
         .into_iter()
         .collect();
     if todo.is_empty() {
-        return;
+        return false;
     }
     let mut sizes: HashMap<(String, u32), Vec2> = HashMap::new();
     let mut notes = Vec::new();
@@ -181,7 +195,10 @@ pub(crate) fn after_open(s: &mut Session, i: usize) {
             Err(e) => notes.push(format!("PDF underlay not shown: {e}")),
         }
     }
-    if !sizes.is_empty() {
+    let found = !sizes.is_empty();
+    if found {
+        // Reading a size is no change: an unmodified drawing stays so.
+        let unmodified = !st.is_dirty();
         let d = Arc::make_mut(&mut st.doc);
         let fill = |store: &mut cadcraft_doc::EntityStore| {
             let hs: Vec<Handle> = store.iter().filter(|e| missing_size(e)).map(|e| e.handle).collect();
@@ -202,11 +219,17 @@ pub(crate) fn after_open(s: &mut Session, i: usize) {
                 fill(&mut Arc::make_mut(b).entities);
             }
         }
-        st.saved = st.doc.clone();
+        if unmodified || report {
+            st.saved = st.doc.clone();
+        }
+        st.revision += 1;
     }
-    for n in notes {
-        s.echo(n);
+    if report {
+        for n in notes {
+            s.echo(n);
+        }
     }
+    found
 }
 
 /// A PDF page's size: on paper, in millimetres, and at underlay scale 1 (`native`), in the units
