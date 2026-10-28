@@ -171,3 +171,51 @@ fn autocad_dwgs_keep_every_field() {
         assert!(unexpected.is_empty(), "{name}: {} of {} records differ beyond the known ones: {unexpected:?}", differ.len(), a.len());
     }
 }
+
+/// The references of every object of a DWG that name no object of the file (null excepted): the
+/// referring object, its type and the missing handle.
+pub(crate) fn dangling(bytes: &[u8]) -> std::collections::BTreeSet<(u64, String, u64)> {
+    let c = read_container(bytes).unwrap();
+    let mut out = std::collections::BTreeSet::new();
+    for (r, o) in c.objects_iter() {
+        let Ok(o) = o else { continue };
+        let name = type_name(o.type_code, &c.classes).0;
+        for h in cadcraft_dwg::codec::edit::handle_refs(&o, c.version).unwrap_or_default() {
+            if h != 0 && !c.has_handle(h) {
+                out.insert((r.handle, name.clone(), h));
+            }
+        }
+    }
+    out
+}
+
+/// Deleting entities from AutoCAD's DWG leaves no reference to them in the saved file: not in a
+/// dimension style's reactors, a block's entity list, an associativity object or an object copied
+/// back as the file had it (`dwg_check::restore_unchanged` copies only objects whose references
+/// the new file has). One entity of each kind (and the line a dimension is associated with), then
+/// every model space entity.
+#[test]
+fn autocad_dwgs_keep_no_references_to_deleted_entities() {
+    let Some(dir) = std::env::var_os("MI201_CORPUS").map(std::path::PathBuf::from).filter(|d| d.is_dir()) else { return };
+    for name in ["mi201-r2018.dwg", "mi201-r2013.dwg", "mi201-r2010.dwg", "mi201-r2004.dwg"] {
+        let Ok(bytes) = std::fs::read(dir.join(name)) else { continue };
+        assert!(dangling(&bytes).is_empty(), "{name}: the file itself");
+        let d0 = cadcraft_io::read(&bytes, name).unwrap();
+        let model: Vec<(cadcraft_doc::Handle, &str)> =
+            d0.space(&cadcraft_doc::Space::Model).unwrap().iter().map(|e| (e.handle, e.kind.type_name())).collect();
+        let mut kinds = std::collections::BTreeSet::new();
+        let mut cases: Vec<Vec<cadcraft_doc::Handle>> =
+            model.iter().filter(|(h, k)| kinds.insert(*k) || h.0 == 0x26).map(|(h, _)| vec![*h]).collect();
+        cases.push(model.iter().map(|(h, _)| *h).collect());
+        for gone in cases {
+            let mut d = d0.clone();
+            for h in &gone {
+                d.remove_entity(*h);
+            }
+            let saved = cadcraft_io::write(&d, name).unwrap();
+            assert!(dangling(&saved).is_empty(), "{name}: deleting {gone:X?}: {:X?}", dangling(&saved));
+            let back = cadcraft_io::read(&saved, name).unwrap();
+            assert_eq!(back.entity_count(), d.entity_count(), "{name}: deleting {gone:X?}");
+        }
+    }
+}

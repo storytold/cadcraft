@@ -2,8 +2,9 @@
 //! what the bridge (acadrust) can't carry survives open and save, and what CADCraft changed is
 //! saved as CADCraft wrote it.
 
-use cadcraft_doc::Drawing;
+use cadcraft_doc::{AssocSnap, DimAssoc, DimKind, Dimension, Drawing, EntityKind, Line, Space};
 use cadcraft_dwg::codec::{edit, read_container, type_name};
+use cadcraft_geom::Vec3;
 
 /// The handle of the first object of type `kind`.
 fn first_of(bytes: &[u8], kind: &str) -> u64 {
@@ -72,4 +73,51 @@ fn a_dwg_of_another_version_is_not_copied_from() {
     let opts = cadcraft_io::SaveOptions { version: Some(cadcraft_dxf::Version::R2013), binary: false };
     let saved = cadcraft_io::write_with(&d, "x.dwg", &opts).unwrap();
     assert!(!refs_of(&saved, dimstyle).contains(&ucs));
+}
+
+/// A DWG with a line and a dimension associated with it, opened again: deleting the line, the
+/// dimension or both and saving leaves no reference to what was deleted, though the model space
+/// block's entity list and the associativity object named them when the file was opened (an
+/// object is copied back as the file had it only when the new file has everything it names).
+#[test]
+fn deleted_entities_leave_no_references_behind() {
+    let mut d = Drawing::new_imperial();
+    let line = d.add(&Space::Model, Default::default(), EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(10.0, 0.0, 0.0) })).unwrap();
+    let dim = Dimension {
+        kind: DimKind::Linear { rotation: 0.0 },
+        p13: Vec3::ZERO,
+        p14: Vec3::new(10.0, 0.0, 0.0),
+        defpt: Vec3::new(10.0, 2.0, 0.0),
+        style: "Standard".into(),
+        assoc: vec![DimAssoc { read: Default::default(), point: "p13".into(), handle: line, snap: AssocSnap::Start }],
+        ..serde_json::from_value(serde_json::json!({"kind": {"linear": {"rotation": 0.0}}, "defpt": [0, 0, 0], "textMid": [0, 0, 0]})).unwrap()
+    };
+    let dh = d.add(&Space::Model, Default::default(), EntityKind::Dimension(dim)).unwrap();
+    let file = cadcraft_io::write(&d, "x.dwg").unwrap();
+    assert!(super::dwg_corpus_content::dangling(&file).is_empty(), "the file itself");
+    let c = read_container(&file).unwrap();
+    let naming = |h: u64| -> Vec<String> {
+        c.objects_iter()
+            .filter_map(|(r, o)| {
+                let o = o.ok()?;
+                (r.handle != h && edit::handle_refs(&o, c.version).ok()?.contains(&h)).then(|| type_name(o.type_code, &c.classes).0)
+            })
+            .collect()
+    };
+    // The block's entity list (DWG only: CADCraft's DXF record of the block doesn't change) and
+    // the associativity object name both.
+    for h in [line.0, dh.0] {
+        assert!(naming(h).iter().any(|n| n == "BLOCK_HEADER") && naming(h).iter().any(|n| n == "DIMASSOC"), "{h:X}: {:?}", naming(h));
+    }
+    let opened = cadcraft_io::read(&file, "x.dwg").unwrap();
+    for gone in [vec![line], vec![dh], vec![line, dh]] {
+        let mut d = opened.clone();
+        for h in &gone {
+            d.remove_entity(*h);
+        }
+        let saved = cadcraft_io::write(&d, "x.dwg").unwrap();
+        let left = super::dwg_corpus_content::dangling(&saved);
+        assert!(left.is_empty(), "deleting {gone:X?}: {left:X?}");
+        assert_eq!(cadcraft_io::read(&saved, "x.dwg").unwrap().entity_count(), d.entity_count());
+    }
 }
