@@ -34,6 +34,9 @@ const SETTLE_S: f64 = 0.25;
 /// Seconds a sharper part is kept once no underlay drawn shows it (scrolled away, deleted,
 /// another drawing): each can hold a texture of up to `DETAIL_PX` squared pixels.
 const DETAIL_KEEP_S: f64 = 5.0;
+/// Seconds before a page that could not be read is read again (the view still on it): the PDF
+/// may have come back meanwhile.
+const PAGE_RETRY_S: f64 = 5.0;
 /// Seconds before a part whose drawing failed is asked for again (the view still on it): each
 /// attempt reads the whole PDF again.
 const DETAIL_RETRY_S: f64 = 5.0;
@@ -69,11 +72,12 @@ struct Detail {
     failed: Option<([f64; 4], f64, f64)>,
 }
 
-/// A page being read on a worker thread, or read: its texture, or the error, kept so it is not
-/// read again every frame.
+/// A page being read on a worker thread, read (its texture), or not read: the error and when
+/// (egui time), kept so it is not read again every frame but only after [`PAGE_RETRY_S`].
 enum Page {
     Reading(std::sync::mpsc::Receiver<Pixels>),
-    Read(Result<TextureHandle, String>),
+    Read(TextureHandle),
+    Failed(String, f64),
 }
 
 /// Which of a frame's two calls of [`shapes`] draws: the active viewport's list (model space
@@ -121,6 +125,12 @@ impl Cache {
         // A relative path means a different file in another drawing's folder; the PDF's layers
         // shown or hidden make another picture of the page.
         let key = (format!("{}|{path}|{}", document.unwrap_or(""), layers_key(layers)), page, look);
+        // A page that could not be read is read again after a while: the PDF may be back.
+        if let Some((Page::Failed(_, at), _)) = self.pages.get(&key)
+            && now - at >= PAGE_RETRY_S
+        {
+            self.pages.remove(&key);
+        }
         if !self.pages.contains_key(&key) {
             if self.pages.len() >= MAX_PAGES {
                 let oldest = self.pages.iter().filter(|(_, (_, used))| *used < now).min_by(|a, b| a.1.1.total_cmp(&b.1.1)).map(|(k, _)| k.clone());
@@ -149,7 +159,7 @@ impl Cache {
                 job();
                 true
             };
-            let state = if started { Page::Reading(rx) } else { Page::Read(Err("the page could not be read".to_string())) };
+            let state = if started { Page::Reading(rx) } else { Page::Failed("the page could not be read".to_string(), now) };
             self.pages.insert(key.clone(), (state, now));
         }
         if let Some((_, used)) = self.pages.get_mut(&key) {
@@ -171,14 +181,18 @@ impl Cache {
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => Err("the page could not be read".to_string()),
             };
-            if let Err(e) = &read {
-                log::warn!("PDF underlay {path} page {page}: {e}");
-            }
-            self.pages.insert(key.clone(), (Page::Read(read), now));
+            let state = match read {
+                Ok(t) => Page::Read(t),
+                Err(e) => {
+                    log::warn!("PDF underlay {path} page {page}: {e}");
+                    Page::Failed(e, now)
+                }
+            };
+            self.pages.insert(key.clone(), (state, now));
         }
         match self.pages.get(&key) {
-            Some((Page::Read(Ok(t)), _)) => Ok(t),
-            Some((Page::Read(Err(e)), _)) => Err(e.as_str()),
+            Some((Page::Read(t), _)) => Ok(t),
+            Some((Page::Failed(e, _), _)) => Err(e.as_str()),
             _ => Err("being read"),
         }
     }
@@ -536,6 +550,33 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert!(got.is_err_and(|e| e != "being read"), "the reading ended");
+    }
+
+    /// Reads the page of `path` at egui time `now` until the worker is done; the outcome.
+    fn read_page(ctx: &egui::Context, cache: &mut Cache, path: &str, now: f64) -> Result<(), String> {
+        for _ in 0..200 {
+            match cache.texture(ctx, path, None, 1, (false, 100, false), &[], now) {
+                Err("being read") => std::thread::sleep(std::time::Duration::from_millis(10)),
+                r => return r.map(|_| ()).map_err(str::to_string),
+            }
+        }
+        Err("being read".into())
+    }
+
+    #[test]
+    fn a_page_that_could_not_be_read_is_read_again_after_a_while() {
+        // The PDF isn't there when the drawing opens (a network share not yet reachable, a file
+        // copied in later): the page is read again once in a while, not only after a restart.
+        let ctx = egui::Context::default();
+        let mut cache = Cache::default();
+        let path = "/nowhere/later.pdf";
+        assert!(read_page(&ctx, &mut cache, path, 1.0).is_err_and(|e| e != "being read"), "the first reading fails");
+        // The next frames, still on screen, don't read it again every frame.
+        for now in [1.05, 2.0, 1.0 + PAGE_RETRY_S - 0.1] {
+            assert!(cache.texture(&ctx, path, None, 1, (false, 100, false), &[], now).is_err_and(|e| e != "being read"), "at {now} s");
+        }
+        // After a while it is read again.
+        assert_eq!(cache.texture(&ctx, path, None, 1, (false, 100, false), &[], 1.0 + PAGE_RETRY_S).err(), Some("being read"));
     }
 
     #[test]
