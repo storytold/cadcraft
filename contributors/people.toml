@@ -91,3 +91,7 @@ sync_github_name = false
 real_name = "Robert Lee"
 sync_github_name = true
 
+[people.Sladrian]
+real_name = "Sladrian Pedroso"
+display_name = "Sladrian Pedroso"
+sync_github_name = false

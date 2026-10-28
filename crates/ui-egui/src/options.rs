@@ -15,7 +15,7 @@
 //! | `saveVersion` | `"2000"` … `"2018"`: the version drawings with no file yet are saved in |
 //! | `SAVETIME` | minutes between automatic saves, 0–600 (0: off) |
 //! | `SAVEFILEPATH` | the folder automatic saves go to |
-//! | `timeSensitiveRightClick` | while a command runs, a quick right-click is Enter and holding the button opens the shortcut menu (default); `false`: a right-click always opens the menu |
+//! | `timeSensitiveRightClick` | a quick right-click is Enter (between commands it repeats the last one) and holding the button opens the shortcut menu (default); `false`: a right-click always opens the menu |
 //! | `systemCursor` | keep the system cursor visible over the drawing area |
 //! | `historyLines` | command-line history lines, 0–12 |
 //! | `modelBackground`, `paperBackground` | `"#rrggbb"`, or `null` for the default |

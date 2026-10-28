@@ -133,7 +133,7 @@ pub struct CanvasState {
     /// A GRIP edit was running last frame (its grips go cold when it ends).
     grip_editing: bool,
     /// The grip whose menu (Stretch, Add Vertex, Lengthen…) a right-click opened.
-    grip_menu: Option<(Handle, usize)>,
+    pub(crate) grip_menu: Option<(Handle, usize)>,
     /// Dynamic block grips of the selection (cached), the one being dragged, and the list grip
     /// whose choices are open (and whether it opened this frame).
     pub(crate) dyn_grips: crate::dyngrips::Cache,
@@ -895,24 +895,27 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             }
         }
     }
-    // Right-click acts as Enter while a command runs (the classic CAD default; held, it opens the
-    // command menu); otherwise it opens the shortcut menu (Repeat, Clipboard, …).
-    // Shift/Ctrl+right-click opens the object snap menu.
+    // A quick right-click is Enter (the classic CAD default): it enters what was typed, ends the
+    // input of a running command, and between commands repeats the last one. Held, it opens the
+    // command menu or the shortcut menu (Repeat, Clipboard, …). Shift/Ctrl+right-click opens the
+    // object snap menu.
     let idle = !app.session.prompting();
     if inside && pressed_secondary {
         app.canvas.snap_menu = mods.shift || mods.ctrl;
-    }
-    if crate::context_menu::in_command(app, ui, inside, pressed_secondary) {
-        let _ = app.session.input(Input::Enter);
     }
     // Right-click on a grip with options (polyline vertex, line end…) opens the grip menu.
     if inside && pressed_secondary && idle && !app.canvas.snap_menu {
         app.canvas.grip_menu = grip_at(app, &xf, hover_pos).filter(|g| !grip_options(app, *g).is_empty());
     }
+    let enter = crate::context_menu::in_command(app, ui, inside, pressed_secondary);
+    if enter {
+        // As the Enter key does: what was typed (`rec`, `@10,0`), or Enter when nothing was.
+        crate::cmdline::submit(app);
+    }
     crate::dyngrips::menu(app, ui.ctx(), &xf);
     if idle && !app.canvas.snap_menu && app.canvas.grip_menu.is_some() {
         grip_menu(app, &resp);
-    } else if idle || app.canvas.snap_menu {
+    } else if (idle && !enter) || app.canvas.snap_menu {
         crate::context_menu::show(app, &resp);
     }
 

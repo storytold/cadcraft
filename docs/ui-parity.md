@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-22 · **Change:** minor (distinct polyline midpoint grips) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-28 · **Change:** minor (a quick right-click is Enter between commands too, #1387) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
 
 How CADCraft's interaction compares with AutoCAD's: point entry, object snaps, tracking, dynamic
 input, grips, selection, the command line, chrome and navigation. A drafter's speed in AutoCAD
@@ -190,11 +190,15 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
   shortcuts. AutoCAD for Mac's defaults are similar in number; F4 (3D osnap) and F6 (dynamic UCS)
   are missing.
 - Delete erases the selection on macOS (#64); Escape cancels.
-- Right-click on the canvas is Enter while a command runs; holding it (250 ms, AutoCAD's
-  time-sensitive right-click) opens the command menu: Enter, Cancel, Recent Input, the prompt's
-  options, Snap Overrides, Pan/Zoom. Otherwise it opens a shortcut menu (Repeat, Recent Commands,
-  Clipboard ▸, Isolate ▸, the selection's editing commands, Draw Order ▸, Group, the selected
-  object type's edit commands, Select Similar, Deselect All, Undo/Redo, Pan/Zoom; #325, #512).
+- A quick right-click on the canvas is Enter, as in AutoCAD: it enters what was typed (a command
+  name, a point), ends the input of a running command, and between commands repeats the last one
+  (#1387). Holding it (250 ms, AutoCAD's time-sensitive right-click) opens the command menu while
+  a command runs: Enter, Cancel, Recent Input, the prompt's options, Snap Overrides, Pan/Zoom.
+  Held between commands, it opens a shortcut menu (Repeat, Recent Commands, Clipboard ▸,
+  Isolate ▸, the selection's editing commands, Draw Order ▸, Group, the selected object type's
+  edit commands, Select Similar, Deselect All, Undo/Redo, Pan/Zoom; #325, #512). With the
+  time-sensitive right-click turned off in Options, every right-click opens one of these menus:
+  the command menu while a command runs, the shortcut menu between commands.
   The command line, drawing tabs, layout tabs, Layers palette rows and the Properties palette
   have menus too (#512). Still missing: in-place layout tab rename, Move or Copy, Select All
   Layouts.
@@ -210,6 +214,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 | 2026-10-14 | minor | Holding Shift overrides ortho while it is held (on when ORTHOMODE is off, off when it is on), as in AutoCAD |
 | 2026-10-16 | minor | ALIASEDIT opens the Command Aliases dialog (#1381) |
 | 2026-10-18 | minor | In-window menu bar: once a menu is open, pointing at another title closes it and opens that one (#1567) |
+| 2026-10-28 | minor | A quick right-click is Enter between commands too: it runs the typed command or repeats the last one, and enters typed input while a command runs (#1387) |
 | 2026-10-13 | minor | Options ▸ Selection adds Select using two clicks only; PICKDRAG 0 disables drag-window creation/completion, 2 preserves clicks or drag, and the preference survives restart; UI pointer and profile regressions |
 | 2026-10-12 | minor | Selected and hovered objects redrawn in the selection colour (text and arrowheads included); Options ▸ Selection laid out as AutoCAD's: Object grouping, Show grips, grip object limit, selection preview, Visual Effect Settings (selection area, preview filter) |
 | 2026-10-12 | minor | Animation effects (dialog and menu fades, smoothed wheel scrolling and ⌘/Ctrl+wheel zoom) follow the operating system's setting; View ▸ Accessibility ▸ Animation Effects chooses System, On or Off |
