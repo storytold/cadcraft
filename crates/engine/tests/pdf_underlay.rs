@@ -63,6 +63,22 @@ fn a_page_is_attached_at_its_size_on_paper() {
     assert!(!s.doc().unwrap().space(&Space::Model).into_iter().flat_map(|st| st.iter()).any(|e| matches!(e.kind, EntityKind::PdfUnderlay(_))));
 }
 
+#[test]
+fn a_rotation_that_is_not_a_number_is_refused() {
+    hooks();
+    let path = pdf_file("Rotation.pdf", b"%PDF-1.7 fake");
+    let mut s = Session::empty();
+    s.new_drawing(true);
+    for bad in [json!("90"), json!(true), json!([90]), json!({"deg": 90})] {
+        let r = s.execute("pdfattach", &json!({"path": path, "rotation": bad}));
+        assert!(r.as_ref().is_err_and(|e| e.to_string().contains("rotation")), "{bad}: {r:?}");
+    }
+    assert!(!s.doc().unwrap().model.iter().any(|e| matches!(e.kind, EntityKind::PdfUnderlay(_))), "nothing attached");
+    // A number, or none (0), is taken.
+    assert!(s.execute("pdfattach", &json!({"path": path, "rotation": 90})).is_ok());
+    assert!(s.execute("pdfattach", &json!({"path": path, "rotation": null})).is_ok());
+}
+
 /// Every INSUNITS value sizes the page at its size on paper in that unit (DXF reference values;
 /// the survey units are the US survey foot's, 1200/3937 m).
 #[test]
