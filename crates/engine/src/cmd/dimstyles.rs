@@ -6,7 +6,7 @@ use cadcraft_doc::{DimStyle, EntityKind, Handle};
 use serde_json::{Value, json};
 
 use super::machines::SelectRun;
-use super::*;
+use super::{CommandSpec, bad, curves, str_param, targets};
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 fn other(m: impl Into<String>) -> EngineError {
