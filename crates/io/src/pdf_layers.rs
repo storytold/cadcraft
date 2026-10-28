@@ -218,6 +218,63 @@ mod tests {
         out
     }
 
+    /// A PDF 1.5 whose cross-reference is a stream (as most recent PDF writers make), with layers
+    /// MURS (a red square) and COTES (a green one).
+    fn xref_stream_pdf() -> Vec<u8> {
+        let content = b"/OC /L1 BDC 1 0 0 rg 10 10 80 80 re f EMC /OC /L2 BDC 0 1 0 rg 110 10 80 80 re f EMC";
+        let objects: Vec<Vec<u8>> = vec![
+            b"<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [5 0 R 6 0 R] /D << /BaseState /ON /Order [5 0 R 6 0 R] >> >> >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Resources << /Properties << /L1 5 0 R /L2 6 0 R >> >> /Contents 4 0 R >>"
+                .to_vec(),
+            [format!("<< /Length {} >>\nstream\n", content.len()).into_bytes(), content.to_vec(), b"\nendstream".to_vec()].concat(),
+            b"<< /Type /OCG /Name (MURS) >>".to_vec(),
+            b"<< /Type /OCG /Name (COTES) >>".to_vec(),
+        ];
+        let mut out = b"%PDF-1.5\n".to_vec();
+        let mut offsets = Vec::new();
+        for (i, o) in objects.iter().enumerate() {
+            offsets.push(u32::try_from(out.len()).unwrap());
+            out.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+            out.extend_from_slice(o);
+            out.extend_from_slice(b"\nendobj\n");
+        }
+        // The cross-reference stream (object 7, uncompressed): type 1, offset (4 bytes), generation (2).
+        let xref_at = u32::try_from(out.len()).unwrap();
+        offsets.push(xref_at);
+        let mut rows = vec![0u8, 0, 0, 0, 0, 0xff, 0xff];
+        for o in &offsets {
+            rows.push(1);
+            rows.extend_from_slice(&o.to_be_bytes());
+            rows.extend_from_slice(&[0, 0]);
+        }
+        out.extend_from_slice(format!("7 0 obj\n<< /Type /XRef /Size 8 /W [1 4 2] /Root 1 0 R /Length {} >>\nstream\n", rows.len()).as_bytes());
+        out.extend_from_slice(&rows);
+        out.extend_from_slice(format!("\nendstream\nendobj\nstartxref\n{xref_at}\n%%EOF\n").as_bytes());
+        out
+    }
+
+    #[test]
+    fn layers_are_turned_off_in_a_pdf_whose_cross_reference_is_a_stream() {
+        let pdf = xref_stream_pdf();
+        let names: Vec<String> = layers(&pdf).unwrap().into_iter().map(|l| l.name).collect();
+        assert_eq!(names, ["MURS", "COTES"]);
+        let (red, green) = colours(&pdf);
+        assert!(red > 1000 && green > 1000, "both shown at first: {red} red, {green} green");
+        // A classic update chained to the stream: MURS off.
+        let murs_off = with_layers(&pdf, &[("MURS".into(), false)]).unwrap();
+        assert!(murs_off.starts_with(&pdf), "an incremental update");
+        let (red, green) = colours(&murs_off);
+        assert!(red == 0 && green > 1000, "MURS hidden: {red} red, {green} green");
+        assert_eq!(layers(&murs_off).unwrap().iter().map(|l| (l.name.as_str(), l.on)).collect::<Vec<_>>(), [("MURS", false), ("COTES", true)]);
+        // A second update on top of the first: MURS back, COTES off.
+        let cotes_off = with_layers(&murs_off, &[("MURS".into(), true), ("COTES".into(), false)]).unwrap();
+        let (red, green) = colours(&cotes_off);
+        assert!(red > 1000 && green == 0, "COTES hidden: {red} red, {green} green");
+        // Nothing to change: the same bytes.
+        assert_eq!(with_layers(&cotes_off, &[("COTES".into(), false)]).unwrap(), cotes_off);
+    }
+
     #[test]
     fn the_new_catalog_takes_a_number_no_object_uses() {
         let pdf = understated_size_pdf();
