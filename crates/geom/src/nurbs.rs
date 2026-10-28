@@ -8,7 +8,7 @@
 
 use std::f64::consts::FRAC_PI_2;
 
-use crate::spline::{basis, find_span};
+use crate::spline::{MAX_STACK_DEGREE, basis, find_span};
 use crate::{EPS, Ellipse, Spline, TAU, Vec2};
 
 /// Highest degree the editing operations work with.
@@ -88,6 +88,34 @@ fn elevate_bezier(p: &[H]) -> Vec<H> {
         .collect()
 }
 
+/// Basis functions of degree `p` in `n[..=p]` and of degree `p - 1` in `lower[..p]` for `p >= 1`,
+/// in one Cox-de Boor sweep: the degree `p - 1` values are the state just before the last step,
+/// so they match [`basis`] exactly. `left` and `right` are scratch of `p + 1` values; the outputs
+/// stay untouched when a slice is too short.
+#[allow(clippy::too_many_arguments)]
+fn basis_pair_into(span: usize, u: f64, p: usize, knots: &[f64], n: &mut [f64], lower: &mut [f64], left: &mut [f64], right: &mut [f64]) {
+    if p == 0 || n.len() <= p || lower.len() < p || left.len() <= p || right.len() <= p {
+        return;
+    }
+    n[0] = 1.0;
+    for j in 1..=p {
+        let k = |i: isize| knots.get(i.max(0) as usize).copied().unwrap_or(0.0);
+        left[j] = u - k(span as isize + 1 - j as isize);
+        right[j] = k(span as isize + j as isize) - u;
+        if j == p {
+            lower[..p].copy_from_slice(&n[..p]);
+        }
+        let mut saved = 0.0;
+        for r in 0..j {
+            let den = right[r + 1] + left[j - r];
+            let tmp = if den.abs() > 1e-300 { n[r] / den } else { 0.0 };
+            n[r] = saved + right[r + 1] * tmp;
+            saved = left[j - r] * tmp;
+        }
+        n[j] = saved;
+    }
+}
+
 impl Spline {
     fn weight(&self, i: usize) -> f64 {
         if self.weights.is_empty() { 1.0 } else { self.weights.get(i).copied().unwrap_or(1.0) }
@@ -130,14 +158,25 @@ impl Spline {
     /// First derivative without re-validating the spline. The caller must have confirmed
     /// [`Spline::is_valid`] already; integration calls this once per sample, and re-running the
     /// O(knots) validity scan each time would make measuring a valid spline quadratic (CWE-407).
+    /// Up to degree [`MAX_STACK_DEGREE`] both bases come from one stack-only sweep; higher degrees
+    /// compute them on the heap.
     fn derivative_unchecked(&self, t: f64) -> Vec2 {
         let p = self.degree;
         let Some(n) = self.control.len().checked_sub(1) else { return Vec2::ZERO };
         let (lo, hi) = self.domain();
         let t = if t.is_finite() { t.clamp(lo, hi) } else { lo };
         let span = find_span(n, p, t, &self.knots);
-        let nb = basis(span, t, p, &self.knots);
-        let nd = basis(span, t, p - 1, &self.knots);
+        let (mut sb, mut sd, mut sl, mut sr) =
+            ([0.0; MAX_STACK_DEGREE + 1], [0.0; MAX_STACK_DEGREE + 1], [0.0; MAX_STACK_DEGREE + 1], [0.0; MAX_STACK_DEGREE + 1]);
+        let (hb, hd);
+        let (nb, nd): (&[f64], &[f64]) = if (1..=MAX_STACK_DEGREE).contains(&p) {
+            basis_pair_into(span, t, p, &self.knots, &mut sb, &mut sd, &mut sl, &mut sr);
+            (&sb, &sd)
+        } else {
+            hb = basis(span, t, p, &self.knots);
+            hd = basis(span, t, p - 1, &self.knots);
+            (&hb, &hd)
+        };
         let k = |i: usize| self.knots.get(i).copied().unwrap_or(0.0);
         let ratio = |num: Option<&f64>, den: f64| if den.abs() > 1e-300 { num.copied().unwrap_or(0.0) / den } else { 0.0 };
         let (mut a, mut w, mut da, mut dw) = (Vec2::ZERO, 0.0, Vec2::ZERO, 0.0);
@@ -602,6 +641,132 @@ mod tests {
 
     fn cubic() -> Spline {
         Spline::from_control(vec![Vec2::new(0.0, 0.0), Vec2::new(3.0, 3.0), Vec2::new(6.0, -3.0), Vec2::new(9.0, 0.0), Vec2::new(12.0, 2.0)], 3)
+    }
+
+    /// The previous implementation (two heap-allocated bases), kept as the oracle for the
+    /// allocation-free `derivative_unchecked`.
+    impl Spline {
+        fn derivative_unchecked_old(&self, t: f64) -> Vec2 {
+            let p = self.degree;
+            let Some(n) = self.control.len().checked_sub(1) else { return Vec2::ZERO };
+            let (lo, hi) = self.domain();
+            let t = if t.is_finite() { t.clamp(lo, hi) } else { lo };
+            let span = find_span(n, p, t, &self.knots);
+            let nb = basis(span, t, p, &self.knots);
+            let nd = basis(span, t, p - 1, &self.knots);
+            let k = |i: usize| self.knots.get(i).copied().unwrap_or(0.0);
+            let ratio = |num: Option<&f64>, den: f64| if den.abs() > 1e-300 { num.copied().unwrap_or(0.0) / den } else { 0.0 };
+            let (mut a, mut w, mut da, mut dw) = (Vec2::ZERO, 0.0, Vec2::ZERO, 0.0);
+            for j in 0..=p {
+                let Some(i) = (span + j).checked_sub(p) else { continue };
+                let Some(c) = self.control.get(i) else { continue };
+                let wi = self.weight(i);
+                let n0 = nb.get(j).copied().unwrap_or(0.0);
+                // N'_{i,p} = p (N_{i,p-1} / (u_{i+p} - u_i) - N_{i+1,p-1} / (u_{i+p+1} - u_{i+1})).
+                let left = if j >= 1 { ratio(nd.get(j - 1), k(i + p) - k(i)) } else { 0.0 };
+                let right = if j < p { ratio(nd.get(j), k(i + p + 1) - k(i + 1)) } else { 0.0 };
+                let dn = p as f64 * (left - right);
+                a += *c * (n0 * wi);
+                w += n0 * wi;
+                da += *c * (dn * wi);
+                dw += dn * wi;
+            }
+            if w.abs() < 1e-300 {
+                return Vec2::ZERO;
+            }
+            let d = (da - a / w * dw) / w;
+            if d.is_finite() { d } else { Vec2::ZERO }
+        }
+    }
+
+    struct XorShift(u64);
+    impl XorShift {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn unit(&mut self) -> f64 {
+            (self.next() >> 11) as f64 / (1u64 << 53) as f64
+        }
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+    }
+
+    /// A valid random spline of degree `p`: clamped or unclamped knots, repeated interior knots,
+    /// and non-rational, rational or zero/negative weights.
+    fn random_spline(r: &mut XorShift, p: usize) -> Spline {
+        let n = p + 1 + r.below(8);
+        let control = (0..n).map(|_| Vec2::new(r.unit() * 100.0 - 50.0, r.unit() * 100.0 - 50.0)).collect();
+        let total = n + p + 1;
+        let mut knots: Vec<f64> =
+            (0..total).map(|_| (r.unit() * 8.0).floor() * if r.below(3) == 0 { 0.5 } else { 1.0 } + r.unit() * f64::from(r.below(2) == 0)).collect();
+        knots.sort_by(f64::total_cmp);
+        if r.below(2) == 0 {
+            // Clamp both ends.
+            let (lo, hi) = (knots[p], knots[n]);
+            knots[..=p].fill(lo);
+            knots[n..].fill(hi);
+        }
+        let weights = match r.below(4) {
+            0 => Vec::new(),
+            1 => (0..n).map(|_| 0.2 + r.unit() * 4.0).collect(),
+            2 => (0..n).map(|_| if r.below(5) == 0 { 0.0 } else { r.unit() * 2.0 - 0.5 }).collect(),
+            _ => (0..n).map(|_| 1.0 + r.unit() * 1e-9).collect(),
+        };
+        Spline { degree: p, knots, control, weights, ..Spline::default() }
+    }
+
+    fn bits(v: Vec2) -> (u64, u64) {
+        (v.x.to_bits(), v.y.to_bits())
+    }
+
+    #[test]
+    fn derivative_is_bit_identical_to_the_heap_implementation() {
+        let mut r = XorShift(0x9E37_79B9_7F4A_7C15);
+        let mut zero_results = 0usize;
+        for p in 1..=12usize {
+            let mut compared = 0usize;
+            for _ in 0..400 {
+                let s = random_spline(&mut r, p);
+                if !s.is_valid() {
+                    continue;
+                }
+                let (lo, hi) = s.domain();
+                let mut ts = vec![lo, hi, 0.5 * (lo + hi), lo - 1.0, hi + 1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY];
+                ts.extend(s.knots.iter().copied());
+                ts.extend(s.knots.iter().map(|k| k.next_up()));
+                ts.extend(s.knots.iter().map(|k| k.next_down()));
+                ts.extend((0..8).map(|_| lo + (hi - lo) * r.unit()));
+                for t in ts {
+                    let (new, old) = (s.derivative_unchecked(t), s.derivative_unchecked_old(t));
+                    assert_eq!(bits(new), bits(old), "degree {p}, t = {t}, knots {:?}, weights {:?}", s.knots, s.weights);
+                    compared += 1;
+                    zero_results += usize::from(old == Vec2::ZERO);
+                }
+            }
+            assert!(compared > 1000, "degree {p}: only {compared} comparisons ran");
+        }
+        // The zero-vector exits (vanishing weight sum, non-finite result) are exercised too.
+        assert!(zero_results > 0);
+    }
+
+    #[test]
+    fn derivative_dispatch_around_the_stack_limit_does_not_change_results() {
+        // The last stack degree and the first heap degree both match the oracle on a clamped
+        // uniform spline (the heap degree runs the unchanged old path; this checks the dispatch).
+        for p in [MAX_STACK_DEGREE, MAX_STACK_DEGREE + 1] {
+            let ctrl: Vec<Vec2> = (0..p + 4).map(|i| Vec2::new(i as f64, (i * i % 7) as f64)).collect();
+            let s = Spline::from_control(ctrl, p);
+            assert_eq!(s.degree, p);
+            let (lo, hi) = s.domain();
+            for i in 0..=50 {
+                let t = lo + (hi - lo) * f64::from(i) / 50.0;
+                assert_eq!(bits(s.derivative_unchecked(t)), bits(s.derivative_unchecked_old(t)), "degree {p}, t = {t}");
+            }
+        }
     }
 
     #[test]
