@@ -235,7 +235,16 @@ pub(crate) fn insert_with(
 ) -> Result<Handle> {
     let blk = s.doc()?.block(name).cloned().ok_or_else(|| EngineError::Other(format!("Block \"{name}\" not found.")))?;
     let mut ins = insert_entity(&blk, at, scale, rotation, base);
+    ins.attribs = reference_attribs(&blk, &ins, values);
+    s.add_entity(EntityKind::Insert(ins))
+}
+
+/// The attributes a reference `ins` of block `blk` gets: one per attribute definition that is not
+/// constant, placed like it under the reference, with its value from `values` (by tag, any case)
+/// or its default.
+pub(crate) fn reference_attribs(blk: &Block, ins: &Insert, values: &serde_json::Map<String, Value>) -> Vec<Attrib> {
     let m = ins.transform(blk.base.xy());
+    let mut out = Vec::new();
     for e in blk.entities.iter() {
         if let EntityKind::AttDef(ad) = &e.kind {
             if ad.constant {
@@ -248,7 +257,7 @@ pub(crate) fn insert_with(
                 t = tt;
             }
             t.value = attedit::value_for(values, &ad.tag).unwrap_or_else(|| ad.text.value.clone());
-            ins.attribs.push(Attrib {
+            out.push(Attrib {
                 tag: ad.tag.clone(),
                 text: t,
                 invisible: ad.invisible,
@@ -260,7 +269,18 @@ pub(crate) fn insert_with(
             });
         }
     }
-    s.add_entity(EntityKind::Insert(ins))
+    out
+}
+
+/// The attribute definitions of block `blk` a reference asks values for (not constant), as
+/// (tag, prompt, default value).
+pub(crate) fn asked_attdefs(blk: &Block) -> Vec<(String, String, String)> {
+    blk.entities
+        .iter()
+        .filter_map(|e| {
+            if let EntityKind::AttDef(a) = &e.kind { (!a.constant).then(|| (a.tag.clone(), a.prompt.clone(), a.text.value.clone())) } else { None }
+        })
+        .collect()
 }
 
 fn run_block(s: &mut Session, p: &Value) -> Result<Value> {
@@ -625,20 +645,7 @@ impl InsertM {
             s.echo(format!("Block \"{name}\" not found."));
             return Ok(());
         };
-        self.attdefs = if self.explode {
-            Vec::new()
-        } else {
-            b.entities
-                .iter()
-                .filter_map(|e| {
-                    if let EntityKind::AttDef(a) = &e.kind {
-                        (!a.constant).then(|| (a.tag.clone(), a.prompt.clone(), a.text.value.clone()))
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        };
+        self.attdefs = if self.explode { Vec::new() } else { asked_attdefs(&b) };
         s.doc_mut()?.header.set_str("INSNAME", &b.name);
         self.name = Some(b.name.clone());
         self.stage = InsStage::Point;

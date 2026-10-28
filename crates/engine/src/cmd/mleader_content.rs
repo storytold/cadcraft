@@ -15,6 +15,8 @@ pub(super) struct Content {
     /// Block content: the block name, and whether its extents centre (rather than its insertion
     /// point) attaches to the end of the landing.
     pub block: Option<(String, bool)>,
+    /// Values of the block's attributes by tag (any case); the others take their defaults.
+    pub attributes: serde_json::Map<String, Value>,
 }
 
 /// A block MLEADER can use as content: defined, and not an anonymous (`*`) block.
@@ -67,6 +69,10 @@ pub(super) fn apply(s: &Session, k: EntityKind, c: &Content) -> Result<EntityKin
                 }
             }
         }
+        // The block's attributes, placed like their definitions under the reference.
+        if let Some(blk) = s.doc()?.block(&ins.block) {
+            ins.attribs = super::blocks::reference_attribs(blk, &ins, &c.attributes);
+        }
         m.text = None;
         m.block = Some(ins);
     }
@@ -93,5 +99,10 @@ pub(super) fn json_content(s: &Session, p: &Value) -> Result<Content> {
             Some((block_name(s, n).map_err(|e| bad("mleader", e.to_string()))?, center))
         }
     };
-    Ok(Content { leader, block })
+    let attributes = match p.get("attributes") {
+        None | Some(Value::Null) => serde_json::Map::new(),
+        Some(Value::Object(o)) => o.clone(),
+        Some(_) => return Err(bad("mleader", "`attributes` must be an object of attribute values by tag")),
+    };
+    Ok(Content { leader, block, attributes })
 }

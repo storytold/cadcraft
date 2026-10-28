@@ -86,7 +86,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("mleader", "Multileader", run_mleader)
             .menu(&["Dimension", "Multileader"])
             .alias(&["mld"])
-            .params("{points: [[arrow], ..., [landing]] ([location] with leaderType none), text?, leaderType?: straight|spline|none, block?: name, blockAttach?: center|insertion}")
+            .params("{points: [[arrow], ..., [landing]] ([location] with leaderType none), text?, leaderType?: straight|spline|none, block?: name, blockAttach?: center|insertion, attributes?: {TAG: value} (the block's attribute values; the others take their defaults)}")
             .interactive(|s| Ok(Box::new(MLeaderM::new(s)))),
         CommandSpec::new("leader", "Leader", run_leader).alias(&["lead"]).params("{points: [[x,y]...], text?}"),
         CommandSpec::new("dimstyle.update", "Update", run_update)

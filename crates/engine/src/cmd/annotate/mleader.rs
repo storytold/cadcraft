@@ -122,6 +122,12 @@ pub(super) struct MLeaderM {
     block: bool,
     block_name: String,
     block_center: bool,
+    /// Block content's attributes to ask once the leader is placed: (tag, prompt, default),
+    /// filled in then; and the values given so far, by tag.
+    attdefs: Option<Vec<(String, String, String)>>,
+    values: serde_json::Map<String, Value>,
+    /// How many of `attdefs` were answered (a tag may repeat).
+    answered: usize,
 }
 
 impl MLeaderM {
@@ -144,6 +150,9 @@ impl MLeaderM {
             block: o.block && s.doc().is_ok_and(|d| d.block(&s.last_used.mleader_block).is_some()),
             block_name: s.last_used.mleader_block.clone(),
             block_center: o.block_center,
+            attdefs: None,
+            values: serde_json::Map::new(),
+            answered: 0,
         }
     }
     /// Keep the order and Options for the next MLEADER.
@@ -165,6 +174,7 @@ impl MLeaderM {
         crate::cmd::mleader_content::Content {
             leader: self.leader_type,
             block: (self.content && self.block).then(|| (self.block_name.clone(), self.block_center)),
+            attributes: self.values.clone(),
         }
     }
     /// Leader type None: the one point placed is the content location.
@@ -196,6 +206,19 @@ impl MLeaderM {
             && !self.block
             && self.text.is_none()
             && (self.leader_done || (self.order == LeaderOrder::Content && self.pts.len() == 1 && !self.no_leader()))
+    }
+    /// The attribute whose value is asked now: block content with attributes, leader placed.
+    fn asked_attribute(&self) -> Option<&(String, String, String)> {
+        self.attdefs.as_ref()?.get(self.answered)
+    }
+    /// The leader is placed: block content's attributes are asked next (as INSERT asks them),
+    /// else the multileader is made.
+    fn placed(&mut self, s: &mut Session) -> Result<Step> {
+        if self.attdefs.is_none() && self.content && self.block {
+            let defs = s.doc()?.block(&self.block_name).map(|b| crate::cmd::blocks::asked_attdefs(b)).unwrap_or_default();
+            self.attdefs = Some(defs);
+        }
+        if self.asked_attribute().is_some() { Ok(Step::Continue) } else { self.finish(s) }
     }
     fn finish(&self, s: &mut Session) -> Result<Step> {
         if self.no_leader() && !self.content {
@@ -321,6 +344,10 @@ impl Interactive for MLeaderM {
         if let Some(o) = self.opt {
             return Self::option_prompt(o);
         }
+        if let Some((_, prompt, default)) = self.asked_attribute() {
+            let p = if prompt.is_empty() { "Enter attribute value".to_string() } else { prompt.clone() };
+            return Prompt::new(p, Accept::TEXT).default(default.clone());
+        }
         if self.wants_text() {
             return Prompt::new("Enter leader text", Accept::TEXT);
         }
@@ -350,6 +377,18 @@ impl Interactive for MLeaderM {
             self.remember(s);
             return Ok(Step::Continue);
         }
+        if let Some((tag, _, default)) = self.asked_attribute().cloned() {
+            // Enter keeps the default value.
+            let v = match i {
+                Input::Text(t) => t,
+                Input::Enter => default,
+                _ => return Ok(Step::Continue),
+            };
+            // A repeated tag keeps its first value, as the reference gets it.
+            self.values.entry(tag).or_insert(Value::String(v));
+            self.answered += 1;
+            return if self.asked_attribute().is_some() { Ok(Step::Continue) } else { self.finish(s) };
+        }
         if self.wants_text() {
             self.text = Some(if let Input::Text(t) = i { t } else { String::new() });
             return if self.leader_done { self.finish(s) } else { Ok(Step::Continue) };
@@ -377,10 +416,10 @@ impl Interactive for MLeaderM {
             Input::Enter => return Ok(Step::Cancel),
             _ => {}
         }
-        if self.leader_done && !self.wants_text() { self.finish(s) } else { Ok(Step::Continue) }
+        if self.leader_done && !self.wants_text() { self.placed(s) } else { Ok(Step::Continue) }
     }
     fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
-        if self.opt.is_some() || self.wants_text() || self.leader_done || self.pts.is_empty() {
+        if self.opt.is_some() || self.wants_text() || self.leader_done || self.pts.is_empty() || self.asked_attribute().is_some() {
             return Vec::new();
         }
         let text = self.text.as_deref().unwrap_or("");
