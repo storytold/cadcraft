@@ -8,9 +8,11 @@ use egui::{Rect, Shape, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 
-fn harness(width: f32, height: f32, scale: f32, message: bool) -> Harness<'static, CadApp> {
+/// `pc`: the Windows layout (Ribbon); else the Mac layout (Tool Bar).
+fn harness(width: f32, height: f32, scale: f32, message: bool, pc: bool) -> Harness<'static, CadApp> {
     let mut app = CadApp::new(Session::default(), Services::default());
     app.run("new", serde_json::json!({})).unwrap();
+    app.run(if pc { "ui.layout.pc" } else { "ui.layout.mac" }, serde_json::json!({})).unwrap();
     app.ui.start_tab = false;
     app.ui.in_window_menu = false;
     app.integrated_titlebar = true;
@@ -46,11 +48,11 @@ fn visible_text(shape: &Shape, clip: Rect, result: &mut Vec<(String, Rect)>) {
     }
 }
 
-fn check_status_labels_case(width: f32, height: f32, scale: f32, message: bool, overlaps: &mut Vec<String>) {
-    let mut h = harness(width, height, scale, message);
+fn check_status_labels_case(width: f32, height: f32, scale: f32, message: bool, pc: bool, overlaps: &mut Vec<String>) {
+    let mut h = harness(width, height, scale, message, pc);
     if let Ok(directory) = std::env::var("CRAFT_UI_VISUAL_DIR") {
         std::fs::create_dir_all(&directory).unwrap();
-        h.render().unwrap().save(format!("{directory}/cad-{width}-{scale}-{message}.png")).unwrap();
+        h.render().unwrap().save(format!("{directory}/cad-{width}-{scale}-{message}-{}.png", if pc { "pc" } else { "mac" })).unwrap();
     }
     let mut texts = Vec::new();
     for shape in &h.output().shapes {
@@ -76,8 +78,8 @@ fn status_labels_never_overlap_at_standard_and_compact_sizes() {
     let mut overlaps = Vec::new();
     for (width, height) in [(1200.0, 760.0), (900.0, 560.0)] {
         for scale in [1.0, 2.0] {
-            for message in [false, true] {
-                check_status_labels_case(width, height, scale, message, &mut overlaps);
+            for (message, pc) in [(false, false), (true, false), (false, true), (true, true)] {
+                check_status_labels_case(width, height, scale, message, pc, &mut overlaps);
             }
         }
     }
@@ -87,7 +89,7 @@ fn status_labels_never_overlap_at_standard_and_compact_sizes() {
 #[test]
 fn layout_tabs_stay_anchored_when_toolsets_toggle_resize_or_move() {
     for scale in [1.0, 2.0] {
-        let mut h = harness(1200.0, 760.0, scale, false);
+        let mut h = harness(1200.0, 760.0, scale, false, false);
         let tab_rects =
             |h: &Harness<'_, CadApp>| ["Model", "Layout1", "Layout2"].map(|name| h.get_by_role_and_label(egui::accesskit::Role::Tab, name).rect());
         let original = tab_rects(&h);
@@ -114,7 +116,7 @@ fn layout_tabs_stay_anchored_when_toolsets_toggle_resize_or_move() {
 #[test]
 fn layout_tabs_and_add_button_work_with_toolsets_shown_or_hidden() {
     for visible in [true, false] {
-        let mut h = harness(1400.0, 760.0, 1.0, false);
+        let mut h = harness(1400.0, 760.0, 1.0, false, false);
         h.state_mut().run("ui.toggle.toolsets", serde_json::json!({"on":visible})).unwrap();
         h.run_steps(5);
         h.get_by_role_and_label(egui::accesskit::Role::Tab, "Layout1").click();
@@ -137,7 +139,7 @@ fn layout_tabs_and_add_button_work_with_toolsets_shown_or_hidden() {
 
 #[test]
 fn compact_toolbar_overflow_keeps_help_reachable() {
-    let mut h = harness(900.0, 560.0, 1.0, false);
+    let mut h = harness(900.0, 560.0, 1.0, false, false);
     h.get_by_label("More toolbar commands").click();
     h.run_steps(3);
     h.get_by_label("Help").click();
@@ -147,8 +149,54 @@ fn compact_toolbar_overflow_keeps_help_reachable() {
 
 #[test]
 fn toolbar_plot_preview_opens_dialog() {
-    let mut h = harness(1200.0, 760.0, 1.0, false);
+    let mut h = harness(1200.0, 760.0, 1.0, false, false);
     h.get_by_label("Plot Preview").click();
     h.run_steps(3);
     assert_eq!(h.state().ui.dialog.as_deref(), Some("preview"));
+}
+
+#[test]
+fn ribbon_output_tab_preview_opens_dialog() {
+    let mut h = harness(1200.0, 760.0, 1.0, false, true);
+    h.get_by_label("Output").click();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.ribbon_tab, "output");
+    h.get_by_label("Preview").click();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.dialog.as_deref(), Some("preview"));
+}
+
+#[test]
+fn ribbon_home_tab_starts_line() {
+    let mut h = harness(1200.0, 760.0, 1.0, false, true);
+    h.get_by_label("Line").click();
+    h.run_steps(3);
+    assert!(h.state().session.running.is_some(), "LINE should be prompting");
+}
+
+#[test]
+fn the_in_window_menu_bar_sits_above_the_ribbon() {
+    let mut h = harness(1200.0, 760.0, 1.0, false, true);
+    // Windows and Linux draw the menu bar in the window (macOS uses the system one).
+    h.state_mut().ui.in_window_menu = true;
+    h.run_steps(5);
+    let mut texts = Vec::new();
+    for shape in &h.output().shapes {
+        visible_text(&shape.shape, shape.clip_rect, &mut texts);
+    }
+    let top = |label: &str| texts.iter().find(|(text, _)| text == label).map(|(_, rect)| rect.top()).unwrap_or_else(|| panic!("no {label:?} drawn"));
+    // The menu bar's File, then the Ribbon's Home tab under it.
+    assert!(top("File") < top("Home"), "File at {}, Home at {}", top("File"), top("Home"));
+}
+
+#[test]
+fn the_windows_layout_has_no_collapsed_tool_sets_strip() {
+    // The Ribbon holds the tools: no 22 px Tool Sets strip beside the Properties palette.
+    let h = harness(1200.0, 760.0, 1.0, false, true);
+    assert!(h.query_by_label("Expand Tool Sets").is_none());
+    // The Mac layout with Tool Sets hidden keeps its strip to bring them back.
+    let mut h = harness(1200.0, 760.0, 1.0, false, false);
+    h.state_mut().ui.show_toolsets = false;
+    h.run_steps(3);
+    assert!(h.query_by_label("Expand Tool Sets").is_some());
 }

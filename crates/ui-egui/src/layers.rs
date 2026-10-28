@@ -167,7 +167,7 @@ fn lw_sample(p: &egui::Painter, r: Rect, lw: Lineweight, c: Color32) {
 }
 
 /// A linetype preview drawn from its own dash pattern.
-fn lt_sample(p: &egui::Painter, r: Rect, lt: Option<&cadcraft_doc::Linetype>, c: Color32) {
+pub(crate) fn lt_sample(p: &egui::Painter, r: Rect, lt: Option<&cadcraft_doc::Linetype>, c: Color32) {
     let y = r.center().y;
     let Some(lt) = lt.filter(|l| !l.pattern.is_empty() && l.pattern.iter().any(|e| e.length.abs() > 1e-9)) else {
         p.line_segment([pos2(r.left(), y), pos2(r.right(), y)], Stroke::new(1.0, c));

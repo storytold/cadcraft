@@ -34,12 +34,19 @@ fn snapshot(ui: &UiState) -> Result<Value, String> {
     if ui.history_lines > 12 {
         return Err("historyLines must be between 0 and 12".into());
     }
+    if ui.ribbon_tab.len() > 64 {
+        return Err("ribbonTab exceeds the workspace size limit".into());
+    }
     Ok(json!({
         "docking": ui.docking,
         "dockingVersion": cadcraft_ui_egui::docking::LAYOUT_VERSION,
         "showToolsets": ui.show_toolsets,
         "showPalettes": ui.show_palettes,
         "showToolbar": ui.show_toolbar,
+        "showRibbon": ui.show_ribbon,
+        "ribbonTab": ui.ribbon_tab,
+        "ribbonMinimized": ui.ribbon_minimized,
+        "pcLayoutApplied": ui.pc_layout_applied,
         "showFileTabs": ui.show_file_tabs,
         "showStatusBar": ui.show_status_bar,
         "showCommandLine": ui.show_command_line,
@@ -239,6 +246,21 @@ mod tests {
         transient_only.start_tab = false;
         first.save_if_changed(&transient_only, Instant::now()).unwrap();
         assert_eq!(fs::read(&path).unwrap(), bytes);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn the_ribbon_survives_native_workspace_file_reload() {
+        let directory = temp_dir();
+        let path = directory.join("workspace.json");
+        let (mut first, _, _) = Workspace::at(Some(path.clone()));
+        let ui = UiState { show_ribbon: true, ribbon_tab: "annotate".into(), ribbon_minimized: true, pc_layout_applied: true, ..Default::default() };
+        first.save_if_changed(&ui, Instant::now()).unwrap();
+        let (_, restored, error) = Workspace::at(Some(path.clone()));
+        assert!(error.is_none(), "{error:?}");
+        let restored = restored.unwrap();
+        assert!(restored.show_ribbon && restored.ribbon_minimized && restored.pc_layout_applied);
+        assert_eq!(restored.ribbon_tab, "annotate");
         fs::remove_dir_all(directory).unwrap();
     }
 
