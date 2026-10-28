@@ -1,5 +1,5 @@
-//! PDF underlays' pages: read from their PDF files for showing them, and sized when a drawing
-//! is opened (a file stores no page size).
+//! PDF underlays: PDFATTACH puts one page of a PDF file under the drawing, at its size on paper.
+//! PDFADJUST fades it, sets its contrast, shows it in greys and adapts its colours to a dark background.
 //!
 //! The PDF reader belongs to a lower layer (io); the host installs it as [`PdfHooks`], so the
 //! engine stays I/O-agnostic and builds without it report "not available".
@@ -7,11 +7,13 @@
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
-use cadcraft_doc::{Drawing, EntityKind, Handle};
-use cadcraft_geom::Vec2;
+use cadcraft_doc::{Drawing, EntityKind, Handle, PdfUnderlay, UNDERLAY_MAX_FADE};
+use cadcraft_geom::{Vec2, Vec3};
+use serde_json::{Value, json};
 
-use super::bad;
-use crate::{Result, Session};
+use super::machines::{SelOutcome, SelectPhase};
+use super::{CommandSpec, bad, f64_or, point_value, str_param, targets};
+use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 /// The PDF reader, installed by the host.
 pub struct PdfHooks {
@@ -67,8 +69,591 @@ pub fn pdf() -> Option<&'static PdfHooks> {
     PDF.get()
 }
 
-/// The largest PDF file read for an underlay.
+/// The largest PDF file PDFATTACH reads.
 const MAX_PDF_BYTES: u64 = 512 * 1024 * 1024;
+
+pub fn specs() -> Vec<CommandSpec> {
+    vec![
+        CommandSpec::new("pdfattach", "PDF Underlay...", run_pdfattach)
+            .menu(&["Insert", "PDF Underlay..."])
+            .params("{path: PDF file, page?: number from 1 (default 1), at?: [x,y] lower-left corner (default 0,0), scale?: 1 = the page at its size on paper (default; 1/50 = a fiftieth of it), rotation? (degrees), fade?: 0..80 (default 0), contrast?: 0..100 (default 100), monochrome?: bool (default false), adjustColors?: bool (default true)} → {handle, page, pages, width, height} (typed: path, page, insertion point, scale, rotation)")
+            .interactive(|s| Ok(Box::new(AttachM::new(s)))),
+        CommandSpec::new("pdfadjust", "Adjust PDF Underlay", run_pdfadjust)
+            .menu(&["Modify", "Object", "PDF Underlay", "Adjust"])
+            .params("{handles?: PDF underlays (default the selection), fade?: 0..80, contrast?: 0..100, monochrome?: bool, adjustColors?: bool (on a dark background, white paper shows dark and dark lines light)} → {adjusted}")
+            .interactive(|_| Ok(Box::new(AdjustM::default()))),
+    ]
+}
+
+/// Most pages one PDFATTACH attaches.
+const MAX_ATTACH_PAGES: usize = 100;
+
+fn run_pdfattach(s: &mut Session, p: &Value) -> Result<Value> {
+    const ID: &str = "pdfattach";
+    let hooks = pdf().ok_or_else(|| bad(ID, "PDF underlays are not available in this build"))?;
+    let path = str_param(p, "path").filter(|s| !s.is_empty()).ok_or_else(|| bad(ID, "`path` (the PDF file) is required"))?;
+    let page_no = |v: &Value| v.as_u64().filter(|n| *n >= 1).and_then(|n| u32::try_from(n).ok());
+    let wanted: Vec<u32> = match (p.get("pages"), p.get("page")) {
+        (Some(Value::Array(a)), _) if !a.is_empty() && a.len() <= MAX_ATTACH_PAGES => {
+            a.iter().map(|v| page_no(v).ok_or_else(|| bad(ID, "`pages` must be page numbers from 1"))).collect::<Result<_>>()?
+        }
+        (Some(_), _) => return Err(bad(ID, format!("`pages` must be a list of 1 to {MAX_ATTACH_PAGES} page numbers"))),
+        (None, Some(v)) => vec![page_no(v).ok_or_else(|| bad(ID, "`page` must be a page number from 1"))?],
+        (None, None) => vec![1],
+    };
+    let at = match p.get("at") {
+        Some(v) => point_value(v).ok_or_else(|| bad(ID, "`at` must be a point [x, y]"))?,
+        None => Vec2::ZERO,
+    };
+    // Given as 1 = the page at its size on paper; stored as the file format's underlay scale.
+    let scale = match p.get("scale") {
+        Some(v) => v.as_f64().filter(|k| k.is_finite() && (1e-9..=1e9).contains(k)).ok_or_else(|| bad(ID, "`scale` must be a positive number"))?,
+        None => 1.0,
+    };
+    let rotation = f64_or(p, "rotation", 0.0);
+    if !rotation.is_finite() {
+        return Err(bad(ID, "`rotation` must be a number of degrees"));
+    }
+    let document = s.state().ok().and_then(|st| st.path.clone());
+    let stored = stored_path(path, document.as_deref(), str_param(p, "pathType").unwrap_or("full")).map_err(|e| bad(ID, e))?;
+    let adjust = adjust_params(ID, p)?;
+    let bytes = read_pdf(path)?;
+    // Several pages go side by side, left to right along the pages' bottom edge.
+    let (sin, cos) = rotation.to_radians().sin_cos();
+    let mut origin = at;
+    let mut handles = Vec::new();
+    let mut first: Option<(u32, usize, Vec2, f64, f64, f64)> = None;
+    // Every page is read before any is attached: a page that doesn't exist attaches none.
+    let mut sized = Vec::with_capacity(wanted.len());
+    for page in wanted {
+        let (pages, w_mm, h_mm, per_point) = (hooks.page)(&bytes, page).map_err(|e| bad(ID, format!("{path}: {e}")))?;
+        let size = PageSize::new(w_mm, h_mm, per_point).ok_or_else(|| bad(ID, format!("{path}: page {page} has no usable size")))?;
+        sized.push((page, pages, w_mm, h_mm, size));
+    }
+    let d = s.doc()?.clone();
+    for (page, pages, w_mm, h_mm, page_size) in sized {
+        let (size, scale) = (page_size.native, page_size.file_scale(&d, scale));
+        let mut u = PdfUnderlay {
+            insert: Vec3::new(origin.x, origin.y, 0.0),
+            size,
+            scale,
+            rotation: rotation.to_radians(),
+            path: stored.clone(),
+            page,
+            ..PdfUnderlay::default()
+        };
+        adjust.apply(&mut u);
+        handles.push(s.add_entity(EntityKind::PdfUnderlay(u))?.hex());
+        let step = size.x * scale * 1.05;
+        origin += Vec2::new(cos * step, sin * step);
+        first.get_or_insert((page, pages, size, scale, w_mm, h_mm));
+    }
+    let (page, pages, size, scale, w_mm, h_mm) = first.unwrap_or_default();
+    let file = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let message = match handles.len() {
+        1 => format!("Page {page} of {pages} of {file} attached ({w_mm:.0} × {h_mm:.0} mm)"),
+        n => format!("{n} pages of {file} attached"),
+    };
+    Ok(json!({
+        "handle": handles.first(),
+        "handles": handles,
+        "pages": pages,
+        "width": size.x * scale,
+        "height": size.y * scale,
+        "path": stored,
+        "message": message,
+    }))
+}
+
+/// The path to store for the PDF `chosen` (a full path) in the drawing saved at `document`:
+/// `full` as chosen, `relative` from the drawing's folder, `none` the file name alone (found
+/// beside the drawing). The last two need a saved drawing.
+pub fn stored_path(chosen: &str, document: Option<&str>, kind: &str) -> std::result::Result<String, String> {
+    let file = std::path::Path::new(chosen);
+    match kind.to_ascii_lowercase().as_str() {
+        "full" => Ok(chosen.to_string()),
+        "none" | "relative" if document.is_none() => Err("save the drawing first to store a relative path or the file name alone".into()),
+        "none" => Ok(file.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| chosen.to_string())),
+        "relative" => {
+            let dir = document.map(std::path::Path::new).and_then(std::path::Path::parent).unwrap_or(std::path::Path::new(""));
+            let (a, b): (Vec<_>, Vec<_>) = (dir.components().collect(), file.components().collect());
+            let common = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+            // On different drives (Windows) or roots there is no relative path: keep it full.
+            if common == 0 {
+                return Ok(chosen.to_string());
+            }
+            let mut rel = std::path::PathBuf::new();
+            for _ in common..a.len() {
+                rel.push("..");
+            }
+            for c in b.iter().skip(common) {
+                rel.push(c.as_os_str());
+            }
+            Ok(rel.to_string_lossy().to_string())
+        }
+        other => Err(format!("`pathType` must be full, relative or none, got {other}")),
+    }
+}
+
+/// What the PDF Underlay dialog chose: the values given, and `None` for those to specify on
+/// screen.
+#[derive(Clone, Debug)]
+pub struct AttachPreset {
+    pub path: String,
+    pub pages: Vec<u32>,
+    pub at: Option<Vec2>,
+    /// 1 = the page at its size on paper.
+    pub scale: Option<f64>,
+    /// Degrees.
+    pub rotation: Option<f64>,
+    /// `full`, `relative` or `none`.
+    pub path_type: String,
+}
+
+/// Attach what the dialog chose: at once when nothing is to be specified on screen, else
+/// PDFATTACH asks for what is (insertion point, scale, rotation) with the rest filled in.
+pub fn start_attach(s: &mut Session, preset: AttachPreset) -> Result<()> {
+    if let (Some(at), Some(scale), Some(rotation)) = (preset.at, preset.scale, preset.rotation) {
+        let p = json!({"path": preset.path, "pages": preset.pages, "at": [at.x, at.y], "scale": scale, "rotation": rotation, "pathType": preset.path_type});
+        let r = s.execute("pdfattach", &p)?;
+        if let Some(m) = r.get("message").and_then(Value::as_str) {
+            s.echo(m);
+        }
+        return Ok(());
+    }
+    s.attach_preset = Some(preset);
+    let r = s.start("pdfattach");
+    // Only the PDFATTACH started here gets it.
+    s.attach_preset = None;
+    r
+}
+
+/// The number of pages of the PDF at `path` (a path the user chose).
+pub fn pdf_pages(path: &str) -> Result<usize> {
+    let hooks = pdf().ok_or_else(|| bad("pdfattach", "PDF underlays are not available in this build"))?;
+    let bytes = read_pdf(path)?;
+    (hooks.page)(&bytes, 1).map(|(n, ..)| n).map_err(|e| bad("pdfattach", format!("{path}: {e}")))
+}
+
+#[derive(Default)]
+enum AttachStage {
+    #[default]
+    Path,
+    Page,
+    Point,
+    Scale,
+    Rotation,
+}
+
+/// PDFATTACH typed (or after the menu's file dialog): path, page, insertion point, scale and
+/// rotation, as the command line form asks them.
+#[derive(Default)]
+struct AttachM {
+    stage: AttachStage,
+    path: String,
+    pages: usize,
+    /// The chosen page's size.
+    size: PageSize,
+    page: u32,
+    at: Vec2,
+    scale: f64,
+    /// From the dialog: every page to attach, the rotation and how to store the path.
+    chosen: Vec<u32>,
+    scale_given: bool,
+    rotation: Option<f64>,
+    path_type: Option<String>,
+}
+
+impl AttachM {
+    /// PDFATTACH, with what the dialog chose when it started it.
+    fn new(s: &Session) -> AttachM {
+        let mut m = AttachM::default();
+        let Some(p) = s.attach_preset.clone() else { return m };
+        let first = p.pages.first().copied().unwrap_or(1);
+        let Ok((pages, size)) = m.page_size(&p.path, first) else { return m };
+        m.path = p.path;
+        m.pages = pages;
+        m.size = size;
+        m.page = first;
+        m.chosen = p.pages;
+        m.at = p.at.unwrap_or_default();
+        m.scale = p.scale.unwrap_or(1.0);
+        m.scale_given = p.scale.is_some();
+        m.rotation = p.rotation;
+        m.path_type = Some(p.path_type);
+        m.stage = if p.at.is_none() {
+            AttachStage::Point
+        } else if p.scale.is_none() {
+            AttachStage::Scale
+        } else {
+            AttachStage::Rotation
+        };
+        m
+    }
+    /// The file is chosen: read its page count and first page's size.
+    fn file(&mut self, s: &mut Session, path: &str) -> Result<Step> {
+        let path = path.trim().trim_matches('"');
+        match self.page_size(path, 1) {
+            Ok((pages, size)) => {
+                self.path = path.to_string();
+                self.pages = pages;
+                self.size = size;
+                self.page = 1;
+                self.stage = if pages > 1 { AttachStage::Page } else { AttachStage::Point };
+            }
+            Err(e) => s.echo(e.to_string()),
+        }
+        Ok(Step::Continue)
+    }
+    fn page_size(&self, path: &str, page: u32) -> Result<(usize, PageSize)> {
+        let hooks = pdf().ok_or_else(|| bad("pdfattach", "PDF underlays are not available in this build"))?;
+        let bytes = read_pdf(path)?;
+        let (pages, w, h, per_point) = (hooks.page)(&bytes, page).map_err(|e| bad("pdfattach", format!("{path}: {e}")))?;
+        let size = PageSize::new(w, h, per_point).ok_or_else(|| bad("pdfattach", format!("{path}: page {page} has no usable size")))?;
+        Ok((pages, size))
+    }
+    fn number(i: &Input) -> Option<f64> {
+        match i {
+            Input::Text(t) | Input::Keyword(t) => t.trim().parse::<f64>().ok().filter(|v| v.is_finite()),
+            _ => None,
+        }
+    }
+    fn finish(&mut self, s: &mut Session, rotation: f64) -> Result<Step> {
+        let pages = if self.chosen.is_empty() { vec![self.page] } else { self.chosen.clone() };
+        let path_type = self.path_type.clone().unwrap_or_else(|| "full".into());
+        let p = json!({"path": self.path, "pages": pages, "at": [self.at.x, self.at.y], "scale": self.scale, "rotation": rotation, "pathType": path_type});
+        match run_pdfattach(s, &p) {
+            Ok(r) => {
+                if let Some(m) = r.get("message").and_then(Value::as_str) {
+                    s.echo(m);
+                }
+            }
+            Err(e) => s.echo(e.to_string()),
+        }
+        Ok(Step::Done)
+    }
+}
+
+impl Interactive for AttachM {
+    fn name(&self) -> &'static str {
+        "PDFATTACH"
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        match self.stage {
+            AttachStage::Path => Prompt::new("Enter path to PDF file", Accept::TEXT),
+            AttachStage::Page => Prompt::new(format!("Enter page number (1-{})", self.pages), Accept::NUMBER).default("1"),
+            AttachStage::Point => Prompt::new("Specify insertion point", Accept::POINT).default("0,0"),
+            AttachStage::Scale => Prompt::new("Specify scale factor (1 = size on paper)", Accept::NUMBER).default("1"),
+            AttachStage::Rotation => Prompt::new("Specify rotation", Accept::NUMBER).default("0"),
+        }
+    }
+    fn preview(&self, s: &Session, cursor: Vec2) -> Vec<EntityKind> {
+        if self.path.is_empty() {
+            return Vec::new();
+        }
+        let (at, k) = match self.stage {
+            AttachStage::Path | AttachStage::Page | AttachStage::Point => (cursor, 1.0),
+            _ => (self.at, self.scale),
+        };
+        let Ok(d) = s.doc() else { return Vec::new() };
+        let u =
+            PdfUnderlay { insert: Vec3::new(at.x, at.y, 0.0), size: self.size.native, scale: self.size.file_scale(d, k), ..PdfUnderlay::default() };
+        let c = u.corners();
+        (0..4).filter_map(|i| Some(EntityKind::Line(cadcraft_doc::Line { a: c.get(i)?.to3(0.0), b: c.get((i + 1) % 4)?.to3(0.0) }))).collect()
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        match self.stage {
+            AttachStage::Path => match &i {
+                Input::Text(t) | Input::Keyword(t) if !t.trim().is_empty() => self.file(s, t),
+                Input::Enter | Input::Cancel => Ok(Step::Done),
+                _ => Ok(Step::Continue),
+            },
+            AttachStage::Page => {
+                let page = match &i {
+                    Input::Enter => Some(1),
+                    _ => Self::number(&i).filter(|n| n.fract() == 0.0 && *n >= 1.0 && *n <= self.pages as f64).map(|n| n as u32),
+                };
+                match page {
+                    Some(p) => match self.page_size(&self.path.clone(), p) {
+                        Ok((_, size)) => {
+                            self.page = p;
+                            self.size = size;
+                            self.stage = AttachStage::Point;
+                        }
+                        Err(e) => s.echo(e.to_string()),
+                    },
+                    None => s.echo(format!("Requires a page number from 1 to {}.", self.pages)),
+                }
+                Ok(Step::Continue)
+            }
+            AttachStage::Point => {
+                match &i {
+                    Input::Point(p) => self.at = *p,
+                    Input::Enter => self.at = Vec2::ZERO,
+                    _ => return Ok(Step::Continue),
+                }
+                // Values the dialog gave are not asked again.
+                match (self.scale_given, self.rotation) {
+                    (true, Some(r)) => return self.finish(s, r),
+                    (true, None) => self.stage = AttachStage::Rotation,
+                    (false, _) => self.stage = AttachStage::Scale,
+                }
+                Ok(Step::Continue)
+            }
+            AttachStage::Scale => {
+                let k = match &i {
+                    Input::Enter => Some(1.0),
+                    _ => Self::number(&i).filter(|k| (1e-9..=1e9).contains(k)),
+                };
+                match k {
+                    Some(k) => {
+                        self.scale = k;
+                        if let Some(r) = self.rotation {
+                            return self.finish(s, r);
+                        }
+                        self.stage = AttachStage::Rotation;
+                    }
+                    None => s.echo("Requires a positive number."),
+                }
+                Ok(Step::Continue)
+            }
+            AttachStage::Rotation => match &i {
+                Input::Enter => self.finish(s, 0.0),
+                _ => match Self::number(&i) {
+                    Some(r) => self.finish(s, r),
+                    None => {
+                        s.echo("Requires a number of degrees.");
+                        Ok(Step::Continue)
+                    }
+                },
+            },
+        }
+    }
+}
+
+/// The display settings PDFADJUST (or PDFATTACH) changes; `None` keeps an underlay's own.
+#[derive(Clone, Copy, Default)]
+struct Adjust {
+    fade: Option<u8>,
+    contrast: Option<u8>,
+    monochrome: Option<bool>,
+    colors: Option<bool>,
+}
+
+impl Adjust {
+    fn apply(&self, u: &mut PdfUnderlay) {
+        if let Some(f) = self.fade {
+            u.fade = f.min(UNDERLAY_MAX_FADE);
+        }
+        if let Some(c) = self.contrast {
+            u.contrast = c.min(100);
+        }
+        if let Some(m) = self.monochrome {
+            u.monochrome = m;
+        }
+        if let Some(a) = self.colors {
+            u.adjust_colors = a;
+        }
+    }
+}
+
+/// `fade?`, `contrast?`, `monochrome?` and `adjustColors?`.
+fn adjust_params(id: &str, p: &Value) -> Result<Adjust> {
+    let percent = |key: &str, max: u8| -> Result<Option<u8>> {
+        match p.get(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(v) => v
+                .as_u64()
+                .and_then(|f| u8::try_from(f).ok())
+                .filter(|f| *f <= max)
+                .map(Some)
+                .ok_or_else(|| bad(id, format!("`{key}` must be a whole number from 0 to {max}"))),
+        }
+    };
+    let flag = |key: &str| -> Result<Option<bool>> {
+        match p.get(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(v) => v.as_bool().map(Some).ok_or_else(|| bad(id, format!("`{key}` must be true or false"))),
+        }
+    };
+    Ok(Adjust {
+        fade: percent("fade", UNDERLAY_MAX_FADE)?,
+        contrast: percent("contrast", 100)?,
+        monochrome: flag("monochrome")?,
+        colors: flag("adjustColors")?,
+    })
+}
+
+fn run_pdfadjust(s: &mut Session, p: &Value) -> Result<Value> {
+    let adjust = adjust_params("pdfadjust", p)?;
+    let hs = targets(s, p)?;
+    let n = set_adjust(s, &hs, adjust)?;
+    if n == 0 {
+        return Err(bad("pdfadjust", "no PDF underlay to adjust (select one, or pass `handles`)"));
+    }
+    Ok(json!({ "adjusted": n }))
+}
+
+/// Change the display settings of the PDF underlays among `hs` (those on locked layers are left
+/// alone). Returns how many were changed.
+fn set_adjust(s: &mut Session, hs: &[Handle], adjust: Adjust) -> Result<usize> {
+    let d = s.doc()?;
+    let ids: Vec<Handle> = hs
+        .iter()
+        .copied()
+        .filter(|h| d.entity(*h).is_some_and(|e| matches!(e.kind, EntityKind::PdfUnderlay(_)) && !d.layer(&e.common.layer).is_some_and(|l| l.locked)))
+        .collect();
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let d = s.doc_mut()?;
+    for h in &ids {
+        d.modify_entity(*h, |e| {
+            if let EntityKind::PdfUnderlay(u) = &mut e.kind {
+                adjust.apply(u);
+            }
+        })?;
+    }
+    Ok(ids.len())
+}
+
+#[derive(Default)]
+enum AdjustStage {
+    #[default]
+    Select,
+    Option,
+    Fade,
+    Contrast,
+    Monochrome,
+    Colors,
+}
+
+/// PDFADJUST typed or from a menu: select the underlays, pick Fade, Contrast, Monochrome or
+/// adjustColors, give the value.
+#[derive(Default)]
+struct AdjustM {
+    stage: AdjustStage,
+    sel: SelectPhase,
+    objs: Vec<Handle>,
+}
+
+impl AdjustM {
+    fn current(&self, s: &Session) -> Option<PdfUnderlay> {
+        let d = s.doc().ok()?;
+        self.objs.iter().find_map(|h| match &d.entity(*h)?.kind {
+            EntityKind::PdfUnderlay(u) => Some(u.clone()),
+            _ => None,
+        })
+    }
+    fn selected(&mut self, s: &mut Session, hs: Vec<Handle>) -> Result<Step> {
+        s.set_selection(Vec::new());
+        self.objs = hs;
+        if self.current(s).is_none() {
+            s.echo("No PDF underlay selected.");
+            return Ok(Step::Done);
+        }
+        self.stage = AdjustStage::Option;
+        Ok(Step::Continue)
+    }
+    fn apply(&mut self, s: &mut Session, adjust: Adjust) -> Result<Step> {
+        let objs = std::mem::take(&mut self.objs);
+        set_adjust(s, &objs, adjust)?;
+        Ok(Step::Done)
+    }
+}
+
+impl Interactive for AdjustM {
+    fn name(&self) -> &'static str {
+        "PDFADJUST"
+    }
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        self.sel = SelectPhase::begin(s);
+        if self.sel.done {
+            let hs = self.sel.picked.clone();
+            return self.selected(s, hs);
+        }
+        Ok(Step::Continue)
+    }
+    fn prompt(&self, s: &Session) -> Prompt {
+        let u = self.current(s).unwrap_or_default();
+        match self.stage {
+            AdjustStage::Select => self.sel.prompt(),
+            AdjustStage::Option => {
+                Prompt::new("Enter PDF underlay option", Accept::TEXT).kw(&["Fade", "Contrast", "Monochrome", "adjustColors"]).default("Fade")
+            }
+            AdjustStage::Fade => Prompt::new(format!("Enter fade value (0-{UNDERLAY_MAX_FADE})"), Accept::NUMBER).default(u.fade.to_string()),
+            AdjustStage::Contrast => Prompt::new("Enter contrast value (0-100)", Accept::NUMBER).default(u.contrast.to_string()),
+            AdjustStage::Monochrome => {
+                Prompt::new("Show in shades of grey?", Accept::TEXT).kw(&["Yes", "No"]).default(if u.monochrome { "Yes" } else { "No" })
+            }
+            AdjustStage::Colors => {
+                Prompt::new("Adjust colors for the background?", Accept::TEXT).kw(&["Yes", "No"]).default(if u.adjust_colors { "Yes" } else { "No" })
+            }
+        }
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        let text = match &i {
+            Input::Keyword(k) | Input::Text(k) => Some(k.trim().to_ascii_lowercase()),
+            _ => None,
+        };
+        match self.stage {
+            AdjustStage::Select => match self.sel.feed(s, &i)? {
+                SelOutcome::More => Ok(Step::Continue),
+                SelOutcome::Empty => Ok(Step::Done),
+                SelOutcome::Done(hs) => self.selected(s, hs),
+            },
+            AdjustStage::Option => {
+                match (&i, text.as_deref()) {
+                    (Input::Enter, _) | (_, Some("fade" | "f")) => self.stage = AdjustStage::Fade,
+                    (_, Some("contrast" | "c")) => self.stage = AdjustStage::Contrast,
+                    (_, Some("monochrome" | "m")) => self.stage = AdjustStage::Monochrome,
+                    (_, Some("adjustcolors" | "a" | "adjust")) => self.stage = AdjustStage::Colors,
+                    _ => s.echo("Invalid option keyword."),
+                }
+                Ok(Step::Continue)
+            }
+            AdjustStage::Fade | AdjustStage::Contrast => {
+                let max = if matches!(self.stage, AdjustStage::Fade) { UNDERLAY_MAX_FADE } else { 100 };
+                match (&i, text.as_deref()) {
+                    (Input::Enter, _) => Ok(Step::Done),
+                    (_, Some(t)) => match t.parse::<f64>().ok().filter(|f| f.is_finite() && (0.0..=f64::from(max)).contains(f)) {
+                        Some(f) => {
+                            let v = Some(f.round() as u8);
+                            let adjust = if matches!(self.stage, AdjustStage::Fade) {
+                                Adjust { fade: v, ..Adjust::default() }
+                            } else {
+                                Adjust { contrast: v, ..Adjust::default() }
+                            };
+                            self.apply(s, adjust)
+                        }
+                        None => {
+                            s.echo(format!("Requires a number from 0 to {max}."));
+                            Ok(Step::Continue)
+                        }
+                    },
+                    _ => Ok(Step::Continue),
+                }
+            }
+            AdjustStage::Monochrome | AdjustStage::Colors => {
+                let yes = match (&i, text.as_deref()) {
+                    (Input::Enter, _) => return Ok(Step::Done),
+                    (_, Some("yes" | "y")) => true,
+                    (_, Some("no" | "n")) => false,
+                    _ => {
+                        s.echo("Invalid option keyword.");
+                        return Ok(Step::Continue);
+                    }
+                };
+                let adjust = if matches!(self.stage, AdjustStage::Monochrome) {
+                    Adjust { monochrome: Some(yes), ..Adjust::default() }
+                } else {
+                    Adjust { colors: Some(yes), ..Adjust::default() }
+                };
+                self.apply(s, adjust)
+            }
+        }
+    }
+}
 
 /// Turn over the lightness of straight RGBA pixels, keeping their hues: white paper becomes
 /// black and black lines white, a red line stays red (an underlay's "adjust colors" on a dark
