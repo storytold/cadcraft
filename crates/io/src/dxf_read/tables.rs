@@ -1,8 +1,8 @@
 use super::common::T;
 use super::objects::MAX_OBJECTS;
 use super::{
-    BlockProps, Color, DashElement, DimStyle, Drawing, HVal, HashMap, Layer, Linetype, Lineweight, NamedView, Rgb, Rx, Tag, TextStyle, Ucs, Vec2, Vec3,
-    VportConfig, VportTile, records,
+    BlockProps, Color, DashElement, DimStyle, Drawing, HVal, HashMap, Layer, Linetype, Lineweight, NamedView, Rgb, Rx, Tag, TextStyle, Ucs, Vec2,
+    Vec3, VportConfig, VportTile, records,
 };
 
 pub(super) fn header(tags: &[Tag], d: &mut Drawing) {

@@ -47,6 +47,17 @@ const MODELLED_XDICT_KEYS: &[&str] = &["ACAD_DIMASSOC", "ACAD_SORTENTS", "ACDBCO
 /// when written ([`block_contexts`]).
 const CONTEXTS_KEY: &str = "ACDBCONTEXTDATAMANAGER";
 
+/// The handles of the drawing's block references.
+fn insert_handles(d: &Drawing) -> HashSet<String> {
+    all_entities(d).filter(|e| matches!(e.kind, EntityKind::Insert(_))).map(|e| e.handle.hex()).collect()
+}
+
+/// Whether the object `tags` belongs to a block reference (`inserts`) or one of its attributes
+/// (an ATTRIB in `ids`): their extension dictionaries keep annotation scale contexts.
+fn of_insert(tags: &[Tag], inserts: &HashSet<String>, ids: &HashMap<String, ForeignKey>) -> bool {
+    head(tags).owner.is_some_and(|o| inserts.contains(&o) || ids.get(&o).is_some_and(|k| k.0 == "ATTRIB"))
+}
+
 /// Whether extension dictionary entry `key` is left to CADCraft's model, in the extension
 /// dictionary of a block reference (`of_insert`) or of something else.
 fn modelled_xdict_key(key: &str, of_insert: bool) -> bool {
@@ -374,8 +385,7 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
     };
     // Block references and their attributes (their extension dictionaries keep annotation scale
     // contexts).
-    let inserts: HashSet<String> = all_entities(d).filter(|e| matches!(e.kind, EntityKind::Insert(_))).map(|e| e.handle.hex()).collect();
-    let of_insert = |t: &[Tag]| head(t).owner.is_some_and(|o| inserts.contains(&o) || ids.get(&o).is_some_and(|k| k.0 == "ATTRIB"));
+    let inserts = insert_handles(d);
     let memo = retained_objects(&objects, &ents, &ids, &by_handle, (root.as_deref(), &root_entries), &xdict_of, &inserts);
     let mut f = Foreign::default();
     let mut kept: HashSet<String> = HashSet::new();
@@ -386,7 +396,7 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
         let Some(h) = head(t).handle.and_then(|h| handle(&h)) else { continue };
         let mut tags: Vec<RawTag> = t.iter().map(raw).collect();
         if is_xdict(i) {
-            strip_entries(&mut tags, of_insert(t));
+            strip_entries(&mut tags, of_insert(t, &inserts, &ids));
         }
         if head(t).owner == root
             && let Some(key) = root_key(&h.hex())
@@ -416,13 +426,7 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
         }
     }
     put_xdata(d, xdata_of);
-    // Attributes' extension dictionaries (their annotation scale contexts), by attribute.
-    let attribs: Vec<&[Tag]> = blocks.iter().chain(&entities).filter(|(k, _, _)| k == "ATTRIB").map(|(_, _, t)| *t).collect();
-    for (t, key) in attribs.iter().zip(attrib_keys(attribs.iter().copied())) {
-        if let Some(xd) = head(t).xdict.filter(|x| kept.contains(x)).and_then(|x| handle(&x)) {
-            f.records.entry(("ATTRIB".into(), key)).or_insert(ForeignExtra { xdict: Some(xd), ..ForeignExtra::default() });
-        }
-    }
+    keep_attrib_dictionaries(&mut f, (&blocks, &entities), &kept);
     for (kind, _, t) in tables.iter().chain(blocks.iter().filter(|(k, _, _)| k == "BLOCK")) {
         let Some(key) = head(t).handle.and_then(|h| ids.get(&h).cloned()) else { continue };
         let x = extra(kind, t, kind == "BLOCK", false, &kept);
@@ -430,26 +434,7 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
             f.records.entry(key).or_insert(x);
         }
     }
-    // Block references whose extension dictionaries are kept (their annotation scale contexts),
-    // as read.
-    for e in all_entities(d) {
-        if let EntityKind::Insert(ins) = &e.kind
-            && f.entities.get(&e.handle).is_some_and(|x| x.xdict.is_some())
-        {
-            let attribs = ins
-                .attribs
-                .iter()
-                .map(|a| cadcraft_doc::foreign::KeptAttrib {
-                    tag: a.tag.clone(),
-                    insert: a.text.insert,
-                    align: a.text.align_pt.unwrap_or(a.text.insert),
-                    rotation: a.text.rotation,
-                })
-                .collect();
-            f.placements
-                .insert(e.handle, cadcraft_doc::foreign::KeptPlacement { insert: ins.insert, rotation: ins.rotation, scale: ins.scale, attribs });
-        }
-    }
+    keep_placements(&mut f, d);
     // The classes of kept objects and of entities of types CADCraft doesn't model.
     let mut types: HashSet<String> = f.objects.iter().map(|o| up(&o.kind)).collect();
     types.extend(all_entities(d).filter_map(|e| match &e.kind {
@@ -538,6 +523,39 @@ fn extension_dictionaries(
     dictionaries
 }
 
+/// Attributes' extension dictionaries (their annotation scale contexts), by attribute.
+fn keep_attrib_dictionaries(f: &mut Foreign, (blocks, entities): (&Recs, &Recs), kept: &HashSet<String>) {
+    let attribs: Vec<&[Tag]> = blocks.iter().chain(entities).filter(|(k, _, _)| k == "ATTRIB").map(|(_, _, t)| *t).collect();
+    for (t, key) in attribs.iter().zip(attrib_keys(attribs.iter().copied())) {
+        if let Some(xd) = head(t).xdict.filter(|x| kept.contains(x)).and_then(|x| handle(&x)) {
+            f.records.entry(("ATTRIB".into(), key)).or_insert(ForeignExtra { xdict: Some(xd), ..ForeignExtra::default() });
+        }
+    }
+}
+
+/// Block references whose extension dictionaries are kept (their annotation scale contexts), as
+/// read: where the reference and its attributes were.
+fn keep_placements(f: &mut Foreign, d: &Drawing) {
+    for e in all_entities(d) {
+        if let EntityKind::Insert(ins) = &e.kind
+            && f.entities.get(&e.handle).is_some_and(|x| x.xdict.is_some())
+        {
+            let attribs = ins
+                .attribs
+                .iter()
+                .map(|a| cadcraft_doc::foreign::KeptAttrib {
+                    tag: a.tag.clone(),
+                    insert: a.text.insert,
+                    align: a.text.align_pt.unwrap_or(a.text.insert),
+                    rotation: a.text.rotation,
+                })
+                .collect();
+            f.placements
+                .insert(e.handle, cadcraft_doc::foreign::KeptPlacement { insert: ins.insert, rotation: ins.rotation, scale: ins.scale, attribs });
+        }
+    }
+}
+
 /// Determine which objects belong to unmodelled dictionary entries or owners.
 fn retained_objects(
     objects: &[(String, usize, &[Tag])],
@@ -548,9 +566,6 @@ fn retained_objects(
     xdict_of: &HashMap<String, String>,
     inserts: &HashSet<String>,
 ) -> HashMap<usize, bool> {
-    let of_insert = |tags: &[Tag]| {
-        head(tags).owner.is_some_and(|owner| inserts.contains(&owner) || records.get(&owner).is_some_and(|key| key.0 == "ATTRIB"))
-    };
     let root_key = |handle: &str| root_entries.iter().find(|(_, entry_handle)| entry_handle == handle).map(|(key, _)| key);
     let is_xdict = |index: usize| {
         let Some((_, _, tags)) = objects.get(index) else { return false };
@@ -559,7 +574,7 @@ fn retained_objects(
         !by_handle.contains_key(&owner) && xdict_of.get(&owner) == Some(&handle) && (entities.contains_key(&owner) || records.contains_key(&owner))
     };
     let modelled_entry = |tags: &[Tag], handle: &str| {
-        entries(tags).iter().any(|(key, entry_handle)| entry_handle == handle && modelled_xdict_key(key, of_insert(tags)))
+        entries(tags).iter().any(|(key, entry_handle)| entry_handle == handle && modelled_xdict_key(key, of_insert(tags, inserts, records)))
     };
     let mut retained = HashMap::new();
     for index in 0..objects.len() {
@@ -590,7 +605,7 @@ fn retained_objects(
                 continue;
             }
             if is_xdict(current) {
-                break entries(tags).iter().any(|(key, _)| !modelled_xdict_key(key, of_insert(tags)));
+                break entries(tags).iter().any(|(key, _)| !modelled_xdict_key(key, of_insert(tags, inserts, records)));
             }
             break entities.get(&owner) == Some(&true);
         };
@@ -1190,6 +1205,35 @@ struct Rec {
     end: usize,
 }
 
+/// The written attributes' identities ([`attrib_keys`]), by record start.
+fn written_attribs(recs: &[Rec], tags: &[Tag]) -> HashMap<usize, String> {
+    let body = |r: &Rec| tags.get(r.start + 1..r.end).unwrap_or(&[]);
+    let attrib_recs: Vec<&Rec> = recs.iter().filter(|r| matches!(r.sec.as_str(), "ENTITIES" | "BLOCKS") && r.kind == "ATTRIB").collect();
+    attrib_recs.iter().map(|r| r.start).zip(attrib_keys(attrib_recs.iter().map(|r| body(r)))).collect()
+}
+
+/// The kept annotation scale contexts of block references and their attributes, up to date with
+/// the references and in line with the drawing's scales ([`reconcile`]); the new objects' owners
+/// join `owners`.
+fn refreshed_contexts(
+    f: &Foreign,
+    d: &Drawing,
+    owners: &mut HashMap<String, String>,
+    roles: &HashMap<ForeignKey, String>,
+    tags: &[Tag],
+) -> (HashMap<String, ForeignObject>, Reconciled) {
+    let mut contexts = block_contexts(f, d, owners);
+    let attribute = attribute_contexts(f, d, owners, &contexts);
+    contexts.extend(attribute);
+    let rec = reconcile(f, d, owners, roles, &mut contexts, seed(tags).max(max_handle(tags)));
+    for o in &rec.added {
+        if let Some(parent) = o.tags.iter().find(|t| t.code == 330) {
+            owners.insert(o.handle.hex(), norm(&parent.value));
+        }
+    }
+    (contexts, rec)
+}
+
 fn written_records(tags: &[Tag]) -> Vec<Rec> {
     let mut out: Vec<Rec> = Vec::new();
     let mut sec = String::new();
@@ -1406,9 +1450,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
     let root = objects.first().filter(|(k, _, _)| is_dictionary(k)).map(|(_, s, _)| *s);
     let root_keys: HashSet<String> =
         objects.iter().find(|(_, s, _)| Some(*s) == root).map(|(_, _, t)| entries(t).into_iter().map(|(k, _)| up(&k)).collect()).unwrap_or_default();
-    // The written attributes' identities, by record.
-    let attrib_recs: Vec<&Rec> = recs.iter().filter(|r| matches!(r.sec.as_str(), "ENTITIES" | "BLOCKS") && r.kind == "ATTRIB").collect();
-    let attribs: HashMap<usize, String> = attrib_recs.iter().map(|r| r.start).zip(attrib_keys(attrib_recs.iter().map(|r| body(r)))).collect();
+    let attribs = written_attribs(&recs, tags);
     // Extension dictionaries that go on a written record (one without its own).
     let mut block = String::new();
     let mut attached: HashSet<String> = HashSet::new();
@@ -1434,18 +1476,8 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
         .iter()
         .filter_map(|o| Some((o.handle.hex(), head(&o.tags.iter().take_while(|t| t.code < 1000).map(tag).collect::<Vec<_>>()).owner?)))
         .collect();
-    // Block references' annotation scale contexts, up to date with the references.
-    let mut contexts = block_contexts(f, d, &owners);
-    let attribute = attribute_contexts(f, d, &owners, &contexts);
-    contexts.extend(attribute);
-    // In line with the drawing's scales and each reference's.
-    let rec = reconcile(f, d, &owners, &roles, &mut contexts, seed(tags).max(max_handle(tags)));
+    let (contexts, rec) = refreshed_contexts(f, d, &mut owners, &roles, tags);
     let all: Vec<&ForeignObject> = f.objects.iter().chain(&rec.added).collect();
-    for o in &rec.added {
-        if let Some(parent) = o.tags.iter().find(|t| t.code == 330) {
-            owners.insert(o.handle.hex(), norm(&parent.value));
-        }
-    }
     // Which kept objects are written: those whose owner chain ends at a written owner.
     let objs: HashMap<String, &ForeignObject> = all.iter().map(|o| (o.handle.hex(), *o)).collect();
     let mut alive_memo: HashMap<String, bool> = HashMap::new();
@@ -1480,9 +1512,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
             alive_memo.insert(p, verdict);
         }
     }
-    for h in &rec.dropped {
-        alive_memo.insert(h.clone(), false);
-    }
+    alive_memo.extend(rec.dropped.iter().map(|h| (h.clone(), false)));
     // New handles for the written kept objects, above every written handle and the seed.
     let mut next = seed(tags).max(max_handle(tags).saturating_add(1));
     let mut alive: HashMap<String, String> = HashMap::new();
