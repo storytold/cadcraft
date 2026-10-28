@@ -280,7 +280,21 @@ impl Paragraphs {
                     match code {
                         'P' => brk(&mut out, cur, false),
                         'N' => brk(&mut out, cur, true),
-                        '~' | '\\' | '{' | '}' | 'L' | 'l' | 'O' | 'o' | 'K' | 'k' => {}
+                        '~' | '\\' | '{' | '}' | 'L' | 'l' | 'O' | 'o' | 'K' | 'k' | 'X' | 'x' => {}
+                        'U' if chars.get(i) == Some(&'+') => {
+                            let mut j = i + 1;
+                            while j < i + 5 && chars.get(j).is_some_and(|c| c.is_ascii_hexdigit()) {
+                                j += 1;
+                            }
+                            i = j;
+                        }
+                        'M' if chars.get(i) == Some(&'+') => {
+                            let mut j = i + 1;
+                            while j < i + 6 && chars.get(j).is_some_and(|c| c.is_ascii_hexdigit()) {
+                                j += 1;
+                            }
+                            i = j;
+                        }
                         'S' => {
                             let mut j = i;
                             while let Some(&ch) = chars.get(j) {

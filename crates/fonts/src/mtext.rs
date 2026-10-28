@@ -6,6 +6,29 @@ use crate::{Shaped, TextFont, shape_line, text_width};
 
 pub(crate) mod para;
 
+fn parse_hex_char(chars: &[char], start: usize) -> (Option<char>, usize) {
+    let mut j = start;
+    let limit = start + 4;
+    let mut hex = String::new();
+    while j < limit && chars.get(j).is_some_and(|c| c.is_ascii_hexdigit()) {
+        if let Some(&ch) = chars.get(j) {
+            hex.push(ch);
+        }
+        j += 1;
+    }
+    let ch = if hex.len() == 4 { u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32) } else { None };
+    (ch, j)
+}
+
+fn skip_mif(chars: &[char], start: usize) -> usize {
+    let mut j = start;
+    let limit = start + 5;
+    while j < limit && chars.get(j).is_some_and(|c| c.is_ascii_hexdigit()) {
+        j += 1;
+    }
+    j
+}
+
 /// Strip MTEXT formatting codes to plain text with `\n` paragraph breaks.
 /// Stacked fractions `\S1/2;` become `1/2`; `\~` is a space; braces are dropped.
 pub fn plain_mtext(s: &str) -> String {
@@ -54,7 +77,15 @@ pub fn plain_mtext(s: &str) -> String {
                         out.push_str(stack.trim_end_matches('/'));
                         i = j + 1;
                     }
-                    'L' | 'l' | 'O' | 'o' | 'K' | 'k' => i += 2,
+                    'L' | 'l' | 'O' | 'o' | 'K' | 'k' | 'X' | 'x' => i += 2,
+                    'U' if chars.get(i + 2) == Some(&'+') => {
+                        let (ch, j) = parse_hex_char(&chars, i + 3);
+                        if let Some(c) = ch {
+                            out.push(c);
+                        }
+                        i = j;
+                    }
+                    'M' if chars.get(i + 2) == Some(&'+') => i = skip_mif(&chars, i + 3),
                     // Codes with an argument terminated by ';' (\f, \F, \H, \W, \Q, \T, \A, \C, \c, \p).
                     _ => {
                         let mut j = i + 2;
@@ -286,7 +317,15 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
                     'l' => derive(&mut fmts, &mut cur, &|f| f.under = false),
                     'O' => derive(&mut fmts, &mut cur, &|f| f.over = true),
                     'o' => derive(&mut fmts, &mut cur, &|f| f.over = false),
-                    'K' | 'k' => {}
+                    'K' | 'k' | 'X' | 'x' => {}
+                    'U' if chars.get(i) == Some(&'+') => {
+                        let (ch, j) = parse_hex_char(&chars, i + 1);
+                        if let Some(c) = ch {
+                            push_char(&mut word, c, cur);
+                        }
+                        i = j;
+                    }
+                    'M' if chars.get(i) == Some(&'+') => i = skip_mif(&chars, i + 1),
                     'S' => {
                         let mut j = i;
                         let (mut top, mut bottom, mut sep) = (String::new(), String::new(), None);
@@ -710,6 +749,17 @@ mod tests {
         assert_eq!(plain_mtext("a\\~b\\\\c"), "a b\\c");
         assert_eq!(plain_mtext("\\H2.5x;Big"), "Big");
         assert_eq!(plain_mtext("unterminated \\H2"), "unterminated ");
+        assert_eq!(plain_mtext("top\\Xbottom"), "topbottom");
+        assert_eq!(plain_mtext("\\U+00B110"), "±10");
+    }
+
+    #[test]
+    fn dimension_x_and_unicode_escapes_lay_out() {
+        let l = layout_mtext("top\\Xbottom", Vec2::ZERO, 1.0, 0.0, 1, 0.0, 1.0);
+        assert_eq!(l.lines[0], "topbottom");
+
+        let l_uni = layout_mtext("\\U+00B110", Vec2::ZERO, 1.0, 0.0, 1, 0.0, 1.0);
+        assert_eq!(l_uni.lines[0], "±10");
     }
 
     #[test]
