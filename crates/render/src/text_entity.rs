@@ -127,29 +127,8 @@ pub fn transcode_mtext(contents: &str, hint: Option<&str>) -> String {
             '\\' => {
                 let code = chars.get(i + 1).copied().unwrap_or(' ');
                 match code {
-                    // Paragraph and column breaks
-                    'P' | 'N' => {
-                        flush_text(&mut text_run, &mut out, current_hint.as_deref());
-                        out.push('\\');
-                        out.push(code);
-                        i += 2;
-                    }
-                    // Non-breaking space
-                    '~' => {
-                        flush_text(&mut text_run, &mut out, current_hint.as_deref());
-                        out.push('\\');
-                        out.push('~');
-                        i += 2;
-                    }
-                    // Escaped literal characters: \\, \{, \}
-                    '\\' | '{' | '}' => {
-                        flush_text(&mut text_run, &mut out, current_hint.as_deref());
-                        out.push('\\');
-                        out.push(code);
-                        i += 2;
-                    }
-                    // 2-character toggles without arguments or semicolons
-                    'L' | 'l' | 'O' | 'o' | 'K' | 'k' => {
+                    // 1. Argument-less 2-character control codes and toggles (no ';' needed)
+                    'P' | 'N' | '~' | '\\' | '{' | '}' | 'L' | 'l' | 'O' | 'o' | 'K' | 'k' | 'X' | 'x' => {
                         flush_text(&mut text_run, &mut out, current_hint.as_deref());
                         out.push('\\');
                         out.push(code);

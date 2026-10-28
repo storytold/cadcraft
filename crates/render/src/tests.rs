@@ -1459,3 +1459,23 @@ fn mtext_unterminated_unicode_escape_does_not_swallow_legacy_text() {
     let text_with_escape = crate::transcode_mtext(r"tiªu chuÈn \U+00B1 0.5", Some(".VnTimeH"));
     assert_eq!(text_with_escape, r"TIÊU CHUẨN \U+00B1 0.5");
 }
+
+#[test]
+fn mtext_dimension_x_escape_does_not_swallow_text() {
+    let transcoded = crate::transcode_mtext(r"tiªu\XchuÈn", Some(".VnTime"));
+    assert_eq!(transcoded, r"tiêu\Xchuẩn");
+
+    let transcoded_upper = crate::transcode_mtext(r"TI£U\XCHUÈN", Some(".VnTime"));
+    assert_eq!(transcoded_upper, r"TIÊU\XCHUẨN");
+
+    let mut d = Drawing::new_imperial();
+    d.text_styles.push(cadcraft_doc::TextStyle { name: ".VnTime".into(), font: ".VnTime".into(), ..Default::default() });
+    if let Some(st) = d.dim_styles.first_mut() {
+        st.text_style = ".VnTime".into();
+    }
+    let dim = cadcraft_doc::Dimension { text: r"tiªu<>\XchuÈn".into(), ..lin_dim() };
+    let g = dimension_in(&d, &dim);
+    assert!(g.mtext.contains(r"\X"));
+    assert!(g.mtext.contains("tiêu"));
+    assert!(g.mtext.contains("chuẩn"));
+}
