@@ -63,25 +63,32 @@ pub(super) fn run_leader(s: &mut Session, p: &Value) -> Result<Value> {
         arrow: true,
         spline: false,
         style: st,
+        overrides: Default::default(),
     }))?;
     let mut out = vec![h.hex()];
+    // A leader of an annotative dimension style is annotative, and so is its text: both keep
+    // their paper size at every annotation scale they support.
+    let scales = s.doc()?.entity(h).map(|e| e.common.anno_scales.clone()).unwrap_or_default();
     if let (Some(t), Some(last)) = (str_param(p, "text"), pts.last()) {
         let th = s.doc()?.dim_style(&style(s)).map(|d| d.text_height).unwrap_or(0.18);
-        out.push(
-            s.add_entity(EntityKind::MText(MText {
-                insert: v3(*last + Vec2::new(th * 0.5, th * 0.5)),
-                height: th,
-                width: 0.0,
-                attach: 4,
-                rotation: 0.0,
-                style: "Standard".into(),
-                contents: t.into(),
-                line_spacing: 1.0,
-                line_spacing_exact: false,
-                columns: None,
-            }))?
-            .hex(),
-        );
+        // An annotative text's gap from the leader end is at the scale it is drawn at.
+        let gap = th * 0.5 * scales.first().map(|sc| sc.factor()).unwrap_or(1.0);
+        let text = s.add_entity(EntityKind::MText(MText {
+            insert: v3(*last + Vec2::new(gap, gap)),
+            height: th,
+            width: 0.0,
+            attach: 4,
+            rotation: 0.0,
+            style: "Standard".into(),
+            contents: t.into(),
+            line_spacing: 1.0,
+            line_spacing_exact: false,
+            columns: None,
+        }))?;
+        if !scales.is_empty() {
+            s.doc_mut()?.modify_entity(text, |e| e.common.anno_scales = scales)?;
+        }
+        out.push(text.hex());
     }
     Ok(json!({ "handles": out }))
 }

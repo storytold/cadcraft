@@ -198,7 +198,9 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             if l.arrow
                 && let (Some(a), Some(n)) = (pts.first(), pts.get(1))
             {
-                let st = ctx.d.dim_style(&l.style);
+                // The leader's own settings (an annotative leader's scale) over its style's.
+                let st = ctx.d.dim_style(&l.style).map(|s| s.with_overrides(&l.overrides));
+                let st = st.as_ref();
                 // DIMASZ × DIMSCALE of the leader's style (the drawing's DIMSCALE when it is 0).
                 let size = st.map(|s| s.arrow_size).unwrap_or(0.18) * leader_scale(ctx.d, st);
                 // DIMLDRBLK ("" = closed filled).

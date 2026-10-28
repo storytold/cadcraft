@@ -205,6 +205,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
             arrow: t.i(71).unwrap_or(1) != 0,
             spline: t.i(72).unwrap_or(0) != 0,
             style: t.s(3).unwrap_or_else(|| "Standard".into()),
+            overrides: Default::default(),
         }),
         // Names behind handles follow in `entity_extras` and `Objects::apply`.
         "MULTILEADER" | "MLEADER" => EntityKind::MLeader(crate::dxf_mleader::read(tags)),

@@ -190,6 +190,10 @@ pub struct Leader {
     pub spline: bool,
     #[serde(default = "standard")]
     pub style: String,
+    /// Dimension style settings of this leader in place of its style's (DimStyle field names →
+    /// values, as on a dimension). An annotative leader drawn at an annotation scale has `scale`.
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub overrides: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -105,3 +105,33 @@ fn hostile_scales_and_records_are_ignored() {
         assert!(scales_of(&r, "ROOM").is_empty(), "{junk}");
     }
 }
+
+/// An annotative LEADER keeps its scales through DXF and DWG, like the other annotative objects;
+/// a plain one stays plain.
+#[test]
+fn annotative_leaders_round_trip_through_dxf_and_dwg() {
+    let mut d = Drawing::new_metric();
+    let leader = |x: f64| {
+        EntityKind::Leader(cadcraft_doc::Leader {
+            vertices: vec![Vec3::new(x, 0.0, 0.0), Vec3::new(x + 10.0, 5.0, 0.0)],
+            arrow: true,
+            spline: false,
+            style: "Standard".into(),
+            overrides: Default::default(),
+        })
+    };
+    let anno = Common { anno_scales: vec![AnnoScale::new("1:50", 1.0, 50.0), AnnoScale::new("1:100", 1.0, 100.0)], ..Default::default() };
+    d.add(&Space::Model, anno, leader(0.0)).unwrap();
+    d.add(&Space::Model, Common::default(), leader(100.0)).unwrap();
+    let leader_scales = |d: &Drawing, x: f64| -> Vec<String> {
+        let e = d.model.iter().find(|e| matches!(&e.kind, EntityKind::Leader(l) if l.vertices.first().is_some_and(|v| v.x == x))).unwrap();
+        e.common.anno_scales.iter().map(|s| s.name.clone()).collect()
+    };
+    let r = read_dxf(write_dxf(&d).as_bytes()).unwrap();
+    assert_eq!(leader_scales(&r, 0.0), ["1:50", "1:100"]);
+    assert!(leader_scales(&r, 100.0).is_empty());
+    let dwg = cadcraft_io::write(&d, "x.dwg").unwrap();
+    let r = cadcraft_io::read(&dwg, "x.dwg").unwrap();
+    assert_eq!(leader_scales(&r, 0.0), ["1:50", "1:100"]);
+    assert!(leader_scales(&r, 100.0).is_empty());
+}

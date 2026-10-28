@@ -84,7 +84,13 @@ fn arrow_length(d: &Drawing) -> f64 {
 fn leader_arrows_use_their_style_dimscale() {
     let mut d = Drawing::new_imperial();
     d.dim_styles.push(DimStyle { name: "BIG".into(), scale: 10.0, arrow_size: 0.18, ..DimStyle::default() });
-    let leader = Leader { vertices: vec![Vec3::ZERO, Vec3::new(5.0, 0.0, 0.0)], arrow: true, spline: false, style: "BIG".into() };
+    let leader = Leader {
+        vertices: vec![Vec3::ZERO, Vec3::new(5.0, 0.0, 0.0)],
+        arrow: true,
+        spline: false,
+        style: "BIG".into(),
+        overrides: Default::default(),
+    };
     d.add(&Space::Model, Common::default(), EntityKind::Leader(leader)).unwrap();
     d.header.set_f64("DIMSCALE", 1.0);
     assert!((arrow_length(&d) - 1.8).abs() < 1e-6, "{}", arrow_length(&d));

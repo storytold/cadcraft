@@ -2,7 +2,7 @@
 //!
 //! An annotation scale ("1:50") says how many drawing units one paper unit stands for. The
 //! drawing keeps a list of them (SCALELISTEDIT) and a current one (`CANNOSCALE`). An annotative
-//! object (text, MText, dimension, multileader, hatch, block reference) stores its size as it
+//! object (text, MText, dimension, leader, multileader, hatch, block reference) stores its size as it
 //! should measure on paper and the set of scales it supports ([`Common::anno_scales`]); in a view
 //! it draws at paper size × that view's annotation scale, and only in views whose scale it
 //! supports unless `ANNOALLVISIBLE` is 1. Model space is seen at `CANNOSCALE`, a layout viewport
@@ -91,7 +91,13 @@ pub fn imperial_scales() -> Vec<AnnoScale> {
 pub fn can_be_annotative(k: &EntityKind) -> bool {
     matches!(
         k,
-        EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::Dimension(_) | EntityKind::MLeader(_) | EntityKind::Hatch(_) | EntityKind::Insert(_)
+        EntityKind::Text(_)
+            | EntityKind::MText(_)
+            | EntityKind::Dimension(_)
+            | EntityKind::Leader(_)
+            | EntityKind::MLeader(_)
+            | EntityKind::Hatch(_)
+            | EntityKind::Insert(_)
     )
 }
 
@@ -147,9 +153,9 @@ pub fn anno_draw(e: &Entity, view: f64, all_visible: bool) -> AnnoDraw {
     }
 }
 
-/// `e` as it draws at annotation scale `f`: its paper sizes (text height and width, dimension
-/// overall scale, multileader arrow, landing and content, hatch pattern scale, block scale and
-/// attributes) multiplied by `f`. A dimension is drawn from its definition at that scale, not
+/// `e` as it draws at annotation scale `f`: its paper sizes (text height and width, dimension and
+/// leader overall scale, multileader arrow, landing and content, hatch pattern scale, block scale
+/// and attributes) multiplied by `f`. A dimension is drawn from its definition at that scale, not
 /// from a stored geometry block. Other kinds come back unchanged.
 pub fn anno_scaled(e: &Entity, f: f64) -> Entity {
     let f = if f.is_finite() && f > 0.0 { f } else { 1.0 };
@@ -166,6 +172,9 @@ pub fn anno_scaled(e: &Entity, f: f64) -> Entity {
         EntityKind::Dimension(dm) => {
             dm.overrides.insert("scale".into(), serde_json::json!(f));
             dm.block = None;
+        }
+        EntityKind::Leader(l) => {
+            l.overrides.insert("scale".into(), serde_json::json!(f));
         }
         EntityKind::MLeader(m) => {
             let land = m.landing;
@@ -234,13 +243,14 @@ impl Drawing {
         anno_draw(e, self.current_anno_scale().factor(), self.anno_all_visible())
     }
     /// Whether new objects of this kind are annotative: text and MText with an annotative text
-    /// style, dimensions with an annotative dimension style, multileaders with an annotative
+    /// style, dimensions and leaders with an annotative dimension style, multileaders with an annotative
     /// multileader style, hatches while `HPANNOTATIVE` is 1, references to annotative blocks.
     pub fn annotative_by_style(&self, k: &EntityKind) -> bool {
         match k {
             EntityKind::Text(t) => self.text_style(&t.style).is_some_and(|s| s.annotative),
             EntityKind::MText(t) => self.text_style(&t.style).is_some_and(|s| s.annotative),
             EntityKind::Dimension(dm) => self.dim_style(&dm.style).is_some_and(|s| s.annotative),
+            EntityKind::Leader(l) => self.dim_style(&l.style).is_some_and(|s| s.annotative),
             EntityKind::MLeader(m) => self.mleader_styles.iter().find(|s| s.name.eq_ignore_ascii_case(&m.style)).is_some_and(|s| s.annotative),
             EntityKind::Hatch(_) => self.header.i64("HPANNOTATIVE", 0) != 0,
             EntityKind::Insert(ins) => self.block(&ins.block).is_some_and(|b| b.annotative),

@@ -2,6 +2,7 @@ mod angle_prompts;
 mod angle_settings;
 mod annotate_options;
 mod annotative;
+mod annotative_leader;
 mod arc_ctrl_direction;
 mod array_commands;
 mod assoc_array;

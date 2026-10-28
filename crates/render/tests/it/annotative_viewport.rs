@@ -84,3 +84,31 @@ fn model_space_uses_cannoscale() {
     let b = build(&d, &Space::Model, &Options::default()).bounds;
     assert!(b.height() > 150.0 && b.height() < 350.0, "{}", b.height());
 }
+
+/// A horizontal annotative leader (no text) supporting 1:50 and 1:100, seen at `scale`.
+fn leader_drawing(scale: f64) -> Drawing {
+    let mut d = Drawing::new_metric();
+    let anno = Common { anno_scales: vec![AnnoScale::new("1:50", 1.0, 50.0), AnnoScale::new("1:100", 1.0, 100.0)], ..Default::default() };
+    let leader = cadcraft_doc::Leader {
+        vertices: vec![Vec3::new(-1000.0, 0.0, 0.0), Vec3::new(1000.0, 0.0, 0.0)],
+        arrow: true,
+        spline: false,
+        style: "Standard".into(),
+        overrides: Default::default(),
+    };
+    d.add(&Space::Model, anno, EntityKind::Leader(leader)).unwrap();
+    d.add(&Space::Paper("Layout1".into()), Common::default(), EntityKind::Viewport(viewport(50.0, scale))).unwrap();
+    d
+}
+
+#[test]
+fn an_annotative_leaders_arrowhead_keeps_its_paper_size() {
+    // The horizontal leader crosses the whole viewport; the drawn height is the arrowhead's.
+    let at_50 = content(&leader_drawing(50.0)).height();
+    let at_100 = content(&leader_drawing(100.0)).height();
+    assert!(at_50 > 0.0 && (at_50 / at_100 - 1.0).abs() < 1e-6, "{at_50} vs {at_100}");
+    // On paper a closed arrowhead is a third of the style's DIMASZ wide.
+    let d = leader_drawing(50.0);
+    let asz = d.dim_style("Standard").unwrap().arrow_size;
+    assert!((at_50 - asz / 3.0).abs() < 1e-6, "{at_50} vs DIMASZ {asz}");
+}

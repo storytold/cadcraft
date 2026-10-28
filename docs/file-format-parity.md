@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-25 · **Change:** minor (LAYOUT SAveas writes a layout as a DWT template) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-28 · **Change:** minor (annotative LEADERs keep their scales) · **Target:** Autodesk AutoCAD 2027
 
 Every format AutoCAD 2027 reads or writes, with CADCraft's support, fidelity and tests. Work
 items are in [gaps.md](gaps.md#file-formats); the weighted score feeds
@@ -79,7 +79,7 @@ on read with a note, so such files no longer exceed the DXF limit (#1482). **DWG
 | DIMENSION (all 7 kinds) | yes | yes, with anonymous `*D` blocks | a reopened dimension's `*D` block is regenerated under its name, unreferenced ones dropped (#495); DIMASSOC objects written for every associated kind — linear/aligned, angular, radial/diametric, ordinate and arc length — and read back without CADCraft's xdata (#1651) |
 | DIMENSION (all 7 kinds) | yes | yes, with anonymous `*D` blocks | a reopened dimension's `*D` block is regenerated under its name, unreferenced ones dropped (#495); DIMASSOC objects written; angular block text honors DIMDSEP, including per-dimension overrides (#1646) |
 | DIMENSION (all 7 kinds) | yes | yes, with anonymous `*D` blocks; their text keeps the diameter sign as `%%c`, so SHX styles plot it (#1645) | a reopened dimension's `*D` block is regenerated under its name, unreferenced ones dropped (#495); DIMASSOC objects written |
-| LEADER | yes | yes | |
+| LEADER | yes | yes | an annotative leader's scales kept in CADCraft's annotation record (DXF and DWG), like the other annotative objects; AutoCAD's own scale contexts not read |
 | MULTILEADER | yes (#459) | yes, native MULTILEADER with MLEADERSTYLE (#459) | several landings per multileader are folded into one; per-object overrides and annotative scale contexts not kept |
 | HATCH pattern / solid | yes | yes; associative hatches keep their boundary objects in blocks too, and the boundary carries the hatch reactor (stretched dynamic blocks drag the fill in AutoCAD) | |
 | HATCH gradient | yes | yes (#162, fixes #80) | |
@@ -140,6 +140,7 @@ our output in AutoCAD black-box.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-28 | minor | Annotative LEADERs keep the scales they support through DXF and DWG, in the `CADCRAFT_ANNOTATION` record |
 | 2026-10-25 | minor | LAYOUT SAveas (`layout.saveas`) writes a layout as a drawing template: its page setup and paper space objects, no model space objects or other layouts, and only the named objects they use |
 | 2026-10-22 | minor | DXF/DWG save: angular, diametric and radial dimensions get standard DIMASSOC objects (one centre reference to the circle for radial/diametric, the definition points for angular), so AutoCAD follows their geometry; the standard objects of those kinds are read back too, without CADCraft's xdata (#1651) |
 | 2026-10-19 | minor | DXF/DWG save: angular dimension block text honors DIMDSEP, including per-dimension overrides (#1646) |
