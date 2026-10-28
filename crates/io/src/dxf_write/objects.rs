@@ -84,7 +84,8 @@ pub(super) fn mleader_style_obj(w: &mut W, s: &MLeaderStyle, h: &str, dict: &str
     w.i(291, i64::from(p.dogleg_on));
     w.f(43, s.dogleg);
     w.s(3, p.description.clone());
-    if let Some(a) = block(&p.arrow_block) {
+    // A user block by name, otherwise the arrowhead block written for it.
+    if let Some(a) = block(&p.arrow_block).or_else(|| (!p.arrow_block.trim().is_empty()).then(|| cx.arrow(&p.arrow_block)).flatten()) {
         w.s(341, a);
     }
     w.f(44, s.arrow_size);

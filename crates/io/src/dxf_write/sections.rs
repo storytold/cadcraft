@@ -870,6 +870,8 @@ fn arrow_block_definitions(
     for s in &d.dim_styles {
         arrow_names.extend([s.arrow_block.clone(), s.arrow_block1.clone(), s.arrow_block2.clone(), s.leader_arrow_block.clone()]);
     }
+    // A multileader style's arrowhead (341) is a block record too.
+    arrow_names.extend(d.mleader_styles.iter().map(|s| s.props.arrow_block.clone()));
     for e in every {
         if let EntityKind::Dimension(dm) = &e.kind {
             for (k, v) in &dm.overrides {

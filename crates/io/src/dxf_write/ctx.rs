@@ -66,7 +66,7 @@ impl Ctx {
     pub(super) fn style(&self, name: &str) -> Option<String> {
         self.styles.get(&name.to_ascii_uppercase()).cloned()
     }
-    fn arrow(&self, name: &str) -> Option<String> {
+    pub(super) fn arrow(&self, name: &str) -> Option<String> {
         self.arrows.get(&name.trim().to_ascii_uppercase()).cloned()
     }
     pub(super) fn table_style(&self, name: &str) -> String {

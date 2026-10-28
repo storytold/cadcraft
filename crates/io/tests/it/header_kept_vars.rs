@@ -73,3 +73,22 @@ fn a_changed_value_is_written_with_the_kept_code() {
     let out = header(&write_dxf(&d));
     assert_eq!(var(&out, "$SURFTAB1"), Some(&vec![(70, "24".to_string())]));
 }
+
+/// A kept code that no header value can have (a record start, a variable name, a subclass marker,
+/// extended data) leaves the variable out rather than breaking the file.
+#[test]
+fn a_structural_code_leaves_the_variable_out() {
+    let mut d = read_dxf(SRC.as_bytes()).unwrap();
+    for (name, code) in [("USERR1", 0), ("PROJECTNAME", 9), ("SURFTAB1", 100), ("SOLIDHIST", 1001), ("REQUIREDVERSIONS", -7)] {
+        d.header.set_code(name, code);
+    }
+    let text = write_dxf(&d);
+    let out = header(&text);
+    for name in ["$USERR1", "$PROJECTNAME", "$SURFTAB1", "$SOLIDHIST", "$REQUIREDVERSIONS"] {
+        assert!(var(&out, name).is_none(), "{name} was written with a structural code");
+    }
+    // The file still reads, with the variables that kept a value code.
+    let again = read_dxf(text.as_bytes()).unwrap();
+    assert_eq!(again.header.get("PUCSORG"), Some(&HVal::Point(Vec3::new(1.0, 2.0, 3.0))));
+    assert_eq!(again.header.code("PLIMMAX"), Some(POINT_2D));
+}

@@ -138,6 +138,13 @@ pub(super) fn header_vars(w: &mut W, d: &Drawing) {
 /// file, with the group code it was read with ([`cadcraft_doc::Header::codes`]), in name order.
 /// A variable that points at another object by handle is written while that object keeps the
 /// handle it was read with.
+/// Whether a header variable may be written with group `code` (DXF Reference, HEADER section):
+/// a value code, a handle, or one of the point codes. `code` comes from the file a drawing was
+/// read from, so anything else is skipped.
+fn header_value_code(code: i32) -> bool {
+    matches!(code, cadcraft_doc::POINT_2D | cadcraft_doc::POINT_3D | 1..=8 | 10..=99 | 105 | 110..=149 | 160..=179 | 210..=239 | 270..=481)
+}
+
 pub(super) fn kept_header_vars(w: &mut W, d: &Drawing, start: usize) {
     let written: HashSet<String> =
         w.t.get(start..).unwrap_or(&[]).iter().filter(|t| t.code == 9).map(|t| t.str().trim_start_matches('$').to_ascii_uppercase()).collect();
@@ -148,6 +155,11 @@ pub(super) fn kept_header_vars(w: &mut W, d: &Drawing, start: usize) {
             continue;
         }
         let Some(code) = d.header.code(name) else { continue };
+        // Only a code a header value can have: a structural code (0 starts a record, 9 a variable,
+        // 100 to 102 subclasses and groups) or extended data would break the file.
+        if !header_value_code(code) {
+            continue;
+        }
         // A reference to another object by handle: written while that object keeps its handle.
         if matches!(code, 5 | 105 | 320..=369 | 390..=399 | 480 | 481) {
             let target = v.as_str().and_then(Handle::parse_hex);

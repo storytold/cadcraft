@@ -214,7 +214,6 @@ impl Drawing {
         self.handseed = self.handseed.saturating_add(1);
         h
     }
-    /// Make sure future handles don't collide with `h` (after loading a file).
     /// Every handle the drawing keeps for its tables, blocks, layouts, styles and kept objects:
     /// written back to the same objects.
     pub fn kept_handles(&self) -> std::collections::HashSet<u64> {
@@ -238,6 +237,7 @@ impl Drawing {
         out
     }
 
+    /// Make sure future handles don't collide with `h` (after loading a file).
     pub fn bump_handseed(&mut self, h: Handle) {
         if h.0 >= self.handseed {
             self.handseed = h.0.saturating_add(1);
