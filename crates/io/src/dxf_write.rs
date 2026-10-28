@@ -1520,16 +1520,21 @@ fn dim_block_entities(d: &Drawing, dm: &Dimension, layer: &str) -> Vec<Entity> {
     // dimension's own colour (#1052).
     let in_color = |color: Color| Common { layer: layer.into(), color, ..Common::default() };
     let (dim_c, ext_c, text_c) = (in_color(style.dim_line_color), in_color(style.ext_line_color), in_color(style.text_color));
-    for (i, l) in g.lines.iter().enumerate() {
+    let line_entities = |i: usize, l: &[Vec2]| -> Vec<Entity> {
         let c = match g.line_roles.get(i) {
             Some(cadcraft_render::LineRole::Ext) => &ext_c,
             _ => &dim_c,
         };
-        for seg in l.windows(2) {
-            if let [a, b] = seg {
-                out.push(Entity { handle: Handle(0), common: c.clone(), kind: EntityKind::Line(Line { a: a.to3(0.0), b: b.to3(0.0) }) });
-            }
-        }
+        l.windows(2)
+            .filter_map(|seg| match seg {
+                [a, b] => Some(Entity { handle: Handle(0), common: c.clone(), kind: EntityKind::Line(Line { a: a.to3(0.0), b: b.to3(0.0) }) }),
+                _ => None,
+            })
+            .collect()
+    };
+    // The text's marks (arc length symbol, DIMINSPECT frame) go after the text background.
+    for (i, l) in g.lines.iter().enumerate().filter(|(i, _)| !g.text_marks.contains(i)) {
+        out.extend(line_entities(i, l));
     }
     for t in &g.fills {
         if let [a, b, cc] = t.as_slice() {
@@ -1539,6 +1544,20 @@ fn dim_block_entities(d: &Drawing, dm: &Dimension, layer: &str) -> Vec<Entity> {
                 kind: EntityKind::Solid(Solid { corners: [a.to3(0.0), b.to3(0.0), cc.to3(0.0), cc.to3(0.0)] }),
             });
         }
+    }
+    // DIMTFILL 2: the text background in DIMTFILLCLR, under the text and its marks (SOLID
+    // corners go 1, 2, 4, 3).
+    if style.text_fill == 2
+        && let [p0, p1, p2, p3] = g.text_fill.as_slice()
+    {
+        out.push(Entity {
+            handle: Handle(0),
+            common: in_color(style.text_fill_color),
+            kind: EntityKind::Solid(Solid { corners: [p0.to3(0.0), p1.to3(0.0), p3.to3(0.0), p2.to3(0.0)] }),
+        });
+    }
+    for (i, l) in g.lines.iter().enumerate().filter(|(i, _)| g.text_marks.contains(i)) {
+        out.extend(line_entities(i, l));
     }
     if !g.value.is_empty() {
         out.push(Entity {
@@ -1552,7 +1571,7 @@ fn dim_block_entities(d: &Drawing, dm: &Dimension, layer: &str) -> Vec<Entity> {
                 attach: 5,
                 rotation: g.text_angle,
                 style: style.text_style.clone(),
-                contents: g.value.clone(),
+                contents: g.mtext_contents(),
                 line_spacing: 1.0,
                 line_spacing_exact: false,
                 columns: None,
@@ -1643,6 +1662,16 @@ fn arrow_block_entities(kind: cadcraft_render::Arrowhead) -> Vec<Entity> {
     out
 }
 
+/// Whether the entities of the block `name` are the arrowhead block CADCraft writes for that
+/// standard arrow name ([`arrow_block_entities`]): the same lines and solids with the same
+/// properties (layer 0, ByBlock). Any other content (AutoCAD's own `_Dot`, a user's
+/// redefinition, an older CADCraft's geometry) is the file's.
+pub(crate) fn is_generated_arrow(name: &str, entities: &[&Entity]) -> bool {
+    let Some((_, kind)) = dxf_ext::arrow_block_name(name) else { return false };
+    let ours = arrow_block_entities(kind);
+    ours.len() == entities.len() && ours.iter().zip(entities).all(|(a, b)| a.kind == b.kind && a.common == b.common)
+}
+
 /// Whether a DIMASSOC point reference to `k` names a point of it without naming a segment:
 /// true for objects made of one curve. Polylines are referenced by segment ([`polyline_vertex_ref`]);
 /// 3D polylines and multilines can't be yet, and references to them are left out, as AutoCAD
@@ -1678,7 +1707,8 @@ pub(crate) fn polyline_vertex_ref(p: &LwPolyline, index: usize) -> Option<(i64, 
 }
 
 /// Standard DIMASSOC point references of an associative dimension: the extension-line
-/// origins of linear/aligned dimensions and the feature point of ordinate dimensions, linked
+/// origins of linear/aligned dimensions, both ends of both lines of an angular dimension, the
+/// feature point of ordinate dimensions and the circle of a radial/diametric dimension, linked
 /// to objects that exist ([`whole_object_ref`]). CADCraft's exact links travel in xdata as well.
 /// The reference data the file held for `a`, while `a` is still the link that was read.
 fn kept_read(a: &DimAssoc) -> Option<OsnapRead> {
@@ -1686,17 +1716,30 @@ fn kept_read(a: &DimAssoc) -> Option<OsnapRead> {
 }
 
 fn std_assoc_refs(d: &Drawing, dm: &Dimension) -> (i64, Vec<OsnapRef>) {
+    if matches!(dm.kind, DimKind::Radius | DimKind::Diameter) {
+        return radial_ref(d, &dm.assoc);
+    }
     let slots: &[&str] = match dm.kind {
         DimKind::Linear { .. } | DimKind::Aligned => &["p13", "p14"],
+        DimKind::Angular => &["p13", "p14", "p15", "p16"],
+        DimKind::Angular3P => &["p13", "p14", "p15"],
+        // Saved as an aligned dimension (`dim_xdata` marks it): its extension origins are the arc ends.
+        DimKind::ArcLength => &["p13", "p14"],
         DimKind::Ordinate { .. } => &["p13"],
-        _ => &[],
+        DimKind::Radius | DimKind::Diameter => &[],
     };
     let mut flags = 0;
     let mut refs = Vec::new();
     for (slot, name) in slots.iter().enumerate() {
         let Some(a) = dm.assoc.iter().find(|a| a.point == *name) else { continue };
         let Some(ent) = d.entity(a.handle) else { continue };
-        let point = if *name == "p13" { dm.p13 } else { dm.p14 };
+        let point = match *name {
+            "p13" => dm.p13,
+            "p14" => dm.p14,
+            "p15" => dm.p15,
+            "p16" => dm.p16,
+            _ => continue,
+        };
         if let EntityKind::LwPolyline(p) = &ent.kind {
             let index = match &a.snap {
                 AssocSnap::Vertex { index } => Some(*index),
@@ -1713,7 +1756,10 @@ fn std_assoc_refs(d: &Drawing, dm: &Dimension) -> (i64, Vec<OsnapRef>) {
             continue;
         }
         let (osnap, param, other) = match &a.snap {
-            AssocSnap::Start | AssocSnap::End | AssocSnap::Vertex { .. } => (1, 0.0, None),
+            // AutoCAD marks a curve's start with osnap 13 and its end with osnap 1 (group 72).
+            AssocSnap::Start => (if matches!(ent.kind, EntityKind::Point(_)) { 1 } else { 13 }, 0.0, None),
+            AssocSnap::End => (1, 1.0, None),
+            AssocSnap::Vertex { .. } => (1, 0.0, None),
             AssocSnap::Mid => (2, 0.0, None),
             AssocSnap::Center => (if matches!(ent.kind, EntityKind::Point(_)) { 4 } else { 3 }, 0.0, None),
             AssocSnap::OnCircle { angle } => (10, *angle, None),
@@ -1728,6 +1774,30 @@ fn std_assoc_refs(d: &Drawing, dm: &Dimension) -> (i64, Vec<OsnapRef>) {
         refs.push(OsnapRef { osnap, main: a.handle, segment: 0, param, point, other, read: kept_read(a) });
     }
     (flags, refs)
+}
+
+/// The single standard reference of a radial or diametric dimension: the circle or arc it
+/// measures, by its centre, with associativity flag 2. AutoCAD writes radial and diametric
+/// dimensions that way: the one reference names the geometry, whose radius or diameter the
+/// dimension then follows. Returns no flags and no references when the association does not name
+/// a circle or arc, so such a dimension is saved unassociated rather than pointing at nothing.
+fn radial_ref(d: &Drawing, assoc: &[DimAssoc]) -> (i64, Vec<OsnapRef>) {
+    for a in assoc {
+        let Some(ent) = d.entity(a.handle) else { continue };
+        let centre = match &ent.kind {
+            EntityKind::Circle(c) => c.center.xy(),
+            EntityKind::Arc(arc) => arc.center.xy(),
+            _ => continue,
+        };
+        if !centre.is_finite() {
+            continue;
+        }
+        return (
+            2,
+            vec![OsnapRef { read: Default::default(), osnap: 3, main: a.handle, segment: 0, param: 0.0, point: centre.to3(0.0), other: None }],
+        );
+    }
+    (0, Vec::new())
 }
 
 /// Layouts with viewports but without the paper-space viewport (id 1, the sheet itself), keyed
@@ -1751,6 +1821,15 @@ fn paper_views(d: &Drawing) -> HashMap<Handle, usize> {
         }
     }
     out
+}
+
+/// A layout's entities with its paper-space viewport (id 1) first. DWG stores no viewport ids and
+/// readers number a layout's viewports in order, so the sheet must lead even when the draw order
+/// (SORTENTS) put it behind a model viewport; otherwise that viewport becomes the sheet.
+fn sheet_first(l: &Layout) -> Vec<&Entity> {
+    let sheet = |e: &&Entity| matches!(&e.kind, EntityKind::Viewport(v) if v.id == 1);
+    let all = || l.entities.iter().map(|e| e.as_ref());
+    all().filter(sheet).chain(all().filter(|e| !sheet(e))).collect()
 }
 
 /// The paper-space viewport (id 1) of the layout whose first viewport is `e`, if it needs one
@@ -1952,8 +2031,7 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
     w.roles = d.foreign.handles.iter().map(|(k, h)| (k.clone(), *h)).collect();
     w.reserved = d.kept_handles();
     // Pre-allocate handles for block records.
-    let mut paper_layouts: Vec<&Layout> = d.layouts.iter().collect();
-    paper_layouts.sort_by_key(|l| l.tab_order);
+    let paper_layouts = d.paper_space_layouts();
     let ms_br = w.keep(Handle(0), ("BLOCK_RECORD", "*MODEL_SPACE"));
     // Xrefs are saved as references: without their objects and the symbols that came with them.
     let saved_view = crate::dxf_xref::saved_view(d);
@@ -2474,8 +2552,13 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
                 w.dimval(*code, enc, false);
                 continue;
             }
-            // Table groups where the file version has them, else xdata.
-            if version >= dxf_ext::NEWER_SINCE {
+            // Table groups where the file version has them, else xdata. DIMTFILL and DIMTFILLCLR
+            // are written only when set, as other writers do, so a style without a text
+            // background has a single 70 (its flags).
+            if version >= dxf_ext::newer_since(*code) {
+                if matches!(*code, 69 | 70) && v.get(*field) == defaults.get(*field) {
+                    continue;
+                }
                 w.dimval(*code, enc, false);
             } else if v.get(*field) != defaults.get(*field) {
                 newer.i(1070, i64::from(*code));
@@ -2587,7 +2670,7 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
         if i == 0 {
             block(&mut w, n, kept, "", h, Vec3::ZERO, 0, &mut std::iter::empty(), true);
         } else {
-            block(&mut w, n, kept, "", h, Vec3::ZERO, 0, &mut l.entities.iter().map(|e| e.as_ref()), true);
+            block(&mut w, n, kept, "", h, Vec3::ZERO, 0, &mut sheet_first(l).into_iter(), true);
         }
     }
     for (n, h, b) in &user_blocks {
@@ -2619,7 +2702,7 @@ fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Tag> {
         entity(&mut w, d, e, &ms_br, false, &cx);
     }
     if let Some((_, h, l)) = ps_brs.first() {
-        for e in l.entities.iter() {
+        for e in sheet_first(l) {
             entity(&mut w, d, e, h, true, &cx);
         }
     }

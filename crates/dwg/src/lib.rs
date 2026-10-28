@@ -541,10 +541,78 @@ mod native {
         dimension_flags(&mut doc);
         drop_unwritable(&mut doc);
         current_dimstyle(&mut doc);
+        add_variable_dictionary(&mut doc);
         current_text_style(&mut doc);
         std::panic::catch_unwind(AssertUnwindSafe(|| acadrust::DwgWriter::write_to_vec(&doc)))
             .map_err(|_| "the DWG writer failed on this drawing".to_string())?
             .map_err(|e| format!("DWG write: {e}"))
+    }
+
+    /// AutoCAD's entry name for the drawing variables dictionary (the DXF Reference calls it the
+    /// ACDBVARIABLEDICTIONARY; dictionary keys are case-insensitive).
+    const VARIABLE_DICTIONARY: &str = "AcDbVariableDictionary";
+
+    /// A style or scale name, or `default` when the drawing has none.
+    fn name_or_default(name: &str, default: &str) -> String {
+        let name = name.trim();
+        if name.is_empty() { default.to_string() } else { name.to_string() }
+    }
+
+    /// A drawing variable's value as text, or `default` when the header holds a value the
+    /// variable doesn't accept (a hostile file can put any integer in it).
+    fn variable_value(value: i16, valid: &[i16], default: i16) -> String {
+        if valid.contains(&value) { value.to_string() } else { default.to_string() }
+    }
+
+    /// Add the drawing variables dictionary AutoCAD always writes into the named object
+    /// dictionary, with the variables it keeps there, when the drawing has none (#1813).
+    /// Vectric Aspire 10.5 reads a 2004 (AC1018) DWG without it as empty ("No data was imported
+    /// from the DXF / DWG file"), though it reads the same drawing as DXF — which has no such
+    /// dictionary either, as CADCraft's and ezdxf's writers don't make one. AutoCAD's AC1032 DWGs
+    /// read there without it, so newer output is left as it was, and a dictionary the drawing
+    /// does have keeps its own entries and values.
+    fn add_variable_dictionary(doc: &mut acadrust::CadDocument) {
+        use acadrust::objects::{Dictionary, DictionaryVariable, ObjectType};
+        if doc.version >= acadrust::DxfVersion::AC1032 {
+            return;
+        }
+        let root_handle = doc.header.named_objects_dict_handle;
+        match doc.objects.get(&root_handle) {
+            Some(ObjectType::Dictionary(root)) => {
+                if root.get(VARIABLE_DICTIONARY).is_some() {
+                    return;
+                }
+            }
+            _ => return,
+        }
+        // The variables AutoCAD writes for a drawing with default styles and a 1:1 annotation
+        // scale. DIMASSOC and HIDETEXT keep the drawing's own header values; LAYEREVAL and
+        // LAYERNOTIFY have no DXF header variable.
+        let variables = [
+            ("CMLEADERSTYLE", name_or_default(&doc.header.current_mleader_style_name, "Standard")),
+            ("CTABLESTYLE", name_or_default(&doc.header.current_table_style_name, "Standard")),
+            ("CANNOSCALE", name_or_default(&doc.header.current_annotation_scale, "1:1")),
+            ("DIMASSOC", variable_value(doc.header.dimension_associativity, &[0, 1, 2], 2)),
+            ("HIDETEXT", variable_value(doc.header.hide_text, &[0, 1], 1)),
+            ("LAYEREVAL", "0".to_string()),
+            ("LAYERNOTIFY", "0".to_string()),
+        ];
+        let dictionary_handle = doc.allocate_handle();
+        let mut dictionary = Dictionary::new();
+        dictionary.handle = dictionary_handle;
+        dictionary.owner = root_handle;
+        for (name, value) in variables {
+            let handle = doc.allocate_handle();
+            let mut variable = DictionaryVariable::new(name, &value);
+            variable.handle = handle;
+            variable.owner_handle = dictionary_handle;
+            dictionary.add_entry(name, handle);
+            doc.objects.insert(handle, ObjectType::DictionaryVariable(variable));
+        }
+        doc.objects.insert(dictionary_handle, ObjectType::Dictionary(dictionary));
+        if let Some(ObjectType::Dictionary(root)) = doc.objects.get_mut(&root_handle) {
+            root.add_entry(VARIABLE_DICTIONARY, dictionary_handle);
+        }
     }
 
     /// Entities of a layout other than the one in `*Paper_Space` are written owned by their block

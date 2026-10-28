@@ -100,6 +100,9 @@ pub struct Drawing {
     pub blocks: BTreeMap<String, std::sync::Arc<Block>>,
     pub model: EntityStore,
     pub layouts: Vec<Layout>,
+    /// The layout a file marks active (its block is `*Paper_Space`, the others `*Paper_SpaceN`),
+    /// written active again. `None`, or a layout that no longer exists: the first by tab order.
+    pub active_layout: Option<String>,
     pub views: Vec<NamedView>,
     /// Model space viewport configurations (VPORTS): the tiles shown and named ones.
     pub vports: Vec<VportConfig>,
@@ -182,6 +185,7 @@ impl Drawing {
             blocks: BTreeMap::new(),
             model: EntityStore::new(),
             layouts: vec![Layout::new("Layout1", 1), Layout::new("Layout2", 2)],
+            active_layout: None,
             views: Vec::new(),
             vports: Vec::new(),
             ucss: Vec::new(),
@@ -333,6 +337,18 @@ impl Drawing {
         }
         self.layers.push(Layer::new(name));
         true
+    }
+
+    /// The layouts in the order their paper space blocks are named in a file: the active one
+    /// (`*Paper_Space`) first, then the others by tab order (`*Paper_Space0`, `*Paper_Space1`, …).
+    pub fn paper_space_layouts(&self) -> Vec<&Layout> {
+        let mut ls: Vec<&Layout> = self.layouts.iter().collect();
+        ls.sort_by_key(|l| l.tab_order);
+        if let Some(i) = self.active_layout.as_ref().and_then(|a| ls.iter().position(|l| l.name.eq_ignore_ascii_case(a))) {
+            let active = ls.remove(i);
+            ls.insert(0, active);
+        }
+        ls
     }
 
     pub fn space(&self, space: &Space) -> Option<&EntityStore> {

@@ -9,7 +9,8 @@ use serde_json::{Value, json};
 
 use super::helpers::v3;
 use super::machines::{SelOutcome, SelectPhase, SelectRun};
-use super::*;
+use super::{CommandSpec, bad, point_param, point_req, points_param, str_param, targets};
+
 use crate::{Accept, EngineError, Input, Interactive, LeaderOrder, MLeaderOptions, Prompt, Result, Session, Step};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -119,7 +120,7 @@ fn style(s: &Session) -> String {
     s.doc().map(|d| d.header.str("DIMSTYLE", "Standard")).unwrap_or_else(|_| "Standard".into())
 }
 
-fn dim(s: &Session, kind: DimKind, defpt: Vec2, p13: Vec2, p14: Vec2, p15: Vec2, p16: Vec2, text: &str) -> EntityKind {
+fn dim(s: &Session, kind: DimKind, defpt: Vec2, p13: Vec2, p14: Vec2, p15: Vec2, text: &str) -> EntityKind {
     EntityKind::Dimension(Dimension {
         flag_73: Default::default(),
         flip_arrows: Default::default(),
@@ -130,7 +131,7 @@ fn dim(s: &Session, kind: DimKind, defpt: Vec2, p13: Vec2, p14: Vec2, p15: Vec2,
         p13: v3(p13),
         p14: v3(p14),
         p15: v3(p15),
-        p16: v3(p16),
+        p16: v3(Vec2::ZERO),
         text: text.into(),
         style: style(s),
         measurement: 0.0,
@@ -185,7 +186,7 @@ fn with_assoc(k: EntityKind, assoc: Vec<DimAssoc>) -> EntityKind {
     }
 }
 
-/// Angular dimension between two lines, attached to them (vertex = their intersection).
+/// Two-line angular dimension (type 2) between two lines, attached to them.
 fn angular_from_lines(s: &Session, h1: Handle, h2: Handle, at: Vec2) -> Option<EntityKind> {
     let d = s.doc().ok()?;
     let line = |h: Handle| match &d.entity(h)?.kind {
@@ -203,13 +204,21 @@ fn angular_from_lines(s: &Session, h1: Handle, h2: Handle, at: Vec2) -> Option<E
     };
     let (p1, s1) = pick(a1, a2, AssocSnap::Start, AssocSnap::End);
     let (p2, s2) = pick(b1, b2, AssocSnap::Start, AssocSnap::End);
-    let k = dim(s, DimKind::Angular3P, at, p1, p2, v, Vec2::ZERO, "");
+    // A two-line angular dimension (type 2): line 1 is p13 -> p14, line 2 is defpt -> p15, p16 is on the arc.
+    // The picked leg end goes last in each pair, so the renderer measures between p14 and p15.
+    let (o1, t1) = if s1 == AssocSnap::Start { (a2, AssocSnap::End) } else { (a1, AssocSnap::Start) };
+    let (o2, t2) = if s2 == AssocSnap::Start { (b2, AssocSnap::End) } else { (b1, AssocSnap::Start) };
+    let mut k = dim(s, DimKind::Angular, o2, o1, p1, p2, "");
+    if let EntityKind::Dimension(d) = &mut k {
+        d.p16 = v3(at);
+    }
     let mut assoc = Vec::new();
     if assoc_enabled(s) {
         assoc = vec![
-            DimAssoc { read: Default::default(), point: "p13".into(), handle: h1, snap: s1 },
-            DimAssoc { read: Default::default(), point: "p14".into(), handle: h2, snap: s2 },
-            DimAssoc { read: Default::default(), point: "p15".into(), handle: h1, snap: AssocSnap::Intersection { other: h2 } },
+            DimAssoc { read: Default::default(), point: "p13".into(), handle: h1, snap: t1 },
+            DimAssoc { read: Default::default(), point: "p14".into(), handle: h1, snap: s1 },
+            DimAssoc { read: Default::default(), point: "defpt".into(), handle: h2, snap: t2 },
+            DimAssoc { read: Default::default(), point: "p15".into(), handle: h2, snap: s2 },
         ];
     }
     Some(with_assoc(k, assoc))
@@ -222,7 +231,7 @@ fn run_linear(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let at = point_req("dimlinear", p, "at")?;
     let rot = p.get("rotation").and_then(Value::as_f64).map(f64::to_radians);
-    let k = dim(s, linear_kind(a, b, at, rot, false), at, a, b, Vec2::ZERO, Vec2::ZERO, str_param(p, "text").unwrap_or(""));
+    let k = dim(s, linear_kind(a, b, at, rot, false), at, a, b, Vec2::ZERO, str_param(p, "text").unwrap_or(""));
     Ok(json!({ "handle": add_dim(s, k)?.hex() }))
 }
 
@@ -230,7 +239,7 @@ fn run_aligned(s: &mut Session, p: &Value) -> Result<Value> {
     let a = point_req("dimaligned", p, "p1")?;
     let b = point_req("dimaligned", p, "p2")?;
     let at = point_req("dimaligned", p, "at")?;
-    let k = dim(s, DimKind::Aligned, at, a, b, Vec2::ZERO, Vec2::ZERO, str_param(p, "text").unwrap_or(""));
+    let k = dim(s, DimKind::Aligned, at, a, b, Vec2::ZERO, str_param(p, "text").unwrap_or(""));
     Ok(json!({ "handle": add_dim(s, k)?.hex() }))
 }
 
@@ -258,9 +267,9 @@ fn radial(s: &mut Session, p: &Value, diameter: bool) -> Result<Value> {
         return Err(bad(id, "`point` must differ from `center`"));
     }
     let k = if diameter {
-        dim(s, DimKind::Diameter, c + (c - pt), Vec2::ZERO, Vec2::ZERO, pt, Vec2::ZERO, "")
+        dim(s, DimKind::Diameter, c + (c - pt), Vec2::ZERO, Vec2::ZERO, pt, "")
     } else {
-        dim(s, DimKind::Radius, c, Vec2::ZERO, Vec2::ZERO, pt, Vec2::ZERO, "")
+        dim(s, DimKind::Radius, c, Vec2::ZERO, Vec2::ZERO, pt, "")
     };
     let k = match at {
         Some(at) => text_at(k, at),
@@ -305,7 +314,7 @@ fn run_angular(s: &mut Session, p: &Value) -> Result<Value> {
             _ => return Err(bad("dimangular", "object is not an arc")),
         };
         let g = cadcraft_geom::Arc::new(a.center.xy(), a.radius, a.start, a.end);
-        let k = dim(s, DimKind::Angular3P, at, g.start_point(), g.end_point(), g.center, Vec2::ZERO, "");
+        let k = dim(s, DimKind::Angular3P, at, g.start_point(), g.end_point(), g.center, "");
         return Ok(json!({ "handle": add_dim(s, k)?.hex() }));
     }
     let v = point_req("dimangular", p, "vertex")?;
@@ -315,7 +324,7 @@ fn run_angular(s: &mut Session, p: &Value) -> Result<Value> {
     if v.near(a, 1e-12) || v.near(b, 1e-12) {
         return Err(bad("dimangular", "`p1` and `p2` must differ from `vertex`"));
     }
-    let k = dim(s, DimKind::Angular3P, at, a, b, v, Vec2::ZERO, "");
+    let k = dim(s, DimKind::Angular3P, at, a, b, v, "");
     Ok(json!({ "handle": add_dim(s, k)?.hex() }))
 }
 
@@ -327,7 +336,7 @@ fn run_arclen(s: &mut Session, p: &Value) -> Result<Value> {
         _ => return Err(bad("dimarc", "object is not an arc")),
     };
     let ga = cadcraft_geom::Arc::new(a.center.xy(), a.radius, a.start, a.end);
-    let k = dim(s, DimKind::ArcLength, at, ga.start_point(), ga.end_point(), ga.center, Vec2::ZERO, "");
+    let k = dim(s, DimKind::ArcLength, at, ga.start_point(), ga.end_point(), ga.center, "");
     Ok(json!({ "handle": add_dim(s, k)?.hex() }))
 }
 
@@ -335,7 +344,7 @@ fn run_ordinate(s: &mut Session, p: &Value) -> Result<Value> {
     let f = point_req("dimordinate", p, "feature")?;
     let l = point_req("dimordinate", p, "leader")?;
     let xtype = p.get("xtype").and_then(Value::as_bool).unwrap_or((l - f).y.abs() > (l - f).x.abs());
-    let k = dim(s, DimKind::Ordinate { x_type: xtype }, Vec2::ZERO, f, l, Vec2::ZERO, Vec2::ZERO, "");
+    let k = dim(s, DimKind::Ordinate { x_type: xtype }, Vec2::ZERO, f, l, Vec2::ZERO, "");
     Ok(json!({ "handle": add_dim(s, k)?.hex() }))
 }
 
@@ -897,7 +906,7 @@ fn pick_at(s: &Session, p: Vec2) -> Option<Handle> {
 }
 
 /// The straight or curved piece of `h` picked at `p`: a line, an arc, or the polyline segment nearest `p`.
-fn segment_at(s: &Session, h: Handle, p: Vec2) -> Option<Segment> {
+pub(super) fn segment_at(s: &Session, h: Handle, p: Vec2) -> Option<Segment> {
     match &s.doc().ok()?.entity(h)?.kind {
         EntityKind::Line(l) => Some(Segment::Line(cadcraft_geom::Line::new(l.a.xy(), l.b.xy()))),
         EntityKind::Arc(a) => Some(Segment::Arc { arc: cadcraft_geom::Arc::new(a.center.xy(), a.radius, a.start, a.end), ccw: true }),
@@ -1059,7 +1068,7 @@ impl Interactive for LinearM {
             }
             (_, Input::Point(at)) => {
                 let (Some(&a), Some(&b)) = (self.pts.first(), self.pts.get(1)) else { return Ok(Step::Continue) };
-                let k = self.text.apply(dim(s, linear_kind(a, b, at, self.rotation, self.aligned), at, a, b, Vec2::ZERO, Vec2::ZERO, ""));
+                let k = self.text.apply(dim(s, linear_kind(a, b, at, self.rotation, self.aligned), at, a, b, Vec2::ZERO, ""));
                 add_dim(s, k)?;
                 if let Some(EntityKind::Dimension(d)) = s.last_dim.and_then(|h| s.doc().ok()?.entity(h).map(|e| e.kind.clone())) {
                     let st = s.doc()?.dim_style(&d.style).cloned().unwrap_or_default();
@@ -1086,7 +1095,7 @@ impl Interactive for LinearM {
     fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
         match self.pts.as_slice() {
             [a] => vec![super::helpers::line(*a, c)],
-            [a, b] => vec![self.text.apply(dim(s, linear_kind(*a, *b, c, self.rotation, self.aligned), c, *a, *b, Vec2::ZERO, Vec2::ZERO, ""))],
+            [a, b] => vec![self.text.apply(dim(s, linear_kind(*a, *b, c, self.rotation, self.aligned), c, *a, *b, Vec2::ZERO, ""))],
             _ => Vec::new(),
         }
     }
@@ -1105,9 +1114,9 @@ impl RadialM {
     fn kind(&self, s: &Session, c: Vec2, r: f64, at: Vec2) -> EntityKind {
         let pt = c + (at - c).normalized() * r;
         let k = self.text.apply(if self.diameter {
-            dim(s, DimKind::Diameter, c + (c - pt), Vec2::ZERO, Vec2::ZERO, pt, Vec2::ZERO, "")
+            dim(s, DimKind::Diameter, c + (c - pt), Vec2::ZERO, Vec2::ZERO, pt, "")
         } else {
-            dim(s, DimKind::Radius, c, Vec2::ZERO, Vec2::ZERO, pt, Vec2::ZERO, "")
+            dim(s, DimKind::Radius, c, Vec2::ZERO, Vec2::ZERO, pt, "")
         });
         text_at(k, at)
     }
@@ -1240,7 +1249,7 @@ impl Interactive for AngularM {
                         ([h1, h2], None) => angular_from_lines(s, *h1, *h2, at),
                         _ => None,
                     };
-                    let k = k.unwrap_or_else(|| dim(s, DimKind::Angular3P, at, a, b, v, Vec2::ZERO, ""));
+                    let k = k.unwrap_or_else(|| dim(s, DimKind::Angular3P, at, a, b, v, ""));
                     add_dim(s, self.text.apply(k))?;
                     Ok(Step::Done)
                 }
@@ -1306,9 +1315,7 @@ impl Interactive for AngularM {
         }
     }
     fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
-        self.geometry()
-            .map(|(v, a, b)| vec![self.text.apply(dim(s, DimKind::Angular3P, self.located(v, c), a, b, v, Vec2::ZERO, ""))])
-            .unwrap_or_default()
+        self.geometry().map(|(v, a, b)| vec![self.text.apply(dim(s, DimKind::Angular3P, self.located(v, c), a, b, v, ""))]).unwrap_or_default()
     }
 }
 
@@ -1384,7 +1391,7 @@ impl Interactive for ArcLenM {
                 Ok(Step::Continue)
             }
             (Some(g), Input::Point(at)) => {
-                add_dim(s, self.text.apply(dim(s, DimKind::ArcLength, at, g.start_point(), g.end_point(), g.center, Vec2::ZERO, "")))?;
+                add_dim(s, self.text.apply(dim(s, DimKind::ArcLength, at, g.start_point(), g.end_point(), g.center, "")))?;
                 Ok(Step::Done)
             }
             (Some(_), Input::Keyword(k)) => {
@@ -1403,9 +1410,7 @@ impl Interactive for ArcLenM {
         if self.partial.is_some() {
             return Vec::new();
         }
-        self.arc
-            .map(|g| vec![self.text.apply(dim(s, DimKind::ArcLength, c, g.start_point(), g.end_point(), g.center, Vec2::ZERO, ""))])
-            .unwrap_or_default()
+        self.arc.map(|g| vec![self.text.apply(dim(s, DimKind::ArcLength, c, g.start_point(), g.end_point(), g.center, ""))]).unwrap_or_default()
     }
 }
 
@@ -1420,7 +1425,7 @@ struct OrdinateM {
 impl OrdinateM {
     fn kind(&self, s: &Session, f: Vec2, l: Vec2) -> EntityKind {
         let x = self.xtype.unwrap_or((l - f).y.abs() > (l - f).x.abs());
-        self.text.apply(dim(s, DimKind::Ordinate { x_type: x }, Vec2::ZERO, f, l, Vec2::ZERO, Vec2::ZERO, ""))
+        self.text.apply(dim(s, DimKind::Ordinate { x_type: x }, Vec2::ZERO, f, l, Vec2::ZERO, ""))
     }
 }
 

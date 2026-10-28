@@ -11,7 +11,7 @@ on:
         default: ""
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -59,12 +59,15 @@ jobs:
 
   release:
     needs: git-sources
+    permissions:
+      # The reusable release workflow tags and uploads the draft release.
+      contents: write
     # Intentionally tracked at @main (not SHA-pinned) so org-wide CI improvements, security fixes, and build optimizations propagate without PR churn across all craftapp repos.
     uses: storytold/craft-common-actions/.github/workflows/release.yml@main
     with:
       app-name: cadcraft
       app-title: CADCraft
-      craft-fonts-ref: 3d9ab3a132ed0eff457e424226a435a901da30d3
+      craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
       version: ${{ inputs.version }}
     secrets:
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}

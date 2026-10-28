@@ -43,6 +43,26 @@ fn gap_tolerance_closes_small_gaps() {
 }
 
 #[test]
+fn lines_ending_on_an_ellipse_close_a_boundary() {
+    // #1690: the verticals end on the true ellipse, which the boundary tracer sees as chords
+    // that pass just below those ends.
+    let mut s = Session::new();
+    s.execute("ellipse", &json!({ "center": [0, 0], "major": [10, 0], "ratio": 0.5 })).unwrap();
+    for x in [1.0f64, 2.0] {
+        let y = 5.0 * (1.0 - x * x / 100.0).sqrt();
+        s.execute("line", &json!({ "points": [[x, 8.0], [x, y]] })).unwrap();
+    }
+    let top = s.execute("line", &json!({ "points": [[0, 8], [3, 8]] })).unwrap()["handles"][0].clone();
+    let h = handle(&s.execute("hatch", &json!({ "points": [[1.5, 7]] })).unwrap());
+    let hh = hatch(&s, &h);
+    assert_eq!(hh.loops.len(), 1);
+    assert_eq!(hh.loops[0].sources.len(), 4);
+    // The associative refill traces the same way: sliding the top edge keeps the hatch.
+    s.execute("move", &json!({ "handles": [top], "delta": [0.5, 0] })).unwrap();
+    assert!(hatch(&s, &h).associative);
+}
+
+#[test]
 fn pattern_origin_options() {
     let mut s = Session::new();
     rect(&mut s, [5.0, 5.0], [15.0, 10.0]);
@@ -248,4 +268,14 @@ fn hatchedit_refuses_unknown_patterns_and_region_boundaries() {
     assert!(hatch(&s, &h).solid);
     // Region boundaries need REGION objects; the hatch is left as it was.
     assert!(s.execute("hatchedit", &json!({ "handles": [h], "recreate": "region" })).is_err());
+}
+
+#[test]
+fn multiline_wall_hatch_keeps_the_room_as_an_island() {
+    // A closed multiline wall: picking inside the wall hatches the band between its outer and
+    // inner lines; the room the inner lines enclose is an island, not filled.
+    let mut s = Session::new();
+    s.execute("mline", &json!({ "points": [[0, 0], [10, 0], [10, 10], [0, 10]], "closed": true, "scale": 1, "justification": "zero" })).unwrap();
+    let h = handle(&s.execute("hatch", &json!({ "points": [[0, 5]], "pattern": "SOLID" })).unwrap());
+    assert_eq!(hatch(&s, &h).loops.len(), 2, "outer face + the room as an island");
 }

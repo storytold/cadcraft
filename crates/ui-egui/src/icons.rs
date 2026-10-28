@@ -683,7 +683,9 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, dim: bool) {
                 LayerFreeze => pen.text(x, y, "❄", 9.0, Color32::from_rgb(0x9f, 0xd4, 0xff)),
                 LayerLock => pen.rect(x - 3.0, y - 1.0, 6.0, 5.0, Color32::from_rgb(0xe6, 0xb4, 0x3c)),
                 LayerMatch => pen.la(x - 4.0, y, x + 4.0, y),
-                MakeCurrent => pen.text(x, y, "✓", 9.0, Color32::from_rgb(0x6f, 0xe0, 0x6f)),
+                // Drawn rather than a "✓" glyph: no bundled font has U+2713, and a missing
+                // glyph panics under epaint's strict policy when no system font supplies one.
+                MakeCurrent => pen.poly(&[(x - 3.0, y), (x - 1.0, y + 2.0), (x + 3.0, y - 2.5)], false, Color32::from_rgb(0x6f, 0xe0, 0x6f)),
                 _ => {
                     pen.arc(x, y, 3.5, 90.0, 360.0, a);
                 }
@@ -967,8 +969,8 @@ pub fn button(ui: &mut egui::Ui, icon: Icon, size: f32, tooltip: &str, selected:
 pub fn describe_control(ui: &egui::Ui, response: &egui::Response, label: &str, selected: Option<bool>, tab: bool) {
     let label = crate::i18n::t(label);
     response.widget_info(|| match selected {
-        Some(selected) => egui::WidgetInfo::selected(egui::WidgetType::Button, response.enabled(), selected, label),
-        None => egui::WidgetInfo::labeled(egui::WidgetType::Button, response.enabled(), label),
+        Some(selected) => egui::WidgetInfo::selected(egui::Role::Button, response.enabled(), selected, label),
+        None => egui::WidgetInfo::labeled(egui::Role::Button, response.enabled(), label),
     });
     if tab {
         ui.ctx().accesskit_node_builder(response.id, |node| {

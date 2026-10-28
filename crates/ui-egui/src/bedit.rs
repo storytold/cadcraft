@@ -51,7 +51,7 @@ pub fn authoring_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) 
         .unwrap_or_else(|| crate::i18n::t("This drawing").to_string());
     let mut choice: Option<&str> = None;
     egui::Window::new(crate::tl!("Open in Block Editor"))
-        .id(egui::Id::new("Open in Block Editor"))
+        .id(egui::Id::unique("Open in Block Editor"))
         .open(open)
         .collapsible(false)
         .resizable(false)
@@ -165,15 +165,15 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let description = existing.as_deref().and_then(|n| d.block(n)).map(|b| b.description.clone()).unwrap_or_default();
     let (mut ok, mut cancel) = (false, false);
     egui::Window::new(crate::tl!("Edit Block Definition"))
-        .id(egui::Id::new("Edit Block Definition"))
+        .id(egui::Id::unique("Edit Block Definition"))
         .open(open)
         .collapsible(false)
         .resizable(false)
         .pivot(egui::Align2::CENTER_CENTER)
         .default_pos(ctx.content_rect().center())
         .show(ctx, |ui| {
-            ui.label(crate::tl!("Block to create or edit"));
-            let edit = ui.add(egui::TextEdit::singleline(&mut app.bedit.name).desired_width(460.0));
+            let name_label = ui.label(crate::tl!("Block to create or edit"));
+            let edit = ui.add(egui::TextEdit::singleline(&mut app.bedit.name).desired_width(460.0)).labelled_by(name_label.id);
             if edit.changed() {
                 app.bedit.error = None;
             }

@@ -211,6 +211,42 @@ fn autosave_files_are_written_in_the_background_and_removed_on_exit() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Autosave files are unsaved drawings: on Unix an autosave folder that doesn't exist yet is made
+/// owner-only, and one that already exists (SAVEFILEPATH can be any folder) keeps its mode.
+#[cfg(unix)]
+#[test]
+fn a_new_autosave_folder_is_owner_only() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    hooks();
+    let base = temp_dir("modes");
+    let picked = base.join("picked");
+    std::fs::create_dir_all(&picked).unwrap();
+    std::fs::set_permissions(&picked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    for (dir, expected) in [(base.join("new").join("autosave"), 0o700), (picked, 0o755)] {
+        let mut s = Session::new();
+        draw(&mut s);
+        // Not instance_id(): a test started in the same millisecond would get the same id, and
+        // shutdown() would then remove its lock from the process-wide SAVEFILEPATH.
+        let mut a = Autosaver::new("41-c");
+        a.plan(&s, 0.0, 1, &dir.to_string_lossy());
+        let jobs = a.plan(&s, 60.0, 1, &dir.to_string_lossy());
+        let path = writes(&jobs).pop().unwrap();
+        a.perform(jobs);
+        for _ in 0..500 {
+            if std::path::Path::new(&path).exists() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(std::path::Path::new(&path).exists());
+        assert_eq!(mode(&dir), expected, "{}", dir.display());
+        a.shutdown();
+    }
+    assert_eq!(mode(&base.join("new")), 0o700);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 #[test]
 fn a_failed_autosave_is_tried_again_without_another_change() {
     hooks();
@@ -285,4 +321,42 @@ fn hooks() {
         write: |_, _| Ok(b"0\nSECTION\n0\nENDSEC\n0\nEOF\n".to_vec()),
         plot: None,
     });
+}
+
+#[test]
+fn a_block_editor_that_cannot_be_composed_is_not_autosaved_as_the_old_host() {
+    use cadcraft_engine::doc::{Entity, EntityKind, Insert};
+    use cadcraft_engine::geom::Vec3;
+
+    let mut s = Session::new();
+    let l = s.execute("line", &json!({ "points": [[10, 10], [12, 10]] })).unwrap()["handles"][0].clone();
+    s.execute("block", &json!({ "name": "Door", "base": [10, 10], "handles": [l] })).unwrap();
+    s.execute("bedit", &json!({ "name": "Door" })).unwrap();
+    // An unsaved change in the editor: the block would contain a reference to itself.
+    let d = s.doc_mut().unwrap();
+    let h = d.new_handle();
+    let kind = EntityKind::Insert(Insert {
+        block: "Door".into(),
+        insert: Vec3::ZERO,
+        scale: Vec3::new(1.0, 1.0, 1.0),
+        rotation: 0.0,
+        attribs: vec![],
+        cols: 1,
+        rows: 1,
+        col_spacing: 0.0,
+        row_spacing: 0.0,
+    });
+    d.model.push(Entity::new(h, kind));
+    assert!(s.state().unwrap().recovery_drawing().is_err());
+
+    let mut a = Autosaver::new("55-b");
+    a.plan(&s, 0.0, 1, "/auto");
+    assert!(a.plan(&s, 60.0, 1, "/auto").is_empty(), "no recovery file without the editor's changes");
+    assert!(a.plan(&s, 120.0, 1, "/auto").is_empty());
+    assert_eq!(a.next_due(120.0, 1), Some(0.0), "still waiting to be written");
+
+    // Once the reference is gone, the next autosave writes the editor's changes.
+    let d = s.doc_mut().unwrap();
+    d.model.remove(h);
+    assert_eq!(writes(&a.plan(&s, 180.0, 1, "/auto")).len(), 1);
 }

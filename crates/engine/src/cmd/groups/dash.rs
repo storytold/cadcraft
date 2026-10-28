@@ -7,7 +7,8 @@ use serde_json::{Value, json};
 
 use super::super::machines::{SelOutcome, SelectPhase, number};
 use super::super::qselect::wildcard;
-use super::super::*;
+use super::super::{CommandSpec, bad, bool_or, str_param, targets};
+
 use super::{add_members, create, echo_list, find, remove_members, rename, ungroup, valid_name};
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 

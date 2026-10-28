@@ -4,7 +4,7 @@ use super::value::{Value, to_text};
 use crate::Session;
 use crate::cmd::file::{EntityCodec, set_entity_codec};
 
-fn session() -> Session {
+pub(super) fn session() -> Session {
     set_entity_codec(EntityCodec { groups: cadcraft_io::entity_groups, entity: cadcraft_io::entity_from_groups });
     Session::new()
 }
@@ -136,6 +136,10 @@ fn lists_and_strings() {
     assert_eq!(ok(&mut s, "(wcmatch \"abc\" \"x*,a?c\")"), "T");
     assert_eq!(ok(&mut s, "(wcmatch \"abc\" \"~a*\")"), "nil");
     assert_eq!(ok(&mut s, "(wcmatch \"b\" \"[a-c]\")"), "T");
+    let many = format!("(wcmatch \"{}\" \"{}\")", "a".repeat(80), "*a".repeat(80));
+    assert_eq!(ok(&mut s, &many), "T");
+    let too_deep = format!("(wcmatch \"{}\" \"{}\")", "a".repeat(400), "*a".repeat(400));
+    assert!(eval(&mut s, &too_deep).is_err());
     assert_eq!(ok(&mut s, "(vl-string-subst \"X\" \"b\" \"abcb\")"), "\"aXcb\"");
     assert_eq!(ok(&mut s, "(vl-string-search \"c\" \"abc\")"), "2");
     assert_eq!(ok(&mut s, "(read \"(1 2)\")"), "(1 2)");
@@ -438,6 +442,33 @@ fn tables_and_variables() {
 }
 
 #[test]
+fn getvar_drawing_and_session_variables() {
+    let mut s = session();
+    assert_eq!(ok(&mut s, "(list (getvar \"DWGPREFIX\") (getvar \"DWGTITLED\"))"), "(\"\" 0)");
+    assert_eq!(ok(&mut s, "(list (getvar \"FILEDIA\") (getvar \"CMDECHO\") (getvar \"TILEMODE\"))"), "(1 1 1)");
+    assert_eq!(ok(&mut s, "(setvar \"FILEDIA\" 0) (setvar \"CMDECHO\" 0) (getvar \"FILEDIA\")"), "0");
+    // Both belong to the session, so they survive a switch to another drawing.
+    s.new_drawing(true);
+    assert_eq!(ok(&mut s, "(list (getvar \"FILEDIA\") (getvar \"CMDECHO\"))"), "(0 0)");
+    assert_eq!(ok(&mut s, "(getvar \"CMDACTIVE\")"), "0");
+    let dir = std::env::temp_dir();
+    let file = dir.join("lisp_getvar_test.dxf");
+    s.state_mut().unwrap().path = Some(file.to_string_lossy().into_owned());
+    let want = format!("{}{}", dir.to_string_lossy().trim_end_matches(std::path::MAIN_SEPARATOR), std::path::MAIN_SEPARATOR);
+    assert_eq!(crate::sysvars::get(&s, "DWGPREFIX"), Some(serde_json::json!(want)));
+    assert_eq!(ok(&mut s, "(getvar \"DWGTITLED\")"), "1");
+}
+
+/// CECOLOR is a string in AutoCAD, whatever it was set from (#1999).
+#[test]
+fn getvar_cecolor_is_a_string() {
+    let mut s = session();
+    assert_eq!(ok(&mut s, "(list (getvar \"CECOLOR\") (type (getvar \"CECOLOR\")))"), "(\"BYLAYER\" STR)");
+    assert_eq!(ok(&mut s, "(setvar \"CECOLOR\" \"red\") (getvar \"CECOLOR\")"), "\"1\"");
+    assert_eq!(ok(&mut s, "(setvar \"CECOLOR\" \"10,20,30\") (getvar \"CECOLOR\")"), "\"RGB:10,20,30\"");
+}
+
+#[test]
 fn input_functions_take_supplied_answers() {
     let mut s = session();
     let r = eval_with(
@@ -464,6 +495,13 @@ fn interactive_routine_waits_for_the_user() {
     s.cmdline("(progn (initget 1 \"Yes No\") (setq ans (getkword \"\\nSure? [Yes/No]: \")))").unwrap();
     s.cmdline("n").unwrap();
     assert_eq!(to_text(&s.lisp_var("ANS"), true), "\"No\"");
+    // Bit 128 lets getkword return arbitrary text; a keyword still wins.
+    s.cmdline("(progn (initget 128 \"SElect CUrrent\") (setq ans (getkword \"\\nOption: \")))").unwrap();
+    s.cmdline("banana").unwrap();
+    assert_eq!(to_text(&s.lisp_var("ANS"), true), "\"banana\"");
+    s.cmdline("(progn (initget 128 \"SElect CUrrent\") (setq ans (getkword \"\\nOption: \")))").unwrap();
+    s.cmdline("cu").unwrap();
+    assert_eq!(to_text(&s.lisp_var("ANS"), true), "\"CUrrent\"");
     s.cmdline("(setq d (getdist '(0 0)))").unwrap();
     s.cmdline("3,4").unwrap();
     assert_eq!(to_text(&s.lisp_var("D"), true), "5.0");
@@ -477,6 +515,24 @@ fn interactive_routine_waits_for_the_user() {
     s.input(crate::Input::Point(cadcraft_geom::Vec2::new(50.0, 50.0))).unwrap();
     assert!(!s.lisp_running());
     assert!(s.doc().unwrap().model.iter().any(|e| matches!(&e.kind, cadcraft_doc::EntityKind::Circle(c) if c.center.x == 50.0 && c.radius == 2.0)));
+}
+
+#[test]
+fn getangle_is_relative_to_angbase() {
+    let mut s = session();
+    s.cmdline("(setvar \"ANGBASE\" 90)").unwrap();
+    // A picked point at 180° in world terms is 90° from ANGBASE.
+    s.cmdline("(setq a (getangle '(0 0)))").unwrap();
+    s.input(crate::Input::Point(cadcraft_geom::Vec2::new(-1.0, 0.0))).unwrap();
+    assert_eq!(to_text(&s.lisp_var("A"), true), "1.5708");
+    // getorient ignores ANGBASE.
+    s.cmdline("(setq o (getorient '(0 0)))").unwrap();
+    s.input(crate::Input::Point(cadcraft_geom::Vec2::new(-1.0, 0.0))).unwrap();
+    assert_eq!(to_text(&s.lisp_var("O"), true), "3.14159");
+    // A typed angle is already measured from ANGBASE.
+    s.cmdline("(setq t2 (getangle))").unwrap();
+    s.cmdline("180").unwrap();
+    assert_eq!(to_text(&s.lisp_var("T2"), true), "3.14159");
 }
 
 #[test]
@@ -497,6 +553,63 @@ fn appload_and_load() {
     assert_eq!(r["output"][0], "x");
     let r = s.execute("lisp", &serde_json::json!({"code": "(car 1)"})).unwrap();
     assert!(r["error"].as_str().is_some_and(|e| e.contains("bad argument type")));
+}
+
+#[test]
+fn appload_reads_a_lsp_path_and_reports_its_commands() {
+    let dir = std::env::temp_dir().join(format!("cadcraft-appload-lisp-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("Tools.LSP");
+    std::fs::write(&path, "(defun c:hi () (princ \"hi\") (princ)) (defun c:bye () (princ))").unwrap();
+    let mut s = session();
+    let r = s.execute("appload", &serde_json::json!({"path": path.to_string_lossy()})).unwrap();
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(r["commands"], serde_json::json!(["BYE", "HI"]));
+    assert!(s.log.iter().any(|l| l == "Tools.LSP successfully loaded."));
+    s.cmdline("HI").unwrap();
+    assert_eq!(s.log.last().map(String::as_str), Some("hi"));
+    // Only `.lsp` files are APPLOADed, whatever the case of the extension.
+    let txt = dir.join("notes.txt");
+    std::fs::write(&txt, "(defun c:no () (princ))").unwrap();
+    let e = s.execute("appload", &serde_json::json!({"path": txt.to_string_lossy()})).unwrap_err().to_string();
+    assert!(e.contains(".lsp"), "{e}");
+    // A missing file and a file that fails to parse are ordinary errors.
+    let missing = dir.join("missing.lsp");
+    let e = s.execute("appload", &serde_json::json!({"path": missing.to_string_lossy()})).unwrap_err().to_string();
+    assert!(e.contains("can't read"), "{e}");
+    let broken = dir.join("broken.lsp");
+    std::fs::write(&broken, "(defun c:oops (").unwrap();
+    let e = s.execute("appload", &serde_json::json!({"path": broken.to_string_lossy()})).unwrap_err().to_string();
+    assert!(!e.is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn appload_keeps_the_whitespace_of_a_relative_path() {
+    /// A folder in the test's current directory, removed even when an assertion fails.
+    struct TempDir(std::path::PathBuf);
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    // A JSON call's path is read as it is given: a relative path whose folder starts with a
+    // space names that folder, not the one its trimmed name would.
+    let dir = TempDir(std::path::PathBuf::from(format!(" cadcraft-appload-space-{}", std::process::id())));
+    let _ = std::fs::remove_dir_all(&dir.0);
+    std::fs::create_dir_all(&dir.0).unwrap();
+    let path = dir.0.join("tools.lsp");
+    std::fs::write(&path, "(setq space-loaded 1)").unwrap();
+    let mut s = session();
+    let r = s.execute("appload", &serde_json::json!({"path": path.to_string_lossy()})).unwrap();
+    assert!(r.get("error").is_none(), "{r}");
+    assert_eq!(ok(&mut s, "space-loaded"), "1");
+    // A path of blanks only is still refused, not read as "".
+    for blank in ["", " ", "\t "] {
+        let e = s.execute("appload", &serde_json::json!({"path": blank})).unwrap_err().to_string();
+        assert!(e.contains("`path`"), "{blank:?}: {e}");
+    }
 }
 
 #[test]
@@ -745,4 +858,13 @@ fn a_panic_inside_a_routine_ends_it_with_an_error() {
     assert!(!s.lisp_running());
     assert!(s.log.iter().any(|l| l.contains("internal error")), "{:?}", s.log);
     assert_eq!(ok(&mut s, "(+ 1 2)"), "3");
+}
+
+#[test]
+fn angtof_reads_the_string_in_the_given_units() {
+    let mut s = Session::new();
+    assert_eq!(ok(&mut s, "(angtof \"1.5\" 3)"), "1.5");
+    assert_eq!(ok(&mut s, "(angtof \"180\" 0)"), "3.14159");
+    assert_eq!(ok(&mut s, "(angtof \"180\" 7)"), "nil");
+    assert_eq!(ok(&mut s, "(angtof \"180\" \"x\")"), "nil");
 }

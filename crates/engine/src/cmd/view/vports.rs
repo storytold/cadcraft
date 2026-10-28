@@ -15,7 +15,8 @@ use cadcraft_geom::Vec2;
 use serde_json::{Value, json};
 
 use super::super::qselect::wildcard;
-use super::super::*;
+use super::super::{CommandSpec, bad, find_command, str_param};
+
 use crate::{Accept, DocState, EngineError, Input, Interactive, ModelTile, ModelTiles, Prompt, Result, Session, Step, View};
 
 /// Most tiles on screen at once.

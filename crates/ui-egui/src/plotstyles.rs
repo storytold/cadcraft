@@ -20,11 +20,11 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
 }
 
 fn temp<T: Clone + Send + Sync + 'static>(ctx: &egui::Context, id: &str) -> Option<T> {
-    ctx.data_mut(|d| d.get_temp::<T>(egui::Id::new(id)))
+    ctx.data_mut(|d| d.get_temp::<T>(egui::Id::unique(id)))
 }
 
 fn set_temp<T: Clone + Send + Sync + 'static>(ctx: &egui::Context, id: &str, v: T) {
-    ctx.data_mut(|d| d.insert_temp(egui::Id::new(id), v));
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(id), v));
 }
 
 /// Lineweights offered for a style, in millimetres.
@@ -41,6 +41,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     }
 }
 
+/// Plot Style Manager window; returns the command (`stylesmanager` or `pagesetup`) to run after drawing.
 fn window(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
     let t = Tokens::get();
     let title = crate::tl!("Plot Style Manager");
@@ -65,7 +66,7 @@ fn window(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
     let mut new_style = temp::<String>(ctx, "pstyle_new").unwrap_or_default();
     let mut action: Action = None;
     let set = |table: &str, style: Value| Some(("stylesmanager", json!({ "action": "set", "name": table, "style": style })));
-    egui::Window::new(title).id(egui::Id::new("Plot Style Manager")).open(open).default_size(vec2(760.0, 460.0)).resizable(true).show(ctx, |ui| {
+    egui::Window::new(title).id(egui::Id::unique("Plot Style Manager")).open(open).default_size(vec2(760.0, 460.0)).resizable(true).show(ctx, |ui| {
         ui.horizontal(|ui| {
             ui.label(crate::tl!("Plot style table"));
             egui::ComboBox::from_id_salt("pstyle_table").selected_text(sel.as_str()).width(200.0).show_ui(ui, |ui| {
@@ -93,8 +94,12 @@ fn window(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
         if let Some((name, current, show)) = &layout {
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new(crate::tf!("Layout {name}: {table}", name = name, table = if current.is_empty() { "None" } else { current }))
-                        .color(t.text_dim),
+                    RichText::new(crate::tf!(
+                        "Layout {name}: {table}",
+                        name = name,
+                        table = if current.is_empty() { crate::i18n::t("None") } else { current.as_str() }
+                    ))
+                    .color(t.text_dim),
                 );
                 if ui.add_enabled(!current.eq_ignore_ascii_case(&sel), egui::Button::new(crate::tl!("Use for this layout"))).clicked() {
                     action = Some(("pagesetup", json!({ "layout": name, "plotStyleTable": sel })));
@@ -193,8 +198,8 @@ fn window(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
         if named {
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label(crate::tl!("New style"));
-                ui.add(egui::TextEdit::singleline(&mut new_style).desired_width(160.0));
+                let label = ui.label(crate::tl!("New style"));
+                ui.add(egui::TextEdit::singleline(&mut new_style).desired_width(160.0)).labelled_by(label.id);
                 if ui.add_enabled(!new_style.trim().is_empty(), egui::Button::new(crate::tl!("Add"))).clicked() {
                     action = set(&table.name, json!({ "name": new_style.trim() }));
                     new_style.clear();

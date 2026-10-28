@@ -17,7 +17,8 @@ use serde_json::{Value, json};
 use super::helpers::{line, v3};
 use super::machines::{SelOutcome, SelectPhase, number};
 use super::modify::transform_entities;
-use super::*;
+use super::{CommandSpec, bad, bool_or, f64_or, find_command, point_param, point_req, str_param, targets};
+
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 mod edit;

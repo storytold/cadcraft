@@ -143,6 +143,7 @@ pub fn apply(app: &mut CadApp) -> bool {
     }
 }
 
+/// Command Aliases window that edits the in-memory alias set in `app.alias_dlg`; OK/Apply send the differences to ALIASEDIT, read the resulting aliases and source file back, and show any error.
 pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     if app.alias_dlg.is_none() {
         crate::aliasdlg::open(app);
@@ -151,7 +152,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let warn = Tokens::get().warn;
     let (mut ok, mut cancel, mut apply_clicked) = (false, false, false);
     let Some(st) = app.alias_dlg.as_mut() else { return };
-    let id = egui::Id::new("aliasedit_dialog");
+    let id = egui::Id::unique("aliasedit_dialog");
     if std::mem::take(&mut st.raise) {
         ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, id));
     }
@@ -161,8 +162,8 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             None => ui.label(crate::tl!("No alias file loaded. REINIT replaces these aliases with a file's.")),
         };
         ui.horizontal(|ui| {
-            ui.label(crate::tl!("Filter"));
-            ui.text_edit_singleline(&mut st.filter);
+            let label = ui.label(crate::tl!("Filter"));
+            ui.text_edit_singleline(&mut st.filter).labelled_by(label.id);
         });
         let f = st.filter.trim().to_ascii_lowercase();
         let mut names: Vec<&String> = st.user.keys().chain(built.keys().filter(|a| !st.user.contains_key(*a))).collect();
@@ -226,11 +227,11 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         if let Some(form) = st.form.as_mut() {
             ui.group(|ui| {
                 egui::Grid::new("alias_form").num_columns(2).show(ui, |ui| {
-                    ui.label(crate::tl!("Alias"));
-                    ui.text_edit_singleline(&mut form.alias);
+                    let alias_label = ui.label(crate::tl!("Alias"));
+                    ui.text_edit_singleline(&mut form.alias).labelled_by(alias_label.id);
                     ui.end_row();
-                    ui.label(crate::tl!("Command"));
-                    ui.text_edit_singleline(&mut form.command);
+                    let command_label = ui.label(crate::tl!("Command"));
+                    ui.text_edit_singleline(&mut form.command).labelled_by(command_label.id);
                     ui.end_row();
                 });
                 // A few commands starting with what was typed, to pick from.

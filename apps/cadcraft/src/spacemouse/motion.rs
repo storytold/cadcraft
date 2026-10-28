@@ -107,6 +107,23 @@ impl Filter {
         *self = Self::default();
     }
 
+    fn update_drift(&mut self, complete: bool, now: Instant, bias: &mut [f64; 6]) {
+        if !complete {
+            return;
+        }
+        if self.raw.iter().zip(*bias).all(|(raw, b)| (*raw - b).abs() <= FULL_SCALE * DEADZONE) {
+            let since = *self.idle_since.get_or_insert(now);
+            if now.saturating_duration_since(since) >= Duration::from_secs(2) {
+                for (b, raw) in bias.iter_mut().zip(self.raw) {
+                    *b += (raw - *b) * 0.01;
+                }
+                self.bias = Some(*bias);
+            }
+        } else {
+            self.idle_since = None;
+        }
+    }
+
     pub fn update(&mut self, values: [i16; 6], mask: u8, now: Instant) -> Motion {
         for (index, seen) in self.seen.iter_mut().enumerate() {
             if mask & (1 << index) != 0 {
@@ -128,19 +145,7 @@ impl Filter {
         }
         let Some(mut bias) = self.bias else { return Motion::default() };
         // Follow small resting drift only after two seconds entirely inside the deadzone.
-        if complete {
-            if self.raw.iter().zip(bias).all(|(raw, bias)| (*raw - bias).abs() <= FULL_SCALE * DEADZONE) {
-                let since = *self.idle_since.get_or_insert(now);
-                if now.saturating_duration_since(since) >= Duration::from_secs(2) {
-                    for (bias, raw) in bias.iter_mut().zip(self.raw) {
-                        *bias += (raw - *bias) * 0.01;
-                    }
-                    self.bias = Some(bias);
-                }
-            } else {
-                self.idle_since = None;
-            }
-        }
+        self.update_drift(complete, now, &mut bias);
         let mut axes = [0.0; 6];
         for ((axis, raw), bias) in axes.iter_mut().zip(self.raw).zip(bias) {
             let value = ((raw - bias) / FULL_SCALE).clamp(-1.0, 1.0);
@@ -154,5 +159,79 @@ impl Filter {
         }
         let [tx, ty, tz, _rx, _ry, rz] = axes;
         Motion { pan: [tx, ty], zoom: (tz + rz).clamp(-1.0, 1.0) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_reports() {
+        assert_eq!(decode(&[]), None);
+        assert_eq!(decode(&[3]), None);
+        assert_eq!(decode(&[3, 5]), Some(Report::Buttons(5)));
+        let values = [1_i16, -2, 3, 4, -5, 6];
+        let mut bytes = vec![1_u8];
+        for v in values {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        assert_eq!(decode(&bytes), Some(Report::Axes { values, mask: 3 }));
+        bytes[0] = 2;
+        assert_eq!(decode(&bytes), Some(Report::Axes { values: [0, 0, 0, 1, -2, 3], mask: 2 }));
+        assert_eq!(decode(&[2, 1, 2, 3]), None, "too short for a rotation report");
+    }
+
+    /// Sixteen complete reports at rest, spread over more than CALIBRATION_TIME, all stamped
+    /// on a made-up point in time big enough that they sit in the past of later updates.
+    fn calibrated(t0: Instant) -> Filter {
+        let mut f = Filter::default();
+        for i in 0..17 {
+            let at = t0 + Duration::from_millis(50 * i);
+            assert_eq!(f.update([0; 6], 1, at), Motion::default());
+            assert_eq!(f.update([0; 6], 2, at), Motion::default());
+        }
+        assert!(f.calibrated());
+        f
+    }
+
+    #[test]
+    fn axes_deflect_and_expire() {
+        let t0 = Instant::now();
+        let mut f = calibrated(t0);
+        let at = t0 + Duration::from_secs(2);
+        let ms = Duration::from_millis;
+        let m = f.update([500, 500, 0, 0, 0, 0], 1, at);
+        assert!((m.pan[0] - 1.0).abs() < 1e-9);
+        assert!((m.pan[1] - 1.0).abs() < 1e-9);
+        assert_eq!(m.zoom, 0.0, "no rotation input");
+        // A fresh rotation report drives the zoom.
+        let m = f.update([0, 0, 0, 0, 0, 500], 2, at + ms(100));
+        assert!((m.zoom - 1.0).abs() < 1e-9);
+        // The rotation axes went quiet for over 250 ms while translations still arrive.
+        let m = f.update([500, 500, 0, 0, 0, 0], 1, at + ms(400));
+        assert_eq!(m.zoom, 0.0);
+        // A fresh rotation report puts the zoom back.
+        let m = f.update([500, 500, 0, 0, 0, 500], 2, at + ms(500));
+        assert!((m.zoom - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn drift_tracks_rest_after_two_idle_seconds() {
+        // Five axes units of drift sit inside the deadzone (FULL_SCALE * DEADZONE = 20).
+        let mut f = Filter { raw: [5.0; 6], bias: Some([0.0; 6]), ..Filter::default() };
+        let t0 = Instant::now();
+        let mut b = [0.0; 6];
+        f.update_drift(true, t0, &mut b); // starts the idle window: no shift yet
+        assert_eq!(b, [0.0; 6]);
+        f.update_drift(true, t0 + Duration::from_secs(3), &mut b);
+        assert!((b[0] - 0.05).abs() < 1e-12, "bias follows resting drift");
+        assert_eq!(f.bias, Some(b));
+        // Motion outside the deadzone resets the idle window.
+        f.raw = [100.0; 6];
+        f.update_drift(true, t0 + Duration::from_secs(4), &mut b);
+        assert_eq!(f.idle_since, None);
+        f.update_drift(true, t0 + Duration::from_secs(5), &mut b);
+        assert!((b[0] - 0.05).abs() < 1e-12, "no shift before two seconds at rest");
     }
 }

@@ -2,7 +2,7 @@
 //! Block Editor.
 
 pub(crate) mod bedit;
-mod purge;
+pub(in crate::cmd) mod purge;
 
 use std::sync::Arc;
 
@@ -12,7 +12,9 @@ use serde_json::{Value, json};
 
 use super::helpers::v3;
 use super::machines::{SelOutcome, SelectPhase, number};
-use super::*;
+use super::{CommandSpec, bad, bool_or, f64_or, find_command, ok, point_param, point_req, point_value, str_param, targets};
+
+use super::has_doc;
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 mod attedit;
@@ -74,27 +76,36 @@ pub fn specs() -> Vec<CommandSpec> {
         attribs::attdisp_spec(),
         attribs::attsync_spec(),
         burst::burst_spec(),
+        blockreplace::blockreplace_spec(),
         extract::dataextraction_spec(),
         extract::eattext_spec(),
     ]
     .into_iter()
+    .chain(attribs::attdisp_menu_specs())
     .chain(xref::specs())
     .chain(refedit::specs())
     .chain(bedit::specs())
     .collect()
 }
 
-fn valid_block_name(n: &str) -> bool {
+pub(crate) fn valid_block_name(n: &str) -> bool {
     !n.trim().is_empty() && n.len() <= 255 && !n.starts_with('*') && !n.chars().any(|c| "<>/\\\":;?*|,=`".contains(c))
 }
 
-/// The block an entity references, when it is a block reference.
+/// The block an entity draws, if any: a block reference's block, a dimension's block or a
+/// multileader's block content.
 fn referenced_block(e: &Entity) -> Option<String> {
-    if let EntityKind::Insert(i) = &e.kind { Some(i.block.clone()) } else { None }
+    match &e.kind {
+        EntityKind::Insert(i) => Some(i.block.clone()),
+        EntityKind::Dimension(dm) => dm.block.clone(),
+        EntityKind::MLeader(m) => m.block.as_ref().map(|b| b.block.clone()),
+        _ => None,
+    }
 }
 
-/// Whether any of `ents` refers to block `name`, directly or through nested block references.
-fn references_block(d: &cadcraft_doc::Drawing, ents: &[Entity], name: &str) -> bool {
+/// Whether any of `ents` refers to block `name`, directly or through nested block references,
+/// dimension blocks and multileader block content.
+pub(crate) fn references_block(d: &cadcraft_doc::Drawing, ents: &[Entity], name: &str) -> bool {
     let mut todo: Vec<String> = ents.iter().filter_map(referenced_block).collect();
     let mut seen = std::collections::HashSet::new();
     while let Some(b) = todo.pop() {
@@ -878,3 +889,4 @@ impl Interactive for AttdefM {
 
 mod attribs;
 mod battman;
+mod blockreplace;

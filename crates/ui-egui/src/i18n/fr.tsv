@@ -144,6 +144,7 @@
 	Current selection	Sélection actuelle
 	Current: {color}	Actuel : {color}
 	Cut	Couper
+	Cut with Base Point	Couper avec point de base
 	Cyan	Cyan
 	Cylinder	Cylindre
 	DWG	DWG
@@ -471,6 +472,7 @@
 	No selection	Aucune sélection
 	Node	Nœud
 	None	Aucun
+	Normal	Normal
 	Not available	Non disponible
 	Not available yet	Pas encore disponible
 	OK	OK
@@ -616,6 +618,7 @@
 	Rename Text Style	Renommer le style de texte
 	Rename...	Renommer...
 	Repeat {command}	Répéter {command}
+	Replace Block...	Remplacer le bloc...
 	Requires a point (x,y, @dx,dy or @d<a).	Nécessite un point (x,y, @dx,dy ou @d<a).
 	Reset Palettes	Réinitialiser les palettes
 	Restore	Restaurer
@@ -961,6 +964,7 @@
 	Viewport Properties	Propriétés de la fenêtre
 	Viewport {id}	Fenêtre {id}
 	Viewports	Fenêtres
+	Volume	Volume
 	W	O
 	WCS	SCG
 	White	Blanc
@@ -1008,3 +1012,6 @@
 	Not a number or distance: {text}	Ni un nombre ni une distance : {text}
 	Query Texts	Interroger les textes
 	Analyze Shapes	Analyser les formes
+	Check for Updates…	Rechercher des mises à jour…
+	CADCraft is up to date.	CADCraft est à jour.
+	Could not check for updates.	Impossible de rechercher les mises à jour.

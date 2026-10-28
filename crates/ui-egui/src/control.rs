@@ -102,8 +102,9 @@ struct Widget {
     selected: Option<bool>,
 }
 
+/// egui temp-data key holding the widgets observed during the current frame.
 fn widgets_id() -> egui::Id {
-    egui::Id::new("cadcraft-observed-widgets")
+    egui::Id::unique("cadcraft-observed-widgets")
 }
 
 pub(crate) fn begin_frame(ctx: &egui::Context) {
@@ -252,6 +253,7 @@ pub fn cmdline_state(app: &CadApp) -> Value {
     })
 }
 
+/// Build the `ui.inspect` snapshot: UI state and theme, animations, focus, canvas/window rects, view, cursor, snap, session summary, close prompt and performance counters.
 pub fn inspect(app: &CadApp, ctx: &egui::Context) -> Value {
     let r = ctx.content_rect();
     let view = app.session.state().map(|s| s.view()).ok();
@@ -267,7 +269,7 @@ pub fn inspect(app: &CadApp, ctx: &egui::Context) -> Value {
         "snap": app.canvas.snap.map(|s| json!({"point": [s.point.x, s.point.y], "mode": s.name})),
         "session": app.session.summary(),
         "closePrompt": app.close_prompt(),
-        "perf": {"frameMs": app.frame_ms, "buildMs": app.canvas.build_ms, "drawMs": app.canvas.draw_ms, "meshMs": app.canvas.mesh_ms, "building": app.canvas.building(), "renderer": if app.canvas.gpu.is_some() { "gpu" } else { "cpu" }, "prims": app.canvas.list.as_ref().map(|l| l.prims.len())},
+        "perf": {"frameMs": app.frame_ms, "buildMs": app.canvas.build_ms, "drawMs": app.canvas.draw_ms, "meshMs": app.canvas.mesh_ms, "building": app.canvas.building(), "renderer": if app.canvas.gpu.is_some() { "gpu" } else { "cpu" }, "prims": app.canvas.list.as_ref().map(|l| l.prims.len()), "uiFrames": app.ui_frames, "passIndex": ctx.current_pass_index()},
     })
 }
 
@@ -452,7 +454,7 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
             }
             match serde_json::from_value::<crate::UiState>(cur) {
                 Ok(u) => {
-                    if let Err(error) = u.docking.validate() {
+                    if let Err(error) = crate::docking::validate(&u.docking) {
                         return err(error);
                     }
                     app.ui = u;
@@ -543,18 +545,138 @@ fn render_reply(png: &[u8], w: u32, h: u32, path: Option<&str>) -> Value {
     v
 }
 
-/// Save a screenshot PNG.
-pub fn save_screenshot(image: &egui::ColorImage, path: Option<&str>) -> Value {
+/// A private, per-process screenshot directory for pathless `ui.screenshot` requests.
+///
+/// The directory is created with owner-only permissions (`0700` on Unix) under a name that
+/// includes the process id, a monotonic nonce and a sequence number. `create_dir` fails rather
+/// than following a pre-created symlink, so another local user cannot redirect the write.
+fn private_shot_dir() -> std::io::Result<std::path::PathBuf> {
+    use std::sync::OnceLock;
+    static DIR: OnceLock<Result<std::path::PathBuf, String>> = OnceLock::new();
+    DIR.get_or_init(|| create_private_shot_dir().map_err(|e| e.to_string())).clone().map_err(std::io::Error::other)
+}
+
+/// Process-wide monotonic counter used to keep pathless screenshot names unique.
+fn next_pathless_nonce() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Create at most 32 exclusive `cadcraft-shots-<pid>-<stamp>-<nonce>` directories in the temp dir; only `AlreadyExists` is retried.
+fn create_private_shot_dir() -> std::io::Result<std::path::PathBuf> {
+    let base = std::env::temp_dir();
+    let stamp = crate::now_ms().to_bits();
+    for _ in 0..32 {
+        let nonce = next_pathless_nonce();
+        let dir = base.join(format!("cadcraft-shots-{}-{stamp:x}-{nonce}", std::process::id()));
+        match create_private_dir(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "could not create a private screenshot directory"))
+}
+
+/// Create `path` with mode 0700 on Unix (plain create elsewhere), failing rather than following or reusing a pre-created entry.
+fn create_private_dir(path: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        std::fs::DirBuilder::new().mode(0o700).create(path)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::create_dir(path)
+    }
+}
+
+/// Create a new file with owner-only permissions. `create_new` uses `O_EXCL` on Unix and refuses
+/// an existing path, including a symlink, so a pre-created link cannot redirect the screenshot.
+fn create_private_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    options.open(path)
+}
+
+/// True when the metadata has no group/other permission bits (always true on non-Unix).
+fn is_private_shot_dir(meta: &std::fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        meta.permissions().mode() & 0o077 == 0
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = meta;
+        true
+    }
+}
+
+/// Save a pathless screenshot into the private per-process directory: re-validate or recreate it as an owner-only real directory (0700 on Unix; plain create elsewhere), then create up to 64 exclusive files (0600 on Unix) and write a PNG.
+fn save_pathless_screenshot(img: &image::RgbaImage, token: u64) -> std::io::Result<std::path::PathBuf> {
+    use std::io::Write as _;
+    let dir = private_shot_dir()?;
+    // Tests and users may remove the private directory between requests; recreate it exclusively
+    // rather than following anything that replaced it.
+    if !std::fs::symlink_metadata(&dir).is_ok_and(|m| m.file_type().is_dir() && !m.file_type().is_symlink() && is_private_shot_dir(&m)) {
+        match create_private_dir(&dir) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                let meta = std::fs::symlink_metadata(&dir)?;
+                if !meta.file_type().is_dir() || meta.file_type().is_symlink() || !is_private_shot_dir(&meta) {
+                    return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "the screenshot directory was replaced"));
+                }
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    for _ in 0..64 {
+        let path = dir.join(format!("cadcraft-shot-{token}-{}.png", next_pathless_nonce()));
+        match create_private_file(&path) {
+            Ok(mut file) => {
+                img.write_to(&mut file, image::ImageFormat::Png).map_err(std::io::Error::other)?;
+                file.flush()?;
+                return Ok(path);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "could not allocate a unique screenshot file"))
+}
+
+/// Save a screenshot PNG. Only called from the logic drain, never from the screenshot callback.
+///
+/// An explicit `path` is written as before. Without one, the file gets a unique name inside a
+/// private per-process directory, created exclusively with owner-only permissions; concurrent
+/// requests (even from two app instances with the same per-process token) cannot collide or
+/// follow a pre-created symlink.
+pub fn save_screenshot(image: &egui::ColorImage, path: Option<&str>, token: u64) -> Value {
     let [w, h] = image.size;
-    let mut buf = Vec::with_capacity(w * h * 4);
+    let Some(len) = w.checked_mul(h).and_then(|pixels| pixels.checked_mul(4)) else {
+        return json!({"ok": false, "error": "screenshot dimensions overflow", "request": token});
+    };
+    let mut buf = Vec::with_capacity(len);
     for c in &image.pixels {
         buf.extend_from_slice(&c.to_array());
     }
-    let Some(img) = image::RgbaImage::from_raw(w as u32, h as u32, buf) else { return json!({"ok": false, "error": "bad image"}) };
-    let path = path.map(str::to_string).unwrap_or_else(|| std::env::temp_dir().join("cadcraft-shot.png").to_string_lossy().to_string());
-    match img.save(&path) {
-        Ok(()) => json!({"ok": true, "result": {"path": path, "width": w, "height": h}}),
-        Err(e) => json!({"ok": false, "error": e.to_string()}),
+    let Some(img) = image::RgbaImage::from_raw(w as u32, h as u32, buf) else {
+        return json!({"ok": false, "error": "bad image", "request": token});
+    };
+    let saved = match path {
+        Some(path) => img.save(path).map(|()| path.to_string()).map_err(std::io::Error::other),
+        None => save_pathless_screenshot(&img, token).map(|path| path.to_string_lossy().into_owned()),
+    };
+    match saved {
+        Ok(path) => json!({"ok": true, "request": token, "result": {"path": path, "width": w, "height": h}}),
+        Err(e) => json!({"ok": false, "error": e.to_string(), "request": token}),
     }
 }
 
@@ -608,6 +730,55 @@ mod tests {
         assert!(req.begin());
         let _ = req.reply.send(json!({"ok": true}));
         assert_eq!(pending.wait(Duration::ZERO), json!({"ok": true}));
+    }
+
+    /// Two pathless saves with the same token produce distinct, decodable PNGs; on Unix the files are 0600 and their directory 0700.
+    #[test]
+    fn pathless_screenshots_are_unique_private_png_files() {
+        let img = egui::ColorImage::filled([4, 3], egui::Color32::RED);
+        let first = save_screenshot(&img, None, 1);
+        let second = save_screenshot(&img, None, 1);
+        assert_eq!(first["ok"], true, "{first}");
+        assert_eq!(second["ok"], true, "{second}");
+        let a = std::path::PathBuf::from(first["result"]["path"].as_str().unwrap_or_default());
+        let b = std::path::PathBuf::from(second["result"]["path"].as_str().unwrap_or_default());
+        assert_ne!(a, b, "the same per-process token must not reuse a pathless file");
+        for path in [&a, &b] {
+            let bytes = std::fs::read(path).expect("the screenshot file exists");
+            assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"), "{path:?} is a PNG");
+            image::load_from_memory(&bytes).expect("decodable PNG");
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            for path in [&a, &b] {
+                let mode = std::fs::metadata(path).expect("metadata").permissions().mode() & 0o777;
+                assert_eq!(mode, 0o600, "screenshot {path:?} is owner-only");
+            }
+            let dir = a.parent().expect("the file has a private directory");
+            let dir_mode = std::fs::metadata(dir).expect("directory metadata").permissions().mode() & 0o777;
+            assert_eq!(dir_mode, 0o700, "the screenshot directory is owner-only");
+        }
+        for path in [&a, &b] {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    /// `create_new` refuses a pre-existing symlink with `AlreadyExists` and leaves the link target unchanged.
+    #[cfg(unix)]
+    #[test]
+    fn private_screenshot_file_refuses_a_preexisting_symlink() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-shot-symlink-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        create_private_dir(&dir).expect("private test directory");
+        let target = dir.join("target.txt");
+        std::fs::write(&target, b"do not overwrite").expect("target file");
+        let link = dir.join("shot.png");
+        std::os::unix::fs::symlink(&target, &link).expect("symlink");
+        let err = create_private_file(&link).expect_err("an existing symlink is refused");
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&target).expect("target unchanged"), b"do not overwrite");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

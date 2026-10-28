@@ -12,18 +12,22 @@ fn line(d: &mut Drawing, a: (f64, f64), b: (f64, f64)) {
     d.add(&Space::Model, Common::default(), k).unwrap();
 }
 
-fn pdf_text(d: &Drawing, opts: Value) -> String {
+fn pdf_doc(d: &Drawing, opts: Value) -> crate::pdf_read::Doc {
     let mut o = json!({"compress": false});
     if let (Some(m), Some(e)) = (o.as_object_mut(), opts.as_object()) {
         m.extend(e.clone());
     }
-    String::from_utf8_lossy(&plotter::plot(d, &Space::Model, &o).unwrap()).into_owned()
+    crate::pdf_read::read(&plotter::plot(d, &Space::Model, &o).unwrap())
 }
 
-/// The plot area's clip rectangle (`x y w h re W n`) of the first page.
-fn clip(pdf: &str) -> Vec<f64> {
-    let line = pdf.lines().find(|l| l.ends_with(" re W n")).unwrap_or("");
-    line.split_whitespace().take(4).filter_map(|t| t.parse().ok()).collect()
+/// The plot area's clip rectangle (`x y w h`) of the first page.
+fn clip(doc: &crate::pdf_read::Doc) -> Vec<f64> {
+    crate::pdf_read::clip_rect(doc.content()).map(|r| vec![r[0], r[1], r[2] - r[0], r[3] - r[1]]).unwrap_or_default()
+}
+
+/// The link targets of the first page.
+fn uris(doc: &crate::pdf_read::Doc) -> Vec<String> {
+    doc.pages[0].links.iter().map(|l| l.uri.clone()).collect()
 }
 
 #[test]
@@ -32,17 +36,17 @@ fn model_space_pdf_uses_the_device_margins() {
     line(&mut d, (0.0, 0.0), (100.0, 50.0));
     let mm = 72.0 / 25.4;
     // No device: the page setup's printable area, as before.
-    let plain = clip(&pdf_text(&d, json!({})));
+    let plain = clip(&pdf_doc(&d, json!({})));
     assert!(plain.first().is_some_and(|x| (x - 20.0 * mm).abs() > 1.0), "{plain:?}");
     // A device paper with 20 mm margins: the printable area starts 20 mm in.
-    let r = clip(&pdf_text(&d, json!({"width": 210, "height": 297, "margins": [20, 20, 20, 20]})));
+    let r = clip(&pdf_doc(&d, json!({"width": 210, "height": 297, "margins": [20, 20, 20, 20]})));
     assert_eq!(r.len(), 4, "{r:?}");
     assert!((r[0] - 20.0 * mm).abs() < 0.01 && (r[1] - 20.0 * mm).abs() < 0.01, "{r:?}");
     let (w, h) = (r[2].min(r[3]), r[2].max(r[3]));
     assert!((w - 170.0 * mm).abs() < 0.01 && (h - 257.0 * mm).abs() < 0.01, "{r:?}");
     // Hostile margins are ignored.
     for bad in [json!([1e9, 0, 0, 0]), json!([1, 2, 3]), json!("wide"), json!([f64::NAN, 1, 1, 1])] {
-        assert_eq!(clip(&pdf_text(&d, json!({"margins": bad}))), plain, "{bad}");
+        assert_eq!(clip(&pdf_doc(&d, json!({"margins": bad}))), plain, "{bad}");
     }
 }
 
@@ -107,13 +111,11 @@ fn pe_url_hyperlinks_become_link_annotations() {
     let text = with_pe_urls(&d, &["https://example.com/plan", "javascript:alert(1)", "data:text/html,x"]);
     assert_eq!(text.matches("PE_URL").count(), 3, "the test drawing carries the links");
     let read = read_dxf(text.as_bytes()).unwrap();
-    let pdf = pdf_text(&read, json!({}));
-    assert_eq!(pdf.matches("/Subtype /Link").count(), 1, "only the web link: {pdf}");
-    assert!(pdf.contains("https://example.com/plan"));
-    assert!(!pdf.contains("javascript") && !pdf.contains("data:text"));
+    let pdf = uris(&pdf_doc(&read, json!({})));
+    assert_eq!(pdf, ["https://example.com/plan"], "only the web link");
     // Turned off, and given explicitly for the same object (the explicit one wins).
-    assert_eq!(pdf_text(&read, json!({"hyperlinks": false})).matches("/Subtype /Link").count(), 0);
+    assert!(uris(&pdf_doc(&read, json!({"hyperlinks": false}))).is_empty());
     let first = read.model.iter().next().unwrap().handle.hex();
-    let own = pdf_text(&read, json!({"links": [{"handle": first, "url": "https://example.org/own"}]}));
-    assert!(own.contains("https://example.org/own") && !own.contains("example.com/plan"), "{own}");
+    let own = uris(&pdf_doc(&read, json!({"links": [{"handle": first, "url": "https://example.org/own"}]})));
+    assert!(own.contains(&"https://example.org/own".to_string()) && !own.contains(&"https://example.com/plan".to_string()), "{own:?}");
 }

@@ -179,6 +179,7 @@
 	Close Array Editing	Dizi Düzenlemeyi Kapat
 	Close Block Editor	Blok Düzenleyiciyi Kapat
 	Close Comparison	Karşılaştırmayı Kapat
+	Export Comparison	Karşılaştırmayı Dışa Aktar
 	Closed	Kapalı
 	Coincident	Çakışık
 	Collapse Palettes	Paletleri Daralt
@@ -240,6 +241,7 @@
 	Curved	Eğri
 	Custom	Özel
 	Cut	Kes
+	Cut with Base Point	Taban Noktasıyla Kes
 	Cyan	Camgöbeği
 	Cylinder	Silindir
 	DWG	DWG
@@ -862,6 +864,7 @@
 	Rename Text Style	Metin Stilini Yeniden Adlandır
 	Rename...	Yeniden Adlandır...
 	Repeat {command}	Yinele: {command}
+	Replace Block...	Bloğu Değiştir...
 	Requires a point (x,y, @dx,dy or @d<a).	Bir nokta gerekir (x,y, @dx,dy veya @d<a).
 	Reset Palettes	Paletleri Sıfırla
 	Reset Panel Layout	Panel Düzenini Sıfırla
@@ -1344,3 +1347,6 @@ menu	Dimension	Ölçülendirme
 menu	Draw	Çiz
 menu	Modify	Değiştir
 menu	View	Görünüm
+	Check for Updates…	Güncellemeleri denetle…
+	CADCraft is up to date.	CADCraft güncel.
+	Could not check for updates.	Güncellemeler denetlenemedi.

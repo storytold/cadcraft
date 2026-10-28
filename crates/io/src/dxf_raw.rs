@@ -498,6 +498,25 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
         EntityKind::Unknown(u) => Some(up(&u.dxf_type)),
         _ => None,
     }));
+    // A proxy's class is the one its group 91 numbers in the file's CLASSES: keep it too, and the
+    // file's class order, by which saving renumbers the proxy.
+    let class_order: Vec<String> =
+        classes.iter().filter(|(k, _, _)| k == "CLASS").take(MAX_OBJECTS).map(|(_, _, t)| up(&val(t, 1).unwrap_or_default())).collect();
+    let mut proxies = false;
+    let proxy_tags = f.objects.iter().filter(|o| is_proxy(&o.kind)).map(|o| &o.tags);
+    let proxy_tags = proxy_tags.chain(all_entities(d).filter_map(|e| match &e.kind {
+        EntityKind::Unknown(u) if is_proxy(&u.dxf_type) => Some(&u.tags),
+        _ => None,
+    }));
+    for tags in proxy_tags {
+        proxies = true;
+        if let Some(name) = class_index(class_number(tags.iter().map(|r| (r.code, r.value.as_str())))).and_then(|i| class_order.get(i)) {
+            types.insert(name.clone());
+        }
+    }
+    if proxies {
+        f.class_order = class_order;
+    }
     for (kind, _, t) in &classes {
         if kind == "CLASS" && val(t, 1).is_some_and(|n| types.contains(&up(&n))) && f.classes.len() < MAX_OBJECTS {
             f.classes.push(t.iter().map(raw).collect());
@@ -532,6 +551,45 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
     }
     if !f.is_empty() {
         d.foreign = Arc::new(f);
+    }
+}
+
+/// Proxy records (DXF Reference, ACAD_PROXY_OBJECT and ACAD_PROXY_ENTITY): another application's
+/// objects and entities, whose class is named by number in group 91.
+fn is_proxy(kind: &str) -> bool {
+    matches!(up(kind).as_str(), "ACAD_PROXY_OBJECT" | "ACAD_PROXY_ENTITY")
+}
+
+/// Where a proxy's class number is: its first group 91 outside the `102 {NAME` … `102 }` groups
+/// (an application's can hold a 91 of its own) and before any xdata.
+fn class_group<S: AsRef<str>>(groups: impl IntoIterator<Item = (i32, S)>) -> Option<usize> {
+    let mut in_group = false;
+    for (i, (code, value)) in groups.into_iter().enumerate() {
+        match code {
+            1000.. => return None,
+            102 => in_group = value.as_ref().trim().starts_with('{'),
+            91 if !in_group => return Some(i),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// A proxy's class number (see [`class_group`]).
+fn class_number<S: AsRef<str>>(groups: impl IntoIterator<Item = (i32, S)> + Clone) -> Option<i64> {
+    let i = class_group(groups.clone())?;
+    groups.into_iter().nth(i).and_then(|(_, v)| v.as_ref().trim().parse().ok())
+}
+
+/// The place in CLASSES a class number names (500 is the first class).
+fn class_index(number: Option<i64>) -> Option<usize> {
+    usize::try_from(number?.checked_sub(500)?).ok()
+}
+
+/// Set a proxy's class number (see [`class_group`]).
+fn set_class_number(tags: &mut [Tag], n: i64) {
+    if let Some(t) = class_group(tags.iter().map(|t| (t.code, t.str()))).and_then(|i| tags.get_mut(i)) {
+        *t = Tag::i(91, n);
     }
 }
 
@@ -828,8 +886,28 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
         roles.entry(k.clone()).or_insert(h.clone());
     }
     let mut written: HashSet<String> = recs.iter().filter_map(|r| head(body(r)).handle).collect();
+    // The written CLASSES as numbered (500 for the first): the writer's own, then the kept ones it
+    // doesn't write (appended below, in this order). A kept proxy's group 91 is renumbered to its
+    // class's place here; a proxy whose class isn't written is dropped (#1812).
+    let class_names: HashSet<String> = recs.iter().filter(|r| r.kind == "CLASS").filter_map(|r| val(body(r), 1)).map(|n| up(&n)).collect();
+    let appended = f.classes.iter().filter_map(|c| c.iter().find(|t| t.code == 1)).map(|n| up(&n.value)).filter(|n| !class_names.contains(n));
+    let mut numbers: HashMap<String, i64> = HashMap::new();
+    for (i, n) in recs.iter().filter(|r| r.kind == "CLASS").filter_map(|r| val(body(r), 1)).map(|n| up(&n)).chain(appended).enumerate() {
+        numbers.entry(n).or_insert(500_i64.saturating_add(i64::try_from(i).unwrap_or(i64::MAX)));
+    }
+    let renumber = |old: Option<i64>| class_index(old).and_then(|i| f.class_order.get(i)).and_then(|n| numbers.get(n).copied());
     // Entities of types CADCraft doesn't model, placed among the written ones.
-    let planned = plan_unknown(d, &recs, tags, &roles);
+    let mut planned = plan_unknown(d, &recs, tags, &roles);
+    for list in planned.values_mut() {
+        list.retain_mut(|(_, t)| {
+            if !t.first().is_some_and(|z| is_proxy(&z.str())) {
+                return true;
+            }
+            let Some(n) = renumber(class_number(t.iter().map(|x| (x.code, x.str())))) else { return false };
+            set_class_number(t, n);
+            true
+        });
+    }
     for list in planned.values() {
         for (_, t) in list {
             written.extend(head(t.get(1..).unwrap_or(&[])).handle);
@@ -866,6 +944,9 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
         .filter_map(|o| Some((o.handle.hex(), head(&o.tags.iter().take_while(|t| t.code < 1000).map(tag).collect::<Vec<_>>()).owner?)))
         .collect();
     let mut alive_memo: HashMap<String, bool> = HashMap::new();
+    for o in f.objects.iter().filter(|o| is_proxy(&o.kind) && renumber(class_number(o.tags.iter().map(|r| (r.code, r.value.as_str())))).is_none()) {
+        alive_memo.insert(o.handle.hex(), false);
+    }
     for o in &f.objects {
         let mut path: Vec<String> = Vec::new();
         let mut cur = o.handle.hex();
@@ -913,7 +994,6 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
     }
     let entities: HashSet<String> = all_entities(d).map(|e| e.handle.hex()).filter(|h| written.contains(h)).collect();
     let map = Map { f, alive, raw: objs.keys().cloned().collect(), roles, entities };
-    let class_names: HashSet<String> = recs.iter().filter(|r| r.kind == "CLASS").filter_map(|r| val(body(r), 1)).map(|n| up(&n)).collect();
     let mut out: Vec<Tag> = Vec::with_capacity(tags.len() + f.objects.iter().map(|o| o.tags.len() + 1).sum::<usize>());
     let mut block = String::new();
     for r in &recs {
@@ -929,7 +1009,16 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
         }
         if r.kind == "ENDSEC" && r.sec == "OBJECTS" {
             for o in f.objects.iter().filter(|o| map.alive.contains_key(&o.handle.hex())) {
-                map.object(o, &mut out);
+                let number = is_proxy(&o.kind).then(|| renumber(class_number(o.tags.iter().map(|r| (r.code, r.value.as_str()))))).flatten();
+                match number {
+                    Some(n) => {
+                        let mut tags: Vec<Tag> = o.tags.iter().map(tag).collect();
+                        set_class_number(&mut tags, n);
+                        let o = ForeignObject { tags: tags.iter().map(raw).collect(), ..o.clone() };
+                        map.object(&o, &mut out);
+                    }
+                    None => map.object(o, &mut out),
+                }
             }
         }
         for (sec, t) in planned.get(&r.start).into_iter().flatten() {
@@ -976,8 +1065,7 @@ fn plan_unknown(d: &Drawing, recs: &[Rec], tags: &[Tag], roles: &HashMap<Foreign
     };
     let br = |name: &str| roles.get(&("BLOCK_RECORD".to_string(), up(name))).cloned();
     let first_at = |s: &cadcraft_doc::EntityStore| s.iter().find_map(|e| at.get(&e.handle.hex()).copied());
-    let mut layouts: Vec<&cadcraft_doc::Layout> = d.layouts.iter().collect();
-    layouts.sort_by_key(|l| l.tab_order);
+    let layouts = d.paper_space_layouts();
     // (entities, owner, paper space, end of the space, section)
     let mut stores: Vec<(&cadcraft_doc::EntityStore, Option<String>, bool, Option<usize>, &str)> = Vec::new();
     let model_end = layouts.first().and_then(|l| first_at(&l.entities)).or(ents_end);

@@ -20,6 +20,7 @@ fn app() -> (CadApp, Rc<Cell<u32>>) {
             b.set(b.get() + 1);
             None
         })),
+        ..Services::default()
     };
     (CadApp::new(Session::new(), services), picks)
 }

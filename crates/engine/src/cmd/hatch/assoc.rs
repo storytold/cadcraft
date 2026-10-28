@@ -86,9 +86,10 @@ fn refill(before: &Drawing, after: &Drawing, l: &HatchLoop) -> Refill {
     if nb.is_empty() {
         return Refill::Open;
     }
-    let tol = (nb.width() + nb.height()).max(1e-9) / 20000.0;
-    let polys: Vec<Vec<Vec2>> = live.iter().filter_map(|h| after.entity(*h)).flat_map(|e| object_polys(after, e, tol, nb)).collect();
+    let tol = super::outline_tol(nb);
     let snap = ((nb.width() + nb.height()) * 1e-9).max(1e-9);
+    let polys: Vec<Vec<Vec2>> = live.iter().filter_map(|h| after.entity(*h)).flat_map(|e| object_polys(after, e, tol, nb)).collect();
+    let polys = region::snap_ends(&polys, tol, snap);
     let gap = gap_tolerance(after);
     let found = if l.outer {
         // The face around a point inside the old loop, carried along with the objects.

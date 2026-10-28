@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::mpsc;
 
 use cadcraft_ui_egui::menus::{self, Entry};
 use cadcraft_ui_egui::{CadApp, i18n};
@@ -15,10 +16,14 @@ pub struct NativeMenu {
     submenus: Vec<(String, Submenu)>,
     predefined: Vec<(&'static str, PredefinedMenuItem)>,
     language: &'static str,
+    /// Monotonic time of the last enablement refresh. `NEG_INFINITY` makes the first poll refresh
+    /// immediately: `now_ms` starts near zero, so the old `0.0` sentinel suppressed the first
+    /// ~300 ms of menu enablement.
     last_refresh: f64,
     /// The recent files File ▸ Open Recent lists now (it is rebuilt when they change).
     recent: Vec<String>,
     counter: usize,
+    events: mpsc::Receiver<MenuEvent>,
 }
 
 /// Accelerator for "Cmd+Shift+S" (modifier-less shortcuts stay in the app so typing works).
@@ -30,7 +35,16 @@ fn accel(sc: &str) -> Option<Accelerator> {
 }
 
 impl NativeMenu {
-    pub fn install(app: &mut CadApp) -> Self {
+    /// Build and register the macOS menu (app menu, Settings and the translated command tree); returns the state holding item ids and submenus.
+    pub fn install(app: &mut CadApp, ctx: &egui::Context) -> Self {
+        // A menu choice (or its shortcut, such as Cmd+W) is no window event, so winit would not
+        // wake the app for it: the handler does, and the choice runs in the next frame.
+        let (sender, events) = mpsc::channel();
+        let wake = ctx.clone();
+        MenuEvent::set_event_handler(Some(move |event| {
+            let _ = sender.send(event);
+            wake.request_repaint();
+        }));
         let menu = Menu::new();
         let mut items = HashMap::new();
         let language = app.language();
@@ -66,7 +80,17 @@ impl NativeMenu {
             submenus.push((title, sub));
         }
         menu.init_for_nsapp();
-        Self { _menu: menu, items, submenus, predefined, language, last_refresh: 0.0, recent: app.ui.recent_files.clone(), counter }
+        Self {
+            _menu: menu,
+            items,
+            submenus,
+            predefined,
+            language,
+            last_refresh: f64::NEG_INFINITY,
+            recent: app.ui.recent_files.clone(),
+            counter,
+            events,
+        }
     }
 
     /// Rebuild File ▸ Open Recent after a drawing was opened or the list was cleared: the native
@@ -87,13 +111,14 @@ impl NativeMenu {
         build(&sub, &menus::recent_entries(app), &mut self.items, &mut self.submenus, &mut self.counter, self.language);
     }
 
+    /// Drain queued menu events into commands (Discord opens externally), rebuild Open Recent, retranslate on a language change and refresh enablement when 300 ms have elapsed.
     pub fn poll(&mut self, app: &mut CadApp, ctx: &egui::Context) {
-        while let Ok(ev) = MenuEvent::receiver().try_recv() {
+        while let Ok(ev) = self.events.try_recv() {
             if let Some((cmd, _, _)) = self.items.get(ev.id.as_ref()) {
                 if cmd == "ui.discord" {
                     ctx.open_url(egui::OpenUrl::new_tab("https://discord.gg/artcraft"));
                 } else {
-                    menus::activate(app, &cmd.clone());
+                    menus::activate_native(app, ctx, &cmd.clone());
                 }
                 ctx.request_repaint();
             }
@@ -113,15 +138,23 @@ impl NativeMenu {
             }
         }
         let now = cadcraft_ui_egui::now_ms();
-        if now - self.last_refresh < 300.0 {
+        if !refresh_due(now, self.last_refresh) {
             return;
         }
         self.last_refresh = now;
+        let typing = menus::text_field_window(ctx).is_some();
         for (cmd, _, item) in self.items.values() {
-            let en = cadcraft_engine::find_command(cmd).is_none_or(|c| (c.enabled)(&app.session).is_ok());
+            let en = (typing && menus::edits_text(cmd)) || cadcraft_engine::find_command(cmd).is_none_or(|c| (c.enabled)(&app.session).is_ok());
             item.set_enabled(en);
         }
     }
+}
+
+/// The periodic enablement refresh is due every 300 ms. Split out so the first-poll sentinel is
+/// testable without a macOS menu: `now_ms` starts near zero, so a `0.0` initial value would
+/// suppress the first refresh for 300 ms.
+fn refresh_due(now: f64, last_refresh: f64) -> bool {
+    now - last_refresh >= 300.0
 }
 
 fn build(
@@ -148,5 +181,19 @@ fn build(
                 items.insert(mid, (id.clone(), label.clone(), i));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::refresh_due;
+
+    /// `refresh_due` treats `NEG_INFINITY` as due at any finite time and `0.0` as due once 300 ms have elapsed; `install` initializes a fresh menu with `last_refresh = NEG_INFINITY`.
+    #[test]
+    fn the_first_poll_refreshes_immediately() {
+        assert!(refresh_due(0.5, f64::NEG_INFINITY), "a fresh menu refreshes on its first poll");
+        assert!(!refresh_due(0.5, 0.0), "the old 0.0 sentinel delayed the first refresh");
+        assert!(!refresh_due(299.9, 0.0));
+        assert!(refresh_due(300.0, 0.0));
     }
 }

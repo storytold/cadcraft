@@ -15,14 +15,14 @@ fn layout_with_red_line() -> Drawing {
     d
 }
 
-/// The uncompressed PDF of Layout1 with extra plot options.
+/// The page content of Layout1's PDF with extra plot options.
 fn pdf_text(d: &Drawing, extra: serde_json::Value) -> String {
     let mut opts = json!({"compress": false});
     if let (Some(o), Some(e)) = (opts.as_object_mut(), extra.as_object()) {
         o.extend(e.clone());
     }
     let bytes = cadcraft_io::plot(d, &Space::Paper("Layout1".into()), &opts).unwrap();
-    String::from_utf8_lossy(&bytes).into_owned()
+    crate::pdf_read::read(&bytes).content().to_string()
 }
 
 #[test]

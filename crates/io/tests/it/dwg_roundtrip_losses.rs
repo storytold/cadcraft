@@ -141,3 +141,24 @@ fn viewport_ids_survive_dwg_and_the_paper_viewport_stays_implicit() {
     assert!(!text.contains("PAPERVIEW"));
     assert_eq!(viewport_ids(&cadcraft_io::read_dxf(text.as_bytes()).unwrap().layouts[0]), [1, 2]);
 }
+
+/// The paper-space viewport (id 1) of a drawing from another program can come after a model
+/// viewport in the layout, e.g. when the draw order (SORTENTS) put it behind. DWG numbers in
+/// order, so the writer puts it first: otherwise the model viewport became the sheet on reopen.
+#[test]
+fn a_paper_viewport_behind_a_model_viewport_stays_id_1_through_dwg() {
+    let mut d = Drawing::new_metric();
+    let names: Vec<String> = d.layouts.iter().map(|l| l.name.clone()).collect();
+    for name in &names {
+        let space = Space::Paper(name.clone());
+        let model = d.add(&space, Common::default(), viewport(2)).unwrap();
+        let sheet = d.add(&space, Common::default(), viewport(1)).unwrap();
+        let back = through_dwg(&d);
+        let l = back.layouts.iter().find(|l| &l.name == name).unwrap();
+        let id = |h: Handle| match &l.entities.get(h).map(|e| &e.kind) {
+            Some(EntityKind::Viewport(v)) => Some(v.id),
+            _ => None,
+        };
+        assert_eq!((id(model), id(sheet)), (Some(2), Some(1)), "layout {name}");
+    }
+}

@@ -7,7 +7,8 @@ use cadcraft_doc::{Layer, Lineweight};
 use serde_json::{Value, json};
 
 use super::machines::SelectRun;
-use super::*;
+use super::{CommandSpec, bad, bool_or, ok, str_param, targets};
+
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {

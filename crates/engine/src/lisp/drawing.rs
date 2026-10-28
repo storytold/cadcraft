@@ -357,10 +357,25 @@ fn entity_from_list(ctx: &Ctx<'_>, list: &Value) -> Result<(String, cadcraft_doc
 pub fn entmake(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 0, 1)?;
     let Some(list) = a.first().filter(|v| !v.is_nil()) else { return Ok(Flow::Value(Value::Nil)) };
+    // A block definition is a BLOCK list, its entities, then an ENDBLK list (#1662).
+    match list_to_groups(list) {
+        Ok((k, tags)) if k == "BLOCK" => return Ok(Flow::Value(begin_block(ctx, list, &tags))),
+        Ok((k, _)) if k == "ENDBLK" => return Ok(Flow::Value(end_block(ctx))),
+        _ => {}
+    }
     let (_, common, kind) = match entity_from_list(ctx, list) {
         Ok(x) => x,
         Err(_) => return Ok(Flow::Value(Value::Nil)),
     };
+    if let Some((_, ents)) = ctx.env.pending_block.as_mut() {
+        // Into the block being defined; it is added to the drawing, with handles and the layers
+        // its entities name, at ENDBLK (a refused or dropped definition leaves nothing behind).
+        if ents.len() >= MAX_PENDING_BLOCK_ENTITIES {
+            return Ok(Flow::Value(Value::Nil));
+        }
+        ents.push(Entity { handle: Handle(0), common, kind });
+        return Ok(Flow::Value(list.clone()));
+    }
     let space = ctx.s.space();
     let Ok(d) = ctx.s.doc_mut() else { return Ok(Flow::Value(Value::Nil)) };
     // A layer entmake names that doesn't exist yet is created.
@@ -372,6 +387,75 @@ pub fn entmake(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         }
         Err(_) => Ok(Flow::Value(Value::Nil)),
     }
+}
+
+/// `entmake` of a BLOCK list (2 name, 70 flags, 10 base point, 4 description): begin a block
+/// definition. Flag 1 makes an anonymous block (`*U…`, named at ENDBLK); xrefs (flag 4) can't be
+/// made this way. nil, and the definition already begun kept, when one is open.
+fn begin_block(ctx: &mut Ctx<'_>, list: &Value, tags: &[Tag]) -> Value {
+    if ctx.env.pending_block.is_some() {
+        return Value::Nil;
+    }
+    let group = |code: i32| tags.iter().find(|t| t.code == code);
+    let flags = group(70).map(Tag::i64).unwrap_or(0);
+    let name = group(2).map(|t| t.str().trim().to_string()).unwrap_or_default();
+    let anonymous = flags & 1 != 0;
+    if flags & 4 != 0 || !(anonymous && name.starts_with('*') || crate::cmd::blocks::valid_block_name(&name)) {
+        return Value::Nil;
+    }
+    let mut b = cadcraft_doc::Block::new(&name);
+    b.anonymous = anonymous;
+    b.base = cadcraft_geom::Vec3::new(
+        group(10).map(Tag::f64).unwrap_or(0.0),
+        group(20).map(Tag::f64).unwrap_or(0.0),
+        group(30).map(Tag::f64).unwrap_or(0.0),
+    );
+    if !b.base.is_finite() {
+        return Value::Nil;
+    }
+    b.description = group(4).map(Tag::str).unwrap_or_default();
+    ctx.env.pending_block = Some((b, Vec::new()));
+    list.clone()
+}
+
+/// The most entities one `entmake` block definition takes (a runaway loop can't fill memory).
+const MAX_PENDING_BLOCK_ENTITIES: usize = 1_000_000;
+
+/// `entmake` of an ENDBLK list: add the block begun to the drawing (redefining one of the same
+/// name) and return its name, generated for an anonymous block. nil without one begun, or when
+/// its entities reference the block itself.
+fn end_block(ctx: &mut Ctx<'_>) -> Value {
+    let Some((mut b, ents)) = ctx.env.pending_block.take() else { return Value::Nil };
+    let Ok(d) = ctx.s.doc_mut() else { return Value::Nil };
+    if b.anonymous {
+        // Its kind letter (`*U`, `*X`…) is kept; a name that isn't one gets `*U`.
+        let prefix: String = b.name.chars().take(2).collect();
+        let prefix = if prefix.chars().count() == 2 && prefix.starts_with('*') { prefix.as_str() } else { "*U" };
+        b.name = d.anonymous_block_name(prefix);
+    } else {
+        // Block names are case-insensitive: a redefinition keeps the existing name.
+        if let Some(existing) = d.blocks.keys().find(|k| k.eq_ignore_ascii_case(&b.name)) {
+            b.name = existing.clone();
+        }
+        // As BLOCK: a block being edited in place isn't redefined until REFCLOSE.
+        if d.refedit.as_ref().is_some_and(|r| r.block.eq_ignore_ascii_case(&b.name)) {
+            return Value::Nil;
+        }
+    }
+    // Named or anonymous (a routine can know the name an anonymous block will get), a block
+    // that inserts itself isn't added.
+    if crate::cmd::blocks::references_block(d, &ents, &b.name) {
+        return Value::Nil;
+    }
+    for mut e in ents {
+        d.ensure_layer(&e.common.layer);
+        e.handle = d.new_handle();
+        b.entities.push(e);
+    }
+    let name = b.name.clone();
+    d.blocks.insert(name.clone(), Arc::new(b));
+    ctx.s.touch();
+    Value::str(&name)
 }
 
 pub fn entmod(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
@@ -985,7 +1069,14 @@ pub fn distof(_ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 pub fn angtof(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 2)?;
     let s = string(&a[0])?;
-    Ok(Flow::Value(ctx.s.angle_settings().direction(&s).map(Value::Real).unwrap_or_default()))
+    let mut settings = ctx.s.angle_settings();
+    // AUNITS 0..=4; any other units argument is an error in AutoCAD, nil here.
+    match a.get(1) {
+        None | Some(Value::Nil) => {}
+        Some(Value::Int(u)) if (0..=4).contains(u) => settings.aunits = i64::from(*u),
+        Some(_) => return Ok(Flow::Value(Value::Nil)),
+    }
+    Ok(Flow::Value(settings.direction(&s).map(Value::Real).unwrap_or_default()))
 }
 
 /// `(trans pt from to [disp])`: points are in the world system throughout (no UCS yet).

@@ -18,7 +18,8 @@ use cadcraft_render::raster::{RasterOptions, View};
 use serde_json::{Value, json};
 
 use super::file::{base64_decode, base64_encode, io};
-use super::*;
+use super::{CommandSpec, bad, point_value, str_param};
+
 use crate::{EngineError, Result, Session};
 
 /// Formats EXPORT writes (the io layer picks the writer from the extension).
@@ -85,9 +86,23 @@ fn write_file(cmd: &str, path: &str, bytes: &[u8]) -> Result<()> {
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = (path, bytes);
-        Err(bad(cmd, "paths are not available on the web; omit `path` to get the file as base64 `data`"))
+        deliver_file(cmd, path, bytes, super::file::deliver())
     }
+}
+
+/// No file system on the web: hand the bytes to the host's delivery hook (a browser download)
+/// named after `path`, like SAVE and TABLEEXPORT do. EXPORT and PLOT (PUBLISH, EXPORTPDF) use it.
+#[cfg(any(test, target_arch = "wasm32"))]
+pub(super) fn deliver_file(cmd: &str, path: &str, bytes: &[u8], hook: Option<super::file::DeliverHook>) -> Result<()> {
+    let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string());
+    let mime = match extension(&name).as_str() {
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "pdf" => "application/pdf",
+        _ => "application/octet-stream",
+    };
+    let deliver = hook.ok_or_else(|| bad(cmd, "files can't be written in this build; omit `path` to get the file as base64 `data`"))?;
+    deliver(&name, mime, bytes).map_err(|e| bad(cmd, format!("{name}: {e}")))
 }
 
 // ---------- EXPORT ----------
@@ -546,7 +561,27 @@ mod tests {
     use cadcraft_geom::Vec3;
 
     use super::super::file::{IoHooks, set_io};
+
+    use super::super::resolve_alias;
     use super::*;
+    use serde_json::json;
+
+    static DELIVERED: std::sync::Mutex<Vec<(String, String, usize)>> = std::sync::Mutex::new(Vec::new());
+
+    fn record(name: &str, mime: &str, bytes: &[u8]) -> std::result::Result<(), String> {
+        DELIVERED.lock().map_err(|e| e.to_string())?.push((name.into(), mime.into(), bytes.len()));
+        Ok(())
+    }
+
+    #[test]
+    fn web_export_delivers_a_download_instead_of_writing_a_path() {
+        deliver_file("export", "Drawing1.svg", b"<svg/>", Some(record)).unwrap();
+        deliver_file("export", "dir/Plan.pdf", b"%PDF", Some(record)).unwrap();
+        let got = DELIVERED.lock().unwrap().clone();
+        assert_eq!(got, [("Drawing1.svg".to_string(), "image/svg+xml".to_string(), 6), ("Plan.pdf".to_string(), "application/pdf".to_string(), 4)]);
+        let e = deliver_file("export", "a.svg", b"x", None).unwrap_err().to_string();
+        assert!(e.contains("base64"), "{e}");
+    }
 
     fn fake_plot(_: &Drawing, space: &Space, opts: &Value) -> std::result::Result<Vec<u8>, String> {
         // Same output as the layout tests' stand-in: whichever test installs first wins.

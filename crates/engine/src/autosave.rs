@@ -208,6 +208,12 @@ impl Autosaver {
             if minutes == 0 || dir.trim().is_empty() || (!urgent && now - since < f64::from(minutes) * 60.0) {
                 continue;
             }
+            // In the Block Editor: the drawing with the editor's unsaved changes in the block. When
+            // they can't be put there, nothing is written and nothing is marked as covered, so the
+            // next pass tries again instead of keeping the host without them.
+            let Ok(doc) = st.recovery_drawing() else {
+                continue;
+            };
             let path = t
                 .file
                 .clone()
@@ -216,8 +222,7 @@ impl Autosaver {
             t.written = Some(Arc::downgrade(&st.doc));
             t.host = Some(Arc::downgrade(st.drawing()));
             t.since = None;
-            // In the Block Editor: the drawing with the editor's unsaved changes in the block.
-            jobs.push(Job::Write { uid: st.uid, path, doc: st.recovery_drawing() });
+            jobs.push(Job::Write { uid: st.uid, path, doc });
         }
         jobs
     }
@@ -302,7 +307,7 @@ mod native {
     /// files of stopped apps that have no files left. Only an autosave file is deleted: a path
     /// whose name doesn't parse as one ([`parse_file_name`]) is left alone.
     pub fn discard(path: &str) {
-        let ours = Path::new(path).file_name().and_then(|n| n.to_str()).is_some_and(|n| parse_file_name(n).is_some());
+        let ours = Path::new(path).file_name().and_then(std::ffi::OsStr::to_str).is_some_and(|n| parse_file_name(n).is_some());
         if !ours {
             log::warn!("autosave: not deleting {path}: not an autosave file");
             return;
@@ -334,10 +339,22 @@ mod native {
 
     type WriteHook = fn(&Drawing, &str) -> std::result::Result<Vec<u8>, String>;
 
+    /// Create the autosave folder `dir` and any missing parents. On Unix the folders made here are
+    /// owner-only (`0o700`): autosave files are unsaved drawings, and with the default mode other
+    /// accounts on the machine could read them. A folder that already exists keeps its mode, since
+    /// SAVEFILEPATH can be any folder the user picked.
+    fn create_folder(dir: &Path) -> std::io::Result<()> {
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        builder.create(dir)
+    }
+
     fn write_file(write: WriteHook, doc: &Drawing, path: &str) -> std::result::Result<(), String> {
         let bytes = write(doc, "autosave.dxf")?;
         if let Some(dir) = Path::new(path).parent() {
-            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+            create_folder(dir).map_err(|e| e.to_string())?;
         }
         // Create a fresh temporary file exclusively and rename it into place, so a planted
         // `<path>.tmp` symlink in a shared autosave directory cannot redirect the write (CWE-59).
@@ -434,7 +451,7 @@ mod native {
             }
             self.last_beat = Some(now);
             let dir = Path::new(dir);
-            let r = std::fs::create_dir_all(dir).and_then(|()| std::fs::write(lock_path(dir, &self.instance), std::process::id().to_string()));
+            let r = create_folder(dir).and_then(|()| std::fs::write(lock_path(dir, &self.instance), std::process::id().to_string()));
             if let Err(e) = r {
                 log::warn!("autosave: lock file in {}: {e}", dir.display());
             }

@@ -68,8 +68,9 @@ impl Inbox {
     }
 
     /// Read the files dropped on the page this frame (eframe hands them over unread on the web).
+    /// The list is taken, not cloned: a later pass or hidden tick must not read the same drop.
     pub fn take_dropped(&self, ctx: &egui::Context) {
-        for f in ctx.input(|i| i.raw.dropped_files.clone()) {
+        for f in ctx.input_mut(|i| std::mem::take(&mut i.raw.dropped_files)) {
             if let Some(file) = f.web_file() {
                 self.read(file.clone());
             }

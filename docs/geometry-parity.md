@@ -1,6 +1,6 @@
 # Geometry parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-14 · **Change:** trivial (JOIN Close on a single arc or elliptical arc) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-22 · **Change:** minor (bounded constraint expression and parameter depth) · **Target:** Autodesk AutoCAD 2027
 
 CAD users trust numbers: a trimmed endpoint, an offset, an intersection or an area is either right
 to the last displayed digit or the tool is unusable for production drawings. This document
@@ -119,7 +119,7 @@ lines are scanline families clipped against the tessellated loops (`render/src/h
 | Item | AutoCAD | CADCraft (`crates/constraints`) |
 |---|---|---|
 | Geometric constraints (12) | coincident, collinear, concentric, fix, parallel, perpendicular, horizontal, vertical, tangent, smooth (G2), symmetric, equal | all 12; Smooth is G2 (common point, tangent and curvature, `curves.rs`) between a spline and a line, arc, elliptical arc, polyline segment or spline; between two non-spline curves it stays tangency |
-| Dimensional constraints | linear, horizontal, vertical, aligned, angular, radial, diameter; dynamic and annotational; reference | distance (aligned/horizontal/vertical), angular, radius, diameter; parameters and expressions (`expr.rs`) |
+| Dimensional constraints | linear, horizontal, vertical, aligned, angular, radial, diameter; dynamic and annotational; reference | distance (aligned/horizontal/vertical), angular, radius, diameter; parameters and expressions (`expr.rs`), with one depth limit across syntax trees and parameter references |
 | Geometry | lines, arcs, circles, polylines, ellipses, splines, blocks | line, circle, arc, polyline, point; ellipse and elliptical arc (centre, axis ends and arc ends as points; tangent, coincident, concentric, horizontal/vertical on the major axis); spline (fit or control points as points; tangent and smooth at its ends; open clamped or fit splines); block reference (insertion point, and the block's own points riding rigidly with position and rotation) (`model.rs`) |
 | Algorithm | proprietary | damped Gauss–Newton / Levenberg–Marquardt, numeric Jacobian, per connected component; MAX_ITER 200, MAX_ROWS 800; curve–curve tangency with an ellipse through auxiliary contact parameters |
 | Over-constraint | refused with a message | redundancy by Jacobian rank (Householder QR with column pivoting, rows and columns balanced), including Fix; the message names the constraints the new one duplicates; conflicts by removal probing (up to 48 probes) |
@@ -157,6 +157,7 @@ Total ≈ 90–140 h; items 1–6 parallelise across two or three agents.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-22 | minor | Constraint expressions count operator chains toward the syntax-tree depth limit; evaluation shares one depth limit across operators and parameter references, with a 1 MiB-stack regression (#1936) |
 | 2026-10-14 | trivial | JOIN Close: a single arc becomes its circle, a single elliptical arc its full ellipse (#1175) |
 | 2026-10-12 | trivial | TRIM on a closed polyline keeps only the complementary run when the pick lies past the last cut (#726) |
 | 2026-10-12 | minor | Property-based and hostile-input tests for geometry numerics landed (`crates/geom/src/property_tests.rs`): intersections, closest points, three-point arcs, bounds, vector identities; hostile f64s never panic; known answers at 1e6–1e7 |

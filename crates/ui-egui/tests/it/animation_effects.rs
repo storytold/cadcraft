@@ -23,8 +23,8 @@ fn frame<R>(
     let mut seen = None;
     let mut out = ctx.run_ui(raw, |ui| {
         app.logic(ui.ctx());
-        seen = Some(look(ui.ctx()));
         app.ui(ui);
+        seen = Some(look(ui.ctx()));
     });
     out.textures_delta.clear(); // no renderer here
     (seen.unwrap(), out.shapes)
@@ -101,6 +101,7 @@ fn wheel_scrolling_glides_only_while_animation_effects_show() {
     let notches = || {
         vec![egui::Event::MouseWheel {
             unit: egui::MouseWheelUnit::Line,
+            source: egui::MouseWheelSource::Unknown,
             delta: egui::vec2(0.0, -3.0),
             phase: egui::TouchPhase::Move,
             modifiers: egui::Modifiers::NONE,
@@ -130,7 +131,13 @@ fn wheel_zoom(app: &mut CadApp, modifiers: egui::Modifiers) -> Vec<f64> {
         frame(app, &ctx, vec![egui::Event::PointerMoved(over)], |_| ());
     }
     let before = height(app);
-    let notch = egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Line, delta: egui::vec2(0.0, 1.0), phase: egui::TouchPhase::Move, modifiers };
+    let notch = egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: egui::vec2(0.0, 1.0),
+        phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Unknown,
+        modifiers,
+    };
     let mut events = vec![notch];
     (0..40)
         .map(|_| {
