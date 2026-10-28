@@ -112,6 +112,119 @@ fn last_number(bytes: &[u8], key: &[u8]) -> Option<u64> {
     std::str::from_utf8(&digits).ok()?.parse().ok()
 }
 
+/// Most bytes of a trailer dictionary read to carry its entries over.
+const MAX_TRAILER_BYTES: usize = 64 << 10;
+
+/// The end of the PDF value (a dictionary, array, string, name, number or reference) starting
+/// at `at` in `b`, skipping leading white space; `None` when it doesn't end within `b`.
+fn value_end(b: &[u8], at: usize) -> Option<usize> {
+    let mut i = at;
+    while b.get(i).is_some_and(u8::is_ascii_whitespace) {
+        i += 1;
+    }
+    let delimited = |c: u8| c.is_ascii_whitespace() || b"()<>[]{}/%".contains(&c);
+    match (*b.get(i)?, b.get(i + 1).copied()) {
+        (b'<', Some(b'<')) | (b'[', _) | (b'(', _) => {
+            // Nested dictionaries, arrays and strings (with their escapes) up to the matching end.
+            let mut stack: Vec<u8> = Vec::new();
+            let mut j = i;
+            loop {
+                let c = *b.get(j)?;
+                if stack.last() == Some(&b'(') {
+                    match c {
+                        b'\\' => j += 1,
+                        b'(' => stack.push(b'('),
+                        b')' => {
+                            stack.pop();
+                        }
+                        _ => {}
+                    }
+                } else {
+                    match (c, b.get(j + 1).copied()) {
+                        (b'<', Some(b'<')) => {
+                            stack.push(b'd');
+                            j += 1;
+                        }
+                        (b'>', Some(b'>')) if stack.last() == Some(&b'd') => {
+                            stack.pop();
+                            j += 1;
+                        }
+                        (b'<', _) => {
+                            j += b.get(j..)?.iter().position(|&x| x == b'>')?;
+                        }
+                        (b'[', _) | (b'(', _) => stack.push(c),
+                        (b']', _) if stack.last() == Some(&b'[') => {
+                            stack.pop();
+                        }
+                        _ => {}
+                    }
+                }
+                j += 1;
+                if stack.is_empty() {
+                    return Some(j);
+                }
+            }
+        }
+        (b'<', _) => Some(i + b.get(i..)?.iter().position(|&x| x == b'>')? + 1),
+        (b'/', _) => Some(i + 1 + b.get(i + 1..)?.iter().position(|&c| delimited(c)).unwrap_or(b.len() - i - 1)),
+        _ => {
+            // A number, or a reference: two numbers and R.
+            let word = |from: usize| -> Option<(usize, usize)> {
+                let mut k = from;
+                while b.get(k).is_some_and(u8::is_ascii_whitespace) {
+                    k += 1;
+                }
+                let len = b.get(k..)?.iter().position(|&c| delimited(c)).unwrap_or(b.len() - k);
+                (len > 0).then_some((k, k + len))
+            };
+            let (_, end) = word(i)?;
+            match (word(end), word(end).and_then(|(_, e)| word(e))) {
+                (Some((gs, ge)), Some((rs, re)))
+                    if b.get(gs..ge).is_some_and(|g| g.iter().all(u8::is_ascii_digit)) && b.get(rs..re) == Some(b"R".as_slice()) =>
+                {
+                    Some(re)
+                }
+                _ => Some(end),
+            }
+        }
+    }
+}
+
+/// The `/Encrypt`, `/ID` and `/Info` entries of the trailer of the cross-reference section at
+/// `prev` in `bytes` (a `trailer` dictionary, or a cross-reference stream's), as written there:
+/// an update's trailer must repeat them, or an encrypted PDF is no longer decrypted.
+fn kept_trailer_entries(bytes: &[u8], prev: usize) -> Vec<u8> {
+    let Some(region) = bytes.get(prev..).map(|r| &r[..r.len().min(MAX_TRAILER_BYTES)]) else { return Vec::new() };
+    let Some(start) = region.windows(2).position(|w| w == b"<<") else { return Vec::new() };
+    let Some(end) = value_end(region, start) else { return Vec::new() };
+    let dict = &region[start + 2..end.saturating_sub(2)];
+    let mut out = Vec::new();
+    let mut i = 0;
+    // Each entry of the dictionary itself (not of one nested in it): a name, then its value.
+    while i < dict.len() {
+        if dict[i].is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+        if dict[i] != b'/' {
+            match value_end(dict, i) {
+                Some(e) if e > i => i = e,
+                _ => i += 1,
+            }
+            continue;
+        }
+        let Some(key_end) = value_end(dict, i) else { break };
+        let Some(val_end) = value_end(dict, key_end) else { break };
+        let key = &dict[i..key_end];
+        if [b"/Encrypt".as_slice(), b"/ID", b"/Info"].contains(&key) {
+            out.push(b' ');
+            out.extend_from_slice(&dict[i..val_end]);
+        }
+        i = val_end;
+    }
+    out
+}
+
 /// A number for one new object of the PDF `bytes`: from its trailer's size (read from the raw
 /// bytes, which may name the size of an older section or match bytes inside a stream) or its
 /// count of objects, whichever is larger, then past any number the PDF already uses.
@@ -141,6 +254,7 @@ pub fn with_layers(bytes: &[u8], visible: &[(String, bool)]) -> Result<Vec<u8>> 
     let r = |o: &ObjRef| format!("{} {} R", o.obj_number, o.gen_number);
     let all: Vec<String> = l.groups.iter().map(|(o, _)| r(o)).collect();
     let off: Vec<String> = l.groups.iter().filter(|(_, layer)| !shown(layer)).map(|(o, _)| r(o)).collect();
+    let kept = usize::try_from(prev).map(|p| kept_trailer_entries(bytes, p)).unwrap_or_default();
     let mut out = bytes.to_vec();
     out.extend_from_slice(b"\n");
     let at = out.len();
@@ -156,12 +270,11 @@ pub fn with_layers(bytes: &[u8], visible: &[(String, bool)]) -> Result<Vec<u8>> 
     );
     let xref = out.len();
     out.extend_from_slice(
-        format!(
-            "xref\n0 1\n0000000000 65535 f \n{size} 1\n{at:010} 00000 n \ntrailer\n<< /Size {} /Root {size} 0 R /Prev {prev} >>\nstartxref\n{xref}\n%%EOF\n",
-            size + 1
-        )
-        .as_bytes(),
+        format!("xref\n0 1\n0000000000 65535 f \n{size} 1\n{at:010} 00000 n \ntrailer\n<< /Size {} /Root {size} 0 R /Prev {prev}", size + 1)
+            .as_bytes(),
     );
+    out.extend_from_slice(&kept);
+    out.extend_from_slice(format!(" >>\nstartxref\n{xref}\n%%EOF\n").as_bytes());
     Ok(out)
 }
 
@@ -294,6 +407,168 @@ mod tests {
         let off = with_layers(&pdf, &[("Coût — 5 €".into(), false)]).unwrap();
         let (red, green) = colours(&off);
         assert!(red == 0 && green > 1000, "the layer named in PDFDocEncoding hidden: {red} red, {green} green");
+    }
+
+    /// MD5 (RFC 1321), for [`encrypted_pdf`].
+    fn md5(data: &[u8]) -> [u8; 16] {
+        let s: [u32; 64] = [
+            7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11,
+            16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+        ];
+        let k: Vec<u32> = (0..64).map(|i| ((f64::from(i + 1)).sin().abs() * 4_294_967_296.0) as u32).collect();
+        let mut msg = data.to_vec();
+        let bits = (data.len() as u64).wrapping_mul(8);
+        msg.push(0x80);
+        while msg.len() % 64 != 56 {
+            msg.push(0);
+        }
+        msg.extend_from_slice(&bits.to_le_bytes());
+        let (mut a0, mut b0, mut c0, mut d0) = (0x6745_2301u32, 0xefcd_ab89u32, 0x98ba_dcfeu32, 0x1032_5476u32);
+        for chunk in msg.chunks(64) {
+            let m: Vec<u32> = chunk.chunks(4).map(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]])).collect();
+            let (mut a, mut b, mut c, mut d) = (a0, b0, c0, d0);
+            for i in 0..64 {
+                let (f, g) = match i / 16 {
+                    0 => ((b & c) | (!b & d), i),
+                    1 => ((d & b) | (!d & c), (5 * i + 1) % 16),
+                    2 => (b ^ c ^ d, (3 * i + 5) % 16),
+                    _ => (c ^ (b | !d), (7 * i) % 16),
+                };
+                let f = f.wrapping_add(a).wrapping_add(k[i]).wrapping_add(m[g]);
+                a = d;
+                d = c;
+                c = b;
+                b = b.wrapping_add(f.rotate_left(s[i]));
+            }
+            a0 = a0.wrapping_add(a);
+            b0 = b0.wrapping_add(b);
+            c0 = c0.wrapping_add(c);
+            d0 = d0.wrapping_add(d);
+        }
+        let mut out = [0u8; 16];
+        for (i, v) in [a0, b0, c0, d0].iter().enumerate() {
+            out[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+        }
+        out
+    }
+
+    /// RC4, for [`encrypted_pdf`].
+    fn rc4(key: &[u8], data: &[u8]) -> Vec<u8> {
+        let mut st: Vec<u8> = (0..=255).collect();
+        let mut j = 0u8;
+        for i in 0..256 {
+            j = j.wrapping_add(st[i]).wrapping_add(key[i % key.len()]);
+            st.swap(i, usize::from(j));
+        }
+        let (mut i, mut j) = (0u8, 0u8);
+        data.iter()
+            .map(|b| {
+                i = i.wrapping_add(1);
+                j = j.wrapping_add(st[usize::from(i)]);
+                st.swap(usize::from(i), usize::from(j));
+                b ^ st[usize::from(st[usize::from(i)].wrapping_add(st[usize::from(j)]))]
+            })
+            .collect()
+    }
+
+    fn hex(b: &[u8]) -> String {
+        b.iter().map(|x| format!("{x:02X}")).collect()
+    }
+
+    /// The PDF of [`xref_stream_pdf`] encrypted with the standard security handler (revision 2,
+    /// 40-bit RC4, empty user password, ISO 32000 §7.6.3), with a classic cross-reference table:
+    /// its content and its layers' names are encrypted.
+    fn encrypted_pdf() -> Vec<u8> {
+        const PAD: [u8; 32] = [
+            0x28, 0xBF, 0x4E, 0x5E, 0x4E, 0x75, 0x8A, 0x41, 0x64, 0x00, 0x4E, 0x56, 0xFF, 0xFA, 0x01, 0x08, 0x2E, 0x2E, 0x00, 0xB6, 0xD0, 0x68, 0x3E,
+            0x80, 0x2F, 0x0C, 0xA9, 0xFE, 0x64, 0x53, 0x69, 0x7A,
+        ];
+        let id = *b"cadcraft-test-id";
+        let p: i32 = -4;
+        let o = rc4(&md5(&PAD)[..5], &PAD);
+        let key: Vec<u8> = md5(&[PAD.as_slice(), &o, &p.to_le_bytes(), &id].concat())[..5].to_vec();
+        let u = rc4(&key, &PAD);
+        let obj_key = |n: u32| md5(&[key.as_slice(), &n.to_le_bytes()[..3], &[0, 0]].concat())[..10].to_vec();
+        let content = rc4(&obj_key(4), b"/OC /L1 BDC 1 0 0 rg 10 10 80 80 re f EMC /OC /L2 BDC 0 1 0 rg 110 10 80 80 re f EMC");
+        let objects: Vec<Vec<u8>> = vec![
+            b"<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [5 0 R 6 0 R] /D << /BaseState /ON /Order [5 0 R 6 0 R] >> >> >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Resources << /Properties << /L1 5 0 R /L2 6 0 R >> >> /Contents 4 0 R >>"
+                .to_vec(),
+            [format!("<< /Length {} >>\nstream\n", content.len()).into_bytes(), content, b"\nendstream".to_vec()].concat(),
+            format!("<< /Type /OCG /Name <{}> >>", hex(&rc4(&obj_key(5), b"MURS"))).into_bytes(),
+            format!("<< /Type /OCG /Name <{}> >>", hex(&rc4(&obj_key(6), b"COTES"))).into_bytes(),
+            format!("<< /Filter /Standard /V 1 /R 2 /O <{}> /U <{}> /P {p} >>", hex(&o), hex(&u)).into_bytes(),
+        ];
+        let mut out = b"%PDF-1.4\n".to_vec();
+        let mut offsets = Vec::new();
+        for (i, ob) in objects.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+            out.extend_from_slice(ob);
+            out.extend_from_slice(b"\nendobj\n");
+        }
+        let xref = out.len();
+        out.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes());
+        for o in offsets {
+            out.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+        }
+        out.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R /Encrypt 7 0 R /ID [<{}> <{}>] >>\nstartxref\n{xref}\n%%EOF\n",
+                objects.len() + 1,
+                hex(&id),
+                hex(&id)
+            )
+            .as_bytes(),
+        );
+        out
+    }
+
+    #[test]
+    fn an_update_repeats_the_trailer_s_encryption_identity_and_info() {
+        let kept = |trailer: &[u8]| String::from_utf8_lossy(&kept_trailer_entries(trailer, 0)).into_owned();
+        // A reference, a two-string array and a reference; other entries left out.
+        assert_eq!(
+            kept(
+                b"xref\n0 1\n0000000000 65535 f \ntrailer\n<< /Size 8 /Root 1 0 R /Encrypt 7 0 R /ID [<AB> <CD>] /Info 3 0 R /Prev 10 >>\nstartxref"
+            ),
+            " /Encrypt 7 0 R /ID [<AB> <CD>] /Info 3 0 R"
+        );
+        // A direct encryption dictionary, an identity with literal strings holding brackets and an
+        // escaped parenthesis, in a cross-reference stream's dictionary (its data not read).
+        assert_eq!(
+            kept(
+                b"7 0 obj\n<< /Type /XRef /Encrypt << /Filter /Standard /O <00ff> /P -4 >> /ID [(a]b\\)c) (x>>y)] /W [1 4 2] >>\nstream\n\x01<<\x02"
+            ),
+            " /Encrypt << /Filter /Standard /O <00ff> /P -4 >> /ID [(a]b\\)c) (x>>y)]"
+        );
+        // An /Encrypt inside a nested dictionary is not the trailer's.
+        assert_eq!(kept(b"trailer\n<< /Root 1 0 R /X << /Encrypt 9 0 R >> >>"), "");
+        // Hostile or cut short: nothing, no panic.
+        for b in [b"".as_slice(), b"<<", b"<< /Encrypt", b"<< /ID [(unclosed", b"<< /Encrypt 7 0", b"<<<<<<>>", b"<< /ID <ab"] {
+            let _ = kept_trailer_entries(b, 0);
+            let _ = kept_trailer_entries(b, 1000);
+        }
+        assert_eq!(kept(b"<< /Encrypt 7 0"), "");
+    }
+
+    #[test]
+    fn layers_are_turned_off_in_an_encrypted_pdf() {
+        let pdf = encrypted_pdf();
+        let names: Vec<String> = layers(&pdf).unwrap().into_iter().map(|l| l.name).collect();
+        assert_eq!(names, ["MURS", "COTES"], "the names are decrypted");
+        let (red, green) = colours(&pdf);
+        assert!(red > 1000 && green > 1000, "both shown at first: {red} red, {green} green");
+        // The update keeps the file's encryption: its trailer names the same /Encrypt and /ID.
+        let off = with_layers(&pdf, &[("MURS".into(), false)]).unwrap();
+        assert_eq!(layers(&off).unwrap().iter().map(|l| (l.name.as_str(), l.on)).collect::<Vec<_>>(), [("MURS", false), ("COTES", true)]);
+        let (red, green) = colours(&off);
+        assert!(red == 0 && green > 1000, "MURS hidden, the page still decrypted: {red} red, {green} green");
+        // And a second update on top of it.
+        let both = with_layers(&off, &[("COTES".into(), false)]).unwrap();
+        let (red, green) = colours(&both);
+        assert!(red == 0 && green == 0, "both hidden: {red} red, {green} green");
     }
 
     #[test]
