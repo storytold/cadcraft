@@ -354,13 +354,20 @@ impl Interactive for AttachM {
         if self.path.is_empty() {
             return Vec::new();
         }
+        // Placing the page: at the scale the dialog gave (else 1, its size on paper).
         let (at, k) = match self.stage {
-            AttachStage::Path | AttachStage::Page | AttachStage::Point => (cursor, 1.0),
+            AttachStage::Path | AttachStage::Page | AttachStage::Point => (cursor, if self.scale_given { self.scale } else { 1.0 }),
             _ => (self.at, self.scale),
         };
         let Ok(d) = s.doc() else { return Vec::new() };
-        let u =
-            PdfUnderlay { insert: Vec3::new(at.x, at.y, 0.0), size: self.size.native, scale: self.size.file_scale(d, k), ..PdfUnderlay::default() };
+        let u = PdfUnderlay {
+            insert: Vec3::new(at.x, at.y, 0.0),
+            size: self.size.native,
+            scale: self.size.file_scale(d, k),
+            // The rotation the dialog gave, until it is specified on screen.
+            rotation: self.rotation.filter(|r| r.is_finite()).unwrap_or(0.0).to_radians(),
+            ..PdfUnderlay::default()
+        };
         let c = u.corners();
         (0..4).filter_map(|i| Some(EntityKind::Line(cadcraft_doc::Line { a: c.get(i)?.to3(0.0), b: c.get((i + 1) % 4)?.to3(0.0) }))).collect()
     }

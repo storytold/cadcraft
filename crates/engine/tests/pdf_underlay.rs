@@ -440,6 +440,34 @@ fn the_path_is_stored_full_relative_or_as_the_file_name() {
     assert!(stored_path(pdf, Some(doc), "nope").is_err());
 }
 
+/// The frame shown while the insertion point is picked is the page as it will be attached: at
+/// the dialog's scale and rotation.
+#[test]
+fn the_insertion_preview_has_the_dialog_s_scale_and_rotation() {
+    use cadcraft_engine::doc::Line;
+    hooks();
+    let path = pdf_file("Preview.pdf", b"%PDF-1.7 fake");
+    let mut s = Session::empty();
+    s.new_drawing(true);
+    let preset = AttachPreset { path, pages: vec![1], at: None, scale: Some(0.02), rotation: Some(90.0), path_type: "full".into() };
+    start_attach(&mut s, preset).unwrap();
+    let cursor = cadcraft_geom::Vec2::new(100.0, 50.0);
+    let lines: Vec<Line> = s
+        .preview(cursor)
+        .into_iter()
+        .filter_map(|e| match e.kind {
+            EntityKind::Line(l) => Some(l),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(lines.len(), 4);
+    let pts: Vec<cadcraft_geom::Vec2> = lines.iter().flat_map(|l| [l.a.xy(), l.b.xy()]).collect();
+    let b = cadcraft_geom::Bounds2::from_points(pts);
+    // 297 × 210 mm at 1/50, turned a quarter turn about the cursor: x from -4.2 to 0, y 0 to 5.94.
+    assert!((b.width() - 210.0 * 0.02).abs() < 1e-9 && (b.height() - 297.0 * 0.02).abs() < 1e-9, "{b:?}");
+    assert!((b.max.x - cursor.x).abs() < 1e-9 && (b.min.y - cursor.y).abs() < 1e-9, "{b:?}");
+}
+
 #[test]
 fn the_dialog_fills_in_what_it_knows_and_the_screen_gives_the_rest() {
     hooks();
