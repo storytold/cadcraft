@@ -13,10 +13,9 @@ use set::run_set;
 
 use cadcraft_color::Color;
 use cadcraft_doc::{EntityKind, Lineweight, Transparency};
-use cadcraft_geom::Vec3;
 use serde_json::{Value, json};
 
-use super::{CommandSpec, always, bad, bool_or, f64_req, find_command, ok, point_req, point_value, str_param, targets};
+use super::{CommandSpec, always, bad, bool_or, f64_req, find_command, ok, point_req, str_param, targets};
 
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
