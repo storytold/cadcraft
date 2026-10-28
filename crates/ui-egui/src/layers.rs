@@ -228,6 +228,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let d = &dst.doc;
     let cur = d.header.str("CLAYER", "0");
     let used = used_layers(d);
+    let lw_mm = app.session.settings.lwunits_mm;
     let vp: Option<(Handle, cadcraft_doc::Viewport)> = dst.active_viewport();
     let linetypes: Vec<cadcraft_doc::Linetype> = d.linetypes.clone();
     let library: Vec<String> = cadcraft_doc::library::standard_linetypes().into_iter().map(|l| l.name).filter(|n| d.linetype(n).is_none()).collect();
@@ -388,6 +389,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                                             library: &library,
                                             state: &mut st,
                                             actions: &mut actions,
+                                            lw_mm,
                                         },
                                     );
                                     ui.end_row();
@@ -427,10 +429,12 @@ struct LayerRow<'a> {
     library: &'a [String],
     state: &'a mut LpmState,
     actions: &'a mut Vec<(&'static str, Value)>,
+    /// LWUNITS: lineweights listed in millimetres (or inches).
+    lw_mm: bool,
 }
 
 fn row(ui: &mut egui::Ui, args: LayerRow<'_>) {
-    let LayerRow { layer: l, current: cur, used, viewport: vp, linetypes, library, state: st, actions } = args;
+    let LayerRow { layer: l, current: cur, used, viewport: vp, linetypes, library, state: st, actions, lw_mm } = args;
     let t = Tokens::get();
     let name = layer_identity(ui, l, cur, used, st, actions);
     // On / Freeze / Lock / Plot.
@@ -521,7 +525,7 @@ fn row(ui: &mut egui::Ui, args: LayerRow<'_>) {
             ui.painter().text(
                 pos2(r.left() + 30.0, r.center().y),
                 egui::Align2::LEFT_CENTER,
-                crate::i18n::t(&l.lineweight.name()),
+                crate::i18n::t(&crate::lwsettings::name(l.lineweight, lw_mm)),
                 crate::theme::body(),
                 t.text,
             );
@@ -544,7 +548,7 @@ fn row(ui: &mut egui::Ui, args: LayerRow<'_>) {
                     ui.painter().text(
                         pos2(r.left() + 52.0, r.center().y),
                         egui::Align2::LEFT_CENTER,
-                        crate::i18n::t(&lw.name()),
+                        crate::i18n::t(&crate::lwsettings::name(lw, lw_mm)),
                         crate::theme::body(),
                         t.text,
                     );

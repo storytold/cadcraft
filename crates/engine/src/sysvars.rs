@@ -35,6 +35,7 @@ const SESSION_VARS: &[&str] = &[
     "DYNPICOORDS",
     "DYNPROMPT",
     "LWDISPLAY",
+    "LWUNITS",
     "PLOTTRANSPARENCYOVERRIDE",
     "SELECTIONCYCLING",
     "SELECTSIMILARMODE",
@@ -107,6 +108,7 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "DYNPICOORDS" => json!(i32::from(st.dynpi_absolute)),
         "DYNPROMPT" => json!(i32::from(st.dynprompt)),
         "LWDISPLAY" => json!(i32::from(st.lwdisplay)),
+        "LWUNITS" => json!(i32::from(st.lwunits_mm)),
         "PLOTTRANSPARENCYOVERRIDE" => json!(st.plot_transparency_override),
         // Negative while turned off, so the toggle keeps the display it turns back on.
         "SELECTIONCYCLING" => {
@@ -320,6 +322,8 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         "DYNPICOORDS" => st.dynpi_absolute = as_bool(v).ok_or_else(bad)?,
         "DYNPROMPT" => st.dynprompt = as_bool(v).ok_or_else(bad)?,
         "LWDISPLAY" => st.lwdisplay = as_bool(v).ok_or_else(bad)?,
+        // 0 inches, 1 millimetres.
+        "LWUNITS" => st.lwunits_mm = small(v, 1).ok_or_else(bad)? == 1,
         "PLOTTRANSPARENCYOVERRIDE" => {
             st.plot_transparency_override = as_i(v).filter(|i| (0..=2).contains(i)).and_then(|i| u8::try_from(i).ok()).ok_or_else(bad)?
         }

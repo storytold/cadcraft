@@ -1373,3 +1373,14 @@
 	Check for Updates…	Перевірити оновлення…
 	CADCraft is up to date.	Встановлено найновішу версію CADCraft.
 	Could not check for updates.	Не вдалося перевірити оновлення.
+	Lineweight Settings	Параметри товщини ліній
+	Lineweight Settings...	Параметри товщини ліній...
+	Lineweights	Товщини ліній
+	Units for Listing	Одиниці в списку
+	Millimeters (mm)	Міліметри (мм)
+	Inches (in)	Дюйми (дюйм)
+	Display Lineweight	Показувати товщину ліній
+	Current Lineweight:	Поточна товщина лінії:
+	Open a drawing to choose its current lineweight.	Відкрийте креслення, щоб вибрати його поточну товщину лінії.
+	Objects whose lineweight is Default are drawn and plotted this wide.	Об'єкти з товщиною «За замовчуванням» малюються й друкуються такої товщини.
+	Default lineweight:	Товщина лінії за замовчуванням:

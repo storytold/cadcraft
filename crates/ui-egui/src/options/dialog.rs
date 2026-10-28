@@ -74,6 +74,11 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
     if close {
         *open = false;
     }
+    if *open {
+        lineweight_settings(app, ctx);
+    } else {
+        ctx.data_mut(|d| d.insert_temp(egui::Id::unique(LINEWEIGHT_SETTINGS), false));
+    }
     if let Some(t) = next_tab {
         app.ui.dialog = Some(format!("options:{t}"));
     }
@@ -560,6 +565,23 @@ fn preferences(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>
         changes.insert("timeSensitiveRightClick".into(), json!(timed));
     }
     hint(ui, crate::tl!("Turned off, a right-click while a command runs always opens the shortcut menu."));
+    ui.add_space(6.0);
+    if ui.button(crate::tl!("Lineweight Settings...")).clicked() {
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique(LINEWEIGHT_SETTINGS), true));
+    }
+}
+
+/// Whether the Lineweight Settings window opened from User Preferences is open (egui temp data).
+const LINEWEIGHT_SETTINGS: &str = "cc_options_lineweight_settings";
+
+/// The Lineweight Settings window over the Options dialog, while User Preferences opened it.
+fn lineweight_settings(app: &mut CadApp, ctx: &egui::Context) {
+    let id = egui::Id::unique(LINEWEIGHT_SETTINGS);
+    let mut open = ctx.data(|d| d.get_temp::<bool>(id).unwrap_or(false));
+    if open {
+        crate::lwsettings::window(app, ctx, &mut open);
+    }
+    ctx.data_mut(|d| d.insert_temp(id, open));
 }
 
 fn profiles(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {

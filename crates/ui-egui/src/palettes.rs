@@ -710,6 +710,8 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     properties_header(app, ui);
     let sel = app.session.selection();
+    // LWUNITS: lineweights listed in millimetres or inches.
+    let lw_mm = app.session.settings.lwunits_mm;
     let Ok(d) = app.session.doc() else { return };
     ui.add_space(4.0);
     let h = &d.header;
@@ -782,8 +784,9 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                 act("setvar", json!({ "name": "CELTSCALE", "value": f }));
             }
         });
+        let current_lw = crate::lwsettings::name(cadcraft_doc::Lineweight::from_dxf(h.i64("CELWEIGHT", -1) as i16), lw_mm);
         prop_row(ui, "Lineweight", |ui| {
-            ui.menu_button(crate::i18n::t(&cadcraft_doc::Lineweight::from_dxf(h.i64("CELWEIGHT", -1) as i16).name()), |ui| {
+            ui.menu_button(crate::i18n::t(&current_lw), |ui| {
                 for n in ["ByLayer", "ByBlock", "Default"] {
                     if ui.button(crate::i18n::t(n)).clicked() {
                         act("lweight", json!({ "lineweight": n }));
@@ -791,7 +794,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                     }
                 }
                 for v in cadcraft_doc::Lineweight::STANDARD {
-                    if ui.button(format!("{:.2} mm", f64::from(v) / 100.0)).clicked() {
+                    if ui.button(crate::lwsettings::name(cadcraft_doc::Lineweight::Mm100(v), lw_mm)).clicked() {
                         act("lweight", json!({ "lineweight": f64::from(v) / 100.0 }));
                         ui.close();
                     }
@@ -892,7 +895,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     let layer = same(&|e| e.common.layer.clone());
     let linetype = same(&|e| e.common.linetype.clone());
     let lts = same(&|e| format!("{:.4}", e.common.ltscale));
-    let lw = same(&|e| e.common.lineweight.name());
+    let lw = same(&|e| crate::lwsettings::name(e.common.lineweight, lw_mm));
     let tr = same(&|e| e.common.transparency.name());
     let layers: Vec<String> = d.layers.iter().map(|l| l.name.clone()).collect();
     let linetypes: Vec<String> = d.linetypes.iter().map(|l| l.name.clone()).collect();
@@ -958,7 +961,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                 }
             }
             for v in cadcraft_doc::Lineweight::STANDARD {
-                if ui.button(format!("{:.2} mm", f64::from(v) / 100.0)).clicked() {
+                if ui.button(crate::lwsettings::name(cadcraft_doc::Lineweight::Mm100(v), lw_mm)).clicked() {
                     set = Some(json!({ "handles": ids, "lineweight": f64::from(v) / 100.0 }));
                     ui.close();
                 }

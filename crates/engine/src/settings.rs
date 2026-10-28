@@ -44,6 +44,8 @@ pub struct Settings {
     /// prompt's options there (on by default).
     pub dynprompt: bool,
     pub lwdisplay: bool,
+    /// LWUNITS: lineweights are listed in millimetres (true, the default) or inches.
+    pub lwunits_mm: bool,
     /// TRANSPARENCYDISPLAY: draw objects with their transparency on screen (on by default).
     pub transparency_display: bool,
     /// PLOTTRANSPARENCYOVERRIDE: 0 never plots transparency, 1 (default) uses the page setup's or
@@ -152,6 +154,7 @@ impl Default for Settings {
             dynpi_absolute: false,
             dynprompt: true,
             lwdisplay: false,
+            lwunits_mm: true,
             transparency_display: true,
             plot_transparency_override: 1,
             selection_cycling: false,

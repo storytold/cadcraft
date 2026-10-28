@@ -32,6 +32,7 @@ pub const PROFILE_VARS: &[&str] = &[
     "DYNDIVIS",
     "OSNAPHATCH",
     "LWDISPLAY",
+    "LWUNITS",
     "QPMODE",
     "SELECTIONEFFECT",
     "SELECTIONPREVIEW",
@@ -136,6 +137,7 @@ pub fn reset(s: &mut Session) {
     st.dynpi_absolute = d.dynpi_absolute;
     st.osnaphatch = d.osnaphatch;
     st.lwdisplay = d.lwdisplay;
+    st.lwunits_mm = d.lwunits_mm;
     st.qpmode = d.qpmode;
     st.pickbox = d.pickbox;
     st.aperture = d.aperture;

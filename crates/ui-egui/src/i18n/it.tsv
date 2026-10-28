@@ -1367,3 +1367,14 @@ menu	Modify	Edita
 	Check for Updates…	Verifica aggiornamenti…
 	CADCraft is up to date.	CADCraft è aggiornato.
 	Could not check for updates.	Impossibile verificare gli aggiornamenti.
+	Lineweight Settings	Impostazioni spessore di linea
+	Lineweight Settings...	Impostazioni spessore di linea...
+	Lineweights	Spessori di linea
+	Units for Listing	Unità di elenco
+	Millimeters (mm)	Millimetri (mm)
+	Inches (in)	Pollici (in)
+	Display Lineweight	Visualizza spessore di linea
+	Current Lineweight:	Spessore di linea corrente:
+	Open a drawing to choose its current lineweight.	Aprire un disegno per sceglierne lo spessore di linea corrente.
+	Objects whose lineweight is Default are drawn and plotted this wide.	Gli oggetti con spessore di linea Predefinito vengono disegnati e stampati con questa larghezza.
+	Default lineweight:	Spessore di linea predefinito:

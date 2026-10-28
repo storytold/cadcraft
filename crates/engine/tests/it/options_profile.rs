@@ -150,6 +150,27 @@ fn selection_tab_variables_have_autocads_defaults_ranges_and_are_saved() {
 }
 
 #[test]
+fn lwunits_lists_lineweights_in_millimetres_or_inches_and_is_saved() {
+    let mut s = Session::new();
+    assert_eq!(getvar(&mut s, "LWUNITS"), json!(1), "millimetres by default");
+    s.execute("options", &json!({"LWUNITS": 0, "LWDISPLAY": 1})).unwrap();
+    assert!(!s.settings.lwunits_mm && s.settings.lwdisplay);
+    for bad in [json!(2), json!(-1), json!("mm"), json!(0.5), json!(null), json!([1])] {
+        assert!(s.execute("setvar", &json!({"name": "LWUNITS", "value": bad})).is_err(), "{bad}");
+        assert!(s.execute("options", &json!({"LWDISPLAY": 0, "LWUNITS": bad})).is_err(), "{bad}");
+    }
+    assert!(!s.settings.lwunits_mm && s.settings.lwdisplay, "refused values change nothing");
+    let mut t = Session::new();
+    restore(&mut t, &profile(&s));
+    assert!(!t.settings.lwunits_mm, "kept with the profile");
+    let mut u = Session::new();
+    restore(&mut u, &json!({"LWUNITS": "inches"}));
+    assert!(u.settings.lwunits_mm, "a hostile saved value is skipped");
+    s.execute("options", &json!({"reset": true})).unwrap();
+    assert!(s.settings.lwunits_mm, "reset");
+}
+
+#[test]
 fn grips_show_up_to_the_object_limit() {
     let mut s = Session::new();
     assert!(s.shows_grips(100) && !s.shows_grips(101), "GRIPOBJLIMIT 100");

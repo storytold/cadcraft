@@ -118,6 +118,9 @@ fn route_ui_subsystems(app: &mut CadApp, id: &str, params: &Value) -> Option<Res
     if let Some(r) = crate::options::route(app, id, params) {
         return Some(r);
     }
+    if let Some(r) = crate::lwsettings::route(app, id, params) {
+        return Some(r);
+    }
     None
 }
 
