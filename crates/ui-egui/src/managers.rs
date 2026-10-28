@@ -17,10 +17,10 @@ use crate::theme::Tokens;
 
 /// The Block Attribute Manager (BATTMAN).
 mod battman;
-/// Named Viewports (View > Viewports > Named Viewports...).
-mod named_vports;
 /// The Dimension Style Manager (DIMSTYLE).
 mod dimstyle;
+/// Named Viewports (View > Viewports > Named Viewports...).
+mod named_vports;
 
 /// Open the dialog for a typed or menu-invoked command. `None` if `id` has no dialog here or the
 /// call carries parameters.

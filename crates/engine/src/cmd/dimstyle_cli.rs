@@ -8,7 +8,7 @@ use cadcraft_doc::{DimStyle, Drawing, EntityKind, Handle};
 use serde_json::{Value, json};
 
 use super::machines::{SelOutcome, SelectPhase};
-use super::*;
+use super::{CommandSpec, bad, bool_or, curves, str_param, targets};
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 const CMD: &str = "-dimstyle";
