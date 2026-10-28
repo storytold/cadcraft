@@ -14,6 +14,9 @@
   unless DESKTOPSHORTCUT=1 or DESKTOPSHORTCUT=0 is given.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <?ifndef HasCraftFontLicences ?>
+  <?define HasCraftFontLicences=0 ?>
+  <?endif ?>
   <Package
       Name="CADCraft"
       Manufacturer="Learning Machines LLC"
@@ -59,11 +62,19 @@
     <UIRef Id="CadcraftUI" />
 
     <Feature Id="Main" Title="CADCraft" Level="1">
+      <?if $(var.HasCraftFontLicences) = 1 ?>
+      <ComponentGroupRef Id="CraftFontLicences" />
+      <?endif ?>
       <ComponentGroupRef Id="CadcraftFiles" />
     </Feature>
   </Package>
 
   <Fragment>
+    <?if $(var.HasCraftFontLicences) = 1 ?>
+    <ComponentGroup Id="CraftFontLicences" Directory="INSTALLFOLDER">
+      <Files Include="$(var.DocsDir)\**" />
+    </ComponentGroup>
+    <?endif ?>
     <ComponentGroup Id="CadcraftFiles" Directory="INSTALLFOLDER">
       <Component Id="CadcraftApp" Guid="2AC18056-48DE-4079-AB79-4FDEF4FBB075">
         <File Id="CadcraftExe" Source="$(var.BinDir)\cadcraft.exe" KeyPath="yes">

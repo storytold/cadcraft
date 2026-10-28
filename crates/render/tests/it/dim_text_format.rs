@@ -75,3 +75,59 @@ fn dimpost_is_not_added_to_angular_dimensions() {
     a.text = "<> TYP".into();
     assert_eq!(text(&a, serde_json::json!({"DIMPOST": "<>mm"})), "90° TYP");
 }
+
+fn angular(radians: f64) -> Dimension {
+    let mut d = linear(0.0);
+    d.kind = DimKind::Angular3P;
+    d.p13 = Vec3::new(10.0, 0.0, 0.0);
+    d.p14 = Vec3::new(10.0 * radians.cos(), 10.0 * radians.sin(), 0.0);
+    d.defpt = Vec3::new(5.0 * (radians / 2.0).cos(), 5.0 * (radians / 2.0).sin(), 0.0);
+    d
+}
+
+#[test]
+fn angular_dimensions_use_the_style_decimal_separator() {
+    for (unit, radians, decimals, dot, comma) in
+        [(0, 39.4_f64.to_radians(), 1, "39.4°", "39,4°"), (2, std::f64::consts::FRAC_PI_4, 1, "50.0g", "50,0g"), (3, 1.25, 2, "1.25r", "1,25r")]
+    {
+        let three_point = angular(radians);
+        let mut two_line = three_point.clone();
+        two_line.kind = DimKind::Angular;
+        two_line.p16 = three_point.defpt;
+        two_line.p15 = three_point.p14;
+        two_line.p14 = three_point.p13;
+        two_line.p13 = Vec3::ZERO;
+        two_line.defpt = Vec3::ZERO;
+        for d in [three_point, two_line] {
+            let vars = serde_json::json!({"DIMAUNIT": unit, "DIMADEC": decimals});
+            assert_eq!(text(&d, vars.clone()), dot);
+            let mut vars = vars;
+            vars["DIMDSEP"] = serde_json::json!(",");
+            assert_eq!(text(&d, vars), comma);
+        }
+    }
+}
+
+#[test]
+fn angular_decimal_separator_respects_overrides_and_literal_text() {
+    let mut d = angular(39.4_f64.to_radians());
+    d.text = "<> at 1.5".into();
+    d.overrides.insert("DIMDSEP".into(), serde_json::json!(","));
+    assert_eq!(text(&d, serde_json::json!({"DIMADEC": 1, "DIMDSEP": "."})), "39,4° at 1.5");
+    d.overrides.insert("DIMDSEP".into(), serde_json::json!("."));
+    assert_eq!(text(&d, serde_json::json!({"DIMADEC": 1, "DIMDSEP": ","})), "39.4° at 1.5");
+}
+
+#[test]
+fn angular_zero_suppression_works_with_a_decimal_comma() {
+    let d = angular(0.5_f64.to_radians());
+    for (zin, expected) in [(0, "0,500°"), (1, ",500°"), (2, "0,5°"), (3, ",5°")] {
+        assert_eq!(text(&d, serde_json::json!({"DIMADEC": 3, "DIMAZIN": zin, "DIMDSEP": ","})), expected);
+    }
+}
+
+#[test]
+fn angular_decimal_separator_keeps_dms_notation() {
+    let d = angular(45.5125_f64.to_radians());
+    assert_eq!(text(&d, serde_json::json!({"DIMAUNIT": 1, "DIMADEC": 3, "DIMDSEP": ","})), "45°30'45\"");
+}

@@ -6,7 +6,11 @@
 //! parametrisation, end tangents and fit tolerance. Control-point edits change the curve
 //! directly and drop the fit data, as the curve no longer follows it.
 
-use super::*;
+use super::super::{point_value, points_param};
+use super::{
+    Accept, Entity, EntityKind, Handle, Input, Interactive, LwPolyline, MAX_GEN, PolyVertex, Prompt, Result, SelOutcome, SelectPhase, Session, Space,
+    Spline, Step, Value, Vec2, bad, bool_or, curves, f64_req, json, line, number, other, point_req, set_kind, str_param, targets,
+};
 
 /// The spline after a JSON SPLINEDIT option (`option` plus that option's parameters).
 pub(super) fn run_splinedit(s: &mut Session, p: &Value) -> Result<Value> {

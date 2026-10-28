@@ -5,12 +5,19 @@ use cadcraft_doc::{EntityKind, HAlign, MText, Point, RayLine, Text, VAlign};
 use cadcraft_geom::{Arc, Circle, Ellipse, PolyVertex, Polyline, Spline, Vec2, arc_to_bulge, bulge_to_arc};
 use serde_json::{Value, json};
 
-use super::helpers::*;
+use super::helpers::{arc, circle, line, lwpoly, polygon_from_edge, polygon_typed_radius_point, polygon_vertices, v3};
+
 use super::machines::number;
 use super::pline_opts::{Outcome, PlineAsk};
-use super::*;
+use super::{
+    CommandSpec, bad, bool_or, distinct_points, f64_or, f64_req, find_command, point_param, point_req, point_value, points_param, size_param,
+    str_param,
+};
+
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step, snap};
 
+/// Every draw command's spec: JSON parameters, menu path, aliases and the interactive prompt
+/// machine each command starts.
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("line", "Line", run_line)
@@ -36,7 +43,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("rectang", "Rectangle", super::draw2::run_rectang2)
             .menu(&["Draw", "Rectangle"])
             .alias(&["rec", "rectangle"])
-            .params("{p1, p2 | dimensions: [l, w] (p2 picks the quadrant) | area + length|breadth, rotation? (deg), fillet?, chamfer?: [d1, d2], width?, elevation?, thickness?}")
+            .params("{p1, p2 | dimensions: [l, w] (p2 picks the quadrant) | area + length|breadth, rotation? (deg), fillet?, chamfer?: [d1, d2], width?, elevation?, thickness?, center?: bool (p1 is the centre, not a corner; the size spans it evenly)}")
             .interactive(|_| Ok(Box::new(super::draw2::RectM2::default()))),
         CommandSpec::new("polygon", "Polygon", run_polygon)
             .menu(&["Draw", "Polygon"])

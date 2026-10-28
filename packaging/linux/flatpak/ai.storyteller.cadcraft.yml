@@ -50,6 +50,8 @@ modules:
       - install -Dm644 packaging/linux/ai.storyteller.cadcraft.desktop /app/share/applications/ai.storyteller.cadcraft.desktop
       - install -Dm644 packaging/linux/ai.storyteller.cadcraft.mime.xml /app/share/mime/packages/ai.storyteller.cadcraft.xml
       - mkdir -p /app/share/icons && cp -R assets/app-icon/hicolor /app/share/icons/
+      - install -Dm644 NOTICE /app/share/doc/cadcraft/NOTICE
+      - install -Dm644 ATTRIBUTION.md /app/share/doc/cadcraft/ATTRIBUTION.md
       - >-
         version=$(awk '/^\[/{p=($0=="[workspace.package]");next} p&&$1=="version"{gsub(/[" ]/,"",$3);print $3;exit}' Cargo.toml);
         install -d /app/share/metainfo;

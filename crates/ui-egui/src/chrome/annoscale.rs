@@ -22,7 +22,7 @@ pub fn status(app: &mut CadApp, ui: &mut egui::Ui, right: f32, cy: f32) -> f32 {
     let g = p.layout_no_wrap(current.clone(), crate::theme::small(), t.text);
     let w = g.size().x.min(160.0) + 22.0;
     let r = Rect::from_min_size(pos2(right - w, cy - 9.0), vec2(w, 18.0));
-    let resp = ui.interact(r, ui.id().with("anno_scale"), Sense::click());
+    let resp = ui.interact(r, ui.scope_id().with("anno_scale"), Sense::click());
     p.rect_filled(r, 3.0, if resp.hovered() { t.control_hover } else { t.control.gamma_multiply(0.5) });
     p.with_clip_rect(r.shrink2(vec2(4.0, 0.0))).galley(pos2(r.left() + 6.0, r.center().y - g.size().y / 2.0), g, t.text);
     let (ax, ay) = (r.right() - 9.0, r.center().y);

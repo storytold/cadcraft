@@ -41,8 +41,8 @@ pub struct Prompt {
     /// prompt (a point with no base yet, e.g. the first point of a line). Elsewhere a deferred
     /// pick arrives as the plain point it was picked at.
     pub deferred: bool,
-    /// The base is a rectangle's first corner (ZOOM Window, RECTANG, ARRAYRECT's unit cell): ortho
-    /// does not bend the opposite corner, so the rectangle keeps its area.
+    /// The base is a rectangle's first corner (ZOOM Window, PLOTWINDOW, RECTANG, ARRAYRECT's unit
+    /// cell): ortho does not bend the opposite corner, so the rectangle keeps its area.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub corner: bool,
     /// The grip this prompt stretches (one hot grip at the STRETCH prompt), as (object, grip
@@ -101,7 +101,7 @@ impl Prompt {
         self
     }
     pub fn kw(mut self, k: &[&str]) -> Self {
-        self.keywords = k.iter().map(|s| s.to_string()).collect();
+        self.keywords = k.iter().map(ToString::to_string).collect();
         self
     }
     pub fn base(mut self, p: Vec2) -> Self {

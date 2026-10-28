@@ -162,3 +162,32 @@ fn hostile_nesting_is_bounded() {
     assert!(r["blocks"]["LOOP"].as_u64().unwrap() >= 1, "{r}");
     assert!(r["blocks"].get("L16").is_none(), "nesting stops at MAX_BLOCK_DEPTH: {r}");
 }
+
+/// #1440: COUNT says which objects it scanned, which it counted, and why the rest were skipped.
+#[test]
+fn self_check_says_what_count_covered() {
+    let mut s = plates();
+    put(&mut s, &Space::Model, circle(300.0, 1.0));
+    let r = s.execute("count", &json!({})).unwrap();
+    let sc = &r["selfCheck"];
+    assert_eq!(sc["schema"], 1);
+    assert_eq!(sc["found"], 4, "three block references and one circle: {r}");
+    assert_eq!(sc["analyzed"], 3);
+    assert_eq!(sc["skipped"]["Circle"], json!({ "count": 1, "reason": "not a block reference" }));
+    assert_eq!(sc["caps"], json!({}));
+    assert_eq!(sc["implausible"], json!([]));
+
+    // Counting the circles compares only circles, and says so.
+    let h = put(&mut s, &Space::Model, circle(310.0, 1.0));
+    let r = s.execute("count", &json!({"object": h.hex()})).unwrap();
+    let sc = &r["selfCheck"];
+    assert_eq!((sc["found"].clone(), sc["analyzed"].clone()), (json!(5), json!(2)), "{r}");
+    assert_eq!(sc["skipped"]["Block Reference"]["reason"], "a different type");
+
+    // When nested expansion hits the work cap, the cap and its value are reported.
+    let mut s = Session::new();
+    define(&mut s, "LOOP", vec![insert("LOOP", 0.0, 1, 1)]);
+    put(&mut s, &Space::Model, insert("LOOP", 0.0, 1, 1));
+    let r: Value = s.execute("count", &json!({"space": "all"})).unwrap();
+    assert_eq!(r["selfCheck"]["caps"], json!({ "blockDepth": 16 }), "the infinite LOOP hits the depth cap: {r}");
+}

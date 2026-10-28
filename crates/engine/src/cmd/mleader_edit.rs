@@ -9,7 +9,8 @@ use serde_json::{Value, json};
 
 use super::helpers::v3;
 use super::machines::{SelOutcome, SelectPhase};
-use super::*;
+use super::{CommandSpec, bad, point_req, points_param, str_param, targets};
+
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 /// Most arrowheads added by one call, and most multileaders aligned / collected by one call.
@@ -310,6 +311,67 @@ fn segment_dir(m: &MLeader) -> Option<Vec2> {
     (v.len() > 1e-12).then(|| v.normalized())
 }
 
+fn align_parallel(items: &[(Handle, MLeader)], reference: Option<&MLeader>) -> Result<Vec<(Handle, Vec2)>> {
+    let rdir = reference.and_then(segment_dir).ok_or_else(|| bad("mleaderalign", "the reference multileader has no leader"))?;
+    let mut moves = Vec::new();
+    for (h, m) in items {
+        let Some(arrow) = m.leaders.first().and_then(|l| l.last()) else { continue };
+        let len = (m.landing.xy() - arrow.xy()).len();
+        moves.push((*h, arrow.xy() + rdir * len - m.landing.xy()));
+    }
+    Ok(moves)
+}
+
+fn align_distribute(mut items: Vec<(Handle, MLeader)>, line: Option<(Vec2, Vec2)>) -> Result<Vec<(Handle, Vec2)>> {
+    let (a, b) = line.ok_or_else(|| bad("mleaderalign", "`points` (first and last position) are required"))?;
+    let d = b - a;
+    if d.len() < 1e-12 {
+        return Err(bad("mleaderalign", "the two points coincide"));
+    }
+    let u = d.normalized();
+    items.sort_by(|x, y| (x.1.landing.xy() - a).dot(u).total_cmp(&(y.1.landing.xy() - a).dot(u)));
+    let n = items.len();
+    let mut moves = Vec::new();
+    for (i, (h, m)) in items.iter().enumerate() {
+        let f = if n > 1 { i as f64 / (n - 1) as f64 } else { 0.0 };
+        moves.push((*h, a + d * f - m.landing.xy()));
+    }
+    Ok(moves)
+}
+
+fn align_directional(
+    items: &[(Handle, MLeader)],
+    reference: Option<&MLeader>,
+    line: Option<(Vec2, Vec2)>,
+    spacing: Spacing,
+) -> Result<Vec<(Handle, Vec2)>> {
+    let (a, b) = line.ok_or_else(|| bad("mleaderalign", "`direction` (two points or an angle) is required"))?;
+    let d = b - a;
+    if d.len() < 1e-12 {
+        return Err(bad("mleaderalign", "the direction is zero"));
+    }
+    let u = d.normalized();
+    let origin = reference.map(|r| r.landing.xy()).unwrap_or(a);
+    let t_of = |m: &MLeader| (m.landing.xy() - origin).dot(u);
+    let mut moves = Vec::new();
+    if let Spacing::Value(sp) = spacing {
+        let (mut pos, mut neg): (Vec<_>, Vec<_>) = items.iter().partition(|(_, m)| t_of(m) >= 0.0);
+        pos.sort_by(|x, y| t_of(&x.1).total_cmp(&t_of(&y.1)));
+        neg.sort_by(|x, y| t_of(&y.1).total_cmp(&t_of(&x.1)));
+        for (k, (h, m)) in pos.iter().enumerate() {
+            moves.push((*h, origin + u * (sp * (k + 1) as f64) - m.landing.xy()));
+        }
+        for (k, (h, m)) in neg.iter().enumerate() {
+            moves.push((*h, origin - u * (sp * (k + 1) as f64) - m.landing.xy()));
+        }
+    } else {
+        for (h, m) in items {
+            moves.push((*h, origin + u * t_of(m) - m.landing.xy()));
+        }
+    }
+    Ok(moves)
+}
+
 fn align(s: &mut Session, hs: &[Handle], to: Option<Handle>, spacing: Spacing, line: Option<(Vec2, Vec2)>) -> Result<usize> {
     let mut items: Vec<(Handle, MLeader)> = Vec::new();
     for h in hs {
@@ -331,56 +393,11 @@ fn align(s: &mut Session, hs: &[Handle], to: Option<Handle>, spacing: Spacing, l
         (_, Some(t)) => Some(get_mleader(s, t).ok_or_else(|| bad("mleaderalign", "`to` is not a multileader"))?),
         (_, None) => return Err(bad("mleaderalign", "`to` (the multileader to align to) is required")),
     };
-    let mut moves: Vec<(Handle, Vec2)> = Vec::new();
-    match spacing {
-        Spacing::Parallel => {
-            let rdir = reference.as_ref().and_then(segment_dir).ok_or_else(|| bad("mleaderalign", "the reference multileader has no leader"))?;
-            for (h, m) in &items {
-                let Some(arrow) = m.leaders.first().and_then(|l| l.last()) else { continue };
-                let len = (m.landing.xy() - arrow.xy()).len();
-                moves.push((*h, arrow.xy() + rdir * len - m.landing.xy()));
-            }
-        }
-        Spacing::Distribute => {
-            let (a, b) = line.ok_or_else(|| bad("mleaderalign", "`points` (first and last position) are required"))?;
-            let d = b - a;
-            if d.len() < 1e-12 {
-                return Err(bad("mleaderalign", "the two points coincide"));
-            }
-            let u = d.normalized();
-            items.sort_by(|x, y| (x.1.landing.xy() - a).dot(u).total_cmp(&(y.1.landing.xy() - a).dot(u)));
-            let n = items.len();
-            for (i, (h, m)) in items.iter().enumerate() {
-                let f = if n > 1 { i as f64 / (n - 1) as f64 } else { 0.0 };
-                moves.push((*h, a + d * f - m.landing.xy()));
-            }
-        }
-        Spacing::Current | Spacing::Value(_) => {
-            let (a, b) = line.ok_or_else(|| bad("mleaderalign", "`direction` (two points or an angle) is required"))?;
-            let d = b - a;
-            if d.len() < 1e-12 {
-                return Err(bad("mleaderalign", "the direction is zero"));
-            }
-            let u = d.normalized();
-            let origin = reference.as_ref().map(|r| r.landing.xy()).unwrap_or(a);
-            let t_of = |m: &MLeader| (m.landing.xy() - origin).dot(u);
-            if let Spacing::Value(sp) = spacing {
-                let (mut pos, mut neg): (Vec<_>, Vec<_>) = items.iter().partition(|(_, m)| t_of(m) >= 0.0);
-                pos.sort_by(|x, y| t_of(&x.1).total_cmp(&t_of(&y.1)));
-                neg.sort_by(|x, y| t_of(&y.1).total_cmp(&t_of(&x.1)));
-                for (k, (h, m)) in pos.iter().enumerate() {
-                    moves.push((*h, origin + u * (sp * (k + 1) as f64) - m.landing.xy()));
-                }
-                for (k, (h, m)) in neg.iter().enumerate() {
-                    moves.push((*h, origin - u * (sp * (k + 1) as f64) - m.landing.xy()));
-                }
-            } else {
-                for (h, m) in &items {
-                    moves.push((*h, origin + u * t_of(m) - m.landing.xy()));
-                }
-            }
-        }
-    }
+    let moves = match spacing {
+        Spacing::Parallel => align_parallel(&items, reference.as_ref())?,
+        Spacing::Distribute => align_distribute(items, line)?,
+        Spacing::Current | Spacing::Value(_) => align_directional(&items, reference.as_ref(), line, spacing)?,
+    };
     move_content(s, &moves)?;
     Ok(moves.len())
 }

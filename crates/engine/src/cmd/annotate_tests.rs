@@ -1,4 +1,4 @@
-use cadcraft_doc::{AssocSnap, DimKind, Dimension, EntityKind, Handle};
+use cadcraft_doc::{DimKind, Dimension, EntityKind, Handle};
 use cadcraft_geom::Vec2;
 use serde_json::{Value, json};
 
@@ -136,7 +136,9 @@ fn angular_between_lines_follows_rotation() {
     let b = line(&mut s, [0.0, 0.0], [0.0, 10.0]);
     let d = h(&s.execute("dimangular", &json!({ "lines": [a.hex(), b.hex()], "at": [3, 3] })).unwrap());
     let dm = dim(&s, d);
-    assert!(dm.assoc.iter().any(|x| matches!(x.snap, AssocSnap::Intersection { .. })));
+    // Two picked lines make a two-line angular dimension (type 2), tied to both lines at all four points.
+    assert_eq!(dm.kind, DimKind::Angular);
+    assert_eq!(dm.assoc.len(), 4);
     assert_eq!(cadcraft_render::dimension_in(s.doc().unwrap(), &dm).value, "90°");
     // Swing the second line to 45°.
     s.execute("properties.set", &json!({ "handles": [b.hex()], "end": [10, 10] })).unwrap();

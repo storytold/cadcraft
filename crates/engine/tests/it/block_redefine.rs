@@ -40,6 +40,12 @@ fn a_block_cannot_be_redefined_to_reference_itself() {
     let r = s.execute("block", &json!({ "name": "a", "base": [0, 0], "handles": [b] }));
     assert!(r.is_err_and(|e| e.to_string().contains("references itself")));
     assert_eq!(contents(&s, "A"), ["line"]);
+
+    // Through a multileader whose content is the block being redefined.
+    let m = s.execute("mleader", &json!({ "points": [[0, 0], [10, 5]], "block": "A" })).unwrap()["handle"].clone();
+    let r = s.execute("block", &json!({ "name": "A", "base": [0, 0], "handles": [m] }));
+    assert!(r.is_err_and(|e| e.to_string().contains("references itself")));
+    assert_eq!(contents(&s, "A"), ["line"]);
 }
 
 #[test]

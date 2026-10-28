@@ -1,6 +1,6 @@
 //! PDF export with layers, several sheets and hyperlinks (issue #560): drawing layers become
 //! optional content groups, `layouts` plots several sheets into one file with page labels, and
-//! linked entities get link annotations. The tests parse the written objects.
+//! linked entities get link annotations. The tests read the written file back.
 
 use cadcraft_color::Color;
 use cadcraft_doc::{Block, Common, Drawing, Entity, EntityKind, Handle, Insert, Layer, Line, Space, Viewport};
@@ -9,57 +9,19 @@ use cadcraft_io::pdf::{MAX_PAGES, pdf_sheets};
 use cadcraft_io::{PdfOptions, plot};
 use serde_json::json;
 
-/// The objects of a PDF by number, after checking the cross-reference table points at them.
-fn objects(bytes: &[u8]) -> Vec<(usize, String)> {
-    assert!(bytes.starts_with(b"%PDF-1."));
-    // Byte offsets stay valid: non-ASCII bytes (the binary comment) become `?`.
-    let text: String = bytes.iter().map(|b| if b.is_ascii() { char::from(*b) } else { '?' }).collect();
-    let sx = text.rfind("startxref\n").expect("startxref");
-    let xref: usize = text[sx + 10..].lines().next().unwrap().trim().parse().unwrap();
-    assert!(text[xref..].starts_with("xref\n"));
-    let mut lines = text[xref..].lines().skip(1);
-    let count: usize = lines.next().unwrap().split_whitespace().nth(1).unwrap().parse().unwrap();
-    let entries: Vec<&str> = lines.take(count).collect();
-    assert_eq!(entries.len(), count);
-    let mut out = Vec::new();
-    for (i, e) in entries.iter().enumerate().skip(1) {
-        let off: usize = e[..10].parse().unwrap();
-        let head = format!("{i} 0 obj\n");
-        assert!(bytes[off..].starts_with(head.as_bytes()), "object {i} offset");
-        let body = &text[off + head.len()..];
-        let end = body.find("\nendobj\n").expect("endobj");
-        out.push((i, body[..end].to_string()));
-    }
-    assert!(text.contains(&format!("/Size {count}")));
-    out
+use crate::pdf_read::{self, Doc};
+
+fn read(bytes: &[u8]) -> Doc {
+    pdf_read::read(bytes)
 }
 
-fn object(objs: &[(usize, String)], n: usize) -> &str {
-    &objs.iter().find(|(i, _)| *i == n).unwrap().1
+fn ocg_names(doc: &Doc) -> Vec<String> {
+    doc.ocgs.iter().map(|g| g.name.clone()).collect()
 }
 
-/// The object a `/Key n 0 R` entry of `dict` refers to.
-fn reference(dict: &str, key: &str) -> usize {
-    let i = dict.find(&format!("{key} ")).unwrap_or_else(|| panic!("{key} in {dict}")) + key.len() + 1;
-    dict[i..].split_whitespace().next().unwrap().parse().unwrap()
-}
-
-/// Uncompressed content streams in page order.
-fn contents(objs: &[(usize, String)]) -> Vec<String> {
-    pages(objs).iter().map(|p| object(objs, reference(p, "/Contents")).to_string()).collect()
-}
-
-fn pages(objs: &[(usize, String)]) -> Vec<String> {
-    objs.iter().filter(|(_, b)| b.starts_with("<< /Type /Page ")).map(|(_, b)| b.clone()).collect()
-}
-
-fn catalog(objs: &[(usize, String)]) -> String {
-    objs.iter().find(|(_, b)| b.starts_with("<< /Type /Catalog")).unwrap().1.clone()
-}
-
-/// The names of the optional content groups.
-fn ocg_names(objs: &[(usize, String)]) -> Vec<String> {
-    objs.iter().filter_map(|(_, b)| b.strip_prefix("<< /Type /OCG /Name ").map(|r| r.trim_end_matches(" >>").to_string())).collect()
+/// The `BDC` marks of a content: the property resource each one names.
+fn marks(content: &str) -> Vec<String> {
+    pdf_read::ops(content).into_iter().filter(|o| o.op == "BDC").filter_map(|o| o.names.get(1).cloned()).collect()
 }
 
 fn add_line(d: &mut Drawing, space: &Space, layer: &str, a: (f64, f64), b: (f64, f64)) -> Handle {
@@ -109,45 +71,66 @@ fn raw(extra: serde_json::Value) -> serde_json::Value {
 #[test]
 fn drawing_layers_become_pdf_layers() {
     let d = layered();
-    let objs = objects(&plot(&d, &Space::Model, &raw(json!({}))).unwrap());
-    let names = ocg_names(&objs);
+    let doc = read(&plot(&d, &Space::Model, &raw(json!({}))).unwrap());
     // Plotted layers only, in drawing order of first use; block contents on layer 0 are on
-    // the block reference's layer.
-    assert_eq!(names, ["(0)", "(Walls)", "(Doors)"]);
-    let cat = catalog(&objs);
-    assert!(cat.contains("/Version /1.5") && cat.contains("/OCProperties") && cat.contains("/OFF []"), "{cat}");
-    // Every OCG is listed and switchable.
-    let ocgs: Vec<usize> = objs.iter().filter(|(_, b)| b.starts_with("<< /Type /OCG")).map(|(i, _)| *i).collect();
-    for id in &ocgs {
-        assert!(cat.contains(&format!("{id} 0 R")));
-    }
+    // the block reference's layer. None starts hidden.
+    assert_eq!(ocg_names(&doc), ["0", "Walls", "Doors"]);
+    assert!(doc.ocgs.iter().all(|g| !g.off));
+    // One sheet: the viewer opens with its layer panel.
+    assert_eq!(doc.page_mode.as_deref(), Some("UseOC"));
     // The page maps its marks to the groups, and the marked sections are balanced.
-    // Marks are named after the layer's place in the layer table (0, Defpoints, Walls, …).
-    let page = &pages(&objs)[0];
-    for i in [0, 2, 5] {
-        let id = reference(page, &format!("/L{i}"));
-        assert!(ocgs.contains(&id));
+    let page = &doc.pages[0];
+    let groups: Vec<&str> = page.properties.iter().map(|(_, g)| g.as_str()).collect();
+    for n in ["0", "Walls", "Doors"] {
+        assert!(groups.contains(&n), "{n} in {groups:?}");
     }
-    let c = &contents(&objs)[0];
-    assert_eq!(c.matches(" BDC\n").count(), c.matches("EMC\n").count());
-    assert!(c.contains("/OC /L2 BDC\n1 0 0 RG"), "the red wall line is on Walls: {c}");
-    let (q, bdc, emc) = (c.find("re W n").unwrap(), c.find("BDC").unwrap(), c.rfind("EMC").unwrap());
-    assert!(q < bdc && emc < c.rfind("Q\n").unwrap(), "marked content inside the clip's q/Q");
+    let c = &page.content;
+    assert_eq!(pdf_read::count(c, "BDC"), pdf_read::count(c, "EMC"));
+    for m in marks(c) {
+        assert!(page.properties.iter().any(|(k, _)| *k == m), "mark {m} is a page property");
+    }
+    // The red wall line is on Walls.
+    let walls = page.properties.iter().find(|(_, g)| g == "Walls").map(|(k, _)| k.clone()).unwrap();
+    let ops = pdf_read::ops(c);
+    let at = ops.iter().position(|o| o.op == "BDC" && o.names.get(1) == Some(&walls)).unwrap();
+    let next = ops[at..].iter().find(|o| o.op == "RG").unwrap();
+    assert_eq!(next.nums, [1.0, 0.0, 0.0], "{c}");
+    // Marked content inside the clip's q/Q.
+    let first_bdc = ops.iter().position(|o| o.op == "BDC").unwrap();
+    let last_emc = ops.iter().rposition(|o| o.op == "EMC").unwrap();
+    let clip = ops.iter().position(|o| o.op == "W").unwrap();
+    let last_q = ops.iter().rposition(|o| o.op == "Q").unwrap();
+    assert!(clip < first_bdc && last_emc < last_q, "marked content inside the clip's q/Q");
 }
 
 #[test]
 fn layers_that_are_off_are_included_hidden_on_request() {
     let d = layered();
-    let objs = objects(&plot(&d, &Space::Model, &raw(json!({"offLayers": true}))).unwrap());
-    let names = ocg_names(&objs);
-    assert!(names.contains(&"(Notes)".to_string()) && !names.contains(&"(Hidden)".to_string()), "{names:?}");
-    let notes = objs.iter().find(|(_, b)| b.contains("/Name (Notes)")).unwrap().0;
-    let cat = catalog(&objs);
-    assert!(cat.contains(&format!("/OFF [{notes} 0 R]")), "{cat}");
-    // Off: neither the layer nor its objects; without layers, no optional content at all.
-    let flat = objects(&plot(&d, &Space::Model, &raw(json!({"layers": false}))).unwrap());
-    assert!(ocg_names(&flat).is_empty() && !catalog(&flat).contains("/OCProperties"));
-    assert!(!contents(&flat)[0].contains("BDC"));
+    let doc = read(&plot(&d, &Space::Model, &raw(json!({"offLayers": true}))).unwrap());
+    let names = ocg_names(&doc);
+    assert!(names.contains(&"Notes".to_string()) && !names.contains(&"Hidden".to_string()), "{names:?}");
+    let off: Vec<&str> = doc.ocgs.iter().filter(|g| g.off).map(|g| g.name.as_str()).collect();
+    assert_eq!(off, ["Notes"]);
+    // Without layers, no optional content at all.
+    let flat = read(&plot(&d, &Space::Model, &raw(json!({"layers": false}))).unwrap());
+    assert!(flat.ocgs.is_empty() && flat.page_mode.is_none());
+    assert_eq!(pdf_read::count(flat.content(), "BDC"), 0);
+}
+
+#[test]
+fn layers_that_are_off_are_plotted_only_on_request() {
+    let d = layered();
+    let strokes = |o: serde_json::Value| {
+        let doc = read(&plot(&d, &Space::Model, &raw(o)).unwrap());
+        pdf_read::drawn(doc.content()).iter().filter(|o| o.op == "m").count()
+    };
+    // By default Notes (off) and Hidden (frozen) aren't drawn: the four lines less those two,
+    // plus the door.
+    let plain = strokes(json!({}));
+    assert_eq!(plain, 3, "lines on 0 and Walls, and the door leaf");
+    // `offLayers` adds Notes (on a hidden PDF layer), never the frozen layer; it needs PDF layers.
+    assert_eq!(strokes(json!({"offLayers": true})), 4);
+    assert_eq!(strokes(json!({"layers": false, "offLayers": true})), plain);
 }
 
 #[test]
@@ -169,43 +152,50 @@ fn viewport_contents_keep_their_layers() {
     };
     d.add(&paper, Common { layer: "Viewports".into(), ..Default::default() }, EntityKind::Viewport(vp)).unwrap();
     add_line(&mut d, &paper, "Title", (10.0, 10.0), (50.0, 10.0));
-    let objs = objects(&plot(&d, &paper, &raw(json!({}))).unwrap());
-    let names = ocg_names(&objs);
+    let names = ocg_names(&read(&plot(&d, &paper, &raw(json!({}))).unwrap()));
     // The viewport's frozen layer is left out; the model layers seen through it are kept.
-    for n in ["(Viewports)", "(0)", "(Doors)", "(Title)"] {
+    for n in ["Viewports", "0", "Doors", "Title"] {
         assert!(names.contains(&n.to_string()), "{n} in {names:?}");
     }
-    assert!(!names.contains(&"(Walls)".to_string()));
+    assert!(!names.contains(&"Walls".to_string()));
 }
 
 #[test]
 fn several_sheets_in_one_file_with_page_labels() {
     let mut d = layered();
     add_line(&mut d, &Space::Paper("Layout1".into()), "Walls", (10.0, 10.0), (50.0, 10.0));
-    let bytes = plot(&d, &Space::Model, &raw(json!({"layouts": ["model", "LAYOUT1"]}))).unwrap();
+    let doc = read(&plot(&d, &Space::Model, &raw(json!({"layouts": ["model", "LAYOUT1"]}))).unwrap());
     // "all": model (it has objects), then every layout in tab order.
-    let all = objects(&plot(&d, &Space::Model, &raw(json!({"layouts": "All"}))).unwrap());
-    assert!(catalog(&all).contains("[0 << /P (Model) >> 1 << /P (Layout1) >> 2 << /P (Layout2) >>]"), "{}", catalog(&all));
-    let objs = objects(&bytes);
-    let tree = objs.iter().find(|(_, b)| b.starts_with("<< /Type /Pages")).unwrap().1.clone();
-    assert!(tree.contains("/Count 2"), "{tree}");
-    assert_eq!(pages(&objs).len(), 2);
-    let cat = catalog(&objs);
-    assert!(cat.contains("/PageLabels << /Nums [0 << /P (Model) >> 1 << /P (Layout1) >>] >>"), "{cat}");
-    // One OCG per layer for the whole file, shared by the pages.
-    let names = ocg_names(&objs);
-    assert_eq!(names.iter().filter(|n| *n == "(Walls)").count(), 1);
-    let walls = objs.iter().find(|(_, b)| b.contains("/Name (Walls)")).unwrap().0;
-    for p in pages(&objs) {
-        assert!(p.contains(&format!(" {walls} 0 R")), "{p}");
-    }
+    let all = read(&plot(&d, &Space::Model, &raw(json!({"layouts": "All"}))).unwrap());
+    assert_eq!(all.labels, ["Model", "Layout1", "Layout2"]);
+    assert_eq!(doc.pages.len(), 2);
+    assert_eq!(doc.labels, ["Model", "Layout1"]);
     // Each page has its own sheet: model on A4 landscape, the layout on its page setup.
-    let c = contents(&objs);
-    assert!(c[0].contains("1 0 0 RG") && c[1].contains("1 0 0 RG"));
+    for p in &doc.pages {
+        assert!(pdf_read::ops(&p.content).iter().any(|o| o.op == "RG" && o.nums == [1.0, 0.0, 0.0]), "the red wall line: {}", p.content);
+    }
+    let size = |p: &pdf_read::Page| (p.media[2] - p.media[0], p.media[3] - p.media[1]);
+    assert!((size(&doc.pages[0]).0 - 841.89).abs() < 0.01 && (size(&doc.pages[0]).1 - 595.276).abs() < 0.01);
     // The library call does the same.
     let o = PdfOptions { compress: false, ..PdfOptions::default() };
-    let objs2 = objects(&pdf_sheets(&d, &[Space::Paper("Layout1".into()), Space::Model], &o).unwrap());
-    assert!(catalog(&objs2).contains("0 << /P (Layout1) >> 1 << /P (Model) >>"));
+    let doc2 = read(&pdf_sheets(&d, &[Space::Paper("Layout1".into()), Space::Model], &o).unwrap());
+    assert_eq!(doc2.labels, ["Layout1", "Model"]);
+    // Title: the first page's label unless given.
+    assert_eq!(doc2.title.as_deref(), Some("Layout1"));
+    assert_eq!((doc2.creator.as_deref(), doc2.producer.as_deref()), (Some("CADCraft"), Some("CADCraft")));
+}
+
+#[test]
+fn several_sheets_share_one_pdf_layer_per_drawing_layer() {
+    let mut d = layered();
+    add_line(&mut d, &Space::Paper("Layout1".into()), "Walls", (10.0, 10.0), (50.0, 10.0));
+    let doc = read(&plot(&d, &Space::Model, &raw(json!({"layouts": ["model", "LAYOUT1"]}))).unwrap());
+    assert_eq!(ocg_names(&doc).iter().filter(|n| *n == "Walls").count(), 1);
+    for p in &doc.pages {
+        assert!(p.properties.iter().any(|(_, g)| g == "Walls"));
+    }
+    // Several sheets: no layer panel forced open.
+    assert!(doc.page_mode.is_none());
 }
 
 #[test]
@@ -230,28 +220,51 @@ fn hyperlinks_become_link_annotations() {
         {"handle": h.hex(), "url": "https://example.com/ü"},
         {"url": "https://example.com/no-handle"},
     ]);
-    let objs = objects(&plot(&d, &Space::Model, &raw(json!({ "links": links }))).unwrap());
-    let annots: Vec<&String> = objs.iter().map(|(_, b)| b).filter(|b| b.contains("/Subtype /Link")).collect();
-    assert_eq!(annots.len(), 2, "{annots:?}");
-    assert!(annots[0].contains("/A << /S /URI /URI (https://example.com/a\\(1\\)) >>"), "{}", annots[0]);
-    assert!(annots[1].contains("(https://example.com/%C3%BC)"), "{}", annots[1]);
-    let page = &pages(&objs)[0];
-    assert!(page.contains("/Annots ["));
+    let doc = read(&plot(&d, &Space::Model, &raw(json!({ "links": links }))).unwrap());
+    let annots = &doc.pages[0].links;
+    assert_eq!(annots.len(), 2);
+    assert_eq!(annots[0].uri, "https://example.com/a(1)");
+    assert_eq!(annots[1].uri, "https://example.com/%C3%BC");
     // The rectangle is inside the A4 landscape sheet and wide like the line.
-    let r = annots[0].split("/Rect [").nth(1).unwrap().split(']').next().unwrap();
-    let v: Vec<f64> = r.split_whitespace().map(|x| x.parse().unwrap()).collect();
+    let v = annots[0].rect;
     assert!(v[0] >= 0.0 && v[2] <= 841.9 && v[1] >= 0.0 && v[3] <= 595.3 && v[2] - v[0] > 100.0, "{v:?}");
 }
 
-#[test]
-fn unusual_layer_names_and_titles_are_escaped() {
+fn unusual_names() -> Drawing {
     let mut d = Drawing::new_metric();
     for name in ["a(b)\\c", "Wände", "日本"] {
         d.layers.push(Layer { name: name.into(), ..Layer::default() });
         add_line(&mut d, &Space::Model, name, (0.0, 0.0), (10.0, 10.0));
     }
-    let objs = objects(&plot(&d, &Space::Model, &raw(json!({"title": "Plan ü"}))).unwrap());
-    let names = ocg_names(&objs);
-    assert_eq!(names, ["(a\\(b\\)\\\\c)", "<FEFF005700E4006E00640065>", "<FEFF65E5672C>"]);
-    assert!(objs.iter().any(|(_, b)| b.contains("/Title <FEFF0050006C0061006E002000FC>")));
+    d
+}
+
+#[test]
+fn unusual_layer_names_are_kept() {
+    let doc = read(&plot(&unusual_names(), &Space::Model, &raw(json!({}))).unwrap());
+    assert_eq!(ocg_names(&doc), ["a(b)\\c", "Wände", "日本"]);
+}
+
+#[test]
+fn unusual_titles_are_kept() {
+    let doc = read(&plot(&unusual_names(), &Space::Model, &raw(json!({"title": "Plan ü (1)\\"}))).unwrap());
+    assert_eq!(doc.title.as_deref(), Some("Plan ü (1)\\"));
+}
+
+#[test]
+fn layers_past_the_cap_print_without_a_pdf_layer() {
+    // One more drawing layer than a file has PDF layers (4096).
+    let mut d = Drawing::new_metric();
+    for i in 0..4097 {
+        let name = format!("L{i}");
+        d.layers.push(Layer { name: name.clone(), ..Layer::default() });
+        add_line(&mut d, &Space::Model, &name, (0.0, f64::from(i)), (10.0, f64::from(i)));
+    }
+    let doc = read(&plot(&d, &Space::Model, &raw(json!({}))).unwrap());
+    assert_eq!(doc.ocgs.len(), 4096);
+    assert!(!ocg_names(&doc).contains(&"L4096".to_string()));
+    // Every line is still drawn; only the last is outside marked content.
+    let c = doc.content();
+    assert_eq!(pdf_read::drawn(c).iter().filter(|o| o.op == "m").count(), 4097);
+    assert_eq!((pdf_read::count(c, "BDC"), pdf_read::count(c, "EMC")), (4096, 4096));
 }

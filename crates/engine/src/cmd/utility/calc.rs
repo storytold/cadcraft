@@ -73,7 +73,7 @@ struct Parser<'a> {
 
 impl Parser<'_> {
     fn peek(&mut self) -> Option<u8> {
-        while self.s.get(self.i).is_some_and(|c| c.is_ascii_whitespace()) {
+        while self.s.get(self.i).is_some_and(u8::is_ascii_whitespace) {
             self.i += 1;
         }
         self.s.get(self.i).copied()

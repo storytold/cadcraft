@@ -178,6 +178,7 @@
 	Close Array Editing	Kiosztás szerkesztésének lezárása
 	Close Block Editor	Blokkszerkesztő bezárása
 	Close Comparison	Összehasonlítás bezárása
+	Export Comparison	Összehasonlítás exportálása
 	Closed	Zárt
 	Coincident	Egybeeső
 	Collapse Palettes	Paletták összecsukása
@@ -239,6 +240,7 @@
 	Curved	Ívelt
 	Custom	Egyéni
 	Cut	Kivágás
+	Cut with Base Point	Kivágás bázisponttal
 	Cyan	Cián
 	Cylinder	Henger
 	DWG	DWG
@@ -861,6 +863,7 @@
 	Rename Text Style	Szövegstílus átnevezése
 	Rename...	Átnevezés...
 	Repeat {command}	Ismétlés: {command}
+	Replace Block...	Blokk cseréje...
 	Requires a point (x,y, @dx,dy or @d<a).	Pontot kell megadni (x,y, @dx,dy vagy @d<a).
 	Reset Palettes	Paletták visszaállítása
 	Reset Panel Layout	Panelelrendezés visszaállítása
@@ -1341,3 +1344,6 @@ menu	Dimension	Méretezés
 menu	Draw	Rajzolás
 menu	Modify	Módosítás
 menu	View	Nézet
+	Check for Updates…	Frissítések keresése…
+	CADCraft is up to date.	A CADCraft naprakész.
+	Could not check for updates.	A frissítések keresése nem sikerült.

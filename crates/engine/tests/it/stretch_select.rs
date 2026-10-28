@@ -128,3 +128,49 @@ fn hostile_polygon_and_fence_never_panic() {
         s.cancel();
     }
 }
+
+#[test]
+fn polygon_moves_only_the_multiline_vertices_inside_it() {
+    let mut s = Session::new();
+    s.execute("mline", &json!({ "points": [[0, 0], [3000, 0], [3000, 2000]], "scale": 200 })).unwrap();
+    let r = s.execute("stretch", &json!({ "polygon": [[2500, 1500], [3500, 1500], [3500, 2500], [2500, 2500]], "delta": [610, 0] })).unwrap();
+    assert_eq!(r["stretched"], 1);
+    let pts = |s: &Session| -> Vec<(f64, f64)> {
+        s.doc()
+            .unwrap()
+            .model
+            .iter()
+            .find_map(|e| match &e.kind {
+                EntityKind::MLine(m) => Some(m.vertices.iter().map(|v| (v.p.x, v.p.y)).collect()),
+                _ => None,
+            })
+            .unwrap()
+    };
+    assert_eq!(pts(&s), vec![(0.0, 0.0), (3000.0, 0.0), (3610.0, 2000.0)]);
+    // A window over the first vertex moves that vertex only, not the whole multiline.
+    s.execute("stretch", &json!({ "window": [[-100, -100], [100, 100]], "delta": [610, 0] })).unwrap();
+    assert_eq!(pts(&s), vec![(610.0, 0.0), (3000.0, 0.0), (3610.0, 2000.0)]);
+}
+
+#[test]
+fn small_area_around_a_multiline_vertex_moves_it_at_a_large_scale() {
+    let mline_points = |s: &Session| -> Vec<(f64, f64)> {
+        s.doc()
+            .unwrap()
+            .model
+            .iter()
+            .find_map(|e| match &e.kind {
+                EntityKind::MLine(m) => Some(m.vertices.iter().map(|v| (v.p.x, v.p.y)).collect()),
+                _ => None,
+            })
+            .unwrap()
+    };
+    let mut s = Session::new();
+    s.execute("mline", &json!({ "points": [[0, 0], [3000, 0], [3000, 2000]], "scale": 200 })).unwrap();
+    // The element lines run 100 away from the middle vertex, so this area touches none of them.
+    let r = s.execute("stretch", &json!({ "polygon": [[2995, -5], [3005, -5], [3005, 5], [2995, 5]], "delta": [0, 610] })).unwrap();
+    assert_eq!(r["stretched"], 1);
+    assert_eq!(mline_points(&s), vec![(0.0, 0.0), (3000.0, 610.0), (3000.0, 2000.0)]);
+    s.execute("stretch", &json!({ "window": [[2995, 605], [3005, 615]], "delta": [0, -610] })).unwrap();
+    assert_eq!(mline_points(&s), vec![(0.0, 0.0), (3000.0, 0.0), (3000.0, 2000.0)]);
+}

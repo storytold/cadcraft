@@ -144,6 +144,7 @@
 	Close All Other Drawings	Закрити всі інші креслення
 	Closed	Замкнений
 	Close Comparison	Закрити порівняння
+	Export Comparison	Експортувати порівняння
 	Coincident	Збіг
 	Collapse Palettes	Згорнути палітри
 	Collapse Tool Sets	Згорнути набори інструментів
@@ -191,6 +192,7 @@
 	Current selection	Поточний вибір
 	Current: {color}	Поточний: {color}
 	Cut	Вирізати
+	Cut with Base Point	Вирізати з базовою точкою
 	Cyan	Блакитний
 	Cylinder	Циліндр
 	DWG	DWG
@@ -255,6 +257,7 @@
 	Drawing Template (DWT)	Шаблон креслення (DWT)
 	Drawing Utilities	Утиліти креслення
 	Drawings (DWG, DXF)	Креслення (DWG, DXF)
+	AutoLISP (LSP)	AutoLISP (LSP)
 	SVG drawings (SVG, SVGZ)	Креслення SVG (SVG, SVGZ)
 	Dynamic	Динамічно
 	Dynamic Dimensions	Динамічні розміри
@@ -747,6 +750,7 @@
 	Rename Text Style	Перейменувати текстовий стиль
 	Rename...	Перейменувати...
 	Repeat {command}	Повторити {command}
+	Replace Block...	Замінити блок...
 	Requires a point (x,y, @dx,dy or @d<a).	Потрібна точка (x,y, @dx,dy або @d<a).
 	Reset Palettes	Скинути палітри
 	Restore	Відновити
@@ -980,6 +984,10 @@
 	Reset keeps the interface language.	Скидання не змінює мову інтерфейсу.
 	Reset to Defaults	Скинути до типових
 	Save new drawings as	Зберігати нові креслення як
+	Units of new drawings	Одиниці нових креслень
+	Imperial (inches)	Імперські (дюйми)
+	Metric (millimetres)	Метричні (міліметри)
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	Команда «Створити» і перше креслення під час запуску використовують ці одиниці, якщо не задано типовий шаблон (QNEWTEMPLATE).
 	Screen magnifiers, screen readers and recorders follow the system cursor.	Екранні лупи, програми читання з екрана та запису стежать за системним курсором.
 	Select objects first, then choose a command	Спочатку вибирати об'єкти, потім команду
 	Selection	Вибір
@@ -1281,6 +1289,8 @@
 	Run Script...	Виконати сценарій...
 	Query Texts	Запит текстів
 	Analyze Shapes	Аналіз фігур
+	Analyze Usage	Аналіз використання
+	Implied Loops	Неявні контури
 	Hatch Pick	Вибір для штрихування
 # Hatch and Gradient dialog
 	Hatch and Gradient	Штрихування та градієнт
@@ -1358,3 +1368,6 @@
 	Discard	Скасувати зміни
 	Customize	Налаштування інтерфейсу
 	Edit Command Aliases (PGP)...	Редагувати псевдоніми команд (PGP)...
+	Check for Updates…	Перевірити оновлення…
+	CADCraft is up to date.	Встановлено найновішу версію CADCraft.
+	Could not check for updates.	Не вдалося перевірити оновлення.

@@ -58,6 +58,9 @@ pub struct Env {
     pub order: Option<(usize, Arc<Vec<Handle>>)>,
     /// `tblnext`'s place in each table.
     pub tblnext: HashMap<String, usize>,
+    /// A block definition `entmake` has begun (a BLOCK list) and not yet ended (ENDBLK): the
+    /// entities made meanwhile go into it, numbered when it ends.
+    pub pending_block: Option<(cadcraft_doc::Block, Vec<cadcraft_doc::Entity>)>,
     /// The command history's length after LISP last printed a line: when something else wrote since
     /// (a prompt, a command's echo), a leading newline only ends that line.
     pub printed_at: Option<usize>,
@@ -75,6 +78,7 @@ impl Default for Env {
             deleted: HashMap::new(),
             order: None,
             tblnext: HashMap::new(),
+            pending_block: None,
             printed_at: None,
         };
         builtins::install(&mut e);
@@ -440,6 +444,12 @@ impl Session {
     /// A LISP error: run `*error*` when the routine defined one, else print it.
     fn lisp_error(&mut self, e: LispError) {
         let Some(mut run) = self.lisp.run.take() else { return };
+        // A block definition the failed routine began is dropped: a later routine's entities
+        // would otherwise go into it instead of the drawing (#1662). A definition still spans
+        // runs that end normally.
+        if let Some(env) = self.lisp.envs.get_mut(&run.uid) {
+            env.pending_block = None;
+        }
         // The command a failed routine left running is cancelled.
         if self.running.is_some() {
             self.cancel();
@@ -567,6 +577,20 @@ impl Session {
         self.lisp.active
     }
 
+    /// The commands the active drawing's LISP defines (`c:` functions), uppercase and sorted.
+    pub fn lisp_commands(&self) -> Vec<String> {
+        let Ok(uid) = self.state().map(|s| s.uid) else { return Vec::new() };
+        let Some(env) = self.lisp.envs.get(&uid) else { return Vec::new() };
+        let mut names: Vec<String> = env
+            .globals
+            .iter()
+            .filter(|(name, f)| name.name().starts_with("C:") && matches!(f, Value::Func(_) | Value::Subr(_)))
+            .filter_map(|(name, _)| name.name().strip_prefix("C:").filter(|n| !n.is_empty()).map(str::to_string))
+            .collect();
+        names.sort();
+        names
+    }
+
     /// A `c:` function for a command name typed at the command line.
     pub(crate) fn lisp_command(&self, name: &str) -> Option<Value> {
         if self.lisp.active {
@@ -600,7 +624,7 @@ impl Session {
         self.lisp.files.insert(file_key(name), text.to_string());
         let r = self.lisp_eval(text, false, blocking, Vec::new())?;
         if !matches!(r, Some(Err(_))) {
-            let shown = std::path::Path::new(name).file_name().and_then(|n| n.to_str()).unwrap_or(name).to_string();
+            let shown = std::path::Path::new(name).file_name().and_then(std::ffi::OsStr::to_str).unwrap_or(name).to_string();
             self.echo(format!("{shown} successfully loaded."));
         }
         Ok(r)
@@ -608,9 +632,12 @@ impl Session {
 }
 
 fn file_key(name: &str) -> String {
-    let base = std::path::Path::new(&name.replace('\\', "/")).file_name().and_then(|n| n.to_str()).unwrap_or(name).to_ascii_lowercase();
+    let base = std::path::Path::new(&name.replace('\\', "/")).file_name().and_then(std::ffi::OsStr::to_str).unwrap_or(name).to_ascii_lowercase();
     base.strip_suffix(".lsp").map(str::to_string).unwrap_or(base)
 }
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod block_tests;

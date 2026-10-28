@@ -430,7 +430,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     };
     let title = if st.edit.is_empty() { crate::tl!("Hatch and Gradient") } else { crate::tl!("Hatch Edit") };
     let mut action = Action::None;
-    egui::Window::new(title).id(egui::Id::new("hatch_dialog")).open(open).collapsible(false).resizable(false).show(ctx, |ui| {
+    egui::Window::new(title).id(egui::Id::unique("hatch_dialog")).open(open).collapsible(false).resizable(false).show(ctx, |ui| {
         ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
                 ui.set_width(340.0);
@@ -478,6 +478,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     }
 }
 
+/// Pattern/gradient fill selector and its controls; an origin pick is reported through `action`.
 fn fill_ui(ui: &mut egui::Ui, f: &mut Fill, action: &mut Action) {
     ui.horizontal(|ui| {
         ui.selectable_value(&mut f.gradient, false, crate::tl!("Pattern"));
@@ -487,12 +488,12 @@ fn fill_ui(ui: &mut egui::Ui, f: &mut Fill, action: &mut Action) {
     if f.gradient {
         egui::Grid::new("hatch_gradient").num_columns(2).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
             ui.label(crate::tl!("Color 1"));
-            if let Some(c) = crate::layers::color_button(ui, egui::Id::new("hatch_color1"), f.color1, false, 160.0) {
+            if let Some(c) = crate::layers::color_button(ui, egui::Id::unique("hatch_color1"), f.color1, false, 160.0) {
                 f.color1 = c;
             }
             ui.end_row();
             ui.label(crate::tl!("Color 2"));
-            if let Some(c) = crate::layers::color_button(ui, egui::Id::new("hatch_color2"), f.color2, false, 160.0) {
+            if let Some(c) = crate::layers::color_button(ui, egui::Id::unique("hatch_color2"), f.color2, false, 160.0) {
                 f.color2 = c;
             }
             ui.end_row();
@@ -853,7 +854,7 @@ mod tests {
             let (mut app, _) = app_with_rect();
             open_create(&mut app, gradient);
             let ctx = frames(&mut app);
-            let r = ctx.memory(|m| m.area_rect(egui::Id::new("hatch_dialog"))).unwrap();
+            let r = ctx.memory(|m| m.area_rect(egui::Id::unique("hatch_dialog"))).unwrap();
             // The screen is 1000 points high: the window keeps to its content.
             assert!(r.height() < 700.0, "gradient {gradient}: {r:?}");
         }

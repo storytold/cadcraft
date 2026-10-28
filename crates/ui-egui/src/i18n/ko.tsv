@@ -141,6 +141,7 @@
 	Close All Other Drawings	다른 도면 모두 닫기
 	Closed	닫힘
 	Close Comparison	비교 닫기
+	Export Comparison	비교 내보내기
 	Coincident	일치
 	Collapse Palettes	팔레트 접기
 	Collapse Tool Sets	도구 세트 접기
@@ -187,6 +188,7 @@
 	Current selection	현재 선택 항목
 	Current: {color}	현재: {color}
 	Cut	잘라내기
+	Cut with Base Point	기준점을 지정하여 잘라내기
 	Cyan	청록색
 	Cylinder	원기둥
 	DWG	DWG
@@ -560,6 +562,7 @@
 	No selection	선택 항목 없음
 	Node	노드
 	None	없음
+	Normal	보통
 	Not available	사용할 수 없음
 	Not available yet	아직 사용할 수 없음
 	Numbered list	번호 매기기 목록
@@ -732,6 +735,7 @@
 	Rename Text Style	문자 스타일 이름 바꾸기
 	Rename...	이름 바꾸기...
 	Repeat {command}	{command} 반복
+	Replace Block...	블록 바꾸기...
 	Requires a point (x,y, @dx,dy or @d<a).	점이 필요합니다(x,y, @dx,dy 또는 @d<a).
 	Reset Palettes	팔레트 초기화
 	Restore	복원
@@ -1238,3 +1242,6 @@ menu	View	보기
 menu	Draw	그리기
 menu	Dimension	치수
 menu	Modify	수정
+	Check for Updates…	업데이트 확인…
+	CADCraft is up to date.	CADCraft가 최신 버전입니다.
+	Could not check for updates.	업데이트를 확인하지 못했습니다.

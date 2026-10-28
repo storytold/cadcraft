@@ -5,6 +5,8 @@
 //! Errors use AutoLISP's wording (`bad argument type: numberp: nil`, `too few arguments`,
 //! `divide by zero`), since routines and their `*error*` handlers match on it.
 
+use std::cmp::Ordering;
+use std::ffi::OsStr;
 use std::sync::Arc;
 
 use super::eval::{Ctx, Flow, Special};
@@ -335,16 +337,16 @@ fn num_ne(a: &[Value]) -> R {
     eq_chain(a, false)
 }
 fn lt(a: &[Value]) -> R {
-    chain(a, |o| o.is_lt())
+    chain(a, Ordering::is_lt)
 }
 fn gt(a: &[Value]) -> R {
-    chain(a, |o| o.is_gt())
+    chain(a, Ordering::is_gt)
 }
 fn le(a: &[Value]) -> R {
-    chain(a, |o| o.is_le())
+    chain(a, Ordering::is_le)
 }
 fn ge(a: &[Value]) -> R {
-    chain(a, |o| o.is_ge())
+    chain(a, Ordering::is_ge)
 }
 
 fn zerop(a: &[Value]) -> R {
@@ -658,12 +660,12 @@ fn vl_list_to_string(a: &[Value]) -> R {
 fn vl_filename_base(a: &[Value]) -> R {
     arity(a, 1, 1)?;
     let s = string(&a[0])?;
-    Ok(Value::str(std::path::Path::new(&*s.replace('\\', "/")).file_stem().and_then(|x| x.to_str()).unwrap_or("")))
+    Ok(Value::str(std::path::Path::new(&*s.replace('\\', "/")).file_stem().and_then(OsStr::to_str).unwrap_or("")))
 }
 fn vl_filename_extension(a: &[Value]) -> R {
     arity(a, 1, 1)?;
     let s = string(&a[0])?;
-    Ok(std::path::Path::new(&*s.replace('\\', "/")).extension().and_then(|x| x.to_str()).map(|e| Value::str(&format!(".{e}"))).unwrap_or_default())
+    Ok(std::path::Path::new(&*s.replace('\\', "/")).extension().and_then(OsStr::to_str).map(|e| Value::str(&format!(".{e}"))).unwrap_or_default())
 }
 fn vl_filename_directory(a: &[Value]) -> R {
     arity(a, 1, 1)?;
@@ -783,6 +785,48 @@ fn glob_cached(
     Ok(matched)
 }
 
+/// For the bracket class opening at `pat[p]`, whether `text[t]` is in it: the index of its closing
+/// `]` when it is, `None` when it is not or the class is never closed.
+fn class_end(text: &[char], pat: &[char], p: usize, t: usize, budget: &mut u64) -> Result<Option<usize>, ()> {
+    let mut close = p;
+    while let Some(c) = pat.get(close) {
+        charge_match(budget)?;
+        if *c == ']' {
+            break;
+        }
+        close += 1;
+    }
+    if close == pat.len() {
+        return Ok(None);
+    }
+    let Some(&c) = text.get(t) else { return Ok(None) };
+    let set = &pat[p + 1..close];
+    let (neg, set) = match set.split_first() {
+        Some(('~', r)) if !r.is_empty() => (true, r),
+        _ => (false, set),
+    };
+    let mut hit = false;
+    let mut i = 0;
+    while i < set.len() {
+        charge_match(budget)?;
+        if set.get(i + 1) == Some(&'-') && i + 2 < set.len() {
+            if set[i] <= c && c <= set[i + 2] {
+                hit = true;
+            }
+            i += 3;
+        } else {
+            if set[i] == c {
+                hit = true;
+            }
+            i += 1;
+        }
+    }
+    if hit == neg {
+        return Ok(None);
+    }
+    Ok(Some(close))
+}
+
 /// Evaluate wildcard tokens and backtracking branches under shared work and recursion limits.
 fn glob_inner(
     text: &[char],
@@ -795,8 +839,8 @@ fn glob_inner(
         return Err(());
     }
     *budget -= 1;
-    if depth > 64 {
-        return Ok(false);
+    if depth > 256 {
+        return Err(());
     }
     let (mut t, mut p) = (0usize, 0usize);
     while p < pat.len() {
@@ -820,42 +864,7 @@ fn glob_inner(
                 p += 2;
             }
             '[' => {
-                let mut close = p;
-                while let Some(c) = pat.get(close) {
-                    charge_match(budget)?;
-                    if *c == ']' {
-                        break;
-                    }
-                    close += 1;
-                }
-                if close == pat.len() {
-                    return Ok(false);
-                }
-                let Some(&c) = text.get(t) else { return Ok(false) };
-                let set = &pat[p + 1..close];
-                let (neg, set) = match set.split_first() {
-                    Some(('~', r)) if !r.is_empty() => (true, r),
-                    _ => (false, set),
-                };
-                let mut hit = false;
-                let mut i = 0;
-                while i < set.len() {
-                    charge_match(budget)?;
-                    if set.get(i + 1) == Some(&'-') && i + 2 < set.len() {
-                        if set[i] <= c && c <= set[i + 2] {
-                            hit = true;
-                        }
-                        i += 3;
-                    } else {
-                        if set[i] == c {
-                            hit = true;
-                        }
-                        i += 1;
-                    }
-                }
-                if hit == neg {
-                    return Ok(false);
-                }
+                let Some(close) = class_end(text, pat, p, t, budget)? else { return Ok(false) };
                 t += 1;
                 p = close + 1;
             }

@@ -39,11 +39,22 @@ struct App {
     workspace_error: Option<String>,
     #[cfg(target_os = "macos")]
     native_menu: Option<native_menu::NativeMenu>,
+    /// The `movable` flag last set on the main window.
+    #[cfg(target_os = "macos")]
+    movable: Option<bool>,
 }
 
 impl App {
-    fn persist_workspace(&mut self, final_attempt: bool) {
-        let result = if final_attempt { self.workspace.save_on_exit(&self.cad.ui) } else { self.workspace.save_if_changed(&self.cad.ui) };
+    /// `ctx` is `None` only for the final attempt at exit.
+    fn persist_workspace(&mut self, ctx: Option<&egui::Context>) {
+        let result = match ctx {
+            None => self.workspace.save_on_exit(&self.cad.ui),
+            Some(ctx) => self.workspace.save_if_changed(&self.cad.ui, std::time::Instant::now()).map(|wait| {
+                if let Some(wait) = wait {
+                    ctx.request_repaint_after(wait);
+                }
+            }),
+        };
         if let Err(error) = result {
             if self.workspace_error.as_ref() != Some(&error) {
                 eprintln!("CADCraft workspace: {error}");
@@ -65,37 +76,49 @@ fn follow_desktop(raw: &mut egui::RawInput, desktop: Option<egui::Theme>) {
 }
 
 impl eframe::App for App {
+    /// eframe logic callback: syncs the OS animation setting and runs `CadApp::logic`; when the pass index is 0 (the first pass or a hidden tick) it also installs/polls the macOS native menu, polls the spacemouse and persists the workspace; a quit request closes the viewport.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        #[cfg(target_os = "macos")]
-        {
-            if self.native_menu.is_none() && std::env::var_os("CADCRAFT_NO_NATIVE_MENU").is_none() {
-                self.native_menu = Some(native_menu::NativeMenu::install(&mut self.cad));
-            }
-            if let Some(m) = &mut self.native_menu {
-                m.poll(&mut self.cad, ctx);
-            }
-        }
         self.cad.system_animations = self.system_animations.current();
+        // Consume control/open/screenshot queues and time-based autosave, including hidden ticks.
         self.cad.logic(ctx);
-        self.spacemouse.poll(&mut self.cad, ctx);
-        self.persist_workspace(false);
+        // Host frame work runs here, once per frame, and so also on a hidden logic-only tick (which
+        // never reaches `App::ui`): native menus stay current, the spacemouse still navigates and a
+        // workspace changed while hidden is persisted. `current_pass_index()` is zero on the first
+        // pass and on every hidden tick, and non-zero on later passes of a multi-pass frame.
+        if ctx.current_pass_index() == 0 {
+            #[cfg(target_os = "macos")]
+            {
+                if self.native_menu.is_none() && std::env::var_os("CADCRAFT_NO_NATIVE_MENU").is_none() {
+                    self.native_menu = Some(native_menu::NativeMenu::install(&mut self.cad, ctx));
+                }
+                if let Some(m) = &mut self.native_menu {
+                    m.poll(&mut self.cad, ctx);
+                }
+            }
+            self.spacemouse.poll(&mut self.cad, ctx);
+            // After `cad.logic`, so a control command's workspace change is saved in the same frame.
+            self.persist_workspace(Some(ctx));
+        }
         if std::mem::take(&mut self.cad.quit_requested) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
+    /// Apply the desktop-theme fallback, forward raw input to `CadApp`, and capture Tab at the command line.
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
         follow_desktop(raw, self.desktop_theme.current());
-        self.cad.raw_input_hook(raw);
+        self.cad.raw_input_hook(ctx, raw);
         cadcraft_ui_egui::cmdline::capture_tab(ctx, raw);
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.cad.ui(ui);
-        self.persist_workspace(false);
+        #[cfg(target_os = "macos")]
+        craft_window::title_bar::sync_movable(ui.ctx(), &mut self.movable);
     }
     /// A normal exit: the workspace is saved, and this run's autosave files are not needed (a
     /// crash leaves them for recovery).
     fn on_exit(&mut self) {
-        self.persist_workspace(true);
+        self.persist_workspace(None);
+        self.cad.cancel_screenshots();
         self.cad.shutdown_autosave();
     }
     /// Preferences (the interface theme) survive restarts; window and egui state are not kept.
@@ -143,6 +166,13 @@ fn services() -> Services {
                 .save_file()
                 .map(|p| p.to_string_lossy().to_string())
         })),
+        // APPLOAD: AutoLISP routines only, starting where the last one was loaded from.
+        pick_lisp: Some(Box::new(|dir: &str| {
+            let dialog = rfd::FileDialog::new().add_filter(i18n::t("AutoLISP (LSP)"), &["lsp"]).add_filter(i18n::t("All files"), &["*"]);
+            let dialog = if dir.is_empty() { dialog } else { dialog.set_directory(dir) };
+            dialog.pick_file().map(|p| p.to_string_lossy().to_string())
+        })),
+        no_file_system: false,
     }
 }
 
@@ -225,9 +255,19 @@ fn control_flag(current: Option<u16>, value: Option<String>) -> Option<u16> {
     current
 }
 
+/// Parse CLI options (`--control`, `--sample`, files, `--version`), install logging and I/O hooks, build the services and app, and run eframe.
 fn main() -> eframe::Result {
     // First, so every start-up record is captured; see `logging`.
     let logger = logging::install();
+    // The update helper relaunches this binary after a self-update; it runs and exits here.
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(done) = craft_update::self_update::finish(&craft_update::suite::CADCRAFT, &std::env::args_os().skip(1).collect::<Vec<_>>()) {
+        if let Err(e) = done {
+            eprintln!("CADCraft update helper failed: {e}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     // lossy, so a value that is not Unicode is reported like any other bad port instead of ignored
     let mut control_port =
         control_port_from("CADCRAFT_CONTROL_PORT", std::env::var_os("CADCRAFT_CONTROL_PORT").map(|p| p.to_string_lossy().into_owned()));
@@ -273,6 +313,9 @@ fn main() -> eframe::Result {
             .with_title_shown(false)
             .with_app_id(APP_ID),
         persist_window: false,
+        // CADCraft installs its own capped font chain (`theme::install_fonts`); never run
+        // system-font discovery as a hidden fallback.
+        system_font_fallback: false,
         // A stencil buffer clips the contents of clipped layout viewports on the GPU.
         stencil_buffer: STENCIL_BITS,
         ..Default::default()
@@ -331,6 +374,7 @@ fn main() -> eframe::Result {
             // Autosave files (SAVEFILEPATH) default to `<settings dir>/autosave`.
             if let Some(dir) = config_dir() {
                 app.enable_autosave(&dir.join("autosave"));
+                app.enable_update_check();
                 // Startup LISP (acad.lsp, acaddoc.lsp) is read from `<settings>/support`; the
                 // folder is made so it is there to put them in.
                 let support = dir.join("support");
@@ -357,7 +401,9 @@ fn main() -> eframe::Result {
                 app.open_path(f);
             }
             if app.session.docs.is_empty() {
-                app.session.new_drawing(false);
+                // In the units the profile asks for (MEASUREINIT, restored above).
+                let metric = app.session.settings.measureinit;
+                app.session.new_drawing(metric);
             }
             let ctx = cc.egui_ctx.clone();
             let desktop_theme = desktop_theme::DesktopTheme::start(move || ctx.request_repaint());
@@ -372,6 +418,8 @@ fn main() -> eframe::Result {
                 workspace_error,
                 #[cfg(target_os = "macos")]
                 native_menu: None,
+                #[cfg(target_os = "macos")]
+                movable: None,
             }))
         }),
     )

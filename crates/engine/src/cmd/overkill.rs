@@ -13,7 +13,8 @@ use cadcraft_geom::{TAU, Vec2, Vec3, ccw_sweep, norm_angle};
 use serde_json::{Value, json};
 
 use super::machines::{SelOutcome, SelectPhase, number};
-use super::*;
+use super::{CommandSpec, bad, targets};
+
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 pub fn specs() -> Vec<CommandSpec> {

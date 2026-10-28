@@ -4,7 +4,7 @@
 
 use cadcraft_engine::Session;
 use cadcraft_engine::doc::EntityKind;
-use cadcraft_ui_egui::{CadApp, Services};
+use cadcraft_ui_egui::{CadApp, Services, theme};
 use egui::{Key, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{Queryable, by};
@@ -16,7 +16,9 @@ fn palettes(lunits: i64) -> Harness<'static, CadApp> {
     app.run("setvar", json!({ "name": "LUNITS", "value": lunits })).unwrap();
     let h = app.run("text", json!({ "at": [0, 0], "text": "Note", "height": 2.5 })).unwrap();
     app.run("select", json!({ "handles": [h["handle"]] })).unwrap();
-    let mut h = Harness::builder().with_size(vec2(400.0, 1400.0)).build_ui_state(
+    // Install the production font chain before the first pass; the fixture draws palettes
+    // directly and would otherwise fall back to egui's fonts instead of the app's chain.
+    let mut h = Harness::builder().with_size(vec2(400.0, 1400.0)).with_context_setup(|ctx| theme::install_fonts(ctx, "en")).build_ui_state(
         |ui, app: &mut CadApp| {
             app.logic(&ui.ctx().clone());
             cadcraft_ui_egui::palettes::right_palettes(app, ui);

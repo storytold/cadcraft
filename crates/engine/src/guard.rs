@@ -23,7 +23,7 @@ pub(crate) struct Guarded {
 }
 
 pub(crate) fn message(p: &(dyn Any + Send)) -> String {
-    p.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| p.downcast_ref::<String>().cloned()).unwrap_or_else(|| "panic".into())
+    p.downcast_ref::<&str>().map(ToString::to_string).or_else(|| p.downcast_ref::<String>().cloned()).unwrap_or_else(|| "panic".into())
 }
 
 impl Guarded {

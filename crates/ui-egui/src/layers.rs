@@ -218,7 +218,7 @@ fn natural_lower(s: &str) -> String {
 /// The Layer Properties Manager window.
 pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let t = Tokens::get();
-    let sid = egui::Id::new("lpm_state");
+    let sid = egui::Id::unique("lpm_state");
     let mut st: LpmState = ctx.data_mut(|d| d.get_temp(sid)).unwrap_or_default();
     let mut actions: Vec<(&str, Value)> = Vec::new();
     let Ok(dst) = app.session.state() else {
@@ -249,7 +249,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         None => "Layer Properties Manager",
     };
     egui::Window::new(crate::i18n::t(title))
-        .id(egui::Id::new("lpm_window"))
+        .id(egui::Id::unique("lpm_window"))
         .open(open)
         .default_size(vec2(1180.0, 440.0))
         .min_width(640.0)
@@ -302,7 +302,8 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 {
                     actions.push(("layerstate.delete", json!({ "name": s })));
                 }
-                ui.add(egui::TextEdit::singleline(&mut st.state_name).hint_text(crate::tl!("New state name")).desired_width(120.0));
+                ui.add(egui::TextEdit::singleline(&mut st.state_name).hint_text(crate::tl!("New state name")).desired_width(120.0))
+                    .on_hover_text(crate::tl!("New state name"));
                 if ui.add_enabled(!st.state_name.trim().is_empty(), egui::Button::new(crate::tl!("Save State"))).clicked() {
                     let n = st.state_name.trim().to_string();
                     actions.push(("layerstate.save", json!({ "name": n })));
@@ -310,7 +311,8 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                     st.state_name.clear();
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add(egui::TextEdit::singleline(&mut st.search).hint_text(crate::tl!("Search for layer")).desired_width(160.0));
+                    ui.add(egui::TextEdit::singleline(&mut st.search).hint_text(crate::tl!("Search for layer")).desired_width(160.0))
+                        .on_hover_text(crate::tl!("Search for layer"));
                     icons::paint(
                         ui.painter(),
                         Rect::from_center_size(ui.cursor().right_center() - vec2(8.0, 0.0), vec2(14.0, 14.0)),
@@ -403,6 +405,8 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     }
 }
 
+/// One Layer Properties Manager row: status/name, on/freeze/lock/plot, colour, linetype, lineweight, transparency, viewport overrides, new-viewport freeze and description.
+/// Edits update `st` and push commands into `actions`.
 #[allow(clippy::too_many_arguments)]
 fn row(
     ui: &mut egui::Ui,
@@ -439,7 +443,9 @@ fn row(
     // Name (double-click or F2-style rename).
     match st.renaming.clone() {
         Some((n, mut buf)) if n.eq_ignore_ascii_case(&name) => {
-            let r = ui.add(egui::TextEdit::singleline(&mut buf).desired_width(150.0).id(egui::Id::new(("lpm_rename", &name))));
+            let r = ui
+                .add(egui::TextEdit::singleline(&mut buf).desired_width(150.0).id(egui::Id::unique(("lpm_rename", &name))))
+                .accessible_name(crate::tl!("Name"));
             if !r.has_focus() && !r.lost_focus() {
                 r.request_focus();
             }
@@ -503,7 +509,7 @@ fn row(
         actions.push(("layer.set", json!({ "name": name, "plot": !l.plot })));
     }
     // Color.
-    if let Some(c) = color_button(ui, egui::Id::new(("lpm_color", &name)), l.color, false, 96.0) {
+    if let Some(c) = color_button(ui, egui::Id::unique(("lpm_color", &name)), l.color, false, 96.0) {
         actions.push(("layer.set", json!({ "name": name, "color": c.name() })));
     }
     // Linetype.
@@ -524,7 +530,7 @@ fn row(
         })
         .inner;
     egui::Popup::from_toggle_button_response(&lt_resp)
-        .id(egui::Id::new(("lpm_lt", &name)))
+        .id(egui::Id::unique(("lpm_lt", &name)))
         .width(240.0)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
@@ -580,7 +586,7 @@ fn row(
         })
         .inner;
     egui::Popup::from_toggle_button_response(&lw_resp)
-        .id(egui::Id::new(("lpm_lw", &name)))
+        .id(egui::Id::unique(("lpm_lw", &name)))
         .width(170.0)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
@@ -611,7 +617,7 @@ fn row(
             });
         });
     // Transparency (commits when the drag or edit ends).
-    let tid = egui::Id::new(("lpm_tr", &name));
+    let tid = egui::Id::unique(("lpm_tr", &name));
     let mut tr = ui.data_mut(|d| d.get_temp::<u8>(tid)).unwrap_or(l.transparency);
     let r = ui.add(egui::DragValue::new(&mut tr).range(0..=90).speed(0.5));
     if r.dragged() || r.has_focus() {
@@ -632,7 +638,7 @@ fn row(
         }
         let vc = v.layer_colors.iter().find(|(n, _)| n.eq_ignore_ascii_case(&name)).map(|(_, c)| *c);
         ui.horizontal(|ui| {
-            if let Some(c) = color_button(ui, egui::Id::new(("lpm_vpcolor", &name)), vc.unwrap_or(l.color), false, 96.0) {
+            if let Some(c) = color_button(ui, egui::Id::unique(("lpm_vpcolor", &name)), vc.unwrap_or(l.color), false, 96.0) {
                 actions.push(("vplayer", json!({ "handle": h.hex(), "colors": { name.clone(): c.name() } })));
             }
             if vc.is_some() && ui.small_button("×").on_hover_text(crate::tl!("Remove the viewport override")).clicked() {
@@ -653,7 +659,9 @@ fn row(
     // Description (double-click to edit).
     match st.describing.clone() {
         Some((n, mut buf)) if n.eq_ignore_ascii_case(&name) => {
-            let r = ui.add(egui::TextEdit::singleline(&mut buf).desired_width(200.0).id(egui::Id::new(("lpm_desc", &name))));
+            let r = ui
+                .add(egui::TextEdit::singleline(&mut buf).desired_width(200.0).id(egui::Id::unique(("lpm_desc", &name))))
+                .accessible_name(crate::tl!("Description"));
             if !r.has_focus() && !r.lost_focus() {
                 r.request_focus();
             }
@@ -750,7 +758,7 @@ mod tests {
                 dialog(&mut app, ui.ctx(), &mut open);
             });
             out.textures_delta.clear();
-            let id = egui::LayerId::new(egui::Order::Middle, egui::Id::new("lpm_window"));
+            let id = egui::LayerId::new(egui::Order::Middle, egui::Id::unique("lpm_window"));
             heights.push(ctx.memory(|m| m.area_rect(id.id)).map_or(0.0, |r| r.height()));
         }
         let (first, last) = (heights[5], heights[29]);

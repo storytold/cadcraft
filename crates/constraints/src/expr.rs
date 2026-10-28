@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 /// Longest expression accepted (characters).
 pub const MAX_LEN: usize = 1024;
-/// Deepest nesting (parentheses, unary minus) and parameter reference chain.
+/// Deepest syntax tree and combined expression/parameter evaluation path.
 pub const MAX_DEPTH: usize = 64;
 
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
@@ -49,7 +49,7 @@ struct Parser<'a> {
 
 impl Parser<'_> {
     fn ws(&mut self) {
-        while self.s.get(self.i).is_some_and(|c| c.is_ascii_whitespace()) {
+        while self.s.get(self.i).is_some_and(u8::is_ascii_whitespace) {
             self.i += 1;
         }
     }
@@ -165,6 +165,20 @@ pub fn parse(text: &str) -> Result<Expr, ExprError> {
     if p.peek().is_some() {
         return Err(ExprError::Syntax(format!("unexpected `{}`", text.get(p.i..).unwrap_or("").trim())));
     }
+    let mut pending = vec![(&e, 1)];
+    while let Some((node, depth)) = pending.pop() {
+        if depth > MAX_DEPTH {
+            return Err(ExprError::TooDeep);
+        }
+        match node {
+            Expr::Neg(a) => pending.push((a, depth + 1)),
+            Expr::Bin(_, a, b) => {
+                pending.push((a, depth + 1));
+                pending.push((b, depth + 1));
+            }
+            _ => {}
+        }
+    }
     Ok(e)
 }
 
@@ -224,12 +238,19 @@ pub fn rename(text: &str, old: &str, new: &str) -> String {
 
 /// Evaluate with a variable lookup.
 pub fn eval_with(e: &Expr, lookup: &mut dyn FnMut(&str) -> Result<f64, ExprError>) -> Result<f64, ExprError> {
+    eval_at_depth(e, &mut |n, _| lookup(n), 0)
+}
+
+fn eval_at_depth(e: &Expr, lookup: &mut dyn FnMut(&str, usize) -> Result<f64, ExprError>, depth: usize) -> Result<f64, ExprError> {
+    if depth >= MAX_DEPTH {
+        return Err(ExprError::TooDeep);
+    }
     let v = match e {
         Expr::Num(v) => *v,
-        Expr::Var(n) => lookup(n)?,
-        Expr::Neg(a) => -eval_with(a, lookup)?,
+        Expr::Var(n) => lookup(n, depth + 1)?,
+        Expr::Neg(a) => -eval_at_depth(a, lookup, depth + 1)?,
         Expr::Bin(op, a, b) => {
-            let (x, y) = (eval_with(a, lookup)?, eval_with(b, lookup)?);
+            let (x, y) = (eval_at_depth(a, lookup, depth + 1)?, eval_at_depth(b, lookup, depth + 1)?);
             match op {
                 '+' => x + y,
                 '-' => x - y,
@@ -273,9 +294,12 @@ impl Env {
     /// Value of a named parameter.
     pub fn value(&mut self, name: &str) -> Result<f64, ExprError> {
         let mut stack = Vec::new();
-        self.value_inner(name, &mut stack)
+        self.value_inner(name, &mut stack, 0)
     }
-    fn value_inner(&mut self, name: &str, stack: &mut Vec<String>) -> Result<f64, ExprError> {
+    fn value_inner(&mut self, name: &str, stack: &mut Vec<String>, depth: usize) -> Result<f64, ExprError> {
+        if depth >= MAX_DEPTH {
+            return Err(ExprError::TooDeep);
+        }
         if let Some(v) = self.cache.get(name) {
             return Ok(*v);
         }
@@ -288,7 +312,7 @@ impl Env {
         let text = self.exprs.get(name).cloned().ok_or_else(|| ExprError::Unknown(name.to_string()))?;
         let e = parse(&text)?;
         stack.push(name.to_string());
-        let r = eval_with(&e, &mut |n| self.value_inner(n, stack));
+        let r = eval_at_depth(&e, &mut |n, depth| self.value_inner(n, stack, depth), depth);
         stack.pop();
         let v = r?;
         self.cache.insert(name.to_string(), v);
@@ -298,7 +322,7 @@ impl Env {
     pub fn eval(&mut self, text: &str) -> Result<f64, ExprError> {
         let e = parse(text)?;
         let mut stack = Vec::new();
-        eval_with(&e, &mut |n| self.value_inner(n, &mut stack))
+        eval_at_depth(&e, &mut |n, depth| self.value_inner(n, &mut stack, depth), 0)
     }
 }
 
@@ -349,6 +373,31 @@ mod tests {
             chain.insert(&format!("p{i}"), &format!("p{}+1", i + 1));
         }
         assert!(chain.value("p0").is_err());
+    }
+
+    #[test]
+    fn expression_and_parameter_depth_share_a_limit_on_a_small_stack() {
+        std::thread::Builder::new()
+            .stack_size(1024 * 1024)
+            .spawn(|| {
+                for op in ["+", "-", "*", "/"] {
+                    let within = vec!["1"; MAX_DEPTH].join(op);
+                    assert!(eval_const(&within).is_ok());
+                    assert_eq!(parse(&format!("{within}{op}1")), Err(ExprError::TooDeep));
+                }
+                let mut env = Env::new();
+                for i in 0..MAX_DEPTH {
+                    env.insert(&format!("p{i}"), &format!("p{}+{}", i + 1, vec!["0"; 30].join("+")));
+                }
+                env.insert(&format!("p{MAX_DEPTH}"), "1");
+                assert_eq!(env.value("p0"), Err(ExprError::TooDeep));
+                assert_eq!(env.eval("p0+1"), Err(ExprError::TooDeep));
+                env.insert("safe", "2*3");
+                assert_eq!(env.eval("safe+1"), Ok(7.0));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     #[test]

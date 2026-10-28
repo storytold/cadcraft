@@ -59,9 +59,10 @@ fn pretty(k: &str) -> String {
     out
 }
 
+/// Quick Select window; caches `qselect.info` per drawing, apply-to choice and object type, then runs the selection with the chosen criteria.
 pub fn qselect_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let t = Tokens::get();
-    let sid = egui::Id::new("qselect_state");
+    let sid = egui::Id::unique("qselect_state");
     let mut st: QsState = ctx.data_mut(|d| d.get_temp(sid)).unwrap_or_default();
     let key = app.session.state().map(|s| std::sync::Arc::as_ptr(&s.doc) as usize).unwrap_or(0);
     let want = (key, st.apply_selection, st.ty.clone());
@@ -77,7 +78,7 @@ pub fn qselect_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let mut run: Option<Value> = None;
     let mut close = false;
     egui::Window::new(crate::tl!("Quick Select"))
-        .id(egui::Id::new("Quick Select"))
+        .id(egui::Id::unique("Quick Select"))
         .open(open)
         .collapsible(false)
         .resizable(false)
@@ -141,10 +142,10 @@ pub fn qselect_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                     }
                 });
                 ui.end_row();
-                ui.label(crate::tl!("Value:"));
+                let value_label = ui.label(crate::tl!("Value:"));
                 let choices: Vec<String> = match st.property.as_str() {
                     "color" => {
-                        ["ByLayer", "ByBlock", "Red", "Yellow", "Green", "Cyan", "Blue", "Magenta", "White"].iter().map(|s| s.to_string()).collect()
+                        ["ByLayer", "ByBlock", "Red", "Yellow", "Green", "Cyan", "Blue", "Magenta", "White"].iter().map(ToString::to_string).collect()
                     }
                     "layer" => app.session.doc().map(|d| d.layers.iter().map(|l| l.name.clone()).collect()).unwrap_or_default(),
                     "linetype" => app.session.doc().map(|d| d.linetypes.iter().map(|l| l.name.clone()).collect()).unwrap_or_default(),
@@ -152,7 +153,8 @@ pub fn qselect_dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                     _ => Vec::new(),
                 };
                 ui.horizontal(|ui| {
-                    ui.add(egui::TextEdit::singleline(&mut st.value).desired_width(if choices.is_empty() { 220.0 } else { 190.0 }));
+                    ui.add(egui::TextEdit::singleline(&mut st.value).desired_width(if choices.is_empty() { 220.0 } else { 190.0 }))
+                        .labelled_by(value_label.id);
                     if !choices.is_empty() {
                         ui.menu_button("▼", |ui| {
                             egui::ScrollArea::vertical().max_height(240.0).show(ui, |ui| {
@@ -228,10 +230,11 @@ struct QpState {
     at: Option<Pos2>,
 }
 
+/// Quick Properties numeric row: an expression or distance field labelled by `label`; commits only a finite value under `key` into `set`.
 fn num_row(ui: &mut egui::Ui, label: &str, id: egui::Id, v: f64, set: &mut Option<(String, Value)>, key: &str) {
-    ui.label(RichText::new(crate::i18n::t(label)).color(Tokens::get().text_dim));
+    let label = ui.label(RichText::new(crate::i18n::t(label)).color(Tokens::get().text_dim));
     let s = format!("{v:.4}");
-    if let Some(n) = crate::parametric::expr_field(ui, id, &s)
+    if let Some(n) = crate::parametric::expr_field(ui, id, &s, Some(label.id))
         && let Some(f) = cadcraft_engine::units::parse_distance(&n).or_else(|| n.parse::<f64>().ok()).filter(|f| f.is_finite())
     {
         *set = Some((key.to_string(), json!(f)));
@@ -247,7 +250,7 @@ fn ro_row(ui: &mut egui::Ui, label: &str, v: String) {
 
 /// The Quick Properties palette, near where the selection was made.
 pub fn quick_properties(app: &mut CadApp, ctx: &egui::Context) {
-    let sid = egui::Id::new("qp_state");
+    let sid = egui::Id::unique("qp_state");
     let sel = app.session.selection();
     let active = app.session.settings.qpmode
         && !sel.is_empty()
@@ -299,7 +302,7 @@ pub fn quick_properties(app: &mut CadApp, ctx: &egui::Context) {
     let angles = app.session.angle_settings();
     let mut close = false;
     egui::Window::new(title)
-        .id(egui::Id::new(("quick_properties", &st.sel)))
+        .id(egui::Id::unique(("quick_properties", &st.sel)))
         .default_pos(at)
         .collapsible(false)
         .resizable(false)
@@ -309,7 +312,7 @@ pub fn quick_properties(app: &mut CadApp, ctx: &egui::Context) {
             egui::Grid::new("qp_grid").num_columns(2).spacing(vec2(10.0, 4.0)).min_col_width(80.0).show(ui, |ui| {
                 ui.label(RichText::new(crate::tl!("Color")).color(Tokens::get().text_dim));
                 let cur = color.unwrap_or(cadcraft_color::Color::ByLayer);
-                if let Some(c) = crate::layers::color_button(ui, egui::Id::new(("qp_color", &ids)), cur, true, 150.0) {
+                if let Some(c) = crate::layers::color_button(ui, egui::Id::unique(("qp_color", &ids)), cur, true, 150.0) {
                     set = Some(("color".into(), json!(c.name())));
                 }
                 ui.end_row();
@@ -334,7 +337,7 @@ pub fn quick_properties(app: &mut CadApp, ctx: &egui::Context) {
                     }
                 });
                 ui.end_row();
-                let id = |k: &str| egui::Id::new(("qp", k, &ids));
+                let id = |k: &str| egui::Id::unique(("qp", k, &ids));
                 match &kind {
                     Some(EntityKind::Line(l)) => {
                         let dl = l.b.xy() - l.a.xy();
@@ -369,8 +372,8 @@ pub fn quick_properties(app: &mut CadApp, ctx: &egui::Context) {
                         num_row(ui, "Global width", id("w"), p.const_width, &mut set, "width");
                     }
                     Some(EntityKind::Text(tx)) => {
-                        ui.label(RichText::new(crate::tl!("Contents")).color(Tokens::get().text_dim));
-                        if let Some(v) = crate::parametric::expr_field(ui, id("txt"), &tx.value) {
+                        let label = ui.label(RichText::new(crate::tl!("Contents")).color(Tokens::get().text_dim));
+                        if let Some(v) = crate::parametric::expr_field(ui, id("txt"), &tx.value, Some(label.id)) {
                             set = Some(("text".into(), json!(v)));
                         }
                         ui.end_row();
@@ -378,8 +381,8 @@ pub fn quick_properties(app: &mut CadApp, ctx: &egui::Context) {
                         num_row(ui, "Rotation", id("rot"), angles.shown(tx.rotation).to_degrees(), &mut set, "rotation");
                     }
                     Some(EntityKind::MText(tx)) => {
-                        ui.label(RichText::new(crate::tl!("Contents")).color(Tokens::get().text_dim));
-                        if let Some(v) = crate::parametric::expr_field(ui, id("mtxt"), &tx.contents) {
+                        let label = ui.label(RichText::new(crate::tl!("Contents")).color(Tokens::get().text_dim));
+                        if let Some(v) = crate::parametric::expr_field(ui, id("mtxt"), &tx.contents, Some(label.id)) {
                             set = Some(("text".into(), json!(v)));
                         }
                         ui.end_row();
@@ -391,8 +394,8 @@ pub fn quick_properties(app: &mut CadApp, ctx: &egui::Context) {
                         num_row(ui, "Scale", id("sc"), i.scale.x, &mut set, "scale");
                     }
                     Some(EntityKind::Dimension(dm)) => {
-                        ui.label(RichText::new(crate::tl!("Text override")).color(Tokens::get().text_dim));
-                        if let Some(v) = crate::parametric::expr_field(ui, id("dt"), &dm.text) {
+                        let label = ui.label(RichText::new(crate::tl!("Text override")).color(Tokens::get().text_dim));
+                        if let Some(v) = crate::parametric::expr_field(ui, id("dt"), &dm.text, Some(label.id)) {
                             set = Some(("textOverride".into(), json!(v)));
                         }
                         ui.end_row();

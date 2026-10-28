@@ -23,7 +23,7 @@ fn keys(v: &Value) -> Vec<String> {
 /// The `cmdline.state` fields plus `extra`.
 fn want(app: &mut CadApp, extra: &[&str]) -> Vec<String> {
     let mut k = keys(&call(app, "cmdline.state", json!({}))["result"]);
-    k.extend(extra.iter().map(|s| s.to_string()));
+    k.extend(extra.iter().map(ToString::to_string));
     k.sort();
     k
 }

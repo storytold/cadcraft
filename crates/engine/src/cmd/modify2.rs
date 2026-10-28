@@ -9,9 +9,11 @@ use cadcraft_geom::{
 use serde_json::{Value, json};
 
 use super::curves::{self, Chain, MAX_GEN, TanObj};
-use super::helpers::*;
+use super::helpers::{arc, line, lwpoly, v3};
+
 use super::machines::{SelOutcome, SelectPhase, number};
-use super::*;
+use super::{CommandSpec, bad, bool_or, f64_or, f64_req, point_param, point_req, str_param, targets};
+
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 mod curve_edits;

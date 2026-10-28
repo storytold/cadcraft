@@ -13,10 +13,10 @@ use crate::CadApp;
 
 /// egui memory: the clipboard copy last mirrored, and the hash of the text it became.
 fn serial_id() -> egui::Id {
-    egui::Id::new("cc_clipboard_serial")
+    egui::Id::unique("cc_clipboard_serial")
 }
 fn text_id() -> egui::Id {
-    egui::Id::new("cc_clipboard_text")
+    egui::Id::unique("cc_clipboard_text")
 }
 
 /// Line endings normalised (pasted text arrives with `\n`), so our own text is recognised.

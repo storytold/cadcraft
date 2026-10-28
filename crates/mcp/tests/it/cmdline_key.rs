@@ -14,7 +14,7 @@ fn keys(v: &Value) -> Vec<String> {
 /// The `cmdline.state` fields plus `extra`.
 fn want(b: &mut Headless, extra: &[&str]) -> Vec<String> {
     let mut k = keys(&b.call("cmdline.state", json!({})).unwrap());
-    k.extend(extra.iter().map(|s| s.to_string()));
+    k.extend(extra.iter().map(ToString::to_string));
     k.sort();
     k
 }

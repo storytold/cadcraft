@@ -29,12 +29,16 @@ fn rect_region(s: &mut Session, a: [f64; 2], b: [f64; 2]) -> Handle {
     r
 }
 
+/// Add a circle and turn it into a region, returning the handle of the region's source circle.
 fn circle_region(s: &mut Session, c: [f64; 2], r: f64) -> Handle {
     let hd = h(&s.execute("circle", &json!({"center": c, "radius": r})).unwrap());
     s.execute("region", &json!({"handles": [hd.hex()]})).unwrap();
     hd
 }
 
+/// REGION turns closed rectangles and circles into regions and refuses an open line; AREA and
+/// MASSPROP then report the expected area, perimeter, centroid and moments (a rectangle's and a
+/// circle's integrals are known exactly).
 #[test]
 fn region_from_closed_objects_measures() {
     let mut s = Session::new();
@@ -68,6 +72,42 @@ fn region_from_closed_objects_measures() {
     assert!(s.execute("massprop", &json!({"handles": [line.hex()]})).is_err());
 }
 
+/// #1440: MASSPROP says what it measured and what it skipped, and carries a self-check.
+#[test]
+fn massprop_self_check_reports_skipped_objects() {
+    let mut s = Session::new();
+    let a = rect_region(&mut s, [0.0, 0.0], [10.0, 4.0]);
+    s.execute("line", &json!({"points": [[0, 10], [5, 10]]})).unwrap();
+    let line = s.doc().unwrap().model.iter().last().unwrap().handle;
+    let m = s.execute("massprop", &json!({"handles": [a.hex(), line.hex()]})).unwrap();
+    let sc = &m["selfCheck"];
+    assert_eq!(sc["schema"], 1);
+    assert_eq!((sc["found"].clone(), sc["analyzed"].clone()), (json!(2), json!(1)), "{m}");
+    assert_eq!(sc["skipped"]["Line"], json!({ "count": 1, "reason": "not a region" }));
+    assert_eq!(sc["caps"], json!({}));
+    assert_eq!(sc["implausible"], json!([]));
+}
+
+/// Make `hd` invisible: it no longer counts towards the drawing extents.
+fn hide(s: &mut Session, hd: Handle) {
+    s.doc_mut().unwrap().modify_entity(hd, |e| e.common.visible = false).unwrap();
+}
+
+/// #1440 review: with no visible extents (the only region is invisible) there is no drawing bound
+/// to compare an area against, so it is not flagged as larger than the extents.
+#[test]
+fn massprop_does_not_flag_area_without_visible_extents() {
+    let mut s = Session::new();
+    let a = rect_region(&mut s, [0.0, 0.0], [10.0, 4.0]);
+    hide(&mut s, a);
+    assert!(s.doc().unwrap().extents(&Space::Model).is_empty());
+    let m = s.execute("massprop", &json!({"handles": [a.hex()]})).unwrap();
+    assert_eq!(m["regions"][0]["area"], json!(40.0));
+    assert_eq!(m["selfCheck"]["implausible"], json!([]), "no extents means no area bound: {m}");
+}
+
+/// SUBTRACT cuts a hole where a region lies inside another, and UNION adds an island when a region
+/// sits inside that hole; the loops, area and containment follow, and the removed region is gone.
 #[test]
 fn booleans_on_separate_and_nested_regions() {
     // Subtract a circle inside a rectangle: a hole.
