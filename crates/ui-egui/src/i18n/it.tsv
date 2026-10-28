@@ -1367,3 +1367,20 @@ menu	Modify	Edita
 	Check for Updates…	Verifica aggiornamenti…
 	CADCraft is up to date.	CADCraft è aggiornato.
 	Could not check for updates.	Impossibile verificare gli aggiornamenti.
+	Right-Click Customization...	Personalizzazione pulsante destro...
+	Right-Click Customization	Personalizzazione pulsante destro
+	Turn on time-sensitive right-click	Attiva clic destro sensibile al tempo
+	Longer click duration:	Durata clic lungo:
+	milliseconds	millisecondi
+	While a command runs, a quick click is Enter and a longer click opens the shortcut menu.	Durante un comando un clic rapido equivale a Invio, un clic più lungo apre il menu di scelta rapida.
+	Default Mode	Modalità predefinita
+	No objects selected and no command running:	Nessun oggetto selezionato e nessun comando in corso:
+	Edit Mode	Modalità modifica
+	Objects selected and no command running:	Oggetti selezionati e nessun comando in corso:
+	Repeat last command	Ripeti ultimo comando
+	Shortcut Menu	Menu di scelta rapida
+	Command Mode	Modalità comando
+	While a command runs:	Durante un comando:
+	ENTER	INVIO
+	Shortcut Menu: always enabled	Menu di scelta rapida: sempre attivo
+	Shortcut Menu: enabled when command options are present	Menu di scelta rapida: attivo se il comando ha opzioni

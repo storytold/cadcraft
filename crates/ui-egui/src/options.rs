@@ -15,7 +15,10 @@
 //! | `saveVersion` | `"2000"` … `"2018"`: the version drawings with no file yet are saved in |
 //! | `SAVETIME` | minutes between automatic saves, 0–600 (0: off) |
 //! | `SAVEFILEPATH` | the folder automatic saves go to |
-//! | `timeSensitiveRightClick` | while a command runs, a quick right-click is Enter and holding the button opens the shortcut menu (default); `false`: a right-click always opens the menu |
+//! | `timeSensitiveRightClick` | while a command runs, a quick right-click is Enter and holding the button opens the shortcut menu (default); `false`: `rightClickCommand` decides |
+//! | `rightClickDuration` | how long the right button is held to open the menu while a command runs, 100–2000 ms (250) |
+//! | `rightClickDefault`, `rightClickEdit` | a right-click with no command running and nothing (`Default`) or something (`Edit`) selected: `"menu"` (the shortcut menu, default) or `"repeat"` (the last command) |
+//! | `rightClickCommand` | a right-click while a command runs, with the time-sensitive right-click off: `"menu"` (default), `"enter"`, or `"menuWithOptions"` (the menu when the prompt has options, else Enter) |
 //! | `systemCursor` | keep the system cursor visible over the drawing area |
 //! | `historyLines` | command-line history lines, 0–12 |
 //! | `modelBackground`, `paperBackground` | `"#rrggbb"`, or `null` for the default |
@@ -56,6 +59,66 @@ pub const SNAP_MARKER_SIZES: std::ops::RangeInclusive<f32> = 5.0..=31.0;
 /// Interface scales the JSON form accepts (1: the system's own size).
 pub const INTERFACE_SCALES: std::ops::RangeInclusive<f32> = 0.5..=3.0;
 
+/// How long a right-click may be held before it opens the menu, in milliseconds.
+pub const RIGHT_CLICK_DURATIONS: std::ops::RangeInclusive<u32> = 100..=2000;
+
+/// What a right-click does with no command running (Right-Click Customization's Default and Edit
+/// modes).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum IdleClick {
+    /// Repeat the last command.
+    Repeat,
+    /// The shortcut menu.
+    #[default]
+    Menu,
+}
+
+impl IdleClick {
+    pub const ALL: [IdleClick; 2] = [IdleClick::Repeat, IdleClick::Menu];
+
+    /// The JSON name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            IdleClick::Repeat => "repeat",
+            IdleClick::Menu => "menu",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<IdleClick> {
+        IdleClick::ALL.into_iter().find(|c| c.as_str().eq_ignore_ascii_case(s.trim()))
+    }
+}
+
+/// What a right-click does while a command runs with the time-sensitive right-click off
+/// (Right-Click Customization's Command mode).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CommandClick {
+    /// Enter.
+    Enter,
+    /// The shortcut menu, always.
+    #[default]
+    Menu,
+    /// The shortcut menu when the prompt has options, else Enter.
+    MenuWithOptions,
+}
+
+impl CommandClick {
+    pub const ALL: [CommandClick; 3] = [CommandClick::Enter, CommandClick::Menu, CommandClick::MenuWithOptions];
+
+    /// The JSON name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CommandClick::Enter => "enter",
+            CommandClick::Menu => "menu",
+            CommandClick::MenuWithOptions => "menuWithOptions",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<CommandClick> {
+        CommandClick::ALL.into_iter().find(|c| c.as_str().eq_ignore_ascii_case(s.trim()))
+    }
+}
+
 /// The interface's own preferences (the drafting ones are engine settings).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UiOptions {
@@ -68,8 +131,16 @@ pub struct UiOptions {
     /// The selection highlight colour; `None` keeps the theme's.
     pub selection_color: Option<Color32>,
     /// While a command runs: a quick right-click is Enter and a held one opens the shortcut menu
-    /// (AutoCAD's time-sensitive right-click). Off: a right-click always opens the menu.
+    /// (AutoCAD's time-sensitive right-click). Off: [`Self::right_click_command`] decides.
     pub time_sensitive_right_click: bool,
+    /// How long the right button is held to open the menu while a command runs, in milliseconds.
+    pub right_click_hold_ms: u32,
+    /// A right-click with no command running and nothing selected (Default mode) or a selection
+    /// (Edit mode).
+    pub right_click_default: IdleClick,
+    pub right_click_edit: IdleClick,
+    /// A right-click while a command runs, with the time-sensitive right-click off.
+    pub right_click_command: CommandClick,
     /// The size of every menu, palette, dialog and the command line (1: the system's own).
     pub interface_scale: f32,
 }
@@ -82,6 +153,10 @@ impl Default for UiOptions {
             snap_marker_size: theme::SNAP_MARKER,
             selection_color: None,
             time_sensitive_right_click: true,
+            right_click_hold_ms: (crate::context_menu::HOLD_SECS * 1000.0) as u32,
+            right_click_default: IdleClick::Menu,
+            right_click_edit: IdleClick::Menu,
+            right_click_command: CommandClick::Menu,
             interface_scale: 1.0,
         }
     }
@@ -148,6 +223,10 @@ struct UiChanges {
     savetime: Option<u32>,
     savefilepath: Option<String>,
     time_sensitive_right_click: Option<bool>,
+    right_click_hold_ms: Option<u32>,
+    right_click_default: Option<IdleClick>,
+    right_click_edit: Option<IdleClick>,
+    right_click_command: Option<CommandClick>,
     interface_scale: Option<f32>,
 }
 
@@ -191,6 +270,17 @@ fn parse_ui(key: &str, v: &Value, c: &mut UiChanges) -> Result<bool, String> {
             c.save_version = Some(crate::SaveVersion::parse(name.trim()).ok_or("saveVersion must be 2000, 2004, 2007, 2010, 2013 or 2018")?);
         }
         "timeSensitiveRightClick" => c.time_sensitive_right_click = Some(v.as_bool().ok_or("timeSensitiveRightClick must be true or false")?),
+        "rightClickDuration" => {
+            let (lo, hi) = (f64::from(*RIGHT_CLICK_DURATIONS.start()), f64::from(*RIGHT_CLICK_DURATIONS.end()));
+            let n =
+                v.as_f64().filter(|n| n.is_finite() && (lo..=hi).contains(n)).ok_or("rightClickDuration must be from 100 to 2000 milliseconds")?;
+            c.right_click_hold_ms = Some(n.round() as u32);
+        }
+        "rightClickDefault" => c.right_click_default = Some(IdleClick::parse(text()?).ok_or("rightClickDefault must be menu or repeat")?),
+        "rightClickEdit" => c.right_click_edit = Some(IdleClick::parse(text()?).ok_or("rightClickEdit must be menu or repeat")?),
+        "rightClickCommand" => {
+            c.right_click_command = Some(CommandClick::parse(text()?).ok_or("rightClickCommand must be menu, enter or menuWithOptions")?)
+        }
         k if k.eq_ignore_ascii_case("SAVETIME") => {
             let max = cadcraft_engine::autosave::MAX_SAVETIME;
             let n = v
@@ -227,6 +317,10 @@ fn ui_json(app: &CadApp) -> Map<String, Value> {
     m.insert("SAVETIME".into(), json!(cadcraft_engine::autosave::savetime()));
     m.insert("SAVEFILEPATH".into(), json!(cadcraft_engine::autosave::savefilepath()));
     m.insert("timeSensitiveRightClick".into(), json!(o.time_sensitive_right_click));
+    m.insert("rightClickDuration".into(), json!(o.right_click_hold_ms));
+    m.insert("rightClickDefault".into(), json!(o.right_click_default.as_str()));
+    m.insert("rightClickEdit".into(), json!(o.right_click_edit.as_str()));
+    m.insert("rightClickCommand".into(), json!(o.right_click_command.as_str()));
     m
 }
 
@@ -300,7 +394,24 @@ fn run_json(app: &mut CadApp, params: &Value) -> Result<Value, String> {
     if let Some(b) = ui.time_sensitive_right_click {
         app.options.time_sensitive_right_click = b;
     }
+    apply_right_click(&mut app.options, &ui);
     Ok(report(app))
+}
+
+/// Right-Click Customization's settings (the time-sensitive switch aside) from `c`.
+fn apply_right_click(o: &mut UiOptions, c: &UiChanges) {
+    if let Some(ms) = c.right_click_hold_ms {
+        o.right_click_hold_ms = ms;
+    }
+    if let Some(m) = c.right_click_default {
+        o.right_click_default = m;
+    }
+    if let Some(m) = c.right_click_edit {
+        o.right_click_edit = m;
+    }
+    if let Some(m) = c.right_click_command {
+        o.right_click_command = m;
+    }
 }
 
 /// The interface preferences back to their defaults (the interface language stays).
@@ -330,6 +441,10 @@ impl CadApp {
             "selectionColor": color_json(self.options.selection_color),
             "snapMarkerSize": self.options.snap_marker_size,
             "timeSensitiveRightClick": self.options.time_sensitive_right_click,
+            "rightClickDuration": self.options.right_click_hold_ms,
+            "rightClickDefault": self.options.right_click_default.as_str(),
+            "rightClickEdit": self.options.right_click_edit.as_str(),
+            "rightClickCommand": self.options.right_click_command.as_str(),
             "interfaceScale": self.options.interface_scale,
         })
         .to_string()
@@ -346,9 +461,19 @@ impl CadApp {
             cadcraft_engine::cmd::options::restore(&mut self.session, vars);
         }
         let mut c = UiChanges::default();
-        for key in
-            ["systemCursor", "modelBackground", "paperBackground", "selectionColor", "snapMarkerSize", "timeSensitiveRightClick", "interfaceScale"]
-        {
+        for key in [
+            "systemCursor",
+            "modelBackground",
+            "paperBackground",
+            "selectionColor",
+            "snapMarkerSize",
+            "timeSensitiveRightClick",
+            "rightClickDuration",
+            "rightClickDefault",
+            "rightClickEdit",
+            "rightClickCommand",
+            "interfaceScale",
+        ] {
             if let Some(value) = v.get(key) {
                 let _ = parse_ui(key, value, &mut c);
             }
@@ -372,6 +497,7 @@ impl CadApp {
         if let Some(b) = c.time_sensitive_right_click {
             self.options.time_sensitive_right_click = b;
         }
+        apply_right_click(&mut self.options, &c);
         if let Some(n) = c.interface_scale {
             self.options.interface_scale = n;
         }
@@ -390,5 +516,17 @@ mod tests {
         for bad in ["#+f+0+0", "", "#fff", "#gggggg", "#12345678", "#ééé", "#1234567"] {
             assert_eq!(parse_hex(bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn idle_and_command_clicks_parse_their_names() {
+        for c in IdleClick::ALL {
+            assert_eq!(IdleClick::parse(c.as_str()), Some(c));
+        }
+        for c in CommandClick::ALL {
+            assert_eq!(CommandClick::parse(c.as_str()), Some(c));
+        }
+        assert_eq!(IdleClick::parse("enter"), None);
+        assert_eq!(CommandClick::parse("repeat"), None);
     }
 }

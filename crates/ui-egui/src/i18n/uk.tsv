@@ -1373,3 +1373,20 @@
 	Check for Updates…	Перевірити оновлення…
 	CADCraft is up to date.	Встановлено найновішу версію CADCraft.
 	Could not check for updates.	Не вдалося перевірити оновлення.
+	Right-Click Customization...	Налаштування правої кнопки...
+	Right-Click Customization	Налаштування правої кнопки
+	Turn on time-sensitive right-click	Увімкнути залежне від часу клацання правою кнопкою
+	Longer click duration:	Тривалість довгого клацання:
+	milliseconds	мілісекунд
+	While a command runs, a quick click is Enter and a longer click opens the shortcut menu.	Під час команди коротке клацання — Enter, довше відкриває контекстне меню.
+	Default Mode	Режим за замовчуванням
+	No objects selected and no command running:	Нічого не вибрано й команда не виконується:
+	Edit Mode	Режим редагування
+	Objects selected and no command running:	Об'єкти вибрано, команда не виконується:
+	Repeat last command	Повторити останню команду
+	Shortcut Menu	Контекстне меню
+	Command Mode	Режим команди
+	While a command runs:	Під час виконання команди:
+	ENTER	Клавіша Enter
+	Shortcut Menu: always enabled	Контекстне меню: завжди
+	Shortcut Menu: enabled when command options are present	Контекстне меню: коли команда має параметри

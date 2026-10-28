@@ -6,8 +6,12 @@
 //!   Pan/Zoom, Quick Select, Find, Properties and Options.
 //! - **While a command runs** ([`command_entries`]): a quick right-click is Enter; holding the
 //!   button for [`HOLD_SECS`] opens Enter, Cancel, Recent Input, the prompt's options, Snap
-//!   Overrides and Pan/Zoom instead (AutoCAD's time-sensitive right-click). With that turned off
-//!   in OPTIONS (`timeSensitiveRightClick`), every right-click opens the menu.
+//!   Overrides and Pan/Zoom instead (AutoCAD's time-sensitive right-click; Options ▸ User
+//!   Preferences ▸ Right-Click Customization sets how long, `rightClickDuration`). With that turned
+//!   off (`timeSensitiveRightClick`), Command mode says what a right-click does
+//!   (`rightClickCommand`: the menu, Enter, or the menu only when the prompt has options).
+//!   `rightClickDefault` and `rightClickEdit` can make a right-click with no command running
+//!   repeat the last command instead of opening the menu.
 //! - **Shift/Ctrl+right-click** ([`snap_entries`]): the object snap menu. Its items type the point
 //!   modifiers and snap overrides (`_from`, `_endp`, `_non`…) at the current point prompt.
 //!
@@ -41,7 +45,8 @@ const SETTINGS: &[&str] = &["options"];
 /// How many recent commands and inputs the menus list.
 pub const RECENT: usize = 8;
 /// How long the right button must be held while a command runs to open the command menu instead
-/// of acting as Enter (AutoCAD's time-sensitive right-click; 250 ms there by default).
+/// of acting as Enter, by default (AutoCAD's time-sensitive right-click; 250 ms there by
+/// default). OPTIONS `rightClickDuration` changes it.
 pub const HOLD_SECS: f64 = 0.25;
 
 /// Item ids that are not commands: keys, typed text and snap menu items.
@@ -290,6 +295,19 @@ pub fn groups_ui(ui: &mut egui::Ui, groups: &[Vec<Entry>], clicked: &mut Option<
 pub fn show(app: &mut CadApp, resp: &egui::Response) {
     let mut clicked = None;
     let snap = app.canvas.snap_menu;
+    // Right-Click Customization: with nothing selected (Default mode) or a selection (Edit mode),
+    // a right-click may repeat the last command instead of opening the menu.
+    let o = &app.options;
+    let mode =
+        if o.right_click_default == o.right_click_edit || app.session.selection().is_empty() { o.right_click_default } else { o.right_click_edit };
+    if !snap && mode == crate::options::IdleClick::Repeat {
+        if resp.secondary_clicked()
+            && let Some(last) = app.session.last_command.clone()
+        {
+            app.start(&last);
+        }
+        return;
+    }
     resp.context_menu(|ui| {
         let groups = if snap { snap_entries(app) } else { entries(app) };
         groups_ui(ui, &groups, &mut clicked);
@@ -307,8 +325,9 @@ struct Press(f64, egui::Pos2);
 
 /// The canvas's right button while a command runs (Shift/Ctrl+right-click is the snap menu's): a
 /// quick click is Enter — returns `true` when the caller should send it — and a click held for
-/// [`HOLD_SECS`] opens the command menu ([`command_entries`]) at the pointer (any click does with
-/// the time-sensitive right-click turned off). Call it every frame
+/// OPTIONS `rightClickDuration` opens the command menu ([`command_entries`]) at the pointer. With
+/// the time-sensitive right-click turned off, `rightClickCommand` says whether a click opens the
+/// menu or is Enter. Call it every frame
 /// with whether the pointer is on the canvas and whether a right-click ended there; it also shows
 /// the menu while it is open.
 pub fn in_command(app: &mut CadApp, ui: &egui::Ui, inside: bool, right_clicked: bool) -> bool {
@@ -325,14 +344,23 @@ pub fn in_command(app: &mut CadApp, ui: &egui::Ui, inside: bool, right_clicked: 
         ctx.data_mut(|d| d.insert_temp(press_id, Press(now, p)));
     }
     let running = app.session.prompting() && !app.canvas.snap_menu;
+    let o = &app.options;
+    let timed = o.time_sensitive_right_click;
+    // Without the time-sensitive right-click, Command mode says whether a click opens the menu.
+    let menu = match o.right_click_command {
+        crate::options::CommandClick::Menu => true,
+        crate::options::CommandClick::Enter => false,
+        crate::options::CommandClick::MenuWithOptions => app.session.current_prompt().is_some_and(|p| !p.keywords.is_empty()),
+    };
+    let hold = f64::from(o.right_click_hold_ms) / 1000.0;
     let mut open = false;
     if released && let Some(Press(t0, p0)) = ctx.data_mut(|d| d.remove_temp::<Press>(press_id)) {
         // A drag isn't a click; a click held long enough asks for the menu.
         let still = pos.is_some_and(|p| p.distance(p0) <= 6.0);
-        let held = now - t0 >= HOLD_SECS || !app.options.time_sensitive_right_click;
+        let held = if timed { now - t0 >= hold } else { menu };
         open = running && still && held;
     }
-    let enter = running && inside && right_clicked && !open && app.options.time_sensitive_right_click;
+    let enter = running && inside && right_clicked && !open && (timed || !menu);
     if !running {
         return false;
     }
