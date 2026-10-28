@@ -146,6 +146,12 @@ closing/reopening within the same session; they are not saved across application
 
 Invoke these UI commands through `engine.execute`, for example `{"command":"ui.dock","params":{"operation":"float","panel":"layers","rect":[100,100,320,440]}}`.
 
+`{"operation":"dock","panel":"layers","side":"Start"}` moves the selected palette into
+its own left-side column; `"End"` selects the right side. The shared docking command creates
+the side dock when absent and adds a column when it already exists. This is also the route
+used by the palette context menu's Dock Left and Dock Right choices. Protected drawing
+placement and workspace locking still apply; an invalid request leaves the layout unchanged.
+
 Advanced `ui.dock` operations use the same validated transaction as pointer gestures:
 `moveFloating` updates `rect`, `resizeSplit` accepts a boolean child `path` and
 `size` (`{"Ratio":0.5}`, `{"FixedFirst":280}`, or `{"FixedSecond":280}`),

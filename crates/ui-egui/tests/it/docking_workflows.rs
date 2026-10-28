@@ -593,3 +593,57 @@ fn group_drag_bar_moves_the_whole_group_into_the_other_dock() {
     assert_eq!(frames(layout), [[Panel::Canvas]]);
     assert_eq!(h.state().session.doc().unwrap(), &document);
 }
+
+/// Side choices move the selected palette into a real dock column, without grouping it into
+/// another palette or moving the document; floating and persisted layouts use the same path.
+#[test]
+fn palette_side_menu_redocks_each_panel_without_grouping_the_drawing() {
+    let mut h = harness(None, 1600.0, 1.0);
+    h.state_mut().session.start("line").unwrap();
+    let before = h.state().session.doc().unwrap().model.len();
+    for panel in [Panel::ToolSets, Panel::Layers, Panel::Properties, Panel::QuickCalc, Panel::ExternalRefs] {
+        h.state_mut().run("ui.dock", json!({"operation":"open", "panel":panel})).unwrap();
+        h.state_mut().run("ui.dock", json!({"operation":"float", "panel":panel, "rect":[400,150,280,380]})).unwrap();
+        h.run_steps(5);
+        for (label, side) in [("Dock Left", Side::Start), ("Dock Right", Side::End)] {
+            let pos = hit(&h, Hit::Tab(panel)).center();
+            h.event(Event::PointerMoved(pos));
+            h.event(Event::PointerButton { pos, button: PointerButton::Secondary, pressed: true, modifiers: Modifiers::NONE });
+            h.event(Event::PointerButton { pos, button: PointerButton::Secondary, pressed: false, modifiers: Modifiers::NONE });
+            h.run_steps(4);
+            h.get_by_label(label).click();
+            h.run_steps(5);
+            assert!(
+                dock_panels(&h.state().ui.docking.layout, side).iter().flatten().any(|group| group == &[panel]),
+                "{panel:?} {side:?}: {:?}; status {:?}",
+                h.state().ui.docking,
+                h.state().status
+            );
+            assert_eq!(frames(&h.state().ui.docking.layout), [[Panel::Canvas]]);
+            assert!(!h.state().ui.docking.layout.floating.iter().any(|window| window.panels().any(|p| *p == panel)));
+            assert_eq!(h.state().session.running.as_ref().map(|r| r.id.as_str()), Some("line"));
+            assert_eq!(h.state().session.doc().unwrap().model.len(), before);
+        }
+    }
+    let saved = serde_json::to_value(&h.state().ui).unwrap();
+    let restored: UiState = serde_json::from_value(saved).unwrap();
+    assert_eq!(restored.docking, h.state().ui.docking);
+}
+
+#[test]
+fn palette_side_command_preserves_siblings_and_rejects_protected_or_locked_moves() {
+    let mut h = harness(None, 1600.0, 1.0);
+    h.state_mut().run("ui.dock", json!({"operation":"move", "panel":"layers", "target":"properties", "zone":"center"})).unwrap();
+    h.state_mut().run("ui.dock", json!({"operation":"dock", "panel":"layers", "side":"Start"})).unwrap();
+    assert!(dock_panels(&h.state().ui.docking.layout, Side::Start).iter().flatten().any(|group| group == &[Panel::Layers]));
+    assert!(dock_panels(&h.state().ui.docking.layout, Side::End).iter().flatten().any(|group| group == &[Panel::Properties]));
+    for params in [json!({"operation":"dock", "panel":"canvas", "side":"Start"}), json!({"operation":"dock", "panel":"layers", "side":"invalid"})] {
+        let before = h.state().ui.docking.clone();
+        assert!(h.state_mut().run("ui.dock", params).is_err());
+        assert_eq!(h.state().ui.docking, before);
+    }
+    h.state_mut().ui.docking.locked = true;
+    let before = h.state().ui.docking.clone();
+    assert!(h.state_mut().run("ui.dock", json!({"operation":"dock", "panel":"layers", "side":"End"})).is_err());
+    assert_eq!(h.state().ui.docking, before);
+}

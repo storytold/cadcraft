@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-22 · **Change:** minor (distinct polyline midpoint grips) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-26 · **Change:** minor (explicit palette side docking) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
 
 How CADCraft's interaction compares with AutoCAD's: point entry, object snaps, tracking, dynamic
 input, grips, selection, the command line, chrome and navigation. A drafter's speed in AutoCAD
@@ -199,10 +199,25 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
   have menus too (#512). Still missing: in-place layout tab rename, Move or Copy, Select All
   Layouts.
 
+## Explicit palette side docking
+
+Palette tab context menus offer Dock Left and Dock Right in addition to the shared floating
+and grouping actions. Each choice moves that palette to a real side dock column through
+`ui.dock`; it does not turn the drawing into a tab group or move the palette's other tabs.
+The same menu works for floating palettes. Native workspace persistence stores the resulting
+layout across restarts. The browser host does not persist workspace layouts; reloading restores
+the default arrangement. The document view has no side-placement menu and retains its protected permissions.
+This CC-018 extraction uses the upstream shared docking implementation; auto-hide and
+Tool Sets-to-ribbon placement are separate follow-ups.
+AutoCAD 2027's Properties palette menu was observed on Windows: it offers Allow Docking,
+Anchor Left, Anchor Right and Auto-hide. These fixed-column actions are an incremental
+placement/recovery improvement, not a claim to reproduce anchoring or hover auto-hide.
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-26 | minor | CC-018: palette tab menu Dock Left/Right actions use shared side columns; independent of ribbon and auto-hide |
 | 2026-10-22 | minor | Polyline segment midpoint grips use rectangles, distinct from square vertex grips, with matching hover and pick bounds (#1950) |
 | 2026-10-13 | minor | Filled-region highlight boundaries are traversed in deterministic coordinate order, fixing dash-phase jumps on CPU hover/selection redraws and GPU highlight rebuilds; CPU dash-position, pixel and GPU mesh regressions |
 | 2026-10-14 | minor | Selection cycling (#1143): the list and badge of SELECTIONCYCLING, Shift+Space through overlapping objects (#1145) |

@@ -252,8 +252,20 @@ fn set_visible(workspace: &mut Workspace, panel: Panel, visible: bool) -> Result
 }
 
 /// `ui.dock` params: `{action}` or `{operation, …}` in craft-ui's shared grammar.
+/// `operation: "dock"` delegates to the shared side/anchor docking command.
 fn apply_command(workspace: &mut Workspace, params: &Value) -> Result<(), String> {
     validate(workspace)?;
+    if params.get("operation").and_then(Value::as_str) == Some("dock") && params.get("action").is_none() {
+        let mut command = params.clone();
+        command["command"] = json!("window.panel.dock");
+        let command: DockCommand<Panel> = serde_json::from_value(command).map_err(|error| error.to_string())?;
+        let mut next = workspace.clone();
+        let space = FloatSpace::new(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0)));
+        command.apply(&mut next, false, &space, permissions).map_err(|error| error.to_string())?;
+        validate(&next)?;
+        *workspace = next;
+        return Ok(());
+    }
     let operation = if let Some(action) = params.get("action") {
         UiDock::Action { action: serde_json::from_value(action.clone()).map_err(|error| error.to_string())? }
     } else {
@@ -415,6 +427,21 @@ impl DockContent<Panel> for Panels<'_> {
                 egui::ScrollArea::both().id_salt("dock-xrefs").auto_shrink([false, false]).show(ui, |ui| crate::xrefs::section(app, ui));
             }
         }
+    }
+    fn panel_menu(&mut self, ui: &mut egui::Ui, panel: &Panel) {
+        if !permissions(panel).movable {
+            return;
+        }
+        for (label, side) in [(crate::tl!("Dock Left"), Side::Start), (crate::tl!("Dock Right"), Side::End)] {
+            if ui.button(label).clicked() {
+                let result = self.app.run("ui.dock", json!({"operation": "dock", "panel": panel, "side": side}));
+                if let Err(error) = result {
+                    self.app.set_status(format!("Panel move was not applied: {error}"));
+                }
+                ui.close();
+            }
+        }
+        ui.separator();
     }
     fn logical_label(&self, panel: &Panel) -> String {
         crate::i18n::t(panel.label()).into()
