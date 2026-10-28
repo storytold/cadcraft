@@ -791,8 +791,8 @@ mod tests {
 
     #[test]
     fn pair_search_matches_oracle_with_budgets() {
-        // Small inputs in few cells: many pairs share several cells, and sweeping both budgets
-        // across their full range hits every exhaustion point (and the exact boundary).
+        // Small inputs in few cells: many pairs share several cells. Sweeping each budget over
+        // 0..=400 crosses its exhaustion point for most seeds, including the exact boundary.
         for seed in 1..=150u64 {
             let mut r = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
             let n = 2 + (r.next() % 28) as usize;
@@ -821,9 +821,11 @@ mod tests {
             let cells = ((segs.len() as f64).sqrt().ceil() as usize).clamp(1, 512);
             assert!(cells >= 64, "grid too coarse to reach the long path");
             assert_same_search(&segs, 60_000_000, 20_000_000);
-            // Budget exhausted in the cell phase, and in the long phase.
+            // Budgets exhausted in the cell phase (visits, then pairs).
             assert_same_search(&segs, 3_000, 20_000_000);
             assert_same_search(&segs, 60_000_000, 200);
+            assert!(pair_splits_limited(&segs, &bb, 3_000, 20_000_000).is_none());
+            assert!(pair_splits_limited(&segs, &bb, 60_000_000, 200).is_none());
             let (cw, ch) = ((bb.width() / cells as f64).max(1e-12), (bb.height() / cells as f64).max(1e-12));
             let span = |a: f64, b: f64, o: f64, w: f64| {
                 (((b.max(a) - o) / w).floor().min((cells - 1) as f64) - ((b.min(a) - o) / w).floor().max(0.0) + 1.0) as usize
