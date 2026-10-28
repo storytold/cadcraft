@@ -220,6 +220,8 @@ enum Stage {
     Edges(Vec<Handle>),
     /// Fence points so far.
     Fence(Vec<Vec2>),
+    /// Quick mode's two-point fence, started by a pick in empty space: its first point.
+    QuickFence(Vec2),
     /// A crossing window: its first corner once picked.
     Crossing(Option<Vec2>),
     Mode,
@@ -356,6 +358,7 @@ impl Interactive for TrimM {
                 None => Prompt::new("Specify first fence point", Accept::POINT),
                 Some(l) => Prompt::new("Specify next fence point", Accept::POINT).kw(&["Undo"]).base(*l),
             },
+            Stage::QuickFence(a) => Prompt::new("Specify next fence point", Accept::POINT).base(*a),
             Stage::Crossing(None) => Prompt::new("Specify first corner", Accept::POINT),
             Stage::Crossing(Some(_)) => Prompt::new("Specify opposite corner", Accept::POINT),
             Stage::Mode => {
@@ -455,6 +458,16 @@ impl Interactive for TrimM {
                 }
                 Ok(Step::Continue)
             }
+            Stage::QuickFence(a) => {
+                self.stage = Stage::Pick;
+                if let Input::Point(b) = i {
+                    let r = self.step(s, |m, s| fence(s, &[a, b], extending, m.edges(quick, implied), quick).map(|_| ()));
+                    if let Err(e) = r {
+                        s.echo(e.to_string());
+                    }
+                }
+                Ok(Step::Continue)
+            }
             Stage::Crossing(first) => {
                 match (first, i) {
                     (None, Input::Point(p)) => self.stage = Stage::Crossing(Some(p)),
@@ -475,8 +488,9 @@ impl Interactive for TrimM {
                     let ap = s.pixel_size() * s.settings.pickbox.max(1.0) * 1.5;
                     let space = s.space();
                     let Some(h) = crate::select::pick(s.doc()?, &space, p, ap) else {
-                        // A pick in empty space opens a crossing window there.
-                        self.stage = Stage::Crossing(Some(p));
+                        // A pick in empty space starts a two-point fence in Quick mode (as in
+                        // AutoCAD, #1594) and a crossing window in Standard mode.
+                        self.stage = if quick { Stage::QuickFence(p) } else { Stage::Crossing(Some(p)) };
                         return Ok(Step::Continue);
                     };
                     let r = self.step(s, |m, s| apply(s, h, p, extending, m.edges(quick, implied), quick).map(|_| ()));
@@ -525,6 +539,7 @@ impl Interactive for TrimM {
                 .windows(2)
                 .filter_map(|w| Some(line(*w.first()?, *w.get(1)?)))
                 .collect(),
+            Stage::QuickFence(a) => vec![line(*a, c)],
             Stage::Crossing(Some(a)) => vec![lwpoly(rect_vertices(*a, c), true)],
             _ => Vec::new(),
         }

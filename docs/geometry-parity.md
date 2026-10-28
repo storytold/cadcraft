@@ -1,6 +1,6 @@
 # Geometry parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-22 · **Change:** minor (bounded constraint expression and parameter depth) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-25 · **Change:** minor (TRIM/EXTEND Quick mode two-point fence) · **Target:** Autodesk AutoCAD 2027
 
 CAD users trust numbers: a trimmed endpoint, an offset, an intersection or an area is either right
 to the last displayed digit or the tool is unusable for production drawings. This document
@@ -80,7 +80,7 @@ constraints 10%.
 
 | Command | AutoCAD supports | CADCraft supports |
 |---|---|---|
-| TRIM | every curve type, quick and standard modes | line, arc, circle, polyline; ellipse and spline via sampled cutting (`modify.rs:485-656`, `modify2.rs` `trim_other`); a closed spline leaves one open spline On a closed polyline a pick before the first or after the last cut keeps the run between the cuts and nothing more (#726). |
+| TRIM | every curve type, quick and standard modes | line, arc, circle, polyline; ellipse and spline via sampled cutting (`modify.rs:485-656`, `modify2.rs` `trim_other`); a closed spline leaves one open spline On a closed polyline a pick before the first or after the last cut keeps the run between the cuts and nothing more (#726). In Quick mode TRIM and EXTEND start a two-point fence from a pick in empty space, Standard mode a crossing window (#1594). |
 | EXTEND | every open curve | line, arc, polyline, elliptical arc, open spline (runs on along its end tangent, `modify2/curve_edits.rs`) |
 | FILLET | lines, arcs, circles, polylines, ellipses, splines, xlines, rays; Trim/No trim | lines, arcs, circles (TTR circle), polyline mode, Trim/No trim, Multiple; elliptical arcs and splines with any of these (tangent circle from sampled offsets refined by Newton's method, `geom/src/fillet.rs`; arcs trimmed or extended round the ellipse, splines split at the touch point); two straight segments of one polyline (adjacent, or with one between that the corner replaces), a polyline's straight end segment with a line (the line joins it); not polyline arc segments, xlines or rays |
 | CHAMFER | lines, polylines, xlines, rays | lines, Distance/Angle, whole polylines (Polyline option), polyline segments as for FILLET (`modify2/fillet_pline.rs`); refuses arcs, ellipses and splines with a message, as AutoCAD; not xlines or rays |
@@ -157,6 +157,7 @@ Total ≈ 90–140 h; items 1–6 parallelise across two or three agents.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-25 | minor | TRIM and EXTEND in Quick mode: a pick in empty space starts a two-point fence, as in AutoCAD; Standard mode keeps the crossing window (#1594) |
 | 2026-10-22 | minor | Constraint expressions count operator chains toward the syntax-tree depth limit; evaluation shares one depth limit across operators and parameter references, with a 1 MiB-stack regression (#1936) |
 | 2026-10-14 | trivial | JOIN Close: a single arc becomes its circle, a single elliptical arc its full ellipse (#1175) |
 | 2026-10-12 | trivial | TRIM on a closed polyline keeps only the complementary run when the pick lies past the last cut (#726) |
