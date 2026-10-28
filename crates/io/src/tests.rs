@@ -2823,3 +2823,24 @@ fn proxies_keep_their_class_when_classes_are_rewritten() {
         dxf_records(&pairs, "ACAD_PROXY_OBJECT").iter().map(|r| classes[own_91(r).parse::<usize>().unwrap() - 500].clone()).collect();
     assert_eq!(names, ["VISUALSTYLE", "WIDGETX"]);
 }
+
+/// A DWG whose model space block record has a damaged name (the bytes of `*Model_Space`
+/// garbled) still opens with its entities in model space: the Model layout names that record by
+/// handle. They used to land in an ordinary block of the garbled name, leaving model space empty
+/// without a note.
+#[test]
+fn a_garbled_model_space_name_keeps_model_space() {
+    let mut dxf = String::from("0\nSECTION\n2\nENTITIES\n");
+    for i in 0..20 {
+        dxf += &format!("0\nLINE\n8\n0\n10\n{i}\n20\n0\n11\n{i}\n21\n10\n");
+    }
+    dxf += "0\nENDSEC\n0\nEOF\n";
+    let d = read(dxf.as_bytes(), "lines.dxf").unwrap();
+    let mut dwg = crate::write_with(&d, "lines.dwg", &crate::SaveOptions { version: Some(crate::Version::R2000), binary: false }).unwrap();
+    let name = b"*Model_Space";
+    let at = dwg.windows(name.len()).position(|w| w.eq_ignore_ascii_case(name)).expect("the record's name");
+    dwg[at + 2..at + 6].iter_mut().for_each(|x| *x ^= 0xA5);
+    let back = read(&dwg, "damaged.dwg").unwrap();
+    assert_eq!(back.model.len(), 20, "blocks: {:?}", back.blocks.keys().collect::<Vec<_>>());
+    assert!(back.blocks.keys().all(|n| !n.to_ascii_uppercase().ends_with("SPACE")));
+}

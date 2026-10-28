@@ -2013,8 +2013,10 @@ fn setup_layouts(d: &mut Drawing, layout_objs: &mut [LayoutDef], rx: &Rx) -> (Ha
     layout_objs.sort_by_key(|l| l.1);
     for (name, order, br, page, own, record) in layout_objs.iter() {
         if name.eq_ignore_ascii_case("Model") {
-            // Model space's own page setup and layout data (its handles are the file's roles).
-            d.model_layout = Some(Box::new(Layout { page: page.clone(), record: record.clone(), ..Layout::new("Model", 0) }));
+            // Model space's own page setup and layout data (its handles are the file's roles), and
+            // its block record, which names model space when the record's own name doesn't.
+            let block_handle = Handle::parse_hex(br).unwrap_or_default().into();
+            d.model_layout = Some(Box::new(Layout { page: page.clone(), record: record.clone(), block_handle, ..Layout::new("Model", 0) }));
             continue;
         }
         let block_handle = Handle::parse_hex(br).unwrap_or_default().into();
@@ -2041,9 +2043,12 @@ fn setup_layouts(d: &mut Drawing, layout_objs: &mut [LayoutDef], rx: &Rx) -> (Ha
 fn place_blocks(d: &mut Drawing, blocks: Vec<BlockDef>, rx: &mut Rx, paper_block_for: &HashMap<String, String>, first_layout: &str) {
     // Block record handles by upper-case block name.
     let br_of: HashMap<String, Handle> = rx.brs.iter().filter_map(|(h, n)| Some((n.to_ascii_uppercase(), Handle::parse_hex(h)?))).collect();
+    // Model space's block record, by the Model layout's pointer: a damaged file can garble the
+    // record's name, and its entities are still model space's.
+    let model_br = d.model_layout.as_ref().map(|l| l.block_handle.get()).filter(|h| h.0 != 0);
     for (name, base, description, ents, xref, (begin, end)) in blocks {
         let up = name.to_ascii_uppercase();
-        if up == "*MODEL_SPACE" {
+        if up == "*MODEL_SPACE" || (model_br.is_some() && br_of.get(&up).copied() == model_br) {
             for (_, _, e) in ents {
                 d.ensure_layer(&e.common.layer);
                 d.model.push(e);
