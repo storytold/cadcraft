@@ -1367,3 +1367,20 @@ menu	Modify	Edita
 	Check for Updates…	Verifica aggiornamenti…
 	CADCraft is up to date.	CADCraft è aggiornato.
 	Could not check for updates.	Impossibile verificare gli aggiornamenti.
+	Colors...	Colori...
+	Drawing Window Colors	Colori finestra di disegno
+	Context:	Contesto:
+	Interface element:	Elemento dell'interfaccia:
+	2D model space	Spazio modello 2D
+	Sheet / layout	Foglio / layout
+	Uniform background	Sfondo uniforme
+	Crosshairs	Puntatore a croce
+	Grid major lines	Linee principali griglia
+	Grid minor lines	Linee secondarie griglia
+	Autosnap marker	Indicatore AutoSnap
+	Autotrack vector	Vettore AutoTrack
+	Paper	Carta
+	Color:	Colore:
+	Restore Element	Ripristina elemento
+	Restore all contexts	Ripristina tutti i contesti
+	Preview:	Anteprima:

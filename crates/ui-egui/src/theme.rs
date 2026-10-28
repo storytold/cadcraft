@@ -124,6 +124,10 @@ pub struct Tokens {
     pub crosshair: Color32,
     /// The sheet of paper on a layout tab.
     pub paper: Color32,
+    /// Around the sheet on a layout tab.
+    pub layout_bg: Color32,
+    /// Polar and object snap tracking paths and acquired points (AutoTrack vectors).
+    pub track: Color32,
 }
 
 impl Tokens {
@@ -172,6 +176,8 @@ impl Tokens {
         warn: Color32::from_rgb(0xff, 0xd0, 0x80),
         crosshair: Color32::from_rgb(0xe8, 0xe8, 0xe8),
         paper: Color32::WHITE,
+        layout_bg: Color32::from_rgb(0x50, 0x57, 0x63),
+        track: Color32::from_rgb(0x2f, 0xd0, 0x62),
     };
 
     /// Light grey chrome with dark text. The drawing-area colours (canvas, grid, axes, selection,
@@ -241,8 +247,8 @@ pub(crate) fn crosshair_color(background: Color32) -> Color32 {
     if luminance(background) > 0.5 { Color32::from_rgb(0x20, 0x20, 0x20) } else { Tokens::DARK.crosshair }
 }
 
-/// The user's drawing-area preferences (Options ▸ Display and Drafting); `None` keeps the theme's
-/// colour.
+/// The user's drawing-area preferences (Options ▸ Display and Drafting, and the Drawing Window
+/// Colors dialog); `None` keeps the theme's colour.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Canvas {
     pub model: Option<Color32>,
@@ -251,6 +257,14 @@ pub struct Canvas {
     pub snap_marker: f32,
     /// The colour selected objects are highlighted in.
     pub selection: Option<Color32>,
+    /// Model space: the crosshair, grid lines, AutoSnap marker and AutoTrack vector.
+    pub crosshair: Option<Color32>,
+    pub grid_major: Option<Color32>,
+    pub grid_minor: Option<Color32>,
+    pub snap: Option<Color32>,
+    pub track: Option<Color32>,
+    /// Layouts: around the sheet.
+    pub layout_bg: Option<Color32>,
 }
 
 /// The default object snap marker size.
@@ -258,7 +272,18 @@ pub const SNAP_MARKER: f32 = 11.0;
 
 impl Default for Canvas {
     fn default() -> Self {
-        Canvas { model: None, paper: None, snap_marker: SNAP_MARKER, selection: None }
+        Canvas {
+            model: None,
+            paper: None,
+            snap_marker: SNAP_MARKER,
+            selection: None,
+            crosshair: None,
+            grid_major: None,
+            grid_minor: None,
+            snap: None,
+            track: None,
+            layout_bg: None,
+        }
     }
 }
 
@@ -268,7 +293,17 @@ impl Canvas {
             Some(bg) => t.with_model_background(bg),
             None => t,
         };
-        Tokens { paper: self.paper.unwrap_or(t.paper), selection: self.selection.unwrap_or(t.selection), ..t }
+        Tokens {
+            paper: self.paper.unwrap_or(t.paper),
+            selection: self.selection.unwrap_or(t.selection),
+            crosshair: self.crosshair.unwrap_or(t.crosshair),
+            grid_major: self.grid_major.unwrap_or(t.grid_major),
+            grid_minor: self.grid_minor.unwrap_or(t.grid_minor),
+            snap: self.snap.unwrap_or(t.snap),
+            track: self.track.unwrap_or(t.track),
+            layout_bg: self.layout_bg.unwrap_or(t.layout_bg),
+            ..t
+        }
     }
 }
 

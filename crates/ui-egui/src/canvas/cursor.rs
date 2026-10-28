@@ -68,7 +68,7 @@ pub(super) fn draw_snap_marker(p: &egui::Painter, at: Pos2, hit: &SnapHit) {
 pub(super) fn draw_tracking(p: &egui::Painter, xf: &Xf, acquired: &[snap::tracking::Acquired], track: Option<&snap::tracking::Track>, far: f64) {
     use snap::tracking::{Acquired, PathShape};
     let t = Tokens::get();
-    let st = Stroke::new(1.0, t.snap);
+    let st = Stroke::new(1.0, t.track);
     for a in acquired {
         let c = xf.to_screen(a.at());
         if let Acquired::Parallel { .. } = a {
@@ -99,7 +99,7 @@ pub(super) fn draw_tracking(p: &egui::Painter, xf: &Xf, acquired: &[snap::tracki
                 (0..=96).map(|i| xf.to_screen(e.at_param(t0 - span + span * f64::from(i) / 48.0))).collect()
             }
         };
-        p.extend(Shape::dotted_line(&pts, t.snap, 6.0, 1.0));
+        p.extend(Shape::dotted_line(&pts, t.track, 6.0, 1.0));
         let (distance, angle) = (
             cadcraft_engine::units::format_distance(path.from.dist(tr.point), 2, 4),
             (path.from.angle_to(tr.point).to_degrees().round() as i64).rem_euclid(360),

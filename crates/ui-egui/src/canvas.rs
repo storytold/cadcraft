@@ -968,7 +968,8 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
     }));
     ensure_list(app, &xf_paper, &views, ui.ctx());
     let sheet = app.canvas.list.as_ref().and_then(|l| l.sheet);
-    let surround = Color32::from_rgb(0x50, 0x57, 0x63);
+    // Around the sheet on a layout tab (Options ▸ Display ▸ Colors...).
+    let surround = t.layout_bg;
     let (bg, paper_rect) = match sheet {
         Some(sh) => {
             // Paper space: grey surround, the sheet with a shadow, the printable area dashed.

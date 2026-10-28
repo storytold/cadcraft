@@ -19,6 +19,8 @@
 //! | `systemCursor` | keep the system cursor visible over the drawing area |
 //! | `historyLines` | command-line history lines, 0–12 |
 //! | `modelBackground`, `paperBackground` | `"#rrggbb"`, or `null` for the default |
+//! | `layoutBackground` | around the sheet on layout tabs: `"#rrggbb"`, or `null` for the default |
+//! | `crosshairColor`, `gridMajorColor`, `gridMinorColor`, `autosnapColor`, `autotrackColor` | model space's crosshair, grid lines, AutoSnap marker and AutoTrack vector: `"#rrggbb"`, or `null` for the default |
 //! | `selectionColor` | the colour selected objects are highlighted in: `"#rrggbb"`, or `null` for the theme's |
 //! | `snapMarkerSize` | object snap marker size in points, 5–31 |
 //! | `interfaceScale` | the interface's size, 0.5–3 (1: the system's own) |
@@ -56,6 +58,10 @@ pub const SNAP_MARKER_SIZES: std::ops::RangeInclusive<f32> = 5.0..=31.0;
 /// Interface scales the JSON form accepts (1: the system's own size).
 pub const INTERFACE_SCALES: std::ops::RangeInclusive<f32> = 0.5..=3.0;
 
+/// The drawing-area elements the Drawing Window Colors dialog (Options ▸ Display ▸ Colors...)
+/// colours besides the model and paper backgrounds, by their JSON names.
+pub const WINDOW_COLORS: [&str; 6] = ["layoutBackground", "crosshairColor", "gridMajorColor", "gridMinorColor", "autosnapColor", "autotrackColor"];
+
 /// The interface's own preferences (the drafting ones are engine settings).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UiOptions {
@@ -63,6 +69,15 @@ pub struct UiOptions {
     pub model_background: Option<Color32>,
     /// The sheet colour on layout tabs; `None` is white.
     pub paper_background: Option<Color32>,
+    /// Around the sheet on layout tabs; `None` keeps the theme's.
+    pub layout_background: Option<Color32>,
+    /// Model space's crosshair, grid lines, AutoSnap marker and AutoTrack vector; `None` keeps
+    /// the theme's (the crosshair and grid follow the model background).
+    pub crosshair_color: Option<Color32>,
+    pub grid_major_color: Option<Color32>,
+    pub grid_minor_color: Option<Color32>,
+    pub autosnap_color: Option<Color32>,
+    pub autotrack_color: Option<Color32>,
     /// Object snap marker size in points.
     pub snap_marker_size: f32,
     /// The selection highlight colour; `None` keeps the theme's.
@@ -79,6 +94,12 @@ impl Default for UiOptions {
         UiOptions {
             model_background: None,
             paper_background: None,
+            layout_background: None,
+            crosshair_color: None,
+            grid_major_color: None,
+            grid_minor_color: None,
+            autosnap_color: None,
+            autotrack_color: None,
             snap_marker_size: theme::SNAP_MARKER,
             selection_color: None,
             time_sensitive_right_click: true,
@@ -95,7 +116,36 @@ impl UiOptions {
             paper: self.paper_background,
             snap_marker: self.snap_marker_size,
             selection: self.selection_color,
+            crosshair: self.crosshair_color,
+            grid_major: self.grid_major_color,
+            grid_minor: self.grid_minor_color,
+            snap: self.autosnap_color,
+            track: self.autotrack_color,
+            layout_bg: self.layout_background,
         }
+    }
+
+    /// The drawing-area colour called `key` (`modelBackground`, `paperBackground` or one of
+    /// [`WINDOW_COLORS`]); `None` for another name.
+    pub fn color_mut(&mut self, key: &str) -> Option<&mut Option<Color32>> {
+        Some(match key {
+            "modelBackground" => &mut self.model_background,
+            "paperBackground" => &mut self.paper_background,
+            "layoutBackground" => &mut self.layout_background,
+            "crosshairColor" => &mut self.crosshair_color,
+            "gridMajorColor" => &mut self.grid_major_color,
+            "gridMinorColor" => &mut self.grid_minor_color,
+            "autosnapColor" => &mut self.autosnap_color,
+            "autotrackColor" => &mut self.autotrack_color,
+            _ => return None,
+        })
+    }
+
+    /// The user's colour for the element called `key` ([`Self::color_mut`]); `None` keeps the
+    /// default.
+    pub fn color(&self, key: &str) -> Option<Color32> {
+        let mut o = *self;
+        o.color_mut(key).and_then(|c| *c)
     }
 }
 
@@ -142,6 +192,8 @@ struct UiChanges {
     history_lines: Option<usize>,
     model_background: Option<Option<Color32>>,
     paper_background: Option<Option<Color32>>,
+    /// [`WINDOW_COLORS`] by name.
+    window_colors: Vec<(&'static str, Option<Color32>)>,
     selection_color: Option<Option<Color32>>,
     snap_marker_size: Option<f32>,
     save_version: Option<crate::SaveVersion>,
@@ -191,6 +243,10 @@ fn parse_ui(key: &str, v: &Value, c: &mut UiChanges) -> Result<bool, String> {
             c.save_version = Some(crate::SaveVersion::parse(name.trim()).ok_or("saveVersion must be 2000, 2004, 2007, 2010, 2013 or 2018")?);
         }
         "timeSensitiveRightClick" => c.time_sensitive_right_click = Some(v.as_bool().ok_or("timeSensitiveRightClick must be true or false")?),
+        k if WINDOW_COLORS.contains(&k) => {
+            let colour = color_param(key, v)?;
+            c.window_colors.extend(WINDOW_COLORS.iter().find(|n| **n == k).map(|n| (*n, colour)));
+        }
         k if k.eq_ignore_ascii_case("SAVETIME") => {
             let max = cadcraft_engine::autosave::MAX_SAVETIME;
             let n = v
@@ -221,6 +277,9 @@ fn ui_json(app: &CadApp) -> Map<String, Value> {
     m.insert("modelBackground".into(), color_json(o.model_background));
     m.insert("paperBackground".into(), color_json(o.paper_background));
     m.insert("selectionColor".into(), color_json(o.selection_color));
+    for key in WINDOW_COLORS {
+        m.insert(key.into(), color_json(o.color(key)));
+    }
     m.insert("snapMarkerSize".into(), json!(o.snap_marker_size));
     m.insert("interfaceScale".into(), json!(o.interface_scale));
     m.insert("saveVersion".into(), json!(app.ui.save_version));
@@ -282,6 +341,11 @@ fn run_json(app: &mut CadApp, params: &Value) -> Result<Value, String> {
     if let Some(c) = ui.selection_color {
         app.options.selection_color = c;
     }
+    for (key, c) in ui.window_colors {
+        if let Some(slot) = app.options.color_mut(key) {
+            *slot = c;
+        }
+    }
     if let Some(n) = ui.snap_marker_size {
         app.options.snap_marker_size = n;
     }
@@ -321,7 +385,7 @@ impl CadApp {
     /// ([`CadApp::prefs_json`]) and the desktop workspace file (panels, command line) do not
     /// already keep.
     pub fn profile_json(&self) -> String {
-        json!({
+        let mut v = json!({
             "version": 1,
             "sysvars": cadcraft_engine::cmd::options::profile(&self.session),
             "systemCursor": self.ui.system_cursor,
@@ -331,8 +395,13 @@ impl CadApp {
             "snapMarkerSize": self.options.snap_marker_size,
             "timeSensitiveRightClick": self.options.time_sensitive_right_click,
             "interfaceScale": self.options.interface_scale,
-        })
-        .to_string()
+        });
+        if let Some(m) = v.as_object_mut() {
+            for key in WINDOW_COLORS {
+                m.insert(key.into(), color_json(self.options.color(key)));
+            }
+        }
+        v.to_string()
     }
 
     /// Restore a profile saved by [`Self::profile_json`]. Unknown, malformed or out-of-range
@@ -346,9 +415,9 @@ impl CadApp {
             cadcraft_engine::cmd::options::restore(&mut self.session, vars);
         }
         let mut c = UiChanges::default();
-        for key in
-            ["systemCursor", "modelBackground", "paperBackground", "selectionColor", "snapMarkerSize", "timeSensitiveRightClick", "interfaceScale"]
-        {
+        let keys =
+            ["systemCursor", "modelBackground", "paperBackground", "selectionColor", "snapMarkerSize", "timeSensitiveRightClick", "interfaceScale"];
+        for key in keys.into_iter().chain(WINDOW_COLORS) {
             if let Some(value) = v.get(key) {
                 let _ = parse_ui(key, value, &mut c);
             }
@@ -365,6 +434,11 @@ impl CadApp {
         }
         if let Some(sel) = c.selection_color {
             self.options.selection_color = sel;
+        }
+        for (key, colour) in c.window_colors {
+            if let Some(slot) = self.options.color_mut(key) {
+                *slot = colour;
+            }
         }
         if let Some(n) = c.snap_marker_size {
             self.options.snap_marker_size = n;

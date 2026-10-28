@@ -4,7 +4,7 @@
 //!
 //! The open tab is part of the dialog name (`"options:selection"`), so `ui.set` can show any tab.
 
-use egui::{Color32, RichText, Sense, Stroke, vec2};
+use egui::{Color32, Pos2, Rect, RichText, Sense, Shape, Stroke, vec2};
 use serde_json::{Map, Value, json};
 
 use crate::CadApp;
@@ -136,8 +136,9 @@ fn preview_square(ui: &mut egui::Ui, side: f32, color: Color32) {
     p.rect_stroke(egui::Rect::from_center_size(rect.center(), vec2(side, side)), 0.0, Stroke::new(2.0, color), egui::StrokeKind::Middle);
 }
 
-/// Display tab: interface theme, animation preference and scale, drawing-area colours, crosshair size, history length and the system-cursor option; edits accumulate in `changes`.
+/// Display tab: interface theme, animation preference and scale, drawing-area colours (and the Drawing Window Colors window), crosshair size, history length and the system-cursor option; edits accumulate in `changes`.
 fn display(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
+    let mut colors = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::unique(WINDOW_COLORS)).unwrap_or(false));
     grid(ui, "options_display", |ui| {
         let theme_caption = ui.label(crate::tl!("Interface theme"));
         let mut theme = app.ui.theme;
@@ -187,6 +188,12 @@ fn display(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
         color_row(ui, app.options.paper_background, Tokens::DARK.paper, "paperBackground", changes, paper_caption.id);
         ui.end_row();
 
+        ui.label(crate::tl!("Drawing Window Colors"));
+        if ui.button(crate::tl!("Colors...")).clicked() {
+            colors = true;
+        }
+        ui.end_row();
+
         let crosshair_caption = ui.label(crate::tl!("Crosshair size"));
         ui.horizontal(|ui| {
             let mut size = app.session.settings.cursorsize;
@@ -212,6 +219,169 @@ fn display(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
         changes.insert("systemCursor".into(), json!(system_cursor));
     }
     hint(ui, crate::tl!("Screen magnifiers, screen readers and recorders follow the system cursor."));
+    if colors {
+        window_colors(app, ui.ctx(), &mut colors, changes);
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique(WINDOW_COLORS), colors));
+}
+
+/// Whether the Drawing Window Colors window is open (egui temp data).
+const WINDOW_COLORS: &str = "cc_options_window_colors";
+
+/// The selected (context, interface element) in Drawing Window Colors (egui temp data).
+const WINDOW_COLORS_SELECTED: &str = "cc_options_window_colors_selected";
+
+/// The Drawing Window Colors contexts and their interface elements: (context, [(JSON name,
+/// element)]).
+const CONTEXTS: [(&str, &[(&str, &str)]); 2] = [
+    (
+        "2D model space",
+        &[
+            ("modelBackground", "Uniform background"),
+            ("crosshairColor", "Crosshairs"),
+            ("gridMajorColor", "Grid major lines"),
+            ("gridMinorColor", "Grid minor lines"),
+            ("autosnapColor", "Autosnap marker"),
+            ("autotrackColor", "Autotrack vector"),
+        ],
+    ),
+    ("Sheet / layout", &[("layoutBackground", "Uniform background"), ("paperBackground", "Paper")]),
+];
+
+/// What an element shows while it has no colour of its own: the theme's, with the grid and
+/// crosshair following the user's model background.
+fn element_default(app: &CadApp, key: &str) -> Color32 {
+    let base = Tokens::of(crate::theme::active());
+    let model = app.options.model_background.map_or(base, |bg| base.with_model_background(bg));
+    match key {
+        "crosshairColor" => model.crosshair,
+        "gridMajorColor" => model.grid_major,
+        "gridMinorColor" => model.grid_minor,
+        "autosnapColor" => model.snap,
+        "autotrackColor" => model.track,
+        "layoutBackground" => base.layout_bg,
+        "paperBackground" => base.paper,
+        _ => base.canvas,
+    }
+}
+
+/// Drawing Window Colors (Options ▸ Display ▸ Colors...): a context, its interface elements and
+/// the selected element's colour, with a preview. Changes apply at once, as on the Options tabs.
+fn window_colors(app: &CadApp, ctx: &egui::Context, open: &mut bool, changes: &mut Map<String, Value>) {
+    let t = Tokens::get();
+    let sel_id = egui::Id::unique(WINDOW_COLORS_SELECTED);
+    let (mut ci, mut ei) = ctx.data(|d| d.get_temp::<(usize, usize)>(sel_id).unwrap_or((0, 0)));
+    ci = ci.min(CONTEXTS.len() - 1);
+    let elements = CONTEXTS.get(ci).map_or(&[][..], |(_, e)| *e);
+    ei = ei.min(elements.len().saturating_sub(1));
+    let shown = |key: &str| app.options.color(key).unwrap_or_else(|| element_default(app, key));
+    let mut close = false;
+    egui::Window::new(crate::tl!("Drawing Window Colors"))
+        .id(egui::Id::unique("cc_window_colors"))
+        .open(open)
+        .resizable(false)
+        .collapsible(false)
+        .pivot(egui::Align2::CENTER_CENTER)
+        .default_pos(ctx.content_rect().center())
+        .show(ctx, |ui| {
+            ui.horizontal_top(|ui| {
+                ui.vertical(|ui| {
+                    ui.set_width(170.0);
+                    ui.label(crate::tl!("Context:"));
+                    egui::Frame::NONE.fill(t.field).inner_margin(egui::Margin::same(4)).show(ui, |ui| {
+                        ui.set_width(160.0);
+                        for (i, (name, _)) in CONTEXTS.iter().enumerate() {
+                            if ui.selectable_label(i == ci, crate::i18n::t(name)).clicked() && i != ci {
+                                (ci, ei) = (i, 0);
+                            }
+                        }
+                    });
+                });
+                ui.vertical(|ui| {
+                    ui.set_width(190.0);
+                    ui.label(crate::tl!("Interface element:"));
+                    egui::Frame::NONE.fill(t.field).inner_margin(egui::Margin::same(4)).show(ui, |ui| {
+                        ui.set_width(180.0);
+                        for (i, (key, name)) in elements.iter().enumerate() {
+                            ui.horizontal(|ui| {
+                                let (r, _) = ui.allocate_exact_size(vec2(12.0, 12.0), Sense::hover());
+                                ui.painter().rect_filled(r, 1.0, shown(key));
+                                ui.painter().rect_stroke(r, 1.0, Stroke::new(1.0, t.border), egui::StrokeKind::Middle);
+                                if ui.selectable_label(i == ei, crate::i18n::t(name)).clicked() {
+                                    ei = i;
+                                }
+                            });
+                        }
+                    });
+                });
+                ui.vertical(|ui| {
+                    let caption = ui.label(crate::tl!("Color:"));
+                    if let Some((key, _)) = elements.get(ei) {
+                        color_row(ui, app.options.color(key), element_default(app, key), key, changes, caption.id);
+                    }
+                    ui.add_space(8.0);
+                    if ui.button(crate::tl!("Restore Element")).clicked()
+                        && let Some((key, _)) = elements.get(ei)
+                    {
+                        changes.insert((*key).into(), Value::Null);
+                    }
+                    if ui.button(crate::tl!("Restore all contexts")).clicked() {
+                        for (key, _) in CONTEXTS.iter().flat_map(|(_, els)| els.iter()) {
+                            changes.insert((*key).into(), Value::Null);
+                        }
+                    }
+                });
+            });
+            ui.add_space(6.0);
+            ui.label(crate::tl!("Preview:"));
+            let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width().max(560.0), 150.0), Sense::hover());
+            preview(ui.painter(), rect, ci, &shown);
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(crate::tl!("Close")).clicked() {
+                        close = true;
+                    }
+                });
+            });
+        });
+    ctx.data_mut(|d| d.insert_temp(sel_id, (ci, ei)));
+    if close {
+        *open = false;
+    }
+}
+
+/// The Drawing Window Colors preview: model space's grid, AutoSnap marker, AutoTrack vector and
+/// crosshair, or a layout's sheet on its background.
+fn preview(p: &egui::Painter, rect: Rect, context: usize, shown: &dyn Fn(&str) -> Color32) {
+    if context != 0 {
+        p.rect_filled(rect, 2.0, shown("layoutBackground"));
+        let sheet = Rect::from_center_size(rect.center(), vec2(180.0, 120.0));
+        p.rect_filled(sheet.translate(vec2(4.0, 4.0)), 0.0, Color32::from_black_alpha(110));
+        p.rect_filled(sheet, 0.0, shown("paperBackground"));
+        return;
+    }
+    p.rect_filled(rect, 2.0, shown("modelBackground"));
+    let (minor, major) = (shown("gridMinorColor"), shown("gridMajorColor"));
+    let line = |i: i32| Stroke::new(1.0, if i % 5 == 0 { major } else { minor });
+    let (mut x, mut i) = (rect.left() + 10.0, 0);
+    while x < rect.right() {
+        p.line_segment([Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())], line(i));
+        (x, i) = (x + 12.0, i + 1);
+    }
+    let (mut y, mut i) = (rect.bottom() - 10.0, 0);
+    while y > rect.top() {
+        p.line_segment([Pos2::new(rect.left(), y), Pos2::new(rect.right(), y)], line(i));
+        (y, i) = (y - 12.0, i + 1);
+    }
+    let at = rect.center() + vec2(60.0, 0.0);
+    p.extend(Shape::dotted_line(&[Pos2::new(rect.left() + 20.0, at.y), Pos2::new(rect.right() - 20.0, at.y)], shown("autotrackColor"), 6.0, 1.0));
+    let marker = Rect::from_center_size(rect.center() - vec2(90.0, 0.0), vec2(12.0, 12.0));
+    p.rect_stroke(marker, 0.0, Stroke::new(2.0, shown("autosnapColor")), egui::StrokeKind::Middle);
+    let cross = Stroke::new(1.0, shown("crosshairColor"));
+    p.line_segment([Pos2::new(at.x - 50.0, at.y), Pos2::new(at.x + 50.0, at.y)], cross);
+    p.line_segment([Pos2::new(at.x, at.y - 50.0), Pos2::new(at.x, at.y + 50.0)], cross);
+    p.rect_stroke(Rect::from_center_size(at, vec2(8.0, 8.0)), 0.0, cross, egui::StrokeKind::Middle);
 }
 
 /// Files tab: save format and default version, new-drawing units, autosave interval and autosave file location; edits accumulate in `changes`.
