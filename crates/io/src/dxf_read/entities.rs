@@ -180,7 +180,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
                 8 => DimKind::ArcLength,
                 _ => DimKind::Aligned,
             };
-            EntityKind::Dimension(Dimension {
+            let dim = Dimension {
                 kind,
                 defpt: t.p(10),
                 // The text midpoint is the one OCS point of a DIMENSION.
@@ -198,7 +198,15 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
                 overrides: Default::default(),
                 assoc: Vec::new(),
                 marks: Default::default(),
-            })
+            };
+            // Group 42 (the measured value) is 0 or missing in many files: the writers that
+            // leave it empty write 0, and the ones that fill it in may write a stale one.
+            // The measurement is worked out from the definition points instead, the way
+            // AutoCAD measures it, so a dimension read from a file reports the value it
+            // measures. A stored measurement that is there is kept.
+            let stored = dim.measurement;
+            let measurement = if stored.is_finite() && stored.abs() > f64::EPSILON { stored } else { dim.geometric_measurement().unwrap_or(stored) };
+            EntityKind::Dimension(Dimension { measurement, ..dim })
         }
         "LEADER" => EntityKind::Leader(Leader {
             vertices: t.pts(10).into_iter().map(|p| p.to3(0.0)).collect(),

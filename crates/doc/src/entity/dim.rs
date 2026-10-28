@@ -2,6 +2,7 @@ use super::block::Insert;
 use super::common::Handle;
 use super::text::MText;
 use super::{Deserialize, GSpline, Serialize, Vec2, Vec3, one, standard, yes};
+use cadcraft_geom::{Arc, angle_in_sweep, ccw_sweep, line_line_infinite};
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -91,7 +92,6 @@ impl DimMarks {
     pub fn is_empty(&self) -> bool {
         *self == DimMarks::default()
     }
-
     /// Transform the points and angles (part of [`super::EntityKind::transform`]).
     pub(super) fn transform(&mut self, t3: &dyn Fn(&mut Vec3), rot: f64, s: f64, mirror: bool) {
         if let Some(a) = &mut self.oblique {
@@ -108,6 +108,100 @@ impl DimMarks {
             t3(&mut b.at);
             b.size *= s;
         }
+    }
+}
+
+/// The measured value of a dimension worked out from its definition points, the way AutoCAD
+/// measures it: the length along the dimension line for a linear or aligned dimension, the
+/// radius or diameter for a radial one, the angle in radians for an angular one.
+///
+/// The DXF group code 42 of a DIMENSION holds this value, but many writers leave it at 0 (or
+/// write a stale one), so a dimension read from a file often carries no usable measurement. This
+/// computes it from the geometry instead, which is what the renderer does when it draws the
+/// dimension, so the number a file reports and the number it draws agree.
+///
+/// Returns `None` when the definition points do not describe a measurable dimension (a zero
+/// length, a missing arc centre), so a caller can tell "no measurement" from "a measurement of
+/// zero".
+impl Dimension {
+    /// The measured value from the definition points, or `None` when they do not describe one.
+    pub fn geometric_measurement(&self) -> Option<f64> {
+        let p13 = self.p13.xy();
+        let p14 = self.p14.xy();
+        match self.kind {
+            DimKind::Linear { rotation } => {
+                // The length along the dimension line: the projection of p13 → p14 on the
+                // dimension's own direction (a horizontal dimension of a sloped pair measures
+                // its horizontal run, not the slope).
+                let direction = Vec2::from_angle(rotation);
+                let m = (p14 - p13).dot(direction).abs();
+                m.is_finite().then_some(m)
+            }
+            DimKind::Aligned => {
+                // The length along the dimension line, which for an aligned dimension runs from
+                // p13 to p14.
+                let m = p13.dist(p14);
+                m.is_finite().then_some(m)
+            }
+            DimKind::Angular | DimKind::Angular3P => {
+                // The angle in radians, as AutoCAD stores it in group 42.
+                let (vertex, a1, a2, arc_pt) = if matches!(self.kind, DimKind::Angular3P) {
+                    (self.p15.xy(), p13, p14, self.defpt.xy())
+                } else {
+                    // Two lines: p13 → p14 and defpt → p15; the vertex is where they meet.
+                    let v = line_line_infinite(p13, p14, self.defpt.xy(), self.p15.xy()).map(|x| x.0).unwrap_or(p14);
+                    (v, p14, self.p15.xy(), self.p16.xy())
+                };
+                let r = vertex.dist(arc_pt);
+                if !r.is_finite() || r <= 0.0 {
+                    return None;
+                }
+                let s = vertex.angle_to(a1);
+                let e = vertex.angle_to(a2);
+                let arc = if angle_in_sweep(vertex.angle_to(arc_pt), s, e) { Arc::new(vertex, r, s, e) } else { Arc::new(vertex, r, e, s) };
+                let sweep = ccw_sweep(arc.start, arc.end);
+                sweep.is_finite().then_some(sweep)
+            }
+            DimKind::Radius | DimKind::Diameter => {
+                // p15 is the point on the circle; defpt is the centre of a radius dimension
+                // and one end of the diameter for a diameter dimension, whose measured value
+                // is the whole span.
+                let a = self.defpt.xy();
+                let b = self.p15.xy();
+                let m = a.dist(b);
+                m.is_finite().then_some(m)
+            }
+            DimKind::Ordinate { x_type } => {
+                // The distance from the origin to the feature, along one axis.
+                let feature = p13;
+                let origin = self.defpt.xy();
+                let m = if x_type { (feature.x - origin.x).abs() } else { (feature.y - origin.y).abs() };
+                m.is_finite().then_some(m)
+            }
+            DimKind::ArcLength => {
+                // The length of the arc, from p13 to p14 around the centre p15.
+                let c = self.p15.xy();
+                let r = c.dist(p13);
+                if !r.is_finite() || r <= 0.0 {
+                    return None;
+                }
+                let arc = Arc::new(c, c.dist(self.defpt.xy()).max(1e-9), c.angle_to(p13), c.angle_to(p14));
+                let m = r * arc.sweep();
+                m.is_finite().then_some(m)
+            }
+        }
+    }
+
+    /// The measured value to report for this dimension: the stored one (DXF group 42) when it
+    /// holds one, and the value worked out from the definition points otherwise.
+    ///
+    /// A stored measurement of 0 is treated as absent: a dimension that measures nothing is
+    /// degenerate, and the writers that leave group 42 empty write 0.
+    pub fn effective_measurement(&self) -> Option<f64> {
+        if self.measurement.is_finite() && self.measurement.abs() > f64::EPSILON {
+            return Some(self.measurement);
+        }
+        self.geometric_measurement()
     }
 }
 

@@ -405,3 +405,6 @@ pub use anno::*;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod dim_measure_tests;
