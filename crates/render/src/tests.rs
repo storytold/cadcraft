@@ -1488,3 +1488,11 @@ fn dimension_text_split_x_renders_both_parts() {
     assert_eq!(g.value, "10\n20");
     assert!(!g.text.is_empty() || !g.text_runs.is_empty());
 }
+
+#[test]
+fn dimension_escaped_backslash_x_does_not_trigger_split() {
+    let d = Drawing::new_imperial();
+    let dim = cadcraft_doc::Dimension { text: r"<> \\Xref".into(), ..lin_dim() };
+    let g = dimension_in(&d, &dim);
+    assert!(!g.value.contains('\n'));
+}
