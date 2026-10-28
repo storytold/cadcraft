@@ -194,7 +194,12 @@ fn value_end(b: &[u8], at: usize) -> Option<usize> {
 /// `prev` in `bytes` (a `trailer` dictionary, or a cross-reference stream's), as written there:
 /// an update's trailer must repeat them, or an encrypted PDF is no longer decrypted.
 fn kept_trailer_entries(bytes: &[u8], prev: usize) -> Vec<u8> {
-    let Some(region) = bytes.get(prev..).map(|r| &r[..r.len().min(MAX_TRAILER_BYTES)]) else { return Vec::new() };
+    let Some(section) = bytes.get(prev..) else { return Vec::new() };
+    // A classic table runs 20 bytes an object before its `trailer`: the dictionary is read from
+    // there, however long the table.
+    let classic = section.iter().position(|c| !c.is_ascii_whitespace()).is_some_and(|i| section[i..].starts_with(b"xref"));
+    let from = if classic { section.windows(7).position(|w| w == b"trailer").unwrap_or(0) } else { 0 };
+    let Some(region) = section.get(from..).map(|r| &r[..r.len().min(MAX_TRAILER_BYTES)]) else { return Vec::new() };
     let Some(start) = region.windows(2).position(|w| w == b"<<") else { return Vec::new() };
     let Some(end) = value_end(region, start) else { return Vec::new() };
     let dict = &region[start + 2..end.saturating_sub(2)];
@@ -479,6 +484,12 @@ mod tests {
     /// 40-bit RC4, empty user password, ISO 32000 §7.6.3), with a classic cross-reference table:
     /// its content and its layers' names are encrypted.
     fn encrypted_pdf() -> Vec<u8> {
+        encrypted_pdf_with(0)
+    }
+
+    /// [`encrypted_pdf`] with `filler` more (empty) objects, so its cross-reference table can be
+    /// long.
+    fn encrypted_pdf_with(filler: usize) -> Vec<u8> {
         const PAD: [u8; 32] = [
             0x28, 0xBF, 0x4E, 0x5E, 0x4E, 0x75, 0x8A, 0x41, 0x64, 0x00, 0x4E, 0x56, 0xFF, 0xFA, 0x01, 0x08, 0x2E, 0x2E, 0x00, 0xB6, 0xD0, 0x68, 0x3E,
             0x80, 0x2F, 0x0C, 0xA9, 0xFE, 0x64, 0x53, 0x69, 0x7A,
@@ -490,7 +501,7 @@ mod tests {
         let u = rc4(&key, &PAD);
         let obj_key = |n: u32| md5(&[key.as_slice(), &n.to_le_bytes()[..3], &[0, 0]].concat())[..10].to_vec();
         let content = rc4(&obj_key(4), b"/OC /L1 BDC 1 0 0 rg 10 10 80 80 re f EMC /OC /L2 BDC 0 1 0 rg 110 10 80 80 re f EMC");
-        let objects: Vec<Vec<u8>> = vec![
+        let mut objects: Vec<Vec<u8>> = vec![
             b"<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [5 0 R 6 0 R] /D << /BaseState /ON /Order [5 0 R 6 0 R] >> >> >>".to_vec(),
             b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
             b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Resources << /Properties << /L1 5 0 R /L2 6 0 R >> >> /Contents 4 0 R >>"
@@ -500,6 +511,7 @@ mod tests {
             format!("<< /Type /OCG /Name <{}> >>", hex(&rc4(&obj_key(6), b"COTES"))).into_bytes(),
             format!("<< /Filter /Standard /V 1 /R 2 /O <{}> /U <{}> /P {p} >>", hex(&o), hex(&u)).into_bytes(),
         ];
+        objects.extend(std::iter::repeat_n(b"null".to_vec(), filler));
         let mut out = b"%PDF-1.4\n".to_vec();
         let mut offsets = Vec::new();
         for (i, ob) in objects.iter().enumerate() {
@@ -551,6 +563,17 @@ mod tests {
             let _ = kept_trailer_entries(b, 1000);
         }
         assert_eq!(kept(b"<< /Encrypt 7 0"), "");
+    }
+
+    #[test]
+    fn layers_are_turned_off_in_an_encrypted_pdf_with_a_long_cross_reference_table() {
+        // 4,500 objects: the table (20 bytes an object) is longer than the trailer window.
+        let pdf = encrypted_pdf_with(4500);
+        assert!(pdf.len() > 4500 * 20);
+        let off = with_layers(&pdf, &[("MURS".into(), false)]).unwrap();
+        assert_eq!(layers(&off).unwrap().iter().map(|l| (l.name.as_str(), l.on)).collect::<Vec<_>>(), [("MURS", false), ("COTES", true)]);
+        let (red, green) = colours(&off);
+        assert!(red == 0 && green > 1000, "MURS hidden, the page still decrypted: {red} red, {green} green");
     }
 
     #[test]
