@@ -208,6 +208,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(utility::specs());
         v.extend(table::specs());
         v.extend(tolerance::specs());
+        v.extend(underlay::specs());
         v.extend(txt2mtxt::specs());
         v.extend(constraints::specs());
         v.extend(lisp::specs());
