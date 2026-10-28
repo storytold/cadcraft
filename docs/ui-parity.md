@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-22 · **Change:** minor (distinct polyline midpoint grips) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-26 · **Change:** minor (ribbon visibility customization and workspace recovery) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
 
 How CADCraft's interaction compares with AutoCAD's: point entry, object snaps, tracking, dynamic
 input, grips, selection, the command line, chrome and navigation. A drafter's speed in AutoCAD
@@ -199,10 +199,27 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
   have menus too (#512). Still missing: in-place layout tab rename, Move or Copy, Select All
   Layouts.
 
+## Ribbon item visibility
+
+The tabbed ribbon supports command-backed visibility for tabs and their tool panels through
+its customization menu. The customization button remains reachable when every tab is hidden;
+Show All Ribbon Items restores the catalog. Visibility preferences persist independently of
+the drawing and palette layout. Invalid preferences and control updates are rejected atomically.
+Native workspace loading discards only malformed or obsolete ribbon visibility, preserving
+other saved preferences and subsequent saves; runtime control validation remains strict.
+
+This CC-014/024 contribution extends the existing #1023 ribbon proposal. It does not introduce
+a competing ribbon, native floating infrastructure, contextual tabs or auto-hide. Reverting
+the visibility contribution leaves the prerequisite ribbon usable with all items shown; its
+extra preference field can be ignored by the prior version. Any later feature using these
+visibility commands must document that dependency. Runtime and regression validation for this
+draft are pending; this section does not claim complete AutoCAD parity.
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-26 | minor | Independent ribbon tab/panel visibility and recovery controls over #1023; Windows restart/all-hidden recovery and release-browser hide/reload/recovery verified. Browser layout selection still resets independently of item visibility. |
 | 2026-10-22 | minor | Polyline segment midpoint grips use rectangles, distinct from square vertex grips, with matching hover and pick bounds (#1950) |
 | 2026-10-13 | minor | Filled-region highlight boundaries are traversed in deterministic coordinate order, fixing dash-phase jumps on CPU hover/selection redraws and GPU highlight rebuilds; CPU dash-position, pixel and GPU mesh regressions |
 | 2026-10-14 | minor | Selection cycling (#1143): the list and badge of SELECTIONCYCLING, Shift+Space through overlapping objects (#1145) |

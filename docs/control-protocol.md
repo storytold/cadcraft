@@ -128,6 +128,21 @@ value disables all settings reads and writes (workspace, logs, autosave, plotter
 reported and left untouched, with persistence disabled for that launch. Repair or move that
 file before restarting to resume saving workspace choices.
 
+## Ribbon visibility
+
+Use `engine.execute` with `ui.ribbon.visibility` and parameters
+`{"tab":"home","panel":"Draw","on":false}` to hide one panel. Omit `panel`
+to show or hide the whole tab. Tab IDs and canonical English panel titles come
+from the ribbon catalog; translated display labels are not identifiers.
+`ui.ribbon.visibility.reset` restores all catalog items. These commands preserve
+the drawing and any active drafting command.
+
+`ui.set` accepts `ribbonVisibility` with `hiddenTabs` and `hiddenPanels` (pairs of
+tab ID and panel title). Unknown, duplicate, excessive or malformed entries
+reject the whole UI update without changing unrelated fields. Valid visibility
+preferences persist in native and browser hosts and survive Reset Palettes.
+The Ribbon Customization button remains available when all tabs are hidden.
+
 ## Panel docking
 
 Tool Sets, Layers, and Properties can be regrouped, split, floated within the app window, closed, and reopened. The drawing canvas stays visible and cannot be closed or turned into a tab. The document/session view is protected. Layouts, active tabs, panel visibility, and floating rectangles are saved with the app's existing UI preferences. These operations do not edit document contents.

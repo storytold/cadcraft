@@ -34,12 +34,21 @@ fn snapshot(ui: &UiState) -> Result<Value, String> {
     if ui.history_lines > 12 {
         return Err("historyLines must be between 0 and 12".into());
     }
+    if ui.ribbon_tab.len() > 64 {
+        return Err("ribbonTab exceeds the workspace size limit".into());
+    }
+    ui.ribbon_visibility.validate()?;
     Ok(json!({
         "docking": ui.docking,
         "dockingVersion": cadcraft_ui_egui::docking::LAYOUT_VERSION,
         "showToolsets": ui.show_toolsets,
         "showPalettes": ui.show_palettes,
         "showToolbar": ui.show_toolbar,
+        "showRibbon": ui.show_ribbon,
+        "ribbonTab": ui.ribbon_tab,
+        "ribbonMinimized": ui.ribbon_minimized,
+        "ribbonVisibility": ui.ribbon_visibility,
+        "pcLayoutApplied": ui.pc_layout_applied,
         "showFileTabs": ui.show_file_tabs,
         "showStatusBar": ui.show_status_bar,
         "showCommandLine": ui.show_command_line,
@@ -71,17 +80,24 @@ fn read(path: &Path) -> Result<Option<UiState>, String> {
     }
     let workspace =
         value.get("workspace").filter(|value| value.is_object()).ok_or_else(|| format!("{}: missing workspace object", path.display()))?;
-    // Dock schemas can evolve independently of the other saved workspace preferences.
-    // Recover only this optional field; runtime UiState deserialization remains strict.
+    // Dock schemas and ribbon catalogs can evolve independently of other preferences.
+    // Recover these optional fields; runtime UiState deserialization remains strict.
     // A layout from before the current shape (split frames, saved without `dockingVersion`)
     // gives way to the default, its hidden panels with it.
     let mut fields = workspace.clone();
+    let visibility = fields.as_object_mut().and_then(|fields| fields.remove("ribbonVisibility"));
     let (docking, version) = match fields.as_object_mut() {
         Some(fields) => (fields.remove("docking"), fields.remove("dockingVersion")),
         None => (None, None),
     };
     let current = version.and_then(|version| version.as_u64()).is_some_and(|version| version >= u64::from(cadcraft_ui_egui::docking::LAYOUT_VERSION));
     let mut ui: UiState = serde_json::from_value(fields).map_err(|error| format!("{}: invalid workspace: {error}", path.display()))?;
+    if let Some(visibility) = visibility
+        && let Ok(visibility) = serde_json::from_value::<cadcraft_ui_egui::ribbon::visibility::Visibility>(visibility)
+        && visibility.validate().is_ok()
+    {
+        ui.ribbon_visibility = visibility;
+    }
     if let Some(docking) = docking.filter(|_| current)
         && let Ok(docking) = serde_json::from_value::<cadcraft_ui_egui::docking::Workspace>(docking)
         && cadcraft_ui_egui::docking::validate(&docking).is_ok()
@@ -243,6 +259,25 @@ mod tests {
     }
 
     #[test]
+    fn the_ribbon_survives_native_workspace_file_reload() {
+        let directory = temp_dir();
+        let path = directory.join("workspace.json");
+        let (mut first, _, _) = Workspace::at(Some(path.clone()));
+        let mut ui =
+            UiState { show_ribbon: true, ribbon_tab: "annotate".into(), ribbon_minimized: true, pc_layout_applied: true, ..Default::default() };
+        ui.ribbon_visibility.hidden_tabs.push("home".into());
+        ui.ribbon_visibility.hidden_panels.push(("home".into(), "Draw".into()));
+        first.save_if_changed(&ui, Instant::now()).unwrap();
+        let (_, restored, error) = Workspace::at(Some(path.clone()));
+        assert!(error.is_none(), "{error:?}");
+        let restored = restored.unwrap();
+        assert!(restored.show_ribbon && restored.ribbon_minimized && restored.pc_layout_applied);
+        assert_eq!(restored.ribbon_tab, "annotate");
+        assert_eq!(restored.ribbon_visibility, ui.ribbon_visibility);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn dock_columns_floating_and_hidden_panels_survive_native_workspace_file_reload() {
         use cadcraft_ui_egui::docking::{LAYOUT_VERSION, Panel, permissions, reveal_panel};
         let directory = temp_dir();
@@ -342,6 +377,32 @@ mod tests {
             assert_eq!(restored.collapsed_groups, ["Draw"]);
             assert_eq!(restored.history_lines, 7);
             assert_eq!(serde_json::to_value(restored.docking).unwrap(), serde_json::to_value(UiState::default().docking).unwrap());
+        }
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn invalid_ribbon_visibility_preserves_workspace_and_future_saves() {
+        let directory = temp_dir();
+        let path = directory.join("workspace.json");
+        for visibility in [
+            json!({"hiddenTabs":["futureTab"]}),
+            json!({"hiddenPanels":[["home","Future Panel"]]}),
+            json!({"futureField":true}),
+            json!({"hiddenTabs":false}),
+        ] {
+            let workspace = json!({"showToolbar":false,"toolsetTab":"Modeling","historyLines":7,"ribbonVisibility":visibility});
+            fs::write(&path, serde_json::to_vec(&json!({"version":1,"workspace":workspace})).unwrap()).unwrap();
+            let (mut store, restored, error) = Workspace::at(Some(path.clone()));
+            assert!(error.is_none(), "optional visibility must not reject the workspace: {error:?}");
+            let mut restored = restored.unwrap();
+            assert!(!restored.show_toolbar);
+            assert_eq!(restored.toolset_tab, "Modeling");
+            assert_eq!(restored.history_lines, 7);
+            assert_eq!(restored.ribbon_visibility, Default::default());
+            restored.history_lines = 8;
+            store.save_on_exit(&restored).unwrap();
+            assert_eq!(read(&path).unwrap().unwrap().history_lines, 8);
         }
         fs::remove_dir_all(directory).unwrap();
     }

@@ -457,6 +457,9 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
                     if let Err(error) = crate::docking::validate(&u.docking) {
                         return err(error);
                     }
+                    if let Err(error) = u.ribbon_visibility.validate() {
+                        return err(error);
+                    }
                     app.ui = u;
                     ok(serde_json::to_value(&app.ui).unwrap_or_default())
                 }
