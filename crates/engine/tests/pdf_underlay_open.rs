@@ -133,6 +133,31 @@ fn an_underlay_whose_pdf_comes_back_gets_its_size_without_reopening() {
 }
 
 #[test]
+fn a_damaged_pdf_is_not_read_again_until_it_changes() {
+    use cadcraft_engine::cmd::underlay::{SizeRead, page_size};
+    hooks();
+    let dir = std::env::temp_dir().join(format!("cadcraft-pdf-damaged-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let pdf = dir.join("Damaged.pdf");
+    let stored = pdf.to_string_lossy().to_string();
+    assert_eq!(page_size(&stored, None, 1, None), SizeRead::Missing, "not there yet");
+    std::fs::write(&pdf, b"not a pdf").unwrap();
+    let SizeRead::Unreadable(since, why) = page_size(&stored, None, 1, None) else { panic!("a damaged file") };
+    assert!(since.is_some() && why.contains("Damaged.pdf"), "{why}");
+    // Not changed since: not read again.
+    assert_eq!(page_size(&stored, None, 1, since), SizeRead::Unchanged);
+    // Replaced by a good one (a later modification time): read, and found.
+    let later = since.unwrap() + std::time::Duration::from_secs(2);
+    std::fs::write(&pdf, b"%PDF-1.7 fake").unwrap();
+    std::fs::File::options().write(true).open(&pdf).unwrap().set_modified(later).unwrap();
+    let SizeRead::Found(size) = page_size(&stored, None, 1, since) else { panic!("read again once changed") };
+    assert!((size.x - 297.0 / 25.4).abs() < 1e-12);
+    // A page the PDF doesn't have: unreadable too.
+    assert!(matches!(page_size(&stored, None, 9, None), SizeRead::Unreadable(..)));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn turning_the_lightness_over_keeps_hues() {
     let mut px = vec![255, 255, 255, 255, 0, 0, 0, 255, 255, 0, 0, 255, 200, 200, 200, 255];
     turn_lightness(&mut px);
