@@ -306,6 +306,18 @@ fn entity_reactors(x: &mut ForeignExtra, tags: &[Tag], entities: &HashMap<String
     }
 }
 
+/// A dimension style's text style reference (340) that names no text style but another record of
+/// the file (AutoCAD writes some files with it naming the UCS table): kept as it is, as the style
+/// models only text styles by name.
+fn odd_text_style(x: &mut ForeignExtra, tags: &[Tag], text_styles: &HashSet<String>, ids: &HashMap<String, ForeignKey>) {
+    let end = tags.iter().position(|t| t.code >= 1000).unwrap_or(tags.len());
+    let Some(t) = tags.get(..end).unwrap_or(&[]).iter().find(|t| t.code == 340) else { return };
+    let h = norm(&t.str());
+    if !text_styles.contains(&h) && ids.contains_key(&h) {
+        x.props.push(raw(t));
+    }
+}
+
 /// The extension dictionary of the record with handle `h` when its own groups don't name one but the
 /// dictionary was found by its owner (see `xdict_of` in [`read`]), and it is kept.
 fn found_xdict(x: &mut ForeignExtra, h: &str, xdict_of: &HashMap<String, String>, kept: &HashSet<String>) {
@@ -414,12 +426,16 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
         }
     }
     put_xdata(d, xdata_of);
+    let text_styles: HashSet<String> = tables.iter().filter(|(k, _, _)| k == "STYLE").filter_map(|(_, _, t)| head(t).handle).collect();
     for (kind, _, t) in tables.iter().chain(blocks.iter().filter(|(k, _, _)| k == "BLOCK")) {
         let Some(h) = head(t).handle else { continue };
         let Some(key) = ids.get(&h).cloned() else { continue };
         let mut x = extra(kind, t, kind == "BLOCK", false, &kept);
         found_xdict(&mut x, &h, &xdict_of, &kept);
         entity_reactors(&mut x, t, &ents);
+        if kind == "DIMSTYLE" {
+            odd_text_style(&mut x, t, &text_styles, &ids);
+        }
         if !x.is_empty() {
             f.records.entry(key).or_insert(x);
         }
@@ -1254,6 +1270,10 @@ fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: bool
             && let Some(x) = x
         {
             xdata(map, x, &own_apps, out);
+        }
+        // A kept text style reference of a dimension style replaces the one the writer made.
+        if r.kind == "DIMSTYLE" && t.code == 340 && i < xdata_at && x.is_some_and(|x| x.props.iter().any(|p| p.code == 340)) {
+            continue;
         }
         let mut t = t.clone();
         if unknown && i < xdata_at && is_pointer(t.code) && t.code != 102 {

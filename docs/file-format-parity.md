@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-25 · **Change:** minor (LAYOUT SAveas writes a layout as a DWT template) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-28 · **Change:** minor (DWG open and save keeps every object of the file: unchanged objects byte for byte) · **Target:** Autodesk AutoCAD 2027
 
 Every format AutoCAD 2027 reads or writes, with CADCraft's support, fidelity and tests. Work
 items are in [gaps.md](gaps.md#file-formats); the weighted score feeds
@@ -37,17 +37,39 @@ version (the file's `$ACADVER`, 2018 for a new drawing), at least 2004 unless 20
 The bridge repairs two acadrust 0.6.3 gaps in 2010+ DWG: merged table cells and table-style
 title/header suppression.
 
+**Open and save keep the file (2004–2018).** CADCraft's own DWG reader and container writer
+(`crates/dwg/src/codec`, from the ODA's public specification) check and repair what the bridge
+does to a file CADCraft opened and saved (`crates/io/src/dwg_check.rs`):
+
+- every object keeps its handle and type, model and paper space keep their block markers;
+- persistent reactors the bridge drops are put back: a dictionary entry's reactor to its
+  dictionary (on save), a table record's reactors to entities (on open);
+- every object CADCraft didn't change is written back as the file had it, byte for byte (a class
+  object with the new file's class number): what the bridge can't carry (a multileader style's
+  draw order and block flags, a 2004 file's material and visual style entries, a dimension style
+  whose text style reference names another record) survives. An object counts as unchanged when
+  CADCraft writes its record as it did on open and it references what the bridge's object does,
+  or what CADCraft's record names; the rewritten file is read back before it is used.
+
+Measured on AutoCAD's MI-201 drawing saved at 2000, 2004, 2010, 2013 and 2018 (a corpus outside
+the repository, `MI201_CORPUS`): opened and saved by CADCraft, the 2004–2018 files keep every
+object by handle and type, its extended data, reactors and extension dictionary, and every field
+as the bridge reads them, except what CADCraft adds (its registered application, its named
+dictionary entries) (`autocad_dwgs_keep_every_objects_common_data`, `autocad_dwgs_keep_every_field`;
+`dwg_copy_back`, `dwg_reactors` without the corpus). A 2000 file is saved as 2004, where nothing
+of the file is copied back. Not yet checked: the saved files opened in AutoCAD.
+
 | DWG version | Code | AutoCAD 2027 | CADCraft read | CADCraft write | Tested how |
 |---|---|---|---|---|---|
 | R1.0–R2.6, R9, R10, R11/R12 | MC0.0–AC1009 | read | **no** (`is_dwg` accepts only `AC10xx` magic; acadrust doesn't target pre-R13) | no | — |
 | R13 | AC1012 | read | acadrust claims support; untested | no | none |
 | R14 | AC1014 | read, write | acadrust claims support; untested | **no** | none |
 | 2000–2002 | AC1015 | read, write | yes via bridge | yes, when asked for (no true colours, transparency or table styles: the format has none) | synthetic round trips (`dwg_at_every_version_reads_back`, `dwg_roundtrip_keeps_non_ascii_text`) |
-| 2004–2006 | AC1018 | read, write | via bridge | yes | `dwg_at_every_version_reads_back`, `dwg_roundtrip_keeps_extension_data` |
+| 2004–2006 | AC1018 | read, write | via bridge | yes; open and save keep the file | `dwg_at_every_version_reads_back`, `dwg_roundtrip_keeps_extension_data`, MI-201 corpus (above) |
 | 2007–2009 | AC1021 | read, write | via bridge | yes | `dwg_at_every_version_reads_back` |
-| 2010–2012 | AC1024 | read, write | via bridge | yes | `dwg_at_every_version_reads_back`, `ac1024_dwg_with_many_entities_opens` |
-| 2013–2017 | AC1027 | read, write | via bridge | yes | `dwg_at_every_version_reads_back` |
-| 2018–2027 | AC1032 | read, write (default) | via bridge; untested on real files | yes (default for new drawings) | `dwg_at_every_version_reads_back` (synthetic only) |
+| 2010–2012 | AC1024 | read, write | via bridge | yes; open and save keep the file | `dwg_at_every_version_reads_back`, `ac1024_dwg_with_many_entities_opens`, MI-201 corpus |
+| 2013–2017 | AC1027 | read, write | via bridge | yes; open and save keep the file | `dwg_at_every_version_reads_back`, MI-201 corpus |
+| 2018–2027 | AC1032 | read, write (default) | via bridge | yes (default for new drawings); open and save keep the file | `dwg_at_every_version_reads_back`, MI-201 corpus |
 | Web build | — | — | **no** (error: "save as DXF") | no | — |
 
 Everything lost in the DXF read/write paths below is also lost through DWG, plus whatever
@@ -140,6 +162,7 @@ our output in AutoCAD black-box.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-28 | minor | DWG open and save (2004–2018): every object keeps its handle and type; dropped reactors are put back; objects CADCraft didn't change are written back byte for byte; measured on AutoCAD's MI-201 drawing at five versions |
 | 2026-10-25 | minor | LAYOUT SAveas (`layout.saveas`) writes a layout as a drawing template: its page setup and paper space objects, no model space objects or other layouts, and only the named objects they use |
 | 2026-10-22 | minor | DXF/DWG save: angular, diametric and radial dimensions get standard DIMASSOC objects (one centre reference to the circle for radial/diametric, the definition points for angular), so AutoCAD follows their geometry; the standard objects of those kinds are read back too, without CADCraft's xdata (#1651) |
 | 2026-10-19 | minor | DXF/DWG save: angular dimension block text honors DIMDSEP, including per-dimension overrides (#1646) |

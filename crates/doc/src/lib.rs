@@ -143,6 +143,27 @@ pub struct Drawing {
     /// Records of the file this drawing was read from that the reader could not place (a damaged
     /// file), counted by the section they came from. Never written to a file.
     pub skipped_records: BTreeMap<String, usize>,
+    /// The DWG file this drawing was read from, so that saving it as DWG of the same version writes
+    /// back as they were the objects CADCraft hasn't changed. Never written to a file of its own.
+    pub dwg_source: Option<std::sync::Arc<DwgSource>>,
+}
+
+/// The DWG file a drawing was read from ([`Drawing::dwg_source`]): its bytes, and how CADCraft
+/// wrote each of its objects right after reading it, so a save can tell the objects that haven't
+/// changed since. Not part of the drawing's value: two drawings that differ only in it are equal.
+#[derive(Clone, Debug, Default)]
+pub struct DwgSource {
+    /// The file as read.
+    pub bytes: Vec<u8>,
+    /// For each object's handle, a fingerprint of the record CADCraft wrote for it right after
+    /// reading the file.
+    pub fingerprints: std::collections::HashMap<u64, u64>,
+}
+
+impl PartialEq for DwgSource {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
 }
 
 impl Default for Drawing {
@@ -171,6 +192,7 @@ impl Drawing {
     }
     fn bare() -> Self {
         Drawing {
+            dwg_source: Default::default(),
             header: Header::default(),
             foreign: std::sync::Arc::default(),
             layers: vec![Layer::default(), Layer { name: "Defpoints".into(), plot: false, ..Layer::default() }],

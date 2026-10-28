@@ -1,6 +1,6 @@
 # Where CADCraft falls short of AutoCAD
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-25 · **Change:** minor (Named Viewports dialog: U11 narrowed; MVIEW Restore and PURGE of multiline styles had landed: F15 and F21 corrected) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-28 · **Change:** minor (DWG open and save keep the file: gap 1, FF1 and FF7 narrowed) · **Target:** Autodesk AutoCAD 2027
 
 Every known shortfall, one row each, ranked within each section by user impact. This is the work
 list: agents pick from here (top of a section first), and remove or update a row in the same PR
@@ -13,7 +13,7 @@ do them first.
 
 | # | Gap | Why it ranks here | Est. | Doc |
 |---|---|---|---|---|
-| 1 | **[alpha blocker]** **Saving DWG drops what we don't model** (DXF now writes back unknown entities and objects, foreign xdata, extension dictionaries, reactors, layer states and colour books, #528, and native MULTILEADERs, #459 (not yet tested through DWG); through DWG, acadrust drops custom-class entities and objects, xdata on table records and blocks, entity colour books and reactors) | Opening a colleague's DWG and saving it still deletes some content: the one thing a CAD user can't forgive | 6–10 | [file formats](file-format-parity.md) |
+| 1 | **[alpha blocker]** **Saving DWG may still drop what we don't model** (DXF writes back unknown entities and objects, foreign xdata, extension dictionaries, reactors, layer states and colour books, #528; through DWG 2004–2018, open and save keep every object of AutoCAD's MI-201 drawing, unchanged objects byte for byte. Left: objects CADCraft changes are written by acadrust, which drops custom-class entities and objects, xdata on table records and blocks, entity colour books; a 2000 file is saved as 2004 without copy-back; one drawing measured, none checked in AutoCAD) | Opening a colleague's DWG and saving it may still delete content of objects CADCraft edits | 4–8 | [file formats](file-format-parity.md) |
 | 2 | **[alpha blocker]** **No real-file test corpus and no check in AutoCAD** | All 36 file tests are synthetic; nobody has verified a CADCraft DWG/DXF opens cleanly in AutoCAD | 10–15 + human | [file formats](file-format-parity.md#tests) |
 | 3 | **Ellipse and spline geometry is tessellated** (intersections, offsets, closest points; polyline offset ignores bulges) | Coordinates are subtly wrong; offsets of ellipses come out as polylines | 30–50 | [geometry](geometry-parity.md) |
 | 4 | **[alpha blocker]** **No dynamic blocks or REFEDIT; xrefs can't be edited in place or clipped** (xrefs, #525, groups, #417, and the Block Editor for static blocks landed) | Most production drawings use them | 55–90 | [features](#features) |
@@ -73,13 +73,13 @@ Detail: [file-format-parity.md](file-format-parity.md).
 
 | # | Gap | User impact | Est. |
 |---|---|---|---|
-| FF1 | **[alpha blocker]** Round-trip what we don't model. DXF done (#528): unknown entities and objects (with their CLASS records), foreign xdata (hyperlinks included), extension dictionaries, persistent reactors, DICTIONARYVAR and XRECORDs, layer states, colour book colours, references remapped on save; IMAGE, VIEW/UCS, groups, block descriptions, true colours, transparency (#201, #204, #208, #209, #213, #223); WIPEOUT and gradients (#147, #162). Left: through DWG, acadrust drops custom-class entities and objects, xdata on table records and blocks, entity colour book names and reactors; UCS elevation; MTEXT background colours; unknown entities follow only layer edits, and renamed layers and blocks lose their foreign data | High | 6–10 |
+| FF1 | **[alpha blocker]** Round-trip what we don't model. DXF done (#528): unknown entities and objects (with their CLASS records), foreign xdata (hyperlinks included), extension dictionaries, persistent reactors, DICTIONARYVAR and XRECORDs, layer states, colour book colours, references remapped on save; IMAGE, VIEW/UCS, groups, block descriptions, true colours, transparency (#201, #204, #208, #209, #213, #223); WIPEOUT and gradients (#147, #162). Through DWG 2004–2018, unchanged objects are written back as the file had them and dropped reactors put back. Left: objects CADCraft changes go through acadrust, which drops custom-class entities and objects, xdata on table records and blocks and entity colour book names; UCS elevation; MTEXT background colours; unknown entities follow only layer edits, and renamed layers and blocks lose their foreign data | High | 6–10 |
 | FF2 | Multileader leftovers (native MULTILEADER read/write landed, #459): several landings per multileader (extra leader roots are folded into the lines), per-object overrides (leader colour and linetype, arrowhead symbol, text frame), annotative scale contexts; check the text placement of our MULTILEADER output in AutoCAD | Medium | 3–5 |
 | FF3 | Save-version leftovers (DXF/DWG 2000–2018, binary DXF, SAVEAS `version`/`binary` and the default save version landed, #421): no R14 DWG or R12 DXF output; the Save dialog can't pick the version per file (the file picker doesn't report the chosen type; File > Default Save Format sets it); no command-line SAVEAS format prompt | Low | 2–4 |
 | FF4 | Code-page leftovers (pre-2007 DXF read in their `$DWGCODEPAGE` landed, #505): Johab (ANSI_1361) and DOS 855/857/860–865/869 read as ANSI_1252; saving declares `ANSI_1252` instead of the file's code page (the text is pure ASCII, so still correct); acadrust approximates DOS code pages in pre-2007 DWG (DOS437 as 866, DOS850 as 1252) | Low | 1–2 |
 | FF5 | **[alpha blocker]** Real-file corpus (`storytold/cadcraft-corpus`), open → save → reopen tests, black-box check in AutoCAD | High | 10–15 + human |
 | FF6 | **[alpha blocker]** DWG throughput: a 10 MB DWG took ~2 min to fail (#57) | High for real projects | 6–10 |
-| FF7 | Table record and object handles from other programs' files are renumbered on the first save (entity handles are kept; `*D` blocks no longer duplicate and once reopened, CADCraft's own files keep every handle across saves, #495) | Low | 4–6 |
+| FF7 | Handles from other programs' files: kept on save (table records, objects, entities, layouts, space block markers), checked through DWG on AutoCAD's MI-201 drawing; a DXF that names no handle gets new ones | Low | 1–2 |
 | FF8 | SHX fonts (shape and big fonts) not read | Medium-high (text metrics differ) | 8–12 |
 | FF9 | `.pc3` plotter configuration files; linetype shape (SHX) elements are skipped (templates and `.dwt`, user `.lin`/`.pat` and `.pgp` alias files landed, #552; `.ctb`/`.stb`, #410) | Low-medium | 5–10 |
 | FF10 | PDF import and underlays (PDFATTACH); raster image attach (IMAGEATTACH). PDF export has real text in embedded TrueType subsets, PDF layers, several sheets per file and hyperlinks (#567, #571) | Medium | 20–35 |
@@ -150,6 +150,7 @@ Detail: [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-28 | minor | DWG open and save keep the file (handles, types, reactors; unchanged objects byte for byte): gap 1, FF1 and FF7 narrowed |
 | 2026-10-25 | minor | Named Viewports (View ▸ Viewports ▸ Named Viewports..., `vports.named`) lists the saved viewport configurations with a preview and the current one's name, and restores or deletes one; in a layout Restore places it as MVIEW Restore does: U11 narrowed. F15 and U11 no longer list MVIEW Restore (#633), and F21 no longer says PURGE skips multiline styles |
 | 2026-10-25 | minor | DIMTFILL limits: with DIMTFILL 1 (the drawing's background color) the written `*D` block and EXPLODE keep no background mask (a WIPEOUT over the text box would), and a true-color DIMTFILLCLR is written to DXF as the nearest ACI: F7 updated |
 | 2026-10-24 | minor | COMPAREEXPORT (typed, or Export on the comparison bar) opens the comparison as a new untitled drawing, `compare_<this> vs <other>.dwg`: this drawing's objects in one group and the other drawing's differing objects in a second group, in the comparison colors (green, red, gray for objects in both), block contents and style colors included: F22 narrowed |

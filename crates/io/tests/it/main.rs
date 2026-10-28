@@ -15,6 +15,7 @@ mod dim_marks_roundtrip;
 mod dimstyle_vars_roundtrip;
 mod dimtfill_roundtrip;
 mod drafting_spacing;
+mod dwg_copy_back;
 #[cfg(not(target_arch = "wasm32"))]
 mod dwg_corpus_content;
 mod dwg_corpus_handles;

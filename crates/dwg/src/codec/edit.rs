@@ -134,7 +134,74 @@ pub fn with_reactors(o: &RawObject, version: DwgVersion, entity: bool, reactors:
     }
     copy_bits(&o.data, l.reactors_end, l.total, &mut w)?;
     w.pad_to_byte();
-    let body = w.into_bytes();
+    finish_stored(w.into_bytes(), version, data_bits)
+}
+
+/// The reactor count an object says it has, and the reactor handles from its handle stream.
+pub fn reactors(o: &RawObject, version: DwgVersion, entity: bool) -> Result<Vec<u64>> {
+    let l = layout(o, version, entity)?;
+    let mut hs = BitReader::new(&o.data);
+    hs.set_position(l.owner_end)?;
+    let own = o.handle;
+    (0..l.count).map(|_| hs.handle().map(|h| h.absolute(own))).collect()
+}
+
+/// The object stored with type code `type_code` instead of its own (a class object moved to a
+/// file that numbers its classes differently): size, handle stream size (2010 and later), data and
+/// checksum. Every other bit is copied.
+pub fn with_type(o: &RawObject, version: DwgVersion, type_code: u16) -> Result<Vec<u8>> {
+    if version < V::R2000 {
+        return Err(Error::new(ErrorKind::Unsupported, "objects before 2000 aren't rewritten"));
+    }
+    let total = o.data.len().checked_mul(8).ok_or_else(|| Error::format("object size overflows"))?;
+    let mut dat = BitReader::new(&o.data);
+    let mut w = BitWriter::new();
+    let data_bits = if version >= V::R2010 {
+        dat.ot()?;
+        w.ot(type_code);
+        let data_end = usize::try_from(o.handle_stream_bits)
+            .ok()
+            .and_then(|h| total.checked_sub(h))
+            .ok_or_else(|| Error::format("handle stream larger than the object"))?;
+        let rest = dat.position();
+        copy_bits(&o.data, rest, total, &mut w)?;
+        data_end.checked_sub(rest).and_then(|d| d.checked_add(type_bits(type_code, version)))
+    } else {
+        dat.bs()?;
+        let after_type = dat.position();
+        let data_end = usize::try_from(dat.rl()?).map_err(|_| Error::format("object data size overflows"))?;
+        let rest = dat.position();
+        let new_end = data_end.checked_sub(after_type).and_then(|d| d.checked_add(type_bits(type_code, version)));
+        w.bs(type_code);
+        w.rl(new_end.and_then(|e| u32::try_from(e).ok()).ok_or_else(|| Error::format("object data size overflows"))?);
+        copy_bits(&o.data, rest, total, &mut w)?;
+        new_end
+    }
+    .ok_or_else(|| Error::format("object data size overflows"))?;
+    w.pad_to_byte();
+    finish_stored(w.into_bytes(), version, data_bits)
+}
+
+/// A stored object (size, data and checksum: [`with_reactors`]'s or [`with_type`]'s output) read
+/// back as the reader sees it.
+pub fn parse_stored(version: DwgVersion, stored: &[u8]) -> Result<RawObject> {
+    super::read::object_at(version, stored, 0)
+}
+
+/// The number of bits the type code `t` takes (OT from 2010, BS before).
+fn type_bits(t: u16, version: DwgVersion) -> usize {
+    let mut w = BitWriter::new();
+    if version >= V::R2010 {
+        w.ot(t);
+    } else {
+        w.bs(t);
+    }
+    w.position()
+}
+
+/// An object's data `body` (data stream of `data_bits` bits, then the handle stream) stored:
+/// size, handle stream size (2010 and later), data and checksum.
+fn finish_stored(body: Vec<u8>, version: DwgVersion, data_bits: usize) -> Result<Vec<u8>> {
     let mut out = BitWriter::new();
     out.ms(u32::try_from(body.len()).map_err(|_| Error::format("object too large"))?);
     if version >= V::R2010 {
@@ -148,18 +215,71 @@ pub fn with_reactors(o: &RawObject, version: DwgVersion, entity: bool, reactors:
     Ok(stored)
 }
 
-/// The reactor count an object says it has, and the reactor handles from its handle stream.
-pub fn reactors(o: &RawObject, version: DwgVersion, entity: bool) -> Result<Vec<u64>> {
-    let l = layout(o, version, entity)?;
+/// Every handle an object references, in its handle stream's order (absolute; null handles
+/// included): what it points to, whatever its type.
+pub fn handle_refs(o: &RawObject, version: DwgVersion) -> Result<Vec<u64>> {
+    let start = handle_stream_start(o, version)?;
     let mut hs = BitReader::new(&o.data);
-    hs.set_position(l.owner_end)?;
-    let own = o.handle;
-    (0..l.count).map(|_| hs.handle().map(|h| h.absolute(own))).collect()
+    hs.set_position(start)?;
+    let mut out = Vec::new();
+    // A handle takes at least 8 bits; what is left after the last one is padding.
+    while hs.remaining() >= 8 {
+        let Ok(h) = hs.handle() else { break };
+        out.push(h.absolute(o.handle));
+    }
+    Ok(out)
+}
+
+/// Where an object's handle stream starts, in bits of its data.
+fn handle_stream_start(o: &RawObject, version: DwgVersion) -> Result<usize> {
+    if version < V::R2000 {
+        return Err(Error::new(ErrorKind::Unsupported, "objects before 2000 aren't read for their handles"));
+    }
+    let total = o.data.len().checked_mul(8).ok_or_else(|| Error::format("object size overflows"))?;
+    if version >= V::R2010 {
+        return usize::try_from(o.handle_stream_bits)
+            .ok()
+            .and_then(|h| total.checked_sub(h))
+            .ok_or_else(|| Error::format("handle stream larger than the object"));
+    }
+    let mut dat = BitReader::new(&o.data);
+    dat.bs()?;
+    let start = usize::try_from(dat.rl()?).map_err(|_| Error::format("object data size overflows"))?;
+    if start > total {
+        return Err(Error::format("handle stream starts past the object"));
+    }
+    Ok(start)
+}
+
+/// The object stored with its `index`th reference ([`handle_refs`]'s order) naming `handle`, of the
+/// same kind (hard or soft, pointer or owner): size, handle stream size (2010 and later), data and
+/// checksum. Every other bit is copied. A reference stored relative to the object's own handle is
+/// not rewritten (an error), nor is one past the handle stream's end.
+pub fn with_reference(o: &RawObject, version: DwgVersion, index: usize, handle: u64) -> Result<Vec<u8>> {
+    let start = handle_stream_start(o, version)?;
+    let mut hs = BitReader::new(&o.data);
+    hs.set_position(start)?;
+    for _ in 0..index {
+        hs.handle()?;
+    }
+    let from = hs.position();
+    let code = hs.handle()?.code;
+    if !(2..=5).contains(&code) {
+        return Err(Error::new(ErrorKind::Unsupported, "relative references aren't rewritten"));
+    }
+    let to = hs.position();
+    let total = o.data.len().checked_mul(8).ok_or_else(|| Error::format("object size overflows"))?;
+    // A handle is whole bytes, so the rest (the padding too, as the file had it) stays aligned.
+    let mut w = BitWriter::new();
+    copy_bits(&o.data, 0, from, &mut w)?;
+    w.handle(code, handle);
+    copy_bits(&o.data, to, total, &mut w)?;
+    finish_stored(w.into_bytes(), version, start)
 }
 
 /// The length in bytes of the object stored at `offset` of `objects`: its size prefix, data and
 /// checksum.
-fn stored_len(version: DwgVersion, objects: &[u8], offset: usize) -> Result<usize> {
+pub(crate) fn stored_len(version: DwgVersion, objects: &[u8], offset: usize) -> Result<usize> {
     let mut r = BitReader::new(objects);
     r.set_position(offset.checked_mul(8).ok_or_else(|| Error::format("object offset overflows"))?)?;
     let size = usize::try_from(r.ms()?).map_err(|_| Error::format("object size overflows"))?;

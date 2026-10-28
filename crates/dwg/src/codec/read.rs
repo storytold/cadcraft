@@ -281,6 +281,13 @@ impl DwgContainer {
         object_at(self.version, &self.objects, offset)
     }
 
+    /// The object stored at `offset` as the file holds it: size prefix, data and checksum (what
+    /// [`super::edit::replace_objects`] takes).
+    pub fn stored(&self, offset: usize) -> Option<&[u8]> {
+        let len = super::edit::stored_len(self.version, &self.objects, offset).ok()?;
+        self.objects.get(offset..offset.checked_add(len)?)
+    }
+
     /// The header section's data, without its sentinels, size and checksum; `None` when the file
     /// has no header section or its start sentinel is missing.
     pub fn header_body(&self) -> Option<&[u8]> {

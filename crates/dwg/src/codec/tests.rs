@@ -139,7 +139,8 @@ fn files_that_are_not_read_say_why() {
 }
 
 /// Read `file` as far as anything goes: the container, every object and its common data, and
-/// the header; and rewrite each object with its reactors, and the file around them.
+/// the header; and rewrite each object with its reactors, its type and its first reference, and
+/// the file around them.
 fn read_everything(file: &[u8]) {
     if let Ok(c) = read_container(file) {
         let mut replace = std::collections::BTreeMap::new();
@@ -147,6 +148,12 @@ fn read_everything(file: &[u8]) {
             let Ok(o) = o else { continue };
             let (_, entity) = super::type_name(o.type_code, &c.classes);
             let _ = o.common(c.version, entity);
+            if let Ok(refs) = super::edit::handle_refs(&o, c.version)
+                && let Some(&first) = refs.first()
+            {
+                let _ = super::edit::with_reference(&o, c.version, 0, first).and_then(|s| super::edit::parse_stored(c.version, &s));
+            }
+            let _ = super::edit::with_type(&o, c.version, o.type_code);
             if let Ok(reactors) = super::edit::reactors(&o, c.version, entity)
                 && let Ok(stored) = super::edit::with_reactors(&o, c.version, entity, &reactors)
             {
@@ -257,6 +264,34 @@ fn objects_rewritten_with_their_own_reactors_are_unchanged() {
         }
         assert!(checked * 10 >= c.map.len() * 9, "{name}: only {checked} of {} objects checked", c.map.len());
     }
+}
+
+/// An object with one reference rewritten reads back with only that reference changed; with the
+/// same handle it is stored exactly as it was.
+#[test]
+fn objects_rewritten_with_another_reference_change_only_it() {
+    let files: Vec<Vec<u8>> = corpus()
+        .map(|dir| ["mi201-r2018.dwg", "mi201-r2004.dwg"].iter().filter_map(|n| std::fs::read(dir.join(n)).ok()).collect())
+        .unwrap_or_default();
+    let mut rewritten = 0;
+    for bytes in files.iter().map(Vec::as_slice).chain([synthetic().0.as_slice()]) {
+        let c = read_container(bytes).unwrap();
+        for r in &c.map {
+            let o = c.object_at(r.offset).unwrap();
+            let Ok(refs) = super::edit::handle_refs(&o, c.version) else { continue };
+            for (i, &h) in refs.iter().enumerate().take(4) {
+                let Ok(same) = super::edit::with_reference(&o, c.version, i, h) else { continue };
+                assert_eq!(super::edit::parse_stored(c.version, &same).unwrap(), o, "object {:X} reference {i}", r.handle);
+                let other = super::edit::with_reference(&o, c.version, i, h ^ 0x1_0000).unwrap();
+                let back = super::edit::handle_refs(&super::edit::parse_stored(c.version, &other).unwrap(), c.version).unwrap();
+                let mut want = refs.clone();
+                want[i] = h ^ 0x1_0000;
+                assert_eq!(back, want, "object {:X} reference {i}", r.handle);
+                rewritten += 1;
+            }
+        }
+    }
+    assert!(rewritten > 0);
 }
 
 /// An AutoCAD file written again with nothing replaced reads back the same: every object, the

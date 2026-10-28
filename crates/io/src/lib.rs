@@ -71,6 +71,10 @@ pub fn read(bytes: &[u8], name: impl AsRef<Path>) -> Result<Drawing> {
         let mut d = dxf_read::read(&dxf).map_err(|e| IoError::Format(format!("{e} (in the DXF converted from this DWG)")))?;
         d.read_notes = notes;
         dwg_check::space_block_ends(&mut d, bytes);
+        // How CADCraft writes each object now, for saving back the ones that don't change.
+        let version = save_version(&d).max(Version::R2004);
+        let fingerprints = dwg_check::fingerprints(dxf_write::dwg_bridge(&d, version).as_bytes());
+        d.dwg_source = Some(std::sync::Arc::new(cadcraft_doc::DwgSource { bytes: bytes.to_vec(), fingerprints }));
         return Ok(d);
     }
     match (Format::from_path(name), ext(name).as_str()) {
@@ -109,7 +113,8 @@ pub fn write_with(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> Re
             let version = opts.version.unwrap_or_else(|| version.max(Version::R2004));
             let dxf = dxf_write::dwg_bridge(d, version);
             let dwg = cadcraft_dwg::dxf_to_dwg_as(dxf.as_bytes(), version.code()).map_err(IoError::Format)?;
-            Ok(dwg_check::restore_reactors(&dxf, dwg))
+            let dwg = dwg_check::restore_reactors(&dxf, dwg);
+            Ok(dwg_check::restore_unchanged(d, &dxf, dwg))
         }
         _ if opts.binary => Err(IoError::Format(format!("binary output is for DXF files, not `{}`", ext(name)))),
         _ => write_framed(d, name, None),
