@@ -20,5 +20,21 @@ pub(crate) struct Container {
     /// order. Sections that could not be read are left out. Empty for
     /// R13–R15.
     pub others: Vec<(String, Vec<u8>)>,
+    /// Each section of an R2004-family file as the section map describes it, in section-map order
+    /// (the unnamed one included): what rewriting the file needs to lay it out again. Empty for
+    /// R13–R15.
+    pub layout: Vec<SectionLayout>,
     pub notes: Vec<Diagnostic>,
+}
+
+/// How one section of an R2004-family file is stored ([`Container::layout`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SectionLayout {
+    pub name: String,
+    /// Bytes per page before compression.
+    pub page_size: u32,
+    pub compressed: bool,
+    pub encrypted: bool,
+    /// The number of its first page (0 for none): pages are numbered in file order.
+    pub first_page: i32,
 }

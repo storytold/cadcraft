@@ -138,14 +138,24 @@ fn files_that_are_not_read_say_why() {
     assert_eq!(read_container(b"AC1032").unwrap_err().kind, ErrorKind::Truncated);
 }
 
-/// Read `file` as far as anything goes: the container, every object and the header.
+/// Read `file` as far as anything goes: the container, every object and its common data, and
+/// the header; and rewrite each object with its reactors, and the file around them.
 fn read_everything(file: &[u8]) {
     if let Ok(c) = read_container(file) {
-        for (_, o) in c.objects_iter() {
-            let _ = o;
+        let mut replace = std::collections::BTreeMap::new();
+        for (r, o) in c.objects_iter() {
+            let Ok(o) = o else { continue };
+            let (_, entity) = super::type_name(o.type_code, &c.classes);
+            let _ = o.common(c.version, entity);
+            if let Ok(reactors) = super::edit::reactors(&o, c.version, entity)
+                && let Ok(stored) = super::edit::with_reactors(&o, c.version, entity, &reactors)
+            {
+                replace.insert(r.handle, stored);
+            }
         }
         let _ = c.header_body();
         let _ = c.summary();
+        let _ = super::edit::replace_objects(file, &replace);
     }
 }
 
@@ -219,4 +229,97 @@ fn the_corpus_damaged_never_panics() {
     let Some(dir) = corpus() else { return };
     let Ok(bytes) = std::fs::read(dir.join("mi201-r2018.dwg")) else { return };
     hostile(&bytes, 61);
+}
+
+/// Every corpus object, rewritten with the reactors it has, comes out byte for byte as stored:
+/// the editor changes nothing but the reactors.
+#[test]
+fn objects_rewritten_with_their_own_reactors_are_unchanged() {
+    let Some(dir) = corpus() else { return };
+    for name in ["mi201-r2018.dwg", "mi201-r2013.dwg", "mi201-r2010.dwg", "mi201-r2004.dwg", "mi201-r2000.dwg"] {
+        let Ok(bytes) = std::fs::read(dir.join(name)) else { continue };
+        let c = read_container(&bytes).unwrap();
+        let mut checked = 0;
+        for r in &c.map {
+            let o = c.object_at(r.offset).unwrap();
+            let (_, entity) = super::type_name(o.type_code, &c.classes);
+            let Ok(reactors) = super::edit::reactors(&o, c.version, entity) else { continue };
+            let stored = super::edit::with_reactors(&o, c.version, entity, &reactors).unwrap();
+            let mut rd = super::bits::BitReader::new(&c.objects);
+            rd.set_position(r.offset * 8).unwrap();
+            let size = rd.ms().unwrap() as usize;
+            if c.version >= DwgVersion::R2010 {
+                rd.mc_unsigned().unwrap();
+            }
+            let end = rd.position() / 8 + size + 2;
+            assert_eq!(stored, &c.objects[r.offset..end], "{name}: object {:X}", r.handle);
+            checked += 1;
+        }
+        assert!(checked * 10 >= c.map.len() * 9, "{name}: only {checked} of {} objects checked", c.map.len());
+    }
+}
+
+/// An AutoCAD file written again with nothing replaced reads back the same: every object, the
+/// header, the classes and every other section.
+#[test]
+fn a_file_rewritten_without_changes_reads_back_the_same() {
+    let Some(dir) = corpus() else { return };
+    for name in ["mi201-r2018.dwg", "mi201-r2013.dwg", "mi201-r2010.dwg", "mi201-r2004.dwg"] {
+        let Ok(bytes) = std::fs::read(dir.join(name)) else { continue };
+        let again = super::edit::replace_objects(&bytes, &Default::default()).unwrap();
+        let (a, b) = (read_container(&bytes).unwrap(), read_container(&again).unwrap());
+        assert_eq!(a.version, b.version, "{name}");
+        assert_eq!(a.header_body(), b.header_body(), "{name}: header");
+        assert_eq!(a.classes, b.classes, "{name}: classes");
+        assert_eq!(a.others, b.others, "{name}: other sections");
+        let objects = |c: &super::DwgContainer| c.objects_iter().map(|(r, o)| (r.handle, o.unwrap())).collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(objects(&a), objects(&b), "{name}: objects");
+        let worse: Vec<_> = b.notes.iter().filter(|n| n.severity != super::Severity::Info).collect();
+        assert!(worse.is_empty(), "{name}: {worse:?}");
+        // The plain file header is the source's but for where sections start, which the 2010 and
+        // later files lay out as AutoCAD did.
+        let addresses = [0x0D..0x11, 0x20..0x24, 0x2C..0x30, 0x30..0x34];
+        for at in (0..0x80).filter(|at| !addresses.iter().any(|r| r.contains(at))) {
+            assert_eq!(bytes[at], again[at], "{name}: file header byte {at:#04x}");
+        }
+        if a.version >= DwgVersion::R2010 {
+            assert_eq!(bytes[..0x80], again[..0x80], "{name}: file header");
+        }
+    }
+}
+
+/// An object given new reactors reads back with them, in a file rewritten around it, and the
+/// rest of the file is untouched.
+#[test]
+fn new_reactors_read_back_from_the_rewritten_file() {
+    let Some(dir) = corpus() else { return };
+    for name in ["mi201-r2018.dwg", "mi201-r2010.dwg", "mi201-r2004.dwg"] {
+        let Ok(bytes) = std::fs::read(dir.join(name)) else { continue };
+        let c = read_container(&bytes).unwrap();
+        // Every object that has no reactors gets two (the first two handles of the map).
+        let targets: Vec<u64> = c.map.iter().take(2).map(|r| r.handle).collect();
+        let mut replace = std::collections::BTreeMap::new();
+        for r in &c.map {
+            let o = c.object_at(r.offset).unwrap();
+            let (_, entity) = super::type_name(o.type_code, &c.classes);
+            if super::edit::reactors(&o, c.version, entity).is_ok_and(|v| v.is_empty()) {
+                replace.insert(r.handle, super::edit::with_reactors(&o, c.version, entity, &targets).unwrap());
+            }
+        }
+        assert!(replace.len() > 10, "{name}: {} objects without reactors", replace.len());
+        let again = super::edit::replace_objects(&bytes, &replace).unwrap();
+        let d = read_container(&again).unwrap();
+        for (r, o) in d.objects_iter() {
+            let o = o.unwrap();
+            let (_, entity) = super::type_name(o.type_code, &d.classes);
+            let read = super::edit::reactors(&o, d.version, entity).unwrap();
+            let common = o.common(d.version, entity).unwrap();
+            if replace.contains_key(&r.handle) {
+                assert_eq!(read, targets, "{name}: {:X}", r.handle);
+                assert_eq!(common.reactors, targets);
+            } else {
+                assert_eq!(o, c.object_at(c.map.iter().find(|m| m.handle == r.handle).unwrap().offset).unwrap(), "{name}: {:X} changed", r.handle);
+            }
+        }
+    }
 }

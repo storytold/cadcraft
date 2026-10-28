@@ -4,7 +4,7 @@
 //! Spec §4.1–§4.7 (verified against the spec text). R2010, R2013 and R2018
 //! use the same container (spec chapters 6–8).
 
-use super::container::Container;
+use super::container::{Container, SectionLayout};
 use super::crc::{crc32, page_checksum};
 use super::error::{Error, ErrorKind, Result};
 use super::lz77;
@@ -238,7 +238,17 @@ pub(crate) fn read(file: &[u8], ver: DwgVersion) -> Result<Container> {
         }
     }
 
-    Ok(Container { maintenance, codepage, header, classes, handles, objects, sections, others, notes })
+    let layout = descs
+        .iter()
+        .map(|d| SectionLayout {
+            name: d.name.clone(),
+            page_size: d.max_decompressed,
+            compressed: d.compressed == 2,
+            encrypted: d.encrypted == 1,
+            first_page: d.pages.first().map_or(0, |p| p.number),
+        })
+        .collect();
+    Ok(Container { maintenance, codepage, header, classes, handles, objects, sections, others, layout, notes })
 }
 
 /// Reassemble one section from its pages, taking its size from what is left of the file's

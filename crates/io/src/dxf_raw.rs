@@ -293,6 +293,19 @@ fn extra(kind: &str, tags: &[Tag], entity: bool, unknown: bool, kept: &HashSet<S
     x
 }
 
+/// A table record's persistent reactors that name entities of the drawing (a dimension style's
+/// dimensions): kept with the record, as entities keep their handles. Entities' own reactors are
+/// the writer's to make (associativity), so this is for records only.
+fn entity_reactors(x: &mut ForeignExtra, tags: &[Tag], entities: &HashMap<String, bool>) {
+    for r in head(tags).reactors.iter().filter(|r| entities.contains_key(*r)) {
+        if let Some(h) = handle(r)
+            && !x.reactors.contains(&h)
+        {
+            x.reactors.push(h);
+        }
+    }
+}
+
 /// The extension dictionary of the record with handle `h` when its own groups don't name one but the
 /// dictionary was found by its owner (see `xdict_of` in [`read`]), and it is kept.
 fn found_xdict(x: &mut ForeignExtra, h: &str, xdict_of: &HashMap<String, String>, kept: &HashSet<String>) {
@@ -406,6 +419,7 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
         let Some(key) = ids.get(&h).cloned() else { continue };
         let mut x = extra(kind, t, kind == "BLOCK", false, &kept);
         found_xdict(&mut x, &h, &xdict_of, &kept);
+        entity_reactors(&mut x, t, &ents);
         if !x.is_empty() {
             f.records.entry(key).or_insert(x);
         }

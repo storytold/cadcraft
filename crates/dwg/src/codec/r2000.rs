@@ -73,5 +73,16 @@ pub(crate) fn read(file: &[u8], _ver: DwgVersion) -> Result<Container> {
         .collect();
 
     let handles = slice(2).ok_or_else(|| Error::format("object map locator (record 2) missing or out of range"))?;
-    Ok(Container { maintenance, codepage, header: slice(0), classes: slice(1), handles, objects: file.to_vec(), sections, others: Vec::new(), notes })
+    Ok(Container {
+        maintenance,
+        codepage,
+        header: slice(0),
+        classes: slice(1),
+        handles,
+        objects: file.to_vec(),
+        sections,
+        others: Vec::new(),
+        layout: Vec::new(),
+        notes,
+    })
 }

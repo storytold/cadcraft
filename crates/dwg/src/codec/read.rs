@@ -45,11 +45,86 @@ impl RawObject {
     pub fn entity_space(&self, version: DwgVersion) -> Result<EntitySpace> {
         entity_space(&self.data, version)
     }
+
+    /// The data every object starts with (ODA DWG specification, common entity data and common
+    /// non-entity object data): its extended data and, from the handle stream, its owner, its
+    /// persistent reactors and its extension dictionary. `entity` says which of the two layouts
+    /// it has ([`type_name`]).
+    pub fn common(&self, version: DwgVersion, entity: bool) -> Result<CommonData> {
+        let mut dat = BitReader::new(&self.data);
+        let (own, extended_data, handles_at) = object_head_at(&mut dat, version, self)?;
+        let space = if entity { Some(entity_mode(&mut dat, version)?) } else { None };
+        let reactor_count = dat.bl()?;
+        // From 2004 a flag says when there is no extension dictionary (and its handle is left out).
+        let xdict_missing = version >= V::R2004 && dat.b()?;
+        let Some(at) = handles_at else {
+            return Ok(CommonData { extended_data, owner: None, reactors: Vec::new(), reactor_count, xdict: None, space });
+        };
+        let mut hs = BitReader::new(&self.data);
+        hs.set_position(at)?;
+        // Entities with an owner handle: in a block or owned by another entity (§20.4.1, entmode 0).
+        let owner = if !entity || space == Some(EntitySpace::Block) { Some(hs.handle()?.absolute(own)) } else { None };
+        let mut reactors = Vec::new();
+        for _ in 0..reactor_count.min(MAX_REACTORS) {
+            reactors.push(hs.handle()?.absolute(own));
+        }
+        let xdict = if xdict_missing { Some(0) } else { Some(hs.handle()?.absolute(own)) };
+        Ok(CommonData { extended_data, owner, reactors, reactor_count, xdict, space })
+    }
+}
+
+/// An object's common data ([`RawObject::common`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommonData {
+    /// Extended data (xdata): each application's handle as stored and its bytes.
+    pub extended_data: Vec<(u64, Vec<u8>)>,
+    /// The owner, for objects and for entities in a block (`None` when not read).
+    pub owner: Option<u64>,
+    /// The persistent reactors' handles (empty when the handle stream isn't read).
+    pub reactors: Vec<u64>,
+    /// How many persistent reactors the object says it has.
+    pub reactor_count: u32,
+    /// The extension dictionary's handle, 0 for none (`None` when not read).
+    pub xdict: Option<u64>,
+    /// For an entity, where it lives.
+    pub space: Option<EntitySpace>,
+}
+
+/// Most reactor handles read from one object.
+const MAX_REACTORS: u32 = 4096;
+
+/// [`object_head`], with the object's own handle and the bit where its handle stream starts
+/// (2000 and later; `None` before, and when it can't be placed).
+fn object_head_at(dat: &mut BitReader<'_>, version: DwgVersion, o: &RawObject) -> Result<(u64, Vec<(u64, Vec<u8>)>, Option<usize>)> {
+    if version >= V::R2010 {
+        dat.ot()?;
+    } else {
+        dat.bs()?;
+    }
+    let size_bits = if (V::R2000..=V::R2007).contains(&version) { Some(dat.rl()?) } else { None };
+    let own = dat.handle()?.value;
+    let extended_data = extended_data(dat)?;
+    let total = o.data.len().saturating_mul(8);
+    let at = match size_bits {
+        Some(bits) => usize::try_from(bits).ok(),
+        None if version >= V::R2010 => usize::try_from(o.handle_stream_bits).ok().and_then(|h| total.checked_sub(h)),
+        None => None,
+    };
+    Ok((own, extended_data, at.filter(|a| *a <= total)))
 }
 
 /// [`RawObject::entity_space`] of an object's data.
 fn entity_space(data: &[u8], version: DwgVersion) -> Result<EntitySpace> {
     let mut dat = BitReader::new(data);
+    object_head(&mut dat, version)?;
+    entity_mode(&mut dat, version)
+}
+
+/// Most extended data blocks read from one object (a damaged file can repeat them).
+const MAX_EXTENDED_DATA: usize = 4096;
+
+/// Read an object's type, size (2000 to 2007), own handle and extended data.
+fn object_head(dat: &mut BitReader<'_>, version: DwgVersion) -> Result<Vec<(u64, Vec<u8>)>> {
     if version >= V::R2010 {
         dat.ot()?;
     } else {
@@ -59,16 +134,29 @@ fn entity_space(data: &[u8], version: DwgVersion) -> Result<EntitySpace> {
         dat.rl()?;
     }
     dat.handle()?;
-    // Extended data: (size, application handle, bytes) until a size of 0. Every pass reads at
-    // least 18 bits, so the loop ends with the data.
+    extended_data(dat)
+}
+
+/// Extended data: (size, application handle, bytes) until a size of 0. Every pass reads at least
+/// 18 bits, so the loop ends with the data.
+pub(crate) fn extended_data(dat: &mut BitReader<'_>) -> Result<Vec<(u64, Vec<u8>)>> {
+    let mut out = Vec::new();
     loop {
         let size = usize::from(dat.bs()?);
         if size == 0 {
             break;
         }
-        dat.handle()?;
-        dat.skip_bits(size.checked_mul(8).ok_or_else(|| Error::format("extended data size overflows"))?)?;
+        if out.len() >= MAX_EXTENDED_DATA {
+            return Err(Error::format("too many extended data blocks"));
+        }
+        let app = dat.handle()?;
+        out.push((app.value, dat.raw_bytes(size)?));
     }
+    Ok(out)
+}
+
+/// After the extended data of an entity: its graphics (skipped) and its entity mode.
+pub(crate) fn entity_mode(dat: &mut BitReader<'_>, version: DwgVersion) -> Result<EntitySpace> {
     if dat.b()? {
         let size = if version >= V::R2010 { dat.bll()? } else { u64::from(dat.rl()?) };
         let bits = usize::try_from(size).ok().and_then(|s| s.checked_mul(8)).ok_or_else(|| Error::format("graphics size overflows"))?;

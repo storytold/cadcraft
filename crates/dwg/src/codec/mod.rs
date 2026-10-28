@@ -33,6 +33,7 @@ mod version;
 
 mod classes;
 mod container;
+pub mod edit;
 mod objmap;
 mod r2000;
 mod r2004;
@@ -42,6 +43,6 @@ mod streams;
 mod tests;
 
 pub use error::{Error, ErrorKind, Result};
-pub use read::{DwgContainer, EntitySpace, ObjectRef, RawObject, SpaceMarkers, read_container, sniff_version};
+pub use read::{CommonData, DwgContainer, EntitySpace, ObjectRef, RawObject, SpaceMarkers, read_container, sniff_version};
 pub use types::{ClassDef, Diagnostic, SectionInfo, Severity, fixed_type, type_name};
 pub use version::DwgVersion;

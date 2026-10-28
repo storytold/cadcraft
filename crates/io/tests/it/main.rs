@@ -16,10 +16,12 @@ mod dimstyle_vars_roundtrip;
 mod dimtfill_roundtrip;
 mod drafting_spacing;
 #[cfg(not(target_arch = "wasm32"))]
+mod dwg_corpus_content;
 mod dwg_corpus_handles;
 #[cfg(not(target_arch = "wasm32"))]
 mod dwg_header_vars;
 mod dwg_layout_owner;
+mod dwg_reactors;
 #[cfg(not(target_arch = "wasm32"))]
 mod dwg_roundtrip_losses;
 #[cfg(not(target_arch = "wasm32"))]
