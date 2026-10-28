@@ -29,6 +29,8 @@ fn spline_leader_and_block_content_are_written() {
             col_spacing: 0.0,
             row_spacing: 0.0,
         }),
+        roots: Vec::new(),
+        ..Default::default()
     };
     d.add(&Space::Model, Common::default(), EntityKind::MLeader(m)).unwrap();
     let bytes = cadcraft_io::write(&d, "a.dxf").unwrap();

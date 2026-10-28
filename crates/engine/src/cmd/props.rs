@@ -17,7 +17,7 @@ use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("properties", "Properties", run_get).menu(&["Modify", "Properties"]).alias(&["pr", "props", "ch"]).params("{handles?} → properties of the selection").noundo(),
-        CommandSpec::new("properties.set", "Set Properties", run_set).params("{handles?, layer?, color?, linetype?, lineweight?, ltscale?, thickness?, transparency?: \"ByLayer\" | \"ByBlock\" | 0..90, visible?, <geometry fields: radius, center, start, end, text, height, rotation…>; dimensions: textOverride, dimStyle, textHeight, arrowSize, dimScale, precision (per-dimension overrides)}"),
+        CommandSpec::new("properties.set", "Set Properties", run_set).params("{handles?, layer?, color?, linetype?, lineweight?, ltscale?, thickness?, transparency?: \"ByLayer\" | \"ByBlock\" | 0..90, visible?, <geometry fields: radius, center, start, end, text, height, rotation…>; dimensions: textOverride, dimStyle, textHeight, arrowSize, dimScale, precision (per-dimension overrides); multileaders: leaderColor, leaderLinetype, leaderLineweight, textColor, blockColor (colour, linetype and lineweight values as above, ByBlock: the multileader's own), textFrame: bool}"),
         CommandSpec::new("matchprop", "Match Properties", matchprop::run_matchprop)
             .menu(&["Modify", "Match Properties"])
             .alias(&["ma", "painter"])
@@ -215,15 +215,78 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         .map(|n| d.dim_style(n).map(|st| st.name.clone()).ok_or_else(|| bad("properties.set", format!("dimension style `{n}` not found"))))
         .transpose()?;
     let dim_over = dim_overrides(p)?;
+    let ml = mleader_overrides(p, d)?;
     let anno_scale = d.current_anno_scale();
     let common = CommonEntityProperties { anno_scale: &anno_scale, color, linetype: linetype.as_deref(), lineweight: lw, transparency, thickness };
     for h in &hs {
         d.modify_entity(*h, |e| {
             set_common_properties(e, p, &common);
             apply_kind_properties(e, p, dim_style.as_ref(), &dim_over);
+            if let EntityKind::MLeader(m) = &mut e.kind {
+                ml.apply(m);
+            }
         })?;
     }
     Ok(json!({ "changed": hs.len() }))
+}
+
+/// A multileader's own leader, text and block properties asked for by `properties.set`.
+#[derive(Default)]
+struct MLeaderOverrides {
+    leader_color: Option<cadcraft_color::Color>,
+    leader_linetype: Option<String>,
+    leader_lineweight: Option<cadcraft_doc::Lineweight>,
+    text_color: Option<cadcraft_color::Color>,
+    text_frame: Option<bool>,
+    block_color: Option<cadcraft_color::Color>,
+}
+
+impl MLeaderOverrides {
+    fn apply(&self, m: &mut cadcraft_doc::MLeader) {
+        if let Some(c) = self.leader_color {
+            m.leader_color = c;
+        }
+        if let Some(l) = &self.leader_linetype {
+            m.leader_linetype.clone_from(l);
+        }
+        if let Some(l) = self.leader_lineweight {
+            m.leader_lineweight = l;
+        }
+        if let Some(c) = self.text_color {
+            m.text_color = c;
+        }
+        if let Some(f) = self.text_frame {
+            m.text_frame = f;
+        }
+        if let Some(c) = self.block_color {
+            m.block_color = c;
+        }
+    }
+}
+
+/// The multileader keys of `properties.set`, checked before anything changes.
+fn mleader_overrides(p: &Value, d: &cadcraft_doc::Drawing) -> Result<MLeaderOverrides> {
+    let color = |key: &str| p.get(key).map(|c| parse_color(c).ok_or_else(|| bad("properties.set", format!("`{key}` is not a colour")))).transpose();
+    let leader_linetype = str_param(p, "leaderLinetype")
+        .map(|n| {
+            if n.eq_ignore_ascii_case("ByLayer") || n.eq_ignore_ascii_case("ByBlock") {
+                Ok(n.to_string())
+            } else {
+                d.linetype(n).map(|t| t.name.clone()).ok_or_else(|| bad("properties.set", format!("linetype `{n}` is not loaded")))
+            }
+        })
+        .transpose()?;
+    let leader_lineweight =
+        p.get("leaderLineweight").map(|v| super::layer::parse_lw(v).ok_or_else(|| bad("properties.set", "bad `leaderLineweight`"))).transpose()?;
+    let text_frame = p.get("textFrame").map(|v| v.as_bool().ok_or_else(|| bad("properties.set", "`textFrame` must be true or false"))).transpose()?;
+    Ok(MLeaderOverrides {
+        leader_color: color("leaderColor")?,
+        leader_linetype,
+        leader_lineweight,
+        text_color: color("textColor")?,
+        text_frame,
+        block_color: color("blockColor")?,
+    })
 }
 
 fn apply_kind_properties(

@@ -24,12 +24,15 @@ fn edit_adds_and_removes_leaders() {
     let mut s = Session::new();
     let h = text_ml(&mut s, [0.0, 0.0], [5.0, 5.0]);
     s.execute("mleaderedit", &json!({ "handle": h.hex(), "points": [[1, 9], [8, 0]] })).unwrap();
-    assert_eq!(ml(&s, h).leaders.len(), 3);
-    // Pick the leader near (8, 0): it is leader 2.
+    // (8, 0) is right of the text: it gets a landing of its own there.
+    assert_eq!(ml(&s, h).leaders.len(), 2);
+    assert_eq!(ml(&s, h).line_count(), 3);
+    assert_eq!(ml(&s, h).roots.len(), 1);
+    // Pick the leader near (8, 0): it is leader 2, and its landing goes with it.
     s.execute("mleaderedit", &json!({ "handle": h.hex(), "mode": "remove", "points": [[7.5, 0.5]] })).unwrap();
     let m = ml(&s, h);
     assert_eq!(m.leaders.len(), 2);
-    assert!(m.leaders.iter().all(|l| l[0].x != 8.0));
+    assert!(m.leaders.iter().all(|l| l[0].x != 8.0) && m.roots.is_empty());
     assert!(s.execute("mleaderedit", &json!({ "handle": h.hex(), "mode": "remove", "index": 7 })).is_err());
     // Interactive: Add Leader then Remove Leader, one undo step each.
     s.start("mleaderedit.add").unwrap();
@@ -121,6 +124,64 @@ fn hostile_mleader_edit_params_never_panic() {
     let _ = cadcraft_render::build(s.doc().unwrap(), &cadcraft_doc::Space::Model, &cadcraft_render::Options::default());
 }
 
+#[test]
+fn leaders_on_both_sides_of_the_text_get_a_landing_each() {
+    let mut s = Session::new();
+    s.execute("mleaderstyle", &json!({"name": "M", "textHeight": 2.5, "arrowSize": 2.5, "current": true})).unwrap();
+    let h = hd(&s.execute("mleader", &json!({ "points": [[0, 0], [10, 5]], "text": "A LONGER NOTE" })).unwrap());
+    let first = ml(&s, h);
+    let t = first.text.clone().unwrap();
+    let gap = t.insert.x - first.landing.x - first.dogleg;
+    // Two arrowheads right of the text: one new landing there, mirrored from the first.
+    s.execute("mleaderedit", &json!({ "handle": h.hex(), "points": [[80, 0], [80, 12]] })).unwrap();
+    let m = ml(&s, h);
+    assert_eq!((m.leaders.len(), m.roots.len()), (1, 1));
+    let r = &m.roots[0];
+    assert_eq!(r.leaders.len(), 2);
+    assert_eq!((r.landing.y, r.dogleg), (first.landing.y, first.dogleg));
+    let right = cadcraft_render::layout_mtext_entity(s.doc().unwrap(), &t).bounds.max.x;
+    assert!((r.landing.x - (right + gap + r.dogleg)).abs() < 1e-9, "{} vs {}", r.landing.x, right + gap + r.dogleg);
+    assert_eq!(m.dogleg_dir(r.landing), -1.0, "its dogleg points back at the text");
+    // The second landing's grip moves that landing only; the first one's moves everything.
+    let n = m.leaders.iter().chain(&r.leaders).map(Vec::len).sum::<usize>();
+    let grips = EntityKind::MLeader(m.clone()).grips();
+    assert_eq!(grips.len(), n + 2);
+    let to = grips[n + 1] + Vec2::new(3.0, 1.0);
+    let Some(EntityKind::MLeader(g)) = crate::grips::stretch_grip(&EntityKind::MLeader(m.clone()), n + 1, to) else { panic!("no stretch") };
+    assert_eq!(g.roots[0].landing.xy(), to);
+    assert_eq!((g.landing, g.text.as_ref().map(|t| t.insert)), (m.landing, m.text.as_ref().map(|t| t.insert)));
+    let Some(EntityKind::MLeader(g)) = crate::grips::stretch_grip(&EntityKind::MLeader(m.clone()), n, grips[n] + Vec2::new(0.0, 2.0)) else {
+        panic!("no stretch")
+    };
+    assert_eq!(g.roots[0].landing.y, r.landing.y + 2.0);
+    assert_eq!(g.roots[0].leaders, r.leaders, "arrowheads stay");
+    // Removing the first root's only leader makes the other root the first.
+    s.execute("mleaderedit", &json!({ "handle": h.hex(), "mode": "remove", "index": 0 })).unwrap();
+    let m = ml(&s, h);
+    assert!(m.roots.is_empty());
+    assert_eq!((m.landing, m.leaders.len()), (r.landing, 2));
+    assert!(s.execute("mleaderedit", &json!({ "handle": h.hex(), "mode": "remove", "index": 2 })).is_err());
+}
+
+#[test]
+fn collecting_multileaders_with_several_roots_keeps_every_arrowhead() {
+    let mut s = Session::new();
+    s.execute("line", &json!({ "points": [[0, 0], [2, 2]] })).unwrap();
+    let l = s.doc().unwrap().model.iter().next().map(|e| e.handle).unwrap();
+    s.execute("block", &json!({ "name": "B", "base": [0, 0], "handles": [l.hex()], "keep": "delete" })).unwrap();
+    let mk = |s: &mut Session, x: f64| hd(&s.execute("mleader", &json!({ "points": [[x, 0], [x, 5]], "block": "B" })).unwrap());
+    let (a, b) = (mk(&mut s, 10.0), mk(&mut s, 20.0));
+    // An arrowhead far right of a's block: a landing of its own there.
+    s.execute("mleaderedit", &json!({ "handle": a.hex(), "points": [[60, 0]] })).unwrap();
+    assert_eq!(ml(&s, a).roots.len(), 1);
+    s.execute("mleadercollect", &json!({ "handles": [a.hex(), b.hex()], "at": [0, 20] })).unwrap();
+    let m = ml(&s, a);
+    assert!(m.roots.is_empty(), "the collected multileader has one landing");
+    assert_eq!(m.line_count(), 3);
+    // The further root's line keeps its own landing as its last point.
+    assert!(m.leaders.iter().any(|l| l.first().is_some_and(|p| p.x == 60.0) && l.len() == 2));
+}
+
 mod units {
     use super::super::{Spacing, align_directional, align_distribute, align_parallel};
     use cadcraft_doc::{Handle, MLeader};
@@ -136,6 +197,8 @@ mod units {
             arrow_size: 1.0,
             spline: false,
             block: None,
+            roots: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -149,6 +212,8 @@ mod units {
             arrow_size: 1.0,
             spline: false,
             block: None,
+            roots: Vec::new(),
+            ..Default::default()
         }
     }
 

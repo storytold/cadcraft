@@ -69,6 +69,7 @@ mod matchprop;
 mod measure_distance_snapping;
 mod metric_linetypes;
 mod mleader_content;
+mod mleader_overrides;
 mod mleader_remember;
 mod mline;
 mod mocoro;

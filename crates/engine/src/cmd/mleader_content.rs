@@ -36,6 +36,7 @@ pub(super) fn apply(s: &Session, k: EntityKind, c: &Content) -> Result<EntityKin
     if c.leader == LeaderType::None {
         // Content only, at the picked location (text from its top left corner).
         m.leaders.clear();
+        m.roots.clear();
         m.dogleg = 0.0;
         if let Some(t) = &mut m.text {
             t.insert = m.landing;
