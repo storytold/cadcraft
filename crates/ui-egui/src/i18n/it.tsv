@@ -132,7 +132,7 @@ menu	Modify	Edita
 	Center, Start, Angle	Centro, inizio, angolo
 	Center, Start, End	Centro, inizio, fine
 	Center, Start, Length	Centro, inizio, lunghezza
-	Chamfer	Cima
+	Chamfer	Smusso
 	Change Space	Cambia spazio
 	Change to Current Layer	Cambia al layer corrente
 	Changed: {n}	Modificati: {n}
@@ -917,8 +917,8 @@ menu	Modify	Edita
 	Specify fillet radius	Specificare il raggio di raccordo
 	Specify fillet radius for rectangles	Specificare il raggio di raccordo dei rettangoli
 	Specify first angle endpoint	Specificare il primo estremo dell'angolo
-	Specify first chamfer distance	Specificare la prima distanza di cimatura
-	Specify first chamfer distance for rectangles	Specificare la prima distanza di cimatura dei rettangoli
+	Specify first chamfer distance	Specificare la prima distanza di smusso
+	Specify first chamfer distance for rectangles	Specificare la prima distanza di smusso dei rettangoli
 	Specify first constraint point	Specificare il primo punto del vincolo
 	Specify first corner	Specificare il primo angolo
 	Specify first corner point	Specificare il primo angolo
@@ -1003,7 +1003,7 @@ menu	Modify	Edita
 	Specify scale factor	Specificare il fattore di scala
 	Specify second angle endpoint	Specificare il secondo estremo dell'angolo
 	Specify second break point	Specificare il secondo punto di interruzione
-	Specify second chamfer distance for rectangles	Specificare la seconda distanza di cimatura dei rettangoli
+	Specify second chamfer distance for rectangles	Specificare la seconda distanza di smusso dei rettangoli
 	Specify second constraint point	Specificare il secondo punto del vincolo
 	Specify second destination point	Specificare il secondo punto di destinazione
 	Specify second end point of circle's diameter	Specificare il secondo estremo del diametro del cerchio

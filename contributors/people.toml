@@ -91,3 +91,5 @@ sync_github_name = false
 real_name = "Robert Lee"
 sync_github_name = true
 
+[people.starise]
+real_name = "Andrea Brandi"
