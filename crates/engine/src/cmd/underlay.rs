@@ -148,41 +148,137 @@ pub(crate) fn after_open(s: &mut Session, i: usize) {
     fill_sizes(s, i, true);
 }
 
-/// Give the PDF underlays of the active drawing that have no page size (their PDF couldn't be
-/// read when it opened) their size, when their PDF can be read now; nothing is reported. The
-/// drawing is redrawn (a new revision) and stays unmodified if it was. Returns whether a size
-/// was found. The canvas calls it once in a while while such an underlay is shown.
+/// The pages (stored path, page) of drawing `d`'s PDF underlays that have no page size.
+fn pages_without_size(d: &Drawing) -> Vec<(String, u32)> {
+    let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(d.blocks.values().map(|b| &b.entities));
+    stores
+        .flat_map(|s| s.iter())
+        .filter_map(|e| match &e.kind {
+            EntityKind::PdfUnderlay(u) if u.size == Vec2::ZERO => Some((u.path.clone(), u.page)),
+            _ => None,
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+/// The pages (stored path, page) of the active drawing's PDF underlays that have no page size
+/// (their PDF couldn't be read when it opened), and the drawing's file: what [`page_size`]
+/// reads, off the UI thread, for [`set_sizes`].
+pub fn unsized_pages(s: &Session) -> (Option<String>, Vec<(String, u32)>) {
+    s.state().map(|st| (st.path.clone(), pages_without_size(&st.doc))).unwrap_or_default()
+}
+
+/// What reading a page's size gave ([`page_size`]).
+#[derive(Clone, Debug, PartialEq)]
+pub enum SizeRead {
+    /// The size at underlay scale 1, in the units files store the scale against.
+    Found(Vec2),
+    /// The PDF can't be found or opened (not there yet, a share not reachable): worth trying again.
+    Missing,
+    /// The PDF is there but gives no size for the page (damaged, or without that page); its
+    /// modification time, so it is read again only once it changes.
+    Unreadable(Option<std::time::SystemTime>, String),
+    /// Unreadable last time and not changed since: not read again.
+    Unchanged,
+}
+
+/// Page `page`'s size of the PDF `stored` in the drawing saved at `document`. It reads files and
+/// nothing else, so it can run on a worker thread. `unreadable_since`: the modification time of
+/// the file when it was last found unreadable; while it has that time, it isn't read again.
+pub fn page_size(stored: &str, document: Option<&str>, page: u32, unreadable_since: Option<std::time::SystemTime>) -> SizeRead {
+    let Some(hooks) = pdf() else { return SizeRead::Missing };
+    let Ok(file) = underlay_file(stored, document) else { return SizeRead::Missing };
+    let modified = std::fs::metadata(&file).and_then(|m| m.modified()).ok();
+    if unreadable_since.is_some() && modified == unreadable_since {
+        return SizeRead::Unchanged;
+    }
+    let Ok(bytes) = read_pdf(&file.to_string_lossy()) else { return SizeRead::Missing };
+    match (hooks.page)(&bytes, page) {
+        Ok((_, w, h, per_point)) => match PageSize::new(w, h, per_point) {
+            Some(size) => SizeRead::Found(size.native),
+            None => SizeRead::Unreadable(modified, format!("{stored}: page {page} has no usable size")),
+        },
+        Err(e) => SizeRead::Unreadable(modified, format!("{stored}: {e}")),
+    }
+}
+
+/// Give the active drawing's PDF underlays that have no page size theirs from `sizes` (by
+/// stored path and page). The drawing is redrawn (a new revision) and stays unmodified if it
+/// was. Returns whether a size was set.
+pub fn set_sizes(s: &mut Session, sizes: &HashMap<(String, u32), Vec2>) -> bool {
+    let i = s.active;
+    s.docs.get_mut(i).is_some_and(|st| set_sizes_in(st, sizes, false))
+}
+
+/// [`set_sizes`] on one drawing; `opened`: it was just opened, so its state counts as saved.
+fn set_sizes_in(st: &mut crate::DocState, sizes: &HashMap<(String, u32), Vec2>, opened: bool) -> bool {
+    let missing_size = |e: &cadcraft_doc::Entity| matches!(&e.kind, EntityKind::PdfUnderlay(u) if u.size == Vec2::ZERO && sizes.contains_key(&(u.path.clone(), u.page)));
+    let d = &st.doc;
+    let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(d.blocks.values().map(|b| &b.entities));
+    if !stores.flat_map(|s| s.iter()).any(|e| missing_size(e)) {
+        return false;
+    }
+    // Reading a size is no change: an unmodified drawing stays so.
+    let unmodified = !st.is_dirty();
+    let d = Arc::make_mut(&mut st.doc);
+    let fill = |store: &mut cadcraft_doc::EntityStore| {
+        let hs: Vec<Handle> = store.iter().filter(|e| missing_size(e)).map(|e| e.handle).collect();
+        for h in hs {
+            store.modify(h, |e| {
+                if let EntityKind::PdfUnderlay(u) = &mut e.kind
+                    && let Some(sz) = sizes.get(&(u.path.clone(), u.page))
+                {
+                    u.size = *sz;
+                }
+            });
+        }
+    };
+    fill(&mut d.model);
+    d.layouts.iter_mut().for_each(|l| fill(&mut l.entities));
+    for b in d.blocks.values_mut() {
+        if b.entities.iter().any(|e| missing_size(e)) {
+            fill(&mut Arc::make_mut(b).entities);
+        }
+    }
+    if unmodified || opened {
+        st.saved = st.doc.clone();
+    }
+    st.revision += 1;
+    true
+}
+
+/// [`unsized_pages`], [`page_size`] and [`set_sizes`] in one go, on the calling thread: for
+/// hosts without a UI thread to keep free (the canvas runs [`page_size`] on a worker). Returns
+/// whether a size was set.
 pub fn retry_sizes(s: &mut Session) -> bool {
-    fill_sizes(s, s.active, false)
+    let (document, pages) = unsized_pages(s);
+    let sizes: HashMap<(String, u32), Vec2> = pages
+        .into_iter()
+        .filter_map(|(stored, page)| match page_size(&stored, document.as_deref(), page, None) {
+            SizeRead::Found(size) => Some(((stored, page), size)),
+            _ => None,
+        })
+        .collect();
+    set_sizes(s, &sizes)
 }
 
 /// The page sizes of drawing `i`'s PDF underlays that have none, read from their PDFs; the PDFs
 /// that can't be read are reported when `report`. Returns whether a size was found.
 fn fill_sizes(s: &mut Session, i: usize, report: bool) -> bool {
-    let Some(hooks) = pdf() else { return false };
     let Some(st) = s.docs.get_mut(i) else { return false };
-    let missing_size = |e: &cadcraft_doc::Entity| matches!(&e.kind, EntityKind::PdfUnderlay(u) if u.size == Vec2::ZERO);
-    let d = &st.doc;
-    let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(d.blocks.values().map(|b| &b.entities));
-    let todo: Vec<(String, u32)> = stores
-        .flat_map(|s| s.iter())
-        .filter(|e| missing_size(e))
-        .filter_map(|e| match &e.kind {
-            EntityKind::PdfUnderlay(u) => Some((u.path.clone(), u.page)),
-            _ => None,
-        })
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect();
+    let todo = pages_without_size(&st.doc);
     if todo.is_empty() {
         return false;
     }
     let mut sizes: HashMap<(String, u32), Vec2> = HashMap::new();
     let mut notes = Vec::new();
     for (stored, page) in todo {
-        let size = underlay_file(&stored, st.path.as_deref())
-            .and_then(|p| read_pdf(&p.to_string_lossy()))
-            .and_then(|b| (hooks.page)(&b, page).map_err(|e| bad("pdfattach", format!("{stored}: {e}"))));
+        let size = underlay_file(&stored, st.path.as_deref()).and_then(|p| read_pdf(&p.to_string_lossy())).and_then(|b| {
+            pdf()
+                .ok_or_else(|| bad("pdfattach", "PDF underlays are not available in this build"))
+                .and_then(|h| (h.page)(&b, page).map_err(|e| bad("pdfattach", format!("{stored}: {e}"))))
+        });
         match size {
             Ok((_, w, h, per_point)) => match PageSize::new(w, h, per_point) {
                 Some(size) => {
@@ -195,35 +291,7 @@ fn fill_sizes(s: &mut Session, i: usize, report: bool) -> bool {
             Err(e) => notes.push(format!("PDF underlay not shown: {e}")),
         }
     }
-    let found = !sizes.is_empty();
-    if found {
-        // Reading a size is no change: an unmodified drawing stays so.
-        let unmodified = !st.is_dirty();
-        let d = Arc::make_mut(&mut st.doc);
-        let fill = |store: &mut cadcraft_doc::EntityStore| {
-            let hs: Vec<Handle> = store.iter().filter(|e| missing_size(e)).map(|e| e.handle).collect();
-            for h in hs {
-                store.modify(h, |e| {
-                    if let EntityKind::PdfUnderlay(u) = &mut e.kind
-                        && let Some(sz) = sizes.get(&(u.path.clone(), u.page))
-                    {
-                        u.size = *sz;
-                    }
-                });
-            }
-        };
-        fill(&mut d.model);
-        d.layouts.iter_mut().for_each(|l| fill(&mut l.entities));
-        for b in d.blocks.values_mut() {
-            if b.entities.iter().any(|e| missing_size(e)) {
-                fill(&mut Arc::make_mut(b).entities);
-            }
-        }
-        if unmodified || report {
-            st.saved = st.doc.clone();
-        }
-        st.revision += 1;
-    }
+    let found = set_sizes_in(st, &sizes, report);
     if report {
         for n in notes {
             s.echo(n);
