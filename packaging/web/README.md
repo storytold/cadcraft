@@ -73,6 +73,66 @@ Local test: `python3 -m http.server 8765` inside the folder, then open http://lo
   downloads) are blocked.
 - Don't send `X-Frame-Options: DENY` or a `frame-ancestors` CSP that excludes the embedding page.
 
+## Host mode: let the page open and store drawings
+
+A page can take over the file side of the app instead of the browser's downloads. The iframe
+embed above opts in by adding `?host=parent` to the iframe's URL
+(`https://example.com/cadcraft/?host=parent`); the app then talks to its same-origin framing
+page over `postMessage`, with plain window messages that carry a `type`:
+
+| Message | Direction | Fields |
+|---|---|---|
+| `cadcraft:ready` | app → page | `version`: the app is listening; send a drawing now |
+| `cadcraft:open` | page → app | `name`, `bytes` (an `ArrayBuffer` or `Uint8Array`): open like File › Open |
+| `cadcraft:save` | app → page | `name`, `bytes` (a transferred `ArrayBuffer`): every file the app would otherwise download (SAVE, SAVEAS, exports). The page stores it and reports failures itself. |
+| `cadcraft:dirty` | app → page | `dirty`: unsaved changes appeared or went away |
+| `cadcraft:failed` | app → page | `error`: the app couldn't start |
+
+In host mode the app starts on the Start tab instead of an empty Drawing1, so the page should
+guard leaving it while changes are unsaved (that is what `cadcraft:dirty` reports).
+
+### Same-document host mode (no iframe)
+
+A page can also run the app in its own document — its own `<canvas id="cadcraft_canvas">`
+inside a component, no iframe — by loading the wasm-bindgen module itself. It opts in with
+`data-host="page"` on that canvas — the exact value `page`; anything else, and an unframed
+`?host=parent`, keeps the normal app with downloads. The behaviour is the same as the parent
+bridge, except the transport is DOM `CustomEvent`s on the canvas instead of `postMessage`: the
+app dispatches `cadcraft:ready`, `cadcraft:save`, `cadcraft:dirty` and `cadcraft:failed` on the
+canvas with the message fields (without the `type`) as the event's `detail`, and the page
+dispatches a `cadcraft:open` event with `detail: { name, bytes }` to open a drawing. Events
+don't bubble, so two editors on one page can't hear each other; listen on the canvas itself.
+
+```html
+<canvas id="cadcraft_canvas" data-host="page" style="width: 100%; height: 600px; border: 0;"></canvas>
+```
+
+```js
+import init from "./cadcraft-web-<hash>.js"; // the wasm-bindgen glue shipped with the app
+
+const canvas = document.getElementById("cadcraft_canvas");
+// The app announces itself while `init` runs, so add the listeners first.
+canvas.addEventListener("cadcraft:ready", () => {
+  // The app is listening; hand it a drawing of the page's own now, if you have one.
+  canvas.dispatchEvent(new CustomEvent("cadcraft:open", {
+    detail: { name: "plan.dxf", bytes: drawingBytes }, // ArrayBuffer or Uint8Array
+  }));
+});
+// Every file the app would otherwise download (SAVE, SAVEAS, exports) arrives here.
+canvas.addEventListener("cadcraft:save", (event) => {
+  const { name, bytes } = event.detail; // bytes is an ArrayBuffer
+  storeFile(name, bytes);
+});
+canvas.addEventListener("cadcraft:dirty", (event) => {
+  warnBeforeLeaving(event.detail.dirty);
+});
+canvas.addEventListener("cadcraft:failed", (event) => {
+  showError(event.detail.error);
+});
+
+await init({ module_or_path: "./cadcraft-web-<hash>_bg.wasm" });
+```
+
 ## Renderer selection and fallback flags
 
 CADCraft renders with wgpu. It uses **WebGPU** when the browser has it and falls back to

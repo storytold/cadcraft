@@ -6,7 +6,8 @@
 //! with egui shapes instead of the GPU canvas, `?sample` opens the sample drawing. Saving downloads
 //! the drawing through the browser (`download.rs`). With `?host=parent` (inside an `<iframe>`), a
 //! same-origin parent page sends the drawing to open and stores what CADCraft saves instead
-//! (`host.rs`).
+//! (`host.rs`); a page can also host CADCraft in its own document (no iframe) with
+//! `data-host="page"` on the canvas, talking over DOM `CustomEvent`s on it (`host.rs`).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 #[cfg(target_arch = "wasm32")]
@@ -24,7 +25,8 @@ mod web {
     const LOADING_ID: &str = "cadcraft_loading";
 
     /// The app, the files File > Open… and drag and drop read for it in the background, the
-    /// page embedding it (`?host=parent`), the browser's `prefers-reduced-motion` (it stays
+    /// host page (`?host=parent`, or `data-host="page"` on the canvas), the browser's
+    /// `prefers-reduced-motion` (it stays
     /// live, so View ▸ Accessibility ▸ Animation Effects ▸ Use System Setting follows a change),
     /// and the document title last written to the page.
     struct Shell(
@@ -93,6 +95,12 @@ mod web {
         web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default()
     }
 
+    /// The app's canvas: the one element `index.html` and every embedding page must provide,
+    /// with the id the app looks up.
+    fn app_canvas() -> Option<web_sys::HtmlCanvasElement> {
+        web_sys::window()?.document()?.get_element_by_id(CANVAS_ID).and_then(|e| e.dyn_into::<web_sys::HtmlCanvasElement>().ok())
+    }
+
     fn query_param(key: &str) -> Option<String> {
         web_sys::UrlSearchParams::new_with_str(&query()).ok()?.get(key)
     }
@@ -120,10 +128,23 @@ mod web {
             groups: cadcraft_io::entity_groups,
             entity: cadcraft_io::entity_from_groups,
         });
+        let Some(canvas) = app_canvas() else {
+            log::error!("missing <canvas id=\"{CANVAS_ID}\">");
+            return;
+        };
         // `?host=parent`: a same-origin page framing CADCraft (such as a Nextcloud app) opens
-        // drawings in it and stores what it saves. Otherwise there is no file system here: saved
-        // files reach the user as browser downloads.
-        let bridge = if query_param("host").as_deref() == Some("parent") { crate::host::Bridge::new() } else { None };
+        // drawings in it and stores what it saves. Otherwise `data-host="page"` on the canvas
+        // opts in a page that runs CADCraft in its own document (no iframe) and talks over DOM
+        // `CustomEvent`s on the canvas (`host`). With neither, there is no file system here:
+        // saved files reach the user as browser downloads; an unframed `?host=parent` stays
+        // that normal app.
+        let bridge = if query_param("host").as_deref() == Some("parent") {
+            crate::host::Bridge::new()
+        } else if crate::page_host_enabled(canvas.get_attribute("data-host").as_deref()) {
+            Some(crate::host::Bridge::for_page(&canvas))
+        } else {
+            None
+        };
         match &bridge {
             Some(bridge) => {
                 bridge.install();
@@ -134,10 +155,6 @@ mod web {
         let app_bridge = bridge.clone();
         wasm_bindgen_futures::spawn_local(async move {
             let Some(document) = web_sys::window().and_then(|w| w.document()) else { return };
-            let Some(canvas) = document.get_element_by_id(CANVAS_ID).and_then(|e| e.dyn_into::<web_sys::HtmlCanvasElement>().ok()) else {
-                log::error!("missing <canvas id=\"{CANVAS_ID}\">");
-                return;
-            };
             let mut options = eframe::WebOptions::default();
             if query().contains("webgl")
                 && let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut options.wgpu_options.wgpu_setup
@@ -149,7 +166,7 @@ mod web {
                     canvas,
                     options,
                     Box::new(move |cc| {
-                        // Embedded, the parent sends the drawing: start on the Start tab, not Drawing1.
+                        // Embedded, the host sends the drawing: start on the Start tab, not Drawing1.
                         let session = if app_bridge.is_some() { Session::empty() } else { Session::new() };
                         let mut app = CadApp::new(session, services());
                         app.system_languages =
@@ -210,6 +227,14 @@ fn wants_cpu(query: &str) -> bool {
     query.trim_start_matches('?').split('&').any(|p| p == "cpu" || p.starts_with("cpu="))
 }
 
+/// Host mode on the canvas is opt-in by attribute value: only the exact `page` turns it on
+/// (`data-host="page"`). Everything else — `Page`, ` page`, `page `, `parent` (the URL opt-in),
+/// empty or missing — keeps the normal app with downloads.
+#[cfg(any(target_arch = "wasm32", test))]
+fn page_host_enabled(data_host: Option<&str>) -> bool {
+    data_host == Some("page")
+}
+
 /// The browser tab title: the open drawing's file name, a bullet once it has unsaved changes,
 /// and the app name (`drawing.dwg • — CADCraft`), or just the app name with no drawing. An
 /// embedding page (`?host=parent`) reads it to tell which drawing opened and whether it is dirty.
@@ -263,7 +288,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{document_title, push_title, title_to_send, wants_cpu};
+    use super::{document_title, page_host_enabled, push_title, title_to_send, wants_cpu};
 
     /// Guards the `?cpu` URL flag: only a whole `cpu` query parameter (bare or with a value)
     /// selects the CPU canvas, so `?sample` and `?gpucpu` stay on the GPU path.
@@ -324,5 +349,16 @@ mod tests {
         // Closing the drawing writes the app name.
         assert!(push_title(&mut sent, None, false, |title| written.push(title.to_owned())));
         assert_eq!(written, ["drawing.dwg — CADCraft", "drawing.dwg • — CADCraft", "CADCraft"]);
+    }
+
+    /// Guards the `data-host="page"` opt-in: only the exact value `page` on the canvas turns the
+    /// page host mode on; anything else (or a missing attribute) keeps the normal app with
+    /// downloads, and so does an unframed `?host=parent` (decided in `web::start`, not here).
+    #[test]
+    fn only_the_exact_page_attribute_enables_the_page_host_mode() {
+        assert!(page_host_enabled(Some("page")));
+        for off in [None, Some(""), Some("Page"), Some(" page"), Some("page "), Some("parent")] {
+            assert!(!page_host_enabled(off), "{off:?} must keep host mode off");
+        }
     }
 }
