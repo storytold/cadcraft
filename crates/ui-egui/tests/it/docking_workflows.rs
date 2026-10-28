@@ -87,6 +87,65 @@ fn frames(layout: &Layout<Panel>) -> Vec<Vec<Panel>> {
 }
 
 #[test]
+fn reset_keeps_the_active_ribbon_or_classic_layout() {
+    for ribbon in [false, true] {
+        let mut h = harness(None, 1280.0, 1.0);
+        if ribbon {
+            menus::activate(h.state_mut(), "ui.layout.pc");
+        }
+        h.state_mut().run("ui.dock", json!({"operation":"float","panel":"properties","rect":[400,250,300,350]})).unwrap();
+        h.state_mut().run("ui.dock.reset", json!({})).unwrap();
+        h.run_steps(4);
+        assert_eq!(h.state().ui.show_ribbon, ribbon);
+        assert_eq!(h.state().ui.show_toolsets, !ribbon);
+        let expected = if ribbon { cadcraft_ui_egui::docking::pc_workspace() } else { cadcraft_ui_egui::docking::default_workspace() };
+        assert_eq!(h.state().ui.docking, expected);
+    }
+}
+
+#[test]
+fn reset_palettes_preserves_ribbon_preferences_and_the_drawing() {
+    for ribbon in [false, true] {
+        let mut h = harness(None, 1280.0, 1.0);
+        if ribbon {
+            menus::activate(h.state_mut(), "ui.layout.pc");
+        }
+        h.state_mut().ui.ribbon_tab = "annotate".into();
+        h.state_mut().ui.ribbon_minimized = true;
+        let applied = h.state().ui.pc_layout_applied;
+        let drawing = h.state().session.doc().unwrap().clone();
+        h.state_mut().run("ui.dock", json!({"operation":"float","panel":"properties","rect":[400,250,300,350]})).unwrap();
+        menus::activate(h.state_mut(), "ui.resetpalettes");
+        h.run_steps(4);
+        assert_eq!(h.state().ui.show_ribbon, ribbon);
+        assert_eq!(h.state().ui.show_toolbar, !ribbon);
+        assert_eq!(h.state().ui.show_toolsets, !ribbon);
+        assert_eq!(h.state().ui.ribbon_tab, "annotate");
+        assert!(h.state().ui.ribbon_minimized);
+        assert_eq!(h.state().ui.pc_layout_applied, applied);
+        let expected = if ribbon { cadcraft_ui_egui::docking::pc_workspace() } else { cadcraft_ui_egui::docking::default_workspace() };
+        assert_eq!(h.state().ui.docking, expected);
+        assert_eq!(h.state().session.doc().unwrap(), &drawing);
+    }
+}
+
+#[test]
+fn invalid_layout_recovers_to_the_active_ribbon_or_classic_layout() {
+    for ribbon in [false, true] {
+        let mut h = harness(None, 1280.0, 1.0);
+        if ribbon {
+            menus::activate(h.state_mut(), "ui.layout.pc");
+        }
+        // A missing drawing view is invalid, regardless of the active layout.
+        h.state_mut().ui.docking.layout.root = None;
+        h.run_steps(4);
+        assert_eq!(h.state().ui.show_ribbon, ribbon);
+        let expected = if ribbon { cadcraft_ui_egui::docking::pc_workspace() } else { cadcraft_ui_egui::docking::default_workspace() };
+        assert_eq!(h.state().ui.docking, expected);
+    }
+}
+
+#[test]
 fn default_layout_is_tool_sets_left_and_the_palettes_right_in_dock_columns() {
     use cadcraft_ui_egui::docking::{PALETTES_WIDTH, TOOL_SETS_WIDTH, default_workspace, validate};
     let workspace = default_workspace();

@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-22 · **Change:** minor (distinct polyline midpoint grips) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-27 · **Change:** minor (active-layout panel reset and collapsed ribbon menus) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
 
 How CADCraft's interaction compares with AutoCAD's: point entry, object snaps, tracking, dynamic
 input, grips, selection, the command line, chrome and navigation. A drafter's speed in AutoCAD
@@ -199,10 +199,14 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
   have menus too (#512). Still missing: in-place layout tab rename, Move or Copy, Select All
   Layouts.
 
+Panel reset and recovery from invalid panel layouts preserve the active shell: Windows ribbon mode restores Properties on the left without Tool Sets or Layers; classic mode retains Tool Sets left and Layers/Properties right. Reset Palettes also retains the ribbon tab and minimized state. Regression coverage exercises both reset commands and invalid-layout recovery in the actual UI harness, including drawing preservation.
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-27 | minor | Panel reset and invalid-layout recovery choose the active ribbon or classic workspace; drawing layout remains available |
+| 2026-10-27 | minor | Collapsed ribbon panels omit overflow commands already present in their cells, preserving first-occurrence order and unique overflow actions |
 | 2026-10-22 | minor | Polyline segment midpoint grips use rectangles, distinct from square vertex grips, with matching hover and pick bounds (#1950) |
 | 2026-10-13 | minor | Filled-region highlight boundaries are traversed in deterministic coordinate order, fixing dash-phase jumps on CPU hover/selection redraws and GPU highlight rebuilds; CPU dash-position, pixel and GPU mesh regressions |
 | 2026-10-14 | minor | Selection cycling (#1143): the list and badge of SELECTIONCYCLING, Shift+Space through overlapping objects (#1145) |

@@ -35,6 +35,9 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.animations.off", "Off", &["View", "Accessibility", "Animation Effects", "Off"], None),
     ("ui.animations", "Animation Effects", &[], None),
     ("ui.toggle.toolbar", "Tool Bar", &["Window", "Tool Bar"], None),
+    ("ui.toggle.ribbon", "Ribbon", &["Window", "Ribbon"], None),
+    ("ui.layout.pc", "Windows Layout (Ribbon)", &["Window", "Windows Layout (Ribbon)"], None),
+    ("ui.layout.mac", "Mac Layout (Tool Sets)", &["Window", "Mac Layout (Tool Sets)"], None),
     ("ui.toggle.filetabs", "File Tab", &["Window", "File Tab"], None),
     ("ui.toggle.statusbar", "Status Bar", &["Window", "Status Bar"], None),
     ("ui.toggle.cmdline", "Command Line", &["Window", "Command Line"], Some("Cmd+9")),
@@ -217,6 +220,18 @@ fn run_ui_toggle_command(app: &mut CadApp, id: &str, params: &Value) -> Option<R
             toggle(&mut app.ui.show_toolbar, params);
             Ok(Value::Null)
         }
+        "ui.toggle.ribbon" => {
+            toggle(&mut app.ui.show_ribbon, params);
+            Ok(Value::Null)
+        }
+        "ui.layout.pc" => {
+            crate::ribbon::apply_pc_layout(app);
+            Ok(Value::Null)
+        }
+        "ui.layout.mac" => {
+            crate::ribbon::apply_mac_layout(app);
+            Ok(Value::Null)
+        }
         "ui.toggle.filetabs" => {
             toggle(&mut app.ui.show_file_tabs, params);
             Ok(Value::Null)
@@ -290,6 +305,32 @@ fn run_close_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resul
 
 fn should_pick_file_path(id: &str, params: &Value) -> bool {
     if id.starts_with("ui.") { params.is_null() || (params.get("path").is_none() && params.get("data").is_none()) } else { params.is_null() }
+}
+
+fn reset_palettes(app: &mut CadApp) {
+    let (menu, theme, interface_language, save_format) = (app.ui.in_window_menu, app.ui.theme, app.ui.interface_language, app.ui.save_format);
+    let (animations, save_version) = (app.ui.animations, std::mem::take(&mut app.ui.save_version));
+    let (show_ribbon, ribbon_tab, ribbon_minimized, pc_layout_applied) =
+        (app.ui.show_ribbon, std::mem::take(&mut app.ui.ribbon_tab), app.ui.ribbon_minimized, app.ui.pc_layout_applied);
+    let system_cursor = app.system_cursor_default;
+    app.ui = crate::UiState {
+        in_window_menu: menu,
+        theme,
+        animations,
+        interface_language,
+        save_format,
+        save_version,
+        show_ribbon,
+        ribbon_tab,
+        ribbon_minimized,
+        pc_layout_applied,
+        system_cursor,
+        ..Default::default()
+    };
+    if show_ribbon {
+        crate::ribbon::apply_pc_layout(app);
+        app.ui.pc_layout_applied = pc_layout_applied;
+    }
 }
 
 fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
@@ -393,6 +434,7 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             app.ui.start_tab = false;
             Ok(Value::Null)
         }
+
         "export" | "exp" | "import" | "imp" | "publish" | "preview" | "pre" if params.is_null() && app.session.state().is_ok() => {
             return Some(crate::exchange::route(app, id));
         }
@@ -402,19 +444,7 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             Ok(Value::Null)
         }
         "ui.resetpalettes" => {
-            let (menu, theme, interface_language, save_format) = (app.ui.in_window_menu, app.ui.theme, app.ui.interface_language, app.ui.save_format);
-            let (animations, save_version) = (app.ui.animations, std::mem::take(&mut app.ui.save_version));
-            let system_cursor = app.system_cursor_default;
-            app.ui = crate::UiState {
-                in_window_menu: menu,
-                theme,
-                animations,
-                interface_language,
-                save_format,
-                save_version,
-                system_cursor,
-                ..Default::default()
-            };
+            reset_palettes(app);
             Ok(Value::Null)
         }
         "ui.start" => {
