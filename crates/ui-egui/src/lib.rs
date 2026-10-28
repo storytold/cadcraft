@@ -71,6 +71,9 @@ pub const PREFS_KEY: &str = "cadcraft.prefs";
 /// How many recently opened drawings are kept (AutoCAD's default for its file history).
 pub const RECENT_FILES: usize = 9;
 
+/// The most recent drawings Options ▸ Open and Save lets the list keep.
+pub const MAX_RECENT_FILES: usize = 50;
+
 /// Persisted UI state (serde, so automation can read and set it).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -268,6 +271,10 @@ pub struct CadApp {
     shown_animations: Option<bool>,
     /// The interface scale last handed to egui (`None` until the first frame).
     shown_interface_scale: Option<f32>,
+    /// The tooltip setting (shown, delay in tenths of a second) last handed to egui.
+    shown_tooltips: Option<(bool, u32)>,
+    /// The window title last sent to the host ([`chrome::window_title`]).
+    pub(crate) shown_title: Option<String>,
     pub frame_ms: f64,
     pub quit_requested: bool,
     /// The app may close although drawings have unsaved changes (they were dealt with, or the
@@ -331,6 +338,8 @@ impl CadApp {
             shown_follows_system: false,
             shown_animations: None,
             shown_interface_scale: None,
+            shown_tooltips: None,
+            shown_title: None,
             frame_ms: 0.0,
             quit_requested: false,
             quit_confirmed: false,
@@ -467,7 +476,9 @@ impl CadApp {
             self.ui.save_version = v.year().to_string();
         }
         if let Some(files) = v.get("recentFiles").and_then(Value::as_array) {
-            self.ui.recent_files = files.iter().filter_map(Value::as_str).filter(|p| !p.is_empty()).take(RECENT_FILES).map(str::to_string).collect();
+            // As many as the profile (loaded first) keeps.
+            let keep = self.options.recent_files.min(MAX_RECENT_FILES);
+            self.ui.recent_files = files.iter().filter_map(Value::as_str).filter(|p| !p.is_empty()).take(keep).map(str::to_string).collect();
         }
         if let Some(dir) = v.get("lispDir").and_then(Value::as_str).filter(|d| !d.is_empty()) {
             self.ui.last_lisp_dir = Some(dir.to_string());
@@ -608,7 +619,7 @@ impl CadApp {
         let recent = &mut self.ui.recent_files;
         recent.retain(|p| *p != path);
         recent.insert(0, path);
-        recent.truncate(RECENT_FILES);
+        recent.truncate(self.options.recent_files.min(MAX_RECENT_FILES));
     }
 
     /// Consume asynchronous work on every logic callback, including hidden `run_logic` ticks.
@@ -801,6 +812,7 @@ impl CadApp {
             ctx.set_zoom_factor(scale);
             self.shown_interface_scale = Some(scale);
         }
+        self.apply_window_options(ctx);
         // Wait for the frame cap on a painted pass, where a wait cannot delay a hidden tick.
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(cap) = &mut self.frame_cap {
@@ -808,6 +820,18 @@ impl CadApp {
         }
         panel_state::migrate(ui);
         self.ui_input(ctx);
+    }
+
+    /// Options ▸ Display ▸ Show ToolTips and their delay, and the window title (Options ▸ Open
+    /// and Save ▸ Display full path in title), each handed to egui only when it changes.
+    fn apply_window_options(&mut self, ctx: &egui::Context) {
+        let tips = (self.options.tooltips, (self.options.tooltip_delay * 10.0).round() as u32);
+        if self.shown_tooltips != Some(tips) {
+            let delay = if tips.0 { self.options.tooltip_delay } else { options::NO_TOOLTIPS };
+            ctx.all_styles_mut(|s| s.interaction.tooltip_delay = delay);
+            self.shown_tooltips = Some(tips);
+        }
+        chrome::window_title(self, ctx);
     }
 
     /// Input-derived work, once per layout frame.

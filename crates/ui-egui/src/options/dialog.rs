@@ -212,6 +212,28 @@ fn display(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
         changes.insert("systemCursor".into(), json!(system_cursor));
     }
     hint(ui, crate::tl!("Screen magnifiers, screen readers and recorders follow the system cursor."));
+    ui.add_space(6.0);
+    tooltips_row(app, ui, changes);
+}
+
+/// Show ToolTips, and the seconds before one shows.
+fn tooltips_row(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
+    let o = &app.options;
+    let mut on = o.tooltips;
+    if ui.checkbox(&mut on, crate::tl!("Show ToolTips")).changed() {
+        changes.insert("tooltips".into(), json!(on));
+    }
+    ui.add_enabled_ui(o.tooltips, |ui| {
+        ui.horizontal(|ui| {
+            ui.add_space(20.0);
+            let mut seconds = o.tooltip_delay;
+            let field = ui.add(egui::DragValue::new(&mut seconds).range(super::TOOLTIP_DELAYS).speed(0.1).max_decimals(1));
+            let caption = ui.label(crate::tl!("Number of seconds before display"));
+            if field.labelled_by(caption.id).changed() {
+                changes.insert("tooltipDelay".into(), json!((seconds * 10.0).round() / 10.0));
+            }
+        });
+    });
 }
 
 /// Files tab: save format and default version, new-drawing units, autosave interval and autosave file location; edits accumulate in `changes`.
@@ -227,10 +249,36 @@ fn files(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
         ui.end_row();
         savefile_row(ui, changes);
         ui.end_row();
+        recent_files_row(ui, app, changes);
+        ui.end_row();
     });
+    file_open_checks(ui, app, changes);
     hint(ui, crate::tl!("New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE)."));
     hint(ui, crate::tl!("A drawing opened from a file keeps that file's format."));
     hint(ui, crate::tl!("Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off."));
+}
+
+fn recent_files_row(ui: &mut egui::Ui, app: &CadApp, changes: &mut Map<String, Value>) {
+    let caption = ui.label(crate::tl!("Number of recently-used files"));
+    let mut n = app.options.recent_files;
+    if ui.add(egui::DragValue::new(&mut n).range(0..=crate::MAX_RECENT_FILES)).labelled_by(caption.id).changed() {
+        changes.insert("recentFiles".into(), json!(n));
+    }
+}
+
+/// Display full path in title and, on the desktop, the Start tab at start-up (STARTMODE).
+fn file_open_checks(ui: &mut egui::Ui, app: &CadApp, changes: &mut Map<String, Value>) {
+    let mut full = app.options.full_path_in_title;
+    if ui.checkbox(&mut full, crate::tl!("Display full path in title")).changed() {
+        changes.insert("fullPathInTitle".into(), json!(full));
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut start = app.options.start_tab;
+        if ui.checkbox(&mut start, crate::tl!("Show the Start tab when CADCraft starts")).changed() {
+            changes.insert("STARTMODE".into(), json!(i32::from(start)));
+        }
+    }
 }
 
 fn save_format_row(ui: &mut egui::Ui, app: &CadApp, changes: &mut Map<String, Value>) {

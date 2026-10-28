@@ -354,7 +354,8 @@ fn main() -> eframe::Result {
             for f in &files {
                 app.open_path(f);
             }
-            if app.session.docs.is_empty() {
+            // STARTMODE 1 (Options ▸ Open and Save): the Start tab instead of a new drawing.
+            if app.session.docs.is_empty() && !app.options.start_tab {
                 // In the units the profile asks for (MEASUREINIT, restored above).
                 let metric = app.session.settings.measureinit;
                 app.session.new_drawing(metric);

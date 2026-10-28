@@ -22,6 +22,10 @@
 //! | `selectionColor` | the colour selected objects are highlighted in: `"#rrggbb"`, or `null` for the theme's |
 //! | `snapMarkerSize` | object snap marker size in points, 5–31 |
 //! | `interfaceScale` | the interface's size, 0.5–3 (1: the system's own) |
+//! | `tooltips`, `tooltipDelay` | show tooltips; seconds before they show, 0–10 (0.5) |
+//! | `fullPathInTitle` | the title bar shows the drawing's full path, not just its name |
+//! | `recentFiles` | how many recent drawings File ▸ Open Recent and the Start page list, 0–50 (9) |
+//! | `STARTMODE` | 1: the desktop app starts on the Start tab; 0: with a new drawing (default) |
 //!
 //! SAVETIME and SAVEFILEPATH are the engine's autosave settings, kept with the autosave state
 //! rather than in the profile.
@@ -56,6 +60,12 @@ pub const SNAP_MARKER_SIZES: std::ops::RangeInclusive<f32> = 5.0..=31.0;
 /// Interface scales the JSON form accepts (1: the system's own size).
 pub const INTERFACE_SCALES: std::ops::RangeInclusive<f32> = 0.5..=3.0;
 
+/// Seconds before a tooltip shows.
+pub const TOOLTIP_DELAYS: std::ops::RangeInclusive<f32> = 0.0..=10.0;
+
+/// The tooltip delay that keeps tooltips from showing (Show ToolTips off).
+pub const NO_TOOLTIPS: f32 = 1.0e9;
+
 /// The interface's own preferences (the drafting ones are engine settings).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UiOptions {
@@ -72,6 +82,15 @@ pub struct UiOptions {
     pub time_sensitive_right_click: bool,
     /// The size of every menu, palette, dialog and the command line (1: the system's own).
     pub interface_scale: f32,
+    /// Show tooltips, after this many seconds.
+    pub tooltips: bool,
+    pub tooltip_delay: f32,
+    /// The title bar shows the drawing's full path.
+    pub full_path_in_title: bool,
+    /// How many recent drawings are listed (up to [`crate::MAX_RECENT_FILES`]).
+    pub recent_files: usize,
+    /// STARTMODE: the desktop app starts on the Start tab instead of a new drawing.
+    pub start_tab: bool,
 }
 
 impl Default for UiOptions {
@@ -83,6 +102,11 @@ impl Default for UiOptions {
             selection_color: None,
             time_sensitive_right_click: true,
             interface_scale: 1.0,
+            tooltips: true,
+            tooltip_delay: 0.5,
+            full_path_in_title: false,
+            recent_files: crate::RECENT_FILES,
+            start_tab: false,
         }
     }
 }
@@ -149,7 +173,75 @@ struct UiChanges {
     savefilepath: Option<String>,
     time_sensitive_right_click: Option<bool>,
     interface_scale: Option<f32>,
+    window: WindowChanges,
 }
+
+/// The Display, Open and Save and start-up preferences a JSON call may set.
+#[derive(Default)]
+struct WindowChanges {
+    tooltips: Option<bool>,
+    tooltip_delay: Option<f32>,
+    full_path_in_title: Option<bool>,
+    recent_files: Option<usize>,
+    start_tab: Option<bool>,
+}
+
+/// The [`WindowChanges`] key `key`, if it is one (`Ok(false)`: some other key).
+fn parse_window(key: &str, v: &Value, c: &mut WindowChanges) -> Result<bool, String> {
+    let flag = || v.as_bool().ok_or_else(|| format!("{key} must be true or false"));
+    match key {
+        "tooltips" => c.tooltips = Some(flag()?),
+        "tooltipDelay" => {
+            let n =
+                v.as_f64().filter(|n| n.is_finite() && TOOLTIP_DELAYS.contains(&(*n as f32))).ok_or("tooltipDelay must be from 0 to 10 seconds")?;
+            c.tooltip_delay = Some(n as f32);
+        }
+        "fullPathInTitle" => c.full_path_in_title = Some(flag()?),
+        "recentFiles" => {
+            let n = v.as_u64().filter(|n| *n <= crate::MAX_RECENT_FILES as u64).ok_or("recentFiles must be a whole number from 0 to 50")?;
+            c.recent_files = Some(n as usize);
+        }
+        k if k.eq_ignore_ascii_case("STARTMODE") => {
+            let n = v.as_i64().or_else(|| v.as_bool().map(i64::from)).filter(|n| matches!(n, 0 | 1)).ok_or("STARTMODE must be 0 or 1")?;
+            c.start_tab = Some(n == 1);
+        }
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
+/// Apply parsed [`WindowChanges`].
+fn apply_window(app: &mut CadApp, c: &WindowChanges) {
+    let o = &mut app.options;
+    if let Some(b) = c.tooltips {
+        o.tooltips = b;
+    }
+    if let Some(s) = c.tooltip_delay {
+        o.tooltip_delay = s;
+    }
+    if let Some(b) = c.full_path_in_title {
+        o.full_path_in_title = b;
+    }
+    if let Some(n) = c.recent_files {
+        o.recent_files = n;
+        app.ui.recent_files.truncate(n);
+    }
+    if let Some(b) = c.start_tab {
+        app.options.start_tab = b;
+    }
+}
+
+/// The [`WindowChanges`] keys as the JSON form reports them.
+fn window_json(o: &UiOptions, m: &mut Map<String, Value>) {
+    m.insert("tooltips".into(), json!(o.tooltips));
+    m.insert("tooltipDelay".into(), json!(o.tooltip_delay));
+    m.insert("fullPathInTitle".into(), json!(o.full_path_in_title));
+    m.insert("recentFiles".into(), json!(o.recent_files));
+    m.insert("STARTMODE".into(), json!(i32::from(o.start_tab)));
+}
+
+/// The keys of [`WindowChanges`], as the profile keeps them.
+const WINDOW_KEYS: [&str; 5] = ["tooltips", "tooltipDelay", "fullPathInTitle", "recentFiles", "STARTMODE"];
 
 fn color_param(key: &str, v: &Value) -> Result<Option<Color32>, String> {
     match v {
@@ -203,7 +295,7 @@ fn parse_ui(key: &str, v: &Value, c: &mut UiChanges) -> Result<bool, String> {
             let p = v.as_str().map(str::trim).filter(|p| p.chars().count() <= MAX_PATH_CHARS && !p.chars().any(char::is_control));
             c.savefilepath = Some(p.ok_or("SAVEFILEPATH must be a folder path")?.to_string());
         }
-        _ => return Ok(false),
+        _ => return parse_window(key, v, &mut c.window),
     }
     Ok(true)
 }
@@ -227,6 +319,7 @@ fn ui_json(app: &CadApp) -> Map<String, Value> {
     m.insert("SAVETIME".into(), json!(cadcraft_engine::autosave::savetime()));
     m.insert("SAVEFILEPATH".into(), json!(cadcraft_engine::autosave::savefilepath()));
     m.insert("timeSensitiveRightClick".into(), json!(o.time_sensitive_right_click));
+    window_json(o, &mut m);
     m
 }
 
@@ -300,6 +393,7 @@ fn run_json(app: &mut CadApp, params: &Value) -> Result<Value, String> {
     if let Some(b) = ui.time_sensitive_right_click {
         app.options.time_sensitive_right_click = b;
     }
+    apply_window(app, &ui.window);
     Ok(report(app))
 }
 
@@ -313,6 +407,7 @@ fn reset_ui(app: &mut CadApp) {
     app.ui.system_cursor = app.system_cursor_default;
     app.ui.history_lines = d.history_lines;
     app.options = UiOptions::default();
+    app.ui.recent_files.truncate(app.options.recent_files);
 }
 
 impl CadApp {
@@ -321,7 +416,7 @@ impl CadApp {
     /// ([`CadApp::prefs_json`]) and the desktop workspace file (panels, command line) do not
     /// already keep.
     pub fn profile_json(&self) -> String {
-        json!({
+        let mut v = json!({
             "version": 1,
             "sysvars": cadcraft_engine::cmd::options::profile(&self.session),
             "systemCursor": self.ui.system_cursor,
@@ -331,8 +426,11 @@ impl CadApp {
             "snapMarkerSize": self.options.snap_marker_size,
             "timeSensitiveRightClick": self.options.time_sensitive_right_click,
             "interfaceScale": self.options.interface_scale,
-        })
-        .to_string()
+        });
+        if let Some(m) = v.as_object_mut() {
+            window_json(&self.options, m);
+        }
+        v.to_string()
     }
 
     /// Restore a profile saved by [`Self::profile_json`]. Unknown, malformed or out-of-range
@@ -375,6 +473,12 @@ impl CadApp {
         if let Some(n) = c.interface_scale {
             self.options.interface_scale = n;
         }
+        for key in WINDOW_KEYS {
+            if let Some(value) = v.get(key) {
+                let _ = parse_window(key, value, &mut c.window);
+            }
+        }
+        apply_window(self, &c.window);
     }
 }
 

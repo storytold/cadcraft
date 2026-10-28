@@ -1367,3 +1367,8 @@ menu	Modify	Edita
 	Check for Updates…	Verifica aggiornamenti…
 	CADCraft is up to date.	CADCraft è aggiornato.
 	Could not check for updates.	Impossibile verificare gli aggiornamenti.
+	Show ToolTips	Mostra descrizioni comandi
+	Number of seconds before display	Secondi prima della visualizzazione
+	Number of recently-used files	Numero di file usati di recente
+	Display full path in title	Visualizza percorso completo nel titolo
+	Show the Start tab when CADCraft starts	Mostra la scheda Inizia all'avvio di CADCraft

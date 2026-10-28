@@ -61,6 +61,28 @@ fn title_left(left: f32, width: f32, text_w: f32) -> f32 {
     (left + (width - text_w) / 2.0).max(left + MAC_CONTENT_LEFT)
 }
 
+/// The drawing as the title names it: its file name (a drawing without a file is a .dwg), or
+/// with Options ▸ Open and Save ▸ Display full path in title its file's full path. `None` on the
+/// Start tab.
+pub fn title_drawing(app: &CadApp) -> Option<String> {
+    let st = app.session.state().ok().filter(|_| !app.ui.start_tab)?;
+    Some(match &st.path {
+        Some(path) if app.options.full_path_in_title => path.clone(),
+        _ if st.title.contains('.') => st.title.clone(),
+        _ => format!("{}.dwg", st.title),
+    })
+}
+
+/// Keep the window's title on the drawing shown ("CADCraft - Drawing1.dwg"); sent to the host
+/// only when it changes.
+pub fn window_title(app: &mut CadApp, ctx: &egui::Context) {
+    let title = title_drawing(app).map_or_else(|| "CADCraft".to_string(), |d| format!("CADCraft - {d}"));
+    if app.shown_title.as_deref() != Some(title.as_str()) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+        app.shown_title = Some(title);
+    }
+}
+
 /// Title row (with the integrated macOS title bar) and the Tool Bar.
 pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
@@ -71,10 +93,7 @@ pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
         if title_h > 0.0 {
             // The empty row moves the window; it goes first so later widgets take their own clicks.
             craft_window::title_bar::empty_area(ui, Rect::from_min_size(r.min, vec2(r.width(), title_h)));
-            let title = match app.session.state() {
-                Ok(st) if !app.ui.start_tab => format!("CADCraft      {}{}", st.title, if st.title.contains('.') { "" } else { ".dwg" }),
-                _ => format!("CADCraft      {}", crate::tl!("Start")),
-            };
+            let title = format!("CADCraft      {}", title_drawing(app).unwrap_or_else(|| crate::tl!("Start").to_string()));
             // Centred on the traffic lights' centre line (the row's middle): with the system font
             // the capitals' middle is the text box's middle, so no optical nudge.
             let galley = ui.painter().layout_no_wrap(title, egui::FontId::proportional(13.0), t.text_dim);
