@@ -2,6 +2,8 @@ use super::common::T;
 use super::dimassoc::dimassoc;
 use super::document::sortents_table;
 use super::{Drawing, EntityKind, Group, Handle, HashMap, MLeaderStyle, PageSetup, Rx, Tag, Vec2};
+use cadcraft_color::Color;
+use cadcraft_doc::{Lineweight, MLeaderContent, MLeaderLineType};
 
 /// Non-graphical objects applied once every entity is placed.
 #[derive(Default)]
@@ -137,6 +139,9 @@ impl Objects {
             let def = MLeaderStyle::default();
             let num = |code: i32, d: f64, min: f64| t.f(code).filter(|v| v.is_finite() && *v >= min).unwrap_or(d);
             let text_style = t.s(342).and_then(|sh| rx.styles.get(&sh.trim().to_ascii_uppercase()).cloned()).filter(|n| !n.is_empty());
+            let color = |code: i32| t.i(code).and_then(crate::dxf_mleader::color_of).unwrap_or(Color::ByBlock);
+            let angle = |code: i32| t.f(code).filter(|v| v.is_finite() && (0.0..=std::f64::consts::PI).contains(v)).unwrap_or(0.0);
+            let handle = |code: i32| t.s(code).map(|h| h.trim().to_ascii_uppercase());
             let st = MLeaderStyle {
                 name: name.clone(),
                 arrow_size: num(44, def.arrow_size, 0.0),
@@ -145,6 +150,34 @@ impl Objects {
                 dogleg: num(43, def.dogleg, 0.0),
                 text_style: text_style.unwrap_or(def.text_style),
                 annotative: t.i(296).unwrap_or(0) != 0,
+                content: match t.i(170) {
+                    Some(0) => MLeaderContent::None,
+                    Some(1) => MLeaderContent::Block,
+                    _ => MLeaderContent::MText,
+                },
+                leader_type: match t.i(173) {
+                    Some(0) => MLeaderLineType::None,
+                    Some(2) => MLeaderLineType::Spline,
+                    _ => MLeaderLineType::Straight,
+                },
+                max_points: t.i(90).and_then(|v| u32::try_from(v).ok()).filter(|v| (2..=64).contains(v)).unwrap_or(def.max_points),
+                first_angle: angle(40),
+                second_angle: angle(41),
+                landing: t.i(291).unwrap_or(1) != 0,
+                leader_color: color(91),
+                leader_linetype: handle(340).and_then(|h| rx.ltypes.get(&h).cloned()).filter(|n| !n.trim().is_empty()).unwrap_or(def.leader_linetype),
+                leader_lineweight: t.i(92).and_then(|v| i16::try_from(v).ok()).map_or(Lineweight::ByBlock, Lineweight::from_dxf),
+                text_color: color(93),
+                text_frame: t.i(292).unwrap_or(0) != 0,
+                default_text: t.s(300).unwrap_or_default(),
+                block: handle(343).and_then(|h| rx.brs.get(&h).cloned()).filter(|n| !n.trim().is_empty()).unwrap_or_default(),
+                block_color: color(94),
+                block_scale: t.f(47).filter(|v| v.is_finite() && *v > 0.0 && *v < 1e9).unwrap_or(1.0),
+                block_rotation: t.f(141).filter(|v| v.is_finite() && v.abs() <= std::f64::consts::TAU).unwrap_or(0.0),
+                block_center: t.i(177).unwrap_or(0) == 0,
+                scale: t.f(142).filter(|v| v.is_finite() && *v > 0.0 && *v < 1e9).unwrap_or(1.0),
+                break_size: num(143, def.break_size, 0.0),
+                description: t.s(3).unwrap_or_default(),
             };
             match d.mleader_styles.iter_mut().find(|s| s.name.eq_ignore_ascii_case(name)) {
                 Some(x) => *x = st,

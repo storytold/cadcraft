@@ -489,6 +489,7 @@ fn write_annotations_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, pap
                 style: cx.mleader_style(&m.style),
                 text_style: m.text.as_ref().and_then(|t| cx.style(&t.style)),
                 block: m.block.as_ref().and_then(|b| cx.block_records.get(&b.block.to_ascii_uppercase()).cloned()),
+                linetype: cx.ltypes.get(&m.leader_linetype.trim().to_ascii_uppercase()).cloned(),
             };
             w.t.extend(crate::dxf_mleader::entity_tags(d, m, &refs));
         }
@@ -695,13 +696,13 @@ fn write_other_entity(w: &mut W, _d: &Drawing, e: &Entity, owner: &str, paper: b
 }
 
 /// A multileader for a file older than 2007 (no MULTILEADER): a LEADER per leader line, ending
-/// at the landing, plus its MTEXT or its block's INSERT, with the multileader's properties.
+/// at its landing, plus its MTEXT or its block's INSERT, with the multileader's properties.
 fn mleader_fallback(w: &mut W, d: &Drawing, e: &Entity, m: &MLeader, owner: &str, paper: bool, cx: &Ctx) {
     let part = |w: &mut W, kind: EntityKind| Entity { handle: Handle::parse_hex(&w.h()).unwrap_or(Handle(0)), common: e.common.clone(), kind };
     let style = d.header.str("DIMSTYLE", "Standard");
-    for arm in m.leaders.iter().take(64) {
+    for (arm, landing) in m.lines().take(64) {
         let mut vertices = arm.clone();
-        vertices.push(m.landing);
+        vertices.push(landing);
         let le = part(w, EntityKind::Leader(Leader { vertices, arrow: true, spline: m.spline, style: style.clone() }));
         entity(w, d, &le, owner, paper, cx);
     }

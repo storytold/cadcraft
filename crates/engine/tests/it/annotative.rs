@@ -323,6 +323,8 @@ fn annotative_mtext_columns_follow_the_scale() {
             arrow_size: 1.0,
             spline: false,
             block: None,
+            roots: Vec::new(),
+            ..Default::default()
         }),
         ..e.clone()
     };

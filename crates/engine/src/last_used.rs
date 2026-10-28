@@ -23,6 +23,9 @@ pub struct LastUsed {
     pub mleader: MLeaderOptions,
     /// MLEADER's block content name (Options > Content type > Block).
     pub mleader_block: String,
+    /// The multileader style MLEADER's Options were last set for: with another current style,
+    /// MLEADER starts from that style's settings.
+    pub mleader_style: String,
     /// BREAKLINE's Block, Size and Extension.
     pub breakline: cmd::BreaklineOptions,
 }
@@ -38,6 +41,7 @@ impl Default for LastUsed {
             matchprop: cmd::MatchProps::default(),
             mleader: MLeaderOptions::default(),
             mleader_block: String::new(),
+            mleader_style: String::new(),
             breakline: cmd::BreaklineOptions::default(),
         }
     }

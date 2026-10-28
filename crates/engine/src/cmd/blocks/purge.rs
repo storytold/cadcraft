@@ -127,8 +127,9 @@ pub(in crate::cmd) fn override_arrows(dm: &cadcraft_doc::Dimension) -> impl Iter
         .filter(|n| !n.is_empty())
 }
 
-/// Upper-case names of blocks reachable from model space, the layouts and dimensions, and the
-/// arrowhead blocks dimension styles and dimension overrides name.
+/// Upper-case names of blocks reachable from model space, the layouts and dimensions, the
+/// arrowhead blocks dimension styles and dimension overrides name, and the content blocks of
+/// multileader styles.
 pub(in crate::cmd) fn used_blocks(d: &Drawing) -> HashSet<String> {
     let mut used = HashSet::new();
     let mut frontier: Vec<String> = Vec::new();
@@ -140,6 +141,7 @@ pub(in crate::cmd) fn used_blocks(d: &Drawing) -> HashSet<String> {
                 .filter(|n| !n.is_empty()),
         );
     }
+    frontier.extend(d.mleader_styles.iter().map(|s| s.block.trim().to_string()).filter(|n| !n.is_empty()));
     for e in d.model.iter().chain(d.layouts.iter().flat_map(|l| l.entities.iter())) {
         match &e.kind {
             EntityKind::Insert(i) => frontier.push(i.block.clone()),

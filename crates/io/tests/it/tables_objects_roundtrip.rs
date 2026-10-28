@@ -70,6 +70,7 @@ fn multileader_styles_and_current_style_round_trip() {
         dogleg: 5.0,
         text_style: "Slanted".into(),
         annotative: false,
+        ..MLeaderStyle::default()
     };
     d.mleader_styles.push(callout);
     d.header.set_str("CMLEADERSTYLE", "Callout");

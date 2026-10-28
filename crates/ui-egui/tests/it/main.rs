@@ -17,6 +17,7 @@ mod instant_modals;
 mod lisp_files;
 mod measure_distance_snapping;
 mod menubar_hover;
+mod mleader_style_dialog;
 mod mspace_viewport_view;
 mod named_viewports_dialog;
 mod native_menu_text_keys;

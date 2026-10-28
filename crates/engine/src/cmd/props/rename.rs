@@ -68,6 +68,11 @@ pub(super) fn block(s: &mut Session, from: &str, to: &str) -> Result<()> {
     if d.header.str("INSNAME", "").eq_ignore_ascii_case(&key) {
         d.header.set_str("INSNAME", &to);
     }
+    for ms in &mut d.mleader_styles {
+        if ms.block.eq_ignore_ascii_case(&key) {
+            ms.block = to.clone();
+        }
+    }
     for ds in &mut d.dim_styles {
         for a in [&mut ds.arrow_block, &mut ds.arrow_block1, &mut ds.arrow_block2] {
             if a.eq_ignore_ascii_case(&key) {

@@ -25,6 +25,7 @@ pub(super) use common::segment_at;
 use common::{DimText, add_dim, assoc_enabled, circle_of, dim, pick_at};
 use edit::{DimSpaceM, OverrideM, dims_of, run_dimspace, run_dimtedit, run_disassociate, run_override, run_reassociate, run_tedit, run_update};
 use linear::{ChainM, LinearM, MAX_CHAIN, OrdinateM, run_aligned, run_baseline, run_continue, run_linear, run_ordinate};
+pub(super) use mleader::current_style as current_mleader_style;
 use mleader::{MLeaderM, run_leader, run_mleader};
 use radial::{RadialM, run_diameter, run_radius};
 

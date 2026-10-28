@@ -90,6 +90,7 @@ pub(crate) fn rename_refs(e: &mut Entity, f: &dyn Fn(Sym, &str) -> Option<String
         EntityKind::Leader(l) => fix(Sym::DimStyle, &mut l.style),
         EntityKind::MLeader(m) => {
             fix(Sym::MLeaderStyle, &mut m.style);
+            fix(Sym::Linetype, &mut m.leader_linetype);
             if let Some(t) = &mut m.text {
                 fix(Sym::Style, &mut t.style);
             }
@@ -390,7 +391,10 @@ fn import(d: &mut Drawing, key: &str, x: &Drawing, cx: &mut Ctx) -> Result<(), S
             && !d.mleader_styles.iter().any(|o| o.name.eq_ignore_ascii_case(&n))
         {
             let text_style = dep(Sym::Style, &t.text_style).unwrap_or_else(|| t.text_style.clone());
-            d.mleader_styles.push(cadcraft_doc::MLeaderStyle { name: n, text_style, ..t.clone() });
+            // Its content block and leader linetype are the xref's too.
+            let block = dep(Sym::Block, &t.block).unwrap_or_else(|| t.block.clone());
+            let leader_linetype = dep(Sym::Linetype, &t.leader_linetype).unwrap_or_else(|| t.leader_linetype.clone());
+            d.mleader_styles.push(cadcraft_doc::MLeaderStyle { name: n, text_style, block, leader_linetype, ..t.clone() });
         }
     }
     for t in &x.table_styles {

@@ -372,18 +372,43 @@ fn mleader_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Acti
         return None;
     };
     let text_styles: Vec<String> = d.text_styles.iter().map(|s| s.name.clone()).collect();
+    // Blocks block content can use: defined and not anonymous.
+    let blocks: Vec<String> = d.blocks.values().map(|b| b.name.clone()).filter(|n| !n.starts_with('*')).collect();
+    let words = |v: &[&str]| v.iter().map(|w| w.to_string()).collect::<Vec<String>>();
     let mut styles: Vec<Style> = d
         .mleader_styles
         .iter()
-        .map(|s| Style {
-            name: s.name.clone(),
-            fields: vec![
+        .map(|s| {
+            use cadcraft_doc::{MLeaderContent, MLeaderLineType};
+            let leader = match s.leader_type {
+                MLeaderLineType::Straight => "Straight",
+                MLeaderLineType::Spline => "Spline",
+                MLeaderLineType::None => "None",
+            };
+            let content = match s.content {
+                MLeaderContent::MText => "MText",
+                MLeaderContent::Block => "Block",
+                MLeaderContent::None => "None",
+            };
+            let mut fields = vec![
+                Field::Choice("leaderType", "Leader type", leader.into(), words(&["Straight", "Spline", "None"])),
+                Field::Num("maxPoints", "Maximum leader points", f64::from(s.max_points)),
                 Field::Num("arrowSize", "Arrowhead size", s.arrow_size),
-                Field::Num("textHeight", "Text height", s.text_height),
+                Field::Bool("landing", "Automatically include landing", s.landing),
                 Field::Num("landingGap", "Landing gap", s.landing_gap),
                 Field::Num("dogleg", "Landing length", s.dogleg),
+                Field::Num("scale", "Scale", s.scale),
+                Field::Choice("content", "Multileader type", content.into(), words(&["MText", "Block", "None"])),
                 Field::Choice("textStyle", "Text style", s.text_style.clone(), text_styles.clone()),
-            ],
+                Field::Num("textHeight", "Text height", s.text_height),
+                Field::Bool("textFrame", "Frame text", s.text_frame),
+            ];
+            if !blocks.is_empty() {
+                fields.push(Field::Choice("block", "Source block", s.block.clone(), blocks.clone()));
+            }
+            fields.push(Field::Num("blockScale", "Block scale", s.block_scale));
+            fields.push(Field::Bool("blockCenter", "Attach block by the centre of its extents", s.block_center));
+            Style { name: s.name.clone(), fields }
         })
         .collect();
     if styles.is_empty() {
@@ -448,15 +473,16 @@ fn style_manager(ctx: &egui::Context, open: &mut bool, title: &str, cmd: &'stati
                             ui.checkbox(&mut b, *label).changed().then(|| (*key, json!(b)))
                         }
                         Field::Choice(key, label, v, choices) => {
-                            ui.label(*label);
+                            let field_label = ui.label(*label);
                             let mut picked = None;
-                            craft_ui::ComboBox::from_id_salt((cmd, *key)).selected_text(v.as_str()).show_ui(ui, |ui| {
+                            let combo = craft_ui::ComboBox::from_id_salt((cmd, *key)).selected_text(v.as_str()).show_ui(ui, |ui| {
                                 for c in choices {
                                     if ui.selectable_label(c == v, c).clicked() && c != v {
                                         picked = Some(c.clone());
                                     }
                                 }
                             });
+                            combo.response.labelled_by(field_label.id);
                             picked.map(|c| (*key, json!(c)))
                         }
                     };

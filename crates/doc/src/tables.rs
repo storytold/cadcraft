@@ -630,6 +630,58 @@ pub struct MLeaderStyle {
     pub text_style: String,
     /// New multileaders of this style are annotative.
     pub annotative: bool,
+    /// What new multileaders hold: multiline text, a block or nothing (Content tab).
+    pub content: MLeaderContent,
+    /// Leader lines of new multileaders: straight, spline or none (Leader Format tab).
+    pub leader_type: MLeaderLineType,
+    /// Most points of a leader line, its arrowhead and landing included (2..=64).
+    pub max_points: u32,
+    /// Angle constraints of the first and second leader segments (radians; 0: free).
+    pub first_angle: f64,
+    pub second_angle: f64,
+    /// New multileaders get a landing (dogleg) of [`MLeaderStyle::dogleg`].
+    pub landing: bool,
+    /// Leader colour, linetype and lineweight of new multileaders (ByBlock: the multileader's).
+    pub leader_color: Color,
+    pub leader_linetype: String,
+    pub leader_lineweight: Lineweight,
+    /// Text colour and frame of new multileaders.
+    pub text_color: Color,
+    pub text_frame: bool,
+    /// Default text of new multileaders with text content.
+    pub default_text: String,
+    /// The block of block content, its colour, scale and rotation (radians).
+    pub block: String,
+    pub block_color: Color,
+    pub block_scale: f64,
+    pub block_rotation: f64,
+    /// Block content attaches by the centre of its extents (else by its insertion point).
+    pub block_center: bool,
+    /// Overall scale of the style's sizes (non-annotative styles).
+    pub scale: f64,
+    /// Gap DIMBREAK leaves where an object crosses the leader lines.
+    pub break_size: f64,
+    pub description: String,
+}
+
+/// The content of a multileader style's new multileaders (MLEADERSTYLE group 170).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MLeaderContent {
+    None,
+    Block,
+    #[default]
+    MText,
+}
+
+/// The leader lines of a multileader style's new multileaders (MLEADERSTYLE group 173).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MLeaderLineType {
+    None,
+    #[default]
+    Straight,
+    Spline,
 }
 
 impl Default for MLeaderStyle {
@@ -642,6 +694,26 @@ impl Default for MLeaderStyle {
             dogleg: 0.36,
             text_style: "Standard".into(),
             annotative: false,
+            content: MLeaderContent::MText,
+            leader_type: MLeaderLineType::Straight,
+            max_points: 2,
+            first_angle: 0.0,
+            second_angle: 0.0,
+            landing: true,
+            leader_color: Color::ByBlock,
+            leader_linetype: "ByBlock".into(),
+            leader_lineweight: Lineweight::ByBlock,
+            text_color: Color::ByBlock,
+            text_frame: false,
+            default_text: String::new(),
+            block: String::new(),
+            block_color: Color::ByBlock,
+            block_scale: 1.0,
+            block_rotation: 0.0,
+            block_center: true,
+            scale: 1.0,
+            break_size: 0.125,
+            description: String::new(),
         }
     }
 }
@@ -649,7 +721,55 @@ impl Default for MLeaderStyle {
 impl MLeaderStyle {
     /// The Standard style for metric drawings: text and arrows as high as ISO-25's.
     pub fn metric() -> Self {
-        MLeaderStyle { arrow_size: 2.5, text_height: 2.5, landing_gap: 0.625, dogleg: 5.0, ..Default::default() }
+        MLeaderStyle { arrow_size: 2.5, text_height: 2.5, landing_gap: 0.625, dogleg: 5.0, break_size: 3.75, ..Default::default() }
+    }
+
+    /// The overall scale its sizes are drawn at: [`MLeaderStyle::scale`] when it is a usable
+    /// number, else 1.
+    pub fn size_factor(&self) -> f64 {
+        if self.scale.is_finite() && self.scale > 0.0 && self.scale < 1e12 { self.scale } else { 1.0 }
+    }
+
+    /// Set the field `key` (its camelCase name, as `mleaderstyle` takes it) from `v`. Err: the
+    /// value is not one the field takes; Ok(false): no such field.
+    pub fn set_field(&mut self, key: &str, v: &serde_json::Value) -> Result<bool, String> {
+        let num = |min: f64, max: f64| {
+            v.as_f64().filter(|x| x.is_finite() && (min..=max).contains(x)).ok_or_else(|| format!("`{key}` must be a number from {min} to {max}"))
+        };
+        let flag = || v.as_bool().ok_or_else(|| format!("`{key}` must be true or false"));
+        let text = || v.as_str().map(str::to_string).ok_or_else(|| format!("`{key}` must be text"));
+        match key {
+            "content" => {
+                self.content = match v.as_str().map(str::to_ascii_lowercase).as_deref() {
+                    Some("mtext") => MLeaderContent::MText,
+                    Some("block") => MLeaderContent::Block,
+                    Some("none") => MLeaderContent::None,
+                    _ => return Err("`content` must be \"mtext\", \"block\" or \"none\"".into()),
+                }
+            }
+            "leaderType" => {
+                self.leader_type = match v.as_str().map(str::to_ascii_lowercase).as_deref() {
+                    Some("straight") => MLeaderLineType::Straight,
+                    Some("spline") => MLeaderLineType::Spline,
+                    Some("none") => MLeaderLineType::None,
+                    _ => return Err("`leaderType` must be \"straight\", \"spline\" or \"none\"".into()),
+                }
+            }
+            "maxPoints" => self.max_points = num(2.0, 64.0)?.round() as u32,
+            "firstAngle" => self.first_angle = num(0.0, 90.0)?.to_radians(),
+            "secondAngle" => self.second_angle = num(0.0, 90.0)?.to_radians(),
+            "landing" => self.landing = flag()?,
+            "textFrame" => self.text_frame = flag()?,
+            "blockCenter" => self.block_center = flag()?,
+            "defaultText" => self.default_text = text()?,
+            "description" => self.description = text()?,
+            "blockScale" => self.block_scale = num(1e-9, 1e9)?,
+            "blockRotation" => self.block_rotation = num(-360.0, 360.0)?.to_radians(),
+            "scale" => self.scale = num(1e-9, 1e9)?,
+            "breakSize" => self.break_size = num(0.0, 1e9)?,
+            _ => return Ok(false),
+        }
+        Ok(true)
     }
 }
 

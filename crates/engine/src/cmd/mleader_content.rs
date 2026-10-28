@@ -19,8 +19,13 @@ pub(super) struct Content {
 
 /// A block MLEADER can use as content: defined, and not an anonymous (`*`) block.
 pub(super) fn block_name(s: &Session, name: &str) -> Result<String> {
+    block_name_in(s.doc()?, name)
+}
+
+/// [`block_name`] in drawing `d`.
+pub(super) fn block_name_in(d: &cadcraft_doc::Drawing, name: &str) -> Result<String> {
     let name = name.trim();
-    match s.doc()?.block(name) {
+    match d.block(name) {
         Some(b) if !b.name.starts_with('*') => Ok(b.name.clone()),
         _ => Err(EngineError::Other(format!("Block \"{name}\" not found."))),
     }
@@ -36,6 +41,7 @@ pub(super) fn apply(s: &Session, k: EntityKind, c: &Content) -> Result<EntityKin
     if c.leader == LeaderType::None {
         // Content only, at the picked location (text from its top left corner).
         m.leaders.clear();
+        m.roots.clear();
         m.dogleg = 0.0;
         if let Some(t) = &mut m.text {
             t.insert = m.landing;
@@ -44,11 +50,14 @@ pub(super) fn apply(s: &Session, k: EntityKind, c: &Content) -> Result<EntityKin
     }
     if let Some((name, center)) = &c.block {
         let anchor = land + Vec2::new(m.dogleg * dir, 0.0);
+        // The style's block scale and rotation.
+        let st = super::annotate::current_mleader_style(s);
+        let k = if st.block_scale.is_finite() && st.block_scale > 0.0 { st.block_scale } else { 1.0 };
         let mut ins = Insert {
             block: name.clone(),
             insert: Vec3::new(anchor.x, anchor.y, m.landing.z),
-            scale: Vec3::new(1.0, 1.0, 1.0),
-            rotation: 0.0,
+            scale: Vec3::new(k, k, k),
+            rotation: if st.block_rotation.is_finite() { st.block_rotation } else { 0.0 },
             attribs: Vec::new(),
             cols: 1,
             rows: 1,
@@ -76,13 +85,23 @@ pub(super) fn apply(s: &Session, k: EntityKind, c: &Content) -> Result<EntityKin
 /// `leaderType` ("straight" | "spline" | "none"), `block` (a block name) and `blockAttach`
 /// ("center" | "insertion") from the JSON form.
 pub(super) fn json_content(s: &Session, p: &Value) -> Result<Content> {
+    // Without them, the current multileader style's leader type and block content.
+    let st = super::annotate::current_mleader_style(s);
     let leader = match str_param(p, "leaderType").map(str::to_ascii_lowercase).as_deref() {
-        None | Some("straight") => LeaderType::Straight,
+        None => match st.leader_type {
+            cadcraft_doc::MLeaderLineType::Straight => LeaderType::Straight,
+            cadcraft_doc::MLeaderLineType::Spline => LeaderType::Spline,
+            cadcraft_doc::MLeaderLineType::None => LeaderType::None,
+        },
+        Some("straight") => LeaderType::Straight,
         Some("spline") => LeaderType::Spline,
         Some("none") => LeaderType::None,
         Some(_) => return Err(bad("mleader", "`leaderType` must be \"straight\", \"spline\" or \"none\"")),
     };
     let block = match str_param(p, "block") {
+        None if str_param(p, "text").is_none() && st.content == cadcraft_doc::MLeaderContent::Block => {
+            block_name(s, &st.block).ok().map(|n| (n, st.block_center))
+        }
         None => None,
         Some(n) => {
             let center = match str_param(p, "blockAttach").map(str::to_ascii_lowercase).as_deref() {

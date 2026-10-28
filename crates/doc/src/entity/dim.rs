@@ -210,15 +210,37 @@ pub struct MLeader {
     /// Block content in place of the text: a block reference placed at the landing.
     #[serde(default)]
     pub block: Option<Insert>,
+    /// Further leader roots: landings with leader lines of their own (a text with leaders on
+    /// both sides has a root on each side). The first root is [`MLeader::landing`],
+    /// [`MLeader::dogleg`] and [`MLeader::leaders`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roots: Vec<super::MLeaderRoot>,
+    /// Colour of the leader lines, doglegs and arrowheads (ByBlock: the multileader's own).
+    #[serde(default = "super::mleader::byblock", skip_serializing_if = "super::mleader::is_byblock")]
+    pub leader_color: cadcraft_color::Color,
+    /// Linetype of the leader lines and doglegs (ByBlock: the multileader's own).
+    #[serde(default = "super::mleader::byblock_name", skip_serializing_if = "super::mleader::is_byblock_name")]
+    pub leader_linetype: String,
+    /// Lineweight of the leader lines, doglegs and arrowheads (ByBlock: the multileader's own).
+    #[serde(default = "super::mleader::byblock_lw", skip_serializing_if = "super::mleader::is_byblock_lw")]
+    pub leader_lineweight: super::Lineweight,
+    /// Colour of the text (ByBlock: the multileader's own).
+    #[serde(default = "super::mleader::byblock", skip_serializing_if = "super::mleader::is_byblock")]
+    pub text_color: cadcraft_color::Color,
+    /// A frame is drawn around the text, the style's landing gap away from it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub text_frame: bool,
+    /// Colour of the block content (ByBlock: the multileader's own).
+    #[serde(default = "super::mleader::byblock", skip_serializing_if = "super::mleader::is_byblock")]
+    pub block_color: cadcraft_color::Color,
 }
 
 impl MLeader {
-    /// Each leader line as drawn: through its points to the landing, smoothed for spline leaders.
+    /// Each leader line as drawn: through its points to its landing, smoothed for spline leaders.
     pub fn leader_paths(&self) -> Vec<Vec<Vec2>> {
-        self.leaders
-            .iter()
-            .map(|l| {
-                let pts: Vec<Vec2> = l.iter().map(|v| v.xy()).chain(std::iter::once(self.landing.xy())).collect();
+        self.lines()
+            .map(|(l, landing)| {
+                let pts: Vec<Vec2> = l.iter().map(|v| v.xy()).chain(std::iter::once(landing.xy())).collect();
                 if self.spline && pts.len() > 2 { GSpline::from_fit_points(&pts).tessellate(1e-3) } else { pts }
             })
             .collect()

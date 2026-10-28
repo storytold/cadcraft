@@ -5,7 +5,7 @@ use super::ctx::{AssocObj, Ctx};
 use super::entity::{entity, hatch_reactors};
 use super::header::{code_page, header_vars};
 use super::layout::{paper_views, record_head, sheet_first, table_head, vport_table};
-use super::objects::{cadcraft_fonts_name, group_obj, mleader_style_obj, scale_list, table_style_obj};
+use super::objects::{StyleRefs, cadcraft_fonts_name, group_obj, mleader_style_obj, scale_list, table_style_obj};
 use super::{
     Block, Color, DimStyle, DimVal, Drawing, Entity, EntityKind, EntityStore, Group, HVal, Handle, HashMap, Layout, MLeaderStyle, PageSetup, Space,
     TableStyle, Tag, Vec2, Vec3, Version, W, dxf_ext,
@@ -622,9 +622,14 @@ fn write_style_objects(w: &mut W, plan: &ObjectWritePlan<'_>, mleader_dict: &str
         w.s(3, &s.name);
         w.s(350, h);
     }
-    let byblock_ltype = ltype_handles.get("BYBLOCK").cloned();
     for (s, h) in mleader_styles.iter().zip(mleader_handles) {
-        mleader_style_obj(w, s, h, mleader_dict, byblock_ltype.as_deref(), cx.style(&s.text_style));
+        let lt = s.leader_linetype.trim().to_ascii_uppercase();
+        let refs = StyleRefs {
+            leader_linetype: ltype_handles.get(&lt).or_else(|| ltype_handles.get("BYBLOCK")).cloned(),
+            text_style: cx.style(&s.text_style),
+            block: (!s.block.trim().is_empty()).then(|| cx.block_records.get(&s.block.trim().to_ascii_uppercase()).cloned()).flatten(),
+        };
+        mleader_style_obj(w, s, h, mleader_dict, &refs);
     }
     // Multiline styles.
     w.t.extend(crate::dxf_mline::objects(&cx.mlines, root_dict));

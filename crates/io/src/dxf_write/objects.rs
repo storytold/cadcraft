@@ -46,61 +46,86 @@ pub(super) fn group_obj(w: &mut W, g: &Group, h: &str, dict: &str, written: &std
     }
 }
 
-/// A MLEADERSTYLE object (DXF Reference, OBJECTS: MLEADERSTYLE): MText content and straight
-/// ByBlock leaders with the style's landing gap, dogleg length, arrow size, text style and
-/// text height.
-pub(super) fn mleader_style_obj(w: &mut W, s: &MLeaderStyle, h: &str, dict: &str, byblock_ltype: Option<&str>, text_style: Option<String>) {
-    // ByBlock as a 32-bit colour value (0xC1000000).
-    const BYBLOCK: i64 = -1_056_964_608;
+/// What a MLEADERSTYLE object points at in the file being written (record handles).
+pub(super) struct StyleRefs {
+    pub leader_linetype: Option<String>,
+    pub text_style: Option<String>,
+    pub block: Option<String>,
+}
+
+/// A MLEADERSTYLE object (DXF Reference, OBJECTS: MLEADERSTYLE): content type, leader type,
+/// colours, linetype and lineweight, landing, arrowhead size, text and block content settings.
+pub(super) fn mleader_style_obj(w: &mut W, s: &MLeaderStyle, h: &str, dict: &str, r: &StyleRefs) {
+    use crate::dxf_mleader::color_value;
+    use cadcraft_doc::{MLeaderContent, MLeaderLineType};
+    let finite = |v: f64, d: f64| if v.is_finite() { v } else { d };
     w.s(0, "MLEADERSTYLE");
     w.s(5, h);
     w.group("ACAD_REACTORS", 330, &[dict]);
     w.s(330, dict);
     w.s(100, "AcDbMLeaderStyle");
     w.i(179, 2);
-    w.i(170, 2);
+    w.i(
+        170,
+        match s.content {
+            MLeaderContent::None => 0,
+            MLeaderContent::Block => 1,
+            MLeaderContent::MText => 2,
+        },
+    );
     w.i(171, 1);
     w.i(172, 0);
-    w.i(90, 2);
-    w.f(40, 0.0);
-    w.f(41, 0.0);
-    w.i(173, 1);
-    w.i(91, BYBLOCK);
-    if let Some(lt) = byblock_ltype {
+    w.i(90, i64::from(s.max_points.clamp(2, 64)));
+    w.f(40, finite(s.first_angle, 0.0));
+    w.f(41, finite(s.second_angle, 0.0));
+    w.i(
+        173,
+        match s.leader_type {
+            MLeaderLineType::None => 0,
+            MLeaderLineType::Straight => 1,
+            MLeaderLineType::Spline => 2,
+        },
+    );
+    w.i(91, color_value(s.leader_color));
+    if let Some(lt) = &r.leader_linetype {
         w.s(340, lt);
     }
-    w.i(92, -2);
-    w.i(290, 1);
+    w.i(92, i64::from(s.leader_lineweight.to_dxf()));
+    w.i(290, i64::from(s.landing));
     w.f(42, s.landing_gap);
-    w.i(291, 1);
+    w.i(291, i64::from(s.landing));
     w.f(43, s.dogleg);
-    w.s(3, "");
+    w.s(3, &s.description);
     w.f(44, s.arrow_size);
-    w.s(300, "");
-    if let Some(ts) = text_style {
+    w.s(300, &s.default_text);
+    if let Some(ts) = &r.text_style {
         w.s(342, ts);
     }
     w.i(174, 1);
     w.i(178, 1);
     w.i(175, 1);
     w.i(176, 0);
-    w.i(93, BYBLOCK);
+    w.i(93, color_value(s.text_color));
     w.f(45, s.text_height);
-    w.i(292, 0);
+    w.i(292, i64::from(s.text_frame));
     w.i(297, 0);
     w.f(46, 4.0);
-    w.i(94, BYBLOCK);
+    if let Some(b) = &r.block {
+        w.s(343, b);
+    }
+    w.i(94, color_value(s.block_color));
+    let scale = finite(s.block_scale, 1.0);
     for c in [47, 49, 140] {
-        w.f(c, 1.0);
+        w.f(c, scale);
     }
     w.i(293, 1);
-    w.f(141, 0.0);
+    w.f(141, finite(s.block_rotation, 0.0));
     w.i(294, 1);
-    w.i(177, 0);
-    w.f(142, 1.0);
+    w.i(177, i64::from(!s.block_center));
+    w.f(142, s.size_factor());
     w.i(295, 0);
     w.i(296, i64::from(s.annotative));
-    w.f(143, 0.125);
+    w.f(143, finite(s.break_size, 0.125));
     w.i(271, 0);
     w.i(272, 9);
     w.i(273, 9);

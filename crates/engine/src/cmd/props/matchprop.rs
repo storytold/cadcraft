@@ -220,6 +220,12 @@ fn copy_props(src: &Entity, dst: &mut Entity, m: &MatchProps) {
             b.arrow_size = a.arrow_size;
             b.dogleg = a.dogleg;
             b.spline = a.spline;
+            b.leader_color = a.leader_color;
+            b.leader_linetype.clone_from(&a.leader_linetype);
+            b.leader_lineweight = a.leader_lineweight;
+            b.text_color = a.text_color;
+            b.text_frame = a.text_frame;
+            b.block_color = a.block_color;
         }
         _ => {}
     }

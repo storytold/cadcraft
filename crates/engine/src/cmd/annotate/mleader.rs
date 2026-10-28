@@ -4,18 +4,32 @@ use super::{
     bad, json, points_param, str_param, v3,
 };
 
+/// The current multileader style (CMLEADERSTYLE, else the first one).
+pub(in crate::cmd) fn current_style(s: &Session) -> cadcraft_doc::MLeaderStyle {
+    let Ok(d) = s.doc() else { return Default::default() };
+    let cur = d.header.str("CMLEADERSTYLE", "Standard");
+    d.mleader_styles.iter().find(|m| m.name.eq_ignore_ascii_case(&cur)).or(d.mleader_styles.first()).cloned().unwrap_or_default()
+}
+
 /// A multileader from arrowhead to landing; `landing` false leaves out the landing line (dogleg).
+/// It takes the current style's sizes, leader and text properties.
 fn mleader_kind(s: &Session, pts: &[Vec2], text: &str, landing: bool) -> Option<EntityKind> {
     let (landing_pt, arrow_pts) = pts.split_last()?;
-    let d = s.doc().ok()?;
-    let cur = d.header.str("CMLEADERSTYLE", "Standard");
-    let st = d.mleader_styles.iter().find(|m| m.name.eq_ignore_ascii_case(&cur)).or(d.mleader_styles.first()).cloned().unwrap_or_default();
-    // The style's sizes are the drawn sizes: a multileader style has no scale of its own and
-    // DIMSCALE (a dimension-style setting) does not apply, as in AutoCAD.
+    let st = current_style(s);
+    // The style's sizes times its scale are the drawn sizes (an annotative style's sizes are
+    // paper sizes); DIMSCALE (a dimension-style setting) does not apply, as in AutoCAD.
+    let k = if st.annotative { 1.0 } else { st.size_factor() };
+    let st = cadcraft_doc::MLeaderStyle {
+        text_height: st.text_height * k,
+        arrow_size: st.arrow_size * k,
+        landing_gap: st.landing_gap * k,
+        dogleg: st.dogleg * k,
+        ..st
+    };
     let th = st.text_height;
     let dir = if arrow_pts.first().is_some_and(|a| a.x > landing_pt.x) { -1.0 } else { 1.0 };
     let attach = if dir > 0.0 { 4 } else { 6 };
-    let dogleg = if landing { st.dogleg } else { 0.0 };
+    let dogleg = if landing && st.landing { st.dogleg } else { 0.0 };
     let tpos = *landing_pt + Vec2::new((dogleg + st.landing_gap) * dir, 0.0);
     Some(EntityKind::MLeader(MLeader {
         leaders: vec![arrow_pts.iter().map(|p| v3(*p)).collect()],
@@ -37,6 +51,13 @@ fn mleader_kind(s: &Session, pts: &[Vec2], text: &str, landing: bool) -> Option<
         arrow_size: st.arrow_size,
         spline: false,
         block: None,
+        roots: Vec::new(),
+        leader_color: st.leader_color,
+        leader_linetype: st.leader_linetype.clone(),
+        leader_lineweight: st.leader_lineweight,
+        text_color: st.text_color,
+        text_frame: st.text_frame,
+        block_color: st.block_color,
     }))
 }
 
@@ -47,7 +68,14 @@ pub(super) fn run_mleader(s: &mut Session, p: &Value) -> Result<Value> {
     if pts.len() < 2 && !(content.leader == crate::LeaderType::None && pts.len() == 1) {
         return Err(bad("mleader", "need an arrowhead and a landing point"));
     }
-    let k = mleader_kind(s, &pts, str_param(p, "text").unwrap_or(""), true).ok_or_else(|| bad("mleader", "bad points"))?;
+    // Without `text` (or `block`) the style's content: its default text, or nothing.
+    let st = current_style(s);
+    let text = match str_param(p, "text") {
+        Some(t) => t.to_string(),
+        None if content.block.is_none() && st.content == cadcraft_doc::MLeaderContent::MText => st.default_text.clone(),
+        None => String::new(),
+    };
+    let k = mleader_kind(s, &pts, &text, true).ok_or_else(|| bad("mleader", "bad points"))?;
     let k = crate::cmd::mleader_content::apply(s, k, &content)?;
     Ok(json!({ "handle": s.add_entity(k)?.hex() }))
 }
@@ -84,6 +112,25 @@ pub(super) fn run_leader(s: &mut Session, p: &Value) -> Result<Value> {
         );
     }
     Ok(json!({ "handles": out }))
+}
+
+/// MLEADER's Options as multileader style `st` sets them (the placement order stays `o`'s).
+fn style_options(st: &cadcraft_doc::MLeaderStyle, o: MLeaderOptions) -> MLeaderOptions {
+    use cadcraft_doc::{MLeaderContent, MLeaderLineType};
+    MLeaderOptions {
+        order: o.order,
+        max_points: usize::try_from(st.max_points).unwrap_or(2).clamp(2, MAX_LEADER_POINTS),
+        angles: [st.first_angle, st.second_angle].map(|a| if a.is_finite() && a > 0.0 { a } else { 0.0 }),
+        landing: st.landing,
+        content: st.content != MLeaderContent::None,
+        leader_type: match st.leader_type {
+            MLeaderLineType::Straight => crate::LeaderType::Straight,
+            MLeaderLineType::Spline => crate::LeaderType::Spline,
+            MLeaderLineType::None => crate::LeaderType::None,
+        },
+        block: st.content == MLeaderContent::Block,
+        block_center: st.block_center,
+    }
 }
 
 /// The MLEADER Options prompt being answered.
@@ -125,9 +172,16 @@ pub(super) struct MLeaderM {
 }
 
 impl MLeaderM {
-    /// Starts with the order and Options chosen the last time (as AutoCAD does).
+    /// Starts with the order and Options chosen the last time (as AutoCAD does), or with the
+    /// current multileader style's settings when the Options were set for another style.
     pub(super) fn new(s: &Session) -> Self {
-        let o = s.last_used.mleader;
+        let st = current_style(s);
+        let o = if s.last_used.mleader_style.eq_ignore_ascii_case(&st.name) { s.last_used.mleader } else { style_options(&st, s.last_used.mleader) };
+        let block_name = if s.last_used.mleader_style.eq_ignore_ascii_case(&st.name) || st.block.is_empty() {
+            s.last_used.mleader_block.clone()
+        } else {
+            st.block.clone()
+        };
         let max_points = o.max_points.clamp(2, MAX_LEADER_POINTS);
         MLeaderM {
             order: o.order,
@@ -141,8 +195,8 @@ impl MLeaderM {
             content: o.content,
             leader_type: o.leader_type,
             // Block content needs a block that still exists.
-            block: o.block && s.doc().is_ok_and(|d| d.block(&s.last_used.mleader_block).is_some()),
-            block_name: s.last_used.mleader_block.clone(),
+            block: o.block && s.doc().is_ok_and(|d| d.block(&block_name).is_some()),
+            block_name,
             block_center: o.block_center,
         }
     }
@@ -159,6 +213,7 @@ impl MLeaderM {
             block_center: self.block_center,
         };
         s.last_used.mleader_block = self.block_name.clone();
+        s.last_used.mleader_style = current_style(s).name;
     }
     /// The leader type and block content for `mleader_content::apply`.
     fn content_spec(&self) -> crate::cmd::mleader_content::Content {
