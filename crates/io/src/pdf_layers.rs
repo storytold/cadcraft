@@ -34,15 +34,35 @@ fn open(bytes: &[u8]) -> Result<Pdf> {
     pdf.map_err(|e| IoError::Format(format!("not a readable PDF file ({e:?})")))
 }
 
-/// A layer name: UTF-16 with a byte order mark, else PDFDocEncoding read as Latin-1.
+/// A layer name, a PDF text string: UTF-16 with a byte order mark, UTF-8 with one (PDF 2.0), else
+/// PDFDocEncoding.
 fn text(b: &[u8]) -> String {
     match b {
         [0xFE, 0xFF, rest @ ..] => {
             let units: Vec<u16> = rest.as_chunks::<2>().0.iter().map(|c| u16::from_be_bytes(*c)).collect();
             String::from_utf16_lossy(&units)
         }
-        _ => b.iter().map(|&c| char::from(c)).collect(),
+        [0xEF, 0xBB, 0xBF, rest @ ..] => String::from_utf8_lossy(rest).into_owned(),
+        _ => b.iter().map(|&c| pdf_doc_char(c)).collect(),
     }
+}
+
+/// PDFDocEncoding's character for byte `c` (ISO 32000, annex D): Latin-1 but for the accents at
+/// 0x18–0x1F and the punctuation, ligatures and letters at 0x80–0xA0. Bytes it leaves undefined
+/// keep their Latin-1 character.
+fn pdf_doc_char(c: u8) -> char {
+    const LOW: [char; 8] = ['\u{2d8}', '\u{2c7}', '\u{2c6}', '\u{2d9}', '\u{2dd}', '\u{2db}', '\u{2da}', '\u{2dc}'];
+    const HIGH: [char; 33] = [
+        '\u{2022}', '\u{2020}', '\u{2021}', '\u{2026}', '\u{2014}', '\u{2013}', '\u{192}', '\u{2044}', '\u{2039}', '\u{203a}', '\u{2212}',
+        '\u{2030}', '\u{201e}', '\u{201c}', '\u{201d}', '\u{2018}', '\u{2019}', '\u{201a}', '\u{2122}', '\u{fb01}', '\u{fb02}', '\u{141}', '\u{152}',
+        '\u{160}', '\u{178}', '\u{17d}', '\u{131}', '\u{142}', '\u{153}', '\u{161}', '\u{17e}', '\u{9f}', '\u{20ac}',
+    ];
+    match c {
+        0x18..=0x1F => LOW.get(usize::from(c - 0x18)).copied(),
+        0x80..=0xA0 => HIGH.get(usize::from(c - 0x80)).copied(),
+        _ => None,
+    }
+    .unwrap_or(char::from(c))
 }
 
 fn read(pdf: &Pdf) -> Result<Option<Layers>> {
@@ -221,6 +241,11 @@ mod tests {
     /// A PDF 1.5 whose cross-reference is a stream (as most recent PDF writers make), with layers
     /// MURS (a red square) and COTES (a green one).
     fn xref_stream_pdf() -> Vec<u8> {
+        xref_stream_pdf_named(b"(MURS)", b"(COTES)")
+    }
+
+    /// [`xref_stream_pdf`] with its two layers' names written as `red` and `green` (PDF strings).
+    fn xref_stream_pdf_named(red: &[u8], green: &[u8]) -> Vec<u8> {
         let content = b"/OC /L1 BDC 1 0 0 rg 10 10 80 80 re f EMC /OC /L2 BDC 0 1 0 rg 110 10 80 80 re f EMC";
         let objects: Vec<Vec<u8>> = vec![
             b"<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [5 0 R 6 0 R] /D << /BaseState /ON /Order [5 0 R 6 0 R] >> >> >>".to_vec(),
@@ -228,8 +253,8 @@ mod tests {
             b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Resources << /Properties << /L1 5 0 R /L2 6 0 R >> >> /Contents 4 0 R >>"
                 .to_vec(),
             [format!("<< /Length {} >>\nstream\n", content.len()).into_bytes(), content.to_vec(), b"\nendstream".to_vec()].concat(),
-            b"<< /Type /OCG /Name (MURS) >>".to_vec(),
-            b"<< /Type /OCG /Name (COTES) >>".to_vec(),
+            [b"<< /Type /OCG /Name ".as_slice(), red, b" >>"].concat(),
+            [b"<< /Type /OCG /Name ".as_slice(), green, b" >>"].concat(),
         ];
         let mut out = b"%PDF-1.5\n".to_vec();
         let mut offsets = Vec::new();
@@ -252,6 +277,23 @@ mod tests {
         out.extend_from_slice(&rows);
         out.extend_from_slice(format!("\nendstream\nendobj\nstartxref\n{xref_at}\n%%EOF\n").as_bytes());
         out
+    }
+
+    #[test]
+    fn layer_names_are_decoded_as_pdf_text_strings() {
+        // PDFDocEncoding: 0x84 is an em dash and 0xA0 the euro sign (not Latin-1's no-break space).
+        assert_eq!(text(b"Co\xfbt \x84 5 \xa0"), "Coût — 5 €");
+        assert_eq!(text(b"\x18\x8d\x8e\x92\x93\x95\x9e"), "˘\u{201c}\u{201d}™ﬁŁž");
+        // UTF-16 with its byte order mark, and UTF-8 with its own (PDF 2.0).
+        assert_eq!(text(b"\xfe\xff\x00C\x00\xf4\x20\xac"), "Cô€");
+        assert_eq!(text(b"\xef\xbb\xbfCo\xc3\xbbt \xe2\x82\xac"), "Coût €");
+        // A PDF whose layer is named in PDFDocEncoding: listed by its name, and turned off by it.
+        let pdf = xref_stream_pdf_named(b"(Co\\373t \\204 5 \\240)", b"(COTES)");
+        let names: Vec<String> = layers(&pdf).unwrap().into_iter().map(|l| l.name).collect();
+        assert_eq!(names, ["Coût — 5 €", "COTES"]);
+        let off = with_layers(&pdf, &[("Coût — 5 €".into(), false)]).unwrap();
+        let (red, green) = colours(&off);
+        assert!(red == 0 && green > 1000, "the layer named in PDFDocEncoding hidden: {red} red, {green} green");
     }
 
     #[test]
