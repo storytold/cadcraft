@@ -80,8 +80,10 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "OSNAPHATCH" => json!(i32::from(st.osnaphatch)),
         // AutoCAD's values: positive on, negative off (4 = every annotative object).
         "ANNOAUTOSCALE" => json!(if st.annoautoscale { 4 } else { -4 }),
+        // Inside a layout viewport (MSPACE), the viewport's annotation scale.
+        "CANNOSCALE" => json!(s.anno_scale().ok()?.name),
         // Paper units per drawing unit of the current annotation scale (1:50 → 0.02).
-        "CANNOSCALEVALUE" => json!(1.0 / s.doc().ok()?.current_anno_scale().factor()),
+        "CANNOSCALEVALUE" => json!(1.0 / s.anno_scale().ok()?.factor()),
         "ORTHOMODE" => json!(i32::from(st.orthomode)),
         "POLARMODE" => json!(st.polar_flags),
         "POLARADDANG" => json!(format_angle_list(&st.polaraddang)),

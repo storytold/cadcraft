@@ -221,6 +221,15 @@ impl Session {
     pub fn space(&self) -> Space {
         self.state().map(DocState::edit_space).unwrap_or_default()
     }
+    /// The current annotation scale: inside a layout viewport (MSPACE) the viewport's own, else
+    /// the drawing's (`CANNOSCALE`).
+    pub fn anno_scale(&self) -> Result<cadcraft_doc::AnnoScale> {
+        let st = self.state()?;
+        Ok(match st.active_viewport() {
+            Some((_, vp)) => st.doc.viewport_anno_scale(&vp),
+            None => st.doc.current_anno_scale(),
+        })
+    }
     /// The tab being displayed: Model or a layout, regardless of MSPACE.
     pub fn layout_space(&self) -> Space {
         self.state().map(|s| s.space.clone()).unwrap_or_default()
@@ -271,9 +280,10 @@ impl Session {
         }
         // Text, dimensions, multileaders, hatches and block references of annotative styles are
         // annotative, supporting the current annotation scale.
+        let anno = self.anno_scale()?;
         let d = self.doc()?;
         if d.annotative_by_style(&kind) {
-            common.anno_scales = vec![d.current_anno_scale()];
+            common.anno_scales = vec![anno];
         }
         // Lines, arcs, circles, points, polylines and 2D solids take the current 3D thickness
         // (THICKNESS). RECTANG sets its own, and text never takes it.

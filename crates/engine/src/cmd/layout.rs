@@ -70,7 +70,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{p1?, p2?, layout?}")
             .interactive(|s| Ok(super::view::model_vports(s, Some(4)).unwrap_or_else(|| Box::new(MviewM::new(4, false))))),
         CommandSpec::new("viewport.set", "Viewport Properties", run_viewport_set).params(
-            "{handle? (default: selected viewports), scale?: paper units per model unit | \"1:50\", viewHeight?, center?: [x,y], locked?, freeze?: [layer], thaw?: [layer], colors?: {layer: color | null}}",
+            "{handle? (default: selected viewports), scale?: paper units per model unit | \"1:50\", viewHeight?, center?: [x,y], locked?, annoScale?: scale name | null (its annotation scale, apart from its viewport scale; null: the one matching its viewport scale, which a new scale also resets), freeze?: [layer], thaw?: [layer], colors?: {layer: color | null}}",
+        ),
+        CommandSpec::new("viewport.syncscale", "Synchronize Viewport Scale", run_viewport_sync).params(
+            "{handle? (default: active or selected viewports), to?: \"annotation\" (default: the viewport scale becomes the annotation scale; not for a locked viewport) | \"viewport\" (the annotation scale follows the viewport scale)}",
         ),
         CommandSpec::new("vplayer", "Viewport Layer Freeze", run_viewport_set)
             .params("{handle?, freeze?: [layer], thaw?: [layer], colors?: {layer: color (\"red\" | 1..255 | \"r,g,b\") | null to clear}} (typed: option prompts)")
@@ -515,7 +518,7 @@ fn layer_list(p: &Value, key: &str) -> Vec<String> {
     }
 }
 
-fn viewport_json(h: Handle, v: &Viewport) -> Value {
+fn viewport_json(d: &Drawing, h: Handle, v: &Viewport) -> Value {
     json!({
         "handle": h.hex(),
         "id": v.id,
@@ -526,6 +529,8 @@ fn viewport_json(h: Handle, v: &Viewport) -> Value {
         "viewHeight": v.view_height,
         "scale": if v.view_height > 0.0 { v.height / v.view_height } else { 0.0 },
         "locked": v.locked,
+        "annoScale": d.viewport_anno_scale(v).name,
+        "scalesDiffer": d.viewport_scales_differ(v),
         "on": v.on,
         "clip": v.clip.map(|h| h.hex()),
         "frozenLayers": v.frozen_layers,
@@ -536,8 +541,9 @@ fn viewport_json(h: Handle, v: &Viewport) -> Value {
 /// VPLAYER's command-line prompts.
 mod vplayer;
 
-fn run_viewport_set(s: &mut Session, p: &Value) -> Result<Value> {
-    let cmd = "viewport.set";
+/// The layout viewports a command acts on: the given or selected ones, else the active one
+/// (MSPACE); an error when there are none.
+fn viewport_targets(s: &Session, p: &Value, cmd: &str) -> Result<Vec<Handle>> {
     let d = s.doc()?;
     let mut hs: Vec<Handle> =
         targets(s, p)?.into_iter().filter(|h| d.entity(*h).is_some_and(|e| matches!(&e.kind, EntityKind::Viewport(v) if v.id != 1))).collect();
@@ -552,6 +558,23 @@ fn run_viewport_set(s: &mut Session, p: &Value) -> Result<Value> {
     if hs.is_empty() {
         return Err(bad(cmd, "no viewport given (pass `handle` or select a viewport)"));
     }
+    Ok(hs)
+}
+
+fn run_viewport_set(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "viewport.set";
+    let hs = viewport_targets(s, p, cmd)?;
+    // Its own annotation scale: a scale of the drawing's list, or null for the one matching its
+    // viewport scale.
+    let anno = match p.get("annoScale") {
+        None => None,
+        Some(Value::Null) => Some(None),
+        Some(Value::String(n)) => {
+            let sc = s.doc()?.anno_scale(n).filter(|sc| sc.is_valid()).cloned();
+            Some(Some(sc.ok_or_else(|| bad(cmd, format!("`{}` is not in the scale list", n.trim())))?))
+        }
+        Some(_) => return Err(bad(cmd, "`annoScale` is a scale name or null")),
+    };
     let scale = match p.get("scale") {
         Some(v) => Some(parse_scale(v).ok_or_else(|| bad(cmd, "`scale` must be a positive number or \"a:b\""))?),
         None => None,
@@ -606,6 +629,13 @@ fn run_viewport_set(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(vh) = view_height {
             v.view_height = vh;
         }
+        // A new viewport scale brings the annotation scale with it, as in AutoCAD.
+        if scale.is_some() || view_height.is_some() {
+            v.anno_scale = None;
+        }
+        if let Some(a) = &anno {
+            v.anno_scale = a.clone();
+        }
         if let Some(c) = center {
             v.view_center = c;
         }
@@ -624,7 +654,40 @@ fn run_viewport_set(s: &mut Session, p: &Value) -> Result<Value> {
                 v.layer_colors.push((layer.clone(), *c));
             }
         }
-        out.push(viewport_json(h, &v));
+        out.push(viewport_json(s.doc()?, h, &v));
+        s.doc_mut()?.modify_entity(h, |e| e.kind = EntityKind::Viewport(v)).map_err(|e| bad(cmd, e.to_string()))?;
+    }
+    Ok(Value::Array(out))
+}
+
+/// Bring a viewport's annotation scale and viewport scale back together: the viewport scale
+/// becomes the annotation scale (`to: "annotation"`, unlocked viewports only), or the annotation
+/// scale follows the viewport scale (`to: "viewport"`).
+fn run_viewport_sync(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "viewport.syncscale";
+    let hs = viewport_targets(s, p, cmd)?;
+    let to_annotation = match p.get("to") {
+        None | Some(Value::Null) => true,
+        Some(Value::String(t)) if t.trim().eq_ignore_ascii_case("annotation") => true,
+        Some(Value::String(t)) if t.trim().eq_ignore_ascii_case("viewport") => false,
+        Some(_) => return Err(bad(cmd, "`to` is \"annotation\" or \"viewport\"")),
+    };
+    let mut out = Vec::new();
+    for h in hs {
+        let Some(EntityKind::Viewport(mut v)) = s.doc()?.entity(h).map(|e| e.kind.clone()) else { continue };
+        if to_annotation {
+            if v.locked {
+                return Err(bad(cmd, format!("viewport {} is locked", h.hex())));
+            }
+            let sc = s.doc()?.viewport_anno_scale(&v);
+            let vh = v.height * sc.factor();
+            if vh.is_finite() && vh > 0.0 {
+                v.view_height = vh;
+            }
+        } else {
+            v.anno_scale = None;
+        }
+        out.push(viewport_json(s.doc()?, h, &v));
         s.doc_mut()?.modify_entity(h, |e| e.kind = EntityKind::Viewport(v)).map_err(|e| bad(cmd, e.to_string()))?;
     }
     Ok(Value::Array(out))

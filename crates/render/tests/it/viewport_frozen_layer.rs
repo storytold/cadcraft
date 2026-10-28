@@ -21,6 +21,7 @@ fn drawing() -> Drawing {
         layer_colors: Vec::new(),
         clip: None,
         on: true,
+        anno_scale: None,
     };
     d.add(&Space::Paper("Layout1".into()), Common { layer: "VPORTS".into(), ..Default::default() }, EntityKind::Viewport(vp)).unwrap();
     d

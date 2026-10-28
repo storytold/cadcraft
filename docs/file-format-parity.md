@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-25 · **Change:** minor (LAYOUT SAveas writes a layout as a DWT template) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-28 · **Change:** minor (a viewport's own annotation scale kept) · **Target:** Autodesk AutoCAD 2027
 
 Every format AutoCAD 2027 reads or writes, with CADCraft's support, fidelity and tests. Work
 items are in [gaps.md](gaps.md#file-formats); the weighted score feeds
@@ -85,7 +85,7 @@ on read with a note, so such files no longer exceed the DXF limit (#1482). **DWG
 | HATCH gradient | yes | yes (#162, fixes #80) | |
 | SOLID, TRACE, 3DFACE | yes | yes | |
 | ACAD_TABLE | yes | yes (entity + block) | |
-| VIEWPORT | yes | yes; frozen-layer lists kept (#150), also as standard group 341 layer handles that other programs read | DWG: the DXF→DWG converter does not yet write group 341 (frozen layers survive a CADCraft round trip via xdata); VP layer colour overrides lost (#99, PR #197) |
+| VIEWPORT | yes | yes; frozen-layer lists kept (#150), also as standard group 341 layer handles that other programs read; a viewport's own annotation scale kept in CADCraft's annotation record (DXF and DWG; AutoCAD's own storage of it is not in the DXF Reference, so other programs see the viewport scale) | DWG: the DXF→DWG converter does not yet write group 341 (frozen layers survive a CADCraft round trip via xdata); VP layer colour overrides lost (#99, PR #197) |
 | IMAGE | yes, with IMAGEDEF | yes, with IMAGEDEF and IMAGEDEF_REACTOR | no attach command or display of the picture yet (FF10) |
 | WIPEOUT | yes | yes (#147, fixes #79) | |
 | MLINE (+ MLINESTYLE), HELIX, TOLERANCE | yes (#510, #420) | yes | |
@@ -140,6 +140,7 @@ our output in AutoCAD black-box.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-28 | minor | A layout viewport's own annotation scale (apart from its viewport scale) is written to and read from the `CADCRAFT_ANNOTATION` record by viewport handle, through DXF and DWG; unusable records are ignored |
 | 2026-10-25 | minor | LAYOUT SAveas (`layout.saveas`) writes a layout as a drawing template: its page setup and paper space objects, no model space objects or other layouts, and only the named objects they use |
 | 2026-10-22 | minor | DXF/DWG save: angular, diametric and radial dimensions get standard DIMASSOC objects (one centre reference to the circle for radial/diametric, the definition points for angular), so AutoCAD follows their geometry; the standard objects of those kinds are read back too, without CADCraft's xdata (#1651) |
 | 2026-10-19 | minor | DXF/DWG save: angular dimension block text honors DIMDSEP, including per-dimension overrides (#1646) |

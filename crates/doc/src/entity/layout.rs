@@ -25,6 +25,10 @@ pub struct Viewport {
     /// Display on (MVIEW ON/OFF). An off viewport shows its border but no model space.
     #[serde(default = "yes")]
     pub on: bool,
+    /// The viewport's own annotation scale, the one its annotative objects draw at. `None`: the
+    /// scale matching its viewport scale (the usual case; setting the viewport scale clears it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anno_scale: Option<crate::AnnoScale>,
 }
 
 impl Default for Viewport {
@@ -41,6 +45,7 @@ impl Default for Viewport {
             layer_colors: Vec::new(),
             clip: None,
             on: true,
+            anno_scale: None,
         }
     }
 }

@@ -243,6 +243,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
             // Status flags: 65536 = non-rectangular clipping (by the 340 entity), 131072 = off.
             clip: t.s(340).and_then(|h| Handle::parse_hex(&h)).filter(|h| h.0 != 0 && t.i(90).unwrap_or(0) & 65536 != 0),
             on: t.i(90).unwrap_or(0) & 131072 == 0,
+            anno_scale: None,
         }),
         "WIPEOUT" => {
             let o = t.p(10);

@@ -1367,3 +1367,5 @@ menu	Modify	Edita
 	Check for Updates…	Verifica aggiornamenti…
 	CADCraft is up to date.	CADCraft è aggiornato.
 	Could not check for updates.	Impossibile verificare gli aggiornamenti.
+	Synchronize Viewport Scale	Sincronizza scala finestra
+	Annotation scale is not equal to viewport scale: click to synchronize	La scala di annotazione è diversa dalla scala della finestra: fare clic per sincronizzare

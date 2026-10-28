@@ -96,7 +96,9 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
     // PSLTSCALE on: model-space dashes are scaled so they measure the same on paper as in
     // paper space, whatever the viewport scale.
     let lt_factor = if d.header.i64("PSLTSCALE", 1) != 0 { 1.0 / s } else { 1.0 };
-    let ctx = || Ctx { lt_factor, ..top_ctx(d, xf, VIEWPORT_CONTENT, &vp.frozen_layers, &vp.layer_colors) };
+    // Annotative objects draw at the viewport's annotation scale (by default its viewport scale).
+    let anno_factor = Some(d.viewport_anno_scale(vp).factor());
+    let ctx = || Ctx { lt_factor, anno_factor, ..top_ctx(d, xf, VIEWPORT_CONTENT, &vp.frozen_layers, &vp.layer_colors) };
     let seen = |me: &Entity| {
         if matches!(me.kind, EntityKind::Viewport(_)) {
             return false;

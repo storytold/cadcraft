@@ -100,6 +100,9 @@ struct Ctx<'a> {
     block_pstyle: Option<usize>,
     /// Transparency (percent) of the block reference being expanded, for `ByBlock`.
     block_transparency: u8,
+    /// The annotation scale (model units per paper unit) of the viewport being drawn; `None`
+    /// outside a viewport.
+    anno_factor: Option<f64>,
 }
 
 impl Ctx<'_> {

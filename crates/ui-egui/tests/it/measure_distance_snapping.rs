@@ -30,6 +30,7 @@ fn harness(paper: bool, render: bool) -> Harness<'static, CadApp> {
             layer_colors: Vec::new(),
             clip: None,
             on: true,
+            anno_scale: None,
         }),
     )
     .unwrap();

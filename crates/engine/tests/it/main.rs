@@ -139,6 +139,7 @@ mod trim_closed_polyline;
 mod trim_extend_options;
 mod undo_count;
 mod undo_layout_tab;
+mod viewport_anno_scale;
 mod viewport_clip;
 mod vplayer_prompts;
 mod vports;

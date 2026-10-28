@@ -44,11 +44,12 @@ pub(crate) fn entity(b: &mut Builder, ctx: &Ctx, e: &Entity) {
 }
 
 fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
-    // A top-level annotative object draws at the view's annotation scale: a viewport's scale for
+    // A top-level annotative object draws at the view's annotation scale: a viewport's own for
     // model space seen through it, else the drawing's (CANNOSCALE in model space, 1:1 on paper).
     if ctx.depth == 0 && cadcraft_doc::is_annotative(e) {
         let mode = if ctx.top == VIEWPORT_CONTENT {
-            cadcraft_doc::anno_draw(e, 1.0 / ctx.xf.scale_factor().max(1e-12), ctx.d.anno_all_visible())
+            let f = ctx.anno_factor.unwrap_or_else(|| 1.0 / ctx.xf.scale_factor().max(1e-12));
+            cadcraft_doc::anno_draw(e, f, ctx.d.anno_all_visible())
         } else {
             ctx.d.anno_draw(e)
         };

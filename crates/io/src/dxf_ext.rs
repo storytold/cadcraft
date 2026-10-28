@@ -773,9 +773,10 @@ pub(crate) fn parse_plot_styles(text: &str) -> Option<Vec<PlotStyleTable>> {
 }
 
 /// Annotative scaling stored in the `CADCRAFT_ANNOTATION` XRECORD: the current annotation scale
-/// (CANNOSCALE), ANNOALLVISIBLE, the annotative blocks and the scales each annotative object
-/// supports, by handle. The DXF Reference doesn't document how objects refer to their scales,
-/// so this is CADCraft's own record; the scale list itself is the standard `ACAD_SCALELIST`.
+/// (CANNOSCALE), ANNOALLVISIBLE, the annotative blocks, the scales each annotative object
+/// supports and the layout viewports' own annotation scales, by handle. The DXF Reference doesn't
+/// document how objects refer to their scales, so this is CADCraft's own record; the scale list
+/// itself is the standard `ACAD_SCALELIST`.
 #[derive(Default, Serialize, Deserialize)]
 pub(crate) struct AnnoPayload {
     version: u32,
@@ -787,12 +788,21 @@ pub(crate) struct AnnoPayload {
     blocks: Vec<String>,
     #[serde(default)]
     objects: Vec<AnnoObject>,
+    /// Layout viewports whose annotation scale differs from their viewport scale.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    viewports: Vec<AnnoViewport>,
 }
 
 #[derive(Serialize, Deserialize)]
 struct AnnoObject {
     handle: String,
     scales: Vec<cadcraft_doc::AnnoScale>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct AnnoViewport {
+    handle: String,
+    scale: cadcraft_doc::AnnoScale,
 }
 
 /// Most annotative objects read from one file.
@@ -811,10 +821,19 @@ pub(crate) fn anno_chunks(d: &cadcraft_doc::Drawing) -> Option<Vec<String>> {
         .filter(|e| cadcraft_doc::is_annotative(e))
         .map(|e| AnnoObject { handle: e.handle.hex(), scales: e.common.anno_scales.clone() })
         .collect();
-    if cannoscale == "1:1" && annoallvisible == 1 && blocks.is_empty() && objects.is_empty() {
+    let viewports: Vec<AnnoViewport> = d
+        .layouts
+        .iter()
+        .flat_map(|l| l.entities.iter())
+        .filter_map(|e| match &e.kind {
+            cadcraft_doc::EntityKind::Viewport(vp) => vp.anno_scale.clone().map(|scale| AnnoViewport { handle: e.handle.hex(), scale }),
+            _ => None,
+        })
+        .collect();
+    if cannoscale == "1:1" && annoallvisible == 1 && blocks.is_empty() && objects.is_empty() && viewports.is_empty() {
         return None;
     }
-    let p = AnnoPayload { version: 1, cannoscale: Some(cannoscale), annoallvisible: Some(annoallvisible), blocks, objects };
+    let p = AnnoPayload { version: 1, cannoscale: Some(cannoscale), annoallvisible: Some(annoallvisible), blocks, objects, viewports };
     Some(json_chunks(&serde_json::to_string(&p).ok()?))
 }
 
@@ -824,7 +843,8 @@ pub(crate) fn parse_anno(text: &str) -> Option<AnnoPayload> {
         return None;
     }
     let p: AnnoPayload = serde_json::from_str(text).ok()?;
-    (p.version == 1 && p.objects.len() <= MAX_ANNO_OBJECTS && p.blocks.len() <= MAX_ANNO_OBJECTS).then_some(p)
+    (p.version == 1 && p.objects.len() <= MAX_ANNO_OBJECTS && p.blocks.len() <= MAX_ANNO_OBJECTS && p.viewports.len() <= MAX_ANNO_OBJECTS)
+        .then_some(p)
 }
 
 /// Apply a parsed annotative scaling record: variables, annotative blocks and each object's
@@ -855,6 +875,17 @@ pub(crate) fn apply_anno(d: &mut cadcraft_doc::Drawing, p: AnnoPayload) {
         let _ = d.modify_entity(h, |e| {
             if cadcraft_doc::can_be_annotative(&e.kind) {
                 e.common.anno_scales = scales;
+            }
+        });
+    }
+    for v in p.viewports {
+        let Some(h) = Handle::parse_hex(&v.handle) else { continue };
+        if !v.scale.is_valid() || v.scale.name.trim().is_empty() || v.scale.name.len() > 255 {
+            continue;
+        }
+        let _ = d.modify_entity(h, |e| {
+            if let cadcraft_doc::EntityKind::Viewport(vp) = &mut e.kind {
+                vp.anno_scale = Some(v.scale);
             }
         });
     }

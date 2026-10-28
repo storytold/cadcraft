@@ -90,6 +90,7 @@ pub(crate) fn top_ctx<'a>(d: &'a Drawing, xf: Mat3, top: Handle, frozen: &'a [St
         lt_factor: 1.0,
         block_pstyle: None,
         block_transparency: 0,
+        anno_factor: None,
     }
 }
 

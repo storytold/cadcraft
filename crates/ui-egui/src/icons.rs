@@ -102,6 +102,8 @@ pub enum Icon {
     BulbOff,
     Lock,
     Unlock,
+    /// Two arrows chasing round a circle: bring two scales back together.
+    SyncScale,
     Sun,
     Snowflake,
     Grid,
@@ -768,6 +770,13 @@ fn paint_display_toggles(pen: &Pen<'_>, icon: Icon, b: Color32, _a: Color32, dim
             } else {
                 pen.arc(15.0, 9.0, 4.0, 0.0, 180.0, c);
             }
+        }
+        SyncScale => {
+            let c = alpha(Color32::from_rgb(0xe6, 0xb4, 0x3c));
+            pen.arc(12.0, 12.0, 7.0, 20.0, 160.0, c);
+            pen.arc(12.0, 12.0, 7.0, 200.0, 340.0, c);
+            pen.arrow_tip(5.4, 9.6, -0.35, 1.0, c);
+            pen.arrow_tip(18.6, 14.4, 0.35, -1.0, c);
         }
         Sun => {
             let c = alpha(Color32::from_rgb(0xf5, 0xd0, 0x3b));

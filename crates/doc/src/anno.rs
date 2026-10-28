@@ -6,11 +6,12 @@
 //! should measure on paper and the set of scales it supports ([`Common::anno_scales`]); in a view
 //! it draws at paper size × that view's annotation scale, and only in views whose scale it
 //! supports unless `ANNOALLVISIBLE` is 1. Model space is seen at `CANNOSCALE`, a layout viewport
-//! at its viewport scale, and paper space itself at 1:1.
+//! at its own annotation scale (by default the one matching its viewport scale), and paper space
+//! itself at 1:1.
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Common, Drawing, Entity, EntityKind};
+use crate::{Common, Drawing, Entity, EntityKind, Viewport};
 
 /// A named annotation scale: `paper_units` on paper show `drawing_units` of the drawing.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -46,6 +47,28 @@ impl AnnoScale {
     pub fn has_factor(&self, factor: f64) -> bool {
         same_factor(self.factor(), factor)
     }
+}
+
+/// A scale named after its ratio (`1:37.5`, `2:1`) with `factor` drawing units per paper unit; 1:1
+/// for an unusable factor.
+pub fn ratio_scale(factor: f64) -> AnnoScale {
+    if !(factor.is_finite() && factor > 0.0 && (1.0 / factor).is_finite()) {
+        return AnnoScale::unit();
+    }
+    let num = |x: f64| {
+        let r = (x * 1000.0).round() / 1000.0;
+        if r.fract() == 0.0 { format!("{r:.0}") } else { format!("{r}") }
+    };
+    let name = if factor >= 1.0 { format!("1:{}", num(factor)) } else { format!("{}:1", num(1.0 / factor)) };
+    AnnoScale::new(&name, 1.0, factor)
+}
+
+/// A layout viewport's scale as an annotation factor (model units per paper unit: a 1:50
+/// viewport gives 50); `None` for a viewport with no usable size.
+pub fn viewport_factor(vp: &Viewport) -> Option<f64> {
+    let ok = |v: f64| v.is_finite() && v > 0.0;
+    let f = vp.view_height / vp.height;
+    (ok(vp.height) && ok(vp.view_height) && ok(f)).then_some(f)
 }
 
 /// Two scale factors are the same ratio (relative tolerance).
@@ -216,6 +239,27 @@ impl Drawing {
     pub fn current_anno_scale(&self) -> AnnoScale {
         let name = self.header.str("CANNOSCALE", "1:1");
         self.anno_scale(&name).filter(|s| s.is_valid()).cloned().unwrap_or_else(AnnoScale::unit)
+    }
+    /// The scale of the list with the ratio `factor`, else one named after the ratio.
+    pub fn scale_with_factor(&self, factor: f64) -> AnnoScale {
+        self.scales.iter().find(|s| s.is_valid() && s.has_factor(factor)).cloned().unwrap_or_else(|| ratio_scale(factor))
+    }
+    /// The annotation scale layout viewport `vp` shows annotative objects at: its own
+    /// ([`Viewport::anno_scale`]) when it has a valid one, else the one matching its viewport
+    /// scale (a scale of the list with that ratio, or one named after the ratio).
+    pub fn viewport_anno_scale(&self, vp: &Viewport) -> AnnoScale {
+        if let Some(s) = vp.anno_scale.as_ref().filter(|s| s.is_valid()) {
+            return s.clone();
+        }
+        viewport_factor(vp).map(|f| self.scale_with_factor(f)).unwrap_or_else(AnnoScale::unit)
+    }
+    /// Whether `vp`'s annotation scale differs from its viewport scale (AutoCAD's status bar then
+    /// offers to synchronize them).
+    pub fn viewport_scales_differ(&self, vp: &Viewport) -> bool {
+        match (vp.anno_scale.as_ref().filter(|s| s.is_valid()), viewport_factor(vp)) {
+            (Some(s), Some(f)) => !s.has_factor(f),
+            _ => false,
+        }
     }
     /// Whether annotative objects that don't support the view's scale show (`ANNOALLVISIBLE`).
     pub fn anno_all_visible(&self) -> bool {

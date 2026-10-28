@@ -84,3 +84,31 @@ fn model_space_uses_cannoscale() {
     let b = build(&d, &Space::Model, &Options::default()).bounds;
     assert!(b.height() > 150.0 && b.height() < 350.0, "{}", b.height());
 }
+
+/// The drawing of [`drawing`] with the viewport's own annotation scale set to `anno`.
+fn with_viewport_anno(scale: f64, anno: AnnoScale) -> Drawing {
+    let mut d = drawing(scale, false);
+    let vp = d.layout("Layout1").unwrap().entities.iter().find(|e| matches!(&e.kind, EntityKind::Viewport(v) if v.id == 2)).unwrap().handle;
+    d.modify_entity(vp, |e| {
+        if let EntityKind::Viewport(v) = &mut e.kind {
+            v.anno_scale = Some(anno);
+        }
+    })
+    .unwrap();
+    d
+}
+
+#[test]
+fn a_viewports_own_annotation_scale_sets_the_size() {
+    // A 1:20 viewport with annotation scale 1:50: the text draws at its 1:50 size, which is 50/20
+    // = 2.5 times its paper size at this viewport scale.
+    let own = content(&with_viewport_anno(20.0, AnnoScale::new("1:50", 1.0, 50.0)));
+    let at_50 = content(&drawing(50.0, false));
+    assert!(!own.is_empty(), "the text supports the viewport's annotation scale");
+    assert!((own.height() / at_50.height() - 2.5).abs() < 1e-9, "{} vs {}", own.height(), at_50.height());
+    // A 1:50 viewport whose annotation scale the text doesn't support hides it.
+    assert!(content(&with_viewport_anno(50.0, AnnoScale::new("1:20", 1.0, 20.0))).is_empty());
+    // An unusable annotation scale falls back to the viewport scale.
+    let bad = content(&with_viewport_anno(50.0, AnnoScale::new("bad", 0.0, f64::NAN)));
+    assert!((bad.height() / at_50.height() - 1.0).abs() < 1e-9);
+}

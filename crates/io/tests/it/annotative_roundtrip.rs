@@ -105,3 +105,84 @@ fn hostile_scales_and_records_are_ignored() {
         assert!(scales_of(&r, "ROOM").is_empty(), "{junk}");
     }
 }
+
+/// A drawing with two layout viewports: one with its own annotation scale, one without.
+fn with_viewports() -> (Drawing, cadcraft_doc::Handle, cadcraft_doc::Handle) {
+    let mut d = Drawing::new_metric();
+    d.scales.push(AnnoScale::new("Detail", 1.0, 3.0));
+    let vp = |x: f64, anno: Option<AnnoScale>| {
+        EntityKind::Viewport(cadcraft_doc::Viewport {
+            center: Vec3::new(x, 50.0, 0.0),
+            width: 80.0,
+            height: 60.0,
+            view_height: 3000.0,
+            id: 2,
+            anno_scale: anno,
+            ..Default::default()
+        })
+    };
+    let paper = Space::Paper("Layout1".into());
+    let own = d.add(&paper, Common::default(), vp(50.0, Some(AnnoScale::new("Detail", 1.0, 3.0)))).unwrap();
+    let plain = d.add(&paper, Common::default(), vp(150.0, None)).unwrap();
+    (d, own, plain)
+}
+
+fn viewport_anno(d: &Drawing, h: cadcraft_doc::Handle) -> Option<AnnoScale> {
+    match &d.layout("Layout1")?.entities.get(h)?.kind {
+        EntityKind::Viewport(v) => v.anno_scale.clone(),
+        _ => None,
+    }
+}
+
+#[test]
+fn a_viewports_own_annotation_scale_round_trips_through_dxf_and_dwg() {
+    let (d, own, plain) = with_viewports();
+    let text = write_dxf(&d);
+    assert!(text.contains("CADCRAFT_ANNOTATION") && text.contains("\"viewports\""));
+    let r = read_dxf(text.as_bytes()).unwrap();
+    assert_eq!(viewport_anno(&r, own), Some(AnnoScale::new("Detail", 1.0, 3.0)));
+    assert_eq!(viewport_anno(&r, plain), None);
+    let dwg = cadcraft_io::write(&d, "x.dwg").unwrap();
+    let r = cadcraft_io::read(&dwg, "x.dwg").unwrap();
+    let own_vp = r.layout("Layout1").unwrap().entities.iter().find(|e| matches!(&e.kind, EntityKind::Viewport(v) if v.center.x == 50.0)).unwrap();
+    assert_eq!(viewport_anno(&r, own_vp.handle).map(|s| s.name), Some("Detail".into()));
+    // Viewports that follow their viewport scale add nothing to the record.
+    let (mut d, own, _) = with_viewports();
+    d.modify_entity(own, |e| {
+        if let EntityKind::Viewport(v) = &mut e.kind {
+            v.anno_scale = None;
+        }
+    })
+    .unwrap();
+    assert!(!write_dxf(&d).contains("CADCRAFT_ANNOTATION"));
+}
+
+#[test]
+fn hostile_viewport_annotation_scales_are_ignored() {
+    let (d, own, plain) = with_viewports();
+    let text = write_dxf(&d);
+    let start = text.find("{\"version\":1,\"cannoscale\"").unwrap();
+    let end = start + text[start..].find("\r\n").unwrap();
+    let not_a_viewport = d.model.iter().next().map(|e| e.handle.hex()).unwrap_or_else(|| "1".into());
+    for junk in [
+        format!(
+            "{{\"version\":1,\"viewports\":[{{\"handle\":\"{}\",\"scale\":{{\"name\":\"x\",\"paperUnits\":0,\"drawingUnits\":1}}}}]}}",
+            own.hex()
+        ),
+        format!("{{\"version\":1,\"viewports\":[{{\"handle\":\"{}\",\"scale\":{{\"name\":\"\",\"paperUnits\":1,\"drawingUnits\":1}}}}]}}", own.hex()),
+        format!(
+            "{{\"version\":1,\"viewports\":[{{\"handle\":\"{}\",\"scale\":{{\"name\":\"x\",\"paperUnits\":1e308,\"drawingUnits\":1e-308}}}}]}}",
+            own.hex()
+        ),
+        "{\"version\":1,\"viewports\":[{\"handle\":\"ZZ\",\"scale\":{\"name\":\"x\",\"paperUnits\":1,\"drawingUnits\":2}}]}".into(),
+        format!(
+            "{{\"version\":1,\"viewports\":[{{\"handle\":\"{not_a_viewport}\",\"scale\":{{\"name\":\"x\",\"paperUnits\":1,\"drawingUnits\":2}}}}]}}"
+        ),
+        "{\"version\":1,\"viewports\":7}".into(),
+    ] {
+        let t = format!("{}{}{}", &text[..start], junk, &text[end..]);
+        let r = read_dxf(t.as_bytes()).unwrap();
+        assert_eq!(viewport_anno(&r, own), None, "{junk}");
+        assert_eq!(viewport_anno(&r, plain), None, "{junk}");
+    }
+}

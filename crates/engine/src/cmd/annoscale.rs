@@ -1,9 +1,9 @@
 //! Annotative scaling: the drawing's scale list (SCALELISTEDIT), the scales annotative objects
 //! support (OBJECTSCALE, Add/Delete Current Scale, ANNORESET, ANNOUPDATE), which annotative
 //! objects show (ANNOALLVISIBLE) and the current annotation scale (CANNOSCALE with
-//! ANNOAUTOSCALE).
+//! ANNOAUTOSCALE; inside a layout viewport, the viewport's own).
 
-use cadcraft_doc::{AnnoScale, Drawing, EntityKind, Handle, MAX_SCALES, is_annotative};
+use cadcraft_doc::{AnnoScale, Drawing, EntityKind, Handle, MAX_SCALES, Viewport, is_annotative};
 use serde_json::{Value, json};
 
 use super::machines::{SelOutcome, SelectPhase, SelectRun};
@@ -87,13 +87,22 @@ pub(crate) fn parse_ratio(t: &str) -> Option<(f64, f64)> {
     Some((a, b))
 }
 
-/// Make `name` the current annotation scale (CANNOSCALE). With ANNOAUTOSCALE on, the annotative
-/// objects of model space on layers that are on, thawed and unlocked get the scale too.
+/// Make `name` the current annotation scale: CANNOSCALE, or inside a layout viewport (MSPACE) the
+/// viewport's annotation scale. With ANNOAUTOSCALE on, the annotative objects of model space on
+/// layers that are on, thawed and unlocked get the scale too.
 pub(crate) fn set_current(s: &mut Session, name: &str) -> Result<()> {
     let sc = find_scale(s.doc()?, "setvar", name)?;
     let auto = s.settings.annoautoscale;
+    let active = s.state()?.active_viewport().map(|(h, _)| h);
     let d = s.doc_mut()?;
-    d.header.set_str("CANNOSCALE", &sc.name);
+    match active {
+        Some(h) => d.modify_entity(h, |e| {
+            if let EntityKind::Viewport(v) = &mut e.kind {
+                set_viewport_anno(v, &sc);
+            }
+        })?,
+        None => d.header.set_str("CANNOSCALE", &sc.name),
+    }
     if auto {
         let usable = |e: &cadcraft_doc::Entity| d.layer(&e.common.layer).is_none_or(|l| l.visible() && !l.locked);
         let hs: Vec<Handle> = d.model.iter().filter(|e| is_annotative(e) && usable(e)).map(|e| e.handle).collect();
@@ -102,6 +111,16 @@ pub(crate) fn set_current(s: &mut Session, name: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Give layout viewport `v` the annotation scale `sc`. An unlocked viewport's scale follows, as in
+/// AutoCAD; a locked one keeps its scale, so the two then differ.
+pub(crate) fn set_viewport_anno(v: &mut Viewport, sc: &AnnoScale) {
+    v.anno_scale = Some(sc.clone());
+    let vh = v.height * sc.factor();
+    if !v.locked && vh.is_finite() && vh > 0.0 && sc.is_valid() {
+        v.view_height = vh;
+    }
 }
 
 /// Add `sc` to annotative object `h`; whether it changed.
@@ -196,12 +215,12 @@ fn run_objectscale(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn run_add_current(s: &mut Session, p: &Value) -> Result<Value> {
-    let cur = s.doc()?.current_anno_scale();
+    let cur = s.anno_scale()?;
     run_objectscale(s, &with_handles(s, p, json!({ "add": cur.name })))
 }
 
 fn run_remove_current(s: &mut Session, p: &Value) -> Result<Value> {
-    let cur = s.doc()?.current_anno_scale();
+    let cur = s.anno_scale()?;
     run_objectscale(s, &with_handles(s, p, json!({ "delete": cur.name })))
 }
 
@@ -225,8 +244,8 @@ fn run_annoupdate(s: &mut Session, p: &Value) -> Result<Value> {
     if hs.is_empty() {
         return Err(bad("annoupdate", "nothing selected"));
     }
+    let cur = s.anno_scale()?;
     let d = s.doc()?;
-    let cur = d.current_anno_scale();
     // Hatches have no style: HPANNOTATIVE only sets new ones.
     let plan: Vec<(Handle, bool)> = hs
         .iter()
@@ -251,13 +270,18 @@ fn set_all_visible(s: &mut Session, on: Option<bool>) -> Result<Value> {
 
 // ---------------- the scale list ----------------
 
-/// Scales objects use, and the current one: they stay when the list is reset and can't be
-/// deleted.
+/// Scales objects and layout viewports use, and the current one: they stay when the list is
+/// reset and can't be deleted.
 fn in_use(d: &Drawing) -> Vec<AnnoScale> {
     let mut v = vec![d.current_anno_scale()];
     let ents = d.model.iter().chain(d.layouts.iter().flat_map(|l| l.entities.iter()));
-    for e in ents.filter(|e| is_annotative(e)) {
-        for sc in &e.common.anno_scales {
+    for e in ents {
+        let used: &[AnnoScale] = match &e.kind {
+            EntityKind::Viewport(vp) => vp.anno_scale.as_slice(),
+            _ if is_annotative(e) => &e.common.anno_scales,
+            _ => &[],
+        };
+        for sc in used {
             if v.len() < MAX_SCALES && !v.iter().any(|u| u.name.eq_ignore_ascii_case(&sc.name)) {
                 v.push(sc.clone());
             }
@@ -542,7 +566,7 @@ impl Interactive for ObjectScaleM {
         Ok(Step::Continue)
     }
     fn prompt(&self, s: &Session) -> Prompt {
-        let cur = s.doc().map(|d| d.current_anno_scale().name).unwrap_or_else(|_| "1:1".into());
+        let cur = s.anno_scale().map(|c| c.name).unwrap_or_else(|_| "1:1".into());
         match self.stage {
             ObjStage::Select => Prompt::new(if self.sel.removing { "Remove objects" } else { "Select annotative objects" }, Accept::SELECT),
             ObjStage::Option => Prompt::new("Enter an option", Accept::TEXT).kw(&["Add", "Delete", "?"]),
@@ -579,7 +603,7 @@ impl Interactive for ObjectScaleM {
                     echo_list(s);
                     return Ok(Step::Continue);
                 }
-                let name = if text.is_empty() { s.doc()?.current_anno_scale().name } else { text };
+                let name = if text.is_empty() { s.anno_scale()?.name } else { text };
                 self.apply(s, if stage == ObjStage::Add { "add" } else { "delete" }, &name);
                 self.stage = ObjStage::Option;
             }
