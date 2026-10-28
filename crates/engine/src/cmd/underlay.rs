@@ -12,7 +12,7 @@ use cadcraft_geom::{Vec2, Vec3};
 use serde_json::{Value, json};
 
 use super::machines::{SelOutcome, SelectPhase};
-use super::{CommandSpec, bad, f64_or, point_value, str_param, targets};
+use super::{CommandSpec, bad, point_value, str_param, targets};
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 /// The PDF reader, installed by the host.
@@ -110,10 +110,11 @@ fn run_pdfattach(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => v.as_f64().filter(|k| k.is_finite() && (1e-9..=1e9).contains(k)).ok_or_else(|| bad(ID, "`scale` must be a positive number"))?,
         None => 1.0,
     };
-    let rotation = f64_or(p, "rotation", 0.0);
-    if !rotation.is_finite() {
-        return Err(bad(ID, "`rotation` must be a number of degrees"));
-    }
+    // Strict like the other parameters: "90" or true is refused, not taken as 0.
+    let rotation = match p.get("rotation") {
+        None | Some(Value::Null) => 0.0,
+        Some(v) => v.as_f64().filter(|r| r.is_finite()).ok_or_else(|| bad(ID, "`rotation` must be a number of degrees"))?,
+    };
     let document = s.state().ok().and_then(|st| st.path.clone());
     let stored = stored_path(path, document.as_deref(), str_param(p, "pathType").unwrap_or("full")).map_err(|e| bad(ID, e))?;
     let adjust = adjust_params(ID, p)?;
