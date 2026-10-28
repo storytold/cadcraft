@@ -40,11 +40,7 @@ pub fn plain_mtext(s: &str) -> String {
             '\\' => {
                 let code = chars.get(i + 1).copied().unwrap_or(' ');
                 match code {
-                    'P' => {
-                        out.push('\n');
-                        i += 2;
-                    }
-                    'N' => {
+                    'P' | 'N' | 'X' | 'x' => {
                         out.push('\n');
                         i += 2;
                     }
@@ -77,7 +73,7 @@ pub fn plain_mtext(s: &str) -> String {
                         out.push_str(stack.trim_end_matches('/'));
                         i = j + 1;
                     }
-                    'L' | 'l' | 'O' | 'o' | 'K' | 'k' | 'X' | 'x' => i += 2,
+                    'L' | 'l' | 'O' | 'o' | 'K' | 'k' => i += 2,
                     'U' if chars.get(i + 2) == Some(&'+') => {
                         let (ch, j) = parse_hex_char(&chars, i + 3);
                         if let Some(c) = ch {
@@ -307,7 +303,7 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
                 let code = chars.get(i + 1).copied().unwrap_or(' ');
                 i += 2;
                 match code {
-                    'P' | 'N' => {
+                    'P' | 'N' | 'X' | 'x' => {
                         end_word(&mut atoms, &mut word);
                         atoms.push(Atom::Para(cur));
                     }
@@ -317,7 +313,7 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
                     'l' => derive(&mut fmts, &mut cur, &|f| f.under = false),
                     'O' => derive(&mut fmts, &mut cur, &|f| f.over = true),
                     'o' => derive(&mut fmts, &mut cur, &|f| f.over = false),
-                    'K' | 'k' | 'X' | 'x' => {}
+                    'K' | 'k' => {}
                     'U' if chars.get(i) == Some(&'+') => {
                         let (ch, j) = parse_hex_char(&chars, i + 1);
                         if let Some(c) = ch {
@@ -749,14 +745,16 @@ mod tests {
         assert_eq!(plain_mtext("a\\~b\\\\c"), "a b\\c");
         assert_eq!(plain_mtext("\\H2.5x;Big"), "Big");
         assert_eq!(plain_mtext("unterminated \\H2"), "unterminated ");
-        assert_eq!(plain_mtext("top\\Xbottom"), "topbottom");
+        assert_eq!(plain_mtext("top\\Xbottom"), "top\nbottom");
         assert_eq!(plain_mtext("\\U+00B110"), "±10");
     }
 
     #[test]
     fn dimension_x_and_unicode_escapes_lay_out() {
         let l = layout_mtext("top\\Xbottom", Vec2::ZERO, 1.0, 0.0, 1, 0.0, 1.0);
-        assert_eq!(l.lines[0], "topbottom");
+        assert_eq!(l.lines.len(), 2);
+        assert_eq!(l.lines[0], "top");
+        assert_eq!(l.lines[1], "bottom");
 
         let l_uni = layout_mtext("\\U+00B110", Vec2::ZERO, 1.0, 0.0, 1, 0.0, 1.0);
         assert_eq!(l_uni.lines[0], "±10");

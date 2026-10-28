@@ -1479,3 +1479,12 @@ fn mtext_dimension_x_escape_does_not_swallow_text() {
     assert!(g.mtext.contains("tiêu"));
     assert!(g.mtext.contains("chuẩn"));
 }
+
+#[test]
+fn dimension_text_split_x_renders_both_parts() {
+    let d = Drawing::new_imperial();
+    let dim = cadcraft_doc::Dimension { text: r"10\X20".into(), ..lin_dim() };
+    let g = dimension_in(&d, &dim);
+    assert_eq!(g.value, "10\n20");
+    assert!(!g.text.is_empty() || !g.text_runs.is_empty());
+}
