@@ -4,6 +4,8 @@
 //! Plotting goes through the host's [`super::file::IoHooks::plot`] hook so the engine stays
 //! I/O-agnostic.
 
+use std::collections::{HashMap, HashSet};
+
 use cadcraft_doc::{Drawing, Entity, EntityKind, EntityStore, Handle, Layout, PageSetup, Space, Viewport};
 use cadcraft_geom::{Bounds2, Vec2};
 use serde_json::{Value, json};
@@ -31,6 +33,9 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("layout.delete", "Delete Layout", run_delete).params("{name}"),
         CommandSpec::new("layout.rename", "Rename Layout", run_rename).params("{from?: current layout, to}"),
         CommandSpec::new("layout.copy", "Copy Layout", run_copy).params("{from, to?}"),
+        CommandSpec::new("layout.move", "Move or Copy Layout", run_move).params(
+            "{name | names: [layout…], before?: layout (default: to the end), copy?: bool (copies go there, the layouts stay)} → {layouts: [name…] in tab order, moved: [name…]}",
+        ),
         CommandSpec::new("layout.list", "List Layouts", run_list).params("→ [{name, tabOrder, page, viewports}]").noundo(),
         CommandSpec::new("layout.saveas", "Save Layout as Template", saveas::run_saveas)
             .params("{name?: layout (default: the current layout, else the first tab), path: .dwt (or .dwg, .dxf; no extension adds .dwt)} → {name, path, bytes, notSaved?}")
@@ -315,6 +320,69 @@ fn run_copy(s: &mut Session, p: &Value) -> Result<Value> {
     }
     d.layouts.push(Layout { name: to.clone(), tab_order: order, page: src.page, entities: store, view: src.view });
     Ok(json!({ "name": to }))
+}
+
+/// Most layouts one `layout.move` takes (input-derived: a cap on the work).
+const MAX_MOVE: usize = 10_000;
+
+/// Move or Copy (the layout tab menu): the layouts go, or their copies go, before `before` (or to
+/// the end), in their tab order; the tab order is renumbered from 1.
+fn run_move(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "layout.move";
+    let d = s.doc()?;
+    let mut requested: Vec<&str> = match p.get("names") {
+        Some(Value::Array(a)) => {
+            a.iter().take(MAX_MOVE).map(|v| v.as_str().ok_or_else(|| bad(CMD, "`names` must be layout names"))).collect::<Result<_>>()?
+        }
+        Some(_) => return Err(bad(CMD, "`names` must be an array of layout names")),
+        None => Vec::new(),
+    };
+    requested.extend(str_param(p, "name"));
+    if requested.is_empty() {
+        return Err(bad(CMD, "`name` or `names` is required"));
+    }
+    let names: Vec<String> = requested.into_iter().map(|n| layout_name(CMD, d, n)).collect::<Result<_>>()?;
+    let before = match str_param(p, "before") {
+        Some(b) => Some(layout_name(CMD, d, b)?),
+        None => None,
+    };
+    let copy = bool_or(p, "copy", false);
+    let mut order: Vec<String> = {
+        let mut ls: Vec<&Layout> = d.layouts.iter().collect();
+        ls.sort_by_key(|l| l.tab_order);
+        ls.into_iter().map(|l| l.name.clone()).collect()
+    };
+    // The moved layouts keep their tab order among themselves.
+    let picked: HashSet<String> = names.iter().cloned().collect();
+    let names: Vec<String> = order.iter().filter(|o| picked.contains(*o)).cloned().collect();
+    // Where they go: before `before`, or before the first layout after it that stays.
+    let anchor = before.as_ref().and_then(|b| {
+        let from = order.iter().position(|o| o == b)?;
+        order.iter().skip(from).find(|o| copy || !picked.contains(*o)).cloned()
+    });
+    let moved: Vec<String> = if copy {
+        let mut copies = Vec::with_capacity(names.len());
+        for n in &names {
+            let v = run_copy(s, &json!({ "from": n }))?;
+            copies.push(v.get("name").and_then(Value::as_str).ok_or_else(|| bad(CMD, "the copy has no name"))?.to_string());
+        }
+        copies
+    } else {
+        order.retain(|o| !picked.contains(o));
+        names
+    };
+    let at = anchor.and_then(|a| order.iter().position(|o| *o == a)).unwrap_or(order.len());
+    order.splice(at..at, moved.iter().cloned());
+    let rank: HashMap<&str, u32> =
+        order.iter().enumerate().map(|(i, n)| (n.as_str(), u32::try_from(i).unwrap_or(u32::MAX - 1).saturating_add(1))).collect();
+    let d = s.doc_mut()?;
+    for l in d.layouts.iter_mut() {
+        if let Some(r) = rank.get(l.name.as_str()) {
+            l.tab_order = *r;
+        }
+    }
+    s.touch();
+    Ok(json!({ "layouts": order, "moved": moved }))
 }
 
 fn run_list(s: &mut Session, _p: &Value) -> Result<Value> {

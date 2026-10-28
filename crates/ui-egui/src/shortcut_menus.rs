@@ -90,8 +90,9 @@ pub fn drawing_tab_entries(app: &CadApp, index: usize) -> Vec<Vec<Entry>> {
 }
 
 /// A layout tab's menu (`name` is the layout, "Model" the model tab): New Layout, From Template,
-/// Delete, Rename and Copy (layouts only), Page Setup Manager and Print. Delete, Rename and Copy
-/// go through LAYOUT's prompts, so Rename and Copy ask for the new name on the command line.
+/// Delete, Rename, Move or Copy and Copy (layouts only), Page Setup Manager and Print. Delete,
+/// Rename and Copy go through LAYOUT's prompts, so Rename and Copy ask for the new name on the
+/// command line; Move or Copy opens its dialog, which runs `layout.move`.
 pub fn layout_tab_entries(app: &CadApp, name: &str) -> Vec<Vec<Entry>> {
     let model = name == "Model";
     let layout = |op: &str, label: &str| action(label, format!("layout:{op}:{name}"), true);
@@ -100,7 +101,11 @@ pub fn layout_tab_entries(app: &CadApp, name: &str) -> Vec<Vec<Entry>> {
     if find_command("layout").is_some() {
         new.push(layout("template", "From Template..."));
         if !model {
-            new.extend([layout("delete", "Delete Layout"), layout("rename", "Rename Layout"), layout("copy", "Copy Layout")]);
+            new.extend([layout("delete", "Delete Layout"), layout("rename", "Rename Layout")]);
+            if find_command("layout.move").is_some() {
+                new.push(layout("movecopy", "Move or Copy..."));
+            }
+            new.push(layout("copy", "Copy Layout"));
         }
     }
     push(&mut groups, new);
@@ -211,6 +216,7 @@ fn layout_action(app: &mut CadApp, op: &str, name: &str) {
             let _ = app.run("layout.set", json!({ "name": name }));
             activate(app, op);
         }
+        "movecopy" => crate::managers::open_layout_move(app, name),
         // LAYOUT's options, as typed: Template asks for the file, Rename and Copy for the new name.
         "template" | "delete" | "rename" | "copy" => {
             activate(app, "layout");

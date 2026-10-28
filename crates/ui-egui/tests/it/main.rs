@@ -14,6 +14,7 @@ mod file_tab_titles;
 mod gpu_viewport_stencil;
 mod hidden_command_line;
 mod instant_modals;
+mod layout_move_copy;
 mod lisp_files;
 mod measure_distance_snapping;
 mod menubar_hover;

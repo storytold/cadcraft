@@ -1367,3 +1367,11 @@ menu	Modify	Edita
 	Check for Updates…	Verifica aggiornamenti…
 	CADCraft is up to date.	CADCraft è aggiornato.
 	Could not check for updates.	Impossibile verificare gli aggiornamenti.
+# Layout tab menu: Move or Copy.
+	Move or Copy...	Sposta o copia...
+	Move or Copy Layout	Sposta o copia layout
+	Move or Copy	Sposta o copia
+	Move or copy {name}	Sposta o copia {name}
+	Before layout:	Prima del layout:
+	(move to end)	(sposta alla fine)
+	Create a copy	Crea una copia

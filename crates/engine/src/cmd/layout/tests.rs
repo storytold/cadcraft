@@ -293,3 +293,75 @@ fn mspace_edits_model_through_viewport() {
     s.execute("layout.set", &json!({"name": "Model"})).unwrap();
     assert!(s.state().unwrap().mspace.is_none());
 }
+
+fn tab_names(s: &Session) -> Vec<String> {
+    let mut ls: Vec<_> = s.doc().unwrap().layouts.iter().map(|l| (l.tab_order, l.name.clone())).collect();
+    ls.sort();
+    ls.into_iter().map(|l| l.1).collect()
+}
+
+#[test]
+fn layout_move_reorders_the_tabs() {
+    let mut s = Session::new();
+    s.execute("layout.new", &json!({ "name": "C" })).unwrap();
+    assert_eq!(tab_names(&s), ["Layout1", "Layout2", "C"]);
+    let r = s.execute("layout.move", &json!({ "name": "C", "before": "Layout1" })).unwrap();
+    assert_eq!(r["layouts"], json!(["C", "Layout1", "Layout2"]));
+    assert_eq!(tab_names(&s), ["C", "Layout1", "Layout2"]);
+    let orders: Vec<u32> = {
+        let mut ls: Vec<_> = s.doc().unwrap().layouts.iter().map(|l| l.tab_order).collect();
+        ls.sort_unstable();
+        ls
+    };
+    assert_eq!(orders, [1, 2, 3], "renumbered from 1");
+    // No `before`: to the end. Names are matched without regard to case.
+    s.execute("layout.move", &json!({ "name": "c" })).unwrap();
+    assert_eq!(tab_names(&s), ["Layout1", "Layout2", "C"]);
+    // Before itself: nothing moves.
+    s.execute("layout.move", &json!({ "name": "Layout2", "before": "Layout2" })).unwrap();
+    assert_eq!(tab_names(&s), ["Layout1", "Layout2", "C"]);
+    // One undo step brings the order back.
+    s.execute("layout.move", &json!({ "name": "Layout1", "before": "C" })).unwrap();
+    assert_eq!(tab_names(&s), ["Layout2", "Layout1", "C"]);
+    s.execute("undo", &json!({})).unwrap();
+    assert_eq!(tab_names(&s), ["Layout1", "Layout2", "C"]);
+}
+
+#[test]
+fn layout_move_several_keeps_their_order_and_copy_leaves_them() {
+    let mut s = session_with_model();
+    for n in ["C", "D"] {
+        s.execute("layout.new", &json!({ "name": n })).unwrap();
+    }
+    // Picked in any order, they keep their tab order; `before` one of them goes before the next that stays.
+    s.execute("layout.move", &json!({ "names": ["D", "Layout1"], "before": "Layout1" })).unwrap();
+    assert_eq!(tab_names(&s), ["Layout1", "D", "Layout2", "C"]);
+    let r = s.execute("layout.move", &json!({ "names": ["Layout1", "C"], "before": "Layout2", "copy": true })).unwrap();
+    assert_eq!(r["moved"], json!(["Layout1 (2)", "C (2)"]));
+    assert_eq!(tab_names(&s), ["Layout1", "D", "Layout1 (2)", "C (2)", "Layout2", "C"]);
+    // The copy has its own viewport, with the same view.
+    let (a, b) = (viewports(&s, "Layout1"), viewports(&s, "Layout1 (2)"));
+    assert_eq!(a.len(), b.len());
+    assert!(a.iter().zip(&b).all(|(x, y)| x.0 != y.0 && x.1.view_center == y.1.view_center));
+}
+
+#[test]
+fn layout_move_refuses_what_it_cannot_do() {
+    let mut s = Session::new();
+    for p in [
+        json!({}),
+        json!({ "name": "Model" }),
+        json!({ "name": "Nope" }),
+        json!({ "name": "Layout1", "before": "Nope" }),
+        json!({ "names": "Layout1" }),
+        json!({ "names": [1, 2] }),
+        json!({ "name": 7 }),
+    ] {
+        assert!(s.execute("layout.move", &p).is_err(), "{p}");
+    }
+    assert_eq!(tab_names(&s), ["Layout1", "Layout2"], "nothing changed");
+    // A hostile list is capped, and repeats count once.
+    let many: Vec<&str> = std::iter::repeat_n("Layout1", 50_000).collect();
+    s.execute("layout.move", &json!({ "names": many })).unwrap();
+    assert_eq!(tab_names(&s), ["Layout2", "Layout1"]);
+}

@@ -1373,3 +1373,11 @@
 	Check for Updates…	Перевірити оновлення…
 	CADCraft is up to date.	Встановлено найновішу версію CADCraft.
 	Could not check for updates.	Не вдалося перевірити оновлення.
+# Layout tab menu: Move or Copy.
+	Move or Copy...	Перемістити або копіювати...
+	Move or Copy Layout	Перемістити або копіювати аркуш
+	Move or Copy	Перемістити або копіювати
+	Move or copy {name}	Перемістити або копіювати {name}
+	Before layout:	Перед аркушем:
+	(move to end)	(перемістити в кінець)
+	Create a copy	Створити копію

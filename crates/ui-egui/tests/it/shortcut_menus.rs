@@ -102,6 +102,9 @@ fn layout_tab_menu() {
 
     let second = before[1].clone();
     let g = sm::layout_tab_entries(&app, &second);
+    choose(&mut app, &g, "Move or Copy...");
+    assert_eq!(app.ui.dialog, Some(format!("layoutmove:{second}")), "Move or Copy opens its dialog");
+    app.ui.dialog = None;
     choose(&mut app, &g, "Delete Layout");
     assert!(!layout_names(&app).contains(&second));
 

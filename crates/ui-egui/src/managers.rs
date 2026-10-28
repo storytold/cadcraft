@@ -1,6 +1,6 @@
 //! Style and settings dialogs opened from the menus: Linetype Manager, Point Style, Text Style,
-//! Table Style, Multileader Style, Page Setup Manager, Plot, Constraint Settings and Named
-//! Viewports.
+//! Table Style, Multileader Style, Page Setup Manager, Plot, Constraint Settings, Named
+//! Viewports and Move or Copy (layouts).
 //!
 //! Typed or chosen from a menu (no parameters) these commands open their dialog; JSON calls run
 //! the command. The dialogs read the drawing and change it only through the same commands
@@ -17,8 +17,12 @@ use crate::theme::Tokens;
 
 /// The Block Attribute Manager (BATTMAN).
 mod battman;
+/// Move or Copy (a layout tab's menu).
+mod layout_move;
 /// Named Viewports (View > Viewports > Named Viewports...).
 mod named_vports;
+
+pub use layout_move::open as open_layout_move;
 
 /// Open the dialog for a typed or menu-invoked command. `None` if `id` has no dialog here or the
 /// call carries parameters.
@@ -59,6 +63,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
         "csettings" => constraint_settings(app, ctx, open),
         "namedvports" => named_vports::dialog(app, ctx, open),
         "plot" => plot(app, ctx, open),
+        n if n.starts_with(layout_move::DIALOG) => layout_move::dialog(app, ctx, n, open),
         _ => {
             *open = false;
             None
