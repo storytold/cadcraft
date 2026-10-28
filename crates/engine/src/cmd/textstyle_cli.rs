@@ -7,7 +7,7 @@
 use cadcraft_doc::{Drawing, TextStyle};
 use serde_json::{Value, json};
 
-use super::*;
+use super::CommandSpec;
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 pub fn specs() -> Vec<CommandSpec> {
