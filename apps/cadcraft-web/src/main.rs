@@ -6,9 +6,12 @@
 //! with egui shapes instead of the GPU canvas, `?sample` opens the sample drawing. Saving downloads
 //! the drawing through the browser (`download.rs`). With `?host=parent` (inside an `<iframe>`), a
 //! same-origin parent page sends the drawing to open and stores what CADCraft saves instead
-//! (`host.rs`).
+//! (`host.rs`). Unsaved drawings are autosaved in the browser's storage and offered for recovery
+//! when the page starts again (`autosave.rs`).
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+#[cfg(any(target_arch = "wasm32", test))]
+mod autosave;
 #[cfg(target_arch = "wasm32")]
 pub mod download;
 #[cfg(target_arch = "wasm32")]
@@ -59,10 +62,12 @@ mod web {
             self.0.raw_input_hook(ctx, raw);
             cadcraft_ui_egui::cmdline::capture_tab(ctx, raw);
         }
-        /// Preferences (interface theme and language) survive reloads; egui state is not kept.
+        /// Preferences (interface theme and language, the autosave interval) survive reloads; egui
+        /// state is not kept.
         fn save(&mut self, storage: &mut dyn eframe::Storage) {
             storage.set_string(cadcraft_ui_egui::options::PROFILE_KEY, self.0.profile_json());
             storage.set_string(cadcraft_ui_egui::PREFS_KEY, self.0.prefs_json());
+            storage.set_string(cadcraft_ui_egui::autosave::PREFS_KEY, cadcraft_ui_egui::autosave::prefs_json());
         }
         fn persist_egui_memory(&self) -> bool {
             false
@@ -159,6 +164,15 @@ mod web {
                         }
                         if let Some(prefs) = cc.storage.and_then(|s| s.get_string(cadcraft_ui_egui::PREFS_KEY)) {
                             app.load_prefs(&prefs);
+                        }
+                        // SAVETIME; autosaves go to the browser's storage, and what a closed,
+                        // reloaded or crashed tab left there is offered in Drawing Recovery.
+                        if let Some(prefs) = cc.storage.and_then(|s| s.get_string(cadcraft_ui_egui::autosave::PREFS_KEY)) {
+                            cadcraft_ui_egui::autosave::load_prefs(&prefs);
+                        }
+                        if let Err(e) = crate::autosave::start(&mut app) {
+                            log::warn!("{e}");
+                            app.set_status(e);
                         }
                         // `?cpu`: no render state for the app, so the canvas draws with egui shapes.
                         if !crate::wants_cpu(&query())

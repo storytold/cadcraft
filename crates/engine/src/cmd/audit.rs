@@ -30,8 +30,9 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
-/// Drawing Recovery: list the autosave files that apps which stopped left in SAVEFILEPATH, open
-/// one as an unsaved copy, or delete one. Only listed files can be opened or deleted.
+/// Drawing Recovery: list the autosave files that apps which stopped left in SAVEFILEPATH (or, with
+/// an autosave store installed, as on the web, their records in it), open one as an unsaved copy,
+/// or delete one. Only listed files can be opened or deleted.
 fn run_drawingrecovery(s: &mut Session, p: &Value) -> Result<Value> {
     let action = str_param(p, "action").unwrap_or("list").to_ascii_lowercase();
     let files = recoverable_files();
@@ -43,7 +44,13 @@ fn run_drawingrecovery(s: &mut Session, p: &Value) -> Result<Value> {
         "list" => Ok(json!({ "files": files })),
         "open" => {
             let f = pick()?;
-            run_recover(s, &json!({ "path": f.path, "copy": true, "title": f.drawing }))
+            match crate::autosave::store::with(|st| crate::autosave::store::read(st, &f.path)) {
+                Some(bytes) => {
+                    let bytes = bytes.map_err(|e| bad("drawingrecovery", e))?;
+                    recover_bytes(s, &bytes, &f.path, None, Some(&f.drawing), true)
+                }
+                None => run_recover(s, &json!({ "path": f.path, "copy": true, "title": f.drawing })),
+            }
         }
         "discard" => {
             let f = pick()?;
@@ -54,8 +61,15 @@ fn run_drawingrecovery(s: &mut Session, p: &Value) -> Result<Value> {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+/// What Drawing Recovery offers: the installed autosave store's records, or else the files in
+/// SAVEFILEPATH.
 fn recoverable_files() -> Vec<crate::autosave::Recoverable> {
+    // This app's own records are never listed: its lock is fresh.
+    crate::autosave::store::with(|st| crate::autosave::store::recoverable(st, "")).unwrap_or_else(recoverable_dir_files)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn recoverable_dir_files() -> Vec<crate::autosave::Recoverable> {
     let dir = crate::autosave::savefilepath();
     if dir.is_empty() {
         return Vec::new();
@@ -65,17 +79,23 @@ fn recoverable_files() -> Vec<crate::autosave::Recoverable> {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn recoverable_files() -> Vec<crate::autosave::Recoverable> {
+fn recoverable_dir_files() -> Vec<crate::autosave::Recoverable> {
     Vec::new()
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn discard_file(path: &str) {
+    if crate::autosave::store::with(|st| crate::autosave::store::discard(st, path)).is_none() {
+        discard_dir_file(path);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn discard_dir_file(path: &str) {
     crate::autosave::discard(path);
 }
 
 #[cfg(target_arch = "wasm32")]
-fn discard_file(_: &str) {}
+fn discard_dir_file(_: &str) {}
 
 /// Check the current drawing; with `fix`, repair it (one undo step).
 fn run_audit(s: &mut Session, p: &Value) -> Result<Value> {
@@ -106,13 +126,19 @@ fn run_recover(s: &mut Session, p: &Value) -> Result<Value> {
         }
         (None, None) => return Err(bad("recover", "`path` or `data` (base64) is required")),
     };
+    recover_bytes(s, &bytes, &name, path, str_param(p, "title"), bool_or(p, "copy", false))
+}
+
+/// RECOVER on a drawing's bytes, read as file `name` (`path`: the file it came from, kept as the
+/// drawing's file name unless it opens as an unsaved `copy` titled `title`).
+fn recover_bytes(s: &mut Session, bytes: &[u8], name: &str, path: Option<String>, title: Option<&str>, copy: bool) -> Result<Value> {
+    let name = name.to_string();
     let hooks = file::io().ok_or_else(|| bad("recover", "file formats are not available in this build"))?;
-    let d = (hooks.read)(&bytes, &name).map_err(|e| bad("recover", format!("{name} can't be read: {e}")))?;
-    let title = match str_param(p, "title") {
+    let d = (hooks.read)(bytes, &name).map_err(|e| bad("recover", format!("{name} can't be read: {e}")))?;
+    let title = match title {
         Some(t) => t.to_string(),
         None => std::path::Path::new(&name).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| name.clone()),
     };
-    let copy = bool_or(p, "copy", false);
     let i = s.open_drawing(d, &title, if copy { None } else { path });
     let st = s.state_mut()?;
     let report = crate::audit::fix(Arc::make_mut(&mut st.doc));

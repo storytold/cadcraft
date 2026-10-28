@@ -275,7 +275,7 @@ pub struct CadApp {
     pub quit_confirmed: bool,
     /// A close request waiting for "Save changes?" answers ([`closing`]).
     pub closing: Option<closing::Closing>,
-    /// Autosave (desktop; `None` until [`Self::enable_autosave`]).
+    /// Autosave (`None` until [`Self::enable_autosave`], or [`Self::enable_store_autosave`] on the web).
     pub autosave: Option<cadcraft_engine::autosave::Autosaver>,
     /// Drawing Recovery: autosave files a crashed app left behind.
     pub recovery: autosave::Recovery,

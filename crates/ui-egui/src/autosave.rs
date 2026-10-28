@@ -1,7 +1,10 @@
 //! Autosave and Drawing Recovery in the app. The engine decides what to write and writes it
 //! ([`cadcraft_engine::autosave`]); this runs it every frame, keeps SAVETIME and SAVEFILEPATH with
 //! the preferences, and shows the Drawing Recovery list after a crash: each autosaved drawing can
-//! be opened (as an unsaved copy) or discarded. On the web there is no autosave yet.
+//! be opened (as an unsaved copy) or discarded. The web build has no files: it installs the
+//! browser's storage as the engine's autosave store ([`autosave::store`]) and calls
+//! [`CadApp::enable_store_autosave`]; the same list then offers what a closed, reloaded or crashed
+//! tab left there.
 
 use cadcraft_engine::autosave::{self, Recoverable};
 use egui::{RichText, vec2};
@@ -58,11 +61,31 @@ impl CadApp {
         self.autosave = Some(saver);
     }
 
+    /// Turn autosave on into the installed autosave store (the web build, after
+    /// [`autosave::store::install`]), as app instance `instance`; what tabs that stopped left
+    /// there is listed for Drawing Recovery.
+    pub fn enable_store_autosave(&mut self, instance: String) {
+        let saver = autosave::Autosaver::for_store(instance);
+        autosave::store::with(autosave::store::prune_locks);
+        self.recovery.items = autosave::store::with(|st| autosave::store::recoverable(st, &saver.instance)).unwrap_or_default();
+        self.autosave = Some(saver);
+    }
+
+    /// Whether autosaves go to the browser's storage rather than to files.
+    fn autosave_in_store(&self) -> bool {
+        self.autosave.as_ref().is_some_and(autosave::Autosaver::uses_store)
+    }
+
     /// Open recovery item `i` as an unsaved copy. Its autosave file stays until that drawing is
     /// saved or closed, so a second crash doesn't lose it.
     pub fn recover_item(&mut self, i: usize) -> Result<(), String> {
         let item = self.recovery.items.get(i).cloned().ok_or("no such recovery file")?;
-        let r = self.run("recover", json!({ "path": item.path, "copy": true, "title": item.drawing }))?;
+        let r = if self.autosave_in_store() {
+            // No paths in a store: DRAWINGRECOVERY reads the record and RECOVERs it.
+            self.run("drawingrecovery", json!({ "action": "open", "path": item.path }))?
+        } else {
+            self.run("recover", json!({ "path": item.path, "copy": true, "title": item.drawing }))?
+        };
         self.recovery.items.remove(i);
         if let (Some(saver), Some(uid)) = (&mut self.autosave, r.get("uid").and_then(Value::as_u64)) {
             saver.adopt(&self.session, uid, &item.path);
@@ -75,17 +98,30 @@ impl CadApp {
     /// Delete recovery item `i`'s file.
     pub fn discard_item(&mut self, i: usize) {
         if i < self.recovery.items.len() {
-            let _item = self.recovery.items.remove(i);
-            #[cfg(not(target_arch = "wasm32"))]
-            autosave::discard(&_item.path);
+            let item = self.recovery.items.remove(i);
+            if self.autosave_in_store() {
+                autosave::store::with(|st| autosave::store::discard(st, &item.path));
+            } else {
+                #[cfg(not(target_arch = "wasm32"))]
+                autosave::discard(&item.path);
+            }
         }
     }
 
     /// Every frame: autosave what is due, and wake up when the next one is.
-    pub fn autosave_tick(&mut self, _ctx: &egui::Context) {
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(wait) = self.autosave.as_mut().and_then(|s| s.tick(&self.session)) {
-            _ctx.request_repaint_after(wait);
+    pub fn autosave_tick(&mut self, ctx: &egui::Context) {
+        let Some(saver) = self.autosave.as_mut() else { return };
+        let wait = if saver.uses_store() {
+            let tick = saver.tick_store(&self.session);
+            if let Some(e) = tick.errors.last() {
+                self.set_status(e.clone());
+            }
+            tick.next_due.map(std::time::Duration::from_secs_f64)
+        } else {
+            tick_files(saver, &self.session)
+        };
+        if let Some(wait) = wait {
+            ctx.request_repaint_after(wait);
         }
     }
 
@@ -93,22 +129,46 @@ impl CadApp {
     /// session may not survive it) and show [`gpu_notice`].
     pub fn gpu_fault_tick(&mut self, ctx: &egui::Context) {
         let Some(fault) = self.gpu_faults.take() else { return };
-        #[cfg(not(target_arch = "wasm32"))]
-        let saved = self.autosave.as_mut().map_or(0, |a| a.save_now(&self.session));
-        #[cfg(target_arch = "wasm32")]
-        let saved = 0;
+        let saved = self.autosave.as_mut().map_or(0, |a| save_now(a, &self.session));
         let autosaved = self.gpu_notice.as_ref().map_or(0, |n| n.autosaved) + saved;
         self.gpu_notice = Some(GpuNotice { fault, autosaved });
         ctx.request_repaint();
     }
 
-    /// The app closes normally: this app's autosave files are not needed any more.
+    /// The app closes normally: this app's autosave files are not needed any more. (A browser tab
+    /// has no normal exit: its records stay until their drawings are saved or closed.)
     pub fn shutdown_autosave(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(s) = &mut self.autosave {
             s.shutdown();
         }
     }
+}
+
+/// Autosave to files what is due (desktop); how long until the next autosave is due.
+#[cfg(not(target_arch = "wasm32"))]
+fn tick_files(saver: &mut autosave::Autosaver, session: &cadcraft_engine::Session) -> Option<std::time::Duration> {
+    saver.tick(session)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn tick_files(_: &mut autosave::Autosaver, _: &cadcraft_engine::Session) -> Option<std::time::Duration> {
+    None
+}
+
+/// Autosave every drawing with changes not yet autosaved at once; how many were written.
+fn save_now(saver: &mut autosave::Autosaver, session: &cadcraft_engine::Session) -> usize {
+    if saver.uses_store() { saver.save_now_store(session).written } else { save_files_now(saver, session) }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn save_files_now(saver: &mut autosave::Autosaver, session: &cadcraft_engine::Session) -> usize {
+    saver.save_now(session)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn save_files_now(_: &mut autosave::Autosaver, _: &cadcraft_engine::Session) -> usize {
+    0
 }
 
 /// `secs` since 1970 as `YYYY-MM-DD HH:MM` (UTC). Past chrono's year 262143 range the proleptic
@@ -154,7 +214,11 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         ui.set_width(460.0);
         ui.label(RichText::new("Drawing Recovery").strong());
         ui.add_space(4.0);
-        ui.label("CADCraft did not close normally. These drawings were autosaved:");
+        if app.autosave_in_store() {
+            ui.label("CADCraft was closed, reloaded or stopped with unsaved changes. These drawings were autosaved in this browser:");
+        } else {
+            ui.label("CADCraft did not close normally. These drawings were autosaved:");
+        }
         ui.add_space(6.0);
         egui::Grid::new("cc_recovery_list").num_columns(4).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
             for (i, item) in app.recovery.items.iter().enumerate() {

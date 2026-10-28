@@ -9,8 +9,12 @@
 //! an instance id ([`is_instance_id`]) are ever read as ours or deleted.
 //!
 //! [`Autosaver::plan`] decides what to write and delete (no I/O, so it is testable); on the desktop
-//! [`Autosaver::tick`] carries it out, writing on a background thread. SAVETIME and SAVEFILEPATH
-//! are profile settings: process-wide, not saved in the drawing.
+//! [`Autosaver::tick`] carries it out, writing on a background thread. The web build has no files:
+//! an autosaver made with [`Autosaver::for_store`] keeps its autosaves in a key-value store (the
+//! browser's `localStorage`, see [`store`]) through [`Autosaver::tick_store`]. SAVETIME and
+//! SAVEFILEPATH are profile settings: process-wide, not saved in the drawing.
+
+pub mod store;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -30,7 +34,6 @@ pub const MAX_SAVETIME: u32 = 600;
 /// A lock file not refreshed for this long belongs to an app that is no longer running.
 pub const STALE_LOCK_SECS: u64 = 5 * 60;
 /// How often a running app refreshes its lock file.
-#[cfg(not(target_arch = "wasm32"))]
 const HEARTBEAT_SECS: f64 = 60.0;
 
 static SAVETIME: AtomicU32 = AtomicU32::new(DEFAULT_SAVETIME);
@@ -125,6 +128,10 @@ pub struct Autosaver {
     docs: HashMap<u64, Tracked>,
     /// Drawings whose autosave is being written right now.
     busy: HashSet<u64>,
+    /// Autosaves go to the installed [`store`] instead of files.
+    in_store: bool,
+    /// When the lock record in the store was last refreshed.
+    store_beat: Option<f64>,
     /// Writes in progress; each tells whether its file was written.
     #[cfg(not(target_arch = "wasm32"))]
     running: Vec<(u64, std::thread::JoinHandle<bool>)>,
@@ -140,6 +147,8 @@ impl Autosaver {
             instance: instance.into(),
             docs: HashMap::new(),
             busy: HashSet::new(),
+            in_store: false,
+            store_beat: None,
             #[cfg(not(target_arch = "wasm32"))]
             running: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -147,6 +156,17 @@ impl Autosaver {
             #[cfg(not(target_arch = "wasm32"))]
             last_beat: None,
         }
+    }
+
+    /// An autosaver that keeps its autosaves in the installed [`store`] (the web build): the
+    /// "paths" of its jobs and files are record keys, and [`Autosaver::tick_store`] runs it.
+    pub fn for_store(instance: impl Into<String>) -> Self {
+        Autosaver { in_store: true, ..Self::new(instance) }
+    }
+
+    /// Whether this autosaver writes to the installed [`store`] rather than to files.
+    pub fn uses_store(&self) -> bool {
+        self.in_store
     }
 
     /// Take over an existing autosave file for drawing `uid` (a drawing opened from Drawing
@@ -214,10 +234,10 @@ impl Autosaver {
             let Ok(doc) = st.recovery_drawing() else {
                 continue;
             };
-            let path = t
-                .file
-                .clone()
-                .unwrap_or_else(|| std::path::Path::new(dir).join(file_name(&st.title, &self.instance, st.uid)).to_string_lossy().to_string());
+            let path = t.file.clone().unwrap_or_else(|| {
+                let name = file_name(&st.title, &self.instance, st.uid);
+                if self.in_store { store::key(&name) } else { std::path::Path::new(dir).join(name).to_string_lossy().to_string() }
+            });
             t.file = Some(path.clone());
             t.written = Some(Arc::downgrade(&st.doc));
             t.host = Some(Arc::downgrade(st.drawing()));
@@ -227,6 +247,14 @@ impl Autosaver {
         jobs
     }
 
+    /// A write of drawing `uid` failed: it no longer counts as autosaved, so the next plan restarts
+    /// its clock and it is tried again SAVETIME later even if it doesn't change.
+    fn unwritten(&mut self, uid: u64) {
+        if let Some(t) = self.docs.get_mut(&uid) {
+            t.written = None;
+        }
+    }
+
     /// Seconds from `now` until the next autosave is due, if one is waiting.
     pub fn next_due(&self, now: f64, minutes: u32) -> Option<f64> {
         if minutes == 0 {
@@ -234,6 +262,90 @@ impl Autosaver {
         }
         self.docs.values().filter_map(|t| t.since).map(|since| (since + f64::from(minutes) * 60.0 - now).max(0.0)).reduce(f64::min)
     }
+}
+
+/// What [`Autosaver::tick_store`] did.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StoreTick {
+    /// Seconds until the next autosave is due, if one is waiting.
+    pub next_due: Option<f64>,
+    /// Drawings autosaved now.
+    pub written: usize,
+    /// Autosaves that failed, worded for the user (storage missing or full, drawing too large).
+    pub errors: Vec<String>,
+}
+
+impl Autosaver {
+    /// Autosave what is due into the installed [`store`] and delete the records no longer needed
+    /// (the web build calls this every frame). With no store installed nothing happens.
+    pub fn tick_store(&mut self, s: &Session) -> StoreTick {
+        self.run_store(s, false)
+    }
+
+    /// [`Autosaver::tick_store`] writing every drawing with changes not yet autosaved at once,
+    /// without waiting for SAVETIME (the page may not survive what just happened, e.g. a lost
+    /// graphics device).
+    pub fn save_now_store(&mut self, s: &Session) -> StoreTick {
+        self.run_store(s, true)
+    }
+
+    fn run_store(&mut self, s: &Session, urgent: bool) -> StoreTick {
+        let minutes = savetime();
+        store::with(|st| {
+            let now = st.now();
+            let jobs = self.plan_with(s, now, minutes, store::KEY_PREFIX, urgent);
+            let mut tick = self.perform_store(st, jobs, now);
+            if urgent {
+                self.store_beat = None;
+            }
+            self.heartbeat_store(st, now);
+            tick.next_due = self.next_due(now, minutes);
+            tick
+        })
+        .unwrap_or_default()
+    }
+
+    /// Carry out jobs from [`Autosaver::plan`] in the store. A write that fails leaves its drawing
+    /// counted as not autosaved, so it is tried again SAVETIME later.
+    fn perform_store(&mut self, st: &mut dyn store::Store, jobs: Vec<Job>, now: f64) -> StoreTick {
+        let mut tick = StoreTick::default();
+        for job in jobs {
+            match job {
+                Job::Delete { path } => store::discard(st, &path),
+                Job::Write { uid, path, doc } => match write_record(st, &path, &doc, now) {
+                    Ok(()) => {
+                        log::info!("autosaved {path}");
+                        tick.written += 1;
+                    }
+                    Err(e) => {
+                        log::warn!("autosave {path}: {e}");
+                        self.unwritten(uid);
+                        let title = store::parse_key(&path).map_or("the drawing", |(t, _, _)| t);
+                        tick.errors.push(format!("Autosave of {title} failed: {e}"));
+                    }
+                },
+            }
+        }
+        tick
+    }
+
+    /// Keep this app's lock record fresh while it has autosaves in the store.
+    fn heartbeat_store(&mut self, st: &mut dyn store::Store, now: f64) {
+        if self.docs.values().all(|t| t.file.is_none()) || self.store_beat.is_some_and(|b| (0.0..HEARTBEAT_SECS).contains(&(now - b))) {
+            return;
+        }
+        self.store_beat = Some(now);
+        if let Err(e) = st.set(&store::lock_key(&self.instance), &format!("{now:.0}")) {
+            log::warn!("autosave: lock record: {e}");
+        }
+    }
+}
+
+/// Write `doc` as DXF into the store under `key`.
+fn write_record(st: &mut dyn store::Store, key: &str, doc: &Drawing, now: f64) -> std::result::Result<(), String> {
+    let write = crate::cmd::file::io().map(|h| h.write).ok_or("file formats are not available in this build")?;
+    let bytes = write(doc, "autosave.dxf")?;
+    store::write(st, key, &bytes, now).map_err(|e| e.to_string())
 }
 
 /// A file Drawing Recovery offers: an autosave left behind by an app that is no longer running.
@@ -403,12 +515,6 @@ mod native {
                 if !h.join().unwrap_or(false) {
                     self.unwritten(uid);
                 }
-            }
-        }
-
-        fn unwritten(&mut self, uid: u64) {
-            if let Some(t) = self.docs.get_mut(&uid) {
-                t.written = None;
             }
         }
 
