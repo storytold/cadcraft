@@ -30,6 +30,22 @@ struct LinearDimState {
     text_mid: Vec2,
 }
 
+fn has_dimension_split(s: &str) -> bool {
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.peek() {
+                Some('\\') => {
+                    chars.next();
+                }
+                Some('X' | 'x') => return true,
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
 pub(super) fn draw_linear(config: &DimConfig<'_>, g: &mut DimGeometry, text_angle_out: &mut f64, text_mid_out: &mut Vec2) {
     let mut state = prepare_linear(config, g, *text_mid_out);
     position_linear_text(config, &mut state);
@@ -80,7 +96,7 @@ fn prepare_linear(config: &DimConfig<'_>, g: &mut DimGeometry, text_mid: Vec2) -
     };
     let inside_angle = if st.text_inside_horizontal { 0.0 } else { along_angle };
     let tvp = if st.text_above == 0 && st.text_vertical_pos.is_finite() { st.text_vertical_pos } else { 0.0 };
-    let has_x = g.mtext.contains("\\X") || g.mtext.contains("\\x");
+    let has_x = has_dimension_split(&g.mtext);
     let centred = st.text_above == 0 && tvp.abs() < 0.7 && !has_x;
     let text_need = if centred { 2.0 * (extent(inside_angle) + config.gap) } else { 2.0 * extent(inside_angle) };
     let fits = !has_text || measurement >= text_need + 2.0 * arrow_width;
