@@ -57,11 +57,12 @@ pub(super) fn groups(ui: &mut egui::Ui, d: &Drawing, desc: &Description, ids: &[
     let angles = AngleSettings::from_header(&d.header);
     // A fixed-height text style names itself in the dimension's Text style row.
     let text_style = typed.iter().flat_map(|g| &g.rows).find(|r| r.key == "textStyle" && !r.varies).map(|r| r.display.clone());
+    let rows = Rows { d, ids, angles: &angles, text_style: text_style.as_deref() };
     for g in typed {
         group(ui, g.name);
         for row in &g.rows {
             // The row's label names its value field and menu for screen readers.
-            ui.name_inputs(crate::i18n::t(row.label).to_string(), |ui| described_row(ui, d, row, ids, &angles, text_style.as_deref(), edit, bad));
+            ui.name_inputs(crate::i18n::t(row.label).to_string(), |ui| described_row(ui, &rows, row, edit, bad));
         }
     }
     true
@@ -94,16 +95,18 @@ fn note(row: &Row, text_style: Option<&str>) -> Option<String> {
     })
 }
 
-fn described_row(
-    ui: &mut egui::Ui,
-    d: &Drawing,
-    row: &Row,
-    ids: &[String],
-    angles: &AngleSettings,
-    text_style: Option<&str>,
-    edit: &mut Option<Edit>,
-    bad: &mut Option<String>,
-) {
+/// What every described row is drawn with: the drawing, the selected objects' handles, how the
+/// drawing measures angles, and the dimension text style when the objects share one.
+#[derive(Clone, Copy)]
+struct Rows<'a> {
+    d: &'a Drawing,
+    ids: &'a [String],
+    angles: &'a AngleSettings,
+    text_style: Option<&'a str>,
+}
+
+fn described_row(ui: &mut egui::Ui, rows: &Rows<'_>, row: &Row, edit: &mut Option<Edit>, bad: &mut Option<String>) {
+    let Rows { d, ids, angles, text_style } = *rows;
     let t = Tokens::get();
     let key = row.key;
     let mut picked: Option<Value> = None;
