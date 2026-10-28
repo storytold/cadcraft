@@ -303,3 +303,196 @@ fn a_normal_low_degree_spline_is_valid() {
     assert!(s.is_valid());
     assert!(s.tessellate(1e-3).len() > 4);
 }
+
+thread_local! {
+    /// While set, `solve` runs `solve_dense` (this thread only, so parallel tests do not mix).
+    pub(super) static DENSE_ORACLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `solve` before it was limited to the matrix band, kept as the reference.
+#[allow(clippy::needless_range_loop)]
+pub(super) fn solve_dense(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
+    let n = b.len();
+    for c in 0..n {
+        let piv = (c..n).max_by(|&i, &j| a[i][c].abs().total_cmp(&a[j][c].abs()))?;
+        if a[piv][c].abs() < 1e-14 {
+            return None;
+        }
+        a.swap(c, piv);
+        b.swap(c, piv);
+        for r in c + 1..n {
+            let f = a[r][c] / a[c][c];
+            if f != 0.0 {
+                for k in c..n {
+                    a[r][k] -= f * a[c][k];
+                }
+                b[r] -= f * b[c];
+            }
+        }
+    }
+    let mut x = vec![0.0; n];
+    for r in (0..n).rev() {
+        let s: f64 = (r + 1..n).map(|k| a[r][k] * x[k]).sum();
+        x[r] = (b[r] - s) / a[r][r];
+    }
+    Some(x)
+}
+
+fn bits(v: &[f64]) -> Vec<u64> {
+    v.iter().map(|x| x.to_bits()).collect()
+}
+
+fn bits2(v: &[Vec2]) -> Vec<u64> {
+    v.iter().flat_map(|p| [p.x.to_bits(), p.y.to_bits()]).collect()
+}
+
+/// Both solvers on one system: `None` together, or the same bits.
+fn assert_same_solution(a: &[Vec<f64>], b: &[f64], what: &str) {
+    let old = solve_dense(a.to_vec(), b.to_vec());
+    let new = solve(a.to_vec(), b.to_vec());
+    assert_eq!(old.as_deref().map(bits), new.as_deref().map(bits), "{what}");
+}
+
+/// A random matrix with `kl` sub- and `ku` super-diagonals (some entries exactly zero).
+fn banded(n: usize, kl: usize, ku: usize, seed: &mut u64) -> Vec<Vec<f64>> {
+    let mut a = vec![vec![0.0; n]; n];
+    for (r, row) in a.iter_mut().enumerate() {
+        for (c, v) in row.iter_mut().enumerate() {
+            if c + kl >= r && c <= r + ku && noise(seed) > 0.15 {
+                *v = noise(seed) * 4.0 - 2.0;
+            }
+        }
+    }
+    a
+}
+
+#[test]
+fn banded_solve_matches_the_dense_sweep_bit_for_bit() {
+    let mut seed = 0x5eed_u64;
+    for n in [1, 2, 3, 4, 5, 8, 17, 40, 120] {
+        for (kl, ku) in [(0, 0), (1, 0), (0, 2), (1, 1), (3, 3), (2, 5), (n, n)] {
+            for _ in 0..6 {
+                let a = banded(n, kl, ku, &mut seed);
+                // Right-hand sides with zeros of both signs make the zero-sign cases reachable.
+                let b: Vec<f64> = (0..n)
+                    .map(|i| [noise(&mut seed) * 9.0 - 4.0, 0.0, -0.0][(noise(&mut seed) * 3.0) as usize % 3] * (i % 4 != 0) as u8 as f64)
+                    .collect();
+                assert_same_solution(&a, &b, &format!("n={n} kl={kl} ku={ku}"));
+                assert_same_solution(&a, &vec![0.0; n], &format!("zero rhs n={n} kl={kl} ku={ku}"));
+                assert_same_solution(&a, &vec![-0.0; n], &format!("negative-zero rhs n={n} kl={kl} ku={ku}"));
+            }
+        }
+    }
+}
+
+#[test]
+fn solve_handles_negative_zeros_signed_zero_sums_and_hostile_values() {
+    let mut seed = 77_u64;
+    for n in [3, 6, 30] {
+        let mut a = banded(n, 1, 2, &mut seed);
+        // A stored `-0.0` outside the band is still part of the matrix.
+        a[0][n - 1] = -0.0;
+        a[n - 1][0] = -0.0;
+        let b: Vec<f64> = (0..n).map(|i| if i % 2 == 0 { -0.0 } else { 1.0 }).collect();
+        assert_same_solution(&a, &b, &format!("negative zeros n={n}"));
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 1e200, 1e101] {
+            let mut ab = a.clone();
+            ab[n / 2][n / 2] = bad;
+            assert_same_solution(&ab, &b, &format!("{bad:?} in the matrix, n={n}"));
+            let mut bb = b.clone();
+            bb[n - 1] = bad;
+            assert_same_solution(&a, &bb, &format!("{bad:?} in the rhs, n={n}"));
+        }
+    }
+    // Bad values in a narrow band with no corner entry, so the guard (not a full-width matrix) decides.
+    for bad in [f64::NAN, f64::INFINITY, 1e200, 1e101] {
+        let a = banded(12, 1, 2, &mut seed);
+        let mut ab = a.clone();
+        ab[5][5] = bad;
+        ab[5][6] = 1.0;
+        assert_same_solution(&ab, &[1.0; 12], &format!("{bad:?} in a narrow band"));
+        let mut b = vec![1.0; 12];
+        b[3] = bad;
+        assert_same_solution(&a, &b, &format!("{bad:?} in the rhs of a narrow band"));
+    }
+    // Singular and empty systems.
+    assert_same_solution(&[vec![0.0, 0.0], vec![0.0, 1.0]], &[1.0, 1.0], "singular");
+    assert_same_solution(&[], &[], "empty");
+    assert_eq!(solve(Vec::new(), Vec::new()), Some(Vec::new()));
+}
+
+/// Fit points: a wavy line with noise; every `zero_every`-th coordinate is exactly zero.
+fn fit_points(n: usize, seed: &mut u64, zero_every: usize) -> Vec<Vec2> {
+    (0..n)
+        .map(|i| {
+            let x = i as f64 * 3.0 + noise(seed);
+            let y = (i as f64 * 0.3).sin() * 50.0 + noise(seed) * 5.0;
+            if zero_every > 0 && i % zero_every == 0 { Vec2::new(x, 0.0) } else { Vec2::new(x, y) }
+        })
+        .collect()
+}
+
+fn spline_bits(s: &Spline) -> (Vec<u64>, Vec<u64>, Vec<u64>, Vec<u64>, usize) {
+    (bits(&s.knots), bits2(&s.control), bits(&s.weights), bits2(&s.fit), s.degree)
+}
+
+/// Fit with the banded `solve`, then with the dense reference, and compare every bit.
+/// Clears `DENSE_ORACLE` when dropped, so a failing assertion cannot leave it set.
+struct OracleOff;
+impl Drop for OracleOff {
+    fn drop(&mut self) {
+        DENSE_ORACLE.set(false);
+    }
+}
+
+fn assert_fit_unchanged(fit: &[Vec2], closed: bool, opts: FitOptions, what: &str) {
+    let _off = OracleOff;
+    let new = Spline::fit_with(fit, closed, opts);
+    DENSE_ORACLE.set(true);
+    let old = Spline::fit_with(fit, closed, opts);
+    DENSE_ORACLE.set(false);
+    assert_eq!(spline_bits(&old), spline_bits(&new), "{what}");
+}
+
+#[test]
+fn fits_are_bit_identical_to_the_dense_solver() {
+    let mut seed = 2432_u64;
+    let tolerant = FitOptions { tolerance: 0.5, ..FitOptions::default() };
+    let tangents = FitOptions { start_tangent: Some(Vec2::new(0.0, 1.0)), end_tangent: Some(Vec2::new(1.0, -1.0)), ..FitOptions::default() };
+    let chord = FitOptions { knots: crate::KnotParam::Chord, ..FitOptions::default() };
+    for n in [3, 4, 5, 7, 12, 30, 100] {
+        for round in 0..4 {
+            let zero_every = [0, 2, 3, 1][round];
+            let pts = fit_points(n, &mut seed, zero_every);
+            for closed in [false, true] {
+                for (name, opts) in [("default", FitOptions::default()), ("tolerance", tolerant), ("tangents", tangents), ("chord", chord)] {
+                    assert_fit_unchanged(&pts, closed, opts, &format!("n={n} closed={closed} {name} zero_every={zero_every}"));
+                }
+            }
+        }
+    }
+    // Large point sets: open interpolation (banded) and a closed one (full bandwidth), and a
+    // tolerance fit at the size the approximation search still accepts.
+    let big = fit_points(1000, &mut seed, 0);
+    assert_fit_unchanged(&big, false, FitOptions::default(), "n=1000 open");
+    assert_fit_unchanged(&big[..150], true, FitOptions::default(), "n=150 closed");
+    assert_fit_unchanged(&big[..300], false, tolerant, "n=300 tolerance");
+    // Repeated points are kinks, which fit each piece on its own.
+    let mut kinked = fit_points(40, &mut seed, 0);
+    kinked.insert(10, kinked[10]);
+    kinked.insert(25, kinked[25]);
+    assert_fit_unchanged(&kinked, false, FitOptions::default(), "kinks");
+}
+
+#[test]
+fn the_cyclic_matrix_of_a_closed_fit_keeps_the_full_sweep() {
+    // Corner entries give the closed matrix a full bandwidth; it must still agree with the dense sweep.
+    let mut seed = 9_u64;
+    for n in [4, 9, 60] {
+        let mut a = banded(n, 1, 1, &mut seed);
+        a[0][n - 1] = 0.7;
+        a[n - 1][0] = -0.3;
+        let b: Vec<f64> = (0..n).map(|_| noise(&mut seed)).collect();
+        assert_same_solution(&a, &b, &format!("cyclic n={n}"));
+    }
+}

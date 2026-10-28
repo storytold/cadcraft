@@ -288,21 +288,64 @@ fn basis_into(span: usize, u: f64, p: usize, knots: &[f64], n: &mut [f64], left:
     }
 }
 
-/// Gaussian elimination with partial pivoting.
+/// Gaussian elimination with partial pivoting. The interpolation and least-squares matrices are
+/// banded, so every loop is limited to the band (lower width `kl`, upper width `ku`, measured from
+/// the matrix; partial pivoting widens the upper band to at most `kl + ku`). The skipped operations
+/// only combine entries that are exactly `+0.0` (they stay `+0.0` through the full sweep), so the
+/// result is bit for bit that of the full sweep (for finite input that does not overflow). A matrix with full bandwidth (the cyclic matrix of
+/// a closed fit) costs what it did before.
+///
+/// A skipped `0 * x` is not zero when `x` is NaN or infinite, so a matrix or right-hand side with
+/// NaN, infinity or magnitudes above `1e100` (which could overflow) takes the full sweep, and so
+/// does a back-substitution row whose banded sum is zero (skipped zero terms can flip its sign).
 #[allow(clippy::needless_range_loop)]
 pub(crate) fn solve(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
+    #[cfg(test)]
+    if tests::DENSE_ORACLE.get() {
+        return tests::solve_dense(a, b);
+    }
     let n = b.len();
+    // Per row: how far its non-zero entries reach left and right of the diagonal, and whether one
+    // is NaN, infinite or large enough to overflow.
+    let measure = |r: usize, row: &[f64]| {
+        // Bit test, not `!= 0.0`: a stored `-0.0` is not the `+0.0` the skipped entries rely on.
+        let row = row.get(..n).unwrap_or(row);
+        let Some(first) = row.iter().position(|v| v.to_bits() != 0) else { return (0, 0, false) };
+        let last = row.iter().rposition(|v| v.to_bits() != 0).unwrap_or(first);
+        let wild = row.get(first..=last).is_some_and(|band| band.iter().any(|v| v.is_nan() || v.abs() > 1e100));
+        (r.saturating_sub(first), last.saturating_sub(r), wild)
+    };
+    let join = |x: (usize, usize, bool), m: (usize, usize, bool)| (x.0.max(m.0), x.1.max(m.1), x.2 | m.2);
+    // A last row that reaches column 0 (the cyclic matrix of a closed fit) makes every range of the
+    // sweep full-width whatever the other rows hold, so they need no measuring.
+    let mut m = (0usize, 0usize, false);
+    for r in [0, n.saturating_sub(1)] {
+        if let Some(row) = a.get(r) {
+            m = join(m, measure(r, row));
+        }
+    }
+    // (kl = n - 1 widens every range to the full matrix, so the unmeasured rows cannot matter.)
+    if m.0 + 1 < n {
+        m = a.iter().enumerate().take(n).fold(m, |x, (r, row)| join(x, measure(r, row)));
+    }
+    let (mut kl, mut ku, wild) = m;
+    if wild || b.iter().any(|v| v.is_nan() || v.abs() > 1e100) {
+        (kl, ku) = (n, n);
+    }
+    let kw = ku + kl;
     for c in 0..n {
-        let piv = (c..n).max_by(|&i, &j| a[i][c].abs().total_cmp(&a[j][c].abs()))?;
+        let end = (c + kl).min(n - 1) + 1;
+        let piv = (c..end).max_by(|&i, &j| a[i][c].abs().total_cmp(&a[j][c].abs()))?;
         if a[piv][c].abs() < 1e-14 {
             return None;
         }
         a.swap(c, piv);
         b.swap(c, piv);
-        for r in c + 1..n {
+        let kend = (c + kw).min(n - 1) + 1;
+        for r in c + 1..end {
             let f = a[r][c] / a[c][c];
             if f != 0.0 {
-                for k in c..n {
+                for k in c..kend {
                     a[r][k] -= f * a[c][k];
                 }
                 b[r] -= f * b[c];
@@ -311,7 +354,12 @@ pub(crate) fn solve(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
     }
     let mut x = vec![0.0; n];
     for r in (0..n).rev() {
-        let s: f64 = (r + 1..n).map(|k| a[r][k] * x[k]).sum();
+        let end = (r + kw).min(n - 1) + 1;
+        let mut s: f64 = (r + 1..end).map(|k| a[r][k] * x[k]).sum();
+        if s == 0.0 && end < n {
+            // The skipped terms are signed zeros; added to a zero they can flip its sign.
+            s = (r + 1..n).map(|k| a[r][k] * x[k]).sum();
+        }
         x[r] = (b[r] - s) / a[r][r];
     }
     Some(x)
