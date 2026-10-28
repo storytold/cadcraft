@@ -14,6 +14,10 @@ crate (DWG reading and writing, https://github.com/hakanaktt/acadrust) is licens
 Mozilla Public License 2.0 and is used unmodified as a separate library (crates/dwg). Its source
 is available from crates.io and the repository above.
 
+CADCraft's DWG container code (crates/dwg/src/codec) is ported by its author, WithShalom
+(design@withshalom.com), from the cad-dwg crate (https://github.com/withshalom/CAD, MIT OR
+Apache-2.0), and is offered under CADCraft's license above.
+
 
 CADCraft's icons, drafting font, hatch patterns and linetypes are drawn or defined in code.
 The UI also bundles the egui font inputs described below. The per-file list is in ATTRIBUTION.md.
