@@ -25,6 +25,10 @@ mod edit;
 
 /// Most preview entities drawn while the array is edited.
 const PREVIEW_LIMIT: usize = 2000;
+/// Most objects whose key points are searched for a Key point base point.
+const MAX_KEY_OBJECTS: usize = 10_000;
+/// The prompt after the Key point option of a base point.
+const KEY_POINT_PROMPT: &str = "Specify key point on source objects to use as base point";
 /// Keyword-only prompts: each typed token is matched on its own (no free text).
 const KEYWORDS: Accept = Accept { point: false, number: false, text: false, select: false, enter: true };
 
@@ -39,13 +43,13 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("arrayrect", "Rectangular Array", run_arrayrect)
             .menu(&["Modify", "Array", "Rectangular Array"])
             .params(
-                "{handles?, rows, cols, rowSpacing, colSpacing, levels? (1), levelSpacing?, rowElevation?, axisAngle? (degrees), base? ([x, y], default the objects' centre), associative?: bool (default ARRAYASSOCIATIVITY, on)} → {handle (the array, when associative), created (copies)}",
+                "{handles?, rows, cols, rowSpacing, colSpacing, levels? (1), levelSpacing?, rowElevation?, axisAngle? (degrees), base? ([x, y], default the objects' centre), keyPoint? ([x, y]: the base point is the objects' key point nearest it), associative?: bool (default ARRAYASSOCIATIVITY, on)} → {handle (the array, when associative), created (copies)}",
             )
             .interactive(|_| Ok(Box::new(RectM::default()))),
         CommandSpec::new("arraypolar", "Polar Array", run_arraypolar)
             .menu(&["Modify", "Array", "Polar Array"])
             .params(
-                "{handles?, center, count, angle? (degrees, default 360), rotate?: bool, rows? (1), rowSpacing?, rowElevation?, levels? (1), levelSpacing?, base? ([x, y], default the first object's centre), associative?: bool (default ARRAYASSOCIATIVITY, on)} → {handle (the array, when associative), created (copies)}",
+                "{handles?, center, count, angle? (degrees, default 360), rotate?: bool, rows? (1), rowSpacing?, rowElevation?, levels? (1), levelSpacing?, base? ([x, y], default the first object's centre), keyPoint? ([x, y]: the base point is the objects' key point nearest it), associative?: bool (default ARRAYASSOCIATIVITY, on)} → {handle (the array, when associative), created (copies)}",
             )
             .interactive(|_| Ok(Box::new(PolarM::default()))),
     ]
@@ -219,6 +223,32 @@ fn bounds(d: &Drawing, hs: &[Handle]) -> Bounds2 {
 }
 
 /// The centre of the first object (the point a non-rotated polar copy is moved by).
+/// The key point of `ents`, placed by `m`, nearest `at`: one of their grips (end points,
+/// midpoints, centres, vertices, insertion points). `None` when they have none.
+pub(crate) fn nearest_key_point<'a>(ents: impl Iterator<Item = &'a Entity>, m: &Mat3, at: Vec2) -> Option<Vec2> {
+    if !at.is_finite() {
+        return None;
+    }
+    let mut best: Option<(Vec2, f64)> = None;
+    for e in ents.take(MAX_KEY_OBJECTS) {
+        let mut k = e.kind.clone();
+        k.transform(m);
+        for g in k.grips().into_iter().filter(|g| g.is_finite()) {
+            let d = g.dist(at);
+            if best.is_none_or(|(_, bd)| d < bd) {
+                best = Some((g, d));
+            }
+        }
+    }
+    best.map(|b| b.0)
+}
+
+/// The key point of objects `hs` in the drawing nearest `at`.
+pub(crate) fn key_point_of(d: &Drawing, hs: &[Handle], at: Vec2) -> Result<Vec2> {
+    nearest_key_point(hs.iter().filter_map(|h| d.entity(*h)).map(|e| &**e), &Mat3::IDENTITY, at)
+        .ok_or_else(|| other("The objects have no key point; specify a point."))
+}
+
 fn first_center(d: &Drawing, hs: &[Handle]) -> Option<Vec2> {
     hs.first().and_then(|h| d.entity(*h)).map(|e| cadcraft_doc::entity_bounds(d, e, 0).center()).filter(|c| c.is_finite())
 }
@@ -348,9 +378,10 @@ fn run_arrayrect(s: &mut Session, p: &Value) -> Result<Value> {
         row_elevation: f64_or(p, "rowElevation", 0.0),
     });
     let rs = f64_or(p, "rowSpacing", 1.0);
-    let base = match point_param(p, "base") {
-        Some(b) => b,
-        None => Some(bounds(s.doc()?, &hs).center()).filter(|c| c.is_finite()).unwrap_or_default(),
+    let base = match (point_param(p, "keyPoint"), point_param(p, "base")) {
+        (Some(k), _) => key_point_of(s.doc()?, &hs, k)?,
+        (None, Some(b)) => b,
+        (None, None) => Some(bounds(s.doc()?, &hs).center()).filter(|c| c.is_finite()).unwrap_or_default(),
     };
     let p2 = params(kind, levels, f64_or(p, "levelSpacing", rs));
     let associative = bool_or(p, "associative", assoc_default(s));
@@ -364,7 +395,10 @@ fn run_arraypolar(s: &mut Session, p: &Value) -> Result<Value> {
     let rows = count_or(p, "rows", 1);
     let levels = count_or(p, "levels", 1);
     check_size(s, n.saturating_mul(rows).saturating_mul(levels), hs.len())?;
-    let base = point_param(p, "base").or_else(|| s.doc().ok().and_then(|d| first_center(d, &hs))).unwrap_or(c);
+    let base = match point_param(p, "keyPoint") {
+        Some(k) => key_point_of(s.doc()?, &hs, k)?,
+        None => point_param(p, "base").or_else(|| s.doc().ok().and_then(|d| first_center(d, &hs))).unwrap_or(c),
+    };
     let row_spacing = f64_or(p, "rowSpacing", 1.0);
     let kind = ArrayKind::Polar(PolarArray {
         center: c - base,
@@ -461,6 +495,8 @@ enum RStage {
     Main,
     Assoc,
     Base,
+    /// Base point: Key point (a grip of the source objects).
+    BaseKey,
     /// COUnt: columns, then rows.
     CountCols,
     CountRows,
@@ -621,6 +657,7 @@ impl Interactive for RectM {
                 .default("eXit"),
             Assoc => assoc_prompt(self.assoc),
             Base => Prompt::new("Specify base point", Accept::POINT).kw(&["Key point"]).default("centroid"),
+            BaseKey => Prompt::new(KEY_POINT_PROMPT, Accept::POINT),
             CountCols | ColsCount => cols(),
             CountRows | RowsCount => rows(),
             SpaceCols => dist("Specify the distance between columns", self.cs).kw(&["Unit cell"]),
@@ -670,10 +707,12 @@ impl Interactive for RectM {
                 self.base = self.centroid;
                 Main
             }
-            (Base, Input::Keyword(_)) => {
-                s.echo("Key points are not available yet; specify a point.");
-                Base
+            (Base, Input::Keyword(_)) => BaseKey,
+            (BaseKey, Input::Point(p)) => {
+                self.base = key_point_of(s.doc()?, &self.objs, *p)?;
+                Main
             }
+            (BaseKey, Input::Enter) => Base,
             (CountCols | ColsCount, _) => match count(&i, self.cols, max_count(s, self.rows.saturating_mul(self.levels), n))? {
                 Some(c) => {
                     self.cols = c;
@@ -816,6 +855,9 @@ enum PStage {
     Main,
     Assoc,
     Base,
+    /// Key point of the base point asked from the center prompt, or from the main prompt.
+    CenterBaseKey,
+    BaseKey,
     Items,
     Between,
     Fill,
@@ -992,6 +1034,7 @@ impl Interactive for PolarM {
         match self.stage {
             Center => Prompt::new("Specify center point of array", Accept::POINT).kw(&["Base point", "Axis of rotation"]),
             CenterBase | Base => Prompt::new("Specify base point", Accept::POINT).kw(&["Key point"]).default("centroid"),
+            CenterBaseKey | BaseKey => Prompt::new(KEY_POINT_PROMPT, Accept::POINT),
             Main => Prompt::new("Select grip to edit array", Accept::POINT)
                 .kw(&["ASsociative", "Base point", "Items", "Angle between", "Fill angle", "ROWs", "Levels", "ROTate items", "eXit"])
                 .default("eXit"),
@@ -1050,10 +1093,14 @@ impl Interactive for PolarM {
                 self.base = None;
                 if stage == CenterBase { Center } else { Main }
             }
-            (CenterBase | Base, Input::Keyword(_)) => {
-                s.echo("Key points are not available yet; specify a point.");
-                stage
+            (CenterBase, Input::Keyword(_)) => CenterBaseKey,
+            (Base, Input::Keyword(_)) => BaseKey,
+            (CenterBaseKey | BaseKey, Input::Point(p)) => {
+                self.base = Some(key_point_of(s.doc()?, &self.objs, *p)?);
+                if stage == CenterBaseKey { Center } else { Main }
             }
+            (CenterBaseKey, Input::Enter) => CenterBase,
+            (BaseKey, Input::Enter) => Base,
             (Items, _) => match count(&i, self.items, max_count(s, self.rows.saturating_mul(self.levels), n))? {
                 Some(c) => {
                     self.items = c;
