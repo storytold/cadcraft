@@ -175,6 +175,9 @@ struct PlannedDef {
     /// Unloaded: an underlay keeps no state of its own, so a loaded and an unloaded underlay of
     /// one page get a definition each.
     unloaded: bool,
+    /// The underlays using it, gathered while planning so writing doesn't scan every underlay
+    /// per definition (CWE-407).
+    users: Vec<Handle>,
 }
 
 /// The objects behind a drawing's PDF underlays, with handles allocated before anything is written.
@@ -225,14 +228,15 @@ pub(crate) fn plan<'a>(entities: impl Iterator<Item = &'a cadcraft_doc::Entity>,
                     name = format!("{base}_{n}");
                     *n = n.saturating_add(1);
                 }
-                p.defs.push(PlannedDef { handle: next(), name, path: u.path.clone(), page: u.page.max(1), unloaded: u.unloaded });
+                p.defs.push(PlannedDef { handle: next(), name, path: u.path.clone(), page: u.page.max(1), unloaded: u.unloaded, users: Vec::new() });
                 let at = p.defs.len().saturating_sub(1);
                 index.insert(k, at);
                 at
             }
         };
-        if let Some(def) = p.defs.get(at) {
+        if let Some(def) = p.defs.get_mut(at) {
             p.by_entity.insert(e.handle, def.handle.clone());
+            def.users.push(e.handle);
         }
     }
     if !p.defs.is_empty() {
@@ -311,7 +315,7 @@ pub(crate) fn objects(p: &Plan, root: &str) -> Vec<Tag> {
         // Its reactors: the dictionary, then the underlays using it (a PDF whose definition
         // names none is listed as unreferenced).
         t.extend([Tag::s(0, "PDFDEFINITION"), Tag::s(5, &d.handle), Tag::s(102, "{ACAD_REACTORS"), Tag::s(330, &p.dict)]);
-        let mut users: Vec<Handle> = p.by_entity.iter().filter(|(_, def)| **def == d.handle).map(|(h, _)| *h).collect();
+        let mut users = d.users.clone();
         users.sort_unstable();
         t.extend(users.iter().map(|h| Tag::s(330, h.hex())));
         t.push(Tag::s(102, "}"));
@@ -326,7 +330,7 @@ pub(crate) fn objects(p: &Plan, root: &str) -> Vec<Tag> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cadcraft_doc::{Common, Space};
+    use cadcraft_doc::{Common, Entity, Space};
 
     fn drawing() -> Drawing {
         let mut d = Drawing::new_metric();
@@ -512,6 +516,68 @@ mod tests {
         assert_eq!(flags(&new), Some(11));
         assert_eq!(flags(&PdfUnderlay { clipping: false, ..new }), Some(10));
         assert!(!read_entity(&[Tag::i(280, 10)]).clipping && read_entity(&[Tag::i(280, 11)]).clipping);
+    }
+
+    /// Each definition lists exactly its own underlays, whatever the mix of shared and distinct files.
+    #[test]
+    fn each_definition_lists_its_own_underlays_as_reactors() {
+        let u = |path: &str, page| PdfUnderlay { path: path.into(), page, ..PdfUnderlay::default() };
+        let es = [
+            Entity::new(Handle(0x30), EntityKind::PdfUnderlay(u("/a.pdf", 1))),
+            Entity::new(Handle(0x10), EntityKind::PdfUnderlay(u("/b.pdf", 1))),
+            Entity::new(Handle(0x20), EntityKind::PdfUnderlay(u("/a.pdf", 1))),
+            Entity::new(Handle(0x40), EntityKind::PdfUnderlay(u("/a.pdf", 2))),
+            Entity::new(Handle(0x50), EntityKind::PdfUnderlay(PdfUnderlay { unloaded: true, ..u("/a.pdf", 1) })),
+        ];
+        let mut n = 0x100u64;
+        let p = plan(es.iter(), || {
+            n += 1;
+            Handle(n).hex()
+        });
+        let tags = objects(&p, "C");
+        // Per PDFDEFINITION: its handle, then the 330 groups inside its reactor block.
+        let mut reactors: Vec<(String, Vec<String>)> = Vec::new();
+        let mut inside = false;
+        for (i, t) in tags.iter().enumerate() {
+            if t.code == 0 && t.str() == "PDFDEFINITION" {
+                let h = tags.get(i + 1).map(Tag::str).unwrap_or_default();
+                reactors.push((h, Vec::new()));
+            } else if t.code == 102 {
+                inside = t.str() == "{ACAD_REACTORS";
+            } else if inside
+                && t.code == 330
+                && let Some((_, r)) = reactors.last_mut()
+            {
+                r.push(t.str());
+            }
+        }
+        let def_of = |h: u64| p.by_entity.get(&Handle(h)).cloned().unwrap_or_default();
+        let users = |def: &str| reactors.iter().find(|(d, _)| d == def).map(|(_, r)| r.clone()).unwrap_or_default();
+        // The dictionary first, then the underlays in handle order.
+        assert_eq!(users(&def_of(0x30)), vec![p.dict.clone(), "20".into(), "30".into()]);
+        assert_eq!(def_of(0x20), def_of(0x30));
+        assert_eq!(users(&def_of(0x10)), vec![p.dict.clone(), "10".into()]);
+        assert_eq!(users(&def_of(0x40)), vec![p.dict.clone(), "40".into()]);
+        assert_eq!(users(&def_of(0x50)), vec![p.dict.clone(), "50".into()]);
+        assert_eq!(reactors.len(), 4);
+    }
+
+    /// A file with one PDF per underlay (one definition each) is written in linear time: each
+    /// definition's users are gathered while planning, not by scanning every underlay (CWE-407).
+    #[test]
+    fn many_underlays_of_distinct_files_are_written_quickly() {
+        let es: Vec<Entity> = (1..=60_000u64)
+            .map(|i| Entity::new(Handle(i), EntityKind::PdfUnderlay(PdfUnderlay { path: format!("/p{i}.pdf"), page: 1, ..PdfUnderlay::default() })))
+            .collect();
+        let mut n = 0x100_000u64;
+        let t = std::time::Instant::now();
+        let p = plan(es.iter(), || {
+            n += 1;
+            Handle(n).hex()
+        });
+        let tags = objects(&p, "C");
+        assert!(t.elapsed().as_secs() < 5, "took {:?}", t.elapsed());
+        assert_eq!(tags.iter().filter(|t| t.code == 0 && t.str() == "PDFDEFINITION").count(), 60_000);
     }
 
     #[test]
