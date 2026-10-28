@@ -92,7 +92,12 @@ impl GripEdit {
         if self.hot.contains(&(h, i)) || self.hot.len() >= MAX_HOT {
             return Ok(());
         }
-        let p = s.grips_of(h)?.get(i).copied().ok_or_else(|| other("no such grip"))?;
+        // A selected group's centre grip (GROUPDISPLAYMODE) stands for the whole group.
+        let p = if i == super::groups::GROUP_GRIP {
+            s.group_grip_of(h).ok_or_else(|| other("no such grip"))?
+        } else {
+            s.grips_of(h)?.get(i).copied().ok_or_else(|| other("no such grip"))?
+        };
         if self.hot.is_empty() {
             self.base = p;
             self.targets.push(h);
@@ -209,7 +214,10 @@ impl GripEdit {
     /// Edit with the dragged point `to` (STRETCH) or the transform `m` (the other modes).
     fn edit(&mut self, s: &mut Session, to: Vec2, m: Option<Mat3>) -> Result<Step> {
         let before = s.state()?.doc.clone();
+        let group = self.hot.iter().any(|(_, i)| *i == super::groups::GROUP_GRIP);
         let changed = match (self.mode, m) {
+            // Stretching a group's centre grip moves the group.
+            (GripMode::Stretch, _) if group => !transform_entities(s, &self.targets, &Mat3::translate(to - self.base), self.copy)?.is_empty(),
             (GripMode::Stretch, _) => !stretch_grips(s, &self.hot, &self.targets, to - self.base, self.copy)?.is_empty(),
             (_, Some(m)) => !transform_entities(s, &self.targets, &m, self.copy)?.is_empty(),
             (_, None) => return Err(other("Invalid point.")),
@@ -444,7 +452,20 @@ impl Interactive for GripEdit {
             Ask::Base | Ask::RefFirst => return Vec::new(),
         };
         let Ok(d) = s.doc() else { return Vec::new() };
-        let mut out: Vec<EntityKind> = if self.mode == GripMode::Stretch {
+        let group = self.hot.iter().any(|(_, i)| *i == super::groups::GROUP_GRIP);
+        let mut out: Vec<EntityKind> = if self.mode == GripMode::Stretch && group {
+            let m = Mat3::translate(c - base);
+            self.targets
+                .iter()
+                .take(500)
+                .filter_map(|h| d.entity(*h))
+                .map(|e| {
+                    let mut k = e.kind.clone();
+                    k.transform(&m);
+                    k
+                })
+                .collect()
+        } else if self.mode == GripMode::Stretch {
             super::gripcmds::stretched(s, &self.hot, &self.targets, c - base).into_iter().take(500).map(|(_, k)| k).collect()
         } else {
             match self.matrix(c) {

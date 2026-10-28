@@ -492,6 +492,11 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             Ok(Value::Null)
         }
         // Typed or from the Tools menu: the Command Aliases dialog. JSON calls keep the JSON form.
+        // Typed or from the Tools menu: the Object Grouping dialog. JSON calls list the groups.
+        "classicgroup" if params.is_null() => {
+            app.ui.dialog = Some("objectgrouping".into());
+            Ok(Value::Null)
+        }
         "aliasedit" if params.is_null() => {
             crate::aliasdlg::open(app);
             Ok(Value::Null)

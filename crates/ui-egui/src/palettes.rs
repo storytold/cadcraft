@@ -9,6 +9,8 @@ use crate::CadApp;
 use crate::icons::{self, Icon};
 use crate::theme::Tokens;
 
+/// The Object Grouping dialog (CLASSICGROUP).
+pub mod groupdlg;
 #[cfg(test)]
 mod layer_menu_tests;
 /// The hatch pattern picker.

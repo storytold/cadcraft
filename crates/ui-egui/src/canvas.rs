@@ -1050,30 +1050,48 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         && let Ok(st) = app.session.state()
     {
         let gs = app.session.settings.gripsize as f32;
+        // A selected group shows one grip at its centre (and its box, GROUPDISPLAYMODE 2), not
+        // its members' grips.
+        let groups = app.session.group_grips();
+        // (object, grip index, position, the grip's size on screen).
+        let mut grips: Vec<(Handle, usize, Vec2, egui::Vec2)> = Vec::new();
+        for g in &groups {
+            if g.frame {
+                let (a, b) = (xf.to_screen(g.bounds.min), xf.to_screen(g.bounds.max));
+                painter.rect_stroke(Rect::from_two_pos(a, b), 0.0, Stroke::new(1.0, t.grip), egui::StrokeKind::Middle);
+            }
+            if let Some(m) = g.members.first() {
+                grips.push((*m, cadcraft_engine::GROUP_GRIP, g.center, vec2(gs * 2.0, gs * 2.0)));
+            }
+        }
         for h in sel.iter().take(200) {
+            if groups.iter().any(|g| g.members.contains(h)) {
+                continue;
+            }
             if let Some(e) = st.doc.entity(*h) {
-                let grips = e.kind.grips();
-                let count = grips.len();
-                for (gi, g) in grips.into_iter().enumerate() {
-                    let sp = xf.to_screen(g);
-                    if rect.contains(sp) {
-                        let r = grip_rect(&e.kind, count, gi, sp, gs);
-                        let hot = app.canvas.hot_grips.contains(&(*h, gi));
-                        let warm = !hot && hover_pos.is_some_and(|hp| r.expand(2.0).contains(hp));
-                        painter.rect_filled(
-                            r,
-                            0.0,
-                            if hot {
-                                t.grip_hot
-                            } else if warm {
-                                Color32::from_rgb(0xff, 0x7f, 0x9f)
-                            } else {
-                                t.grip
-                            },
-                        );
-                        painter.rect_stroke(r, 0.0, Stroke::new(1.0, Color32::from_rgb(0x10, 0x30, 0x80)), egui::StrokeKind::Middle);
-                    }
-                }
+                let all = e.kind.grips();
+                let count = all.len();
+                grips.extend(all.into_iter().enumerate().map(|(gi, g)| (*h, gi, g, grip_rect(&e.kind, count, gi, Pos2::ZERO, gs).size())));
+            }
+        }
+        for (h, gi, g, size) in grips {
+            let sp = xf.to_screen(g);
+            if rect.contains(sp) {
+                let r = Rect::from_center_size(sp, size);
+                let hot = app.canvas.hot_grips.contains(&(h, gi));
+                let warm = !hot && hover_pos.is_some_and(|hp| r.expand(2.0).contains(hp));
+                painter.rect_filled(
+                    r,
+                    0.0,
+                    if hot {
+                        t.grip_hot
+                    } else if warm {
+                        Color32::from_rgb(0xff, 0x7f, 0x9f)
+                    } else {
+                        t.grip
+                    },
+                );
+                painter.rect_stroke(r, 0.0, Stroke::new(1.0, Color32::from_rgb(0x10, 0x30, 0x80)), egui::StrokeKind::Middle);
             }
         }
         crate::dyngrips::draw(app, painter, &xf, rect, hover_pos);

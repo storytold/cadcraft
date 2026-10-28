@@ -1367,3 +1367,22 @@ menu	Modify	Edita
 	Check for Updates…	Verifica aggiornamenti…
 	CADCraft is up to date.	CADCraft è aggiornato.
 	Could not check for updates.	Impossibile verificare gli aggiornamenti.
+	Adds the selected objects	Aggiunge gli oggetti selezionati
+	Change Group	Modifica gruppo
+	Create Group	Crea gruppo
+	Group Identification	Identificazione gruppo
+	Group Name	Nome gruppo
+	Groups the objects selected in the drawing	Raggruppa gli oggetti selezionati nel disegno
+	Highlight	Evidenzia
+	Include Unnamed	Includi senza nome
+	New Group	Nuovo gruppo
+	Object Grouping	Raggruppamento oggetti
+	Objects	Oggetti
+	Removes the group; its objects stay	Elimina il gruppo; i suoi oggetti restano
+	Removes the selected objects	Rimuove gli oggetti selezionati
+	Rename	Rinomina
+	Select the objects in the drawing first.	Seleziona prima gli oggetti nel disegno.
+	Selectable	Selezionabile
+	Turns whole-group selection on or off	Attiva o disattiva la selezione dell'intero gruppo
+	Unnamed	Senza nome
+	Object Grouping...	Raggruppamento oggetti...

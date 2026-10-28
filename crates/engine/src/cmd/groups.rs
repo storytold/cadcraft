@@ -16,12 +16,14 @@ use super::{CommandSpec, bad, bool_or, str_param, targets};
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 mod dash;
+pub(crate) mod display;
 mod pick;
 
+pub use display::{GROUP_GRIP, GroupGrip};
 pub(crate) use pick::expand;
 
 /// The most groups one drawing holds, and the most names one call lists.
-const MAX_GROUPS: usize = 100_000;
+pub(crate) const MAX_GROUPS: usize = 100_000;
 
 pub fn specs() -> Vec<CommandSpec> {
     let mut v = vec![
@@ -35,8 +37,12 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{name?: \"G1\" | \"G1,G2\" | [names]} | {handles?} (default the selection: every group holding one of the objects) → {ungrouped: [names]}")
             .interactive(|_| Ok(Box::new(UngroupM::default()))),
         CommandSpec::new("groupedit", "Group Edit", run_groupedit)
-            .params("{name, add?: [handles], remove?: [handles], rename?: new name} → {name, members}. Removing every member deletes the group.")
+            .params("{name, add?: [handles], remove?: [handles], rename?: new name, description?, selectable?: bool} → {name, members}. Removing every member deletes the group.")
             .interactive(|_| Ok(Box::new(GroupEditM::default()))),
+        CommandSpec::new("classicgroup", "Object Grouping...", run_list)
+            .menu(&["Tools", "Object Grouping..."])
+            .params("{} → the groups as groups.list lists them (the app opens the Object Grouping dialog)")
+            .noundo(),
         CommandSpec::new("groups.list", "List Groups", run_list)
             .params("{} → {groups: [{name, description, selectable, unnamed, members: [handles]}]}")
             .noundo(),
@@ -66,7 +72,7 @@ pub(crate) fn groups_of(d: &Drawing, h: Handle) -> Vec<usize> {
 }
 
 /// The first free unnamed group name: `*A1`, `*A2`…
-fn next_unnamed(d: &Drawing) -> String {
+pub(crate) fn next_unnamed(d: &Drawing) -> String {
     let used: std::collections::HashSet<String> = d.groups.iter().map(|g| g.name.to_ascii_uppercase()).collect();
     (1..=d.groups.len() + 1).map(|n| format!("*A{n}")).find(|n| !used.contains(n)).unwrap_or_else(|| format!("*A{}", d.groups.len() + 1))
 }
@@ -291,6 +297,20 @@ fn run_groupedit(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if let Some(n) = new_name {
         rename(s, i, n)?;
+    }
+    // The Object Grouping dialog's Description and Selectable.
+    let description = str_param(p, "description").map(str::to_string);
+    let selectable = p.get("selectable").and_then(Value::as_bool);
+    if description.is_some() || selectable.is_some() {
+        let d = s.doc_mut()?;
+        if let Some(g) = d.groups.get_mut(i) {
+            if let Some(t) = description {
+                g.description = t;
+            }
+            if let Some(v) = selectable {
+                g.selectable = v;
+            }
+        }
     }
     let g = s.doc()?.groups.get(i).ok_or_else(|| bad("groupedit", "no such group"))?;
     Ok(json!({ "name": g.name, "members": g.members.len() }))

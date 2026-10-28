@@ -54,6 +54,9 @@ const HEADER: &[(&str, Kind, Def)] = &[
     ("DONUTID", Kind::Real { min: 0.0, strict: false }, Def::Real(0.5)),
     ("DONUTOD", Kind::Real { min: 0.0, strict: true }, Def::Real(1.0)),
     ("EDGEMODE", Kind::Choice(&[0, 1]), Def::Int(0)),
+    // A selected group: 0 every member's grips, 1 one grip at its centre, 2 that grip and its
+    // bounding box.
+    ("GROUPDISPLAYMODE", Kind::Choice(&[0, 1, 2]), Def::Int(2)),
     ("HPANG", Kind::Angle, Def::Real(0.0)),
     // 1: HATCH and GRADIENT typed or from a menu open the Hatch and Gradient dialog; 0: the command line.
     ("HPDLGMODE", Kind::Choice(&[0, 1]), Def::Int(1)),

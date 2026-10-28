@@ -83,7 +83,18 @@ pub(super) fn grip_at(app: &CadApp, xf: &Xf, hover: Option<Pos2>) -> Option<(Han
     if !app.session.shows_grips(sel.len()) {
         return None;
     }
+    // A selected group's centre grip (GROUPDISPLAYMODE).
+    let groups = app.session.group_grips();
+    for g in &groups {
+        let sp = xf.to_screen(g.center);
+        if (sp.x - hp.x).abs() <= gs && (sp.y - hp.y).abs() <= gs {
+            return g.members.first().map(|m| (*m, cadcraft_engine::GROUP_GRIP));
+        }
+    }
     for h in sel.iter().take(200) {
+        if groups.iter().any(|g| g.members.contains(h)) {
+            continue;
+        }
         let e = st.doc.entity(*h)?;
         if st.doc.layer(&e.common.layer).is_some_and(|l| l.locked) {
             continue;
