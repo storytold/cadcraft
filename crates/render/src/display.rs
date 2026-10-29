@@ -62,6 +62,25 @@ pub struct DisplayList {
     /// Plot style end, join and fill style per primitive (parallel to `prims`; missing entries
     /// are "use object"), turned into geometry by [`pen::apply`].
     pub pens: Vec<Pen>,
+    /// Raster images placed in the display list's coordinate space (for PDF plotting and CPU rasterisation).
+    pub images: Vec<PlotImage>,
+}
+
+/// A raster image placed in world/paper coordinates.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlotImage {
+    /// Bottom-left corner in world/paper coordinates.
+    pub origin: Vec2,
+    /// Bottom edge vector (`u * size.x`) in world/paper coordinates.
+    pub u: Vec2,
+    /// Left edge vector (`v * size.y`) in world/paper coordinates.
+    pub v: Vec2,
+    /// Raw encoded image bytes (PNG/JPEG).
+    pub bytes: std::sync::Arc<[u8]>,
+    /// Fade percentage (0..=100).
+    pub fade: u8,
+    /// Optional clip rectangle (e.g. when inside a viewport).
+    pub clip: Option<Bounds2>,
 }
 
 /// A glyph of plotted text: the font glyph and, in world coordinates, where it sits. It is
@@ -149,6 +168,7 @@ pub(crate) fn append(dst: &mut DisplayList, src: DisplayList) {
         t
     }));
     dst.pens.extend(src.pens);
+    dst.images.extend(src.images);
     dst.bounds = dst.bounds.union(&src.bounds);
     dst.expanded = dst.expanded.saturating_add(src.expanded);
 }

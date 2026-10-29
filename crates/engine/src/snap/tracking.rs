@@ -120,6 +120,15 @@ impl PathShape {
             }
         }
     }
+
+    fn translated(self, delta: Vec2) -> Self {
+        match self {
+            PathShape::Ray { origin, dir } => PathShape::Ray { origin: origin + delta, dir },
+            PathShape::Line { origin, dir } => PathShape::Line { origin: origin + delta, dir },
+            PathShape::Circle { center, radius, gap } => PathShape::Circle { center: center + delta, radius, gap },
+            PathShape::Ellipse { center, major, ratio, gap } => PathShape::Ellipse { center: center + delta, major, ratio, gap },
+        }
+    }
 }
 
 /// The point of the ellipse `e` closest to `p`: the tessellated closest point, refined by a few
@@ -609,6 +618,95 @@ pub(crate) fn candidate_with_prims(
     candidate_from_prims(cursor, hit, aperture, cfg, base, prims)
 }
 
+/// Like [`candidate`], gathering and testing primitives against `view_cursor` in `orbit` view space.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn candidate_in_orbit(
+    d: &Drawing,
+    space: &Space,
+    orbit: cadcraft_render::Orbit3d,
+    view_cursor: Vec2,
+    hit: Option<&SnapHit>,
+    aperture: f64,
+    cfg: &TrackConfig,
+    base: Option<Vec2>,
+) -> Option<Acquired> {
+    if !can_acquire(view_cursor, aperture, cfg) {
+        return None;
+    }
+    let prims = super::gather_in_orbit(d, space, orbit, view_cursor, aperture);
+    let hit = hit.filter(|h| h.deferred.is_none() && h.mode != mode::NEA && h.point.is_finite());
+    let ext_end = if cfg.running(mode::EXT) {
+        let mut best: Option<(f64, Vec2, PathShape)> = None;
+        for (prim, z) in &prims {
+            for (end, shape) in extension_ends(prim) {
+                let pr = orbit.project(end.to3(*z));
+                let Some(work_end) = super::work_plane_point(orbit, end, *z, pr) else {
+                    continue;
+                };
+                let dd = match hit {
+                    Some(h) => work_end.dist(h.point),
+                    None => pr.dist(view_cursor),
+                };
+                if !dd.is_finite() || dd > aperture || best.as_ref().is_some_and(|(bd, ..)| *bd <= dd) {
+                    continue;
+                }
+                let shape = shape.translated(work_end - end);
+                if shape.is_finite() && work_end.is_finite() {
+                    best = Some((dd, work_end, shape));
+                }
+            }
+        }
+        best.map(|(_, at, shape)| (at, shape))
+    } else {
+        None
+    };
+    if let Some((at, ext)) = ext_end
+        && hit.is_none_or(|h| h.point.dist(at) <= cadcraft_geom::EPS * (1.0 + at.len()))
+    {
+        return Some(Acquired::Point { at, name: hit.map_or("Endpoint", |h| h.name), ext: Some(ext) });
+    }
+    if let Some(h) = hit {
+        return cfg.otrack.then_some(Acquired::Point { at: h.point, name: h.name, ext: None });
+    }
+    let (prim, at, _) = prims
+        .iter()
+        .filter(|(p, _)| super::extendable(p))
+        .filter_map(|(p, z)| {
+            let local_c = orbit.unproject_z(view_cursor, *z)?;
+            let (at, vd) = super::prim_segments(p)
+                .iter()
+                .map(|s| {
+                    let pt = super::fix_circle(s).closest(local_c);
+                    let vd = orbit.project(pt.to3(*z)).dist(view_cursor);
+                    (pt, vd)
+                })
+                .min_by(|a, b| a.1.total_cmp(&b.1))?;
+            (at.is_finite() && vd.is_finite() && vd <= aperture).then_some((p, at, vd))
+        })
+        .min_by(|a, b| a.2.total_cmp(&b.2))?;
+    let line = match prim {
+        Prim::Seg(Segment::Line(l)) => Some((l.b - l.a).normalized()),
+        Prim::Infinite { dir, .. } => Some(dir.normalized()),
+        _ => None,
+    }
+    .filter(|d| *d != Vec2::ZERO && d.is_finite());
+    if cfg.running(mode::PAR)
+        && base.is_some()
+        && let Some(dir) = line
+    {
+        return Some(Acquired::Parallel { at, dir });
+    }
+    if cfg.running(mode::APP) {
+        let shape = match prim {
+            Prim::Seg(Segment::Arc { arc, .. }) => PathShape::Circle { center: arc.center, radius: arc.radius, gap: None },
+            Prim::Circle(c) => PathShape::Circle { center: c.center, radius: c.radius, gap: None },
+            _ => PathShape::Line { origin: at, dir: line? },
+        };
+        return shape.is_finite().then_some(Acquired::Apparent { at, shape });
+    }
+    None
+}
+
 fn can_acquire(cursor: Vec2, aperture: f64, cfg: &TrackConfig) -> bool {
     (cfg.otrack || cfg.running(mode::EXT | mode::PAR | mode::APP)) && cursor.is_finite() && aperture.is_finite() && aperture > 0.0
 }
@@ -795,11 +893,20 @@ impl crate::Session {
         let last = self.last_segment.filter(|(_, b)| q.base.is_some_and(|base| base.near(*b, 1e-9 * (1.0 + b.len())))).map(|(a, b)| a.angle_to(b));
         let cfg = TrackConfig::relative_to(&s, angbase, last);
         let osmode = s.osmode | if s.osnaphatch { mode::HATCH } else { 0 };
-        let ix = crate::spatial::index(&doc, &space);
-        let (hit, near_prims) = super::osnap_with_neighborhood(&doc, &space, &ix, raw, q.aperture, osmode, q.base, q.deferred);
-        let cand = match (osmode & mode::HATCH, near_prims.as_deref()) {
-            (0, Some(prims)) => candidate_with_prims(raw, hit.as_ref(), q.aperture, &cfg, q.base, prims),
-            _ => candidate(&doc, &space, raw, hit.as_ref(), q.aperture, &cfg, q.base),
+        let orbit = self.edit_orbit();
+        let (hit, cand) = if orbit.is_top() {
+            let ix = crate::spatial::index(&doc, &space);
+            let (hit, near_prims) = super::osnap_with_neighborhood(&doc, &space, &ix, raw, q.aperture, osmode, q.base, q.deferred);
+            let cand = match (osmode & mode::HATCH, near_prims.as_deref()) {
+                (0, Some(prims)) => candidate_with_prims(raw, hit.as_ref(), q.aperture, &cfg, q.base, prims),
+                _ => candidate(&doc, &space, raw, hit.as_ref(), q.aperture, &cfg, q.base),
+            };
+            (hit, cand)
+        } else {
+            let view_cursor = orbit.project(raw.to3(0.0));
+            let hit = super::osnap_in_orbit(&doc, &space, orbit, view_cursor, q.aperture, osmode, q.base, q.deferred);
+            let cand = candidate_in_orbit(&doc, &space, orbit, view_cursor, hit.as_ref(), q.aperture, &cfg, q.base);
+            (hit, cand)
         };
         let wait = self.tracking.hover(cand, q.now, cfg.shift_acquire, q.shift);
         if let Some(h) = hit {

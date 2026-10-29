@@ -520,6 +520,12 @@ fn paste(s: &mut Session, offset: Vec2) -> Result<Vec<Handle>> {
 }
 
 fn run_paste(s: &mut Session, p: &Value) -> Result<Value> {
+    if s.clipboard.is_empty() && s.clipboard_image.is_some() {
+        let at = point_param(p, "at").unwrap_or(s.clipboard_base);
+        let scale = p.get("scale").and_then(Value::as_f64);
+        let h = clipboard::paste_image(s, at, scale)?;
+        return Ok(json!({ "handles": [h.hex()] }));
+    }
     if s.clipboard.is_empty() {
         return Err(bad("pasteclip", "the clipboard is empty"));
     }
@@ -625,12 +631,16 @@ impl Interactive for PasteM {
         }
     }
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
-        if s.clipboard.is_empty() {
+        if s.clipboard.is_empty() && s.clipboard_image.is_none() {
             s.echo("Clipboard is empty.");
             return Ok(Step::Done);
         }
         if self.mode == PasteMode::Orig {
-            paste(s, Vec2::ZERO)?;
+            if s.clipboard.is_empty() && s.clipboard_image.is_some() {
+                clipboard::paste_image(s, Vec2::ZERO, None)?;
+            } else {
+                paste(s, Vec2::ZERO)?;
+            }
             return Ok(Step::Done);
         }
         Ok(Step::Continue)
@@ -644,12 +654,38 @@ impl Interactive for PasteM {
                 clipboard::paste_block(s, p)?;
                 Ok(Step::Done)
             }
+            Input::Point(p) if s.clipboard.is_empty() && s.clipboard_image.is_some() => {
+                clipboard::paste_image(s, p, None)?;
+                Ok(Step::Done)
+            }
             Input::Point(p) => {
                 let base = s.clipboard_base;
                 paste(s, p - base)?;
                 Ok(Step::Done)
             }
-            Input::Enter => Ok(Step::Done),
+            Input::Enter => {
+                if s.clipboard.is_empty() && s.clipboard_image.is_some() {
+                    clipboard::paste_image(s, Vec2::ZERO, None)?;
+                } else if !s.clipboard.is_empty() {
+                    let base = s.clipboard_base;
+                    paste(s, Vec2::ZERO - base)?;
+                }
+                Ok(Step::Done)
+            }
+            Input::Text(t) => {
+                if let Some(p) = crate::prompt::parse_point(&t, Vec2::ZERO) {
+                    if self.mode == PasteMode::Block {
+                        clipboard::paste_block(s, p)?;
+                    } else if s.clipboard.is_empty() && s.clipboard_image.is_some() {
+                        clipboard::paste_image(s, p, None)?;
+                    } else {
+                        let base = s.clipboard_base;
+                        paste(s, p - base)?;
+                    }
+                    return Ok(Step::Done);
+                }
+                Ok(Step::Continue)
+            }
             _ => Ok(Step::Continue),
         }
     }
@@ -660,6 +696,20 @@ impl Interactive for PasteM {
         Some(crate::prompt::Drag { handles: Vec::new(), matrix: Mat3::translate(c - s.clipboard_base), extra: Vec::new(), clipboard: true })
     }
     fn preview(&self, s: &Session, c: Vec2) -> Vec<cadcraft_doc::EntityKind> {
+        if s.clipboard.is_empty()
+            && let Some(img) = &s.clipboard_image
+        {
+            let scale = clipboard::default_image_scale(s, img.width, img.height);
+            return vec![cadcraft_doc::EntityKind::Image(cadcraft_doc::Image {
+                insert: c.to3(0.0),
+                u: cadcraft_geom::Vec3::new(scale, 0.0, 0.0),
+                v: cadcraft_geom::Vec3::new(0.0, scale, 0.0),
+                size: Vec2::new(img.width as f64, img.height as f64),
+                path: "preview".into(),
+                name: "preview".into(),
+                ..cadcraft_doc::Image::default()
+            })];
+        }
         let m = Mat3::translate(c - s.clipboard_base);
         s.clipboard
             .iter()

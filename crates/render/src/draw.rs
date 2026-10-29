@@ -1,6 +1,6 @@
 use super::blocks::{insert, sub_ctx};
 use super::dim_draw::{MAX_FILL_SOLIDS, MAX_FILL_TEXTS, block_text_box, dim_text_fill, dimension, dimension_in, solid_covers, starts_text_marks};
-use super::display::{Kind, NO_LAYER, VIEWPORT_CONTENT};
+use super::display::{Kind, NO_LAYER, PlotImage, VIEWPORT_CONTENT};
 use super::props::{resolve, transparency};
 use super::text_entity::{mtext, place_text_entity};
 use super::{
@@ -43,6 +43,27 @@ pub(crate) fn entity(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     }
 }
 
+/// The planar Z elevation of an entity `kind` when rendered or tested in a 3D orbit (0.0 for
+/// non-planar 3D entities that carry per-vertex Z coordinates).
+pub fn entity_elevation(kind: &EntityKind) -> f64 {
+    match kind {
+        EntityKind::LwPolyline(p) => p.elevation,
+        EntityKind::Hatch(h) => h.elevation,
+        EntityKind::Circle(c) => c.center.z,
+        EntityKind::Arc(a) => a.center.z,
+        EntityKind::Ellipse(el) => el.center.z,
+        EntityKind::Text(t) => t.insert.z,
+        EntityKind::MText(t) => t.insert.z,
+        EntityKind::Point(p) => p.p.z,
+        EntityKind::Dimension(d) => d.defpt.z,
+        EntityKind::Solid(s) | EntityKind::Trace(s) => s.corners[0].z,
+        EntityKind::Image(i) => i.insert.z,
+        EntityKind::Line(l) if (l.a.z - l.b.z).abs() <= 1e-12 => l.a.z,
+        _ => 0.0,
+    }
+}
+
+/// Emit the primitives for entity `e` into `b` under `ctx`.
 fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     // A top-level annotative object draws at the view's annotation scale: a viewport's scale for
     // model space seen through it, else the drawing's (CANNOSCALE in model space, 1:1 on paper).
@@ -69,6 +90,10 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     if b.opts.transparency {
         b.transparency = transparency(e.common.transparency, layer_transparency, ctx.block_transparency);
     }
+    let orbit = b.active_orbit(ctx);
+    let ent_z = if orbit.is_top() { 0.0 } else { entity_elevation(&e.kind) };
+    let ctx_z = Ctx { z_offset: ctx.z_offset + ent_z * ctx.z_scale, ..ctx.clone() };
+    let ctx = &ctx_z;
     // A plot style's linetype replaces the object's.
     let lt = match b.styles.and_then(|s| s.linetype(rgb, b.named)) {
         Some(over) => over,
@@ -89,7 +114,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                     b.polyline(ctx, rgb, lw, &dash);
                 }
             }
-            // Text embedded in the linetype (shapes need SHX files and are not drawn).
+            // Text and shapes embedded in the linetype (shapes when their SHX file is found).
             if b.opts.text {
                 for sh in linetype_text::texts(ctx.d, pts, lt, ltscale, min) {
                     b.shaped(ctx, rgb, lw, &sh);
@@ -182,14 +207,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             }
         }
         EntityKind::Wipeout(w) => draw_wipeout(b, ctx, w, rgb, lw),
-        EntityKind::Image(i) => {
-            let o = i.insert.xy();
-            let u = i.u.xy() * i.size.x;
-            let v = i.v.xy() * i.size.y;
-            b.polyline(ctx, rgb, lw, &[o, o + u, o + u + v, o + v, o]);
-            b.polyline(ctx, rgb, lw, &[o, o + u + v]);
-            b.polyline(ctx, rgb, lw, &[o + u, o + v]);
-        }
+        EntityKind::Image(i) => draw_image(b, ctx, i, rgb, lw),
         EntityKind::Table(t) => table(b, ctx, t, rgb, lw),
         EntityKind::Tolerance(t) => tolerance::draw(b, ctx, e, t, lw, tol),
         EntityKind::Leader(l) => {
@@ -223,6 +241,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 b.polyline(ctx, rgb, lw, l);
             }
         }
+        EntityKind::Line(_) | EntityKind::Polyline3d(_) | EntityKind::Face3d(_) if !orbit.is_top() && draw_3d_wire(b, ctx, &e.kind, rgb, lw) => {}
         kind => {
             for prim in kind.prims() {
                 match prim {
@@ -252,6 +271,83 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             }
         }
     }
+}
+
+fn draw_image(b: &mut Builder, ctx: &Ctx, i: &cadcraft_doc::Image, rgb: Ink, lw: f32) {
+    let o = i.insert.xy();
+    let u = i.u.xy() * i.size.x;
+    let v = i.v.xy() * i.size.y;
+    for q in [o, o + u, o + u + v, o + v] {
+        b.list.bounds.add(ctx.xf.apply(q));
+    }
+    if b.opts.fill
+        && let Some(bytes) = resolve_image_bytes(ctx.d, i)
+    {
+        let world_o = ctx.xf.apply(o);
+        let world_u = ctx.xf.apply(o + u) - world_o;
+        let world_v = ctx.xf.apply(o + v) - world_o;
+        b.list.images.push(PlotImage {
+            origin: world_o,
+            u: world_u,
+            v: world_v,
+            bytes,
+            fade: i.fade.clamp(0, 100),
+            clip: None,
+        });
+    }
+    let frame = match ctx.d.header.get("IMAGEFRAME").and_then(cadcraft_doc::HVal::as_i64).unwrap_or(1) {
+        0 => false,
+        2 => !b.plotting,
+        _ => !i.path.starts_with("clipboard_paste_"),
+    };
+    if frame {
+        b.polyline(ctx, rgb, lw, &[o, o + u, o + u + v, o + v, o]);
+    }
+}
+
+fn draw_3d_wire(b: &mut Builder, ctx: &Ctx, kind: &EntityKind, rgb: Ink, lw: f32) -> bool {
+    match kind {
+        EntityKind::Line(l) if (l.a.z - l.b.z).abs() > 1e-12 => {
+            b.polyline_3d(ctx, rgb, lw, &[l.a, l.b]);
+            true
+        }
+        EntityKind::Polyline3d(p) => {
+            let mut pts = p.points.clone();
+            if p.closed
+                && let Some(first) = p.points.first().copied()
+            {
+                pts.push(first);
+            }
+            b.polyline_3d(ctx, rgb, lw, &pts);
+            true
+        }
+        EntityKind::Face3d(f) => {
+            let c = &f.corners;
+            b.polyline_3d(ctx, rgb, lw, &[c[0], c[1], c[2], c[3], c[0]]);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Resolve image bytes from in-memory drawing assets or disk.
+fn resolve_image_bytes(d: &Drawing, i: &cadcraft_doc::Image) -> Option<std::sync::Arc<[u8]>> {
+    let file_name = i.path.rsplit(['/', '\\']).next().unwrap_or(&i.path).trim();
+    if let Some(b) = d
+        .get_image_asset(&i.path)
+        .or_else(|| d.get_image_asset(&i.name))
+        .or_else(|| d.get_image_asset(file_name))
+    {
+        return Some(std::sync::Arc::from(b.as_slice()));
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let s = i.path.trim().trim_matches('"').trim_matches('\'').trim();
+        if !s.is_empty() && let Ok(bytes) = std::fs::read(s) {
+            return Some(std::sync::Arc::from(bytes));
+        }
+    }
+    None
 }
 
 fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeader, rgb: Ink, lw: f32) {

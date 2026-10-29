@@ -287,6 +287,13 @@ fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
                     'O' => derive(&mut fmts, &mut cur, &|f| f.over = true),
                     'o' => derive(&mut fmts, &mut cur, &|f| f.over = false),
                     'K' | 'k' => {}
+                    // `\U+XXXX`: a character by its Unicode code.
+                    'U' if i >= 2 && crate::unicode_escape(&chars, i - 2).is_some() => {
+                        if let Some(u) = crate::unicode_escape(&chars, i - 2) {
+                            push_char(&mut word, u, cur);
+                        }
+                        i += 5;
+                    }
                     'S' => {
                         let mut j = i;
                         let (mut top, mut bottom, mut sep) = (String::new(), String::new(), None);

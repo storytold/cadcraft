@@ -1247,3 +1247,370 @@ menu	Modify	수정
 	Check for Updates…	업데이트 확인…
 	CADCraft is up to date.	CADCraft가 최신 버전입니다.
 	Could not check for updates.	업데이트를 확인하지 못했습니다.
+	Copy All	모두 복사
+	Copy history output to clipboard	명령 기록 클립보드 복사
+	Close History Window (F2)	명령 기록 닫기 (F2)
+	Edit XData (XDEDIT)	XData 편집 (XDEDIT)
+	Open visual XData Editor for selected object	선택 항목 XData 편집
+	Command & XData Output (select text + Ctrl+C to copy)	명령 기록 & XData (Ctrl+C로 복사)
+	Save changes to {name}?	{name} 변경 사항 저장?
+	Your changes will be lost if you don't save them.	저장하지 않으면 변경 사항이 손실됩니다.
+	Don't Save	저장 안 함
+	List Xdata	XData 목록
+	Edit Xdata	XData 편집
+	Edit Xdata (XDEDIT)	XData 편집 (XDEDIT)
+	✏ Edit XData (XDEDIT)	✏ XData 편집 (XDEDIT)
+	Open visual XData Editor dialog	XData 편집 열기
+	📋 Copy Values	📋 값 복사
+	Copy XData values (Key,Value) to clipboard	XData 값 클립보드 복사
+	Click to copy value to clipboard	클립보드에 값 복사
+	✓ XData values copied to clipboard	✓ XData 값 클립보드 복사됨
+	Selection canceled — previous object kept.	선택 취소됨 — 이전 객체 유지.
+	Drag left or right to resize this column	열 폭 조정
+	XDATA Editor (XDEDIT)	XDATA 편집 (XDEDIT)
+	No object selected.	선택된 객체 없음.
+	🎯 Select object in drawing	🎯 도면에서 객체 선택
+	Object: {kind}	객체: {kind}
+	Layer: {layer}	도면층: {layer}
+	Handle: {handle}	핸들: {handle}
+	🎯 Select Another Object	🎯 다른 객체 선택
+	Hide editor temporarily, pick another object in the drawing, and open it in XDEDIT	도면에서 다른 객체를 선택하여 XDEDIT에서 열기
+	Next ▶	다음 ▶
+	Step to the next object with XData in the selection or drawing	다음 XData 객체로 이동
+	◀ Previous	◀ 이전
+	Step to the previous object with XData in the selection or drawing	이전 XData 객체로 이동
+	📋 Copy JSON	📋 JSON 복사
+	Copy all XData as structured JSON to clipboard	전체 XData JSON 클립보드 복사
+	✓ JSON copied to clipboard	✓ JSON 클립보드 복사됨
+	📋 Copy Text	📋 문자 복사
+	Copy all XData as text to clipboard	전체 XData 문자 클립보드 복사
+	✓ XData text copied to clipboard	✓ XData 문자 클립보드 복사됨
+	AppID (1001):	AppID (1001):
+	New AppID (e.g. CAD_XDATA)	새 AppID (예: CAD_XDATA)
+	+ Add AppID	+ AppID 추가
+	🗑 Delete AppID	🗑 AppID 삭제
+	Remove this Application and its XData from the entity	객체에서 이 AppID 및 XData 삭제
+	Application removed (click Apply to save)	AppID 삭제됨 (적용을 눌러 저장)
+	🔍 Filter:	🔍 필터:
+	Search key or value (e.g. THEMA, DIEPTE)...	이름 또는 값 검색...
+	Key width:	이름 폭:
+	Drag this value or the column divider ⇔ to resize the Key column	이름 열 폭 조정
+	Value width:	값 폭:
+	Drag this value or the column divider ⇔ to resize the Value column	값 열 폭 조정
+	Smart Key=Value Columns	이름=값 열 분리
+	Split 'KEY=VALUE' or 'Key: Value' into separate editable Key and Value fields	'KEY=VALUE' 항목을 이름과 값 필드로 분리
+	This object currently has no user XData.	이 객체에는 사용자 XData가 없습니다.
+	+ Create CAD_XDATA Application	+ CAD_XDATA 작성
+	DXF Code	DXF 코드
+	Property / Key ⇔	특성 / 이름 ⇔
+	Value (Selectable & Editable) ⇔	값 (선택 및 편집) ⇔
+	Raw Value (Selectable & Editable) ⇔	원본 값 (선택 및 편집) ⇔
+	Actions	작업
+	Copy value to clipboard	값 클립보드 복사
+	✓ Copied: {val}	✓ 복사됨: {val}
+	Move row up	행 위로 이동
+	Move row down	행 아래로 이동
+	Delete this XData row	이 XData 행 삭제
+	Add Row:	행 추가:
+	Key (e.g. OPMERKING)	이름 (예: OPMERKING)
+	+ Add Property	+ 특성 추가
+	● Unsaved changes	● 저장되지 않은 변경 사항
+	Ready — click '🎯 Select Next Object' or '◀ Previous / Next ▶' to switch objects.	준비 — 다음 객체 선택 또는 이전 / 다음으로 전환.
+	↺ Revert	↺ 되돌리기
+	✔ Apply / Save XData	✔ 적용 / XData 저장
+	Write modified XData to the entity (Undoable with Ctrl+Z)	변경된 XData를 객체에 저장 (Ctrl+Z 취소 가능)
+	✔ Save & Select Next Object	✔ 저장 및 다음 객체 선택
+	🎯 Select Next Object	🎯 다음 객체 선택
+	Save any changes and directly pick the next object in the drawing	변경 사항을 저장하고 다음 객체 선택
+	Object {idx1}/{total} loaded ({kind} — {handle})	객체 {idx1}/{total} 로드됨 ({kind} — {handle})
+	↺ Reverted to saved entity XData	↺ 저장된 XData로 복원됨
+	✔ XData saved to entity (Undoable)	✔ 객체에 XData 저장됨 (Ctrl+Z 가능)
+	Error: {err}	오류: {err}
+	⚠ Entity XData changed outside editor — click Revert before saving.	⚠ 외부에서 XData가 변경됨 — 저장 전 복원 클릭.
+	+  |  {view} ({yaw}°, {pitch}°)  |  3D Orbit Wireframe	+  |  {view} ({yaw}°, {pitch}°)  |  3D 궤도 회전 와이어프레임
+	.NET Plugin Bridge	.NET 플러그인 연결
+	3D Orbit	3D 궤도 회전
+	3D Views	3D 뷰
+	Add to Working Set	작업 세트에 추가
+	Add: Pick points	추가: 점 지정
+	Add: Select objects	추가: 객체 선택
+	Add…	추가…
+	Adjust Image...	이미지 조정...
+	Adjust...	조정...
+	Alias	별칭
+	Alias file: {file}	별칭 파일: {file}
+	Align Multileaders	다중 지시선 정렬
+	Analyze Shapes	형상 검사
+	Analyze Usage	사용 검사
+	Angstroms	단위 (Å)
+	Animation Effects	화면 전환 동작
+	Animation effects	화면 전환 동작
+	Apply to Layout	배치에 적용
+	Architectural	건축
+	Arrow size	화살촉 크기
+	Associate	연관
+	Associative	연관
+	Astronomical Units	거리 단위 (AU)
+	Attach Image...	이미지 부착...
+	AutoLISP (LSP)	AutoLISP (LSP)
+	AutoLISP / VB.NET / C# IDE...	AutoLISP / VB.NET / C# IDE...
+	AutoLISP / VBA IDE...	AutoLISP / VBA IDE...
+	Back	뒤
+	Block to create or edit	작성 또는 편집할 블록
+	Bottom left	아래 왼쪽
+	Bottom right	아래 오른쪽
+	Boundaries	경계
+	Boundaries picked: {n}	지정된 경계: {n}개
+	Break-line Symbol	파단선 기호
+	Center the plot	플롯 중심 맞춤
+	Centered	중심
+	Centimeters	미터법 단위 (cm)
+	Change Properties	특성 변경
+	Choose the command the alias starts.	별칭이 시작할 명령을 선택하세요.
+	Clear Recent Files	최근 파일 지우기
+	Click the ruler to add a tab stop, right-click to remove one	클릭하여 탭을 추가하고 오른쪽 클릭하여 제거
+	Click to set new origin	클릭하여 새 시작점 설정
+	Clip Image	이미지 자르기
+	Close Block Editor	블록 편집기 닫기
+	Collect	모아 보기
+	Collect Multileaders	다중 지시선 모아 보기
+	Color 1	색상 1
+	Color 2	색상 2
+	Command	명령
+	Convert Text to Mtext	문자를 여러 줄 문자로 변환
+	Create separate hatches	개별 해치 작성
+	Crossing selection color:	걸침 선택 색상:
+	Curved	곡선
+	Custom	사용자
+	Customize	사용자 설정
+	Decameters	미터법 단위 (dam)
+	Decimal	소수점
+	Decimal Degrees	소수점 각도
+	Decimeters	미터법 단위 (dm)
+	Default to boundary extents	경계 범위를 기본값으로 사용
+	Define each corner of the selection window with a separate click.	선택 창의 구석을 각각 클릭하여 지정합니다.
+	Deg/Min/Sec	도/분/초
+	Dim scale overall	전체 치수 축척
+	Discard	취소
+	Drag Dynamic Grip	동적 그립 드래그
+	Drawing Units	도면 단위
+	Dynamic Block Data	동적 블록 데이터
+	Dynamic Block Grips	동적 블록 그립
+	Dynamic Block Reference	동적 블록 참조
+	Edit Block Definition	블록 정의 편집
+	Edit Command Aliases (PGP)...	명령 별칭 편집 (PGP)...
+	Edit Multileader	다중 지시선 편집
+	Edit Reference In-Place	참조 내부 편집
+	Edit…	편집…
+	Engineering	공학
+	Enter block names to extract	추출할 블록 이름 입력
+	Enter geometric characteristic	기하 특성 입력
+	Enter name of LISP file to load	로드할 LISP 파일 이름 입력
+	Evaluate LISP	LISP 실행
+	Exclude:	제외:
+	Explode Attributes to Text	속성을 문자로 분해
+	Express Tools	Express 도구
+	Feet	길이 단위 (ft)
+	First corner	첫 번째 구석
+	Fit to paper	용지에 맞춤
+	Fractional	분수
+	Frame	프레임
+	Front	정면
+	Gigameters	기가미터
+	Grads	그라드
+	Grips	그립
+	Groups	그룹
+	Hatch Pick	해치 선택
+	Hatch and Gradient	해치 및 그라데이션
+	Hatch origin	해치 시작점
+	Hatches	해치
+	Hectometers	미터법 단위 (hm)
+	Hemispherical	반구형
+	Ignore	무시
+	Image	이미지
+	Image Frame	이미지 프레임
+	Imperial (inches)	인치 단위 (in)
+	Implied Loops	추론된 루프
+	Inches	인치
+	Indicate selection area	선택 영역 표시
+	Insertion scale	삽입 축척
+	Interface scale	인터페이스 축척
+	Inverted	반전
+	Island	내부 영역
+	Island detection	내부 영역 검색
+	Italic	기울이기
+	Justify	자리맞추기
+	Kilometers	미터법 단위 (km)
+	Landscape	가로 방향
+	Layouts	배치
+	Light Years	거리 단위 (ly)
+	Limits	도면 한계
+	Load .NET DLL / LISP Application (NETLOAD)...	앱 로드 (.NET DLL / LISP, NETLOAD)...
+	Load Application (NETLOAD)...	앱 로드 (NETLOAD)...
+	Load Application...	앱 로드...
+	Meters	미터
+	Metric (millimetres)	미터법 (밀리미터)
+	Microinches	마이크로인치
+	Microns	마이크론
+	Miles	마일
+	Millimeters	밀리미터
+	Mils	밀
+	Model Tab	모형 탭
+	More than {n} aliases.	별칭 {n}개 초과.
+	Move/Copy/Rotate	이동/복사/회전
+	Multiline text	여러 줄 문자
+	NE Isometric	북동 등각
+	NW Isometric	북서 등각
+	Nanometers	나노미터
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	기본 템플릿(QNEWTEMPLATE)이 설정되지 않은 경우 시작할 때 첫 도면과 새 도면에 이 단위를 사용합니다.
+	New block	새 블록
+	No alias file loaded. REINIT replaces these aliases with a file's.	로드된 별칭 파일이 없습니다. REINIT로 파일의 별칭을 적용합니다.
+	Not a number or distance: {text}	숫자 또는 거리 입력 오류: {text}
+	Object grouping	객체 그룹
+	Object selection limit for display of grips	그립 표시를 위한 객체 선택 한계
+	Objects on locked layers	잠금 도면층의 객체
+	Open Recent	최근 파일 열기
+	Open in Block Editor	블록 편집기에서 열기
+	Opposite corner	반대 구석
+	Orientation	방향
+	Origin: {x}, {y}	시작점: {x}, {y}
+	Outer	바깥쪽
+	Overline	윗줄
+	Paper size	용지 크기
+	Parsecs	거리 단위 (pc)
+	Plot area	플롯 영역
+	Plot object lineweights	객체 선가중치 플롯
+	Plot offset	플롯 간격띄우기
+	Plot transparency	투명도 플롯
+	Portrait	세로
+	Precision	정밀도
+	Preview	미리보기
+	Printer/plotter	프린터/플로터
+	Query Texts	문자 조회
+	Radians	각도 (rad)
+	Raster Image Reference...	래스터 이미지 참조...
+	SE Isometric	남동 등각
+	SW Isometric	남서 등각
+	Sample output	출력 예
+	Save Block	블록 저장
+	Save Block As	다른 이름으로 블록 저장
+	Save Reference Edits	참조 편집 내용 저장
+	Save alias	별칭 저장
+	Scientific	과학적
+	Select boundaries to remove	제거할 경계 선택
+	Select using two clicks only	두 번 클릭으로 선택
+	Selection Area Effect	선택 영역 표시
+	Selection Preview Filter	선택 미리보기 필터
+	Selection area opacity:	선택 영역 투명도:
+	Selection effect color	선택 표시 색상
+	Selection modes	선택 모드
+	Selection preview	선택 미리보기
+	Set Dynamic Property	동적 특성 설정
+	Shape	형상
+	Sheet Books to PDF...	도면 세트를 PDF로 내보내기...
+	Show grips	그립 표시
+	Specified origin	지정된 시작점
+	Spherical	구형
+	Surveyor's Units	측량 단위
+	Tables	표
+	Text color	문자 색상
+	This drawing	이 도면
+	Top (2D Plan)	평면 (2D 평면도)
+	Top left	위 왼쪽
+	Top right	위 오른쪽
+	Type an alias name.	별칭 이름을 입력하세요.
+	US Survey Feet	US 측량 단위 (ft)
+	US Survey Inch	US 측량 인치
+	US Survey Mile	US 측량 마일
+	US Survey Yard	US 측량 야드
+	Underline	밑줄
+	Unitless	단위 없음
+	Units of new drawings	새 도면 단위
+	Units to scale inserted content	삽입된 내용의 축척 단위
+	Unsaved changes	저장되지 않은 변경 사항
+	Use current origin	현재 시작점 사용
+	View Resolution	뷰 해상도
+	Visual Effect Settings	화면 표시 설정
+	Visual Effect Settings...	화면 표시 설정...
+	When a command is active	명령이 실행 중일 때
+	When no command is active	명령이 실행 중이지 않을 때
+	Window <	창 <
+	Window selection color:	창 선택 색상:
+	Working Set	작업 세트
+	X offset (mm)	X 간격띄우기 (mm)
+	Xref and Block In-place Editing	외부 참조 및 블록 내부 편집
+	Xrefs	외부 참조
+	Y offset (mm)	Y 간격띄우기 (mm)
+	Yards	야드
+	built-in	기본 제공
+	contains authoring elements. Open in Block Editor?	동적 요소가 포함되어 있습니다. 블록 편집기에서 열까요?
+	overrides built-in	기본값 재지정
+	{alias} is already defined; select it and use Edit.	{alias}은(는) 이미 정의되어 있습니다. 선택 후 편집을 사용하세요.
+	{command} is an unknown command.	{command}: 찾을 수 없는 명령입니다.
+	📋 Copy All	📋 모두 복사
+	🗑 Clear	🗑 지우기
+	.NET command started	.NET 명령 시작됨
+	0. Empty file (New)	0. 비어 있는 파일 (새로 만들기)
+	1. AutoLISP: Basic Math & Commands	1. AutoLISP: 기본 수식 및 명령
+	2. AutoLISP: Survey Marker (c:meetpunt)	2. AutoLISP: 측정 표식 (c:meetpunt)
+	3. VB.NET Plugin (.vb -> .dll)	3. VB.NET 플러그인 (.vb -> .dll)
+	4. C# Plugin (.cs -> .dll)	4. C# 플러그인 (.cs -> .dll)
+	Added to Startup Suite (Auto-Load at startup & per drawing)	시작 세트에 추가됨 (시작 및 도면별 자동 로드)
+	Auto-Load	자동 로드
+	AutoLISP / VB.NET / C# IDE & NETLOAD Studio	AutoLISP / VB.NET / C# IDE 및 NETLOAD 도구
+	AutoLISP Commands (click to run)	AutoLISP 명령 (클릭하여 실행)
+	AutoLISP Editor (.lsp)	AutoLISP 편집기 (.lsp)
+	Bottom	밑면
+	C# Plugin Editor (.cs)	C# 플러그인 편집기 (.cs)
+	C# source opened	C# 원본 파일 열기 완료
+	Clear Log	기록 지우기
+	Commands	명령
+	Compact Menu	축소 메뉴
+	Compilation error	컴파일 오류
+	Compilation failed (see Console)	컴파일 실패 (출력 창 참조)
+	Compilation succeeded	컴파일 완료
+	Compile & Load .NET DLL	.NET DLL 컴파일 및 로드
+	Console / Output	명령 기록 / 출력
+	Error	오류
+	Error in	다음에서 오류:
+	Error: cadcraft-nethost.exe not found next to the application.	오류: 프로그램 경로에서 cadcraft-nethost.exe를 찾을 수 없습니다.
+	Evaluate the LISP code or compile the VB.NET / C# source directly into a .NET DLL	LISP 코드 실행 또는 VB.NET / C# 원본을 .NET DLL로 바로 컴파일
+	Failed to invoke compiler	컴파일러 실행 실패
+	Failed to load	로드 실패
+	Failed to save to	다음에 저장 실패:
+	Failed to start .NET command	.NET 명령 시작 실패
+	Failed to write source file	원본 파일 쓰기 실패
+	Hide this Studio window and show the compact floating Plugin Commands menu	이 Studio 창을 숨기고 플러그인 명령 메뉴 표시
+	Load & Run LISP	LISP 로드 및 실행
+	NETLOAD .NET DLL loaded	NETLOAD .NET DLL 로드됨
+	NETLOAD error in	NETLOAD 오류 위치
+	NETLOAD failed to run cadcraft-nethost.exe	NETLOAD에서 cadcraft-nethost.exe를 실행하지 못했습니다
+	Open .lsp / .vb / .cs	.lsp / .vb / .cs 열기
+	Open NETLOAD Studio (VBAIDE)	NETLOAD Studio 열기 (VBAIDE)
+	Open Studio	Studio 열기
+	Open the full AutoLISP / VB.NET / C# & NETLOAD Studio	전체 AutoLISP / VB.NET / C# & NETLOAD Studio 열기
+	Plugin Commands	플러그인 명령
+	Plugins	플러그인
+	Quick Expression	빠른 표현식
+	Ready. Open a .dll (.NET VB.NET/C#) or .lsp (AutoLISP) file via NETLOAD.	준비됨. NETLOAD로 .dll(.NET VB.NET/C#) 또는 .lsp(AutoLISP) 파일을 여세요.
+	Registered commands	등록된 명령
+	Removed from Startup Suite (Auto-Load)	시작 세트(자동 로드)에서 제거됨
+	Routine started	명령 시작됨
+	Routine started from	명령 시작 위치
+	Run .NET command	.NET 명령 실행
+	Run command	명령 실행
+	Save the current source code in the editor to disk	편집기의 현재 원본 코드를 파일로 저장
+	Saved to	저장 위치
+	Select and load a .lsp, .dll, .vb, or .cs file from disk	.lsp, .dll, .vb 또는 .cs 파일을 선택하여 로드
+	Show Floating Command Menu	명령 메뉴 표시
+	Template...	템플릿...
+	Toggle Startup Suite (Auto-Load at startup)	시작 세트 전환 (시작할 때 자동 로드)
+	Toggle Startup Suite: automatically load this file at startup and in every opened drawing	시작 세트 전환: 시작할 때 및 열리는 모든 도면에서 이 파일을 자동으로 로드
+	VB.NET Plugin Editor (.vb)	VB.NET 플러그인 편집기 (.vb)
+	VB.NET source opened	VB.NET 원본 코드 로드됨
+	cadcraft-nethost.exe not found	cadcraft-nethost.exe를 찾을 수 없음
+	cannot read file	파일을 읽을 수 없음
+	e.g. (+ 1 2) or + 1 2	예: (+ 1 2) 또는 + 1 2
+	no [CommandMethod] found	[CommandMethod]를 찾을 수 없음
+	Font	글꼴
+	Save Layout as Template	배치를 템플릿으로 저장

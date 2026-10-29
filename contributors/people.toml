@@ -91,3 +91,6 @@ sync_github_name = false
 real_name = "Robert Lee"
 sync_github_name = true
 
+[people.Torentje]
+display_name = "The old Dutch Guy"
+sync_github_name = false

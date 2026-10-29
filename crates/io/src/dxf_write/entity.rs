@@ -504,6 +504,29 @@ fn write_annotations_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, pap
             }
         }
         EntityKind::Image(i) => {
+            if let Some(ole) = d.ole_items.get(&i.path) {
+                w.s(0, "OLE2FRAME");
+                common(w, e, owner, paper, "AcDbOle2Frame");
+                w.i(70, 2);
+                w.s(3, &ole.name);
+                let dx = (i.u.x.abs() * i.size.x).max(1e-6);
+                let dy = (i.v.y.abs() * i.size.y).max(1e-6);
+                w.p(10, Vec3::new(i.insert.x, i.insert.y + dy, i.insert.z));
+                w.p(11, Vec3::new(i.insert.x + dx, i.insert.y, i.insert.z));
+                w.i(71, ole.ole_type as i64);
+                w.i(72, if paper { 1 } else { 0 });
+                w.i(73, 2);
+                w.i(90, ole.data.len() as i64);
+                for chunk in ole.data.chunks(64) {
+                    let mut hex = String::with_capacity(chunk.len() * 2);
+                    for b in chunk {
+                        use std::fmt::Write;
+                        let _ = write!(hex, "{b:02X}");
+                    }
+                    w.s(310, &hex);
+                }
+                return;
+            }
             // Every image has its IMAGEDEF (planned in `write`); the fallback never happens.
             let Some((def, reactor)) = cx.images.by_entity.get(&e.handle) else { return };
             w.s(0, "IMAGE");

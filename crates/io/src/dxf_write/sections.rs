@@ -928,7 +928,7 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Ta
     let mut arrow_defs = arrow_block_definitions(d, &every, &user_blocks, &mut w, &mut cx);
     let mut table_defs = table_block_definitions(d, &every, &mut w, &mut cx);
     // Image definitions (IMAGEDEF objects) of raster images anywhere in the drawing.
-    cx.images = crate::dxf_image::plan(every.iter().copied(), || w.h());
+    cx.images = crate::dxf_image::plan(every.iter().copied(), &d.ole_items, || w.h());
     cx.mlines = crate::dxf_mline::plan(d, every.iter().copied(), || w.h());
     plan_dimension_associations(d, &all_spaces, &mut w, &mut cx);
     let default_table_style = [TableStyle::default()];

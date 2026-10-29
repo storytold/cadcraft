@@ -29,6 +29,7 @@ use break_join::{BreakM, run_break, run_breakat, run_join};
 use explode::run_explode;
 pub(crate) use explode::{explode_kind, explode_with};
 use fillet::{FilletM, run_chamfer, run_fillet};
+pub(crate) use offset::offset_polyline;
 use offset::{OffsetM, run_offset};
 use select_then::{DisplaceM, Op, SelectThen};
 use stretch::{StretchM, run_stretch};

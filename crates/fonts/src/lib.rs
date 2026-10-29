@@ -1,7 +1,8 @@
 //! CADCraft text layout.
 //!
 //! Turns TEXT and MTEXT into stroke polylines with the built-in single-stroke font
-//! ("CADCraft Stroke") or glyph outlines of installed TrueType fonts ([`ttf`]), with a
+//! ("CADCraft Stroke"), the user's SHX shape fonts and big fonts ([`shx`]) or glyph outlines
+//! of installed TrueType fonts ([`ttf`]), with a
 //! per-character fallback to installed fonts for characters the chosen font lacks. Handles the
 //! `%%` control codes, alignment modes, width factor, obliquing, MTEXT inline formatting
 //! (paragraphs, stacking, height changes), word wrap and attachment points.
@@ -16,6 +17,7 @@
 pub mod bidi;
 mod complex;
 mod mtext;
+pub mod shx;
 mod stroke;
 pub mod subset;
 pub mod ttf;
@@ -39,8 +41,8 @@ pub struct Run {
 }
 
 /// Replace `%%` control codes: `%%d` degree, `%%p` plus/minus, `%%c` diameter, `%%%` percent,
-/// `%%nnn` character code. Underline/overline toggles (`%%u`, `%%o`) are returned as flags
-/// per character.
+/// `%%nnn` character code, and `\U+XXXX` Unicode escapes. Underline/overline toggles (`%%u`,
+/// `%%o`) are returned as flags per character.
 pub fn decode_controls(s: &str) -> Vec<(char, bool, bool)> {
     let mut out = Vec::with_capacity(s.len());
     let mut under = false;
@@ -49,6 +51,14 @@ pub fn decode_controls(s: &str) -> Vec<(char, bool, bool)> {
     let mut i = 0;
     while i < chars.len() {
         let c = chars.get(i).copied().unwrap_or(' ');
+        // `\U+XXXX`: a Unicode character by its code.
+        if c == '\\'
+            && let Some(u) = unicode_escape(&chars, i)
+        {
+            out.push((u, under, over));
+            i += 7;
+            continue;
+        }
         if c == '%' && chars.get(i + 1) == Some(&'%') {
             let code = chars.get(i + 2).copied().unwrap_or(' ');
             match code.to_ascii_lowercase() {
@@ -78,6 +88,18 @@ pub fn decode_controls(s: &str) -> Vec<(char, bool, bool)> {
         i += 1;
     }
     out
+}
+
+/// The character of a `\U+XXXX` escape (four hex digits) starting at `chars[i]`.
+pub(crate) fn unicode_escape(chars: &[char], i: usize) -> Option<char> {
+    if chars.get(i) != Some(&'\\') || !matches!(chars.get(i + 1), Some('U' | 'u')) || chars.get(i + 2) != Some(&'+') {
+        return None;
+    }
+    let hex: String = chars.get(i + 3..i + 7)?.iter().collect();
+    if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    char::from_u32(u32::from_str_radix(&hex, 16).ok()?)
 }
 
 /// Advance width of one character at height 1 and width factor 1.
@@ -268,34 +290,64 @@ pub fn space_width(font: &TextFont, height: f64, width_factor: f64) -> f64 {
     {
         return w;
     }
+    if let TextFont::Shx(t) = font {
+        return shx::width(t, " ", height, width_factor);
+    }
     stroke_advance(' ', height, width_factor) + stroke::GAP / stroke::CAP * height * width_factor
 }
 
-/// The font a piece of text is set in: the built-in stroke font or an installed TrueType /
-/// OpenType face (outlines). Either way, characters the font lacks come from a fallback font.
+/// The font a piece of text is set in: the built-in stroke font, an installed TrueType /
+/// OpenType face (outlines) or the user's SHX fonts (a main font and a big font). Whichever,
+/// characters the font lacks come from a fallback font.
 #[derive(Clone, Debug, Default)]
 pub enum TextFont {
     #[default]
     Stroke,
     Outline(ttf::Face),
+    Shx(std::sync::Arc<shx::ShxText>),
 }
 
 impl TextFont {
-    /// Resolve a text style font name: an installed TTF/OTF/TTC when found; else, for a font we
-    /// can't find (an SHX file, a missing TTF), the FONTALT font ([`ttf::font_alt`]) when set;
-    /// else the stroke font.
+    /// Resolve a text style font name (no big font, horizontal): see [`TextFont::resolve_style`].
     pub fn resolve(name: &str) -> TextFont {
-        if let Some(f) = ttf::find(name) {
+        TextFont::resolve_style(name, "", false)
+    }
+
+    /// Resolve a text style's fonts: an installed TTF/OTF/TTC when `font` names one; else the
+    /// SHX font and big font when found ([`shx::find`]), a missing one replaced by the FONTALT
+    /// font ([`ttf::font_alt`], which may name both: `simplex.shx,bigfont.shx`); else FONTALT
+    /// as a TrueType font; else the stroke font (which also draws the characters a missing big
+    /// font would have). `vertical` is the style's vertical flag, honoured by fonts made for it.
+    pub fn resolve_style(font: &str, big_font: &str, vertical: bool) -> TextFont {
+        if let Some(f) = ttf::find(font) {
             return TextFont::Outline(f);
         }
-        let n = name.trim();
-        if n.is_empty() || n.eq_ignore_ascii_case(BUILTIN_FONT) {
+        let n = font.trim();
+        let builtin = n.is_empty() || n.eq_ignore_ascii_case(BUILTIN_FONT);
+        let alt = ttf::font_alt();
+        let (alt_main, alt_big) = alt.split_once(',').map_or((alt.as_str(), ""), |(a, b)| (a.trim(), b.trim()));
+        let main = if builtin { None } else { shx::find(n).or_else(|| shx::find(alt_main)) };
+        let (big, big_name) = match big_font.trim() {
+            "" => (None, ""),
+            b => match shx::find(b) {
+                Some(f) => (Some(f), b),
+                None => (shx::find(alt_big), alt_big),
+            },
+        };
+        if main.is_some() || big.is_some() {
+            return TextFont::Shx(std::sync::Arc::new(shx::ShxText::new(main, big, big_name, vertical)));
+        }
+        if builtin {
             return TextFont::Stroke;
         }
-        ttf::find(&ttf::font_alt()).map(TextFont::Outline).unwrap_or(TextFont::Stroke)
+        ttf::find(alt_main).map(TextFont::Outline).unwrap_or(TextFont::Stroke)
     }
     pub fn is_outline(&self) -> bool {
         matches!(self, TextFont::Outline(_))
+    }
+    /// Whether the text is drawn with SHX fonts.
+    pub fn is_shx(&self) -> bool {
+        matches!(self, TextFont::Shx(_))
     }
 }
 
@@ -419,6 +471,9 @@ pub fn shape_line(font: &TextFont, s: &str, height: f64, width_factor: f64, obli
     {
         return sh;
     }
+    if let TextFont::Shx(t) = font {
+        return shx::shape(t, s, height, width_factor, oblique);
+    }
     shape_stroke(s, height, width_factor, oblique)
 }
 
@@ -428,6 +483,9 @@ pub fn text_width(font: &TextFont, s: &str, height: f64, width_factor: f64) -> f
         && let Some(w) = ttf::width(face, s, height, width_factor)
     {
         return w;
+    }
+    if let TextFont::Shx(t) = font {
+        return shx::width(t, s, height, width_factor);
     }
     line_width(s, height, width_factor)
 }

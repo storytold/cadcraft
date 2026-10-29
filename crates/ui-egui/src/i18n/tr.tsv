@@ -1352,3 +1352,276 @@ menu	View	Görünüm
 	Check for Updates…	Güncellemeleri denetle…
 	CADCraft is up to date.	CADCraft güncel.
 	Could not check for updates.	Güncellemeler denetlenemedi.
+	Copy All	Tümünü Kopyala
+	Copy history output to clipboard	Geçmiş çıktısını panoya kopyala
+	Close History Window (F2)	Geçmiş Penceresini Kapat (F2)
+	Edit XData (XDEDIT)	XData Düzenle (XDEDIT)
+	Open visual XData Editor for selected object	Seçili nesne için görsel XData Düzenleyiciyi aç
+	Command & XData Output (select text + Ctrl+C to copy)	Komut ve XData Çıktısı (metni seçin + kopyalamak için Ctrl+C)
+	Save changes to {name}?	{name} içindeki değişiklikler kaydedilsin mi?
+	Your changes will be lost if you don't save them.	Kaydetmezseniz değişiklikleriniz kaybolacaktır.
+	Don't Save	Kaydetme
+	List Xdata	XData Listele
+	Edit Xdata	XData Düzenle
+	Edit Xdata (XDEDIT)	XData Düzenle (XDEDIT)
+	✏ Edit XData (XDEDIT)	✏ XData Düzenle (XDEDIT)
+	Open visual XData Editor dialog	Görsel XData Düzenleyiciyi aç
+	📋 Copy Values	📋 Değerleri Kopyala
+	Copy XData values (Key,Value) to clipboard	XData değerlerini (Anahtar,Değer) panoya kopyala
+	Click to copy value to clipboard	Değeri panoya kopyalamak için tıklayın
+	✓ XData values copied to clipboard	✓ XData değerleri panoya kopyalandı
+	Selection canceled — previous object kept.	Seçim iptal edildi — önceki nesne korundu.
+	Drag left or right to resize this column	Bu sütunu yeniden boyutlandırmak için sola veya sağa sürükleyin
+	XDATA Editor (XDEDIT)	XDATA Düzenleyici (XDEDIT)
+	No object selected.	Seçili nesne yok.
+	🎯 Select object in drawing	🎯 Çizimde nesne seç
+	Object: {kind}	Nesne: {kind}
+	Layer: {layer}	Katman: {layer}
+	Handle: {handle}	Tanıtıcı: {handle}
+	🎯 Select Another Object	🎯 Başka Nesne Seç
+	Hide editor temporarily, pick another object in the drawing, and open it in XDEDIT	Düzenleyiciyi geçici olarak gizle, çizimde başka bir nesne seç ve XDEDIT'te aç
+	Next ▶	Sonraki ▶
+	Step to the next object with XData in the selection or drawing	Seçimdeki veya çizimdeki XData'lı sonraki nesneye geç
+	◀ Previous	◀ Önceki
+	Step to the previous object with XData in the selection or drawing	Seçimdeki veya çizimdeki XData'lı önceki nesneye geç
+	📋 Copy JSON	📋 JSON Kopyala
+	Copy all XData as structured JSON to clipboard	Tüm XData'yı yapılandırılmış JSON olarak panoya kopyala
+	✓ JSON copied to clipboard	✓ JSON panoya kopyalandı
+	📋 Copy Text	📋 Metni Kopyala
+	Copy all XData as text to clipboard	Tüm XData'yı metin olarak panoya kopyala
+	✓ XData text copied to clipboard	✓ XData metni panoya kopyalandı
+	AppID (1001):	AppID (1001):
+	New AppID (e.g. CAD_XDATA)	Yeni AppID (örn. CAD_XDATA)
+	+ Add AppID	+ AppID Ekle
+	🗑 Delete AppID	🗑 AppID Sil
+	Remove this Application and its XData from the entity	Bu uygulamayı ve XData verilerini nesneden kaldır
+	Application removed (click Apply to save)	Uygulama kaldırıldı (kaydetmek için Uygula'ya tıklayın)
+	🔍 Filter:	🔍 Filtre:
+	Search key or value (e.g. THEMA, DIEPTE)...	Anahtar veya değer ara (örn. THEMA, DIEPTE)...
+	Key width:	Anahtar genişliği:
+	Drag this value or the column divider ⇔ to resize the Key column	Anahtar sütununu yeniden boyutlandırmak için değeri veya ⇔ ayırıcısını sürükleyin
+	Value width:	Değer genişliği:
+	Drag this value or the column divider ⇔ to resize the Value column	Değer sütununu yeniden boyutlandırmak için değeri veya ⇔ ayırıcısını sürükleyin
+	Smart Key=Value Columns	Akıllı Anahtar=Değer Sütunları
+	Split 'KEY=VALUE' or 'Key: Value' into separate editable Key and Value fields	'KEY=VALUE' veya 'Key: Value' ifadelerini ayrı düzenlenebilir alanlara böl
+	This object currently has no user XData.	Bu nesnede şu anda kullanıcı XData verisi yok.
+	+ Create CAD_XDATA Application	+ CAD_XDATA Uygulaması Oluştur
+	DXF Code	DXF Kodu
+	Property / Key ⇔	Özellik / Anahtar ⇔
+	Value (Selectable & Editable) ⇔	Değer (Seçilebilir ve Düzenlenebilir) ⇔
+	Raw Value (Selectable & Editable) ⇔	Ham Değer (Seçilebilir ve Düzenlenebilir) ⇔
+	Actions	İşlemler
+	Copy value to clipboard	Değeri panoya kopyala
+	✓ Copied: {val}	✓ Kopyalandı: {val}
+	Move row up	Satırı yukarı taşı
+	Move row down	Satırı aşağı taşı
+	Delete this XData row	Bu XData satırını sil
+	Add Row:	Satır Ekle:
+	Key (e.g. OPMERKING)	Anahtar (örn. OPMERKING)
+	+ Add Property	+ Özellik Ekle
+	● Unsaved changes	● Kaydedilmemiş değişiklikler
+	Ready — click '🎯 Select Next Object' or '◀ Previous / Next ▶' to switch objects.	Hazır — nesne değiştirmek için '🎯 Sonraki Nesneyi Seç' veya '◀ Önceki / Sonraki ▶' tıklayın.
+	↺ Revert	↺ Geri Al
+	✔ Apply / Save XData	✔ Uygula / XData Kaydet
+	Write modified XData to the entity (Undoable with Ctrl+Z)	Değiştirilen XData'yı nesneye yaz (Ctrl+Z ile geri alınabilir)
+	✔ Save & Select Next Object	✔ Kaydet ve Sonrakini Seç
+	🎯 Select Next Object	🎯 Sonraki Nesneyi Seç
+	Save any changes and directly pick the next object in the drawing	Değişiklikleri kaydet ve çizimdeki sonraki nesneyi doğrudan seç
+	Object {idx1}/{total} loaded ({kind} — {handle})	Nesne {idx1}/{total} yüklendi ({kind} — {handle})
+	↺ Reverted to saved entity XData	↺ Kaydedilmiş XData verilerine geri dönüldü
+	✔ XData saved to entity (Undoable)	✔ XData nesneye kaydedildi (Ctrl+Z ile geri alınabilir)
+	Error: {err}	Hata: {err}
+	⚠ Entity XData changed outside editor — click Revert before saving.	⚠ Nesne XData'sı düzenleyici dışında değişti — kaydetmeden önce Geri Al'a tıklayın.
+	+  |  {view} ({yaw}°, {pitch}°)  |  3D Orbit Wireframe	+  |  {view} ({yaw}°, {pitch}°)  |  3B Yörünge Tel Kafes
+	.NET Plugin Bridge	.NET Eklenti Köprüsü
+	3D Orbit	3B Yörünge
+	3D Views	3B Görünümler
+	Add…	Ekle…
+	Adjust Image...	Görüntüyü Ayarla...
+	Adjust...	Ayarla...
+	Alias	Takma Ad
+	Alias file: {file}	Takma ad dosyası: {file}
+	Analyze Shapes	Şekilleri Analiz Et
+	Analyze Usage	Kullanımı Analiz Et
+	Angstroms	Angström
+	Apply to Layout	Düzene Uygula
+	Architectural	Mimari
+	Arrow size	Ok boyutu
+	Associate	İlişkilendir
+	Astronomical Units	Astronomik Birimler
+	Attach Image...	Görüntü Ekle...
+	AutoLISP (LSP)	AutoLISP (LSP)
+	AutoLISP / VB.NET / C# IDE...	AutoLISP / VB.NET / C# IDE...
+	AutoLISP / VBA IDE...	AutoLISP / VBA IDE...
+	Back	Arka
+	Break-line Symbol	Kesme Çizgisi Sembolü
+	Center the plot	Çizimi ortala
+	Centimeters	Santimetre
+	Change Properties	Özellikleri Değiştir
+	Choose the command the alias starts.	Takma adın başlattığı komutu seçin.
+	Clip Image	Görüntüyü Kırp
+	Command	Komut
+	Convert Text to Mtext	Metni Çok Satırlı Metne Dönüştür
+	Customize	Özelleştir
+	Decameters	Dekametre
+	Decimal	Ondalık
+	Decimal Degrees	Ondalık Derece
+	Decimeters	Desimetre
+	Define each corner of the selection window with a separate click.	Seçim penceresinin her köşesini ayrı bir tıklamayla tanımlayın.
+	Deg/Min/Sec	Der/Dak/San
+	Dim scale overall	Genel ölçülendirme ölçeği
+	Discard	At
+	Drawing Units	Çizim Birimleri
+	Edit Command Aliases (PGP)...	Komut Takma Adlarını Düzenle (PGP)...
+	Edit…	Düzenle…
+	Engineering	Mühendislik
+	Enter block names to extract	Çıkarılacak blok adlarını girin
+	Enter geometric characteristic	Geometrik özelliği girin
+	Enter name of LISP file to load	Yüklenecek LISP dosyasının adını girin
+	Explode Attributes to Text	Öznitelikleri Metne Patlat
+	Express Tools	Express Araçları
+	Feet	Fit
+	First corner	Birinci köşe
+	Fit to paper	Kağıda sığdır
+	Fractional	Kesirli
+	Frame	Çerçeve
+	Front	Ön
+	Gigameters	Gigametre
+	Grads	Grad
+	Hectometers	Hektometre
+	Image	Görüntü
+	Image Frame	Görüntü Çerçevesi
+	Imperial (inches)	İngiliz (inç)
+	Implied Loops	Örtük Döngüler
+	Inches	İnç
+	Insertion scale	Ekleme ölçeği
+	Interface scale	Arayüz ölçeği
+	Island	Ada
+	Kilometers	Kilometre
+	Landscape	Yatay
+	Layouts	Düzenler
+	Light Years	Işık yılı
+	Limits	Sınırlar
+	Load .NET DLL / LISP Application (NETLOAD)...	.NET DLL / LISP Uygulaması Yükle (NETLOAD)...
+	Load Application (NETLOAD)...	Uygulama Yükle (NETLOAD)...
+	Meters	Metre
+	Metric (millimetres)	Metrik (milimetre)
+	Microinches	Mikroinç
+	Microns	Mikron
+	Miles	Mil
+	Millimeters	Milimetre
+	Mils	Mil (inç binde biri)
+	Model Tab	Model Sekmesi
+	More than {n} aliases.	{n} adetten fazla takma ad.
+	Move/Copy/Rotate	Taşı/Kopyala/Döndür
+	NE Isometric	KD İzometrik
+	NW Isometric	KB İzometrik
+	Nanometers	Nanometre
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	Varsayılan bir şablon (QNEWTEMPLATE) ayarlanmadığı sürece, yeni çizimler ve başlangıçtaki ilk çizim bu birimleri kullanır.
+	No alias file loaded. REINIT replaces these aliases with a file's.	Yüklenmiş takma ad dosyası yok. REINIT bu takma adları bir dosyanınkilerle değiştirir.
+	Opposite corner	Karşı köşe
+	Orientation	Yönlendirme
+	Paper size	Kağıt boyutu
+	Parsecs	Parsek
+	Plot area	Çizim alanı
+	Plot object lineweights	Nesne çizgi kalınlıklarını çizdir
+	Plot offset	Çizim ofseti
+	Plot transparency	Saydamlığı çizdir
+	Portrait	Dikey
+	Precision	Hassasiyet
+	Printer/plotter	Yazıcı/çizici
+	Radians	Radyan
+	Raster Image Reference...	Raster Görüntü Referansı...
+	SE Isometric	GD İzometrik
+	SW Isometric	GB İzometrik
+	Sample output	Örnek çıktı
+	Save alias	Takma adı kaydet
+	Scientific	Bilimsel
+	Select boundaries to remove	Kaldırılacak sınırları seçin
+	Select using two clicks only	Yalnızca iki tıklamayla seç
+	Surveyor's Units	Haritacı Birimleri
+	Top (2D Plan)	Üst (2B Plan)
+	Type an alias name.	Bir takma ad yazın.
+	US Survey Feet	ABD Haritacı Ayakları
+	US Survey Inch	ABD Haritacı İnçleri
+	US Survey Mile	ABD Haritacı Milleri
+	US Survey Yard	ABD Haritacı Yardaları
+	Unitless	Birimsiz
+	Units of new drawings	Yeni çizimlerin birimleri
+	Units to scale inserted content	Eklenen içeriği ölçeklendirme birimleri
+	View Resolution	Görünüm Çözünürlüğü
+	Window <	Pencere <
+	X offset (mm)	X ofseti (mm)
+	Y offset (mm)	Y ofseti (mm)
+	Yards	Yarda
+	built-in	yerleşik
+	overrides built-in	yerleşik olanı geçersiz kılar
+	{alias} is already defined; select it and use Edit.	{alias} zaten tanımlı; seçin ve Düzenle'yi kullanın.
+	{command} is an unknown command.	{command} bilinmeyen bir komuttur.
+	📋 Copy All	📋 Tümünü Kopyala
+	🗑 Clear	🗑 Temizle
+	.NET command started	.NET komutu başlatıldı
+	0. Empty file (New)	0. Boş dosya (Yeni)
+	1. AutoLISP: Basic Math & Commands	1. AutoLISP: Temel Matematik ve Komutlar
+	2. AutoLISP: Survey Marker (c:meetpunt)	2. AutoLISP: Ölçüm Noktası (c:meetpunt)
+	3. VB.NET Plugin (.vb -> .dll)	3. VB.NET Eklentisi (.vb -> .dll)
+	4. C# Plugin (.cs -> .dll)	4. C# Eklentisi (.cs -> .dll)
+	Added to Startup Suite (Auto-Load at startup & per drawing)	Başlangıç Paketine eklendi (başlangıçta ve her çizimde otomatik yükle)
+	Auto-Load	Otomatik Yükle
+	AutoLISP / VB.NET / C# IDE & NETLOAD Studio	AutoLISP / VB.NET / C# IDE ve NETLOAD Studio
+	AutoLISP Commands (click to run)	AutoLISP Komutları (çalıştırmak için tıklayın)
+	AutoLISP Editor (.lsp)	AutoLISP Düzenleyicisi (.lsp)
+	Bottom	Alt
+	C# Plugin Editor (.cs)	C# Eklenti Düzenleyicisi (.cs)
+	C# source opened	C# kaynak kodu açıldı
+	Clear Log	Günlüğü Temizle
+	Commands	Komutlar
+	Compact Menu	Kompakt Menü
+	Compilation error	Derleme hatası
+	Compilation failed (see Console)	Derleme başarısız oldu (Konsola bakın)
+	Compilation succeeded	Derleme başarılı
+	Compile & Load .NET DLL	.NET DLL Derle ve Yükle
+	Console / Output	Konsol / Çıktı
+	Error	Hata
+	Error in	Hata:
+	Error: cadcraft-nethost.exe not found next to the application.	Hata: cadcraft-nethost.exe uygulamanın yanında bulunamadı.
+	Evaluate the LISP code or compile the VB.NET / C# source directly into a .NET DLL	LISP kodunu değerlendirin veya VB.NET / C# kaynak kodunu doğrudan bir .NET DLL dosyasına derleyin
+	Failed to invoke compiler	Derleyici başlatılamadı
+	Failed to load	Yüklenemedi
+	Failed to save to	Şuraya kaydedilemedi:
+	Failed to start .NET command	.NET komutu başlatılamadı
+	Failed to write source file	Kaynak dosyası yazılamadı
+	Hide this Studio window and show the compact floating Plugin Commands menu	Bu Studio penceresini gizle ve kompakt yüzen Eklenti Komutları menüsünü göster
+	Load & Run LISP	LISP Yükle ve Çalıştır
+	NETLOAD .NET DLL loaded	NETLOAD .NET DLL yüklendi
+	NETLOAD error in	NETLOAD hatası:
+	NETLOAD failed to run cadcraft-nethost.exe	NETLOAD cadcraft-nethost.exe dosyasını çalıştıramadı
+	Open .lsp / .vb / .cs	.lsp / .vb / .cs Aç
+	Open NETLOAD Studio (VBAIDE)	NETLOAD Studio'yu Aç (VBAIDE)
+	Open Studio	Studio'yu Aç
+	Open the full AutoLISP / VB.NET / C# & NETLOAD Studio	Tam AutoLISP / VB.NET / C# & NETLOAD Studio'yu aç
+	Plugin Commands	Eklenti Komutları
+	Plugins	Eklentiler
+	Quick Expression	Hızlı İfade
+	Ready. Open a .dll (.NET VB.NET/C#) or .lsp (AutoLISP) file via NETLOAD.	Hazır. NETLOAD ile bir .dll (.NET VB.NET/C#) veya .lsp (AutoLISP) dosyası açın.
+	Registered commands	Kayıtlı komutlar
+	Removed from Startup Suite (Auto-Load)	Başlangıç Paketinden kaldırıldı (Otomatik Yükleme)
+	Routine started	Yordam başlatıldı
+	Routine started from	Yordam şuradan başlatıldı:
+	Run .NET command	.NET komutunu çalıştır
+	Run command	Komutu çalıştır
+	Save the current source code in the editor to disk	Düzenleyicideki geçerli kaynak kodunu diske kaydet
+	Saved to	Şuraya kaydedildi:
+	Select and load a .lsp, .dll, .vb, or .cs file from disk	Diskten bir .lsp, .dll, .vb veya .cs dosyası seçin ve yükleyin
+	Show Floating Command Menu	Yüzen Komut Menüsünü Göster
+	Template...	Şablon...
+	Toggle Startup Suite (Auto-Load at startup)	Başlangıç Paketini Değiştir (Başlangıçta otomatik yükle)
+	Toggle Startup Suite: automatically load this file at startup and in every opened drawing	Başlangıç Paketini Değiştir: bu dosyayı başlangıçta ve açılan her çizimde otomatik olarak yükle
+	VB.NET Plugin Editor (.vb)	VB.NET Eklenti Düzenleyicisi (.vb)
+	VB.NET source opened	VB.NET kaynak kodu açıldı
+	cadcraft-nethost.exe not found	cadcraft-nethost.exe bulunamadı
+	cannot read file	dosya okunamıyor
+	e.g. (+ 1 2) or + 1 2	örn. (+ 1 2) veya + 1 2
+	no [CommandMethod] found	[CommandMethod] bulunamadı
+	Font	Yazı Tipi
+	Save Layout as Template	Düzeni Şablon Olarak Kaydet

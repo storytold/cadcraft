@@ -53,19 +53,21 @@ impl Default for Limits {
 pub fn start(port: u16, ctx: egui::Context) -> Receiver<ControlRequest> {
     match TcpListener::bind(("127.0.0.1", port)) {
         Ok(l) => {
+            let bound = l.local_addr().map(|a| a.port()).unwrap_or(port);
             // Loopback TCP cannot tell local users apart, so issue an unguessable per-session
             // token in an owner-only file and require it on every request (CWE-306). A client
-            // (the MCP bridge) reads it from the file, which needs the desktop user's filesystem
-            // access; another local account cannot.
-            let token = match cadcraft_mcp::control_token::issue(port) {
+            // (the MCP bridge or .NET plugin host) reads it from the file, which needs the desktop
+            // user's filesystem access; another local account cannot.
+            let token = match cadcraft_mcp::control_token::issue(bound) {
                 Ok(t) => Arc::new(t),
                 Err(e) => {
                     log::error!("control server not started: could not write the control token: {e}");
                     return sync_channel::<ControlRequest>(0).1;
                 }
             };
-            if let Ok(path) = cadcraft_mcp::control_token::token_path(port) {
-                log::info!("control server listening on 127.0.0.1:{port} (token in {})", path.display());
+            cadcraft_ui_egui::lisp_ide::ACTIVE_CONTROL_PORT.store(bound, Ordering::SeqCst);
+            if let Ok(path) = cadcraft_mcp::control_token::token_path(bound) {
+                log::info!("control server listening on 127.0.0.1:{bound} (token in {})", path.display());
             }
             serve_listener(l, Limits::default(), ctx, token)
         }

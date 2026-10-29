@@ -51,7 +51,7 @@ mod wcmatch;
 
 use args::R;
 pub use args::args_err;
-pub use files::{LispFile, read_text_file};
+pub use files::{LispFile, read_text_file, resolve_support_file};
 use files::{close, findfile, open, read_line, write_line};
 pub use functions::catch_all_error;
 use functions::{
@@ -71,8 +71,8 @@ use output::{alert, prin1, princ, print, prompt, terpri};
 pub use output::{is_null_symbol, null_symbol, real};
 use strings::{
     ascii, atof, atoi, chr, itoa, read_fn, strcase, strcat, strlen, substr, vl_filename_base, vl_filename_directory, vl_filename_extension,
-    vl_list_to_string, vl_prin1_to_string, vl_princ_to_string, vl_string_left_trim, vl_string_right_trim, vl_string_search, vl_string_subst,
-    vl_string_to_list, vl_string_translate, vl_string_trim, vl_symbol_name, vl_symbolp,
+    vl_list_to_string, vl_prin1_to_string, vl_princ_to_string, vl_string_left_trim, vl_string_position, vl_string_right_trim, vl_string_search,
+    vl_string_subst, vl_string_to_list, vl_string_translate, vl_string_trim, vl_symbol_name, vl_symbolp,
 };
 use wcmatch::wcmatch;
 pub use wcmatch::wild_match;
@@ -179,6 +179,7 @@ static BUILTINS: &[Builtin] = &[
     pure!("VL-SYMBOL-NAME", vl_symbol_name),
     pure!("VL-SYMBOLP", vl_symbolp),
     pure!("VL-STRING-SEARCH", vl_string_search),
+    pure!("VL-STRING-POSITION", vl_string_position),
     pure!("VL-STRING-SUBST", vl_string_subst),
     pure!("VL-STRING-TRIM", vl_string_trim),
     pure!("VL-STRING-LEFT-TRIM", vl_string_left_trim),
@@ -193,13 +194,17 @@ static BUILTINS: &[Builtin] = &[
     pure!("DISTANCE", distance),
     pure!("ANGLE", angle),
     pure!("INTERS", inters),
-    pure!("FINDFILE", findfile),
     pure!("VL-CATCH-ALL-ERROR-P", vl_catch_all_error_p),
     pure!("VL-CATCH-ALL-ERROR-MESSAGE", vl_catch_all_error_message),
     pure!("VL-LOAD-COM", noop),
     pure!("GC", noop),
     pure!("REDRAW", noop),
+    pure!("GRDRAW", noop),
+    pure!("GRCLEAR", noop),
+    pure!("GRTEXT", noop),
+    pure!("GRVECS", noop),
     pure!("VER", ver),
+    ctx!("FINDFILE", findfile),
     ctx!("PRINC", princ),
     ctx!("PRIN1", prin1),
     ctx!("PRINT", print),
@@ -239,6 +244,7 @@ static BUILTINS: &[Builtin] = &[
     ctx!("GETKWORD", input::getkword),
     ctx!("ENTSEL", input::entsel),
     ctx!("NENTSEL", input::entsel),
+    ctx!("GETFILED", input::getfiled),
     ctx!("COMMAND", drawing::command),
     ctx!("COMMAND-S", drawing::command),
     ctx!("VL-CMDF", drawing::command),
@@ -252,6 +258,8 @@ static BUILTINS: &[Builtin] = &[
     ctx!("ENTNEXT", drawing::entnext),
     ctx!("ENTUPD", drawing::entupd),
     ctx!("HANDENT", drawing::handent),
+    ctx!("TEXTBOX", drawing::textbox),
+    ctx!("LAYOUTLIST", drawing::layoutlist),
     ctx!("SSGET", drawing::ssget),
     ctx!("SSADD", drawing::ssadd),
     ctx!("SSDEL", drawing::ssdel),

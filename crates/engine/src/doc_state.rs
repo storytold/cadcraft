@@ -35,6 +35,8 @@ pub struct DocState {
     /// The Block Editor (BEDIT), when it is open: `doc` is then the editor's drawing, and the
     /// drawing itself waits in it ([`DocState::drawing`]).
     pub block_edit: Option<blockedit::BlockEdit>,
+    /// 3D Orbit orientation of model space (`Orbit3d::default()` = Top 2D plan view).
+    pub orbit: cadcraft_render::Orbit3d,
 }
 
 static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -61,6 +63,7 @@ impl DocState {
             uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             binary_dxf: false,
             block_edit: None,
+            orbit: cadcraft_render::Orbit3d::default(),
         }
     }
     /// The drawing has changes not saved to its file, or the Block Editor has changes not yet

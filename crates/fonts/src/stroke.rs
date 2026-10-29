@@ -6,7 +6,7 @@
 //! `i` = 6 (cap height). Strokes are separated by spaces.
 
 pub(crate) const CAP: f64 = 6.0;
-pub(crate) const GAP: f64 = 1.6;
+pub(crate) const GAP: f64 = 1.2;
 
 pub(crate) fn glyph(c: char) -> Option<(f64, &'static str)> {
     let g: (f64, &str) = match c {
@@ -108,6 +108,13 @@ pub(crate) fn glyph(c: char) -> Option<(f64, &'static str)> {
         '°' => (2.0, "1i0h1g2h1i"),
         '±' => (4.0, "2e2i 0g4g 0d4d"),
         'Ø' | 'ø' | '⌀' => (4.0, "1c0d0h1i3i4h4d3c1c 0c4i"),
+        'ä' => (4.0, "4g4c 4f3g1g0f0d1c3c4d 1h1i 3h3i"),
+        'ë' => (4.0, "0e4e4f3g1g0f0d1c3c4d 1h1i 3h3i"),
+        'é' => (4.0, "0e4e4f3g1g0f0d1c3c4d 2h3i"),
+        'è' => (4.0, "0e4e4f3g1g0f0d1c3c4d 2i3h"),
+        'ï' => (2.0, "1c1g 0h0i 2h2i"),
+        'ö' => (4.0, "1c0d0f1g3g4f4d3c1c 1h1i 3h3i"),
+        'ü' => (4.0, "0g0d1c3c4d 4g4c 1h1i 3h3i"),
         // List bullet: a small crossed diamond at mid x-height.
         '•' => (2.0, "1d0e1f2e1d 0e2e 1d1f"),
         _ => return None,

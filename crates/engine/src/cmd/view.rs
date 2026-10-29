@@ -102,6 +102,56 @@ pub fn specs() -> Vec<CommandSpec> {
         })
         .noundo(),
         CommandSpec::new("layout.set", "Switch Layout", run_layout_set).params("{name: \"Model\" | layout name}").noundo(),
+        CommandSpec::new("model", "Model Tab", |s, _| run_layout_set(s, &json!({"name": "Model"}))).noundo(),
+        CommandSpec::new("viewres", "View Resolution", |s, _| {
+            s.touch();
+            ok()
+        })
+        .noundo()
+        .interactive(|_| Ok(Box::new(ViewresM::default()))),
+        CommandSpec::new("3dorbit", "3D Orbit", run_3dorbit)
+            .menu(&["View", "3D Orbit"])
+            .alias(&["3do", "orbit", "3dforbit"])
+            .params("{yaw?: degrees, pitch?: degrees, preset?: \"top\"|\"front\"|\"back\"|\"left\"|\"right\"|\"seiso\"|\"swiso\"|\"neiso\"|\"nwiso\", reset?: bool}")
+            .noundo()
+            .transparent()
+            .interactive(|_| Ok(Box::new(OrbitM))),
+        CommandSpec::new("view.top", "Top (2D Plan)", |s, _| run_3dorbit(s, &json!({"preset": "top"})))
+            .menu(&["View", "3D Views", "Top (2D Plan)"])
+            .noundo()
+            .transparent(),
+        CommandSpec::new("view.front", "Front", |s, _| run_3dorbit(s, &json!({"preset": "front"})))
+            .menu(&["View", "3D Views", "Front"])
+            .noundo()
+            .transparent(),
+        CommandSpec::new("view.back", "Back", |s, _| run_3dorbit(s, &json!({"preset": "back"})))
+            .menu(&["View", "3D Views", "Back"])
+            .noundo()
+            .transparent(),
+        CommandSpec::new("view.left", "Left", |s, _| run_3dorbit(s, &json!({"preset": "left"})))
+            .menu(&["View", "3D Views", "Left"])
+            .noundo()
+            .transparent(),
+        CommandSpec::new("view.right", "Right", |s, _| run_3dorbit(s, &json!({"preset": "right"})))
+            .menu(&["View", "3D Views", "Right"])
+            .noundo()
+            .transparent(),
+        CommandSpec::new("view.swiso", "SW Isometric", |s, _| run_3dorbit(s, &json!({"preset": "swiso"})))
+            .menu(&["View", "3D Views", "SW Isometric"])
+            .noundo()
+            .transparent(),
+        CommandSpec::new("view.seiso", "SE Isometric", |s, _| run_3dorbit(s, &json!({"preset": "seiso"})))
+            .menu(&["View", "3D Views", "SE Isometric"])
+            .noundo()
+            .transparent(),
+        CommandSpec::new("view.neiso", "NE Isometric", |s, _| run_3dorbit(s, &json!({"preset": "neiso"})))
+            .menu(&["View", "3D Views", "NE Isometric"])
+            .noundo()
+            .transparent(),
+        CommandSpec::new("view.nwiso", "NW Isometric", |s, _| run_3dorbit(s, &json!({"preset": "nwiso"})))
+            .menu(&["View", "3D Views", "NW Isometric"])
+            .noundo()
+            .transparent(),
     ];
     v.extend(named_views::specs());
     v.extend(vports::specs());
@@ -578,6 +628,166 @@ impl Session {
         let k = f64::from(self.settings.zoomfactor.clamp(3, 100)) / 60.0;
         (delta / 300.0 * k).clamp(-40.0, 40.0).exp()
     }
+    /// Whether `3DORBIT` is currently running interactively.
+    pub fn orbit_active(&self) -> bool {
+        self.running.as_ref().is_some_and(|r| r.id == "3dorbit")
+    }
+    /// Rotate the 3D Orbit view by `(dx, dy)` screen pixels.
+    pub fn orbit_drag(&mut self, dx: f64, dy: f64) -> Result<()> {
+        if !(dx.is_finite() && dy.is_finite()) {
+            return Ok(());
+        }
+        let pivot = self.state()?.orbit.is_top().then(|| default_orbit_pivot(self));
+        let st = self.state_mut()?;
+        if let Some(pivot) = pivot {
+            st.orbit.pivot = pivot;
+        }
+        st.orbit.yaw = (st.orbit.yaw - dx * 0.008) % std::f64::consts::TAU;
+        st.orbit.pitch = (st.orbit.pitch - dy * 0.008).clamp(0.0, std::f64::consts::PI);
+        if st.orbit.is_top() {
+            st.orbit = cadcraft_render::Orbit3d::default();
+        }
+        self.touch();
+        Ok(())
+    }
+}
+
+/// Default 3D rotation pivot for the active drawing space: uses the current view centre when inside
+/// the drawing extents (or the extents centre otherwise) and the mid-Z of the space's entities.
+fn default_orbit_pivot(s: &Session) -> cadcraft_geom::Vec3 {
+    let Ok(st) = s.state() else {
+        return cadcraft_geom::Vec3::ZERO;
+    };
+    let space = st.edit_space();
+    let ext = st.doc.extents(&space);
+    let view_c = st.view().center;
+    let xy = if !ext.is_empty() && ext.contains(view_c) {
+        view_c
+    } else if !ext.is_empty() {
+        ext.center()
+    } else {
+        view_c
+    };
+    let (mut min_z, mut max_z, mut any_z) = (f64::INFINITY, f64::NEG_INFINITY, false);
+    if let Some(store) = st.doc.space(&space) {
+        let mut add_z = |z: f64| {
+            if z.is_finite() {
+                min_z = min_z.min(z);
+                max_z = max_z.max(z);
+                any_z = true;
+            }
+        };
+        for e in store.iter() {
+            match &e.kind {
+                cadcraft_doc::EntityKind::Line(l) => {
+                    add_z(l.a.z);
+                    add_z(l.b.z);
+                }
+                cadcraft_doc::EntityKind::Polyline3d(p) => {
+                    for pt in &p.points {
+                        add_z(pt.z);
+                    }
+                }
+                cadcraft_doc::EntityKind::LwPolyline(p) => add_z(p.elevation),
+                cadcraft_doc::EntityKind::Point(p) => add_z(p.p.z),
+                cadcraft_doc::EntityKind::Circle(c) => add_z(c.center.z),
+                cadcraft_doc::EntityKind::Arc(a) => add_z(a.center.z),
+                cadcraft_doc::EntityKind::Insert(i) => add_z(i.insert.z),
+                cadcraft_doc::EntityKind::Text(t) => add_z(t.insert.z),
+                cadcraft_doc::EntityKind::MText(t) => add_z(t.insert.z),
+                _ => {}
+            }
+        }
+    }
+    let z = if any_z { (min_z + max_z) * 0.5 } else { 0.0 };
+    cadcraft_geom::Vec3::new(xy.x, xy.y, z)
+}
+
+/// Execute `3DORBIT` (`ORBIT`, `3DO`): resets to Top view, applies a named 3D preset, or sets
+/// explicit `yaw` and `pitch` angles in degrees.
+fn run_3dorbit(s: &mut Session, p: &Value) -> Result<Value> {
+    if p.get("reset").and_then(Value::as_bool) == Some(true) {
+        let st = s.state_mut()?;
+        st.orbit = cadcraft_render::Orbit3d::default();
+        s.touch();
+        return Ok(json!({ "yaw": 0.0, "pitch": 0.0, "label": "TOP" }));
+    }
+    let pivot = default_orbit_pivot(s);
+    let st = s.state_mut()?;
+    let iso_pitch = (2.0_f64.sqrt()).atan(); // ~54.7356°
+    if let Some(preset) = str_param(p, "preset") {
+        let (yaw_deg, pitch_rad) = match preset.to_ascii_lowercase().as_str() {
+            "top" | "plan" | "reset" => (0.0_f64, 0.0_f64),
+            "bottom" => (0.0, std::f64::consts::PI),
+            "front" => (0.0, std::f64::consts::FRAC_PI_2),
+            "back" => (180.0, std::f64::consts::FRAC_PI_2),
+            "left" => (90.0, std::f64::consts::FRAC_PI_2),
+            "right" => (-90.0, std::f64::consts::FRAC_PI_2),
+            "swiso" | "iso" => (45.0, iso_pitch),
+            "seiso" => (-45.0, iso_pitch),
+            "neiso" => (-135.0, iso_pitch),
+            "nwiso" => (135.0, iso_pitch),
+            other => return Err(bad("3dorbit", format!("unknown 3D view preset `{other}`"))),
+        };
+        st.orbit = if yaw_deg == 0.0 && pitch_rad == 0.0 {
+            cadcraft_render::Orbit3d::default()
+        } else {
+            cadcraft_render::Orbit3d { yaw: yaw_deg.to_radians(), pitch: pitch_rad, pivot }
+        };
+        let (y, pt, lbl) = (st.orbit.yaw.to_degrees(), st.orbit.pitch.to_degrees(), st.orbit.label());
+        s.touch();
+        return Ok(json!({ "yaw": y, "pitch": pt, "label": lbl }));
+    }
+    if st.orbit.is_top() {
+        st.orbit.pivot = pivot;
+    }
+    if let Some(yaw_deg) = p.get("yaw").and_then(Value::as_f64).filter(|v| v.is_finite()) {
+        st.orbit.yaw = yaw_deg.to_radians();
+    }
+    if let Some(pitch_deg) = p.get("pitch").and_then(Value::as_f64).filter(|v| v.is_finite()) {
+        st.orbit.pitch = pitch_deg.to_radians().clamp(0.0, std::f64::consts::PI);
+    }
+    if st.orbit.is_top() {
+        st.orbit = cadcraft_render::Orbit3d::default();
+    }
+    let (y, pt, lbl) = (st.orbit.yaw.to_degrees(), st.orbit.pitch.to_degrees(), st.orbit.label());
+    s.touch();
+    Ok(json!({ "yaw": y, "pitch": pt, "label": lbl }))
+}
+
+struct OrbitM;
+
+impl Interactive for OrbitM {
+    fn name(&self) -> &'static str {
+        "3DORBIT"
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        Prompt::new(
+            "Press and drag to orbit 3D view, or choose preset (Esc or Enter to exit)",
+            Accept::TEXT,
+        )
+        .kw(&["Top", "Front", "Right", "Left", "Back", "SEiso", "SWiso", "Reset"])
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        match i {
+            Input::Enter | Input::Cancel => Ok(Step::Done),
+            Input::Keyword(k) => {
+                let preset = match k.as_str() {
+                    "Top" | "Reset" => "top",
+                    "Front" => "front",
+                    "Right" => "right",
+                    "Left" => "left",
+                    "Back" => "back",
+                    "SEiso" => "seiso",
+                    "SWiso" => "swiso",
+                    _ => "top",
+                };
+                run_3dorbit(s, &json!({ "preset": preset }))?;
+                Ok(Step::Continue)
+            }
+            _ => Ok(Step::Continue),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -607,6 +817,37 @@ impl Interactive for PanM {
             }
             (_, Input::Enter) => Ok(Step::Done),
             _ => Ok(Step::Continue),
+        }
+    }
+}
+
+#[derive(Default)]
+struct ViewresM {
+    step: u8,
+}
+
+impl Interactive for ViewresM {
+    fn name(&self) -> &'static str {
+        "VIEWRES"
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        if self.step == 0 {
+            Prompt::new("Do you want fast zooms?", Accept::TEXT).kw(&["Yes", "No"]).default("Y")
+        } else {
+            Prompt::new("Enter circle zoom percent (1-20000)", Accept::NUMBER).default("1000")
+        }
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        match i {
+            Input::Cancel => Ok(Step::Cancel),
+            _ if self.step == 0 => {
+                self.step = 1;
+                Ok(Step::Continue)
+            }
+            _ => {
+                s.touch();
+                Ok(Step::Done)
+            }
         }
     }
 }

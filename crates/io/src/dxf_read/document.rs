@@ -311,7 +311,15 @@ pub(super) fn apply_sortents(
     for (owner, map) in tables {
         let Some(name) = brs.get(owner) else { continue };
         let up = name.to_ascii_uppercase();
-        let key = |e: &Entity| map.get(&e.handle).copied().unwrap_or(e.handle.0);
+        // Attribute definitions are not drawn in block references; preserve their record order so
+        // INSERT prompts attributes in creation/BATTMAN order rather than draw order.
+        let key = |e: &Entity| {
+            if matches!(e.kind, EntityKind::AttDef(_)) {
+                (1u8, 0)
+            } else {
+                (0u8, map.get(&e.handle).copied().unwrap_or(e.handle.0))
+            }
+        };
         if up == "*MODEL_SPACE" {
             d.model.sort_by_key(key);
         } else if up.starts_with("*PAPER_SPACE") {

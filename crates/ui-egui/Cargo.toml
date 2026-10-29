@@ -25,11 +25,15 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
 chrono = { workspace = true }
-image = { workspace = true }
+image = { workspace = true, features = ["bmp"] }
 web-time = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+arboard = { workspace = true, features = ["image-data"] }
 craft-update = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+clipboard-win = "5"
 
 [dev-dependencies]
 # Tests build the dock area as the desktop app does (headless contexts keep floats in-window).

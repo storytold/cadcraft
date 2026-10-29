@@ -15,6 +15,7 @@ cadcraft-doc = { workspace = true }
 cadcraft-fonts = { workspace = true }
 tiny-skia = { workspace = true }
 lyon_tessellation = { workspace = true }
+image = { workspace = true }
 
 # Display lists of large drawings are built on all cores (not on the web, which has no threads).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

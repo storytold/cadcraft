@@ -36,6 +36,17 @@ pub struct ClipSource {
     pub serial: u64,
 }
 
+/// A raster image payload held on the clipboard.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ClipboardImage {
+    /// PNG or raw image bytes.
+    pub bytes: Arc<Vec<u8>>,
+    /// Image width in pixels.
+    pub width: u32,
+    /// Image height in pixels.
+    pub height: u32,
+}
+
 /// Put copies of `ents` from the active drawing on the clipboard, with `base` as base point.
 pub(crate) fn copy(s: &mut Session, ents: Vec<Entity>, base: Vec2) -> Result<()> {
     let uid = s.state()?.uid;
@@ -48,13 +59,57 @@ fn set(s: &mut Session, ents: Vec<Entity>, base: Vec2, defs: Drawing, uid: Optio
     let serial = s.clipboard_source.as_ref().map_or(0, |c| c.serial).wrapping_add(1);
     s.clipboard = ents;
     s.clipboard_base = base;
+    s.clipboard_image = None;
     s.clipboard_source = Some(ClipSource { uid, defs: Arc::new(defs), serial });
 }
 
 /// Enabled check of PASTECLIP and PASTEBLOCK: something to paste.
 pub(crate) fn has_clip(s: &Session) -> std::result::Result<(), String> {
     has_doc(s)?;
-    if s.clipboard.is_empty() { Err("the clipboard is empty".into()) } else { Ok(()) }
+    if s.clipboard.is_empty() && s.clipboard_image.is_none() { Err("the clipboard is empty".into()) } else { Ok(()) }
+}
+
+/// Default scale for a pasted clipboard image in `s`'s current space.
+pub(crate) fn default_image_scale(s: &Session, width: u32, height: u32) -> f64 {
+    let w = (width.max(1)) as f64;
+    let h = (height.max(1)) as f64;
+    match s.space() {
+        cadcraft_doc::Space::Paper(_) => 0.25_f64.min(180.0 / w).min(125.0 / h).max(1e-6),
+        cadcraft_doc::Space::Model => 1.0,
+    }
+}
+
+/// Paste a clipboard image at insertion point `at`.
+pub(crate) fn paste_image(s: &mut Session, at: Vec2, scale: Option<f64>) -> Result<Handle> {
+    let img = s.clipboard_image.clone().ok_or_else(|| bad("pasteclip", "no image on clipboard"))?;
+    use std::hash::{DefaultHasher, Hasher};
+    let mut hasher = DefaultHasher::new();
+    hasher.write(&img.bytes);
+    let hash = hasher.finish();
+    let key = format!("paste_{hash:016x}.png");
+
+    let default_scale = default_image_scale(s, img.width, img.height);
+    let space = s.space();
+    let d = s.doc_mut()?;
+    d.store_image_asset(&key, (*img.bytes).clone());
+    let scale = scale.unwrap_or(default_scale).max(1e-9);
+    let image_ent = cadcraft_doc::Image {
+        insert: at.to3(0.0),
+        u: Vec2::new(scale, 0.0).to3(0.0),
+        v: Vec2::new(0.0, scale).to3(0.0),
+        size: Vec2::new(img.width as f64, img.height as f64),
+        path: key.clone(),
+        name: key,
+        ..cadcraft_doc::Image::default()
+    };
+    let h = d.new_handle();
+    let e = Entity::new(h, EntityKind::Image(image_ent));
+    d.ensure_layer(&e.common.layer);
+    if let Some(st) = d.space_mut(&space) {
+        st.push(e);
+    }
+    s.set_selection(vec![h]);
+    Ok(h)
 }
 
 /// Enabled check of PASTEORIG: as in AutoCAD, it pastes objects copied from another drawing.
@@ -148,13 +203,13 @@ pub fn system_text(s: &Session) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
-/// Make DXF text (from the system clipboard) the clipboard: its model space objects with what
-/// they reference, the base point from `$INSBASE`. `false` (clipboard unchanged) when the text
-/// isn't a DXF drawing with objects.
+/// Make DXF text or tab-separated spreadsheet cells (from the system clipboard) the clipboard:
+/// its model space objects with what they reference, the base point from `$INSBASE`. `false`
+/// (clipboard unchanged) when the text isn't a DXF drawing or spreadsheet range.
 pub fn load_system_text(s: &mut Session, text: &str) -> bool {
     let mut lines = text.lines().map(str::trim);
     if lines.next() != Some("0") || lines.next() != Some("SECTION") || text.len() > 256 << 20 {
-        return false;
+        return load_tsv_table(s, text);
     }
     let Some(hooks) = super::file::io() else { return false };
     let Ok(src) = (hooks.read)(text.as_bytes(), "clipboard.dxf") else { return false };
@@ -165,6 +220,169 @@ pub fn load_system_text(s: &mut Session, text: &str) -> bool {
     let base = src.header.point("INSBASE").map(|p| p.xy()).filter(|p| p.is_finite()).unwrap_or(Vec2::ZERO);
     let defs = defs_for(&src, &ents);
     set(s, ents, base, defs, None);
+    true
+}
+
+/// Convert a tab-separated spreadsheet range (copied from Excel / Calc) into a formatted
+/// [`EntityKind::Table`] on the clipboard so `Ctrl+V` pastes it directly.
+fn load_tsv_table(s: &mut Session, text: &str) -> bool {
+    if !text.contains('\t') || text.len() > 4 << 20 {
+        return false;
+    }
+    let raw_rows: Vec<Vec<&str>> = text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.trim_end_matches('\r').split('\t').collect())
+        .collect();
+    if raw_rows.is_empty() {
+        return false;
+    }
+    let ncols = raw_rows.iter().map(|r| r.len()).max().unwrap_or(0);
+    if !(2..=64).contains(&ncols) || raw_rows.len() > 500 {
+        return false;
+    }
+    let nrows = raw_rows.len();
+    let text_h = 2.0;
+    let margin_h = 1.2;
+    let margin_v = 0.8;
+    let row_h = 5.0;
+
+    let mut col_widths = vec![12.0_f64; ncols];
+    let mut col_center = vec![true; ncols];
+    for (r_idx, row) in raw_rows.iter().enumerate() {
+        for (c_idx, cell) in row.iter().enumerate() {
+            let trimmed = cell.trim().trim_matches('"');
+            let chars = trimmed.chars().count() as f64;
+            let needed = (chars * text_h * 0.68 + margin_h * 2.4).clamp(10.0, 95.0);
+            if needed > col_widths[c_idx] {
+                col_widths[c_idx] = needed;
+            }
+            if r_idx > 0 && !trimmed.is_empty() {
+                let is_short_or_num = chars <= 4.0
+                    || trimmed
+                        .chars()
+                        .all(|ch| ch.is_ascii_digit() || matches!(ch, '.' | ',' | '-' | '+' | '/' | ' '));
+                if !is_short_or_num {
+                    col_center[c_idx] = false;
+                }
+            }
+        }
+    }
+    let total_w: f64 = col_widths.iter().sum();
+    if matches!(s.space(), cadcraft_doc::Space::Paper(_)) && total_w > 225.0 {
+        let factor = 225.0 / total_w;
+        for w in &mut col_widths {
+            *w *= factor;
+        }
+    }
+
+    let cells: Vec<Vec<cadcraft_doc::TableCell>> = raw_rows
+        .iter()
+        .enumerate()
+        .map(|(r_idx, row)| {
+            (0..ncols)
+                .map(|c_idx| {
+                    let raw = row.get(c_idx).copied().unwrap_or("").trim().trim_matches('"');
+                    let style = if r_idx == 0 {
+                        String::new()
+                    } else if col_center[c_idx] {
+                        "DataCenter".into()
+                    } else {
+                        String::new()
+                    };
+                    cadcraft_doc::TableCell {
+                        text: raw.into(),
+                        merged: None,
+                        style,
+                        formula: None,
+                        text_height: None,
+                    }
+                })
+                .collect()
+        })
+        .collect();
+
+    let border = cadcraft_doc::CellBorder {
+        visible: true,
+        color: cadcraft_color::Color::True(cadcraft_color::Rgb(0, 0, 0)),
+        lineweight: cadcraft_doc::Lineweight::Mm100(18),
+    };
+    let borders = cadcraft_doc::CellBorders {
+        top: border,
+        inside_h: border,
+        bottom: border,
+        left: border,
+        inside_v: border,
+        right: border,
+    };
+    let header_cs = cadcraft_doc::CellStyle {
+        name: cadcraft_doc::CellStyle::HEADER.into(),
+        text_style: "EXCEL_ISO".into(),
+        text_height: text_h,
+        text_color: cadcraft_color::Color::True(cadcraft_color::Rgb(0, 0, 0)),
+        fill: Some(cadcraft_color::Color::True(cadcraft_color::Rgb(183, 222, 232))),
+        align: 5,
+        margin_h,
+        margin_v,
+        borders,
+        format: cadcraft_doc::CellFormat::Text,
+        precision: 2,
+        merge: false,
+    };
+    let data_cs = cadcraft_doc::CellStyle {
+        name: cadcraft_doc::CellStyle::DATA.into(),
+        text_style: "EXCEL_ISO".into(),
+        text_height: text_h,
+        text_color: cadcraft_color::Color::True(cadcraft_color::Rgb(0, 0, 0)),
+        fill: Some(cadcraft_color::Color::True(cadcraft_color::Rgb(255, 255, 255))),
+        align: 4,
+        margin_h,
+        margin_v,
+        borders,
+        format: cadcraft_doc::CellFormat::Text,
+        precision: 2,
+        merge: false,
+    };
+    let data_center_cs = cadcraft_doc::CellStyle {
+        name: "DataCenter".into(),
+        align: 5,
+        ..data_cs.clone()
+    };
+    let ts = cadcraft_doc::TableStyle {
+        name: "EXCEL_TABLE".into(),
+        text_height: text_h,
+        margin: margin_v,
+        title: false,
+        header: nrows > 1,
+        cell_styles: vec![header_cs, data_cs, data_center_cs],
+    };
+
+    let mut defs = Drawing::new_metric();
+    defs.text_styles.push(cadcraft_doc::TextStyle {
+        name: "EXCEL_ISO".into(),
+        font: "isocp.shx".into(),
+        ..cadcraft_doc::TextStyle::default()
+    });
+    defs.table_styles.push(ts);
+
+    let table = cadcraft_doc::Table {
+        insert: Vec2::ZERO.to3(0.0),
+        col_widths,
+        row_heights: vec![row_h; nrows],
+        cells,
+        style: "EXCEL_TABLE".into(),
+        text_height: text_h,
+        title: false,
+        header: nrows > 1,
+        row_styles: Vec::new(),
+        breaks: None,
+        data_link: None,
+    };
+    let mut ent = Entity::new(Handle(1), EntityKind::Table(table));
+    if let Ok(d) = s.doc() {
+        ent.common.layer = d.header.str("CLAYER", "0").to_string();
+    }
+    set(s, vec![ent], Vec2::ZERO, defs, None);
     true
 }
 
@@ -259,6 +477,9 @@ fn defs_for(src: &Drawing, ents: &[Entity]) -> Drawing {
     }
     for ms in src.mleader_styles.iter().filter(|t| used.mleader_styles.contains(&up(&t.name))) {
         used.text_styles.insert(up(&ms.text_style));
+    }
+    for ts in src.table_styles.iter().filter(|t| used.table_styles.contains(&up(&t.name))) {
+        used.text_styles.extend(ts.cell_styles.iter().map(|c| up(&c.text_style)));
     }
     fn pick<T: Clone>(all: &[T], used: &HashSet<String>, name: fn(&T) -> &str) -> Vec<T> {
         all.iter().filter(|t| used.contains(&up(name(t)))).cloned().collect()

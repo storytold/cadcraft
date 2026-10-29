@@ -30,9 +30,9 @@ const VP_SETTLE_MS: f64 = 150.0;
 #[derive(Default)]
 pub(super) struct VpContent {
     list: DisplayList,
-    /// What the list was built from: drawing, revision, document, viewport, tessellation band
-    /// and lineweight display.
-    pub(super) key: Option<(u64, u64, usize, Handle, i32, bool, bool)>,
+    /// What the list was built from: drawing, revision, document, viewport, tessellation band,
+    /// lineweight display, transparency display and 3D orbit key.
+    pub(super) key: Option<(u64, u64, usize, Handle, i32, bool, bool, u64)>,
     /// The viewport's view (centre, height) the list was built for, and the paper area it covers.
     view: (Vec2, f64),
     area: Bounds2,
@@ -99,7 +99,7 @@ pub(super) fn ensure_vp_content(app: &mut CadApp, xf_paper: &Xf, ctx: &egui::Con
     };
     let px = 1.0 / xf_paper.scale.max(1e-300);
     let band = px.max(1e-300).log2().floor() as i32;
-    let key = (st.uid, st.revision, std::sync::Arc::as_ptr(&st.doc) as usize, h, band, lwdisplay, transparency);
+    let key = (st.uid, st.revision, std::sync::Arc::as_ptr(&st.doc) as usize, h, band, lwdisplay, transparency, st.orbit.hash_key());
     let now = crate::now_ms();
     let view = (vp.view_center, vp.view_height);
     if view != c.last_view {
@@ -132,10 +132,11 @@ pub(super) fn ensure_vp_content(app: &mut CadApp, xf_paper: &Xf, ctx: &egui::Con
             lineweights: lwdisplay,
             view_height: st.paper_view().height,
             plot_style_table: None,
-            view: Some(area),
+            view: if st.orbit.is_top() { Some(area) } else { None },
             skip_viewport: None,
             transparency,
             cancel: None,
+            orbit: st.orbit,
         };
         c.list = cadcraft_render::viewport_content(&st.doc, &st.space, h, area, &opts);
         c.key = Some(key);
@@ -274,17 +275,18 @@ pub(super) struct VpHighlight {
 }
 
 impl VpHighlight {
+    /// Rebuild the viewport highlight display list when the drawing, orbit, zoom band or `handles` change.
     pub(super) fn update(&mut self, st: &cadcraft_engine::DocState, handles: &[Handle], scale: f64) {
         let tolerance = viewport_highlight_tolerance(scale);
         let key = {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
-            (st.uid, st.revision, std::sync::Arc::as_ptr(&st.doc) as usize, tolerance.to_bits(), handles).hash(&mut h);
+            (st.uid, st.revision, std::sync::Arc::as_ptr(&st.doc) as usize, tolerance.to_bits(), st.orbit.hash_key(), handles).hash(&mut h);
             h.finish()
         };
         if self.key != Some(key) {
             let ents = handles.iter().filter_map(|h| st.doc.model.get(*h)).map(|e| e.as_ref());
-            self.list = cadcraft_render::build_entities(&st.doc, ents, &cadcraft_render::Options { tolerance, ..Default::default() });
+            self.list = cadcraft_render::build_entities(&st.doc, ents, &cadcraft_render::Options { tolerance, orbit: st.orbit, ..Default::default() });
             self.key = Some(key);
             self.list_gen = self.list_gen.wrapping_add(1);
         }

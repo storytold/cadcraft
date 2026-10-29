@@ -191,7 +191,7 @@ impl GripEdit {
         match i {
             Input::Point(p) => self.act(s, action, Some(p), None),
             Input::Deferred(d) => self.act(s, action, Some(d.at), None),
-            Input::Text(t) if matches!(action, GripAction::Lengthen | GripAction::Radius) => {
+            Input::Text(t) if matches!(action, GripAction::Lengthen | GripAction::Radius | GripAction::Scale | GripAction::Rotate) => {
                 let v = number(&t).filter(|v| v.is_finite()).ok_or_else(|| other("Requires a number or point."))?;
                 self.act(s, action, None, Some(v))
             }
@@ -357,6 +357,8 @@ impl Interactive for GripEdit {
                     GripAction::ToArc => ("Specify a point on the arc", Accept::POINT),
                     GripAction::Lengthen => ("Specify end point or length change", Accept::POINT_OR_NUMBER),
                     GripAction::Radius => ("Specify radius", Accept::POINT_OR_NUMBER),
+                    GripAction::Scale => ("Specify scale factor or point", Accept::POINT_OR_NUMBER),
+                    GripAction::Rotate => ("Specify rotation angle or point", Accept::POINT_OR_NUMBER),
                     GripAction::RemoveVertex | GripAction::ToLine => ("", Accept::POINT),
                 };
                 Prompt::new(format!("{} {msg}", a.title()), accept).kw(&["eXit"]).base(base)

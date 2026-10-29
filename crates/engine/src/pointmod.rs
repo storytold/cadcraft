@@ -122,15 +122,32 @@ pub fn snap_name(m: u32) -> &'static str {
 /// The candidate snaps near `cursor` for Tab cycling: the snap [`crate::snap::osnap`] picks
 /// first, then the closest snap of each other mode in `osmode`, nearest first, without repeats.
 pub fn snap_candidates(d: &Drawing, space: &Space, cursor: Vec2, aperture: f64, osmode: u32, base: Option<Vec2>, deferred: bool) -> Vec<SnapHit> {
+    snap_candidates_in_orbit(d, space, cadcraft_render::Orbit3d::default(), cursor, aperture, osmode, base, deferred)
+}
+
+/// The candidate snaps near the 2D view-plane `view_cursor` under `orbit` for Tab cycling: the
+/// snap [`crate::snap::osnap_in_orbit`] picks first, then the closest snap of each other mode in
+/// `osmode` (sorted by projected 2D distance to `view_cursor`), without repeats.
+#[allow(clippy::too_many_arguments)]
+pub fn snap_candidates_in_orbit(
+    d: &Drawing,
+    space: &Space,
+    orbit: cadcraft_render::Orbit3d,
+    view_cursor: Vec2,
+    aperture: f64,
+    osmode: u32,
+    base: Option<Vec2>,
+    deferred: bool,
+) -> Vec<SnapHit> {
     if osmode & !mode::HATCH == 0 || osmode & mode::OFF != 0 {
         return Vec::new();
     }
-    let osnap = |m: u32| crate::snap::osnap(d, space, cursor, aperture, m, base, deferred);
+    let osnap = |m: u32| crate::snap::osnap_in_orbit_with_proj(d, space, orbit, view_cursor, aperture, m, base, deferred);
     let extra = osmode & mode::HATCH;
-    let mut per_mode: Vec<SnapHit> = mode::ALL.iter().filter(|(b, _)| osmode & b != 0).filter_map(|(b, _)| osnap(*b | extra)).collect();
-    per_mode.sort_by(|a, b| a.point.dist(cursor).total_cmp(&b.point.dist(cursor)));
-    let mut out: Vec<SnapHit> = osnap(osmode).into_iter().collect();
-    for h in per_mode {
+    let mut per_mode: Vec<(SnapHit, Vec2)> = mode::ALL.iter().filter(|(b, _)| osmode & b != 0).filter_map(|(b, _)| osnap(*b | extra)).collect();
+    per_mode.sort_by(|a, b| a.1.dist(view_cursor).total_cmp(&b.1.dist(view_cursor)));
+    let mut out: Vec<SnapHit> = osnap(osmode).map(|(h, _)| h).into_iter().collect();
+    for (h, _) in per_mode {
         if !out.iter().any(|o| o.mode == h.mode && o.point.near(h.point, aperture * 1e-6)) {
             out.push(h);
         }
@@ -343,11 +360,13 @@ impl Session {
                     // Snap the point with this mode alone, within the aperture.
                     let prompt = self.current_prompt();
                     let space = self.space();
+                    let orbit = self.edit_orbit();
                     let aperture = self.pixel_size() * self.settings.aperture.max(1.0);
                     let hatch = if self.settings.osnaphatch { mode::HATCH } else { 0 };
                     let base = prompt.as_ref().and_then(|q| q.base);
                     let deferred = prompt.as_ref().is_some_and(|q| q.deferred);
-                    let hit = crate::snap::osnap(self.doc()?, &space, p, aperture, mode | hatch, base, deferred);
+                    let view_p = if orbit.is_top() { p } else { orbit.project(p.to3(0.0)) };
+                    let hit = crate::snap::osnap_in_orbit(self.doc()?, &space, orbit, view_p, aperture, mode | hatch, base, deferred);
                     match hit {
                         Some(h) if self.point_mods.is_empty() => return self.input_snapped(h),
                         Some(h) => p = h.point,

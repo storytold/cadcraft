@@ -16,11 +16,43 @@ impl Session {
         Ok(Bounds2::new(lo, hi))
     }
 
-    pub fn zoom_extents(&mut self) -> Result<()> {
+    /// Extents of the space being edited, projected into the 2D view plane when `edit_orbit` is
+    /// not Top.
+    pub(crate) fn space_extents(&self) -> Result<Bounds2> {
         let space = self.space();
-        let ext = self.doc()?.extents(&space);
+        let orbit = self.edit_orbit();
+        let d = self.doc()?;
+        if orbit.is_top() {
+            Ok(d.extents(&space))
+        } else {
+            Ok(cadcraft_render::build(
+                d,
+                &space,
+                &cadcraft_render::Options { orbit, text: true, fill: true, ..Default::default() },
+            )
+            .bounds)
+        }
+    }
+
+    pub fn zoom_extents(&mut self) -> Result<()> {
+        let orbit = self.edit_orbit();
+        let ext = self.space_extents()?;
         let (w, h) = self.viewport_px;
-        let ext = if ext.is_empty() { self.zoom_limits()? } else { ext };
+        let ext = if ext.is_empty() {
+            let lim = self.zoom_limits()?;
+            if orbit.is_top() {
+                lim
+            } else {
+                Bounds2::from_points([
+                    orbit.project(Vec2::new(lim.min.x, lim.min.y).to3(0.0)),
+                    orbit.project(Vec2::new(lim.max.x, lim.min.y).to3(0.0)),
+                    orbit.project(Vec2::new(lim.max.x, lim.max.y).to3(0.0)),
+                    orbit.project(Vec2::new(lim.min.x, lim.max.y).to3(0.0)),
+                ])
+            }
+        } else {
+            ext
+        };
         let st = self.state_mut()?;
         let aspect = st.zoom_aspect(w / h.max(1.0));
         let height = ext.height().max(ext.width() / aspect.max(1e-6)).max(1e-6) * 1.05;

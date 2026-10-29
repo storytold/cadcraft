@@ -111,8 +111,14 @@ pub struct LispState {
     run: Option<Box<Run>>,
     /// A routine runs, from its start to its end (also while its machine is out of `run`).
     active: bool,
+    /// True while `lisp_drive` has taken `run` out to step the VM.
+    pub(crate) executing: bool,
     /// Files loaded by APPLOAD, by name, for `(load name)` where there is no file system.
     files: HashMap<String, String>,
+    /// Files explicitly loaded by the user via `Session::lisp_load`, replayed into newly opened drawings.
+    user_loaded: Vec<(String, String)>,
+    /// Number of `user_loaded` entries evaluated in each drawing `uid`.
+    user_loaded_uids: HashMap<u64, usize>,
     /// Where startup files are read from (see `startup.rs`).
     support_dir: Option<std::path::PathBuf>,
     /// Drawings that had their startup files.
@@ -240,13 +246,16 @@ impl Session {
         inputs: Vec<Value>,
         label: String,
     ) -> crate::Result<Option<std::result::Result<Value, String>>> {
+        if self.lisp.active && self.lisp.run.is_none() && !self.lisp.executing {
+            self.lisp.active = false;
+        }
         if self.lisp.active {
             return Err(crate::EngineError::Other("a LISP routine is already running".into()));
         }
-        self.lisp.active = true;
         let st = self.state()?;
         let before = Some((st.doc.clone(), st.selection.clone()));
         let uid = st.uid;
+        self.lisp.active = true;
         self.lisp.run = Some(Box::new(Run {
             machine,
             uid,
@@ -282,8 +291,9 @@ impl Session {
     }
 
     fn lisp_tick_unguarded(&mut self) {
-        // A drawing seen for the first time gets its startup files.
+        // A drawing seen for the first time gets its startup files and any user-loaded LISP files.
         self.lisp_autoload();
+        self.lisp_ensure_user_loaded();
         if self.lisp.run.as_ref().is_some_and(|r| matches!(r.waiting, Some(Need::Yield))) {
             if let Some(r) = self.lisp.run.as_mut() {
                 r.waiting = None;
@@ -314,11 +324,13 @@ impl Session {
             let mut env = self.lisp_env_take();
             value::set_string_budget(run.string_bytes, self.lisp.limits.string_bytes);
             value::set_cell_limit(self.lisp.limits.cells.max(run.cells_at_start));
+            self.lisp.executing = true;
             let outcome = {
                 let machine = &mut run.machine;
                 let mut ctx = Ctx { s: self, env: &mut env, depth: 0 };
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| machine.run(&mut ctx, SLICE)))
             };
+            self.lisp.executing = false;
             run.string_bytes = value::string_bytes_used();
             let outcome = match outcome {
                 Ok(o) => o,
@@ -459,9 +471,11 @@ impl Session {
             run.handler = true;
             run.waiting = None;
             run.print = false;
+            run.blocking = true;
             run.machine = Machine::calling(handler, vec![Value::str(&e.msg)]);
             self.lisp.run = Some(run);
             self.lisp_drive();
+            self.lisp.active = false;
             // The routine failed whatever its handler returned.
             if let Some(Ok(_)) = &self.lisp_last {
                 self.lisp_last = Some(Err(e.msg));
@@ -501,6 +515,7 @@ impl Session {
         if self.lisp.run.is_some() {
             self.lisp_error(LispError::quit(msg));
         }
+        self.lisp.active = false;
     }
 
     /// A routine waits for the user's answer to a `get…` function: its prompt.
@@ -593,12 +608,40 @@ impl Session {
 
     /// A `c:` function for a command name typed at the command line.
     pub(crate) fn lisp_command(&self, name: &str) -> Option<Value> {
-        if self.lisp.active {
+        if self.lisp.active && (self.lisp.run.is_some() || self.lisp.executing) {
             return None;
         }
+        let cname = format!("C:{name}");
         let uid = self.state().ok()?.uid;
-        let f = self.lisp.envs.get(&uid)?.get(&format!("C:{name}"));
-        matches!(f, Value::Func(_) | Value::Subr(_)).then_some(f)
+        if let Some(f) = self.lisp.envs.get(&uid).map(|e| e.get(&cname)).filter(|f| matches!(f, Value::Func(_) | Value::Subr(_))) {
+            return Some(f);
+        }
+        self.lisp
+            .envs
+            .values()
+            .find_map(|e| {
+                let f = e.get(&cname);
+                matches!(f, Value::Func(_) | Value::Subr(_)).then_some(f)
+            })
+    }
+
+    /// Replay any LISP files loaded via [`Session::lisp_load`] into the active drawing if not yet loaded there.
+    pub(crate) fn lisp_ensure_user_loaded(&mut self) {
+        if (self.lisp.active && (self.lisp.run.is_some() || self.lisp.executing)) || self.lisp.user_loaded.is_empty() {
+            return;
+        }
+        let Ok(uid) = self.state().map(|s| s.uid) else { return };
+        let done = self.lisp.user_loaded_uids.get(&uid).copied().unwrap_or(0);
+        if done >= self.lisp.user_loaded.len() {
+            return;
+        }
+        let pending: Vec<String> = self.lisp.user_loaded[done..].iter().map(|(_, t)| t.clone()).collect();
+        self.lisp.user_loaded_uids.insert(uid, self.lisp.user_loaded.len());
+        let saved_last = self.lisp_last.take();
+        for src in pending {
+            let _ = self.lisp_eval(&src, false, true, Vec::new());
+        }
+        self.lisp_last = saved_last;
     }
 
     /// Run a `c:` command.
@@ -607,6 +650,7 @@ impl Session {
     }
 }
 
+pub(crate) use builtins::resolve_support_file;
 pub(crate) use drawing::from_json as drawing_from_json;
 pub(crate) use drawing::load_source;
 
@@ -621,7 +665,28 @@ impl Session {
     /// and `(load name)` finds it later even where there is no file system. `blocking`: run to
     /// the end (programmatic calls).
     pub fn lisp_load(&mut self, name: &str, text: &str, blocking: bool) -> crate::Result<Option<std::result::Result<Value, String>>> {
-        self.lisp.files.insert(file_key(name), text.to_string());
+        if let Some(parent) = std::path::Path::new(name).parent().and_then(|p| p.to_str()).filter(|s| !s.is_empty()) {
+            self.lisp_file_dir = Some(parent.to_string());
+        }
+        if self.lisp.active {
+            self.lisp_abort("Function cancelled");
+        }
+        let key = file_key(name);
+        self.lisp.files.insert(key.clone(), text.to_string());
+        if let Some(entry) = self.lisp.user_loaded.iter_mut().find(|(k, _)| *k == key) {
+            entry.1 = text.to_string();
+        } else {
+            self.lisp.user_loaded.push((key, text.to_string()));
+        }
+        self.lisp.user_loaded_uids.clear();
+        if self.docs.is_empty() {
+            let shown = std::path::Path::new(name).file_name().and_then(|n| n.to_str()).unwrap_or(name).to_string();
+            self.echo(format!("{shown} successfully loaded."));
+            return Ok(Some(Ok(Value::Nil)));
+        }
+        if let Ok(st) = self.state() {
+            self.lisp.user_loaded_uids.insert(st.uid, self.lisp.user_loaded.len());
+        }
         let r = self.lisp_eval(text, false, blocking, Vec::new())?;
         if !matches!(r, Some(Err(_))) {
             let shown = std::path::Path::new(name).file_name().and_then(std::ffi::OsStr::to_str).unwrap_or(name).to_string();

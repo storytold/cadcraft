@@ -165,7 +165,13 @@ fn push_instance(out: &mut Vec<u8>, a: [f32; 2], b: [f32; 2], c: [u8; 4], width:
 }
 
 /// Lineweight in screen points for a primitive (as on the CPU path), or `None` for a hairline.
+/// Negative values encode a direct screen-point width for single-stroke font glyphs so tiny
+/// sub-pixel glyph segments render as screen-space quads with endcaps instead of dropping out
+/// under the hardware `LineList` diamond-exit rule.
 pub fn wide_width(lw: f32, lwdisplay: bool) -> Option<f32> {
+    if lw < 0.0 {
+        return Some(lw);
+    }
     if !lwdisplay || lw <= 0.0 {
         return None;
     }
@@ -464,15 +470,21 @@ fn vs_quad(
         dir = d / len;
     }
     let n = vec2<f32>(-dir.y, dir.x);
-    // Width arrives in points.
-    let hw = 0.5 * width * view.c.x;
+    // Width arrives in points; negative width is a 1px Chebyshev-coverage text stroke.
+    var hw_perp = 0.5 * abs(width) * view.c.x;
+    var hw_along = hw_perp;
+    if (width < 0.0) {
+        let cheb = max(abs(dir.x), abs(dir.y));
+        hw_perp = 0.54 * cheb;
+        hw_along = max(0.54 / cheb + hw_perp - 0.5 * len, hw_perp);
+    }
     let t = select(0.0, 1.0, vi == 1u || vi == 4u || vi == 5u);
     let s = select(-1.0, 1.0, vi == 2u || vi == 3u || vi == 5u);
-    let along = mix(pa - dir * hw, pb + dir * hw, t);
+    let along = mix(pa - dir * hw_along, pb + dir * hw_along, t);
     var o: VOut;
-    o.pos = px_to_clip(along + n * hw * s);
+    o.pos = px_to_clip(along + n * hw_perp * s);
     o.color = out_color(color);
-    o.along = start * view.a.z + mix(-hw, len + hw, t);
+    o.along = start * view.a.z + mix(-hw_along, len + hw_along, t);
     return o;
 }
 

@@ -1367,3 +1367,252 @@ menu	Modify	Edita
 	Check for Updates…	Verifica aggiornamenti…
 	CADCraft is up to date.	CADCraft è aggiornato.
 	Could not check for updates.	Impossibile verificare gli aggiornamenti.
+	Copy All	Copia tutto
+	Copy history output to clipboard	Copia cronologia negli appunti
+	Close History Window (F2)	Chiudi finestra cronologia (F2)
+	Edit XData (XDEDIT)	Modifica XData (XDEDIT)
+	Open visual XData Editor for selected object	Apri editor XData visuale per l'oggetto selezionato
+	Command & XData Output (select text + Ctrl+C to copy)	Output comandi e XData (seleziona testo + Ctrl+C per copiare)
+	Save changes to {name}?	Salvare le modifiche a {name}?
+	Your changes will be lost if you don't save them.	Le modifiche andranno perse se non vengono salvate.
+	Don't Save	Non salvare
+	List Xdata	Elenca XData
+	Edit Xdata	Modifica XData
+	Edit Xdata (XDEDIT)	Modifica XData (XDEDIT)
+	✏ Edit XData (XDEDIT)	✏ Modifica XData (XDEDIT)
+	Open visual XData Editor dialog	Apri finestra editor visuale XData
+	📋 Copy Values	📋 Copia valori
+	Copy XData values (Key,Value) to clipboard	Copia i valori XData (Chiave,Valore) negli appunti
+	Click to copy value to clipboard	Fai clic per copiare il valore negli appunti
+	✓ XData values copied to clipboard	✓ Valori XData copiati negli appunti
+	Selection canceled — previous object kept.	Selezione annullata — oggetto precedente mantenuto.
+	Drag left or right to resize this column	Trascina a sinistra o a destra per ridimensionare la colonna
+	XDATA Editor (XDEDIT)	Editor XDATA (XDEDIT)
+	No object selected.	Nessun oggetto selezionato.
+	🎯 Select object in drawing	🎯 Seleziona oggetto nel disegno
+	Object: {kind}	Oggetto: {kind}
+	Layer: {layer}	Layer: {layer}
+	Handle: {handle}	Handle: {handle}
+	🎯 Select Another Object	🎯 Seleziona un altro oggetto
+	Hide editor temporarily, pick another object in the drawing, and open it in XDEDIT	Nascondi l'editor, scegli un altro oggetto nel disegno e aprilo in XDEDIT
+	Next ▶	Successivo ▶
+	Step to the next object with XData in the selection or drawing	Passa all'oggetto successivo con XData nella selezione o nel disegno
+	◀ Previous	◀ Precedente
+	Step to the previous object with XData in the selection or drawing	Passa all'oggetto precedente con XData nella selezione o nel disegno
+	📋 Copy JSON	📋 Copia JSON
+	Copy all XData as structured JSON to clipboard	Copia tutti gli XData come JSON strutturato negli appunti
+	✓ JSON copied to clipboard	✓ JSON copiato negli appunti
+	📋 Copy Text	📋 Copia testo
+	Copy all XData as text to clipboard	Copia tutti gli XData come testo negli appunti
+	✓ XData text copied to clipboard	✓ Testo XData copiato negli appunti
+	AppID (1001):	AppID (1001):
+	New AppID (e.g. CAD_XDATA)	Nuovo AppID (es. CAD_XDATA)
+	+ Add AppID	+ Aggiungi AppID
+	🗑 Delete AppID	🗑 Elimina AppID
+	Remove this Application and its XData from the entity	Rimuovi questa applicazione e i suoi XData dall'entità
+	Application removed (click Apply to save)	Applicazione rimossa (fai clic su Applica per salvare)
+	🔍 Filter:	🔍 Filtro:
+	Search key or value (e.g. THEMA, DIEPTE)...	Cerca chiave o valore (es. THEMA, DIEPTE)...
+	Key width:	Larghezza chiave:
+	Drag this value or the column divider ⇔ to resize the Key column	Trascina questo valore o il divisore ⇔ per ridimensionare la colonna Chiave
+	Value width:	Larghezza valore:
+	Drag this value or the column divider ⇔ to resize the Value column	Trascina questo valore o il divisore ⇔ per ridimensionare la colonna Valore
+	Smart Key=Value Columns	Colonne intelligenti Chiave=Valore
+	Split 'KEY=VALUE' or 'Key: Value' into separate editable Key and Value fields	Dividi 'KEY=VALUE' o 'Key: Value' in campi Chiave e Valore separati
+	This object currently has no user XData.	Questo oggetto non contiene attualmente XData utente.
+	+ Create CAD_XDATA Application	+ Crea applicazione CAD_XDATA
+	DXF Code	Codice DXF
+	Property / Key ⇔	Proprietà / Chiave ⇔
+	Value (Selectable & Editable) ⇔	Valore (Selezionabile e Modificabile) ⇔
+	Raw Value (Selectable & Editable) ⇔	Valore grezzo (Selezionabile e Modificabile) ⇔
+	Actions	Azioni
+	Copy value to clipboard	Copia valore negli appunti
+	✓ Copied: {val}	✓ Copiato: {val}
+	Move row up	Sposta riga in alto
+	Move row down	Sposta riga in basso
+	Delete this XData row	Elimina questa riga XData
+	Add Row:	Aggiungi riga:
+	Key (e.g. OPMERKING)	Chiave (es. OPMERKING)
+	+ Add Property	+ Aggiungi proprietà
+	● Unsaved changes	● Modifiche non salvate
+	Ready — click '🎯 Select Next Object' or '◀ Previous / Next ▶' to switch objects.	Pronto — fai clic su '🎯 Seleziona oggetto successivo' o '◀ Precedente / Successivo ▶'.
+	↺ Revert	↺ Ripristina
+	✔ Apply / Save XData	✔ Applica / Salva XData
+	Write modified XData to the entity (Undoable with Ctrl+Z)	Scrivi gli XData modificati nell'entità (Annullabile con Ctrl+Z)
+	✔ Save & Select Next Object	✔ Salva e seleziona successivo
+	🎯 Select Next Object	🎯 Seleziona oggetto successivo
+	Save any changes and directly pick the next object in the drawing	Salva le modifiche e seleziona direttamente l'oggetto successivo
+	Object {idx1}/{total} loaded ({kind} — {handle})	Oggetto {idx1}/{total} caricato ({kind} — {handle})
+	↺ Reverted to saved entity XData	↺ Ripristinati gli XData salvati
+	✔ XData saved to entity (Undoable)	✔ XData salvati nell'entità (Ctrl+Z disponibile)
+	Error: {err}	Errore: {err}
+	⚠ Entity XData changed outside editor — click Revert before saving.	⚠ Gli XData sono cambiati fuori dall'editor — fai clic su Ripristina prima di salvare.
+	+  |  {view} ({yaw}°, {pitch}°)  |  3D Orbit Wireframe	+  |  {view} ({yaw}°, {pitch}°)  |  Wireframe orbita 3D
+	.NET Plugin Bridge	Bridge plug-in .NET
+	3D Orbit	Orbita 3D
+	3D Views	Viste 3D
+	Adjust Image...	Regola immagine...
+	Adjust...	Regola...
+	Analyze Usage	Analizza utilizzo
+	Angstroms	Angstrom
+	Apply to Layout	Applica al layout
+	Architectural	Architettoniche
+	Arrow size	Dimensione freccia
+	Associate	Associa
+	Astronomical Units	Unità astronomiche
+	Attach Image...	Allega immagine...
+	AutoLISP (LSP)	AutoLISP (LSP)
+	AutoLISP / VB.NET / C# IDE...	IDE AutoLISP / VB.NET / C#...
+	AutoLISP / VBA IDE...	IDE AutoLISP / VBA...
+	B	G
+	Back	Posteriore
+	CADCraft	CADCraft
+	Center the plot	Centra stampa
+	Centimeters	Centimetri
+	Change Properties	Modifica proprietà
+	Clip Image	Ritaglia immagine
+	Decameters	Decametri
+	Decimal	Decimali
+	Decimal Degrees	Gradi decimali
+	Decimeters	Decimetri
+	Deg/Min/Sec	Gradi/Min/Sec
+	Dim scale overall	Scala generale quote
+	Drawing Units	Unità di disegno
+	Engineering	Ingegneristiche
+	Enter block names to extract	Digitare i nomi dei blocchi da estrarre
+	Enter geometric characteristic	Digitare la caratteristica geometrica
+	Enter name of LISP file to load	Digitare il nome del file LISP da caricare
+	Feet	Piedi
+	First corner	Primo angolo
+	Fit to paper	Adatta al foglio
+	Fractional	Frazionarie
+	Frame	Cornice
+	Front	Frontale
+	Gigameters	Gigametri
+	Grads	Gradi centesimali
+	Hectometers	Ettometri
+	Image	Immagine
+	Image Frame	Cornice immagine
+	Imperial (inches)	Imperiale (pollici)
+	Implied Loops	Contorni impliciti
+	Inches	Pollici
+	Insertion scale	Scala di inserimento
+	Kilometers	Chilometri
+	Landscape	Orizzontale
+	Layouts	Layout
+	Light Years	Anni luce
+	Limits	Limiti
+	Load .NET DLL / LISP Application (NETLOAD)...	Carica applicazione .NET DLL / LISP (NETLOAD)...
+	Load Application (NETLOAD)...	Carica applicazione (NETLOAD)...
+	Meters	Metri
+	Metric (millimetres)	Metrico (millimetri)
+	Microinches	Micropollici
+	Microns	Micron
+	Miles	Miglia
+	Millimeters	Millimetri
+	Mils	Mil
+	Model Tab	Scheda Modello
+	NE Isometric	Assonometria NE
+	NW Isometric	Assonometria NO
+	Nanometers	Nanometri
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	I nuovi disegni e il primo disegno all'avvio utilizzano queste unità a meno che non sia impostato un modello di default (QNEWTEMPLATE).
+	Opposite corner	Angolo opposto
+	Orientation	Orientamento
+	Paper size	Formato carta
+	Parsecs	Parsec
+	Plot area	Area di stampa
+	Plot object lineweights	Stampa spessori di linea oggetto
+	Plot offset	Offset di stampa
+	Plot transparency	Stampa trasparenza
+	Portrait	Verticale
+	Precision	Precisione
+	Printer/plotter	Stampante/plotter
+	Radians	Radianti
+	Raster Image Reference...	Riferimento immagine raster...
+	SE Isometric	Assonometria SE
+	SW Isometric	Assonometria SO
+	Sample output	Esempio di output
+	Scientific	Scientifiche
+	Surveyor's Units	Unità topografiche
+	Top (2D Plan)	Alto (Pianta 2D)
+	US Survey Feet	Piedi topografici USA
+	US Survey Inch	Pollici topografici USA
+	US Survey Mile	Miglia topografiche USA
+	US Survey Yard	Iarde topografiche USA
+	Unitless	Senza unità
+	Units of new drawings	Unità dei nuovi disegni
+	Units to scale inserted content	Unità di scala del contenuto inserito
+	View Resolution	Risoluzione vista
+	Window <	Finestra <
+	X	X
+	X offset (mm)	Offset X (mm)
+	Y	Y
+	Y offset (mm)	Offset Y (mm)
+	Yards	Iarde
+	📋 Copy All	📋 Copia tutto
+	🗑 Clear	🗑 Cancella
+	.NET command started	Comando .NET avviato
+	0. Empty file (New)	0. File vuoto (Nuovo)
+	1. AutoLISP: Basic Math & Commands	1. AutoLISP: Matematica di base e comandi
+	2. AutoLISP: Survey Marker (c:meetpunt)	2. AutoLISP: Punto topografico (c:meetpunt)
+	3. VB.NET Plugin (.vb -> .dll)	3. Plug-in VB.NET (.vb -> .dll)
+	4. C# Plugin (.cs -> .dll)	4. Plug-in C# (.cs -> .dll)
+	Added to Startup Suite (Auto-Load at startup & per drawing)	Aggiunto al gruppo di avvio (caricamento automatico all'avvio e per disegno)
+	Auto-Load	Caricamento automatico
+	AutoLISP / VB.NET / C# IDE & NETLOAD Studio	IDE AutoLISP / VB.NET / C# e NETLOAD Studio
+	AutoLISP Commands (click to run)	Comandi AutoLISP (fare clic per eseguire)
+	AutoLISP Editor (.lsp)	Editor AutoLISP (.lsp)
+	Bottom	Inferiore
+	C# Plugin Editor (.cs)	Editor plug-in C# (.cs)
+	C# source opened	Codice sorgente C# aperto
+	Clear Log	Cancella registro
+	Commands	Comandi
+	Compact Menu	Menu compatto
+	Compilation error	Errore di compilazione
+	Compilation failed (see Console)	Compilazione non riuscita (vedere Console)
+	Compilation succeeded	Compilazione riuscita
+	Compile & Load .NET DLL	Compila e carica DLL .NET
+	Console / Output	Console / Output
+	Error	Errore
+	Error in	Errore in
+	Error: cadcraft-nethost.exe not found next to the application.	Errore: cadcraft-nethost.exe non trovato accanto all'applicazione.
+	Evaluate the LISP code or compile the VB.NET / C# source directly into a .NET DLL	Valuta il codice LISP o compila il codice sorgente VB.NET / C# direttamente in una DLL .NET
+	Failed to invoke compiler	Impossibile avviare il compilatore
+	Failed to load	Caricamento non riuscito
+	Failed to save to	Impossibile salvare in
+	Failed to start .NET command	Impossibile avviare il comando .NET
+	Failed to write source file	Impossibile scrivere il file sorgente
+	Hide this Studio window and show the compact floating Plugin Commands menu	Nascondi questa finestra di Studio e mostra il menu flottante compatto Comandi plug-in
+	Load & Run LISP	Carica ed esegui LISP
+	NETLOAD .NET DLL loaded	DLL .NET NETLOAD caricata
+	NETLOAD error in	Errore NETLOAD in
+	NETLOAD failed to run cadcraft-nethost.exe	NETLOAD non è riuscito a eseguire cadcraft-nethost.exe
+	Open .lsp / .vb / .cs	Apri .lsp / .vb / .cs
+	Open NETLOAD Studio (VBAIDE)	Apri NETLOAD Studio (VBAIDE)
+	Open Studio	Apri Studio
+	Open the full AutoLISP / VB.NET / C# & NETLOAD Studio	Apri l'ambiente completo AutoLISP / VB.NET / C# & NETLOAD Studio
+	Plugin Commands	Comandi plug-in
+	Plugins	Plug-in
+	Quick Expression	Espressione rapida
+	Ready. Open a .dll (.NET VB.NET/C#) or .lsp (AutoLISP) file via NETLOAD.	Pronto. Apri un file .dll (.NET VB.NET/C#) o .lsp (AutoLISP) tramite NETLOAD.
+	Registered commands	Comandi registrati
+	Removed from Startup Suite (Auto-Load)	Rimosso dal gruppo di avvio (Caricamento automatico)
+	Routine started	Routine avviata
+	Routine started from	Routine avviata da
+	Run .NET command	Esegui comando .NET
+	Run command	Esegui comando
+	Save the current source code in the editor to disk	Salva il codice sorgente corrente nell'editor su disco
+	Saved to	Salvato in
+	Select and load a .lsp, .dll, .vb, or .cs file from disk	Seleziona e carica un file .lsp, .dll, .vb o .cs dal disco
+	Show Floating Command Menu	Mostra menu comandi flottante
+	Template...	Modello...
+	Toggle Startup Suite (Auto-Load at startup)	Attiva/disattiva gruppo di avvio (Caricamento automatico all'avvio)
+	Toggle Startup Suite: automatically load this file at startup and in every opened drawing	Attiva/disattiva gruppo di avvio: carica automaticamente questo file all'avvio e in ogni disegno aperto
+	VB.NET Plugin Editor (.vb)	Editor plug-in VB.NET (.vb)
+	VB.NET source opened	Codice sorgente VB.NET aperto
+	cadcraft-nethost.exe not found	cadcraft-nethost.exe non trovato
+	cannot read file	impossibile leggere il file
+	e.g. (+ 1 2) or + 1 2	ad es. (+ 1 2) o + 1 2
+	no [CommandMethod] found	nessun [CommandMethod] trovato
+	Font	Carattere
+	Save Layout as Template	Salva layout come modello

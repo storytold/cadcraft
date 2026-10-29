@@ -67,6 +67,7 @@ fn items(p: &PickSet) -> Vec<Handle> {
 /// selection set picks objects, and `pause` waits for the user. A command not finished by the
 /// arguments stays active for the next `command` call. No arguments: cancel the active command.
 pub fn command(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
+    ctx.env.order = None;
     if a.is_empty() {
         if ctx.s.running.is_some() {
             ctx.s.cancel();
@@ -112,7 +113,9 @@ pub fn command(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
             Value::PickSet(p) => feed(ctx.s, Input::Pick(items(p))),
             Value::Cons(_) => {
                 if let Some(p) = arg.as_point() {
+                    ctx.s.pending_point_z = Some(p[2]);
                     feed(ctx.s, Input::Point(Vec2::new(p[0], p[1])));
+                    ctx.s.pending_point_z = None;
                 } else if let Value::Ename(h) = arg.car() {
                     // An `entsel` result: (ename point).
                     feed(ctx.s, Input::Pick(vec![h]));
@@ -191,6 +194,9 @@ pub fn getvar(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 pub fn setvar(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 2, 2)?;
     let name = string(&a[0])?;
+    if a[1].is_nil() {
+        return Ok(Flow::Value(Value::Nil));
+    }
     let mut budget: u64 = TO_JSON_BUDGET;
     let Some(json) = to_json_bounded(&a[1], 0, &mut budget) else {
         return Err(LispError::new(format!("AutoCAD variable setting rejected: {} value too large", to_text(&a[0], true))));
@@ -314,12 +320,73 @@ fn space_of(d: &cadcraft_doc::Drawing, h: Handle) -> Option<Space> {
     d.space_of(h)
 }
 
+const SUB_BIT: u64 = 1u64 << 63;
+const SUB_SEQEND: usize = 0x7FFF;
+
+fn make_sub_handle(parent: Handle, index: usize) -> Handle {
+    Handle(SUB_BIT | ((index as u64 & 0x7FFF) << 48) | (parent.0 & 0x0000_FFFF_FFFF_FFFF))
+}
+
+fn split_sub_handle(h: Handle) -> Option<(Handle, usize)> {
+    if h.0 & SUB_BIT == 0 {
+        None
+    } else {
+        let index = ((h.0 >> 48) & 0x7FFF) as usize;
+        let parent = Handle(h.0 & 0x0000_FFFF_FFFF_FFFF);
+        Some((parent, index))
+    }
+}
+
+fn sub_entity_count(e: &Entity) -> usize {
+    match &e.kind {
+        cadcraft_doc::EntityKind::Polyline3d(p) => p.points.len(),
+        cadcraft_doc::EntityKind::Insert(i) => i.attribs.len(),
+        _ => 0,
+    }
+}
+
+fn sub_entget(h: Handle, parent: &Entity, index: usize) -> Option<Value> {
+    let mut items = vec![Value::cons(Value::Int(-1), Value::Ename(h))];
+    if index == SUB_SEQEND {
+        items.push(Value::cons(Value::Int(0), Value::str("SEQEND")));
+        items.push(Value::cons(Value::Int(8), Value::str(&parent.common.layer)));
+        return Some(Value::list(items));
+    }
+    match &parent.kind {
+        cadcraft_doc::EntityKind::Polyline3d(p) => {
+            let v = p.points.get(index)?;
+            items.push(Value::cons(Value::Int(0), Value::str("VERTEX")));
+            items.push(Value::cons(Value::Int(8), Value::str(&parent.common.layer)));
+            items.push(Value::list(vec![Value::Int(10), Value::Real(v.x), Value::Real(v.y), Value::Real(v.z)]));
+            items.push(Value::cons(Value::Int(70), Value::Int(32)));
+            Some(Value::list(items))
+        }
+        cadcraft_doc::EntityKind::Insert(ins) => {
+            let att = ins.attribs.get(index)?;
+            items.push(Value::cons(Value::Int(0), Value::str("ATTRIB")));
+            items.push(Value::cons(Value::Int(8), Value::str(&parent.common.layer)));
+            items.push(Value::list(vec![Value::Int(10), Value::Real(att.text.insert.x), Value::Real(att.text.insert.y), Value::Real(att.text.insert.z)]));
+            items.push(Value::cons(Value::Int(40), Value::Real(att.text.height)));
+            items.push(Value::cons(Value::Int(1), Value::str(&att.text.value)));
+            items.push(Value::cons(Value::Int(2), Value::str(&att.tag)));
+            items.push(Value::cons(Value::Int(50), Value::Real(att.text.rotation)));
+            Some(Value::list(items))
+        }
+        _ => None,
+    }
+}
+
 pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 2)?;
     let h = ename(&a[0])?;
     let Ok(d) = ctx.s.doc() else { return Ok(Flow::Value(Value::Nil)) };
+    if let Some((parent_h, index)) = split_sub_handle(h) {
+        let Some(parent) = d.entity(parent_h) else { return Ok(Flow::Value(Value::Nil)) };
+        return Ok(Flow::Value(sub_entget(h, parent, index).unwrap_or_default()));
+    }
     let Some(e) = d.entity(h) else { return Ok(Flow::Value(Value::Nil)) };
     let (kind, mut tags) = (codec()?.groups)(d, e);
+    tags.retain(|t| t.code < 1000);
     convert_angles(&kind, &mut tags, f64::to_radians);
     let layout = match space_of(d, h) {
         Some(Space::Paper(name)) => name,
@@ -334,6 +401,52 @@ pub fn entget(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         if after_marker {
             items.push(Value::cons(Value::Int(410), Value::str(&layout)));
             placed_layout = true;
+        }
+    }
+    if matches!(&e.kind, cadcraft_doc::EntityKind::Insert(ins) if !ins.attribs.is_empty()) {
+        items.push(Value::cons(Value::Int(66), Value::Int(1)));
+    }
+    if let Some(apps) = a.get(1)
+        && !apps.is_nil()
+        && !e.common.xdata.is_empty()
+    {
+        let wanted: Vec<String> = apps
+            .iter()
+            .filter_map(|v| match v {
+                Value::Str(s) => Some(s.to_uppercase()),
+                _ => None,
+            })
+            .collect();
+        let keep = |app: &str| wanted.iter().any(|w| super::builtins::wild_match(&app.to_uppercase(), w));
+        let mut xapps = Vec::new();
+        let mut cur_app: Option<(String, Vec<Value>)> = None;
+        for tag in &e.common.xdata {
+            let (code, val) = (tag.code, &tag.value);
+            if code == 1001 {
+                if let Some((app, list)) = cur_app.take().filter(|(a, _)| keep(a)) {
+                    let mut entry = vec![Value::str(&app)];
+                    entry.extend(list);
+                    xapps.push(Value::list(entry));
+                }
+                cur_app = Some((val.clone(), Vec::new()));
+            } else if let Some((_, list)) = &mut cur_app {
+                let v = match code {
+                    1070 | 1071 => Value::Int(val.parse::<i32>().unwrap_or(0)),
+                    1040..=1042 => Value::Real(val.parse::<f64>().unwrap_or(0.0)),
+                    _ => Value::str(val),
+                };
+                list.push(Value::cons(Value::Int(code), v));
+            }
+        }
+        if let Some((app, list)) = cur_app.take().filter(|(a, _)| keep(a)) {
+            let mut entry = vec![Value::str(&app)];
+            entry.extend(list);
+            xapps.push(Value::list(entry));
+        }
+        if !xapps.is_empty() {
+            let mut group3 = vec![Value::Int(-3)];
+            group3.extend(xapps);
+            items.push(Value::list(group3));
         }
     }
     Ok(Flow::Value(Value::list(items)))
@@ -464,6 +577,40 @@ pub fn entmod(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     let Some(Value::Ename(h)) = list.iter().find(|v| v.car().as_number() == Some(-1.0)).map(|v| v.cdr()) else {
         return Err(LispError::bad_arg("lentityp", &Value::Nil));
     };
+    if let Some((parent_h, index)) = split_sub_handle(h) {
+        let Ok(d) = ctx.s.doc_mut() else { return Ok(Flow::Value(Value::Nil)) };
+        let new_val = list.iter().find(|v| v.car().as_number() == Some(1.0)).and_then(|v| match v.cdr() {
+            Value::Str(s) => Some(s.to_string()),
+            _ => None,
+        });
+        let new_pt = list.iter().find(|v| v.car().as_number() == Some(10.0)).and_then(|v| v.cdr().as_point());
+        let ok = d
+            .modify_entity(parent_h, |e| match &mut e.kind {
+                cadcraft_doc::EntityKind::Insert(ins) => {
+                    if let Some(att) = ins.attribs.get_mut(index) {
+                        if let Some(val) = new_val {
+                            att.text.value = val;
+                        }
+                        if let Some(p) = new_pt {
+                            att.text.insert = cadcraft_geom::Vec3::new(p[0], p[1], p[2]);
+                        }
+                    }
+                }
+                cadcraft_doc::EntityKind::Polyline3d(poly) => {
+                    if let Some(v) = poly.points.get_mut(index)
+                        && let Some(p) = new_pt
+                    {
+                        *v = cadcraft_geom::Vec3::new(p[0], p[1], p[2]);
+                    }
+                }
+                _ => {}
+            })
+            .is_ok();
+        if ok {
+            ctx.s.touch();
+        }
+        return Ok(Flow::Value(if ok { list.clone() } else { Value::Nil }));
+    }
     let Some(old) = ctx.s.doc().ok().and_then(|d| d.entity(h)).cloned() else { return Ok(Flow::Value(Value::Nil)) };
     let (kind_name, common, kind) = match entity_from_list(ctx, list) {
         Ok(x) => x,
@@ -521,13 +668,14 @@ pub fn entdel(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 /// Every entity's handle in creation order (model space and layouts), cached per drawing.
 fn handles_in_order(ctx: &mut Ctx<'_>) -> Arc<Vec<Handle>> {
     let Ok(st) = ctx.s.state() else { return Arc::default() };
-    let key = Arc::as_ptr(&st.doc) as usize;
+    let d = &st.doc;
+    let count = d.model.len() + d.layouts.iter().map(|l| l.entities.len()).sum::<usize>();
+    let key = (Arc::as_ptr(&st.doc) as usize) ^ (st.revision as usize).rotate_left(13) ^ count.rotate_left(29);
     if let Some((k, v)) = &ctx.env.order
         && *k == key
     {
         return v.clone();
     }
-    let d = &st.doc;
     let mut v: Vec<Handle> = d.model.handles();
     for l in &d.layouts {
         v.extend(l.entities.handles());
@@ -545,16 +693,62 @@ pub fn entlast(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 
 pub fn entnext(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 0, 1)?;
-    let order = handles_in_order(ctx);
-    let next = match a.first() {
-        None | Some(Value::Nil) => order.first().copied(),
-        Some(v) => {
-            let h = ename(v)?;
-            let i = order.partition_point(|x| *x <= h);
-            order.get(i).copied()
+    if let Some(v) = a.first().filter(|v| !v.is_nil()) {
+        let h = ename(v)?;
+        if let Some((parent_h, index)) = split_sub_handle(h) {
+            if index == SUB_SEQEND {
+                let order = handles_in_order(ctx);
+                let i = order.partition_point(|x| *x <= parent_h);
+                return Ok(Flow::Value(order.get(i).copied().map(Value::Ename).unwrap_or_default()));
+            }
+            let count = ctx.s.doc().ok().and_then(|d| d.entity(parent_h)).map(|e| sub_entity_count(e)).unwrap_or(0);
+            let next_idx = if index + 1 < count { index + 1 } else { SUB_SEQEND };
+            return Ok(Flow::Value(Value::Ename(make_sub_handle(parent_h, next_idx))));
         }
-    };
-    Ok(Flow::Value(next.map(Value::Ename).unwrap_or_default()))
+        let count = ctx.s.doc().ok().and_then(|d| d.entity(h)).map(|e| sub_entity_count(e)).unwrap_or(0);
+        if count > 0 {
+            return Ok(Flow::Value(Value::Ename(make_sub_handle(h, 0))));
+        }
+        let order = handles_in_order(ctx);
+        let i = order.partition_point(|x| *x <= h);
+        return Ok(Flow::Value(order.get(i).copied().map(Value::Ename).unwrap_or_default()));
+    }
+    let order = handles_in_order(ctx);
+    Ok(Flow::Value(order.first().copied().map(Value::Ename).unwrap_or_default()))
+}
+
+pub fn textbox(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
+    arity(&a, 1, 1)?;
+    let list = &a[0];
+    let text = list
+        .iter()
+        .find(|v| v.car().as_number() == Some(1.0))
+        .map(|v| to_text(&v.cdr(), false))
+        .unwrap_or_default();
+    let default_h = ctx.s.doc().ok().map(|d| d.header.f64("TEXTSIZE", 0.2)).unwrap_or(0.2);
+    let h = list
+        .iter()
+        .find(|v| v.car().as_number() == Some(40.0))
+        .and_then(|v| v.cdr().as_number())
+        .unwrap_or(default_h)
+        .max(1e-6);
+    let wf = list
+        .iter()
+        .find(|v| v.car().as_number() == Some(41.0))
+        .and_then(|v| v.cdr().as_number())
+        .unwrap_or(1.0);
+    let w = (text.chars().count() as f64) * h * 0.85 * wf;
+    Ok(Flow::Value(Value::list(vec![
+        Value::point(&[0.0, 0.0, 0.0]),
+        Value::point(&[w, h, 0.0]),
+    ])))
+}
+
+pub fn layoutlist(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
+    arity(&a, 0, 0)?;
+    let Ok(d) = ctx.s.doc() else { return Ok(Flow::Value(Value::Nil)) };
+    let names: Vec<Value> = d.layouts.iter().map(|l| Value::str(&l.name)).collect();
+    Ok(Flow::Value(if names.is_empty() { Value::list(vec![Value::str("Layout1")]) } else { Value::list(names) }))
 }
 
 pub fn handent(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
@@ -745,15 +939,26 @@ fn parse_filter_item(items: &[Value], i: &mut usize, depth: usize) -> Result<Fil
 }
 
 fn matches_filter(d: &cadcraft_doc::Drawing, e: &Entity, f: &Filter) -> bool {
+    let layout = match space_of(d, e.handle) {
+        Some(Space::Paper(name)) => name,
+        _ => "Model".into(),
+    };
     let groups = || match crate::cmd::file::entity_codec() {
         Some(c) => {
             let (kind, mut tags) = (c.groups)(d, e);
             convert_angles(&kind, &mut tags, f64::to_radians);
-            let mut l = vec![Value::cons(Value::Int(0), Value::str(&kind))];
+            let mut l = vec![Value::cons(Value::Int(0), Value::str(&kind)), Value::cons(Value::Int(410), Value::str(&layout))];
+            if matches!(&e.kind, cadcraft_doc::EntityKind::Insert(ins) if !ins.attribs.is_empty()) {
+                l.push(Value::cons(Value::Int(66), Value::Int(1)));
+            }
             l.extend(groups_to_list(&tags));
             l
         }
-        None => vec![Value::cons(Value::Int(0), Value::str(e.kind.dxf_name())), Value::cons(Value::Int(8), Value::str(&e.common.layer))],
+        None => vec![
+            Value::cons(Value::Int(0), Value::str(e.kind.dxf_name())),
+            Value::cons(Value::Int(8), Value::str(&e.common.layer)),
+            Value::cons(Value::Int(410), Value::str(&layout)),
+        ],
     };
     let groups = groups();
     eval_filter(&groups, f)

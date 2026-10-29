@@ -1,5 +1,5 @@
 use super::list::preview_options;
-use super::{Bounds2, CanvasState, Color32, DisplayList, Handle, Kind, ListKey, Pos2, Rect, Rgb, Shape, Stroke, Vec2, Xf, vec2};
+use super::{Bounds2, CanvasState, Color32, DisplayList, Handle, Kind, ListKey, Pos2, Rect, Rgb, Shape, Stroke, Vec2, Xf, pos2, vec2};
 
 fn color32(c: Rgb) -> Color32 {
     Color32::from_rgb(c.0, c.1, c.2)
@@ -17,6 +17,167 @@ fn clip_infinite(xf: &Xf, base: Vec2, dir: Vec2, ray: bool) -> Option<[Pos2; 2]>
     let a = if ray { base } else { base - dir * far };
     let b = base + dir * far;
     Some([xf.to_screen(a), xf.to_screen(b)])
+}
+
+fn load_texture_from_bytes(ctx: &egui::Context, bytes: &[u8], name: &str) -> Option<egui::TextureHandle> {
+    let dyn_img = image::load_from_memory(bytes).ok()?;
+    let (w, h) = (dyn_img.width(), dyn_img.height());
+    if w == 0 || h == 0 || w > 16384 || h > 16384 {
+        return None;
+    }
+    let rgba = dyn_img.to_rgba8();
+    let size = [w as usize, h as usize];
+    let pixels = rgba.into_raw();
+    let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+    Some(ctx.load_texture(name, color_image, egui::TextureOptions::LINEAR))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_image_entity(
+    canvas: &mut CanvasState,
+    doc: &cadcraft_doc::Drawing,
+    img: &cadcraft_doc::Image,
+    doc_path: Option<&str>,
+    painter: &egui::Painter,
+    xf: &Xf,
+    ctx: &egui::Context,
+    opacity: f32,
+) {
+    let texture = match canvas.image_textures.get(&img.path) {
+        Some(tex) => tex.clone(),
+        None => {
+            let bytes = cadcraft_engine::cmd::image::resolve_image_bytes(doc, img, doc_path);
+            let Some(bytes) = bytes else { return };
+            let Some(tex) = load_texture_from_bytes(ctx, &bytes, &img.path) else { return };
+            canvas.image_textures.insert(img.path.clone(), tex.clone());
+            tex
+        }
+    };
+
+    let corners = img.corners();
+    let p_bl = xf.to_screen(corners[0]);
+    let p_br = xf.to_screen(corners[1]);
+    let p_tr = xf.to_screen(corners[2]);
+    let p_tl = xf.to_screen(corners[3]);
+
+    if !p_bl.is_finite() || !p_br.is_finite() || !p_tr.is_finite() || !p_tl.is_finite() {
+        return;
+    }
+
+    let fade_alpha = (100u32.saturating_sub(img.fade as u32) * 255 / 100).clamp(0, 255) as f32;
+    let alpha = (fade_alpha * opacity).clamp(0.0, 255.0) as u8;
+    let tint = Color32::from_rgba_unmultiplied(255, 255, 255, alpha);
+
+    let mut mesh = egui::Mesh::with_texture(texture.id());
+    let i0 = mesh.vertices.len() as u32;
+    mesh.vertices.push(egui::epaint::Vertex { pos: p_bl, uv: pos2(0.0, 1.0), color: tint });
+    mesh.vertices.push(egui::epaint::Vertex { pos: p_br, uv: pos2(1.0, 1.0), color: tint });
+    mesh.vertices.push(egui::epaint::Vertex { pos: p_tr, uv: pos2(1.0, 0.0), color: tint });
+    mesh.vertices.push(egui::epaint::Vertex { pos: p_tl, uv: pos2(0.0, 0.0), color: tint });
+    mesh.indices.extend([i0, i0 + 1, i0 + 2, i0, i0 + 2, i0 + 3]);
+    painter.add(egui::Shape::mesh(mesh));
+}
+
+pub(super) fn paint_images(
+    canvas: &mut CanvasState,
+    session: &cadcraft_engine::Session,
+    painter: &egui::Painter,
+    xf_model: &Xf,
+    xf_paper: &Xf,
+    ctx: &egui::Context,
+) {
+    let Ok(st) = session.state() else { return };
+    let doc_path = st.path.as_deref();
+    let space = &st.space;
+    let xf = match space {
+        cadcraft_doc::Space::Model => xf_model,
+        cadcraft_doc::Space::Paper(_) => xf_paper,
+    };
+    let Some(store) = st.doc.space(space) else { return };
+    for e in store.iter() {
+        if let cadcraft_doc::EntityKind::Image(img) = &e.kind {
+            if let Some(layer) = st.doc.layer(&e.common.layer)
+                && (layer.frozen || !layer.on)
+            {
+                continue;
+            }
+            if img.display & 1 == 0 {
+                continue;
+            }
+            paint_image_entity(canvas, &st.doc, img, doc_path, painter, xf, ctx, 1.0);
+        } else if let cadcraft_doc::EntityKind::Insert(ins) = &e.kind
+            && let Some(b) = st.doc.block(&ins.block)
+        {
+            let m = ins.transform(b.base.xy());
+            for be in b.entities.iter() {
+                if let cadcraft_doc::EntityKind::Image(bimg) = &be.kind {
+                    let mut ximg = bimg.clone();
+                    ximg.transform(&m);
+                    paint_image_entity(canvas, &st.doc, &ximg, doc_path, painter, xf, ctx, 1.0);
+                }
+            }
+        }
+    }
+}
+
+pub(super) fn paint_preview_images(
+    canvas: &mut CanvasState,
+    session: &cadcraft_engine::Session,
+    ents: &[cadcraft_doc::Entity],
+    painter: &egui::Painter,
+    xf: &Xf,
+    ctx: &egui::Context,
+) {
+    for ent in ents {
+        if let cadcraft_doc::EntityKind::Image(img) = &ent.kind {
+            let tex = if img.path == "preview" {
+                let Some(clip_img) = &session.clipboard_image else { continue };
+                let hash = {
+                    use std::hash::{DefaultHasher, Hasher};
+                    let mut h = DefaultHasher::new();
+                    h.write(&clip_img.bytes);
+                    h.finish()
+                };
+                if canvas.preview_hash != Some(hash)
+                    && let Some(t) = load_texture_from_bytes(ctx, &clip_img.bytes, "__preview__")
+                {
+                    canvas.image_textures.insert("__preview__".to_string(), t);
+                    canvas.preview_hash = Some(hash);
+                }
+                canvas.image_textures.get("__preview__").cloned()
+            } else {
+                canvas.image_textures.get(&img.path).cloned().or_else(|| {
+                    let doc = session.doc().ok()?;
+                    let doc_path = session.drawing_path();
+                    let bytes = cadcraft_engine::cmd::image::resolve_image_bytes(doc, img, doc_path.as_deref())?;
+                    let t = load_texture_from_bytes(ctx, &bytes, &img.path)?;
+                    canvas.image_textures.insert(img.path.clone(), t.clone());
+                    Some(t)
+                })
+            };
+
+            let Some(texture) = tex else { continue };
+            let corners = img.corners();
+            let p_bl = xf.to_screen(corners[0]);
+            let p_br = xf.to_screen(corners[1]);
+            let p_tr = xf.to_screen(corners[2]);
+            let p_tl = xf.to_screen(corners[3]);
+
+            if !p_bl.is_finite() || !p_br.is_finite() || !p_tr.is_finite() || !p_tl.is_finite() {
+                continue;
+            }
+
+            let tint = Color32::from_rgba_unmultiplied(255, 255, 255, 160);
+            let mut mesh = egui::Mesh::with_texture(texture.id());
+            let i0 = mesh.vertices.len() as u32;
+            mesh.vertices.push(egui::epaint::Vertex { pos: p_bl, uv: pos2(0.0, 1.0), color: tint });
+            mesh.vertices.push(egui::epaint::Vertex { pos: p_br, uv: pos2(1.0, 1.0), color: tint });
+            mesh.vertices.push(egui::epaint::Vertex { pos: p_tr, uv: pos2(1.0, 0.0), color: tint });
+            mesh.vertices.push(egui::epaint::Vertex { pos: p_tl, uv: pos2(0.0, 0.0), color: tint });
+            mesh.indices.extend([i0, i0 + 1, i0 + 2, i0, i0 + 2, i0 + 3]);
+            painter.add(egui::Shape::mesh(mesh));
+        }
+    }
 }
 
 /// Draw a display list.
@@ -154,13 +315,23 @@ pub(super) fn draw_drag_gpu(
     clipboard: (&[cadcraft_doc::Entity], u64),
     bg: Rgb,
     transparency: bool,
+    orbit: cadcraft_render::Orbit3d,
 ) {
     // Tessellate for a power-of-two zoom band so zooming mid-drag rebuilds only every 2x.
     let band = xf.scale.max(1e-300).log2().round() as i32;
+    let raw_m = drag.matrix;
+    let is_translation = (raw_m.a - 1.0).abs() <= 1e-12
+        && raw_m.b.abs() <= 1e-12
+        && raw_m.c.abs() <= 1e-12
+        && (raw_m.d - 1.0).abs() <= 1e-12;
+    let pre_transform = !orbit.is_top() && !is_translation;
     let key = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (c.key, band, bg.0, bg.1, bg.2, &drag.handles, transparency).hash(&mut h);
+        (c.key, band, bg.0, bg.1, bg.2, &drag.handles, transparency, orbit.hash_key()).hash(&mut h);
+        if pre_transform {
+            [raw_m.a, raw_m.b, raw_m.c, raw_m.d, raw_m.e, raw_m.f].map(f64::to_bits).hash(&mut h);
+        }
         if drag.clipboard {
             clipboard.1.hash(&mut h);
         }
@@ -168,8 +339,31 @@ pub(super) fn draw_drag_gpu(
     };
     if c.drag_key != Some(key) {
         let band_scale = 2f64.powi(band);
-        let opts = cadcraft_render::Options { transparency, ..preview_options(band_scale) };
-        let list = if drag.clipboard {
+        let opts = cadcraft_render::Options { transparency, orbit, ..preview_options(band_scale) };
+        let list = if pre_transform {
+            let transformed: Vec<cadcraft_doc::Entity> = if drag.clipboard {
+                clipboard
+                    .0
+                    .iter()
+                    .map(|e| {
+                        let mut e = e.clone();
+                        e.kind.transform(&raw_m);
+                        e
+                    })
+                    .collect()
+            } else {
+                drag.handles
+                    .iter()
+                    .filter_map(|h| doc.entity(*h))
+                    .map(|e| {
+                        let mut e = (**e).clone();
+                        e.kind.transform(&raw_m);
+                        e
+                    })
+                    .collect()
+            };
+            cadcraft_render::build_entities(doc, transformed.iter(), &opts)
+        } else if drag.clipboard {
             cadcraft_render::build_entities(doc, clipboard.0.iter(), &opts)
         } else {
             cadcraft_render::build_entities(doc, drag.handles.iter().filter_map(|h| doc.entity(*h)).map(|e| e.as_ref()), &opts)
@@ -183,9 +377,14 @@ pub(super) fn draw_drag_gpu(
         c.drag_origin = origin;
     }
     // Positions are relative to the origin o: M(o + p) = L·p + (M(o) − o).
-    let m = drag.matrix;
     let o = c.drag_origin;
-    let t = m.apply(o) - o;
+    let xform = if pre_transform {
+        crate::gpu::IDENTITY_XFORM
+    } else {
+        let m = orbit.project_mat3(raw_m);
+        let t = m.apply(o) - o;
+        [m.a as f32, m.b as f32, m.c as f32, m.d as f32, t.x as f32, t.y as f32]
+    };
     let center = xf.rect.center();
     p.add(egui_wgpu::Callback::new_paint_callback(
         xf.rect,
@@ -196,7 +395,7 @@ pub(super) fn draw_drag_gpu(
             scale: xf.scale as f32,
             center: [center.x, center.y],
             layer: crate::gpu::LAYER_DRAG,
-            xform: [m.a as f32, m.b as f32, m.c as f32, m.d as f32, t.x as f32, t.y as f32],
+            xform,
             dash: 0.0,
             stencil: crate::gpu::Stencil::Off,
         },

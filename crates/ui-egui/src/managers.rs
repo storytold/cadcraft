@@ -857,8 +857,8 @@ fn plot_params(st: &PlotState, preview_dpi: Option<f64>) -> Value {
         "plotTransparency": page.plot_transparency,
     });
     if let Some(o) = p.as_object_mut() {
-        let device = device_label(page) != "None";
-        let output = cadcraft_engine::cmd::plotters::find_device(&page.device).map_or("pdf", |d| d.output.as_str());
+        let dev = cadcraft_engine::cmd::plotters::find_device(&page.device);
+        let output = dev.as_ref().map_or("pdf", |d| d.output.as_str());
         match preview_dpi {
             // The page's own sheet, so a device's paper and printable area show as they plot.
             Some(dpi) => {
@@ -869,7 +869,7 @@ fn plot_params(st: &PlotState, preview_dpi: Option<f64>) -> Value {
                 o.insert("height".into(), json!(page.height_mm));
                 o.insert("margins".into(), json!(page.margins_mm));
             }
-            None if device => {
+            None if dev.is_some() => {
                 o.insert("device".into(), json!(page.device));
                 o.insert("paper".into(), json!(page.paper));
             }

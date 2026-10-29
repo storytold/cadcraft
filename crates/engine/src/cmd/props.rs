@@ -23,7 +23,15 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["ma", "painter"])
             .params("{source, targets?: [hex] (default: selection), properties?: [name] | {name: bool} (default: all; names: color, layer, linetype, ltscale, lineweight, transparency, thickness, plotStyle, dimension, text, hatch, polyline, viewport, table, multileader)} → {changed}")
             .interactive(|_| Ok(Box::new(matchprop::MatchPropM::new()))),
-        CommandSpec::new("color", "Color...", run_color).menu(&["Format", "Color..."]).alias(&["col", "colour"]).params("{color: \"ByLayer\" | \"red\" | 1..255 | \"r,g,b\"}"),
+        CommandSpec::new("color", "Color...", run_color)
+            .menu(&["Format", "Color..."])
+            .alias(&["col", "colour", "-color"])
+            .params("{color: \"ByLayer\" | \"red\" | 1..255 | \"r,g,b\"}")
+            .interactive(|_| Ok(Box::new(ColorM))),
+        CommandSpec::new("chprop", "Change Properties", run_set)
+            .alias(&["change"])
+            .params("{handles?, layer?, color?, linetype?, lineweight?, ltscale?, transparency?}")
+            .interactive(|_| Ok(Box::new(ChpropM::default()))),
         CommandSpec::new("linetype", "Linetype...", run_linetype).menu(&["Format", "Linetype..."]).alias(&["lt", "ltype"]).params("{current?: name, load?: name | \"*\" (with a file: comma-separated names, wildcards), file?: path to a .lin file | text?: its contents, reload?: bool}"),
         CommandSpec::new("hatch.patterns", "Hatch Patterns", super::hatch::run_patterns)
             .params("{file?: path to a .pat file | text?: its contents, clear?: bool} → {standard, user, added, warnings} (HATCH also takes patternFile | patternText)")
@@ -41,8 +49,9 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("limits", "Drawing Limits", run_limits).menu(&["Format", "Drawing Limits"]).params("{min: [x,y], max: [x,y]}"),
         CommandSpec::new("style", "Text Style...", run_style)
             .menu(&["Format", "Text Style..."])
-            .alias(&["st"])
-            .params("{name, font?, bigFont?, height?, widthFactor?, oblique? (degrees), backwards?, upsideDown?, vertical?, annotative?, current?} → styles"),
+            .alias(&["st", "-style"])
+            .params("{name, font?, bigFont?, height?, widthFactor?, oblique? (degrees), backwards?, upsideDown?, vertical?, annotative?, current?} → styles")
+            .interactive(|_| Ok(Box::new(StyleM::default()))),
         CommandSpec::new("style.list", "List Text Styles", run_style_list).params("{} → text styles").noundo(),
         CommandSpec::new("style.rename", "Rename Text Style", run_style_rename).params("{from, to}"),
         CommandSpec::new("style.delete", "Delete Text Style", run_style_delete).params("{name} (not Standard, the current style or one in use)"),
@@ -1211,6 +1220,292 @@ fn run_rename(s: &mut Session, p: &Value) -> Result<Value> {
         _ => return Err(bad("rename", "unsupported table")),
     }
     ok()
+}
+
+struct ColorM;
+
+impl Interactive for ColorM {
+    fn name(&self) -> &'static str {
+        "COLOR"
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        Prompt::new("Enter default object color", Accept { number: true, ..Accept::TEXT })
+            .kw(&["BYLayer", "BYBlock"])
+            .default("BYLAYER")
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        let text = match i {
+            Input::Cancel => return Ok(Step::Cancel),
+            Input::Enter => "ByLayer".to_string(),
+            Input::Keyword(k) | Input::Text(k) => k,
+            _ => return Ok(Step::Continue),
+        };
+        let _ = run_color(s, &json!({ "color": text.trim() }));
+        Ok(Step::Done)
+    }
+}
+
+#[derive(Default)]
+struct StyleM {
+    step: u8,
+    name: String,
+    font: String,
+    height: Option<f64>,
+    width_factor: Option<f64>,
+    oblique: Option<f64>,
+    backwards: Option<bool>,
+    upside_down: Option<bool>,
+    vertical: Option<bool>,
+}
+
+impl StyleM {
+    fn asks_vertical(&self) -> bool {
+        let f = self.font.trim().to_ascii_lowercase();
+        f.is_empty()
+            || f.ends_with(".shx")
+            || (!f.ends_with(".ttf")
+                && !f.ends_with(".otf")
+                && !f.ends_with(".ttc")
+                && cadcraft_fonts::ttf::find(&self.font).is_none())
+    }
+
+    fn finish(&self, s: &mut Session) -> Result<Step> {
+        let mut p = json!({
+            "name": if self.name.is_empty() { "Standard" } else { &self.name },
+            "current": true,
+        });
+        if let Some(o) = p.as_object_mut() {
+            if !self.font.is_empty() {
+                o.insert("font".into(), json!(self.font));
+            }
+            if let Some(h) = self.height {
+                o.insert("height".into(), json!(h));
+            }
+            if let Some(w) = self.width_factor {
+                o.insert("widthFactor".into(), json!(w));
+            }
+            if let Some(ob) = self.oblique {
+                o.insert("oblique".into(), json!(ob));
+            }
+            if let Some(b) = self.backwards {
+                o.insert("backwards".into(), json!(b));
+            }
+            if let Some(u) = self.upside_down {
+                o.insert("upsideDown".into(), json!(u));
+            }
+            if let Some(v) = self.vertical {
+                o.insert("vertical".into(), json!(v));
+            }
+        }
+        let _ = run_style(s, &p);
+        Ok(Step::Done)
+    }
+}
+
+impl Interactive for StyleM {
+    fn name(&self) -> &'static str {
+        "-STYLE"
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        match self.step {
+            0 => Prompt::new("Enter name of text style or [?]", Accept::TEXT).default("Standard"),
+            1 => Prompt::new("Specify full font name or font filename (TTF or SHX)", Accept::TEXT).default("txt"),
+            2 => Prompt::new("Specify height of text", Accept::NUMBER).default("0.0000"),
+            3 => Prompt::new("Specify width factor", Accept::NUMBER).default("1.0000"),
+            4 => Prompt::new("Specify obliquing angle", Accept::NUMBER).default("0"),
+            5 => Prompt::new("Display text backwards?", Accept::TEXT).kw(&["Yes", "No"]).default("N"),
+            6 => Prompt::new("Display text upside-down?", Accept::TEXT).kw(&["Yes", "No"]).default("N"),
+            _ => Prompt::new("Vertical?", Accept::TEXT).kw(&["Yes", "No"]).default("N"),
+        }
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if matches!(i, Input::Cancel) {
+            return Ok(Step::Cancel);
+        }
+        let text = match i {
+            Input::Text(t) | Input::Keyword(t) => Some(t.trim().to_string()).filter(|t| !t.is_empty()),
+            _ => None,
+        };
+        match self.step {
+            0 => {
+                self.name = text.unwrap_or_else(|| "Standard".into());
+                self.step = 1;
+                Ok(Step::Continue)
+            }
+            1 => {
+                if let Some(f) = text {
+                    self.font = f;
+                }
+                self.step = 2;
+                Ok(Step::Continue)
+            }
+            2 => {
+                if let Some(h) = text.and_then(|t| t.parse::<f64>().ok()) {
+                    self.height = Some(h);
+                }
+                self.step = 3;
+                Ok(Step::Continue)
+            }
+            3 => {
+                if let Some(w) = text.and_then(|t| t.parse::<f64>().ok()) {
+                    self.width_factor = Some(w);
+                }
+                self.step = 4;
+                Ok(Step::Continue)
+            }
+            4 => {
+                if let Some(ob) = text.and_then(|t| t.parse::<f64>().ok()) {
+                    self.oblique = Some(ob);
+                }
+                self.step = 5;
+                Ok(Step::Continue)
+            }
+            5 => {
+                if let Some(t) = text {
+                    self.backwards = Some(t.to_ascii_lowercase().starts_with('y'));
+                }
+                self.step = 6;
+                Ok(Step::Continue)
+            }
+            6 => {
+                if let Some(t) = text {
+                    self.upside_down = Some(t.to_ascii_lowercase().starts_with('y'));
+                }
+                if self.asks_vertical() {
+                    self.step = 7;
+                    Ok(Step::Continue)
+                } else {
+                    self.finish(s)
+                }
+            }
+            _ => {
+                if let Some(t) = text {
+                    self.vertical = Some(t.to_ascii_lowercase().starts_with('y'));
+                }
+                self.finish(s)
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct ChpropM {
+    selected: Vec<cadcraft_doc::Handle>,
+    selecting: bool,
+    prop: Option<String>,
+}
+
+impl Interactive for ChpropM {
+    fn name(&self) -> &'static str {
+        "CHPROP"
+    }
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        let sel = s.selection();
+        if !sel.is_empty() {
+            self.selected = sel;
+            self.selecting = false;
+        } else {
+            self.selecting = true;
+        }
+        Ok(Step::Continue)
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        if self.selecting {
+            Prompt::new("Select objects", Accept::SELECT)
+        } else if let Some(prop) = &self.prop {
+            Prompt::new(format!("Enter new {} for selected objects", prop), Accept { number: true, ..Accept::TEXT })
+        } else {
+            Prompt::new(
+                "Enter property to change",
+                Accept { point: false, number: false, text: true, select: false, enter: true },
+            )
+            .kw(&["Color", "LAyer", "LType", "ltScale", "LWeight", "Thickness", "TRansparency"])
+        }
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if matches!(i, Input::Cancel) {
+            return Ok(Step::Cancel);
+        }
+        if self.selecting {
+            match i {
+                Input::Pick(hs) => {
+                    for h in hs {
+                        if !self.selected.contains(&h) {
+                            self.selected.push(h);
+                        }
+                    }
+                    Ok(Step::Continue)
+                }
+                Input::Enter => {
+                    if self.selected.is_empty() {
+                        Ok(Step::Done)
+                    } else {
+                        self.selecting = false;
+                        Ok(Step::Continue)
+                    }
+                }
+                _ => Ok(Step::Continue),
+            }
+        } else if let Some(prop) = self.prop.take() {
+            let val = match i {
+                Input::Text(t) | Input::Keyword(t) => t.trim().to_string(),
+                _ => String::new(),
+            };
+            if !val.is_empty() && !self.selected.is_empty() {
+                let handles: Vec<String> = self.selected.iter().map(|h| h.hex()).collect();
+                let mut p = json!({ "handles": handles });
+                if let Some(o) = p.as_object_mut() {
+                    match prop.as_str() {
+                        "color" => {
+                            o.insert("color".into(), json!(val));
+                        }
+                        "layer" => {
+                            o.insert("layer".into(), json!(val));
+                        }
+                        "linetype" => {
+                            o.insert("linetype".into(), json!(val));
+                        }
+                        "ltscale" => {
+                            if let Ok(n) = val.parse::<f64>() {
+                                o.insert("ltscale".into(), json!(n));
+                            }
+                        }
+                        "lineweight" => {
+                            if let Ok(n) = val.parse::<f64>() {
+                                o.insert("lineweight".into(), json!(n));
+                            } else {
+                                o.insert("lineweight".into(), json!(val));
+                            }
+                        }
+                        "transparency" => {
+                            o.insert("transparency".into(), json!(val));
+                        }
+                        _ => {}
+                    }
+                }
+                let _ = run_set(s, &p);
+            }
+            Ok(Step::Continue)
+        } else {
+            match i {
+                Input::Enter => Ok(Step::Done),
+                Input::Keyword(k) | Input::Text(k) => {
+                    let kl = k.trim().to_ascii_lowercase();
+                    self.prop = Some(match kl.as_str() {
+                        "c" | "color" | "colour" => "color".into(),
+                        "la" | "layer" => "layer".into(),
+                        "lt" | "ltype" | "linetype" => "linetype".into(),
+                        "s" | "ltscale" => "ltscale".into(),
+                        "lw" | "lweight" | "lineweight" => "lineweight".into(),
+                        "tr" | "transparency" => "transparency".into(),
+                        _ => "other".into(),
+                    });
+                    Ok(Step::Continue)
+                }
+                _ => Ok(Step::Continue),
+            }
+        }
+    }
 }
 
 #[cfg(test)]
