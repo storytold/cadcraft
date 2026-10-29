@@ -325,3 +325,89 @@ fn grip_option_json_form() {
         assert!(s.execute("grip.option", &p).is_err(), "{p}");
     }
 }
+
+#[test]
+fn ctrl_cycles_the_options_of_the_hot_grip() {
+    let mut s = Session::new();
+    let h = pline(&mut s, &[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]], false);
+    s.set_selection(vec![h]);
+    assert!(!s.cycle_grip_option().unwrap(), "no grip edit running");
+    let undo = s.state().unwrap().undo.len();
+    s.start_grip_edit(&[(h, grip_index(&s, h, 10.0, 0.0))]).unwrap();
+    // A vertex: Stretch, Add Vertex, Remove Vertex, Stretch again.
+    assert!(s.cycle_grip_option().unwrap());
+    assert!(s.prompt_text().contains("** ADD VERTEX ** Specify new vertex point"), "{}", s.prompt_text());
+    s.cycle_grip_option().unwrap();
+    assert!(s.prompt_text().contains("** REMOVE VERTEX ** Specify a point to remove the vertex"), "{}", s.prompt_text());
+    s.cycle_grip_option().unwrap();
+    assert!(s.prompt_text().contains("** STRETCH ** Specify stretch point"), "{}", s.prompt_text());
+    assert!(s.log.iter().rev().take(4).any(|l| l.contains("** REMOVE VERTEX **")), "each option is echoed");
+    // Round again to Remove Vertex: a click applies it, as one undo step.
+    s.cycle_grip_option().unwrap();
+    s.cycle_grip_option().unwrap();
+    typed(&mut s, &["50,50"]);
+    assert!(s.running.is_none());
+    let v: Vec<Vec2> = vertices(&s, h).into_iter().map(|v| v.0).collect();
+    assert!(v.len() == 2 && near(v[1], 10.0, 10.0), "{v:?}");
+    assert_eq!(s.state().unwrap().undo.len(), undo + 1);
+
+    // An arc segment's midpoint: Add Vertex, then Convert to Line, which a click applies.
+    let h = pline(&mut s, &[[0.0, 0.0], [10.0, 0.0]], false);
+    s.execute("grip.option", &json!({ "handle": h.hex(), "index": 1, "option": "toArc", "to": [5, 3] })).unwrap();
+    s.set_selection(vec![h]);
+    s.start_grip_edit(&[(h, 1)]).unwrap();
+    s.cycle_grip_option().unwrap();
+    s.cycle_grip_option().unwrap();
+    assert!(s.prompt_text().contains("** CONVERT TO LINE **"), "{}", s.prompt_text());
+    typed(&mut s, &["0,0"]);
+    assert_eq!(vertices(&s, h)[0].1, 0.0);
+
+    // A line end: Stretch and Lengthen; a typed length applies.
+    let a = line(&mut s, [0.0, 20.0], [10.0, 20.0]);
+    s.set_selection(vec![a]);
+    s.start_grip_edit(&[(a, 2)]).unwrap();
+    s.cycle_grip_option().unwrap();
+    assert!(s.prompt_text().contains("** LENGTHEN **"), "{}", s.prompt_text());
+    typed(&mut s, &["5"]);
+    assert!(near(ends(&s, a).1, 15.0, 20.0), "{:?}", ends(&s, a));
+}
+
+#[test]
+fn ctrl_leaves_grips_without_options_and_other_modes_alone() {
+    let mut s = Session::new();
+    // A line's midpoint has no options: Ctrl changes nothing.
+    let a = line(&mut s, [0.0, 0.0], [10.0, 0.0]);
+    s.set_selection(vec![a]);
+    s.start_grip_edit(&[(a, 1)]).unwrap();
+    let before = s.prompt_text();
+    assert!(s.cycle_grip_option().unwrap());
+    assert_eq!(s.prompt_text(), before);
+    // MOVE (Enter cycles the modes): Ctrl changes nothing.
+    s.cancel();
+    s.start_grip_edit(&[(a, 2)]).unwrap();
+    typed(&mut s, &[""]);
+    assert!(s.prompt_text().contains("** MOVE **"), "{}", s.prompt_text());
+    s.cycle_grip_option().unwrap();
+    assert!(s.prompt_text().contains("** MOVE **"), "{}", s.prompt_text());
+    // Several hot grips: no options either.
+    s.cancel();
+    s.start_grip_edit(&[(a, 0), (a, 2)]).unwrap();
+    let before = s.prompt_text();
+    s.cycle_grip_option().unwrap();
+    assert_eq!(s.prompt_text(), before);
+    // Typed, the hidden keyword is only text: a polyline vertex (which has options) stays in
+    // STRETCH.
+    s.cancel();
+    let pl = pline(&mut s, &[[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]], false);
+    s.set_selection(vec![pl]);
+    s.start_grip_edit(&[(pl, grip_index(&s, pl, 10.0, 0.0))]).unwrap();
+    s.log.clear();
+    let _ = s.cmdline("*cycle*");
+    assert!(s.prompt_text().contains("** STRETCH **"), "{}", s.prompt_text());
+    assert!(!s.log.iter().any(|l| l.contains("** ADD VERTEX **")), "{:?}", s.log);
+    // Other commands don't take it.
+    s.cancel();
+    s.cmdline("line").unwrap();
+    assert!(!s.cycle_grip_option().unwrap());
+    s.cancel();
+}

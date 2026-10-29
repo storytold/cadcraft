@@ -812,6 +812,8 @@ impl CadApp {
 
     /// Input-derived work, once per layout frame.
     fn ui_input(&mut self, ctx: &egui::Context) {
+        // Before the shortcuts consume their keys, so Ctrl+E is never a Ctrl tap.
+        canvas::ctrl_cycle(self, ctx);
         menus::shortcuts(self, ctx);
         #[cfg(not(target_arch = "wasm32"))]
         {

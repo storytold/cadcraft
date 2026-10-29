@@ -25,6 +25,59 @@ pub(super) fn click_grip(app: &mut CadApp, g: (Handle, usize), shift: bool) {
     }
 }
 
+/// At most this many Ctrl taps step the grip in one frame (input-derived: a cap on the work).
+const MAX_TAPS_PER_FRAME: usize = 16;
+
+/// Ctrl pressed and let go on its own while a grip is hot steps to the grip's next option
+/// (Stretch, Add Vertex, Remove Vertex…), as in AutoCAD. Ctrl held for a key, a click, a scroll
+/// or another modifier (Ctrl+Z, Ctrl+click, Ctrl+Shift) is not a tap. A quick tap can go down and
+/// up within one frame, so the frame's modifier changes are followed in order, and each clean tap
+/// steps once. Runs at the start of the frame's input, before the menu shortcuts consume their key
+/// presses, so a shortcut's key always spoils the tap (Ctrl+E with Ctrl let go before E too).
+pub(crate) fn ctrl_cycle(app: &mut CadApp, ctx: &egui::Context) {
+    /// Ctrl down (`Some(still a tap)`) or up; `taps` counts the clean presses that end. Another
+    /// modifier held with Ctrl (Shift, Alt, Cmd) spoils the tap.
+    fn step(state: Option<bool>, m: egui::Modifiers, taps: &mut usize) -> Option<bool> {
+        let others = m.shift || m.alt || m.mac_cmd;
+        match (state, m.ctrl) {
+            (None, true) => Some(!others),
+            (Some(clean), true) => Some(clean && !others),
+            (Some(clean), false) => {
+                if clean {
+                    *taps = taps.saturating_add(1);
+                }
+                None
+            }
+            (None, false) => None,
+        }
+    }
+    let (state, taps) = ctx.input(|i| {
+        let (mut state, mut taps, mut changes) = (app.canvas.ctrl_tap, 0usize, false);
+        for e in &i.events {
+            match e {
+                egui::Event::ModifiersChanged(m) => {
+                    changes = true;
+                    state = step(state, *m, &mut taps);
+                }
+                egui::Event::PointerMoved(_) | egui::Event::MouseMoved(_) | egui::Event::PointerGone => {}
+                _ => state = state.map(|_| false),
+            }
+        }
+        // An integration that only reports the modifiers' state.
+        if !changes {
+            state = step(state, i.modifiers, &mut taps);
+        }
+        (state, taps)
+    });
+    app.canvas.ctrl_tap = state;
+    for _ in 0..taps.min(MAX_TAPS_PER_FRAME) {
+        if let Err(e) = app.session.cycle_grip_option() {
+            app.session.echo(e.to_string());
+            break;
+        }
+    }
+}
+
 /// The multifunctional options of grip `g` (Add Vertex, Lengthen…; empty: Stretch only).
 pub(super) fn grip_options(app: &CadApp, (h, i): (Handle, usize)) -> Vec<cadcraft_engine::grips::GripAction> {
     let Ok(st) = app.session.state() else { return Vec::new() };

@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-22 · **Change:** minor (distinct polyline midpoint grips) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-27 · **Change:** minor (Ctrl cycles a hot grip's options) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
 
 How CADCraft's interaction compares with AutoCAD's: point entry, object snaps, tracking, dynamic
 input, grips, selection, the command line, chrome and navigation. A drafter's speed in AutoCAD
@@ -116,7 +116,8 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 | Hot-grip modes with Space/Enter cycling | Stretch, Move, Rotate, Scale, Mirror | yes (`canvas.rs:58-67`) |
 | Hot-grip options: Base point, Copy, Undo, Reference, eXit | yes | **advertised in the prompt but not parsed**; the engine's JSON grip commands accept `copy`, the UI never passes it |
 | Several hot grips at once (Shift-click) | yes | **no** (one handle) |
-| Multifunctional grip hover menus (Add Vertex, Remove Vertex, Convert to Arc, Lengthen …) | yes | **no** |
+| Multifunctional grip menus (Add Vertex, Remove Vertex, Convert to Arc, Lengthen …) | on hover and right-click | right-click, for polyline, line and arc grips (#440); no hover menu |
+| Ctrl cycles a hot multifunctional grip's options | yes | yes: Stretch, then each option of the grip menu, then Stretch; a click applies Remove Vertex and Convert to Line |
 | Grip dimensional input (length/angle fields) | yes | no |
 | Dynamic block grips | yes | no (no dynamic blocks) |
 | Grip appearance (GRIPSIZE, colours, hover) | yes | GRIPSIZE, GRIPS and GRIPOBJLIMIT honoured (Options ▸ Selection); polyline segment midpoints use rectangles, vertices use squares; no grip colours |
@@ -203,6 +204,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-27 | minor | Ctrl tapped while a multifunctional grip is hot steps through its options, as in AutoCAD; the multifunctional grip menu row says what landed (#440) |
 | 2026-10-22 | minor | Polyline segment midpoint grips use rectangles, distinct from square vertex grips, with matching hover and pick bounds (#1950) |
 | 2026-10-13 | minor | Filled-region highlight boundaries are traversed in deterministic coordinate order, fixing dash-phase jumps on CPU hover/selection redraws and GPU highlight rebuilds; CPU dash-position, pixel and GPU mesh regressions |
 | 2026-10-14 | minor | Selection cycling (#1143): the list and badge of SELECTIONCYCLING, Shift+Space through overlapping objects (#1145) |

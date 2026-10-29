@@ -30,6 +30,7 @@ use draw::{draw_drag_gpu, draw_highlight_gpu, draw_list_gpu, list_mesh_key, sele
 use dyn_boxes::dynamic_input;
 pub(crate) use dyn_boxes::length_units;
 use grid::draw_grid;
+pub(crate) use grips::ctrl_cycle;
 use grips::{click_grip, grip_at, grip_menu, grip_options, grip_rect};
 use list::{PrimIndex, ensure_list, rebuilt_preview};
 #[cfg(test)]
@@ -134,6 +135,8 @@ pub struct CanvasState {
     grip_editing: bool,
     /// The grip whose menu (Stretch, Add Vertex, Lengthen…) a right-click opened.
     grip_menu: Option<(Handle, usize)>,
+    /// Ctrl is down: whether it is still a tap (no key, click or scroll since it went down).
+    ctrl_tap: Option<bool>,
     /// Dynamic block grips of the selection (cached), the one being dragged, and the list grip
     /// whose choices are open (and whether it opened this frame).
     pub(crate) dyn_grips: crate::dyngrips::Cache,

@@ -4,7 +4,8 @@
 //! (ROTATE and SCALE) and eXit. Several grips can be hot at once; STRETCH moves them together.
 //!
 //! The UI starts it with [`Session::start_grip_edit`]; typed, `GRIP` asks for the grips first.
-//! The whole grip edit, copies included, is one undo step.
+//! Ctrl ([`Session::cycle_grip_option`]) steps through a multifunctional grip's options, as in
+//! AutoCAD. The whole grip edit, copies included, is one undo step.
 
 use std::sync::Arc;
 
@@ -20,6 +21,10 @@ use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Running, Se
 
 /// At most this many grips are hot at once (input-derived: a cap on the work per edit).
 const MAX_HOT: usize = 1000;
+
+/// The keyword [`Session::cycle_grip_option`] gives the grip edit. No prompt lists it, so typed
+/// it is only text.
+const CYCLE: &str = "*cycle*";
 
 /// What the prompt asks for besides the mode's own point.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -206,6 +211,34 @@ impl GripEdit {
         }
     }
 
+    /// Ctrl: from STRETCH to the hot grip's first option, from each option to the next, and from
+    /// the last back to STRETCH. Nothing happens in the other modes or without options.
+    fn cycle(&mut self, s: &mut Session) -> Step {
+        if self.picking {
+            return Step::Continue;
+        }
+        let actions = self.actions(s);
+        let next = match self.ask {
+            Ask::Mode if self.mode == GripMode::Stretch => match actions.first() {
+                Some(a) => Some(*a),
+                None => return Step::Continue,
+            },
+            Ask::Action(a) => actions.iter().position(|x| *x == a).and_then(|i| actions.get(i + 1)).copied(),
+            _ => return Step::Continue,
+        };
+        match next {
+            Some(a) => {
+                self.ask = Ask::Action(a);
+                s.echo(a.title());
+            }
+            None => {
+                self.ask = Ask::Mode;
+                s.echo(self.label());
+            }
+        }
+        Step::Continue
+    }
+
     /// Edit with the dragged point `to` (STRETCH) or the transform `m` (the other modes).
     fn edit(&mut self, s: &mut Session, to: Vec2, m: Option<Mat3>) -> Result<Step> {
         let before = s.state()?.doc.clone();
@@ -357,7 +390,9 @@ impl Interactive for GripEdit {
                     GripAction::ToArc => ("Specify a point on the arc", Accept::POINT),
                     GripAction::Lengthen => ("Specify end point or length change", Accept::POINT_OR_NUMBER),
                     GripAction::Radius => ("Specify radius", Accept::POINT_OR_NUMBER),
-                    GripAction::RemoveVertex | GripAction::ToLine => ("", Accept::POINT),
+                    // Reached with Ctrl: a click applies them.
+                    GripAction::RemoveVertex => ("Specify a point to remove the vertex", Accept::POINT),
+                    GripAction::ToLine => ("Specify a point to straighten the segment", Accept::POINT),
                 };
                 Prompt::new(format!("{} {msg}", a.title()), accept).kw(&["eXit"]).base(base)
             }
@@ -389,6 +424,9 @@ impl Interactive for GripEdit {
     }
 
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if matches!(&i, Input::Keyword(k) if k == CYCLE) {
+            return Ok(self.cycle(s));
+        }
         if self.picking {
             return match i {
                 Input::Point(p) => {
@@ -468,6 +506,17 @@ impl Interactive for GripEdit {
 }
 
 impl Session {
+    /// Ctrl during a grip edit: the hot grip's next multifunctional option (Stretch, Add Vertex,
+    /// Remove Vertex… in the order of its grip menu, then Stretch again), shown on the command
+    /// line. `false` when no grip edit is running to take it.
+    pub fn cycle_grip_option(&mut self) -> Result<bool> {
+        if !self.running.as_ref().is_some_and(|r| r.id == "grip") || !self.point_mods.is_empty() {
+            return Ok(false);
+        }
+        self.input(Input::Keyword(CYCLE.into()))?;
+        Ok(true)
+    }
+
     /// Make grips hot and start editing them (the UI's click on a grip; Shift+click collects
     /// several first). `hot` lists (object, grip index); the first is the base grip. The grip
     /// modes and their options then run at the command line like any prompt.
