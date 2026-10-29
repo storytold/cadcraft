@@ -55,10 +55,16 @@ const HEADER: &[(&str, Kind, Def)] = &[
     ("DONUTOD", Kind::Real { min: 0.0, strict: true }, Def::Real(1.0)),
     ("EDGEMODE", Kind::Choice(&[0, 1]), Def::Int(0)),
     ("HPANG", Kind::Angle, Def::Real(0.0)),
+    // Match properties / Inherit Properties: 0 keeps the current origin, 1 takes the source's.
+    ("HPINHERIT", Kind::Choice(&[0, 1]), Def::Int(0)),
+    // The layer new hatches go on; empty (".") is the current layer.
+    ("HPLAYER", Kind::Name, Def::Str("")),
     // 1: HATCH and GRADIENT typed or from a menu open the Hatch and Gradient dialog; 0: the command line.
     ("HPDLGMODE", Kind::Choice(&[0, 1]), Def::Int(1)),
     ("HPNAME", Kind::Pattern, Def::Str("ANSI31")),
     ("HPSCALE", Kind::Real { min: 0.0, strict: true }, Def::Real(1.0)),
+    // The transparency of new hatches: ByLayer, ByBlock or 0–90; empty (".") is the current one.
+    ("HPTRANSPARENCY", Kind::Name, Def::Str("")),
     ("INSNAME", Kind::Name, Def::Str("")),
     ("LWDEFAULT", Kind::Choice(&LINEWEIGHTS), Def::Int(25)),
     // Negative: Through (OFFSET picks a point).

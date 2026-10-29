@@ -416,3 +416,124 @@ fn a_gradient_hatch_offers_the_current_pattern_on_the_pattern_tab() {
         k => panic!("{k:?}"),
     }
 }
+
+fn hatches(app: &CadApp) -> Vec<(Handle, cadcraft_doc::Hatch, String)> {
+    let d = app.session.doc().unwrap();
+    d.model
+        .iter()
+        .filter_map(|e| if let cadcraft_doc::EntityKind::Hatch(h) = &e.kind { Some((e.handle, h.clone(), e.common.layer.clone())) } else { None })
+        .collect()
+}
+
+#[test]
+fn inherit_properties_takes_the_picked_hatchs_fill_and_layer() {
+    let (mut app, _) = app_with_rect();
+    app.session.execute("rectang", &json!({ "p1": [20, 0], "p2": [30, 10] })).unwrap();
+    app.run("layer.new", json!({ "name": "Walls" })).unwrap();
+    let p = json!({ "points": [[5, 5]], "pattern": "BRICK", "scale": 2, "angle": 30, "layer": "Walls", "transparency": 40 });
+    let src = Handle::parse_hex(app.run("hatch", p).unwrap()["handle"].as_str().unwrap()).unwrap();
+    open_create(&mut app, false);
+    start_pick(&mut app, PickMode::Inherit);
+    assert_eq!(app.ui.dialog, None, "hidden while picking");
+    assert!(app.session.prompt_text().contains("Select hatch object"));
+    // Not a hatch: asked again.
+    let rect = app.session.doc().unwrap().model.iter().find(|e| !matches!(e.kind, cadcraft_doc::EntityKind::Hatch(_))).map(|e| e.handle).unwrap();
+    app.session.input(cadcraft_engine::Input::Pick(vec![rect])).unwrap();
+    assert!(app.session.running.is_some());
+    app.session.input(cadcraft_engine::Input::Pick(vec![src])).unwrap();
+    resume(&mut app);
+    assert_eq!(app.ui.dialog.as_deref(), Some("hatch"));
+    let f = app.hatch_dlg.clone().unwrap().fill;
+    assert_eq!((f.pattern.as_str(), f.scale, f.layer.as_deref(), f.transparency.as_deref()), ("BRICK", 2.0, Some("Walls"), Some("40")));
+    assert!((f.angle - 30.0).abs() < 1e-9);
+    frames(&mut app);
+    // OK makes a hatch with them.
+    if let Some(st) = app.hatch_dlg.as_mut() {
+        st.points.push([25.0, 5.0]);
+    }
+    assert!(ok(&mut app));
+    let made: Vec<_> = hatches(&app).into_iter().filter(|(x, ..)| *x != src).collect();
+    assert_eq!(made.len(), 1);
+    assert_eq!((made[0].1.pattern.as_str(), made[0].1.scale, made[0].2.as_str()), ("BRICK", 2.0, "Walls"));
+}
+
+#[test]
+fn inherit_takes_a_gradient_and_refuses_what_is_not_a_hatch() {
+    let (mut app, r) = app_with_rect();
+    let g = app.run("gradient", json!({ "points": [[5, 5]], "name": "INVCYLINDER", "color1": "1", "color2": "3", "centered": false })).unwrap();
+    let g = Handle::parse_hex(g["handle"].as_str().unwrap()).unwrap();
+    let mut st = create_state(app.session.doc().unwrap(), 0, false);
+    let before = st.clone();
+    assert!(!inherit(&mut st, app.session.doc().unwrap(), r));
+    assert!(!inherit(&mut st, app.session.doc().unwrap(), Handle(0xFFFF_FFFF)));
+    assert_eq!(st, before, "unchanged");
+    assert!(inherit(&mut st, app.session.doc().unwrap(), g));
+    let f = &st.fill;
+    assert!(f.gradient && f.inverted && !f.centered);
+    assert_eq!((f.shape.as_str(), f.color1, f.color2), ("CYLINDER", Color::Index(1), Color::Index(3)));
+}
+
+#[test]
+fn preview_shows_the_hatch_then_returns_or_accepts() {
+    let (mut app, _) = app_with_rect();
+    open_create(&mut app, false);
+    if let Some(st) = app.hatch_dlg.as_mut() {
+        st.points.push([5.0, 5.0]);
+        st.fill.pattern = "NET".into();
+    }
+    let before = app.session.doc().unwrap().clone();
+    preview(&mut app);
+    assert_eq!(app.ui.dialog, None, "the drawing shows the preview");
+    let shown = app.session.preview(Vec2::ZERO);
+    assert!(matches!(shown.first().map(|e| &e.kind), Some(cadcraft_doc::EntityKind::Hatch(x)) if x.pattern == "NET"));
+    assert_eq!(*app.session.doc().unwrap(), before, "a preview adds nothing");
+    // A pick goes back to the dialog, unchanged.
+    app.session.input(cadcraft_engine::Input::Point(Vec2::new(50.0, 50.0))).unwrap();
+    resume(&mut app);
+    assert_eq!(app.ui.dialog.as_deref(), Some("hatch"));
+    assert_eq!(app.hatch_dlg.as_ref().map(|s| s.points.clone()), Some(vec![[5.0, 5.0]]));
+    assert!(hatches(&app).is_empty());
+    // Esc goes back too.
+    preview(&mut app);
+    app.session.cancel();
+    resume(&mut app);
+    assert_eq!(app.ui.dialog.as_deref(), Some("hatch"));
+    assert!(hatches(&app).is_empty());
+    // Enter (right-click) accepts: the hatch is made and the dialog closes.
+    preview(&mut app);
+    app.session.input(cadcraft_engine::Input::Enter).unwrap();
+    resume(&mut app);
+    assert_eq!(app.ui.dialog, None);
+    assert!(app.hatch_dlg.is_none());
+    let made = hatches(&app);
+    assert_eq!(made.len(), 1);
+    assert_eq!(made[0].1.pattern, "NET");
+}
+
+#[test]
+fn edit_mode_previews_the_change_and_a_bad_preview_keeps_the_dialog() {
+    let (mut app, _) = app_with_rect();
+    let hx = app.run("hatch", json!({ "points": [[5, 5]] })).unwrap()["handle"].as_str().unwrap().to_string();
+    let st = app.session.state().unwrap();
+    app.hatch_dlg = edit_state(&st.doc, st.uid, vec![Handle::parse_hex(&hx).unwrap()]);
+    app.ui.dialog = Some("hatch".into());
+    if let Some(st) = app.hatch_dlg.as_mut() {
+        st.fill.pattern = "NET".into();
+    }
+    preview(&mut app);
+    let shown = app.session.preview(Vec2::ZERO);
+    assert!(matches!(shown.first().map(|e| &e.kind), Some(cadcraft_doc::EntityKind::Hatch(x)) if x.pattern == "NET"));
+    assert_eq!(hatches(&app)[0].1.pattern, "ANSI31", "unchanged until OK");
+    app.session.cancel();
+    resume(&mut app);
+    assert_eq!(app.ui.dialog.as_deref(), Some("hatch"));
+    // A preview that can't be made (no boundary there) keeps the dialog with the error.
+    let (mut app, _) = app_with_rect();
+    open_create(&mut app, false);
+    if let Some(st) = app.hatch_dlg.as_mut() {
+        st.points.push([500.0, 500.0]);
+    }
+    preview(&mut app);
+    assert!(app.session.running.is_none());
+    assert!(app.hatch_dlg.as_ref().is_some_and(|s| s.error.is_some()));
+}

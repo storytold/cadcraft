@@ -405,6 +405,16 @@ pub(super) fn run_hatchedit(s: &mut Session, p: &Value) -> Result<Value> {
         Some(_) => return Err(bad("hatchedit", "`boundary` is an array of object handles")),
     };
     let associate = bool_or(p, "associate", false);
+    let layer = match str_param(p, "layer") {
+        Some(l) => Some(s.doc()?.layer(l).map(|x| x.name.clone()).ok_or_else(|| bad("hatchedit", format!("no layer {l}")))?),
+        None => None,
+    };
+    let transparency = match p.get("transparency").filter(|v| !v.is_null()) {
+        Some(v) => {
+            Some(super::props::parse_transparency(v).ok_or_else(|| bad("hatchedit", "`transparency` is \"ByLayer\", \"ByBlock\" or 0 to 90"))?)
+        }
+        None => None,
+    };
     let mut created = Vec::new();
     let mut notes = Vec::new();
     let mut budget = MAX_LOOPS;
@@ -455,7 +465,15 @@ pub(super) fn run_hatchedit(s: &mut Session, p: &Value) -> Result<Value> {
             }
             created.extend(new);
         }
-        s.doc_mut()?.modify_entity(*handle, |e| e.kind = EntityKind::Hatch(h))?;
+        s.doc_mut()?.modify_entity(*handle, |e| {
+            e.kind = EntityKind::Hatch(h);
+            if let Some(l) = &layer {
+                e.common.layer.clone_from(l);
+            }
+            if let Some(t) = transparency {
+                e.common.transparency = t;
+            }
+        })?;
         if bool_or(p, "separate", false) {
             created.extend(separate(s, *handle)?);
         }

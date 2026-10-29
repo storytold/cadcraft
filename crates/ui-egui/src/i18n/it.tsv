@@ -1367,3 +1367,7 @@ menu	Modify	Edita
 	Check for Updates…	Verifica aggiornamenti…
 	CADCraft is up to date.	CADCraft è aggiornato.
 	Could not check for updates.	Impossibile verificare gli aggiornamenti.
+	Inherit Properties	Eredita proprietà
+	Use current	Usa corrente
+	Takes the pattern and properties of an existing hatch.	Prende il modello e le proprietà di un tratteggio esistente.
+	Layer: {layer}  Transparency: {transparency}	Layer: {layer}  Trasparenza: {transparency}

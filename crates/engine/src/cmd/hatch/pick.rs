@@ -1,10 +1,12 @@
 //! HATCHPICK: the Hatch and Gradient dialog's picks (internal points, boundary objects, a pattern
-//! origin, or the hatches to edit), kept in the session for the dialog to take. It never changes
-//! the drawing.
+//! origin, the hatches to edit, the hatch whose properties to inherit), kept in the session for
+//! the dialog to take, and its Preview (the hatch OK would make, shown until a pick or Enter).
+//! It never changes the drawing.
 
 use cadcraft_doc::{EntityKind, Handle, HatchLoop};
 use cadcraft_geom::Vec2;
 use serde_json::{Value, json};
+use std::sync::Arc;
 
 use super::{HatchSettings, closed_loop, loops_at, loops_from_handles};
 use crate::cmd::{bad, points_param, targets};
@@ -14,7 +16,7 @@ use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 pub(crate) const MAX_PICKS: usize = 1000;
 
 /// The first prompt's keywords: what to pick.
-const MODES: [&str; 4] = ["Points", "Objects", "oRigin", "Hatch"];
+const MODES: [&str; 6] = ["Points", "Objects", "oRigin", "Hatch", "Inherit", "preView"];
 
 /// What HATCHPICK picks.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -28,6 +30,10 @@ pub enum PickMode {
     Origin,
     /// Hatches to edit.
     Hatch,
+    /// The hatch whose properties the dialog takes (Inherit Properties).
+    Inherit,
+    /// The hatch the dialog would make, shown until a pick (back to the dialog) or Enter (OK).
+    Preview,
 }
 
 /// What the last HATCHPICK kept ([`Session::hatch_picks`]).
@@ -39,6 +45,10 @@ pub struct HatchPicks {
     pub handles: Vec<Handle>,
     /// The pattern origin (Origin).
     pub origin: Option<Vec2>,
+    /// The hatches a Preview shows (set by the JSON form's `preview`).
+    pub preview: Vec<EntityKind>,
+    /// A Preview ended with Enter: the dialog's OK.
+    pub accepted: bool,
 }
 
 fn mode_named(t: &str) -> Option<PickMode> {
@@ -47,12 +57,61 @@ fn mode_named(t: &str) -> Option<PickMode> {
         "objects" | "o" => PickMode::Objects,
         "origin" | "r" => PickMode::Origin,
         "hatch" | "h" => PickMode::Hatch,
+        "inherit" | "i" => PickMode::Inherit,
+        "preview" | "v" => PickMode::Preview,
         _ => return None,
     })
 }
 
-/// JSON form: `{points?, handles?}`, checked as the prompts check them.
+/// Upper bound on the hatches one Preview shows.
+const MAX_PREVIEW: usize = 1000;
+
+/// The hatches `{command: "hatch"|"gradient"|"hatchedit", params}` would make or change, made on
+/// the drawing and taken back: the drawing is as it was, whatever the command does.
+fn preview_kinds(s: &mut Session, spec: &Value) -> Result<Vec<EntityKind>> {
+    let cmd = spec.get("command").and_then(Value::as_str).unwrap_or("hatch");
+    let params = spec.get("params").cloned().unwrap_or_else(|| json!({}));
+    let (doc, selection) = {
+        let st = s.state()?;
+        (Arc::clone(&st.doc), st.selection.clone())
+    };
+    let run = match cmd {
+        "hatch" => super::run_hatch(s, &params),
+        "gradient" => super::run_gradient(s, &params),
+        "hatchedit" => super::edit::run_hatchedit(s, &params),
+        _ => Err(bad("hatchpick", "`preview.command` is \"hatch\", \"gradient\" or \"hatchedit\"")),
+    };
+    let kinds = run.as_ref().ok().map(|r| {
+        let listed = |v: Option<&Value>| -> Vec<Handle> {
+            v.and_then(Value::as_array).map(|a| a.iter().filter_map(|h| h.as_str().and_then(Handle::parse_hex)).collect()).unwrap_or_default()
+        };
+        let mut hs = listed(r.get("handles"));
+        if cmd == "hatchedit" {
+            hs.extend(listed(params.get("handles")));
+        }
+        let d = s.doc().ok();
+        hs.iter()
+            .filter_map(|h| d.and_then(|d| d.entity(*h)))
+            .filter(|e| matches!(e.kind, EntityKind::Hatch(_)))
+            .take(MAX_PREVIEW)
+            .map(|e| e.kind.clone())
+            .collect::<Vec<_>>()
+    });
+    let st = s.state_mut()?;
+    st.doc = doc;
+    st.selection = selection;
+    run?;
+    Ok(kinds.unwrap_or_default())
+}
+
+/// JSON form: `{points?, handles?}`, checked as the prompts check them, or `{preview}`.
 pub(super) fn run_hatchpick(s: &mut Session, p: &Value) -> Result<Value> {
+    if let Some(spec) = p.get("preview").filter(|v| !v.is_null()) {
+        let kinds = preview_kinds(s, spec)?;
+        let n = kinds.len();
+        s.hatch_picks = Some(HatchPicks { mode: PickMode::Preview, preview: kinds, ..HatchPicks::default() });
+        return Ok(json!({ "preview": n }));
+    }
     let given = |k: &str| p.get(k).is_some_and(|v| !v.is_null());
     if !given("points") && !given("handles") {
         return Err(bad("hatchpick", "give internal `points` or boundary `handles`"));
@@ -102,6 +161,8 @@ enum Pick {
 pub(super) struct HatchPickM {
     mode: Option<PickMode>,
     picks: Vec<Pick>,
+    /// What Preview shows.
+    preview: Vec<EntityKind>,
 }
 
 impl HatchPickM {
@@ -136,13 +197,20 @@ impl Interactive for HatchPickM {
             Some(PickMode::Points) => Prompt::new("Pick internal point", Accept::POINT).kw(&["Undo"]),
             Some(PickMode::Objects) => Prompt::new("Select objects", Accept::SELECT).kw(&["Undo"]),
             Some(PickMode::Origin) => Prompt::new("Specify the pattern origin", Accept::POINT),
-            Some(PickMode::Hatch) => Prompt::new("Select hatch object", Accept::SELECT),
+            Some(PickMode::Hatch | PickMode::Inherit) => Prompt::new("Select hatch object", Accept::SELECT),
+            Some(PickMode::Preview) => Prompt::new("Pick or press Esc to return to dialog or <Right-click to accept hatch>", Accept::POINT),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         let Some(mode) = self.mode else {
             match &i {
-                Input::Keyword(t) | Input::Text(t) => self.mode = mode_named(t),
+                Input::Keyword(t) | Input::Text(t) => {
+                    self.mode = mode_named(t);
+                    // The hatches to show were set by the JSON form just before.
+                    if self.mode == Some(PickMode::Preview) {
+                        self.preview = s.hatch_picks.take().map(|p| p.preview).unwrap_or_default();
+                    }
+                }
                 Input::Enter | Input::Cancel => return Ok(Step::Cancel),
                 _ => {}
             }
@@ -204,11 +272,34 @@ impl Interactive for HatchPickM {
                 s.hatch_picks = Some(HatchPicks { mode, handles: hatches, ..HatchPicks::default() });
                 Ok(Step::Done)
             }
-            (PickMode::Origin | PickMode::Hatch, Input::Enter) => Ok(Step::Done),
+            (PickMode::Inherit, Input::Pick(hs)) => {
+                let hatch = {
+                    let d = s.doc()?;
+                    hs.into_iter().find(|h| matches!(d.entity(*h).map(|e| &e.kind), Some(EntityKind::Hatch(_))))
+                };
+                let Some(h) = hatch else {
+                    s.echo("No hatch selected.");
+                    return Ok(Step::Continue);
+                };
+                s.hatch_picks = Some(HatchPicks { mode, handles: vec![h], ..HatchPicks::default() });
+                Ok(Step::Done)
+            }
+            (PickMode::Preview, Input::Enter) => {
+                s.hatch_picks = Some(HatchPicks { mode, accepted: true, ..HatchPicks::default() });
+                Ok(Step::Done)
+            }
+            (PickMode::Preview, Input::Point(_)) => {
+                s.hatch_picks = Some(HatchPicks { mode, ..HatchPicks::default() });
+                Ok(Step::Done)
+            }
+            (PickMode::Origin | PickMode::Hatch | PickMode::Inherit, Input::Enter) => Ok(Step::Done),
             _ => Ok(Step::Continue),
         }
     }
     fn preview(&self, s: &Session, _c: Vec2) -> Vec<EntityKind> {
+        if self.mode == Some(PickMode::Preview) {
+            return self.preview.clone();
+        }
         let loops: Vec<HatchLoop> = self
             .picks
             .iter()

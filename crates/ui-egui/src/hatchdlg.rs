@@ -1,6 +1,9 @@
 //! The Hatch and Gradient dialog (HATCH, GRADIENT) and, on existing hatches, the Hatch Edit
 //! dialog (HATCHEDIT, double-click): one window in two modes. It never edits the drawing itself:
-//! picks go through HATCHPICK, and OK runs one HATCH, GRADIENT or HATCHEDIT call.
+//! picks go through HATCHPICK, and OK runs one HATCH, GRADIENT or HATCHEDIT call. Inherit
+//! Properties picks a hatch whose fill and options it takes (HATCHPICK Inherit); Preview shows
+//! the hatches OK would make (HATCHPICK `preview`) until a pick brings the dialog back or Enter
+//! accepts them.
 
 use cadcraft_color::Color;
 use cadcraft_doc::{Drawing, EntityKind, Handle, Space};
@@ -41,6 +44,10 @@ pub struct Fill {
     pub associative: bool,
     /// Island detection: 0 normal, 1 outer, 2 ignore.
     pub style: u8,
+    /// The layer and transparency taken from a hatch by Inherit Properties; `None`: the current
+    /// ones (create mode) or unchanged (edit mode).
+    pub layer: Option<String>,
+    pub transparency: Option<String>,
 }
 
 /// The dialog while open (and while a pick it started runs).
@@ -94,6 +101,8 @@ pub fn create_state(d: &Drawing, uid: u64, gradient: bool) -> HatchDlgState {
         origin_mode: origin_mode.into(),
         associative: h.i64("HPASSOC", 1) != 0,
         style: u8::try_from(h.i64("HPISLANDDETECTION", 0).clamp(0, 2)).unwrap_or(0),
+        layer: None,
+        transparency: None,
     };
     HatchDlgState {
         opened: fill.clone(),
@@ -196,6 +205,12 @@ pub fn ok_call(st: &HatchDlgState) -> Option<(&'static str, Value)> {
         p.insert("associative".into(), json!(f.associative));
         p.insert("separate".into(), json!(st.separate));
         p.insert("style".into(), json!(style_name(f.style)));
+        if let Some(l) = &f.layer {
+            p.insert("layer".into(), json!(l));
+        }
+        if let Some(t) = &f.transparency {
+            p.insert("transparency".into(), json!(t));
+        }
         match (f.specified, f.origin) {
             (true, Some(o)) => p.insert("origin".into(), json!(o)),
             (true, None) => p.insert("originMode".into(), json!(f.origin_mode)),
@@ -244,6 +259,12 @@ pub fn ok_call(st: &HatchDlgState) -> Option<(&'static str, Value)> {
     if f.style != o.style {
         p.insert("style".into(), json!(style_name(f.style)));
     }
+    if let Some(l) = f.layer.as_ref().filter(|_| f.layer != o.layer) {
+        p.insert("layer".into(), json!(l));
+    }
+    if let Some(t) = f.transparency.as_ref().filter(|_| f.transparency != o.transparency) {
+        p.insert("transparency".into(), json!(t));
+    }
     if f.specified {
         match f.origin {
             Some(q) => p.insert("origin".into(), json!(q)),
@@ -274,9 +295,63 @@ pub fn merge_picks(st: &mut HatchDlgState, picks: HatchPicks) {
                 st.fill.specified = true;
             }
         }
-        PickMode::Hatch => {}
+        // Taken by `resume`, which reads the drawing.
+        PickMode::Hatch | PickMode::Inherit | PickMode::Preview => {}
     }
     st.error = None;
+}
+
+/// Inherit Properties: the fill, island style, associativity, layer and transparency of hatch
+/// `h` (and its origin with HPINHERIT 1). False when `h` isn't a hatch.
+pub fn inherit(st: &mut HatchDlgState, d: &Drawing, h: Handle) -> bool {
+    let origin = d.header.i64("HPINHERIT", 0) == 1;
+    let Some(m) = cadcraft_engine::inherit_params(d, h, origin) else { return false };
+    let f = &mut st.fill;
+    let num = |k: &str| m.get(k).and_then(Value::as_f64).filter(|v| v.is_finite());
+    let text = |k: &str| m.get(k).and_then(Value::as_str).map(str::to_string);
+    f.gradient = m.get("gradient").and_then(Value::as_bool).unwrap_or(false);
+    if f.gradient {
+        let up = text("name").unwrap_or_default().trim().to_ascii_uppercase();
+        let (inverted, base) = match up.strip_prefix("INV") {
+            Some(b) => (true, b.to_string()),
+            None => (false, up.clone()),
+        };
+        f.shape = if SHAPES.contains(&base.as_str()) { base } else { "LINEAR".into() };
+        f.inverted = inverted;
+        if let Some(c) = text("color1").and_then(|t| Color::parse(&t)) {
+            f.color1 = c;
+        }
+        if let Some(c) = text("color2").and_then(|t| Color::parse(&t)) {
+            f.color2 = c;
+        }
+        f.centered = m.get("centered").and_then(Value::as_bool).unwrap_or(true);
+    } else if let Some(p) = text("pattern") {
+        f.pattern = p;
+    }
+    if let Some(a) = num("angle") {
+        f.angle = a;
+    }
+    if let Some(v) = num("scale").filter(|v| *v > 0.0) {
+        f.scale = v;
+    }
+    f.style = match text("style").as_deref() {
+        Some("outer") => 1,
+        Some("ignore") => 2,
+        _ => 0,
+    };
+    f.associative = m.get("associative").and_then(Value::as_bool).unwrap_or(f.associative);
+    f.layer = text("layer");
+    f.transparency = match m.get("transparency") {
+        Some(Value::Number(n)) => Some(n.to_string()),
+        Some(Value::String(t)) => Some(t.clone()),
+        _ => None,
+    };
+    if let Some([x, y]) = m.get("origin").and_then(Value::as_array).and_then(|a| Some([a.first()?.as_f64()?, a.get(1)?.as_f64()?])) {
+        f.specified = true;
+        f.origin = Some([x, y]);
+    }
+    st.error = None;
+    true
 }
 
 /// Whether typed or menu HATCH and GRADIENT open the dialog (HPDLGMODE, default 1).
@@ -319,7 +394,10 @@ pub fn start_pick(app: &mut CadApp, mode: PickMode) {
     let Some(st) = app.hatch_dlg.as_mut() else { return };
     st.picking = Some(mode);
     st.error = None;
-    app.session.hatch_picks = None;
+    // A Preview's hatches were just set by `preview`; HATCHPICK takes them.
+    if mode != PickMode::Preview {
+        app.session.hatch_picks = None;
+    }
     app.ui.dialog = None;
     app.start("hatchpick");
     let kw = match mode {
@@ -327,6 +405,8 @@ pub fn start_pick(app: &mut CadApp, mode: PickMode) {
         PickMode::Objects => "Objects",
         PickMode::Origin => "oRigin",
         PickMode::Hatch => "Hatch",
+        PickMode::Inherit => "Inherit",
+        PickMode::Preview => "preView",
     };
     if app.session.running.is_some()
         && let Err(e) = app.session.input(cadcraft_engine::Input::Keyword(kw.into()))
@@ -350,7 +430,20 @@ pub fn resume(app: &mut CadApp) {
         return;
     }
     st.picking = None;
-    if mode == PickMode::Hatch {
+    if mode == PickMode::Preview {
+        // Enter (right-click): OK; a pick or Esc: back to the dialog.
+        let accepted = picks.is_some_and(|p| p.accepted);
+        app.hatch_dlg = Some(st);
+        if !(accepted && ok(app)) {
+            app.ui.dialog = Some("hatch".into());
+        }
+        return;
+    }
+    if mode == PickMode::Inherit {
+        if let (Some(h), Ok(d)) = (picks.and_then(|p| p.handles.first().copied()), app.session.doc()) {
+            inherit(&mut st, d, h);
+        }
+    } else if mode == PickMode::Hatch {
         let next = picks.and_then(|p| app.session.doc().ok().and_then(|d| edit_state(d, st.uid, p.handles)));
         let Some(mut next) = next else { return };
         next.space = st.space.clone();
@@ -360,6 +453,21 @@ pub fn resume(app: &mut CadApp) {
     }
     app.hatch_dlg = Some(st);
     app.ui.dialog = Some("hatch".into());
+}
+
+/// Preview: the hatches OK would make, shown on the drawing (the dialog hides) until a pick brings
+/// it back or Enter accepts them. A call that would fail keeps the dialog open with the error.
+pub fn preview(app: &mut CadApp) {
+    let Some((cmd, p)) = app.hatch_dlg.as_ref().and_then(ok_call) else { return };
+    app.session.hatch_picks = None;
+    match app.run("hatchpick", json!({ "preview": { "command": cmd, "params": p } })) {
+        Ok(_) => start_pick(app, PickMode::Preview),
+        Err(e) => {
+            if let Some(st) = app.hatch_dlg.as_mut() {
+                st.error = Some(e);
+            }
+        }
+    }
 }
 
 /// OK: run the dialog's command. True when the dialog closes; a failed command keeps it open
@@ -389,6 +497,7 @@ enum Action {
     Ok,
     Cancel,
     Pick(PickMode),
+    Preview,
 }
 
 fn shape_label(name: &str) -> &'static str {
@@ -450,6 +559,10 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         ui.separator();
         ui.horizontal(|ui| {
             let ready = !st.edit.is_empty() || !(st.points.is_empty() && st.handles.is_empty());
+            if ui.add_enabled(ready && ok_call(&st).is_some(), egui::Button::new(crate::tl!("Preview"))).clicked() {
+                action = Action::Preview;
+            }
+            ui.add_space(12.0);
             if ui.add_enabled(ready, egui::Button::new(crate::tl!("OK"))).clicked() {
                 action = Action::Ok;
             }
@@ -470,6 +583,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
             *open = false;
         }
         Action::Pick(mode) => start_pick(app, mode),
+        Action::Preview => preview(app),
         Action::None => {
             if !*open {
                 app.hatch_dlg = None;
@@ -590,6 +704,15 @@ fn options_ui(ui: &mut egui::Ui, st: &mut HatchDlgState, action: &mut Action) {
         ui.separator();
     }
     ui.strong(crate::tl!("Options"));
+    if ui.button(crate::tl!("Inherit Properties")).on_hover_text(crate::tl!("Takes the pattern and properties of an existing hatch.")).clicked() {
+        *action = Action::Pick(PickMode::Inherit);
+    }
+    if st.fill.layer.is_some() || st.fill.transparency.is_some() {
+        let current = crate::tl!("Use current");
+        let layer = st.fill.layer.clone().unwrap_or_else(|| current.to_string());
+        let transparency = st.fill.transparency.clone().unwrap_or_else(|| current.to_string());
+        ui.label(crate::tf!("Layer: {layer}  Transparency: {transparency}", layer = layer, transparency = transparency));
+    }
     ui.checkbox(&mut st.fill.associative, crate::tl!("Associative"));
     if st.edit.is_empty() {
         ui.checkbox(&mut st.separate, crate::tl!("Create separate hatches"));

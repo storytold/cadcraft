@@ -49,6 +49,7 @@ mod group_selection;
 mod groups;
 mod hatch_assoc;
 mod hatch_dialog_helpers;
+mod hatch_inherit;
 mod hatch_numeric_validation;
 mod hatch_options;
 mod helix;
