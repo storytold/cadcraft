@@ -1338,3 +1338,276 @@ menu	View	Προβολή
 	Check for Updates…	Έλεγχος για ενημερώσεις…
 	CADCraft is up to date.	Το CADCraft είναι ενημερωμένο.
 	Could not check for updates.	Δεν ήταν δυνατός ο έλεγχος για ενημερώσεις.
+	Copy All	Αντιγραφή όλων
+	Copy history output to clipboard	Αντιγραφή ιστορικού στο πρόχειρο
+	Close History Window (F2)	Κλείσιμο παραθύρου ιστορικού (F2)
+	Edit XData (XDEDIT)	Επεξεργασία XData (XDEDIT)
+	Open visual XData Editor for selected object	Άνοιγμα επεξεργαστή XData για το επιλεγμένο αντικείμενο
+	Command & XData Output (select text + Ctrl+C to copy)	Έξοδος εντολών και XData (επιλέξτε κείμενο + Ctrl+C για αντιγραφή)
+	Save changes to {name}?	Αποθήκευση αλλαγών στο {name};
+	Your changes will be lost if you don't save them.	Οι αλλαγές σας θα χαθούν αν δεν τις αποθηκεύσετε.
+	Don't Save	Μη αποθήκευση
+	List Xdata	Λίστα XData
+	Edit Xdata	Επεξεργασία XData
+	Edit Xdata (XDEDIT)	Επεξεργασία XData (XDEDIT)
+	✏ Edit XData (XDEDIT)	✏ Επεξεργασία XData (XDEDIT)
+	Open visual XData Editor dialog	Άνοιγμα παραθύρου επεξεργαστή XData
+	📋 Copy Values	📋 Αντιγραφή τιμών
+	Copy XData values (Key,Value) to clipboard	Αντιγραφή τιμών XData (Κλειδί,Τιμή) στο πρόχειρο
+	Click to copy value to clipboard	Κλικ για αντιγραφή τιμής στο πρόχειρο
+	✓ XData values copied to clipboard	✓ Οι τιμές XData αντιγράφηκαν στο πρόχειρο
+	Selection canceled — previous object kept.	Η επιλογή ακυρώθηκε — διατηρήθηκε το προηγούμενο αντικείμενο.
+	Drag left or right to resize this column	Σύρετε αριστερά ή δεξιά για αλλαγή πλάτους στήλης
+	XDATA Editor (XDEDIT)	Επεξεργαστής XDATA (XDEDIT)
+	No object selected.	Δεν επιλέχθηκε αντικείμενο.
+	🎯 Select object in drawing	🎯 Επιλογή αντικειμένου στο σχέδιο
+	Object: {kind}	Αντικείμενο: {kind}
+	Layer: {layer}	Επίπεδο: {layer}
+	Handle: {handle}	Αναγνωριστικό: {handle}
+	🎯 Select Another Object	🎯 Επιλογή άλλου αντικειμένου
+	Hide editor temporarily, pick another object in the drawing, and open it in XDEDIT	Προσωρινή απόκρυψη, επιλογή άλλου αντικειμένου και άνοιγμα στο XDEDIT
+	Next ▶	Επόμενο ▶
+	Step to the next object with XData in the selection or drawing	Μετάβαση στο επόμενο αντικείμενο με XData
+	◀ Previous	◀ Προηγούμενο
+	Step to the previous object with XData in the selection or drawing	Μετάβαση στο προηγούμενο αντικείμενο με XData
+	📋 Copy JSON	📋 Αντιγραφή JSON
+	Copy all XData as structured JSON to clipboard	Αντιγραφή όλων των XData ως JSON στο πρόχειρο
+	✓ JSON copied to clipboard	✓ Το JSON αντιγράφηκε στο πρόχειρο
+	📋 Copy Text	📋 Αντιγραφή κειμένου
+	Copy all XData as text to clipboard	Αντιγραφή όλων των XData ως κείμενο στο πρόχειρο
+	✓ XData text copied to clipboard	✓ Το κείμενο XData αντιγράφηκε στο πρόχειρο
+	AppID (1001):	AppID (1001):
+	New AppID (e.g. Lumi_KLIC)	Νέο AppID (π.χ. Lumi_KLIC)
+	+ Add AppID	+ Προσθήκη AppID
+	🗑 Delete AppID	🗑 Διαγραφή AppID
+	Remove this Application and its XData from the entity	Αφαίρεση αυτής της εφαρμογής και των XData από το αντικείμενο
+	Application removed (click Apply to save)	Η εφαρμογή αφαιρέθηκε (πατήστε Εφαρμογή για αποθήκευση)
+	🔍 Filter:	🔍 Φίλτρο:
+	Search key or value (e.g. THEMA, DIEPTE)...	Αναζήτηση κλειδιού ή τιμής (π.χ. THEMA, DIEPTE)...
+	Key width:	Πλάτος κλειδιού:
+	Drag this value or the column divider ⇔ to resize the Key column	Σύρετε την τιμή ή το διαχωριστικό ⇔ για αλλαγή πλάτους Κλειδιού
+	Value width:	Πλάτος τιμής:
+	Drag this value or the column divider ⇔ to resize the Value column	Σύρετε την τιμή ή το διαχωριστικό ⇔ για αλλαγή πλάτους Τιμής
+	Smart Key=Value Columns	Έξυπνες στήλες Κλειδί=Τιμή
+	Split 'KEY=VALUE' or 'Key: Value' into separate editable Key and Value fields	Διαχωρισμός 'KEY=VALUE' ή 'Key: Value' σε ξεχωριστά πεδία Κλειδιού και Τιμής
+	This object currently has no user XData.	Αυτό το αντικείμενο δεν έχει XData χρήστη.
+	+ Create Lumi_KLIC Application	+ Δημιουργία εφαρμογής Lumi_KLIC
+	DXF Code	Κωδικός DXF
+	Property / Key ⇔	Ιδιότητα / Κλειδί ⇔
+	Value (Selectable & Editable) ⇔	Τιμή (Επιλέξιμη & Επεξεργάσιμη) ⇔
+	Raw Value (Selectable & Editable) ⇔	Ακατέργαστη τιμή (Επιλέξιμη & Επεξεργάσιμη) ⇔
+	Actions	Ενέργειες
+	Copy value to clipboard	Αντιγραφή τιμής στο πρόχειρο
+	✓ Copied: {val}	✓ Αντιγράφηκε: {val}
+	Move row up	Μετακίνηση γραμμής πάνω
+	Move row down	Μετακίνηση γραμμής κάτω
+	Delete this XData row	Διαγραφή αυτής της γραμμής XData
+	Add Row:	Προσθήκη γραμμής:
+	Key (e.g. OPMERKING)	Κλειδί (π.χ. OPMERKING)
+	+ Add Property	+ Προσθήκη ιδιότητας
+	● Unsaved changes	● Μη αποθηκευμένες αλλαγές
+	Ready — click '🎯 Select Next Object' or '◀ Previous / Next ▶' to switch objects.	Έτοιμο — πατήστε '🎯 Επιλογή επόμενου' ή '◀ Προηγούμενο / Επόμενο ▶'.
+	↺ Revert	↺ Επαναφορά
+	✔ Apply / Save XData	✔ Εφαρμογή / Αποθήκευση XData
+	Write modified XData to the entity (Undoable with Ctrl+Z)	Εγγραφή τροποποιημένων XData στο αντικείμενο (αναίρεση με Ctrl+Z)
+	✔ Save & Select Next Object	✔ Αποθήκευση & Επόμενο αντικείμενο
+	🎯 Select Next Object	🎯 Επιλογή επόμενου αντικειμένου
+	Save any changes and directly pick the next object in the drawing	Αποθήκευση αλλαγών και άμεση επιλογή του επόμενου αντικειμένου
+	Object {idx1}/{total} loaded ({kind} — {handle})	Αντικείμενο {idx1}/{total} φορτώθηκε ({kind} — {handle})
+	↺ Reverted to saved entity XData	↺ Επαναφορά στα αποθηκευμένα XData
+	✔ XData saved to entity (Undoable)	✔ Τα XData αποθηκεύτηκαν στο αντικείμενο (Ctrl+Z διαθέσιμο)
+	Error: {err}	Σφάλμα: {err}
+	⚠ Entity XData changed outside editor — click Revert before saving.	⚠ Τα XData άλλαξαν εκτός επεξεργαστή — πατήστε Επαναφορά πριν την αποθήκευση.
+	+  |  {view} ({yaw}°, {pitch}°)  |  3D Orbit Wireframe	+  |  {view} ({yaw}°, {pitch}°)  |  Τρισδιάστατη τροχιά δικτυωτού
+	.NET Plugin Bridge	Γέφυρα προσθέτων .NET
+	3D Orbit	Τρισδιάστατη τροχιά
+	3D Views	Τρισδιάστατες προβολές
+	Add…	Προσθήκη…
+	Adjust Image...	Προσαρμογή εικόνας...
+	Adjust...	Προσαρμογή...
+	Alias	Ψευδώνυμο
+	Alias file: {file}	Αρχείο ψευδωνύμων: {file}
+	Analyze Shapes	Ανάλυση σχημάτων
+	Analyze Usage	Ανάλυση χρήσης
+	Angstroms	Άνγκστρομ
+	Apply to Layout	Εφαρμογή στη διάταξη
+	Architectural	Αρχιτεκτονικές
+	Arrow size	Μέγεθος βέλους
+	Associate	Συσχέτιση
+	Astronomical Units	Αστρονομικές μονάδες
+	Attach Image...	Επισύναψη εικόνας...
+	AutoLISP (LSP)	AutoLISP (LSP)
+	AutoLISP / VB.NET / C# IDE...	Περιβάλλον ανάπτυξης AutoLISP / VB.NET / C#...
+	AutoLISP / VBA IDE...	Περιβάλλον ανάπτυξης AutoLISP / VBA...
+	Back	Πίσω
+	Break-line Symbol	Σύμβολο γραμμής διακοπής
+	Center the plot	Κεντράρισμα εκτύπωσης
+	Centimeters	Εκατοστά
+	Change Properties	Αλλαγή ιδιοτήτων
+	Choose the command the alias starts.	Επιλέξτε την εντολή που εκκινεί το ψευδώνυμο.
+	Clip Image	Αποκοπή εικόνας
+	Command	Εντολή
+	Convert Text to Mtext	Μετατροπή κειμένου σε κείμενο πολλαπλών γραμμών (Mtext)
+	Customize	Προσαρμογή
+	Decameters	Δεκάμετρα
+	Decimal	Δεκαδικές
+	Decimal Degrees	Δεκαδικές μοίρες
+	Decimeters	Δεκατόμετρα
+	Define each corner of the selection window with a separate click.	Ορίστε κάθε γωνία του παραθύρου επιλογής με ξεχωριστό κλικ.
+	Deg/Min/Sec	Μοίρες/Λεπτά/Δευτ.
+	Dim scale overall	Συνολική κλίμακα διαστάσεων
+	Discard	Απόρριψη
+	Drawing Units	Μονάδες σχεδίασης
+	Edit Command Aliases (PGP)...	Επεξεργασία ψευδωνύμων εντολών (PGP)...
+	Edit…	Επεξεργασία…
+	Engineering	Μηχανολογικές
+	Enter block names to extract	Εισαγάγετε ονόματα μπλοκ για εξαγωγή
+	Enter geometric characteristic	Εισαγάγετε γεωμετρικό χαρακτηριστικό
+	Enter name of LISP file to load	Εισαγάγετε το όνομα του αρχείου LISP για φόρτωση
+	Explode Attributes to Text	Διάσπαση ιδιοτήτων σε κείμενο
+	Express Tools	Εργαλεία Express
+	Feet	Πόδια
+	First corner	Πρώτη γωνία
+	Fit to paper	Προσαρμογή στο χαρτί
+	Fractional	Κλασματικές
+	Frame	Πλαίσιο
+	Front	Μπροστά
+	Gigameters	Γιγάμετρα
+	Grads	Βαθμοί (Grad)
+	Hectometers	Εκατόμετρα
+	Image	Εικόνα
+	Image Frame	Πλαίσιο εικόνας
+	Imperial (inches)	Βρετανικό σύστημα (ίντσες)
+	Implied Loops	Υπονοούμενοι βρόχοι
+	Inches	Ίντσες
+	Insertion scale	Κλίμακα εισαγωγής
+	Interface scale	Κλίμακα διεπαφής
+	Island	Νησίδα
+	Kilometers	Χιλιόμετρα
+	Landscape	Οριζόντιος
+	Layouts	Διατάξεις
+	Light Years	Έτη φωτός
+	Limits	Όρια
+	Load .NET DLL / LISP Application (NETLOAD)...	Φόρτωση εφαρμογής .NET DLL / LISP (NETLOAD)...
+	Load Application (NETLOAD)...	Φόρτωση εφαρμογής (NETLOAD)...
+	Meters	Μέτρα
+	Metric (millimetres)	Μετρικό (χιλιοστά)
+	Microinches	Μικροΐντσες
+	Microns	Μικρά
+	Miles	Μίλια
+	Millimeters	Χιλιοστά
+	Mils	Μιλς
+	Model Tab	Καρτέλα Μοντέλο
+	More than {n} aliases.	Περισσότερα από {n} ψευδώνυμα.
+	Move/Copy/Rotate	Μετακίνηση/Αντιγραφή/Περιστροφή
+	NE Isometric	ΒΑ Ισομετρική
+	NW Isometric	ΒΔ Ισομετρική
+	Nanometers	Νανόμετρα
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	Τα νέα σχέδια και το πρώτο σχέδιο κατά την εκκίνηση χρησιμοποιούν αυτές τις μονάδες, εκτός αν έχει οριστεί προεπιλεγμένο πρότυπο (QNEWTEMPLATE).
+	No alias file loaded. REINIT replaces these aliases with a file's.	Δεν φορτώθηκε αρχείο ψευδωνύμων. Η εντολή REINIT αντικαθιστά αυτά τα ψευδώνυμα με εκείνα ενός αρχείου.
+	Opposite corner	Απέναντι γωνία
+	Orientation	Προσανατολισμός
+	Paper size	Μέγεθος χαρτιού
+	Parsecs	Παρσέκ
+	Plot area	Περιοχή εκτύπωσης
+	Plot object lineweights	Εκτύπωση πάχους γραμμών αντικειμένων
+	Plot offset	Μετατόπιση εκτύπωσης
+	Plot transparency	Εκτύπωση διαφάνειας
+	Portrait	Κατακόρυφα
+	Precision	Ακρίβεια
+	Printer/plotter	Εκτυπωτής/σχεδιογράφος
+	Radians	Ακτίνια
+	Raster Image Reference...	Αναφορά εικόνας ράστερ...
+	SE Isometric	ΝΑ Ισομετρική
+	SW Isometric	ΝΔ Ισομετρική
+	Sample output	Δείγμα εξόδου
+	Save alias	Αποθήκευση ψευδωνύμου
+	Scientific	Επιστημονικές
+	Select boundaries to remove	Επιλέξτε όρια για αφαίρεση
+	Select using two clicks only	Επιλογή μόνο με δύο κλικ
+	Surveyor's Units	Τοπογραφικές μονάδες
+	Top (2D Plan)	Κάτοψη (Σχέδιο 2D)
+	Type an alias name.	Πληκτρολογήστε ένα όνομα ψευδωνύμου.
+	US Survey Feet	Τοπογραφικά πόδια ΗΠΑ
+	US Survey Inch	Τοπογραφικές ίντσες ΗΠΑ
+	US Survey Mile	Τοπογραφικά μίλια ΗΠΑ
+	US Survey Yard	Τοπογραφικές γιάρδες ΗΠΑ
+	Unitless	Χωρίς μονάδες
+	Units of new drawings	Μονάδες νέων σχεδίων
+	Units to scale inserted content	Μονάδες κλιμάκωσης εισαγόμενου περιεχομένου
+	View Resolution	Ανάλυση προβολής
+	Window <	Παράθυρο <
+	X offset (mm)	Μετατόπιση X (mm)
+	Y offset (mm)	Μετατόπιση Y (mm)
+	Yards	Γιάρδες
+	built-in	ενσωματωμένο
+	overrides built-in	αντικαθιστά το ενσωματωμένο
+	{alias} is already defined; select it and use Edit.	Το {alias} έχει ήδη οριστεί· επιλέξτε το και χρησιμοποιήστε Επεξεργασία.
+	{command} is an unknown command.	Το {command} είναι άγνωστη εντολή.
+	📋 Copy All	📋 Αντιγραφή όλων
+	🗑 Clear	🗑 Εκκαθάριση
+	.NET command started	Η εντολή .NET ξεκίνησε
+	0. Empty file (New)	0. Κενό αρχείο (Νέο)
+	1. AutoLISP: Basic Math & Commands	1. AutoLISP: Βασικά μαθηματικά & εντολές
+	2. AutoLISP: Survey Marker (c:meetpunt)	2. AutoLISP: Τοπογραφικό σημείο (c:meetpunt)
+	3. VB.NET Plugin (.vb -> .dll)	3. Πρόσθετο VB.NET (.vb -> .dll)
+	4. C# Plugin (.cs -> .dll)	4. Πρόσθετο C# (.cs -> .dll)
+	Added to Startup Suite (Auto-Load at startup & per drawing)	Προστέθηκε στη σουίτα εκκίνησης (αυτόματη φόρτωση στην εκκίνηση & ανά σχέδιο)
+	Auto-Load	Αυτόματη φόρτωση
+	AutoLISP / VB.NET / C# IDE & NETLOAD Studio	Περιβάλλον AutoLISP / VB.NET / C# IDE & NETLOAD Studio
+	AutoLISP Commands (click to run)	Εντολές AutoLISP (κλικ για εκτέλεση)
+	AutoLISP Editor (.lsp)	Επεξεργαστής AutoLISP (.lsp)
+	Bottom	Κάτω
+	C# Plugin Editor (.cs)	Επεξεργαστής προσθέτων C# (.cs)
+	C# source opened	Ο πηγαίος κώδικας C# άνοιξε
+	Clear Log	Εκκαθάριση καταγραφής
+	Commands	Εντολές
+	Compact Menu	Συμπαγές μενού
+	Compilation error	Σφάλμα μεταγλώττισης
+	Compilation failed (see Console)	Η μεταγλώττιση απέτυχε (δείτε την Κονσόλα)
+	Compilation succeeded	Η μεταγλώττιση ολοκληρώθηκε επιτυχώς
+	Compile & Load .NET DLL	Μεταγλώττιση & φόρτωση .NET DLL
+	Console / Output	Κονσόλα / Έξοδος
+	Error	Σφάλμα
+	Error in	Σφάλμα σε
+	Error: cadcraft-nethost.exe not found next to the application.	Σφάλμα: Το cadcraft-nethost.exe δεν βρέθηκε δίπλα στην εφαρμογή.
+	Evaluate the LISP code or compile the VB.NET / C# source directly into a .NET DLL	Αξιολόγηση του κώδικα LISP ή απευθείας μεταγλώττιση του πηγαίου κώδικα VB.NET / C# σε .NET DLL
+	Failed to invoke compiler	Αποτυχία κλήσης του μεταγλωττιστή
+	Failed to load	Αποτυχία φόρτωσης
+	Failed to save to	Αποτυχία αποθήκευσης σε
+	Failed to start .NET command	Αποτυχία εκκίνησης εντολής .NET
+	Failed to write source file	Αποτυχία εγγραφής αρχείου πηγαίου κώδικα
+	Hide this Studio window and show the compact floating Plugin Commands menu	Απόκρυψη αυτού του παραθύρου Studio και εμφάνιση του συμπαγούς αιωρούμενου μενού Εντολές προσθέτων
+	Load & Run LISP	Φόρτωση & εκτέλεση LISP
+	NETLOAD .NET DLL loaded	Το NETLOAD .NET DLL φορτώθηκε
+	NETLOAD error in	Σφάλμα NETLOAD σε
+	NETLOAD failed to run cadcraft-nethost.exe	Το NETLOAD απέτυχε να εκτελέσει το cadcraft-nethost.exe
+	Open .lsp / .vb / .cs	Άνοιγμα .lsp / .vb / .cs
+	Open NETLOAD Studio (VBAIDE)	Άνοιγμα NETLOAD Studio (VBAIDE)
+	Open Studio	Άνοιγμα Studio
+	Open the full AutoLISP / VB.NET / C# & NETLOAD Studio	Άνοιγμα του πλήρους AutoLISP / VB.NET / C# & NETLOAD Studio
+	Plugin Commands	Εντολές προσθέτων
+	Plugins	Πρόσθετα
+	Quick Expression	Γρήγορη έκφραση
+	Ready. Open a .dll (.NET VB.NET/C#) or .lsp (AutoLISP) file via NETLOAD.	Έτοιμο. Ανοίξτε ένα αρχείο .dll (.NET VB.NET/C#) ή .lsp (AutoLISP) μέσω NETLOAD.
+	Registered commands	Καταχωρισμένες εντολές
+	Removed from Startup Suite (Auto-Load)	Αφαιρέθηκε από τη σουίτα εκκίνησης (Αυτόματη φόρτωση)
+	Routine started	Η ρουτίνα ξεκίνησε
+	Routine started from	Η ρουτίνα ξεκίνησε από
+	Run .NET command	Εκτέλεση εντολής .NET
+	Run command	Εκτέλεση εντολής
+	Save the current source code in the editor to disk	Αποθήκευση του τρέχοντος πηγαίου κώδικα του επεξεργαστή στον δίσκο
+	Saved to	Αποθηκεύτηκε σε
+	Select and load a .lsp, .dll, .vb, or .cs file from disk	Επιλογή και φόρτωση αρχείου .lsp, .dll, .vb ή .cs από τον δίσκο
+	Show Floating Command Menu	Εμφάνιση αιωρούμενου μενού εντολών
+	Template...	Πρότυπο...
+	Toggle Startup Suite (Auto-Load at startup)	Εναλλαγή σουίτας εκκίνησης (Αυτόματη φόρτωση κατά την εκκίνηση)
+	Toggle Startup Suite: automatically load this file at startup and in every opened drawing	Εναλλαγή σουίτας εκκίνησης: αυτόματη φόρτωση αυτού του αρχείου κατά την εκκίνηση και σε κάθε ανοιχτό σχέδιο
+	VB.NET Plugin Editor (.vb)	Επεξεργαστής προσθέτων VB.NET (.vb)
+	VB.NET source opened	Ο πηγαίος κώδικας VB.NET άνοιξε
+	cadcraft-nethost.exe not found	Το cadcraft-nethost.exe δεν βρέθηκε
+	cannot read file	αδυναμία ανάγνωσης αρχείου
+	e.g. (+ 1 2) or + 1 2	π.χ. (+ 1 2) ή + 1 2
+	no [CommandMethod] found	δεν βρέθηκε [CommandMethod]
+	Font	Γραμματοσειρά
+	Save Layout as Template	Αποθήκευση διάταξης ως πρότυπο

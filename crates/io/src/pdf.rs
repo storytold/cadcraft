@@ -527,6 +527,7 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
         view: None,
         skip_viewport: None,
         cancel: None,
+        orbit: cadcraft_render::Orbit3d::default(),
     };
     let k = unit_mm * PT_PER_MM;
     let window = o.window.filter(|w| matches!(space, Space::Model) && !w.is_empty());

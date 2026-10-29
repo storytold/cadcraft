@@ -1349,3 +1349,265 @@
 	Check for Updates…	检查更新…
 	CADCraft is up to date.	CADCraft 已是最新版本。
 	Could not check for updates.	无法检查更新。
+	Copy All	全部复制
+	Copy history output to clipboard	复制命令行历史到剪贴板
+	Close History Window (F2)	关闭命令行历史 (F2)
+	Edit XData (XDEDIT)	编辑 XData (XDEDIT)
+	Open visual XData Editor for selected object	编辑所选对象 XData
+	Command & XData Output (select text + Ctrl+C to copy)	命令行历史 & XData (Ctrl+C 复制)
+	List Xdata	列出 XData
+	Edit Xdata	编辑 XData
+	Edit Xdata (XDEDIT)	编辑 XData (XDEDIT)
+	✏ Edit XData (XDEDIT)	✏ 编辑 XData (XDEDIT)
+	Open visual XData Editor dialog	打开可视化 XData 编辑器
+	📋 Copy Values	📋 复制数值
+	Copy XData values (Key,Value) to clipboard	复制 XData 数值到剪贴板
+	Click to copy value to clipboard	点击复制数值到剪贴板
+	✓ XData values copied to clipboard	✓ XData 数值已复制到剪贴板
+	Selection canceled — previous object kept.	选择已取消 — 保留上一个对象。
+	Drag left or right to resize this column	左右拖动以调整列宽
+	XDATA Editor (XDEDIT)	XDATA 编辑器 (XDEDIT)
+	No object selected.	未选择对象。
+	🎯 Select object in drawing	🎯 在图形中选择对象
+	Object: {kind}	对象: {kind}
+	Layer: {layer}	图层: {layer}
+	Handle: {handle}	句柄: {handle}
+	🎯 Select Another Object	🎯 选择其他对象
+	Hide editor temporarily, pick another object in the drawing, and open it in XDEDIT	暂时隐藏编辑器，在图形中选择其他对象并在 XDEDIT 中打开
+	Next ▶	下一个 ▶
+	Step to the next object with XData in the selection or drawing	切换到下一个带有 XData 的对象
+	◀ Previous	◀ 上一个
+	Step to the previous object with XData in the selection or drawing	切换到上一个带有 XData 的对象
+	📋 Copy JSON	📋 复制 JSON
+	Copy all XData as structured JSON to clipboard	将全部 XData 作为 JSON 复制到剪贴板
+	✓ JSON copied to clipboard	✓ JSON 已复制到剪贴板
+	📋 Copy Text	📋 复制文字
+	Copy all XData as text to clipboard	将全部 XData 作为文字复制到剪贴板
+	✓ XData text copied to clipboard	✓ XData 文字已复制到剪贴板
+	AppID (1001):	AppID (1001):
+	New AppID (e.g. Lumi_KLIC)	新 AppID (例如 Lumi_KLIC)
+	+ Add AppID	+ 添加 AppID
+	🗑 Delete AppID	🗑 删除 AppID
+	Remove this Application and its XData from the entity	从对象中删除此应用程序及其 XData
+	Application removed (click Apply to save)	应用程序已删除 (点击应用以保存)
+	🔍 Filter:	🔍 过滤:
+	Search key or value (e.g. THEMA, DIEPTE)...	搜索名称或数值 (例如 THEMA, DIEPTE)...
+	Key width:	名称宽度:
+	Drag this value or the column divider ⇔ to resize the Key column	拖动此数值或分隔线 ⇔ 以调整名称列宽
+	Value width:	数值宽度:
+	Drag this value or the column divider ⇔ to resize the Value column	拖动此数值或分隔线 ⇔ 以调整数值列宽
+	Smart Key=Value Columns	智能 名称=数值 列
+	Split 'KEY=VALUE' or 'Key: Value' into separate editable Key and Value fields	将 'KEY=VALUE' 或 'Key: Value' 拆分为可编辑字段
+	This object currently has no user XData.	此对象当前没有用户 XData。
+	+ Create Lumi_KLIC Application	+ 创建 Lumi_KLIC 应用程序
+	DXF Code	DXF 代码
+	Property / Key ⇔	特性 / 名称 ⇔
+	Value (Selectable & Editable) ⇔	数值 (可选择与编辑) ⇔
+	Raw Value (Selectable & Editable) ⇔	原始数值 (可选择与编辑) ⇔
+	Actions	操作
+	Copy value to clipboard	复制数值到剪贴板
+	✓ Copied: {val}	✓ 已复制: {val}
+	Move row up	上移行
+	Move row down	下移行
+	Delete this XData row	删除此 XData 行
+	Add Row:	添加行:
+	Key (e.g. OPMERKING)	名称 (例如 OPMERKING)
+	+ Add Property	+ 添加特性
+	● Unsaved changes	● 未保存的更改
+	Ready — click '🎯 Select Next Object' or '◀ Previous / Next ▶' to switch objects.	就绪 — 点击切换对象。
+	↺ Revert	↺ 还原
+	✔ Apply / Save XData	✔ 应用 / 保存 XData
+	Write modified XData to the entity (Undoable with Ctrl+Z)	将修改后的 XData 写入对象 (Ctrl+Z 放弃)
+	✔ Save & Select Next Object	✔ 保存并选择下一个
+	🎯 Select Next Object	🎯 选择下一个对象
+	Save any changes and directly pick the next object in the drawing	保存更改并直接选择下一个对象
+	Object {idx1}/{total} loaded ({kind} — {handle})	已加载对象 {idx1}/{total} ({kind} — {handle})
+	↺ Reverted to saved entity XData	↺ 已还原为已保存的 XData
+	✔ XData saved to entity (Undoable)	✔ XData 已保存到对象 (可 Ctrl+Z)
+	Error: {err}	错误: {err}
+	⚠ Entity XData changed outside editor — click Revert before saving.	⚠ 对象 XData 已在外部更改 — 保存前请点击还原。
+	+  |  {view} ({yaw}°, {pitch}°)  |  3D Orbit Wireframe	+  |  {view} ({yaw}°, {pitch}°)  |  三维动态观察线框
+	.NET Plugin Bridge	.NET 插件桥接
+	3D Orbit	三维动态观察
+	3D Views	三维视图
+	Add…	添加…
+	Adjust Image...	调整图像...
+	Adjust...	调整...
+	Alias	别名
+	Alias file: {file}	别名文件：{file}
+	Align Multileaders	对齐多重引线
+	Analyze Usage	分析使用情况
+	Associative	关联
+	Attach Image...	附着图像...
+	AutoLISP (LSP)	AutoLISP (LSP)
+	AutoLISP / VB.NET / C# IDE...	AutoLISP / VB.NET / C# 集成开发环境...
+	AutoLISP / VBA IDE...	AutoLISP / VBA 集成开发环境...
+	B	B
+	Back	后视
+	Block to create or edit	要创建或编辑的块
+	Break-line Symbol	折断线符号
+	Change Properties	修改特性
+	Choose the command the alias starts.	选择该别名启动的命令。
+	Clear Recent Files	清除最近使用的文件
+	Click the ruler to add a tab stop, right-click to remove one	单击标尺添加制表位，右键单击移除制表位
+	Clip Image	剪裁图像
+	Close Block Editor	关闭块编辑器
+	Collect	合并
+	Collect Multileaders	合并多重引线
+	Command	命令
+	Convert Text to Mtext	将文字转换为多行文字
+	Crossing selection color:	交叉选择颜色：
+	Custom	自定义
+	Customize	自定义
+	Define each corner of the selection window with a separate click.	通过单独单击定义选择窗口的每个角点。
+	Discard	放弃
+	Drag Dynamic Grip	拖动动态夹点
+	Dynamic Block Data	动态块数据
+	Dynamic Block Grips	动态块夹点
+	Dynamic Block Reference	动态块参照
+	Edit Block Definition	编辑块定义
+	Edit Command Aliases (PGP)...	编辑命令别名 (PGP)...
+	Edit Multileader	编辑多重引线
+	Edit…	编辑…
+	Evaluate LISP	求值 LISP
+	Exclude:	排除：
+	Explode Attributes to Text	将属性分解为文字
+	Express Tools	Express 工具
+	Frame	边框
+	Front	前视
+	Grips	夹点
+	Groups	编组
+	Hatch Pick	拾取填充
+	Hatches	填充
+	Image	图像
+	Image Frame	图像边框
+	Imperial (inches)	英制 (英寸)
+	Implied Loops	隐含环
+	Indicate selection area	指示选择区域
+	Interface scale	界面缩放
+	Island	孤岛
+	Italic	斜体
+	Justify	两端对齐
+	Load .NET DLL / LISP Application (NETLOAD)...	加载 .NET DLL / LISP 应用程序 (NETLOAD)...
+	Load Application (NETLOAD)...	加载应用程序 (NETLOAD)...
+	Metric (millimetres)	公制（毫米）
+	Model Tab	“模型”选项卡
+	More than {n} aliases.	超过 {n} 个别名。
+	Move/Copy/Rotate	移动/复制/旋转
+	Multiline text	多行文字
+	NE Isometric	东北等轴测
+	NW Isometric	西北等轴测
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	除非设置了默认样板 (QNEWTEMPLATE)，否则新建图形和启动时的第一个图形将使用这些单位。
+	New block	新建块
+	No alias file loaded. REINIT replaces these aliases with a file's.	未加载别名文件。REINIT 会用文件中的别名替换这些别名。
+	Object grouping	对象编组
+	Object selection limit for display of grips	显示夹点的对象选择限制
+	Objects on locked layers	锁定图层上的对象
+	Open in Block Editor	在块编辑器中打开
+	Origin: {x}, {y}	原点：{x}, {y}
+	Overline	上划线
+	Raster Image Reference...	光栅图像参照...
+	SE Isometric	东南等轴测
+	SW Isometric	西南等轴测
+	Save Block	保存块
+	Save Block As	块另存为
+	Save alias	保存别名
+	Select boundaries to remove	选择要移除的边界
+	Select using two clicks only	仅使用两次单击进行选择
+	Selection Area Effect	选择区域效果
+	Selection Preview Filter	选择预览过滤器
+	Selection area opacity:	选择区域不透明度：
+	Selection effect color	选择效果颜色
+	Selection modes	选择模式
+	Selection preview	选择预览
+	Set Dynamic Property	设置动态特性
+	Show grips	显示夹点
+	Tables	表格
+	Text color	文字颜色
+	This drawing	本图形
+	Top (2D Plan)	俯视（二维平面）
+	Type an alias name.	输入别名名称。
+	Underline	下划线
+	Units of new drawings	新图形的单位
+	Unsaved changes	未保存的更改
+	View Resolution	视图分辨率
+	Visual Effect Settings	视觉效果设置
+	Visual Effect Settings...	视觉效果设置...
+	When a command is active	命令激活时
+	When no command is active	无激活命令时
+	Window selection color:	窗口选择颜色：
+	X	X
+	Xrefs	外部参照
+	Y	Y
+	built-in	内置
+	contains authoring elements. Open in Block Editor?	包含块编写元素。是否在块编辑器中打开？
+	overrides built-in	替代内置
+	{alias} is already defined; select it and use Edit.	{alias} 已定义；请选择它并使用“编辑”。
+	{command} is an unknown command.	{command} 是未知命令。
+	📋 Copy All	📋 全部复制
+	🗑 Clear	🗑 清除
+	.NET command started	.NET 命令已启动
+	0. Empty file (New)	0. 空文件 (新建)
+	1. AutoLISP: Basic Math & Commands	1. AutoLISP：基础数学与命令
+	2. AutoLISP: Survey Marker (c:meetpunt)	2. AutoLISP：测量标记 (c:meetpunt)
+	3. VB.NET Plugin (.vb -> .dll)	3. VB.NET 插件 (.vb -> .dll)
+	4. C# Plugin (.cs -> .dll)	4. C# 插件 (.cs -> .dll)
+	Added to Startup Suite (Auto-Load at startup & per drawing)	已添加到启动组（启动时及每个图形自动加载）
+	Auto-Load	自动加载
+	AutoLISP / VB.NET / C# IDE & NETLOAD Studio	AutoLISP / VB.NET / C# 集成开发环境与 NETLOAD 工作室
+	AutoLISP Commands (click to run)	AutoLISP 命令（点击运行）
+	AutoLISP Editor (.lsp)	AutoLISP 编辑器 (.lsp)
+	Bottom	仰视
+	C# Plugin Editor (.cs)	C# 插件编辑器 (.cs)
+	C# source opened	已打开 C# 源代码
+	Clear Log	清除日志
+	Commands	命令
+	Compact Menu	紧凑菜单
+	Compilation error	编译错误
+	Compilation failed (see Console)	编译失败（请查看控制台）
+	Compilation succeeded	编译成功
+	Compile & Load .NET DLL	编译并加载 .NET DLL
+	Console / Output	控制台 / 输出
+	Error	错误
+	Error in	错误位于
+	Error: cadcraft-nethost.exe not found next to the application.	错误：在应用程序旁未找到 cadcraft-nethost.exe。
+	Evaluate the LISP code or compile the VB.NET / C# source directly into a .NET DLL	求值 LISP 代码或将 VB.NET / C# 源代码直接编译为 .NET DLL
+	Failed to invoke compiler	调用编译器失败
+	Failed to load	加载失败
+	Failed to save to	未能保存到
+	Failed to start .NET command	启动 .NET 命令失败
+	Failed to write source file	写入源文件失败
+	Hide this Studio window and show the compact floating Plugin Commands menu	隐藏此 Studio 窗口并显示紧凑型浮动插件命令菜单
+	Load & Run LISP	加载并运行 LISP
+	NETLOAD .NET DLL loaded	已加载 NETLOAD .NET DLL
+	NETLOAD error in	NETLOAD 错误位于
+	NETLOAD failed to run cadcraft-nethost.exe	NETLOAD 无法运行 cadcraft-nethost.exe
+	Open .lsp / .vb / .cs	打开 .lsp / .vb / .cs
+	Open NETLOAD Studio (VBAIDE)	打开 NETLOAD Studio (VBAIDE)
+	Open Studio	打开 Studio
+	Open the full AutoLISP / VB.NET / C# & NETLOAD Studio	打开完整的 AutoLISP / VB.NET / C# & NETLOAD Studio
+	Plugin Commands	插件命令
+	Plugins	插件
+	Quick Expression	快速表达式
+	Ready. Open a .dll (.NET VB.NET/C#) or .lsp (AutoLISP) file via NETLOAD.	就绪。通过 NETLOAD 打开 .dll (.NET VB.NET/C#) 或 .lsp (AutoLISP) 文件。
+	Registered commands	已注册命令
+	Removed from Startup Suite (Auto-Load)	已从启动组（自动加载）中移除
+	Routine started	例程已启动
+	Routine started from	例程启动自
+	Run .NET command	运行 .NET 命令
+	Run command	运行命令
+	Save the current source code in the editor to disk	将编辑器中的当前源代码保存到磁盘
+	Saved to	已保存到
+	Select and load a .lsp, .dll, .vb, or .cs file from disk	从磁盘选择并加载 .lsp、.dll、.vb 或 .cs 文件
+	Show Floating Command Menu	显示浮动命令菜单
+	Template...	样板...
+	Toggle Startup Suite (Auto-Load at startup)	切换启动组（启动时自动加载）
+	Toggle Startup Suite: automatically load this file at startup and in every opened drawing	切换启动组：在启动时以及在每个打开的图形中自动加载此文件
+	VB.NET Plugin Editor (.vb)	VB.NET 插件编辑器 (.vb)
+	VB.NET source opened	已打开 VB.NET 源代码
+	cadcraft-nethost.exe not found	未找到 cadcraft-nethost.exe
+	cannot read file	无法读取文件
+	e.g. (+ 1 2) or + 1 2	例如 (+ 1 2) 或 + 1 2
+	no [CommandMethod] found	未找到 [CommandMethod]
+	Font	字体
+	Save Layout as Template	将布局另存为样板

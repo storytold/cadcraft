@@ -154,13 +154,23 @@ pub(super) fn draw_drag_gpu(
     clipboard: (&[cadcraft_doc::Entity], u64),
     bg: Rgb,
     transparency: bool,
+    orbit: cadcraft_render::Orbit3d,
 ) {
     // Tessellate for a power-of-two zoom band so zooming mid-drag rebuilds only every 2x.
     let band = xf.scale.max(1e-300).log2().round() as i32;
+    let raw_m = drag.matrix;
+    let is_translation = (raw_m.a - 1.0).abs() <= 1e-12
+        && raw_m.b.abs() <= 1e-12
+        && raw_m.c.abs() <= 1e-12
+        && (raw_m.d - 1.0).abs() <= 1e-12;
+    let pre_transform = !orbit.is_top() && !is_translation;
     let key = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (c.key, band, bg.0, bg.1, bg.2, &drag.handles, transparency).hash(&mut h);
+        (c.key, band, bg.0, bg.1, bg.2, &drag.handles, transparency, orbit.hash_key()).hash(&mut h);
+        if pre_transform {
+            [raw_m.a, raw_m.b, raw_m.c, raw_m.d, raw_m.e, raw_m.f].map(f64::to_bits).hash(&mut h);
+        }
         if drag.clipboard {
             clipboard.1.hash(&mut h);
         }
@@ -168,8 +178,31 @@ pub(super) fn draw_drag_gpu(
     };
     if c.drag_key != Some(key) {
         let band_scale = 2f64.powi(band);
-        let opts = cadcraft_render::Options { transparency, ..preview_options(band_scale) };
-        let list = if drag.clipboard {
+        let opts = cadcraft_render::Options { transparency, orbit, ..preview_options(band_scale) };
+        let list = if pre_transform {
+            let transformed: Vec<cadcraft_doc::Entity> = if drag.clipboard {
+                clipboard
+                    .0
+                    .iter()
+                    .map(|e| {
+                        let mut e = e.clone();
+                        e.kind.transform(&raw_m);
+                        e
+                    })
+                    .collect()
+            } else {
+                drag.handles
+                    .iter()
+                    .filter_map(|h| doc.entity(*h))
+                    .map(|e| {
+                        let mut e = (**e).clone();
+                        e.kind.transform(&raw_m);
+                        e
+                    })
+                    .collect()
+            };
+            cadcraft_render::build_entities(doc, transformed.iter(), &opts)
+        } else if drag.clipboard {
             cadcraft_render::build_entities(doc, clipboard.0.iter(), &opts)
         } else {
             cadcraft_render::build_entities(doc, drag.handles.iter().filter_map(|h| doc.entity(*h)).map(|e| e.as_ref()), &opts)
@@ -183,9 +216,14 @@ pub(super) fn draw_drag_gpu(
         c.drag_origin = origin;
     }
     // Positions are relative to the origin o: M(o + p) = L·p + (M(o) − o).
-    let m = drag.matrix;
     let o = c.drag_origin;
-    let t = m.apply(o) - o;
+    let xform = if pre_transform {
+        crate::gpu::IDENTITY_XFORM
+    } else {
+        let m = orbit.project_mat3(raw_m);
+        let t = m.apply(o) - o;
+        [m.a as f32, m.b as f32, m.c as f32, m.d as f32, t.x as f32, t.y as f32]
+    };
     let center = xf.rect.center();
     p.add(egui_wgpu::Callback::new_paint_callback(
         xf.rect,
@@ -196,7 +234,7 @@ pub(super) fn draw_drag_gpu(
             scale: xf.scale as f32,
             center: [center.x, center.y],
             layer: crate::gpu::LAYER_DRAG,
-            xform: [m.a as f32, m.b as f32, m.c as f32, m.d as f32, t.x as f32, t.y as f32],
+            xform,
             dash: 0.0,
             stencil: crate::gpu::Stencil::Off,
         },

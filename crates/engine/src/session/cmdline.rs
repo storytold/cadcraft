@@ -100,7 +100,7 @@ impl Session {
                 lisp::value::Value::Real(r) => self.typed(&format!("{r}")),
                 lisp::value::Value::Str(s) => self.typed(&s),
                 other => match other.as_point() {
-                    Some(p) => self.input(Input::Point(Vec2::new(p[0], p[1]))),
+                    Some(p) => self.typed_point(Vec2::new(p[0], p[1])),
                     None => {
                         self.echo(format!("Invalid input: {}", lisp::value::to_text(&other, true)));
                         Ok(())
@@ -124,14 +124,14 @@ impl Session {
         if prompt.accept.point {
             if let Some(p) = prompt::parse_point_with(tt, self.last_point, &self.angle_settings()) {
                 self.last_polar = prompt::parse_polar_text(tt, &self.angle_settings());
-                return self.input(Input::Point(p));
+                return self.typed_point(p);
             }
             // Direct distance entry along the tracking path the cursor is on, from the point it
             // comes from (an acquired or temporary tracking point needs no base point).
             if let Some(dist) = units::parse_distance(tt).filter(|_| !prompt.accept.number)
                 && let Some((from, dir)) = self.tracking.last.as_ref().filter(|t| t.point.near(self.cursor, 1e-9)).and_then(|t| t.along())
             {
-                return self.input(Input::Point(from + dir * dist));
+                return self.typed_point(from + dir * dist);
             }
             // Direct distance entry along the rubber band.
             if let (Some(base), Some(dist)) = (prompt.base, units::parse_distance(tt))
@@ -143,10 +143,24 @@ impl Session {
                 }
                 let dir = (c - base).normalized();
                 let dir = if dir == Vec2::ZERO { Vec2::X } else { dir };
-                return self.input(Input::Point(base + dir * dist));
+                return self.typed_point(base + dir * dist);
             }
         }
         self.input(Input::Text(tt.to_string()))
+    }
+
+    /// Feed a point typed at the command line (or evaluated from a LISP expression): keeps
+    /// `last_point` in model XY (`z = 0`) coordinates and projects to the 2D view plane when the
+    /// active prompt selects objects or areas in view space (`!prompt_wants_work_point()`).
+    fn typed_point(&mut self, p: Vec2) -> Result<()> {
+        self.last_point = p;
+        let pt = if self.prompt_wants_work_point() {
+            p
+        } else {
+            let orbit = self.edit_orbit();
+            if orbit.is_top() { p } else { orbit.project(p.to3(0.0)) }
+        };
+        self.input(Input::Point(pt))
     }
 
     /// Run a script, as AutoCAD reads one: a space or a line end ends an input, and an empty

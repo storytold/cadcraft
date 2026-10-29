@@ -1242,3 +1242,376 @@ menu	View	عرض
 	Check for Updates…	التحقق من وجود تحديثات…
 	CADCraft is up to date.	CADCraft محدّث.
 	Could not check for updates.	تعذّر التحقق من وجود تحديثات.
+	Copy All	نسخ الكل
+	Copy history output to clipboard	نسخ السجل إلى الحافظة
+	Close History Window (F2)	إغلاق نافذة السجل (F2)
+	Edit XData (XDEDIT)	تحرير XData (XDEDIT)
+	Open visual XData Editor for selected object	فتح محرر XData للكائن المحدد
+	Command & XData Output (select text + Ctrl+C to copy)	سجل الأوامر و XData (Ctrl+C للنسخ)
+	Save changes to {name}?	حفظ التغييرات في {name}؟
+	Your changes will be lost if you don't save them.	ستفقد التغييرات إذا لم تقم بحفظها.
+	Don't Save	عدم الحفظ
+	List Xdata	عرض XData
+	Edit Xdata	تحرير XData
+	Edit Xdata (XDEDIT)	تحرير XData (XDEDIT)
+	✏ Edit XData (XDEDIT)	✏ تحرير XData (XDEDIT)
+	Open visual XData Editor dialog	فتح محرر XData
+	📋 Copy Values	📋 نسخ القيم
+	Copy XData values (Key,Value) to clipboard	نسخ قيم XData إلى الحافظة
+	Click to copy value to clipboard	انقر لنسخ القيمة إلى الحافظة
+	✓ XData values copied to clipboard	✓ تم نسخ قيم XData إلى الحافظة
+	Selection canceled — previous object kept.	تم إلغاء التحديد — تم الاحتفاظ بالكائن السابق.
+	Drag left or right to resize this column	اسحب لتغيير عرض العمود
+	XDATA Editor (XDEDIT)	محرر XDATA (XDEDIT)
+	No object selected.	لم يتم تحديد كائن.
+	🎯 Select object in drawing	🎯 تحديد كائن في الرسم
+	Object: {kind}	كائن: {kind}
+	Layer: {layer}	طبقة: {layer}
+	Handle: {handle}	معرف: {handle}
+	🎯 Select Another Object	🎯 تحديد كائن آخر
+	Hide editor temporarily, pick another object in the drawing, and open it in XDEDIT	إخفاء المحرر مؤقتا وتحديد كائن آخر في الرسم
+	Next ▶	التالي ▶
+	Step to the next object with XData in the selection or drawing	الانتقال إلى الكائن التالي
+	◀ Previous	◀ السابق
+	Step to the previous object with XData in the selection or drawing	الانتقال إلى الكائن السابق
+	📋 Copy JSON	📋 نسخ JSON
+	Copy all XData as structured JSON to clipboard	نسخ XData بصيغة JSON إلى الحافظة
+	✓ JSON copied to clipboard	✓ تم نسخ JSON إلى الحافظة
+	📋 Copy Text	📋 نسخ النص
+	Copy all XData as text to clipboard	نسخ XData كنص إلى الحافظة
+	✓ XData text copied to clipboard	✓ تم نسخ نص XData إلى الحافظة
+	AppID (1001):	AppID (1001):
+	New AppID (e.g. Lumi_KLIC)	AppID جديد (مثل Lumi_KLIC)
+	+ Add AppID	+ إضافة AppID
+	🗑 Delete AppID	🗑 حذف AppID
+	Remove this Application and its XData from the entity	إزالة هذا التطبيق وبيانات XData من الكائن
+	Application removed (click Apply to save)	تمت إزالة التطبيق (انقر تطبيق للحفظ)
+	🔍 Filter:	🔍 تصفية:
+	Search key or value (e.g. THEMA, DIEPTE)...	بحث عن مفتاح أو قيمة...
+	Key width:	عرض المفتاح:
+	Drag this value or the column divider ⇔ to resize the Key column	اسحب لتغيير عرض عمود المفتاح
+	Value width:	عرض القيمة:
+	Drag this value or the column divider ⇔ to resize the Value column	اسحب لتغيير عرض عمود القيمة
+	Smart Key=Value Columns	أعمدة مفتاح=قيمة ذكية
+	Split 'KEY=VALUE' or 'Key: Value' into separate editable Key and Value fields	فصل المفتاح والقيمة في حقول قابلة للتحرير
+	This object currently has no user XData.	لا توجد بيانات XData لهذا الكائن.
+	+ Create Lumi_KLIC Application	+ إنشاء تطبيق Lumi_KLIC
+	DXF Code	رمز DXF
+	Property / Key ⇔	خاصية / مفتاح ⇔
+	Value (Selectable & Editable) ⇔	قيمة (قابلة للتحرير) ⇔
+	Raw Value (Selectable & Editable) ⇔	قيمة خام (قابلة للتحرير) ⇔
+	Actions	إجراءات
+	Copy value to clipboard	نسخ القيمة إلى الحافظة
+	✓ Copied: {val}	✓ تم النسخ: {val}
+	Move row up	تحريك الصف لأعلى
+	Move row down	تحريك الصف لأسفل
+	Delete this XData row	حذف صف XData
+	Add Row:	إضافة صف:
+	Key (e.g. OPMERKING)	مفتاح (مثل OPMERKING)
+	+ Add Property	+ إضافة خاصية
+	● Unsaved changes	● تغييرات غير محفوظة
+	Ready — click '🎯 Select Next Object' or '◀ Previous / Next ▶' to switch objects.	جاهز — انقر لتبديل الكائنات.
+	↺ Revert	↺ استعادة
+	✔ Apply / Save XData	✔ تطبيق / حفظ XData
+	Write modified XData to the entity (Undoable with Ctrl+Z)	حفظ XData في الكائن (تراجع عبر Ctrl+Z)
+	✔ Save & Select Next Object	✔ حفظ وتحديد التالي
+	🎯 Select Next Object	🎯 تحديد الكائن التالي
+	Save any changes and directly pick the next object in the drawing	حفظ التغييرات وتحديد الكائن التالي
+	Object {idx1}/{total} loaded ({kind} — {handle})	تم تحميل الكائن {idx1}/{total} ({kind} — {handle})
+	↺ Reverted to saved entity XData	↺ تمت استعادة XData المحفوظة
+	✔ XData saved to entity (Undoable)	✔ تم حفظ XData (Ctrl+Z متاح)
+	Error: {err}	خطأ: {err}
+	⚠ Entity XData changed outside editor — click Revert before saving.	⚠ تغيرت XData خارج المحرر — انقر استعادة قبل الحفظ.
+	+  |  {view} ({yaw}°, {pitch}°)  |  3D Orbit Wireframe	+  |  {view} ({yaw}°, {pitch}°)  |  إطار سلكي لمدار ثلاثي الأبعاد
+	.NET Plugin Bridge	جسر إضافات .NET
+	3D Orbit	مدار ثلاثي الأبعاد
+	3D Views	طرق عرض ثلاثية الأبعاد
+	Add to Working Set	إضافة إلى مجموعة العمل
+	Add: Pick points	إضافة: اختيار نقاط
+	Add: Select objects	إضافة: تحديد كائنات
+	Add…	إضافة…
+	Adjust Image...	ضبط الصورة...
+	Adjust...	ضبط...
+	Alias	الاسم المستعار
+	Alias file: {file}	ملف الأسماء المستعارة: {file}
+	Align Multileaders	محاذاة الخطوط الدليلية المتعددة
+	Analyze Shapes	تحليل الأشكال
+	Analyze Usage	تحليل الاستخدام
+	Angstroms	أنغستروم
+	Animation Effects	تأثيرات الحركة
+	Animation effects	تأثيرات الحركة
+	Apply to Layout	تطبيق على التخطيط
+	Architectural	معماري
+	Arrow size	حجم السهم
+	Associate	إقران
+	Associative	ترابطي
+	Astronomical Units	وحدات فلكية
+	Attach Image...	إرفاق صورة...
+	AutoLISP (LSP)	AutoLISP (LSP)
+	AutoLISP / VB.NET / C# IDE...	بيئة تطوير AutoLISP / VB.NET / C#...
+	AutoLISP / VBA IDE...	بيئة تطوير AutoLISP / VBA...
+	B	B
+	Back	خلفي
+	Block to create or edit	الكتلة المراد إنشاؤها أو تحريرها
+	Bottom left	أسفل اليسار
+	Bottom right	أسفل اليمين
+	Boundaries	الحدود
+	Boundaries picked: {n}	الحدود المختارة: {n}
+	Break-line Symbol	رمز خط القطع
+	CADCraft	CADCraft
+	Center the plot	توسيط الطباعة
+	Centered	في المركز
+	Centimeters	سنتيمترات
+	Change Properties	تغيير الخصائص
+	Choose the command the alias starts.	اختر الأمر الذي يبدأه الاسم المستعار.
+	Clear Recent Files	مسح الملفات الأخيرة
+	Click the ruler to add a tab stop, right-click to remove one	انقر على المسطرة لإضافة علامة جدولة، وانقر بزر الماوس الأيمن لإزالتها
+	Click to set new origin	انقر لتعيين نقطة أصل جديدة
+	Clip Image	قص الصورة
+	Close Block Editor	إغلاق محرر الكتل
+	Collect	تجميع
+	Collect Multileaders	تجميع الخطوط الدليلية المتعددة
+	Color 1	اللون 1
+	Color 2	اللون 2
+	Command	الأمر
+	Convert Text to Mtext	تحويل النص إلى نص متعدد الأسطر
+	Create separate hatches	إنشاء تهشيرات منفصلة
+	Crossing selection color:	لون التحديد المتقاطع:
+	Curved	منحني
+	Custom	مخصص
+	Customize	تخصيص
+	Decameters	ديكامترات
+	Decimal	عشري
+	Decimal Degrees	درجات عشرية
+	Decimeters	ديسيمترات
+	Default to boundary extents	الافتراضي إلى حدود المحيط
+	Define each corner of the selection window with a separate click.	حدد كل ركن من أركان نافذة التحديد بنقرة منفصلة.
+	Deg/Min/Sec	درجة/دقيقة/ثانية
+	Dim scale overall	المقياس الكلي للأبعاد
+	Discard	تجاهل
+	Drag Dynamic Grip	سحب المقبض الديناميكي
+	Drawing Units	وحدات الرسم
+	Dynamic Block Data	بيانات الكتلة الديناميكية
+	Dynamic Block Grips	مقابض الكتلة الديناميكية
+	Dynamic Block Reference	مرجع كتلة ديناميكية
+	E	شرق
+	Edit Block Definition	تحرير تعريف الكتلة
+	Edit Command Aliases (PGP)...	تحرير الأسماء المستعارة للأوامر (PGP)...
+	Edit Multileader	تحرير الخط الدليلي المتعدد
+	Edit Reference In-Place	تحرير المرجع في مكانه
+	Edit…	تحرير…
+	Engineering	هندسي
+	Enter block names to extract	أدخل أسماء الكتل المراد استخراجها
+	Enter geometric characteristic	أدخل الخاصية الهندسية
+	Enter name of LISP file to load	أدخل اسم ملف LISP لتحميله
+	Evaluate LISP	تقييم LISP
+	Exclude:	استبعاد:
+	Explode Attributes to Text	تفجير السمات إلى نص
+	Express Tools	أدوات Express
+	Feet	أقدام
+	First corner	الركن الأول
+	Fit to paper	ملاءمة للورقة
+	Fractional	كسري
+	Frame	إطار
+	Front	أمامي
+	Gigameters	غيغامترات
+	Grads	غراد
+	Grips	المقابض
+	Groups	المجموعات
+	Hatch Pick	اختيار التهشير
+	Hatch and Gradient	التهشير والتدرج اللوني
+	Hatch origin	نقطة أصل التهشير
+	Hatches	التهشيرات
+	Hectometers	هكتومترات
+	Hemispherical	نصف كروي
+	Ignore	تجاهل
+	Image	صورة
+	Image Frame	إطار الصورة
+	Imperial (inches)	إمبراطوري (بوصة)
+	Implied Loops	حلقات ضمنية
+	Inches	بوصات
+	Indicate selection area	إظهار منطقة التحديد
+	Insertion scale	مقياس الإدراج
+	Interface scale	مقياس الواجهة
+	Inverted	معكوس
+	Island	جزيرة
+	Island detection	اكتشاف الجزر
+	Italic	مائل
+	Justify	ضبط المحاذاة
+	Kilometers	كيلومترات
+	Landscape	أفقي
+	Layouts	التخطيطات
+	Light Years	سنوات ضوئية
+	Limits	الحدود
+	Load .NET DLL / LISP Application (NETLOAD)...	تحميل تطبيق .NET DLL / LISP (NETLOAD)...
+	Load Application (NETLOAD)...	تحميل تطبيق (NETLOAD)...
+	Load Application...	تحميل تطبيق...
+	Meters	أمتار
+	Metric (millimetres)	متري (ملليمترات)
+	Microinches	ميكروبوصة
+	Microns	ميكرونات
+	Miles	أميال
+	Millimeters	ملليمترات
+	Mils	ميل (جزء من الألف من البوصة)
+	Model Tab	علامة تبويب النموذج
+	More than {n} aliases.	أكثر من {n} اسم مستعار.
+	Move/Copy/Rotate	نقل/نسخ/تدوير
+	Multiline text	نص متعدد الأسطر
+	N	شمال
+	NE Isometric	أيزومتري شمالي شرقي
+	NW Isometric	أيزومتري شمالي غربي
+	Nanometers	نانومترات
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	تستخدم الرسومات الجديدة والرسم الأول عند بدء التشغيل هذه الوحدات ما لم يتم تعيين قالب افتراضي (QNEWTEMPLATE).
+	New block	كتلة جديدة
+	No alias file loaded. REINIT replaces these aliases with a file's.	لم يتم تحميل ملف أسماء مستعارة. يستبدل REINIT هذه الأسماء المستعارة بملف.
+	Not a number or distance: {text}	ليس رقماً أو مسافة: {text}
+	Object grouping	تجميع الكائنات
+	Object selection limit for display of grips	حد تحديد الكائنات لعرض المقابض
+	Objects on locked layers	الكائنات الموجودة على طبقات مقفلة
+	Open Recent	فتح الأخيرة
+	Open in Block Editor	فتح في محرر الكتل
+	Opposite corner	الركن المقابل
+	Orientation	الاتجاه
+	Origin: {x}, {y}	نقطة الأصل: {x}, {y}
+	Outer	خارجي
+	Overline	تسطير علوي
+	Paper size	حجم الورق
+	Parsecs	فرسخ فلكي
+	Plot area	منطقة الطباعة
+	Plot object lineweights	طباعة أوزان خطوط الكائنات
+	Plot offset	إزاحة الطباعة
+	Plot transparency	طباعة الشفافية
+	Portrait	عمودي
+	Precision	الدقة
+	Preview	معاينة
+	Printer/plotter	الطابعة/الراسمة
+	Query Texts	استعلام النصوص
+	Radians	راديان
+	Raster Image Reference...	مرجع صورة نقطية...
+	S	جنوب
+	SE Isometric	أيزومتري جنوبي شرقي
+	SW Isometric	أيزومتري جنوبي غربي
+	Sample output	نموذج الإخراج
+	Save Block	حفظ الكتلة
+	Save Block As	حفظ الكتلة باسم
+	Save Reference Edits	حفظ تعديلات المرجع
+	Save alias	حفظ الاسم المستعار
+	Scientific	علمي
+	Select boundaries to remove	حدد الحدود المراد إزالتها
+	Select using two clicks only	التحديد باستخدام نقرتين فقط
+	Selection Area Effect	تأثير منطقة التحديد
+	Selection Preview Filter	عامل تصفية معاينة التحديد
+	Selection area opacity:	عتامة منطقة التحديد:
+	Selection effect color	لون تأثير التحديد
+	Selection modes	أوضاع التحديد
+	Selection preview	معاينة التحديد
+	Set Dynamic Property	تعيين الخاصية الديناميكية
+	Shape	الشكل
+	Sheet Books to PDF...	دفاتر اللوحات إلى PDF...
+	Show grips	إظهار المقابض
+	Specified origin	نقطة الأصل المحددة
+	Spherical	كروي
+	Surveyor's Units	وحدات المساحة
+	Tables	الجداول
+	Text color	لون النص
+	This drawing	هذا الرسم
+	Top (2D Plan)	أعلى (مسقط أفقي ثنائي الأبعاد)
+	Top left	أعلى اليسار
+	Top right	أعلى اليمين
+	Type an alias name.	اكتب اسمًا مستعارًا.
+	US Survey Feet	قدم المساحة الأمريكي
+	US Survey Inch	بوصة المساحة الأمريكية
+	US Survey Mile	ميل المساحة الأمريكي
+	US Survey Yard	ياردة المساحة الأمريكية
+	Underline	تسطير
+	Unitless	بلا وحدة
+	Units of new drawings	وحدات الرسومات الجديدة
+	Units to scale inserted content	وحدات تغيير مقياس المحتوى المدرج
+	Unsaved changes	تغييرات غير محفوظة
+	Use current origin	استخدام نقطة الأصل الحالية
+	View Resolution	دقة العرض
+	Visual Effect Settings	إعدادات التأثيرات المرئية
+	Visual Effect Settings...	إعدادات التأثيرات المرئية...
+	W	غرب
+	When a command is active	عندما يكون هناك أمر نشط
+	When no command is active	عند عدم وجود أمر نشط
+	Window <	نافذة <
+	Window selection color:	لون تحديد النافذة:
+	Working Set	مجموعة العمل
+	X offset (mm)	إزاحة X (مم)
+	Xref and Block In-place Editing	تحرير المراجع الخارجية والكتل في مكانها
+	Xrefs	المراجع الخارجية
+	Y offset (mm)	إزاحة Y (مم)
+	Yards	ياردات
+	built-in	مدمج
+	contains authoring elements. Open in Block Editor?	يحتوي على عناصر تأليف. هل تريد فتحه في محرر الكتل؟
+	overrides built-in	يتجاوز المدمج
+	{alias} is already defined; select it and use Edit.	تم تعريف {alias} بالفعل؛ حدده واستخدم تحرير.
+	{command} is an unknown command.	{command} أمر غير معروف.
+	📋 Copy All	📋 نسخ الكل
+	🗑 Clear	🗑 مسح
+	.NET command started	تم بدء أمر .NET
+	0. Empty file (New)	0. ملف فارغ (جديد)
+	1. AutoLISP: Basic Math & Commands	1. AutoLISP: الحساب الأساسي والأوامر
+	2. AutoLISP: Survey Marker (c:meetpunt)	2. AutoLISP: علامة مساحة (c:meetpunt)
+	3. VB.NET Plugin (.vb -> .dll)	3. إضافة VB.NET (.vb -> .dll)
+	4. C# Plugin (.cs -> .dll)	4. إضافة C# (.cs -> .dll)
+	Added to Startup Suite (Auto-Load at startup & per drawing)	تمت الإضافة إلى مجموعة بدء التشغيل (تحميل تلقائي عند البدء ولكل رسم)
+	Auto-Load	تحميل تلقائي
+	AutoLISP / VB.NET / C# IDE & NETLOAD Studio	بيئة تطوير AutoLISP / VB.NET / C# واستوديو NETLOAD
+	AutoLISP Commands (click to run)	أوامر AutoLISP (انقر للتشغيل)
+	AutoLISP Editor (.lsp)	محرر AutoLISP (.lsp)
+	Bottom	سفلي
+	C# Plugin Editor (.cs)	محرر إضافات C# (.cs)
+	C# source opened	تم فتح مصدر C#
+	Clear Log	مسح السجل
+	Commands	الأوامر
+	Compact Menu	قائمة مدمجة
+	Compilation error	خطأ في الترجمة البرمجية
+	Compilation failed (see Console)	فشلت الترجمة البرمجية (راجع وحدة التحكم)
+	Compilation succeeded	نجحت الترجمة البرمجية
+	Compile & Load .NET DLL	ترجمة وتحميل ملف .NET DLL
+	Console / Output	وحدة التحكم / المخرجات
+	Error	خطأ
+	Error in	خطأ في
+	Error: cadcraft-nethost.exe not found next to the application.	خطأ: لم يتم العثور على cadcraft-nethost.exe بجانب التطبيق.
+	Evaluate the LISP code or compile the VB.NET / C# source directly into a .NET DLL	تقييم كود LISP أو ترجمة مصدر VB.NET / C# مباشرة إلى ملف .NET DLL
+	Failed to invoke compiler	فشل استدعاء المترجم البرمجي
+	Failed to load	فشل التحميل
+	Failed to save to	فشل الحفظ إلى
+	Failed to start .NET command	فشل بدء أمر .NET
+	Failed to write source file	فشل في كتابة ملف المصدر
+	Hide this Studio window and show the compact floating Plugin Commands menu	إخفاء نافذة Studio هذه وإظهار قائمة أوامر الإضافات العائمة المدمجة
+	Load & Run LISP	تحميل وتشغيل LISP
+	NETLOAD .NET DLL loaded	تم تحميل NETLOAD .NET DLL
+	NETLOAD error in	خطأ NETLOAD في
+	NETLOAD failed to run cadcraft-nethost.exe	فشل NETLOAD في تشغيل cadcraft-nethost.exe
+	Open .lsp / .vb / .cs	فتح .lsp / .vb / .cs
+	Open NETLOAD Studio (VBAIDE)	فتح NETLOAD Studio (VBAIDE)
+	Open Studio	فتح Studio
+	Open the full AutoLISP / VB.NET / C# & NETLOAD Studio	فتح بيئة AutoLISP / VB.NET / C# & NETLOAD Studio الكاملة
+	Plugin Commands	أوامر الإضافات
+	Plugins	الإضافات
+	Quick Expression	تعبير سريع
+	Ready. Open a .dll (.NET VB.NET/C#) or .lsp (AutoLISP) file via NETLOAD.	جاهز. افتح ملف .dll (.NET VB.NET/C#) أو .lsp (AutoLISP) عبر NETLOAD.
+	Registered commands	الأوامر المسجلة
+	Removed from Startup Suite (Auto-Load)	تمت الإزالة من مجموعة بدء التشغيل (التحميل التلقائي)
+	Routine started	بدأ الروتين
+	Routine started from	بدأ الروتين من
+	Run .NET command	تشغيل أمر .NET
+	Run command	تشغيل الأمر
+	Save the current source code in the editor to disk	حفظ الكود المصدري الحالي في المحرر إلى القرص
+	Saved to	تم الحفظ في
+	Select and load a .lsp, .dll, .vb, or .cs file from disk	تحديد وتحميل ملف .lsp أو .dll أو .vb أو .cs من القرص
+	Show Floating Command Menu	إظهار قائمة الأوامر العائمة
+	Template...	قالب...
+	Toggle Startup Suite (Auto-Load at startup)	تبديل مجموعة بدء التشغيل (التحميل التلقائي عند بدء التشغيل)
+	Toggle Startup Suite: automatically load this file at startup and in every opened drawing	تبديل مجموعة بدء التشغيل: تحميل هذا الملف تلقائيًا عند بدء التشغيل وفي كل رسم مفتوح
+	VB.NET Plugin Editor (.vb)	محرر إضافات VB.NET (.vb)
+	VB.NET source opened	تم فتح مصدر VB.NET
+	cadcraft-nethost.exe not found	لم يتم العثور على cadcraft-nethost.exe
+	cannot read file	لا يمكن قراءة الملف
+	e.g. (+ 1 2) or + 1 2	مثال: (+ 1 2) أو + 1 2
+	no [CommandMethod] found	لم يتم العثور على [CommandMethod]
+	Font	الخط
+	Save Layout as Template	حفظ التخطيط كقالب

@@ -243,6 +243,11 @@ pub trait Interactive: Send {
     fn editing_mtext(&self) -> Option<cadcraft_doc::MText> {
         None
     }
+    /// Whether this command collects points on the model work plane (`z = 0`) rather than
+    /// picking objects or selection areas in the 2D view plane.
+    fn collects_work_points(&self) -> bool {
+        true
+    }
 }
 
 /// See [`Interactive::drag`].

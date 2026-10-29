@@ -1018,3 +1018,596 @@
 	Check for Updates…	Проверить обновления…
 	CADCraft is up to date.	У вас последняя версия CADCraft.
 	Could not check for updates.	Не удалось проверить обновления.
+	Clear Command History	Очистить историю команд
+	Copy All	Копировать все
+	Copy history output to clipboard	Скопировать историю в буфер обмена
+	Close History Window (F2)	Закрыть окно истории (F2)
+	Edit XData (XDEDIT)	Редактировать XData (XDEDIT)
+	Open visual XData Editor for selected object	Открыть визуальный редактор XData для выбранного объекта
+	Command & XData Output (select text + Ctrl+C to copy)	Вывод команд и XData (выделите текст + Ctrl+C для копирования)
+	Save changes to {name}?	Сохранить изменения в {name}?
+	Your changes will be lost if you don't save them.	Ваши изменения будут потеряны, если вы их не сохраните.
+	Don't Save	Не сохранять
+	List Xdata	Список XData
+	Edit Xdata	Редактировать XData
+	Edit Xdata (XDEDIT)	Редактировать XData (XDEDIT)
+	✏ Edit XData (XDEDIT)	✏ Редактировать XData (XDEDIT)
+	Open visual XData Editor dialog	Открыть визуальный редактор XData
+	📋 Copy Values	📋 Копировать значения
+	Copy XData values (Key,Value) to clipboard	Копировать значения XData (Ключ,Значение) в буфер обмена
+	Click to copy value to clipboard	Нажмите для копирования значения в буфер обмена
+	✓ XData values copied to clipboard	✓ Значения XData скопированы в буфер обмена
+	Selection canceled — previous object kept.	Выбор отменен — сохранен предыдущий объект.
+	Drag left or right to resize this column	Перетащите влево или вправо для изменения ширины столбца
+	XDATA Editor (XDEDIT)	Редактор XDATA (XDEDIT)
+	No object selected.	Объект не выбран.
+	🎯 Select object in drawing	🎯 Выбрать объект на чертеже
+	Object: {kind}	Объект: {kind}
+	Layer: {layer}	Слой: {layer}
+	Handle: {handle}	Дескриптор: {handle}
+	🎯 Select Another Object	🎯 Выбрать другой объект
+	Hide editor temporarily, pick another object in the drawing, and open it in XDEDIT	Временно скрыть редактор, выбрать другой объект и открыть его в XDEDIT
+	Next ▶	Далее ▶
+	Step to the next object with XData in the selection or drawing	Перейти к следующему объекту с XData
+	◀ Previous	◀ Назад
+	Step to the previous object with XData in the selection or drawing	Перейти к предыдущему объекту с XData
+	📋 Copy JSON	📋 Копировать JSON
+	Copy all XData as structured JSON to clipboard	Копировать все XData как JSON в буфер обмена
+	✓ JSON copied to clipboard	✓ JSON скопирован в буфер обмена
+	📋 Copy Text	📋 Копировать текст
+	Copy all XData as text to clipboard	Копировать все XData как текст в буфер обмена
+	✓ XData text copied to clipboard	✓ Текст XData скопирован в буфер обмена
+	AppID (1001):	AppID (1001):
+	New AppID (e.g. Lumi_KLIC)	Новый AppID (напр. Lumi_KLIC)
+	+ Add AppID	+ Добавить AppID
+	🗑 Delete AppID	🗑 Удалить AppID
+	Remove this Application and its XData from the entity	Удалить это приложение и его XData из объекта
+	Application removed (click Apply to save)	Приложение удалено (нажмите Применить для сохранения)
+	🔍 Filter:	🔍 Фильтр:
+	Search key or value (e.g. THEMA, DIEPTE)...	Поиск ключа или значения (напр. THEMA, DIEPTE)...
+	Key width:	Ширина ключа:
+	Drag this value or the column divider ⇔ to resize the Key column	Перетащите значение или разделитель ⇔ для изменения ширины столбца Ключ
+	Value width:	Ширина значения:
+	Drag this value or the column divider ⇔ to resize the Value column	Перетащите значение или разделитель ⇔ для изменения ширины столбца Значение
+	Smart Key=Value Columns	Умные столбцы Ключ=Значение
+	Split 'KEY=VALUE' or 'Key: Value' into separate editable Key and Value fields	Разделять 'KEY=VALUE' или 'Key: Value' на отдельные поля Ключ и Значение
+	This object currently has no user XData.	У этого объекта нет пользовательских XData.
+	+ Create Lumi_KLIC Application	+ Создать приложение Lumi_KLIC
+	DXF Code	Код DXF
+	Property / Key ⇔	Свойство / Ключ ⇔
+	Value (Selectable & Editable) ⇔	Значение (Выбор и редактирование) ⇔
+	Raw Value (Selectable & Editable) ⇔	Исходное значение (Выбор и редактирование) ⇔
+	Actions	Действия
+	Copy value to clipboard	Копировать значение в буфер обмена
+	✓ Copied: {val}	✓ Скопировано: {val}
+	Move row up	Переместить строку выше
+	Move row down	Переместить строку ниже
+	Delete this XData row	Удалить эту строку XData
+	Add Row:	Добавить строку:
+	Key (e.g. OPMERKING)	Ключ (напр. OPMERKING)
+	+ Add Property	+ Добавить свойство
+	● Unsaved changes	● Несохраненные изменения
+	Ready — click '🎯 Select Next Object' or '◀ Previous / Next ▶' to switch objects.	Готово — нажмите '🎯 Выбрать следующий объект' или '◀ Назад / Далее ▶'.
+	↺ Revert	↺ Восстановить
+	✔ Apply / Save XData	✔ Применить / Сохранить XData
+	Write modified XData to the entity (Undoable with Ctrl+Z)	Записать измененные XData в объект (отмена через Ctrl+Z)
+	✔ Save & Select Next Object	✔ Сохранить и выбрать следующий
+	🎯 Select Next Object	🎯 Выбрать следующий объект
+	Save any changes and directly pick the next object in the drawing	Сохранить изменения и сразу выбрать следующий объект на чертеже
+	Object {idx1}/{total} loaded ({kind} — {handle})	Объект {idx1}/{total} загружен ({kind} — {handle})
+	↺ Reverted to saved entity XData	↺ Восстановлены сохраненные XData объекта
+	✔ XData saved to entity (Undoable)	✔ XData сохранены в объекте (доступна отмена Ctrl+Z)
+	Error: {err}	Ошибка: {err}
+	⚠ Entity XData changed outside editor — click Revert before saving.	⚠ XData объекта изменены вне редактора — нажмите Восстановить перед сохранением.
+	+  |  {view} ({yaw}°, {pitch}°)  |  3D Orbit Wireframe	+  |  {view} ({yaw}°, {pitch}°)  |  3D-орбита (каркас)
+	.NET Plugin Bridge	Мост подключаемых модулей .NET
+	3D Mouse	3D-мышь
+	3D Mouse Navigation	Навигация 3D-мышью
+	3D Mouse...	3D-мышь...
+	3D Orbit	3D-орбита
+	3D Views	3D-виды
+	3D mouse busy, possibly 3DxWare or missing device permissions	3D-мышь занята, возможно, процессом 3DxWare или из-за отсутствия прав доступа к устройству
+	3D mouse connected	3D-мышь подключена
+	3D mouse disconnected	3D-мышь отключена
+	3D mouse input could not be started	Не удалось запустить ввод с 3D-мыши
+	3D mouse input is unavailable on this platform	Ввод с 3D-мыши недоступен на этой платформе
+	A drawing opened from a file keeps that file's format.	Чертёж, открытый из файла, сохраняет формат этого файла.
+	A variable name starts with a letter and has only letters, digits and _	Имя переменной начинается с буквы и содержит только буквы, цифры и _
+	Add Current Scale	Добавить текущий масштаб
+	Add Vertex	Добавить вершину
+	Add/Delete Scales...	Добавить/удалить масштабы...
+	Add: Pick points	Добавить: указать точки
+	Add: Select objects	Добавить: выбрать объекты
+	Additional angles	Дополнительные углы
+	Add…	Добавить…
+	Adjust Image...	Настроить изображение...
+	Adjust...	Настроить...
+	Alias	Псевдоним
+	Alias file: {file}	Файл псевдонимов: {file}
+	Align Multileaders	Выровнять мультивыноски
+	All Annotation Objects	Все объекты аннотаций
+	All Scales	Все масштабы
+	An array that would create more objects than this is refused.	Массив, создающий больше объектов, чем этот предел, отклоняется.
+	Analyze Usage	Анализ использования
+	Angstroms	Ангстремы
+	Annotative Object Scale	Масштаб аннотативных объектов
+	Annotative Update	Обновить аннотативные объекты
+	Apply	Применить
+	Apply to Layout	Применить к листу
+	Architectural	Архитектурные
+	Arrow size	Размер стрелки
+	Associate	Ассоциировать
+	Associative	Ассоциативный
+	Astronomical Units	Астрономические единицы
+	Attach DWG...	Вставить DWG...
+	Attach Image...	Присоединить изображение...
+	AutoLISP (LSP)	AutoLISP (LSP)
+	AutoLISP / VB.NET / C# IDE...	Среда разработки AutoLISP / VB.NET / C#...
+	AutoLISP / VBA IDE...	Среда разработки AutoLISP / VBA...
+	Automatic save every	Автосохранение каждые
+	Automatic save file location	Расположение файлов автосохранения
+	B	Ж
+	Back	Сзади
+	Bind	Внедрить
+	Bind...	Внедрить...
+	Block to create or edit	Блок для создания или редактирования
+	Bottom left	Внизу слева
+	Bottom right	Внизу справа
+	Boundaries	Контуры
+	Boundaries picked: {n}	Выбрано контуров: {n}
+	Break-line Symbol	Символ линии разрыва
+	Bring Above Objects	Переместить над объектами
+	Bring Annotations to Front	Переместить аннотации на передний план
+	Bulleted list	Маркированный список
+	CADCraft	CADCraft
+	CADCraft keeps these preferences, object snap modes and drafting toggles for your user account and restores them when it starts.	CADCraft сохраняет эти настройки, режимы объектной привязки и переключатели черчения для вашей учётной записи и восстанавливает их при запуске.
+	Calibrate	Калибровать
+	Calibrate 3D Mouse	Калибровать 3D-мышь
+	Center the plot	Центрировать
+	Centered	По центру
+	Centimeters	Сантиметры
+	Change Properties	Изменить свойства
+	Changed: {n}	Изменено: {n}
+	Changes apply at once and are kept for next time.	Изменения применяются сразу и сохраняются до следующего запуска.
+	Choose the command the alias starts.	Выберите команду, которую запускает псевдоним.
+	Clear History	Очистить журнал
+	Clear Recent Files	Очистить список недавних файлов
+	Click the ruler to add a tab stop, right-click to remove one	Щелкните на линейке, чтобы добавить позицию табуляции, или правой кнопкой мыши, чтобы удалить ее
+	Click to set new origin	Щелкните, чтобы задать новую исходную точку
+	Clip	Подрезать
+	Clip Image	Подрезать изображение
+	Clip Viewport	Подрезать видовой экран
+	Close All Other Drawings	Закрыть все остальные чертежи
+	Close Array Editing	Закрыть редактирование массива
+	Close Block Editor	Закрыть редактор блоков
+	Close Comparison	Закрыть сравнение
+	Collapse Palettes	Свернуть палитры
+	Collect	Собрать
+	Collect Multileaders	Собрать мультивыноски
+	Color 1	Цвет 1
+	Color 2	Цвет 2
+	Command	Команда
+	Command Aliases	Псевдонимы команд
+	Command line history	Журнал командной строки
+	Compare Drawings...	Сравнить чертежи...
+	Convert	Преобразовать
+	Convert Text to Mtext	Преобразовать текст в Мтекст
+	Convert to Arc	Преобразовать в дугу
+	Convert to Line	Преобразовать в отрезок
+	Copy Full File Path	Копировать полный путь к файлу
+	Copy History	Копировать журнал
+	Copy as JSON	Копировать как JSON
+	Count List	Список подсчёта
+	Count Table	Таблица подсчёта
+	Create separate hatches	Создавать отдельные штриховки
+	Crosshair size	Размер перекрестия
+	Crossing selection color:	Цвет выбора секущей рамкой:
+	Current Scale Only	Только текущий масштаб
+	Curved	Криволинейный
+	Custom	Пользовательский
+	Customize	Адаптация
+	DWG Reference...	Ссылка на DWG...
+	Data Extraction...	Извлечение данных...
+	Data Link...	Связь с данными...
+	Decameters	Декаметры
+	Decimal	Десятичные
+	Decimal Degrees	Десятичные градусы
+	Decimeters	Дециметры
+	Default Save Version	Версия сохранения по умолчанию
+	Default save version	Версия сохранения по умолчанию
+	Default to boundary extents	По умолчанию по границам контура
+	Define each corner of the selection window with a separate click.	Задайте каждый угол рамки выбора отдельным щелчком мыши.
+	Deg/Min/Sec	Град/Мин/Сек
+	Degrees of Freedom	Степени свободы
+	Degrees of freedom: {n}	Степени свободы: {n}
+	Delete Current Scale	Удалить текущий масштаб
+	Detach	Отсоединить
+	Dim scale overall	Общий масштаб размеров
+	Dimension Break	Разрыв размера
+	Dimension Edit	Редактировать размер
+	Dimension Objects Only	Только размерные объекты
+	Discard	Отменить
+	Display	Экран
+	Drag Dynamic Grip	Перетащить динамическую ручку
+	Drawing Recovery Manager...	Диспетчер восстановления чертежей...
+	Drawing Template (DWT)	Шаблон чертежа (DWT)
+	Drawing Units	Единицы чертежа
+	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	Чертежи без файла сохраняются в версии по умолчанию. Значение 0 минут отключает автосохранение.
+	Dynamic	Динамический
+	Dynamic Block Data	Данные динамического блока
+	Dynamic Block Grips	Ручки динамического блока
+	Dynamic Block Reference	Вхождение динамического блока
+	Edit Array	Редактировать массив
+	Edit Attributes...	Редактировать атрибуты...
+	Edit Block Definition	Редактировать определение блока
+	Edit Command Aliases (PGP)...	Редактировать псевдонимы команд (PGP)...
+	Edit Multileader	Редактировать мультивыноску
+	Edit Table Cell	Редактировать ячейку таблицы
+	Edit…	Изменить…
+	Enable 3D mouse navigation	Включить навигацию 3D-мышью
+	End Object Isolation	Завершить изоляцию объектов
+	Engineering	Инженерные
+	Enter	Ввод
+	Enter block names to extract	Введите имена извлекаемых блоков
+	Enter geometric characteristic	Введите геометрическую характеристику
+	Enter name of LISP file to load	Введите имя загружаемого файла LISP
+	Evaluate	Вычислить
+	Evaluate LISP	Вычислить LISP
+	Exclude:	Исключить:
+	Explode Attributes to Text	Расчленить атрибуты в текст
+	Export Table	Экспорт таблицы
+	Express Tools	Express Tools
+	External Reference	Внешняя ссылка
+	External References	Внешние ссылки
+	Feet	Футы
+	First corner	Первый угол
+	Fit to paper	Вписать
+	Fractional	Дробные
+	Frame	Контур
+	From Template...	Из шаблона...
+	Front	Спереди
+	Get from the Drawing	Получить из чертежа
+	Gigameters	Гигаметры
+	Grads	Грады
+	Grid snap	Шаговая привязка
+	Grip Edit	Редактирование ручками
+	Grip Option	Параметр ручки
+	Grip size	Размер ручек
+	Grips	Ручки
+	Group Options	Параметры группы
+	Group Selection	Выбор группы
+	Groups	Группы
+	Hatch Patterns	Образцы штриховки
+	Hatch Pick	Выбор штриховки
+	Hatch and Gradient	Штриховка и градиент
+	Hatch origin	Исходная точка штриховки
+	Hatches	Штриховки
+	Hectometers	Гектометры
+	Hemispherical	Полусферический
+	Hide Objects	Скрыть объекты
+	Hide Palette	Скрыть палитру
+	History	Журнал
+	Hold Shift to add to the selection	Удерживайте Shift для добавления к выбору
+	Ignore	Игнорировать
+	Image	Изображение
+	Image Frame	Контур изображения
+	Imperial (inches)	Британские (дюймы)
+	Implied Loops	Неявные контуры
+	Inches	Дюймы
+	Indicate selection area	Показывать область выбора
+	Infer Constraints	Автоналожение зависимостей
+	Insert Table Formula	Вставить формулу в таблицу
+	Insert tab	Вставить табуляцию
+	Insertion scale	Масштаб вставки
+	Inspection	Контрольный размер
+	Interface language	Язык интерфейса
+	Interface scale	Масштаб интерфейса
+	Interface theme	Тема интерфейса
+	Inverted	Инвертированный
+	Island	Островок
+	Island detection	Обнаружение островков
+	Isolate Objects	Изолировать объекты
+	Isometric Plane	Изометрическая плоскость
+	Isometric snap	Изометрическая привязка
+	Italic	Курсив
+	Jogged	С изломом
+	Jogged Linear	Линейный с изломом
+	Justify	Выровнять по ширине
+	Keep the system cursor visible over the drawing area	Оставлять системный курсор видимым над областью черчения
+	Kilometers	Километры
+	Landscape	Альбомная
+	Largest array	Наибольший массив
+	Layout paper	Бумага листа
+	Layouts	Листы
+	Leaders Only	Только выноски
+	Left device button: zoom extents. Right device button: calibrate.	Левая кнопка устройства: показать всё. Правая кнопка устройства: калибровать.
+	Light Years	Световые годы
+	Limits	Лимиты
+	Lines of Command History	Строк журнала команд
+	Load .NET DLL / LISP Application (NETLOAD)...	Загрузить приложение .NET DLL / LISP (NETLOAD)...
+	Load Application (NETLOAD)...	Загрузить приложение (NETLOAD)...
+	Load Application...	Загрузить приложение...
+	Loaded	Загружена
+	Lock viewport	Блокировать видовой экран
+	Make it a block of this drawing, keeping its layer names	Преобразовать в блок этого чертежа с сохранением имён слоёв
+	Make it a block of this drawing; its layers become NAME$0$LAYER	Преобразовать в блок этого чертежа; слои получат вид NAME$0$LAYER
+	Meters	Метры
+	Metric (millimetres)	Метрические (миллиметры)
+	Microinches	Микродюймы
+	Microns	Микроны
+	Miles	Мили
+	Millimeters	Миллиметры
+	Mils	Милы
+	Model Tab	Вкладка «Модель»
+	Model background	Фон пространства модели
+	More than {n} aliases.	Более {n} псевдонимов.
+	More toolbar commands	Другие команды панели инструментов
+	Move sideways to pan; push/pull or twist to zoom.	Сдвигайте в стороны для панорамирования; нажимайте, тяните или поворачивайте для масштабирования.
+	Move/Copy/Rotate	Перенести/Копировать/Повернуть
+	Multiline Style...	Стиль мультилинии...
+	Multiline text	Многострочный текст
+	Multiline...	Мультилиния...
+	NE Isometric	СВ изометрия
+	NW Isometric	СЗ изометрия
+	Named Views...	Именованные виды...
+	Nanometers	Нанометры
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	Новые чертежи и первый чертёж при запуске используют эти единицы, если не задан шаблон по умолчанию (QNEWTEMPLATE).
+	New block	Новый блок
+	New from Template...	Создать по шаблону...
+	Next Change	Следующее изменение
+	No alias file loaded. REINIT replaces these aliases with a file's.	Файл псевдонимов не загружен. Команда REINIT заменяет эти псевдонимы данными из файла.
+	No external references are attached.	Внешние ссылки не вставлены.
+	No supported 3D mouse found	Поддерживаемая 3D-мышь не найдена
+	Not Found	Не найдена
+	Not loaded	Не загружена
+	Numbered list	Нумерованный список
+	Object Snap Tracking Settings	Параметры объектного отслеживания
+	Object grouping	Группировка объектов
+	Object selection limit for display of grips	Предел выбора объектов для отображения ручек
+	Object snap aperture	Прицел объектной привязки
+	Object snap marker size	Размер маркера объектной привязки
+	Objects on locked layers	Объекты на заблокированных слоях
+	Oblique	Наклон
+	Only in this drawing: {n}	Только в этом чертеже: {n}
+	Only in {name}: {n}	Только в {name}: {n}
+	Open	Открыть
+	Open Recent	Открыть недавние
+	Open Xref	Открыть внешнюю ссылку
+	Open and Save	Открытие и сохранение
+	Open in Block Editor	Открыть в редакторе блоков
+	Opposite corner	Противоположный угол
+	Options	Параметры
+	Options...	Параметры...
+	Orientation	Ориентация
+	Origin: {x}, {y}	Исходная точка: {x}, {y}
+	Outer	Внешний
+	Over-constrained	Избыточные зависимости
+	Overlay	Наложение
+	Overline	Надчеркнутый
+	Pan sensitivity	Чувствительность панорамирования
+	Paper size	Формат бумаги
+	Parsecs	Парсеки
+	Paste to Command Line	Вставить в командную строку
+	Pickbox size	Размер прицела выбора
+	Plot Window	Окно печати
+	Plot area	Область печати
+	Plot object lineweights	Учитывать веса линий объектов
+	Plot offset	Смещение от начала
+	Plot transparency	Учитывать прозрачность
+	Plotter Manager	Диспетчер плоттеров
+	Plotter Manager...	Диспетчер плоттеров...
+	Polar angle measurement	Отсчёт полярных углов
+	Polar distance	Полярное расстояние
+	PolarSnap	Полярная привязка
+	Polygonal Viewport	Многоугольный видовой экран
+	Polyline Edit	Редактировать полилинию
+	Portrait	Книжная
+	Precision	Точность
+	Preview	Просмотр
+	Previous Change	Предыдущее изменение
+	Printer/plotter	Принтер/плоттер
+	Profiles	Профили
+	QuickCalc Pick	Выбор для Быстрого калькулятора
+	Radians	Радианы
+	Raster Image Reference...	Ссылка на растровое изображение...
+	Recalculate Table Formulas	Пересчитать формулы таблицы
+	Recent Commands	Последние команды
+	Recent Input	Последний ввод
+	Rectangular snap	Ортогональная шаговая привязка
+	Reference Manager	Диспетчер ссылок
+	Reference Name	Имя ссылки
+	References: {n}	Ссылок: {n}
+	Reinitialize	Реинициализировать
+	Relative to last segment	Относительно последнего сегмента
+	Release the 3D mouse to calibrate its resting position	Отпустите 3D-мышь для калибровки её нейтрального положения
+	Reload	Обновить
+	Reload All	Обновить все
+	Remove Vertex	Удалить вершину
+	Reset keeps the interface language.	Сброс сохраняет выбранный язык интерфейса.
+	Reset to Defaults	Восстановить значения по умолчанию
+	Reverse zoom direction	Обратить направление масштабирования
+	Run Script...	Запустить сценарий...
+	SE Isometric	ЮВ изометрия
+	SVG drawings (SVG, SVGZ)	Чертежи SVG (SVG, SVGZ)
+	SW Isometric	ЮЗ изометрия
+	Sample output	Пример вывода
+	Save Block	Сохранить блок
+	Save Block As	Сохранить блок как
+	Save alias	Сохранить псевдоним
+	Save new drawings as	Сохранять новые чертежи как
+	Saved Path	Сохранённый путь
+	Scale List...	Список масштабов...
+	Scientific	Научные
+	Screen magnifiers, screen readers and recorders follow the system cursor.	Экранные лупы, программы чтения и записи экрана следуют за системным курсором.
+	Select Similar	Выбрать подобные
+	Select boundaries to remove	Выберите контуры для удаления
+	Select objects first, then choose a command	Сначала выберите объекты, а затем команду
+	Select using two clicks only	Выбирать только двумя щелчками
+	Selection	Выбор
+	Selection Area Effect	Эффект области выбора
+	Selection Preview Filter	Фильтр предварительного просмотра выбора
+	Selection area opacity:	Непрозрачность области выбора:
+	Selection effect color	Цвет эффекта выбора
+	Selection modes	Режимы выбора
+	Selection preview	Предварительный просмотр выбора
+	Send Hatches to Back	Переместить штриховки на задний план
+	Send Under Objects	Переместить под объекты
+	Set Current Viewport	Сделать видовой экран текущим
+	Set Dynamic Property	Задать динамическое свойство
+	Set Table Cell Style	Задать стиль ячейки таблицы
+	Settings...	Настройки...
+	Shape	Форма
+	Show Annotative Objects	Показывать аннотативные объекты
+	Show Quick Properties for selected objects	Показывать быстрые свойства для выбранных объектов
+	Show and hide the tools of this category	Показать и скрыть инструменты этой категории
+	Show command prompting near the crosshairs	Показывать командные подсказки рядом с перекрестием
+	Show grips	Показывать ручки
+	Show in Tool Sets	Показывать в наборах инструментов
+	Snap Overrides	Переопределения привязок
+	Snap type	Тип привязки
+	Snap, grid, polar tracking and Dynamic Input:	Привязка, сетка, полярное отслеживание и динамический ввод:
+	Solid Editing	Редактирование тел
+	Specified origin	Заданная исходная точка
+	Spherical	Сферический
+	Spline Edit	Редактировать сплайн
+	Stretch Vertex	Растянуть вершину
+	Surveyor's Units	Топографические единицы
+	Synchronize Multiple-scale Positions	Синхронизировать положения для нескольких масштабов
+	Table Breaks	Разбиение таблицы
+	Table Cell Style	Стиль ячейки таблицы
+	Tables	Таблицы
+	Temporary track point	Временная точка отслеживания
+	Text Objects Only	Только текстовые объекты
+	Text color	Цвет текста
+	Thaw Layer	Разморозить слой
+	The aperture is how near the cursor must come to a point for an object snap to find it.	Прицел определяет, насколько близко курсор должен подойти к точке, чтобы сработала объектная привязка.
+	This drawing	Этот чертеж
+	Time-sensitive right-click: a quick click is Enter, holding opens the menu	Правый клик с учётом времени: быстрое нажатие — Ввод, удерживание открывает меню
+	To	В
+	Tolerance...	Допуск...
+	Top (2D Plan)	Сверху (2D-план)
+	Top left	Вверху слева
+	Top right	Вверху справа
+	Track orthogonally only	Отслеживать только ортогонально
+	Track using all polar angle settings	Отслеживать по всем полярным углам
+	Turn On Layer	Включить слой
+	Turned off, a right-click while a command runs always opens the shortcut menu.	Если отключено, правый клик во время выполнения команды всегда открывает контекстное меню.
+	Type an alias name.	Введите имя псевдонима.
+	US Survey Feet	Геодезические футы США
+	US Survey Inch	Геодезические дюймы США
+	US Survey Mile	Геодезические мили США
+	US Survey Yard	Геодезические ярды США
+	Underline	Подчеркнутый
+	Unitless	Безразмерный
+	Units Conversion	Преобразование единиц
+	Units of new drawings	Единицы новых чертежей
+	Units to scale inserted content	Единицы масштаба вставляемых элементов
+	Unload	Выгрузить
+	Unloaded	Выгружена
+	Unlock viewport	Разблокировать видовой экран
+	Unreferenced	Нет ссылок
+	Unresolved	Не найдена
+	Unsaved changes	Несохраненные изменения
+	Update Data Links	Обновить связи с данными
+	Use current origin	Использовать текущую исходную точку
+	User Preferences	Пользовательские настройки
+	Variables	Переменные
+	Version 2000	Версия 2000
+	Version 2004	Версия 2004
+	Version 2007	Версия 2007
+	Version 2010	Версия 2010
+	Version 2013	Версия 2013
+	Version 2018	Версия 2018
+	View Resolution	Разрешение вида
+	Viewport is locked	Видовой экран заблокирован
+	Viewport scale	Масштаб видового экрана
+	Visual Effect Settings	Параметры визуальных эффектов
+	Visual Effect Settings...	Параметры визуальных эффектов...
+	When a command is active	Когда команда активна
+	When no command is active	Когда нет активных команд
+	Window <	Рамка <
+	Window selection color:	Цвет выбора рамкой:
+	X	X
+	X offset (mm)	Смещение по X (мм)
+	Xrefs	Внешние ссылки
+	Y	Y
+	Y offset (mm)	Смещение по Y (мм)
+	Yards	Ярды
+	Zoom Dynamic	Динамическое зумирование
+	Zoom Realtime	Зумирование в реальном времени
+	Zoom sensitivity	Чувствительность масштабирования
+	built-in	встроенный
+	contains authoring elements. Open in Block Editor?	содержит элементы вариации. Открыть в редакторе блоков?
+	min	мин
+	objects	объектов
+	overrides built-in	переопределяет встроенный
+	{alias} is already defined; select it and use Edit.	{alias} уже определен; выберите его и нажмите «Изменить».
+	{command} is an unknown command.	{command} — неизвестная команда.
+	📋 Copy All	📋 Копировать всё
+	🗑 Clear	🗑 Очистить
+	.NET command started	Команда .NET запущена
+	0. Empty file (New)	0. Пустой файл (Новый)
+	1. AutoLISP: Basic Math & Commands	1. AutoLISP: базовая математика и команды
+	2. AutoLISP: Survey Marker (c:meetpunt)	2. AutoLISP: геодезический пикет (c:meetpunt)
+	3. VB.NET Plugin (.vb -> .dll)	3. Плагин VB.NET (.vb -> .dll)
+	4. C# Plugin (.cs -> .dll)	4. Плагин C# (.cs -> .dll)
+	Added to Startup Suite (Auto-Load at startup & per drawing)	Добавлено в автозагрузку (автоматическая загрузка при запуске и для каждого чертежа)
+	Auto-Load	Автозагрузка
+	AutoLISP / VB.NET / C# IDE & NETLOAD Studio	Среда разработки AutoLISP / VB.NET / C# и студия NETLOAD
+	AutoLISP Commands (click to run)	Команды AutoLISP (нажмите для запуска)
+	AutoLISP Editor (.lsp)	Редактор AutoLISP (.lsp)
+	Bottom	Снизу
+	C# Plugin Editor (.cs)	Редактор плагинов C# (.cs)
+	C# source opened	Исходный код C# открыт
+	Clear Log	Очистить журнал
+	Commands	Команды
+	Compact Menu	Компактное меню
+	Compilation error	Ошибка компиляции
+	Compilation failed (see Console)	Сбой компиляции (см. консоль)
+	Compilation succeeded	Компиляция успешно завершена
+	Compile & Load .NET DLL	Скомпилировать и загрузить .NET DLL
+	Console / Output	Консоль / Вывод
+	Error	Ошибка
+	Error in	Ошибка в
+	Error: cadcraft-nethost.exe not found next to the application.	Ошибка: файл cadcraft-nethost.exe не найден рядом с приложением.
+	Evaluate the LISP code or compile the VB.NET / C# source directly into a .NET DLL	Выполнить код LISP или скомпилировать исходный код VB.NET / C# напрямую в .NET DLL
+	Failed to invoke compiler	Не удалось запустить компилятор
+	Failed to load	Не удалось загрузить
+	Failed to save to	Не удалось сохранить в
+	Failed to start .NET command	Не удалось запустить команду .NET
+	Failed to write source file	Не удалось записать исходный файл
+	Hide this Studio window and show the compact floating Plugin Commands menu	Скрыть это окно Studio и показать компактное плавающее меню команд плагинов
+	Load & Run LISP	Загрузить и выполнить LISP
+	NETLOAD .NET DLL loaded	NETLOAD .NET DLL загружена
+	NETLOAD error in	Ошибка NETLOAD в
+	NETLOAD failed to run cadcraft-nethost.exe	NETLOAD не удалось запустить cadcraft-nethost.exe
+	Open .lsp / .vb / .cs	Открыть .lsp / .vb / .cs
+	Open NETLOAD Studio (VBAIDE)	Открыть NETLOAD Studio (VBAIDE)
+	Open Studio	Открыть Studio
+	Open the full AutoLISP / VB.NET / C# & NETLOAD Studio	Открыть полную среду AutoLISP / VB.NET / C# & NETLOAD Studio
+	Plugin Commands	Команды плагинов
+	Plugins	Плагины
+	Quick Expression	Быстрое выражение
+	Ready. Open a .dll (.NET VB.NET/C#) or .lsp (AutoLISP) file via NETLOAD.	Готово. Откройте файл .dll (.NET VB.NET/C#) или .lsp (AutoLISP) через NETLOAD.
+	Registered commands	Зарегистрированные команды
+	Removed from Startup Suite (Auto-Load)	Удалено из автозагрузки (Startup Suite)
+	Routine started	Процедура запущена
+	Routine started from	Процедура запущена из
+	Run .NET command	Выполнить команду .NET
+	Run command	Выполнить команду
+	Save the current source code in the editor to disk	Сохранить текущий исходный код в редакторе на диск
+	Saved to	Сохранено в
+	Select and load a .lsp, .dll, .vb, or .cs file from disk	Выбрать и загрузить файл .lsp, .dll, .vb или .cs с диска
+	Show Floating Command Menu	Показать плавающее меню команд
+	Template...	Шаблон...
+	Toggle Startup Suite (Auto-Load at startup)	Переключить автозагрузку (Startup Suite при запуске)
+	Toggle Startup Suite: automatically load this file at startup and in every opened drawing	Переключить автозагрузку: автоматически загружать этот файл при запуске и в каждом открытом чертеже
+	VB.NET Plugin Editor (.vb)	Редактор плагинов VB.NET (.vb)
+	VB.NET source opened	Исходный код VB.NET открыт
+	cadcraft-nethost.exe not found	cadcraft-nethost.exe не найден
+	cannot read file	не удаётся прочитать файл
+	e.g. (+ 1 2) or + 1 2	напр., (+ 1 2) или + 1 2
+	no [CommandMethod] found	[CommandMethod] не найден
+	Font	Шрифт
+	Save Layout as Template	Сохранить лист как шаблон
+	Export Comparison	Экспорт сравнения
