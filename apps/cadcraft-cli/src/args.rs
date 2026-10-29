@@ -81,6 +81,13 @@ pub(crate) enum Command {
     Mcp(McpArgs),
     Perf(PerfArgs),
     Sample(SampleArgs),
+    StoreWrite(crate::store::StoreWriteArgs),
+    StoreRead(crate::store::StoreReadArgs),
+    StoreStat(crate::store::StoreStatArgs),
+    StoreList(crate::store::StoreListArgs),
+    StoreRemove(crate::store::StoreRemoveArgs),
+    StoreProbe(crate::store::StoreProbeArgs),
+    StoreRecover(crate::store::StoreRecoverArgs),
 }
 
 /// Print a drawing's summary as JSON

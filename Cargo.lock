@@ -649,6 +649,7 @@ dependencies = [
  "cadcraft-io",
  "cadcraft-mcp",
  "cadcraft-render",
+ "cadcraft-storage",
  "clap",
  "clap_complete",
  "clap_mangen",
@@ -785,6 +786,16 @@ dependencies = [
  "rayon",
  "serde_json",
  "tiny-skia",
+]
+
+[[package]]
+name = "cadcraft-storage"
+version = "0.13.0"
+dependencies = [
+ "base64 0.22.1",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

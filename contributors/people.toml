@@ -91,3 +91,7 @@ sync_github_name = false
 real_name = "Robert Lee"
 sync_github_name = true
 
+
+[people.mission-deny-the-mission]
+display_name = "Harry Hall"
+sync_github_name = false

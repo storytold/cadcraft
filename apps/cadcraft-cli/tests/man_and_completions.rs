@@ -20,7 +20,22 @@ fn the_example_writes_the_files_the_packages_install() {
     let mut written: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
     written.sort();
     let completions = ["cadcraft-cli.bash", "_cadcraft-cli", "cadcraft-cli.fish", "cadcraft-cli.elv", "_cadcraft-cli.ps1"];
-    let subcommands = ["info", "convert", "run", "commands", "mcp", "perf", "sample"];
+    let subcommands = [
+        "info",
+        "convert",
+        "run",
+        "commands",
+        "mcp",
+        "perf",
+        "sample",
+        "store-write",
+        "store-read",
+        "store-stat",
+        "store-list",
+        "store-remove",
+        "store-probe",
+        "store-recover",
+    ];
     let mut expected: Vec<String> = completions.map(String::from).into();
     expected.push("cadcraft-cli.1".into());
     expected.extend(subcommands.iter().map(|s| format!("cadcraft-cli-{s}.1")));

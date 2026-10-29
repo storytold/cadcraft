@@ -1,0 +1,18 @@
+[package]
+name = "cadcraft-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CADCraft storage backends (storytold/wordcraft#518, Phase 0-1): a StorageBackend trait with capability probing, atomic writes and a recovery-journal hook; local-filesystem and WebDAV (oCIS-compatible) backends"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+base64 = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

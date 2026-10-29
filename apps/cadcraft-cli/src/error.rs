@@ -1,6 +1,7 @@
 use crate::output::OutputError;
 use crate::perf::PerfError;
 use crate::run::RunError;
+use crate::store::StoreError;
 
 /// Why a subcommand failed: printed as `error: {e}`, exit 1.
 #[derive(Debug, thiserror::Error)]
@@ -19,6 +20,8 @@ pub(crate) enum CliError {
     Output(#[from] OutputError),
     #[error(transparent)]
     Perf(#[from] PerfError),
+    #[error(transparent)]
+    Store(#[from] StoreError),
     /// The engine and io crates take file names as text.
     #[error("{}: the file name is not valid Unicode", .0.display())]
     NotUnicode(std::path::PathBuf),

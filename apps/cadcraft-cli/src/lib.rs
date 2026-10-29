@@ -18,6 +18,7 @@ mod output;
 mod perf;
 mod run;
 mod sample;
+mod store;
 
 #[cfg(test)]
 use args::Framing;
@@ -36,6 +37,7 @@ use run::run_cmds;
 #[cfg(test)]
 use run::{fill_last, returned_handle};
 use sample::sample;
+use store::{store_list, store_probe, store_read, store_recover, store_remove, store_stat, store_write};
 
 fn install_io() {
     cadcraft_engine::cmd::file::set_io(cadcraft_engine::cmd::file::IoHooks {
@@ -99,7 +101,16 @@ where
         Command::Run(a) => a.settings.apply(),
         Command::Mcp(a) => a.settings.apply(),
         Command::Sample(a) => a.settings.apply(),
-        Command::Info(_) | Command::Commands(_) | Command::Perf(_) => {}
+        Command::Info(_)
+        | Command::Commands(_)
+        | Command::Perf(_)
+        | Command::StoreWrite(_)
+        | Command::StoreRead(_)
+        | Command::StoreStat(_)
+        | Command::StoreList(_)
+        | Command::StoreRemove(_)
+        | Command::StoreProbe(_)
+        | Command::StoreRecover(_) => {}
     }
     let mut io = Streams::new(out, err);
     let result = match &cli.command {
@@ -110,6 +121,13 @@ where
         Command::Mcp(a) => mcp(a),
         Command::Perf(a) => perf(a.target.as_ref(), &mut io),
         Command::Sample(a) => sample(a, &mut io),
+        Command::StoreWrite(a) => store_write(a, &mut io),
+        Command::StoreRead(a) => store_read(a, &mut io),
+        Command::StoreStat(a) => store_stat(a, &mut io),
+        Command::StoreList(a) => store_list(a, &mut io),
+        Command::StoreRemove(a) => store_remove(a, &mut io),
+        Command::StoreProbe(a) => store_probe(a, &mut io),
+        Command::StoreRecover(a) => store_recover(a, &mut io),
     };
     let mut code = 0;
     if let Err(e) = result {
