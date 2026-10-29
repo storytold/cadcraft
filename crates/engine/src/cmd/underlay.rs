@@ -65,6 +65,29 @@ static LINES: std::sync::Mutex<Option<HashMap<(String, u32, String), (u64, PageL
 static LINES_READ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 /// Most pages whose lines are kept.
 const MAX_LINE_PAGES: usize = 128;
+/// Pages whose lines are being read: a second reading of one (two drawings whose PDF came back
+/// together) reads nothing, rather than a second copy of a large PDF at the same time.
+static LINES_READING: std::sync::Mutex<Option<std::collections::HashSet<(String, u32, String)>>> = std::sync::Mutex::new(None);
+
+/// A page's lines being read ([`LINES_READING`]), until it is dropped.
+struct ReadingLines((String, u32, String));
+
+impl ReadingLines {
+    /// `None` when page `key` is being read already.
+    fn start(key: (String, u32, String)) -> Option<Self> {
+        let mut g = LINES_READING.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        g.get_or_insert_with(std::collections::HashSet::new).insert(key.clone()).then_some(ReadingLines(key))
+    }
+}
+
+impl Drop for ReadingLines {
+    fn drop(&mut self) {
+        let mut g = LINES_READING.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(set) = g.as_mut() {
+            set.remove(&self.0);
+        }
+    }
+}
 
 /// The lines of page `page` of the PDF `stored` with `layers` shown or hidden (see
 /// [`cadcraft_doc::PdfUnderlay::layers_key`]), if they have been read.
@@ -80,6 +103,7 @@ pub(crate) fn load_lines(stored: &str, document: Option<&str>, page: u32, layers
     if page_lines(stored, page, &key).is_some() {
         return;
     }
+    let Some(_reading) = ReadingLines::start((stored.to_string(), page, key.clone())) else { return };
     let Some(hooks) = pdf() else { return };
     let Ok(bytes) = underlay_bytes(hooks, stored, document, layers) else { return };
     let Ok(lines) = (hooks.lines)(&bytes, page) else { return };
