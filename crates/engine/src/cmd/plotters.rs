@@ -110,23 +110,6 @@ impl PlotterStore {
     }
 }
 
-/// The CADCraft settings directory: `CADCRAFT_CONFIG_DIR`, else the platform's (none when it
-/// can't be told).
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn config_root() -> Option<std::path::PathBuf> {
-    use std::path::PathBuf;
-    let get = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
-    match std::env::var_os("CADCRAFT_CONFIG_DIR") {
-        Some(r) if !r.is_empty() => Some(PathBuf::from(r)),
-        Some(_) => None,
-        None => match std::env::consts::OS {
-            "macos" => get("HOME").map(|h| h.join("Library/Application Support/CADCraft")),
-            "windows" => get("APPDATA").map(|r| r.join("CADCraft")),
-            _ => get("XDG_CONFIG_HOME").map(|r| r.join("cadcraft")).or_else(|| get("HOME").map(|h| h.join(".config/cadcraft"))),
-        },
-    }
-}
-
 fn store() -> PlotterStore {
     *STORE.get_or_init(|| {
         #[cfg(not(target_arch = "wasm32"))]

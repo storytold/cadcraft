@@ -1,4 +1,4 @@
-use super::{Bounds2, Builder, Color, Ctx, Drawing, Ink, Rgb, ink};
+use super::{Bounds2, Builder, Color, Ctx, Drawing, Ink, Rgb, Vec2, ink};
 
 /// The text style of an entity (Standard defaults when missing).
 pub(crate) fn text_style(d: &Drawing, name: &str) -> cadcraft_doc::TextStyle {

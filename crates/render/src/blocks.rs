@@ -1,6 +1,6 @@
 use super::draw::entity;
 use super::props::{resolve, resolve_common, transparency};
-use super::text_entity::{mtext, place_text_entity};
+use super::text_entity::{field_text_background, mtext, place_text_entity};
 use super::{Builder, Color, Ctx, Entity, EntityKind, Ink, Lineweight, Mat3, Vec2};
 
 pub(crate) fn sub_ctx<'a>(ctx: &Ctx<'a>, e: &Entity, m: Mat3) -> Ctx<'a> {
