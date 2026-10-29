@@ -1,0 +1,1611 @@
+	Apply	Toepassen
+	Attach DWG...	DWG koppelen...
+	Bind	Invoegen
+	Detach	Ontkoppelen
+	Loaded	Geladen
+	Make it a block of this drawing, keeping its layer names	Maak een blok in deze tekening met behoud van laagnamen
+	Make it a block of this drawing; its layers become NAME$0$LAYER	Maak een blok in deze tekening; de lagen worden NAME$0$LAYER
+	No external references are attached.	Er zijn geen externe referenties gekoppeld.
+	Not Found	Niet gevonden
+	Not loaded	Niet geladen
+	Open	Openen
+	Overlay	Onderlegger
+	Reference Manager	Referentiebeheer
+	Reference Name	Referentienaam
+	References: {n}	Referenties: {n}
+	Reload	Herladen
+	Reload All	Alles herladen
+	Saved Path	Opgeslagen pad
+	Unload	Ontladen
+	Unloaded	Ontladen
+	Unreferenced	Geen referentie
+	Unresolved	Onopgelost
+	  Cancel  	  Annuleren  
+	  OK  	  OK  
+	 or [	 of [
+	% of all commits	% van alle commits
+	* Wildcard Match	* Jokerteken-overeenkomst
+	*VARIES*	*VARIEERT*
+	+  |  Top  |  2D Wireframe	+  |  Boven  |  2D-draadmodel
+	+Bin	+Bin
+	+LOC	+Regels
+	1 Viewport	1 kijkvenster
+	2 Points	2 punten
+	2 Viewports	2 kijkvensters
+	2D Solid	2D-vlakvulling
+	3 Points	3 punten
+	3 Viewports	3 kijkvensters
+	3D Face	3D-vlak
+	3D Operations	3D-bewerkingen
+	3D Polyline	3D-polylijn
+	4 Viewports	4 kijkvensters
+	< Less than	< Kleiner dan
+	<> Not Equal	<> Niet gelijk aan
+	= Equals	= Gelijk aan
+	> Greater than	> Groter dan
+	A variable name starts with a letter and has only letters, digits and _	Een variabelenaam begint met een letter en bevat alleen letters, cijfers en _
+	About	Over
+	About CADCraft	Over CADCraft
+	Absolute	Absoluut
+	Add Leader	Aanwijslijn toevoegen
+	Additional angles	Extra hoeken
+	Align	Uitlijnen
+	Align Text	Tekst uitlijnen
+	Aligned	Uitgelijnd
+	All	Alles
+	All Annotation Objects	Alle annotatieobjecten
+	All Used Layers	Alle gebruikte lagen
+	All files	Alle bestanden
+	Angle	Hoek
+	Angular	Hoekmaat
+	Annotation Visibility	Zichtbaarheid van annotaties
+	Annotation scale	Annotatieschaal
+	Apparent Intersection	Schijnbaar snijpunt
+	Append to current selection set	Toevoegen aan huidige selectieset
+	Apply to:	Toepassen op:
+	Apply true color	Ware kleuren toepassen
+	Arc	Boog
+	Arc Length	Booglengte
+	Area	Oppervlakte
+	Arrange Panel	Paneel indelen
+	Array	Reeks
+	Attach	Koppelen
+	Attribute	Attribuut
+	Attribute Definition	Attribuutdefinitie
+	Attribute Display	Attribuutweergave
+	Audit	Tekening controleren
+	Auto (system language)	Auto (systeemtaal)
+	Auto Constrain	Automatische relaties
+	AutoConstrain	Automatische relaties
+	Axis, End	As, einde
+	Base	Basis
+	Baseline	Basislijn
+	Batch Publish	Batch publiceren
+	Binary assets added	Binaire bestanden toegevoegd
+	Binary assets removed	Binaire bestanden verwijderd
+	Bind...	Invoegen...
+	Blend	Vloeiende overgang
+	Block	Blok
+	Block Attribute Manager...	Blokattribuutbeheer...
+	Block Editor	Blokeditor
+	Block Reference	Blokreferentie
+	Block...	Blok...
+	Blocks	Blokken
+	Blue	Blauw
+	Bold	Vet
+	Boolean	Booleaanse bewerkingen
+	Boundary	Begrenzing
+	Boundary...	Begrenzing...
+	Box	Balk
+	Break	Onderbreken
+	Break At Point	Onderbreken op punt
+	Break-line Symbol	Afbrekingssymbool
+	Bring Above Objects	Boven objecten plaatsen
+	Bring Annotations to Front	Annotaties naar voorgrond brengen
+	Bring to Front	Naar voorgrond
+	Bulleted list	Lijst met opsommingstekens
+	ByBlock	OpBlok
+	ByColor	OpKleur
+	ByLayer	OpLaag
+	CADCraft Help	CADCraft-hulp
+	Cancel	Annuleren
+	Cartesian (x, y)	Cartesisch (x, y)
+	Center	Middelpunt
+	Center Line	Hartlijn
+	Center Mark	Centrummarkering
+	Center X	Middelpunt X
+	Center Y	Middelpunt Y
+	Center Z	Middelpunt Z
+	Center, Diameter	Middelpunt, diameter
+	Center, Radius	Middelpunt, straal
+	Center, Start, Angle	Middelpunt, begin, hoek
+	Center, Start, End	Middelpunt, begin, einde
+	Center, Start, Length	Middelpunt, begin, lengte
+	Chamfer	Afschuining
+	Change Space	Ruimte wisselen
+	Change to Current Layer	Naar huidige laag verplaatsen
+	Changed: {n}	Gewijzigd: {n}
+	Circle	Cirkel
+	Circumference	Omtrek
+	Clear History	Geschiedenis wissen
+	Clear	Wissen
+	Clip	Bijsnijden
+	Clip Viewport	Kijkvenster bijsnijden
+	Clipboard	Klembord
+	Close	Sluiten
+	Close All	Alles sluiten
+	Close All Other Drawings	Alle andere tekeningen sluiten
+	Closed	Gesloten
+	Close Comparison	Vergelijking sluiten
+	Coincident	Samenvallend
+	Collapse Palettes	Paletten inklappen
+	Collapse Tool Sets	Gereedschapssets inklappen
+	Collinear	Collineair
+	Color	Kleur
+	Color 8	Kleur 8
+	Color 9	Kleur 9
+	Color Index	Kleurindex
+	Color...	Kleur...
+	Command Aliases	Opdrachtaliassen
+	Command History	Opdrachtgeschiedenis
+	Clear Command History	Opdrachtgeschiedenis wissen
+	Command Line	Opdrachtregel
+	Command Line History Lines	Aantal regels opdrachtgeschiedenis
+	Command Reference	Opdrachtoverzicht
+	Commits	Commits
+	Company	Bedrijf
+	Compare Drawings...	Tekeningen vergelijken...
+	Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust.	Computerondersteund ontwerpen en tekenen: een open-source, onafhankelijk ontwikkelde CAD-toepassing geschreven in puur Rust.
+	Concentric	Concentrisch
+	Cone	Kegel
+	Constraint Bars	Relatiebalken
+	Constraint Settings	Relatie-instellingen
+	Construction Line	Constructielijn
+	Contents	Inhoud
+	Continue	Doorgaan
+	Contributors	Bijdragers
+	Control Vertices	Controlepunten
+	Convert	Converteren
+	Convert Text to Mtext	Tekst omzetten naar meerregelige tekst
+	Copy	Kopiëren
+	Copy Full File Path	Volledig bestandspad kopiëren
+	Copy History	Geschiedenis kopiëren
+	Copy Layout	Lay-out kopiëren
+	Copy Nested Objects	Geneste objecten kopiëren
+	Copy Selection	Selectie kopiëren
+	Copy with Base Point	Kopiëren met basispunt
+	Count	Tellen
+	Count List	Tellijst
+	Count Table	Teltabel
+	Create Block	Blok maken
+	Creates a user parameter	Maakt een gebruikersparameter aan
+	Ctrl+Enter to finish	Ctrl+Enter om te voltooien
+	Current layer	Huidige laag
+	Current selection	Huidige selectie
+	Current: {color}	Huidig: {color}
+	Cut	Knippen
+	Cyan	Cyaan
+	Cylinder	Cilinder
+	DWG	DWG
+	DWG Reference...	DWG-referentie...
+	DXF	DXF
+	Dark	Donker
+	Data Extraction...	Gegevensextractie...
+	Default	Standaard
+	Data Link...	Gegevenskoppeling...
+	Default Save Format	Standaard opslagformaat
+	Default Save Version	Standaard opslagversie
+	Define Attributes	Attributen definiëren
+	Define Attributes...	Attributen definiëren...
+	Defined width	Gedefinieerde breedte
+	Degree	Graad
+	Degrees of Freedom	Vrijheidsgraden
+	Degrees of freedom: {n}	Vrijheidsgraden: {n}
+	Delete	Verwijderen
+	Delete Column	Kolom verwijderen
+	Delete Constraints	Relaties verwijderen
+	Delete Dimension Style	Maatvoeringsstijl verwijderen
+	Delete Duplicate Objects	Dubbele objecten verwijderen
+	Delete Layer	Laag verwijderen
+	Delete Layer State	Laagstatus verwijderen
+	Delete Layout	Lay-out verwijderen
+	Delete Row	Rij verwijderen
+	Delete Text Style	Tekststijl verwijderen
+	Delta X	Delta X
+	Delta Y	Delta Y
+	Description	Beschrijving
+	Deselect All	Selectie opheffen
+	Diameter	Diameter
+	Dim style	Maatvoeringsstijl
+	Dimension Break	Maatlijn onderbreken
+	Dimension Edit	Maatvoering bewerken
+	Dimension	Maatvoering
+	Dimension Objects Only	Alleen maatvoeringsobjecten
+	Dimension Space	Maatlijnafstand
+	Dimension Style Override	Maatvoeringsstijl overschrijven
+	Dimension Style...	Maatvoeringsstijl...
+	Dimension Text Edit	Maattekst bewerken
+	Dimension style	Maatvoeringsstijl
+	Dimensional Constraint	Maatrelatie
+	Dimensional Constraint Parameters	Parameters van maatrelaties
+	Dimensional Constraints	Maatrelaties
+	Disassociate Dimensions	Associativiteit van maatvoering opheffen
+	Display name	Weergavenaam
+	Distance	Afstand
+	Divide	Verdelen
+	Do not plot (click: plot)	Niet plotten (klik: plotten)
+	Donut	Ring
+	Double-click to edit the description	Dubbelklik om de beschrijving te bewerken
+	Down	Omlaag
+	Drafting	Tekenen
+	Drafting Settings	Tekeninstellingen
+	Drafting Settings...	Tekeninstellingen...
+	Draw	Tekenen
+	Draw Order	Tekenorder
+	Drawing (DWG)	Tekening (DWG)
+	Drawing (DXF)	Tekening (DXF)
+	Drawing Limits	Tekeninggrenzen
+	Drawing Template (DWT)	Tekeningsjabloon (DWT)
+	Drawing Utilities	Tekeninghulpmiddelen
+	Drawings (DWG, DXF)	Tekeningen (DWG, DXF)
+	SVG drawings (SVG, SVGZ)	SVG-tekeningen (SVG, SVGZ)
+	Dynamic	Dynamisch
+	Dynamic Dimensions	Dynamische maatvoering
+	Dynamic Input	Dynamische invoer
+	Dynamic Input (F12)	Dynamische invoer (F12)
+	E	O
+	Edit	Bewerken
+	Edit Attributes...	Attributen bewerken...
+	Edit Text...	Tekst bewerken...
+	Edit Table Cell	Tabelcel bewerken
+	Elevation	Hoogtepeil
+	Ellipse	Ellips
+	Elliptical Arc	Elliptische boog
+	Enable Dynamic Input (F12)	Dynamische invoer inschakelen (F12)
+	End Object Isolation	Objectisolatie beëindigen
+	End Width	Eindbreedte
+	End X	Einde X
+	End Y	Einde Y
+	End angle	Eindhoek
+	Endpoint	Eindpunt
+	Enter	Enter
+	Enter Top, Zero or Bottom.	Voer Top, Zero of Bottom in.
+	Enter a fit data option	Voer een paspuntoptie in
+	Enter a pattern name	Voer een patroonnaam in
+	Enter a vertex editing option	Voer een hoekpuntbewerkingsoptie in
+	Enter an option	Voer een optie in
+	Enter angle of xline	Voer hoek van constructielijn in
+	Enter angle of xline (0) or	Voer hoek van constructielijn (0) in of
+	Enter area of rectangle in current units	Voer oppervlakte van rechthoek in huidige eenheden in
+	Enter attribute prompt	Voer attribuutvraag in
+	Enter attribute tag name	Voer attribuutlabelnaam in
+	Enter attribute value	Voer attribuutwaarde in
+	Enter block name	Voer bloknaam in
+	Enter constraint type	Voer relatietype in
+	Enter continuity	Voer continuïteit in
+	Enter default attribute value	Voer standaard attribuutwaarde in
+	Enter degree of spline	Voer graad van spline in
+	Enter delta angle	Voer deltahoek in
+	Enter delta length or	Voer deltalengte in of
+	Enter dimension text	Voer maattekst in
+	Enter dimension text (<> = measurement)	Voer maattekst in (<> = gemeten waarde)
+	Enter dimension value or [name=expression]	Voer maatwaarde of [name=expression] in
+	Enter dimension variable name to override	Voer naam van te overschrijven maatvariabele in
+	Enter justification type	Voer uitlijningstype in
+	Enter leader text	Voer aanwijstekst in
+	Enter mline scale	Voer multilijnschaal in
+	Enter mode	Voer modus in
+	Enter name of block to insert	Voer naam van in te voegen blok in
+	Enter new text	Voer nieuwe tekst in
+	Enter next point	Voer volgend punt in
+	Enter number of columns	Voer aantal kolommen in
+	Enter number of data rows	Voer aantal gegevensrijen in
+	Enter number of items	Voer aantal elementen in
+	Enter number of items along path	Voer aantal elementen langs pad in
+	Enter number of sides	Voer aantal zijden in
+	Enter number of turns	Voer aantal windingen in
+	Enter percentage length	Voer lengte in procenten in
+	Enter rectangle length	Voer lengte van rechthoek in
+	Enter rectangle width	Voer breedte van rechthoek in
+	Enter scale factor	Voer schaalfactor in
+	Enter text	Voer tekst in
+	Enter text (use \P for new paragraphs)	Voer tekst in (gebruik \P voor nieuwe alinea's)
+	Enter the number of segments	Voer het aantal segmenten in
+	Enter twist direction of helix	Voer draairichting van spiraal in
+	Entire drawing	Gehele tekening
+	Equal	Gelijk
+	Erase	Wissen
+	Evaluate	Evalueren
+	Evaluate LISP	LISP evalueren
+	Exclude from new selection set	Uitsluiten van nieuwe selectieset
+	Explode	Exploderen
+	Explode Attributes to Text	Attributen exploderen naar tekst
+	Export	Exporteren
+	Export Table	Tabel exporteren
+	Export to PDF...	Exporteren naar PDF...
+	Express Tools	Express Tools
+	Expression	Expressie
+	Extend	Verlengen
+	Extension	Verlenging
+	Extents	Tekeningomvang
+	External Reference	Externe referentie
+	External References	Externe referenties
+	Extrude	Extruderen
+	File	Bestand
+	File Tab	Bestandstabblad
+	Fillet	Afronding
+	Filter	Filter
+	Filters	Filters
+	Find and Replace	Zoeken en vervangen
+	Find...	Zoeken...
+	First	Eerste
+	First commit	Eerste commit
+	Fit Points	Paspunten
+	Fix	Vastzetten
+	Flatten Objects	Objecten platmaken
+	Format	Opmaak
+	Freehand	Vrije hand
+	Freeze	Bevriezen
+	Freeze Layer	Laag bevriezen
+	Freeze in new viewports	Bevriezen in nieuwe kijkvensters
+	Freeze/Thaw	Bevriezen/ontdooien
+	Freeze/Thaw in all viewports	Bevriezen/ontdooien in alle kijkvensters
+	Freeze/Thaw in the current viewport	Bevriezen/ontdooien in huidig kijkvenster
+	From	Vanaf punt
+	From Template...	Uit sjabloon...
+	General	Algemeen
+	Geometric Center	Geometrisch middelpunt
+	Geometric Constraint	Geometrische relatie
+	Geometric Constraints	Geometrische relaties
+	Geometry	Geometrie
+	Get from the Drawing	Uit tekening halen
+	Get Variable	Variabele opvragen
+	Get View	Weergave opvragen
+	Global	Globaal
+	Global width	Globale breedte
+	Grab bag	Overzicht
+	Gradient	Kleurverloop
+	Gradient...	Kleurverloop...
+	Green	Groen
+	Grid (F7)	Raster (F7)
+	Grid Display	Rasterweergave
+	Grid On (F7)	Raster aan (F7)
+	Grid snap	Rastervangfunctie
+	Grid spacing	Rasterafstand
+	Grip Edit	Bewerken met grepen
+	Grip Mirror	Spiegelen met grepen
+	Grip Option	Greepoptie
+	Grip Rotate	Roteren met grepen
+	Grip Scale	Schalen met grepen
+	Grip Stretch	Uitrekken met grepen
+	Group	Groeperen
+	Group Edit	Groep bewerken
+	Group Options	Groepsopties
+	Group Selection	Groepsselectie
+	Hatch	Arcering
+	Hatch Edit	Arcering bewerken
+	Hatch Patterns	Arceerpatronen
+	Hatch...	Arcering...
+	Height	Hoogte
+	Height: {height}	Hoogte: {height}
+	Helix	Spiraal
+	Help	Hulp
+	Hide All	Alles verbergen
+	Hide All Constraint Bars	Alle relatiebalken verbergen
+	Hide All Dynamic Dimensions	Alle dynamische maatvoering verbergen
+	Hide Layer List	Laaglijst verbergen
+	Hide Objects	Objecten verbergen
+	Hide Palettes	Paletten verbergen
+	History	Geschiedenis
+	Home	Startweergave
+	Horizontal	Horizontaal
+	HorizontalDistance	Horizontale afstand
+	How to apply:	Hoe toe te passen:
+	ID Point	Puntcoördinaten
+	Import	Importeren
+	Align Multileaders	Multiaanwijslijnen uitlijnen
+	Collect	Verzamelen
+	Collect Multileaders	Multiaanwijslijnen verzamelen
+	Edit Multileader	Multiaanwijslijn bewerken
+	In	Inzoomen
+	In-window Menu Bar	Menubalk in venster
+	Include in new selection set	Opnemen in nieuwe selectieset
+	Increment angle	Hoekstap
+	Index Color	Indexkleur
+	Index color: {index}	Indexkleur: {index}
+	Infer Constraints	Relaties afleiden
+	Inquiry	Opvragen
+	Insert	Invoegen
+	Insert Block	Blok invoegen
+	Insert Column	Kolom invoegen
+	Insert Row	Rij invoegen
+	Insert tab	Tab invoegen
+	Insert this block	Dit blok invoegen
+	Insert Table Formula	Tabelformule invoegen
+	Insertion	Invoegpunt
+	Insertion X	Invoegpunt X
+	Insertion Y	Invoegpunt Y
+	Insertion Z	Invoegpunt Z
+	Inspect Constraints	Relaties inspecteren
+	Inspect Drawing	Tekening inspecteren
+	Inspection	Controlemaat
+	Interface Language	Interfacetaal
+	Interface Theme	Interfacethema
+	Intersect	Doorsnede
+	Intersection	Snijpunt
+	Isolate	Isoleren
+	Isolate Layer	Laag isoleren
+	Isolate Objects	Objecten isoleren
+	Isometric Drafting	Isometrisch tekenen
+	Jogged	Geknikt
+	Jogged Linear	Geknikt lineair
+	Join	Samenvoegen
+	Join the ArtCraft Discord…	Neem deel aan de ArtCraft Discord…
+	Join us on Discord	Praat mee op Discord
+	Isometric Plane	Isometrisch vlak
+	Isometric snap	Isometrische vangfunctie
+	Language	Taal
+	Last	Laatste
+	Last commit	Laatste commit
+	Layer	Laag
+	Layer Delete	Laag verwijderen
+	Layer Match	Laag overnemen
+	Layer Merge	Lagen samenvoegen
+	Layer Off	Laag uitschakelen
+	Layer Properties	Laageigenschappen
+	Layer Properties Manager	Laageigenschappenbeheer
+	Layer Properties Manager — current viewport	Laageigenschappenbeheer — huidig kijkvenster
+	Layer State	Laagstatus
+	Layer States Manager...	Laagstatusbeheer...
+	Layer Tools	Laaggereedschappen
+	Layer contains objects (double-click to make current)	Laag bevat objecten (dubbelklik om actief te maken)
+	Layer is empty (double-click to make current)	Laag is leeg (dubbelklik om actief te maken)
+	Layers	Lagen
+	Layers Palette	Lagenpalet
+	Hide Palette	Palet verbergen
+	Layers displayed: {shown} of {total}.   Current layer: {layer}	Weergegeven lagen: {shown} van {total}.   Huidige laag: {layer}
+	Layout	Lay-out
+	Layout list	Lay-outlijst
+	Leader	Aanwijslijn
+	Leaders Only	Alleen aanwijslijnen
+	Left	Links
+	Length	Lengte
+	Length X	Lengte X
+	Length Y	Lengte Y
+	Lengthen	Lengte wijzigen
+	Light	Licht
+	Line	Lijn
+	Line delta	Regelverschil
+	Linear	Lineair
+	Lines +/−	Regels +/−
+	Lines added	Regels toegevoegd
+	Lines deleted	Regels verwijderd
+	Lines of Command History	Regels opdrachtgeschiedenis
+	Linetype	Lijntype
+	Linetype Scale	Lijntypeschaal
+	Ltscale	Lijntypeschaal
+	Linetype...	Lijntype...
+	Lineweight	Lijndikte
+	Lineweight...	Lijndikte...
+	List	Lijst
+	List Blocks	Blokken weergeven
+	List Dimension Styles	Maatvoeringsstijlen weergeven
+	List Groups	Groepen weergeven
+	List Layer States	Laagstatussen weergeven
+	List Layouts	Lay-outs weergeven
+	List System Variables	Systeemvariabelen weergeven
+	List Text Styles	Tekststijlen weergeven
+	Load all	Alles laden
+	Load...	Laden...
+	Load Application...	Toepassing laden...
+	Loaded linetypes	Geladen lijntypen
+	Lock	Vergrendelen
+	Lock Layer	Laag vergrendelen
+	Lock viewport	Kijkvenster vergrendelen
+	Lock/Unlock	Vergrendelen/ontgrendelen
+	Loft	Loft
+	MIT OR Apache-2.0. Not affiliated with Autodesk, Inc.	MIT OR Apache-2.0. Niet gelieerd aan Autodesk, Inc.
+	MODEL	MODEL
+	MText	Meerregelige tekst
+	Magenta	Magenta
+	Major line every	Hoofdlijn elke
+	Make Current	Actief maken
+	Make Object's Layer Current	Laag van object actief maken
+	Make...	Maken...
+	Match Layer	Laag overnemen
+	Match Properties	Eigenschappen overnemen
+	Measure	Afpassen
+	Measure Distance	Afstand meten
+	Measure Geometry	Geometrie meten
+	Merge Cells	Cellen samenvoegen
+	Merged PRs	Samengevoegde PR's
+	Mid Between 2 Points	Midden tussen 2 punten
+	Midpoint	Middenpunt
+	Mirror	Spiegelen
+	Model Space (in viewport)	Modelruimte (in kijkvenster)
+	Modeling	Modelleren
+	Models	Modellen
+	Modify	Wijzigen
+	Move	Verplaatsen
+	Move/Copy/Rotate	Verplaatsen/Kopiëren/Roteren
+	Multileader	Multiaanwijslijn
+	Multileader Style...	Multiaanwijslijnstijl...
+	Multileader style	Multiaanwijslijnstijl
+	Multiline	Multilijn
+	Multiline Text	Meerregelige tekst
+	Multiline Text...	Meerregelige tekst...
+	Multiple	Meerdere
+	Multiple Point	Meerdere punten
+	My	Mijn
+	My properties: not available yet	Mijn eigenschappen: nog niet beschikbaar
+	N	N
+	Name	Naam
+	Name (A–Z)	Naam (A–Z)
+	Named Views...	Benoemde weergaven...
+	Nearest	Dichtstbijzijnd
+	New	Nieuw
+	New (metric)	Nieuw (metrisch)
+	New Drawing	Nieuwe tekening
+	New Drawing (⌘N)	Nieuwe tekening (⌘N)
+	New Drawing...	Nieuwe tekening...
+	New Layer	Nieuwe laag
+	New Layout	Nieuwe lay-out
+	New VP Freeze	Bevriezen in nieuwe KV
+	New Viewports...	Nieuwe kijkvensters...
+	New from Template...	Nieuw uit sjabloon...
+	New state name	Nieuwe statusnaam
+	Next Change	Volgende wijziging
+	No	Nee
+	No blocks defined in this drawing.	Er zijn geen blokken gedefinieerd in deze tekening.
+	No contributor data was built into this copy.	Er zijn geen bijdragersgegevens meegecompileerd in dit exemplaar.
+	No model credits were built into this copy.	Er zijn geen modelgegevens meegecompileerd in dit exemplaar.
+	No saved layer states	Geen opgeslagen laagstatussen
+	No selection	Geen selectie
+	Node	Knooppunt
+	None	Geen
+	Not available	Niet beschikbaar
+	Not available yet	Nog niet beschikbaar
+	Numbered list	Genummerde lijst
+	OK	OK
+	Object	Object
+	Object Snap	Objectvangfunctie
+	Object Snap (F3)	Objectvangfunctie (F3)
+	Object Snap On (F3)	Objectvangfunctie aan (F3)
+	Object Snap Tracking	Objectvangsporen
+	Object Snap Tracking (F11)	Objectvangsporen (F11)
+	Object Snap Tracking Settings	Instellingen voor objectvangsporen
+	Object type:	Objecttype:
+	Oblique	Schuin
+	Off	Uit
+	Offset	Parallel kopiëren
+	On	Aan
+	On/Off	Aan/Uit
+	One of the Crafting Apps by the ArtCraft team and community.	Een van de Crafting Apps door het ArtCraft-team en de community.
+	Only in this drawing: {n}	Alleen in deze tekening: {n}
+	Only in {name}: {n}	Alleen in {name}: {n}
+	Open (⌘O)	Openen (⌘O)
+	Open Sample Drawing	Voorbeeldtekening openen
+	Open Xref	Xref openen
+	Open...	Openen...
+	Open Recent	Recent geopend
+	Clear Recent Files	Recente bestanden wissen
+	Operator:	Operator:
+	Orbit	Baanbeweging
+	Ordinate	Ordinaatmaat
+	Ortho (F8)	Ortho (F8)
+	Ortho Mode	Orthomodus
+	Ortho Mode (F8)	Orthomodus (F8)
+	Osnap Settings...	Objectvanginstellingen...
+	Out	Uitzoomen
+	Over-constrained	Overbepaald
+	Override	Overschrijven
+	PAPER	PAPIER
+	Percent	Procent
+	Polar (distance < angle)	Polair (afstand < hoek)
+	PRs	PR's
+	Page Setup Manager	Pagina-instellingenbeheer
+	Page Setup Manager...	Pagina-instellingenbeheer...
+	Pan	Verschuiven
+	Pan Down	Omlaag verschuiven
+	Pan Left	Naar links verschuiven
+	Pan Right	Naar rechts verschuiven
+	Pan Up	Omhoog verschuiven
+	Paper Space	Papierruimte
+	Parallel	Evenwijdig
+	Parameters Manager	Parameterbeheer
+	Parametric	Parametrisch
+	Paste	Plakken
+	Paste as Block	Plakken als blok
+	Paste to Command Line	Plakken in opdrachtregel
+	Paste to Original Coordinates	Plakken op oorspronkelijke coördinaten
+	Path Array	Padreeks
+	Pattern	Patroon
+	Perpendicular	Loodrecht
+	Plot	Plotten
+	Plot (click: do not plot)	Plotten (klik: niet plotten)
+	Plot Preview	Plotvoorbeeld
+	Plot Window	Plotvenster
+	Plot style	Plotstijl
+	Plot style attached to	Plotstijl gekoppeld aan
+	Plot style table	Plotstijltabel
+	Plot Style...	Plotstijl...
+	Plot Style Manager	Plotstijlbeheer
+	Plot Style Manager...	Plotstijlbeheer...
+	Plot Styles...	Plotstijlen...
+	Plotter Manager	Plotterbeheer
+	Plotter Manager...	Plotterbeheer...
+	New CTB	Nieuwe CTB
+	New STB	Nieuwe STB
+	New style	Nieuwe stijl
+	Reset Panel Layout	Paneelindeling herstellen
+	Send Hatches to Back	Arceringen naar achtergrond sturen
+	Send Under Objects	Onder objecten plaatsen
+	Text Objects Only	Alleen tekstobjecten
+	Use for this layout	Gebruiken voor deze lay-out
+	Display plot styles	Plotstijlen weergeven
+	No plot style tables.	Geen plotstijltabellen.
+	A built-in table: editing it keeps an edited copy in the drawing.	Een ingebouwde tabel: bij bewerken wordt een bewerkte kopie in de tekening bewaard.
+	Keep an editable copy of this table in the drawing	Bewaar een bewerkbare kopie van deze tabel in de tekening
+	Layout {name}: {table}	Lay-out {name}: {table}
+	Grayscale	Grijswaarden
+	Screening	Rasterintensiteit
+	Use object linetype	Lijntype van object gebruiken
+	Use object lineweight	Lijndikte van object gebruiken
+	Remove	Verwijderen
+	Add	Toevoegen
+	Open a drawing first.	Open eerst een tekening.
+	Plot table type	Type plottabel
+	Color-dependent	Kleurafhankelijk
+	Named	Benoemd
+	Plus/minus	Plus/min
+	Point	Punt
+	Point Filters	Puntfilters
+	Point Style...	Puntstijl...
+	Polar Array	Polaire reeks
+	Polar Tracking	Polaire sporen
+	Polar Tracking (F10)	Polaire sporen (F10)
+	Polar Tracking On (F10)	Polaire sporen aan (F10)
+	Polar angle measurement	Polaire hoekmeting
+	Polar distance	Polaire afstand
+	Polar: {distance} < {angle}°	Polair: {distance} < {angle}°
+	PolarSnap	PolarSnap
+	Polygon	Veelhoek
+	Polygonal	Veelhoekig
+	Polygonal Viewport	Veelhoekig kijkvenster
+	Polyline	Polylijn
+	Polyline Edit	Polylijn bewerken
+	Position X	Positie X
+	Position Y	Positie Y
+	Position Z	Positie Z
+	Previous	Vorige
+	Previous Change	Vorige wijziging
+	Previous Layer	Vorige laag
+	Primitives	Basisvormen
+	Print	Afdrukken
+	Print...	Afdrukken...
+	Properties	Eigenschappen
+	Properties Inspector	Eigenschappenvenster
+	Properties:	Eigenschappen:
+	Proxy	Proxy-object
+	Purge	Opschonen
+	Pyramid	Piramide
+	Quadrant	Kwadrant
+	Query Entities	Objecten opvragen
+	Quick	Snel
+	Quick Dimension	Snel maatvoeren
+	Quick Properties	Snelle eigenschappen
+	Quick Select	Snel selecteren
+	Quick Select Properties	Eigenschappen snel selecteren
+	Quick Select...	Snel selecteren...
+	QuickCalc	Snelrekenmachine
+	QuickCalc Pick	Kiezen voor snelrekenmachine
+	Quit CADCraft	CADCraft afsluiten
+	Radius	Straal
+	Raster Image	Rasterafbeelding
+	Ray	Halflijn
+	Read-only	Alleen-lezen
+	Real name	Echte naam
+	Realtime	Realtime
+	Reassociate Dimensions	Maatvoering opnieuw associëren
+	Recent	Recent
+	Recent Commands	Recente opdrachten
+	Recent Input	Recente invoer
+	Recover...	Herstellen...
+	Rectangle	Rechthoek
+	Recalculate Table Formulas	Tabelformules herberekenen
+	Rectangular	Rechthoekig
+	Rectangular snap	Rechthoekige vangfunctie
+	Rectangular Array	Rechthoekige reeks
+	Red	Rood
+	Redo	Opnieuw uitvoeren
+	Redo (⇧⌘Z)	Opnieuw uitvoeren (⇧⌘Z)
+	Redraw	Hertekenen
+	Regen	Regenereren
+	Regen All	Alles regenereren
+	Region	Regio
+	Region/Mass Properties	Regio-/massa-eigenschappen
+	Reinitialize	Opnieuw initialiseren
+	Relative	Relatief
+	Relative to last segment	Relatief ten opzichte van laatste segment
+	Remove Leader	Aanwijslijn verwijderen
+	Remove the viewport override	Overschrijving van kijkvenster verwijderen
+	Rename Dimension Style	Maatvoeringsstijl hernoemen
+	Rename Layer	Laag hernoemen
+	Rename Layer State	Laagstatus hernoemen
+	Rename Layout	Lay-out hernoemen
+	Rename Text Style	Tekststijl hernoemen
+	Rename...	Hernoemen...
+	Repeat {command}	Herhaal {command}
+	Requires a point (x,y, @dx,dy or @d<a).	Vereist een punt (x,y, @dx,dy of @d<a).
+	Reset Palettes	Paletten herstellen
+	Restore	Herstellen
+	Restore Layer State	Laagstatus herstellen
+	Reverse	Richting omkeren
+	Reverse the order	Volgorde omkeren
+	Revision Cloud	Revisiewolk
+	Revolve	Omwentelen
+	Right	Rechts
+	Rotate	Roteren
+	Rotation	Rotatie
+	S	Z
+	Save	Opslaan
+	Save (⌘S)	Opslaan (⌘S)
+	Save As	Opslaan als
+	Save As...	Opslaan als...
+	Save Layer State	Laagstatus opslaan
+	Save State	Status opslaan
+	Scale	Schalen
+	Search for layer	Laag zoeken
+	Search for parameter	Parameter zoeken
+	Second and next points:	Tweede en volgende punten:
+	Select	Selecteren
+	Select 2D polyline	Selecteer 2D-polylijn
+	Select All	Alles selecteren
+	Select Objects	Objecten selecteren
+	Select Similar	Soortgelijke selecteren
+	Select a 2D polyline.	Selecteer een 2D-polylijn.
+	Select a block reference.	Selecteer een blokreferentie.
+	Select a circle or arc.	Selecteer een cirkel of boog.
+	Select a closed polyline	Selecteer een gesloten polylijn
+	Select a closed polyline, circle, ellipse or closed spline.	Selecteer een gesloten polylijn, cirkel, ellips of gesloten spline.
+	Select a closed polyline.	Selecteer een gesloten polylijn.
+	Select a curve as the path.	Selecteer een curve als pad.
+	Select a dimension constraint type	Selecteer een type maatrelatie
+	Select a line object	Selecteer een lijnobject
+	Select a line object.	Selecteer een lijnobject.
+	Select a line or an arc.	Selecteer een lijn of een boog.
+	Select a line or polyline segment	Selecteer een lijn of polylijnsegment
+	Select a line, arc or open polyline.	Selecteer een lijn, boog of open polylijn.
+	Select a line, arc, circle, polyline, ellipse or spline as the path.	Selecteer een lijn, boog, cirkel, polylijn, ellips of spline als pad.
+	Select a line, circle, arc or polyline segment.	Selecteer een lijn, cirkel, boog of polylijnsegment.
+	Select a line.	Selecteer een lijn.
+	Select a polyline.	Selecteer een polylijn.
+	Select a text, mtext, attribute definition or dimension.	Selecteer een tekst, meerregelige tekst, attribuutdefinitie of maatvoering.
+	Select an annotation object	Selecteer een annotatieobject
+	Select an arc or circle	Selecteer een boog of cirkel
+	Select an arc.	Selecteer een boog.
+	Select an object	Selecteer een object
+	Select an object to change or	Selecteer een te wijzigen object of
+	Select an object to measure or	Selecteer een te meten object of
+	Select an object.	Selecteer een object.
+	Select an open curve.	Selecteer een open curve.
+	Select an open line, arc, polyline, ellipse arc or spline.	Selecteer een open lijn, boog, polylijn, elliptische boog of spline.
+	Select arc or circle	Selecteer boog of cirkel
+	Select arc or polyline arc segment	Selecteer boog of polylijn-boogsegment
+	Select arc style	Selecteer boogstijl
+	Select arc, circle, line	Selecteer boog, cirkel, lijn
+	Select at least two objects to join.	Selecteer minimaal twee objecten om samen te voegen.
+	Select circle or arc to add center mark	Selecteer cirkel of boog om centrummarkering toe te voegen
+	Select closed objects (regions, closed polylines, circles).	Selecteer gesloten objecten (regio's, gesloten polylijnen, cirkels).
+	Select first line	Selecteer eerste lijn
+	Select first line or arc	Selecteer eerste lijn of boog
+	Select first object	Selecteer eerste object
+	Select first object or	Selecteer eerste object of
+	Select first point	Selecteer eerste punt
+	Select nested objects to copy or	Selecteer geneste objecten om te kopiëren of
+	Select object	Selecteer object
+	Select object to dimension	Selecteer object om te bematen
+	Select object to divide	Selecteer te verdelen object
+	Select object to extend or shift-select to trim	Selecteer te verlengen object of Shift-selecteer om bij te snijden
+	Select object to measure	Selecteer af te passen object
+	Select object to offset	Selecteer parallel te kopiëren object
+	Select object to trim or shift-select to extend	Selecteer bij te snijden object of Shift-selecteer om te verlengen
+	Select objects (crossing window first corner)	Selecteer objecten (eerste hoek kruisvenster)
+	Select objects to array.	Selecteer objecten voor reeks.
+	Select objects to stretch by crossing-window or crossing-polygon...	Selecteer uit te rekken objecten met kruisvenster of kruisveelhoek...
+	Select objects:	Selecteer objecten:
+	Add to Working Set	Toevoegen aan werkset
+	Edit Reference In-Place	Referentie ter plaatse bewerken
+	Save Reference Edits	Referentiewijzigingen opslaan
+	Working Set	Werkset
+	Xref and Block In-place Editing	Xref en blok ter plaatse bewerken
+	Select one polyline (Multiple is available through the JSON form).	Selecteer één polylijn (Multiple is beschikbaar via de JSON-vorm).
+	Select path curve	Selecteer padcurve
+	Select point or object	Selecteer punt of object
+	Select polyline or	Selecteer polylijn of
+	Select second line	Selecteer tweede lijn
+	Select second line or shift-select to apply corner	Selecteer tweede lijn of Shift-selecteer om hoek te maken
+	Select second object	Selecteer tweede object
+	Select second object or shift-select to apply corner	Selecteer tweede object of Shift-selecteer om hoek te maken
+	Select second point	Selecteer tweede punt
+	Select spline	Selecteer spline
+	Select symmetry line	Selecteer symmetrielijn
+	Select two points	Selecteer twee punten
+	Selection Cycling	Selectiewisseling
+	Send to Back	Naar achtergrond
+	Set Current	Actief maken
+	Set Current Dimension Style	Maatvoeringsstijl actief maken
+	Set Current Text Style	Tekststijl actief maken
+	Set Current Viewport	Kijkvenster actief maken
+	Set Layer Properties	Laageigenschappen instellen
+	Set Properties	Eigenschappen instellen
+	Set Table Cell	Tabelcel instellen
+	Set Table Cell Style	Tabelcelstijl instellen
+	Set Variable	Variabele instellen
+	Set View	Weergave instellen
+	Share	Delen
+	Show	Tonen
+	Show All	Alles tonen
+	Show All Constraint Bars	Alle relatiebalken tonen
+	Show All Dynamic Dimensions	Alle dynamische maatvoering tonen
+	Show and hide the tools of this category	Gereedschappen van deze categorie tonen en verbergen
+	Show in Tool Sets	Tonen in gereedschapssets
+	Show command prompting near the crosshairs	Opdrachtprompts bij het dradenkruis tonen
+	Show Layer List	Laaglijst tonen
+	Show/Hide Lineweight	Lijndikte tonen/verbergen
+	Show/Hide Transparency	Transparantie tonen/verbergen
+	Single Line Text	Enkelregelige tekst
+	Single Point	Enkel punt
+	Single...	Enkel...
+	Smooth	Vloeiend
+	Snap	Vangfunctie
+	Snap Mode	Vangmodus
+	Snap Mode (F9)	Vangmodus (F9)
+	Snap On (F9)	Vangfunctie aan (F9)
+	Snap Overrides	Vangoverschrijvingen
+	Snap X spacing	Vangafstand X
+	Snap and Grid	Vangfunctie en raster
+	Snap type	Vangtype
+	Solid	Volume
+	Sort	Sorteren
+	Specify a point	Geef een punt op
+	Specify a scale for the hatch pattern	Geef een schaal voor het arceerpatroon op
+	Specify a second extension line origin	Geef oorsprong van tweede hulplijn op
+	Specify an angle for the hatch pattern	Geef een hoek voor het arceerpatroon op
+	Specify angle end point	Geef eindpunt van hoek op
+	Specify angle of dimension line	Geef hoek van maatlijn op
+	Specify angle of dimension text	Geef hoek van maattekst op
+	Specify angle start point	Geef beginpunt van hoek op
+	Specify angle vertex	Geef hoekpunt op
+	Specify angle vertex point	Geef hoekpunt op
+	Specify arc length dimension location	Geef positie van booglengtemaat op
+	Specify axis endpoint of ellipse	Geef aseindpunt van ellips op
+	Specify base diameter	Geef basisdiameter op
+	Specify base point	Geef basispunt op
+	Specify base point or	Geef basispunt op of
+	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Geef basispunt of verplaatsing op (sleep met middelste muisknop om realtime te verschuiven)
+	Specify base radius or	Geef basisstraal op of
+	Specify center of donut	Geef middelpunt van ring op
+	Specify center of ellipse	Geef middelpunt van ellips op
+	Specify center of polygon	Geef middelpunt van veelhoek op
+	Specify center point for circle	Geef middelpunt van cirkel op
+	Specify center point of arc	Geef middelpunt van boog op
+	Specify center point of array	Geef middelpunt van reeks op
+	Specify center point of base	Geef middelpunt van basis op
+	Specify corner of viewport	Geef hoek van kijkvenster op
+	Specify corner of window, enter a scale factor (nX or nXP)	Geef hoek van venster op, of voer een schaalfactor in (nX of nXP)
+	Specify diameter of circle	Geef diameter van cirkel op
+	Specify dimension arc line location	Geef positie van maatboog op
+	Specify dimension line location	Geef positie van maatlijn op
+	Specify distance between turns	Geef afstand tussen windingen op
+	Specify distance to other axis	Geef afstand tot andere as op
+	Specify end angle	Geef eindhoek op
+	Specify end point of arc	Geef eindpunt van boog op
+	Specify end point of arc (hold Ctrl to switch direction)	Geef eindpunt van boog op (houd Ctrl ingedrukt om richting te wisselen)
+	Specify ending width	Geef eindbreedte op
+	Specify ending width for next segment	Geef eindbreedte voor volgend segment op
+	Specify endpoint of arc	Geef eindpunt van boog op
+	Specify endpoint of axis	Geef eindpunt van as op
+	Specify endpoint of line	Geef eindpunt van lijn op
+	Specify feature location	Geef positie van kenmerk op
+	Specify fillet radius	Geef afrondingsstraal op
+	Specify fillet radius for rectangles	Geef afrondingsstraal voor rechthoeken op
+	Specify first angle endpoint	Geef eerste eindpunt van hoek op
+	Specify first chamfer distance	Geef eerste afschuinafstand op
+	Specify first chamfer distance for rectangles	Geef eerste afschuinafstand voor rechthoeken op
+	Specify first constraint point	Geef eerste relatiepunt op
+	Specify first corner	Geef eerste hoek op
+	Specify first corner point	Geef eerste hoekpunt op
+	Specify first destination point	Geef eerste doelpunt op
+	Specify first end point of circle's diameter	Geef eerste eindpunt van cirkeldiameter op
+	Specify first endpoint of edge	Geef eerste eindpunt van zijde op
+	Specify first extension line origin	Geef oorsprong van eerste hulplijn op
+	Specify first point	Geef eerste punt op
+	Specify first point of mirror line	Geef eerste punt van spiegellijn op
+	Specify first point on circle	Geef eerste punt op cirkel op
+	Specify first point on circle: _tan to	Geef eerste punt op cirkel op: _tan aan
+	Specify first source point	Geef eerste bronpunt op
+	Specify height	Geef hoogte op
+	Specify helix height or	Geef spiraalhoogte op of
+	Specify included angle	Geef ingesloten hoek op
+	Specify insertion base point	Geef invoegbasispunt op
+	Specify insertion point	Geef invoegpunt op
+	A drawing opened from a file keeps that file's format.	Een uit een bestand geopende tekening behoudt het formaat van dat bestand.
+	An array that would create more objects than this is refused.	Een reeks die meer objecten dan dit zou aanmaken wordt geweigerd.
+	CADCraft keeps these preferences, object snap modes and drafting toggles for your user account and restores them when it starts.	CADCraft bewaart deze voorkeuren, objectvangmodi en tekenopties voor uw gebruikersaccount en herstelt ze bij het opstarten.
+	Changes apply at once and are kept for next time.	Wijzigingen worden direct toegepast en bewaard voor de volgende keer.
+	Command line history	Opdrachtregelgeschiedenis
+	Copy as JSON	Kopiëren als JSON
+	Crosshair size	Grootte dradenkruis
+	Crossing selection color:	Kleur kruisselectie:
+	Display	Weergave
+	Exclude:	Uitsluiten:
+	Grip size	Grootte van grepen
+	Grips	Grepen
+	Groups	Groepen
+	Hatches	Arceringen
+	Hold Shift to add to the selection	Houd Shift ingedrukt om aan selectie toe te voegen
+	Indicate selection area	Selectiegebied weergeven
+	Keep the system cursor visible over the drawing area	Systeemcursor zichtbaar houden boven het tekengebied
+	Largest array	Grootste reeks
+	Layout paper	Lay-outpapier
+	Model background	Modelachtergrond
+	Object grouping	Objectgroepering
+	Object selection limit for display of grips	Selectielimiet voor weergave van grepen
+	Object snap aperture	Opening voor objectvangfunctie
+	Object snap marker size	Grootte van objectvangmarkering
+	Objects on locked layers	Objecten op vergrendelde lagen
+	Open and Save	Openen en opslaan
+	Options	Opties
+	Options...	Opties...
+	Pickbox size	Grootte van selectievakje
+	Preview	Voorbeeld
+	Profiles	Profielen
+	Reset keeps the interface language.	Herstellen behoudt de interfacetaal.
+	Reset to Defaults	Standaardinstellingen herstellen
+	Save new drawings as	Nieuwe tekeningen opslaan als
+	Screen magnifiers, screen readers and recorders follow the system cursor.	Schermvergrootglazen, schermlezers en opnameprogramma's volgen de systeemcursor.
+	Select objects first, then choose a command	Selecteer eerst objecten en kies daarna een opdracht
+	Selection	Selectie
+	Selection Area Effect	Effect voor selectiegebied
+	Selection Preview Filter	Filter voor selectievoorbeeld
+	Selection area opacity:	Dekking van selectiegebied:
+	Selection effect color	Kleur van selectie-effect
+	Selection modes	Selectiemodi
+	Selection preview	Selectievoorbeeld
+	Settings...	Instellingen...
+	Show Quick Properties for selected objects	Snelle eigenschappen tonen voor geselecteerde objecten
+	Show grips	Grepen tonen
+	Snap, grid, polar tracking and Dynamic Input:	Vangfunctie, raster, polaire sporen en dynamische invoer:
+	Tables	Tabellen
+	The aperture is how near the cursor must come to a point for an object snap to find it.	De opening bepaalt hoe dicht de cursor bij een punt moet komen voordat een objectvangfunctie het vindt.
+	User Preferences	Gebruikersvoorkeuren
+	Visual Effect Settings	Instellingen voor visuele effecten
+	Visual Effect Settings...	Instellingen voor visuele effecten...
+	When a command is active	Wanneer een opdracht actief is
+	When no command is active	Wanneer geen opdracht actief is
+	Window selection color:	Kleur vensterselectie:
+	Xrefs	Xrefs
+	objects	objecten
+	Specify inside diameter of donut	Geef binnendiameter van ring op
+	Specify leader arrowhead location	Geef positie van aanwijspijlpunt op
+	Specify leader endpoint	Geef eindpunt van aanwijslijn op
+	Specify leader landing location	Geef positie van aanwijslijnstuk op
+	Specify length for rectangles	Geef lengte voor rechthoeken op
+	Specify length of chord	Geef lengte van koorde op
+	Specify length of segment	Geef lengte van segment op
+	Specify line width for rectangles	Geef lijnbreedte voor rechthoeken op
+	Specify location for new vertex	Geef positie voor nieuw hoekpunt op
+	Specify minimum length of arc	Geef minimale booglengte op
+	Specify new end point	Geef nieuw eindpunt op
+	Specify new location for marked vertex	Geef nieuwe positie voor gemarkeerd hoekpunt op
+	Specify new width for all segments	Geef nieuwe breedte voor alle segmenten op
+	Specify next point	Geef volgend punt op
+	Specify offset distance	Geef parallelafstand op
+	Specify offset distance or	Geef parallelafstand op of
+	Specify opposite corner	Geef tegenoverliggende hoek op
+	Specify other corner point	Geef ander hoekpunt op
+	Specify other endpoint of axis	Geef ander eindpunt van as op
+	Specify outside diameter of donut	Geef buitendiameter van ring op
+	Specify point	Geef punt op
+	Specify point on object for first tangent of circle	Geef punt op object voor eerste raaklijn van cirkel op
+	Specify point on object for second tangent of circle	Geef punt op object voor tweede raaklijn van cirkel op
+	Specify point on side to offset	Geef punt aan zijde voor parallel kopiëren op
+	Specify radius of arc	Geef straal van boog op
+	Specify radius of circle	Geef straal van cirkel op
+	Specify rotation angle	Geef rotatiehoek op
+	Specify rotation angle of text	Geef rotatiehoek van tekst op
+	Specify rotation angle or	Geef rotatiehoek op of
+	Specify scale factor	Geef schaalfactor op
+	Specify second angle endpoint	Geef tweede eindpunt van hoek op
+	Specify second break point	Geef tweede onderbrekingspunt op
+	Specify second chamfer distance for rectangles	Geef tweede afschuinafstand voor rechthoeken op
+	Specify second constraint point	Geef tweede relatiepunt op
+	Specify second destination point	Geef tweede doelpunt op
+	Specify second end point of circle's diameter	Geef tweede eindpunt van cirkeldiameter op
+	Specify second endpoint of edge	Geef tweede eindpunt van zijde op
+	Specify second extension line origin	Geef oorsprong van tweede hulplijn op
+	Specify second point	Geef tweede punt op
+	Specify second point of arc	Geef tweede punt van boog op
+	Specify second point of mirror line	Geef tweede punt van spiegellijn op
+	Specify second point on circle	Geef tweede punt op cirkel op
+	Specify second point on circle: _tan to	Geef tweede punt op cirkel op: _tan aan
+	Specify second point or <use first point as displacement>	Geef tweede punt op of <eerste punt als verplaatsing gebruiken>
+	Specify second source point	Geef tweede bronpunt op
+	Specify side to offset	Geef zijde voor parallel kopiëren op
+	Specify start angle	Geef beginhoek op
+	Specify start point	Geef beginpunt op
+	Specify start point of arc	Geef beginpunt van boog op
+	Specify start point of polyline	Geef beginpunt van polylijn op
+	Specify start point of text	Geef beginpunt van tekst op
+	Specify starting width	Geef beginbreedte op
+	Specify starting width for next segment	Geef beginbreedte voor volgend segment op
+	Specify tangent direction for the start point of arc	Geef raaklijnrichting voor beginpunt van boog op
+	Specify the elevation for rectangles	Geef hoogtepeil voor rechthoeken op
+	Specify thickness for rectangles	Geef dikte voor rechthoeken op
+	Specify third point on circle	Geef derde punt op cirkel op
+	Specify third point on circle: _tan to	Geef derde punt op cirkel op: _tan aan
+	Specify third source point or <continue>	Geef derde bronpunt op of <doorgaan>
+	Specify through point	Geef doorgangspunt op
+	Specify top diameter	Geef bovendiameter op
+	Specify top radius or	Geef bovenstraal op of
+	Specify total angle	Geef totale hoek op
+	Specify total length or	Geef totale lengte op of
+	Specify width for rectangles	Geef breedte voor rechthoeken op
+	Sphere	Bol
+	Spline	Spline
+	Spline Edit	Spline bewerken
+	Stack (type 1/2 then select)	Breuk (typ 1/2 en selecteer)
+	Standard	Standaard
+	Start	Start
+	Start Width	Beginbreedte
+	Start X	Begin X
+	Start Y	Begin Y
+	Start angle	Beginhoek
+	Start, Center, Angle	Begin, middelpunt, hoek
+	Start, Center, End	Begin, middelpunt, einde
+	Start, Center, Length	Begin, middelpunt, lengte
+	Start, End, Angle	Begin, einde, hoek
+	Start, End, Direction	Begin, einde, richting
+	Start, End, Radius	Begin, einde, straal
+	Status	Status
+	Status Bar	Statusbalk
+	Stretch	Uitrekken
+	Style: Standard	Stijl: Standard
+	Subtract	Aftrekken
+	Sweep	Vegen
+	Switch Drawing	Tekening wisselen
+	Switch Layout	Lay-out wisselen
+	Switch between model space in a viewport and paper space	Wisselen tussen modelruimte in een kijkvenster en papierruimte
+	Symmetric	Symmetrisch
+	Synchronize Attributes	Attributen synchroniseren
+	To	Naar
+	Toggle PICKADD (off: each pick replaces the selection)	PICKADD schakelen (uit: elke keuze vervangt de selectie)
+	Toggle PICKADD (on: picks add to the selection)	PICKADD schakelen (aan: keuzes worden aan de selectie toegevoegd)
+	TOP	BOVEN
+	Table	Tabel
+	Table Breaks	Tabelonderbrekingen
+	Table Cell Style	Tabelcelstijl
+	Table Style...	Tabelstijl...
+	Table style	Tabelstijl
+	Table...	Tabel...
+	Tan, Tan, Radius	Raaklijn, raaklijn, straal
+	Tan, Tan, Tan	Raaklijn, raaklijn, raaklijn
+	Tangent	Raaklijn
+	Temporary track point	Tijdelijk spoorpunt
+	Text	Tekst
+	Text Editor	Teksteditor
+	Text Height	Teksthoogte
+	Text Style...	Tekststijl...
+	Text override	Tekstoverschrijving
+	Text style	Tekststijl
+	Thaw All Layers	Alle lagen ontdooien
+	Thaw Layer	Laag ontdooien
+	There is nothing here yet.	Er is hier nog niets.
+	Thickness	Dikte
+	Time	Tijd
+	To get started, create or open a drawing.	Maak of open een tekening om te beginnen.
+	Tool Bar	Werkbalk
+	Tool Sets	Gereedschapssets
+	Tools	Extra
+	Torus	Torus
+	Trace	Spoor
+	Track orthogonally only	Alleen orthogonaal sporen volgen
+	Track using all polar angle settings	Sporen volgen met alle polaire hoekinstellingen
+	Transparency	Transparantie
+	Trim	Bijsnijden
+	True Color	Ware kleuren
+	Turn All Layers On	Alle lagen inschakelen
+	Turn Off Layer	Laag uitschakelen
+	Turn On Layer	Laag inschakelen
+	Turn Quick Properties off (QPMODE)	Snelle eigenschappen uitschakelen (QPMODE)
+	Type	Type
+	Type a command	Typ een opdracht
+	Type text; Enter starts a new paragraph	Typ tekst; Enter begint een nieuwe alinea
+	UCS Icon	UCS-pictogram
+	Undo	Ongedaan maken
+	Undo (⌘Z)	Ongedaan maken (⌘Z)
+	Ungroup	Groep opheffen
+	Union	Verenigen
+	Unisolate Layer	Laagisolatie opheffen
+	Units Conversion	Eenhedenconversie
+	Units...	Eenheden...
+	Unlock Layer	Laag ontgrendelen
+	Unlock viewport	Kijkvenster ontgrendelen
+	Unmerge Cells	Cellen splitsen
+	Unsaved Layer State	Niet-opgeslagen laagstatus
+	Up	Omhoog
+	Update Data Links	Gegevenskoppelingen bijwerken
+	Update	Bijwerken
+	Use System Setting	Systeeminstelling gebruiken
+	User	Gebruiker
+	User Parameters	Gebruikersparameters
+	Username	Gebruikersnaam
+	Volume	Volume
+	VP Color	KV-kleur
+	VP Freeze	KV-bevriezen
+	Value	Waarde
+	Value:	Waarde:
+	Variables	Variabelen
+	Version	Versie
+	Version 2000	Versie 2000
+	Version 2004	Versie 2004
+	Version 2007	Versie 2007
+	Version 2010	Versie 2010
+	Version 2013	Versie 2013
+	Version 2018	Versie 2018
+	Version {version}	Versie {version}
+	Vertical	Verticaal
+	VerticalDistance	Verticale afstand
+	View	Weergave
+	ViewCube	ViewCube
+	Viewport	Kijkvenster
+	Viewport Layer Freeze	Laag bevriezen in kijkvenster
+	Viewport Properties	Eigenschappen van kijkvenster
+	Viewport is locked	Kijkvenster is vergrendeld
+	Viewport scale	Schaal van kijkvenster
+	Viewport {id}	Kijkvenster {id}
+	Viewports	Kijkvensters
+	W	W
+	WCS	WCS
+	White	Wit
+	Width factor	Breedtefactor
+	Window	Venster
+	Wipeout	Afdekking
+	Workspace Switching	Werkruimte wisselen
+	Write Block	Blok wegschrijven
+	Xline	Constructielijn
+	Yellow	Geel
+	Yes	Ja
+	Zoom	Zoomen
+	Zoom All	Alles zoomen
+	Zoom Dynamic	Dynamisch zoomen
+	Zoom Extents	Omvang zoomen
+	Zoom In	Inzoomen
+	Zoom Object	Object zoomen
+	Zoom Out	Uitzoomen
+	Zoom Previous	Vorige zoom
+	Zoom Realtime	Realtime zoomen
+	Zoom Window	Venster zoomen
+	error	fout
+	{contributors} · {commits}	{contributors} · {commits}
+	{kind} (constraint {id})	{kind} (relatie {id})
+	{kind} constraint {name} = {expression}  (double-click to edit)	Relatie {kind} {name} = {expression}  (dubbelklik om te bewerken)
+	{name}: {distance} < {angle}°	{name}: {distance} < {angle}°
+	ƒx  New User Parameter	ƒx  Nieuwe gebruikersparameter
+	ΔLOC	ΔRegels
+	−Bin	−Bin
+	−LOC	−Regels
+	⌘↩ to finish	⌘↩ om te voltooien
+@plural	{n} commit	{n} commit|{n} commits
+@plural	{n} contributor	{n} bijdrager|{n} bijdragers
+	Drawing as bytes	Tekening als bytes
+	Services	Voorzieningen
+	Hide CADCraft	CADCraft verbergen
+	Hide Others	Andere verbergen
+	Accessibility	Toegankelijkheid
+	Show System Cursor	Systeemcursor tonen
+	Animation Effects	Animatie-effecten
+	Interface scale	Interfaceschaal
+	Import...	Importeren...
+	Export...	Exporteren...
+	Batch Publish...	Batch publiceren...
+	Scale List...	Schaallijst...
+	Annotative Object Scale	Schaal voor annotatieve objecten
+	Add Current Scale	Huidige schaal toevoegen
+	Delete Current Scale	Huidige schaal verwijderen
+	Add/Delete Scales...	Schalen toevoegen/verwijderen...
+	Synchronize Multiple-scale Positions	Posities voor meerdere schalen synchroniseren
+	Annotative Update	Annotatieve objecten bijwerken
+	Show Annotative Objects	Annotatieve objecten tonen
+	Current Scale Only	Alleen huidige schaal
+	All Scales	Alle schalen
+	Drawing Recovery Manager...	Tekeningherstelbeheer...
+	Tolerance...	Tolerantie...
+	Add Vertex	Hoekpunt toevoegen
+	Remove Vertex	Hoekpunt verwijderen
+	Convert to Arc	Omzetten naar boog
+	Convert to Line	Omzetten naar lijn
+	Stretch Vertex	Hoekpunt uitrekken
+	Edit Array	Reeks bewerken
+	Close Array Editing	Reeksbewerking sluiten
+	Multiline...	Multilijn...
+	Multiline Style...	Multilijnstijl...
+	Solid Editing	Volumes bewerken
+	3D Mouse...	3D-muis...
+	3D Mouse	3D-muis
+	Calibrate 3D Mouse	3D-muis kalibreren
+	3D Mouse Navigation	3D-muisnavigatie
+	3D mouse input is unavailable on this platform	3D-muisinvoer is niet beschikbaar op dit platform
+	No supported 3D mouse found	Geen ondersteunde 3D-muis gevonden
+	Release the 3D mouse to calibrate its resting position	Laat de 3D-muis los om de rustpositie te kalibreren
+	3D mouse connected	3D-muis verbonden
+	3D mouse busy, possibly 3DxWare or missing device permissions	3D-muis bezet, mogelijk door 3DxWare of ontbrekende apparaatrechten
+	3D mouse disconnected	Verbinding met 3D-muis verbroken
+	3D mouse input could not be started	3D-muisinvoer kon niet worden gestart
+	Enable 3D mouse navigation	3D-muisnavigatie inschakelen
+	Pan sensitivity	Verschuifgevoeligheid
+	Zoom sensitivity	Zoomgevoeligheid
+	Reverse zoom direction	Zoomrichting omkeren
+	Calibrate	Kalibreren
+	Move sideways to pan; push/pull or twist to zoom.	Beweeg zijwaarts om te verschuiven; duw/trek of draai om te zoomen.
+	Left device button: zoom extents. Right device button: calibrate.	Linkerknop: omvang zoomen. Rechterknop: kalibreren.
+	More toolbar commands	Meer werkbalkopdrachten
+	Automatic save every	Automatisch opslaan elke
+	min	min
+	Automatic save file location	Bestandslocatie voor automatisch opslaan
+	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	Tekeningen zonder bestand worden opgeslagen in de standaardversie. 0 minuten schakelt automatisch opslaan uit.
+	Time-sensitive right-click: a quick click is Enter, holding opens the menu	Tijdgevoelige rechtermuisklik: kort klikken is Enter, ingedrukt houden opent het menu
+	Turned off, a right-click while a command runs always opens the shortcut menu.	Indien uitgeschakeld opent een rechtermuisklik tijdens een opdracht altijd het snelmenu.
+	Hatch Pattern	Arceerpatroon
+	Search for pattern	Patroon zoeken
+	Run Script...	Script uitvoeren...
+	Query Texts	Teksten opvragen
+	Analyze Shapes	Vormen analyseren
+	Hatch Pick	Arcering kiezen
+	Hatch and Gradient	Arcering en kleurverloop
+	Color 1	Kleur 1
+	Color 2	Kleur 2
+	Shape	Vorm
+	Curved	Gebogen
+	Spherical	Bolvormig
+	Hemispherical	Halfbolvormig
+	Inverted	Geïnverteerd
+	Centered	Gecentreerd
+	Hatch origin	Arceeroorsprong
+	Use current origin	Huidige oorsprong gebruiken
+	Specified origin	Opgegeven oorsprong
+	Click to set new origin	Klik om nieuwe oorsprong in te stellen
+	Default to boundary extents	Standaard op begrenzingomvang
+	Bottom left	Linksonder
+	Bottom right	Rechtsonder
+	Top left	Linksboven
+	Top right	Rechtsboven
+	Boundaries	Begrenzingen
+	Add: Pick points	Toevoegen: punten kiezen
+	Add: Select objects	Toevoegen: objecten selecteren
+	Boundaries picked: {n}	Gekozen begrenzingen: {n}
+	Select boundaries to remove	Selecteer te verwijderen begrenzingen
+	Island	Eiland
+	Associative	Associatief
+	Create separate hatches	Afzonderlijke arceringen maken
+	Island detection	Eilanddetectie
+	Normal	Normaal
+	Outer	Buitenste
+	Ignore	Negeren
+	Origin: {x}, {y}	Oorsprong: {x}, {y}
+	Sheet Books to PDF...	Tekeningboeken naar PDF...
+	Not a number or distance: {text}	Geen getal of afstand: {text}
+	Dynamic Block Data	Gegevens dynamisch blok
+	Custom	Aangepast
+	Dynamic Block Reference	Dynamische blokreferentie
+	Set Dynamic Property	Dynamische eigenschap instellen
+	Dynamic Block Grips	Grepen dynamisch blok
+	Drag Dynamic Grip	Dynamische greep slepen
+	Save Block	Blok opslaan
+	Save Block As	Blok opslaan als
+	Close Block Editor	Blokeditor sluiten
+	Unsaved changes	Niet-opgeslagen wijzigingen
+	Edit Block Definition	Blokdefinitie bewerken
+	Block to create or edit	Blok om te maken of te bewerken
+	Open in Block Editor	Openen in blokeditor
+	This drawing	Deze tekening
+	contains authoring elements. Open in Block Editor?	bevat ontwerpelementen. Openen in blokeditor?
+	New block	Nieuw blok
+	Italic	Cursief
+	Underline	Onderstrepen
+	Overline	Bovenstrepen
+	Justify	Uitvullen
+	Text color	Tekstkleur
+	Click the ruler to add a tab stop, right-click to remove one	Klik op de liniaal om een tabstop toe te voegen, klik rechts om er een te verwijderen
+	Select using two clicks only	Alleen met twee klikken selecteren
+	Define each corner of the selection window with a separate click.	Bepaal elke hoek van het selectievenster met een afzonderlijke klik.
+	Type an alias name.	Typ een aliasnaam.
+	Choose the command the alias starts.	Kies de opdracht die de alias start.
+	{command} is an unknown command.	{command} is een onbekende opdracht.
+	{alias} is already defined; select it and use Edit.	{alias} is al gedefinieerd; selecteer deze en gebruik Bewerken.
+	More than {n} aliases.	Meer dan {n} aliassen.
+	Alias file: {file}	Aliasbestand: {file}
+	No alias file loaded. REINIT replaces these aliases with a file's.	Geen aliasbestand geladen. REINIT vervangt deze aliassen door die uit een bestand.
+	Alias	Alias
+	Command	Opdracht
+	overrides built-in	overschrijft ingebouwd
+	built-in	ingebouwd
+	Add…	Toevoegen…
+	Edit…	Bewerken…
+	Save alias	Alias opslaan
+	Discard	Verwerpen
+	Customize	Aanpassen
+	Edit Command Aliases (PGP)...	Opdrachtaliassen bewerken (PGP)...
+	List Xdata	XData weergeven
+	Edit Xdata	XData bewerken
+	Edit Xdata (XDEDIT)	XData bewerken (XDEDIT)
+menu	View	Beeld
+menu	Draw	Tekenen
+menu	Dimension	Maatvoering
+menu	Modify	Wijzigen
+	✏ Edit XData (XDEDIT)	✏ XData bewerken (XDEDIT)
+	Open visual XData Editor dialog	Visuele XData-editor openen
+	📋 Copy Values	📋 Waarden kopiëren
+	Copy XData values (Key,Value) to clipboard	Kopieer XData-waarden (Key,Value) naar klembord
+	Click to copy value to clipboard	Klik om waarde te kopiëren naar klembord
+	✓ XData values copied to clipboard	✓ XData-waarden gekopieerd naar klembord
+	Selection canceled — previous object kept.	Selectie geannuleerd — vorig object behouden.
+	Drag left or right to resize this column	Sleep naar links/rechts om deze kolom breder of smaller te maken
+	XDATA Editor (XDEDIT)	XDATA Editor (XDEDIT)
+	No object selected.	Geen object geselecteerd.
+	🎯 Select object in drawing	🎯 Selecteer object in tekening
+	Object: {kind}	Object: {kind}
+	Layer: {layer}	Laag: {layer}
+	Handle: {handle}	Handle: {handle}
+	🎯 Select Another Object	🎯 Selecteer ander object
+	Hide editor temporarily, pick another object in the drawing, and open it in XDEDIT	Verberg editor tijdelijk, klik een ander object in de tekening aan en open deze direct in XDEDIT
+	Next ▶	Volgend ▶
+	Step to the next object with XData in the selection or drawing	Ga naar het volgende object met XData in de selectie of tekening
+	◀ Previous	◀ Vorig
+	Step to the previous object with XData in the selection or drawing	Ga naar het vorige object met XData in de selectie of tekening
+	📋 Copy JSON	📋 Copy JSON
+	Copy all XData as structured JSON to clipboard	Kopieer alle XData als gestructureerde JSON naar klembord
+	✓ JSON copied to clipboard	✓ JSON gekopieerd naar klembord
+	📋 Copy Text	📋 Copy Text
+	Copy all XData as text to clipboard	Kopieer alle XData als tekst naar klembord
+	✓ XData text copied to clipboard	✓ XData-tekst gekopieerd naar klembord
+	AppID (1001):	AppID (1001):
+	New AppID (e.g. CAD_XDATA)	Nieuwe AppID (bijv. CAD_XDATA)
+	+ Add AppID	+ AppID toevoegen
+	🗑 Delete AppID	🗑 AppID verwijderen
+	Remove this Application and its XData from the entity	Verwijder deze applicatie en bijbehorende XData van het object
+	Application removed (click Apply to save)	Applicatie verwijderd (klik op Opslaan om toe te passen)
+	🔍 Filter:	🔍 Filter:
+	Search key or value (e.g. THEMA, DIEPTE)...	Zoek op key of waarde (bijv. THEMA, DIEPTE)...
+	Key width:	Key breedte:
+	Drag this value or the column divider ⇔ to resize the Key column	Sleep dit getal of de kolomrand ⇔ om de Property / Key kolom breder te maken
+	Value width:	Value breedte:
+	Drag this value or the column divider ⇔ to resize the Value column	Sleep dit getal of de kolomrand ⇔ om de Value kolom breder te maken
+	Smart Key=Value Columns	Slimme Key=Value kolommen
+	Split 'KEY=VALUE' or 'Key: Value' into separate editable Key and Value fields	Splits 'KEY=VALUE' of 'Key: Value' in losse bewerkbare Key- en Value-velden
+	This object currently has no user XData.	Dit object heeft momenteel geen gebruikers-XData.
+	+ Create CAD_XDATA Application	+ CAD_XDATA applicatie aanmaken
+	DXF Code	DXF-code
+	Property / Key ⇔	Property / Key ⇔
+	Value (Selectable & Editable) ⇔	Value (Selecteerbaar & Bewerkbaar) ⇔
+	Raw Value (Selectable & Editable) ⇔	Ruwe waarde (Selecteerbaar & Bewerkbaar) ⇔
+	Actions	Acties
+	Copy value to clipboard	Kopieer waarde naar klembord
+	✓ Copied: {val}	✓ Gekopieerd: {val}
+	Move row up	Rij omhoog verplaatsen
+	Move row down	Rij omlaag verplaatsen
+	Delete this XData row	Verwijder deze XData-rij
+	Add Row:	Rij toevoegen:
+	Key (e.g. OPMERKING)	Key (bijv. OPMERKING)
+	+ Add Property	+ Eigenschap toevoegen
+	● Unsaved changes	● Niet-opgeslagen wijzigingen
+	Ready — click '🎯 Select Next Object' or '◀ Previous / Next ▶' to switch objects.	Gereed — klik '🎯 Selecteer volgend object' of '◀ Vorig / Volgend ▶' om te wisselen.
+	↺ Revert	↺ Herstellen
+	✔ Apply / Save XData	✔ Toepassen / XData opslaan
+	Write modified XData to the entity (Undoable with Ctrl+Z)	Schrijf gewijzigde XData naar het object (ongedaan maken met Ctrl+Z)
+	✔ Save & Select Next Object	✔ Opslaan & Selecteer volgend object
+	🎯 Select Next Object	🎯 Selecteer volgend object
+	Save any changes and directly pick the next object in the drawing	Sla eventuele wijzigingen op en klik direct een volgend object aan in de tekening
+	Object {idx1}/{total} loaded ({kind} — {handle})	Object {idx1}/{total} geladen ({kind} — {handle})
+	↺ Reverted to saved entity XData	↺ Hersteld naar opgeslagen XData van object
+	✔ XData saved to entity (Undoable)	✔ XData opgeslagen op object (Ctrl+Z mogelijk)
+	Error: {err}	Fout: {err}
+	Command & XData Output (select text + Ctrl+C to copy)	Opdracht- & XData-uitvoer (selecteer tekst + Ctrl+C om te kopiëren)
+	Close History Window (F2)	Geschiedenisvenster sluiten (F2)
+	Open visual XData Editor for selected object	Open visuele XData-editor voor geselecteerd object
+	Copy All	Alles kopiëren
+	Copy history output to clipboard	Kopieer geschiedenisuitvoer naar klembord
+	⚠ Entity XData changed outside editor — click Revert before saving.	⚠ Object-XData is buiten de editor gewijzigd — klik op Herstellen vóór het opslaan.
+	Save changes to {name}?	Wijzigingen in {name} opslaan?
+	Your changes will be lost if you don't save them.	Uw wijzigingen gaan verloren als u ze niet opslaat.
+	Don't Save	Niet opslaan
+	+  |  {view} ({yaw}°, {pitch}°)  |  3D Orbit Wireframe	+  |  {view} ({yaw}°, {pitch}°)  |  3D-baan draadmodel
+	.NET Plugin Bridge	.NET-plug-inbrug
+	3D Orbit	3D-baan
+	3D Views	3D-weergaven
+	Adjust Image...	Afbeelding aanpassen...
+	Adjust...	Aanpassen...
+	Analyze Usage	Gebruik analyseren
+	Angstroms	Ångström
+	Apply to Layout	Toepassen op lay-out
+	Architectural	Architectuur
+	Arrow size	Pijlgrootte
+	Associate	Associëren
+	Astronomical Units	Astronomische eenheden
+	Attach Image...	Afbeelding koppelen...
+	AutoLISP (LSP)	AutoLISP (LSP)
+	AutoLISP / VB.NET / C# IDE...	AutoLISP / VB.NET / C# IDE...
+	AutoLISP / VBA IDE...	AutoLISP / VBA IDE...
+	B	V
+	Back	Achter
+	CADCraft	CADCraft
+	Center the plot	Plot centreren
+	Centimeters	Centimeters
+	Change Properties	Eigenschappen wijzigen
+	Clip Image	Afbeelding bijsnijden
+	Decameters	Decameters
+	Decimal	Decimaal
+	Decimal Degrees	Decimale graden
+	Decimeters	Decimeters
+	Deg/Min/Sec	Gr/Min/Sec
+	Dim scale overall	Algehele maatschaal
+	Drawing Units	Tekeningeenheden
+	Engineering	Technisch
+	Enter block names to extract	Voer bloknamen in om te extraheren
+	Enter geometric characteristic	Voer geometrisch kenmerk in
+	Enter name of LISP file to load	Voer de naam in van het te laden LISP-bestand
+	Feet	Voet
+	First corner	Eerste hoek
+	Fit to paper	Passend op papier
+	Fractional	Breuk
+	Frame	Kader
+	Front	Voor
+	Gigameters	Gigameters
+	Grads	Decimale graden (gon)
+	Hectometers	Hectometers
+	Image	Afbeelding
+	Image Frame	Afbeeldingskader
+	Imperial (inches)	Imperiaal (inches)
+	Implied Loops	Impliciete lussen
+	Inches	Inches
+	Insertion scale	Invoegschaal
+	Kilometers	Kilometers
+	Landscape	Liggend
+	Layouts	Lay-outs
+	Light Years	Lichtjaren
+	Limits	Limieten
+	Load .NET DLL / LISP Application (NETLOAD)...	.NET DLL / LISP-toepassing laden (NETLOAD)...
+	Load Application (NETLOAD)...	Toepassing laden (NETLOAD)...
+	Meters	Meters
+	Metric (millimetres)	Metrisch (millimeters)
+	Microinches	Micro-inches
+	Microns	Microns
+	Miles	Mijlen
+	Millimeters	Millimeters
+	Mils	Mils
+	Model Tab	Tabblad Model
+	NE Isometric	NO Isometrisch
+	NW Isometric	NW Isometrisch
+	Nanometers	Nanometers
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	Nieuwe tekeningen en de eerste tekening bij het opstarten gebruiken deze eenheden, tenzij er een standaardsjabloon is ingesteld (QNEWTEMPLATE).
+	Opposite corner	Tegenoverliggende hoek
+	Orientation	Afdrukstand
+	Paper size	Papierformaat
+	Parsecs	Parsecs
+	Plot area	Plotgebied
+	Plot object lineweights	Lijndiktes van objecten plotten
+	Plot offset	Plotoffset
+	Plot transparency	Transparantie plotten
+	Portrait	Staand
+	Precision	Nauwkeurigheid
+	Printer/plotter	Printer/plotter
+	Radians	Radialen
+	Raster Image Reference...	Rasterafbeeldingsreferentie...
+	SE Isometric	ZO Isometrisch
+	SW Isometric	ZW Isometrisch
+	Sample output	Voorbeelduitvoer
+	Scientific	Wetenschappelijk
+	Surveyor's Units	Landmeetkundige eenheden
+	Top (2D Plan)	Boven (2D-plattegrond)
+	US Survey Feet	US landmeetkundige voet
+	US Survey Inch	US landmeetkundige inch
+	US Survey Mile	US landmeetkundige mijl
+	US Survey Yard	US landmeetkundige yard
+	Unitless	Eenheidloos
+	Units of new drawings	Eenheden van nieuwe tekeningen
+	Units to scale inserted content	Eenheden voor het schalen van ingevoegde inhoud
+	View Resolution	Weergaveresolutie
+	Window <	Venster <
+	X	X
+	X offset (mm)	X-offset (mm)
+	Y	Y
+	Y offset (mm)	Y-offset (mm)
+	Yards	Yards
+	.NET command started	.NET-opdracht gestart
+	0. Empty file (New)	0. Leeg bestand (Nieuw)
+	1. AutoLISP: Basic Math & Commands	1. AutoLISP: Basiswiskunde & opdrachten
+	2. AutoLISP: Survey Marker (c:meetpunt)	2. AutoLISP: Meetpunt-symbool (c:meetpunt)
+	3. VB.NET Plugin (.vb -> .dll)	3. VB.NET-plug-in (.vb -> .dll)
+	4. C# Plugin (.cs -> .dll)	4. C#-plug-in (.cs -> .dll)
+	Added to Startup Suite (Auto-Load at startup & per drawing)	Toegevoegd aan opstartsuite (automatisch laden bij opstarten & per tekening)
+	Auto-Load	Automatisch laden
+	AutoLISP / VB.NET / C# IDE & NETLOAD Studio	AutoLISP / VB.NET / C# IDE & NETLOAD Studio
+	AutoLISP Commands (click to run)	AutoLISP-opdrachten (klik om uit te voeren)
+	AutoLISP Editor (.lsp)	AutoLISP-editor (.lsp)
+	Bottom	Onder
+	C# Plugin Editor (.cs)	C#-plug-ineditor (.cs)
+	C# source opened	C#-broncode geopend
+	Clear Log	Logboek wissen
+	Commands	Opdrachten
+	Compact Menu	Compact menu
+	Compilation error	Compilatiefout
+	Compilation failed (see Console)	Compilatie mislukt (zie Console)
+	Compilation succeeded	Compilatie geslaagd
+	Compile & Load .NET DLL	.NET-DLL compileren & laden
+	Console / Output	Console / Uitvoer
+	Error in	Fout in
+	Error: cadcraft-nethost.exe not found next to the application.	Fout: cadcraft-nethost.exe niet gevonden naast de applicatie.
+	Evaluate the LISP code or compile the VB.NET / C# source directly into a .NET DLL	Evalueer de LISP-code of compileer de VB.NET- / C#-broncode rechtstreeks naar een .NET-DLL
+	Failed to invoke compiler	Compiler aanroepen mislukt
+	Failed to load	Laden mislukt
+	Failed to save to	Opslaan mislukt naar
+	Failed to start .NET command	Starten van .NET-opdracht mislukt
+	Failed to write source file	Schrijven van bronbestand mislukt
+	Hide this Studio window and show the compact floating Plugin Commands menu	Dit Studio-venster verbergen en het compacte zwevende menu Plug-in-opdrachten tonen
+	Load & Run LISP	LISP laden & uitvoeren
+	NETLOAD .NET DLL loaded	NETLOAD .NET DLL geladen
+	NETLOAD error in	NETLOAD-fout in
+	NETLOAD failed to run cadcraft-nethost.exe	NETLOAD kan cadcraft-nethost.exe niet uitvoeren
+	Open .lsp / .vb / .cs	Open .lsp / .vb / .cs
+	Open NETLOAD Studio (VBAIDE)	NETLOAD Studio openen (VBAIDE)
+	Open Studio	Studio openen
+	Open the full AutoLISP / VB.NET / C# & NETLOAD Studio	Volledige AutoLISP / VB.NET / C# & NETLOAD Studio openen
+	Plugin Commands	Plug-in-opdrachten
+	Plugins	Plug-ins
+	Quick Expression	Snelle expressie
+	Ready. Open a .dll (.NET VB.NET/C#) or .lsp (AutoLISP) file via NETLOAD.	Gereed. Open een .dll- (.NET VB.NET/C#) of .lsp-bestand (AutoLISP) via NETLOAD.
+	Registered commands	Geregistreerde opdrachten
+	Removed from Startup Suite (Auto-Load)	Verwijderd uit opstartsuite (Automatisch laden)
+	Routine started	Routine gestart
+	Routine started from	Routine gestart vanuit
+	Run .NET command	.NET-opdracht uitvoeren
+	Run command	Opdracht uitvoeren
+	Save the current source code in the editor to disk	De huidige broncode in de editor op schijf opslaan
+	Saved to	Opgeslagen in
+	Select and load a .lsp, .dll, .vb, or .cs file from disk	Selecteer en laad een .lsp-, .dll-, .vb- of .cs-bestand vanaf schijf
+	Show Floating Command Menu	Zwevend opdrachtmenu tonen
+	Template...	Sjabloon...
+	Toggle Startup Suite (Auto-Load at startup)	Opstartsuite in-/uitschakelen (Automatisch laden bij opstarten)
+	Toggle Startup Suite: automatically load this file at startup and in every opened drawing	Opstartsuite schakelen: dit bestand automatisch laden bij het opstarten en in elke geopende tekening
+	VB.NET Plugin Editor (.vb)	VB.NET-plug-in-editor (.vb)
+	VB.NET source opened	VB.NET-broncode geopend
+	cadcraft-nethost.exe not found	cadcraft-nethost.exe niet gevonden
+	cannot read file	kan bestand niet lezen
+	e.g. (+ 1 2) or + 1 2	bijv. (+ 1 2) of + 1 2
+	no [CommandMethod] found	geen [CommandMethod] gevonden
+	Block Description...	Blokbeschrijving...
+	Export Comparison	Vergelijking exporteren
+	Cut with Base Point	Knippen met basispunt
+	Named Viewports...	Benoemde viewports...
+	Replace Block...	Blok vervangen...
+	Check for Updates…	Controleren op updates…
+	CADCraft is up to date.	CADCraft is up-to-date.
+	Could not check for updates.	Kan niet controleren op updates.
+	Linetype scale	Lijntypeschaal
+	Model	Model
+	New layout	Nieuwe lay-out
+	Open sample drawing	Voorbeeldtekening openen
+	Select objects	Objecten selecteren
+	Text height	Teksthoogte
+	Animation effects	Animatie-effecten
+	Edit XData (XDEDIT)	XData bewerken (XDEDIT)
+	Default save version	Standaard opslagversie
+	Interface language	Interfacetaal
+	Interface theme	Interfacethema
+	Multiline text	Meerregelige tekst
+	📋 Copy All	📋 Alles kopiëren
+	🗑 Clear	🗑 Wissen
+	Error	Fout
+	Font	Lettertype
+	Save Layout as Template	Lay-out opslaan als sjabloon

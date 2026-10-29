@@ -32,6 +32,7 @@ mod pline_opts;
 pub mod plotters;
 mod props;
 pub use draw2::breakline::BreaklineOptions;
+pub use inquiry::is_system_xdata_app;
 pub use props::MatchProps;
 pub(crate) use props::{current_color_value, set_current_color_value};
 mod qselect;

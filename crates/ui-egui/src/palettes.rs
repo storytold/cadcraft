@@ -518,9 +518,13 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
 
 /// Properties row: a right-aligned translated label in a 106-point layout box that exposes a Label node to accessibility and names the control added by `add`.
 fn prop_row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
+    prop_row_raw(ui, crate::i18n::t(label), add);
+}
+
+fn prop_row_raw(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
     let t = Tokens::get();
     ui.horizontal(|ui| {
-        let mut job = egui::text::LayoutJob::simple(crate::i18n::t(label).to_string(), crate::theme::body(), t.text_dim, 106.0);
+        let mut job = egui::text::LayoutJob::simple(label.to_string(), crate::theme::body(), t.text_dim, 106.0);
         job.halign = egui::Align::RIGHT;
         let galley = ui.painter().layout_job(job);
         let (lr, label_response) = ui.allocate_exact_size(vec2(118.0, galley.size().y.max(22.0)), Sense::hover());
@@ -628,6 +632,11 @@ fn custom_properties(ui: &egui::Ui, app: &CadApp, h: cadcraft_engine::doc::Handl
 /// A greyed value computed from the geometry.
 fn read_only(ui: &mut egui::Ui, text: &str) {
     value_box(ui, crate::i18n::t(text), false, false).on_hover_text(crate::tl!("Read-only"));
+}
+
+/// A greyed drawing-owned value shown verbatim (not translated).
+fn read_only_raw(ui: &mut egui::Ui, text: &str) {
+    value_box(ui, text, false, false).on_hover_text(crate::tl!("Read-only"));
 }
 
 /// The Properties header: All/My, the selection-type filter and the PICKADD / Select Objects /
@@ -1156,8 +1165,72 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                         });
                     }
                 }
+                if !i.attribs.is_empty() {
+                    group(ui, "Attributes");
+                    for a in &i.attribs {
+                        prop_row_raw(ui, &a.tag, |ui| read_only_raw(ui, &a.text.value));
+                    }
+                }
             }
             _ => {}
+        }
+        if !e.common.xdata.is_empty() {
+            let mut cur_app = String::new();
+            let mut app_header_shown = false;
+            let mut open_xdedit = false;
+            let mut copied_xdata = false;
+            for tag in &e.common.xdata {
+                if tag.code == 1001 {
+                    cur_app = tag.value.trim().to_string();
+                    app_header_shown = false;
+                    continue;
+                }
+                if cadcraft_engine::is_system_xdata_app(&cur_app) {
+                    continue;
+                }
+                if tag.code == 1002 {
+                    continue;
+                }
+                if !app_header_shown {
+                    let hdr = if cur_app.is_empty() { "XData".to_string() } else { format!("XData ({cur_app})") };
+                    group(ui, &hdr);
+                    ui.horizontal(|ui| {
+                        ui.add_space(12.0);
+                        if ui.small_button(crate::tl!("✏ Edit XData (XDEDIT)")).on_hover_text(crate::tl!("Open visual XData Editor dialog")).clicked() {
+                            open_xdedit = true;
+                        }
+                        if ui.small_button(crate::tl!("📋 Copy Values")).on_hover_text(crate::tl!("Copy XData values (Key,Value) to clipboard")).clicked() {
+                            let text = crate::xdedit::XdEditState::from_entity(&e).format_plain_text();
+                            ui.ctx().copy_text(text);
+                            copied_xdata = true;
+                        }
+                    });
+                    app_header_shown = true;
+                }
+                let val_str = tag.value.trim();
+                if let Some((k, v)) = val_str.split_once(": ").or_else(|| val_str.split_once('=')) {
+                    let v_clean = v.trim();
+                    prop_row_raw(ui, k.trim(), |ui| {
+                        if value_box(ui, v_clean, false, false).on_hover_text(crate::tl!("Click to copy value to clipboard")).clicked() {
+                            ui.ctx().copy_text(v_clean.to_string());
+                        }
+                    });
+                } else {
+                    prop_row_raw(ui, &format!("Code {}", tag.code), |ui| {
+                        if value_box(ui, val_str, false, false).on_hover_text(crate::tl!("Click to copy value to clipboard")).clicked() {
+                            ui.ctx().copy_text(val_str.to_string());
+                        }
+                    });
+                }
+            }
+            let handle = e.handle;
+            let _ = d;
+            if copied_xdata {
+                app.set_status(crate::tl!("✓ XData values copied to clipboard"));
+            }
+            if open_xdedit {
+                crate::xdedit::open_for_handle(app, handle);
+            }
         }
     }
     if let Some(mut p) = set {

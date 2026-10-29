@@ -1349,3 +1349,280 @@ menu	View	Nézet
 	Check for Updates…	Frissítések keresése…
 	CADCraft is up to date.	A CADCraft naprakész.
 	Could not check for updates.	A frissítések keresése nem sikerült.
+	Copy All	Összes másolása
+	Copy history output to clipboard	Előzmények másolása a vágólapra
+	Close History Window (F2)	Előzményablak bezárása (F2)
+	Edit XData (XDEDIT)	XData szerkesztése (XDEDIT)
+	Open visual XData Editor for selected object	Vizuális XData-szerkesztő megnyitása a kijelölt objektumhoz
+	Command & XData Output (select text + Ctrl+C to copy)	Parancs- és XData-kimenet (jelölje ki a szöveget + Ctrl+C a másoláshoz)
+	Save changes to {name}?	Menti a(z) {name} módosításait?
+	Your changes will be lost if you don't save them.	A módosítások elvesznek, ha nem menti őket.
+	Don't Save	Ne mentse
+	List Xdata	XData listázása
+	Edit Xdata	XData szerkesztése
+	Edit Xdata (XDEDIT)	XData szerkesztése (XDEDIT)
+	✏ Edit XData (XDEDIT)	✏ XData szerkesztése (XDEDIT)
+	Open visual XData Editor dialog	Vizuális XData-szerkesztő megnyitása
+	📋 Copy Values	📋 Értékek másolása
+	Copy XData values (Key,Value) to clipboard	XData-értékek (Kulcs,Érték) másolása a vágólapra
+	Click to copy value to clipboard	Kattintson az érték vágólapra másolásához
+	✓ XData values copied to clipboard	✓ XData-értékek a vágólapra másolva
+	Selection canceled — previous object kept.	Kijelölés megszakítva — előző objektum megtartva.
+	Drag left or right to resize this column	Húzza balra vagy jobbra az oszlop átméretezéséhez
+	XDATA Editor (XDEDIT)	XDATA-szerkesztő (XDEDIT)
+	No object selected.	Nincs kijelölt objektum.
+	🎯 Select object in drawing	🎯 Objektum kijelölése a rajzon
+	Object: {kind}	Objektum: {kind}
+	Layer: {layer}	Fólia: {layer}
+	Handle: {handle}	Azonosító: {handle}
+	🎯 Select Another Object	🎯 Másik objektum kijelölése
+	Hide editor temporarily, pick another object in the drawing, and open it in XDEDIT	Szerkesztő elrejtése, másik objektum választása a rajzon és megnyitása XDEDIT-ben
+	Next ▶	Következő ▶
+	Step to the next object with XData in the selection or drawing	Lépés a következő XData-val rendelkező objektumra
+	◀ Previous	◀ Előző
+	Step to the previous object with XData in the selection or drawing	Lépés az előző XData-val rendelkező objektumra
+	📋 Copy JSON	📋 JSON másolása
+	Copy all XData as structured JSON to clipboard	Összes XData másolása strukturált JSON-ként a vágólapra
+	✓ JSON copied to clipboard	✓ JSON a vágólapra másolva
+	📋 Copy Text	📋 Szöveg másolása
+	Copy all XData as text to clipboard	Összes XData másolása szövegként a vágólapra
+	✓ XData text copied to clipboard	✓ XData-szöveg a vágólapra másolva
+	AppID (1001):	AppID (1001):
+	New AppID (e.g. CAD_XDATA)	Új AppID (pl. CAD_XDATA)
+	+ Add AppID	+ AppID hozzáadása
+	🗑 Delete AppID	🗑 AppID törlése
+	Remove this Application and its XData from the entity	Alkalmazás és XData-adatainak eltávolítása az objektumról
+	Application removed (click Apply to save)	Alkalmazás eltávolítva (mentéshez kattintson az Alkalmaz gombra)
+	🔍 Filter:	🔍 Szűrő:
+	Search key or value (e.g. THEMA, DIEPTE)...	Kulcs vagy érték keresése (pl. THEMA, DIEPTE)...
+	Key width:	Kulcs szélessége:
+	Drag this value or the column divider ⇔ to resize the Key column	Húzza ezt az értéket vagy az elválasztót ⇔ a Kulcs oszlop átméretezéséhez
+	Value width:	Érték szélessége:
+	Drag this value or the column divider ⇔ to resize the Value column	Húzza ezt az értéket vagy az elválasztót ⇔ az Érték oszlop átméretezéséhez
+	Smart Key=Value Columns	Intelligens Kulcs=Érték oszlopok
+	Split 'KEY=VALUE' or 'Key: Value' into separate editable Key and Value fields	'KEY=VALUE' vagy 'Key: Value' felosztása külön szerkeszthető Kulcs és Érték mezőkre
+	This object currently has no user XData.	Ennek az objektumnak jelenleg nincs felhasználói XData-ja.
+	+ Create CAD_XDATA Application	+ CAD_XDATA alkalmazás létrehozása
+	DXF Code	DXF-kód
+	Property / Key ⇔	Tulajdonság / Kulcs ⇔
+	Value (Selectable & Editable) ⇔	Érték (Kijelölhető és Szerkeszthető) ⇔
+	Raw Value (Selectable & Editable) ⇔	Nyers érték (Kijelölhető és Szerkeszthető) ⇔
+	Actions	Műveletek
+	Copy value to clipboard	Érték másolása a vágólapra
+	✓ Copied: {val}	✓ Másolva: {val}
+	Move row up	Sor mozgatása felfelé
+	Move row down	Sor mozgatása lefelé
+	Delete this XData row	XData-sor törlése
+	Add Row:	Sor hozzáadása:
+	Key (e.g. OPMERKING)	Kulcs (pl. OPMERKING)
+	+ Add Property	+ Tulajdonság hozzáadása
+	● Unsaved changes	● Nem mentett módosítások
+	Ready — click '🎯 Select Next Object' or '◀ Previous / Next ▶' to switch objects.	Kész — kattintson a '🎯 Következő objektum' vagy '◀ Előző / Következő ▶' gombra.
+	↺ Revert	↺ Visszaállítás
+	✔ Apply / Save XData	✔ Alkalmaz / XData mentése
+	Write modified XData to the entity (Undoable with Ctrl+Z)	Módosított XData írása az objektumba (Ctrl+Z-vel visszavonható)
+	✔ Save & Select Next Object	✔ Mentés és következő objektum
+	🎯 Select Next Object	🎯 Következő objektum kijelölése
+	Save any changes and directly pick the next object in the drawing	Módosítások mentése és a következő objektum közvetlen kijelölése
+	Object {idx1}/{total} loaded ({kind} — {handle})	Objektum {idx1}/{total} betöltve ({kind} — {handle})
+	↺ Reverted to saved entity XData	↺ Visszaállítva a mentett XData-ra
+	✔ XData saved to entity (Undoable)	✔ XData mentve az objektumba (Ctrl+Z lehetséges)
+	Error: {err}	Hiba: {err}
+	⚠ Entity XData changed outside editor — click Revert before saving.	⚠ Az XData a szerkesztőn kívül megváltozott — mentés előtt kattintson a Visszaállításra.
+	+  |  {view} ({yaw}°, {pitch}°)  |  3D Orbit Wireframe	+  |  {view} ({yaw}°, {pitch}°)  |  3D keringés drótváz
+	.NET Plugin Bridge	.NET-bővítményhíd
+	3D Orbit	3D keringés
+	3D Views	3D nézetek
+	Add…	Hozzáadás…
+	Adjust Image...	Kép módosítása...
+	Adjust...	Módosítás...
+	Alias	Álnév
+	Alias file: {file}	Álnévfájl: {file}
+	Analyze Shapes	Alakzatok elemzése
+	Analyze Usage	Használat elemzése
+	Angstroms	Angström
+	Apply to Layout	Alkalmazás az elrendezésre
+	Architectural	Építészeti
+	Arrow size	Nyílméret
+	Associate	Asszociálás
+	Astronomical Units	Csillagászati egység
+	Attach Image...	Kép csatolása...
+	AutoLISP (LSP)	AutoLISP (LSP)
+	AutoLISP / VB.NET / C# IDE...	AutoLISP / VB.NET / C# fejlesztői környezet...
+	AutoLISP / VBA IDE...	AutoLISP / VBA fejlesztői környezet...
+	B	F
+	Back	Hátulnézet
+	Break-line Symbol	Törésvonal szimbólum
+	CADCraft	CADCraft
+	Center the plot	Nyomtatás középre igazítása
+	Centimeters	Centiméter
+	Change Properties	Tulajdonságok módosítása
+	Choose the command the alias starts.	Válassza ki az álnév által indított parancsot.
+	Clip Image	Kép levágása
+	Command	Parancs
+	Convert Text to Mtext	Szöveg átalakítása bekezdéses szöveggé
+	Customize	Testreszabás
+	Decameters	Dekaméter
+	Decimal	Decimális
+	Decimal Degrees	Decimális fok
+	Decimeters	Deciméter
+	Define each corner of the selection window with a separate click.	Adja meg a kijelölési ablak minden sarkát külön kattintással.
+	Deg/Min/Sec	Fok/perc/mp
+	Dim scale overall	Méretezés globális léptéke
+	Discard	Elvetés
+	Drawing Units	Rajzi egységek
+	Edit Command Aliases (PGP)...	Parancsálnevek szerkesztése (PGP)...
+	Edit…	Szerkesztés…
+	Engineering	Mérnöki
+	Enter block names to extract	Adja meg a kinyerendő blokkok nevét
+	Enter geometric characteristic	Adja meg a geometriai jellemzőt
+	Enter name of LISP file to load	Adja meg a betöltendő LISP-fájl nevét
+	Explode Attributes to Text	Attribútumok szétbontása szöveggé
+	Express Tools	Express Tools
+	Feet	Láb
+	First corner	Első sarok
+	Fit to paper	Papírhoz igazítás
+	Fractional	Tört
+	Frame	Keret
+	Front	Elölnézet
+	Gigameters	Gigaméter
+	Grads	Újfok
+	Hectometers	Hektométer
+	Image	Kép
+	Image Frame	Képkeret
+	Imperial (inches)	Angolszász (hüvelyk)
+	Implied Loops	Levezetett hurkok
+	Inches	Hüvelyk
+	Insertion scale	Beillesztési lépték
+	Interface scale	Felület léptéke
+	Island	Sziget
+	Kilometers	Kilométer
+	Landscape	Fekvő
+	Layouts	Elrendezések
+	Light Years	Fényév
+	Limits	Határok
+	Load .NET DLL / LISP Application (NETLOAD)...	.NET DLL / LISP alkalmazás betöltése (NETLOAD)...
+	Load Application (NETLOAD)...	Alkalmazás betöltése (NETLOAD)...
+	Meters	Méter
+	Metric (millimetres)	Metrikus (milliméter)
+	Microinches	Mikrohüvelyk
+	Microns	Mikron
+	Miles	Mérföld
+	Millimeters	Milliméter
+	Mils	Mil
+	Model Tab	Modell lap
+	More than {n} aliases.	Több mint {n} álnév.
+	Move/Copy/Rotate	Mozgatás/Másolás/Forgatás
+	NE Isometric	ÉK izometrikus
+	NW Isometric	ÉNY izometrikus
+	Nanometers	Nanométer
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	Az új rajzok és az indításkor megnyíló első rajz ezeket az egységeket használják, kivéve ha alapértelmezett sablon van beállítva (QNEWTEMPLATE).
+	No alias file loaded. REINIT replaces these aliases with a file's.	Nincs betöltve álnévfájl. A REINIT lecseréli ezeket az álneveket egy fájlban lévőkre.
+	Opposite corner	Átlós sarokpont
+	Orientation	Tájolás
+	Paper size	Papírméret
+	Parsecs	Parsec
+	Plot area	Nyomtatási terület
+	Plot object lineweights	Objektum vonalvastagságok nyomtatása
+	Plot offset	Nyomtatási eltolás
+	Plot transparency	Átlátszóság nyomtatása
+	Portrait	Álló
+	Precision	Pontosság
+	Printer/plotter	Nyomtató/plotter
+	Radians	Radián
+	Raster Image Reference...	Raszterkép-referencia...
+	SE Isometric	DK izometrikus
+	SW Isometric	DNY izometrikus
+	Sample output	Minta kimenet
+	Save alias	Álnév mentése
+	Scientific	Tudományos
+	Select boundaries to remove	Válassza ki az eltávolítandó határvonalakat
+	Select using two clicks only	Kijelölés csak két kattintással
+	Surveyor's Units	Földmérési egységek
+	Top (2D Plan)	Felül (2D alaprajz)
+	Type an alias name.	Írjon be egy álnévnevet.
+	US Survey Feet	Amerikai földmérési láb
+	US Survey Inch	Amerikai földmérési hüvelyk
+	US Survey Mile	Amerikai földmérési mérföld
+	US Survey Yard	Amerikai földmérési yard
+	Unitless	Mértékegység nélküli
+	Units of new drawings	Új rajzok mértékegységei
+	Units to scale inserted content	Beillesztett tartalom léptékezési egysége
+	View Resolution	Nézet felbontása
+	Window <	Ablak <
+	X	X
+	X offset (mm)	X eltolás (mm)
+	Y	Y
+	Y offset (mm)	Y eltolás (mm)
+	Yards	Yard
+	built-in	beépített
+	overrides built-in	felülírja a beépítettet
+	{alias} is already defined; select it and use Edit.	A(z) {alias} már definiálva van; jelölje ki, és használja a Szerkesztés műveletet.
+	{command} is an unknown command.	A(z) {command} ismeretlen parancs.
+	📋 Copy All	📋 Összes másolása
+	🗑 Clear	🗑 Törlés
+	.NET command started	.NET-parancs elindítva
+	0. Empty file (New)	0. Üres fájl (Új)
+	1. AutoLISP: Basic Math & Commands	1. AutoLISP: Alapvető matematika és parancsok
+	2. AutoLISP: Survey Marker (c:meetpunt)	2. AutoLISP: Mérési pont (c:meetpunt)
+	3. VB.NET Plugin (.vb -> .dll)	3. VB.NET-bővítmény (.vb -> .dll)
+	4. C# Plugin (.cs -> .dll)	4. C#-bővítmény (.cs -> .dll)
+	Added to Startup Suite (Auto-Load at startup & per drawing)	Hozzáadva az indítókészlethez (automatikus betöltés indításkor és rajzonként)
+	Auto-Load	Automatikus betöltés
+	AutoLISP / VB.NET / C# IDE & NETLOAD Studio	AutoLISP / VB.NET / C# IDE és NETLOAD Studio
+	AutoLISP Commands (click to run)	AutoLISP-parancsok (kattintson a futtatáshoz)
+	AutoLISP Editor (.lsp)	AutoLISP-szerkesztő (.lsp)
+	Bottom	Alulnézet
+	C# Plugin Editor (.cs)	C#-bővítményszerkesztő (.cs)
+	C# source opened	C#-forráskód megnyitva
+	Clear Log	Napló törlése
+	Commands	Parancsok
+	Compact Menu	Kompakt menü
+	Compilation error	Fordítási hiba
+	Compilation failed (see Console)	A fordítás sikertelen (lásd a konzolt)
+	Compilation succeeded	A fordítás sikerült
+	Compile & Load .NET DLL	.NET DLL fordítása és betöltése
+	Console / Output	Konzol / Kimenet
+	Error	Hiba
+	Error in	Hiba itt:
+	Error: cadcraft-nethost.exe not found next to the application.	Hiba: A cadcraft-nethost.exe nem található az alkalmazás mellett.
+	Evaluate the LISP code or compile the VB.NET / C# source directly into a .NET DLL	A LISP-kód kiértékelése vagy a VB.NET / C# forráskód közvetlen lefordítása .NET DLL-fájlba
+	Failed to invoke compiler	Nem sikerült elindítani a fordítót
+	Failed to load	A betöltés sikertelen
+	Failed to save to	Nem sikerült menteni ide:
+	Failed to start .NET command	Nem sikerült elindítani a .NET-parancsot
+	Failed to write source file	Nem sikerült a forrásfájl írása
+	Hide this Studio window and show the compact floating Plugin Commands menu	A Studio ablak elrejtése és a kompakt lebegő Beépülőmodul-parancsok menü megjelenítése
+	Load & Run LISP	LISP betöltése és futtatása
+	NETLOAD .NET DLL loaded	NETLOAD .NET DLL betöltve
+	NETLOAD error in	NETLOAD hiba itt:
+	NETLOAD failed to run cadcraft-nethost.exe	A NETLOAD nem tudta futtatni a cadcraft-nethost.exe fájlt
+	Open .lsp / .vb / .cs	.lsp / .vb / .cs megnyitása
+	Open NETLOAD Studio (VBAIDE)	NETLOAD Studio megnyitása (VBAIDE)
+	Open Studio	Studio megnyitása
+	Open the full AutoLISP / VB.NET / C# & NETLOAD Studio	A teljes AutoLISP / VB.NET / C# & NETLOAD Studio megnyitása
+	Plugin Commands	Beépülőmodul-parancsok
+	Plugins	Beépülő modulok
+	Quick Expression	Gyorskifejezés
+	Ready. Open a .dll (.NET VB.NET/C#) or .lsp (AutoLISP) file via NETLOAD.	Kész. Nyisson meg egy .dll (.NET VB.NET/C#) vagy .lsp (AutoLISP) fájlt a NETLOAD paranccsal.
+	Registered commands	Regisztrált parancsok
+	Removed from Startup Suite (Auto-Load)	Eltávolítva az indítási csomagból (Automatikus betöltés)
+	Routine started	Rutin elindítva
+	Routine started from	Rutin elindítva innen:
+	Run .NET command	.NET parancs futtatása
+	Run command	Parancs futtatása
+	Save the current source code in the editor to disk	A szerkesztőben lévő aktuális forráskód mentése lemezre
+	Saved to	Mentve ide:
+	Select and load a .lsp, .dll, .vb, or .cs file from disk	.lsp, .dll, .vb vagy .cs fájl kiválasztása és betöltése lemezről
+	Show Floating Command Menu	Lebegő parancsmenü megjelenítése
+	Template...	Sablon...
+	Toggle Startup Suite (Auto-Load at startup)	Indítási csomag be-/kikapcsolása (Automatikus betöltés indításkor)
+	Toggle Startup Suite: automatically load this file at startup and in every opened drawing	Indítási csomag váltása: a fájl automatikus betöltése indításkor és minden megnyitott rajzban
+	VB.NET Plugin Editor (.vb)	VB.NET beépülőmodul-szerkesztő (.vb)
+	VB.NET source opened	VB.NET forráskód megnyitva
+	cadcraft-nethost.exe not found	A cadcraft-nethost.exe nem található
+	cannot read file	a fájl nem olvasható
+	e.g. (+ 1 2) or + 1 2	pl. (+ 1 2) vagy + 1 2
+	no [CommandMethod] found	nem található [CommandMethod]
+	Font	Betűtípus
+	Save Layout as Template	Elrendezés mentése sablonként

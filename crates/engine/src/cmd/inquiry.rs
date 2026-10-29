@@ -40,6 +40,17 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{handles?}")
             .noundo()
             .interactive(|_| Ok(Box::new(ListM::default()))),
+        CommandSpec::new("xdlist", "List Xdata", run_xdlist)
+            .menu(&["Tools", "Inquiry", "List Xdata"])
+            .alias(&["xdl", "xdata"])
+            .params("{handles?, app?}")
+            .noundo()
+            .interactive(|_| Ok(Box::new(XdListM::default()))),
+        CommandSpec::new("xdedit", "Edit Xdata", run_xdedit)
+            .menu(&["Tools", "Inquiry", "Edit Xdata (XDEDIT)"])
+            .alias(&["xde"])
+            .params("{handle?, xdata?: [{code, value}]}")
+            .interactive(|_| Ok(Box::new(XdEditM::default()))),
         CommandSpec::new("area", "Area", run_area)
             .menu(&["Tools", "Inquiry", "Area"])
             .alias(&["aa"])
@@ -387,6 +398,22 @@ fn list_text(s: &Session, h: Handle) -> String {
             }
         }
     }
+    if !e.common.xdata.is_empty() {
+        let mut cur_app = String::new();
+        for tag in &e.common.xdata {
+            if tag.code == 1001 {
+                cur_app = tag.value.trim().to_string();
+                if !is_system_xdata_app(&cur_app) {
+                    t.push_str(&format!("\n  Extended Data ({cur_app}):"));
+                }
+                continue;
+            }
+            if is_system_xdata_app(&cur_app) || tag.code == 1002 {
+                continue;
+            }
+            t.push_str(&format!("\n    [{}] {}", tag.code, tag.value.trim()));
+        }
+    }
     t
 }
 
@@ -394,6 +421,71 @@ fn run_list(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
     let texts: Vec<String> = hs.iter().map(|h| list_text(s, *h)).collect();
     Ok(json!({ "message": texts.join("\n\n") }))
+}
+
+fn xdlist_app_matches(app_name: &str, filter: &str) -> bool {
+    let f = filter.trim();
+    if f.is_empty() || f == "*" {
+        return !is_system_xdata_app(app_name);
+    }
+    let a_low = app_name.to_ascii_lowercase();
+    let f_low = f.to_ascii_lowercase();
+    if let Some(prefix) = f_low.strip_suffix('*') {
+        a_low.starts_with(prefix)
+    } else {
+        a_low == f_low || a_low.contains(&f_low)
+    }
+}
+
+fn xdata_code_label(code: i32) -> &'static str {
+    match code {
+        1000 => "ASCII string",
+        1002 => "Control string",
+        1003 => "Layer name",
+        1004 => "Binary data",
+        1005 => "Database handle",
+        1010..=1033 => "3D point",
+        1040 => "Real",
+        1041 => "Distance",
+        1042 => "Scale factor",
+        1070 => "16-bit integer",
+        1071 => "32-bit signed long",
+        _ => "Value",
+    }
+}
+
+fn xdlist_text(s: &Session, h: Handle, filter: &str) -> String {
+    let Ok(d) = s.doc() else { return String::new() };
+    let Some(e) = d.entity(h) else { return String::new() };
+    let mut out = format!("Object: {}   Layer: \"{}\"   Handle: {}", e.kind.dxf_name(), e.common.layer, h.hex());
+    let mut cur_app;
+    let mut show_cur = false;
+    let mut found_any = false;
+    for tag in &e.common.xdata {
+        if tag.code == 1001 {
+            cur_app = tag.value.trim().to_string();
+            show_cur = xdlist_app_matches(&cur_app, filter);
+            if show_cur {
+                found_any = true;
+                out.push_str(&format!("\n* Registered Application Name: {cur_app}"));
+            }
+            continue;
+        }
+        if show_cur {
+            out.push_str(&format!("\n  * Code {}, {}: {}", tag.code, xdata_code_label(tag.code), tag.value.trim()));
+        }
+    }
+    if !found_any {
+        out.push_str("\nNo Xdata associated with Application Name(s).");
+    }
+    out
+}
+
+fn run_xdlist(s: &mut Session, p: &Value) -> Result<Value> {
+    let hs = targets(s, p)?;
+    let app = p.get("app").and_then(Value::as_str).unwrap_or("*");
+    let texts: Vec<String> = hs.iter().map(|h| xdlist_text(s, *h, app)).collect();
+    Ok(json!({ "app": app, "message": texts.join("\n\n") }))
 }
 
 pub(super) fn area_of(pts: &[Vec2]) -> (f64, f64) {
@@ -971,6 +1063,200 @@ impl Interactive for ListM {
     }
 }
 
+#[derive(Default)]
+struct XdListM {
+    sel: super::machines::SelectPhase,
+}
+
+impl XdListM {
+    fn report(&self, s: &mut Session, app_filter: &str) -> Step {
+        let f = if app_filter.trim().is_empty() { "*" } else { app_filter.trim() };
+        for h in &self.sel.picked {
+            let t = xdlist_text(s, *h, f);
+            for l in t.lines() {
+                s.echo(l.to_string());
+            }
+        }
+        Step::Done
+    }
+}
+
+impl Interactive for XdListM {
+    fn name(&self) -> &'static str {
+        "XDLIST"
+    }
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        self.sel = super::machines::SelectPhase::begin(s);
+        if !self.sel.done {
+            self.sel.single = true;
+        }
+        Ok(Step::Continue)
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        if !self.sel.done {
+            self.sel.prompt()
+        } else {
+            Prompt::new("Application name", Accept::TEXT).default("*")
+        }
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if !self.sel.done {
+            return match self.sel.feed(s, &i)? {
+                super::machines::SelOutcome::More => Ok(Step::Continue),
+                super::machines::SelOutcome::Empty => Ok(Step::Done),
+                super::machines::SelOutcome::Done(hs) => {
+                    self.sel.picked = hs;
+                    self.sel.done = true;
+                    Ok(Step::Continue)
+                }
+            };
+        }
+        match i {
+            Input::Enter => Ok(self.report(s, "*")),
+            Input::Text(app) | Input::Keyword(app) => Ok(self.report(s, &app)),
+            Input::Cancel => Ok(Step::Cancel),
+            _ => Ok(Step::Continue),
+        }
+    }
+}
+
+/// Returns `true` if `app` is an internal AutoCAD or CADCraft system XData application
+/// (`ACAD`, `CADCRAFT`, or `AcDb*`).
+pub fn is_system_xdata_app(app: &str) -> bool {
+    let a = app.trim();
+    a.eq_ignore_ascii_case("ACAD")
+        || a.eq_ignore_ascii_case("CADCRAFT")
+        || a.get(..4).is_some_and(|p| p.eq_ignore_ascii_case("AcDb"))
+}
+
+fn run_xdedit(s: &mut Session, p: &Value) -> Result<Value> {
+    let hs = targets(s, p)?;
+    let h = match hs.as_slice() {
+        [] => return Err(bad("xdedit", "nothing selected")),
+        [h] => *h,
+        _ => return Err(bad("xdedit", "XDEDIT edits one object; pass a single `handle`")),
+    };
+    let Some(arr) = p.get("xdata").and_then(Value::as_array) else {
+        return Ok(json!({ "handle": h.hex() }));
+    };
+    let mut new_user_tags: Vec<cadcraft_doc::RawTag> = Vec::new();
+    let mut apps: Vec<String> = Vec::new();
+    let mut in_app = false;
+    let mut xdata_depth: usize = 0;
+    for (i, item) in arr.iter().enumerate() {
+        let code = item
+            .get("code")
+            .and_then(Value::as_i64)
+            .and_then(|c| i32::try_from(c).ok())
+            .ok_or_else(|| bad("xdedit", format!("xdata[{i}]: `code` must be an integer")))?;
+        let val = match item.get("value") {
+            Some(Value::String(s)) => s.clone(),
+            Some(v @ Value::Number(_)) => v.to_string(),
+            _ => return Err(bad("xdedit", format!("xdata[{i}]: `value` must be a string or number"))),
+        };
+        let valid_code = matches!(code, 1000..=1005 | 1010..=1013 | 1020..=1023 | 1030..=1033 | 1040..=1042 | 1070 | 1071);
+        if !valid_code {
+            return Err(bad("xdedit", format!("xdata[{i}]: {code} is not an XData group code")));
+        }
+        let numeric_ok = match code {
+            1010..=1013 | 1020..=1023 | 1030..=1033 | 1040..=1042 => val.trim().parse::<f64>().is_ok_and(f64::is_finite),
+            1070 => val.trim().parse::<i16>().is_ok(),
+            1071 => val.trim().parse::<i32>().is_ok(),
+            _ => true,
+        };
+        if !numeric_ok {
+            return Err(bad("xdedit", format!("xdata[{i}]: `{val}` is not a valid value for code {code}")));
+        }
+        if code == 1001 {
+            if xdata_depth != 0 {
+                return Err(bad("xdedit", format!("xdata[{i}]: previous application has unmatched `{{`")));
+            }
+            in_app = true;
+            let app_name = val.trim().to_string();
+            if app_name.is_empty() {
+                return Err(bad("xdedit", format!("xdata[{i}]: application name is empty")));
+            }
+            if is_system_xdata_app(&app_name) {
+                return Err(bad("xdedit", format!("xdata[{i}]: system application `{app_name}` cannot be edited")));
+            }
+            if !apps.iter().any(|a| a.eq_ignore_ascii_case(&app_name)) {
+                apps.push(app_name);
+            }
+        } else if !in_app {
+            return Err(bad("xdedit", format!("xdata[{i}]: tags must follow a 1001 application name")));
+        } else if code == 1002 {
+            match val.trim() {
+                "{" => xdata_depth += 1,
+                "}" if xdata_depth > 0 => xdata_depth -= 1,
+                "}" => return Err(bad("xdedit", format!("xdata[{i}]: unmatched `}}`"))),
+                _ => return Err(bad("xdedit", format!("xdata[{i}]: invalid 1002 control string"))),
+            }
+        }
+        let value = if code == 1002 { val.trim().to_string() } else { val };
+        new_user_tags.push(cadcraft_doc::RawTag { code, value });
+    }
+    if xdata_depth != 0 {
+        return Err(bad("xdedit", "xdata: unmatched `{` control string"));
+    }
+    let d = s.doc_mut()?;
+    if d.entity(h).is_none() {
+        return Err(bad("xdedit", "no such object"));
+    }
+    for app_name in apps {
+        std::sync::Arc::make_mut(&mut d.foreign)
+            .records
+            .entry(("APPID".to_string(), app_name.to_ascii_uppercase()))
+            .or_default();
+    }
+    d.modify_entity(h, |e| {
+        let mut kept: Vec<cadcraft_doc::RawTag> = Vec::new();
+        let mut sys = false;
+        for t in &e.common.xdata {
+            if t.code == 1001 {
+                sys = is_system_xdata_app(t.value.trim());
+            }
+            if sys {
+                kept.push(t.clone());
+            }
+        }
+        kept.extend(new_user_tags);
+        e.common.xdata = kept;
+    })?;
+    Ok(json!({ "handle": h.hex(), "updated": true }))
+}
+
+#[derive(Default)]
+struct XdEditM {
+    sel: super::machines::SelectPhase,
+}
+
+impl Interactive for XdEditM {
+    fn name(&self) -> &'static str {
+        "XDEDIT"
+    }
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        self.sel = super::machines::SelectPhase::begin(s);
+        if self.sel.done {
+            return Ok(Step::Done);
+        }
+        self.sel.single = true;
+        Ok(Step::Continue)
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        self.sel.prompt()
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        match self.sel.feed(s, &i)? {
+            super::machines::SelOutcome::More => Ok(Step::Continue),
+            super::machines::SelOutcome::Empty => Ok(Step::Done),
+            super::machines::SelOutcome::Done(hs) => {
+                s.set_selection(hs);
+                Ok(Step::Done)
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum AreaMode {
     /// Measure one area and end.
@@ -1236,6 +1522,7 @@ mod tests {
     use cadcraft_doc::Handle;
 
     use super::*;
+    use cadcraft_doc::RawTag;
 
     /// #1440 review: a value one ulp past its bound (a border rectangle's shoelace area against
     /// the extents' `width * height`) is rounding, not a bug; a value clearly past it still is.
@@ -1255,5 +1542,121 @@ mod tests {
         let mut check = SelfCheck::new();
         check.implausible(Handle::default(), "Region", "area", 1e9, f64::INFINITY, "past the bound");
         assert!(check.implausible.is_empty(), "an infinite bound applies to nothing: {}", check.to_json());
+    }
+
+    #[test]
+    fn xdedit_requires_selection_and_validates_payload() {
+        let mut s = Session::default();
+        assert!(s.execute("xdedit", &json!({})).is_err());
+
+        let line = s.execute("line", &json!({ "points": [[0.0, 0.0], [10.0, 0.0]] })).ok();
+        let h_str = line
+            .and_then(|v| v["handles"][0].as_str().map(str::to_string))
+            .unwrap_or_default();
+        let line2 = s.execute("line", &json!({ "points": [[0.0, 5.0], [10.0, 5.0]] })).ok();
+        let h2_str = line2
+            .and_then(|v| v["handles"][0].as_str().map(str::to_string))
+            .unwrap_or_default();
+
+        // Multi-handle request or empty 1001 application name is rejected.
+        assert!(
+            s.execute(
+                "xdedit",
+                &json!({ "handles": [&h_str, &h2_str], "xdata": [{ "code": 1001, "value": "CAD_XDATA" }] })
+            )
+            .is_err()
+        );
+        assert!(
+            s.execute("xdedit", &json!({ "handles": [&h_str], "xdata": [{ "code": 1001, "value": "   " }] }))
+                .is_err()
+        );
+
+        // Missing or invalid code/value, system app, or orphan tag before 1001 is rejected.
+        assert!(
+            s.execute("xdedit", &json!({ "handles": [&h_str], "xdata": [{ "value": "bad" }] }))
+                .is_err()
+        );
+        assert!(
+            s.execute("xdedit", &json!({ "handles": [&h_str], "xdata": [{ "code": 1000, "value": true }] }))
+                .is_err()
+        );
+        assert!(
+            s.execute("xdedit", &json!({ "handles": [&h_str], "xdata": [{ "code": 1001, "value": "ACAD" }] }))
+                .is_err()
+        );
+        assert!(
+            s.execute("xdedit", &json!({ "handles": [&h_str], "xdata": [{ "code": 1000, "value": "ORPHAN=1" }] }))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn xdedit_preserves_system_xdata_and_xdlist_filters_by_app() {
+        let mut s = Session::default();
+        let line = s.execute("line", &json!({ "points": [[0.0, 0.0], [10.0, 0.0]] })).ok();
+        let h_str = line
+            .and_then(|v| v["handles"][0].as_str().map(str::to_string))
+            .unwrap_or_default();
+        let h = Handle::parse_hex(&h_str).unwrap_or(Handle(1));
+        if let Ok(d) = s.doc_mut() {
+            let _ = d.modify_entity(h, |e| {
+                e.common.xdata = vec![
+                    RawTag { code: 1001, value: "ACAD".into() },
+                    RawTag { code: 1000, value: "DSTYLE".into() },
+                    RawTag { code: 1001, value: "AcDbBlockRepBTag".into() },
+                    RawTag { code: 1070, value: "1".into() },
+                    RawTag { code: 1001, value: "OLD_USER_APP".into() },
+                    RawTag { code: 1000, value: "OLD=1".into() },
+                ];
+            });
+        }
+
+        let res = s.execute(
+            "xdedit",
+            &json!({
+                "handles": [&h_str],
+                "xdata": [
+                    { "code": 1001, "value": "CAD_XDATA" },
+                    { "code": 1000, "value": "THEMA=Laagspanning" },
+                    { "code": 1040, "value": 1.25 },
+                    { "code": 1001, "value": "OTHER_APP" },
+                    { "code": 1070, "value": 42 }
+                ]
+            }),
+        );
+        assert!(res.is_ok());
+
+        // Wildcard XDLIST skips system apps (ACAD, AcDb*) and lists user apps.
+        let all_msg = s
+            .execute("xdlist", &json!({ "handles": [&h_str], "app": "*" }))
+            .ok()
+            .and_then(|v| v["message"].as_str().map(str::to_string))
+            .unwrap_or_default();
+        assert!(all_msg.contains("CAD_XDATA"));
+        assert!(all_msg.contains("OTHER_APP"));
+        assert!(!all_msg.contains("OLD_USER_APP"));
+        assert!(!all_msg.contains("Application Name: ACAD"));
+        assert!(!all_msg.contains("AcDbBlockRepBTag"));
+
+        // Filtered XDLIST only shows the requested application.
+        let filtered_msg = s
+            .execute("xdlist", &json!({ "handles": [&h_str], "app": "CAD_XDATA" }))
+            .ok()
+            .and_then(|v| v["message"].as_str().map(str::to_string))
+            .unwrap_or_default();
+        assert!(filtered_msg.contains("CAD_XDATA"));
+        assert!(filtered_msg.contains("THEMA=Laagspanning"));
+        assert!(filtered_msg.contains("1.25"));
+        assert!(!filtered_msg.contains("OTHER_APP"));
+
+        // Verify system XData is still intact on the entity.
+        let xdata = s
+            .doc()
+            .ok()
+            .and_then(|d| d.entity(h))
+            .map(|e| e.common.xdata.clone())
+            .unwrap_or_default();
+        assert!(xdata.iter().any(|t| t.code == 1001 && t.value == "ACAD"));
+        assert!(xdata.iter().any(|t| t.code == 1001 && t.value == "AcDbBlockRepBTag"));
     }
 }

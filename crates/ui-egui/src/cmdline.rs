@@ -64,6 +64,26 @@ pub fn dyn_frame(app: &CadApp) -> Option<crate::dyninput::Frame> {
 /// the command line deaf to typing). While no widget has focus, a pressed Tab becomes a `"\t"`
 /// text event, which keeps its place among the other keystrokes; [`keyboard`] handles it.
 pub fn capture_tab(ctx: &egui::Context, raw: &mut egui::RawInput) {
+    // If the read-only F2 history log text widget has focus, surrender it when the user types
+    // normal characters or presses Escape/Enter/Backspace (keep Ctrl/Cmd+C and Ctrl/Cmd+A for copying).
+    let log_id = egui::Id::unique("cmd_history_log_text");
+    if ctx.memory(|m| m.has_focus(log_id)) {
+        let should_release = raw.events.iter().any(|e| match e {
+            egui::Event::Copy | egui::Event::Cut => false,
+            egui::Event::Text(t) => !t.is_empty(),
+            egui::Event::Key { key, pressed: true, modifiers, .. } => {
+                if (modifiers.ctrl || modifiers.command) && matches!(key, Key::C | Key::A) {
+                    false
+                } else {
+                    matches!(key, Key::Escape | Key::Enter | Key::Backspace | Key::F2)
+                }
+            }
+            _ => false,
+        });
+        if should_release {
+            ctx.memory_mut(|m| m.surrender_focus(log_id));
+        }
+    }
     if ctx.egui_wants_keyboard_input() {
         return;
     }
@@ -439,13 +459,20 @@ pub fn submit(app: &mut CadApp) {
         }
     }
     crate::context_menu::note_input(app, &text);
+    let was_inquiry = app.session.running.as_ref().is_some_and(|r| r.id == "xdlist" || r.id == "list");
     if text.is_empty() {
         if let Err(e) = app.session.input(Input::Enter) {
             app.session.echo(e.to_string());
         }
+        if was_inquiry && !app.session.prompting() {
+            app.cmd.expanded = true;
+        }
         return;
     }
     app.cmdline(&text);
+    if was_inquiry && !app.session.prompting() {
+        app.cmd.expanded = true;
+    }
 }
 
 fn visible_lines(app: &CadApp, canvas: Rect, bar: Rect) -> usize {
@@ -657,7 +684,11 @@ fn zones(app: &CadApp, canvas: Rect, bar: Rect) -> Zones {
 /// the top edge sets how many lines show (`ui.cmdline.lines`).
 fn history(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect, bar: Rect) {
     let z = zones(app, canvas, bar);
-    let resp = ui.interact(z.all, ui.scope_id().with("cmdline"), Sense::click_and_drag());
+    if let Some(r) = z.window {
+        history_window(app, ui, r);
+    }
+    let interact_rect = if z.window.is_some() { bar } else { z.all };
+    let resp = ui.interact(interact_rect, ui.scope_id().with("cmdline"), Sense::click_and_drag());
     let at = resp.hover_pos().or(resp.interact_pointer_pos());
     let on_grip = |p: Pos2| z.grip.contains(p) && z.window.is_none();
     let on_toggle = |p: Pos2| z.chevron.contains(p) || z.lines.is_some_and(|r| r.contains(p));
@@ -686,32 +717,76 @@ fn history(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect, bar: Rect) {
         let _ = app.run("ui.toggle.history", serde_json::json!({}));
     }
     crate::shortcut_menus::attach(app, &resp, crate::shortcut_menus::command_line_entries);
-    if let Some(r) = zones(app, canvas, bar).window {
-        history_window(app, ui, r);
-    }
 }
 
-/// The expanded history: the whole command log, scrollable, newest at the bottom.
-fn history_window(app: &CadApp, ui: &mut egui::Ui, r: Rect) {
+/// The expanded history: the whole command log, scrollable & selectable, with Copy and XDEDIT buttons.
+fn history_window(app: &mut CadApp, ui: &mut egui::Ui, r: Rect) {
     let t = Tokens::get();
+    // Block clicks inside the history window from falling through to the drawing canvas or the
+    // history bar toggle behind it.
+    let _ = ui.interact(r, ui.scope_id().with("cmd_history_window_bg"), Sense::click_and_drag());
     ui.painter().rect_filled(r, 3.0, t.cmd_bg);
     ui.painter().rect_stroke(r, 3.0, Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
-    let inner = r.shrink2(vec2(8.0, 3.0));
+    let inner = r.shrink2(vec2(8.0, 4.0));
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::top_down(egui::Align::Min)));
-    child.spacing_mut().item_spacing.y = 0.0;
-    let log = &app.session.log;
-    egui::ScrollArea::vertical().id_salt("cmd_history").stick_to_bottom(true).auto_shrink([false, false]).show_rows(
-        &mut child,
-        LINE_H,
-        log.len(),
-        |ui, rows| {
-            for l in log.get(rows).into_iter().flatten() {
-                let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), LINE_H), Sense::hover());
-                let p = ui.painter().with_clip_rect(row.intersect(ui.clip_rect()));
-                p.text(pos2(row.left(), row.center().y), egui::Align2::LEFT_CENTER, l, crate::theme::small(), t.text_dim);
+    let mut open_xdedit = None;
+    let mut close_hist = false;
+    child.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(crate::tl!("Command & XData Output (select text + Ctrl+C to copy)"))
+                .font(crate::theme::small())
+                .color(t.text_dim),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .small_button("✕")
+                .on_hover_text(crate::tl!("Close History Window (F2)"))
+                .clicked()
+            {
+                close_hist = true;
             }
-        },
-    );
+            if let Some(&h) = app.session.selection().first()
+                && ui
+                    .small_button(crate::tl!("✏ Edit XData (XDEDIT)"))
+                    .on_hover_text(crate::tl!("Open visual XData Editor for selected object"))
+                    .clicked()
+            {
+                open_xdedit = Some(h);
+            }
+            if ui
+                .small_button(crate::tl!("📋 Copy All"))
+                .on_hover_text(crate::tl!("Copy history output to clipboard"))
+                .clicked()
+            {
+                ui.ctx().copy_text(app.session.log.join("\n"));
+            }
+        });
+    });
+    child.separator();
+    let full_text = app.session.log.join("\n");
+    let mut text_slice: &str = full_text.as_str();
+    egui::ScrollArea::vertical()
+        .id_salt("cmd_history")
+        .stick_to_bottom(true)
+        .auto_shrink([false, false])
+        .show(&mut child, |ui| {
+            ui.add_sized(
+                ui.available_size(),
+                egui::TextEdit::multiline(&mut text_slice)
+                    .id(egui::Id::unique("cmd_history_log_text"))
+                    .font(crate::theme::mono())
+                    .text_color(t.text)
+                    .frame(egui::Frame::NONE)
+                    .desired_width(f32::INFINITY),
+            );
+        });
+    if close_hist {
+        app.cmd.expanded = false;
+    }
+    if let Some(h) = open_xdedit {
+        app.cmd.expanded = false;
+        crate::xdedit::open_for_handle(app, h);
+    }
 }
 
 #[cfg(test)]

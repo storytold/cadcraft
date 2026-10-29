@@ -1044,3 +1044,570 @@
 	Check for Updates…	Nach Updates suchen…
 	CADCraft is up to date.	CADCraft ist auf dem neuesten Stand.
 	Could not check for updates.	Die Suche nach Updates ist fehlgeschlagen.
+	Clear Command History	Befehlsverlauf leeren
+	Copy All	Alles kopieren
+	Copy history output to clipboard	Verlaufsausgabe in die Zwischenablage kopieren
+	Close History Window (F2)	Verlaufsfenster schließen (F2)
+	Edit XData (XDEDIT)	XData bearbeiten (XDEDIT)
+	Open visual XData Editor for selected object	Visuellen XData-Editor für ausgewähltes Objekt öffnen
+	Command & XData Output (select text + Ctrl+C to copy)	Befehls- & XData-Ausgabe (Text markieren + Strg+C zum Kopieren)
+	Save changes to {name}?	Änderungen in {name} speichern?
+	Your changes will be lost if you don't save them.	Ihre Änderungen gehen verloren, wenn Sie sie nicht speichern.
+	Don't Save	Nicht speichern
+	List Xdata	XData auflisten
+	Edit Xdata	XData bearbeiten
+	Edit Xdata (XDEDIT)	XData bearbeiten (XDEDIT)
+	✏ Edit XData (XDEDIT)	✏ XData bearbeiten (XDEDIT)
+	Open visual XData Editor dialog	Visuellen XData-Editor öffnen
+	📋 Copy Values	📋 Werte kopieren
+	Copy XData values (Key,Value) to clipboard	XData-Werte (Key,Value) in die Zwischenablage kopieren
+	Click to copy value to clipboard	Klicken, um Wert in die Zwischenablage zu kopieren
+	✓ XData values copied to clipboard	✓ XData-Werte in die Zwischenablage kopiert
+	Selection canceled — previous object kept.	Auswahl abgebrochen — vorheriges Objekt beibehalten.
+	Drag left or right to resize this column	Nach links oder rechts ziehen, um die Spaltenbreite zu ändern
+	XDATA Editor (XDEDIT)	XDATA-Editor (XDEDIT)
+	No object selected.	Kein Objekt ausgewählt.
+	🎯 Select object in drawing	🎯 Objekt in Zeichnung auswählen
+	Object: {kind}	Objekt: {kind}
+	Layer: {layer}	Layer: {layer}
+	Handle: {handle}	Handle: {handle}
+	🎯 Select Another Object	🎯 Anderes Objekt auswählen
+	Hide editor temporarily, pick another object in the drawing, and open it in XDEDIT	Editor kurz ausblenden, anderes Objekt in der Zeichnung wählen und in XDEDIT öffnen
+	Next ▶	Weiter ▶
+	Step to the next object with XData in the selection or drawing	Zum nächsten Objekt mit XData in Auswahl oder Zeichnung wechseln
+	◀ Previous	◀ Zurück
+	Step to the previous object with XData in the selection or drawing	Zum vorherigen Objekt mit XData in Auswahl oder Zeichnung wechseln
+	📋 Copy JSON	📋 JSON kopieren
+	Copy all XData as structured JSON to clipboard	Alle XData als strukturiertes JSON in die Zwischenablage kopieren
+	✓ JSON copied to clipboard	✓ JSON in die Zwischenablage kopiert
+	📋 Copy Text	📋 Text kopieren
+	Copy all XData as text to clipboard	Alle XData als Text in die Zwischenablage kopieren
+	✓ XData text copied to clipboard	✓ XData-Text in die Zwischenablage kopiert
+	AppID (1001):	AppID (1001):
+	New AppID (e.g. CAD_XDATA)	Neue AppID (z. B. CAD_XDATA)
+	+ Add AppID	+ AppID hinzufügen
+	🗑 Delete AppID	🗑 AppID löschen
+	Remove this Application and its XData from the entity	Diese Anwendung und ihre XData vom Objekt entfernen
+	Application removed (click Apply to save)	Anwendung entfernt (zum Speichern auf Übernehmen klicken)
+	🔍 Filter:	🔍 Filter:
+	Search key or value (e.g. THEMA, DIEPTE)...	Schlüssel oder Wert suchen (z. B. THEMA, DIEPTE)...
+	Key width:	Schlüsselbreite:
+	Drag this value or the column divider ⇔ to resize the Key column	Wert oder Spaltentrenner ⇔ ziehen, um die Schlüsselspalte anzupassen
+	Value width:	Wertbreite:
+	Drag this value or the column divider ⇔ to resize the Value column	Wert oder Spaltentrenner ⇔ ziehen, um die Wertspalte anzupassen
+	Smart Key=Value Columns	Intelligente Key=Value-Spalten
+	Split 'KEY=VALUE' or 'Key: Value' into separate editable Key and Value fields	Teilt 'KEY=VALUE' oder 'Key: Value' in separate bearbeitbare Felder auf
+	This object currently has no user XData.	Dieses Objekt hat derzeit keine Benutzer-XData.
+	+ Create CAD_XDATA Application	+ CAD_XDATA-Anwendung erstellen
+	DXF Code	DXF-Code
+	Property / Key ⇔	Eigenschaft / Schlüssel ⇔
+	Value (Selectable & Editable) ⇔	Wert (Auswählbar & Bearbeitbar) ⇔
+	Raw Value (Selectable & Editable) ⇔	Rohwert (Auswählbar & Bearbeitbar) ⇔
+	Actions	Aktionen
+	Copy value to clipboard	Wert in die Zwischenablage kopieren
+	✓ Copied: {val}	✓ Kopiert: {val}
+	Move row up	Zeile nach oben verschieben
+	Move row down	Zeile nach unten verschieben
+	Delete this XData row	Diese XData-Zeile löschen
+	Add Row:	Zeile hinzufügen:
+	Key (e.g. OPMERKING)	Schlüssel (z. B. OPMERKING)
+	+ Add Property	+ Eigenschaft hinzufügen
+	● Unsaved changes	● Ungespeicherte Änderungen
+	Ready — click '🎯 Select Next Object' or '◀ Previous / Next ▶' to switch objects.	Bereit — klicken Sie auf '🎯 Nächstes Objekt auswählen' oder '◀ Zurück / Weiter ▶' zum Wechseln.
+	↺ Revert	↺ Zurücksetzen
+	✔ Apply / Save XData	✔ Übernehmen / XData speichern
+	Write modified XData to the entity (Undoable with Ctrl+Z)	Geänderte XData auf das Objekt schreiben (Rückgängig mit Strg+Z)
+	✔ Save & Select Next Object	✔ Speichern & Nächstes Objekt
+	🎯 Select Next Object	🎯 Nächstes Objekt auswählen
+	Save any changes and directly pick the next object in the drawing	Änderungen speichern und direkt das nächste Objekt in der Zeichnung wählen
+	Object {idx1}/{total} loaded ({kind} — {handle})	Objekt {idx1}/{total} geladen ({kind} — {handle})
+	↺ Reverted to saved entity XData	↺ Auf gespeicherte Objekt-XData zurückgesetzt
+	✔ XData saved to entity (Undoable)	✔ XData im Objekt gespeichert (Strg+Z möglich)
+	Error: {err}	Fehler: {err}
+	⚠ Entity XData changed outside editor — click Revert before saving.	⚠ Objekt-XData außerhalb des Editors geändert — vor dem Speichern Zurücksetzen klicken.
+	+  |  {view} ({yaw}°, {pitch}°)  |  3D Orbit Wireframe	+  |  {view} ({yaw}°, {pitch}°)  |  3D-Orbit Drahtmodell
+	.NET Plugin Bridge	.NET-Plugin-Brücke
+	3D Orbit	3D-Orbit
+	3D Views	3D-Ansichten
+	A drawing opened from a file keeps that file's format.	Eine aus einer Datei geöffnete Zeichnung behält das Format dieser Datei bei.
+	A variable name starts with a letter and has only letters, digits and _	Ein Variablenname beginnt mit einem Buchstaben und enthält nur Buchstaben, Ziffern und _
+	Add Current Scale	Aktuellen Maßstab hinzufügen
+	Add Vertex	Scheitelpunkt hinzufügen
+	Add/Delete Scales...	Maßstäbe hinzufügen/löschen...
+	Add: Pick points	Hinzufügen: Punkte auswählen
+	Add: Select objects	Hinzufügen: Objekte auswählen
+	Additional angles	Zusätzliche Winkel
+	Add…	Hinzufügen…
+	Adjust Image...	Bild anpassen...
+	Adjust...	Anpassen...
+	Alias	Alias
+	Alias file: {file}	Aliasdatei: {file}
+	All Annotation Objects	Alle Beschriftungsobjekte
+	All Scales	Alle Maßstäbe
+	An array that would create more objects than this is refused.	Eine Reihe, die mehr Objekte als diesen Grenzwert erzeugen würde, wird abgelehnt.
+	Analyze Usage	Verwendung analysieren
+	Angstroms	Angström
+	Annotative Object Scale	Maßstab für Beschriftungsobjekte
+	Annotative Update	Beschriftungsobjekte aktualisieren
+	Apply	Anwenden
+	Apply to Layout	Auf Layout anwenden
+	Architectural	Architektur
+	Arrow size	Pfeilgröße
+	Associate	Assoziieren
+	Associative	Assoziativ
+	Astronomical Units	Astronomische Einheiten
+	Attach DWG...	DWG zuordnen...
+	Attach Image...	Bild zuordnen...
+	AutoLISP (LSP)	AutoLISP (LSP)
+	AutoLISP / VB.NET / C# IDE...	AutoLISP / VB.NET / C# IDE...
+	AutoLISP / VBA IDE...	AutoLISP / VBA IDE...
+	Automatic save every	Automatisch speichern alle
+	Automatic save file location	Position für Datei zur automatischen Speicherung
+	B	F
+	Back	Hinten
+	Batch Publish...	Stapelplotten...
+	Bind	Binden
+	Bind...	Binden...
+	Block to create or edit	Zu erstellender oder zu bearbeitender Block
+	Bottom left	Unten links
+	Bottom right	Unten rechts
+	Boundaries	Begrenzungen
+	Boundaries picked: {n}	Ausgewählte Begrenzungen: {n}
+	Break-line Symbol	Bruchlinien-Symbol
+	Bring Above Objects	Über Objekte bringen
+	Bring Annotations to Front	Beschriftungen in den Vordergrund bringen
+	Bulleted list	Aufzählung
+	CADCraft	CADCraft
+	CADCraft keeps these preferences, object snap modes and drafting toggles for your user account and restores them when it starts.	CADCraft speichert diese Einstellungen, Objektfangmodi und Zeichenhilfen für Ihr Benutzerkonto und stellt sie beim Start wieder her.
+	Center the plot	Plot zentrieren
+	Centered	Zentriert
+	Centimeters	Zentimeter
+	Change Properties	Eigenschaften ändern
+	Changed: {n}	Geändert: {n}
+	Changes apply at once and are kept for next time.	Änderungen werden sofort wirksam und für das nächste Mal gespeichert.
+	Choose the command the alias starts.	Wählen Sie den Befehl aus, den der Alias startet.
+	Clear History	Verlauf löschen
+	Clear Recent Files	Zuletzt verwendete Dateien löschen
+	Click to set new origin	Klicken, um neuen Ursprung festzulegen
+	Clip	Zuschneiden
+	Clip Image	Bild zuschneiden
+	Clip Viewport	Ansichtsfenster zuschneiden
+	Close All Other Drawings	Alle anderen Zeichnungen schließen
+	Close Array Editing	Reihenbearbeitung schließen
+	Close Block Editor	Blockeditor schließen
+	Close Comparison	Vergleich schließen
+	Color 1	Farbe 1
+	Color 2	Farbe 2
+	Command	Befehl
+	Command Aliases	Befehlsaliase
+	Command line history	Befehlszeilenverlauf
+	Compare Drawings...	Zeichnungen vergleichen...
+	Convert	Konvertieren
+	Convert Text to Mtext	Text in MText konvertieren
+	Convert to Arc	In Bogen umwandeln
+	Convert to Line	In Linie umwandeln
+	Copy Full File Path	Vollständigen Dateipfad kopieren
+	Copy History	Verlauf kopieren
+	Copy as JSON	Als JSON kopieren
+	Count List	Zählliste
+	Count Table	Zähltabelle
+	Create separate hatches	Separate Schraffuren erstellen
+	Crosshair size	Fadenkreuzgröße
+	Crossing selection color:	Farbe für Kreuzen-Auswahl:
+	Current Scale Only	Nur aktueller Maßstab
+	Curved	Gekrümmt
+	Custom	Benutzerdefiniert
+	Customize	Anpassen
+	DWG Reference...	DWG-Referenz...
+	Data Extraction...	Datenextraktion...
+	Data Link...	Datenverknüpfung...
+	Decameters	Dekameter
+	Decimal	Dezimal
+	Decimal Degrees	Dezimalgrad
+	Decimeters	Dezimeter
+	Default Save Version	Vorgabe-Speicherversion
+	Default save version	Vorgabe-Speicherversion
+	Default to boundary extents	Vorgabe auf Begrenzungsausdehnung
+	Define each corner of the selection window with a separate click.	Definieren Sie jede Ecke des Auswahlfensters mit einem separaten Klick.
+	Deg/Min/Sec	Grad/Min/Sek
+	Degrees of Freedom	Freiheitsgrade
+	Degrees of freedom: {n}	Freiheitsgrade: {n}
+	Delete Current Scale	Aktuellen Maßstab löschen
+	Detach	Lösen
+	Dim scale overall	Gesamtskalierfaktor der Bemaßung
+	Dimension Break	Bemaßungsbruch
+	Dimension Edit	Bemaßung bearbeiten
+	Dimension Objects Only	Nur Bemaßungsobjekte
+	Discard	Verwerfen
+	Display	Anzeige
+	Drag Dynamic Grip	Dynamischen Griff ziehen
+	Drawing Recovery Manager...	Manager für Zeichnungswiederherstellung...
+	Drawing Template (DWT)	Zeichnungsvorlage (DWT)
+	Drawing Units	Zeichnungseinheiten
+	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	Zeichnungen ohne bestehende Datei werden in der Vorgabeversion gespeichert. 0 Minuten deaktiviert das automatische Speichern.
+	Dynamic	Dynamisch
+	Dynamic Block Data	Dynamische Blockdaten
+	Dynamic Block Grips	Dynamische Blockgriffe
+	Dynamic Block Reference	Dynamische Blockreferenz
+	Edit Array	Reihe bearbeiten
+	Edit Attributes...	Attribute bearbeiten...
+	Edit Block Definition	Blockdefinition bearbeiten
+	Edit Command Aliases (PGP)...	Befehlsaliase bearbeiten (PGP)...
+	Edit Table Cell	Tabellenzelle bearbeiten
+	Edit…	Bearbeiten…
+	End Object Isolation	Objektisolierung beenden
+	Engineering	Ingenieur
+	Enter	Eingabe
+	Enter block names to extract	Namen der zu extrahierenden Blöcke eingeben
+	Enter geometric characteristic	Geometrisches Merkmal eingeben
+	Enter name of LISP file to load	Namen der zu ladenden LISP-Datei eingeben
+	Evaluate	Auswerten
+	Evaluate LISP	LISP auswerten
+	Exclude:	Ausschließen:
+	Explode Attributes to Text	Attribute in Text auflösen
+	Export Table	Tabelle exportieren
+	Export...	Exportieren...
+	Express Tools	Express Tools
+	External Reference	Externe Referenz
+	External References	Externe Referenzen
+	Feet	Fuß
+	First corner	Erste Ecke
+	Fit to paper	An Papier anpassen
+	Fractional	Bruch
+	Frame	Rahmen
+	From Template...	Aus Vorlage...
+	Front	Vorne
+	Get from the Drawing	Aus Zeichnung abrufen
+	Gigameters	Gigameter
+	Grads	Gon
+	Grid snap	Rasterfang
+	Grip Edit	Griffbearbeitung
+	Grip Option	Griffoption
+	Grip size	Griffgröße
+	Grips	Griffe
+	Group Options	Gruppenoptionen
+	Group Selection	Gruppenauswahl
+	Groups	Gruppen
+	Hatch Patterns	Schraffurmuster
+	Hatch Pick	Schraffurauswahl
+	Hatch and Gradient	Schraffur und Abstufung
+	Hatch origin	Schraffurursprung
+	Hatches	Schraffuren
+	Hectometers	Hektometer
+	Hemispherical	Halbkugelförmig
+	Hide Objects	Objekte ausblenden
+	Hide Palette	Palette ausblenden
+	History	Verlauf
+	Hold Shift to add to the selection	Umschalttaste gedrückt halten, um zur Auswahl hinzuzufügen
+	Ignore	Ignorieren
+	Image	Bild
+	Image Frame	Bildrahmen
+	Imperial (inches)	Britisch (Zoll)
+	Implied Loops	Implizite Schleifen
+	Import...	Importieren...
+	Inches	Zoll
+	Indicate selection area	Auswahlbereich anzeigen
+	Infer Constraints	Abhängigkeiten ableiten
+	Insert Table Formula	Tabellenformel einfügen
+	Insert tab	Tabulator einfügen
+	Insertion scale	Einfügemaßstab
+	Inspection	Prüfmaß
+	Interface language	Oberflächensprache
+	Interface scale	Oberflächenskalierung
+	Interface theme	Oberflächenthema
+	Inverted	Invertiert
+	Island	Insel
+	Island detection	Inselerkennung
+	Isolate Objects	Objekte isolieren
+	Isometric Plane	Isometrische Ebene
+	Isometric snap	Isometrischer Fang
+	Jogged	Verkürzt
+	Jogged Linear	Linear verkürzt
+	Keep the system cursor visible over the drawing area	Systemzeiger über dem Zeichenbereich sichtbar lassen
+	Kilometers	Kilometer
+	Landscape	Querformat
+	Largest array	Größte Reihe
+	Layout paper	Layoutpapier
+	Layouts	Layouts
+	Leaders Only	Nur Führungslinien
+	Light Years	Lichtjahre
+	Limits	Limiten
+	Lines of Command History	Zeilen des Befehlsverlaufs
+	Load .NET DLL / LISP Application (NETLOAD)...	.NET-DLL- / LISP-Anwendung laden (NETLOAD)...
+	Load Application (NETLOAD)...	Anwendung laden (NETLOAD)...
+	Load Application...	Anwendung laden...
+	Loaded	Geladen
+	Lock viewport	Ansichtsfenster sperren
+	Make it a block of this drawing, keeping its layer names	Als Block in diese Zeichnung einbinden und Layernamen beibehalten
+	Make it a block of this drawing; its layers become NAME$0$LAYER	Als Block in diese Zeichnung einbinden; Layer werden zu NAME$0$LAYER
+	Meters	Meter
+	Metric (millimetres)	Metrisch (Millimeter)
+	Microinches	Mikrozoll
+	Microns	Mikrometer
+	Miles	Meilen
+	Millimeters	Millimeter
+	Mils	Mil
+	Model Tab	Registerkarte Modell
+	Model background	Modellhintergrund
+	More than {n} aliases.	Mehr als {n} Aliase.
+	More toolbar commands	Weitere Werkzeugkastenbefehle
+	Move/Copy/Rotate	Verschieben/Kopieren/Drehen
+	Multiline Style...	Multilinienstil...
+	Multiline text	Mehrzeiliger Text
+	Multiline...	Multilinie...
+	NE Isometric	NO Isometrisch
+	NW Isometric	NW Isometrisch
+	Named Views...	Benannte Ansichten...
+	Nanometers	Nanometer
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	Neue Zeichnungen und die erste Zeichnung beim Start verwenden diese Einheiten, sofern keine Standardvorlage festgelegt ist (QNEWTEMPLATE).
+	New block	Neuer Block
+	New from Template...	Neu aus Vorlage...
+	Next Change	Nächste Änderung
+	No alias file loaded. REINIT replaces these aliases with a file's.	Keine Aliasdatei geladen. REINIT ersetzt diese Aliase durch die einer Datei.
+	No external references are attached.	Es sind keine externen Referenzen zugeordnet.
+	Not Found	Nicht gefunden
+	Not loaded	Nicht geladen
+	Numbered list	Nummerierte Liste
+	Object Snap Tracking Settings	Einstellungen für Objektfangspur
+	Object grouping	Objektgruppierung
+	Object selection limit for display of grips	Objektauswahllimit für die Anzeige von Griffen
+	Object snap aperture	Objektfang-Zielrahmen
+	Object snap marker size	Größe der Objektfangmarkierung
+	Objects on locked layers	Objekte auf gesperrten Layern
+	Oblique	Schrägstellen
+	Only in this drawing: {n}	Nur in dieser Zeichnung: {n}
+	Only in {name}: {n}	Nur in {name}: {n}
+	Open	Öffnen
+	Open Recent	Zuletzt verwendet öffnen
+	Open Xref	XRef öffnen
+	Open and Save	Öffnen und Speichern
+	Open in Block Editor	Im Blockeditor öffnen
+	Opposite corner	Gegenüberliegende Ecke
+	Options	Optionen
+	Options...	Optionen...
+	Orientation	Ausrichtung
+	Origin: {x}, {y}	Ursprung: {x}, {y}
+	Outer	Außen
+	Over-constrained	Überbestimmt
+	Overlay	Überlagerung
+	Paper size	Papierformat
+	Parsecs	Parsec
+	Paste to Command Line	In Befehlszeile einfügen
+	Pickbox size	Pickbox-Größe
+	Plot area	Plotbereich
+	Plot object lineweights	Objektlinienstärken plotten
+	Plot offset	Plotversatz
+	Plot transparency	Transparenz plotten
+	Plotter Manager	Plotter-Manager
+	Plotter Manager...	Plotter-Manager...
+	Polar angle measurement	Polare Winkelmessung
+	Polar distance	Polarer Abstand
+	PolarSnap	PolarSnap
+	Polygonal Viewport	Polygonales Ansichtsfenster
+	Polyline Edit	Polylinie bearbeiten
+	Portrait	Hochformat
+	Precision	Genauigkeit
+	Preview	Vorschau
+	Previous Change	Vorherige Änderung
+	Printer/plotter	Drucker/Plotter
+	Profiles	Profile
+	QuickCalc Pick	Taschenrechner-Auswahl
+	Radians	Bogenmaß
+	Raster Image Reference...	Rasterbildreferenz...
+	Recalculate Table Formulas	Tabellenformeln neu berechnen
+	Recent Commands	Letzte Befehle
+	Recent Input	Letzte Eingabe
+	Rectangular snap	Rechteckiger Fang
+	Reference Manager	Referenzmanager
+	Reference Name	Referenzname
+	References: {n}	Referenzen: {n}
+	Reinitialize	Neu initialisieren
+	Relative to last segment	Relativ zum letzten Segment
+	Reload	Neu laden
+	Reload All	Alle neu laden
+	Remove Vertex	Scheitelpunkt entfernen
+	Reset keeps the interface language.	Beim Zurücksetzen bleibt die Oberflächensprache erhalten.
+	Reset to Defaults	Auf Vorgaben zurücksetzen
+	Run Script...	Skript ausführen...
+	SE Isometric	SO Isometrisch
+	SVG drawings (SVG, SVGZ)	SVG-Zeichnungen (SVG, SVGZ)
+	SW Isometric	SW Isometrisch
+	Sample output	Beispielausgabe
+	Save Block	Block speichern
+	Save Block As	Block speichern unter
+	Save alias	Alias speichern
+	Save new drawings as	Neue Zeichnungen speichern als
+	Saved Path	Gespeicherter Pfad
+	Scale List...	Maßstabsliste...
+	Scientific	Wissenschaftlich
+	Screen magnifiers, screen readers and recorders follow the system cursor.	Bildschirmlupen, Screenreader und Aufzeichnungsprogramme folgen dem Systemzeiger.
+	Select Similar	Ähnliche auswählen
+	Select boundaries to remove	Zu entfernende Begrenzungen auswählen
+	Select objects first, then choose a command	Zuerst Objekte auswählen und dann einen Befehl wählen
+	Select using two clicks only	Nur mit zwei Klicks auswählen
+	Selection	Auswahl
+	Selection Area Effect	Auswahlbereich-Effekt
+	Selection Preview Filter	Auswahlvorschau-Filter
+	Selection area opacity:	Deckkraft des Auswahlbereichs:
+	Selection effect color	Farbe des Auswahleffekts
+	Selection modes	Auswahlmodi
+	Selection preview	Auswahlvorschau
+	Send Hatches to Back	Schraffuren in den Hintergrund stellen
+	Send Under Objects	Unter Objekte stellen
+	Set Current Viewport	Aktuelles Ansichtsfenster festlegen
+	Set Dynamic Property	Dynamische Eigenschaft festlegen
+	Set Table Cell Style	Tabellenzellenstil festlegen
+	Settings...	Einstellungen...
+	Shape	Form
+	Sheet Books to PDF...	Planmappen als PDF...
+	Show Annotative Objects	Beschriftungsobjekte anzeigen
+	Show Quick Properties for selected objects	Schnelleigenschaften für ausgewählte Objekte anzeigen
+	Show and hide the tools of this category	Werkzeuge dieser Kategorie ein- und ausblenden
+	Show command prompting near the crosshairs	Befehlseingabeaufforderung in der Nähe des Fadenkreuzes anzeigen
+	Show grips	Griffe anzeigen
+	Show in Tool Sets	In Werkzeugsätzen anzeigen
+	Snap Overrides	Fangüberschreibungen
+	Snap type	Fangtyp
+	Snap, grid, polar tracking and Dynamic Input:	Fang, Raster, Polarspur und dynamische Eingabe:
+	Solid Editing	Volumenkörperbearbeitung
+	Specified origin	Angegebener Ursprung
+	Spherical	Kugelförmig
+	Spline Edit	Spline bearbeiten
+	Stretch Vertex	Scheitelpunkt strecken
+	Surveyor's Units	Feldmaße
+	Synchronize Multiple-scale Positions	Positionen für mehrere Maßstäbe synchronisieren
+	Table Breaks	Tabellenumbrüche
+	Table Cell Style	Tabellenzellenstil
+	Tables	Tabellen
+	Temporary track point	Temporärer Spurpunkt
+	Text Objects Only	Nur Textobjekte
+	Thaw Layer	Layer tauen
+	The aperture is how near the cursor must come to a point for an object snap to find it.	Der Zielrahmen legt fest, wie nahe das Fadenkreuz einem Punkt kommen muss, damit der Objektfang ihn erfasst.
+	This drawing	Diese Zeichnung
+	Time-sensitive right-click: a quick click is Enter, holding opens the menu	Zeitabhängiger Rechtsklick: kurzes Klicken entspricht der Eingabetaste, Halten öffnet das Menü
+	To	Nach
+	Tolerance...	Toleranz...
+	Top (2D Plan)	Oben (2D-Grundriss)
+	Top left	Oben links
+	Top right	Oben rechts
+	Track orthogonally only	Nur orthogonal verfolgen
+	Track using all polar angle settings	Mit allen Polarwinkeleinstellungen verfolgen
+	Turn On Layer	Layer einschalten
+	Turned off, a right-click while a command runs always opens the shortcut menu.	Wenn deaktiviert, öffnet ein Rechtsklick während eines aktiven Befehls immer das Kontextmenü.
+	Type an alias name.	Geben Sie einen Aliasnamen ein.
+	US Survey Feet	US-Vermessungsfuß
+	US Survey Inch	US-Vermessungszoll
+	US Survey Mile	US-Vermessungsmeilen
+	US Survey Yard	US-Vermessungsyard
+	Unitless	Einheitenlos
+	Units Conversion	Einheitenumrechnung
+	Units of new drawings	Einheiten neuer Zeichnungen
+	Units to scale inserted content	Einheiten zum Skalieren des eingefügten Inhalts
+	Unload	Entladen
+	Unloaded	Entladen
+	Unlock viewport	Ansichtsfenster entsperren
+	Unreferenced	Nicht referenziert
+	Unresolved	Nicht aufgelöst
+	Unsaved changes	Ungespeicherte Änderungen
+	Update Data Links	Datenverknüpfungen aktualisieren
+	Use current origin	Aktuellen Ursprung verwenden
+	User Preferences	Benutzereinstellungen
+	Variables	Variablen
+	Version 2000	Version 2000
+	Version 2004	Version 2004
+	Version 2007	Version 2007
+	Version 2010	Version 2010
+	Version 2013	Version 2013
+	Version 2018	Version 2018
+	View Resolution	Ansichtsauflösung
+	Viewport is locked	Ansichtsfenster ist gesperrt
+	Viewport scale	Ansichtsfenstermaßstab
+	Visual Effect Settings	Einstellungen für visuelle Effekte
+	Visual Effect Settings...	Einstellungen für visuelle Effekte...
+	When a command is active	Wenn ein Befehl aktiv ist
+	When no command is active	Wenn kein Befehl aktiv ist
+	Window <	Fenster <
+	Window selection color:	Farbe für Fensterauswahl:
+	X	X
+	X offset (mm)	X-Versatz (mm)
+	Xrefs	XRefs
+	Y	Y
+	Y offset (mm)	Y-Versatz (mm)
+	Yards	Yard
+	Zoom Dynamic	Dynamisch zoomen
+	Zoom Realtime	Echtzeitzoom
+	built-in	integriert
+	contains authoring elements. Open in Block Editor?	enthält Erstellungselemente. Im Blockeditor öffnen?
+	min	Min.
+	objects	Objekte
+	overrides built-in	überschreibt integriert
+	{alias} is already defined; select it and use Edit.	{alias} ist bereits definiert; wählen Sie ihn aus und verwenden Sie Bearbeiten.
+	{command} is an unknown command.	{command} ist ein unbekannter Befehl.
+	📋 Copy All	📋 Alles kopieren
+	🗑 Clear	🗑 Löschen
+	.NET command started	.NET-Befehl gestartet
+	0. Empty file (New)	0. Leere Datei (Neu)
+	1. AutoLISP: Basic Math & Commands	1. AutoLISP: Grundrechenarten & Befehle
+	2. AutoLISP: Survey Marker (c:meetpunt)	2. AutoLISP: Vermessungspunkt (c:meetpunt)
+	3. VB.NET Plugin (.vb -> .dll)	3. VB.NET-Plugin (.vb -> .dll)
+	4. C# Plugin (.cs -> .dll)	4. C#-Plugin (.cs -> .dll)
+	Added to Startup Suite (Auto-Load at startup & per drawing)	Zur Startgruppe hinzugefügt (automatisches Laden beim Start & pro Zeichnung)
+	Auto-Load	Automatisch laden
+	AutoLISP / VB.NET / C# IDE & NETLOAD Studio	AutoLISP / VB.NET / C# IDE & NETLOAD Studio
+	AutoLISP Commands (click to run)	AutoLISP-Befehle (zum Ausführen klicken)
+	AutoLISP Editor (.lsp)	AutoLISP-Editor (.lsp)
+	Bottom	Unten
+	C# Plugin Editor (.cs)	C#-Plugin-Editor (.cs)
+	C# source opened	C#-Quellcode geöffnet
+	Clear Log	Protokoll löschen
+	Commands	Befehle
+	Compact Menu	Kompaktmenü
+	Compilation error	Kompilierungsfehler
+	Compilation failed (see Console)	Kompilierung fehlgeschlagen (siehe Konsole)
+	Compilation succeeded	Kompilierung erfolgreich
+	Compile & Load .NET DLL	.NET-DLL kompilieren & laden
+	Console / Output	Konsole / Ausgabe
+	Error	Fehler
+	Error in	Fehler in
+	Error: cadcraft-nethost.exe not found next to the application.	Fehler: cadcraft-nethost.exe wurde nicht neben der Anwendung gefunden.
+	Evaluate the LISP code or compile the VB.NET / C# source directly into a .NET DLL	LISP-Code auswerten oder VB.NET- / C#-Quellcode direkt in eine .NET-DLL kompilieren
+	Failed to invoke compiler	Compiler konnte nicht aufgerufen werden
+	Failed to load	Laden fehlgeschlagen
+	Failed to save to	Speichern fehlgeschlagen unter
+	Failed to start .NET command	.NET-Befehl konnte nicht gestartet werden
+	Failed to write source file	Quelldatei konnte nicht geschrieben werden
+	Hide this Studio window and show the compact floating Plugin Commands menu	Dieses Studio-Fenster ausblenden und das kompakte schwebende Menü „Plugin-Befehle“ anzeigen
+	Load & Run LISP	LISP laden & ausführen
+	NETLOAD .NET DLL loaded	NETLOAD .NET-DLL geladen
+	NETLOAD error in	NETLOAD-Fehler in
+	NETLOAD failed to run cadcraft-nethost.exe	NETLOAD konnte cadcraft-nethost.exe nicht ausführen
+	Open .lsp / .vb / .cs	.lsp / .vb / .cs öffnen
+	Open NETLOAD Studio (VBAIDE)	NETLOAD Studio öffnen (VBAIDE)
+	Open Studio	Studio öffnen
+	Open the full AutoLISP / VB.NET / C# & NETLOAD Studio	Vollständiges AutoLISP / VB.NET / C# & NETLOAD Studio öffnen
+	Plugin Commands	Plugin-Befehle
+	Plugins	Plugins
+	Quick Expression	Schnellausdruck
+	Ready. Open a .dll (.NET VB.NET/C#) or .lsp (AutoLISP) file via NETLOAD.	Bereit. Öffnen Sie eine .dll- (.NET VB.NET/C#) oder .lsp-Datei (AutoLISP) über NETLOAD.
+	Registered commands	Registrierte Befehle
+	Removed from Startup Suite (Auto-Load)	Aus der Startgruppe entfernt (Automatisch laden)
+	Routine started	Routine gestartet
+	Routine started from	Routine gestartet aus
+	Run .NET command	.NET-Befehl ausführen
+	Run command	Befehl ausführen
+	Save the current source code in the editor to disk	Aktuellen Quellcode im Editor auf der Festplatte speichern
+	Saved to	Gespeichert unter
+	Select and load a .lsp, .dll, .vb, or .cs file from disk	Eine .lsp-, .dll-, .vb- oder .cs-Datei von der Festplatte auswählen und laden
+	Show Floating Command Menu	Schwebendes Befehlsmenü anzeigen
+	Template...	Vorlage...
+	Toggle Startup Suite (Auto-Load at startup)	Startgruppe umschalten (Automatisch beim Start laden)
+	Toggle Startup Suite: automatically load this file at startup and in every opened drawing	Startgruppe umschalten: Diese Datei beim Start und in jeder geöffneten Zeichnung automatisch laden
+	VB.NET Plugin Editor (.vb)	VB.NET-Plugin-Editor (.vb)
+	VB.NET source opened	VB.NET-Quellcode geöffnet
+	cadcraft-nethost.exe not found	cadcraft-nethost.exe nicht gefunden
+	cannot read file	Datei kann nicht gelesen werden
+	e.g. (+ 1 2) or + 1 2	z. B. (+ 1 2) oder + 1 2
+	no [CommandMethod] found	kein [CommandMethod] gefunden
+	Font	Schriftart
+	Save Layout as Template	Layout als Vorlage speichern
+	Export Comparison	Vergleich exportieren
