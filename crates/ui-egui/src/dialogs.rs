@@ -86,7 +86,7 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         let mut deg = current;
         ui.horizontal(|ui| {
             let label = ui.label(crate::tl!("Increment angle"));
-            let combo = egui::ComboBox::from_id_salt("polarang").selected_text(format!("{deg}")).show_ui(ui, |ui| {
+            let combo = craft_ui::ComboBox::from_id_salt("polarang").selected_text(format!("{deg}")).show_ui(ui, |ui| {
                 for a in [90.0, 45.0, 30.0, 22.5, 18.0, 15.0, 10.0, 5.0] {
                     ui.selectable_value(&mut deg, a, format!("{a}"));
                 }
@@ -231,7 +231,7 @@ const INSERTION_UNITS: [&str; 25] = [
 /// A combo box over `(value, label)` options.
 fn pick(ui: &mut egui::Ui, salt: &str, value: &mut i64, options: &[(i64, String)]) {
     let current = options.iter().find(|o| o.0 == *value).map(|o| o.1.clone()).unwrap_or_default();
-    egui::ComboBox::from_id_salt(salt).selected_text(current).width(180.0).show_ui(ui, |ui| {
+    craft_ui::ComboBox::from_id_salt(salt).selected_text(current).width(180.0).show_ui(ui, |ui| {
         for (k, label) in options {
             ui.selectable_value(value, *k, label);
         }
@@ -431,7 +431,7 @@ fn insert_block(app: &mut CadApp, name: &str) {
 /// Interface Language combo; selecting a language runs `ui.language` with its code.
 fn language(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     egui::Window::new(crate::tl!("Interface Language")).id(egui::Id::unique("interface_language")).open(open).resizable(false).show(ctx, |ui| {
-        egui::ComboBox::from_id_salt("interface_language_choice").selected_text(app.ui.interface_language.name()).show_ui(ui, |ui| {
+        craft_ui::ComboBox::from_id_salt("interface_language_choice").selected_text(app.ui.interface_language.name()).show_ui(ui, |ui| {
             for preference in crate::i18n::Preference::for_picker() {
                 if ui.selectable_label(app.ui.interface_language == preference, preference.name()).clicked() {
                     let _ = app.run("ui.language", serde_json::json!({"lang": preference.code()}));

@@ -85,7 +85,7 @@ pub(crate) fn refused_in_editor(s: &Session, id: &str) -> Option<String> {
 }
 
 /// The block a block reference refers to.
-fn block_of(d: &Drawing, h: Handle) -> Option<String> {
+pub(super) fn block_of(d: &Drawing, h: Handle) -> Option<String> {
     match d.entity(h).map(|e| &e.kind) {
         Some(EntityKind::Insert(i)) => Some(dynamic_definition(d, &i.block).unwrap_or_else(|| i.block.clone())),
         _ => None,
@@ -129,7 +129,7 @@ fn open(s: &mut Session, name: &str, create: bool) -> Result<Value> {
 }
 
 /// The one block reference selected, if exactly one is.
-fn selected_reference(s: &Session) -> Option<String> {
+pub(super) fn selected_reference(s: &Session) -> Option<String> {
     let d = s.doc().ok()?;
     let refs: Vec<String> = s.selection().iter().filter_map(|h| block_of(d, *h)).collect();
     match refs.as_slice() {

@@ -25,6 +25,8 @@ enum Stage {
     RenameFrom,
     RenameTo(String),
     Set,
+    SaveasLayout,
+    SaveasFile(String),
     List,
 }
 
@@ -34,7 +36,7 @@ pub struct LayoutM {
 }
 
 /// The layout the name prompts default to: the current one, else the first tab.
-fn current_layout(s: &Session) -> Option<String> {
+pub(super) fn current_layout(s: &Session) -> Option<String> {
     if let Space::Paper(n) = s.layout_space() {
         return Some(n);
     }
@@ -70,9 +72,10 @@ impl LayoutM {
             "New" => Stage::New,
             "Rename" => Stage::RenameFrom,
             "Set" => Stage::Set,
+            "SAveas" => Stage::SaveasLayout,
             "?" => Stage::List,
             other => {
-                // Template, SAveas: report and end, leaving the next input to the command line.
+                // Template: report and end, leaving the next input to the command line.
                 s.echo(format!("LAYOUT {other} is not available yet."));
                 return Ok(Step::Done);
             }
@@ -131,6 +134,8 @@ impl Interactive for LayoutM {
                 let tab = s.layout_space().tab_name().to_string();
                 Prompt::new("Enter layout to make current", Accept::TEXT).default(tab)
             }
+            Stage::SaveasLayout => with_cur(Prompt::new("Enter layout to save to template", Accept::TEXT)),
+            Stage::SaveasFile(layout) => Prompt::new("Enter template file name", Accept::TEXT).default(super::saveas::default_path(s, layout)),
             Stage::List => Prompt::new("Enter layout name(s) to list", Accept::TEXT).default("*"),
         }
     }
@@ -197,6 +202,19 @@ impl Interactive for LayoutM {
                 };
                 let set = find_command("layout.set").ok_or_else(|| EngineError::UnknownCommand("layout.set".into()))?;
                 (set.run)(s, &json!({ "name": n })).map_err(retry)?;
+                Ok(Step::Done)
+            }
+            Stage::SaveasLayout => {
+                let n = need(name.or_else(|| current_layout(s)))?;
+                let n = super::layout_name("layout.saveas", s.doc()?, &n).map_err(retry)?;
+                self.stage = Stage::SaveasFile(n);
+                Ok(Step::Continue)
+            }
+            Stage::SaveasFile(layout) => {
+                let path = name.unwrap_or_else(|| super::saveas::default_path(s, &layout));
+                let r = super::saveas::run_saveas(s, &json!({ "name": layout, "path": path })).map_err(retry)?;
+                let path = r.get("path").and_then(Value::as_str).unwrap_or_default();
+                s.echo(format!("Layout \"{layout}\" saved to template \"{path}\"."));
                 Ok(Step::Done)
             }
             Stage::List => {

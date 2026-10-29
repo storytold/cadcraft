@@ -281,7 +281,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 // Layer states.
                 ui.label(crate::tl!("Layer State"));
                 let label = st.state_sel.clone().unwrap_or_else(|| crate::tl!("Unsaved Layer State").into());
-                egui::ComboBox::from_id_salt("lpm_states").selected_text(label).width(170.0).show_ui(ui, |ui| {
+                craft_ui::ComboBox::from_id_salt("lpm_states").selected_text(label).width(170.0).show_ui(ui, |ui| {
                     for s in &states {
                         if ui.selectable_label(st.state_sel.as_deref() == Some(s), s).clicked() {
                             st.state_sel = Some(s.clone());
