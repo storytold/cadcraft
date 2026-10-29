@@ -198,9 +198,11 @@ pub fn stretch_grip(kind: &EntityKind, index: usize, to: Vec2) -> Option<EntityK
         EntityKind::Leader(l) => set_xy(l.vertices.get_mut(index)?, to),
         EntityKind::MLine(m) => set_xy(&mut m.vertices.get_mut(index)?.p, to),
         EntityKind::MLeader(m) => {
+            // Grips: every leader vertex (the first root's first), then the landings.
             let mut idx = 0usize;
             let mut done = false;
-            'outer: for l in &mut m.leaders {
+            let lines = m.leaders.iter_mut().chain(m.roots.iter_mut().flat_map(|r| r.leaders.iter_mut()));
+            'outer: for l in lines {
                 for v in l.iter_mut() {
                     if idx == index {
                         set_xy(v, to);
@@ -210,18 +212,15 @@ pub fn stretch_grip(kind: &EntityKind, index: usize, to: Vec2) -> Option<EntityK
                     idx += 1;
                 }
             }
+            // A further root's landing grip moves that landing only.
+            if !done && let Some(r) = index.checked_sub(idx + 1).and_then(|k| m.roots.get_mut(k)) {
+                let ld = r.landing.xy() + delta;
+                set_xy(&mut r.landing, ld);
+                done = true;
+            }
             if !done {
-                // The landing grip moves the landing and its content.
-                let ld = m.landing.xy() + delta;
-                set_xy(&mut m.landing, ld);
-                if let Some(t) = &mut m.text {
-                    let q = t.insert.xy() + delta;
-                    set_xy(&mut t.insert, q);
-                }
-                if let Some(b) = &mut m.block {
-                    let q = b.insert.xy() + delta;
-                    set_xy(&mut b.insert, q);
-                }
+                // The first landing's grip moves the content with every landing.
+                m.shift_content(delta);
             }
         }
         EntityKind::Solid(s) | EntityKind::Trace(s) => set_xy(s.corners.get_mut(index)?, to),

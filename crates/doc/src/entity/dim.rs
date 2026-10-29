@@ -210,15 +210,19 @@ pub struct MLeader {
     /// Block content in place of the text: a block reference placed at the landing.
     #[serde(default)]
     pub block: Option<Insert>,
+    /// Further leader roots: landings with leader lines of their own (a text with leaders on
+    /// both sides has a root on each side). The first root is [`MLeader::landing`],
+    /// [`MLeader::dogleg`] and [`MLeader::leaders`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roots: Vec<super::MLeaderRoot>,
 }
 
 impl MLeader {
-    /// Each leader line as drawn: through its points to the landing, smoothed for spline leaders.
+    /// Each leader line as drawn: through its points to its landing, smoothed for spline leaders.
     pub fn leader_paths(&self) -> Vec<Vec<Vec2>> {
-        self.leaders
-            .iter()
-            .map(|l| {
-                let pts: Vec<Vec2> = l.iter().map(|v| v.xy()).chain(std::iter::once(self.landing.xy())).collect();
+        self.lines()
+            .map(|(l, landing)| {
+                let pts: Vec<Vec2> = l.iter().map(|v| v.xy()).chain(std::iter::once(landing.xy())).collect();
                 if self.spline && pts.len() > 2 { GSpline::from_fit_points(&pts).tessellate(1e-3) } else { pts }
             })
             .collect()

@@ -2,8 +2,11 @@
 //! leader type, landing and dogleg switches, content type, block attribute values) come after
 //! the `AcDbMLeader` marker; the geometry lives in nested sections that reuse the same group
 //! codes: `300 CONTEXT_DATA{` … `301 }` holds the content (MText or block) and the plane, each
-//! `302 LEADER{` … `303 }` inside it a landing point with its dogleg, and each
+//! `302 LEADER{` … `303 }` inside it a leader root (a landing point with its dogleg), and each
 //! `304 LEADER_LINE{` … `305 }` inside that the vertices of one leader line from the arrowhead.
+//!
+//! A multileader's first root is [`MLeader::landing`] with [`MLeader::leaders`]; every further
+//! root (a text with leaders on both sides) is one of [`MLeader::roots`].
 //!
 //! The reader walks those sections with a level counter over the record's tags, so an
 //! unterminated or unbalanced section ends with the record; counts of leaders, lines,
@@ -12,7 +15,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use cadcraft_doc::{Attrib, Drawing, Entity, EntityKind, Handle, Insert, MLeader, MLeaderStyle, MText};
+use cadcraft_doc::{Attrib, Drawing, Entity, EntityKind, Handle, Insert, MLeader, MLeaderRoot, MLeaderStyle, MText};
 use cadcraft_dxf::Tag;
 use cadcraft_geom::Vec3;
 
@@ -266,32 +269,30 @@ pub(crate) fn read(tags: &[Tag]) -> MLeader {
     let p = parse(tags);
     let def = MLeaderStyle::default();
     let pos = |v: Option<f64>| v.filter(|x| *x > 0.0);
-    // Leader lines: those of the first root run to its landing; a further root's lines get
-    // their own landing as a last vertex (one landing per multileader here).
-    let mut leaders: Vec<Vec<Vec3>> = Vec::new();
-    for (i, r) in p.roots.iter().enumerate() {
-        for l in r.lines.iter().filter(|l| !l.is_empty()) {
-            let mut l = l.clone();
-            if i > 0
-                && let Some(land) = r.landing.get()
-            {
-                l.push(land);
-            }
-            leaders.push(l);
-        }
-    }
+    // Each root with leader lines keeps its own landing and dogleg: the first is the
+    // multileader's own, the others its further roots. Leader type None keeps no lines (a
+    // multileader without leaders keeps its first landing).
     let none = p.leader_type == Some(0);
-    if none {
-        leaders.clear();
-    }
+    let dogleg_of = |r: &Root| if p.dogleg_on == Some(false) { 0.0 } else { r.dogleg.or(p.dogleg).filter(|d| *d >= 0.0).unwrap_or(0.0) };
+    let lines_of = |r: &Root| -> Vec<Vec<Vec3>> { r.lines.iter().filter(|l| !l.is_empty()).cloned().collect() };
+    let with_lines: Vec<&Root> = if none { Vec::new() } else { p.roots.iter().filter(|r| r.lines.iter().any(|l| !l.is_empty())).collect() };
+    let first = with_lines.first().copied();
+    let leaders = first.map(lines_of).unwrap_or_default();
+    let roots: Vec<MLeaderRoot> = with_lines
+        .iter()
+        .skip(1)
+        .filter_map(|r| Some(MLeaderRoot { landing: r.landing.get()?, dogleg: dogleg_of(r), leaders: lines_of(r) }))
+        .collect();
     let text_location = p.text_location.get();
     let block_location = p.block_location.get();
-    let landing = p.roots.iter().find_map(|r| r.landing.get()).or(p.base.get()).or(text_location).or(block_location).unwrap_or(Vec3::ZERO);
-    let dogleg = if leaders.is_empty() || p.dogleg_on == Some(false) {
-        0.0
-    } else {
-        p.roots.iter().find_map(|r| r.dogleg).or(p.dogleg).filter(|d| *d >= 0.0).unwrap_or(0.0)
-    };
+    let landing = first
+        .and_then(|r| r.landing.get())
+        .or_else(|| p.roots.iter().find_map(|r| r.landing.get()))
+        .or(p.base.get())
+        .or(text_location)
+        .or(block_location)
+        .unwrap_or(Vec3::ZERO);
+    let dogleg = first.map_or(0.0, dogleg_of);
     let has_block = p.has_block.unwrap_or(p.content == Some(1));
     let has_text = !has_block && p.has_text.unwrap_or(p.content == Some(2));
     let text = has_text.then(|| {
@@ -336,6 +337,7 @@ pub(crate) fn read(tags: &[Tag]) -> MLeader {
         arrow_size: pos(p.arrow_ctx).or(pos(p.arrow)).unwrap_or(def.arrow_size),
         spline: p.leader_type == Some(2),
         block,
+        roots,
     }
 }
 
@@ -477,7 +479,9 @@ pub(crate) fn entity_tags(d: &Drawing, m: &MLeader, r: &Refs) -> Vec<Tag> {
     let block = m.block.as_ref().zip(r.block.as_ref());
     let text = if block.is_some() { None } else { m.text.as_ref() };
     let content_pt = block.map(|(b, _)| b.insert).or(text.map(|x| x.insert));
-    let dir = if content_pt.is_some_and(|c| c.x < m.landing.x) { -1.0 } else { 1.0 };
+    let dir_of = |landing: Vec3| if content_pt.is_some_and(|c| c.x < landing.x) { -1.0 } else { 1.0 };
+    let dir = dir_of(m.landing);
+    let has_leaders = m.line_count() > 0;
     let attach = text.map_or(1, |x| x.attach.clamp(1, 9));
     // The text's row as its attachment to the landing (top of top line, middle of text,
     // bottom of bottom line) and its column as the text side and alignment.
@@ -547,20 +551,24 @@ pub(crate) fn entity_tags(d: &Drawing, m: &MLeader, r: &Refs) -> Vec<Tag> {
     p(&mut t, 111, Vec3::new(1.0, 0.0, 0.0));
     p(&mut t, 112, Vec3::new(0.0, 1.0, 0.0));
     i(&mut t, 297, 0);
-    if !m.leaders.is_empty() {
+    // One LEADER section per root with leader lines, its dogleg pointing at the content; the
+    // roots are numbered in order and the leader lines over all roots.
+    let mut line_no = 0i64;
+    for (k, root) in m.all_roots().filter(|x| !x.leaders.is_empty()).enumerate() {
         s(&mut t, 302, "LEADER{");
         i(&mut t, 290, 1);
         i(&mut t, 291, 1);
-        p(&mut t, 10, m.landing);
-        p(&mut t, 11, Vec3::new(dir, 0.0, 0.0));
-        i(&mut t, 90, 0);
-        f(&mut t, 40, m.dogleg);
-        for (n, l) in m.leaders.iter().enumerate() {
+        p(&mut t, 10, root.landing);
+        p(&mut t, 11, Vec3::new(dir_of(root.landing), 0.0, 0.0));
+        i(&mut t, 90, i64::try_from(k).unwrap_or(i64::MAX));
+        f(&mut t, 40, root.dogleg);
+        for l in root.leaders {
             s(&mut t, 304, "LEADER_LINE{");
             for v in l {
                 p(&mut t, 10, *v);
             }
-            i(&mut t, 91, i64::try_from(n).unwrap_or(i64::MAX));
+            i(&mut t, 91, line_no);
+            line_no = line_no.saturating_add(1);
             s(&mut t, 305, "}");
         }
         i(&mut t, 271, 0);
@@ -576,7 +584,7 @@ pub(crate) fn entity_tags(d: &Drawing, m: &MLeader, r: &Refs) -> Vec<Tag> {
     i(
         &mut t,
         170,
-        if m.leaders.is_empty() {
+        if !has_leaders {
             0
         } else if m.spline {
             2
@@ -587,7 +595,7 @@ pub(crate) fn entity_tags(d: &Drawing, m: &MLeader, r: &Refs) -> Vec<Tag> {
     i(&mut t, 91, BYBLOCK);
     i(&mut t, 171, -2);
     i(&mut t, 290, 1);
-    i(&mut t, 291, i64::from(m.dogleg > 0.0));
+    i(&mut t, 291, i64::from(m.all_roots().any(|x| x.dogleg > 0.0)));
     f(&mut t, 41, m.dogleg);
     f(&mut t, 42, m.arrow_size);
     i(

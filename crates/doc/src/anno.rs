@@ -171,6 +171,11 @@ pub fn anno_scaled(e: &Entity, f: f64) -> Entity {
             let land = m.landing;
             m.arrow_size *= f;
             m.dogleg *= f;
+            // A further root sits on the content's other side: it moves away as the content grows.
+            for r in &mut m.roots {
+                r.dogleg *= f;
+                r.landing = land + (r.landing - land) * f;
+            }
             if let Some(t) = &mut m.text {
                 t.insert = land + (t.insert - land) * f;
                 t.height *= f;

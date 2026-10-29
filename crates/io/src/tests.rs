@@ -1718,6 +1718,7 @@ fn mleader_is_written_as_multileader() {
         arrow_size: 2.5,
         spline: false,
         block: None,
+        roots: Vec::new(),
     };
     d.add(&Space::Model, Default::default(), EntityKind::MLeader(m.clone())).unwrap();
     // MULTILEADER is a 2007 entity (R2000/2004 files get LEADER + MTEXT).

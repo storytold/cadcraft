@@ -1122,3 +1122,41 @@ fn raster_hatch_pattern_matches_one_by_one() {
         assert!(render(&l, &view, &o).unwrap().data() == render_one_by_one(&l, &view, &o).data());
     }
 }
+
+/// A multileader with a landing on each side of its text draws every root's leader lines and
+/// arrowheads, and each root's dogleg towards the text.
+#[test]
+fn multileader_draws_every_leader_root() {
+    let mut d = Drawing::new_metric();
+    let text = cadcraft_doc::MText {
+        insert: Vec3::new(12.5, 5.0, 0.0),
+        height: 2.5,
+        width: 0.0,
+        attach: 4,
+        rotation: 0.0,
+        style: "Standard".into(),
+        contents: "NOTE".into(),
+        line_spacing: 1.0,
+        line_spacing_exact: false,
+        columns: None,
+    };
+    let m = cadcraft_doc::MLeader {
+        leaders: vec![vec![Vec3::new(0.0, 0.0, 0.0)]],
+        landing: Vec3::new(10.0, 5.0, 0.0),
+        dogleg: 2.0,
+        text: Some(text),
+        arrow_size: 2.5,
+        roots: vec![cadcraft_doc::MLeaderRoot { landing: Vec3::new(30.0, 5.0, 0.0), dogleg: 2.0, leaders: vec![vec![Vec3::new(40.0, 0.0, 0.0)]] }],
+        ..Default::default()
+    };
+    d.add(&Space::Model, Common { color: cadcraft_color::Color::Index(1), ..Common::default() }, EntityKind::MLeader(m)).unwrap();
+    let l = build(&d, &Space::Model, &Options::default());
+    let lines: Vec<Vec<Vec2>> = l.prims.iter().filter(|p| p.kind == Kind::Polyline).map(|p| l.points(p).to_vec()).collect();
+    let has = |want: &[Vec2]| lines.iter().any(|p| p.as_slice() == want);
+    assert!(has(&[Vec2::new(0.0, 0.0), Vec2::new(10.0, 5.0)]) && has(&[Vec2::new(40.0, 0.0), Vec2::new(30.0, 5.0)]), "{lines:?}");
+    assert!(has(&[Vec2::new(10.0, 5.0), Vec2::new(12.0, 5.0)]), "the first dogleg runs right, to the text");
+    assert!(has(&[Vec2::new(30.0, 5.0), Vec2::new(28.0, 5.0)]), "the second runs left, back to the text");
+    // Two arrowheads, one at each leader's start.
+    let arrows: Vec<&[Vec2]> = l.prims.iter().filter(|p| p.kind == Kind::Tris).map(|p| l.points(p)).collect();
+    assert!(arrows.iter().any(|t| t.contains(&Vec2::new(0.0, 0.0))) && arrows.iter().any(|t| t.contains(&Vec2::new(40.0, 0.0))));
+}

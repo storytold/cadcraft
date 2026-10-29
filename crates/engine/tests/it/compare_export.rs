@@ -215,6 +215,7 @@ fn a_named_block_defined_differently_in_the_other_drawing_shows_the_other_defini
             arrow_size: 1.0,
             spline: false,
             block: Some(insert("SYMBOL")),
+            roots: Vec::new(),
         };
         part.entities.push(Entity::new(Handle(first + 2), EntityKind::MLeader(leader)));
         let mut sub = Block::new("SUB");

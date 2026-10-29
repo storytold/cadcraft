@@ -37,6 +37,7 @@ fn mleader_kind(s: &Session, pts: &[Vec2], text: &str, landing: bool) -> Option<
         arrow_size: st.arrow_size,
         spline: false,
         block: None,
+        roots: Vec::new(),
     }))
 }
 

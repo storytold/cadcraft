@@ -43,6 +43,7 @@ mod curves;
 mod dim;
 mod fill;
 mod layout;
+mod mleader;
 mod text;
 
 pub use block::{Attrib, AttribModes, AttribProps, Insert, MultilineAttrib, mtext_literal};
@@ -51,6 +52,7 @@ pub use curves::{Arc, Circle, Ellipse, Face3d, Line, LwPolyline, Point, Polyline
 pub use dim::{AssocSnap, DimAssoc, DimBreak, DimKind, DimMarks, Dimension, Inspection, JoggedRadius, Leader, MLeader};
 pub use fill::{Gradient, Hatch, HatchLoop, Wipeout};
 pub use layout::{Image, Table, TableCell, Viewport};
+pub use mleader::{MLeaderRoot, RootRef};
 pub use text::{HAlign, MText, MTextColumnType, MTextColumns, Text, VAlign};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Unknown {
@@ -248,9 +250,8 @@ impl EntityKind {
             EntityKind::Dimension(d) => vec![Prim::Point(d.defpt.xy())],
             EntityKind::MLine(m) => m.segments().into_iter().map(Prim::Seg).collect(),
             EntityKind::MLeader(m) => m
-                .leaders
-                .iter()
-                .flat_map(|l| l.windows(2).filter_map(|w| Some(Prim::Seg(Segment::Line(GLine::new(w.first()?.xy(), w.get(1)?.xy()))))))
+                .lines()
+                .flat_map(|(l, _)| l.windows(2).filter_map(|w| Some(Prim::Seg(Segment::Line(GLine::new(w.first()?.xy(), w.get(1)?.xy()))))))
                 .chain(m.block.iter().map(|b| Prim::Point(b.insert.xy())))
                 .collect(),
             EntityKind::Image(i) => vec![Prim::Point(i.insert.xy())],
@@ -390,10 +391,7 @@ impl EntityKind {
             }
             EntityKind::Leader(l) => l.vertices.iter_mut().for_each(t3),
             EntityKind::MLeader(ml) => {
-                for l in &mut ml.leaders {
-                    l.iter_mut().for_each(t3);
-                }
-                t3(&mut ml.landing);
+                ml.for_each_leader_point(t3);
                 if let Some(t) = &mut ml.text {
                     t3(&mut t.insert);
                     t.height *= s;
@@ -521,7 +519,8 @@ impl EntityKind {
             EntityKind::Dimension(d) => vec![d.p13.xy(), d.p14.xy(), d.defpt.xy(), d.text_mid.xy()],
             EntityKind::MLine(m) => m.points(),
             EntityKind::Leader(l) => l.vertices.iter().map(|v| v.xy()).collect(),
-            EntityKind::MLeader(m) => m.leaders.iter().flat_map(|l| l.iter().map(|v| v.xy())).chain(std::iter::once(m.landing.xy())).collect(),
+            // Every leader vertex, then the landings (the first root's first).
+            EntityKind::MLeader(m) => m.lines().flat_map(|(l, _)| l.iter().map(|v| v.xy())).chain(m.all_roots().map(|r| r.landing.xy())).collect(),
             EntityKind::Hatch(h) => {
                 let b = Bounds2::from_points(h.loops.iter().flat_map(|l| l.vertices.iter().map(|v| v.p)));
                 vec![b.center()]

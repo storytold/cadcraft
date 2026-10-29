@@ -184,7 +184,7 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
             b
         }
         EntityKind::MLeader(m) => {
-            let mut b = Bounds2::from_points(m.leaders.iter().flatten().map(|v| v.xy()).chain(std::iter::once(m.landing.xy())));
+            let mut b = Bounds2::from_points(m.lines().flat_map(|(l, _)| l.iter().map(|v| v.xy())).chain(m.all_roots().map(|r| r.landing.xy())));
             if let Some(t) = &m.text {
                 b.add(t.insert.xy());
                 if !blank(&t.contents) {
@@ -366,6 +366,7 @@ mod tests {
             arrow_size: 1.0,
             spline: false,
             block: None,
+            roots: Vec::new(),
         };
         let b = bounds(EntityKind::MLeader(ml.clone()));
         // The glyph spans x 25.45..28.78, y -2.5..2.5.

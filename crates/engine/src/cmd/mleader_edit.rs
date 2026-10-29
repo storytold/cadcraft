@@ -1,13 +1,15 @@
 //! MLEADEREDIT (add / remove leaders), MLEADERALIGN and MLEADERCOLLECT.
 //!
-//! The model has one landing per multileader: its leaders are polylines from an arrowhead to that
-//! landing, so "add leader" pushes one more arrowhead polyline and "remove leader" drops one.
+//! A multileader's leaders are polylines from an arrowhead to a landing. "Add leader" adds one
+//! from the new arrowhead to the landing on its side of the content: a point on the other side
+//! of the text or block than the first landing gets a landing of its own there (a further leader
+//! root, as the reference program does), the same dogleg and gap from the content as the first.
+//! "Remove leader" drops one; a further landing left without leaders goes with it.
 
-use cadcraft_doc::{Entity, EntityKind, Handle, Insert, MLeader};
+use cadcraft_doc::{Entity, EntityKind, Handle, Insert, MLeader, MLeaderRoot};
 use cadcraft_geom::{Vec2, Vec3};
 use serde_json::{Value, json};
 
-use super::helpers::v3;
 use super::machines::{SelOutcome, SelectPhase};
 use super::{CommandSpec, bad, point_req, points_param, str_param, targets};
 
@@ -20,11 +22,11 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("mleaderedit", "Edit Multileader", run_edit)
             .alias(&["mledit"])
-            .params("{handle, mode?: add|remove (default add), points?: [[x,y]...] (arrowheads to add; with remove, points picking the leaders to remove), index?: number|[number] (remove by position)}")
+            .params("{handle, mode?: add|remove (default add), points?: [[x,y]...] (arrowheads to add, each to the landing on its side of the content: one is made on the other side when there is none; with remove, points picking the leaders to remove), index?: number|[number] (remove by position, counted over every landing)}")
             .interactive(|_| Ok(Box::new(EditM::new(None)))),
         CommandSpec::new("mleaderedit.add", "Add Leader", |s, p| run_edit(s, &with_mode(p, "add")))
             .menu(&["Modify", "Object", "Multileader", "Add Leader"])
-            .params("{handle, points: [[x,y]...] (arrowhead locations)}")
+            .params("{handle, points: [[x,y]...] (arrowhead locations; past the other side of the content they get a landing there)}")
             .interactive(|_| Ok(Box::new(EditM::new(Some(false))))),
         CommandSpec::new("mleaderedit.remove", "Remove Leader", |s, p| run_edit(s, &with_mode(p, "remove")))
             .menu(&["Modify", "Object", "Multileader", "Remove Leader"])
@@ -80,8 +82,8 @@ fn seg_dist(p: Vec2, a: Vec2, b: Vec2) -> f64 {
 /// The leader of `m` nearest `p`.
 fn nearest_leader(m: &MLeader, p: Vec2) -> Option<usize> {
     let mut best: Option<(usize, f64)> = None;
-    for (i, l) in m.leaders.iter().enumerate() {
-        let pts: Vec<Vec2> = l.iter().map(|v| v.xy()).chain(std::iter::once(m.landing.xy())).collect();
+    for (i, (l, landing)) in m.lines().enumerate() {
+        let pts: Vec<Vec2> = l.iter().map(|v| v.xy()).chain(std::iter::once(landing.xy())).collect();
         let d = pts.windows(2).filter_map(|w| Some(seg_dist(p, *w.first()?, *w.get(1)?))).fold(f64::INFINITY, f64::min);
         if d.is_finite() && best.is_none_or(|(_, bd)| d < bd) {
             best = Some((i, d));
@@ -92,16 +94,56 @@ fn nearest_leader(m: &MLeader, p: Vec2) -> Option<usize> {
 
 // ---------------------------------------------------------------- MLEADEREDIT
 
+/// The content's extent along X (left, right): the text as laid out, or the block's extents.
+fn content_span(s: &Session, m: &MLeader) -> Option<(f64, f64)> {
+    let d = s.doc().ok()?;
+    let b = if let Some(t) = &m.text {
+        cadcraft_render::layout_mtext_entity(d, t).bounds
+    } else if let Some(ins) = &m.block {
+        let probe = Entity { handle: Handle(0), common: Default::default(), kind: EntityKind::Insert(ins.clone()) };
+        cadcraft_doc::entity_bounds(d, &probe, 0)
+    } else {
+        return None;
+    };
+    (!b.is_empty() && b.min.x.is_finite() && b.max.x.is_finite()).then_some((b.min.x, b.max.x))
+}
+
+/// Add an arrowhead at `p` to `m`, its leader running to the landing on its side of the content
+/// (`span`, left and right). On the other side than the first landing it goes to a further root
+/// there, made when there is none: the first landing mirrored about the content (same dogleg,
+/// same gap to the content).
+fn add_leader(m: &mut MLeader, p: Vec2, span: Option<(f64, f64)>) {
+    let line = vec![Vec3::new(p.x, p.y, m.landing.z)];
+    let Some((x0, x1)) = span.filter(|_| !m.leaders.is_empty()) else {
+        m.leaders.push(line);
+        return;
+    };
+    let mid = (x0 + x1) / 2.0;
+    let (first_left, new_left) = (m.landing.x <= mid, p.x <= mid);
+    if first_left == new_left {
+        m.leaders.push(line);
+        return;
+    }
+    if let Some(r) = m.roots.iter_mut().find(|r| (r.landing.x <= mid) == new_left) {
+        r.leaders.push(line);
+        return;
+    }
+    let gap = if first_left { x0 - (m.landing.x + m.dogleg) } else { m.landing.x - m.dogleg - x1 };
+    let gap = if gap.is_finite() { gap.max(0.0) } else { 0.0 };
+    let x = if new_left { x0 - gap - m.dogleg } else { x1 + gap + m.dogleg };
+    m.roots.push(MLeaderRoot { landing: Vec3::new(x, m.landing.y, m.landing.z), dogleg: m.dogleg, leaders: vec![line] });
+}
+
 fn add_leaders(s: &mut Session, h: Handle, pts: &[Vec2]) -> Result<()> {
-    get_mleader(s, h).ok_or_else(|| bad("mleaderedit", "`handle` is not a multileader"))?;
+    let mut m = get_mleader(s, h).ok_or_else(|| bad("mleaderedit", "`handle` is not a multileader"))?;
     if locked(s, h) {
         return Err(bad("mleaderedit", "the multileader is on a locked layer"));
     }
-    s.doc_mut()?.modify_entity(h, |e| {
-        if let EntityKind::MLeader(m) = &mut e.kind {
-            m.leaders.extend(pts.iter().map(|p| vec![v3(*p)]));
-        }
-    })?;
+    let span = content_span(s, &m);
+    for p in pts {
+        add_leader(&mut m, *p, span);
+    }
+    s.doc_mut()?.modify_entity(h, |e| e.kind = EntityKind::MLeader(m))?;
     Ok(())
 }
 
@@ -110,8 +152,9 @@ fn remove_leaders(s: &mut Session, h: Handle, idx: &[usize]) -> Result<()> {
     if locked(s, h) {
         return Err(bad("mleaderedit", "the multileader is on a locked layer"));
     }
-    if let Some(i) = idx.iter().find(|i| **i >= m.leaders.len()) {
-        return Err(bad("mleaderedit", format!("no leader {i} (the multileader has {})", m.leaders.len())));
+    let n = m.line_count();
+    if let Some(i) = idx.iter().find(|i| **i >= n) {
+        return Err(bad("mleaderedit", format!("no leader {i} (the multileader has {n})")));
     }
     s.doc_mut()?.modify_entity(h, |e| {
         if let EntityKind::MLeader(m) = &mut e.kind {
@@ -119,9 +162,7 @@ fn remove_leaders(s: &mut Session, h: Handle, idx: &[usize]) -> Result<()> {
             sorted.sort_unstable();
             sorted.dedup();
             for i in sorted.into_iter().rev() {
-                if i < m.leaders.len() {
-                    m.leaders.remove(i);
-                }
+                m.remove_line(i);
             }
         }
     })?;
@@ -267,18 +308,6 @@ impl Interactive for EditM {
 
 // ---------------------------------------------------------------- shared geometry
 
-/// Move a multileader's content (landing, text, block) by `d`; the arrowheads stay.
-fn shift_content(m: &mut MLeader, d: Vec2) {
-    let mv = |v: &mut Vec3| *v = Vec3::new(v.x + d.x, v.y + d.y, v.z);
-    mv(&mut m.landing);
-    if let Some(t) = &mut m.text {
-        mv(&mut t.insert);
-    }
-    if let Some(b) = &mut m.block {
-        mv(&mut b.insert);
-    }
-}
-
 fn move_content(s: &mut Session, moves: &[(Handle, Vec2)]) -> Result<()> {
     let d = s.doc_mut()?;
     for (h, delta) in moves {
@@ -287,7 +316,7 @@ fn move_content(s: &mut Session, moves: &[(Handle, Vec2)]) -> Result<()> {
         }
         d.modify_entity(*h, |e| {
             if let EntityKind::MLeader(m) = &mut e.kind {
-                shift_content(m, *delta);
+                m.shift_content(*delta);
             }
         })?;
     }
@@ -660,7 +689,8 @@ fn collect(s: &mut Session, hs: &[Handle], at: Vec2, layout: Layout, spacing: Op
     }
     let (first_h, first) = items[0].clone();
     let mut merged = first;
-    merged.leaders = items.iter().flat_map(|(_, m)| m.leaders.iter().cloned()).collect();
+    merged.leaders = items.iter().flat_map(|(_, m)| m.lines_to_first_root()).collect();
+    merged.roots.clear();
     merged.landing = Vec3::new(at.x, at.y, merged.landing.z);
     merged.dogleg = 0.0;
     merged.text = None;
