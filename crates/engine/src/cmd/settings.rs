@@ -137,18 +137,38 @@ fn run_osnap(s: &mut Session, p: &Value) -> Result<Value> {
         }
         s.settings.osmode = bits;
     }
+    // Object snap is on when the F3 bit is clear and a running mode is set (the status bar's
+    // button shows the same): F3 with OSMODE 0 turns it on, not off.
+    let has_modes = |o: u32| o & !mode::OFF != 0;
+    let mut asked_on = false;
     if p.get("osmode").is_none() && p.get("modes").is_none() {
-        let on = p.get("on").and_then(Value::as_bool).unwrap_or(s.settings.osmode & mode::OFF != 0);
+        let was_on = s.settings.osmode & mode::OFF == 0 && has_modes(s.settings.osmode);
+        let on = p.get("on").and_then(Value::as_bool).unwrap_or(!was_on);
         if on {
             s.settings.osmode &= !mode::OFF;
         } else {
             s.settings.osmode |= mode::OFF;
         }
+        asked_on = on;
     }
     s.touch();
-    let on = s.settings.osmode & mode::OFF == 0;
-    let active: Vec<&str> = mode::ALL.iter().filter(|(b, _)| s.settings.osmode & b != 0).map(|(_, n)| *n).collect();
-    Ok(json!({ "on": on, "osmode": s.settings.osmode, "modes": active, "message": format!("<Osnap {}>", if on { "on" } else { "off" }) }))
+    let osmode = s.settings.osmode;
+    let on = osmode & mode::OFF == 0 && has_modes(osmode);
+    let active: Vec<&str> = mode::ALL.iter().filter(|(b, _)| osmode & b != 0).map(|(_, n)| *n).collect();
+    // Turned on with no running snap set: nothing could snap. AutoCAD then shows the Object Snap
+    // settings; the reply says so (`noModes`), and the desktop app opens Drafting Settings. The
+    // message is echoed on the command line, so the JSON way to set them is in `hint` only.
+    if asked_on && !has_modes(osmode) {
+        return Ok(json!({
+            "on": false,
+            "osmode": osmode,
+            "modes": active,
+            "noModes": true,
+            "message": "No running object snaps are set: choose them in Drafting Settings.",
+            "hint": "Set them with OSNAP {\"modes\": [\"end\", \"mid\", ...]} or {\"osmode\": N}.",
+        }));
+    }
+    Ok(json!({ "on": on, "osmode": osmode, "modes": active, "message": format!("<Osnap {}>", if on { "on" } else { "off" }) }))
 }
 
 fn run_dsettings(s: &mut Session, p: &Value) -> Result<Value> {

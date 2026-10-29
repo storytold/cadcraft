@@ -99,7 +99,8 @@ fn dsettings(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         tracking_options(ui, s);
         ui.separator();
         ui.heading(crate::tl!("Object Snap"));
-        let mut on = s.osmode & cadcraft_engine::snap::mode::OFF == 0;
+        // On as the status bar's button and OSNAP show it: the F3 bit clear and a mode set.
+        let mut on = s.osmode & cadcraft_engine::snap::mode::OFF == 0 && s.osmode != 0;
         if ui.checkbox(&mut on, crate::tl!("Object Snap On (F3)")).changed() {
             if on {
                 s.osmode &= !cadcraft_engine::snap::mode::OFF;

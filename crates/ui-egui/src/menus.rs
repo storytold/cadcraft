@@ -773,6 +773,11 @@ pub fn run_transparent(app: &mut CadApp, id: &str) {
             if let Some(m) = v.get("message").and_then(Value::as_str) {
                 app.session.echo(m.to_string());
             }
+            // F3 or the status bar's button with no running snap set: show the object snap
+            // settings to pick them, as AutoCAD does.
+            if v.get("noModes").and_then(Value::as_bool) == Some(true) {
+                app.ui.dialog = Some("dsettings".into());
+            }
         }
         Err(_) => {
             let _ = app.run(id, json!({}));

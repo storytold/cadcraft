@@ -83,6 +83,7 @@ mod offset_closed_spline;
 mod offset_ellipse_side;
 mod offset_move;
 mod options_profile;
+mod osnap_no_modes;
 mod overkill;
 mod parallel_display_list;
 mod pedit_splinedit;
