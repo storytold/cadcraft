@@ -876,3 +876,332 @@ fn angtof_reads_the_string_in_the_given_units() {
     assert_eq!(ok(&mut s, "(angtof \"180\" 7)"), "nil");
     assert_eq!(ok(&mut s, "(angtof \"180\" \"x\")"), "nil");
 }
+
+// ---------------------------------------------------------------------------
+//  xdata: a routine's own data on an entity
+//
+//  A routine that keeps its own data on the drawing (an electrical point knowing which panel
+//  feeds it, a conduit knowing which two points it joins) writes it as xdata, because xdata
+//  survives COPY, ARRAY and the file. Without these four things it cannot:
+//
+//    regapp         the first line of every such routine
+//    entget + apps  reading it back
+//    entmod + (-3)  writing it
+//    and above all: an ORDINARY entmod not throwing it away
+// ---------------------------------------------------------------------------
+
+/// A LINE to hang data on.
+fn a_line(s: &mut Session) {
+    ok(s, "(entmake '((0 . \"LINE\") (8 . \"0\") (10 0 0 0) (11 5 0 0))) (setq e (entlast))");
+}
+
+#[test]
+fn regapp_answers_the_name() {
+    let mut s = session();
+    assert_eq!(ok(&mut s, "(regapp \"ACME\")"), "\"ACME\"");
+    assert_eq!(ok(&mut s, "(regapp \"\")"), "nil");
+}
+
+#[test]
+fn an_entity_list_has_no_xdata_unless_it_was_asked_for() {
+    let mut s = session();
+    a_line(&mut s);
+    ok(&mut s, "(entmod (append (entget e) '((-3 (\"ACME\" (1000 . \"panel=P-1\"))))))");
+    // without the second argument there is no -3 at all, which is how AutoCAD answers
+    assert_eq!(ok(&mut s, "(if (assoc -3 (entget e)) \"yes\" \"no\")"), "\"no\"");
+    assert_eq!(ok(&mut s, "(if (assoc -3 (entget e '(\"ACME\"))) \"yes\" \"no\")"), "\"yes\"");
+}
+
+#[test]
+fn xdata_written_from_lisp_reads_back() {
+    let mut s = session();
+    a_line(&mut s);
+    ok(&mut s, "(regapp \"ACME\")");
+    ok(&mut s, "(entmod (append (entget e) '((-3 (\"ACME\" (1000 . \"panel=P-1\") (1000 . \"kind=outlet\") (1070 . 7) (1040 . 2.5))))))");
+    let v = ok(&mut s, "(cdr (assoc -3 (entget e '(\"ACME\"))))");
+    assert_eq!(v, "((\"ACME\" (1000 . \"panel=P-1\") (1000 . \"kind=outlet\") (1070 . 7) (1040 . 2.5)))", "{v}");
+    // and the integer comes back an integer, not 7.0: whoever reads it does arithmetic
+    assert_eq!(ok(&mut s, "(cdr (assoc 1070 (cdar (cdr (assoc -3 (entget e '(\"ACME\")))))))"), "7");
+}
+
+#[test]
+fn an_ordinary_entmod_does_not_throw_the_xdata_away() {
+    // THIS IS THE BUG THE REST OF THE WORK CAME FROM.
+    //
+    // `common` comes from the group list, and xdata is not an ordinary group - so it came back
+    // empty and `e.common = common` wiped the entity's xdata. Changing a layer destroyed
+    // another application's data, silently. For a routine that keeps its model in the drawing
+    // that is not a detail: it loses the job on the first command that touches anything.
+    let mut s = session();
+    a_line(&mut s);
+    ok(&mut s, "(entmod (append (entget e) '((-3 (\"ACME\" (1000 . \"panel=P-1\"))))))");
+    // an entmod that says nothing about xdata: it only changes the layer
+    ok(&mut s, "(setq d (entget e)) (entmod (subst (cons 8 \"OTHER\") (assoc 8 d) d))");
+    assert_eq!(ok(&mut s, "(cdr (assoc 8 (entget e)))"), "\"OTHER\"", "the layer changed");
+    let v = ok(&mut s, "(cdr (assoc -3 (entget e '(\"ACME\"))))");
+    assert_eq!(v, "((\"ACME\" (1000 . \"panel=P-1\")))", "the xdata survived: {v}");
+}
+
+#[test]
+fn writing_one_application_leaves_another_alone() {
+    let mut s = session();
+    a_line(&mut s);
+    ok(&mut s, "(entmod (append (entget e) '((-3 (\"PE_URL\" (1000 . \"https://x/7\"))))))");
+    ok(&mut s, "(entmod (append (entget e) '((-3 (\"ACME\" (1000 . \"kind=conduit\"))))))");
+    // both are there, and "*" asks for all of them
+    let v = ok(&mut s, "(cdr (assoc -3 (entget e '(\"*\"))))");
+    assert!(v.contains("PE_URL") && v.contains("ACME"), "{v}");
+    // and writing one of them again does not touch the other
+    ok(&mut s, "(entmod (append (entget e) '((-3 (\"ACME\" (1000 . \"kind=feed\"))))))");
+    let v = ok(&mut s, "(cdr (assoc -3 (entget e '(\"PE_URL\"))))");
+    assert_eq!(v, "((\"PE_URL\" (1000 . \"https://x/7\")))", "{v}");
+}
+
+#[test]
+fn naming_an_application_with_no_groups_removes_it() {
+    let mut s = session();
+    a_line(&mut s);
+    ok(&mut s, "(entmod (append (entget e) '((-3 (\"ACME\" (1000 . \"kind=conduit\"))))))");
+    ok(&mut s, "(entmod (append (entget e) '((-3 (\"ACME\")))))");
+    assert_eq!(ok(&mut s, "(if (assoc -3 (entget e '(\"ACME\"))) \"yes\" \"no\")"), "\"no\"");
+}
+
+#[test]
+fn the_appid_table_reports_what_the_drawing_holds() {
+    let mut s = session();
+    a_line(&mut s);
+    assert_eq!(ok(&mut s, "(if (tblsearch \"APPID\" \"ACME\") \"yes\" \"no\")"), "\"no\"");
+    ok(&mut s, "(entmod (append (entget e) '((-3 (\"ACME\" (1000 . \"kind=conduit\"))))))");
+    assert_eq!(ok(&mut s, "(if (tblsearch \"APPID\" \"ACME\") \"yes\" \"no\")"), "\"yes\"");
+    // and a name already in use is not registered again
+    assert_eq!(ok(&mut s, "(regapp \"ACME\")"), "nil");
+}
+
+#[test]
+fn a_point_in_xdata_survives_the_round_trip() {
+    let mut s = session();
+    a_line(&mut s);
+    ok(&mut s, "(entmod (append (entget e) '((-3 (\"ACME\" (1010 1.5 2.5 0.0))))))");
+    let v = ok(&mut s, "(cdr (assoc -3 (entget e '(\"ACME\"))))");
+    assert_eq!(v, "((\"ACME\" (1010 1.5 2.5 0.0)))", "{v}");
+}
+
+#[test]
+fn an_entity_without_xdata_answers_nothing() {
+    let mut s = session();
+    a_line(&mut s);
+    assert_eq!(ok(&mut s, "(if (assoc -3 (entget e '(\"ACME\"))) \"yes\" \"no\")"), "\"no\"");
+    assert_eq!(ok(&mut s, "(if (assoc -3 (entget e '(\"*\"))) \"yes\" \"no\")"), "\"no\"");
+}
+
+#[test]
+fn an_entmod_does_not_throw_a_block_reference_attributes_away() {
+    // Same cause as the xdata: `entget` does not emit a block reference's attributes (there
+    // is no group for them in the list), so the rebuilt entity came back with none and the
+    // entmod wiped every value. In an electrical drawing that is the circuit number of each
+    // outlet.
+    //
+    // The check is on the model and not through LISP on purpose: the attributes are part of
+    // the Insert rather than entities of their own, so `entnext` never shows them - which is
+    // exactly why the group list could not carry them back.
+    const DXF: &str = "0
+SECTION
+2
+ENTITIES
+0
+INSERT
+5
+2A
+8
+0
+2
+P
+10
+0
+20
+0
+30
+0
+66
+1
+0
+ATTRIB
+5
+2B
+8
+0
+10
+0
+20
+0
+30
+0
+40
+0.2
+1
+7
+2
+CIRCUIT
+70
+0
+0
+SEQEND
+5
+2C
+0
+ENDSEC
+0
+EOF
+";
+
+    set_entity_codec(EntityCodec { groups: cadcraft_io::entity_groups, entity: cadcraft_io::entity_from_groups });
+    let d = cadcraft_io::read_dxf(DXF.as_bytes()).unwrap();
+    let mut s = Session::empty();
+    s.open_drawing(d, "attribs", None);
+
+    let values = |s: &Session| -> Vec<String> {
+        let doc = s.doc().unwrap();
+        doc.model
+            .iter()
+            .find_map(|e| match &e.kind {
+                cadcraft_doc::EntityKind::Insert(i) => Some(i.attribs.iter().map(|a| a.text.value.clone()).collect()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    };
+    assert_eq!(values(&s), vec!["7".to_string()], "the attribute was read from the file");
+
+    // an entmod that says nothing about attributes: it only changes the layer
+    ok(&mut s, "(setq e (handent \"2A\")) (setq d (entget e)) (entmod (subst (cons 8 \"OTHER\") (assoc 8 d) d))");
+    assert_eq!(ok(&mut s, "(cdr (assoc 8 (entget (handent \"2A\"))))"), "\"OTHER\"", "the layer changed");
+    assert_eq!(values(&s), vec!["7".to_string()], "and the attribute survived");
+}
+
+#[test]
+fn an_entmake_keeps_the_xdata_its_list_carries() {
+    // The other door into the same loss. `list_to_groups` leaves `-3` out, and entmake hands
+    // what is left to `entity_from_list` - so the entity was made and the data it arrived with
+    // was dropped, by the call that was asked to store it.
+    let mut s = session();
+    ok(&mut s, "(entmake '((0 . \"LINE\") (8 . \"0\") (10 0 0 0) (11 5 0 0) (-3 (\"ACME\" (1000 . \"panel=P-1\")))))");
+    ok(&mut s, "(setq e (entlast))");
+    let v = ok(&mut s, "(cdr (assoc -3 (entget e '(\"ACME\"))))");
+    assert_eq!(v, "((\"ACME\" (1000 . \"panel=P-1\")))", "the xdata came in with the entity: {v}");
+}
+
+#[test]
+fn a_real_in_xdata_keeps_all_of_its_digits() {
+    // The AutoLISP display format rounds to six significant digits, which is right for showing
+    // a number and wrong for storing one: 1234567.89 was stored as 1234570.0, so a coordinate
+    // kept in xdata moved two units on the way in and nothing said so.
+    let mut s = session();
+    a_line(&mut s);
+    ok(&mut s, "(entmod (append (entget e) '((-3 (\"ACME\" (1040 . 1234567.89) (1010 1234567.89 0.1234567890123 2.5))))))");
+    ok(&mut s, "(setq x (car (cdr (assoc -3 (entget e '(\"ACME\"))))))");
+    assert_eq!(ok(&mut s, "(if (equal (cdr (nth 1 x)) 1234567.89 1e-9) \"yes\" \"no\")"), "\"yes\"", "the real kept its digits");
+    assert_eq!(ok(&mut s, "(if (equal (nth 1 (nth 2 x)) 1234567.89 1e-9) \"yes\" \"no\")"), "\"yes\"", "and so did the point's x");
+    assert_eq!(ok(&mut s, "(if (equal (nth 2 (nth 2 x)) 0.1234567890123 1e-15) \"yes\" \"no\")"), "\"yes\"", "and its y");
+}
+
+#[test]
+fn an_appid_in_a_block_definition_is_in_the_drawing_too() {
+    // An application used only inside a block definition, or on a layout, holds data in this
+    // drawing just as much as one used in model space. Reading `model` alone answered that it
+    // was not there, so `regapp` handed its name back as free and `tblsearch` denied it.
+    let mut s = session();
+    ok(&mut s, "(entmake '((0 . \"BLOCK\") (2 . \"P\") (10 0 0 0) (70 . 0)))");
+    ok(&mut s, "(entmake '((0 . \"LINE\") (8 . \"0\") (10 0 0 0) (11 1 0 0) (-3 (\"INBLOCK\" (1000 . \"kind=outlet\")))))");
+    ok(&mut s, "(entmake '((0 . \"ENDBLK\")))");
+    assert_eq!(ok(&mut s, "(if (tblsearch \"APPID\" \"INBLOCK\") \"yes\" \"no\")"), "\"yes\"", "the table sees it");
+    assert_eq!(ok(&mut s, "(regapp \"INBLOCK\")"), "nil", "and regapp does not hand the name out as free");
+}
+
+#[test]
+fn an_entmod_keeps_every_part_of_common_the_group_list_cannot_carry() {
+    // The general shape of the two fixes above, as a guard. `entity_from_list` rebuilds `common`
+    // from the group list, so every part of Common the list has no group for came back empty and
+    // was written over the entity: the xdata did, and so do the annotative scales, which ride in
+    // a separate record rather than in the entity's groups. Here every field is set away from its
+    // default and only the layer is changed, so anything that does not survive is a part of the
+    // entity that a layer change destroys - and a field added to Common later without a group of
+    // its own fails here instead of quietly going missing.
+    let mut s = session();
+    a_line(&mut s);
+    let h = s.doc().unwrap().model.handles().first().copied().unwrap();
+    s.doc_mut().unwrap().model.modify(h, |e| {
+        e.common.color = cadcraft_doc::color::Color::Index(3);
+        e.common.linetype = "DASHED".into();
+        e.common.lineweight = cadcraft_doc::Lineweight::Mm100(50);
+        e.common.ltscale = 2.5;
+        e.common.transparency = cadcraft_doc::Transparency::Percent(40);
+        e.common.visible = false;
+        e.common.thickness = 1.25;
+        e.common.extrusion = cadcraft_doc::geom::Vec3::new(0.0, 0.0, -1.0);
+        e.common.plot_style = "Style1".into();
+        e.common.anno_scales = vec![cadcraft_doc::AnnoScale { name: "1:50".into(), paper_units: 1.0, drawing_units: 50.0 }];
+        e.common.xdata =
+            vec![cadcraft_doc::RawTag { code: 1001, value: "ACME".into() }, cadcraft_doc::RawTag { code: 1000, value: "panel=P-1".into() }];
+    });
+    let common = |s: &Session| s.doc().unwrap().model.get(h).unwrap().common.clone();
+    let before = common(&s);
+
+    ok(&mut s, "(setq d (entget e)) (entmod (subst (cons 8 \"OTHER\") (assoc 8 d) d))");
+
+    let mut wanted = before;
+    wanted.layer = "OTHER".into();
+    assert_eq!(common(&s), wanted, "a layer change took something else with it");
+}
+
+#[test]
+fn a_group_the_file_cannot_hold_is_refused_instead_of_written() {
+    // THE HOLE THE REVIEW FOUND, AND THE WORST OF THEM.
+    //
+    // `(0 . "CIRCLE")` in a `-3` list went into the entity's xdata and then into the file, where
+    // a group `0` ends the entity: every reader took what followed as a new one, so a drawing of
+    // one line came back as a line and a circle. A typo - `(0 . …)` for `(1000 . …)` - was
+    // enough. The check is in `tag_from` now, and this test saves and reopens, because the harm
+    // was in the file rather than in memory.
+    let mut s = session();
+    a_line(&mut s);
+    let bad = eval(&mut s, "(entmod (append (entget e) '((-3 (\"ACME\" (0 . \"CIRCLE\") (1000 . \"ok\"))))))");
+    assert_eq!(bad, Err("0 inside -3: xdata holds group codes 1000 and up".into()));
+    // nothing of it reached the entity, and nothing reaches the file
+    assert_eq!(ok(&mut s, "(if (assoc -3 (entget e '(\"*\"))) \"yes\" \"no\")"), "\"no\"");
+    let saved = cadcraft_io::write_dxf(s.doc().unwrap());
+    let back = cadcraft_io::read_dxf(saved.as_bytes()).unwrap();
+    assert_eq!(back.model.len(), 1, "the saved drawing still holds one entity");
+}
+
+#[test]
+fn an_xdata_group_has_to_be_the_kind_the_file_holds() {
+    let mut s = session();
+    a_line(&mut s);
+    let bad = |s: &mut Session, item: &str| eval(s, &format!("(entmod (append (entget e) '((-3 (\"ACME\" {item})))))"));
+
+    // 1070 is 16 bits wide in the file, and another program reading it expects that
+    assert!(bad(&mut s, "(1070 . 99999)").is_err(), "1070 out of range");
+    assert!(bad(&mut s, "(1071 . \"abc\")").is_err(), "1071 is not a string");
+    assert!(bad(&mut s, "(1040 . \"abc\")").is_err(), "1040 is not a string");
+    assert!(bad(&mut s, "(1002 . \"nao\")").is_err(), "1002 is a brace or nothing");
+    assert!(bad(&mut s, "(1010 . 1.0)").is_err(), "1010 wants a point");
+    // and the braces have to close, or the reader drops the whole application
+    assert!(bad(&mut s, "(1002 . \"{\") (1000 . \"x\")").is_err(), "an unclosed brace");
+    assert!(bad(&mut s, "(1002 . \"}\") (1002 . \"{\")").is_err(), "closed before it opened");
+
+    // what the file does hold goes in, braces and all
+    ok(&mut s, "(entmod (append (entget e) '((-3 (\"ACME\" (1002 . \"{\") (1070 . 7) (1002 . \"}\"))))))");
+    let v = ok(&mut s, "(cdr (assoc -3 (entget e '(\"ACME\"))))");
+    assert_eq!(v, "((\"ACME\" (1002 . \"{\") (1070 . 7) (1002 . \"}\")))", "{v}");
+}
+
+#[test]
+fn a_group_dxf_gives_no_type_to_still_makes_the_round_trip() {
+    // The refusal is about what the file cannot hold, not about codes this module has not been
+    // told about: a drawing from another program may carry one, `entget` shows it, and
+    // `(entmod (entget e))` must not be the call that loses it.
+    let mut s = session();
+    a_line(&mut s);
+    ok(&mut s, "(entmod (append (entget e) '((-3 (\"ACME\" (1009 . \"odd but legal\"))))))");
+    let v = ok(&mut s, "(cdr (assoc -3 (entget e '(\"ACME\"))))");
+    assert_eq!(v, "((\"ACME\" (1009 . \"odd but legal\")))", "{v}");
+}

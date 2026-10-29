@@ -75,7 +75,7 @@ reached", malformed source is a reader error, and every built-in checks its argu
 - **Errors:** `*error*`, `vl-catch-all-apply vl-catch-all-error-p vl-catch-all-error-message`
 - **Drawing:** `command` (also `command-s`, `vl-cmdf`) with `pause`, a command left open for the
   next call, and `(command)` to cancel; `getvar setvar`; `entget entmake entmod entdel entlast
-  entnext entupd handent`; `ssget` (modes X, L, P, I, W, C, F, WP, CP, a point, or the user
+  entnext entupd handent regapp`; `ssget` (modes X, L, P, I, W, C, F, WP, CP, a point, or the user
   selecting; filters with wildcards and `-4` operators) `ssadd ssdel sslength ssname ssmemb
   sssetfirst ssgetfirst`; `tblsearch tblnext` (LAYER, LTYPE, STYLE, BLOCK, DIMSTYLE, APPID)
 - **Input:** `initget getpoint getcorner getdist getangle getorient getreal getint getstring
@@ -87,6 +87,20 @@ Entity lists use the DXF group codes of CADCraft's DXF files: what `entget` retu
 DXF file holds for the object, plus `-1` (its name) and `410` (its layout). Angles (groups 50–58)
 are in radians, as in AutoCAD, where the file holds degrees; `entmake`, `entmod` and `ssget`
 filters take radians too.
+
+Extended data (xdata) is the group `-3`, one sublist per application: `(-3 ("ACME" (1000 . "D-07")
+(1070 . 3)))`. `entget` adds that item only for the applications named in its second argument
+(`'("ACME")`, or `'("*")` for every one); without the argument an entity list has no `-3`, as in
+AutoCAD. `entmod` takes the same shape back and replaces only the applications the list names —
+another application's data is left alone — while an application named with no groups after it is
+removed. `entmake` takes it too, so an entity can be made with its data already on it. Group codes
+keep their types: `1070` and `1071` are integers, `1040`–`1042` reals, and a `1010` point comes back
+as `(1010 x y z)`. `regapp` answers the name, or nil when the drawing already holds data for it:
+there is no APPID table to add a record to, because `tblsearch "APPID"` reads the applications out
+of the drawing's own xdata. A `-3` list holds only what the file holds: group codes 1000 and up, a
+`1002` that is one brace with the braces closing, a real for `1040`-`1042`, an integer within the
+group's width for `1070` and `1071`, and a point for `1010`-`1013`. Anything else is an error rather
+than data that reads back as nothing.
 
 `entmake` defines blocks: a BLOCK list (2 name, 70 flags, 10 base point, 4 description) begins a
 definition, the entities made after it go into the block instead of the drawing, and an ENDBLK
