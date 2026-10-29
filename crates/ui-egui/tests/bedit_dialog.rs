@@ -133,7 +133,7 @@ fn opening_a_drawing_with_authoring_elements_offers_the_block_editor() {
     let symbol = dir.join("Symbol.dxf");
     std::fs::write(&symbol, "authoring").unwrap();
     let mut app = CadApp::new(Session::new(), Services::default());
-    app.open_path(&symbol.to_string_lossy());
+    app.open_path(&symbol);
     // The file is read in the background (#797): wait for it to be added.
     let t = std::time::Instant::now();
     while app.opening.busy() && t.elapsed() < std::time::Duration::from_secs(10) {
@@ -163,7 +163,7 @@ fn opening_a_drawing_with_authoring_elements_offers_the_block_editor() {
     let plain = dir.join("Plain.dxf");
     std::fs::write(&plain, "plain").unwrap();
     let mut app = CadApp::new(Session::new(), Services::default());
-    app.open_path(&plain.to_string_lossy());
+    app.open_path(&plain);
     // The file is read in the background (#797): wait for it to be added.
     let t = std::time::Instant::now();
     while app.opening.busy() && t.elapsed() < std::time::Duration::from_secs(10) {

@@ -1,4 +1,4 @@
-use super::*;
+use super::{Bounds2, Result, Session, Space, Vec2, View};
 
 impl Session {
     // ---------------- views ----------------

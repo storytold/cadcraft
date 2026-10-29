@@ -328,22 +328,10 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
     let get = |name: &str| secs.iter().find(|s| s.name == name).map(|s| split(&s.tags)).unwrap_or_default();
     let (classes, tables, blocks, entities, objects) = (get("CLASSES"), get("TABLES"), get("BLOCKS"), get("ENTITIES"), get("OBJECTS"));
     // The drawing's entities by handle: whether each is of a type CADCraft doesn't model.
-    let mut ents: HashMap<String, bool> = HashMap::new();
-    for e in all_entities(d) {
-        ents.entry(e.handle.hex()).or_insert(matches!(e.kind, EntityKind::Unknown(_)));
-    }
+    let ents = entity_types(d);
     let ids = identities(&tables, &blocks, &objects);
     // Extension dictionaries of entities and records: owner → dictionary.
-    let mut xdict_of: HashMap<String, String> = HashMap::new();
-    for (kind, _, t) in tables.iter().chain(&blocks).chain(&entities) {
-        if kind == "ENDBLK" {
-            continue;
-        }
-        let h = head(t);
-        if let (Some(o), Some(x)) = (h.handle, h.xdict) {
-            xdict_of.entry(o).or_insert(x);
-        }
-    }
+    let xdict_of = extension_dictionaries(&tables, &blocks, &entities);
     // Objects by handle: the first of each, and none that has an entity's handle.
     let mut by_handle: HashMap<String, usize> = HashMap::new();
     for (i, (_, _, t)) in objects.iter().enumerate() {
@@ -361,48 +349,7 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
         let (Some(h), Some(o)) = (hd.handle, hd.owner) else { return false };
         !by_handle.contains_key(&o) && xdict_of.get(&o) == Some(&h) && (ents.contains_key(&o) || ids.contains_key(&o))
     };
-    let modelled_entry = |t: &[Tag], h: &str| entries(t).iter().any(|(k, eh)| eh == h && MODELLED_XDICT_KEYS.contains(&up(k).as_str()));
-    // Which objects to keep: those under a named object dictionary entry CADCraft doesn't model,
-    // under the extension dictionary of an entity or record (minus modelled entries; one left
-    // empty goes), or owned by an entity of a type CADCraft doesn't model. Memoized along each
-    // ownership chain; cycles and over-long chains are not kept.
-    let mut memo: HashMap<usize, bool> = HashMap::new();
-    for i in 0..objects.len() {
-        let mut path: Vec<usize> = Vec::new();
-        let mut cur = i;
-        let verdict = loop {
-            if let Some(&v) = memo.get(&cur) {
-                break v;
-            }
-            if path.contains(&cur) || path.len() >= MAX_DEPTH {
-                break false;
-            }
-            path.push(cur);
-            let Some((_, _, t)) = objects.get(cur) else { break false };
-            let hd = head(t);
-            let (Some(h), Some(o)) = (hd.handle, hd.owner) else { break false };
-            if by_handle.get(&h) != Some(&cur) {
-                break false;
-            }
-            if Some(&o) == root.as_ref() {
-                break root_key(&h).is_some_and(|k| !modelled_key(&k));
-            }
-            if let Some(&j) = by_handle.get(&o) {
-                if is_xdict(j) && objects.get(j).is_some_and(|p| modelled_entry(p.2, &h)) {
-                    break false;
-                }
-                cur = j;
-                continue;
-            }
-            if is_xdict(cur) {
-                break entries(t).iter().any(|(k, _)| !MODELLED_XDICT_KEYS.contains(&up(k).as_str()));
-            }
-            break ents.get(&o) == Some(&true);
-        };
-        for p in path {
-            memo.insert(p, verdict);
-        }
-    }
+    let memo = retained_objects(&objects, &ents, &ids, &by_handle, root.as_deref(), &root_entries, &xdict_of);
     let mut f = Foreign::default();
     let mut kept: HashSet<String> = HashSet::new();
     for (i, (kind, _, t)) in objects.iter().enumerate() {
@@ -509,6 +456,92 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
     if !f.is_empty() {
         d.foreign = Arc::new(f);
     }
+}
+
+fn entity_types(drawing: &Drawing) -> HashMap<String, bool> {
+    let mut types = HashMap::new();
+    for entity in all_entities(drawing) {
+        types.entry(entity.handle.hex()).or_insert(matches!(entity.kind, EntityKind::Unknown(_)));
+    }
+    types
+}
+
+fn extension_dictionaries(
+    tables: &[(String, usize, &[Tag])],
+    blocks: &[(String, usize, &[Tag])],
+    entities: &[(String, usize, &[Tag])],
+) -> HashMap<String, String> {
+    let mut dictionaries = HashMap::new();
+    for (kind, _, tags) in tables.iter().chain(blocks).chain(entities) {
+        if kind == "ENDBLK" {
+            continue;
+        }
+        let header = head(tags);
+        if let (Some(owner), Some(dictionary)) = (header.handle, header.xdict) {
+            dictionaries.entry(owner).or_insert(dictionary);
+        }
+    }
+    dictionaries
+}
+
+/// Determine which objects belong to unmodelled dictionary entries or owners.
+fn retained_objects(
+    objects: &[(String, usize, &[Tag])],
+    entities: &HashMap<String, bool>,
+    records: &HashMap<String, ForeignKey>,
+    by_handle: &HashMap<String, usize>,
+    root: Option<&str>,
+    root_entries: &[(String, String)],
+    xdict_of: &HashMap<String, String>,
+) -> HashMap<usize, bool> {
+    let root_key = |handle: &str| root_entries.iter().find(|(_, entry_handle)| entry_handle == handle).map(|(key, _)| key);
+    let is_xdict = |index: usize| {
+        let Some((_, _, tags)) = objects.get(index) else { return false };
+        let header = head(tags);
+        let (Some(handle), Some(owner)) = (header.handle, header.owner) else { return false };
+        !by_handle.contains_key(&owner) && xdict_of.get(&owner) == Some(&handle) && (entities.contains_key(&owner) || records.contains_key(&owner))
+    };
+    let modelled_entry = |tags: &[Tag], handle: &str| {
+        entries(tags).iter().any(|(key, entry_handle)| entry_handle == handle && MODELLED_XDICT_KEYS.contains(&up(key).as_str()))
+    };
+    let mut retained = HashMap::new();
+    for index in 0..objects.len() {
+        let mut path = Vec::new();
+        let mut current = index;
+        let keep = loop {
+            if let Some(&known) = retained.get(&current) {
+                break known;
+            }
+            if path.contains(&current) || path.len() >= MAX_DEPTH {
+                break false;
+            }
+            path.push(current);
+            let Some((_, _, tags)) = objects.get(current) else { break false };
+            let header = head(tags);
+            let (Some(handle), Some(owner)) = (header.handle, header.owner) else { break false };
+            if by_handle.get(&handle) != Some(&current) {
+                break false;
+            }
+            if root == Some(owner.as_str()) {
+                break root_key(&handle).is_some_and(|key| !modelled_key(key));
+            }
+            if let Some(&parent) = by_handle.get(&owner) {
+                if is_xdict(parent) && objects.get(parent).is_some_and(|object| modelled_entry(object.2, &handle)) {
+                    break false;
+                }
+                current = parent;
+                continue;
+            }
+            if is_xdict(current) {
+                break entries(tags).iter().any(|(key, _)| !MODELLED_XDICT_KEYS.contains(&up(key).as_str()));
+            }
+            break entities.get(&owner) == Some(&true);
+        };
+        for visited in path {
+            retained.insert(visited, keep);
+        }
+    }
+    retained
 }
 
 /// Proxy records (DXF Reference, ACAD_PROXY_OBJECT and ACAD_PROXY_ENTITY): another application's

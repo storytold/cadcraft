@@ -1,5 +1,5 @@
 use super::common::{DimText, add_dim, circle_of, dim, pick_at, text_at};
-use super::*;
+use super::{Accept, DimKind, EntityKind, Input, Interactive, Prompt, Result, Session, Step, Value, Vec2, bad, json, point_param, targets};
 
 fn radial(s: &mut Session, p: &Value, diameter: bool) -> Result<Value> {
     let id = if diameter { "dimdiameter" } else { "dimradius" };

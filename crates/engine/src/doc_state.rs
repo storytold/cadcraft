@@ -1,5 +1,5 @@
 use super::view::{ModelTiles, View, usable_view};
-use super::*;
+use super::{Arc, Drawing, Handle, Space, blockedit, undoctl};
 
 #[derive(Clone, Debug)]
 pub struct Snapshot {

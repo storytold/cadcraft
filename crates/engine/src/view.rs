@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Serialize, Vec2};
 
 /// A 2D view of a space: world centre and visible height in drawing units.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

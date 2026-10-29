@@ -1,4 +1,4 @@
-use super::*;
+use super::{Accept, DimAssoc, DimKind, Dimension, EntityKind, Handle, Input, Prompt, Result, Segment, Session, Value, Vec2, Vec3, v3};
 
 pub(super) fn style(s: &Session) -> String {
     s.doc().map(|d| d.header.str("DIMSTYLE", "Standard")).unwrap_or_else(|_| "Standard".into())

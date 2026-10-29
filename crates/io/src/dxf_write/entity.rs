@@ -2,7 +2,9 @@ use super::blocks::table_size;
 use super::common::{attrib_common, common, common_x, dim_xdata, layer_and_props, multiline_tags, oblique_52, text_tags};
 use super::ctx::Ctx;
 use super::layout::paper_view;
-use super::*;
+use super::{
+    Bounds2, Color, DimKind, Drawing, Entity, EntityKind, Gradient, Handle, HashMap, Hatch, Leader, MLeader, Point, Vec2, Vec3, Version, W, dxf_ext,
+};
 
 /// The persistent reactors of boundary objects: each source object of an associative hatch in
 /// the same space or block → the hatches it bounds (AutoCAD links the two both ways; without the
@@ -31,6 +33,19 @@ pub(super) fn hatch_reactors(d: &Drawing) -> HashMap<Handle, Vec<String>> {
 }
 
 pub(super) fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {
+    write_basic_entity(w, d, e, owner, paper, cx);
+    write_text_entity(w, d, e, owner, paper, cx);
+    write_insert_entity(w, d, e, owner, paper, cx);
+    write_dimension_entity(w, d, e, owner, paper, cx);
+    write_table_entity(w, d, e, owner, paper, cx);
+    write_annotations_entity(w, d, e, owner, paper, cx);
+    write_hatch_entity(w, d, e, owner, paper, cx);
+    write_viewport_entity(w, d, e, owner, paper, cx);
+    write_wipeout_entity(w, d, e, owner, paper, cx);
+    write_other_entity(w, d, e, owner, paper, cx);
+}
+
+fn write_basic_entity(w: &mut W, _d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {
     match &e.kind {
         EntityKind::Line(l) => {
             w.s(0, "LINE");
@@ -199,6 +214,12 @@ pub(super) fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
             w.p(10, r.base);
             w.p(11, r.dir);
         }
+        _ => {}
+    }
+}
+
+fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {
+    match &e.kind {
         EntityKind::Text(t) => {
             w.s(0, "TEXT");
             common(w, e, owner, paper, "AcDbText");
@@ -255,196 +276,211 @@ pub(super) fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
             w.f(44, t.line_spacing);
             w.t.extend(crate::dxf_read::mtext_dxf::column_tags(t));
         }
-        EntityKind::Insert(i) => {
-            w.s(0, "INSERT");
-            common(w, e, owner, paper, "AcDbBlockReference");
-            if !i.attribs.is_empty() {
-                w.i(66, 1);
-            }
-            w.s(2, &i.block);
-            w.p(10, i.insert);
-            w.f(41, i.scale.x);
-            w.f(42, i.scale.y);
-            w.f(43, i.scale.z);
-            w.f(50, i.rotation.to_degrees());
-            if i.cols > 1 || i.rows > 1 {
-                w.i(70, i64::from(i.cols));
-                w.i(71, i64::from(i.rows));
-                w.f(44, i.col_spacing);
-                w.f(45, i.row_spacing);
-            }
-            if !i.attribs.is_empty() {
-                for a in &i.attribs {
-                    let ah = w.h();
-                    w.s(0, "ATTRIB");
-                    w.s(5, ah);
-                    w.s(330, e.handle.hex());
-                    w.s(100, "AcDbEntity");
-                    let (c, base) = attrib_common(d, e, i, a);
-                    layer_and_props(w, &c, Some(&base));
-                    // Hidden with its definition (a dynamic block's visibility state hides it).
-                    if !base.visible {
-                        w.i(60, 1);
-                    }
-                    w.s(100, "AcDbText");
-                    text_tags(w, d, &a.text, Some((a, cx.target)), None);
-                    if cx.target >= Version::R2007 {
-                        multiline_tags(w, a, false);
-                    }
-                }
-                let sh = w.h();
-                w.s(0, "SEQEND");
-                w.s(5, sh);
+        _ => {}
+    }
+}
+
+fn write_insert_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {
+    if let EntityKind::Insert(i) = &e.kind {
+        w.s(0, "INSERT");
+        common(w, e, owner, paper, "AcDbBlockReference");
+        if !i.attribs.is_empty() {
+            w.i(66, 1);
+        }
+        w.s(2, &i.block);
+        w.p(10, i.insert);
+        w.f(41, i.scale.x);
+        w.f(42, i.scale.y);
+        w.f(43, i.scale.z);
+        w.f(50, i.rotation.to_degrees());
+        if i.cols > 1 || i.rows > 1 {
+            w.i(70, i64::from(i.cols));
+            w.i(71, i64::from(i.rows));
+            w.f(44, i.col_spacing);
+            w.f(45, i.row_spacing);
+        }
+        if !i.attribs.is_empty() {
+            for a in &i.attribs {
+                let ah = w.h();
+                w.s(0, "ATTRIB");
+                w.s(5, ah);
                 w.s(330, e.handle.hex());
                 w.s(100, "AcDbEntity");
-                w.s(8, &e.common.layer);
+                let (c, base) = attrib_common(d, e, i, a);
+                layer_and_props(w, &c, Some(&base));
+                // Hidden with its definition (a dynamic block's visibility state hides it).
+                if !base.visible {
+                    w.i(60, 1);
+                }
+                w.s(100, "AcDbText");
+                text_tags(w, d, &a.text, Some((a, cx.target)), None);
+                if cx.target >= Version::R2007 {
+                    multiline_tags(w, a, false);
+                }
+            }
+            let sh = w.h();
+            w.s(0, "SEQEND");
+            w.s(5, sh);
+            w.s(330, e.handle.hex());
+            w.s(100, "AcDbEntity");
+            w.s(8, &e.common.layer);
+        }
+    }
+}
+
+fn write_dimension_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {
+    if let EntityKind::Dimension(dm) = &e.kind {
+        w.s(0, "DIMENSION");
+        common_x(w, e, owner, paper, "AcDbDimension", cx.assoc.get(&e.handle));
+        let bname = cx.dim_blocks.get(&e.handle).cloned().or_else(|| dm.block.clone()).unwrap_or_default();
+        w.s(2, bname);
+        w.p(10, dm.defpt);
+        let style = d.dim_style(&dm.style).cloned().unwrap_or_default();
+        let g = cadcraft_render::dimension_geometry(dm, &style, d.header.f64("DIMSCALE", 1.0));
+        w.p(11, if dm.user_text_pos { dm.text_mid } else { g.text_pos.to3(0.0) });
+        let ty: i64 = match dm.kind {
+            DimKind::Linear { .. } => 0,
+            DimKind::Aligned => 1,
+            DimKind::Angular => 2,
+            DimKind::Diameter => 3,
+            DimKind::Radius => 4,
+            DimKind::Angular3P => 5,
+            DimKind::Ordinate { x_type } => 6 | if x_type { 64 } else { 0 },
+            // Written as aligned, marked by CADCraft xdata (see `dim_xdata`).
+            DimKind::ArcLength => 1,
+        };
+        w.i(70, ty | 32 | if dm.user_text_pos { 128 } else { 0 });
+        // The actual measurement (read-only in DXF): AutoLISP's entget shows it.
+        w.f(42, g.measurement);
+        if !dm.text.is_empty() {
+            w.s(1, &dm.text);
+        }
+        w.s(3, &dm.style);
+        if dm.text_rotation != 0.0 {
+            w.f(53, dm.text_rotation.to_degrees());
+        }
+        match dm.kind {
+            DimKind::Linear { rotation } => {
+                w.s(100, "AcDbAlignedDimension");
+                w.p(13, dm.p13);
+                w.p(14, dm.p14);
+                w.f(50, rotation.to_degrees());
+                oblique_52(w, dm, rotation);
+                w.s(100, "AcDbRotatedDimension");
+            }
+            DimKind::Aligned | DimKind::ArcLength => {
+                w.s(100, "AcDbAlignedDimension");
+                w.p(13, dm.p13);
+                w.p(14, dm.p14);
+                if matches!(dm.kind, DimKind::Aligned) {
+                    oblique_52(w, dm, (dm.p14.xy() - dm.p13.xy()).angle());
+                }
+            }
+            DimKind::Radius => {
+                w.s(100, "AcDbRadialDimension");
+                w.p(15, dm.p15);
+                w.f(40, 0.0);
+            }
+            DimKind::Diameter => {
+                w.s(100, "AcDbDiametricDimension");
+                w.p(15, dm.p15);
+                w.f(40, 0.0);
+            }
+            DimKind::Angular => {
+                w.s(100, "AcDb2LineAngularDimension");
+                w.p(13, dm.p13);
+                w.p(14, dm.p14);
+                w.p(15, dm.p15);
+                w.p(16, dm.p16);
+            }
+            DimKind::Angular3P => {
+                w.s(100, "AcDb3PointAngularDimension");
+                w.p(13, dm.p13);
+                w.p(14, dm.p14);
+                w.p(15, dm.p15);
+            }
+            DimKind::Ordinate { .. } => {
+                w.s(100, "AcDbOrdinateDimension");
+                w.p(13, dm.p13);
+                w.p(14, dm.p14);
             }
         }
-        EntityKind::Dimension(dm) => {
-            w.s(0, "DIMENSION");
-            common_x(w, e, owner, paper, "AcDbDimension", cx.assoc.get(&e.handle));
-            let bname = cx.dim_blocks.get(&e.handle).cloned().or_else(|| dm.block.clone()).unwrap_or_default();
-            w.s(2, bname);
-            w.p(10, dm.defpt);
-            let style = d.dim_style(&dm.style).cloned().unwrap_or_default();
-            let g = cadcraft_render::dimension_geometry(dm, &style, d.header.f64("DIMSCALE", 1.0));
-            w.p(11, if dm.user_text_pos { dm.text_mid } else { g.text_pos.to3(0.0) });
-            let ty: i64 = match dm.kind {
-                DimKind::Linear { .. } => 0,
-                DimKind::Aligned => 1,
-                DimKind::Angular => 2,
-                DimKind::Diameter => 3,
-                DimKind::Radius => 4,
-                DimKind::Angular3P => 5,
-                DimKind::Ordinate { x_type } => 6 | if x_type { 64 } else { 0 },
-                // Written as aligned, marked by CADCraft xdata (see `dim_xdata`).
-                DimKind::ArcLength => 1,
-            };
-            w.i(70, ty | 32 | if dm.user_text_pos { 128 } else { 0 });
-            // The actual measurement (read-only in DXF): AutoLISP's entget shows it.
-            w.f(42, g.measurement);
-            if !dm.text.is_empty() {
-                w.s(1, &dm.text);
-            }
-            w.s(3, &dm.style);
-            if dm.text_rotation != 0.0 {
-                w.f(53, dm.text_rotation.to_degrees());
-            }
-            match dm.kind {
-                DimKind::Linear { rotation } => {
-                    w.s(100, "AcDbAlignedDimension");
-                    w.p(13, dm.p13);
-                    w.p(14, dm.p14);
-                    w.f(50, rotation.to_degrees());
-                    oblique_52(w, dm, rotation);
-                    w.s(100, "AcDbRotatedDimension");
-                }
-                DimKind::Aligned | DimKind::ArcLength => {
-                    w.s(100, "AcDbAlignedDimension");
-                    w.p(13, dm.p13);
-                    w.p(14, dm.p14);
-                    if matches!(dm.kind, DimKind::Aligned) {
-                        oblique_52(w, dm, (dm.p14.xy() - dm.p13.xy()).angle());
-                    }
-                }
-                DimKind::Radius => {
-                    w.s(100, "AcDbRadialDimension");
-                    w.p(15, dm.p15);
-                    w.f(40, 0.0);
-                }
-                DimKind::Diameter => {
-                    w.s(100, "AcDbDiametricDimension");
-                    w.p(15, dm.p15);
-                    w.f(40, 0.0);
-                }
-                DimKind::Angular => {
-                    w.s(100, "AcDb2LineAngularDimension");
-                    w.p(13, dm.p13);
-                    w.p(14, dm.p14);
-                    w.p(15, dm.p15);
-                    w.p(16, dm.p16);
-                }
-                DimKind::Angular3P => {
-                    w.s(100, "AcDb3PointAngularDimension");
-                    w.p(13, dm.p13);
-                    w.p(14, dm.p14);
-                    w.p(15, dm.p15);
-                }
-                DimKind::Ordinate { .. } => {
-                    w.s(100, "AcDbOrdinateDimension");
-                    w.p(13, dm.p13);
-                    w.p(14, dm.p14);
-                }
-            }
-            dim_xdata(w, dm, cx);
+        dim_xdata(w, dm, cx);
+    }
+}
+
+fn write_table_entity(w: &mut W, _d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {
+    if let EntityKind::Table(t) = &e.kind {
+        // Tables without a generated block (none expected) are not written.
+        let Some((bname, brh)) = cx.tables.get(&e.handle) else { return };
+        w.s(0, "ACAD_TABLE");
+        common(w, e, owner, paper, "AcDbBlockReference");
+        w.s(2, bname);
+        w.p(10, t.insert);
+        w.s(100, "AcDbTable");
+        w.i(280, 0);
+        w.s(342, cx.table_style(&t.style));
+        w.s(343, brh);
+        w.p(11, Vec3::new(1.0, 0.0, 0.0));
+        w.i(90, 0);
+        let (rows, cols) = table_size(t);
+        w.i(91, rows as i64);
+        w.i(92, cols as i64);
+        for c in [93, 94, 95, 96] {
+            w.i(c, 0);
         }
-        EntityKind::Table(t) => {
-            // Tables without a generated block (none expected) are not written.
-            let Some((bname, brh)) = cx.tables.get(&e.handle) else { return };
-            w.s(0, "ACAD_TABLE");
-            common(w, e, owner, paper, "AcDbBlockReference");
-            w.s(2, bname);
-            w.p(10, t.insert);
-            w.s(100, "AcDbTable");
-            w.i(280, 0);
-            w.s(342, cx.table_style(&t.style));
-            w.s(343, brh);
-            w.p(11, Vec3::new(1.0, 0.0, 0.0));
-            w.i(90, 0);
-            let (rows, cols) = table_size(t);
-            w.i(91, rows as i64);
-            w.i(92, cols as i64);
-            for c in [93, 94, 95, 96] {
-                w.i(c, 0);
-            }
-            for h in t.row_heights.iter().take(rows) {
-                w.f(141, *h);
-            }
-            for c in t.col_widths.iter().take(cols) {
-                w.f(142, *c);
-            }
-            let cov = cadcraft_render::table_covered(t);
-            let span = |v: u32| i64::from(v.min(i16::MAX as u32));
-            for r in 0..rows {
-                for c in 0..cols {
-                    let cell = t.cells.get(r).and_then(|x| x.get(c));
-                    let covered = cov.get(r).and_then(|x| x.get(c)).copied().unwrap_or(false);
-                    let merge = cell.and_then(|x| x.merged).filter(|&(a, b)| a >= 1 && b >= 1 && (a, b) != (1, 1));
-                    w.i(171, 1);
-                    w.i(172, 0);
-                    w.i(173, i64::from(covered || merge.is_some()));
-                    w.i(174, 0);
-                    let (rs, cs) = if covered { (0, 0) } else { merge.map(|(a, b)| (span(a), span(b))).unwrap_or((1, 1)) };
-                    w.i(175, cs);
-                    w.i(176, rs);
-                    w.i(91, 0);
-                    w.i(178, 0);
-                    w.f(145, 0.0);
-                    if let Some(h) = cell.and_then(|x| x.text_height).filter(|h| h.is_finite() && *h > 0.0) {
-                        w.f(140, h);
-                    }
-                    // Long text: 250-character code-2 chunks, the rest in code 1.
-                    let chars: Vec<char> = cell.map(|x| x.text.chars().collect()).unwrap_or_default();
-                    let chunks: Vec<String> = chars.chunks(250).map(|c| c.iter().collect()).collect();
-                    let n = chunks.len();
-                    for (i, ch) in chunks.into_iter().enumerate() {
-                        w.s(if i + 1 == n { 1 } else { 2 }, ch);
-                    }
-                    if n == 0 {
-                        w.s(1, "");
-                    }
+        for h in t.row_heights.iter().take(rows) {
+            w.f(141, *h);
+        }
+        for c in t.col_widths.iter().take(cols) {
+            w.f(142, *c);
+        }
+        let cov = cadcraft_render::table_covered(t);
+        let span = |v: u32| i64::from(v.min(i16::MAX as u32));
+        for r in 0..rows {
+            for c in 0..cols {
+                let cell = t.cells.get(r).and_then(|x| x.get(c));
+                let covered = cov.get(r).and_then(|x| x.get(c)).copied().unwrap_or(false);
+                let merge = cell.and_then(|x| x.merged).filter(|&(a, b)| a >= 1 && b >= 1 && (a, b) != (1, 1));
+                w.i(171, 1);
+                w.i(172, 0);
+                w.i(173, i64::from(covered || merge.is_some()));
+                w.i(174, 0);
+                let (rs, cs) = if covered { (0, 0) } else { merge.map(|(a, b)| (span(a), span(b))).unwrap_or((1, 1)) };
+                w.i(175, cs);
+                w.i(176, rs);
+                w.i(91, 0);
+                w.i(178, 0);
+                w.f(145, 0.0);
+                if let Some(h) = cell.and_then(|x| x.text_height).filter(|h| h.is_finite() && *h > 0.0) {
+                    w.f(140, h);
                 }
-            }
-            w.s(1001, dxf_ext::APP);
-            w.s(1000, "TABLE");
-            w.i(1070, i64::from(t.title));
-            w.i(1070, i64::from(t.header));
-            w.f(1040, t.text_height);
-            w.s(1000, &t.style);
-            for c in crate::dxf_table::table_xdata(t) {
-                w.s(1000, c);
+                // Long text: 250-character code-2 chunks, the rest in code 1.
+                let chars: Vec<char> = cell.map(|x| x.text.chars().collect()).unwrap_or_default();
+                let chunks: Vec<String> = chars.chunks(250).map(|c| c.iter().collect()).collect();
+                let n = chunks.len();
+                for (i, ch) in chunks.into_iter().enumerate() {
+                    w.s(if i + 1 == n { 1 } else { 2 }, ch);
+                }
+                if n == 0 {
+                    w.s(1, "");
+                }
             }
         }
+        w.s(1001, dxf_ext::APP);
+        w.s(1000, "TABLE");
+        w.i(1070, i64::from(t.title));
+        w.i(1070, i64::from(t.header));
+        w.f(1040, t.text_height);
+        w.s(1000, &t.style);
+        for c in crate::dxf_table::table_xdata(t) {
+            w.s(1000, c);
+        }
+    }
+}
+
+fn write_annotations_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {
+    match &e.kind {
         EntityKind::MLeader(m) if !cx.native_mleader() => mleader_fallback(w, d, e, m, owner, paper, cx),
         EntityKind::MLeader(m) => {
             w.s(0, "MULTILEADER");
@@ -493,142 +529,157 @@ pub(super) fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
             w.p(13, f.corners[3]);
             w.i(70, i64::from(f.hidden_edges));
         }
-        EntityKind::Hatch(h) => {
-            w.s(0, "HATCH");
-            common(w, e, owner, paper, "AcDbHatch");
-            w.p(10, Vec3::new(0.0, 0.0, h.elevation));
-            w.p(210, Vec3::Z);
-            w.s(2, &h.pattern);
-            w.i(70, i64::from(h.solid));
-            w.i(71, i64::from(h.associative));
-            w.i(91, h.loops.len() as i64);
-            for l in &h.loops {
-                w.i(92, 2 | if l.outer { 1 } else { 0 });
-                let has_bulge = l.vertices.iter().any(|v| v.bulge != 0.0);
-                w.i(72, i64::from(has_bulge));
-                w.i(73, 1);
-                w.i(93, l.vertices.len() as i64);
-                for v in &l.vertices {
-                    w.p2(10, v.p);
-                    if has_bulge {
-                        w.f(42, v.bulge);
-                    }
-                }
-                // Source boundary objects of an associative hatch (the ones still beside it, in
-                // its space or block, which carry the hatch as a reactor).
-                let own = e.handle.hex();
-                let sources: Vec<String> =
-                    l.sources.iter().filter(|s| h.associative && w.reactors.get(*s).is_some_and(|r| r.contains(&own))).map(|s| s.hex()).collect();
-                w.i(97, sources.len() as i64);
-                for s in &sources {
-                    w.s(330, s);
+        _ => {}
+    }
+}
+
+fn write_hatch_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, _cx: &Ctx) {
+    if let EntityKind::Hatch(h) = &e.kind {
+        w.s(0, "HATCH");
+        common(w, e, owner, paper, "AcDbHatch");
+        w.p(10, Vec3::new(0.0, 0.0, h.elevation));
+        w.p(210, Vec3::Z);
+        w.s(2, &h.pattern);
+        w.i(70, i64::from(h.solid));
+        w.i(71, i64::from(h.associative));
+        w.i(91, h.loops.len() as i64);
+        for l in &h.loops {
+            w.i(92, 2 | if l.outer { 1 } else { 0 });
+            let has_bulge = l.vertices.iter().any(|v| v.bulge != 0.0);
+            w.i(72, i64::from(has_bulge));
+            w.i(73, 1);
+            w.i(93, l.vertices.len() as i64);
+            for v in &l.vertices {
+                w.p2(10, v.p);
+                if has_bulge {
+                    w.f(42, v.bulge);
                 }
             }
-            w.i(75, i64::from(h.style));
-            w.i(76, 1);
-            if !h.solid {
-                w.f(52, h.angle.to_degrees());
-                w.f(41, h.scale);
-                w.i(77, 0);
-                // The lines read from the file, else the library's pattern of that name.
-                let lines = if h.pattern_lines.is_empty() {
-                    cadcraft_doc::library::pattern_for(d, &h.pattern).map(|p| p.lines).unwrap_or_default()
-                } else {
-                    h.pattern_lines.clone()
-                };
-                w.i(78, lines.len() as i64);
-                for pl in lines {
-                    let ang = pl.angle.to_radians() + h.angle;
-                    w.f(53, ang.to_degrees());
-                    let o = h.origin + Vec2::new(pl.origin.0, pl.origin.1).rotate(h.angle) * h.scale;
-                    w.f(43, o.x);
-                    w.f(44, o.y);
-                    let dl = Vec2::new(pl.delta.0, pl.delta.1).rotate(ang) * h.scale;
-                    w.f(45, dl.x);
-                    w.f(46, dl.y);
-                    w.i(79, pl.dashes.len() as i64);
-                    for dsh in pl.dashes {
-                        w.f(49, dsh * h.scale);
-                    }
-                }
+            // Source boundary objects of an associative hatch (the ones still beside it, in
+            // its space or block, which carry the hatch as a reactor).
+            let own = e.handle.hex();
+            let sources: Vec<String> =
+                l.sources.iter().filter(|s| h.associative && w.reactors.get(*s).is_some_and(|r| r.contains(&own))).map(|s| s.hex()).collect();
+            w.i(97, sources.len() as i64);
+            for s in &sources {
+                w.s(330, s);
             }
-            w.i(98, 0);
-            if let Some(g) = &h.gradient {
-                gradient(w, g);
-            }
-            hatch_xdata(w, h);
         }
-        EntityKind::Viewport(v) => {
-            paper_view(w, d, e, owner, cx);
-            w.s(0, "VIEWPORT");
-            common(w, e, owner, paper, "AcDbViewport");
-            w.p(10, v.center);
-            w.f(40, v.width);
-            w.f(41, v.height);
-            // Status 68: a positive value is "on" (the stacking order; 1 is the active viewport), 0 off.
-            w.i(68, if v.on { i64::from(v.id.clamp(1, 32767)) } else { 0 });
-            w.i(69, i64::from(v.id));
-            w.p2(12, v.view_center);
-            w.f(45, v.view_height);
-            // Status flags: 16384 = display locked, 32768 = always set, 65536 = clipped by the
-            // 340 entity, 131072 = off.
-            let clip = v.clip.filter(|h| *h != e.handle && d.entity(*h).is_some());
-            let flags = 32768 | if v.locked { 16384 } else { 0 } | if clip.is_some() { 65536 } else { 0 } | if v.on { 0 } else { 131072 };
-            w.i(90, flags);
-            if let Some(h) = clip {
-                w.s(340, h.hex());
-            }
-            // AutoCAD's frozen-layer list: one soft pointer per layer, to its LAYER record. Other
-            // programs read only this; CADCraft prefers its own xdata below when present.
-            for name in &v.frozen_layers {
-                if let Some(h) = w.layers.get(&name.to_ascii_uppercase()).cloned() {
-                    w.s(341, h);
-                }
-            }
-            // One CADCraft xdata group holds both lists: readers stop at the first group of an app.
-            if !v.frozen_layers.is_empty() || !v.layer_colors.is_empty() {
-                w.s(1001, dxf_ext::APP);
-                if !v.frozen_layers.is_empty() {
-                    w.xdata(dxf_ext::frozen_xdata(&v.frozen_layers));
-                }
-                if !v.layer_colors.is_empty() {
-                    w.xdata(dxf_ext::layer_colors_xdata(&v.layer_colors));
+        w.i(75, i64::from(h.style));
+        w.i(76, 1);
+        if !h.solid {
+            w.f(52, h.angle.to_degrees());
+            w.f(41, h.scale);
+            w.i(77, 0);
+            // The lines read from the file, else the library's pattern of that name.
+            let lines = if h.pattern_lines.is_empty() {
+                cadcraft_doc::library::pattern_for(d, &h.pattern).map(|p| p.lines).unwrap_or_default()
+            } else {
+                h.pattern_lines.clone()
+            };
+            w.i(78, lines.len() as i64);
+            for pl in lines {
+                let ang = pl.angle.to_radians() + h.angle;
+                w.f(53, ang.to_degrees());
+                let o = h.origin + Vec2::new(pl.origin.0, pl.origin.1).rotate(h.angle) * h.scale;
+                w.f(43, o.x);
+                w.f(44, o.y);
+                let dl = Vec2::new(pl.delta.0, pl.delta.1).rotate(ang) * h.scale;
+                w.f(45, dl.x);
+                w.f(46, dl.y);
+                w.i(79, pl.dashes.len() as i64);
+                for dsh in pl.dashes {
+                    w.f(49, dsh * h.scale);
                 }
             }
         }
-        EntityKind::Wipeout(wo) => {
-            // A 1x1 image spanning the boundary's extents. Clip vertices are in pixel space, whose origin is
-            // the image's top-left corner with y pointing down: the reader maps each vertex back through
-            // insert + u * (x + 0.5) + v * (0.5 - y).
-            // Polygonal clip boundaries are closed, so the first vertex is repeated when needed.
-            let b = Bounds2::from_points(wo.boundary.iter().copied());
-            let o = if b.is_empty() { Vec2::ZERO } else { b.min };
-            let (sx, sy) = (if b.width() > 0.0 { b.width() } else { 1.0 }, if b.height() > 0.0 { b.height() } else { 1.0 });
-            w.s(0, "WIPEOUT");
-            common(w, e, owner, paper, "AcDbWipeout");
-            w.i(90, 0);
-            w.p(10, Vec3::new(o.x, o.y, 0.0));
-            w.p(11, Vec3::new(sx, 0.0, 0.0));
-            w.p(12, Vec3::new(0.0, sy, 0.0));
-            w.p2(13, Vec2::new(1.0, 1.0));
-            // Display flags 7 = show image, show unaligned, use clipping boundary; clipping on; default brightness/contrast/fade.
-            w.i(70, 7);
-            w.i(280, 1);
-            w.i(281, 50);
-            w.i(282, 50);
-            w.i(283, 0);
-            w.i(71, 2);
-            let mut pts = wo.boundary.clone();
-            if let (Some(first), Some(last)) = (pts.first().copied(), pts.last().copied())
-                && first != last
-            {
-                pts.push(first);
-            }
-            w.i(91, pts.len() as i64);
-            for q in pts {
-                w.p2(14, Vec2::new((q.x - o.x) / sx - 0.5, 0.5 - (q.y - o.y) / sy));
+        w.i(98, 0);
+        if let Some(g) = &h.gradient {
+            gradient(w, g);
+        }
+        hatch_xdata(w, h);
+    }
+}
+
+fn write_viewport_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {
+    if let EntityKind::Viewport(v) = &e.kind {
+        paper_view(w, d, e, owner, cx);
+        w.s(0, "VIEWPORT");
+        common(w, e, owner, paper, "AcDbViewport");
+        w.p(10, v.center);
+        w.f(40, v.width);
+        w.f(41, v.height);
+        // Status 68: a positive value is "on" (the stacking order; 1 is the active viewport), 0 off.
+        w.i(68, if v.on { i64::from(v.id.clamp(1, 32767)) } else { 0 });
+        w.i(69, i64::from(v.id));
+        w.p2(12, v.view_center);
+        w.f(45, v.view_height);
+        // Status flags: 16384 = display locked, 32768 = always set, 65536 = clipped by the
+        // 340 entity, 131072 = off.
+        let clip = v.clip.filter(|h| *h != e.handle && d.entity(*h).is_some());
+        let flags = 32768 | if v.locked { 16384 } else { 0 } | if clip.is_some() { 65536 } else { 0 } | if v.on { 0 } else { 131072 };
+        w.i(90, flags);
+        if let Some(h) = clip {
+            w.s(340, h.hex());
+        }
+        // AutoCAD's frozen-layer list: one soft pointer per layer, to its LAYER record. Other
+        // programs read only this; CADCraft prefers its own xdata below when present.
+        for name in &v.frozen_layers {
+            if let Some(h) = w.layers.get(&name.to_ascii_uppercase()).cloned() {
+                w.s(341, h);
             }
         }
+        // One CADCraft xdata group holds both lists: readers stop at the first group of an app.
+        if !v.frozen_layers.is_empty() || !v.layer_colors.is_empty() {
+            w.s(1001, dxf_ext::APP);
+            if !v.frozen_layers.is_empty() {
+                w.xdata(dxf_ext::frozen_xdata(&v.frozen_layers));
+            }
+            if !v.layer_colors.is_empty() {
+                w.xdata(dxf_ext::layer_colors_xdata(&v.layer_colors));
+            }
+        }
+    }
+}
+
+fn write_wipeout_entity(w: &mut W, _d: &Drawing, e: &Entity, owner: &str, paper: bool, _cx: &Ctx) {
+    if let EntityKind::Wipeout(wo) = &e.kind {
+        // A 1x1 image spanning the boundary's extents. Clip vertices are in pixel space, whose origin is
+        // the image's top-left corner with y pointing down: the reader maps each vertex back through
+        // insert + u * (x + 0.5) + v * (0.5 - y).
+        // Polygonal clip boundaries are closed, so the first vertex is repeated when needed.
+        let b = Bounds2::from_points(wo.boundary.iter().copied());
+        let o = if b.is_empty() { Vec2::ZERO } else { b.min };
+        let (sx, sy) = (if b.width() > 0.0 { b.width() } else { 1.0 }, if b.height() > 0.0 { b.height() } else { 1.0 });
+        w.s(0, "WIPEOUT");
+        common(w, e, owner, paper, "AcDbWipeout");
+        w.i(90, 0);
+        w.p(10, Vec3::new(o.x, o.y, 0.0));
+        w.p(11, Vec3::new(sx, 0.0, 0.0));
+        w.p(12, Vec3::new(0.0, sy, 0.0));
+        w.p2(13, Vec2::new(1.0, 1.0));
+        // Display flags 7 = show image, show unaligned, use clipping boundary; clipping on; default brightness/contrast/fade.
+        w.i(70, 7);
+        w.i(280, 1);
+        w.i(281, 50);
+        w.i(282, 50);
+        w.i(283, 0);
+        w.i(71, 2);
+        let mut pts = wo.boundary.clone();
+        if let (Some(first), Some(last)) = (pts.first().copied(), pts.last().copied())
+            && first != last
+        {
+            pts.push(first);
+        }
+        w.i(91, pts.len() as i64);
+        for q in pts {
+            w.p2(14, Vec2::new((q.x - o.x) / sx - 0.5, 0.5 - (q.y - o.y) / sy));
+        }
+    }
+}
+
+fn write_other_entity(w: &mut W, _d: &Drawing, e: &Entity, owner: &str, paper: bool, _cx: &Ctx) {
+    match &e.kind {
         EntityKind::Tolerance(t) => {
             w.s(0, "TOLERANCE");
             common(w, e, owner, paper, "AcDbFcf");
@@ -639,6 +690,7 @@ pub(super) fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
         }
         // Entity types CADCraft doesn't model aren't written; the save command reports them.
         EntityKind::Unknown(_) => {}
+        _ => {}
     }
 }
 

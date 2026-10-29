@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, Serialize, Vec2, snap};
 
 /// Session-level drafting settings. [`Session::drafting_settings`] supplies the active drawing's
 /// snap/grid spacing in the corresponding fields for UI and JSON consumers.

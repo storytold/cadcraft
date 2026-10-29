@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    Block, Color, Common, Dimension, Drawing, Entity, EntityKind, EntityStore, Handle, HashMap, Line, MText, Solid, Table, Vec2, Vec3, dxf_ext,
+};
 
 /// What happens to the anonymous `*D` blocks read from a file (#495): a dimension that still
 /// names its block regenerates its geometry under that name, keeping the block's entity

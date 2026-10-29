@@ -1,4 +1,4 @@
-use super::*;
+use super::{Deserialize, PolyVertex, Serialize, Vec3};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Line {

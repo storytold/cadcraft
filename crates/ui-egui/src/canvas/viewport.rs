@@ -1,5 +1,5 @@
 use super::draw::draw_list;
-use super::*;
+use super::{Bounds2, CadApp, DisplayList, Handle, Kind, Rect, Rgb, Vec2, Xf};
 
 /// The active MSPACE viewport when its contents are drawn apart from the layout's list (see
 /// [`VpContent`]), with its clip outline when it is clipped. A clipped viewport is clipped with

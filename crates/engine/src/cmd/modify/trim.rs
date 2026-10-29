@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, EngineError, Entity, EntityKind, Handle, Line, PolyVertex, Polyline, Prim, Result, Segment, Session, TAU, Vec2, angle_in_sweep, arc,
+    ccw_sweep, intersect_ext, line, lwpoly, norm_angle,
+};
 
 // ---------------- trim / extend ----------------
 

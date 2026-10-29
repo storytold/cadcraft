@@ -1,5 +1,5 @@
 use super::common::{T, common, ocs_n};
-use super::*;
+use super::{Attrib, AttribModes, AttribProps, Common, HAlign, MText, MultilineAttrib, Tag, Text, VAlign, Vec2, Vec3, mtext_dxf};
 
 /// The properties an ATTRIB carries itself: those it has groups for. Its layer counts only when
 /// it differs from its block reference's (an attribute defined on layer 0 goes on the reference's

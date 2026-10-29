@@ -154,6 +154,19 @@ fn text_above_and_centred() {
 }
 
 #[test]
+fn dimtvp_uses_the_dimension_text_height() {
+    let d = lin((0.0, 0.0), (10.0, 0.0), (0.0, 5.0), 0.0);
+    let style = st_with(|s| {
+        s.text_above = 0;
+        s.text_vertical_pos = 2.0;
+        s.text_height = 0.18;
+    });
+    let font = DimText { fixed_height: 0.8, width_factor: 1.0, ..Default::default() };
+    let g = dimension_geometry_with(&d, &style, 1.0, &font);
+    assert!((g.text_pos.y - 6.6).abs() < 1e-6, "text y={} height={}", g.text_pos.y, g.text_height);
+}
+
+#[test]
 fn dimtad_one_uses_autocad_text_clearance() {
     let d = lin((0.0, 0.10), (0.0, 0.70), (0.30, 0.40), std::f64::consts::FRAC_PI_2);
     let st = st_with(|s| {

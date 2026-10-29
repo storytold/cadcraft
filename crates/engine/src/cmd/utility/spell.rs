@@ -89,7 +89,7 @@ fn user_dictionary(s: &Session) -> Option<String> {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        super::super::plotters::config_root().map(|r| r.join("user.dic").to_string_lossy().into_owned())
+        crate::settings_dir::current().map(|r| r.join("user.dic").to_string_lossy().into_owned())
     }
     #[cfg(target_arch = "wasm32")]
     None

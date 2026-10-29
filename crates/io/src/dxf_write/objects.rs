@@ -1,4 +1,4 @@
-use super::*;
+use super::{Drawing, Group, MLeaderStyle, TableStyle, W, dxf_ext};
 
 /// A TABLESTYLE object (DXF Reference, OBJECTS: TABLESTYLE): margins, title/header
 /// suppression and per row type (data, column header, title) text and border settings.

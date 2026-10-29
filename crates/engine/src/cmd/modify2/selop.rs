@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    EntityKind, Handle, Input, Interactive, LwPolyline, Mat3, PolyVertex, Prompt, Result, SelOutcome, SelectPhase, Session, Space, Step, Value,
+    curves, json, lwpoly, other, set_kind, str_param, targets,
+};
 
 // =====================================================================================
 // REVERSE / CHSPACE / FLATTEN (select, then act)

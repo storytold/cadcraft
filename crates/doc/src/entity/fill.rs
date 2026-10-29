@@ -1,5 +1,5 @@
 use super::common::Handle;
-use super::*;
+use super::{Color, Deserialize, PolyVertex, Serialize, Vec2, one};
 
 /// A hatch boundary loop: closed polyline with bulges.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

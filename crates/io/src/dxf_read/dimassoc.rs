@@ -1,5 +1,5 @@
 use super::common::T;
-use super::*;
+use super::{Arc, AssocSnap, Circle, DimAssoc, DimKind, Dimension, Drawing, EntityKind, Handle, Tag, Vec2, Vec3};
 
 /// Associativity from a DIMASSOC object (files from other writers). The dimension kind decides
 /// which definition points the references name, in the order AutoCAD writes them: `p13`/`p14`

@@ -1,5 +1,8 @@
 use super::trim::{param_on, sub_polyline};
-use super::*;
+use super::{
+    Accept, Arc, EngineError, Entity, EntityKind, Handle, Input, Interactive, Line, PolyVertex, Polyline, Prompt, Result, Segment, Session, Step,
+    Value, Vec2, arc, bad, json, lwpoly, norm_angle, point_param, point_req, targets,
+};
 
 /// Gives a rebuilt arc piece its source centre Z, or a rebuilt polyline piece its source elevation.
 fn with_z(mut k: EntityKind, z: f64) -> EntityKind {

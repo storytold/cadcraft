@@ -53,15 +53,15 @@ fn opened_drawings_are_listed_newest_first_and_survive_a_restart() {
     let mut app = CadApp::new(Session::empty(), Services::default());
     assert!(app.ui.recent_files.is_empty());
 
-    app.open_path(&plan);
+    app.open_path(std::path::Path::new(&plan));
     settle(&mut app);
-    app.open_path(&section);
+    app.open_path(std::path::Path::new(&section));
     settle(&mut app);
-    app.open_path(&plan);
+    app.open_path(std::path::Path::new(&plan));
     settle(&mut app);
     assert_eq!(app.ui.recent_files, [plan.clone(), section.clone()], "newest first, each file once");
     // A file that could not be opened is not listed.
-    app.open_path("/nonexistent/missing.dxf");
+    app.open_path(std::path::Path::new("/nonexistent/missing.dxf"));
     settle(&mut app);
     assert_eq!(app.ui.recent_files, [plan.clone(), section.clone()]);
 

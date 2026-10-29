@@ -1,0 +1,47 @@
+id: clap-error-message-variable
+valid:
+  - |
+    fn conflict(cmd: &mut Command, a: String, b: String) -> clap::Error {
+        cmd.error(ErrorKind::ArgumentConflict, Conflict { a, b })
+    }
+  - |
+    fn wrap(cmd: &mut Command, e: UsageError) -> clap::Error {
+        cmd.error(ErrorKind::ValueValidation, e)
+    }
+  - |
+    fn unrelated(cmd: &mut Command, e: UsageError) -> clap::Error {
+        let shown = format!("{e}");
+        eprintln!("{shown}");
+        cmd.error(ErrorKind::ValueValidation, e)
+    }
+  - |
+    fn cloned(cmd: &mut Command, e: &UsageError) -> clap::Error {
+        let owned = e.to_owned();
+        cmd.error(ErrorKind::ValueValidation, owned)
+    }
+invalid:
+  - |
+    fn conflict(cmd: &mut Command, a: &str, b: &str) -> clap::Error {
+        let message = format!("the argument '{a}' cannot be used with '{b}'");
+        cmd.error(ErrorKind::ArgumentConflict, message)
+    }
+  - |
+    fn bad(cmd: &mut Command, e: UsageError) -> clap::Error {
+        let message = e.to_string();
+        cmd.error(ErrorKind::ValueValidation, message)
+    }
+  - |
+    fn typed(cmd: &mut Command, flag: &str) -> clap::Error {
+        let message: String = flag.into();
+        clap::Error::raw(ErrorKind::InvalidValue, message)
+    }
+  - |
+    fn literal(cmd: &mut Command) -> clap::Error {
+        let message = "bad value".to_owned();
+        cmd.error(ErrorKind::InvalidValue, message)
+    }
+  - |
+    fn from(cmd: &mut Command) -> clap::Error {
+        let message = String::from("bad value");
+        cmd.error(ErrorKind::InvalidValue, message)
+    }

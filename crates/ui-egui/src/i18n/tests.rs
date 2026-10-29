@@ -157,8 +157,7 @@ fn module_files(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
     }
 }
 
-#[test]
-fn locale_and_saved_preference_resolution() {
+fn assert_primary_locale_aliases() {
     for tag in ["uk", "uk-UA", "uk_UA.UTF-8", "UK-ua", " uk-UA ", "uk_UA@euro"] {
         assert_eq!(locale_language(tag), Some("uk"), "{tag}");
     }
@@ -168,12 +167,18 @@ fn locale_and_saved_preference_resolution() {
     for (tag, code) in [("ru", "ru"), ("ru-RU", "ru"), ("ru_RU.UTF-8", "ru"), ("fr", "fr"), ("fr-FR", "fr"), ("fr_CA.UTF-8", "fr")] {
         assert_eq!(locale_language(tag), Some(code), "{tag}");
     }
+}
+
+fn assert_portuguese_and_spanish_aliases() {
     for tag in ["pt", "pt-BR", "pt_BR.UTF-8", "PT-br", "pt-PT"] {
         assert_eq!(locale_language(tag), Some("pt-BR"), "{tag}");
     }
     for tag in ["es", "es-ES", "es_MX.UTF-8", "ES-ar"] {
         assert_eq!(locale_language(tag), Some("es"), "{tag}");
     }
+}
+
+fn assert_additional_locale_aliases() {
     for (code, tags) in [
         ("cs", &["cs", "cs-CZ", "cs_CZ.UTF-8", "CS-cz", " cs-CZ ", "cs_CZ@euro"][..]),
         ("it", &["it", "it-IT", "it_IT.UTF-8", "IT-ch", " it-CH ", "it_IT@euro"]),
@@ -188,12 +193,18 @@ fn locale_and_saved_preference_resolution() {
             assert_eq!(locale_language(tag), Some(code), "{tag}");
         }
     }
+}
+
+fn assert_unrecognized_locale_tags() {
     // Look-alike codes, three-letter codes and endonyms pick nothing: `se` is Northern Sami.
     let look_alikes = ["ua", "ukulele", "pl-PL", "", "garbage", "💙", "ptolemy", "cz", "csharp", "csomething", "italic"];
     let others = ["kr", "korean", "kotlin", "se", "swe", "svenska", "hun", "magyar", "tur", "türkçe", "elvish"];
     for tag in look_alikes.into_iter().chain(others) {
         assert_eq!(locale_language(tag), None, "{tag}");
     }
+}
+
+fn assert_auto_locale_precedence() {
     assert_eq!(Preference::Auto.resolve(&["pl-PL".into(), "pt-BR".into()]), "pt-BR");
     assert_eq!(Preference::Auto.resolve(&["fr-FR".into(), "pt-BR".into()]), "fr");
     assert_eq!(Preference::Auto.resolve(&["es-ES".into(), "pt-BR".into()]), "es");
@@ -202,30 +213,51 @@ fn locale_and_saved_preference_resolution() {
     assert_eq!(Preference::English.resolve(&locales), "en");
     assert_eq!(Preference::Auto.resolve(&["en-US".into(), "uk-UA".into()]), "en");
     assert_eq!(Preference::Auto.resolve(&[]), "en");
+}
+
+fn assert_saved_preference_restoration(preference: Preference) {
+    assert_eq!(Preference::restore(Some(preference.code())), preference);
+    let saved = serde_json::to_string(&preference).unwrap();
+    assert_eq!(saved, format!("\"{}\"", preference.code()));
+    assert_eq!(serde_json::from_str::<Preference>(&saved).unwrap(), preference);
+    assert_eq!(serde_json::from_value::<Preference>(json!(preference.code())).unwrap(), preference);
+}
+
+fn assert_preference_resolution(preference: Preference) {
+    if preference == Preference::Auto {
+        return;
+    }
+    assert_eq!(Preference::parse(preference.code()), Some(preference));
+    // A chosen language wins over the system's; Auto takes the first system language there is.
+    assert_eq!(preference.resolve(&["uk-UA".into()]), preference.code());
+    if preference != Preference::English {
+        assert_eq!(Preference::Auto.resolve(&["pl-PL".into(), preference.code().into(), "en-US".into()]), preference.code());
+    }
+}
+
+fn assert_saved_preference_persistence(preference: Preference) {
+    let mut app = CadApp::new(Session::new(), Services::default());
+    app.ui.interface_language = preference;
+    let mut restored = CadApp::new(Session::new(), Services::default());
+    restored.load_prefs(&app.prefs_json());
+    assert_eq!(restored.ui.interface_language, preference);
+    restored.load_prefs(r#"{"interfaceLanguage":"klingon"}"#);
+    assert_eq!(restored.ui.interface_language, preference);
+}
+
+#[test]
+fn locale_and_saved_preference_resolution() {
+    assert_primary_locale_aliases();
+    assert_portuguese_and_spanish_aliases();
+    assert_additional_locale_aliases();
+    assert_unrecognized_locale_tags();
+    assert_auto_locale_precedence();
     assert_eq!(Preference::restore(None), Preference::Auto);
     assert_eq!(Preference::restore(Some("obsolete")), Preference::Auto);
     for preference in Preference::ALL {
-        assert_eq!(Preference::restore(Some(preference.code())), preference);
-        let saved = serde_json::to_string(&preference).unwrap();
-        assert_eq!(saved, format!("\"{}\"", preference.code()));
-        assert_eq!(serde_json::from_str::<Preference>(&saved).unwrap(), preference);
-        if preference == Preference::Auto {
-            continue;
-        }
-        assert_eq!(Preference::parse(preference.code()), Some(preference));
-        // A chosen language wins over the system's; Auto takes the first system language there is.
-        assert_eq!(preference.resolve(&["uk-UA".into()]), preference.code());
-        if preference != Preference::English {
-            assert_eq!(Preference::Auto.resolve(&["pl-PL".into(), preference.code().into(), "en-US".into()]), preference.code());
-        }
-        // Saved with the host's other preferences; a bad saved value keeps the current choice.
-        let mut a = CadApp::new(Session::new(), Services::default());
-        a.ui.interface_language = preference;
-        let mut b = CadApp::new(Session::new(), Services::default());
-        b.load_prefs(&a.prefs_json());
-        assert_eq!(b.ui.interface_language, preference);
-        b.load_prefs(r#"{"interfaceLanguage":"klingon"}"#);
-        assert_eq!(b.ui.interface_language, preference);
+        assert_saved_preference_restoration(preference);
+        assert_preference_resolution(preference);
+        assert_saved_preference_persistence(preference);
     }
     assert!(serde_json::from_str::<Preference>("\"unsupported\"").is_err());
     assert_eq!(serde_json::from_value::<crate::UiState>(json!({})).unwrap().interface_language, Preference::Auto);

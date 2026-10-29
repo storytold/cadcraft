@@ -106,46 +106,54 @@ fn equality_compares_symbols_as_autolisp_does() {
 #[test]
 fn lists_and_strings() {
     let mut s = session();
-    assert_eq!(ok(&mut s, "(cons 1 '(2 3))"), "(1 2 3)");
-    assert_eq!(ok(&mut s, "(cons 8 \"0\")"), "(8 . \"0\")");
-    assert_eq!(ok(&mut s, "(cadr '(1 2 3))"), "2");
-    assert_eq!(ok(&mut s, "(cdr (assoc 40 '((10 1.0 2.0 0.0) (40 . 2.5))))"), "2.5");
-    assert_eq!(ok(&mut s, "(subst '(40 . 5.0) '(40 . 2.5) '((8 . \"0\") (40 . 2.5)))"), "((8 . \"0\") (40 . 5.0))");
-    assert_eq!(ok(&mut s, "(append '(1) '(2 3) nil '(4))"), "(1 2 3 4)");
-    assert_eq!(ok(&mut s, "(reverse '(1 2 3))"), "(3 2 1)");
-    assert_eq!(ok(&mut s, "(nth 1 '(a b c))"), "B");
-    assert_eq!(ok(&mut s, "(member 2 '(1 2 3))"), "(2 3)");
-    assert_eq!(ok(&mut s, "(length '(1 2 3))"), "3");
-    assert_eq!(ok(&mut s, "(last '(1 2 3))"), "3");
-    assert_eq!(ok(&mut s, "(mapcar '+ '(1 2 3) '(10 20 30))"), "(11 22 33)");
-    assert_eq!(ok(&mut s, "(mapcar '(lambda (x) (* x x)) '(1 2 3))"), "(1 4 9)");
-    assert_eq!(ok(&mut s, "(apply 'max '(3 9 2))"), "9");
-    assert_eq!(ok(&mut s, "(vl-sort '(3 1 2) '<)"), "(1 2 3)");
-    assert_eq!(ok(&mut s, "(vl-sort '(3 1 2) (function (lambda (a b) (> a b))))"), "(3 2 1)");
-    assert_eq!(ok(&mut s, "(vl-remove-if 'minusp '(1 -2 3))"), "(1 3)");
-    assert_eq!(ok(&mut s, "(strcat \"a\" \"b\" \"c\")"), "\"abc\"");
-    assert_eq!(ok(&mut s, "(substr \"Hello\" 2 3)"), "\"ell\"");
-    assert_eq!(ok(&mut s, "(strcase \"abc\")"), "\"ABC\"");
-    assert_eq!(ok(&mut s, "(strlen \"abc\" \"de\")"), "5");
-    assert_eq!(ok(&mut s, "(itoa 42)"), "\"42\"");
-    assert_eq!(ok(&mut s, "(atoi \"12abc\")"), "12");
-    assert_eq!(ok(&mut s, "(atof \"2.5mm\")"), "2.5");
-    assert_eq!(ok(&mut s, "(atof \"x\")"), "0.0");
-    assert_eq!(ok(&mut s, "(wcmatch \"Name\" \"N*\")"), "T");
-    assert_eq!(ok(&mut s, "(wcmatch \"A12\" \"@##\")"), "T");
-    assert_eq!(ok(&mut s, "(wcmatch \"abc\" \"x*,a?c\")"), "T");
-    assert_eq!(ok(&mut s, "(wcmatch \"abc\" \"~a*\")"), "nil");
-    assert_eq!(ok(&mut s, "(wcmatch \"b\" \"[a-c]\")"), "T");
+    list_builtins(&mut s);
+    string_builtins(&mut s);
+}
+
+fn list_builtins(s: &mut Session) {
+    assert_eq!(ok(s, "(cons 1 '(2 3))"), "(1 2 3)");
+    assert_eq!(ok(s, "(cons 8 \"0\")"), "(8 . \"0\")");
+    assert_eq!(ok(s, "(cadr '(1 2 3))"), "2");
+    assert_eq!(ok(s, "(cdr (assoc 40 '((10 1.0 2.0 0.0) (40 . 2.5))))"), "2.5");
+    assert_eq!(ok(s, "(subst '(40 . 5.0) '(40 . 2.5) '((8 . \"0\") (40 . 2.5)))"), "((8 . \"0\") (40 . 5.0))");
+    assert_eq!(ok(s, "(append '(1) '(2 3) nil '(4))"), "(1 2 3 4)");
+    assert_eq!(ok(s, "(reverse '(1 2 3))"), "(3 2 1)");
+    assert_eq!(ok(s, "(nth 1 '(a b c))"), "B");
+    assert_eq!(ok(s, "(member 2 '(1 2 3))"), "(2 3)");
+    assert_eq!(ok(s, "(length '(1 2 3))"), "3");
+    assert_eq!(ok(s, "(last '(1 2 3))"), "3");
+    assert_eq!(ok(s, "(mapcar '+ '(1 2 3) '(10 20 30))"), "(11 22 33)");
+    assert_eq!(ok(s, "(mapcar '(lambda (x) (* x x)) '(1 2 3))"), "(1 4 9)");
+    assert_eq!(ok(s, "(apply 'max '(3 9 2))"), "9");
+    assert_eq!(ok(s, "(vl-sort '(3 1 2) '<)"), "(1 2 3)");
+    assert_eq!(ok(s, "(vl-sort '(3 1 2) (function (lambda (a b) (> a b))))"), "(3 2 1)");
+    assert_eq!(ok(s, "(vl-remove-if 'minusp '(1 -2 3))"), "(1 3)");
+}
+
+fn string_builtins(s: &mut Session) {
+    assert_eq!(ok(s, "(strcat \"a\" \"b\" \"c\")"), "\"abc\"");
+    assert_eq!(ok(s, "(substr \"Hello\" 2 3)"), "\"ell\"");
+    assert_eq!(ok(s, "(strcase \"abc\")"), "\"ABC\"");
+    assert_eq!(ok(s, "(strlen \"abc\" \"de\")"), "5");
+    assert_eq!(ok(s, "(itoa 42)"), "\"42\"");
+    assert_eq!(ok(s, "(atoi \"12abc\")"), "12");
+    assert_eq!(ok(s, "(atof \"2.5mm\")"), "2.5");
+    assert_eq!(ok(s, "(atof \"x\")"), "0.0");
+    assert_eq!(ok(s, "(wcmatch \"Name\" \"N*\")"), "T");
+    assert_eq!(ok(s, "(wcmatch \"A12\" \"@##\")"), "T");
+    assert_eq!(ok(s, "(wcmatch \"abc\" \"x*,a?c\")"), "T");
+    assert_eq!(ok(s, "(wcmatch \"abc\" \"~a*\")"), "nil");
+    assert_eq!(ok(s, "(wcmatch \"b\" \"[a-c]\")"), "T");
     let many = format!("(wcmatch \"{}\" \"{}\")", "a".repeat(80), "*a".repeat(80));
-    assert_eq!(ok(&mut s, &many), "T");
+    assert_eq!(ok(s, &many), "T");
     let too_deep = format!("(wcmatch \"{}\" \"{}\")", "a".repeat(400), "*a".repeat(400));
-    assert!(eval(&mut s, &too_deep).is_err());
-    assert_eq!(ok(&mut s, "(vl-string-subst \"X\" \"b\" \"abcb\")"), "\"aXcb\"");
-    assert_eq!(ok(&mut s, "(vl-string-search \"c\" \"abc\")"), "2");
-    assert_eq!(ok(&mut s, "(read \"(1 2)\")"), "(1 2)");
-    assert_eq!(ok(&mut s, "(type \"x\")"), "STR");
-    assert_eq!(ok(&mut s, "(type 'x)"), "SYM");
-    assert_eq!(ok(&mut s, "(equal '(1 2.0) '(1 2.0000001) 1e-3)"), "T");
+    assert!(eval(s, &too_deep).is_err());
+    assert_eq!(ok(s, "(vl-string-subst \"X\" \"b\" \"abcb\")"), "\"aXcb\"");
+    assert_eq!(ok(s, "(vl-string-search \"c\" \"abc\")"), "2");
+    assert_eq!(ok(s, "(read \"(1 2)\")"), "(1 2)");
+    assert_eq!(ok(s, "(type \"x\")"), "STR");
+    assert_eq!(ok(s, "(type 'x)"), "SYM");
+    assert_eq!(ok(s, "(equal '(1 2.0) '(1 2.0000001) 1e-3)"), "T");
 }
 
 #[test]
