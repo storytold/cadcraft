@@ -165,8 +165,19 @@ fn pages_without_size(d: &Drawing) -> Vec<(String, u32)> {
 /// The pages (stored path, page) of the active drawing's PDF underlays that have no page size
 /// (their PDF couldn't be read when it opened), and the drawing's file: what [`page_size`]
 /// reads, off the UI thread, for [`set_sizes`].
-pub fn unsized_pages(s: &Session) -> (Option<String>, Vec<(String, u32)>) {
-    s.state().map(|st| (st.path.clone(), pages_without_size(&st.doc))).unwrap_or_default()
+pub fn unsized_pages(s: &Session) -> Unsized {
+    s.state().map(|st| Unsized { drawing: st.uid, document: st.path.clone(), pages: pages_without_size(&st.doc) }).unwrap_or_default()
+}
+
+/// The PDF underlays of a drawing that have no page size ([`unsized_pages`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Unsized {
+    /// The drawing (its `uid`), so sizes read for it go to it alone ([`set_sizes`]).
+    pub drawing: u64,
+    /// The file the drawing is saved at: relative PDF paths are read from its folder.
+    pub document: Option<String>,
+    /// Their stored PDF path and page.
+    pub pages: Vec<(String, u32)>,
 }
 
 /// What reading a page's size gave ([`page_size`]).
@@ -189,9 +200,14 @@ pub enum SizeRead {
 pub fn page_size(stored: &str, document: Option<&str>, page: u32, unreadable_since: Option<std::time::SystemTime>) -> SizeRead {
     let Some(hooks) = pdf() else { return SizeRead::Missing };
     let Ok(file) = underlay_file(stored, document) else { return SizeRead::Missing };
-    let modified = std::fs::metadata(&file).and_then(|m| m.modified()).ok();
+    let meta = std::fs::metadata(&file).ok();
+    let modified = meta.as_ref().and_then(|m| m.modified().ok());
     if unreadable_since.is_some() && modified == unreadable_since {
         return SizeRead::Unchanged;
+    }
+    // Too large to read is no reason to try again: it stays so until the file changes.
+    if meta.is_some_and(|m| m.len() > MAX_PDF_BYTES) {
+        return SizeRead::Unreadable(modified, format!("{stored}: the file is larger than {} MB", MAX_PDF_BYTES / (1024 * 1024)));
     }
     let Ok(bytes) = read_pdf(&file.to_string_lossy()) else { return SizeRead::Missing };
     match (hooks.page)(&bytes, page) {
@@ -203,12 +219,12 @@ pub fn page_size(stored: &str, document: Option<&str>, page: u32, unreadable_sin
     }
 }
 
-/// Give the active drawing's PDF underlays that have no page size theirs from `sizes` (by
-/// stored path and page). The drawing is redrawn (a new revision) and stays unmodified if it
-/// was. Returns whether a size was set.
-pub fn set_sizes(s: &mut Session, sizes: &HashMap<(String, u32), Vec2>) -> bool {
-    let i = s.active;
-    s.docs.get_mut(i).is_some_and(|st| set_sizes_in(st, sizes, false))
+/// Give the PDF underlays that have no page size theirs from `sizes` (by stored path and page),
+/// in the drawing they were read for ([`Unsized::drawing`]), open or not active, as long as it
+/// is still saved at `document` (relative paths would name other PDFs otherwise). The drawing
+/// is redrawn (a new revision) and stays unmodified if it was. Returns whether a size was set.
+pub fn set_sizes(s: &mut Session, drawing: u64, document: Option<&str>, sizes: &HashMap<(String, u32), Vec2>) -> bool {
+    s.docs.iter_mut().find(|st| st.uid == drawing && st.path.as_deref() == document).is_some_and(|st| set_sizes_in(st, sizes, false))
 }
 
 /// [`set_sizes`] on one drawing; `opened`: it was just opened, so its state counts as saved.
@@ -252,15 +268,16 @@ fn set_sizes_in(st: &mut crate::DocState, sizes: &HashMap<(String, u32), Vec2>, 
 /// hosts without a UI thread to keep free (the canvas runs [`page_size`] on a worker). Returns
 /// whether a size was set.
 pub fn retry_sizes(s: &mut Session) -> bool {
-    let (document, pages) = unsized_pages(s);
-    let sizes: HashMap<(String, u32), Vec2> = pages
+    let todo = unsized_pages(s);
+    let sizes: HashMap<(String, u32), Vec2> = todo
+        .pages
         .into_iter()
-        .filter_map(|(stored, page)| match page_size(&stored, document.as_deref(), page, None) {
+        .filter_map(|(stored, page)| match page_size(&stored, todo.document.as_deref(), page, None) {
             SizeRead::Found(size) => Some(((stored, page), size)),
             _ => None,
         })
         .collect();
-    set_sizes(s, &sizes)
+    set_sizes(s, todo.drawing, todo.document.as_deref(), &sizes)
 }
 
 /// The page sizes of drawing `i`'s PDF underlays that have none, read from their PDFs; the PDFs
