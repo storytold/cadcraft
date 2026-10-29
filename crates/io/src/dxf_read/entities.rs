@@ -180,7 +180,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
                 8 => DimKind::ArcLength,
                 _ => DimKind::Aligned,
             };
-            EntityKind::Dimension(Dimension {
+            let dim = Dimension {
                 kind,
                 defpt: t.p(10),
                 // The text midpoint is the one OCS point of a DIMENSION.
@@ -198,7 +198,13 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
                 overrides: Default::default(),
                 assoc: Vec::new(),
                 marks: Default::default(),
-            })
+            };
+            // Group 42 (the measured value) is 0 or missing in many files: the writers that
+            // leave it empty write 0. The measurement is worked out from the definition points
+            // instead — but only once `entity_extras` has settled the dimension's kind (an
+            // arc-length dimension is stored as an aligned one and restored afterwards), so
+            // the fallback lives there, not here.
+            EntityKind::Dimension(dim)
         }
         "LEADER" => EntityKind::Leader(Leader {
             vertices: t.pts(10).into_iter().map(|p| p.to3(0.0)).collect(),
@@ -424,6 +430,16 @@ pub(super) fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityK
             if let Some(center) = crate::dxf_ext::read_arclen(tags) {
                 dm.kind = DimKind::ArcLength;
                 dm.p15 = center;
+            }
+            // Group 42 (the measured value) is optional and many writers leave it out or write
+            // 0, so a dimension read from such a file reports no measurement at all. It is
+            // worked out from the definition points here — after the kind is settled, so an
+            // arc-length dimension measures its arc and not its chord. A stored measurement
+            // that is there is kept.
+            if !dm.measurement.is_finite() || dm.measurement.abs() <= f64::EPSILON {
+                if let Some(m) = dm.geometric_measurement() {
+                    dm.measurement = m;
+                }
             }
             dm.marks = crate::dxf_ext::read_marks(tags);
             // Group 52: the extension lines' angle relative to the dimension line (DIMEDIT Oblique).

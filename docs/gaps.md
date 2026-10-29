@@ -1,6 +1,6 @@
 # Where CADCraft falls short of AutoCAD
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-25 · **Change:** minor (Named Viewports dialog: U11 narrowed; MVIEW Restore and PURGE of multiline styles had landed: F15 and F21 corrected) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-28 · **Change:** minor (a dimension read from a file without a stored measurement is measured from its definition points) · **Target:** Autodesk AutoCAD 2027
 
 Every known shortfall, one row each, ranked within each section by user impact. This is the work
 list: agents pick from here (top of a section first), and remove or update a row in the same PR
@@ -150,6 +150,7 @@ Detail: [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-28 | minor | DXF/DWG read: a dimension whose file carries no actual measurement (group 42 is optional and many writers leave it out) is measured from its definition points, the way AutoCAD measures it, so a dimension read from such a file reports the value it measures instead of none |
 | 2026-10-25 | minor | Named Viewports (View ▸ Viewports ▸ Named Viewports..., `vports.named`) lists the saved viewport configurations with a preview and the current one's name, and restores or deletes one; in a layout Restore places it as MVIEW Restore does: U11 narrowed. F15 and U11 no longer list MVIEW Restore (#633), and F21 no longer says PURGE skips multiline styles |
 | 2026-10-25 | minor | DIMTFILL limits: with DIMTFILL 1 (the drawing's background color) the written `*D` block and EXPLODE keep no background mask (a WIPEOUT over the text box would), and a true-color DIMTFILLCLR is written to DXF as the nearest ACI: F7 updated |
 | 2026-10-24 | minor | COMPAREEXPORT (typed, or Export on the comparison bar) opens the comparison as a new untitled drawing, `compare_<this> vs <other>.dwg`: this drawing's objects in one group and the other drawing's differing objects in a second group, in the comparison colors (green, red, gray for objects in both), block contents and style colors included: F22 narrowed |
