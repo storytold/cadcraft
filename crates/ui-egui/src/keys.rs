@@ -152,7 +152,7 @@ pub fn effective(user: &UserKeys) -> Vec<(KeyboardShortcut, String)> {
 /// [`effective`], worked out again only when the user's shortcuts change (the shortcut handler
 /// asks every frame).
 pub fn effective_cached(ctx: &egui::Context, user: &UserKeys) -> Vec<(KeyboardShortcut, String)> {
-    let id = egui::Id::new("user_keys_effective");
+    let id = egui::Id::unique("user_keys_effective");
     if let Some((k, v)) = ctx.data(|m| m.get_temp::<(UserKeys, Vec<(KeyboardShortcut, String)>)>(id))
         && k == *user
     {
@@ -280,11 +280,11 @@ const RECORDING: &str = "user_keys_recording";
 
 /// Whether a shortcut is being recorded (every shortcut stays quiet meanwhile).
 pub fn recording(ctx: &egui::Context) -> bool {
-    ctx.data(|m| m.get_temp::<String>(egui::Id::new(RECORDING))).is_some()
+    ctx.data(|m| m.get_temp::<String>(egui::Id::unique(RECORDING))).is_some()
 }
 
 pub fn stop_recording(ctx: &egui::Context) {
-    ctx.data_mut(|m| m.remove::<String>(egui::Id::new(RECORDING)));
+    ctx.data_mut(|m| m.remove::<String>(egui::Id::unique(RECORDING)));
 }
 
 /// The commands the editor lists, sorted by the label shown: (id, label, what tells same labels
@@ -318,9 +318,9 @@ fn label_of(id: &str) -> String {
 pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let t = Tokens::get();
     let mac = ctx.os().is_mac();
-    let rec_id = egui::Id::new(RECORDING);
-    let filter_id = egui::Id::new("user_keys_filter");
-    let note_id = egui::Id::new("user_keys_note");
+    let rec_id = egui::Id::unique(RECORDING);
+    let filter_id = egui::Id::unique("user_keys_filter");
+    let note_id = egui::Id::unique("user_keys_note");
     let mut recording: Option<String> = ctx.data(|m| m.get_temp(rec_id));
     let mut filter: String = ctx.data(|m| m.get_temp(filter_id)).unwrap_or_default();
     let mut note: Option<(String, bool)> = ctx.data(|m| m.get_temp(note_id));
@@ -349,7 +349,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     }
     let mut reset_all = false;
     egui::Window::new(crate::tl!("Keyboard Shortcuts"))
-        .id(egui::Id::new("shortcuts_dialog"))
+        .id(egui::Id::unique("shortcuts_dialog"))
         .open(open)
         .collapsible(false)
         .default_size(vec2(600.0, 520.0))
@@ -648,7 +648,7 @@ mod tests {
         app.session.cancel();
         // Recording in the dialog: F4 becomes the recorded key, nothing runs.
         app.ui.dialog = Some(DIALOG.into());
-        ctx.data_mut(|m| m.insert_temp(egui::Id::new(RECORDING), "circle".to_string()));
+        ctx.data_mut(|m| m.insert_temp(egui::Id::unique(RECORDING), "circle".to_string()));
         let mut out = ctx.run_ui(press(Key::F6), |ui| {
             crate::menus::shortcuts(&mut app, ui.ctx());
             let mut open = true;
