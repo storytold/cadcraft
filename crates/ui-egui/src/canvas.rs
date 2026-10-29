@@ -506,13 +506,7 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
     }
 }
 
-fn paint_pointer_overlay(
-    frame: &mut CanvasPaint<'_>,
-    paper_rect: Option<Rect>,
-    surround: Color32,
-    selecting: bool,
-    sheet: Option<cadcraft_render::Sheet>,
-) {
+fn paint_pointer_overlay(frame: &mut CanvasPaint<'_>, paper_rect: Option<Rect>, surround: Color32, sheet: Option<cadcraft_render::Sheet>) {
     let app = &mut *frame.app;
     let ui = &mut *frame.ui;
     let painter = frame.painter;
@@ -556,7 +550,8 @@ fn paint_pointer_overlay(
             // Use the painted sheet even in MSPACE, where the editing transform follows a
             // model viewport. The whole cursor takes one colour from its centre.
             let ink = paper_rect.map_or(t.crosshair, |paper| crate::theme::crosshair_color(if paper.contains(hp) { t.paper } else { surround }));
-            draw_crosshair(app, painter, rect, hp, selecting, ink);
+            let picking = app.session.picking_objects() && app.session.pending_window.is_none();
+            draw_crosshair(app, painter, rect, hp, picking, ink);
             if app.canvas.cycle_badge && app.canvas.cycle.is_none() {
                 cycle_badge(painter, hp);
             }
@@ -738,7 +733,7 @@ struct PromptClickContext<'a> {
 fn collect_prompt_clicks(app: &mut CadApp, ui: &egui::Ui, context: PromptClickContext<'_>) -> bool {
     // egui drops a click whose button comes up a few pixels from where it went down (a drag to it),
     // and eframe hands a slow frame's clicks over together, which egui reports as one.
-    let point_prompt = app.session.current_prompt().is_some_and(|p| cadcraft_engine::pointmod::accepts(&p))
+    let point_prompt = app.session.current_prompt().is_some_and(|p| p.accept.point && !p.accept.selection)
         && app.session.pending_window.is_none()
         && !app.session.realtime_zoom_active();
     let pressed_primary = context.primary_clicked || (point_prompt && context.response.drag_stopped_by(egui::PointerButton::Primary));
@@ -1011,7 +1006,6 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         raw_world,
     } = frame;
     let scale = xf.scale;
-    let selecting = app.session.previews_selection();
     painter.rect_filled(rect, 0.0, t.canvas);
     let t0 = crate::now_ms();
     let mut views = vec![(xf_paper.world_bounds(), 1.0 / xf_paper.scale)];
@@ -1193,7 +1187,6 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         },
         paper_rect,
         surround,
-        selecting,
         sheet,
     );
 }
