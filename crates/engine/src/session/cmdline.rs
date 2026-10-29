@@ -29,6 +29,13 @@ impl Session {
                 if !script && !first {
                     return Ok(());
                 }
+                if self.lisp_prompt().is_none() && is_bare_lisp_prefix(rest) {
+                    let wrapped = format!("({})", rest.trim());
+                    if let Err(e) = self.lisp_eval(&wrapped, true, false, Vec::new()) {
+                        self.echo(e.to_string());
+                    }
+                    return Ok(());
+                }
                 // `cmd {json}`: programmatic call with parameters.
                 if let Some((name, json)) = rest.trim().split_once(' ')
                     && json.trim_start().starts_with('{')
@@ -203,6 +210,46 @@ impl Session {
 fn lisp_expression(t: &str) -> bool {
     let t = t.trim();
     t.starts_with('(') || (t.starts_with('!') && t.len() > 1)
+}
+
+/// Bare prefix LISP/arithmetic expression typed at `Command:` without outer parentheses (e.g. `+ 1 2`).
+pub fn is_bare_lisp_prefix(t: &str) -> bool {
+    let t = t.trim_start();
+    let Some((op, rest)) = t.split_once([' ', '\t']) else {
+        return false;
+    };
+    is_bare_lisp_operator(op) && !rest.trim().is_empty()
+}
+
+/// Whether `op` is a LISP prefix operator that accepts space-separated arguments on the command line.
+pub fn is_bare_lisp_operator(op: &str) -> bool {
+    let op = op.to_ascii_lowercase();
+    matches!(
+        op.as_str(),
+        "+" | "-"
+            | "*"
+            | "/"
+            | "="
+            | "/="
+            | "<"
+            | ">"
+            | "<="
+            | ">="
+            | "1+"
+            | "1-"
+            | "sin"
+            | "cos"
+            | "sqrt"
+            | "abs"
+            | "min"
+            | "max"
+            | "expt"
+            | "rem"
+            | "gcd"
+            | "strcat"
+            | "setq"
+            | "defun"
+    )
 }
 
 /// The next command-line input in `rest` and what follows it: up to a space or tab, except that
