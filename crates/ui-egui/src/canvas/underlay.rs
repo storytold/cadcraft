@@ -104,15 +104,18 @@ pub(crate) struct Cache {
     views: HashMap<Scope, (Bounds2, f64)>,
     /// When (egui time) the sizes of underlays without one were last looked for.
     size_retry: Option<f64>,
-    /// The page sizes being read on a worker thread.
-    sizing: Option<std::sync::mpsc::Receiver<Vec<((String, u32), SizeRead)>>>,
-    /// Pages whose PDF is there but gives no size, with the file's modification time then: not
-    /// read again until it changes.
-    unreadable: HashMap<(String, u32), Option<std::time::SystemTime>>,
+    /// The page sizes being read on a worker thread, and the drawing they are read for.
+    sizing: Option<(Sized, std::sync::mpsc::Receiver<Vec<((String, u32), SizeRead)>>)>,
+    /// Pages whose PDF is there but gives no size, by drawing, with the file's modification time
+    /// then: not read again until it changes. Two drawings can name one relative path that
+    /// resolves to two PDFs.
+    unreadable: HashMap<(Sized, String, u32), Option<std::time::SystemTime>>,
 }
 
 /// The page sizes read on a worker for underlays shown without one.
 type SizeRead = cadcraft_engine::cmd::underlay::SizeRead;
+/// A drawing whose page sizes are read: its `uid` and the file it is saved at.
+type Sized = (u64, Option<String>);
 
 impl Cache {
     /// The page's texture once it has been read. The first call starts reading it on a worker
@@ -374,38 +377,41 @@ fn visible_region(it: &Item, view: &Bounds2, margin: f64) -> Option<[f64; 4]> {
 /// start another reading every [`PAGE_RETRY_S`] seconds.
 fn retry_missing_sizes(app: &mut CadApp, ctx: &egui::Context) {
     let now = ctx.input(|i| i.time);
-    if let Some(sizes) = app.canvas.underlays.take_sizes()
-        && cadcraft_engine::cmd::underlay::set_sizes(&mut app.session, &sizes)
+    if let Some(((drawing, document), sizes)) = app.canvas.underlays.take_sizes()
+        && cadcraft_engine::cmd::underlay::set_sizes(&mut app.session, drawing, document.as_deref(), &sizes)
     {
         // The display list was built from the drawing without the size: draw it again now.
         ctx.request_repaint();
     }
     if app.canvas.underlays.size_retry_due(now) {
-        let (document, pages) = cadcraft_engine::cmd::underlay::unsized_pages(&app.session);
-        app.canvas.underlays.start_sizing(document, pages);
+        let todo = cadcraft_engine::cmd::underlay::unsized_pages(&app.session);
+        app.canvas.underlays.start_sizing(ctx, todo);
     }
     ctx.request_repaint_after(std::time::Duration::from_secs_f64(PAGE_RETRY_S));
 }
 
 impl Cache {
-    /// Read the sizes of `pages` (stored path, page) of the drawing saved at `document` on a
-    /// worker thread (at once on the web, which has no threads), unless a reading is going on.
-    fn start_sizing(&mut self, document: Option<String>, pages: Vec<(String, u32)>) {
-        if self.sizing.is_some() || pages.is_empty() {
+    /// Read the sizes of `todo`'s pages on a worker thread (at once on the web, which has no
+    /// threads), unless a reading is going on; the canvas is redrawn when they are read.
+    fn start_sizing(&mut self, ctx: &egui::Context, todo: cadcraft_engine::cmd::underlay::Unsized) {
+        if self.sizing.is_some() || todo.pages.is_empty() {
             return;
         }
-        let unreadable = self.unreadable.clone();
+        let drawing: Sized = (todo.drawing, todo.document);
+        let since = self.unreadable_since(&drawing, &todo.pages);
         let (tx, rx) = std::sync::mpsc::channel();
+        let (document, pages, ctx) = (drawing.1.clone(), todo.pages, ctx.clone());
         let job = move || {
             let read: Vec<((String, u32), SizeRead)> = pages
                 .into_iter()
-                .map(|(stored, page)| {
-                    let since = unreadable.get(&(stored.clone(), page)).copied().flatten();
+                .zip(since)
+                .map(|((stored, page), since)| {
                     let r = cadcraft_engine::cmd::underlay::page_size(&stored, document.as_deref(), page, since);
                     ((stored, page), r)
                 })
                 .collect();
             let _ = tx.send(read);
+            ctx.request_repaint();
         };
         #[cfg(not(target_arch = "wasm32"))]
         if std::thread::Builder::new().name("cadcraft-pdf-size".into()).spawn(job).is_err() {
@@ -413,35 +419,43 @@ impl Cache {
         }
         #[cfg(target_arch = "wasm32")]
         job();
-        self.sizing = Some(rx);
+        self.sizing = Some((drawing, rx));
     }
 
-    /// The sizes the worker found, once it is done (`None` while it reads, or without a
-    /// reading); pages it found unreadable are noted so they aren't read again unchanged.
-    fn take_sizes(&mut self) -> Option<HashMap<(String, u32), Vec2>> {
-        let read = match self.sizing.as_ref()?.try_recv() {
+    /// For each of `pages` of `drawing`, the modification time its PDF had when it was found
+    /// unreadable, if it was.
+    fn unreadable_since(&self, drawing: &Sized, pages: &[(String, u32)]) -> Vec<Option<std::time::SystemTime>> {
+        pages.iter().map(|(stored, page)| self.unreadable.get(&(drawing.clone(), stored.clone(), *page)).copied().flatten()).collect()
+    }
+
+    /// The sizes the worker found and the drawing they were read for, once it is done (`None`
+    /// while it reads, or without a reading); pages it found unreadable are noted so they aren't
+    /// read again unchanged.
+    fn take_sizes(&mut self) -> Option<(Sized, HashMap<(String, u32), Vec2>)> {
+        let read = match self.sizing.as_ref()?.1.try_recv() {
             Ok(read) => read,
             Err(std::sync::mpsc::TryRecvError::Empty) => return None,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => Vec::new(),
         };
-        self.sizing = None;
+        let (drawing, _) = self.sizing.take()?;
         let mut sizes = HashMap::new();
-        for (key, r) in read {
+        for ((stored, page), r) in read {
+            let noted = (drawing.clone(), stored.clone(), page);
             match r {
                 SizeRead::Found(size) => {
-                    self.unreadable.remove(&key);
-                    sizes.insert(key, size);
+                    self.unreadable.remove(&noted);
+                    sizes.insert((stored, page), size);
                 }
                 SizeRead::Unreadable(since, why) => {
-                    if !self.unreadable.contains_key(&key) {
+                    if !self.unreadable.contains_key(&noted) {
                         log::warn!("PDF underlay {why}");
                     }
-                    self.unreadable.insert(key, since);
+                    self.unreadable.insert(noted, since);
                 }
                 SizeRead::Missing | SizeRead::Unchanged => {}
             }
         }
-        Some(sizes)
+        Some((drawing, sizes))
     }
 
     /// Whether it is time, at egui time `now`, to look again for the page size of underlays
@@ -577,6 +591,7 @@ fn mesh(texture: egui::TextureId, it: &Item, [l, b, r, t]: [f64; 4], xf: &Xf, co
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cadcraft_engine::cmd::underlay::Unsized;
 
     fn item() -> Item {
         Item {
@@ -685,14 +700,16 @@ mod tests {
 
     #[test]
     fn page_sizes_are_read_on_a_worker_one_reading_at_a_time() {
+        let ctx = egui::Context::default();
         let mut cache = Cache::default();
         let pages = vec![("/nowhere/a.pdf".to_string(), 1), ("/nowhere/b.pdf".to_string(), 2)];
-        cache.start_sizing(None, pages.clone());
+        let todo = Unsized { drawing: 7, document: None, pages };
+        cache.start_sizing(&ctx, todo.clone());
         assert!(cache.sizing.is_some(), "started without waiting for the files");
         // One reading at a time: a second start while it runs starts nothing.
-        let first = cache.sizing.as_ref().map(|rx| rx as *const _);
-        cache.start_sizing(None, pages);
-        assert_eq!(cache.sizing.as_ref().map(|rx| rx as *const _), first);
+        let first = cache.sizing.as_ref().map(|(_, rx)| rx as *const _);
+        cache.start_sizing(&ctx, todo);
+        assert_eq!(cache.sizing.as_ref().map(|(_, rx)| rx as *const _), first);
         let mut got = None;
         for _ in 0..200 {
             got = cache.take_sizes();
@@ -701,12 +718,49 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        assert_eq!(got.map(|s| s.len()), Some(0), "nothing found (no PDF reader in this test), and the reading is over");
+        let (drawing, sizes) = got.expect("the reading is over");
+        assert_eq!(drawing, (7, None), "with the drawing it was read for");
+        assert!(sizes.is_empty(), "nothing found (no PDF reader in this test)");
         assert!(cache.sizing.is_none());
         assert!(cache.take_sizes().is_none(), "no reading going on");
         // Nothing to read: nothing started.
-        cache.start_sizing(None, Vec::new());
+        cache.start_sizing(&ctx, Unsized::default());
         assert!(cache.sizing.is_none());
+    }
+
+    #[test]
+    fn the_canvas_is_redrawn_as_soon_as_the_sizes_are_read() {
+        let ctx = egui::Context::default();
+        let now = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen = now.clone();
+        ctx.set_request_repaint_callback(move |info| {
+            if info.delay.is_zero() {
+                seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        });
+        let mut cache = Cache::default();
+        cache.start_sizing(&ctx, Unsized { drawing: 1, document: None, pages: vec![("/nowhere/a.pdf".to_string(), 1)] });
+        for _ in 0..200 {
+            if now.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(now.load(std::sync::atomic::Ordering::SeqCst) > 0, "not left to the next retry, seconds later");
+        assert!(cache.take_sizes().is_some());
+    }
+
+    #[test]
+    fn an_unreadable_page_is_noted_for_its_own_drawing() {
+        let mut cache = Cache::default();
+        let when = Some(std::time::SystemTime::UNIX_EPOCH);
+        let pages = vec![("plan.pdf".to_string(), 1)];
+        cache.unreadable.insert(((1, Some("/a/A.dxf".into())), "plan.pdf".into(), 1), when);
+        assert_eq!(cache.unreadable_since(&(1, Some("/a/A.dxf".into())), &pages), vec![when]);
+        // Another drawing naming the same relative path reads its own PDF.
+        assert_eq!(cache.unreadable_since(&(2, Some("/b/B.dxf".into())), &pages), vec![None]);
+        // The same drawing saved elsewhere too.
+        assert_eq!(cache.unreadable_since(&(1, Some("/b/A.dxf".into())), &pages), vec![None]);
     }
 
     #[test]

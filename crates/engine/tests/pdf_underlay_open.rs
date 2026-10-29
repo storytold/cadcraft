@@ -163,3 +163,51 @@ fn turning_the_lightness_over_keeps_hues() {
     turn_lightness(&mut px);
     assert_eq!(px, vec![0, 0, 0, 255, 255, 255, 255, 255, 255, 0, 0, 255, 55, 55, 55, 255]);
 }
+
+#[test]
+fn a_pdf_too_large_to_read_is_not_looked_for_again_until_it_changes() {
+    use cadcraft_engine::cmd::underlay::{SizeRead, page_size};
+    hooks();
+    let dir = std::env::temp_dir().join(format!("cadcraft-pdf-huge-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let pdf = dir.join("Huge.pdf");
+    let stored = pdf.to_string_lossy().to_string();
+    // A sparse file just over the cap: its length is enough, nothing of it is read.
+    std::fs::File::create(&pdf).unwrap().set_len(512 * 1024 * 1024 + 1).unwrap();
+    let SizeRead::Unreadable(since, why) = page_size(&stored, None, 1, None) else { panic!("too large, not missing") };
+    assert!(why.contains("larger than"), "{why}");
+    assert_eq!(page_size(&stored, None, 1, since), SizeRead::Unchanged);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn sizes_go_to_the_drawing_they_were_read_for() {
+    use cadcraft_engine::cmd::underlay::{set_sizes, unsized_pages};
+    use cadcraft_geom::Vec2;
+    hooks();
+    real_io();
+    let dir = std::env::temp_dir().join(format!("cadcraft-pdf-whose-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let dxf = dir.join("Whose.dxf");
+    let mut d = Drawing::new_metric();
+    let u = PdfUnderlay { scale: 25.4, path: "Plan.pdf".into(), ..PdfUnderlay::default() };
+    d.add(&Space::Model, Common::default(), EntityKind::PdfUnderlay(u)).unwrap();
+    std::fs::write(&dxf, cadcraft_io::write(&d, "Whose.dxf").unwrap()).unwrap();
+    let mut s = Session::empty();
+    s.execute("open", &json!({"path": dxf.to_string_lossy()})).unwrap();
+    let todo = unsized_pages(&s);
+    assert_eq!(todo.pages, vec![("Plan.pdf".to_string(), 1)]);
+    let sizes = [(("Plan.pdf".to_string(), 1), Vec2::new(11.0, 8.0))].into_iter().collect();
+    // Another drawing is made the active one while the size is read.
+    s.execute("new", &json!({})).unwrap();
+    let active = s.state().unwrap().uid;
+    assert_ne!(active, todo.drawing);
+    assert!(!set_sizes(&mut s, todo.drawing + 1000, todo.document.as_deref(), &sizes), "the right file, but not the drawing it was read for");
+    assert!(!set_sizes(&mut s, todo.drawing, Some("/elsewhere/Whose.dxf"), &sizes), "saved elsewhere since");
+    assert!(set_sizes(&mut s, todo.drawing, todo.document.as_deref(), &sizes));
+    let whose = s.docs.iter().find(|st| st.uid == todo.drawing).unwrap();
+    let size = whose.doc.model.iter().find_map(|e| if let EntityKind::PdfUnderlay(u) = &e.kind { Some(u.size) } else { None });
+    assert_eq!(size, Some(Vec2::new(11.0, 8.0)));
+    assert_eq!(s.state().unwrap().uid, active, "the active drawing stays so");
+    let _ = std::fs::remove_dir_all(&dir);
+}
