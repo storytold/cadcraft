@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-22 · **Change:** minor (distinct polyline midpoint grips) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-27 · **Change:** minor (attribute values when inserting: ATTREQ, ATTDIA and the Edit Attributes dialog) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
 
 How CADCraft's interaction compares with AutoCAD's: point entry, object snaps, tracking, dynamic
 input, grips, selection, the command line, chrome and navigation. A drafter's speed in AutoCAD
@@ -149,6 +149,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 | Clickable keywords in the prompt | yes | yes (`cmdline.rs:253-267`) |
 | UNDO with Mark, Back, BEgin, End, Auto, Control | yes | count only, whole-document snapshots capped at 2,000 (`lib.rs:477`, `edit.rs:56`) |
 | SETVAR for every system variable | ~1,000 sysvars | about 60 session/header variables by name (`sysvars.rs`) |
+| Attribute values when inserting (ATTREQ, ATTDIA, Verify, Preset) | prompts or the Edit Attributes dialog | both: ATTDIA 1 opens Edit Attributes (OK, Enter, Cancel; typed answers still work), ATTDIA 0 (the default) asks at the command line, Verify attributes asked twice there, Preset ones and ATTREQ 0 take their defaults (`attentry.rs`); no Previous/Next pages (one scrolling list) |
 | Scripts (SCRIPT, `.scr`) | yes | script text via CLI/MCP/control; no `.scr` file command |
 | Floating/docked command window, transparency, lines of history | yes | floating overlay, history lines setting |
 
@@ -203,6 +204,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-27 | minor | INSERT asks for attribute values as AutoCAD does: the Edit Attributes dialog with ATTDIA 1, the command line with 0 (Verify asked twice), none with ATTREQ 0 or for Preset attributes |
 | 2026-10-22 | minor | Polyline segment midpoint grips use rectangles, distinct from square vertex grips, with matching hover and pick bounds (#1950) |
 | 2026-10-13 | minor | Filled-region highlight boundaries are traversed in deterministic coordinate order, fixing dash-phase jumps on CPU hover/selection redraws and GPU highlight rebuilds; CPU dash-position, pixel and GPU mesh regressions |
 | 2026-10-14 | minor | Selection cycling (#1143): the list and badge of SELECTIONCYCLING, Shift+Space through overlapping objects (#1145) |

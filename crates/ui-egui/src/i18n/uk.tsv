@@ -1373,3 +1373,7 @@
 	Check for Updates…	Перевірити оновлення…
 	CADCraft is up to date.	Встановлено найновішу версію CADCraft.
 	Could not check for updates.	Не вдалося перевірити оновлення.
+	Edit Attributes	Редагування атрибутів
+	Block name:	Ім’я блока:
+	Tag: {tag}	Мітка: {tag}
+	Values typed at the command line work too	Значення, введені в командному рядку, теж приймаються

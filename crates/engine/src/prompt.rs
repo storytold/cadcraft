@@ -243,6 +243,46 @@ pub trait Interactive: Send {
     fn editing_mtext(&self) -> Option<cadcraft_doc::MText> {
         None
     }
+    /// The attribute values the command waits for, all at once, when the UI should ask for them
+    /// in the Edit Attributes dialog (INSERT with ATTDIA 1). Typed answers still work.
+    fn attribute_entry(&self) -> Option<AttribEntry> {
+        None
+    }
+}
+
+/// See [`Interactive::attribute_entry`]: the block being inserted and the attributes asked for,
+/// in order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AttribEntry {
+    pub block: String,
+    pub rows: Vec<AttribAsk>,
+}
+
+/// One attribute an INSERT asks for: its tag, prompt and default value; Verify ones are asked
+/// twice at the command line.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AttribAsk {
+    pub tag: String,
+    pub prompt: String,
+    pub default: String,
+    pub verify: bool,
+}
+
+impl AttribEntry {
+    /// The answers that give the attributes `values` (one per row, in order; a missing one is
+    /// the default) when typed in turn: a Verify attribute's value twice, as the dialog has
+    /// already shown it.
+    pub fn answers(&self, values: &[String]) -> Vec<String> {
+        let mut out = Vec::with_capacity(self.rows.len().saturating_mul(2));
+        for (i, r) in self.rows.iter().enumerate() {
+            let v = values.get(i).cloned().unwrap_or_else(|| r.default.clone());
+            if r.verify {
+                out.push(v.clone());
+            }
+            out.push(v);
+        }
+        out
+    }
 }
 
 /// See [`Interactive::drag`].

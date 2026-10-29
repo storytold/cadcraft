@@ -1367,3 +1367,7 @@ menu	Modify	Edita
 	Check for Updates…	Verifica aggiornamenti…
 	CADCraft is up to date.	CADCraft è aggiornato.
 	Could not check for updates.	Impossibile verificare gli aggiornamenti.
+	Edit Attributes	Modifica attributi
+	Block name:	Nome blocco:
+	Tag: {tag}	Etichetta: {tag}
+	Values typed at the command line work too	Anche i valori digitati nella riga di comando vengono accettati

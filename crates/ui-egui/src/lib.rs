@@ -10,6 +10,7 @@
 
 pub mod aliasdlg;
 pub mod animation;
+pub mod attentry;
 pub mod autosave;
 pub mod bedit;
 pub mod canvas;

@@ -15,7 +15,7 @@ use super::machines::{SelOutcome, SelectPhase, number};
 use super::{CommandSpec, bad, bool_or, f64_or, find_command, ok, point_param, point_req, point_value, str_param, targets};
 
 use super::has_doc;
-use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
+use crate::{Accept, AttribAsk, AttribEntry, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 mod attedit;
 mod burst;
@@ -588,7 +588,15 @@ struct InsertM {
     x_scale: Option<f64>,
     scale: Option<Vec2>,
     rotation: Option<f64>,
-    attdefs: Vec<(String, String, String)>,
+    /// The attributes to ask for, in order: not the constant or Preset ones (they take their
+    /// value without asking), none with ATTREQ 0 (every one takes its default).
+    attdefs: Vec<AttribAsk>,
+    /// How many of `attdefs` have their value.
+    asked: usize,
+    /// A Verify attribute's value waiting to be confirmed.
+    verifying: Option<String>,
+    /// ATTDIA 1: the values are asked for in the Edit Attributes dialog.
+    dialog: bool,
     values: serde_json::Map<String, Value>,
     /// `*name`: insert the block's objects (one uniform scale factor, no attribute values).
     explode: bool,
@@ -607,7 +615,7 @@ impl InsertM {
             InsStage::Attribs
         };
         if self.stage == InsStage::Attribs
-            && self.values.len() >= self.attdefs.len()
+            && self.asked >= self.attdefs.len()
             && let (Some(n), Some(a), Some(sc), Some(r)) = (self.name.clone(), self.at, self.scale, self.rotation)
         {
             let h = insert_with(s, &n, a, sc, r, self.base, &self.values)?;
@@ -625,20 +633,24 @@ impl InsertM {
             s.echo(format!("Block \"{name}\" not found."));
             return Ok(());
         };
-        self.attdefs = if self.explode {
+        let ask = s.settings.attreq;
+        self.dialog = s.settings.attdia;
+        self.attdefs = if self.explode || !ask {
             Vec::new()
         } else {
             b.entities
                 .iter()
-                .filter_map(|e| {
-                    if let EntityKind::AttDef(a) = &e.kind {
-                        (!a.constant).then(|| (a.tag.clone(), a.prompt.clone(), a.text.value.clone()))
-                    } else {
-                        None
+                .filter_map(|e| match &e.kind {
+                    EntityKind::AttDef(a) if !a.constant && !a.modes.preset => {
+                        Some(AttribAsk { tag: a.tag.clone(), prompt: a.prompt.clone(), default: a.text.value.clone(), verify: a.modes.verify })
                     }
+                    _ => None,
                 })
                 .collect()
         };
+        self.asked = 0;
+        self.verifying = None;
+        self.values.clear();
         s.doc_mut()?.header.set_str("INSNAME", &b.name);
         self.name = Some(b.name.clone());
         self.stage = InsStage::Point;
@@ -697,8 +709,11 @@ impl Interactive for InsertM {
             InsStage::YScale => Prompt::new("Enter Y scale factor", Accept::NUMBER).default("use X scale factor"),
             InsStage::Rotation => Prompt::new("Specify rotation angle", Accept::POINT_OR_NUMBER).default("0").base(at),
             InsStage::Attribs => {
-                let (_, prompt, default) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
-                Prompt::new(if prompt.is_empty() { "Enter attribute value".into() } else { prompt }, Accept::TEXT).default(default)
+                if let Some(v) = &self.verifying {
+                    return Prompt::new("Verify attribute value", Accept::TEXT).default(v.clone());
+                }
+                let a = self.attdefs.get(self.asked).cloned().unwrap_or_default();
+                Prompt::new(if a.prompt.is_empty() { "Enter attribute value".into() } else { a.prompt }, Accept::TEXT).default(a.default)
             }
         }
     }
@@ -816,12 +831,24 @@ impl Interactive for InsertM {
                 return self.advance(s);
             }
             InsStage::Attribs => {
-                let (tag, _, default) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
-                let v = match i {
-                    Input::Text(t) => t,
-                    _ => default,
+                let a = self.attdefs.get(self.asked).cloned().unwrap_or_default();
+                let v = match (i, self.verifying.take()) {
+                    // Verify: Enter keeps the value given, a typed one replaces it.
+                    (Input::Text(t), Some(_)) => t,
+                    (_, Some(v)) => v,
+                    (Input::Text(t), None) if a.verify => {
+                        self.verifying = Some(t);
+                        return Ok(Step::Continue);
+                    }
+                    (_, None) if a.verify => {
+                        self.verifying = Some(a.default);
+                        return Ok(Step::Continue);
+                    }
+                    (Input::Text(t), None) => t,
+                    (_, None) => a.default,
                 };
-                self.values.insert(tag, Value::String(v));
+                self.values.insert(a.tag, Value::String(v));
+                self.asked += 1;
                 return self.advance(s);
             }
         }
@@ -842,6 +869,13 @@ impl Interactive for InsertM {
         });
         let rot = self.rotation.unwrap_or(if self.stage == InsStage::Rotation { at.angle_to(c) } else { 0.0 });
         vec![EntityKind::Insert(insert_entity(b, at, scale, rot, self.base))]
+    }
+    fn attribute_entry(&self) -> Option<AttribEntry> {
+        // Only before the first answer: values typed at the command line go on there.
+        if !self.dialog || self.stage != InsStage::Attribs || self.asked > 0 || self.verifying.is_some() || self.attdefs.is_empty() {
+            return None;
+        }
+        Some(AttribEntry { block: self.name.clone().unwrap_or_default(), rows: self.attdefs.clone() })
     }
 }
 

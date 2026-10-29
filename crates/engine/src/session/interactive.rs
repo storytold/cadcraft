@@ -435,6 +435,12 @@ impl Session {
         self.running.as_ref().and_then(|r| r.machine.editing_mtext())
     }
 
+    /// The attribute values the running command asks for in the Edit Attributes dialog
+    /// ([`Interactive::attribute_entry`]).
+    pub fn attribute_entry(&self) -> Option<crate::AttribEntry> {
+        self.running.as_ref().and_then(|r| r.machine.attribute_entry())
+    }
+
     pub fn current_prompt(&self) -> Option<Prompt> {
         if let Some(p) = self.lisp_prompt() {
             return Some(p);

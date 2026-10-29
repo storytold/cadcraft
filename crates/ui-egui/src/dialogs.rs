@@ -10,6 +10,7 @@ use crate::theme::Tokens;
 
 pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     crate::mtext_editor::show(app, ctx);
+    crate::attentry::show(app, ctx);
     crate::quick::quick_properties(app, ctx);
     let Some(d) = app.ui.dialog.clone() else { return };
     let mut open = true;

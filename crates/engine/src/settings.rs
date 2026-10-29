@@ -127,6 +127,12 @@ pub struct Settings {
     pub polardist: f64,
     /// AUDITCTL: 1 creates an audit report (.adt) file when AUDIT is run (default: 0).
     pub auditctl: bool,
+    /// ATTREQ: INSERT asks for attribute values (on by default); off gives every attribute its
+    /// default value. A user setting, as in AutoCAD (not saved in the drawing).
+    pub attreq: bool,
+    /// ATTDIA: INSERT typed or from a menu asks for attribute values in the Edit Attributes
+    /// dialog; off (the default, as in AutoCAD) asks at the command line.
+    pub attdia: bool,
 }
 
 impl Default for Settings {
@@ -191,6 +197,8 @@ impl Default for Settings {
             polarsnap: false,
             polardist: 0.0,
             auditctl: false,
+            attreq: true,
+            attdia: false,
         }
     }
 }

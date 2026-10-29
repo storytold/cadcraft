@@ -102,6 +102,15 @@ impl Interactive for Guarded {
             None
         })
     }
+    fn attribute_entry(&self) -> Option<crate::prompt::AttribEntry> {
+        if self.broken.get().is_some() {
+            return None;
+        }
+        catch_unwind(AssertUnwindSafe(|| self.inner.attribute_entry())).unwrap_or_else(|_| {
+            self.broken.set(Some("panic in prompt"));
+            None
+        })
+    }
 }
 
 #[cfg(test)]
