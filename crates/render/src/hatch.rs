@@ -418,11 +418,21 @@ const MAX_SWATCH_RUNS: usize = 4000;
 
 /// A preview of a pattern for a pattern picker: the runs of its line families `lines` inside the
 /// `side` × `side` square with a corner at the origin, at a scale that shows a few repeats of the
-/// pattern (each family's line spacing or dash repeat, whichever is longer). Empty for a pattern
-/// with no lines (SOLID).
+/// pattern (each family's line spacing, or for dashed lines the side of the cell its lines and
+/// dashes tile, the geometric mean of the spacing and the dash repeat: a family of short strokes
+/// on a lattice has close lines with long gaps, and its look repeats on the lattice's cell). Empty
+/// for a pattern with no lines (SOLID).
 pub fn pattern_swatch(lines: &[PatternLine], side: f64) -> Vec<Vec<Vec2>> {
-    let repeat =
-        lines.iter().map(|l| l.delta.1.abs().max(l.dashes.iter().map(|d| d.abs()).sum::<f64>())).filter(|r| r.is_finite()).fold(0.0, f64::max);
+    let cell = |l: &PatternLine| {
+        let spacing = l.delta.1.abs();
+        let dashes = l.dashes.iter().map(|d| d.abs()).sum::<f64>();
+        match (spacing > 1e-9, dashes > 0.0) {
+            (true, true) => (spacing * dashes).sqrt().max(spacing),
+            (false, _) => dashes,
+            (true, false) => spacing,
+        }
+    };
+    let repeat = lines.iter().map(cell).filter(|r| r.is_finite()).fold(0.0, f64::max);
     if !side.is_finite() || side <= 0.0 || repeat < 1e-9 {
         return Vec::new();
     }

@@ -855,10 +855,23 @@ mod tests {
     fn unknown_pattern_error_and_catalog_name_the_pat_file_route() {
         let mut s = Session::new();
         s.execute("rectang", &json!({ "p1": [0, 0], "p2": [10, 10] })).unwrap();
-        let e = s.execute("hatch", &json!({ "points": [[5, 5]], "pattern": "GRAVEL" })).unwrap_err();
+        let e = s.execute("hatch", &json!({ "points": [[5, 5]], "pattern": "NO_SUCH_PATTERN" })).unwrap_err();
         assert!(e.to_string().contains("patternFile"), "{e}");
         let spec = specs().into_iter().find(|c| c.id == "hatch").unwrap();
         assert!(spec.params.contains("patternFile") && spec.params.contains("patternText"), "{}", spec.params);
+    }
+
+    #[test]
+    fn the_added_library_patterns_hatch_and_are_offered() {
+        let mut s = Session::new();
+        s.execute("rectang", &json!({ "p1": [0, 0], "p2": [4, 4] })).unwrap();
+        assert!(crate::pattern_choices().len() >= 60);
+        for name in ["STEEL", "INSULATION", "HERRINGBONE", "FLAGSTONE", "GRAVEL", "CHECKER_PLATE"] {
+            let out = s.execute("hatch", &json!({ "points": [[2, 2]], "pattern": name })).unwrap();
+            let h = Handle::parse_hex(out["handle"].as_str().unwrap()).unwrap();
+            let made = s.doc().unwrap().entity(h).map(|e| e.kind.clone());
+            assert!(matches!(made, Some(EntityKind::Hatch(h)) if h.pattern == name), "{name}");
+        }
     }
 
     #[test]
