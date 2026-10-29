@@ -7,7 +7,7 @@
 //! name beside the drawing.
 
 use cadcraft_doc::Drawing;
-use cadcraft_geom::Vec2;
+use cadcraft_geom::{Bounds2, Vec2};
 use cadcraft_render::DisplayList;
 
 use crate::pdf_read::{MAX_SIDE, PdfFile};
@@ -81,6 +81,19 @@ pub(crate) fn images(d: &Drawing, list: &DisplayList, document: Option<&str>, px
     out
 }
 
+/// `list`'s extents with the part of each underlay's page it shows: a page is drawn as an
+/// image, not by the list's primitives, so with its frame off (PDFFRAME 0) nothing else marks
+/// where it is, and a plot of the extents would be fitted without it.
+pub(crate) fn plotted_bounds(list: &DisplayList) -> Bounds2 {
+    list.underlays.iter().take(MAX_UNDERLAYS).fold(list.bounds, |b, lu| match lu.shown() {
+        Some([l, bt, r, t]) => {
+            let at = |x: f64, y: f64| lu.origin + lu.u * x + lu.v * y;
+            b.union(&Bounds2::from_points([at(l, bt), at(r, bt), at(r, t), at(l, t)]))
+        }
+        None => b,
+    })
+}
+
 /// The bytes of the PDF `stored` in the drawing saved at `document`.
 fn read(stored: &str, document: Option<&str>) -> Option<Vec<u8>> {
     #[cfg(not(target_arch = "wasm32"))]
@@ -133,6 +146,39 @@ mod tests {
     fn dark_pixels(png: &[u8]) -> usize {
         let img = tiny_skia::Pixmap::decode_png(png).unwrap();
         img.pixels().iter().filter(|p| p.red() < 100).count()
+    }
+
+    /// Dark pixels of a plot, PDF (read back) or PNG.
+    fn plot_dark(d: &Drawing, opts: serde_json::Value) -> usize {
+        let out = crate::plotter::plot(d, &Space::Model, &opts).unwrap();
+        if opts.get("output").is_some() {
+            return dark_pixels(&out);
+        }
+        let r = crate::pdf_read::PdfFile::open(&out).unwrap().render(1, 600).unwrap();
+        r.rgba.as_chunks::<4>().0.iter().filter(|c| c[0] < 100 && c[3] > 128).count()
+    }
+
+    #[test]
+    fn a_plot_of_the_extents_fits_the_pages_with_their_frames_off() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-underlay-plot-noframe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut d = drawing_with_underlay(&dir.join("Plan.pdf"), true);
+        // A short line in a corner of the page: with the frame off, the only other thing drawn.
+        d.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::new(280.0, 190.0, 0.0), b: Vec3::new(285.0, 195.0, 0.0) })).ok();
+        for opts in [json!({"paper": "A4", "landscape": true}), json!({"output": "png", "paper": "A4", "landscape": true, "resolution": 100})] {
+            d.header.set_i64("PDFFRAME", 1);
+            let framed = plot_dark(&d, opts.clone());
+            d.header.set_i64("PDFFRAME", 0);
+            let unframed = plot_dark(&d, opts.clone());
+            // The frame is a few hundred pixels; the page's diagonal line is fitted the same.
+            assert!(unframed * 2 > framed && framed * 2 > unframed, "{opts}: {unframed} dark pixels without the frame, {framed} with it");
+        }
+        // An SVG export of the extents shows the whole page too, not the line alone.
+        let svg = crate::svg::export(&d, &Space::Model);
+        let view: Vec<f64> =
+            svg.split("viewBox=\"").nth(1).and_then(|v| v.split('"').next()).unwrap().split_whitespace().map(|x| x.parse().unwrap()).collect();
+        assert!(view.get(2).is_some_and(|w| *w >= 297.0), "{view:?}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

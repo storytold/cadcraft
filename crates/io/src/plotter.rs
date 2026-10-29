@@ -88,7 +88,7 @@ fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let ropts = cadcraft_render::Options { tolerance, lineweights, plot_style_table: table, transparency, ..cadcraft_render::Options::default() };
     let mut list = cadcraft_render::build_plot(d, space, &ropts);
     let half = Vec2::new(f64::from(width), f64::from(height)) / (2.0 * k);
-    let b = window.unwrap_or(list.bounds);
+    let b = window.unwrap_or_else(|| crate::underlay_plot::plotted_bounds(&list));
     let s = if fit { fit_scale(&b, &sheet, &o) } else { 1.0 };
     // Plot style ends, joins and fill patterns at the plot scale, as PDF draws them (a layout's
     // are already drawn).
@@ -142,7 +142,7 @@ fn svg(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let transparency = o.plot_transparency.unwrap_or(page.plot_transparency);
     let ropts = cadcraft_render::Options { tolerance, lineweights, plot_style_table: table, transparency, ..cadcraft_render::Options::default() };
     let mut list = cadcraft_render::build_plot(d, space, &ropts);
-    let s = fit_scale(&window.unwrap_or(list.bounds), &sheet, &o);
+    let s = fit_scale(&window.unwrap_or_else(|| crate::underlay_plot::plotted_bounds(&list)), &sheet, &o);
     cadcraft_render::pen::apply(&mut list, s * sheet.unit_mm);
     // PDF underlays' pages at the plot resolution on paper.
     let images = crate::underlay_plot::images(d, &list, o.document.as_deref(), s * sheet.unit_mm / 25.4 * crate::underlay_plot::DPI);

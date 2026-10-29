@@ -546,7 +546,7 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
     // Relative point sizes follow the plotted window (else the extents).
     let view_height = window.map(|w| w.height()).unwrap_or(0.0);
     let list = cadcraft_render::build_plot(d, space, &cadcraft_render::Options { tolerance, view_height, ..ropts });
-    let b = window.unwrap_or(list.bounds);
+    let b = window.unwrap_or_else(|| crate::underlay_plot::plotted_bounds(&list));
     let s = plot_scale(&b, &sheet, fit, o.scale);
     let map = if fit || matches!(space, Space::Model) {
         let (from, to) = placement(space, &b, fit, &sheet, o);
