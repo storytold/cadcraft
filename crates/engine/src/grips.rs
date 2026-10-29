@@ -333,7 +333,8 @@ fn shift_params(e: &mut cadcraft_doc::Ellipse, by: f64) {
     }
 }
 
-/// A multifunctional grip option besides Stretch (the menu a polyline, line or arc grip shows).
+/// A multifunctional grip option besides Stretch (the menu a polyline, line, arc or hatch grip
+/// shows).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum GripAction {
@@ -349,6 +350,12 @@ pub enum GripAction {
     Lengthen,
     /// Arc midpoint: change the radius, keeping the center and angles.
     Radius,
+    /// Hatch: move the pattern's origin to a picked point (the fill stays).
+    HatchOrigin,
+    /// Hatch: the pattern's angle, typed or toward a picked point from the grip.
+    HatchAngle,
+    /// Hatch: the pattern's scale, typed or as the distance from the grip to a picked point.
+    HatchScale,
 }
 
 impl GripAction {
@@ -361,6 +368,9 @@ impl GripAction {
             GripAction::ToLine => "conVert to line",
             GripAction::Lengthen => "Lengthen",
             GripAction::Radius => "Radius",
+            GripAction::HatchOrigin => "Origin point",
+            GripAction::HatchAngle => "hatch Angle",
+            GripAction::HatchScale => "hatch Scale",
         }
     }
     /// The grip menu label.
@@ -372,6 +382,9 @@ impl GripAction {
             GripAction::ToLine => "Convert to Line",
             GripAction::Lengthen => "Lengthen",
             GripAction::Radius => "Radius",
+            GripAction::HatchOrigin => "Origin Point",
+            GripAction::HatchAngle => "Hatch Angle",
+            GripAction::HatchScale => "Hatch Scale",
         }
     }
     /// The mode name on the command line ("** ADD VERTEX **").
@@ -383,17 +396,43 @@ impl GripAction {
             GripAction::ToLine => "** CONVERT TO LINE **",
             GripAction::Lengthen => "** LENGTHEN **",
             GripAction::Radius => "** RADIUS **",
+            GripAction::HatchOrigin => "** ORIGIN POINT **",
+            GripAction::HatchAngle => "** HATCH ANGLE **",
+            GripAction::HatchScale => "** HATCH SCALE **",
         }
     }
     /// Whether the option needs a point (or value); the others act at once.
     pub fn needs_point(self) -> bool {
         !matches!(self, GripAction::RemoveVertex | GripAction::ToLine)
     }
+    /// Whether a typed number answers the option's prompt (a length, radius, angle or scale).
+    pub fn takes_value(self) -> bool {
+        matches!(self, GripAction::Lengthen | GripAction::Radius | GripAction::HatchAngle | GripAction::HatchScale)
+    }
+}
+
+/// A hatch the pattern options apply to: a pattern fill (a solid or gradient fill has no pattern
+/// to turn, scale or shift).
+fn patterned(h: &cadcraft_doc::Hatch) -> bool {
+    !h.solid && h.gradient.is_none() && !h.pattern.eq_ignore_ascii_case("SOLID")
+}
+
+/// The finest and coarsest scale the Hatch Scale option sets (input-derived: a guard against a
+/// fill of millions of lines, or of none).
+const HATCH_SCALE: std::ops::RangeInclusive<f64> = 1e-6..=1e9;
+
+/// What the Hatch Scale option takes, said when a typed or JSON value is out of range.
+pub const HATCH_SCALE_HINT: &str = "The hatch scale must be a positive number from 1e-6 to 1e9.";
+
+/// Whether `f` is a scale the Hatch Scale option sets (positive, within 1e-6..1e9).
+pub fn hatch_scale_ok(f: f64) -> bool {
+    HATCH_SCALE.contains(&f)
 }
 
 /// The multifunctional options of grip `index` of `kind` (empty when it has only Stretch):
 /// polyline vertices Add/Remove Vertex, polyline segment midpoints Add Vertex and Convert to
-/// Arc/Line, line and arc ends Lengthen, the arc midpoint Radius.
+/// Arc/Line, line and arc ends Lengthen, the arc midpoint Radius, a pattern hatch's centre grip
+/// Origin Point, Hatch Angle and Hatch Scale.
 pub fn grip_actions(kind: &EntityKind, index: usize) -> Vec<GripAction> {
     match kind {
         EntityKind::LwPolyline(p) => match poly_grip(p, index) {
@@ -408,15 +447,18 @@ pub fn grip_actions(kind: &EntityKind, index: usize) -> Vec<GripAction> {
         EntityKind::Line(_) if index == 0 || index == 2 => vec![GripAction::Lengthen],
         EntityKind::Arc(_) if index == 0 || index == 2 => vec![GripAction::Lengthen],
         EntityKind::Arc(_) if index == 1 => vec![GripAction::Radius],
+        EntityKind::Hatch(h) if index == 0 && patterned(h) => vec![GripAction::HatchOrigin, GripAction::HatchAngle, GripAction::HatchScale],
         _ => Vec::new(),
     }
 }
 
 /// The object after the multifunctional `action` on grip `index`, with the picked point `to`
 /// (Add Vertex: the new vertex; Convert to Arc: a point on the arc; Lengthen: the new end,
-/// projected onto the object; Radius: a point on the new circle) or the typed `value` (Lengthen:
-/// the change in length; Radius: the new radius). `None` when the option doesn't apply or the
-/// result would be degenerate.
+/// projected onto the object; Radius: a point on the new circle; Origin Point: the new origin;
+/// Hatch Angle: the pattern's direction from the grip; Hatch Scale: the distance from the grip)
+/// or the typed `value` (Lengthen: the change in length; Radius: the new radius; Hatch Angle: the
+/// angle in radians; Hatch Scale: the scale). `None` when the option doesn't apply or the result
+/// would be degenerate.
 pub fn grip_action(kind: &EntityKind, index: usize, action: GripAction, to: Option<Vec2>, value: Option<f64>) -> Option<EntityKind> {
     if !grip_actions(kind, index).contains(&action) || to.is_some_and(|p| !p.is_finite()) || value.is_some_and(|v| !v.is_finite()) {
         return None;
@@ -511,6 +553,28 @@ pub fn grip_action(kind: &EntityKind, index: usize, action: GripAction, to: Opti
                 return None;
             }
             a.radius = r;
+        }
+        (EntityKind::Hatch(h), GripAction::HatchOrigin) => h.origin = to?,
+        (EntityKind::Hatch(h), GripAction::HatchAngle) => {
+            let grip = *kind.grips().first()?;
+            let a = match (value, to) {
+                (Some(a), _) => a,
+                (None, Some(p)) if !p.near(grip, EPS) => grip.angle_to(p),
+                _ => return None,
+            };
+            h.angle = norm_angle(a);
+        }
+        (EntityKind::Hatch(h), GripAction::HatchScale) => {
+            let grip = *kind.grips().first()?;
+            let f = match (value, to) {
+                (Some(f), _) => f,
+                (None, Some(p)) => grip.dist(p),
+                _ => return None,
+            };
+            if !hatch_scale_ok(f) {
+                return None;
+            }
+            h.scale = f;
         }
         _ => return None,
     }

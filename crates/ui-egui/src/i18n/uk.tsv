@@ -1255,6 +1255,9 @@
 	Convert to Arc	Перетворити на дугу
 	Convert to Line	Перетворити на відрізок
 	Stretch Vertex	Розтягнути вершину
+	Origin Point	Точка початку
+	Hatch Angle	Кут штрихування
+	Hatch Scale	Масштаб штрихування
 	Edit Array	Редагувати масив
 	Close Array Editing	Завершити редагування масиву
 	Multiline...	Мультилінія...

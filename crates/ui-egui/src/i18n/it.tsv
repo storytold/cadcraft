@@ -1212,6 +1212,9 @@ menu	Modify	Edita
 	Convert to Arc	Converti in arco
 	Convert to Line	Converti in linea
 	Stretch Vertex	Stira vertice
+	Origin Point	Punto di origine
+	Hatch Angle	Angolo tratteggio
+	Hatch Scale	Scala tratteggio
 	Edit Array	Modifica serie
 	Close Array Editing	Chiudi modifica serie
 	Multiline...	Multilinea...

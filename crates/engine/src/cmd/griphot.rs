@@ -15,7 +15,7 @@ use super::gripcmds::stretch_grips;
 use super::helpers::line;
 use super::machines::number;
 use super::modify::transform_entities;
-use crate::grips::{GripAction, GripMode, grip_action, grip_actions, mode_matrix};
+use crate::grips::{GripAction, GripMode, HATCH_SCALE_HINT, grip_action, grip_actions, hatch_scale_ok, mode_matrix};
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Running, Session, Step};
 
 /// At most this many grips are hot at once (input-derived: a cap on the work per edit).
@@ -182,7 +182,9 @@ impl GripEdit {
         if self.hot.first().is_some_and(|(h, _)| super::curves::is_locked(s, *h)) {
             return Err(other("The object is on a locked layer."));
         }
-        let (h, k) = self.acted(s, action, to, value).ok_or_else(|| other("That would make a degenerate object."))?;
+        let (h, k) = self
+            .acted(s, action, to, value)
+            .ok_or_else(|| other(if action == GripAction::HatchScale { HATCH_SCALE_HINT } else { "That would make a degenerate object." }))?;
         s.doc_mut()?.modify_entity(h, |e| e.kind = k)?;
         Ok(Step::Done)
     }
@@ -191,8 +193,17 @@ impl GripEdit {
         match i {
             Input::Point(p) => self.act(s, action, Some(p), None),
             Input::Deferred(d) => self.act(s, action, Some(d.at), None),
-            Input::Text(t) if matches!(action, GripAction::Lengthen | GripAction::Radius) => {
+            // Hatch Angle takes an angle in the drawing's angle units.
+            Input::Text(t) if action == GripAction::HatchAngle => {
+                let a = s.angle_settings().rotation(&t).filter(|a| a.is_finite()).ok_or_else(|| other("Requires an angle or point."))?;
+                self.act(s, action, None, Some(a))
+            }
+            Input::Text(t) if action.takes_value() => {
                 let v = number(&t).filter(|v| v.is_finite()).ok_or_else(|| other("Requires a number or point."))?;
+                // Say what to type instead of an out-of-range scale (0, -2, 2e9).
+                if action == GripAction::HatchScale && !hatch_scale_ok(v) {
+                    return Err(other(HATCH_SCALE_HINT));
+                }
                 self.act(s, action, None, Some(v))
             }
             Input::Keyword(k) if k == "eXit" => Ok(Step::Done),
@@ -357,6 +368,9 @@ impl Interactive for GripEdit {
                     GripAction::ToArc => ("Specify a point on the arc", Accept::POINT),
                     GripAction::Lengthen => ("Specify end point or length change", Accept::POINT_OR_NUMBER),
                     GripAction::Radius => ("Specify radius", Accept::POINT_OR_NUMBER),
+                    GripAction::HatchOrigin => ("Specify origin point", Accept::POINT),
+                    GripAction::HatchAngle => ("Specify hatch angle", Accept::POINT_OR_NUMBER),
+                    GripAction::HatchScale => ("Specify hatch scale", Accept::POINT_OR_NUMBER),
                     GripAction::RemoveVertex | GripAction::ToLine => ("", Accept::POINT),
                 };
                 Prompt::new(format!("{} {msg}", a.title()), accept).kw(&["eXit"]).base(base)

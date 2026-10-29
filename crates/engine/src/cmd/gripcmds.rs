@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use super::curves;
 use super::{CommandSpec, bad, bool_or, point_param, point_req, str_param, targets};
 
-use crate::grips::{GripAction, GripMode, grip_action, mode_matrix, stretch_grip};
+use crate::grips::{GripAction, GripMode, grip_action, hatch_scale_ok, mode_matrix, stretch_grip};
 use crate::{EngineError, Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -23,7 +23,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("grip.mirror", "Grip Mirror", run_grip_mirror)
             .params("{handles?, base | baseHandle+index, to (second mirror point), copy?}"),
         CommandSpec::new("grip.option", "Grip Option", run_grip_option).params(
-            "{handle, index, option: addVertex|removeVertex|toArc|toLine|lengthen|radius, to? (point), value? (lengthen: length change; radius)}",
+            "{handle, index, option: addVertex|removeVertex|toArc|toLine|lengthen|radius|hatchOrigin|hatchAngle|hatchScale, to? (point), value? (lengthen: length change; radius; hatchAngle: degrees; hatchScale)}",
         ),
         CommandSpec::new("grip", "Grip Edit", run_grip)
             .params("interactive: select grips, then the grip modes with [Base point/Copy/Undo/Reference/eXit]; JSON: use grip.stretch/move/rotate/scale/mirror")
@@ -130,20 +130,26 @@ fn run_grip_stretch(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// A multifunctional grip option (polyline Add/Remove Vertex, Convert to Arc/Line; line and arc
-/// Lengthen; arc Radius), as the grip menu runs it.
+/// Lengthen; arc Radius; hatch Origin Point, Hatch Angle and Hatch Scale), as the grip menu runs
+/// it.
 fn run_grip_option(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "grip.option";
     let h = curves::handle_param(p, "handle").ok_or_else(|| bad(cmd, "`handle` is required"))?;
     let i = index_param(cmd, p)?;
-    let action: GripAction = p
-        .get("option")
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .ok_or_else(|| bad(cmd, "`option` must be addVertex, removeVertex, toArc, toLine, lengthen or radius"))?;
+    let action: GripAction = p.get("option").and_then(|v| serde_json::from_value(v.clone()).ok()).ok_or_else(|| {
+        bad(cmd, "`option` must be addVertex, removeVertex, toArc, toLine, lengthen, radius, hatchOrigin, hatchAngle or hatchScale")
+    })?;
     if curves::is_locked(s, h) {
         return Err(EngineError::Other("The object is on a locked layer.".into()));
     }
     let e = curves::entity(s, h)?;
-    let value = p.get("value").and_then(Value::as_f64);
+    let value = p.get("value").and_then(Value::as_f64).map(|v| if action == GripAction::HatchAngle { v.to_radians() } else { v });
+    if action == GripAction::HatchScale
+        && let Some(v) = value
+        && !hatch_scale_ok(v)
+    {
+        return Err(bad(cmd, "`value` (the hatch scale) must be a positive number from 1e-6 to 1e9"));
+    }
     let k = grip_action(&e.kind, i, action, point_param(p, "to"), value)
         .ok_or_else(|| bad(cmd, "that option doesn't apply to this grip, or the result would be degenerate"))?;
     s.doc_mut()?.modify_entity(h, |e| e.kind = k)?;

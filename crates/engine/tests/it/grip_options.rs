@@ -325,3 +325,128 @@ fn grip_option_json_form() {
         assert!(s.execute("grip.option", &p).is_err(), "{p}");
     }
 }
+
+// ---------------- hatch grips ----------------
+
+fn hatch_of(s: &Session, h: Handle) -> cadcraft_engine::doc::Hatch {
+    match &s.doc().unwrap().entity(h).unwrap().kind {
+        EntityKind::Hatch(x) => x.clone(),
+        k => panic!("not a hatch: {k:?}"),
+    }
+}
+
+/// A 10 x 10 square filled with ANSI31, its centre grip at (5, 5).
+fn pattern_hatch(s: &mut Session, pattern: &str) -> Handle {
+    s.execute("rectang", &json!({ "p1": [0, 0], "p2": [10, 10] })).unwrap();
+    let r = s.execute("hatch", &json!({ "points": [[5, 5]], "pattern": pattern })).unwrap();
+    Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap()
+}
+
+#[test]
+fn hatch_centre_grip_origin_angle_and_scale() {
+    let mut s = Session::new();
+    let h = pattern_hatch(&mut s, "ANSI31");
+    s.set_selection(vec![h]);
+    assert!(near(s.grips_of(h).unwrap()[0], 5.0, 5.0));
+    let undo = s.state().unwrap().undo.len();
+    s.start_grip_edit(&[(h, 0)]).unwrap();
+    assert!(s.prompt_text().contains("[Base point/Copy/Undo/Origin point/hatch Angle/hatch Scale/eXit]"), "{}", s.prompt_text());
+    // Origin Point: the pattern's origin moves, the fill stays.
+    let loops = hatch_of(&s, h).loops;
+    typed(&mut s, &["O"]);
+    assert!(s.prompt_text().contains("** ORIGIN POINT ** Specify origin point"), "{}", s.prompt_text());
+    typed(&mut s, &["2,3"]);
+    assert!(s.running.is_none());
+    let x = hatch_of(&s, h);
+    assert!(near(x.origin, 2.0, 3.0), "{:?}", x.origin);
+    assert_eq!(x.loops, loops);
+    assert_eq!(s.state().unwrap().undo.len(), undo + 1);
+    // Hatch Angle: typed in degrees, or toward a picked point from the grip.
+    s.start_grip_edit(&[(h, 0)]).unwrap();
+    typed(&mut s, &["A", "30"]);
+    assert!((hatch_of(&s, h).angle.to_degrees() - 30.0).abs() < 1e-9);
+    s.start_grip_edit(&[(h, 0)]).unwrap();
+    typed(&mut s, &["A", "5,10"]);
+    assert!((hatch_of(&s, h).angle.to_degrees() - 90.0).abs() < 1e-9);
+    // Hatch Scale: typed, or the distance from the grip.
+    s.start_grip_edit(&[(h, 0)]).unwrap();
+    typed(&mut s, &["S", "2.5"]);
+    assert!((hatch_of(&s, h).scale - 2.5).abs() < 1e-12);
+    s.start_grip_edit(&[(h, 0)]).unwrap();
+    typed(&mut s, &["S", "9,5"]);
+    assert!((hatch_of(&s, h).scale - 4.0).abs() < 1e-12);
+    // A scale of zero or a hostile one is refused; the prompt stays.
+    s.start_grip_edit(&[(h, 0)]).unwrap();
+    for bad in ["0", "-1", "1e300"] {
+        typed(&mut s, &["S"]);
+        assert!(s.cmdline(bad).is_err() || s.running.is_some(), "{bad}");
+        s.cancel();
+        s.start_grip_edit(&[(h, 0)]).unwrap();
+    }
+    s.cancel();
+    assert!((hatch_of(&s, h).scale - 4.0).abs() < 1e-12);
+    // Stretch still moves the whole hatch.
+    s.start_grip_edit(&[(h, 0)]).unwrap();
+    typed(&mut s, &["15,5"]);
+    assert!(near(s.grips_of(h).unwrap()[0], 15.0, 5.0));
+}
+
+#[test]
+fn hatch_grip_options_json_form_and_solid_fills() {
+    let mut s = Session::new();
+    let h = pattern_hatch(&mut s, "ANSI31");
+    s.execute("grip.option", &json!({ "handle": h.hex(), "index": 0, "option": "hatchAngle", "value": 45 })).unwrap();
+    assert!((hatch_of(&s, h).angle.to_degrees() - 45.0).abs() < 1e-9, "JSON takes degrees");
+    s.execute("grip.option", &json!({ "handle": h.hex(), "index": 0, "option": "hatchScale", "value": 3 })).unwrap();
+    s.execute("grip.option", &json!({ "handle": h.hex(), "index": 0, "option": "hatchOrigin", "to": [1, 1] })).unwrap();
+    let x = hatch_of(&s, h);
+    assert!((x.scale - 3.0).abs() < 1e-12 && near(x.origin, 1.0, 1.0));
+    for p in [
+        json!({ "handle": h.hex(), "index": 0, "option": "hatchScale", "value": 0 }),
+        json!({ "handle": h.hex(), "index": 0, "option": "hatchScale", "value": 1e300 }),
+        json!({ "handle": h.hex(), "index": 0, "option": "hatchAngle" }),
+        json!({ "handle": h.hex(), "index": 0, "option": "hatchAngle", "to": [5, 5] }),
+        json!({ "handle": h.hex(), "index": 1, "option": "hatchOrigin", "to": [1, 1] }),
+        json!({ "handle": h.hex(), "index": 0, "option": "hatchOrigin" }),
+    ] {
+        assert!(s.execute("grip.option", &p).is_err(), "{p}");
+    }
+    // A solid fill has no pattern: Stretch only.
+    let solid = pattern_hatch(&mut s, "SOLID");
+    s.set_selection(vec![solid]);
+    s.start_grip_edit(&[(solid, 0)]).unwrap();
+    assert!(!s.prompt_text().contains("hatch Angle"), "{}", s.prompt_text());
+    s.cancel();
+    assert!(s.execute("grip.option", &json!({ "handle": solid.hex(), "index": 0, "option": "hatchScale", "value": 2 })).is_err());
+}
+
+/// An out-of-range Hatch Scale says what to type (positive, within 1e-6..1e9), at the prompt and
+/// in the JSON form, instead of "degenerate object"; the prompt stays for another try.
+#[test]
+fn hatch_scale_out_of_range_says_what_to_type() {
+    let mut s = Session::new();
+    let h = pattern_hatch(&mut s, "ANSI31");
+    s.set_selection(vec![h]);
+    s.start_grip_edit(&[(h, 0)]).unwrap();
+    typed(&mut s, &["S"]);
+    for bad in ["0", "-2", "2e9", "1e-7"] {
+        s.log.clear();
+        typed(&mut s, &[bad]);
+        let e = s.log.join(" | ");
+        assert!(e.contains("positive") && e.contains("1e-6") && e.contains("1e9"), "{bad}: {e}");
+        assert!(!e.contains("degenerate"), "{bad}: {e}");
+        assert!(s.prompt_text().contains("** HATCH SCALE **"), "{bad}: {}", s.prompt_text());
+    }
+    // A picked point on the grip (scale 0) says the same.
+    s.log.clear();
+    typed(&mut s, &["5,5"]);
+    assert!(s.log.iter().any(|l| l.contains("1e-6")), "{:?}", s.log);
+    typed(&mut s, &["2"]);
+    assert!((hatch_of(&s, h).scale - 2.0).abs() < 1e-12);
+    for v in [0.0, -2.0, 2e9, 1e-7] {
+        let e = s.execute("grip.option", &json!({ "handle": h.hex(), "index": 0, "option": "hatchScale", "value": v })).unwrap_err();
+        let e = e.to_string();
+        assert!(e.contains("positive") && e.contains("1e-6") && e.contains("1e9") && !e.contains("degenerate"), "{v}: {e}");
+    }
+    assert!((hatch_of(&s, h).scale - 2.0).abs() < 1e-12);
+}
