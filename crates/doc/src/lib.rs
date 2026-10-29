@@ -255,6 +255,9 @@ impl Drawing {
         out.extend(self.vports.iter().flat_map(|v| v.tiles.iter().map(|t| t.handle.0.0)));
         out.extend(self.blocks.values().flat_map(|b| [b.handle.0.0, b.begin_handle.0.0, b.end_handle.0.0]));
         out.extend(self.layouts.iter().flat_map(|l| [l.handle.0.0, l.block_handle.0.0, l.begin_handle.0.0, l.end_handle.0.0]));
+        out.extend(self.appids.iter().map(|x| x.handle.0.0));
+        out.extend(self.active_vport.iter().map(|t| t.handle.0.0));
+        out.extend(self.model_layout.iter().flat_map(|l| [l.handle.0.0, l.block_handle.0.0, l.begin_handle.0.0, l.end_handle.0.0]));
         out.remove(&0);
         out
     }

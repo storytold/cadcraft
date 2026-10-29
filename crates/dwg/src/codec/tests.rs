@@ -11,18 +11,24 @@ use super::{DwgVersion, ErrorKind, read_container};
 const INFO: FileInfo = FileInfo { version: *b"AC1032", maintenance: 0, app_version: 33, app_maintenance: 0, codepage: 30, acad_maintenance: 0 };
 
 /// An AC1032 object as an objects section stores it: size, handle-stream size, data, checksum.
-/// The data is the type, the object's own handle and some padding.
-fn object(type_code: u16, handle: u64, padding: usize) -> Vec<u8> {
+/// The data is the type, the object's own handle and some padding, then a handle stream naming
+/// `refs` (absolute soft pointers); with no references there is no handle stream.
+fn object(type_code: u16, handle: u64, padding: usize, refs: &[u64]) -> Vec<u8> {
     let mut data = BitWriter::new();
     data.ot(type_code);
     data.handle(0, handle);
     for i in 0..padding {
         data.rc(i as u8);
     }
+    let stream_start = data.position();
+    for &r in refs {
+        data.handle(5, r);
+    }
     let data = data.into_bytes();
+    let stream_bits = if refs.is_empty() { 0 } else { (data.len() * 8 - stream_start) as u64 };
     let mut w = BitWriter::new();
     w.ms(data.len() as u32);
-    w.mc_unsigned(0);
+    w.mc_unsigned(stream_bits);
     let mut out = w.into_bytes();
     out.extend_from_slice(&data);
     out.extend_from_slice(&[0, 0]);
@@ -40,7 +46,8 @@ fn header(body: &[u8]) -> Vec<u8> {
     out
 }
 
-/// A small 2018 file: a header section and objects with handles 1 to 40 (types 0x13 and 0x1F2+).
+/// A small 2018 file: a header section and objects with handles 1 to 40 (types 0x13 and 0x1F2+;
+/// every fourth one references two others).
 fn synthetic() -> (Vec<u8>, Vec<(u64, u16)>, Vec<u8>) {
     synthetic_with(None)
 }
@@ -53,7 +60,10 @@ fn synthetic_with(compress: Option<super::pack::Compress>) -> (Vec<u8>, Vec<(u64
     for h in 1..=40u64 {
         let type_code = if h % 3 == 0 { 0x1F2 + (h as u16 % 5) } else { 0x13 };
         map.push((h, objects.len() as u64));
-        objects.extend_from_slice(&object(type_code, h, (h as usize * 7) % 23));
+        // Every fourth object references two others, so reference rewriting has something to work on
+        // without the corpus.
+        let refs: &[u64] = if h % 4 == 0 { &[h - 1, 1] } else { &[] };
+        objects.extend_from_slice(&object(type_code, h, (h as usize * 7) % 23, refs));
         expected.push((h, type_code));
     }
     let header_body: Vec<u8> = (0..300u32).map(|i| (i * 31 % 251) as u8).collect();
@@ -291,7 +301,8 @@ fn objects_rewritten_with_another_reference_change_only_it() {
             }
         }
     }
-    assert!(rewritten > 0);
+    // The synthetic file alone gives 10 objects with 2 references each.
+    assert!(rewritten >= 20, "only {rewritten} references rewritten");
 }
 
 /// An AutoCAD file written again with nothing replaced reads back the same: every object, the

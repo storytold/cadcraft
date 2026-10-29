@@ -308,14 +308,33 @@ fn entity_reactors(x: &mut ForeignExtra, tags: &[Tag], entities: &HashMap<String
 
 /// A dimension style's text style reference (340) that names no text style but another record of
 /// the file (AutoCAD writes some files with it naming the UCS table): kept as it is, as the style
-/// models only text styles by name.
-fn odd_text_style(x: &mut ForeignExtra, tags: &[Tag], text_styles: &HashSet<String>, ids: &HashMap<String, ForeignKey>) {
+/// models only text styles by name. The style then names the text style it falls back to
+/// (`basis`, `None` when the drawing has none), and the kept reference is written only while it
+/// still does ([`kept_text_style_stands`]).
+fn odd_text_style(x: &mut ForeignExtra, tags: &[Tag], text_styles: &HashSet<String>, ids: &HashMap<String, ForeignKey>, basis: Option<Handle>) {
     let end = tags.iter().position(|t| t.code >= 1000).unwrap_or(tags.len());
     let Some(t) = tags.get(..end).unwrap_or(&[]).iter().find(|t| t.code == 340) else { return };
     let h = norm(&t.str());
     if !text_styles.contains(&h) && ids.contains_key(&h) {
         x.props.push(raw(t));
+        x.text_style_basis = basis;
     }
+}
+
+/// Whether a dimension style's kept text style reference (340) is still the one to write: the
+/// style's own reference (`written`, the writer's group 340) names the text style the style named
+/// when the file was read. A style given another text style is written with that one.
+fn kept_text_style_stands(x: &ForeignExtra, written: Option<&Tag>) -> bool {
+    match (x.text_style_basis, written) {
+        (Some(basis), Some(t)) => basis.hex().eq_ignore_ascii_case(t.str().trim()),
+        _ => true,
+    }
+}
+
+/// The unmodelled property groups of `x` to write: its kept text style reference only when it
+/// `stands`.
+fn kept_props(x: &ForeignExtra, stands: bool) -> impl Iterator<Item = &RawTag> {
+    x.props.iter().filter(move |p| stands || p.code != 340)
 }
 
 /// The extension dictionary of the record with handle `h` when its own groups don't name one but the
@@ -427,6 +446,8 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
     }
     put_xdata(d, xdata_of);
     let text_styles: HashSet<String> = tables.iter().filter(|(k, _, _)| k == "STYLE").filter_map(|(_, _, t)| head(t).handle).collect();
+    // The text style a dimension style names when its own reference couldn't be read.
+    let dim_text_style = d.text_style(&cadcraft_doc::DimStyle::default().text_style).map(|s| s.handle.get()).filter(|h| !h.is_none());
     for (kind, _, t) in tables.iter().chain(blocks.iter().filter(|(k, _, _)| k == "BLOCK")) {
         let Some(h) = head(t).handle else { continue };
         let Some(key) = ids.get(&h).cloned() else { continue };
@@ -434,7 +455,7 @@ pub(crate) fn read(secs: &[Section], d: &mut Drawing) {
         found_xdict(&mut x, &h, &xdict_of, &kept);
         entity_reactors(&mut x, t, &ents);
         if kind == "DIMSTYLE" {
-            odd_text_style(&mut x, t, &text_styles, &ids);
+            odd_text_style(&mut x, t, &text_styles, &ids, dim_text_style);
         }
         if !x.is_empty() {
             f.records.entry(key).or_insert(x);
@@ -1232,6 +1253,26 @@ fn plan_unknown(d: &Drawing, recs: &[Rec], tags: &[Tag], roles: &HashMap<Foreign
     out
 }
 
+/// The kept reactors of a record that still exist and that its written `ACAD_REACTORS` group
+/// (`written`, handles as `head` reads them) doesn't name.
+fn missing_reactors(map: &Map, x: &ForeignExtra, written: &[String]) -> Vec<String> {
+    x.reactors.iter().filter_map(|r| map.get(&r.hex())).filter(|r| r != "0" && !written.contains(&norm(r))).collect()
+}
+
+/// Follows the record's `ACAD_REACTORS` group as its groups are copied (`inside` says it is open),
+/// and adds the `missing` reactors to it where it closes.
+fn add_missing_reactors(t: &Tag, inside: &mut bool, missing: &[String], out: &mut Vec<Tag>) {
+    if t.code != 102 {
+        return;
+    }
+    let v = t.str();
+    if v.trim().strip_prefix('{') == Some("ACAD_REACTORS") {
+        *inside = true;
+    } else if v.trim() == "}" && std::mem::take(inside) {
+        out.extend(missing.iter().map(|h| Tag::s(330, h.clone())));
+    }
+}
+
 /// A written record with its kept extras, remapped references (unknown entities) and kept
 /// dictionary entries (the named object dictionary).
 fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: bool, root: bool, out: &mut Vec<Tag>) {
@@ -1253,6 +1294,12 @@ fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: bool
     let rgb = b.iter().take(xdata_at).find(|t| t.code == 420).map(Tag::str);
     let has_book = b.iter().take(xdata_at).any(|t| t.code == 430);
     let handle_at = b.iter().position(|t| matches!(t.code, 5 | 105));
+    // A dimension style's kept text style reference replaces the writer's own only while the style
+    // still names the text style it named when read.
+    let keep_340 = x.is_none_or(|x| kept_text_style_stands(x, b.iter().take(xdata_at).find(|t| t.code == 340)));
+    // Kept reactors the writer's own `ACAD_REACTORS` group (a dimension's DIMASSOC) doesn't name.
+    let missing = if h.has_reactors { x.map(|x| missing_reactors(map, x, &h.reactors)).unwrap_or_default() } else { Vec::new() };
+    let mut in_reactors = false;
     let mut seen_owner = false;
     for (i, t) in b.iter().enumerate() {
         if i == props_at
@@ -1264,7 +1311,7 @@ fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: bool
             {
                 out.push(Tag::s(430, book.clone()));
             }
-            out.extend(x.props.iter().map(|p| map.group(p)));
+            out.extend(kept_props(x, keep_340).map(|p| map.group(p)));
         }
         if i == xdata_at
             && let Some(x) = x
@@ -1272,9 +1319,10 @@ fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: bool
             xdata(map, x, &own_apps, out);
         }
         // A kept text style reference of a dimension style replaces the one the writer made.
-        if r.kind == "DIMSTYLE" && t.code == 340 && i < xdata_at && x.is_some_and(|x| x.props.iter().any(|p| p.code == 340)) {
+        if r.kind == "DIMSTYLE" && t.code == 340 && i < xdata_at && keep_340 && x.is_some_and(|x| x.props.iter().any(|p| p.code == 340)) {
             continue;
         }
+        add_missing_reactors(t, &mut in_reactors, &missing, out);
         let mut t = t.clone();
         if unknown && i < xdata_at && is_pointer(t.code) && t.code != 102 {
             if t.code == 330 && !seen_owner {
@@ -1306,7 +1354,7 @@ fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: bool
             {
                 out.push(Tag::s(430, book.clone()));
             }
-            out.extend(x.props.iter().map(|p| map.group(p)));
+            out.extend(kept_props(x, keep_340).map(|p| map.group(p)));
         }
         if xdata_at == b.len() {
             xdata(map, x, &own_apps, out);

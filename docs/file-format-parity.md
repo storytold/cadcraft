@@ -1,14 +1,16 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-28 · **Change:** minor (DWG open and save keeps every object of the file: unchanged objects byte for byte) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-29 · **Change:** minor (headline and foreign-data row say what a DWG save keeps: unchanged objects byte for byte; changed objects and entities the bridge drops still lose data) · **Target:** Autodesk AutoCAD 2027
 
 Every format AutoCAD 2027 reads or writes, with CADCraft's support, fidelity and tests. Work
 items are in [gaps.md](gaps.md#file-formats); the weighted score feeds
 [target-app-parity.md](target-app-parity.md).
 
 **Headline (estimated):** file formats ≈ **30%** of AutoCAD's. Opening the commonest 2D DXF/DWG
-drawings works, but saving is lossy: everything CADCraft doesn't model is dropped, and no test
-uses a real third-party file. DXF and DWG save at 2000–2018 (2018 by default, #421). Remaining: **≈ 170–280 Opus 5.5 hours**:
+drawings works, but saving is still lossy: DXF save writes back what it kept (#528) and a DWG save
+(2004–2018) writes back every object CADCraft didn't change as the file had it, but what CADCraft
+changes and what the DWG bridge doesn't write (3D solids and other entities it drops) is lost, and
+no committed test uses a real third-party file. DXF and DWG save at 2000–2018 (2018 by default, #421). Remaining: **≈ 170–280 Opus 5.5 hours**:
 ≈ 40–60 h for DXF/DWG fidelity (the part that decides beta), ≈ 110–180 h for the other formats
 below, and ≈ 20–40 h for 3D exchange formats that wait for 3D modelling.
 
@@ -119,7 +121,7 @@ on read with a note, so such files no longer exceed the DXF limit (#1482). **DWG
 | Objects: LAYOUT, DICTIONARY, XRECORD, TABLESTYLE, DIMASSOC | yes | yes | |
 | Objects: GROUP, MLINESTYLE, MLEADERSTYLE, IMAGEDEF, SCALE | yes | yes (groups #417, scale list #468) | |
 | Objects: VISUALSTYLE, PLOTSETTINGS, materials, field objects and other unmodelled objects | kept raw (#528) | written back as read; a proxy object (ACAD_PROXY_OBJECT) keeps its class: its group 91 is renumbered to the written CLASSES, which keep the class it names, and one whose number names no class is dropped (#1812) | not editable |
-| Foreign xdata, extension dictionaries, reactors, unmodelled objects, colour books | kept raw (#528); an entity's xdata is part of the entity, so COPY, MIRROR, ARRAY and paste keep it on the copies (EXPLODE pieces don't) | written back, handles remapped, references to deleted objects dropped | through DWG: xdata on table records and blocks, entity colour books and reactors, custom-class objects lost (acadrust) |
+| Foreign xdata, extension dictionaries, reactors, unmodelled objects, colour books | kept raw (#528); an entity's xdata is part of the entity, so COPY, MIRROR, ARRAY and paste keep it on the copies (EXPLODE pieces don't) | written back, handles remapped, references to deleted objects dropped | through DWG: kept as the file had them on every object CADCraft didn't change (2004–2018); on objects CADCraft changes, xdata on table records and blocks, entity colour books and custom-class objects are lost (acadrust) |
 | Objects: dynamic block data (ACAD_EVALUATION_GRAPH, BLOCK…PARAMETER, BLOCK…ACTION, grips) | read into a model (`dynblock`, `blocks.dynamic`): parameters, visibility states, value sets, stretch and lookup actions; references: their dynamic block, values and custom properties (`blocks.reference`, Properties ▸ Custom, read-only); kept raw (#528) | written back as read; a changed visibility state is written as AutoCAD writes it (a new anonymous block with its `AcDbBlockRepBTag`, the objects' `AcDbBlockRepETag`, the reference's representation data) | visibility states (and lookups that set only them) can be changed (`blocks.reference.set`, Properties ▸ Custom); distances, positions and the actions they drive not yet; DWG open and save keep it too (checked with an AutoCAD dynamic block) |
 | Handles and owners | entity handles kept; others regenerated | consistent | stable across CADCraft re-saves (#495); other programs' table and object handles renumbered once |
 
@@ -162,6 +164,7 @@ our output in AutoCAD black-box.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-29 | minor | Headline and the foreign-data row now say what a DWG save keeps (every unchanged object, byte for byte) and what is still lost (what CADCraft changes; entities the bridge doesn't write) |
 | 2026-10-28 | minor | DWG open and save (2004–2018): every object keeps its handle and type; dropped reactors are put back; objects CADCraft didn't change are written back byte for byte; measured on AutoCAD's MI-201 drawing at five versions |
 | 2026-10-25 | minor | LAYOUT SAveas (`layout.saveas`) writes a layout as a drawing template: its page setup and paper space objects, no model space objects or other layouts, and only the named objects they use |
 | 2026-10-22 | minor | DXF/DWG save: angular, diametric and radial dimensions get standard DIMASSOC objects (one centre reference to the circle for radial/diametric, the definition points for angular), so AutoCAD follows their geometry; the standard objects of those kinds are read back too, without CADCraft's xdata (#1651) |

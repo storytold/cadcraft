@@ -40,8 +40,15 @@ pub struct ForeignExtra {
     /// The colour book colour (group 430) and the true colour (group 420) it was read with: it is
     /// written back while the colour is unchanged.
     pub color_book: Option<(String, String)>,
-    /// Other unmodelled property groups (material 347, shadow mode 284).
+    /// Other unmodelled property groups (material 347, shadow mode 284). A dimension style's text
+    /// style reference (340) that names no text style is one of them, kept while
+    /// [`ForeignExtra::text_style_basis`] still matches what the style names.
     pub props: Vec<RawTag>,
+    /// For a dimension style with a kept text style reference: the text style the style named
+    /// when the file was read (the one it falls back to, as the file's own is no text style). The
+    /// kept reference is written only while the style still names it; a style given another text
+    /// style is written with that one. `None`: not known, the kept reference stands.
+    pub text_style_basis: Option<Handle>,
 }
 
 impl ForeignExtra {

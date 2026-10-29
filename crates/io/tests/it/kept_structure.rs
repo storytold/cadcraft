@@ -115,3 +115,34 @@ fn dictionaries_list_entries_in_key_order() {
     let (got, want) = sorted(layouts);
     assert_eq!(got, want, "the layout dictionary");
 }
+
+/// A line that a dimension follows and that a kept object of another application reacts to names
+/// both: the DIMASSOC the writer adds doesn't replace the kept reactor.
+#[test]
+fn a_followed_line_keeps_its_foreign_reactor_beside_the_dimassoc() {
+    use cadcraft_doc::foreign::{ForeignExtra, ForeignObject};
+    let (mut d, l1, l2) = drawing();
+    // The line's extension dictionary holds an object of another application, which the line
+    // reacts to (a kept object is written when its owners lead to a written record).
+    let (xdict, acme) = (Handle(0xACD), Handle(0xACE));
+    let tag = |code: i32, value: String| RawTag { code, value };
+    let mut f = (*d.foreign).clone();
+    f.objects.push(ForeignObject {
+        handle: xdict,
+        kind: "DICTIONARY".into(),
+        tags: vec![tag(330, l1.hex()), tag(100, "AcDbDictionary".into()), tag(281, "1".into()), tag(3, "ACME".into()), tag(350, acme.hex())],
+    });
+    f.objects.push(ForeignObject {
+        handle: acme,
+        kind: "XRECORD".into(),
+        tags: vec![tag(330, xdict.hex()), tag(100, "AcDbXrecord".into()), tag(280, "1".into())],
+    });
+    f.entities.insert(l1, ForeignExtra { xdict: Some(xdict), reactors: vec![acme], ..ForeignExtra::default() });
+    d.foreign = std::sync::Arc::new(f);
+    let text = write_dxf(&d);
+    let (assoc_handle, _) = assoc(&text);
+    let got = reactors(&text, l1);
+    assert!(got.contains(&assoc_handle) && got.contains(&acme.hex()), "reactors of the followed line: {got:?}");
+    // A line with no kept reactor names only the DIMASSOC.
+    assert_eq!(reactors(&text, l2), vec![assoc_handle]);
+}

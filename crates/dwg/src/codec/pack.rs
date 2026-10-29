@@ -188,9 +188,8 @@ pub(crate) fn pack_with(info: &FileInfo, sections: &[Section], map_order: &[&str
             let header_sum = page_checksum(data_sum, &hdr);
             put_u32(&mut hdr, 24, header_sum);
             let m = PAGE_MASK ^ address as u32;
-            for w in hdr.chunks_exact_mut(4) {
-                let v = u32::from_le_bytes([w[0], w[1], w[2], w[3]]) ^ m;
-                w.copy_from_slice(&v.to_le_bytes());
+            for w in hdr.as_chunks_mut::<4>().0 {
+                *w = (u32::from_le_bytes(*w) ^ m).to_le_bytes();
             }
             out.extend_from_slice(&hdr);
             out.extend_from_slice(&stored);

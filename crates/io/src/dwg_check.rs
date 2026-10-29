@@ -41,7 +41,7 @@ const MAX_DXF_LINES: usize = 64_000_000;
 /// ASCII in any DXF; the rest (text before 2007 is in the drawing's code page) is only copied.
 fn dxf_pairs(bytes: &[u8]) -> Vec<(&[u8], &[u8])> {
     let lines: Vec<&[u8]> = bytes.split_inclusive(|b| *b == b'\n').take(MAX_DXF_LINES).collect();
-    lines.chunks_exact(2).filter_map(|p| Some((*p.first()?, *p.get(1)?))).collect()
+    lines.as_chunks::<2>().0.iter().map(|[code, value]| (*code, *value)).collect()
 }
 
 /// A DXF line without its line ending and surrounding blanks.

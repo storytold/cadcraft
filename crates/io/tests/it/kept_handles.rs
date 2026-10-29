@@ -369,3 +369,25 @@ fn renamed_layer_keeps_its_handle() {
     let h = handles(&write_dxf(&d));
     assert_eq!(get(&h, "LAYER", "PARTITIONS").as_deref(), Some("11"));
 }
+
+/// The APPID records, the active viewport and the Model layout keep handles on read, so new objects
+/// must not be given them in memory (the handle seed after a read and the writer's reserved set
+/// both come from `kept_handles`).
+#[test]
+fn kept_handles_include_the_appids_the_active_viewport_and_the_model_layout() {
+    use cadcraft_doc::{AppId, Drawing, KeptHandle, Layout, VportTile};
+    let kept = |h: u64| KeptHandle(Handle(h));
+    let mut d = Drawing::default();
+    d.appids.push(AppId { handle: kept(0x7001), ..AppId::default() });
+    d.active_vport = Some(Box::new(VportTile { handle: kept(0x7002), ..VportTile::default() }));
+    let mut model = Layout::new("Model", 0);
+    model.handle = kept(0x7003);
+    model.block_handle = kept(0x7004);
+    model.begin_handle = kept(0x7005);
+    model.end_handle = kept(0x7006);
+    d.model_layout = Some(Box::new(model));
+    let handles = d.kept_handles();
+    for h in 0x7001..=0x7006u64 {
+        assert!(handles.contains(&h), "handle {h:X} is not kept");
+    }
+}
