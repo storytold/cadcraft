@@ -35,6 +35,7 @@ pub use draw2::breakline::BreaklineOptions;
 pub use props::MatchProps;
 pub(crate) use props::{current_color_value, set_current_color_value};
 mod qselect;
+pub(crate) use qselect::wildcard as qselect_wildcard;
 mod selecttools;
 mod settings;
 mod spline_opts;

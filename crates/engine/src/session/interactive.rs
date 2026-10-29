@@ -237,6 +237,36 @@ impl Session {
     /// objects go to the command as a pick once the mode is complete.
     fn select_mode_input(&mut self, input: Input) -> Result<Option<Input>> {
         let Some(mut mode) = self.select_mode.take() else { return Ok(Some(input)) };
+        if mode.kind == select::SelectKind::Class {
+            return match input {
+                Input::Text(name) | Input::Keyword(name) if name.trim() == "?" => {
+                    let list = select::classes_in(self.doc()?, &self.space());
+                    if list.is_empty() {
+                        self.echo("No objects.");
+                    }
+                    for (c, n) in list {
+                        self.echo(format!("  {c}: {n}"));
+                    }
+                    self.select_mode = Some(mode);
+                    Ok(None)
+                }
+                Input::Text(name) | Input::Keyword(name) if !name.trim().is_empty() => {
+                    let hs = select::select_class(self.doc()?, &self.space(), &name);
+                    if hs.is_empty() {
+                        self.echo(format!("No objects of class \"{}\".", name.trim()));
+                        return Ok(None);
+                    }
+                    Ok(Some(Input::Pick(cmd::groups::expand(self, hs))))
+                }
+                Input::Cancel => Ok(Some(input)),
+                Input::Enter => Ok(None),
+                _ => {
+                    self.echo("Invalid class name.");
+                    self.select_mode = Some(mode);
+                    Ok(None)
+                }
+            };
+        }
         if mode.kind == select::SelectKind::Group {
             return match input {
                 Input::Text(name) | Input::Keyword(name) => match select::select_group(self.doc()?, &self.space(), &name) {

@@ -254,7 +254,7 @@ impl StretchM {
                 let word = t.trim().to_ascii_lowercase();
                 // `_C`, `_L`: the English name, as scripts write it.
                 let word = word.strip_prefix('_').unwrap_or(&word).to_string();
-                if let Some(m) = SelectMode::from_keyword(&word).filter(|m| m.kind != SelectKind::Group) {
+                if let Some(m) = SelectMode::from_keyword(&word).filter(|m| !matches!(m.kind, SelectKind::Group | SelectKind::Class)) {
                     self.mode = Some(m);
                     return Ok(Step::Continue);
                 }

@@ -368,6 +368,34 @@ pub fn select_polygon(d: &Drawing, space: &Space, poly: &[Vec2], crossing: bool)
     out
 }
 
+/// The class names of an object, any of which CLass accepts: its DXF name (`LWPOLYLINE`), its
+/// name in the Properties palette (`Polyline`) and its ObjectARX-style class name
+/// (`AcDbPolyline`, from the palette name).
+pub fn class_names(e: &Entity) -> [String; 3] {
+    let shown = e.kind.type_name();
+    [e.kind.dxf_name().to_string(), shown.to_string(), format!("AcDb{}", shown.replace([' ', '-'], ""))]
+}
+
+/// The visible objects in `space` whose class matches `pattern` (any case; `*`, `?` and `#`
+/// wildcards, as QSELECT takes them).
+pub fn select_class(d: &Drawing, space: &Space, pattern: &str) -> Vec<Handle> {
+    let pat = pattern.trim();
+    let Some(store) = d.space(space) else { return Vec::new() };
+    store.iter().filter(|e| selectable(d, e) && class_names(e).iter().any(|n| crate::cmd::qselect_wildcard(pat, n))).map(|e| e.handle).collect()
+}
+
+/// The classes of the visible objects in `space` (their DXF names), sorted, with how many of
+/// each: CLass's `?` list.
+pub fn classes_in(d: &Drawing, space: &Space) -> Vec<(String, usize)> {
+    let mut m: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    if let Some(store) = d.space(space) {
+        for e in store.iter().filter(|e| selectable(d, e)) {
+            *m.entry(e.kind.dxf_name().to_string()).or_default() += 1;
+        }
+    }
+    m.into_iter().collect()
+}
+
 /// The visible objects in `space` of the group called `name` (any case), or `None` when the
 /// drawing has no such group.
 pub fn select_group(d: &Drawing, space: &Space, name: &str) -> Option<Vec<Handle>> {
@@ -393,6 +421,8 @@ pub enum SelectKind {
     Box,
     /// `G`: the objects of a group, by name.
     Group,
+    /// `CL`: every object of a class (object type), by name.
+    Class,
 }
 
 /// Most points a fence or polygon collects (typed input is hostile).
@@ -416,6 +446,7 @@ impl SelectMode {
             "cp" | "cpolygon" => SelectKind::CPolygon,
             "box" => SelectKind::Box,
             "g" | "group" => SelectKind::Group,
+            "cl" | "class" => SelectKind::Class,
             _ => return None,
         };
         Some(SelectMode { kind, pts: Vec::new() })
@@ -428,6 +459,7 @@ impl SelectMode {
         let last = self.pts.last().copied();
         let (first, next) = match self.kind {
             SelectKind::Group => return Prompt::new("Enter group name", Accept::TEXT),
+            SelectKind::Class => return Prompt::new("Enter class name", Accept::TEXT).kw(&["?"]),
             SelectKind::Window | SelectKind::Crossing | SelectKind::Box => ("Specify first corner", "Specify opposite corner"),
             SelectKind::Fence => ("Specify first fence point", "Specify next fence point"),
             SelectKind::WPolygon | SelectKind::CPolygon => ("Specify first polygon point", "Specify endpoint of line"),
