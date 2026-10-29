@@ -1,10 +1,10 @@
 //! BATTMAN: the attribute definitions of a block — listed, edited (tag, prompt, default value,
-//! modes, height, layer), removed and reordered. Changes are applied to the existing references
+//! modes, multiple lines, height, layer), removed and reordered. Changes are applied to the existing references
 //! (as ATTSYNC does) unless `sync` is false. Tags match in any case, as in AutoCAD.
 
 use std::sync::Arc;
 
-use cadcraft_doc::{Attrib, Block, EntityKind, EntityStore, Handle};
+use cadcraft_doc::{Attrib, Block, EntityKind, EntityStore, Handle, MText, MultilineAttrib, mtext_literal};
 use serde_json::{Value, json};
 
 use super::attribs::{blocks_with_attdefs, has_attdefs, reference_count, rename_tag, sync};
@@ -16,7 +16,7 @@ pub(super) fn battman_spec() -> CommandSpec {
     CommandSpec::new("battman", "Block Attribute Manager...", run)
         .menu(&["Modify", "Object", "Attribute", "Block Attribute Manager..."])
         .params(
-            "{name, action?: \"list\" (default) | \"edit\" | \"remove\" | \"up\" | \"down\" | \"order\" | \"sync\", tag? (the definition to edit, remove or move; any case), newTag?, prompt?, default?, invisible?, constant?, height?, layer?, order?: [every tag, in the new order], sync?: bool (default true: existing references follow, as with ATTSYNC)} → {block, attributes: [{tag, prompt, default, invisible, constant, height, layer}], references, synced?}",
+            "{name, action?: \"list\" (default) | \"edit\" | \"remove\" | \"up\" | \"down\" | \"order\" | \"sync\", tag? (the definition to edit, remove or move; any case), newTag?, prompt?, default?, invisible?, constant?, verify?, preset?, lockPosition?, multiline?: bool (width?: its width, 0 = no wrapping; omitted, a multiline definition keeps its width), height?, layer?, order?: [every tag, in the new order], sync?: bool (default true: existing references follow, as with ATTSYNC)} → {block, attributes: [{tag, prompt, default, invisible, constant, verify, preset, lockPosition, multiline, height, layer}], references, synced?}",
         )
         .interactive(|s| Ok(Box::new(BattmanM::new(s))))
 }
@@ -29,8 +29,49 @@ struct Change {
     default: Option<String>,
     invisible: Option<bool>,
     constant: Option<bool>,
+    verify: Option<bool>,
+    preset: Option<bool>,
+    lock_position: Option<bool>,
+    /// Multiple lines on or off.
+    multiline: Option<bool>,
+    /// With Multiple lines on: the text's width (0: no wrapping). `None` keeps a multiline
+    /// definition's width and gives a new one 0.
+    width: Option<f64>,
     height: Option<f64>,
     layer: Option<String>,
+}
+
+/// Make the definition `a` multiline (Multiple lines on), `width` wide (0: no wrapping), its
+/// default value its text; or single-line again (`width` None), its lines joined by spaces.
+fn set_multiline(a: &mut Attrib, width: Option<f64>) {
+    match width {
+        Some(w) => {
+            let value = a.text.value.clone();
+            let mtext = MText {
+                insert: a.text.insert,
+                height: a.text.height,
+                width: if w.is_finite() { w.abs() } else { 0.0 },
+                attach: 1,
+                rotation: a.text.rotation,
+                style: a.text.style.clone(),
+                contents: mtext_literal(&value),
+                line_spacing: 1.0,
+                line_spacing_exact: false,
+                columns: None,
+            };
+            a.multiline = Some(MultilineAttrib { mtext, read_as: value });
+        }
+        None => {
+            if a.multiline.take().is_some() {
+                a.text.value = single_line(&a.text.value);
+            }
+        }
+    }
+}
+
+/// `v`'s lines joined by spaces, as a single-line attribute holds them.
+pub(super) fn single_line(v: &str) -> String {
+    v.lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" ")
 }
 
 /// The attribute definitions of `b` in order: handle, definition, layer.
@@ -63,7 +104,19 @@ fn listing(s: &Session, name: &str) -> Result<Value> {
     let atts: Vec<Value> = defs(&b)
         .into_iter()
         .map(|(_, a, layer)| {
-            json!({"tag": a.tag, "prompt": a.prompt, "default": a.text.value, "invisible": a.invisible, "constant": a.constant, "height": a.text.height, "layer": layer})
+            json!({
+                "tag": a.tag,
+                "prompt": a.prompt,
+                "default": a.text.value,
+                "invisible": a.invisible,
+                "constant": a.constant,
+                "verify": a.modes.verify,
+                "preset": a.modes.preset,
+                "lockPosition": a.modes.lock_position,
+                "multiline": a.multiline.is_some(),
+                "height": a.text.height,
+                "layer": layer
+            })
         })
         .collect();
     Ok(json!({ "block": b.name, "attributes": atts, "references": reference_count(s.doc()?, &b.name) }))
@@ -130,8 +183,34 @@ fn edit(s: &mut Session, name: &str, tag: &str, c: &Change) -> Result<String> {
                 if let Some(v) = c.constant {
                     a.constant = v;
                 }
+                if let Some(v) = c.verify {
+                    a.modes.verify = v;
+                }
+                if let Some(v) = c.preset {
+                    a.modes.preset = v;
+                }
+                if let Some(v) = c.lock_position {
+                    a.modes.lock_position = v;
+                }
                 if let Some(v) = c.height {
                     a.text.height = v;
+                }
+                match c.multiline {
+                    // Turning it on keeps a multiline text as it is (its width changes when given,
+                    // 0 included: no wrapping).
+                    Some(true) => match &mut a.multiline {
+                        Some(ml) => {
+                            if let Some(w) = c.width {
+                                ml.mtext.width = w;
+                            }
+                        }
+                        None => set_multiline(a, Some(c.width.unwrap_or(0.0))),
+                    },
+                    Some(false) => set_multiline(a, None),
+                    None => {}
+                }
+                if let (Some(ml), Some(h)) = (&mut a.multiline, c.height) {
+                    ml.mtext.height = h;
                 }
                 result = a.tag.clone();
             }
@@ -228,6 +307,21 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
                 default: opt_str("default"),
                 invisible: opt_bool("invisible"),
                 constant: opt_bool("constant"),
+                verify: opt_bool("verify"),
+                preset: opt_bool("preset"),
+                lock_position: opt_bool("lockPosition"),
+                multiline: opt_bool("multiline"),
+                // Read with Multiple lines on only; omitted, a multiline definition keeps its width.
+                width: match (opt_bool("multiline"), p.get("width")) {
+                    (Some(true), Some(v)) if !v.is_null() => {
+                        let w = v.as_f64().ok_or_else(|| bad("battman", "`width` must be a number"))?;
+                        if !(w.is_finite() && w >= 0.0) {
+                            return Err(bad("battman", "`width` must be zero or positive"));
+                        }
+                        Some(w)
+                    }
+                    _ => None,
+                },
                 height,
                 layer: opt_str("layer"),
             };
@@ -279,6 +373,10 @@ enum Prop {
     Default,
     Invisible,
     Constant,
+    Verify,
+    Preset,
+    Lock,
+    Multiline,
     Height,
     Layer,
 }
@@ -302,7 +400,8 @@ struct BattmanM {
 }
 
 const OPTIONS: &[&str] = &["Edit", "Remove", "moveUp", "moveDown", "Sync", "List", "eXit"];
-const PROPS: &[&str] = &["Tag", "Prompt", "Default", "Invisible", "Constant", "Height", "Layer", "eXit"];
+const PROPS: &[&str] =
+    &["Tag", "Prompt", "Default", "Invisible", "Constant", "Verify", "pReset", "locK position", "Multiple lines", "Height", "Layer", "eXit"];
 
 impl BattmanM {
     fn new(s: &Session) -> Self {
@@ -331,6 +430,18 @@ impl BattmanM {
                 }
                 if a.constant {
                     modes.push("constant");
+                }
+                if a.modes.verify {
+                    modes.push("verify");
+                }
+                if a.modes.preset {
+                    modes.push("preset");
+                }
+                if a.modes.lock_position {
+                    modes.push("lock position");
+                }
+                if a.multiline.is_some() {
+                    modes.push("multiple lines");
                 }
                 let modes = if modes.is_empty() { String::new() } else { format!(" ({})", modes.join(", ")) };
                 format!("  {}  prompt \"{}\"  default \"{}\"{modes}", a.tag, a.prompt, a.text.value)
@@ -409,6 +520,14 @@ impl Interactive for BattmanM {
                     Prop::Default => Prompt::new("Enter new default value", Accept::TEXT).default(text(|a| a.text.value.clone())),
                     Prop::Invisible => Prompt::new("Invisible?", KW).kw(&["Yes", "No"]).default(yes_no(a.as_ref().is_some_and(|a| a.invisible))),
                     Prop::Constant => Prompt::new("Constant?", KW).kw(&["Yes", "No"]).default(yes_no(a.as_ref().is_some_and(|a| a.constant))),
+                    Prop::Verify => Prompt::new("Verify?", KW).kw(&["Yes", "No"]).default(yes_no(a.as_ref().is_some_and(|a| a.modes.verify))),
+                    Prop::Preset => Prompt::new("Preset?", KW).kw(&["Yes", "No"]).default(yes_no(a.as_ref().is_some_and(|a| a.modes.preset))),
+                    Prop::Lock => {
+                        Prompt::new("Lock position?", KW).kw(&["Yes", "No"]).default(yes_no(a.as_ref().is_some_and(|a| a.modes.lock_position)))
+                    }
+                    Prop::Multiline => {
+                        Prompt::new("Multiple lines?", KW).kw(&["Yes", "No"]).default(yes_no(a.as_ref().is_some_and(|a| a.multiline.is_some())))
+                    }
                     Prop::Height => Prompt::new("Specify text height", Accept::NUMBER).default(num(a.as_ref().map_or(0.0, |a| a.text.height))),
                     Prop::Layer => Prompt::new("Enter layer name", Accept::TEXT).default(self.current_layer(s)),
                 }
@@ -484,6 +603,10 @@ impl Interactive for BattmanM {
                         "Default" => Stage::Value(Prop::Default),
                         "Invisible" => Stage::Value(Prop::Invisible),
                         "Constant" => Stage::Value(Prop::Constant),
+                        "Verify" => Stage::Value(Prop::Verify),
+                        "pReset" => Stage::Value(Prop::Preset),
+                        "locK position" => Stage::Value(Prop::Lock),
+                        "Multiple lines" => Stage::Value(Prop::Multiline),
                         "Height" => Stage::Value(Prop::Height),
                         "Layer" => Stage::Value(Prop::Layer),
                         _ => Stage::Option,
@@ -510,6 +633,15 @@ impl Interactive for BattmanM {
                     }
                     Prop::Constant => {
                         Change { constant: Some(yes(&i).ok_or_else(|| EngineError::Other("Enter Yes or No.".into()))?), ..Change::default() }
+                    }
+                    Prop::Verify | Prop::Preset | Prop::Lock | Prop::Multiline => {
+                        let v = yes(&i).ok_or_else(|| EngineError::Other("Enter Yes or No.".into()))?;
+                        match p {
+                            Prop::Verify => Change { verify: Some(v), ..Change::default() },
+                            Prop::Preset => Change { preset: Some(v), ..Change::default() },
+                            Prop::Lock => Change { lock_position: Some(v), ..Change::default() },
+                            _ => Change { multiline: Some(v), ..Change::default() },
+                        }
                     }
                     Prop::Height => {
                         let h = crate::units::parse_distance(&text).ok_or_else(|| EngineError::Other("Requires a positive number.".into()))?;

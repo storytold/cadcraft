@@ -113,6 +113,10 @@ pub(super) fn synced(blk: &Block, defs: &[&Attrib], ins: &Insert) -> Vec<Attrib>
                 .find(|a| a.tag.eq_ignore_ascii_case(&ad.tag))
                 .map(|a| a.text.value.clone())
                 .unwrap_or_else(|| ad.text.value.clone());
+            // A value of several lines, kept from a multiline attribute, on one line.
+            if ad.multiline.is_none() && t.value.contains('\n') {
+                t.value = super::battman::single_line(&t.value);
+            }
             Attrib {
                 tag: ad.tag.clone(),
                 text: t,

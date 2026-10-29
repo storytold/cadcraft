@@ -10,6 +10,7 @@ mod attedit_prompts;
 mod attrib_modes;
 mod attrib_props;
 mod attribute_tools;
+mod battman_modes;
 mod block_description;
 mod block_keep;
 mod block_redefine;

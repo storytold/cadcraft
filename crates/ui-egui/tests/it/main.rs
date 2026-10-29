@@ -1,4 +1,5 @@
 mod animation_effects;
+mod battman_modes_dialog;
 mod block_description_palette;
 mod chrome_geometry;
 mod context_menu;

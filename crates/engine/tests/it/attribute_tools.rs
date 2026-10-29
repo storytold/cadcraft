@@ -47,7 +47,7 @@ fn battman_lists_definitions_and_references() {
     assert_eq!(tags(&r), ["A", "B", "C"]);
     assert_eq!(
         r["attributes"][0],
-        json!({"tag": "A", "prompt": "A?", "default": "a", "invisible": false, "constant": false, "height": 1.0, "layer": "0"})
+        json!({"tag": "A", "prompt": "A?", "default": "a", "invisible": false, "constant": false, "verify": false, "preset": false, "lockPosition": false, "multiline": false, "height": 1.0, "layer": "0"})
     );
     // Listing changes nothing, so it leaves no undo step.
     let undo = s.state().unwrap().undo.len();
@@ -65,7 +65,7 @@ fn battman_edit_renames_a_tag_and_references_keep_their_values() {
     assert_eq!(r["synced"], 2);
     assert_eq!(
         r["attributes"][0],
-        json!({"tag": "PART", "prompt": "Part number", "default": "P-0", "invisible": true, "constant": false, "height": 1.0, "layer": "0"})
+        json!({"tag": "PART", "prompt": "Part number", "default": "P-0", "invisible": true, "constant": false, "verify": false, "preset": false, "lockPosition": false, "multiline": false, "height": 1.0, "layer": "0"})
     );
     let a = attribs(&s, r1);
     assert_eq!(a[0], ("PART".into(), "one".into(), true));
@@ -158,7 +158,7 @@ fn battman_at_the_command_line_edits_removes_and_moves() {
     let r = battman(&mut s, json!({"name": "B"}));
     assert_eq!(
         r["attributes"][0],
-        json!({"tag": "ITEM", "prompt": "Item name", "default": "a", "invisible": true, "constant": false, "height": 2.0, "layer": "0"})
+        json!({"tag": "ITEM", "prompt": "Item name", "default": "a", "invisible": true, "constant": false, "verify": false, "preset": false, "lockPosition": false, "multiline": false, "height": 2.0, "layer": "0"})
     );
     assert_eq!(attribs(&s, r1)[0], ("ITEM".into(), "one".into(), true));
     for l in ["d", "item", "r", "c"] {
