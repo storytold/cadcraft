@@ -17,6 +17,7 @@
 //! | `SAVEFILEPATH` | the folder automatic saves go to |
 //! | `timeSensitiveRightClick` | while a command runs, a quick right-click is Enter and holding the button opens the shortcut menu (default); `false`: a right-click always opens the menu |
 //! | `systemCursor` | keep the system cursor visible over the drawing area |
+//! | `systemTitleBar` | where the desktop leaves the window frame to the app (GNOME on Wayland), keep winit's frame instead of drawing the window buttons in a title row |
 //! | `historyLines` | command-line history lines, 0–12 |
 //! | `modelBackground`, `paperBackground` | `"#rrggbb"`, or `null` for the default |
 //! | `selectionColor` | the colour selected objects are highlighted in: `"#rrggbb"`, or `null` for the theme's |
@@ -139,6 +140,7 @@ struct UiChanges {
     language: Option<crate::i18n::Preference>,
     save_format: Option<crate::SaveFormat>,
     system_cursor: Option<bool>,
+    system_title_bar: Option<bool>,
     history_lines: Option<usize>,
     model_background: Option<Option<Color32>>,
     paper_background: Option<Option<Color32>>,
@@ -171,6 +173,7 @@ fn parse_ui(key: &str, v: &Value, c: &mut UiChanges) -> Result<bool, String> {
         }
         "saveFormat" => c.save_format = Some(crate::SaveFormat::parse(text()?).ok_or("saveFormat must be dxf or dwg")?),
         "systemCursor" => c.system_cursor = Some(v.as_bool().ok_or("systemCursor must be true or false")?),
+        "systemTitleBar" => c.system_title_bar = Some(v.as_bool().ok_or("systemTitleBar must be true or false")?),
         "historyLines" => {
             let n = v.as_u64().filter(|n| *n <= crate::cmdline::MAX_LINES as u64).ok_or("historyLines must be a whole number from 0 to 12")?;
             c.history_lines = Some(n as usize);
@@ -217,6 +220,7 @@ fn ui_json(app: &CadApp) -> Map<String, Value> {
     m.insert("interfaceLanguage".into(), json!(app.ui.interface_language.code()));
     m.insert("saveFormat".into(), json!(app.ui.save_format.as_str()));
     m.insert("systemCursor".into(), json!(app.ui.system_cursor));
+    m.insert("systemTitleBar".into(), json!(app.ui.system_title_bar));
     m.insert("historyLines".into(), json!(app.ui.history_lines));
     m.insert("modelBackground".into(), color_json(o.model_background));
     m.insert("paperBackground".into(), color_json(o.paper_background));
@@ -270,6 +274,9 @@ fn run_json(app: &mut CadApp, params: &Value) -> Result<Value, String> {
     if let Some(b) = ui.system_cursor {
         app.ui.system_cursor = b;
     }
+    if let Some(b) = ui.system_title_bar {
+        app.ui.system_title_bar = b;
+    }
     if let Some(n) = ui.history_lines {
         app.ui.history_lines = n;
     }
@@ -311,6 +318,7 @@ fn reset_ui(app: &mut CadApp) {
     app.ui.save_format = d.save_format;
     app.ui.save_version = d.save_version;
     app.ui.system_cursor = app.system_cursor_default;
+    app.ui.system_title_bar = d.system_title_bar;
     app.ui.history_lines = d.history_lines;
     app.options = UiOptions::default();
 }

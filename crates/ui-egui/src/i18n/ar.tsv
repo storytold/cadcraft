@@ -1242,3 +1242,7 @@ menu	View	عرض
 	Check for Updates…	التحقق من وجود تحديثات…
 	CADCraft is up to date.	CADCraft محدّث.
 	Could not check for updates.	تعذّر التحقق من وجود تحديثات.
+	Minimize	تصغير
+	Maximize	تكبير
+	Use system title bar	استخدام شريط عنوان النظام
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	يعرض شريط عنوان بسيطاً لأزرار النافذة فوق شريط CADCraft نفسه. لا يرسم GNOME أشرطة العناوين للتطبيقات، لذا لا يتبع هذا الشريط سمته.

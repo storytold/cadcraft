@@ -1349,3 +1349,7 @@ menu	View	Nézet
 	Check for Updates…	Frissítések keresése…
 	CADCraft is up to date.	A CADCraft naprakész.
 	Could not check for updates.	A frissítések keresése nem sikerült.
+	Minimize	Kis méret
+	Maximize	Teljes méret
+	Use system title bar	A rendszer címsorának használata
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	Egyszerű címsort jelenít meg az ablak gombjaival a CADCraft saját címsora fölött. A GNOME nem rajzol címsort az alkalmazásoknak, ezért ez nem követi a témáját.

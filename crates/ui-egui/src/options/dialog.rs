@@ -212,6 +212,21 @@ fn display(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
         changes.insert("systemCursor".into(), json!(system_cursor));
     }
     hint(ui, crate::tl!("Screen magnifiers, screen readers and recorders follow the system cursor."));
+    // Only where the app draws the window buttons (GNOME on Wayland); elsewhere the desktop draws
+    // the frame.
+    if app.window_controls.is_some() {
+        ui.add_space(6.0);
+        let mut system = app.ui.system_title_bar;
+        if ui.checkbox(&mut system, crate::tl!("Use system title bar")).changed() {
+            changes.insert("systemTitleBar".into(), json!(system));
+        }
+        hint(
+            ui,
+            crate::tl!(
+                "Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme."
+            ),
+        );
+    }
 }
 
 /// Files tab: save format and default version, new-drawing units, autosave interval and autosave file location; edits accumulate in `changes`.

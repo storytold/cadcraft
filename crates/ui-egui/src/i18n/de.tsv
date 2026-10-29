@@ -1044,3 +1044,7 @@
 	Check for Updates…	Nach Updates suchen…
 	CADCraft is up to date.	CADCraft ist auf dem neuesten Stand.
 	Could not check for updates.	Die Suche nach Updates ist fehlgeschlagen.
+	Minimize	Minimieren
+	Maximize	Maximieren
+	Use system title bar	System-Titelleiste verwenden
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	Eine einfache Titelleiste für die Fensterknöpfe über der von CADCraft anzeigen. GNOME zeichnet für Apps keine Titelleisten, daher folgt diese nicht seinem Design.

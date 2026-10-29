@@ -1373,3 +1373,7 @@
 	Check for Updates…	Перевірити оновлення…
 	CADCraft is up to date.	Встановлено найновішу версію CADCraft.
 	Could not check for updates.	Не вдалося перевірити оновлення.
+	Minimize	Згорнути
+	Maximize	Розгорнути
+	Use system title bar	Використовувати системний заголовок вікна
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	Показує простий заголовок вікна з кнопками над заголовком CADCraft. GNOME не малює заголовки для застосунків, тому цей не відповідає його темі.

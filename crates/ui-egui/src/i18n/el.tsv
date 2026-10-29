@@ -1338,3 +1338,7 @@ menu	View	Προβολή
 	Check for Updates…	Έλεγχος για ενημερώσεις…
 	CADCraft is up to date.	Το CADCraft είναι ενημερωμένο.
 	Could not check for updates.	Δεν ήταν δυνατός ο έλεγχος για ενημερώσεις.
+	Minimize	Ελαχιστοποίηση
+	Maximize	Μεγιστοποίηση
+	Use system title bar	Χρήση της γραμμής τίτλου του συστήματος
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	Εμφανίζει μια απλή γραμμή τίτλου με τα κουμπιά του παραθύρου πάνω από τη γραμμή του CADCraft. Το GNOME δεν σχεδιάζει γραμμές τίτλου για τις εφαρμογές, οπότε αυτή δεν ακολουθεί το θέμα του.

@@ -1349,3 +1349,7 @@
 	Check for Updates…	检查更新…
 	CADCraft is up to date.	CADCraft 已是最新版本。
 	Could not check for updates.	无法检查更新。
+	Minimize	最小化
+	Maximize	最大化
+	Use system title bar	使用系统标题栏
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	在 CADCraft 自己的标题栏上方显示带窗口按钮的基本标题栏。GNOME 不为应用绘制标题栏，因此此标题栏不跟随其主题。
