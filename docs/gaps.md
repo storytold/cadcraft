@@ -1,6 +1,6 @@
 # Where CADCraft falls short of AutoCAD
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-25 · **Change:** minor (Named Viewports dialog: U11 narrowed; MVIEW Restore and PURGE of multiline styles had landed: F15 and F21 corrected) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-28 · **Change:** minor (a dimension read from a file without a stored measurement is measured from its definition points) · **Target:** Autodesk AutoCAD 2027
 
 Every known shortfall, one row each, ranked within each section by user impact. This is the work
 list: agents pick from here (top of a section first), and remove or update a row in the same PR

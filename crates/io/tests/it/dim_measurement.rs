@@ -117,3 +117,41 @@ fn a_dimension_without_usable_points_reports_no_measurement() {
     let d = read(dxf.as_bytes(), "d.dxf").expect("read");
     assert_eq!(measurements(&d), vec![0.0]);
 }
+
+/// An arc-length dimension is stored as an aligned one and restored from CADCraft's xdata
+/// afterwards, so the measurement must be worked out after that: the arc, not its chord.
+#[test]
+fn an_arc_length_dimension_measures_its_arc_and_not_its_chord() {
+    // A quarter circle of radius 10 about the origin: from (10, 0) to (0, 10).
+    let mut d = Drawing::new_imperial();
+    d.add(
+        &Space::Model,
+        Common::default(),
+        EntityKind::Dimension(Dimension {
+            kind: DimKind::ArcLength,
+            defpt: Vec3::new(0.0, 5.0, 0.0),
+            text_mid: Vec3::ZERO,
+            p13: Vec3::new(10.0, 0.0, 0.0),
+            p14: Vec3::new(0.0, 10.0, 0.0),
+            p15: Vec3::ZERO, // the arc centre, restored from the xdata on read
+            p16: Vec3::ZERO,
+            text: String::new(),
+            style: "Standard".into(),
+            measurement: 0.0,
+            text_rotation: 0.0,
+            user_text_pos: false,
+            block: None,
+            overrides: Default::default(),
+            assoc: Vec::new(),
+            marks: Default::default(),
+        }),
+    )
+    .unwrap();
+    let dxf = write_dxf(&d);
+    let back = read(dxf.as_bytes(), "d.dxf").expect("read");
+    let m = measurements(&back);
+    assert_eq!(m.len(), 1);
+    // The arc is a quarter of the circle: 10 · π/2 ≈ 15.7. The chord is 14.14.
+    let want = 10.0 * std::f64::consts::FRAC_PI_2;
+    assert!((m[0] - want).abs() < 1e-3, "measured {} instead of the arc {}", m[0], want);
+}
