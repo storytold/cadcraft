@@ -1227,3 +1227,390 @@ menu	Modify	Modifikace
 	Check for Updates…	Zkontrolovat aktualizace…
 	CADCraft is up to date.	CADCraft je aktuální.
 	Could not check for updates.	Aktualizace se nepodařilo zkontrolovat.
+	Copy All	Kopírovat vše
+	Copy history output to clipboard	Zkopírovat výstup historie do schránky
+	Close History Window (F2)	Zavřít okno historie (F2)
+	Edit XData (XDEDIT)	Upravit XData (XDEDIT)
+	Open visual XData Editor for selected object	Otevřít vizuální editor XData pro vybraný objekt
+	Command & XData Output (select text + Ctrl+C to copy)	Výstup příkazů a XData (vyberte text + Ctrl+C pro kopírování)
+	Save changes to {name}?	Uložit změny v {name}?
+	Your changes will be lost if you don't save them.	Pokud změny neuložíte, budou ztraceny.
+	Don't Save	Neukládat
+	List Xdata	Vypsat XData
+	Edit Xdata	Upravit XData
+	Edit Xdata (XDEDIT)	Upravit XData (XDEDIT)
+	✏ Edit XData (XDEDIT)	✏ Upravit XData (XDEDIT)
+	Open visual XData Editor dialog	Otevřít vizuální editor XData
+	📋 Copy Values	📋 Kopírovat hodnoty
+	Copy XData values (Key,Value) to clipboard	Kopírovat hodnoty XData (Klíč,Hodnota) do schránky
+	Click to copy value to clipboard	Kliknutím zkopírujete hodnotu do schránky
+	✓ XData values copied to clipboard	✓ Hodnoty XData zkopírovány do schránky
+	Selection canceled — previous object kept.	Výběr zrušen — ponechán předchozí objekt.
+	Drag left or right to resize this column	Tažením doleva nebo doprava změníte šířku sloupce
+	XDATA Editor (XDEDIT)	Editor XDATA (XDEDIT)
+	No object selected.	Není vybrán žádný objekt.
+	🎯 Select object in drawing	🎯 Vybrat objekt ve výkresu
+	Object: {kind}	Objekt: {kind}
+	Layer: {layer}	Hladina: {layer}
+	Handle: {handle}	Identifikátor: {handle}
+	🎯 Select Another Object	🎯 Vybrat jiný objekt
+	Hide editor temporarily, pick another object in the drawing, and open it in XDEDIT	Dočasně skrýt editor, vybrat jiný objekt ve výkresu a otevřít jej v XDEDIT
+	Next ▶	Další ▶
+	Step to the next object with XData in the selection or drawing	Přejít na další objekt s XData ve výběru nebo výkresu
+	◀ Previous	◀ Předchozí
+	Step to the previous object with XData in the selection or drawing	Přejít na předchozí objekt s XData ve výběru nebo výkresu
+	📋 Copy JSON	📋 Kopírovat JSON
+	Copy all XData as structured JSON to clipboard	Kopírovat všechna XData jako strukturovaný JSON do schránky
+	✓ JSON copied to clipboard	✓ JSON zkopírován do schránky
+	📋 Copy Text	📋 Kopírovat text
+	Copy all XData as text to clipboard	Kopírovat všechna XData jako text do schránky
+	✓ XData text copied to clipboard	✓ Text XData zkopírován do schránky
+	AppID (1001):	AppID (1001):
+	New AppID (e.g. Lumi_KLIC)	Nové AppID (např. Lumi_KLIC)
+	+ Add AppID	+ Přidat AppID
+	🗑 Delete AppID	🗑 Smazat AppID
+	Remove this Application and its XData from the entity	Odebrat tuto aplikaci a její XData z objektu
+	Application removed (click Apply to save)	Aplikace odebrána (uložte kliknutím na Použít)
+	🔍 Filter:	🔍 Filtr:
+	Search key or value (e.g. THEMA, DIEPTE)...	Hledat klíč nebo hodnotu (např. THEMA, DIEPTE)...
+	Key width:	Šířka klíče:
+	Drag this value or the column divider ⇔ to resize the Key column	Tažením hodnoty nebo oddělovače ⇔ změníte šířku sloupce Klíč
+	Value width:	Šířka hodnoty:
+	Drag this value or the column divider ⇔ to resize the Value column	Tažením hodnoty nebo oddělovače ⇔ změníte šířku sloupce Hodnota
+	Smart Key=Value Columns	Chytré sloupce Klíč=Hodnota
+	Split 'KEY=VALUE' or 'Key: Value' into separate editable Key and Value fields	Rozdělit 'KEY=VALUE' nebo 'Key: Value' do samostatných polí Klíč a Hodnota
+	This object currently has no user XData.	Tento objekt momentálně nemá žádná uživatelská XData.
+	+ Create Lumi_KLIC Application	+ Vytvořit aplikaci Lumi_KLIC
+	DXF Code	Kód DXF
+	Property / Key ⇔	Vlastnost / Klíč ⇔
+	Value (Selectable & Editable) ⇔	Hodnota (Vybratelná a Upravitelná) ⇔
+	Raw Value (Selectable & Editable) ⇔	Surová hodnota (Vybratelná a Upravitelná) ⇔
+	Actions	Akce
+	Copy value to clipboard	Kopírovat hodnotu do schránky
+	✓ Copied: {val}	✓ Zkopírováno: {val}
+	Move row up	Posunout řádek nahoru
+	Move row down	Posunout řádek dolů
+	Delete this XData row	Smazat tento řádek XData
+	Add Row:	Přidat řádek:
+	Key (e.g. OPMERKING)	Klíč (např. OPMERKING)
+	+ Add Property	+ Přidat vlastnost
+	● Unsaved changes	● Neuložené změny
+	Ready — click '🎯 Select Next Object' or '◀ Previous / Next ▶' to switch objects.	Připraveno — klikněte na '🎯 Vybrat další objekt' nebo '◀ Předchozí / Další ▶'.
+	↺ Revert	↺ Vrátit
+	✔ Apply / Save XData	✔ Použít / Uložit XData
+	Write modified XData to the entity (Undoable with Ctrl+Z)	Zapsat upravená XData do objektu (lze vrátit pomocí Ctrl+Z)
+	✔ Save & Select Next Object	✔ Uložit a vybrat další
+	🎯 Select Next Object	🎯 Vybrat další objekt
+	Save any changes and directly pick the next object in the drawing	Uložit změny a přímo vybrat další objekt ve výkresu
+	Object {idx1}/{total} loaded ({kind} — {handle})	Objekt {idx1}/{total} načten ({kind} — {handle})
+	↺ Reverted to saved entity XData	↺ Vráceno k uloženým XData objektu
+	✔ XData saved to entity (Undoable)	✔ XData uložena do objektu (Ctrl+Z možné)
+	Error: {err}	Chyba: {err}
+	⚠ Entity XData changed outside editor — click Revert before saving.	⚠ XData objektu byla změněna mimo editor — před uložením klikněte na Vrátit.
+	+  |  {view} ({yaw}°, {pitch}°)  |  3D Orbit Wireframe	+  |  {view} ({yaw}°, {pitch}°)  |  3D Orbit drátový model
+	.NET Plugin Bridge	Můstek modulů plug-in .NET
+	3D Mouse	3D myš
+	3D Mouse Navigation	Navigace 3D myší
+	3D Mouse...	3D myš...
+	3D Orbit	3D Orbit
+	3D Views	3D pohledy
+	3D mouse busy, possibly 3DxWare or missing device permissions	3D myš je zaneprázdněna, pravděpodobně kvůli 3DxWare nebo chybějícím oprávněním zařízení
+	3D mouse connected	3D myš připojena
+	3D mouse disconnected	3D myš odpojena
+	3D mouse input could not be started	Vstup 3D myši se nepodařilo spustit
+	3D mouse input is unavailable on this platform	Vstup 3D myši není na této platformě k dispozici
+	Add: Pick points	Přidat: Vybrat body
+	Add: Select objects	Přidat: Vybrat objekty
+	Add…	Přidat…
+	Adjust Image...	Upravit obrázek...
+	Adjust...	Upravit...
+	Alias	Alias
+	Alias file: {file}	Soubor aliasů: {file}
+	Align Multileaders	Zarovnat multiodkazy
+	Analyze Usage	Analyzovat využití
+	Angstroms	Ångströmy
+	Apply to Layout	Použít na rozvržení
+	Architectural	Architektonické
+	Arrow size	Velikost šipky
+	Associate	Asociovat
+	Associative	Asociativní
+	Astronomical Units	Astronomické jednotky
+	Attach Image...	Připojit obrázek...
+	AutoLISP (LSP)	AutoLISP (LSP)
+	AutoLISP / VB.NET / C# IDE...	Vývojové prostředí AutoLISP / VB.NET / C#...
+	AutoLISP / VBA IDE...	Vývojové prostředí AutoLISP / VBA...
+	Automatic save every	Automatické ukládání každých
+	Automatic save file location	Umístění souborů automatického ukládání
+	Back	Zadní
+	Block to create or edit	Blok k vytvoření nebo úpravě
+	Bottom left	Vlevo dole
+	Bottom right	Vpravo dole
+	Boundaries	Hranice
+	Boundaries picked: {n}	Vybrané hranice: {n}
+	Break-line Symbol	Symbol čáry přerušení
+	Calibrate	Kalibrovat
+	Calibrate 3D Mouse	Kalibrovat 3D myš
+	Center the plot	Centrovat výkres
+	Centered	Centrovaný
+	Centimeters	Centimetry
+	Change Properties	Změnit vlastnosti
+	Choose the command the alias starts.	Vyberte příkaz, který alias spouští.
+	Clear Recent Files	Vymazat poslední soubory
+	Click the ruler to add a tab stop, right-click to remove one	Kliknutím na pravítko přidáte zarážku tabulátoru, pravým kliknutím ji odeberete
+	Click to set new origin	Kliknutím nastavíte nový počátek
+	Clip Image	Oříznout obrázek
+	Close Block Editor	Zavřít editor bloků
+	Collapse Palettes	Sbalit palety
+	Collect	Seskupit
+	Collect Multileaders	Seskupit multiodkazy
+	Color 1	Barva 1
+	Color 2	Barva 2
+	Command	Příkaz
+	Convert Text to Mtext	Převést text na Mtext
+	Create separate hatches	Vytvořit samostatné šrafy
+	Crossing selection color:	Barva křížového výběru:
+	Curved	Zakřivený
+	Custom	Vlastní
+	Customize	Přizpůsobit
+	Decameters	Dekametry
+	Decimal	Desítkové
+	Decimal Degrees	Desítkové stupně
+	Decimeters	Decimetry
+	Default save version	Výchozí verze pro ukládání
+	Default to boundary extents	Výchozí podle mezí hranice
+	Define each corner of the selection window with a separate click.	Definujte každý roh výběrového okna samostatným kliknutím.
+	Deg/Min/Sec	St/Min/Sek
+	Dim scale overall	Celkové měřítko kót
+	Discard	Zahodit
+	Drag Dynamic Grip	Přetáhnout dynamický uzel
+	Drawing Units	Jednotky výkresu
+	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	Výkresy bez souboru se ukládají ve výchozí verzi. Hodnota 0 minut vypne automatické ukládání.
+	Dynamic Block Data	Data dynamického bloku
+	Dynamic Block Grips	Uzly dynamického bloku
+	Dynamic Block Reference	Reference dynamického bloku
+	Edit Block Definition	Upravit definici bloku
+	Edit Command Aliases (PGP)...	Upravit aliasy příkazů (PGP)...
+	Edit Multileader	Upravit multiodkaz
+	Edit…	Upravit…
+	Enable 3D mouse navigation	Povolit navigaci 3D myší
+	Engineering	Inženýrské
+	Enter block names to extract	Zadejte názvy bloků k extrakci
+	Enter geometric characteristic	Zadejte geometrickou charakteristiku
+	Enter name of LISP file to load	Zadejte název souboru LISP k načtení
+	Evaluate LISP	Vyhodnotit LISP
+	Exclude:	Vyloučit:
+	Explode Attributes to Text	Rozložit atributy na text
+	Express Tools	Express Tools
+	Feet	Stopy
+	First corner	První roh
+	Fit to paper	Přizpůsobit papíru
+	Fractional	Zlomkové
+	Frame	Rámeček
+	Front	Přední
+	Gigameters	Gigametry
+	Grads	Grády
+	Grips	Uzly
+	Groups	Skupiny
+	Hatch Pick	Výběr šrafování
+	Hatch and Gradient	Šrafy a barevný přechod
+	Hatch origin	Počátek šrafování
+	Hatches	Šrafy
+	Hectometers	Hektometry
+	Hemispherical	Polokulový
+	Ignore	Ignorovat
+	Image	Obrázek
+	Image Frame	Rámeček obrázku
+	Imperial (inches)	Imperiální (palce)
+	Implied Loops	Odvozené smyčky
+	Inches	Palce
+	Indicate selection area	Zobrazit oblast výběru
+	Insertion scale	Měřítko vložení
+	Interface scale	Měřítko rozhraní
+	Inverted	Invertovaný
+	Island	Ostrůvek
+	Island detection	Detekce ostrůvků
+	Italic	Kurzíva
+	Justify	Zarovnat do bloku
+	Kilometers	Kilometry
+	Landscape	Na šířku
+	Layouts	Rozvržení
+	Left device button: zoom extents. Right device button: calibrate.	Levé tlačítko zařízení: zoom na rozsah. Pravé tlačítko zařízení: kalibrovat.
+	Light Years	Světelné roky
+	Limits	Meze
+	Load .NET DLL / LISP Application (NETLOAD)...	Načíst aplikaci .NET DLL / LISP (NETLOAD)...
+	Load Application (NETLOAD)...	Načíst aplikaci (NETLOAD)...
+	Load Application...	Načíst aplikaci...
+	Meters	Metry
+	Metric (millimetres)	Metrické (milimetry)
+	Microinches	Mikropalce
+	Microns	Mikrony
+	Miles	Míle
+	Millimeters	Milimetry
+	Mils	Mily
+	Model Tab	Karta Model
+	More than {n} aliases.	Více než {n} aliasů.
+	Move sideways to pan; push/pull or twist to zoom.	Posunem do stran posouváte pohled; zatlačením, zatažením nebo otočením přibližujete.
+	Move/Copy/Rotate	Posunout/Kopírovat/Otočit
+	Multiline text	Víceřádkový text
+	NE Isometric	SV izometrický
+	NW Isometric	SZ izometrický
+	Nanometers	Nanometry
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	Nové výkresy a první výkres při spuštění používají tyto jednotky, pokud není nastavena výchozí šablona (QNEWTEMPLATE).
+	New block	Nový blok
+	No alias file loaded. REINIT replaces these aliases with a file's.	Není načten žádný soubor aliasů. Příkaz REINIT nahradí tyto aliasy obsahem souboru.
+	No supported 3D mouse found	Nebyla nalezena žádná podporovaná 3D myš
+	Object grouping	Seskupování objektů
+	Object selection limit for display of grips	Limit výběru objektů pro zobrazení uzlů
+	Objects on locked layers	Objekty na uzamčených hladinách
+	Open Recent	Otevřít poslední
+	Open in Block Editor	Otevřít v editoru bloků
+	Opposite corner	Protější roh
+	Orientation	Orientace
+	Origin: {x}, {y}	Počátek: {x}, {y}
+	Outer	Vnější
+	Overline	Nadtržené
+	Pan sensitivity	Citlivost posunu pohledu
+	Paper size	Formát papíru
+	Parsecs	Parseky
+	Plot area	Vykreslovaná oblast
+	Plot object lineweights	Vykreslit tloušťky čar objektů
+	Plot offset	Odsazení vykreslování
+	Plot transparency	Vykreslit průhlednost
+	Portrait	Na výšku
+	Precision	Přesnost
+	Preview	Náhled
+	Printer/plotter	Tiskárna/plotr
+	Radians	Radiány
+	Raster Image Reference...	Reference rastrového obrázku...
+	Release the 3D mouse to calibrate its resting position	Uvolněte 3D myš pro kalibraci její klidové polohy
+	Reverse zoom direction	Obrátit směr přiblížení
+	Run Script...	Spustit skript...
+	SE Isometric	JV izometrický
+	SVG drawings (SVG, SVGZ)	Výkresy SVG (SVG, SVGZ)
+	SW Isometric	JZ izometrický
+	Sample output	Ukázka výstupu
+	Save Block	Uložit blok
+	Save Block As	Uložit blok jako
+	Save alias	Uložit alias
+	Scientific	Vědecké
+	Select boundaries to remove	Vyberte hranice k odebrání
+	Select using two clicks only	Vybrat pouze dvěma kliknutími
+	Selection Area Effect	Efekt oblasti výběru
+	Selection Preview Filter	Filtr náhledu výběru
+	Selection area opacity:	Neprůhlednost oblasti výběru:
+	Selection effect color	Barva efektu výběru
+	Selection modes	Režimy výběru
+	Selection preview	Náhled výběru
+	Set Dynamic Property	Nastavit dynamickou vlastnost
+	Shape	Tvar
+	Sheet Books to PDF...	Knihy výkresů do PDF...
+	Show and hide the tools of this category	Zobrazit a skrýt nástroje této kategorie
+	Show grips	Zobrazit uzly
+	Show in Tool Sets	Zobrazit v sadách nástrojů
+	Specified origin	Zadaný počátek
+	Spherical	Kulový
+	Surveyor's Units	Geodetické jednotky
+	Tables	Tabulky
+	Text color	Barva textu
+	This drawing	Tento výkres
+	Time-sensitive right-click: a quick click is Enter, holding opens the menu	Časově citlivé pravé tlačítko: krátké kliknutí je Enter, podržení otevře nabídku
+	Top (2D Plan)	Shora (2D půdorys)
+	Top left	Vlevo nahoře
+	Top right	Vpravo nahoře
+	Turned off, a right-click while a command runs always opens the shortcut menu.	Pokud je vypnuto, kliknutí pravým tlačítkem během příkazu vždy otevře místní nabídku.
+	Type an alias name.	Zadejte název aliasu.
+	US Survey Feet	Americké geodetické stopy
+	US Survey Inch	Americké geodetické palce
+	US Survey Mile	Americké geodetické míle
+	US Survey Yard	Americké geodetické yardy
+	Underline	Podtržené
+	Unitless	Bez jednotek
+	Units of new drawings	Jednotky nových výkresů
+	Units to scale inserted content	Jednotky měřítka vkládaného obsahu
+	Unsaved changes	Neuložené změny
+	Use current origin	Použít aktuální počátek
+	View Resolution	Rozlišení zobrazení
+	Visual Effect Settings	Nastavení vizuálních efektů
+	Visual Effect Settings...	Nastavení vizuálních efektů...
+	When a command is active	Když je příkaz aktivní
+	When no command is active	Když není aktivní žádný příkaz
+	Window <	Okno <
+	Window selection color:	Barva výběru oknem:
+	X offset (mm)	Odsazení X (mm)
+	Xrefs	Xrefy
+	Y offset (mm)	Odsazení Y (mm)
+	Yards	Yardy
+	Zoom sensitivity	Citlivost přiblížení
+	built-in	vestavěný
+	contains authoring elements. Open in Block Editor?	obsahuje prvky pro tvorbu bloků. Otevřít v editoru bloků?
+	min	min
+	overrides built-in	přepisuje vestavěný
+	{alias} is already defined; select it and use Edit.	{alias} je již definován; vyberte jej a použijte Upravit.
+	{command} is an unknown command.	{command} je neznámý příkaz.
+	📋 Copy All	📋 Kopírovat vše
+	🗑 Clear	🗑 Vymazat
+	.NET command started	Příkaz .NET byl spuštěn
+	0. Empty file (New)	0. Prázdný soubor (Nový)
+	1. AutoLISP: Basic Math & Commands	1. AutoLISP: Základní matematika a příkazy
+	2. AutoLISP: Survey Marker (c:meetpunt)	2. AutoLISP: Geodetický bod (c:meetpunt)
+	3. VB.NET Plugin (.vb -> .dll)	3. Modul plug-in VB.NET (.vb -> .dll)
+	4. C# Plugin (.cs -> .dll)	4. Modul plug-in C# (.cs -> .dll)
+	Added to Startup Suite (Auto-Load at startup & per drawing)	Přidáno do sady spouštění (automatické načtení při spuštění a pro každý výkres)
+	Auto-Load	Automatické načtení
+	AutoLISP / VB.NET / C# IDE & NETLOAD Studio	Vývojové prostředí AutoLISP / VB.NET / C# a NETLOAD Studio
+	AutoLISP Commands (click to run)	Příkazy AutoLISP (kliknutím spustíte)
+	AutoLISP Editor (.lsp)	Editor AutoLISP (.lsp)
+	Bottom	Dolní
+	C# Plugin Editor (.cs)	Editor modulů plug-in C# (.cs)
+	C# source opened	Zdrojový kód C# byl otevřen
+	Clear Log	Vymazat protokol
+	Commands	Příkazy
+	Compact Menu	Kompaktní nabídka
+	Compilation error	Chyba kompilace
+	Compilation failed (see Console)	Kompilace selhala (viz Konzola)
+	Compilation succeeded	Kompilace proběhla úspěšně
+	Compile & Load .NET DLL	Zkompilovat a načíst .NET DLL
+	Console / Output	Konzola / Výstup
+	Error	Chyba
+	Error in	Chyba v
+	Error: cadcraft-nethost.exe not found next to the application.	Chyba: Soubor cadcraft-nethost.exe nebyl nalezen vedle aplikace.
+	Evaluate the LISP code or compile the VB.NET / C# source directly into a .NET DLL	Vyhodnotit kód LISP nebo zkompilovat zdrojový kód VB.NET / C# přímo do .NET DLL
+	Failed to invoke compiler	Nepodařilo se spustit kompilátor
+	Failed to load	Nepodařilo se načíst
+	Failed to save to	Nepodařilo se uložit do
+	Failed to start .NET command	Nepodařilo se spustit příkaz .NET
+	Failed to write source file	Nepodařilo se zapsat zdrojový soubor
+	Hide this Studio window and show the compact floating Plugin Commands menu	Skrýt toto okno Studio a zobrazit kompaktní plovoucí nabídku Příkazy modulů plug-in
+	Load & Run LISP	Načíst a spustit LISP
+	NETLOAD .NET DLL loaded	NETLOAD .NET DLL načtena
+	NETLOAD error in	Chyba NETLOAD v
+	NETLOAD failed to run cadcraft-nethost.exe	NETLOAD se nepodařilo spustit cadcraft-nethost.exe
+	Open .lsp / .vb / .cs	Otevřít .lsp / .vb / .cs
+	Open NETLOAD Studio (VBAIDE)	Otevřít NETLOAD Studio (VBAIDE)
+	Open Studio	Otevřít Studio
+	Open the full AutoLISP / VB.NET / C# & NETLOAD Studio	Otevřít plné prostředí AutoLISP / VB.NET / C# & NETLOAD Studio
+	Plugin Commands	Příkazy modulů plug-in
+	Plugins	Moduly plug-in
+	Quick Expression	Rychlý výraz
+	Ready. Open a .dll (.NET VB.NET/C#) or .lsp (AutoLISP) file via NETLOAD.	Připraveno. Otevřete soubor .dll (.NET VB.NET/C#) nebo .lsp (AutoLISP) pomocí NETLOAD.
+	Registered commands	Registrované příkazy
+	Removed from Startup Suite (Auto-Load)	Odebráno ze sady při spuštění (automatické načítání)
+	Routine started	Rutina spuštěna
+	Routine started from	Rutina spuštěna z
+	Run .NET command	Spustit příkaz .NET
+	Run command	Spustit příkaz
+	Save the current source code in the editor to disk	Uložit aktuální zdrojový kód v editoru na disk
+	Saved to	Uloženo do
+	Select and load a .lsp, .dll, .vb, or .cs file from disk	Vybrat a načíst soubor .lsp, .dll, .vb nebo .cs z disku
+	Show Floating Command Menu	Zobrazit plovoucí nabídku příkazů
+	Template...	Šablona...
+	Toggle Startup Suite (Auto-Load at startup)	Přepnout sadu při spuštění (automatické načítání při spuštění)
+	Toggle Startup Suite: automatically load this file at startup and in every opened drawing	Přepnout sadu při spuštění: automaticky načíst tento soubor při spuštění a v každém otevřeném výkresu
+	VB.NET Plugin Editor (.vb)	Editor modulů plug-in VB.NET (.vb)
+	VB.NET source opened	Zdrojový kód VB.NET otevřen
+	cadcraft-nethost.exe not found	cadcraft-nethost.exe nebyl nalezen
+	cannot read file	nelze přečíst soubor
+	e.g. (+ 1 2) or + 1 2	např. (+ 1 2) nebo + 1 2
+	no [CommandMethod] found	nebyla nalezena žádná metoda [CommandMethod]
+	Font	Písmo
+	Save Layout as Template	Uložit rozvržení jako šablonu

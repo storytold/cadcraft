@@ -4,19 +4,38 @@ use super::{
     line, points_param,
 };
 
-/// An area whose vertices STRETCH moves: a window's box, or a polygon closed back to its first
-/// point.
+/// The 2D shape of a STRETCH selection area in projected view coordinates.
 #[derive(Clone)]
-enum StretchArea {
+enum StretchShape {
     Box(cadcraft_geom::Bounds2),
     Polygon(Vec<Vec2>),
 }
 
+/// An area whose vertices STRETCH moves: a window's box, or a polygon closed back to its first
+/// point, paired with the [`cadcraft_render::Orbit3d`] active when the area was selected.
+#[derive(Clone)]
+struct StretchArea {
+    shape: StretchShape,
+    orbit: cadcraft_render::Orbit3d,
+}
+
 impl StretchArea {
-    fn contains(&self, p: Vec2) -> bool {
-        match self {
-            StretchArea::Box(bx) => bx.contains(p),
-            StretchArea::Polygon(poly) => cadcraft_geom::point_in_polygon(poly, p),
+    /// Construct a rectangular stretch area selected under `orbit`.
+    fn r#box(bx: cadcraft_geom::Bounds2, orbit: cadcraft_render::Orbit3d) -> Self {
+        Self { shape: StretchShape::Box(bx), orbit }
+    }
+
+    /// Construct a polygonal stretch area selected under `orbit`.
+    fn polygon(poly: Vec<Vec2>, orbit: cadcraft_render::Orbit3d) -> Self {
+        Self { shape: StretchShape::Polygon(poly), orbit }
+    }
+
+    /// True when 3D world point `p` projects inside this stretch area under its stored orbit.
+    fn contains(&self, p: cadcraft_geom::Vec3) -> bool {
+        let q = self.orbit.project(p);
+        match &self.shape {
+            StretchShape::Box(bx) => bx.contains(q),
+            StretchShape::Polygon(poly) => cadcraft_geom::point_in_polygon(poly, q),
         }
     }
 }
@@ -30,7 +49,7 @@ fn add_mline_vertex_hits(d: &cadcraft_doc::Drawing, space: &cadcraft_doc::Space,
         if let EntityKind::MLine(m) = &e.kind
             && d.is_visible(e)
             && !hs.contains(&e.handle)
-            && m.vertices.iter().any(|v| area.contains(v.p.xy()))
+            && m.vertices.iter().any(|v| area.contains(v.p))
         {
             hs.push(e.handle);
         }
@@ -39,9 +58,9 @@ fn add_mline_vertex_hits(d: &cadcraft_doc::Drawing, space: &cadcraft_doc::Space,
 
 /// Move the vertices of `e` that lie inside any of the areas `wins` by `d` (STRETCH).
 fn stretch_entity(e: &mut Entity, wins: &[StretchArea], d: Vec2) {
-    let inside = |p: Vec2| wins.iter().any(|a| a.contains(p));
+    let inside3 = |p: cadcraft_geom::Vec3| wins.iter().any(|a| a.contains(p));
     let mv = |p: &mut cadcraft_geom::Vec3| {
-        if inside(p.xy()) {
+        if inside3(*p) {
             p.x += d.x;
             p.y += d.y;
         }
@@ -52,16 +71,20 @@ fn stretch_entity(e: &mut Entity, wins: &[StretchArea], d: Vec2) {
             mv(&mut l.b);
         }
         EntityKind::LwPolyline(pl) => {
+            let elev = pl.elevation;
             for v in &mut pl.vertices {
-                if inside(v.p) {
+                if inside3(v.p.to3(elev)) {
                     v.p += d;
                 }
             }
         }
         EntityKind::MLine(m) => m.vertices.iter_mut().for_each(|v| mv(&mut v.p)),
+        EntityKind::Polyline3d(pl) => {
+            pl.points.iter_mut().for_each(mv);
+        }
         EntityKind::Arc(a) => {
             // Arcs keep their shape: move when the centre is inside.
-            if inside(a.center.xy()) {
+            if inside3(a.center) {
                 a.center.x += d.x;
                 a.center.y += d.y;
             }
@@ -75,7 +98,11 @@ fn stretch_entity(e: &mut Entity, wins: &[StretchArea], d: Vec2) {
         }
         k => {
             let g = k.grips();
-            if g.first().is_some_and(|p| inside(*p)) {
+            let elev = match &*k {
+                EntityKind::Insert(i) => i.insert.z,
+                other => cadcraft_render::entity_elevation(other),
+            };
+            if g.first().is_some_and(|p| inside3(p.to3(elev))) {
                 k.transform(&Mat3::translate(d));
             }
         }
@@ -85,6 +112,7 @@ fn stretch_entity(e: &mut Entity, wins: &[StretchArea], d: Vec2) {
 pub(super) fn run_stretch(s: &mut Session, p: &Value) -> Result<Value> {
     let d = delta_of("stretch", p)?;
     let space = s.space();
+    let orbit = cadcraft_render::Orbit3d::default();
     let listed = |key: &str, least: usize| -> Result<Option<Vec<Vec2>>> {
         let Some(pts) = points_param(p, key) else { return Ok(None) };
         if pts.len() < least || pts.len() > crate::select::MAX_MODE_POINTS || pts.iter().any(|q| !q.is_finite()) {
@@ -94,17 +122,17 @@ pub(super) fn run_stretch(s: &mut Session, p: &Value) -> Result<Value> {
     };
     // A fence marks no area: the objects it crosses move whole.
     if let Some(fence) = listed("fence", 2)? {
-        let hs = crate::select::select_fence(s.doc()?, &space, &fence);
+        let hs = crate::select::select_fence_in_orbit(s.doc()?, &space, orbit, &fence);
         let moved = transform_entities(s, &hs, &Mat3::translate(d), false)?;
         return Ok(json!({ "stretched": moved.len() }));
     }
     let (mut hs, area) = if let Some(poly) = listed("polygon", 3)? {
-        (crate::select::select_polygon(s.doc()?, &space, &poly, true), StretchArea::Polygon(poly))
+        (crate::select::select_polygon_in_orbit(s.doc()?, &space, orbit, &poly, true), StretchArea::polygon(poly, orbit))
     } else {
         let w = points_param(p, "window").ok_or_else(|| bad("stretch", "`window` [[x,y],[x,y]], `polygon` or `fence` is required"))?;
         let (Some(a), Some(b)) = (w.first(), w.get(1)) else { return Err(bad("stretch", "window needs 2 corners")) };
         let bx = cadcraft_geom::Bounds2::new(*a, *b);
-        (crate::select::select_window(s.doc()?, &space, bx, true), StretchArea::Box(bx))
+        (crate::select::select_window_in_orbit(s.doc()?, &space, orbit, bx, true), StretchArea::r#box(bx, orbit))
     };
     add_mline_vertex_hits(s.doc()?, &space, &area, &mut hs);
     hs.retain(|h| !crate::cmd::curves::is_locked(s, *h));
@@ -173,16 +201,17 @@ impl StretchM {
     /// of two) the mode is dropped.
     fn finish_mode(&mut self, s: &mut Session, m: SelectMode) -> Result<()> {
         let space = s.space();
-        let Some(mut hs) = m.select(s.doc()?, &space) else { return Ok(()) };
+        let orbit = s.edit_orbit();
+        let Some(mut hs) = m.select(s.doc()?, &space, orbit) else { return Ok(()) };
         let crossing = match (m.kind, m.pts.first().zip(m.pts.get(1))) {
             (SelectKind::Crossing | SelectKind::CPolygon, _) => true,
             (SelectKind::Box, Some((a, b))) => b.x < a.x,
             _ => false,
         };
         let area = match (m.kind, m.pts.first().zip(m.pts.get(1))) {
-            (SelectKind::WPolygon | SelectKind::CPolygon, _) => Some(StretchArea::Polygon(m.pts)),
+            (SelectKind::WPolygon | SelectKind::CPolygon, _) => Some(StretchArea::polygon(m.pts, orbit)),
             (SelectKind::Window | SelectKind::Crossing | SelectKind::Box, Some((a, b))) => {
-                Some(StretchArea::Box(cadcraft_geom::Bounds2::new(*a, *b)))
+                Some(StretchArea::r#box(cadcraft_geom::Bounds2::new(*a, *b), orbit))
             }
             // A fence marks no area: what it crosses moves whole.
             _ => None,
@@ -224,28 +253,32 @@ impl StretchM {
             }
         }
         match i {
-            Input::Point(p) => match self.corner.take() {
-                Some(c) => {
-                    let bx = cadcraft_geom::Bounds2::new(c, p);
-                    let space = s.space();
-                    let mut hs = crate::select::select_window(s.doc()?, &space, bx, p.x < c.x);
-                    if !self.removing {
-                        if p.x < c.x {
-                            add_mline_vertex_hits(s.doc()?, &space, &StretchArea::Box(bx), &mut hs);
+            Input::Point(p) => {
+                let orbit = s.edit_orbit();
+                match self.corner.take() {
+                    Some(c) => {
+                        let bx = cadcraft_geom::Bounds2::new(c, p);
+                        let space = s.space();
+                        let mut hs = crate::select::select_window_in_orbit(s.doc()?, &space, orbit, bx, p.x < c.x);
+                        let area = StretchArea::r#box(bx, orbit);
+                        if !self.removing {
+                            if p.x < c.x {
+                                add_mline_vertex_hits(s.doc()?, &space, &area, &mut hs);
+                            }
+                            self.windows.push(area);
                         }
-                        self.windows.push(StretchArea::Box(bx));
+                        self.add(s, hs, false);
                     }
-                    self.add(s, hs, false);
-                }
-                None => {
-                    let aperture = s.pixel_size() * s.settings.pickbox.max(1.0) * 1.5;
-                    let space = s.space();
-                    match crate::select::pick(s.doc()?, &space, p, aperture) {
-                        Some(h) => self.add(s, vec![h], true),
-                        None => self.corner = Some(p),
+                    None => {
+                        let aperture = s.pixel_size() * s.settings.pickbox.max(1.0) * 1.5;
+                        let space = s.space();
+                        match crate::select::pick_in_orbit(s.doc()?, &space, orbit, p, aperture) {
+                            Some(h) => self.add(s, vec![h], true),
+                            None => self.corner = Some(p),
+                        }
                     }
                 }
-            },
+            }
             Input::Pick(hs) => self.add(s, hs, true),
             Input::Text(t) | Input::Keyword(t) => {
                 self.corner = None;
@@ -320,7 +353,10 @@ impl Interactive for StretchM {
         }
         match (self.phase, self.corner) {
             (StretchPhase::Select, Some(c)) => Prompt::new("Specify opposite corner", Accept::POINT).corner(c),
-            (StretchPhase::Select, None) => Prompt::new(if self.removing { "Remove objects" } else { "Select objects" }, Accept::POINT),
+            (StretchPhase::Select, None) => Prompt {
+                picks_one: self.removing,
+                ..Prompt::new(if self.removing { "Remove objects" } else { "Select objects" }, Accept::POINT)
+            },
             (StretchPhase::Base, _) => Prompt::new("Specify base point", Accept::POINT).kw(&["Displacement"]).default("Displacement"),
             (StretchPhase::Displacement, _) => Prompt::new("Specify displacement", Accept::POINT).default("0,0"),
             (StretchPhase::Second, _) => Prompt::new("Specify second point or <use first point as displacement>", Accept::POINT).base_opt(self.base),
@@ -349,10 +385,21 @@ impl Interactive for StretchM {
             _ => Ok(Step::Continue),
         }
     }
+    fn collects_work_points(&self) -> bool {
+        matches!(self.phase, StretchPhase::Base | StretchPhase::Displacement | StretchPhase::Second)
+    }
     fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
-        let rect = |a: Vec2| {
+        let orbit = s.edit_orbit();
+        let vline = |p: Vec2, q: Vec2| {
+            if orbit.is_top() || orbit.is_edge_on() {
+                Some(line(p, q))
+            } else {
+                Some(line(orbit.unproject_xy(p)?, orbit.unproject_xy(q)?))
+            }
+        };
+        let rect = |a: Vec2| -> Vec<EntityKind> {
             let (b, d) = (Vec2::new(c.x, a.y), Vec2::new(a.x, c.y));
-            vec![line(a, b), line(b, c), line(c, d), line(d, a)]
+            [vline(a, b), vline(b, c), vline(c, d), vline(d, a)].into_iter().flatten().collect()
         };
         if let (StretchPhase::Select, Some(m)) = (self.phase, &self.mode) {
             let Some(first) = m.pts.first().copied() else { return Vec::new() };
@@ -360,10 +407,10 @@ impl Interactive for StretchM {
                 return rect(first);
             }
             // The fence or polygon so far, on to the cursor; a polygon closes back to its start.
-            let mut out: Vec<EntityKind> = m.pts.windows(2).filter_map(|w| Some(line(*w.first()?, *w.get(1)?))).collect();
-            out.extend(m.pts.last().map(|l| line(*l, c)));
+            let mut out: Vec<EntityKind> = m.pts.windows(2).filter_map(|w| vline(*w.first()?, *w.get(1)?)).collect();
+            out.extend(m.pts.last().and_then(|l| vline(*l, c)));
             if m.kind != SelectKind::Fence && m.pts.len() >= 2 {
-                out.push(line(c, first));
+                out.extend(vline(c, first));
             }
             return out;
         }

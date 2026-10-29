@@ -63,6 +63,7 @@ pub use doc_state::{DocState, Snapshot};
 pub use error::{EngineError, Result};
 pub use last_used::{LastUsed, LeaderOrder, LeaderType, MLeaderOptions};
 pub use running::{PendingWindow, Running};
+pub use session::{is_bare_lisp_operator, is_bare_lisp_prefix};
 pub use settings::Settings;
 pub use view::{ModelTile, ModelTiles, View};
 

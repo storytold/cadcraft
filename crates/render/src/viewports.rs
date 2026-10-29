@@ -67,8 +67,16 @@ pub fn viewport_content(d: &Drawing, space: &Space, handle: Handle, area: Bounds
     }
     let opts = &with_point_view(d, space, opts);
     let styler = style_table(d, space, opts, false).map(|t| plotstyle::Styler::new(d, t));
-    let mut b =
-        Builder { list: DisplayList::default(), opts, plotting: false, styles: styler.as_ref(), named: None, shared_budget: None, transparency: 0 };
+    let mut b = Builder {
+        list: DisplayList::default(),
+        opts,
+        plotting: false,
+        paper: false,
+        styles: styler.as_ref(),
+        named: None,
+        shared_budget: None,
+        transparency: 0,
+    };
     contents(&mut b, d, vp, area, &Clip::Rect(area), paper::unit_mm_of(d, handle));
     b.list
 }
@@ -101,7 +109,7 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
         if matches!(me.kind, EntityKind::Viewport(_)) {
             return false;
         }
-        if matches!(me.kind, EntityKind::Ray(_) | EntityKind::XLine(_)) {
+        if matches!(me.kind, EntityKind::Ray(_) | EntityKind::XLine(_)) || !b.opts.orbit.is_top() {
             return true;
         }
         let eb = cadcraft_doc::entity_bounds(d, me, 0);
@@ -115,6 +123,7 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
         list: DisplayList::default(),
         opts: b.opts,
         plotting: b.plotting,
+        paper: false,
         styles: b.styles,
         named: None,
         shared_budget: Some(&budget),
@@ -138,6 +147,7 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
                         list: DisplayList::default(),
                         opts,
                         plotting: false,
+                        paper: false,
                         styles: None,
                         named: None,
                         shared_budget: Some(&budget),

@@ -3,7 +3,7 @@ use super::display::append;
 use super::display::{DisplayList, Kind, NO_LAYER, PlotText, VIEWPORT_CONTENT};
 use super::draw::entity;
 use super::viewports::{MAX_VIEWPORTS, viewport};
-use super::{Bounds2, Builder, Color, Ctx, Drawing, Entity, EntityKind, Handle, Lineweight, Mat3, Space, Vec2, paper, pen, plotstyle, point};
+use super::{Bounds2, Builder, Color, Ctx, Drawing, Entity, EntityKind, Handle, Lineweight, Mat3, Orbit3d, Space, Vec2, paper, pen, plotstyle, point};
 
 /// Build options.
 #[derive(Clone, Debug)]
@@ -37,6 +37,8 @@ pub struct Options {
     /// rebuild the view no longer needs). A cancelled build returns a partial list, which the
     /// caller must discard; see [`Options::cancelled`].
     pub cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// 3D Orbit camera orientation (defaults to 2D Top plan view).
+    pub orbit: Orbit3d,
 }
 
 impl Options {
@@ -47,6 +49,7 @@ impl Options {
 }
 
 impl Default for Options {
+    /// Default render options (2D Top orbit, text and fills enabled).
     fn default() -> Self {
         Options {
             tolerance: 0.001,
@@ -60,6 +63,7 @@ impl Default for Options {
             skip_viewport: None,
             transparency: false,
             cancel: None,
+            orbit: Orbit3d::default(),
         }
     }
 }
@@ -75,6 +79,7 @@ pub fn build_plot(d: &Drawing, space: &Space, opts: &Options) -> DisplayList {
     build_space(d, space, opts, true)
 }
 
+/// Construct the root [`Ctx`] for rendering top-level entities or viewport content.
 pub(crate) fn top_ctx<'a>(d: &'a Drawing, xf: Mat3, top: Handle, frozen: &'a [String], vp_colors: &'a [(String, Color)]) -> Ctx<'a> {
     Ctx {
         d,
@@ -90,18 +95,22 @@ pub(crate) fn top_ctx<'a>(d: &'a Drawing, xf: Mat3, top: Handle, frozen: &'a [St
         lt_factor: 1.0,
         block_pstyle: None,
         block_transparency: 0,
+        z_offset: 0.0,
+        z_scale: 1.0,
+        vp_xf: xf,
+        vp_xf_inv: xf.inverse().unwrap_or(Mat3::IDENTITY),
     }
 }
 
 fn build_space(d: &Drawing, space: &Space, opts: &Options, plotting: bool) -> DisplayList {
     let opts = &with_point_view(d, space, opts);
     let styler = style_table(d, space, opts, plotting).map(|t| plotstyle::Styler::new(d, t));
-    let mut b = Builder { list: DisplayList::default(), opts, plotting, styles: styler.as_ref(), named: None, shared_budget: None, transparency: 0 };
+    let paper = matches!(space, Space::Paper(_));
+    let mut b = Builder { list: DisplayList::default(), opts, plotting, paper, styles: styler.as_ref(), named: None, shared_budget: None, transparency: 0 };
     if let Space::Paper(name) = space {
         b.list.sheet = paper::sheet(d, name);
     }
     if let Some(store) = d.space(space) {
-        let paper = matches!(space, Space::Paper(_));
         #[cfg(not(target_arch = "wasm32"))]
         if !paper && !plotting && b.styles.is_none() && store.len() >= 2 * PARALLEL_CHUNK {
             build_parallel(&mut b, d, store);
@@ -147,8 +156,16 @@ fn build_parallel(b: &mut Builder, d: &Drawing, store: &cadcraft_doc::EntityStor
     let parts: Vec<DisplayList> = ents
         .par_chunks(PARALLEL_CHUNK)
         .map(|chunk| {
-            let mut part =
-                Builder { list: DisplayList::default(), opts, plotting, styles: None, named: None, shared_budget: Some(&budget), transparency: 0 };
+            let mut part = Builder {
+                list: DisplayList::default(),
+                opts,
+                plotting,
+                paper: false,
+                styles: None,
+                named: None,
+                shared_budget: Some(&budget),
+                transparency: 0,
+            };
             for e in chunk {
                 entity(&mut part, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
             }
@@ -200,7 +217,16 @@ pub fn build_entities<'a, I: IntoIterator<Item = &'a Entity>>(d: &Drawing, ents:
     } else {
         opts
     };
-    let mut b = Builder { list: DisplayList::default(), opts, plotting: false, styles: None, named: None, shared_budget: None, transparency: 0 };
+    let mut b = Builder {
+        list: DisplayList::default(),
+        opts,
+        plotting: false,
+        paper: false,
+        styles: None,
+        named: None,
+        shared_budget: None,
+        transparency: 0,
+    };
     for e in ents {
         entity(&mut b, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
     }

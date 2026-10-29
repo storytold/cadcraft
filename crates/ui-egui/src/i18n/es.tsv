@@ -1256,3 +1256,358 @@
 	Check for Updates…	Buscar actualizaciones…
 	CADCraft is up to date.	CADCraft está actualizado.
 	Could not check for updates.	No se pudo buscar actualizaciones.
+	Copy All	Copiar todo
+	Copy history output to clipboard	Copiar salida del historial al portapapeles
+	Close History Window (F2)	Cerrar ventana de historial (F2)
+	Edit XData (XDEDIT)	Editar XData (XDEDIT)
+	Open visual XData Editor for selected object	Abrir editor visual de XData para el objeto seleccionado
+	Command & XData Output (select text + Ctrl+C to copy)	Salida de comandos y XData (seleccione texto + Ctrl+C para copiar)
+	Save changes to {name}?	¿Guardar los cambios en {name}?
+	Your changes will be lost if you don't save them.	Los cambios se perderán si no los guarda.
+	Don't Save	No guardar
+	List Xdata	Listar XData
+	Edit Xdata	Editar XData
+	Edit Xdata (XDEDIT)	Editar XData (XDEDIT)
+	✏ Edit XData (XDEDIT)	✏ Editar XData (XDEDIT)
+	Open visual XData Editor dialog	Abrir el editor visual de XData
+	📋 Copy Values	📋 Copiar valores
+	Copy XData values (Key,Value) to clipboard	Copiar valores XData (Clave,Valor) al portapapeles
+	Click to copy value to clipboard	Clic para copiar el valor al portapapeles
+	✓ XData values copied to clipboard	✓ Valores XData copiados al portapapeles
+	Selection canceled — previous object kept.	Selección cancelada — se mantiene el objeto anterior.
+	Drag left or right to resize this column	Arrastre a izquierda o derecha para cambiar el ancho de columna
+	XDATA Editor (XDEDIT)	Editor de XDATA (XDEDIT)
+	No object selected.	Ningún objeto seleccionado.
+	🎯 Select object in drawing	🎯 Seleccionar objeto en el dibujo
+	Object: {kind}	Objeto: {kind}
+	Layer: {layer}	Capa: {layer}
+	Handle: {handle}	Identificador: {handle}
+	🎯 Select Another Object	🎯 Seleccionar otro objeto
+	Hide editor temporarily, pick another object in the drawing, and open it in XDEDIT	Ocultar el editor, elegir otro objeto en el dibujo y abrirlo en XDEDIT
+	Next ▶	Siguiente ▶
+	Step to the next object with XData in the selection or drawing	Ir al siguiente objeto con XData en la selección o el dibujo
+	◀ Previous	◀ Anterior
+	Step to the previous object with XData in the selection or drawing	Ir al objeto anterior con XData en la selección o el dibujo
+	📋 Copy JSON	📋 Copiar JSON
+	Copy all XData as structured JSON to clipboard	Copiar todos los XData como JSON estructurado al portapapeles
+	✓ JSON copied to clipboard	✓ JSON copiado al portapapeles
+	📋 Copy Text	📋 Copiar texto
+	Copy all XData as text to clipboard	Copiar todos los XData como texto al portapapeles
+	✓ XData text copied to clipboard	✓ Texto XData copiado al portapapeles
+	AppID (1001):	AppID (1001):
+	New AppID (e.g. Lumi_KLIC)	Nuevo AppID (ej. Lumi_KLIC)
+	+ Add AppID	+ Añadir AppID
+	🗑 Delete AppID	🗑 Eliminar AppID
+	Remove this Application and its XData from the entity	Eliminar esta aplicación y sus XData de la entidad
+	Application removed (click Apply to save)	Aplicación eliminada (haga clic en Aplicar para guardar)
+	🔍 Filter:	🔍 Filtro:
+	Search key or value (e.g. THEMA, DIEPTE)...	Buscar clave o valor (ej. THEMA, DIEPTE)...
+	Key width:	Ancho de clave:
+	Drag this value or the column divider ⇔ to resize the Key column	Arrastre este valor o el divisor ⇔ para cambiar el ancho de Clave
+	Value width:	Ancho de valor:
+	Drag this value or the column divider ⇔ to resize the Value column	Arrastre este valor o el divisor ⇔ para cambiar el ancho de Valor
+	Smart Key=Value Columns	Columnas inteligentes Clave=Valor
+	Split 'KEY=VALUE' or 'Key: Value' into separate editable Key and Value fields	Dividir 'KEY=VALUE' o 'Key: Value' en campos editables de Clave y Valor
+	This object currently has no user XData.	Este objeto no tiene actualmente XData de usuario.
+	+ Create Lumi_KLIC Application	+ Crear aplicación Lumi_KLIC
+	DXF Code	Código DXF
+	Property / Key ⇔	Propiedad / Clave ⇔
+	Value (Selectable & Editable) ⇔	Valor (Seleccionable y Editable) ⇔
+	Raw Value (Selectable & Editable) ⇔	Valor sin procesar (Seleccionable y Editable) ⇔
+	Actions	Acciones
+	Copy value to clipboard	Copiar valor al portapapeles
+	✓ Copied: {val}	✓ Copiado: {val}
+	Move row up	Mover fila arriba
+	Move row down	Mover fila abajo
+	Delete this XData row	Eliminar esta fila de XData
+	Add Row:	Añadir fila:
+	Key (e.g. OPMERKING)	Clave (ej. OPMERKING)
+	+ Add Property	+ Añadir propiedad
+	● Unsaved changes	● Cambios sin guardar
+	Ready — click '🎯 Select Next Object' or '◀ Previous / Next ▶' to switch objects.	Listo — pulse '🎯 Seleccionar siguiente objeto' o '◀ Anterior / Siguiente ▶'.
+	↺ Revert	↺ Revertir
+	✔ Apply / Save XData	✔ Aplicar / Guardar XData
+	Write modified XData to the entity (Undoable with Ctrl+Z)	Escribir XData modificados en la entidad (Deshacer con Ctrl+Z)
+	✔ Save & Select Next Object	✔ Guardar y seleccionar siguiente
+	🎯 Select Next Object	🎯 Seleccionar siguiente objeto
+	Save any changes and directly pick the next object in the drawing	Guardar cambios y seleccionar directamente el siguiente objeto
+	Object {idx1}/{total} loaded ({kind} — {handle})	Objeto {idx1}/{total} cargado ({kind} — {handle})
+	↺ Reverted to saved entity XData	↺ Revertido a los XData guardados
+	✔ XData saved to entity (Undoable)	✔ XData guardados en la entidad (Ctrl+Z disponible)
+	Error: {err}	Error: {err}
+	⚠ Entity XData changed outside editor — click Revert before saving.	⚠ Los XData cambiaron fuera del editor — pulse Revertir antes de guardar.
+	+  |  {view} ({yaw}°, {pitch}°)  |  3D Orbit Wireframe	+  |  {view} ({yaw}°, {pitch}°)  |  Estructura alámbrica de órbita 3D
+	.NET Plugin Bridge	Puente de complementos .NET
+	3D Orbit	Órbita 3D
+	3D Views	Vistas 3D
+	Add: Pick points	Añadir: Designar puntos
+	Add: Select objects	Añadir: Seleccionar objetos
+	Add…	Añadir…
+	Adjust Image...	Ajustar imagen...
+	Adjust...	Ajustar...
+	Alias	Alias
+	Alias file: {file}	Archivo de alias: {file}
+	Align Multileaders	Alinear directrices múltiples
+	Analyze Usage	Analizar uso
+	Angstroms	Angstroms
+	Apply to Layout	Aplicar a presentación
+	Architectural	Pies y pulgadas II
+	Associate	Asociar
+	Associative	Asociativo
+	Astronomical Units	Unidades astronómicas
+	Attach Image...	Enlazar imagen...
+	AutoLISP (LSP)	AutoLISP (LSP)
+	AutoLISP / VB.NET / C# IDE...	Entorno IDE de AutoLISP / VB.NET / C#...
+	AutoLISP / VBA IDE...	Entorno IDE de AutoLISP / VBA...
+	Back	Posterior
+	Block to create or edit	Bloque para crear o editar
+	Bottom left	Abajo a la izquierda
+	Bottom right	Abajo a la derecha
+	Boundaries	Contornos
+	Boundaries picked: {n}	Contornos designados: {n}
+	Break-line Symbol	Símbolo de línea de rotura
+	Center the plot	Centrar trazado
+	Centered	Centrado
+	Centimeters	Centímetros
+	Change Properties	Cambiar propiedades
+	Choose the command the alias starts.	Elija el comando que inicia el alias.
+	Clear Recent Files	Borrar archivos recientes
+	Click the ruler to add a tab stop, right-click to remove one	Haga clic en la regla para añadir una tabulación, clic derecho para eliminarla
+	Click to set new origin	Haga clic para definir un nuevo origen
+	Clip Image	Delimitar imagen
+	Close Block Editor	Cerrar editor de bloques
+	Collect	Recopilar
+	Collect Multileaders	Recopilar directrices múltiples
+	Color 1	Color 1
+	Color 2	Color 2
+	Command	Comando
+	Convert Text to Mtext	Convertir texto en textoM
+	Create separate hatches	Crear sombreados independientes
+	Crossing selection color:	Color de selección de captura:
+	Curved	Curvado
+	Custom	Personalizado
+	Customize	Personalizar
+	Decameters	Decámetros
+	Decimal	Decimales
+	Decimal Degrees	Grados decimales
+	Decimeters	Decímetros
+	Default to boundary extents	Por defecto en la extensión del contorno
+	Define each corner of the selection window with a separate click.	Defina cada esquina de la ventana de selección con un clic independiente.
+	Deg/Min/Sec	Gra/Min/Seg
+	Discard	Descartar
+	Drag Dynamic Grip	Arrastrar pinzamiento dinámico
+	Drawing Units	Unidades de dibujo
+	Dynamic Block Data	Datos de bloque dinámico
+	Dynamic Block Grips	Pinzamientos de bloque dinámico
+	Dynamic Block Reference	Referencia de bloque dinámico
+	Edit Block Definition	Editar definición de bloque
+	Edit Command Aliases (PGP)...	Editar alias de comandos (PGP)...
+	Edit Multileader	Editar directriz múltiple
+	Edit…	Editar…
+	Engineering	Pies y pulgadas I
+	Enter block names to extract	Introduzca los nombres de bloque para extraer
+	Enter geometric characteristic	Introduzca la característica geométrica
+	Enter name of LISP file to load	Introduzca el nombre del archivo LISP que desea cargar
+	Evaluate LISP	Evaluar LISP
+	Exclude:	Excluir:
+	Explode Attributes to Text	Descomponer atributos en texto
+	Express Tools	Express Tools
+	Feet	Pies
+	First corner	Primera esquina
+	Fit to paper	Ajustar al papel
+	Fractional	Fraccionarias
+	Frame	Marco
+	Front	Frontal
+	Gigameters	Gigámetros
+	Grads	Gradianes
+	Grips	Pinzamientos
+	Groups	Grupos
+	Hatch Pick	Designar sombreado
+	Hatch and Gradient	Sombreado y degradado
+	Hatch origin	Origen de sombreado
+	Hatches	Sombreados
+	Hectometers	Hectómetros
+	Hemispherical	Hemisférico
+	Ignore	Ignorar
+	Image	Imagen
+	Image Frame	Marco de imagen
+	Imperial (inches)	Imperial (pulgadas)
+	Implied Loops	Bucles implícitos
+	Inches	Pulgadas
+	Indicate selection area	Indicar área de selección
+	Insertion scale	Escala de inserción
+	Interface scale	Escala de la interfaz
+	Inverted	Invertido
+	Island	Isla
+	Island detection	Detección de islas
+	Italic	Cursiva
+	Justify	Justificar
+	Kilometers	Kilómetros
+	Landscape	Horizontal
+	Layouts	Presentaciones
+	Light Years	Años luz
+	Limits	Límites
+	Load .NET DLL / LISP Application (NETLOAD)...	Cargar aplicación .NET DLL / LISP (NETLOAD)...
+	Load Application (NETLOAD)...	Cargar aplicación (NETLOAD)...
+	Load Application...	Cargar aplicación...
+	Meters	Metros
+	Metric (millimetres)	Métrico (milímetros)
+	Microinches	Micropulgadas
+	Microns	Micras
+	Miles	Millas
+	Millimeters	Milímetros
+	Mils	Mils
+	Model Tab	Ficha Modelo
+	More than {n} aliases.	Más de {n} alias.
+	Move/Copy/Rotate	Desplazar/Copiar/Girar
+	Multiline text	Texto de líneas múltiples
+	NE Isometric	Isométrica NE
+	NW Isometric	Isométrica NO
+	Nanometers	Nanómetros
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	Los dibujos nuevos y el primer dibujo al iniciar utilizan estas unidades a menos que se establezca una plantilla predeterminada (QNEWTEMPLATE).
+	New block	Nuevo bloque
+	No alias file loaded. REINIT replaces these aliases with a file's.	No se ha cargado ningún archivo de alias. REINIT reemplaza estos alias por los de un archivo.
+	Object grouping	Agrupación de objetos
+	Object selection limit for display of grips	Límite de selección de objetos para mostrar pinzamientos
+	Objects on locked layers	Objetos en capas bloqueadas
+	Open Recent	Abrir recientes
+	Open in Block Editor	Abrir en el editor de bloques
+	Opposite corner	Esquina opuesta
+	Orientation	Orientación
+	Origin: {x}, {y}	Origen: {x}, {y}
+	Outer	Exterior
+	Overline	Sobrelínea
+	Paper size	Tamaño de papel
+	Parsecs	Pársecs
+	Plot area	Área de trazado
+	Plot object lineweights	Trazar grosores de línea de objeto
+	Plot offset	Desfase de trazado
+	Plot transparency	Trazar transparencia
+	Portrait	Vertical
+	Preview	Vista preliminar
+	Printer/plotter	Impresora/trazador
+	Radians	Radianes
+	Raster Image Reference...	Referencia de imagen ráster...
+	Run Script...	Ejecutar script...
+	SE Isometric	Isométrica SE
+	SW Isometric	Isométrica SO
+	Sample output	Muestra de salida
+	Save Block	Guardar bloque
+	Save Block As	Guardar bloque como
+	Save alias	Guardar alias
+	Scientific	Científicas
+	Select boundaries to remove	Seleccione los contornos que desea eliminar
+	Select using two clicks only	Seleccionar solo con dos clics
+	Selection Area Effect	Efecto de área de selección
+	Selection Preview Filter	Filtro de vista preliminar de selección
+	Selection area opacity:	Opacidad del área de selección:
+	Selection effect color	Color del efecto de selección
+	Selection modes	Modos de selección
+	Selection preview	Vista preliminar de selección
+	Set Dynamic Property	Definir propiedad dinámica
+	Shape	Forma
+	Sheet Books to PDF...	Libros de planos a PDF...
+	Show grips	Mostrar pinzamientos
+	Specified origin	Origen especificado
+	Spherical	Esférico
+	Surveyor's Units	Unidades topográficas
+	Tables	Tablas
+	Text color	Color de texto
+	This drawing	Este dibujo
+	Top (2D Plan)	Superior (Planta 2D)
+	Top left	Arriba a la izquierda
+	Top right	Arriba a la derecha
+	Type an alias name.	Escriba un nombre de alias.
+	US Survey Feet	Pies topográficos de EE. UU.
+	US Survey Inch	Pulgadas topográficas de EE. UU.
+	US Survey Mile	Millas topográficas de EE. UU.
+	US Survey Yard	Yardas topográficas de EE. UU.
+	Underline	Subrayado
+	Unitless	Sin unidad
+	Units of new drawings	Unidades de dibujos nuevos
+	Units to scale inserted content	Unidades de escala del contenido insertado
+	Unsaved changes	Cambios sin guardar
+	Use current origin	Usar origen actual
+	View Resolution	Resolución de vista
+	Visual Effect Settings	Parámetros de efectos visuales
+	Visual Effect Settings...	Parámetros de efectos visuales...
+	When a command is active	Cuando hay un comando activo
+	When no command is active	Cuando no hay ningún comando activo
+	Window <	Ventana <
+	Window selection color:	Color de selección de ventana:
+	X offset (mm)	Desfase X (mm)
+	Xrefs	RefX
+	Y offset (mm)	Desfase Y (mm)
+	Yards	Yardas
+	built-in	integrado
+	contains authoring elements. Open in Block Editor?	contiene elementos de creación. ¿Abrir en el editor de bloques?
+	overrides built-in	reemplaza al integrado
+	{alias} is already defined; select it and use Edit.	{alias} ya está definido; selecciónelo y use Editar.
+	{command} is an unknown command.	{command} es un comando desconocido.
+	📋 Copy All	📋 Copiar todo
+	🗑 Clear	🗑 Borrar
+	.NET command started	Comando .NET iniciado
+	0. Empty file (New)	0. Archivo vacío (Nuevo)
+	1. AutoLISP: Basic Math & Commands	1. AutoLISP: Matemáticas básicas y comandos
+	2. AutoLISP: Survey Marker (c:meetpunt)	2. AutoLISP: Punto topográfico (c:meetpunt)
+	3. VB.NET Plugin (.vb -> .dll)	3. Complemento VB.NET (.vb -> .dll)
+	4. C# Plugin (.cs -> .dll)	4. Complemento C# (.cs -> .dll)
+	Added to Startup Suite (Auto-Load at startup & per drawing)	Añadido al grupo de inicio (carga automática al iniciar y por dibujo)
+	Auto-Load	Carga automática
+	AutoLISP / VB.NET / C# IDE & NETLOAD Studio	IDE de AutoLISP / VB.NET / C# y NETLOAD Studio
+	AutoLISP Commands (click to run)	Comandos AutoLISP (clic para ejecutar)
+	AutoLISP Editor (.lsp)	Editor AutoLISP (.lsp)
+	Bottom	Inferior
+	C# Plugin Editor (.cs)	Editor de complementos C# (.cs)
+	C# source opened	Código fuente C# abierto
+	Clear Log	Borrar registro
+	Commands	Comandos
+	Compact Menu	Menú compacto
+	Compilation error	Error de compilación
+	Compilation failed (see Console)	Error de compilación (véase la consola)
+	Compilation succeeded	Compilación correcta
+	Compile & Load .NET DLL	Compilar y cargar DLL de .NET
+	Console / Output	Consola / Salida
+	Error	Error
+	Error in	Error en
+	Error: cadcraft-nethost.exe not found next to the application.	Error: No se encontró cadcraft-nethost.exe junto a la aplicación.
+	Evaluate the LISP code or compile the VB.NET / C# source directly into a .NET DLL	Evaluar el código LISP o compilar el código fuente VB.NET / C# directamente en una DLL de .NET
+	Failed to invoke compiler	Error al invocar el compilador
+	Failed to load	Error al cargar
+	Failed to save to	Error al guardar en
+	Failed to start .NET command	Error al iniciar el comando .NET
+	Failed to write source file	Error al escribir el archivo de código fuente
+	Hide this Studio window and show the compact floating Plugin Commands menu	Ocultar esta ventana de Studio y mostrar el menú flotante compacto de Comandos de complementos
+	Load & Run LISP	Cargar y ejecutar LISP
+	NETLOAD .NET DLL loaded	DLL .NET de NETLOAD cargada
+	NETLOAD error in	Error de NETLOAD en
+	NETLOAD failed to run cadcraft-nethost.exe	NETLOAD no pudo ejecutar cadcraft-nethost.exe
+	Open .lsp / .vb / .cs	Abrir .lsp / .vb / .cs
+	Open NETLOAD Studio (VBAIDE)	Abrir NETLOAD Studio (VBAIDE)
+	Open Studio	Abrir Studio
+	Open the full AutoLISP / VB.NET / C# & NETLOAD Studio	Abrir el entorno completo AutoLISP / VB.NET / C# & NETLOAD Studio
+	Plugin Commands	Comandos de complementos
+	Plugins	Complementos
+	Quick Expression	Expresión rápida
+	Ready. Open a .dll (.NET VB.NET/C#) or .lsp (AutoLISP) file via NETLOAD.	Listo. Abra un archivo .dll (.NET VB.NET/C#) o .lsp (AutoLISP) mediante NETLOAD.
+	Registered commands	Comandos registrados
+	Removed from Startup Suite (Auto-Load)	Eliminado de Startup Suite (Carga automática)
+	Routine started	Rutina iniciada
+	Routine started from	Rutina iniciada desde
+	Run .NET command	Ejecutar comando .NET
+	Run command	Ejecutar comando
+	Save the current source code in the editor to disk	Guardar el código fuente actual del editor en el disco
+	Saved to	Guardado en
+	Select and load a .lsp, .dll, .vb, or .cs file from disk	Seleccionar y cargar un archivo .lsp, .dll, .vb o .cs desde el disco
+	Show Floating Command Menu	Mostrar menú de comandos flotante
+	Template...	Plantilla...
+	Toggle Startup Suite (Auto-Load at startup)	Alternar Startup Suite (Carga automática al iniciar)
+	Toggle Startup Suite: automatically load this file at startup and in every opened drawing	Alternar Startup Suite: cargar automáticamente este archivo al iniciar y en cada dibujo abierto
+	VB.NET Plugin Editor (.vb)	Editor de complementos VB.NET (.vb)
+	VB.NET source opened	Código fuente VB.NET abierto
+	cadcraft-nethost.exe not found	No se encontró cadcraft-nethost.exe
+	cannot read file	no se puede leer el archivo
+	e.g. (+ 1 2) or + 1 2	p. ej. (+ 1 2) o + 1 2
+	no [CommandMethod] found	no se encontró ningún [CommandMethod]
+	Font	Fuente
+	Save Layout as Template	Guardar presentación como plantilla

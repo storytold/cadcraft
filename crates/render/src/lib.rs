@@ -36,6 +36,156 @@ pub use hatch::{fill_loops as hatch_fill_loops, pattern_swatch};
 pub use paper::{PAPER_SIZES, PaperSize, Sheet, paper_size, sheet};
 pub use tolerance::{gdt_points, tolerance_in};
 
+/// 3D Orbit orientation for model space: azimuth (`yaw`) around world Z, elevation tilt (`pitch`)
+/// from the Top 2D plan view (`0.0`), and the 3D `pivot` point in world coordinates.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Orbit3d {
+    pub yaw: f64,
+    pub pitch: f64,
+    pub pivot: cadcraft_geom::Vec3,
+}
+
+impl Orbit3d {
+    /// True when looking straight down `-Z` with zero twist (the standard 2D Top plan view).
+    pub fn is_top(&self) -> bool {
+        self.yaw.abs() <= 1e-9 && self.pitch.abs() <= 1e-9
+    }
+
+    /// Orthographically project a 3D world point `p` onto the 2D view plane around `self.pivot`.
+    pub fn project(&self, p: cadcraft_geom::Vec3) -> Vec2 {
+        if self.is_top() {
+            return p.xy();
+        }
+        let d = p - self.pivot;
+        let (sy, cy) = self.yaw.sin_cos();
+        let (sp, cp) = self.pitch.sin_cos();
+        let x1 = d.x * cy - d.y * sy;
+        let y1 = d.x * sy + d.y * cy;
+        let y2 = y1 * cp + d.z * sp;
+        Vec2::new(self.pivot.x + x1, self.pivot.y + y2)
+    }
+
+    /// Project a 3D direction vector onto the 2D view plane.
+    pub fn project_vec(&self, v: cadcraft_geom::Vec3) -> Vec2 {
+        if self.is_top() {
+            return v.xy();
+        }
+        let (sy, cy) = self.yaw.sin_cos();
+        let (sp, cp) = self.pitch.sin_cos();
+        let x1 = v.x * cy - v.y * sy;
+        let y1 = v.x * sy + v.y * cy;
+        let y2 = y1 * cp + v.z * sp;
+        Vec2::new(x1, y2)
+    }
+
+    /// The 2D affine transform mapping a point `(x, y)` on the world `z = 0` work plane to its
+    /// projected 2D view-plane coordinates ([`Self::project`] at `z = 0`).
+    pub fn xy_mat3(&self) -> cadcraft_geom::Mat3 {
+        if self.is_top() {
+            return cadcraft_geom::Mat3::IDENTITY;
+        }
+        let (sy, cy) = self.yaw.sin_cos();
+        let (sp, cp) = self.pitch.sin_cos();
+        let a = cy;
+        let c = -sy;
+        let b = sy * cp;
+        let d = cy * cp;
+        let e = self.pivot.x - a * self.pivot.x - c * self.pivot.y;
+        let f = self.pivot.y - self.pivot.z * sp - b * self.pivot.x - d * self.pivot.y;
+        cadcraft_geom::Mat3 { a, b, c, d, e, f }
+    }
+
+    /// Whether the 3D orbit looks along the `z = 0` work plane edge-on (`cos(pitch)` ≈ 0, e.g.
+    /// Front, Back, Left, or Right views), so 2D view-plane points cannot be unprojected onto `z = 0`.
+    pub fn is_edge_on(&self) -> bool {
+        !self.is_top() && self.pitch.cos().abs() < 1e-4
+    }
+
+    /// Map a 2D view-plane point `p` back onto the world `z = 0` work plane (the inverse of
+    /// [`Self::project`] at `z = 0`), or `None` when the work plane is edge-on ([`Self::is_edge_on`]).
+    pub fn unproject_xy(&self, p: Vec2) -> Option<Vec2> {
+        self.unproject_z(p, 0.0)
+    }
+
+    /// Map a 2D view-plane point `p` back onto the horizontal plane at world elevation `z` (the
+    /// inverse of [`Self::project`] at `z`), or `None` when the plane is edge-on ([`Self::is_edge_on`]).
+    pub fn unproject_z(&self, p: Vec2, z: f64) -> Option<Vec2> {
+        if self.is_top() {
+            return p.is_finite().then_some(p);
+        }
+        let (sy, cy) = self.yaw.sin_cos();
+        let (sp, cp) = self.pitch.sin_cos();
+        if cp.abs() < 1e-4 {
+            return None;
+        }
+        let x1 = p.x - self.pivot.x;
+        let y2 = p.y - self.pivot.y;
+        let y1 = (y2 - (z - self.pivot.z) * sp) / cp;
+        let dx = x1 * cy + y1 * sy;
+        let dy = -x1 * sy + y1 * cy;
+        let out = Vec2::new(self.pivot.x + dx, self.pivot.y + dy);
+        out.is_finite().then_some(out)
+    }
+
+    /// Conjugate a world-XY 2D affine transform `m` into projected 2D view-plane coordinates
+    /// (`P * m * P^-1`), matching the result of applying `m` in world XY before projecting.
+    pub fn project_mat3(&self, m: cadcraft_geom::Mat3) -> cadcraft_geom::Mat3 {
+        if self.is_top() {
+            return m;
+        }
+        let p = self.xy_mat3();
+        match p.inverse() {
+            Some(inv) => p.then_before(m).then_before(inv),
+            None => m,
+        }
+    }
+
+    /// Stable hash key for display-list caching (`0` in 2D Top view).
+    pub fn hash_key(&self) -> u64 {
+        if self.is_top() {
+            return 0;
+        }
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (
+            self.yaw.to_bits(),
+            self.pitch.to_bits(),
+            self.pivot.x.to_bits(),
+            self.pivot.y.to_bits(),
+            self.pivot.z.to_bits(),
+        )
+            .hash(&mut h);
+        h.finish()
+    }
+
+    /// Short label for the ViewCube face (`"TOP"`, `"FRONT"`, `"RIGHT"`, `"ISO"`, `"3D"`).
+    pub fn label(&self) -> &'static str {
+        if self.is_top() {
+            return "TOP";
+        }
+        let deg_y = self.yaw.to_degrees().rem_euclid(360.0);
+        let deg_p = self.pitch.to_degrees();
+        if (deg_p - 90.0).abs() < 2.0 {
+            if !(2.0..=358.0).contains(&deg_y) {
+                return "FRONT";
+            }
+            if (deg_y - 90.0).abs() < 2.0 {
+                return "LEFT";
+            }
+            if (deg_y - 180.0).abs() < 2.0 {
+                return "BACK";
+            }
+            if (deg_y - 270.0).abs() < 2.0 {
+                return "RIGHT";
+            }
+        }
+        if (deg_p - 54.7356).abs() < 3.0 {
+            return "ISO";
+        }
+        "3D"
+    }
+}
+
 /// A resolved colour: its RGB, whether it is colour 7, and its index colour (0 = a true
 /// colour), which picks the style of a colour-dependent plot style table.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -100,6 +250,14 @@ struct Ctx<'a> {
     block_pstyle: Option<usize>,
     /// Transparency (percent) of the block reference being expanded, for `ByBlock`.
     block_transparency: u8,
+    /// Accumulated Z elevation for 3D orbit projection.
+    z_offset: f64,
+    /// Accumulated Z scale for 3D orbit projection inside block references.
+    z_scale: f64,
+    /// Viewport model-to-paper transform when rendering inside a layout viewport.
+    vp_xf: Mat3,
+    /// Inverse of `vp_xf` (paper-to-model) when rendering inside a layout viewport.
+    vp_xf_inv: Mat3,
 }
 
 impl Ctx<'_> {
@@ -117,6 +275,9 @@ struct Builder<'a> {
     opts: &'a Options,
     /// Plotting: skip layers marked "do not plot".
     plotting: bool,
+    /// True when building a paper-space layout directly (ordinary paper-space entities stay in
+    /// 2D paper coordinates; only model-space viewport contents use [`Options::orbit`]).
+    paper: bool,
     /// The plot style table drawn with.
     styles: Option<&'a plotstyle::Styler>,
     /// Named plot style (table index) of the entity being drawn.
@@ -134,6 +295,15 @@ struct Builder<'a> {
 pub const MAX_BLOCK_EXPANSION: usize = 2_000_000;
 
 impl Builder<'_> {
+    /// The 3D orbit active for `ctx`: 2D Top for ordinary paper-space geometry, and
+    /// [`Options::orbit`] for model space (including model space seen through a layout viewport).
+    fn active_orbit(&self, ctx: &Ctx) -> Orbit3d {
+        if self.paper && ctx.top != VIEWPORT_CONTENT {
+            Orbit3d::default()
+        } else {
+            self.opts.orbit
+        }
+    }
     /// `color` and `lw` as the plot style table prints them.
     fn styled(&self, color: Ink, lw: f32) -> (Ink, f32) {
         match self.styles {
@@ -168,10 +338,32 @@ impl Builder<'_> {
         let (color, _) = self.styled(color, 0.0);
         self.push_polyline(ctx, color, 0.0, pts);
     }
-    fn push_polyline(&mut self, ctx: &Ctx, color: Ink, lw: f32, pts: &[Vec2]) {
+    /// Project a 2D point `p` with additional local Z offset `extra_z` through `ctx` and the active 3D orbit.
+    fn project_pt(&self, ctx: &Ctx, p: Vec2, extra_z: f64) -> Vec2 {
+        let orbit = self.active_orbit(ctx);
+        if orbit.is_top() {
+            return ctx.xf.apply(p);
+        }
+        let z = ctx.z_offset + extra_z * ctx.z_scale;
+        let q = ctx.xf.apply(p);
+        if ctx.top == VIEWPORT_CONTENT {
+            let m = ctx.vp_xf_inv.apply(q);
+            let m_proj = orbit.project(cadcraft_geom::Vec3::new(m.x, m.y, z));
+            ctx.vp_xf.apply(m_proj)
+        } else {
+            orbit.project(cadcraft_geom::Vec3::new(q.x, q.y, z))
+        }
+    }
+    /// Append a 3D polyline primitive projected through the current context and 3D orbit.
+    fn polyline_3d(&mut self, ctx: &Ctx, color: Ink, lw: f32, pts: &[cadcraft_geom::Vec3]) {
+        if pts.len() < 2 {
+            return;
+        }
+        self.note_pen(color);
+        let (color, lw) = self.styled(color, lw);
         let start = self.list.verts.len() as u32;
         for p in pts {
-            let q = ctx.xf.apply(*p);
+            let q = self.project_pt(ctx, p.xy(), p.z);
             self.list.bounds.add(q);
             self.list.verts.push(q);
         }
@@ -186,9 +378,30 @@ impl Builder<'_> {
             len: pts.len() as u32,
         });
     }
+    /// Push a styled 2D polyline primitive projected through `ctx`.
+    fn push_polyline(&mut self, ctx: &Ctx, color: Ink, lw: f32, pts: &[Vec2]) {
+        let start = self.list.verts.len() as u32;
+        for p in pts {
+            let q = self.project_pt(ctx, *p, 0.0);
+            self.list.bounds.add(q);
+            self.list.verts.push(q);
+        }
+        self.list.prims.push(DPrim {
+            handle: ctx.top,
+            color: color.rgb,
+            aci7: color.aci7,
+            lw,
+            transparency: self.transparency,
+            kind: Kind::Polyline,
+            start,
+            len: pts.len() as u32,
+        });
+    }
+    /// Append filled triangles transformed by `ctx.xf`.
     fn tris(&mut self, ctx: &Ctx, color: Ink, tris: &[Vec2]) {
         self.tris_at(ctx, color, tris, ctx.xf);
     }
+    /// Append filled triangles transformed by `xf` and projected through the active 3D orbit.
     fn tris_at(&mut self, ctx: &Ctx, color: Ink, tris: &[Vec2], xf: Mat3) {
         if tris.len() < 3 {
             return;
@@ -196,8 +409,20 @@ impl Builder<'_> {
         self.note_pen(color);
         let (color, _) = self.styled(color, 0.0);
         let start = self.list.tris.len() as u32;
+        let orbit = self.active_orbit(ctx);
         for p in tris {
-            let q = xf.apply(*p);
+            let q = if orbit.is_top() {
+                xf.apply(*p)
+            } else {
+                let q0 = xf.apply(*p);
+                if ctx.top == VIEWPORT_CONTENT {
+                    let m = ctx.vp_xf_inv.apply(q0);
+                    let m_proj = orbit.project(cadcraft_geom::Vec3::new(m.x, m.y, ctx.z_offset));
+                    ctx.vp_xf.apply(m_proj)
+                } else {
+                    orbit.project(cadcraft_geom::Vec3::new(q0.x, q0.y, ctx.z_offset))
+                }
+            };
             self.list.bounds.add(q);
             self.list.tris.push(q);
         }
@@ -214,8 +439,14 @@ impl Builder<'_> {
     }
     /// Shaped text: strokes as polylines; TrueType glyphs filled (TEXTFILL) or outlined.
     fn shaped(&mut self, ctx: &Ctx, color: Ink, lw: f32, sh: &cadcraft_fonts::Shaped) {
+        let on_screen = !self.plotting && self.opts.min_dash > 0.0;
+        let stroke_lw = if on_screen && lw * 3.78 <= 1.35 {
+            -1.0
+        } else {
+            lw
+        };
         for s in &sh.strokes {
-            self.polyline(ctx, color, lw, s);
+            self.polyline(ctx, color, stroke_lw, s);
         }
         if sh.glyphs.is_empty() {
             return;
@@ -233,10 +464,20 @@ impl Builder<'_> {
                     let xf = crate::text::placement(t, ctx.xf);
                     let mesh = crate::text::mesh(t, xf, pixel);
                     self.tris_at(ctx, color, &mesh.triangles, xf);
+                    if on_screen && xf.a.hypot(xf.b).hypot(xf.c.hypot(xf.d)) * 1000.0 <= pixel * 9.0 {
+                        for c in g {
+                            self.polyline(ctx, color, stroke_lw, c);
+                        }
+                    }
                     mesh.triangles.len()
                 } else {
                     let tris = fill::triangulate_evenodd(g);
                     self.tris(ctx, color, &tris);
+                    if on_screen {
+                        for c in g {
+                            self.polyline(ctx, color, stroke_lw, c);
+                        }
+                    }
                     tris.len()
                 };
                 if let Some(t) = glyph.filter(|_| self.plotting)
@@ -255,9 +496,10 @@ impl Builder<'_> {
             }
         }
     }
+    /// Append a point primitive at `p` projected through `ctx`.
     fn point(&mut self, ctx: &Ctx, color: Ink, p: Vec2) {
         let (color, _) = self.styled(color, 0.0);
-        let q = ctx.xf.apply(p);
+        let q = self.project_pt(ctx, p, 0.0);
         self.list.bounds.add(q);
         let start = self.list.verts.len() as u32;
         self.list.verts.push(q);
@@ -272,11 +514,19 @@ impl Builder<'_> {
             len: 1,
         });
     }
+    /// Append an infinite line (`XLINE`) or ray primitive projected through `ctx`.
     fn infinite(&mut self, ctx: &Ctx, color: Ink, base: Vec2, dir: Vec2, ray: bool) {
         let (color, _) = self.styled(color, 0.0);
         let start = self.list.verts.len() as u32;
-        self.list.verts.push(ctx.xf.apply(base));
-        self.list.verts.push(ctx.xf.apply_vec(dir).normalized());
+        self.list.verts.push(self.project_pt(ctx, base, 0.0));
+        let d2 = ctx.xf.apply_vec(dir);
+        let orbit = self.active_orbit(ctx);
+        let d_proj = if orbit.is_top() {
+            d2.normalized()
+        } else {
+            orbit.project_vec(cadcraft_geom::Vec3::new(d2.x, d2.y, 0.0)).normalized()
+        };
+        self.list.verts.push(d_proj);
         self.list.prims.push(DPrim {
             handle: ctx.top,
             color: color.rgb,
@@ -312,6 +562,7 @@ mod viewports;
 
 pub use dim_draw::{dim_text, dimension_in};
 pub use display::{DPrim, DisplayList, Kind, MAX_TRANSPARENCY, NO_LAYER, PlotText, VIEWPORT_CONTENT, alpha};
+pub use draw::entity_elevation;
 pub use pipeline::{Options, build, build_entities, build_plot};
 use props::{default_lineweight, resolve_common};
 use text_entity::text_style;

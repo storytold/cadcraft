@@ -1451,3 +1451,175 @@ menu	Modify	Ändra
 	Check for Updates…	Sök efter uppdateringar…
 	CADCraft is up to date.	CADCraft är uppdaterat.
 	Could not check for updates.	Det gick inte att söka efter uppdateringar.
+	Copy All	Kopiera allt
+	Copy history output to clipboard	Kopiera historik till urklipp
+	Close History Window (F2)	Stäng historikfönster (F2)
+	Edit XData (XDEDIT)	Redigera XData (XDEDIT)
+	Open visual XData Editor for selected object	Öppna visuell XData-redigerare för valt objekt
+	Command & XData Output (select text + Ctrl+C to copy)	Kommando- & XData-utdata (markera text + Ctrl+C för att kopiera)
+	List Xdata	Lista XData
+	Edit Xdata	Redigera XData
+	Edit Xdata (XDEDIT)	Redigera XData (XDEDIT)
+	✏ Edit XData (XDEDIT)	✏ Redigera XData (XDEDIT)
+	Open visual XData Editor dialog	Öppna visuell XData-redigerare
+	📋 Copy Values	📋 Kopiera värden
+	Copy XData values (Key,Value) to clipboard	Kopiera XData-värden (Nyckel,Värde) till urklipp
+	Click to copy value to clipboard	Klicka för att kopiera värdet till urklipp
+	✓ XData values copied to clipboard	✓ XData-värden kopierade till urklipp
+	Selection canceled — previous object kept.	Val avbrutet — föregående objekt behölls.
+	Drag left or right to resize this column	Dra åt vänster eller höger för att ändra kolumnbredd
+	XDATA Editor (XDEDIT)	XDATA-redigerare (XDEDIT)
+	No object selected.	Inget objekt valt.
+	🎯 Select object in drawing	🎯 Välj objekt i ritningen
+	Object: {kind}	Objekt: {kind}
+	Layer: {layer}	Lager: {layer}
+	Handle: {handle}	Referens: {handle}
+	🎯 Select Another Object	🎯 Välj ett annat objekt
+	Hide editor temporarily, pick another object in the drawing, and open it in XDEDIT	Dölj redigeraren tillfälligt, välj ett annat objekt i ritningen och öppna det i XDEDIT
+	Next ▶	Nästa ▶
+	Step to the next object with XData in the selection or drawing	Gå till nästa objekt med XData i urvalet eller ritningen
+	◀ Previous	◀ Föregående
+	Step to the previous object with XData in the selection or drawing	Gå till föregående objekt med XData i urvalet eller ritningen
+	📋 Copy JSON	📋 Kopiera JSON
+	Copy all XData as structured JSON to clipboard	Kopiera alla XData som strukturerad JSON till urklipp
+	✓ JSON copied to clipboard	✓ JSON kopierad till urklipp
+	📋 Copy Text	📋 Kopiera text
+	Copy all XData as text to clipboard	Kopiera alla XData som text till urklipp
+	✓ XData text copied to clipboard	✓ XData-text kopierad till urklipp
+	AppID (1001):	AppID (1001):
+	New AppID (e.g. Lumi_KLIC)	Nytt AppID (t.ex. Lumi_KLIC)
+	+ Add AppID	+ Lägg till AppID
+	🗑 Delete AppID	🗑 Ta bort AppID
+	Remove this Application and its XData from the entity	Ta bort detta program och dess XData från objektet
+	Application removed (click Apply to save)	Program borttaget (klicka på Verkställ för att spara)
+	🔍 Filter:	🔍 Filter:
+	Search key or value (e.g. THEMA, DIEPTE)...	Sök nyckel eller värde (t.ex. THEMA, DIEPTE)...
+	Key width:	Nyckelbredd:
+	Drag this value or the column divider ⇔ to resize the Key column	Dra detta värde eller kolumnavdelaren ⇔ för att ändra Nyckel-kolumnen
+	Value width:	Värdebredd:
+	Drag this value or the column divider ⇔ to resize the Value column	Dra detta värde eller kolumnavdelaren ⇔ för att ändra Värde-kolumnen
+	Smart Key=Value Columns	Smarta Nyckel=Värde-kolumner
+	Split 'KEY=VALUE' or 'Key: Value' into separate editable Key and Value fields	Dela upp 'KEY=VALUE' eller 'Key: Value' i separata redigerbara fält
+	This object currently has no user XData.	Detta objekt har för närvarande inga användar-XData.
+	+ Create Lumi_KLIC Application	+ Skapa Lumi_KLIC-program
+	DXF Code	DXF-kod
+	Property / Key ⇔	Egenskap / Nyckel ⇔
+	Value (Selectable & Editable) ⇔	Värde (Markerbart & Redigerbart) ⇔
+	Raw Value (Selectable & Editable) ⇔	Råvärde (Markerbart & Redigerbart) ⇔
+	Actions	Åtgärder
+	Copy value to clipboard	Kopiera värde till urklipp
+	✓ Copied: {val}	✓ Kopierat: {val}
+	Move row up	Flytta rad uppåt
+	Move row down	Flytta rad nedåt
+	Delete this XData row	Ta bort denna XData-rad
+	Add Row:	Lägg till rad:
+	Key (e.g. OPMERKING)	Nyckel (t.ex. OPMERKING)
+	+ Add Property	+ Lägg till egenskap
+	● Unsaved changes	● Osparade ändringar
+	Ready — click '🎯 Select Next Object' or '◀ Previous / Next ▶' to switch objects.	Klar — klicka på '🎯 Välj nästa objekt' eller '◀ Föregående / Nästa ▶'.
+	↺ Revert	↺ Återställ
+	✔ Apply / Save XData	✔ Verkställ / Spara XData
+	Write modified XData to the entity (Undoable with Ctrl+Z)	Skriv ändrade XData till objektet (kan ångras med Ctrl+Z)
+	✔ Save & Select Next Object	✔ Spara & välj nästa objekt
+	🎯 Select Next Object	🎯 Välj nästa objekt
+	Save any changes and directly pick the next object in the drawing	Spara ändringar och välj direkt nästa objekt i ritningen
+	Object {idx1}/{total} loaded ({kind} — {handle})	Objekt {idx1}/{total} laddat ({kind} — {handle})
+	↺ Reverted to saved entity XData	↺ Återställt till sparade XData
+	✔ XData saved to entity (Undoable)	✔ XData sparade i objektet (Ctrl+Z möjligt)
+	Error: {err}	Fel: {err}
+	⚠ Entity XData changed outside editor — click Revert before saving.	⚠ Objektets XData ändrades utanför redigeraren — klicka på Återställ innan du sparar.
+	+  |  {view} ({yaw}°, {pitch}°)  |  3D Orbit Wireframe	+  |  {view} ({yaw}°, {pitch}°)  |  3D-bana trådmodell
+	.NET Plugin Bridge	.NET-insticksbrygga
+	3D Orbit	3D-bana
+	3D Views	3D-vyer
+	Adjust Image...	Justera bild...
+	Adjust...	Justera...
+	Associate	Associera
+	Attach Image...	Bifoga bild...
+	AutoLISP / VB.NET / C# IDE...	AutoLISP / VB.NET / C# IDE...
+	AutoLISP / VBA IDE...	AutoLISP / VBA IDE...
+	Back	Bakifrån
+	Change Properties	Ändra egenskaper
+	Clip Image	Klipp bild
+	Frame	Ram
+	Front	Framifrån
+	Image	Bild
+	Image Frame	Bildram
+	Layouts	Layouter
+	Load .NET DLL / LISP Application (NETLOAD)...	Läs in .NET DLL- / LISP-program (NETLOAD)...
+	Load Application (NETLOAD)...	Läs in program (NETLOAD)...
+	Model Tab	Fliken Modell
+	NE Isometric	NO isometrisk
+	NW Isometric	NV isometrisk
+	Raster Image Reference...	Rasterbildsreferens...
+	SE Isometric	SO isometrisk
+	SW Isometric	SV isometrisk
+	Top (2D Plan)	Uppifrån (2D-plan)
+	View Resolution	Vyupplösning
+	📋 Copy All	📋 Kopiera allt
+	🗑 Clear	🗑 Rensa
+	.NET command started	.NET-kommando startat
+	0. Empty file (New)	0. Tom fil (Ny)
+	1. AutoLISP: Basic Math & Commands	1. AutoLISP: Grundläggande matematik & kommandon
+	2. AutoLISP: Survey Marker (c:meetpunt)	2. AutoLISP: Mätpunkt (c:meetpunt)
+	3. VB.NET Plugin (.vb -> .dll)	3. VB.NET-insticksmodul (.vb -> .dll)
+	4. C# Plugin (.cs -> .dll)	4. C#-insticksmodul (.cs -> .dll)
+	Added to Startup Suite (Auto-Load at startup & per drawing)	Tillagd i startgruppen (automatisk inläsning vid start & per ritning)
+	Auto-Load	Läs in automatiskt
+	AutoLISP / VB.NET / C# IDE & NETLOAD Studio	AutoLISP / VB.NET / C# IDE & NETLOAD Studio
+	AutoLISP Commands (click to run)	AutoLISP-kommandon (klicka för att köra)
+	AutoLISP Editor (.lsp)	AutoLISP-redigerare (.lsp)
+	Bottom	Underifrån
+	C# Plugin Editor (.cs)	C#-insticksredigerare (.cs)
+	C# source opened	C#-källkod öppnad
+	Clear Log	Rensa logg
+	Commands	Kommandon
+	Compact Menu	Kompakt meny
+	Compilation error	Kompileringsfel
+	Compilation failed (see Console)	Kompilering misslyckades (se Konsol)
+	Compilation succeeded	Kompilering lyckades
+	Compile & Load .NET DLL	Kompilera & läs in .NET-DLL
+	Console / Output	Konsol / Utdata
+	Error	Fel
+	Error in	Fel i
+	Error: cadcraft-nethost.exe not found next to the application.	Fel: cadcraft-nethost.exe hittades inte bredvid programmet.
+	Evaluate the LISP code or compile the VB.NET / C# source directly into a .NET DLL	Utvärdera LISP-koden eller kompilera VB.NET- / C#-källkoden direkt till en .NET-DLL
+	Failed to invoke compiler	Det gick inte att starta kompilatorn
+	Failed to load	Det gick inte att läsa in
+	Failed to save to	Det gick inte att spara till
+	Failed to start .NET command	Det gick inte att starta .NET-kommandot
+	Failed to write source file	Det gick inte att skriva källfilen
+	Hide this Studio window and show the compact floating Plugin Commands menu	Dölj detta Studio-fönster och visa den kompakta flytande menyn Instickskommandon
+	Load & Run LISP	Läs in och kör LISP
+	NETLOAD .NET DLL loaded	NETLOAD .NET DLL inläst
+	NETLOAD error in	NETLOAD-fel i
+	NETLOAD failed to run cadcraft-nethost.exe	NETLOAD kunde inte köra cadcraft-nethost.exe
+	Open .lsp / .vb / .cs	Öppna .lsp / .vb / .cs
+	Open NETLOAD Studio (VBAIDE)	Öppna NETLOAD Studio (VBAIDE)
+	Open Studio	Öppna Studio
+	Open the full AutoLISP / VB.NET / C# & NETLOAD Studio	Öppna hela AutoLISP / VB.NET / C# & NETLOAD Studio
+	Plugin Commands	Instickskommandon
+	Plugins	Insticksprogram
+	Quick Expression	Snabbuttryck
+	Ready. Open a .dll (.NET VB.NET/C#) or .lsp (AutoLISP) file via NETLOAD.	Redo. Öppna en .dll- (.NET VB.NET/C#) eller .lsp-fil (AutoLISP) via NETLOAD.
+	Registered commands	Registrerade kommandon
+	Removed from Startup Suite (Auto-Load)	Borttagen från startgruppen (automatisk inläsning)
+	Routine started	Rutin startad
+	Routine started from	Rutin startad från
+	Run .NET command	Kör .NET-kommando
+	Run command	Kör kommando
+	Save the current source code in the editor to disk	Spara den aktuella källkoden i redigeraren till disk
+	Saved to	Sparad till
+	Select and load a .lsp, .dll, .vb, or .cs file from disk	Välj och läs in en .lsp-, .dll-, .vb- eller .cs-fil från disk
+	Show Floating Command Menu	Visa flytande kommandomeny
+	Template...	Mall...
+	Toggle Startup Suite (Auto-Load at startup)	Växla startgrupp (läs in automatiskt vid start)
+	Toggle Startup Suite: automatically load this file at startup and in every opened drawing	Växla startgrupp: läs in denna fil automatiskt vid start och i varje öppnad ritning
+	VB.NET Plugin Editor (.vb)	VB.NET-insticksredigerare (.vb)
+	VB.NET source opened	VB.NET-källkod öppnad
+	cadcraft-nethost.exe not found	cadcraft-nethost.exe hittades inte
+	cannot read file	kan inte läsa filen
+	e.g. (+ 1 2) or + 1 2	t.ex. (+ 1 2) eller + 1 2
+	no [CommandMethod] found	ingen [CommandMethod] hittades
+	Font	Teckensnitt
+	Save Layout as Template	Spara layout som mall

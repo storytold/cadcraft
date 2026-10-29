@@ -53,8 +53,14 @@ pub(super) fn preview_options(scale: f64) -> cadcraft_render::Options {
 /// command's rubber band and rebuilt copies of existing objects. They carry CLAYER's properties,
 /// not the objects', so they are drawn opaque (the GPU drag of the objects themselves keeps their
 /// transparency, see [`draw_drag_gpu`]).
-pub(super) fn rebuilt_preview<'a>(doc: &cadcraft_doc::Drawing, ents: impl IntoIterator<Item = &'a cadcraft_doc::Entity>, scale: f64) -> DisplayList {
-    cadcraft_render::build_entities(doc, ents, &preview_options(scale))
+pub(super) fn rebuilt_preview<'a>(
+    doc: &cadcraft_doc::Drawing,
+    ents: impl IntoIterator<Item = &'a cadcraft_doc::Entity>,
+    scale: f64,
+    orbit: cadcraft_render::Orbit3d,
+) -> DisplayList {
+    let options = cadcraft_render::Options { orbit, ..preview_options(scale) };
+    cadcraft_render::build_entities(doc, ents, &options)
 }
 
 /// Rebuild the display list when needed. `xf`: the current view; `views`: every area on screen
@@ -76,6 +82,11 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
     // contents stay in the list, which then follows its view: realtime navigation changes it
     // without a new revision.
     let split = split_viewport(st, stencil_clip(app)).map(|(h, ..)| h);
+    let active_orbit = if matches!(st.space, cadcraft_doc::Space::Paper(_)) && (st.mspace.is_none() || split.is_some()) {
+        cadcraft_render::Orbit3d::default()
+    } else {
+        st.orbit
+    };
     let vp_view = {
         use std::hash::{Hash, Hasher};
         let mut s = std::collections::hash_map::DefaultHasher::new();
@@ -88,7 +99,17 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
         s.finish()
     };
     let (lwdisplay, transparency_display) = (app.session.settings.lwdisplay, app.session.settings.transparency_display);
-    let key: ListKey = (st.uid, st.revision, band(px), lod_band, lwdisplay, transparency_display, std::sync::Arc::as_ptr(&st.doc) as usize, vp_view);
+    let key: ListKey = (
+        st.uid,
+        st.revision,
+        band(px),
+        lod_band,
+        lwdisplay,
+        transparency_display,
+        std::sync::Arc::as_ptr(&st.doc) as usize,
+        vp_view,
+        active_orbit.hash_key(),
+    );
     // A background build that finished: use it unless the drawing has changed since it started
     // (or the list was dropped to force a rebuild).
     if let Some(job) = &app.canvas.job {
@@ -114,8 +135,16 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
         return;
     }
     // Only the view moved: keep drawing the current list and build the new one in the background.
+    // While an orbit rotation build is already in flight for the same content, let it finish and
+    // install its orientation before starting the next step, rather than cancelling every frame.
     let view_only = app.canvas.list.is_some() && same_content(&app.canvas.key, &key);
-    if view_only && app.canvas.job.as_ref().is_some_and(|j| j.serves(&key, &visible)) {
+    if view_only
+        && app
+            .canvas
+            .job
+            .as_ref()
+            .is_some_and(|j| j.serves(&key, &visible) || (same_content(&j.key, &key) && j.key.8 != app.canvas.key.8))
+    {
         return;
     }
     // A build for another view, or for a drawing that has since changed, is no longer wanted:
@@ -132,10 +161,11 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
         lineweights: lwdisplay,
         view_height: st.paper_view().height,
         plot_style_table: None,
-        view: build_window(views),
+        view: if active_orbit.is_top() { build_window(views) } else { None },
         transparency: app.session.settings.transparency_display,
         skip_viewport: split,
         cancel: None,
+        orbit: active_orbit,
     };
     if view_only {
         let t = Tokens::get();

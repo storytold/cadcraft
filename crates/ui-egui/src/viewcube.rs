@@ -10,14 +10,20 @@
 //! twist, no 3D view direction and no user coordinate system yet, so the compass ring explains
 //! that instead of rotating, and the WCS menu lists the only coordinate system there is.
 
-use egui::{Color32, CursorIcon, Pos2, Rect, Sense, Stroke, pos2, vec2};
+use egui::{CursorIcon, Pos2, Rect, Sense, Stroke, pos2, vec2};
 use serde_json::json;
 
 use crate::CadApp;
 use crate::theme::Tokens;
 
+pub mod cube3d;
+use cube3d::{CubeProjector, CubeZone};
+
 /// Shown when the compass ring is clicked or dragged.
 pub const NO_TWIST: &str = "ViewCube: rotating the view needs a view twist, which the 2D plan view doesn't support yet.";
+
+/// Half-size (in screen pixels) of the unit 3D ViewCube before projection.
+const CUBE_HALF_SIZE: f32 = 28.0;
 
 /// Where the ViewCube's parts are on the canvas.
 #[derive(Clone, Copy, Debug)]
@@ -34,32 +40,42 @@ pub struct Layout {
 }
 
 impl Layout {
+    /// Compute the ViewCube layout rectangles anchored to the top-right of `canvas`.
     pub fn new(canvas: Rect) -> Self {
-        let center = pos2(canvas.right() - 92.0, canvas.top() + 82.0);
-        let ring = 58.0;
+        let center = pos2(canvas.right() - 96.0, canvas.top() + 86.0);
+        let ring = 64.0;
         Layout {
             center,
             ring,
-            face: Rect::from_center_size(center, vec2(44.0, 44.0)),
+            face: Rect::from_center_size(center, vec2(56.0, 56.0)),
             home: Rect::from_center_size(center + vec2(-ring + 2.0, -ring + 2.0), vec2(20.0, 20.0)),
             pill: Rect::from_center_size(center + vec2(0.0, ring + 26.0), vec2(56.0, 16.0)),
-            bounds: Rect::from_center_size(center, vec2(2.0 * (ring + 10.0), 2.0 * (ring + 10.0))),
+            bounds: Rect::from_center_size(center, vec2(2.0 * (ring + 14.0), 2.0 * (ring + 14.0))),
         }
     }
 
-    /// The part of the cube at `p` (not the pill, which is its own widget).
+    /// The part of the cube at `p` in Top plan view (not the pill, which is its own widget).
     pub fn part_at(&self, p: Pos2) -> Option<Part> {
+        self.part_at_in_orbit(p, cadcraft_render::Orbit3d::default()).0
+    }
+
+    /// The [`Part`] and optional [`CubeZone`] (face, edge, or corner) at `p` under `orbit`.
+    pub fn part_at_in_orbit(&self, p: Pos2, orbit: cadcraft_render::Orbit3d) -> (Option<Part>, Option<CubeZone>) {
         if self.home.contains(p) {
-            return Some(Part::Home);
+            return (Some(Part::Home), None);
         }
-        if self.face.contains(p) {
-            return Some(Part::Face);
+        let proj = CubeProjector::new(self.center, CUBE_HALF_SIZE, orbit);
+        if let Some(zone) = proj.zone_at(p) {
+            return (Some(Part::Face), Some(zone));
         }
-        let d = p.distance(self.center);
-        ((self.ring - 10.0..=self.ring + 10.0).contains(&d)).then_some(Part::Ring)
+        if proj.on_compass_ring(p, self.ring) {
+            return (Some(Part::Ring), None);
+        }
+        (None, None)
     }
 }
 
+/// Interactive region of the ViewCube widget.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Part {
     Face,
@@ -68,66 +84,123 @@ pub enum Part {
 }
 
 impl Part {
+    /// Tooltip text shown when hovering over this part of the ViewCube.
     fn tip(self) -> &'static str {
         match self {
-            Part::Face => "Top: plan view of the drawing (zoom extents)",
+            Part::Face => "Click a face, edge, or corner to align the 3D view; drag to orbit",
             Part::Home => "Home: zoom to the drawing extents",
-            Part::Ring => "Compass: view rotation isn't available in the 2D plan view yet",
+            Part::Ring => "Compass: drag to rotate the 3D view around the Z axis, or click N/E/S/W",
         }
     }
 }
 
-/// Paint the ViewCube's ring, compass letters, Top face and Home button, and handle the pointer.
-/// The canvas paints the WCS pill itself; this returns the pointer's part for its highlight.
+/// Paint the 3D projected ViewCube, tilted compass ring, and Home button, and handle the pointer.
+/// The canvas paints the WCS pill itself.
 pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
+    let current_orbit = app.session.state().map(|s| s.orbit).unwrap_or_default();
+    let proj = CubeProjector::new(l.center, CUBE_HALF_SIZE, current_orbit);
     let resp = ui.interact(l.bounds, ui.scope_id().with("viewcube"), Sense::click_and_drag());
-    let part = resp.hover_pos().and_then(|p| l.part_at(p));
+    let (part, hover_zone) = resp.hover_pos().map_or((None, None), |pos| l.part_at_in_orbit(pos, current_orbit));
+
     let p = ui.painter_at(l.bounds.union(l.pill));
-    let ring_col = if part == Some(Part::Ring) { Color32::from_rgb(0x5c, 0x67, 0x7c) } else { Color32::from_rgb(0x48, 0x50, 0x5c) };
-    p.circle_stroke(l.center, l.ring, Stroke::new(9.0, ring_col));
-    p.circle_stroke(l.center, l.ring + 4.5, Stroke::new(1.0, Color32::from_rgb(0x5c, 0x65, 0x72)));
-    let f = egui::FontId::proportional(17.0);
-    let lc = Color32::from_rgb(0xc8, 0xcc, 0xd2);
-    let c = l.center;
-    let ring = l.ring;
-    p.text(c + vec2(0.0, -ring - 1.0), egui::Align2::CENTER_CENTER, crate::tl!("N"), f.clone(), lc);
-    p.text(c + vec2(0.0, ring + 1.0), egui::Align2::CENTER_CENTER, crate::tl!("S"), f.clone(), lc);
-    p.text(c + vec2(ring + 1.0, 0.0), egui::Align2::CENTER_CENTER, crate::tl!("E"), f.clone(), lc);
-    p.text(c + vec2(-ring - 1.0, 0.0), egui::Align2::CENTER_CENTER, crate::tl!("W"), f, lc);
-    let face_col = if part == Some(Part::Face) { Color32::from_rgb(0xb8, 0xbc, 0xc2) } else { Color32::from_rgb(0x9a, 0x9e, 0xa4) };
-    p.rect_filled(l.face, 2.0, face_col);
-    p.rect_stroke(l.face, 2.0, Stroke::new(1.0, Color32::from_rgb(0x6c, 0x70, 0x76)), egui::StrokeKind::Inside);
-    p.text(c, egui::Align2::CENTER_CENTER, crate::tl!("TOP"), egui::FontId::proportional(13.0), Color32::from_rgb(0x50, 0x54, 0x5a));
+    proj.paint(&p, l.ring, part == Some(Part::Ring), hover_zone);
     paint_home(&p, l.home, part == Some(Part::Home));
 
-    let resp = match part {
-        Some(part) => resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(part.tip()),
-        None => resp,
+    let resp = match (part, hover_zone) {
+        (Some(Part::Face), Some(zone)) => resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(zone.tooltip()),
+        (Some(part), _) => resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(part.tip()),
+        (None, _) => resp,
     };
-    let pressed_on = resp.interact_pointer_pos().and_then(|o| l.part_at(o));
+    let press_pos = ui.input(|i| i.pointer.press_origin()).or(resp.interact_pointer_pos());
+    let (pressed_on, pressed_zone) = press_pos.map_or((None, None), |o| l.part_at_in_orbit(o, current_orbit));
     if resp.clicked() {
         match pressed_on {
-            Some(Part::Face | Part::Home) => {
+            Some(Part::Face) => {
+                let zone = pressed_zone.or(hover_zone).unwrap_or(CubeZone::new(0, 0, 1));
+                let (yaw_deg, pitch_deg) = zone.target_angles_deg(current_orbit.yaw.to_degrees());
+                if zone == CubeZone::new(0, 0, 1) && current_orbit.is_top() {
+                    let _ = app.run("zoom.extents", json!({}));
+                } else {
+                    let _ = app.run("3dorbit", json!({ "yaw": yaw_deg, "pitch": pitch_deg }));
+                    let _ = app.run("zoom.extents", json!({}));
+                }
+            }
+            Some(Part::Home) => {
                 let _ = app.run("zoom.extents", json!({}));
             }
-            Some(Part::Ring) => app.session.echo(NO_TWIST),
+            Some(Part::Ring) => {
+                if current_orbit.is_top() {
+                    app.session.echo(NO_TWIST);
+                } else if let Some(click_pos) = resp.interact_pointer_pos() {
+                    // Clicking near N / S / E / W on the compass ring in 3D snaps yaw to that cardinal direction.
+                    for (dir, target_yaw) in [
+                        (cadcraft_geom::Vec3::new(0.0, 1.0, 0.0), 180.0_f64),
+                        (cadcraft_geom::Vec3::new(0.0, -1.0, 0.0), 0.0_f64),
+                        (cadcraft_geom::Vec3::new(1.0, 0.0, 0.0), -90.0_f64),
+                        (cadcraft_geom::Vec3::new(-1.0, 0.0, 0.0), 90.0_f64),
+                    ] {
+                        if proj.project_ring_point(dir, l.ring).distance(click_pos) <= 14.0 {
+                            let _ = app.run(
+                                "3dorbit",
+                                json!({ "yaw": target_yaw, "pitch": current_orbit.pitch.to_degrees() }),
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
             None => {}
         }
     }
-    if resp.drag_started() && pressed_on == Some(Part::Ring) {
-        app.session.echo(NO_TWIST);
+    if resp.dragged() && pressed_on == Some(Part::Face) {
+        let d = resp.drag_delta();
+        let _ = app.session.orbit_drag(f64::from(d.x), f64::from(d.y));
+    }
+    if resp.dragged() && pressed_on == Some(Part::Ring) {
+        if current_orbit.is_top() {
+            if resp.drag_started() {
+                app.session.echo(NO_TWIST);
+            }
+        } else {
+            let d = resp.drag_delta();
+            let _ = app.session.orbit_drag(f64::from(d.x), 0.0);
+        }
     }
     let mut action = None;
+    let mut start_orbit = false;
     resp.context_menu(|ui| {
-        if ui.button("Home").clicked() {
+        if ui.button("Home (Zoom Extents)").clicked() {
             action = Some(("zoom.extents", json!({})));
             ui.close();
         }
+        if ui.button("3D Orbit (3DO)").clicked() {
+            start_orbit = true;
+            ui.close();
+        }
+        ui.separator();
+        for (lbl, cmd) in [
+            ("Top (2D Plan)", "view.top"),
+            ("Front", "view.front"),
+            ("Right", "view.right"),
+            ("Left", "view.left"),
+            ("Back", "view.back"),
+            ("SE Isometric", "view.seiso"),
+            ("SW Isometric", "view.swiso"),
+        ] {
+            if ui.button(lbl).clicked() {
+                action = Some((cmd, json!({})));
+                ui.close();
+            }
+        }
+        ui.separator();
         if ui.button("Hide ViewCube").clicked() {
             action = Some(("ui.toggle.viewcube", json!({"on": false})));
             ui.close();
         }
     });
+    if start_orbit {
+        app.start("3dorbit");
+    }
     if let Some((id, params)) = action {
         let _ = app.run(id, params);
     }
@@ -179,17 +252,42 @@ pub fn ucs_icon(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
     ucs_menu(app, egui::Popup::menu(&resp).open_memory(open).at_pointer_fixed());
 }
 
-/// The coordinate-system menu: the WCS (the only coordinate system so far) and the icon switch.
+/// The coordinate-system menu: the WCS, 3D View presets, 3D Orbit and the icon switch.
 fn ucs_menu(app: &mut CadApp, popup: egui::Popup<'_>) {
     let mut hide = false;
+    let mut preset: Option<&'static str> = None;
+    let mut start_orbit = false;
     popup.show(|ui| {
         ui.radio(true, "World (WCS)").on_hover_text("CADCraft draws in the World Coordinate System; user coordinate systems aren't available yet.");
+        ui.separator();
+        if ui.button("3D Orbit (3DO)").clicked() {
+            start_orbit = true;
+            ui.close();
+        }
+        for (lbl, cmd) in [
+            ("Top (2D Plan)", "view.top"),
+            ("Front", "view.front"),
+            ("Right", "view.right"),
+            ("SE Isometric", "view.seiso"),
+            ("SW Isometric", "view.swiso"),
+        ] {
+            if ui.button(lbl).clicked() {
+                preset = Some(cmd);
+                ui.close();
+            }
+        }
         ui.separator();
         if ui.button("Hide UCS Icon").clicked() {
             hide = true;
             ui.close();
         }
     });
+    if start_orbit {
+        app.start("3dorbit");
+    }
+    if let Some(cmd) = preset {
+        let _ = app.run(cmd, json!({}));
+    }
     if hide {
         let _ = app.run("ui.toggle.ucsicon", json!({"on": false}));
     }
@@ -250,7 +348,7 @@ mod tests {
         assert_eq!(l.part_at(l.home.center()), Some(Part::Home));
         assert_eq!(l.part_at(l.center + vec2(0.0, -l.ring)), Some(Part::Ring), "N");
         assert_eq!(l.part_at(l.center + vec2(l.ring + 3.0, 0.0)), Some(Part::Ring), "E");
-        assert_eq!(l.part_at(l.center + vec2(30.0, 30.0)), None, "between the face and the ring");
+        assert_eq!(l.part_at(l.center + vec2(34.0, 34.0)), None, "between the face and the ring");
         assert!(l.bounds.contains_rect(l.home) && l.bounds.contains_rect(l.face));
     }
 
@@ -292,5 +390,29 @@ mod tests {
         click(&mut app, &ctx, l.pill.center(), egui::PointerButton::Primary);
         assert!(menu_shown(&ctx), "WCS menu");
         assert!(app.session.pending_window.is_none());
+    }
+
+    #[test]
+    fn cube3d_faces_edges_and_corners_align_view_orientation() {
+        let (mut app, ctx) = app_and_ctx();
+        let l = Layout::new(canvas(&app));
+        // Clicking the bottom-right corner of the Top face in 2D plan view selects the Top-Front-Right (SE Isometric) corner.
+        let corner_pos = l.center + vec2(22.0, 22.0);
+        let (part, zone) = l.part_at_in_orbit(corner_pos, cadcraft_render::Orbit3d::default());
+        assert_eq!(part, Some(Part::Face));
+        assert_eq!(zone, Some(CubeZone::new(1, -1, 1)), "Top-Front-Right corner");
+        click(&mut app, &ctx, corner_pos, egui::PointerButton::Primary);
+        let orbit = app.session.state().map(|s| s.orbit).unwrap_or_default();
+        assert!(!orbit.is_top(), "clicking corner rotates into 3D isometric view");
+        assert!((orbit.yaw.to_degrees() - -45.0).abs() < 1e-3);
+        assert!((orbit.pitch.to_degrees() - 54.7356).abs() < 0.05);
+
+        // In 3D SE Isometric view, the Front, Right, and Top faces are all projected on the 3D cube and clickable.
+        let proj = CubeProjector::new(l.center, CUBE_HALF_SIZE, orbit);
+        let (front_center, _) = proj.project_unit(cadcraft_geom::Vec3::new(0.0, -1.0, 0.0));
+        assert_eq!(proj.zone_at(front_center), Some(CubeZone::new(0, -1, 0)), "Front face center");
+        click(&mut app, &ctx, front_center, egui::PointerButton::Primary);
+        let orbit_after_front = app.session.state().map(|s| s.orbit).unwrap_or_default();
+        assert_eq!(orbit_after_front.label(), "FRONT");
     }
 }

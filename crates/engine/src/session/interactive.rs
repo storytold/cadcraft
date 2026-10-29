@@ -1,6 +1,6 @@
 use super::{
-    Arc, Bounds2, Drag, Drawing, EngineError, Entity, Handle, Input, PendingWindow, Prompt, Result, Running, Session, Snapshot, Step, Value, Vec2,
-    assoc, cmd, find_command, guard, pointmod, select, snap, sysvars,
+    Arc, Bounds2, Drag, Drawing, EngineError, Entity, Handle, Input, PendingWindow, Prompt, Result, Running, Session, Snapshot, Space, Step, Value,
+    Vec2, assoc, cmd, find_command, guard, pointmod, select, snap, sysvars,
 };
 
 impl Session {
@@ -197,12 +197,13 @@ impl Session {
         match input {
             Input::Point(p) => {
                 let ap = self.pixel_size() * self.settings.pickbox.max(1.0) * 1.5;
+                let orbit = self.edit_orbit();
                 if let Some(pw) = self.pending_window.take() {
                     let crossing = p.x < pw.corner.x;
-                    let hs = select::select_window(self.doc()?, &space, Bounds2::new(pw.corner, p), crossing);
+                    let hs = select::select_window_in_orbit(self.doc()?, &space, orbit, Bounds2::new(pw.corner, p), crossing);
                     return Ok(Some(Input::Pick(cmd::groups::expand(self, hs))));
                 }
-                match select::pick(self.doc()?, &space, p, ap) {
+                match select::pick_in_orbit(self.doc()?, &space, orbit, p, ap) {
                     Some(h) => Ok(Some(Input::Pick(cmd::groups::expand(self, vec![h])))),
                     None => {
                         self.pending_window = Some(PendingWindow { corner: p, during_command: true });
@@ -233,6 +234,14 @@ impl Session {
         }
     }
 
+    /// The orbit that applies to the edit space: the drawing's in model space, else the default (top).
+    pub(crate) fn edit_orbit(&self) -> cadcraft_render::Orbit3d {
+        self.state()
+            .ok()
+            .filter(|st| matches!(st.edit_space(), Space::Model))
+            .map_or_else(cadcraft_render::Orbit3d::default, |st| st.orbit)
+    }
+
     /// Input while a typed selection mode (W, C, F, WP, CP) collects its points: the selected
     /// objects go to the command as a pick once the mode is complete.
     fn select_mode_input(&mut self, input: Input) -> Result<Option<Input>> {
@@ -256,17 +265,18 @@ impl Session {
                 }
             };
         }
+        let orbit = self.edit_orbit();
         match input {
             Input::Point(p) => {
                 if mode.push(p) {
-                    return Ok(mode.select(self.doc()?, &self.space()).map(Input::Pick));
+                    return Ok(mode.select(self.doc()?, &self.space(), orbit).map(Input::Pick));
                 }
             }
             Input::Keyword(k) if k == "Undo" => {
                 mode.pts.pop();
             }
             // Enter ends a fence or polygon; with too few points the mode is dropped.
-            Input::Enter => return Ok(mode.select(self.doc()?, &self.space()).map(Input::Pick)),
+            Input::Enter => return Ok(mode.select(self.doc()?, &self.space(), orbit).map(Input::Pick)),
             Input::Cancel | Input::Pick(_) => return Ok(Some(input)),
             _ => self.echo("Invalid point."),
         }
@@ -276,14 +286,17 @@ impl Session {
 
     pub(crate) fn feed(&mut self, input: Option<Input>) -> Result<()> {
         let base = if matches!(input, Some(Input::Point(_))) { self.current_prompt().and_then(|p| p.base) } else { None };
+        let wants_work = self.prompt_wants_work_point();
         let Some(mut run) = self.running.take() else { return Ok(()) };
         let step = match input {
             Some(Input::Cancel) => Ok(Step::Cancel),
             Some(i) => {
                 if let Input::Point(p) = &i {
-                    self.last_point = *p;
-                    if let Some(b) = base.filter(|b| b.is_finite() && p.is_finite() && b.dist(*p) > 1e-12) {
-                        self.last_segment = Some((b, *p));
+                    if wants_work {
+                        self.last_point = *p;
+                        if let Some(b) = base.filter(|b| b.is_finite() && p.is_finite() && b.dist(*p) > 1e-12) {
+                            self.last_segment = Some((b, *p));
+                        }
                     }
                     // A temporary tracking point (TT) serves one point.
                     self.tracking.release_temporary();
@@ -456,6 +469,37 @@ impl Session {
             Some(p) => p.picks_objects(),
             None => self.settings.pickfirst,
         }
+    }
+
+    /// Whether the current prompt wants points on the model work plane (`z = 0`), regardless of
+    /// whether the view is currently edge-on.
+    pub fn prompt_wants_work_point(&self) -> bool {
+        if self.pending_window.is_some() || self.select_mode.is_some() {
+            return false;
+        }
+        if let Some(r) = &self.running {
+            if r.id.starts_with("zoom") {
+                return false;
+            }
+            if !r.machine.collects_work_points() && self.point_mods.is_empty() {
+                return false;
+            }
+        }
+        self.current_prompt().as_ref().is_some_and(pointmod::accepts)
+    }
+
+    /// Whether the current prompt collects points on the model work plane (`z = 0`) rather than
+    /// picking objects or selection areas in the 2D view plane. Returns `false` when the `z = 0`
+    /// work plane is viewed edge-on ([`cadcraft_render::Orbit3d::is_edge_on`]).
+    pub fn accepts_work_point(&self) -> bool {
+        if self
+            .state()
+            .ok()
+            .is_some_and(|st| matches!(st.edit_space(), Space::Model) && st.orbit.is_edge_on())
+        {
+            return false;
+        }
+        self.prompt_wants_work_point()
     }
 
     /// Whether the object under the cursor is highlighted (SELECTIONPREVIEW): the cursor picks

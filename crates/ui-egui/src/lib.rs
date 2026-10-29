@@ -30,6 +30,7 @@ pub mod spacemouse;
 pub mod switch;
 // The External References palette.
 pub mod xrefs;
+pub mod lisp_ide;
 
 pub mod dyngrips;
 pub mod dyninput;
@@ -289,6 +290,7 @@ pub struct CadApp {
     pub hatch_dlg: Option<hatchdlg::HatchDlgState>,
     /// The Edit Block Definition dialog ([`bedit`]).
     pub bedit: bedit::State,
+    pub lisp_ide: Option<lisp_ide::LispIdeState>,
     /// The startup update check and its prompt (desktop; [`updates_ui`]).
     #[cfg(not(target_arch = "wasm32"))]
     pub updates_rt: updates_ui::Runtime,
@@ -342,6 +344,7 @@ impl CadApp {
             alias_dlg: None,
             hatch_dlg: None,
             bedit: bedit::State::default(),
+            lisp_ide: None,
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
         }

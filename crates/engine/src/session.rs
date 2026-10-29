@@ -13,3 +13,5 @@ mod files;
 mod interactive;
 mod picking;
 mod zoom;
+
+pub use cmdline::{is_bare_lisp_operator, is_bare_lisp_prefix};
