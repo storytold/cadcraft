@@ -230,3 +230,63 @@ fn dynamic_input_distance_follows_the_drawing_units() {
     let text = painted_text(&mut app, &ctx, at);
     assert!(text.contains(&format!("   {}  <", arch(c.len()))), "no {} in:\n{text}", arch(c.len()));
 }
+
+/// Verifies that command object-selection prompts draw only the pickbox square while idle and
+/// point prompts draw the crosshair lines.
+#[test]
+fn cursor_shows_pickbox_only_at_command_object_selection_prompts() {
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    let rect = Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0));
+    let at = pos2(400.0, 300.0);
+    let paint = |app: &CadApp| {
+        let ctx = egui::Context::default();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let painter = ui.painter_at(rect);
+            let picking = app.session.picking_objects() && app.session.pending_window.is_none();
+            draw_crosshair(app, &painter, rect, at, picking, Color32::WHITE);
+        });
+        out.textures_delta.clear();
+        let mut lines = 0usize;
+        let mut rects = 0usize;
+        for clipped in &out.shapes {
+            match &clipped.shape {
+                Shape::LineSegment { .. } => lines += 1,
+                Shape::Rect(r) if r.rect.center() == at => rects += 1,
+                _ => {}
+            }
+        }
+        (lines, rects)
+    };
+
+    // 1. Idle with PICKFIRST on: crosshair lines (4 segments) + pickbox square (1 rect).
+    assert_eq!(paint(&app), (4, 1), "idle with PICKFIRST on");
+
+    // 2. Idle with SELECTIONPREVIEW = 0: pickbox still drawn while PICKFIRST is on.
+    app.session.settings.selectionpreview = 0;
+    assert_eq!(paint(&app), (4, 1), "idle with SELECTIONPREVIEW = 0");
+    app.session.settings.selectionpreview = 3;
+
+    // 3. Command asking for points (LINE): crosshair lines only (4 segments, 0 rects).
+    app.session.cmdline("line").unwrap();
+    assert_eq!(paint(&app), (4, 0), "point prompt (LINE)");
+    app.session.cancel();
+
+    // 4. Command asking to select objects (ERASE): pickbox square only (0 segments, 1 rect).
+    app.session.cmdline("erase").unwrap();
+    assert_eq!(paint(&app), (0, 1), "object selection prompt (ERASE)");
+
+    // 5. Even when PICKBOX = 0, a command object-selection prompt keeps a minimal visible pickbox.
+    app.session.settings.pickbox = 0.0;
+    assert_eq!(paint(&app), (0, 1), "object selection prompt with PICKBOX = 0");
+    app.session.settings.pickbox = 3.0;
+
+    // 6. While picking the second corner of a selection window, the crosshair lines return.
+    app.session.pending_window = Some(cadcraft_engine::PendingWindow { corner: Vec2::ZERO, during_command: true });
+    assert_eq!(paint(&app), (4, 0), "selection window second corner");
+    app.session.pending_window = None;
+    app.session.cancel();
+
+    // 7. STRETCH's "Remove objects" prompt also draws the pickbox-only cursor.
+    app.session.cmdline("stretch r").unwrap();
+    assert_eq!(paint(&app), (0, 1), "STRETCH Remove objects prompt");
+}
