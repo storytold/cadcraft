@@ -29,7 +29,7 @@ pub fn export_window_with(d: &Drawing, space: &Space, window: Option<Bounds2>, t
 /// across the view.
 pub(crate) fn export_window_from(d: &Drawing, space: &Space, window: Option<Bounds2>, transparency: bool, document: Option<&str>) -> String {
     let list = cadcraft_render::build(d, space, &cadcraft_render::Options { transparency, ..cadcraft_render::Options::default() });
-    let b = window.filter(|w| !w.is_empty()).unwrap_or(list.bounds);
+    let b = window.filter(|w| !w.is_empty()).unwrap_or_else(|| crate::underlay_plot::plotted_bounds(&list));
     let px_per_unit = 3200.0 / b.width().max(b.height()).max(1e-9);
     let images = crate::underlay_plot::images(d, &list, document, px_per_unit);
     export_list_over(&list, window, &images)
@@ -52,7 +52,7 @@ pub fn export_list(list: &cadcraft_render::DisplayList, window: Option<Bounds2>)
 /// before.
 pub(crate) fn export_list_over(list: &cadcraft_render::DisplayList, window: Option<Bounds2>, images: &[crate::underlay_plot::PlotImage]) -> String {
     let window = window.filter(|w| !w.is_empty());
-    let b = window.unwrap_or(list.bounds);
+    let b = window.unwrap_or_else(|| crate::underlay_plot::plotted_bounds(list));
     // A single point (or a zero-size window) has no extent: show a unit box centred on it.
     let point = !b.is_empty() && b.width().max(b.height()) <= 1e-9;
     let (w, h) = if b.is_empty() {
