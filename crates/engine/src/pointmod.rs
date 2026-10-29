@@ -120,17 +120,14 @@ pub fn snap_name(m: u32) -> &'static str {
 }
 
 /// The candidate snaps near `cursor` for Tab cycling: the snap [`crate::snap::osnap`] picks
-/// first, then the closest snap of each other mode in `osmode`, nearest first, without repeats.
+/// first, then every other snap of the modes in `osmode` under the aperture (each endpoint of
+/// each object, each intersection …; [`crate::snap::osnap_all`]), best first, without repeats.
 pub fn snap_candidates(d: &Drawing, space: &Space, cursor: Vec2, aperture: f64, osmode: u32, base: Option<Vec2>, deferred: bool) -> Vec<SnapHit> {
     if osmode & !mode::HATCH == 0 || osmode & mode::OFF != 0 {
         return Vec::new();
     }
-    let osnap = |m: u32| crate::snap::osnap(d, space, cursor, aperture, m, base, deferred);
-    let extra = osmode & mode::HATCH;
-    let mut per_mode: Vec<SnapHit> = mode::ALL.iter().filter(|(b, _)| osmode & b != 0).filter_map(|(b, _)| osnap(*b | extra)).collect();
-    per_mode.sort_by(|a, b| a.point.dist(cursor).total_cmp(&b.point.dist(cursor)));
-    let mut out: Vec<SnapHit> = osnap(osmode).into_iter().collect();
-    for h in per_mode {
+    let mut out: Vec<SnapHit> = crate::snap::osnap(d, space, cursor, aperture, osmode, base, deferred).into_iter().collect();
+    for h in crate::snap::osnap_all(d, space, cursor, aperture, osmode, base, deferred) {
         if !out.iter().any(|o| o.mode == h.mode && o.point.near(h.point, aperture * 1e-6)) {
             out.push(h);
         }

@@ -1,6 +1,6 @@
 # Where CADCraft falls short of AutoCAD
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-25 · **Change:** minor (Named Viewports dialog: U11 narrowed; MVIEW Restore and PURGE of multiline styles had landed: F15 and F21 corrected) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-27 · **Change:** minor (Tab snap cycling offers every candidate: U4 closed) · **Target:** Autodesk AutoCAD 2027
 
 Every known shortfall, one row each, ranked within each section by user impact. This is the work
 list: agents pick from here (top of a section first), and remove or update a row in the same PR
@@ -58,7 +58,6 @@ Options ▸ Selection can now require two separate clicks for a selection window
 or allow clicks and drag (2, default), saved in the user profile. Drag-only mode (1) remains unavailable.
 | # | Gap | User impact | Est. |
 |---|---|---|---|
-| U4 | Tab snap cycling offers the closest snap of each mode, not every candidate. Typed snap overrides (`END`, `MID` … `NON`), the Shift/Ctrl+right-click snap menu and Tab cycling landed (#393), the menu's Temporary track point in #441 | Low | 1 |
 | U5 | Grip menus open on right-click only (no hover menu, no Ctrl to cycle the options); no multifunctional grips on dimensions, MLEADER, hatches or text; Add Vertex on an arc segment straightens it. Hot-grip options (Base point, Copy, Undo, Reference, eXit), multiple hot grips and the polyline/line/arc grip menus landed (#425) | Low-medium | 2–4 |
 | U6 | Selection: lasso; the CLass keyword; isolation saved with the drawing (OBJECTISOLATIONMODE 1) and the status-bar isolate button. Press-drag windows (#63), the W, C, F, WP and CP keywords (#226), BOX, AUto, SIngle, Multiple, Group, Add, Remove and Undo, SELECTSIMILAR, ISOLATEOBJECTS/HIDEOBJECTS/UNISOLATEOBJECTS (#428) and selection cycling (#1143) landed | Medium | 3–5 |
 | U7 | Right-click menus: no in-place layout tab rename or Move or Copy dialog, no Select All Layouts, no Paste to command line; palette menus are on the Layers rows and the Properties background only. The command menu (held right-click: Enter, Cancel, Recent Input, options, Snap Overrides, Pan/Zoom), the selection menu with object edits, command line, drawing tab, layout tab and palette menus landed (#512) | Low | 1–2 |
@@ -150,6 +149,7 @@ Detail: [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-27 | minor | Tab snap cycling steps through every snap of the running modes under the aperture (each endpoint, intersection … of each object nearby, at most 256), not one per mode: U4 closed |
 | 2026-10-25 | minor | Named Viewports (View ▸ Viewports ▸ Named Viewports..., `vports.named`) lists the saved viewport configurations with a preview and the current one's name, and restores or deletes one; in a layout Restore places it as MVIEW Restore does: U11 narrowed. F15 and U11 no longer list MVIEW Restore (#633), and F21 no longer says PURGE skips multiline styles |
 | 2026-10-25 | minor | DIMTFILL limits: with DIMTFILL 1 (the drawing's background color) the written `*D` block and EXPLODE keep no background mask (a WIPEOUT over the text box would), and a true-color DIMTFILLCLR is written to DXF as the nearest ACI: F7 updated |
 | 2026-10-24 | minor | COMPAREEXPORT (typed, or Export on the comparison bar) opens the comparison as a new untitled drawing, `compare_<this> vs <other>.dwg`: this drawing's objects in one group and the other drawing's differing objects in a second group, in the comparison colors (green, red, gray for objects in both), block contents and style colors included: F22 narrowed |

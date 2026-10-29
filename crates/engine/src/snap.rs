@@ -308,6 +308,72 @@ fn osnap_in_with_prims(
     frozen: &[String],
     clip: Option<Bounds2>,
 ) -> Option<(Option<SnapHit>, Vec<Prim>)> {
+    let (cands, near_prims) = collect_in(d, space, ix, cursor, aperture, osmode, frozen)?;
+    let hit = finish(cands, &near_prims, cursor, aperture, osmode, base, deferred, clip);
+    Some((hit, near_prims))
+}
+
+/// Every snap of `osmode` under the aperture round `cursor`, best first: Tab cycles through
+/// these. Each mode's points of every object nearby, the intersections, perpendicular and
+/// tangent points from `base`, the deferred snaps and the nearest point of each object, without
+/// repeats and at most [`MAX_CYCLE`]; in viewports too, as [`osnap`] snaps.
+pub fn osnap_all(d: &Drawing, space: &Space, cursor: Vec2, aperture: f64, osmode: u32, base: Option<Vec2>, deferred: bool) -> Vec<SnapHit> {
+    if osmode == 0 || osmode & mode::OFF != 0 || !cursor.is_finite() || !(aperture.is_finite() && aperture > 0.0) {
+        return Vec::new();
+    }
+    let ix = crate::spatial::index(d, space);
+    let mut out: Vec<SnapHit> = Vec::new();
+    if let Some((cands, prims)) = collect_in(d, space, &ix, cursor, aperture, osmode, &[]) {
+        out = finish_all(cands, &prims, cursor, aperture, osmode, base, deferred, None);
+    }
+    let model = Space::Model;
+    let views = viewport::near(d, space, cursor, aperture);
+    if !views.is_empty() {
+        let model_ix = crate::spatial::index(d, &model);
+        for view in views {
+            let (mc, ma, mb) = (view.to_model(cursor), aperture / view.scale, base.map(|p| view.to_model(p)));
+            if !mc.is_finite() || !(ma.is_finite() && ma > 0.0) || mb.is_some_and(|p| !p.is_finite()) {
+                continue;
+            }
+            let Some((cands, prims)) = collect_in(d, &model, &model_ix, mc, ma, osmode, &view.viewport.frozen_layers) else { continue };
+            out.extend(finish_all(cands, &prims, mc, ma, osmode, mb, deferred, Some(view.model_clip)).into_iter().filter_map(|h| view.hit(h)));
+        }
+    }
+    out.sort_by(|a, b| rank(a, cursor, aperture).total_cmp(&rank(b, cursor, aperture)));
+    let mut unique: Vec<SnapHit> = Vec::with_capacity(out.len().min(MAX_CYCLE));
+    for h in out {
+        if unique.len() >= MAX_CYCLE {
+            break;
+        }
+        if !unique.iter().any(|u| u.mode == h.mode && u.point.near(h.point, aperture * 1e-6)) {
+            unique.push(h);
+        }
+    }
+    unique
+}
+
+/// Most snaps [`osnap_all`] offers.
+const MAX_CYCLE: usize = 256;
+
+/// Where a snap ranks among [`osnap_all`]'s: by [`snap_score`], the unspecific ones (Nearest,
+/// deferred) after every other.
+fn rank(h: &SnapHit, cursor: Vec2, aperture: f64) -> f64 {
+    let vague = h.mode == mode::NEA || h.deferred.is_some();
+    snap_score(h.mode, h.point, cursor, aperture) + if vague { aperture * 4.0 } else { 0.0 }
+}
+
+/// The candidate snap points near `cursor` (each with its mode) and the primitives near it:
+/// [`gather_in`]'s, plus the intersections between those primitives.
+#[allow(clippy::too_many_arguments)]
+fn collect_in(
+    d: &Drawing,
+    space: &Space,
+    ix: &Option<std::sync::Arc<crate::spatial::SpatialIndex>>,
+    cursor: Vec2,
+    aperture: f64,
+    osmode: u32,
+    frozen: &[String],
+) -> Option<(Vec<(u32, Vec2)>, Vec<Prim>)> {
     let (mut cands, near_prims) = gather_in(d, space, ix, cursor, aperture, osmode, frozen)?;
     // Intersections between nearby primitives; Apparent Intersection also where their extensions
     // meet (lines extended, arcs as full circles: in 2D, the "apparent" crossing of objects
@@ -345,8 +411,7 @@ fn osnap_in_with_prims(
             }
         }
     }
-    let hit = finish(cands, &near_prims, cursor, aperture, osmode, base, deferred, clip);
-    Some((hit, near_prims))
+    Some((cands, near_prims))
 }
 
 fn finite_intersection_probe(cursor: Vec2, aperture: f64) -> Option<Bounds2> {
@@ -470,6 +535,88 @@ fn finish(
     deferred: bool,
     clip: Option<Bounds2>,
 ) -> Option<SnapHit> {
+    base_snaps(&mut cands, near_prims, osmode, base);
+    let visible = |p: Vec2| p.is_finite() && clip.is_none_or(|c| c.contains(p));
+    let best = cands.iter().filter(|(_, p)| visible(*p) && p.dist(cursor) <= aperture).min_by(|a, b| {
+        // Prefer more specific modes when nearly equidistant.
+        let da = snap_score(a.0, a.1, cursor, aperture);
+        let db = snap_score(b.0, b.1, cursor, aperture);
+        da.total_cmp(&db)
+    });
+    if let Some((m, p)) = best {
+        return Some(SnapHit { point: *p, mode: *m, name: name_of(*m), viewport: None, deferred: None });
+    }
+    if base.is_none()
+        && deferred
+        && let Some(h) = deferred_hit(near_prims, cursor, aperture, osmode, clip)
+    {
+        return Some(h);
+    }
+    if osmode & mode::NEA != 0 {
+        // The closest point of all nearby objects, whatever their drawing order.
+        let nb = nearest_points(near_prims, cursor, aperture, clip).into_iter().min_by(|a, b| a.dist(cursor).total_cmp(&b.dist(cursor)));
+        if let Some(p) = nb {
+            return Some(SnapHit { point: p, mode: mode::NEA, name: "Nearest", viewport: None, deferred: None });
+        }
+    }
+    None
+}
+
+/// [`finish`], keeping every candidate: the specific snaps best first, then the deferred snap,
+/// then the nearest point of each object nearby.
+#[allow(clippy::too_many_arguments)]
+fn finish_all(
+    mut cands: Vec<(u32, Vec2)>,
+    near_prims: &[Prim],
+    cursor: Vec2,
+    aperture: f64,
+    osmode: u32,
+    base: Option<Vec2>,
+    deferred: bool,
+    clip: Option<Bounds2>,
+) -> Vec<SnapHit> {
+    base_snaps(&mut cands, near_prims, osmode, base);
+    let visible = |p: Vec2| p.is_finite() && clip.is_none_or(|c| c.contains(p));
+    let mut scored: Vec<(f64, u32, Vec2)> = cands
+        .iter()
+        .filter(|(_, p)| visible(*p) && p.dist(cursor) <= aperture)
+        .map(|(m, p)| (snap_score(*m, *p, cursor, aperture), *m, *p))
+        .collect();
+    scored.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut out: Vec<SnapHit> =
+        scored.into_iter().map(|(_, m, p)| SnapHit { point: p, mode: m, name: name_of(m), viewport: None, deferred: None }).collect();
+    if base.is_none()
+        && deferred
+        && let Some(h) = deferred_hit(near_prims, cursor, aperture, osmode, clip)
+    {
+        out.push(h);
+    }
+    if osmode & mode::NEA != 0 {
+        let mut near = nearest_points(near_prims, cursor, aperture, clip);
+        near.sort_by(|a, b| a.dist(cursor).total_cmp(&b.dist(cursor)));
+        out.extend(near.into_iter().map(|p| SnapHit { point: p, mode: mode::NEA, name: "Nearest", viewport: None, deferred: None }));
+    }
+    out
+}
+
+/// The point of each nearby primitive closest to `cursor`, within the aperture.
+fn nearest_points(near_prims: &[Prim], cursor: Vec2, aperture: f64, clip: Option<Bounds2>) -> Vec<Vec2> {
+    let visible = |p: Vec2| p.is_finite() && clip.is_none_or(|c| c.contains(p));
+    let mut out = Vec::new();
+    for p in near_prims {
+        let c = match p {
+            Prim::Circle(c) => Some(c.closest(cursor)),
+            _ => prim_segments(p).iter().map(|s| fix_circle(s).closest(cursor)).min_by(|a, b| a.dist(cursor).total_cmp(&b.dist(cursor))),
+        };
+        if let Some(c) = c.filter(|c| visible(*c) && c.dist(cursor) <= aperture) {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Add the perpendicular and tangent points from the base point `base`.
+fn base_snaps(cands: &mut Vec<(u32, Vec2)>, near_prims: &[Prim], osmode: u32, base: Option<Vec2>) {
     // Perpendicular / tangent from the base point.
     if let Some(bp) = base {
         for p in near_prims {
@@ -506,44 +653,6 @@ fn finish(
             }
         }
     }
-    let visible = |p: Vec2| p.is_finite() && clip.is_none_or(|c| c.contains(p));
-    let best = cands.iter().filter(|(_, p)| visible(*p) && p.dist(cursor) <= aperture).min_by(|a, b| {
-        // Prefer more specific modes when nearly equidistant.
-        let da = snap_score(a.0, a.1, cursor, aperture);
-        let db = snap_score(b.0, b.1, cursor, aperture);
-        da.total_cmp(&db)
-    });
-    if let Some((m, p)) = best {
-        return Some(SnapHit { point: *p, mode: *m, name: name_of(*m), viewport: None, deferred: None });
-    }
-    if base.is_none()
-        && deferred
-        && let Some(h) = deferred_hit(near_prims, cursor, aperture, osmode, clip)
-    {
-        return Some(h);
-    }
-    if osmode & mode::NEA != 0 {
-        // The closest point of all nearby objects, whatever their drawing order.
-        let mut nb: Option<(f64, Vec2)> = None;
-        let mut consider = |c: Vec2| {
-            let dd = c.dist(cursor);
-            if visible(c) && dd <= aperture && nb.is_none_or(|(bd, _)| dd < bd) {
-                nb = Some((dd, c));
-            }
-        };
-        for p in near_prims {
-            for s in prim_segments(p) {
-                consider(fix_circle(&s).closest(cursor));
-            }
-            if let Prim::Circle(c) = p {
-                consider(c.closest(cursor));
-            }
-        }
-        if let Some((_, p)) = nb {
-            return Some(SnapHit { point: p, mode: mode::NEA, name: "Nearest", viewport: None, deferred: None });
-        }
-    }
-    None
 }
 
 fn snap_score(mode: u32, point: Vec2, cursor: Vec2, aperture: f64) -> f64 {

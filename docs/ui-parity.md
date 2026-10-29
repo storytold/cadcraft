@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-22 · **Change:** minor (distinct polyline midpoint grips) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-27 · **Change:** minor (Tab cycles every candidate snap) · **Target:** Autodesk AutoCAD 2027 for Mac (26.0)
 
 How CADCraft's interaction compares with AutoCAD's: point entry, object snaps, tracking, dynamic
 input, grips, selection, the command line, chrome and navigation. A drafter's speed in AutoCAD
@@ -75,7 +75,7 @@ ignored; there are no context menus. Remaining: **≈ 110–170 Opus 5.5 hours**
 | Parallel | yes, with parallel path | yes: rest on a line, then a path parallel to it runs through the base point (`snap/tracking.rs`) |
 | Temporary overrides typed at a prompt (`END`, `MID`, `INT` …) | yes | **no**: the text arrives as plain input |
 | Shift/Ctrl+right-click snap menu | yes | yes: From, Mid Between 2 Points, Point Filters, the snap modes, None, Osnap Settings; no Temporary track point yet (`context_menu.rs`) |
-| Tab to cycle candidate snaps | yes | yes, through the closest snap of each running mode under the cursor (`pointmod::snap_candidates`) |
+| Tab to cycle candidate snaps | yes | yes, through every snap of the running modes under the aperture: each endpoint, midpoint, intersection … of each object nearby, best first, at most 256 (`snap::osnap_all` via `pointmod::snap_candidates`) |
 | AutoSnap marker, tooltip, magnet, aperture box | yes | marker per mode and name label; aperture from APERTURE; no magnet, no aperture box |
 | OSNAPZ, 3D object snaps | yes | no |
 
@@ -203,6 +203,7 @@ down-arrow options menu (DYNPROMPT), and DYNDIM.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-27 | minor | Tab cycles through every snap under the aperture, not the closest of each mode (gaps U4) |
 | 2026-10-22 | minor | Polyline segment midpoint grips use rectangles, distinct from square vertex grips, with matching hover and pick bounds (#1950) |
 | 2026-10-13 | minor | Filled-region highlight boundaries are traversed in deterministic coordinate order, fixing dash-phase jumps on CPU hover/selection redraws and GPU highlight rebuilds; CPU dash-position, pixel and GPU mesh regressions |
 | 2026-10-14 | minor | Selection cycling (#1143): the list and badge of SELECTIONCYCLING, Shift+Space through overlapping objects (#1145) |

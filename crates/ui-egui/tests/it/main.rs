@@ -29,6 +29,7 @@ mod rapid_clicks;
 mod selection_cycling;
 mod shared_controls;
 mod shortcut_menus;
+mod snap_tab_cycling;
 mod status_bar_toggles;
 mod style_dialogs;
 mod system_cursor;

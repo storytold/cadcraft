@@ -121,6 +121,7 @@ mod snap_curves;
 mod snap_intersections_aperture;
 mod snap_nearest;
 mod snap_overrides;
+mod snap_tab_cycling;
 mod snap_tracking;
 mod snaps_more;
 mod space_is_enter;
