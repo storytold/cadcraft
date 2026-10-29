@@ -1,5 +1,5 @@
 use super::args::{R, arity, int, list_arg, num, string};
-use super::*;
+use super::{LispError, Value, eq, equal};
 
 // ---------------- predicates and lists ----------------
 

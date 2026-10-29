@@ -29,6 +29,7 @@ pub mod prompt;
 mod recent;
 pub mod sample;
 pub mod select;
+pub mod settings_dir;
 pub mod snap;
 pub mod spatial;
 pub mod sysvars;
@@ -43,6 +44,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub use cadcraft_doc as doc;
+pub use cadcraft_fonts as fonts;
 pub use cadcraft_geom as geom;
 pub use cadcraft_render as render;
 pub use cmd::hatch::{HatchPicks, PatternChoice, PickMode, pattern_choices};
@@ -63,6 +65,14 @@ pub use last_used::{LastUsed, LeaderOrder, LeaderType, MLeaderOptions};
 pub use running::{PendingWindow, Running};
 pub use settings::Settings;
 pub use view::{ModelTile, ModelTiles, View};
+
+/// `<version> (<commit>)`, what `--version` prints after the program name in the app and the CLI.
+/// The commit comes from `CADCRAFT_BUILD_SHA` at build time, `dev` without it.
+pub fn build_version() -> &'static str {
+    static VERSION: std::sync::LazyLock<String> =
+        std::sync::LazyLock::new(|| format!("{} ({})", env!("CARGO_PKG_VERSION"), option_env!("CADCRAFT_BUILD_SHA").unwrap_or("dev")));
+    &VERSION
+}
 
 /// The editor session: open drawings, settings, the running command and the command log.
 pub struct Session {

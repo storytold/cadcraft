@@ -1,7 +1,7 @@
 use super::common::T;
 use super::dimassoc::dimassoc;
 use super::document::sortents_table;
-use super::*;
+use super::{Drawing, EntityKind, Group, Handle, HashMap, MLeaderStyle, PageSetup, Rx, Tag, Vec2};
 
 /// Non-graphical objects applied once every entity is placed.
 #[derive(Default)]

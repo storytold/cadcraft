@@ -1,4 +1,4 @@
-use super::*;
+use super::{Entity, EntityKind, Handle, PolyVertex, Polyline, Result, Segment, Session, Value, Vec2, arc, json, line, lwpoly, targets, v3};
 
 // ---------------- explode / array / order / break / join ----------------
 

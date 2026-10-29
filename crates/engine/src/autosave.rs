@@ -256,7 +256,10 @@ mod native {
     use std::path::Path;
     use std::time::{Duration, SystemTime};
 
-    use super::*;
+    use super::{
+        Autosaver, Drawing, HEARTBEAT_SECS, HashMap, Job, Recoverable, STALE_LOCK_SECS, Session, is_instance_id, parse_file_name, parse_lock_name,
+        savefilepath, savetime,
+    };
 
     /// A new instance id: the process id and the start time.
     pub fn instance_id() -> String {

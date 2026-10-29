@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Accept, Ellipse, EntityKind, Input, Interactive, Prompt, Result, Session, Step, Value, Vec2, added, bad, f64_or, f64_req, line, number,
+    point_req, v3,
+};
 
 pub(super) fn run_ellipse(s: &mut Session, p: &Value) -> Result<Value> {
     if p.get("isocircle").is_some() {

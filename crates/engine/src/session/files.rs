@@ -1,4 +1,4 @@
-use super::*;
+use super::{DocState, Drawing, EngineError, Result, Session, Space, Value, Vec2, View, cmd};
 
 impl Session {
     /// Append a new untitled drawing (`DrawingN`, metric or imperial default view), end a running command, make it active, bump the document epoch and return its index.

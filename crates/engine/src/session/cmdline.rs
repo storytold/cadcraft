@@ -1,4 +1,4 @@
-use super::*;
+use super::{EngineError, Input, Result, Session, Value, Vec2, cmd, lisp, prompt, snap, units};
 
 impl Session {
     /// Process one line typed at the command line (Enter pressed). Spaces separate inputs as in a

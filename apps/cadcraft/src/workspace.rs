@@ -1,6 +1,5 @@
 //! Native workspace preferences. Drawing data and transient dialogs never enter this file.
 
-use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -22,18 +21,6 @@ pub struct Workspace {
     read_failed: bool,
     pending_write_error: Option<String>,
     last_write: Option<Instant>,
-}
-
-fn config_dir_from(platform: &str, get: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
-    if let Some(root) = get("CADCRAFT_CONFIG_DIR") {
-        return (!root.is_empty()).then(|| PathBuf::from(root));
-    }
-    let nonempty = |key| get(key).filter(|value| !value.is_empty()).map(PathBuf::from);
-    match platform {
-        "macos" => nonempty("HOME").map(|home| home.join("Library/Application Support/CADCraft")),
-        "windows" => nonempty("APPDATA").map(|root| root.join("CADCraft")),
-        _ => nonempty("XDG_CONFIG_HOME").map(|root| root.join("cadcraft")).or_else(|| nonempty("HOME").map(|home| home.join(".config/cadcraft"))),
-    }
 }
 
 fn snapshot(ui: &UiState) -> Result<Value, String> {
@@ -139,8 +126,9 @@ fn write(path: &Path, workspace: &Value) -> Result<(), String> {
 }
 
 impl Workspace {
-    pub fn load() -> (Self, Option<UiState>, Option<String>) {
-        Self::at(config_dir_from(std::env::consts::OS, |key| std::env::var_os(key)).map(|root| root.join("workspace.json")))
+    /// The workspace file in the settings directory `config_dir`; without one nothing is kept.
+    pub fn load(config_dir: Option<&Path>) -> (Self, Option<UiState>, Option<String>) {
+        Self::at(config_dir.map(|root| root.join("workspace.json")))
     }
 
     fn at(path: Option<PathBuf>) -> (Self, Option<UiState>, Option<String>) {
@@ -195,6 +183,7 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
 
     fn temp_dir() -> PathBuf {
         let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
@@ -205,20 +194,18 @@ mod tests {
 
     #[test]
     fn profile_override_isolated_or_explicitly_disabled() {
-        let get = |key: &str| match key {
-            "CADCRAFT_CONFIG_DIR" => Some(OsString::from("/private/test-state")),
-            "HOME" | "APPDATA" | "XDG_CONFIG_HOME" => Some(OsString::from("/unrelated-user-profile")),
-            _ => None,
+        let vars = |config: Option<&'static str>| {
+            move |key: &str| match key {
+                "CADCRAFT_CONFIG_DIR" => config.map(OsString::from),
+                "HOME" | "APPDATA" | "XDG_CONFIG_HOME" => Some(OsString::from("/unrelated-user-profile")),
+                _ => None,
+            }
         };
-        for platform in ["macos", "windows", "linux", "freebsd"] {
-            assert_eq!(config_dir_from(platform, get), Some(PathBuf::from("/private/test-state")));
-            assert_eq!(config_dir_from(platform, |key| if key == "CADCRAFT_CONFIG_DIR" { Some(OsString::new()) } else { get(key) }), None);
-        }
-        assert_eq!(
-            config_dir_from("linux", |key| (key == "XDG_CONFIG_HOME").then(|| OsString::from("/config"))),
-            Some(PathBuf::from("/config/cadcraft"))
-        );
-        assert_eq!(config_dir_from("macos", |_| None), None);
+        let dir = |config| crate::env::Env::from_vars(vars(config)).config_dir;
+        assert_eq!(dir(Some("/private/test-state")), Some(PathBuf::from("/private/test-state")));
+        assert_eq!(dir(Some("")), None);
+        let (_, restored, error) = Workspace::load(dir(Some("")).as_deref());
+        assert!(restored.is_none() && error.is_none(), "no settings folder, no workspace file");
     }
 
     #[test]

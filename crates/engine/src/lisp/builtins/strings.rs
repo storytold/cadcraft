@@ -1,5 +1,5 @@
 use super::args::{R, arity, int, list_arg, string};
-use super::*;
+use super::{LispError, OsStr, Value, check_string_len, read, to_text};
 
 // ---------------- strings ----------------
 

@@ -3,7 +3,7 @@
 //! Without a logger every `log::warn!`/`log::error!`/`log::info!` in the workspace (a broken app
 //! icon, the GPU canvas set-up, the control server) vanished. A launch from a desktop menu has no
 //! terminal, so the file is what a bug report can attach: `<settings dir>/logs/cadcraft.log`
-//! (`CADCRAFT_CONFIG_DIR`, or the platform settings directory; see `config_dir` in `main.rs`).
+//! (`CADCRAFT_CONFIG_DIR`, or the platform settings directory; empty means none; see `env.rs`).
 //! Each start moves the previous log to `cadcraft.1.log` (and that one to `.2`), so the log of a
 //! run that crashed survives the next launch.
 //!

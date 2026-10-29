@@ -148,6 +148,11 @@ fn pedit_command_line() {
 
 #[test]
 fn splinedit_json_and_command_line() {
+    splinedit_json_edits();
+    splinedit_command_line_edits();
+}
+
+fn splinedit_json_edits() {
     let mut s = Session::new();
     let sp = h(&s.execute("spline", &json!({"fit": [[0, 0], [2, 2], [4, 0], [6, 2]]})).unwrap());
     s.execute("splinedit", &json!({"handle": sp, "option": "close"})).unwrap();
@@ -167,7 +172,9 @@ fn splinedit_json_and_command_line() {
     s.execute("splinedit", &json!({"handle": sp, "option": "polyline", "precision": 4})).unwrap();
     assert!(matches!(kind(&s, &sp), EntityKind::LwPolyline(p) if p.vertices.len() > 4));
     assert!(s.execute("splinedit", &json!({"handle": sp, "option": "close"})).is_err());
+}
 
+fn splinedit_command_line_edits() {
     let mut s = Session::new();
     s.execute("spline", &json!({"control": [[0, 0], [2, 3], [4, 0], [6, 3]]})).unwrap();
     s.cmdline("splinedit 0,0 c").unwrap();

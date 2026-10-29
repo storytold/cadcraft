@@ -5,7 +5,7 @@
 //! whose `ACAD_ENHANCEDBLOCK` entry is an evaluation graph (`ACAD_EVALUATION_GRAPH`), and the
 //! graph lists the block's *parameters* (a distance, a point, visibility states, a lookup…) and
 //! *actions* (what changing a parameter does to the block's objects: stretch, move, look up…).
-//! [`dynamic_block`] reads them into the model below without changing the kept data, so a drawing
+//! [`dynamic_block`](crate::dynblock::dynamic_block) reads them into the model below without changing the kept data, so a drawing
 //! saved again still carries them exactly as read.
 //!
 //! Every count and index here comes from the file: they are capped by the data actually present

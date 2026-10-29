@@ -1,5 +1,5 @@
 use super::viewport::{split_viewport, stencil_clip};
-use super::*;
+use super::{Bounds2, CadApp, DisplayList, Handle, ListKey, Rgb, Tokens, Xf, rebuild, same_content};
 
 /// Primitives of `list` sorted by entity handle, built on the first highlight after each list
 /// rebuild. Highlighting the hovered entity used to scan every primitive on every frame: ~2.5 ms

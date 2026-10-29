@@ -537,6 +537,69 @@ pub fn layout_mtext(contents: &str, insert: Vec2, height: f64, width: f64, attac
     layout_mtext_with(contents, &MTextParams { insert, height, width, attach, rotation, line_spacing, ..MTextParams::new(insert, height) })
 }
 
+fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line> {
+    let fmt = |index: usize| fmts.get(index).unwrap_or(base);
+    let mut lines = Vec::new();
+    let mut line = Line::default();
+    let mut pending_space = None;
+    let mut last_fmt = 0usize;
+    let mut paragraph = 0usize;
+    let finish = |lines: &mut Vec<Line>, line: &mut Line, format: &Fmt, paragraph: usize| {
+        if line.items.is_empty() {
+            line.max_h = format.height;
+        }
+        line.para = paragraph;
+        lines.push(std::mem::take(line));
+    };
+
+    for atom in atoms {
+        match atom {
+            Atom::Space(format) => {
+                if !line.items.is_empty() || pending_space.is_some() {
+                    pending_space = Some(*format);
+                }
+                last_fmt = *format;
+            }
+            Atom::Para(format) => {
+                pending_space = None;
+                finish(&mut lines, &mut line, fmt(*format), paragraph);
+                paragraph += 1;
+                last_fmt = *format;
+            }
+            Atom::Word(segments) => {
+                let word_width: f64 = segments.iter().map(|(segment, format)| seg_width(segment, fmt(*format))).sum();
+                let space_width =
+                    pending_space.map(|format| crate::space_width(&fmt(format).font, fmt(format).height, fmt(format).wf)).unwrap_or(0.0);
+                if width > 0.0 && !line.items.is_empty() && line.width + space_width + word_width > width + 1e-9 {
+                    finish(&mut lines, &mut line, fmt(last_fmt), paragraph);
+                } else if !line.items.is_empty() || pending_space.is_some() {
+                    if let Some(format) = pending_space {
+                        let at = line.chars;
+                        line.items.push(Item { seg: None, fmt: format, x: line.width, w: space_width, at });
+                        line.text.push(' ');
+                        line.chars += 1;
+                    }
+                    line.width += space_width;
+                }
+                pending_space = None;
+                for (segment, format) in segments {
+                    let segment_width = seg_width(segment, fmt(*format));
+                    line.max_h = line.max_h.max(fmt(*format).height);
+                    let at = line.chars;
+                    let plain = seg_plain(segment);
+                    line.chars += plain.chars().count();
+                    line.text.push_str(&plain);
+                    line.items.push(Item { seg: Some(segment.clone()), fmt: *format, x: line.width, w: segment_width, at });
+                    line.width += segment_width;
+                    last_fmt = *format;
+                }
+            }
+        }
+    }
+    finish(&mut lines, &mut line, fmt(last_fmt), paragraph);
+    lines
+}
+
 /// Lay out MTEXT: inline formatting runs, stacked fractions, paragraphs, word wrap to the
 /// column width and the attachment point.
 pub fn layout_mtext_with(contents: &str, p: &MTextParams) -> MTextLayout {
@@ -550,62 +613,7 @@ pub fn layout_mtext_with(contents: &str, p: &MTextParams) -> MTextLayout {
         return para::layout(contents, p, &base);
     }
     let fmt = |i: usize| fmts.get(i).unwrap_or(&base);
-    let mut lines: Vec<Line> = Vec::new();
-    let mut line = Line::default();
-    let mut pending_space: Option<usize> = None;
-    let mut last_fmt = 0usize;
-    let mut para = 0usize;
-    let finish = |lines: &mut Vec<Line>, line: &mut Line, f: &Fmt, para: usize| {
-        if line.items.is_empty() {
-            line.max_h = f.height;
-        }
-        line.para = para;
-        lines.push(std::mem::take(line));
-    };
-    for a in &atoms {
-        match a {
-            Atom::Space(f) => {
-                if !line.items.is_empty() || pending_space.is_some() {
-                    pending_space = Some(*f);
-                }
-                last_fmt = *f;
-            }
-            Atom::Para(f) => {
-                pending_space = None;
-                finish(&mut lines, &mut line, fmt(*f), para);
-                para += 1;
-                last_fmt = *f;
-            }
-            Atom::Word(segs) => {
-                let ww: f64 = segs.iter().map(|(sg, f)| seg_width(sg, fmt(*f))).sum();
-                let sw = pending_space.map(|f| crate::space_width(&fmt(f).font, fmt(f).height, fmt(f).wf)).unwrap_or(0.0);
-                if width > 0.0 && !line.items.is_empty() && line.width + sw + ww > width + 1e-9 {
-                    finish(&mut lines, &mut line, fmt(last_fmt), para);
-                } else if !line.items.is_empty() || pending_space.is_some() {
-                    if let Some(f) = pending_space {
-                        let at = line.chars;
-                        line.items.push(Item { seg: None, fmt: f, x: line.width, w: sw, at });
-                        line.text.push(' ');
-                        line.chars += 1;
-                    }
-                    line.width += sw;
-                }
-                pending_space = None;
-                for (sg, f) in segs {
-                    let fw = seg_width(sg, fmt(*f));
-                    line.max_h = line.max_h.max(fmt(*f).height);
-                    let at = line.chars;
-                    let plain = seg_plain(sg);
-                    line.chars += plain.chars().count();
-                    line.text.push_str(&plain);
-                    line.items.push(Item { seg: Some(sg.clone()), fmt: *f, x: line.width, w: fw, at });
-                    line.width += fw;
-                    last_fmt = *f;
-                }
-            }
-        }
-    }
-    finish(&mut lines, &mut line, fmt(last_fmt), para);
+    let mut lines = plain_lines(&atoms, &fmts, &base, width);
     // Right-to-left text: each line in display order, its paragraph's direction from the
     // paragraph's first strong character.
     let mut bases: Vec<Option<bool>> = Vec::new();

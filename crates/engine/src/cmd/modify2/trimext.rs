@@ -1,4 +1,4 @@
-use super::*;
+use super::{Ellipse, EntityKind, Line, Result, Segment, TAU, Vec2, ccw_sweep, curve_edits, curves, intersect_ext, norm_angle, other, v3};
 
 // =====================================================================================
 // TRIM / EXTEND for ellipses and splines

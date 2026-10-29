@@ -1,4 +1,4 @@
-use super::*;
+use super::{Color, Common, Lineweight, Rgb, Tag, Transparency, Vec2, Vec3};
 
 /// Value lookup helpers over an entity's tags.
 pub(super) struct T<'a>(pub(super) &'a [Tag]);

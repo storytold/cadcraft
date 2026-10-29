@@ -1,5 +1,8 @@
 use super::common::{hex_param, style};
-use super::*;
+use super::{
+    Accept, DimKind, EntityKind, Handle, Input, Interactive, Prompt, Result, SelOutcome, SelectPhase, Session, Step, Value, Vec2, bad, json,
+    point_param, str_param, targets, v3,
+};
 
 pub(super) fn run_update(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;

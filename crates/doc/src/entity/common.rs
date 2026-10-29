@@ -1,4 +1,4 @@
-use super::*;
+use super::{Color, Deserialize, Serialize, Vec3};
 
 /// A database handle (DXF group 5), unique per drawing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]

@@ -216,210 +216,247 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         .transpose()?;
     let dim_over = dim_overrides(p)?;
     let anno_scale = d.current_anno_scale();
+    let common = CommonEntityProperties { anno_scale: &anno_scale, color, linetype: linetype.as_deref(), lineweight: lw, transparency, thickness };
     for h in &hs {
         d.modify_entity(*h, |e| {
-            // Annotative: Yes supports the current annotation scale; No drops every scale.
-            if let Some(a) = p.get("annotative").and_then(Value::as_bool) {
-                cadcraft_doc::set_annotative(e, a, &anno_scale);
-            }
-            if let Some(l) = str_param(p, "layer") {
-                e.common.layer = l.to_string();
-            }
-            if let Some(c) = color {
-                e.common.color = c;
-            }
-            if let Some(lt) = &linetype {
-                e.common.linetype.clone_from(lt);
-            }
-            if let Some(w) = lw {
-                e.common.lineweight = w;
-            }
-            if let Some(x) = p.get("ltscale").and_then(Value::as_f64).filter(|x| *x > 0.0) {
-                e.common.ltscale = x;
-            }
-            if let Some(t) = transparency {
-                e.common.transparency = t;
-            }
-            if let Some(th) = thickness {
-                e.common.thickness = th;
-            }
-            if let Some(v) = p.get("visible").and_then(Value::as_bool) {
-                e.common.visible = v;
-            }
-            let num = |k: &str| p.get(k).and_then(Value::as_f64).filter(|v| v.is_finite());
-            match &mut e.kind {
-                EntityKind::Line(l) => {
-                    if let Some(v) = p.get("start") {
-                        set_xy(&mut l.a, v);
-                    }
-                    if let Some(v) = p.get("end") {
-                        set_xy(&mut l.b, v);
-                    }
-                    // Length / angle keep the start point and move the end point.
-                    let (a, b) = (l.a.xy(), l.b.xy());
-                    let len = num("length").filter(|x| *x > 0.0 && *x < 1e15).unwrap_or_else(|| a.dist(b));
-                    let ang = num("angle").map(f64::to_radians).unwrap_or_else(|| a.angle_to(b));
-                    if num("length").is_some() || num("angle").is_some() {
-                        let e = cadcraft_geom::Vec2::polar(a, len, ang);
-                        if e.is_finite() {
-                            l.b.x = e.x;
-                            l.b.y = e.y;
-                        }
-                    }
-                }
-                EntityKind::Circle(c) => {
-                    if let Some(v) = p.get("center") {
-                        set_xy(&mut c.center, v);
-                    }
-                    if let Some(r) = num("radius").filter(|r| *r > 0.0) {
-                        c.radius = r;
-                    }
-                    if let Some(dm) = num("diameter").filter(|r| *r > 0.0) {
-                        c.radius = dm / 2.0;
-                    }
-                    if let Some(cf) = num("circumference").filter(|x| *x > 0.0) {
-                        c.radius = cf / cadcraft_geom::TAU;
-                    }
-                    if let Some(a) = num("area").filter(|x| *x > 0.0) {
-                        c.radius = (a / cadcraft_geom::PI).sqrt();
-                    }
-                }
-                EntityKind::Arc(a) => {
-                    if let Some(v) = p.get("center") {
-                        set_xy(&mut a.center, v);
-                    }
-                    if let Some(r) = num("radius").filter(|r| *r > 0.0) {
-                        a.radius = r;
-                    }
-                    if let Some(x) = num("startAngle") {
-                        a.start = cadcraft_geom::norm_angle(x.to_radians());
-                    }
-                    if let Some(x) = num("endAngle") {
-                        a.end = cadcraft_geom::norm_angle(x.to_radians());
-                    }
-                }
-                EntityKind::Text(t) => {
-                    if let Some(v) = str_param(p, "text") {
-                        t.value = v.to_string();
-                    }
-                    if let Some(x) = num("height").filter(|x| *x > 0.0) {
-                        t.height = x;
-                    }
-                    if let Some(x) = num("rotation") {
-                        t.rotation = x.to_radians();
-                    }
-                    if let Some(x) = num("widthFactor").filter(|x| *x > 0.0) {
-                        t.width_factor = x;
-                    }
-                    // The position is the point the text is placed by: moving it moves the text.
-                    if let Some(to) = p.get("position").and_then(point_value) {
-                        let d = to - t.justify_point();
-                        for q in std::iter::once(&mut t.insert).chain(t.align_pt.as_mut()) {
-                            q.x += d.x;
-                            q.y += d.y;
-                        }
-                    }
-                }
-                EntityKind::MText(t) => {
-                    if let Some(v) = str_param(p, "text") {
-                        t.contents = v.replace('\n', "\\P");
-                    }
-                    if let Some(x) = num("height").filter(|x| *x > 0.0) {
-                        t.height = x;
-                    }
-                    if let Some(x) = num("width").filter(|x| *x >= 0.0) {
-                        t.width = x;
-                    }
-                    if let Some(x) = num("rotation") {
-                        t.rotation = x.to_radians();
-                    }
-                }
-                EntityKind::LwPolyline(pl) => {
-                    if let Some(x) = num("width").filter(|x| *x >= 0.0) {
-                        pl.const_width = x;
-                    }
-                    if let Some(c) = p.get("closed").and_then(Value::as_bool) {
-                        pl.closed = c;
-                    }
-                }
-                EntityKind::Insert(i) => {
-                    if let Some(x) = num("rotation") {
-                        let turn = x.to_radians() - i.rotation;
-                        i.rotation = x.to_radians();
-                        // The attached text turns with the reference, around its insertion point (as ROTATE does).
-                        let base = i.insert.xy();
-                        for a in &mut i.attribs {
-                            let t = &mut a.text;
-                            for q in std::iter::once(&mut t.insert).chain(t.align_pt.as_mut()) {
-                                let r = q.xy().rotate_about(base, turn);
-                                q.x = r.x;
-                                q.y = r.y;
-                            }
-                            t.rotation = cadcraft_geom::norm_angle(t.rotation + turn);
-                            if let Some(ml) = &mut a.multiline {
-                                let r = ml.mtext.insert.xy().rotate_about(base, turn);
-                                ml.mtext.insert.x = r.x;
-                                ml.mtext.insert.y = r.y;
-                                ml.mtext.rotation = cadcraft_geom::norm_angle(ml.mtext.rotation + turn);
-                            }
-                        }
-                    }
-                    if let Some(x) = num("scale").filter(|x| *x != 0.0) {
-                        // A new positive scale carries the attached attribute text with it, like SCALE about the insertion point.
-                        if x > 0.0 && i.scale.x > 0.0 {
-                            let m = cadcraft_geom::Mat3::scale_about(i.insert.xy(), x / i.scale.x);
-                            for a in &mut i.attribs {
-                                let mut k = EntityKind::Text(a.text.clone());
-                                k.transform(&m);
-                                if let EntityKind::Text(t) = k {
-                                    a.text = t;
-                                }
-                                a.transform_multiline(&m);
-                            }
-                        }
-                        i.scale = Vec3::new(x, x, x);
-                    }
-                }
-                EntityKind::Dimension(dm) => {
-                    if let Some(v) = str_param(p, "textOverride") {
-                        dm.text = v.to_string();
-                        dm.block = None;
-                    }
-                    if let Some(st) = &dim_style {
-                        dm.style.clone_from(st);
-                        dm.block = None;
-                    }
-                    if !dim_over.is_empty() {
-                        dm.overrides.extend(dim_over.clone());
-                        dm.block = None;
-                    }
-                }
-                EntityKind::Hatch(h) => {
-                    if let Some(v) = str_param(p, "pattern") {
-                        if !h.pattern.eq_ignore_ascii_case(v) {
-                            h.pattern_lines = super::hatch::lines_for(v);
-                        }
-                        h.pattern = v.to_ascii_uppercase();
-                        // The old pattern's definition lines no longer apply.
-                        h.pattern_lines.clear();
-                        h.solid = h.pattern == "SOLID";
-                        if !h.solid {
-                            // A named pattern replaces the gradient fill; the renderer draws the gradient first when it is set.
-                            h.gradient = None;
-                        }
-                    }
-                    if let Some(x) = num("scale").filter(|x| *x > 0.0) {
-                        h.scale = x;
-                    }
-                    if let Some(x) = num("angle") {
-                        h.angle = x.to_radians();
-                    }
-                }
-                _ => {}
-            }
+            set_common_properties(e, p, &common);
+            apply_kind_properties(e, p, dim_style.as_ref(), &dim_over);
         })?;
     }
     Ok(json!({ "changed": hs.len() }))
+}
+
+fn apply_kind_properties(
+    entity: &mut cadcraft_doc::Entity,
+    params: &Value,
+    dim_style: Option<&String>,
+    dim_overrides: &serde_json::Map<String, Value>,
+) {
+    let num = |key: &str| params.get(key).and_then(Value::as_f64).filter(|value| value.is_finite());
+    match &mut entity.kind {
+        EntityKind::Line(l) => {
+            if let Some(v) = params.get("start") {
+                set_xy(&mut l.a, v);
+            }
+            if let Some(v) = params.get("end") {
+                set_xy(&mut l.b, v);
+            }
+            // Length / angle keep the start point and move the end point.
+            let (a, b) = (l.a.xy(), l.b.xy());
+            let len = num("length").filter(|x| *x > 0.0 && *x < 1e15).unwrap_or_else(|| a.dist(b));
+            let ang = num("angle").map(f64::to_radians).unwrap_or_else(|| a.angle_to(b));
+            if num("length").is_some() || num("angle").is_some() {
+                let e = cadcraft_geom::Vec2::polar(a, len, ang);
+                if e.is_finite() {
+                    l.b.x = e.x;
+                    l.b.y = e.y;
+                }
+            }
+        }
+        EntityKind::Circle(c) => {
+            if let Some(v) = params.get("center") {
+                set_xy(&mut c.center, v);
+            }
+            if let Some(r) = num("radius").filter(|r| *r > 0.0) {
+                c.radius = r;
+            }
+            if let Some(dm) = num("diameter").filter(|r| *r > 0.0) {
+                c.radius = dm / 2.0;
+            }
+            if let Some(cf) = num("circumference").filter(|x| *x > 0.0) {
+                c.radius = cf / cadcraft_geom::TAU;
+            }
+            if let Some(a) = num("area").filter(|x| *x > 0.0) {
+                c.radius = (a / cadcraft_geom::PI).sqrt();
+            }
+        }
+        EntityKind::Arc(a) => {
+            if let Some(v) = params.get("center") {
+                set_xy(&mut a.center, v);
+            }
+            if let Some(r) = num("radius").filter(|r| *r > 0.0) {
+                a.radius = r;
+            }
+            if let Some(x) = num("startAngle") {
+                a.start = cadcraft_geom::norm_angle(x.to_radians());
+            }
+            if let Some(x) = num("endAngle") {
+                a.end = cadcraft_geom::norm_angle(x.to_radians());
+            }
+        }
+        EntityKind::Text(t) => {
+            if let Some(v) = str_param(params, "text") {
+                t.value = v.to_string();
+            }
+            if let Some(x) = num("height").filter(|x| *x > 0.0) {
+                t.height = x;
+            }
+            if let Some(x) = num("rotation") {
+                t.rotation = x.to_radians();
+            }
+            if let Some(x) = num("widthFactor").filter(|x| *x > 0.0) {
+                t.width_factor = x;
+            }
+            // The position is the point the text is placed by: moving it moves the text.
+            if let Some(to) = params.get("position").and_then(point_value) {
+                let d = to - t.justify_point();
+                for q in std::iter::once(&mut t.insert).chain(t.align_pt.as_mut()) {
+                    q.x += d.x;
+                    q.y += d.y;
+                }
+            }
+        }
+        EntityKind::MText(t) => {
+            if let Some(v) = str_param(params, "text") {
+                t.contents = v.replace('\n', "\\P");
+            }
+            if let Some(x) = num("height").filter(|x| *x > 0.0) {
+                t.height = x;
+            }
+            if let Some(x) = num("width").filter(|x| *x >= 0.0) {
+                t.width = x;
+            }
+            if let Some(x) = num("rotation") {
+                t.rotation = x.to_radians();
+            }
+        }
+        EntityKind::LwPolyline(pl) => {
+            if let Some(x) = num("width").filter(|x| *x >= 0.0) {
+                pl.const_width = x;
+            }
+            if let Some(c) = params.get("closed").and_then(Value::as_bool) {
+                pl.closed = c;
+            }
+        }
+        EntityKind::Insert(insert) => set_insert_properties(insert, params),
+        EntityKind::Dimension(dimension) => set_dimension_properties(dimension, params, dim_style, dim_overrides),
+        EntityKind::Hatch(hatch) => set_hatch_properties(hatch, params),
+        _ => {}
+    }
+}
+
+fn set_insert_properties(insert: &mut cadcraft_doc::Insert, params: &Value) {
+    let number = |key: &str| params.get(key).and_then(Value::as_f64).filter(|value| value.is_finite());
+
+    if let Some(x) = number("rotation") {
+        let turn = x.to_radians() - insert.rotation;
+        insert.rotation = x.to_radians();
+        // The attached text turns with the reference, around its insertion point (as ROTATE does).
+        let base = insert.insert.xy();
+        for a in &mut insert.attribs {
+            let t = &mut a.text;
+            for q in std::iter::once(&mut t.insert).chain(t.align_pt.as_mut()) {
+                let r = q.xy().rotate_about(base, turn);
+                q.x = r.x;
+                q.y = r.y;
+            }
+            t.rotation = cadcraft_geom::norm_angle(t.rotation + turn);
+            if let Some(ml) = &mut a.multiline {
+                let r = ml.mtext.insert.xy().rotate_about(base, turn);
+                ml.mtext.insert.x = r.x;
+                ml.mtext.insert.y = r.y;
+                ml.mtext.rotation = cadcraft_geom::norm_angle(ml.mtext.rotation + turn);
+            }
+        }
+    }
+    if let Some(x) = number("scale").filter(|x| *x != 0.0) {
+        // A new positive scale carries the attached attribute text with it, like SCALE about the insertion point.
+        if x > 0.0 && insert.scale.x > 0.0 {
+            let m = cadcraft_geom::Mat3::scale_about(insert.insert.xy(), x / insert.scale.x);
+            for a in &mut insert.attribs {
+                let mut k = EntityKind::Text(a.text.clone());
+                k.transform(&m);
+                if let EntityKind::Text(t) = k {
+                    a.text = t;
+                }
+                a.transform_multiline(&m);
+            }
+        }
+        insert.scale = Vec3::new(x, x, x);
+    }
+}
+
+fn set_dimension_properties(
+    dimension: &mut cadcraft_doc::Dimension,
+    params: &Value,
+    style: Option<&String>,
+    overrides: &serde_json::Map<String, Value>,
+) {
+    if let Some(v) = str_param(params, "textOverride") {
+        dimension.text = v.to_string();
+        dimension.block = None;
+    }
+    if let Some(st) = style {
+        dimension.style.clone_from(st);
+        dimension.block = None;
+    }
+    if !overrides.is_empty() {
+        dimension.overrides.extend(overrides.clone());
+        dimension.block = None;
+    }
+}
+
+fn set_hatch_properties(hatch: &mut cadcraft_doc::Hatch, params: &Value) {
+    let number = |key: &str| params.get(key).and_then(Value::as_f64).filter(|value| value.is_finite());
+
+    if let Some(v) = str_param(params, "pattern") {
+        if !hatch.pattern.eq_ignore_ascii_case(v) {
+            hatch.pattern_lines = super::hatch::lines_for(v);
+        }
+        hatch.pattern = v.to_ascii_uppercase();
+        // The old pattern's definition lines no longer apply.
+        hatch.pattern_lines.clear();
+        hatch.solid = hatch.pattern == "SOLID";
+        if !hatch.solid {
+            // A named pattern replaces the gradient fill; the renderer draws the gradient first when it is set.
+            hatch.gradient = None;
+        }
+    }
+    if let Some(x) = number("scale").filter(|x| *x > 0.0) {
+        hatch.scale = x;
+    }
+    if let Some(x) = number("angle") {
+        hatch.angle = x.to_radians();
+    }
+}
+
+struct CommonEntityProperties<'a> {
+    anno_scale: &'a cadcraft_doc::AnnoScale,
+    color: Option<Color>,
+    linetype: Option<&'a str>,
+    lineweight: Option<Lineweight>,
+    transparency: Option<Transparency>,
+    thickness: Option<f64>,
+}
+
+fn set_common_properties(entity: &mut cadcraft_doc::Entity, params: &Value, common: &CommonEntityProperties<'_>) {
+    if let Some(annotative) = params.get("annotative").and_then(Value::as_bool) {
+        cadcraft_doc::set_annotative(entity, annotative, common.anno_scale);
+    }
+    if let Some(layer) = str_param(params, "layer") {
+        entity.common.layer = layer.to_string();
+    }
+    if let Some(color) = common.color {
+        entity.common.color = color;
+    }
+    if let Some(linetype) = common.linetype {
+        entity.common.linetype = linetype.to_string();
+    }
+    if let Some(lineweight) = common.lineweight {
+        entity.common.lineweight = lineweight;
+    }
+    if let Some(scale) = params.get("ltscale").and_then(Value::as_f64).filter(|scale| *scale > 0.0) {
+        entity.common.ltscale = scale;
+    }
+    if let Some(transparency) = common.transparency {
+        entity.common.transparency = transparency;
+    }
+    if let Some(thickness) = common.thickness {
+        entity.common.thickness = thickness;
+    }
+    if let Some(visible) = params.get("visible").and_then(Value::as_bool) {
+        entity.common.visible = visible;
+    }
 }
 
 fn run_color(s: &mut Session, p: &Value) -> Result<Value> {

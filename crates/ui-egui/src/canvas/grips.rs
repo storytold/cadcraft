@@ -1,4 +1,4 @@
-use super::*;
+use super::{CadApp, Handle, Input, Pos2, Rect, Xf, vec2};
 
 /// A click on grip `g` (idle): Shift+click makes it hot or cold again; a plain click starts
 /// editing it, with the other hot grips when it is one of them.
