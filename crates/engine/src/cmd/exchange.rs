@@ -652,6 +652,7 @@ mod tests {
             rows: 1,
             col_spacing: 0.0,
             row_spacing: 0.0,
+            clip: None,
         })
     }
 

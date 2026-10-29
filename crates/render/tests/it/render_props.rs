@@ -169,6 +169,7 @@ fn attributes_draw_with_their_own_properties() {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     let common = Common { color: Color::Index(1), lineweight: Lineweight::Mm100(35), ..on("INS") };
     d.add(&Space::Model, common, EntityKind::Insert(ins)).unwrap();

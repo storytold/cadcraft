@@ -142,6 +142,7 @@ mod undo_layout_tab;
 mod viewport_clip;
 mod vplayer_prompts;
 mod vports;
+mod xclip;
 mod xdata_follows_entity;
 mod zoom_keywords;
 mod zoom_viewport;

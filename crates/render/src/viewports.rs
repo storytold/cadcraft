@@ -5,7 +5,7 @@ use super::draw::entity;
 #[cfg(not(target_arch = "wasm32"))]
 use super::pipeline::PARALLEL_CHUNK;
 use super::pipeline::{Options, style_table, top_ctx, with_point_view};
-use super::{Bounds2, Builder, Ctx, Drawing, Entity, EntityKind, Handle, MAX_BLOCK_EXPANSION, Mat3, Space, Vec2, clip, paper, pen, plotstyle};
+use super::{Bounds2, Builder, Ctx, Drawing, Entity, EntityKind, Handle, MAX_BLOCK_EXPANSION, Mat3, Pen, Space, Vec2, clip, paper, pen, plotstyle};
 
 /// Upper bound on viewports drawn per layout (hostile files).
 pub(crate) const MAX_VIEWPORTS: usize = 256;
@@ -187,16 +187,50 @@ pub fn viewport_clip(d: &Drawing, handle: Handle, vp: &cadcraft_doc::Viewport) -
 }
 
 /// What viewport contents are clipped to.
-enum Clip<'a> {
+pub(crate) enum Clip<'a> {
     /// The viewport rectangle (the fast path).
     Rect(Bounds2),
     /// A clip boundary's outline.
     Poly(&'a clip::PolyClip),
+    /// Outside a clip boundary's outline (an inverted XCLIP).
+    Outside(&'a clip::PolyClip),
 }
 
 /// Append `src` to `dst`, clipped to `clip`.
-fn append_clipped(dst: &mut DisplayList, src: &DisplayList, clip: &Clip) {
+pub(crate) fn append_clipped(dst: &mut DisplayList, src: &DisplayList, clip: &Clip) {
     for p in &src.prims {
+        clip_prim(dst, src, p, clip);
+    }
+}
+
+/// Append `src` to `dst` clipped to `clip`, keeping each primitive's plot style pen and, for a
+/// glyph that the clip leaves whole, its plotted text (an XCLIP-clipped block reference).
+pub(crate) fn append_clipped_keep(dst: &mut DisplayList, src: &DisplayList, clip: &Clip) {
+    let texts: std::collections::HashMap<usize, &PlotText> =
+        src.texts.iter().filter(|t| t.prim != PlotText::NONE && t.prim != PlotText::CLIPPED).map(|t| (t.prim as usize, t)).collect();
+    for (i, p) in src.prims.iter().enumerate() {
+        let first = dst.prims.len();
+        clip_prim(dst, src, p, clip);
+        if let Some(pen) = src.pens.get(i).copied().filter(|pen| !pen.is_object()) {
+            for k in first..dst.prims.len() {
+                dst.pens.resize(k, Pen::default());
+                dst.pens.push(pen);
+            }
+        }
+        if dst.prims.len() == first + 1
+            && let (Some(q), Some(t)) = (dst.prims.get(first), texts.get(&i))
+            && q.kind == p.kind
+            && dst.points(q) == src.points(p)
+            && let Ok(prim) = u32::try_from(first)
+        {
+            dst.texts.push(PlotText { prim, ..(**t).clone() });
+        }
+    }
+}
+
+/// Append primitive `p` of `src` to `dst`, clipped to `clip`.
+fn clip_prim(dst: &mut DisplayList, src: &DisplayList, p: &DPrim, clip: &Clip) {
+    {
         let pts = src.points(p);
         match (p.kind, clip) {
             (Kind::Polyline, Clip::Rect(rect)) => {
@@ -209,6 +243,11 @@ fn append_clipped(dst: &mut DisplayList, src: &DisplayList, clip: &Clip) {
                     push_raw(dst, p, Kind::Polyline, &piece);
                 }
             }
+            (Kind::Polyline, Clip::Outside(c)) => {
+                for piece in c.clip_polyline_outside(pts) {
+                    push_raw(dst, p, Kind::Polyline, &piece);
+                }
+            }
             (Kind::Tris | Kind::Mask, Clip::Rect(rect)) => {
                 let t = clip::clip_triangles(pts, rect);
                 push_raw(dst, p, p.kind, &t);
@@ -217,10 +256,15 @@ fn append_clipped(dst: &mut DisplayList, src: &DisplayList, clip: &Clip) {
                 let t = c.clip_triangles(pts);
                 push_raw(dst, p, p.kind, &t);
             }
+            (Kind::Tris | Kind::Mask, Clip::Outside(c)) => {
+                let t = c.clip_triangles_outside(pts);
+                push_raw(dst, p, p.kind, &t);
+            }
             (Kind::Point, _) => {
                 let inside = |q: Vec2| match clip {
                     Clip::Rect(rect) => rect.contains(q),
                     Clip::Poly(c) => c.contains(q),
+                    Clip::Outside(c) => !c.contains(q),
                 };
                 if let Some(q) = pts.first()
                     && inside(*q)
@@ -238,6 +282,13 @@ fn append_clipped(dst: &mut DisplayList, src: &DisplayList, clip: &Clip) {
             (Kind::Infinite { ray }, Clip::Poly(c)) => {
                 if let (Some(base), Some(dir)) = (pts.first(), pts.get(1)) {
                     for piece in c.clip_infinite(*base, *dir, ray) {
+                        push_raw(dst, p, Kind::Polyline, &piece);
+                    }
+                }
+            }
+            (Kind::Infinite { ray }, Clip::Outside(c)) => {
+                if let (Some(base), Some(dir)) = (pts.first(), pts.get(1)) {
+                    for piece in c.clip_infinite_outside(*base, *dir, ray) {
                         push_raw(dst, p, Kind::Polyline, &piece);
                     }
                 }

@@ -23,6 +23,7 @@ mod description;
 mod dyngrip;
 mod extract;
 pub(crate) mod refedit;
+mod xclip;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -86,6 +87,7 @@ pub fn specs() -> Vec<CommandSpec> {
     .chain(attribs::attdisp_menu_specs())
     .chain(xref::specs())
     .chain(refedit::specs())
+    .chain(xclip::specs())
     .chain(bedit::specs())
     .collect()
 }
@@ -215,6 +217,7 @@ fn insert_entity(blk: &Block, at: Vec2, scale: Vec2, rotation: f64, base: Option
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     if let Some(b) = base {
         let landed = ins.transform(blk.base.xy()).apply(b);

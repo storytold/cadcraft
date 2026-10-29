@@ -67,4 +67,5 @@ mod tolerance_roundtrip;
 mod user_lin_pat_roundtrip;
 mod view_tables_roundtrip;
 mod viewport_clip_roundtrip;
+mod xclip_roundtrip;
 mod xref_roundtrip;

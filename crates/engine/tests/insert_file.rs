@@ -35,6 +35,7 @@ fn read(bytes: &[u8], _name: &str) -> Result<Drawing, String> {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     };
     d.model.push(Entity::new(Handle(0x61), EntityKind::Insert(ins)));
     Ok(d)

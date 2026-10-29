@@ -138,6 +138,7 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
         d.layers.insert(0, Layer::default());
     }
     crate::dxf_raw::read(&secs, &mut d);
+    crate::dxf_clip::read(&mut d);
     d.skipped_records = skipped;
     Ok(d)
 }

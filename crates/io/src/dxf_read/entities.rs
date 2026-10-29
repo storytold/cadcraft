@@ -165,6 +165,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
                 rows: t.i(71).unwrap_or(1).clamp(1, 10_000) as u32,
                 col_spacing,
                 row_spacing: t.fd(45, 0.0),
+                clip: None,
             })
         }
         "DIMENSION" => {

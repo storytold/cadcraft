@@ -154,6 +154,7 @@ pub(crate) fn make_assoc(s: &mut Session, objs: &[Handle], base: Vec2, mut p: Ar
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     }))
 }
 

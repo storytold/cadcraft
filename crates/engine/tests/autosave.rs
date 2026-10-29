@@ -345,6 +345,7 @@ fn a_block_editor_that_cannot_be_composed_is_not_autosaved_as_the_old_host() {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     });
     d.model.push(Entity::new(h, kind));
     assert!(s.state().unwrap().recovery_drawing().is_err());

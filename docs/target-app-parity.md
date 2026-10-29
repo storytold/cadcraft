@@ -1,6 +1,6 @@
 # Target-app parity: CADCraft vs AutoCAD 2027
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (COMPAREEXPORT; numbers not re-measured) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-27 · **Change:** minor (XCLIP; numbers not re-measured) · **Target:** Autodesk AutoCAD 2027
 
 The authoritative assessment of how close CADCraft is to AutoCAD, and how much Opus 5.5 work
 remains. [ROADMAP.md](../ROADMAP.md) summarises it, [gaps.md](gaps.md) lists every shortfall,
@@ -154,7 +154,7 @@ presence: an option that prints "not available yet" doesn't count.
 | Text and MTEXT | 6% | 35% | 30–45 | TrueType, formatting codes, stacking; MTEXT prompt options (#408), indents, tabs, bullets, numbering and columns (#547), annotative scaling (#468); editor is a dialog, not in place; no fields or SPELL (open PR #551), no SHX | [gaps](gaps.md#features) |
 | Leaders, tables, fields | 4% | 25% | 25–35 | MLEADER options and block content (#408), native MULTILEADER in DXF (#459); tables with cell styles, formulas, breaking and CSV data links (#534); no MLEADEREDIT/ALIGN/COLLECT, no FIELD | [gaps](gaps.md#features) |
 | Hatch and gradients | 5% | 35% | 15–25 | pick points with islands; 23 patterns of ~85; gradients render flat; origin, gap tolerance, separate hatches, island styles and HATCHEDIT options (#451); Hatch and Gradient / Hatch Edit dialogs (no Preview or Inherit Properties) | [gaps](gaps.md#features) |
-| Blocks, attributes, xrefs, groups | 9% | 25% | 80–120 | static blocks and attributes; ATTSYNC, BATTMAN editing, DATAEXTRACTION/EATTEXT (#433); xrefs (#525); groups (#417); Block Editor for static blocks (BEDIT, BSAVE, BSAVEAS, BCLOSE); REFEDIT; dynamic block references read and edited; no dynamic-block authoring, XCLIP, DesignCenter | [gaps](gaps.md#features) |
+| Blocks, attributes, xrefs, groups | 9% | 25% | 80–120 | static blocks and attributes; ATTSYNC, BATTMAN editing, DATAEXTRACTION/EATTEXT (#433); xrefs (#525); groups (#417); Block Editor for static blocks (BEDIT, BSAVE, BSAVEAS, BCLOSE); REFEDIT; dynamic block references read and edited; XCLIP; no dynamic-block authoring, DesignCenter | [gaps](gaps.md#features) |
 | Layouts, viewports, plotting | 9% | 35% | 35–50 | layouts, per-VP layers, page setups, plot styles (CTB/STB), Plot dialog (#160), Plot Preview and PUBLISH (#186), plotter devices (#564), PDF with text, layers and sheets (#567, #571), polygonal/object/clipped viewports (#453), annotative scales (#468); no MVIEW Restore, no system printers | [gaps](gaps.md#features) |
 | Inquiry and utilities | 4% | 30% | 30–45 | DIST, AREA, ID, LIST, MEASUREGEOM, CAL, FIND, COUNT across layouts, QuickCalc, COMPARE (#563) and COMPAREEXPORT, MASSPROP on regions (#510), autosave/recovery, AUDIT, RECOVER (#406), OPTIONS (#23); no SPELL (open PR #551), ETRANSMIT | [gaps](gaps.md#features) |
 | Parametric constraints | 2% | 50% | 20–30 | all 12 geometric and the dimensional constraints, own solver; DOF report, G2 Smooth, ellipse/spline/block geometry and CONSTRAINTINFER landed (#546) | [geometry-parity](geometry-parity.md#constraint-solver--50) |
@@ -223,6 +223,7 @@ DWG/DXF corpus (files from people who own them); black-box checks in AutoCAD of 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-27 | minor | Blocks, attributes, xrefs, groups row: XCLIP and XCLIPFRAME clip block and xref references; parity percentages and hours not re-measured |
 | 2026-10-24 | minor | Inquiry and utilities row: COMPAREEXPORT exports a comparison to a new drawing; parity percentages and hours not re-measured |
 | 2026-10-22 | minor | Draw row: RECTANG gained a centre construction mode (`Center` keyword, `center: true`) beside its corner mode (#1127); parity percentages and hours not re-measured |
 | 2026-10-12 | minor | Hatch row evidence: Hatch and Gradient / Hatch Edit dialogs; percentages and hours not re-measured |

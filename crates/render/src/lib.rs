@@ -133,7 +133,7 @@ struct Builder<'a> {
 /// bounds the depth); past the limit the remaining block contents are not drawn.
 pub const MAX_BLOCK_EXPANSION: usize = 2_000_000;
 
-impl Builder<'_> {
+impl<'a> Builder<'a> {
     /// `color` and `lw` as the plot style table prints them.
     fn styled(&self, color: Ink, lw: f32) -> (Ink, f32) {
         match self.styles {
@@ -288,6 +288,21 @@ impl Builder<'_> {
             len: 2,
         });
     }
+    /// An empty builder drawing like this one (for contents cut afterwards, an XCLIP), with the
+    /// block-expansion count carried over.
+    fn part(&self) -> Builder<'a> {
+        let mut list = DisplayList::default();
+        list.expanded = self.list.expanded;
+        Builder {
+            list,
+            opts: self.opts,
+            plotting: self.plotting,
+            styles: self.styles,
+            named: self.named,
+            shared_budget: self.shared_budget,
+            transparency: self.transparency,
+        }
+    }
     /// Take one unit of the block-expansion budget; false once it is spent.
     fn expand(&mut self) -> bool {
         self.list.expanded = self.list.expanded.saturating_add(1);
@@ -316,6 +331,7 @@ pub use pipeline::{Options, build, build_entities, build_plot};
 use props::{default_lineweight, resolve_common};
 use text_entity::text_style;
 pub use text_entity::{layout_mtext_entity, place_text_entity, text_align};
+use viewports::{Clip, append_clipped_keep};
 pub use viewports::{viewport_clip, viewport_content};
 
 #[cfg(test)]

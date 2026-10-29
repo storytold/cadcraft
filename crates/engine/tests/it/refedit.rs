@@ -20,6 +20,7 @@ fn insert(s: &mut Session, block: &str, at: (f64, f64), scale: f64, rot_deg: f64
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     });
     s.doc_mut().unwrap().add(&Space::Model, Common::default(), kind).unwrap().hex()
 }
@@ -246,6 +247,7 @@ fn a_block_that_references_itself_in_a_file_does_not_hang() {
         rows: 1,
         col_spacing: 0.0,
         row_spacing: 0.0,
+        clip: None,
     });
     let d = s.doc_mut().unwrap();
     let hh = d.new_handle();

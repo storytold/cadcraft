@@ -161,6 +161,25 @@ pub struct Insert {
     pub col_spacing: f64,
     #[serde(default)]
     pub row_spacing: f64,
+    /// XCLIP boundary of this reference (other references to the block are not clipped).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clip: Option<crate::ClipBoundary>,
+}
+impl Default for Insert {
+    fn default() -> Self {
+        Insert {
+            block: String::new(),
+            insert: Vec3::ZERO,
+            scale: unit_scale(),
+            rotation: 0.0,
+            attribs: Vec::new(),
+            cols: 1,
+            rows: 1,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+            clip: None,
+        }
+    }
 }
 
 fn unit_scale() -> Vec3 {

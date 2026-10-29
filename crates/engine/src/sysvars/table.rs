@@ -74,6 +74,8 @@ const HEADER: &[(&str, Kind, Def)] = &[
     ("TRIMEXTENDMODE", Kind::Choice(&[0, 1]), Def::Int(1)),
     ("TRIMMODE", Kind::Choice(&[0, 1]), Def::Int(1)),
     ("WIPEOUTFRAME", Kind::Choice(&[0, 1, 2]), Def::Int(1)),
+    // XCLIP boundaries: 0 hidden, 1 shown and plotted, 2 shown but not plotted.
+    ("XCLIPFRAME", Kind::Choice(&[0, 1, 2]), Def::Int(2)),
 ];
 
 /// The standard lineweights in hundredths of a millimetre.
