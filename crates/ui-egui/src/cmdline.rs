@@ -282,6 +282,77 @@ fn enable_ime(app: &mut CadApp, ctx: &egui::Context) {
     });
 }
 
+/// True while the command-line buffer holds an incomplete LISP expression (`(`) or starts with a
+/// bare LISP prefix operator (`+ 1 2`), so spaces stay inside the expression instead of submitting.
+fn lisp_accepts_space(buf: &str, prompting: bool) -> bool {
+    let b = buf.trim_start();
+    let after_bang = b.trim_start_matches('!');
+    if after_bang.starts_with('(') {
+        let (mut depth, mut in_str, mut escaped) = (0i32, false, false);
+        for c in after_bang.chars() {
+            if in_str {
+                match (escaped, c) {
+                    (true, _) => escaped = false,
+                    (false, '\\') => escaped = true,
+                    (false, '"') => in_str = false,
+                    _ => {}
+                }
+                continue;
+            }
+            match c {
+                '"' => in_str = true,
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                _ => {}
+            }
+        }
+        return depth > 0 || in_str;
+    }
+    if !prompting {
+        let first = b.split_whitespace().next().unwrap_or("");
+        if cadcraft_engine::is_bare_lisp_operator(first) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Handle an event while the command-line options menu is open; returns `true` when consumed.
+fn handle_options_event(app: &mut CadApp, ev: &egui::Event, keep_space: bool) -> bool {
+    if app.cmd.options.is_none() {
+        return false;
+    }
+    let space = matches!(ev, egui::Event::Text(t) if t == " ") && !keep_space;
+    match ev {
+        _ if space => {
+            if let Some(k) = app.cmd.options.as_ref().and_then(|m| m.current()).map(str::to_owned) {
+                pick_option(app, k);
+            }
+            true
+        }
+        egui::Event::Key { key: Key::Enter, pressed: true, .. } => {
+            if let Some(k) = app.cmd.options.as_ref().and_then(|m| m.current()).map(str::to_owned) {
+                pick_option(app, k);
+            }
+            true
+        }
+        egui::Event::Key { key: Key::Escape, pressed: true, .. } => {
+            app.cmd.options = None;
+            true
+        }
+        egui::Event::Key { key: Key::ArrowUp, pressed: true, modifiers, .. } if !modifiers.any() => {
+            options_key(app, -1);
+            true
+        }
+        egui::Event::Key { key: Key::ArrowDown | Key::ArrowUp, pressed: true, .. } | egui::Event::Key { key: Key::Space, .. } => false,
+        egui::Event::Text(_) | egui::Event::Key { pressed: true, .. } => {
+            app.cmd.options = None;
+            false
+        }
+        _ => false,
+    }
+}
+
 /// Handle keyboard input destined for the command line (when no text field has focus).
 pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
     if ctx.egui_wants_keyboard_input() {
@@ -303,42 +374,15 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
     }
     options_still_fit(app);
     for ev in events {
-        // The options menu takes the arrows, Enter and Escape; typing closes it.
-        if app.cmd.options.is_some() {
-            let space = matches!(&ev, egui::Event::Text(t) if t == " ") && !text_prompt;
-            match &ev {
-                _ if space => {
-                    if let Some(k) = app.cmd.options.as_ref().and_then(|m| m.current()).map(str::to_owned) {
-                        pick_option(app, k);
-                    }
-                    continue;
-                }
-                egui::Event::Key { key: Key::Enter, pressed: true, .. } => {
-                    if let Some(k) = app.cmd.options.as_ref().and_then(|m| m.current()).map(str::to_owned) {
-                        pick_option(app, k);
-                    }
-                    continue;
-                }
-                egui::Event::Key { key: Key::Escape, pressed: true, .. } => {
-                    app.cmd.options = None;
-                    continue;
-                }
-                egui::Event::Key { key: Key::ArrowUp, pressed: true, modifiers, .. } if !modifiers.any() => {
-                    options_key(app, -1);
-                    continue;
-                }
-                egui::Event::Key { key: Key::ArrowDown | Key::ArrowUp, pressed: true, .. } => {}
-                // Space arrives as a key and as text; the text picks.
-                egui::Event::Key { key: Key::Space, .. } => {}
-                egui::Event::Text(_) | egui::Event::Key { pressed: true, .. } => app.cmd.options = None,
-                _ => {}
-            }
+        let keep_space = text_prompt || lisp_accepts_space(&app.cmd.buffer, app.session.prompting());
+        if handle_options_event(app, &ev, keep_space) {
+            continue;
         }
         match ev {
             egui::Event::Text(t) => {
                 if t == "\t" {
                     tab(app);
-                } else if t == " " && !text_prompt {
+                } else if t == " " && !keep_space {
                     submit(app);
                 } else {
                     app.cmd.preedit.clear();
