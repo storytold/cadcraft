@@ -188,6 +188,12 @@ pub(super) struct PlineM {
 }
 
 impl PlineM {
+    /// PLINE starts at the current polyline width (PLINEWID).
+    pub(super) fn new(s: &Session) -> Self {
+        let w = s.doc().map(|d| d.header.f64("PLINEWID", 0.0)).unwrap_or(0.0);
+        let w = if w.is_finite() && w >= 0.0 { w } else { 0.0 };
+        PlineM { start_w: w, end_w: w, ..PlineM::default() }
+    }
     fn entity(&self, closed: bool) -> EntityKind {
         let mut k = lwpoly(self.verts.clone(), closed);
         if let EntityKind::LwPolyline(pl) = &mut k {
@@ -303,6 +309,9 @@ impl Interactive for PlineM {
             if self.asking_width == 1 {
                 // The ending width defaults to the starting width.
                 self.end_w = self.start_w;
+            } else {
+                // The width the segments after the next one get is the next PLINE's width too.
+                s.doc_mut()?.header.set_f64("PLINEWID", self.end_w);
             }
             self.asking_width = if self.asking_width == 1 { 2 } else { 0 };
             return Ok(Step::Continue);

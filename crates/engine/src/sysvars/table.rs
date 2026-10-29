@@ -40,7 +40,11 @@ enum Def {
 
 /// Header variables: name, kind, the default the commands use while the header has none.
 const HEADER: &[(&str, Kind, Def)] = &[
+    // Attribute display: 0 all hidden, 1 normal (as each attribute's mode says), 2 all shown.
+    ("ATTMODE", Kind::Choice(&[0, 1, 2]), Def::Int(1)),
     ("CENTEREXE", Kind::Real { min: 0.0, strict: false }, Def::Units(0.12, 3.5)),
+    // The linetype scale new objects get (props: CELTSCALE).
+    ("CELTSCALE", Kind::Real { min: 0.0, strict: true }, Def::Real(1.0)),
     ("CHAMFERA", Kind::Real { min: 0.0, strict: false }, Def::Real(0.0)),
     ("CHAMFERB", Kind::Real { min: 0.0, strict: false }, Def::Real(0.0)),
     ("CHAMFERC", Kind::Real { min: 0.0, strict: false }, Def::Real(0.0)),
@@ -54,6 +58,8 @@ const HEADER: &[(&str, Kind, Def)] = &[
     ("DONUTID", Kind::Real { min: 0.0, strict: false }, Def::Real(0.5)),
     ("DONUTOD", Kind::Real { min: 0.0, strict: true }, Def::Real(1.0)),
     ("EDGEMODE", Kind::Choice(&[0, 1]), Def::Int(0)),
+    // Solid fills (solids, wide polylines, filled hatches) show filled (1) or as outlines (0).
+    ("FILLMODE", Kind::Choice(&[0, 1]), Def::Int(1)),
     ("HPANG", Kind::Angle, Def::Real(0.0)),
     // 1: HATCH and GRADIENT typed or from a menu open the Hatch and Gradient dialog; 0: the command line.
     ("HPDLGMODE", Kind::Choice(&[0, 1]), Def::Int(1)),
@@ -62,22 +68,53 @@ const HEADER: &[(&str, Kind, Def)] = &[
     ("INSNAME", Kind::Name, Def::Str("")),
     ("LWDEFAULT", Kind::Choice(&LINEWEIGHTS), Def::Int(25)),
     // Negative: Through (OFFSET picks a point).
+    // The global linetype scale (LTSCALE).
+    ("LTSCALE", Kind::Real { min: 0.0, strict: true }, Def::Real(1.0)),
     ("OFFSETDIST", Kind::AnyReal, Def::Real(-1.0)),
     ("OFFSETERASE", Kind::Choice(&[0, 1]), Def::Int(0)),
     ("OFFSETLAYER", Kind::Choice(&[0, 1]), Def::Int(0)),
+    // Point style: shape 0-4, plus 32 (circle) and/or 64 (square), as PTYPE sets it.
+    ("PDMODE", Kind::Choice(&PDMODES), Def::Int(0)),
+    // Point size: positive in drawing units, negative a percentage of the view height, 0 5%.
+    ("PDSIZE", Kind::AnyReal, Def::Real(0.0)),
+    // New polylines generate their linetype across their vertices (1), or start it again at
+    // each vertex (0); PEDIT Ltype gen changes one polyline.
+    ("PLINEGEN", Kind::Choice(&[0, 1]), Def::Int(0)),
+    // The width PLINE starts with; its Width and Halfwidth answers set it.
+    ("PLINEWID", Kind::Real { min: 0.0, strict: false }, Def::Real(0.0)),
     ("POLYSIDES", Kind::Int(3, 1024), Def::Int(4)),
     ("PROJMODE", Kind::Choice(&[0, 1, 2]), Def::Int(1)),
+    // Paper space linetype scaling: 1 dashes in viewports are sized in paper units.
+    ("PSLTSCALE", Kind::Choice(&[0, 1]), Def::Int(1)),
     ("REVCLOUDARCLEN", Kind::Real { min: 0.0, strict: true }, Def::Units(0.5, 15.0)),
     ("SPLINESEGS", Kind::Int(-32768, 32767), Def::Int(8)),
+    // PEDIT Spline: 5 quadratic, 6 cubic B-spline.
+    ("SPLINETYPE", Kind::Choice(&[5, 6]), Def::Int(6)),
     ("SPLKNOTS", Kind::Choice(&[0, 1, 2]), Def::Int(0)),
     ("TEXTFILL", Kind::Choice(&[0, 1]), Def::Int(1)),
+    // The height new text gets (TEXT, MTEXT, ATTDEF) when its style has none.
+    ("TEXTSIZE", Kind::Real { min: 0.0, strict: true }, Def::Units(0.2, 2.5)),
     ("TRIMEXTENDMODE", Kind::Choice(&[0, 1]), Def::Int(1)),
     ("TRIMMODE", Kind::Choice(&[0, 1]), Def::Int(1)),
+    // Values kept for scripts and programs (AutoLISP's GETVAR/SETVAR); saved with the drawing.
+    ("USERI1", Kind::Int(-32768, 32767), Def::Int(0)),
+    ("USERI2", Kind::Int(-32768, 32767), Def::Int(0)),
+    ("USERI3", Kind::Int(-32768, 32767), Def::Int(0)),
+    ("USERI4", Kind::Int(-32768, 32767), Def::Int(0)),
+    ("USERI5", Kind::Int(-32768, 32767), Def::Int(0)),
+    ("USERR1", Kind::AnyReal, Def::Real(0.0)),
+    ("USERR2", Kind::AnyReal, Def::Real(0.0)),
+    ("USERR3", Kind::AnyReal, Def::Real(0.0)),
+    ("USERR4", Kind::AnyReal, Def::Real(0.0)),
+    ("USERR5", Kind::AnyReal, Def::Real(0.0)),
     ("WIPEOUTFRAME", Kind::Choice(&[0, 1, 2]), Def::Int(1)),
 ];
 
 /// The standard lineweights in hundredths of a millimetre.
 const LINEWEIGHTS: [i64; 24] = [0, 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50, 53, 60, 70, 80, 90, 100, 106, 120, 140, 158, 200, 211];
+
+/// PDMODE's values: a shape 0-4, plus 32 (circle) and/or 64 (square).
+const PDMODES: [i64; 20] = [0, 1, 2, 3, 4, 32, 33, 34, 35, 36, 64, 65, 66, 67, 68, 96, 97, 98, 99, 100];
 
 /// On/off session settings: name, read, write.
 type Toggle = (&'static str, fn(&Settings) -> bool, fn(&mut Settings, bool));

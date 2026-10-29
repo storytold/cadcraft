@@ -261,7 +261,7 @@ impl Session {
     }
 
     /// Add an entity to the current space with current properties.
-    pub fn add_entity(&mut self, kind: EntityKind) -> Result<Handle> {
+    pub fn add_entity(&mut self, mut kind: EntityKind) -> Result<Handle> {
         let common = self.current_common();
         let space = self.space();
         let true_color = self.doc()?.header.get("CECOLOR_RGB").and_then(|v| v.as_i64());
@@ -287,6 +287,12 @@ impl Session {
                 | EntityKind::Solid(_)
         ) {
             common.thickness = Some(d.header.f64("THICKNESS", 0.0)).filter(|t| t.is_finite()).unwrap_or(0.0);
+        }
+        // New polylines generate their linetype across their vertices while PLINEGEN is 1.
+        if let EntityKind::LwPolyline(pl) = &mut kind
+            && d.header.i64("PLINEGEN", 0) == 1
+        {
+            pl.plinegen = true;
         }
         let h = self.doc_mut()?.add(&space, common, kind)?;
         Ok(h)

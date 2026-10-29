@@ -70,8 +70,9 @@ pub(crate) fn fit_vertices(vs: &[PolyVertex], closed: bool, tans: &[Option<Vec2>
     out
 }
 
-/// Spline curve: a cubic B-spline with the vertices as its frame (control points).
-pub(crate) fn spline_vertices(vs: &[PolyVertex], closed: bool, segs: usize) -> Vec<PolyVertex> {
+/// Spline curve: a B-spline with the vertices as its frame (control points), quadratic or cubic
+/// as SPLINETYPE says (5 or 6).
+pub(crate) fn spline_vertices(vs: &[PolyVertex], closed: bool, segs: usize, quadratic: bool) -> Vec<PolyVertex> {
     let pts: Vec<Vec2> = vs.iter().map(|v| v.p).collect();
     let n = pts.len();
     if n < 3 {
@@ -79,7 +80,21 @@ pub(crate) fn spline_vertices(vs: &[PolyVertex], closed: bool, segs: usize) -> V
     }
     let segs = segs.clamp(1, 64).min((MAX_GEN / n).max(1));
     let mut out: Vec<Vec2> = Vec::new();
-    if closed {
+    if closed && quadratic {
+        // Uniform periodic quadratic B-spline: each piece runs between the midpoints of two
+        // frame segments.
+        let at = |i: usize| pts.get(i % n).copied().unwrap_or_default();
+        for i in 0..n {
+            let (p0, p1, p2) = (at(i + n - 1), at(i), at(i + 1));
+            for k in 0..segs {
+                let t = k as f64 / segs as f64;
+                let b0 = (1.0 - t).powi(2) / 2.0;
+                let b1 = (-2.0 * t * t + 2.0 * t + 1.0) / 2.0;
+                let b2 = t * t / 2.0;
+                out.push(p0 * b0 + p1 * b1 + p2 * b2);
+            }
+        }
+    } else if closed {
         // Uniform periodic cubic B-spline.
         let at = |i: usize| pts.get(i % n).copied().unwrap_or_default();
         for i in 0..n {
@@ -95,7 +110,7 @@ pub(crate) fn spline_vertices(vs: &[PolyVertex], closed: bool, segs: usize) -> V
             }
         }
     } else {
-        let sp = Spline::from_control(pts.clone(), 3);
+        let sp = Spline::from_control(pts.clone(), if quadratic { 2 } else { 3 });
         let (lo, hi) = sp.domain();
         let m = (segs * (n - 1)).min(MAX_GEN);
         for k in 0..=m {
@@ -190,8 +205,9 @@ fn pedit_apply(s: &mut Session, h: Handle, opt: &str, p: &Value) -> Result<Value
         }
         "fit" | "f" => pl.vertices = fit_vertices(&pl.vertices, pl.closed, &pedit_vertex::tangent_param(p, pl.vertices.len())?),
         "spline" | "s" => {
-            let segs = s.doc()?.header.i64("SPLINESEGS", 8).clamp(1, 64) as usize;
-            pl.vertices = spline_vertices(&pl.vertices, pl.closed, segs);
+            let header = &s.doc()?.header;
+            let segs = header.i64("SPLINESEGS", 8).clamp(1, 64) as usize;
+            pl.vertices = spline_vertices(&pl.vertices, pl.closed, segs, header.i64("SPLINETYPE", 6) == 5);
         }
         "decurve" | "d" => pl.vertices.iter_mut().for_each(|v| v.bulge = 0.0),
         "reverse" | "r" => pl.vertices = curves::reverse_vertices(&pl.vertices, pl.closed),
