@@ -249,3 +249,16 @@ fn paper_margins_are_checked_against_their_own_axis() {
     assert!(s.execute("plottermanager", &paper(json!([0, 250, 0, 0]))).is_err());
     // 300 mm of left + right margin still leaves 100 mm of printable width on a 400 mm paper.
     assert!(s.execute("plottermanager", &paper(json!([150, 0, 150, 0]))).is_ok());
+    // The paper is stored portrait and the margins turn with it: the 100 x 200 printable area
+    // of the requested sheet stays 200 x 100 on the stored 200 x 400 one.
+    let stored = s.execute("plottermanager", &json!({"action": "get", "name": "Banner Printer"})).unwrap();
+    let banner = stored["papers"].as_array().unwrap().iter().find(|p| p["name"] == "Banner").unwrap().clone();
+    assert_eq!((banner["width"].as_f64().unwrap(), banner["height"].as_f64().unwrap()), (200.0, 400.0));
+    assert_eq!(banner["margins"], json!([0.0, 150.0, 0.0, 150.0]));
+    // Setting the same sheet again without margins keeps them: the stored margins belong to the
+    // portrait sheet and turn back before the per-axis check.
+    s.execute("plottermanager", &json!({"action": "set", "name": "Banner Printer", "paper": {"name": "Banner", "width": 400, "height": 200}})).unwrap();
+    let stored = s.execute("plottermanager", &json!({"action": "get", "name": "Banner Printer"})).unwrap();
+    let banner = stored["papers"].as_array().unwrap().iter().find(|p| p["name"] == "Banner").unwrap().clone();
+    assert_eq!(banner["margins"], json!([0.0, 150.0, 0.0, 150.0]));
+}
