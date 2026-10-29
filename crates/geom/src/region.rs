@@ -60,6 +60,21 @@ struct Graph {
     edge_src: HashMap<(usize, usize), usize>,
 }
 
+/// Records the crossing of segments `i` and `j`, if any, as split parameters on both.
+fn split_pair(segs: &[(Vec2, Vec2)], splits: &mut [Vec<f64>], i: usize, j: usize) {
+    let (Some(si), Some(sj)) = (segs.get(i), segs.get(j)) else { return };
+    let li = Line::new(si.0, si.1);
+    let lj = Line::new(sj.0, sj.1);
+    if let Some(x) = line_line(&li, &lj) {
+        if let Some(v) = splits.get_mut(i) {
+            v.push(li.param_of(x).clamp(0.0, 1.0));
+        }
+        if let Some(v) = splits.get_mut(j) {
+            v.push(lj.param_of(x).clamp(0.0, 1.0));
+        }
+    }
+}
+
 fn build(polys: &[Vec<Vec2>], tol: f64) -> Option<Graph> {
     let mut segs: Vec<(Vec2, Vec2)> = Vec::new();
     let mut owner: Vec<usize> = Vec::new();
@@ -94,16 +109,13 @@ fn build(polys: &[Vec<Vec2>], tol: f64) -> Option<Graph> {
         )
     };
     let mut grid: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+    let mut long: Vec<usize> = Vec::new();
     for (i, (a, b)) in segs.iter().enumerate() {
         let (x0, y0) = cell(a.min(*b));
         let (x1, y1) = cell(a.max(*b));
         if (x1 - x0 + 1) * (y1 - y0 + 1) > 4096 {
-            // Very long segment: register in a coarse band.
-            for gx in (x0..=x1).step_by(((x1 - x0) / 64).max(1)) {
-                for gy in (y0..=y1).step_by(((y1 - y0) / 64).max(1)) {
-                    grid.entry((gx, gy)).or_default().push(i);
-                }
-            }
+            // Very long segment: too many cells to register in; it is tested against every segment below.
+            long.push(i);
             continue;
         }
         for gx in x0..=x1 {
@@ -130,20 +142,21 @@ fn build(polys: &[Vec<Vec2>], tol: f64) -> Option<Graph> {
                 if i == j || !tested.insert((i.min(j), i.max(j))) {
                     continue;
                 }
-                let (Some(si), Some(sj)) = (segs.get(i), segs.get(j)) else { continue };
-                let li = Line::new(si.0, si.1);
-                let lj = Line::new(sj.0, sj.1);
-                if let Some(x) = line_line(&li, &lj) {
-                    if let Some(v) = splits.get_mut(i) {
-                        v.push(li.param_of(x).clamp(0.0, 1.0));
-                    }
-                    if let Some(v) = splits.get_mut(j) {
-                        v.push(lj.param_of(x).clamp(0.0, 1.0));
-                    }
-                }
+                split_pair(&segs, &mut splits, i, j);
                 if tested.len() > 20_000_000 {
                     return None;
                 }
+            }
+        }
+    }
+    for &i in &long {
+        for j in 0..n {
+            if i == j || !tested.insert((i.min(j), i.max(j))) {
+                continue;
+            }
+            split_pair(&segs, &mut splits, i, j);
+            if tested.len() > 20_000_000 {
+                return None;
             }
         }
     }
@@ -434,6 +447,44 @@ fn islands(g: &Graph, outer: &[usize], p: Vec2) -> Vec<Island> {
     out
 }
 
+/// The point of the nearest other curve within `snap` of the end `e` of curve `i`, as (curve,
+/// segment, parameter, point). `None` when the end touches a curve, or none is near. `Err` when
+/// the budget of segment checks runs out.
+fn nearest_curve(polys: &[Vec<Vec2>], i: usize, e: Vec2, snap: f64, tol: f64, budget: &mut usize) -> Result<Option<(usize, usize, f64, Vec2)>, ()> {
+    let mut best: Option<(f64, usize, usize, f64, Vec2)> = None;
+    let mut touching = false;
+    for (j, other) in polys.iter().enumerate() {
+        if j == i {
+            continue;
+        }
+        for (k, w) in other.windows(2).enumerate() {
+            if *budget == 0 {
+                return Err(());
+            }
+            *budget -= 1;
+            let [a, b] = w else { continue };
+            if !(a.is_finite() && b.is_finite())
+                || e.x < a.x.min(b.x) - snap
+                || e.x > a.x.max(b.x) + snap
+                || e.y < a.y.min(b.y) - snap
+                || e.y > a.y.max(b.y) + snap
+            {
+                continue;
+            }
+            let line = Line::new(*a, *b);
+            let t = line.param_of(e).clamp(0.0, 1.0);
+            let q = line.at(t);
+            let d = q.dist(e);
+            if d <= tol {
+                touching = true;
+            } else if d <= snap && best.is_none_or(|(bd, ..)| d < bd) {
+                best = Some((d, j, k, t, q));
+            }
+        }
+    }
+    Ok(best.filter(|_| !touching).map(|(_, j, k, t, q)| (j, k, t, q)))
+}
+
 /// The curves with each open end that stops within `snap` of another curve moved onto that
 /// curve (which gains a vertex there), so the two meet exactly. A curve that is flattened
 /// into chords (an ellipse, a spline) lies up to the flattening tolerance off the true curve,
@@ -461,38 +512,8 @@ pub fn snap_ends(polys: &[Vec<Vec2>], snap: f64, tol: f64) -> Vec<Vec<Vec2>> {
             if !e.is_finite() {
                 continue;
             }
-            let mut best: Option<(f64, usize, usize, f64, Vec2)> = None;
-            let mut touching = false;
-            for (j, other) in polys.iter().enumerate() {
-                if j == i {
-                    continue;
-                }
-                for (k, w) in other.windows(2).enumerate() {
-                    if budget == 0 {
-                        break 'ends;
-                    }
-                    budget -= 1;
-                    let [a, b] = w else { continue };
-                    if !(a.is_finite() && b.is_finite())
-                        || e.x < a.x.min(b.x) - snap
-                        || e.x > a.x.max(b.x) + snap
-                        || e.y < a.y.min(b.y) - snap
-                        || e.y > a.y.max(b.y) + snap
-                    {
-                        continue;
-                    }
-                    let line = Line::new(*a, *b);
-                    let t = line.param_of(e).clamp(0.0, 1.0);
-                    let q = line.at(t);
-                    let d = q.dist(e);
-                    if d <= tol {
-                        touching = true;
-                    } else if d <= snap && best.is_none_or(|(bd, ..)| d < bd) {
-                        best = Some((d, j, k, t, q));
-                    }
-                }
-            }
-            let Some((_, j, k, t, q)) = best.filter(|_| !touching) else { continue };
+            let Ok(near) = nearest_curve(polys, i, e, snap, tol, &mut budget) else { break 'ends };
+            let Some((j, k, t, q)) = near else { continue };
             let Some(slot) = out.get_mut(i).and_then(|v| if at_end { v.last_mut() } else { v.first_mut() }) else { continue };
             *slot = q;
             let ends = polys.get(j).and_then(|o| o.get(k).zip(o.get(k + 1)));
@@ -607,6 +628,20 @@ mod tests {
 
     fn square(x0: f64, y0: f64, s: f64) -> Vec<Vec2> {
         vec![Vec2::new(x0, y0), Vec2::new(x0 + s, y0), Vec2::new(x0 + s, y0 + s), Vec2::new(x0, y0 + s), Vec2::new(x0, y0)]
+    }
+
+    #[test]
+    fn long_segment_crossing_in_unsampled_cell_is_split() {
+        // A diagonal long enough to skip the grid, and a short segment crossing it in a cell the old coarse sampling missed.
+        let mut polys = vec![vec![Vec2::new(0.0, 0.0), Vec2::new(1000.0, 1000.0)], vec![Vec2::new(11.0, 12.0), Vec2::new(12.0, 11.0)]];
+        for i in 0..17_000usize {
+            let x = 600.0 + (i % 130) as f64 * 2.0;
+            let y = 100.0 + (i / 130) as f64 * 2.0;
+            polys.push(vec![Vec2::new(x, y), Vec2::new(x + 1.0, y)]);
+        }
+        let g = build(&polys, 1e-6).unwrap();
+        let hit = g.pts.iter().position(|p| p.near(Vec2::new(11.5, 11.5), 1e-6)).unwrap();
+        assert_eq!(g.adj[hit].len(), 4);
     }
 
     #[test]

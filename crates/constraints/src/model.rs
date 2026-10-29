@@ -191,6 +191,77 @@ impl Model {
         Self::build_budgeted(d, handles, &mut members_left)
     }
 
+    /// Add the parameters of one supported entity to `m`, and return its shape; `None` when it is
+    /// left out (too large, degenerate or unsupported).
+    fn add_params(m: &mut Model, d: &Drawing, h: Handle, kind: &EntityKind, off: usize, members_left: &mut usize) -> Option<Shape> {
+        let shape = match kind {
+            EntityKind::Line(l) => {
+                m.x0.extend([l.a.x, l.a.y, l.b.x, l.b.y]);
+                Shape::Line
+            }
+            EntityKind::Circle(c) => {
+                m.x0.extend([c.center.x, c.center.y, c.radius]);
+                Shape::Circle
+            }
+            EntityKind::Arc(a) => {
+                m.x0.extend([a.center.x, a.center.y, a.radius, a.start, a.end]);
+                Shape::Arc
+            }
+            EntityKind::LwPolyline(p) => {
+                if p.vertices.len() < 2 || off + p.vertices.len() * 2 > MAX_PARAMS {
+                    return None;
+                }
+                for v in &p.vertices {
+                    m.x0.extend([v.p.x, v.p.y]);
+                }
+                Shape::Poly { n: p.vertices.len(), closed: p.closed }
+            }
+            EntityKind::Point(p) => {
+                m.x0.extend([p.p.x, p.p.y]);
+                Shape::Point
+            }
+            EntityKind::Ellipse(el) => {
+                let ell = cadcraft_geom::Ellipse { center: el.center.xy(), major: el.major.xy(), ratio: el.ratio, start: el.start, end: el.end };
+                let arc = !ell.is_full();
+                m.x0.extend([el.center.x, el.center.y, el.major.x, el.major.y, el.ratio]);
+                if arc {
+                    m.x0.extend([el.start, el.end]);
+                }
+                Shape::Ellipse { arc }
+            }
+            EntityKind::Spline(sp) => {
+                let fit = fit_mode(sp);
+                let pts = if fit { &sp.fit } else { &sp.control };
+                let n = pts.len();
+                if !(2..=MAX_SPLINE_POINTS).contains(&n) || off + n * 2 > MAX_PARAMS || (!fit && !sp.is_valid()) {
+                    return None;
+                }
+                for p in pts {
+                    m.x0.extend([p.x, p.y]);
+                }
+                // Fit points interpolate exactly, so the curve's ends are the first and last
+                // fit point; a control polygon's ends are its first and last points when the
+                // knots are clamped.
+                let ends = !sp.closed && (fit || (clamped(sp, false) && clamped(sp, true)));
+                // Missing weights default to 1 in eval; only excess weights are unused.
+                let mut kept = sp.clone();
+                kept.weights.truncate(kept.control.len());
+                m.splines.insert(h, kept);
+                Shape::Spline { n, fit, ends }
+            }
+            EntityKind::Insert(ins) => {
+                let base = Vec2::new(ins.insert.x, ins.insert.y);
+                let pts: Vec<Vec2> = rigid_points_budgeted(d, ins, members_left).into_iter().map(|p| (p - base).rotate(-ins.rotation)).collect();
+                m.x0.extend([ins.insert.x, ins.insert.y, ins.rotation]);
+                let n = pts.len();
+                m.rigid.insert(h, pts);
+                Shape::Insert { n }
+            }
+            _ => return None,
+        };
+        Some(shape)
+    }
+
     /// Build solver parameters for supported entities while sharing rigid-member sampling work with other models.
     pub(crate) fn build_budgeted(d: &Drawing, handles: &[Handle], members_left: &mut usize) -> Model {
         let mut m = Model::default();
@@ -200,71 +271,7 @@ impl Model {
             }
             let Some(e) = d.entity(h) else { continue };
             let off = m.x0.len();
-            let shape = match &e.kind {
-                EntityKind::Line(l) => {
-                    m.x0.extend([l.a.x, l.a.y, l.b.x, l.b.y]);
-                    Shape::Line
-                }
-                EntityKind::Circle(c) => {
-                    m.x0.extend([c.center.x, c.center.y, c.radius]);
-                    Shape::Circle
-                }
-                EntityKind::Arc(a) => {
-                    m.x0.extend([a.center.x, a.center.y, a.radius, a.start, a.end]);
-                    Shape::Arc
-                }
-                EntityKind::LwPolyline(p) => {
-                    if p.vertices.len() < 2 || off + p.vertices.len() * 2 > MAX_PARAMS {
-                        continue;
-                    }
-                    for v in &p.vertices {
-                        m.x0.extend([v.p.x, v.p.y]);
-                    }
-                    Shape::Poly { n: p.vertices.len(), closed: p.closed }
-                }
-                EntityKind::Point(p) => {
-                    m.x0.extend([p.p.x, p.p.y]);
-                    Shape::Point
-                }
-                EntityKind::Ellipse(el) => {
-                    let ell = cadcraft_geom::Ellipse { center: el.center.xy(), major: el.major.xy(), ratio: el.ratio, start: el.start, end: el.end };
-                    let arc = !ell.is_full();
-                    m.x0.extend([el.center.x, el.center.y, el.major.x, el.major.y, el.ratio]);
-                    if arc {
-                        m.x0.extend([el.start, el.end]);
-                    }
-                    Shape::Ellipse { arc }
-                }
-                EntityKind::Spline(sp) => {
-                    let fit = fit_mode(sp);
-                    let pts = if fit { &sp.fit } else { &sp.control };
-                    let n = pts.len();
-                    if !(2..=MAX_SPLINE_POINTS).contains(&n) || off + n * 2 > MAX_PARAMS || (!fit && !sp.is_valid()) {
-                        continue;
-                    }
-                    for p in pts {
-                        m.x0.extend([p.x, p.y]);
-                    }
-                    // Fit points interpolate exactly, so the curve's ends are the first and last
-                    // fit point; a control polygon's ends are its first and last points when the
-                    // knots are clamped.
-                    let ends = !sp.closed && (fit || (clamped(sp, false) && clamped(sp, true)));
-                    // Missing weights default to 1 in eval; only excess weights are unused.
-                    let mut kept = sp.clone();
-                    kept.weights.truncate(kept.control.len());
-                    m.splines.insert(h, kept);
-                    Shape::Spline { n, fit, ends }
-                }
-                EntityKind::Insert(ins) => {
-                    let base = Vec2::new(ins.insert.x, ins.insert.y);
-                    let pts: Vec<Vec2> = rigid_points_budgeted(d, ins, members_left).into_iter().map(|p| (p - base).rotate(-ins.rotation)).collect();
-                    m.x0.extend([ins.insert.x, ins.insert.y, ins.rotation]);
-                    let n = pts.len();
-                    m.rigid.insert(h, pts);
-                    Shape::Insert { n }
-                }
-                _ => continue,
-            };
+            let Some(shape) = Self::add_params(&mut m, d, h, &e.kind, off, members_left) else { continue };
             if m.x0.len() > MAX_PARAMS || m.x0.get(off..).unwrap_or(&[]).iter().any(|v| !v.is_finite()) {
                 m.x0.truncate(off);
                 continue;

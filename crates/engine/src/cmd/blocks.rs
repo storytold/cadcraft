@@ -12,11 +12,14 @@ use serde_json::{Value, json};
 
 use super::helpers::v3;
 use super::machines::{SelOutcome, SelectPhase, number};
-use super::*;
+use super::{CommandSpec, bad, bool_or, f64_or, find_command, ok, point_param, point_req, point_value, str_param, targets};
+
+use super::has_doc;
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 mod attedit;
 mod burst;
+mod description;
 mod dyngrip;
 mod extract;
 pub(crate) mod refedit;
@@ -26,12 +29,12 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("block", "Make...", run_block)
             .menu(&["Draw", "Block", "Make..."])
             .alias(&["b", "bmake"])
-            .params("{name, base: [x,y], handles?, keep?: \"convert\"|\"retain\"|\"delete\" (default \"convert\"), description?, annotative?}")
+            .params("{name, base: [x,y], handles?, keep?: \"convert\"|\"retain\"|\"delete\" (default \"convert\"), description? (up to 255 characters, one line), annotative?}")
             .interactive(|_| Ok(Box::new(BlockM::default()))),
         // -BLOCK erases the selected objects once the block is defined.
         CommandSpec::new("-block", "Create Block", run_dash_block)
             .alias(&["-b"])
-            .params("{name, base: [x,y], handles?, keep?: \"delete\"|\"retain\"|\"convert\" (default \"delete\"), description?}")
+            .params("{name, base: [x,y], handles?, keep?: \"delete\"|\"retain\"|\"convert\" (default \"delete\"), description? (up to 255 characters, one line)}")
             .interactive(|_| Ok(Box::new(BlockM { dash: true, ..BlockM::default() }))),
         CommandSpec::new("insert", "Block...", run_insert)
             .menu(&["Insert", "Block..."])
@@ -77,6 +80,7 @@ pub fn specs() -> Vec<CommandSpec> {
         blockreplace::blockreplace_spec(),
         extract::dataextraction_spec(),
         extract::eattext_spec(),
+        description::description_spec(),
     ]
     .into_iter()
     .chain(attribs::attdisp_menu_specs())
@@ -264,7 +268,9 @@ fn run_block(s: &mut Session, p: &Value) -> Result<Value> {
     let base = point_param(p, "base").unwrap_or(Vec2::ZERO);
     let hs = targets(s, p)?;
     let keep = keep_param("block", p, Keep::Convert)?;
-    let r = make_block(s, &name, base, &hs, keep, str_param(p, "description").unwrap_or(""))?;
+    let description = str_param(p, "description").unwrap_or("");
+    description::check_text("block", description)?;
+    let r = make_block(s, &name, base, &hs, keep, description)?;
     // An annotative block: its references (the converted selection too) are annotative.
     if bool_or(p, "annotative", false) {
         let d = s.doc_mut()?;

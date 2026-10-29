@@ -8,7 +8,8 @@
 use cadcraft_doc::{Drawing, PlotStyle, PlotStyleKind, PlotStyleTable};
 use serde_json::{Value, json};
 
-use super::*;
+use super::super::targets;
+use super::{CommandSpec, Result, Session, bad, str_param};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![

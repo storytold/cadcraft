@@ -63,6 +63,8 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.dialog.qselect", "Quick Select...", &[], None),
     ("ui.dialog.parameters", "Parameters Manager", &["Window", "Parameters Manager"], None),
     ("ui.dialog.dsettings", "Drafting Settings...", &[], None),
+    #[cfg(not(target_arch = "wasm32"))]
+    ("ui.updates.check", "Check for Updates…", &["Help", "Check for Updates…"], None),
     ("ui.dialog.about", "About CADCraft", &["Help", "About CADCraft"], None),
     ("ui.dialog.commands", "Command Reference", &["Help", "CADCraft Help"], Some("F1")),
     ("ui.toggle.history", "Command History", &["Window", "Command History"], Some("F2")),
@@ -83,7 +85,7 @@ pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Resu
     crate::i18n::with_language(app.language(), || run_ui_command_inner(app, id, params))
 }
 
-fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+fn route_ui_subsystems(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
     if let Some(result) = crate::spacemouse::route(app, id, params) {
         return Some(result);
     }
@@ -116,163 +118,24 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
     if let Some(r) = crate::options::route(app, id, params) {
         return Some(r);
     }
-    let toggle = |b: &mut bool, p: &Value| {
-        *b = p.get("on").and_then(Value::as_bool).unwrap_or(!*b);
-    };
-    // When a file command should ask for a file. The `ui.*` commands are the pickers; the engine's
-    // OPEN/SAVEAS/QSAVE ask only when typed or chosen from a menu (no parameters), so JSON calls
-    // never open a picker.
-    let no_path =
-        if id.starts_with("ui.") { params.is_null() || (params.get("path").is_none() && params.get("data").is_none()) } else { params.is_null() };
+    None
+}
+
+fn run_recent_file_command(app: &mut CadApp, id: &str) -> Option<Result<Value, String>> {
     if id == RECENT_CLEAR {
         app.ui.recent_files.clear();
         return Some(Ok(Value::Null));
     }
     if let Some(i) = id.strip_prefix(RECENT_ITEM).and_then(|n| n.parse::<usize>().ok()) {
         let Some(path) = app.ui.recent_files.get(i).cloned() else { return Some(Err(format!("no recent file {i}"))) };
-        app.open_path(&path);
+        app.open_path(std::path::Path::new(&path));
         return Some(Ok(Value::Null));
     }
+    None
+}
+
+fn run_preference_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
     let r = match id {
-        "ui.language" => {
-            let Some(preference) = params.get("lang").and_then(Value::as_str).and_then(crate::i18n::Preference::parse) else {
-                return Some(Err(format!("language must be {}", crate::i18n::Preference::codes())));
-            };
-            app.ui.interface_language = preference;
-            let shown = app.language();
-            if shown != preference.resolve(&app.system_languages) {
-                app.set_status(if preference.resolve(&app.system_languages) == "ko" {
-                    "No font covers the Korean interface, so it stays in English. Install a Hangul font (Malgun Gothic or Nanum Gothic), or build with a Hang/Kore craft-fonts face."
-                } else {
-                    "No Chinese font is installed, so the interface stays in English. Install one (Noto Sans CJK, for example) to use Chinese."
-                });
-            }
-            Ok(json!({"interfaceLanguage": preference.code(), "shown": shown}))
-        }
-        "ui.open" | "open" if no_path => {
-            let picked = app.services.pick_open.as_ref().and_then(|f| f());
-            if let Some(p) = picked {
-                app.open_path(&p);
-            }
-            Ok(Value::Null)
-        }
-        // APPLOAD typed or chosen from a menu: the `.lsp` file picker, starting where the last
-        // one came from. JSON calls carry `path` and never open one. A picked file is loaded as a
-        // typed name is, through the interactive command, so a routine it starts that asks for a
-        // point waits for it; on the web (no file system) it says to drop the file instead.
-        "appload" | "ap" if params.is_null() => {
-            if app.services.no_file_system {
-                let hint = "APPLOAD: there is no file system here; drop a .lsp file on the window to load it";
-                app.session.echo(hint.to_string());
-                app.set_status(hint);
-                return Some(Ok(Value::Null));
-            }
-            let pick = app.services.pick_lisp.as_ref()?;
-            let dir = app.ui.last_lisp_dir.clone().unwrap_or_default();
-            let Some(path) = pick(&dir) else { return Some(Ok(Value::Null)) };
-            if let Some(dir) = std::path::Path::new(&path).parent().and_then(|p| p.to_str()).filter(|d| !d.is_empty()) {
-                app.ui.last_lisp_dir = Some(dir.to_string());
-            }
-            if let Err(e) = app.session.start("appload") {
-                return Some(Err(e.to_string()));
-            }
-            app.cmdline(&path);
-            Ok(Value::Null)
-        }
-        // Pick a template (.dwt or .dxf) and start a new drawing from it.
-        "ui.newtemplate" => {
-            if let Some(p) = app.services.pick_open.as_ref().and_then(|f| f()) {
-                return Some(app.session.execute("new", &json!({ "template": p })).map_err(|e| e.to_string()));
-            }
-            Ok(Value::Null)
-        }
-        // RECOVER from the menu or typed: pick the file. Without a picker the engine asks for the
-        // file name on the command line.
-        "recover" if no_path && app.services.pick_open.is_some() => {
-            if let Some(p) = app.services.pick_open.as_ref().and_then(|f| f()) {
-                let r = app.run("recover", json!({ "path": p }));
-                app.opened(r);
-            }
-            Ok(Value::Null)
-        }
-        "ui.saveas" | "saveas" if no_path => {
-            let title = app.session.state().map(|s| s.title.clone()).ok();
-            let name = app.ui.save_format.suggested_name(title.as_deref());
-            if let Some(p) = app.services.pick_save.as_ref().and_then(|f| f(&name)) {
-                return Some(app.session.execute("saveas", &saveas_params(&app.ui, &app.session, &p)).map_err(|e| e.to_string()));
-            }
-            Ok(Value::Null)
-        }
-        "qsave" if no_path && app.session.state().is_ok_and(|s| s.path.is_none()) => return run_ui_command(app, "ui.saveas", &Value::Null),
-        // EXPORTPDF from the menu or typed: ask where to save the PDF (PLOT and PRINT open the Plot
-        // dialog, `managers::route`). JSON calls (scripts, control channel, MCP) always carry
-        // params, never get here and never open a dialog.
-        "exportpdf" if params.is_null() && app.session.state().is_ok() => {
-            let pick = app.services.pick_save.as_ref()?;
-            let title = app.session.state().map(|s| s.title.clone()).unwrap_or_default();
-            let stem = std::path::Path::new(&title).file_stem().map(|s| s.to_string_lossy().to_string()).filter(|s| !s.is_empty());
-            let Some(path) = pick(&format!("{}.pdf", stem.unwrap_or_else(|| "Drawing".into()))) else { return Some(Ok(Value::Null)) };
-            let r = app.session.execute("exportpdf", &json!({ "path": path })).map_err(|e| e.to_string());
-            app.session.echo(match &r {
-                Ok(_) => format!("Plotted to {path}"),
-                Err(e) => e.clone(),
-            });
-            r
-        }
-        "ui.sample" => {
-            let d = cadcraft_engine::sample::default_sample();
-            app.session.open_drawing(d, "Bracket", None);
-            app.canvas.zoom_pending = true;
-            app.ui.start_tab = false;
-            Ok(Value::Null)
-        }
-        "ui.toggle.toolsets" => {
-            if params.get("on").and_then(Value::as_bool) == Some(true) {
-                return Some(crate::docking::command(app, false, &json!({"operation":"open", "panel":"toolSets"})));
-            }
-            toggle(&mut app.ui.show_toolsets, params);
-            Ok(Value::Null)
-        }
-        "ui.toggle.palettes" => {
-            toggle(&mut app.ui.show_palettes, params);
-            Ok(Value::Null)
-        }
-        "ui.toggle.toolbar" => {
-            toggle(&mut app.ui.show_toolbar, params);
-            Ok(Value::Null)
-        }
-        "ui.toggle.filetabs" => {
-            toggle(&mut app.ui.show_file_tabs, params);
-            Ok(Value::Null)
-        }
-        // Typed or chosen from a menu or the tool bar: ask for the file (or show the preview).
-        "export" | "exp" | "import" | "imp" | "publish" | "preview" | "pre" if params.is_null() && app.session.state().is_ok() => {
-            return Some(crate::exchange::route(app, id));
-        }
-        "ui.toggle.statusbar" => {
-            toggle(&mut app.ui.show_status_bar, params);
-            Ok(Value::Null)
-        }
-        "ui.toggle.cmdline" => {
-            toggle(&mut app.ui.show_command_line, params);
-            Ok(Value::Null)
-        }
-        "ui.toggle.systemcursor" => {
-            toggle(&mut app.ui.system_cursor, params);
-            Ok(Value::Null)
-        }
-        "ui.toggle.viewcube" => {
-            toggle(&mut app.ui.show_viewcube, params);
-            Ok(Value::Null)
-        }
-        "ui.toggle.ucsicon" => {
-            toggle(&mut app.ui.show_ucs_icon, params);
-            Ok(Value::Null)
-        }
-        "ui.toggle.menubar" => {
-            toggle(&mut app.ui.in_window_menu, params);
-            Ok(Value::Null)
-        }
         "ui.theme.system" | "ui.theme.light" | "ui.theme.dark" => {
             let pref = crate::theme::ThemePref::parse(id.trim_start_matches("ui.theme.")).unwrap_or_default();
             set_theme(app, pref)
@@ -329,6 +192,210 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
                 None => Ok(json!({ "saveVersion": app.ui.save_version })),
             }
         }
+        _ => return None,
+    };
+    Some(r)
+}
+
+fn run_ui_toggle_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    let toggle = |b: &mut bool, p: &Value| {
+        *b = p.get("on").and_then(Value::as_bool).unwrap_or(!*b);
+    };
+    let result = match id {
+        "ui.toggle.toolsets" => {
+            if params.get("on").and_then(Value::as_bool) == Some(true) {
+                return Some(crate::docking::command(app, false, &json!({"operation":"open", "panel":"toolSets"})));
+            }
+            toggle(&mut app.ui.show_toolsets, params);
+            Ok(Value::Null)
+        }
+        "ui.toggle.palettes" => {
+            toggle(&mut app.ui.show_palettes, params);
+            Ok(Value::Null)
+        }
+        "ui.toggle.toolbar" => {
+            toggle(&mut app.ui.show_toolbar, params);
+            Ok(Value::Null)
+        }
+        "ui.toggle.filetabs" => {
+            toggle(&mut app.ui.show_file_tabs, params);
+            Ok(Value::Null)
+        }
+        "ui.toggle.statusbar" => {
+            toggle(&mut app.ui.show_status_bar, params);
+            Ok(Value::Null)
+        }
+        "ui.toggle.cmdline" => {
+            toggle(&mut app.ui.show_command_line, params);
+            Ok(Value::Null)
+        }
+        "ui.toggle.systemcursor" => {
+            toggle(&mut app.ui.system_cursor, params);
+            Ok(Value::Null)
+        }
+        "ui.toggle.viewcube" => {
+            toggle(&mut app.ui.show_viewcube, params);
+            Ok(Value::Null)
+        }
+        "ui.toggle.ucsicon" => {
+            toggle(&mut app.ui.show_ucs_icon, params);
+            Ok(Value::Null)
+        }
+        "ui.toggle.menubar" => {
+            toggle(&mut app.ui.in_window_menu, params);
+            Ok(Value::Null)
+        }
+        "ui.toggle.history" | "textscr" => {
+            let open = json!({"on": true});
+            toggle(&mut app.cmd.expanded, if id == "textscr" { &open } else { params });
+            Ok(json!({ "on": app.cmd.expanded }))
+        }
+        _ => return None,
+    };
+    Some(result)
+}
+
+fn run_language_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    if id != "ui.language" {
+        return None;
+    }
+    let Some(preference) = params.get("lang").and_then(Value::as_str).and_then(crate::i18n::Preference::parse) else {
+        return Some(Err(format!("language must be {}", crate::i18n::Preference::codes())));
+    };
+    app.ui.interface_language = preference;
+    let shown = app.language();
+    if shown != preference.resolve(&app.system_languages) {
+        app.set_status(if preference.resolve(&app.system_languages) == "ko" {
+            "No font covers the Korean interface, so it stays in English. Install a Hangul font (Malgun Gothic or Nanum Gothic), or build with a Hang/Kore craft-fonts face."
+        } else {
+            "No Chinese font is installed, so the interface stays in English. Install one (Noto Sans CJK, for example) to use Chinese."
+        });
+    }
+    Some(Ok(json!({"interfaceLanguage": preference.code(), "shown": shown})))
+}
+
+fn run_close_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    match id {
+        "close" if params.is_null() => {
+            app.request_close(None);
+            Some(Ok(Value::Null))
+        }
+        "closeall" if params.is_null() => {
+            app.request_close_all();
+            Some(Ok(Value::Null))
+        }
+        _ => None,
+    }
+}
+
+fn should_pick_file_path(id: &str, params: &Value) -> bool {
+    if id.starts_with("ui.") { params.is_null() || (params.get("path").is_none() && params.get("data").is_none()) } else { params.is_null() }
+}
+
+fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    if let Some(result) = route_ui_subsystems(app, id, params) {
+        return Some(result);
+    }
+    // When a file command should ask for a file. The `ui.*` commands are the pickers; the engine's
+    // OPEN/SAVEAS/QSAVE ask only when typed or chosen from a menu (no parameters), so JSON calls
+    // never open a picker.
+    let no_path = should_pick_file_path(id, params);
+    if let Some(result) = run_recent_file_command(app, id) {
+        return Some(result);
+    }
+    if let Some(result) = run_preference_command(app, id, params) {
+        return Some(result);
+    }
+    if let Some(result) = run_ui_toggle_command(app, id, params) {
+        return Some(result);
+    }
+    if let Some(result) = run_language_command(app, id, params) {
+        return Some(result);
+    }
+    if let Some(result) = run_close_command(app, id, params) {
+        return Some(result);
+    }
+    let r = match id {
+        "ui.open" | "open" if no_path => {
+            let picked = app.services.pick_open.as_ref().and_then(|f| f());
+            if let Some(p) = picked {
+                app.open_path(std::path::Path::new(&p));
+            }
+            Ok(Value::Null)
+        }
+        // APPLOAD typed or chosen from a menu: the `.lsp` file picker, starting where the last
+        // one came from. JSON calls carry `path` and never open one. A picked file is loaded as a
+        // typed name is, through the interactive command, so a routine it starts that asks for a
+        // point waits for it; on the web (no file system) it says to drop the file instead.
+        "appload" | "ap" if params.is_null() => {
+            if app.services.no_file_system {
+                let hint = "APPLOAD: there is no file system here; drop a .lsp file on the window to load it";
+                app.session.echo(hint.to_string());
+                app.set_status(hint);
+                return Some(Ok(Value::Null));
+            }
+            let pick = app.services.pick_lisp.as_ref()?;
+            let dir = app.ui.last_lisp_dir.clone().unwrap_or_default();
+            let Some(path) = pick(&dir) else { return Some(Ok(Value::Null)) };
+            if let Some(dir) = std::path::Path::new(&path).parent().and_then(std::path::Path::to_str).filter(|d| !d.is_empty()) {
+                app.ui.last_lisp_dir = Some(dir.to_string());
+            }
+            if let Err(e) = app.session.start("appload") {
+                return Some(Err(e.to_string()));
+            }
+            app.cmdline(&path);
+            Ok(Value::Null)
+        }
+        // Pick a template (.dwt or .dxf) and start a new drawing from it.
+        "ui.newtemplate" => {
+            if let Some(p) = app.services.pick_open.as_ref().and_then(|f| f()) {
+                return Some(app.session.execute("new", &json!({ "template": p })).map_err(|e| e.to_string()));
+            }
+            Ok(Value::Null)
+        }
+        // RECOVER from the menu or typed: pick the file. Without a picker the engine asks for the
+        // file name on the command line.
+        "recover" if no_path && app.services.pick_open.is_some() => {
+            if let Some(p) = app.services.pick_open.as_ref().and_then(|f| f()) {
+                let r = app.run("recover", json!({ "path": p }));
+                app.opened(r);
+            }
+            Ok(Value::Null)
+        }
+        "ui.saveas" | "saveas" if no_path => {
+            let title = app.session.state().map(|s| s.title.clone()).ok();
+            let name = app.ui.save_format.suggested_name(title.as_deref());
+            if let Some(p) = app.services.pick_save.as_ref().and_then(|f| f(&name)) {
+                return Some(app.session.execute("saveas", &saveas_params(&app.ui, &app.session, &p)).map_err(|e| e.to_string()));
+            }
+            Ok(Value::Null)
+        }
+        "qsave" if no_path && app.session.state().is_ok_and(|s| s.path.is_none()) => return run_ui_command(app, "ui.saveas", &Value::Null),
+        // EXPORTPDF from the menu or typed: ask where to save the PDF (PLOT and PRINT open the Plot
+        // dialog, `managers::route`). JSON calls (scripts, control channel, MCP) always carry
+        // params, never get here and never open a dialog.
+        "exportpdf" if params.is_null() && app.session.state().is_ok() => {
+            let pick = app.services.pick_save.as_ref()?;
+            let title = app.session.state().map(|s| s.title.clone()).unwrap_or_default();
+            let stem = std::path::Path::new(&title).file_stem().map(|s| s.to_string_lossy().to_string()).filter(|s| !s.is_empty());
+            let Some(path) = pick(&format!("{}.pdf", stem.unwrap_or_else(|| "Drawing".into()))) else { return Some(Ok(Value::Null)) };
+            let r = app.session.execute("exportpdf", &json!({ "path": path })).map_err(|e| e.to_string());
+            app.session.echo(match &r {
+                Ok(_) => format!("Plotted to {path}"),
+                Err(e) => e.clone(),
+            });
+            r
+        }
+        "ui.sample" => {
+            let d = cadcraft_engine::sample::default_sample();
+            app.session.open_drawing(d, "Bracket", None);
+            app.canvas.zoom_pending = true;
+            app.ui.start_tab = false;
+            Ok(Value::Null)
+        }
+        "export" | "exp" | "import" | "imp" | "publish" | "preview" | "pre" if params.is_null() && app.session.state().is_ok() => {
+            return Some(crate::exchange::route(app, id));
+        }
         "ui.hidepalettes" => {
             app.ui.show_palettes = false;
             app.ui.show_toolsets = false;
@@ -337,7 +404,17 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         "ui.resetpalettes" => {
             let (menu, theme, interface_language, save_format) = (app.ui.in_window_menu, app.ui.theme, app.ui.interface_language, app.ui.save_format);
             let (animations, save_version) = (app.ui.animations, std::mem::take(&mut app.ui.save_version));
-            app.ui = crate::UiState { in_window_menu: menu, theme, animations, interface_language, save_format, save_version, ..Default::default() };
+            let system_cursor = app.system_cursor_default;
+            app.ui = crate::UiState {
+                in_window_menu: menu,
+                theme,
+                animations,
+                interface_language,
+                save_format,
+                save_version,
+                system_cursor,
+                ..Default::default()
+            };
             Ok(Value::Null)
         }
         "ui.start" => {
@@ -345,12 +422,6 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             Ok(Value::Null)
         }
         // The expanded command history (AutoCAD's text window; TEXTSCR opens it).
-        "ui.toggle.history" | "textscr" => {
-            let open = json!({"on": true});
-            toggle(&mut app.cmd.expanded, if id == "textscr" { &open } else { params });
-            Ok(json!({ "on": app.cmd.expanded }))
-        }
-        // `{"lines": n}`: how many history lines show above the command line (0–12); without it, reports it.
         "ui.cmdline.lines" => {
             if let Some(n) = params.get("lines").and_then(Value::as_u64) {
                 app.ui.history_lines = n.min(crate::cmdline::MAX_LINES as u64) as usize;
@@ -372,6 +443,11 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             app.ui.dialog = Some(id.trim_start_matches("ui.dialog.").to_string());
             Ok(Value::Null)
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        "ui.updates.check" => {
+            crate::updates_ui::check_now(app);
+            Ok(Value::Null)
+        }
         "ui.dialog.close" => {
             app.ui.dialog = None;
             Ok(Value::Null)
@@ -382,14 +458,6 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         }
         "ui.noop" => Ok(Value::Null),
         // From a menu or typed, closing asks about unsaved changes; JSON calls close without asking.
-        "close" if params.is_null() => {
-            app.request_close(None);
-            Ok(Value::Null)
-        }
-        "closeall" if params.is_null() => {
-            app.request_close_all();
-            Ok(Value::Null)
-        }
         "layer" | "la" | "layers" if params.is_null() => {
             app.ui.dialog = Some("layers".into());
             Ok(Value::Null)
@@ -640,6 +708,61 @@ pub fn activate(app: &mut CadApp, id: &str) {
     }
     app.cmd.buffer.clear();
     app.start(id);
+}
+
+/// Activate the menu command `id` from a native menu bar, which takes the Edit menu's key
+/// equivalents (⌘C, ⌘X, ⌘V, ⌘A, ⌘Z, ⇧⌘Z) before any window sees them: while a text field has
+/// the keyboard, in the main window or a floating panel's own window, the field gets the key
+/// and the drawing command does not run.
+pub fn activate_native(app: &mut CadApp, ctx: &egui::Context, id: &str) {
+    let (Some(window), Some(text)) = (text_field_window(ctx), text_command(id, ctx.os().is_mac())) else {
+        activate(app, id);
+        return;
+    };
+    match text {
+        TextCommand::Paste => ctx.send_viewport_cmd_to(window, egui::ViewportCommand::RequestPaste),
+        TextCommand::Events(events) if window == egui::ViewportId::ROOT => {
+            app.synthetic.extend(events);
+            ctx.request_repaint();
+        }
+        TextCommand::Events(events) => craft_ui::docking::send_keys(ctx, window, events),
+    }
+}
+
+/// The window whose text field has the keyboard: a floating panel's own OS window, or the main
+/// window.
+pub fn text_field_window(ctx: &egui::Context) -> Option<egui::ViewportId> {
+    craft_ui::docking::typing_window(ctx).or_else(|| ctx.text_edit_focused().then_some(egui::ViewportId::ROOT))
+}
+
+/// Whether a focused text field takes the menu command `id` ([`activate_native`]): a native
+/// menu keeps such items enabled while one has the keyboard, whatever the drawing allows.
+pub fn edits_text(id: &str) -> bool {
+    text_command(id, false).is_some()
+}
+
+/// What a focused text field does for an Edit menu command.
+#[derive(Debug, PartialEq)]
+enum TextCommand {
+    /// The clipboard text, which the window asks for and receives as `Paste`.
+    Paste,
+    Events(Vec<egui::Event>),
+}
+
+fn text_command(id: &str, mac: bool) -> Option<TextCommand> {
+    let key = |key, shift| {
+        let modifiers = egui::Modifiers { mac_cmd: mac, ctrl: !mac, command: true, shift, alt: false };
+        TextCommand::Events([true, false].map(|pressed| egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers }).into())
+    };
+    Some(match id {
+        "copyclip" => TextCommand::Events(vec![egui::Event::Copy]),
+        "cutclip" => TextCommand::Events(vec![egui::Event::Cut]),
+        "pasteclip" => TextCommand::Paste,
+        "u" => key(egui::Key::Z, false),
+        "redo" => key(egui::Key::Z, true),
+        "selectall" => key(egui::Key::A, false),
+        _ => return None,
+    })
 }
 
 /// Run `id` with default parameters without cancelling the active command, as the drafting

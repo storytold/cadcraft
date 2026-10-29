@@ -6,10 +6,12 @@ use cadcraft_doc::{Entity, EntityKind, Handle};
 use cadcraft_geom::{Polyline, Vec2, Vec3};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, bad, bool_or, f64_req, point_req, point_value, points_param, targets};
+
 use crate::units::{format_angle, format_distance};
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
+mod arcs;
 mod loops;
 mod regions;
 mod shapes;
@@ -417,6 +419,9 @@ fn run_area(s: &mut Session, p: &Value) -> Result<Value> {
         let h = targets(s, p)?.first().copied().ok_or_else(|| bad("area", "`points` or `handle` is required"))?;
         object_area(s, h)?
     };
+    if let Some(what) = too_large(a, per) {
+        return Err(bad("area", format!("the {what} is too large")));
+    }
     Ok(json!({ "area": a, "perimeter": per, "message": area_text(s, a, per) }))
 }
 
@@ -453,6 +458,17 @@ fn volume_text(s: &Session, v: f64) -> String {
 fn fmt_volume(s: &Session, v: f64) -> String {
     let (u, p) = s.doc().map(|d| (d.header.i64("LUNITS", 2), d.header.i64("LUPREC", 4))).unwrap_or((2, 4));
     format_distance(v, if matches!(u, 3 | 4) { 2 } else { u }, p)
+}
+
+/// "area" or "perimeter" when that value is past f64's range, `None` when both can be reported.
+fn too_large(a: f64, per: f64) -> Option<&'static str> {
+    if !a.is_finite() {
+        Some("area")
+    } else if !per.is_finite() {
+        Some("perimeter")
+    } else {
+        None
+    }
 }
 
 /// Area and perimeter of a closed object (AREA's Object option).
@@ -693,10 +709,16 @@ pub(super) struct DistM {
     sources: Vec<Option<crate::snap::ViewportPoint>>,
     /// Asking for the length of a segment (the Length option).
     length: bool,
+    /// The bulge of the segment that starts at each point (the Arc option).
+    bulges: Vec<f64>,
+    arcs: arcs::Arcs,
 }
 
-/// Total length of the segments through `pts`.
-fn path_len(pts: &[Vec2]) -> f64 {
+/// Total length of the segments through `pts`, each with its bulge in `bulges`.
+fn path_len(pts: &[Vec2], bulges: &[f64]) -> f64 {
+    if arcs::has_arcs(bulges) {
+        return arcs::polyline(pts, bulges, false).len();
+    }
     pts.windows(2)
         .map(|w| match w {
             [a, b] => a.dist(*b),
@@ -706,15 +728,11 @@ fn path_len(pts: &[Vec2]) -> f64 {
 }
 
 /// The point `len` beyond the last of `pts`, continuing the last segment (along X after a single
-/// point): the Length option of AREA and DIST's point sequences.
-fn extend_last(pts: &[Vec2], len: f64) -> Option<Vec2> {
+/// point, along the tangent after an arc segment): the Length option of AREA and DIST's point
+/// sequences.
+fn extend_last(pts: &[Vec2], bulges: &[f64], len: f64) -> Option<Vec2> {
     let last = *pts.last()?;
-    let dir = match pts.len().checked_sub(2).and_then(|i| pts.get(i)) {
-        Some(prev) => (last - *prev).normalized(),
-        None => Vec2::X,
-    };
-    let dir = if dir == Vec2::ZERO { Vec2::X } else { dir };
-    let p = last + dir * len;
+    let p = last + arcs::tangent(pts, bulges) * len;
     p.is_finite().then_some(p)
 }
 
@@ -723,13 +741,21 @@ fn length_prompt() -> Prompt {
 }
 
 /// Feed the Length option's answer: the next point, or `None` when the option was dismissed (Enter).
-fn length_input(pts: &[Vec2], i: Input) -> Result<Option<Vec2>> {
+fn length_input(pts: &[Vec2], bulges: &[f64], i: Input) -> Result<Option<Vec2>> {
     let t = match i {
         Input::Text(t) => t,
         _ => return Ok(None),
     };
     let len = crate::units::parse_distance(&t).filter(|v| v.is_finite()).ok_or_else(|| crate::EngineError::Other("Requires a distance.".into()))?;
-    Ok(extend_last(pts, len))
+    Ok(extend_last(pts, bulges, len))
+}
+
+/// Where the paper point `p`, computed near `last` (an arc option's end point), lies in the model
+/// space of the viewport `last` was picked through (the last of `sources`).
+fn follow_source(sources: &[Option<crate::snap::ViewportPoint>], last: Vec2, p: Vec2) -> Option<crate::snap::ViewportPoint> {
+    let source = sources.last().copied().flatten()?;
+    let point = source.point + (p - last) / source.scale;
+    (source.scale.abs() > 1e-12 && point.is_finite()).then_some(crate::snap::ViewportPoint { point, ..source })
 }
 
 /// Model units apply only when every point was snapped through one and the same viewport.
@@ -742,9 +768,12 @@ impl Interactive for DistM {
     fn name(&self) -> &'static str {
         "DIST"
     }
-    fn prompt(&self, _s: &Session) -> Prompt {
+    fn prompt(&self, s: &Session) -> Prompt {
         if self.length {
             return length_prompt();
+        }
+        if let Some(p) = self.multi.as_deref().and_then(|pts| self.arcs.prompt(s, pts, &self.bulges, "")) {
+            return p;
         }
         match (&self.multi, self.first) {
             (Some(pts), _) if pts.len() < 2 => {
@@ -762,7 +791,7 @@ impl Interactive for DistM {
         if let Some(pts) = &mut self.multi {
             if self.length {
                 let model = model_points(&self.sources);
-                if let Some(p) = length_input(model.as_deref().unwrap_or(pts), i)? {
+                if let Some(p) = length_input(model.as_deref().unwrap_or(pts), &self.bulges, i)? {
                     let source = model.as_ref().and_then(|_| self.sources.last().copied().flatten());
                     let paper = match (source, pts.last()) {
                         (Some(source), Some(last)) => *last + (p - source.point) * source.scale,
@@ -771,31 +800,64 @@ impl Interactive for DistM {
                     if !paper.is_finite() {
                         return Err(bad("dist", "the next point is too large"));
                     }
-                    pts.push(paper);
+                    arcs::push(pts, &mut self.bulges, paper, 0.0);
                     self.sources.push(source.map(|source| crate::snap::ViewportPoint { point: p, ..source }));
                     let model = model_points(&self.sources);
-                    s.echo(format!("Distance = {}", fmt_d(s, path_len(model.as_deref().unwrap_or(pts)))));
+                    s.echo(format!("Distance = {}", fmt_d(s, path_len(model.as_deref().unwrap_or(pts), &self.bulges))));
                 }
                 self.length = false;
                 return Ok(Step::Continue);
             }
+            if self.arcs.asking() {
+                let last = pts.last().copied();
+                // A picked end point keeps its own viewport; an end computed from the answers follows the
+                // last point's. In model units, a typed radius or chord length is in model units too.
+                let picked_end = match i {
+                    Input::Point(p) if self.arcs.asks_end_point() => Some(p),
+                    _ => None,
+                };
+                let i = match model_points(&self.sources).and(self.sources.last().copied().flatten()) {
+                    Some(source) => self.arcs.scale_typed_size(i, source.scale),
+                    None => i,
+                };
+                if self.arcs.answer(s, i, pts, &mut self.bulges)? {
+                    // The arc can end off the picked point (CEnter projects it onto the circle).
+                    let source = match (picked_end, last, pts.last()) {
+                        (Some(p), _, Some(end)) => follow_source(&[s.picked_viewport], p, *end),
+                        (None, Some(last), Some(end)) => follow_source(&self.sources, last, *end),
+                        _ => None,
+                    };
+                    self.sources.push(source);
+                    let model = model_points(&self.sources);
+                    s.echo(format!("Distance = {}", fmt_d(s, path_len(model.as_deref().unwrap_or(pts), &self.bulges))));
+                }
+                return Ok(Step::Continue);
+            }
             match i {
                 Input::Point(p) => {
-                    pts.push(p);
+                    self.arcs.point(pts, &mut self.bulges, p)?;
                     self.sources.push(s.picked_viewport);
                     let model = model_points(&self.sources);
-                    s.echo(format!("Distance = {}", fmt_d(s, path_len(model.as_deref().unwrap_or(pts)))));
+                    s.echo(format!("Distance = {}", fmt_d(s, path_len(model.as_deref().unwrap_or(pts), &self.bulges))));
                 }
                 Input::Keyword(k) if k == "Undo" => {
                     if pts.len() > 1 {
-                        pts.pop();
+                        self.arcs.undo(pts, &mut self.bulges);
                         self.sources.pop();
                     }
                 }
                 Input::Keyword(k) if k == "Length" => self.length = true,
-                Input::Keyword(k) if k == "Total" => return self.total(s),
-                Input::Keyword(k) => s.echo(format!("{k}: not available yet")),
-                Input::Enter => return self.total(s),
+                Input::Keyword(k) if k == "Total" => return self.total(s, false),
+                Input::Keyword(k) if k == "CLose" && self.arcs.on => {
+                    self.arcs.close(pts, &mut self.bulges)?;
+                    return self.total(s, true);
+                }
+                Input::Keyword(k) => {
+                    if !self.arcs.keyword(&k, pts) {
+                        s.echo(format!("{k}: not available yet"));
+                    }
+                }
+                Input::Enter => return self.total(s, false),
                 _ => {}
             }
             return Ok(Step::Continue);
@@ -829,20 +891,20 @@ impl Interactive for DistM {
     }
     fn preview(&self, _s: &Session, c: Vec2) -> Vec<EntityKind> {
         match &self.multi {
-            Some(pts) => {
-                let mut v: Vec<cadcraft_geom::PolyVertex> = pts.iter().map(|p| cadcraft_geom::PolyVertex::new(*p)).collect();
-                v.push(cadcraft_geom::PolyVertex::new(c));
-                vec![super::helpers::lwpoly(v, false)]
-            }
+            Some(pts) => self.arcs.preview(pts, &self.bulges, c, false),
             None => self.first.map(|a| vec![super::helpers::line(a, c)]).unwrap_or_default(),
         }
     }
 }
 
 impl DistM {
-    fn total(&self, s: &mut Session) -> Result<Step> {
+    /// Report the total distance and end; `closed` adds the closing segment (CLose).
+    fn total(&self, s: &mut Session, closed: bool) -> Result<Step> {
         let model = model_points(&self.sources);
-        let d = model.as_deref().or(self.multi.as_deref()).map_or(0.0, path_len);
+        let d = model
+            .as_deref()
+            .or(self.multi.as_deref())
+            .map_or(0.0, |pts| if closed { arcs::polyline(pts, &self.bulges, true).len() } else { path_len(pts, &self.bulges) });
         s.echo(format!("Distance = {}", fmt_d(s, d)));
         Ok(Step::Done)
     }
@@ -935,6 +997,9 @@ pub(super) struct AreaM {
     pending: Vec<f64>,
     /// The first point of a height given by two points.
     height_from: Option<Vec2>,
+    /// The bulge of the segment that starts at each point (the Arc option).
+    bulges: Vec<f64>,
+    arcs: arcs::Arcs,
 }
 
 impl AreaM {
@@ -962,6 +1027,57 @@ impl AreaM {
             AreaMode::Subtract => self.total - v,
         }
     }
+    /// Input while a height is pending: typed, or given by two points (their distance).
+    fn height_input(&mut self, s: &mut Session, i: Input) -> Step {
+        match (i, self.height_from) {
+            (Input::Point(p), None) => self.height_from = Some(p),
+            (Input::Point(p), Some(from)) => {
+                self.height_from = None;
+                return self.height(s, p.dist(from));
+            }
+            (Input::Text(t), None) => match crate::units::parse_distance(&t).filter(|v| v.is_finite()) {
+                Some(h) => return self.height(s, h),
+                None => s.echo("Requires a distance."),
+            },
+            (Input::Enter, None) => s.echo("Requires a height."),
+            (Input::Enter, Some(_)) => s.echo("Requires a second point."),
+            (Input::Text(_), Some(_)) => s.echo("Requires a point."),
+            _ => {}
+        }
+        Step::Continue
+    }
+
+    /// Input while the objects to measure are picked.
+    fn object_input(&mut self, s: &mut Session, i: Input) -> Step {
+        match i {
+            Input::Pick(hs) => {
+                for h in hs {
+                    match object_area(s, h) {
+                        Ok((a, per)) => {
+                            if self.measured(s, a, per) == Step::Done {
+                                return Step::Done;
+                            }
+                            // A single volume takes the first object with an area.
+                            if self.volume && self.mode == AreaMode::Single {
+                                break;
+                            }
+                        }
+                        Err(_) => s.echo("The selected object has no area."),
+                    }
+                }
+            }
+            Input::Enter => {
+                self.object = false;
+                if self.mode == AreaMode::Single {
+                    return Step::Done;
+                }
+            }
+            Input::Text(_) | Input::Keyword(_) => s.echo("*Invalid selection*"),
+            _ => {}
+        }
+        Step::Continue
+    }
+
     /// Measure the oldest pending area's volume with height `h`.
     fn height(&mut self, s: &mut Session, h: f64) -> Step {
         match self.pending.first().map(|a| a * h.abs()) {
@@ -987,27 +1103,45 @@ impl AreaM {
     }
     /// Report an area (and the running total in add/subtract mode); ends the command in single mode.
     /// In volume mode the area waits for its height instead.
+    /// An area, perimeter or total past f64's range is not reported or added to the total.
     fn measured(&mut self, s: &mut Session, a: f64, per: f64) -> Step {
         if self.volume {
+            if !a.is_finite() {
+                s.echo("The area is too large.");
+                return if self.mode == AreaMode::Single { Step::Done } else { Step::Continue };
+            }
             self.pending.push(a);
             return Step::Continue;
         }
-        s.echo(area_text(s, a, per));
-        match self.mode {
-            AreaMode::Single => return Step::Done,
-            AreaMode::Add => self.total += a,
-            AreaMode::Subtract => self.total -= a,
+        let total = self.total_with(a);
+        if let Some(what) = too_large(a, per).or_else(|| (!total.is_finite()).then_some("total area")) {
+            s.echo(format!("The {what} is too large."));
+            return if self.mode == AreaMode::Single { Step::Done } else { Step::Continue };
         }
+        s.echo(area_text(s, a, per));
+        if self.mode == AreaMode::Single {
+            return Step::Done;
+        }
+        self.total = total;
         s.echo(format!("Total area = {}", fmt_d(s, self.total)));
         Step::Continue
     }
     /// Close the boundary picked so far (Enter or Total at the next-point prompt).
+    /// An arc segment (the Arc option) can close an area of two points.
     fn close(&mut self, s: &mut Session) -> Step {
         let pts = std::mem::take(&mut self.pts);
-        if pts.len() < 3 {
+        let bulges = std::mem::take(&mut self.bulges);
+        self.arcs = arcs::Arcs::default();
+        let curved = arcs::has_arcs(&bulges);
+        if pts.len() < if curved { 2 } else { 3 } {
             return if self.mode == AreaMode::Single { Step::Done } else { Step::Continue };
         }
-        let (a, per) = area_of(&pts);
+        let (a, per) = if curved {
+            let g = arcs::polyline(&pts, &bulges, true);
+            (g.area().abs(), g.len())
+        } else {
+            area_of(&pts)
+        };
         self.measured(s, a, per)
     }
 }
@@ -1016,7 +1150,7 @@ impl Interactive for AreaM {
     fn name(&self) -> &'static str {
         if self.volume { "MEASUREGEOM" } else { "AREA" }
     }
-    fn prompt(&self, _s: &Session) -> Prompt {
+    fn prompt(&self, s: &Session) -> Prompt {
         if !self.pending.is_empty() {
             return match self.height_from {
                 Some(p) => Prompt::new("Specify second point", Accept::POINT).base(p),
@@ -1028,6 +1162,9 @@ impl Interactive for AreaM {
         }
         if self.length {
             return length_prompt();
+        }
+        if let Some(p) = self.arcs.prompt(s, &self.pts, &self.bulges, self.mode_prefix()) {
+            return p;
         }
         let next = format!("{}Specify next point", self.mode_prefix());
         let (add, subtract) = self.mode_keywords();
@@ -1041,72 +1178,40 @@ impl Interactive for AreaM {
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         if !self.pending.is_empty() {
-            // A height is typed, or given by two points (their distance).
-            match (i, self.height_from) {
-                (Input::Point(p), None) => self.height_from = Some(p),
-                (Input::Point(p), Some(from)) => {
-                    self.height_from = None;
-                    return Ok(self.height(s, p.dist(from)));
-                }
-                (Input::Text(t), None) => match crate::units::parse_distance(&t).filter(|v| v.is_finite()) {
-                    Some(h) => return Ok(self.height(s, h)),
-                    None => s.echo("Requires a distance."),
-                },
-                (Input::Enter, None) => s.echo("Requires a height."),
-                (Input::Enter, Some(_)) => s.echo("Requires a second point."),
-                (Input::Text(_), Some(_)) => s.echo("Requires a point."),
-                _ => {}
-            }
-            return Ok(Step::Continue);
+            return Ok(self.height_input(s, i));
         }
         if self.object {
-            match i {
-                Input::Pick(hs) => {
-                    for h in hs {
-                        match object_area(s, h) {
-                            Ok((a, per)) => {
-                                if self.measured(s, a, per) == Step::Done {
-                                    return Ok(Step::Done);
-                                }
-                                // A single volume takes the first object with an area.
-                                if self.volume && self.mode == AreaMode::Single {
-                                    break;
-                                }
-                            }
-                            Err(_) => s.echo("The selected object has no area."),
-                        }
-                    }
-                }
-                Input::Enter => {
-                    self.object = false;
-                    if self.mode == AreaMode::Single {
-                        return Ok(Step::Done);
-                    }
-                }
-                Input::Text(_) | Input::Keyword(_) => s.echo("*Invalid selection*"),
-                _ => {}
-            }
-            return Ok(Step::Continue);
+            return Ok(self.object_input(s, i));
         }
         if self.length {
-            if let Some(p) = length_input(&self.pts, i)? {
-                self.pts.push(p);
+            if let Some(p) = length_input(&self.pts, &self.bulges, i)? {
+                arcs::push(&mut self.pts, &mut self.bulges, p, 0.0);
             }
             self.length = false;
             return Ok(Step::Continue);
         }
+        if self.arcs.asking() {
+            self.arcs.answer(s, i, &mut self.pts, &mut self.bulges)?;
+            return Ok(Step::Continue);
+        }
         match i {
-            Input::Point(p) => self.pts.push(p),
+            Input::Point(p) => self.arcs.point(&mut self.pts, &mut self.bulges, p)?,
             Input::Keyword(k) => match k.as_str() {
                 "Object" => self.object = true,
                 "Add area" | "Add volume" => self.mode = AreaMode::Add,
                 "Subtract area" | "Subtract volume" => self.mode = AreaMode::Subtract,
-                "Undo" => {
-                    self.pts.pop();
-                }
+                "Undo" => self.arcs.undo(&mut self.pts, &mut self.bulges),
                 "Length" => self.length = true,
                 "Total" => return Ok(self.close(s)),
-                _ => s.echo(format!("{k}: not available yet")),
+                "CLose" if self.arcs.on => {
+                    self.arcs.close(&self.pts, &mut self.bulges)?;
+                    return Ok(self.close(s));
+                }
+                k => {
+                    if !self.arcs.keyword(k, &self.pts) {
+                        s.echo(format!("{k}: not available yet"));
+                    }
+                }
             },
             Input::Enter if self.pts.is_empty() => match self.mode {
                 // Enter takes the default, Object; in add/subtract mode it ends the command.
@@ -1122,14 +1227,14 @@ impl Interactive for AreaM {
         if self.pts.is_empty() || self.object || self.length {
             return Vec::new();
         }
-        let mut v: Vec<cadcraft_geom::PolyVertex> = self.pts.iter().map(|p| cadcraft_geom::PolyVertex::new(*p)).collect();
-        v.push(cadcraft_geom::PolyVertex::new(c));
-        vec![super::helpers::lwpoly(v, true)]
+        self.arcs.preview(&self.pts, &self.bulges, c, true)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use cadcraft_doc::Handle;
+
     use super::*;
 
     /// #1440 review: a value one ulp past its bound (a border rectangle's shoelace area against

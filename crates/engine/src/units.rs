@@ -327,6 +327,12 @@ fn bearing(t: &str) -> Option<f64> {
     Some(deg.to_radians())
 }
 
+/// Minutes or seconds of a D'" angle: a number in `0..=60`.
+fn dms_part(t: &str) -> Option<f64> {
+    let v: f64 = t.trim().parse().ok()?;
+    (0.0..=60.0).contains(&v).then_some(v)
+}
+
 /// Degrees, `45d`, `45d30'` or `45d30'15"` (a leading `-` negates the whole angle).
 fn parse_dms(t: &str) -> Option<f64> {
     let (neg, t) = match t.trim().strip_prefix('-') {
@@ -339,11 +345,11 @@ fn parse_dms(t: &str) -> Option<f64> {
     if !rest.is_empty() {
         let (m, rest2) = rest.split_once('\'').unwrap_or((rest, ""));
         if !m.trim().is_empty() {
-            deg += m.trim().parse::<f64>().ok()? / 60.0;
+            deg += dms_part(m)? / 60.0;
         }
         let s = rest2.trim().trim_end_matches('"');
         if !s.is_empty() {
-            deg += s.parse::<f64>().ok()? / 3600.0;
+            deg += dms_part(s)? / 3600.0;
         }
     }
     let deg = if neg { -deg } else { deg };
@@ -362,6 +368,14 @@ pub const DEG: f64 = PI / 180.0;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dms_minutes_and_seconds_must_be_within_0_to_60() {
+        for t in ["45d-30'", "45d30'-15\"", "45d75'", "45d30'75\"", "n45d-30'e"] {
+            assert_eq!(parse_angle(t), None, "{t}");
+        }
+        assert!(parse_angle("45d30'15\"").is_some());
+    }
 
     #[test]
     fn engineering_huge_distance_falls_back_to_decimal() {

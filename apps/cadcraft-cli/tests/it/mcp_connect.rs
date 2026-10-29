@@ -33,12 +33,15 @@ fn replies(out: &Output) -> Vec<Value> {
 #[test]
 fn connect_without_address_fails_before_serving() {
     let input = format!("{INIT}\n{CIRCLE}\n");
-    for args in [&["--connect"][..], &["--connect", ""], &["--connect", "--foo"]] {
+    // clap names an unknown flag rather than the value it left missing.
+    for (args, named) in
+        [(&["--connect"][..], "--connect <HOST:PORT>"), (&["--connect", ""], "--connect <HOST:PORT>"), (&["--connect", "--foo"], "'--foo'")]
+    {
         let out = mcp(args, &input);
-        assert!(!out.status.success(), "{args:?} must exit non-zero");
+        assert_eq!(out.status.code(), Some(2), "{args:?} is a usage error");
         assert!(out.stdout.is_empty(), "{args:?} must not answer MCP requests: {}", String::from_utf8_lossy(&out.stdout));
         let err = String::from_utf8_lossy(&out.stderr);
-        assert!(err.contains("--connect needs HOST:PORT"), "{args:?}: {err}");
+        assert!(err.contains(named), "{args:?}: {err}");
     }
 }
 

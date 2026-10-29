@@ -441,6 +441,49 @@ impl DimStyle {
             .or_else(|| ["name", "annotative"].into_iter().find(|f| f.eq_ignore_ascii_case(name)))
     }
 
+    /// The value `v` takes for a field whose current value is `old`: coerced to the field's type where
+    /// the text or number can be read as it.
+    fn coerce_value(old: &serde_json::Value, v: &serde_json::Value, field: &str) -> serde_json::Value {
+        use serde_json::Value;
+        match (old, v) {
+            (Value::Bool(_), Value::Number(n)) => Value::Bool(n.as_f64().is_some_and(|x| x != 0.0)),
+            (Value::Bool(_), Value::String(t)) => Value::Bool(matches!(t.to_ascii_lowercase().as_str(), "1" | "on" | "true" | "yes")),
+            (Value::Number(_), Value::String(t)) => match t.trim().parse::<f64>() {
+                Ok(x) => serde_json::json!(x),
+                // Lineweight names.
+                Err(_) if matches!(field, "dimLineweight" | "extLineweight") => match t.trim().to_ascii_lowercase().as_str() {
+                    "bylayer" => serde_json::json!(-1),
+                    "byblock" => serde_json::json!(-2),
+                    "default" => serde_json::json!(-3),
+                    _ => v.clone(),
+                },
+                Err(_) => v.clone(),
+            },
+            (Value::Number(_), Value::Bool(b)) => serde_json::json!(u8::from(*b)),
+            (Value::String(_), Value::Number(n)) => Value::String(n.to_string()),
+            (Value::Object(_), Value::Number(n)) => {
+                let c = n.as_i64().and_then(|i| i16::try_from(i).ok()).map(Color::from_aci);
+                c.and_then(|c| serde_json::to_value(c).ok()).unwrap_or_else(|| v.clone())
+            }
+            (Value::Object(_), Value::String(t)) => Color::parse(t).and_then(|c| serde_json::to_value(c).ok()).unwrap_or_else(|| v.clone()),
+            _ => v.clone(),
+        }
+    }
+
+    /// Whether `coerced` is outside the range its `field` can take.
+    fn out_of_range(field: &str, coerced: &serde_json::Value) -> bool {
+        let x = coerced.as_f64();
+        match field {
+            "textHeight" | "tolScale" => x.is_some_and(|x| x <= 0.0),
+            "scale" | "arrowSize" | "tickSize" | "fixedExtLength" => x.is_some_and(|x| x < 0.0),
+            "fit" | "angularZeroSuppression" => x.is_some_and(|x| x > 3.0),
+            "textMove" | "tolJust" | "arcSymbol" | "textFill" => x.is_some_and(|x| x > 2.0),
+            "dimLineweight" | "extLineweight" => x.is_some_and(|x| !(-3.0..=211.0).contains(&x)),
+            "jogAngle" => x.is_some_and(|x| !(5.0..=90.0).contains(&x)),
+            _ => false,
+        }
+    }
+
     /// Set fields from a JSON object of field or DIM* variable names (numbers, booleans as
     /// 0/1, colours as ACI numbers or names). Returns the names that were not recognised or
     /// had unusable values.
@@ -458,29 +501,7 @@ impl DimStyle {
                 rejected.push(k.clone());
                 continue;
             };
-            let coerced = match (&old, v) {
-                (Value::Bool(_), Value::Number(n)) => Value::Bool(n.as_f64().is_some_and(|x| x != 0.0)),
-                (Value::Bool(_), Value::String(t)) => Value::Bool(matches!(t.to_ascii_lowercase().as_str(), "1" | "on" | "true" | "yes")),
-                (Value::Number(_), Value::String(t)) => match t.trim().parse::<f64>() {
-                    Ok(x) => serde_json::json!(x),
-                    // Lineweight names.
-                    Err(_) if matches!(field, "dimLineweight" | "extLineweight") => match t.trim().to_ascii_lowercase().as_str() {
-                        "bylayer" => serde_json::json!(-1),
-                        "byblock" => serde_json::json!(-2),
-                        "default" => serde_json::json!(-3),
-                        _ => v.clone(),
-                    },
-                    Err(_) => v.clone(),
-                },
-                (Value::Number(_), Value::Bool(b)) => serde_json::json!(u8::from(*b)),
-                (Value::String(_), Value::Number(n)) => Value::String(n.to_string()),
-                (Value::Object(_), Value::Number(n)) => {
-                    let c = n.as_i64().and_then(|i| i16::try_from(i).ok()).map(Color::from_aci);
-                    c.and_then(|c| serde_json::to_value(c).ok()).unwrap_or_else(|| v.clone())
-                }
-                (Value::Object(_), Value::String(t)) => Color::parse(t).and_then(|c| serde_json::to_value(c).ok()).unwrap_or_else(|| v.clone()),
-                _ => v.clone(),
-            };
+            let coerced = Self::coerce_value(&old, v, field);
             // Integers stored in u8 fields: round floats.
             let coerced = match (&old, &coerced) {
                 // Lineweights (i16): whole hundredths of a mm or -1/-2/-3.
@@ -502,16 +523,7 @@ impl DimStyle {
                 _ => coerced,
             };
             // Sizes that can't be negative (text height and tolerance scale: not zero either).
-            let x = coerced.as_f64();
-            let out_of_range = match field {
-                "textHeight" | "tolScale" => x.is_some_and(|x| x <= 0.0),
-                "scale" | "arrowSize" | "tickSize" | "fixedExtLength" => x.is_some_and(|x| x < 0.0),
-                "fit" | "angularZeroSuppression" => x.is_some_and(|x| x > 3.0),
-                "textMove" | "tolJust" | "arcSymbol" | "textFill" => x.is_some_and(|x| x > 2.0),
-                "dimLineweight" | "extLineweight" => x.is_some_and(|x| !(-3.0..=211.0).contains(&x)),
-                "jogAngle" => x.is_some_and(|x| !(5.0..=90.0).contains(&x)),
-                _ => false,
-            };
+            let out_of_range = Self::out_of_range(field, &coerced);
             if out_of_range {
                 rejected.push(k.clone());
                 continue;

@@ -144,6 +144,11 @@ impl BlockEdit {
         }
         let host = &self.host.doc;
         let mut d = editor.clone();
+        // When the block is saved under another name, the edited block keeps the drawing's
+        // description and block `name` gets the description changed in the editor.
+        if !name.eq_ignore_ascii_case(&self.name) {
+            keep_description(&mut d, host, &self.name);
+        }
         d.model = host.model.clone();
         d.layouts = host.layouts.clone();
         d.groups = host.groups.clone();
@@ -171,6 +176,21 @@ impl BlockEdit {
     }
 }
 
+/// Give block `name` of `d` the description `host` has for it, or, when `host` has no such block,
+/// drop the empty definition a description gives a block the editor started and never saved.
+fn keep_description(d: &mut Drawing, host: &Drawing, name: &str) {
+    match host.block(name) {
+        Some(h) => {
+            if let Some((_, b)) = d.blocks.iter_mut().find(|(k, _)| k.eq_ignore_ascii_case(name))
+                && b.description != h.description
+            {
+                Arc::make_mut(b).description = h.description.clone();
+            }
+        }
+        None => d.blocks.retain(|k, b| !(k.eq_ignore_ascii_case(name) && b.entities.is_empty())),
+    }
+}
+
 impl DocState {
     /// The drawing as a file saves it: outside the Block Editor's changes while it is open.
     pub fn drawing(&self) -> &Arc<Drawing> {
@@ -195,12 +215,13 @@ impl DocState {
         self.block_edit.as_ref().is_some_and(|b| !Arc::ptr_eq(&b.saved, &self.doc))
     }
     /// The drawing to keep for recovery (autosave): with the Block Editor's unsaved changes in the
-    /// block, so a crash doesn't lose them.
-    pub fn recovery_drawing(&self) -> Arc<Drawing> {
+    /// block, so a crash doesn't lose them. An error when the editor's changes can't be put in the
+    /// block (it would contain itself): the host drawing alone would lose them.
+    pub fn recovery_drawing(&self) -> Result<Arc<Drawing>> {
         match &self.block_edit {
-            Some(be) if self.block_unsaved() => be.compose(&self.doc, &be.name).map(Arc::new).unwrap_or_else(|_| be.host.doc.clone()),
-            Some(be) => be.host.doc.clone(),
-            None => self.doc.clone(),
+            Some(be) if self.block_unsaved() => be.compose(&self.doc, &be.name).map(Arc::new),
+            Some(be) => Ok(be.host.doc.clone()),
+            None => Ok(self.doc.clone()),
         }
     }
 
@@ -271,6 +292,24 @@ impl DocState {
         let d = be.compose(&self.doc, &name)?;
         let original = d.block(&name).map(|b| b.entities.clone()).unwrap_or_default();
         let name = d.block(&name).map(|b| b.name.clone()).unwrap_or(name);
+        // When BSAVEAS saves the block under another name, the editor's drawing and each undo and
+        // redo step get the block as saved and the edited block as the drawing has it, so a later
+        // save and the description shown start from them after an undo too.
+        if !name.eq_ignore_ascii_case(&be.name)
+            && let Some(b) = d.block(&name).cloned()
+        {
+            let was = be.name.clone();
+            let reconcile = |doc: &mut Arc<Drawing>| {
+                let editor = Arc::make_mut(doc);
+                keep_description(editor, &d, &was);
+                editor.blocks.retain(|k, _| !k.eq_ignore_ascii_case(&name));
+                editor.blocks.insert(name.clone(), b.clone());
+            };
+            reconcile(&mut self.doc);
+            for step in self.undo.iter_mut().chain(self.redo.iter_mut()) {
+                reconcile(&mut step.doc);
+            }
+        }
         let editor = self.doc.clone();
         let Some(be) = &mut self.block_edit else { return Ok(()) };
         let before = be.host.doc.clone();

@@ -114,6 +114,7 @@
 	Blend	Harmanla
 	Block	Blok
 	Block Attribute Manager...	Blok Öznitelik Yöneticisi...
+	Block Description...	Blok Açıklaması...
 	Block Editor	Blok Düzenleyici
 	Block Reference	Blok Referansı
 	Block to create or edit	Oluşturulacak ya da düzenlenecek blok
@@ -651,6 +652,7 @@
 	Name	Ad
 	Name (A–Z)	Ad (A–Z)
 	Named	Adlandırılmış
+	Named Viewports...	Adlandırılmış Görünüm Pencereleri...
 	Named Views...	Adlandırılmış Görünümler...
 	Nearest	En Yakın
 	New	Yeni
@@ -1347,3 +1349,6 @@ menu	Dimension	Ölçülendirme
 menu	Draw	Çiz
 menu	Modify	Değiştir
 menu	View	Görünüm
+	Check for Updates…	Güncellemeleri denetle…
+	CADCraft is up to date.	CADCraft güncel.
+	Could not check for updates.	Güncellemeler denetlenemedi.

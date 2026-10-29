@@ -2139,6 +2139,30 @@ fn hatch_edges_keep_full_circles_splines_and_clockwise_ellipses() {
     near(hatch_edge_extents(&ellipse(1)), [-5.0, 0.0, 5.0, 2.5]);
 }
 
+/// Issue #923: a HATCH spline edge caps its degree at 10 like the SPLINE reader does, both when the
+/// knots are valid for the stated degree and when the reader falls back to the control polygon.
+#[test]
+fn hatch_spline_edge_caps_degree_like_spline() {
+    let control: Vec<Vec2> = (0..13).map(|i| Vec2::new(f64::from(i), f64::from(i % 2) * 10.0)).collect();
+    let points: String = control.iter().map(|c| format!("10\n{}\n20\n{}\n", c.x, c.y)).collect();
+    let close = "72\n1\n10\n12\n20\n0\n11\n0\n21\n0\n";
+    // The degree-10 curve over the same controls, which is what the capped edge must produce.
+    let want = cadcraft_geom::Spline::from_control(control, 10).tessellate(1e-3);
+    let (mut lo, mut hi) = (Vec2::new(f64::MAX, f64::MAX), Vec2::new(f64::MIN, f64::MIN));
+    for p in &want {
+        (lo, hi) = (Vec2::new(lo.x.min(p.x), lo.y.min(p.y)), Vec2::new(hi.x.max(p.x), hi.y.max(p.y)));
+    }
+    // Degree 12 with 13 controls: a valid knot vector has 26 knots; the second edge gives none.
+    let knots = format!("{}{}", "40\n0\n".repeat(13), "40\n1\n".repeat(13));
+    for (nk, knots) in [(26, knots.as_str()), (0, "")] {
+        let edge = format!("72\n4\n94\n12\n73\n0\n74\n0\n95\n{nk}\n96\n13\n{knots}{points}97\n0\n{close}");
+        let b = hatch_edge_extents(&edge);
+        for (got, want) in [(b.min.x, lo.x), (b.min.y, lo.y), (b.max.x, hi.x), (b.max.y, hi.y)] {
+            assert!((got - want).abs() < 1e-6, "extents {b:?}, want {lo:?} {hi:?} (knots {nk})");
+        }
+    }
+}
+
 #[test]
 fn mirrored_text_extrusion_keeps_its_footprint() {
     // TEXT at OCS (-10,5) under extrusion (0,0,-1) starts at WCS (10,5) and runs towards -x (with
@@ -2788,4 +2812,18 @@ fn proxies_keep_their_class_when_classes_are_rewritten() {
     let names: Vec<String> =
         dxf_records(&pairs, "ACAD_PROXY_OBJECT").iter().map(|r| classes[own_91(r).parse::<usize>().unwrap() - 500].clone()).collect();
     assert_eq!(names, ["VISUALSTYLE", "WIDGETX"]);
+}
+
+/// A name that isn't valid Unicode still picks its format by extension.
+#[cfg(unix)]
+#[test]
+fn non_unicode_names_pick_the_format_by_extension() {
+    use std::os::unix::ffi::OsStringExt as _;
+    let name = |ext: &str| std::path::PathBuf::from(std::ffi::OsString::from_vec([b"caf\xe9.".as_slice(), ext.as_bytes()].concat()));
+    assert!(is_image(name("png")) && !is_image(name("dxf")));
+    let d = sample();
+    let bytes = write(&d, name("dxf")).unwrap();
+    assert!(read(&bytes, name("dxf")).is_ok());
+    assert!(write(&d, name("png")).unwrap().starts_with(b"\x89PNG"));
+    assert!(write(&d, name("dwt")).is_ok(), "a template is written as DWG");
 }

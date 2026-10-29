@@ -87,6 +87,7 @@
 	Blend	Fusión de curvas
 	Block	Bloque
 	Block Attribute Manager...	Administrador de atributos de bloque...
+	Block Description...	Descripción de bloque...
 	Block Editor	Editor de bloques
 	Block Reference	Referencia de bloque
 	Block...	Bloque...
@@ -567,6 +568,7 @@
 	N	N
 	Name	Nombre
 	Name (A–Z)	Nombre (A–Z)
+	Named Viewports...	Ventanas gráficas con nombre...
 	Named Views...	Vistas con nombre...
 	Nearest	Cercano
 	New	Nuevo
@@ -1251,3 +1253,6 @@
 	Not a number or distance: {text}	No es un número ni una distancia: {text}
 	Query Texts	Consultar textos
 	Analyze Shapes	Analizar formas
+	Check for Updates…	Buscar actualizaciones…
+	CADCraft is up to date.	CADCraft está actualizado.
+	Could not check for updates.	No se pudo buscar actualizaciones.

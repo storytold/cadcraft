@@ -230,6 +230,19 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, dim: bool) {
     let alpha = |c: Color32| if dim { c.gamma_multiply(0.4) } else { c };
     let pen = Pen { p, r: rect, w: (rect.width() / 16.0).clamp(1.0, 1.6), base: alpha(t.icon), acc: alpha(t.icon_accent), pt: alpha(t.icon_point) };
     let (b, a) = (pen.base, pen.acc);
+    paint_file_view(&pen, icon, b, a, dim);
+    paint_document_tools(&pen, icon, b, a, dim);
+    paint_draw_tools(&pen, icon, b, a, dim);
+    paint_edit_tools(&pen, icon, b, a, dim);
+    paint_dimensions(&pen, icon, b, a, dim);
+    paint_block_tools(&pen, icon, b, a, dim);
+    paint_layer_tools(&pen, icon, b, a, dim);
+    paint_display_toggles(&pen, icon, b, a, dim);
+    paint_navigation_controls(&pen, icon, b, a, dim);
+    paint_constraints(&pen, icon, b, a, dim);
+}
+
+fn paint_file_view(pen: &Pen<'_>, icon: Icon, b: Color32, a: Color32, _dim: bool) {
     use Icon::*;
     match icon {
         New => {
@@ -331,6 +344,13 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, dim: bool) {
                 b,
             );
         }
+        _ => {}
+    }
+}
+
+fn paint_document_tools(pen: &Pen<'_>, icon: Icon, b: Color32, a: Color32, _dim: bool) {
+    use Icon::*;
+    match icon {
         Orbit => {
             pen.c(12.0, 12.0, 4.0, b);
             pen.arc(12.0, 12.0, 9.0, 20.0, 160.0, a);
@@ -355,6 +375,13 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, dim: bool) {
                 pen.poly(&[(3.0, y + 2.0), (12.0, *y - 2.0), (21.0, y + 2.0), (12.0, y + 6.0)], true, c);
             }
         }
+        _ => {}
+    }
+}
+
+fn paint_draw_tools(pen: &Pen<'_>, icon: Icon, b: Color32, a: Color32, dim: bool) {
+    use Icon::*;
+    match icon {
         Help => {
             pen.c(12.0, 12.0, 9.0, b);
             pen.text(12.0, 12.5, "?", 12.0, b);
@@ -485,6 +512,13 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, dim: bool) {
             pen.la(14.0, 18.0, 21.0, 18.0);
             pen.la(14.0, 21.0, 19.0, 21.0);
         }
+        _ => {}
+    }
+}
+
+fn paint_edit_tools(pen: &Pen<'_>, icon: Icon, b: Color32, a: Color32, _dim: bool) {
+    use Icon::*;
+    match icon {
         Move => {
             pen.la(12.0, 3.0, 12.0, 21.0);
             pen.la(3.0, 12.0, 21.0, 12.0);
@@ -604,6 +638,13 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, dim: bool) {
             pen.poly(&[(20.0, 6.0), (20.0, 11.0), (11.0, 11.0), (11.0, 14.0)], false, b);
             pen.fill_rect(9.5, 14.0, 3.0, 8.0, a);
         }
+        _ => {}
+    }
+}
+
+fn paint_dimensions(pen: &Pen<'_>, icon: Icon, b: Color32, a: Color32, _dim: bool) {
+    use Icon::*;
+    match icon {
         DimLinear | DimAligned | DimBaseline | DimContinue | QDim => {
             let (y0, y1) = (8.0, 18.0);
             pen.l(4.0, y1, 4.0, 5.0);
@@ -673,6 +714,13 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, dim: bool) {
                 _ => pen.text(19.0, 19.0, "A", 9.0, a),
             }
         }
+        _ => {}
+    }
+}
+
+fn paint_block_tools(pen: &Pen<'_>, icon: Icon, b: Color32, a: Color32, _dim: bool) {
+    use Icon::*;
+    match icon {
         LayerOff | LayerIso | LayerFreeze | LayerLock | LayerMatch | MakeCurrent | LayerPrev => {
             pen.poly(&[(2.0, 9.0), (10.0, 5.0), (18.0, 9.0), (10.0, 13.0)], true, b);
             pen.poly(&[(2.0, 13.0), (10.0, 17.0), (18.0, 13.0)], false, b);
@@ -691,11 +739,27 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, dim: bool) {
                 }
             }
         }
+        _ => {}
+    }
+}
+
+fn paint_layer_tools(pen: &Pen<'_>, icon: Icon, _b: Color32, _a: Color32, dim: bool) {
+    let alpha = |c: Color32| if dim { c.gamma_multiply(0.4) } else { c };
+    use Icon::*;
+    match icon {
         Bulb | BulbOff => {
             let c = if icon == Bulb { Color32::from_rgb(0xf5, 0xd0, 0x3b) } else { Color32::from_rgb(0x70, 0x78, 0x86) };
             pen.fill_c(12.0, 10.0, 6.0, alpha(c));
             pen.fill_rect(9.5, 15.0, 5.0, 4.0, alpha(Color32::from_rgb(0xb0, 0xb4, 0xba)));
         }
+        _ => {}
+    }
+}
+
+fn paint_display_toggles(pen: &Pen<'_>, icon: Icon, b: Color32, _a: Color32, dim: bool) {
+    let alpha = |c: Color32| if dim { c.gamma_multiply(0.4) } else { c };
+    use Icon::*;
+    match icon {
         Lock | Unlock => {
             let c = alpha(Color32::from_rgb(0xe6, 0xb4, 0x3c));
             pen.fill_rect(6.0, 11.0, 12.0, 9.0, c);
@@ -762,7 +826,7 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, dim: bool) {
         Lineweight => {
             for (k, w) in [1.0f32, 2.0, 3.5].iter().enumerate() {
                 let y = 6.0 + k as f32 * 6.0;
-                p.line_segment([pen.at(3.0, y), pen.at(21.0, y)], Stroke::new(w * pen.sc(), b));
+                pen.p.line_segment([pen.at(3.0, y), pen.at(21.0, y)], Stroke::new(w * pen.sc(), b));
             }
         }
         Transparency => {
@@ -784,7 +848,7 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, dim: bool) {
             pen.c(12.0, 12.0, 4.0, b);
             for i in 0..8 {
                 let ang = (i as f32 * 45.0).to_radians();
-                p.line_segment(
+                pen.p.line_segment(
                     [pen.at(12.0 + 6.0 * ang.cos(), 12.0 + 6.0 * ang.sin()), pen.at(12.0 + 9.0 * ang.cos(), 12.0 + 9.0 * ang.sin())],
                     Stroke::new(2.2 * pen.sc(), b),
                 );
@@ -801,6 +865,13 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, dim: bool) {
             pen.l(9.0, 4.0, 9.0, 20.0);
             pen.l(9.0, 9.0, 21.0, 9.0);
         }
+        _ => {}
+    }
+}
+
+fn paint_navigation_controls(pen: &Pen<'_>, icon: Icon, b: Color32, a: Color32, _dim: bool) {
+    use Icon::*;
+    match icon {
         ChevronDown => pen.poly(&[(6.0, 9.0), (12.0, 15.0), (18.0, 9.0)], false, b),
         ChevronUp => pen.poly(&[(6.0, 15.0), (12.0, 9.0), (18.0, 15.0)], false, b),
         ChevronLeft => pen.poly(&[(15.0, 6.0), (9.0, 12.0), (15.0, 18.0)], false, b),
@@ -827,6 +898,14 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, dim: bool) {
                 pen.l(4.0, y, 20.0, y);
             }
         }
+        _ => {}
+    }
+}
+
+fn paint_constraints(pen: &Pen<'_>, icon: Icon, b: Color32, a: Color32, dim: bool) {
+    let alpha = |c: Color32| if dim { c.gamma_multiply(0.4) } else { c };
+    use Icon::*;
+    match icon {
         Constraint | Fix => {
             pen.fill_rect(7.0, 11.0, 10.0, 9.0, Color32::from_rgb(0xe6, 0xb4, 0x3c));
             pen.arc(12.0, 11.0, 4.0, 0.0, 180.0, Color32::from_rgb(0xe6, 0xb4, 0x3c));
@@ -940,6 +1019,7 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, dim: bool) {
             pen.poly(&[(3.0, 4.0), (19.0, 4.0), (13.0, 11.0), (13.0, 19.0), (9.0, 17.0), (9.0, 11.0)], true, b);
             pen.poly(&[(20.0, 10.0), (16.5, 15.5), (20.0, 15.5), (17.0, 21.0)], false, a);
         }
+        _ => {}
     }
 }
 

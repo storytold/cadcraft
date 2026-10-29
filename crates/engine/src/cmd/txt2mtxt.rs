@@ -334,5 +334,4 @@ impl Interactive for Txt2MtxtM {
 }
 
 #[cfg(test)]
-#[path = "txt2mtxt_tests.rs"]
 mod tests;

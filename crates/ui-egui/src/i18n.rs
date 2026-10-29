@@ -190,44 +190,50 @@ pub struct Language {
 pub static LANGUAGES: [Language; 16] = [
     Language { code: "en", name: "English", source: "", plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     // Greek: one for exactly 1; other for zero and all other integer counts.
-    Language { code: "el", name: "Ελληνικά", source: include_str!("el.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     Language {
-        code: "uk", name: "Українська", source: include_str!("uk.tsv"), plural: plural_uk, plural_forms: 3, catalog: OnceLock::new()
+        code: "el", name: "Ελληνικά", source: include_str!("i18n/el.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new()
+    },
+    Language {
+        code: "uk", name: "Українська", source: include_str!("i18n/uk.tsv"), plural: plural_uk, plural_forms: 3, catalog: OnceLock::new()
     },
     Language {
         code: "pt-BR",
         name: "Português (Brasil)",
-        source: include_str!("pt_br.tsv"),
+        source: include_str!("i18n/pt_br.tsv"),
         plural: plural_pt,
         plural_forms: 2,
         catalog: OnceLock::new(),
     },
     // German plurals follow the English rule: one (1), other.
-    Language { code: "de", name: "Deutsch", source: include_str!("de.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
+    Language { code: "de", name: "Deutsch", source: include_str!("i18n/de.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     // Spanish integer plurals follow the English rule too.
-    Language { code: "es", name: "Español", source: include_str!("es.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
-    Language { code: "cs", name: "Čeština", source: include_str!("cs.tsv"), plural: plural_cs, plural_forms: 3, catalog: OnceLock::new() },
+    Language { code: "es", name: "Español", source: include_str!("i18n/es.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
+    Language { code: "cs", name: "Čeština", source: include_str!("i18n/cs.tsv"), plural: plural_cs, plural_forms: 3, catalog: OnceLock::new() },
     // Russian integer plurals follow the Ukrainian rule: one (1, 21), few (2–4), many.
-    Language { code: "ru", name: "Русский", source: include_str!("ru.tsv"), plural: plural_uk, plural_forms: 3, catalog: OnceLock::new() },
+    Language {
+        code: "ru", name: "Русский", source: include_str!("i18n/ru.tsv"), plural: plural_uk, plural_forms: 3, catalog: OnceLock::new()
+    },
     // French integer plurals (CLDR `fr`): one (0, 1), other, the Portuguese rule.
-    Language { code: "fr", name: "Français", source: include_str!("fr.tsv"), plural: plural_pt, plural_forms: 2, catalog: OnceLock::new() },
+    Language { code: "fr", name: "Français", source: include_str!("i18n/fr.tsv"), plural: plural_pt, plural_forms: 2, catalog: OnceLock::new() },
     // Chinese has no grammatical plural: both `@plural` forms read the same. Its glyphs come from
     // an installed CJK font (`theme::cjk_font`); without one the interface stays English.
-    Language { code: "zh", name: "简体中文", source: include_str!("zh.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
+    Language { code: "zh", name: "简体中文", source: include_str!("i18n/zh.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     // Italian integer plurals (CLDR `it`) follow the English rule: one (1), other.
-    Language { code: "it", name: "Italiano", source: include_str!("it.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
+    Language { code: "it", name: "Italiano", source: include_str!("i18n/it.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     // Korean has one integer plural form and needs a Hangul-capable interface font.
-    Language { code: "ko", name: "한국어", source: include_str!("ko.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new() },
+    Language { code: "ko", name: "한국어", source: include_str!("i18n/ko.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new() },
     // Swedish plurals follow the English rule: one (1), other.
-    Language { code: "sv", name: "Svenska", source: include_str!("sv.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
+    Language { code: "sv", name: "Svenska", source: include_str!("i18n/sv.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     // العربية (Arabic) is right-to-left; an installed Arabic font (`theme::arabic_font`)
     // covers its glyphs, and the shell keeps egui's left-to-right run order. Six plural
     // forms: zero, one, two, few, many, other.
-    Language { code: "ar", name: "العربية", source: include_str!("ar.tsv"), plural: plural_arabic, plural_forms: 6, catalog: OnceLock::new() },
+    Language {
+        code: "ar", name: "العربية", source: include_str!("i18n/ar.tsv"), plural: plural_arabic, plural_forms: 6, catalog: OnceLock::new()
+    },
     // Hungarian uses the singular after a numeral, so one form covers every count (the Korean rule).
-    Language { code: "hu", name: "Magyar", source: include_str!("hu.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new() },
+    Language { code: "hu", name: "Magyar", source: include_str!("i18n/hu.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new() },
     // Turkish keeps a noun singular after a number ("3 commit"), so like Korean it has one form.
-    Language { code: "tr", name: "Türkçe", source: include_str!("tr.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new() },
+    Language { code: "tr", name: "Türkçe", source: include_str!("i18n/tr.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new() },
 ];
 
 /// BCP 47 and POSIX locale tags, including `uk-UA`, `uk_UA.UTF-8` and `pt_BR.UTF-8`.

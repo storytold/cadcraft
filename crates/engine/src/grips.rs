@@ -119,74 +119,19 @@ pub fn stretch_grip(kind: &EntityKind, index: usize, to: Vec2) -> Option<EntityK
             c.radius = r;
         }
         EntityKind::Arc(a) => {
-            let g = Arc::new(a.center.xy(), a.radius, a.start, a.end);
-            let (mut s, mut m, mut e) = (g.start_point(), g.mid_point(), g.end_point());
-            match index {
-                0 => s = to,
-                1 => m = to,
-                2 => e = to,
-                _ => return Some(translated(kind, delta)),
-            }
-            let na = Arc::from_3_points(s, m, e)?;
-            return Some(crate::cmd::helpers::arc(&na));
+            return stretch_arc(kind, a, index, to, delta);
         }
         EntityKind::Ellipse(e) => {
-            let c = e.center.xy();
-            let mj = e.major.xy();
-            let a = mj.len();
-            if a <= EPS {
+            if e.major.xy().len() <= EPS {
                 return None;
             }
-            let b = a * e.ratio;
-            match index {
-                0 => return Some(translated(kind, delta)),
-                1 | 3 => {
-                    let v = if index == 1 { to - c } else { c - to };
-                    let l = v.len();
-                    if l <= EPS {
-                        return None;
-                    }
-                    if l >= b {
-                        e.major = v.to3(0.0);
-                        e.ratio = (b / l).clamp(1e-9, 1.0);
-                    } else {
-                        e.major = (v.normalized().perp() * b).to3(0.0);
-                        e.ratio = (l / b).clamp(1e-9, 1.0);
-                        shift_params(e, -std::f64::consts::FRAC_PI_2);
-                    }
-                }
-                _ => {
-                    let u = mj / a;
-                    let l = (to - c).dot(u.perp()).abs();
-                    if l <= EPS {
-                        return None;
-                    }
-                    if l <= a {
-                        e.ratio = (l / a).clamp(1e-9, 1.0);
-                    } else {
-                        e.major = (u.perp() * l).to3(0.0);
-                        e.ratio = (a / l).clamp(1e-9, 1.0);
-                        shift_params(e, -std::f64::consts::FRAC_PI_2);
-                    }
-                }
+            if index == 0 {
+                return Some(translated(kind, delta));
             }
+            stretch_ellipse(e, index, to)?;
         }
         EntityKind::LwPolyline(p) => {
-            let n = p.vertices.len();
-            match poly_grip(p, index)? {
-                PolyGrip::Vertex(i) => p.vertices.get_mut(i)?.p = to,
-                PolyGrip::Mid(i) => {
-                    let j = (i + 1) % n.max(1);
-                    let (a, b) = (p.vertices.get(i)?.p, p.vertices.get(j)?.p);
-                    if p.vertices.get(i)?.bulge.abs() > 1e-12 {
-                        // Arc segment: reshape through the dragged midpoint.
-                        p.vertices.get_mut(i)?.bulge = crate::cmd::curves::bulge_through(a, to, b);
-                    } else {
-                        p.vertices.get_mut(i)?.p = a + delta;
-                        p.vertices.get_mut(j)?.p = b + delta;
-                    }
-                }
-            }
+            stretch_polyline(p, index, to, delta)?;
         }
         EntityKind::Polyline3d(p) => set_xy(p.points.get_mut(index)?, to),
         EntityKind::Spline(sp) => {
@@ -298,6 +243,86 @@ pub fn stretch_grip(kind: &EntityKind, index: usize, to: Vec2) -> Option<EntityK
         EntityKind::Unknown(_) => return None,
     }
     Some(k)
+}
+
+fn stretch_arc(kind: &EntityKind, arc: &cadcraft_doc::Arc, index: usize, to: Vec2, delta: Vec2) -> Option<EntityKind> {
+    let geometry = Arc::new(arc.center.xy(), arc.radius, arc.start, arc.end);
+    let (mut start, mut mid, mut end) = (geometry.start_point(), geometry.mid_point(), geometry.end_point());
+    match index {
+        0 => start = to,
+        1 => mid = to,
+        2 => end = to,
+        _ => return Some(translated(kind, delta)),
+    }
+    let adjusted = Arc::from_3_points(start, mid, end)?;
+    Some(crate::cmd::helpers::arc(&adjusted))
+}
+
+fn stretch_ellipse(ellipse: &mut cadcraft_doc::Ellipse, index: usize, to: Vec2) -> Option<()> {
+    let center = ellipse.center.xy();
+    let major = ellipse.major.xy();
+    let major_len = major.len();
+    if major_len <= EPS {
+        return None;
+    }
+    let minor_len = major_len * ellipse.ratio;
+    match index {
+        1 | 3 => stretch_ellipse_major(ellipse, index, to, center, minor_len)?,
+        _ => stretch_ellipse_minor(ellipse, to, center, major, major_len)?,
+    }
+    Some(())
+}
+
+fn stretch_ellipse_major(ellipse: &mut cadcraft_doc::Ellipse, index: usize, to: Vec2, center: Vec2, minor_len: f64) -> Option<()> {
+    let axis = if index == 1 { to - center } else { center - to };
+    let len = axis.len();
+    if len <= EPS {
+        return None;
+    }
+    if len >= minor_len {
+        ellipse.major = axis.to3(0.0);
+        ellipse.ratio = (minor_len / len).clamp(1e-9, 1.0);
+    } else {
+        ellipse.major = (axis.normalized().perp() * minor_len).to3(0.0);
+        ellipse.ratio = (len / minor_len).clamp(1e-9, 1.0);
+        shift_params(ellipse, -std::f64::consts::FRAC_PI_2);
+    }
+    Some(())
+}
+
+fn stretch_ellipse_minor(ellipse: &mut cadcraft_doc::Ellipse, to: Vec2, center: Vec2, major: Vec2, major_len: f64) -> Option<()> {
+    let unit = major / major_len;
+    let minor_len = (to - center).dot(unit.perp()).abs();
+    if minor_len <= EPS {
+        return None;
+    }
+    if minor_len <= major_len {
+        ellipse.ratio = (minor_len / major_len).clamp(1e-9, 1.0);
+    } else {
+        ellipse.major = (unit.perp() * minor_len).to3(0.0);
+        ellipse.ratio = (major_len / minor_len).clamp(1e-9, 1.0);
+        shift_params(ellipse, -std::f64::consts::FRAC_PI_2);
+    }
+    Some(())
+}
+
+fn stretch_polyline(polyline: &mut LwPolyline, index: usize, to: Vec2, delta: Vec2) -> Option<()> {
+    let count = polyline.vertices.len();
+    match poly_grip(polyline, index)? {
+        PolyGrip::Vertex(i) => polyline.vertices.get_mut(i)?.p = to,
+        PolyGrip::Mid(i) => {
+            let next = (i + 1) % count.max(1);
+            let (start, end) = (polyline.vertices.get(i)?.p, polyline.vertices.get(next)?.p);
+            if polyline.vertices.get(i)?.bulge.abs() > 1e-12 {
+                // Arc segment: reshape through the dragged midpoint.
+                polyline.vertices.get_mut(i)?.bulge = crate::cmd::curves::bulge_through(start, to, end);
+            } else {
+                polyline.vertices.get_mut(i)?.p = start + delta;
+                polyline.vertices.get_mut(next)?.p = end + delta;
+            }
+        }
+    }
+    Some(())
 }
 
 fn shift_params(e: &mut cadcraft_doc::Ellipse, by: f64) {
@@ -538,5 +563,4 @@ pub fn polyline_grip_count(p: &LwPolyline) -> usize {
 }
 
 #[cfg(test)]
-#[path = "grips_tests.rs"]
 mod tests;

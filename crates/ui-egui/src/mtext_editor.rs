@@ -231,7 +231,7 @@ fn toolbar(ui: &mut egui::Ui, st: &mut State, base_h: f64) {
         ui.add_space(4.0);
         // Font
         let shown = cur.font.clone().unwrap_or_else(|| st.fmt.base_font.clone());
-        egui::ComboBox::from_id_salt("mtext_font")
+        craft_ui::ComboBox::from_id_salt("mtext_font")
             .width(120.0)
             .selected_text(shown.clone())
             .show_ui(ui, |ui| {

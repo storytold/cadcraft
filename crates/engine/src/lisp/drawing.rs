@@ -1097,5 +1097,5 @@ pub fn load_source(s: &Session, name: &str) -> Option<String> {
     // As given (a path, or relative to the working folder), then in the support folder.
     let support =
         s.lisp_support_dir().map(|d| candidates.iter().map(|c| d.join(c).to_string_lossy().into_owned()).collect::<Vec<_>>()).unwrap_or_default();
-    candidates.iter().chain(&support).find_map(|c| super::builtins::read_text_file(c))
+    candidates.iter().chain(&support).find_map(super::builtins::read_text_file)
 }

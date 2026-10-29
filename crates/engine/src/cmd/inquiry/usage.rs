@@ -8,8 +8,9 @@ use std::collections::{HashMap, HashSet};
 use cadcraft_doc::{Drawing, Entity, EntityKind};
 use serde_json::{Value, json};
 
+use super::super::bad;
 use super::super::blocks::purge;
-use super::super::*;
+
 use crate::{Result, Session};
 
 const CMD: &str = "usage";
@@ -280,11 +281,9 @@ impl Unused {
 fn item_json(
     c: Category,
     name: &str,
-    entities: usize,
-    block_entities: usize,
+    (entities, block_entities): (usize, usize),
     references: usize,
-    used: bool,
-    empty: bool,
+    (used, empty): (bool, bool),
     current: Option<bool>,
     unused: &Unused,
 ) -> Value {
@@ -314,13 +313,13 @@ fn items(scan: &Scan, unused: &Unused, d: &Drawing) -> Vec<Value> {
         let (e, b) = scan.layers.get(&l.name.to_ascii_lowercase()).copied().unwrap_or_default();
         let uses = e.saturating_add(b);
         let cur = l.name.eq_ignore_ascii_case(&current_layer);
-        out.push(item_json(Category::Layer, &l.name, e, b, 0, uses > 0, uses == 0, Some(cur), unused));
+        out.push(item_json(Category::Layer, &l.name, (e, b), 0, (uses > 0, uses == 0), Some(cur), unused));
     }
     for b in d.blocks.values() {
         let (e, n) = scan.blocks.get(&b.name.to_ascii_lowercase()).copied().unwrap_or_default();
         // A definition is used when a reference to it is reachable, as PURGE counts it.
         let used = scan.used_blocks.contains(&b.name.to_ascii_uppercase());
-        out.push(item_json(Category::Block, &b.name, e, n, 0, used, e.saturating_add(n) == 0, None, unused));
+        out.push(item_json(Category::Block, &b.name, (e, n), 0, (used, e.saturating_add(n) == 0), None, unused));
     }
     let current_style = d.header.str("TEXTSTYLE", "Standard");
     for t in &d.text_styles {
@@ -328,7 +327,7 @@ fn items(scan: &Scan, unused: &Unused, d: &Drawing) -> Vec<Value> {
         let r = scan.style_refs.get(&t.name.to_ascii_lowercase()).copied().unwrap_or(0);
         let uses = e.saturating_add(b).saturating_add(r);
         let cur = t.name.eq_ignore_ascii_case(&current_style);
-        out.push(item_json(Category::TextStyle, &t.name, e, b, r, uses > 0, uses == 0, Some(cur), unused));
+        out.push(item_json(Category::TextStyle, &t.name, (e, b), r, (uses > 0, uses == 0), Some(cur), unused));
     }
     let current_linetype = d.header.str("CELTYPE", "ByLayer");
     for t in &d.linetypes {
@@ -336,7 +335,7 @@ fn items(scan: &Scan, unused: &Unused, d: &Drawing) -> Vec<Value> {
         let r = scan.linetype_refs.get(&t.name.to_ascii_lowercase()).copied().unwrap_or(0);
         let uses = e.saturating_add(b).saturating_add(r);
         let cur = t.name.eq_ignore_ascii_case(&current_linetype);
-        out.push(item_json(Category::Linetype, &t.name, e, b, r, uses > 0, uses == 0, Some(cur), unused));
+        out.push(item_json(Category::Linetype, &t.name, (e, b), r, (uses > 0, uses == 0), Some(cur), unused));
     }
     out
 }
@@ -433,5 +432,4 @@ pub fn run(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 #[cfg(test)]
-#[path = "usage_tests.rs"]
 mod tests;

@@ -29,7 +29,7 @@ fn folder(tag: &str) -> PathBuf {
 }
 
 fn save(d: &Drawing, path: &Path) {
-    std::fs::write(path, cadcraft_io::write(d, &path.to_string_lossy()).unwrap()).unwrap();
+    std::fs::write(path, cadcraft_io::write(d, path).unwrap()).unwrap();
 }
 
 fn line(d: &mut Drawing, layer: &str, a: (f64, f64), b: (f64, f64)) {

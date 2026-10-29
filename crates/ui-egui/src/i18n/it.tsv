@@ -97,6 +97,7 @@ menu	Modify	Edita
 	Blend	Fondi
 	Block	Blocco
 	Block Attribute Manager...	Gestore attributi blocco...
+	Block Description...	Descrizione blocco...
 	Block Editor	Editor blocchi
 	Block Reference	Riferimento di blocco
 	Block...	Blocco...
@@ -549,6 +550,7 @@ menu	Modify	Edita
 	N	N
 	Name	Nome
 	Name (A–Z)	Nome (A–Z)
+	Named Viewports...	Finestre con nome...
 	Named Views...	Viste con nome...
 	Nearest	Vicino
 	New	Nuovo
@@ -1362,3 +1364,6 @@ menu	Modify	Edita
 	Click the ruler to add a tab stop, right-click to remove one	Fare clic sul righello per aggiungere una tabulazione, clic destro per rimuoverla
 	Select using two clicks only	Seleziona solo con due clic
 	Define each corner of the selection window with a separate click.	Definire ogni angolo della finestra di selezione con un clic separato.
+	Check for Updates…	Verifica aggiornamenti…
+	CADCraft is up to date.	CADCraft è aggiornato.
+	Could not check for updates.	Impossibile verificare gli aggiornamenti.

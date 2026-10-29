@@ -310,7 +310,7 @@ fn reset_ui(app: &mut CadApp) {
     app.ui.animations = d.animations;
     app.ui.save_format = d.save_format;
     app.ui.save_version = d.save_version;
-    app.ui.system_cursor = d.system_cursor;
+    app.ui.system_cursor = app.system_cursor_default;
     app.ui.history_lines = d.history_lines;
     app.options = UiOptions::default();
 }
@@ -353,7 +353,7 @@ impl CadApp {
                 let _ = parse_ui(key, value, &mut c);
             }
         }
-        // CADCRAFT_SYSTEM_CURSOR=1 turns the system cursor on whatever was saved.
+        // A saved `false` leaves the host's default (`set_system_cursor_default`) in place.
         if c.system_cursor == Some(true) {
             self.ui.system_cursor = true;
         }

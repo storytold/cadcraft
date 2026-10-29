@@ -8,7 +8,8 @@ use cadcraft_doc::{EntityKind, Handle};
 use serde_json::{Value, json};
 
 use super::machines::{SelOutcome, SelectPhase, SelectRun};
-use super::*;
+use super::{CommandSpec, EngineError, bad, ok, targets};
+
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 pub fn specs() -> Vec<CommandSpec> {

@@ -12,8 +12,9 @@ use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
 use serde_json::{Value, json};
 
+use super::super::always;
 use super::super::helpers::support_text;
-use super::*;
+use super::{CommandSpec, Result, Session, bad, bool_or, find_command};
 
 /// Most user aliases held.
 pub const MAX_ALIASES: usize = 10_000;

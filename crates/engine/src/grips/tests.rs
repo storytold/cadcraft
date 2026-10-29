@@ -76,6 +76,18 @@ fn arc_and_ellipse_grips() {
 }
 
 #[test]
+fn degenerate_ellipse_cannot_move_from_its_center_grip() {
+    let ellipse = EntityKind::Ellipse(cadcraft_doc::Ellipse {
+        center: cadcraft_geom::Vec3::ZERO,
+        major: cadcraft_geom::Vec3::ZERO,
+        ratio: 0.5,
+        start: 0.0,
+        end: cadcraft_geom::TAU,
+    });
+    assert!(super::stretch_grip(&ellipse, 0, v(1.0, 1.0)).is_none());
+}
+
+#[test]
 fn polyline_grips() {
     let mut s = Session::new();
     let p = h(&s.execute("pline", &json!({"vertices": [[0, 0], {"p": [10, 0], "bulge": 0.0}, {"p": [10, 10], "bulge": 1.0}, [0, 10]]})).unwrap());
