@@ -63,6 +63,8 @@ fn missing_commands_menus_tools_and_snap_labels(language: &str) -> Vec<String> {
     let catalog = catalog(language).unwrap();
     let mut sources = BTreeSet::new();
     sources.extend(crate::menus::MENUS.iter().copied());
+    // File ▸ Open Recent is built at run time, not from a command's menu path.
+    sources.extend([crate::menus::OPEN_RECENT, crate::menus::CLEAR_RECENT]);
     for c in cadcraft_engine::command_specs() {
         sources.insert(c.label);
         sources.extend(c.menu.iter().copied());
