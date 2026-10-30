@@ -556,3 +556,112 @@ fn production_font_chain_covers_latin_and_shortcut_symbols() {
         assert!(view.has_glyph(&egui::FontId::monospace(12.0), '\u{21e7}'), "U+21E7 shift symbol missing in Monospace");
     });
 }
+
+#[test]
+fn finnish_locales_preferences_and_plural_forms() {
+    for tag in ["fi", "fi-FI", "fi_FI.UTF-8", "FI-fi", " fi-FI "] {
+        assert_eq!(locale_language(tag), Some("fi"), "{tag}");
+    }
+    // `fil` is Filipino and `fin` the three-letter code; neither picks Finnish. `sv-FI` stays Swedish.
+    for tag in ["fil", "fin", "suomi"] {
+        assert_eq!(locale_language(tag), None, "{tag}");
+    }
+    assert_eq!(locale_language("sv-FI"), Some("sv"));
+    assert_eq!(Preference::parse("fi"), Some(Preference::Finnish));
+    assert_eq!(Preference::Finnish.name(), "Suomi");
+    assert_eq!(Preference::Finnish.resolve(&["en-US".into()]), "fi");
+    assert_eq!(Preference::Auto.resolve(&["pl-PL".into(), "fi-FI".into(), "en-US".into()]), "fi");
+    let mut app = CadApp::new(Session::new(), Services::default());
+    app.ui.interface_language = Preference::Finnish;
+    let mut restored = CadApp::new(Session::new(), Services::default());
+    restored.load_prefs(&app.prefs_json());
+    assert_eq!(restored.ui.interface_language, Preference::Finnish);
+    with_language("fi", || {
+        for n in [0, 1, 2, 5, 21, u64::MAX] {
+            // Other numbers than 1 take the partitive singular: 1 osallistuja, 2 osallistujaa.
+            let (contributor, commit) = if n == 1 { ("osallistuja", "kommitti") } else { ("osallistujaa", "kommittia") };
+            assert_eq!(count(n, "{n} contributor", "{n} contributors"), format!("{n} {contributor}"));
+            assert_eq!(count(n, "{n} commit", "{n} commits"), format!("{n} {commit}"));
+        }
+        assert_eq!(format("Current: {color}", &[("color", "{n} Open".into())]), "Nykyinen: {n} Open");
+    });
+}
+
+#[test]
+fn finnish_menu_headings_keep_object_labels() {
+    with_language("fi", || {
+        assert_eq!(menu("Dimension"), "Mitoitus");
+        assert_eq!(t("Dimension"), "Mitta");
+        assert_eq!(menu("View"), "Näytä");
+        assert_eq!(menu("Draw"), "Piirrä");
+        assert_eq!(menu("Edit"), "Muokkaa");
+        assert_eq!(menu("Modify"), "Muuta");
+        assert_eq!(menu("File"), "Tiedosto");
+        // Every menu bar heading reads differently.
+        let headings: BTreeSet<_> = crate::menus::MENUS.iter().map(|m| menu(m)).collect();
+        assert_eq!(headings.len(), crate::menus::MENUS.len());
+    });
+}
+
+#[test]
+fn live_finnish_switch_preserves_drawing_command_and_saved_choice() {
+    let mut app = CadApp::new(Session::new(), Services::default());
+    app.ui.in_window_menu = true;
+    app.session.state_mut().unwrap().title = "Open".into();
+    let ctx = egui::Context::default();
+    app.logic(&ctx);
+    assert!(render(&mut app, &ctx).contains("Properties"));
+    app.start("line");
+    let prompt = crate::control::cmdline_state(&app);
+    let commands = crate::control::all_commands(&app);
+    app.run("ui.language", json!({"lang":"fi"})).unwrap();
+    let text = render(&mut app, &ctx);
+    for label in ["Ominaisuudet", "Tiedosto", "Näytä", "Piirrä", "Mitoitus", "Määritä ensimmäinen piste"] {
+        assert!(text.contains(label), "missing {label}: {text}");
+    }
+    assert_eq!(app.language(), "fi");
+    assert_eq!(app.session.state().unwrap().title, "Open");
+    assert_eq!(crate::control::cmdline_state(&app), prompt);
+    assert_eq!(crate::control::all_commands(&app), commands);
+    app.run("ui.language", json!({"lang":"en"})).unwrap();
+    assert!(render(&mut app, &ctx).contains("Properties"));
+}
+
+#[test]
+fn finnish_dialogs_render_with_stable_ids() {
+    for (dialog, heading) in [
+        ("dsettings", "Piirtoasetukset"),
+        ("about", "Tietoja CADCraftista"),
+        ("blocks", "Lohko"),
+        ("layers", "Tasojen ominaisuuksien hallinta"),
+        ("qselect", "Pikavalinta"),
+        ("parameters", "Parametrien hallinta"),
+        ("language", "Suomi"),
+        ("options:preferences", "Käyttäjän asetukset"),
+    ] {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        app.ui.interface_language = Preference::Finnish;
+        app.ui.dialog = Some(dialog.into());
+        let ctx = egui::Context::default();
+        app.logic(&ctx);
+        let text = render(&mut app, &ctx);
+        assert!(text.contains(heading), "{dialog}: {text}");
+        assert_eq!(app.ui.dialog.as_deref(), Some(dialog));
+    }
+}
+
+#[test]
+fn default_fonts_cover_finnish_letters_and_quotes() {
+    let ctx = egui::Context::default();
+    let mut output = ctx.run_ui(Default::default(), |_| {});
+    output.textures_delta.clear();
+    let letters: BTreeSet<_> = "ÄÖÅäöåŠšŽž”–".chars().collect();
+    ctx.fonts_mut(|view| {
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            let chars = view.characters(&family);
+            for c in &letters {
+                assert!(chars.contains_key(c), "missing {c} in {family:?}");
+            }
+        }
+    });
+}
