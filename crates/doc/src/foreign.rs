@@ -70,6 +70,10 @@ pub struct Foreign {
     /// proxy objects or entities: a proxy's class number (group 91) is 500 plus its class's place
     /// here, and saving renumbers it to the written CLASSES (#1812).
     pub class_order: Vec<String>,
+    /// The roles of every file handle of an object CADCraft writes itself (table records, tables,
+    /// blocks, the named object dictionary and its entries), so that AutoLISP names those objects
+    /// as the file did (`handent`). Saving gives them new handles; not part of [`Foreign::is_empty`].
+    pub handles: BTreeMap<Handle, ForeignKey>,
     /// The file's data store section (ACDSDATA, AutoCAD 2013 and later), as read: its groups
     /// after the section name. It holds the ACIS geometry of 3D solids, regions, bodies and
     /// surfaces, which from 2013 on those entities don't carry themselves: each `ACDSRECORD`

@@ -26,6 +26,7 @@ use std::path::{Path, PathBuf};
 
 pub use cadcraft_doc::Format;
 pub use cadcraft_dxf::Version;
+pub use dxf_raw::{ObjectRecord, object_records};
 pub use dxf_read::entity_from_groups;
 pub use dxf_write::entity_groups;
 pub use pdf::{PdfOptions, pdf, plot};
