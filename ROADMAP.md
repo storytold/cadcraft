@@ -99,7 +99,7 @@ Ukrainian and German. Detail: [localization-parity.md](docs/localization-parity.
 | Korean | none | 0% |
 | Vietnamese | none | 0% |
 
-Other languages shipped: Ukrainian and German (989 catalog rows each; Ukrainian landed with #36), Brazilian Portuguese, Spanish, Czech, Russian, French, Simplified Chinese and Italian (1,227 rows, 2026-10-12); engine messages stay English.
+Other languages shipped: Ukrainian and German (989 catalog rows each; Ukrainian landed with #36), Brazilian Portuguese, Spanish, Czech, Russian, French, Simplified Chinese and Italian (1,227 rows, 2026-10-12), Thai (1,421 rows, 2026-10-25); engine messages stay English.
 
 ## Upcoming
 

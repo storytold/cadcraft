@@ -3,9 +3,9 @@
 //! empty, `CRAFT_FONTS` is empty and the build is unchanged. It only reads the local checkout
 //! (no network). A bad checkout is a warning, or an error with `CRAFT_FONTS_REQUIRED=1`.
 //!
-//! On wasm32 it embeds only BIZ UDPGothic Regular and the `Arab` faces (about 5.5 MB), to keep the
+//! On wasm32 it embeds only BIZ UDPGothic Regular and the `Arab` and `Thai` faces (about 5.7 MB), to keep the
 //! web build within hosting limits (Cloudflare Pages: 25 MiB per file). The web build has no
-//! system fonts, so these are its only fallback for Japanese and Arabic-script text.
+//! system fonts, so these are its only fallback for Japanese, Arabic-script and Thai text.
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
@@ -55,7 +55,9 @@ fn craft_fonts(dir: &std::path::Path) -> Result<String, String> {
             continue;
         }
         let arabic = scripts.split(',').any(|s| s.trim() == "Arab");
-        let web_face = (*family == "BIZ UDPGothic" && *style == "Regular") || arabic;
+        // Thai: Noto Sans Thai is about 0.2 MB, so the web build carries it for the Thai interface.
+        let thai = scripts.split(',').any(|s| s.trim() == "Thai");
+        let web_face = (*family == "BIZ UDPGothic" && *style == "Regular") || arabic || thai;
         if wasm && !web_face {
             continue;
         }

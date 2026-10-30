@@ -959,7 +959,8 @@ fn glyph(s: &mut Surface<'_>, font: kr::text::Font, t: &cadcraft_render::PlotTex
     if !det.is_finite() || det == 0.0 {
         return;
     }
-    let text = g.ch.to_string();
+    // The glyph's whole source text (a ligature maps back to all its characters).
+    let text = format!("{}{}", g.ch, g.rest);
     let glyphs = [KrillaGlyph::new(GlyphId::new(u32::from(g.gid)), 0.0, 0.0, 0.0, 0.0, 0..text.len(), None)];
     // The writer sets glyphs upright on a y-down surface: flip the em's y axis back.
     s.push_transform(&Transform::from_row(a, b, -c, -d, e, f));

@@ -155,6 +155,10 @@ const ARABIC_FALLBACK: &[&str] = &[
     "dejavusans",
 ];
 const HEBREW_FALLBACK: &[&str] = &["notosanshebrew", "notoserifhebrew", "arial", "tahoma", "segoeui", "dejavusans"];
+/// Thai: the general fallback ranking favours wide-coverage CJK fonts, which carry no Thai, so
+/// Thai text goes to a Thai face first (Noto Sans Thai is the craft-fonts face, also on the web).
+const THAI_FALLBACK: &[&str] =
+    &["notosansthai", "notoserifthai", "notolooped", "sarabun", "leelawadee", "leelaw", "thonburi", "ayuthaya", "loma", "garuda", "tahoma"];
 /// Script-specific fallback files loaded per character, at most.
 const MAX_SCRIPT_FILES: usize = 4;
 
@@ -163,6 +167,7 @@ fn script_fallback(c: char) -> &'static [&'static str] {
     match c {
         '\u{0600}'..='\u{08FF}' | '\u{FB50}'..='\u{FDFF}' | '\u{FE70}'..='\u{FEFF}' => ARABIC_FALLBACK,
         '\u{0590}'..='\u{05FF}' | '\u{FB1D}'..='\u{FB4F}' => HEBREW_FALLBACK,
+        '\u{0E00}'..='\u{0E7F}' => THAI_FALLBACK,
         _ => &[],
     }
 }
@@ -805,6 +810,7 @@ pub(crate) fn text_glyph_at(g: &GlyphOutline, c: char, origin: Vec2, scale: f64,
         face,
         gid,
         ch: c,
+        rest: String::new(),
         outline: 0,
         origin,
         x: Vec2::new(em * wf, 0.0),
@@ -845,7 +851,7 @@ pub(crate) fn place_glyph_at(g: &GlyphOutline, origin: Vec2, scale: f64, wf: f64
 /// Characters the face lacks come from a fallback font, scaled to its own cap height.
 pub fn shape(face: &Face, s: &str, height: f64, width_factor: f64, oblique: f64) -> Option<Shaped> {
     face.font()?;
-    if crate::bidi::has_rtl(s)
+    if crate::bidi::needs_shaping(s)
         && let Some(sh) = crate::complex::shape(Some(face), s, height, width_factor, oblique)
     {
         return Some(sh);
@@ -883,7 +889,7 @@ pub fn shape(face: &Face, s: &str, height: f64, width_factor: f64, oblique: f64)
 /// Width of one line set in a TrueType face.
 pub fn width(face: &Face, s: &str, height: f64, width_factor: f64) -> Option<f64> {
     face.font()?;
-    if crate::bidi::has_rtl(s)
+    if crate::bidi::needs_shaping(s)
         && let Some(sh) = crate::complex::shape(Some(face), s, height, width_factor, 0.0)
     {
         return Some(sh.width);

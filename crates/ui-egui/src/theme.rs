@@ -372,6 +372,11 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
         {
             added.push(("system-arabic".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes))));
         }
+        // ไทย: an installed Thai face in every interface language, because layer, layout and file
+        // names can be Thai whatever the interface shows; egui's bundled faces carry no Thai.
+        if let Some(bytes) = thai_font().and_then(|p| read_capped(p, MAX_UI_FONT_BYTES)) {
+            added.push(("system-thai".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes))));
+        }
     }
     let embedded: Vec<_> = cadcraft_fonts::CRAFT_FONTS.iter().collect();
     added.extend(
@@ -415,6 +420,7 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
 /// Chinese interface takes the face with its own glyphs ahead of a Japanese one — a Japanese face
 /// shares most ideographs but lacks the simplified-only ones (图 园 测), which would be tofu.
 /// العربية adds its Arabic face after those, egui's bundled faces carrying no Arabic glyphs.
+/// A Thai face follows in every language (names can be Thai whatever the interface shows).
 fn embedded_ui_faces<'a>(faces: &[&'a cadcraft_fonts::CraftFont], language: &str) -> Vec<&'a cadcraft_fonts::CraftFont> {
     let cjk = |f: &&cadcraft_fonts::CraftFont| f.style == "Regular" && f.scripts.iter().any(|s| matches!(*s, "Jpan" | "Hans" | "Hant"));
     let mut out: Vec<_> = faces.iter().copied().filter(cjk).collect();
@@ -425,6 +431,7 @@ fn embedded_ui_faces<'a>(faces: &[&'a cadcraft_fonts::CraftFont], language: &str
     if language == "ar" {
         out.extend(faces.iter().copied().filter(|f| f.style == "Regular" && f.scripts.contains(&"Arab")));
     }
+    out.extend(faces.iter().copied().filter(|f| f.style == "Regular" && f.scripts.contains(&"Thai")));
     out
 }
 
@@ -471,6 +478,42 @@ pub fn cjk_font() -> Option<&'static std::path::Path> {
                     ]
                 };
                 candidates.iter().map(std::path::PathBuf::from).find(|p| p.is_file())
+            })
+            .as_deref()
+    }
+    #[cfg(target_arch = "wasm32")]
+    None
+}
+
+/// An installed font with Thai glyphs, for Thai names and the ไทย interface; fonts are never
+/// bundled here (the web build has none, and uses the face embedded from craft-fonts instead).
+pub fn thai_font() -> Option<&'static std::path::Path> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        static FOUND: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+        FOUND
+            .get_or_init(|| {
+                let candidates: &[&str] = if cfg!(target_os = "macos") {
+                    &["/System/Library/Fonts/Supplemental/Thonburi.ttc", "/System/Library/Fonts/Thonburi.ttc", "/Library/Fonts/Ayuthaya.ttf"]
+                } else if cfg!(windows) {
+                    &["C:\\Windows\\Fonts\\LeelawUI.ttf", "C:\\Windows\\Fonts\\leelawad.ttf", "C:\\Windows\\Fonts\\tahoma.ttf"]
+                } else {
+                    &[
+                        "/usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf",
+                        "/usr/share/fonts/noto/NotoSansThai-Regular.ttf",
+                        "/usr/share/fonts/google-noto/NotoSansThai-Regular.ttf",
+                        "/usr/share/fonts/truetype/tlwg/Loma.ttf",
+                        "/usr/share/fonts/truetype/tlwg/Garuda.ttf",
+                    ]
+                };
+                // Only a file `install_fonts` will actually load whose first face (the one egui
+                // uses) has every Thai letter the interface shows, so `can_show("th")` never picks
+                // Thai without usable glyphs (unreadable, oversized or Thai-less files fall back).
+                candidates.iter().map(std::path::PathBuf::from).find(|p| {
+                    p.is_file()
+                        && read_capped(p, MAX_UI_FONT_BYTES)
+                            .is_some_and(|bytes| cadcraft_fonts::ttf::faces(&std::sync::Arc::new(bytes)).first().is_some_and(covers_thai))
+                })
             })
             .as_deref()
     }
@@ -561,6 +604,28 @@ fn hangul_letters() -> &'static std::collections::BTreeSet<char> {
             .filter(|c| matches!(c, '\u{1100}'..='\u{11ff}' | '\u{3130}'..='\u{318f}' | '\u{a960}'..='\u{a97f}' | '\u{ac00}'..='\u{d7ff}'))
             .collect()
     })
+}
+
+/// Every Thai letter, vowel and tone mark the Thai interface shows (its catalog and its name).
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn thai_letters() -> &'static std::collections::BTreeSet<char> {
+    static LETTERS: std::sync::OnceLock<std::collections::BTreeSet<char>> = std::sync::OnceLock::new();
+    LETTERS.get_or_init(|| {
+        include_str!("i18n/th.tsv")
+            .lines()
+            .filter_map(|line| line.split('\t').nth(2))
+            .flat_map(str::chars)
+            .chain("ไทย".chars())
+            .filter(|c| matches!(c, '\u{0e00}'..='\u{0e7f}'))
+            .collect()
+    })
+}
+
+/// Whether `face` has every Thai character the Thai interface shows (rejects malformed fonts and
+/// faces without Thai, such as a Latin-only file at a Thai font's usual path).
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn covers_thai(face: &cadcraft_fonts::ttf::Face) -> bool {
+    thai_letters().iter().all(|c| face.has_glyph(*c))
 }
 
 /// Whether `face` has every Hangul letter the Korean interface shows (rejects malformed fonts
@@ -659,11 +724,13 @@ pub fn shows_hangul(language: &str) -> bool {
 
 /// Whether the interface can show `language` without missing-glyph boxes: Chinese needs a font
 /// with its glyphs (installed, or the CJK face this build embedded from craft-fonts), Korean a
-/// font with Hangul, العربية an installed Arabic font or the embedded Arabic face.
+/// font with Hangul, العربية an installed Arabic font or the embedded Arabic face, ไทย an
+/// installed Thai font or the embedded Thai face.
 pub fn can_show(language: &str) -> bool {
     match language {
         "ko" => shows_hangul("ko"),
         "ar" => arabic_font().is_some() || embedded_script("Arab"),
+        "th" => thai_font().is_some() || embedded_script("Thai"),
         l if l.starts_with("zh") => cjk_font().is_some() || embedded_script("Hans") || embedded_script("Hant"),
         _ => true,
     }
@@ -737,6 +804,22 @@ pub fn apply(ctx: &egui::Context, theme: Theme, follow_system: bool) {
 
 #[cfg(test)]
 mod tests {
+    /// The Thai font check accepts a Thai face and rejects one without Thai (as on a system
+    /// whose file at a Thai font's path is something else).
+    #[test]
+    fn thai_coverage_accepts_thai_faces_only() {
+        assert!(super::thai_letters().contains(&'ก') && super::thai_letters().contains(&'้'));
+        let thai = cadcraft_fonts::CRAFT_FONTS.iter().find(|f| f.scripts.contains(&"Thai"));
+        let latin = cadcraft_fonts::CRAFT_FONTS.iter().find(|f| !f.scripts.contains(&"Thai") && f.scripts.contains(&"Arab"));
+        let first = |f: &cadcraft_fonts::CraftFont| cadcraft_fonts::ttf::faces(&std::sync::Arc::new(f.bytes.to_vec())).into_iter().next();
+        if let Some(face) = thai.and_then(first) {
+            assert!(super::covers_thai(&face));
+        }
+        if let Some(face) = latin.and_then(first) {
+            assert!(!super::covers_thai(&face));
+        }
+    }
+
     use cadcraft_fonts::CraftFont;
 
     /// A face shaped like `build.rs` writes them, with no font file (as in `cadcraft-fonts`).

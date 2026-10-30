@@ -1,0 +1,1424 @@
+# CADCraft Thai interface catalog — original Thai translations.
+# License: MIT OR Apache-2.0 (the repository LICENSE-MIT and LICENSE-APACHE).
+# Written from CADCraft English strings; no proprietary translations copied.
+# Style: CAD terms transliterated as Thai drafters say them (เลเยอร์, บล็อก, ไดเมนชัน, แฮทช์).
+# UTF-8: context<TAB>English source<TAB>Thai translation.
+# @plural uses a single Thai form with {n} (Thai has no grammatical plural).
+	  Cancel  	  ยกเลิก  
+	  OK  	  ตกลง  
+	 or [	 หรือ [
+	% of all commits	% ของคอมมิตทั้งหมด
+	* Wildcard Match	* ตรงตามไวลด์การ์ด
+	*VARIES*	*หลายค่า*
+	+  |  Top  |  2D Wireframe	+  |  ด้านบน  |  2D ไวร์เฟรม
+	1 Viewport	1 วิวพอร์ต
+	2 Points	2 จุด
+	2 Viewports	2 วิวพอร์ต
+	2D Solid	2D โซลิด
+	3 Points	3 จุด
+	3 Viewports	3 วิวพอร์ต
+	3D Face	3D เฟซ
+	3D Operations	การทำงาน 3D
+	3D Polyline	3D โพลีไลน์
+	4 Viewports	4 วิวพอร์ต
+	< Less than	< น้อยกว่า
+	<> Not Equal	<> ไม่เท่ากับ
+	= Equals	= เท่ากับ
+	> Greater than	> มากกว่า
+	A drawing opened from a file keeps that file's format.	แบบที่เปิดจากไฟล์จะคงรูปแบบไฟล์เดิมไว้
+	A variable name starts with a letter and has only letters, digits and _	ชื่อตัวแปรต้องขึ้นต้นด้วยตัวอักษร และมีได้เฉพาะตัวอักษร ตัวเลข และ _
+	About	เกี่ยวกับ
+	About CADCraft	เกี่ยวกับ CADCraft
+	Absolute	สัมบูรณ์
+	Add Current Scale	เพิ่มสเกลปัจจุบัน
+	Add Leader	เพิ่มลีดเดอร์
+	Add Vertex	เพิ่มเวอร์เท็กซ์
+	Add/Delete Scales...	เพิ่ม/ลบสเกล...
+	Additional angles	มุมเพิ่มเติม
+	Align	อะไลน์
+	Align Text	จัดแนวข้อความ
+	Aligned	อะไลน์ (แนวเอียง)
+	All	ทั้งหมด
+	All Annotation Objects	ออบเจกต์คำอธิบายประกอบทั้งหมด
+	All Scales	ทุกสเกล
+	All Used Layers	เลเยอร์ที่ใช้งานทั้งหมด
+	All files	ไฟล์ทั้งหมด
+	An array that would create more objects than this is refused.	อาร์เรย์ที่จะสร้างออบเจกต์มากกว่านี้จะไม่ถูกสร้าง
+	Angle	มุม
+	Angular	มุม (แองกูลาร์)
+	Annotation Visibility	การแสดงคำอธิบายประกอบ
+	Annotation scale	สเกลคำอธิบายประกอบ
+	Annotative Object Scale	สเกลของออบเจกต์แอนโนเททีฟ
+	Annotative Update	อัปเดตแอนโนเททีฟ
+	Apparent Intersection	จุดตัดที่มองเห็น
+	Append to current selection set	เพิ่มในชุดที่เลือกปัจจุบัน
+	Apply	ใช้
+	Apply to:	ใช้กับ:
+	Apply true color	ใช้ทรูคัลเลอร์
+	Arc	อาร์ก
+	Arc Length	ความยาวอาร์ก
+	Area	พื้นที่
+	Arrange Panel	จัดเรียงพาเนล
+	Array	อาร์เรย์
+	Attach	แนบ
+	Attach DWG...	แนบ DWG...
+	Attribute	แอตทริบิวต์
+	Attribute Definition	นิยามแอตทริบิวต์
+	Attribute Display	การแสดงแอตทริบิวต์
+	Audit	ตรวจสอบแบบ (Audit)
+	Auto (system language)	อัตโนมัติ (ภาษาของระบบ)
+	Auto Constrain	คอนสเตรนต์อัตโนมัติ
+	AutoConstrain	คอนสเตรนต์อัตโนมัติ
+	Automatic save every	บันทึกอัตโนมัติทุก
+	Automatic save file location	ตำแหน่งไฟล์บันทึกอัตโนมัติ
+	Axis, End	แกน, ปลาย
+	Base	ฐาน
+	Baseline	เบสไลน์
+	Batch Publish	พับลิชเป็นชุด
+	Batch Publish...	พับลิชเป็นชุด...
+	Binary assets added	ไฟล์ไบนารีที่เพิ่ม
+	Binary assets removed	ไฟล์ไบนารีที่ลบ
+	Bind	ผูกรวม (Bind)
+	Bind...	ผูกรวม (Bind)...
+	Blend	เบลนด์
+	Block	บล็อก
+	Block Attribute Manager...	ตัวจัดการแอตทริบิวต์บล็อก...
+	Block Editor	บล็อกเอดิเตอร์
+	Block Reference	บล็อกอ้างอิง
+	Block...	บล็อก...
+	Blocks	บล็อก
+	Blue	น้ำเงิน
+	Bold	ตัวหนา
+	Boolean	บูลีน
+	Boundary	ขอบเขต (Boundary)
+	Boundary...	ขอบเขต (Boundary)...
+	Box	กล่อง (Box)
+	Break	เบรก (ตัดแยก)
+	Break At Point	เบรกที่จุด
+	Bring Above Objects	นำมาไว้เหนือออบเจกต์
+	Bring Annotations to Front	นำคำอธิบายประกอบมาไว้หน้าสุด
+	Bring to Front	นำมาไว้หน้าสุด
+	Bulleted list	รายการสัญลักษณ์แสดงหัวข้อย่อย
+	CADCraft Help	วิธีใช้ CADCraft
+	CADCraft keeps these preferences, object snap modes and drafting toggles for your user account and restores them when it starts.	CADCraft จะเก็บค่ากำหนด โหมดออบเจกต์สแนป และสวิตช์การเขียนแบบเหล่านี้ไว้สำหรับบัญชีผู้ใช้ของคุณ และเรียกคืนเมื่อเริ่มโปรแกรม
+	Cancel	ยกเลิก
+	Cartesian (x, y)	คาร์ทีเซียน (x, y)
+	Center	จุดศูนย์กลาง
+	Center Line	เซ็นเตอร์ไลน์
+	Center Mark	เซ็นเตอร์มาร์ก
+	Center X	จุดศูนย์กลาง X
+	Center Y	จุดศูนย์กลาง Y
+	Center Z	จุดศูนย์กลาง Z
+	Center, Diameter	จุดศูนย์กลาง, เส้นผ่านศูนย์กลาง
+	Center, Radius	จุดศูนย์กลาง, รัศมี
+	Center, Start, Angle	จุดศูนย์กลาง, จุดเริ่ม, มุม
+	Center, Start, End	จุดศูนย์กลาง, จุดเริ่ม, จุดปลาย
+	Center, Start, Length	จุดศูนย์กลาง, จุดเริ่ม, ความยาว
+	Chamfer	แชมเฟอร์
+	Change Space	เปลี่ยนสเปซ
+	Change to Current Layer	เปลี่ยนเป็นเลเยอร์ปัจจุบัน
+	Changed: {n}	เปลี่ยนแปลง: {n}
+	Changes apply at once and are kept for next time.	การเปลี่ยนแปลงมีผลทันทีและจะถูกเก็บไว้ใช้ครั้งถัดไป
+	Circle	วงกลม
+	Circumference	เส้นรอบวง
+	Clear	ล้าง
+	Clear Command History	ล้างประวัติคำสั่ง
+	Clear History	ล้างประวัติ
+	Clip	คลิป
+	Clip Viewport	คลิปวิวพอร์ต
+	Clipboard	คลิปบอร์ด
+	Close	ปิด
+	Close All	ปิดทั้งหมด
+	Close All Other Drawings	ปิดแบบอื่นทั้งหมด
+	Close Array Editing	ปิดการแก้ไขอาร์เรย์
+	Close Comparison	ปิดการเปรียบเทียบ
+	Export Comparison	ส่งออกการเปรียบเทียบ
+	Closed	ปิด (Closed)
+	Coincident	ทับจุด (Coincident)
+	Collapse Palettes	ย่อพาเลต
+	Collapse Tool Sets	ย่อทูลเซต
+	Collinear	แนวเดียวกัน (Collinear)
+	Color	สี
+	Color 8	สี 8
+	Color 9	สี 9
+	Color Index	อินเด็กซ์สี
+	Color...	สี...
+	Command Aliases	ชื่อย่อคำสั่ง
+	Command History	ประวัติคำสั่ง
+	Command Line	คอมมานด์ไลน์
+	Command Line History Lines	จำนวนบรรทัดประวัติคอมมานด์ไลน์
+	Command Reference	รายการคำสั่ง
+	Command line history	ประวัติคอมมานด์ไลน์
+	Commits	คอมมิต
+	Company	บริษัท
+	Compare Drawings...	เปรียบเทียบแบบ...
+	Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust.	การออกแบบและเขียนแบบด้วยคอมพิวเตอร์: โปรแกรม CAD โอเพนซอร์สที่เขียนขึ้นใหม่ทั้งหมดด้วยภาษา Rust
+	Concentric	ศูนย์ร่วม (Concentric)
+	Cone	กรวย (Cone)
+	Constraint Bars	แถบคอนสเตรนต์
+	Constraint Settings	การตั้งค่าคอนสเตรนต์
+	Construction Line	เส้นช่วยเขียนแบบ (XLine)
+	Contents	สารบัญ
+	Continue	ต่อเนื่อง (Continue)
+	Contributors	ผู้ร่วมพัฒนา
+	Control Vertices	คอนโทรลเวอร์เท็กซ์
+	Convert	แปลง
+	Convert to Arc	แปลงเป็นอาร์ก
+	Convert to Line	แปลงเป็นเส้นตรง
+	Copy	คัดลอก
+	Copy Full File Path	คัดลอกพาธไฟล์แบบเต็ม
+	Copy History	คัดลอกประวัติ
+	Copy Layout	คัดลอกเลย์เอาต์
+	Copy Nested Objects	คัดลอกออบเจกต์ซ้อน
+	Copy Selection	คัดลอกที่เลือก
+	Copy as JSON	คัดลอกเป็น JSON
+	Copy with Base Point	คัดลอกพร้อมจุดฐาน
+	Count	นับ
+	Count List	รายการนับ
+	Count Table	ตารางนับ
+	Create Block	สร้างบล็อก
+	Creates a user parameter	สร้างพารามิเตอร์ผู้ใช้
+	Crosshair size	ขนาดเคอร์เซอร์กากบาท
+	Ctrl+Enter to finish	Ctrl+Enter เพื่อจบ
+	Current Scale Only	เฉพาะสเกลปัจจุบัน
+	Current layer	เลเยอร์ปัจจุบัน
+	Current selection	ที่เลือกปัจจุบัน
+	Current: {color}	ปัจจุบัน: {color}
+	Cut	ตัด
+	Cut with Base Point	ตัดพร้อมจุดฐาน
+	Cyan	ฟ้า
+	Cylinder	ทรงกระบอก
+	DWG Reference...	DWG อ้างอิง...
+	Dark	มืด
+	Data Extraction...	ดึงข้อมูล (Data Extraction)...
+	Data Link...	ดาต้าลิงก์...
+	Default	ค่าเริ่มต้น
+	Default Save Format	รูปแบบบันทึกเริ่มต้น
+	Default Save Version	เวอร์ชันบันทึกเริ่มต้น
+	Default save version	เวอร์ชันบันทึกเริ่มต้น
+	Define Attributes	นิยามแอตทริบิวต์
+	Define Attributes...	นิยามแอตทริบิวต์...
+	Defined width	ความกว้างที่กำหนด
+	Degree	ดีกรี
+	Degrees of Freedom	ดีกรีอิสระ
+	Degrees of freedom: {n}	ดีกรีอิสระ: {n}
+	Delete	ลบ
+	Delete Column	ลบคอลัมน์
+	Delete Constraints	ลบคอนสเตรนต์
+	Delete Current Scale	ลบสเกลปัจจุบัน
+	Delete Dimension Style	ลบสไตล์ไดเมนชัน
+	Delete Duplicate Objects	ลบออบเจกต์ที่ซ้ำกัน
+	Delete Layer	ลบเลเยอร์
+	Delete Layer State	ลบเลเยอร์สเตต
+	Delete Layout	ลบเลย์เอาต์
+	Delete Row	ลบแถว
+	Delete Text Style	ลบสไตล์ข้อความ
+	Delta X	ระยะต่าง X
+	Delta Y	ระยะต่าง Y
+	Description	คำอธิบาย
+	Deselect All	ยกเลิกการเลือกทั้งหมด
+	Detach	ถอดออก
+	Diameter	เส้นผ่านศูนย์กลาง
+	Dim style	สไตล์ไดเมนชัน
+	Dimension	ไดเมนชัน
+	Dimension Break	เบรกไดเมนชัน
+	Dimension Edit	แก้ไขไดเมนชัน
+	Dimension Objects Only	เฉพาะออบเจกต์ไดเมนชัน
+	Dimension Space	ระยะห่างไดเมนชัน
+	Dimension Style Override	โอเวอร์ไรด์สไตล์ไดเมนชัน
+	Dimension Style...	สไตล์ไดเมนชัน...
+	Dimension Text Edit	แก้ไขข้อความไดเมนชัน
+	Dimension style	สไตล์ไดเมนชัน
+	Dimensional Constraint	ไดเมนชันคอนสเตรนต์
+	Dimensional Constraint Parameters	พารามิเตอร์ไดเมนชันคอนสเตรนต์
+	Dimensional Constraints	ไดเมนชันคอนสเตรนต์
+	Disassociate Dimensions	ยกเลิกการเชื่อมโยงไดเมนชัน
+	Display	การแสดงผล
+	Display name	ชื่อที่แสดง
+	Distance	ระยะทาง
+	Divide	แบ่งส่วน (Divide)
+	Do not plot (click: plot)	ไม่พล็อต (คลิก: พล็อต)
+	Donut	โดนัท
+	Double-click to edit the description	ดับเบิลคลิกเพื่อแก้ไขคำอธิบาย
+	Down	ลง
+	Drafting	การเขียนแบบ
+	Drafting Settings	การตั้งค่าการเขียนแบบ
+	Drafting Settings...	การตั้งค่าการเขียนแบบ...
+	Draw	วาด
+	Draw Order	ลำดับการแสดง
+	Drawing (DWG)	แบบ (DWG)
+	Drawing (DXF)	แบบ (DXF)
+	Drawing Limits	ขอบเขตแบบ (Limits)
+	Drawing Recovery Manager...	ตัวจัดการกู้คืนแบบ...
+	Drawing Template (DWT)	เทมเพลตแบบ (DWT)
+	Drawing Utilities	ยูทิลิตี้แบบ
+	Drawings (DWG, DXF)	แบบ (DWG, DXF)
+	Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off.	แบบที่ยังไม่มีไฟล์จะบันทึกเป็นเวอร์ชันเริ่มต้น ตั้ง 0 นาทีเพื่อปิดการบันทึกอัตโนมัติ
+	Dynamic	ไดนามิก
+	Dynamic Dimensions	ไดนามิกไดเมนชัน
+	Dynamic Input	ไดนามิกอินพุต
+	Dynamic Input (F12)	ไดนามิกอินพุต (F12)
+	Edit	แก้ไข
+	Edit Array	แก้ไขอาร์เรย์
+	Edit Attributes...	แก้ไขแอตทริบิวต์...
+	Edit Table Cell	แก้ไขเซลล์ตาราง
+	Edit Text...	แก้ไขข้อความ...
+	Elevation	ระดับ (Elevation)
+	Ellipse	วงรี
+	Elliptical Arc	อาร์กวงรี
+	Enable Dynamic Input (F12)	เปิดไดนามิกอินพุต (F12)
+	End Object Isolation	สิ้นสุดการไอโซเลตออบเจกต์
+	End Width	ความกว้างปลาย
+	End X	ปลาย X
+	End Y	ปลาย Y
+	End angle	มุมปลาย
+	Endpoint	จุดปลาย (Endpoint)
+	Enter	Enter
+	Enter Top, Zero or Bottom.	ป้อน Top, Zero หรือ Bottom
+	Enter a fit data option	ป้อนตัวเลือกข้อมูลฟิต
+	Enter a pattern name	ป้อนชื่อแพตเทิร์น
+	Enter a vertex editing option	ป้อนตัวเลือกการแก้ไขเวอร์เท็กซ์
+	Enter an option	ป้อนตัวเลือก
+	Enter angle of xline	ป้อนมุมของ xline
+	Enter angle of xline (0) or	ป้อนมุมของ xline (0) หรือ
+	Enter area of rectangle in current units	ป้อนพื้นที่สี่เหลี่ยมในหน่วยปัจจุบัน
+	Enter attribute prompt	ป้อนข้อความถามแอตทริบิวต์
+	Enter attribute tag name	ป้อนชื่อแท็กแอตทริบิวต์
+	Enter attribute value	ป้อนค่าแอตทริบิวต์
+	Enter block name	ป้อนชื่อบล็อก
+	Enter constraint type	ป้อนชนิดคอนสเตรนต์
+	Enter continuity	ป้อนความต่อเนื่อง
+	Enter default attribute value	ป้อนค่าเริ่มต้นของแอตทริบิวต์
+	Enter degree of spline	ป้อนดีกรีของสไปลน์
+	Enter delta angle	ป้อนมุมที่เปลี่ยน
+	Enter delta length or	ป้อนความยาวที่เปลี่ยน หรือ
+	Enter dimension text	ป้อนข้อความไดเมนชัน
+	Enter dimension text (<> = measurement)	ป้อนข้อความไดเมนชัน (<> = ค่าที่วัดได้)
+	Enter dimension value or [name=expression]	ป้อนค่าไดเมนชัน หรือ [ชื่อ=นิพจน์]
+	Enter dimension variable name to override	ป้อนชื่อตัวแปรไดเมนชันที่จะโอเวอร์ไรด์
+	Enter justification type	ป้อนชนิดการจัดแนว
+	Enter leader text	ป้อนข้อความลีดเดอร์
+	Enter mline scale	ป้อนสเกล mline
+	Enter mode	ป้อนโหมด
+	Enter name of block to insert	ป้อนชื่อบล็อกที่จะแทรก
+	Enter new text	ป้อนข้อความใหม่
+	Enter next point	ป้อนจุดถัดไป
+	Enter number of columns	ป้อนจำนวนคอลัมน์
+	Enter number of data rows	ป้อนจำนวนแถวข้อมูล
+	Enter number of items	ป้อนจำนวนชิ้น
+	Enter number of items along path	ป้อนจำนวนชิ้นตามพาธ
+	Enter number of sides	ป้อนจำนวนด้าน
+	Enter number of turns	ป้อนจำนวนรอบ
+	Enter percentage length	ป้อนความยาวเป็นเปอร์เซ็นต์
+	Enter rectangle length	ป้อนความยาวสี่เหลี่ยม
+	Enter rectangle width	ป้อนความกว้างสี่เหลี่ยม
+	Enter scale factor	ป้อนตัวคูณสเกล
+	Enter text	ป้อนข้อความ
+	Enter text (use \P for new paragraphs)	ป้อนข้อความ (ใช้ \P ขึ้นย่อหน้าใหม่)
+	Enter the number of segments	ป้อนจำนวนเซกเมนต์
+	Enter twist direction of helix	ป้อนทิศทางการบิดของเฮลิกซ์
+	Entire drawing	ทั้งแบบ
+	Equal	เท่ากัน (Equal)
+	Erase	ลบ (Erase)
+	Evaluate	ประเมินค่า
+	Exclude from new selection set	ไม่รวมในชุดที่เลือกใหม่
+	Explode	ระเบิด (Explode)
+	Export	ส่งออก
+	Export Table	ส่งออกตาราง
+	Export to PDF...	ส่งออกเป็น PDF...
+	Export...	ส่งออก...
+	Expression	นิพจน์
+	Extend	เอกซ์เทนด์ (ยืด)
+	Extension	ส่วนต่อขยาย (Extension)
+	Extents	เอกซ์เทนต์
+	External Reference	เอกซ์เรฟ (การอ้างอิงภายนอก)
+	External References	เอกซ์เรฟ (การอ้างอิงภายนอก)
+	Extrude	เอกซ์ทรูด
+	File	ไฟล์
+	File Tab	แท็บไฟล์
+	Fillet	ฟิลเล็ต
+	Filter	ตัวกรอง
+	Filters	ตัวกรอง
+	Find and Replace	ค้นหาและแทนที่
+	Find...	ค้นหา...
+	First	แรก
+	First commit	คอมมิตแรก
+	Fit Points	ฟิตพอยต์
+	Fix	ตรึง (Fix)
+	Flatten Objects	ทำออบเจกต์ให้แบน (Flatten)
+	Format	ฟอร์แมต
+	Freehand	วาดอิสระ
+	Freeze	ฟรีซ
+	Freeze Layer	ฟรีซเลเยอร์
+	Freeze in new viewports	ฟรีซในวิวพอร์ตใหม่
+	Freeze/Thaw	ฟรีซ/ทอว์
+	Freeze/Thaw in all viewports	ฟรีซ/ทอว์ในทุกวิวพอร์ต
+	Freeze/Thaw in the current viewport	ฟรีซ/ทอว์ในวิวพอร์ตปัจจุบัน
+	From	จาก
+	From Template...	จากเทมเพลต...
+	General	ทั่วไป
+	Geometric Center	จุดศูนย์กลางเรขาคณิต
+	Geometric Constraint	จีโอเมตริกคอนสเตรนต์
+	Geometric Constraints	จีโอเมตริกคอนสเตรนต์
+	Geometry	เรขาคณิต
+	Get Variable	อ่านค่าตัวแปร
+	Get View	อ่านมุมมอง
+	Get from the Drawing	ดึงจากแบบ
+	Global	ทั้งหมด (Global)
+	Global width	ความกว้างทั้งหมด
+	Grab bag	รวมเครื่องมือ
+	Gradient	เกรเดียนต์
+	Gradient...	เกรเดียนต์...
+	Green	เขียว
+	Grid (F7)	กริด (F7)
+	Grid Display	การแสดงกริด
+	Grid On (F7)	เปิดกริด (F7)
+	Grid snap	กริดสแนป
+	Grid spacing	ระยะห่างกริด
+	Grip Edit	แก้ไขด้วยกริป
+	Grip Mirror	มิเรอร์ด้วยกริป
+	Grip Option	ตัวเลือกกริป
+	Grip Rotate	หมุนด้วยกริป
+	Grip Scale	สเกลด้วยกริป
+	Grip Stretch	สเตรตช์ด้วยกริป
+	Grip size	ขนาดกริป
+	Group	กรุ๊ป
+	Group Edit	แก้ไขกรุ๊ป
+	Group Options	ตัวเลือกกรุ๊ป
+	Group Selection	เลือกเป็นกรุ๊ป
+	Hatch	แฮทช์
+	Hatch Edit	แก้ไขแฮทช์
+	Hatch Patterns	แพตเทิร์นแฮทช์
+	Hatch...	แฮทช์...
+	Height	ความสูง
+	Height: {height}	ความสูง: {height}
+	Helix	เฮลิกซ์
+	Help	วิธีใช้
+	Hide All	ซ่อนทั้งหมด
+	Hide All Constraint Bars	ซ่อนแถบคอนสเตรนต์ทั้งหมด
+	Hide All Dynamic Dimensions	ซ่อนไดนามิกไดเมนชันทั้งหมด
+	Hide Layer List	ซ่อนรายการเลเยอร์
+	Hide Objects	ซ่อนออบเจกต์
+	Hide Palette	ซ่อนพาเลต
+	Hide Palettes	ซ่อนพาเลต
+	History	ประวัติ
+	Hold Shift to add to the selection	กด Shift ค้างไว้เพื่อเพิ่มในการเลือก
+	Home	หน้าหลัก
+	Horizontal	แนวนอน
+	HorizontalDistance	ระยะแนวนอน
+	How to apply:	วิธีใช้งาน:
+	ID Point	พิกัดจุด (ID)
+	Import	นำเข้า
+	Import...	นำเข้า...
+	In	ขยาย (In)
+	In-window Menu Bar	แถบเมนูในหน้าต่าง
+	Include in new selection set	รวมในชุดที่เลือกใหม่
+	Increment angle	มุมเพิ่มทีละ
+	Index Color	อินเด็กซ์คัลเลอร์
+	Index color: {index}	อินเด็กซ์คัลเลอร์: {index}
+	Infer Constraints	อนุมานคอนสเตรนต์
+	Inquiry	สอบถามข้อมูล (Inquiry)
+	Insert	แทรก
+	Insert Block	แทรกบล็อก
+	Insert Column	แทรกคอลัมน์
+	Insert Row	แทรกแถว
+	Insert Table Formula	แทรกสูตรตาราง
+	Insert tab	แทรกแท็บ
+	Insert this block	แทรกบล็อกนี้
+	Insertion	จุดแทรก
+	Insertion X	จุดแทรก X
+	Insertion Y	จุดแทรก Y
+	Insertion Z	จุดแทรก Z
+	Inspect Constraints	ตรวจคอนสเตรนต์
+	Inspect Drawing	ตรวจแบบ
+	Inspection	การตรวจ
+	Interface Language	ภาษาของหน้าจอ
+	Interface Theme	ธีมหน้าจอ
+	Interface language	ภาษาของหน้าจอ
+	Interface theme	ธีมหน้าจอ
+	Intersect	อินเตอร์เซกต์
+	Intersection	จุดตัด (Intersection)
+	Isolate	ไอโซเลต
+	Isolate Layer	ไอโซเลตเลเยอร์
+	Isolate Objects	ไอโซเลตออบเจกต์
+	Isometric Drafting	เขียนแบบไอโซเมตริก
+	Isometric Plane	ระนาบไอโซเมตริก
+	Isometric snap	ไอโซเมตริกสแนป
+	Jogged	หักมุม (Jogged)
+	Jogged Linear	เส้นตรงหักมุม (Jogged Linear)
+	Join	รวม (Join)
+	Join the ArtCraft Discord…	เข้าร่วม Discord ของ ArtCraft…
+	Join us on Discord	เข้าร่วมกับเราใน Discord
+	Keep the system cursor visible over the drawing area	แสดงเคอร์เซอร์ของระบบในพื้นที่เขียนแบบ
+	Language	ภาษา
+	Largest array	อาร์เรย์ใหญ่สุด
+	Last	ล่าสุด
+	Last commit	คอมมิตล่าสุด
+	Layer	เลเยอร์
+	Layer Delete	ลบเลเยอร์
+	Layer Match	จับคู่เลเยอร์
+	Layer Merge	รวมเลเยอร์
+	Layer Off	ปิดเลเยอร์
+	Layer Properties	คุณสมบัติเลเยอร์
+	Layer Properties Manager	ตัวจัดการคุณสมบัติเลเยอร์
+	Layer Properties Manager — current viewport	ตัวจัดการคุณสมบัติเลเยอร์ — วิวพอร์ตปัจจุบัน
+	Layer State	เลเยอร์สเตต
+	Layer States Manager...	ตัวจัดการเลเยอร์สเตต...
+	Layer Tools	เครื่องมือเลเยอร์
+	Layer contains objects (double-click to make current)	เลเยอร์มีออบเจกต์ (ดับเบิลคลิกเพื่อตั้งเป็นปัจจุบัน)
+	Layer is empty (double-click to make current)	เลเยอร์ว่าง (ดับเบิลคลิกเพื่อตั้งเป็นปัจจุบัน)
+	Layers	เลเยอร์
+	Layers Palette	พาเลตเลเยอร์
+	Layers displayed: {shown} of {total}.   Current layer: {layer}	แสดงเลเยอร์: {shown} จาก {total}   เลเยอร์ปัจจุบัน: {layer}
+	Layout	เลย์เอาต์
+	Layout list	รายการเลย์เอาต์
+	Layout paper	กระดาษเลย์เอาต์
+	Leader	ลีดเดอร์
+	Leaders Only	เฉพาะลีดเดอร์
+	Left	ซ้าย
+	Length	ความยาว
+	Length X	ความยาว X
+	Length Y	ความยาว Y
+	Lengthen	ปรับความยาว (Lengthen)
+	Light	สว่าง
+	Line	เส้นตรง (Line)
+	Line delta	ส่วนต่างบรรทัด
+	Linear	เส้นตรง (Linear)
+	Lines +/−	บรรทัด +/−
+	Lines added	บรรทัดที่เพิ่ม
+	Lines deleted	บรรทัดที่ลบ
+	Lines of Command History	จำนวนบรรทัดประวัติคำสั่ง
+	Linetype	ไลน์ไทป์
+	Linetype Scale	สเกลไลน์ไทป์
+	Linetype scale	สเกลไลน์ไทป์
+	Loaded	โหลดแล้ว
+	Lock viewport	ล็อกวิวพอร์ต
+	Ltscale	Ltscale (สเกลไลน์ไทป์)
+	Linetype...	ไลน์ไทป์...
+	Lineweight	ไลน์เวท
+	Lineweight...	ไลน์เวท...
+	List	แสดงข้อมูล (List)
+	List Blocks	รายการบล็อก
+	List Dimension Styles	รายการสไตล์ไดเมนชัน
+	List Groups	รายการกรุ๊ป
+	List Layer States	รายการเลเยอร์สเตต
+	List Layouts	รายการเลย์เอาต์
+	List System Variables	รายการตัวแปรระบบ
+	List Text Styles	รายการสไตล์ข้อความ
+	Load all	โหลดทั้งหมด
+	Load...	โหลด...
+	Loaded linetypes	ไลน์ไทป์ที่โหลดแล้ว
+	Lock	ล็อก
+	Lock Layer	ล็อกเลเยอร์
+	Lock/Unlock	ล็อก/ปลดล็อก
+	Loft	ลอฟต์
+	MIT OR Apache-2.0. Not affiliated with Autodesk, Inc.	MIT OR Apache-2.0 ไม่มีส่วนเกี่ยวข้องกับ Autodesk, Inc.
+	MODEL	โมเดล
+	MText	MText (ข้อความหลายบรรทัด)
+	Magenta	ม่วงแดง
+	Major line every	เส้นหลักทุก
+	Make Current	ตั้งเป็นปัจจุบัน
+	Make Object's Layer Current	ตั้งเลเยอร์ของออบเจกต์เป็นปัจจุบัน
+	Make it a block of this drawing, keeping its layer names	ทำเป็นบล็อกของแบบนี้ โดยคงชื่อเลเยอร์เดิม
+	Make it a block of this drawing; its layers become NAME$0$LAYER	ทำเป็นบล็อกของแบบนี้ ชื่อเลเยอร์จะเปลี่ยนเป็น NAME$0$LAYER
+	Make...	สร้าง...
+	Match Layer	จับคู่เลเยอร์
+	Match Properties	คัดลอกคุณสมบัติ (Match Properties)
+	Measure	วัดแบ่งระยะ (Measure)
+	Measure Distance	วัดระยะ
+	Measure Geometry	วัดเรขาคณิต
+	Merge Cells	รวมเซลล์
+	Merged PRs	PR ที่รวมแล้ว
+	Mid Between 2 Points	กึ่งกลางระหว่าง 2 จุด
+	Midpoint	จุดกึ่งกลาง (Midpoint)
+	Mirror	มิเรอร์ (สะท้อน)
+	Model	โมเดล
+	Model Space (in viewport)	โมเดลสเปซ (ในวิวพอร์ต)
+	Model background	พื้นหลังโมเดล
+	Modeling	การสร้างโมเดล
+	Models	โมเดล
+	Modify	แก้ไข (Modify)
+	More toolbar commands	คำสั่งอื่นในทูลบาร์
+	Move	ย้าย (Move)
+	Multileader	มัลติลีดเดอร์
+	Multileader Style...	สไตล์มัลติลีดเดอร์...
+	Multileader style	สไตล์มัลติลีดเดอร์
+	Multiline	มัลติไลน์
+	Multiline Style...	สไตล์มัลติไลน์...
+	Multiline Text	ข้อความหลายบรรทัด (MText)
+	Multiline Text...	ข้อความหลายบรรทัด (MText)...
+	Multiline...	มัลติไลน์...
+	Multiple	หลายครั้ง (Multiple)
+	Multiple Point	หลายจุด
+	My	ของฉัน
+	My properties: not available yet	คุณสมบัติของฉัน: ยังไม่พร้อมใช้งาน
+	Name	ชื่อ
+	Name (A–Z)	ชื่อ (A–Z)
+	Named Views...	มุมมองที่ตั้งชื่อ...
+	Nearest	ใกล้ที่สุด (Nearest)
+	New	ใหม่
+	New (metric)	ใหม่ (เมตริก)
+	New Drawing	แบบใหม่
+	New Drawing (⌘N)	แบบใหม่ (⌘N)
+	New Drawing...	แบบใหม่...
+	New Layer	เลเยอร์ใหม่
+	New Layout	เลย์เอาต์ใหม่
+	New VP Freeze	ฟรีซในวิวพอร์ตใหม่
+	New Viewports...	วิวพอร์ตใหม่...
+	New from Template...	ใหม่จากเทมเพลต...
+	New layout	เลย์เอาต์ใหม่
+	New state name	ชื่อสเตตใหม่
+	Next Change	การเปลี่ยนแปลงถัดไป
+	No	ไม่
+	No blocks defined in this drawing.	แบบนี้ไม่มีบล็อก
+	No contributor data was built into this copy.	สำเนานี้ไม่มีข้อมูลผู้ร่วมพัฒนา
+	No external references are attached.	ไม่มีเอกซ์เรฟที่แนบอยู่
+	No model credits were built into this copy.	สำเนานี้ไม่มีข้อมูลเครดิตโมเดล
+	No saved layer states	ไม่มีเลเยอร์สเตตที่บันทึกไว้
+	No selection	ไม่มีสิ่งที่เลือก
+	Node	โหนด (Node)
+	None	ไม่มี
+	Not Found	ไม่พบ
+	Not available	ไม่พร้อมใช้งาน
+	Not available yet	ยังไม่พร้อมใช้งาน
+	Not loaded	ยังไม่โหลด
+	Numbered list	รายการลำดับเลข
+	OK	ตกลง
+	Object	ออบเจกต์
+	Object Snap	ออบเจกต์สแนป
+	Object Snap (F3)	ออบเจกต์สแนป (F3)
+	Object Snap On (F3)	เปิดออบเจกต์สแนป (F3)
+	Object Snap Tracking	ออบเจกต์สแนปแทร็กกิง
+	Object Snap Tracking (F11)	ออบเจกต์สแนปแทร็กกิง (F11)
+	Object Snap Tracking Settings	การตั้งค่าออบเจกต์สแนปแทร็กกิง
+	Object snap aperture	ขนาดช่องจับออบเจกต์สแนป
+	Object snap marker size	ขนาดมาร์กเกอร์ออบเจกต์สแนป
+	Object type:	ชนิดออบเจกต์:
+	Oblique	เอียง (Oblique)
+	Off	ปิด
+	Offset	ออฟเซ็ต
+	On	เปิด
+	On/Off	เปิด/ปิด
+	One of the Crafting Apps by the ArtCraft team and community.	หนึ่งใน Crafting Apps โดยทีมและชุมชน ArtCraft
+	Only in this drawing: {n}	เฉพาะในแบบนี้: {n}
+	Only in {name}: {n}	เฉพาะใน {name}: {n}
+	Open	เปิด
+	Open (⌘O)	เปิด (⌘O)
+	Open Sample Drawing	เปิดแบบตัวอย่าง
+	Open Xref	เปิดเอกซ์เรฟ
+	Open and Save	เปิดและบันทึก
+	Open sample drawing	เปิดแบบตัวอย่าง
+	Open...	เปิด...
+	Operator:	ตัวดำเนินการ:
+	Options	ตัวเลือก
+	Options...	ตัวเลือก...
+	Orbit	ออร์บิท
+	Ordinate	พิกัด (Ordinate)
+	Ortho (F8)	ออร์โธ (F8)
+	Ortho Mode	โหมดออร์โธ
+	Ortho Mode (F8)	โหมดออร์โธ (F8)
+	Osnap Settings...	การตั้งค่าออบเจกต์สแนป...
+	Out	ย่อ (Out)
+	Over-constrained	คอนสเตรนต์เกิน
+	Overlay	โอเวอร์เลย์
+	Override	โอเวอร์ไรด์
+	PAPER	กระดาษ
+	Paste to Command Line	วางในคอมมานด์ไลน์
+	Percent	เปอร์เซ็นต์
+	Pickbox size	ขนาดพิกบ็อกซ์
+	Plotter Manager	ตัวจัดการพล็อตเตอร์
+	Plotter Manager...	ตัวจัดการพล็อตเตอร์...
+	Polar (distance < angle)	โพลาร์ (ระยะ < มุม)
+	PRs	PR
+	Page Setup Manager	ตัวจัดการตั้งค่าหน้ากระดาษ
+	Page Setup Manager...	ตัวจัดการตั้งค่าหน้ากระดาษ...
+	Pan	แพน (เลื่อนมุมมอง)
+	Pan Down	แพนลง
+	Pan Left	แพนซ้าย
+	Pan Right	แพนขวา
+	Pan Up	แพนขึ้น
+	Paper Space	เปเปอร์สเปซ
+	Parallel	ขนาน (Parallel)
+	Parameters Manager	ตัวจัดการพารามิเตอร์
+	Parametric	พาราเมตริก
+	Paste	วาง
+	Paste as Block	วางเป็นบล็อก
+	Paste to Original Coordinates	วางที่พิกัดเดิม
+	Path Array	พาธอาร์เรย์
+	Pattern	แพตเทิร์น
+	Perpendicular	ตั้งฉาก (Perpendicular)
+	Plot	พล็อต
+	Plot (click: do not plot)	พล็อต (คลิก: ไม่พล็อต)
+	Plot Preview	ดูตัวอย่างก่อนพล็อต
+	Plot Window	หน้าต่างพล็อต
+	Plot style	พล็อตสไตล์
+	Plot style attached to	พล็อตสไตล์ที่ผูกกับ
+	Plot style table	ตารางพล็อตสไตล์
+	Plot Style...	พล็อตสไตล์...
+	Plot Style Manager	ตัวจัดการพล็อตสไตล์
+	Plot Style Manager...	ตัวจัดการพล็อตสไตล์...
+	Plot Styles...	พล็อตสไตล์...
+	New CTB	CTB ใหม่
+	New STB	STB ใหม่
+	New style	สไตล์ใหม่
+	Polar angle measurement	การวัดมุมโพลาร์
+	Polar distance	ระยะโพลาร์
+	PolarSnap	โพลาร์สแนป
+	Polygonal Viewport	วิวพอร์ตหลายเหลี่ยม
+	Polyline Edit	แก้ไขโพลีไลน์
+	Previous Change	การเปลี่ยนแปลงก่อนหน้า
+	Profiles	โปรไฟล์
+	QuickCalc Pick	เลือกจาก QuickCalc
+	Recalculate Table Formulas	คำนวณสูตรตารางใหม่
+	Recent Commands	คำสั่งล่าสุด
+	Recent Input	ค่าที่ป้อนล่าสุด
+	Rectangular snap	สแนปแบบสี่เหลี่ยม
+	Reference Manager	ตัวจัดการการอ้างอิง
+	Reference Name	ชื่อการอ้างอิง
+	References: {n}	การอ้างอิง: {n}
+	Reinitialize	เริ่มต้นใหม่ (Reinitialize)
+	Relative to last segment	สัมพัทธ์กับเซกเมนต์ล่าสุด
+	Reload	โหลดใหม่
+	Reload All	โหลดใหม่ทั้งหมด
+	Remove Vertex	ลบเวอร์เท็กซ์
+	Reset Panel Layout	รีเซ็ตการจัดวางพาเนล
+	Reset keeps the interface language.	การรีเซ็ตจะคงภาษาของหน้าจอไว้
+	Reset to Defaults	รีเซ็ตเป็นค่าเริ่มต้น
+	SVG drawings (SVG, SVGZ)	แบบ SVG (SVG, SVGZ)
+	Save new drawings as	บันทึกแบบใหม่เป็น
+	Saved Path	พาธที่บันทึก
+	Scale List...	รายการสเกล...
+	Screen magnifiers, screen readers and recorders follow the system cursor.	แว่นขยายหน้าจอ โปรแกรมอ่านหน้าจอ และโปรแกรมบันทึกหน้าจอ จะติดตามเคอร์เซอร์ของระบบ
+	Select Similar	เลือกที่คล้ายกัน
+	Select objects first, then choose a command	เลือกออบเจกต์ก่อน แล้วจึงเลือกคำสั่ง
+	Selection	การเลือก
+	Send Hatches to Back	ส่งแฮทช์ไปไว้หลังสุด
+	Send Under Objects	ส่งไปไว้ใต้ออบเจกต์
+	Set Current Viewport	ตั้งวิวพอร์ตปัจจุบัน
+	Set Table Cell Style	ตั้งสไตล์เซลล์ตาราง
+	Settings...	การตั้งค่า...
+	Show Annotative Objects	แสดงออบเจกต์แอนโนเททีฟ
+	Show Quick Properties for selected objects	แสดงคุณสมบัติด่วนของออบเจกต์ที่เลือก
+	Show and hide the tools of this category	แสดงและซ่อนเครื่องมือในหมวดนี้
+	Show command prompting near the crosshairs	แสดงข้อความคำสั่งใกล้เคอร์เซอร์กากบาท
+	Show in Tool Sets	แสดงในทูลเซต
+	Snap Overrides	สแนปโอเวอร์ไรด์
+	Snap type	ชนิดสแนป
+	Snap, grid, polar tracking and Dynamic Input:	สแนป กริด โพลาร์แทร็กกิง และไดนามิกอินพุต:
+	Solid Editing	แก้ไขโซลิด
+	Spline Edit	แก้ไขสไปลน์
+	Stretch Vertex	สเตรตช์เวอร์เท็กซ์
+	Synchronize Multiple-scale Positions	ซิงก์ตำแหน่งหลายสเกล
+	Table Breaks	แบ่งตาราง
+	Table Cell Style	สไตล์เซลล์ตาราง
+	Temporary track point	จุดแทร็กชั่วคราว
+	Text Objects Only	เฉพาะออบเจกต์ข้อความ
+	Thaw Layer	ทอว์เลเยอร์
+	The aperture is how near the cursor must come to a point for an object snap to find it.	ขนาดช่องจับคือระยะที่เคอร์เซอร์ต้องเข้าใกล้จุด เพื่อให้ออบเจกต์สแนปจับจุดนั้นได้
+	Time-sensitive right-click: a quick click is Enter, holding opens the menu	คลิกขวาตามเวลา: คลิกเร็วคือ Enter กดค้างเพื่อเปิดเมนู
+	To	ถึง
+	Tolerance...	ค่าความคลาดเคลื่อน (Tolerance)...
+	Track orthogonally only	แทร็กเฉพาะแนวตั้งฉาก
+	Track using all polar angle settings	แทร็กด้วยการตั้งค่ามุมโพลาร์ทั้งหมด
+	Turn On Layer	เปิดเลเยอร์
+	Turned off, a right-click while a command runs always opens the shortcut menu.	เมื่อปิด การคลิกขวาระหว่างใช้คำสั่งจะเปิดเมนูลัดเสมอ
+	Units Conversion	แปลงหน่วย
+	Unload	เลิกโหลด
+	Unloaded	เลิกโหลดแล้ว
+	Unlock viewport	ปลดล็อกวิวพอร์ต
+	Unreferenced	ไม่ถูกอ้างอิง
+	Unresolved	หาไม่พบ
+	Update Data Links	อัปเดตดาต้าลิงก์
+	Use for this layout	ใช้กับเลย์เอาต์นี้
+	Display plot styles	แสดงพล็อตสไตล์
+	No plot style tables.	ไม่มีตารางพล็อตสไตล์
+	A built-in table: editing it keeps an edited copy in the drawing.	ตารางในตัว: การแก้ไขจะเก็บสำเนาที่แก้ไขไว้ในแบบ
+	Keep an editable copy of this table in the drawing	เก็บสำเนาที่แก้ไขได้ของตารางนี้ไว้ในแบบ
+	Layout {name}: {table}	เลย์เอาต์ {name}: {table}
+	Grayscale	ระดับสีเทา
+	Screening	ความเข้มสี (Screening)
+	Use object linetype	ใช้ไลน์ไทป์ของออบเจกต์
+	Use object lineweight	ใช้ไลน์เวทของออบเจกต์
+	Remove	ลบออก
+	Add	เพิ่ม
+	Open a drawing first.	กรุณาเปิดแบบก่อน
+	Plot table type	ชนิดตารางพล็อต
+	Color-dependent	ขึ้นกับสี
+	Named	ตั้งชื่อ
+	Plus/minus	บวก/ลบ
+	Point	จุด (Point)
+	Point Filters	ตัวกรองจุด
+	Point Style...	สไตล์จุด...
+	Polar Array	โพลาร์อาร์เรย์
+	Polar Tracking	โพลาร์แทร็กกิง
+	Polar Tracking (F10)	โพลาร์แทร็กกิง (F10)
+	Polar Tracking On (F10)	เปิดโพลาร์แทร็กกิง (F10)
+	Polar: {distance} < {angle}°	โพลาร์: {distance} < {angle}°
+	Polygon	รูปหลายเหลี่ยม (Polygon)
+	Polygonal	หลายเหลี่ยม
+	Polyline	โพลีไลน์
+	Position X	ตำแหน่ง X
+	Position Y	ตำแหน่ง Y
+	Position Z	ตำแหน่ง Z
+	Previous	ก่อนหน้า
+	Previous Layer	เลเยอร์ก่อนหน้า
+	Primitives	รูปทรงพื้นฐาน
+	Print	พิมพ์
+	Print...	พิมพ์...
+	Properties	คุณสมบัติ
+	Properties Inspector	ตัวตรวจคุณสมบัติ
+	Properties:	คุณสมบัติ:
+	Proxy	พร็อกซี
+	Purge	เพิร์จ (ล้างที่ไม่ใช้)
+	Pyramid	พีระมิด
+	Quadrant	จุดควอดแรนต์ (Quadrant)
+	Query Entities	สอบถามออบเจกต์
+	Quick	ด่วน
+	Quick Dimension	ไดเมนชันด่วน
+	Quick Properties	คุณสมบัติด่วน
+	Quick Select	เลือกด่วน
+	Quick Select Properties	คุณสมบัติการเลือกด่วน
+	Quick Select...	เลือกด่วน...
+	QuickCalc	QuickCalc (เครื่องคิดเลข)
+	Quit CADCraft	ออกจาก CADCraft
+	Radius	รัศมี
+	Raster Image	ภาพแรสเตอร์
+	Ray	เรย์ (Ray)
+	Read-only	อ่านอย่างเดียว
+	Real name	ชื่อจริง
+	Realtime	เรียลไทม์
+	Reassociate Dimensions	เชื่อมโยงไดเมนชันใหม่
+	Recent	ล่าสุด
+	Recover...	กู้คืน...
+	Rectangle	สี่เหลี่ยม (Rectangle)
+	Rectangular	สี่เหลี่ยม
+	Rectangular Array	อาร์เรย์แบบสี่เหลี่ยม
+	Red	แดง
+	Redo	ทำซ้ำ (Redo)
+	Redo (⇧⌘Z)	ทำซ้ำ (⇧⌘Z)
+	Redraw	รีดรอว์
+	Regen	รีเจน
+	Regen All	รีเจนทั้งหมด
+	Region	รีเจียน
+	Region/Mass Properties	คุณสมบัติรีเจียน/มวล
+	Relative	สัมพัทธ์
+	Remove Leader	ลบลีดเดอร์
+	Remove the viewport override	ลบโอเวอร์ไรด์ของวิวพอร์ต
+	Rename Dimension Style	เปลี่ยนชื่อสไตล์ไดเมนชัน
+	Rename Layer	เปลี่ยนชื่อเลเยอร์
+	Rename Layer State	เปลี่ยนชื่อเลเยอร์สเตต
+	Rename Layout	เปลี่ยนชื่อเลย์เอาต์
+	Rename Text Style	เปลี่ยนชื่อสไตล์ข้อความ
+	Rename...	เปลี่ยนชื่อ...
+	Repeat {command}	ทำซ้ำ {command}
+	Replace Block...	แทนที่บล็อก...
+	Requires a point (x,y, @dx,dy or @d<a).	ต้องระบุจุด (x,y, @dx,dy หรือ @d<a)
+	Reset Palettes	รีเซ็ตพาเลต
+	Restore	เรียกคืน
+	Restore Layer State	เรียกคืนเลเยอร์สเตต
+	Reverse	กลับทิศ (Reverse)
+	Reverse the order	กลับลำดับ
+	Revision Cloud	รีวิชันคลาวด์
+	Revolve	รีวอลฟ์
+	Right	ขวา
+	Rotate	หมุน (Rotate)
+	Rotation	การหมุน
+	Save	บันทึก
+	Save (⌘S)	บันทึก (⌘S)
+	Save As	บันทึกเป็น
+	Save As...	บันทึกเป็น...
+	Save Layer State	บันทึกเลเยอร์สเตต
+	Save State	บันทึกสเตต
+	Scale	สเกล
+	Search for layer	ค้นหาเลเยอร์
+	Search for parameter	ค้นหาพารามิเตอร์
+	Second and next points:	จุดที่สองและจุดถัดไป:
+	Select	เลือก
+	Select 2D polyline	เลือก 2D โพลีไลน์
+	Select All	เลือกทั้งหมด
+	Select Objects	เลือกออบเจกต์
+	Select a 2D polyline.	เลือก 2D โพลีไลน์
+	Select a block reference.	เลือกบล็อกอ้างอิง
+	Select a circle or arc.	เลือกวงกลมหรืออาร์ก
+	Select a closed polyline	เลือกโพลีไลน์ปิด
+	Select a closed polyline, circle, ellipse or closed spline.	เลือกโพลีไลน์ปิด วงกลม วงรี หรือสไปลน์ปิด
+	Select a closed polyline.	เลือกโพลีไลน์ปิด
+	Select a curve as the path.	เลือกเส้นโค้งเป็นพาธ
+	Select a dimension constraint type	เลือกชนิดไดเมนชันคอนสเตรนต์
+	Select a line object	เลือกออบเจกต์เส้นตรง
+	Select a line object.	เลือกออบเจกต์เส้นตรง
+	Select a line or an arc.	เลือกเส้นตรงหรืออาร์ก
+	Select a line or polyline segment	เลือกเส้นตรงหรือเซกเมนต์โพลีไลน์
+	Select a line, arc or open polyline.	เลือกเส้นตรง อาร์ก หรือโพลีไลน์เปิด
+	Select a line, arc, circle, polyline, ellipse or spline as the path.	เลือกเส้นตรง อาร์ก วงกลม โพลีไลน์ วงรี หรือสไปลน์เป็นพาธ
+	Select a line, circle, arc or polyline segment.	เลือกเส้นตรง วงกลม อาร์ก หรือเซกเมนต์โพลีไลน์
+	Select a line.	เลือกเส้นตรง
+	Select a polyline.	เลือกโพลีไลน์
+	Select a text, mtext, attribute definition or dimension.	เลือกข้อความ mtext นิยามแอตทริบิวต์ หรือไดเมนชัน
+	Select an annotation object	เลือกออบเจกต์คำอธิบายประกอบ
+	Select an arc or circle	เลือกอาร์กหรือวงกลม
+	Select an arc.	เลือกอาร์ก
+	Select an object	เลือกออบเจกต์
+	Select an object to change or	เลือกออบเจกต์ที่จะเปลี่ยน หรือ
+	Select an object to measure or	เลือกออบเจกต์ที่จะวัด หรือ
+	Select an object.	เลือกออบเจกต์
+	Select an open curve.	เลือกเส้นโค้งเปิด
+	Select an open line, arc, polyline, ellipse arc or spline.	เลือกเส้นตรง อาร์ก โพลีไลน์ อาร์กวงรี หรือสไปลน์ที่เปิดอยู่
+	Select arc or circle	เลือกอาร์กหรือวงกลม
+	Select arc or polyline arc segment	เลือกอาร์กหรือเซกเมนต์อาร์กของโพลีไลน์
+	Select arc style	เลือกสไตล์อาร์ก
+	Select arc, circle, line	เลือกอาร์ก วงกลม เส้นตรง
+	Select at least two objects to join.	เลือกอย่างน้อยสองออบเจกต์เพื่อรวม
+	Select circle or arc to add center mark	เลือกวงกลมหรืออาร์กเพื่อใส่เซ็นเตอร์มาร์ก
+	Select closed objects (regions, closed polylines, circles).	เลือกออบเจกต์ปิด (รีเจียน โพลีไลน์ปิด วงกลม)
+	Select first line	เลือกเส้นแรก
+	Select first line or arc	เลือกเส้นแรกหรืออาร์ก
+	Select first object	เลือกออบเจกต์แรก
+	Select first object or	เลือกออบเจกต์แรก หรือ
+	Select first point	เลือกจุดแรก
+	Select nested objects to copy or	เลือกออบเจกต์ซ้อนที่จะคัดลอก หรือ
+	Select object	เลือกออบเจกต์
+	Select object to dimension	เลือกออบเจกต์ที่จะใส่ไดเมนชัน
+	Select object to divide	เลือกออบเจกต์ที่จะแบ่งส่วน
+	Select object to extend or shift-select to trim	เลือกออบเจกต์ที่จะเอกซ์เทนด์ หรือกด Shift เลือกเพื่อทริม
+	Select object to measure	เลือกออบเจกต์ที่จะวัด
+	Select object to offset	เลือกออบเจกต์ที่จะออฟเซ็ต
+	Select object to trim or shift-select to extend	เลือกออบเจกต์ที่จะทริม หรือกด Shift เลือกเพื่อเอกซ์เทนด์
+	Select objects	เลือกออบเจกต์
+	Select objects (crossing window first corner)	เลือกออบเจกต์ (มุมแรกของหน้าต่างแบบคร่อม)
+	Select objects to array.	เลือกออบเจกต์ที่จะทำอาร์เรย์
+	Select objects to stretch by crossing-window or crossing-polygon...	เลือกออบเจกต์ที่จะสเตรตช์ด้วยหน้าต่างคร่อมหรือรูปหลายเหลี่ยมคร่อม...
+	Select objects:	เลือกออบเจกต์:
+	Select one polyline (Multiple is available through the JSON form).	เลือกโพลีไลน์หนึ่งเส้น (ใช้ Multiple ได้ผ่านรูปแบบ JSON)
+	Select path curve	เลือกเส้นโค้งพาธ
+	Select point or object	เลือกจุดหรือออบเจกต์
+	Select polyline or	เลือกโพลีไลน์ หรือ
+	Select second line	เลือกเส้นที่สอง
+	Select second line or shift-select to apply corner	เลือกเส้นที่สอง หรือกด Shift เลือกเพื่อทำมุมแหลม
+	Select second object	เลือกออบเจกต์ที่สอง
+	Select second object or shift-select to apply corner	เลือกออบเจกต์ที่สอง หรือกด Shift เลือกเพื่อทำมุมแหลม
+	Select second point	เลือกจุดที่สอง
+	Select spline	เลือกสไปลน์
+	Select symmetry line	เลือกเส้นสมมาตร
+	Select two points	เลือกสองจุด
+	Selection Cycling	วนเลือกออบเจกต์ซ้อน
+	Send to Back	ส่งไปไว้หลังสุด
+	Set Current	ตั้งเป็นปัจจุบัน
+	Set Current Dimension Style	ตั้งสไตล์ไดเมนชันปัจจุบัน
+	Set Current Text Style	ตั้งสไตล์ข้อความปัจจุบัน
+	Set Layer Properties	ตั้งคุณสมบัติเลเยอร์
+	Set Properties	ตั้งคุณสมบัติ
+	Set Table Cell	ตั้งค่าเซลล์ตาราง
+	Set Variable	ตั้งค่าตัวแปร
+	Set View	ตั้งมุมมอง
+	Share	แชร์
+	Show	แสดง
+	Show All	แสดงทั้งหมด
+	Show All Constraint Bars	แสดงแถบคอนสเตรนต์ทั้งหมด
+	Show All Dynamic Dimensions	แสดงไดนามิกไดเมนชันทั้งหมด
+	Show Layer List	แสดงรายการเลเยอร์
+	Show/Hide Lineweight	แสดง/ซ่อนไลน์เวท
+	Show/Hide Transparency	แสดง/ซ่อนความโปร่งใส
+	Single Line Text	ข้อความบรรทัดเดียว (DText)
+	Single Point	จุดเดียว
+	Single...	บรรทัดเดียว...
+	Smooth	สมูท
+	Snap	สแนป
+	Snap Mode	โหมดสแนป
+	Snap Mode (F9)	โหมดสแนป (F9)
+	Snap On (F9)	เปิดสแนป (F9)
+	Snap X spacing	ระยะสแนป X
+	Snap and Grid	สแนปและกริด
+	Solid	โซลิด
+	Sort	เรียงลำดับ
+	Specify a point	ระบุจุด
+	Specify a scale for the hatch pattern	ระบุสเกลของแพตเทิร์นแฮทช์
+	Specify a second extension line origin	ระบุจุดเริ่มของเส้นเอกซ์เทนชันที่สอง
+	Specify an angle for the hatch pattern	ระบุมุมของแพตเทิร์นแฮทช์
+	Specify angle end point	ระบุจุดปลายของมุม
+	Specify angle of dimension line	ระบุมุมของเส้นไดเมนชัน
+	Specify angle of dimension text	ระบุมุมของข้อความไดเมนชัน
+	Specify angle start point	ระบุจุดเริ่มของมุม
+	Specify angle vertex	ระบุจุดยอดมุม
+	Specify angle vertex point	ระบุจุดยอดมุม
+	Specify arc length dimension location	ระบุตำแหน่งไดเมนชันความยาวอาร์ก
+	Specify axis endpoint of ellipse	ระบุจุดปลายแกนของวงรี
+	Specify base diameter	ระบุเส้นผ่านศูนย์กลางฐาน
+	Specify base point	ระบุจุดฐาน
+	Specify base point or	ระบุจุดฐาน หรือ
+	Specify base point or displacement (drag with the middle mouse button for realtime pan)	ระบุจุดฐานหรือระยะเลื่อน (ลากด้วยปุ่มกลางเมาส์เพื่อแพนแบบเรียลไทม์)
+	Specify base radius or	ระบุรัศมีฐาน หรือ
+	Specify center of donut	ระบุจุดศูนย์กลางของโดนัท
+	Specify center of ellipse	ระบุจุดศูนย์กลางของวงรี
+	Specify center of polygon	ระบุจุดศูนย์กลางของรูปหลายเหลี่ยม
+	Specify center point for circle	ระบุจุดศูนย์กลางของวงกลม
+	Specify center point of arc	ระบุจุดศูนย์กลางของอาร์ก
+	Specify center point of array	ระบุจุดศูนย์กลางของอาร์เรย์
+	Specify center point of base	ระบุจุดศูนย์กลางของฐาน
+	Specify corner of viewport	ระบุมุมของวิวพอร์ต
+	Specify corner of window, enter a scale factor (nX or nXP)	ระบุมุมของหน้าต่าง หรือป้อนตัวคูณสเกล (nX หรือ nXP)
+	Specify diameter of circle	ระบุเส้นผ่านศูนย์กลางของวงกลม
+	Specify dimension arc line location	ระบุตำแหน่งเส้นอาร์กของไดเมนชัน
+	Specify dimension line location	ระบุตำแหน่งเส้นไดเมนชัน
+	Specify distance between turns	ระบุระยะระหว่างรอบ
+	Specify distance to other axis	ระบุระยะถึงแกนอีกแกน
+	Specify end angle	ระบุมุมปลาย
+	Specify end point of arc	ระบุจุดปลายของอาร์ก
+	Specify end point of arc (hold Ctrl to switch direction)	ระบุจุดปลายของอาร์ก (กด Ctrl ค้างเพื่อสลับทิศทาง)
+	Specify ending width	ระบุความกว้างปลาย
+	Specify ending width for next segment	ระบุความกว้างปลายของเซกเมนต์ถัดไป
+	Specify endpoint of arc	ระบุจุดปลายของอาร์ก
+	Specify endpoint of axis	ระบุจุดปลายของแกน
+	Specify endpoint of line	ระบุจุดปลายของเส้น
+	Specify feature location	ระบุตำแหน่งฟีเจอร์
+	Specify fillet radius	ระบุรัศมีฟิลเล็ต
+	Specify fillet radius for rectangles	ระบุรัศมีฟิลเล็ตของสี่เหลี่ยม
+	Specify first angle endpoint	ระบุจุดปลายมุมแรก
+	Specify first chamfer distance	ระบุระยะแชมเฟอร์แรก
+	Specify first chamfer distance for rectangles	ระบุระยะแชมเฟอร์แรกของสี่เหลี่ยม
+	Specify first constraint point	ระบุจุดคอนสเตรนต์แรก
+	Specify first corner	ระบุมุมแรก
+	Specify first corner point	ระบุจุดมุมแรก
+	Specify first destination point	ระบุจุดปลายทางแรก
+	Specify first end point of circle's diameter	ระบุจุดปลายแรกของเส้นผ่านศูนย์กลางวงกลม
+	Specify first endpoint of edge	ระบุจุดปลายแรกของขอบ
+	Specify first extension line origin	ระบุจุดเริ่มของเส้นเอกซ์เทนชันแรก
+	Specify first point	ระบุจุดแรก
+	Specify first point of mirror line	ระบุจุดแรกของเส้นมิเรอร์
+	Specify first point on circle	ระบุจุดแรกบนวงกลม
+	Specify first point on circle: _tan to	ระบุจุดแรกบนวงกลม: _tan to
+	Specify first source point	ระบุจุดต้นทางแรก
+	Specify height	ระบุความสูง
+	Specify helix height or	ระบุความสูงเฮลิกซ์ หรือ
+	Specify included angle	ระบุมุมที่รวม
+	Specify insertion base point	ระบุจุดฐานสำหรับแทรก
+	Specify insertion point	ระบุจุดแทรก
+	Specify inside diameter of donut	ระบุเส้นผ่านศูนย์กลางในของโดนัท
+	Specify leader arrowhead location	ระบุตำแหน่งหัวลูกศรลีดเดอร์
+	Specify leader endpoint	ระบุจุดปลายลีดเดอร์
+	Specify leader landing location	ระบุตำแหน่งเส้นพักของลีดเดอร์
+	Specify length for rectangles	ระบุความยาวของสี่เหลี่ยม
+	Specify length of chord	ระบุความยาวคอร์ด
+	Specify length of segment	ระบุความยาวเซกเมนต์
+	Specify line width for rectangles	ระบุความกว้างเส้นของสี่เหลี่ยม
+	Specify location for new vertex	ระบุตำแหน่งเวอร์เท็กซ์ใหม่
+	Specify minimum length of arc	ระบุความยาวอาร์กต่ำสุด
+	Specify new end point	ระบุจุดปลายใหม่
+	Specify new location for marked vertex	ระบุตำแหน่งใหม่ของเวอร์เท็กซ์ที่ทำเครื่องหมาย
+	Specify new width for all segments	ระบุความกว้างใหม่ของทุกเซกเมนต์
+	Specify next point	ระบุจุดถัดไป
+	Specify offset distance	ระบุระยะออฟเซ็ต
+	Specify offset distance or	ระบุระยะออฟเซ็ต หรือ
+	Specify opposite corner	ระบุมุมตรงข้าม
+	Specify other corner point	ระบุจุดมุมอีกด้าน
+	Specify other endpoint of axis	ระบุจุดปลายอีกด้านของแกน
+	Specify outside diameter of donut	ระบุเส้นผ่านศูนย์กลางนอกของโดนัท
+	Specify point	ระบุจุด
+	Specify point on object for first tangent of circle	ระบุจุดบนออบเจกต์สำหรับแทนเจนต์แรกของวงกลม
+	Specify point on object for second tangent of circle	ระบุจุดบนออบเจกต์สำหรับแทนเจนต์ที่สองของวงกลม
+	Specify point on side to offset	ระบุจุดด้านที่จะออฟเซ็ต
+	Specify radius of arc	ระบุรัศมีอาร์ก
+	Specify radius of circle	ระบุรัศมีวงกลม
+	Specify rotation angle	ระบุมุมหมุน
+	Specify rotation angle of text	ระบุมุมหมุนของข้อความ
+	Specify rotation angle or	ระบุมุมหมุน หรือ
+	Specify scale factor	ระบุตัวคูณสเกล
+	Specify second angle endpoint	ระบุจุดปลายมุมที่สอง
+	Specify second break point	ระบุจุดเบรกที่สอง
+	Specify second chamfer distance for rectangles	ระบุระยะแชมเฟอร์ที่สองของสี่เหลี่ยม
+	Specify second constraint point	ระบุจุดคอนสเตรนต์ที่สอง
+	Specify second destination point	ระบุจุดปลายทางที่สอง
+	Specify second end point of circle's diameter	ระบุจุดปลายที่สองของเส้นผ่านศูนย์กลางวงกลม
+	Specify second endpoint of edge	ระบุจุดปลายที่สองของขอบ
+	Specify second extension line origin	ระบุจุดเริ่มของเส้นเอกซ์เทนชันที่สอง
+	Specify second point	ระบุจุดที่สอง
+	Specify second point of arc	ระบุจุดที่สองของอาร์ก
+	Specify second point of mirror line	ระบุจุดที่สองของเส้นมิเรอร์
+	Specify second point on circle	ระบุจุดที่สองบนวงกลม
+	Specify second point on circle: _tan to	ระบุจุดที่สองบนวงกลม: _tan to
+	Specify second point or <use first point as displacement>	ระบุจุดที่สอง หรือ <ใช้จุดแรกเป็นระยะเลื่อน>
+	Specify second source point	ระบุจุดต้นทางที่สอง
+	Specify side to offset	ระบุด้านที่จะออฟเซ็ต
+	Specify start angle	ระบุมุมเริ่ม
+	Specify start point	ระบุจุดเริ่ม
+	Specify start point of arc	ระบุจุดเริ่มของอาร์ก
+	Specify start point of polyline	ระบุจุดเริ่มของโพลีไลน์
+	Specify start point of text	ระบุจุดเริ่มของข้อความ
+	Specify starting width	ระบุความกว้างเริ่ม
+	Specify starting width for next segment	ระบุความกว้างเริ่มของเซกเมนต์ถัดไป
+	Specify tangent direction for the start point of arc	ระบุทิศทางแทนเจนต์ที่จุดเริ่มของอาร์ก
+	Specify the elevation for rectangles	ระบุระดับ (Elevation) ของสี่เหลี่ยม
+	Specify thickness for rectangles	ระบุความหนาของสี่เหลี่ยม
+	Specify third point on circle	ระบุจุดที่สามบนวงกลม
+	Specify third point on circle: _tan to	ระบุจุดที่สามบนวงกลม: _tan to
+	Specify third source point or <continue>	ระบุจุดต้นทางที่สาม หรือ <ดำเนินการต่อ>
+	Specify through point	ระบุจุดที่ผ่าน
+	Specify top diameter	ระบุเส้นผ่านศูนย์กลางบน
+	Specify top radius or	ระบุรัศมีบน หรือ
+	Specify total angle	ระบุมุมรวม
+	Specify total length or	ระบุความยาวรวม หรือ
+	Specify width for rectangles	ระบุความกว้างของสี่เหลี่ยม
+	Sphere	ทรงกลม
+	Spline	สไปลน์
+	Stack (type 1/2 then select)	ซ้อนเศษส่วน (พิมพ์ 1/2 แล้วเลือก)
+	Standard	มาตรฐาน
+	Start	เริ่ม
+	Start Width	ความกว้างเริ่ม
+	Start X	จุดเริ่ม X
+	Start Y	จุดเริ่ม Y
+	Start angle	มุมเริ่ม
+	Start, Center, Angle	จุดเริ่ม, จุดศูนย์กลาง, มุม
+	Start, Center, End	จุดเริ่ม, จุดศูนย์กลาง, จุดปลาย
+	Start, Center, Length	จุดเริ่ม, จุดศูนย์กลาง, ความยาว
+	Start, End, Angle	จุดเริ่ม, จุดปลาย, มุม
+	Start, End, Direction	จุดเริ่ม, จุดปลาย, ทิศทาง
+	Start, End, Radius	จุดเริ่ม, จุดปลาย, รัศมี
+	Status	สถานะ
+	Status Bar	แถบสถานะ
+	Stretch	สเตรตช์ (ยืด)
+	Style: Standard	สไตล์: Standard
+	Subtract	ซับแทร็กต์ (ลบออก)
+	Sweep	สวีป
+	Switch Drawing	สลับแบบ
+	Switch Layout	สลับเลย์เอาต์
+	Switch between model space in a viewport and paper space	สลับระหว่างโมเดลสเปซในวิวพอร์ตกับเปเปอร์สเปซ
+	Symmetric	สมมาตร (Symmetric)
+	Synchronize Attributes	ซิงก์แอตทริบิวต์
+	Toggle PICKADD (off: each pick replaces the selection)	สลับ PICKADD (ปิด: เลือกใหม่จะแทนที่ของเดิม)
+	Toggle PICKADD (on: picks add to the selection)	สลับ PICKADD (เปิด: เลือกเพิ่มเข้าในชุดที่เลือก)
+	TOP	ด้านบน
+	Table	ตาราง
+	Table Style...	สไตล์ตาราง...
+	Table style	สไตล์ตาราง
+	Table...	ตาราง...
+	Tan, Tan, Radius	แทนเจนต์, แทนเจนต์, รัศมี
+	Tan, Tan, Tan	แทนเจนต์, แทนเจนต์, แทนเจนต์
+	Tangent	สัมผัส (Tangent)
+	Text	ข้อความ
+	Text Editor	ตัวแก้ไขข้อความ
+	Text Height	ความสูงข้อความ
+	Text Style...	สไตล์ข้อความ...
+	Text height	ความสูงข้อความ
+	Text override	ข้อความแทนที่
+	Text style	สไตล์ข้อความ
+	Thaw All Layers	ทอว์ทุกเลเยอร์
+	There is nothing here yet.	ยังไม่มีอะไรที่นี่
+	Thickness	ความหนา
+	Time	เวลา
+	To get started, create or open a drawing.	เริ่มต้นด้วยการสร้างหรือเปิดแบบ
+	Tool Bar	ทูลบาร์
+	Tool Sets	ทูลเซต
+	Tools	เครื่องมือ
+	Torus	ทอรัส
+	Trace	เทรซ
+	Transparency	ความโปร่งใส
+	Trim	ทริม (ตัด)
+	True Color	ทรูคัลเลอร์
+	Turn All Layers On	เปิดทุกเลเยอร์
+	Turn Off Layer	ปิดเลเยอร์
+	Turn Quick Properties off (QPMODE)	ปิดคุณสมบัติด่วน (QPMODE)
+	Type	ชนิด
+	Type a command	พิมพ์คำสั่ง
+	Type text; Enter starts a new paragraph	พิมพ์ข้อความ กด Enter เพื่อขึ้นย่อหน้าใหม่
+	UCS Icon	ไอคอน UCS
+	Undo	เลิกทำ (Undo)
+	Undo (⌘Z)	เลิกทำ (⌘Z)
+	Ungroup	ยกเลิกกรุ๊ป
+	Union	ยูเนียน (รวม)
+	Unisolate Layer	เลิกไอโซเลตเลเยอร์
+	Units...	หน่วย...
+	Unlock Layer	ปลดล็อกเลเยอร์
+	Unmerge Cells	แยกเซลล์
+	Unsaved Layer State	เลเยอร์สเตตที่ยังไม่บันทึก
+	Up	ขึ้น
+	Update	อัปเดต
+	Use System Setting	ใช้การตั้งค่าของระบบ
+	User	ผู้ใช้
+	User Parameters	พารามิเตอร์ผู้ใช้
+	User Preferences	ค่ากำหนดผู้ใช้
+	Username	ชื่อผู้ใช้
+	VP Color	สีในวิวพอร์ต
+	VP Freeze	ฟรีซในวิวพอร์ต
+	Value	ค่า
+	Value:	ค่า:
+	Variables	ตัวแปร
+	Version	เวอร์ชัน
+	Version 2000	เวอร์ชัน 2000
+	Version 2004	เวอร์ชัน 2004
+	Version 2007	เวอร์ชัน 2007
+	Version 2010	เวอร์ชัน 2010
+	Version 2013	เวอร์ชัน 2013
+	Version 2018	เวอร์ชัน 2018
+	Version {version}	เวอร์ชัน {version}
+	Vertical	แนวตั้ง
+	VerticalDistance	ระยะแนวตั้ง
+	View	มุมมอง
+	ViewCube	ViewCube (วิวคิวบ์)
+	Viewport	วิวพอร์ต
+	Viewport Layer Freeze	ฟรีซเลเยอร์ในวิวพอร์ต
+	Viewport Properties	คุณสมบัติวิวพอร์ต
+	Viewport is locked	วิวพอร์ตถูกล็อก
+	Viewport scale	สเกลวิวพอร์ต
+	Viewport {id}	วิวพอร์ต {id}
+	Viewports	วิวพอร์ต
+	Volume	ปริมาตร
+	WCS	WCS
+	White	ขาว
+	Width factor	ตัวคูณความกว้าง
+	Window	หน้าต่าง
+	Wipeout	ไวป์เอาต์
+	Workspace Switching	สลับเวิร์กสเปซ
+	Write Block	เขียนบล็อกเป็นไฟล์ (WBlock)
+	Xline	เอกซ์ไลน์ (Xline)
+	Yellow	เหลือง
+	Yes	ใช่
+	Zoom	ซูม
+	Zoom All	ซูมทั้งหมด
+	Zoom Dynamic	ซูมไดนามิก
+	Zoom Extents	ซูมเอกซ์เทนต์
+	Zoom In	ซูมเข้า
+	Zoom Object	ซูมออบเจกต์
+	Zoom Out	ซูมออก
+	Zoom Previous	ซูมก่อนหน้า
+	Zoom Realtime	ซูมเรียลไทม์
+	Zoom Window	ซูมหน้าต่าง
+	error	ข้อผิดพลาด
+	min	นาที
+	objects	ออบเจกต์
+	{contributors} · {commits}	{contributors} · {commits}
+	{kind} (constraint {id})	{kind} (คอนสเตรนต์ {id})
+	{kind} constraint {name} = {expression}  (double-click to edit)	คอนสเตรนต์ {kind} {name} = {expression}  (ดับเบิลคลิกเพื่อแก้ไข)
+	{name}: {distance} < {angle}°	{name}: {distance} < {angle}°
+	ƒx  New User Parameter	ƒx  พารามิเตอร์ผู้ใช้ใหม่
+	⌘↩ to finish	⌘↩ เพื่อจบ
+@plural	{n} commit	{n} คอมมิต
+@plural	{n} contributor	ผู้ร่วมพัฒนา {n} คน
+	Drawing as bytes	แบบในรูปไบต์
+	Services	บริการ
+	Hide CADCraft	ซ่อน CADCraft
+	Hide Others	ซ่อนแอปอื่น
+	Accessibility	การช่วยการเข้าถึง
+	Show System Cursor	แสดงเคอร์เซอร์ของระบบ
+	3D Mouse...	เมาส์ 3D...
+	3D Mouse	เมาส์ 3D
+	Calibrate 3D Mouse	ปรับเทียบเมาส์ 3D
+	3D Mouse Navigation	การนำทางด้วยเมาส์ 3D
+	3D mouse input is unavailable on this platform	ใช้เมาส์ 3D บนแพลตฟอร์มนี้ไม่ได้
+	No supported 3D mouse found	ไม่พบเมาส์ 3D ที่รองรับ
+	Release the 3D mouse to calibrate its resting position	ปล่อยเมาส์ 3D เพื่อปรับเทียบตำแหน่งพัก
+	3D mouse connected	เชื่อมต่อเมาส์ 3D แล้ว
+	3D mouse busy, possibly 3DxWare or missing device permissions	เมาส์ 3D ไม่ว่าง อาจถูก 3DxWare ใช้อยู่หรือไม่มีสิทธิ์เข้าถึงอุปกรณ์
+	3D mouse disconnected	ตัดการเชื่อมต่อเมาส์ 3D แล้ว
+	3D mouse input could not be started	เริ่มรับอินพุตเมาส์ 3D ไม่ได้
+	Enable 3D mouse navigation	เปิดการนำทางด้วยเมาส์ 3D
+	Pan sensitivity	ความไวการแพน
+	Zoom sensitivity	ความไวการซูม
+	Reverse zoom direction	กลับทิศทางการซูม
+	Calibrate	ปรับเทียบ
+	Move sideways to pan; push/pull or twist to zoom.	เลื่อนด้านข้างเพื่อแพน ดัน/ดึงหรือบิดเพื่อซูม
+	Left device button: zoom extents. Right device button: calibrate.	ปุ่มซ้ายของอุปกรณ์: ซูมเอกซ์เทนต์ ปุ่มขวา: ปรับเทียบ
+	Hatch Pattern	แพตเทิร์นแฮทช์
+	Search for pattern	ค้นหาแพตเทิร์น
+	Run Script...	รันสคริปต์...
+menu	View	มุมมอง
+menu	Draw	วาด
+menu	Dimension	ไดเมนชัน
+menu	Modify	แก้ไข
+	Hatch and Gradient	แฮทช์และเกรเดียนต์
+	Color 1	สี 1
+	Color 2	สี 2
+	Shape	รูปทรง
+	Curved	โค้ง
+	Spherical	ทรงกลม
+	Hemispherical	ครึ่งทรงกลม
+	Inverted	กลับด้าน
+	Centered	กึ่งกลาง
+	Hatch origin	จุดอ้างอิงแฮทช์
+	Use current origin	ใช้จุดอ้างอิงปัจจุบัน
+	Specified origin	จุดอ้างอิงที่กำหนด
+	Click to set new origin	คลิกเพื่อกำหนดจุดอ้างอิงใหม่
+	Default to boundary extents	ใช้ขอบเขตเป็นค่าเริ่มต้น
+	Bottom left	ล่างซ้าย
+	Bottom right	ล่างขวา
+	Top left	บนซ้าย
+	Top right	บนขวา
+	Boundaries	ขอบเขต
+	Add: Pick points	เพิ่ม: คลิกจุด
+	Add: Select objects	เพิ่ม: เลือกออบเจกต์
+	Boundaries picked: {n}	ขอบเขตที่เลือก: {n}
+	Associative	แอสโซซิเอทีฟ (ผูกกับขอบเขต)
+	Create separate hatches	สร้างแฮทช์แยกกัน
+	Island detection	ตรวจหาไอส์แลนด์
+	Normal	ปกติ
+	Outer	ชั้นนอก
+	Ignore	ไม่สนใจ
+	Origin: {x}, {y}	จุดอ้างอิง: {x}, {y}
+	Hatch Pick	เลือกแฮทช์
+	Query Texts	สอบถามข้อความ
+	Sheet Books to PDF...	สมุดแผ่นงานเป็น PDF...
+	Not a number or distance: {text}	ไม่ใช่ตัวเลขหรือระยะ: {text}
+	Dynamic Block Data	ข้อมูลไดนามิกบล็อก
+	Custom	กำหนดเอง
+	Dynamic Block Reference	ไดนามิกบล็อกอ้างอิง
+	Set Dynamic Property	ตั้งคุณสมบัติไดนามิก
+	Dynamic Block Grips	กริปไดนามิกบล็อก
+	Drag Dynamic Grip	ลากกริปไดนามิก
+	Save Block	บันทึกบล็อก
+	Save Block As	บันทึกบล็อกเป็น
+	Close Block Editor	ปิดบล็อกเอดิเตอร์
+	Unsaved changes	มีการเปลี่ยนแปลงที่ยังไม่บันทึก
+	Edit Block Definition	แก้ไขนิยามบล็อก
+	Block to create or edit	บล็อกที่จะสร้างหรือแก้ไข
+	Open in Block Editor	เปิดในบล็อกเอดิเตอร์
+	This drawing	แบบนี้
+	contains authoring elements. Open in Block Editor?	มีองค์ประกอบสำหรับสร้างบล็อก เปิดในบล็อกเอดิเตอร์หรือไม่?
+	New block	บล็อกใหม่
+	Preview	ตัวอย่าง
+	Italic	ตัวเอียง
+	Underline	ขีดเส้นใต้
+	Overline	ขีดเส้นบน
+	Justify	จัดแนว
+	Text color	สีข้อความ
+	Click the ruler to add a tab stop, right-click to remove one	คลิกที่ไม้บรรทัดเพื่อเพิ่มแท็บ คลิกขวาเพื่อลบ
+	Edit Multileader	แก้ไขมัลติลีดเดอร์
+	Align Multileaders	จัดแนวมัลติลีดเดอร์
+	Collect Multileaders	รวมมัลติลีดเดอร์
+	Collect	รวม
+	Edit Reference In-Place	แก้ไขการอ้างอิงในที่ (Refedit)
+	Working Set	ชุดทำงาน
+	Add to Working Set	เพิ่มในชุดทำงาน
+	Save Reference Edits	บันทึกการแก้ไขการอ้างอิง
+	Xref and Block In-place Editing	แก้ไขเอกซ์เรฟและบล็อกในที่
+	Load Application...	โหลดแอปพลิเคชัน...
+	Evaluate LISP	ประมวลผล LISP
+	Open Recent	เปิดล่าสุด
+	Clear Recent Files	ล้างไฟล์ล่าสุด
+	Animation Effects	เอฟเฟกต์แอนิเมชัน
+	Animation effects	เอฟเฟกต์แอนิเมชัน
+	Selection modes	โหมดการเลือก
+	Object grouping	การจัดกรุ๊ปออบเจกต์
+	Selection effect color	สีเอฟเฟกต์การเลือก
+	Grips	กริป
+	Show grips	แสดงกริป
+	Object selection limit for display of grips	จำนวนออบเจกต์สูงสุดที่แสดงกริป
+	Selection preview	ตัวอย่างการเลือก
+	When a command is active	เมื่อมีคำสั่งทำงานอยู่
+	When no command is active	เมื่อไม่มีคำสั่งทำงาน
+	Visual Effect Settings...	การตั้งค่าเอฟเฟกต์ภาพ...
+	Visual Effect Settings	การตั้งค่าเอฟเฟกต์ภาพ
+	Selection Area Effect	เอฟเฟกต์พื้นที่การเลือก
+	Indicate selection area	แสดงพื้นที่การเลือก
+	Window selection color:	สีการเลือกแบบหน้าต่าง:
+	Crossing selection color:	สีการเลือกแบบคร่อม:
+	Selection area opacity:	ความทึบของพื้นที่การเลือก:
+	Selection Preview Filter	ตัวกรองตัวอย่างการเลือก
+	Exclude:	ไม่รวม:
+	Objects on locked layers	ออบเจกต์บนเลเยอร์ที่ล็อก
+	Xrefs	เอกซ์เรฟ
+	Tables	ตาราง
+	Groups	กรุ๊ป
+	Multiline text	ข้อความหลายบรรทัด
+	Hatches	แฮทช์
+	Break-line Symbol	สัญลักษณ์เส้นตัด (Break-line)
+	Convert Text to Mtext	แปลงข้อความเป็น Mtext
+	Explode Attributes to Text	ระเบิดแอตทริบิวต์เป็นข้อความ
+	Express Tools	Express Tools
+	Move/Copy/Rotate	ย้าย/คัดลอก/หมุน
+	Interface scale	ขนาดหน้าจอ
+	Analyze Shapes	วิเคราะห์รูปทรง
+	Select boundaries to remove	เลือกขอบเขตที่จะลบ
+	Island	ไอส์แลนด์
+	Select using two clicks only	เลือกด้วยการคลิกสองครั้งเท่านั้น
+	Define each corner of the selection window with a separate click.	กำหนดแต่ละมุมของหน้าต่างการเลือกด้วยการคลิกแยกกัน
+	Type an alias name.	พิมพ์ชื่อย่อ
+	Choose the command the alias starts.	เลือกคำสั่งที่ชื่อย่อนี้เรียกใช้
+	{command} is an unknown command.	ไม่รู้จักคำสั่ง {command}
+	{alias} is already defined; select it and use Edit.	มี {alias} อยู่แล้ว เลือกแล้วใช้แก้ไข
+	More than {n} aliases.	ชื่อย่อเกิน {n} รายการ
+	Alias file: {file}	ไฟล์ชื่อย่อ: {file}
+	No alias file loaded. REINIT replaces these aliases with a file's.	ยังไม่ได้โหลดไฟล์ชื่อย่อ REINIT จะแทนที่ชื่อย่อเหล่านี้ด้วยชื่อย่อจากไฟล์
+	Alias	ชื่อย่อ
+	Command	คำสั่ง
+	overrides built-in	แทนที่ค่าในตัว
+	built-in	ในตัว
+	Add…	เพิ่ม…
+	Edit…	แก้ไข…
+	Save alias	บันทึกชื่อย่อ
+	Discard	ทิ้ง
+	Customize	ปรับแต่ง
+	Edit Command Aliases (PGP)...	แก้ไขชื่อย่อคำสั่ง (PGP)...
+	Apply to Layout	ใช้กับเลย์เอาต์
+	Arrow size	ขนาดหัวลูกศร
+	Center the plot	จัดพล็อตกึ่งกลาง
+	Dim scale overall	สเกลไดเมนชันโดยรวม
+	Enter block names to extract	ป้อนชื่อบล็อกที่จะดึงข้อมูล
+	Enter geometric characteristic	ป้อนลักษณะทางเรขาคณิต
+	Enter name of LISP file to load	ป้อนชื่อไฟล์ LISP ที่จะโหลด
+	First corner	มุมแรก
+	Fit to paper	พอดีกระดาษ
+	Landscape	แนวนอน
+	Limits	ขอบเขต (Limits)
+	Opposite corner	มุมตรงข้าม
+	Orientation	การวางแนว
+	Paper size	ขนาดกระดาษ
+	Plot area	พื้นที่พล็อต
+	Plot object lineweights	พล็อตไลน์เวทของออบเจกต์
+	Plot offset	ระยะเลื่อนการพล็อต
+	Plot transparency	พล็อตความโปร่งใส
+	Portrait	แนวตั้ง
+	Precision	ความละเอียด
+	Printer/plotter	เครื่องพิมพ์/พล็อตเตอร์
+	Window <	หน้าต่าง <
+	X offset (mm)	ระยะเลื่อน X (มม.)
+	Y offset (mm)	ระยะเลื่อน Y (มม.)
+	AutoLISP (LSP)	AutoLISP (LSP)
+	Units of new drawings	หน่วยของแบบใหม่
+	Imperial (inches)	อิมพีเรียล (นิ้ว)
+	Metric (millimetres)	เมตริก (มิลลิเมตร)
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	แบบใหม่และแบบแรกเมื่อเปิดโปรแกรมจะใช้หน่วยนี้ เว้นแต่ตั้งเทมเพลตเริ่มต้นไว้ (QNEWTEMPLATE)
+	Analyze Usage	วิเคราะห์การใช้งาน
+	Implied Loops	ลูปโดยนัย
+	Layouts	เลย์เอาต์
+	Save changes to {name}?	บันทึกการเปลี่ยนแปลงใน {name} หรือไม่?
+	Your changes will be lost if you don't save them.	การเปลี่ยนแปลงจะหายไปถ้าไม่บันทึก
+	Don't Save	ไม่บันทึก
+	Associate	เชื่อมโยง
+	Drawing Units	หน่วยของแบบ
+	Insertion scale	สเกลการแทรก
+	Units to scale inserted content	หน่วยสำหรับปรับสเกลสิ่งที่แทรก
+	Sample output	ตัวอย่างผลลัพธ์
+	Architectural	สถาปัตยกรรม (ฟุต-นิ้ว)
+	Decimal	ทศนิยม
+	Engineering	วิศวกรรม
+	Fractional	เศษส่วน
+	Scientific	วิทยาศาสตร์
+	Decimal Degrees	องศาทศนิยม
+	Deg/Min/Sec	องศา/ลิปดา/ฟิลิปดา
+	Grads	เกรเดียน
+	Radians	เรเดียน
+	Surveyor's Units	หน่วยงานสำรวจ
+	Unitless	ไม่มีหน่วย
+	Inches	นิ้ว
+	Feet	ฟุต
+	Miles	ไมล์
+	Millimeters	มิลลิเมตร
+	Centimeters	เซนติเมตร
+	Meters	เมตร
+	Kilometers	กิโลเมตร
+	Microinches	ไมโครนิ้ว
+	Mils	มิล
+	Yards	หลา
+	Angstroms	อังสตรอม
+	Nanometers	นาโนเมตร
+	Microns	ไมครอน
+	Decimeters	เดซิเมตร
+	Decameters	เดคาเมตร
+	Hectometers	เฮกโตเมตร
+	Gigameters	จิกะเมตร
+	Astronomical Units	หน่วยดาราศาสตร์
+	Light Years	ปีแสง
+	Parsecs	พาร์เซก
+	US Survey Feet	ฟุตสำรวจสหรัฐฯ
+	US Survey Inch	นิ้วสำรวจสหรัฐฯ
+	US Survey Yard	หลาสำรวจสหรัฐฯ
+	US Survey Mile	ไมล์สำรวจสหรัฐฯ

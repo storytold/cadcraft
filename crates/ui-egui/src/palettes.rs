@@ -636,10 +636,18 @@ fn properties_header(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let hr = section_header(ui, "Properties");
     // All | My segmented control ("My" property sets don't exist yet).
-    let seg = Rect::from_min_size(pos2(hr.right() - 120.0, hr.top() + 4.0), vec2(70.0, 18.0));
+    // Each half fits the longer label, so translated labels (ทั้งหมด, Alle) don't overlap.
+    let label_w = |s: &str| ui.painter().layout_no_wrap(s.to_string(), crate::theme::small(), t.text).size().x;
+    let wanted = (label_w(crate::tl!("All")).max(label_w(crate::tl!("My"))) + 10.0).clamp(35.0, 80.0);
+    // Never over the title (section_header starts it 10 px in): a long one (Eigenschaften)
+    // narrows the control instead, down to the original 35 px halves.
+    let title_w = ui.painter().layout_no_wrap(crate::tl!("Properties").to_string(), egui::FontId::proportional(14.0), t.text).size().x;
+    let room = (hr.width() - 50.0 - 10.0 - title_w - 8.0) / 2.0;
+    let w = wanted.min(room).max(35.0);
+    let seg = Rect::from_min_size(pos2(hr.right() - 50.0 - 2.0 * w, hr.top() + 4.0), vec2(2.0 * w, 18.0));
     ui.painter().rect_filled(seg, 3.0, t.chrome_dark);
-    let half = Rect::from_min_size(seg.min, vec2(35.0, 18.0));
-    let my = half.translate(vec2(35.0, 0.0));
+    let half = Rect::from_min_size(seg.min, vec2(w, 18.0));
+    let my = half.translate(vec2(w, 0.0));
     ui.painter().rect_filled(if app.ui.properties_all { half } else { my }, 3.0, t.control);
     ui.painter().text(half.center(), egui::Align2::CENTER_CENTER, crate::tl!("All"), crate::theme::small(), t.text);
     ui.painter().text(my.center(), egui::Align2::CENTER_CENTER, crate::tl!("My"), crate::theme::small(), t.text_faint);
