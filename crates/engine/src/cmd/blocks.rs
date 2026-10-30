@@ -18,7 +18,11 @@ use super::has_doc;
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 mod attedit;
+mod bauthor;
+mod belement;
+mod blookup;
 mod burst;
+mod bvstate;
 mod description;
 mod dyngrip;
 mod extract;
@@ -87,6 +91,10 @@ pub fn specs() -> Vec<CommandSpec> {
     .chain(xref::specs())
     .chain(refedit::specs())
     .chain(bedit::specs())
+    .chain(bauthor::specs())
+    .chain(belement::specs())
+    .chain(bvstate::specs())
+    .chain(blookup::specs())
     .collect()
 }
 

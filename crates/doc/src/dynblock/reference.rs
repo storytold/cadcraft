@@ -151,6 +151,8 @@ fn same(cell: &str, value: &str) -> bool {
 struct Current<'a> {
     m: &'a DynamicBlock,
     values: &'a BTreeMap<i32, Value>,
+    /// The block's base point (table cells give positions from it).
+    base: Vec3,
 }
 
 impl Current<'_> {
@@ -169,6 +171,13 @@ impl Current<'_> {
                     _ => (*base, *end),
                 };
                 Some(format!("{}", (e - b).len()))
+            }
+            (ParameterKind::Point { at, .. }, axis @ ("updatedx" | "updatedy")) => {
+                let at = match v {
+                    Some(Value::Point { at }) => *at,
+                    _ => *at,
+                };
+                Some(format!("{}", if axis == "updatedx" { at.x - self.base.x } else { at.y - self.base.y }))
             }
             (ParameterKind::Lookup { .. }, "lookupstring") => match v {
                 Some(Value::Text { value }) => Some(value.clone()),
@@ -226,7 +235,7 @@ pub fn custom_properties(d: &Drawing, insert: Handle) -> Option<(String, Vec<Cus
     let m = dynamic_block(d, &r.definition)?;
     let base = d.block(&r.definition).map(|b| b.base).unwrap_or_default();
     let (sx, sy) = (ins.scale.x.abs(), ins.scale.y.abs());
-    let cur = Current { m: &m, values: &r.values };
+    let cur = Current { m: &m, values: &r.values, base };
     let mut out = Vec::new();
     for p in m.parameters.iter().filter(|p| p.show_properties) {
         let v = r.values.get(&p.node);
@@ -262,8 +271,9 @@ pub fn custom_properties(d: &Drawing, insert: Handle) -> Option<(String, Vec<Cus
     Some((r.definition, out))
 }
 
-/// Whether every lookup table that sets lookup parameter `node` sets only what
-/// [`super::set_property`] can apply with it: visibility states and distances.
+/// Whether every lookup table that sets lookup parameter `node` allows reverse lookup and sets
+/// only what [`super::set_property`] can apply with it: visibility states, distances and
+/// positions.
 fn lookup_sets_what_changes(m: &DynamicBlock, node: i32) -> bool {
     let mut any = false;
     for a in &m.actions {
@@ -272,9 +282,13 @@ fn lookup_sets_what_changes(m: &DynamicBlock, node: i32) -> bool {
             continue;
         }
         any = true;
-        if !columns
-            .iter()
-            .all(|c| matches!(c.property.to_ascii_lowercase().as_str(), "lookupstring" | "visibilitystate" | "updateddistance" | "distance"))
+        if !columns.iter().any(|c| c.lookup && c.node == node && c.reverse)
+            || !columns.iter().all(|c| {
+                matches!(
+                    c.property.to_ascii_lowercase().as_str(),
+                    "lookupstring" | "visibilitystate" | "updateddistance" | "distance" | "updatedx" | "updatedy"
+                )
+            })
         {
             return false;
         }

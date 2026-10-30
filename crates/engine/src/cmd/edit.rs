@@ -60,7 +60,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{} (only into a drawing other than the one copied from)")
             .enabled(clipboard::can_paste_orig)
             .interactive(|_| Ok(Box::new(PasteM { mode: PasteMode::Orig }))),
-        CommandSpec::new("erase.selection", "Clear", run_clear).menu(&["Edit", "Clear"]).key("Delete").enabled(has_selection).params("{}"),
+        CommandSpec::new("erase.selection", "Clear", run_clear).menu(&["Edit", "Clear"]).key("Delete").enabled(clearable).params("{}"),
         CommandSpec::new("selectall", "Select All", run_selectall).menu(&["Edit", "Select All"]).key("Cmd+A").alias(&["ai_selall"]).noundo(),
         CommandSpec::new("ai_deselect", "Deselect All", run_deselect).params("{}").noundo(),
         CommandSpec::new("select", "Select", run_select)
@@ -546,11 +546,17 @@ fn run_pasteorig(s: &mut Session, _p: &Value) -> Result<Value> {
     Ok(json!({ "handles": r.iter().map(|h| h.hex()).collect::<Vec<_>>() }))
 }
 
+/// Something to clear: selected objects, or parameters and actions picked in the Block Editor.
+fn clearable(s: &Session) -> std::result::Result<(), String> {
+    if !s.picked_elements().is_empty() { Ok(()) } else { has_selection(s) }
+}
+
 fn run_clear(s: &mut Session, _p: &Value) -> Result<Value> {
     let mut hs = s.selection();
     hs.retain(|h| !super::curves::is_locked(s, *h));
+    // The Block Editor's picked parameters and actions go too.
+    let mut n = s.erase_picked_elements()?;
     let d = s.doc_mut()?;
-    let mut n = 0;
     for h in hs {
         if d.remove_entity(h).is_some() {
             n += 1;

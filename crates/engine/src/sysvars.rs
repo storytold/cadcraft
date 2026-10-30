@@ -38,6 +38,7 @@ const SESSION_VARS: &[&str] = &[
     "PLOTTRANSPARENCYOVERRIDE",
     "SELECTIONCYCLING",
     "SELECTSIMILARMODE",
+    "BVMODE",
     "OBJECTISOLATIONMODE",
     "QPMODE",
     "HIGHLIGHT",
@@ -135,6 +136,7 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "CMDECHO" => json!(i32::from(st.cmdecho)),
         "FILEDIA" => json!(i32::from(st.filedia)),
         "PICKADD" => json!(i32::from(st.pickadd)),
+        "BVMODE" => json!(i32::from(st.bvmode)),
         "PICKDRAG" => json!(i32::from(st.pickdrag) * 2),
         "PICKSTYLE" => json!(st.pickstyle),
         "GRIPSIZE" => json!(st.gripsize),
@@ -353,6 +355,10 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
         "CMDECHO" => st.cmdecho = small(v, 1).ok_or_else(bad)? == 1,
         "FILEDIA" => st.filedia = small(v, 1).ok_or_else(bad)? == 1,
         "PICKADD" => st.pickadd = as_bool(v).ok_or_else(bad)?,
+        "BVMODE" => {
+            st.bvmode = as_bool(v).ok_or_else(bad)?;
+            s.refresh_block_visibility()?;
+        }
         "PICKDRAG" => st.pickdrag = as_i(v).filter(|b| matches!(b, 0 | 2)).map(|b| b == 2).ok_or_else(bad)?,
         "PICKSTYLE" => st.pickstyle = as_i(v).filter(|b| (0..=3).contains(b)).and_then(|b| u8::try_from(b).ok()).ok_or_else(bad)?,
         "GRIPSIZE" => st.gripsize = as_f64(v).ok_or_else(bad)?.clamp(1.0, 255.0),

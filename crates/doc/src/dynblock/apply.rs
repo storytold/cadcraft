@@ -155,6 +155,8 @@ fn linear_points(base: Vec3, end: Vec3, dist: f64, from_midpoint: bool) -> (Vec3
 #[derive(Default)]
 struct Plan {
     set: BTreeMap<i32, Val>,
+    /// The block's base point (table cells give positions from it).
+    base: Vec3,
 }
 
 impl Plan {
@@ -175,6 +177,18 @@ impl Plan {
                 let Some(Val::Points(b, e)) = self.set.get(&node).cloned().or_else(|| current(m, values, node)) else { return Ok(()) };
                 let (b2, e2) = linear_points(b, e, dist, *from_midpoint);
                 self.set.insert(node, Val::Points(b2, e2));
+            }
+            (ParameterKind::Point { .. }, axis @ ("updatedx" | "updatedy")) => {
+                // From the block's base point, as Properties shows a position.
+                let v = cell
+                    .trim()
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|v| v.is_finite())
+                    .ok_or_else(|| format!("A lookup table gives \"{cell}\" for a position."))?;
+                let Some(Val::Point(at)) = self.set.get(&node).cloned().or_else(|| current(m, values, node)) else { return Ok(()) };
+                let at = if axis == "updatedx" { Vec3::new(self.base.x + v, at.y, at.z) } else { Vec3::new(at.x, self.base.y + v, at.z) };
+                self.set.insert(node, Val::Point(at));
             }
             (_, other) => return Err(format!("A lookup table sets {other}, which CADCraft can't change yet.")),
         }
@@ -209,6 +223,8 @@ impl Plan {
             match (v, prop.to_ascii_lowercase().as_str()) {
                 (Val::Text(t), "visibilitystate" | "lookupstring") => Some(t),
                 (Val::Points(b, e), "updateddistance" | "distance") => Some(format!("{}", (e - b).len())),
+                (Val::Point(at), "updatedx") => Some(format!("{}", at.x - plan.base.x)),
+                (Val::Point(at), "updatedy") => Some(format!("{}", at.y - plan.base.y)),
                 _ => None,
             }
         };
@@ -268,7 +284,7 @@ pub fn set_property(d: &mut Drawing, insert: Handle, name: &str, value: &str) ->
             p.show_properties && p.kind.label().is_some_and(|l| l.eq_ignore_ascii_case(want) || (axis.is_some() && l.eq_ignore_ascii_case(label)))
         })
         .ok_or_else(|| format!("The reference has no property \"{name}\"."))?;
-    let mut plan = Plan::default();
+    let mut plan = Plan { base: block_base, ..Plan::default() };
     match (&p.kind, axis) {
         (ParameterKind::Visibility { states, label, .. }, _) => {
             let s = states.iter().find(|s| s.name.eq_ignore_ascii_case(value.trim())).ok_or_else(|| {
@@ -302,6 +318,7 @@ pub fn set_property(d: &mut Drawing, insert: Handle, name: &str, value: &str) ->
             let v = number(value)?;
             let at = if is_x { Vec3::new(block_base.x + v / sx, at.y, at.z) } else { Vec3::new(at.x, block_base.y + v / sy, at.z) };
             plan.set.insert(p.node, Val::Point(at));
+            plan.chain(&m, &r.values, p.node, if is_x { "UpdatedX" } else { "UpdatedY" })?;
         }
         _ => return Err(format!("CADCraft can't change {name} yet.")),
     }
@@ -324,7 +341,7 @@ pub fn drag_grip(d: &mut Drawing, insert: Handle, node: i32, part: super::GripPa
     let base = d.block(&r.definition).map(|b| b.base.xy()).unwrap_or_default();
     let q = ins.transform(base).inverse().ok_or("The reference has a zero scale.")?.apply(to);
     let p = m.parameters.iter().find(|p| p.node == node).ok_or("The reference has no such parameter.")?;
-    let mut plan = Plan::default();
+    let mut plan = Plan { base: base.to3(0.0), ..Plan::default() };
     match (&p.kind, part) {
         (ParameterKind::Linear { values, from_midpoint, label, .. }, GripPart::Base | GripPart::End) => {
             let Some(Val::Points(b, e)) = current(&m, &r.values, node) else { return Err(format!("{label} has no points.")) };
@@ -356,6 +373,8 @@ pub fn drag_grip(d: &mut Drawing, insert: Handle, node: i32, part: super::GripPa
         (ParameterKind::Point { label, .. }, GripPart::At) => {
             let Some(Val::Point(at)) = current(&m, &r.values, node) else { return Err(format!("{label} has no position.")) };
             plan.set.insert(node, Val::Point(Vec3::new(q.x, q.y, at.z)));
+            plan.chain(&m, &r.values, node, "UpdatedX")?;
+            plan.chain(&m, &r.values, node, "UpdatedY")?;
         }
         _ => return Err("That grip can't be dragged.".into()),
     }

@@ -1,7 +1,9 @@
 //! The canvas's right-click menus, after AutoCAD's shortcut menus:
 //!
 //! - **No command running** ([`entries`]): Repeat the last command, Recent Commands, the
-//!   Clipboard and Isolate; with a selection the editing commands, Draw Order, Group, the edit
+//!   Clipboard and Isolate; in the Block Editor with a selection, Object Visibility (hide or show
+//!   the objects in the current or every visibility state; greyed out without a visibility
+//!   parameter); with a selection the editing commands, Draw Order, Group, the edit
 //!   commands of the selected object type, Select Similar and Deselect All; then Undo/Redo,
 //!   Pan/Zoom, Quick Select, Find, Properties and Options.
 //! - **While a command runs** ([`command_entries`]): a quick right-click is Enter; holding the
@@ -53,6 +55,8 @@ pub const TYPE: &str = "type:";
 pub const KEYWORD: &str = "keyword:";
 /// An object snap menu item ([`choose_snap`]).
 pub const SNAP: &str = "snap:";
+/// An Object Visibility item: BVHIDE or BVSHOW on the selection ([`choose_visibility`]).
+pub const VISIBILITY: &str = "visibility:";
 
 fn item(app: &CadApp, id: &str, label: Option<&str>) -> Option<Entry> {
     let spec = find_command(id)?;
@@ -97,6 +101,10 @@ pub fn entries(app: &CadApp) -> Vec<Vec<Entry>> {
         .collect();
     first.extend(sub("Recent Commands", recent));
     push(&mut groups, first);
+    let selected = !app.session.selection().is_empty();
+    if selected {
+        push(&mut groups, visibility_entries(app).into_iter().collect());
+    }
     // In the Block Editor: save the block or go back to the drawing.
     if app.session.state().is_ok_and(|st| st.block_edit.is_some()) {
         push(&mut groups, items(app, &["bsave", "bsaveas", "bclose"]));
@@ -104,7 +112,10 @@ pub fn entries(app: &CadApp) -> Vec<Vec<Entry>> {
     let mut clip: Vec<Entry> = sub("Clipboard", items(app, CLIPBOARD)).into_iter().collect();
     clip.extend(sub("Isolate", items(app, ISOLATE)));
     push(&mut groups, clip);
-    let selected = !app.session.selection().is_empty();
+    // Only parameters or actions picked in the Block Editor: what acts on them.
+    if !selected && !app.session.picked_elements().is_empty() {
+        push(&mut groups, items(app, &["erase", "move"]));
+    }
     if selected {
         let mut edit: Vec<Entry> = EDIT.iter().filter_map(|(id, label)| item(app, id, *label)).collect();
         edit.extend(sub("Draw Order", items(app, DRAW_ORDER)));
@@ -119,6 +130,40 @@ pub fn entries(app: &CadApp) -> Vec<Vec<Entry>> {
     last.extend(items(app, SETTINGS));
     push(&mut groups, last);
     groups
+}
+
+/// Object Visibility ▸ in the Block Editor (AutoCAD's shortcut menu there): hide or show the
+/// selected objects in the current visibility state or all of them. Its items are greyed out when
+/// the block has no visibility parameter.
+fn visibility_entries(app: &CadApp) -> Option<Entry> {
+    use cadcraft_engine::doc::dynblock::{ParameterKind, dynamic_block};
+    let st = app.session.state().ok()?;
+    let be = st.block_edit.as_ref()?;
+    let has = !be.current
+        && dynamic_block(&st.doc, &be.name).is_some_and(|m| m.parameters.iter().any(|p| matches!(p.kind, ParameterKind::Visibility { .. })));
+    let item = |label: &str, id: &str| Entry::Item { label: label.into(), id: format!("{VISIBILITY}{id}"), shortcut: None, enabled: has };
+    Some(Entry::Sub {
+        label: "Object Visibility".into(),
+        children: vec![
+            item("Hide for Current State", "hide"),
+            item("Show for Current State", "show"),
+            item("Hide for All States", "hide-all"),
+            item("Show for All States", "show-all"),
+        ],
+    })
+}
+
+/// Run an Object Visibility item on the selection.
+fn choose_visibility(app: &mut CadApp, what: &str) {
+    let (cmd, all) = match what {
+        "hide" => ("bvhide", false),
+        "show" => ("bvshow", false),
+        "hide-all" => ("bvhide", true),
+        "show-all" => ("bvshow", true),
+        _ => return,
+    };
+    let handles: Vec<String> = app.session.selection().iter().map(|h| h.hex()).collect();
+    let _ = app.run(cmd, serde_json::json!({ "handles": handles, "all": all }));
 }
 
 /// The edit commands of the selected objects' type (when they are all of one type), with their
@@ -213,6 +258,8 @@ pub fn choose(app: &mut CadApp, id: &str) {
         }
     } else if let Some(s) = id.strip_prefix(SNAP) {
         choose_snap(app, s);
+    } else if let Some(v) = id.strip_prefix(VISIBILITY) {
+        choose_visibility(app, v);
     } else {
         activate(app, id);
     }

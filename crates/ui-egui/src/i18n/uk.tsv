@@ -96,6 +96,31 @@
 	Block Attribute Manager...	Диспетчер атрибутів блоків...
 	Block Description...	Опис блока...
 	Block Editor	Редактор блоків
+	Parameter	Параметр
+	Action	Дія
+	Visibility States	Стани видимості
+	Make Visible	Зробити видимим
+	Make Invisible	Зробити невидимим
+	Visibility states:	Стани видимості:
+	Set current	Зробити поточним
+	New...	Створити...
+	Rename	Перейменувати
+	Move Up	Вгору
+	Move Down	Вниз
+	New Visibility State	Новий стан видимості
+	Visibility state name:	Назва стану видимості:
+	Visibility options for new states	Видимість у новому стані
+	Hide all existing objects in new state	Приховати всі наявні об'єкти в новому стані
+	Show all existing objects in new state	Показати всі наявні об'єкти в новому стані
+	Leave visibility of existing objects unchanged in new state	Залишити видимість наявних об'єктів без змін у новому стані
+	Visibility Mode	Режим видимості
+	Object Visibility	Видимість об'єктів
+	Hide for Current State	Приховати в поточному стані
+	Show for Current State	Показати в поточному стані
+	Hide for All States	Приховати в усіх станах
+	Show for All States	Показати в усіх станах
+	A visibility state needs a name.	Стан видимості потребує назви.
+	A visibility state already has the name	Уже є стан видимості з назвою
 	Block Reference	Посилання на блок
 	Block...	Блок...
 	Blocks	Блоки
