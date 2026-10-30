@@ -565,9 +565,11 @@ fn backup(path: &std::path::Path) -> std::io::Result<()> {
         src.seek(std::io::SeekFrom::Start(head.len() as u64))?;
     }
     let bak = backup_path(path);
-    // Whole, or (a 2007 DWG, which can't be told) with no backup yet to keep.
-    let whole = looks_like_drawing(&head) && completeness(&head, &tail, len).unwrap_or_else(|| !bak.exists());
-    if !whole {
+    // A file that doesn't look whole (or a 2007 DWG, which can't be told) never replaces a backup
+    // already there. With none yet it is still kept: the checks can be wrong about a real file,
+    // and this save is about to replace the only copy.
+    let whole = looks_like_drawing(&head) && completeness(&head, &tail, len) == Some(true);
+    if !whole && (len == 0 || bak.exists()) {
         log::warn!("save: {} doesn't look like a whole drawing; its backup is left as it was", path.display());
         return Ok(());
     }
@@ -719,6 +721,17 @@ pub fn not_saved_message(lost: &std::collections::BTreeMap<String, usize>) -> Op
     }
     let list: Vec<String> = lost.iter().map(|(t, n)| format!("{n} {t}")).collect();
     Some(format!("Not saved in the DWG file (its writer can't write these object types yet; DXF keeps them): {}", list.join(", ")))
+}
+
+/// What saving the active drawing to `path` would leave out, before anything is written: empty
+/// when the format keeps everything. The interactive save asks with this; [`save_reporting`]
+/// reports the same list afterwards to callers that never get a dialog.
+pub fn loss_on_save(s: &Session, path: &str) -> std::collections::BTreeMap<String, usize> {
+    if !drops_unknown(path) {
+        return Default::default();
+    }
+    let version = drawing_version(s, path);
+    s.doc().map(|d| not_saved_as(d, version)).unwrap_or_default()
 }
 
 /// Whether saving to `path` leaves out the entities [`not_saved`] counts: DWG does (the DWG

@@ -25,7 +25,7 @@ fn temp_dir(tag: &str) -> std::path::PathBuf {
 }
 
 fn circles(path: &std::path::Path) -> usize {
-    let d = cadcraft_io::read(&std::fs::read(path).unwrap(), &path.to_string_lossy()).unwrap();
+    let d = cadcraft_io::read(&std::fs::read(path).unwrap(), &*path.to_string_lossy()).unwrap();
     d.model.iter().filter(|e| matches!(e.kind, cadcraft_engine::doc::EntityKind::Circle(_))).count()
 }
 
@@ -237,4 +237,24 @@ fn a_dwg_cut_off_anywhere_keeps_the_good_backup() {
         assert_eq!(circles(&backup_path(&path)), 1, "{version}: the cut-off file didn't replace it");
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+/// The checks can be wrong about a real file. With no backup yet, a file that doesn't look whole
+/// is still kept, because the save is about to replace the only copy of it.
+#[test]
+fn a_file_that_looks_damaged_is_kept_when_there_is_no_backup_yet() {
+    let _saving = saving();
+    hooks();
+    let dir = temp_dir("first");
+    let path = dir.join("Plan.dxf");
+    let p = path.to_string_lossy().to_string();
+    let mut s = Session::new();
+    add_circle(&mut s, 0.0);
+    s.execute("saveas", &json!({ "path": p })).unwrap();
+    let odd = b"AC1032 but not as this header expects it".to_vec();
+    std::fs::write(&path, &odd).unwrap();
+    add_circle(&mut s, 5.0);
+    s.execute("qsave", &json!({})).unwrap();
+    assert_eq!(std::fs::read(backup_path(&path)).unwrap(), odd);
+    let _ = std::fs::remove_dir_all(&dir);
 }

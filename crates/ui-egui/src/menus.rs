@@ -292,6 +292,16 @@ fn should_pick_file_path(id: &str, params: &Value) -> bool {
     if id.starts_with("ui.") { params.is_null() || (params.get("path").is_none() && params.get("data").is_none()) } else { params.is_null() }
 }
 
+/// A user's QSAVE: a drawing with no file yet picks one, and saving over a file that would lose
+/// content asks first. `None` lets the engine save. JSON calls carry params and never get here;
+/// they report the loss in their result instead.
+fn user_qsave(app: &mut CadApp) -> Option<Result<Value, String>> {
+    if app.session.state().is_ok_and(|s| s.path.is_none()) {
+        return run_ui_command(app, "ui.saveas", &Value::Null);
+    }
+    app.hold_lossy_save().then_some(Ok(Value::Null))
+}
+
 fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
     if let Some(result) = route_ui_subsystems(app, id, params) {
         return Some(result);
@@ -370,7 +380,7 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             }
             Ok(Value::Null)
         }
-        "qsave" if no_path && app.session.state().is_ok_and(|s| s.path.is_none()) => return run_ui_command(app, "ui.saveas", &Value::Null),
+        "qsave" if no_path => return user_qsave(app),
         // EXPORTPDF from the menu or typed: ask where to save the PDF (PLOT and PRINT open the Plot
         // dialog, `managers::route`). JSON calls (scripts, control channel, MCP) always carry
         // params, never get here and never open a dialog.
