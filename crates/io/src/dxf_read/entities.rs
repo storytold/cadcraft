@@ -121,7 +121,9 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
         return None;
     }
     let t = T(tags);
-    let c = common(&t);
+    // MTEXT reuses group 48 for column width; embedded objects also have their own groups.
+    // Keep those out of Common without changing the tags used for the entity's contents.
+    let c = common(&T(if kind == "MTEXT" { mtext_dxf::before_columns(tags) } else { tags }));
     let k = match kind {
         "LINE" => EntityKind::Line(Line { a: t.p(10), b: t.p(11) }),
         "POINT" => EntityKind::Point(Point { p: t.p(10), angle: t.fd(50, 0.0).to_radians() }),
