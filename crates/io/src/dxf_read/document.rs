@@ -206,8 +206,8 @@ pub(super) fn place_blocks(d: &mut Drawing, blocks: Vec<BlockDef>, rx: &mut Rx, 
         let mut b = Block::new(&name);
         b.base = base;
         b.description = description;
-        if let Some(&(units, explodable)) = rx.block_props.get(&up) {
-            (b.units, b.explodable) = (units, explodable);
+        if let Some(p) = rx.block_props.get(&up) {
+            (b.units, b.explodable, b.scale_uniformly, b.annotative) = (p.units, p.explodable, p.scale_uniformly, p.annotative);
         }
         if xref & 4 != 0 {
             b.xref_path = Some(String::new());

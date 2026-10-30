@@ -81,7 +81,7 @@ pub fn entity_bounds(d: &Drawing, e: &Entity, depth: usize) -> Bounds2 {
         match d.anno_draw(e) {
             crate::AnnoDraw::Plain => {}
             crate::AnnoDraw::Hidden => return Bounds2::EMPTY,
-            crate::AnnoDraw::Scaled(f) => return bounds_in(d, &crate::anno_scaled(e, f), 0, &mut HashMap::new()),
+            crate::AnnoDraw::Scaled { factor, by } => return bounds_in(d, &crate::anno_placed(e, factor, by), 0, &mut HashMap::new()),
         }
     }
     bounds_in(d, e, depth, &mut HashMap::new())

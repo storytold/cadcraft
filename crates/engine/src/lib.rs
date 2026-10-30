@@ -292,6 +292,11 @@ impl Session {
         Ok(h)
     }
 
+    /// The annotation scale of the active MSPACE viewport ([`DocState::anno_view`]).
+    pub fn anno_view(&self) -> Option<f64> {
+        self.state().ok().and_then(DocState::anno_view)
+    }
+
     /// World units per pixel at the current view.
     pub fn pixel_size(&self) -> f64 {
         let v = self.state().map(DocState::view).unwrap_or_default();

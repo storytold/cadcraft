@@ -12,6 +12,7 @@ pub(crate) fn transform_entities(s: &mut Session, hs: &[Handle], m: &Mat3, copy:
             let nh = d.new_handle();
             let mut ne = Entity { handle: nh, ..e };
             ne.kind.transform(m);
+            ne.common.transform_moves(m);
             if let Some(st) = d.space_mut(&sp) {
                 st.push(ne);
                 out.push(nh);
@@ -21,7 +22,10 @@ pub(crate) fn transform_entities(s: &mut Session, hs: &[Handle], m: &Mat3, copy:
             if locked {
                 continue;
             }
-            d.modify_entity(*h, |e| e.kind.transform(m))?;
+            d.modify_entity(*h, |e| {
+                e.kind.transform(m);
+                e.common.transform_moves(m);
+            })?;
             out.push(*h);
         }
     }
