@@ -34,6 +34,7 @@ pub mod dialogs;
 pub mod docking;
 pub mod hatchdlg;
 mod mtext_editor;
+pub mod objectscale;
 mod panel_state;
 pub mod spacemouse;
 pub mod switch;
@@ -296,6 +297,8 @@ pub struct CadApp {
     pub alias_dlg: Option<aliasdlg::AliasDlgState>,
     /// The Hatch and Gradient dialog while open or picking ([`hatchdlg`]).
     pub hatch_dlg: Option<hatchdlg::HatchDlgState>,
+    /// The Annotation Object Scale dialog while open ([`objectscale`]).
+    pub objectscale: Option<objectscale::ObjectScaleDlg>,
     /// The Edit Block Definition dialog ([`bedit`]).
     pub bedit: bedit::State,
     /// The startup update check and its prompt (desktop; [`updates_ui`]).
@@ -350,6 +353,7 @@ impl CadApp {
             gpu_notice: None,
             alias_dlg: None,
             hatch_dlg: None,
+            objectscale: None,
             bedit: bedit::State::default(),
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
