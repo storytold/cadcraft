@@ -520,7 +520,7 @@ fn saveas_params(ui: &crate::UiState, session: &cadcraft_engine::Session, path: 
 
 fn set_save_format(app: &mut CadApp, format: crate::SaveFormat) -> Value {
     app.ui.save_format = format;
-    app.session.echo(format!("New drawings will be saved as {}", format.as_str().to_ascii_uppercase()));
+    app.session.echo(format!("Save As will suggest {}", format.as_str().to_ascii_uppercase()));
     json!({ "saveFormat": format.as_str() })
 }
 

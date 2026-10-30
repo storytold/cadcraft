@@ -396,6 +396,13 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
                 if !st.apply_fields(&serde_json::Map::from_iter([((*field).to_string(), v.clone())])).is_empty() {
                     return Err(bad());
                 }
+                // A real style field (DIMJOGANG, DIMSCALE...) is a real variable, even set to a
+                // whole number first, so a later fraction still fits. It takes the value the style
+                // took.
+                if let Some(f) = serde_json::to_value(&st).ok().and_then(|j| j.get(*field).filter(|f| f.is_f64()).and_then(|f| f.as_f64())) {
+                    d.header.set_f64(&n, f);
+                    return Ok(());
+                }
             }
             let val = match v {
                 Value::Number(x) if x.is_i64() => cadcraft_doc::HVal::Int(x.as_i64().unwrap_or(0)),
