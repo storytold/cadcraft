@@ -8,11 +8,13 @@
 //!   stops being associative (with a message).
 //! - The hatch moved or reshaped without its boundary: it stops being associative.
 //! - A new hatch (COPY, paste, EXPLODE) whose loops aren't where its objects are: it stops being
-//!   associative.
+//!   associative. COPY, MIRROR, ROTATE and SCALE that copy a hatch together with all of its
+//!   objects point the copy at the copied objects first ([`remap_sources`]), so it follows them.
 //!
 //! Only hatches whose own objects changed are traced again, so a command costs a scan of the
 //! hatches plus the work on the ones it touched.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use cadcraft_doc::{Drawing, EntityKind, Handle, Hatch, HatchLoop, entity_bounds};
@@ -124,6 +126,24 @@ pub(super) fn same_shape(a: &[PolyVertex], b: &[PolyVertex]) -> bool {
 pub(super) fn detach(h: &mut Hatch) {
     h.associative = false;
     h.loops.iter_mut().for_each(|l| l.sources.clear());
+}
+
+/// Point the loops of a copied hatch at the copies of its objects, when every object of every
+/// loop was copied with it (`map`: original handle to copy). Returns whether it did; a hatch
+/// copied without all of its objects keeps its sources, and [`update`] ends its link.
+pub(crate) fn remap_sources(h: &mut Hatch, map: &HashMap<Handle, Handle>) -> bool {
+    let srcs = || h.loops.iter().flat_map(|l| &l.sources);
+    if !h.associative || srcs().next().is_none() || !srcs().all(|s| map.contains_key(s)) {
+        return false;
+    }
+    for l in &mut h.loops {
+        for s in &mut l.sources {
+            if let Some(&c) = map.get(s) {
+                *s = c;
+            }
+        }
+    }
+    true
 }
 
 /// Loops of `h` that aren't loops of `prev` (a hatch split by HATCHEDIT, or one that lost an
