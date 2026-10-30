@@ -353,7 +353,7 @@ fn write_dimension_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper
         // The actual measurement (read-only in DXF): AutoLISP's entget shows it.
         w.f(42, g.measurement);
         if !dm.text.is_empty() {
-            w.s(1, &dm.text);
+            w.s(1, crate::dxf_read::mtext_dxf::escape_carets(&dm.text));
         }
         w.s(3, &dm.style);
         if dm.text_rotation != 0.0 {
@@ -622,11 +622,11 @@ fn write_viewport_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper:
         if let Some(h) = clip {
             w.s(340, h.hex());
         }
-        // AutoCAD's frozen-layer list: one soft pointer per layer, to its LAYER record. Other
-        // programs read only this; CADCraft prefers its own xdata below when present.
+        // AutoCAD's frozen-layer list: one pointer per layer, to its LAYER record ([`Ctx::frozen_341`]
+        // picks the group). Other programs read only this; CADCraft prefers its own xdata below.
         for name in &v.frozen_layers {
             if let Some(h) = w.layers.get(&name.to_ascii_uppercase()).cloned() {
-                w.s(341, h);
+                w.s(if cx.frozen_341 { 341 } else { 331 }, h);
             }
         }
         // One CADCraft xdata group holds both lists: readers stop at the first group of an app.

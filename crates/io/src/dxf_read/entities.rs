@@ -1,5 +1,6 @@
 use super::common::{T, common, ocs};
 use super::hatch::hatch;
+use super::mtext_dxf;
 use super::text::{attdef, attrib_modes, attrib_props, mtext_from, multiline_attrib, split_embedded, text_from};
 use super::{
     Arc, Attrib, Circle, Common, DimKind, Dimension, Ellipse, EntityKind, Face3d, Handle, HashMap, Helix, HelixConstrain, Insert, Leader, Line,
@@ -189,7 +190,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
                 p14: t.p(14),
                 p15: t.p(15),
                 p16: t.p(16),
-                text: t.s(1).unwrap_or_default(),
+                text: mtext_dxf::unescape_carets(&t.s(1).unwrap_or_default()),
                 style: t.s(3).unwrap_or_else(|| "Standard".into()),
                 measurement: t.fd(42, 0.0),
                 text_rotation: t.fd(53, 0.0).to_radians(),
@@ -456,14 +457,18 @@ pub(super) fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityK
             }
             rx.mleader_fix.push((h, pending));
         }
-        // CADCraft's VPFROZEN xdata wins; otherwise AutoCAD's group 341 layer handles.
+        // CADCraft's VPFROZEN xdata wins; otherwise the layer handles of group 331 (DXF 2004 and
+        // later) or 341 (DXF 2000).
         ("VIEWPORT", EntityKind::Viewport(v)) if v.frozen_layers.is_empty() => {
-            v.frozen_layers = tags
-                .iter()
-                .take_while(|t| t.code < 1000)
-                .filter(|t| t.code == 341)
-                .filter_map(|t| rx.layers.get(&t.str().trim().to_ascii_uppercase()).cloned())
-                .collect();
+            // Each layer once, in file order; a set keeps a long list linear.
+            let mut seen = std::collections::HashSet::new();
+            for t in tags.iter().take_while(|t| t.code < 1000).filter(|t| t.code == 331 || t.code == 341) {
+                if let Some(name) = rx.layers.get(&t.str().trim().to_ascii_uppercase())
+                    && seen.insert(name.as_str())
+                {
+                    v.frozen_layers.push(name.clone());
+                }
+            }
         }
         _ => {}
     }

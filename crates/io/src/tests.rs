@@ -604,6 +604,12 @@ fn viewport_frozen_layers_roundtrip() {
     assert!(frozen.contains(&(3, Vec::new())), "{frozen:?}");
 }
 
+/// `d` as an R2018 DXF (frozen viewport layers in group 331).
+fn dxf_2018(d: &Drawing) -> String {
+    let opts = SaveOptions { version: Some(Version::R2018), binary: false };
+    String::from_utf8(write_with(d, "t.dxf", &opts).unwrap()).unwrap()
+}
+
 /// A layout with viewport 2 frozen on `Walls` and `A B` (both real layers), and its written DXF as
 /// (code, value) pairs.
 fn frozen_vp_dxf() -> (Drawing, Vec<(String, String)>) {
@@ -624,10 +630,14 @@ fn frozen_vp_dxf() -> (Drawing, Vec<(String, String)>) {
         on: true,
     });
     d.add(&paper, Common::default(), vp).unwrap();
-    let text = write_dxf(&d);
+    let text = dxf_2018(&d);
+    (d, pairs(&text))
+}
+
+/// The (code, value) pairs of DXF text.
+fn pairs(text: &str) -> Vec<(String, String)> {
     let lines: Vec<&str> = text.lines().collect();
-    let pairs = lines.chunks(2).map(|c| (c[0].trim().to_string(), c.get(1).copied().unwrap_or("").to_string())).collect();
-    (d, pairs)
+    lines.chunks(2).map(|c| (c[0].trim().to_string(), c.get(1).copied().unwrap_or("").to_string())).collect()
 }
 
 /// The pair range of the VIEWPORT record whose group 69 is `id`.
@@ -677,26 +687,33 @@ fn join(p: &[(String, String)]) -> String {
 }
 
 #[test]
-fn viewport_frozen_layers_written_as_341_handles() {
+fn viewport_frozen_layers_written_as_331_handles() {
     let (_, p) = frozen_vp_dxf();
     let r = vp_record(&p, "2");
     let rec = &p[r];
+    let h331: Vec<&str> = rec.iter().filter(|(c, _)| c == "331").map(|(_, v)| v.as_str()).collect();
+    assert_eq!(h331, vec![layer_handle(&p, "Walls").as_str(), layer_handle(&p, "A B").as_str()]);
+    let last331 = rec.iter().rposition(|(c, _)| c == "331").unwrap();
+    let x = rec.iter().position(|(c, _)| c == "1001").expect("xdata");
+    assert!(last331 < x, "331 must precede the xdata");
+    // An R2000 DXF holds them in group 341, as the DXF 2000 Reference has them.
+    let (d, _) = frozen_vp_dxf();
+    let p = pairs(&write_dxf(&d));
+    let rec = &p[vp_record(&p, "2")];
     let h341: Vec<&str> = rec.iter().filter(|(c, _)| c == "341").map(|(_, v)| v.as_str()).collect();
     assert_eq!(h341, vec![layer_handle(&p, "Walls").as_str(), layer_handle(&p, "A B").as_str()]);
-    let last341 = rec.iter().rposition(|(c, _)| c == "341").unwrap();
-    let x = rec.iter().position(|(c, _)| c == "1001").expect("xdata");
-    assert!(last341 < x, "341 must precede the xdata");
+    assert!(!rec.iter().any(|(c, _)| c == "331"));
 }
 
 #[test]
-fn viewport_frozen_layers_read_from_341_without_xdata() {
+fn viewport_frozen_layers_read_from_331_without_xdata() {
     let (_, p) = frozen_vp_dxf();
     let r = vp_record(&p, "2");
-    // Strip the CADCraft xdata, and add a 341 to a handle that names no layer.
+    // Strip the CADCraft xdata, and add a 331 to a handle that names no layer.
     let x = p[r.clone()].iter().position(|(c, _)| c == "1001").unwrap() + r.start;
     let mut q: Vec<(String, String)> = p[..r.start].to_vec();
     let mut head = p[r.start..x].to_vec();
-    head.push(("341".into(), "FFFFF".into()));
+    head.push(("331".into(), "FFFFF".into()));
     q.extend(head);
     q.extend(p[r.end..].iter().cloned());
     let back = read_dxf(join(&q).as_bytes()).unwrap();
@@ -704,14 +721,50 @@ fn viewport_frozen_layers_read_from_341_without_xdata() {
 }
 
 #[test]
-fn viewport_frozen_xdata_wins_over_341() {
+fn a_331_only_viewport_freeze_survives_open_and_save() {
+    // As AutoCAD 2026 and ezdxf write it: group 331, no CADCraft xdata. Opening and saving it,
+    // as DXF or DWG, keeps the freeze in the file (it used to be dropped on the first save).
     let (_, p) = frozen_vp_dxf();
     let r = vp_record(&p, "2");
-    // Point every 341 at layer 0: the xdata list must still be what is read.
+    let x = p[r.clone()].iter().position(|(c, _)| c == "1001").unwrap() + r.start;
+    let mut q: Vec<(String, String)> = p[..x].to_vec();
+    q.extend(p[r.end..].iter().cloned());
+    let opened = read_dxf(join(&q).as_bytes()).unwrap();
+    assert_eq!(viewport_frozen(&opened, 2), vec!["Walls".to_string(), "A B".to_string()]);
+    let frozen_331 = |p: &[(String, String)]| -> Vec<String> {
+        let rec = &p[vp_record(p, "2")];
+        rec.iter().filter(|(c, _)| c == "331").map(|(_, v)| v.trim().to_string()).collect()
+    };
+    let saved = pairs(&dxf_2018(&opened));
+    assert_eq!(frozen_331(&saved), [layer_handle(&saved, "Walls"), layer_handle(&saved, "A B")]);
+    let dwg = write(&opened, "t.dwg").unwrap();
+    let from_dwg = pairs(&String::from_utf8_lossy(&cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()));
+    assert_eq!(frozen_331(&from_dwg), [layer_handle(&from_dwg, "Walls"), layer_handle(&from_dwg, "A B")]);
+}
+
+#[test]
+fn viewport_frozen_layers_read_from_341_as_dxf_2000_writes_them() {
+    let (_, p) = frozen_vp_dxf();
+    let r = vp_record(&p, "2");
+    // No xdata, the handles in group 341, and a layer listed in both groups is read once.
+    let x = p[r.clone()].iter().position(|(c, _)| c == "1001").unwrap() + r.start;
+    let mut q: Vec<(String, String)> = p[..r.start].to_vec();
+    q.extend(p[r.start..x].iter().map(|(c, v)| (if c == "331" { "341".into() } else { c.clone() }, v.clone())));
+    q.push(("331".into(), layer_handle(&p, "Walls")));
+    q.extend(p[r.end..].iter().cloned());
+    let back = read_dxf(join(&q).as_bytes()).unwrap();
+    assert_eq!(viewport_frozen(&back, 2), vec!["Walls".to_string(), "A B".to_string()]);
+}
+
+#[test]
+fn viewport_frozen_xdata_wins_over_331() {
+    let (_, p) = frozen_vp_dxf();
+    let r = vp_record(&p, "2");
+    // Point every 331 at layer 0: the xdata list must still be what is read.
     let zero = layer_handle(&p, "0");
     let mut q = p.clone();
     for t in &mut q[r] {
-        if t.0 == "341" {
+        if t.0 == "331" {
             t.1 = zero.clone();
         }
     }
@@ -725,7 +778,11 @@ fn viewport_frozen_layers_survive_dwg() {
     let dwg = write(&d, "t.dwg").unwrap();
     let back = read(&dwg, "t.dwg").unwrap();
     assert_eq!(viewport_frozen(&back, 2), vec!["Walls".to_string(), "A B".to_string()]);
-    // Survives via the CADCraft xdata: the DWG converter does not yet carry group 341 itself.
+    // The DWG itself holds them (group 331, what AutoCAD reads), not only the CADCraft xdata.
+    let p = pairs(&String::from_utf8(cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).unwrap());
+    let rec = &p[vp_record(&p, "2")];
+    let frozen: Vec<&str> = rec.iter().filter(|(c, _)| c == "331").map(|(_, v)| v.trim()).collect();
+    assert_eq!(frozen, [layer_handle(&p, "Walls").as_str(), layer_handle(&p, "A B").as_str()]);
 }
 
 #[test]
