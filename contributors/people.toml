@@ -96,5 +96,9 @@ real_name = "Doan Huynh Huu Khuong"
 display_name = "Doan Huynh Huu Khuong"
 sync_github_name = false
 
+
+[people.dylanmtaylor]
+sync_github_name = true
+
 [people.tyrel]
 real_name = "Tyrel Haveman"

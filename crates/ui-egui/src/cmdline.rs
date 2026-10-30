@@ -379,13 +379,11 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
                         app.cmd.buffer.pop();
                     }
                 }
-                Key::ArrowUp if !modifiers.any() => {
-                    if !app.cmd.history.is_empty() {
-                        let n = app.cmd.history.len();
-                        let pos = app.cmd.history_pos.map(|p| p.saturating_sub(1)).unwrap_or(n - 1);
-                        app.cmd.history_pos = Some(pos);
-                        app.cmd.buffer = app.cmd.history.get(pos).cloned().unwrap_or_default();
-                    }
+                Key::ArrowUp if !modifiers.any() && !app.cmd.history.is_empty() => {
+                    let n = app.cmd.history.len();
+                    let pos = app.cmd.history_pos.map(|p| p.saturating_sub(1)).unwrap_or(n - 1);
+                    app.cmd.history_pos = Some(pos);
+                    app.cmd.buffer = app.cmd.history.get(pos).cloned().unwrap_or_default();
                 }
                 Key::ArrowDown if !modifiers.any() => {
                     if !options_key(app, 1)
