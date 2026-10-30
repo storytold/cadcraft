@@ -294,11 +294,7 @@ fn draw_wipeout(b: &mut Builder, ctx: &Ctx, w: &cadcraft_doc::Wipeout, rgb: Ink,
         _ => true,
     };
     if frame {
-        let mut pts = w.boundary.clone();
-        if let Some(f) = pts.first().copied() {
-            pts.push(f);
-        }
-        b.polyline(ctx, rgb, lw, &pts);
+        b.polyline(ctx, rgb, lw, &w.closed_boundary());
     }
 }
 

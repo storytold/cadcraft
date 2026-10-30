@@ -311,7 +311,11 @@ pub(super) fn apply_sortents(
     for (owner, map) in tables {
         let Some(name) = brs.get(owner) else { continue };
         let up = name.to_ascii_uppercase();
-        let key = |e: &Entity| map.get(&e.handle).copied().unwrap_or(e.handle.0);
+        // A sort handle of 0 draws last (ezdxf `reorder`, which notes AutoCAD defines it, undocumented).
+        let key = |e: &Entity| {
+            let k = map.get(&e.handle).copied().unwrap_or(e.handle.0);
+            (k == 0, k)
+        };
         if up == "*MODEL_SPACE" {
             d.model.sort_by_key(key);
         } else if up.starts_with("*PAPER_SPACE") {

@@ -3,7 +3,7 @@
 //! time or by replacing a string in all of them. Attribute tags match in any case, as in AutoCAD.
 
 use cadcraft_doc::color::Color;
-use cadcraft_doc::{AttribProps, Common, EntityKind, Handle};
+use cadcraft_doc::{AttribProps, Common, EntityKind, HAlign, Handle, Text, VAlign};
 use serde_json::{Map, Value, json};
 
 use crate::cmd::curves::KW;
@@ -67,7 +67,7 @@ fn run(s: &mut Session, p: &Value) -> Result<Value> {
         if let EntityKind::Insert(i) = &mut e.kind {
             for a in &mut i.attribs {
                 if let Some(v) = value_for(&vals, &a.tag) {
-                    a.text.value = v;
+                    set_value(&mut a.text, v);
                     n += 1;
                 }
             }
@@ -130,11 +130,27 @@ fn edit(s: &mut Session, (h, k): (Handle, usize), f: impl FnOnce(&str) -> Option
             && let Some(a) = ins.attribs.get_mut(k)
             && let Some(v) = f(&a.text.value).filter(|v| *v != a.text.value)
         {
-            a.text.value = v;
+            set_value(&mut a.text, v);
             changed = true;
         }
     })?;
     Ok(changed)
+}
+
+/// Refresh the derived baseline after a value change, even one within the writer's
+/// imported-font tolerance. Equal XY points request recomputation on export; retain
+/// both elevations and the independent endpoints used by Aligned/Fit text.
+fn set_value(text: &mut Text, value: String) {
+    if text.value == value {
+        return;
+    }
+    text.value = value;
+    if !matches!((text.halign, text.valign), (HAlign::Left, VAlign::Baseline) | (HAlign::Aligned | HAlign::Fit, _))
+        && let Some(anchor) = text.align_pt
+    {
+        text.insert.x = anchor.x;
+        text.insert.y = anchor.y;
+    }
 }
 
 /// Change the properties set on attribute `k` of block reference `h`.

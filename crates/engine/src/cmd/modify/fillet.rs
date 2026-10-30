@@ -118,7 +118,11 @@ pub(super) fn run_chamfer(s: &mut Session, p: &Value) -> Result<Value> {
         }
         (None, None) => {
             let d1 = f64_or(p, "d1", s.doc()?.header.f64("CHAMFERA", 0.0));
-            ChamferCut::Dist(d1, f64_or(p, "d2", d1))
+            let d2 = f64_or(p, "d2", d1);
+            if !(d1.is_finite() && d1 >= 0.0 && d2.is_finite() && d2 >= 0.0) {
+                return Err(bad("chamfer", "`d1` and `d2` must be >= 0"));
+            }
+            ChamferCut::Dist(d1, d2)
         }
         _ => return Err(bad("chamfer", "`length` (>= 0) and `angle` (degrees, 0 to 180) go together")),
     };

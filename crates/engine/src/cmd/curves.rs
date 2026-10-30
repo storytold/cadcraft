@@ -479,6 +479,19 @@ impl Chain {
         }
         best.1
     }
+    /// The curve parameter of the point on the chain nearest `p`: the index of its segment plus
+    /// the fraction along it (AutoCAD's polyline parameter; 0..1 along a line or an arc).
+    pub fn param_of(&self, p: Vec2) -> f64 {
+        let mut best = (f64::INFINITY, 0.0);
+        for (i, s) in self.segs.iter().enumerate() {
+            let c = s.closest(p);
+            let dd = c.dist(p);
+            if dd < best.0 {
+                best = (dd, i as f64 + seg_param(s, c));
+            }
+        }
+        best.1
+    }
     /// Reversed copy.
     pub fn reversed(&self) -> Chain {
         Chain { segs: self.segs.iter().rev().map(Segment::reversed).collect(), closed: self.closed }
@@ -504,6 +517,29 @@ impl Chain {
         }
         vs
     }
+}
+
+/// The polyline parameter of the point nearest `p` on spans `(start, end, bulge)` taken from the
+/// source vertices: the span's index plus the fraction along it. Unlike [`Chain::param_of`] it
+/// counts zero-length spans, which a polyline's parameter range includes (one per vertex) but its
+/// chain drops.
+pub fn vertex_param_of(spans: &[(Vec2, Vec2, f64)], p: Vec2) -> f64 {
+    let mut best = (f64::INFINITY, 0.0);
+    for (i, &(a, b, bulge)) in spans.iter().enumerate() {
+        if a.near(b, EPS) {
+            continue;
+        }
+        let seg = match cadcraft_geom::bulge_to_arc(a, b, bulge) {
+            Some((arc, ccw)) => Segment::Arc { arc, ccw },
+            None => Segment::Line(Line::new(a, b)),
+        };
+        let c = seg.closest(p);
+        let dd = c.dist(p);
+        if dd < best.0 {
+            best = (dd, i as f64 + seg_param(&seg, c));
+        }
+    }
+    best.1
 }
 
 /// Parameter (0..1 along travel) of a point on a segment.

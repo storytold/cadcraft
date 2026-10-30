@@ -375,6 +375,15 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
             let a = a.filter(|a| a.is_finite()).ok_or_else(bad)?;
             s.doc_mut()?.header.set_f64("ANGBASE", cadcraft_geom::norm_angle(a));
         }
+        // Whole numbers inside the range UNITS clamps to.
+        "LUNITS" | "LUPREC" | "AUNITS" | "AUPREC" => {
+            let (_, lo, hi) = crate::cmd::UNIT_RANGES.iter().find(|(k, ..)| k.eq_ignore_ascii_case(&n)).copied().ok_or_else(bad)?;
+            let i = as_i(v)
+                .or_else(|| as_f64(v).filter(|f| f.fract() == 0.0 && f.abs() < 1e15).map(|f| f as i64))
+                .filter(|i| (lo..=hi).contains(i))
+                .ok_or_else(bad)?;
+            s.doc_mut()?.header.set_i64(&n, i);
+        }
         "CONSTRAINTINFER" => s.doc_mut()?.parametric.settings.infer = as_bool(v).ok_or_else(bad)?,
         _ => {
             if let Some(r) = table::set(s, &n, v) {

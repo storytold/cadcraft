@@ -239,7 +239,7 @@ pub fn stretch_grip(kind: &EntityKind, index: usize, to: Vec2) -> Option<EntityK
             v.width = w;
             v.height = h;
         }
-        EntityKind::Wipeout(w) => *w.boundary.get_mut(index)? = to,
+        EntityKind::Wipeout(w) => w.set_vertex(index, to)?,
         EntityKind::Unknown(_) => return None,
     }
     Some(k)

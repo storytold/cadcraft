@@ -197,6 +197,9 @@ fn join_point(a: &Segment, b: &Segment) -> Option<Vec2> {
 pub(super) fn run_offset(s: &mut Session, p: &Value) -> Result<Value> {
     let h = targets(s, p)?.first().copied().ok_or_else(|| bad("offset", "`handle` is required"))?;
     let dist = f64_req("offset", p, "distance")?;
+    if dist == 0.0 {
+        return Err(bad("offset", "Requires a positive distance."));
+    }
     let side = point_req("offset", p, "side")?;
     let e = s.doc()?.entity(h).map(|e| (**e).clone()).ok_or_else(|| bad("offset", "no such object"))?;
     let k = offset_kind(&e.kind, dist.abs(), side).ok_or_else(|| bad("offset", "cannot offset that object"))?;

@@ -44,14 +44,16 @@ mod dim;
 mod fill;
 mod layout;
 mod text;
+mod wipeout;
 
 pub use block::{Attrib, AttribModes, AttribProps, Insert, MultilineAttrib, mtext_literal};
 pub use common::{Common, Handle, Lineweight, RawTag, Transparency};
 pub use curves::{Arc, Circle, Ellipse, Face3d, Line, LwPolyline, Point, Polyline3d, RayLine, Solid};
 pub use dim::{AssocSnap, DimAssoc, DimBreak, DimKind, DimMarks, Dimension, Inspection, JoggedRadius, Leader, MLeader};
-pub use fill::{Gradient, Hatch, HatchLoop, Wipeout};
+pub use fill::{Gradient, Hatch, HatchLoop};
 pub use layout::{Image, Table, TableCell, Viewport};
 pub use text::{HAlign, MText, MTextColumnType, MTextColumns, Text, VAlign};
+pub use wipeout::Wipeout;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Unknown {
     pub dxf_type: String,
@@ -226,11 +228,7 @@ impl EntityKind {
                 h.loops.iter().flat_map(|l| Polyline { vertices: l.vertices.clone(), closed: true }.segments()).map(Prim::Seg).collect()
             }
             EntityKind::Wipeout(w) => {
-                let mut pts = w.boundary.clone();
-                if let Some(f) = pts.first().copied() {
-                    pts.push(f);
-                }
-                pts.windows(2).filter_map(|w| Some(Prim::Seg(Segment::Line(GLine::new(*w.first()?, *w.get(1)?))))).collect()
+                w.closed_boundary().windows(2).filter_map(|w| Some(Prim::Seg(Segment::Line(GLine::new(*w.first()?, *w.get(1)?))))).collect()
             }
             EntityKind::Viewport(v) => {
                 let c = v.center.xy();
@@ -535,7 +533,7 @@ impl EntityKind {
                 Bounds2::new(c - h, c + h).corners().to_vec()
             }
             EntityKind::Image(i) => vec![i.insert.xy()],
-            EntityKind::Wipeout(w) => w.boundary.clone(),
+            EntityKind::Wipeout(w) => w.vertices().to_vec(),
             EntityKind::Table(t) => vec![t.insert.xy()],
             EntityKind::Tolerance(t) => vec![t.insert.xy()],
             EntityKind::Unknown(_) => Vec::new(),

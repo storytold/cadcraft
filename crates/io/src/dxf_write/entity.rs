@@ -665,14 +665,9 @@ fn write_wipeout_entity(w: &mut W, _d: &Drawing, e: &Entity, owner: &str, paper:
         w.i(282, 50);
         w.i(283, 0);
         w.i(71, 2);
-        let mut pts = wo.boundary.clone();
-        if let (Some(first), Some(last)) = (pts.first().copied(), pts.last().copied())
-            && first != last
-        {
-            pts.push(first);
-        }
+        let pts = wo.closed_boundary();
         w.i(91, pts.len() as i64);
-        for q in pts {
+        for q in pts.iter() {
             w.p2(14, Vec2::new((q.x - o.x) / sx - 0.5, 0.5 - (q.y - o.y) / sy));
         }
     }
