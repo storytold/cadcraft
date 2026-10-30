@@ -1,7 +1,7 @@
 use super::draw::entity;
 use super::props::{resolve, resolve_common, transparency};
 use super::text_entity::{mtext, place_text_entity};
-use super::{Builder, Color, Ctx, Entity, EntityKind, Ink, Lineweight, Mat3, Vec2};
+use super::{Builder, Color, Ctx, Entity, EntityKind, Ink, Lineweight, Mat3, Vec2, cull};
 
 pub(crate) fn sub_ctx<'a>(ctx: &Ctx<'a>, e: &Entity, m: Mat3) -> Ctx<'a> {
     let layer = if e.common.layer == "0" { ctx.block_layer.clone() } else { Some(e.common.layer.clone()) };
@@ -47,6 +47,8 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
     if let Some(blk) = ctx.d.block(&ins.block) {
         let cols = ins.cols.clamp(1, 10_000);
         let rows = ins.rows.clamp(1, 10_000);
+        // Measured once for every copy of the reference.
+        let reach = b.cull.map(|w| (w, cull::block_reach(ctx.d, blk)));
         'copies: for r in 0..rows {
             for c in 0..cols {
                 if !b.expand() {
@@ -55,9 +57,14 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
                 let off = Vec2::new(ins.col_spacing * f64::from(c), ins.row_spacing * f64::from(r)).rotate(ins.rotation);
                 let m = Mat3::translate(off).then_before(ins.transform(blk.base.xy()));
                 let sub = Ctx { block_pstyle: b.named, block_transparency: b.transparency, ..sub_ctx(ctx, e, m) };
-                for be in blk.entities.iter() {
+                let shown = match reach.as_ref().map(|(w, r)| r.copy(&sub.xf, w)) {
+                    Some(cull::CopyReach::Nothing) => continue,
+                    Some(cull::CopyReach::Some(s)) => Some(s),
+                    Some(cull::CopyReach::All) | None => None,
+                };
+                for (k, be) in blk.entities.iter().enumerate() {
                     // Constant/visible attribute definitions inside blocks are not drawn; attribs are.
-                    if matches!(be.kind, EntityKind::AttDef(_)) {
+                    if matches!(be.kind, EntityKind::AttDef(_)) || shown.as_ref().is_some_and(|s| s.get(k) == Some(&false)) {
                         continue;
                     }
                     if !b.expand() {

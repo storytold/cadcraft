@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 pub mod clip;
+mod cull;
 mod dim;
 mod fill;
 mod hatch;
@@ -125,6 +126,9 @@ struct Builder<'a> {
     shared_budget: Option<&'a std::sync::atomic::AtomicUsize>,
     /// Transparency (percent) of the entity being drawn.
     transparency: u8,
+    /// The window this build culls against (world units of the space being built): top-level
+    /// objects and block contents wholly outside it are left out. `None` = build everything.
+    cull: Option<Bounds2>,
 }
 
 /// Upper bound on the block contents drawn per display list (each block reference, MINSERT copy

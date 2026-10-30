@@ -3,7 +3,7 @@ use super::display::append;
 use super::display::{DisplayList, Kind, NO_LAYER, PlotText, VIEWPORT_CONTENT};
 use super::draw::entity;
 use super::viewports::{MAX_VIEWPORTS, viewport};
-use super::{Bounds2, Builder, Color, Ctx, Drawing, Entity, EntityKind, Handle, Lineweight, Mat3, Space, Vec2, paper, pen, plotstyle, point};
+use super::{Bounds2, Builder, Color, Ctx, Drawing, Entity, EntityKind, Handle, Lineweight, Mat3, Space, Vec2, cull, paper, pen, plotstyle, point};
 
 /// Build options.
 #[derive(Clone, Debug)]
@@ -24,8 +24,10 @@ pub struct Options {
     /// Plot style table to draw with. When `None`, [`build`] of a layout whose page setup has
     /// "Display plot styles" on uses the layout's table; [`build_plot`] uses none.
     pub plot_style_table: Option<std::sync::Arc<cadcraft_doc::PlotStyleTable>>,
-    /// The area being looked at (world units of the space being built), for on-screen builds:
-    /// hatch patterns are only generated inside it. `None` = everywhere (plots, exports, picks).
+    /// The area being looked at (world units of the space being built): hatch patterns are only
+    /// generated inside it. A model-space [`build_plot`] also leaves out the top-level objects
+    /// and block contents whose bounds are wholly outside it (with a small margin for
+    /// lineweights); objects without measurable bounds are always built. `None` = everywhere.
     pub view: Option<Bounds2>,
     /// Draw objects with their transparency ([`DPrim::transparency`]). Off by default: the screen
     /// follows TRANSPARENCYDISPLAY, plots the page setup's "Plot transparency".
@@ -96,7 +98,9 @@ pub(crate) fn top_ctx<'a>(d: &'a Drawing, xf: Mat3, top: Handle, frozen: &'a [St
 fn build_space(d: &Drawing, space: &Space, opts: &Options, plotting: bool) -> DisplayList {
     let opts = &with_point_view(d, space, opts);
     let styler = style_table(d, space, opts, plotting).map(|t| plotstyle::Styler::new(d, t));
-    let mut b = Builder { list: DisplayList::default(), opts, plotting, styles: styler.as_ref(), named: None, shared_budget: None, transparency: 0 };
+    let cull = cull::window(opts, space, plotting);
+    let mut b =
+        Builder { list: DisplayList::default(), opts, plotting, styles: styler.as_ref(), named: None, shared_budget: None, transparency: 0, cull };
     if let Space::Paper(name) = space {
         b.list.sheet = paper::sheet(d, name);
     }
@@ -109,6 +113,11 @@ fn build_space(d: &Drawing, space: &Space, opts: &Options, plotting: bool) -> Di
         }
         let mut viewports = 0usize;
         for e in store.iter() {
+            if let Some(w) = &b.cull
+                && !cull::entity_reaches(d, e, w)
+            {
+                continue;
+            }
             if paper && let EntityKind::Viewport(vp) = &e.kind {
                 if viewports < MAX_VIEWPORTS {
                     viewports += 1;
@@ -143,13 +152,26 @@ fn build_parallel(b: &mut Builder, d: &Drawing, store: &cadcraft_doc::EntityStor
     use rayon::prelude::*;
     let ents: Vec<&std::sync::Arc<Entity>> = store.iter().collect();
     let budget = std::sync::atomic::AtomicUsize::new(0);
-    let (opts, plotting) = (b.opts, b.plotting);
+    let (opts, plotting, window) = (b.opts, b.plotting, b.cull);
     let parts: Vec<DisplayList> = ents
         .par_chunks(PARALLEL_CHUNK)
         .map(|chunk| {
-            let mut part =
-                Builder { list: DisplayList::default(), opts, plotting, styles: None, named: None, shared_budget: Some(&budget), transparency: 0 };
+            let mut part = Builder {
+                list: DisplayList::default(),
+                opts,
+                plotting,
+                styles: None,
+                named: None,
+                shared_budget: Some(&budget),
+                transparency: 0,
+                cull: window,
+            };
             for e in chunk {
+                if let Some(w) = &window
+                    && !cull::entity_reaches(d, e, w)
+                {
+                    continue;
+                }
                 entity(&mut part, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
             }
             part.list
@@ -200,7 +222,8 @@ pub fn build_entities<'a, I: IntoIterator<Item = &'a Entity>>(d: &Drawing, ents:
     } else {
         opts
     };
-    let mut b = Builder { list: DisplayList::default(), opts, plotting: false, styles: None, named: None, shared_budget: None, transparency: 0 };
+    let mut b =
+        Builder { list: DisplayList::default(), opts, plotting: false, styles: None, named: None, shared_budget: None, transparency: 0, cull: None };
     for e in ents {
         entity(&mut b, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
     }
