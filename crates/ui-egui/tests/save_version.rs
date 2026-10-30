@@ -67,6 +67,9 @@ fn default_save_format_applies_to_opened_drawings() {
         std::fs::write(&file, b"0\nEOF\n").unwrap();
         app.run("open", json!({ "path": file.to_string_lossy() })).unwrap();
         app.run("ui.saveformat", json!({ "format": format })).unwrap();
+        // the picker's path decides the format, so the echo promises only the suggestion
+        let echo = format!("Save As will suggest {}", format.to_ascii_uppercase());
+        assert_eq!(app.session.log.last(), Some(&echo), "{opened} with {format}");
         app.run("ui.saveas", Value::Null).unwrap();
         assert_eq!(suggested.lock().unwrap().last().map(String::as_str), Some(expected), "{opened} with {format}");
         let path = app.session.state().unwrap().path.clone().unwrap_or_default();
