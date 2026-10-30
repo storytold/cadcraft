@@ -568,17 +568,23 @@ impl CadApp {
 
     /// Open a drawing from its contents where there is no path to open (on the web: the file
     /// picker, a dropped file). Runs OPEN with `{data, name}` as [`Self::open_path`] runs it with
-    /// `{path}`; failures show on the command line and in the status bar.
-    pub fn open_bytes(&mut self, name: &str, bytes: &[u8]) {
+    /// `{path}`; failures show on the command line and in the status bar, and are returned too
+    /// (the web build tells a page that sent the drawing). A LISP file is loaded and reports its
+    /// own outcome.
+    pub fn open_bytes(&mut self, name: &str, bytes: &[u8]) -> Result<(), String> {
         if let Some(e) = Self::open_size_error(name, bytes.len() as u64) {
-            return self.open_failed(e);
+            self.open_failed(e.clone());
+            return Err(e);
         }
         if is_lisp_file(name) {
-            return self.load_lisp(name, &String::from_utf8_lossy(bytes));
+            self.load_lisp(name, &String::from_utf8_lossy(bytes));
+            return Ok(());
         }
         let data = cadcraft_engine::cmd::file::base64_encode(bytes);
         let r = self.run("open", json!({ "data": data, "name": name }));
+        let outcome = r.as_ref().map(|_| ()).map_err(Clone::clone);
         self.opened(r);
+        outcome
     }
 
     /// Report a file that could not be opened before OPEN ran (unreadable, too large) as a failed

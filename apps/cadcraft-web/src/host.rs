@@ -4,6 +4,9 @@
 //! - `cadcraft:ready` (to the parent): `{ version }`, the app is listening; send a drawing now.
 //! - `cadcraft:open` (from the parent): `{ name, bytes }`, bytes an `ArrayBuffer` or
 //!   `Uint8Array`. It opens like a file picked with File › Open or dropped on the window.
+//! - `cadcraft:open-failed` (to the parent): `{ name, error }` when a drawing it sent didn't open:
+//!   no bytes in the message, too large, or not readable (format or content). `error` is the
+//!   message the status bar shows.
 //! - `cadcraft:save` (to the parent): `{ name, bytes }` (a transferred `ArrayBuffer`) for every
 //!   file CADCraft would otherwise download (SAVE, SAVEAS, exports): it replaces the engine's
 //!   delivery hook. The parent stores the file and reports failures itself.
@@ -82,9 +85,12 @@ impl Bridge {
                 .map(|n| n.chars().take(MAX_NAME_CHARS).collect())
                 .unwrap_or_else(|| "Drawing.dxf".to_string());
             // Refuse an oversized drawing before copying it into the app's memory.
-            let Some(array) = byte_array(&data) else { return };
+            let Some(array) = byte_array(&data) else {
+                inbox.refuse(name, "Open: the page sent no drawing (`bytes` must be an ArrayBuffer or Uint8Array)".into());
+                return;
+            };
             if let Some(e) = CadApp::open_size_error(&name, u64::from(array.length())) {
-                inbox.refuse(e);
+                inbox.refuse(name, e);
                 return;
             }
             inbox.receive(name, array.to_vec());
@@ -116,6 +122,14 @@ impl Bridge {
     /// Post a message to the parent; false if it couldn't be sent.
     fn send(&self, fields: &[(&str, JsValue)]) -> bool {
         message(fields).is_some_and(|m| self.parent.post_message(&m, &self.origin).is_ok())
+    }
+}
+
+/// Tell the parent page that a drawing it sent didn't open (`cadcraft:open-failed`). Does nothing
+/// outside host mode.
+pub fn post_open_failed(name: &str, error: &str) {
+    if let Some(bridge) = BRIDGE.with(|b| b.borrow().clone()) {
+        bridge.send(&[("type", "cadcraft:open-failed".into()), ("name", name.into()), ("error", error.into())]);
     }
 }
 

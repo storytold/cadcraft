@@ -124,7 +124,7 @@ Detail: [localization-parity.md](localization-parity.md).
 
 | # | Gap | Est. |
 |---|---|---|
-| P1 | Web build: plot shows raw PDF bytes (#134) (File > Open and save downloads fixed, #55, #133; DWG opens and saves, #898) | 3–5 |
+| P1 | Web build: plot shows raw PDF bytes (#134) (File > Open and save downloads fixed, #55, #133; DWG opens and saves, and an embedding page is told when a drawing it sent doesn't open, #898) | 3–5 |
 | P2 | Windows and Linux get little runtime testing; Linux Mint mouse delay (#25); Windows magnifier (#39) | 6–10 |
 | P3 | macOS file associations: opening `.dxf` from Finder fails (#158) | 1–2 |
 
@@ -149,7 +149,7 @@ Detail: [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-30 | minor | The web build opens and saves DWG through the same `acadrust` bridge as the desktop app (#898): FF12 removed, P1 no longer lists DWG |
+| 2026-10-30 | minor | The web build opens and saves DWG through the same `acadrust` bridge as the desktop app (#898): FF12 removed, P1 no longer lists DWG; an embedding page gets `cadcraft:open-failed` when a drawing it sent doesn't open |
 | 2026-10-25 | minor | Named Viewports (View ▸ Viewports ▸ Named Viewports..., `vports.named`) lists the saved viewport configurations with a preview and the current one's name, and restores or deletes one; in a layout Restore places it as MVIEW Restore does: U11 narrowed. F15 and U11 no longer list MVIEW Restore (#633), and F21 no longer says PURGE skips multiline styles |
 | 2026-10-25 | minor | DIMTFILL limits: with DIMTFILL 1 (the drawing's background color) the written `*D` block and EXPLODE keep no background mask (a WIPEOUT over the text box would), and a true-color DIMTFILLCLR is written to DXF as the nearest ACI: F7 updated |
 | 2026-10-26 | minor | BEDIT in the Block Editor (typed, Edit Block, or the Edit Block Definition dialog) switches to another block as AutoCAD's does, asking whether to save the changes not saved yet; the JSON form takes `save`: F3 evidence |
