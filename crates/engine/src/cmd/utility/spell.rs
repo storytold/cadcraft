@@ -11,7 +11,7 @@ use cadcraft_doc::{EntityKind, Handle};
 use serde_json::{Value, json};
 
 use super::super::machines::{SelOutcome, SelectPhase};
-use super::super::*;
+use super::super::{CommandSpec, bad, str_param, targets};
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 pub fn specs() -> Vec<CommandSpec> {

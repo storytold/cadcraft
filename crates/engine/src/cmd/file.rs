@@ -652,20 +652,16 @@ mod tests {
     use serde_json::json;
 
     use crate::Session;
+    use crate::temp_dir::TempDir;
 
     fn active_title(s: &Session) -> String {
         s.state().unwrap().title.clone()
     }
 
-    fn temp_script(name: &str, text: &str) -> String {
-        let path = std::env::temp_dir().join(format!("cadcraft-script-{}-{name}", std::process::id()));
-        std::fs::write(&path, text).unwrap();
-        path.to_string_lossy().into_owned()
-    }
-
     #[test]
     fn script_command_runs_a_scr_file() {
-        let path = temp_script("run.scr", "; a comment\ncircle 50,25 20\nrectang 0,0 100,60\n");
+        let dir = TempDir::new("script");
+        let path = dir.file("run.scr", "; a comment\ncircle 50,25 20\nrectang 0,0 100,60\n");
         let mut s = Session::new();
         let r = s.execute("script", &json!({ "path": path })).unwrap();
         assert_eq!(r["lines"], 3);
@@ -683,8 +679,9 @@ mod tests {
     /// A script that runs itself must be refused, not recurse until the stack dies.
     #[test]
     fn a_script_cannot_start_a_script() {
-        let inner = temp_script("inner.scr", "circle 0,0 1\n");
-        let outer = temp_script("outer.scr", &format!("script {}\ncircle 0,0 2\n", json!({ "path": inner })));
+        let dir = TempDir::new("script");
+        let inner = dir.file("inner.scr", "circle 0,0 1\n");
+        let outer = dir.file("outer.scr", format!("script {}\ncircle 0,0 2\n", json!({ "path": inner })));
         let mut s = Session::new();
         let e = s.execute("script", &json!({ "path": outer })).unwrap_err().to_string();
         assert!(e.contains("already running"), "{e}");
@@ -692,7 +689,8 @@ mod tests {
 
     #[test]
     fn typed_script_prompts_for_the_file_then_runs_or_reports_it() {
-        let good = temp_script("typed.scr", "circle 0,0 1\n");
+        let dir = TempDir::new("script");
+        let good = dir.file("typed.scr", "circle 0,0 1\n");
         let mut s = Session::new();
         s.cmdline("script").unwrap();
         assert!(s.running.is_some(), "SCRIPT asks for the file name");

@@ -42,3 +42,34 @@ fn values_on_a_grey_background_on_screen_only() {
     off.header.set("FIELDDISPLAY", HVal::Int(0));
     assert_eq!(build(&off, &Space::Model, &o).tris.len(), p.tris.len());
 }
+
+#[test]
+fn layout_matching_fields_keep_glyphs_and_background_upright() {
+    let (code, _) = fields::set_values(&fields::var_code("Title", None), |_| Some("PLATE".into()));
+    let upright = |value: &str, rotation: f64| {
+        let mut d = drawing(value);
+        let entities: Vec<_> = d.model.iter().map(|e| (**e).clone()).collect();
+        for mut e in entities {
+            e.common.xdata =
+                vec![cadcraft_doc::RawTag { code: 1001, value: "AcadAnnoPO".into() }, cadcraft_doc::RawTag { code: 1070, value: "1".into() }];
+            if let EntityKind::Text(t) = &mut e.kind {
+                t.rotation = rotation;
+            }
+            if let EntityKind::MText(t) = &mut e.kind {
+                t.rotation = rotation;
+            }
+            d.model.push(e);
+        }
+        d
+    };
+    let points = |d: &Drawing, plot: bool| {
+        let list = if plot { build_plot(d, &Space::Model, &Options::default()) } else { build(d, &Space::Model, &Options::default()) };
+        list.prims.iter().flat_map(|p| list.points(p).iter().copied()).collect::<Vec<_>>()
+    };
+    let rotated = upright(&code, std::f64::consts::PI);
+    let zero = upright(&code, 0.0);
+    let plain = upright("PLATE", 0.0);
+    assert!(!points(&rotated, false).is_empty());
+    assert_eq!(points(&rotated, false), points(&zero, false), "glyphs and field backgrounds ignore stored rotation");
+    assert_eq!(points(&rotated, true), points(&plain, true), "plotting draws the displayed field value upright without a background");
+}

@@ -619,6 +619,35 @@ fn is_private_shot_dir(meta: &std::fs::Metadata) -> bool {
     }
 }
 
+/// Pathless screenshots share one directory per process. Tests that write them hold this guard,
+/// so no other test writes while it is cleaned up. Dropping it, even while a failed test unwinds,
+/// removes every screenshot file in the directory and then the directory itself.
+#[cfg(test)]
+pub(crate) struct PathlessShots {
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+pub(crate) fn lock_pathless_shots() -> PathlessShots {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    PathlessShots { _lock: LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner) }
+}
+
+#[cfg(test)]
+impl Drop for PathlessShots {
+    fn drop(&mut self) {
+        let Ok(dir) = private_shot_dir() else { return };
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                if entry.file_name().to_string_lossy().starts_with("cadcraft-shot-") {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+        let _ = std::fs::remove_dir(&dir);
+    }
+}
+
 /// Save a pathless screenshot into the private per-process directory: re-validate or recreate it as an owner-only real directory (0700 on Unix; plain create elsewhere), then create up to 64 exclusive files (0600 on Unix) and write a PNG.
 fn save_pathless_screenshot(img: &image::RgbaImage, token: u64) -> std::io::Result<std::path::PathBuf> {
     use std::io::Write as _;
@@ -641,8 +670,13 @@ fn save_pathless_screenshot(img: &image::RgbaImage, token: u64) -> std::io::Resu
         let path = dir.join(format!("cadcraft-shot-{token}-{}.png", next_pathless_nonce()));
         match create_private_file(&path) {
             Ok(mut file) => {
-                img.write_to(&mut file, image::ImageFormat::Png).map_err(std::io::Error::other)?;
-                file.flush()?;
+                let written = img.write_to(&mut file, image::ImageFormat::Png).map_err(std::io::Error::other).and_then(|()| file.flush());
+                if let Err(e) = written {
+                    // The reply carries no path on failure, so nobody else could remove the partial file.
+                    drop(file);
+                    let _ = std::fs::remove_file(&path);
+                    return Err(e);
+                }
                 return Ok(path);
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -735,6 +769,7 @@ mod tests {
     /// Two pathless saves with the same token produce distinct, decodable PNGs; on Unix the files are 0600 and their directory 0700.
     #[test]
     fn pathless_screenshots_are_unique_private_png_files() {
+        let _shots = lock_pathless_shots();
         let img = egui::ColorImage::filled([4, 3], egui::Color32::RED);
         let first = save_screenshot(&img, None, 1);
         let second = save_screenshot(&img, None, 1);
@@ -758,9 +793,6 @@ mod tests {
             let dir = a.parent().expect("the file has a private directory");
             let dir_mode = std::fs::metadata(dir).expect("directory metadata").permissions().mode() & 0o777;
             assert_eq!(dir_mode, 0o700, "the screenshot directory is owner-only");
-        }
-        for path in [&a, &b] {
-            let _ = std::fs::remove_file(path);
         }
     }
 

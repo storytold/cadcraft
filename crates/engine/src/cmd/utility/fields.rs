@@ -12,7 +12,7 @@ use cadcraft_geom::{Polyline, Vec2, Vec3};
 use serde_json::{Value, json};
 
 use super::super::machines::{SelOutcome, SelectPhase};
-use super::super::*;
+use super::super::{CommandSpec, bad, point_req, str_param, targets};
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 pub fn specs() -> Vec<CommandSpec> {

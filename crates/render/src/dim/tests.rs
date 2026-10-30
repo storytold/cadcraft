@@ -234,6 +234,29 @@ fn text_that_does_not_fit_follows_dimtmove_2() {
 }
 
 #[test]
+fn dimtmove_2_text_clearance_matches_autocad() {
+    // #2222: the 0.10 dimension of #1998 in the #2004 1:50 style. AutoCAD 2026 recomputes the
+    // moved text at about 0.358 from the dimension line (0.658214, 0.05).
+    let st = st_with(|s| {
+        s.scale = 50.0;
+        s.text_height = 0.0025;
+        s.text_gap = 0.0008;
+        s.arrow_size = 0.0015;
+        s.text_above = 1;
+        s.text_inside_horizontal = false;
+        s.text_outside_horizontal = false;
+        s.decimals = 2;
+        s.text_move = 2;
+    });
+    let d = lin((0.0, 0.0), (0.0, 0.10), (0.30, 0.0), std::f64::consts::FRAC_PI_2);
+    let g = dimension_geometry(&d, &st, 50.0);
+    assert!(g.text_pos.dist(Vec2::new(0.658214, 0.05)) < 0.005, "vertical: {:?}", g.text_pos);
+    let d = lin((0.0, 0.0), (0.10, 0.0), (0.0, -0.30), 0.0);
+    let g = dimension_geometry(&d, &st, 50.0);
+    assert!(g.text_pos.dist(Vec2::new(0.05, -0.658214)) < 0.005, "horizontal: {:?}", g.text_pos);
+}
+
+#[test]
 fn text_that_does_not_fit_follows_dimtmove_1() {
     // Moved off the line with a leader from the middle of the dimension line.
     let d = lin((0.0, 0.0), (0.5, 0.0), (0.0, 5.0), 0.0);
