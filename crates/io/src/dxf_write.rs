@@ -42,8 +42,8 @@ struct W {
     pstyles: HashMap<String, String>,
     /// Upper-case layer name → its LAYER table record handle (group 341 of viewports).
     layers: HashMap<String, String>,
-    /// Persistent reactors of boundary objects: each source object of an associative hatch →
-    /// the hatches (groups `{ACAD_REACTORS 330 …}`), from [`hatch_reactors`].
+    /// Persistent reactors of source geometry: the associative hatches and DIMASSOC objects
+    /// that follow it (groups `{ACAD_REACTORS 330 …}`).
     reactors: HashMap<Handle, Vec<String>>,
 }
 
