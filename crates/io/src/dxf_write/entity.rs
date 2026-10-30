@@ -221,10 +221,16 @@ fn write_basic_entity(w: &mut W, _d: &Drawing, e: &Entity, owner: &str, paper: b
 fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {
     match &e.kind {
         EntityKind::Text(t) => {
+            let scaled = cx.at_default(e);
+            let t = match scaled.as_ref().map(|s| &s.kind) {
+                Some(EntityKind::Text(s)) => s,
+                _ => t,
+            };
             w.s(0, "TEXT");
             common(w, e, owner, paper, "AcDbText");
             thickness(w, e);
             text_tags(w, d, t, None, None);
+            cx.anno_xdata(w, e);
         }
         // Closed polylines, one per loop (`dxf_region`): REGION's own data is ACIS.
         EntityKind::Region(r) => {
@@ -250,6 +256,11 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
             }
         }
         EntityKind::MText(t) => {
+            let scaled = cx.at_default(e);
+            let t = match scaled.as_ref().map(|s| &s.kind) {
+                Some(EntityKind::MText(s)) => s,
+                _ => t,
+            };
             w.s(0, "MTEXT");
             common(w, e, owner, paper, "AcDbMText");
             w.p(10, t.insert);
@@ -275,6 +286,7 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
             w.i(73, if t.line_spacing_exact { 2 } else { 1 });
             w.f(44, t.line_spacing);
             w.t.extend(crate::dxf_read::mtext_dxf::column_tags(t));
+            cx.anno_xdata(w, e);
         }
         _ => {}
     }
@@ -336,7 +348,13 @@ fn write_dimension_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper
         w.s(2, bname);
         w.p(10, dm.defpt);
         let style = d.dim_style(&dm.style).cloned().unwrap_or_default();
-        let g = cadcraft_render::dimension_geometry(dm, &style, d.header.f64("DIMSCALE", 1.0));
+        // An annotative dimension's text is where its default scale puts it.
+        let scaled = cx.at_default(e);
+        let at = match scaled.as_ref().map(|s| &s.kind) {
+            Some(EntityKind::Dimension(s)) => s,
+            _ => dm,
+        };
+        let g = cadcraft_render::dimension_geometry(at, &style, d.header.f64("DIMSCALE", 1.0));
         w.p(11, if dm.user_text_pos { dm.text_mid } else { g.text_pos.to3(0.0) });
         let ty: i64 = match dm.kind {
             DimKind::Linear { .. } => 0,
@@ -406,6 +424,7 @@ fn write_dimension_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper
             }
         }
         dim_xdata(w, dm, cx);
+        cx.anno_xdata(w, e);
     }
 }
 
