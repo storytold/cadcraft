@@ -103,6 +103,27 @@ fn refers_to(d: &Drawing, store: &EntityStore, name: &str) -> bool {
 }
 
 impl BlockEdit {
+    /// The block's base point, which is the editor's origin.
+    pub fn base(&self) -> Vec2 {
+        self.base
+    }
+
+    /// The edited block's parameters and actions as the editor draws them, in the editor's
+    /// coordinates (`editor` is the editor's drawing).
+    pub fn marks(&self, editor: &Drawing) -> Vec<cadcraft_doc::dynblock::Mark> {
+        use cadcraft_doc::dynblock::Mark;
+        let off = self.base.to3(0.0);
+        let mut out = cadcraft_doc::dynblock::marks(editor, &self.name);
+        for m in &mut out {
+            match m {
+                Mark::Linear { base, end, .. } => (*base, *end) = (*base - off, *end - off),
+                Mark::Point { at, label_at, .. } => (*at, *label_at) = (*at - off, *label_at - off),
+                Mark::Parameter { at, .. } | Mark::Action { at, .. } => *at = *at - off,
+            }
+        }
+        out
+    }
+
     /// The editor's objects in block coordinates, ready to be the block's: unchanged objects are
     /// the block's own, the others are moved back from the editor's origin to the base point.
     fn block_objects(&self, editor: &Drawing) -> EntityStore {
@@ -132,12 +153,22 @@ impl BlockEdit {
     /// The drawing with the editor's objects saved into block `name` (the edited block, or a new
     /// name for BSAVEAS), from `editor`, the editor's drawing.
     pub fn compose(&self, editor: &Drawing, name: &str) -> Result<Drawing> {
+        self.compose_mapped(editor, name).map(|(d, _)| d)
+    }
+
+    /// [`BlockEdit::compose`], and the handles the saved objects got when a dynamic block is saved
+    /// under another name (they are a copy's, with a graph of their own), by their old ones.
+    pub fn compose_mapped(
+        &self,
+        editor: &Drawing,
+        name: &str,
+    ) -> Result<(Drawing, std::collections::HashMap<cadcraft_doc::Handle, cadcraft_doc::Handle>)> {
         // The drawing itself: the editor's drawing is the drawing.
         if self.current {
             if !name.eq_ignore_ascii_case(CURRENT_DRAWING) {
                 return Err(EngineError::Other("The current drawing can't be saved as a block from the Block Editor; use WBLOCK or BLOCK.".into()));
             }
-            return Ok(editor.clone());
+            return Ok((editor.clone(), std::collections::HashMap::new()));
         }
         if refers_to(editor, &editor.model, name) {
             return Err(EngineError::Other(format!("Block \"{name}\" can't contain a reference to itself.")));
@@ -170,9 +201,21 @@ impl BlockEdit {
         }
         b.base.x = self.base.x;
         b.base.y = self.base.y;
+        let mut entities = entities;
+        // Saved under another name, a dynamic block's copy has its own graph and objects; the
+        // edited block stays as the drawing has it (the editor's changes to its graph are the
+        // copy's).
+        let mut remap = std::collections::HashMap::new();
+        if !name.eq_ignore_ascii_case(&self.name) {
+            remap = cadcraft_doc::dynblock::copy_definition(&mut d, &self.name, name, &mut entities);
+            cadcraft_doc::dynblock::restore_definition(&mut d, host, &self.name);
+        }
+        // A dynamic block's objects carry element tags, which its references' copies are paired
+        // with; objects added in the editor get theirs here.
+        cadcraft_doc::dynblock::tag_elements(&mut d, name, &mut entities);
         b.entities = entities;
         d.blocks.insert(key, Arc::new(b));
-        Ok(d)
+        Ok((d, remap))
     }
 }
 
@@ -289,7 +332,7 @@ impl DocState {
     pub fn save_block_editor(&mut self, as_name: Option<&str>) -> Result<()> {
         let Some(be) = &self.block_edit else { return Err(EngineError::Other("The Block Editor is not open.".into())) };
         let name = as_name.unwrap_or(&be.name).to_string();
-        let d = be.compose(&self.doc, &name)?;
+        let (d, remap) = be.compose_mapped(&self.doc, &name)?;
         let original = d.block(&name).map(|b| b.entities.clone()).unwrap_or_default();
         let name = d.block(&name).map(|b| b.name.clone()).unwrap_or(name);
         // When BSAVEAS saves the block under another name, the editor's drawing and each undo and
@@ -304,10 +347,23 @@ impl DocState {
                 keep_description(editor, &d, &was);
                 editor.blocks.retain(|k, _| !k.eq_ignore_ascii_case(&name));
                 editor.blocks.insert(name.clone(), b.clone());
+                // A dynamic block's copy: the editor edits it from here on, with its graph and
+                // the handles its objects got.
+                if !remap.is_empty() {
+                    editor.foreign = d.foreign.clone();
+                    editor.model = cadcraft_doc::dynblock::remap_handles(&editor.model, &remap);
+                }
             };
             reconcile(&mut self.doc);
-            for step in self.undo.iter_mut().chain(self.redo.iter_mut()) {
-                reconcile(&mut step.doc);
+            if remap.is_empty() {
+                for step in self.undo.iter_mut().chain(self.redo.iter_mut()) {
+                    reconcile(&mut step.doc);
+                }
+            } else {
+                // Older steps hold the handles and graph from before the copy; they can't be
+                // remapped consistently, so the copy starts a new history.
+                self.undo.clear();
+                self.redo.clear();
             }
         }
         let editor = self.doc.clone();
