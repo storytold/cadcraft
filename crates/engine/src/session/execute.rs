@@ -75,6 +75,7 @@ impl Session {
         let cur = Snapshot { label: snap.label.clone(), doc: st.doc.clone(), selection: st.selection.clone() };
         st.doc = snap.doc;
         st.follow_layout(&cur.doc);
+        st.reconcile_untiled_twist();
         st.selection = Vec::new();
         st.redo.push(cur);
         st.revision += 1;
@@ -87,6 +88,7 @@ impl Session {
         let cur = Snapshot { label: snap.label.clone(), doc: st.doc.clone(), selection: st.selection.clone() };
         st.doc = snap.doc;
         st.follow_layout(&cur.doc);
+        st.reconcile_untiled_twist();
         st.selection = Vec::new();
         st.undo.push(cur);
         st.revision += 1;

@@ -135,14 +135,15 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
         w.s(2, &v.name);
         w.i(70, i64::from(v.layout.is_some()));
         w.f(40, v.height);
-        w.p2(10, v.center);
+        let twist = if v.twist.is_finite() { v.twist } else { 0.0 };
+        w.p2(10, dxf_ext::model_center_to_dcs(v.center, twist));
         w.f(41, v.width);
         w.p(11, Vec3::Z);
         w.p(12, Vec3::ZERO);
         w.f(42, 50.0);
         w.f(43, 0.0);
         w.f(44, 0.0);
-        w.f(50, if v.twist.is_finite() { v.twist.to_degrees() } else { 0.0 });
+        w.f(50, twist.to_degrees());
         w.i(71, 0);
         w.i(281, 0);
         w.i(72, 0);

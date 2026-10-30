@@ -329,7 +329,7 @@ pub(super) fn run_vpclip(s: &mut Session, p: &Value) -> Result<Value> {
     let k = cur.view_height / cur.height.max(1e-12);
     let mut v = cur;
     let c = b.center();
-    let view_center = v.view_center + (c - v.center.xy()) * k;
+    let view_center = v.paper_to_model(c);
     let view_height = b.height() * k;
     if view_center.is_finite() && view_height.is_finite() && view_height > 0.0 {
         v.view_center = view_center;

@@ -524,6 +524,7 @@ fn viewport_json(h: Handle, v: &Viewport) -> Value {
         "height": v.height,
         "viewCenter": [v.view_center.x, v.view_center.y],
         "viewHeight": v.view_height,
+        "twist": v.view_twist().to_degrees(),
         "scale": if v.view_height > 0.0 { v.height / v.view_height } else { 0.0 },
         "locked": v.locked,
         "on": v.on,

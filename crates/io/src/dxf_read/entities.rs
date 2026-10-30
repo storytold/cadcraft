@@ -230,19 +230,24 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
             k
         }
         "ACAD_TABLE" => EntityKind::Table(acad_table(tags, table_cells_left)),
-        "VIEWPORT" => EntityKind::Viewport(Viewport {
-            center: t.p(10),
-            width: t.fd(40, 1.0),
-            height: t.fd(41, 1.0),
-            view_center: Vec2::new(t.fd(12, 0.0), t.fd(22, 0.0)),
-            view_height: t.fd(45, 1.0),
-            id: t.i(69).unwrap_or(0) as u32,
-            locked: t.i(90).unwrap_or(0) & 16384 != 0,
-            frozen_layers: crate::dxf_ext::read_frozen(tags),
-            layer_colors: crate::dxf_ext::read_layer_colors(tags),
-            // Status flags: 65536 = non-rectangular clipping (by the 340 entity), 131072 = off.
-            clip: t.s(340).and_then(|h| Handle::parse_hex(&h)).filter(|h| h.0 != 0 && t.i(90).unwrap_or(0) & 65536 != 0),
-            on: t.i(90).unwrap_or(0) & 131072 == 0,
+        "VIEWPORT" => EntityKind::Viewport({
+            // View twist (group 51, degrees).
+            let twist = t.f(51).filter(|a| a.is_finite()).map_or(0.0, |a| a.rem_euclid(360.0).to_radians());
+            Viewport {
+                center: t.p(10),
+                width: t.fd(40, 1.0),
+                height: t.fd(41, 1.0),
+                view_center: crate::dxf_ext::dcs_center_to_model(Vec2::new(t.fd(12, 0.0), t.fd(22, 0.0)), twist, t.p(17).xy()),
+                view_height: t.fd(45, 1.0),
+                id: t.i(69).unwrap_or(0) as u32,
+                locked: t.i(90).unwrap_or(0) & 16384 != 0,
+                frozen_layers: crate::dxf_ext::read_frozen(tags),
+                layer_colors: crate::dxf_ext::read_layer_colors(tags),
+                // Status flags: 65536 = non-rectangular clipping (by the 340 entity), 131072 = off.
+                clip: t.s(340).and_then(|h| Handle::parse_hex(&h)).filter(|h| h.0 != 0 && t.i(90).unwrap_or(0) & 65536 != 0),
+                on: t.i(90).unwrap_or(0) & 131072 == 0,
+                twist,
+            }
         }),
         "WIPEOUT" => {
             let o = t.p(10);

@@ -1,5 +1,5 @@
 use super::draw::draw_list;
-use super::{Bounds2, CadApp, DisplayList, Handle, Kind, Rect, Rgb, Vec2, Xf};
+use super::{Bounds2, CadApp, DisplayList, Handle, Kind, Mat3, Rect, Rgb, Vec2, Xf};
 
 /// The active MSPACE viewport when its contents are drawn apart from the layout's list (see
 /// [`VpContent`]), with its clip outline when it is clipped. A clipped viewport is clipped with
@@ -61,12 +61,12 @@ impl VpContent {
 }
 
 /// How a list built for view `built` (centre, height) of viewport `vp` maps to its current
-/// view, as `p = k·p0 + b` on paper. A model point m is at p0 = c + s0 (m − c0) in the list and
-/// belongs at p = c + s (m − vc), with c the viewport's centre and s, s0 paper units per model
-/// unit, so k = s / s0 and b = c (1 − k) + s (c0 − vc).
+/// view, as `p = k·p0 + b` on paper. A model point m is at p0 = c + s0 R(m − c0) in the list and
+/// belongs at p = c + s R(m − vc), with c the viewport's centre, R its view twist and s, s0 paper
+/// units per model unit, so k = s / s0 and b = c (1 − k) + s R(c0 − vc).
 fn vp_motion(vp: &cadcraft_doc::Viewport, built: (Vec2, f64)) -> Option<(f64, Vec2)> {
     let (s, k) = (vp.height / vp.view_height, built.1 / vp.view_height);
-    let b = vp.center.xy() * (1.0 - k) + (built.0 - vp.view_center) * s;
+    let b = vp.center.xy() * (1.0 - k) + (built.0 - vp.view_center).rotate(vp.view_twist()) * s;
     (k.is_finite() && k > 0.0 && b.is_finite()).then_some((k, b))
 }
 
@@ -148,7 +148,7 @@ pub(super) fn ensure_vp_content(app: &mut CadApp, xf_paper: &Xf, ctx: &egui::Con
     let (k, b) = vp_motion(&vp, c.view)?;
     c.motion = Some((k, b));
     // Paper p = k·p0 + b, so the list is drawn by the paper transform scaled by k about b.
-    let xf = Xf { rect: xf_paper.rect, center: (xf_paper.center - b) / k, scale: xf_paper.scale * k };
+    let xf = Xf { rect: xf_paper.rect, center: (xf_paper.center - b) / k, scale: xf_paper.scale * k, twist: xf_paper.twist };
     let on_screen = Rect::from_two_pos(xf_paper.to_screen(Vec2::new(rect.min.x, rect.max.y)), xf_paper.to_screen(Vec2::new(rect.max.x, rect.min.y)));
     Some(VpFrame { xf, on_screen, outline: clip.map(|p| p.polygon().to_vec()) })
 }
@@ -192,7 +192,7 @@ pub(super) fn draw_vp_content(c: &mut VpContent, gpu: bool, p: &egui::Painter, f
             scale: xf.scale as f32,
             center: [center.x, center.y],
             layer: crate::gpu::LAYER_VIEWPORT,
-            xform: crate::gpu::IDENTITY_XFORM,
+            xform: xf.gpu_xform(c.mesh_origin, Mat3::IDENTITY),
             dash: 0.0,
             stencil,
         },
@@ -247,7 +247,7 @@ fn draw_vp_mask(c: &mut VpContent, p: &egui::Painter, outline: &[Vec2], xf_paper
             scale: xf_paper.scale as f32,
             center: [center.x, center.y],
             layer: crate::gpu::LAYER_MASK,
-            xform: crate::gpu::IDENTITY_XFORM,
+            xform: xf_paper.gpu_xform(c.mask_origin, Mat3::IDENTITY),
             dash: 0.0,
             stencil: crate::gpu::Stencil::Mask,
         },

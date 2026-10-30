@@ -175,6 +175,8 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
             json!([v.center.x, v.center.y, 0.0])
         }
         "VIEWSIZE" => json!(s.state().ok()?.view().height),
+        // The view twist (DVIEW TWist), in degrees counterclockwise.
+        "VIEWTWIST" => json!(s.state().ok()?.view().twist.to_degrees()),
         "EXTMIN" | "EXTMAX" => {
             let d = s.doc().ok()?;
             let e = d.extents(&s.space());
@@ -248,6 +250,7 @@ const READ_ONLY: &[&str] = &[
     "LASTPOINT",
     "VIEWCTR",
     "VIEWSIZE",
+    "VIEWTWIST",
     "EXTMIN",
     "EXTMAX",
     "UNDOCTL",

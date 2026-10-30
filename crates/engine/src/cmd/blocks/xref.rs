@@ -62,7 +62,10 @@ pub(crate) fn after_open(s: &mut Session, i: usize) {
     st.saved = st.doc.clone();
     let ext = st.doc.extents(&cadcraft_doc::Space::Model);
     if !ext.is_empty() {
-        st.set_view_quiet(crate::View { center: ext.center(), height: (ext.height().max(ext.width() * px.1 / px.0.max(1.0)) * 1.1).max(1e-6) });
+        // Fit in the frame of the saved twist, which open_drawing has restored.
+        let twist = st.view().twist;
+        let (center, w, h) = crate::View::twisted_box(ext, twist);
+        st.set_view_quiet(crate::View { center, height: (h.max(w * px.1 / px.0.max(1.0)) * 1.1).max(1e-6), twist });
     }
     echo_all(s, &out);
 }

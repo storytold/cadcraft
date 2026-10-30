@@ -612,8 +612,13 @@ fn write_viewport_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper:
         // Status 68: a positive value is "on" (the stacking order; 1 is the active viewport), 0 off.
         w.i(68, if v.on { i64::from(v.id.clamp(1, 32767)) } else { 0 });
         w.i(69, i64::from(v.id));
-        w.p2(12, v.view_center);
+        // The view centre in display coordinates (turned by the twist).
+        w.p2(12, dxf_ext::model_center_to_dcs(v.view_center, v.view_twist()));
         w.f(45, v.view_height);
+        // View twist (degrees), when the viewport has one.
+        if v.view_twist() != 0.0 {
+            w.f(51, v.view_twist().to_degrees());
+        }
         // Status flags: 16384 = display locked, 32768 = always set, 65536 = clipped by the
         // 340 entity, 131072 = off.
         let clip = v.clip.filter(|h| *h != e.handle && d.entity(*h).is_some());

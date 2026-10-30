@@ -69,6 +69,8 @@ pub(super) fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
         center: if ext.is_empty() { Vec2::new(6.0, 4.5) } else { ext.center() },
         height: if ext.is_empty() { 9.0 } else { (ext.height() * 1.1).max(1e-6) },
         aspect: 1.6,
+        // An untiled view's twist: the lone `*Active` tile the editor keeps for it.
+        twist: d.vports.iter().find(|c| c.is_active() && c.tiles.len() == 1).and_then(|c| c.tiles.first()).map_or(0.0, |t| t.twist),
     };
     let tiled = d.vports.iter().find(|c| c.is_active() && c.tiles.len() > 1);
     let mut records: Vec<(&str, &VportTile)> = match tiled {
@@ -84,7 +86,8 @@ pub(super) fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
         w.i(70, 0);
         w.p2(10, finite(t.min, Vec2::ZERO));
         w.p2(11, finite(t.max, Vec2::new(1.0, 1.0)));
-        w.p2(12, finite(t.center, Vec2::ZERO));
+        let twist = if t.twist.is_finite() { t.twist } else { 0.0 };
+        w.p2(12, dxf_ext::model_center_to_dcs(finite(t.center, Vec2::ZERO), twist));
         // Snap grid origin and rotation (SNAPBASE, SNAPANG in degrees): R13+ files keep them here.
         w.p2(13, d.header.point("SNAPBASE").map(|p| p.xy()).filter(|p| p.is_finite()).unwrap_or(Vec2::ZERO));
         w.p2(14, d.header.snap_unit());
@@ -95,6 +98,7 @@ pub(super) fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
         w.f(41, if t.aspect.is_finite() && t.aspect > 0.0 { t.aspect } else { 1.0 });
         w.f(42, 50.0);
         w.f(50, d.header.f64("SNAPANG", 0.0));
+        w.f(51, twist.to_degrees());
     }
     w.s(0, "ENDTAB");
 }

@@ -1,5 +1,5 @@
 use super::viewport::{split_viewport, stencil_clip};
-use super::{Bounds2, CadApp, DisplayList, Handle, ListKey, Rgb, Tokens, Xf, rebuild, same_content};
+use super::{Bounds2, CadApp, DisplayList, Handle, ListKey, Rgb, Tokens, Vec2, Xf, rebuild, same_content};
 
 /// Primitives of `list` sorted by entity handle, built on the first highlight after each list
 /// rebuild. Highlighting the hovered entity used to scan every primitive on every frame: ~2.5 ms
@@ -160,6 +160,38 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
     app.canvas.window = opts.view;
     app.canvas.list_gen = app.canvas.list_gen.wrapping_add(1);
     app.canvas.build_ms = crate::now_ms() - t0;
+}
+
+/// The display list of what a running command shows in place of the drawing
+/// ([`cadcraft_engine::Session::display_only`]: DVIEW's preview set), rebuilt when the drawing,
+/// the set or the 2x zoom band changes.
+#[derive(Default)]
+pub(super) struct OnlyList {
+    key: Option<u64>,
+    pub(super) list: DisplayList,
+}
+
+impl OnlyList {
+    /// `outline`: a clipped viewport's outline (model units) the preview is clipped to.
+    pub(super) fn update(&mut self, st: &cadcraft_engine::DocState, only: &cadcraft_engine::DisplayOnly, scale: f64, outline: Option<&[Vec2]>) {
+        let band = (1.0 / scale.max(1e-300)).log2().floor() as i32;
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            (st.uid, st.revision, std::sync::Arc::as_ptr(&st.doc) as usize, band, &only.handles, format!("{:?}", only.extra)).hash(&mut h);
+            outline.into_iter().flatten().for_each(|q| (q.x.to_bits(), q.y.to_bits()).hash(&mut h));
+            h.finish()
+        };
+        if self.key != Some(key) {
+            let ents = only.handles.iter().filter_map(|h| st.doc.entity(*h)).map(|e| e.as_ref()).chain(only.extra.iter());
+            let list = rebuilt_preview(&st.doc, ents, 2f64.powi(-band));
+            self.list = match outline.and_then(cadcraft_render::clip::PolyClip::new) {
+                Some(c) => cadcraft_render::clip_list(&list, &c),
+                None => list,
+            };
+            self.key = Some(key);
+        }
+    }
 }
 
 /// The area a display list is built for: each view with half its larger side of margin all

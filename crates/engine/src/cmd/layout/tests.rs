@@ -283,7 +283,7 @@ fn mspace_edits_model_through_viewport() {
     s.cmdline("circle 10,10 3").unwrap();
     assert_eq!(s.doc().unwrap().model.len(), before + 1);
     // Zooming changes the viewport's model view, not the sheet.
-    s.state_mut().unwrap().set_view(crate::View { center: v.center, height: v.height / 2.0 });
+    s.state_mut().unwrap().set_view(crate::View { center: v.center, height: v.height / 2.0, twist: v.twist });
     let vp2 = viewports(&s, "L").into_iter().find(|(x, _)| *x == h).unwrap().1;
     assert!((vp2.view_height - vp.view_height / 2.0).abs() < 1e-9);
     assert_eq!(s.state().unwrap().paper_view(), pv);
