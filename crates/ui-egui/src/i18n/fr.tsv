@@ -67,6 +67,7 @@
 	Blend	Raccord lissé
 	Block	Bloc
 	Block Attribute Manager...	Gestionnaire des attributs de bloc...
+	Block Description...	Description de bloc...
 	Block Editor	Éditeur de blocs
 	Block Reference	Référence de bloc
 	Block...	Bloc...
@@ -452,6 +453,7 @@
 	N	N
 	Name	Nom
 	Name (A–Z)	Nom (A–Z)
+	Named Viewports...	Fenêtres nommées...
 	Nearest	Plus proche
 	New	Nouveau
 	New (metric)	Nouveau (métrique)

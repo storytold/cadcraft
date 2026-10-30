@@ -2,7 +2,6 @@
 //! Updates… (desktop only; the web build is always the latest). The flow itself is
 //! `craft_update::updater::Updater`.
 
-use craft_update::suite::CADCRAFT;
 use craft_update::updater::{Action, Status, Updater};
 
 use crate::CadApp;
@@ -21,7 +20,7 @@ pub struct Runtime {
 
 impl Default for Runtime {
     fn default() -> Self {
-        Self { updater: Updater::new(&CADCRAFT, VERSION), enabled: false, check_requested: false }
+        Self { updater: Updater::new(&crate::UPDATE_APP, VERSION), enabled: false, check_requested: false }
     }
 }
 

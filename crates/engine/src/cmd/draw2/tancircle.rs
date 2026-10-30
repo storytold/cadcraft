@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Accept, Circle, Handle, Input, Interactive, Prompt, Result, Session, Step, TanObj, Value, Vec2, added, bad, circle, curves, f64_req, number,
+    other, point_param, point_req,
+};
 
 pub(super) fn run_circle_variant(s: &mut Session, p: &Value) -> Result<Value> {
     let c = if let (Some(c), Some(d)) = (point_param(p, "center"), p.get("diameter").and_then(Value::as_f64)) {

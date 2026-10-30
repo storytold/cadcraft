@@ -1,5 +1,5 @@
 use super::args::{arity, string};
-use super::*;
+use super::{Arc, Ctx, Flow, LispError, Sym, Value, charge_bytes, real_text, to_text};
 
 // ---------------- output ----------------
 

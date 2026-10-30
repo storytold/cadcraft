@@ -1,4 +1,4 @@
-use super::*;
+use super::{Color, Deserialize, Serialize, Vec3};
 
 /// A database handle (DXF group 5), unique per drawing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -129,4 +129,21 @@ impl Default for Common {
 pub struct RawTag {
     pub code: i32,
     pub value: String,
+}
+
+impl Common {
+    /// Whether "Match orientation to layout" is on for this annotative object (AutoCAD's
+    /// `AcadAnnoPO` xdata = 1). AutoCAD draws such text upright and ignores its stored rotation.
+    /// The object's own `AcadAnnotative` xdata never reaches [`Common::xdata`] (the reader drops
+    /// it), so the `AcadAnnoPO` flag alone decides.
+    pub fn matches_layout_orientation(&self) -> bool {
+        let app = self.xdata.iter().position(|t| t.code == 1001 && t.value.trim().eq_ignore_ascii_case("AcadAnnoPO"));
+        let Some(at) = app else { return false };
+        self.xdata
+            .iter()
+            .skip(at + 1)
+            .take_while(|t| t.code != 1001)
+            .find(|t| t.code == 1070)
+            .is_some_and(|t| t.value.trim().parse::<i64>().is_ok_and(|v| v != 0))
+    }
 }

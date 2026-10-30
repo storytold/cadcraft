@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Accept, Arc, EngineError, Entity, EntityKind, Handle, Input, Interactive, Line, PolyVertex, Polyline, Prompt, Result, Segment, Session, Step,
+    Value, Vec2, arc, bad, bool_or, ccw_sweep, circle, f64_req, intersect_ext, json, line, lwpoly, number, point_req, str_param, targets, v3,
+};
 
 /// Whether OFFSET can work on this kind of object at all.
 fn offsettable(k: &EntityKind) -> bool {
@@ -194,6 +197,9 @@ fn join_point(a: &Segment, b: &Segment) -> Option<Vec2> {
 pub(super) fn run_offset(s: &mut Session, p: &Value) -> Result<Value> {
     let h = targets(s, p)?.first().copied().ok_or_else(|| bad("offset", "`handle` is required"))?;
     let dist = f64_req("offset", p, "distance")?;
+    if dist == 0.0 {
+        return Err(bad("offset", "Requires a positive distance."));
+    }
     let side = point_req("offset", p, "side")?;
     let e = s.doc()?.entity(h).map(|e| (**e).clone()).ok_or_else(|| bad("offset", "no such object"))?;
     let k = offset_kind(&e.kind, dist.abs(), side).ok_or_else(|| bad("offset", "cannot offset that object"))?;
@@ -439,7 +445,7 @@ impl Interactive for OffsetM {
             (None, Input::Point(p)) => {
                 let ap = s.pixel_size() * s.settings.pickbox.max(1.0) * 1.5;
                 let space = s.space();
-                match crate::select::pick(s.doc()?, &space, p, ap) {
+                match s.pick_object(&space, p, ap)? {
                     Some(h) => {
                         self.picked = Some(h);
                         s.set_selection(vec![h]);

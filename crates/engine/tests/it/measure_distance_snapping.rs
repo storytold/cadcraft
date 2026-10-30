@@ -162,6 +162,99 @@ fn multiple_points_length_and_undo_keep_the_measurement_units() {
 }
 
 #[test]
+fn multiple_points_arc_options_keep_the_measurement_units() {
+    let (d, _) = drawing();
+    let mut s = session(d);
+    s.start("dist").unwrap();
+    s.input_snapped(pick(&s, Vec2::new(95.0, 50.0), mode::END)).unwrap();
+    s.input(Input::Keyword("Multiple points".into())).unwrap();
+    s.input_snapped(pick(&s, Vec2::new(100.0, 50.0), mode::INT)).unwrap();
+    // A half circle of radius 2.5 on paper, ended by its included angle, is radius 5 in the
+    // model: 10 + 5 pi.
+    s.input(Input::Keyword("Arc".into())).unwrap();
+    s.input(Input::Keyword("CEnter".into())).unwrap();
+    s.input(Input::Point(Vec2::new(100.0, 52.5))).unwrap();
+    s.input(Input::Keyword("Angle".into())).unwrap();
+    s.input(Input::Text("180".into())).unwrap();
+    assert_eq!(s.log.last().unwrap(), "Distance = 25.7080");
+    let base = s.current_prompt().unwrap().base.unwrap();
+    assert!(base.near(Vec2::new(100.0, 55.0), 1e-9), "the path stays in paper coordinates: {base:?}");
+    s.input(Input::Enter).unwrap();
+    assert_eq!(s.log.last().unwrap(), "Distance = 25.7080");
+
+    // A typed radius is in model units: 5 is 2.5 on paper, the same half circle.
+    let start = |s: &mut Session| {
+        s.start("dist").unwrap();
+        s.input_snapped(pick(s, Vec2::new(95.0, 50.0), mode::END)).unwrap();
+        s.input(Input::Keyword("Multiple points".into())).unwrap();
+        s.input_snapped(pick(s, Vec2::new(100.0, 50.0), mode::INT)).unwrap();
+        s.input(Input::Keyword("Arc".into())).unwrap();
+    };
+    start(&mut s);
+    for i in [Input::Keyword("Radius".into()), Input::Text("5".into()), Input::Keyword("Angle".into()), Input::Text("180".into()), Input::Enter] {
+        s.input(i).unwrap();
+    }
+    assert_eq!(s.log.last().unwrap(), "Distance = 25.7080");
+
+    // A snapped end point off the circle gives the direction of the end: the model end is the
+    // arc's, not the snapped point (0,0). Radius 5 from angle -90 to the angle of (-2,-1).
+    start(&mut s);
+    s.input(Input::Keyword("CEnter".into())).unwrap();
+    s.input(Input::Point(Vec2::new(100.0, 52.5))).unwrap();
+    s.input_snapped(pick(&s, Vec2::new(95.0, 50.0), mode::END)).unwrap();
+    let sweep = (-1.0f64).atan2(-2.0) + std::f64::consts::FRAC_PI_2 + std::f64::consts::TAU;
+    assert_eq!(s.log.last().unwrap(), &format!("Distance = {:.4}", 10.0 + 5.0 * sweep));
+    s.input(Input::Enter).unwrap();
+
+    // A typed end point is a paper point, as in line mode: the path is measured in paper units.
+    start(&mut s);
+    s.input(Input::Keyword("CEnter".into())).unwrap();
+    s.input(Input::Point(Vec2::new(100.0, 52.5))).unwrap();
+    s.input(Input::Point(Vec2::new(100.0, 55.0))).unwrap();
+    assert_eq!(s.log.last().unwrap(), "Distance = 12.8540");
+}
+
+#[test]
+fn an_arc_end_picked_through_another_viewport_uses_paper_units() {
+    let (mut d, paper) = drawing();
+    let mut vp = match &d.entity(viewport(&d, &paper)).unwrap().kind {
+        EntityKind::Viewport(vp) => vp.clone(),
+        _ => panic!("viewport fixture"),
+    };
+    vp.center.x = 120.0;
+    vp.view_height = 20.0;
+    vp.id = 3;
+    d.add(&paper, Common::default(), EntityKind::Viewport(vp)).unwrap();
+    let mut s = session(d);
+    let mut measure = |snap: bool| {
+        s.start("dist").unwrap();
+        let first = pick(&s, Vec2::new(95.0, 50.0), mode::END);
+        let second = pick(&s, Vec2::new(100.0, 50.0), mode::INT);
+        let end = pick(&s, Vec2::new(110.0, 50.0), mode::END);
+        assert_ne!(first.viewport.unwrap().viewport, end.viewport.unwrap().viewport);
+        for (n, hit) in [first, second].into_iter().enumerate() {
+            if n == 1 {
+                s.input(Input::Keyword("Multiple points".into())).unwrap();
+            }
+            if snap { s.input_snapped(hit).unwrap() } else { s.input(Input::Point(hit.point)).unwrap() }
+        }
+        s.input(Input::Keyword("Arc".into())).unwrap();
+        s.input(Input::Keyword("Second pt".into())).unwrap();
+        s.input(Input::Point(Vec2::new(105.0, 52.0))).unwrap();
+        if snap {
+            s.input_snapped(end).unwrap()
+        } else {
+            s.input(Input::Point(end.point)).unwrap()
+        }
+        s.input(Input::Enter).unwrap();
+        s.log.last().unwrap().clone()
+    };
+    let typed = measure(false);
+    assert_eq!(typed, "Distance = 16.0347", "5 along X, then the arc through 105,52 to 110,50");
+    assert_eq!(measure(true), typed);
+}
+
+#[test]
 fn explicit_endpoint_and_intersection_overrides_work_from_the_command_line() {
     let (d, _) = drawing();
     let mut s = session(d);

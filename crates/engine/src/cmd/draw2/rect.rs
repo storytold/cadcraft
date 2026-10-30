@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Accept, EntityKind, Input, Interactive, PolyVertex, Prompt, Result, Session, Step, Value, Vec2, added, bad, bool_or, curves, f64_or, lwpoly,
+    number, other, point_param, point_req, rect_with_corners, size_param,
+};
 
 // =====================================================================================
 // RECTANG with Area / Dimensions / Rotation / Width / Elevation / Thickness

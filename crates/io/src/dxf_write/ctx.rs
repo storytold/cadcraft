@@ -1,4 +1,4 @@
-use super::*;
+use super::{DimVal, Handle, HashMap, K, Vec3, Version, dxf_ext};
 
 /// The `DIMASSOC` object of an associative dimension (stored in the dimension's extension
 /// dictionary under `ACAD_DIMASSOC`).

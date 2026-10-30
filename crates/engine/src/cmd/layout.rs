@@ -1,4 +1,4 @@
-//! Layouts, paper-space viewports, page setup and plotting: LAYOUT (new/delete/rename/copy),
+//! Layouts, paper-space viewports, page setup and plotting: LAYOUT (new/delete/rename/copy/saveas),
 //! MVIEW / VPORTS, viewport scale/lock/layer settings, PAGESETUP, PLOT and EXPORTPDF.
 //!
 //! Plotting goes through the host's [`super::file::IoHooks::plot`] hook so the engine stays
@@ -9,7 +9,7 @@ use cadcraft_geom::{Bounds2, Vec2};
 use serde_json::{Value, json};
 
 use super::file::{base64_encode, io};
-use super::*;
+use super::{CommandSpec, bad, bool_or, find_command, point_param, point_value, str_param, targets};
 
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 use viewports::MviewM;
@@ -22,7 +22,7 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("layout", "Layout", run_layout)
             .alias(&["lo"])
-            .params("{option: new|copy|delete|rename|set|list, name?, to?} (typed LAYOUT / -LAYOUT: option prompts)")
+            .params("{option: new|copy|delete|rename|saveas|set|list, name?, to?, path? (saveas)} (typed LAYOUT / -LAYOUT: option prompts)")
             .interactive(|_| Ok(Box::new(prompts::LayoutM::default()))),
         CommandSpec::new("layout.new", "New Layout", run_new)
             .menu(&["Insert", "Layout", "New Layout"])
@@ -32,6 +32,9 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("layout.rename", "Rename Layout", run_rename).params("{from?: current layout, to}"),
         CommandSpec::new("layout.copy", "Copy Layout", run_copy).params("{from, to?}"),
         CommandSpec::new("layout.list", "List Layouts", run_list).params("→ [{name, tabOrder, page, viewports}]").noundo(),
+        CommandSpec::new("layout.saveas", "Save Layout as Template", saveas::run_saveas)
+            .params("{name?: layout (default: the current layout, else the first tab), path: .dwt (or .dwg, .dxf; no extension adds .dwt)} → {name, path, bytes, notSaved?}")
+            .noundo(),
         CommandSpec::new("mview", "Viewports", run_mview)
             .alias(&["mv"])
             .params(
@@ -334,6 +337,9 @@ fn run_list(s: &mut Session, _p: &Value) -> Result<Value> {
     ))
 }
 
+/// LAYOUT SAveas: a layout written as a drawing template.
+mod saveas;
+
 /// `-LAYOUT`-style dispatcher.
 fn run_layout(s: &mut Session, p: &Value) -> Result<Value> {
     let opt = str_param(p, "option").unwrap_or("list").to_ascii_lowercase();
@@ -362,8 +368,9 @@ fn run_layout(s: &mut Session, p: &Value) -> Result<Value> {
             let set = find_command("layout.set").ok_or_else(|| bad("layout", "layout.set is missing"))?;
             (set.run)(s, p)
         }
+        "saveas" | "sa" => saveas::run_saveas(s, p),
         "list" | "?" => run_list(s, p),
-        _ => Err(bad("layout", "option must be new, copy, delete, rename, set or list")),
+        _ => Err(bad("layout", "option must be new, copy, delete, rename, saveas, set or list")),
     }
 }
 

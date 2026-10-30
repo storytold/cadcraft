@@ -305,7 +305,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             egui::Grid::new("qc-units-grid").num_columns(2).spacing(vec2(6.0, 4.0)).show(ui, |ui| {
                 ui.label(crate::tl!("Type"));
                 let kind_label = KINDS.get(st.kind).map_or("", |k| k.1);
-                egui::ComboBox::from_id_salt("qc-kind").selected_text(crate::i18n::t(kind_label)).show_ui(ui, |ui| {
+                craft_ui::ComboBox::from_id_salt("qc-kind").selected_text(crate::i18n::t(kind_label)).show_ui(ui, |ui| {
                     for (i, (_, label)) in KINDS.iter().enumerate() {
                         if ui.selectable_label(st.kind == i, crate::i18n::t(label)).clicked() {
                             st.kind = i;
@@ -320,7 +320,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
                     ui.label(label);
                     let sel = if which == 0 { &mut st.from } else { &mut st.to };
                     let shown = list.get(*sel).map(|u| u.1.clone()).unwrap_or_default();
-                    egui::ComboBox::from_id_salt(salt).selected_text(shown).show_ui(ui, |ui| {
+                    craft_ui::ComboBox::from_id_salt(salt).selected_text(shown).show_ui(ui, |ui| {
                         for (i, (_, sym)) in list.iter().enumerate() {
                             if ui.selectable_label(*sel == i, sym).clicked() {
                                 *sel = i;

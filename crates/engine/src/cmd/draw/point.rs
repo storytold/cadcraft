@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Accept, EntityKind, Input, Interactive, Point, PolyVertex, Prompt, RayLine, Result, Session, Step, Value, Vec2, added, bad, json, lwpoly, number,
+    point_param, point_req, points_param, size_param, v3,
+};
 
 pub(super) fn run_point(s: &mut Session, p: &Value) -> Result<Value> {
     let pts = match point_param(p, "at") {

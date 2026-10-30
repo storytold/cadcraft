@@ -1,7 +1,7 @@
 use super::common::T;
 use super::entities::{entity_extras, entity_plot_style, entity_with_table_budget, insert_attribs, polyline_entity};
 use super::objects::{MAX_OBJECTS, Objects, page_setup};
-use super::*;
+use super::{Block, BlockDef, Drawing, Entity, EntityKind, Handle, HashMap, Layout, LayoutDef, Rx, Tag, records};
 
 pub(super) fn parse_entities(
     recs: &[(String, Vec<Tag>)],
@@ -35,13 +35,11 @@ pub(super) fn parse_entities(
                 extra = more;
                 kindent = Some((c, k));
             }
-            "INSERT" => {
-                if t.i(66) == Some(1) {
-                    let ins_layer = kindent.as_ref().map(|(c, _)| c.layer.clone()).unwrap_or_default();
-                    let attribs = insert_attribs(recs, &mut i, &ins_layer);
-                    if let Some((_, EntityKind::Insert(ins))) = kindent.as_mut() {
-                        ins.attribs = attribs;
-                    }
+            "INSERT" if t.i(66) == Some(1) => {
+                let ins_layer = kindent.as_ref().map(|(c, _)| c.layer.clone()).unwrap_or_default();
+                let attribs = insert_attribs(recs, &mut i, &ins_layer);
+                if let Some((_, EntityKind::Insert(ins))) = kindent.as_mut() {
+                    ins.attribs = attribs;
                 }
             }
             // A VERTEX or ATTRIB with no POLYLINE or INSERT before it; a stray SEQEND holds nothing.
@@ -311,7 +309,11 @@ pub(super) fn apply_sortents(
     for (owner, map) in tables {
         let Some(name) = brs.get(owner) else { continue };
         let up = name.to_ascii_uppercase();
-        let key = |e: &Entity| map.get(&e.handle).copied().unwrap_or(e.handle.0);
+        // A sort handle of 0 draws last (ezdxf `reorder`, which notes AutoCAD defines it, undocumented).
+        let key = |e: &Entity| {
+            let k = map.get(&e.handle).copied().unwrap_or(e.handle.0);
+            (k == 0, k)
+        };
         if up == "*MODEL_SPACE" {
             d.model.sort_by_key(key);
         } else if up.starts_with("*PAPER_SPACE") {

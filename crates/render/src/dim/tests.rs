@@ -154,6 +154,19 @@ fn text_above_and_centred() {
 }
 
 #[test]
+fn dimtvp_uses_the_dimension_text_height() {
+    let d = lin((0.0, 0.0), (10.0, 0.0), (0.0, 5.0), 0.0);
+    let style = st_with(|s| {
+        s.text_above = 0;
+        s.text_vertical_pos = 2.0;
+        s.text_height = 0.18;
+    });
+    let font = DimText { fixed_height: 0.8, width_factor: 1.0, ..Default::default() };
+    let g = dimension_geometry_with(&d, &style, 1.0, &font);
+    assert!((g.text_pos.y - 6.6).abs() < 1e-6, "text y={} height={}", g.text_pos.y, g.text_height);
+}
+
+#[test]
 fn dimtad_one_uses_autocad_text_clearance() {
     let d = lin((0.0, 0.10), (0.0, 0.70), (0.30, 0.40), std::f64::consts::FRAC_PI_2);
     let st = st_with(|s| {
@@ -218,6 +231,29 @@ fn text_that_does_not_fit_follows_dimtmove_2() {
     let g = dimension_geometry(&d, &st_with(|s| s.text_move = 2), 1.0);
     assert!((g.text_pos.x - 0.25).abs() < 1e-9 && g.text_pos.y < 4.8, "{:?}", g.text_pos);
     assert!(g.lines_of(LineRole::Dim).flatten().all(|p| p.x <= 0.5 + 1e-9 && p.y >= 5.0 - 1e-9), "no leader, no line out to the text");
+}
+
+#[test]
+fn dimtmove_2_text_clearance_matches_autocad() {
+    // #2222: the 0.10 dimension of #1998 in the #2004 1:50 style. AutoCAD 2026 recomputes the
+    // moved text at about 0.358 from the dimension line (0.658214, 0.05).
+    let st = st_with(|s| {
+        s.scale = 50.0;
+        s.text_height = 0.0025;
+        s.text_gap = 0.0008;
+        s.arrow_size = 0.0015;
+        s.text_above = 1;
+        s.text_inside_horizontal = false;
+        s.text_outside_horizontal = false;
+        s.decimals = 2;
+        s.text_move = 2;
+    });
+    let d = lin((0.0, 0.0), (0.0, 0.10), (0.30, 0.0), std::f64::consts::FRAC_PI_2);
+    let g = dimension_geometry(&d, &st, 50.0);
+    assert!(g.text_pos.dist(Vec2::new(0.658214, 0.05)) < 0.005, "vertical: {:?}", g.text_pos);
+    let d = lin((0.0, 0.0), (0.10, 0.0), (0.0, -0.30), 0.0);
+    let g = dimension_geometry(&d, &st, 50.0);
+    assert!(g.text_pos.dist(Vec2::new(0.05, -0.658214)) < 0.005, "horizontal: {:?}", g.text_pos);
 }
 
 #[test]

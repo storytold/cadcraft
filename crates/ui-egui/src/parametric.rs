@@ -259,18 +259,20 @@ enum Act {
 }
 
 /// Draw constraint bars and dynamic constraints. `xf` maps model space to the screen.
-pub fn draw_overlay(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter, xf: &Xf) {
-    refresh(app);
-    let Ok(d) = app.session.doc() else { return };
-    if d.constraints.is_empty() {
-        app.canvas.param.editing = None;
-        return;
-    }
-    let t = Tokens::get();
-    let set = &d.parametric.settings;
-    let mut act: Option<Act> = None;
-    let glyphs = &app.canvas.param.glyphs;
-    let (lu, lp) = (d.header.i64("LUNITS", 2), d.header.i64("LUPREC", 4));
+struct DimensionalContext<'a> {
+    doc: &'a Drawing,
+    settings: &'a cadcraft_doc::ParametricSettings,
+    glyphs: &'a [Glyph],
+    xf: &'a Xf,
+    painter: &'a egui::Painter,
+    ui: &'a mut egui::Ui,
+    tokens: Tokens,
+    units: (i64, i64),
+}
+
+fn draw_dimensional_constraints(frame: DimensionalContext<'_>) -> Option<Act> {
+    let DimensionalContext { doc: d, settings: set, glyphs, xf, painter, ui, tokens: t, units: (lu, lp) } = frame;
+    let mut act = None;
     // ----- dynamic (dimensional) constraints -----
     let dim_c = Color32::from_rgb(0x9f, 0xb6, 0xd6);
     let off_px: f32 = 26.0;
@@ -403,6 +405,13 @@ pub fn draw_overlay(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter
             expression = c.expr
         ));
     }
+    act
+}
+
+fn draw_geometric_constraints(app: &CadApp, ui: &mut egui::Ui, painter: &egui::Painter, xf: &Xf, t: Tokens) {
+    let Ok(d) = app.session.doc() else { return };
+    let set = &d.parametric.settings;
+    let glyphs = &app.canvas.param.glyphs;
     // ----- geometric constraint bars -----
     let mut bars: Vec<(Handle, Vec2, Vec<(&str, u32)>)> = Vec::new();
     let mut dots: Vec<Vec2> = Vec::new();
@@ -488,6 +497,21 @@ pub fn draw_overlay(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter
         painter.rect_filled(r, 2.0, t.canvas.gamma_multiply(0.85));
         painter.galley(at + vec2(4.0, 2.0), galley, col);
     }
+}
+
+pub fn draw_overlay(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter, xf: &Xf) {
+    refresh(app);
+    let Ok(d) = app.session.doc() else { return };
+    if d.constraints.is_empty() {
+        app.canvas.param.editing = None;
+        return;
+    }
+    let t = Tokens::get();
+    let set = &d.parametric.settings;
+    let glyphs = &app.canvas.param.glyphs;
+    let (lu, lp) = (d.header.i64("LUNITS", 2), d.header.i64("LUPREC", 4));
+    let act = draw_dimensional_constraints(DimensionalContext { doc: d, settings: set, glyphs, xf, painter, ui, tokens: t, units: (lu, lp) });
+    draw_geometric_constraints(app, ui, painter, xf, t);
     let _ = act_take(app, act, ui);
 }
 

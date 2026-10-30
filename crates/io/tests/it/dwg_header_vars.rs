@@ -59,3 +59,31 @@ fn header_settings_round_trip_through_dwg() {
     let r = cadcraft_io::read(&dwg, "x.dwg").unwrap();
     check("DWG", &r);
 }
+
+/// The current layer (`$CLAYER`) survives a DWG save and reopen, ASCII or not. A DWG stores a
+/// handle to the layer, and the writer used the null handle, so the drawing came back on "0" (#2252).
+#[test]
+fn the_current_layer_round_trips_through_dwg() {
+    for name in ["Survey_B", "Survey_\u{c4}"] {
+        let mut d = Drawing::new_metric();
+        d.layers.push(cadcraft_doc::Layer::new(name));
+        d.header.set_str("CLAYER", name);
+        let dxf = cadcraft_io::read_dxf(cadcraft_io::write_dxf(&d).as_bytes()).unwrap();
+        assert_eq!(dxf.header.str("CLAYER", "?"), name, "DXF keeps it");
+        let dwg = cadcraft_io::write(&d, "x.dwg").unwrap();
+        let r = cadcraft_io::read(&dwg, "x.dwg").unwrap();
+        assert_eq!(r.header.str("CLAYER", "?"), name, "DWG");
+    }
+}
+
+/// `$CLAYER` naming the layer in other letter case still finds it: the DWG comes back on the
+/// layer, under the layer's own spelling, not on "0" (#2252).
+#[test]
+fn a_current_layer_in_other_case_resolves_to_the_layer() {
+    let mut d = Drawing::new_metric();
+    d.layers.push(cadcraft_doc::Layer::new("Survey_\u{c4}"));
+    d.header.set_str("CLAYER", "Survey_\u{e4}");
+    let dwg = cadcraft_io::write(&d, "x.dwg").unwrap();
+    let r = cadcraft_io::read(&dwg, "x.dwg").unwrap();
+    assert_eq!(r.header.str("CLAYER", "?"), "Survey_\u{c4}");
+}

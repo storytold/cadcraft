@@ -3,7 +3,10 @@ use super::dim_draw::{MAX_FILL_SOLIDS, MAX_FILL_TEXTS, block_text_box, dim_text_
 use super::display::{Kind, NO_LAYER, VIEWPORT_CONTENT};
 use super::props::{resolve, transparency};
 use super::text_entity::{mtext, place_text_entity};
-use super::*;
+use super::{
+    Builder, Ctx, DimGeometry, Drawing, Entity, EntityKind, Handle, Ink, Mat3, Polyline, Prim, Vec2, dim, fill, hatch, linetype, linetype_text,
+    mline, point, table, tolerance, wide,
+};
 
 /// The layer `e` is drawn on, as an index in the layer table: layer 0 inside a block is the
 /// block reference's layer.
@@ -100,6 +103,13 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             if !b.opts.text {
                 return;
             }
+            let upright;
+            let t = if e.common.matches_layout_orientation() && t.rotation != 0.0 {
+                upright = cadcraft_doc::Text { rotation: 0.0, ..t.clone() };
+                &upright
+            } else {
+                t
+            };
             let (sh, _) = place_text_entity(ctx.d, t, &t.value);
             b.shaped(ctx, rgb, lw, &sh);
         }
@@ -111,53 +121,14 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             if !b.opts.text {
                 return;
             }
-            mtext(b, ctx, t, rgb, lw);
-        }
-        EntityKind::Insert(ins) => insert(b, ctx, e, ins, rgb),
-        EntityKind::Dimension(dm) => {
-            if let Some(blk) = dm.block.as_ref().and_then(|n| ctx.d.block(n))
-                && ctx.depth < cadcraft_doc::MAX_BLOCK_DEPTH
-            {
-                let sub = Ctx { block_pstyle: b.named, block_transparency: b.transparency, ..sub_ctx(ctx, e, Mat3::IDENTITY) };
-                // DIMTFILL: the block's MTEXT carries no background mask here, so a background
-                // around each of the block's texts is drawn before the block's first text or first
-                // line of the text's marks, except for a text that a SOLID of the block covers.
-                let style = ctx.d.dim_style(&dm.style).cloned().unwrap_or_default().with_overrides(&dm.overrides);
-                let g = if style.text_fill != 0 { dimension_in(ctx.d, dm) } else { DimGeometry::default() };
-                let gap = style.text_gap.abs() * style.effective_scale(ctx.d.header.f64("DIMSCALE", 1.0));
-                let boxes: Vec<Vec<Vec2>> = if g.text_fill.is_empty() {
-                    Vec::new()
-                } else {
-                    let solids: Vec<&Entity> =
-                        blk.entities.iter().map(|be| &**be).filter(|be| matches!(be.kind, EntityKind::Solid(_))).take(MAX_FILL_SOLIDS).collect();
-                    // A text's own box (no gap): a SOLID holding all its corners is its background.
-                    let covered =
-                        |be: &Entity| block_text_box(ctx.d, be, 0.0).is_some_and(|t| solids.iter().any(|s| t.iter().all(|p| solid_covers(s, *p))));
-                    blk.entities
-                        .iter()
-                        .filter(|be| matches!(be.kind, EntityKind::MText(_) | EntityKind::Text(_)))
-                        .take(MAX_FILL_TEXTS)
-                        .filter(|be| !covered(be))
-                        .filter_map(|be| block_text_box(ctx.d, be, gap))
-                        .collect()
-                };
-                let mut fill_pending = !boxes.is_empty();
-                for be in blk.entities.iter() {
-                    if !b.expand() {
-                        break;
-                    }
-                    if fill_pending && starts_text_marks(be, &g) {
-                        for corners in &boxes {
-                            dim_text_fill(b, ctx, e, &style, corners);
-                        }
-                        fill_pending = false;
-                    }
-                    entity(b, &sub, be);
-                }
+            if e.common.matches_layout_orientation() && t.rotation != 0.0 {
+                mtext(b, ctx, &cadcraft_doc::MText { rotation: 0.0, ..t.clone() }, rgb, lw);
             } else {
-                dimension(b, ctx, e, dm, lw, lt.as_ref(), ltscale);
+                mtext(b, ctx, t, rgb, lw);
             }
         }
+        EntityKind::Insert(ins) => insert(b, ctx, e, ins, rgb),
+        EntityKind::Dimension(dm) => draw_dimension(b, ctx, e, dm, lw, lt.as_ref(), ltscale),
         EntityKind::Hatch(h) => hatch::draw(b, ctx, e, h, rgb, lw, tol),
         EntityKind::MLine(m) => mline::draw(b, ctx, e, m, rgb, lw, tol),
         EntityKind::LwPolyline(p) if p.const_width > 0.0 || p.vertices.iter().any(|v| v.start_width > 0.0 || v.end_width > 0.0) => {
@@ -221,29 +192,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 b.polyline(ctx, rgb, lw, &[q[0], q[1], q[2], q[3], q[0]]);
             }
         }
-        EntityKind::Wipeout(w) => {
-            // Hide what was drawn before it (draw order), then the frame per WIPEOUTFRAME:
-            // 0 = none, 1 = shown and plotted, 2 = shown but not plotted.
-            if b.opts.fill {
-                let n = b.list.prims.len();
-                b.tris(ctx, rgb, &fill::triangulate_evenodd(std::slice::from_ref(&w.boundary)));
-                if let Some(p) = b.list.prims.get_mut(n) {
-                    p.kind = Kind::Mask;
-                }
-            }
-            let frame = match ctx.d.header.i64("WIPEOUTFRAME", 1) {
-                0 => false,
-                2 => !b.plotting,
-                _ => true,
-            };
-            if frame {
-                let mut pts = w.boundary.clone();
-                if let Some(f) = pts.first().copied() {
-                    pts.push(f);
-                }
-                b.polyline(ctx, rgb, lw, &pts);
-            }
-        }
+        EntityKind::Wipeout(w) => draw_wipeout(b, ctx, w, rgb, lw),
         EntityKind::Image(i) => {
             let o = i.insert.xy();
             let u = i.u.xy() * i.size.x;
@@ -272,29 +221,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 b.tris(ctx, rgb, &g.tris);
             }
         }
-        EntityKind::MLeader(m) => {
-            // Straight or spline leader lines; block content draws like a block reference.
-            for pts in m.leader_paths() {
-                b.polyline(ctx, rgb, lw, &pts);
-                if let (Some(a), Some(n)) = (pts.first(), pts.get(1)) {
-                    b.tris(ctx, rgb, &dim::arrow(*a, (*a - *n).normalized(), m.arrow_size));
-                }
-            }
-            if let Some(t) = &m.text {
-                let land = m.landing.xy();
-                let dir = if t.insert.x >= land.x { 1.0 } else { -1.0 };
-                b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);
-                mtext(b, ctx, t, rgb, lw);
-            }
-            if let Some(ins) = &m.block {
-                if m.dogleg > 0.0 && !m.leaders.is_empty() {
-                    let land = m.landing.xy();
-                    let dir = if ins.insert.x >= land.x { 1.0 } else { -1.0 };
-                    b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);
-                }
-                insert(b, ctx, e, ins, rgb);
-            }
-        }
+        EntityKind::MLeader(m) => draw_mleader(b, ctx, e, m, rgb, lw),
         EntityKind::Point(p) => {
             // Relative sizes follow the view: undo the block / viewport scale.
             let view = b.opts.view_height / ctx.xf.scale_factor().max(1e-12);
@@ -335,6 +262,94 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 }
             }
         }
+    }
+}
+
+fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeader, rgb: Ink, lw: f32) {
+    // Straight or spline leader lines; block content draws like a block reference.
+    for pts in m.leader_paths() {
+        b.polyline(ctx, rgb, lw, &pts);
+        if let (Some(a), Some(n)) = (pts.first(), pts.get(1)) {
+            b.tris(ctx, rgb, &dim::arrow(*a, (*a - *n).normalized(), m.arrow_size));
+        }
+    }
+    if let Some(t) = &m.text {
+        let land = m.landing.xy();
+        let dir = if t.insert.x >= land.x { 1.0 } else { -1.0 };
+        b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);
+        mtext(b, ctx, t, rgb, lw);
+    }
+    if let Some(ins) = &m.block {
+        if m.dogleg > 0.0 && !m.leaders.is_empty() {
+            let land = m.landing.xy();
+            let dir = if ins.insert.x >= land.x { 1.0 } else { -1.0 };
+            b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);
+        }
+        insert(b, ctx, e, ins, rgb);
+    }
+}
+
+fn draw_wipeout(b: &mut Builder, ctx: &Ctx, w: &cadcraft_doc::Wipeout, rgb: Ink, lw: f32) {
+    // Hide what was drawn before it (draw order), then the frame per WIPEOUTFRAME:
+    // 0 = none, 1 = shown and plotted, 2 = shown but not plotted.
+    if b.opts.fill {
+        let n = b.list.prims.len();
+        b.tris(ctx, rgb, &fill::triangulate_evenodd(std::slice::from_ref(&w.boundary)));
+        if let Some(p) = b.list.prims.get_mut(n) {
+            p.kind = Kind::Mask;
+        }
+    }
+    let frame = match ctx.d.header.i64("WIPEOUTFRAME", 1) {
+        0 => false,
+        2 => !b.plotting,
+        _ => true,
+    };
+    if frame {
+        b.polyline(ctx, rgb, lw, &w.closed_boundary());
+    }
+}
+
+fn draw_dimension(b: &mut Builder, ctx: &Ctx, e: &Entity, dm: &cadcraft_doc::Dimension, lw: f32, lt: Option<&cadcraft_doc::Linetype>, ltscale: f64) {
+    if let Some(blk) = dm.block.as_ref().and_then(|n| ctx.d.block(n))
+        && ctx.depth < cadcraft_doc::MAX_BLOCK_DEPTH
+    {
+        let sub = Ctx { block_pstyle: b.named, block_transparency: b.transparency, ..sub_ctx(ctx, e, Mat3::IDENTITY) };
+        // DIMTFILL: the block's MTEXT carries no background mask here, so a background
+        // around each of the block's texts is drawn before the block's first text or first
+        // line of the text's marks, except for a text that a SOLID of the block covers.
+        let style = ctx.d.dim_style(&dm.style).cloned().unwrap_or_default().with_overrides(&dm.overrides);
+        let g = if style.text_fill != 0 { dimension_in(ctx.d, dm) } else { DimGeometry::default() };
+        let gap = style.text_gap.abs() * style.effective_scale(ctx.d.header.f64("DIMSCALE", 1.0));
+        let boxes: Vec<Vec<Vec2>> = if g.text_fill.is_empty() {
+            Vec::new()
+        } else {
+            let solids: Vec<&Entity> =
+                blk.entities.iter().map(|be| &**be).filter(|be| matches!(be.kind, EntityKind::Solid(_))).take(MAX_FILL_SOLIDS).collect();
+            // A text's own box (no gap): a SOLID holding all its corners is its background.
+            let covered = |be: &Entity| block_text_box(ctx.d, be, 0.0).is_some_and(|t| solids.iter().any(|s| t.iter().all(|p| solid_covers(s, *p))));
+            blk.entities
+                .iter()
+                .filter(|be| matches!(be.kind, EntityKind::MText(_) | EntityKind::Text(_)))
+                .take(MAX_FILL_TEXTS)
+                .filter(|be| !covered(be))
+                .filter_map(|be| block_text_box(ctx.d, be, gap))
+                .collect()
+        };
+        let mut fill_pending = !boxes.is_empty();
+        for be in blk.entities.iter() {
+            if !b.expand() {
+                break;
+            }
+            if fill_pending && starts_text_marks(be, &g) {
+                for corners in &boxes {
+                    dim_text_fill(b, ctx, e, &style, corners);
+                }
+                fill_pending = false;
+            }
+            entity(b, &sub, be);
+        }
+    } else {
+        dimension(b, ctx, e, dm, lw, lt, ltscale);
     }
 }
 

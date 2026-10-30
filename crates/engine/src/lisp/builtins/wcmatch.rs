@@ -1,5 +1,5 @@
 use super::args::{R, arity, string};
-use super::*;
+use super::{LispError, Value};
 
 /// `wcmatch`: `#` a digit, `@` a letter, `.` neither, `*` any run, `?` any character, `~` (first)
 /// not, `[…]` a set (`[~…]` not in it, ranges `a-z`), `` ` `` the next character as is, `,`

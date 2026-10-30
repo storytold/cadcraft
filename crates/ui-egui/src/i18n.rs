@@ -45,10 +45,12 @@ pub enum Preference {
     Hungarian,
     #[serde(rename = "tr")]
     Turkish,
+    #[serde(rename = "bs")]
+    Bosnian,
 }
 
 impl Preference {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::Auto,
         Self::English,
         Self::Greek,
@@ -66,6 +68,7 @@ impl Preference {
         Self::Arabic,
         Self::Hungarian,
         Self::Turkish,
+        Self::Bosnian,
     ];
 
     /// Every preference in the order the Interface Language dialog lists them: Auto, then English
@@ -113,6 +116,7 @@ impl Preference {
             Self::Arabic => "ar",
             Self::Hungarian => "hu",
             Self::Turkish => "tr",
+            Self::Bosnian => "bs",
         }
     }
 
@@ -141,6 +145,7 @@ impl Preference {
             Self::Arabic => "العربية",
             Self::Hungarian => "Magyar",
             Self::Turkish => "Türkçe",
+            Self::Bosnian => "Bosanski",
         }
     }
 
@@ -171,6 +176,7 @@ impl Preference {
             Self::Arabic => "ar",
             Self::Hungarian => "hu",
             Self::Turkish => "tr",
+            Self::Bosnian => "bs",
             Self::Auto => locales.iter().find_map(|s| locale_language(s)).unwrap_or("en"),
         }
     }
@@ -187,7 +193,7 @@ pub struct Language {
     catalog: OnceLock<Catalog<'static>>,
 }
 
-pub static LANGUAGES: [Language; 16] = [
+pub static LANGUAGES: [Language; 17] = [
     Language { code: "en", name: "English", source: "", plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     // Greek: one for exactly 1; other for zero and all other integer counts.
     Language {
@@ -234,6 +240,9 @@ pub static LANGUAGES: [Language; 16] = [
     Language { code: "hu", name: "Magyar", source: include_str!("i18n/hu.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new() },
     // Turkish keeps a noun singular after a number ("3 commit"), so like Korean it has one form.
     Language { code: "tr", name: "Türkçe", source: include_str!("i18n/tr.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new() },
+    // Bosnian (Latin script, Ijekavian): one (1, 21), few (2–4, 22–24, not 12–14), other — the
+    // Ukrainian rule for integer counts.
+    Language { code: "bs", name: "Bosanski", source: include_str!("i18n/bs.tsv"), plural: plural_uk, plural_forms: 3, catalog: OnceLock::new() },
 ];
 
 /// BCP 47 and POSIX locale tags, including `uk-UA`, `uk_UA.UTF-8` and `pt_BR.UTF-8`.
@@ -437,6 +446,7 @@ mod picker_order_tests {
         assert!(pos(Preference::Czech) < pos(Preference::German), "Čeština sorts under C");
         assert!(pos(Preference::Italian) < pos(Preference::Hungarian), "Magyar sorts under M");
         assert!(pos(Preference::Turkish) < pos(Preference::Greek), "Latin names come before Greek");
+        assert!(pos(Preference::Bosnian) < pos(Preference::Czech), "Bosanski sorts under B");
         assert_eq!(name_sort_key("Türkçe"), "turkce");
     }
 }
