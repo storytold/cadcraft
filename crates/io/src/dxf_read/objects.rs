@@ -241,6 +241,7 @@ pub(super) fn page_setup(t: &T) -> PageSetup {
     let rotated = matches!(t.i(73), Some(1 | 3));
     if w > 0.0 && h > 0.0 {
         p.landscape = rotated != (w > h);
+        p.file_paper = Some((w, h, t.i(73).unwrap_or(0)));
     } else if t.i(73).is_some() {
         p.landscape = rotated;
     }
