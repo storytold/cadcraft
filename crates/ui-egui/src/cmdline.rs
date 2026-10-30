@@ -18,6 +18,10 @@ pub struct CmdLine {
     typed_since_selection: bool,
     pub history: Vec<String>,
     pub history_pos: Option<usize>,
+    /// Keyboard-selected AutoComplete row (Shift+Up/Down).
+    suggestion_index: Option<usize>,
+    /// Input for which the suggestion selection was calculated.
+    suggestion_prefix: String,
     /// What was typed at command prompts (not command names), oldest first: the in-command
     /// shortcut menu's Recent Input.
     pub recent_input: Vec<String>,
@@ -102,8 +106,13 @@ fn tab(app: &mut CadApp) {
     {
         // Both values typed: Tab locks the second one as well.
         app.cmd.locked_second = Some(app.cmd.buffer.clone());
-    } else if let Some(s) = suggestions(&app.cmd.buffer).first() {
-        app.cmd.buffer = s.id.clone();
+    } else {
+        let choices = suggestions(&app.cmd.buffer);
+        if let Some(s) = choices.get(app.cmd.suggestion_index.unwrap_or(0)) {
+            app.cmd.buffer = s.id.clone();
+            app.cmd.suggestion_index = None;
+            app.cmd.suggestion_prefix.clear();
+        }
     }
 }
 
@@ -282,6 +291,16 @@ fn enable_ime(app: &mut CadApp, ctx: &egui::Context) {
     });
 }
 
+/// Use the highlighted command for keyboard submission, leaving prompt input untouched.
+fn accept_selected_suggestion(app: &mut CadApp) {
+    if !app.session.prompting()
+        && let Some(index) = app.cmd.suggestion_index
+        && let Some(suggestion) = suggestions(&app.cmd.buffer).get(index)
+    {
+        app.cmd.buffer = suggestion.id.clone();
+    }
+}
+
 /// Handle keyboard input destined for the command line (when no text field has focus).
 pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
     if ctx.egui_wants_keyboard_input() {
@@ -303,6 +322,32 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
     }
     options_still_fit(app);
     for ev in events {
+        // A changed command prefix invalidates the previous suggestion selection.
+        if app.cmd.suggestion_prefix != app.cmd.buffer {
+            app.cmd.suggestion_index = None;
+            app.cmd.suggestion_prefix = app.cmd.buffer.clone();
+        }
+        // Preserve the existing prompt options menu and ordinary history arrows.
+        if app.cmd.options.is_none()
+            && !app.session.prompting()
+            && let egui::Event::Key { key: key @ (Key::ArrowUp | Key::ArrowDown), pressed: true, modifiers, .. } = &ev
+            && modifiers.shift
+            && !modifiers.alt
+            && !modifiers.ctrl
+            && !modifiers.command
+        {
+            let count = suggestions(&app.cmd.buffer).len();
+            if count > 0 {
+                let current = app.cmd.suggestion_index;
+                let next = if *key == Key::ArrowDown {
+                    current.map(|i| (i + 1) % count).unwrap_or(1 % count)
+                } else {
+                    current.map(|i| (i + count - 1) % count).unwrap_or(count - 1)
+                };
+                app.cmd.suggestion_index = Some(next);
+                continue;
+            }
+        }
         // The options menu takes the arrows, Enter and Escape; typing closes it.
         if app.cmd.options.is_some() {
             let space = matches!(&ev, egui::Event::Text(t) if t == " ") && !text_prompt;
@@ -339,6 +384,7 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
                 if t == "\t" {
                     tab(app);
                 } else if t == " " && !text_prompt {
+                    accept_selected_suggestion(app);
                     submit(app);
                 } else {
                     app.cmd.preedit.clear();
@@ -357,7 +403,10 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
             }
             egui::Event::Ime(_) => {}
             egui::Event::Key { key, pressed: true, repeat, modifiers, .. } => match key {
-                Key::Enter => submit(app),
+                Key::Enter => {
+                    accept_selected_suggestion(app);
+                    submit(app);
+                }
                 Key::Escape => {
                     app.cmd.buffer.clear();
                     app.cmd.preedit.clear();
@@ -406,6 +455,10 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
                 _ => {}
             },
             _ => {}
+        }
+        if app.cmd.suggestion_prefix != app.cmd.buffer {
+            app.cmd.suggestion_index = None;
+            app.cmd.suggestion_prefix = app.cmd.buffer.clone();
         }
         app.cmd.note_typing();
     }
@@ -593,7 +646,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
             for (i, s) in sug.iter().enumerate() {
                 let r = Rect::from_min_size(pos2(lr.left(), lr.top() + rh * i as f32), vec2(lr.width(), rh));
                 let resp = ui.interact(r, ui.scope_id().with(("sug", i)), Sense::click());
-                if resp.hovered() || i == 0 {
+                if resp.hovered() || i == app.cmd.suggestion_index.unwrap_or(0) {
                     p.rect_filled(r.shrink(1.0), 2.0, if resp.hovered() { t.cmd_keyword_hover } else { t.list_row });
                 }
                 p.text(Pos2::new(r.left() + 8.0, r.center().y), egui::Align2::LEFT_CENTER, &s.display, crate::theme::body(), t.text);
@@ -923,5 +976,81 @@ mod autocomplete_tests {
         app.cmd.buffer = "rec".to_string();
         tab(&mut app);
         assert_eq!(app.cmd.buffer, "RECTANG");
+    }
+    #[test]
+    fn shift_down_selects_next_suggestion_and_tab_completes_it() {
+        let mut app = CadApp::new(cadcraft_engine::Session::empty(), crate::Services::default());
+        let ctx = egui::Context::default();
+
+        app.cmd.buffer = "c".to_string();
+
+        let down = egui::Event::Key { key: Key::ArrowDown, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::SHIFT };
+
+        let mut output = ctx.run_ui(egui::RawInput { events: vec![down], ..Default::default() }, |ctx| {
+            keyboard(&mut app, ctx);
+        });
+        output.textures_delta.clear();
+        assert_eq!(app.cmd.suggestion_index, Some(1));
+
+        tab(&mut app);
+        assert_eq!(app.cmd.buffer, suggestions("c")[1].id);
+    }
+
+    // Run a keyboard event in a minimal egui frame and release its texture updates.
+    fn key_frame(app: &mut CadApp, ctx: &egui::Context, event: egui::Event) {
+        let mut output = ctx.run_ui(egui::RawInput { events: vec![event], ..Default::default() }, |ui| keyboard(app, ui.ctx()));
+        output.textures_delta.clear();
+    }
+
+    fn key_event(key: Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers }
+    }
+
+    #[test]
+    fn enter_executes_highlighted_suggestion_instead_of_alias() {
+        let mut app = CadApp::new(cadcraft_engine::Session::empty(), crate::Services::default());
+        let ctx = egui::Context::default();
+        app.cmd.buffer = "c".into();
+        key_frame(&mut app, &ctx, key_event(Key::ArrowDown, egui::Modifiers::SHIFT));
+        let expected = suggestions("c")[1].id.clone();
+        assert_ne!(expected, suggestions("c")[0].id);
+        key_frame(&mut app, &ctx, key_event(Key::Enter, egui::Modifiers::NONE));
+        assert_eq!(app.cmd.history.last(), Some(&expected));
+    }
+
+    #[test]
+    fn space_executes_highlighted_suggestion() {
+        let mut app = CadApp::new(cadcraft_engine::Session::empty(), crate::Services::default());
+        let ctx = egui::Context::default();
+        app.cmd.buffer = "c".into();
+        key_frame(&mut app, &ctx, key_event(Key::ArrowDown, egui::Modifiers::SHIFT));
+        let expected = suggestions("c")[1].id.clone();
+        key_frame(&mut app, &ctx, egui::Event::Text(" ".into()));
+        assert_eq!(app.cmd.history.last(), Some(&expected));
+    }
+
+    #[test]
+    fn suggestion_navigation_wraps_in_both_directions() {
+        let mut app = CadApp::new(cadcraft_engine::Session::empty(), crate::Services::default());
+        let ctx = egui::Context::default();
+        app.cmd.buffer = "c".into();
+        let count = suggestions("c").len();
+        assert!(count > 1);
+        key_frame(&mut app, &ctx, key_event(Key::ArrowUp, egui::Modifiers::SHIFT));
+        assert_eq!(app.cmd.suggestion_index, Some(count - 1));
+        key_frame(&mut app, &ctx, key_event(Key::ArrowDown, egui::Modifiers::SHIFT));
+        assert_eq!(app.cmd.suggestion_index, Some(0));
+    }
+
+    #[test]
+    fn typing_a_new_prefix_resets_highlight() {
+        let mut app = CadApp::new(cadcraft_engine::Session::empty(), crate::Services::default());
+        let ctx = egui::Context::default();
+        app.cmd.buffer = "c".into();
+        key_frame(&mut app, &ctx, key_event(Key::ArrowDown, egui::Modifiers::SHIFT));
+        assert_eq!(app.cmd.suggestion_index, Some(1));
+        key_frame(&mut app, &ctx, egui::Event::Text("o".into()));
+        assert_eq!(app.cmd.buffer, "co");
+        assert_eq!(app.cmd.suggestion_index, None);
     }
 }
