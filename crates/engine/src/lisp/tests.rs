@@ -876,3 +876,28 @@ fn angtof_reads_the_string_in_the_given_units() {
     assert_eq!(ok(&mut s, "(angtof \"180\" 7)"), "nil");
     assert_eq!(ok(&mut s, "(angtof \"180\" \"x\")"), "nil");
 }
+
+/// #1920: the value of an expression typed at a prompt is the answer, not another expression.
+/// `(setq q "!q")` returned `"!q"`, which was evaluated again as `!q`, forever, until the stack
+/// overflowed and the process aborted (no `catch_unwind` catches that).
+#[test]
+fn a_lisp_value_at_a_prompt_is_not_evaluated_again() {
+    let mut s = session();
+    s.cmdline("circle (setq q \"!q\")").unwrap();
+    assert_eq!(ok(&mut s, "q"), "\"!q\"");
+    // "!q" is no centre point, so CIRCLE still asks for one; the session carries on.
+    assert!(s.running.is_some());
+    s.cancel();
+    // A value that is itself an expression stays text too: `(+ 1 2)` is not evaluated to 3.
+    s.cmdline("circle 0,0 (setq r \"(+ 1 2)\")").unwrap();
+    assert!(s.running.is_some(), "\"(+ 1 2)\" is no radius");
+    s.cancel();
+    // Values that answer the prompt still do.
+    s.cmdline("(setq r \"4\")").unwrap();
+    s.cmdline("circle 0,0 !r").unwrap();
+    let r = s.doc().unwrap().model.iter().find_map(|e| match &e.kind {
+        cadcraft_doc::EntityKind::Circle(c) => Some(c.radius),
+        _ => None,
+    });
+    assert_eq!(r, Some(4.0));
+}

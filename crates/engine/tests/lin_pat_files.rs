@@ -6,16 +6,12 @@ use cadcraft_engine::Session;
 use cadcraft_engine::doc::{EntityKind, Hatch};
 use serde_json::json;
 
-const LIN: &str = "*MYDASH,My dash __ __\nA,.5,-.25\n*MYTEXT,My text --MY--\nA,.5,-.2,[\"MY\",Standard,S=.1,X=-.1,Y=-.05],-.2\n";
+#[path = "support/temp_dir.rs"]
+mod temp_dir;
 
-/// A user file in the test's temp folder; returns its path.
-fn file(name: &str, text: &str) -> String {
-    let dir = std::env::temp_dir().join(format!("cadcraft-lin-pat-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let p = dir.join(name);
-    std::fs::write(&p, text).unwrap();
-    p.to_string_lossy().into_owned()
-}
+use temp_dir::TempDir;
+
+const LIN: &str = "*MYDASH,My dash __ __\nA,.5,-.25\n*MYTEXT,My text --MY--\nA,.5,-.2,[\"MY\",Standard,S=.1,X=-.1,Y=-.05],-.2\n";
 
 fn linetype_pattern(s: &Session, name: &str) -> Option<Vec<f64>> {
     s.doc().unwrap().linetype(name).map(|l| l.pattern.iter().map(|e| e.length).collect())
@@ -46,7 +42,8 @@ fn linetype_json_loads_named_linetypes_from_file_text() {
 
 #[test]
 fn linetype_json_reads_a_lin_file_by_path() {
-    let path = file("mine.lin", LIN);
+    let dir = TempDir::new("lin-pat");
+    let path = dir.file("mine.lin", LIN);
     let mut s = Session::new();
     s.execute("linetype", &json!({ "load": "MYTEXT", "file": path })).unwrap();
     assert!(linetype_pattern(&s, "MYTEXT").is_some());
@@ -58,7 +55,8 @@ fn linetype_json_reads_a_lin_file_by_path() {
 
 #[test]
 fn dash_linetype_loads_from_a_file_and_the_library_at_the_command_line() {
-    let path = file("cmdline.lin", LIN);
+    let dir = TempDir::new("lin-pat");
+    let path = dir.file("cmdline.lin", LIN);
     let mut s = Session::new();
     s.cmdline("-linetype").unwrap();
     for line in ["l", "MYDASH,MYTEXT", path.as_str(), "s", "MYTEXT"] {
@@ -72,7 +70,7 @@ fn dash_linetype_loads_from_a_file_and_the_library_at_the_command_line() {
     assert!(s.log.iter().any(|l| l.contains("Linetype MYDASH loaded")), "{:?}", s.log);
 
     // Already loaded: asked whether to reload, in the file's order.
-    let changed = file("changed.lin", &LIN.replace(".5,-.25", "2,-2"));
+    let changed = dir.file("changed.lin", LIN.replace(".5,-.25", "2,-2"));
     s.cmdline("-linetype").unwrap();
     for line in ["l", "*", changed.as_str()] {
         s.cmdline(line).unwrap();
@@ -132,7 +130,8 @@ fn hatch_uses_a_pattern_from_a_pat_file_and_keeps_its_definition() {
 
 #[test]
 fn hatch_pattern_prompt_takes_a_pat_file_name() {
-    let path = file("MYSTAIRS.pat", "*MYOTHER\n0,0,0,0,1\n*MYSTAIRS,Stairs\n0,0,0,.5,.5,.5,-.5\n90,.5,0,.5,.5,.5,-.5\n");
+    let dir = TempDir::new("lin-pat");
+    let path = dir.file("MYSTAIRS.pat", "*MYOTHER\n0,0,0,0,1\n*MYSTAIRS,Stairs\n0,0,0,.5,.5,.5,-.5\n90,.5,0,.5,.5,.5,-.5\n");
     let mut s = Session::new();
     s.execute("rectang", &json!({ "p1": [0, 0], "p2": [10, 10] })).unwrap();
     s.cmdline("hatch").unwrap();

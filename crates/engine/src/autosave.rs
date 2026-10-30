@@ -59,10 +59,22 @@ pub fn set_savefilepath(path: &str) {
 
 /// The autosave file name for drawing `uid` titled `title`, written by app instance `instance`.
 pub fn file_name(title: &str, instance: &str, uid: u64) -> String {
-    let stem: String = title.chars().map(|c| if c.is_alphanumeric() || " .-_()".contains(c) { c } else { '-' }).take(80).collect();
+    // File systems limit a name to 255 bytes, so the stem gets what the suffix leaves, cut at a character boundary.
+    let suffix = format!("_{instance}_{uid}.{EXT}");
+    let budget = 255usize.saturating_sub(suffix.len());
+    let mut used = 0;
+    let stem: String = title
+        .chars()
+        .map(|c| if c.is_alphanumeric() || " .-_()".contains(c) { c } else { '-' })
+        .take(80)
+        .take_while(|c| {
+            used += c.len_utf8();
+            used <= budget
+        })
+        .collect();
     let stem = stem.trim().trim_matches('.');
     let stem = if stem.is_empty() { "Drawing" } else { stem };
-    format!("{stem}_{instance}_{uid}.{EXT}")
+    format!("{stem}{suffix}")
 }
 
 /// Whether `s` has the form of an app instance id (`<process id>-<start time in hex>`, see
@@ -475,6 +487,23 @@ mod native {
             if !dir.is_empty() && is_instance_id(&self.instance) {
                 let _ = std::fs::remove_file(lock_path(Path::new(&dir), &self.instance));
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_name_fits_255_bytes_for_multibyte_titles() {
+        let instance = "12345-abcdef0123456789";
+        for title in ["图".repeat(100), "😀".repeat(100), "aé图😀".repeat(40), "a".repeat(300)] {
+            let name = file_name(&title, instance, u64::MAX);
+            assert!(name.len() <= 255, "{} bytes", name.len());
+            let (t, i, u) = parse_file_name(&name).expect("round trips");
+            assert_eq!((i, u), (instance, u64::MAX));
+            assert!(!t.is_empty());
         }
     }
 }

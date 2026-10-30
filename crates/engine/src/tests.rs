@@ -345,6 +345,15 @@ fn fillet_two_lines() {
 }
 
 #[test]
+fn offset_zero_distance_is_rejected() {
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    let r = s.execute("offset", &json!({"handle": "100", "distance": 0, "side": [1, 1]}));
+    assert!(r.is_err(), "offset distance 0 made a coincident copy: {r:?}");
+    assert_eq!(s.doc().unwrap().model.len(), 1);
+}
+
+#[test]
 fn offset_circle_and_polyline() {
     let mut s = Session::new();
     let c = s.execute("circle", &json!({"center": [0, 0], "radius": 5})).unwrap();
@@ -631,6 +640,17 @@ fn setvar_keeps_header_types() {
     assert_eq!(s.doc().unwrap().header.get("LUNITS"), Some(&cadcraft_doc::HVal::Int(3)));
     assert!(s.execute("setvar", &json!({"name": "LTSCALE", "value": "big"})).is_err());
     assert_eq!(s.doc().unwrap().header.f64("LTSCALE", 0.0), 1.0);
+}
+
+#[test]
+fn setvar_rejects_out_of_range_units() {
+    let mut s = Session::new();
+    for (name, v) in [("LUPREC", 100), ("LUNITS", 9), ("LUNITS", 0), ("AUPREC", -5), ("AUNITS", 5)] {
+        assert!(s.execute("setvar", &json!({"name": name, "value": v})).is_err(), "{name} {v}");
+    }
+    s.execute("setvar", &json!({"name": "LUPREC", "value": 8})).unwrap();
+    assert_eq!(s.doc().unwrap().header.i64("LUPREC", 0), 8);
+    assert_ne!(s.doc().unwrap().header.i64("LUNITS", 2), 9);
 }
 
 #[test]
@@ -1432,4 +1452,35 @@ fn hostile_variable_like_input_never_panics() {
     // The session is still usable afterwards.
     s.cmdline("pickadd").unwrap();
     assert!(setvar_prompt_open(&s));
+}
+
+#[test]
+fn chamfer_rejects_negative_distances() {
+    let mut s = Session::new();
+    let h1 = s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    let h2 = s.execute("line", &json!({"points": [[0, 0], [0, 10]]})).unwrap();
+    let before = format!("{:?}", s.doc().unwrap().model.iter().map(|e| e.kind.clone()).collect::<Vec<_>>());
+    let r = s.execute("chamfer", &json!({"h1": h1["handles"][0], "h2": h2["handles"][0], "p1": [5, 0], "p2": [0, 5], "d1": -3, "d2": 2}));
+    assert!(r.is_err(), "negative chamfer distance accepted: {r:?}");
+    let after = format!("{:?}", s.doc().unwrap().model.iter().map(|e| e.kind.clone()).collect::<Vec<_>>());
+    assert_eq!(before, after);
+}
+
+#[test]
+fn array_counts_reject_invalid_values() {
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [1, 0]]})).unwrap();
+    for bad in [json!(-3), json!(0), json!(2.5)] {
+        for key in ["count", "rows", "levels"] {
+            let mut p = json!({"center": [0, 0], "associative": false});
+            p[key] = bad.clone();
+            assert!(s.execute("arraypolar", &p).is_err(), "arraypolar {key}={bad}");
+        }
+        for key in ["rows", "cols", "levels"] {
+            let mut p = json!({"associative": false});
+            p[key] = bad.clone();
+            assert!(s.execute("arrayrect", &p).is_err(), "arrayrect {key}={bad}");
+        }
+    }
+    s.execute("arraypolar", &json!({"center": [0, 0], "count": 1, "associative": false})).unwrap();
 }

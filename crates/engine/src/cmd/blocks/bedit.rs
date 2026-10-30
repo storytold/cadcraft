@@ -2,6 +2,8 @@
 //! drawing's own tab, its base point at the origin; the block's objects are edited with the
 //! ordinary commands; BSAVE saves them into the definition, so every reference to the block in the
 //! drawing shows the change; BCLOSE goes back to the drawing, saving or discarding what isn't saved.
+//! BEDIT while the Block Editor is open switches it to another block: changes not saved yet are
+//! saved or discarded first (asked at the command line; `save` in JSON).
 //! The state is [`crate::blockedit`].
 
 use cadcraft_doc::{Drawing, EntityKind, Handle};
@@ -16,10 +18,9 @@ pub(super) fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("bedit", "Block Editor", run_bedit)
             .menu(&["Tools", "Block Editor"])
             .alias(&["be", "-bedit"])
-            .params("{name? (\"<Current Drawing>\": the drawing itself, a dynamic block's own drawing) | handle? (a block reference: edits its block); default the one selected block reference, create?: bool (a name no block has yet starts a new block; BSAVE creates it)} → {block, new}")
-            .enabled(not_editing)
+            .params("{name? (\"<Current Drawing>\": the drawing itself, a dynamic block's own drawing) | handle? (a block reference: edits its block); default the one selected block reference, create?: bool (a name no block has yet starts a new block; BSAVE creates it), save?: bool (in the Block Editor, switching to another block: save (true) or discard (false) the changes not saved yet; required when there are some), check?: bool (in the Block Editor: only check that the block can be switched to)} → {block, new, saved?}")
             .noundo()
-            .interactive(|_| Ok(Box::new(BeditM))),
+            .interactive(|_| Ok(Box::new(BeditM::default()))),
         CommandSpec::new("bsave", "Save Block", run_bsave).params("{} → {block}").enabled(editing).noundo(),
         CommandSpec::new("bsaveas", "Save Block As", run_bsaveas)
             .params("{name, replace?: bool (redefine an existing block of that name)} → {block}")
@@ -50,16 +51,6 @@ fn editing_a_block(s: &Session) -> std::result::Result<(), String> {
             Err("The Block Editor is open on the current drawing; there is no block to save under another name.".into())
         }
         _ => Ok(()),
-    }
-}
-
-fn not_editing(s: &Session) -> std::result::Result<(), String> {
-    match s.state() {
-        Ok(st) => match st.block_editor() {
-            Some(name) => Err(format!("The Block Editor is already open on \"{name}\"; close it first (BCLOSE).")),
-            None => Ok(()),
-        },
-        Err(e) => Err(e.to_string()),
     }
 }
 
@@ -106,8 +97,53 @@ fn dynamic_definition(d: &Drawing, name: &str) -> Option<String> {
     (kind == "BLOCK_RECORD").then(|| d.block(block).map(|b| b.name.clone())).flatten()
 }
 
-/// Open the Block Editor on block `name` and frame its objects.
-fn open(s: &mut Session, name: &str, create: bool) -> Result<Value> {
+/// Whether the open Block Editor can switch to block `name`: the block is there (or `create` makes
+/// it) and isn't one the editor refuses. Checked before anything is saved or closed, or asked.
+fn check_target(s: &Session, name: &str, create: bool) -> Result<()> {
+    let host = s.state()?.block_edit.as_ref().map(|b| b.host.doc.clone()).ok_or_else(|| bad("bedit", "the Block Editor is not open"))?;
+    if name.trim().eq_ignore_ascii_case(crate::blockedit::CURRENT_DRAWING) {
+        return Ok(());
+    }
+    match host.block(name) {
+        None if !create => Err(bad("bedit", format!("Block \"{name}\" not found."))),
+        None => Ok(()),
+        Some(_) => crate::blockedit::refusal(&host, name).map_or(Ok(()), |why| Err(bad("bedit", why))),
+    }
+}
+
+/// Open the Block Editor on block `name` and frame its objects. While it is open on another
+/// block it switches: the changes not saved yet are saved first with `save` Some(true),
+/// discarded with Some(false); with None there must be none. The block to switch to is checked
+/// before anything is saved or closed, so a refused switch leaves the editor as it was.
+fn open(s: &mut Session, name: &str, create: bool, save: Option<bool>) -> Result<Value> {
+    let mut saved = None;
+    if let Some(current) = s.state()?.block_editor().map(str::to_string) {
+        if current.eq_ignore_ascii_case(name.trim()) {
+            s.echo(format!("The Block Editor is already editing \"{current}\"."));
+            return Ok(json!({ "block": current, "new": false }));
+        }
+        check_target(s, name, create)?;
+        let save = match (s.state()?.block_unsaved(), save) {
+            (false, _) => false,
+            (true, Some(save)) => save,
+            (true, None) => {
+                return Err(bad(
+                    "bedit",
+                    format!("Block \"{current}\" has changes not saved; pass `save: true` to save them or `save: false` to discard them"),
+                ));
+            }
+        };
+        saved = close(s, save)?.get("saved").cloned();
+    }
+    let mut r = open_closed(s, name, create)?;
+    if let (Some(v), Some(o)) = (saved, r.as_object_mut()) {
+        o.insert("saved".into(), v);
+    }
+    Ok(r)
+}
+
+/// [`open`] with the Block Editor closed.
+fn open_closed(s: &mut Session, name: &str, create: bool) -> Result<Value> {
     let new = create && !name.eq_ignore_ascii_case(crate::blockedit::CURRENT_DRAWING) && s.doc()?.block(name).is_none();
     s.state_mut()?.open_block_editor(name, create)?;
     let name = s.state()?.block_editor().unwrap_or(name).to_string();
@@ -153,7 +189,15 @@ fn run_bedit(s: &mut Session, p: &Value) -> Result<Value> {
     if create && !current && s.doc()?.block(name).is_none() && !super::valid_block_name(name) {
         return Err(bad("bedit", format!("\"{name}\" is not a valid block name")));
     }
-    open(s, name, create)
+    if p.get("save").is_some_and(|v| !v.is_null() && !v.is_boolean()) {
+        return Err(bad("bedit", "`save` must be true or false"));
+    }
+    // Only whether the Block Editor, when open, can switch to the block: nothing opens or closes.
+    if bool_or(p, "check", false) && s.state()?.block_editor().is_some() {
+        check_target(s, name, create)?;
+        return Ok(json!({ "block": name, "checked": true }));
+    }
+    open(s, name, create, p.get("save").and_then(Value::as_bool))
 }
 
 fn run_bsave(s: &mut Session, _p: &Value) -> Result<Value> {
@@ -206,7 +250,27 @@ fn run_bclose(s: &mut Session, p: &Value) -> Result<Value> {
 // ---------------- interactive ----------------
 
 /// BEDIT: the selected block reference's block, else a block name typed or a reference picked.
-struct BeditM;
+/// In the Block Editor with changes not saved yet, it asks whether to save them before switching.
+#[derive(Default)]
+struct BeditM {
+    /// The block to switch to, waiting for the answer to "Save changes?".
+    pending: Option<String>,
+}
+
+impl BeditM {
+    /// Go to block `name`: at once, or after asking about the changes not saved yet.
+    fn go(&mut self, s: &mut Session, name: &str) -> Result<Step> {
+        let st = s.state()?;
+        let other = st.block_editor().is_some_and(|b| !b.eq_ignore_ascii_case(name.trim()));
+        if other && st.block_unsaved() {
+            // A block it can't switch to is refused before the question, which would trap the user.
+            check_target(s, name.trim(), false)?;
+            self.pending = Some(name.trim().to_string());
+            return Ok(Step::Continue);
+        }
+        open(s, name, false, Some(false)).map(|_| Step::Done)
+    }
+}
 
 impl Interactive for BeditM {
     fn name(&self) -> &'static str {
@@ -214,14 +278,30 @@ impl Interactive for BeditM {
     }
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
         match selected_reference(s) {
-            Some(name) => open(s, &name, false).map(|_| Step::Done),
+            Some(name) => self.go(s, &name),
             None => Ok(Step::Continue),
         }
     }
-    fn prompt(&self, _s: &Session) -> Prompt {
+    fn prompt(&self, s: &Session) -> Prompt {
+        if self.pending.is_some() {
+            let name = s.state().ok().and_then(|st| st.block_editor().map(str::to_string)).unwrap_or_default();
+            return Prompt::new(format!("Save changes to block \"{name}\"?"), KW).kw(&["Yes", "No"]).default("Y");
+        }
         Prompt::new("Enter block name or select a block reference [?]", Accept { point: true, number: false, text: true, select: true, enter: true })
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        if let Some(name) = self.pending.clone() {
+            let answer = match i {
+                Input::Enter => "Y".to_string(),
+                Input::Keyword(k) | Input::Text(k) => k,
+                _ => return Ok(Step::Continue),
+            };
+            return match answer.trim().chars().next().map(|c| c.to_ascii_uppercase()) {
+                Some('Y') => open(s, &name, false, Some(true)).map(|_| Step::Done),
+                Some('N') => open(s, &name, false, Some(false)).map(|_| Step::Done),
+                _ => Err(EngineError::Other("Enter Yes or No.".into())),
+            };
+        }
         match i {
             Input::Text(t) if t.trim() == "?" => {
                 let names: Vec<String> = {
@@ -231,14 +311,14 @@ impl Interactive for BeditM {
                 s.echo(if names.is_empty() { "No blocks to edit.".to_string() } else { names.join(", ") });
                 Ok(Step::Continue)
             }
-            Input::Text(t) | Input::Keyword(t) => open(s, t.trim(), false).map(|_| Step::Done),
+            Input::Text(t) | Input::Keyword(t) => self.go(s, t.trim()),
             Input::Pick(hs) => {
                 let name = {
                     let d = s.doc()?;
                     hs.iter().find_map(|h| block_of(d, *h))
                 };
                 match name {
-                    Some(n) => open(s, &n, false).map(|_| Step::Done),
+                    Some(n) => self.go(s, &n),
                     None => Err(EngineError::Other("Select a block reference.".into())),
                 }
             }
