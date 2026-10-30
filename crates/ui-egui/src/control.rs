@@ -286,6 +286,14 @@ fn key_from(name: &str) -> Option<egui::Key> {
 }
 
 pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Outcome {
+    let out = handle_request(app, ctx, req);
+    // A command the request ran may have asked for a bar (MENUBAR, TOOLBAR): apply it before
+    // the next request, so a later query or `ui.set` sees the bars as they are now.
+    app.sync_bars();
+    out
+}
+
+fn handle_request(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Outcome {
     let p = &req.params;
     let s = |k: &str| p.get(k).and_then(Value::as_str);
     let f = |k: &str| p.get(k).and_then(Value::as_f64);
