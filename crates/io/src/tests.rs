@@ -372,11 +372,11 @@ fn image_export_frames_window() {
     let d = sample();
     let win = Bounds2::new(Vec2::new(1.0, 2.0), Vec2::new(31.0, 22.0));
     // SVG: the viewBox is exactly the window (no margin); the default still fits the extents.
-    let framed = String::from_utf8(write_framed(&d, "a.svg", Some(win)).unwrap()).unwrap();
+    let framed = String::from_utf8(write_framed(&d, "a.svg", Some(win), None).unwrap()).unwrap();
     let plain = String::from_utf8(write(&d, "a.svg").unwrap()).unwrap();
     assert_eq!(view_box(&framed), "0 0 30.000000 20.000000");
     assert_ne!(view_box(&framed), view_box(&plain));
-    assert_eq!(plain, String::from_utf8(write_framed(&d, "a.svg", None).unwrap()).unwrap());
+    assert_eq!(plain, String::from_utf8(write_framed(&d, "a.svg", None, None).unwrap()).unwrap());
     let ext = cadcraft_render::build(&d, &Space::Model, &cadcraft_render::Options::default()).bounds;
     let m = ext.width().max(ext.height()) * 0.02;
     assert_eq!(view_box(&plain), format!("0 0 {:.6} {:.6}", ext.width() + 2.0 * m, ext.height() + 2.0 * m));
@@ -385,15 +385,77 @@ fn image_export_frames_window() {
     assert_eq!(v.center, Vec2::new(16.0, 12.0));
     assert!((v.scale - 80.0).abs() < 1e-9);
     assert_eq!(png_view(&ext, 2400, 1600, None), cadcraft_render::raster::View::fit(&ext, 2400, 1600, 0.05));
-    let png_framed = write_framed(&d, "a.png", Some(win)).unwrap();
+    let png_framed = write_framed(&d, "a.png", Some(win), None).unwrap();
     assert_eq!(&png_framed[1..4], b"PNG");
     assert_ne!(png_framed, write(&d, "a.png").unwrap());
     // PDF: the window is fitted to the sheet instead of the extents.
-    let pdf_framed = write_framed(&d, "a.pdf", Some(win)).unwrap();
+    let pdf_framed = write_framed(&d, "a.pdf", Some(win), None).unwrap();
     check_pdf(&pdf_framed);
     assert_ne!(pdf_framed, write(&d, "a.pdf").unwrap());
     // Non-image formats ignore the window.
-    assert_eq!(write_framed(&d, "a.dxf", Some(win)).unwrap(), write(&d, "a.dxf").unwrap());
+    assert_eq!(write_framed(&d, "a.dxf", Some(win), None).unwrap(), write(&d, "a.dxf").unwrap());
+}
+
+#[test]
+fn image_export_draws_a_3d_view_as_the_screen() {
+    use cadcraft_geom::Mat4;
+    let d = sample();
+    let projection = Mat4::view(Vec3::new(-1.0, -1.0, 1.0).normalized(), Vec3::ZERO, 0.0);
+    let opts = cadcraft_render::Options { projection: Some(projection), transparency: true, ..cadcraft_render::Options::default() };
+    let list = cadcraft_render::build(&d, &Space::Model, &opts);
+    // The current view's window, in view coordinates.
+    let win = list.bounds;
+    // SVG and PNG: exactly what the screen draws through the window, not the plan.
+    let svg = String::from_utf8(write_framed(&d, "a.svg", Some(win), Some(projection)).unwrap()).unwrap();
+    assert_eq!(svg, svg::export_list(&list, Some(win)));
+    assert_ne!(svg, String::from_utf8(write_framed(&d, "a.svg", Some(win), None).unwrap()).unwrap());
+    let png = write_framed(&d, "a.png", Some(win), Some(projection)).unwrap();
+    let raster = cadcraft_render::raster::render_png(
+        &list,
+        &png_view(&list.bounds, 2400, 1600, Some(win)),
+        &cadcraft_render::raster::RasterOptions::default(),
+    );
+    assert_eq!(Some(png), raster);
+    let pdf = write_framed(&d, "a.pdf", Some(win), Some(projection)).unwrap();
+    check_pdf(&pdf);
+    assert_ne!(pdf, write_framed(&d, "a.pdf", Some(win), None).unwrap());
+}
+
+#[test]
+fn plot_3d_view_options() {
+    use cadcraft_geom::Mat4;
+    use serde_json::json;
+    let v = |j: serde_json::Value| PdfOptions::from_json(&j).projection;
+    let front = v(json!({"viewDir": [0, -2, 0]})).unwrap();
+    assert_eq!(front, Mat4::view(Vec3::new(0.0, -1.0, 0.0), Vec3::ZERO, 0.0));
+    // A huge but finite direction is still a direction.
+    assert!(v(json!({"viewDir": [1e308, 1e308, 0]})).is_some());
+    // Missing, plan, zero, non-finite or malformed directions plot in plan.
+    let bad = [
+        json!({}),
+        json!({"viewDir": [0, 0, 1]}),
+        json!({"viewDir": [0, 0, 7]}),
+        json!({"viewDir": [0, 0, 0]}),
+        json!({"viewDir": [f64::NAN, 0, 1]}),
+        json!({"viewDir": [1, "x", 0]}),
+        json!({"viewDir": [1, 0]}),
+        json!({"viewDir": [1, 0, 0, 0]}),
+        json!({"viewDir": "swiso"}),
+    ];
+    for j in bad {
+        assert_eq!(v(j.clone()), None, "{j}");
+    }
+    // The plotter draws model space in the view: a window in its view coordinates shows it.
+    let d = sample();
+    let iso = v(json!({"viewDir": [-1, -1, 1]})).unwrap();
+    let opts = cadcraft_render::Options { projection: Some(iso), ..cadcraft_render::Options::default() };
+    let w = cadcraft_render::build(&d, &Space::Model, &opts).bounds;
+    let window = json!([[w.min.x, w.min.y], [w.max.x, w.max.y]]);
+    for output in ["pdf", "png", "svg"] {
+        let in_view = plot(&d, &Space::Model, &json!({"output": output, "window": window, "viewDir": [-1, -1, 1]})).unwrap();
+        let plan = plot(&d, &Space::Model, &json!({"output": output, "window": window})).unwrap();
+        assert_ne!(in_view, plan, "{output}");
+    }
 }
 
 #[test]
@@ -414,7 +476,7 @@ fn hostile_export_window_is_an_error() {
     for w in bad {
         assert!(check_window(&w).is_err(), "{w:?}");
         for name in ["a.png", "a.svg", "a.pdf"] {
-            assert!(write_framed(&d, name, Some(w)).is_err(), "{name} {w:?}");
+            assert!(write_framed(&d, name, Some(w), None).is_err(), "{name} {w:?}");
         }
     }
     assert!(check_window(&raw(-1e6, -1e6, 1e6, 1e6)).is_ok());
@@ -481,6 +543,7 @@ fn pdf_layout_one_to_one_with_viewport() {
             layer_colors: Vec::new(),
             clip: None,
             on: true,
+            view3d: None,
         }),
     )
     .unwrap();
@@ -586,6 +649,7 @@ fn viewport_frozen_layers_roundtrip() {
             layer_colors: Vec::new(),
             clip: None,
             on: true,
+            view3d: None,
         })
     };
     d.add(&paper, Common::default(), vp(2, vec!["Walls".into(), "A B".into()])).unwrap();
@@ -622,6 +686,7 @@ fn frozen_vp_dxf() -> (Drawing, Vec<(String, String)>) {
         layer_colors: Vec::new(),
         clip: None,
         on: true,
+        view3d: None,
     });
     d.add(&paper, Common::default(), vp).unwrap();
     let text = write_dxf(&d);
@@ -745,6 +810,7 @@ fn viewport_layer_colors_roundtrip() {
             layer_colors: colors,
             clip: None,
             on: true,
+            view3d: None,
         })
     };
     let colors = vec![("Walls".to_string(), Color::Index(5)), ("A B".to_string(), Color::True(cadcraft_color::Rgb(255, 128, 0)))];

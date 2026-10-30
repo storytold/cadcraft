@@ -821,6 +821,12 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
         if let Some(w) = plot_window(s, p, cmd, &space)? {
             o.insert("window".into(), json!([[w.min.x, w.min.y], [w.max.x, w.max.y]]));
         }
+        // The plotter's 3D view: set only here, for a display plot of a 3D model view (whose
+        // window is in that view's coordinates), never taken from the caller.
+        o.remove("viewDir");
+        if let Some(dir) = display_view(s, p, &space)? {
+            o.insert("viewDir".into(), json!([dir.x, dir.y, dir.z]));
+        }
         // Without one, the plotter uses each sheet's page setup.
         match super::plotters::plot_transparency(s, p) {
             Some(t) => o.insert("plotTransparency".into(), json!(t)),
@@ -853,9 +859,21 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
     }
 }
 
+/// The viewing direction a `display` plot of model space draws in, as the screen shows it; `None` in
+/// plan view and for the other plot areas.
+fn display_view(s: &Session, p: &Value, space: &Space) -> Result<Option<cadcraft_geom::Vec3>> {
+    let display = str_param(p, "plotArea").is_some_and(|a| a.eq_ignore_ascii_case("display"));
+    if !(display && matches!(space, Space::Model)) {
+        return Ok(None);
+    }
+    let st = s.state()?;
+    Ok(st.model_view().map(|_| st.view_dir))
+}
+
 /// The model-space rectangle a plot of `plotArea` covers: `extents` (default) plots everything,
-/// `display` the current model view, `limits` the drawing limits, `window` the `window` corners.
-/// Layouts plot their sheet (`layout`).
+/// `display` the current model view (in a 3D view, in its view coordinates: [`display_view`]),
+/// `limits` the drawing limits, `window` the `window` corners. Layouts plot their sheet
+/// (`layout`).
 fn plot_window(s: &Session, p: &Value, cmd: &str, space: &Space) -> Result<Option<Bounds2>> {
     let area = str_param(p, "plotArea").map(str::to_ascii_lowercase);
     let w = match (space, area.as_deref()) {

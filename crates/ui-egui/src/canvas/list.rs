@@ -1,5 +1,6 @@
 use super::viewport::{split_viewport, stencil_clip};
 use super::{Bounds2, CadApp, DisplayList, Handle, ListKey, Rgb, Tokens, Xf, rebuild, same_content};
+use cadcraft_geom::Mat4;
 
 /// Primitives of `list` sorted by entity handle, built on the first highlight after each list
 /// rebuild. Highlighting the hovered entity used to scan every primitive on every frame: ~2.5 ms
@@ -43,9 +44,10 @@ pub(super) fn prims_of(list: &DisplayList, handles: &[Handle]) -> Vec<usize> {
     list.prims.iter().enumerate().filter(|(_, pr)| set.contains(&pr.handle)).map(|(i, _)| i).collect()
 }
 
-/// Build options for previews at `scale` pixels per drawing unit (opaque).
-pub(super) fn preview_options(scale: f64) -> cadcraft_render::Options {
-    cadcraft_render::Options { tolerance: 0.5 / scale, min_dash: 2.0 / scale, ..Default::default() }
+/// Build options for previews at `scale` pixels per drawing unit (opaque), in the view's
+/// projection.
+pub(super) fn preview_options(scale: f64, projection: Option<Mat4>) -> cadcraft_render::Options {
+    cadcraft_render::Options { tolerance: 0.5 / scale, min_dash: 2.0 / scale, projection, ..Default::default() }
 }
 
 /// The display list of preview entities the session builds with the current properties
@@ -53,8 +55,13 @@ pub(super) fn preview_options(scale: f64) -> cadcraft_render::Options {
 /// command's rubber band and rebuilt copies of existing objects. They carry CLAYER's properties,
 /// not the objects', so they are drawn opaque (the GPU drag of the objects themselves keeps their
 /// transparency, see [`draw_drag_gpu`]).
-pub(super) fn rebuilt_preview<'a>(doc: &cadcraft_doc::Drawing, ents: impl IntoIterator<Item = &'a cadcraft_doc::Entity>, scale: f64) -> DisplayList {
-    cadcraft_render::build_entities(doc, ents, &preview_options(scale))
+pub(super) fn rebuilt_preview<'a>(
+    doc: &cadcraft_doc::Drawing,
+    ents: impl IntoIterator<Item = &'a cadcraft_doc::Entity>,
+    scale: f64,
+    projection: Option<Mat4>,
+) -> DisplayList {
+    cadcraft_render::build_entities(doc, ents, &preview_options(scale, projection))
 }
 
 /// Rebuild the display list when needed. `xf`: the current view; `views`: every area on screen
@@ -80,6 +87,8 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
         use std::hash::{Hash, Hasher};
         let mut s = std::collections::hash_map::DefaultHasher::new();
         split.hash(&mut s);
+        // A 3D view of model space draws another list.
+        xf.projection.map(|m| m.m.map(|r| r.map(f64::to_bits))).hash(&mut s);
         if split.is_none()
             && let Some((h, vp)) = st.active_viewport()
         {
@@ -136,6 +145,7 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
         transparency: app.session.settings.transparency_display,
         skip_viewport: split,
         cancel: None,
+        projection: xf.projection,
     };
     if view_only {
         let t = Tokens::get();

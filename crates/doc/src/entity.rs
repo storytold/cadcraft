@@ -48,10 +48,10 @@ mod wipeout;
 
 pub use block::{Attrib, AttribModes, AttribProps, Insert, MultilineAttrib, mtext_literal};
 pub use common::{Common, Handle, Lineweight, RawTag, Transparency};
-pub use curves::{Arc, Circle, Ellipse, Face3d, Line, LwPolyline, Point, Polyline3d, RayLine, Solid};
+pub use curves::{Arc, Circle, Ellipse, Face3d, Line, LwPolyline, Point, PolyfaceMesh, Polyline3d, RayLine, Solid};
 pub use dim::{AssocSnap, DimAssoc, DimBreak, DimKind, DimMarks, Dimension, Inspection, JoggedRadius, Leader, MLeader};
 pub use fill::{Gradient, Hatch, HatchLoop};
-pub use layout::{Image, Table, TableCell, Viewport};
+pub use layout::{Image, Table, TableCell, ViewDir, Viewport};
 pub use text::{HAlign, MText, MTextColumnType, MTextColumns, Text, VAlign};
 pub use wipeout::Wipeout;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -86,6 +86,7 @@ pub enum EntityKind {
     Solid(Solid),
     Trace(Solid),
     Face3d(Face3d),
+    PolyfaceMesh(PolyfaceMesh),
     Region(Region),
     Viewport(Viewport),
     Image(Image),
@@ -140,6 +141,7 @@ impl EntityKind {
             EntityKind::Solid(_) => "2D Solid",
             EntityKind::Trace(_) => "Trace",
             EntityKind::Face3d(_) => "3D Face",
+            EntityKind::PolyfaceMesh(_) => "Polyface Mesh",
             EntityKind::Region(_) => "Region",
             EntityKind::Viewport(_) => "Viewport",
             EntityKind::Image(_) => "Raster Image",
@@ -175,6 +177,7 @@ impl EntityKind {
             EntityKind::Solid(_) => "SOLID",
             EntityKind::Trace(_) => "TRACE",
             EntityKind::Face3d(_) => "3DFACE",
+            EntityKind::PolyfaceMesh(_) => "POLYLINE",
             EntityKind::Region(_) => "REGION",
             EntityKind::Viewport(_) => "VIEWPORT",
             EntityKind::Image(_) => "IMAGE",
@@ -218,10 +221,10 @@ impl EntityKind {
                 let c = &s.corners;
                 vec![Prim::Fill(vec![c[0].xy(), c[1].xy(), c[3].xy(), c[2].xy()])]
             }
-            EntityKind::Face3d(f) => {
-                let c = &f.corners;
-                let pts = [c[0].xy(), c[1].xy(), c[2].xy(), c[3].xy(), c[0].xy()];
-                pts.windows(2).filter_map(|w| Some(Prim::Seg(Segment::Line(GLine::new(*w.first()?, *w.get(1)?))))).collect()
+            EntityKind::Face3d(f) => f.visible_edges().into_iter().map(|(a, b)| Prim::Seg(Segment::Line(GLine::new(a.xy(), b.xy())))).collect(),
+            // Each face's visible edges (an edge flagged hidden, by a negative index, isn't drawn).
+            EntityKind::PolyfaceMesh(m) => {
+                m.faces3d().iter().flat_map(Face3d::visible_edges).map(|(a, b)| Prim::Seg(Segment::Line(GLine::new(a.xy(), b.xy())))).collect()
             }
             EntityKind::Region(r) => r.segments().into_iter().map(Prim::Seg).collect(),
             EntityKind::Hatch(h) => {
@@ -424,6 +427,7 @@ impl EntityKind {
             }
             EntityKind::Solid(so) | EntityKind::Trace(so) => so.corners.iter_mut().for_each(t3),
             EntityKind::Face3d(f) => f.corners.iter_mut().for_each(t3),
+            EntityKind::PolyfaceMesh(pm) => pm.vertices.iter_mut().for_each(t3),
             EntityKind::Region(r) => {
                 for v in r.loops.iter_mut().flat_map(|l| l.vertices.iter_mut()) {
                     v.p = m.apply(v.p);
@@ -526,6 +530,7 @@ impl EntityKind {
             }
             EntityKind::Solid(s) | EntityKind::Trace(s) => s.corners.iter().map(|c| c.xy()).collect(),
             EntityKind::Face3d(f) => f.corners.iter().map(|c| c.xy()).collect(),
+            EntityKind::PolyfaceMesh(m) => m.vertices.iter().map(|v| v.xy()).collect(),
             EntityKind::Region(r) => vec![r.bounds().center()],
             EntityKind::Viewport(v) => {
                 let c = v.center.xy();

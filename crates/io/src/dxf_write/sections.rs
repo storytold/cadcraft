@@ -137,8 +137,8 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
         w.f(40, v.height);
         w.p2(10, v.center);
         w.f(41, v.width);
-        w.p(11, Vec3::Z);
-        w.p(12, Vec3::ZERO);
+        w.p(11, v.view3d.map_or(Vec3::Z, |v3| v3.dir));
+        w.p(12, v.view3d.map_or(Vec3::ZERO, |v3| v3.target));
         w.f(42, 50.0);
         w.f(43, 0.0);
         w.f(44, 0.0);

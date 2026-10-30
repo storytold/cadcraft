@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use cadcraft_engine::cmd::file::compare::Comparison;
 use cadcraft_engine::doc::{Drawing, Handle};
+use cadcraft_engine::geom::Vec2;
 use cadcraft_render::DisplayList;
 use egui::{Rect, RichText, Stroke, vec2};
 use serde_json::json;
@@ -17,11 +18,15 @@ use crate::theme::Tokens;
 /// Objects drawn per side; a larger difference shows its areas only.
 const MAX_DRAWN: usize = 20_000;
 
-/// The display lists of the differences, rebuilt when the drawing, the comparison or the zoom
-/// band changes.
+/// What the cached lists were built for: drawing, revision, other drawing, differences, zoom band
+/// and 3D view.
+type Key = (u64, u64, usize, usize, i64, Option<[[u64; 4]; 4]>);
+
+/// The display lists of the differences, rebuilt when the drawing, the comparison, the zoom band
+/// or the 3D view changes.
 #[derive(Clone, Default)]
 struct Cache {
-    key: (u64, u64, usize, usize, i64),
+    key: Key,
     ours: Option<Arc<DisplayList>>,
     theirs: Option<Arc<DisplayList>>,
 }
@@ -32,10 +37,10 @@ fn id() -> egui::Id {
 
 /// The display lists of the differences for this frame: the stored ones when they still match
 /// `key`, otherwise rebuilt at zoom `scale` and stored.
-fn cache_for(ctx: &egui::Context, key: (u64, u64, usize, usize, i64), doc: &Drawing, c: &Comparison, scale: f64) -> Cache {
+fn cache_for(ctx: &egui::Context, key: Key, doc: &Drawing, c: &Comparison, scale: f64, projection: Option<cadcraft_geom::Mat4>) -> Cache {
     let mut cache: Cache = ctx.data_mut(|d| d.get_temp(id())).unwrap_or_default();
     if cache.key != key || cache.ours.is_none() {
-        let opts = cadcraft_render::Options { tolerance: 0.5 / scale.max(1e-12), ..Default::default() };
+        let opts = cadcraft_render::Options { tolerance: 0.5 / scale.max(1e-12), projection, ..Default::default() };
         let ours: Vec<Handle> = c.added.iter().copied().chain(c.changed.iter().map(|(a, _)| *a)).take(MAX_DRAWN).collect();
         let theirs: Vec<Handle> = c.removed.iter().copied().chain(c.changed.iter().map(|(_, b)| *b)).take(MAX_DRAWN).collect();
         let list = |d: &Drawing, hs: &[Handle]| {
@@ -55,8 +60,10 @@ pub(super) fn paint(app: &mut CadApp, ctx: &egui::Context, p: &egui::Painter, xf
     // Dim everything; the differences are drawn on top.
     p.rect_filled(rect, 0.0, t.canvas.gamma_multiply(0.75));
     let band = xf.scale.max(1e-300).log2().round() as i64;
-    let key = (st.uid, st.revision, Arc::as_ptr(&c.other) as usize, c.differences(), band);
-    let cache = cache_for(ctx, key, &st.doc, c, xf.scale);
+    // In a 3D view the lists are in its coordinates, so the view is part of the key.
+    let view = xf.projection.map(|m| m.m.map(|r| r.map(f64::to_bits)));
+    let key = (st.uid, st.revision, Arc::as_ptr(&c.other) as usize, c.differences(), band, view);
+    let cache = cache_for(ctx, key, &st.doc, c, xf.scale, xf.projection);
     for (list, color) in [(&cache.theirs, t.compare_other), (&cache.ours, t.compare_this)] {
         if let Some(l) = list {
             let all: Vec<usize> = (0..l.prims.len()).collect();
@@ -65,7 +72,9 @@ pub(super) fn paint(app: &mut CadApp, ctx: &egui::Context, p: &egui::Painter, xf
     }
     // The areas holding differences; the one shown last by next/previous stands out.
     for (i, b) in c.regions.iter().enumerate() {
-        let r = Rect::from_two_pos(xf.to_screen(b.min), xf.to_screen(b.max)).expand(6.0);
+        // Its corners on screen (a box on the XY plane is a parallelogram in a 3D view).
+        let corners = [b.min, Vec2::new(b.max.x, b.min.y), b.max, Vec2::new(b.min.x, b.max.y)].map(|q| xf.to_screen(q));
+        let r = Rect::from_points(&corners).expand(6.0);
         if r.intersects(rect) {
             let w = if c.at == Some(i) { 2.5 } else { 1.0 };
             p.rect_stroke(r, 4.0, Stroke::new(w, t.compare_area), egui::StrokeKind::Middle);

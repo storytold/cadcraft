@@ -1,6 +1,6 @@
 # Where CADCraft falls short of AutoCAD
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-28 · **Change:** minor (BEDIT in the Block Editor switches blocks: F3 updated) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-30 · **Change:** minor (3D views: F24 narrowed; BEDIT in the Block Editor switches blocks: F3 updated) · **Target:** Autodesk AutoCAD 2027
 
 Every known shortfall, one row each, ranked within each section by user impact. This is the work
 list: agents pick from here (top of a section first), and remove or update a row in the same PR
@@ -45,7 +45,7 @@ do them first.
 | F21 | MLINE, REGION and HELIX are objects since #510, with gaps: MLEDIT tees trim square; UNION/SUBTRACT/INTERSECT only combine regions whose boundaries don't meet; regions are saved as closed polylines (no ACIS data) | `draw2/mline.rs`, `inquiry/regions.rs`, `dxf_region.rs` | Low | 6–10 |
 | F22 | Inquiry leftovers (COUNT across spaces and nested blocks, the QuickCalc palette and COMPARE landed, #563; MASSPROP on regions, #510): COMPARE compares the tab shown, not every layout at once (COMPAREEXPORT, the comparison as a new drawing, landed); COMPAREEXPORT puts the two sets of objects in model-space groups, where AutoCAD puts them in blocks; QuickCalc keeps its history and variables for the session only | `file/compare.rs`, `palettes/quickcalc.rs` | Low | 3–5 |
 | F23 | No Sheet Set Manager, eTransmit, Share, Traces, Markup Import, Activity Insights | menu items uncovered | Low-medium (team workflows) | 40–70 |
-| F24 | No 3D: UCS, 3D views, orbit, solids, surfaces, meshes, sections, visual styles, materials, lights, rendering (150 menu items) | [parity-checklist](parity-checklist.md) | Medium (3D users) | 300–450 |
+| F24 | 3D views (VPOINT, PLAN, View ▸ 3D Views presets, 3DORBIT, ViewCube, saved in DXF/DWG) landed, drawn as wireframe; polyface meshes are read, drawn and saved; left: UCS, solids, surfaces, editable meshes, sections, visual styles, materials, lights, rendering; in a 3D view, picking and object snaps on objects off the XY plane are approximate, points are entered on the XY plane (or in view coordinates when it is seen edge-on), the UCS icon stays in plan, and layout viewports and tiled model viewports (VPORTS) are drawn in plan (a layout viewport's 3D view is kept in the file) (150 menu items) | [parity-checklist](parity-checklist.md) | Medium (3D users) | 300–450 |
 
 ## UI/UX
 
@@ -64,7 +64,7 @@ or allow clicks and drag (2, default), saved in the user profile. Drag-only mode
 | U7 | Right-click menus: no in-place layout tab rename or Move or Copy dialog, no Select All Layouts, no Paste to command line; palette menus are on the Layers rows and the Properties background only. The command menu (held right-click: Enter, Cancel, Recent Input, options, Snap Overrides, Pan/Zoom), the selection menu with object edits, command line, drawing tab, layout tab and palette menus landed (#512) | Low | 1–2 |
 | U10 | SETVAR covers about 150 of ~1,000 variables (UNDO options, MREDO and UNDOCTL, and header variables such as CIRCLERAD, OFFSETDIST, POLYSIDES, HPNAME and the dimension variables in SETVAR ? landed, #461; typing a bare variable name as a command runs SETVAR on it) | Low-medium | 3–5 |
 | U11 | VIEW Orthographic, UCS and background settings; view twist is kept but not shown (Zoom Realtime and Dynamic, ZOOMFACTOR, named views (VIEW) and tiled model viewports with saved configurations (VPORTS) landed in #463, MVIEW Restore in #633, and the Named Viewports dialog, which restores or deletes a saved configuration) | Low | 1–2 |
-| U12 | Workspaces, navigation bar, CUI customisation, ViewCube drag (#7) (the Command Aliases dialog landed, #1381) | Low-medium | 13–23 |
+| U12 | Workspaces, navigation bar, CUI customisation, ViewCube faces, edges and corners (dragging the cube orbits, #7; the Command Aliases dialog landed, #1381) | Low-medium | 13–23 |
 | U13 | `.dxf` from Finder fails to open on macOS (#158) (window controls fixed, #161) | Medium | 1–2 |
 
 ## File formats
@@ -150,6 +150,7 @@ Detail: [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-30 | minor | 3D views (VPOINT, PLAN, View ▸ 3D Views presets, 3DORBIT, dragging the ViewCube, #7) and polyface meshes landed, drawn as wireframe: F24 narrowed and its limits listed, U12 narrowed |
 | 2026-10-25 | minor | Named Viewports (View ▸ Viewports ▸ Named Viewports..., `vports.named`) lists the saved viewport configurations with a preview and the current one's name, and restores or deletes one; in a layout Restore places it as MVIEW Restore does: U11 narrowed. F15 and U11 no longer list MVIEW Restore (#633), and F21 no longer says PURGE skips multiline styles |
 | 2026-10-25 | minor | DIMTFILL limits: with DIMTFILL 1 (the drawing's background color) the written `*D` block and EXPLODE keep no background mask (a WIPEOUT over the text box would), and a true-color DIMTFILLCLR is written to DXF as the nearest ACI: F7 updated |
 | 2026-10-26 | minor | BEDIT in the Block Editor (typed, Edit Block, or the Edit Block Definition dialog) switches to another block as AutoCAD's does, asking whether to save the changes not saved yet; the JSON form takes `save`: F3 evidence |

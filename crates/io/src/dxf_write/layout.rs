@@ -60,8 +60,9 @@ pub(super) fn paper_view(w: &mut W, d: &Drawing, e: &Entity, owner: &str, cx: &C
     w.s(1000, dxf_ext::PAPER_VIEW);
 }
 
-/// The VPORT table: the `*Active` model space tiles (one viewport on the extents when there is no
-/// tiled configuration) and the saved configurations, each tile a record, the current one first.
+/// The VPORT table: the `*Active` model space tiles as the drawing has them (tiled viewports, or a
+/// single one with the editor's 3D view), else one viewport on the extents; then the saved
+/// configurations, each tile a record, the current one first.
 pub(super) fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
     let single = VportTile {
         min: Vec2::ZERO,
@@ -69,9 +70,9 @@ pub(super) fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
         center: if ext.is_empty() { Vec2::new(6.0, 4.5) } else { ext.center() },
         height: if ext.is_empty() { 9.0 } else { (ext.height() * 1.1).max(1e-6) },
         aspect: 1.6,
+        view3d: None,
     };
-    let tiled = d.vports.iter().find(|c| c.is_active() && c.tiles.len() > 1);
-    let mut records: Vec<(&str, &VportTile)> = match tiled {
+    let mut records: Vec<(&str, &VportTile)> = match d.vports.iter().find(|c| c.is_active() && !c.tiles.is_empty()) {
         Some(c) => c.tiles.iter().map(|t| (VportConfig::ACTIVE, t)).collect(),
         None => vec![(VportConfig::ACTIVE, &single)],
     };
@@ -89,8 +90,8 @@ pub(super) fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
         w.p2(13, d.header.point("SNAPBASE").map(|p| p.xy()).filter(|p| p.is_finite()).unwrap_or(Vec2::ZERO));
         w.p2(14, d.header.snap_unit());
         w.p2(15, d.header.grid_unit());
-        w.p(16, Vec3::Z);
-        w.p(17, Vec3::ZERO);
+        w.p(16, t.view3d.map_or(Vec3::Z, |v| v.dir));
+        w.p(17, t.view3d.map_or(Vec3::ZERO, |v| v.target));
         w.f(40, if t.height.is_finite() && t.height > 0.0 { t.height } else { 1.0 });
         w.f(41, if t.aspect.is_finite() && t.aspect > 0.0 { t.aspect } else { 1.0 });
         w.f(42, 50.0);

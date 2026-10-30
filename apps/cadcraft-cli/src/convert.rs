@@ -1,6 +1,6 @@
 use super::args::ConvertArgs;
 use super::error::Result;
-use super::output::{Streams, export_framed, export_window, skipped_message, undrawn_message};
+use super::output::{Streams, export_frame, export_framed, skipped_message, undrawn_message};
 use super::{open, unicode};
 use cadcraft_engine::Session;
 
@@ -17,6 +17,6 @@ pub(crate) fn convert(a: &ConvertArgs, io: &mut Streams) -> Result {
     {
         io.errln(format_args!("{m}"));
     }
-    let window = export_window(&s, framing, None)?;
-    export_framed(&s, &a.output, window, io)
+    let (window, view) = export_frame(&s, framing, None)?;
+    export_framed(&s, &a.output, window, view, io)
 }

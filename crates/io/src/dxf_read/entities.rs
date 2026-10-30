@@ -1,11 +1,13 @@
 use super::common::{T, common, ocs};
 use super::hatch::hatch;
+use super::tables::view;
 use super::text::{attdef, attrib_modes, attrib_props, mtext_from, multiline_attrib, split_embedded, text_from};
 use super::{
     Arc, Attrib, Circle, Common, DimKind, Dimension, Ellipse, EntityKind, Face3d, Handle, HashMap, Helix, HelixConstrain, Insert, Leader, Line,
     LwPolyline, MAX_FRAME_CHARS, Point, PolyVertex, Polyline3d, RawTag, RayLine, Rx, Solid, Spline, Table, TableCell, Tag, Tolerance, Unknown, Vec2,
     Vec3, Viewport, Wipeout, records,
 };
+use cadcraft_doc::PolyfaceMesh;
 
 /// Parse one entity record. POLYLINE/INSERT followers are handled by the caller.
 pub(super) fn entity(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
@@ -230,20 +232,24 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
             k
         }
         "ACAD_TABLE" => EntityKind::Table(acad_table(tags, table_cells_left)),
-        "VIEWPORT" => EntityKind::Viewport(Viewport {
-            center: t.p(10),
-            width: t.fd(40, 1.0),
-            height: t.fd(41, 1.0),
-            view_center: Vec2::new(t.fd(12, 0.0), t.fd(22, 0.0)),
-            view_height: t.fd(45, 1.0),
-            id: t.i(69).unwrap_or(0) as u32,
-            locked: t.i(90).unwrap_or(0) & 16384 != 0,
-            frozen_layers: crate::dxf_ext::read_frozen(tags),
-            layer_colors: crate::dxf_ext::read_layer_colors(tags),
-            // Status flags: 65536 = non-rectangular clipping (by the 340 entity), 131072 = off.
-            clip: t.s(340).and_then(|h| Handle::parse_hex(&h)).filter(|h| h.0 != 0 && t.i(90).unwrap_or(0) & 65536 != 0),
-            on: t.i(90).unwrap_or(0) & 131072 == 0,
-        }),
+        "VIEWPORT" => {
+            let (view_center, view3d) = view(&t);
+            EntityKind::Viewport(Viewport {
+                center: t.p(10),
+                width: t.fd(40, 1.0),
+                height: t.fd(41, 1.0),
+                view_center,
+                view_height: t.fd(45, 1.0),
+                id: t.i(69).unwrap_or(0) as u32,
+                locked: t.i(90).unwrap_or(0) & 16384 != 0,
+                frozen_layers: crate::dxf_ext::read_frozen(tags),
+                layer_colors: crate::dxf_ext::read_layer_colors(tags),
+                // Status flags: 65536 = non-rectangular clipping (by the 340 entity), 131072 = off.
+                clip: t.s(340).and_then(|h| Handle::parse_hex(&h)).filter(|h| h.0 != 0 && t.i(90).unwrap_or(0) & 65536 != 0),
+                on: t.i(90).unwrap_or(0) & 131072 == 0,
+                view3d,
+            })
+        }
         "WIPEOUT" => {
             let o = t.p(10);
             let u = t.p(11);
@@ -497,11 +503,20 @@ pub(super) fn polyline_entity(recs: &[(String, Vec<Tag>)], i: &mut usize, t: &T)
     }
     let c = common(t);
     let mut extra: Vec<EntityKind> = Vec::new();
-    let k = if flags & (16 | 64) != 0 {
-        // Polyface (64) and polygon (16) meshes become 3D faces; the first takes the
-        // polyline's place.
+    let k = if flags & 64 != 0 {
+        // Face records that name a missing vertex (or fewer than three) are dropped: they draw
+        // nothing and would be written back broken. A mesh left with no face is skipped.
+        let mut mesh = PolyfaceMesh { vertices: pts.iter().map(|p| p.0).collect(), faces: Vec::new() };
+        let kept = faces.iter().map(|f| f.map(|ix| i32::try_from(ix).unwrap_or(i32::MAX))).filter(|f| mesh.face3d(f).is_some()).collect();
+        mesh.faces = kept;
+        if mesh.faces.is_empty() {
+            return None;
+        }
+        EntityKind::PolyfaceMesh(mesh)
+    } else if flags & 16 != 0 {
+        // Polygon meshes become 3D faces; the first takes the polyline's place.
         let verts: Vec<Vec3> = pts.iter().map(|p| p.0).collect();
-        let mut fs = if flags & 64 != 0 { polyface_faces(&verts, &faces) } else { mesh_faces(&verts, t, flags) }.into_iter().map(EntityKind::Face3d);
+        let mut fs = mesh_faces(&verts, t, flags).into_iter().map(EntityKind::Face3d);
         let first = fs.next()?;
         extra.extend(fs);
         first
@@ -554,36 +569,6 @@ pub(super) fn insert_attribs(recs: &[(String, Vec<Tag>)], i: &mut usize, ins_lay
         }
     }
     attribs
-}
-
-/// Faces of a polyface mesh: each face record names three or four vertices by 1-based index;
-/// a negative index hides the edge that starts at that vertex. Faces with fewer vertices or
-/// an index outside the vertex list are skipped.
-fn polyface_faces(verts: &[Vec3], faces: &[[i64; 4]]) -> Vec<Face3d> {
-    let mut out = Vec::new();
-    for f in faces {
-        let mut corners: Vec<Vec3> = Vec::with_capacity(4);
-        let mut hidden = 0u8;
-        let mut ok = true;
-        for &ix in f.iter().filter(|&&ix| ix != 0) {
-            let at = usize::try_from(ix.unsigned_abs()).ok().and_then(|n| n.checked_sub(1));
-            let Some(p) = at.and_then(|n| verts.get(n)) else {
-                ok = false;
-                break;
-            };
-            if ix < 0 {
-                hidden |= 1 << corners.len();
-            }
-            corners.push(*p);
-        }
-        match (ok, corners.as_slice()) {
-            // A triangle's closing edge is the 3DFACE's fourth (the third is degenerate).
-            (true, [a, b, c]) => out.push(Face3d { corners: [*a, *b, *c, *c], hidden_edges: hidden | if hidden & 4 != 0 { 8 } else { 0 } }),
-            (true, [a, b, c, d]) => out.push(Face3d { corners: [*a, *b, *c, *d], hidden_edges: hidden }),
-            _ => {}
-        }
-    }
-    out
 }
 
 /// Quads of an M×N polygon mesh (71/72, or the smoothed 73/74 when the vertex count matches

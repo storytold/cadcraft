@@ -17,6 +17,12 @@ pub(crate) fn usable_view(v: &View) -> bool {
     v.center.is_finite() && v.height.is_finite() && v.height > 1e-12
 }
 
+/// Model space is split into tiled viewports (VPORTS): they are drawn in plan, so it shows no 3D
+/// view.
+pub(crate) fn tiled(d: &cadcraft_doc::Drawing) -> bool {
+    d.vports.iter().any(|c| c.is_active() && c.tiles.len() > 1)
+}
+
 /// Tiled model viewports (VPORTS): the session side of the drawing's `*Active` configuration.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModelTiles {

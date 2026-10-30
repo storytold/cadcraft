@@ -196,6 +196,35 @@ fn fake_plot(d: &Drawing, space: &Space, opts: &Value) -> std::result::Result<Ve
 }
 
 #[test]
+fn display_plot_of_a_3d_view_reaches_the_plotter() {
+    super::super::file::set_io(super::super::file::IoHooks {
+        read: |_, _| Err("no reader in tests".into()),
+        write: |_, _| Err("no writer in tests".into()),
+        plot: Some(fake_plot),
+    });
+    let mut s = session_with_model();
+    if io().and_then(|h| h.plot).is_none() {
+        return; // another test installed hooks without a plotter first
+    }
+    let opts = |s: &mut Session, p: Value| {
+        let r = s.execute("plot", &p).unwrap();
+        String::from_utf8(super::super::file::base64_decode(r["data"].as_str().unwrap()).unwrap()).unwrap()
+    };
+    // Plan view: no 3D view, and the caller's is dropped.
+    let text = opts(&mut s, json!({"layout": "Model", "plotArea": "display", "viewDir": [1, 1, 1]}));
+    assert!(!text.contains("viewDir"), "{text}");
+    s.execute("vpoint", &json!({"preset": "swiso"})).unwrap();
+    let dir = s.state().unwrap().view_dir;
+    let text = opts(&mut s, json!({"layout": "Model", "plotArea": "display"}));
+    assert!(text.contains(&format!(r#""viewDir":{}"#, json!([dir.x, dir.y, dir.z]))), "{text}");
+    // The other plot areas plot the plan.
+    for area in ["extents", "limits"] {
+        let text = opts(&mut s, json!({"layout": "Model", "plotArea": area, "viewDir": [1, 1, 1]}));
+        assert!(!text.contains("viewDir"), "{area}: {text}");
+    }
+}
+
+#[test]
 fn plot_goes_through_the_hook() {
     super::super::file::set_io(super::super::file::IoHooks {
         read: |_, _| Err("no reader in tests".into()),
