@@ -538,7 +538,9 @@ pub fn not_saved(d: &Drawing) -> std::collections::BTreeMap<String, usize> {
 const MODELER_TYPES: [&str; 3] = ["3DSOLID", "REGION", "BODY"];
 
 /// [`not_saved`] for a file saved as `version`. From 2013 on, a 3D solid, region or body the data
-/// store has a record for keeps its geometry and is not counted.
+/// store has a record for keeps its geometry and is not counted, and neither is another program's
+/// proxy entity: the DWG writes it with its class (before 2013 it has no class to name, and the
+/// DWG leaves it out).
 pub fn not_saved_as(d: &Drawing, version: Version) -> std::collections::BTreeMap<String, usize> {
     let mut out: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     let stored = if version >= Version::R2013 { d.foreign.data_store_entities() } else { Default::default() };
@@ -546,6 +548,9 @@ pub fn not_saved_as(d: &Drawing, version: Version) -> std::collections::BTreeMap
     for e in stores.flat_map(|s| s.iter()) {
         if let cadcraft_doc::EntityKind::Unknown(u) = &e.kind {
             if MODELER_TYPES.iter().any(|t| u.dxf_type.eq_ignore_ascii_case(t)) && stored.contains(&e.handle) {
+                continue;
+            }
+            if version >= Version::R2013 && u.dxf_type.eq_ignore_ascii_case("ACAD_PROXY_ENTITY") {
                 continue;
             }
             let n = out.entry(u.dxf_type.clone()).or_insert(0);
