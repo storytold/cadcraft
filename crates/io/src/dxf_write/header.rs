@@ -1,4 +1,4 @@
-use super::*;
+use super::{DimVal, Drawing, HVal, K, Version, W, dxf_ext};
 
 /// Header variables we write, with their group codes (DXF Reference, HEADER section).
 /// `P2`/`P3` = 2D/3D point.

@@ -1,4 +1,4 @@
-use super::*;
+use super::cmd;
 
 /// Options and values the interactive commands remember for the rest of the session, offered as
 /// the `<default>` the next time they ask (as AutoCAD does). Values AutoCAD keeps in a drawing

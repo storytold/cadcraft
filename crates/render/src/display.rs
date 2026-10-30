@@ -1,4 +1,4 @@
-use super::*;
+use super::{Bounds2, Handle, Pen, Rgb, Sheet, Vec2, outline};
 
 /// Handle carried by model-space geometry drawn inside a paper-space viewport (it belongs to no
 /// single paper-space entity, so selection highlighting never matches it).

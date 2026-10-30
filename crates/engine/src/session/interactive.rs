@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, Bounds2, Drag, Drawing, EngineError, Entity, Handle, Input, PendingWindow, Prompt, Result, Running, Session, Snapshot, Step, Value, Vec2,
+    assoc, cmd, find_command, guard, pointmod, select, snap, sysvars,
+};
 
 impl Session {
     // ---------------- interactive commands ----------------
@@ -6,6 +9,7 @@ impl Session {
     /// Start a command by name or alias as if typed at the command line.
     pub fn start(&mut self, name: &str) -> Result<()> {
         self.last_polar = None;
+        self.pick_hint = None;
         let name = name.trim();
         let (transparent, name) = match name.strip_prefix('\'') {
             Some(n) => (true, n),

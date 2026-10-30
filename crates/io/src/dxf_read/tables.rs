@@ -1,6 +1,9 @@
 use super::common::T;
 use super::objects::MAX_OBJECTS;
-use super::*;
+use super::{
+    Color, DashElement, DimStyle, Drawing, HVal, HashMap, Layer, Linetype, Lineweight, NamedView, Rgb, Rx, Tag, TextStyle, Ucs, Vec2, Vec3,
+    VportConfig, VportTile, records,
+};
 
 pub(super) fn header(tags: &[Tag], d: &mut Drawing) {
     let mut i = 0;
@@ -99,30 +102,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
         })
         .collect();
     // Handle maps first: DIMSTYLE records refer to text styles and arrow blocks by handle.
-    for (kind, tg) in &recs {
-        let t = T(tg);
-        let (Some(h), Some(n)) = (t.s(5), t.s(2)) else { continue };
-        match kind.as_str() {
-            "STYLE" => {
-                rx.styles.insert(h.trim().to_ascii_uppercase(), n);
-            }
-            "BLOCK_RECORD" => {
-                let units = t.i(70).and_then(|u| u8::try_from(u).ok()).unwrap_or(0);
-                rx.block_props.insert(n.to_ascii_uppercase(), (units, t.i(280).unwrap_or(1) != 0));
-                if let Some(a) = crate::dxf_ext::read_array(tg) {
-                    rx.block_arrays.insert(n.to_ascii_uppercase(), a);
-                }
-                rx.brs.insert(h.trim().to_ascii_uppercase(), n);
-            }
-            "LTYPE" => {
-                rx.ltypes.insert(h.trim().to_ascii_uppercase(), n);
-            }
-            "LAYER" => {
-                rx.layers.insert(h.trim().to_ascii_uppercase(), n);
-            }
-            _ => {}
-        }
-    }
+    index_table_handles(&recs, rx);
     let mut active_vport = false;
     // Index of layers already appended, by lower-cased name, so each LAYER record updates or
     // appends in O(1) instead of scanning the growing layer list — otherwise many distinct layer
@@ -298,6 +278,33 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
     }
     // One *Active viewport is no tiling: the view is the editor's (it zooms to the extents).
     d.vports.retain(|c| c.tiles.len() > usize::from(c.is_active()));
+}
+
+fn index_table_handles(recs: &[(String, Vec<Tag>)], rx: &mut Rx) {
+    for (kind, tags) in recs {
+        let table = T(tags);
+        let (Some(handle), Some(name)) = (table.s(5), table.s(2)) else { continue };
+        match kind.as_str() {
+            "STYLE" => {
+                rx.styles.insert(handle.trim().to_ascii_uppercase(), name);
+            }
+            "BLOCK_RECORD" => {
+                let units = table.i(70).and_then(|units| u8::try_from(units).ok()).unwrap_or(0);
+                rx.block_props.insert(name.to_ascii_uppercase(), (units, table.i(280).unwrap_or(1) != 0));
+                if let Some(array) = crate::dxf_ext::read_array(tags) {
+                    rx.block_arrays.insert(name.to_ascii_uppercase(), array);
+                }
+                rx.brs.insert(handle.trim().to_ascii_uppercase(), name);
+            }
+            "LTYPE" => {
+                rx.ltypes.insert(handle.trim().to_ascii_uppercase(), name);
+            }
+            "LAYER" => {
+                rx.layers.insert(handle.trim().to_ascii_uppercase(), name);
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Most tiles a viewport configuration keeps.

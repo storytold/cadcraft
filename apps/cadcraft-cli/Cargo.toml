@@ -6,6 +6,14 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
+[lib]
+name = "cadcraft_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cadcraft-cli"
+path = "src/main.rs"
+
 [lints]
 workspace = true
 
@@ -14,4 +22,13 @@ cadcraft-engine = { workspace = true }
 cadcraft-io = { workspace = true }
 cadcraft-mcp = { workspace = true }
 cadcraft-render = { workspace = true }
+clap = { workspace = true }
+same-file = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# Shell completions and man pages (examples/man-and-completions.rs, for the Linux packages); not
+# in the binary.
+clap_complete = { workspace = true }
+clap_mangen = { workspace = true }

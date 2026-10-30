@@ -328,16 +328,19 @@ fn run_array(s: &mut Session, p: &Value) -> Result<Value> {
     (spec.run)(s, p)
 }
 
-/// A count parameter (at least 1).
-fn count_or(p: &Value, key: &str, default: u64) -> u64 {
-    p.get(key).and_then(Value::as_u64).unwrap_or(default).max(1)
+/// A count parameter (at least 1); a missing key gives the default, an invalid value is refused.
+fn count_or(cmd: &str, p: &Value, key: &str, default: u64) -> Result<u64> {
+    match p.get(key) {
+        None | Some(Value::Null) => Ok(default),
+        Some(v) => v.as_u64().filter(|n| *n >= 1).ok_or_else(|| bad(cmd, format!("`{key}` must be a whole number of at least 1"))),
+    }
 }
 
 fn run_arrayrect(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
-    let rows = count_or(p, "rows", 3);
-    let cols = count_or(p, "cols", 4);
-    let levels = count_or(p, "levels", 1);
+    let rows = count_or("arrayrect", p, "rows", 3)?;
+    let cols = count_or("arrayrect", p, "cols", 4)?;
+    let levels = count_or("arrayrect", p, "levels", 1)?;
     check_size(s, rows.saturating_mul(cols).saturating_mul(levels), hs.len())?;
     let kind = ArrayKind::Rect(RectArray {
         cols: count32(cols),
@@ -360,9 +363,9 @@ fn run_arrayrect(s: &mut Session, p: &Value) -> Result<Value> {
 fn run_arraypolar(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
     let c = point_req("arraypolar", p, "center")?;
-    let n = count_or(p, "count", 6);
-    let rows = count_or(p, "rows", 1);
-    let levels = count_or(p, "levels", 1);
+    let n = count_or("arraypolar", p, "count", 6)?;
+    let rows = count_or("arraypolar", p, "rows", 1)?;
+    let levels = count_or("arraypolar", p, "levels", 1)?;
     check_size(s, n.saturating_mul(rows).saturating_mul(levels), hs.len())?;
     let base = point_param(p, "base").or_else(|| s.doc().ok().and_then(|d| first_center(d, &hs))).unwrap_or(c);
     let row_spacing = f64_or(p, "rowSpacing", 1.0);

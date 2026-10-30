@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, LispError, Value};
 
 pub(super) type R = Result<Value, LispError>;
 

@@ -1,5 +1,8 @@
 use super::trimext::ellipse_of;
-use super::*;
+use super::{
+    Accept, Arc, Chain, EntityKind, Handle, Input, Interactive, LwPolyline, Polyline, Prompt, Result, Session, Step, TAU, Value, Vec2, bad,
+    ccw_sweep, curve_edits, curves, json, number, other, point_param, set_kind, targets,
+};
 
 // =====================================================================================
 // LENGTHEN

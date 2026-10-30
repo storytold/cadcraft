@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Accept, EntityKind, Input, Interactive, Prompt, Result, Session, Step, Value, Vec2, added, bad, bool_or, lwpoly, number, point_req, points_param,
+    polygon_from_edge, polygon_typed_radius_point, polygon_vertices, size_param,
+};
 
 pub(super) fn run_polygon(s: &mut Session, p: &Value) -> Result<Value> {
     // A `sides` that is not a whole number (e.g. -3) is refused, not replaced by the default 4.

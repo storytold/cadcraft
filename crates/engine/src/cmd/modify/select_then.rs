@@ -1,7 +1,9 @@
 use super::break_join::join;
 use super::explode::explode;
 use super::transform::{erase, transform_entities};
-use super::*;
+use super::{
+    Accept, EngineError, EntityKind, Handle, Input, Interactive, Mat3, Prompt, Result, SelOutcome, SelectPhase, Session, Step, Vec2, line, number,
+};
 
 // ---------------- interactive ----------------
 

@@ -1,5 +1,5 @@
 use super::common::Handle;
-use super::*;
+use super::{Color, Deserialize, Serialize, Vec2, Vec3, standard, yes};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

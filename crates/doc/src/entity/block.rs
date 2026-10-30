@@ -1,6 +1,6 @@
 use super::common::{Common, Lineweight};
 use super::text::{MText, Text};
-use super::*;
+use super::{Color, Deserialize, EntityKind, Mat3, Serialize, Vec2, Vec3};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -738,7 +738,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                 value_box(ui, &name, false, false).on_hover_text(crate::tl!("Read-only"));
             });
             prop_row(ui, "Description", |ui| {
-                if let Some(text) = edit_field(ui, ui.id().with("block_description"), description) {
+                if let Some(text) = edit_field(ui, ui.scope_id().with("block_description"), description) {
                     act("blocks.description", json!({ "description": text }));
                 }
             });

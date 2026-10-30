@@ -181,7 +181,9 @@ pub(crate) fn candidates<'a>(
     }
 }
 
-/// The topmost entity within `aperture` of `p`.
+/// The topmost entity within `aperture` of `p`: the one drawn last (on top in the draw order), not
+/// the nearest, as AutoCAD 2024 picks (two objects under the pickbox: the one drawn later is
+/// picked, and DRAWORDER changes which).
 pub fn pick(d: &Drawing, space: &Space, p: Vec2, aperture: f64) -> Option<Handle> {
     let ix = spatial::index(d, space);
     pick_with(d, space, &ix, p, aperture)
@@ -189,7 +191,7 @@ pub fn pick(d: &Drawing, space: &Space, p: Vec2, aperture: f64) -> Option<Handle
 
 pub(crate) fn pick_with(d: &Drawing, space: &Space, ix: &Option<std::sync::Arc<SpatialIndex>>, p: Vec2, aperture: f64) -> Option<Handle> {
     let probe = Bounds2::new(p, p).expand(aperture);
-    let mut best: Option<(f64, Handle)> = None;
+    // Candidates come topmost first: the first within the aperture is the one.
     for (e, known) in candidates(d, space, ix, &probe.expand(aperture), true, true)? {
         if !selectable(d, e) {
             continue;
@@ -198,30 +200,24 @@ pub(crate) fn pick_with(d: &Drawing, space: &Space, ix: &Option<std::sync::Arc<S
         if !infinite && !bounds_of(d, e, known).expand(aperture).intersects(&probe) {
             continue;
         }
-        let dist = entity_distance(d, e, p, aperture / 4.0);
-        if dist <= aperture && best.is_none_or(|(bd, _)| dist < bd - 1e-12) {
-            best = Some((dist, e.handle));
-            if dist == 0.0 {
-                break;
-            }
+        if entity_distance(d, e, p, aperture / 4.0) <= aperture {
+            return Some(e.handle);
         }
     }
-    best.map(|(_, h)| h)
+    None
 }
 
-/// Every entity within `aperture` of `p`, nearest first and topmost among equals (so the first is
-/// what [`pick`] chooses): the objects selection cycling lists.
+/// Every entity within `aperture` of `p`, topmost first (so the first is what [`pick`] chooses):
+/// the objects selection cycling lists.
 pub fn pick_all(d: &Drawing, space: &Space, p: Vec2, aperture: f64) -> Vec<Handle> {
     let ix = spatial::index(d, space);
     let probe = Bounds2::new(p, p).expand(aperture);
     let Some(cands) = candidates(d, space, &ix, &probe.expand(aperture), true, true) else { return Vec::new() };
-    let mut hits: Vec<(f64, Handle)> = cands
+    cands
         .filter(|(e, known)| selectable(d, e) && (is_infinite(e) || bounds_of(d, e, *known).expand(aperture).intersects(&probe)))
-        .map(|(e, _)| (entity_distance(d, e, p, aperture / 4.0), e.handle))
-        .filter(|(dist, _)| *dist <= aperture)
-        .collect();
-    hits.sort_by(|a, b| a.0.total_cmp(&b.0));
-    hits.into_iter().map(|(_, h)| h).collect()
+        .filter(|(e, _)| entity_distance(d, e, p, aperture / 4.0) <= aperture)
+        .map(|(e, _)| e.handle)
+        .collect()
 }
 
 /// Whether PREVIEWFILTER keeps `e` from being highlighted under the cursor: bits 1 objects on
@@ -485,6 +481,26 @@ mod tests {
         assert_eq!(fence_hits(EntityKind::Ray(line.clone()), [(-5.0, -5.0), (-5.0, 5.0)]), 0);
         assert_eq!(fence_hits(EntityKind::XLine(line.clone()), [(0.0, 1.0), (0.0, 5.0)]), 0);
         assert_eq!(fence_hits(EntityKind::Ray(line), [(5.0, 1.0), (5.0, 5.0)]), 0);
+    }
+
+    /// Two objects under the pickbox: AutoCAD 2024 picks the one drawn last, not the nearer one,
+    /// and DRAWORDER changes which (`(ssget pt)` in accoreconsole).
+    #[test]
+    fn a_pick_takes_the_object_drawn_last() {
+        let mut d = Drawing::new_metric();
+        let circle = d
+            .add(&Space::Model, Common::default(), EntityKind::Circle(cadcraft_doc::Circle { center: Vec3::new(50.0, 50.0, 0.0), radius: 10.0 }))
+            .unwrap();
+        let line = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(40.5, 45.0, 0.0), b: Vec3::new(40.5, 55.0, 0.0) });
+        let line = d.add(&Space::Model, Common::default(), line).unwrap();
+        // 0.05 from the circle and 0.45 from the line, both inside an aperture of 1.
+        let p = Vec2::new(40.05, 50.0);
+        assert_eq!(pick(&d, &Space::Model, p, 1.0), Some(line));
+        assert_eq!(pick_all(&d, &Space::Model, p, 1.0), vec![line, circle]);
+        d.model.send_to_back(line);
+        assert_eq!(pick(&d, &Space::Model, p, 1.0), Some(circle));
+        // Only one within reach: that one, whatever the order.
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(41.3, 50.0), 1.0), Some(line));
     }
 }
 

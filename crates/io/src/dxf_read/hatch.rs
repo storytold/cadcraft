@@ -1,5 +1,5 @@
 use super::common::T;
-use super::*;
+use super::{Color, EntityKind, Gradient, Handle, Hatch, HatchLoop, PolyVertex, Rgb, Spline, Tag, Vec2};
 
 pub(super) fn hatch(tags: &[Tag], t: &T) -> Option<EntityKind> {
     let (origin, background) = hatch_xdata(tags);
@@ -19,181 +19,11 @@ pub(super) fn hatch(tags: &[Tag], t: &T) -> Option<EntityKind> {
         let flags = get(i)?.i64();
         i += 1;
         let outer = flags & 1 != 0;
-        let mut verts: Vec<PolyVertex> = Vec::new();
-        if flags & 2 != 0 {
-            // Polyline boundary: 72 has-bulge, 73 closed, 93 count, then 10/20/42.
-            let has_bulge = get(i).filter(|x| x.code == 72).map(Tag::i64).unwrap_or(0) != 0;
-            while get(i).is_some_and(|x| x.code != 93) {
-                i += 1;
-            }
-            let n = get(i)?.i64().clamp(0, 1_000_000) as usize;
-            i += 1;
-            for _ in 0..n {
-                let x = get(i).filter(|t| t.code == 10)?.f64();
-                let y = get(i + 1).filter(|t| t.code == 20)?.f64();
-                i += 2;
-                let mut b = 0.0;
-                if has_bulge && get(i).is_some_and(|t| t.code == 42) {
-                    b = get(i)?.f64();
-                    i += 1;
-                }
-                verts.push(PolyVertex::with_bulge(Vec2::new(x, y), b));
-            }
-        } else {
-            // Edge boundary: 93 edge count, each 72 edge type.
-            while get(i).is_some_and(|x| x.code != 93) {
-                i += 1;
-            }
-            let n = get(i)?.i64().clamp(0, 1_000_000) as usize;
-            i += 1;
-            for _ in 0..n {
-                while get(i).is_some_and(|x| x.code != 72) {
-                    i += 1;
-                }
-                let ty = get(i)?.i64();
-                i += 1;
-                let f = |i: usize| get(i).map(Tag::f64).unwrap_or(0.0);
-                match ty {
-                    1 => {
-                        let a = Vec2::new(f(i), f(i + 1));
-                        let b = Vec2::new(f(i + 2), f(i + 3));
-                        i += 4;
-                        if verts.last().is_none_or(|l| !l.p.near(a, 1e-9)) {
-                            verts.push(PolyVertex::new(a));
-                        }
-                        verts.push(PolyVertex::new(b));
-                    }
-                    2 => {
-                        let c = Vec2::new(f(i), f(i + 1));
-                        let r = f(i + 2);
-                        let sa = f(i + 3).to_radians();
-                        let ea = f(i + 4).to_radians();
-                        let ccw = get(i + 5).map(Tag::i64).unwrap_or(1) != 0;
-                        i += 6;
-                        let (s, e) = if ccw { (sa, ea) } else { (-sa, -ea) };
-                        let p0 = Vec2::polar(c, r, s);
-                        let p1 = Vec2::polar(c, r, e);
-                        let sweep = if ccw { cadcraft_geom::ccw_sweep(s, e) } else { -cadcraft_geom::ccw_sweep(e, s) };
-                        if verts.last().is_none_or(|l| !l.p.near(p0, 1e-9)) {
-                            verts.push(PolyVertex::new(p0));
-                        }
-                        // A full circle (0 to 360) starts and ends on the same point, which one
-                        // bulge can't span: it goes in as two half circles.
-                        let full = (sweep.abs() - std::f64::consts::TAU).abs() < 1e-9;
-                        let bulge = cadcraft_geom::arc_to_bulge(if full { sweep / 2.0 } else { sweep });
-                        if let Some(l) = verts.last_mut() {
-                            l.bulge = bulge;
-                        }
-                        if full {
-                            verts.push(PolyVertex::with_bulge(Vec2::polar(c, r, s + sweep / 2.0), bulge));
-                        }
-                        verts.push(PolyVertex::new(p1));
-                    }
-                    3 => {
-                        // Elliptic arc: approximate with points.
-                        let c = Vec2::new(f(i), f(i + 1));
-                        let m = Vec2::new(f(i + 2), f(i + 3));
-                        let ratio = f(i + 4);
-                        let sa = f(i + 5).to_radians();
-                        let ea = f(i + 6).to_radians();
-                        let ccw = get(i + 7).filter(|t| t.code == 73).map(Tag::i64).unwrap_or(1) != 0;
-                        i += 8;
-                        // A clockwise edge stores its parameters mirrored, as an arc edge does: it
-                        // runs from -start clockwise to -end, the ccw sweep from -end to -start
-                        // walked backwards.
-                        let (s, e) = if ccw { (sa, ea) } else { (-ea, -sa) };
-                        let e = cadcraft_geom::Ellipse { center: c, major: m, ratio, start: s, end: e };
-                        let mut pts = Vec::new();
-                        e.tessellate(m.len() * 1e-3, &mut pts);
-                        if !ccw {
-                            pts.reverse();
-                        }
-                        verts.extend(pts.into_iter().map(PolyVertex::new));
-                    }
-                    4 => {
-                        // Spline edge: 94 degree, 73 rational, 74 periodic, 95 knot count, 96
-                        // control point count, then the 40 knots, the 10/20 control points (each
-                        // with a 42 weight when rational), and 97 fit point count with 11/21 fit
-                        // points and 12/22, 13/23 end tangents (R2010+).
-                        let (mut degree, mut nk, mut nc) = (3, 0, 0);
-                        while let Some(x) = get(i).filter(|x| matches!(x.code, 94 | 73 | 74 | 95 | 96)) {
-                            let n = x.i64().clamp(0, 100_000) as usize;
-                            match x.code {
-                                94 => degree = n.clamp(1, 10), // same cap as the SPLINE reader
-                                95 => nk = n,
-                                96 => nc = n,
-                                _ => {}
-                            }
-                            i += 1;
-                        }
-                        let mut knots = Vec::new();
-                        while knots.len() < nk && get(i).is_some_and(|x| x.code == 40) {
-                            knots.push(f(i));
-                            i += 1;
-                        }
-                        let (mut control, mut weights) = (Vec::new(), Vec::new());
-                        while control.len() < nc && get(i).is_some_and(|x| x.code == 10) {
-                            control.push(Vec2::new(f(i), f(i + 1)));
-                            i += 2;
-                            if get(i).is_some_and(|t| t.code == 42) {
-                                weights.push(f(i));
-                                i += 1;
-                            }
-                        }
-                        let mut fit = Vec::new();
-                        if get(i).is_some_and(|x| x.code == 97) {
-                            let n = get(i).map(Tag::i64).unwrap_or(0).clamp(0, 100_000) as usize;
-                            i += 1;
-                            while fit.len() < n && get(i).is_some_and(|x| x.code == 11) {
-                                fit.push(Vec2::new(f(i), f(i + 1)));
-                                i += 2;
-                            }
-                        }
-                        if weights.len() != control.len() {
-                            weights.clear();
-                        }
-                        let sp = Spline { degree, knots, control, weights, ..Spline::default() };
-                        let sp = if sp.is_valid() {
-                            sp
-                        } else if sp.control.is_empty() && fit.len() > 1 {
-                            Spline::from_fit_points(&fit)
-                        } else {
-                            Spline::from_control(sp.control, degree)
-                        };
-                        let pts = sp.tessellate(1e-3);
-                        let skip = usize::from(verts.last().zip(pts.first()).is_some_and(|(l, p)| l.p.near(*p, 1e-9)));
-                        verts.extend(pts.into_iter().skip(skip).map(PolyVertex::new));
-                    }
-                    _ => {}
-                }
-            }
-        }
+        let mut verts = if flags & 2 != 0 { polyline_boundary(tags, &mut i)? } else { edge_boundary(tags, &mut i)? };
         if verts.len() > 1 && verts.first().map(|f| f.p).zip(verts.last().map(|l| l.p)).is_some_and(|(a, b)| a.near(b, 1e-9)) {
             verts.pop();
         }
-        // 97: number of source boundary objects, then their handles (330). A spline edge's fit
-        // data count is a 97 too, followed by its fit points instead.
-        let mut sources = Vec::new();
-        for _ in 0..2 {
-            while get(i).is_some_and(|x| !matches!(x.code, 97 | 92 | 75)) {
-                i += 1;
-            }
-            if get(i).is_none_or(|x| x.code != 97) {
-                break;
-            }
-            let n = get(i).map(Tag::i64).unwrap_or(0).clamp(0, MAX_HATCH_SOURCES as i64) as usize;
-            i += 1;
-            if get(i).is_some_and(|x| !matches!(x.code, 330 | 92 | 75)) {
-                continue;
-            }
-            while sources.len() < n
-                && let Some(x) = get(i).filter(|x| x.code == 330)
-            {
-                sources.extend(Handle::parse_hex(&x.str()).filter(|h| h.0 != 0));
-                i += 1;
-            }
-            break;
-        }
+        let sources = boundary_sources(tags, &mut i);
         loops.push(HatchLoop { vertices: verts, outer, sources });
     }
     let solid = solid || pattern.eq_ignore_ascii_case("SOLID");
@@ -217,6 +47,191 @@ pub(super) fn hatch(tags: &[Tag], t: &T) -> Option<EntityKind> {
         background,
         pattern_lines,
     }))
+}
+
+fn seek_code(tags: &[Tag], index: &mut usize, code: i32) {
+    while tags.get(*index).is_some_and(|tag| tag.code != code) {
+        *index += 1;
+    }
+}
+
+fn polyline_boundary(tags: &[Tag], index: &mut usize) -> Option<Vec<PolyVertex>> {
+    let get = |i: usize| tags.get(i);
+    let has_bulge = get(*index).filter(|tag| tag.code == 72).map(Tag::i64).unwrap_or(0) != 0;
+    seek_code(tags, index, 93);
+    let count = get(*index)?.i64().clamp(0, 1_000_000) as usize;
+    *index += 1;
+    let mut vertices = Vec::new();
+    for _ in 0..count {
+        let x = get(*index).filter(|tag| tag.code == 10)?.f64();
+        let y = get(*index + 1).filter(|tag| tag.code == 20)?.f64();
+        *index += 2;
+        let mut bulge = 0.0;
+        if has_bulge && get(*index).is_some_and(|tag| tag.code == 42) {
+            bulge = get(*index)?.f64();
+            *index += 1;
+        }
+        vertices.push(PolyVertex::with_bulge(Vec2::new(x, y), bulge));
+    }
+    Some(vertices)
+}
+
+fn edge_boundary(tags: &[Tag], index: &mut usize) -> Option<Vec<PolyVertex>> {
+    let get = |i: usize| tags.get(i);
+    seek_code(tags, index, 93);
+    let count = get(*index)?.i64().clamp(0, 1_000_000) as usize;
+    *index += 1;
+    let mut vertices = Vec::new();
+    for _ in 0..count {
+        seek_code(tags, index, 72);
+        let kind = get(*index)?.i64();
+        *index += 1;
+        match kind {
+            1 => line_edge(tags, index, &mut vertices),
+            2 => circular_edge(tags, index, &mut vertices),
+            3 => elliptic_edge(tags, index, &mut vertices),
+            4 => spline_edge(tags, index, &mut vertices),
+            _ => {}
+        }
+    }
+    Some(vertices)
+}
+
+fn edge_value(tags: &[Tag], index: usize) -> f64 {
+    tags.get(index).map(Tag::f64).unwrap_or(0.0)
+}
+
+fn line_edge(tags: &[Tag], index: &mut usize, vertices: &mut Vec<PolyVertex>) {
+    let start = Vec2::new(edge_value(tags, *index), edge_value(tags, *index + 1));
+    let end = Vec2::new(edge_value(tags, *index + 2), edge_value(tags, *index + 3));
+    *index += 4;
+    if vertices.last().is_none_or(|last| !last.p.near(start, 1e-9)) {
+        vertices.push(PolyVertex::new(start));
+    }
+    vertices.push(PolyVertex::new(end));
+}
+
+fn circular_edge(tags: &[Tag], index: &mut usize, vertices: &mut Vec<PolyVertex>) {
+    let center = Vec2::new(edge_value(tags, *index), edge_value(tags, *index + 1));
+    let radius = edge_value(tags, *index + 2);
+    let start_angle = edge_value(tags, *index + 3).to_radians();
+    let end_angle = edge_value(tags, *index + 4).to_radians();
+    let ccw = tags.get(*index + 5).map(Tag::i64).unwrap_or(1) != 0;
+    *index += 6;
+    let (start, end) = if ccw { (start_angle, end_angle) } else { (-start_angle, -end_angle) };
+    let start_point = Vec2::polar(center, radius, start);
+    let end_point = Vec2::polar(center, radius, end);
+    let sweep = if ccw { cadcraft_geom::ccw_sweep(start, end) } else { -cadcraft_geom::ccw_sweep(end, start) };
+    if vertices.last().is_none_or(|last| !last.p.near(start_point, 1e-9)) {
+        vertices.push(PolyVertex::new(start_point));
+    }
+    // A full circle needs two bulges because one bulge cannot span coincident endpoints.
+    let full = (sweep.abs() - std::f64::consts::TAU).abs() < 1e-9;
+    let bulge = cadcraft_geom::arc_to_bulge(if full { sweep / 2.0 } else { sweep });
+    if let Some(last) = vertices.last_mut() {
+        last.bulge = bulge;
+    }
+    if full {
+        vertices.push(PolyVertex::with_bulge(Vec2::polar(center, radius, start + sweep / 2.0), bulge));
+    }
+    vertices.push(PolyVertex::new(end_point));
+}
+
+fn elliptic_edge(tags: &[Tag], index: &mut usize, vertices: &mut Vec<PolyVertex>) {
+    let center = Vec2::new(edge_value(tags, *index), edge_value(tags, *index + 1));
+    let major = Vec2::new(edge_value(tags, *index + 2), edge_value(tags, *index + 3));
+    let ratio = edge_value(tags, *index + 4);
+    let start_angle = edge_value(tags, *index + 5).to_radians();
+    let end_angle = edge_value(tags, *index + 6).to_radians();
+    let ccw = tags.get(*index + 7).filter(|tag| tag.code == 73).map(Tag::i64).unwrap_or(1) != 0;
+    *index += 8;
+    let (start, end) = if ccw { (start_angle, end_angle) } else { (-end_angle, -start_angle) };
+    let ellipse = cadcraft_geom::Ellipse { center, major, ratio, start, end };
+    let mut points = Vec::new();
+    ellipse.tessellate(major.len() * 1e-3, &mut points);
+    if !ccw {
+        points.reverse();
+    }
+    vertices.extend(points.into_iter().map(PolyVertex::new));
+}
+
+fn spline_edge(tags: &[Tag], index: &mut usize, vertices: &mut Vec<PolyVertex>) {
+    let get = |i: usize| tags.get(i);
+    let mut degree = 3;
+    let (mut knot_count, mut control_count) = (0, 0);
+    while let Some(tag) = get(*index).filter(|tag| matches!(tag.code, 94 | 73 | 74 | 95 | 96)) {
+        let count = tag.i64().clamp(0, 100_000) as usize;
+        match tag.code {
+            94 => degree = count.clamp(1, 10),
+            95 => knot_count = count,
+            96 => control_count = count,
+            _ => {}
+        }
+        *index += 1;
+    }
+    let mut knots = Vec::new();
+    while knots.len() < knot_count && get(*index).is_some_and(|tag| tag.code == 40) {
+        knots.push(edge_value(tags, *index));
+        *index += 1;
+    }
+    let (mut control, mut weights) = (Vec::new(), Vec::new());
+    while control.len() < control_count && get(*index).is_some_and(|tag| tag.code == 10) {
+        control.push(Vec2::new(edge_value(tags, *index), edge_value(tags, *index + 1)));
+        *index += 2;
+        if get(*index).is_some_and(|tag| tag.code == 42) {
+            weights.push(edge_value(tags, *index));
+            *index += 1;
+        }
+    }
+    let mut fit = Vec::new();
+    if get(*index).is_some_and(|tag| tag.code == 97) {
+        let count = get(*index).map(Tag::i64).unwrap_or(0).clamp(0, 100_000) as usize;
+        *index += 1;
+        while fit.len() < count && get(*index).is_some_and(|tag| tag.code == 11) {
+            fit.push(Vec2::new(edge_value(tags, *index), edge_value(tags, *index + 1)));
+            *index += 2;
+        }
+    }
+    if weights.len() != control.len() {
+        weights.clear();
+    }
+    let spline = Spline { degree, knots, control, weights, ..Spline::default() };
+    let spline = if spline.is_valid() {
+        spline
+    } else if spline.control.is_empty() && fit.len() > 1 {
+        Spline::from_fit_points(&fit)
+    } else {
+        Spline::from_control(spline.control, degree)
+    };
+    let points = spline.tessellate(1e-3);
+    let skip = usize::from(vertices.last().zip(points.first()).is_some_and(|(last, point)| last.p.near(*point, 1e-9)));
+    vertices.extend(points.into_iter().skip(skip).map(PolyVertex::new));
+}
+
+fn boundary_sources(tags: &[Tag], index: &mut usize) -> Vec<Handle> {
+    let get = |i: usize| tags.get(i);
+    let mut sources = Vec::new();
+    for _ in 0..2 {
+        while get(*index).is_some_and(|tag| !matches!(tag.code, 97 | 92 | 75)) {
+            *index += 1;
+        }
+        if get(*index).is_none_or(|tag| tag.code != 97) {
+            break;
+        }
+        let count = get(*index).map(Tag::i64).unwrap_or(0).clamp(0, MAX_HATCH_SOURCES as i64) as usize;
+        *index += 1;
+        if get(*index).is_some_and(|tag| !matches!(tag.code, 330 | 92 | 75)) {
+            continue;
+        }
+        while sources.len() < count
+            && let Some(tag) = get(*index).filter(|tag| tag.code == 330)
+        {
+            sources.extend(Handle::parse_hex(&tag.str()).filter(|handle| handle.0 != 0));
+            *index += 1;
+        }
+        break;
+    }
+    sources
 }
 
 /// Upper bound on the source boundary objects of one HATCH loop.
