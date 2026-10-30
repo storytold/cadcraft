@@ -844,6 +844,8 @@ fn marks(s: &mut Surface<'_>, p: &SheetPage, groups: &Groups, fonts: &mut fonts:
                 }
             }
             Kind::Point => point(s, &mut batch, &p.map, raw, m),
+            // Raster images are not written to PDF yet: their frame is.
+            Kind::Image { .. } => {}
         }
     }
     flush(s, &mut batch);

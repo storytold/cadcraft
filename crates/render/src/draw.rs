@@ -186,9 +186,17 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             let o = i.insert.xy();
             let u = i.u.xy() * i.size.x;
             let v = i.v.xy() * i.size.y;
+            // Display flag 1: show the image. Without pixels (file not found, not loaded yet,
+            // hidden) the rectangle is crossed out.
+            let raster = if i.display & 1 != 0 { ctx.d.rasters.get(&i.path) } else { None };
+            if let Some(r) = raster {
+                b.image(ctx, rgb, i, r);
+            }
             b.polyline(ctx, rgb, lw, &[o, o + u, o + u + v, o + v, o]);
-            b.polyline(ctx, rgb, lw, &[o, o + u + v]);
-            b.polyline(ctx, rgb, lw, &[o + u, o + v]);
+            if raster.is_none() {
+                b.polyline(ctx, rgb, lw, &[o, o + u + v]);
+                b.polyline(ctx, rgb, lw, &[o + u, o + v]);
+            }
         }
         EntityKind::Table(t) => table(b, ctx, t, rgb, lw),
         EntityKind::Tolerance(t) => tolerance::draw(b, ctx, e, t, lw, tol),

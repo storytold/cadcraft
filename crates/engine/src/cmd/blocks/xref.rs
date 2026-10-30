@@ -67,6 +67,12 @@ pub(crate) fn after_open(s: &mut Session, i: usize) {
     echo_all(s, &out);
 }
 
+/// The file a reference saved as `path` in a drawing at `host` is read from, if there is one
+/// (xrefs and raster images look in the same places).
+pub(crate) fn find_file(path: &str, host: Option<&str>) -> Option<std::path::PathBuf> {
+    load::find(path, host.map(std::path::Path::new), false).ok()
+}
+
 /// The open drawing's path (xref paths are relative to its folder).
 fn host(s: &Session) -> Option<String> {
     s.state().ok().and_then(|st| st.path.clone())

@@ -186,6 +186,45 @@ impl Builder<'_> {
             len: pts.len() as u32,
         });
     }
+    /// The pixels of image `i` over its rectangle, cut to its clip boundary.
+    fn image(&mut self, ctx: &Ctx, color: Ink, i: &cadcraft_doc::Image, raster: &std::sync::Arc<cadcraft_doc::Raster>) {
+        // Where the entity puts its picture: the top-left corner, and one of its pixels to the
+        // right and down.
+        let top_left = ctx.xf.apply(i.insert.xy() + i.v.xy() * i.size.y);
+        let right = ctx.xf.apply_vec(i.u.xy());
+        let down = ctx.xf.apply_vec(i.v.xy() * -1.0);
+        let clip = image_clip(i, |q| top_left + right * q.x + down * q.y);
+        // The file found can have another pixel count than the entity records: its pixels are
+        // stretched over the same rectangle.
+        let img = DImage {
+            raster: raster.clone(),
+            origin: top_left,
+            right: right * (i.size.x / f64::from(raster.width())),
+            down: down * (i.size.y / f64::from(raster.height())),
+            clips: clip.into_iter().collect(),
+            fade: i.fade.min(100),
+        };
+        let corners = img.corners();
+        if !corners.iter().all(|q| q.x.is_finite() && q.y.is_finite()) {
+            return;
+        }
+        let (Ok(index), Ok(start)) = (u32::try_from(self.list.images.len()), u32::try_from(self.list.verts.len())) else { return };
+        for q in corners {
+            self.list.bounds.add(q);
+            self.list.verts.push(q);
+        }
+        self.list.images.push(img);
+        self.list.prims.push(DPrim {
+            handle: ctx.top,
+            color: color.rgb,
+            aci7: color.aci7,
+            lw: 0.0,
+            transparency: self.transparency,
+            kind: Kind::Image { index },
+            start,
+            len: 4,
+        });
+    }
     fn tris(&mut self, ctx: &Ctx, color: Ink, tris: &[Vec2]) {
         self.tris_at(ctx, color, tris, ctx.xf);
     }
@@ -298,6 +337,23 @@ impl Builder<'_> {
     }
 }
 
+/// The clip boundary of image `i` as a closed outline, or `None` when the whole image shows.
+/// `place` gives the position of a point of the entity's pixel grid (x right, y down from the
+/// top-left corner of the image).
+fn image_clip(i: &cadcraft_doc::Image, place: impl Fn(Vec2) -> Vec2) -> Option<Vec<Vec2>> {
+    if !i.clipping {
+        return None;
+    }
+    // Boundaries count from pixel centres: the top-left corner of the image is (-0.5, -0.5).
+    let at = |q: Vec2| place(Vec2::new(q.x + 0.5, q.y + 0.5));
+    match i.clip.as_slice() {
+        // Two opposite corners of a rectangle.
+        [a, b] => Some(vec![at(*a), at(Vec2::new(b.x, a.y)), at(*b), at(Vec2::new(a.x, b.y))]),
+        polygon if polygon.len() >= 3 => Some(polygon.iter().map(|q| at(*q)).collect()),
+        _ => None,
+    }
+}
+
 mod table;
 pub use table::{MAX_LAYOUT_CELLS, TableFill, TableGeom, TableLine, TableText, table_covered, table_geometry, table_style_of};
 
@@ -311,7 +367,7 @@ mod text_entity;
 mod viewports;
 
 pub use dim_draw::{dim_text, dimension_in};
-pub use display::{DPrim, DisplayList, Kind, MAX_TRANSPARENCY, NO_LAYER, PlotText, VIEWPORT_CONTENT, alpha};
+pub use display::{DImage, DPrim, DisplayList, Kind, MAX_TRANSPARENCY, NO_LAYER, PlotText, VIEWPORT_CONTENT, alpha};
 pub use pipeline::{Options, build, build_entities, build_plot};
 use props::{default_lineweight, resolve_common};
 use text_entity::text_style;

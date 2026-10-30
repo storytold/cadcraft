@@ -59,8 +59,9 @@ pub struct Image {
     /// The image definition's name (its key in the drawing's image dictionary).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
-    /// Clip boundary in pixel coordinates (origin at the top-left corner of the image, y down):
-    /// two opposite corners of a rectangle, or a polygon's vertices. Empty: the whole image.
+    /// Clip boundary in pixel coordinates (y down, counted from pixel centres: the centre of the
+    /// top-left pixel is the origin, so the whole image is -0.5 to size - 0.5): two opposite
+    /// corners of a rectangle, or a polygon's vertices. Empty: the whole image.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub clip: Vec<Vec2>,
     /// The clip boundary is applied.

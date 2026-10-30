@@ -51,7 +51,7 @@ skrifa = "0.48"
 # so the graph has both) and the Unicode Bidirectional Algorithm for right-to-left drawing text.
 harfrust = "0.14"
 unicode-bidi = "0.3.18"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "tiff"] }
 encoding_rs = "0.8.35"
 # XML for the SVG reader (streaming parser, no entity expansion beyond the five predefined ones)
 quick-xml = "0.42"

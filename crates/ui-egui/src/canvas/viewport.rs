@@ -162,6 +162,9 @@ pub(super) fn draw_vp_content(c: &mut VpContent, gpu: bool, p: &egui::Painter, f
         draw_list(p, xf, &c.list, bg, lwdisplay);
         return;
     }
+    // Images first, under the lines, as in `draw_list_gpu` (`p` clips them to the viewport's
+    // rectangle; a clipped viewport's outline masks the GPU geometry only).
+    super::images::draw(p, xf, &c.list);
     let mut stencil = crate::gpu::Stencil::Off;
     if let Some(outline) = &f.outline {
         draw_vp_mask(c, p, outline, xf_paper);
