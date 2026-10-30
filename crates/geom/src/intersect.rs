@@ -20,6 +20,15 @@ pub fn line_line(a: &Line, b: &Line) -> Option<Vec2> {
     ((-tol..=1.0 + tol).contains(&t) && (-tol..=1.0 + tol).contains(&u)).then_some(p)
 }
 
+/// Like [`line_line`], but the end slack is at most 1e-9 drawing units, so a huge segment (a ray or
+/// construction line clipped to a far point) does not reach past its end.
+pub fn line_line_capped(a: &Line, b: &Line) -> Option<Vec2> {
+    let (p, t, u) = line_line_infinite(a.a, a.b, b.a, b.b)?;
+    let slack = |l: &Line| 1e-9 / l.len().max(1.0);
+    let (ta, tb) = (slack(a), slack(b));
+    ((-ta..=1.0 + ta).contains(&t) && (-tb..=1.0 + tb).contains(&u)).then_some(p)
+}
+
 /// Intersections of the infinite line through `l` with a circle. Returns points with line params.
 pub fn line_circle(l: &Line, c: &Circle) -> Vec<(Vec2, f64)> {
     let d = l.b - l.a;
