@@ -185,8 +185,9 @@ pub fn grip_dims(s: &Session) -> Vec<GripDim> {
         return Vec::new();
     }
     let Some((h, i)) = s.current_prompt().and_then(|p| p.grip) else { return Vec::new() };
-    let Some(e) = s.doc().ok().and_then(|d| d.entity(h)) else { return Vec::new() };
-    let all = dims_of(&e.kind, i);
+    let Ok(d) = s.doc() else { return Vec::new() };
+    let Some(e) = d.entity(h) else { return Vec::new() };
+    let all = dims_of(&d.anno_shown_in(e, s.anno_view()), i);
     let st = &s.settings;
     match st.dyndivis {
         0 => all.into_iter().take(1).collect(),

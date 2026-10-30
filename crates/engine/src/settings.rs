@@ -98,6 +98,8 @@ pub struct Settings {
     /// SELECTIONPREVIEW bits: the object under the cursor is highlighted (1) when no command is
     /// active, (2) when a command asks for objects.
     pub selectionpreview: u8,
+    /// SELECTIONANNODISPLAY: a selected annotative object also shows faded at its other scales.
+    pub selectionannodisplay: bool,
     /// PREVIEWEFFECT: how that object is highlighted: 0 dashed, 1 thicker, 2 dashed and thicker.
     pub previeweffect: u8,
     /// PREVIEWFILTER bits: objects the cursor never highlights: 1 on locked layers, 2 xrefs,
@@ -178,6 +180,7 @@ impl Default for Settings {
             highlight: true,
             selectioneffect: 1,
             selectionpreview: 3,
+            selectionannodisplay: true,
             previeweffect: 2,
             previewfilter: 3,
             grips: 1,

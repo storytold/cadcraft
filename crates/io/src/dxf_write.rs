@@ -45,6 +45,9 @@ struct W {
     /// Persistent reactors of boundary objects: each source object of an associative hatch →
     /// the hatches (groups `{ACAD_REACTORS 330 …}`), from [`hatch_reactors`].
     reactors: HashMap<Handle, Vec<String>>,
+    /// Extension dictionaries of annotative objects (their annotation scale contexts, see
+    /// [`crate::dxf_anno`]), by object; a dimension's DIMASSOC dictionary is written by its own.
+    xdicts: HashMap<Handle, String>,
 }
 
 impl W {
@@ -145,6 +148,7 @@ pub fn entity_groups(d: &Drawing, e: &Entity) -> (String, Vec<Tag>) {
         pstyles: HashMap::new(),
         layers: HashMap::new(),
         reactors: HashMap::new(),
+        xdicts: HashMap::new(),
     };
     let cx = Ctx { target: Version::R2018, ..Ctx::default() };
     let paper = d.space_of(e.handle).is_some_and(|s| !matches!(s, cadcraft_doc::Space::Model));
