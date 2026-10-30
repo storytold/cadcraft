@@ -22,6 +22,7 @@ fn clip_infinite(xf: &Xf, base: Vec2, dir: Vec2, ray: bool) -> Option<[Pos2; 2]>
 /// Draw a display list.
 pub(crate) fn draw_list(p: &egui::Painter, xf: &Xf, list: &DisplayList, bg: Rgb, lwdisplay: bool) {
     let vis = xf.world_bounds();
+    super::images::draw(p, xf, list);
     let mut shapes: Vec<Shape> = Vec::with_capacity(list.prims.len());
     let px = 1.0 / xf.scale;
     for prim in &list.prims {
@@ -79,6 +80,8 @@ pub(crate) fn draw_list(p: &egui::Painter, xf: &Xf, list: &DisplayList, bg: Rgb,
                     shapes.push(Shape::line_segment(seg, Stroke::new(1.0, col)));
                 }
             }
+            // Drawn first, under the lines (`images::draw`).
+            Kind::Image { .. } => {}
         }
     }
     p.extend(shapes);
@@ -228,6 +231,7 @@ pub(super) fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, bg:
         c.mesh_origin = origin;
         c.mesh_ms = crate::now_ms() - t0;
     }
+    super::images::draw(p, xf, list);
     let center = xf.rect.center();
     p.add(egui_wgpu::Callback::new_paint_callback(
         xf.rect,
@@ -317,6 +321,7 @@ pub(crate) fn draw_highlight(p: &egui::Painter, xf: &Xf, list: &DisplayList, pri
                     line(outline.iter().map(|q| xf.to_screen(*q)).collect(), &mut shapes);
                 }
             }
+            Kind::Image { .. } => line(pts.iter().chain(pts.first()).map(|q| xf.to_screen(*q)).collect(), &mut shapes),
         }
     }
     if !fill.is_empty() {

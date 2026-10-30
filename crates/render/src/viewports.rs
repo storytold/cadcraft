@@ -1,6 +1,6 @@
 #[cfg(not(target_arch = "wasm32"))]
 use super::display::append;
-use super::display::{DPrim, DisplayList, Kind, PlotText, VIEWPORT_CONTENT};
+use super::display::{DImage, DPrim, DisplayList, Kind, PlotText, VIEWPORT_CONTENT};
 use super::draw::entity;
 #[cfg(not(target_arch = "wasm32"))]
 use super::pipeline::PARALLEL_CHUNK;
@@ -228,6 +228,11 @@ fn append_clipped(dst: &mut DisplayList, src: &DisplayList, clip: &Clip) {
                     push_raw(dst, p, Kind::Point, &[*q]);
                 }
             }
+            (Kind::Image { index }, _) => {
+                if let Some(img) = src.images.get(index as usize) {
+                    push_clipped_image(dst, p, img, pts, clip);
+                }
+            }
             (Kind::Infinite { ray }, Clip::Rect(rect)) => {
                 if let (Some(base), Some(dir)) = (pts.first(), pts.get(1))
                     && let Some((a, c)) = clip::clip_infinite(*base, *dir, ray, rect)
@@ -244,6 +249,25 @@ fn append_clipped(dst: &mut DisplayList, src: &DisplayList, clip: &Clip) {
             }
         }
     }
+}
+
+/// Append image `img` (primitive `p`, corners `corners`) to `dst`, to be cut to `clip` when it
+/// is drawn: the picture is not cut here, the outline is added to those it carries.
+fn push_clipped_image(dst: &mut DisplayList, p: &DPrim, img: &DImage, corners: &[Vec2], clip: &Clip) {
+    let outline = match clip {
+        Clip::Rect(rect) => {
+            if !Bounds2::from_points(corners.iter().copied()).intersects(rect) {
+                return;
+            }
+            vec![rect.min, Vec2::new(rect.max.x, rect.min.y), rect.max, Vec2::new(rect.min.x, rect.max.y)]
+        }
+        Clip::Poly(c) => c.polygon().to_vec(),
+    };
+    let Ok(index) = u32::try_from(dst.images.len()) else { return };
+    let mut img = img.clone();
+    img.clips.push(outline);
+    dst.images.push(img);
+    push_raw(dst, p, Kind::Image { index }, corners);
 }
 
 fn push_raw(dst: &mut DisplayList, p: &DPrim, kind: Kind, pts: &[Vec2]) {

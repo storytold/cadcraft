@@ -752,6 +752,7 @@ dependencies = [
  "cadcraft-geom",
  "cadcraft-render",
  "craft-pdf",
+ "image",
  "miniz_oxide 0.9.1",
  "quick-xml 0.42.0",
  "serde",
