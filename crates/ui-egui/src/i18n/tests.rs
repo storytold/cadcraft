@@ -556,3 +556,10 @@ fn production_font_chain_covers_latin_and_shortcut_symbols() {
         assert!(view.has_glyph(&egui::FontId::monospace(12.0), '\u{21e7}'), "U+21E7 shift symbol missing in Monospace");
     });
 }
+
+/// #1129: in Chinese every menu, submenu, command, tool palette and object-snap label is
+/// translated, so no menu shows English entries.
+#[test]
+fn chinese_menus_and_commands_are_fully_translated() {
+    assert_eq!(missing_commands_menus_tools_and_snap_labels("zh"), Vec::<String>::new());
+}
