@@ -15,8 +15,9 @@
 //! - Both directions reject oversized input *before* the decoder runs ([`Limits::max_dwg_bytes`]
 //!   for DWG→DXF, [`Limits::max_dxf_bytes`] for DXF→DWG), and the DWG→DXF output is capped while
 //!   it is written (`CappedWriter`).
-//! - The reader and writer run inside `catch_unwind`, so a decode failure is reported instead of
-//!   crashing.
+//! - On native targets the reader and writer run inside `catch_unwind`, so a decode failure is
+//!   reported instead of crashing. The web build (`wasm32-unknown-unknown`) aborts on a panic, so
+//!   there a panic inside the decoder ends the page.
 //!
 //! These bound the input- and output-size variants. A small file that declares a huge internal
 //! table or section can still make the dependency allocate before any size is known; fully fixing
