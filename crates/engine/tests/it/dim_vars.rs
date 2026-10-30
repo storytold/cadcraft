@@ -101,6 +101,34 @@ fn new_variables_are_style_overrides_and_read_back() {
 }
 
 #[test]
+fn text_fill_variables_are_style_overrides() {
+    let mut s = Session::new();
+    set(&mut s, "DIMTFILL", json!(2));
+    set(&mut s, "DIMTFILLCLR", json!(3));
+    let o = s.doc().unwrap().dim_overrides();
+    assert_eq!(o.get("textFill"), Some(&json!(2)));
+    linear(&mut s, 10.0);
+    let (dm, g) = last_dim(&s);
+    let st = DimStyle::default().with_overrides(&dm.overrides);
+    assert_eq!((st.text_fill, st.text_fill_color), (2, cadcraft_engine::doc::color::Color::Index(3)));
+    assert_eq!(g.text_fill.len(), 4, "the new dimension has a text background");
+    // DIMTFILL takes 0, 1 or 2.
+    let mut st = DimStyle::default();
+    assert_eq!(st.apply_fields(&serde_json::Map::from_iter([("DIMTFILL".to_string(), json!(3))])).len(), 1);
+    // EXPLODE keeps the background as a SOLID in DIMTFILLCLR, before the text.
+    let h = s.doc().unwrap().model.last().unwrap().handle.hex();
+    s.execute("explode", &json!({ "handles": [h] })).unwrap();
+    let d = s.doc().unwrap();
+    let solid = d.model.iter().position(|e| matches!(e.kind, EntityKind::Solid(_)) && e.common.color == cadcraft_engine::doc::color::Color::Index(3));
+    let mtext = d.model.iter().position(|e| matches!(e.kind, EntityKind::MText(_)));
+    assert!(solid.is_some() && solid < mtext, "{solid:?}, {mtext:?}");
+    // The arrowheads (the other SOLIDs) come before the background, as the dimension draws them.
+    let arrows: Vec<usize> =
+        d.model.iter().enumerate().filter(|(i, e)| matches!(e.kind, EntityKind::Solid(_)) && Some(*i) != solid).map(|(i, _)| i).collect();
+    assert!(!arrows.is_empty() && arrows.iter().all(|i| Some(*i) < solid), "{arrows:?} before {solid:?}");
+}
+
+#[test]
 fn fit_moves_text_or_arrows_outside() {
     // 0.5 between the extension lines: the text "0.5000" doesn't fit, the arrows (2 × 0.18) do.
     let mut s = Session::new();
@@ -197,6 +225,37 @@ fn text_move_settings() {
 }
 
 #[test]
+fn setvar_refuses_the_values_the_style_refuses() {
+    let mut s = Session::new();
+    set(&mut s, "DIMTMOVE", json!(1));
+    let get = |s: &mut Session, name: &str| s.execute("getvar", &json!({ "name": name })).unwrap()["value"].clone();
+    for (name, v) in [
+        ("DIMTMOVE", json!(3)),
+        ("DIMATFIT", json!(7)),
+        ("DIMLWD", json!(500)),
+        ("DIMJOGANG", json!(120)),
+        ("DIMFXL", json!(-1)),
+        ("DIMTXT", json!(0)),
+        ("DIMDEC", json!(300)),
+        ("DIMCLRT", json!("no such color")),
+    ] {
+        let before = get(&mut s, name);
+        assert!(s.execute("setvar", &json!({ "name": name, "value": v })).is_err(), "{name} {v}");
+        assert_eq!(get(&mut s, name), before, "{name} keeps its value");
+        // DIMSTYLE and DIMOVERRIDE refuse the same value.
+        let mut st = DimStyle::default();
+        assert_eq!(st.apply_fields(&serde_json::Map::from_iter([(name.to_string(), v)])).len(), 1, "{name}");
+    }
+    assert_eq!(s.doc().unwrap().dim_overrides().get("textMove"), Some(&json!(1)));
+    // Values in range still go in, typed as text too.
+    set(&mut s, "DIMTMOVE", json!("2"));
+    set(&mut s, "DIMCLRT", json!(3));
+    let o = s.doc().unwrap().dim_overrides();
+    assert_eq!(o.get("textMove"), Some(&json!(2)));
+    assert_eq!(o.get("textColor"), serde_json::to_value(cadcraft_engine::doc::color::Color::Index(3)).ok().as_ref(), "{o:?}");
+}
+
+#[test]
 fn tolerance_justification_angular_zeros_and_arc_symbol() {
     let mut s = Session::new();
     set(&mut s, "DIMTOL", json!(1));
@@ -260,6 +319,69 @@ fn linetypes_and_lineweights_of_dimension_and_extension_lines() {
     let dl = cadcraft_engine::render::build(s.doc().unwrap(), &cadcraft_engine::doc::Space::Model, &opts);
     let lws: Vec<f32> = dl.prims.iter().filter(|p| p.kind == cadcraft_engine::render::Kind::Polyline).map(|p| p.lw).collect();
     assert!(lws.contains(&0.5) && lws.contains(&0.13), "{lws:?}");
+}
+
+fn ignored(r: &Value) -> Vec<&str> {
+    r["ignored"].as_array().map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default()
+}
+
+#[test]
+fn dimstyle_and_dimoverride_refuse_negative_whole_numbers() {
+    let mut s = Session::new();
+    s.execute("dimstyle", &json!({ "name": "Standard", "DIMTMOVE": 2, "DIMLWD": 50 })).unwrap();
+    let r = s
+        .execute(
+            "dimstyle",
+            &json!({
+                "name": "Standard",
+                "DIMDEC": -1,
+                "DIMTMOVE": -1,
+                "DIMLUNIT": "-1",
+                "DIMTDEC": -0.6,
+                "DIMADEC": -2,
+                "DIMALTD": "300",
+                "DIMLWE": "300",
+            }),
+        )
+        .unwrap();
+    let ign = ignored(&r);
+    for k in ["DIMDEC", "DIMTMOVE", "DIMLUNIT", "DIMTDEC", "DIMADEC", "DIMALTD", "DIMLWE"] {
+        assert!(ign.contains(&k), "{k}: {r}");
+    }
+    let st = s.doc().unwrap().dim_style("Standard").unwrap().clone();
+    let def = DimStyle::default();
+    assert_eq!((st.decimals, st.text_move, st.linear_unit, st.tol_decimals), (def.decimals, 2, def.linear_unit, def.tol_decimals));
+    assert_eq!((st.angular_decimals, st.alt_decimals, st.ext_lineweight), (def.angular_decimals, def.alt_decimals, def.ext_lineweight));
+    // DIMADEC -1 is a documented value (stored as 0); ByLayer lineweights stay -1.
+    let r = s.execute("dimstyle", &json!({ "name": "Standard", "DIMADEC": -1, "DIMLWD": "ByLayer" })).unwrap();
+    assert!(r.get("ignored").is_none(), "{r}");
+    assert_eq!(s.doc().unwrap().dim_style("Standard").unwrap().dim_lineweight, -1);
+
+    // DIMOVERRIDE keeps the valid value and leaves the negative one out.
+    linear(&mut s, 10.0);
+    let h = s.doc().unwrap().model.last().unwrap().handle.hex();
+    s.execute("dimoverride", &json!({ "handles": [h], "DIMDEC": -1, "DIMTMOVE": 1 })).unwrap();
+    let (dm, _) = last_dim(&s);
+    assert!(!dm.overrides.contains_key("decimals"), "{:?}", dm.overrides);
+    assert_eq!(dm.overrides.get("textMove"), Some(&json!(1)));
+    assert!(s.execute("dimoverride", &json!({ "handles": [h], "DIMZIN": -3 })).is_err());
+}
+
+#[test]
+fn setvar_negative_whole_numbers_do_not_reach_new_dimensions() {
+    let mut s = Session::new();
+    for (name, v) in [("DIMDEC", json!(-1)), ("DIMLUNIT", json!("-1")), ("DIMTDEC", json!(-0.6))] {
+        // The header may hold the value; new dimensions keep the style's own.
+        let _ = s.execute("setvar", &json!({ "name": name, "value": v }));
+    }
+    let o = s.doc().unwrap().dim_overrides();
+    for f in ["decimals", "linearUnit", "tolDecimals"] {
+        assert!(!o.contains_key(f), "{f}: {o:?}");
+    }
+    linear(&mut s, 10.0);
+    let (dm, g) = last_dim(&s);
+    assert_eq!(g.value, "10.0000");
+    assert!(dm.overrides.is_empty(), "{:?}", dm.overrides);
 }
 
 #[test]

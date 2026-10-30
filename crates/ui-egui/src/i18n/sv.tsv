@@ -90,6 +90,7 @@
 	Blend	Mjuk övergång
 	Block	Block
 	Block Attribute Manager...	Hantera blockattribut...
+	Block Description...	Blockbeskrivning...
 	Block Editor	Blockredigerare
 	Block Reference	Blockreferens
 	Block...	Block...
@@ -143,6 +144,7 @@
 	Close All Other Drawings	Stäng alla andra ritningar
 	Close Array Editing	Avsluta redigering av array
 	Close Comparison	Stäng jämförelse
+	Export Comparison	Exportera jämförelse
 	Closed	Sluten
 	Coincident	Sammanfallande
 	Collapse Palettes	Fäll ihop paletter
@@ -195,6 +197,7 @@
 	Current selection	Aktuell markering
 	Current: {color}	Aktuell: {color}
 	Cut	Klipp ut
+	Cut with Base Point	Klipp ut med baspunkt
 	Cyan	Cyan
 	Cylinder	Cylinder
 	DWG	DWG
@@ -567,6 +570,7 @@
 	N	N
 	Name	Namn
 	Name (A–Z)	Namn (A–Ö)
+	Named Viewports...	Namngivna vyfönster...
 	Named Views...	Namngivna vyer...
 	Nearest	Närmaste
 	New	Ny
@@ -824,6 +828,7 @@
 	Rename Text Style	Byt namn på textstil
 	Rename...	Byt namn...
 	Repeat {command}	Upprepa {command}
+	Replace Block...	Ersätt block...
 	Requires a point (x,y, @dx,dy or @d<a).	Kräver en punkt (x,y, @dx,dy eller @d<a).
 	Reset Palettes	Återställ paletter
 	Restore	Återställ
@@ -1394,3 +1399,55 @@ menu	Modify	Ändra
 	Window <	Fönster <
 	X offset (mm)	X-förskjutning (mm)
 	Y offset (mm)	Y-förskjutning (mm)
+	AutoLISP (LSP)	AutoLISP (LSP)
+	Units of new drawings	Enheter för nya ritningar
+	Imperial (inches)	Anglosaxiskt (tum)
+	Metric (millimetres)	Metriskt (millimeter)
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	Nya ritningar och den första ritningen vid start använder dessa enheter om ingen standardmall är angiven (QNEWTEMPLATE).
+	Analyze Usage	Analysera användning
+	Implied Loops	Implicita slingor
+	Angstroms	Ångström
+	Architectural	Arkitektonisk
+	Astronomical Units	Astronomiska enheter
+	Centimeters	Centimeter
+	Decameters	Dekameter
+	Decimal	Decimal
+	Decimal Degrees	Decimalgrader
+	Decimeters	Decimeter
+	Deg/Min/Sec	Grad/min/sek
+	Don't Save	Spara inte
+	Drawing Units	Ritningsenheter
+	Engineering	Teknisk
+	Feet	Fot
+	Fractional	Bråk
+	Gigameters	Gigameter
+	Grads	Gon
+	Hectometers	Hektometer
+	Inches	Tum
+	Insertion scale	Insättningsskala
+	Kilometers	Kilometer
+	Light Years	Ljusår
+	Meters	Meter
+	Microinches	Mikrotum
+	Microns	Mikrometer
+	Miles	Engelska mil
+	Millimeters	Millimeter
+	Mils	Tusendels tum
+	Nanometers	Nanometer
+	Parsecs	Parsek
+	Radians	Radianer
+	Sample output	Exempel på utdata
+	Save changes to {name}?	Spara ändringar i {name}?
+	Scientific	Vetenskaplig
+	Surveyor's Units	Lantmäterienheter
+	Unitless	Enhetslös
+	Units to scale inserted content	Enheter för skalning av infogat innehåll
+	US Survey Feet	Lantmäterifot (USA)
+	US Survey Inch	Lantmäteritum (USA)
+	US Survey Mile	Engelsk lantmäterimil (USA)
+	US Survey Yard	Lantmäteriyard (USA)
+	Yards	Yard
+	Your changes will be lost if you don't save them.	Dina ändringar går förlorade om du inte sparar dem.
+	Check for Updates…	Sök efter uppdateringar…
+	CADCraft is up to date.	CADCraft är uppdaterat.
+	Could not check for updates.	Det gick inte att söka efter uppdateringar.

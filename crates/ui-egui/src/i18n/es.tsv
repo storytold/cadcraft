@@ -87,6 +87,7 @@
 	Blend	Fusión de curvas
 	Block	Bloque
 	Block Attribute Manager...	Administrador de atributos de bloque...
+	Block Description...	Descripción de bloque...
 	Block Editor	Editor de bloques
 	Block Reference	Referencia de bloque
 	Block...	Bloque...
@@ -140,6 +141,7 @@
 	Close All Other Drawings	Cerrar todos los demás dibujos
 	Close Array Editing	Cerrar la edición de matriz
 	Close Comparison	Cerrar comparación
+	Export Comparison	Exportar comparación
 	Closed	Cerrada
 	Coincident	Coincidente
 	Collapse Palettes	Contraer paletas
@@ -192,6 +194,7 @@
 	Current selection	Selección actual
 	Current: {color}	Actual: {color}
 	Cut	Cortar
+	Cut with Base Point	Cortar con punto base
 	Cyan	Cian
 	Cylinder	Cilindro
 	DWG	DWG
@@ -565,6 +568,7 @@
 	N	N
 	Name	Nombre
 	Name (A–Z)	Nombre (A–Z)
+	Named Viewports...	Ventanas gráficas con nombre...
 	Named Views...	Vistas con nombre...
 	Nearest	Cercano
 	New	Nuevo
@@ -589,6 +593,7 @@
 	No selection	Sin selección
 	Node	Nodo
 	None	Ninguno
+	Normal	Normal
 	Not Found	No encontrada
 	Not available	No disponible
 	Not available yet	Aún no disponible
@@ -828,6 +833,7 @@
 	Rename Text Style	Renombrar estilo de texto
 	Rename...	Renombrar...
 	Repeat {command}	Repetir {command}
+	Replace Block...	Reemplazar bloque...
 	Requires a point (x,y, @dx,dy or @d<a).	Se requiere un punto (x,y, @dx,dy o @d<a).
 	Reset Palettes	Restablecer paletas
 	Restore	Restaurar
@@ -1247,3 +1253,6 @@
 	Not a number or distance: {text}	No es un número ni una distancia: {text}
 	Query Texts	Consultar textos
 	Analyze Shapes	Analizar formas
+	Check for Updates…	Buscar actualizaciones…
+	CADCraft is up to date.	CADCraft está actualizado.
+	Could not check for updates.	No se pudo buscar actualizaciones.

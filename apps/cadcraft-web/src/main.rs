@@ -14,6 +14,9 @@ pub mod download;
 #[cfg(target_arch = "wasm32")]
 mod host;
 
+#[cfg(any(target_arch = "wasm32", test))]
+mod panel_layout;
+
 #[cfg(target_arch = "wasm32")]
 mod web {
     use cadcraft_engine::Session;
@@ -41,33 +44,45 @@ mod web {
         /// document title when it changed (so the tab and an embedding page name the open
         /// drawing), and reports unsaved changes to that page.
         fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-            self.1.take_dropped(ctx);
+            // Background reads are consume-based and run on hidden ticks too. Dropped files are
+            // input and are read from `ui` only.
             self.1.drain(&mut self.0);
             self.0.system_animations = self.3.as_ref().map(|reduced| !reduced.matches());
             self.0.logic(ctx);
             let drawing = self.0.session.state().ok();
             crate::push_title(&mut self.4, drawing.map(|d| d.title.as_str()), drawing.is_some_and(|d| d.is_dirty()), set_page_title);
+            // `DirtyReport` suppresses duplicates, so reporting after every logic callback
+            // (including a hidden tab's) is idempotent and keeps the parent's guard current.
             if let Some((bridge, reported)) = &self.2 {
                 bridge.report_dirty(&self.0, reported);
             }
         }
+        /// Forward raw input to the web `CadApp` and capture Tab at the command line.
         fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
-            self.0.raw_input_hook(raw);
+            self.0.raw_input_hook(ctx, raw);
             cadcraft_ui_egui::cmdline::capture_tab(ctx, raw);
         }
-        /// Preferences (interface theme and language) survive reloads; egui state is not kept.
+        /// Preferences and validated panel placement survive reloads; egui memory is not kept.
         fn save(&mut self, storage: &mut dyn eframe::Storage) {
             storage.set_string(cadcraft_ui_egui::options::PROFILE_KEY, self.0.profile_json());
             storage.set_string(cadcraft_ui_egui::PREFS_KEY, self.0.prefs_json());
+            match crate::panel_layout::save(&self.0.ui) {
+                Ok(layout) => storage.set_string(crate::panel_layout::KEY, layout),
+                Err(error) => log::warn!("panel layout was not saved: {error}"),
+            }
         }
         fn persist_egui_memory(&self) -> bool {
             false
         }
+        /// On the first pass consume files dropped on the page, then delegate drawing to `CadApp::ui`.
         fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-            self.0.ui(ui);
-            if let Some((bridge, reported)) = &self.2 {
-                bridge.report_dirty(&self.0, reported);
+            let first_pass = ui.ctx().current_pass_index() == 0;
+            if first_pass {
+                // `take_dropped` consumes the raw list; a second pass or hidden tick cannot
+                // re-read the same file.
+                self.1.take_dropped(ui.ctx());
             }
+            self.0.ui(ui);
         }
     }
 
@@ -151,6 +166,11 @@ mod web {
                         }
                         if let Some(prefs) = cc.storage.and_then(|s| s.get_string(cadcraft_ui_egui::PREFS_KEY)) {
                             app.load_prefs(&prefs);
+                        }
+                        if let Some(layout) = cc.storage.and_then(|s| s.get_string(crate::panel_layout::KEY))
+                            && let Err(error) = crate::panel_layout::restore(&mut app.ui, &layout)
+                        {
+                            log::warn!("panel layout was not restored: {error}");
                         }
                         // `?cpu`: no render state for the app, so the canvas draws with egui shapes.
                         if !crate::wants_cpu(&query())

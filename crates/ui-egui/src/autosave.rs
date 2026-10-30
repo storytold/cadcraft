@@ -150,7 +150,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     let mut open = None;
     let mut discard = None;
     let mut later = false;
-    egui::Modal::new(egui::Id::new("cc_drawing_recovery")).show(ctx, |ui| {
+    crate::modal::instant(ctx, egui::Id::unique("cc_drawing_recovery")).show(ctx, |ui| {
         ui.set_width(460.0);
         ui.label(RichText::new("Drawing Recovery").strong());
         ui.add_space(4.0);
@@ -204,7 +204,7 @@ pub fn gpu_notice(app: &mut CadApp, ctx: &egui::Context) {
     let t = Tokens::get();
     let mut dismiss = false;
     egui::Window::new("Graphics error")
-        .id(egui::Id::new("cc_gpu_notice"))
+        .id(egui::Id::unique("cc_gpu_notice"))
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_TOP, vec2(0.0, 48.0))

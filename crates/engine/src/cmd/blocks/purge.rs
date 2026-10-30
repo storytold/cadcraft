@@ -119,7 +119,7 @@ fn entities(d: &Drawing) -> impl Iterator<Item = &std::sync::Arc<cadcraft_doc::E
 }
 
 /// The arrowhead block names a dimension's overrides set.
-fn override_arrows(dm: &cadcraft_doc::Dimension) -> impl Iterator<Item = String> + '_ {
+pub(in crate::cmd) fn override_arrows(dm: &cadcraft_doc::Dimension) -> impl Iterator<Item = String> + '_ {
     dm.overrides
         .iter()
         .filter(|(k, _)| cadcraft_doc::DimStyle::field_name(k).is_some_and(|f| f.starts_with("arrowBlock") || f == "leaderArrowBlock"))

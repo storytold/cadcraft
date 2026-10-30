@@ -100,6 +100,7 @@
 	Blend	Ομαλή σύνδεση (Blend)
 	Block	Μπλοκ (Block)
 	Block Attribute Manager...	Διαχείριση ιδιοτήτων μπλοκ (Block Attributes)...
+	Block Description...	Περιγραφή μπλοκ...
 	Block Editor	Επεξεργαστής μπλοκ (Block Editor)
 	Block Reference	Αναφορά μπλοκ (Block Reference)
 	Block to create or edit	Μπλοκ προς δημιουργία ή επεξεργασία
@@ -165,6 +166,7 @@
 	Close Array Editing	Κλείσιμο επεξεργασίας διάταξης
 	Close Block Editor	Κλείσιμο επεξεργαστή μπλοκ
 	Close Comparison	Κλείσιμο σύγκρισης
+	Export Comparison	Εξαγωγή σύγκρισης
 	Closed	Κλειστό
 	Coincident	Σύμπτωση (Coincident)
 	Collapse Palettes	Σύμπτυξη παλετών
@@ -227,6 +229,7 @@
 	Curved	Καμπύλο
 	Custom	Προσαρμοσμένο
 	Cut	Αποκοπή
+	Cut with Base Point	Αποκοπή με σημείο βάσης
 	Cyan	Κυανό
 	Cylinder	Κύλινδρος
 	Dark	Σκούρο
@@ -638,6 +641,7 @@
 	Name	Όνομα
 	Name (A–Z)	Όνομα (Α–Ω)
 	Named	Με όνομα
+	Named Viewports...	Αποθηκευμένα παράθυρα προβολής...
 	Named Views...	Αποθηκευμένες όψεις...
 	Nearest	Πλησιέστερο (Nearest)
 	New	Νέο
@@ -852,6 +856,7 @@
 	Rename Text Style	Μετονομασία στυλ κειμένου
 	Rename...	Μετονομασία...
 	Repeat {command}	Επανάληψη εντολής {command}
+	Replace Block...	Αντικατάσταση μπλοκ...
 	Requires a point (x,y, @dx,dy or @d<a).	Απαιτείται σημείο (x,y, @dx,dy ή @d<a).
 	Reset keeps the interface language.	Η επαναφορά διατηρεί τη γλώσσα του περιβάλλοντος.
 	Reset Palettes	Επαναφορά παλετών
@@ -1330,3 +1335,6 @@ menu	Dimension	Διαστασιολόγηση
 menu	Draw	Σχεδίαση
 menu	Modify	Τροποποίηση
 menu	View	Προβολή
+	Check for Updates…	Έλεγχος για ενημερώσεις…
+	CADCraft is up to date.	Το CADCraft είναι ενημερωμένο.
+	Could not check for updates.	Δεν ήταν δυνατός ο έλεγχος για ενημερώσεις.

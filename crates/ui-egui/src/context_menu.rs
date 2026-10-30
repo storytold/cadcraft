@@ -313,8 +313,8 @@ struct Press(f64, egui::Pos2);
 /// the menu while it is open.
 pub fn in_command(app: &mut CadApp, ui: &egui::Ui, inside: bool, right_clicked: bool) -> bool {
     let ctx = ui.ctx().clone();
-    let press_id = egui::Id::new("cc_command_menu_press");
-    let popup_id = egui::Id::new("cc_command_menu");
+    let press_id = egui::Id::unique("cc_command_menu_press");
+    let popup_id = egui::Id::unique("cc_command_menu");
     let secondary = egui::PointerButton::Secondary;
     let (pressed, released, now, pos) =
         ctx.input(|i| (i.pointer.button_pressed(secondary), i.pointer.button_released(secondary), i.time, i.pointer.interact_pos()));

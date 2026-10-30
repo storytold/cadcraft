@@ -33,7 +33,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
     let mut close = false;
     let center = ctx.content_rect().center();
     egui::Window::new(crate::tl!("Options"))
-        .id(egui::Id::new("cc_options"))
+        .id(egui::Id::unique("cc_options"))
         .open(open)
         .resizable(false)
         .collapsible(false)
@@ -110,11 +110,12 @@ fn animations_label(a: AnimationPref) -> &'static str {
 }
 
 /// A colour button, its hex value and a Default button; a change goes into `changes` under `key`.
-fn color_row(ui: &mut egui::Ui, current: Option<Color32>, default: Color32, key: &str, changes: &mut Map<String, Value>) {
+/// `label` is the visible row label, so a screen reader names the colour well by it.
+fn color_row(ui: &mut egui::Ui, current: Option<Color32>, default: Color32, key: &str, changes: &mut Map<String, Value>, label: egui::Id) {
     ui.horizontal(|ui| {
         let shown = current.unwrap_or(default);
         let mut rgb = [shown.r(), shown.g(), shown.b()];
-        if ui.color_edit_button_srgb(&mut rgb).changed() {
+        if ui.color_edit_button_srgb(&mut rgb).labelled_by(label).changed() {
             changes.insert(key.into(), json!(super::hex(Color32::from_rgb(rgb[0], rgb[1], rgb[2]))));
         }
         ui.monospace(super::hex(shown));
@@ -135,36 +136,39 @@ fn preview_square(ui: &mut egui::Ui, side: f32, color: Color32) {
     p.rect_stroke(egui::Rect::from_center_size(rect.center(), vec2(side, side)), 0.0, Stroke::new(2.0, color), egui::StrokeKind::Middle);
 }
 
+/// Display tab: interface theme, animation preference and scale, drawing-area colours, crosshair size, history length and the system-cursor option; edits accumulate in `changes`.
 fn display(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
     grid(ui, "options_display", |ui| {
-        ui.label(crate::tl!("Interface theme"));
+        let theme_caption = ui.label(crate::tl!("Interface theme"));
         let mut theme = app.ui.theme;
-        egui::ComboBox::from_id_salt("options_theme").selected_text(theme_label(theme)).show_ui(ui, |ui| {
+        let theme_combo = craft_ui::ComboBox::from_id_salt("options_theme").selected_text(theme_label(theme)).show_ui(ui, |ui| {
             for t in ThemePref::ALL {
                 ui.selectable_value(&mut theme, t, theme_label(t));
             }
         });
+        theme_combo.response.labelled_by(theme_caption.id);
         if theme != app.ui.theme {
             changes.insert("theme".into(), json!(theme.as_str()));
         }
         ui.end_row();
 
-        ui.label(crate::tl!("Animation effects"));
+        let animations_caption = ui.label(crate::tl!("Animation effects"));
         let mut animations = app.ui.animations;
-        egui::ComboBox::from_id_salt("options_animations").selected_text(animations_label(animations)).show_ui(ui, |ui| {
+        let animations_combo = craft_ui::ComboBox::from_id_salt("options_animations").selected_text(animations_label(animations)).show_ui(ui, |ui| {
             for a in AnimationPref::ALL {
                 ui.selectable_value(&mut animations, a, animations_label(a));
             }
         });
+        animations_combo.response.labelled_by(animations_caption.id);
         if animations != app.ui.animations {
             changes.insert("animations".into(), json!(animations.as_str()));
         }
         ui.end_row();
 
-        ui.label(crate::tl!("Interface scale"));
+        let scale_caption = ui.label(crate::tl!("Interface scale"));
         let scale = app.options.interface_scale;
         let percent = |s: f32| format!("{} %", (s * 100.0).round());
-        egui::ComboBox::from_id_salt("options_interface_scale").selected_text(percent(scale)).show_ui(ui, |ui| {
+        let scale_combo = craft_ui::ComboBox::from_id_salt("options_interface_scale").selected_text(percent(scale)).show_ui(ui, |ui| {
             for n in [75u16, 100, 125, 150, 175, 200, 250, 300] {
                 let s = f32::from(n) / 100.0;
                 if ui.selectable_label((scale - s).abs() < 1e-4, format!("{n} %")).clicked() && (scale - s).abs() >= 1e-4 {
@@ -172,26 +176,32 @@ fn display(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
                 }
             }
         });
+        scale_combo.response.labelled_by(scale_caption.id);
         ui.end_row();
 
-        ui.label(crate::tl!("Model background"));
-        color_row(ui, app.options.model_background, Tokens::DARK.canvas, "modelBackground", changes);
+        let background_caption = ui.label(crate::tl!("Model background"));
+        color_row(ui, app.options.model_background, Tokens::DARK.canvas, "modelBackground", changes, background_caption.id);
         ui.end_row();
 
-        ui.label(crate::tl!("Layout paper"));
-        color_row(ui, app.options.paper_background, Tokens::DARK.paper, "paperBackground", changes);
+        let paper_caption = ui.label(crate::tl!("Layout paper"));
+        color_row(ui, app.options.paper_background, Tokens::DARK.paper, "paperBackground", changes, paper_caption.id);
         ui.end_row();
 
-        ui.label(crate::tl!("Crosshair size"));
-        let mut size = app.session.settings.cursorsize;
-        if ui.add(egui::Slider::new(&mut size, 1.0..=100.0).integer().suffix(" %")).changed() {
-            changes.insert("CURSORSIZE".into(), json!(size));
-        }
+        let crosshair_caption = ui.label(crate::tl!("Crosshair size"));
+        ui.horizontal(|ui| {
+            let mut size = app.session.settings.cursorsize;
+            // The slider's own value box is a separate spin button: name both halves with the row label.
+            let slider = ui.add(egui::Slider::new(&mut size, 1.0..=100.0).integer().show_value(false)).labelled_by(crosshair_caption.id);
+            let field = ui.add(egui::DragValue::new(&mut size).range(1.0..=100.0).max_decimals(0).suffix(" %")).labelled_by(crosshair_caption.id);
+            if slider.changed() || field.changed() {
+                changes.insert("CURSORSIZE".into(), json!(size));
+            }
+        });
         ui.end_row();
 
-        ui.label(crate::tl!("Command line history"));
+        let history_caption = ui.label(crate::tl!("Command line history"));
         let mut lines = app.ui.history_lines;
-        if ui.add(egui::DragValue::new(&mut lines).range(0..=crate::cmdline::MAX_LINES)).changed() {
+        if ui.add(egui::DragValue::new(&mut lines).range(0..=crate::cmdline::MAX_LINES)).labelled_by(history_caption.id).changed() {
             changes.insert("historyLines".into(), json!(lines));
         }
         ui.end_row();
@@ -204,70 +214,18 @@ fn display(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
     hint(ui, crate::tl!("Screen magnifiers, screen readers and recorders follow the system cursor."));
 }
 
+/// Files tab: save format and default version, new-drawing units, autosave interval and autosave file location; edits accumulate in `changes`.
 fn files(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
     grid(ui, "options_files", |ui| {
-        ui.label(crate::tl!("Save new drawings as"));
-        ui.horizontal(|ui| {
-            for f in crate::SaveFormat::ALL {
-                let label = match f {
-                    crate::SaveFormat::Dxf => crate::tl!("DXF"),
-                    crate::SaveFormat::Dwg => crate::tl!("DWG"),
-                };
-                if ui.radio(app.ui.save_format == f, label).clicked() && app.ui.save_format != f {
-                    changes.insert("saveFormat".into(), json!(f.as_str()));
-                }
-            }
-        });
+        save_format_row(ui, app, changes);
         ui.end_row();
-
-        ui.label(crate::tl!("Default save version"));
-        let current = crate::SaveVersion::parse(&app.ui.save_version).unwrap_or_default();
-        let mut version = current;
-        egui::ComboBox::from_id_salt("options_save_version").selected_text(version.year()).show_ui(ui, |ui| {
-            for v in crate::SaveVersion::ALL {
-                ui.selectable_value(&mut version, v, v.year());
-            }
-        });
-        if version != current {
-            changes.insert("saveVersion".into(), json!(version.year()));
-        }
+        save_version_row(ui, app, changes);
         ui.end_row();
-
-        ui.label(crate::tl!("Units of new drawings"));
-        ui.horizontal(|ui| {
-            let metric = app.session.settings.measureinit;
-            if ui.radio(!metric, crate::tl!("Imperial (inches)")).clicked() && metric {
-                changes.insert("MEASUREINIT".into(), json!(0));
-            }
-            if ui.radio(metric, crate::tl!("Metric (millimetres)")).clicked() && !metric {
-                changes.insert("MEASUREINIT".into(), json!(1));
-            }
-        });
+        units_row(ui, app, changes);
         ui.end_row();
-
-        ui.label(crate::tl!("Automatic save every"));
-        let mut minutes = cadcraft_engine::autosave::savetime();
-        let max = cadcraft_engine::autosave::MAX_SAVETIME;
-        if ui.add(egui::DragValue::new(&mut minutes).range(0..=max).suffix(format!(" {}", crate::tl!("min")))).changed() {
-            changes.insert("SAVETIME".into(), json!(minutes));
-        }
+        autosave_row(ui, changes);
         ui.end_row();
-
-        ui.label(crate::tl!("Automatic save file location"));
-        // Edited as text; the folder changes when the field loses focus.
-        let id = egui::Id::new("cc_options_savefilepath");
-        let current = cadcraft_engine::autosave::savefilepath();
-        let mut path = ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| current.clone());
-        let r = ui.add(egui::TextEdit::singleline(&mut path).desired_width(330.0));
-        if r.changed() {
-            ui.data_mut(|d| d.insert_temp(id, path.clone()));
-        }
-        if r.lost_focus() {
-            ui.data_mut(|d| d.remove::<String>(id));
-            if path.trim() != current {
-                changes.insert("SAVEFILEPATH".into(), json!(path.trim()));
-            }
-        }
+        savefile_row(ui, changes);
         ui.end_row();
     });
     hint(ui, crate::tl!("New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE)."));
@@ -275,23 +233,98 @@ fn files(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
     hint(ui, crate::tl!("Drawings with no file yet are saved in the default version. 0 minutes turns automatic save off."));
 }
 
+fn save_format_row(ui: &mut egui::Ui, app: &CadApp, changes: &mut Map<String, Value>) {
+    ui.label(crate::tl!("Save new drawings as"));
+    ui.horizontal(|ui| {
+        for f in crate::SaveFormat::ALL {
+            let label = match f {
+                crate::SaveFormat::Dxf => crate::tl!("DXF"),
+                crate::SaveFormat::Dwg => crate::tl!("DWG"),
+            };
+            if ui.radio(app.ui.save_format == f, label).clicked() && app.ui.save_format != f {
+                changes.insert("saveFormat".into(), json!(f.as_str()));
+            }
+        }
+    });
+}
+
+fn save_version_row(ui: &mut egui::Ui, app: &CadApp, changes: &mut Map<String, Value>) {
+    let version_caption = ui.label(crate::tl!("Default save version"));
+    let current = crate::SaveVersion::parse(&app.ui.save_version).unwrap_or_default();
+    let mut version = current;
+    let version_combo = craft_ui::ComboBox::from_id_salt("options_save_version").selected_text(version.year()).show_ui(ui, |ui| {
+        for v in crate::SaveVersion::ALL {
+            ui.selectable_value(&mut version, v, v.year());
+        }
+    });
+    version_combo.response.labelled_by(version_caption.id);
+    if version != current {
+        changes.insert("saveVersion".into(), json!(version.year()));
+    }
+}
+
+fn units_row(ui: &mut egui::Ui, app: &CadApp, changes: &mut Map<String, Value>) {
+    ui.label(crate::tl!("Units of new drawings"));
+    ui.horizontal(|ui| {
+        let metric = app.session.settings.measureinit;
+        if ui.radio(!metric, crate::tl!("Imperial (inches)")).clicked() && metric {
+            changes.insert("MEASUREINIT".into(), json!(0));
+        }
+        if ui.radio(metric, crate::tl!("Metric (millimetres)")).clicked() && !metric {
+            changes.insert("MEASUREINIT".into(), json!(1));
+        }
+    });
+}
+
+fn autosave_row(ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
+    let minutes_caption = ui.label(crate::tl!("Automatic save every"));
+    let mut minutes = cadcraft_engine::autosave::savetime();
+    let max = cadcraft_engine::autosave::MAX_SAVETIME;
+    if ui.add(egui::DragValue::new(&mut minutes).range(0..=max).suffix(format!(" {}", crate::tl!("min")))).labelled_by(minutes_caption.id).changed() {
+        changes.insert("SAVETIME".into(), json!(minutes));
+    }
+}
+
+fn savefile_row(ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
+    let savefile_label = ui.label(crate::tl!("Automatic save file location"));
+    // Edited as text; the folder changes when the field loses focus.
+    let id = egui::Id::unique("cc_options_savefilepath");
+    let current = cadcraft_engine::autosave::savefilepath();
+    let mut path = ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| current.clone());
+    let r = ui.add(egui::TextEdit::singleline(&mut path).desired_width(330.0)).labelled_by(savefile_label.id);
+    if r.changed() {
+        ui.data_mut(|d| d.insert_temp(id, path.clone()));
+    }
+    if r.lost_focus() {
+        ui.data_mut(|d| d.remove::<String>(id));
+        if path.trim() != current {
+            changes.insert("SAVEFILEPATH".into(), json!(path.trim()));
+        }
+    }
+}
+
+/// Drafting tab: object-snap marker size and aperture previews plus the Drafting Settings entry; edits accumulate in `changes` and the entry may request a command through `start`.
 fn drafting(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>, start: &mut Option<&'static str>) {
     let t = Tokens::get();
     grid(ui, "options_drafting", |ui| {
-        ui.label(crate::tl!("Object snap marker size"));
+        let marker_caption = ui.label(crate::tl!("Object snap marker size"));
         ui.horizontal(|ui| {
             let mut size = app.options.snap_marker_size;
-            if ui.add(egui::Slider::new(&mut size, super::SNAP_MARKER_SIZES).integer()).changed() {
+            let slider = ui.add(egui::Slider::new(&mut size, super::SNAP_MARKER_SIZES).integer().show_value(false)).labelled_by(marker_caption.id);
+            let field = ui.add(egui::DragValue::new(&mut size).range(super::SNAP_MARKER_SIZES).max_decimals(0)).labelled_by(marker_caption.id);
+            if slider.changed() || field.changed() {
                 changes.insert("snapMarkerSize".into(), json!(size));
             }
             preview_square(ui, size, t.snap);
         });
         ui.end_row();
 
-        ui.label(crate::tl!("Object snap aperture"));
+        let aperture_caption = ui.label(crate::tl!("Object snap aperture"));
         ui.horizontal(|ui| {
             let mut aperture = app.session.settings.aperture;
-            if ui.add(egui::Slider::new(&mut aperture, 1.0..=50.0).integer().suffix(" px")).changed() {
+            let slider = ui.add(egui::Slider::new(&mut aperture, 1.0..=50.0).integer().show_value(false)).labelled_by(aperture_caption.id);
+            let field = ui.add(egui::DragValue::new(&mut aperture).range(1.0..=50.0).max_decimals(0).suffix(" px")).labelled_by(aperture_caption.id);
+            if slider.changed() || field.changed() {
                 changes.insert("APERTURE".into(), json!(aperture));
             }
             preview_square(ui, aperture as f32, t.crosshair);
@@ -308,17 +341,20 @@ fn drafting(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>, s
     });
 }
 
+/// Selection tab: pickbox and selection-mode controls, selection preview/area effects and the Visual Effect Settings window; edits accumulate in `changes`.
 fn selection(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
     let t = Tokens::get();
     let st = &app.session.settings;
-    let mut effects = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new(VISUAL_EFFECTS)).unwrap_or(false));
+    let mut effects = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::unique(VISUAL_EFFECTS)).unwrap_or(false));
     ui.columns(2, |cols| {
         let [left, right] = cols else { return };
         // Left: how objects are picked.
-        heading(left, crate::tl!("Pickbox size"));
+        let pickbox_caption = heading(left, crate::tl!("Pickbox size"));
         left.horizontal(|ui| {
             let mut pickbox = st.pickbox;
-            if ui.add(egui::Slider::new(&mut pickbox, 0.0..=50.0).integer().suffix(" px")).changed() {
+            let slider = ui.add(egui::Slider::new(&mut pickbox, 0.0..=50.0).integer().show_value(false)).labelled_by(pickbox_caption.id);
+            let field = ui.add(egui::DragValue::new(&mut pickbox).range(0.0..=50.0).max_decimals(0).suffix(" px")).labelled_by(pickbox_caption.id);
+            if slider.changed() || field.changed() {
                 changes.insert("PICKBOX".into(), json!(pickbox));
             }
             preview_square(ui, (pickbox * 3.0) as f32, t.crosshair);
@@ -350,14 +386,23 @@ fn selection(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) 
             changes.insert("QPMODE".into(), json!(i32::from(qp)));
         }
         left.add_space(4.0);
-        left.label(crate::tl!("Selection effect color"));
-        color_row(left, app.options.selection_color, crate::theme::Tokens::of(crate::theme::active()).selection, "selectionColor", changes);
+        let selection_caption = left.label(crate::tl!("Selection effect color"));
+        color_row(
+            left,
+            app.options.selection_color,
+            crate::theme::Tokens::of(crate::theme::active()).selection,
+            "selectionColor",
+            changes,
+            selection_caption.id,
+        );
 
         // Right: grips and the preview under the cursor.
-        heading(right, crate::tl!("Grip size"));
+        let grip_caption = heading(right, crate::tl!("Grip size"));
         right.horizontal(|ui| {
             let mut grip = st.gripsize;
-            if ui.add(egui::Slider::new(&mut grip, 1.0..=20.0).integer().suffix(" px")).changed() {
+            let slider = ui.add(egui::Slider::new(&mut grip, 1.0..=20.0).integer().show_value(false)).labelled_by(grip_caption.id);
+            let field = ui.add(egui::DragValue::new(&mut grip).range(1.0..=20.0).max_decimals(0).suffix(" px")).labelled_by(grip_caption.id);
+            if slider.changed() || field.changed() {
                 changes.insert("GRIPSIZE".into(), json!(grip));
             }
             preview_square(ui, (grip * 2.0) as f32, t.grip);
@@ -370,10 +415,11 @@ fn selection(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) 
         }
         right.horizontal(|ui| {
             let mut limit = st.gripobjlimit;
-            if ui.add_enabled(st.grips > 0, egui::DragValue::new(&mut limit).range(0..=32_767)).changed() {
+            let field = ui.add_enabled(st.grips > 0, egui::DragValue::new(&mut limit).range(0..=32_767));
+            let caption = ui.label(crate::tl!("Object selection limit for display of grips"));
+            if field.labelled_by(caption.id).changed() {
                 changes.insert("GRIPOBJLIMIT".into(), json!(limit));
             }
-            ui.label(crate::tl!("Object selection limit for display of grips"));
         });
         right.add_space(8.0);
         heading(right, crate::tl!("Preview"));
@@ -391,14 +437,15 @@ fn selection(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) 
     if effects {
         visual_effects(ui.ctx(), st, &mut effects, changes);
     }
-    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(VISUAL_EFFECTS), effects));
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique(VISUAL_EFFECTS), effects));
 }
 
 /// Whether the Visual Effect Settings window is open (egui temp data).
 const VISUAL_EFFECTS: &str = "cc_options_visual_effects";
 
-fn heading(ui: &mut egui::Ui, text: &str) {
-    ui.label(RichText::new(text).strong());
+/// Strong (bold) label for section headings in the Options Selection tab and the Visual Effect Settings window.
+fn heading(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    ui.label(RichText::new(text).strong())
 }
 
 /// Visual Effect Settings: the selection area (window and crossing fills) and the objects the
@@ -406,7 +453,7 @@ fn heading(ui: &mut egui::Ui, text: &str) {
 fn visual_effects(ctx: &egui::Context, st: &cadcraft_engine::Settings, open: &mut bool, changes: &mut Map<String, Value>) {
     let mut close = false;
     egui::Window::new(crate::tl!("Visual Effect Settings"))
-        .id(egui::Id::new("cc_visual_effects"))
+        .id(egui::Id::unique("cc_visual_effects"))
         .open(open)
         .resizable(false)
         .collapsible(false)
@@ -421,15 +468,19 @@ fn visual_effects(ctx: &egui::Context, st: &cadcraft_engine::Settings, open: &mu
                     changes.insert("SELECTIONAREA".into(), json!(i32::from(area)));
                 }
                 left.add_enabled_ui(st.selectionarea, |ui| {
-                    ui.label(crate::tl!("Window selection color:"));
-                    aci_row(ui, st.windowareacolor, "WINDOWAREACOLOR", changes);
-                    ui.label(crate::tl!("Crossing selection color:"));
-                    aci_row(ui, st.crossingareacolor, "CROSSINGAREACOLOR", changes);
-                    ui.label(crate::tl!("Selection area opacity:"));
-                    let mut opacity = st.selectionareaopacity;
-                    if ui.add(egui::Slider::new(&mut opacity, 0..=100)).changed() {
-                        changes.insert("SELECTIONAREAOPACITY".into(), json!(opacity));
-                    }
+                    let window_caption = ui.label(crate::tl!("Window selection color:"));
+                    aci_row(ui, st.windowareacolor, "WINDOWAREACOLOR", changes, window_caption.id);
+                    let crossing_caption = ui.label(crate::tl!("Crossing selection color:"));
+                    aci_row(ui, st.crossingareacolor, "CROSSINGAREACOLOR", changes, crossing_caption.id);
+                    let opacity_caption = ui.label(crate::tl!("Selection area opacity:"));
+                    ui.horizontal(|ui| {
+                        let mut opacity = st.selectionareaopacity;
+                        let slider = ui.add(egui::Slider::new(&mut opacity, 0..=100).show_value(false)).labelled_by(opacity_caption.id);
+                        let field = ui.add(egui::DragValue::new(&mut opacity).range(0..=100)).labelled_by(opacity_caption.id);
+                        if slider.changed() || field.changed() {
+                            changes.insert("SELECTIONAREAOPACITY".into(), json!(opacity));
+                        }
+                    });
                 });
 
                 heading(right, crate::tl!("Selection Preview Filter"));
@@ -463,35 +514,41 @@ fn visual_effects(ctx: &egui::Context, st: &cadcraft_engine::Settings, open: &mu
 }
 
 /// A colour by its index (ACI 1-255): a swatch and the number; a change goes into `changes`.
-fn aci_row(ui: &mut egui::Ui, current: u8, key: &str, changes: &mut Map<String, Value>) {
+fn aci_row(ui: &mut egui::Ui, current: u8, key: &str, changes: &mut Map<String, Value>, label: egui::Id) {
     ui.horizontal(|ui| {
         let c = cadcraft_color::aci_rgb(current);
         let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), egui::Sense::hover());
         ui.painter().rect_filled(r, 2.0, Color32::from_rgb(c.0, c.1, c.2));
         let mut v = current;
-        if ui.add(egui::DragValue::new(&mut v).range(1..=255).prefix(format!("{} ", crate::tl!("Color")))).changed() {
+        if ui.add(egui::DragValue::new(&mut v).range(1..=255).prefix(format!("{} ", crate::tl!("Color")))).labelled_by(label).changed() {
             changes.insert(key.into(), json!(v));
         }
     });
 }
 
+/// Preferences tab: interface language, largest-array limit and time-sensitive right-click; edits accumulate in `changes`.
 fn preferences(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
     grid(ui, "options_preferences", |ui| {
-        ui.label(crate::tl!("Interface language"));
+        let language_caption = ui.label(crate::tl!("Interface language"));
         let mut lang = app.ui.interface_language;
-        egui::ComboBox::from_id_salt("options_language").selected_text(lang.name()).show_ui(ui, |ui| {
+        let language_combo = craft_ui::ComboBox::from_id_salt("options_language").selected_text(lang.name()).show_ui(ui, |ui| {
             for p in crate::i18n::Preference::for_picker() {
                 ui.selectable_value(&mut lang, p, p.name());
             }
         });
+        language_combo.response.labelled_by(language_caption.id);
         if lang != app.ui.interface_language {
             changes.insert("interfaceLanguage".into(), json!(lang.code()));
         }
         ui.end_row();
 
-        ui.label(crate::tl!("Largest array"));
+        let array_caption = ui.label(crate::tl!("Largest array"));
         let mut max = app.session.settings.maxarray;
-        if ui.add(egui::DragValue::new(&mut max).range(100..=10_000_000).speed(1000.0).suffix(format!(" {}", crate::tl!("objects")))).changed() {
+        if ui
+            .add(egui::DragValue::new(&mut max).range(100..=10_000_000).speed(1000.0).suffix(format!(" {}", crate::tl!("objects"))))
+            .labelled_by(array_caption.id)
+            .changed()
+        {
             changes.insert("MAXARRAY".into(), json!(max));
         }
         ui.end_row();

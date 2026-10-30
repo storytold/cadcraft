@@ -204,7 +204,7 @@ pub fn prompt(app: &mut CadApp, ctx: &egui::Context) {
     };
     let t = Tokens::get();
     let mut choice = None;
-    egui::Modal::new(egui::Id::new("cc_close_prompt")).show(ctx, |ui| {
+    crate::modal::instant(ctx, egui::Id::unique("cc_close_prompt")).show(ctx, |ui| {
         ui.set_width(360.0);
         ui.label(RichText::new(crate::tl!("CADCraft")).strong());
         ui.add_space(4.0);

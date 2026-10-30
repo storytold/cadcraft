@@ -4,7 +4,7 @@ use cadcraft_engine::doc::EntityKind;
 use cadcraft_engine::geom::Vec2;
 use cadcraft_engine::{Input, Session};
 use cadcraft_ui_egui::{CadApp, Services};
-use egui::{Event, Modifiers, PointerButton, Pos2, vec2};
+use egui::{Event, ImeEvent, Key, Modifiers, PointerButton, Pos2, vec2};
 use egui_kittest::Harness;
 use serde_json::json;
 
@@ -66,6 +66,25 @@ fn double_click_on_text_starts_textedit_for_that_object() {
         // TEXTEDIT goes on asking for objects (its Multiple mode), as AutoCAD's does.
         assert_eq!(h.state().session.current_prompt().unwrap().message, "Select an annotation object");
     }
+}
+
+#[test]
+fn double_clicked_text_takes_ime_composition_and_commit() {
+    let mut h = harness();
+    double_click(&mut h, Vec2::new(4.0, 1.2));
+    assert_eq!(h.state().session.current_prompt().unwrap().message, "Enter new text");
+    // Composition is shown, not saved; the commit is inserted exactly once (#1761).
+    h.event(Event::Ime(ImeEvent::Preedit { text: "zhong".into(), active_range_chars: None }));
+    h.run_steps(1);
+    assert_eq!(h.state().cmd.preedit, "zhong");
+    assert!(h.state().cmd.buffer.is_empty());
+    h.event(Event::Ime(ImeEvent::Commit("中文".into())));
+    h.run_steps(1);
+    assert!(h.state().cmd.preedit.is_empty());
+    assert_eq!(h.state().cmd.buffer, "中文");
+    h.key_press(Key::Enter);
+    h.run_steps(1);
+    assert_eq!(text_at(&h, 0), "中文");
 }
 
 #[test]

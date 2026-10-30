@@ -96,6 +96,7 @@
 	Blend	دمج تدريجي
 	Block	كتلة
 	Block Attribute Manager...	مدير سمات الكتلة...
+	Block Description...	وصف الكتلة...
 	Block Editor	محرر الكتل
 	Block Reference	مرجع كتلة
 	Block...	كتلة...
@@ -150,6 +151,7 @@
 	Close All Other Drawings	إغلاق كل الرسومات الأخرى
 	Close Array Editing	إغلاق تحرير المصفوفة
 	Close Comparison	إغلاق المقارنة
+	Export Comparison	تصدير المقارنة
 	Closed	مغلق
 	Coincident	تطابق
 	Collapse Palettes	طي اللوحات
@@ -203,6 +205,7 @@
 	Current selection	التحديد الحالي
 	Current: {color}	الحالي: {color}
 	Cut	قص
+	Cut with Base Point	قص من نقطة أساس
 	Cyan	سماوي
 	Cylinder	أسطوانة
 	DWG	DWG
@@ -585,6 +588,7 @@
 	Name	الاسم
 	Name (A–Z)	الاسم (أ–ي)
 	Named	مسمى
+	Named Viewports...	أطر العرض المسماة...
 	Named Views...	طرق عرض مسماة...
 	Nearest	الأقرب
 	New	جديد
@@ -614,6 +618,7 @@
 	No supported 3D mouse found	لم يُعثر على فأرة ثلاثية الأبعاد مدعومة
 	Node	عقدة
 	None	لا شيء
+	Normal	عادي
 	Not Found	غير موجود
 	Not available	غير متاح
 	Not available yet	غير متاح بعد
@@ -785,6 +790,7 @@
 	Rename Text Style	إعادة تسمية نمط النص
 	Rename...	إعادة تسمية...
 	Repeat {command}	تكرار {command}
+	Replace Block...	استبدال الكتلة...
 	Requires a point (x,y, @dx,dy or @d<a).	يتطلب نقطة (x,y أو @dx,dy أو @d<a).
 	Reset Palettes	إعادة تعيين اللوحات
 	Reset Panel Layout	إعادة تعيين تخطيط اللوحات
@@ -1233,3 +1239,6 @@ menu	Modify	تعديل
 menu	View	عرض
 @plural	{n} commit	{n} إيداع|{n} إيداع|{n} إيداعان|{n} إيداعات|{n} إيداعاً|{n} إيداع
 @plural	{n} contributor	{n} مساهم|{n} مساهم|{n} مساهمان|{n} مساهمين|{n} مساهماً|{n} مساهم
+	Check for Updates…	التحقق من وجود تحديثات…
+	CADCraft is up to date.	CADCraft محدّث.
+	Could not check for updates.	تعذّر التحقق من وجود تحديثات.

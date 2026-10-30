@@ -9,7 +9,8 @@ use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, Insert, MAX_BLOCK_DEPTH,
 use cadcraft_geom::{Mat3, Vec2};
 use serde_json::{Value, json};
 
-use super::super::*;
+use super::super::{bad, bool_or, point_req, str_param, targets};
+
 use super::SelfCheck;
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 

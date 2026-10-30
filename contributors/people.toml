@@ -87,3 +87,15 @@ real_name = "Richard Sauer"
 display_name = "Richard Sauer"
 sync_github_name = false
 
+[people.dotCooCoo]
+real_name = "Robert Lee"
+sync_github_name = true
+
+[people.2ez4gcx]
+real_name = "Doan Huynh Huu Khuong"
+display_name = "Doan Huynh Huu Khuong"
+sync_github_name = false
+
+
+[people.dylanmtaylor]
+sync_github_name = true

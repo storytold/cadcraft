@@ -307,8 +307,10 @@ pub fn mono() -> FontId {
     FontId::new(12.0, FontFamily::Monospace)
 }
 
-/// Load a system UI font at run time when one is installed (not bundled), else keep egui's;
-/// then CJK fonts after the Latin ones, so Latin text keeps its look, in every interface
+/// Load a system UI font at run time when one is installed (not bundled), else keep egui's
+/// bundled bounded Latin/icon faces (`default_fonts` + `monochrome_emoji_fonts`, enabled in the
+/// workspace manifest for native and web); then CJK fonts after the Latin ones, so Latin text
+/// keeps its look, in every interface
 /// language: file, layout and layer names can be Japanese or Chinese whatever the interface
 /// shows (#513). In a Chinese interface (`language` "zh…") the Chinese font comes first, else a
 /// Japanese one, so names take their own glyph forms; in an Arabic interface an installed
@@ -317,6 +319,7 @@ pub fn mono() -> FontId {
 /// interface adds a Hangul font only when the CJK font found doesn't cover Hangul
 /// ([`korean_font`]).
 pub fn install_fonts(ctx: &egui::Context, language: &str) {
+    crate::mtext_editor::install_diameter_glyph(ctx);
     let mut fonts = egui::FontDefinitions::default();
     let mut added: Vec<(String, std::sync::Arc<egui::FontData>)> = Vec::new();
     #[cfg(not(target_arch = "wasm32"))]
@@ -340,6 +343,11 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
                 fonts.font_data.insert("system-ui".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
                 if let Some(f) = fonts.families.get_mut(&FontFamily::Proportional) {
                     f.insert(0, "system-ui".into());
+                }
+                // Keep Hack first in Monospace, then use the system face for glyphs Hack lacks.
+                if let Some(f) = fonts.families.get_mut(&FontFamily::Monospace) {
+                    let at = f.iter().position(|name| name == "Hack").map_or(0, |i| i + 1);
+                    f.insert(at, "system-ui".into());
                 }
                 break;
             }
@@ -387,6 +395,16 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
                 f.push(name.clone());
             }
         }
+    }
+    // `default_fonts` supplies Ubuntu-Light (Proportional) and Hack (Monospace). Hack also
+    // carries the modifier symbols (⇧) that proportional shortcut labels use; keep it as a
+    // bounded late fallback when Ubuntu-Light lacks one. The monochrome emoji face (enabled by
+    // `monochrome_emoji_fonts`) supplies ⌘ in both families.
+    if fonts.font_data.contains_key("Hack")
+        && let Some(f) = fonts.families.get_mut(&FontFamily::Proportional)
+        && !f.iter().any(|name| name == "Hack")
+    {
+        f.push("Hack".into());
     }
     ctx.set_fonts(fonts);
 }

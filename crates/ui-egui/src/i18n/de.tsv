@@ -67,6 +67,7 @@
 	Blend	Übergang
 	Block	Block
 	Block Attribute Manager...	Blockattribut-Manager...
+	Block Description...	Blockbeschreibung...
 	Block Editor	Blockeditor
 	Block Reference	Blockreferenz
 	Block...	Block...
@@ -145,6 +146,7 @@
 	Current selection	Aktuelle Auswahl
 	Current: {color}	Aktuell: {color}
 	Cut	Ausschneiden
+	Cut with Base Point	Mit Basispunkt ausschneiden
 	Cyan	Cyan
 	Cylinder	Zylinder
 	DWG	DWG
@@ -456,6 +458,7 @@
 	N	N
 	Name	Name
 	Name (A–Z)	Name (A–Z)
+	Named Viewports...	Benannte Ansichtsfenster...
 	Nearest	Nächstgelegener
 	New	Neu
 	New (metric)	Neu (metrisch)
@@ -476,6 +479,7 @@
 	No selection	Keine Auswahl
 	Node	Knoten
 	None	Keine
+	Normal	Normal
 	Not available	Nicht verfügbar
 	Not available yet	Noch nicht verfügbar
 	OK	OK
@@ -622,6 +626,7 @@
 	Rename Text Style	Textstil umbenennen
 	Rename...	Umbenennen...
 	Repeat {command}	{command} wiederholen
+	Replace Block...	Block ersetzen...
 	Requires a point (x,y, @dx,dy or @d<a).	Erfordert einen Punkt (x,y, @dx,dy oder @d<a).
 	Reset Palettes	Paletten zurücksetzen
 	Restore	Wiederherstellen
@@ -967,6 +972,7 @@
 	Viewport Properties	Ansichtsfenster-Eigenschaften
 	Viewport {id}	Ansichtsfenster {id}
 	Viewports	Ansichtsfenster
+	Volume	Volumen
 	W	W
 	WCS	WKS
 	White	Weiß
@@ -1035,3 +1041,6 @@
 	Justify	Blocksatz
 	Text color	Textfarbe
 	Click the ruler to add a tab stop, right-click to remove one	Klick auf das Lineal setzt einen Tabstopp, Rechtsklick entfernt ihn
+	Check for Updates…	Nach Updates suchen…
+	CADCraft is up to date.	CADCraft ist auf dem neuesten Stand.
+	Could not check for updates.	Die Suche nach Updates ist fehlgeschlagen.

@@ -569,7 +569,9 @@ impl Polyline {
             let (Some(a), Some(b)) = (self.vertices.get(i), self.vertices.get((i + 1) % n)) else { continue };
             let (pa, pb) = (a.p - origin, b.p - origin);
             add(pa.cross(pb) / 2.0, (pa + pb) * (1.0 / 3.0));
-            if let Some((arc, ccw)) = bulge_to_arc(a.p, b.p, a.bulge) {
+            if (i + 1 < n || self.closed)
+                && let Some((arc, ccw)) = bulge_to_arc(a.p, b.p, a.bulge)
+            {
                 let t = arc.sweep();
                 let seg = arc.radius * arc.radius * (t - t.sin()) / 2.0;
                 if seg > 0.0 {

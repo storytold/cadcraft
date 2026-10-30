@@ -106,42 +106,54 @@ fn equality_compares_symbols_as_autolisp_does() {
 #[test]
 fn lists_and_strings() {
     let mut s = session();
-    assert_eq!(ok(&mut s, "(cons 1 '(2 3))"), "(1 2 3)");
-    assert_eq!(ok(&mut s, "(cons 8 \"0\")"), "(8 . \"0\")");
-    assert_eq!(ok(&mut s, "(cadr '(1 2 3))"), "2");
-    assert_eq!(ok(&mut s, "(cdr (assoc 40 '((10 1.0 2.0 0.0) (40 . 2.5))))"), "2.5");
-    assert_eq!(ok(&mut s, "(subst '(40 . 5.0) '(40 . 2.5) '((8 . \"0\") (40 . 2.5)))"), "((8 . \"0\") (40 . 5.0))");
-    assert_eq!(ok(&mut s, "(append '(1) '(2 3) nil '(4))"), "(1 2 3 4)");
-    assert_eq!(ok(&mut s, "(reverse '(1 2 3))"), "(3 2 1)");
-    assert_eq!(ok(&mut s, "(nth 1 '(a b c))"), "B");
-    assert_eq!(ok(&mut s, "(member 2 '(1 2 3))"), "(2 3)");
-    assert_eq!(ok(&mut s, "(length '(1 2 3))"), "3");
-    assert_eq!(ok(&mut s, "(last '(1 2 3))"), "3");
-    assert_eq!(ok(&mut s, "(mapcar '+ '(1 2 3) '(10 20 30))"), "(11 22 33)");
-    assert_eq!(ok(&mut s, "(mapcar '(lambda (x) (* x x)) '(1 2 3))"), "(1 4 9)");
-    assert_eq!(ok(&mut s, "(apply 'max '(3 9 2))"), "9");
-    assert_eq!(ok(&mut s, "(vl-sort '(3 1 2) '<)"), "(1 2 3)");
-    assert_eq!(ok(&mut s, "(vl-sort '(3 1 2) (function (lambda (a b) (> a b))))"), "(3 2 1)");
-    assert_eq!(ok(&mut s, "(vl-remove-if 'minusp '(1 -2 3))"), "(1 3)");
-    assert_eq!(ok(&mut s, "(strcat \"a\" \"b\" \"c\")"), "\"abc\"");
-    assert_eq!(ok(&mut s, "(substr \"Hello\" 2 3)"), "\"ell\"");
-    assert_eq!(ok(&mut s, "(strcase \"abc\")"), "\"ABC\"");
-    assert_eq!(ok(&mut s, "(strlen \"abc\" \"de\")"), "5");
-    assert_eq!(ok(&mut s, "(itoa 42)"), "\"42\"");
-    assert_eq!(ok(&mut s, "(atoi \"12abc\")"), "12");
-    assert_eq!(ok(&mut s, "(atof \"2.5mm\")"), "2.5");
-    assert_eq!(ok(&mut s, "(atof \"x\")"), "0.0");
-    assert_eq!(ok(&mut s, "(wcmatch \"Name\" \"N*\")"), "T");
-    assert_eq!(ok(&mut s, "(wcmatch \"A12\" \"@##\")"), "T");
-    assert_eq!(ok(&mut s, "(wcmatch \"abc\" \"x*,a?c\")"), "T");
-    assert_eq!(ok(&mut s, "(wcmatch \"abc\" \"~a*\")"), "nil");
-    assert_eq!(ok(&mut s, "(wcmatch \"b\" \"[a-c]\")"), "T");
-    assert_eq!(ok(&mut s, "(vl-string-subst \"X\" \"b\" \"abcb\")"), "\"aXcb\"");
-    assert_eq!(ok(&mut s, "(vl-string-search \"c\" \"abc\")"), "2");
-    assert_eq!(ok(&mut s, "(read \"(1 2)\")"), "(1 2)");
-    assert_eq!(ok(&mut s, "(type \"x\")"), "STR");
-    assert_eq!(ok(&mut s, "(type 'x)"), "SYM");
-    assert_eq!(ok(&mut s, "(equal '(1 2.0) '(1 2.0000001) 1e-3)"), "T");
+    list_builtins(&mut s);
+    string_builtins(&mut s);
+}
+
+fn list_builtins(s: &mut Session) {
+    assert_eq!(ok(s, "(cons 1 '(2 3))"), "(1 2 3)");
+    assert_eq!(ok(s, "(cons 8 \"0\")"), "(8 . \"0\")");
+    assert_eq!(ok(s, "(cadr '(1 2 3))"), "2");
+    assert_eq!(ok(s, "(cdr (assoc 40 '((10 1.0 2.0 0.0) (40 . 2.5))))"), "2.5");
+    assert_eq!(ok(s, "(subst '(40 . 5.0) '(40 . 2.5) '((8 . \"0\") (40 . 2.5)))"), "((8 . \"0\") (40 . 5.0))");
+    assert_eq!(ok(s, "(append '(1) '(2 3) nil '(4))"), "(1 2 3 4)");
+    assert_eq!(ok(s, "(reverse '(1 2 3))"), "(3 2 1)");
+    assert_eq!(ok(s, "(nth 1 '(a b c))"), "B");
+    assert_eq!(ok(s, "(member 2 '(1 2 3))"), "(2 3)");
+    assert_eq!(ok(s, "(length '(1 2 3))"), "3");
+    assert_eq!(ok(s, "(last '(1 2 3))"), "3");
+    assert_eq!(ok(s, "(mapcar '+ '(1 2 3) '(10 20 30))"), "(11 22 33)");
+    assert_eq!(ok(s, "(mapcar '(lambda (x) (* x x)) '(1 2 3))"), "(1 4 9)");
+    assert_eq!(ok(s, "(apply 'max '(3 9 2))"), "9");
+    assert_eq!(ok(s, "(vl-sort '(3 1 2) '<)"), "(1 2 3)");
+    assert_eq!(ok(s, "(vl-sort '(3 1 2) (function (lambda (a b) (> a b))))"), "(3 2 1)");
+    assert_eq!(ok(s, "(vl-remove-if 'minusp '(1 -2 3))"), "(1 3)");
+}
+
+fn string_builtins(s: &mut Session) {
+    assert_eq!(ok(s, "(strcat \"a\" \"b\" \"c\")"), "\"abc\"");
+    assert_eq!(ok(s, "(substr \"Hello\" 2 3)"), "\"ell\"");
+    assert_eq!(ok(s, "(strcase \"abc\")"), "\"ABC\"");
+    assert_eq!(ok(s, "(strlen \"abc\" \"de\")"), "5");
+    assert_eq!(ok(s, "(itoa 42)"), "\"42\"");
+    assert_eq!(ok(s, "(atoi \"12abc\")"), "12");
+    assert_eq!(ok(s, "(atof \"2.5mm\")"), "2.5");
+    assert_eq!(ok(s, "(atof \"x\")"), "0.0");
+    assert_eq!(ok(s, "(wcmatch \"Name\" \"N*\")"), "T");
+    assert_eq!(ok(s, "(wcmatch \"A12\" \"@##\")"), "T");
+    assert_eq!(ok(s, "(wcmatch \"abc\" \"x*,a?c\")"), "T");
+    assert_eq!(ok(s, "(wcmatch \"abc\" \"~a*\")"), "nil");
+    assert_eq!(ok(s, "(wcmatch \"b\" \"[a-c]\")"), "T");
+    let many = format!("(wcmatch \"{}\" \"{}\")", "a".repeat(80), "*a".repeat(80));
+    assert_eq!(ok(s, &many), "T");
+    let too_deep = format!("(wcmatch \"{}\" \"{}\")", "a".repeat(400), "*a".repeat(400));
+    assert!(eval(s, &too_deep).is_err());
+    assert_eq!(ok(s, "(vl-string-subst \"X\" \"b\" \"abcb\")"), "\"aXcb\"");
+    assert_eq!(ok(s, "(vl-string-search \"c\" \"abc\")"), "2");
+    assert_eq!(ok(s, "(read \"(1 2)\")"), "(1 2)");
+    assert_eq!(ok(s, "(type \"x\")"), "STR");
+    assert_eq!(ok(s, "(type 'x)"), "SYM");
+    assert_eq!(ok(s, "(equal '(1 2.0) '(1 2.0000001) 1e-3)"), "T");
 }
 
 #[test]
@@ -455,6 +467,15 @@ fn getvar_drawing_and_session_variables() {
     assert_eq!(ok(&mut s, "(getvar \"DWGTITLED\")"), "1");
 }
 
+/// CECOLOR is a string in AutoCAD, whatever it was set from (#1999).
+#[test]
+fn getvar_cecolor_is_a_string() {
+    let mut s = session();
+    assert_eq!(ok(&mut s, "(list (getvar \"CECOLOR\") (type (getvar \"CECOLOR\")))"), "(\"BYLAYER\" STR)");
+    assert_eq!(ok(&mut s, "(setvar \"CECOLOR\" \"red\") (getvar \"CECOLOR\")"), "\"1\"");
+    assert_eq!(ok(&mut s, "(setvar \"CECOLOR\" \"10,20,30\") (getvar \"CECOLOR\")"), "\"RGB:10,20,30\"");
+}
+
 #[test]
 fn input_functions_take_supplied_answers() {
     let mut s = session();
@@ -507,7 +528,8 @@ fn interactive_routine_waits_for_the_user() {
 #[test]
 fn getangle_is_relative_to_angbase() {
     let mut s = session();
-    s.cmdline("(setvar \"ANGBASE\" 90)").unwrap();
+    // AutoLISP sets angle variables in radians: ANGBASE 90 degrees.
+    s.cmdline("(setvar \"ANGBASE\" (/ pi 2))").unwrap();
     // A picked point at 180° in world terms is 90° from ANGBASE.
     s.cmdline("(setq a (getangle '(0 0)))").unwrap();
     s.input(crate::Input::Point(cadcraft_geom::Vec2::new(-1.0, 0.0))).unwrap();
@@ -520,6 +542,38 @@ fn getangle_is_relative_to_angbase() {
     s.cmdline("(setq t2 (getangle))").unwrap();
     s.cmdline("180").unwrap();
     assert_eq!(to_text(&s.lisp_var("T2"), true), "3.14159");
+}
+
+/// `getvar` and `setvar` take angle variables in radians, as AutoCAD 2024's do (each set to 30 by
+/// SETVAR, or to `(/ pi 6)` by `setvar`, reads 0.5235987755982987; DIMJOGANG's 45 degrees reads
+/// 0.785398), while the SETVAR command keeps degrees.
+#[test]
+fn getvar_and_setvar_take_angle_variables_in_radians() {
+    let mut s = session();
+    let degrees = |s: &Session, name: &str| crate::sysvars::get(s, name).and_then(|v| v.as_f64()).unwrap();
+    // The defaults: polar tracking every 90 degrees, a 45-degree jog.
+    assert_eq!(ok(&mut s, "(list (equal (getvar \"POLARANG\") (/ pi 2) 1e-12) (equal (getvar \"DIMJOGANG\") (/ pi 4) 1e-12))"), "(T T)");
+    // Set from LISP in radians, shown by SETVAR in degrees.
+    for (name, radians, deg) in
+        [("SNAPANG", "(/ pi 6)", 30.0), ("CHAMFERD", "0.95993108859688", 55.0), ("ANGBASE", "(/ pi 2)", 90.0), ("POLARANG", "(/ pi 4)", 45.0)]
+    {
+        ok(&mut s, &format!("(setvar \"{name}\" {radians})"));
+        assert!((degrees(&s, name) - deg).abs() < 1e-9, "{name}: {}", degrees(&s, name));
+        assert_eq!(ok(&mut s, &format!("(equal (getvar \"{name}\") {radians} 1e-12)")), "T", "{name}");
+    }
+    // Set by the SETVAR command in degrees, read by LISP in radians.
+    s.cmdline("SETVAR HPANG 45").unwrap();
+    assert!((degrees(&s, "HPANG") - 45.0).abs() < 1e-9);
+    assert_eq!(ok(&mut s, "(equal (getvar \"HPANG\") 0.7853981633974482 1e-12)"), "T");
+    // DIMJOGANG set to a whole number of degrees still takes a fraction of one from LISP.
+    s.cmdline("SETVAR DIMJOGANG 45").unwrap();
+    ok(&mut s, "(setvar \"DIMJOGANG\" 0.5)");
+    assert!((degrees(&s, "DIMJOGANG") - 0.5_f64.to_degrees()).abs() < 1e-9, "{}", degrees(&s, "DIMJOGANG"));
+    // It takes the value the dimension style takes: `true` is a DIMSCALE of 1.
+    crate::sysvars::set(&mut s, "DIMSCALE", &serde_json::json!(true)).unwrap();
+    assert_eq!(crate::sysvars::get(&s, "DIMSCALE").and_then(|v| v.as_f64()), Some(1.0));
+    // Other variables are as they were.
+    assert_eq!(ok(&mut s, "(getvar \"ANGDIR\")"), "0");
 }
 
 #[test]
@@ -540,6 +594,111 @@ fn appload_and_load() {
     assert_eq!(r["output"][0], "x");
     let r = s.execute("lisp", &serde_json::json!({"code": "(car 1)"})).unwrap();
     assert!(r["error"].as_str().is_some_and(|e| e.contains("bad argument type")));
+}
+
+/// `command` gives an entity name, alone or as `entsel` returns it (name and point), to a prompt
+/// picking one object: the point picks that object, and a bare name stands at its DXF group 10
+/// point. Each call and its numbers are AutoCAD 2024's (accoreconsole, read back with `entget`);
+/// AutoCAD ran TRIM and EXTEND in Standard mode there.
+#[test]
+fn command_names_objects_at_prompts_picking_one() {
+    use cadcraft_doc::EntityKind;
+    let near = |a: [f64; 2], b: [f64; 2]| (0..2).all(|i| (a[i] - b[i]).abs() <= 1e-9 * a[i].abs().max(1.0));
+    // The drawing's points, lines and polyline widths after `forms`, each evaluated on its own.
+    let run = |forms: &[&str]| {
+        let mut s = session();
+        ok(&mut s, "(setvar \"TRIMEXTENDMODE\" 0)");
+        for f in forms {
+            ok(&mut s, f);
+        }
+        assert!(s.running.is_none(), "{forms:?}: a command is still running");
+        let (mut points, mut lines, mut widths) = (Vec::new(), Vec::new(), Vec::new());
+        for e in s.doc().unwrap().model.iter() {
+            match &e.kind {
+                EntityKind::Point(p) => points.push([p.p.x, p.p.y]),
+                EntityKind::Line(l) => lines.push(([l.a.x, l.a.y], [l.b.x, l.b.y])),
+                EntityKind::LwPolyline(pl) => widths.push(pl.const_width),
+                _ => {}
+            }
+        }
+        (points, lines, widths)
+    };
+    let has_point = |points: &[[f64; 2]], p: [f64; 2]| points.iter().any(|q| near(*q, p));
+    let has_line = |lines: &[([f64; 2], [f64; 2])], a: [f64; 2], b: [f64; 2]| lines.iter().any(|(p, q)| near(*p, a) && near(*q, b));
+    let line = |name: &str, a: [f64; 2], b: [f64; 2]| {
+        format!("(setq {name} (progn (entmake '((0 . \"LINE\") (10 {} {} 0.0) (11 {} {} 0.0))) (entlast)))", a[0], a[1], b[0], b[1])
+    };
+
+    // A circle named alone stands at its centre, where nothing is drawn.
+    let (points, ..) = run(&[
+        "(setq a (progn (entmake '((0 . \"CIRCLE\") (10 0.0 0.0 0.0) (40 . 15.0))) (entlast)))",
+        "(command \"_.MEASURE\" a 10.275598705220492)",
+    ]);
+    assert!(points.len() == 9 && has_point(&points, [14.89599800946832, -1.763304653744166]), "{points:?}");
+    // An arc named alone stands at its centre too, as near to either end: MEASURE runs from its
+    // end (250°), so its points run from 233.4° down to 34.4°, not from 46.6° up.
+    let (points, ..) = run(&[
+        "(setq a (progn (entmake '((0 . \"ARC\") (10 -35000.0 81000.0 0.0) (40 . 1000.0) (50 . 0.5235987755982988) (51 . 4.363323129985824))) (entlast)))",
+        "(command \"_.MEASURE\" a 289.4960530820059)",
+    ]);
+    assert!(points.len() == 13 && has_point(&points, [-35596.04133310627, 80197.0462471419]), "{points:?}");
+    assert!(has_point(&points, [-34174.59349504207, 81564.53883973838]), "{points:?}");
+    // PEDIT takes a polyline by name.
+    let (_, _, widths) = run(&[
+        "(setq a (progn (entmake '((0 . \"LWPOLYLINE\") (100 . \"AcDbEntity\") (100 . \"AcDbPolyline\") (90 . 3) (70 . 0) (10 0.0 0.0) (10 30.0 0.0) (42 . 0.4) (10 40.0 20.0))) (entlast)))",
+        "(command \"_.PEDIT\" a \"_W\" 1.25 \"\")",
+    ]);
+    assert_eq!(widths, [1.25]);
+    // `entsel` lists: the point picks the end LENGTHEN moves, BREAK's first point, the piece
+    // TRIM removes and the end EXTEND moves.
+    let (_, lines, _) = run(&[
+        &line("a", [0.0, 0.0], [-11.745250375031729, -27.60523670660726]),
+        "(command \"_.LENGTHEN\" \"_DE\" 5.0 (list a '(-10.962233683362948 -25.764887592833446)) \"\")",
+    ]);
+    assert!(has_line(&lines, [0.0, 0.0], [-13.70279210420368, -32.2061094910418]), "{lines:?}");
+    let (_, lines, _) = run(&[
+        &line("a", [0.0, 0.0], [-97.11873949964188, 23.831710765295487]),
+        "(command \"_.BREAK\" (list a '(-19.77309329359773 4.852067095763353)) '(-77.20177993977879 18.94434070674469))",
+    ]);
+    assert!(lines.len() == 2 && has_line(&lines, [0.0, 0.0], [-19.77309329359773, 4.852067095763352]), "{lines:?}");
+    assert!(has_line(&lines, [-77.20177993977879, 18.94434070674469], [-97.11873949964188, 23.83171076529548]), "{lines:?}");
+    let (_, lines, _) = run(&[
+        &line("a", [-38.39479850296135, -32.02872847799295], [38.39479850296135, 32.02872847799295]),
+        &line("b", [-9.422796057479543, -30.193534825244917], [-15.589739201426854, 9.328216303207391]),
+        &line("c", [35.428336962443794, 7.710053620262788], [-2.7893410422311042, 19.517216189270982]),
+        "(command \"_.TRIM\" a b c \"\" (list a '(1.9066151653265737 1.5904878218740615)) \"\")",
+    ]);
+    assert!(lines.len() == 4 && has_line(&lines, [-38.39479850296135, -32.02872847799294], [-12.50626762945319, -10.43265926101876]), "{lines:?}");
+    assert!(has_line(&lines, [16.31949796010634, 13.61363490476688], [38.39479850296135, 32.02872847799294]), "{lines:?}");
+    let (_, lines, _) = run(&[
+        &line("a", [0.0, 0.0], [18.819750237318146, -6.7688256739971955]),
+        &line("b", [17.056820153998288, -35.36317014637398], [58.2221807952743, 8.2878674503852]),
+        "(command \"_.EXTEND\" a b \"\" (list a '(14.11481267798861 -5.076619255497897)) \"\")",
+    ]);
+    assert!(has_line(&lines, [0.0, 0.0], [37.63950047463629, -13.53765134799439]), "{lines:?}");
+}
+
+#[test]
+fn a_named_object_holds_for_its_own_input_in_its_own_space() {
+    use cadcraft_doc::Space;
+    let mut s = session();
+    ok(&mut s, "(setq a (progn (entmake '((0 . \"LINE\") (10 0.0 0.0 0.0) (11 10.0 0.0 0.0))) (entlast)))");
+    // BREAK takes A at (5,3), off the line; a later pick there finds nothing.
+    ok(&mut s, "(command \"_.BREAK\" (list a '(5.0 3.0)))");
+    assert!(s.prompt_text().contains("Specify second break point"), "{}", s.prompt_text());
+    let model = s.space();
+    assert_eq!(s.pick_object(&model, cadcraft_geom::Vec2::new(5.0, 3.0), 0.5).unwrap(), None);
+    s.cancel();
+    // A paper-space copy of A named in model space picks nothing, not A under its start.
+    let p = {
+        let d = s.doc_mut().unwrap();
+        let e = d.model.iter().next().unwrap();
+        let (common, kind) = (e.common.clone(), e.kind.clone());
+        d.add(&Space::Paper("Layout1".into()), common, kind).unwrap()
+    };
+    ok(&mut s, &format!("(command \"_.BREAK\" (handent \"{}\"))", p.hex()));
+    assert!(s.prompt_text().contains("Select object"), "{}", s.prompt_text());
+    s.cancel();
 }
 
 #[test]
@@ -854,4 +1013,29 @@ fn angtof_reads_the_string_in_the_given_units() {
     assert_eq!(ok(&mut s, "(angtof \"180\" 0)"), "3.14159");
     assert_eq!(ok(&mut s, "(angtof \"180\" 7)"), "nil");
     assert_eq!(ok(&mut s, "(angtof \"180\" \"x\")"), "nil");
+}
+
+/// #1920: the value of an expression typed at a prompt is the answer, not another expression.
+/// `(setq q "!q")` returned `"!q"`, which was evaluated again as `!q`, forever, until the stack
+/// overflowed and the process aborted (no `catch_unwind` catches that).
+#[test]
+fn a_lisp_value_at_a_prompt_is_not_evaluated_again() {
+    let mut s = session();
+    s.cmdline("circle (setq q \"!q\")").unwrap();
+    assert_eq!(ok(&mut s, "q"), "\"!q\"");
+    // "!q" is no centre point, so CIRCLE still asks for one; the session carries on.
+    assert!(s.running.is_some());
+    s.cancel();
+    // A value that is itself an expression stays text too: `(+ 1 2)` is not evaluated to 3.
+    s.cmdline("circle 0,0 (setq r \"(+ 1 2)\")").unwrap();
+    assert!(s.running.is_some(), "\"(+ 1 2)\" is no radius");
+    s.cancel();
+    // Values that answer the prompt still do.
+    s.cmdline("(setq r \"4\")").unwrap();
+    s.cmdline("circle 0,0 !r").unwrap();
+    let r = s.doc().unwrap().model.iter().find_map(|e| match &e.kind {
+        cadcraft_doc::EntityKind::Circle(c) => Some(c.radius),
+        _ => None,
+    });
+    assert_eq!(r, Some(4.0));
 }

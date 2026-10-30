@@ -43,7 +43,7 @@ fn platform_shortcut_toggles_with_expression_focus_and_preserves_drafting() {
         h.key_press_modifiers(modifiers, Key::Num8);
         h.run_steps(5);
         assert!(h.state().ui.docking.layout.contains(&Panel::QuickCalc));
-        let floating = h.state().ui.docking.layout.floating.iter().find(|group| group.panels.contains(&Panel::QuickCalc)).unwrap().rect;
+        let floating = h.state().ui.docking.layout.floating.iter().find(|group| group.contains(&Panel::QuickCalc)).unwrap().rect;
         expression(&h).click();
         h.run_steps(3);
         expression(&h).type_text("2+3");
@@ -55,7 +55,7 @@ fn platform_shortcut_toggles_with_expression_focus_and_preserves_drafting() {
         h.key_press_modifiers(modifiers, Key::Num8);
         h.run_steps(5);
         assert_eq!(h.get(by().role(Role::TextInput).value("2+3")).value().as_deref(), Some("2+3"));
-        assert_eq!(h.state().ui.docking.layout.floating.iter().find(|group| group.panels.contains(&Panel::QuickCalc)).unwrap().rect, floating);
+        assert_eq!(h.state().ui.docking.layout.floating.iter().find(|group| group.contains(&Panel::QuickCalc)).unwrap().rect, floating);
         assert_eq!(h.state().session.running.as_ref().unwrap().id, "line");
         assert_eq!(h.state().cmd.buffer, "12,34");
         assert_eq!(h.state().session.doc().unwrap(), &drawing);
@@ -131,7 +131,7 @@ fn explicit_opens_still_reveal_and_calculations_do_not_open_the_palette() {
     app.run("ui.dock", json!({"operation":"activate", "panel":"toolSets"})).unwrap();
     app.run("ui.panel.quickcalc", Value::Null).unwrap();
     let mut workspace = app.ui.docking.clone();
-    workspace.reveal_panel(Panel::QuickCalc).unwrap();
+    cadcraft_ui_egui::docking::reveal_panel(&mut workspace, Panel::QuickCalc).unwrap();
     assert_eq!(app.ui.docking.layout, workspace.layout, "explicit open must activate an inactive tab");
 }
 

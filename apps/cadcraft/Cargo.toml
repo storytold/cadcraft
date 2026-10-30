@@ -4,6 +4,7 @@ description = "CADCraft desktop app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version = "1.95"
 publish = false
 default-run = "cadcraft"
 
@@ -16,10 +17,12 @@ cadcraft-ui-egui = { workspace = true }
 cadcraft-io = { workspace = true }
 # For the shared per-session control-token helper (control_server.rs authentication).
 cadcraft-mcp = { workspace = true }
-eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11", "links", "persistence"] }
+eframe = { workspace = true, features = ["clipboard", "wgpu", "accesskit", "wayland", "x11", "links", "persistence"] }
 egui = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
+clap = { workspace = true }
+thiserror = { workspace = true }
 chrono = { workspace = true }
 
 [build-dependencies]
@@ -33,10 +36,16 @@ winit = { version = "0.30", default-features = false, features = ["x11"] }
 zbus = { version = "=5.19.0", default-features = false, features = ["async-io", "blocking-api"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Floating panels open in their own OS windows on the desktop; the web build keeps them in the page.
+craft-ui = { workspace = true, features = ["native-windows"] }
+craft-update = { workspace = true }
 rfd = { workspace = true }
 sys-locale = "0.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# `title_bar::sync_movable`: AppKit's title-band drag leaves the window still under the row's
+# controls and under floating panels.
+craft-window = { workspace = true }
 muda = { version = "0.21", default-features = false }
 # View ▸ Accessibility ▸ Animation Effects ▸ Use System Setting: the system's Reduce motion
 # (system_animations.rs). Already in Cargo.lock through muda.

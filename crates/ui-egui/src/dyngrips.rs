@@ -131,7 +131,7 @@ pub(crate) fn menu(app: &mut CadApp, ctx: &egui::Context, xf: &Xf) {
     let gs = app.session.settings.gripsize as f32;
     let at = xf.to_screen(g.at) + vec2(-gs, gs * 1.5);
     let mut chosen: Option<String> = None;
-    let area = egui::Area::new(egui::Id::new(("dyn-grip-list", h, g.node))).order(egui::Order::Foreground).fixed_pos(at).show(ctx, |ui| {
+    let area = egui::Area::new(egui::Id::unique(("dyn-grip-list", h, g.node))).order(egui::Order::Foreground).fixed_pos(at).show(ctx, |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             for c in &g.choices {
                 if ui.selectable_label(c.eq_ignore_ascii_case(&current), c.as_str()).clicked() {

@@ -67,6 +67,7 @@
 	Blend	过渡
 	Block	块
 	Block Attribute Manager...	块属性管理器...
+	Block Description...	块描述...
 	Block Editor	块编辑器
 	Block Reference	块参照
 	Block...	块...
@@ -145,6 +146,7 @@
 	Current selection	当前选择
 	Current: {color}	当前: {color}
 	Cut	剪切
+	Cut with Base Point	带基点剪切
 	Cyan	青色
 	Cylinder	圆柱体
 	DWG	DWG
@@ -617,6 +619,7 @@
 	Rename Text Style	重命名文字样式
 	Rename...	重命名...
 	Repeat {command}	重复 {command}
+	Replace Block...	替换块...
 	Requires a point (x,y, @dx,dy or @d<a).	需要一个点 (x,y, @dx,dy 或 @d<a)。
 	Reset Palettes	重置选项板
 	Restore	恢复
@@ -1119,6 +1122,7 @@
 	Open Recent	打开最近的图形
 	Sheet Books to PDF...	图纸册转 PDF...
 	Drawing Recovery Manager...	图形恢复管理器...
+	Named Viewports...	命名视口...
 	Named Views...	命名视图...
 	Polygonal Viewport	多边形视口
 	From Template...	来自模板...
@@ -1161,6 +1165,7 @@
 	Over-constrained	过度约束
 	Previous Change	上一个更改
 	Close Comparison	关闭比较
+	Export Comparison	导出比较
 	Plotter Manager	打印机管理
 	Clear Command History	清除命令历史记录
 	Degrees of freedom: {n}	自由度: {n}
@@ -1341,3 +1346,6 @@
 	US Survey Inch	美国测量英寸
 	US Survey Yard	美国测量码
 	US Survey Mile	美国测量英里
+	Check for Updates…	检查更新…
+	CADCraft is up to date.	CADCraft 已是最新版本。
+	Could not check for updates.	无法检查更新。

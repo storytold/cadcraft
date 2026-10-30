@@ -104,10 +104,7 @@ mod native {
         }
         let mut notes = read_notes(&outcome.stats);
         let mut doc = outcome.document;
-        current_style_names(&mut doc);
-        table_merges(&mut doc);
-        table_style_rows(&mut doc, false);
-        let orphans = drop_orphaned_dgn_components(&mut doc);
+        let orphans = guarded(AssertUnwindSafe(|| post_process(&mut doc))).map_err(|_| "the DWG post-processing failed on this file".to_string())?;
         if orphans > 0 {
             let (s, were) = if orphans == 1 { ("", "was") } else { ("s", "were") };
             notes.push(format!("DWG: {orphans} DGN line style component{s} that no line style definition uses {were} left out"));
@@ -237,6 +234,33 @@ mod native {
     /// cells already carry merges are left alone. Each range's first cell gets the span; the
     /// cells it covers are marked merged with no span of their own, as CADCraft's DXF writer does.
     fn table_merges(doc: &mut acadrust::CadDocument) {
+        table_merges_within(doc, MAX_MERGE_CELLS);
+    }
+
+    /// The most table cells [`table_merges`] visits in one document: each range is capped, but
+    /// can cover rows × cols cells, so the total is bounded too.
+    const MAX_MERGE_CELLS: usize = 1 << 24;
+
+    /// The fix-ups made to a document after the DWG read, returning how many orphaned DGN
+    /// components were dropped. The document comes from a third-party reader and is hostile.
+    fn post_process(doc: &mut acadrust::CadDocument) -> usize {
+        super::fail_in_test("post_process");
+        current_style_names(doc);
+        table_merges(doc);
+        table_style_rows(doc, false);
+        keep_sort_handles(doc);
+        drop_orphaned_dgn_components(doc)
+    }
+
+    /// Runs `f`, turning a panic into an error (the reader and writer are guarded the same way).
+    fn guarded<R>(f: impl FnOnce() -> R + std::panic::UnwindSafe) -> Result<R, ()> {
+        std::panic::catch_unwind(f).map_err(|_| ())
+    }
+
+    /// [`table_merges`] visiting at most `budget` cells in all; a range that would pass it is
+    /// left unmerged. Returns the cells visited.
+    fn table_merges_within(doc: &mut acadrust::CadDocument, budget: usize) -> usize {
+        let mut left = budget;
         for e in doc.entities_mut() {
             let acadrust::entities::EntityType::Table(t) = e else { continue };
             if t.merged_ranges.is_empty() || t.rows.iter().flat_map(|r| &r.cells).any(|c| c.merge_width > 1 || c.merge_height > 1) {
@@ -252,6 +276,11 @@ mod native {
                 if r.top_row > bottom || r.left_col > right || rows == 0 || cols == 0 || (r.top_row, r.left_col) == (bottom, right) {
                     continue;
                 }
+                let area = (bottom - r.top_row + 1).saturating_mul(right - r.left_col + 1);
+                if area > left {
+                    continue;
+                }
+                left -= area;
                 let span = |n: usize| i32::try_from(n + 1).unwrap_or(i32::MAX);
                 for (ri, row) in t.rows.iter_mut().enumerate().take(bottom + 1).skip(r.top_row) {
                     for (ci, cell) in row.cells.iter_mut().enumerate().take(right + 1).skip(r.left_col) {
@@ -262,6 +291,28 @@ mod native {
                     }
                 }
             }
+        }
+        budget - left
+    }
+
+    /// Draw-order tables (SORTENTSTABLE) keep the sort handles the file gave them. acadrust's DXF
+    /// writer renumbers them past every entity handle, but an entity left out of a table sorts by
+    /// its own handle, so after renumbering it would draw below every listed entity (#2410). Giving
+    /// the table its codes verbatim makes the writer emit them unchanged.
+    fn keep_sort_handles(doc: &mut acadrust::CadDocument) {
+        use acadrust::objects::ObjectType;
+        let version = doc.version;
+        for o in doc.objects.values_mut() {
+            let ObjectType::SortEntitiesTable(t) = o else { continue };
+            let hex = |h: acadrust::types::Handle| format!("{:X}", h.value());
+            let mut codes =
+                vec![(5, hex(t.handle)), (330, hex(t.owner_handle)), (100, "AcDbSortentsTable".to_string()), (330, hex(t.block_owner_handle))];
+            for e in t.entries() {
+                codes.push((331, hex(e.entity_handle)));
+                codes.push((5, hex(e.sort_handle)));
+            }
+            t.raw_dxf_codes = Some(codes);
+            t.raw_dxf_version = Some(version);
         }
     }
 
@@ -512,6 +563,17 @@ mod native {
         }
     }
 
+    /// The current layer (`$CLAYER`) by its name, the same way as [`current_dimstyle`]: a DWG
+    /// stores the handle of the layer, and the one read with the DXF needn't be the layer's in
+    /// the document, so the drawing reopened with layer "0" current (#2252).
+    fn current_layer(doc: &mut acadrust::CadDocument) {
+        let name = doc.header.current_layer_name.clone();
+        // The table's own lookup compares Unicode case-insensitively ("Survey_Ä" = "Survey_ä").
+        if let Some(layer) = doc.layers.get(&name) {
+            doc.header.current_layer_handle = layer.handle;
+        }
+    }
+
     fn convert(dxf: &[u8], version: Option<acadrust::DxfVersion>) -> Result<Vec<u8>, String> {
         // Reject a pathologically large DXF before handing it to the third-party decoder, which
         // allocates tables and section buffers from the input's declared sizes and cannot be
@@ -536,13 +598,19 @@ mod native {
             None if doc.version < MIN_DWG_VERSION => doc.version = MIN_DWG_VERSION,
             None => {}
         }
-        other_layout_owners(&mut doc);
-        table_style_rows(&mut doc, true);
-        dimension_flags(&mut doc);
-        drop_unwritable(&mut doc);
-        current_dimstyle(&mut doc);
-        add_variable_dictionary(&mut doc);
-        current_text_style(&mut doc);
+        // The fix-ups run on the third-party reader's document, so a panic in one is an error, not a crash.
+        guarded(AssertUnwindSafe(|| {
+            super::fail_in_test("convert");
+            other_layout_owners(&mut doc);
+            table_style_rows(&mut doc, true);
+            dimension_flags(&mut doc);
+            drop_unwritable(&mut doc);
+            current_dimstyle(&mut doc);
+            add_variable_dictionary(&mut doc);
+            current_text_style(&mut doc);
+            current_layer(&mut doc);
+        }))
+        .map_err(|_| "the DXF to DWG conversion failed on this file".to_string())?;
         std::panic::catch_unwind(AssertUnwindSafe(|| acadrust::DwgWriter::write_to_vec(&doc)))
             .map_err(|_| "the DWG writer failed on this drawing".to_string())?
             .map_err(|e| format!("DWG write: {e}"))
@@ -639,10 +707,59 @@ mod native {
             }
         }
     }
+
+    #[cfg(test)]
+    mod post_tests {
+        use super::*;
+        use acadrust::entities::{CellRange, EntityType, Table};
+
+        fn doc_with_table(rows: usize, cols: usize, ranges: usize) -> acadrust::CadDocument {
+            let mut t = Table::new(acadrust::types::Vector3::new(0.0, 0.0, 0.0), rows, cols);
+            t.merged_ranges = (0..ranges).map(|_| CellRange::new(0, 0, rows - 1, cols - 1)).collect();
+            let mut doc = acadrust::CadDocument::new();
+            assert!(doc.add_entity(EntityType::Table(Box::new(t))).is_ok());
+            doc
+        }
+
+        /// Overlapping whole-table ranges can't make the merge pass visit more than its budget (#1934).
+        #[test]
+        fn merge_work_is_bounded_by_the_cell_budget() {
+            let mut doc = doc_with_table(10, 10, 50);
+            assert_eq!(table_merges_within(&mut doc, 250), 200, "two whole-table ranges fit, the rest are skipped");
+            let mut doc = doc_with_table(10, 10, 1);
+            assert_eq!(table_merges_within(&mut doc, usize::MAX), 100);
+        }
+
+        /// A panic in the post-read fix-ups is an error, not a crash (#1934).
+        #[test]
+        fn a_panic_in_post_processing_is_an_error() {
+            #[allow(clippy::panic)]
+            let r = guarded(AssertUnwindSafe(|| -> usize { panic!("boom") }));
+            assert!(r.is_err());
+            assert_eq!(guarded(|| 3), Ok(3));
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{dwg_to_dxf, dwg_to_dxf_noted, dwg_to_dxf_with, dxf_to_dwg, dxf_to_dwg_as};
+
+// Test-only: the stage ("post_process" or "convert") whose guard the current test checks. The
+// stage then panics on entry, so a test through the public API shows whether it is guarded.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+thread_local! {
+    static PANIC_IN: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+}
+
+/// Panics when a test asked for `stage` to fail (see [`PANIC_IN`]); does nothing otherwise.
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::panic)]
+fn fail_in_test(_stage: &str) {
+    #[cfg(test)]
+    if PANIC_IN.with(|p| p.get()) == Some(_stage) {
+        panic!("test-forced panic in {_stage}");
+    }
+}
 
 /// The error for a DWG version CADCraft can't write.
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
@@ -675,6 +792,50 @@ pub fn dxf_to_dwg_as(_dxf: &[u8], _version: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The DXF of an empty drawing, enough for the bridge to make a small DWG.
+    #[cfg(not(target_arch = "wasm32"))]
+    const MINIMAL_DXF: &str = "  0\nSECTION\n  2\nHEADER\n  9\n$ACADVER\n  1\nAC1032\n  0\nENDSEC\n  0\nEOF\n";
+
+    /// Makes `stage` panic on the current thread until dropped.
+    #[cfg(not(target_arch = "wasm32"))]
+    struct PanicIn;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    impl PanicIn {
+        fn at(stage: &'static str) -> Self {
+            PANIC_IN.with(|p| p.set(Some(stage)));
+            Self
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    impl Drop for PanicIn {
+        fn drop(&mut self) {
+            PANIC_IN.with(|p| p.set(None));
+        }
+    }
+
+    /// The public read reports a panic in the post-read fix-ups as an error: this fails if the
+    /// `guarded` call around `post_process` is taken out (#2402).
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn reading_a_dwg_survives_a_panic_in_post_processing() {
+        let dwg = dxf_to_dwg(MINIMAL_DXF.as_bytes()).unwrap();
+        assert!(dwg_to_dxf(&dwg).is_ok(), "the DWG reads without the forced panic");
+        let _panic = PanicIn::at("post_process");
+        let err = dwg_to_dxf(&dwg).unwrap_err();
+        assert!(err.contains("the DWG post-processing failed on this file"), "{err}");
+    }
+
+    /// The DXF to DWG conversion reports a panic in its fix-ups as an error, not a crash (#2402).
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn converting_to_dwg_survives_a_panic_in_the_fix_ups() {
+        let _panic = PanicIn::at("convert");
+        let err = dxf_to_dwg(MINIMAL_DXF.as_bytes()).unwrap_err();
+        assert!(err.contains("the DXF to DWG conversion failed on this file"), "{err}");
+    }
 
     #[test]
     fn detects_magic() {

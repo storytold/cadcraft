@@ -1,5 +1,7 @@
-//! Properties: per-object property edits, current properties, MATCHPROP, linetypes, units, RENAME.
+//! Properties: per-object property edits, current properties, CHPROP, MATCHPROP, linetypes, units,
+//! RENAME.
 
+mod chprop;
 mod matchprop;
 mod rename;
 
@@ -10,13 +12,17 @@ use cadcraft_doc::{EntityKind, Lineweight, Transparency};
 use cadcraft_geom::Vec3;
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, always, bad, bool_or, f64_req, find_command, ok, point_req, point_value, str_param, targets};
+
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("properties", "Properties", run_get).menu(&["Modify", "Properties"]).alias(&["pr", "props", "ch"]).params("{handles?} → properties of the selection").noundo(),
         CommandSpec::new("properties.set", "Set Properties", run_set).params("{handles?, layer?, color?, linetype?, lineweight?, ltscale?, thickness?, transparency?: \"ByLayer\" | \"ByBlock\" | 0..90, visible?, <geometry fields: radius, center, start, end, text, height, rotation…>; dimensions: textOverride, dimStyle, textHeight, arrowSize, dimScale, precision (per-dimension overrides)}"),
+        CommandSpec::new("chprop", "Change Properties", chprop::run_chprop)
+            .params("as properties.set, leaving out objects on locked layers → {changed, locked} (the command line asks Color, LAyer, LType, ltScale, LWeight, Thickness and TRansparency in turn)")
+            .interactive(|_| Ok(Box::new(chprop::ChpropM::new()))),
         CommandSpec::new("matchprop", "Match Properties", matchprop::run_matchprop)
             .menu(&["Modify", "Match Properties"])
             .alias(&["ma", "painter"])
@@ -32,6 +38,11 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("lweight", "Lineweight...", run_lweight).menu(&["Format", "Lineweight..."]).alias(&["lw", "lineweight"]).params("{lineweight: mm | ByLayer}"),
         CommandSpec::new("ltscale", "Linetype Scale", run_ltscale).alias(&["lts"]).params("{scale}").interactive(|_| Ok(Box::new(LtscaleM))),
         CommandSpec::new("units", "Units...", run_units).menu(&["Format", "Units..."]).alias(&["un"]).params("{lunits?: 1..5, luprec?: 0..8, aunits?: 0..4, auprec?: 0..8, insunits?}"),
+        CommandSpec::new("thickness", "Thickness", run_thickness)
+            .menu(&["Format", "Thickness"])
+            .params("{thickness} (THICKNESS: the 3D thickness given to new lines, arcs, circles, points and polylines; may be negative) → {thickness}")
+            .transparent()
+            .interactive(|_| Ok(Box::new(ThicknessM))),
         CommandSpec::new("limits", "Drawing Limits", run_limits).menu(&["Format", "Drawing Limits"]).params("{min: [x,y], max: [x,y]}"),
         CommandSpec::new("style", "Text Style...", run_style)
             .menu(&["Format", "Text Style..."])
@@ -147,7 +158,9 @@ fn run_get(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn parse_color(v: &Value) -> Option<Color> {
-    v.as_str().and_then(Color::parse).or_else(|| v.as_i64().and_then(|i| i16::try_from(i).ok()).map(Color::from_aci))
+    v.as_str()
+        .and_then(Color::parse)
+        .or_else(|| v.as_i64().filter(|i| (0..=256).contains(i)).and_then(|i| i16::try_from(i).ok()).map(Color::from_aci))
 }
 
 /// A transparency as JSON, in the form `properties.set` takes: "ByLayer", "ByBlock" or a percentage.
@@ -210,210 +223,247 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         .transpose()?;
     let dim_over = dim_overrides(p)?;
     let anno_scale = d.current_anno_scale();
+    let common = CommonEntityProperties { anno_scale: &anno_scale, color, linetype: linetype.as_deref(), lineweight: lw, transparency, thickness };
     for h in &hs {
         d.modify_entity(*h, |e| {
-            // Annotative: Yes supports the current annotation scale; No drops every scale.
-            if let Some(a) = p.get("annotative").and_then(Value::as_bool) {
-                cadcraft_doc::set_annotative(e, a, &anno_scale);
-            }
-            if let Some(l) = str_param(p, "layer") {
-                e.common.layer = l.to_string();
-            }
-            if let Some(c) = color {
-                e.common.color = c;
-            }
-            if let Some(lt) = &linetype {
-                e.common.linetype.clone_from(lt);
-            }
-            if let Some(w) = lw {
-                e.common.lineweight = w;
-            }
-            if let Some(x) = p.get("ltscale").and_then(Value::as_f64).filter(|x| *x > 0.0) {
-                e.common.ltscale = x;
-            }
-            if let Some(t) = transparency {
-                e.common.transparency = t;
-            }
-            if let Some(th) = thickness {
-                e.common.thickness = th;
-            }
-            if let Some(v) = p.get("visible").and_then(Value::as_bool) {
-                e.common.visible = v;
-            }
-            let num = |k: &str| p.get(k).and_then(Value::as_f64).filter(|v| v.is_finite());
-            match &mut e.kind {
-                EntityKind::Line(l) => {
-                    if let Some(v) = p.get("start") {
-                        set_xy(&mut l.a, v);
-                    }
-                    if let Some(v) = p.get("end") {
-                        set_xy(&mut l.b, v);
-                    }
-                    // Length / angle keep the start point and move the end point.
-                    let (a, b) = (l.a.xy(), l.b.xy());
-                    let len = num("length").filter(|x| *x > 0.0 && *x < 1e15).unwrap_or_else(|| a.dist(b));
-                    let ang = num("angle").map(f64::to_radians).unwrap_or_else(|| a.angle_to(b));
-                    if num("length").is_some() || num("angle").is_some() {
-                        let e = cadcraft_geom::Vec2::polar(a, len, ang);
-                        if e.is_finite() {
-                            l.b.x = e.x;
-                            l.b.y = e.y;
-                        }
-                    }
-                }
-                EntityKind::Circle(c) => {
-                    if let Some(v) = p.get("center") {
-                        set_xy(&mut c.center, v);
-                    }
-                    if let Some(r) = num("radius").filter(|r| *r > 0.0) {
-                        c.radius = r;
-                    }
-                    if let Some(dm) = num("diameter").filter(|r| *r > 0.0) {
-                        c.radius = dm / 2.0;
-                    }
-                    if let Some(cf) = num("circumference").filter(|x| *x > 0.0) {
-                        c.radius = cf / cadcraft_geom::TAU;
-                    }
-                    if let Some(a) = num("area").filter(|x| *x > 0.0) {
-                        c.radius = (a / cadcraft_geom::PI).sqrt();
-                    }
-                }
-                EntityKind::Arc(a) => {
-                    if let Some(v) = p.get("center") {
-                        set_xy(&mut a.center, v);
-                    }
-                    if let Some(r) = num("radius").filter(|r| *r > 0.0) {
-                        a.radius = r;
-                    }
-                    if let Some(x) = num("startAngle") {
-                        a.start = cadcraft_geom::norm_angle(x.to_radians());
-                    }
-                    if let Some(x) = num("endAngle") {
-                        a.end = cadcraft_geom::norm_angle(x.to_radians());
-                    }
-                }
-                EntityKind::Text(t) => {
-                    if let Some(v) = str_param(p, "text") {
-                        t.value = v.to_string();
-                    }
-                    if let Some(x) = num("height").filter(|x| *x > 0.0) {
-                        t.height = x;
-                    }
-                    if let Some(x) = num("rotation") {
-                        t.rotation = x.to_radians();
-                    }
-                    if let Some(x) = num("widthFactor").filter(|x| *x > 0.0) {
-                        t.width_factor = x;
-                    }
-                    // The position is the point the text is placed by: moving it moves the text.
-                    if let Some(to) = p.get("position").and_then(point_value) {
-                        let d = to - t.justify_point();
-                        for q in std::iter::once(&mut t.insert).chain(t.align_pt.as_mut()) {
-                            q.x += d.x;
-                            q.y += d.y;
-                        }
-                    }
-                }
-                EntityKind::MText(t) => {
-                    if let Some(v) = str_param(p, "text") {
-                        t.contents = v.replace('\n', "\\P");
-                    }
-                    if let Some(x) = num("height").filter(|x| *x > 0.0) {
-                        t.height = x;
-                    }
-                    if let Some(x) = num("width").filter(|x| *x >= 0.0) {
-                        t.width = x;
-                    }
-                    if let Some(x) = num("rotation") {
-                        t.rotation = x.to_radians();
-                    }
-                }
-                EntityKind::LwPolyline(pl) => {
-                    if let Some(x) = num("width").filter(|x| *x >= 0.0) {
-                        pl.const_width = x;
-                    }
-                    if let Some(c) = p.get("closed").and_then(Value::as_bool) {
-                        pl.closed = c;
-                    }
-                }
-                EntityKind::Insert(i) => {
-                    if let Some(x) = num("rotation") {
-                        let turn = x.to_radians() - i.rotation;
-                        i.rotation = x.to_radians();
-                        // The attached text turns with the reference, around its insertion point (as ROTATE does).
-                        let base = i.insert.xy();
-                        for a in &mut i.attribs {
-                            let t = &mut a.text;
-                            for q in std::iter::once(&mut t.insert).chain(t.align_pt.as_mut()) {
-                                let r = q.xy().rotate_about(base, turn);
-                                q.x = r.x;
-                                q.y = r.y;
-                            }
-                            t.rotation = cadcraft_geom::norm_angle(t.rotation + turn);
-                            if let Some(ml) = &mut a.multiline {
-                                let r = ml.mtext.insert.xy().rotate_about(base, turn);
-                                ml.mtext.insert.x = r.x;
-                                ml.mtext.insert.y = r.y;
-                                ml.mtext.rotation = cadcraft_geom::norm_angle(ml.mtext.rotation + turn);
-                            }
-                        }
-                    }
-                    if let Some(x) = num("scale").filter(|x| *x != 0.0) {
-                        // A new positive scale carries the attached attribute text with it, like SCALE about the insertion point.
-                        if x > 0.0 && i.scale.x > 0.0 {
-                            let m = cadcraft_geom::Mat3::scale_about(i.insert.xy(), x / i.scale.x);
-                            for a in &mut i.attribs {
-                                let mut k = EntityKind::Text(a.text.clone());
-                                k.transform(&m);
-                                if let EntityKind::Text(t) = k {
-                                    a.text = t;
-                                }
-                                a.transform_multiline(&m);
-                            }
-                        }
-                        i.scale = Vec3::new(x, x, x);
-                    }
-                }
-                EntityKind::Dimension(dm) => {
-                    if let Some(v) = str_param(p, "textOverride") {
-                        dm.text = v.to_string();
-                        dm.block = None;
-                    }
-                    if let Some(st) = &dim_style {
-                        dm.style.clone_from(st);
-                        dm.block = None;
-                    }
-                    if !dim_over.is_empty() {
-                        dm.overrides.extend(dim_over.clone());
-                        dm.block = None;
-                    }
-                }
-                EntityKind::Hatch(h) => {
-                    if let Some(v) = str_param(p, "pattern") {
-                        if !h.pattern.eq_ignore_ascii_case(v) {
-                            h.pattern_lines = super::hatch::lines_for(v);
-                        }
-                        h.pattern = v.to_ascii_uppercase();
-                        // The old pattern's definition lines no longer apply.
-                        h.pattern_lines.clear();
-                        h.solid = h.pattern == "SOLID";
-                        if !h.solid {
-                            // A named pattern replaces the gradient fill; the renderer draws the gradient first when it is set.
-                            h.gradient = None;
-                        }
-                    }
-                    if let Some(x) = num("scale").filter(|x| *x > 0.0) {
-                        h.scale = x;
-                    }
-                    if let Some(x) = num("angle") {
-                        h.angle = x.to_radians();
-                    }
-                }
-                _ => {}
-            }
+            set_common_properties(e, p, &common);
+            apply_kind_properties(e, p, dim_style.as_ref(), &dim_over);
         })?;
     }
     Ok(json!({ "changed": hs.len() }))
+}
+
+fn apply_kind_properties(
+    entity: &mut cadcraft_doc::Entity,
+    params: &Value,
+    dim_style: Option<&String>,
+    dim_overrides: &serde_json::Map<String, Value>,
+) {
+    let num = |key: &str| params.get(key).and_then(Value::as_f64).filter(|value| value.is_finite());
+    match &mut entity.kind {
+        EntityKind::Line(l) => {
+            if let Some(v) = params.get("start") {
+                set_xy(&mut l.a, v);
+            }
+            if let Some(v) = params.get("end") {
+                set_xy(&mut l.b, v);
+            }
+            // Length / angle keep the start point and move the end point.
+            let (a, b) = (l.a.xy(), l.b.xy());
+            let len = num("length").filter(|x| *x > 0.0 && *x < 1e15).unwrap_or_else(|| a.dist(b));
+            let ang = num("angle").map(f64::to_radians).unwrap_or_else(|| a.angle_to(b));
+            if num("length").is_some() || num("angle").is_some() {
+                let e = cadcraft_geom::Vec2::polar(a, len, ang);
+                if e.is_finite() {
+                    l.b.x = e.x;
+                    l.b.y = e.y;
+                }
+            }
+        }
+        EntityKind::Circle(c) => {
+            if let Some(v) = params.get("center") {
+                set_xy(&mut c.center, v);
+            }
+            if let Some(r) = num("radius").filter(|r| *r > 0.0) {
+                c.radius = r;
+            }
+            if let Some(dm) = num("diameter").filter(|r| *r > 0.0) {
+                c.radius = dm / 2.0;
+            }
+            if let Some(cf) = num("circumference").filter(|x| *x > 0.0) {
+                c.radius = cf / cadcraft_geom::TAU;
+            }
+            if let Some(a) = num("area").filter(|x| *x > 0.0) {
+                c.radius = (a / cadcraft_geom::PI).sqrt();
+            }
+        }
+        EntityKind::Arc(a) => {
+            if let Some(v) = params.get("center") {
+                set_xy(&mut a.center, v);
+            }
+            if let Some(r) = num("radius").filter(|r| *r > 0.0) {
+                a.radius = r;
+            }
+            if let Some(x) = num("startAngle") {
+                a.start = cadcraft_geom::norm_angle(x.to_radians());
+            }
+            if let Some(x) = num("endAngle") {
+                a.end = cadcraft_geom::norm_angle(x.to_radians());
+            }
+        }
+        EntityKind::Text(t) => {
+            if let Some(v) = str_param(params, "text") {
+                t.value = v.to_string();
+            }
+            if let Some(x) = num("height").filter(|x| *x > 0.0) {
+                t.height = x;
+            }
+            if let Some(x) = num("rotation") {
+                t.rotation = x.to_radians();
+            }
+            if let Some(x) = num("widthFactor").filter(|x| *x > 0.0) {
+                t.width_factor = x;
+            }
+            // The position is the point the text is placed by: moving it moves the text.
+            if let Some(to) = params.get("position").and_then(point_value) {
+                let d = to - t.justify_point();
+                for q in std::iter::once(&mut t.insert).chain(t.align_pt.as_mut()) {
+                    q.x += d.x;
+                    q.y += d.y;
+                }
+            }
+        }
+        EntityKind::MText(t) => {
+            if let Some(v) = str_param(params, "text") {
+                t.contents = v.replace('\n', "\\P");
+            }
+            if let Some(x) = num("height").filter(|x| *x > 0.0) {
+                t.height = x;
+            }
+            if let Some(x) = num("width").filter(|x| *x >= 0.0) {
+                t.width = x;
+            }
+            if let Some(x) = num("rotation") {
+                t.rotation = x.to_radians();
+            }
+        }
+        EntityKind::LwPolyline(pl) => {
+            if let Some(x) = num("width").filter(|x| *x >= 0.0) {
+                pl.const_width = x;
+            }
+            if let Some(c) = params.get("closed").and_then(Value::as_bool) {
+                pl.closed = c;
+            }
+        }
+        EntityKind::Insert(insert) => set_insert_properties(insert, params),
+        EntityKind::Dimension(dimension) => set_dimension_properties(dimension, params, dim_style, dim_overrides),
+        EntityKind::Hatch(hatch) => set_hatch_properties(hatch, params),
+        _ => {}
+    }
+}
+
+fn set_insert_properties(insert: &mut cadcraft_doc::Insert, params: &Value) {
+    let number = |key: &str| params.get(key).and_then(Value::as_f64).filter(|value| value.is_finite());
+
+    if let Some(x) = number("rotation") {
+        let turn = x.to_radians() - insert.rotation;
+        insert.rotation = x.to_radians();
+        // The attached text turns with the reference, around its insertion point (as ROTATE does).
+        let base = insert.insert.xy();
+        for a in &mut insert.attribs {
+            let t = &mut a.text;
+            for q in std::iter::once(&mut t.insert).chain(t.align_pt.as_mut()) {
+                let r = q.xy().rotate_about(base, turn);
+                q.x = r.x;
+                q.y = r.y;
+            }
+            t.rotation = cadcraft_geom::norm_angle(t.rotation + turn);
+            if let Some(ml) = &mut a.multiline {
+                let r = ml.mtext.insert.xy().rotate_about(base, turn);
+                ml.mtext.insert.x = r.x;
+                ml.mtext.insert.y = r.y;
+                ml.mtext.rotation = cadcraft_geom::norm_angle(ml.mtext.rotation + turn);
+            }
+        }
+    }
+    if let Some(x) = number("scale").filter(|x| *x != 0.0) {
+        // A new positive scale carries the attached attribute text with it, like SCALE about the insertion point.
+        if x > 0.0 && insert.scale.x > 0.0 {
+            let m = cadcraft_geom::Mat3::scale_about(insert.insert.xy(), x / insert.scale.x);
+            for a in &mut insert.attribs {
+                let mut k = EntityKind::Text(a.text.clone());
+                k.transform(&m);
+                if let EntityKind::Text(t) = k {
+                    a.text = t;
+                }
+                a.transform_multiline(&m);
+            }
+        }
+        insert.scale = Vec3::new(x, x, x);
+    }
+}
+
+fn set_dimension_properties(
+    dimension: &mut cadcraft_doc::Dimension,
+    params: &Value,
+    style: Option<&String>,
+    overrides: &serde_json::Map<String, Value>,
+) {
+    if let Some(v) = str_param(params, "textOverride") {
+        dimension.text = v.to_string();
+        dimension.block = None;
+    }
+    if let Some(st) = style {
+        dimension.style.clone_from(st);
+        dimension.block = None;
+    }
+    if !overrides.is_empty() {
+        dimension.overrides.extend(overrides.clone());
+        dimension.block = None;
+    }
+}
+
+fn set_hatch_properties(hatch: &mut cadcraft_doc::Hatch, params: &Value) {
+    let number = |key: &str| params.get(key).and_then(Value::as_f64).filter(|value| value.is_finite());
+
+    if let Some(v) = str_param(params, "pattern") {
+        if !hatch.pattern.eq_ignore_ascii_case(v) {
+            hatch.pattern_lines = super::hatch::lines_for(v);
+        }
+        hatch.pattern = v.to_ascii_uppercase();
+        // The old pattern's definition lines no longer apply.
+        hatch.pattern_lines.clear();
+        hatch.solid = hatch.pattern == "SOLID";
+        if !hatch.solid {
+            // A named pattern replaces the gradient fill; the renderer draws the gradient first when it is set.
+            hatch.gradient = None;
+        }
+    }
+    if let Some(x) = number("scale").filter(|x| *x > 0.0) {
+        hatch.scale = x;
+    }
+    if let Some(x) = number("angle") {
+        hatch.angle = x.to_radians();
+    }
+}
+
+struct CommonEntityProperties<'a> {
+    anno_scale: &'a cadcraft_doc::AnnoScale,
+    color: Option<Color>,
+    linetype: Option<&'a str>,
+    lineweight: Option<Lineweight>,
+    transparency: Option<Transparency>,
+    thickness: Option<f64>,
+}
+
+fn set_common_properties(entity: &mut cadcraft_doc::Entity, params: &Value, common: &CommonEntityProperties<'_>) {
+    if let Some(annotative) = params.get("annotative").and_then(Value::as_bool) {
+        cadcraft_doc::set_annotative(entity, annotative, common.anno_scale);
+    }
+    if let Some(layer) = str_param(params, "layer") {
+        entity.common.layer = layer.to_string();
+    }
+    if let Some(color) = common.color {
+        entity.common.color = color;
+    }
+    if let Some(linetype) = common.linetype {
+        entity.common.linetype = linetype.to_string();
+    }
+    if let Some(lineweight) = common.lineweight {
+        entity.common.lineweight = lineweight;
+    }
+    if let Some(scale) = params.get("ltscale").and_then(Value::as_f64).filter(|scale| *scale > 0.0) {
+        entity.common.ltscale = scale;
+    }
+    if let Some(transparency) = common.transparency {
+        entity.common.transparency = transparency;
+    }
+    if let Some(thickness) = common.thickness {
+        entity.common.thickness = thickness;
+    }
+    if let Some(visible) = params.get("visible").and_then(Value::as_bool) {
+        entity.common.visible = visible;
+    }
 }
 
 fn run_color(s: &mut Session, p: &Value) -> Result<Value> {
@@ -426,12 +476,30 @@ fn run_color(s: &mut Session, p: &Value) -> Result<Value> {
 pub(crate) fn set_current_color_value(s: &mut Session, v: &Value) -> Option<()> {
     // An out-of-range index is refused here, where `color` folds it to ByLayer.
     let c = match v {
-        Value::String(t) => Color::parse(t),
+        // "RGB:r,g,b" is how `getvar` reads a true colour back, so a saved value can be restored.
+        Value::String(t) => match t.trim().get(..4).filter(|p| p.eq_ignore_ascii_case("rgb:")).and_then(|_| t.trim().get(4..)) {
+            Some(triple) => Color::parse(triple).filter(|c| matches!(c, Color::True(_))),
+            None => Color::parse(t),
+        },
         Value::Number(n) => n.as_i64().and_then(|i| Color::parse(&i.to_string())),
         _ => None,
     }?;
     set_current_color(s.doc_mut().ok()?, c);
     Some(())
+}
+
+/// `getvar CECOLOR` as AutoCAD gives it, always text: "BYLAYER", "BYBLOCK", the index ("1" for
+/// red) or "RGB:r,g,b".
+pub(crate) fn current_color_value(d: &cadcraft_doc::Drawing) -> String {
+    if let Some(rgb) = d.header.get("CECOLOR_RGB").and_then(|v| v.as_i64()).and_then(|v| u32::try_from(v).ok()) {
+        let cadcraft_color::Rgb(r, g, b) = cadcraft_color::Rgb::from_u32(rgb);
+        return format!("RGB:{r},{g},{b}");
+    }
+    match Color::from_aci(d.header.i64("CECOLOR", 256) as i16) {
+        Color::ByLayer => "BYLAYER".into(),
+        Color::ByBlock => "BYBLOCK".into(),
+        other => other.to_aci().to_string(),
+    }
 }
 
 /// A true colour keeps its RGB in CECOLOR_RGB (which wins for new objects); any other colour must
@@ -534,9 +602,62 @@ impl Interactive for LtscaleM {
     }
 }
 
+/// The largest THICKNESS, either way.
+const MAX_THICKNESS: f64 = 1e12;
+
+fn thickness_in_range(t: f64) -> bool {
+    t.is_finite() && t.abs() <= MAX_THICKNESS
+}
+
+fn run_thickness(s: &mut Session, p: &Value) -> Result<Value> {
+    let t = f64_req("thickness", p, "thickness")?;
+    if !thickness_in_range(t) {
+        return Err(bad("thickness", "thickness is out of range (-1e12 to 1e12)"));
+    }
+    s.doc_mut()?.header.set_f64("THICKNESS", t);
+    Ok(json!({ "thickness": t }))
+}
+
+/// Format > Thickness and typed THICKNESS: "Enter new value for THICKNESS <0.0000>:".
+struct ThicknessM;
+
+impl Interactive for ThicknessM {
+    fn name(&self) -> &'static str {
+        "THICKNESS"
+    }
+    fn prompt(&self, s: &Session) -> Prompt {
+        let cur = s.doc().map(|d| d.header.f64("THICKNESS", 0.0)).unwrap_or(0.0);
+        Prompt::new("Enter new value for THICKNESS", Accept::NUMBER).default(format!("{cur:.4}"))
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        let text = match i {
+            Input::Enter | Input::Cancel => return Ok(Step::Done),
+            Input::Text(t) => t,
+            _ => return Ok(Step::Continue),
+        };
+        match super::machines::number(&text) {
+            Some(t) if thickness_in_range(t) => {
+                run_thickness(s, &json!({ "thickness": t }))?;
+                Ok(Step::Done)
+            }
+            Some(_) => {
+                s.echo("Requires a value between -1e12 and 1e12.");
+                Ok(Step::Continue)
+            }
+            None => {
+                s.echo("Requires a number.");
+                Ok(Step::Continue)
+            }
+        }
+    }
+}
+
+/// The unit variables (lower-case name, lowest, highest value) shared by UNITS and SETVAR.
+pub(crate) const UNIT_RANGES: [(&str, i64, i64); 5] = [("lunits", 1, 5), ("luprec", 0, 8), ("aunits", 0, 4), ("auprec", 0, 8), ("insunits", 0, 24)];
+
 fn run_units(s: &mut Session, p: &Value) -> Result<Value> {
     let d = s.doc_mut()?;
-    for (k, lo, hi) in [("lunits", 1, 5), ("luprec", 0, 8), ("aunits", 0, 4), ("auprec", 0, 8), ("insunits", 0, 24)] {
+    for (k, lo, hi) in UNIT_RANGES {
         if let Some(v) = p.get(k).and_then(Value::as_i64) {
             d.header.set_i64(&k.to_ascii_uppercase(), v.clamp(lo, hi));
         }
@@ -1104,9 +1225,26 @@ fn run_rename(s: &mut Session, p: &Value) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use serde_json::json;
 
-    use crate::Session;
+    #[test]
+    fn properties_set_rejects_out_of_range_colour() {
+        let mut s = Session::new();
+        s.execute("line", &json!({ "points": [[0, 0], [50, 0]] })).unwrap();
+        let h = s.doc().unwrap().model.last().unwrap().handle.hex();
+        s.execute("properties.set", &json!({ "handles": [h], "color": 1 })).unwrap();
+        let col = |s: &Session| s.doc().unwrap().model.last().unwrap().common.color;
+        for bad in [300, -5, 257] {
+            let e = s.execute("properties.set", &json!({ "handles": [h], "color": bad })).unwrap_err();
+            assert!(e.to_string().contains("bad colour"), "{e}");
+            assert_eq!(col(&s), Color::Index(1));
+        }
+        s.execute("properties.set", &json!({ "handles": [h], "color": 256 })).unwrap();
+        assert_eq!(col(&s), Color::ByLayer);
+        s.execute("properties.set", &json!({ "handles": [h], "color": 0 })).unwrap();
+        assert_eq!(col(&s), Color::ByBlock);
+    }
 
     #[test]
     fn properties_set_rejects_unloaded_linetype() {

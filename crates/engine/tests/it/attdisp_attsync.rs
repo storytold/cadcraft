@@ -60,6 +60,38 @@ fn attdisp_sets_attmode_and_the_display_follows_it() {
 }
 
 #[test]
+fn view_attribute_display_menu_sets_attmode() {
+    let mut s = Session::new();
+    for (id, item, mode) in [("attdisp.on", "On", 2), ("attdisp.off", "Off", 0), ("attdisp.normal", "Normal", 1)] {
+        let spec = cadcraft_engine::find_command(id).unwrap_or_else(|| panic!("no command {id}"));
+        assert_eq!(spec.menu, ["View", "Attribute Display", item]);
+        s.start(id).unwrap();
+        assert!(s.running.is_none(), "{id}: {}", s.prompt_text());
+        assert_eq!(s.doc().unwrap().header.i64("ATTMODE", 1), mode, "{id}");
+    }
+    assert_eq!(s.execute("attdisp.off", &json!({})).unwrap(), json!({"attmode": 0}));
+    s.undo().unwrap();
+    assert_eq!(s.doc().unwrap().header.i64("ATTMODE", 1), 1);
+}
+
+#[test]
+fn attdisp_runs_transparently_inside_another_command() {
+    let mut s = Session::new();
+    s.cmdline("LINE 0,0").unwrap();
+    s.cmdline("'ATTDISP").unwrap();
+    assert_eq!(s.running.as_ref().map(|r| r.id.as_str()), Some("attdisp"));
+    assert!(s.prompt_text().starts_with(">>"), "{}", s.prompt_text());
+    s.cmdline("off").unwrap();
+    assert_eq!(s.doc().unwrap().header.i64("ATTMODE", 1), 0);
+    // LINE prompts again for its next point.
+    assert_eq!(s.running.as_ref().map(|r| r.id.as_str()), Some("line"), "{}", s.prompt_text());
+    s.cmdline("10,0").unwrap();
+    s.cmdline("").unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(s.doc().unwrap().model.iter().count(), 1);
+}
+
+#[test]
 fn attsync_brings_references_in_line_with_the_definitions() {
     let mut s = Session::new();
     attdef(&mut s, "A", "a", 1.0, 0.2, false);

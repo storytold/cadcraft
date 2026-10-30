@@ -2,6 +2,7 @@ mod acad_interop;
 #[cfg(not(target_arch = "wasm32"))]
 mod acis_data_store;
 mod angle_header;
+mod annotative_orientation;
 mod annotative_roundtrip;
 mod assoc_array_roundtrip;
 mod attrib_modes;
@@ -13,6 +14,7 @@ mod dim_block_resave_roundtrip;
 mod dim_block_text;
 mod dim_marks_roundtrip;
 mod dimstyle_vars_roundtrip;
+mod dimtfill_roundtrip;
 mod drafting_spacing;
 #[cfg(not(target_arch = "wasm32"))]
 mod dwg_header_vars;

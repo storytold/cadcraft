@@ -6,7 +6,7 @@ use cadcraft_geom::Vec2;
 use serde_json::{Value, json};
 
 use super::formula::{self, cell_name, parse_cell_name};
-use super::{MAX_COLS, MAX_ROWS, edit, usize_param};
+use super::{MAX_COLS, MAX_ROWS, edit, table_handle, usize_param};
 use crate::cmd::{CommandSpec, bad, bool_or, str_param};
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
@@ -522,15 +522,6 @@ fn write_text(path: &str, text: &str) -> Result<()> {
         let deliver = crate::cmd::file::deliver().ok_or_else(|| bad("tableexport", "files can't be written in this build; use the returned csv"))?;
         deliver(&name, "text/csv", text.as_bytes()).map_err(|e| bad("tableexport", format!("{name}: {e}")))
     }
-}
-
-fn table_handle(s: &Session, p: &Value, id: &str) -> Result<Handle> {
-    p.get("handle")
-        .and_then(|v| v.as_str().and_then(Handle::parse_hex).or_else(|| v.as_u64().map(Handle)))
-        .or_else(|| {
-            s.selection().into_iter().find(|h| s.doc().ok().and_then(|d| d.entity(*h)).is_some_and(|e| matches!(e.kind, EntityKind::Table(_))))
-        })
-        .ok_or_else(|| bad(id, "`handle` of a table is required"))
 }
 
 fn run_export(s: &mut Session, p: &Value) -> Result<Value> {

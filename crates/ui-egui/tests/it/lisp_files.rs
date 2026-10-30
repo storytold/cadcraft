@@ -23,7 +23,10 @@ fn a_long_routine_runs_across_frames() {
     let ctx = egui::Context::default();
     let mut frames = 0;
     while app.session.lisp_running() && frames < 1000 {
-        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| app.logic(ui.ctx()));
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        });
         out.textures_delta.clear(); // no renderer here
         frames += 1;
     }

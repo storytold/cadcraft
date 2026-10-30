@@ -7,11 +7,12 @@ mod template;
 
 use std::sync::OnceLock;
 
-use cadcraft_doc::Drawing;
+use cadcraft_doc::{Drawing, Format};
 pub use cadcraft_dxf::Version;
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, EngineError, Interactive, always, bad, bool_or, find_command, ok, str_param};
+
 use crate::{Accept, Input, Prompt, Result, Session, Step};
 
 /// The rules the Command Aliases dialog checks before it sends an alias to ALIASEDIT.
@@ -135,8 +136,7 @@ fn save_options(cmd: &str, p: &Value) -> Result<SaveAs> {
 
 /// Whether `path` names a DXF file (or has no extension, which saves as DXF).
 fn is_dxf(path: &str) -> bool {
-    let ext = std::path::Path::new(path).extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
-    matches!(ext.as_str(), "dxf" | "")
+    Format::from_path(path) == Some(Format::Dxf)
 }
 
 /// The drawing written to `path` with `opts`: through [`IoHooks::write`] when no option is set,
@@ -272,17 +272,21 @@ pub struct ReadFile {
 }
 
 /// Read and decode `path` (the slow half of `OPEN {path}`). Needs no session; runs anywhere.
-pub fn read_file(path: &str) -> std::result::Result<ReadFile, String> {
+pub fn read_file(path: &std::path::Path) -> std::result::Result<ReadFile, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let r = std::panic::catch_unwind(|| {
-            let bytes =
-                crate::capped_read::read_capped(std::path::Path::new(path), MAX_DRAWING_BYTES).map_err(|e| bad("open", format!("{path}: {e}")))?;
-            read_bytes(&bytes, path, Some(path.to_string()))
+            let shown = path.display();
+            // The session keeps paths as text; a name that isn't Unicode could never be saved back to.
+            let Some(text_path) = path.to_str() else {
+                return Err(bad("open", format!("{shown}: the file name is not valid Unicode, so CADCraft can't save back to it")));
+            };
+            let bytes = crate::capped_read::read_capped(path, MAX_DRAWING_BYTES).map_err(|e| bad("open", format!("{shown}: {e}")))?;
+            read_bytes(&bytes, text_path, Some(text_path.to_string()))
         });
         match r {
             Ok(r) => r.map_err(|e| e.to_string()),
-            Err(_) => Err(bad("open", format!("{path}: the file could not be read")).to_string()),
+            Err(_) => Err(bad("open", format!("{}: the file could not be read", path.display())).to_string()),
         }
     }
     #[cfg(target_arch = "wasm32")]
@@ -362,6 +366,7 @@ fn run_open(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(opened(s, i, false))
 }
 
+/// `close [index]`: cancel the running command, remove the drawing (default: active), keep the active index valid, and bump the document epoch; an unknown index is an error.
 fn run_close(s: &mut Session, p: &Value) -> Result<Value> {
     let i = p.get("index").and_then(Value::as_u64).map(|i| i as usize).unwrap_or(s.active);
     if i >= s.docs.len() {
@@ -376,13 +381,16 @@ fn run_close(s: &mut Session, p: &Value) -> Result<Value> {
     if s.active >= s.docs.len() {
         s.active = s.docs.len().saturating_sub(1);
     }
+    s.bump_doc_epoch();
     ok()
 }
 
+/// `closeall`: cancel the running command, remove every drawing, reset the active index to 0 and bump the document epoch.
 fn run_closeall(s: &mut Session, _p: &Value) -> Result<Value> {
     s.cancel();
     s.docs.clear();
     s.active = 0;
+    s.bump_doc_epoch();
     ok()
 }
 
@@ -487,6 +495,7 @@ fn drawing_version(s: &Session, path: &str) -> Version {
     if is_dxf(path) { v } else { v.max(Version::R2004) }
 }
 
+/// `document.switch index`: require the index, cancel the running command, activate that drawing and bump the epoch even if it was already active (screenshot identity).
 fn run_switch(s: &mut Session, p: &Value) -> Result<Value> {
     let i = p.get("index").and_then(Value::as_u64).ok_or_else(|| bad("document.switch", "`index` is required"))? as usize;
     if i >= s.docs.len() {
@@ -494,6 +503,11 @@ fn run_switch(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.cancel();
     s.active = i;
+    // Bump even when `i` is already active. This is intentionally conservative: the command
+    // cancels the active command, and a screenshot client can only see observed state, not
+    // whether the switch was a no-op. Rejecting an outstanding capture is safer than returning
+    // an image whose queueing identity the client cannot distinguish from a real switch.
+    s.bump_doc_epoch();
     ok()
 }
 
@@ -504,7 +518,7 @@ fn run_bytes(s: &mut Session, p: &Value) -> Result<Value> {
     let lost = not_saved_as(s.doc()?, version);
     let bytes = write_bytes(s, "document.bytes", &format!("drawing.{fmt}"), &opts)?;
     let mut r = json!({ "data": base64_encode(&bytes), "bytes": bytes.len() });
-    if drops_unknown(&format!("drawing.{fmt}")) {
+    if drops_unknown(format!("drawing.{fmt}")) {
         report_not_saved(s, &mut r, &lost);
     }
     Ok(r)
@@ -552,15 +566,13 @@ pub fn not_saved_message(lost: &std::collections::BTreeMap<String, usize>) -> Op
 
 /// Whether saving to `path` leaves out the entities [`not_saved`] counts: DWG does (the DWG
 /// bridge drops types it doesn't know); DXF writes them back as read.
-pub fn drops_unknown(path: &str) -> bool {
-    // Templates (.dwt) are written as DWG too.
-    std::path::Path::new(path).extension().is_some_and(|e| e.eq_ignore_ascii_case("dwg") || e.eq_ignore_ascii_case("dwt"))
+pub fn drops_unknown(path: impl AsRef<std::path::Path>) -> bool {
+    Format::from_path(path).is_some_and(Format::drops_unknown)
 }
 
 /// Whether `path` is saved as a drawing (DXF, DWG) rather than exported as an image.
-fn is_drawing_file(path: &str) -> bool {
-    let ext = std::path::Path::new(path).extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
-    matches!(ext.as_str(), "dxf" | "dwg" | "dwt" | "")
+fn is_drawing_file(path: impl AsRef<std::path::Path>) -> bool {
+    Format::from_path(path).is_some_and(Format::is_drawing)
 }
 
 /// Say on the command line what the file couldn't keep, and list it in the result's `notSaved`.
@@ -640,20 +652,16 @@ mod tests {
     use serde_json::json;
 
     use crate::Session;
+    use crate::temp_dir::TempDir;
 
     fn active_title(s: &Session) -> String {
         s.state().unwrap().title.clone()
     }
 
-    fn temp_script(name: &str, text: &str) -> String {
-        let path = std::env::temp_dir().join(format!("cadcraft-script-{}-{name}", std::process::id()));
-        std::fs::write(&path, text).unwrap();
-        path.to_string_lossy().into_owned()
-    }
-
     #[test]
     fn script_command_runs_a_scr_file() {
-        let path = temp_script("run.scr", "; a comment\ncircle 50,25 20\nrectang 0,0 100,60\n");
+        let dir = TempDir::new("script");
+        let path = dir.file("run.scr", "; a comment\ncircle 50,25 20\nrectang 0,0 100,60\n");
         let mut s = Session::new();
         let r = s.execute("script", &json!({ "path": path })).unwrap();
         assert_eq!(r["lines"], 3);
@@ -671,8 +679,9 @@ mod tests {
     /// A script that runs itself must be refused, not recurse until the stack dies.
     #[test]
     fn a_script_cannot_start_a_script() {
-        let inner = temp_script("inner.scr", "circle 0,0 1\n");
-        let outer = temp_script("outer.scr", &format!("script {}\ncircle 0,0 2\n", json!({ "path": inner })));
+        let dir = TempDir::new("script");
+        let inner = dir.file("inner.scr", "circle 0,0 1\n");
+        let outer = dir.file("outer.scr", format!("script {}\ncircle 0,0 2\n", json!({ "path": inner })));
         let mut s = Session::new();
         let e = s.execute("script", &json!({ "path": outer })).unwrap_err().to_string();
         assert!(e.contains("already running"), "{e}");
@@ -680,7 +689,8 @@ mod tests {
 
     #[test]
     fn typed_script_prompts_for_the_file_then_runs_or_reports_it() {
-        let good = temp_script("typed.scr", "circle 0,0 1\n");
+        let dir = TempDir::new("script");
+        let good = dir.file("typed.scr", "circle 0,0 1\n");
         let mut s = Session::new();
         s.cmdline("script").unwrap();
         assert!(s.running.is_some(), "SCRIPT asks for the file name");
@@ -721,6 +731,7 @@ mod tests {
 #[cfg(test)]
 mod pr193_tests {
     use super::*;
+    use crate::Session;
 
     #[test]
     fn failed_store_keeps_unsaved_changes_and_delivered_save_clears_them() {

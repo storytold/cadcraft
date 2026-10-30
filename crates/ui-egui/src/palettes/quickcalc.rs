@@ -40,7 +40,7 @@ struct State {
 }
 
 fn id() -> egui::Id {
-    egui::Id::new("cadcraft-quickcalc")
+    egui::Id::unique("cadcraft-quickcalc")
 }
 
 /// A variable's value as typed into an expression: a number, or a point as `[x,y]`.
@@ -208,6 +208,15 @@ pub fn open(app: &mut CadApp) -> Result<Value, String> {
     crate::docking::command(app, false, &json!({ "operation": "float", "panel": panel.id(), "rect": rect }))
 }
 
+/// The unit-conversion value row. The visible "Value" label names the numeric field (its
+/// AccessKit label becomes "Value"), and the placeholder repeats the meaning instead of the
+/// unexplained "1" example.
+fn value_row(ui: &mut egui::Ui, value: &mut String) {
+    let label = ui.label(crate::tl!("Value"));
+    ui.add(egui::TextEdit::singleline(value).hint_text(crate::tl!("Value")).desired_width(120.0)).labelled_by(label.id);
+}
+
+/// Quick Calculator dock body: expression entry with evaluation, variables and unit conversion.
 pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let mut st: State = ui.ctx().data_mut(|d| d.get_temp(id())).unwrap_or_default();
@@ -296,7 +305,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             egui::Grid::new("qc-units-grid").num_columns(2).spacing(vec2(6.0, 4.0)).show(ui, |ui| {
                 ui.label(crate::tl!("Type"));
                 let kind_label = KINDS.get(st.kind).map_or("", |k| k.1);
-                egui::ComboBox::from_id_salt("qc-kind").selected_text(crate::i18n::t(kind_label)).show_ui(ui, |ui| {
+                craft_ui::ComboBox::from_id_salt("qc-kind").selected_text(crate::i18n::t(kind_label)).show_ui(ui, |ui| {
                     for (i, (_, label)) in KINDS.iter().enumerate() {
                         if ui.selectable_label(st.kind == i, crate::i18n::t(label)).clicked() {
                             st.kind = i;
@@ -311,7 +320,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
                     ui.label(label);
                     let sel = if which == 0 { &mut st.from } else { &mut st.to };
                     let shown = list.get(*sel).map(|u| u.1.clone()).unwrap_or_default();
-                    egui::ComboBox::from_id_salt(salt).selected_text(shown).show_ui(ui, |ui| {
+                    craft_ui::ComboBox::from_id_salt(salt).selected_text(shown).show_ui(ui, |ui| {
                         for (i, (_, sym)) in list.iter().enumerate() {
                             if ui.selectable_label(*sel == i, sym).clicked() {
                                 *sel = i;
@@ -320,8 +329,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
                     });
                     ui.end_row();
                 }
-                ui.label(crate::tl!("Value"));
-                ui.add(egui::TextEdit::singleline(&mut st.conv_value).hint_text("1").desired_width(120.0));
+                value_row(ui, &mut st.conv_value);
                 ui.end_row();
                 if ui.button(crate::tl!("Convert")).clicked() {
                     st.convert(app);
@@ -364,4 +372,28 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         });
     });
     ui.ctx().data_mut(|d| d.insert_temp(id(), st));
+}
+
+#[cfg(test)]
+mod tests {
+    use egui::accesskit::Role;
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::{NodeT, Queryable};
+
+    use super::value_row;
+
+    /// The conversion value field is named by its visible label under bundled fonts only, so a
+    /// system face cannot hide a missing glyph and a bare "1" placeholder cannot pass as a name.
+    #[test]
+    fn value_field_is_named_by_its_visible_label() {
+        let mut harness = Harness::builder().with_size(egui::vec2(320.0, 80.0)).build_ui(|ui| {
+            let mut value = String::new();
+            value_row(ui, &mut value);
+        });
+        harness.run();
+        let field = harness.get_by_role_and_label(Role::TextInput, "Value");
+        assert!(field.accesskit_node().labelled_by().next().is_some(), "named by the visible Value label");
+        assert_eq!(field.accesskit_node().placeholder(), Some("Value"));
+        assert!(harness.unnamed_widgets().is_empty(), "unnamed controls: {:?}", harness.unnamed_widgets());
+    }
 }

@@ -8,7 +8,6 @@
 
 use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::Arc;
 
 use cadcraft_geom::Vec2;
 
@@ -109,7 +108,7 @@ fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64
                             for p in contours.iter_mut().flatten() {
                                 *p += Vec2::new(dy * shear, dy);
                             }
-                            out.glyphs.push(contours);
+                            out.push_glyph(contours, None);
                         }
                         let adv = g.advance * k;
                         let (u, o) = flags(g.cluster);
@@ -183,9 +182,9 @@ struct Glyph {
 /// Shape characters `r` of `cs` (one direction, one face) into glyphs in display order.
 fn shape_run(face: &Face, cs: &[char], r: Range<usize>, rtl: bool) -> Vec<Glyph> {
     let run = cs.get(r.clone()).unwrap_or_default();
-    // Shares the face's bytes instead of copying them.
-    let bytes: Arc<dyn AsRef<[u8]> + Send + Sync> = face.bytes.clone();
-    let Some(font) = harfrust::Font::new(bytes, face.index) else { return Vec::new() };
+    // Keep the shared font bytes: shaping a run must not clone the entire font file.
+    let source = harfrust::font::Blob::Shared(face.bytes.clone());
+    let Some(font) = harfrust::Font::new(source, face.index) else { return Vec::new() };
     let shaper = harfrust::ShaperFont::new(&font);
     let mut buf = harfrust::Buffer::new();
     let arabic = run.iter().any(|c| matches!(*c, '\u{0600}'..='\u{08FF}'));
@@ -200,11 +199,10 @@ fn shape_run(face: &Face, cs: &[char], r: Range<usize>, rtl: bool) -> Vec<Glyph>
     }
     buf.set_direction(if rtl { harfrust::Direction::RightToLeft } else { harfrust::Direction::LeftToRight });
     buf.guess_segment_properties();
-    // Without a plan, shaping fails only on an already shaped buffer or an unset direction.
     if harfrust::shape(&shaper, &mut buf, harfrust::ShapeOptions::new()).is_err() {
         return Vec::new();
     }
-    let k = 1000.0 / f64::from(font.units_per_em().max(1));
+    let k = 1000.0 / f64::from(shaper.units_per_em().max(1));
     buf.glyph_infos()
         .iter()
         .zip(buf.glyph_positions())
@@ -221,6 +219,59 @@ fn shape_run(face: &Face, cs: &[char], r: Range<usize>, rtl: bool) -> Vec<Glyph>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A single empty glyph with a positive advance, without relying on installed fonts.
+    fn empty_glyph_face() -> Face {
+        let mut head = vec![0_u8; 54];
+        head[..4].copy_from_slice(&0x0001_0000_u32.to_be_bytes());
+        head[18..20].copy_from_slice(&1000_u16.to_be_bytes());
+        let mut hhea = vec![0_u8; 36];
+        hhea[..4].copy_from_slice(&0x0001_0000_u32.to_be_bytes());
+        hhea[4..6].copy_from_slice(&800_i16.to_be_bytes());
+        hhea[6..8].copy_from_slice(&(-200_i16).to_be_bytes());
+        hhea[34..36].copy_from_slice(&1_u16.to_be_bytes());
+        let tables = [
+            (*b"head", head),
+            (*b"hhea", hhea),
+            (*b"hmtx", vec![1, 244, 0, 0]),      // Advance 500, left side bearing 0.
+            (*b"maxp", vec![0, 0, 80, 0, 0, 1]), // Version 0.5, one glyph.
+        ];
+        let mut bytes = vec![0_u8; 12 + tables.len() * 16];
+        bytes[..4].copy_from_slice(&0x0001_0000_u32.to_be_bytes());
+        bytes[4..6].copy_from_slice(&4_u16.to_be_bytes());
+        bytes[6..8].copy_from_slice(&64_u16.to_be_bytes());
+        bytes[8..10].copy_from_slice(&2_u16.to_be_bytes());
+        for (i, (tag, data)) in tables.into_iter().enumerate() {
+            while !bytes.len().is_multiple_of(4) {
+                bytes.push(0);
+            }
+            let record = 12 + i * 16;
+            let offset = u32::try_from(bytes.len()).unwrap();
+            let len = u32::try_from(data.len()).unwrap();
+            bytes[record..record + 4].copy_from_slice(&tag);
+            bytes[record + 8..record + 12].copy_from_slice(&offset.to_be_bytes());
+            bytes[record + 12..record + 16].copy_from_slice(&len.to_be_bytes());
+            bytes.extend(data);
+        }
+        Face::new(std::sync::Arc::new(bytes), 0).expect("synthetic font parses")
+    }
+
+    /// Empty complex glyphs retain spacing and underlines without adding geometry or text slots.
+    #[test]
+    fn empty_complex_glyph_keeps_advance_without_geometry() {
+        let face = empty_glyph_face();
+        let shaped = shape(Some(&face), " ", 1.0, 1.0, 0.0).expect("shapes empty glyph");
+        assert!(shaped.width > 0.0, "the font's advance is retained");
+        assert!(shaped.is_empty());
+        assert!(shaped.glyphs.is_empty());
+        assert!(shaped.text.is_empty());
+
+        let underlined = shape(Some(&face), "%%u ", 1.0, 1.0, 0.0).expect("shapes decorated empty glyph");
+        assert_eq!(underlined.width, shaped.width);
+        assert!(underlined.glyphs.is_empty());
+        assert!(underlined.text.is_empty());
+        assert!(!underlined.strokes.is_empty(), "decoration spans survive an empty outline");
+    }
 
     #[test]
     fn stroke_font_rtl_lines_keep_latin_and_digits_in_the_stroke_font() {
