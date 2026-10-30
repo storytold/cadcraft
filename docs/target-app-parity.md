@@ -1,6 +1,6 @@
 # Target-app parity: CADCraft vs AutoCAD 2027
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-24 · **Change:** minor (COMPAREEXPORT; numbers not re-measured) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-30 · **Change:** minor (Platforms row: the web build has DWG; numbers not re-measured) · **Target:** Autodesk AutoCAD 2027
 
 The authoritative assessment of how close CADCraft is to AutoCAD, and how much Opus 5.5 work
 remains. [ROADMAP.md](../ROADMAP.md) summarises it, [gaps.md](gaps.md) lists every shortfall,
@@ -173,7 +173,7 @@ presence: an option that prints "not available yet" doesn't count.
 | Performance | 5% | 60% | 20–40 | internal numbers only (200k entities fluent); 1M entities and large DWG loads untested; a 10 MB DWG took ~2 min to fail (#57) | [hardware-parity](hardware-parity.md#performance-on-hardware-internal-numbers-only) |
 | Ecosystem and automation (AutoLISP/Visual LISP, .NET/ObjectARX, CUI, APPLOAD, Express Tools, App Store) | 5% | 10% | 120–200 | estimated; MCP, CLI and the control channel are ahead of AutoCAD, but no LISP, CUI or plug-ins | [gaps](gaps.md#ecosystem-and-automation) |
 | Hardware | 3% | 45% | 15–25 | estimated | [hardware-parity](hardware-parity.md) |
-| Platforms | 3% | 75% | 15–25 | macOS, Windows (x64/x86/arm64), Linux, FreeBSD, web: more than AutoCAD; but the web build can't open or save files reliably (#55, #133, #134) and has no DWG, and Windows/Linux get little runtime testing | [gaps](gaps.md#platforms) |
+| Platforms | 3% | 75% | 15–25 | macOS, Windows (x64/x86/arm64), Linux, FreeBSD, web: more than AutoCAD; but the web build can't open or save files reliably (#55, #133, #134), and Windows/Linux get little runtime testing | [gaps](gaps.md#platforms) |
 | Localization | 3% | 5% | 60–100 | measured: string catalog with Ukrainian (936 rows, #36); none of AutoCAD for Mac's 7 other languages | [localization-parity](localization-parity.md) |
 | AI features (Autodesk Assistant, Smart Blocks, Markup Assist) | 1% | 20% | 40–80 | none of AutoCAD's in-app AI; agent control over MCP is a different strength | [gaps](gaps.md#ai-features) |
 | **Ready for real work** | 100% | **≈ 38%** | **≈ 1,300–2,100** | | |
@@ -223,6 +223,7 @@ DWG/DXF corpus (files from people who own them); black-box checks in AutoCAD of 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-30 | minor | Platforms row: the web build opens and saves DWG (#898); percentages not re-measured |
 | 2026-10-24 | minor | Inquiry and utilities row: COMPAREEXPORT exports a comparison to a new drawing; parity percentages and hours not re-measured |
 | 2026-10-22 | minor | Draw row: RECTANG gained a centre construction mode (`Center` keyword, `center: true`) beside its corner mode (#1127); parity percentages and hours not re-measured |
 | 2026-10-12 | minor | Hatch row evidence: Hatch and Gradient / Hatch Edit dialogs; percentages and hours not re-measured |

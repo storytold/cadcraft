@@ -514,7 +514,11 @@ impl CadApp {
         // A LISP file (dropped on the window): loaded as APPLOAD loads it.
         if is_lisp_file(path) {
             match cadcraft_engine::lisp::builtins::read_text_file(path) {
-                Some(text) => self.load_lisp(&path.to_string_lossy(), &text),
+                Some(text) => {
+                    // A file that won't load is reported on the command line by `load_lisp`; a file
+                    // dropped on the window has no caller to return the error to.
+                    let _ = self.load_lisp(&path.to_string_lossy(), &text);
+                }
                 None => self.open_failed(format!("APPLOAD: can't read {}", path.display())),
             }
             return;
@@ -549,10 +553,17 @@ impl CadApp {
     }
 
     /// Load a LISP file: its routine runs and may wait for the user (APPLOAD typed or from the
-    /// menu runs this way too).
-    fn load_lisp(&mut self, name: &str, text: &str) {
-        if let Err(e) = self.session.lisp_load(name, text, false) {
-            self.session.echo(e.to_string());
+    /// menu runs this way too). An error that stops the file from loading at all (source the
+    /// reader rejects, another routine still running) is shown on the command line and returned.
+    /// What the routine does once it runs is shown on the command line only.
+    fn load_lisp(&mut self, name: &str, text: &str) -> Result<(), String> {
+        match self.session.lisp_load(name, text, false) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                let e = e.to_string();
+                self.session.echo(e.clone());
+                Err(e)
+            }
         }
     }
 
@@ -574,17 +585,23 @@ impl CadApp {
 
     /// Open a drawing from its contents where there is no path to open (on the web: the file
     /// picker, a dropped file). Runs OPEN with `{data, name}` as [`Self::open_path`] runs it with
-    /// `{path}`; failures show on the command line and in the status bar.
-    pub fn open_bytes(&mut self, name: &str, bytes: &[u8]) {
+    /// `{path}`; failures show on the command line and in the status bar, and are returned too
+    /// (the web build tells a page that sent the drawing). A LISP file is loaded as APPLOAD loads
+    /// it: source that can't be loaded is returned too, and what its routine does once it runs is
+    /// shown on the command line only.
+    pub fn open_bytes(&mut self, name: &str, bytes: &[u8]) -> Result<(), String> {
         if let Some(e) = Self::open_size_error(name, bytes.len() as u64) {
-            return self.open_failed(e);
+            self.open_failed(e.clone());
+            return Err(e);
         }
         if is_lisp_file(name) {
             return self.load_lisp(name, &String::from_utf8_lossy(bytes));
         }
         let data = cadcraft_engine::cmd::file::base64_encode(bytes);
         let r = self.run("open", json!({ "data": data, "name": name }));
+        let outcome = r.as_ref().map(|_| ()).map_err(Clone::clone);
         self.opened(r);
+        outcome
     }
 
     /// Report a file that could not be opened before OPEN ran (unreadable, too large) as a failed

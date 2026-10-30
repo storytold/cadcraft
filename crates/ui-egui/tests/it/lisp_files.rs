@@ -7,7 +7,7 @@ use cadcraft_ui_egui::{CadApp, Services};
 #[test]
 fn a_dropped_lisp_file_loads_and_defines_its_commands() {
     let mut app = CadApp::new(Session::new(), Services::default());
-    app.open_bytes("Hello.LSP", b"(defun c:hello () (princ \"hi from lisp\") (princ))");
+    assert_eq!(app.open_bytes("Hello.LSP", b"(defun c:hello () (princ \"hi from lisp\") (princ))"), Ok(()));
     assert!(app.session.log.iter().any(|l| l == "Hello.LSP successfully loaded."), "{:?}", app.session.log);
     // Still the same drawing: a LISP file isn't opened as one.
     assert_eq!(app.session.docs.len(), 1);
@@ -15,10 +15,21 @@ fn a_dropped_lisp_file_loads_and_defines_its_commands() {
     assert_eq!(app.session.log.last().map(String::as_str), Some("hi from lisp"));
 }
 
+/// A `.lsp` file the reader rejects (here an unclosed form) doesn't load: the error is returned,
+/// so a page that sent the file is told, and shown on the command line.
+#[test]
+fn a_lisp_file_the_reader_rejects_returns_the_error() {
+    let mut app = CadApp::new(Session::new(), Services::default());
+    let r = app.open_bytes("Broken.lsp", b"(defun c:broken ()\n  (princ \"x\")\n");
+    assert!(r.as_ref().is_err_and(|e| e.contains("malformed list")), "{r:?}");
+    assert!(app.session.log.iter().any(|l| l.contains("malformed list")), "{:?}", app.session.log);
+    assert!(!app.session.log.iter().any(|l| l.contains("successfully loaded")), "{:?}", app.session.log);
+}
+
 #[test]
 fn a_long_routine_runs_across_frames() {
     let mut app = CadApp::new(Session::new(), Services::default());
-    app.open_bytes("loop.lsp", b"(setq i 0) (while (< i 2000000) (setq i (1+ i))) (princ \"done\")");
+    assert_eq!(app.open_bytes("loop.lsp", b"(setq i 0) (while (< i 2000000) (setq i (1+ i))) (princ \"done\")"), Ok(()));
     assert!(app.session.lisp_busy(), "a slice per frame");
     let ctx = egui::Context::default();
     let mut frames = 0;
