@@ -99,3 +99,6 @@ sync_github_name = false
 
 [people.dylanmtaylor]
 sync_github_name = true
+
+[people.withshalom]
+sync_github_name = true
