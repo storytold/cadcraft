@@ -88,6 +88,8 @@ fn spline_leader_with_block_content_and_attributes() {
         style: "Standard".into(),
         halign: HAlign::default(),
         valign: VAlign::default(),
+        backwards: false,
+        upside_down: false,
     };
     blk.entities.push(Entity::new(
         Handle(0x201),

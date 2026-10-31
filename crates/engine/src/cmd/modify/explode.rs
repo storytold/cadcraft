@@ -46,6 +46,8 @@ fn explode_mtext(e: &Entity, m: &cadcraft_doc::MText) -> Vec<Entity> {
                     style: m.style.clone(),
                     halign: Default::default(),
                     valign: Default::default(),
+                    backwards: false,
+                    upside_down: false,
                 }),
             }
         })

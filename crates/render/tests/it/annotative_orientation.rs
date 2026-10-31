@@ -35,6 +35,8 @@ fn bounds(rotation: f64, match_orientation: Option<&str>) -> Bounds2 {
         style: "Standard".into(),
         halign: Default::default(),
         valign: Default::default(),
+        backwards: false,
+        upside_down: false,
     };
     d.add(&Space::Model, common, EntityKind::Text(text)).unwrap();
     let l = build(&d, &Space::Model, &Options::default());

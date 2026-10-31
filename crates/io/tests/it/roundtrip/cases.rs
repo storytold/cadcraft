@@ -38,6 +38,8 @@ pub(super) fn text() -> Text {
         style: "Standard".into(),
         halign: HAlign::Left,
         valign: VAlign::Baseline,
+        backwards: false,
+        upside_down: false,
     }
 }
 
@@ -224,6 +226,18 @@ pub(super) fn text_widths() -> Vec<Case> {
 pub(super) fn text_obliques() -> Vec<Case> {
     [-0.3, 0.0, 0.4]
         .map(|oblique| entity_case(&format!("text/oblique={oblique}"), Common::default(), EntityKind::Text(Text { oblique, ..text() })))
+        .into()
+}
+
+pub(super) fn text_generation() -> Vec<Case> {
+    [(true, false), (false, true), (true, true)]
+        .map(|(backwards, upside_down)| {
+            entity_case(
+                &format!("text/backwards={backwards}/upside_down={upside_down}"),
+                Common::default(),
+                EntityKind::Text(Text { backwards, upside_down, ..text() }),
+            )
+        })
         .into()
 }
 
