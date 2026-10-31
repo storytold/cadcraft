@@ -27,8 +27,8 @@ use cursor::{draw_crosshair, draw_snap_marker, draw_tracking, effective_point, o
 use cycle::{CycleList, cycle_badge, cycle_click, cycle_list, over_canvas_menu, shift_space_cycle};
 pub(crate) use draw::{Look, draw_highlight, draw_list};
 use draw::{draw_drag_gpu, draw_highlight_gpu, draw_list_gpu, list_mesh_key, selection_area_fill};
-use dyn_boxes::dynamic_input;
-pub(crate) use dyn_boxes::length_units;
+pub(crate) use dyn_boxes::{command_tip_shown, length_units};
+use dyn_boxes::{command_tip_text, dynamic_input, typing_anchor};
 use grid::draw_grid;
 use grips::{click_grip, grip_at, grip_menu, grip_options, grip_rect};
 use list::{PrimIndex, ensure_list, rebuilt_preview};
@@ -119,6 +119,10 @@ pub struct CanvasState {
     pub snap: Option<SnapHit>,
     /// Effective cursor point after snaps/ortho/polar.
     pub cursor: Option<Vec2>,
+    /// Where the crosshair stays while a command name is typed beside it (Dynamic Input).
+    pub typing_at: Option<Pos2>,
+    /// The AutoComplete rows beside the cursor as drawn last frame (screen, command id), for clicks.
+    pub tip_rows: Vec<(Rect, String)>,
     /// The polar or object snap tracking path(s) the cursor is on.
     pub track: Option<snap::tracking::Track>,
     pan_last: Option<Pos2>,
@@ -496,11 +500,20 @@ fn paint_pointer_overlay(
     if app.ui.show_command_line {
         crate::cmdline::show(app, ui, full);
     }
+    // Typing a command name beside the cursor: the crosshair and the text stay where typing
+    // started and the pointer moves on its own, until the command starts or is cancelled.
+    let typing_at = typing_anchor(app, hover_pos.filter(|_| inside));
     // Crosshair cursor.
     if inside && !on_menu {
         // Hide the OS cursor under the drawn crosshair, unless assistive tech needs it (#39).
-        ui.ctx().set_cursor_icon(if app.ui.system_cursor { egui::CursorIcon::Crosshair } else { egui::CursorIcon::None });
-        if let Some(hp) = hover_pos {
+        ui.ctx().set_cursor_icon(if typing_at.is_some() {
+            egui::CursorIcon::Default
+        } else if app.ui.system_cursor {
+            egui::CursorIcon::Crosshair
+        } else {
+            egui::CursorIcon::None
+        });
+        if let Some(hp) = typing_at.or(hover_pos) {
             // Use the painted sheet even in MSPACE, where the editing transform follows a
             // model viewport. The whole cursor takes one colour from its centre.
             let ink = paper_rect.map_or(t.crosshair, |paper| crate::theme::crosshair_color(if paper.contains(hp) { t.paper } else { surround }));
@@ -808,6 +821,21 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             }
             None => app.cmd.options = None,
         }
+    }
+    // A click on an AutoComplete row beside the cursor starts that command; rows left from a
+    // frame before a command started (from a dialog, say) no longer count, and a dialog, palette
+    // or selection cycling row over the list keeps its click.
+    if pressed_primary
+        && !picked
+        && inside
+        && !on_menu
+        && command_tip_text(app).is_some()
+        && let Some(id) = hover_pos.and_then(|h| app.canvas.tip_rows.iter().find(|(r, _)| r.contains(h)).map(|(_, id)| id.clone()))
+    {
+        app.cmd.buffer.clear();
+        app.canvas.tip_rows.clear();
+        app.start(&id.to_ascii_lowercase());
+        picked = true;
     }
     // A double-click with no command running (on a layout viewport, say) leaves no selection
     // window behind; while a command asks for points, every click still counts (#815).

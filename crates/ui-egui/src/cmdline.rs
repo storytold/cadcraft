@@ -119,7 +119,7 @@ pub struct Suggestion {
 }
 
 /// Matching command names/aliases for AutoComplete.
-fn suggestions(prefix: &str) -> Vec<Suggestion> {
+pub(crate) fn suggestions(prefix: &str) -> Vec<Suggestion> {
     if prefix.is_empty() || prefix.contains(' ') {
         return Vec::new();
     }
@@ -454,6 +454,8 @@ fn visible_lines(app: &CadApp, canvas: Rect, bar: Rect) -> usize {
 }
 
 /// Draw the floating command bar and its history over the bottom-centre of `canvas`; the bar is 48 % of the canvas width, clamped to 360–760 points and never wider than the canvas minus 8 points.
+/// It holds the prompt with its keywords, the typed text with its caret and the AutoComplete list;
+/// the typed text and its list stay off the bar while Dynamic Input shows them beside the cursor (#2127).
 pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
     let t = Tokens::get();
     let w = (canvas.width() * 0.48).clamp(360.0, 760.0).min((canvas.width() - 8.0).max(0.0));
@@ -551,7 +553,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
             }
         }
     }
-    let g = p.layout_no_wrap(app.cmd.buffer.clone(), font.clone(), t.text);
+    // Typed beside the cursor (Dynamic Input), the command line stays empty.
+    let at_cursor = crate::canvas::command_tip_shown(app);
+    let g = p.layout_no_wrap(if at_cursor { String::new() } else { app.cmd.buffer.clone() }, font.clone(), t.text);
     let gw = g.size().x;
     p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
     let mut caret_x = x + gw;
@@ -565,7 +569,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
     }
     // Caret.
     let blink = (ui.input(|i| i.time) * 2.0).floor() as i64 % 2 == 0;
-    if blink {
+    if blink && !at_cursor {
         p.line_segment([pos2(caret_x + 1.0, bar.top() + 5.0), pos2(caret_x + 1.0, bar.bottom() - 5.0)], Stroke::new(1.0, t.text));
     }
     // Where the IME's composition window follows: the whole command line and the caret in it.
@@ -579,7 +583,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
         false,
     );
     // AutoComplete list.
-    if !app.session.prompting() {
+    if !app.session.prompting() && !at_cursor {
         let sug = suggestions(&app.cmd.buffer);
         if !sug.is_empty() {
             let rh = 20.0;
@@ -628,6 +632,8 @@ struct Zones {
     all: Rect,
 }
 
+/// Where the command line's parts sit around the bar `bar`; the AutoComplete list counts in `all`
+/// only while it shows on the command line, not beside the cursor (#2127).
 fn zones(app: &CadApp, canvas: Rect, bar: Rect) -> Zones {
     let n = if app.cmd.expanded { 0 } else { visible_lines(app, canvas, bar).min(app.session.log.len()) };
     let lines =
@@ -641,7 +647,7 @@ fn zones(app: &CadApp, canvas: Rect, bar: Rect) -> Zones {
     let top = window.or(lines).map_or(bar.top(), |r| r.top());
     let grip = Rect::from_min_max(pos2(bar.left(), top - 3.0), pos2(bar.right(), top + 3.0));
     let mut all = bar.union(grip);
-    if !app.session.prompting() {
+    if !app.session.prompting() && !crate::canvas::command_tip_shown(app) {
         let k = suggestions(&app.cmd.buffer).len();
         if k > 0 {
             let above = if n == 0 { 0.0 } else { LINE_H * n as f32 + 6.0 };

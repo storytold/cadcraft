@@ -11,6 +11,75 @@ fn hs(v: &[u64]) -> Vec<Handle> {
     v.iter().map(|&h| Handle(h)).collect()
 }
 
+/// A click on an AutoComplete row beside the cursor starts that command and places no point
+/// (#2127).
+#[test]
+fn a_click_on_a_suggestion_beside_the_cursor_starts_it() {
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    let ctx = egui::Context::default();
+    let frame = |app: &mut CadApp, events: Vec<egui::Event>| {
+        let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))), events, ..Default::default() };
+        let mut out = ctx.run_ui(raw, |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        });
+        out.textures_delta.clear();
+    };
+    frame(&mut app, Vec::new());
+    let center = app.canvas.rect.map_or(pos2(700.0, 450.0), |r| r.center());
+    frame(&mut app, vec![egui::Event::PointerMoved(center)]);
+    frame(&mut app, vec![egui::Event::Text("l".into())]);
+    frame(&mut app, Vec::new());
+    let (row, id) = app.canvas.tip_rows.first().cloned().expect("the list is drawn beside the cursor");
+    assert_eq!(id, "LINE");
+    // The pointer moves to the row; the crosshair stays where typing started.
+    let at = row.center();
+    frame(&mut app, vec![egui::Event::PointerMoved(at)]);
+    assert_eq!(app.canvas.typing_at, Some(center));
+    let click = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+    frame(&mut app, vec![click(true)]);
+    frame(&mut app, vec![click(false)]);
+    assert!(app.session.running.is_some(), "LINE started");
+    assert!(app.cmd.buffer.is_empty());
+    assert!(app.session.doc().unwrap().model.iter().next().is_none(), "the click placed no point");
+}
+
+/// With no command running, Dynamic Input shows the typed command name and its AutoComplete
+/// matches beside the cursor; nothing when DYNMODE or DYNPROMPT is off (#2127).
+#[test]
+fn typed_command_shows_beside_the_cursor() {
+    use super::dyn_boxes::fit_tip;
+    let mut app = CadApp::new(cadcraft_engine::Session::empty(), crate::Services::default());
+    assert!(command_tip_text(&app).is_none());
+    app.cmd.buffer = "l".into();
+    let (typed, sug) = command_tip_text(&app).unwrap();
+    assert_eq!(typed, "l");
+    assert_eq!(sug[0].id, "LINE");
+    // Only over the drawing does it move off the command line.
+    assert!(!command_tip_shown(&app));
+    app.canvas.cursor = Some(Vec2::new(0.0, 0.0));
+    assert!(command_tip_shown(&app));
+    // The crosshair stays where typing started while the pointer moves.
+    assert_eq!(typing_anchor(&mut app, Some(pos2(10.0, 20.0))), Some(pos2(10.0, 20.0)));
+    assert_eq!(typing_anchor(&mut app, Some(pos2(300.0, 200.0))), Some(pos2(10.0, 20.0)));
+    app.cmd.buffer.clear();
+    assert_eq!(typing_anchor(&mut app, Some(pos2(300.0, 200.0))), None);
+    app.cmd.buffer = "l".into();
+    // The tip and its list stay inside the drawing near its edges.
+    let area = Rect::from_min_max(pos2(0.0, 0.0), pos2(800.0, 600.0));
+    let size = vec2(120.0, 100.0);
+    assert_eq!(fit_tip(pos2(400.0, 300.0), size, 20.0, area), pos2(418.0, 266.0));
+    assert_eq!(fit_tip(pos2(780.0, 300.0), size, 20.0, area), pos2(642.0, 266.0));
+    assert_eq!(fit_tip(pos2(400.0, 5.0), size, 20.0, area), pos2(418.0, 0.0));
+    assert_eq!(fit_tip(pos2(400.0, 590.0), size, 20.0, area), pos2(418.0, 500.0));
+    // DYNPROMPT off: the typed text stays on the command line.
+    app.session.settings.dynprompt = false;
+    assert!(command_tip_text(&app).is_none());
+    app.session.settings.dynprompt = true;
+    app.session.settings.dynmode = false;
+    assert!(command_tip_text(&app).is_none());
+}
+
 /// A dragged object keeps its transparency in the GPU preview when TRANSPARENCYDISPLAY is
 /// on, and is opaque when it is off.
 #[test]
