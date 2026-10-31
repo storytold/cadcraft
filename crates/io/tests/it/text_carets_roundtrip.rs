@@ -55,21 +55,21 @@ fn drawing() -> Drawing {
         modes: Default::default(),
     };
     d.add(&Space::Model, Common::default(), EntityKind::AttDef(attdef)).unwrap();
-    let dm = Dimension { style: "A^ B".into(), ..dimension("<> x10^3") };
-    d.add(&Space::Model, Common::default(), EntityKind::Dimension(dm)).unwrap();
+    d.add(&Space::Model, Common::default(), EntityKind::Dimension(dimension("<> x10^3"))).unwrap();
     d
 }
 
-fn strings(d: &Drawing) -> Vec<String> {
-    d.model
-        .iter()
-        .flat_map(|e| match &e.kind {
-            EntityKind::Text(t) => vec![t.value.clone()],
-            EntityKind::AttDef(a) => vec![a.text.value.clone(), a.prompt.clone()],
-            EntityKind::Dimension(dm) => vec![dm.text.clone()],
-            _ => Vec::new(),
-        })
-        .collect()
+fn strings(k: &EntityKind) -> Vec<String> {
+    match k {
+        EntityKind::Text(t) => vec![t.value.clone()],
+        EntityKind::AttDef(a) => vec![a.text.value.clone(), a.prompt.clone()],
+        EntityKind::Dimension(dm) => vec![dm.text.clone()],
+        _ => Vec::new(),
+    }
+}
+
+fn all_strings(d: &Drawing) -> Vec<String> {
+    d.model.iter().flat_map(|e| strings(&e.kind)).collect()
 }
 
 #[test]
@@ -80,20 +80,19 @@ fn carets_are_written_escaped_and_read_back() {
         assert!(dxf.contains(escaped), "{escaped}");
     }
     let back = read_dxf(dxf.as_bytes()).unwrap();
-    assert_eq!(strings(&back), ["10^2 m, A^JB", "1^3", "Area in m^2", "<> x10^3"]);
+    assert_eq!(all_strings(&back), ["10^2 m, A^JB", "1^3", "Area in m^2", "<> x10^3"]);
     // Older files have bare carets: kept as they are.
     let old = read_dxf(dxf.replace("10^ 2 m", "10^2 m").as_bytes()).unwrap();
-    assert_eq!(strings(&old)[0], "10^2 m, A^JB");
+    assert_eq!(all_strings(&old)[0], "10^2 m, A^JB");
 }
 
 #[test]
-fn entget_shows_plain_carets() {
+fn entmod_of_entget_keeps_the_strings() {
+    // entget gives the groups as the file has them (as for MTEXT), and entmod reads them back.
     let d = drawing();
-    let groups = |i: usize| cadcraft_io::entity_groups(&d, d.model.iter().nth(i).unwrap()).1;
-    let has = |g: &[cadcraft_dxf::Tag], code: i32, value: &str| g.iter().any(|t| t.code == code && t.value.as_str() == value);
-    assert!(has(&groups(0), 1, "10^2 m, A^JB"));
-    assert!(has(&groups(1), 3, "Area in m^2"));
-    // A DIMENSION's group 3 is its style name, written as it is.
-    let dim = groups(2);
-    assert!(has(&dim, 1, "<> x10^3") && has(&dim, 3, "A^ B"), "{dim:?}");
+    for e in d.model.iter() {
+        let (kind, groups) = cadcraft_io::entity_groups(&d, e);
+        let (_, back) = cadcraft_io::entity_from_groups(&kind, &groups).unwrap();
+        assert_eq!(strings(&back), strings(&e.kind), "{kind}");
+    }
 }
