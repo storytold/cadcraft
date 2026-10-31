@@ -27,6 +27,7 @@ fn viewport(id: u32) -> EntityKind {
         layer_colors: vec![],
         clip: None,
         on: true,
+        twist: 0.0,
     })
 }
 
@@ -157,5 +158,69 @@ fn a_paper_viewport_behind_a_model_viewport_stays_id_1_through_dwg() {
             _ => None,
         };
         assert_eq!((id(model), id(sheet)), (Some(2), Some(1)), "layout {name}");
+    }
+}
+
+/// A layout viewport's view twist (group 51, #1316) is read and written, so DXF and DWG keep it;
+/// a hostile angle reads as no twist and never panics.
+#[test]
+fn viewport_twist_survives_dxf_and_dwg() {
+    let mut d = Drawing::new_metric();
+    let name = d.layouts[0].name.clone();
+    let space = Space::Paper(name.clone());
+    let twist = 30f64.to_radians();
+    let EntityKind::Viewport(mut vp) = viewport(2) else { unreachable!() };
+    vp.twist = twist;
+    let h = d.add(&space, Common::default(), EntityKind::Viewport(vp)).unwrap();
+    let twist_of = |d: &Drawing| {
+        let l = d.layouts.iter().find(|l| l.name == name).unwrap();
+        l.entities
+            .iter()
+            .find_map(|e| {
+                if let EntityKind::Viewport(v) = &e.kind
+                    && v.id == 2
+                {
+                    Some(v.twist)
+                } else {
+                    None
+                }
+            })
+            .unwrap()
+    };
+
+    let dxf = cadcraft_io::write(&d, "x.dxf").unwrap();
+    let text = String::from_utf8_lossy(&dxf).to_string();
+    let rec = records(&text, "VIEWPORT").into_iter().find(|r| group(r, "5") == Some(h.hex().as_str())).unwrap();
+    assert_eq!(group(&rec, "51").and_then(|v| v.parse::<f64>().ok()).map(f64::round), Some(30.0), "{rec:?}");
+    assert!((twist_of(&cadcraft_io::read(&dxf, "x.dxf").unwrap()) - twist).abs() < 1e-9);
+    assert!((twist_of(&through_dwg(&d)) - twist).abs() < 1e-9);
+
+    // An untwisted viewport writes no group 51; a hostile twist (from JSON or MCP) writes a finite
+    // angle within one turn, or none.
+    for (value, want) in [(0.0, None), (f64::NAN, None), (f64::INFINITY, None), (1e300, Some(()))] {
+        let mut d = Drawing::new_metric();
+        let EntityKind::Viewport(mut vp) = viewport(2) else { unreachable!() };
+        vp.twist = value;
+        let h = d.add(&space, Common::default(), EntityKind::Viewport(vp)).unwrap();
+        let text = String::from_utf8_lossy(&cadcraft_io::write(&d, "x.dxf").unwrap()).to_string();
+        let rec = records(&text, "VIEWPORT").into_iter().find(|r| group(r, "5") == Some(h.hex().as_str())).unwrap();
+        let written = group(&rec, "51").map(|v| v.parse::<f64>().unwrap());
+        assert_eq!(written.map(|_| ()), want, "{value}: {rec:?}");
+        assert!(written.is_none_or(|a| a.is_finite() && (0.0..360.0).contains(&a)), "{value}: {written:?}");
+    }
+
+    // Hostile angles: not a number reads as 0, a huge one is brought into one turn.
+    for (value, want) in
+        [("nan", Some(0.0)), ("1e400", Some(0.0)), ("-1e-20", Some(0.0)), ("-330", Some(30f64.to_radians())), ("7200000000000000000030", None)]
+    {
+        let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+        let at = lines.windows(2).position(|w| w[0].trim() == "51" && Some(w[1].trim()) == group(&rec, "51")).unwrap();
+        lines[at + 1] = value.to_string();
+        let bad = lines.join("\n");
+        let back = twist_of(&cadcraft_io::read(bad.as_bytes(), "x.dxf").unwrap());
+        assert!(back.is_finite() && (0.0..std::f64::consts::TAU).contains(&back), "{value}: {back}");
+        if let Some(w) = want {
+            assert!((back - w).abs() < 1e-9, "{value}: {back}");
+        }
     }
 }
