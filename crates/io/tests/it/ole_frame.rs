@@ -1,15 +1,40 @@
-//! An OLE2FRAME is kept as an unknown entity; a DWG save carries it with its data (#2422).
+//! An OLE2FRAME is kept as an unknown entity; a DWG save carries it with its data and frame
+//! position (#2422). A DWG's OLE2FRAME object has no corner fields: the position travels in the
+//! start of the OLE data (a 2-byte marker, then the frame's four corners as three little-endian
+//! doubles each: upper left, upper right, lower right, lower left), which is how the DXF's
+//! groups 10 and 11 come back. That layout is read from the acadrust dependency's decoder.
 
 use cadcraft_doc::EntityKind;
 use cadcraft_io::{SaveOptions, Version, read, read_dxf, write_with};
 
+const UL: (f64, f64) = (30.14, -18.99);
+const LR: (f64, f64) = (35.27, -22.39);
+
+/// The OLE data: the envelope with the frame's corners.
+fn blob() -> Vec<u8> {
+    let mut b = vec![1u8, 0];
+    for (x, y) in [UL, (LR.0, UL.1), LR, (UL.0, LR.1)] {
+        for v in [x, y, 0.0] {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    b
+}
+
 /// A 2000 DXF with one OLE2FRAME: corners, the binary data and the end marker (DXF Reference).
 fn dxf() -> String {
-    String::from(
+    let data = blob();
+    let hex: String = data.iter().map(|b| format!("{b:02X}")).collect();
+    format!(
         "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1015\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n\
          0\nOLE2FRAME\n5\n2B\n100\nAcDbEntity\n8\n0\n100\nAcDbOle2Frame\n70\n2\n3\nOLE Object\n\
-         10\n30.14\n20\n-18.99\n30\n0\n11\n35.27\n21\n-22.39\n31\n0\n71\n2\n72\n0\n90\n8\n310\n0102030405060708\n1\nOLE\n\
+         10\n{}\n20\n{}\n30\n0\n11\n{}\n21\n{}\n31\n0\n71\n2\n72\n0\n90\n{}\n310\n{hex}\n1\nOLE\n\
          0\nENDSEC\n0\nEOF\n",
+        UL.0,
+        UL.1,
+        LR.0,
+        LR.1,
+        data.len()
     )
 }
 
@@ -21,16 +46,17 @@ fn ole(d: &cadcraft_doc::Drawing) -> Option<cadcraft_doc::Unknown> {
 }
 
 #[test]
-fn a_dwg_keeps_an_ole_frame_with_its_data() {
+fn a_dwg_keeps_an_ole_frame_with_its_data_and_position() {
     let d = read_dxf(dxf().as_bytes()).unwrap();
     assert!(ole(&d).is_some());
+    let want: String = blob().iter().map(|b| format!("{b:02X}")).collect();
     for v in [Version::R2000, Version::R2010, Version::R2018] {
         let dwg = write_with(&d, "x.dwg", &SaveOptions { version: Some(v), binary: false }).unwrap();
         let back = read(&dwg, "x.dwg").unwrap();
         let u = ole(&back).unwrap_or_else(|| panic!("{v:?}: the OLE2FRAME is gone"));
         let data: String = u.tags.iter().filter(|t| t.code == 310).map(|t| t.value.to_ascii_uppercase()).collect();
-        assert_eq!(data, "0102030405060708", "{v:?}: data");
-        // Only the data is compared: with this stand-in blob the DWG round trip returns default
-        // corners (1,1)/(0,0), which a real object might not do; not verified without a real file.
+        let corner = |code: i32| u.tags.iter().find(|t| t.code == code).and_then(|t| t.value.trim().parse::<f64>().ok());
+        assert_eq!(data, want, "{v:?}: data");
+        assert_eq!((corner(10), corner(20), corner(11), corner(21)), (Some(UL.0), Some(UL.1), Some(LR.0), Some(LR.1)), "{v:?}: frame corners");
     }
 }
