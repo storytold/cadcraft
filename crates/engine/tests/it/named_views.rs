@@ -1,5 +1,5 @@
 //! Named views (#463): VIEW / -VIEW Save, Window, Restore, Delete, ? and the layer snapshot
-//! setting; Zoom Realtime and Dynamic; ZOOMFACTOR. (The DXF round trip of views is tested in
+//! setting; Zoom Realtime and Dynamic; realtime PAN and -PAN; ZOOMFACTOR. (The DXF round trip of views is tested in
 //! `cadcraft-io`'s `view_tables_roundtrip`.)
 
 use cadcraft_engine::doc::Space;
@@ -139,6 +139,41 @@ fn zoom_realtime_drags_and_enter_ends() {
     // The JSON form zooms by a factor about the centre.
     s.execute("zoom.realtime", &json!({ "factor": 4 })).unwrap();
     assert_eq!(view(&s), View { center: Vec2::ZERO, height: 25.0 });
+}
+
+#[test]
+fn pan_realtime_drags_and_enter_ends() {
+    for start in ["pan", "p"] {
+        let mut s = session();
+        set_view(&mut s, 0.0, 0.0, 100.0);
+        s.state_mut().unwrap().view_history.clear();
+        typed(&mut s, &[start]);
+        assert!(s.realtime_pan_active(), "{}", s.prompt_text());
+        // 800 px show 100 units: right 80 px and up 40 px move the drawing with the cursor.
+        s.realtime_pan(80.0, -40.0).unwrap();
+        assert!(close(view(&s).center.x, -10.0) && close(view(&s).center.y, -5.0), "{:?}", view(&s));
+        s.realtime_pan(f64::NAN, 3.0).unwrap();
+        assert!(close(view(&s).center.x, -10.0) && close(view(&s).center.y, -5.0), "{:?}", view(&s));
+        typed(&mut s, &[""]);
+        assert!(s.running.is_none() && !s.realtime_pan_active());
+        // Outside realtime PAN a drag does nothing; Zoom Previous returns to the view before it.
+        s.realtime_pan(80.0, -40.0).unwrap();
+        assert!(close(view(&s).center.x, -10.0) && close(view(&s).center.y, -5.0));
+        s.execute("zoom.previous", &json!({})).unwrap();
+        assert_eq!(view(&s), View { center: Vec2::ZERO, height: 100.0 });
+    }
+}
+
+#[test]
+fn dash_pan_takes_two_points_or_a_displacement() {
+    let mut s = session();
+    set_view(&mut s, 0.0, 0.0, 100.0);
+    typed(&mut s, &["-pan", "0,0", "10,5"]);
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(view(&s).center, Vec2::new(-10.0, -5.0));
+    typed(&mut s, &["-pan", "3,4", ""]);
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(view(&s).center, Vec2::new(-13.0, -9.0));
 }
 
 #[test]

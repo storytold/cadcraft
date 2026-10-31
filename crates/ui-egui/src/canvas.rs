@@ -149,6 +149,9 @@ pub struct CanvasState {
     pub param: crate::parametric::Cache,
     /// A selection window opened by a press-and-drag, to close where the button is let go.
     drag_window: bool,
+    /// The primary drag in progress moved the view (realtime PAN or ZOOM): its release is no
+    /// point, even once the command has ended.
+    nav_drag: bool,
     /// The right-click that opened the shortcut menu held Shift or Ctrl: it is the object snap
     /// menu ([`crate::context_menu`]).
     pub snap_menu: bool,
@@ -252,7 +255,14 @@ fn navigate_canvas(app: &mut CadApp, ui: &mut egui::Ui, nav: &Navigation<'_>) ->
     handle_scroll_zoom(app, ui, nav, inside);
     handle_button_navigation(app, nav, inside);
     if nav.response.dragged_by(egui::PointerButton::Primary) && app.session.realtime_zoom_active() {
+        app.canvas.nav_drag = true;
         let _ = app.session.realtime_zoom(f64::from(nav.response.drag_delta().y));
+    }
+    // PAN (realtime): the drawing follows a left-button drag.
+    if nav.response.dragged_by(egui::PointerButton::Primary) && app.session.realtime_pan_active() {
+        app.canvas.nav_drag = true;
+        let d = nav.response.drag_delta();
+        let _ = app.session.realtime_pan(f64::from(d.x), f64::from(d.y));
     }
     if p.pressed_primary
         && let Some(at) = p.hover_pos
@@ -688,8 +698,17 @@ fn collect_prompt_clicks(app: &mut CadApp, ui: &egui::Ui, context: PromptClickCo
     // and eframe hands a slow frame's clicks over together, which egui reports as one.
     let point_prompt = app.session.current_prompt().is_some_and(|p| cadcraft_engine::pointmod::accepts(&p))
         && app.session.pending_window.is_none()
-        && !app.session.realtime_zoom_active();
-    let pressed_primary = context.primary_clicked || (point_prompt && context.response.drag_stopped_by(egui::PointerButton::Primary));
+        && !app.session.realtime_zoom_active()
+        && !app.session.realtime_pan_active();
+    let drag_stopped = context.response.drag_stopped_by(egui::PointerButton::Primary);
+    // The release of a drag that panned or zoomed (Enter can end the command mid-drag) places
+    // nothing in the command it returns to.
+    let nav_release = drag_stopped && std::mem::take(&mut app.canvas.nav_drag);
+    // A drag Escape stopped early ends with no drag stop: its release still ends it.
+    if ui.input(|i| i.pointer.primary_released()) {
+        app.canvas.nav_drag = false;
+    }
+    let pressed_primary = context.primary_clicked || (point_prompt && drag_stopped && !nav_release);
     if point_prompt && context.inside && pressed_primary && !context.middle_down && app.cmd.options.is_none() && app.cmd.buffer.is_empty() {
         let releases: Vec<egui::Pos2> = ui.input(|i| {
             i.events
