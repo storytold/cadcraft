@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use super::{Input, Interactive, Prompt, Result, Session, Step, bad, bool_or, f64_or, number, point_param, point_req, str_param, v3};
 use crate::Accept;
 use crate::cmd::curves::KW;
-use crate::cmd::draw::{baseline_end, justify, spans_baseline, styled_width};
+use crate::cmd::draw::{baseline_end, justify, justify_code, spans_baseline, styled_width};
 
 /// AFLAGS bits, as AutoCAD numbers the modes.
 const INVISIBLE: i64 = 1;
@@ -275,7 +275,7 @@ impl AttdefM {
 
     fn echo_style(&self, s: &mut Session) -> Result<()> {
         let th = s.doc()?.header.f64("TEXTSIZE", 0.2);
-        s.echo(format!("Current text style:  \"{}\"  Text height:  {th:.4}  Justify:  {}", self.style, justify_name(self.justify)));
+        s.echo(format!("Current text style:  \"{}\"  Text height:  {th:.4}  Justify:  {}", self.style, justify_code(self.justify)));
         Ok(())
     }
 
@@ -352,11 +352,6 @@ impl AttdefM {
         s.add_entity(spec.kind())?;
         Ok(Step::Done)
     }
-}
-
-/// The justification's name in "Current text style: … Justify: …".
-fn justify_name(j: (HAlign, VAlign)) -> &'static str {
-    JUSTIFY.into_iter().find(|k| justify(k) == Some(j)).unwrap_or("Left")
 }
 
 impl Interactive for AttdefM {
