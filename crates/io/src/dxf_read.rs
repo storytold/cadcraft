@@ -12,6 +12,7 @@ use cadcraft_doc::{
 use cadcraft_dxf::{Tag, records, sections};
 use cadcraft_geom::{PolyVertex, Spline, Vec2, Vec3};
 
+use crate::dxf_ext::text;
 use crate::{IoError, Result};
 
 mod common;
@@ -96,9 +97,9 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
     // a polyface mesh) would otherwise get handles that records further on still have. A file
     // CADCraft wrote names its own next handle, above which its rebuilt records are numbered
     // (#495), so it is left to that.
-    let ours = secs.iter().any(|s| s.name == "OBJECTS" && s.tags.iter().any(|t| t.code == 3 && t.str() == crate::dxf_ext::HANDSEED_KEY));
+    let ours = secs.iter().any(|s| s.name == "OBJECTS" && s.tags.iter().any(|t| t.code == 3 && text(t) == Some(crate::dxf_ext::HANDSEED_KEY)));
     for t in secs.iter().filter(|_| !ours).flat_map(|s| s.tags.iter()).filter(|t| t.code == 5 || t.code == 105) {
-        if let Some(h) = Handle::parse_hex(t.str().trim()) {
+        if let Some(h) = text(t).and_then(Handle::parse_hex) {
             d.bump_handseed(h);
         }
     }
@@ -181,5 +182,26 @@ mod table_budget_tests {
         };
         assert_eq!(block.entities.iter().map(|e| count(e)).sum::<usize>(), 2);
         assert_eq!(d.model.iter().map(|e| count(e)).sum::<usize>(), 0);
+    }
+}
+
+#[cfg(test)]
+mod entity_list_tests {
+    use super::*;
+    /// Vertices, attributes and SEQEND fold into the record before them, so they reserve no slots.
+    #[test]
+    fn follower_records_reserve_no_entity_slots() {
+        let rec = |kind: &str, tags: Vec<Tag>| (kind.to_string(), tags);
+        let mut recs = vec![rec("POLYLINE", vec![Tag::s(8, "0"), Tag::i(66, 1)])];
+        for x in 0..200 {
+            recs.push(rec("VERTEX", vec![Tag::s(8, "0"), Tag::f(10, f64::from(x)), Tag::f(20, 0.0)]));
+        }
+        recs.push(rec("SEQEND", vec![Tag::s(8, "0")]));
+        recs.push(rec("LINE", vec![Tag::s(8, "0"), Tag::f(11, 1.0)]));
+        let mut d = Drawing::new_imperial();
+        let (mut rx, mut skipped, mut cells) = (Rx::default(), 0, 100);
+        let out = parse_entities(&recs, &mut d, &mut rx, &mut skipped, &mut cells);
+        assert_eq!(out.len(), 2, "the polyline and the line");
+        assert!(out.capacity() < 10, "capacity {}", out.capacity());
     }
 }

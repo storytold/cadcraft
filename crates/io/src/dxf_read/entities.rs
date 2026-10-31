@@ -6,6 +6,7 @@ use super::{
     LwPolyline, MAX_FRAME_CHARS, Point, PolyVertex, Polyline3d, RawTag, RayLine, Rx, Solid, Spline, Table, TableCell, Tag, Tolerance, Unknown, Vec2,
     Vec3, Viewport, Wipeout, records,
 };
+use crate::dxf_ext::text;
 
 /// Parse one entity record. POLYLINE/INSERT followers are handled by the caller.
 pub(super) fn entity(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
@@ -416,9 +417,9 @@ pub(super) fn entity_plot_style(tags: &[Tag], rx: &Rx) -> Option<String> {
             if in_entity {
                 return None;
             }
-            in_entity = t.str() == "AcDbEntity";
+            in_entity = text(t) == Some("AcDbEntity");
         } else if t.code == 390 && in_entity {
-            return rx.pstyles.get(&t.str().trim().to_ascii_uppercase()).cloned();
+            return rx.pstyles.get(&text(t).unwrap_or_default().trim().to_ascii_uppercase()).cloned();
         }
     }
     None
