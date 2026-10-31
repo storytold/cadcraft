@@ -168,6 +168,8 @@ fn script_fallback(c: char) -> &'static [&'static str] {
 }
 
 const WEIGHT_WORDS: &[&str] = &["thin", "light", "medium", "semibold", "bold", "black", "heavy", "italic", "oblique", "mono", "condensed"];
+/// Common font families always offered at the top of font pickers after [`crate::BUILTIN_FONT`].
+const COMMON_FAMILIES: &[&str] = &["Arial", "Calibri", "Courier New", "Georgia", "Times New Roman", "Verdana"];
 
 #[derive(Default)]
 struct Db {
@@ -178,6 +180,8 @@ struct Db {
     files: HashMap<String, Arc<Vec<u8>>>,
     /// Name lookups already answered, found or not.
     resolved: HashMap<String, Option<Face>>,
+    /// Cached list of font names offered by font pickers (`BUILTIN_FONT` first, then sorted).
+    names: Option<Vec<String>>,
     fallback: Fallback,
     /// Bytes of font files loaded from disk so far (bounded by `MAX_LOADED_BYTES`).
     loaded_bytes: usize,
@@ -472,6 +476,7 @@ pub fn register(name: &str, bytes: Vec<u8>) {
     let mut g = lock();
     g.files.insert(key(name), Arc::new(bytes));
     g.resolved.clear();
+    g.names = None;
     g.fallback = Fallback::default();
 }
 
@@ -484,7 +489,59 @@ pub(crate) fn register_static(name: &str, bytes: &'static [u8]) {
     g.files.remove(&k);
     g.paths.insert(k, Source::Static(bytes));
     g.resolved.clear();
+    g.names = None;
     g.fallback = Fallback::default();
+}
+
+/// Whether `s` is a visible ASCII font name suitable for a font picker (not a hidden dotfile or
+/// the built-in stroke font, which is always placed first).
+fn usable_font_name(s: &str) -> bool {
+    let s = s.trim();
+    !s.is_empty() && !s.starts_with('.') && !s.eq_ignore_ascii_case(crate::BUILTIN_FONT) && s.chars().all(|c| c.is_ascii_graphic() || c == ' ')
+}
+
+/// Font names for a Text Style font picker: [`crate::BUILTIN_FONT`] (`"CADCraft Stroke"`) first,
+/// followed by common families, embedded [`crate::CRAFT_FONTS`] and discovered/registered system
+/// fonts sorted and deduplicated case-insensitively.
+pub fn available_fonts() -> Vec<String> {
+    let mut g = lock();
+    if let Some(names) = &g.names {
+        return names.clone();
+    }
+    let mut out: Vec<String> = Vec::new();
+    out.push(crate::BUILTIN_FONT.to_string());
+    out.extend(COMMON_FAMILIES.iter().map(|s| (*s).to_string()));
+    for f in crate::CRAFT_FONTS {
+        let name = if f.style == "Regular" { f.family.to_string() } else { format!("{} {}", f.family, f.style) };
+        if usable_font_name(&name) && !out.iter().any(|existing| existing.eq_ignore_ascii_case(&name)) {
+            out.push(name);
+        }
+    }
+    let mut rest: Vec<String> = Vec::new();
+    for (stem, src) in &g.paths {
+        let candidate = match src {
+            Source::File(path) => path.file_stem().and_then(|s| s.to_str()).unwrap_or(stem),
+            Source::Static(_) if !crate::craft_fonts::is_embedded(stem) => stem.as_str(),
+            Source::Static(_) => continue,
+        };
+        if usable_font_name(candidate) {
+            rest.push(candidate.trim().to_string());
+        }
+    }
+    for stem in g.files.keys() {
+        if usable_font_name(stem) {
+            rest.push(stem.trim().to_string());
+        }
+    }
+    rest.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()).then_with(|| a.cmp(b)));
+    rest.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    for name in rest {
+        if !out.iter().any(|existing| existing.eq_ignore_ascii_case(&name)) {
+            out.push(name);
+        }
+    }
+    g.names = Some(out.clone());
+    out
 }
 
 /// Normalise a style font name ("arial.ttf", "Arial", "ARIALBD.TTF") to a lookup key.
