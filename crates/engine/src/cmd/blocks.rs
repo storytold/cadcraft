@@ -480,7 +480,12 @@ fn run_attdef(s: &mut Session, p: &Value) -> Result<Value> {
         AttribModes { verify: bool_or(p, "verify", false), preset: bool_or(p, "preset", false), lock_position: bool_or(p, "lockPosition", false) };
     let texts = |at, height, rotation, justify, style: String, width_factor, oblique| AttdefSpec {
         tag: tag.trim().to_string(),
-        prompt: if constant { String::new() } else { str_param(p, "prompt").unwrap_or(tag).to_string() },
+        // A blank or missing prompt is the tag, as the typed form and the answers give it.
+        prompt: if constant {
+            String::new()
+        } else {
+            str_param(p, "prompt").filter(|p| !p.trim().is_empty()).map_or_else(|| tag.trim().to_ascii_uppercase(), str::to_string)
+        },
         default: str_param(p, "default").unwrap_or("").to_string(),
         at,
         height,

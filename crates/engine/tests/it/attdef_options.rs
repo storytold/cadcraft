@@ -377,4 +377,16 @@ fn a_blank_prompt_is_the_tag_typed_and_from_the_dialog() {
         assert!(s.running.is_none(), "{}", s.prompt_text());
         assert_eq!(attdefs(&s).last().unwrap().prompt, expected);
     }
+    // The JSON form, which the dialog sends for a typed point and for "Align below previous
+    // attribute definition": a blank or missing prompt is the uppercase tag too.
+    for (p, tag) in [
+        (json!({"tag": "zone", "prompt": "", "at": [0, 20]}), "ZONE"),
+        (json!({"tag": "wing", "prompt": "  ", "below": true}), "WING"),
+        (json!({"tag": "level", "at": [0, 30]}), "LEVEL"),
+    ] {
+        s.execute("attdef", &p).unwrap();
+        let all = attdefs(&s);
+        let a = all.last().unwrap();
+        assert_eq!((a.tag.as_str(), a.prompt.as_str()), (tag, tag), "{p}");
+    }
 }
