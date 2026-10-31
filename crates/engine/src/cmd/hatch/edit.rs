@@ -362,6 +362,7 @@ fn edit_loops(h: &mut Hatch, added: &[HatchLoop], removed: &[usize]) -> Result<(
 
 pub(super) fn run_hatchedit(s: &mut Session, p: &Value) -> Result<Value> {
     check_numbers(p)?;
+    super::check_background("hatchedit", p)?;
     let hs = hatches(s, p)?;
     let (added, removed) = boundary_changes(s, p, &hs)?;
     let style = match str_param(p, "style") {
@@ -424,6 +425,9 @@ pub(super) fn run_hatchedit(s: &mut Session, p: &Value) -> Result<Value> {
         }
         if let Some(st) = style {
             h.style = st;
+        }
+        if let Some(bg) = super::background_param(p) {
+            h.background = bg;
         }
         if origin.is_some() || mode.is_some() {
             h.origin = mode.unwrap_or_default().origin(&h.loops, origin.unwrap_or(h.origin));

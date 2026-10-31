@@ -372,6 +372,11 @@ impl Session {
         }
         self.pending_window = None;
         self.select_mode = None;
+        // HATCH keeps its boundary objects selected (highlighted) while it runs; they stay
+        // selected no longer than the command, however it ends.
+        if matches!(run.id.as_str(), "hatch" | "gradient" | "hatchpick") {
+            self.set_selection(Vec::new());
+        }
         let label = find_command(&run.id).map(|c| c.label).unwrap_or("Command");
         let _ = cancelled;
         if let Some(m) = cmd::blocks::refedit::after_command(self, &run.before, &run.id) {

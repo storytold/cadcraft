@@ -42,8 +42,9 @@ const MODELLED_KEYS: &[&str] = &[
 const MODELLED_XDICT_KEYS: &[&str] = &["ACAD_DIMASSOC", "ACAD_SORTENTS", "ACDBCONTEXTDATAMANAGER"];
 
 /// Applications whose xdata CADCraft reads and writes itself. `ACAD` holds dimension overrides
-/// (DSTYLE) on dimensions and dimension styles; elsewhere it is kept.
-const OWN_APPS: &[&str] = &["CADCRAFT", "ACADANNOTATIVE", "ACCMTRANSPARENCY", "ACAECLAYERSTANDARD"];
+/// (DSTYLE) on dimensions and dimension styles, `HATCHBACKGROUNDCOLOR` the background of
+/// hatches; elsewhere they are kept.
+const OWN_APPS: &[&str] = &["CADCRAFT", "ACADANNOTATIVE", "ACCMTRANSPARENCY", "ACAECLAYERSTANDARD", "CADCRAFTFORMULA"];
 
 /// Most objects kept from one file.
 const MAX_OBJECTS: usize = 1_000_000;
@@ -232,7 +233,11 @@ fn foreign_xdata(kind: &str, tags: &[Tag]) -> Vec<RawTag> {
         let chunk = rest.get(i..i + 1 + len).unwrap_or(&[]);
         i += 1 + len;
         let app = up(&first.str());
-        let own = OWN_APPS.contains(&app.as_str()) || (app == "ACAD" && matches!(kind, "DIMENSION" | "DIMSTYLE"));
+        // A hatch's background colour is written from the hatch (none once it is cleared), so a
+        // kept copy would bring a cleared background back.
+        let own = OWN_APPS.contains(&app.as_str())
+            || (app == "ACAD" && matches!(kind, "DIMENSION" | "DIMSTYLE"))
+            || (app == crate::dxf_ext::HATCH_BACKGROUND_APP && kind == "HATCH");
         if app.is_empty() || own || out.len() + chunk.len() > MAX_XDATA_GROUPS {
             continue;
         }
@@ -925,6 +930,8 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
     for o in f.objects.iter().filter(|o| is_proxy(&o.kind) && renumber(class_number(o.tags.iter().map(|r| (r.code, r.value.as_str())))).is_none()) {
         alive_memo.insert(o.handle.hex(), false);
     }
+    // A text whose AutoCAD field was replaced drops the field (see `replaced_fields`).
+    alive_memo.extend(replaced_fields(f, d, &owners).into_iter().map(|h| (h, false)));
     for o in &f.objects {
         let mut path: Vec<String> = Vec::new();
         let mut cur = o.handle.hex();
@@ -1012,6 +1019,30 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
         *t = Tag::s(5, format!("{top:X}"));
     }
     *tags = out;
+}
+
+/// The `ACAD_FIELD` dictionaries of texts whose AutoCAD field was replaced (their formula holds
+/// no field any more): not written, nor the fields under them (the extension dictionary's entry
+/// goes with them), so reopening does not bring the field back. `owners`: object → owner.
+fn replaced_fields(f: &Foreign, d: &Drawing, owners: &HashMap<String, String>) -> Vec<String> {
+    let has_field = |formula: &Option<String>| formula.as_deref().is_some_and(|f| f.contains("%<\\"));
+    let fieldless: HashSet<String> = all_entities(d)
+        .filter(|e| match &e.kind {
+            EntityKind::Text(t) => !has_field(&t.formula),
+            EntityKind::MText(t) => !has_field(&t.formula),
+            _ => false,
+        })
+        .map(|e| e.handle.hex())
+        .collect();
+    let mut out = Vec::new();
+    if fieldless.is_empty() {
+        return out;
+    }
+    for o in f.objects.iter().filter(|o| is_dictionary(&o.kind) && owners.get(&o.handle.hex()).is_some_and(|w| fieldless.contains(w))) {
+        let t: Vec<Tag> = o.tags.iter().map(tag).collect();
+        out.extend(entries(&t).into_iter().filter(|(k, _)| up(k) == "ACAD_FIELD").map(|(_, h)| norm(&h)));
+    }
+    out
 }
 
 /// Where the entities of types CADCraft doesn't model go: each before the next written entity of

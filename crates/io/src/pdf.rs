@@ -516,6 +516,7 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
     let lineweights = o.lineweights.unwrap_or(if space.is_paper() { page.lineweights } else { true });
     let plot_style_table = cadcraft_doc::plot_style_table(d, &page.plot_style_table).map(std::sync::Arc::new);
     let ropts = cadcraft_render::Options {
+        continuous: false,
         transparency: o.plot_transparency.unwrap_or(page.plot_transparency),
         tolerance: 0.001,
         min_dash: 0.0,
