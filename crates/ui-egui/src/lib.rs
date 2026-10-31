@@ -327,16 +327,32 @@ pub struct CadApp {
 /// other event does. The web shell reads the DOM code `NumpadDecimal` as `Period`, the same as the
 /// main point key, so there the two can't be told apart and nothing changes.
 pub fn numpad_decimal_point(events: &mut [egui::Event]) {
-    let mut keypad = false;
+    let mut keypad = NumpadDecimal::default();
     for e in events.iter_mut() {
+        keypad.step(e, true);
+    }
+}
+
+/// [`numpad_decimal_point`] one event at a time, for input whose prompt can change between events.
+#[derive(Default)]
+pub struct NumpadDecimal {
+    armed: bool,
+}
+
+impl NumpadDecimal {
+    /// Pass the next event through: the keypad's comma becomes a point when `numeric` (the prompt
+    /// in force when its text arrives reads numbers or points), and stays a comma otherwise.
+    pub fn step(&mut self, e: &mut egui::Event, numeric: bool) {
         match e {
-            egui::Event::Key { key: egui::Key::Comma, physical_key: None, pressed: true, .. } => keypad = true,
+            egui::Event::Key { key: egui::Key::Comma, physical_key: None, pressed: true, .. } => self.armed = true,
             egui::Event::Key { pressed: false, .. } => {}
-            egui::Event::Text(t) if keypad && t == "," => {
-                *t = ".".into();
-                keypad = false;
+            egui::Event::Text(t) if self.armed && t == "," => {
+                if numeric {
+                    *t = ".".into();
+                }
+                self.armed = false;
             }
-            _ => keypad = false,
+            _ => self.armed = false,
         }
     }
 }
