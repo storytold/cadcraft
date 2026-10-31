@@ -504,7 +504,9 @@ fn paint_pointer_overlay(
             // Use the painted sheet even in MSPACE, where the editing transform follows a
             // model viewport. The whole cursor takes one colour from its centre.
             let ink = paper_rect.map_or(t.crosshair, |paper| crate::theme::crosshair_color(if paper.contains(hp) { t.paper } else { surround }));
-            draw_crosshair(app, painter, rect, hp, selecting, ink);
+            let picking = app.session.picking_objects() && app.session.pending_window.is_none();
+            let _ = selecting;
+            draw_crosshair(app, painter, rect, hp, picking, ink);
             if app.canvas.cycle_badge && app.canvas.cycle.is_none() {
                 cycle_badge(painter, hp);
             }

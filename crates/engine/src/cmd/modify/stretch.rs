@@ -314,13 +314,17 @@ impl Interactive for StretchM {
         s.echo("Select objects to stretch by crossing-window or crossing-polygon...");
         Ok(Step::Continue)
     }
+    /// Returns the active interactive prompt for the current `STRETCH` phase.
     fn prompt(&self, _s: &Session) -> Prompt {
         if let (StretchPhase::Select, Some(m)) = (self.phase, &self.mode) {
             return m.prompt();
         }
         match (self.phase, self.corner) {
             (StretchPhase::Select, Some(c)) => Prompt::new("Specify opposite corner", Accept::POINT).corner(c),
-            (StretchPhase::Select, None) => Prompt::new(if self.removing { "Remove objects" } else { "Select objects" }, Accept::POINT),
+            (StretchPhase::Select, None) => Prompt {
+                picks_one: self.removing,
+                ..Prompt::new(if self.removing { "Remove objects" } else { "Select objects" }, Accept::POINT)
+            },
             (StretchPhase::Base, _) => Prompt::new("Specify base point", Accept::POINT).kw(&["Displacement"]).default("Displacement"),
             (StretchPhase::Displacement, _) => Prompt::new("Specify displacement", Accept::POINT).default("0,0"),
             (StretchPhase::Second, _) => Prompt::new("Specify second point or <use first point as displacement>", Accept::POINT).base_opt(self.base),

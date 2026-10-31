@@ -212,28 +212,41 @@ pub(super) fn override_cursor(app: &mut CadApp, raw: Vec2, xf: &Xf) {
     app.session.cursor_deferred = app.canvas.snap.and_then(|h| h.deferred);
 }
 
+/// Half the side of the pick box (`PICKBOX * 1.5` screen points), or `None` when `PICKBOX` is 0.
 fn pickbox_half(pickbox: f64) -> Option<f32> {
     let half = (pickbox * 1.5) as f32;
     (half.is_finite() && half >= 1.0).then_some(half)
 }
 
+/// Draws the canvas cursor at `at`: the full crosshair with pickbox when idle, crosshair lines
+/// only at point prompts, and the pickbox square alone at command object-selection prompts.
 pub(super) fn draw_crosshair(app: &CadApp, p: &egui::Painter, rect: Rect, at: Pos2, pickbox: bool, ink: Color32) {
     let st = Stroke::new(1.0, ink);
     let len = (rect.height() * app.session.settings.cursorsize as f32 / 100.0).max(12.0);
-    let pb = if pickbox { pickbox_half(app.session.settings.pickbox) } else { None };
-    let gap = pb.unwrap_or(0.0);
-    // Along the isometric plane's axes in isometric drafting.
-    if app.session.settings.isodraft {
-        for a in cadcraft_engine::snap::iso::cursor_axes(&app.session.settings) {
-            let dir = vec2(a.cos() as f32, -(a.sin() as f32));
-            p.line_segment([at - dir * len, at - dir * gap], st);
-            p.line_segment([at + dir * gap, at + dir * len], st);
-        }
+    let picking_in_cmd = pickbox && app.session.current_prompt().is_some_and(|pr| pr.picks_objects());
+    let pb = if pickbox {
+        pickbox_half(app.session.settings.pickbox).or(picking_in_cmd.then_some(1.5))
     } else {
-        p.line_segment([pos2(at.x - len, at.y), pos2(at.x - gap, at.y)], st);
-        p.line_segment([pos2(at.x + gap, at.y), pos2(at.x + len, at.y)], st);
-        p.line_segment([pos2(at.x, at.y - len), pos2(at.x, at.y - gap)], st);
-        p.line_segment([pos2(at.x, at.y + gap), pos2(at.x, at.y + len)], st);
+        None
+    };
+    let gap = pb.unwrap_or(0.0);
+    // At a command prompt that selects objects, AutoCAD shows only the pickbox square (no
+    // crosshair lines); when idle or once a selection window corner is picked, the crosshair
+    // lines are drawn.
+    if !picking_in_cmd {
+        // Along the isometric plane's axes in isometric drafting.
+        if app.session.settings.isodraft {
+            for a in cadcraft_engine::snap::iso::cursor_axes(&app.session.settings) {
+                let dir = vec2(a.cos() as f32, -(a.sin() as f32));
+                p.line_segment([at - dir * len, at - dir * gap], st);
+                p.line_segment([at + dir * gap, at + dir * len], st);
+            }
+        } else {
+            p.line_segment([pos2(at.x - len, at.y), pos2(at.x - gap, at.y)], st);
+            p.line_segment([pos2(at.x + gap, at.y), pos2(at.x + len, at.y)], st);
+            p.line_segment([pos2(at.x, at.y - len), pos2(at.x, at.y - gap)], st);
+            p.line_segment([pos2(at.x, at.y + gap), pos2(at.x, at.y + len)], st);
+        }
     }
     if let Some(pb) = pb {
         p.rect_stroke(Rect::from_center_size(at, vec2(pb * 2.0, pb * 2.0)), 0.0, st, egui::StrokeKind::Middle);
