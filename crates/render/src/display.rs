@@ -59,6 +59,10 @@ pub struct DisplayList {
     pub sheet: Option<Sheet>,
     /// Block contents expanded while building (see [`MAX_BLOCK_EXPANSION`]).
     pub expanded: usize,
+    /// The expansion budget was spent: block contents past it are not in the list. The screen,
+    /// plots and exports draw what is here; the CLI and the control channel report this, so an
+    /// output that leaves contents out is never silent (#1070).
+    pub truncated: bool,
     /// Plot style end, join and fill style per primitive (parallel to `prims`; missing entries
     /// are "use object"), turned into geometry by [`pen::apply`].
     pub pens: Vec<Pen>,
