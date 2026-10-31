@@ -33,9 +33,9 @@ fn typed_vplayer_changes_layers_in_chosen_viewports() {
 
     // Freeze in the current viewport (the default inside a viewport).
     s.cmdline("VPLAYER").unwrap();
-    assert_eq!(s.current_prompt().unwrap().display(), "Enter an option or [?/Color/Freeze/Thaw/Reset/Newfrz/Vpvisdflt]:");
+    assert_eq!(s.current_prompt().unwrap().display(), "Enter an option [?/Color/Freeze/Thaw/Reset/Newfrz/Vpvisdflt]:");
     s.script("F\n0\n").unwrap();
-    assert_eq!(s.current_prompt().unwrap().display(), "Enter an option or [All/Select/Current/Except current] <Current>:");
+    assert_eq!(s.current_prompt().unwrap().display(), "Enter an option [All/Select/Current/Except current] <Current>:");
     s.script("\n").unwrap();
     assert_eq!(frozen(&s, &a), ["0"]);
     assert!(frozen(&s, &b).is_empty());

@@ -26,6 +26,41 @@ impl Accept {
     pub const SELECT: Accept = Accept { point: true, number: false, text: false, select: true, enter: true };
 }
 
+/// Prompts that ask for one of their keywords, which AutoCAD 2024 writes without "or" before them:
+/// "Enter an option [?/Make/Set/…]:", "Enter layout option [Copy/Delete/…/?] <set>:", "New color
+/// [Truecolor/COlorbook] <BYLAYER>:". A prompt asking for something else besides its keywords has
+/// it: "Enter block name or [?]:", "Specify insertion base point or [Basepoint/…]:". Read from
+/// AutoCAD's command line over measured runs, where no prompt was written both ways.
+const NO_OR: [&str; 27] = [
+    "Bring to front",
+    "Calculate rectangle dimensions based on",
+    "Choose mode for selected object conversion",
+    "Create annotative block",
+    "Enter a configuration option",
+    "Enter a plotting preference",
+    "Enter an annotation option",
+    "Enter an option",
+    "Enter an option to change",
+    "Enter attribute visibility setting",
+    "Enter justification",
+    "Enter layout option",
+    "Enter leader format option",
+    "Enter line spacing type",
+    "Enter object ordering option",
+    "Enter polyline linetype generation option",
+    "Enter property to change",
+    "Enter the type of array",
+    "Enter type of unused objects to purge",
+    "Enter viewport arrangement",
+    "Explode block",
+    "New color",
+    "Orient relative to sheet in paper space viewports",
+    "Select a content type",
+    "Select a leader type",
+    "Use landing",
+    "Viewport View Locking",
+];
+
 /// A prompt shown on the command line.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -148,11 +183,12 @@ impl Prompt {
         }
         let mut s = self.message.clone();
         if !self.keywords.is_empty() {
-            // A question offers its answers ("Fix any errors detected? [Yes/No]"); anything else
-            // offers options besides what it asks for ("Specify next point or [Undo]").
+            // A question offers its answers ("Fix any errors detected? [Yes/No]"), and so does a
+            // prompt for an option ([`NO_OR`]); anything else offers options besides what it asks
+            // for ("Specify next point or [Undo]").
             s.push_str(if self.message.is_empty() {
                 "["
-            } else if self.message.ends_with('?') {
+            } else if self.message.ends_with('?') || NO_OR.contains(&self.message.as_str()) {
                 " ["
             } else {
                 " or ["
@@ -338,6 +374,13 @@ mod tests {
         assert_eq!(p.display(), "Specify next point or [Undo/Close]:");
         let q = Prompt::new("Erase polyline?", Accept::TEXT).kw(&["Yes", "No"]).default("No");
         assert_eq!(q.display(), "Erase polyline? [Yes/No] <No>:");
+        // A prompt for an option has no "or", as AutoCAD writes it.
+        let o = Prompt::new("Enter an option", Accept::TEXT).kw(&["Close", "Join"]);
+        assert_eq!(o.display(), "Enter an option [Close/Join]:");
+        let c = Prompt::new("New color", Accept::TEXT).kw(&["Truecolor", "COlorbook"]).default("BYLAYER");
+        assert_eq!(c.display(), "New color [Truecolor/COlorbook] <BYLAYER>:");
+        let b = Prompt::new("Enter block name", Accept::TEXT).kw(&["?"]);
+        assert_eq!(b.display(), "Enter block name or [?]:");
         assert_eq!(p.match_keyword("u").as_deref(), Some("Undo"));
         assert_eq!(p.match_keyword("CL").as_deref(), Some("Close"));
         assert_eq!(p.match_keyword("x"), None);
