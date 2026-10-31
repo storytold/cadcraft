@@ -3,8 +3,8 @@
 > **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-28 · **Change:** minor (BEDIT in the Block Editor switches blocks: F3 updated) · **Target:** Autodesk AutoCAD 2027
 
 Every known shortfall, one row each, ranked within each section by user impact. This is the work
-list: agents pick from here (top of a section first), and remove or update a row in the same PR
-that closes it. Numbers and weights live in [target-app-parity.md](target-app-parity.md); hours
+list: agents pick from here (top of a section first). A PR names the rows it closes in its
+description, and maintainers update them in batches. Numbers and weights live in [target-app-parity.md](target-app-parity.md); hours
 are Opus 5.5 agent-hours, calibrated as explained there. "Est." means a judgement from the cited
 evidence. Rows marked **[alpha blocker]** are what fails the [alpha gate](roadmap.md#alpha-gate);
 do them first.
