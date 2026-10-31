@@ -259,3 +259,21 @@ fn a_lazy_bridge_starts_without_the_app_and_says_how_to_open_it() {
     assert_ne!(r["result"]["isError"], json!(true), "{r}");
     app.join().unwrap();
 }
+
+/// A line that is not valid UTF-8 gets a parse error and the session keeps serving.
+#[test]
+fn serve_survives_non_utf8_line() {
+    let mut server = Server::new(Box::new(Headless::default()));
+    // Blank lines stay silent and CRLF terminators are tolerated, as before.
+    let mut input = b"\n\xff\xfe\r\n\r\n".to_vec();
+    input.extend_from_slice(br#"{"jsonrpc":"2.0","id":7,"method":"ping"}"#);
+    input.extend_from_slice(b"\r\n");
+    let mut out = Vec::new();
+    let res = server.serve(&input[..], &mut out);
+    assert!(res.is_ok(), "serve stopped: {res:?}");
+    let text = String::from_utf8_lossy(&out).into_owned();
+    let replies: Vec<Value> = text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    assert_eq!(replies.len(), 2, "output: {text}");
+    assert_eq!(replies[0]["error"]["code"], -32700);
+    assert_eq!(replies[1]["id"], 7);
+}
