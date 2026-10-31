@@ -308,9 +308,18 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_later_launch_hands_its_files_to_the_first() {
+        /// Removes the test's folder when the test ends, best effort: the listener thread keeps its
+        /// socket open until the process exits.
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
         let dir = std::env::temp_dir().join(format!("cadcraft-single-instance-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
+        let _cleanup = Cleanup(dir.clone());
         let path = dir.join("instance-test.sock");
         drop(uds_windows::UnixListener::bind(&path).unwrap());
         assert!(path.exists(), "the stale socket file stays behind");
