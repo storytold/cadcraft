@@ -48,7 +48,7 @@ pub(crate) fn encode_line(s: &str) -> String {
 /// Apply `f` ([`encode_line`] or [`decode_contents`]) to the groups of a `kind` record that hold
 /// an encoded string: the text (1), and an ATTDEF's prompt (3). An embedded MTEXT (from group 101)
 /// has its own and is left alone. AutoLISP's entget and entmake/entmod use it.
-pub(crate) fn map_carets(kind: &str, tags: &mut [Tag], f: fn(&str) -> String) {
+pub(crate) fn map_text_groups(kind: &str, tags: &mut [Tag], f: fn(&str) -> String) {
     let kind = kind.to_ascii_uppercase();
     if !matches!(kind.as_str(), "TEXT" | "ATTRIB" | "ATTDEF" | "DIMENSION") {
         return;
