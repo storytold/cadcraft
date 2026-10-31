@@ -127,6 +127,10 @@ fn layout_tabs_and_add_button_work_with_toolsets_shown_or_hidden() {
         let model = h.get_by_role_and_label(egui::accesskit::Role::Tab, "Model").rect();
         h.get_all_by_label("New layout").find(|node| node.rect().left() > model.right()).unwrap().click();
         h.run_steps(3);
+        // The new layout first asks for the model area it shows; Enter takes the whole model.
+        assert_eq!(h.state().session.state().unwrap().space, cadcraft_engine::doc::Space::Model);
+        h.state_mut().cmdline("");
+        h.run_steps(3);
         assert_eq!(h.state().session.state().unwrap().space, cadcraft_engine::doc::Space::Paper("Layout3".into()));
         assert_eq!(h.state().session.doc().unwrap().layouts.len(), 3);
         h.get_by_role_and_label(egui::accesskit::Role::Tab, "Layout2").click();

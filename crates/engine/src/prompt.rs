@@ -225,6 +225,9 @@ pub trait Interactive: Send {
     fn begin(&mut self, _s: &mut Session) -> Result<Step> {
         Ok(Step::Continue)
     }
+    /// Called when the command is cancelled (Esc), for one that moved the view or the space and
+    /// puts it back. The drawing itself is restored by the session.
+    fn cancelled(&mut self, _s: &mut Session) {}
     /// Rubber-band geometry for the cursor position.
     fn preview(&self, _s: &Session, _cursor: Vec2) -> Vec<EntityKind> {
         Vec::new()

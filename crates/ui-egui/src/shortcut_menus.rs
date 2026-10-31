@@ -198,15 +198,21 @@ fn keyword_then(app: &mut CadApp, keyword: &str, text: Option<&str>) {
     }
 }
 
+/// A new layout from a button or menu: the next free name is taken, then the command asks for the
+/// part of the model it shows (two corners picked in the Model tab, or Enter for the whole
+/// drawing) and ends in the new layout. Esc leaves things as they were.
+pub fn new_layout(app: &mut CadApp) {
+    app.start("layout.new");
+    if app.session.running.as_ref().is_some_and(|r| r.id == "layout.new")
+        && let Err(e) = app.session.input(Input::Enter)
+    {
+        app.session.echo(e.to_string());
+    }
+}
+
 fn layout_action(app: &mut CadApp, op: &str, name: &str) {
     match op {
-        "new" => {
-            if let Ok(v) = app.run("layout.new", json!({}))
-                && let Some(n) = v.get("name").and_then(Value::as_str)
-            {
-                let _ = app.run("layout.set", json!({ "name": n }));
-            }
-        }
+        "new" => new_layout(app),
         "pagesetup" | "plot" => {
             let _ = app.run("layout.set", json!({ "name": name }));
             activate(app, op);

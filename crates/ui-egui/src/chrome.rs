@@ -351,7 +351,7 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
             let resp = resp.on_hover_text(crate::i18n::t(tip));
             if icon == Icon::Plus {
                 if resp.clicked() {
-                    let _ = app.run("layout.new", json!({}));
+                    crate::shortcut_menus::new_layout(app);
                 }
             } else {
                 list_button = Some(resp);
@@ -467,11 +467,8 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
                 let presp = ui.interact(pr, ui.scope_id().with("layout_plus"), Sense::click());
                 icons::paint(&p, pr.shrink(2.0), Icon::Plus, false);
                 icons::describe_control(ui, &presp, "New layout", None, false);
-                if presp.on_hover_text(crate::tl!("New layout")).clicked()
-                    && let Ok(v) = app.run("layout.new", json!({}))
-                    && let Some(n) = v.get("name").and_then(serde_json::Value::as_str)
-                {
-                    switch = Some(n.to_string());
+                if presp.on_hover_text(crate::tl!("New layout")).clicked() {
+                    crate::shortcut_menus::new_layout(app);
                 }
                 x += 22.0;
             }
