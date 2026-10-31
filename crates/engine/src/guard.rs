@@ -102,6 +102,15 @@ impl Interactive for Guarded {
             None
         })
     }
+    fn editing_text(&self) -> Option<cadcraft_doc::Text> {
+        if self.broken.get().is_some() {
+            return None;
+        }
+        catch_unwind(AssertUnwindSafe(|| self.inner.editing_text())).unwrap_or_else(|_| {
+            self.broken.set(Some("panic in prompt"));
+            None
+        })
+    }
 }
 
 #[cfg(test)]

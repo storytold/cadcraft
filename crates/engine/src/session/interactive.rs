@@ -452,6 +452,11 @@ impl Session {
         self.running.as_ref().and_then(|r| r.machine.editing_mtext())
     }
 
+    /// See [`Interactive::editing_text`].
+    pub fn editing_text(&self) -> Option<cadcraft_doc::Text> {
+        self.running.as_ref().and_then(|r| r.machine.editing_text())
+    }
+
     pub fn current_prompt(&self) -> Option<Prompt> {
         if let Some(p) = self.lisp_prompt() {
             return Some(p);
