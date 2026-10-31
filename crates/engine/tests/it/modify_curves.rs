@@ -324,6 +324,18 @@ fn join_at_the_command_line_names_the_result() {
 }
 
 #[test]
+fn join_at_the_command_line_counts_multiple_polylines() {
+    let mut s = Session::new();
+    for pts in [[[0, 0], [5, 0]], [[5, 0], [5, 5]], [[20, 0], [25, 0]], [[25, 0], [25, 5]]] {
+        s.execute("line", &json!({ "points": pts })).unwrap();
+    }
+    s.script("JOIN ALL\n\n").unwrap();
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert!(s.log.iter().any(|l| l.contains("4 objects joined into 2 polylines")), "{:?}", s.log);
+    assert_eq!(count(&s), 2);
+}
+
+#[test]
 fn join_refuses_unconnected_curves() {
     let mut s = Session::new();
     let sp = s_curve(&mut s);

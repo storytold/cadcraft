@@ -99,3 +99,7 @@ sync_github_name = false
 
 [people.dylanmtaylor]
 sync_github_name = true
+
+[people.engdennylsonsantos-cloud]
+real_name = "Dennylson Santos"
+sync_github_name = true

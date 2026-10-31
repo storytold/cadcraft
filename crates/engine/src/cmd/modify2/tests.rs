@@ -112,6 +112,94 @@ fn join_keeps_selected_objects_outside_the_chain() {
 }
 
 #[test]
+fn join_multiple_polygons_simultaneously() {
+    let mut s = Session::new();
+    // Square 1 (4 lines)
+    let s1_1 = h(&s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap());
+    let s1_2 = h(&s.execute("line", &json!({"points": [[10, 0], [10, 10]]})).unwrap());
+    let s1_3 = h(&s.execute("line", &json!({"points": [[10, 10], [0, 10]]})).unwrap());
+    let s1_4 = h(&s.execute("line", &json!({"points": [[0, 10], [0, 0]]})).unwrap());
+
+    // Square 2 (4 lines)
+    let s2_1 = h(&s.execute("line", &json!({"points": [[20, 0], [30, 0]]})).unwrap());
+    let s2_2 = h(&s.execute("line", &json!({"points": [[30, 0], [30, 10]]})).unwrap());
+    let s2_3 = h(&s.execute("line", &json!({"points": [[30, 10], [20, 10]]})).unwrap());
+    let s2_4 = h(&s.execute("line", &json!({"points": [[20, 10], [20, 0]]})).unwrap());
+
+    // Open line strip (3 lines)
+    let o_1 = h(&s.execute("line", &json!({"points": [[40, 0], [50, 0]]})).unwrap());
+    let o_2 = h(&s.execute("line", &json!({"points": [[50, 0], [50, 5]]})).unwrap());
+    let o_3 = h(&s.execute("line", &json!({"points": [[50, 5], [60, 5]]})).unwrap());
+
+    // Unconnected line
+    let far = h(&s.execute("line", &json!({"points": [[100, 100], [110, 110]]})).unwrap());
+
+    let all_handles = [
+        s1_1.clone(),
+        s1_2.clone(),
+        s1_3.clone(),
+        s1_4.clone(),
+        s2_1.clone(),
+        s2_2.clone(),
+        s2_3.clone(),
+        s2_4.clone(),
+        o_1.clone(),
+        o_2.clone(),
+        o_3.clone(),
+        far.clone(),
+    ];
+
+    let r = s.execute("join", &json!({"handles": all_handles})).unwrap();
+    let created = r["handles"].as_array().unwrap();
+    assert_eq!(created.len(), 3, "expected 3 polylines: square 1, square 2, and open strip");
+    assert_eq!(r["handle"].as_str(), created.first().and_then(|h| h.as_str()), "`handle` is the first result");
+
+    let d = s.doc().unwrap();
+    // 11 source lines are consumed
+    for hex in [&s1_1, &s1_2, &s1_3, &s1_4, &s2_1, &s2_2, &s2_3, &s2_4, &o_1, &o_2, &o_3] {
+        assert!(d.entity(Handle::parse_hex(hex).unwrap()).is_none());
+    }
+    // Unconnected line stays
+    assert!(d.entity(Handle::parse_hex(&far).unwrap()).is_some());
+
+    // Check closed squares and open polyline
+    let mut closed_count = 0;
+    let mut open_count = 0;
+    for h_val in created {
+        let hex = h_val.as_str().unwrap();
+        let p = poly(&kind(&s, hex));
+        if p.closed {
+            closed_count += 1;
+            assert_eq!(p.vertices.len(), 4);
+        } else {
+            open_count += 1;
+            assert_eq!(p.vertices.len(), 4);
+        }
+    }
+    assert_eq!(closed_count, 2);
+    assert_eq!(open_count, 1);
+}
+
+/// A chain that consumes only part of a source polyline must not delete the entity and lose the
+/// segments left out (a self-touching open polyline with a tail).
+#[test]
+fn join_partial_owner_rejected_to_prevent_loss() {
+    let mut s = Session::new();
+    // Open polyline with loop (0,0 -> 10,0 -> 10,10 -> 0,0) and tail (0,0 -> 0,-10)
+    let p = pline(&mut s, json!([[0, 0], [10, 0], [10, 10], [0, 0], [0, -10]]), false);
+    let far = h(&s.execute("line", &json!({"points": [[100, 100], [110, 110]]})).unwrap());
+
+    // JOIN should reject because the polyline is not fully consumed into a clean chain
+    let r = s.execute("join", &json!({"handles": [p.clone(), far.clone()]}));
+    assert!(r.is_err());
+
+    // Both entities remain intact in document
+    let d = s.doc().unwrap();
+    assert!(d.entity(Handle::parse_hex(&p).unwrap()).is_some());
+    assert!(d.entity(Handle::parse_hex(&far).unwrap()).is_some());
+}
+
+#[test]
 fn pedit_command_line() {
     let mut s = Session::new();
     pline(&mut s, json!([[0, 0], [10, 0], [10, 10]]), false);

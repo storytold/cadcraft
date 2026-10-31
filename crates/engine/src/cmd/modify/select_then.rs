@@ -86,17 +86,23 @@ impl SelectThen {
     /// JOIN the selected objects and report what they became.
     fn join_now(&mut self, s: &mut Session) -> Result<Step> {
         match join(s, &self.objs) {
-            Ok(h) => {
-                // Objects outside the joined chain are kept, so count only the ones JOIN consumed
+            Ok(hs) => {
+                // Objects outside the joined chains are kept, so count only the ones JOIN consumed
                 // (and the source object an ellipse or spline join keeps).
                 let d = s.doc()?;
-                let n = self.objs.iter().filter(|o| d.entity(**o).is_none() || h == Some(**o)).count();
-                let what = match h.and_then(|h| d.entity(h)).map(|e| &e.kind) {
-                    Some(EntityKind::Spline(_)) => "spline",
-                    Some(EntityKind::Ellipse(_)) => "ellipse",
-                    _ => "polyline",
-                };
-                s.echo(format!("{n} objects joined into 1 {what}"))
+                let n = self.objs.iter().filter(|o| d.entity(**o).is_none() || hs.contains(o)).count();
+                let m = hs.len();
+                if m == 1 {
+                    let h = hs.first().copied();
+                    let what = match h.and_then(|h| d.entity(h)).map(|e| &e.kind) {
+                        Some(EntityKind::Spline(_)) => "spline",
+                        Some(EntityKind::Ellipse(_)) => "ellipse",
+                        _ => "polyline",
+                    };
+                    s.echo(format!("{n} objects joined into 1 {what}"));
+                } else {
+                    s.echo(format!("{n} objects joined into {m} polylines"));
+                }
             }
             Err(e) => s.echo(e.to_string()),
         }
