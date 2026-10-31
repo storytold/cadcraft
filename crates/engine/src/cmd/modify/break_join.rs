@@ -1,18 +1,8 @@
-use super::trim::{param_on, sub_polyline};
+use super::trim::{param_on, replace_with_pieces, sub_polyline};
 use super::{
     Accept, Arc, EngineError, Entity, EntityKind, Handle, Input, Interactive, Line, PolyVertex, Polyline, Prompt, Result, Segment, Session, Step,
     Value, Vec2, arc, bad, json, lwpoly, norm_angle, point_param, point_req, targets,
 };
-
-/// Gives a rebuilt arc piece its source centre Z, or a rebuilt polyline piece its source elevation.
-fn with_z(mut k: EntityKind, z: f64) -> EntityKind {
-    match &mut k {
-        EntityKind::Arc(a) => a.center.z = z,
-        EntityKind::LwPolyline(p) => p.elevation = z,
-        _ => {}
-    }
-    k
-}
 
 /// Break `h` between two points (or at one point when p1 == p2).
 pub(crate) fn break_entity(s: &mut Session, h: Handle, p1: Vec2, p2: Vec2) -> Result<Vec<Handle>> {
@@ -39,12 +29,12 @@ pub(crate) fn break_entity(s: &mut Session, h: Handle, p1: Vec2, p2: Vec2) -> Re
         }
         EntityKind::Circle(c) => {
             if p1.near(p2, 1e-12) {
-                return Err(EngineError::Other("Arc cannot be full 360 degrees.".into()));
+                return Err(EngineError::Other("Arc cannot be full 360 degrees".into()));
             }
             let a1 = c.center.xy().angle_to(p1);
             let a2 = c.center.xy().angle_to(p2);
             // AutoCAD removes the CCW portion from the first to the second point.
-            vec![with_z(arc(&Arc::new(c.center.xy(), c.radius, a2, a1)), c.center.z)]
+            vec![arc(&Arc::new(c.center.xy(), c.radius, a2, a1))]
         }
         EntityKind::Arc(a) => {
             let ga = Arc::new(a.center.xy(), a.radius, a.start, a.end);
@@ -55,10 +45,10 @@ pub(crate) fn break_entity(s: &mut Session, h: Handle, p1: Vec2, p2: Vec2) -> Re
             }
             let mut v = Vec::new();
             if t1 > 1e-12 {
-                v.push(with_z(arc(&Arc::new(ga.center, ga.radius, ga.start, ga.start + t1)), a.center.z));
+                v.push(arc(&Arc::new(ga.center, ga.radius, ga.start, ga.start + t1)));
             }
             if t2 < ga.sweep() - 1e-12 {
-                v.push(with_z(arc(&Arc::new(ga.center, ga.radius, ga.start + t2, ga.end)), a.center.z));
+                v.push(arc(&Arc::new(ga.center, ga.radius, ga.start + t2, ga.end)));
             }
             v
         }
@@ -81,43 +71,39 @@ pub(crate) fn break_entity(s: &mut Session, h: Handle, p1: Vec2, p2: Vec2) -> Re
             };
             let (mut t1, mut t2) = (lp(p1), lp(p2));
             if p.closed {
-                if (t1 - t2).abs() < 1e-9 {
-                    return Err(EngineError::Other("Cannot break a closed polyline at a single point.".into()));
+                let (lo, hi) = if t1 <= t2 { (t1, t2) } else { (t2, t1) };
+                let tol = 1e-9 * (1.0 + total);
+                if hi - lo < tol {
+                    // One point: the outline opens at its start vertex and splits at the point;
+                    // at the start vertex itself it stays whole and closed.
+                    if lo < tol || lo > total - tol {
+                        return Ok(vec![h]);
+                    }
+                    vec![lwpoly(sub_polyline(&segs, 0.0, lo), false), lwpoly(sub_polyline(&segs, lo, total), false)]
+                } else {
+                    // The stretch between the points that doesn't run through the start vertex
+                    // goes, whichever point came first; what is left runs from the later point
+                    // round through the start vertex to the earlier one.
+                    let doubled: Vec<Segment> = segs.iter().chain(segs.iter()).copied().collect();
+                    vec![lwpoly(sub_polyline(&doubled, hi, lo + total), false)]
                 }
-                // Like a circle: the stretch from the first point to the second, along the
-                // vertices, goes; what is left runs from the second point round to the first.
-                let doubled: Vec<Segment> = segs.iter().chain(segs.iter()).copied().collect();
-                let end = if t1 > t2 { t1 } else { t1 + total };
-                vec![with_z(lwpoly(sub_polyline(&doubled, t2, end), false), p.elevation)]
             } else {
                 if t1 > t2 {
                     std::mem::swap(&mut t1, &mut t2);
                 }
                 let mut v = Vec::new();
                 if t1 > 1e-12 {
-                    v.push(with_z(lwpoly(sub_polyline(&segs, 0.0, t1), false), p.elevation));
+                    v.push(lwpoly(sub_polyline(&segs, 0.0, t1), false));
                 }
                 if t2 < total - 1e-12 {
-                    v.push(with_z(lwpoly(sub_polyline(&segs, t2, total), false), p.elevation));
+                    v.push(lwpoly(sub_polyline(&segs, t2, total), false));
                 }
                 v
             }
         }
         _ => return Err(EngineError::Other("Cannot break that object.".into())),
     };
-    let common = e.common.clone();
-    let space = s.space();
-    let d = s.doc_mut()?;
-    d.remove_entity(h);
-    let mut out = Vec::new();
-    for k in pieces {
-        let nh = d.new_handle();
-        if let Some(st) = d.space_mut(&space) {
-            st.push(Entity { handle: nh, common: common.clone(), kind: k });
-            out.push(nh);
-        }
-    }
-    Ok(out)
+    replace_with_pieces(s, h, pieces)
 }
 
 pub(super) fn run_break(s: &mut Session, p: &Value) -> Result<Value> {
@@ -227,6 +213,41 @@ pub(super) fn run_join(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({ "handle": r.map(|h| h.hex()) }))
 }
 
+/// The object picked at `p` for BREAK and BREAKATPOINT ("*Invalid selection*" when there is none).
+/// One on a locked layer is refused there, and the command asks for an object again, as AutoCAD
+/// 2024 does; the pick doesn't fall through to an object under it.
+fn pick_to_break(s: &mut Session, p: Vec2) -> Result<Option<Handle>> {
+    let ap = s.pixel_size() * s.settings.pickbox.max(1.0) * 1.5;
+    let space = s.space();
+    match s.pick_object(&space, p, ap)? {
+        Some(h) if crate::cmd::curves::is_locked(s, h) => {
+            s.echo("The object is on a locked layer.");
+            Ok(None)
+        }
+        Some(h) => {
+            s.set_selection(vec![h]);
+            Ok(Some(h))
+        }
+        None => {
+            s.echo("*Invalid selection*");
+            Ok(None)
+        }
+    }
+}
+
+/// Break `h` from `p1` to `p2` and end the command. As in AutoCAD 2024, a break that can't be made
+/// (a whole circle at one point: "Arc cannot be full 360 degrees") is reported and ends the
+/// command too, leaving the object as it was.
+fn break_and_end(s: &mut Session, h: Handle, p1: Vec2, p2: Vec2) -> Result<Step> {
+    match break_entity(s, h, p1, p2) {
+        Ok(_) => {}
+        Err(EngineError::Other(m)) => s.echo(m),
+        Err(e) => return Err(e),
+    }
+    s.set_selection(Vec::new());
+    Ok(Step::Done)
+}
+
 #[derive(Default)]
 pub(super) struct BreakM {
     obj: Option<(Handle, Vec2)>,
@@ -248,14 +269,8 @@ impl Interactive for BreakM {
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         match (self.obj, i) {
             (None, Input::Point(p)) => {
-                let ap = s.pixel_size() * s.settings.pickbox.max(1.0) * 1.5;
-                let space = s.space();
-                match s.pick_object(&space, p, ap)? {
-                    Some(h) => {
-                        self.obj = Some((h, p));
-                        s.set_selection(vec![h]);
-                    }
-                    None => s.echo("*Invalid selection*"),
+                if let Some(h) = pick_to_break(s, p)? {
+                    self.obj = Some((h, p));
                 }
                 Ok(Step::Continue)
             }
@@ -268,12 +283,46 @@ impl Interactive for BreakM {
                 self.first_point = false;
                 Ok(Step::Continue)
             }
-            (Some((h, p1)), Input::Point(p2)) => {
-                break_entity(s, h, p1, p2)?;
+            (Some((h, p1)), Input::Point(p2)) => break_and_end(s, h, p1, p2),
+            (Some(_), Input::Enter) => {
                 s.set_selection(Vec::new());
                 Ok(Step::Done)
             }
-            (_, Input::Enter) => Ok(Step::Done),
+            (None, Input::Enter) => Ok(Step::Done),
+            _ => Ok(Step::Continue),
+        }
+    }
+}
+
+/// BREAKATPOINT at the command line, with AutoCAD 2024's prompts: "Select object:", then "Specify
+/// break point:"; the object is split there with no gap (the point projects onto it).
+#[derive(Default)]
+pub(super) struct BreakAtPointM {
+    obj: Option<Handle>,
+}
+
+impl Interactive for BreakAtPointM {
+    fn name(&self) -> &'static str {
+        "BREAKATPOINT"
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        match self.obj {
+            None => Prompt::new("Select object", Accept::POINT),
+            Some(_) => Prompt::new("Specify break point", Accept::POINT),
+        }
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        match (self.obj, i) {
+            (None, Input::Point(p)) => {
+                self.obj = pick_to_break(s, p)?;
+                Ok(Step::Continue)
+            }
+            (Some(h), Input::Point(p)) => break_and_end(s, h, p, p),
+            (Some(_), Input::Enter) => {
+                s.set_selection(Vec::new());
+                Ok(Step::Done)
+            }
+            (None, Input::Enter) => Ok(Step::Done),
             _ => Ok(Step::Continue),
         }
     }
