@@ -54,6 +54,8 @@ pub(super) fn run_textedit(s: &mut Session, p: &Value) -> Result<Value> {
 #[derive(Default)]
 pub(super) struct TextEditM {
     h: Option<(Handle, String)>,
+    /// The picked object's single-line text (TEXT or attribute definition), for the in-place field.
+    text: Option<cadcraft_doc::Text>,
     /// Edits made in this run, newest last: each object as it was before (the Undo option).
     edits: Vec<(Handle, EntityKind)>,
     /// Single mode: end after one edit (the Mode option; Multiple by default).
@@ -71,6 +73,9 @@ impl Interactive for TextEditM {
     /// An MTEXT asking for its new text opens in the in-place editor with its contents.
     fn editing_mtext(&self) -> Option<cadcraft_doc::MText> {
         self.h.as_ref().and(self.mtext.clone())
+    }
+    fn editing_text(&self) -> Option<cadcraft_doc::Text> {
+        self.text.clone()
     }
     fn prompt(&self, _s: &Session) -> Prompt {
         if self.mode {
@@ -102,11 +107,13 @@ impl Interactive for TextEditM {
                 }
                 let kind = curves::entity(s, h)?.kind;
                 let old = text_of(&kind).ok_or_else(|| other("Select a text, mtext, multileader, attribute definition or dimension."))?;
-                self.mtext = match kind {
-                    EntityKind::MText(m) => Some(m),
+                (self.mtext, self.text) = match kind {
+                    EntityKind::MText(m) => (Some(m), None),
                     // A multileader's text opens in the same editor (#1081).
-                    EntityKind::MLeader(m) => m.text,
-                    _ => None,
+                    EntityKind::MLeader(m) => (m.text, None),
+                    EntityKind::Text(t) => (None, Some(t)),
+                    EntityKind::AttDef(a) => (None, Some(a.text)),
+                    _ => (None, None),
                 };
                 // The editor would drop part of a text this long, and saving would lose it: the
                 // command line asks for it instead.
@@ -124,11 +131,13 @@ impl Interactive for TextEditM {
                 self.edits.push((h, before));
                 self.h = None;
                 self.mtext = None;
+                self.text = None;
                 Ok(if self.single { Step::Done } else { Step::Continue })
             }
             (Some(_), Input::Enter) => {
                 self.h = None;
                 self.mtext = None;
+                self.text = None;
                 Ok(if self.single { Step::Done } else { Step::Continue })
             }
             (None, Input::Enter) => Ok(Step::Done),
