@@ -151,9 +151,7 @@ fn position_linear_text(config: &DimConfig<'_>, state: &mut LinearDimState) {
     state.side_out = if (config.dimension.defpt.xy() - state.p1).dot(state.n) >= 0.0 { state.n } else { -state.n };
     state.text_axis = Vec2::from_angle(state.angle);
     let clearance = |axis: Vec2, across: f64| {
-        config.gap
-            + state.text_width * state.text_axis.dot(axis).abs() / 2.0
-            + state.text_height * state.text_axis.perp().dot(axis).abs() * across
+        config.gap + state.text_width * state.text_axis.dot(axis).abs() / 2.0 + state.text_height * state.text_axis.perp().dot(axis).abs() * across
     };
     // Empirical #2004 match: 0.595× height with SHX and 0.601× with TrueType.
     let off_along = |axis: Vec2| clearance(axis, if st.text_above == 1 { 0.6 } else { 0.5 });
@@ -186,11 +184,8 @@ fn position_linear_text(config: &DimConfig<'_>, state: &mut LinearDimState) {
         // Half the text height either way, whatever DIMTAD says (#2222).
         let clear = clearance(state.side_out, 0.5);
         let lift = clear + 2.0 * config.arrow_size.max(config.tick_size);
-        state.text_mid = if st.text_move == 1 {
-            mid + state.side_out * lift + state.u * state.half_extent
-        } else {
-            mid + state.side_out * (lift + clear)
-        };
+        state.text_mid =
+            if st.text_move == 1 { mid + state.side_out * lift + state.u * state.half_extent } else { mid + state.side_out * (lift + clear) };
     } else if !config.dimension.user_text_pos {
         state.text_mid = state.along_center + state.offset;
     }

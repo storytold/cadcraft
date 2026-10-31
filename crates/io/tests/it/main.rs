@@ -2,8 +2,10 @@ mod acad_interop;
 #[cfg(not(target_arch = "wasm32"))]
 mod acis_data_store;
 mod angle_header;
+mod annotative_orientation;
 mod annotative_roundtrip;
 mod assoc_array_roundtrip;
+mod attdef_insert_dwg;
 mod attrib_modes;
 mod attrib_props;
 mod block_expansion;
@@ -31,6 +33,7 @@ mod hatch_pattern_def;
 mod helix_roundtrip;
 mod layout_paper_units;
 mod layout_plot_window;
+mod leader_vertex_elevation;
 #[cfg(not(target_arch = "wasm32"))]
 mod low_handseed;
 mod mleader_content;
@@ -52,6 +55,7 @@ mod plot_layout_scale;
 mod plot_model_png_scale;
 mod plot_styles;
 mod region_roundtrip;
+mod roundtrip;
 mod roundtrip_audit;
 mod skipped_records;
 mod sortents;
