@@ -1447,6 +1447,44 @@ fn hostile_variable_like_input_never_panics() {
     assert!(setvar_prompt_open(&s));
 }
 
+/// A message of several lines is one history entry per line, since the history shows one row per
+/// entry (#2433); an empty message is still one blank line.
+#[test]
+fn echo_puts_each_line_of_a_message_in_the_history() {
+    let mut s = Session::new();
+    let n = s.log.len();
+    s.echo("first\nsecond\r\n\nfourth\n");
+    assert_eq!(&s.log[n..], ["first", "second", "", "fourth"]);
+    s.echo("");
+    assert_eq!(s.log.last().map(String::as_str), Some(""));
+}
+
+/// A message with far more lines than the history keeps adds only its last lines, and the history
+/// stays bounded.
+#[test]
+fn a_huge_multiline_echo_keeps_the_history_bounded() {
+    let mut s = Session::new();
+    let lines: Vec<String> = (0..20_001).map(|i| format!("line {i}")).collect();
+    s.echo(lines.join("\n"));
+    // Exactly the message's last 5000 lines, in order: older history goes first.
+    assert_eq!(s.log.as_slice(), &lines[lines.len() - 5000..]);
+}
+
+/// Trimming the history drops older entries, not lines of the message just added, as long as the
+/// message fits within the cap.
+#[test]
+fn trimming_keeps_a_new_message_that_fits() {
+    let mut s = Session::new();
+    for i in 0..3000 {
+        s.echo(format!("older {i}"));
+    }
+    let message: Vec<String> = (0..4500).map(|i| format!("line {i}")).collect();
+    s.echo(message.join("\n"));
+    let n = s.log.len();
+    assert!((4500..=5000).contains(&n), "{n} entries");
+    assert_eq!(&s.log[n - 4500..], message.as_slice(), "the whole message is kept");
+}
+
 #[test]
 fn chamfer_rejects_negative_distances() {
     let mut s = Session::new();
