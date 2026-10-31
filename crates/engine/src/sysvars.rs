@@ -307,7 +307,7 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
             let bits = as_i(v).filter(|b| (0..=63).contains(b)).ok_or_else(bad)?;
             st.set_autosnap(bits as u32);
         }
-        "APBOX" => st.apbox = as_bool(v).ok_or_else(bad)?,
+        "APBOX" => st.apbox = small(v, 1).ok_or_else(bad)? == 1,
         "QNEWTEMPLATE" => crate::cmd::file::set_qnew_template(v.as_str().ok_or_else(bad)?),
         "POLARANG" => st.polarang = as_f64(v).filter(|a| *a > 0.0).ok_or_else(bad)?.to_radians(),
         "GRIDMODE" => st.gridmode = as_bool(v).ok_or_else(bad)?,

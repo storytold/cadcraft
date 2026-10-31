@@ -233,12 +233,15 @@ pub(super) fn override_cursor(app: &mut CadApp, raw: Vec2, xf: &Xf) {
 }
 
 /// The aperture box (APBOX) shows while a point prompt runs object snaps: a square of APERTURE
-/// pixels around the crosshair's centre, the reach of the snap search.
+/// pixels around the crosshair's centre, the reach of the snap search. A one-off override
+/// (`END`, `NON`) decides for its pick, as it does in [`override_cursor`]: `END` shows the box
+/// while F3 has the running snaps off, `NON` hides it while they are on.
 pub(super) fn aperture_box_shown(app: &CadApp) -> bool {
     let s = &app.session.settings;
+    let mode = app.session.snap_override().unwrap_or(s.osmode);
     s.apbox
-        && s.osmode != 0
-        && s.osmode & snap::mode::OFF == 0
+        && mode != 0
+        && mode & snap::mode::OFF == 0
         && app.session.pending_window.is_none()
         && app.session.current_prompt().is_some_and(|p| cadcraft_engine::pointmod::accepts(&p))
 }
