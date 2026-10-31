@@ -20,6 +20,7 @@ mod grid;
 mod grips;
 mod list;
 mod pick;
+mod ucs;
 mod viewport;
 mod widgets;
 
@@ -75,6 +76,22 @@ fn same_content(a: &ListKey, b: &ListKey) -> bool {
 #[derive(Default)]
 pub struct CanvasState {
     pub list: Option<DisplayList>,
+    view3d_key: Option<(u64, u64, u64, u64, u64, u64, u64)>,
+    projection3d: Option<(cadcraft_render::Projection3d, u64)>,
+    projector3d_cache: Option<(u64, u64, u64, u64, u64, cadcraft_render::view3d::Projector3d)>,
+    snap3_index_cache: Option<(u64, u64, Option<ucs::Snap3Index>)>,
+    /// Open state for the native 3D projection, style, light and material controls.
+    pub(crate) view3d_settings_open: bool,
+    /// The last camera change came from dragging in the canvas (3DORBIT), not from a command.
+    pub(crate) orbit_dragged: bool,
+    /// Cursor point in WCS when a 3D point prompt intersects the active UCS plane.
+    cursor3d: Option<cadcraft_geom::Vec3>,
+    cursor3d_snap: Option<ucs::Snap3>,
+    scene3d: Option<cadcraft_render::depth3d::Scene>,
+    plan_view: Option<(u64, cadcraft_engine::View)>,
+    depth_image: Option<cadcraft_render::depth3d::Image>,
+    depth_texture: Option<egui::TextureHandle>,
+    depth_key: Option<(u64, u64, u64, u32, u32, u64, u64)>,
     key: ListKey,
     /// The area `list` was built for (hatch patterns exist only inside it); a view leaving it
     /// rebuilds the list.
@@ -373,6 +390,12 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
     } else if let Some(list) = &app.canvas.list {
         draw_list(painter, &xf_paper, list, bg, app.session.settings.lwdisplay);
     }
+    if let Some(texture) = &app.canvas.depth_texture {
+        painter.image(texture.id(), xf.rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+    }
+    if showing_3d(app) {
+        return;
+    }
     if let Some(vp) = &active_vp {
         // The active viewport: a heavy border, highlights in model units clipped to it.
         let r = Rect::from_two_pos(
@@ -489,7 +512,9 @@ fn paint_pointer_overlay(
     if app.ui.show_viewcube && sheet.is_none() {
         draw_viewcube(app, ui, rect);
     }
-    viewport_label(painter, rect);
+    // Native render settings stay in a self-contained window and go through the VIEW3D command.
+    crate::view3d_controls::show(app, ui.ctx());
+    viewport_label(painter, rect, sheet.is_none().then_some(app.session.view3d).flatten(), Some(app.session.render3d));
     // Typing and Escape reach the command line even when its overlay is hidden.
     crate::cmdline::keyboard(app, ui.ctx());
     // Command line overlay.
@@ -523,6 +548,7 @@ fn paint_pointer_overlay(
     }
     // Over the crosshair, so the row under the pointer reads clearly.
     cycle_list(app, painter);
+    ucs::draw_snap3_marker(painter, app.canvas.cursor3d_snap);
     // No continuous repaint while hovering: input events repaint by themselves. Repainting every
     // frame kept a vsync swapchain's queue full (every frame waited behind queued ones) and would
     // spin the CPU with the low-latency present mode (`gpu::surface_config`).
@@ -598,8 +624,26 @@ fn update_canvas_cursor(
 ) -> (Option<Vec2>, Option<crate::dyninput::Frame>) {
     let raw_world = hover.filter(|_| inside).map(|p| xf.to_world(p));
     let dyn_frame = crate::cmdline::dyn_frame(app);
+    let point3d_prompt = point3d_input(app);
+    app.canvas.cursor3d = None;
+    app.canvas.cursor3d_snap = None;
     if let Some(w) = raw_world {
-        let mut eff = effective_point(app, w, xf, ui.ctx());
+        let mut eff = if point3d_prompt {
+            let projected = if let Some(pointer) = hover
+                && let Some((point, snap)) = point3_at_pointer(app, xf, pointer)
+            {
+                app.canvas.cursor3d = Some(point);
+                app.canvas.cursor3d_snap = snap;
+                snap.map_or(w, |s| s.projected)
+            } else {
+                w
+            };
+            app.canvas.snap = None;
+            app.canvas.track = None;
+            projected
+        } else {
+            effective_point(app, w, xf, ui.ctx())
+        };
         // A locked Dynamic Input value (`40,` or `40<` typed) holds the cursor and overrides snaps.
         if let Some(f) = dyn_frame
             && let Some(e) = crate::dyninput::parse(&app.cmd.buffer, &f)
@@ -610,7 +654,7 @@ fn update_canvas_cursor(
             app.canvas.track = None;
         }
         // Grip dimensional input: typed lengths and angles hold the grip and override snaps.
-        let grip_held = crate::grip_dyn::constrain(app, eff);
+        let grip_held = if point3d_prompt { None } else { crate::grip_dyn::constrain(app, eff) };
         if let Some(q) = grip_held {
             eff = q;
             app.canvas.snap = None;
@@ -620,7 +664,7 @@ fn update_canvas_cursor(
         app.session.cursor = eff;
         app.session.cursor_deferred = app.canvas.snap.and_then(|h| h.deferred);
         // Typed or menu snap overrides (END, NON…) and Tab cycling; a locked Dynamic Input value wins.
-        if dyn_frame.and_then(|f| crate::dyninput::parse(&app.cmd.buffer, &f)).is_none_or(|e| e.first_locked().is_none()) {
+        if !point3d_prompt && dyn_frame.and_then(|f| crate::dyninput::parse(&app.cmd.buffer, &f)).is_none_or(|e| e.first_locked().is_none()) {
             override_cursor(app, w, xf);
         }
         // Typed grip dimensions win over snap overrides too.
@@ -639,6 +683,126 @@ fn update_canvas_cursor(
     (raw_world, dyn_frame)
 }
 
+fn projector3d_for(
+    drawing: &cadcraft_doc::Drawing,
+    camera: cadcraft_render::view3d::Camera3d,
+    render: cadcraft_render::view3d::Render3dOptions,
+    options: &cadcraft_render::Options,
+) -> cadcraft_render::view3d::Projector3d {
+    // Match both the tessellation tolerance and bounds used by build_3d_with_options/Scene.
+    let planar = cadcraft_render::build(drawing, &cadcraft_doc::Space::Model, options);
+    cadcraft_render::view3d::Projector3d::with_planar_bounds(drawing, camera, render, planar.bounds)
+}
+
+fn point3_at_pointer(app: &mut CadApp, xf: &Xf, pointer: Pos2) -> Option<(cadcraft_geom::Vec3, Option<ucs::Snap3>)> {
+    let top = cadcraft_engine::View3d { azimuth: -std::f64::consts::FRAC_PI_2, elevation: std::f64::consts::FRAC_PI_2, orbiting: false };
+    let view = app.session.view3d.unwrap_or(top);
+    let camera = cadcraft_render::view3d::Camera3d { azimuth: view.azimuth, elevation: view.elevation };
+    let (uid, revision) = app.session.state().ok().map(|st| (st.uid, st.revision))?;
+    let render = app.session.render3d;
+    let options = list::preview_options(xf.scale);
+    let key = (uid, revision, render.fingerprint(), options.tolerance.to_bits(), options.min_dash.to_bits());
+    let projector = match app.canvas.projector3d_cache {
+        Some((cached_uid, cached_revision, cached_render, cached_tolerance, cached_min_dash, projector))
+            if (cached_uid, cached_revision, cached_render, cached_tolerance, cached_min_dash) == key =>
+        {
+            projector.with_camera(camera)
+        }
+        _ => {
+            let drawing = app.session.doc().ok()?;
+            projector3d_for(drawing, camera, render, &options)
+        }
+    };
+    app.canvas.projector3d_cache = Some((uid, revision, render.fingerprint(), options.tolerance.to_bits(), options.min_dash.to_bits(), projector));
+    let drawing = app.session.doc().ok()?;
+    if app.canvas.snap3_index_cache.as_ref().is_none_or(|(cached_uid, cached_revision, _)| (*cached_uid, *cached_revision) != (uid, revision)) {
+        let index = ucs::Snap3Index::build(drawing, &cadcraft_doc::Space::Model);
+        app.canvas.snap3_index_cache = Some((uid, revision, index));
+    }
+    let snap = app.canvas.snap3_index_cache.as_ref().and_then(|(_, _, index)| index.as_ref()).and_then(|index| {
+        ucs::snap3d(
+            index,
+            pointer,
+            xf,
+            projector,
+            render.projection == cadcraft_render::Projection3d::Perspective,
+            app.session.settings.osmode,
+            (app.session.settings.pickbox * 6.0) as f32,
+        )
+    });
+    if let Some(snap) = snap {
+        return Some((snap.point, Some(snap)));
+    }
+    let (ray_origin, ray_direction) = projector.ray(xf.to_world(pointer))?;
+    let point = ucs::intersect_plane(ray_origin, ray_direction, app.session.active_ucs())?;
+    Some((point, None))
+}
+
+/// Pointer picks at a 3D point prompt go through the view ray onto the UCS plane (with 3D
+/// snaps) only on the model tab, plan view included. A layout tab shows the 2D sheet, so a click
+/// there is the 2D point under the cursor, which 3D prompts take on the UCS plane like typed `x,y`.
+fn point3d_input(app: &CadApp) -> bool {
+    app.session.current_prompt().is_some_and(|p| p.point3d) && app.session.state().is_ok_and(|st| !st.space.is_paper())
+}
+
+/// The canvas shows the depth-tested 3D projection: a 3D camera is set and the model tab is
+/// displayed. The camera belongs to the drawing and stays set on a layout tab, which draws in
+/// 2D, so selection, hover, grips and window drags there take the 2D paths.
+pub(crate) fn showing_3d(app: &CadApp) -> bool {
+    app.session.view3d.is_some() && app.session.state().is_ok_and(|st| !st.space.is_paper())
+}
+
+fn depth_pick(canvas: &CanvasState, pos: Option<Pos2>) -> Option<Handle> {
+    let (image, xf, p) = (canvas.depth_image.as_ref()?, canvas.xf?, pos?);
+    if !xf.rect.contains(p) {
+        return None;
+    }
+    let x = ((p.x - xf.rect.left()) / xf.rect.width() * image.width as f32).floor() as u32;
+    let y = ((p.y - xf.rect.top()) / xf.rect.height() * image.height as f32).floor() as u32;
+    image.pick(x, y)
+}
+
+fn refresh_depth_image(app: &mut CadApp, ctx: &egui::Context, xf: &Xf) {
+    let Some(scene) = &app.canvas.scene3d else {
+        app.canvas.depth_image = None;
+        app.canvas.depth_texture = None;
+        app.canvas.depth_key = None;
+        return;
+    };
+    let ratio = (2048.0 / xf.rect.width().max(xf.rect.height()).max(1.0)).min(1.0);
+    let w = (xf.rect.width() * ratio).round().clamp(1.0, 2048.0) as u32;
+    let h = (xf.rect.height() * ratio).round().clamp(1.0, 2048.0) as u32;
+    use std::hash::{Hash, Hasher};
+    let selection = app.session.selection();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    selection.hash(&mut hasher);
+    app.canvas.hover.hash(&mut hasher);
+    let key = (xf.center.x.to_bits(), xf.center.y.to_bits(), xf.scale.to_bits(), w, h, app.canvas.list_gen, hasher.finish());
+    if app.canvas.depth_key == Some(key) {
+        return;
+    }
+    let view = cadcraft_render::raster::View {
+        center: xf.center,
+        scale: xf.scale * f64::from(h) / f64::from(xf.rect.height().max(1.0)),
+        width: w,
+        height: h,
+    };
+    if let Some(image) = scene.render(&view) {
+        let mut rgba = image.rgba.clone();
+        for (pixel, handle) in rgba.chunks_exact_mut(4).zip(&image.handles) {
+            if handle.is_some_and(|h| selection.contains(&h) || app.canvas.hover == Some(h)) {
+                pixel[0] /= 2;
+                pixel[1] = pixel[1] / 2 + 90;
+                pixel[2] = pixel[2] / 2 + 127;
+            }
+        }
+        let color = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
+        app.canvas.depth_texture = Some(ctx.load_texture("cadcraft-3d-depth", color, egui::TextureOptions::NEAREST));
+        app.canvas.depth_image = Some(image);
+        app.canvas.depth_key = Some(key);
+    }
+}
+
 fn update_hover(app: &mut CadApp, ui: &egui::Ui, inside: bool, hover_pos: Option<Pos2>, raw_world: Option<Vec2>, scale: f64) {
     // The cursor picks objects (pick box, rollover highlight): "Select objects" and single-object
     // prompts, or no command with PICKFIRST on; SELECTIONPREVIEW says in which of those it shows.
@@ -648,8 +812,12 @@ fn update_hover(app: &mut CadApp, ui: &egui::Ui, inside: bool, hover_pos: Option
             && let (Some(w), Ok(st)) = (raw_world, app.session.state())
         {
             let filter = app.session.settings.previewfilter;
-            app.canvas.hover = cadcraft_engine::select::pick(&st.doc, &st.edit_space(), w, app.session.settings.pickbox.max(1.0) * 1.5 / scale)
-                .filter(|h| st.doc.entity(*h).is_none_or(|e| !cadcraft_engine::select::preview_filtered(&st.doc, e, filter)));
+            app.canvas.hover = if showing_3d(app) {
+                depth_pick(&app.canvas, hover_pos)
+            } else {
+                cadcraft_engine::select::pick(&st.doc, &st.edit_space(), w, app.session.settings.pickbox.max(1.0) * 1.5 / scale)
+            }
+            .filter(|h| st.doc.entity(*h).is_none_or(|e| !cadcraft_engine::select::preview_filtered(&st.doc, e, filter)));
             app.canvas.hover_at = hover_pos;
         }
     } else {
@@ -703,13 +871,23 @@ fn collect_prompt_clicks(app: &mut CadApp, ui: &egui::Ui, context: PromptClickCo
         // The last one is placed below, at the cursor, like any click.
         if let Some((_, earlier)) = releases.split_last() {
             for pos in earlier.iter().filter(|p| context.rect.contains(**p)) {
-                let w = effective_point(app, context.xf.to_world(*pos), &context.xf, ui.ctx());
-                let result = match app.canvas.snap {
-                    Some(hit) => app.session.input_snapped(hit),
-                    None => app.session.input(Input::Point(w)),
-                };
-                if let Err(e) = result {
-                    app.session.echo(e.to_string());
+                if point3d_input(app) {
+                    if let Some((point, _snap)) = point3_at_pointer(app, &context.xf, *pos) {
+                        if let Err(e) = app.session.input(Input::Point3(point)) {
+                            app.session.echo(e.to_string());
+                        }
+                    } else {
+                        app.session.echo("Cannot pick a 3D point: the camera ray is parallel to the active UCS plane. Change the view or UCS.");
+                    }
+                } else {
+                    let w = effective_point(app, context.xf.to_world(*pos), &context.xf, ui.ctx());
+                    let result = match app.canvas.snap {
+                        Some(hit) => app.session.input_snapped(hit),
+                        None => app.session.input(Input::Point(w)),
+                    };
+                    if let Err(e) = result {
+                        app.session.echo(e.to_string());
+                    }
                 }
             }
         }
@@ -726,6 +904,52 @@ fn collect_prompt_clicks(app: &mut CadApp, ui: &egui::Ui, context: PromptClickCo
 /// replaces the pointer over the drawing alone. A menu bar, an open menu (including its frame, not
 /// just its items), a tooltip or a floating palette above the canvas keeps the normal OS cursor
 /// visible (#1701), and so do the menus painted on the canvas itself (see [`over_canvas_menu`]).
+fn orbit_input(app: &mut CadApp, ui: &egui::Ui, resp: &egui::Response) {
+    if ui.input(|i| i.key_pressed(egui::Key::Escape))
+        && let Some(camera) = app.session.view3d.as_mut()
+    {
+        camera.orbiting = false;
+    }
+    // A layout tab draws in 2D: a drag there must not turn the model tab's camera.
+    let shown = showing_3d(app);
+    if let Some(camera) = app.session.view3d.as_mut()
+        && camera.orbiting
+        && shown
+        && resp.dragged_by(egui::PointerButton::Primary)
+    {
+        let delta = ui.input(|i| i.pointer.delta());
+        camera.azimuth -= f64::from(delta.x) * 0.01;
+        camera.elevation =
+            (camera.elevation + f64::from(delta.y) * 0.01).clamp(-std::f64::consts::FRAC_PI_2 + 0.001, std::f64::consts::FRAC_PI_2 - 0.001);
+        app.canvas.orbit_dragged = true;
+        ui.ctx().request_repaint();
+    }
+}
+
+fn select_depth(app: &mut CadApp, hover_pos: Option<Pos2>, shift: bool) {
+    if let Some(h) = depth_pick(&app.canvas, hover_pos) {
+        app.session.idle_pick(h, shift);
+    } else {
+        app.session.set_selection(Vec::new());
+    }
+}
+
+fn pick_dynamic_option(app: &mut CadApp, pressed: bool, hover: Option<egui::Pos2>) -> bool {
+    if !pressed || app.cmd.options.is_none() {
+        return false;
+    }
+    match hover.and_then(|h| app.cmd.option_at(h)) {
+        Some(k) => {
+            crate::cmdline::pick_option(app, k);
+            true
+        }
+        None => {
+            app.cmd.options = None;
+            false
+        }
+    }
+}
+
 pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let full = ui.available_rect_before_wrap();
@@ -758,6 +982,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         dbl_middle: i.pointer.button_double_clicked(egui::PointerButton::Middle),
         dbl_primary: i.pointer.button_double_clicked(egui::PointerButton::Primary),
     });
+    orbit_input(app, ui, &resp);
     let navigation = Navigation { rect, tiles: &tiles, response: &resp, xf, pointer };
     let Some((inside, on_menu)) = navigate_canvas(app, ui, &navigation) else { return };
     let PointerInput { hover_pos, mods, middle_down, pressed_primary, pressed_secondary, dbl_primary, .. } = pointer;
@@ -766,6 +991,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     let scale = f64::from(rect.height()) / view.height.max(1e-12);
     let xf = Xf { rect, center: view.center, scale };
     app.canvas.xf = Some(xf);
+    refresh_depth_image(app, ui.ctx(), &xf);
     // The paper (display) transform; equal to `xf` except inside an MSPACE viewport.
     let (xf_paper, active_vp) = match app.session.state() {
         Ok(st) => {
@@ -793,22 +1019,15 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         return;
     };
 
-    let pressed_primary =
-        collect_prompt_clicks(app, ui, PromptClickContext { rect, xf, inside, middle_down, primary_clicked: pressed_primary, response: &resp });
+    // A 3DORBIT left on blocks clicks only where the 3D view is shown, not on a layout tab.
+    let orbiting = showing_3d(app) && app.session.view3d.is_some_and(|v| v.orbiting);
+    let pressed_primary = !orbiting
+        && collect_prompt_clicks(app, ui, PromptClickContext { rect, xf, inside, middle_down, primary_clicked: pressed_primary, response: &resp });
 
     let (raw_world, dyn_frame) = update_canvas_cursor(app, ui, &xf, inside, hover_pos);
 
     // A click on the Dynamic Input options menu picks the keyword; elsewhere it closes the menu.
-    let mut picked = false;
-    if pressed_primary && app.cmd.options.is_some() {
-        match hover_pos.and_then(|h| app.cmd.option_at(h)) {
-            Some(k) => {
-                crate::cmdline::pick_option(app, k);
-                picked = true;
-            }
-            None => app.cmd.options = None,
-        }
-    }
+    let picked = pick_dynamic_option(app, pressed_primary, hover_pos);
     // A double-click with no command running (on a layout viewport, say) leaves no selection
     // window behind; while a command asks for points, every click still counts (#815).
     let idle_dbl = dbl_primary && app.session.running.is_none();
@@ -850,13 +1069,27 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
                 app.cmd.buffer.clear();
             }
             // Preserve a snap's viewport origin for DIST, and its deferred curve where needed.
-            let result = match app.canvas.snap {
-                Some(hit) => app.session.input_snapped(hit),
-                None => app.session.input(Input::Point(p)),
+            let result = if showing_3d(app) && app.session.current_prompt().is_some_and(|p| p.accept.select) {
+                app.session.input(Input::Pick(depth_pick(&app.canvas, hover_pos).into_iter().collect()))
+            } else if point3d_input(app) {
+                match app.canvas.cursor3d {
+                    Some(point) => app.session.input(Input::Point3(point)),
+                    None => {
+                        app.session.echo("Cannot pick a 3D point: the camera ray is parallel to the active UCS plane. Change the view or UCS.");
+                        Ok(())
+                    }
+                }
+            } else {
+                match app.canvas.snap {
+                    Some(hit) => app.session.input_snapped(hit),
+                    None => app.session.input(Input::Point(p)),
+                }
             };
             if let Err(e) = result {
                 app.session.echo(e.to_string());
             }
+        } else if showing_3d(app) {
+            select_depth(app, hover_pos, mods.shift);
         } else if let Some(g) = crate::dyngrips::at(app, &xf, hover_pos) {
             crate::dyngrips::click(app, g);
         } else if let Some(g) = grip_at(app, &xf, hover_pos) {
@@ -872,6 +1105,8 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         app.canvas.drag_window = false;
     }
     if app.session.settings.pickdrag
+        && !showing_3d(app)
+        && !orbiting
         && resp.drag_started_by(egui::PointerButton::Primary)
         && !middle_down
         && app.canvas.cycle.is_none()
@@ -967,6 +1202,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         (xf.world_bounds(), 1.0 / xf.scale)
     }));
     ensure_list(app, &xf_paper, &views, ui.ctx());
+    refresh_depth_image(app, ui.ctx(), &xf_paper);
     let sheet = app.canvas.list.as_ref().and_then(|l| l.sheet);
     let surround = Color32::from_rgb(0x50, 0x57, 0x63);
     let (bg, paper_rect) = match sheet {
@@ -987,7 +1223,9 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         }
         None => {
             blockedit::wash(app, painter, rect);
-            draw_grid(app, painter, &xf);
+            if !showing_3d(app) {
+                draw_grid(app, painter, &xf);
+            }
             (Rgb(t.canvas.r(), t.canvas.g(), t.canvas.b()), None)
         }
     };
@@ -1044,7 +1282,8 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         app.canvas.dyn_hot = None;
     }
     app.canvas.grip_editing = grip_edit;
-    if (!app.session.prompting() || grip_edit)
+    if !showing_3d(app)
+        && (!app.session.prompting() || grip_edit)
         && app.session.shows_grips(sel.len())
         && let Ok(st) = app.session.state()
     {

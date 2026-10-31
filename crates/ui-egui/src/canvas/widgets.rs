@@ -30,7 +30,7 @@ pub(super) fn draw_tiles(app: &CadApp, ui: &egui::Ui, tiles: &[(Rect, cadcraft_e
         if let Some(list) = &app.canvas.list {
             draw_list(&p, &xf, list, bg, app.session.settings.lwdisplay);
         }
-        viewport_label(&p, *r);
+        viewport_label(&p, *r, None, None);
     }
     let p = ui.painter();
     for (r, tile) in tiles {
@@ -60,10 +60,34 @@ pub(super) fn draw_ucs_icon(p: &egui::Painter, rect: Rect) {
     p.text(o + vec2(0.0, -70.0), egui::Align2::CENTER_BOTTOM, crate::tl!("Y"), f, t.canvas_ink);
 }
 
-pub(super) fn viewport_label(p: &egui::Painter, rect: Rect) {
+pub(super) fn viewport_label(
+    p: &egui::Painter,
+    rect: Rect,
+    camera: Option<cadcraft_engine::View3d>,
+    settings: Option<cadcraft_render::Render3dOptions>,
+) {
     let t = Tokens::get();
     let at = pos2(rect.left() + 10.0, rect.top() + 8.0);
-    p.text(at, egui::Align2::LEFT_TOP, crate::tl!("+  |  Top  |  2D Wireframe"), crate::theme::small(), t.canvas_ink);
+    let label = if camera.is_some() {
+        let style = settings
+            .map(|s| match s.style {
+                cadcraft_render::VisualStyle3d::Shaded => "Shaded",
+                cadcraft_render::VisualStyle3d::Flat => "Flat",
+                cadcraft_render::VisualStyle3d::Realistic => "Realistic",
+                cadcraft_render::VisualStyle3d::Wireframe => "Wireframe",
+            })
+            .unwrap_or("Shaded");
+        let projection = settings
+            .map(|s| match s.projection {
+                cadcraft_render::Projection3d::Orthographic => "Orthographic",
+                cadcraft_render::Projection3d::Perspective => "Perspective",
+            })
+            .unwrap_or("Orthographic");
+        format!("+  |  {projection}  |  {style}")
+    } else {
+        crate::tl!("+  |  Top  |  2D Wireframe").to_string()
+    };
+    p.text(at, egui::Align2::LEFT_TOP, label, crate::theme::small(), t.canvas_ink);
 }
 
 pub(super) fn draw_viewcube(app: &mut CadApp, ui: &mut egui::Ui, rect: Rect) {

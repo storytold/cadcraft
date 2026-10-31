@@ -300,7 +300,7 @@ const HEADLESS_METHODS: &[(&str, &str, &str)] = &[
     ("engine.execute", "{command, params}", "Run any command with JSON parameters. Never opens a dialog."),
     ("engine.commands", "", "Every command: id, label, menu path, shortcut, aliases, params doc, enabled."),
     ("drawing.inspect", "{entities?, limit?}", "Drawing summary and entities with handles and geometry."),
-    ("ui.render", "{path?, width?, height?, fit?}", "Render the drawing; replies pngBase64."),
+    ("ui.render", "{path?, width?, height?, fit?}", "Render the drawing (through the 3D camera after 3dorbit / view3d); replies pngBase64."),
     ("app.open", "{path}", "Open a drawing."),
     ("app.save", "{path?}", "Save the drawing (Save As with a path)."),
     ("control.methods", "", "This list."),
@@ -396,14 +396,31 @@ impl Backend for Headless {
             }
             "drawing.inspect" | "document.inspect" => s.execute("drawing.inspect", &p).map_err(|e| e.to_string()),
             "ui.render" => {
+                let side = |k: &str| p.get(k).and_then(Value::as_f64).map(|x| x.clamp(16.0, 8192.0) as u32);
                 let w = p.get("width").and_then(Value::as_f64).unwrap_or(1600.0).clamp(16.0, 8192.0) as u32;
                 let h = p.get("height").and_then(Value::as_f64).unwrap_or(1000.0).clamp(16.0, 8192.0) as u32;
                 let st = s.state().map_err(|e| e.to_string())?;
                 let window = render_window(&p);
                 let opts = cadcraft_render::Options { view: window, transparency: s.settings.transparency_display, ..Default::default() };
+                // A 3D camera (3dorbit, view3d) draws model space with a depth test, fitted to the
+                // projected drawing; `window` and `fit` have no meaning there, and a side over 2048
+                // pixels is scaled down (the reply says the size drawn).
+                if let (Some(v), cadcraft_engine::doc::Space::Model) = (s.view3d, &st.space) {
+                    let r = cadcraft_engine::cmd::view3d::render_png_of_with_options(
+                        &st.doc,
+                        v,
+                        s.render3d,
+                        side("width").unwrap_or(1600),
+                        side("height").unwrap_or(1000),
+                    )
+                    .map_err(|e| e.to_string())?;
+                    if let Some(path) = str_p("path") {
+                        std::fs::write(&path, &r.png).map_err(|e| format!("{path}: {e}"))?;
+                    }
+                    return Ok(json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(&r.png), "width": r.width, "height": r.height}));
+                }
                 let list = cadcraft_render::build(&st.doc, &st.space, &opts);
                 let fit = p.get("fit").and_then(Value::as_bool).unwrap_or(true);
-                let side = |k: &str| p.get(k).and_then(Value::as_f64).map(|x| x as u32);
                 let view = if let Some(win) = &window {
                     cadcraft_render::raster::View::of_window(win, side("width"), side("height"))
                 } else if fit {

@@ -211,6 +211,22 @@ impl Session {
                     }
                 }
             }
+            Input::Point3(p) => {
+                let p2 = p.xy();
+                let ap = self.pixel_size() * self.settings.pickbox.max(1.0) * 1.5;
+                if let Some(pw) = self.pending_window.take() {
+                    let crossing = p2.x < pw.corner.x;
+                    let hs = select::select_window(self.doc()?, &space, Bounds2::new(pw.corner, p2), crossing);
+                    return Ok(Some(Input::Pick(cmd::groups::expand(self, hs))));
+                }
+                match select::pick(self.doc()?, &space, p2, ap) {
+                    Some(h) => Ok(Some(Input::Pick(cmd::groups::expand(self, vec![h])))),
+                    None => {
+                        self.pending_window = Some(PendingWindow { corner: p2, during_command: true });
+                        Ok(None)
+                    }
+                }
+            }
             Input::Text(ref t) | Input::Keyword(ref t) => {
                 let tl = t.trim().to_ascii_lowercase();
                 let d = self.doc()?;
@@ -276,17 +292,23 @@ impl Session {
     }
 
     pub(crate) fn feed(&mut self, input: Option<Input>) -> Result<()> {
-        let base = if matches!(input, Some(Input::Point(_))) { self.current_prompt().and_then(|p| p.base) } else { None };
+        let base = if matches!(input, Some(Input::Point(_) | Input::Point3(_))) { self.current_prompt().and_then(|p| p.base) } else { None };
         let Some(mut run) = self.running.take() else { return Ok(()) };
         let step = match input {
             Some(Input::Cancel) => Ok(Step::Cancel),
             Some(i) => {
                 if let Input::Point(p) = &i {
                     self.last_point = *p;
+                    self.last_point3 = cadcraft_geom::Vec3::new(p.x, p.y, 0.0);
                     if let Some(b) = base.filter(|b| b.is_finite() && p.is_finite() && b.dist(*p) > 1e-12) {
                         self.last_segment = Some((b, *p));
                     }
                     // A temporary tracking point (TT) serves one point.
+                    self.tracking.release_temporary();
+                }
+                if let Input::Point3(p) = &i {
+                    self.last_point3 = *p;
+                    self.last_point = p.xy();
                     self.tracking.release_temporary();
                 }
                 let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run.machine.input(self, i)));

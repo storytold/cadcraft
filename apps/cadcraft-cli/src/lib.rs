@@ -312,4 +312,45 @@ mod tests {
         assert!(!dir.join("bad.png").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    const QUAD_OBJ: &str = "g part\nv 0 0 0\nv 40 0 0\nv 40 0 30\nv 0 0 30\nv 0 25 0\nf 1 2 3 4\nf 1 2 5\n";
+
+    #[test]
+    fn export_writes_meshes_and_3d_images() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-cli-3d-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = |n: &str| dir.join(n).to_string_lossy().to_string();
+        std::fs::write(dir.join("in.obj"), QUAD_OBJ).unwrap();
+        let go = |extra: &[&str], out: &str| -> i32 {
+            let mut args: Vec<String> = ["run", &path("in.obj")].iter().chain(extra).map(|a| a.to_string()).collect();
+            args.extend(["--export".to_string(), path(out)]);
+            run(args, &mut Vec::new(), &mut Vec::new())
+        };
+        assert_eq!(go(&[], "out.obj"), 0);
+        assert_eq!(go(&[], "out.stl"), 0);
+        assert!(std::fs::read_to_string(dir.join("out.obj")).unwrap().contains("\nv "));
+        assert!(std::fs::read_to_string(dir.join("out.stl")).unwrap().contains("facet"));
+        // The plan view, a 3D png and a 3D svg; a preset and angles; `plan` undoes --view3d.
+        assert_eq!(go(&[], "plan.png"), 0);
+        assert_eq!(go(&["--view3d", "swiso"], "iso.png"), 0);
+        assert_eq!(go(&["--view3d", "30,20"], "angles.svg"), 0);
+        assert_eq!(go(&["--view3d", "swiso", "--cmd", "plan"], "back.png"), 0);
+        let (plan, iso, back) =
+            (std::fs::read(dir.join("plan.png")).unwrap(), std::fs::read(dir.join("iso.png")).unwrap(), std::fs::read(dir.join("back.png")).unwrap());
+        assert_eq!(&iso[1..4], b"PNG");
+        assert_ne!(plan, iso);
+        assert_eq!(plan, back);
+        assert!(std::fs::read_to_string(dir.join("angles.svg")).unwrap().contains("<svg"));
+        // Orbit from a step also draws in 3D.
+        assert_eq!(go(&["--cmd", "3dorbit"], "orbit.png"), 0);
+        assert_ne!(std::fs::read(dir.join("orbit.png")).unwrap(), plan);
+        // Hostile --view3d values are refused and write nothing.
+        for bad in ["NaN,10", "10,100", "sideways", "1,2,3", ""] {
+            let mut err = Vec::new();
+            let code = run(["run", &path("in.obj"), "--view3d", bad, "--export", &path("bad.png")], &mut Vec::new(), &mut err);
+            assert_ne!(code, 0, "{bad}");
+        }
+        assert!(!dir.join("bad.png").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

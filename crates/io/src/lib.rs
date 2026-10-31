@@ -12,10 +12,15 @@ mod dxf_read;
 mod dxf_table;
 mod dxf_write;
 mod dxf_xref;
+mod gltf;
+mod iges;
+mod mesh;
 pub mod pdf;
 pub mod plotter;
+mod step;
 pub mod svg;
 mod svg_read;
+mod three_mf;
 
 /// Multilines and their styles (MLINE, MLINESTYLE).
 mod dxf_mline;
@@ -70,6 +75,12 @@ pub fn read(bytes: &[u8], name: impl AsRef<Path>) -> Result<Drawing> {
         return Ok(d);
     }
     match (Format::from_path(name), ext(name).as_str()) {
+        (_, "obj") => mesh::read_obj(bytes),
+        (_, "stl") => mesh::read_stl(bytes),
+        (_, "gltf" | "glb") => gltf::read(bytes),
+        (_, "3mf") => three_mf::read(bytes),
+        (_, "step" | "stp") => step::read(bytes),
+        (_, "iges" | "igs") => iges::read(bytes),
         (Some(Format::Svg | Format::Svgz), _) => svg_read::read(bytes),
         (Some(Format::Dxf), _) => dxf_read::read(bytes),
         (_, e) if bytes.len() > 4 => dxf_read::read(bytes).map_err(|_| IoError::Unsupported(e.to_string())),
@@ -119,6 +130,16 @@ pub fn write_with(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> Re
 /// [`check_window`].
 pub fn write_framed(d: &Drawing, name: impl AsRef<Path>, window: Option<Bounds2>) -> Result<Vec<u8>> {
     let name = name.as_ref();
+    match ext(name).as_str() {
+        "obj" => return mesh::write_obj(d),
+        "stl" => return mesh::write_stl(d),
+        "gltf" => return gltf::write(d, false),
+        "glb" => return gltf::write(d, true),
+        "3mf" => return three_mf::write(d),
+        "step" | "stp" => return step::write(d),
+        "iges" | "igs" => return iges::write(d),
+        _ => {}
+    }
     // A drawing template (.dwt) is DWG content.
     let format = Format::from_path(name);
     if format == Some(Format::Dwt) {

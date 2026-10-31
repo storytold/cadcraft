@@ -293,3 +293,21 @@ fn mspace_edits_model_through_viewport() {
     s.execute("layout.set", &json!({"name": "Model"})).unwrap();
     assert!(s.state().unwrap().mspace.is_none());
 }
+
+/// A 3D camera belongs to the model tab: ZOOM Extents inside a layout viewport fits the plan
+/// view that viewport shows, not the projected 3D bounds (#2544 review).
+#[test]
+fn zoom_extents_in_a_layout_viewport_ignores_the_model_tab_camera() {
+    let mut s = Session::new();
+    s.execute("box", &json!({"p1": [0, 0, 0], "p2": [10, 10, 100]})).unwrap();
+    s.execute("layout.new", &json!({"name": "L"})).unwrap();
+    s.execute("layout.set", &json!({"name": "L"})).unwrap();
+    let (_, vp) = viewports(&s, "L").into_iter().find(|(_, v)| v.id != 1).unwrap();
+    s.execute("mspace", &json!({"at": [vp.center.x, vp.center.y]})).unwrap();
+    s.execute("zoom.extents", &json!({})).unwrap();
+    let plan = s.state().unwrap().view();
+    s.view3d = Some(crate::View3d { orbiting: false, ..Default::default() });
+    s.execute("zoom.extents", &json!({})).unwrap();
+    let with_camera = s.state().unwrap().view();
+    assert!((with_camera.center - plan.center).len() < 1e-9 && (with_camera.height - plan.height).abs() < 1e-9, "{plan:?} vs {with_camera:?}");
+}

@@ -46,7 +46,12 @@ fn save_help() -> &'static str {
 
 fn export_help() -> &'static str {
     static C: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    with_formats(&C, "Export the drawing to this file; its extension picks the format ", Format::WRITE, "")
+    with_formats(
+        &C,
+        "Export the drawing to this file; its extension picks the format ",
+        Format::WRITE,
+        "; also .obj, .stl, .gltf, .glb and .3mf (meshes of the 3D faces), and .step/.stp and .iges/.igs (exact solids)",
+    )
 }
 
 fn convert_about() -> &'static str {
@@ -180,7 +185,9 @@ pub(crate) enum ViewMode {
 /// --cmd prints its JSON result on one line (JSON lines); a command with no result prints nothing.
 /// An image --export (png 2400x1600, svg, pdf) shows model space:
 /// the current view if the steps changed it (zoom, pan, view.set…), otherwise the drawing
-/// extents, unless --window or --view says otherwise.
+/// extents, unless --window or --view says otherwise. --export also writes .obj, .stl, .gltf, .glb
+/// and .3mf meshes of the 3D faces, and .step/.stp and .iges/.igs exact solids. With --view3d (or a 3dorbit, view3d step) a png or svg --export is drawn in 3D
+/// and ignores --window and --view; `plan` leaves the 3D view again.
 #[derive(Args)]
 #[command(group(ArgGroup::new("framing").args(["window", "view"]).multiple(true).requires("export")))]
 #[command(after_long_help = r#"--cmd chaining:
@@ -214,6 +221,11 @@ pub(crate) struct RunArgs {
     pub(crate) export: Option<PathBuf>,
     #[command(flatten)]
     pub(crate) framing: FramingArgs,
+    /// Show model space in 3D (png and svg exports): AZIMUTH,ELEVATION in degrees (e.g. -45,30;
+    /// elevation -90 to 90), or a preset: swiso, seiso, neiso, nwiso, top, bottom, front, back,
+    /// left, right. Applied before the steps, so a `--cmd view3d` or `plan` step overrides it
+    #[arg(long, value_name = "AZ,EL|PRESET", value_parser = parse_view3d)]
+    pub(crate) view3d: Option<Value>,
     /// Allow an output that is an input file, replacing the original
     #[arg(long)]
     pub(crate) in_place: bool,
@@ -380,6 +392,23 @@ impl UsageError {
         };
         cmd.error(kind, self)
     }
+}
+
+/// Parse `--view3d AZ,EL` or `--view3d PRESET` into the parameters of the `view3d` command (which
+/// range-checks them and knows the presets).
+pub(crate) fn parse_view3d(text: &str) -> Result<Value, String> {
+    let text = text.trim();
+    if let Some((az, el)) = text.split_once(',') {
+        let num = |name: &str, v: &str| match v.trim().parse::<f64>() {
+            Ok(n) if n.is_finite() => Ok(n),
+            _ => Err(format!("{name} must be a finite number of degrees, got `{}`", v.trim())),
+        };
+        return Ok(serde_json::json!({ "azimuth": num("azimuth", az)?, "elevation": num("elevation", el)? }));
+    }
+    if text.is_empty() {
+        return Err("expected AZIMUTH,ELEVATION or a preset name".into());
+    }
+    Ok(serde_json::json!({ "preset": text }))
 }
 
 /// Parse `--window x0,y0,x1,y1` (min corner first). Hostile values are errors, never panics.

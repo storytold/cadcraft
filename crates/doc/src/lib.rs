@@ -37,6 +37,7 @@ pub use refedit::{RefEdit, WorkItem};
 pub use store::EntityStore;
 pub use tables::*;
 
+pub mod brep;
 /// File data CADCraft doesn't model, kept for saving (#528).
 pub mod dynblock;
 pub mod foreign;

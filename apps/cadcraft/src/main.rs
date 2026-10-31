@@ -161,6 +161,8 @@ fn services() -> Services {
             rfd::FileDialog::new()
                 .add_filter(i18n::t("Drawings (DWG, DXF)"), &["dwg", "dxf", "dwt"])
                 .add_filter(i18n::t("SVG drawings (SVG, SVGZ)"), &["svg", "svgz"])
+                .add_filter(i18n::t("3D meshes (OBJ, STL, 3MF, glTF, GLB)"), &["obj", "stl", "3mf", "gltf", "glb"])
+                .add_filter(i18n::t("Exact 3D solids (STEP, IGES)"), &["step", "stp", "iges", "igs"])
                 .add_filter(i18n::t("All files"), &["*"])
                 .pick_file()
                 .map(|p| p.to_string_lossy().to_string())
@@ -186,9 +188,22 @@ fn services() -> Services {
 /// filter's extension, and macOS accepts only listed extensions, replacing any other with the
 /// first one. DWG must be listed for a `.dwg` name to survive, and a drawing opened from DWG
 /// then defaults to DWG; other names keep DXF first.
-fn filters_for_save(name: &str) -> [(&'static str, &'static str); 6] {
-    let mut filters =
-        [("Drawing (DXF)", "dxf"), ("Drawing (DWG)", "dwg"), ("Drawing Template (DWT)", "dwt"), ("SVG", "svg"), ("PNG", "png"), ("PDF", "pdf")];
+fn filters_for_save(name: &str) -> [(&'static str, &'static str); 13] {
+    let mut filters = [
+        ("Drawing (DXF)", "dxf"),
+        ("Drawing (DWG)", "dwg"),
+        ("Drawing Template (DWT)", "dwt"),
+        ("SVG", "svg"),
+        ("PNG", "png"),
+        ("PDF", "pdf"),
+        ("Wavefront OBJ mesh", "obj"),
+        ("STL mesh", "stl"),
+        ("3MF mesh", "3mf"),
+        ("glTF JSON mesh", "gltf"),
+        ("glTF binary mesh", "glb"),
+        ("STEP exact solid", "step"),
+        ("IGES planar exact solid", "iges"),
+    ];
     let lower = name.to_ascii_lowercase();
     filters.sort_by_key(|(_, ext)| !lower.ends_with(&format!(".{ext}")));
     filters
@@ -398,6 +413,19 @@ mod tests {
         for name in ["a.dwg", "b.dxf", "c"] {
             let exts: Vec<_> = filters_for_save(name).iter().map(|(_, e)| *e).collect();
             assert!(exts.contains(&"dwg") && exts.contains(&"dxf"), "{name}");
+            assert!(
+                exts.contains(&"obj")
+                    && exts.contains(&"stl")
+                    && exts.contains(&"gltf")
+                    && exts.contains(&"glb")
+                    && exts.contains(&"3mf")
+                    && exts.contains(&"step")
+                    && exts.contains(&"iges"),
+                "{name}"
+            );
+        }
+        for ext in ["obj", "stl", "gltf", "glb", "3mf", "step", "iges"] {
+            assert_eq!(first(&format!("part.{ext}")), ext);
         }
     }
 
