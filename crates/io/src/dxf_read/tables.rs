@@ -88,6 +88,17 @@ fn style_font(tags: &[Tag], file: String) -> String {
     }
 }
 
+/// Separate arrowheads on (DIMSAH) in a DIMSTYLE record `tg`: an end without its own block is
+/// closed filled, not DIMBLK's arrowhead.
+fn separate_arrowheads(tg: &[Tag], fields: &mut serde_json::Map<String, serde_json::Value>) {
+    if tg.iter().take_while(|x| x.code < 1000).any(|x| x.code == crate::dxf_ext::DIMSAH && x.i64() != 0) {
+        for f in ["arrowBlock1", "arrowBlock2"] {
+            fields.entry(f).or_insert_with(|| serde_json::Value::String(String::new()));
+        }
+        crate::dxf_ext::separate_ends(fields);
+    }
+}
+
 /// Load symbol tables and resolve handle references, indexing layer names for case-insensitive updates.
 pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
     let recs = records(tags);
@@ -265,6 +276,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                     }
                 }
                 fields.extend(crate::dxf_ext::read_newer_dimvars(&tg, &rx.styles, &rx.brs, &rx.ltypes));
+                separate_arrowheads(&tg, &mut fields);
                 let mut st = DimStyle { name: name.clone(), annotative: annotative(&tg), ..DimStyle::default() };
                 st.apply_fields(&fields);
                 match d.dim_styles.iter_mut().find(|s| s.name.eq_ignore_ascii_case(&name)) {

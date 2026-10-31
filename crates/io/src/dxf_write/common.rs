@@ -184,6 +184,15 @@ fn attrib_flags(a: &Attrib) -> i64 {
     i64::from(a.invisible) | if a.constant { 2 } else { 0 } | if a.modes.verify { 4 } else { 0 } | if a.modes.preset { 8 } else { 0 }
 }
 
+/// A text's own formula (`=...`) as extended data; AutoCAD fields stay in their own objects.
+pub(super) fn formula_xdata(w: &mut W, f: Option<&str>) {
+    let Some(f) = f.filter(|f| f.trim_start().starts_with('=')) else { return };
+    w.s(1001, dxf_ext::FORMULA_APP);
+    for c in dxf_ext::formula_chunks(f) {
+        w.s(1000, c);
+    }
+}
+
 /// A TEXT's groups, or an attribute's (`attrib`, in a file of version `target`) with its
 /// subclass: the subclass version (`280 0`, 2010 and later), prompt, tag, flags and alignment,
 /// then Lock position (`280`, 2007 and later; readers take the 280 after the tag as it).

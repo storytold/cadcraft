@@ -1,11 +1,13 @@
 use super::blocks::{insert, sub_ctx};
-use super::dim_draw::{MAX_FILL_SOLIDS, MAX_FILL_TEXTS, block_text_box, dim_text_fill, dimension, dimension_in, solid_covers, starts_text_marks};
+use super::dim_draw::{
+    MAX_FILL_SOLIDS, MAX_FILL_TEXTS, block_text_box, dim_text_fill, dimension, dimension_in, named_arrow, solid_covers, starts_text_marks,
+};
 use super::display::{Kind, NO_LAYER, VIEWPORT_CONTENT};
 use super::props::{resolve, transparency};
 use super::text_entity::{mtext, place_text_entity};
 use super::{
-    Builder, Ctx, DimGeometry, Drawing, Entity, EntityKind, Handle, Ink, Mat3, Polyline, Prim, Vec2, dim, fill, hatch, linetype, linetype_text,
-    mline, point, table, tolerance, wide,
+    Builder, Ctx, DimGeometry, Drawing, Entity, EntityKind, Handle, Ink, Mat3, Polyline, Prim, Vec2, fill, hatch, linetype, linetype_text, mline,
+    point, table, tolerance, wide,
 };
 
 /// The layer `e` is drawn on, as an index in the layer table: layer 0 inside a block is the
@@ -212,9 +214,8 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                 let st = ctx.d.dim_style(&l.style);
                 // DIMASZ × DIMSCALE of the leader's style (the drawing's DIMSCALE when it is 0).
                 let size = st.map(|s| s.arrow_size).unwrap_or(0.18) * leader_scale(ctx.d, st);
-                // DIMLDRBLK ("" = closed filled).
-                let kind = dim::Arrowhead::parse(st.map(|s| s.leader_arrow_block.as_str()).unwrap_or(""));
-                let g = dim::arrowhead(kind, *a, (*a - *n).normalized(), size);
+                // DIMLDRBLK ("" = closed filled), or a user arrowhead block.
+                let g = named_arrow(ctx.d, st.map(|s| s.leader_arrow_block.as_str()).unwrap_or(""), *a, (*a - *n).normalized(), size);
                 for l in &g.lines {
                     b.polyline(ctx, rgb, lw, l);
                 }
@@ -270,17 +271,24 @@ fn draw_mleader(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &cadcraft_doc::MLeade
     for pts in m.leader_paths() {
         b.polyline(ctx, rgb, lw, &pts);
         if let (Some(a), Some(n)) = (pts.first(), pts.get(1)) {
-            b.tris(ctx, rgb, &dim::arrow(*a, (*a - *n).normalized(), m.arrow_size));
+            let g = named_arrow(ctx.d, m.arrow_in(ctx.d), *a, (*a - *n).normalized(), m.arrow_size);
+            for l in &g.lines {
+                b.polyline(ctx, rgb, lw, l);
+            }
+            b.tris(ctx, rgb, &g.tris);
         }
     }
     if let Some(t) = &m.text {
-        let land = m.landing.xy();
-        let dir = if t.insert.x >= land.x { 1.0 } else { -1.0 };
-        b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);
+        // No landing without a leader line (leader type None).
+        if m.dogleg > 0.0 && !m.leaderless() {
+            let land = m.landing.xy();
+            let dir = if t.insert.x >= land.x { 1.0 } else { -1.0 };
+            b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);
+        }
         mtext(b, ctx, t, rgb, lw);
     }
     if let Some(ins) = &m.block {
-        if m.dogleg > 0.0 && !m.leaders.is_empty() {
+        if m.dogleg > 0.0 && !m.leaderless() {
             let land = m.landing.xy();
             let dir = if ins.insert.x >= land.x { 1.0 } else { -1.0 };
             b.polyline(ctx, rgb, lw, &[land, land + Vec2::new(m.dogleg * dir, 0.0)]);

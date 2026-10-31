@@ -30,6 +30,7 @@ fn sample() -> Drawing {
         &Space::Model,
         c("0"),
         EntityKind::Text(Text {
+            formula: None,
             insert: Vec3::new(1.0, 1.0, 0.0),
             align_pt: None,
             height: 0.25,
@@ -47,6 +48,7 @@ fn sample() -> Drawing {
         &Space::Model,
         c("0"),
         EntityKind::MText(MText {
+            formula: None,
             insert: Vec3::new(5.0, 5.0, 0.0),
             height: 0.2,
             width: 3.0,
@@ -258,6 +260,7 @@ fn block_definition_properties_and_constant_attdefs_roundtrip() {
     let mut b = Block::new("Title");
     (b.description, b.units, b.explodable) = ("Drawing title block".into(), 4, false);
     let text = Text {
+        formula: None,
         insert: Vec3::ZERO,
         align_pt: None,
         height: 2.5,
@@ -909,6 +912,36 @@ fn file_arrowhead_blocks_with_standard_names_are_kept() {
     }
 }
 
+/// Separate arrowheads: an end that is closed filled while DIMBLK is another arrowhead (".")
+/// stays closed filled; an end that follows DIMBLK still does; an AutoCAD style with DIMSAH on
+/// and no DIMBLK2 block reads as closed filled at that end (#2322 review).
+#[test]
+fn a_closed_filled_end_beside_another_arrowhead_roundtrips() {
+    let mut d = Drawing::new_metric();
+    d.dim_styles.push(DimStyle {
+        name: "Mixed".into(),
+        arrow_block: "_Open".into(),
+        arrow_block1: "_Open".into(),
+        arrow_block2: ".".into(),
+        ..DimStyle::default()
+    });
+    d.dim_styles.push(DimStyle { name: "Follows".into(), arrow_block: "_Dot".into(), arrow_block1: "_Open".into(), ..DimStyle::default() });
+    let mut dm = dim(DimKind::Linear { rotation: 0.0 }, Vec3::ZERO, Vec3::new(10.0, 0.0, 0.0));
+    dm.overrides = serde_json::json!({ "arrowBlock": "_Open", "arrowBlock2": "." }).as_object().unwrap().clone();
+    d.add(&Space::Model, Common::default(), EntityKind::Dimension(dm)).unwrap();
+    let back = roundtrip(&d);
+    let st = |n: &str| back.dim_styles.iter().find(|s| s.name == n).cloned().unwrap();
+    let ends = |s: &DimStyle| {
+        let pick = |own: &str| if own.is_empty() { s.arrow_block.clone() } else { own.to_string() };
+        (cadcraft_render::Arrowhead::parse(&pick(&s.arrow_block1)), cadcraft_render::Arrowhead::parse(&pick(&s.arrow_block2)))
+    };
+    use cadcraft_render::Arrowhead as A;
+    assert_eq!(ends(&st("Mixed")), (A::Open, A::ClosedFilled));
+    assert_eq!(ends(&st("Follows")), (A::Open, A::Dot), "the second end still follows DIMBLK");
+    let got = first(&back, |k| if let EntityKind::Dimension(x) = k { Some(x.clone()) } else { None });
+    assert_eq!(ends(&DimStyle::default().with_overrides(&got.overrides)), (A::Open, A::ClosedFilled), "{:?}", got.overrides);
+}
+
 #[test]
 fn dimension_overrides_roundtrip_as_dstyle_xdata() {
     let mut d = Drawing::new_imperial();
@@ -1433,6 +1466,7 @@ const INTL: &str = "图号 Ä°ø Ø 😀";
 
 fn intl_text(value: &str) -> Text {
     Text {
+        formula: None,
         insert: Vec3::new(1.0, 1.0, 0.0),
         align_pt: None,
         height: 2.5,
@@ -1457,6 +1491,7 @@ fn intl_sample() -> Drawing {
         &Space::Model,
         on.clone(),
         EntityKind::MText(MText {
+            formula: None,
             insert: Vec3::new(5.0, 5.0, 0.0),
             height: 2.5,
             width: 30.0,
@@ -1698,6 +1733,7 @@ fn dwg_roundtrip_keeps_extension_data() {
 fn mleader_is_written_as_multileader() {
     let mut d = Drawing::new_metric();
     let text = cadcraft_doc::MText {
+        formula: None,
         insert: Vec3::new(12.0, 5.0, 0.0),
         height: 2.5,
         width: 0.0,
@@ -1710,6 +1746,8 @@ fn mleader_is_written_as_multileader() {
         columns: None,
     };
     let m = cadcraft_doc::MLeader {
+        arrow: String::new(),
+        no_leader: false,
         leaders: vec![vec![Vec3::new(0.0, 0.0, 0.0)]],
         landing: Vec3::new(10.0, 5.0, 0.0),
         dogleg: 2.0,
@@ -1732,6 +1770,7 @@ fn mleader_is_written_as_multileader() {
 fn attdef_prompt_survives_dxf_roundtrip() {
     let mut d = Drawing::new_metric();
     let text = Text {
+        formula: None,
         insert: Vec3::ZERO,
         align_pt: None,
         height: 2.0,
