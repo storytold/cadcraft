@@ -22,24 +22,30 @@ impl Default for Mat3 {
 impl Mat3 {
     pub const IDENTITY: Mat3 = Mat3 { a: 1.0, b: 0.0, c: 0.0, d: 1.0, e: 0.0, f: 0.0 };
 
+    #[must_use]
     pub fn translate(v: Vec2) -> Mat3 {
         Mat3 { e: v.x, f: v.y, ..Mat3::IDENTITY }
     }
+    #[must_use]
     pub fn scale(sx: f64, sy: f64) -> Mat3 {
         Mat3 { a: sx, d: sy, ..Mat3::IDENTITY }
     }
+    #[must_use]
     pub fn rotate(angle: f64) -> Mat3 {
         let (s, c) = angle.sin_cos();
         Mat3 { a: c, b: s, c: -s, d: c, e: 0.0, f: 0.0 }
     }
     /// Scale about `base`.
+    #[must_use]
     pub fn scale_about(base: Vec2, s: f64) -> Mat3 {
         Mat3::translate(base).then_before(Mat3::scale(s, s)).then_before(Mat3::translate(-base))
     }
+    #[must_use]
     pub fn rotate_about(base: Vec2, angle: f64) -> Mat3 {
         Mat3::translate(base).then_before(Mat3::rotate(angle)).then_before(Mat3::translate(-base))
     }
     /// Reflection across the line through `p1`, `p2`.
+    #[must_use]
     pub fn mirror(p1: Vec2, p2: Vec2) -> Mat3 {
         let d = (p2 - p1).normalized();
         if d == Vec2::ZERO {
@@ -50,6 +56,7 @@ impl Mat3 {
         Mat3::translate(p1).then_before(r).then_before(Mat3::translate(-p1))
     }
     /// `self * o`: apply `o` first, then `self`.
+    #[must_use]
     pub fn then_before(self, o: Mat3) -> Mat3 {
         Mat3 {
             a: self.a * o.a + self.c * o.b,
@@ -61,18 +68,24 @@ impl Mat3 {
         }
     }
     /// Apply `self` first, then `o`.
+    #[must_use]
     pub fn then(self, o: Mat3) -> Mat3 {
         o.then_before(self)
     }
+    #[must_use]
     pub fn apply(&self, p: Vec2) -> Vec2 {
         Vec2::new(self.a * p.x + self.c * p.y + self.e, self.b * p.x + self.d * p.y + self.f)
     }
+    #[must_use]
     pub fn apply_vec(&self, v: Vec2) -> Vec2 {
         Vec2::new(self.a * v.x + self.c * v.y, self.b * v.x + self.d * v.y)
     }
+    #[must_use]
     pub fn det(&self) -> f64 {
         self.a * self.d - self.b * self.c
     }
+    #[must_use]
+    #[expect(clippy::many_single_char_names, reason = "Matrix coefficients use the same a–f notation as Mat3 and the affine-transform formula.")]
     pub fn inverse(&self) -> Option<Mat3> {
         let det = self.det();
         if det.abs() < 1e-300 || !det.is_finite() {
@@ -88,13 +101,16 @@ impl Mat3 {
         Some(Mat3 { a, b, c, d, e, f })
     }
     /// Uniform scale factor (geometric mean of the axis scales).
+    #[must_use]
     pub fn scale_factor(&self) -> f64 {
         self.det().abs().sqrt()
     }
     /// Rotation angle of the transformed X axis.
+    #[must_use]
     pub fn rotation(&self) -> f64 {
         crate::norm_angle(self.b.atan2(self.a))
     }
+    #[must_use]
     pub fn is_mirroring(&self) -> bool {
         self.det() < 0.0
     }
@@ -114,6 +130,7 @@ impl Default for Mat4 {
 
 impl Mat4 {
     pub const IDENTITY: Mat4 = Mat4 { m: [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]] };
+    #[must_use]
     pub fn mul(&self, o: &Mat4) -> Mat4 {
         let mut r = [[0.0; 4]; 4];
         for (i, row) in r.iter_mut().enumerate() {
@@ -123,6 +140,7 @@ impl Mat4 {
         }
         Mat4 { m: r }
     }
+    #[must_use]
     pub fn apply(&self, p: Vec3) -> Vec3 {
         let m = &self.m;
         let w = m[3][0] * p.x + m[3][1] * p.y + m[3][2] * p.z + m[3][3];
@@ -133,10 +151,12 @@ impl Mat4 {
             (m[2][0] * p.x + m[2][1] * p.y + m[2][2] * p.z + m[2][3]) / w,
         )
     }
+    #[must_use]
     pub fn from_mat3(t: &Mat3) -> Mat4 {
         Mat4 { m: [[t.a, t.c, 0.0, t.e], [t.b, t.d, 0.0, t.f], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]] }
     }
     /// The "arbitrary axis algorithm" frame for an extrusion direction (DXF OCS → WCS).
+    #[must_use]
     pub fn ocs(normal: Vec3) -> Mat4 {
         let n = normal.normalized();
         if n == Vec3::ZERO || (n.x.abs() < 1e-12 && n.y.abs() < 1e-12 && n.z > 0.0) {

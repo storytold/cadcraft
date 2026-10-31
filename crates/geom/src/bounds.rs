@@ -24,6 +24,7 @@ impl Default for Bounds2 {
 impl Bounds2 {
     pub const EMPTY: Bounds2 = Bounds2 { min: Vec2 { x: f64::INFINITY, y: f64::INFINITY }, max: Vec2 { x: f64::NEG_INFINITY, y: f64::NEG_INFINITY } };
 
+    #[must_use]
     pub fn new(a: Vec2, b: Vec2) -> Self {
         Bounds2 { min: a.min(b), max: a.max(b) }
     }
@@ -34,6 +35,7 @@ impl Bounds2 {
         }
         b
     }
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         !(self.min.x <= self.max.x && self.min.y <= self.max.y)
     }
@@ -43,6 +45,7 @@ impl Bounds2 {
             self.max = self.max.max(p);
         }
     }
+    #[must_use]
     pub fn union(&self, o: &Bounds2) -> Bounds2 {
         if o.is_empty() {
             return *self;
@@ -52,12 +55,15 @@ impl Bounds2 {
         }
         Bounds2 { min: self.min.min(o.min), max: self.max.max(o.max) }
     }
+    #[must_use]
     pub fn width(&self) -> f64 {
         if self.is_empty() { 0.0 } else { span(self.min.x, self.max.x) }
     }
+    #[must_use]
     pub fn height(&self) -> f64 {
         if self.is_empty() { 0.0 } else { span(self.min.y, self.max.y) }
     }
+    #[must_use]
     pub fn center(&self) -> Vec2 {
         if self.is_empty() {
             return Vec2::ZERO;
@@ -65,26 +71,31 @@ impl Bounds2 {
         // (max - min) can overflow even when both endpoints and their midpoint
         // are finite. Halve first when the endpoints have opposite signs.
         let mid = |a: f64, b: f64| {
-            if a.is_sign_negative() != b.is_sign_negative() { a * 0.5 + b * 0.5 } else { a + (b - a) * 0.5 }
+            if a.is_sign_negative() == b.is_sign_negative() { a + (b - a) * 0.5 } else { a * 0.5 + b * 0.5 }
         };
         Vec2::new(mid(self.min.x, self.max.x), mid(self.min.y, self.max.y))
     }
+    #[must_use]
     pub fn contains(&self, p: Vec2) -> bool {
         p.x >= self.min.x && p.x <= self.max.x && p.y >= self.min.y && p.y <= self.max.y
     }
     /// True when `o` lies entirely inside.
+    #[must_use]
     pub fn contains_box(&self, o: &Bounds2) -> bool {
         !o.is_empty() && self.contains(o.min) && self.contains(o.max)
     }
+    #[must_use]
     pub fn intersects(&self, o: &Bounds2) -> bool {
         !(self.is_empty() || o.is_empty() || o.min.x > self.max.x || o.max.x < self.min.x || o.min.y > self.max.y || o.max.y < self.min.y)
     }
+    #[must_use]
     pub fn expand(&self, d: f64) -> Bounds2 {
         if self.is_empty() {
             return *self;
         }
         Bounds2 { min: self.min - Vec2::new(d, d), max: self.max + Vec2::new(d, d) }
     }
+    #[must_use]
     pub fn corners(&self) -> [Vec2; 4] {
         [self.min, Vec2::new(self.max.x, self.min.y), self.max, Vec2::new(self.min.x, self.max.y)]
     }
@@ -101,17 +112,17 @@ mod tests {
         let b = Bounds2::new(Vec2::new(1e308, 0.0), Vec2::new(1.6e308, 10.0));
         assert!(b.center().x.is_finite());
         assert!((b.center().x / 1e308 - 1.3).abs() < 1e-12);
-        assert_eq!(b.center().y, 5.0);
+        assert_eq!(b.center().y.to_bits(), 5.0_f64.to_bits());
         assert_eq!(Bounds2::EMPTY.center(), Vec2::ZERO);
     }
 
     #[test]
     fn width_and_height_stay_finite_for_opposite_large_coordinates() {
         let b = Bounds2::new(Vec2::new(-1e308, -1e308), Vec2::new(1e308, 1e308));
-        assert_eq!(b.width(), f64::MAX);
-        assert_eq!(b.height(), f64::MAX);
+        assert_eq!(b.width().to_bits(), f64::MAX.to_bits());
+        assert_eq!(b.height().to_bits(), f64::MAX.to_bits());
         let b = Bounds2::new(Vec2::new(1e308, 0.0), Vec2::new(1.6e308, 10.0));
         assert!((b.width() / 1e308 - 0.6).abs() < 1e-12);
-        assert_eq!(b.height(), 10.0);
+        assert_eq!(b.height().to_bits(), 10.0_f64.to_bits());
     }
 }

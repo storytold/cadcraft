@@ -214,7 +214,7 @@ fn segment_offset() {
     let s = Segment::Arc { arc: Arc::new(Vec2::ZERO, 5.0, 0.0, PI), ccw: true };
     let o = s.offset(1.0).unwrap();
     if let Segment::Arc { arc, .. } = o {
-        assert!(close(arc.radius, 4.0))
+        assert!(close(arc.radius, 4.0));
     } else {
         panic!()
     }
@@ -329,8 +329,8 @@ fn polyline_area_is_stable_far_from_the_origin() {
 fn shoelace_preserves_small_polygon_area_at_large_coordinates() {
     let o = 1.0e12;
     let corners = [Vec2::new(o, o), Vec2::new(o + 10.0, o), Vec2::new(o + 10.0, o + 10.0), Vec2::new(o, o + 10.0)];
-    assert_eq!(shoelace(&corners), 100.0);
-    assert_eq!(shoelace(&corners.iter().rev().copied().collect::<Vec<_>>()), -100.0);
+    assert_eq!(shoelace(&corners).to_bits(), 100.0_f64.to_bits());
+    assert_eq!(shoelace(&corners.iter().rev().copied().collect::<Vec<_>>()).to_bits(), (-100.0_f64).to_bits());
 }
 
 #[test]

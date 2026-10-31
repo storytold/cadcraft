@@ -49,6 +49,7 @@ struct Range {
 
 impl TanCurve {
     /// Point at parameter `t`.
+    #[must_use]
     pub fn point(&self, t: f64) -> Vec2 {
         match self {
             TanCurve::Line(l) => l.a + (l.b - l.a) * t,
@@ -59,6 +60,7 @@ impl TanCurve {
     }
 
     /// First derivative at parameter `t`.
+    #[must_use]
     pub fn derivative(&self, t: f64) -> Vec2 {
         match self {
             TanCurve::Line(l) => l.b - l.a,
@@ -69,6 +71,7 @@ impl TanCurve {
     }
 
     /// The point at distance `d` along the left normal at `t` (`None` where the curve stops).
+    #[expect(clippy::many_single_char_names, reason = "The offset equation uses conventional t/d/p/n/q geometric notation.")]
     fn offset(&self, t: f64, d: f64) -> Option<Vec2> {
         let p = self.point(t);
         if d == 0.0 {
@@ -125,6 +128,11 @@ impl TanCurve {
 }
 
 /// A sampled offset curve: runs of consecutive (parameter, point) samples.
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::many_single_char_names,
+    reason = "Sample counts are capped by MAX_SPLINE_SAMPLES, and c/r/d/i/t/p name the curve, range, offset and sample equations."
+)]
 fn sample(c: &TanCurve, r: &Range, d: f64) -> Vec<Vec<(f64, Vec2)>> {
     let n = c.sample_count();
     let mut runs: Vec<Vec<(f64, Vec2)>> = vec![Vec::new()];
@@ -232,6 +240,7 @@ fn refine(c1: &TanCurve, r1: &Range, d1: f64, c2: &TanCurve, r2: &Range, d2: f64
 /// Circles of radius `r` tangent to both curves (`r = 0`: the points where they cross). `near`
 /// (the pick points) widens the search window for lines. Every distinct solution is returned;
 /// callers choose one, usually the nearest the picks.
+#[must_use]
 pub fn tangent_circles(c1: &TanCurve, c2: &TanCurve, r: f64, near: &[Vec2]) -> Vec<CornerFit> {
     if !(r.is_finite() && r >= 0.0) {
         return Vec::new();
