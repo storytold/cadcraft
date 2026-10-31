@@ -1,5 +1,7 @@
-//! Properties: per-object property edits, current properties, MATCHPROP, linetypes, units, RENAME.
+//! Properties: per-object property edits, current properties, CHPROP, MATCHPROP, linetypes, units,
+//! RENAME.
 
+mod chprop;
 mod matchprop;
 mod rename;
 
@@ -18,6 +20,9 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("properties", "Properties", run_get).menu(&["Modify", "Properties"]).alias(&["pr", "props", "ch"]).params("{handles?} → properties of the selection").noundo(),
         CommandSpec::new("properties.set", "Set Properties", run_set).params("{handles?, layer?, color?, linetype?, lineweight?, ltscale?, thickness?, transparency?: \"ByLayer\" | \"ByBlock\" | 0..90, visible?, <geometry fields: radius, center, start, end, text, height, rotation…>; dimensions: textOverride, dimStyle, textHeight, arrowSize, dimScale, precision (per-dimension overrides)}"),
+        CommandSpec::new("chprop", "Change Properties", chprop::run_chprop)
+            .params("as properties.set, leaving out objects on locked layers → {changed, locked} (the command line asks Color, LAyer, LType, ltScale, LWeight, Thickness and TRansparency in turn)")
+            .interactive(|_| Ok(Box::new(chprop::ChpropM::new()))),
         CommandSpec::new("matchprop", "Match Properties", matchprop::run_matchprop)
             .menu(&["Modify", "Match Properties"])
             .alias(&["ma", "painter"])

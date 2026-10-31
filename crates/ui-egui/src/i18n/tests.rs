@@ -188,6 +188,7 @@ fn assert_additional_locale_aliases() {
         ("sv", &["sv", "sv-SE", "sv_SE.UTF-8", "SV-se", " sv-SE ", "sv-FI"]),
         ("hu", &["hu", "hu-HU", "hu_HU.UTF-8", "HU-hu", " hu-HU "]),
         ("tr", &["tr", "tr-TR", "tr_TR.UTF-8", "TR-tr", " tr-TR ", "tr-CY"]),
+        ("bs", &["bs", "bs-BA", "bs_BA.UTF-8", "BS-ba", " bs-BA ", "bs-Latn-BA"]),
         ("el", &["el", "el-GR", "el_GR.UTF-8", "EL-cy"]),
         ("zh", &["zh", "zh-CN"]),
     ] {
@@ -564,4 +565,13 @@ fn production_font_chain_covers_latin_and_shortcut_symbols() {
 #[test]
 fn chinese_menus_and_commands_are_fully_translated() {
     assert_eq!(missing_commands_menus_tools_and_snap_labels("zh"), Vec::<String>::new());
+}
+
+/// Bosnian counts: 1, 21 `one`; 2–4, 22–24 (not 12–14) `few`; everything else `other`.
+#[test]
+fn bosnian_counts_take_one_few_other() {
+    let forms: Vec<usize> = [0, 1, 2, 4, 5, 11, 12, 14, 21, 22, 25, 111].into_iter().map(plural_uk).collect();
+    assert_eq!(forms, [2, 0, 1, 1, 2, 2, 2, 2, 0, 1, 2, 2]);
+    assert_eq!(Preference::parse("bs"), Some(Preference::Bosnian));
+    assert_eq!(Preference::Bosnian.native_name(), "Bosanski");
 }

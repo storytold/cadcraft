@@ -64,8 +64,10 @@ fn items(p: &PickSet) -> Vec<Handle> {
 
 /// `(command arg…)`: arguments go to the command line as typed input: a string starts a command
 /// or answers a prompt ("" is Enter), a number or a point is entered, an entity name or a
-/// selection set picks objects, and `pause` waits for the user. A command not finished by the
-/// arguments stays active for the next `command` call. No arguments: cancel the active command.
+/// selection set picks objects (a name, alone or with a point as `entsel` gives it, also answers
+/// a prompt picking one object: [`Session::input_object`]), and `pause` waits for the user. A
+/// command not finished by the arguments stays active for the next `command` call. No
+/// arguments: cancel the active command.
 pub fn command(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     if a.is_empty() {
         if ctx.s.running.is_some() {
@@ -108,14 +110,14 @@ pub fn command(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
                     }
                 }
             }
-            Value::Ename(h) => feed(ctx.s, Input::Pick(vec![*h])),
+            Value::Ename(h) => named(ctx.s, *h, None),
             Value::PickSet(p) => feed(ctx.s, Input::Pick(items(p))),
             Value::Cons(_) => {
                 if let Some(p) = arg.as_point() {
                     feed(ctx.s, Input::Point(Vec2::new(p[0], p[1])));
                 } else if let Value::Ename(h) = arg.car() {
                     // An `entsel` result: (ename point).
-                    feed(ctx.s, Input::Pick(vec![h]));
+                    named(ctx.s, h, arg.cdr().car().as_point().map(|p| Vec2::new(p[0], p[1])));
                 } else {
                     return Err(LispError::bad_arg("command argument", arg));
                 }
@@ -129,6 +131,14 @@ pub fn command(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 fn feed(s: &mut Session, input: Input) {
     if s.running.is_some()
         && let Err(e) = s.input(input)
+    {
+        s.echo(e.to_string());
+    }
+}
+
+fn named(s: &mut Session, h: Handle, at: Option<Vec2>) {
+    if s.running.is_some()
+        && let Err(e) = s.input_object(h, at)
     {
         s.echo(e.to_string());
     }
@@ -181,10 +191,22 @@ fn to_json_bounded(v: &Value, depth: usize, budget: &mut u64) -> Option<serde_js
     })
 }
 
+/// Angle variables CADCraft reports and takes in degrees, as the SETVAR command shows them, which
+/// AutoLISP's `getvar` and `setvar` give and take in radians, as AutoCAD 2024's do: each of these
+/// set to 30 by the SETVAR command, or to `(/ pi 6)` by `setvar`, reads 0.5235987755982987.
+const RADIAN_VARS: [&str; 6] = ["ANGBASE", "CHAMFERD", "DIMJOGANG", "HPANG", "POLARANG", "SNAPANG"];
+
+fn in_radians(name: &str) -> bool {
+    RADIAN_VARS.iter().any(|v| v.eq_ignore_ascii_case(name.trim()))
+}
+
 pub fn getvar(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 1, 1)?;
     let name = string(&a[0])?;
-    Ok(Flow::Value(crate::sysvars::get(ctx.s, &name).map(|v| from_json(&v)).unwrap_or_default()))
+    Ok(Flow::Value(match crate::sysvars::get(ctx.s, &name) {
+        Some(serde_json::Value::Number(n)) if in_radians(&name) => Value::Real(n.as_f64().unwrap_or(0.0).to_radians()),
+        v => v.map(|v| from_json(&v)).unwrap_or_default(),
+    }))
 }
 
 /// Set a system variable after bounded JSON conversion, reporting invalid or oversized values as LISP errors.
@@ -194,6 +216,10 @@ pub fn setvar(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     let mut budget: u64 = TO_JSON_BUDGET;
     let Some(json) = to_json_bounded(&a[1], 0, &mut budget) else {
         return Err(LispError::new(format!("AutoCAD variable setting rejected: {} value too large", to_text(&a[0], true))));
+    };
+    let json = match json {
+        serde_json::Value::Number(n) if in_radians(&name) => serde_json::json!(n.as_f64().unwrap_or(0.0).to_degrees()),
+        other => other,
     };
     match crate::sysvars::set(ctx.s, &name, &json) {
         Ok(()) => Ok(Flow::Value(a[1].clone())),
@@ -1029,7 +1055,7 @@ pub fn rtos(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 }
 
 fn decimal(v: f64, prec: usize, dimzin: i64) -> String {
-    let mut s = format!("{v:.prec$}");
+    let mut s = crate::units::fixed(v, prec);
     if s.starts_with("-0") && s.trim_start_matches(['-', '0', '.']).is_empty() {
         s = s.trim_start_matches('-').to_string();
     }

@@ -1,5 +1,5 @@
 //! Draw commands: LINE, PLINE, CIRCLE, ARC, RECTANG, POLYGON, ELLIPSE, POINT, XLINE, RAY,
-//! SPLINE, DONUT, TEXT, MTEXT. Each has a JSON form and an interactive prompt sequence.
+//! SPLINE, DONUT, SOLID, TEXT, MTEXT. Each has a JSON form and an interactive prompt sequence.
 
 use cadcraft_doc::{EntityKind, HAlign, MText, Point, RayLine, Text, VAlign};
 use cadcraft_geom::{Arc, Circle, Ellipse, PolyVertex, Polyline, Spline, Vec2, arc_to_bulge, bulge_to_arc};
@@ -21,6 +21,7 @@ mod ellipse;
 mod line_pline;
 mod point;
 mod polygon;
+mod solid;
 mod spline;
 mod text;
 
@@ -30,6 +31,7 @@ use ellipse::{EllipseM, run_ellipse};
 use line_pline::{LineM, PlineM, run_line, run_pline};
 use point::{DonutM, PointM, RayM, run_donut, run_point, run_ray};
 use polygon::{PolygonM, run_polygon};
+use solid::{SolidM, run_solid};
 use spline::{SplineM, run_spline};
 use text::{MTextM, TextM, run_mtext, run_text};
 
@@ -100,6 +102,11 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["do", "doughnut"])
             .params("{center, inside, outside}")
             .interactive(|_| Ok(Box::new(DonutM::default()))),
+        CommandSpec::new("solid", "2D Solid", run_solid)
+            .menu(&["Draw", "2D Solid"])
+            .alias(&["so"])
+            .params("{points: [[x,y],...]} (three or four for the first solid, two more for each next one, chained on its last two corners)")
+            .interactive(|_| Ok(Box::new(SolidM::default()))),
         CommandSpec::new("text", "Single Line Text", run_text)
             .menu(&["Draw", "Text", "Single Line Text"])
             .alias(&["dt", "dtext"])
