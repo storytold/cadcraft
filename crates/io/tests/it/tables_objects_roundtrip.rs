@@ -107,6 +107,23 @@ fn layout_page_setup_and_paper_view_round_trip() {
 }
 
 #[test]
+fn a_layout_in_millimetres_in_an_inch_drawing_is_drawn_in_millimetres() {
+    // As AutoCAD writes it: MEASUREMENT 0 (inches) but the layout's plot paper units are mm, so
+    // paper space is in millimetres and an A3 sheet is 420 × 297 units, not 16.5 × 11.7.
+    let mut d = Drawing::new_imperial();
+    let l = d.layouts.get_mut(0).expect("Layout1");
+    l.page.width_mm = 297.0;
+    l.page.height_mm = 420.0;
+    l.page.margins_mm = [0.0; 4];
+    l.page.paper_mm = true;
+    let r = round_trip(&d);
+    let page = &r.layouts.first().expect("Layout1").page;
+    assert!(page.paper_mm);
+    let sheet = cadcraft_render::paper::Sheet::from_page(page, cadcraft_render::paper::page_unit_mm(&r, page));
+    assert!((sheet.size.x - 420.0).abs() < 1e-9 && (sheet.size.y - 297.0).abs() < 1e-9, "{:?}", sheet.size);
+}
+
+#[test]
 fn named_views_ucss_and_groups_round_trip() {
     let mut d = Drawing::new_imperial();
     let line = d.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(10.0, 0.0, 0.0) })).expect("line");
@@ -256,4 +273,27 @@ fn foreign_and_hostile_tables_objects() {
     let again = round_trip(&d);
     assert_eq!(again.groups, d.groups);
     assert_eq!(again.views, d.views);
+}
+
+#[test]
+fn a_millimetre_layout_of_an_inch_drawing_plots_on_a_page_its_own_size() {
+    // The PDF page of an A3 layout set up in millimetres is A3 (1190.55 × 841.89 pt), not 25.4
+    // times larger, so a printed line keeps its lineweight instead of shrinking 25.4 times.
+    let mut d = Drawing::new_imperial();
+    let name = {
+        let l = d.layouts.get_mut(0).expect("Layout1");
+        l.page.width_mm = 297.0;
+        l.page.height_mm = 420.0;
+        l.page.landscape = true;
+        l.page.margins_mm = [0.0; 4];
+        l.page.paper_mm = true;
+        l.name.clone()
+    };
+    d.add(&Space::Paper(name.clone()), Common::default(), EntityKind::Line(Line { a: Vec3::new(10.0, 10.0, 0.0), b: Vec3::new(400.0, 280.0, 0.0) }))
+        .expect("line");
+    let pdf = cadcraft_io::pdf::pdf(&d, &Space::Paper(name), &cadcraft_io::PdfOptions::default()).expect("pdf");
+    let doc = crate::pdf_read::read(&pdf);
+    let m = doc.pages.first().expect("a page").media;
+    let (w, h) = (m[2] - m[0], m[3] - m[1]);
+    assert!((w - 1190.55).abs() < 1.0 && (h - 841.89).abs() < 1.0, "{w} x {h}");
 }

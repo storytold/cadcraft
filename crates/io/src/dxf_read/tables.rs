@@ -88,6 +88,38 @@ fn style_font(tags: &[Tag], file: String) -> String {
     }
 }
 
+/// A LAYER record's layer.
+fn layer_record(t: &T<'_>, tg: &[Tag], rx: &Rx, name: &str) -> Layer {
+    let aci = t.i(62).unwrap_or(7);
+    let flags = t.i(70).unwrap_or(0);
+    let mut l = Layer {
+        name: name.to_string(),
+        color: Color::Index(aci.unsigned_abs().clamp(1, 255) as u8),
+        linetype: t.s(6).unwrap_or_else(|| "Continuous".into()),
+        lineweight: t.i(370).map(|v| Lineweight::from_dxf(v as i16)).unwrap_or(Lineweight::Default),
+        on: aci >= 0,
+        frozen: flags & 1 != 0,
+        locked: flags & 4 != 0,
+        vp_freeze_new: flags & 2 != 0,
+        plot: t.i(290).unwrap_or(1) != 0,
+        ..Layer::default()
+    };
+    if let Some(tc) = t.i(420) {
+        l.color = Color::True(Rgb::from_u32(tc as u32));
+    }
+    if let Some(n) = t.s(390).and_then(|h| rx.pstyles.get(&h.trim().to_ascii_uppercase())) {
+        l.plot_style = n.clone();
+    }
+    let alpha = crate::dxf_ext::xdata(tg, crate::dxf_ext::LAYER_TRANSPARENCY_APP).iter().find(|x| x.code == 1071);
+    if let Some(pct) = alpha.and_then(|x| crate::dxf_ext::transparency_from_dxf(x.i64())) {
+        l.transparency = pct;
+    }
+    if let Some(desc) = crate::dxf_ext::xdata(tg, crate::dxf_ext::LAYER_DESCRIPTION_APP).iter().filter(|x| x.code == 1000).nth(1) {
+        l.description = desc.str();
+    }
+    l
+}
+
 /// Load symbol tables and resolve handle references, indexing layer names for case-insensitive updates.
 pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
     let recs = records(tags);
@@ -116,33 +148,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 if name.is_empty() || d.layers.len() >= MAX_OBJECTS {
                     continue;
                 }
-                let aci = t.i(62).unwrap_or(7);
-                let flags = t.i(70).unwrap_or(0);
-                let mut l = Layer {
-                    name: name.clone(),
-                    color: Color::Index(aci.unsigned_abs().clamp(1, 255) as u8),
-                    linetype: t.s(6).unwrap_or_else(|| "Continuous".into()),
-                    lineweight: t.i(370).map(|v| Lineweight::from_dxf(v as i16)).unwrap_or(Lineweight::Default),
-                    on: aci >= 0,
-                    frozen: flags & 1 != 0,
-                    locked: flags & 4 != 0,
-                    vp_freeze_new: flags & 2 != 0,
-                    plot: t.i(290).unwrap_or(1) != 0,
-                    ..Layer::default()
-                };
-                if let Some(tc) = t.i(420) {
-                    l.color = Color::True(Rgb::from_u32(tc as u32));
-                }
-                if let Some(n) = t.s(390).and_then(|h| rx.pstyles.get(&h.trim().to_ascii_uppercase())) {
-                    l.plot_style = n.clone();
-                }
-                let alpha = crate::dxf_ext::xdata(&tg, crate::dxf_ext::LAYER_TRANSPARENCY_APP).iter().find(|x| x.code == 1071);
-                if let Some(pct) = alpha.and_then(|x| crate::dxf_ext::transparency_from_dxf(x.i64())) {
-                    l.transparency = pct;
-                }
-                if let Some(desc) = crate::dxf_ext::xdata(&tg, crate::dxf_ext::LAYER_DESCRIPTION_APP).iter().filter(|x| x.code == 1000).nth(1) {
-                    l.description = desc.str();
-                }
+                let l = layer_record(&t, &tg, rx, &name);
                 match layer_index.get(&name.to_ascii_lowercase()) {
                     Some(&i) => {
                         if let Some(x) = d.layers.get_mut(i) {
@@ -215,7 +221,9 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 if name.is_empty() || !(h.is_finite() && w.is_finite() && h > 0.0 && w > 0.0) || d.views.len() >= MAX_OBJECTS {
                     continue;
                 }
-                let center = t.p(10).xy();
+                // The centre is relative to the view target (12).
+                let target = t.p(12).xy();
+                let center = t.p(10).xy() + if target.is_finite() { target } else { Vec2::ZERO };
                 if !(center.x.is_finite() && center.y.is_finite()) {
                     continue;
                 }
@@ -314,7 +322,9 @@ const MAX_VPORT_TILES: usize = 64;
 /// are fractions of the drawing area; unusable tiles are skipped.
 fn vport_record(d: &mut Drawing, t: &T) {
     let name = t.s(2).map(|n| n.trim().to_string()).unwrap_or_default();
-    let (min, max, center) = (t.p(10).xy(), t.p(11).xy(), t.p(12).xy());
+    // The view centre (12) is relative to the view target (17).
+    let target = t.p(17).xy();
+    let (min, max, center) = (t.p(10).xy(), t.p(11).xy(), t.p(12).xy() + if target.is_finite() { target } else { Vec2::ZERO });
     let height = t.fd(40, 0.0);
     let unit = |v: f64| v.is_finite() && (-1e-9..=1.0 + 1e-9).contains(&v);
     let ok = [min.x, min.y, max.x, max.y].into_iter().all(unit)

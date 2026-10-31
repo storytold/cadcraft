@@ -1,6 +1,7 @@
 mod animation_effects;
 mod block_description_palette;
 mod chrome_geometry;
+mod clipboard_between_drawings;
 mod context_menu;
 mod context_menus;
 mod control_cmdline;
@@ -26,6 +27,7 @@ mod parameters_rename;
 mod pickdrag;
 mod properties_units;
 mod rapid_clicks;
+mod rtl_names;
 mod selection_cycling;
 mod shared_controls;
 mod shortcut_menus;

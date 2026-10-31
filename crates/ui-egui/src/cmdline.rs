@@ -284,7 +284,8 @@ fn enable_ime(app: &mut CadApp, ctx: &egui::Context) {
 
 /// Handle keyboard input destined for the command line (when no text field has focus).
 pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
-    if ctx.egui_wants_keyboard_input() {
+    // A modal window (Batch Plot) has the keyboard.
+    if ctx.egui_wants_keyboard_input() || app.ui.dialog.as_deref() == Some("publish") {
         app.cmd.preedit.clear();
         app.cmd.ime_on = false;
         return;
@@ -453,6 +454,32 @@ fn visible_lines(app: &CadApp, canvas: Rect, bar: Rect) -> usize {
     app.ui.history_lines.min(MAX_LINES).min(available)
 }
 
+/// One line of command-line text laid out in reading order: text holding right-to-left letters
+/// (a Hebrew text or layer name in a prompt, history line or typed value) would otherwise be
+/// turned around as a whole by the shaper, English words and numbers included.
+fn lay(p: &egui::Painter, s: String, font: egui::FontId, color: egui::Color32) -> std::sync::Arc<egui::Galley> {
+    p.layout_job(crate::i18n::job(&s, font, color))
+}
+
+/// The text shown left of the caret when it is not the whole of `buffer`: a buffer ending in a
+/// right-to-left run (Hebrew) takes its next letter at the left of that run, so the caret goes
+/// there rather than after the line's last glyph. `None` when the caret is at the line's end.
+fn caret_prefix(buffer: &str) -> Option<String> {
+    if !crate::i18n::has_rtl(buffer) {
+        return None;
+    }
+    let chars: Vec<char> = buffer.chars().collect();
+    let last = chars.len().checked_sub(1)?;
+    let runs = cadcraft_fonts::bidi::visual_runs(&chars, Some(false));
+    let at = runs.iter().position(|(r, _)| r.contains(&last))?;
+    let (_, rtl) = runs.get(at)?;
+    let upto = if *rtl { at } else { at + 1 };
+    if upto >= runs.len() {
+        return None;
+    }
+    Some(runs.iter().take(upto).filter_map(|(r, _)| chars.get(r.clone())).flatten().collect())
+}
+
 /// Draw the floating command bar and its history over the bottom-centre of `canvas`; the bar is 48 % of the canvas width, clamped to 360–760 points and never wider than the canvas minus 8 points.
 pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
     let t = Tokens::get();
@@ -469,7 +496,14 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
         let hr = Rect::from_min_size(pos2(bar.left(), bar.top() - lh * lines.len() as f32 - 4.0), vec2(w, lh * lines.len() as f32 + 2.0));
         p.rect_filled(hr, 3.0, t.cmd_history);
         for (i, l) in lines.iter().enumerate() {
-            p.text(pos2(hr.left() + 8.0, hr.top() + 1.0 + lh * i as f32), egui::Align2::LEFT_TOP, l, crate::theme::small(), t.text_dim);
+            crate::i18n::paint(
+                &p,
+                pos2(hr.left() + 8.0, hr.top() + 1.0 + lh * i as f32),
+                egui::Align2::LEFT_TOP,
+                l,
+                crate::theme::small(),
+                t.text_dim,
+            );
         }
     }
     p.rect_filled(bar, 3.0, t.cmd_bg);
@@ -483,24 +517,24 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
         Some(pr) => {
             // The grip modes name themselves ("** STRETCH **…").
             let name = app.session.running.as_ref().filter(|r| r.id != "grip").map(|r| r.id.to_ascii_uppercase() + " ").unwrap_or_default();
-            let g = p.layout_no_wrap(name, font.clone(), t.text_faint);
+            let g = lay(&p, name, font.clone(), t.text_faint);
             let gw = g.size().x;
             p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text_faint);
             x += gw;
             // A LISP `get…` prompt shows as the routine wrote it (no keywords, default or colon added).
             let message = if pr.raw { pr.display() } else { crate::i18n::t(&pr.message).to_string() };
-            let g = p.layout_no_wrap(message, font.clone(), t.text);
+            let g = lay(&p, message, font.clone(), t.text);
             let gw = g.size().x;
             p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
             x += gw;
             if !pr.raw && !pr.keywords.is_empty() {
-                let g = p.layout_no_wrap(if pr.message.is_empty() { " [".into() } else { crate::tl!(" or [").into() }, font.clone(), t.text);
+                let g = lay(&p, if pr.message.is_empty() { " [".into() } else { crate::tl!(" or [").into() }, font.clone(), t.text);
                 let gw = g.size().x;
                 p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
                 x += gw;
                 let kws = pr.keywords.clone();
                 for (i, k) in kws.iter().enumerate() {
-                    let g = p.layout_no_wrap(k.clone(), font.clone(), t.cmd_keyword);
+                    let g = lay(&p, k.clone(), font.clone(), t.cmd_keyword);
                     let r = Rect::from_min_size(pos2(x, bar.top() + 3.0), vec2(g.size().x, h - 6.0));
                     let resp = ui.interact(r, ui.scope_id().with(("kw", i)), Sense::click());
                     if resp.hovered() {
@@ -513,25 +547,25 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
                         let _ = app.session.input(Input::Keyword(k.clone()));
                     }
                     if i + 1 < kws.len() {
-                        let g = p.layout_no_wrap("/".into(), font.clone(), t.text);
+                        let g = lay(&p, "/".into(), font.clone(), t.text);
                         let gw = g.size().x;
                         p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
                         x += gw;
                     }
                 }
-                let g = p.layout_no_wrap("]".into(), font.clone(), t.text);
+                let g = lay(&p, "]".into(), font.clone(), t.text);
                 let gw = g.size().x;
                 p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
                 x += gw;
             }
             if let Some(d) = pr.default.as_ref().filter(|_| !pr.raw) {
-                let g = p.layout_no_wrap(format!(" <{d}>"), font.clone(), t.text);
+                let g = lay(&p, format!(" <{d}>"), font.clone(), t.text);
                 let gw = g.size().x;
                 p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
                 x += gw;
             }
             if !pr.raw {
-                let g = p.layout_no_wrap(": ".into(), font.clone(), t.text);
+                let g = lay(&p, ": ".into(), font.clone(), t.text);
                 let gw = g.size().x;
                 p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
                 x += gw;
@@ -551,10 +585,12 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
             }
         }
     }
-    let g = p.layout_no_wrap(app.cmd.buffer.clone(), font.clone(), t.text);
+    let g = lay(&p, app.cmd.buffer.clone(), font.clone(), t.text);
     let gw = g.size().x;
     p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
-    let mut caret_x = x + gw;
+    // The caret is where the next letter goes: the end of the buffer in reading order, which is
+    // the left edge of a right-to-left run the buffer ends with.
+    let mut caret_x = x + caret_prefix(&app.cmd.buffer).map_or(gw, |pre| lay(&p, pre, font.clone(), t.text).size().x);
     // The IME's composition text sits after the buffer (underlined) until it is committed.
     if !app.cmd.preedit.is_empty() {
         let pg = p.layout_no_wrap(app.cmd.preedit.clone(), font, t.text);
@@ -708,7 +744,7 @@ fn history_window(app: &CadApp, ui: &mut egui::Ui, r: Rect) {
             for l in log.get(rows).into_iter().flatten() {
                 let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), LINE_H), Sense::hover());
                 let p = ui.painter().with_clip_rect(row.intersect(ui.clip_rect()));
-                p.text(pos2(row.left(), row.center().y), egui::Align2::LEFT_CENTER, l, crate::theme::small(), t.text_dim);
+                crate::i18n::paint(&p, pos2(row.left(), row.center().y), egui::Align2::LEFT_CENTER, l, crate::theme::small(), t.text_dim);
             }
         },
     );
@@ -960,5 +996,21 @@ mod autocomplete_tests {
         submit(&mut app);
         assert!(app.session.running.is_none());
         assert!(app.session.log.iter().any(|l| l.contains("unknown command")), "{:?}", app.session.log);
+    }
+}
+
+#[cfg(test)]
+mod caret_tests {
+    use super::caret_prefix;
+
+    /// A buffer ending in Hebrew puts the caret at the left of that run, where the next Hebrew
+    /// letter appears (#2317 review); otherwise it stays at the end of the line.
+    #[test]
+    fn the_caret_goes_where_the_next_letter_appears() {
+        assert_eq!(caret_prefix("layer שלום").as_deref(), Some("layer "));
+        assert_eq!(caret_prefix("שלום"), Some(String::new()));
+        assert_eq!(caret_prefix("שלום plan"), None);
+        assert_eq!(caret_prefix("line 0,0"), None);
+        assert_eq!(caret_prefix(""), None);
     }
 }
