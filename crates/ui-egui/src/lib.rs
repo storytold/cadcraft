@@ -37,6 +37,7 @@ mod mtext_editor;
 mod panel_state;
 pub mod spacemouse;
 pub mod switch;
+pub mod text_editor;
 // The External References palette.
 pub mod xrefs;
 
