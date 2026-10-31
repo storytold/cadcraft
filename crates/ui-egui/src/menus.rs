@@ -136,6 +136,21 @@ fn run_recent_file_command(app: &mut CadApp, id: &str) -> Option<Result<Value, S
 
 fn run_preference_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
     let r = match id {
+        "ui.language" => {
+            let Some(preference) = params.get("lang").and_then(Value::as_str).and_then(crate::i18n::Preference::parse) else {
+                return Some(Err(format!("language must be {}", crate::i18n::Preference::codes())));
+            };
+            app.ui.interface_language = preference;
+            let shown = app.language();
+            if shown != preference.resolve(&app.system_languages) {
+                app.set_status(match preference.resolve(&app.system_languages) {
+                    "ko" => "No font covers the Korean interface, so it stays in English. Install a Hangul font (Malgun Gothic or Nanum Gothic), or build with a Hang/Kore craft-fonts face.",
+                    "ja" => "No Japanese font is installed, so the interface stays in English. Install one (Hiragino Sans or Noto Sans CJK JP, for example) to use Japanese.",
+                    _ => "No Chinese font is installed, so the interface stays in English. Install one (Noto Sans CJK, for example) to use Chinese.",
+                });
+            }
+            Ok(json!({"interfaceLanguage": preference.code(), "shown": shown}))
+        }
         "ui.theme.system" | "ui.theme.light" | "ui.theme.dark" => {
             let pref = crate::theme::ThemePref::parse(id.trim_start_matches("ui.theme.")).unwrap_or_default();
             set_theme(app, pref)
