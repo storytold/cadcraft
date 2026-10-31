@@ -453,7 +453,9 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
                 }
             }
             match serde_json::from_value::<crate::UiState>(cur) {
-                Ok(u) => {
+                Ok(mut u) => {
+                    // Shortcuts are checked as the preferences check them.
+                    u.shortcuts = crate::keys::from_prefs(&json!(u.shortcuts));
                     if let Err(error) = crate::docking::validate(&u.docking) {
                         return err(error);
                     }

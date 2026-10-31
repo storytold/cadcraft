@@ -1376,3 +1376,10 @@
 	CADCraft is up to date.	Встановлено найновішу версію CADCraft.
 	Could not check for updates.	Не вдалося перевірити оновлення.
 	Save changes to block "{name}"?	Зберегти зміни в блоці «{name}»?
+	Keyboard Shortcuts...	Комбінації клавіш...
+	Keyboard Shortcuts	Комбінації клавіш
+	Replaces the shortcut of {commands}	Замінює комбінацію клавіш команди: {commands}
+	Needs Ctrl, Alt or a function key	Потрібна клавіша Ctrl, Alt або функціональна клавіша
+	Press the keys	Натисніть клавіші
+	Back to CADCraft's shortcut	Повернути комбінацію CADCraft
+	A shortcut you give wins over CADCraft's own. Changes apply at once and are kept for next time.	Ваша комбінація клавіш має перевагу над комбінацією CADCraft. Зміни застосовуються одразу й зберігаються.
