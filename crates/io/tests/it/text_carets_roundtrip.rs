@@ -81,13 +81,17 @@ fn carets_are_written_escaped_and_read_back() {
     }
     let back = read_dxf(dxf.as_bytes()).unwrap();
     assert_eq!(all_strings(&back), ["10^2 m, A^JB", "1^3", "Area in m^2", "<> x10^3"]);
-    // Older files have bare carets: kept as they are.
-    let old = read_dxf(dxf.replace("10^ 2 m", "10^2 m").as_bytes()).unwrap();
+    // Older files have bare carets, `^J` too: kept as they are (a single-line string has no line feed).
+    let old = read_dxf(dxf.replace("10^ 2 m, A^ JB", "10^2 m, A^JB").as_bytes()).unwrap();
     assert_eq!(all_strings(&old)[0], "10^2 m, A^JB");
+    assert!(write_dxf(&old).contains("10^ 2 m, A^ JB"));
     // AutoCAD writes a tab as `^I`: it is read as a tab and written back as `^I`.
     let tab = read_dxf(dxf.replace("10^ 2 m, A^ JB", "A^IB").as_bytes()).unwrap();
     assert_eq!(all_strings(&tab)[0], "A\tB");
     assert!(write_dxf(&tab).contains("A^IB"));
+    // Through a DWG.
+    let dwg = cadcraft_io::write(&drawing(), "t.dwg").unwrap();
+    assert_eq!(all_strings(&cadcraft_io::read(&dwg, "t.dwg").unwrap()), all_strings(&drawing()));
 }
 
 #[test]
