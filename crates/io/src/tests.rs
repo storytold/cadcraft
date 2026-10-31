@@ -1015,6 +1015,41 @@ fn oversized_dwg_and_dxf_are_rejected_early() {
     assert_eq!(e.to_string(), "drawing too large: 60 DXF group codes, more than the 50 CADCraft reads");
 }
 
+/// An attribute's vertical alignment is group 74; its group 73 is the field length. acadrust's
+/// DWG bridge writes the field length (0) for every ATTRIB and ATTDEF, and the reader took it
+/// for the alignment, so a middle-centred attribute from any DWG was drawn with its baseline on
+/// the alignment point, half a height too high (a top-aligned one a whole height, a
+/// bottom-aligned one a third below); left-aligned ones were saved by their precomputed
+/// insertion point. Measured on an office sheet against BricsCAD's own plot: +0.52 h (MR),
+/// +1.00 h (TC), -0.29 h (BC), 0.00 after this.
+#[test]
+fn attribute_vertical_alignment_is_group_74_not_the_field_length() {
+    let dxf = "0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n2\nB\n10\n0\n20\n0\n0\nLINE\n8\n0\n10\n0\n20\n0\n11\n1\n21\n0\n0\nENDBLK\n0\nENDSEC\n\
+0\nSECTION\n2\nENTITIES\n\
+0\nINSERT\n66\n1\n2\nB\n10\n0\n20\n0\n\
+0\nATTRIB\n8\n0\n10\n0\n20\n0\n40\n2\n1\nX\n11\n5\n21\n7\n2\nT\n70\n0\n73\n0\n72\n1\n74\n3\n\
+0\nSEQEND\n\
+0\nATTDEF\n8\n0\n10\n0\n20\n0\n40\n2\n1\nX\n3\nP\n11\n5\n21\n7\n2\nT\n70\n0\n73\n0\n72\n2\n74\n2\n\
+0\nTEXT\n8\n0\n10\n0\n20\n0\n40\n2\n1\nX\n11\n5\n21\n7\n72\n1\n73\n2\n\
+0\nENDSEC\n0\nEOF\n";
+    let d = read(dxf.as_bytes(), "x.dxf").unwrap();
+    let ins = d.model.iter().find_map(|e| if let EntityKind::Insert(i) = &e.kind { Some(i) } else { None }).unwrap();
+    let a = &ins.attribs[0].text;
+    assert_eq!(
+        (a.halign, a.valign, a.align_pt),
+        (HAlign::Center, VAlign::Top, Some(Vec3::new(5.0, 7.0, 0.0))),
+        "placed attribute: 74 = 3 is top, 73 = 0 is the field length"
+    );
+    let def = d.model.iter().find_map(|e| if let EntityKind::AttDef(a) = &e.kind { Some(&a.text) } else { None }).unwrap();
+    assert_eq!(
+        (def.halign, def.valign, def.align_pt),
+        (HAlign::Right, VAlign::Middle, Some(Vec3::new(5.0, 7.0, 0.0))),
+        "definition: 74 = 2 is middle"
+    );
+    let t = d.model.iter().find_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t) } else { None }).unwrap();
+    assert_eq!((t.halign, t.valign), (HAlign::Center, VAlign::Middle), "TEXT keeps group 73");
+}
+
 /// Issue #800: one unreadable object record doesn't fail the whole DWG. The reader skips it, the
 /// rest opens, and the drawing's read notes say how many records were left out and of which
 /// types, so a partial read never passes for a complete one. A complete read has no notes.
