@@ -67,6 +67,7 @@ impl Spline {
             && self.degree >= 1
             && self.degree <= MAX_DEGREE
             && self.knots.len() == n + self.degree + 1
+            && (self.weights.is_empty() || self.weights.len() == n)
             && self.knots.windows(2).all(|w| w.first() <= w.get(1))
     }
 

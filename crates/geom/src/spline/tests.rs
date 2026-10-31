@@ -298,6 +298,16 @@ fn a_huge_degree_spline_is_invalid_and_cheap_to_tessellate() {
 }
 
 #[test]
+fn rational_splines_need_one_weight_per_control_point() {
+    let control = vec![Vec2::ZERO, Vec2::new(1.0, 1.0)];
+    let spline = Spline::from_control(control, 1);
+
+    assert!(spline.is_valid());
+    assert!(Spline { weights: vec![1.0, 2.0], ..spline.clone() }.is_valid());
+    assert!(!Spline { weights: vec![1.0], ..spline }.is_valid());
+}
+
+#[test]
 fn a_normal_low_degree_spline_is_valid() {
     let s = Spline::from_control(vec![Vec2::new(0.0, 0.0), Vec2::new(1.0, 1.0), Vec2::new(2.0, 0.0), Vec2::new(3.0, 1.0)], 3);
     assert!(s.is_valid());
