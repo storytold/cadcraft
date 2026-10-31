@@ -51,7 +51,7 @@ pub use common::{Common, Handle, Lineweight, RawTag, Transparency};
 pub use curves::{Arc, Circle, Ellipse, Face3d, Line, LwPolyline, Point, Polyline3d, RayLine, Solid};
 pub use dim::{AssocSnap, DimAssoc, DimBreak, DimKind, DimMarks, Dimension, Inspection, JoggedRadius, Leader, MLeader};
 pub use fill::{Gradient, Hatch, HatchLoop};
-pub use layout::{Image, Table, TableCell, Viewport};
+pub use layout::{Image, PdfUnderlay, Table, TableCell, UNDERLAY_MAX_FADE, UnderlayLayer, Viewport};
 pub use text::{HAlign, MText, MTextColumnType, MTextColumns, Text, VAlign};
 pub use wipeout::Wipeout;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -89,6 +89,7 @@ pub enum EntityKind {
     Region(Region),
     Viewport(Viewport),
     Image(Image),
+    PdfUnderlay(PdfUnderlay),
     Wipeout(Wipeout),
     Table(Table),
     Tolerance(crate::Tolerance),
@@ -143,6 +144,7 @@ impl EntityKind {
             EntityKind::Region(_) => "Region",
             EntityKind::Viewport(_) => "Viewport",
             EntityKind::Image(_) => "Raster Image",
+            EntityKind::PdfUnderlay(_) => "PDF Underlay",
             EntityKind::Wipeout(_) => "Wipeout",
             EntityKind::Table(_) => "Table",
             EntityKind::Tolerance(_) => "Tolerance",
@@ -178,6 +180,7 @@ impl EntityKind {
             EntityKind::Region(_) => "REGION",
             EntityKind::Viewport(_) => "VIEWPORT",
             EntityKind::Image(_) => "IMAGE",
+            EntityKind::PdfUnderlay(_) => "PDFUNDERLAY",
             EntityKind::Wipeout(_) => "WIPEOUT",
             EntityKind::Table(_) => "ACAD_TABLE",
             EntityKind::Tolerance(_) => "TOLERANCE",
@@ -252,6 +255,17 @@ impl EntityKind {
                 .chain(m.block.iter().map(|b| Prim::Point(b.insert.xy())))
                 .collect(),
             EntityKind::Image(i) => vec![Prim::Point(i.insert.xy())],
+            // The page's frame (its clip boundary when clipped): an underlay is picked on its edges, not inside.
+            // Unloaded: not shown, nothing to pick.
+            EntityKind::PdfUnderlay(u) if u.unloaded => Vec::new(),
+            EntityKind::PdfUnderlay(u) => u
+                .frames()
+                .iter()
+                .flat_map(|c| {
+                    let n = c.len();
+                    (0..n).filter_map(move |i| Some(Prim::Seg(Segment::Line(GLine::new(*c.get(i)?, *c.get((i + 1) % n)?)))))
+                })
+                .collect(),
             EntityKind::Table(t) => vec![Prim::Point(t.insert.xy())],
             EntityKind::Tolerance(t) => vec![Prim::Point(t.insert.xy())],
             EntityKind::Unknown(_) => Vec::new(),
@@ -442,6 +456,39 @@ impl EntityKind {
                 i.u = m.apply_vec(i.u.xy()).to3(0.0);
                 i.v = m.apply_vec(i.v.xy()).to3(0.0);
             }
+            // The page is never shown mirrored: a mirror lays it, unmirrored, on the mirrored
+            // outline, turned the way that keeps it nearer upright (as text with MIRRTEXT = 0),
+            // and its clip boundary on the mirrored one.
+            EntityKind::PdfUnderlay(u) if mirror && u.size != Vec2::ZERO => {
+                let (au, av) = u.axes();
+                let o = u.insert.xy();
+                let mu = m.apply_vec(au);
+                let along = cadcraft_geom::norm_angle(mu.y.atan2(mu.x));
+                let turned = cadcraft_geom::norm_angle(along + std::f64::consts::PI);
+                let off = |r: f64| {
+                    let d = (r - u.rotation).rem_euclid(std::f64::consts::TAU);
+                    d.min(std::f64::consts::TAU - d)
+                };
+                let (w, h) = (u.size.x, u.size.y);
+                if off(along) <= off(turned) {
+                    // From the mirrored upper-left corner; page points flip top to bottom.
+                    let at = m.apply(o + av);
+                    (u.insert.x, u.insert.y, u.rotation) = (at.x, at.y, along);
+                    u.clip.iter_mut().for_each(|p| p.y = h - p.y);
+                } else {
+                    // From the mirrored lower-right corner, half a turn on; left to right.
+                    let at = m.apply(o + au);
+                    (u.insert.x, u.insert.y, u.rotation) = (at.x, at.y, turned);
+                    u.clip.iter_mut().for_each(|p| p.x = w - p.x);
+                }
+                u.scale *= s;
+            }
+            // Without a page size (not read yet) only the insertion point is known.
+            EntityKind::PdfUnderlay(u) => {
+                t3(&mut u.insert);
+                u.scale *= s;
+                u.rotation += rot;
+            }
             EntityKind::Wipeout(w) => w.boundary.iter_mut().for_each(|p| *p = m.apply(*p)),
             EntityKind::Table(t) => {
                 if let Some(b) = &mut t.breaks {
@@ -533,6 +580,7 @@ impl EntityKind {
                 Bounds2::new(c - h, c + h).corners().to_vec()
             }
             EntityKind::Image(i) => vec![i.insert.xy()],
+            EntityKind::PdfUnderlay(u) => u.outline(),
             EntityKind::Wipeout(w) => w.vertices().to_vec(),
             EntityKind::Table(t) => vec![t.insert.xy()],
             EntityKind::Tolerance(t) => vec![t.insert.xy()],
