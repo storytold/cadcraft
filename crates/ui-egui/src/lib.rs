@@ -314,6 +314,33 @@ pub struct CadApp {
     pub updates_rt: updates_ui::Runtime,
 }
 
+/// The numeric keypad's decimal key types a point at the command line, whatever the system's
+/// language: with a German (or any decimal-comma) layout it sends a comma, and a comma separates
+/// coordinates here (`10,20`), so `2,5` typed on the keypad would be a point instead of a number.
+/// The main keyboard's comma stays. Text fields and prompts that collect text never see this, so a
+/// keypad comma typed into MText or a dialog stays a comma ([`cmdline::keyboard`]).
+///
+/// The keypad key is told apart by its physical key: egui-winit (desktop) maps none for
+/// `KeyCode::NumpadDecimal`, and of the other keys that could type a comma only the ISO/JIS extra
+/// keys (`IntlBackslash`, `IntlRo`, `IntlYen`) share that. So a comma key press without a physical
+/// key, followed by a typed comma, is the keypad's. A release in between doesn't change that; any
+/// other event does. The web shell reads the DOM code `NumpadDecimal` as `Period`, the same as the
+/// main point key, so there the two can't be told apart and nothing changes.
+pub fn numpad_decimal_point(events: &mut [egui::Event]) {
+    let mut keypad = false;
+    for e in events.iter_mut() {
+        match e {
+            egui::Event::Key { key: egui::Key::Comma, physical_key: None, pressed: true, .. } => keypad = true,
+            egui::Event::Key { pressed: false, .. } => {}
+            egui::Event::Text(t) if keypad && t == "," => {
+                *t = ".".into();
+                keypad = false;
+            }
+            _ => keypad = false,
+        }
+    }
+}
+
 impl CadApp {
     /// Construct `CadApp` from a session and services with default UI state, options, canvas and command line; no control channel, capture geometry or pending shots are installed.
     pub fn new(session: Session, services: Services) -> Self {

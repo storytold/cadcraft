@@ -289,11 +289,15 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
         app.cmd.ime_on = false;
         return;
     }
-    let events = ctx.input(|i| i.events.clone());
+    let mut events = ctx.input(|i| i.events.clone());
     let selection = app.session.selection();
     app.cmd.watch_selection(&selection);
     let mac = ctx.os() == egui::os::OperatingSystem::Mac;
     let text_prompt = app.session.current_prompt().is_some_and(|p| p.accept.text && !p.accept.point && !p.accept.number);
+    // Numbers and points: the keypad's decimal key is a decimal point (a text prompt keeps its comma).
+    if !text_prompt {
+        crate::numpad_decimal_point(&mut events);
+    }
     if text_prompt {
         enable_ime(app, ctx);
     } else {
@@ -782,6 +786,42 @@ mod tests {
         // Back to selecting objects: the next frame lets the IME go, so it can't swallow ASCII typing.
         let out = frame(&mut app, &ctx, Vec::new());
         assert!(out.platform_output.ime.is_none());
+    }
+
+    #[test]
+    fn the_keypad_comma_is_a_point_at_the_command_line_but_not_in_a_text_prompt() {
+        use cadcraft_engine::geom::Vec2;
+        // The keypad's decimal key under a German layout on the desktop: no physical key, a comma typed.
+        let keypad = || {
+            vec![
+                Event::Key { key: Key::Comma, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE },
+                Event::Text(",".into()),
+            ]
+        };
+        let main_comma = || {
+            vec![
+                Event::Key { key: Key::Comma, physical_key: Some(Key::Comma), pressed: true, repeat: false, modifiers: egui::Modifiers::NONE },
+                Event::Text(",".into()),
+            ]
+        };
+        let ctx = egui::Context::default();
+        let mut app = CadApp::new(Session::new(), crate::Services::default());
+        frame(&mut app, &ctx, vec![Event::Text("2".into())]);
+        frame(&mut app, &ctx, keypad());
+        frame(&mut app, &ctx, vec![Event::Text("5".into())]);
+        frame(&mut app, &ctx, main_comma());
+        frame(&mut app, &ctx, vec![Event::Text("3".into())]);
+        assert_eq!(app.cmd.buffer, "2.5,3");
+
+        // A prompt collecting text keeps the comma the layout types.
+        let mut app = CadApp::new(Session::new(), crate::Services::default());
+        app.run("text", serde_json::json!({"at": [0, 0], "text": "HELLO", "height": 2.5})).unwrap();
+        app.start("textedit");
+        app.session.input(Input::Point(Vec2::new(1.0, 1.0))).unwrap();
+        frame(&mut app, &ctx, vec![Event::Text("2".into())]);
+        frame(&mut app, &ctx, keypad());
+        frame(&mut app, &ctx, vec![Event::Text("5".into())]);
+        assert_eq!(app.cmd.buffer, "2,5");
     }
 
     #[test]
