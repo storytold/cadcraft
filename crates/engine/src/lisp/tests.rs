@@ -596,6 +596,37 @@ fn appload_and_load() {
     assert!(r["error"].as_str().is_some_and(|e| e.contains("bad argument type")));
 }
 
+/// `entlast` and `entnext` see what the same routine has just made, drawn or deleted: a routine
+/// edits the drawing in place, at the same address, so the handles they walk are taken again
+/// whenever the drawing changes.
+#[test]
+fn entlast_and_entnext_follow_edits_within_one_routine() {
+    let mut s = session();
+    let got = ok(
+        &mut s,
+        "(progn
+           (entmake '((0 . \"LINE\") (10 0.0 0.0 0.0) (11 1.0 0.0 0.0))) (setq a (entlast))
+           (entmake '((0 . \"LINE\") (10 0.0 1.0 0.0) (11 1.0 1.0 0.0))) (setq b (entlast))
+           (command \"_.CIRCLE\" '(5.0 5.0) 1.0) (setq c (entlast))
+           (list (equal a b) (equal (entnext a) b) (equal (entnext b) c) (cdr (assoc 0 (entget c)))
+                 (progn (entdel c) (equal (entlast) b))))",
+    );
+    assert_eq!(got, "(nil T T \"CIRCLE\" T)");
+    // Walking every object while editing it with entmod and entupd, then deleting the last one.
+    let got = ok(
+        &mut s,
+        "(progn
+           (setq e (entnext) n 0)
+           (while e
+             (entmod (subst '(8 . \"L1\") (assoc 8 (entget e)) (entget e)))
+             (entupd e)
+             (setq n (1+ n) e (entnext e)))
+           (entdel (entlast))
+           (list n (cdr (assoc 8 (entget (entlast)))) (equal (entlast) a) (entnext a)))",
+    );
+    assert_eq!(got, "(2 \"L1\" T nil)");
+}
+
 /// `command` gives an entity name, alone or as `entsel` returns it (name and point), to a prompt
 /// picking one object: the point picks that object, and a bare name stands at its DXF group 10
 /// point. Each call and its numbers are AutoCAD 2024's (accoreconsole, read back with `entget`);
