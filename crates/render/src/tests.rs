@@ -1122,3 +1122,17 @@ fn raster_hatch_pattern_matches_one_by_one() {
         assert!(render(&l, &view, &o).unwrap().data() == render_one_by_one(&l, &view, &o).data());
     }
 }
+
+/// An OLE2FRAME draws its frame, the rectangle from its two corner points (#2422), and nothing
+/// when a corner is missing.
+#[test]
+fn ole_frame_draws_its_outline() {
+    let tag = |code: i32, value: &str| cadcraft_doc::RawTag { code, value: value.into() };
+    let frame = |tags: Vec<cadcraft_doc::RawTag>| EntityKind::Unknown(cadcraft_doc::Unknown { dxf_type: "OLE2FRAME".into(), tags });
+    let mut d = Drawing::new_imperial();
+    d.add(&Space::Model, Common::default(), frame(vec![tag(10, "30"), tag(20, "-19"), tag(11, "35"), tag(21, "-22")])).unwrap();
+    d.add(&Space::Model, Common::default(), frame(vec![tag(10, "1"), tag(20, "2")])).unwrap();
+    let l = build(&d, &Space::Model, &Options { tolerance: 0.01, ..Default::default() });
+    assert_eq!(l.prims.len(), 1, "only the frame with both corners is drawn");
+    assert_eq!(l.prims[0].len, 5, "a closed rectangle: five points");
+}
