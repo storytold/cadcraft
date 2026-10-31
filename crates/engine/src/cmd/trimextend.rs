@@ -36,7 +36,7 @@ fn misses_edges(e: &EngineError) -> bool {
 }
 
 /// Trim or extend `h` at `at`. A Quick-mode (`quick`) trim of an object no cutting edge crosses
-/// erases it. Returns the handles that replace `h` (none when it was erased).
+/// erases it. Returns what `h` became: its pieces, `h` itself first (none when it was erased).
 fn apply(s: &mut Session, h: Handle, at: Vec2, extending: bool, edges: Edges, quick: bool) -> Result<Vec<Handle>> {
     if extending {
         extend(s, h, at, edges)?;
@@ -118,8 +118,8 @@ fn crossing(s: &mut Session, a: Vec2, b: Vec2, extending: bool, edges: Edges, qu
     run_picks(s, work, extending, edges, quick, tol)
 }
 
-/// Trim (or extend) each object at its pick points. A trim replaces the object with pieces, so
-/// later picks go to the piece within `tol` of the point (none: that part is already gone).
+/// Trim (or extend) each object at its pick points. A trim leaves the object in pieces, so later
+/// picks go to the piece within `tol` of the point (none: that part is already gone).
 fn run_picks(s: &mut Session, work: Vec<(Handle, Vec<Vec2>)>, extending: bool, edges: Edges, quick: bool, tol: f64) -> Result<usize> {
     let mut n = 0;
     let mut last_err = None;

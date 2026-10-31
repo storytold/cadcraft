@@ -82,7 +82,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["Modify", "Trim"])
             .alias(&["tr"])
             .params(
-                "{handle, pick: [x,y] | fence: [[x,y],...] | crossing: [[x,y],[x,y]], edges?: [hex], edgeMode?: \"extend\"|\"none\", mode?: \"quick\"|\"standard\"}",
+                "{handle, pick: [x,y] | fence: [[x,y],...] | crossing: [[x,y],[x,y]], edges?: [hex], edgeMode?: \"extend\"|\"none\", mode?: \"quick\"|\"standard\"} → {handles: the object (kept, reshaped) then the new pieces; none when it was erased} (pick) | {trimmed} (fence, crossing)",
             )
             .interactive(|_| Ok(Box::new(TrimM::new(false)))),
         CommandSpec::new("extend", "Extend", trimextend::run_extend)
@@ -108,9 +108,9 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("break", "Break", run_break)
             .menu(&["Modify", "Break"])
             .alias(&["br"])
-            .params("{handle, p1, p2}")
+            .params("{handle, p1, p2} → {handles: the object (kept, reshaped) then the new pieces; none when nothing is left}")
             .interactive(|_| Ok(Box::new(BreakM::default()))),
-        CommandSpec::new("breakatpoint", "Break At Point", run_breakat).menu(&["Modify", "Break At Point"]).params("{handle, at}"),
+        CommandSpec::new("breakatpoint", "Break At Point", run_breakat).menu(&["Modify", "Break At Point"]).params("{handle, at} → {handles: the object (kept, reshaped) then the new piece}"),
         CommandSpec::new("join", "Join", run_join)
             .menu(&["Modify", "Join"])
             .alias(&["j"])
