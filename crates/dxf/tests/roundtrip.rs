@@ -122,7 +122,11 @@ fn hex_chunks_keep_bytes_and_order() {
     // Larger payloads need chunk-size/reassembly checks rather than exact tag equality;
     // see hex_chunks.rs for the independent wire checks and pending writer regressions.
     for length in [0, 1, 2, 126, 127] {
-        let hex: String = (0..length).map(|i| format!("{:02X}", (i * 37) % 256)).collect();
+        let hex: String = (0..length).fold(String::new(), |mut out, i| {
+            use std::fmt::Write as _;
+            let _ = write!(out, "{:02X}", (i * 37) % 256);
+            out
+        });
         let tags: Vec<_> = (310..=319).chain([1004]).map(|code| Tag::new(code, Value::Hex(hex.clone()))).collect();
         check(&format!("hex/bytes={length}"), &tags);
     }
