@@ -466,24 +466,13 @@ pub(super) fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityK
             }
             rx.mleader_fix.push((h, pending));
         }
-        // The layer handles of group 331 (341 in DXF 2000), each layer once, are what AutoCAD edits,
-        // so they win over CADCraft's VPFROZEN xdata. The xdata still gives the names with no LAYER
-        // record (they have no handle), and the whole list for records without handles.
+        // The frozen layers: the LAYER handles of group 331 (341 in DXF 2000), then the names in
+        // CADCraft's VPFROZEN xdata, which holds those without one; each layer once.
         ("VIEWPORT", EntityKind::Viewport(v)) => {
+            let handles = tags.iter().take_while(|t| t.code < 1000).filter(|t| t.code == 331 || t.code == 341);
+            let named = handles.filter_map(|t| rx.layers.get(&t.str().trim().to_ascii_uppercase()));
             let mut seen = std::collections::HashSet::new();
-            let mut frozen: Vec<String> = tags
-                .iter()
-                .take_while(|t| t.code < 1000)
-                .filter(|t| t.code == 331 || t.code == 341)
-                .filter_map(|t| rx.layers.get(&t.str().trim().to_ascii_uppercase()))
-                .filter(|name| seen.insert(name.as_str()))
-                .cloned()
-                .collect();
-            if !frozen.is_empty() {
-                let layers: std::collections::HashSet<String> = rx.layers.values().map(|n| n.to_ascii_uppercase()).collect();
-                frozen.extend(v.frozen_layers.iter().filter(|n| !layers.contains(&n.to_ascii_uppercase())).cloned());
-                v.frozen_layers = frozen;
-            }
+            v.frozen_layers = named.chain(&v.frozen_layers).filter(|n| seen.insert(n.to_ascii_uppercase())).cloned().collect();
         }
         _ => {}
     }
