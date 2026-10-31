@@ -145,8 +145,8 @@ pub(super) fn vports() -> Case {
     drawing.vports.push(VportConfig {
         name: "Split".into(),
         tiles: vec![
-            VportTile { min: Vec2::ZERO, max: Vec2::new(0.5, 1.0), center: Vec2::new(2.0, 3.0), height: 20.0, aspect: 0.75 },
-            VportTile { min: Vec2::new(0.5, 0.0), max: Vec2::new(1.0, 1.0), center: Vec2::new(7.0, 8.0), height: 30.0, aspect: 0.75 },
+            VportTile { min: Vec2::ZERO, max: Vec2::new(0.5, 1.0), center: Vec2::new(2.0, 3.0), height: 20.0, aspect: 0.75, view3d: None },
+            VportTile { min: Vec2::new(0.5, 0.0), max: Vec2::new(1.0, 1.0), center: Vec2::new(7.0, 8.0), height: 30.0, aspect: 0.75, view3d: None },
         ],
     });
     Case { name: "drawing/tiled-viewports".into(), drawing }

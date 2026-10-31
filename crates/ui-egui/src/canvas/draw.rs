@@ -574,7 +574,7 @@ mod zoomed_highlight_tests {
         let list = line(Vec2::new(-1000.0, 0.0), Vec2::new(1000.0, 0.0));
         // The smaller zoom first, so a regression fails here instead of filling memory at 1e9.
         for scale in [1e3, 1e9] {
-            let n = dashes_of(&list, &Xf { rect: SCREEN, center: Vec2::new(0.3, 0.0), scale }).len();
+            let n = dashes_of(&list, &Xf { rect: SCREEN, center: Vec2::new(0.3, 0.0), scale, projection: None }).len();
             assert!((50..=70).contains(&n), "scale {scale}: {n} dashes for 600 points of line");
         }
     }
@@ -585,7 +585,7 @@ mod zoomed_highlight_tests {
     fn clipped_dashes_stay_where_the_whole_line_puts_them() {
         let list = line(Vec2::new(0.0, 0.0), Vec2::new(1000.0, 0.0));
         for x in [500.3, 512.9, 731.0] {
-            let xf = Xf { rect: SCREEN, center: Vec2::new(x, 0.0), scale: 1.0 };
+            let xf = Xf { rect: SCREEN, center: Vec2::new(x, 0.0), scale: 1.0, projection: None };
             let whole = Shape::dashed_line(
                 &[xf.to_screen(Vec2::ZERO), xf.to_screen(Vec2::new(1000.0, 0.0))],
                 Stroke::new(1.0, Color32::LIGHT_BLUE),

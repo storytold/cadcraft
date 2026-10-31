@@ -546,6 +546,7 @@ impl EntityKind {
             EntityKind::Hatch(h) => scale(&mut h.elevation),
             EntityKind::Solid(so) | EntityKind::Trace(so) => so.corners.iter_mut().for_each(z),
             EntityKind::Face3d(fc) => fc.corners.iter_mut().for_each(z),
+            EntityKind::PolyfaceMesh(m) => m.vertices.iter_mut().for_each(z),
             EntityKind::Viewport(v) => z(&mut v.center),
             EntityKind::Image(i) => z(&mut i.insert),
             EntityKind::Table(t) => z(&mut t.insert),
