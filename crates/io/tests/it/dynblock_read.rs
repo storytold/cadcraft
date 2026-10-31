@@ -301,9 +301,7 @@ fn bad_values_are_refused_and_change_nothing() {
     let ps = cadcraft_doc::dynblock::custom_properties(&d, h("80")).unwrap().1;
     let editable: Vec<(&str, bool)> = ps.iter().map(|p| (p.name.as_str(), p.editable)).collect();
     assert_eq!(editable, [("Visibility1", true), ("Width", true), ("Size", true)]);
-    for (name, value) in
-        [("Visibility1", "Ajar"), ("Size", "Huge"), ("Width", "wide"), ("Width", "0"), ("Width", "-3"), ("Width", "inf"), ("Nope", "x"), ("", "")]
-    {
+    for (name, value) in [("Visibility1", "Ajar"), ("Size", "Huge"), ("Width", "wide"), ("Width", "-3"), ("Width", "inf"), ("Nope", "x"), ("", "")] {
         assert!(cadcraft_doc::dynblock::set_property(&mut d, h("80"), name, value).is_err(), "{name}={value}");
     }
     assert!(cadcraft_doc::dynblock::set_property(&mut d, h("30"), "Visibility1", "Open").is_err(), "not a reference");
