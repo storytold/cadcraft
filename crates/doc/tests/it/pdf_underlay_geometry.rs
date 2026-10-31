@@ -1,4 +1,4 @@
-//! A PDF underlay's place after a mirror, and its bounds with an inverted clip.
+//! A PDF underlay's place after a mirror or a height scaling, and its bounds with an inverted clip.
 
 use cadcraft_doc::geom::{Mat3, Vec2, Vec3};
 use cadcraft_doc::{Common, Drawing, EntityKind, PdfUnderlay, Space, entity_bounds};
@@ -60,4 +60,13 @@ fn an_inverted_clip_frame_is_inside_the_bounds_without_a_page_size() {
     for p in u.clip_outline().unwrap() {
         assert!(b.contains(p), "{p:?} outside {b:?}");
     }
+}
+
+/// SCALE's height scaling moves an underlay's insertion point up or down, as an image's.
+#[test]
+fn scaling_heights_moves_the_insertion_point() {
+    let mut k = EntityKind::PdfUnderlay(PdfUnderlay { insert: Vec3::new(1.0, 2.0, 5.0), size: Vec2::new(10.0, 5.0), ..PdfUnderlay::default() });
+    k.scale_heights(1.0, 2.0);
+    let EntityKind::PdfUnderlay(u) = k else { panic!("still an underlay") };
+    assert_eq!(u.insert, Vec3::new(1.0, 2.0, 9.0));
 }

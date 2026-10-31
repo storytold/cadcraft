@@ -600,6 +600,7 @@ impl EntityKind {
             EntityKind::PolyfaceMesh(m) => m.vertices.iter_mut().for_each(z),
             EntityKind::Viewport(v) => z(&mut v.center),
             EntityKind::Image(i) => z(&mut i.insert),
+            EntityKind::PdfUnderlay(u) => z(&mut u.insert),
             EntityKind::Table(t) => z(&mut t.insert),
             EntityKind::Tolerance(t) => z(&mut t.insert),
             EntityKind::Spline(_) | EntityKind::Region(_) | EntityKind::Wipeout(_) | EntityKind::Unknown(_) => {}
