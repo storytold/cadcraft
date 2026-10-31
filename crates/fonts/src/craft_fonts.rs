@@ -1,7 +1,7 @@
 //! Fonts from the optional craft-fonts build input (<https://github.com/storytold/craft-fonts>).
 //!
 //! Built with `CRAFT_FONTS_DIR=<craft-fonts checkout>`, `build.rs` embeds the fonts listed in its
-//! `fonts/manifest.txt` (web builds: only BIZ UDPGothic Regular and the Arabic faces).
+//! `fonts/manifest.txt` (web builds: only BIZ `UDPGothic` Regular and the Arabic faces).
 //! Without it [`CRAFT_FONTS`] is empty and nothing changes. The font table ([`crate::ttf`])
 //! lists the embedded fonts with the installed ones, under [`CraftFont::stem`]. A text style
 //! can name one (`BIZ UDPGothic`), and they are fallbacks for characters a text's font lacks.

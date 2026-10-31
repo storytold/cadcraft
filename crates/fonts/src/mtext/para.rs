@@ -57,7 +57,7 @@ pub enum ParaAlign {
 }
 
 /// Paragraph properties set by `\p…;`. Indents and tab stops are in drawing units (as in
-/// AutoCAD files: `\pi4.86;` indents the first line by 4.86 units), space before and after in
+/// `AutoCAD` files: `\pi4.86;` indents the first line by 4.86 units), space before and after in
 /// text heights. They stay in effect for the following paragraphs until another `\p` changes them.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ParaProps {
@@ -219,6 +219,7 @@ pub enum ListStyle {
 
 impl ListStyle {
     /// The label of item `i` (from 0).
+    #[must_use]
     pub fn label(self, i: usize) -> String {
         let letters = |upper: bool| {
             // Bijective base 26: a … z, aa, ab …
@@ -226,7 +227,7 @@ impl ListStyle {
             let mut s = Vec::new();
             while n > 0 && s.len() < 16 {
                 n -= 1;
-                let c = b'a' + (n % 26) as u8;
+                let c = b'a' + u8::try_from(n % 26).unwrap_or(0);
                 s.push(char::from(if upper { c.to_ascii_uppercase() } else { c }));
                 n /= 26;
             }
@@ -243,6 +244,7 @@ impl ListStyle {
 
 /// Paragraphs as a list: a hanging indent of `indent` drawing units with a tab stop there, and
 /// each paragraph its label and a tab (`\pxi-3,l3,t3;1.<tab>First\P2.<tab>Second`).
+#[must_use]
 pub fn list_contents(paragraphs: &[&str], style: ListStyle, indent: f64) -> String {
     let indent = if indent.is_finite() && indent > 0.0 { indent.min(MAX_UNITS) } else { 3.0 };
     let props = ParaProps { first: -indent, left: indent, tabs: vec![(indent, TabKind::Left)], ..ParaProps::default() };
@@ -263,6 +265,7 @@ pub struct Paragraphs {
 }
 
 impl Paragraphs {
+    #[must_use]
     pub fn scan(contents: &str) -> Paragraphs {
         let chars: Vec<char> = contents.chars().collect();
         let mut out = Paragraphs { states: vec![ParaProps::default()], ..Default::default() };
@@ -323,17 +326,20 @@ impl Paragraphs {
     }
 
     /// Properties of paragraph `k`.
+    #[must_use]
     pub fn props(&self, k: usize) -> &ParaProps {
         let st = self.para.get(k).or(self.para.last()).copied().unwrap_or(0);
         self.states.get(st).or(self.states.first()).unwrap_or(&DEFAULT_PROPS)
     }
 
     /// The break after paragraph `k` starts a new column.
+    #[must_use]
     pub fn column_break(&self, k: usize) -> bool {
         self.column_break.get(k).copied().unwrap_or(false)
     }
 
     /// Any paragraph formatting at all.
+    #[must_use]
     pub fn formatted(&self) -> bool {
         self.states.len() > 1 || self.column_break.iter().any(|b| *b)
     }
@@ -515,9 +521,7 @@ impl<'a> LineBuilder<'a> {
     fn push_text(&mut self, index: usize, segments: &[(Seg, usize)]) {
         let word_width: f64 = segments.iter().map(|(segment, format)| seg_width(segment, self.format(*format))).sum();
         let space_width = if index == 0 {
-            self.pending_space
-                .map(|format| crate::space_width(&self.format(format).font, self.format(format).height, self.format(format).wf))
-                .unwrap_or(0.0)
+            self.pending_space.map_or(0.0, |format| crate::space_width(&self.format(format).font, self.format(format).height, self.format(format).wf))
         } else {
             0.0
         };
@@ -567,72 +571,80 @@ fn next_tab(x: f64, pp: &ParaProps, h: f64) -> (f64, TabKind) {
 }
 
 /// Lay out MTEXT with paragraph formatting and columns. `base` is the entity's own format,
-/// `h` its text height, `width` the column width (0: no wrapping, no columns).
-pub(super) fn layout(contents: &str, p: &MTextParams, base: &Fmt) -> MTextLayout {
-    let h = base.height;
-    let width = if p.width.is_finite() && p.width > 0.0 { p.width } else { 0.0 };
-    let rotation = if p.rotation.is_finite() { p.rotation } else { 0.0 };
-    let paras = Paragraphs::scan(contents);
+/// `height` its text height, `width` the column width (0: no wrapping, no columns).
+#[expect(
+    clippy::too_many_lines,
+    reason = "Paragraph and column placement is one ordered state machine; splitting it would obscure the transitions between lines and columns."
+)]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "Column indices are at most MAX_COLUMNS and gap counts at most MAX_ATOMS, so every usize converted here is exact in f64."
+)]
+pub(super) fn layout(contents: &str, params: &MTextParams, base: &Fmt) -> MTextLayout {
+    let height = base.height;
+    let width = if params.width.is_finite() && params.width > 0.0 { params.width } else { 0.0 };
+    let rotation = if params.rotation.is_finite() { params.rotation } else { 0.0 };
+    let paragraphs = Paragraphs::scan(contents);
     let (atoms, fmts) = parse(contents, base.clone());
-    let fmt = |i: usize| fmts.get(i).unwrap_or(base);
-    let lines = LineBuilder::new(&paras, &fmts, base, width, h).build(&atoms);
+    let fmt = |index: usize| fmts.get(index).unwrap_or(base);
+    let lines = LineBuilder::new(&paragraphs, &fmts, base, width, height).build(&atoms);
 
     // Vertical placement: baselines below the top of each line's column.
-    let ls = if p.line_spacing > 0.0 && p.line_spacing.is_finite() { p.line_spacing } else { 1.0 };
-    let cols = p.columns.as_ref().filter(|_| width > 0.0);
+    let line_spacing = if params.line_spacing > 0.0 && params.line_spacing.is_finite() { params.line_spacing } else { 1.0 };
+    let cols = params.columns.as_ref().filter(|_| width > 0.0);
     let max_cols = match cols {
-        Some(c) if c.dynamic => MAX_COLUMNS,
-        Some(c) => c.count.clamp(1, MAX_COLUMNS),
+        Some(spec) if spec.dynamic => MAX_COLUMNS,
+        Some(spec) => spec.count.clamp(1, MAX_COLUMNS),
         None => 1,
     };
-    let col_height = |c: usize| -> f64 {
+    let col_height = |column: usize| -> f64 {
         let Some(spec) = cols else { return 0.0 };
-        let v = if spec.heights.is_empty() { spec.height } else { spec.heights.get(c).or(spec.heights.last()).copied().unwrap_or(0.0) };
-        if v.is_finite() && v > 0.0 { v } else { 0.0 }
+        let value = if spec.heights.is_empty() { spec.height } else { spec.heights.get(column).or(spec.heights.last()).copied().unwrap_or(0.0) };
+        if value.is_finite() && value > 0.0 { value } else { 0.0 }
     };
     let mut placed: Vec<(usize, f64)> = Vec::with_capacity(lines.len());
-    let (mut c, mut y, mut first_in_col, mut force) = (0usize, 0.0f64, true, false);
+    let (mut column, mut current_y, mut first_in_col, mut force) = (0usize, 0.0f64, true, false);
     let mut col_bottom = vec![0.0f64];
     let mut prev_para: Option<usize> = None;
-    for l in &lines {
-        let lh = if l.max_h > 0.0 { l.max_h } else { h };
-        let new_para = prev_para != Some(l.para);
-        let before = if new_para && prev_para.is_some() { paras.props(l.para).before * h } else { 0.0 };
-        let step_h = if p.line_spacing_exact { h } else { lh };
-        let pitch = |first: bool| if first { lh } else { step_h * 5.0 / 3.0 * ls + before };
-        let hc = col_height(c);
-        if !first_in_col && c + 1 < max_cols && (force || (hc > 0.0 && y + pitch(false) > hc + 1e-9)) {
-            c += 1;
+    for line in &lines {
+        let line_height = if line.max_h > 0.0 { line.max_h } else { height };
+        let new_para = prev_para != Some(line.para);
+        let before = if new_para && prev_para.is_some() { paragraphs.props(line.para).before * height } else { 0.0 };
+        let step_h = if params.line_spacing_exact { height } else { line_height };
+        let pitch = |first: bool| if first { line_height } else { step_h * 5.0 / 3.0 * line_spacing + before };
+        let column_height = col_height(column);
+        if !first_in_col && column + 1 < max_cols && (force || (column_height > 0.0 && current_y + pitch(false) > column_height + 1e-9)) {
+            column += 1;
             col_bottom.push(0.0);
-            y = 0.0;
+            current_y = 0.0;
             first_in_col = true;
         }
         force = false;
-        y += pitch(first_in_col);
+        current_y += pitch(first_in_col);
         first_in_col = false;
-        placed.push((c, -y));
-        if let Some(b) = col_bottom.get_mut(c) {
-            *b = y;
+        placed.push((column, -current_y));
+        if let Some(bottom) = col_bottom.get_mut(column) {
+            *bottom = current_y;
         }
-        if l.para_end {
-            y += paras.props(l.para).after * h;
-            force = paras.column_break(l.para);
+        if line.para_end {
+            current_y += paragraphs.props(line.para).after * height;
+            force = paragraphs.column_break(line.para);
         }
-        prev_para = Some(l.para);
+        prev_para = Some(line.para);
     }
     let n_cols = match cols {
         Some(spec) if !spec.dynamic => max_cols,
-        _ => c + 1,
+        _ => column + 1,
     };
     let content_h = col_bottom.iter().copied().fold(0.0, f64::max);
     let block_h = match cols {
         Some(_) => (0..n_cols).map(col_height).fold(content_h, f64::max),
         None => content_h,
     };
-    let col_w = if width > 0.0 { width } else { lines.iter().map(|l| l.width + paras.props(l.para).right).fold(0.0, f64::max) };
-    let gutter = cols.map(|s| s.gutter).filter(|g| g.is_finite() && *g >= 0.0).unwrap_or(0.0);
+    let col_w = if width > 0.0 { width } else { lines.iter().map(|line| line.width + paragraphs.props(line.para).right).fold(0.0, f64::max) };
+    let gutter = cols.map(|spec| spec.gutter).filter(|g| g.is_finite() && *g >= 0.0).unwrap_or(0.0);
     let total_w = col_w * n_cols as f64 + gutter * n_cols.saturating_sub(1) as f64;
-    let attach = p.attach.clamp(1, 9) - 1;
+    let attach = params.attach.clamp(1, 9) - 1;
     let (acol, arow) = (attach % 3, attach / 3);
     let top = match arow {
         0 => 0.0,
@@ -644,32 +656,33 @@ pub(super) fn layout(contents: &str, p: &MTextParams, base: &Fmt) -> MTextLayout
         1 => -total_w / 2.0,
         _ => -total_w,
     };
-    let reversed = cols.is_some_and(|s| s.reversed);
-    let insert = p.insert;
-    let xf = |q: Vec2| insert + q.rotate(rotation);
-    let mut out = MTextLayout { lines: lines.iter().map(|l| l.text.clone()).collect(), ..Default::default() };
-    for (l, (c, base_y)) in lines.iter().zip(placed) {
-        let pp = paras.props(l.para);
-        let slot = if reversed { n_cols.saturating_sub(1).saturating_sub(c) } else { c };
+    let reversed = cols.is_some_and(|spec| spec.reversed);
+    let insert = params.insert;
+    let xf = |point: Vec2| insert + point.rotate(rotation);
+    let mut out = MTextLayout { lines: lines.iter().map(|line| line.text.clone()).collect(), ..Default::default() };
+    for (line, (column, base_y)) in lines.iter().zip(placed) {
+        let pp = paragraphs.props(line.para);
+        let slot = if reversed { n_cols.saturating_sub(1).saturating_sub(column) } else { column };
         let col_x = box_x0 + slot as f64 * (col_w + gutter);
         let right_edge = col_w - pp.right;
-        let free = right_edge - l.width;
+        let free = right_edge - line.width;
         let align = match pp.align {
             ParaAlign::Default => [ParaAlign::Left, ParaAlign::Center, ParaAlign::Right].get(usize::from(acol)).copied().unwrap_or_default(),
-            a => a,
+            alignment => alignment,
         };
-        let spread = width > 0.0 && l.gaps > 0 && free > 0.0 && (align == ParaAlign::Distributed || (align == ParaAlign::Justify && !l.para_end));
+        let spread =
+            width > 0.0 && line.gaps > 0 && free > 0.0 && (align == ParaAlign::Distributed || (align == ParaAlign::Justify && !line.para_end));
         let (shift, per_gap) = match align {
             ParaAlign::Center => (free / 2.0, 0.0),
             ParaAlign::Right => (free, 0.0),
-            _ if spread => (0.0, free / l.gaps as f64),
+            _ if spread => (0.0, free / line.gaps as f64),
             _ => (0.0, 0.0),
         };
-        for it in &l.items {
-            let fm = fmt(it.fmt);
-            let mut sh = seg_shape(&it.seg, fm, it.x);
-            let off = Vec2::new(col_x + shift + per_gap * it.gap as f64, top + base_y);
-            sh.map(|q| xf(q + off));
+        for item in &line.items {
+            let fm = fmt(item.fmt);
+            let mut sh = seg_shape(&item.seg, fm, item.x);
+            let off = Vec2::new(col_x + shift + per_gap * item.gap as f64, top + base_y);
+            sh.map(|point| xf(point + off));
             match out.pieces.last_mut() {
                 Some(pc) if pc.color == fm.color => pc.shaped.extend(sh),
                 _ => out.pieces.push(MTextPiece { color: fm.color, shaped: sh }),
@@ -725,17 +738,17 @@ mod tests {
     #[test]
     fn props_parse_and_persist() {
         let p = Paragraphs::scan("\\pxi-3,l3,t3;1.\tone\\P2.\ttwo\\P\\pi0,l0,tz;plain");
-        assert_eq!(p.props(0).first, -3.0);
-        assert_eq!(p.props(0).left, 3.0);
+        assert!((p.props(0).first + 3.0).abs() < f64::EPSILON);
+        assert!((p.props(0).left - 3.0).abs() < f64::EPSILON);
         assert_eq!(p.props(0).tabs, vec![(3.0, TabKind::Left)]);
         assert_eq!(p.props(1), p.props(0));
-        assert_eq!(p.props(2).left, 0.0);
+        assert!(p.props(2).left.abs() < f64::EPSILON);
         assert!(p.props(2).tabs.is_empty());
         let mut pp = ParaProps::default();
         pp.apply("t2,c4,r6,d8,qc,b0.5");
         assert_eq!(pp.tabs, vec![(2.0, TabKind::Left), (4.0, TabKind::Center), (6.0, TabKind::Right), (8.0, TabKind::Decimal)]);
         assert_eq!(pp.align, ParaAlign::Center);
-        assert_eq!(pp.before, 0.5);
+        assert!((pp.before - 0.5).abs() < f64::EPSILON);
         let mut back = ParaProps::default();
         back.apply(pp.code().trim_start_matches("\\p").trim_end_matches(';'));
         assert_eq!(back, pp);

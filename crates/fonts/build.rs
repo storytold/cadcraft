@@ -3,7 +3,7 @@
 //! empty, `CRAFT_FONTS` is empty and the build is unchanged. It only reads the local checkout
 //! (no network). A bad checkout is a warning, or an error with `CRAFT_FONTS_REQUIRED=1`.
 //!
-//! On wasm32 it embeds only BIZ UDPGothic Regular and the `Arab` faces (about 5.5 MB), to keep the
+//! On wasm32 it embeds only `BIZ` `UDPGothic` Regular and the `Arab` faces (about 5.5 MB), to keep the
 //! web build within hosting limits (Cloudflare Pages: 25 MiB per file). The web build has no
 //! system fonts, so these are its only fallback for Japanese and Arabic-script text.
 
@@ -21,7 +21,7 @@ fn main() {
                 println!("cargo::error=CRAFT_FONTS_DIR={}: {}", one_line(&dir.display().to_string()), one_line(&e));
             }
             Err(e) => {
-                println!("cargo::warning=building without craft-fonts: CRAFT_FONTS_DIR={}: {}", one_line(&dir.display().to_string()), one_line(&e))
+                println!("cargo::warning=building without craft-fonts: CRAFT_FONTS_DIR={}: {}", one_line(&dir.display().to_string()), one_line(&e));
             }
         }
     }

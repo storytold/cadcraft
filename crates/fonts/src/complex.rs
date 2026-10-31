@@ -62,69 +62,73 @@ pub(crate) fn shape(primary: Option<&Face>, s: &str, height: f64, width_factor: 
 
 /// Lay out decoded directional runs, keeping advances and decoration spans for empty glyphs.
 fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64, width_factor: f64, oblique: f64) -> Shaped {
-    let h = if height.is_finite() && height > 0.0 { height } else { 1.0 };
-    let wf = if width_factor.is_finite() && width_factor.abs() > 1e-6 { width_factor } else { 1.0 };
+    let normalized_height = if height.is_finite() && height > 0.0 { height } else { 1.0 };
+    let scale_x = if width_factor.is_finite() && width_factor.abs() > 1e-6 { width_factor } else { 1.0 };
     let shear = oblique.tan().clamp(-10.0, 10.0);
-    let sc = h / stroke::CAP;
-    let cs: Vec<char> = chars.iter().map(|c| c.0).collect();
-    let flags = |i: usize| chars.get(i).map(|c| (c.1, c.2)).unwrap_or((false, false));
-    let mut out = Shaped::default();
+    let stroke_scale = normalized_height / stroke::CAP;
+    let characters: Vec<char> = chars.iter().map(|character| character.0).collect();
+    let flags = |index: usize| chars.get(index).map_or((false, false), |character| (character.1, character.2));
+    let mut shaped = Shaped::default();
     let mut points_left = ttf::MAX_SHAPED_POINTS;
     let mut spans: Vec<(f64, f64, bool, bool)> = Vec::new();
-    let mut x = 0.0;
+    let mut pen_x = 0.0;
     // Whether the rightmost glyph so far is a stroke-font glyph.
     let mut stroke_last = false;
-    for (run, rtl) in bidi::visual_runs(&cs, None) {
-        let mut pieces = itemize(&cs, run, primary);
+    for (run, rtl) in bidi::visual_runs(&characters, None) {
+        let mut pieces = itemize(&characters, run, primary);
         if rtl {
             pieces.reverse();
         }
-        for (src, r) in pieces {
+        for (src, range) in pieces {
             match &src {
                 Src::Hidden => {}
                 Src::Stroke | Src::Missing => {
-                    let idx: Vec<usize> = if rtl { r.rev().collect() } else { r.collect() };
-                    for i in idx {
-                        let c = cs.get(i).copied().unwrap_or(' ');
-                        let c = if rtl { bidi::mirror(c) } else { c };
-                        match (&src, stroke::glyph(c)) {
-                            (Src::Stroke, Some((_, spec))) => crate::draw_stroke_glyph(&mut out, spec, x, sc, wf, shear),
-                            (Src::Missing, _) => crate::missing_glyph_box(&mut out, x, h, sc * wf),
+                    let indices: Vec<usize> = if rtl { range.rev().collect() } else { range.collect() };
+                    for index in indices {
+                        let character = characters.get(index).copied().unwrap_or(' ');
+                        let character = if rtl { bidi::mirror(character) } else { character };
+                        match (&src, stroke::glyph(character)) {
+                            (Src::Stroke, Some((_, spec))) => {
+                                crate::draw_stroke_glyph(&mut shaped, spec, pen_x, stroke_scale, scale_x, shear);
+                            }
+                            (Src::Missing, _) => crate::missing_glyph_box(&mut shaped, pen_x, normalized_height, stroke_scale * scale_x),
                             _ => {}
                         }
-                        let adv = crate::char_advance(c) * h * wf;
-                        let (u, o) = flags(i);
-                        spans.push((x, x + adv, u, o));
-                        x += adv;
+                        let advance = crate::char_advance(character) * normalized_height * scale_x;
+                        let (underline, overline) = flags(index);
+                        spans.push((pen_x, pen_x + advance, underline, overline));
+                        pen_x += advance;
                         stroke_last = true;
                     }
                 }
                 Src::Face(face) => {
-                    for g in shape_run(face, &cs, r, rtl) {
-                        let outline = ttf::glyph_by_id(face, g.gid);
-                        let k = h / outline.cap * wf;
-                        let dy = g.dy * h / outline.cap;
-                        if let Some(mut contours) = ttf::place_glyph_budgeted(&outline, x + g.dx * k, h, wf, shear, &mut points_left) {
-                            for p in contours.iter_mut().flatten() {
-                                *p += Vec2::new(dy * shear, dy);
+                    for glyph in shape_run(face, &characters, range, rtl) {
+                        let outline = ttf::glyph_by_id(face, glyph.gid);
+                        let glyph_scale = normalized_height / outline.cap * scale_x;
+                        let offset_y = glyph.dy * normalized_height / outline.cap;
+                        if let Some(mut contours) =
+                            ttf::place_glyph_budgeted(&outline, pen_x + glyph.dx * glyph_scale, normalized_height, scale_x, shear, &mut points_left)
+                        {
+                            for point in contours.iter_mut().flatten() {
+                                *point += Vec2::new(offset_y * shear, offset_y);
                             }
-                            out.push_glyph(contours, None);
+                            shaped.push_glyph(contours, None);
                         }
-                        let adv = g.advance * k;
-                        let (u, o) = flags(g.cluster);
-                        spans.push((x, x + adv, u, o));
-                        x += adv;
+                        let advance = glyph.advance * glyph_scale;
+                        let (underline, overline) = flags(glyph.cluster);
+                        spans.push((pen_x, pen_x + advance, underline, overline));
+                        pen_x += advance;
                         stroke_last = false;
                     }
                 }
             }
         }
     }
-    out.strokes.extend(crate::decorations(&spans, h));
+    shaped.strokes.extend(crate::decorations(&spans, normalized_height));
     // A stroke-font glyph at the right end: the width leaves out its trailing gap, like
     // `shape_stroke`.
-    out.width = if stroke_last { (x - stroke::GAP * sc * wf).max(0.0) } else { x };
-    out
+    shaped.width = if stroke_last { (pen_x - stroke::GAP * stroke_scale * scale_x).max(0.0) } else { pen_x };
+    shaped
 }
 
 /// Split a logical-order run into pieces by what draws each character. Joiners and combining
@@ -267,7 +271,7 @@ mod tests {
         assert!(shaped.text.is_empty());
 
         let underlined = shape(Some(&face), "%%u ", 1.0, 1.0, 0.0).expect("shapes decorated empty glyph");
-        assert_eq!(underlined.width, shaped.width);
+        assert!((underlined.width - shaped.width).abs() < f64::EPSILON);
         assert!(underlined.glyphs.is_empty());
         assert!(underlined.text.is_empty());
         assert!(!underlined.strokes.is_empty(), "decoration spans survive an empty outline");
@@ -284,7 +288,7 @@ mod tests {
         assert!((crate::line_width(s, 1.0, 1.0) - sh.width).abs() < 1e-9);
         let digits: Vec<f64> = sh.strokes.iter().filter(|st| !(st.len() == 5 && st.first() == st.last())).flatten().map(|p| p.x).collect();
         assert!(!digits.is_empty());
-        let (lo, hi) = (digits.iter().cloned().fold(f64::MAX, f64::min), digits.iter().cloned().fold(f64::MIN, f64::max));
+        let (lo, hi) = (digits.iter().copied().fold(f64::MAX, f64::min), digits.iter().copied().fold(f64::MIN, f64::max));
         assert!(lo > 0.2 * sh.width && hi < 0.8 * sh.width, "digits between the words: {lo}..{hi} of {}", sh.width);
     }
 
@@ -316,7 +320,7 @@ mod tests {
 
     fn nominal(f: &Face, c: char) -> Option<u32> {
         use skrifa::MetadataProvider;
-        f.font().and_then(|font| font.charmap().map(c)).map(|g| g.to_u32())
+        f.font().and_then(|font| font.charmap().map(c)).map(skrifa::GlyphId::to_u32)
     }
 
     #[test]
@@ -341,7 +345,7 @@ mod tests {
         assert!(!sh.strokes.iter().any(|s| s.len() == 5 && s.first() == s.last()), "no missing-glyph boxes");
         // The ASCII digits are stroke glyphs in the middle of the line.
         let stroke_x: Vec<f64> = sh.strokes.iter().flatten().map(|p| p.x).collect();
-        let (lo, hi) = (stroke_x.iter().cloned().fold(f64::MAX, f64::min), stroke_x.iter().cloned().fold(f64::MIN, f64::max));
+        let (lo, hi) = (stroke_x.iter().copied().fold(f64::MAX, f64::min), stroke_x.iter().copied().fold(f64::MIN, f64::max));
         assert!(lo > 0.2 * sh.width && hi < 0.8 * sh.width, "digits between the words: {lo}..{hi} of {}", sh.width);
         assert!((crate::line_width("قیمت 25 تومان", 1.0, 1.0) - sh.width).abs() < 1e-9);
     }
