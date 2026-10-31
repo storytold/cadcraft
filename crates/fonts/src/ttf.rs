@@ -499,6 +499,7 @@ fn key(name: &str) -> String {
 /// Names that mean a stroke font: never looked up as TrueType.
 fn is_stroke_name(k: &str) -> bool {
     k.is_empty()
+        || k == ".shx"
         || std::path::Path::new(k).extension().is_some_and(|extension| extension.eq_ignore_ascii_case("shx"))
         || k == crate::BUILTIN_FONT.to_ascii_lowercase()
         || k == "txt"
@@ -954,6 +955,13 @@ mod family_tests {
         assert!(family_candidates(&stems, &norm("gost type a"), "go").is_empty(), "too short a word matches nothing");
         let many: Vec<String> = (0..100).map(|i| format!("gost{i:03}")).collect();
         assert!(family_candidates(&many, "gosttypea", "gost").len() <= MAX_FAMILY_FILES + MAX_FIRST_WORD_FILES);
+    }
+
+    #[test]
+    fn dotfile_shx_names_are_stroke_names() {
+        for name in [".shx", ".shx.ttf", ".SHX", ".SHX.TTF"] {
+            assert!(is_stroke_name(&key(name)), "{name}");
+        }
     }
 }
 
