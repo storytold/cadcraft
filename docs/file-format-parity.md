@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-28 · **Change:** minor (attribute value edits refresh exported baselines) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-28 · **Change:** minor (PDF underlays' pages shown, sized from their PDF on open) · **Target:** Autodesk AutoCAD 2027
 
 Every format AutoCAD 2027 reads or writes, with CADCraft's support, fidelity and tests. Work
 items are in [gaps.md](gaps.md#file-formats); the weighted score feeds
@@ -90,7 +90,8 @@ on read with a note, so such files no longer exceed the DXF limit (#1482). **DWG
 | WIPEOUT | yes | yes (#147, fixes #79) | Implicit or explicit closure in memory; explicit closing point on save. Same logical grips and edit results before/after DXF/DWG round trips (#2256). |
 | MLINE (+ MLINESTYLE), HELIX, TOLERANCE | yes (#510, #420) | yes | |
 | REGION | other programs' REGIONs (ACIS data) kept as Unknown | our regions are written as closed polylines tagged with CADCraft xdata (#510; ACIS has no public spec) | |
-| 3DSOLID, BODY, SURFACE, MESH, SHAPE, UNDERLAY, OLE2FRAME, LIGHT, CAMERA, SECTION, POINTCLOUD, proxy entities | kept as Unknown (raw tags) | written back as read, with their CLASS records (#528); a proxy entity's class number (group 91) is renumbered to its class's place in the written CLASSES (#1812); **dropped by DWG save** (acadrust) | only their layer follows edits |
+| PDFUNDERLAY (+ PDFDEFINITION) | yes: placement, scale, rotation, fade, contrast, monochrome, colour adjustment, clip boundary (inverted too), shown/clip flags, PDF layer overrides, unloaded definitions (`NOLOAD`) | yes, in DXF and DWG | the page size isn't stored in the file: it is read from the PDF on open; the page is shown on screen but not plotted yet (FF10) |
+| 3DSOLID, BODY, SURFACE, MESH, SHAPE, DWF and DGN UNDERLAY, OLE2FRAME, LIGHT, CAMERA, SECTION, POINTCLOUD, proxy entities | kept as Unknown (raw tags) | written back as read, with their CLASS records (#528); a proxy entity's class number (group 91) is renumbered to its class's place in the written CLASSES (#1812); **dropped by DWG save** (acadrust) | only their layer follows edits |
 | Header variables | all read | 36 written | AutoCAD writes about 280 |
 | Tables: LAYER (+ transparency, description), LTYPE, STYLE, DIMSTYLE, BLOCK_RECORD | yes | yes | |
 | Tables: VPORT, VIEW, UCS, APPID | yes | yes: saved viewport configurations (#504), named views, UCSs | UCS elevation lost |
@@ -111,7 +112,7 @@ on read with a note, so such files no longer exceed the DXF limit (#1482). **DWG
 | DWT templates | open, save | NEW/QNEW from `.dwt` and `.dxf` templates, SAVEAS `.dwt` (#552); LAYOUT SAveas writes one layout and the named objects it uses as a `.dwt` (`layout.saveas`) | 0–1 |
 | DWS standards | open, save, CHECKSTANDARDS | no | 6–10 |
 | PDF output (PLOT, EXPORTPDF) | multi-sheet, layers, searchable text, hyperlinks | vector PDF with lineweights, real text in embedded TrueType subsets, layers (OCG), several sheets per file and hyperlinks (#567, #571); object transparency as PDF alpha when "Plot transparency" is on (the option isn't saved in DXF/DWG: no public plot layout flag) | 1–2 |
-| PDF import (PDFIMPORT) and PDF underlays (PDFATTACH) | yes | no | 15–25 |
+| PDF import (PDFIMPORT) and PDF underlays (PDFATTACH) | yes | underlays: attached, adjusted, shown and saved (DXF, DWG); clipped (PDFCLIP), framed (PDFFRAME), snapped to (PDFOSNAP); not plotted, no ULAYERS yet; no PDFIMPORT | 15–25 |
 | Raster images attach (PNG, JPEG, TIFF, BMP …) | yes | IMAGE entity exists, no attach/loading/display path | 6–10 |
 | PNG / JPEG / BMP / TIFF export | PNGOUT, JPGOUT, BMPOUT, TIFOUT | PNG; SVG too (AutoCAD doesn't export SVG) | 1–2 |
 | DWF/DWFx export, DWF underlay | yes | no | 10–15 |
@@ -141,6 +142,8 @@ our output in AutoCAD black-box.
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-26 | minor | CC-046: ATTEDIT and -ATTEDIT value changes invalidate derived justified baselines before DXF/DWG export; preserve alignment anchors, unchanged values and Aligned/Fit endpoints. Review follow-up: baseline recomputation preserves insertion elevation independently of alignment elevation. The shared writer correction also applies to justified TEXT. Independent of attribute editor UI; reverting the follow-up restores elevation loss on recomputation, while reverting the value setter restores stale XY baselines. |
+| 2026-10-28 | minor | PDF underlays' pages are read from their PDF (the shared Hayro reader) and shown on screen in the draw order, through layout viewports and inside blocks, sharp when zoomed; their size comes from the PDF on open |
+| 2026-10-28 | minor | PDF underlays: PDFUNDERLAY and PDFDEFINITION read and written in DXF and DWG (placement, adjustments, clip boundary, PDF layer overrides, unloaded state), instead of being dropped by DWG save |
 | 2026-10-25 | minor | LAYOUT SAveas (`layout.saveas`) writes a layout as a drawing template: its page setup and paper space objects, no model space objects or other layouts, and only the named objects they use |
 | 2026-10-22 | minor | DXF/DWG save: angular, diametric and radial dimensions get standard DIMASSOC objects (one centre reference to the circle for radial/diametric, the definition points for angular), so AutoCAD follows their geometry; the standard objects of those kinds are read back too, without CADCraft's xdata (#1651) |
 | 2026-10-19 | minor | DXF/DWG save: angular dimension block text honors DIMDSEP, including per-dimension overrides (#1646) |
