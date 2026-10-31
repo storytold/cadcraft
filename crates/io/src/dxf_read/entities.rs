@@ -466,14 +466,17 @@ pub(super) fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityK
             }
             rx.mleader_fix.push((h, pending));
         }
-        // CADCraft's VPFROZEN xdata wins; otherwise AutoCAD's group 341 layer handles.
+        // CADCraft's VPFROZEN xdata wins; otherwise the layer handles of group 331 or 341 (DXF 2000).
         ("VIEWPORT", EntityKind::Viewport(v)) if v.frozen_layers.is_empty() => {
-            v.frozen_layers = tags
-                .iter()
-                .take_while(|t| t.code < 1000)
-                .filter(|t| t.code == 341)
-                .filter_map(|t| rx.layers.get(&t.str().trim().to_ascii_uppercase()).cloned())
-                .collect();
+            // Each layer once, in file order.
+            let mut seen = std::collections::HashSet::new();
+            for t in tags.iter().take_while(|t| t.code < 1000).filter(|t| t.code == 331 || t.code == 341) {
+                if let Some(name) = rx.layers.get(&t.str().trim().to_ascii_uppercase())
+                    && seen.insert(name.as_str())
+                {
+                    v.frozen_layers.push(name.clone());
+                }
+            }
         }
         _ => {}
     }

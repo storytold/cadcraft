@@ -59,7 +59,7 @@ struct Rx {
     pstyles: HashMap<String, String>,
     /// Upper-case block name → associative array parameters from its BLOCK_RECORD.
     block_arrays: HashMap<String, cadcraft_doc::ArrayParams>,
-    /// LAYER record handle (upper case) → layer name (VIEWPORT group 341 frozen layers).
+    /// LAYER record handle (upper case) → layer name (VIEWPORT group 331/341 frozen layers).
     layers: HashMap<String, String>,
 }
 
