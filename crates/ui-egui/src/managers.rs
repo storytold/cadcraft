@@ -920,6 +920,17 @@ struct PlotState {
     offset_mm: [f64; 2],
 }
 
+/// Why the dialog's settings cannot plot yet: a Window plot area whose corners enclose no area
+/// (never picked, or typed on one line), which would otherwise leave a blank sheet.
+fn plot_blocker(st: &PlotState) -> Option<&'static str> {
+    if st.target != "Model" || st.page.plot_area != "window" {
+        return None;
+    }
+    let [x1, y1, x2, y2] = st.window;
+    let defined = st.window.iter().all(|v| v.is_finite()) && (x2 - x1).abs() > 1e-9 && (y2 - y1).abs() > 1e-9;
+    (!defined).then_some("Window not defined: pick corners or choose another plot area")
+}
+
 /// The page setup a plot of `target` starts from: the layout's, or model-space defaults (fitted
 /// extents on A4 in metric drawings, ANSI A otherwise).
 fn plot_page(d: &cadcraft_doc::Drawing, target: &str) -> cadcraft_doc::PageSetup {
@@ -1107,14 +1118,17 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
                             egui::Grid::new("plot_layout_grid").num_columns(2).spacing(vec2(10.0, 6.0)).show(ui, |ui| {
                                 ui.label("Layout");
                                 ui.horizontal(|ui| {
-                                    craft_ui::ComboBox::from_id_salt("plot_layout").selected_text(st.target.as_str()).width(190.0).show_ui(ui, |ui| {
-                                        for n in &targets {
-                                            if ui.selectable_label(*n == st.target, n).clicked() && *n != st.target {
-                                                st.page = plot_page(d, n);
-                                                st.target = n.clone();
+                                    craft_ui::ComboBox::from_id_salt("plot_layout").selected_text(st.target.as_str()).width(190.0).show_ui(
+                                        ui,
+                                        |ui| {
+                                            for n in &targets {
+                                                if ui.selectable_label(*n == st.target, n).clicked() && *n != st.target {
+                                                    st.page = plot_page(d, n);
+                                                    st.target = n.clone();
+                                                }
                                             }
-                                        }
-                                    });
+                                        },
+                                    );
                                     ui.add_enabled(false, egui::Button::new("Add…")).on_hover_text("Named page setups are not available yet.");
                                 });
                                 ui.end_row();
@@ -1234,6 +1248,9 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
                                     ui.end_row();
                                 });
                             });
+                            if let Some(warning) = plot_blocker(&st) {
+                                ui.label(RichText::new(warning).color(t.warn));
+                            }
                             if !window_rows {
                                 let note = if model { "Choose Window to set the corners" } else { "Layouts plot the whole sheet" };
                                 ui.painter().text(
@@ -1473,8 +1490,13 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
                 });
             });
             ui.separator();
+            let blocker = plot_blocker(&st);
             ui.horizontal(|ui| {
-                preview = ui.button("Preview").on_hover_text("The sheet as these settings plot it").clicked();
+                preview = ui
+                    .add_enabled(blocker.is_none(), egui::Button::new("Preview"))
+                    .on_hover_text("The sheet as these settings plot it")
+                    .on_disabled_hover_text(blocker.unwrap_or_default())
+                    .clicked();
                 let apply = ui
                     .add_enabled(!model, egui::Button::new("Apply to Layout"))
                     .on_hover_text("Available for layouts; saves these settings in the layout's page setup.");
@@ -1485,7 +1507,7 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
                     ui.add_enabled(false, egui::Button::new("More options")).on_hover_text("Additional plot options are not available yet.");
                     ui.add_enabled(false, egui::Button::new("Help")).on_hover_text("Help for Plot is not available yet.");
                     cancel = ui.button("Cancel").clicked();
-                    ok |= ui.button("OK").clicked();
+                    ok |= ui.add_enabled(blocker.is_none(), egui::Button::new("OK")).on_disabled_hover_text(blocker.unwrap_or_default()).clicked();
                 });
             });
         });
@@ -1512,7 +1534,8 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
         crate::exchange::preview_plot(app, ctx, plot_params(&st, Some((1600.0 / long_in).clamp(50.0, 300.0))), info);
         return action;
     }
-    if ok {
+    // Print... from a preview cannot get past an undefined window either: the dialog stays open with its warning.
+    if ok && plot_blocker(&st).is_none() {
         let mut params = plot_params(&st, None);
         if let Some(pick) = app.services.pick_save.as_ref() {
             let title = app.session.state().map(|s| s.title.clone()).unwrap_or_default();
@@ -1687,6 +1710,25 @@ mod plot_dialog_tests {
             center: true,
             offset_mm: [0.0, 0.0],
         }
+    }
+
+    #[test]
+    fn an_undefined_window_blocks_the_plot_with_a_warning() {
+        let mut st = state("Model");
+        assert_eq!(plot_blocker(&st), None, "extents plot without a window");
+        st.page.plot_area = "window".into();
+        assert_eq!(plot_blocker(&st), None, "a window with area plots");
+        for w in [[0.0; 4], [1.0, 2.0, 1.0, 8.0], [1.0, 2.0, 7.0, 2.0], [0.0, 0.0, f64::NAN, 5.0], [0.0, 0.0, f64::INFINITY, 5.0]] {
+            st.window = w;
+            assert!(plot_blocker(&st).is_some_and(|m| m.contains("Window not defined")), "{w:?} encloses no area");
+        }
+        // Corners given in either order still enclose an area.
+        st.window = [10.0, 10.0, 0.0, 0.0];
+        assert_eq!(plot_blocker(&st), None);
+        // A layout plots its sheet, whatever corners are left over.
+        let mut layout = state("Layout1");
+        layout.window = [0.0; 4];
+        assert_eq!(plot_blocker(&layout), None);
     }
 
     #[test]
