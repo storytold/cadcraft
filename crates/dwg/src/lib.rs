@@ -1,9 +1,9 @@
 //! DWG support through a DXF bridge.
 //!
 //! DWG files are read with the `acadrust` crate (MPL-2.0, used unmodified as a dependency) and
-//! converted to DXF bytes, which CADCraft's own DXF reader maps to its document model; saving
+//! converted to DXF bytes, which `CADCraft`'s own DXF reader maps to its document model; saving
 //! goes the other way. Keeping the dependency behind this byte-level API isolates it: nothing
-//! else in CADCraft depends on its types. Native targets only (it memory-maps files).
+//! else in `CADCraft` depends on its types. Native targets only (it memory-maps files).
 //!
 //! # Guardrails around the third-party decoder
 //!
@@ -31,11 +31,13 @@ pub const VERSIONS: &[(&str, &str)] =
     &[("AC1015", "2000"), ("AC1018", "2004"), ("AC1021", "2007"), ("AC1024", "2010"), ("AC1027", "2013"), ("AC1032", "2018")];
 
 /// True when the bytes look like a DWG file (`AC10xx` magic).
+#[must_use]
 pub fn is_dwg(bytes: &[u8]) -> bool {
     bytes.len() > 6 && bytes.starts_with(b"AC10") && bytes.get(4..6).is_some_and(|v| v.iter().all(u8::is_ascii_digit))
 }
 
 /// The DWG version code of a file (e.g. "AC1032").
+#[must_use]
 pub fn version(bytes: &[u8]) -> Option<String> {
     is_dwg(bytes).then(|| String::from_utf8_lossy(bytes.get(0..6).unwrap_or_default()).to_string())
 }
@@ -59,6 +61,10 @@ impl Limits {
 
 /// A byte count in megabytes for messages ("9.9 MB", "1024 MB").
 #[cfg_attr(no_dwg_bridge, allow(dead_code))]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "Megabyte formatting is rounded for display; exact integer precision beyond 2^53 bytes is not meaningful."
+)]
 fn mb(n: u64) -> String {
     let m = n as f64 / f64::from(1u32 << 20);
     if m >= 100.0 { format!("{m:.0} MB") } else { format!("{m:.1} MB") }
@@ -66,12 +72,17 @@ fn mb(n: u64) -> String {
 
 #[cfg(not(no_dwg_bridge))]
 mod native {
+    use std::fmt::Write as _;
     use std::io::{Cursor, Write};
     use std::panic::AssertUnwindSafe;
 
     use super::{Limits, mb};
 
     /// Read DWG bytes and return an ASCII DXF rendition, within [`Limits::DEFAULT`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the DWG cannot be read or post-processed, or its DXF rendition exceeds the default limits.
     pub fn dwg_to_dxf(bytes: &[u8]) -> Result<Vec<u8>, String> {
         dwg_to_dxf_with(bytes, Limits::DEFAULT)
     }
@@ -79,6 +90,10 @@ mod native {
     /// [`dwg_to_dxf`] with explicit limits. Both are checked before the expensive step they
     /// guard: the input size before the DWG reader runs, the DXF size while it is written, so a
     /// runaway conversion stops at the limit instead of filling memory first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the input exceeds `limits`, decoding fails, or the DXF output exceeds `limits`.
     pub fn dwg_to_dxf_with(bytes: &[u8], limits: Limits) -> Result<Vec<u8>, String> {
         dwg_to_dxf_noted(bytes, limits).map(|(dxf, _)| dxf)
     }
@@ -87,6 +102,10 @@ mod native {
     /// failsafe mode: an object record it can't decode is skipped instead of failing the whole
     /// file, and the notes say how many were skipped and of which types, so a partial read never
     /// passes for a complete one.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the input exceeds `limits`, decoding fails, or the DXF output exceeds `limits`.
     pub fn dwg_to_dxf_noted(bytes: &[u8], limits: Limits) -> Result<(Vec<u8>, Vec<String>), String> {
         if bytes.len() > limits.max_dwg_bytes {
             return Err(format!("DWG: the file is {}, larger than the {} CADCraft opens", mb(bytes.len() as u64), mb(limits.max_dwg_bytes as u64)));
@@ -104,7 +123,7 @@ mod native {
         }
         let mut notes = read_notes(&outcome.stats);
         let mut doc = outcome.document;
-        let orphans = guarded(AssertUnwindSafe(|| post_process(&mut doc))).map_err(|_| "the DWG post-processing failed on this file".to_string())?;
+        let orphans = guarded(AssertUnwindSafe(|| post_process(&mut doc))).map_err(|()| "the DWG post-processing failed on this file".to_string())?;
         if orphans > 0 {
             let (s, were) = if orphans == 1 { ("", "was") } else { ("s", "were") };
             notes.push(format!("DWG: {orphans} DGN line style component{s} that no line style definition uses {were} left out"));
@@ -232,7 +251,7 @@ mod native {
     /// merged cells into the table's `merged_ranges` only, while its DXF writer writes each cell's
     /// own merge groups (173, 175, 176), so without this the merges would be lost. Tables whose
     /// cells already carry merges are left alone. Each range's first cell gets the span; the
-    /// cells it covers are marked merged with no span of their own, as CADCraft's DXF writer does.
+    /// cells it covers are marked merged with no span of their own, as `CADCraft`'s DXF writer does.
     fn table_merges(doc: &mut acadrust::CadDocument) {
         table_merges_within(doc, MAX_MERGE_CELLS);
     }
@@ -270,7 +289,7 @@ mod native {
             // A real table has at most one merge per cell; more ranges than that come from a
             // damaged file and would only make this rows × cols × ranges.
             let max_ranges = rows.saturating_mul(cols).min(1 << 16);
-            for r in t.merged_ranges.iter().take(max_ranges).cloned().collect::<Vec<_>>() {
+            for r in t.merged_ranges.iter().take(max_ranges).copied().collect::<Vec<_>>() {
                 // Clamp to the table: the ranges come from the file.
                 let (bottom, right) = (r.bottom_row.min(rows.saturating_sub(1)), r.right_col.min(cols.saturating_sub(1)));
                 if r.top_row > bottom || r.left_col > right || rows == 0 || cols == 0 || (r.top_row, r.left_col) == (bottom, right) {
@@ -343,7 +362,7 @@ mod native {
 
     /// The DWG dimension flags byte. Its bit 1 is DXF group 70's bit 32 (ODA DWG specification,
     /// common dimension data), which acadrust keeps no copy of from DXF: it is set here as
-    /// CADCraft's DXF writer always sets it (#1094). Bit 0, the opposite of group 70's bit 128,
+    /// `CADCraft`'s DXF writer always sets it (#1094). Bit 0, the opposite of group 70's bit 128,
     /// acadrust 0.6.5 reads and writes itself.
     fn dimension_flags(doc: &mut acadrust::CadDocument) {
         for e in doc.entities_mut() {
@@ -353,12 +372,12 @@ mod native {
     }
 
     /// Leave out DGN line style components (`LS*COMPONENT`) that no line style definition uses
-    /// (#1482). A drawing that once came from MicroStation can carry hundreds of thousands of
-    /// them, orphaned copies piled up by earlier DGN imports and copy-pastes (AutoCAD's PURGE
+    /// (#1482). A drawing that once came from `MicroStation` can carry hundreds of thousands of
+    /// them, orphaned copies piled up by earlier DGN imports and copy-pastes (`AutoCAD`'s PURGE
     /// removes them as orphaned data): in a real 83 MB site plan they were 888,483 of 889,053
     /// components and made its DXF rendition 1.2 GB, over [`Limits::DEFAULT`], so the file
     /// didn't open at all. No definition that was read refers to them (a definition the reader
-    /// skipped can't use them either) and CADCraft doesn't draw DGN line styles, so nothing
+    /// skipped can't use them either) and `CADCraft` doesn't draw DGN line styles, so nothing
     /// visible is lost.
     /// Every component a definition reaches (directly, or through compound and point
     /// components) is kept, as are the definitions; dictionary entries that named a dropped
@@ -410,7 +429,7 @@ mod native {
 
     /// Leave out what acadrust can't write as this DWG version: other programs' custom entities
     /// and objects without raw DWG data of that version. acadrust 0.6.4 refuses the whole file
-    /// for one of them (0.6.3 left them out); CADCraft already tells the user which entity types
+    /// for one of them (0.6.3 left them out); `CADCraft` already tells the user which entity types
     /// a DWG doesn't keep (`not_saved`), so the rest of the drawing is written. Returns how many.
     fn drop_unwritable(doc: &mut acadrust::CadDocument) -> usize {
         let version = doc.version;
@@ -476,7 +495,7 @@ mod native {
         for (name, code, value) in unwritten_header_vars(h) {
             let written = section.windows(name.len() + 2).any(|w| w.starts_with(name.as_bytes()) && w.ends_with(b"\r\n"));
             if !written && value.parse::<f64>().is_ok_and(f64::is_finite) {
-                add.push_str(&format!("  9\r\n{name}\r\n{code:>3}\r\n{value}\r\n"));
+                let _ = write!(add, "  9\r\n{name}\r\n{code:>3}\r\n{value}\r\n");
             }
         }
         dxf.splice(end..end, add.into_bytes());
@@ -508,14 +527,22 @@ mod native {
     /// Oldest DWG version written; older DXF input is written as this version.
     const MIN_DWG_VERSION: acadrust::DxfVersion = acadrust::DxfVersion::AC1018;
 
-    /// Convert DXF bytes into a DWG file of the DXF's version, and at least AutoCAD 2004
+    /// Convert DXF bytes into a DWG file of the DXF's version, and at least `AutoCAD` 2004
     /// (AC1018).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the DXF cannot be decoded or the DWG cannot be written, including oversized input.
     pub fn dxf_to_dwg(dxf: &[u8]) -> Result<Vec<u8>, String> {
         convert(dxf, None)
     }
 
     /// Convert DXF bytes into a DWG file of `version`, a code from [`super::VERSIONS`] ("AC1032"),
     /// whatever version the DXF declares.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unsupported version, invalid DXF, oversized input, or a DWG write failure.
     pub fn dxf_to_dwg_as(dxf: &[u8], version: &str) -> Result<Vec<u8>, String> {
         let v = match version.trim().to_ascii_uppercase().as_str() {
             "AC1015" => acadrust::DxfVersion::AC1015,
@@ -545,7 +572,7 @@ mod native {
 
     /// The current dimension style (`$DIMSTYLE`) by its name: the DXF gives the name, and the
     /// handle read with it needn't be the style's in the document, in which case the DWG writer
-    /// fell back to Standard and AutoCAD opened the drawing with Standard current (#1051).
+    /// fell back to Standard and `AutoCAD` opened the drawing with Standard current (#1051).
     fn current_dimstyle(doc: &mut acadrust::CadDocument) {
         let name = doc.header.current_dimstyle_name.clone();
         if let Some(h) = doc.dim_styles.iter().find(|ds| ds.name.eq_ignore_ascii_case(&name)).map(|ds| ds.handle) {
@@ -555,7 +582,7 @@ mod native {
 
     /// The current text style (`$TEXTSTYLE`) by its name, the same way as [`current_dimstyle`]:
     /// the handle read with the DXF needn't be the style's in the document, in which case the DWG
-    /// writer fell back to Standard and AutoCAD opened the drawing with Standard current (#1650).
+    /// writer fell back to Standard and `AutoCAD` opened the drawing with Standard current (#1650).
     fn current_text_style(doc: &mut acadrust::CadDocument) {
         let name = doc.header.current_text_style_name.clone();
         if let Some(h) = doc.text_styles.iter().find(|ts| ts.name.eq_ignore_ascii_case(&name)).map(|ts| ts.handle) {
@@ -587,7 +614,7 @@ mod native {
             ));
         }
         let data = dxf.to_vec();
-        let mut doc = std::panic::catch_unwind(move || acadrust::DxfReader::from_reader(Cursor::new(data)).and_then(|r| r.read()))
+        let mut doc = std::panic::catch_unwind(move || acadrust::DxfReader::from_reader(Cursor::new(data)).and_then(acadrust::DxfReader::read))
             .map_err(|_| "the DXF→DWG conversion failed".to_string())?
             .map_err(|e| format!("DXF: {e}"))?;
         match version {
@@ -610,13 +637,13 @@ mod native {
             current_text_style(&mut doc);
             current_layer(&mut doc);
         }))
-        .map_err(|_| "the DXF to DWG conversion failed on this file".to_string())?;
+        .map_err(|()| "the DXF to DWG conversion failed on this file".to_string())?;
         std::panic::catch_unwind(AssertUnwindSafe(|| acadrust::DwgWriter::write_to_vec(&doc)))
             .map_err(|_| "the DWG writer failed on this drawing".to_string())?
             .map_err(|e| format!("DWG write: {e}"))
     }
 
-    /// AutoCAD's entry name for the drawing variables dictionary (the DXF Reference calls it the
+    /// `AutoCAD`'s entry name for the drawing variables dictionary (the DXF Reference calls it the
     /// ACDBVARIABLEDICTIONARY; dictionary keys are case-insensitive).
     const VARIABLE_DICTIONARY: &str = "AcDbVariableDictionary";
 
@@ -632,11 +659,11 @@ mod native {
         if valid.contains(&value) { value.to_string() } else { default.to_string() }
     }
 
-    /// Add the drawing variables dictionary AutoCAD always writes into the named object
+    /// Add the drawing variables dictionary `AutoCAD` always writes into the named object
     /// dictionary, with the variables it keeps there, when the drawing has none (#1813).
     /// Vectric Aspire 10.5 reads a 2004 (AC1018) DWG without it as empty ("No data was imported
     /// from the DXF / DWG file"), though it reads the same drawing as DXF — which has no such
-    /// dictionary either, as CADCraft's and ezdxf's writers don't make one. AutoCAD's AC1032 DWGs
+    /// dictionary either, as `CADCraft`'s and ezdxf's writers don't make one. `AutoCAD`'s AC1032 DWGs
     /// read there without it, so newer output is left as it was, and a dictionary the drawing
     /// does have keeps its own entries and values.
     fn add_variable_dictionary(doc: &mut acadrust::CadDocument) {
@@ -685,7 +712,7 @@ mod native {
 
     /// Entities of a layout other than the one in `*Paper_Space` are written owned by their block
     /// (entity mode 0, with its handle). acadrust writes every paper-space entity with mode 1,
-    /// "paper space", which AutoCAD reads as the `*Paper_Space` block's: everything drawn on a
+    /// "paper space", which `AutoCAD` reads as the `*Paper_Space` block's: everything drawn on a
     /// second layout landed on the first one, and the second stayed empty (#1057).
     fn other_layout_owners(doc: &mut acadrust::CadDocument) {
         let others: std::collections::HashSet<acadrust::Handle> = doc
@@ -754,14 +781,14 @@ thread_local! {
 /// Panics when a test asked for `stage` to fail (see [`PANIC_IN`]); does nothing otherwise.
 #[cfg(not(no_dwg_bridge))]
 #[allow(clippy::panic)]
-fn fail_in_test(_stage: &str) {
+fn fail_in_test(stage: &str) {
+    #[cfg(not(test))]
+    let _ = stage;
     #[cfg(test)]
-    if PANIC_IN.with(|p| p.get()) == Some(_stage) {
-        panic!("test-forced panic in {_stage}");
-    }
+    assert!(PANIC_IN.with(std::cell::Cell::get) != Some(stage), "test-forced panic in {stage}");
 }
 
-/// The error for a DWG version CADCraft can't write.
+/// The error for a DWG version `CADCraft` can't write.
 #[cfg_attr(no_dwg_bridge, allow(dead_code))]
 fn unsupported(version: &str) -> String {
     let list: Vec<&str> = VERSIONS.iter().map(|(_, year)| *year).collect();
@@ -795,6 +822,8 @@ pub fn dxf_to_dwg_as(_dxf: &[u8], _version: &str) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
+
     use super::*;
 
     /// The DXF of an empty drawing, enough for the bridge to make a small DWG.
@@ -885,9 +914,9 @@ mod tests {
         let mut s = String::from("  0\nSECTION\n  2\nHEADER\n  9\n$ACADVER\n  1\nAC1032\n  0\nENDSEC\n  0\nSECTION\n  2\nENTITIES\n");
         for (text, flags, sub, pts) in dims {
             s += "  0\nDIMENSION\n  8\n0\n100\nAcDbEntity\n100\nAcDbDimension\n 10\n0\n 20\n0\n 30\n0\n";
-            s += &format!(" 11\n50\n 21\n-20\n 31\n0\n 70\n{flags}\n  1\n{text}\n  3\nStandard\n100\n{sub}\n");
-            for (code, [x, y]) in pts.iter() {
-                s += &format!("{code:>3}\n{x}\n{:>3}\n{y}\n{:>3}\n0\n", code + 10, code + 20);
+            let _ = write!(s, " 11\n50\n 21\n-20\n 31\n0\n 70\n{flags}\n  1\n{text}\n  3\nStandard\n100\n{sub}\n");
+            for (code, [x, y]) in *pts {
+                let _ = write!(s, "{code:>3}\n{x}\n{:>3}\n{y}\n{:>3}\n0\n", code + 10, code + 20);
             }
         }
         s + "  0\nENDSEC\n  0\nEOF\n"
@@ -956,13 +985,17 @@ mod tests {
             .collect()
     }
 
-    /// Issue #1482: a DWG that once came from MicroStation can carry hundreds of thousands of DGN
+    /// Issue #1482: a DWG that once came from `MicroStation` can carry hundreds of thousands of DGN
     /// line style components no definition uses (a real 83 MB site plan: 888,483 of 889,053, a
     /// 1.2 GB DXF rendition over the limit, so it didn't open). They're left out with a note, and
     /// their dictionary entries with them; the definition and every component it reaches —
     /// through compound and point components, around a cycle — are kept.
     #[cfg(not(no_dwg_bridge))]
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "This integration test builds and verifies one complete DGN component graph; splitting the fixture would obscure reachability."
+    )]
     fn orphaned_dgn_line_style_components_are_left_out() {
         use acadrust::objects::*;
         let mut doc = acadrust::CadDocument::new();
