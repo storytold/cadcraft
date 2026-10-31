@@ -92,7 +92,7 @@ pub(crate) fn encode_char(c: char, d: Decoder, out: &mut Vec<u8>) -> bool {
             // A code page byte that is ASCII would read back as another character, and a NUL,
             // CR or LF would break the group, so only all-high-bit sequences or proper double-byte
             // characters are kept (their trail byte may be ASCII, as in Shift-JIS).
-            if unmappable || bytes.is_empty() || !bytes.first().is_some_and(|b| *b >= 0x80) || bytes.iter().any(|b| matches!(b, 0 | b'\r' | b'\n')) {
+            if unmappable || bytes.is_empty() || bytes.first().is_none_or(|b| *b < 0x80) || bytes.iter().any(|b| matches!(b, 0 | b'\r' | b'\n')) {
                 return false;
             }
             out.extend_from_slice(&bytes);

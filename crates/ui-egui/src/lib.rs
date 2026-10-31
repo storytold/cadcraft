@@ -61,6 +61,7 @@ pub mod shortcut_menus;
 pub mod theme;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod updates_ui;
+mod view3d_controls;
 pub mod viewcube;
 pub mod vpscale;
 

@@ -136,9 +136,13 @@ impl Formatted {
                     i += 2;
                     match code {
                         None => {}
-                        Some('P') if f.paras.len() < MAX_PARAS => {
-                            f.push_char('\n', &cur);
-                            f.paras.push(props.clone());
+                        // At the paragraph cap the break is dropped (it must not fall to the verbatim arm).
+                        Some('P') => {
+                            let room = f.paras.len() < MAX_PARAS;
+                            if room {
+                                f.push_char('\n', &cur);
+                                f.paras.push(props.clone());
+                            }
                         }
                         Some(c @ ('\\' | '{' | '}')) => f.push_char(c, &cur),
                         Some('L') => cur.underline = true,

@@ -137,6 +137,35 @@ fn prim_index_matches_a_scan_and_follows_list_rebuilds() {
     assert_eq!(ix.prims(2, &b, &hs(&[9, 3])), vec![0, 1]);
 }
 
+#[test]
+fn perspective_projector_matches_curved_display_geometry_at_each_zoom_tolerance() {
+    use cadcraft_doc::{Common, Drawing, EntityKind, Space};
+    use cadcraft_geom::{Spline, Vec3};
+    use cadcraft_render::view3d::{Camera3d, Projection3d, Render3dOptions, build_3d_with_options};
+
+    let mut drawing = Drawing::new_metric();
+    // An asymmetric curve makes its sampled planar bounds sensitive to tessellation detail.
+    let spline = Spline::from_control(vec![Vec2::new(-17.0, 4.0), Vec2::new(-5.0, 83.0), Vec2::new(62.0, -31.0), Vec2::new(137.0, 22.0)], 3);
+    let first = spline.eval(spline.domain().0);
+    let handle = drawing.add(&Space::Model, Common::default(), EntityKind::Spline(spline)).unwrap();
+    let camera = Camera3d { azimuth: -0.8, elevation: 0.45 };
+    let render = Render3dOptions { projection: Projection3d::Perspective, ..Default::default() };
+
+    let mut projected_at_scales = Vec::new();
+    for scale in [0.2, 30.0] {
+        let options = preview_options(scale);
+        let projector = projector3d_for(&drawing, camera, render, &options);
+        let displayed = build_3d_with_options(&drawing, &Space::Model, &options, camera, render);
+        let primitive = displayed.prims.iter().find(|p| p.handle == handle).expect("spline is displayed");
+        let first_displayed = displayed.points(primitive).first().copied().expect("spline has tessellated points");
+        let expected = projector.project(Vec3::new(first.x, first.y, 0.0)).0;
+        assert!(first_displayed.dist(expected) < 1e-8, "display/picker projector diverged at scale {scale}");
+        projected_at_scales.push((options.tolerance.to_bits(), expected));
+    }
+
+    assert_ne!(projected_at_scales[0].0, projected_at_scales[1].0, "zoom changes preview tessellation tolerance");
+}
+
 fn wheel(unit: egui::MouseWheelUnit, dy: f32, modifiers: egui::Modifiers) -> egui::Event {
     egui::Event::MouseWheel { unit, delta: vec2(0.0, dy), phase: egui::TouchPhase::Move, source: egui::MouseWheelSource::Unknown, modifiers }
 }
@@ -229,4 +258,61 @@ fn dynamic_input_distance_follows_the_drawing_units() {
     app.session.pending_window = Some(cadcraft_engine::PendingWindow { corner: Vec2::ZERO, during_command: true });
     let text = painted_text(&mut app, &ctx, at);
     assert!(text.contains(&format!("   {}  <", arch(c.len()))), "no {} in:\n{text}", arch(c.len()));
+}
+
+/// Exercise the actual canvas depth-pick path, including the idle selection it feeds to edits.
+#[test]
+fn depth_pick_keeps_solids_whole_and_honors_selection_settings() {
+    use serde_json::json;
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    let a = app.session.execute("box", &json!({"p1": [0, 0, 0], "p2": [4, 4, 4]})).unwrap();
+    let b = app.session.execute("box", &json!({"p1": [8, 0, 0], "p2": [12, 4, 4]})).unwrap();
+    let members = |r: &serde_json::Value| -> Vec<Handle> {
+        r["handles"].as_array().unwrap().iter().map(|h| Handle::parse_hex(h.as_str().unwrap()).unwrap()).collect()
+    };
+    let (a, b) = (members(&a), members(&b));
+    app.canvas.xf = Some(Xf { rect: Rect::from_min_size(Pos2::ZERO, vec2(20.0, 10.0)), center: Vec2::ZERO, scale: 1.0 });
+    app.canvas.depth_image = Some(cadcraft_render::depth3d::Image { width: 2, height: 1, rgba: vec![255; 8], handles: vec![Some(a[0]), Some(b[0])] });
+    let (pa, pb) = (Some(pos2(5.0, 5.0)), Some(pos2(15.0, 5.0)));
+    select_depth(&mut app, pa, false);
+    assert_eq!(app.session.selection().len(), a.len(), "an idle face pick selects the solid");
+    let moved = app.session.execute("move3d", &json!({"offset": [0, 0, 3]})).unwrap();
+    assert_eq!(moved["moved"].as_u64(), Some(a.len() as u64));
+    app.session.undo().unwrap();
+    select_depth(&mut app, pa, false);
+    let erased = app.session.execute("erase", &json!({})).unwrap();
+    assert_eq!(erased["erased"].as_u64(), Some(a.len() as u64));
+    assert!(a.iter().all(|h| app.session.doc().unwrap().entity(*h).is_none()));
+    app.session.undo().unwrap();
+    assert!(a.iter().all(|h| app.session.doc().unwrap().entity(*h).is_some()));
+
+    select_depth(&mut app, pa, false);
+    select_depth(&mut app, pb, false); // Default PICKADD adds.
+    assert_eq!(app.session.selection().len(), a.len() + b.len());
+    select_depth(&mut app, pa, true); // Shift removes the entire group.
+    assert_eq!(app.session.selection().len(), b.len());
+    app.session.settings.pickadd = false;
+    select_depth(&mut app, pa, false);
+    assert_eq!(app.session.selection().len(), a.len());
+    select_depth(&mut app, pb, true); // With PICKADD off, Shift adds.
+    assert_eq!(app.session.selection().len(), a.len() + b.len());
+    select_depth(&mut app, pb, true);
+    assert_eq!(app.session.selection().len(), a.len());
+    app.session.settings.pickstyle = 0;
+    select_depth(&mut app, pb, false);
+    assert_eq!(app.session.selection(), vec![b[0]], "explicit group-selection-off permits face edits");
+}
+
+#[test]
+fn viewport_label_follows_3d_and_plan_modes() {
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    let ctx = egui::Context::default();
+    let at = pos2(700.0, 450.0);
+    assert!(painted_text(&mut app, &ctx, at).contains("+  |  Top  |  2D Wireframe"));
+    app.session.execute("view3d", &serde_json::json!({"preset": "seiso"})).unwrap();
+    let text = painted_text(&mut app, &ctx, at);
+    assert!(text.contains("+  |  Orthographic  |  Shaded"));
+    assert!(!text.contains("+  |  Top  |  2D Wireframe"));
+    app.session.execute("plan", &serde_json::json!({})).unwrap();
+    assert!(painted_text(&mut app, &ctx, at).contains("+  |  Top  |  2D Wireframe"));
 }

@@ -290,6 +290,10 @@ impl Session {
                 self.point_mods.clear();
                 self.input(Input::Cancel)
             }
+            Input::Point3(_) => {
+                self.echo("Point modifiers do not accept a 3D coordinate.");
+                Ok(())
+            }
             Input::Keyword(_) | Input::Text(_) | Input::Pick(_) => {
                 self.echo("Invalid point.");
                 Ok(())

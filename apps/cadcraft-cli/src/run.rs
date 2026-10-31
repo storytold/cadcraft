@@ -180,6 +180,9 @@ pub(crate) fn run_cmds(a: &RunArgs, io: &mut Streams) -> Result {
         s.new_drawing(false);
     }
     let before = model_views(&s);
+    if let Some(v) = &a.view3d {
+        s.execute("view3d", v)?;
+    }
     let mut last_handle: Option<Handle> = None;
     for step in steps {
         // A handle belongs to the drawing that returned it: if this step makes another drawing

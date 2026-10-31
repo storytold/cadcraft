@@ -211,7 +211,11 @@ const METHODS: &[(&str, &str, &str)] = &[
     ("ui.resize", "{width, height}", "Resize the window."),
     ("ui.focus", "", "Activate the native window."),
     ("ui.screenshot", "{path?}", "PNG of the window (needs a presented frame)."),
-    ("ui.render", "{path?, width?, height?, fit?}", "Headless render of the drawing; replies pngBase64."),
+    (
+        "ui.render",
+        "{path?, width?, height?, fit?}",
+        "Headless render of the drawing (depth-tested 3D after 3dorbit / view3d, at most 2048 px a side); replies pngBase64.",
+    ),
     ("app.open", "{path}", "Open a drawing."),
     ("app.save", "{path?}", "Save the drawing (Save As with a path)."),
     ("app.quit", "", "Quit without the unsaved-changes prompt."),
@@ -265,6 +269,7 @@ pub fn inspect(app: &CadApp, ctx: &egui::Context) -> Value {
         "canvasRect": app.canvas.rect.map(|c| json!([c.left(), c.top(), c.width(), c.height()])),
         "window": [r.width(), r.height()],
         "view": view.map(|v| json!({"center": [v.center.x, v.center.y], "height": v.height})),
+        "view3d": app.session.view3d.map(|v| json!({"azimuth": v.azimuth.to_degrees(), "elevation": v.elevation.to_degrees(), "orbiting": v.orbiting})),
         "cursor": app.canvas.cursor.map(|c| [c.x, c.y]),
         "snap": app.canvas.snap.map(|s| json!({"point": [s.point.x, s.point.y], "mode": s.name})),
         "session": app.session.summary(),
@@ -473,6 +478,29 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
             let w = f("width").unwrap_or(1600.0).clamp(16.0, 8192.0) as u32;
             let h = f("height").unwrap_or(1000.0).clamp(16.0, 8192.0) as u32;
             let Ok(st) = app.session.state() else { return err("no drawing") };
+            // In a 3D view the picture is the depth-tested projection fitted to the drawing
+            // (`window` and `fit` don't apply; a side over 2048 pixels is scaled down).
+            if let (Some(cam), cadcraft_doc::Space::Model) = (app.session.view3d, &st.space) {
+                let side = |k: &str| f(k).map(|x| x.clamp(16.0, 8192.0) as u32);
+                let r = match cadcraft_engine::cmd::view3d::render_png_of_with_options(
+                    &st.doc,
+                    cam,
+                    app.session.render3d,
+                    side("width").unwrap_or(1600),
+                    side("height").unwrap_or(1000),
+                ) {
+                    Ok(r) => r,
+                    Err(e) => return err(e),
+                };
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(path) = s("path") {
+                    if let Err(e) = std::fs::write(path, &r.png) {
+                        return err(e);
+                    }
+                    return ok(render_reply(&r.png, r.width, r.height, Some(path)));
+                }
+                return ok(render_reply(&r.png, r.width, r.height, None));
+            }
             // `window`: just that area, at the size given or matching its shape.
             let window = render_window(p);
             let opts = cadcraft_render::Options { view: window, transparency: app.session.settings.transparency_display, ..Default::default() };

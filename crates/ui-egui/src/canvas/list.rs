@@ -65,7 +65,77 @@ pub(super) fn rebuilt_preview<'a>(doc: &cadcraft_doc::Drawing, ents: impl IntoIt
 /// yet, is built at once.
 pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], ctx: &egui::Context) {
     let px = 1.0 / xf.scale;
+    let camera = app.session.view3d;
+    let render3d = app.session.render3d;
     let Ok(st) = app.session.state() else { return };
+    if let Some(camera) = camera.filter(|_| !st.space.is_paper()) {
+        let options = preview_options(xf.scale);
+        let key = (
+            st.uid,
+            st.revision,
+            camera.azimuth.to_bits(),
+            camera.elevation.to_bits(),
+            render3d.fingerprint(),
+            options.tolerance.to_bits(),
+            options.min_dash.to_bits(),
+        );
+        if app.canvas.view3d_key != Some(key) {
+            let first = app.canvas.view3d_key.is_none();
+            // Fit the drawing on entering 3D and whenever a command (VIEW3D, a preset, 3DORBIT)
+            // turns the camera; an edit or a drag in the canvas keeps the current zoom.
+            let turned = app.canvas.view3d_key.is_some_and(|k| (k.2, k.3) != (key.2, key.3));
+            let dragged = std::mem::take(&mut app.canvas.orbit_dragged);
+            let refit = first || (turned && !dragged);
+            if first {
+                app.canvas.plan_view = Some((st.uid, st.view()));
+            }
+            let mut list = cadcraft_render::view3d::build_3d_with_options(
+                &st.doc,
+                &st.space,
+                &options,
+                cadcraft_render::view3d::Camera3d { azimuth: camera.azimuth, elevation: camera.elevation },
+                render3d,
+            );
+            let bounds = list.bounds;
+            list.prims.clear();
+            app.canvas.scene3d = Some(cadcraft_render::depth3d::Scene::new_with_render_options(
+                &st.doc,
+                cadcraft_render::view3d::Camera3d { azimuth: camera.azimuth, elevation: camera.elevation },
+                render3d,
+                &options,
+            ));
+            app.canvas.list = Some(list);
+            app.canvas.list_gen = app.canvas.list_gen.wrapping_add(1);
+            app.canvas.hover_at = None;
+            app.canvas.view3d_key = Some(key);
+            app.canvas.job = None;
+            if refit && !bounds.is_empty() {
+                let height = bounds.height().max(bounds.width() * f64::from(xf.rect.height()) / f64::from(xf.rect.width().max(1.0))).max(1e-6) * 1.2;
+                if let Ok(st) = app.session.state_mut() {
+                    st.set_view_quiet(cadcraft_engine::View { center: bounds.center(), height });
+                }
+                ctx.request_repaint();
+            }
+        }
+        return;
+    }
+    if app.canvas.view3d_key.take().is_some() {
+        app.canvas.list = None;
+        app.canvas.scene3d = None;
+        app.canvas.depth_image = None;
+        app.canvas.depth_texture = None;
+        app.canvas.depth_key = None;
+        if let Some((uid, view)) = app.canvas.plan_view.take()
+            && st.uid == uid
+        {
+            if let Ok(st) = app.session.state_mut() {
+                st.set_view_quiet(view);
+            }
+            ctx.request_repaint();
+            return;
+        }
+    }
+
     // Rebuild when the drawing changes, the zoom moves by more than 2x (tessellation band) or a
     // view leaves the area the list was built for.
     let band = |px: f64| px.max(1e-300).log2().floor() as i32;

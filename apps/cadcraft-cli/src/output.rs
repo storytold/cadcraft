@@ -134,7 +134,10 @@ pub(crate) fn export(s: &Session, out: &Path, io: &mut Streams) -> Result {
 
 pub(crate) fn export_framed(s: &Session, out: &Path, window: Option<Bounds2>, io: &mut Streams) -> Result {
     let d = s.doc()?;
-    let bytes = cadcraft_io::write_framed(d, out, window)?;
+    let bytes = match view3d_image(s, out)? {
+        Some(bytes) => bytes,
+        None => cadcraft_io::write_framed(d, out, window)?,
+    };
     write_atomic(out, &bytes)?;
     io.errln(format_args!("wrote {} ({} bytes)", out.display(), bytes.len()));
     if cadcraft_engine::cmd::file::drops_unknown(out) {
@@ -144,6 +147,25 @@ pub(crate) fn export_framed(s: &Session, out: &Path, window: Option<Bounds2>, io
         }
     }
     Ok(())
+}
+
+/// A png or svg of model space through the session's 3D camera (`--view3d`, `3dorbit`, `view3d`);
+/// `None` for the plan view and for other formats, which export as usual. The png is drawn with a
+/// per-pixel depth test and is at most 2048 pixels on a side (the 2400x1600 frame is scaled down
+/// to 2048x1365); the svg is the vector painter's projection of the faces and lines.
+fn view3d_image(s: &Session, out: &Path) -> Result<Option<Vec<u8>>> {
+    let Some(v) = s.view3d else { return Ok(None) };
+    let ext = out.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    match ext.as_str() {
+        "png" => Ok(Some(cadcraft_engine::cmd::view3d::render_png_of(s.doc()?, v, 2400, 1600)?.png)),
+        "svg" => {
+            let opts = cadcraft_render::Options { transparency: true, ..cadcraft_render::Options::default() };
+            let camera = cadcraft_render::view3d::Camera3d { azimuth: v.azimuth, elevation: v.elevation };
+            let list = cadcraft_render::view3d::build_3d(s.doc()?, &Space::Model, &opts, camera);
+            Ok(Some(cadcraft_io::svg::export_list(&list, None).into_bytes()))
+        }
+        _ => Ok(None),
+    }
 }
 
 /// The warning for the model-space entities of `path` an image can't show, by type (those kept

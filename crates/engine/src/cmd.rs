@@ -38,14 +38,20 @@ pub(crate) use props::{current_color_value, set_current_color_value};
 mod qselect;
 mod selecttools;
 mod settings;
+mod solid_edit;
+mod solid_sections;
+mod solids;
 mod spline_opts;
 mod table;
 mod tolerance;
 mod trimextend;
 mod txt2mtxt;
+mod ucs3d;
 pub use txt2mtxt::Txt2MtxtOptions;
 mod utility;
 mod view;
+pub mod view3d;
+mod xform3d;
 
 pub mod curves;
 pub mod helpers;
@@ -208,6 +214,12 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(txt2mtxt::specs());
         v.extend(constraints::specs());
         v.extend(lisp::specs());
+        v.extend(solids::specs());
+        v.extend(solid_sections::specs());
+        v.extend(solid_edit::specs());
+        v.extend(ucs3d::specs());
+        v.extend(view3d::specs());
+        v.extend(xform3d::specs());
         v
     })
 }
