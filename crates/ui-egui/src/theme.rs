@@ -348,15 +348,21 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
         if !chinese {
             paths.extend(japanese_font());
         }
-        paths.extend(cjk_font());
         paths.dedup();
         added.extend(
             paths
                 .into_iter()
                 .filter_map(|p| read_capped(p, MAX_UI_FONT_BYTES))
                 .enumerate()
-                .map(|(i, bytes)| (format!("system-cjk-{i}"), std::sync::Arc::new(egui::FontData::from_owned(bytes)))),
+                .map(|(i, bytes)| (format!("system-japanese-{i}"), std::sync::Arc::new(egui::FontData::from_owned(bytes)))),
         );
+        // A Chinese interface takes the collection's Simplified Chinese face; a collection's
+        // first face is often Japanese (Noto Sans CJK JP), whose shared glyphs use Japanese forms.
+        if let Some(face) = cjk_ui_face(language) {
+            let mut data = egui::FontData::from_owned(face.bytes.as_ref().clone());
+            data.index = face.index;
+            added.push(("system-cjk".into(), std::sync::Arc::new(data)));
+        }
         // العربية: an installed Arabic face after the Latin ones (egui's bundled faces carry no
         // Arabic glyphs), for the Arabic interface.
         if language == "ar"
@@ -531,11 +537,16 @@ pub fn cjk_font() -> Option<&'static std::path::Path> {
                         "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
                         "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
                         "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
+                        // Fedora's google-noto-sans-cjk-vf-fonts and google-noto-sans-cjk-fonts.
+                        "/usr/share/fonts/google-noto-sans-cjk-vf-fonts/NotoSansCJK-VF.ttc",
+                        "/usr/share/fonts/google-noto-sans-cjk-fonts/NotoSansCJK-Regular.ttc",
                         "/usr/local/share/fonts/noto/NotoSansCJK-Regular.ttc",
                         "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
                         "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc",
                         "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
                         "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+                        // Fedora's google-droid-sans-fonts.
+                        "/usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf",
                     ]
                 };
                 candidates.iter().map(std::path::PathBuf::from).find(|p| p.is_file())
@@ -544,6 +555,27 @@ pub fn cjk_font() -> Option<&'static std::path::Path> {
     }
     #[cfg(target_arch = "wasm32")]
     None
+}
+
+/// The installed CJK face the interface loads: the Simplified Chinese face of a collection for
+/// a Chinese interface, else its first face (a Noto Sans CJK collection starts with Japanese).
+#[cfg(not(target_arch = "wasm32"))]
+fn cjk_ui_face(language: &str) -> Option<cadcraft_fonts::ttf::Face> {
+    let bytes = std::sync::Arc::new(read_capped(cjk_font()?, MAX_UI_FONT_BYTES)?);
+    let faces = cadcraft_fonts::ttf::faces(&bytes);
+    if language.starts_with("zh") {
+        faces.iter().find(|f| f.family_name().is_some_and(|n| is_simplified_family(&n))).cloned().or_else(|| faces.into_iter().next())
+    } else {
+        faces.into_iter().next()
+    }
+}
+
+/// Whether a font family name names a Simplified Chinese face (Noto Sans CJK SC, Source Han
+/// Sans SC, Microsoft YaHei, ...), not the Japanese, Korean or Traditional face of the same
+/// collection.
+fn is_simplified_family(name: &str) -> bool {
+    let name = name.to_lowercase();
+    name.contains(" sc") || name.contains("simplified") || name.contains("yahei") || name.contains("simsun") || name.contains("wenquanyi")
 }
 
 /// An installed font with Arabic glyphs, for the العربية interface; fonts are never bundled
@@ -868,5 +900,27 @@ mod tests {
         assert!(!super::any_script(&[bold], "Hans") && !super::any_script(&faces, "Ara"));
         assert!(!super::embedded_script("Hans") || super::can_show("zh"));
         assert!(super::can_show("en") && super::can_show("uk"));
+    }
+
+    #[test]
+    fn simplified_family_names_are_recognised() {
+        for name in ["Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", "SimSun", "PingFang SC", "WenQuanYi Micro Hei"] {
+            assert!(super::is_simplified_family(name), "{name}");
+        }
+        for name in ["Noto Sans CJK JP", "Noto Sans CJK KR", "Noto Sans CJK TC", "Noto Sans CJK HK", "BIZ UDPGothic"] {
+            assert!(!super::is_simplified_family(name), "{name}");
+        }
+    }
+
+    /// Where the installed CJK font is a collection with a Simplified Chinese face, a Chinese
+    /// interface loads that face rather than the collection's first (usually Japanese) one.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn chinese_interface_takes_the_collections_simplified_face() {
+        let Some(path) = super::cjk_font() else { return };
+        let Some(bytes) = super::read_capped(path, super::MAX_UI_FONT_BYTES) else { return };
+        let faces = cadcraft_fonts::ttf::faces(&std::sync::Arc::new(bytes));
+        let Some(simplified) = faces.iter().find(|f| f.family_name().is_some_and(|n| super::is_simplified_family(&n))) else { return };
+        assert_eq!(super::cjk_ui_face("zh").map(|f| f.index), Some(simplified.index));
     }
 }
