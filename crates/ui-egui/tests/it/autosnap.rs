@@ -125,6 +125,34 @@ fn magnet_holds_the_crosshair_on_the_snap_point_and_the_aperture_box_frames_it()
 }
 
 #[test]
+fn a_one_off_snap_decides_for_the_aperture_box() {
+    let mut h = harness();
+    setvar(&mut h, "APBOX", json!(1));
+    h.state_mut().cmdline("line");
+    h.run_steps(2);
+    let near_end = |h: &mut Harness<'_, CadApp>| hover(h, Vec2::new(20.0, 0.0), vec2(4.0, 3.0));
+    let pos = near_end(&mut h);
+    assert!(aperture_box(&h, pos).is_some(), "running snaps on: the box");
+
+    // NON while the running snaps are on: this pick takes no snap, so no box.
+    h.state_mut().cmdline("non");
+    h.run_steps(2);
+    let pos = near_end(&mut h);
+    assert!(aperture_box(&h, pos).is_none(), "NON: no box");
+    h.state_mut().cmdline("5,5");
+    h.run_steps(2);
+
+    // F3 has the running snaps off: no box, until END asks for this pick's endpoint.
+    h.state_mut().session.settings.osmode |= mode::OFF;
+    let pos = near_end(&mut h);
+    assert!(aperture_box(&h, pos).is_none(), "running snaps off: no box");
+    h.state_mut().cmdline("end");
+    h.run_steps(2);
+    let pos = near_end(&mut h);
+    assert!(aperture_box(&h, pos).is_some(), "END: the box for this pick");
+}
+
+#[test]
 fn marker_and_tooltip_follow_their_autosnap_bits() {
     let mut h = harness();
     h.state_mut().cmdline("line");
@@ -173,6 +201,7 @@ fn options_json_and_the_drafting_tab_offer_the_autosnap_settings() {
     let s = &a.session.settings;
     assert!(s.autosnap_magnet && s.autotrack_tooltip && !s.autosnap_marker && !s.autosnap_tooltip && s.apbox);
     assert!(a.run("options", json!({"AUTOSNAP": 64})).is_err(), "0–63 only");
+    assert!(a.run("options", json!({"APBOX": 2})).is_err(), "APBOX is 0 or 1");
 
     a.ui.dialog = Some("options:drafting".into());
     let text = render(&mut a, &egui::Context::default());
