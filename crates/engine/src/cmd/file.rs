@@ -473,6 +473,7 @@ pub fn looks_like_drawing(bytes: &[u8]) -> bool {
 }
 
 /// How much of a drawing's end [`looks_complete`] reads.
+#[cfg(not(target_arch = "wasm32"))]
 const TAIL_BYTES: u64 = 256;
 
 /// Whether a drawing that [`looks_like_drawing`] (`head`, its first bytes, at least 256 of them
@@ -560,6 +561,7 @@ fn ends(src: &mut std::fs::File) -> std::io::Result<(Vec<u8>, Vec<u8>, u64)> {
 /// backup already there. One that can't be told (a 2007 DWG) does: it is most likely fine, and it
 /// is about to be replaced. With no backup yet any file is kept, because the checks can be wrong
 /// about a real file and this save replaces the only copy.
+#[cfg(not(target_arch = "wasm32"))]
 fn backup_replaced(head: &[u8], tail: &[u8], len: u64, backup_exists: bool) -> bool {
     (looks_like_drawing(head) && completeness(head, tail, len) != Some(false)) || (len > 0 && !backup_exists)
 }
