@@ -2,9 +2,9 @@ use super::common::{T, common, ocs};
 use super::hatch::hatch;
 use super::text::{attdef, attrib_modes, attrib_props, mtext_from, multiline_attrib, split_embedded, text_from};
 use super::{
-    Arc, Attrib, Circle, Common, DimKind, Dimension, Ellipse, EntityKind, Face3d, Handle, HashMap, Helix, HelixConstrain, Insert, Leader, Line,
-    LwPolyline, MAX_FRAME_CHARS, Point, PolyVertex, Polyline3d, RawTag, RayLine, Rx, Solid, Spline, Table, TableCell, Tag, Tolerance, Unknown, Vec2,
-    Vec3, Viewport, Wipeout, records,
+    Arc, Attrib, AttribModes, Circle, Common, DimKind, Dimension, Ellipse, EntityKind, Face3d, Handle, HashMap, Helix, HelixConstrain, Insert,
+    Leader, Line, LwPolyline, MAX_FRAME_CHARS, Point, PolyVertex, Polyline3d, RawTag, RayLine, Rx, Solid, Spline, Table, TableCell, Tag, Tolerance,
+    Unknown, Vec2, Vec3, Viewport, Wipeout, records,
 };
 
 /// Parse one entity record. POLYLINE/INSERT followers are handled by the caller.
@@ -553,7 +553,8 @@ pub(super) fn insert_attribs(recs: &[(String, Vec<Tag>)], i: &mut usize, ins_lay
                 prompt: String::new(),
                 props: attrib_props(&tt, ins_layer),
                 multiline,
-                modes: attrib_modes(own.0),
+                // Hidden (group 60) with its definition by a visibility state.
+                modes: AttribModes { hidden: own.i(60).unwrap_or(0) & 1 != 0, ..attrib_modes(own.0) },
             });
             *i += 1;
         } else {

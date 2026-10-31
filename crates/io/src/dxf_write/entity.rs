@@ -311,7 +311,7 @@ fn write_insert_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: b
                 let (c, base) = attrib_common(d, e, i, a);
                 layer_and_props(w, &c, Some(&base));
                 // Hidden with its definition (a dynamic block's visibility state hides it).
-                if !base.visible {
+                if !base.visible || a.modes.hidden {
                     w.i(60, 1);
                 }
                 w.s(100, "AcDbText");

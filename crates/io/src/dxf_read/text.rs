@@ -21,7 +21,7 @@ pub(super) fn attrib_modes(own: &[Tag]) -> AttribModes {
     let sub = own.iter().position(|t| t.code == 100 && t.str().trim().starts_with("AcDbAttribute")).unwrap_or(0);
     let rest = own.get(sub..).unwrap_or_default();
     let lock_position = rest.iter().position(|t| t.code == 2).is_some_and(|at| rest.iter().skip(at + 1).any(|t| t.code == 280 && t.i64() != 0));
-    AttribModes { verify: flags & 4 != 0, preset: flags & 8 != 0, lock_position }
+    AttribModes { verify: flags & 4 != 0, preset: flags & 8 != 0, lock_position, hidden: false }
 }
 
 /// An ATTRIB's or ATTDEF's groups split at its embedded multiline text (`101 Embedded Object`):
