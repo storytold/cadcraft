@@ -341,7 +341,21 @@ impl Session {
         }
     }
 
+    /// End a command: every way out of one comes through here. The passes after a command
+    /// (constraints, associativity, groups) can panic like the command itself; a panic restores
+    /// the drawing as it was before the command, as a panic in its `input` does.
     fn finish(&mut self, run: Running, cancelled: bool) {
+        let (id, before, selection) = (run.id.clone(), run.before.clone(), run.selection_before.clone());
+        if let Err(p) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.finish_guarded(run, cancelled))) {
+            if let Ok(st) = self.state_mut() {
+                st.doc = before;
+                st.selection = selection;
+            }
+            self.echo(format!("Internal error in {id}: {}", crate::guard::message(&*p)));
+        }
+    }
+
+    fn finish_guarded(&mut self, run: Running, cancelled: bool) {
         // A typed selection mode or SIngle never outlives its command.
         self.select_mode = None;
         self.select_single = false;
@@ -391,6 +405,8 @@ impl Session {
     /// started in, so associativity is not applied across a document switch; `ok` is false for a
     /// failed or non-undoable programmatic command, which skips the constraint pass.
     pub(super) fn after_command(&mut self, before: Option<&Arc<Drawing>>, uid: Option<u64>, ok: bool) {
+        #[cfg(test)]
+        crate::guard::tests::panic_if_armed();
         cmd::groups::after_command(self, before);
         cmd::constraints::after_command(self, before, ok);
         assoc::after_command(self, before, uid);

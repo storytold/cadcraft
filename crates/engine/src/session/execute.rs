@@ -4,7 +4,27 @@ impl Session {
     // ---------------- programmatic execution ----------------
 
     /// Run a command with JSON parameters (no dialogs). Records undo when the drawing changes.
+    ///
+    /// The command itself is guarded below, where its own panic can be told apart. This guard is
+    /// for everything around it: the passes after a command (constraints, associativity, groups)
+    /// are as able to panic as the command, and a panic there restores the drawing the same way.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
+        let before = self.state().ok().map(|s| (s.doc.clone(), s.selection.clone(), s.uid));
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.execute_guarded(id, params))) {
+            Ok(r) => r,
+            Err(p) => {
+                if let Some((doc, sel, uid)) = before
+                    && let Some(st) = self.docs.iter_mut().find(|d| d.uid == uid)
+                {
+                    st.doc = doc;
+                    st.selection = sel;
+                }
+                Err(EngineError::Internal(id.into(), crate::guard::message(&*p)))
+            }
+        }
+    }
+
+    fn execute_guarded(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
         (spec.enabled)(self).map_err(|m| EngineError::Disabled(spec.id.into(), m))?;
         if let Some(why) = cmd::blocks::bedit::refused_in_editor(self, spec.id) {

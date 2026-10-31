@@ -56,6 +56,8 @@ pub(super) struct Ctx {
     /// A VIEWPORT's frozen-layer handles go in group 341, as an R2000 DXF has them (the DXF 2000
     /// Reference); otherwise 331, as from 2004 and for the DWG bridge, which reads only 331.
     pub(super) frozen_341: bool,
+    /// MTEXT columns as the legacy groups 75..79 even from R2018 (the groups AutoLISP lists).
+    pub(super) legacy_columns: bool,
 }
 
 impl Ctx {

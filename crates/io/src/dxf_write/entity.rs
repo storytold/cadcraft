@@ -53,6 +53,7 @@ fn write_basic_entity(w: &mut W, _d: &Drawing, e: &Entity, owner: &str, paper: b
             thickness(w, e);
             w.p(10, l.a);
             w.p(11, l.b);
+            extrusion(w, e);
         }
         EntityKind::Point(p) => {
             w.s(0, "POINT");
@@ -256,7 +257,8 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
             w.f(40, t.height);
             w.f(41, t.width);
             w.i(71, i64::from(t.attach));
-            w.i(72, 1);
+            // Drawing direction: 5, by style.
+            w.i(72, 5);
             // Long contents go in 250-char 3-chunks, the remainder in 1.
             let chars: Vec<char> = crate::dxf_read::mtext_dxf::encode_contents(&t.contents).chars().collect();
             let chunks: Vec<String> = chars.chunks(250).map(|c| c.iter().collect()).collect();
@@ -274,7 +276,7 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
             // Line spacing style: 1 = at least, 2 = exactly.
             w.i(73, if t.line_spacing_exact { 2 } else { 1 });
             w.f(44, t.line_spacing);
-            w.t.extend(crate::dxf_read::mtext_dxf::column_tags(t));
+            w.t.extend(crate::dxf_read::mtext_dxf::column_tags(t, cx.target >= Version::R2018 && !cx.legacy_columns));
         }
         _ => {}
     }
@@ -749,6 +751,24 @@ fn gradient(w: &mut W, g: &Gradient) {
 fn thickness(w: &mut W, e: &Entity) {
     if e.common.thickness != 0.0 {
         w.f(39, e.common.thickness);
+    }
+}
+
+/// The extrusion (210) of an entity whose points are world coordinates, when it is not the Z axis.
+fn extrusion(w: &mut W, e: &Entity) {
+    // Zero and non-finite vectors are not a direction: nothing is written. `Vec3::normalized` would
+    // also drop a tiny one (its zero threshold is the drawing tolerance) and turn infinity into NaN.
+    let v = e.common.extrusion;
+    let max = v.x.abs().max(v.y.abs()).max(v.z.abs());
+    if !v.is_finite() || max == 0.0 {
+        return;
+    }
+    // Scaled by the largest component first: the length of a huge one would overflow to infinity.
+    let v = Vec3::new(v.x / max, v.y / max, v.z / max);
+    let len = v.len();
+    let n = Vec3::new(v.x / len, v.y / len, v.z / len);
+    if n != Vec3::Z {
+        w.p(210, n);
     }
 }
 

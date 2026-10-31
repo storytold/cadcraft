@@ -502,6 +502,42 @@ pub fn baseline_start(font: &TextFont, s: &str, p: &TextParams) -> Vec2 {
     origin + Vec2::new(local.x * mirror.x, local.y * mirror.y).rotate(rot)
 }
 
+/// How far below the baseline a bottom-justified text's alignment point lies: a third of the
+/// height for the stroke font (as AutoCAD places it with SHX fonts), the face's descent for an
+/// outline font (#2229).
+fn bottom_depth(font: &TextFont, height: f64) -> f64 {
+    match font {
+        TextFont::Outline(face) => ttf::descent_ratio(face).map_or(height / 3.0, |r| r * height),
+        TextFont::Stroke => height / 3.0,
+    }
+}
+
+/// The vertical middle of shaped text's ink (its strokes and outlines), above the baseline;
+/// `None` when it draws nothing. A Middle (M) text is centred there: AutoCAD centres it on the
+/// string's own extents, descenders included, not at half the height (#2229).
+fn ink_middle(sh: &Shaped) -> Option<f64> {
+    let ys = sh.strokes.iter().flatten().chain(sh.glyphs.iter().flatten().flatten()).map(|q| q.y).filter(|y| y.is_finite());
+    let (lo, hi) = ys.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), y| (lo.min(y), hi.max(y)));
+    (lo <= hi).then_some((lo + hi) / 2.0)
+}
+
+/// The offset of a line's baseline start from its alignment point, for justification `h`/`v`.
+fn justify_offset(font: &TextFont, sh: &Shaped, height: f64, h: Align, v: VAlign) -> Vec2 {
+    let dx = match h {
+        Align::Left | Align::Aligned | Align::Fit => 0.0,
+        Align::Center | Align::Middle => -sh.width / 2.0,
+        Align::Right => -sh.width,
+    };
+    let dy = match (h, v) {
+        (Align::Middle, _) => -ink_middle(sh).unwrap_or(height / 2.0),
+        (_, VAlign::Baseline) => 0.0,
+        (_, VAlign::Bottom) => bottom_depth(font, height),
+        (_, VAlign::Middle) => -height / 2.0,
+        (_, VAlign::Top) => -height,
+    };
+    Vec2::new(dx, dy)
+}
+
 /// How [`place`] puts a line in the world: the point it is placed by, the offset of its baseline
 /// start from that point (along the text), its rotation and its mirroring (backwards, upside
 /// down). Aligned and fit text are placed by their insertion point.
@@ -512,25 +548,13 @@ fn frame(font: &TextFont, s: &str, p: &TextParams) -> (Vec2, Vec2, f64, Vec2) {
         let rot = p.align_pt.map_or(rot, |p2| p.insert.angle_to(p2));
         return (p.insert, Vec2::ZERO, rot, Vec2::new(1.0, 1.0));
     }
-    let width = shape_line(font, s, height, p.width_factor, p.oblique).width;
+    let sh = shape_line(font, s, height, p.width_factor, p.oblique);
     let origin = match (p.h, p.v) {
         (Align::Left, VAlign::Baseline) => p.insert,
         _ => p.align_pt.unwrap_or(p.insert),
     };
-    let dx = match p.h {
-        Align::Left | Align::Aligned | Align::Fit => 0.0,
-        Align::Center | Align::Middle => -width / 2.0,
-        Align::Right => -width,
-    };
-    let dy = match (p.h, p.v) {
-        (Align::Middle, _) => -height / 2.0,
-        (_, VAlign::Baseline) => 0.0,
-        (_, VAlign::Bottom) => height / 3.0,
-        (_, VAlign::Middle) => -height / 2.0,
-        (_, VAlign::Top) => -height,
-    };
     let mirror = Vec2::new(if p.backwards { -1.0 } else { 1.0 }, if p.upside_down { -1.0 } else { 1.0 });
-    (origin, Vec2::new(dx, dy), rot, mirror)
+    (origin, justify_offset(font, &sh, height, p.h, p.v), rot, mirror)
 }
 
 /// Place a single-line TEXT in world coordinates with any font. Returns the shaped text and its
@@ -563,28 +587,15 @@ pub fn place(font: &TextFont, s: &str, p: &TextParams) -> (Shaped, Bounds2) {
         (Align::Left, VAlign::Baseline) | (Align::Aligned | Align::Fit, _) => insert,
         _ => p.align_pt.unwrap_or(insert),
     };
-    let dx = match p.h {
-        Align::Left | Align::Aligned | Align::Fit => 0.0,
-        Align::Center | Align::Middle => -width / 2.0,
-        Align::Right => -width,
-    };
-    let dy = match (p.h, p.v) {
-        (Align::Middle, _) => -height / 2.0,
-        (_, VAlign::Baseline) => 0.0,
-        (_, VAlign::Bottom) => height / 3.0,
-        (_, VAlign::Middle) => -height / 2.0,
-        (_, VAlign::Top) => -height,
-    };
-    let local = Vec2::new(dx, dy);
+    let local = justify_offset(font, &sh, height, p.h, p.v);
     let (mx, my) = (if p.backwards { -1.0 } else { 1.0 }, if p.upside_down { -1.0 } else { 1.0 });
     let xf = |q: Vec2| {
         let l = q + local;
         origin + Vec2::new(l.x * mx, l.y * my).rotate(rot)
     };
     sh.map(xf);
-    let bb = Bounds2::from_points(
-        [Vec2::new(0.0, -height / 3.0), Vec2::new(width, -height / 3.0), Vec2::new(width, height), Vec2::new(0.0, height)].map(xf),
-    );
+    let depth = bottom_depth(font, height);
+    let bb = Bounds2::from_points([Vec2::new(0.0, -depth), Vec2::new(width, -depth), Vec2::new(width, height), Vec2::new(0.0, height)].map(xf));
     (sh, bb)
 }
 
@@ -795,5 +806,94 @@ mod ttf_tests {
         );
         assert!((crate::line_width("\u{4E2D}\u{6587}\u{5B57}\u{4F53}", h, wf) - four.width).abs() < 1e-9);
         assert!(crate::is_wide('\u{3042}') && crate::is_wide('\u{AC00}') && crate::is_wide('\u{FF21}') && !crate::is_wide('A'));
+    }
+}
+
+#[cfg(test)]
+mod justify_tests {
+    use super::*;
+
+    const H: f64 = 2.5;
+
+    /// `s` placed by the alignment point (0, 0) with justification `h`/`v` in `font`.
+    fn placed(font: &TextFont, s: &str, h: Align, v: VAlign) -> (Shaped, Vec2) {
+        let p = TextParams { align_pt: Some(Vec2::ZERO), h, v, ..TextParams::new(Vec2::ZERO, H) };
+        (place(font, s, &p).0, baseline_start(font, s, &p))
+    }
+
+    /// The lowest and highest point of placed text's ink.
+    fn ink_y(sh: &Shaped) -> (f64, f64) {
+        let ys = sh.strokes.iter().flatten().chain(sh.glyphs.iter().flatten().flatten()).map(|q| q.y);
+        ys.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), y| (lo.min(y), hi.max(y)))
+    }
+
+    /// A Middle (M) text is centred on its own ink, descenders included, as AutoCAD centres it,
+    /// not at half the height: lowercase and descenders move the baseline (#2229).
+    #[test]
+    fn a_middle_text_is_centred_on_its_ink() {
+        let font = TextFont::Stroke;
+        let mut baselines = Vec::new();
+        for s in ["ABC 123", "gjpqy", "Tg 1234 ABC", "ace"] {
+            let (sh, start) = placed(&font, s, Align::Middle, VAlign::Baseline);
+            let (lo, hi) = ink_y(&sh);
+            assert!(((lo + hi) / 2.0).abs() < 1e-9, "{s}: ink {lo}..{hi} is centred on the alignment point");
+            // The insertion point a DWG keeps (group 10) is the baseline start, below the ink's
+            // middle by as much as the unplaced text's ink middle is above its baseline.
+            let (lo0, hi0) = ink_y(&shape_line(&font, s, H, 1.0, 0.0));
+            assert!((start.y + (lo0 + hi0) / 2.0).abs() < 1e-9, "{s}: baseline start {start:?}");
+            baselines.push((s, start.y));
+        }
+        // Capitals and digits span the height, so they stay at half of it.
+        assert!((baselines[0].1 + H / 2.0).abs() < 1e-9, "{baselines:?}");
+        // Descenders, or lowercase alone, bring the ink's middle down, so the baseline sits higher.
+        for (s, y) in &baselines[1..] {
+            if *s != "Tg 1234 ABC" {
+                assert!(*y > -H / 2.0 + 0.1, "{s}: {baselines:?}");
+            }
+        }
+    }
+
+    /// Text that draws nothing has no ink to centre: it keeps half the height.
+    #[test]
+    fn a_middle_text_without_ink_keeps_half_the_height() {
+        let (_, start) = placed(&TextFont::Stroke, " ", Align::Middle, VAlign::Baseline);
+        assert!((start.y + H / 2.0).abs() < 1e-9, "{start:?}");
+    }
+
+    /// With the stroke font (as with AutoCAD's SHX fonts), a bottom-justified text's baseline is
+    /// a third of the height above its alignment point, and Middle Center still uses half.
+    #[test]
+    fn stroke_font_bottom_and_middle_center_are_unchanged() {
+        let font = TextFont::Stroke;
+        for h in [Align::Left, Align::Center, Align::Right] {
+            let (_, start) = placed(&font, "gjpqy", h, VAlign::Bottom);
+            assert!((start.y - H / 3.0).abs() < 1e-9, "{h:?}: {start:?}");
+        }
+        let (_, start) = placed(&font, "gjpqy", Align::Center, VAlign::Middle);
+        assert!((start.y + H / 2.0).abs() < 1e-9, "MC: {start:?}");
+    }
+
+    /// With a TrueType font, a bottom-justified text's alignment point is at the face's descent,
+    /// where its descenders end, as AutoCAD places it (#2229: Arial's is 0.296 of the height).
+    /// Uses the first of these common fonts that is installed (Windows, macOS and Linux each have
+    /// one); skips without any.
+    #[test]
+    fn a_bottom_justified_truetype_text_sits_on_its_descent() {
+        let found = ["Arial", "Helvetica", "DejaVuSans", "Verdana", "LiberationSans-Regular"].into_iter().find_map(|n| ttf::find(n).map(|f| (n, f)));
+        let Some((name, face)) = found else { return };
+        let ratio = ttf::descent_ratio(&face).unwrap();
+        let font = TextFont::Outline(face);
+        let (sh, start) = placed(&font, "gjpqy", Align::Left, VAlign::Bottom);
+        assert!((start.y - ratio * H).abs() < 1e-9, "{name}: {start:?}");
+        if name == "Arial" {
+            assert!((ratio - 0.296).abs() < 0.01, "Arial's descent over cap height: {ratio}");
+            // The descenders reach the alignment point's line: h/3 left them 0.1 above it.
+            let (lo, _) = ink_y(&sh);
+            assert!(lo.abs() < 0.02 * H, "descender bottom {lo} from the alignment point");
+        }
+        // And Middle centres the ink, as with the stroke font.
+        let (sh, _) = placed(&font, "Tg 1234 ABC", Align::Middle, VAlign::Baseline);
+        let (lo, hi) = ink_y(&sh);
+        assert!(((lo + hi) / 2.0).abs() < 1e-9, "{name}: {lo}..{hi}");
     }
 }
