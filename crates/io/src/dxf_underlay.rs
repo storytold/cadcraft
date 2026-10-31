@@ -91,6 +91,18 @@ fn has_underlays(store: &EntityStore) -> bool {
     store.iter().any(|e| matches!(e.kind, EntityKind::PdfUnderlay(_)))
 }
 
+/// Whether an underlay of `d` hides PDF layers, so the file needs [`LAYERS_APP`] registered.
+pub(crate) fn hides_layers(d: &Drawing) -> bool {
+    let hides = |store: &EntityStore| store.iter().any(|e| matches!(&e.kind, EntityKind::PdfUnderlay(u) if u.layers.iter().any(|l| !l.on)));
+    hides(&d.model) || d.layouts.iter().any(|l| hides(&l.entities)) || d.blocks.values().any(|b| hides(&b.entities))
+}
+
+/// How many PDF underlays `d` holds, in model space, layouts and blocks.
+fn count_underlays(d: &Drawing) -> usize {
+    let n = |store: &EntityStore| store.iter().filter(|e| matches!(e.kind, EntityKind::PdfUnderlay(_))).count();
+    n(&d.model) + d.layouts.iter().map(|l| n(&l.entities)).sum::<usize>() + d.blocks.values().map(|b| n(&b.entities)).sum::<usize>()
+}
+
 /// Fill in each underlay's file and page from the PDFDEFINITION it points to.
 pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
     if !has_underlays(&d.model) && !d.layouts.iter().any(|l| has_underlays(&l.entities)) && !d.blocks.values().any(|b| has_underlays(&b.entities)) {
@@ -126,6 +138,12 @@ pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
         });
     }
     let by_underlay: HashMap<Handle, &(String, u32, bool)> = refs.iter().filter_map(|(u, dh)| Some((*u, defs.get(dh)?))).collect();
+    // An underlay whose definition is missing has no file: say why its page stays blank.
+    match count_underlays(d).saturating_sub(by_underlay.len()) {
+        0 => {}
+        1 => d.read_notes.push("PDF underlays: 1 underlay names no PDF definition in the file, so its PDF is unknown".into()),
+        n => d.read_notes.push(format!("PDF underlays: {n} underlays name no PDF definition in the file, so their PDF is unknown")),
+    }
     if by_underlay.is_empty() {
         return;
     }
@@ -434,6 +452,40 @@ mod tests {
         // On the unloaded file's definition: 1001 ACAD, 1000 NOLOAD.
         assert!(pairs.windows(2).any(|w| w == [("1001", "ACAD"), ("1000", "NOLOAD")]));
         assert!(pairs.contains(&("2", LAYERS_APP)), "the application is registered");
+    }
+
+    /// A drawing with no underlay hiding PDF layers doesn't register their application.
+    #[test]
+    fn the_layers_application_is_registered_only_when_an_underlay_hides_layers() {
+        let registered = |d: &Drawing| {
+            let bytes = crate::write(d, "plan.dxf").unwrap();
+            let text = String::from_utf8_lossy(&bytes).to_string();
+            text.lines().map(str::trim).any(|l| l == LAYERS_APP)
+        };
+        assert!(!registered(&Drawing::new_metric()), "no underlay");
+        let mut d = Drawing::new_metric();
+        let u = PdfUnderlay { path: "/plans/a.pdf".into(), size: Vec2::new(297.0, 210.0), ..PdfUnderlay::default() };
+        d.add(&Space::Model, Common::default(), EntityKind::PdfUnderlay(u)).unwrap();
+        assert!(!registered(&d), "an underlay showing all its layers");
+        assert!(registered(&drawing()), "an underlay hiding layers");
+    }
+
+    /// An underlay whose PDFDEFINITION is gone reads with a note saying so; a whole file reads without one.
+    #[test]
+    fn an_underlay_without_its_definition_is_noted() {
+        let mut d = Drawing::new_metric();
+        let u = PdfUnderlay { path: "/plans/a.pdf".into(), size: Vec2::new(297.0, 210.0), ..PdfUnderlay::default() };
+        d.add(&Space::Model, Common::default(), EntityKind::PdfUnderlay(u)).unwrap();
+        let text = String::from_utf8(crate::write(&d, "plan.dxf").unwrap()).unwrap();
+        assert!(crate::read(text.as_bytes(), "plan.dxf").unwrap().read_notes.is_empty());
+        // The PDFDEFINITION record removed, up to the next object.
+        let lines: Vec<&str> = text.lines().collect();
+        let at =
+            lines.chunks(2).position(|p| p.first().map(|c| c.trim()) == Some("0") && p.get(1).map(|v| v.trim()) == Some("PDFDEFINITION")).unwrap();
+        let len = lines.chunks(2).skip(at + 1).position(|p| p.first().map(|c| c.trim()) == Some("0")).unwrap() + 1;
+        let cut = [&lines[..at * 2], &lines[(at + len) * 2..]].concat().join("\n");
+        let back = crate::read(cut.as_bytes(), "plan.dxf").unwrap();
+        assert_eq!(back.read_notes, ["PDF underlays: 1 underlay names no PDF definition in the file, so its PDF is unknown"]);
     }
 
     /// Two underlays of one page, one of them unloaded, each come back in their own state.
