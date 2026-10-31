@@ -415,6 +415,9 @@ fn gather_in(
     let mut near_prims: Vec<Prim> = Vec::new();
     let mut count = 0usize;
     let mut budget = MAX_BLOCK_LEAVES;
+    // A PDF underlay's frame is snapped to only while it is shown (PDFFRAME 1 or 2).
+    let frame_hidden = d.header.i64("PDFFRAME", 1) == 0;
+    let snaps = |k: &EntityKind| !(frame_hidden && matches!(k, EntityKind::PdfUnderlay(_)));
     for (e, known) in crate::select::candidates(d, space, ix, &probe.expand(aperture), true, false)? {
         if !d.is_visible(e) || frozen.iter().any(|l| l.eq_ignore_ascii_case(&e.common.layer)) {
             continue;
@@ -446,10 +449,16 @@ fn gather_in(
             }
         }
         let mut sink = Sink { osmode, aperture, probe, cands: &mut cands, near: &mut near_prims };
-        sink.object(&e.kind, None);
+        if snaps(&e.kind) {
+            sink.object(&e.kind, None);
+        }
         // A block reference snaps to the objects inside it, placed by its transform.
         if let EntityKind::Insert(ins) = &e.kind {
-            block_leaves(d, ins, &Mat3::IDENTITY, 0, &mut budget, frozen, &mut |k, m| sink.object(k, Some(m)));
+            block_leaves(d, ins, &Mat3::IDENTITY, 0, &mut budget, frozen, &mut |k, m| {
+                if snaps(k) {
+                    sink.object(k, Some(m));
+                }
+            });
         }
         if let EntityKind::Dimension(dm) = &e.kind {
             sink.dimension(d, dm, &mut budget, frozen);
