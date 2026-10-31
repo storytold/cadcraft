@@ -2,8 +2,10 @@ mod acad_interop;
 #[cfg(not(target_arch = "wasm32"))]
 mod acis_data_store;
 mod angle_header;
+mod annotative_orientation;
 mod annotative_roundtrip;
 mod assoc_array_roundtrip;
+mod attdef_insert_dwg;
 mod attrib_modes;
 mod attrib_props;
 mod block_expansion;
@@ -52,6 +54,7 @@ mod plot_layout_scale;
 mod plot_model_png_scale;
 mod plot_styles;
 mod region_roundtrip;
+mod roundtrip;
 mod roundtrip_audit;
 mod skipped_records;
 mod sortents;

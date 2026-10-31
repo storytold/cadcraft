@@ -17,8 +17,8 @@ People trust CADCraft with their drawings; a crash loses their work. **This outr
 - **Errors are `Result<T, E>`** through the crate's error type and `?`. An unfinished feature returns an error or reports "not available yet"; it never panics.
 - **Input-derived numbers are hostile** (DXF/DWG files, command-line text, MCP/control params): `get()` not `[i]`, checked arithmetic, no NaN casts, cap input-sized allocations and loop counts.
 - **Bound recursion** (nested/cyclic block references: `MAX_BLOCK_DEPTH`).
-- **Last-resort guard:** `Session::execute` and every step of an interactive command (its factory, `begin`, input, `prompt` and `preview`; `crates/engine/src/guard.rs`) run under `catch_unwind`; an escaped panic restores the drawing and reports an error.
-- **Prove it:** every crash fix lands with a regression test (see `hostile_params_never_panic`, `hostile_dxf_does_not_panic`).
+- **Last-resort guard:** `Session::execute` and every step of an interactive command (its factory, `begin`, input, `prompt`, `preview` and the passes after it; `crates/engine/src/guard.rs`) run under `catch_unwind`; an escaped panic restores the drawing and reports an error. It does nothing on wasm, where a panic aborts.
+- **Prove it:** every crash fix lands with a regression test (see `crates/engine/tests/panic_hunt.rs` and `hostile_dxf_does_not_panic` in `crates/io/src/tests.rs`).
 - Every workspace crate manifest carries `[lints] workspace = true` to inherit `[workspace.lints]`; every production crate root carries `#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]`.
 
 ## Non-negotiables
@@ -47,7 +47,7 @@ People trust CADCraft with their drawings; a crash loses their work. **This outr
 - Parallel agents: separate `CARGO_TARGET_DIR` per agent; edit only the crates you own; delete your target dir when done (disk).
 
 ## Roadmap
-`ROADMAP.md` (committed) is the one-page summary: stage, parity numbers, estimates. It follows craftrules' `standards/progress-docs.md`: the assessment is `docs/target-app-parity.md`, the work list `docs/gaps.md` (pick work from its top rows), milestones `docs/roadmap.md`, deep checklists `docs/geometry-parity.md`, `docs/ui-parity.md`, `docs/file-format-parity.md`, `docs/hardware-parity.md`, `docs/localization-parity.md`. When work lands, update the affected rows and the docs' status lines and revision history. `cargo xtask parity` regenerates the menu-breadth checklist in `docs/parity-checklist.md`.
+`ROADMAP.md` (committed) is the one-page summary: stage, parity numbers, estimates. It follows craftrules' `standards/progress-docs.md`: the assessment is `docs/target-app-parity.md`, the work list `docs/gaps.md` (pick work from its top rows), milestones `docs/roadmap.md`, deep checklists `docs/geometry-parity.md`, `docs/ui-parity.md`, `docs/file-format-parity.md`, `docs/hardware-parity.md`, `docs/localization-parity.md`. PRs don't edit these docs: name the affected rows in the PR description, and maintainers update the rows, status lines and revision history in batches, which keeps open PRs from conflicting. `cargo xtask parity` regenerates the menu-breadth checklist in `docs/parity-checklist.md`.
 
 ## Contributor credits (About window)
 

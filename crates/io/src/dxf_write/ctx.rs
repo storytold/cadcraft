@@ -53,6 +53,8 @@ pub(super) struct Ctx {
     /// The version the file ends up in (the DWG version for a DWG save): it decides which
     /// entity types exist (MULTILEADER from 2007).
     pub(super) target: Version,
+    /// MTEXT columns as the legacy groups 75..79 even from R2018 (the groups AutoLISP lists).
+    pub(super) legacy_columns: bool,
 }
 
 impl Ctx {

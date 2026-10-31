@@ -461,7 +461,7 @@ impl Interactive for GcM {
             }
             Input::Point(p) => {
                 let space = s.space();
-                let Some(h) = crate::select::pick(s.doc()?, &space, p, aperture(s)) else {
+                let Some(h) = s.pick_object(&space, p, aperture(s))? else {
                     s.echo("*Invalid selection*");
                     return Ok(Step::Continue);
                 };
@@ -706,11 +706,11 @@ impl Interactive for DcM {
             Input::Point(p) => {
                 let space = s.space();
                 let ap = aperture(s);
-                let d = s.doc()?;
-                let Some(h) = crate::select::pick(d, &space, p, ap) else {
+                let Some(h) = s.pick_object(&space, p, ap)? else {
                     s.echo("*Invalid selection*");
                     return Ok(Step::Continue);
                 };
+                let d = s.doc()?;
                 let want = match dc {
                     Dc::Radius | Dc::Diameter => Want::Curve,
                     Dc::Angular if self.refs.is_empty() => {

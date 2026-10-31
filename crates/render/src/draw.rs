@@ -103,6 +103,13 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             if !b.opts.text {
                 return;
             }
+            let upright;
+            let t = if e.common.matches_layout_orientation() && t.rotation != 0.0 {
+                upright = cadcraft_doc::Text { rotation: 0.0, ..t.clone() };
+                &upright
+            } else {
+                t
+            };
             let (sh, _) = place_text_entity(ctx.d, t, &t.value);
             b.shaped(ctx, rgb, lw, &sh);
         }
@@ -114,7 +121,11 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             if !b.opts.text {
                 return;
             }
-            mtext(b, ctx, t, rgb, lw);
+            if e.common.matches_layout_orientation() && t.rotation != 0.0 {
+                mtext(b, ctx, &cadcraft_doc::MText { rotation: 0.0, ..t.clone() }, rgb, lw);
+            } else {
+                mtext(b, ctx, t, rgb, lw);
+            }
         }
         EntityKind::Insert(ins) => insert(b, ctx, e, ins, rgb),
         EntityKind::Dimension(dm) => draw_dimension(b, ctx, e, dm, lw, lt.as_ref(), ltscale),

@@ -56,6 +56,7 @@ pub mod palettes;
 pub mod parametric;
 pub mod plotstyles;
 pub mod quick;
+pub mod save_loss;
 pub mod shortcut_menus;
 pub mod theme;
 #[cfg(not(target_arch = "wasm32"))]
@@ -118,7 +119,7 @@ pub struct UiState {
     /// Animation effects (dialog and menu fades, smoothed scrolling): "system" (follow the OS
     /// setting), "on" or "off".
     pub animations: animation::AnimationPref,
-    /// The format Save As suggests for a drawing that has no file yet: "dxf" or "dwg".
+    /// The format Save As suggests: "dxf" or "dwg", for new drawings and opened files alike.
     pub save_format: SaveFormat,
     /// The version Save As writes for a drawing that has no file yet ("2000" … "2018"); a
     /// drawing opened from a file keeps that file's version.
@@ -132,8 +133,8 @@ pub struct UiState {
 /// A DXF/DWG file version (2000 … 2018).
 pub use cadcraft_engine::cmd::file::Version as SaveVersion;
 
-/// The default save format for new drawings, like AutoCAD's Options > Open and Save > "Save as".
-/// A drawing opened from a file keeps that file's format.
+/// The default save format, like AutoCAD's Options > Open and Save > "Save as": the format Save As
+/// suggests for every drawing, an opened DWG or DXF too. Save (QSAVE) of an opened file keeps its file.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SaveFormat {
@@ -158,13 +159,19 @@ impl SaveFormat {
         SaveFormat::ALL.into_iter().find(|f| f.as_str().eq_ignore_ascii_case(s.trim().trim_start_matches('.')))
     }
 
-    /// The name Save As suggests: a title that already has an extension (a drawing opened from a
-    /// file) keeps it; an untitled drawing gets this format's extension.
+    /// The name Save As suggests: this format's extension, replacing a drawing's own (DWG, DXF or
+    /// DWT, from a drawing opened from a file); any other extension is kept.
     pub fn suggested_name(self, title: Option<&str>) -> String {
-        match title.map(str::trim).filter(|t| !t.is_empty()) {
-            Some(t) if std::path::Path::new(t).extension().is_some() => t.to_owned(),
-            Some(t) => format!("{t}.{}", self.as_str()),
-            None => format!("Drawing.{}", self.as_str()),
+        let Some(t) = title.map(str::trim).filter(|t| !t.is_empty()) else { return format!("Drawing.{}", self.as_str()) };
+        let path = std::path::Path::new(t);
+        match path.extension().and_then(|e| e.to_str()) {
+            Some(e) if ["dwg", "dxf", "dwt"].iter().any(|d| d.eq_ignore_ascii_case(e)) => {
+                // the extension is ASCII, so this is a char boundary
+                let stem = t.get(..t.len().saturating_sub(e.len() + 1)).unwrap_or(t);
+                format!("{stem}.{}", self.as_str())
+            }
+            Some(_) => t.to_owned(),
+            None => format!("{t}.{}", self.as_str()),
         }
     }
 }
@@ -284,6 +291,10 @@ pub struct CadApp {
     pub quit_confirmed: bool,
     /// A close request waiting for "Save changes?" answers ([`closing`]).
     pub closing: Option<closing::Closing>,
+    /// A save waiting for an answer about the content the file can't keep ([`save_loss`]).
+    pub save_loss: Option<save_loss::Pending>,
+    /// The loss the user last agreed to, so saving again doesn't ask again ([`save_loss`]).
+    pub save_loss_accepted: Option<save_loss::Accepted>,
     /// Autosave (desktop; `None` until [`Self::enable_autosave`]).
     pub autosave: Option<cadcraft_engine::autosave::Autosaver>,
     /// Drawing Recovery: autosave files a crashed app left behind.
@@ -344,6 +355,8 @@ impl CadApp {
             quit_requested: false,
             quit_confirmed: false,
             closing: None,
+            save_loss: None,
+            save_loss_accepted: None,
             autosave: None,
             recovery: autosave::Recovery::default(),
             gpu_faults: std::sync::Arc::default(),
@@ -409,6 +422,13 @@ impl CadApp {
     /// Submit a line of command-line text. A refused line is echoed to the history; the error is
     /// also returned.
     pub fn cmdline(&mut self, text: &str) -> Option<String> {
+        self.cmdline_or(text, None)
+    }
+
+    /// [`CadApp::cmdline`], but a command name nothing knows (no command, alias, UI command, LISP
+    /// command or system variable) runs `fallback` instead: Enter on a partly typed name accepts
+    /// the highlighted AutoComplete suggestion.
+    pub fn cmdline_or(&mut self, text: &str, fallback: Option<&str>) -> Option<String> {
         if !self.session.prompting() {
             let first = text.split_whitespace().next().unwrap_or("");
             // `cmd {json}` is a programmatic call: the engine runs it with those parameters.
@@ -417,7 +437,11 @@ impl CadApp {
                 return None;
             }
         }
-        let e = self.session.cmdline(text).err()?.to_string();
+        let e = match (self.session.cmdline(text), fallback) {
+            (Ok(()), _) => return None,
+            (Err(cadcraft_engine::EngineError::UnknownCommand(_)), Some(f)) => return self.cmdline(f),
+            (Err(e), _) => e.to_string(),
+        };
         self.session.echo(e.clone());
         Some(e)
     }
@@ -685,11 +709,11 @@ impl CadApp {
         ctx.request_repaint_of(egui::ViewportId::ROOT);
     }
 
-    /// Whether a modal dialog is up: the "Save changes?" prompt or Drawing Recovery. The
+    /// Whether a modal dialog is up: the "Save changes?" prompt, the lossy-save warning or Drawing Recovery. The
     /// floating panels' own OS windows take no input meanwhile (egui's `Modal` blocks only the
     /// main window). The app's other dialogs are ordinary windows that leave the drawing usable.
     pub fn shows_modal(&self) -> bool {
-        self.close_prompt().is_some() || !self.recovery.items.is_empty()
+        self.close_prompt().is_some() || self.save_loss.is_some() || !self.recovery.items.is_empty()
     }
 
     /// Input hook: refresh the raw surface snapshot, put in keys forwarded from floating panels'
@@ -869,6 +893,7 @@ impl CadApp {
         dialogs::show(self, ui.ctx());
         palettes::patterns::prompt_picker(self, ui.ctx());
         closing::prompt(self, ui.ctx());
+        save_loss::prompt(self, ui.ctx());
         autosave::show(self, ui.ctx());
         autosave::gpu_notice(self, ui.ctx());
         self.frame_ms = now_ms() - t0;
@@ -1142,11 +1167,17 @@ mod tests {
         b.start("ui.saveformat.dwg");
         b.start("ui.resetpalettes");
         assert_eq!(b.ui.save_format, SaveFormat::Dwg);
-        // Untitled drawings get the format's extension; files keep their own.
+        // Untitled drawings get the format's extension, and so do opened drawings (#2199).
         assert_eq!(SaveFormat::Dwg.suggested_name(Some("Drawing1")), "Drawing1.dwg");
         assert_eq!(SaveFormat::Dxf.suggested_name(Some("Drawing1")), "Drawing1.dxf");
-        assert_eq!(SaveFormat::Dwg.suggested_name(Some("Floorplan.dxf")), "Floorplan.dxf");
-        assert_eq!(SaveFormat::Dxf.suggested_name(Some("Floorplan.DWG")), "Floorplan.DWG");
+        assert_eq!(SaveFormat::Dwg.suggested_name(Some("Floorplan.dxf")), "Floorplan.dwg");
+        assert_eq!(SaveFormat::Dxf.suggested_name(Some("Floorplan.DWG")), "Floorplan.dxf");
+        assert_eq!(SaveFormat::Dxf.suggested_name(Some("Floorplan.dxf")), "Floorplan.dxf");
+        assert_eq!(SaveFormat::Dwg.suggested_name(Some("Title block.dwt")), "Title block.dwg");
+        assert_eq!(SaveFormat::Dwg.suggested_name(Some("v1.2 plan.Dxf")), "v1.2 plan.dwg");
+        assert_eq!(SaveFormat::Dwg.suggested_name(Some("平面図.dxf")), "平面図.dwg");
+        assert_eq!(SaveFormat::Dwg.suggested_name(Some(".dxf")), ".dxf.dwg", "a dot file has no extension");
+        assert_eq!(SaveFormat::Dxf.suggested_name(Some("logo.svg")), "logo.svg", "other files keep their type");
         assert_eq!(SaveFormat::Dwg.suggested_name(None), "Drawing.dwg");
         assert_eq!(SaveFormat::Dwg.suggested_name(Some("  ")), "Drawing.dwg");
         let ui: UiState = serde_json::from_value(json!({ "saveFormat": "dwg" })).unwrap_or_default();

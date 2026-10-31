@@ -44,13 +44,83 @@ fn add_and_extents() {
 }
 
 #[test]
-fn hidden_layers_excluded_from_extents() {
+fn frozen_layers_are_left_out_of_extents_and_layers_turned_off_are_not() {
     let mut d = Drawing::new_imperial();
     let c = Common { layer: "Hidden".into(), ..Default::default() };
     d.add(&Space::Model, c, line((100.0, 100.0), (200.0, 200.0))).unwrap();
     d.add(&Space::Model, Common::default(), line((0.0, 0.0), (1.0, 1.0))).unwrap();
     d.layer_mut("Hidden").unwrap().on = false;
+    assert_eq!(d.extents(&Space::Model).max, Vec2::new(200.0, 200.0));
+    d.layer_mut("Hidden").unwrap().frozen = true;
     assert_eq!(d.extents(&Space::Model).max, Vec2::new(1.0, 1.0));
+}
+
+/// ZOOM Extents in AutoCAD 2024 (accoreconsole, EXTMIN/EXTMAX read back; AutoCAD pads them by a
+/// few hundredths): a layer turned off counts and a frozen one does not, for an entity, for an
+/// entity inside a block, and for a block reference itself.
+#[test]
+fn extents_count_layers_turned_off_as_autocad() {
+    let mut d = Drawing::new_imperial();
+    for (name, on, frozen) in [("OFFL", false, false), ("FRZ", true, true), ("BOFF", false, false), ("BFRZ", true, true)] {
+        let mut l = Layer::new(name);
+        (l.on, l.frozen) = (on, frozen);
+        d.layers.push(l);
+    }
+    for (layer, b) in [("0", (10.0, 10.0)), ("OFFL", (100.0, 0.0)), ("FRZ", (0.0, 200.0))] {
+        d.add(&Space::Model, Common { layer: layer.into(), ..Default::default() }, line((0.0, 0.0), b)).unwrap();
+    }
+    // AutoCAD: (-0.013, -0.009)…(100.027, 10.006).
+    assert_eq!(extents_pair(&d), (Vec2::ZERO, Vec2::new(100.0, 10.0)));
+
+    let mut d = Drawing::new_imperial();
+    for (name, on, frozen) in [("FRZ", true, true), ("BOFF", false, false), ("BFRZ", true, true)] {
+        let mut l = Layer::new(name);
+        (l.on, l.frozen) = (on, frozen);
+        d.layers.push(l);
+    }
+    let mut blk = Block::new("BX");
+    blk.entities.push(on_layer("0", line((0.0, 0.0), (1.0, 1.0)), 1));
+    blk.entities.push(on_layer("BOFF", line((0.0, 0.0), (50.0, 0.0)), 2));
+    blk.entities.push(on_layer("BFRZ", line((0.0, 0.0), (0.0, 70.0)), 3));
+    d.blocks.insert("BX".into(), std::sync::Arc::new(blk));
+    let at = |x: f64| match plain_insert("BX") {
+        EntityKind::Insert(i) => EntityKind::Insert(Insert { insert: Vec3::new(x, x, 0.0), ..i }),
+        k => k,
+    };
+    d.add(&Space::Model, Common::default(), at(1000.0)).unwrap();
+    d.add(&Space::Model, Common { layer: "FRZ".into(), ..Default::default() }, at(-500.0)).unwrap();
+    // AutoCAD: (1000, 1000)…(1050, 1001).
+    assert_eq!(extents_pair(&d), (Vec2::new(1000.0, 1000.0), Vec2::new(1050.0, 1001.0)));
+
+    // An insert's attributes lie on their own layer, else on their definition's: one on a frozen
+    // layer either way does not count, one on a layer turned off does.
+    let mut d = Drawing::new_imperial();
+    for (name, on, frozen) in [("IOFF", false, false), ("AOFF", false, false), ("AFRZ", true, true)] {
+        let mut l = Layer::new(name);
+        (l.on, l.frozen) = (on, frozen);
+        d.layers.push(l);
+    }
+    let attrib = |tag: &str, at: (f64, f64), layer: Option<&str>| {
+        let mut a = plain_attrib(tag);
+        a.text.insert = Vec3::new(at.0, at.1, 0.0);
+        a.props.layer = layer.map(str::to_string);
+        a
+    };
+    let mut blk = Block::new("BA");
+    blk.entities.push(on_layer("0", line((0.0, 0.0), (1.0, 1.0)), 1));
+    blk.entities.push(on_layer("AFRZ", EntityKind::AttDef(plain_attrib("DEF")), 2));
+    d.blocks.insert("BA".into(), std::sync::Arc::new(blk));
+    let ins = match plain_insert("BA") {
+        EntityKind::Insert(i) => {
+            let attribs =
+                vec![attrib("OWN", (0.0, 300.0), Some("AFRZ")), attrib("DEF", (0.0, -400.0), None), attrib("OFF", (40.0, 0.0), Some("AOFF"))];
+            EntityKind::Insert(Insert { attribs, ..i })
+        }
+        k => k,
+    };
+    d.add(&Space::Model, Common { layer: "IOFF".into(), ..Default::default() }, ins).unwrap();
+    let (min, max) = extents_pair(&d);
+    assert!(min.y > -1.0 && max.y < 50.0 && max.x > 40.0, "{min:?} {max:?}");
 }
 
 #[test]
@@ -315,6 +385,31 @@ fn plain_insert(block: &str) -> EntityKind {
     })
 }
 
+/// An attribute (or its definition) `tag` at the origin, one unit high, reading "x".
+fn plain_attrib(tag: &str) -> Attrib {
+    Attrib {
+        tag: tag.into(),
+        text: Text {
+            insert: Vec3::ZERO,
+            align_pt: None,
+            height: 1.0,
+            value: "x".into(),
+            rotation: 0.0,
+            width_factor: 1.0,
+            oblique: 0.0,
+            style: "Standard".into(),
+            halign: HAlign::Left,
+            valign: VAlign::Baseline,
+        },
+        invisible: false,
+        constant: false,
+        prompt: String::new(),
+        props: Default::default(),
+        multiline: None,
+        modes: Default::default(),
+    }
+}
+
 fn on_layer(layer: &str, kind: EntityKind, h: u64) -> Entity {
     Entity { handle: Handle(h), common: Common { layer: layer.into(), ..Default::default() }, kind }
 }
@@ -383,24 +478,18 @@ fn block_entity_with_invisible_flag_is_ignored_in_insert_extents() {
 }
 
 #[test]
-fn block_entity_on_off_or_frozen_layer_is_ignored() {
-    for frozen in [false, true] {
-        let mut d = drawing_with_block(far_line("Hidden"));
-        assert!(d.layer("Hidden").is_none(), "block contents do not create layers");
-        let mut layer = Layer::new("Hidden");
-        if frozen {
-            layer.frozen = true;
-        } else {
-            layer.on = false;
-        }
-        d.layers.push(layer);
-        assert_eq!(extents_pair(&d), (Vec2::ZERO, Vec2::new(1.0, 1.0)), "frozen = {frozen}");
-        // Turned back on, it counts again.
-        let l = d.layer_mut("Hidden").unwrap();
-        l.on = true;
-        l.frozen = false;
-        assert_eq!(d.extents(&Space::Model).max, Vec2::new(6000.0, 6000.0));
-    }
+fn block_entity_on_frozen_layer_is_ignored_and_on_a_layer_turned_off_counts() {
+    let mut d = drawing_with_block(far_line("Hidden"));
+    assert!(d.layer("Hidden").is_none(), "block contents do not create layers");
+    let mut layer = Layer::new("Hidden");
+    layer.frozen = true;
+    d.layers.push(layer);
+    assert_eq!(extents_pair(&d), (Vec2::ZERO, Vec2::new(1.0, 1.0)));
+    // Thawed but turned off, it counts.
+    let l = d.layer_mut("Hidden").unwrap();
+    l.frozen = false;
+    l.on = false;
+    assert_eq!(d.extents(&Space::Model).max, Vec2::new(6000.0, 6000.0));
 }
 
 #[test]
@@ -558,10 +647,10 @@ fn invisible_dimblock_entity_is_ignored_in_dimension_extents() {
     hidden.common.visible = false;
     dim(&mut d, hidden);
     assert!(d.extents(&Space::Model).max.x < 100.0);
-    // Hidden by its layer state.
+    // Hidden by its layer state (frozen; a layer turned off still counts).
     let mut d = Drawing::new_imperial();
     let mut l = Layer::new("*ADSK_CONSTRAINTS");
-    l.on = false;
+    l.frozen = true;
     d.layers.push(l);
     dim(&mut d, on_layer("*ADSK_CONSTRAINTS", line((5000.0, 5000.0), (6000.0, 6000.0)), 2));
     assert!(d.extents(&Space::Model).max.x < 100.0);

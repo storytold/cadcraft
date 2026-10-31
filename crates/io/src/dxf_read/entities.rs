@@ -539,7 +539,7 @@ pub(super) fn insert_attribs(recs: &[(String, Vec<Tag>)], i: &mut usize, ins_lay
                 tag: own.s(2).unwrap_or_default(),
                 text,
                 invisible: own.i(70).unwrap_or(0) & 1 != 0,
-                constant: false,
+                constant: own.i(70).unwrap_or(0) & 2 != 0,
                 prompt: String::new(),
                 props: attrib_props(&tt, ins_layer),
                 multiline,
