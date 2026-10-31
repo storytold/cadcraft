@@ -40,6 +40,9 @@ struct App {
     system_animations: system_animations::SystemAnimations,
     workspace: workspace::Workspace,
     workspace_error: Option<String>,
+    /// `App::ui` ran after the last `App::logic`. A logic-only tick (window minimized or occluded) leaves it false, and
+    /// the next `logic` shows the system cursor.
+    ui_since_logic: bool,
     #[cfg(target_os = "macos")]
     native_menu: Option<native_menu::NativeMenu>,
     /// `CADCRAFT_NO_NATIVE_MENU`: the menus stay inside the window.
@@ -49,6 +52,54 @@ struct App {
     #[cfg(target_os = "macos")]
     movable: Option<bool>,
 }
+
+impl App {
+    /// The system cursor is hidden over the drawing area, where the drawn crosshair is the pointer (as in games). macOS
+    /// shake-to-locate reveals a cursor that is only made transparent, so it is hidden with AppKit. Only while the window
+    /// has focus, so it never stays hidden over other apps.
+    fn update_system_cursor(&mut self, ctx: &egui::Context) {
+        let hide = self.cad.canvas.hide_system_cursor && ctx.input(|i| i.focused);
+        apply_system_cursor(hide);
+    }
+}
+
+/// The system cursor must be shown now, from `App::logic`: the window is hidden (minimized or occluded) or has lost
+/// focus, or the last logic tick never reached `App::ui`. eframe runs only `logic` while the window is hidden, so
+/// `App::update_system_cursor` would never get to show a hidden cursor and it would stay hidden over other apps.
+fn system_cursor_must_show(viewport: &egui::ViewportInfo, focused: bool, ui_since_logic: bool) -> bool {
+    viewport.visible() == Some(false) || !focused || !ui_since_logic
+}
+
+/// The system cursor is hidden over the drawing area (see `App::update_system_cursor`). Global, so the native file
+/// dialogs (`services`) can show it while they are open.
+static SYSTEM_CURSOR_HIDDEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn apply_system_cursor(hide: bool) {
+    if SYSTEM_CURSOR_HIDDEN.swap(hide, std::sync::atomic::Ordering::Relaxed) != hide {
+        set_system_cursor_hidden(hide);
+    }
+}
+
+/// Run a native file dialog with the system cursor shown: it is modal and blocks the frame loop, so a cursor hidden
+/// over the drawing area would stay hidden over the dialog. The next frame hides it again if the pointer is still
+/// over the drawing area.
+fn with_system_cursor<T>(dialog: impl FnOnce() -> T) -> T {
+    apply_system_cursor(false);
+    dialog()
+}
+
+/// Each hide is matched by one unhide: `apply_system_cursor` calls this only when the state changes.
+#[cfg(target_os = "macos")]
+fn set_system_cursor_hidden(hide: bool) {
+    if hide {
+        objc2_app_kit::NSCursor::hide();
+    } else {
+        objc2_app_kit::NSCursor::unhide();
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_system_cursor_hidden(_hide: bool) {}
 
 impl App {
     /// `ctx` is `None` only for the final attempt at exit.
@@ -84,6 +135,11 @@ fn follow_desktop(raw: &mut egui::RawInput, desktop: Option<egui::Theme>) {
 impl eframe::App for App {
     /// eframe logic callback: syncs the OS animation setting and runs `CadApp::logic`; when the pass index is 0 (the first pass or a hidden tick) it also installs/polls the macOS native menu, polls the spacemouse and persists the workspace; a quit request closes the viewport.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Read from the raw input: a logic-only tick updates the viewport info and focus there, but not the ui input.
+        let (viewport, focused) = ctx.input(|i| (i.raw.viewport().clone(), i.raw.focused));
+        if system_cursor_must_show(&viewport, focused, std::mem::replace(&mut self.ui_since_logic, false)) {
+            apply_system_cursor(false);
+        }
         self.cad.system_animations = self.system_animations.current();
         // Consume control/open/screenshot queues and time-based autosave, including hidden ticks.
         self.cad.logic(ctx);
@@ -116,13 +172,17 @@ impl eframe::App for App {
         cadcraft_ui_egui::cmdline::capture_tab(ctx, raw);
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.cad.canvas.hide_system_cursor = false;
         self.cad.ui(ui);
         #[cfg(target_os = "macos")]
         craft_window::title_bar::sync_movable(ui.ctx(), &mut self.movable);
+        self.update_system_cursor(ui.ctx());
+        self.ui_since_logic = true;
     }
     /// A normal exit: the workspace is saved, and this run's autosave files are not needed (a
     /// crash leaves them for recovery).
     fn on_exit(&mut self) {
+        apply_system_cursor(false);
         self.persist_workspace(None);
         self.cad.cancel_screenshots();
         self.cad.shutdown_autosave();
@@ -158,25 +218,29 @@ pub fn install_io() {
 fn services() -> Services {
     Services {
         pick_open: Some(Box::new(|| {
-            rfd::FileDialog::new()
-                .add_filter(i18n::t("Drawings (DWG, DXF)"), &["dwg", "dxf", "dwt"])
-                .add_filter(i18n::t("SVG drawings (SVG, SVGZ)"), &["svg", "svgz"])
-                .add_filter(i18n::t("All files"), &["*"])
-                .pick_file()
-                .map(|p| p.to_string_lossy().to_string())
+            with_system_cursor(|| {
+                rfd::FileDialog::new()
+                    .add_filter(i18n::t("Drawings (DWG, DXF)"), &["dwg", "dxf", "dwt"])
+                    .add_filter(i18n::t("SVG drawings (SVG, SVGZ)"), &["svg", "svgz"])
+                    .add_filter(i18n::t("All files"), &["*"])
+                    .pick_file()
+                    .map(|p| p.to_string_lossy().to_string())
+            })
         })),
         pick_save: Some(Box::new(|name: &str| {
-            filters_for_save(name)
-                .iter()
-                .fold(rfd::FileDialog::new().set_file_name(name), |d, (label, ext)| d.add_filter(i18n::t(label), &[*ext]))
-                .save_file()
-                .map(|p| p.to_string_lossy().to_string())
+            with_system_cursor(|| {
+                filters_for_save(name)
+                    .iter()
+                    .fold(rfd::FileDialog::new().set_file_name(name), |d, (label, ext)| d.add_filter(i18n::t(label), &[*ext]))
+                    .save_file()
+                    .map(|p| p.to_string_lossy().to_string())
+            })
         })),
         // APPLOAD: AutoLISP routines only, starting where the last one was loaded from.
         pick_lisp: Some(Box::new(|dir: &str| {
             let dialog = rfd::FileDialog::new().add_filter(i18n::t("AutoLISP (LSP)"), &["lsp"]).add_filter(i18n::t("All files"), &["*"]);
             let dialog = if dir.is_empty() { dialog } else { dialog.set_directory(dir) };
-            dialog.pick_file().map(|p| p.to_string_lossy().to_string())
+            with_system_cursor(|| dialog.pick_file().map(|p| p.to_string_lossy().to_string()))
         })),
         no_file_system: false,
     }
@@ -370,6 +434,7 @@ fn main() -> eframe::Result {
                 spacemouse: spacemouse::SpaceMouse::start(cc.egui_ctx.clone()),
                 workspace,
                 workspace_error,
+                ui_since_logic: true,
                 #[cfg(target_os = "macos")]
                 native_menu: None,
                 #[cfg(target_os = "macos")]
@@ -383,7 +448,22 @@ fn main() -> eframe::Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{filters_for_save, follow_desktop};
+    use super::{filters_for_save, follow_desktop, system_cursor_must_show};
+
+    /// A hidden window only gets `App::logic`, so `logic` itself must show a cursor hidden over the drawing area.
+    #[test]
+    fn a_hidden_or_unfocused_window_shows_the_system_cursor() {
+        let shown = egui::ViewportInfo { minimized: Some(false), occluded: Some(false), ..Default::default() };
+        assert!(!system_cursor_must_show(&shown, true, true), "a shown, focused window keeps the canvas's choice");
+        let minimized = egui::ViewportInfo { minimized: Some(true), ..shown.clone() };
+        assert!(system_cursor_must_show(&minimized, true, true));
+        let occluded = egui::ViewportInfo { occluded: Some(true), ..shown.clone() };
+        assert!(system_cursor_must_show(&occluded, true, true));
+        assert!(system_cursor_must_show(&shown, false, true), "focus lost");
+        assert!(system_cursor_must_show(&shown, true, false), "the last logic tick never reached App::ui");
+        let unknown = egui::ViewportInfo::default();
+        assert!(!system_cursor_must_show(&unknown, true, true), "no visibility report: the ui keeps running");
+    }
 
     #[test]
     fn save_dialog_offers_dwg_with_the_drawing_format_first() {

@@ -114,6 +114,9 @@ pub struct CanvasState {
     /// Milliseconds spent converting the display list to vertex data (last rebuild).
     pub mesh_ms: f64,
     pub rect: Option<Rect>,
+    /// The pointer is over the drawing area, where the drawn crosshair is the pointer and the system cursor is hidden.
+    /// `show` sets it each frame; the app hides and shows the system cursor to match.
+    pub hide_system_cursor: bool,
     pub xf: Option<Xf>,
     pub hover: Option<Handle>,
     pub snap: Option<SnapHit>,
@@ -496,20 +499,25 @@ fn paint_pointer_overlay(
     if app.ui.show_command_line {
         crate::cmdline::show(app, ui, full);
     }
-    // Crosshair cursor.
-    if inside && !on_menu {
-        // Hide the OS cursor under the drawn crosshair, unless assistive tech needs it (#39).
+    // The software draws the pointer across the drawing area, and the system cursor is hidden there, as in games. This is
+    // set after the overlays (ViewCube, UCS icon, command line), so their hover cursors cannot bring it back. Floating
+    // windows and menus (including the canvas's own option and cycling menus) are not drawing area and keep the arrow.
+    let over_drawing = !on_menu && hover_pos.is_some_and(|p| rect.contains(p) && ui.ctx().layer_id_at(p) == Some(ui.layer_id()));
+    if over_drawing {
+        // The system crosshair stays visible when assistive tech needs it (#39).
         ui.ctx().set_cursor_icon(if app.ui.system_cursor { egui::CursorIcon::Crosshair } else { egui::CursorIcon::None });
-        if let Some(hp) = hover_pos {
-            // Use the painted sheet even in MSPACE, where the editing transform follows a
-            // model viewport. The whole cursor takes one colour from its centre.
-            let ink = paper_rect.map_or(t.crosshair, |paper| crate::theme::crosshair_color(if paper.contains(hp) { t.paper } else { surround }));
-            draw_crosshair(app, painter, rect, hp, selecting, ink);
-            if app.canvas.cycle_badge && app.canvas.cycle.is_none() {
-                cycle_badge(painter, hp);
-            }
+    }
+    app.canvas.hide_system_cursor = over_drawing && !app.ui.system_cursor;
+    if over_drawing && let Some(hp) = hover_pos {
+        // Use the painted sheet even in MSPACE, where the editing transform follows a
+        // model viewport. The whole cursor takes one colour from its centre.
+        let ink = paper_rect.map_or(t.crosshair, |paper| crate::theme::crosshair_color(if paper.contains(hp) { t.paper } else { surround }));
+        draw_crosshair(app, painter, rect, hp, selecting, ink);
+        if app.canvas.cycle_badge && app.canvas.cycle.is_none() {
+            cycle_badge(painter, hp);
         }
     }
+    let mut tooltip = false;
     if inside
         && app.session.settings.dynmode
         && let Some(hp) = hover_pos
@@ -519,7 +527,12 @@ fn paint_pointer_overlay(
         let fields = crate::grip_dyn::draw(app, painter);
         if !fields || app.session.current_prompt().is_some_and(|p| p.distance) {
             dynamic_input(app, painter, hp, fields);
+            tooltip = true;
         }
+    }
+    // Without the tooltip its options menu is not on screen, so a click cannot pick one of last frame's rows.
+    if !tooltip {
+        app.cmd.option_rows.clear();
     }
     // Over the crosshair, so the row under the pointer reads clearly.
     cycle_list(app, painter);
