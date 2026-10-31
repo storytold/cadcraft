@@ -512,7 +512,7 @@ impl CadApp {
         if let Some(dir) = v.get("lispDir").and_then(Value::as_str).filter(|d| !d.is_empty()) {
             self.ui.last_lisp_dir = Some(dir.to_string());
         }
-        if let Some(keys) = v.get("shortcuts") {
+        if let Some(keys) = v.get("shortcuts").filter(|k| k.is_object()) {
             self.ui.shortcuts = keys::from_prefs(keys);
         }
     }
