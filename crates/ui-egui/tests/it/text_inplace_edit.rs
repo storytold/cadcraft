@@ -8,6 +8,7 @@ use cadcraft_engine::{Input, Session};
 use cadcraft_ui_egui::{CadApp, Services, text_editor};
 use egui::{Event, Key, Modifiers, PointerButton, Pos2, vec2};
 use egui_kittest::Harness;
+use egui_kittest::kittest::Queryable;
 use serde_json::json;
 
 fn harness() -> Harness<'static, CadApp> {
@@ -92,6 +93,26 @@ fn escape_keeps_the_text_and_an_attribute_definition_edits_its_default() {
     h.run_steps(2);
     key(&mut h, Key::Enter);
     assert_eq!(value(&h, 1), "12");
+}
+
+#[test]
+fn the_field_is_named_and_escape_over_a_dialog_keeps_the_text() {
+    let mut h = harness();
+    double_click(&mut h, Vec2::new(4.0, 1.2));
+    // Screen readers name the field by the prompt it answers (it has no caption).
+    let _ = h.get_by_label("Enter new text");
+    h.event(Event::Text("X".into()));
+    h.run_steps(2);
+
+    // Plot Preview from the toolbar takes the field's focus. Escape then closes the preview and,
+    // at the command line, ends TEXTEDIT as it ends any command: the text stays as it was.
+    h.get_by_label("Plot Preview").click();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.dialog.as_deref(), Some("preview"));
+    key(&mut h, Key::Escape);
+    assert!(h.state().ui.dialog.is_none(), "the preview closed");
+    assert!(text_editor::editing(&h.ctx).is_none(), "the field is gone");
+    assert_eq!(value(&h, 0), "HELLO", "the draft isn't applied");
 }
 
 #[test]
