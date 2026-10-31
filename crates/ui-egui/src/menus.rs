@@ -40,6 +40,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.toggle.cmdline", "Command Line", &["Window", "Command Line"], Some("Cmd+9")),
     ("ui.toggle.viewcube", "ViewCube", &["View", "ViewCube", "On"], None),
     ("ui.toggle.ucsicon", "UCS Icon", &["View", "UCS Icon", "On"], None),
+    ("ui.toggle.ucsicon.origin", "UCS Icon at Origin", &["View", "UCS Icon", "Origin"], None),
     ("ui.theme.system", "Use System Setting", &["View", "Interface Theme", "Use System Setting"], None),
     ("ui.theme.light", "Light", &["View", "Interface Theme", "Light"], None),
     ("ui.theme.dark", "Dark", &["View", "Interface Theme", "Dark"], None),
@@ -237,9 +238,12 @@ fn run_ui_toggle_command(app: &mut CadApp, id: &str, params: &Value) -> Option<R
             toggle(&mut app.ui.show_viewcube, params);
             Ok(Value::Null)
         }
-        "ui.toggle.ucsicon" => {
-            toggle(&mut app.ui.show_ucs_icon, params);
-            Ok(Value::Null)
+        // UCSICON's bits, through its command: 1 shown, 2 at the UCS origin.
+        "ui.toggle.ucsicon" | "ui.toggle.ucsicon.origin" => {
+            let (key, bit) = if id == "ui.toggle.ucsicon" { ("on", 1) } else { ("origin", 2) };
+            let mut on = app.session.ucsicon_bits() & bit != 0;
+            toggle(&mut on, params);
+            app.run("ucsicon", json!({ key: on }))
         }
         "ui.toggle.menubar" => {
             toggle(&mut app.ui.in_window_menu, params);

@@ -1051,6 +1051,17 @@ pub fn ortho(base: Vec2, p: Vec2) -> Vec2 {
     if d.x.abs() >= d.y.abs() { Vec2::new(p.x, base.y) } else { Vec2::new(base.x, p.y) }
 }
 
+/// [`ortho`] along axes turned by `angle` radians (the current UCS's).
+pub fn ortho_at(base: Vec2, p: Vec2, angle: f64) -> Vec2 {
+    if !angle.is_finite() || angle == 0.0 {
+        return ortho(base, p);
+    }
+    let d = (p - base).rotate(-angle);
+    let along = if d.x.abs() >= d.y.abs() { Vec2::new(d.x, 0.0) } else { Vec2::new(0.0, d.y) };
+    let r = base + along.rotate(angle);
+    if r.is_finite() { r } else { p }
+}
+
 /// Polar tracking: if the direction base→p is within `tol` radians of a multiple of `inc`,
 /// return the point projected onto that ray and the angle.
 pub fn polar(base: Vec2, p: Vec2, inc: f64, tol: f64) -> Option<(Vec2, f64)> {
@@ -1084,10 +1095,24 @@ pub fn grid_snap(p: Vec2, unit: Vec2, origin: Vec2, angle: f64) -> Vec2 {
     if s.is_finite() { s } else { p }
 }
 
-/// The snap grid's origin (SNAPBASE) and rotation in radians (SNAPANG, in degrees) of a drawing.
+/// The snap grid's origin (SNAPBASE) and rotation in radians (SNAPANG, in degrees) of a drawing,
+/// as stored: in the UCS ([`grid_frame_in`] places them in the world).
 pub fn grid_frame(d: &Drawing) -> (Vec2, f64) {
     let base = d.header.point("SNAPBASE").map(|p| p.xy()).filter(|p| p.is_finite()).unwrap_or(Vec2::ZERO);
     (base, d.header.f64("SNAPANG", 0.0).to_radians())
+}
+
+/// The snap grid's origin and rotation in world coordinates, for `space`: SNAPBASE is a point of
+/// the current UCS and SNAPANG is measured from its X axis, so the grid and grid snap lie in the
+/// UCS (in the World UCS while it is tilted out of the XY plane).
+pub fn grid_frame_in(d: &Drawing, space: &Space) -> (Vec2, f64) {
+    let (base, angle) = grid_frame(d);
+    let (ucs, _) = crate::ucs::current(d, space);
+    if !ucs.is_planar() {
+        return (base, angle);
+    }
+    let (o, a) = (ucs.to_wcs(base), ucs.rotation() + angle);
+    if o.is_finite() && a.is_finite() { (o, a) } else { (base, angle) }
 }
 
 #[cfg(test)]

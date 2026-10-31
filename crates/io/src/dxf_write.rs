@@ -9,7 +9,7 @@ use cadcraft_color::Color;
 use cadcraft_doc::{
     AssocSnap, Attrib, Block, Common, DimAssoc, DimKind, DimStyle, Dimension, Drawing, Entity, EntityKind, EntityStore, Gradient, Group, HAlign,
     HVal, Handle, Hatch, Insert, Layout, Leader, Line, Lineweight, LwPolyline, MLeader, MLeaderStyle, MText, PageSetup, Point, Solid, Space, Table,
-    TableStyle, Text, Transparency, VAlign, VportConfig, VportTile,
+    TableStyle, Text, Transparency, Ucs, VAlign, VportConfig, VportTile,
 };
 use cadcraft_dxf::{Tag, Version};
 use cadcraft_geom::{Bounds2, Vec2, Vec3};
@@ -43,6 +43,11 @@ struct W {
     pstyles: HashMap<String, String>,
     /// Upper-case layer name → its LAYER table record handle (group 341 of viewports).
     layers: HashMap<String, String>,
+    /// Upper-case UCS name → its UCS table record handle (group 345 of layouts and viewports).
+    ucss: HashMap<String, String>,
+    /// Active VPORT group-345 tags (their index in `t`) waiting for the handle of the named UCS
+    /// (upper case) they refer to, filled in after the UCS table is written.
+    vport_ucs: Vec<(usize, String)>,
     /// Persistent reactors of boundary objects: each source object of an associative hatch →
     /// the hatches (groups `{ACAD_REACTORS 330 …}`), from [`hatch_reactors`].
     reactors: HashMap<Handle, Vec<String>>,
@@ -145,6 +150,8 @@ pub fn entity_groups(d: &Drawing, e: &Entity) -> (String, Vec<Tag>) {
         next: d.handseed.max(0x100).saturating_add(0x1000),
         pstyles: HashMap::new(),
         layers: HashMap::new(),
+        ucss: HashMap::new(),
+        vport_ucs: Vec::new(),
         reactors: HashMap::new(),
     };
     let cx = Ctx { target: Version::R2018, legacy_columns: true, ..Ctx::default() };

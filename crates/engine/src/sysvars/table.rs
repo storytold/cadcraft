@@ -73,6 +73,9 @@ const HEADER: &[(&str, Kind, Def)] = &[
     ("TEXTFILL", Kind::Choice(&[0, 1]), Def::Int(1)),
     ("TRIMEXTENDMODE", Kind::Choice(&[0, 1]), Def::Int(1)),
     ("TRIMMODE", Kind::Choice(&[0, 1]), Def::Int(1)),
+    ("UCSAXISANG", Kind::Choice(&[5, 10, 15, 18, 22, 30, 45, 90, 180]), Def::Int(90)),
+    // 1: the UCS icon is shown; 2: at the UCS origin when that is on screen.
+    ("UCSICON", Kind::Int(0, 3), Def::Int(3)),
     ("WIPEOUTFRAME", Kind::Choice(&[0, 1, 2]), Def::Int(1)),
 ];
 

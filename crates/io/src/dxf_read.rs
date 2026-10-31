@@ -61,6 +61,8 @@ struct Rx {
     block_arrays: HashMap<String, cadcraft_doc::ArrayParams>,
     /// LAYER record handle (upper case) → layer name (VIEWPORT group 341 frozen layers).
     layers: HashMap<String, String>,
+    /// UCS record handle (upper case) → UCS name (a layout's named UCS, group 345).
+    ucss: HashMap<String, String>,
 }
 
 /// Read a DXF file into a drawing.

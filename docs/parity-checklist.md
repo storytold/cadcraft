@@ -4,17 +4,17 @@
 
 Menu-breadth parity: a reference menu item counts as covered when a CADCraft command is registered under the same menu label. It measures breadth, not depth; see [target-app-parity.md](target-app-parity.md) for the weighted assessment.
 
-**Menu breadth: 298 / 491 items (61%)** · 444 registered commands.
+**Menu breadth: 305 / 491 items (62%)** · 451 registered commands.
 
 | Menu | Items | Covered | % |
 |---|---|---|---|
 | File | 22 | 13 | 59% |
 | Edit | 13 | 12 | 92% |
-| View | 75 | 37 | 49% |
+| View | 75 | 38 | 51% |
 | Insert | 11 | 5 | 45% |
 | Format | 27 | 26 | 96% |
-| Tools | 85 | 66 | 78% |
-| Draw | 87 | 55 | 63% |
+| Tools | 85 | 71 | 84% |
+| Draw | 87 | 56 | 64% |
 | Dimension | 28 | 28 | 100% |
 | Modify | 113 | 53 | 47% |
 | Window | 22 | 3 | 14% |
@@ -65,7 +65,6 @@ Menu-breadth parity: a reference menu item counts as covered when a CADCraft com
 - View > Render > Light > New Distant Light
 - View > Render > Light > Light Glyphs
 - View > Render > Materials Browser
-- View > UCS Icon > Origin
 - View > UCS Icon > Properties...
 - View > ViewCube > Settings
 - View > Lights
@@ -80,15 +79,10 @@ Menu-breadth parity: a reference menu item counts as covered when a CADCraft com
 - Tools > Spelling
 - Tools > Update Fields
 - Tools > Edit Xref in Place
-- Tools > New UCS > World
 - Tools > New UCS > Face
-- Tools > New UCS > View
-- Tools > New UCS > Origin
 - Tools > New UCS > Z Axis Vector
-- Tools > New UCS > 3 Point
 - Tools > New UCS > X
 - Tools > New UCS > Y
-- Tools > New UCS > Z
 - Tools > Named UCS...
 - Tools > Customize > Interface (CUI)...
 - Tools > Import Settings
@@ -126,7 +120,6 @@ Menu-breadth parity: a reference menu item counts as covered when a CADCraft com
 - Draw > 3D Modeling > Meshes > Meshes, Ruled Surface
 - Draw > 3D Modeling > Meshes > Meshes, Edge Surface
 - Draw > 3D Modeling > Setup > Drawing
-- Draw > 3D Modeling > Setup > View
 - Draw > 3D Modeling > Setup > Profile
 - Modify > Object > External Reference > Frame
 - Modify > Object > Image > Adjust...

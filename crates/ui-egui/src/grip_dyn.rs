@@ -309,8 +309,8 @@ mod tests {
         for cartesian in [true, false] {
             let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
             app.session.settings.dynpi_cartesian = cartesian;
-            // The UCS icon paints "X" and "Y" too.
-            app.ui.show_ucs_icon = false;
+            // The UCS icon paints "X" and "Y" too: off (UCSICON, which the drawing keeps).
+            app.run("ucsicon", serde_json::json!({"on": false})).unwrap();
             let ctx = egui::Context::default();
             crate::canvas::tests::painted_text(&mut app, &ctx, pos2(700.0, 450.0));
             let at = app.canvas.xf.unwrap().to_screen(Vec2::ZERO) + vec2(130.0, -70.0);

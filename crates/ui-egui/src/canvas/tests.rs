@@ -1,5 +1,22 @@
+use super::cursor::tooltip_angle;
 use super::*;
 use cadcraft_render::DPrim;
+
+/// Tracking tooltips give angles in the current UCS: a path along a UCS turned 30° reads 0°,
+/// one along World X reads 330°, and the World UCS reads world angles.
+#[test]
+fn tooltip_angles_are_measured_from_the_ucs_x_axis() {
+    let o = Vec2::new(2.0, 1.0);
+    let at = |deg: f64| o + Vec2::from_angle(deg.to_radians()) * 5.0;
+    assert_eq!(tooltip_angle(o, at(90.0), 0.0), 90);
+    assert_eq!(tooltip_angle(o, at(-45.0), 0.0), 315);
+    let ucs = 30f64.to_radians();
+    assert_eq!(tooltip_angle(o, at(30.0), ucs), 0);
+    assert_eq!(tooltip_angle(o, at(0.0), ucs), 330);
+    assert_eq!(tooltip_angle(o, at(120.0), ucs), 90);
+    // A non-finite angle shows a number, not a panic.
+    assert!((0..360).contains(&tooltip_angle(o, o, f64::NAN)));
+}
 
 fn list(handles: &[u64]) -> DisplayList {
     let prim =

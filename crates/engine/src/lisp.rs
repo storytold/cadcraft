@@ -506,7 +506,7 @@ impl Session {
     /// A routine waits for the user's answer to a `get…` function: its prompt.
     pub(crate) fn lisp_prompt(&self) -> Option<Prompt> {
         match self.lisp.run.as_ref()?.waiting.as_ref()? {
-            Need::Get(req) => Some(req.prompt()),
+            Need::Get(req) => Some(req.prompt(&self.input_ucs())),
             _ => None,
         }
     }
@@ -517,10 +517,15 @@ impl Session {
         let Need::Get(req) = self.lisp.run.as_ref()?.waiting.as_ref()? else { return None };
         let line =
             |a: cadcraft_geom::Vec2, b: cadcraft_geom::Vec2| cadcraft_doc::EntityKind::Line(cadcraft_doc::Line { a: a.to3(0.0), b: b.to3(0.0) });
-        let Some(b) = req.first.or(req.base).map(|p| cadcraft_geom::Vec2::new(p[0], p[1])) else { return Some(Vec::new()) };
+        // The base is a UCS point (as the routine gave it); the preview is drawn in world space.
+        let ucs = self.input_ucs();
+        let Some(bu) = req.first.or(req.base).map(|p| cadcraft_geom::Vec2::new(p[0], p[1])) else { return Some(Vec::new()) };
+        let b = ucs.to_wcs(bu);
         Some(match req.kind {
             input::GetKind::Corner => {
-                let (c1, c2) = (cadcraft_geom::Vec2::new(cursor.x, b.y), cadcraft_geom::Vec2::new(b.x, cursor.y));
+                // The rectangle runs along the UCS axes, as the corner it returns is measured.
+                let cu = ucs.to_ucs(cursor);
+                let (c1, c2) = (ucs.to_wcs(cadcraft_geom::Vec2::new(cu.x, bu.y)), ucs.to_wcs(cadcraft_geom::Vec2::new(bu.x, cu.y)));
                 vec![line(b, c1), line(c1, cursor), line(cursor, c2), line(c2, b)]
             }
             input::GetKind::Point | input::GetKind::Dist | input::GetKind::Angle { .. } => vec![line(b, cursor)],
@@ -638,6 +643,8 @@ fn file_key(name: &str) -> String {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod ucs_tests;
 
 #[cfg(test)]
 mod block_tests;

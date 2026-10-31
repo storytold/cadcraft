@@ -125,6 +125,10 @@ pub struct Settings {
     pub polarsnap: bool,
     /// POLARDIST: the PolarSnap step; 0 uses the snap X spacing.
     pub polardist: f64,
+    /// The current UCS's X axis, radians from world +X: ortho, polar and object snap tracking
+    /// work along the UCS axes. Filled in by [`Session::drafting_settings`]; not a setting.
+    #[serde(skip)]
+    pub ucs_angle: f64,
     /// AUDITCTL: 1 creates an audit report (.adt) file when AUDIT is run (default: 0).
     pub auditctl: bool,
 }
@@ -190,6 +194,7 @@ impl Default for Settings {
             polaraddang: Vec::new(),
             polarsnap: false,
             polardist: 0.0,
+            ucs_angle: 0.0,
             auditctl: false,
         }
     }

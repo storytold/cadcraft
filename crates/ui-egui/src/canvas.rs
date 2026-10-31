@@ -475,16 +475,21 @@ fn paint_pointer_overlay(
     let view = frame.view;
     // Acquired tracking points and the polar / tracking paths under the cursor.
     if app.canvas.cursor.is_some() {
-        draw_tracking(painter, &xf, &app.session.tracking.acquired, app.canvas.track.as_ref(), view.height * 4.0);
+        draw_tracking(painter, &xf, &app.session.tracking.acquired, app.canvas.track.as_ref(), view.height * 4.0, app.session.input_ucs().rotation());
     }
     if let (Some(hit), Some(_)) = (app.canvas.snap, app.canvas.cursor) {
         draw_snap_marker(painter, xf.to_screen(hit.point), &hit);
     }
     draw_tiles(app, ui, tiles);
     // UCS icon, ViewCube and viewport label.
-    if app.ui.show_ucs_icon {
-        draw_ucs_icon(painter, rect);
-        crate::viewcube::ucs_icon(app, ui, rect);
+    if app.session.ucsicon_bits() & 1 != 0 {
+        let place = crate::viewcube::IconPlace::of(app, rect, |p| xf.to_screen(p));
+        draw_ucs_icon(painter, &place);
+        // Clickable only at the Command prompt: while a command runs, a pick or a snap at the UCS
+        // origin (where the icon may sit) reaches the drawing.
+        if app.session.running.is_none() && app.session.pending_window.is_none() {
+            crate::viewcube::ucs_icon(app, ui, rect, &place);
+        }
     }
     if app.ui.show_viewcube && sheet.is_none() {
         draw_viewcube(app, ui, rect);

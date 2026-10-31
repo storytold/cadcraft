@@ -236,16 +236,16 @@ impl Session {
         // A distance at "Next point" of TK: straight across or up from the last tracking point,
         // the way the cursor lies from it.
         if let Some(Frame::Track { last: Some(l) }) = self.point_mods.last().copied()
-            && crate::prompt::parse_point_with(t, self.last_point, &self.angle_settings()).is_none()
+            && self.parse_typed_point(t, self.last_point).is_none()
             && let Some(d) = crate::units::parse_distance(t)
         {
-            let dir = (crate::snap::ortho(l, self.cursor) - l).normalized();
+            let dir = (crate::snap::ortho_at(l, self.cursor, self.drafting_settings().ucs_angle) - l).normalized();
             let dir = if dir == Vec2::ZERO || !dir.is_finite() { Vec2::X } else { dir };
             return Some(self.modifier_point(l + dir * d));
         }
         if let Some(Frame::Angle { base, dir }) = self.point_mods.last().copied() {
             // Typed coordinates are explicit: they win over the override.
-            if crate::prompt::parse_point_with(t, self.last_point, &self.angle_settings()).is_some() {
+            if self.parse_typed_point(t, self.last_point).is_some() {
                 self.point_mods.pop();
                 return None;
             }
@@ -328,7 +328,7 @@ impl Session {
                 }
                 Frame::Track { last } => {
                     // Each point after the first goes straight across or up from the last one.
-                    let q = last.map_or(p, |l| crate::snap::ortho(l, p));
+                    let q = last.map_or(p, |l| crate::snap::ortho_at(l, p, self.drafting_settings().ucs_angle));
                     self.point_mods.push(Frame::Track { last: Some(q) });
                     self.last_point = q;
                     return Ok(());
