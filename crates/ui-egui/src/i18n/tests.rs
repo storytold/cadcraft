@@ -188,6 +188,7 @@ fn assert_additional_locale_aliases() {
         ("tr", &["tr", "tr-TR", "tr_TR.UTF-8", "TR-tr", " tr-TR ", "tr-CY"]),
         ("bs", &["bs", "bs-BA", "bs_BA.UTF-8", "BS-ba", " bs-BA ", "bs-Latn-BA"]),
         ("el", &["el", "el-GR", "el_GR.UTF-8", "EL-cy"]),
+        ("ka", &["ka", "ka-GE", "ka_GE.UTF-8", "KA-ge", " ka-GE "]),
         ("zh", &["zh", "zh-CN"]),
     ] {
         for tag in tags {
@@ -199,7 +200,7 @@ fn assert_additional_locale_aliases() {
 fn assert_unrecognized_locale_tags() {
     // Look-alike codes, three-letter codes and endonyms pick nothing: `se` is Northern Sami.
     let look_alikes = ["ua", "ukulele", "pl-PL", "", "garbage", "💙", "ptolemy", "cz", "csharp", "csomething", "italic"];
-    let others = ["kr", "korean", "kotlin", "se", "swe", "svenska", "hun", "magyar", "tur", "türkçe", "elvish"];
+    let others = ["kr", "korean", "kotlin", "se", "swe", "svenska", "hun", "magyar", "tur", "türkçe", "elvish", "kat", "geo", "kab", "kartuli"];
     for tag in look_alikes.into_iter().chain(others) {
         assert_eq!(locale_language(tag), None, "{tag}");
     }
@@ -437,7 +438,7 @@ fn dialogs_render_in_every_language_and_keep_their_source_ids() {
 #[test]
 fn interface_fonts_cover_every_letter_in_each_catalog() {
     for language in translated() {
-        let extra_font = ["ko", "zh", "ar"].contains(&language.code);
+        let extra_font = ["ko", "zh", "ar", "ka"].contains(&language.code);
         if extra_font && !crate::theme::can_show(language.code) {
             continue;
         }
@@ -531,6 +532,22 @@ fn korean_ui_fonts_cover_the_language_picker_in_both_families() {
         missing
     });
     assert!(missing.is_empty(), "missing Korean picker glyphs: {}", missing.join(", "));
+}
+
+/// A Georgian noun stays singular after a numeral, so one count form; the Dimension menu and the
+/// dimension object take different words. Mtavruli (U+1C90–U+1CBF) is a display style, not upper
+/// case: never in the catalog.
+#[test]
+fn georgian_counts_menu_headings_and_no_mtavruli() {
+    with_language("ka", || {
+        for n in [0, 1, 2, 5, 21, u64::MAX] {
+            assert_eq!(count(n, "{n} commit", "{n} commits"), format!("{n} კომიტი"));
+        }
+        assert_eq!(menu("Dimension"), "ზომების დატანა");
+        assert_eq!(t("Dimension"), "ზომა");
+    });
+    let mtavruli: Vec<char> = include_str!("ka.tsv").chars().filter(|c| ('\u{1c90}'..='\u{1cbf}').contains(c)).collect();
+    assert!(mtavruli.is_empty(), "{mtavruli:?}");
 }
 
 /// The production font chain covers alphanumeric ASCII in proportional and monospace, plus ⌘ ⇧ ↩ … − in proportional and ⇧ in monospace.

@@ -95,6 +95,7 @@ Ukrainian and German. Detail: [localization-parity.md](docs/localization-parity.
 | Indonesian | none | 0% |
 | Japanese | none | 0% |
 | Greek | complete current catalog | 1,330 current source keys; independent proofreading pending |
+| Georgian | complete current catalog | 1,383 rows; terminology decided by a native speaker |
 | German | partial | ≈ 100% of the catalog (989 rows) |
 | Korean | none | 0% |
 | Vietnamese | none | 0% |
