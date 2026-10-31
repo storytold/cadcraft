@@ -412,7 +412,7 @@
 	Group Edit	تحرير المجموعة
 	Group Options	خيارات المجموعة
 	Group Selection	تحديد المجموعة
-	Hatch	تظليل
+	Hatch	تهشير
 	Hatch Edit	تحرير التهشير
 	Hatch Pattern	نمط التهشير
 	Hatch Patterns	أنماط التهشير
@@ -504,7 +504,7 @@
 	Layout list	قائمة التخطيطات
 	Layout paper	ورقة التخطيط
 	Layout {name}: {table}	التخطيط {name}: {table}
-	Leader	قائد
+	Leader	خط الإشارة
 	Leaders Only	خطوط الإشارة فقط
 	Left	يسار
 	Left device button: zoom extents. Right device button: calibrate.	زر الجهاز الأيسر: تكبير الحدود. زر الجهاز الأيمن: معايرة.
@@ -573,7 +573,7 @@
 	More toolbar commands	المزيد من أوامر شريط الأدوات
 	Move	نقل
 	Move sideways to pan; push/pull or twist to zoom.	حرّك جانبياً للإزاحة؛ ادفع أو اسحب أو لُف للتكبير.
-	Multileader	قائد متعدد
+	Multileader	خط الإشارة المتعدد
 	Multileader Style...	نمط خط الإشارة المتعدد...
 	Multileader style	نمط خط الإشارة المتعدد
 	Multiline	متعدد الأسطر
@@ -1242,3 +1242,132 @@ menu	View	عرض
 	Check for Updates…	التحقق من وجود تحديثات…
 	CADCraft is up to date.	CADCraft محدّث.
 	Could not check for updates.	تعذّر التحقق من وجود تحديثات.
+	Add to Working Set	إضافة إلى مجموعة العمل
+	Add: Pick points	إضافة: انتقاء نقاط
+	Add: Select objects	إضافة: تحديد كائنات
+	Add…	إضافة…
+	Alias	اختصار
+	Alias file: {file}	ملف الاختصارات: {file}
+	Align Multileaders	محاذاة خطوط الإشارة المتعددة
+	Analyze Shapes	تحليل الأشكال
+	Analyze Usage	تحليل الاستخدام
+	Animation Effects	تأثيرات الحركة
+	Animation effects	تأثيرات الحركة
+	Associative	ترابطي
+	Backup copy	نسخة احتياطية
+	Block to create or edit	الكتلة المراد إنشاؤها أو تحريرها
+	Bottom left	أسفل اليسار
+	Bottom right	أسفل اليمين
+	Boundaries	الحدود
+	Boundaries picked: {n}	الحدود المنتقاة: {n}
+	Break-line Symbol	رمز خط الكسر
+	Centered	متمركز
+	Change Properties	تغيير الخصائص
+	Choose the command the alias starts.	اختر الأمر الذي يشغّله الاختصار.
+	Click the ruler to add a tab stop, right-click to remove one	انقر على المسطرة لإضافة علامة جدولة، وانقر بالزر الأيمن لإزالتها
+	Click to set new origin	انقر لتعيين نقطة أصل جديدة
+	Close Block Editor	إغلاق محرر الكتل
+	Collect	جمع
+	Collect Multileaders	جمع خطوط الإشارة المتعددة
+	Color 1	اللون 1
+	Color 2	اللون 2
+	Command	الأمر
+	Convert Text to Mtext	تحويل النص إلى نص متعدد الأسطر
+	Create backup copy with each save	إنشاء نسخة احتياطية عند كل حفظ
+	Create separate hatches	إنشاء تهشيرات منفصلة
+	Crossing selection color:	لون تحديد التقاطع:
+	Curved	منحنٍ
+	Customize	تخصيص
+	Default to boundary extents	الافتراضي: امتدادات الحدود
+	Define each corner of the selection window with a separate click.	حدد كل زاوية من نافذة التحديد بنقرة منفصلة.
+	Discard	تجاهل
+	Drag Dynamic Grip	سحب المقبض الديناميكي
+	Dynamic Block Data	بيانات الكتلة الديناميكية
+	Dynamic Block Grips	مقابض الكتلة الديناميكية
+	Dynamic Block Reference	مرجع كتلة ديناميكية
+	Edit Block Definition	تحرير تعريف الكتلة
+	Edit Command Aliases (PGP)...	تحرير اختصارات الأوامر (PGP)...
+	Edit Multileader	تحرير خط الإشارة المتعدد
+	Edit Reference In-Place	تحرير المرجع في مكانه
+	Edit…	تحرير…
+	Evaluate LISP	تقييم LISP
+	Exclude:	استثناء:
+	Explode Attributes to Text	تفجير السمات إلى نص
+	Express Tools	أدوات Express
+	Font	الخط
+	Grips	المقابض
+	Groups	المجموعات
+	Hatch Pick	انتقاء التهشير
+	Hatch and Gradient	التهشير والتدرج اللوني
+	Hatch origin	نقطة أصل التهشير
+	Hatches	تهشيرات
+	Hemispherical	نصف كروي
+	Ignore	تجاهل
+	Imperial (inches)	إنجليزي (بوصة)
+	Implied Loops	حلقات ضمنية
+	Indicate selection area	إظهار منطقة التحديد
+	Interface scale	مقياس الواجهة
+	Inverted	معكوس
+	Island	جزيرة
+	Island detection	اكتشاف الجزر
+	Italic	مائل
+	Justify	ضبط المحاذاة
+	Load Application...	تحميل تطبيق...
+	Metric (millimetres)	متري (مليمتر)
+	More than {n} aliases.	أكثر من {n} اختصار.
+	Move/Copy/Rotate	نقل/نسخ/تدوير
+	Multiline text	نص متعدد الأسطر
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	تستخدم الرسومات الجديدة وأول رسم عند بدء التشغيل هذه الوحدات ما لم يُعيَّن قالب افتراضي (QNEWTEMPLATE).
+	New block	كتلة جديدة
+	No alias file loaded. REINIT replaces these aliases with a file's.	لم يُحمَّل ملف اختصارات. يستبدل REINIT هذه الاختصارات باختصارات ملف.
+	Not a number or distance: {text}	ليس رقماً أو مسافة: {text}
+	Object grouping	تجميع الكائنات
+	Object selection limit for display of grips	حد تحديد الكائنات لعرض المقابض
+	Objects on locked layers	الكائنات على الطبقات المقفلة
+	Open in Block Editor	فتح في محرر الكتل
+	Origin: {x}, {y}	نقطة الأصل: {x}, {y}
+	Outer	خارجي
+	Overline	خط علوي
+	Preview	معاينة
+	Query Texts	الاستعلام عن النصوص
+	Save Block	حفظ الكتلة
+	Save Block As	حفظ الكتلة باسم
+	Save Layout as Template	حفظ التخطيط كقالب
+	Save Reference Edits	حفظ تعديلات المرجع
+	Save alias	حفظ الاختصار
+	Save changes to block "{name}"?	حفظ التغييرات على الكتلة "{name}"؟
+	Select boundaries to remove	حدد الحدود المراد إزالتها
+	Select using two clicks only	التحديد بنقرتين فقط
+	Selection Area Effect	تأثير منطقة التحديد
+	Selection Preview Filter	مرشح معاينة التحديد
+	Selection area opacity:	عتامة منطقة التحديد:
+	Selection effect color	لون تأثير التحديد
+	Selection modes	أوضاع التحديد
+	Selection preview	معاينة التحديد
+	Set Dynamic Property	تعيين خاصية ديناميكية
+	Shape	الشكل
+	Sheet Books to PDF...	دفاتر اللوحات إلى PDF...
+	Show grips	إظهار المقابض
+	Specified origin	نقطة أصل محددة
+	Spherical	كروي
+	Tables	الجداول
+	Text color	لون النص
+	Top left	أعلى اليسار
+	Top right	أعلى اليمين
+	Type an alias name.	اكتب اسم الاختصار.
+	Underline	تسطير
+	Units of new drawings	وحدات الرسومات الجديدة
+	Unsaved changes	تغييرات غير محفوظة
+	Use current origin	استخدام نقطة الأصل الحالية
+	Visual Effect Settings	إعدادات التأثيرات المرئية
+	Visual Effect Settings...	إعدادات التأثيرات المرئية...
+	When a command is active	عندما يكون أمر ما نشطاً
+	When no command is active	عندما لا يكون أي أمر نشطاً
+	Window selection color:	لون تحديد النافذة:
+	Working Set	مجموعة العمل
+	Xref and Block In-place Editing	تحرير المراجع الخارجية والكتل في مكانها
+	Xrefs	المراجع الخارجية
+	built-in	مدمج
+	overrides built-in	يتجاوز المدمج
+	{alias} is already defined; select it and use Edit.	{alias} معرَّف مسبقاً؛ حدده واستخدم «تحرير».
+	{command} is an unknown command.	{command} أمر غير معروف.
