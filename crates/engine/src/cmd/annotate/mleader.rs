@@ -66,7 +66,17 @@ pub(super) fn run_leader(s: &mut Session, p: &Value) -> Result<Value> {
     }))?;
     let mut out = vec![h.hex()];
     if let (Some(t), Some(last)) = (str_param(p, "text"), pts.last()) {
-        let th = s.doc()?.dim_style(&style(s)).map(|d| d.text_height).unwrap_or(0.18);
+        // The annotation is drawn at the dimension text size: DIMTXT × DIMSCALE (the style's, else
+        // the drawing's), in the style's text style, as the dimensions beside it (#1056).
+        let d = s.doc()?;
+        let ds = d.dim_style(&style(s)).cloned().unwrap_or_default();
+        // As a dimension of the style: DIMTXT × DIMSCALE; with an annotative style the annotation
+        // scale takes DIMSCALE's place (as for an annotative dimension), so the text is DIMTXT
+        // high and annotative, scaled with the dimension.
+        let annotative = ds.annotative;
+        let k = if annotative { 1.0 } else { ds.effective_scale(d.header.f64("DIMSCALE", 1.0)) };
+        let th = if ds.text_height > 0.0 { ds.text_height * k } else { 0.18 * k };
+        let text_style = d.text_style(&ds.text_style).map_or_else(|| "Standard".to_string(), |t| t.name.clone());
         out.push(
             s.add_entity(EntityKind::MText(MText {
                 insert: v3(*last + Vec2::new(th * 0.5, th * 0.5)),
@@ -74,7 +84,7 @@ pub(super) fn run_leader(s: &mut Session, p: &Value) -> Result<Value> {
                 width: 0.0,
                 attach: 4,
                 rotation: 0.0,
-                style: "Standard".into(),
+                style: text_style,
                 contents: t.into(),
                 line_spacing: 1.0,
                 line_spacing_exact: false,
@@ -82,6 +92,11 @@ pub(super) fn run_leader(s: &mut Session, p: &Value) -> Result<Value> {
             }))?
             .hex(),
         );
+        if annotative && let Some(t) = out.last().and_then(|x| cadcraft_doc::Handle::parse_hex(x)) {
+            let d = s.doc_mut()?;
+            let cur = d.current_anno_scale();
+            d.modify_entity(t, |e| cadcraft_doc::set_annotative(e, true, &cur))?;
+        }
     }
     Ok(json!({ "handles": out }))
 }

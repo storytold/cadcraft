@@ -49,6 +49,98 @@ fn vertical_measures_dy() {
     assert!((g.measurement - 3.0).abs() < 1e-12, "{}", g.measurement);
 }
 
+/// #1055: `\X` in the text puts what follows below the dimension line, on the other side of
+/// it from the rest, at the same distance; the measured value is the part above.
+#[test]
+fn text_after_backslash_x_goes_below_the_line() {
+    for (d, on) in [
+        (lin((0.0, 0.0), (10.0, 0.0), (5.0, 3.0), 0.0), Vec2::new(5.0, 3.0)),
+        (lin((0.0, 0.0), (0.0, 10.0), (4.0, 5.0), std::f64::consts::FRAC_PI_2), Vec2::new(4.0, 5.0)),
+    ] {
+        let mut d = d;
+        d.text = "30 MIN.\\X50 MAX.".into();
+        for tad in [0, 1] {
+            let st = st_with(|s| s.text_above = tad);
+            let g = dimension_geometry(&d, &st, 1.0);
+            assert_eq!(g.value, "30 MIN.", "tad {tad}");
+            let (below, at) = g.below.clone().expect("a part below the line");
+            assert_eq!(below, "50 MAX.");
+            let n = Vec2::from_angle(g.text_angle).perp();
+            let (above_side, below_side) = ((g.text_pos - on).dot(n), (at - on).dot(n));
+            assert!(above_side > 0.0 && below_side < 0.0, "opposite sides of the line (tad {tad}): {above_side} {below_side}");
+            assert!((above_side + below_side).abs() < 1e-9, "same distance: {above_side} {below_side}");
+        }
+    }
+    // Text moved far off the line with DIMTMOVE 1's leader: the part below still goes just under
+    // the dimension line, not along the leader nor as far below as the text is above.
+    let mut moved = lin((0.0, 0.0), (10.0, 0.0), (5.0, 3.0), 0.0);
+    moved.text = "30 MIN.\\X50 MAX.".into();
+    moved.user_text_pos = true;
+    moved.text_mid = Vec3::new(5.0, 30.0, 0.0);
+    let g = dimension_geometry(&moved, &st_with(|s| s.text_move = 1), 1.0);
+    assert!(g.text_leader.is_some(), "a leader to the moved text");
+    let (_, at) = g.below.clone().expect("a part below the line");
+    assert!(at.y < 3.0 && at.y > 2.5 && (at.x - 5.0).abs() < 1e-6, "{at:?}");
+    // Without `\X` nothing goes below.
+    assert!(dimension_geometry(&lin((0.0, 0.0), (10.0, 0.0), (5.0, 3.0), 0.0), &DimStyle::default(), 1.0).below.is_none());
+}
+
+/// `\X` with both halves of the dimension line suppressed (DIMSD1, DIMSD2): nothing of the line
+/// is drawn, but both parts of the text still sit by it, one on each side, apart.
+#[test]
+fn text_after_backslash_x_survives_a_suppressed_dimension_line() {
+    let mut d = lin((0.0, 0.0), (10.0, 5.0), (-3.0 / 5f64.sqrt(), 6.0 / 5f64.sqrt()), 0.0);
+    d.kind = DimKind::Aligned;
+    d.text = "30 MIN.\\X50 MAX.".into();
+    let on = Vec2::new(-3.0 / 5f64.sqrt(), 6.0 / 5f64.sqrt());
+    let ln = Vec2::new(10.0, 5.0).normalized().perp();
+    for tad in [0, 1] {
+        let st = st_with(|s| {
+            s.suppress_dim1 = true;
+            s.suppress_dim2 = true;
+            s.text_inside_horizontal = false;
+            s.text_above = tad;
+        });
+        let g = dimension_geometry(&d, &st, 1.0);
+        assert_eq!(g.lines_of(LineRole::Dim).count(), 0, "no dimension line drawn (tad {tad})");
+        assert_eq!(g.value, "30 MIN.");
+        let (below, at) = g.below.clone().expect("a part below the line");
+        assert_eq!(below, "50 MAX.");
+        let (above_side, below_side) = ((g.text_pos - on).dot(ln), (at - on).dot(ln));
+        assert!(above_side * below_side < 0.0, "opposite sides of the line (tad {tad}): {above_side} {below_side}");
+        assert!((above_side - below_side).abs() >= g.text_height - 1e-9, "apart (tad {tad}): {above_side} {below_side}");
+        assert!((at - on).dot(ln.perp()).abs() - (g.text_pos - on).dot(ln.perp()).abs() < 1e-9, "under the text (tad {tad})");
+    }
+}
+
+/// `\X` with DIMJUST 3 and 4: the text runs along an extension line, beside it, and stays
+/// there; the part below goes under it in its own frame, not onto the dimension line.
+#[test]
+fn text_after_backslash_x_stays_by_the_extension_line() {
+    let mut d = lin((0.0, 0.0), (10.0, 0.0), (5.0, 3.0), 0.0);
+    d.text = "30 MIN.\\X50 MAX.".into();
+    for just in [3, 4] {
+        for tad in [1, 2] {
+            let st = st_with(|s| {
+                s.text_just = just;
+                s.text_above = tad;
+            });
+            let g = dimension_geometry(&d, &st, 1.0);
+            assert!((g.text_angle - std::f64::consts::FRAC_PI_2).abs() < 1e-9, "along the extension line");
+            let beside = if just == 3 { g.text_pos.x < 0.0 } else { g.text_pos.x > 10.0 };
+            assert!(
+                beside && g.text_pos.y > 3.0 + g.text_height,
+                "beside the extension line, off the dimension line (just {just}, tad {tad}): {:?}",
+                g.text_pos
+            );
+            let (_, at) = g.below.clone().expect("a part below the text");
+            let (x, n) = (Vec2::from_angle(g.text_angle), Vec2::from_angle(g.text_angle).perp());
+            assert!((at - g.text_pos).dot(x).abs() < 1e-9, "stacked (just {just}, tad {tad}): {at:?}");
+            assert!((g.text_pos - at).dot(n) >= g.text_height - 1e-9, "under it, apart (just {just}, tad {tad}): {at:?} {:?}", g.text_pos);
+        }
+    }
+}
+
 #[test]
 fn override_text() {
     let mut d = lin((0.0, 0.0), (10.0, 0.0), (0.0, 5.0), 0.0);

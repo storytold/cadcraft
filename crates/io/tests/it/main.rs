@@ -14,6 +14,7 @@ mod codepages;
 mod dim_block_resave_roundtrip;
 mod dim_block_text;
 mod dim_marks_roundtrip;
+mod dim_text_below;
 mod dimstyle_vars_roundtrip;
 mod dimtfill_roundtrip;
 mod drafting_spacing;
