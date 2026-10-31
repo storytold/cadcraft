@@ -41,6 +41,7 @@ pub enum Value {
 }
 
 impl Value {
+    #[must_use]
     pub fn as_str(&self) -> String {
         match self {
             Value::Str(s) | Value::Hex(s) => s.clone(),
@@ -49,6 +50,11 @@ impl Value {
             Value::Bool(b) => i64::from(*b).to_string(),
         }
     }
+    #[must_use]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "DXF numeric accessors intentionally convert integer values to f64, accepting precision loss beyond 2^53."
+    )]
     pub fn as_f64(&self) -> f64 {
         match self {
             Value::Real(r) if r.is_finite() => *r,
@@ -58,11 +64,13 @@ impl Value {
             _ => 0.0,
         }
     }
+    #[must_use]
+    #[expect(clippy::cast_possible_truncation, reason = "DXF numeric accessors intentionally truncate finite real values to i64.")]
     pub fn as_i64(&self) -> i64 {
         match self {
             Value::Int(i) => *i,
             Value::Real(r) if r.is_finite() => *r as i64,
-            Value::Str(s) => s.trim().parse::<i64>().unwrap_or_else(|_| s.trim().parse::<f64>().map(|f| f as i64).unwrap_or(0)),
+            Value::Str(s) => s.trim().parse::<i64>().unwrap_or_else(|_| s.trim().parse::<f64>().map_or(0, |f| f as i64)),
             Value::Bool(b) => i64::from(*b),
             _ => 0,
         }
@@ -76,24 +84,31 @@ pub struct Tag {
 }
 
 impl Tag {
+    #[must_use]
     pub fn new(code: i32, value: Value) -> Self {
         Tag { code, value }
     }
+    #[must_use]
     pub fn s(code: i32, v: impl Into<String>) -> Self {
         Tag { code, value: Value::Str(v.into()) }
     }
+    #[must_use]
     pub fn f(code: i32, v: f64) -> Self {
         Tag { code, value: Value::Real(if v.is_finite() { v } else { 0.0 }) }
     }
+    #[must_use]
     pub fn i(code: i32, v: i64) -> Self {
         Tag { code, value: Value::Int(v) }
     }
+    #[must_use]
     pub fn str(&self) -> String {
         self.value.as_str()
     }
+    #[must_use]
     pub fn f64(&self) -> f64 {
         self.value.as_f64()
     }
+    #[must_use]
     pub fn i64(&self) -> i64 {
         self.value.as_i64()
     }
@@ -111,51 +126,25 @@ pub enum Kind {
     Hex,
 }
 
+#[must_use]
 pub fn kind_of(code: i32) -> Kind {
     match code {
-        0..=9 => Kind::Str,
-        10..=59 => Kind::Real,
-        60..=79 => Kind::Int16,
-        90..=99 => Kind::Int32,
-        100..=109 => Kind::Str,
-        110..=149 => Kind::Real,
+        10..=59 | 110..=149 | 210..=239 | 460..=469 | 1010..=1059 => Kind::Real,
+        60..=79 | 170..=179 | 270..=289 | 370..=389 | 400..=409 | 1060..=1070 => Kind::Int16,
+        90..=99 | 420..=429 | 440..=449 | 450..=459 | 1071 => Kind::Int32,
         160..=169 => Kind::Int64,
-        170..=179 => Kind::Int16,
-        210..=239 => Kind::Real,
-        270..=289 => Kind::Int16,
         290..=299 => Kind::Bool,
-        300..=309 => Kind::Str,
-        310..=319 => Kind::Hex,
-        320..=369 => Kind::Str,
-        370..=389 => Kind::Int16,
-        390..=399 => Kind::Str,
-        400..=409 => Kind::Int16,
-        410..=419 => Kind::Str,
-        420..=429 => Kind::Int32,
-        430..=439 => Kind::Str,
-        440..=449 => Kind::Int32,
-        450..=459 => Kind::Int32,
-        460..=469 => Kind::Real,
-        470..=479 => Kind::Str,
-        480..=481 => Kind::Str,
-        999 => Kind::Str,
-        1000..=1003 => Kind::Str,
-        1004 => Kind::Hex,
-        1005..=1009 => Kind::Str,
-        1010..=1059 => Kind::Real,
-        1060..=1070 => Kind::Int16,
-        1071 => Kind::Int32,
+        310..=319 | 1004 => Kind::Hex,
         _ => Kind::Str,
     }
 }
 
+#[expect(clippy::cast_possible_truncation, reason = "DXF numeric parsing intentionally truncates finite real values to i64.")]
 fn typed(code: i32, text: &str) -> Value {
     let t = text.trim();
     match kind_of(code) {
-        Kind::Real => t.parse::<f64>().ok().filter(|v| v.is_finite()).map(Value::Real).unwrap_or(Value::Real(0.0)),
-        Kind::Int16 | Kind::Int32 | Kind::Int64 => {
-            t.parse::<i64>().map(Value::Int).unwrap_or_else(|_| Value::Int(t.parse::<f64>().map(|f| f as i64).unwrap_or(0)))
-        }
+        Kind::Real => t.parse::<f64>().ok().filter(|v| v.is_finite()).map_or(Value::Real(0.0), Value::Real),
+        Kind::Int16 | Kind::Int32 | Kind::Int64 => t.parse::<i64>().map_or_else(|_| Value::Int(t.parse::<f64>().map_or(0, |f| f as i64)), Value::Int),
         Kind::Bool => Value::Bool(t.parse::<i64>().unwrap_or(0) != 0),
         Kind::Hex => Value::Hex(t.to_string()),
         Kind::Str => Value::Str(text.trim_end_matches(['\r', '\n']).to_string()),
@@ -171,6 +160,10 @@ mod codepage;
 pub use codepage::decode_code_page;
 
 /// Parse a DXF file (ASCII or binary).
+///
+/// # Errors
+///
+/// Returns an error when the input is not DXF, is malformed, ends unexpectedly, or exceeds the group-code limit.
 pub fn parse(bytes: &[u8]) -> Result<Vec<Tag>> {
     parse_with_limit(bytes, MAX_TAGS)
 }
@@ -178,6 +171,10 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Tag>> {
 /// [`parse`] with an explicit group-code limit. For ASCII DXF the limit is checked up front from
 /// the line count, before the text is decoded or any tag allocated, so an oversized file fails in
 /// milliseconds instead of after it has filled memory.
+///
+/// # Errors
+///
+/// Returns an error when the input is not DXF, is malformed, ends unexpectedly, or exceeds `max_tags`.
 pub fn parse_with_limit(bytes: &[u8], max_tags: usize) -> Result<Vec<Tag>> {
     if let Some(body) = bytes.strip_prefix(BINARY_SENTINEL) {
         return parse_binary_with_limit(body, max_tags);
@@ -270,6 +267,11 @@ fn unescape_unicode(s: &str) -> String {
     out
 }
 
+/// Parse ASCII DXF text into typed tags.
+///
+/// # Errors
+///
+/// Returns an error for an empty or malformed file, an invalid group code, an unexpected end of file, or too many tags.
 pub fn parse_ascii(text: &str) -> Result<Vec<Tag>> {
     parse_ascii_with_limit(text, MAX_TAGS)
 }
@@ -356,6 +358,10 @@ impl<'a> Cur<'a> {
 }
 
 /// Binary DXF (R13+: 2-byte group codes).
+///
+/// # Errors
+///
+/// Returns an error for an empty or malformed file, an unexpected end of file, or too many tags.
 pub fn parse_binary(b: &[u8]) -> Result<Vec<Tag>> {
     parse_binary_with_limit(b, MAX_TAGS)
 }
@@ -402,6 +408,7 @@ fn parse_binary_with_limit(b: &[u8], max_tags: usize) -> Result<Vec<Tag>> {
 }
 
 /// Format a real the way DXF writers usually do (shortest round-trip, with a decimal point).
+#[must_use]
 pub fn format_real(v: f64) -> String {
     if !v.is_finite() {
         return "0.0".into();
@@ -414,6 +421,7 @@ pub fn format_real(v: f64) -> String {
 ///
 /// The output is pure ASCII: non-ASCII characters in strings are written as `\U+XXXX` escapes,
 /// the pre-R2007 convention, so it is correct whatever `$DWGCODEPAGE` the header declares.
+#[must_use]
 pub fn write_ascii(tags: &[Tag]) -> String {
     write_ascii_as(tags, false)
 }
@@ -421,6 +429,7 @@ pub fn write_ascii(tags: &[Tag]) -> String {
 /// Write tags as ASCII DXF with text in UTF-8 (`utf8`, the R2007+ convention: non-ASCII
 /// characters as they are) or escaped as `\U+XXXX` (older versions, see [`write_ascii`]). Line
 /// breaks inside strings become spaces either way.
+#[must_use]
 pub fn write_ascii_as(tags: &[Tag], utf8: bool) -> String {
     let bytes = ascii(tags, if utf8 { Strings::Utf8 } else { Strings::Escaped(None) });
     // Both forms are UTF-8 (the escaped one is ASCII).
@@ -430,10 +439,11 @@ pub fn write_ascii_as(tags: &[Tag], utf8: bool) -> String {
 /// Write tags as pre-R2007 ASCII DXF with text in the code page `code_page` names (a
 /// `$DWGCODEPAGE` value such as `ANSI_1252`), as the DXF Reference describes for those versions:
 /// a character the code page has is written as its bytes, any other as a `\U+XXXX` escape. A
-/// code page CADCraft doesn't know, `ASCII`, and `UTF8`/`UNICODE` (not a pre-2007 code page)
+/// code page `CADCraft` doesn't know, `ASCII`, and `UTF8`/`UNICODE` (not a pre-2007 code page)
 /// give [`write_ascii`]'s pure ASCII output. So does a file whose code page bytes happen to be
-/// valid UTF-8 (`СІ` in ANSI_1251 is D1 B2, U+0472), since readers, ours included, take an ASCII
+/// valid UTF-8 (`СІ` in `ANSI_1251` is D1 B2, U+0472), since readers, ours included, take an ASCII
 /// DXF that is valid UTF-8 as UTF-8.
+#[must_use]
 pub fn write_ascii_in(tags: &[Tag], code_page: &str) -> Vec<u8> {
     let bytes = ascii(tags, Strings::Escaped(codepage::encoder(code_page)));
     if !bytes.is_ascii() && std::str::from_utf8(&bytes).is_ok() {
@@ -475,12 +485,14 @@ fn ascii(tags: &[Tag], strings: Strings) -> Vec<u8> {
 /// several groups of the same code). Strings are UTF-8 when `utf8` (R2007+), otherwise escaped as
 /// in [`write_ascii`]. A tag's value is converted to its code's kind, so a number written as text
 /// is stored as a number; a code outside the 16-bit range is skipped.
+#[must_use]
 pub fn write_binary(tags: &[Tag], utf8: bool) -> Vec<u8> {
     binary(tags, if utf8 { Strings::Utf8 } else { Strings::Escaped(None) })
 }
 
 /// Write tags as pre-R2007 binary DXF with text in the code page `code_page` names, as
 /// [`write_ascii_in`] does.
+#[must_use]
 pub fn write_binary_in(tags: &[Tag], code_page: &str) -> Vec<u8> {
     binary(tags, Strings::Escaped(codepage::encoder(code_page)))
 }
@@ -550,6 +562,7 @@ fn hex_bytes(s: &str) -> Vec<u8> {
 }
 
 /// Whether `bytes` are a binary DXF file (they start with the binary sentinel).
+#[must_use]
 pub fn is_binary(bytes: &[u8]) -> bool {
     bytes.starts_with(BINARY_SENTINEL)
 }
@@ -560,7 +573,7 @@ pub fn is_binary(bytes: &[u8]) -> bool {
 /// a code page the result is ASCII, so it is valid in any code page. In every form a backslash
 /// that would start a `\U+` or `\M+` sequence is written as `\U+005C`, so the reader gives back
 /// the literal text (#2050). So is a double-byte character whose trail byte is 0x5C (`\`) in that
-/// place, such as Shift-JIS `表` or Big5 `許`: CADCraft decodes the code page before it looks for
+/// place, such as Shift-JIS `表` or Big5 `許`: `CADCraft` decodes the code page before it looks for
 /// escapes, but a reader that looks first would take that byte and the `U+` after it for one.
 fn push_string(s: &str, strings: Strings, out: &mut Vec<u8>) {
     let chars: Vec<char> = s.chars().collect();
@@ -628,6 +641,7 @@ pub fn sections(tags: &[Tag]) -> Vec<Section> {
 }
 
 /// Split a run of tags into records starting at each code-0 tag: (type, tags after the 0).
+#[must_use]
 pub fn records(tags: &[Tag]) -> Vec<(String, Vec<Tag>)> {
     let mut out: Vec<(String, Vec<Tag>)> = Vec::new();
     for t in tags {
@@ -717,7 +731,7 @@ mod tests {
         assert!(parse(&b).is_err());
         // Bad numbers become 0 rather than failing.
         let t = parse(b"10\nnotanumber\n0\nEOF\n").unwrap();
-        assert_eq!(t[0].f64(), 0.0);
+        assert!(t[0].f64().abs() < f64::EPSILON);
     }
 
     #[test]
