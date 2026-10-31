@@ -3,7 +3,7 @@
 use cadcraft_doc::{Linetype, LwPolyline};
 use cadcraft_geom::{Polyline, Vec2};
 
-use crate::linetype;
+use crate::linetype::{self, Layout};
 
 /// A point on the centre line: position, unit direction, half width and distance along the run.
 #[derive(Clone, Copy, Debug)]
@@ -66,13 +66,25 @@ fn edges(x: &Sample) -> (Vec2, Vec2) {
     (x.p + nrm, x.p - nrm)
 }
 
+/// How far along a closed PLINEGEN polyline, drawn from its first vertex, its second vertex lies
+/// (an arc by its chords at `tol`): where the pattern stretched around it is anchored, as AutoCAD
+/// lays it. 0 when the first two vertices coincide (`Polyline::segments` leaves that segment out).
+pub(crate) fn second_vertex_at(p: &LwPolyline, tol: f64) -> f64 {
+    let first = Polyline { vertices: p.vertices.iter().take(2).copied().collect(), closed: false };
+    first.tessellate(tol).windows(2).map(|w| if let [a, b] = w { a.dist(*b) } else { 0.0 }).sum()
+}
+
 /// Triangles for the dashes of a wide polyline drawn with `lt` at `scale`, a line across the band
 /// for each dot, and the centre line of each dash. With PLINEGEN the pattern runs along the whole
-/// polyline; otherwise it restarts at every vertex. A pattern shorter than `min_pattern` fills
-/// the whole band.
+/// polyline (stretched around a closed one from its second vertex, as a thin one is); otherwise
+/// it restarts at every vertex. A pattern shorter than `min_pattern` fills the whole band.
 pub fn dashed(p: &LwPolyline, tol: f64, lt: &Linetype, scale: f64, min_pattern: f64) -> (Vec<Vec2>, Vec<Vec<Vec2>>, Vec<Vec<Vec2>>) {
     let mut runs = segments(p, tol);
+    let mut how = Layout::Open;
     if p.plinegen && runs.len() > 1 {
+        if p.closed {
+            how = Layout::Closed { anchor: second_vertex_at(p, tol) };
+        }
         let mut whole: Vec<Sample> = Vec::new();
         for run in runs {
             let base = whole.last().map(|x| x.s).unwrap_or(0.0);
@@ -85,7 +97,7 @@ pub fn dashed(p: &LwPolyline, tol: f64, lt: &Linetype, scale: f64, min_pattern: 
     let mut centres = Vec::new();
     for run in &runs {
         let len = run.last().map(|x| x.s).unwrap_or(0.0);
-        let dashes = linetype::ranges(len, lt, scale, min_pattern).unwrap_or_else(|| vec![(0.0, len)]);
+        let dashes = linetype::ranges(len, lt, scale, min_pattern, how).unwrap_or_else(|| vec![(0.0, len)]);
         for (a, b) in dashes {
             if b - a <= 1e-12 {
                 if let Some(x) = at(run, a) {

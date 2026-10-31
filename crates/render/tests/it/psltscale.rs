@@ -43,9 +43,10 @@ fn dash_lengths(d: &Drawing) -> Vec<f64> {
 #[test]
 fn psltscale_on_keeps_paper_dash_length() {
     let dashes = dash_lengths(&drawing(1));
-    // 1000 model units = 10 paper units; 0.75-unit pattern on paper → about 13 dashes of 0.5.
+    // 1000 model units = 10 paper units; 0.75-unit pattern on paper → about 13 dashes of 0.5
+    // (centred on the line: the first and last may be shorter).
     assert!((12..=15).contains(&dashes.len()), "{} dashes", dashes.len());
-    assert!(dashes.iter().take(dashes.len() - 1).all(|l| (l - 0.5).abs() < 1e-6), "{dashes:?}");
+    assert!(dashes.iter().skip(1).take(dashes.len() - 2).all(|l| (l - 0.5).abs() < 1e-6), "{dashes:?}");
 }
 
 #[test]
@@ -53,13 +54,14 @@ fn psltscale_off_scales_dashes_with_the_viewport() {
     let dashes = dash_lengths(&drawing(0));
     // Model-space dash length 0.5, shrunk 100x by the viewport.
     assert!(dashes.len() > 1000, "{} dashes", dashes.len());
-    assert!(dashes.iter().take(dashes.len() - 1).all(|l| (l - 0.005).abs() < 1e-6));
+    assert!(dashes.iter().skip(1).take(dashes.len() - 2).all(|l| (l - 0.005).abs() < 1e-6));
 }
 
 #[test]
 fn model_space_ignores_psltscale() {
     let d = drawing(1);
     let l = build(&d, &Space::Model, &Options::default());
-    let first = l.prims.iter().find(|p| p.kind == Kind::Polyline).map(|p| l.points(p).to_vec()).unwrap();
-    assert!((first[0].dist(first[1]) - 0.5).abs() < 1e-9);
+    // The second dash (the first is cut where the centred pattern meets the line's start).
+    let second = l.prims.iter().filter(|p| p.kind == Kind::Polyline).nth(1).map(|p| l.points(p).to_vec()).unwrap();
+    assert!((second[0].dist(second[1]) - 0.5).abs() < 1e-9);
 }

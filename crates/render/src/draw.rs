@@ -1,6 +1,7 @@
 use super::blocks::{insert, sub_ctx};
 use super::dim_draw::{MAX_FILL_SOLIDS, MAX_FILL_TEXTS, block_text_box, dim_text_fill, dimension, dimension_in, solid_covers, starts_text_marks};
 use super::display::{Kind, NO_LAYER, VIEWPORT_CONTENT};
+use super::linetype::Layout;
 use super::props::{resolve, transparency};
 use super::text_entity::{mtext, place_text_entity};
 use super::{
@@ -76,11 +77,11 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     };
     let tol = b.opts.tolerance / ctx.xf.scale_factor().max(1e-12);
     let lw = if b.opts.lineweights { lw } else { 0.0 };
-    // Stroke a polyline with the entity's linetype.
-    let stroke = |b: &mut Builder, pts: &[Vec2]| match &lt {
+    // Stroke a run with the entity's linetype, laid out as `how` says.
+    let stroke_as = |b: &mut Builder, pts: &[Vec2], how: Layout| match &lt {
         Some(lt) => {
             let min = b.opts.min_dash / ctx.xf.scale_factor().max(1e-12);
-            for dash in linetype::apply(pts, lt, ltscale, min) {
+            for dash in linetype::apply_as(pts, lt, ltscale, min, how) {
                 if dash.len() == 1 {
                     if let Some(p) = dash.first() {
                         b.point(ctx, rgb, *p);
@@ -91,12 +92,30 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
             }
             // Text embedded in the linetype (shapes need SHX files and are not drawn).
             if b.opts.text {
-                for sh in linetype_text::texts(ctx.d, pts, lt, ltscale, min) {
+                for sh in linetype_text::texts(ctx.d, pts, lt, ltscale, min, how) {
                     b.shaped(ctx, rgb, lw, &sh);
                 }
             }
         }
         None => b.polyline(ctx, rgb, lw, pts),
+    };
+    let stroke = |b: &mut Builder, pts: &[Vec2]| stroke_as(b, pts, Layout::Open);
+    // A polyline's centre line: with PLINEGEN the pattern runs along the whole of it (stretched
+    // around a closed one from its second vertex, as AutoCAD lays it); otherwise it restarts at
+    // every vertex.
+    let centre_line = |b: &mut Builder, p: &cadcraft_doc::LwPolyline| {
+        let pl = Polyline { vertices: p.vertices.clone(), closed: p.closed };
+        if p.plinegen && p.closed {
+            stroke_as(b, &pl.tessellate(tol), Layout::Closed { anchor: wide::second_vertex_at(p, tol) });
+        } else if p.plinegen || lt.is_none() {
+            stroke(b, &pl.tessellate(tol));
+        } else {
+            for s in pl.segments() {
+                let mut pts = Vec::new();
+                s.tessellate(tol, &mut pts);
+                stroke(b, &pts);
+            }
+        }
     };
     match &e.kind {
         EntityKind::Text(t) => {
@@ -167,22 +186,11 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                     }
                 }
             } else {
-                let pl = Polyline { vertices: p.vertices.clone(), closed: p.closed };
-                stroke(b, &pl.tessellate(tol));
+                // Fill off: the centre line, dashed as a polyline without width is.
+                centre_line(b, p);
             }
         }
-        EntityKind::LwPolyline(p) => {
-            let pl = Polyline { vertices: p.vertices.clone(), closed: p.closed };
-            if p.plinegen || lt.is_none() {
-                stroke(b, &pl.tessellate(tol));
-            } else {
-                for s in pl.segments() {
-                    let mut pts = Vec::new();
-                    s.tessellate(tol, &mut pts);
-                    stroke(b, &pts);
-                }
-            }
-        }
+        EntityKind::LwPolyline(p) => centre_line(b, p),
         EntityKind::Solid(s) | EntityKind::Trace(s) => {
             let c = &s.corners;
             let q = [c[0].xy(), c[1].xy(), c[3].xy(), c[2].xy()];
@@ -242,15 +250,16 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                         s.tessellate(tol, &mut pts);
                         stroke(b, &pts);
                     }
+                    // Closed runs from angle 0 (or the ellipse's start parameter).
                     Prim::Circle(c) => {
                         let mut pts = Vec::new();
                         c.tessellate(tol, &mut pts);
-                        stroke(b, &pts);
+                        stroke_as(b, &pts, Layout::Closed { anchor: 0.0 });
                     }
                     Prim::Ellipse(el) => {
                         let mut pts = Vec::new();
                         el.tessellate(tol, &mut pts);
-                        stroke(b, &pts);
+                        stroke_as(b, &pts, if el.is_full() { Layout::Closed { anchor: 0.0 } } else { Layout::Open });
                     }
                     Prim::Spline(s) => stroke(b, &s.tessellate(tol)),
                     Prim::Point(p) => b.point(ctx, rgb, p),
