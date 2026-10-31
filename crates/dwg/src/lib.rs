@@ -241,12 +241,36 @@ mod native {
     /// can cover rows × cols cells, so the total is bounded too.
     const MAX_MERGE_CELLS: usize = 1 << 24;
 
+    /// A table cell's own text height only when the file says it overrides the table style's.
+    /// acadrust's DXF writer writes a cell style's height (group 140) whenever the cell has a
+    /// style record, even a default 0.18 with no override flag, and CADCraft reads a 140 as an
+    /// override (#2501). The override is the cell style's TEXT_HEIGHT property flag or the
+    /// content's format override bit 128; without either the height is cleared (0 is no
+    /// override), so the table style's height applies.
+    fn table_cell_heights(doc: &mut acadrust::CadDocument) {
+        use acadrust::entities::table::CellStylePropertyFlags;
+        const CONTENT_TEXT_HEIGHT: i32 = 128;
+        for e in doc.entities_mut() {
+            let acadrust::entities::EntityType::Table(t) = e else { continue };
+            for cell in t.rows.iter_mut().flat_map(|r| r.cells.iter_mut()) {
+                let content_flag = cell.contents.iter().any(|c| c.format_override_flags & CONTENT_TEXT_HEIGHT != 0);
+                if let Some(style) = cell.style.as_mut()
+                    && !content_flag
+                    && !style.property_flags.contains(CellStylePropertyFlags::TEXT_HEIGHT)
+                {
+                    style.text_height = 0.0;
+                }
+            }
+        }
+    }
+
     /// The fix-ups made to a document after the DWG read, returning how many orphaned DGN
     /// components were dropped. The document comes from a third-party reader and is hostile.
     fn post_process(doc: &mut acadrust::CadDocument) -> usize {
         super::fail_in_test("post_process");
         current_style_names(doc);
         table_merges(doc);
+        table_cell_heights(doc);
         table_style_rows(doc, false);
         keep_sort_handles(doc);
         drop_orphaned_dgn_components(doc)
