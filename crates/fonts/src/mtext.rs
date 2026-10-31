@@ -8,6 +8,7 @@ pub(crate) mod para;
 
 /// Strip MTEXT formatting codes to plain text with `\n` paragraph breaks.
 /// Stacked fractions `\S1/2;` become `1/2`; `\~` is a space; braces are dropped.
+#[must_use]
 pub fn plain_mtext(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let chars: Vec<char> = s.chars().collect();
@@ -17,11 +18,7 @@ pub fn plain_mtext(s: &str) -> String {
             '\\' => {
                 let code = chars.get(i + 1).copied().unwrap_or(' ');
                 match code {
-                    'P' => {
-                        out.push('\n');
-                        i += 2;
-                    }
-                    'N' => {
+                    'P' | 'N' => {
                         out.push('\n');
                         i += 2;
                     }
@@ -68,8 +65,7 @@ pub fn plain_mtext(s: &str) -> String {
                     }
                 }
             }
-            '{' | '}' => i += 1,
-            '\r' => i += 1,
+            '{' | '}' | '\r' => i += 1,
             _ => {
                 out.push(c);
                 i += 1;
@@ -109,6 +105,7 @@ pub struct MTextParams {
 }
 
 impl MTextParams {
+    #[must_use]
     pub fn new(insert: Vec2, height: f64) -> Self {
         MTextParams {
             insert,
@@ -227,6 +224,10 @@ fn font_switch(a: &str) -> Option<TextFont> {
 }
 
 /// Parse MTEXT contents into words, spaces and paragraph breaks with their formats.
+#[expect(
+    clippy::too_many_lines,
+    reason = "The MTEXT escape grammar is one cohesive state machine; its ordered transitions are clearer in a single dispatch."
+)]
 fn parse(contents: &str, base: Fmt) -> (Vec<Atom>, Vec<Fmt>) {
     let chars: Vec<char> = contents.chars().collect();
     let mut fmts = vec![base];
@@ -424,56 +425,56 @@ fn seg_width(seg: &Seg, f: &Fmt) -> f64 {
 }
 
 /// Shape a segment with its left end at `x` on the baseline.
-fn seg_shape(seg: &Seg, f: &Fmt, x: f64) -> Shaped {
-    let h = f.height;
+fn seg_shape(seg: &Seg, format: &Fmt, origin_x: f64) -> Shaped {
+    let height = format.height;
     let mut out = Shaped::default();
-    let put = |s: &str, size: f64, at: Vec2| {
-        if s.is_empty() {
+    let put = |text: &str, size: f64, at: Vec2| {
+        if text.is_empty() {
             return Shaped::default();
         }
-        let mut sh = shape_line(&f.font, s, size, f.wf, f.oblique);
-        sh.map(|p| p + at);
+        let mut sh = shape_line(&format.font, text, size, format.wf, format.oblique);
+        sh.map(|point| point + at);
         sh
     };
-    let w = seg_width(seg, f);
+    let width = seg_width(seg, format);
     match seg {
-        Seg::Text(t) => out.extend(put(t, h, Vec2::new(x, 0.0))),
+        Seg::Text(text) => out.extend(put(text, height, Vec2::new(origin_x, 0.0))),
         Seg::Stack(top, bottom, sep) => {
-            let hs = h * STACK_SCALE;
-            let wt = text_width(&f.font, top, hs, f.wf);
-            let wb = text_width(&f.font, bottom, hs, f.wf);
+            let hs = height * STACK_SCALE;
+            let wt = text_width(&format.font, top, hs, format.wf);
+            let wb = text_width(&format.font, bottom, hs, format.wf);
             match sep {
                 '#' => {
-                    out.extend(put(top, hs, Vec2::new(x, h * 0.4)));
-                    let sx = x + wt + h * 0.1;
-                    out.extend(put(bottom, hs, Vec2::new(sx + h * 0.4, -h * 0.05)));
-                    out.strokes.push(vec![Vec2::new(sx, -h * 0.1), Vec2::new(sx + h * 0.3, h * 1.1)]);
+                    out.extend(put(top, hs, Vec2::new(origin_x, height * 0.4)));
+                    let sx = origin_x + wt + height * 0.1;
+                    out.extend(put(bottom, hs, Vec2::new(sx + height * 0.4, -height * 0.05)));
+                    out.strokes.push(vec![Vec2::new(sx, -height * 0.1), Vec2::new(sx + height * 0.3, height * 1.1)]);
                 }
                 '^' => {
                     // Tolerances: centred on the line, or the lower value on the baseline (\A0) or
                     // the upper value level with the text (\A2).
-                    let (yt, yb) = match f.valign {
-                        0 => (hs + h * 0.1, 0.0),
-                        2 => (0.0, -hs - h * 0.1),
-                        _ => (h * 0.55, h * 0.45 - hs),
+                    let (yt, yb) = match format.valign {
+                        0 => (hs + height * 0.1, 0.0),
+                        2 => (0.0, -hs - height * 0.1),
+                        _ => (height * 0.55, height * 0.45 - hs),
                     };
-                    out.extend(put(top, hs, Vec2::new(x, yt)));
-                    out.extend(put(bottom, hs, Vec2::new(x, yb)));
+                    out.extend(put(top, hs, Vec2::new(origin_x, yt)));
+                    out.extend(put(bottom, hs, Vec2::new(origin_x, yb)));
                 }
                 _ => {
-                    let bar = h * 0.45;
-                    out.extend(put(top, hs, Vec2::new(x + (w - wt) / 2.0, bar + h * 0.12)));
-                    out.extend(put(bottom, hs, Vec2::new(x + (w - wb) / 2.0, bar - h * 0.12 - hs)));
-                    out.strokes.push(vec![Vec2::new(x, bar), Vec2::new(x + w, bar)]);
+                    let bar = height * 0.45;
+                    out.extend(put(top, hs, Vec2::new(origin_x + (width - wt) / 2.0, bar + height * 0.12)));
+                    out.extend(put(bottom, hs, Vec2::new(origin_x + (width - wb) / 2.0, bar - height * 0.12 - hs)));
+                    out.strokes.push(vec![Vec2::new(origin_x, bar), Vec2::new(origin_x + width, bar)]);
                 }
             }
         }
     }
-    if f.under {
-        out.strokes.push(vec![Vec2::new(x, -h * 0.2), Vec2::new(x + w, -h * 0.2)]);
+    if format.under {
+        out.strokes.push(vec![Vec2::new(origin_x, -height * 0.2), Vec2::new(origin_x + width, -height * 0.2)]);
     }
-    if f.over {
-        out.strokes.push(vec![Vec2::new(x, h * 1.2), Vec2::new(x + w, h * 1.2)]);
+    if format.over {
+        out.strokes.push(vec![Vec2::new(origin_x, height * 1.2), Vec2::new(origin_x + width, height * 1.2)]);
     }
     out
 }
@@ -533,6 +534,7 @@ impl Line {
 }
 
 /// Lay out MTEXT with the stroke font. `attach` 1..=9 (TL, TC, TR, ML, MC, MR, BL, BC, BR).
+#[must_use]
 pub fn layout_mtext(contents: &str, insert: Vec2, height: f64, width: f64, attach: u8, rotation: f64, line_spacing: f64) -> MTextLayout {
     layout_mtext_with(contents, &MTextParams { insert, height, width, attach, rotation, line_spacing, ..MTextParams::new(insert, height) })
 }
@@ -568,8 +570,7 @@ fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line
             }
             Atom::Word(segments) => {
                 let word_width: f64 = segments.iter().map(|(segment, format)| seg_width(segment, fmt(*format))).sum();
-                let space_width =
-                    pending_space.map(|format| crate::space_width(&fmt(format).font, fmt(format).height, fmt(format).wf)).unwrap_or(0.0);
+                let space_width = pending_space.map_or(0.0, |format| crate::space_width(&fmt(format).font, fmt(format).height, fmt(format).wf));
                 if width > 0.0 && !line.items.is_empty() && line.width + space_width + word_width > width + 1e-9 {
                     finish(&mut lines, &mut line, fmt(last_fmt), paragraph);
                 } else if !line.items.is_empty() || pending_space.is_some() {
@@ -770,7 +771,7 @@ mod tests {
         let cols: Vec<Option<MTextColor>> = l.pieces.iter().map(|p| p.color).collect();
         assert_eq!(cols, vec![None, Some(MTextColor::Aci(1)), None]);
         let l = lay("\\c16711680;R", 0.0);
-        assert_eq!(l.pieces.first().map(|p| p.color), Some(Some(MTextColor::Rgb(0xFF0000))));
+        assert_eq!(l.pieces.first().map(|p| p.color), Some(Some(MTextColor::Rgb(0x00FF_0000))));
     }
 
     #[test]
@@ -792,8 +793,8 @@ mod tests {
         let bar = l.strokes.iter().find(|s| s.len() == 2 && (s[0].y - s[1].y).abs() < 1e-12 && (s[0].y + 0.55).abs() < 1e-9);
         assert!(bar.is_some());
         let ys: Vec<f64> = l.strokes.iter().flatten().map(|p| p.y).collect();
-        let max = ys.iter().cloned().fold(f64::MIN, f64::max);
-        let min = ys.iter().cloned().fold(f64::MAX, f64::min);
+        let max = ys.iter().copied().fold(f64::MIN, f64::max);
+        let min = ys.iter().copied().fold(f64::MAX, f64::min);
         assert!(max > 0.0 && min < -1.0, "{min}..{max}");
         // Narrower than the two digits side by side at full size.
         assert!(l.bounds.width() < crate::line_width("12", 1.0, 1.0));
