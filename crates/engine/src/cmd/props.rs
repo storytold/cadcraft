@@ -554,7 +554,14 @@ fn run_lweight(s: &mut Session, p: &Value) -> Result<Value> {
         Some("bylayer") => -1,
         Some("byblock") => -2,
         Some("default") => -3,
-        _ => (v.as_f64().ok_or_else(|| bad("lweight", "bad lineweight"))? * 100.0).round().clamp(0.0, 211.0) as i64,
+        _ => {
+            let mm = v.as_f64().filter(|m| m.is_finite()).ok_or_else(|| bad("lweight", "bad lineweight"))?;
+            let hundredths = (mm * 100.0).round();
+            if (mm * 100.0 - hundredths).abs() > 1e-6 || !crate::sysvars::LINEWEIGHTS.contains(&(hundredths as i64)) {
+                return Err(bad("lweight", format!("{mm} mm is not a standard lineweight")));
+            }
+            hundredths as i64
+        }
     };
     s.doc_mut()?.header.set_i64("CELWEIGHT", code);
     ok()
