@@ -29,6 +29,7 @@ fn defaults_are_the_ones_the_commands_use() {
         ("DONUTOD", json!(1.0)),
         ("WIPEOUTFRAME", json!(1)),
         ("LWDEFAULT", json!(25)),
+        ("LAYLOCKFADECTL", json!(50)),
         ("DIMASSOC", json!(2)),
         ("CPLOTSTYLE", json!("ByLayer")),
         ("TRANSPARENCYDISPLAY", json!(1)),
@@ -61,6 +62,9 @@ fn values_reach_the_commands() {
     assert!(!s.settings.transparency_display);
     s.cmdline("setvar plottransparencyoverride 2").unwrap();
     assert_eq!(s.settings.plot_transparency_override, 2);
+    for v in [-90, 0, 90] {
+        assert!(setvar(&mut s, "LAYLOCKFADECTL", json!(v)), "LAYLOCKFADECTL {v}");
+    }
     assert!(setvar(&mut s, "INSNAME", json!("Valve")));
     assert!(setvar(&mut s, "INSNAME", json!(".")));
     assert_eq!(getvar(&mut s, "INSNAME"), json!(""));
@@ -74,6 +78,8 @@ fn bad_values_and_unknown_names_are_refused() {
         ("POLYSIDES", json!(5000)),
         ("TRIMMODE", json!(3)),
         ("LWDEFAULT", json!(26)),
+        ("LAYLOCKFADECTL", json!(91)),
+        ("LAYLOCKFADECTL", json!(-91)),
         ("HPSCALE", json!(0)),
         ("HPNAME", json!("NO-SUCH-PATTERN")),
         ("DONUTOD", json!(0)),

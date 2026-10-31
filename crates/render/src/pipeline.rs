@@ -30,6 +30,9 @@ pub struct Options {
     /// Draw objects with their transparency ([`DPrim::transparency`]). Off by default: the screen
     /// follows TRANSPARENCYDISPLAY, plots the page setup's "Plot transparency".
     pub transparency: bool,
+    /// A build for the interactive canvas: objects on locked layers fade by LAYLOCKFADECTL,
+    /// whatever [`Options::transparency`] says. Off by default, so plots and exports never fade.
+    pub on_screen: bool,
     /// A layout viewport whose model-space contents are left out (its border is still drawn):
     /// the canvas draws the active viewport's contents itself, see [`viewport_content`].
     pub skip_viewport: Option<Handle>,
@@ -59,6 +62,7 @@ impl Default for Options {
             view: None,
             skip_viewport: None,
             transparency: false,
+            on_screen: false,
             cancel: None,
         }
     }

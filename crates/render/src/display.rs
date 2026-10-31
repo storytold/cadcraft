@@ -34,7 +34,8 @@ pub struct DPrim {
     /// Lineweight in mm (0 = thinnest).
     pub lw: f32,
     /// Transparency in percent (0 = opaque, at most 90): the object's own, its layer's when
-    /// ByLayer, the block reference's when ByBlock. Always 0 unless [`Options::transparency`].
+    /// ByLayer, the block reference's when ByBlock, with [`Options::transparency`]; on an
+    /// [`Options::on_screen`] build, at least the locked-layer fade (LAYLOCKFADECTL). Otherwise 0.
     pub transparency: u8,
     pub kind: Kind,
     pub start: u32,
