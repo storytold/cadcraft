@@ -171,8 +171,11 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
         w.f(146, 0.0);
     }
     w.s(0, "ENDTAB");
-    let apps =
-        ["ACAD", dxf_ext::APP, "AcadAnnotative", dxf_ext::LAYER_TRANSPARENCY_APP, dxf_ext::LAYER_DESCRIPTION_APP, crate::dxf_underlay::LAYERS_APP];
+    let mut apps = vec!["ACAD", dxf_ext::APP, "AcadAnnotative", dxf_ext::LAYER_TRANSPARENCY_APP, dxf_ext::LAYER_DESCRIPTION_APP];
+    // Only a drawing whose underlays hide PDF layers uses it, so other files stay as they were.
+    if crate::dxf_underlay::hides_layers(d) {
+        apps.push(crate::dxf_underlay::LAYERS_APP);
+    }
     let th = table_head(w, "APPID", apps.len());
     for app in apps {
         record_head(w, "APPID", &th, "AcDbRegAppTableRecord");
