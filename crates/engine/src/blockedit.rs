@@ -274,6 +274,7 @@ impl DocState {
         self.redo.clear();
         self.undo_ctl = Default::default();
         self.selection.clear();
+        self.selection_windows.clear();
         self.previous_selection.clear();
         self.space = cadcraft_doc::Space::Model;
         self.mspace = None;
@@ -340,6 +341,7 @@ impl DocState {
         self.undo_ctl = host.undo_ctl;
         // The drawing comes back with nothing selected; Previous is what was selected before.
         self.selection.clear();
+        self.selection_windows.clear();
         self.previous_selection = if host.selection.is_empty() { host.previous_selection } else { host.selection };
         self.space = host.space;
         self.mspace = host.mspace;
