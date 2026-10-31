@@ -17,3 +17,8 @@ serde_json = { workspace = true }
 log = { workspace = true }
 # Secure randomness for the per-session control token (MIT OR Apache-2.0).
 getrandom = "0.4"
+
+# The AI Assistant palette in `cadcraft-ui-egui` uses this crate's tools, so it is also built for
+# the web: there the control token's randomness comes from the browser's crypto.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.4", features = ["wasm_js"] }

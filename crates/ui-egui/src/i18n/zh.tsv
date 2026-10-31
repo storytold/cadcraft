@@ -1349,3 +1349,69 @@
 	Check for Updates…	检查更新…
 	CADCraft is up to date.	CADCraft 已是最新版本。
 	Could not check for updates.	无法检查更新。
+# AI Assistant
+	AI Assistant	AI 助手
+	Hi! I'm the AI Assistant. Tell me what to draw or change in the drawing, and I'll do it with CADCraft's commands.	你好！我是 AI 助手。告诉我要在图形中绘制或修改什么，我会用 CADCraft 的命令完成。
+	To start, connect your {service} account: paste its account key (it starts with {prefix}). The key stays on this computer and is never shown again.	首先，连接你的 {service} 账户：粘贴账户密钥（以 {prefix} 开头）。密钥保存在这台电脑上，之后不会再显示。
+	Checking the key…	正在检查密钥…
+	Connected to account {conto}.	已连接到账户 {conto}。
+	What shall I draw?	要画什么？
+	Declined: {tool}	已拒绝：{tool}
+	The AI Assistant is not available in this version yet.	此版本尚不提供 AI 助手。
+	Credit available: {usd} USD	可用额度：{usd} USD
+	New conversation	新对话
+	Working…	处理中…
+	The assistant wants to run {tool}.	助手想要运行 {tool}。
+	Allow	允许
+	Decline	拒绝
+	Ask the assistant…	向助手提问…
+	Send	发送
+	Account key	账户密钥
+	Connect	连接
+	A key is already set on this computer	这台电脑上已设置了密钥
+	This is not an account key: an account key starts with ck-fant-	这不是账户密钥：账户密钥以 ck-fant- 开头
+	FANTASTICO does not recognise this key	FANTASTICO 无法识别此密钥
+	FANTASTICO cannot be reached: check the internet connection	无法连接 FANTASTICO：请检查网络连接
+	The credit on your FANTASTICO account has run out: top it up to continue	你的 FANTASTICO 账户额度已用完：请充值后继续
+	No account key is set	未设置账户密钥
+	The stored account key is not readable	无法读取已保存的账户密钥
+	AI Assistant settings	AI 助手设置
+	Assistant language	助手语言
+	Automatic (the language you write in)	自动（你书写所用的语言）
+	Suggested by the account ({model})	账户推荐（{model}）
+	Suggested by the account	账户推荐
+	Search models…	搜索模型…
+	Loading models…	正在加载模型…
+	The models could not be loaded	无法加载模型
+	Account	账户
+	Connected account: {conto}	已连接账户：{conto}
+	Reading the account…	正在读取账户…
+	Change account key	更改账户密钥
+	New account key	新的账户密钥
+	Running {command}…	正在运行 {command}…
+	Running a script…	正在运行脚本…
+	Looking up commands…	正在查找命令…
+	Looking at the drawing…	正在查看图形…
+	Starting a new drawing…	正在新建图形…
+	Opening a drawing…	正在打开图形…
+	Saving the drawing…	正在保存图形…
+	Cancelling…	正在取消…
+	The assistant wants to start a new drawing: the current one will be closed.	助手想要新建图形：当前图形将被关闭。
+	The assistant wants to open {path}.	助手想要打开 {path}。
+	The assistant wants to open a drawing.	助手想要打开图形。
+	The assistant wants to save the drawing to {path}.	助手想要将图形保存到 {path}。
+	The assistant wants to save the drawing.	助手想要保存图形。
+	The assistant wants to run a command that writes or reads {path}.	助手想要运行一个会写入或读取 {path} 的命令。
+	The assistant wants to run a command that can write files: {command}	助手想要运行一个可能写入文件的命令：{command}
+	The assistant wants to run a command that can write files.	助手想要运行一个可能写入文件的命令。
+	The assistant wants to close a drawing: what isn't saved is lost.	助手想要关闭图形：未保存的内容将丢失。
+	The assistant ran out of steps for this turn and stopped; the drawing keeps what it did.	助手已用完本轮的步骤并停止；图形保留已完成的内容。
+	Start a new conversation? The messages so far will be cleared.	开始新的对话？此前的消息将被清除。
+	Keep	保留
+	Refresh credit	刷新余额
+	Get an account key or top up your credit at {site}	在 {site} 获取账户密钥或充值余额
+	Top up credit	充值余额
+	Change key	更改密钥
+	The account key was changed: now connected to account {conto}.	账户密钥已更改：现已连接到账户 {conto}。
+	To answer, the AI Assistant sends your requests, what it reads from the drawing and what its commands return to {service} ({destination}) and to the provider of the chosen model. Allow this for CADCraft?	为了回答，AI 助手会把你的请求、它从图纸中读取的内容以及其命令返回的结果发送到 {service}（{destination}）和所选模型的提供商。允许 CADCraft 这样做吗？
+	Nothing was sent: the AI Assistant needs your agreement first.	未发送任何内容：AI 助手需要先获得你的同意。

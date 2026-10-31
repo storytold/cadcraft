@@ -30,6 +30,7 @@ const MAX_TRIES: u32 = 32;
 /// are written through the retained handle and flushed, and the temporary is then renamed over
 /// `path`. On any failure the temporary is removed and the original `path` is left untouched.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    crate::consent::check_write(path)?;
     let permissions = match std::fs::symlink_metadata(path) {
         Ok(meta) if meta.is_file() => Some(meta.permissions()),
         Ok(_) => None,

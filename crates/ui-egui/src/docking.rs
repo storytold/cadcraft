@@ -19,6 +19,7 @@ pub enum Panel {
     Properties,
     #[serde(rename = "externalReferences")]
     ExternalRefs,
+    Assistant,
 }
 
 impl Panel {
@@ -31,6 +32,7 @@ impl Panel {
             Self::Layers => "layers",
             Self::Properties => "properties",
             Self::ExternalRefs => "externalReferences",
+            Self::Assistant => "assistant",
         }
     }
     fn label(self) -> &'static str {
@@ -41,6 +43,7 @@ impl Panel {
             Self::Layers => "Layers",
             Self::Properties => "Properties",
             Self::ExternalRefs => "External References",
+            Self::Assistant => "AI Assistant",
         }
     }
     /// The icon a palette shows in a column collapsed to icons.
@@ -53,10 +56,11 @@ impl Panel {
             Self::Layers => Some(Icon::Layers),
             Self::Properties => Some(Icon::Properties),
             Self::ExternalRefs => Some(Icon::Attach),
+            Self::Assistant => Some(Icon::Assistant),
         }
     }
-    /// Palettes outside the default arrangement, opened on request (QUICKCALC).
-    pub const ON_DEMAND: &[Self] = &[Self::QuickCalc];
+    /// Palettes outside the default arrangement, opened on request (QUICKCALC, Window ▸ AI Assistant).
+    pub const ON_DEMAND: &[Self] = &[Self::QuickCalc, Self::Assistant];
 }
 
 /// The drawing view never moves, floats, closes or takes tabs; palettes dock beside it.
@@ -140,8 +144,8 @@ fn docked(layout: &Layout<Panel>, panel: Panel) -> bool {
 }
 
 /// The docked neighbour a panel with no recorded place opens beside, as a new group above
-/// (`false`) or below (`true`) it: Layers above Properties, External References and QuickCalc
-/// below them, Tool Sets at the top of the left dock.
+/// (`false`) or below (`true`) it: Layers above Properties, External References, QuickCalc and the
+/// AI Assistant below them, Tool Sets at the top of the left dock.
 fn home_anchor(layout: &Layout<Panel>, panel: Panel) -> Option<(Panel, bool)> {
     let neighbours: &[(Panel, bool)] = match panel {
         Panel::Canvas | Panel::ToolSets => &[],
@@ -149,6 +153,7 @@ fn home_anchor(layout: &Layout<Panel>, panel: Panel) -> Option<(Panel, bool)> {
         Panel::Properties => &[(Panel::Layers, true), (Panel::ExternalRefs, false)],
         Panel::ExternalRefs => &[(Panel::Properties, true), (Panel::Layers, true)],
         Panel::QuickCalc => &[(Panel::ExternalRefs, true), (Panel::Properties, true), (Panel::Layers, true)],
+        Panel::Assistant => &[(Panel::QuickCalc, true), (Panel::ExternalRefs, true), (Panel::Properties, true), (Panel::Layers, true)],
     };
     if let Some(found) = neighbours.iter().copied().find(|(neighbour, _)| docked(layout, *neighbour)) {
         return Some(found);
@@ -400,6 +405,7 @@ impl DockContent<Panel> for Panels<'_> {
             }
             Panel::ToolSets => crate::palettes::toolsets(app, ui),
             Panel::QuickCalc => crate::palettes::quickcalc::show(app, ui),
+            Panel::Assistant => crate::assistant::show(app, ui),
             Panel::Layers => {
                 egui::ScrollArea::vertical()
                     .id_salt("dock-layers")
@@ -440,6 +446,7 @@ fn panel_limits(panel: &Panel) -> PanelLimits {
     let (min, max_width) = match panel {
         Panel::Canvas => (egui::vec2(300.0, 180.0), 1_000_000.0),
         Panel::QuickCalc => (egui::vec2(240.0, 160.0), 600.0),
+        Panel::Assistant => (egui::vec2(280.0, 240.0), 720.0),
         Panel::ToolSets => (egui::vec2(220.0, 150.0), 480.0),
         Panel::Layers | Panel::Properties | Panel::ExternalRefs => (egui::vec2(220.0, 100.0), 720.0),
     };

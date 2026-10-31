@@ -116,6 +116,14 @@ pub enum Icon {
     DynInput,
     QuickProps,
     Gear,
+    /// Sweep away: a fresh start.
+    Broom,
+    /// Read again.
+    Refresh,
+    /// Pay: top up a credit.
+    CreditCard,
+    /// The AI Assistant: a large and a small four-pointed spark.
+    Assistant,
     Annotation,
     Workspace,
     ChevronDown,
@@ -589,6 +597,28 @@ fn paint_edit_tools(pen: &Pen<'_>, icon: Icon, b: Color32, a: Color32, _dim: boo
             pen.poly(&[(20.0, 15.0), (15.0, 20.0)], false, a);
             pen.poly(&[(9.0, 20.0), (4.0, 15.0)], false, a);
             pen.fill_c(12.0, 12.0, 2.0, pen.pt);
+        }
+        Broom => {
+            // Handle, then the head widening towards the bristles.
+            pen.l(20.0, 4.0, 12.0, 12.0);
+            pen.poly(&[(9.5, 10.5), (13.5, 14.5), (10.0, 21.5), (3.0, 16.0)], true, b);
+            pen.la(6.5, 17.5, 8.5, 15.0);
+            pen.la(8.5, 19.5, 10.5, 17.0);
+        }
+        Refresh => {
+            pen.arc(12.0, 12.0, 7.0, 20.0, 320.0, b);
+            pen.arrow_tip(17.4, 16.5, 0.64, -0.77, b);
+        }
+        CreditCard => {
+            // The card, its magnetic stripe and the signature line.
+            pen.rect(3.0, 6.0, 18.0, 12.0, b);
+            pen.l(3.0, 9.5, 21.0, 9.5);
+            pen.l(3.0, 11.0, 21.0, 11.0);
+            pen.la(6.0, 14.5, 12.0, 14.5);
+        }
+        Assistant => {
+            pen.poly(&[(11.0, 5.0), (13.0, 11.0), (19.0, 13.0), (13.0, 15.0), (11.0, 21.0), (9.0, 15.0), (3.0, 13.0), (9.0, 11.0)], true, a);
+            pen.poly(&[(18.0, 2.5), (18.9, 5.1), (21.5, 6.0), (18.9, 6.9), (18.0, 9.5), (17.1, 6.9), (14.5, 6.0), (17.1, 5.1)], true, b);
         }
         Erase => {
             pen.poly(&[(4.0, 16.0), (13.0, 7.0), (19.0, 13.0), (12.0, 20.0), (8.0, 20.0)], true, b);

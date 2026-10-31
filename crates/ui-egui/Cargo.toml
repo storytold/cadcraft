@@ -17,6 +17,9 @@ cadcraft-doc = { workspace = true }
 cadcraft-render = { workspace = true }
 cadcraft-engine = { workspace = true }
 cadcraft-fonts = { workspace = true }
+# The AI Assistant palette: the agent loop and its tools (no network code; the host brings the model).
+cadcraft-assistant = { workspace = true }
+cadcraft-mcp = { workspace = true }
 craft-window = { workspace = true }
 egui = { workspace = true }
 # GPU canvas paint callback (same egui-wgpu/wgpu eframe uses with its "wgpu" feature).

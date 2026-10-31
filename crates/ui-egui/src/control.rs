@@ -37,6 +37,9 @@ pub struct ControlRequest {
     pub method: String,
     pub params: Value,
     pub reply: Sender<ControlResponse>,
+    /// At most what the request may do to files and drawings (the AI Assistant's calls); `None`
+    /// for the control channel's, which the user's key already allows.
+    pub consent: Option<cadcraft_engine::consent::Consent>,
     state: Arc<AtomicU8>,
 }
 
@@ -49,7 +52,13 @@ impl ControlRequest {
     pub fn new(method: impl Into<String>, params: Value) -> (Self, PendingReply) {
         let (tx, rx) = std::sync::mpsc::channel();
         let state = Arc::new(AtomicU8::new(QUEUED));
-        (Self { method: method.into(), params, reply: tx, state: state.clone() }, PendingReply { rx, state })
+        (Self { method: method.into(), params, reply: tx, consent: None, state: state.clone() }, PendingReply { rx, state })
+    }
+
+    /// Run the request allowing at most `consent`.
+    pub fn with_consent(mut self, consent: cadcraft_engine::consent::Consent) -> Self {
+        self.consent = Some(consent);
+        self
     }
 
     /// Mark the request as started. False when the transport already gave up on it

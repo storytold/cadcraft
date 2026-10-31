@@ -372,6 +372,7 @@ fn run_close(s: &mut Session, p: &Value) -> Result<Value> {
     if i >= s.docs.len() {
         return Err(bad("close", "no such drawing"));
     }
+    crate::consent::check_close().map_err(|e| bad("close", e.to_string()))?;
     s.cancel();
     s.docs.remove(i);
     if i < s.active {
@@ -387,6 +388,7 @@ fn run_close(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// `closeall`: cancel the running command, remove every drawing, reset the active index to 0 and bump the document epoch.
 fn run_closeall(s: &mut Session, _p: &Value) -> Result<Value> {
+    crate::consent::check_close().map_err(|e| bad("closeall", e.to_string()))?;
     s.cancel();
     s.docs.clear();
     s.active = 0;

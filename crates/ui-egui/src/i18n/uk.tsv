@@ -1374,3 +1374,69 @@
 	CADCraft is up to date.	Встановлено найновішу версію CADCraft.
 	Could not check for updates.	Не вдалося перевірити оновлення.
 	Save changes to block "{name}"?	Зберегти зміни в блоці «{name}»?
+# AI Assistant
+	AI Assistant	ШІ-асистент
+	Hi! I'm the AI Assistant. Tell me what to draw or change in the drawing, and I'll do it with CADCraft's commands.	Вітаю! Я ШІ-асистент. Скажіть, що накреслити або змінити в кресленні, і я зроблю це командами CADCraft.
+	To start, connect your {service} account: paste its account key (it starts with {prefix}). The key stays on this computer and is never shown again.	Для початку під'єднайте свій рахунок {service}: вставте його ключ рахунку (він починається з {prefix}). Ключ залишається на цьому комп'ютері й більше не показується.
+	Checking the key…	Перевірка ключа…
+	Connected to account {conto}.	Під'єднано до рахунку {conto}.
+	What shall I draw?	Що накреслити?
+	Declined: {tool}	Відхилено: {tool}
+	The AI Assistant is not available in this version yet.	ШІ-асистент поки недоступний у цій версії.
+	Credit available: {usd} USD	Доступний кредит: {usd} USD
+	New conversation	Нова розмова
+	Working…	Працюю…
+	The assistant wants to run {tool}.	Асистент хоче виконати {tool}.
+	Allow	Дозволити
+	Decline	Відхилити
+	Ask the assistant…	Запитайте асистента…
+	Send	Надіслати
+	Account key	Ключ рахунку
+	Connect	Під'єднати
+	A key is already set on this computer	На цьому комп'ютері ключ уже задано
+	This is not an account key: an account key starts with ck-fant-	Це не ключ рахунку: ключ рахунку починається з ck-fant-
+	FANTASTICO does not recognise this key	FANTASTICO не розпізнає цей ключ
+	FANTASTICO cannot be reached: check the internet connection	FANTASTICO недоступний: перевірте підключення до інтернету
+	The credit on your FANTASTICO account has run out: top it up to continue	Кредит на вашому рахунку FANTASTICO вичерпано: поповніть його, щоб продовжити
+	No account key is set	Ключ рахунку не задано
+	The stored account key is not readable	Збережений ключ рахунку не читається
+	AI Assistant settings	Налаштування ШІ-асистента
+	Assistant language	Мова асистента
+	Automatic (the language you write in)	Автоматично (мова, якою ви пишете)
+	Suggested by the account ({model})	Запропонована рахунком ({model})
+	Suggested by the account	Запропонована рахунком
+	Search models…	Пошук моделей…
+	Loading models…	Завантаження моделей…
+	The models could not be loaded	Не вдалося завантажити моделі
+	Account	Рахунок
+	Connected account: {conto}	Під'єднаний рахунок: {conto}
+	Reading the account…	Читання рахунку…
+	Change account key	Змінити ключ рахунку
+	New account key	Новий ключ рахунку
+	Running {command}…	Виконую {command}…
+	Running a script…	Виконую скрипт…
+	Looking up commands…	Переглядаю команди…
+	Looking at the drawing…	Вивчаю креслення…
+	Starting a new drawing…	Створюю нове креслення…
+	Opening a drawing…	Відкриваю креслення…
+	Saving the drawing…	Зберігаю креслення…
+	Cancelling…	Скасовую…
+	The assistant wants to start a new drawing: the current one will be closed.	Асистент хоче створити нове креслення: поточне буде закрито.
+	The assistant wants to open {path}.	Асистент хоче відкрити {path}.
+	The assistant wants to open a drawing.	Асистент хоче відкрити креслення.
+	The assistant wants to save the drawing to {path}.	Асистент хоче зберегти креслення у {path}.
+	The assistant wants to save the drawing.	Асистент хоче зберегти креслення.
+	The assistant wants to run a command that writes or reads {path}.	Асистент хоче виконати команду, яка записує або читає {path}.
+	The assistant wants to run a command that can write files: {command}	Асистент хоче виконати команду, яка може записувати файли: {command}
+	The assistant wants to run a command that can write files.	Асистент хоче виконати команду, яка може записувати файли.
+	The assistant wants to close a drawing: what isn't saved is lost.	Асистент хоче закрити креслення: незбережені зміни буде втрачено.
+	The assistant ran out of steps for this turn and stopped; the drawing keeps what it did.	Асистент вичерпав кроки цього ходу й зупинився; креслення зберігає зроблене.
+	Start a new conversation? The messages so far will be cleared.	Почати нову розмову? Повідомлення дотепер буде видалено.
+	Keep	Залишити
+	Refresh credit	Оновити кредит
+	Get an account key or top up your credit at {site}	Отримати ключ рахунку або поповнити кредит: {site}
+	Top up credit	Поповнити кредит
+	Change key	Змінити ключ
+	The account key was changed: now connected to account {conto}.	Ключ рахунку змінено: тепер під'єднано до рахунку {conto}.
+	To answer, the AI Assistant sends your requests, what it reads from the drawing and what its commands return to {service} ({destination}) and to the provider of the chosen model. Allow this for CADCraft?	Щоб відповісти, ШІ-асистент надсилає ваші запити, те, що він читає з креслення, і те, що повертають його команди, до {service} ({destination}) і постачальнику вибраної моделі. Дозволити це для CADCraft?
+	Nothing was sent: the AI Assistant needs your agreement first.	Нічого не надіслано: ШІ-асистенту спершу потрібна ваша згода.

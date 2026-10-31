@@ -19,6 +19,7 @@ pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
 
 pub mod aliasdlg;
 pub mod animation;
+pub mod assistant;
 pub mod autosave;
 pub mod bedit;
 pub mod canvas;
@@ -304,6 +305,8 @@ pub struct CadApp {
     pub hatch_dlg: Option<hatchdlg::HatchDlgState>,
     /// The Edit Block Definition dialog ([`bedit`]).
     pub bedit: bedit::State,
+    /// The AI Assistant palette ([`assistant`]).
+    pub assistant: assistant::Assistant,
     /// The startup update check and its prompt (desktop; [`updates_ui`]).
     #[cfg(not(target_arch = "wasm32"))]
     pub updates_rt: updates_ui::Runtime,
@@ -357,6 +360,7 @@ impl CadApp {
             alias_dlg: None,
             hatch_dlg: None,
             bedit: bedit::State::default(),
+            assistant: assistant::Assistant::default(),
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
         }
@@ -454,6 +458,12 @@ impl CadApp {
         if !self.ui.recent_files.is_empty() {
             prefs["recentFiles"] = json!(self.ui.recent_files);
         }
+        if self.assistant.language != assistant::Language::default() {
+            prefs["assistantLanguage"] = json!(self.assistant.language.code());
+        }
+        if let Some(m) = &self.assistant.model {
+            prefs["assistantModel"] = json!(m);
+        }
         if let Some(dir) = &self.ui.last_lisp_dir {
             prefs["lispDir"] = json!(dir);
         }
@@ -480,6 +490,12 @@ impl CadApp {
         }
         if let Some(v) = v.get("saveVersion").and_then(Value::as_str).and_then(SaveVersion::parse) {
             self.ui.save_version = v.year().to_string();
+        }
+        if let Some(l) = v.get("assistantLanguage").and_then(Value::as_str).and_then(assistant::Language::parse) {
+            self.assistant.set_language(l);
+        }
+        if let Some(m) = v.get("assistantModel").and_then(Value::as_str) {
+            self.assistant.set_model(Some(m.to_string()));
         }
         if let Some(files) = v.get("recentFiles").and_then(Value::as_array) {
             self.ui.recent_files = files.iter().filter_map(Value::as_str).filter(|p| !p.is_empty()).take(RECENT_FILES).map(str::to_string).collect();
@@ -638,6 +654,7 @@ impl CadApp {
         // Consume-based queues: each item is handled once, whichever callback delivers it. A
         // reply arriving during a later pass is never starved until the next frame.
         self.drain_control(ctx);
+        assistant::tick(self, ctx);
         self.finish_opening();
         // Finishing an open switches to the new drawing.
         capture::note_identity(self, ctx);
@@ -659,7 +676,11 @@ impl CadApp {
         }
         // A long AutoLISP routine runs one bounded slice per frame, including hidden web/native
         // ticks; it must not depend on a paint or `RequestPaintWhileHidden`.
-        self.session.lisp_tick();
+        if self.assistant.started_lisp {
+            cadcraft_engine::consent::with(cadcraft_engine::consent::Consent::NONE, || self.session.lisp_tick());
+        } else {
+            self.session.lisp_tick();
+        }
         // Time-based and idempotent by its own deadline; keeps autosave alive while hidden.
         self.autosave_tick(ctx);
         #[cfg(not(target_arch = "wasm32"))]

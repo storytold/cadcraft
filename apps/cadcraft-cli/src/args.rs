@@ -81,6 +81,47 @@ pub(crate) enum Command {
     Mcp(McpArgs),
     Perf(PerfArgs),
     Sample(SampleArgs),
+    Ask(AskArgs),
+}
+
+/// The AI Assistant carries out PROMPT on a drawing, through a FANTASTICO account
+#[derive(Args)]
+#[command(after_long_help = r#"The account key (ck-fant-...) or project key (sk-fant-...) is read from $FANTASTICO_KEY; get
+one, or top up the credit, at https://artcraft.fantastico.cc. The reply goes to stdout, the
+commands the assistant runs to stderr. New, open and save are asked on a terminal first, and
+declined when stdin is not one, unless --yes is given. --save and --export are written even
+when the turn stops early."#)]
+pub(crate) struct AskArgs {
+    /// What to do, in your own words (one quoted argument)
+    #[arg(value_name = "PROMPT")]
+    pub(crate) prompt: String,
+    /// The drawing to work on (default: a new drawing)
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["sample", "metric"])]
+    pub(crate) open: Option<PathBuf>,
+    /// Work on the built-in sample drawing
+    #[arg(long, conflicts_with = "metric")]
+    pub(crate) sample: bool,
+    /// Start a new metric drawing
+    #[arg(long)]
+    pub(crate) metric: bool,
+    /// The model to ask (default: the one the account suggests)
+    #[arg(long, value_name = "M")]
+    pub(crate) model: Option<String>,
+    /// Model calls allowed in this turn (1 to 20, default 20)
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u16).range(1..=cadcraft_assistant::MAX_STEPS as i64))]
+    pub(crate) max_steps: Option<u16>,
+    /// Allow new, open and save without asking
+    #[arg(long, short)]
+    pub(crate) yes: bool,
+    /// Allow an output that is the --open file, replacing the original
+    #[arg(long)]
+    pub(crate) in_place: bool,
+    #[arg(long, value_name = "OUT.dxf", help = save_help())]
+    pub(crate) save: Option<PathBuf>,
+    #[arg(long, value_name = "OUT.png", help = export_help())]
+    pub(crate) export: Option<PathBuf>,
+    #[command(flatten)]
+    pub(crate) settings: Settings,
 }
 
 /// Print a drawing's summary as JSON
@@ -458,6 +499,10 @@ fn out_is_input(cli: &Cli) -> Option<UsageError> {
             let inputs = r.drawings.iter().filter_map(|d| if let Drawing::File(f) = d { Some(f) } else { None });
             let inputs: Vec<&PathBuf> = inputs.collect();
             [&r.save, &r.export].into_iter().flatten().find(|out| inputs.iter().any(|i| same(i, out))).map(|out| UsageError::OutIsInput(out.clone()))
+        }
+        Command::Ask(a) if !a.in_place => {
+            let input = a.open.as_deref()?;
+            [&a.save, &a.export].into_iter().flatten().find(|out| same(input, out)).map(|out| UsageError::OutIsInput(out.clone()))
         }
         _ => None,
     }

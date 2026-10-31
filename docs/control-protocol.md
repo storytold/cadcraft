@@ -132,7 +132,7 @@ file before restarting to resume saving workspace choices.
 
 Tool Sets, Layers, and Properties can be regrouped, split, floated within the app window, closed, and reopened. The drawing canvas stays visible and cannot be closed or turned into a tab. The document/session view is protected. Layouts, active tabs, panel visibility, and floating rectangles are saved with the app's existing UI preferences. These operations do not edit document contents.
 
-Panel IDs: `toolSets`, `layers`, `properties`, `externalReferences`. The protected center is `canvas`.
+Panel IDs: `toolSets`, `layers`, `properties`, `externalReferences`, and the on-demand `quickCalc` and `assistant`. The protected center is `canvas`.
 
 `ui.dock` accepts `operation`; basic per-panel operations also require `panel`. The advanced `resizeSplit` operation below uses a split `path` instead of a panel. Basic operations are `open`, `close`, `activate`, `float` (with finite positive `rect: [x, y, width, height]`), or `move` (with `target` and `zone: center|tab|left|right|top|bottom|above|below`, default `center`). Center and tab group with the target; side zones split beside it; above and below add a group in a floating window. `open` and `activate` show a hidden panel at its last place and select it. `ui.dock.reset` restores the default arrangement. Invalid moves return an error without changing the layout.
 
@@ -143,6 +143,10 @@ reopens at its saved location. **Window > QuickCalc** and **Ctrl/Cmd+8** invoke
 The shortcut also works with text-field focus. Toggling preserves the running drawing command
 and pending command-line input. The expression, history and calculator variables survive
 closing/reopening within the same session; they are not saved across application restarts.
+
+The AI Assistant palette (`assistant`, [assistant.md](assistant.md)) is not part of the default
+arrangement either: **Window > AI Assistant** and `ui.panel.assistant` open it below the
+right-hand palettes the first time, and later at its saved location.
 
 Invoke these UI commands through `engine.execute`, for example `{"command":"ui.dock","params":{"operation":"float","panel":"layers","rect":[100,100,320,440]}}`.
 

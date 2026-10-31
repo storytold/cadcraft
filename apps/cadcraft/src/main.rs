@@ -14,6 +14,7 @@
 #![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod assistant_host;
 mod control_server;
 mod desktop_theme;
 mod env;
@@ -336,6 +337,13 @@ fn main() -> eframe::Result {
                     log::warn!("no LISP support folder {}: {e}", support.display());
                 }
                 app.session.set_lisp_support_dir(Some(support));
+                // Window ▸ AI Assistant, on the shared Craft AI layer: the account is a connection
+                // every Craft app shares, its key in the system keychain. An older key file in the
+                // settings directory moves there the first time it is needed.
+                match assistant_host::LayerHost::new(dir) {
+                    Ok(host) => app.assistant.set_host(std::sync::Arc::new(host)),
+                    Err(e) => log::warn!("AI Assistant unavailable: {e}"),
+                }
             }
             app.integrated_titlebar = cfg!(target_os = "macos");
             if surface.present_mode == eframe::wgpu::PresentMode::AutoNoVsync {

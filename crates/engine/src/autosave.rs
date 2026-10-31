@@ -327,6 +327,10 @@ mod native {
             log::warn!("autosave: not deleting {path}: not an autosave file");
             return;
         }
+        if let Err(e) = crate::consent::check_write(path) {
+            log::warn!("autosave: {e}");
+            return;
+        }
         if let Err(e) = std::fs::remove_file(path)
             && e.kind() != std::io::ErrorKind::NotFound
         {
