@@ -18,6 +18,9 @@ fn viewport(id: u32, frozen_layers: Vec<String>, layer_colors: Vec<(String, Colo
         layer_colors,
         clip: None,
         on: true,
+        ucs: None,
+        ucs_per_viewport: false,
+        extra: Vec::new(),
     })
 }
 

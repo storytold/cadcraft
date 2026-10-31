@@ -631,14 +631,42 @@ fn write_viewport_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper:
                 w.s(341, h);
             }
         }
-        // One CADCraft xdata group holds both lists: readers stop at the first group of an app.
-        if !v.frozen_layers.is_empty() || !v.layer_colors.is_empty() {
+        // The viewport's own UCS. Its other unmodelled groups (`extra`) go in after this, just
+        // before the xdata (dxf_raw::finish).
+        if v.ucs.is_some() || v.ucs_per_viewport {
+            w.i(71, i64::from(v.ucs_per_viewport));
+        }
+        // The named and base UCS that are still in the UCS table.
+        let mut ucs_names = (None, None);
+        if let Some(u) = &v.ucs {
+            w.p(110, u.origin);
+            w.p(111, u.x_axis);
+            w.p(112, u.y_axis);
+            w.i(79, i64::from(u.ortho));
+            w.f(146, u.elevation);
+            ucs_names = (live_ucs(&w.ucss, &u.named), live_ucs(&w.ucss, &u.base));
+            for (code, name) in [(345, &ucs_names.0), (346, &ucs_names.1)] {
+                if let Some((_, h)) = name {
+                    w.s(code, h.clone());
+                }
+            }
+        }
+        let has_ucs_names = ucs_names.0.is_some() || ucs_names.1.is_some();
+        let has_extra = v.extra.iter().any(|t| !crate::dxf_raw::is_pointer(t.code));
+        // One CADCraft xdata group holds all the lists: readers stop at the first group of an app.
+        if !v.frozen_layers.is_empty() || !v.layer_colors.is_empty() || has_ucs_names || has_extra {
             w.s(1001, dxf_ext::APP);
             if !v.frozen_layers.is_empty() {
                 w.xdata(dxf_ext::frozen_xdata(&v.frozen_layers));
             }
             if !v.layer_colors.is_empty() {
                 w.xdata(dxf_ext::layer_colors_xdata(&v.layer_colors));
+            }
+            if has_ucs_names {
+                w.xdata(dxf_ext::ucs_xdata(ucs_names.0.map(|(n, _)| n), ucs_names.1.map(|(n, _)| n)));
+            }
+            if has_extra {
+                w.xdata(dxf_ext::extra_xdata(&v.extra));
             }
         }
     }
@@ -787,4 +815,10 @@ fn hatch_xdata(w: &mut W, h: &Hatch) {
     w.s(1000, "HATCH");
     w.p(1011, h.origin.to3(0.0));
     w.s(1000, h.background.map(Color::name).unwrap_or_default());
+}
+
+/// A viewport's named or base UCS with its record handle, if the UCS table still has it.
+fn live_ucs<'a>(ucss: &HashMap<String, String>, name: &'a Option<String>) -> Option<(&'a str, String)> {
+    let n = name.as_deref()?;
+    Some((n, ucss.get(&n.to_ascii_uppercase())?.clone()))
 }

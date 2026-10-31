@@ -7,7 +7,8 @@ use cadcraft_doc::{
     Arc, AssocSnap, Attrib, AttribModes, AttribProps, Block, Circle, Common, DashElement, DimAssoc, DimKind, DimStyle, Dimension, Drawing, Ellipse,
     Entity, EntityKind, Face3d, Gradient, Group, HAlign, HVal, Handle, Hatch, HatchLoop, Helix, HelixConstrain, Insert, Layer, Layout, Leader, Line,
     Linetype, Lineweight, LwPolyline, MAX_FRAME_CHARS, MLeaderStyle, MText, MultilineAttrib, NamedView, PageSetup, Point, Polyline3d, RawTag,
-    RayLine, Solid, Table, TableCell, Text, TextStyle, Tolerance, Transparency, Ucs, Unknown, VAlign, Viewport, VportConfig, VportTile, Wipeout,
+    RayLine, Solid, Table, TableCell, Text, TextStyle, Tolerance, Transparency, Ucs, Unknown, VAlign, Viewport, ViewportUcs, VportConfig, VportTile,
+    Wipeout,
 };
 use cadcraft_dxf::{Tag, records, sections};
 use cadcraft_geom::{PolyVertex, Spline, Vec2, Vec3};
@@ -61,6 +62,10 @@ struct Rx {
     block_arrays: HashMap<String, cadcraft_doc::ArrayParams>,
     /// LAYER record handle (upper case) → layer name (VIEWPORT group 341 frozen layers).
     layers: HashMap<String, String>,
+    /// UCS record handle (upper case) → UCS name (VIEWPORT groups 345 and 346).
+    ucss: HashMap<String, String>,
+    /// Upper-case UCS name → UCS name, for a viewport that names its UCS in CADCraft's xdata.
+    ucs_names: HashMap<String, String>,
 }
 
 /// Read a DXF file into a drawing.

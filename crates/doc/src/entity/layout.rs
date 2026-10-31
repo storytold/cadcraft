@@ -1,4 +1,4 @@
-use super::common::Handle;
+use super::common::{Handle, RawTag};
 use super::{Color, Deserialize, Serialize, Vec2, Vec3, standard, yes};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -25,6 +25,40 @@ pub struct Viewport {
     /// Display on (MVIEW ON/OFF). An off viewport shows its border but no model space.
     #[serde(default = "yes")]
     pub on: bool,
+    /// The viewport's own UCS (DXF groups 110–112, 79, 146, 345, 346), the one it keeps while
+    /// `ucs_per_viewport` is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ucs: Option<ViewportUcs>,
+    /// UCS per viewport (UCSVP, DXF group 71): the viewport keeps its own UCS instead of
+    /// following the current one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ucs_per_viewport: bool,
+    /// The viewport's groups CADCraft doesn't model (snap, grid, lens and clipping, render mode,
+    /// plot style sheet, shade plot, visual style, background, lighting…), as read: written back
+    /// on save and carried by copies, their references pointed at what they named.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra: Vec<RawTag>,
+}
+
+/// A layout viewport's own UCS.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ViewportUcs {
+    pub origin: Vec3,
+    pub x_axis: Vec3,
+    pub y_axis: Vec3,
+    /// Elevation (DXF group 146).
+    #[serde(default)]
+    pub elevation: f64,
+    /// Orthographic type (DXF group 79): 0 none, 1 top, 2 bottom, 3 front, 4 back, 5 left, 6 right.
+    #[serde(default)]
+    pub ortho: u8,
+    /// The named UCS it is, by UCS table name (DXF group 345).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub named: Option<String>,
+    /// The UCS an orthographic one is based on, by UCS table name (DXF group 346); none: the WCS.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
 }
 
 impl Default for Viewport {
@@ -41,6 +75,9 @@ impl Default for Viewport {
             layer_colors: Vec::new(),
             clip: None,
             on: true,
+            ucs: None,
+            ucs_per_viewport: false,
+            extra: Vec::new(),
         }
     }
 }

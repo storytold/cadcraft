@@ -27,6 +27,9 @@ fn drawing() -> (Drawing, Space) {
             layer_colors: Vec::new(),
             clip: None,
             on: true,
+            ucs: None,
+            ucs_per_viewport: false,
+            extra: Vec::new(),
         }),
     )
     .unwrap();
