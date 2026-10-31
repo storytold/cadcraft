@@ -23,8 +23,8 @@ pub enum Embedding {
     NotTrueType,
 }
 
-fn table<'a>(f: &FontRef<'a>, t: &[u8; 4]) -> Option<&'a [u8]> {
-    f.table_data(Tag::new(t)).map(|d| d.as_bytes())
+fn table<'a>(f: &FontRef<'a>, t: [u8; 4]) -> Option<&'a [u8]> {
+    f.table_data(Tag::new(&t)).map(|d| d.as_bytes())
 }
 
 fn u16_at(b: &[u8], i: usize) -> Option<u16> {
@@ -32,12 +32,13 @@ fn u16_at(b: &[u8], i: usize) -> Option<u16> {
 }
 
 /// The embedding permission of a face.
+#[must_use]
 pub fn embedding(face: &Face) -> Embedding {
     let Ok(f) = FontRef::from_index(&face.bytes, face.index) else { return Embedding::NotTrueType };
-    if table(&f, b"glyf").is_none() || table(&f, b"loca").is_none() || table(&f, b"head").is_none() {
+    if table(&f, *b"glyf").is_none() || table(&f, *b"loca").is_none() || table(&f, *b"head").is_none() {
         return Embedding::NotTrueType;
     }
-    let Some(fs_type) = table(&f, b"OS/2").and_then(|o| u16_at(o, 8)) else { return Embedding::Allowed };
+    let Some(fs_type) = table(&f, *b"OS/2").and_then(|o| u16_at(o, 8)) else { return Embedding::Allowed };
     if fs_type & 0x0200 != 0 {
         Embedding::BitmapOnly
     } else if fs_type & 0x000F == 0x0002 {
