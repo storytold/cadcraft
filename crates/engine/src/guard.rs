@@ -102,6 +102,15 @@ impl Interactive for Guarded {
             None
         })
     }
+    fn text_editor(&self) -> Option<crate::TextEditor> {
+        if self.broken.get().is_some() {
+            return None;
+        }
+        catch_unwind(AssertUnwindSafe(|| self.inner.text_editor())).unwrap_or_else(|_| {
+            self.broken.set(Some("panic in prompt"));
+            None
+        })
+    }
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-use super::text::linear_text;
+use super::text::{linear_formula_value, linear_text};
 use super::{DimConfig, DimGeometry, DimKind, LineRole, Vec2, ext_line, readable};
 
 struct LinearDimState {
@@ -55,6 +55,7 @@ fn prepare_linear(config: &DimConfig<'_>, g: &mut DimGeometry, text_mid: Vec2) -
     };
     let (f1, f2) = (foot(p1), foot(p2));
     let raw_measurement = (p2 - p1).dot(direction).abs();
+    g.formula_value = Some(linear_formula_value(raw_measurement, st));
     g.mtext = linear_text(raw_measurement, d, st, "");
     g.measurement = raw_measurement;
     let measurement = f1.dist(f2);

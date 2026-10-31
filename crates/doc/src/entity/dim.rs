@@ -85,6 +85,10 @@ pub struct DimMarks {
     /// Inspection frame, label and rate (DIMINSPECT).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inspect: Option<Inspection>,
+    /// A formula for the dimension text (`=<>/2`, `=TEXT(<>,"0.0")&" mm"`; `<>` is the
+    /// measurement); `Dimension::text` holds the last result.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub formula: Option<String>,
 }
 
 impl DimMarks {

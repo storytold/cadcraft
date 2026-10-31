@@ -26,7 +26,8 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         "about" => about(ctx, &mut open),
         "preview" => crate::exchange::dialog(app, ctx, &mut open),
         "commands" => commands(app, ctx, &mut open),
-        "blocks" => blocks(app, ctx, &mut open),
+        "blocks" => crate::blockmgr::dialog(app, ctx, &mut open),
+        "formulas" => formulas(ctx, &mut open),
         "bedit" => crate::bedit::dialog(app, ctx, &mut open),
         "authoring" => crate::bedit::authoring_dialog(app, ctx, &mut open),
         "stylesmanager" => crate::plotstyles::dialog(app, ctx, &mut open),
@@ -355,6 +356,29 @@ fn about(ctx: &egui::Context, open: &mut bool) {
         });
 }
 
+/// Help ▸ Text Formulas: how formulas in text work and the functions they use.
+fn formulas(ctx: &egui::Context, open: &mut bool) {
+    egui::Window::new(crate::tl!("Text Formulas")).id(egui::Id::unique("Text Formulas")).open(open).default_size(vec2(680.0, 520.0)).show(ctx, |ui| {
+        ui.label(crate::tl!(
+            "A text that starts with = shows the result of a formula, as in a spreadsheet: =2400-2*18, =ROUND(PI()*125^2/1000000;3), =TEXT(TODAY();\"dd.mm.yyyy\"). The formula stays with the text: editing the text edits the formula. Dates and times follow the computer's clock and are worked out again when the drawing is opened (Tools ▸ Update Fields does it at once). Date fields in AutoCAD drawings are updated the same way."
+        ));
+        ui.add_space(4.0);
+        ui.label(crate::tl!(
+            "Operators: + - * / ^ (power), % (percent), & (joins texts), = <> < > <= >= (compare). Texts in double quotes. Arguments are separated by commas or semicolons."
+        ));
+        ui.separator();
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            egui::Grid::new("formula_functions").striped(true).num_columns(2).show(ui, |ui| {
+                for (name, args, what) in cadcraft_engine::textformula::FUNCTIONS {
+                    ui.label(egui::RichText::new(format!("{name}({args})")).monospace());
+                    ui.label(crate::i18n::t(what));
+                    ui.end_row();
+                }
+            });
+        });
+    });
+}
+
 /// Command Reference window; filters commands by id or label (English or translated) and starts the clicked command after closing the dialog.
 fn commands(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let mut start = None;
@@ -396,30 +420,13 @@ fn commands(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     }
 }
 
-/// Blocks window listing named (non-anonymous) blocks; clicking one starts INSERT with that block name already supplied.
-fn blocks(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
-    let mut pick = None;
-    egui::Window::new(crate::tl!("Blocks")).id(egui::Id::unique("Blocks")).open(open).default_size(vec2(320.0, 360.0)).show(ctx, |ui| {
-        let Ok(d) = app.session.doc() else { return };
-        let names: Vec<&String> = d.blocks.keys().filter(|k| !k.starts_with('*')).collect();
-        if names.is_empty() {
-            ui.label(crate::tl!("No blocks defined in this drawing."));
-        }
-        for n in names {
-            if ui.button(n).on_hover_text(crate::tl!("Insert this block")).clicked() {
-                pick = Some(n.clone());
-            }
-        }
-    });
-    if let Some(n) = pick {
-        insert_block(app, &n);
-    }
-}
-
 /// Start INSERT with `name` already given at its block name prompt, so the next prompt asks for
 /// the insertion point.
-fn insert_block(app: &mut CadApp, name: &str) {
-    app.start("insert");
+pub(crate) fn insert_block(app: &mut CadApp, name: &str) {
+    // The engine's INSERT itself (the UI's INSERT opens the Block Manager).
+    if let Err(e) = app.session.start("insert") {
+        app.session.echo(e.to_string());
+    }
     if app.session.running.as_ref().is_none_or(|r| r.id != "insert") {
         return;
     }
