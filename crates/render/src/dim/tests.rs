@@ -201,6 +201,21 @@ fn text_alignment_vertical_dimension() {
 }
 
 #[test]
+fn explicit_text_rotation_widens_the_dimension_line_gap() {
+    // A vertical dimension's text, horizontal by DIMTIH, turned along the line (DIMTEDIT Angle,
+    // the Properties palette's Text rotation): the line's gap fits the text as turned.
+    let mut d = lin((0.0, 0.0), (0.0, 40.0), (5.0, 0.0), std::f64::consts::FRAC_PI_2);
+    d.text_rotation = std::f64::consts::FRAC_PI_2;
+    let g = dimension_geometry(&d, &DimStyle::default(), 1.0);
+    let text = bbox(&g.text);
+    assert!(text.height() > 2.0 * text.width(), "turned along the line: {text:?}");
+    for l in g.lines_of(LineRole::Dim) {
+        let b = bbox(std::slice::from_ref(l));
+        assert!(b.max.y <= text.min.y + 1e-9 || b.min.y >= text.max.y - 1e-9, "the dimension line {l:?} crosses the text {text:?}");
+    }
+}
+
+#[test]
 fn justification_moves_text() {
     let d = lin((0.0, 0.0), (10.0, 0.0), (0.0, 5.0), 0.0);
     let j1 = dimension_geometry(&d, &st_with(|s| s.text_just = 1), 1.0);
