@@ -608,7 +608,7 @@ fn code_page_bytes(c: char, d: codepage::Decoder, before_escape: bool, out: &mut
 /// A section: `0 SECTION / 2 NAME ... 0 ENDSEC`. Its tags are a view into the parsed stream,
 /// not a copy: a 58 MB DWG converts to 33 million tags, and copying them once per section and
 /// once per record used to cost more memory than the drawing they describe (#1076).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Section<'a> {
     pub name: &'a str,
     pub tags: &'a [Tag],
