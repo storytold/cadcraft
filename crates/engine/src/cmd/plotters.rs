@@ -482,13 +482,20 @@ fn edit_device(cmd: &str, c: &mut PlotterConfig, p: &Value) -> Result<()> {
             _ => return Err(bad(cmd, "`paper.width` and `paper.height` (mm) are both required")),
         };
         let margins = match pv.get("margins") {
-            None => existing.as_ref().map(|e| e.margins).unwrap_or([0.0; 4]),
+            None => match existing.as_ref() {
+                // Stored margins belong to the stored portrait sheet; naming the same sheet
+                // landscape turns them back, so re-saving a paper does not refuse its own
+                // margins.
+                Some(e) if w > h && e.width == h && e.height == w => {
+                    let [l, b, r, t] = e.margins;
+                    [t, l, b, r]
+                }
+                _ => existing.as_ref().map(|e| e.margins).unwrap_or([0.0; 4]),
+            },
             Some(m) => {
                 let a: Vec<f64> = m.as_array().map(|a| a.iter().filter_map(Value::as_f64).collect()).unwrap_or_default();
                 match a[..] {
-                    [l, b, r, t] if a.iter().all(|v| v.is_finite() && (0.0..=1000.0).contains(v)) && l + r < w.min(h) && b + t < w.max(h) => {
-                        [l, b, r, t]
-                    }
+                    [l, b, r, t] if a.iter().all(|v| v.is_finite() && (0.0..=1000.0).contains(v)) && l + r < w && b + t < h => [l, b, r, t],
                     _ => return Err(bad(cmd, "`paper.margins` must be [left, bottom, right, top] in mm, leaving a printable area")),
                 }
             }
