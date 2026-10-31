@@ -776,3 +776,131 @@ fn offset_elliptical_arc_follows_picked_side() {
     let outer = max_x(json!([20, 20]));
     assert!((outer - 11.0).abs() < 0.05, "outer side went inward: max x = {outer}");
 }
+
+/// STRETCH against what AutoCAD 2024 stores for the same crossing window and displacement (5, 3)
+/// (black-box: synthetic objects in accoreconsole, read back with `entget`): the ends of an arc
+/// that are inside move and the arc keeps its height (bulge × chord / 2), as does a polyline arc
+/// segment; the centre alone moves nothing; a spline's control points inside move.
+#[test]
+fn stretch_arcs_bulges_and_splines_match_autocad() {
+    enum Want {
+        Arc([f64; 2], f64, f64, f64),
+        Bulges(&'static [f64]),
+        Control(&'static [[f64; 2]]),
+    }
+    // ((seed command, params), crossing window, what AutoCAD stores)
+    let cases: Vec<((&str, Value), [[f64; 2]; 2], Want)> = vec![
+        // SX-ARC-1END: one end of the arc inside.
+        (
+            ("arc", json!({"center": [0.0, 0.0], "radius": 20.0, "start": 0.0, "end": 90.0})),
+            [[15.0, -5.0], [30.0, 5.0]],
+            Want::Arc([3.17984478246544, -2.20611061402141], 22.43262716319083, 0.2342130724507349, 1.713026264953702),
+        ),
+        // SX2-ARC-ENDPT: the other end inside.
+        (
+            ("arc", json!({"center": [0.0, 0.0], "radius": 20.0, "start": 0.0, "end": 90.0})),
+            [[-5.0, 15.0], [5.0, 25.0]],
+            Want::Arc([1.476584509301813, 4.310815984327269], 19.01841360081773, 6.054532724492258, 1.384456456611818),
+        ),
+        // SX2-ARC-BIG-END: an arc over 180 degrees, its end inside.
+        (
+            ("arc", json!({"center": [0.0, 0.0], "radius": 20.0, "start": 30.0, "end": 300.0})),
+            [[5.0, -25.0], [15.0, -12.0]],
+            Want::Arc([1.341732093243006, -0.7463649967436295], 19.25631435504786, 0.5920576993601167, 5.500876277544912),
+        ),
+        // SX2-ARC-CEN: only the centre inside: unchanged.
+        (
+            ("arc", json!({"center": [0.0, 0.0], "radius": 20.0, "start": 0.0, "end": 90.0})),
+            [[-3.0, -3.0], [16.0, 16.0]],
+            Want::Arc([0.0, 0.0], 20.0, 0.0, std::f64::consts::FRAC_PI_2),
+        ),
+        // SX-ARC-ALL: the whole arc inside: moved.
+        (
+            ("arc", json!({"center": [0.0, 0.0], "radius": 20.0, "start": 0.0, "end": 90.0})),
+            [[-5.0, -5.0], [30.0, 30.0]],
+            Want::Arc([5.0, 3.0], 20.0, 0.0, std::f64::consts::FRAC_PI_2),
+        ),
+        // A full-sweep arc (start = end) inside the window: moved whole, though its chord is zero.
+        (
+            ("arc", json!({"center": [0.0, 0.0], "radius": 20.0, "start": 45.0, "end": 45.0})),
+            [[-25.0, -25.0], [25.0, 25.0]],
+            Want::Arc([5.0, 3.0], 20.0, std::f64::consts::FRAC_PI_4, std::f64::consts::FRAC_PI_4),
+        ),
+        // SX-PLA-V1: the vertex starting an arc segment.
+        (
+            (
+                "pline",
+                json!({"vertices": [{"p": [0.0, 0.0], "bulge": 0.0}, {"p": [30.0, 0.0], "bulge": 0.5}, {"p": [45.0, 20.0], "bulge": 0.0}, {"p": [60.0, 20.0], "bulge": 0.0}], "closed": false}),
+            ),
+            [[25.0, -5.0], [35.0, 5.0]],
+            Want::Bulges(&[0.0, 0.6337751582042422, 0.0, 0.0]),
+        ),
+        // SX-PLA-V2: the vertex ending an arc segment.
+        (
+            (
+                "pline",
+                json!({"vertices": [{"p": [0.0, 0.0], "bulge": 0.0}, {"p": [30.0, 0.0], "bulge": 0.5}, {"p": [45.0, 20.0], "bulge": 0.0}, {"p": [60.0, 20.0], "bulge": 0.0}], "closed": false}),
+            ),
+            [[40.0, 15.0], [50.0, 25.0]],
+            Want::Bulges(&[0.0, 0.4101116968279916, 0.0, 0.0]),
+        ),
+        // SX2-PLA-NEG: a negative bulge over 180 degrees.
+        (
+            (
+                "pline",
+                json!({"vertices": [{"p": [0.0, 0.0], "bulge": 0.0}, {"p": [30.0, 0.0], "bulge": -1.5}, {"p": [45.0, 20.0], "bulge": 0.0}, {"p": [60.0, 20.0], "bulge": 0.0}], "closed": false}),
+            ),
+            [[40.0, 15.0], [50.0, 25.0]],
+            Want::Bulges(&[0.0, -1.230335090483974, 0.0, 0.0]),
+        ),
+        // SX3-SPL-CV-ONLY: a window holding a control point but missing the drawn curve selects
+        // nothing in AutoCAD ("0 found"), so the spline stays as it was.
+        (
+            ("spline", json!({"control": [[0.0, 0.0], [10.0, 100.0], [20.0, 100.0], [30.0, 0.0]], "degree": 3})),
+            [[5.0, 95.0], [15.0, 105.0]],
+            Want::Control(&[[0.0, 0.0], [10.0, 100.0], [20.0, 100.0], [30.0, 0.0]]),
+        ),
+        // SX3-SPL-CV-CROSS: the same control point in a window that also crosses the curve moves.
+        (
+            ("spline", json!({"control": [[0.0, 0.0], [10.0, 100.0], [20.0, 100.0], [30.0, 0.0]], "degree": 3})),
+            [[5.0, 40.0], [15.0, 105.0]],
+            Want::Control(&[[0.0, 0.0], [15.0, 103.0], [20.0, 100.0], [30.0, 0.0]]),
+        ),
+        // SX-SPL: two control points inside.
+        (
+            ("spline", json!({"control": [[0.0, 0.0], [10.0, 10.0], [20.0, 0.0], [30.0, 10.0]], "degree": 3})),
+            [[15.0, -5.0], [35.0, 15.0]],
+            Want::Control(&[[0.0, 0.0], [10.0, 10.0], [25.0, 3.0], [35.0, 13.0]]),
+        ),
+    ];
+    let same = |a: f64, b: f64| (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1.0);
+    let same_angle = |a: f64, b: f64| {
+        let d = (a - b).rem_euclid(std::f64::consts::TAU);
+        d < 1e-9 || std::f64::consts::TAU - d < 1e-9
+    };
+    for ((seed, params), window, want) in cases {
+        let mut s = Session::new();
+        let hd = h(&s.execute(seed, &params).unwrap());
+        s.execute("stretch", &json!({"window": window, "delta": [5.0, 3.0]})).unwrap();
+        match (kind(&s, &hd), want) {
+            (EntityKind::Arc(a), Want::Arc(c, r, start, end)) => assert!(
+                same(a.center.x, c[0]) && same(a.center.y, c[1]) && same(a.radius, r) && same_angle(a.start, start) && same_angle(a.end, end),
+                "{window:?}: {a:?}"
+            ),
+            (EntityKind::LwPolyline(p), Want::Bulges(want)) => {
+                let got: Vec<f64> = p.vertices.iter().map(|v| v.bulge).collect();
+                assert!(got.len() == want.len() && got.iter().zip(want).all(|(a, b)| same(*a, *b)), "{window:?}: {got:?} / {want:?}");
+            }
+            (EntityKind::Spline(sp), Want::Control(want)) => {
+                let ok = sp.control.len() == want.len() && sp.control.iter().zip(want).all(|(p, w)| same(p.x, w[0]) && same(p.y, w[1]));
+                assert!(ok, "{window:?}: {:?} / {want:?}", sp.control);
+            }
+            (k, _) => panic!("{window:?}: {k:?}"),
+        }
+    }
+    // A stretch that brings an arc segment's ends together leaves no arc to keep: the bulge goes.
+    let mut s = Session::new();
+    let p = pline(&mut s, json!([{"p": [0, 0], "bulge": 0.5}, [10, 0], [20, 0]]), false);
+    s.execute("stretch", &json!({"window": [[9, -1], [11, 1]], "delta": [-10, 0]})).unwrap();
+    assert_eq!(poly(&kind(&s, &p)).vertices.iter().map(|v| v.bulge).collect::<Vec<_>>(), [0.0, 0.0, 0.0]);
+}
