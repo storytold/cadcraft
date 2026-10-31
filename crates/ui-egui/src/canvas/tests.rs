@@ -373,6 +373,10 @@ fn orbit_mode_does_not_capture_layout_clicks_or_drags() {
     app.session.execute("view3d", &json!({"preset": "seiso", "orbit": true})).unwrap();
     assert!(app.session.view3d.is_some_and(|v| v.orbiting));
     app.session.execute("layout.set", &json!({"name": "Layout1"})).unwrap();
+    // A sheet object under the press point, so the drag starts a selection window rather than
+    // the click-click window an empty press begins.
+    app.session.execute("line", &json!({"points": [[1, 2], [9, 2]]})).unwrap();
+    app.session.set_selection(Vec::new());
     let ctx = egui::Context::default();
     let frame = |app: &mut CadApp, events: Vec<egui::Event>| {
         let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))), events, ..Default::default() };
@@ -386,12 +390,13 @@ fn orbit_mode_does_not_capture_layout_clicks_or_drags() {
     let xf = app.canvas.xf.unwrap();
     let camera = app.session.view3d.unwrap();
     // A drag across the sheet leaves the camera alone.
-    let (a, b) = (xf.to_screen(Vec2::new(3.0, 3.0)), xf.to_screen(Vec2::new(6.0, 5.0)));
+    let (a, b) = (xf.to_screen(Vec2::new(3.0, 2.0)), xf.to_screen(Vec2::new(6.0, 3.0)));
     let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
     frame(&mut app, vec![egui::Event::PointerMoved(a), button(a, true)]);
     for k in 1..=5 {
         frame(&mut app, vec![egui::Event::PointerMoved(a + (b - a) * (k as f32 / 5.0))]);
     }
+    assert!(app.canvas.drag_window, "a layout drag opens a selection window");
     frame(&mut app, vec![button(b, false)]);
     let after = app.session.view3d.unwrap();
     assert_eq!((after.azimuth, after.elevation), (camera.azimuth, camera.elevation), "a layout drag doesn't orbit");
@@ -404,4 +409,42 @@ fn orbit_mode_does_not_capture_layout_clicks_or_drags() {
     frame(&mut app, vec![button(at, true)]);
     frame(&mut app, vec![button(at, false)]);
     assert_ne!(app.session.prompt_text(), before, "the click reached the LINE prompt");
+}
+
+/// A 3D point prompt on a layout tab takes the 2D point under the cursor (on the UCS plane), not
+/// a point found through the model tab's 3D camera, which the sheet doesn't show (#2544
+/// re-review).
+#[test]
+fn layout_clicks_at_3d_prompts_use_the_sheet_point() {
+    use serde_json::json;
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    app.session.execute("view3d", &json!({"preset": "seiso", "orbit": false})).unwrap();
+    app.session.execute("layout.set", &json!({"name": "Layout1"})).unwrap();
+    let line = app.session.execute("line", &json!({"points": [[1, 2], [9, 2]]})).unwrap();
+    let h = Handle::parse_hex(line["handles"][0].as_str().or(line["handle"].as_str()).unwrap()).unwrap();
+    let ctx = egui::Context::default();
+    let frame = |app: &mut CadApp, events: Vec<egui::Event>| {
+        let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))), events, ..Default::default() };
+        let mut out = ctx.run_ui(raw, |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        });
+        out.textures_delta.clear();
+    };
+    let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+    frame(&mut app, vec![egui::Event::PointerMoved(pos2(5.0, 5.0))]);
+    let xf = app.canvas.xf.unwrap();
+    app.session.settings.osmode = 0;
+    app.session.set_selection(vec![h]);
+    app.session.start("move3d").unwrap();
+    for at in [Vec2::new(4.0, 5.0), Vec2::new(6.0, 6.0)] {
+        let p = xf.to_screen(at);
+        frame(&mut app, vec![egui::Event::PointerMoved(p)]);
+        assert!(app.canvas.cursor3d.is_none(), "no camera-ray point on a layout tab");
+        frame(&mut app, vec![button(p, true)]);
+        frame(&mut app, vec![button(p, false)]);
+    }
+    app.session.input(cadcraft_engine::Input::Enter).unwrap();
+    let cadcraft_doc::EntityKind::Line(moved) = &app.session.doc().unwrap().entity(h).unwrap().kind else { panic!("line") };
+    assert!((moved.a.x - 3.0).abs() < 1e-6 && (moved.a.y - 3.0).abs() < 1e-6, "moved by the clicked sheet offset: {:?}", moved.a);
 }

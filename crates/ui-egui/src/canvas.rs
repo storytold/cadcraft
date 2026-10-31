@@ -624,7 +624,7 @@ fn update_canvas_cursor(
 ) -> (Option<Vec2>, Option<crate::dyninput::Frame>) {
     let raw_world = hover.filter(|_| inside).map(|p| xf.to_world(p));
     let dyn_frame = crate::cmdline::dyn_frame(app);
-    let point3d_prompt = app.session.current_prompt().is_some_and(|p| p.point3d);
+    let point3d_prompt = point3d_input(app);
     app.canvas.cursor3d = None;
     app.canvas.cursor3d_snap = None;
     if let Some(w) = raw_world {
@@ -736,6 +736,13 @@ fn point3_at_pointer(app: &mut CadApp, xf: &Xf, pointer: Pos2) -> Option<(cadcra
     let (ray_origin, ray_direction) = projector.ray(xf.to_world(pointer))?;
     let point = ucs::intersect_plane(ray_origin, ray_direction, app.session.active_ucs())?;
     Some((point, None))
+}
+
+/// Pointer picks at a 3D point prompt go through the view ray onto the UCS plane (with 3D
+/// snaps) only on the model tab, plan view included. A layout tab shows the 2D sheet, so a click
+/// there is the 2D point under the cursor, which 3D prompts take on the UCS plane like typed `x,y`.
+fn point3d_input(app: &CadApp) -> bool {
+    app.session.current_prompt().is_some_and(|p| p.point3d) && app.session.state().is_ok_and(|st| !st.space.is_paper())
 }
 
 /// The canvas shows the depth-tested 3D projection: a 3D camera is set and the model tab is
@@ -864,7 +871,7 @@ fn collect_prompt_clicks(app: &mut CadApp, ui: &egui::Ui, context: PromptClickCo
         // The last one is placed below, at the cursor, like any click.
         if let Some((_, earlier)) = releases.split_last() {
             for pos in earlier.iter().filter(|p| context.rect.contains(**p)) {
-                if app.session.current_prompt().is_some_and(|p| p.point3d) {
+                if point3d_input(app) {
                     if let Some((point, _snap)) = point3_at_pointer(app, &context.xf, *pos) {
                         if let Err(e) = app.session.input(Input::Point3(point)) {
                             app.session.echo(e.to_string());
@@ -1064,7 +1071,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             // Preserve a snap's viewport origin for DIST, and its deferred curve where needed.
             let result = if showing_3d(app) && app.session.current_prompt().is_some_and(|p| p.accept.select) {
                 app.session.input(Input::Pick(depth_pick(&app.canvas, hover_pos).into_iter().collect()))
-            } else if app.session.current_prompt().is_some_and(|prompt| prompt.point3d) {
+            } else if point3d_input(app) {
                 match app.canvas.cursor3d {
                     Some(point) => app.session.input(Input::Point3(point)),
                     None => {
