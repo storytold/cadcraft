@@ -330,17 +330,21 @@ fn run_preview(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(l) = p.get("landscape").and_then(Value::as_bool) {
         page.landscape = l;
     }
+    // A layout's saved page setup (plot window, scale to fit, scale, centring) applies unless the call says otherwise (#2493).
+    // An explicit `fit: false` without a `scale` asks for the plain 1:1 plot.
+    let plain = p.get("fit").and_then(Value::as_bool) == Some(false) && p.get("scale").is_none();
+    let saved = if space.is_paper() && !plain { cadcraft_render::paper::saved_plot(&page) } else { Default::default() };
     let sheet = Sheet::from_page(&page, paper::page_unit_mm(d, &page));
     let lineweights = p.get("lineweights").and_then(Value::as_bool).unwrap_or(if space.is_paper() { page.lineweights } else { true });
     let transparency = super::plotters::plot_transparency(s, p).unwrap_or(page.plot_transparency);
-    let fit = p.get("fit").and_then(Value::as_bool).unwrap_or(matches!(space, Space::Model));
-    let scale = p.get("scale").and_then(Value::as_f64).filter(|v| v.is_finite() && *v > 0.0);
+    let fit = p.get("fit").and_then(Value::as_bool).unwrap_or(matches!(space, Space::Model) || saved.fit);
+    let scale = p.get("scale").and_then(Value::as_f64).filter(|v| v.is_finite() && *v > 0.0).or(saved.scale);
     let width = p.get("width").and_then(Value::as_u64).unwrap_or(PREVIEW_PX).clamp(16, MAX_PREVIEW_PX);
     let height = ((width as f64) * sheet.size.y / sheet.size.x).round();
     let height = if height.is_finite() { (height as u64).clamp(16, MAX_PREVIEW_PX) } else { width };
     let px_per_paper_unit = width as f64 / sheet.size.x;
     // Curves are flattened to about half a pixel.
-    let est = plot_scale(&d.extents(&space), &sheet, fit, scale);
+    let est = plot_scale(&saved.window.unwrap_or_else(|| d.extents(&space)), &sheet, fit, scale);
     let tol = 0.5 / (px_per_paper_unit * est);
     let ropts = cadcraft_render::Options {
         tolerance: if tol.is_finite() && tol > 0.0 { tol } else { 0.01 },
@@ -352,9 +356,13 @@ fn run_preview(s: &mut Session, p: &Value) -> Result<Value> {
         ..Default::default()
     };
     let list = cadcraft_render::build_plot(d, &space, &ropts);
-    let b = list.bounds;
+    let b = saved.window.unwrap_or(list.bounds);
     // Paper point q shows drawing point (q - to) / k + from.
-    let (from, k, to) = if fit || space == Space::Model {
+    let (from, k, to) = if saved.window.is_some() && !fit {
+        // A saved window at a saved scale: its centre (or corner) on the printable area's.
+        let c = saved.center;
+        (if c { b.center() } else { b.min }, plot_scale(&b, &sheet, fit, scale), if c { sheet.printable.center() } else { sheet.printable.min })
+    } else if fit || space == Space::Model {
         (if b.is_empty() { Vec2::ZERO } else { b.center() }, plot_scale(&b, &sheet, fit, scale), sheet.printable.center())
     } else {
         (Vec2::ZERO, plot_scale(&b, &sheet, fit, scale), Vec2::ZERO)
@@ -736,6 +744,25 @@ mod tests {
         let default = png(&mut s, json!({ "layout": "Layout1", "width": 200 }));
         assert_eq!(png(&mut s, json!({ "layout": "Layout1", "width": 200, "fit": false, "scale": 1 })), default, "scale 1 is the 1:1 default");
         assert_ne!(png(&mut s, json!({ "layout": "Layout1", "width": 200, "fit": false, "scale": 0.5 })), default, "scale 0.5 is not 1:1");
+    }
+
+    /// A layout's saved page setup (plot window, scale to fit) shapes its preview by default, as
+    /// it shapes the PDF; `fit: false` still gives the plain 1:1 sheet (#2493).
+    #[test]
+    fn preview_uses_the_layouts_saved_page_setup_by_default() {
+        let mut s = Session::new();
+        s.execute("layout.set", &json!({ "name": "Layout1" })).unwrap();
+        s.execute("line", &json!({ "points": [[20.0, 5.0], [836.0, 589.0]] })).unwrap();
+        s.execute("pagesetup", &json!({ "layout": "Layout1", "paper": "A4", "landscape": true, "margins": [0, 0, 0, 0] })).unwrap();
+        let png = |s: &mut Session, p: Value| s.execute("preview", &p).unwrap()["data"].as_str().unwrap_or_default().to_string();
+        let unsaved = png(&mut s, json!({ "layout": "Layout1", "width": 200 }));
+        let page = &mut s.doc_mut().unwrap().layouts.iter_mut().find(|l| l.name == "Layout1").unwrap().page;
+        page.plot_area = "window".into();
+        page.plot_window = [20.0, 5.0, 836.0, 589.0];
+        page.scale_to_fit = true;
+        let saved = png(&mut s, json!({ "layout": "Layout1", "width": 200 }));
+        assert_ne!(saved, unsaved, "the saved window and scale to fit change the preview");
+        assert_eq!(png(&mut s, json!({ "layout": "Layout1", "width": 200, "fit": false })), unsaved, "fit: false is the plain 1:1 sheet");
     }
 
     #[test]

@@ -63,7 +63,7 @@ fn fit_scale(b: &Bounds2, sheet: &Sheet, o: &PdfOptions) -> f64 {
 }
 
 fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
-    let o = PdfOptions::from_json(opts);
+    let o = pdf::with_saved_setup(d, space, &PdfOptions::from_json(opts));
     let (sheet, page) = sheet(d, space, &o)?;
     let dpi = opts.get("resolution").and_then(Value::as_f64).filter(|r| r.is_finite()).unwrap_or(300.0).clamp(50.0, 2400.0);
     // Pixels per paper unit, lowered so the image stays within the caps.
@@ -80,7 +80,7 @@ fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let table = cadcraft_doc::plot_style_table(d, &page.plot_style_table).map(Arc::new);
     // Paper units per drawing unit: 1 for a layout at 1:1, the fitted scale for model space.
     let fit = matches!(space, Space::Model) || o.fit == Some(true);
-    let window = o.window.filter(|w| matches!(space, Space::Model) && !w.is_empty());
+    let window = o.window.filter(|w| !w.is_empty());
     let est = if fit { fit_scale(&window.unwrap_or_else(|| d.extents(space)), &sheet, &o) } else { 1.0 };
     // Chord tolerance: a fifth of a pixel.
     let tolerance = (0.2 / (k * est)).max(1e-9);
