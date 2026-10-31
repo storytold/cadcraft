@@ -301,6 +301,7 @@ pub fn finish_open(s: &mut Session, f: ReadFile) -> Result<Value> {
     let ReadFile { drawing, binary_dxf, name, path } = f;
     let i = add_read(s, drawing, binary_dxf, &name, path);
     super::blocks::xref::after_open(s, i);
+    super::underlay::after_open(s, i);
     Ok(opened(s, i, true))
 }
 
@@ -353,6 +354,7 @@ fn run_open(s: &mut Session, p: &Value) -> Result<Value> {
                 crate::capped_read::read_capped(std::path::Path::new(path), MAX_DRAWING_BYTES).map_err(|e| bad("open", format!("{path}: {e}")))?;
             let i = open_bytes(s, &bytes, path, Some(path.to_string()))?;
             super::blocks::xref::after_open(s, i);
+            super::underlay::after_open(s, i);
             return Ok(opened(s, i, true));
         }
         #[cfg(target_arch = "wasm32")]
@@ -363,6 +365,7 @@ fn run_open(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").unwrap_or("Drawing.dxf");
     let i = open_bytes(s, &bytes, name, None)?;
     super::blocks::xref::after_open(s, i);
+    super::underlay::after_open(s, i);
     Ok(opened(s, i, false))
 }
 

@@ -1370,6 +1370,23 @@
 	Discard	Скасувати зміни
 	Customize	Налаштування інтерфейсу
 	Edit Command Aliases (PGP)...	Редагувати псевдоніми команд (PGP)...
+	Adjust	Налаштувати
+	Adjust PDF Underlay	Налаштувати підкладку PDF
+	Attach PDF Underlay	Приєднати підкладку PDF
+	Browse...	Огляд...
+	File name only	Лише ім'я файлу
+	Found at: {path}	Знайдено: {path}
+	Full path	Повний шлях
+	Only the first {count} pages are shown.	Показано лише перші {count} сторінок.
+	PDF Underlay	Підкладка PDF
+	PDF Underlay...	Підкладка PDF...
+	Pages to attach ({count} in the file)	Сторінки для приєднання ({count} у файлі)
+	Path type	Тип шляху
+	Relative path	Відносний шлях
+	Save the drawing first	Спершу збережіть креслення
+	Saved in the drawing as: {path}	Збережено в кресленні як: {path}
+	Scale (1 = size on paper)	Масштаб (1 = розмір на папері)
+	Specify on screen	Вказати на екрані
 	Check for Updates…	Перевірити оновлення…
 	CADCraft is up to date.	Встановлено найновішу версію CADCraft.
 	Could not check for updates.	Не вдалося перевірити оновлення.
