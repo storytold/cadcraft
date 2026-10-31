@@ -144,6 +144,12 @@ The shortcut also works with text-field focus. Toggling preserves the running dr
 and pending command-line input. The expression, history and calculator variables survive
 closing/reopening within the same session; they are not saved across application restarts.
 
+The External References palette (`externalReferences`) is not part of the default arrangement
+either. Typed `XREF`/`XR` opens and activates it. **Window > Reference Manager** (also
+`ui.menu.invoke` with `xref`) opens it too, but closes it when it is present, as Window >
+QuickCalc does; closing leaves the running command and command-line input alone. `xref` with
+JSON parameters lists the references and never opens or closes the palette.
+
 Invoke these UI commands through `engine.execute`, for example `{"command":"ui.dock","params":{"operation":"float","panel":"layers","rect":[100,100,320,440]}}`.
 
 Advanced `ui.dock` operations use the same validated transaction as pointer gestures:

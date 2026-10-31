@@ -5,7 +5,7 @@ use cadcraft_engine::Session;
 use cadcraft_engine::cmd::file::{IoHooks, set_io};
 use cadcraft_engine::doc::geom::Vec3;
 use cadcraft_engine::doc::{Drawing, Entity, EntityKind, Handle, Layer, Line, XrefStatus};
-use cadcraft_ui_egui::{CadApp, Services, docking::Panel};
+use cadcraft_ui_egui::{CadApp, Services, docking::Panel, menus};
 use egui::vec2;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
@@ -69,6 +69,23 @@ fn xref_opens_the_palette_and_its_buttons_manage_the_xref() {
     h.state_mut().session.undo().unwrap();
     h.run_steps(3);
     h.get_by_label("site");
+}
+
+/// Window ▸ Reference Manager closes the palette when it is open, like Window ▸ QuickCalc; typed,
+/// XREF only ever opens it (#2273).
+#[test]
+fn the_window_menu_item_closes_an_open_palette() {
+    let mut app = CadApp::new(Session::default(), Services::default());
+    let open = |app: &CadApp| app.ui.docking.layout.contains(&Panel::ExternalRefs);
+    menus::activate(&mut app, "xref");
+    assert!(open(&app), "the menu item opens the palette");
+    menus::activate(&mut app, "xref");
+    assert!(!open(&app), "the menu item closes the open palette");
+    menus::activate(&mut app, "xref");
+    assert!(open(&app), "and opens it again");
+    assert!(app.cmdline("XREF").is_none());
+    assert!(app.cmdline("XR").is_none());
+    assert!(open(&app), "typed XREF keeps it open");
 }
 
 #[test]

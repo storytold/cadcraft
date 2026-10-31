@@ -43,6 +43,12 @@ fn open_palette(app: &mut CadApp) -> Result<Value, String> {
     crate::docking::command(app, false, &json!({ "operation": "open", "panel": Panel::ExternalRefs.id() }))
 }
 
+/// Close the palette: Window ▸ Reference Manager while it is open, as Window ▸ QuickCalc closes
+/// QuickCalc (#2273).
+pub(crate) fn close_palette(app: &mut CadApp) -> Result<Value, String> {
+    crate::docking::command(app, false, &json!({ "operation": "close", "panel": Panel::ExternalRefs.id() }))
+}
+
 /// A picked file inside the host drawing's folder is attached by its relative path, so the
 /// project folder can move.
 fn relative_to_host(app: &CadApp, picked: &str) -> String {
