@@ -244,7 +244,8 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
             Bounds2::from_points([o, o + u, o + v, o + u + v])
         }
         EntityKind::PdfUnderlay(u) if u.unloaded => Bounds2::EMPTY,
-        EntityKind::PdfUnderlay(u) => Bounds2::from_points(u.outline()),
+        // The frame too: an inverted clip's boundary can lie off a page whose size isn't read yet.
+        EntityKind::PdfUnderlay(u) => Bounds2::from_points(u.outline().into_iter().chain(u.frames().into_iter().flatten())),
         EntityKind::LwPolyline(p) => lwpolyline_bounds(p),
         kind => {
             let mut b = Bounds2::EMPTY;

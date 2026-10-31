@@ -102,8 +102,9 @@ pub struct PdfUnderlay {
     /// shares it, as files keep it on the file's definition.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub unloaded: bool,
-    /// The page not shown (the Properties palette's "Show underlay" No): its frame stays, so it
-    /// can still be picked; it is neither plotted nor snapped to.
+    /// The page not shown (the Properties palette's "Show underlay" No): the page is neither
+    /// drawn, plotted nor snapped to; its frame stays as PDFFRAME says, as for a shown one, so
+    /// the underlay can still be picked.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hidden: bool,
 }

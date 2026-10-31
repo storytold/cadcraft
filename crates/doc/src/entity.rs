@@ -456,7 +456,34 @@ impl EntityKind {
                 i.u = m.apply_vec(i.u.xy()).to3(0.0);
                 i.v = m.apply_vec(i.v.xy()).to3(0.0);
             }
-            // The page is never shown mirrored: a mirror moves and turns it.
+            // The page is never shown mirrored: a mirror lays it, unmirrored, on the mirrored
+            // outline, turned the way that keeps it nearer upright (as text with MIRRTEXT = 0),
+            // and its clip boundary on the mirrored one.
+            EntityKind::PdfUnderlay(u) if mirror && u.size != Vec2::ZERO => {
+                let (au, av) = u.axes();
+                let o = u.insert.xy();
+                let mu = m.apply_vec(au);
+                let along = cadcraft_geom::norm_angle(mu.y.atan2(mu.x));
+                let turned = cadcraft_geom::norm_angle(along + std::f64::consts::PI);
+                let off = |r: f64| {
+                    let d = (r - u.rotation).rem_euclid(std::f64::consts::TAU);
+                    d.min(std::f64::consts::TAU - d)
+                };
+                let (w, h) = (u.size.x, u.size.y);
+                if off(along) <= off(turned) {
+                    // From the mirrored upper-left corner; page points flip top to bottom.
+                    let at = m.apply(o + av);
+                    (u.insert.x, u.insert.y, u.rotation) = (at.x, at.y, along);
+                    u.clip.iter_mut().for_each(|p| p.y = h - p.y);
+                } else {
+                    // From the mirrored lower-right corner, half a turn on; left to right.
+                    let at = m.apply(o + au);
+                    (u.insert.x, u.insert.y, u.rotation) = (at.x, at.y, turned);
+                    u.clip.iter_mut().for_each(|p| p.x = w - p.x);
+                }
+                u.scale *= s;
+            }
+            // Without a page size (not read yet) only the insertion point is known.
             EntityKind::PdfUnderlay(u) => {
                 t3(&mut u.insert);
                 u.scale *= s;
