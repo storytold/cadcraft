@@ -757,10 +757,10 @@ fn viewport_frozen_layers_read_from_341_as_dxf_2000_writes_them() {
 }
 
 #[test]
-fn viewport_frozen_xdata_wins_over_331() {
+fn viewport_frozen_331_wins_over_the_xdata() {
     let (_, p) = frozen_vp_dxf();
     let r = vp_record(&p, "2");
-    // Point every 331 at layer 0: the xdata list must still be what is read.
+    // AutoCAD changed the freeze to layer 0 and kept CADCraft's xdata: group 331 is what is read.
     let zero = layer_handle(&p, "0");
     let mut q = p.clone();
     for t in &mut q[r] {
@@ -769,7 +769,7 @@ fn viewport_frozen_xdata_wins_over_331() {
         }
     }
     let back = read_dxf(join(&q).as_bytes()).unwrap();
-    assert_eq!(viewport_frozen(&back, 2), vec!["Walls".to_string(), "A B".to_string()]);
+    assert_eq!(viewport_frozen(&back, 2), vec!["0".to_string()]);
 }
 
 #[test]

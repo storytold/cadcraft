@@ -620,16 +620,16 @@ fn write_viewport_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper:
         // 340 entity, 131072 = off.
         let clip = v.clip.filter(|h| *h != e.handle && d.entity(*h).is_some());
         let flags = 32768 | if v.locked { 16384 } else { 0 } | if clip.is_some() { 65536 } else { 0 } | if v.on { 0 } else { 131072 };
-        w.i(90, flags);
-        if let Some(h) = clip {
-            w.s(340, h.hex());
-        }
-        // AutoCAD's frozen-layer list: one pointer per layer, to its LAYER record. Other programs
-        // read only this; CADCraft prefers its own xdata below.
+        // AutoCAD's frozen-layer list, before group 90 as in the DXF Reference: one pointer per
+        // layer, to its LAYER record.
         for name in &v.frozen_layers {
             if let Some(h) = w.layers.get(&name.to_ascii_uppercase()).cloned() {
                 w.s(if cx.frozen_341 { 341 } else { 331 }, h);
             }
+        }
+        w.i(90, flags);
+        if let Some(h) = clip {
+            w.s(340, h.hex());
         }
         // One CADCraft xdata group holds both lists: readers stop at the first group of an app.
         if !v.frozen_layers.is_empty() || !v.layer_colors.is_empty() {
