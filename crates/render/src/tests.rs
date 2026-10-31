@@ -511,6 +511,35 @@ fn scattered_dot_pattern_reads_solid_once_dots_fill_the_pixels() {
     assert!(!crate::hatch::reads_solid(&cadcraft_doc::Drawing::new_imperial(), &h, 0.125));
 }
 
+/// AR-CONC's stones are closed triangles wherever they repeat: away from the boundary every side's
+/// two ends meet the ends of the stone's other two sides. Its dots stand alone.
+#[test]
+fn ar_conc_stones_are_closed_triangles() {
+    let d = cadcraft_doc::Drawing::new_imperial();
+    let h = pattern_hatch("AR-CONC", 1.0, (0.0, 0.0, 60.0, 60.0));
+    let runs = crate::hatch::pattern_lines(&d, &h, &loops_of(&h), 0.0, None);
+    let inside = |p: Vec2| p.x > 2.0 && p.x < 58.0 && p.y > 2.0 && p.y < 58.0;
+    let sides: Vec<[Vec2; 2]> = runs
+        .iter()
+        .filter_map(|r| match r.as_slice() {
+            [a, b] if inside(*a) && inside(*b) => Some([*a, *b]),
+            _ => None,
+        })
+        .collect();
+    let dots = runs.iter().filter(|r| r.len() == 1).count();
+    // 56² in² is about 8 tiles of 20 stones and 70 dots.
+    assert!(sides.len() > 3 * 100, "{} sides", sides.len());
+    assert!(dots > 400, "{dots} dots");
+    // A stone's sides are under 1.4 (34 mm): those 4 from the boundary have both neighbours.
+    let deep = |p: &Vec2| p.x > 4.0 && p.x < 56.0 && p.y > 4.0 && p.y < 56.0;
+    for (i, s) in sides.iter().enumerate().filter(|(_, s)| s.iter().all(deep)) {
+        for end in s {
+            let meets = sides.iter().enumerate().filter(|(j, o)| *j != i && o.iter().any(|q| q.near(*end, 1e-4))).count();
+            assert_eq!(meets, 1, "side {i} {s:?}: the end {end:?} meets {meets} other sides");
+        }
+    }
+}
+
 /// Same polylines up to float noise: the view-limited path rotates into the family frame and back,
 /// so a start point can differ by ~1e-16 between platforms (#804). Structure must match exactly.
 fn assert_lines_close(a: &[Vec<Vec2>], b: &[Vec<Vec2>], what: &str) {
