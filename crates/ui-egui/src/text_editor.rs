@@ -59,7 +59,10 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     let mut done = None;
     egui::Area::new(state_id().with("area")).order(egui::Order::Foreground).fixed_pos(pos).show(ctx, |ui| {
         egui::Frame::NONE.fill(tk.panel).stroke(Stroke::new(1.0, tk.accent)).inner_margin(egui::Margin::same(2)).show(ui, |ui| {
-            let r = ui.add_sized(vec2(width, px + 6.0), egui::TextEdit::singleline(&mut buf).id(te).font(font));
+            // Named by the prompt it answers, for screen readers (the field has no caption).
+            let r = ui
+                .add_sized(vec2(width, px + 6.0), egui::TextEdit::singleline(&mut buf).id(te).font(font))
+                .accessible_name(crate::tl!("Enter new text"));
             if first {
                 r.request_focus();
             }
