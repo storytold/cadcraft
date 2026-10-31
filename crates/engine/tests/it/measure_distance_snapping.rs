@@ -2,7 +2,7 @@
 
 use cadcraft_engine::doc::{Block, Circle, Common, Drawing, Entity, EntityKind, Handle, Insert, Line, Space, Viewport};
 use cadcraft_engine::geom::{Vec2, Vec3};
-use cadcraft_engine::snap::{SnapCurve, SnapHit, mode, osnap};
+use cadcraft_engine::snap::{SnapCurve, SnapHit, mode, osnap, osnap_all};
 use cadcraft_engine::{Input, Session};
 use serde_json::json;
 
@@ -275,6 +275,46 @@ fn clipped_endpoints_do_not_hide_a_visible_candidate() {
     let hit = osnap(&d, &paper, Vec2::new(110.11, 51.0), 0.8, mode::END, None, false).unwrap();
     assert_eq!(hit.point, Vec2::new(109.5, 51.0), "only the endpoint inside the viewport is visible");
     assert!(osnap(&d, &paper, Vec2::new(110.11, 51.0), 0.2, mode::END, None, false).is_none());
+}
+
+/// Across spaces a click keeps the snap it had before Tab cycling: a viewport's best snap
+/// replaces paper space's only when it scores closer. Tab still reaches the other one.
+#[test]
+fn a_closer_paper_space_nearest_keeps_the_click_over_a_viewport_endpoint() {
+    let (mut d, paper) = drawing();
+    // A paper-space line 0.3 left of the model endpoint (0, 0), which the viewport shows at (95, 50).
+    d.add(&paper, Common::default(), EntityKind::Line(Line { a: Vec3::new(94.7, 48.0, 0.0), b: Vec3::new(94.7, 52.0, 0.0) })).unwrap();
+    let (cursor, modes) = (Vec2::new(94.8, 50.0), mode::END | mode::NEA);
+    let hit = osnap(&d, &paper, cursor, 0.5, modes, None, false).unwrap();
+    assert_eq!((hit.mode, hit.viewport), (mode::NEA, None), "{hit:?}");
+    assert!(hit.point.near(Vec2::new(94.7, 50.0), 1e-9), "{hit:?}");
+    let all = osnap_all(&d, &paper, cursor, 0.5, modes, None, false);
+    assert_eq!(all.first(), Some(&hit), "Tab starts at the click's snap");
+    assert!(
+        all.iter().any(|h| h.mode == mode::END && h.viewport.is_some() && h.point.near(Vec2::new(95.0, 50.0), 1e-9)),
+        "Tab reaches the viewport's endpoint: {all:?}"
+    );
+}
+
+/// Overlapping viewports can show different model points at one paper point; Tab offers each,
+/// since DIST measures in the model units of the viewport picked.
+#[test]
+fn overlapping_viewports_each_offer_their_model_point() {
+    let (mut d, paper) = drawing();
+    // This viewport shows the model endpoint (20, 0) at paper (100, 50), a second one over it (0, 0).
+    edit_viewport(&mut d, &paper, |vp| vp.view_center = Vec2::new(20.0, 0.0));
+    let mut vp = match &d.entity(viewport(&d, &paper)).unwrap().kind {
+        EntityKind::Viewport(vp) => vp.clone(),
+        _ => panic!("viewport fixture"),
+    };
+    vp.view_center = Vec2::new(0.0, 0.0);
+    vp.id = 3;
+    d.add(&paper, Common::default(), EntityKind::Viewport(vp)).unwrap();
+    let all = osnap_all(&d, &paper, Vec2::new(100.05, 50.04), 0.5, mode::END, None, false);
+    let mut models: Vec<Vec2> =
+        all.iter().filter(|h| h.point.near(Vec2::new(100.0, 50.0), 1e-9)).filter_map(|h| h.viewport).map(|v| v.point).collect();
+    models.sort_by(|a, b| a.x.total_cmp(&b.x));
+    assert_eq!(models, [Vec2::new(0.0, 0.0), Vec2::new(20.0, 0.0)], "{all:?}");
 }
 
 #[test]

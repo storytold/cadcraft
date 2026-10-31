@@ -90,9 +90,14 @@ impl SnapHit {
         (class, snap_score(self.mode, self.point, cursor, aperture))
     }
 
-    /// The same snap (mode and point) as `o`.
+    /// The same snap as `o`: mode and point, from the same source (paper space, or one
+    /// viewport). Overlapping viewports can show different model points at one paper point;
+    /// each stays a candidate, since DIST measures in the model units of the viewport picked.
     fn same(&self, o: &SnapHit) -> bool {
-        self.mode == o.mode && self.deferred.is_some() == o.deferred.is_some() && self.point.near(o.point, 1e-9 * (1.0 + self.point.len()))
+        self.mode == o.mode
+            && self.deferred.is_some() == o.deferred.is_some()
+            && self.viewport.map(|v| v.viewport) == o.viewport.map(|v| v.viewport)
+            && self.point.near(o.point, 1e-9 * (1.0 + self.point.len()))
     }
 }
 
@@ -296,6 +301,10 @@ fn osnap_all_with_neighborhood(
     }
     let model = Space::Model;
     let model_ix = crate::spatial::index(d, &model);
+    // What a click picks across spaces stays as it was: each space's best snap, and a viewport's
+    // replaces the best so far only when it scores closer. A paper-space Nearest can therefore
+    // beat an Endpoint seen through a viewport, which `ranked` alone would put first.
+    let mut pick = all.first().copied();
     for view in views {
         let model_cursor = view.to_model(cursor);
         let model_aperture = aperture / view.scale;
@@ -315,9 +324,19 @@ fn osnap_all_with_neighborhood(
             &view.viewport.frozen_layers,
             Some(view.model_clip),
         );
+        if let Some(hit) = hits.first().and_then(|h| view.hit(*h))
+            && pick.as_ref().is_none_or(|b| snap_score(hit.mode, hit.point, cursor, aperture) < snap_score(b.mode, b.point, cursor, aperture))
+        {
+            pick = Some(hit);
+        }
         all.extend(hits.into_iter().filter_map(|h| view.hit(h)));
     }
-    (ranked(all, cursor, aperture), near_prims)
+    let mut out = ranked(all, cursor, aperture);
+    if let Some(pick) = pick {
+        out.retain(|h| !h.same(&pick));
+        out.insert(0, pick);
+    }
+    (out, near_prims)
 }
 
 /// `hits` best first ([`SnapHit::rank`]), without repeats.
