@@ -819,12 +819,12 @@ pub fn underlay_pixels(stored: &str, document: Option<&str>, page: u32, max_side
     (hooks.render)(&bytes, page, max_side).map_err(|e| bad("pdfattach", format!("{stored}: {e}")))
 }
 
-/// Read the lines of the PDF underlays of drawing `i`, just opened, for object snaps, and give
-/// them their page sizes (a file stores none):
-/// read from each PDF, in the drawing's units. Underlays whose file can't be read keep no size
-/// and are reported. The opened state counts as saved.
-pub(crate) fn after_open(s: &mut Session, i: usize) {
-    load_all_lines(s, i, false);
+/// Read the lines of the PDF underlays of drawing `i`, just opened, for object snaps (on a
+/// worker thread when `background`: a whole PDF read for each page), and give them their page
+/// sizes (a file stores none): read from each PDF, in the drawing's units. Underlays whose file
+/// can't be read keep no size and are reported. The opened state counts as saved.
+pub(crate) fn after_open(s: &mut Session, i: usize, background: bool) {
+    load_all_lines(s, i, background);
     fill_sizes(s, i, true);
 }
 
