@@ -31,7 +31,12 @@ pub(super) fn wheel_zoom_points(events: &[egui::Event], opts: &egui::InputOption
 pub(super) fn edit_text_at(app: &mut CadApp, p: Vec2) -> bool {
     use cadcraft_engine::doc::EntityKind;
     let is_text = cadcraft_engine::cmd::curves::pick_at(&app.session, p).and_then(|h| {
-        app.session.doc().ok()?.entity(h).map(|e| matches!(e.kind, EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_)))
+        app.session.doc().ok()?.entity(h).map(|e| match &e.kind {
+            EntityKind::Text(_) | EntityKind::MText(_) | EntityKind::AttDef(_) => true,
+            // A multileader carrying a block has no text to edit.
+            EntityKind::MLeader(m) => m.text.is_some(),
+            _ => false,
+        })
     });
     if is_text != Some(true) {
         return false;
