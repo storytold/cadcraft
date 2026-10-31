@@ -4,16 +4,20 @@ use cadcraft_doc::Linetype;
 use cadcraft_geom::Vec2;
 
 /// Split `pts` into dashes. Dots come back as single-point runs. When the scaled pattern is
-/// shorter than `min_pattern` (sub-pixel), the polyline is returned whole.
+/// shorter than `min_pattern` (sub-pixel), the polyline is returned whole; a display build
+/// (`min_pattern` above 0) also returns it whole when the pattern would repeat too often (see
+/// [`ranges`]).
 pub fn apply(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64) -> Vec<Vec<Vec2>> {
     let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
     let total = lt.pattern_length() * scale;
     if pts.len() < 2 || total <= 1e-12 || total < min_pattern {
         return vec![pts.to_vec()];
     }
-    // Guard against huge dash counts (zoomed out a lot): fall back to continuous.
+    // A display build zoomed out a lot falls back to a continuous line rather than expanding a
+    // huge dash count. A plot or export has no zoom — `min_pattern` is 0 — so it keeps the
+    // pattern (#1069).
     let len: f64 = pts.windows(2).map(|w| w.first().zip(w.get(1)).map(|(a, b)| a.dist(*b)).unwrap_or(0.0)).sum();
-    if len / total > 50_000.0 {
+    if min_pattern > 0.0 && len / total > 50_000.0 {
         return vec![pts.to_vec()];
     }
     let pattern: Vec<f64> = lt.pattern.iter().map(|d| d.length * scale).collect();
@@ -85,11 +89,12 @@ pub fn apply(pts: &[Vec2], lt: &Linetype, scale: f64, min_pattern: f64) -> Vec<V
 
 /// The dashes of the pattern along a run of length `len`, as (start, end) distances; a dot has
 /// start == end. Laid out like [`apply`]. `None` when the run is drawn continuous: the scaled
-/// pattern is shorter than `min_pattern` or would repeat too often.
+/// pattern is shorter than `min_pattern`, or, in a display build (`min_pattern` above 0), it
+/// would repeat too often (see [`apply`]).
 pub fn ranges(len: f64, lt: &Linetype, scale: f64, min_pattern: f64) -> Option<Vec<(f64, f64)>> {
     let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
     let total = lt.pattern_length() * scale;
-    if !(len.is_finite() && len > 0.0) || total <= 1e-12 || total < min_pattern || len / total > 50_000.0 {
+    if !(len.is_finite() && len > 0.0) || total <= 1e-12 || total < min_pattern || (min_pattern > 0.0 && len / total > 50_000.0) {
         return None;
     }
     let mut out = Vec::new();
@@ -156,5 +161,19 @@ mod tests {
         let lt = Linetype::simple("DASHED", "", &[0.5, -0.25]);
         let d = apply(&[Vec2::ZERO, Vec2::new(0.3, 0.0), Vec2::new(0.3, 1.0)], &lt, 1.0, 0.0);
         assert_eq!(d[0].len(), 3); // the first dash turns the corner
+    }
+
+    #[test]
+    fn a_plot_keeps_the_dashes_of_a_long_line() {
+        // 50,001 pattern periods. A display build may fall back to a continuous line (zoomed out
+        // a lot); a plot or export has no zoom, so it keeps the pattern (#1069).
+        let lt = Linetype::simple("DASHED", "", &[0.5, -0.25]);
+        let len = 50_001.0 * 0.75;
+        let pts = [Vec2::ZERO, Vec2::new(len, 0.0)];
+        assert_eq!(apply(&pts, &lt, 1.0, 0.0).len(), 50_001);
+        assert_eq!(ranges(len, &lt, 1.0, 0.0).expect("the pattern applies").len(), 50_001);
+        // With a level of detail (a display build) the fallback stays.
+        assert_eq!(apply(&pts, &lt, 1.0, 1e-9).len(), 1);
+        assert!(ranges(len, &lt, 1.0, 1e-9).is_none());
     }
 }
