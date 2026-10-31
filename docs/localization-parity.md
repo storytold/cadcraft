@@ -37,6 +37,9 @@ shaping and right-to-left text through TrueType, vertical SHX text styles.
   lam-alef, ZWNJ, marks; Hebrew), in TEXT and MTEXT including wrapping (#287). Left-to-right lines
   are still placed one glyph per code point: **no shaping** for Devanagari and other Indic
   scripts, and **no vertical text**. SHX fonts are not read; our stroke font stands in.
+  Installed fonts are found where fontconfig looks (the XDG font directories, the `<dir>`
+  entries of fontconfig's configuration, Flatpak's host font mounts), so NixOS, Guix and Flatpak
+  get the fallbacks too (#674); fontconfig's aliases and matching rules are not read.
 - **Text input:** egui/winit IME. The command line — which collects single-line TEXT edits and
   other prompt text — now enables the operating system IME while a prompt asks for text and shows
   composition (pre-edit) text until it is committed, so Chinese, Japanese and Korean input works
@@ -92,6 +95,7 @@ each language, which needs humans. Translations parallelise fully once the catal
 |---|---|---|
 | 2026-10-30 | minor | Bosnian (`bs`, Latin, Ijekavian) added: 1,442 rows, one/few/other plurals, `bs-*` locales; AI-assisted, native proofreading pending |
 | 2026-10-22 | minor | Command line IME: enabled while a prompt collects text, composition shown but not saved, commit inserted once; single-line TEXT edits accept CJK input (#1761) |
+| 2026-10-20 | minor | Installed fonts are found where fontconfig looks (XDG font directories, fontconfig `<dir>` entries, Flatpak host mounts): the CJK and Arabic fallbacks and the system UI font work on NixOS, Guix and Flatpak (#674) |
 | 2026-10-19 | minor | Brazilian Portuguese: row brought up to date (it still read 0%); native-speaker terminology pass on 69 rows (Bind as Integrar, prompt keywords and SPDX kept in English, Thaw Layer, Snap type, Revolve fixed; snap, viewport, grip, offset, layer on/off and multiline wording made consistent with Brazilian usage) |
 | 2026-10-15 | minor | Greek (`el`) catalog: 1,330 rows, context/plural/locale/font tests; review pending |
 | 2026-10-14 | minor | Swedish completed: 95 rows for strings added since (Hatch and Gradient dialog, Block Editor, REFEDIT, multileader editing, Options selection settings, MTEXT editor, recent files); 1,330 rows, every key of the Ukrainian reference catalog |

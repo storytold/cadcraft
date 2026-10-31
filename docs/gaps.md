@@ -126,7 +126,7 @@ Detail: [localization-parity.md](localization-parity.md).
 | # | Gap | Est. |
 |---|---|---|
 | P1 | Web build: plot shows raw PDF bytes (#134), no DWG (File > Open and save downloads fixed, #55, #133) | 3–5 |
-| P2 | Windows and Linux get little runtime testing; Linux Mint mouse delay (#25); Windows magnifier (#39) | 6–10 |
+| P2 | Windows and Linux get little runtime testing; Linux Mint mouse delay (#25); Windows magnifier (#39). Fonts outside /usr/share/fonts (NixOS, Guix, Flatpak) are found since 2026-10-20 (#674) | 6–10 |
 | P3 | macOS file associations: opening `.dxf` from Finder fails (#158) | 1–2 |
 
 ## Ecosystem and automation
@@ -157,6 +157,7 @@ Detail: [localization-parity.md](localization-parity.md).
 | 2026-10-24 | minor | COMPAREEXPORT (typed, or Export on the comparison bar) opens the comparison as a new untitled drawing, `compare_<this> vs <other>.dwg`: this drawing's objects in one group and the other drawing's differing objects in a second group, in the comparison colors (green, red, gray for objects in both), block contents and style colors included: F22 narrowed |
 | 2026-10-24 | minor | DIMTFILL and DIMTFILLCLR: a dimension's text background (none, the drawing's background color, or a color) hides what is drawn under the text; SETVAR, DIMOVERRIDE and style fields, DIMSTYLE groups 69 and 70 in DXF from R2007 (CADCraft xdata before), and a SOLID in the `*D` block and from EXPLODE for DIMTFILL 2: F7 narrowed |
 | 2026-10-22 | minor | APPLOAD typed or from Tools ▸ Load Application opens a `.lsp` file browser starting in the last-used folder (kept in the preferences); a picked file loads interactively like a typed name (routines that ask for input wait), the web says to drop the file (no file system), and the JSON form `{path}` reads the path as given and returns the commands the file defined, never opening a dialog (#1820): E1 narrowed |
+| 2026-10-20 | minor | Installed fonts are found where fontconfig looks (XDG font directories, fontconfig `<dir>` entries, Flatpak host mounts), so NixOS, Guix and Flatpak get the CJK fallback and a system UI font (#674): P2 narrowed, hours unchanged |
 | 2026-10-16 | minor | ALIASEDIT typed or from Tools ▸ Customize opens the Command Aliases dialog (user aliases next to the built-in ones; Add, Edit, Remove; OK, Cancel, Apply), #1381: U12 and E5 narrowed |
 | 2026-10-16 | minor | MOCORO (Tools ▸ Express Tools ▸ Move/Copy/Rotate): select objects and a base point once, then Move, Copy, Rotate, Scale, Base and Undo until eXit, one undo step; JSON form `{base, ops}`: E3 narrowed |
 | 2026-10-16 | minor | MLEDIT Merged Tee (MT): the first multiline's outer elements stop at the second one's near side, which opens, and its inner elements run on to the second one's inner element: F21 narrowed, hours unchanged |
