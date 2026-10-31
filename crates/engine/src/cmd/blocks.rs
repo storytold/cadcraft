@@ -409,6 +409,8 @@ fn run_wblock(s: &mut Session, p: &Value) -> Result<Value> {
         e.handle = d.new_handle();
         d.model.push(e);
     }
+    // Only the named objects the written geometry uses, not the source's whole tables.
+    purge::prune_tables(&mut d);
     let hooks = super::file::io().ok_or_else(|| bad("wblock", "file formats are not available in this build"))?;
     let bytes = (hooks.write)(&d, &path).map_err(|e| bad("wblock", e))?;
     #[cfg(not(target_arch = "wasm32"))]
