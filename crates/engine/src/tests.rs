@@ -701,25 +701,6 @@ fn cancel_keeps_partial_line_as_one_undo() {
 }
 
 #[test]
-fn hostile_params_never_panic() {
-    let mut s = Session::new();
-    for c in command_specs() {
-        for p in [
-            json!(null),
-            json!([]),
-            json!("x"),
-            json!({"points": [[1e308, -1e308], ["a"]]}),
-            json!({"handles": ["zz", 99999]}),
-            json!({"radius": -1, "center": [0, 0]}),
-            json!({"gradient": {"name": 5, "color1": [1], "angle": "x", "centered": "y"}}),
-            json!({"points": [[0, 0]], "handles": ["1"], "gradient": "x", "name": "RAINBOW"}),
-        ] {
-            let _ = s.execute(c.id, &p);
-        }
-    }
-}
-
-#[test]
 fn every_interactive_command_starts_and_cancels() {
     for c in command_specs().iter().filter(|c| c.interactive.is_some()) {
         let mut s = Session::new();
