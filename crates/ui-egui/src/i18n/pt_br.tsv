@@ -1256,3 +1256,200 @@
 	Check for Updates…	Verificar atualizações…
 	CADCraft is up to date.	O CADCraft está atualizado.
 	Could not check for updates.	Não foi possível verificar atualizações.
+# Strings the sibling catalogs translate that pt-BR did not yet cover (translated 2026-10-31).
+	Add: Pick points	Adicionar: indicar pontos
+	Add: Select objects	Adicionar: selecionar objetos
+	Add…	Adicionar…
+	Alias	Alias
+	Alias file: {file}	Arquivo de aliases: {file}
+	Align Multileaders	Alinhar multilinhas
+	Analyze Usage	Analisar uso
+	Angstroms	Angströms
+	Apply to Layout	Aplicar à apresentação
+	Architectural	Arquitetônico
+	Arrow size	Tamanho da seta
+	Associate	Associar
+	Associative	Associativo
+	Astronomical Units	Unidades astronômicas
+	AutoLISP (LSP)	AutoLISP (LSP)
+	Backup copy	Cópia de backup
+	Block to create or edit	Bloco a criar ou editar
+	Bottom left	Inferior esquerdo
+	Bottom right	Inferior direito
+	Boundaries	Contornos
+	Boundaries picked: {n}	Contornos selecionados: {n}
+	Break-line Symbol	Símbolo de linha de quebra
+	built-in	integrado
+	Center the plot	Centralizar a plotagem
+	Centered	Centralizado
+	Centimeters	Centímetros
+	Change Properties	Alterar propriedades
+	Choose the command the alias starts.	Escolha o comando que o alias inicia.
+	Clear Recent Files	Limpar arquivos recentes
+	Click the ruler to add a tab stop, right-click to remove one	Clique na régua para adicionar uma parada de tabulação; clique com o botão direito para remover
+	Click to set new origin	Clique para definir a nova origem
+	Close Block Editor	Fechar o editor de blocos
+	Collect	Coletar
+	Collect Multileaders	Coletar multilinhas
+	Color 1	Cor 1
+	Color 2	Cor 2
+	Command	Comando
+	contains authoring elements. Open in Block Editor?	contém elementos de autoria. Abrir no editor de blocos?
+	Convert Text to Mtext	Converter texto em Mtexto
+	Create backup copy with each save	Criar cópia de backup a cada salvamento
+	Create separate hatches	Criar hachuras separadas
+	Crossing selection color:	Cor da seleção por cruzamento:
+	Curved	Curvo
+	Custom	Personalizado
+	Customize	Personalizar
+	Decameters	Decâmetros
+	Decimal	Decimal
+	Decimal Degrees	Graus decimais
+	Decimeters	Decímetros
+	Default to boundary extents	Padrão para a extensão do contorno
+	Deg/Min/Sec	Gra/Min/Seg
+	Dim scale overall	Escala geral de cotas
+	Discard	Descartar
+	Don't Save	Não salvar
+	Drag Dynamic Grip	Arrastar pinça dinâmica
+	Drawing Units	Unidades do desenho
+	Dynamic Block Data	Dados de bloco dinâmico
+	Dynamic Block Grips	Pinças de bloco dinâmico
+	Dynamic Block Reference	Referência de bloco dinâmico
+	Edit Block Definition	Editar definição de bloco
+	Edit Command Aliases (PGP)...	Editar aliases de comandos (PGP)...
+	Edit Multileader	Editar multilinha
+	Edit…	Editar…
+	Engineering	Engenharia
+	Enter block names to extract	Insira os nomes dos blocos a extrair
+	Enter geometric characteristic	Insira a característica geométrica
+	Enter name of LISP file to load	Insira o nome do arquivo LISP a carregar
+	Evaluate LISP	Avaliar LISP
+	Exclude:	Excluir:
+	Explode Attributes to Text	Explodir atributos em texto
+	Express Tools	Ferramentas Express
+	Feet	Pés
+	First corner	Primeiro canto
+	Fit to paper	Ajustar ao papel
+	Font	Fonte
+	Fractional	Fracionário
+	Gigameters	Gigâmetros
+	Grads	Grados
+	Grips	Pinças
+	Groups	Grupos
+	Hatch and Gradient	Hachura e gradiente
+	Hatch origin	Origem da hachura
+	Hatch Pick	Seleção de hachura
+	Hatches	Hachuras
+	Hectometers	Hectômetros
+	Hemispherical	Hemisférico
+	Ignore	Ignorar
+	Imperial (inches)	Imperial (polegadas)
+	Implied Loops	Laços implícitos
+	Inches	Polegadas
+	Indicate selection area	Indicar área de seleção
+	Insertion scale	Escala de inserção
+	Interface scale	Escala da interface
+	Inverted	Invertido
+	Island	Ilha
+	Island detection	Detecção de ilhas
+	Italic	Itálico
+	Justify	Justificar
+	Kilometers	Quilômetros
+	Landscape	Paisagem
+	Layouts	Apresentações
+	Light Years	Anos-luz
+	Limits	Limites
+	Load Application...	Carregar aplicativo...
+	Meters	Metros
+	Metric (millimetres)	Métrico (milímetros)
+	Microinches	Micropolegadas
+	Microns	Mícrons
+	Miles	Milhas
+	Millimeters	Milímetros
+	Mils	Mils
+	More than {n} aliases.	Mais de {n} aliases.
+	Move/Copy/Rotate	Mover/Copiar/Girar
+	Multiline text	Texto multilinha
+	Nanometers	Nanômetros
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	Novos desenhos e o primeiro desenho na inicialização usam estas unidades, a menos que um modelo padrão esteja definido (QNEWTEMPLATE).
+	New block	Novo bloco
+	No alias file loaded. REINIT replaces these aliases with a file's.	Nenhum arquivo de aliases carregado. O REINIT substitui estes aliases pelos de um arquivo.
+	Object grouping	Agrupamento de objetos
+	Object selection limit for display of grips	Limite de seleção de objetos para exibir pinças
+	Objects on locked layers	Objetos em camadas bloqueadas
+	Open in Block Editor	Abrir no editor de blocos
+	Open Recent	Abrir recentes
+	Opposite corner	Canto oposto
+	Orientation	Orientação
+	Origin: {x}, {y}	Origem: {x}, {y}
+	Outer	Externo
+	Overline	Sobrelinha
+	overrides built-in	substitui o integrado
+	Paper size	Tamanho do papel
+	Parsecs	Parsecs
+	Plot area	Área de plotagem
+	Plot object lineweights	Plotar espessuras de linha dos objetos
+	Plot offset	Deslocamento da plotagem
+	Plot transparency	Plotar transparência
+	Portrait	Retrato
+	Precision	Precisão
+	Preview	Visualizar
+	Printer/plotter	Impressora/plotter
+	Radians	Radianos
+	Sample output	Amostra de saída
+	Save alias	Salvar alias
+	Save Block	Salvar bloco
+	Save Block As	Salvar bloco como
+	Save changes to block "{name}"?	Salvar alterações no bloco "{name}"?
+	Save changes to {name}?	Salvar alterações em {name}?
+	Save Layout as Template	Salvar apresentação como modelo
+	Scientific	Científico
+	Select boundaries to remove	Selecione contornos para remover
+	Selection Area Effect	Efeito da área de seleção
+	Selection area opacity:	Opacidade da área de seleção:
+	Selection effect color	Cor do efeito de seleção
+	Selection modes	Modos de seleção
+	Selection preview	Visualização da seleção
+	Selection Preview Filter	Filtro de visualização da seleção
+	Set Dynamic Property	Definir propriedade dinâmica
+	Shape	Forma
+	Sheet Books to PDF...	Livros de folhas em PDF...
+	Show grips	Mostrar pinças
+	Specified origin	Origem especificada
+	Spherical	Esférico
+	Surveyor's Units	Unidades de topografia
+	Tables	Tabelas
+	Text color	Cor do texto
+	This drawing	Este desenho
+	Top left	Superior esquerdo
+	Top right	Superior direito
+	Type an alias name.	Digite um nome de alias.
+	Underline	Sublinhado
+	Unitless	Adimensional
+	Units of new drawings	Unidades de novos desenhos
+	Units to scale inserted content	Unidades para dimensionar conteúdo inserido
+	Unsaved changes	Alterações não salvas
+	US Survey Feet	Pés topográficos norte-americanos
+	US Survey Inch	Polegada topográfica norte-americana
+	US Survey Mile	Milha topográfica norte-americana
+	US Survey Yard	Jarda topográfica norte-americana
+	Use current origin	Usar origem atual
+	Visual Effect Settings	Configurações de efeitos visuais
+	Visual Effect Settings...	Configurações de efeitos visuais...
+	When a command is active	Quando um comando está ativo
+	When no command is active	Quando nenhum comando está ativo
+	Window <	Janela <
+	Window selection color:	Cor da seleção por janela:
+	X offset (mm)	Deslocamento X (mm)
+	Xrefs	Referências externas
+	Y offset (mm)	Deslocamento Y (mm)
+	Yards	Jardas
+	Your changes will be lost if you don't save them.	Suas alterações serão perdidas se você não salvá-las.
+	{alias} is already defined; select it and use Edit.	{alias} já está definido; selecione-o e use Editar.
+	{command} is an unknown command.	{command} é um comando desconhecido.
+# Strings the sibling catalogs translate that pt-BR did not yet cover (translated 2026-10-31).
+menu	Dimension	Cota
+menu	Draw	Desenho
+menu	Modify	Modificar
+menu	View	Exibir
