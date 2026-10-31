@@ -314,7 +314,8 @@ pub fn mono() -> FontId {
 /// language: file, layout and layer names can be Japanese or Chinese whatever the interface
 /// shows (#513). In a Chinese interface (`language` "zh…") the Chinese font comes first, else a
 /// Japanese one, so names take their own glyph forms; in an Arabic interface an installed
-/// Arabic font follows. A font embedded from craft-fonts comes
+/// Arabic font follows. The embedded Georgian face loads in every language, so the language
+/// picker can show ქართული. A font embedded from craft-fonts comes
 /// last, for systems without any (and the web build, which has no system fonts). A Korean
 /// interface adds a Hangul font only when the CJK font found doesn't cover Hangul
 /// ([`korean_font`]).
@@ -414,7 +415,8 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
 /// shows (#513), with the interface's own face leading. A sans-serif face reads best, and a
 /// Chinese interface takes the face with its own glyphs ahead of a Japanese one — a Japanese face
 /// shares most ideographs but lacks the simplified-only ones (图 园 测), which would be tofu.
-/// العربية adds its Arabic face after those, egui's bundled faces carrying no Arabic glyphs.
+/// The Georgian face follows in every language (egui's bundled faces carry no Georgian glyphs, and
+/// the picker names the language ქართული); العربية adds its Arabic face after those.
 fn embedded_ui_faces<'a>(faces: &[&'a cadcraft_fonts::CraftFont], language: &str) -> Vec<&'a cadcraft_fonts::CraftFont> {
     let cjk = |f: &&cadcraft_fonts::CraftFont| f.style == "Regular" && f.scripts.iter().any(|s| matches!(*s, "Jpan" | "Hans" | "Hant"));
     let mut out: Vec<_> = faces.iter().copied().filter(cjk).collect();
@@ -422,6 +424,7 @@ fn embedded_ui_faces<'a>(faces: &[&'a cadcraft_fonts::CraftFont], language: &str
     if language.starts_with("zh") {
         out.sort_by_key(|f| !f.scripts.contains(&"Hans"));
     }
+    out.extend(faces.iter().copied().filter(|f| f.style == "Regular" && f.scripts.contains(&"Geor")));
     if language == "ar" {
         out.extend(faces.iter().copied().filter(|f| f.style == "Regular" && f.scripts.contains(&"Arab")));
     }
@@ -659,11 +662,13 @@ pub fn shows_hangul(language: &str) -> bool {
 
 /// Whether the interface can show `language` without missing-glyph boxes: Chinese needs a font
 /// with its glyphs (installed, or the CJK face this build embedded from craft-fonts), Korean a
-/// font with Hangul, العربية an installed Arabic font or the embedded Arabic face.
+/// font with Hangul, العربية an installed Arabic font or the embedded Arabic face, ქართული the
+/// embedded Georgian face.
 pub fn can_show(language: &str) -> bool {
     match language {
         "ko" => shows_hangul("ko"),
         "ar" => arabic_font().is_some() || embedded_script("Arab"),
+        "ka" => embedded_script("Geor"),
         l if l.starts_with("zh") => cjk_font().is_some() || embedded_script("Hans") || embedded_script("Hant"),
         _ => true,
     }
@@ -761,13 +766,16 @@ mod tests {
         let japanese = face("BIZ UDPGothic", &["Jpan", "Latn"]);
         let chinese = face("Han Test Face", &["Hans", "Latn"]);
         let arabic = face("Noto Sans Arabic", &["Arab"]);
-        let faces = [&japanese, &chinese, &arabic];
+        let georgian = face("Noto Sans Georgian", &["Geor"]);
+        let faces = [&japanese, &chinese, &arabic, &georgian];
         // Every interface reads CJK names, so both CJK faces load, the sans-serif face first.
-        assert_eq!(families(&super::embedded_ui_faces(&faces, "en")), ["BIZ UDPGothic", "Han Test Face"]);
+        // The Georgian face loads in every interface too, after them: the picker shows ქართული.
+        assert_eq!(families(&super::embedded_ui_faces(&faces, "en")), ["BIZ UDPGothic", "Han Test Face", "Noto Sans Georgian"]);
         // A Chinese interface takes the Han face first: a Japanese face lacks 图 园 测.
-        assert_eq!(families(&super::embedded_ui_faces(&faces, "zh")), ["Han Test Face", "BIZ UDPGothic"]);
+        assert_eq!(families(&super::embedded_ui_faces(&faces, "zh")), ["Han Test Face", "BIZ UDPGothic", "Noto Sans Georgian"]);
         // العربية adds the Arabic face, after the CJK ones egui's bundled faces have no glyphs for.
-        assert_eq!(families(&super::embedded_ui_faces(&faces, "ar")), ["BIZ UDPGothic", "Han Test Face", "Noto Sans Arabic"]);
+        assert_eq!(families(&super::embedded_ui_faces(&faces, "ar")), ["BIZ UDPGothic", "Han Test Face", "Noto Sans Georgian", "Noto Sans Arabic"]);
+        assert_eq!(families(&super::embedded_ui_faces(&faces, "ka")), ["BIZ UDPGothic", "Han Test Face", "Noto Sans Georgian"]);
         // Another weight is a style of a face, not an interface face of its own.
         let bold = CraftFont { family: "BIZ UDPGothic", style: "Bold", scripts: &["Jpan"], bytes: &[] };
         assert!(super::embedded_ui_faces(&[&bold], "en").is_empty());
@@ -778,13 +786,38 @@ mod tests {
     /// leaving the installed-font answer the gate had before.
     #[test]
     fn embedded_faces_answer_for_their_scripts() {
-        let faces = [face("BIZ UDPGothic", &["Jpan", "Latn"]), face("Noto Sans Arabic", &["Arab"])];
-        assert!(super::any_script(&faces, "Jpan") && super::any_script(&faces, "Arab"));
+        let faces = [face("BIZ UDPGothic", &["Jpan", "Latn"]), face("Noto Sans Arabic", &["Arab"]), face("Noto Sans Georgian", &["Geor"])];
+        assert!(super::any_script(&faces, "Jpan") && super::any_script(&faces, "Arab") && super::any_script(&faces, "Geor"));
         assert!(!super::any_script(&faces, "Hans") && !super::any_script(&faces, "Hant"));
         // A `Bold`-only face is not the interface's, and a script code is matched whole.
         let bold = CraftFont { family: "Some Han Bold", style: "Bold", scripts: &["Hans"], bytes: &[] };
         assert!(!super::any_script(&[bold], "Hans") && !super::any_script(&faces, "Ara"));
         assert!(!super::embedded_script("Hans") || super::can_show("zh"));
+        // ქართული rides on the embedded Georgian face alone.
+        assert_eq!(super::can_show("ka"), super::embedded_script("Geor"));
         assert!(super::can_show("en") && super::can_show("uk"));
+    }
+
+    /// With the craft-fonts Georgian face (release and web builds), every Mkhedruli letter and the
+    /// picker's ქართული render in both families, in a Georgian and in an English interface.
+    #[test]
+    fn embedded_georgian_face_covers_the_alphabet_in_every_interface() {
+        if !super::embedded_script("Geor") {
+            return;
+        }
+        let letters: Vec<char> = ('ა'..='ჰ').chain("ქართული".chars()).collect();
+        for language in ["ka", "en"] {
+            let ctx = egui::Context::default();
+            super::install_fonts(&ctx, language);
+            let mut output = ctx.run_ui(Default::default(), |_| {});
+            output.textures_delta.clear();
+            ctx.fonts_mut(|view| {
+                for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                    for c in &letters {
+                        assert!(view.has_glyph(&egui::FontId::new(12.0, family.clone()), *c), "{language}: missing Georgian glyph {c} in {family:?}");
+                    }
+                }
+            });
+        }
     }
 }

@@ -101,6 +101,13 @@ catalog, the saved `ko` preference is kept but the interface falls back to Engli
 command reports that a font is needed, and the picker uses the readable label **Korean** wherever
 Hangul can't be shown. This change does not fix platform IME issues or localize engine output.
 
+The bundled egui fonts have no Georgian letters. Georgian is drawn with the Noto Sans Georgian face
+(`Geor`) of the craft-fonts build input, which release builds embed (`craft-fonts-ref` in the
+workflows, and `web-craft-fonts` for the web build, whose embedded faces include it). The face loads
+in every interface language, so the picker shows **ქართული**. A build without craft-fonts keeps the
+saved `ka` choice but shows the interface in English, names the language **Georgian** in the picker,
+and the language command reports that a Georgian font is needed.
+
 ## Greek (`el`) interface
 
 The Greek translation covers all **1,330** distinct source keys collected from the existing
