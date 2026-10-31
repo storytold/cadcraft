@@ -188,21 +188,53 @@ impl Spline {
             return Bounds2::from_points(self.samples(MAX_SAMPLES));
         }
         let (lo, hi) = self.domain();
-        let floor = 8.min(MAX_SAMPLES / spans);
+        let n = self.segments_for(self.polygon_length() / (diag * 1e-3));
+        let mut out = Bounds2::EMPTY;
+        for t in self.span_params(n, spans) {
+            out.add(self.eval_valid(t, lo, hi));
+        }
+        out
+    }
+
+    /// Points along the curve for measuring it (AREA): the count [`Spline::tessellate`] takes at
+    /// `tol`, spread over the knot spans as [`Spline::bounds`] spreads them (at least eight
+    /// segments each, so it can be more), so a narrow span, which one grid over the whole domain
+    /// can step over entirely, is measured too. A spline with more spans than two each allow gets
+    /// the even grid, and an invalid one its control points, as `tessellate` gives them.
+    pub fn tessellate_spans(&self, tol: f64) -> Vec<Vec2> {
+        if !self.is_valid() {
+            return self.control.clone();
+        }
+        let spans = self.knot_spans().count();
+        if spans == 0 {
+            return self.samples(self.sample_count(tol)).collect();
+        }
+        if spans > MAX_SAMPLES / 2 {
+            return self.samples(MAX_SAMPLES).collect();
+        }
+        let (lo, hi) = self.domain();
+        self.span_params(self.sample_count(tol), spans).map(|t| self.eval_valid(t, lo, hi)).collect()
+    }
+
+    /// Parameters for `n` segments spread over the knot spans in proportion to their share of the
+    /// domain, at least eight per span (fewer when that would pass `MAX_SAMPLES`), each span's
+    /// start and the domain's end included; when the spread passes `MAX_SAMPLES` the budget is
+    /// cut to fit. The spline must be valid, with `spans` (its `knot_spans().count()`) from 1 to
+    /// `MAX_SAMPLES / 2`.
+    fn span_params(&self, n: usize, spans: usize) -> impl Iterator<Item = f64> + '_ {
+        let (lo, hi) = self.domain();
+        let floor = 8.min(MAX_SAMPLES / spans.max(1));
         // The span's share of the domain first: huge knots (1e308, from a hostile edit) would
         // overflow `budget * (b - a)` to infinity and the cast to a boundless count.
-        let segments = |budget: usize, (a, b): (f64, f64)| floor.max((budget as f64 * ((b - a) / (hi - lo))) as usize).min(MAX_SAMPLES);
-        let n = self.segments_for(self.polygon_length() / (diag * 1e-3));
-        let budget = if self.knot_spans().map(|s| segments(n, s)).sum::<usize>() <= MAX_SAMPLES { n } else { MAX_SAMPLES - floor * spans };
-        let mut out = Bounds2::EMPTY;
-        for (a, b) in self.knot_spans() {
-            let seg = segments(budget, (a, b));
-            for i in 0..seg {
-                out.add(self.eval_valid(a + (b - a) * i as f64 / seg as f64, lo, hi));
-            }
-        }
-        out.add(self.eval_valid(hi, lo, hi));
-        out
+        let segments = move |budget: usize, (a, b): (f64, f64)| floor.max((budget as f64 * ((b - a) / (hi - lo))) as usize).min(MAX_SAMPLES);
+        let budget =
+            if self.knot_spans().map(|s| segments(n, s)).sum::<usize>() <= MAX_SAMPLES { n } else { MAX_SAMPLES.saturating_sub(floor * spans) };
+        self.knot_spans()
+            .flat_map(move |(a, b)| {
+                let seg = segments(budget, (a, b));
+                (0..seg).map(move |i| a + (b - a) * i as f64 / seg as f64)
+            })
+            .chain(std::iter::once(hi))
     }
 
     /// The non-empty knot spans the curve is defined over, in parameter order.

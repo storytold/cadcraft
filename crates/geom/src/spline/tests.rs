@@ -202,6 +202,36 @@ fn bounds_keep_their_cap_over_huge_knot_spans() {
     }
 }
 
+#[test]
+fn tessellate_spans_measures_narrow_knot_spans() {
+    // A degree-1 spline is its control polygon: the triangle (0,0) (1,0) (0,1), though two of its
+    // three spans are a billionth of the domain. One grid over the domain steps over them and
+    // sees no area; spread over the spans, the corners are there.
+    let control = vec![Vec2::ZERO, Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0), Vec2::ZERO];
+    let s = Spline { degree: 1, knots: vec![0.0, 0.0, 1e-9, 2e-9, 1.0, 1.0], control, ..Spline::default() };
+    assert!(s.is_valid());
+    assert!(crate::shoelace(&s.tessellate(1e-3)).abs() < 1e-6);
+    let pts = s.tessellate_spans(1e-3);
+    assert!(pts.iter().any(|p| p.near(Vec2::new(1.0, 0.0), 1e-12)), "{pts:?}");
+    assert!((crate::shoelace(&pts).abs() - 0.5).abs() < 1e-12);
+    // An ordinary spline measures as `tessellate` does, within the sampling's sag.
+    let w = wiggly(false);
+    let (a, b) = (crate::shoelace(&w.tessellate(1e-4)), crate::shoelace(&w.tessellate_spans(1e-4)));
+    assert!((a - b).abs() <= 1e-4 * a.abs().max(1.0), "{a} {b}");
+}
+
+#[test]
+fn tessellate_spans_keeps_its_cap() {
+    // More spans than two samples each allow: the even grid, capped, as `bounds` falls back.
+    let control: Vec<Vec2> = (0..3000).map(|i| Vec2::new(i as f64, (i % 2) as f64)).collect();
+    let s = Spline::from_control(control, 1);
+    assert!(s.is_valid());
+    assert!(s.tessellate_spans(1e-9).len() <= MAX_SAMPLES + 1);
+    // A few spans: their share of the count, at least eight segments each, end included.
+    let s = Spline::from_control(vec![Vec2::ZERO, Vec2::new(1.0, 0.0), Vec2::new(1.0, 1.0)], 1);
+    assert_eq!(s.tessellate_spans(1.0).len(), 2 * 8 + 1);
+}
+
 fn scaled(s: &Spline, k: f64) -> Spline {
     Spline { control: s.control.iter().map(|c| *c * k).collect(), fit: s.fit.iter().map(|c| *c * k).collect(), ..s.clone() }
 }
