@@ -301,6 +301,9 @@ fn should_pick_file_path(id: &str, params: &Value) -> bool {
 /// content asks first. `None` lets the engine save. JSON calls carry params and never get here;
 /// they report the loss in their result instead.
 fn user_qsave(app: &mut CadApp) -> Option<Result<Value, String>> {
+    if app.file_providers.enabled() {
+        return Some(crate::file_provider_app::save(app, false));
+    }
     if app.session.state().is_ok_and(|s| s.path.is_none()) {
         return run_ui_command(app, "ui.saveas", &Value::Null);
     }
@@ -378,6 +381,9 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             Ok(Value::Null)
         }
         "ui.saveas" | "saveas" if no_path => {
+            if app.file_providers.enabled() {
+                return Some(crate::file_provider_app::save(app, true));
+            }
             let title = app.session.state().map(|s| s.title.clone()).ok();
             let name = app.ui.save_format.suggested_name(title.as_deref());
             if let Some(p) = app.services.pick_save.as_ref().and_then(|f| f(&name)) {
@@ -687,8 +693,11 @@ pub fn menu_bar(app: &mut CadApp, ui: &mut egui::Ui) {
                 // Titles first, so a hovered title can take over before any menu is drawn.
                 let titles: Vec<egui::Response> = tree.iter().map(|(name, _)| ui.add(egui::Button::new(crate::i18n::menu(name)))).collect();
                 switch_on_hover(ui.ctx(), &titles);
-                for ((_, entries), title) in tree.iter().zip(&titles) {
+                for ((menu, entries), title) in tree.iter().zip(&titles) {
                     egui::Popup::menu(title).show(|ui| {
+                        if menu == "File" && app.file_providers.enabled() {
+                            ui.menu_button("Open Recent — file provider", |ui| app.file_providers.recent_ui(ui));
+                        }
                         for e in entries {
                             entry_ui(ui, e, &mut clicked);
                         }
