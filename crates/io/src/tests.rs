@@ -518,6 +518,75 @@ fn pdf_hostile_options_and_empty() {
     }
 }
 
+/// The view a drawing was saved at is the `*ACTIVE` VPORT record's centre and height, repeated in
+/// the `$VIEWCTR`/`$VIEWSIZE` header pair. It used to be dropped on read and replaced on write by
+/// a fit of the geometry extents, so a drawing with far-off geometry opened hundreds of times too
+/// far out, and a conversion replaced wherever the drawing had been left (#1602).
+#[test]
+fn dxf_keeps_the_view_the_drawing_was_saved_at() {
+    const SAVED: &str = "\
+0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1027\n9\n$VIEWCTR\n10\n50.0\n20\n50.0\n30\n0.0\n9\n$VIEWSIZE\n40\n20.0\n0\nENDSEC\n\
+0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nVPORT\n0\nVPORT\n2\n*ACTIVE\n70\n0\n10\n0.0\n20\n0.0\n11\n1.0\n21\n1.0\n\
+12\n50.0\n22\n50.0\n40\n20.0\n41\n1.5\n0\nENDTAB\n0\nENDSEC\n\
+0\nSECTION\n2\nENTITIES\n0\nLINE\n8\n0\n10\n0.0\n20\n0.0\n30\n0.0\n11\n100.0\n21\n60.0\n31\n0.0\n\
+0\nLINE\n8\n0\n10\n5000000.0\n20\n5000000.0\n30\n0.0\n11\n5000100.0\n21\n5000060.0\n31\n0.0\n0\nENDSEC\n0\nEOF\n";
+
+    // The stored view survives the read, far-away geometry and all: the extents here are
+    // 5 000 100 x 5 000 060, a fit of which is 275 000 times the height the drawing was saved at.
+    let d = read_dxf(SAVED.as_bytes()).unwrap();
+    assert_eq!(d.header.saved_view(), Some((Vec2::new(50.0, 50.0), 20.0)));
+    assert!(d.extents(&Space::Model).max.x > 5e6, "the far-off line is read too");
+
+    // And writing the drawing back keeps it, in both places a reader looks.
+    let text = write_dxf(&d);
+    let back = read_dxf(text.as_bytes()).unwrap();
+    assert_eq!(back.header.saved_view(), Some((Vec2::new(50.0, 50.0), 20.0)));
+    let active = text.replace("\r\n", "\n");
+    let active = active.split("*Active").nth(1).unwrap_or_default();
+    for group in ["\n 12\n50", "\n 22\n50", "\n 40\n20"] {
+        assert!(active.contains(group), "the *ACTIVE record keeps {group:?}: {}", &active[..active.len().min(400)]);
+    }
+
+    // A drawing that stores no view is still written on its extents.
+    let mut plain = d.clone();
+    plain.header.vars.remove("VIEWCTR");
+    plain.header.vars.remove("VIEWSIZE");
+    assert_eq!(plain.header.saved_view(), None);
+    let fitted = read_dxf(write_dxf(&plain).as_bytes()).unwrap();
+    let (center, height) = fitted.header.saved_view().unwrap();
+    assert!(center.x > 2.4e6 && height > 5e6, "the extents fit: {center:?} {height}");
+
+    // That fit covers the width as well: a wide, flat drawing opened on its height alone would
+    // show a sliver of it, and a drawing with no height at all would have no view.
+    let mut wide = cadcraft_doc::Drawing::new_metric();
+    for (a, b) in [([0.0, 0.0], [100.0, 10.0]), ([0.0, 10.0], [100.0, 10.0])] {
+        let line = cadcraft_doc::Line { a: Vec3::new(a[0], a[1], 0.0), b: Vec3::new(b[0], b[1], 0.0) };
+        wide.add(&Space::Model, cadcraft_doc::Common::default(), EntityKind::Line(line)).unwrap();
+    }
+    let back = read_dxf(write_dxf(&wide).as_bytes()).unwrap();
+    let (_, height) = back.header.saved_view().unwrap();
+    assert!(height > 60.0, "a 100 x 10 drawing needs more than its height: {height}");
+
+    let mut flat = cadcraft_doc::Drawing::new_metric();
+    let line = cadcraft_doc::Line { a: Vec3::ZERO, b: Vec3::new(100.0, 0.0, 0.0) };
+    flat.add(&Space::Model, cadcraft_doc::Common::default(), EntityKind::Line(line)).unwrap();
+    let back = read_dxf(write_dxf(&flat).as_bytes()).unwrap();
+    let (_, height) = back.header.saved_view().unwrap();
+    assert!(height > 60.0, "a horizontal line needs a view with width in it: {height}");
+}
+
+/// A `*ACTIVE` record that leaves its view centre out (no 12/22) is not a view: `$VIEWCTR` and
+/// `$VIEWSIZE` stay, rather than being replaced by the zero the missing groups read as.
+#[test]
+fn a_viewport_record_without_a_centre_keeps_the_header_view() {
+    const NO_CENTRE: &str = "\
+0\nSECTION\n2\nHEADER\n9\n$VIEWCTR\n10\n50.0\n20\n50.0\n9\n$VIEWSIZE\n40\n20.0\n0\nENDSEC\n\
+0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nVPORT\n0\nVPORT\n2\n*ACTIVE\n70\n0\n10\n0.0\n20\n0.0\n11\n1.0\n21\n1.0\n\
+40\n99.0\n0\nENDTAB\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nLINE\n8\n0\n10\n0.0\n20\n0.0\n11\n9.0\n21\n9.0\n0\nENDSEC\n0\nEOF\n";
+    let d = read_dxf(NO_CENTRE.as_bytes()).unwrap();
+    assert_eq!(d.header.saved_view(), Some((Vec2::new(50.0, 50.0), 20.0)), "the header pair is kept");
+}
+
 #[test]
 fn dxf_roundtrips_page_setup() {
     let mut d = sample();

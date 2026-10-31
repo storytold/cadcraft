@@ -1,5 +1,10 @@
 use super::{DocState, Drawing, EngineError, Result, Session, Space, Value, Vec2, View, cmd};
 
+/// Whether a stored view can be used: a drawing can record a degenerate or non-finite one.
+fn usable_view(v: &View) -> bool {
+    v.center.is_finite() && v.height.is_finite() && v.height > 1e-12
+}
+
 impl Session {
     /// Append a new untitled drawing (`DrawingN`, metric or imperial default view), end a running command, make it active, bump the document epoch and return its index.
     pub fn new_drawing(&mut self, metric: bool) -> usize {
@@ -17,8 +22,15 @@ impl Session {
     /// Append a loaded drawing, fit the view to its model extents (aspect-corrected, minimum height 1e-6) when non-empty, end a running command, make it active, bump the epoch and return its index.
     pub fn open_drawing(&mut self, d: Drawing, title: &str, path: Option<String>) -> usize {
         let mut st = DocState::new(d, title, path);
+        // The view the file was saved at is the one every other reader opens on. Fitting the
+        // extents instead showed a drawing whose extents are dominated by far-off geometry at a
+        // view hundreds of times its content, with the drawing sub-pixel and no way to zoom in
+        // (#1602). The extents remain the fallback for a drawing that stores no view.
+        let saved = st.doc.header.saved_view().map(|(center, height)| View { center, height }).filter(usable_view);
         let ext = st.doc.extents(&Space::Model);
-        if !ext.is_empty() {
+        if let Some(v) = saved {
+            st.set_view_quiet(v);
+        } else if !ext.is_empty() {
             st.set_view_quiet(View {
                 center: ext.center(),
                 height: (ext.height().max(ext.width() * self.viewport_px.1 / self.viewport_px.0.max(1.0)) * 1.1).max(1e-6),
