@@ -65,8 +65,9 @@ fn blank(s: &str) -> bool {
 
 /// Approximate box of an MTEXT, from its attachment point, width and line count.
 fn mtext_box(t: &crate::MText) -> Bounds2 {
-    let lines = t.contents.split("\\P").count().max(1);
-    let longest = t.contents.split("\\P").map(|l| l.chars().count()).max().unwrap_or(1);
+    let shown = crate::fields::display_mtext(&t.contents);
+    let lines = shown.split("\\P").count().max(1);
+    let longest = shown.split("\\P").map(|l| l.chars().count()).max().unwrap_or(1);
     let estimate = t.height * 0.8 * longest as f64;
     // The wrap width only narrows the box: a garbage width must not stretch the drawing extents (#2465).
     let mut w = if t.width > 0.0 { t.width.min(estimate) } else { estimate };
@@ -124,14 +125,14 @@ fn bounds_of(d: &Drawing, e: &Entity, depth: usize, off_counts: bool) -> Bounds2
 fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<(&'a str, usize), Bounds2>, off_counts: bool) -> Bounds2 {
     match &e.kind {
         EntityKind::Table(t) if t.is_broken() => t.bounds(),
-        EntityKind::Text(t) if blank(&t.value) => Bounds2::EMPTY,
-        EntityKind::MText(t) if blank(&t.contents) => Bounds2::EMPTY,
+        EntityKind::Text(t) if blank(&crate::fields::display(&t.value)) => Bounds2::EMPTY,
+        EntityKind::MText(t) if blank(&crate::fields::display_mtext(&t.contents)) => Bounds2::EMPTY,
         // Text that matches the layout's orientation is drawn upright (#2498).
         EntityKind::Text(t) if e.common.matches_layout_orientation() => {
-            text_box(&crate::Text { rotation: 0.0, ..t.clone() }, t.value.chars().count())
+            text_box(&crate::Text { rotation: 0.0, ..t.clone() }, crate::fields::display(&t.value).chars().count())
         }
         EntityKind::MText(t) if e.common.matches_layout_orientation() => mtext_box(&crate::MText { rotation: 0.0, ..t.clone() }),
-        EntityKind::Text(t) => text_box(t, t.value.chars().count()),
+        EntityKind::Text(t) => text_box(t, crate::fields::display(&t.value).chars().count()),
         EntityKind::AttDef(a) => text_box(&a.text, a.tag.chars().count()),
         EntityKind::MText(t) => mtext_box(t),
         EntityKind::Insert(ins) => {
@@ -167,7 +168,7 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
                 if !a.invisible && layer_counts(d, attrib_layer(d, ins, a), off_counts) {
                     b = b.union(&match a.multiline_text() {
                         Some(m) => mtext_box(&m),
-                        None => text_box(&a.text, a.text.value.chars().count()),
+                        None => text_box(&a.text, crate::fields::display(&a.text.value).chars().count()),
                     });
                 }
             }

@@ -670,3 +670,27 @@ fn space_names_its_tab() {
     assert_eq!(p.layout(), Some("Sheet A"));
     assert_eq!(p.tab_name(), "Sheet A");
 }
+
+#[test]
+fn displayed_fields_keep_wrap_bounds_and_layout_orientation() {
+    let d = Drawing::new_metric();
+    let (code, _) = fields::set_values(&fields::var_code("Title", None), |_| Some("PLATE".into()));
+    let mut field_mtext = mtext_kind(&code);
+    if let EntityKind::MText(t) = &mut field_mtext {
+        t.width = 1e9;
+    }
+    let field = entity_bounds(&d, &Entity::new(Handle(1), field_mtext), 0);
+    let plain = entity_bounds(&d, &Entity::new(Handle(1), mtext_kind("PLATE")), 0);
+    assert_eq!(field, plain, "wrap width and raw field code must not inflate the displayed bounds");
+    for (kind, plain) in [(text_kind(&code), text_kind("PLATE")), (mtext_kind(&code), mtext_kind("PLATE"))] {
+        let mut e = Entity::new(Handle(1), kind);
+        if let EntityKind::Text(t) = &mut e.kind {
+            t.rotation = std::f64::consts::PI;
+        }
+        if let EntityKind::MText(t) = &mut e.kind {
+            t.rotation = std::f64::consts::PI;
+        }
+        e.common.xdata = vec![RawTag { code: 1001, value: "AcadAnnoPO".into() }, RawTag { code: 1070, value: "1".into() }];
+        assert_eq!(entity_bounds(&d, &e, 0), entity_bounds(&d, &Entity::new(Handle(1), plain), 0));
+    }
+}

@@ -208,6 +208,7 @@
 	Cut with Base Point	قص من نقطة أساس
 	Cyan	سماوي
 	Cylinder	أسطوانة
+	Drawing Properties...	خصائص الرسم...
 	DWG	DWG
 	DWG Reference...	مرجع DWG...
 	DXF	DXF
@@ -299,6 +300,14 @@
 	End angle	زاوية النهاية
 	Endpoint	نقطة نهاية
 	Enter	إدخال
+	Enter author	أدخل المؤلف
+	Enter comments	أدخل التعليقات
+	Enter field name or system variable	أدخل اسم الحقل أو متغير النظام
+	Enter keywords	أدخل الكلمات الرئيسية
+	Enter property	أدخل الخاصية
+	Enter property to change	أدخل الخاصية المراد تغييرها
+	Enter subject	أدخل الموضوع
+	Enter title	أدخل العنوان
 	Enter Top, Zero or Bottom.	أدخل أعلى أو صفر أو أسفل.
 	Enter a fit data option	أدخل خيار بيانات الملاءمة
 	Enter a pattern name	أدخل اسم نمط
@@ -359,6 +368,7 @@
 	External Reference	مرجع خارجي
 	External References	مراجع خارجية
 	Extrude	بثق
+	Field...	حقل...
 	File	ملف
 	File Tab	علامة تبويب الملف
 	Fillet	تدوير زاوية
@@ -807,6 +817,7 @@
 	Rotate	تدوير
 	Rotation	التدوير
 	Run Script...	تشغيل برمجية...
+	Spelling	التدقيق الإملائي
 	SVG drawings (SVG, SVGZ)	رسومات SVG (SVG, SVGZ)
 	Save	حفظ
 	Save (⌘S)	حفظ (⌘S)
@@ -1165,6 +1176,7 @@
 	Up	أعلى
 	Update	تحديث
 	Update Data Links	تحديث ارتباطات البيانات
+	Update Fields	تحديث الحقول
 	Use System Setting	استخدام إعداد النظام
 	Use for this layout	استخدام لهذا التخطيط
 	Use object linetype	استخدام نوع خط الكائن
