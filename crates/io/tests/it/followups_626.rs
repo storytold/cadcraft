@@ -31,10 +31,13 @@ fn count(d: &Drawing, f: impl Fn(&EntityKind) -> bool) -> usize {
 fn mleader_drawing() -> (Drawing, MLeader) {
     let mut d = Drawing::new_metric();
     let m = MLeader {
+        arrow: String::new(),
+        no_leader: false,
         leaders: vec![vec![Vec3::new(0.0, 0.0, 0.0), Vec3::new(2.0, 3.0, 0.0)], vec![Vec3::new(1.0, -2.0, 0.0)]],
         landing: Vec3::new(5.0, 4.0, 0.0),
         dogleg: 0.75,
         text: Some(MText {
+            formula: None,
             insert: Vec3::new(5.9, 4.0, 0.0),
             height: 0.4,
             width: 6.0,
@@ -162,6 +165,7 @@ fn code_page_is_kept_before_2007() {
         &Space::Model,
         Common::default(),
         EntityKind::Text(Text {
+            formula: None,
             insert: Vec3::ZERO,
             align_pt: None,
             height: 2.5,
