@@ -27,6 +27,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.toggle.toolsets", "Tool Sets", &["Window", "Tool Sets"], Some("Cmd+3")),
     ("ui.panel.properties", "Properties Inspector", &["Window", "Properties Inspector"], Some("Cmd+1")),
     ("ui.panel.layers", "Layers Palette", &["Window", "Layers Palette"], None),
+    ("ui.panel.blocks", "Blocks Palette", &["Window", "Blocks Palette"], None),
     ("ui.toggle.quickcalc", "QuickCalc", &["Window", "QuickCalc"], Some("Cmd+8")),
     ("ui.panel.quickcalc", "QuickCalc", &[], None),
     ("ui.toggle.systemcursor", "Show System Cursor", &["View", "Accessibility", "Show System Cursor"], None),
@@ -101,8 +102,12 @@ fn route_ui_subsystems(app: &mut CadApp, id: &str, params: &Value) -> Option<Res
     if matches!(id, "ui.dock" | "ui.dock.reset") {
         return Some(crate::docking::command(app, id == "ui.dock.reset", params));
     }
-    if matches!(id, "ui.panel.properties" | "ui.panel.layers") {
-        let panel = if id == "ui.panel.properties" { "properties" } else { "layers" };
+    if matches!(id, "ui.panel.properties" | "ui.panel.layers" | "ui.panel.blocks") {
+        let panel = match id {
+            "ui.panel.properties" => "properties",
+            "ui.panel.layers" => "layers",
+            _ => "blocks",
+        };
         return Some(crate::docking::command(app, false, &json!({"operation":"open", "panel":panel})));
     }
     if id == "ui.toggle.quickcalc" {

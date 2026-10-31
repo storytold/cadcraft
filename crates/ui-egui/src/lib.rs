@@ -21,6 +21,7 @@ pub mod aliasdlg;
 pub mod animation;
 pub mod autosave;
 pub mod bedit;
+pub mod blocks_palette;
 pub mod canvas;
 pub mod capture;
 pub mod chrome;
