@@ -1,5 +1,5 @@
 //! Autosave and Drawing Recovery in the app. The engine decides what to write and writes it
-//! ([`cadcraft_engine::autosave`]); this runs it every frame, keeps SAVETIME and SAVEFILEPATH with
+//! ([`cadcraft_engine::autosave`]); this runs it every frame, keeps SAVETIME, SAVEFILEPATH and ISAVEBAK with
 //! the preferences, and shows the Drawing Recovery list after a crash: each autosaved drawing can
 //! be opened (as an unsaved copy) or discarded. On the web there is no autosave yet.
 
@@ -13,9 +13,9 @@ use crate::theme::Tokens;
 /// The host storage key for [`prefs_json`].
 pub const PREFS_KEY: &str = "cadcraft.autosave";
 
-/// SAVETIME and SAVEFILEPATH as JSON for the host's storage.
+/// SAVETIME, SAVEFILEPATH and ISAVEBAK as JSON for the host's storage.
 pub fn prefs_json() -> String {
-    json!({ "savetime": autosave::savetime(), "saveFilePath": autosave::savefilepath() }).to_string()
+    json!({ "savetime": autosave::savetime(), "saveFilePath": autosave::savefilepath(), "backup": autosave::isavebak() }).to_string()
 }
 
 /// Restore what [`prefs_json`] saved; malformed values are ignored.
@@ -26,6 +26,9 @@ pub fn load_prefs(json: &str) {
     }
     if let Some(p) = v.get("saveFilePath").and_then(Value::as_str) {
         autosave::set_savefilepath(p);
+    }
+    if let Some(b) = v.get("backup").and_then(Value::as_bool) {
+        autosave::set_isavebak(b);
     }
 }
 

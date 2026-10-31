@@ -405,7 +405,7 @@ fn entity_lists_hold_angles_in_radians() {
     // MTEXT: 50 before the column type (75) is the rotation, after it a column height.
     ok(
         &mut s,
-        "(entmake (list '(0 . \"MTEXT\") '(10 0.0 0.0 0.0) '(40 . 2.5) '(41 . 10.0) '(1 . \"abc\") (cons 50 (/ pi 3)) '(75 . 2) '(76 . 2) '(79 . 0) '(48 . 10.0) '(49 . 1.0) '(50 . 30.0) '(50 . 20.0)))",
+        "(entmake (list '(0 . \"MTEXT\") '(10 0.0 0.0 0.0) '(40 . 2.5) '(41 . 10.0) '(1 . \"abc\") (cons 50 (/ pi 3)) '(75 . 2) '(76 . 2) '(79 . 0) '(48 . 10.0) '(49 . 1.0) '(50 . 2.0) '(50 . 30.0) '(50 . 20.0)))",
     );
     let mtext = s.doc().unwrap().model.iter().find_map(|e| match &e.kind {
         cadcraft_doc::EntityKind::MText(t) => Some((t.rotation, t.columns.as_ref().map(|c| c.heights.clone()))),

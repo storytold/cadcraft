@@ -42,6 +42,10 @@ pub(super) fn multiline_attrib(embedded: Option<&[Tag]>, c: &Common) -> Option<M
 
 /// Multiline text from MTEXT groups (an MTEXT entity's, or a multiline attribute's embedded ones).
 pub(super) fn mtext_from(tags: &[Tag], c: &Common) -> MText {
+    // The MTEXT's own groups: an embedded object (group 101) reuses their codes (44 is its
+    // column width, not the line spacing factor).
+    let columns = mtext_dxf::read_columns(tags);
+    let tags = mtext_dxf::own(tags);
     let t = T(tags);
     // Contents: code 3 chunks followed by code 1.
     let mut contents = String::new();
@@ -50,7 +54,6 @@ pub(super) fn mtext_from(tags: &[Tag], c: &Common) -> MText {
     }
     contents.push_str(&t.s(1).unwrap_or_default());
     let contents = mtext_dxf::decode_contents(&contents);
-    let columns = mtext_dxf::read_columns(tags);
     // The direction comes from the MTEXT's own groups only: in an R2018+ embedded object
     // (group 101), 11 is the insertion point, not the X-axis direction (#667, as in #834).
     let own = T(mtext_dxf::before_columns(tags));
@@ -73,8 +76,10 @@ pub(super) fn mtext_from(tags: &[Tag], c: &Common) -> MText {
     MText {
         insert: t.p(10),
         height: t.fd(40, 0.2).max(1e-9),
+        // An MTEXT's width is one column's: with columns, the column width (48, or 44 of the
+        // embedded object) rather than 41, which ZWCAD and AutoCAD write as the total width.
         width: match &columns {
-            Some((_, w)) if t.fd(41, 0.0) <= 0.0 => *w,
+            Some((_, w)) if *w > 0.0 => *w,
             _ => t.fd(41, 0.0).max(0.0),
         },
         attach,

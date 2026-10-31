@@ -159,3 +159,16 @@ fn layer_delete_clears_viewport_overrides_for_the_layer() {
     s.execute("layer.new", &json!({ "name": "C" })).unwrap();
     assert!(viewport_lists(&s).iter().all(|(f, _)| !f.contains(&"C".to_string())));
 }
+
+#[test]
+fn renaming_a_layer_repoints_viewport_lists() {
+    let mut s = drawing();
+    assert_eq!(viewport_lists(&s), vec![(vec!["A".to_string(), "C".to_string()], vec!["B".to_string()])]);
+    s.execute("rename", &json!({ "table": "layer", "from": "A", "to": "Murs" })).unwrap();
+    assert_eq!(viewport_lists(&s), vec![(vec!["Murs".to_string(), "C".to_string()], vec!["B".to_string()])]);
+    // layer.set's newName form (what the Properties palette sends) goes through the same path.
+    s.execute("layer.set", &json!({ "name": "B", "newName": "Cloisons" })).unwrap();
+    assert_eq!(viewport_lists(&s), vec![(vec!["Murs".to_string(), "C".to_string()], vec!["Cloisons".to_string()])]);
+    s.undo().unwrap();
+    assert_eq!(viewport_lists(&s), vec![(vec!["Murs".to_string(), "C".to_string()], vec!["B".to_string()])], "undo brings the old name back");
+}

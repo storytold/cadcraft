@@ -8,7 +8,7 @@ use serde_json::json;
 use super::super::bad;
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
-fn valid_name(n: &str) -> bool {
+pub(super) fn valid_name(n: &str) -> bool {
     !n.trim().is_empty() && n.len() <= 255 && !n.starts_with('*') && !n.chars().any(|c| "<>/\\\":;?*|,=`".contains(c))
 }
 
