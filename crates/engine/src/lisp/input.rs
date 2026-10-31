@@ -49,8 +49,8 @@ pub struct GetRequest {
 }
 
 impl GetRequest {
-    /// The prompt the command line shows.
-    pub fn prompt(&self) -> Prompt {
+    /// The prompt the command line shows (`ucs`: the UCS the routine's points are in).
+    pub fn prompt(&self, ucs: &crate::ucs::UcsFrame) -> Prompt {
         let any = self.initget.bits & 128 != 0 || !self.initget.keywords.is_empty();
         let accept = match self.kind {
             GetKind::Point | GetKind::Corner | GetKind::EntSel => Accept { text: any, ..Accept::POINT },
@@ -63,7 +63,7 @@ impl GetRequest {
             (None, true) => default_message(self.kind).to_string(),
             (None, false) => self.message.clone(),
         };
-        let base = self.first.or(self.base).map(|p| Vec2::new(p[0], p[1]));
+        let base = self.first.or(self.base).map(|p| ucs.to_wcs(Vec2::new(p[0], p[1])));
         let mut p = Prompt::new(message, accept).base_opt(base);
         p.keywords = self.initget.keywords.clone();
         p.raw = true;
@@ -106,11 +106,21 @@ impl GetRequest {
                 Ok(Value::Nil)
             }
             Input::Keyword(k) => Ok(Value::str(&k)),
-            Input::Point(p) => self.point(s, [p.x, p.y, 0.0]),
+            // Points come back in the current UCS, on its XY plane.
+            Input::Point(p) => {
+                let u = s.ucs_point(p);
+                self.point(s, [u.x, u.y, 0.0])
+            }
             // A deferred tangent/perpendicular snap is the point it was picked at here.
-            Input::Deferred(d) => self.point(s, [d.at.x, d.at.y, 0.0]),
+            Input::Deferred(d) => {
+                let u = s.ucs_point(d.at);
+                self.point(s, [u.x, u.y, 0.0])
+            }
             Input::Pick(hs) => match (self.kind, hs.first()) {
-                (GetKind::EntSel, Some(h)) => Ok(Value::list(vec![Value::Ename(*h), Value::point(&[s.last_point.x, s.last_point.y, 0.0])])),
+                (GetKind::EntSel, Some(h)) => {
+                    let u = s.ucs_point(s.last_point);
+                    Ok(Value::list(vec![Value::Ename(*h), Value::point(&[u.x, u.y, 0.0])]))
+                }
                 _ => Err("Invalid point.".into()),
             },
             Input::Text(t) => self.text(s, &t),
@@ -141,7 +151,8 @@ impl GetRequest {
                 let ap = s.settings.pickbox.max(1.0) * s.pixel_size();
                 let space = s.state().map(|st| st.edit_space()).map_err(|e| Again::Msg(e.to_string()))?;
                 let d = s.doc().map_err(|e| Again::Msg(e.to_string()))?;
-                match crate::select::pick(d, &space, Vec2::new(p[0], p[1]), ap) {
+                // `p` is in the UCS; objects are picked at the world point.
+                match crate::select::pick(d, &space, s.input_ucs().to_wcs(Vec2::new(p[0], p[1])), ap) {
                     Some(h) => Ok(Value::list(vec![Value::Ename(h), Value::point(&p)])),
                     None => Err("Missed, try again.".into()),
                 }
@@ -187,6 +198,8 @@ impl GetRequest {
             },
             GetKind::Angle { orient } => match s.angle_settings().direction(t) {
                 Some(a) => {
+                    // Measured in the UCS, as an angle from two points is.
+                    let a = a - s.angle_settings().ucs;
                     let a = if orient { a } else { a - s.lisp_angbase() };
                     self.check_number(a.rem_euclid(std::f64::consts::TAU), false)
                 }

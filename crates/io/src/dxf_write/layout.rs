@@ -1,4 +1,5 @@
 use super::ctx::Ctx;
+use super::header::model_ucs;
 use super::{Bounds2, Drawing, Entity, EntityKind, Handle, HashMap, Layout, Vec2, Vec3, VportConfig, VportTile, W, dxf_ext};
 
 /// Layouts with viewports but without the paper-space viewport (id 1, the sheet itself), keyed
@@ -95,6 +96,22 @@ pub(super) fn vport_table(w: &mut W, d: &Drawing, ext: Bounds2) {
         w.f(41, if t.aspect.is_finite() && t.aspect > 0.0 { t.aspect } else { 1.0 });
         w.f(42, 50.0);
         w.f(50, d.header.f64("SNAPANG", 0.0));
+        // The shown configuration's tiles keep model space's current UCS (UCSVP 1).
+        if name == VportConfig::ACTIVE {
+            let ucs = model_ucs(d);
+            w.i(65, 1);
+            w.p(110, ucs.origin);
+            w.p(111, ucs.x_axis);
+            w.p(112, ucs.y_axis);
+            w.i(79, 0);
+            // The named UCS it is (none: unnamed). The UCS table comes after VPORT, so the
+            // handle is filled in once that table has given it one ([`W::vport_ucs`]).
+            if !ucs.name.is_empty() {
+                w.s(345, "0");
+                w.vport_ucs.push((w.t.len() - 1, ucs.name.to_ascii_uppercase()));
+            }
+            w.f(146, 0.0);
+        }
     }
     w.s(0, "ENDTAB");
 }
