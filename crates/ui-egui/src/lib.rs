@@ -21,6 +21,7 @@ pub mod aliasdlg;
 pub mod animation;
 pub mod autosave;
 pub mod bedit;
+pub mod bidi_edit;
 pub mod canvas;
 pub mod capture;
 pub mod chrome;
@@ -31,7 +32,9 @@ pub mod context_menu;
 pub mod control;
 pub mod credits;
 pub mod dialogs;
+pub mod dimstyles;
 pub mod docking;
+pub mod editor_glyphs;
 pub mod hatchdlg;
 mod mtext_editor;
 mod panel_state;
@@ -215,6 +218,8 @@ impl Default for UiState {
 pub struct Services {
     pub pick_open: Option<Box<dyn Fn() -> Option<String>>>,
     pub pick_save: Option<Box<dyn Fn(&str) -> Option<String>>>,
+    /// Pick a folder (Options ▸ Fonts, the Custom Patterns folder); `None` where the host has no folder dialog.
+    pub pick_folder: Option<Box<dyn Fn() -> Option<String>>>,
     /// Pick a `.lsp` file for APPLOAD, starting in the given folder (empty for the default one).
     /// `None` where there is no native file dialog: the desktop without one asks for the name,
     /// and the web (no file system) says to drop the file (`no_file_system`).
@@ -627,6 +632,22 @@ impl CadApp {
                 // the command line.
                 if let Some(w) = v.get("warnings").and_then(Value::as_array).and_then(|w| w.first()).and_then(Value::as_str) {
                     self.set_status(w.to_string());
+                }
+                // Fonts the drawing's text styles name that can't be found: say what stands in.
+                let missing = self.session.doc().map(cadcraft_engine::cmd::missing_fonts).unwrap_or_default();
+                if !missing.is_empty() {
+                    let names: Vec<&str> = missing.iter().map(|(_, f)| f.as_str()).take(6).collect();
+                    let more = if missing.len() > names.len() { format!(" (+{})", missing.len() - names.len()) } else { String::new() };
+                    let msg = format!(
+                        "{} {}{more}. {} {}. {}",
+                        crate::tl!("Fonts not found:"),
+                        names.join(", "),
+                        crate::tl!("Text in them is drawn with"),
+                        cadcraft_engine::cmd::substitute_font(),
+                        crate::tl!("Add a font folder in Tools ▸ Options ▸ Fonts.")
+                    );
+                    self.session.echo(msg.clone());
+                    self.set_status(msg);
                 }
                 // A dynamic block's own drawing: ask whether to open it in the Block Editor.
                 if self.session.state().is_ok_and(|st| cadcraft_engine::blockedit::has_authoring_elements(&st.doc)) {

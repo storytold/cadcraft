@@ -55,6 +55,8 @@ pub(crate) fn mleaders() -> Vec<Case> {
                 &format!("mleader/spline={spline}"),
                 Common::default(),
                 EntityKind::MLeader(MLeader {
+                    arrow: String::new(),
+                    no_leader: false,
                     leaders: vec![vec![Vec3::ZERO, Vec3::new(2.0, 3.0, 0.0)], vec![Vec3::new(1.0, -2.0, 0.0)]],
                     landing: Vec3::new(5.0, 4.0, 0.0),
                     dogleg: 0.75,

@@ -36,6 +36,9 @@ fn explode_mtext(e: &Entity, m: &cadcraft_doc::MText) -> Vec<Entity> {
                 handle: Handle(0),
                 common: e.common.clone(),
                 kind: EntityKind::Text(cadcraft_doc::Text {
+                    backwards: false,
+                    upside_down: false,
+                    formula: None,
                     insert: v3(at),
                     align_pt: None,
                     height: m.height,
@@ -108,6 +111,8 @@ fn explode_dimension(d: &cadcraft_doc::Drawing, e: &Entity, dm: &cadcraft_doc::D
             handle: Handle(0),
             common: e.common.clone(),
             kind: EntityKind::MText(cadcraft_doc::MText {
+                frame: false,
+                formula: None,
                 insert: v3(g.text_pos),
                 height: g.text_height,
                 width: 0.0,

@@ -25,6 +25,9 @@ fn bounds(rotation: f64, match_orientation: Option<&str>) -> Bounds2 {
         ];
     }
     let text = Text {
+        backwards: false,
+        upside_down: false,
+        formula: None,
         insert: Vec3::new(10.0, 5.0, 0.0),
         align_pt: None,
         height: 2.5,

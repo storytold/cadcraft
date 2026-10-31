@@ -35,6 +35,7 @@ pub use draw2::breakline::BreaklineOptions;
 pub use props::MatchProps;
 pub(crate) use props::UNIT_RANGES;
 pub(crate) use props::{current_color_value, set_current_color_value};
+pub use props::{missing_fonts, substitute_font};
 mod qselect;
 mod selecttools;
 mod settings;
