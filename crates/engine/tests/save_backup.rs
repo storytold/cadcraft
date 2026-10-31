@@ -2,7 +2,7 @@
 //! save itself replaces the file atomically: no temporary files are left behind.
 
 use cadcraft_engine::Session;
-use cadcraft_engine::cmd::file::{IoHooks, backup_path, looks_complete, looks_like_drawing, set_io};
+use cadcraft_engine::cmd::file::{IoHooks, backup_path, looks_complete, looks_like_drawing, save_keeps_current, set_io};
 use serde_json::json;
 
 fn hooks() {
@@ -256,5 +256,41 @@ fn a_file_that_looks_damaged_is_kept_when_there_is_no_backup_yet() {
     add_circle(&mut s, 5.0);
     s.execute("qsave", &json!({})).unwrap();
     assert_eq!(std::fs::read(backup_path(&path)).unwrap(), odd);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// What the warning promises and what the save does agree. A 2007 DWG, whose completeness can't
+/// be told, replaces an older backup; a file known to be cut off doesn't.
+#[test]
+fn the_backup_a_save_promises_is_the_one_it_writes() {
+    let _saving = saving();
+    hooks();
+    let dir = temp_dir("promise");
+    let path = dir.join("Plan.dxf");
+    let p = path.to_string_lossy().to_string();
+    let mut s = Session::new();
+    add_circle(&mut s, 0.0);
+    s.execute("saveas", &json!({ "path": p })).unwrap();
+    add_circle(&mut s, 5.0);
+    s.execute("qsave", &json!({})).unwrap();
+    let old = std::fs::read(backup_path(&path)).unwrap();
+
+    let mut dwg2007 = b"AC1021".to_vec();
+    dwg2007.resize(4096, 7);
+    std::fs::write(&path, &dwg2007).unwrap();
+    assert!(save_keeps_current(&path));
+    add_circle(&mut s, 10.0);
+    s.execute("qsave", &json!({})).unwrap();
+    assert_eq!(std::fs::read(backup_path(&path)).unwrap(), dwg2007, "the promise was kept");
+
+    std::fs::write(backup_path(&path), &old).unwrap();
+    std::fs::write(&path, b"AC1032").unwrap();
+    assert!(!save_keeps_current(&path));
+    add_circle(&mut s, 15.0);
+    s.execute("qsave", &json!({})).unwrap();
+    assert_eq!(std::fs::read(backup_path(&path)).unwrap(), old, "cut off: nothing was promised");
+
+    cadcraft_engine::autosave::set_isavebak(false);
+    assert!(!save_keeps_current(&path), "backups off");
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -483,7 +483,8 @@ const TAIL_BYTES: u64 = 256;
 pub fn completeness(head: &[u8], tail: &[u8], len: u64) -> Option<bool> {
     let dwg = head.len() >= 6 && head.starts_with(b"AC") && head[2..6].iter().all(|b| b.is_ascii_digit());
     if dwg {
-        return dwg_complete(head, len);
+        // Too short for any DWG's header: cut off, not unknown.
+        return if head.len() < 256 { Some(false) } else { dwg_complete(head, len) };
     }
     if cadcraft_dxf::is_binary(head) {
         return Some(tail.ends_with(b"EOF\0"));
@@ -495,7 +496,7 @@ pub fn completeness(head: &[u8], tail: &[u8], len: u64) -> Option<bool> {
 
 /// [`completeness`] known to be whole.
 pub fn looks_complete(head: &[u8], tail: &[u8], len: u64) -> bool {
-    completeness(head, tail, len) == Some(true)
+    completeness(head, tail, len) != Some(false)
 }
 
 /// Whether a DWG of `len` bytes reaches the end its header gives (Open Design Specification for
@@ -540,36 +541,57 @@ fn dwg_complete(head: &[u8], len: u64) -> Option<bool> {
     }
 }
 
+/// A file's first bytes, last bytes and length, left positioned just after the first bytes.
+#[cfg(not(target_arch = "wasm32"))]
+fn ends(src: &mut std::fs::File) -> std::io::Result<(Vec<u8>, Vec<u8>, u64)> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut head = Vec::with_capacity(4096);
+    (&mut *src).take(4096).read_to_end(&mut head)?;
+    // Its end too (a DXF's EOF), then on from where the start left off for the copy.
+    let len = src.metadata()?.len();
+    let mut tail = Vec::new();
+    src.seek(SeekFrom::Start(len.saturating_sub(TAIL_BYTES)))?;
+    (&mut *src).take(TAIL_BYTES).read_to_end(&mut tail)?;
+    src.seek(SeekFrom::Start(head.len() as u64))?;
+    Ok((head, tail, len))
+}
+
+/// Whether saving replaces the `.bak` with this file. A file known to be cut off never replaces a
+/// backup already there. One that can't be told (a 2007 DWG) does: it is most likely fine, and it
+/// is about to be replaced. With no backup yet any file is kept, because the checks can be wrong
+/// about a real file and this save replaces the only copy.
+fn backup_replaced(head: &[u8], tail: &[u8], len: u64, backup_exists: bool) -> bool {
+    (looks_like_drawing(head) && completeness(head, tail, len) != Some(false)) || (len > 0 && !backup_exists)
+}
+
+/// Whether a save over `path` now would leave the current file in its `.bak`, for a warning that
+/// must not promise a backup the save won't write.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn save_keeps_current(path: &std::path::Path) -> bool {
+    let Ok(mut src) = std::fs::File::open(path) else { return false };
+    crate::autosave::isavebak() && ends(&mut src).is_ok_and(|(head, tail, len)| backup_replaced(&head, &tail, len, backup_path(path).exists()))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn save_keeps_current(_path: &std::path::Path) -> bool {
+    false
+}
+
 /// Before `path` is replaced: copy it to its `.bak`, streamed and written atomically too
 /// ([`crate::atomic_write::write_atomic_with`]). Nothing
 /// to keep when there is no file yet. A file that doesn't look like a drawing
 /// ([`looks_like_drawing`]) is not backed up, and the `.bak` already there is left alone.
 #[cfg(not(target_arch = "wasm32"))]
 fn backup(path: &std::path::Path) -> std::io::Result<()> {
-    use std::io::Read;
     let mut src = match std::fs::File::open(path) {
         Ok(f) if f.metadata()?.is_file() => f,
         Ok(_) => return Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(e),
     };
-    let mut head = Vec::with_capacity(4096);
-    (&mut src).take(4096).read_to_end(&mut head)?;
-    // Its end too (a DXF's EOF), then on from where the start left off for the copy.
-    let len = src.metadata()?.len();
-    let mut tail = Vec::new();
-    {
-        use std::io::Seek;
-        src.seek(std::io::SeekFrom::Start(len.saturating_sub(TAIL_BYTES)))?;
-        (&mut src).take(TAIL_BYTES).read_to_end(&mut tail)?;
-        src.seek(std::io::SeekFrom::Start(head.len() as u64))?;
-    }
+    let (head, tail, len) = ends(&mut src)?;
     let bak = backup_path(path);
-    // A file that doesn't look whole (or a 2007 DWG, which can't be told) never replaces a backup
-    // already there. With none yet it is still kept: the checks can be wrong about a real file,
-    // and this save is about to replace the only copy.
-    let whole = looks_like_drawing(&head) && completeness(&head, &tail, len) == Some(true);
-    if !whole && (len == 0 || bak.exists()) {
+    if !backup_replaced(&head, &tail, len, bak.exists()) {
         log::warn!("save: {} doesn't look like a whole drawing; its backup is left as it was", path.display());
         return Ok(());
     }

@@ -13,7 +13,7 @@ use egui::{RichText, vec2};
 use serde_json::{Value, json};
 
 use cadcraft_engine::autosave::isavebak;
-use cadcraft_engine::cmd::file::{backup_path, loss_on_save};
+use cadcraft_engine::cmd::file::{backup_path, loss_on_save, save_keeps_current};
 
 use crate::CadApp;
 use crate::theme::Tokens;
@@ -121,8 +121,10 @@ pub fn prompt(app: &mut CadApp, ctx: &egui::Context) {
         ui.add_space(4.0);
         ui.label(crate::tf!("This format can't keep these objects yet: {objects}.", objects = pending.summary()));
         ui.label(RichText::new(crate::tl!("DXF keeps them. Use Save As to keep them in the drawing.")).color(t.text_dim));
-        let on_disk = if isavebak() {
+        let on_disk = if save_keeps_current(path) {
             crate::tf!("The current file is kept as {name} until the next save.", name = backup)
+        } else if isavebak() {
+            crate::tf!("The current file doesn't look whole, so {name} stays as it is and the current file will be replaced.", name = backup)
         } else {
             crate::tl!("Backup copies are off, so the current file will be replaced.").to_string()
         };
