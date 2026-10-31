@@ -25,6 +25,8 @@ pub struct LastUsed {
     pub mleader_block: String,
     /// BREAKLINE's Block, Size and Extension.
     pub breakline: cmd::BreaklineOptions,
+    /// RECTANG's chamfer, fillet, width, elevation, thickness and rotation.
+    pub rectang: cmd::RectangModes,
 }
 
 impl Default for LastUsed {
@@ -39,6 +41,7 @@ impl Default for LastUsed {
             mleader: MLeaderOptions::default(),
             mleader_block: String::new(),
             breakline: cmd::BreaklineOptions::default(),
+            rectang: cmd::RectangModes::default(),
         }
     }
 }

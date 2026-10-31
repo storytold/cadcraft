@@ -62,45 +62,6 @@ pub fn polygon_from_edge(p1: Vec2, p2: Vec2, sides: usize) -> Vec<PolyVertex> {
     pts.into_iter().map(PolyVertex::new).collect()
 }
 
-/// Rectangle vertices with fillet radius or chamfer distances at every corner.
-pub fn rect_with_corners(a: Vec2, b: Vec2, fillet: f64, chamfer: (f64, f64)) -> Vec<PolyVertex> {
-    let (x0, x1) = (a.x.min(b.x), a.x.max(b.x));
-    let (y0, y1) = (a.y.min(b.y), a.y.max(b.y));
-    let w = x1 - x0;
-    let h = y1 - y0;
-    if fillet > 0.0 && fillet * 2.0 <= w.min(h) + 1e-12 {
-        let r = fillet;
-        let bul = cadcraft_geom::arc_to_bulge(std::f64::consts::FRAC_PI_2);
-        return vec![
-            PolyVertex::new(Vec2::new(x0 + r, y0)),
-            PolyVertex::with_bulge(Vec2::new(x1 - r, y0), bul),
-            PolyVertex::new(Vec2::new(x1, y0 + r)),
-            PolyVertex::with_bulge(Vec2::new(x1, y1 - r), bul),
-            PolyVertex::new(Vec2::new(x1 - r, y1)),
-            PolyVertex::with_bulge(Vec2::new(x0 + r, y1), bul),
-            PolyVertex::new(Vec2::new(x0, y1 - r)),
-            PolyVertex::with_bulge(Vec2::new(x0, y0 + r), bul),
-        ];
-    }
-    let (c1, c2) = chamfer;
-    if c1 > 0.0 && c2 > 0.0 && c1 + c1 <= w + 1e-12 && c2 + c2 <= h + 1e-12 {
-        return [
-            Vec2::new(x0 + c1, y0),
-            Vec2::new(x1 - c1, y0),
-            Vec2::new(x1, y0 + c2),
-            Vec2::new(x1, y1 - c2),
-            Vec2::new(x1 - c1, y1),
-            Vec2::new(x0 + c1, y1),
-            Vec2::new(x0, y1 - c2),
-            Vec2::new(x0, y0 + c2),
-        ]
-        .into_iter()
-        .map(PolyVertex::new)
-        .collect();
-    }
-    rect_vertices(Vec2::new(x0, y0), Vec2::new(x1, y1))
-}
-
 // ---------- the user's support files ----------
 
 /// Largest support file (linetype, hatch pattern or alias file) read.

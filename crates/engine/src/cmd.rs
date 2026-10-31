@@ -31,6 +31,7 @@ mod overkill;
 mod pline_opts;
 pub mod plotters;
 mod props;
+pub use draw2::RectangModes;
 pub use draw2::breakline::BreaklineOptions;
 pub use props::MatchProps;
 pub(crate) use props::UNIT_RANGES;
