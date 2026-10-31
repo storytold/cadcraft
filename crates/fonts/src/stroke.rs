@@ -1,4 +1,4 @@
-//! "CADCraft Stroke": an original single-stroke drafting font, designed for CADCraft on a
+//! "`CADCraft` Stroke": an original single-stroke drafting font, designed for `CADCraft` on a
 //! small grid (public domain / CC0 as part of this codebase).
 //!
 //! Each glyph is `(width, strokes)`. A stroke is a run of points; each point is two characters:
@@ -8,8 +8,10 @@
 pub(crate) const CAP: f64 = 6.0;
 pub(crate) const GAP: f64 = 1.6;
 
+// List bullet: a small crossed diamond at mid x-height.
+#[expect(clippy::too_many_lines, reason = "The stroke font is one static glyph table; splitting it would obscure the character-to-outline mapping.")]
 pub(crate) fn glyph(c: char) -> Option<(f64, &'static str)> {
-    let g: (f64, &str) = match c {
+    Some(match c {
         ' ' => (2.4, ""),
         'A' => (4.0, "0c2i4c 1f3f"),
         'B' => (4.0, "0c0i3i4h4g3f0f 3f4e4d3c0c"),
@@ -25,7 +27,6 @@ pub(crate) fn glyph(c: char) -> Option<(f64, &'static str)> {
         'L' => (4.0, "0i0c4c"),
         'M' => (4.0, "0c0i2f4i4c"),
         'N' => (4.0, "0c0i4c4i"),
-        'O' => (4.0, "1c0d0h1i3i4h4d3c1c"),
         'P' => (4.0, "0c0i3i4h4g3f0f"),
         'Q' => (4.0, "1c0d0h1i3i4h4d3c1c 2e4b"),
         'R' => (4.0, "0c0i3i4h4g3f0f 2f4c"),
@@ -37,7 +38,7 @@ pub(crate) fn glyph(c: char) -> Option<(f64, &'static str)> {
         'X' => (4.0, "0i4c 0c4i"),
         'Y' => (4.0, "0i2f4i 2f2c"),
         'Z' => (4.0, "0i4i0c4c"),
-        '0' => (4.0, "1c0d0h1i3i4h4d3c1c"),
+        'O' | '0' => (4.0, "1c0d0h1i3i4h4d3c1c"),
         '1' => (4.0, "1h2i2c 1c3c"),
         '2' => (4.0, "0h1i3i4h4g0c4c"),
         '3' => (4.0, "0h1i3i4h4g3f2f 3f4e4d3c1c0d"),
@@ -108,11 +109,9 @@ pub(crate) fn glyph(c: char) -> Option<(f64, &'static str)> {
         '°' => (2.0, "1i0h1g2h1i"),
         '±' => (4.0, "2e2i 0g4g 0d4d"),
         'Ø' | 'ø' | '⌀' => (4.0, "1c0d0h1i3i4h4d3c1c 0c4i"),
-        // List bullet: a small crossed diamond at mid x-height.
         '•' => (2.0, "1d0e1f2e1d 0e2e 1d1f"),
         _ => return None,
-    };
-    Some(g)
+    })
 }
 
 /// Decode one stroke string into point lists in font units.
