@@ -52,7 +52,7 @@ impl CadApp {
 /// Help ▸ Check for Updates…: check now, and show the result when there is nothing newer.
 pub fn check_now(app: &mut CadApp) {
     if app.updates_rt.disabled {
-        app.session.echo(DISABLED_NOTICE);
+        app.session.echo(disabled_notice());
         app.updates_rt.disabled_notice_open = true;
         return;
     }
@@ -98,14 +98,14 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
         if app.updates_rt.disabled_notice_open {
             let mut open = true;
             let mut close = false;
-            egui::Window::new("Check for Updates")
+            egui::Window::new(crate::tl!("Check for Updates"))
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .show(ctx, |ui| {
-                    ui.label(DISABLED_NOTICE);
-                    let ok = ui.button("OK");
+                    ui.label(disabled_notice());
+                    let ok = ui.button(crate::tl!("OK"));
                     crate::control::record_widget(ui, &ok, "OK", "button", None);
                     close = ok.clicked();
                 });
@@ -138,8 +138,10 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     }
 }
 
-/// What Help ▸ Check for Updates… says in a build with updates turned off.
-const DISABLED_NOTICE: &str = "Release updates are disabled for this development build.";
+/// What Help ▸ Check for Updates… says in a build with updates turned off, in the UI language.
+fn disabled_notice() -> &'static str {
+    crate::tl!("Release updates are disabled for this development build.")
+}
 
 /// Opt-in only: normal release packages retain their existing update behavior.
 fn updates_disabled(value: Option<&str>) -> bool {

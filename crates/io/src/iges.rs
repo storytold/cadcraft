@@ -671,7 +671,15 @@ fn load_edge_list(
             verts,
             vertex_lists,
         )?;
+        // A closed edge (one vertex at both ends) or a zero-length one is not a line; the
+        // writer refuses it too, and the kernel's edge constructor requires distinct vertices.
+        if a == b {
+            return Err(error("edge starts and ends at the same vertex"));
+        }
         let (p0, p1) = line_entity(entities, cptr)?;
+        if (p1 - p0).magnitude2() <= 1e-20 {
+            return Err(error("zero-length edge is unsupported"));
+        }
         let (Some(start), Some(end)) = (verts.get(a), verts.get(b)) else { return Err(error("vertex-list index out of range")) };
         if (p0 - *start).magnitude() > 1e-6 || (p1 - *end).magnitude() > 1e-6 {
             return Err(error("line carrier does not match its topological endpoints"));
@@ -925,5 +933,30 @@ mod tests {
             assert!(global_params(g).is_err() || global_params(g).is_ok_and(|v| v.get(13).map(String::as_str) != Some("2")));
         }
         assert!(param(&[], 1).is_err());
+    }
+
+    /// An edge whose ends are the same vertex (with a matching zero-length line) is refused as
+    /// a format error; the kernel's edge constructor would panic on it, and on wasm nothing
+    /// catches that (#2544 re-review).
+    #[test]
+    fn edges_with_one_vertex_at_both_ends_are_refused() {
+        let body = Body::box_solid(Vec3::ZERO, Vec3::new(4.0, 3.0, 2.0)).unwrap();
+        let mut entities = Vec::new();
+        push_body(&mut entities, &body).unwrap();
+        let list = entities.iter().position(|e| e.kind == 504).unwrap();
+        let mut fields: Vec<String> = entities[list].params.split(',').map(str::to_string).collect();
+        // Edge 1: curve pointer, vertex list, start index, vertex list, end index.
+        fields[5] = fields[3].clone();
+        entities[list].params = fields.join(",");
+        let curve: usize = fields[1].parse().unwrap();
+        let start: usize = fields[3].parse().unwrap();
+        let vertices: Vec<&str> = entities.iter().find(|e| e.kind == 502).unwrap().params.split(',').collect();
+        let p = &vertices[1 + 3 * (start - 1)..4 + 3 * (start - 1)];
+        // Pointer 2k-1 names entity k.
+        entities[curve.div_ceil(2) - 1].params = format!("{0},{1},{2},{0},{1},{2}", p[0], p[1], p[2]);
+        let bytes = write_entities(&entities, &stamp(0)).unwrap();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        let result = std::panic::catch_unwind(|| read_inner(text)).expect("parser must not panic");
+        assert!(result.unwrap_err().to_string().contains("same vertex"));
     }
 }

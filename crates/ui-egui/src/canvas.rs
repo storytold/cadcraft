@@ -903,8 +903,11 @@ fn orbit_input(app: &mut CadApp, ui: &egui::Ui, resp: &egui::Response) {
     {
         camera.orbiting = false;
     }
+    // A layout tab draws in 2D: a drag there must not turn the model tab's camera.
+    let shown = showing_3d(app);
     if let Some(camera) = app.session.view3d.as_mut()
         && camera.orbiting
+        && shown
         && resp.dragged_by(egui::PointerButton::Primary)
     {
         let delta = ui.input(|i| i.pointer.delta());
@@ -1009,7 +1012,8 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         return;
     };
 
-    let orbiting = app.session.view3d.is_some_and(|v| v.orbiting);
+    // A 3DORBIT left on blocks clicks only where the 3D view is shown, not on a layout tab.
+    let orbiting = showing_3d(app) && app.session.view3d.is_some_and(|v| v.orbiting);
     let pressed_primary = !orbiting
         && collect_prompt_clicks(app, ui, PromptClickContext { rect, xf, inside, middle_down, primary_clicked: pressed_primary, response: &resp });
 

@@ -362,3 +362,46 @@ fn layout_tabs_hover_in_2d_while_the_model_tab_keeps_its_camera() {
     painted_text(&mut app, &ctx, on_line + vec2(0.5, 0.0));
     assert_eq!(app.canvas.hover, Some(h), "the layout object under the cursor is found in 2D");
 }
+
+/// A 3DORBIT left on belongs to the model tab's 3D view: on a layout tab a click still goes to
+/// the prompt and a drag doesn't turn the camera (#2544 re-review).
+#[test]
+fn orbit_mode_does_not_capture_layout_clicks_or_drags() {
+    use serde_json::json;
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    app.session.execute("box", &json!({"p1": [0, 0, 0], "p2": [10, 10, 10]})).unwrap();
+    app.session.execute("view3d", &json!({"preset": "seiso", "orbit": true})).unwrap();
+    assert!(app.session.view3d.is_some_and(|v| v.orbiting));
+    app.session.execute("layout.set", &json!({"name": "Layout1"})).unwrap();
+    let ctx = egui::Context::default();
+    let frame = |app: &mut CadApp, events: Vec<egui::Event>| {
+        let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))), events, ..Default::default() };
+        let mut out = ctx.run_ui(raw, |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        });
+        out.textures_delta.clear();
+    };
+    frame(&mut app, vec![egui::Event::PointerMoved(pos2(5.0, 5.0))]);
+    let xf = app.canvas.xf.unwrap();
+    let camera = app.session.view3d.unwrap();
+    // A drag across the sheet leaves the camera alone.
+    let (a, b) = (xf.to_screen(Vec2::new(3.0, 3.0)), xf.to_screen(Vec2::new(6.0, 5.0)));
+    let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+    frame(&mut app, vec![egui::Event::PointerMoved(a), button(a, true)]);
+    for k in 1..=5 {
+        frame(&mut app, vec![egui::Event::PointerMoved(a + (b - a) * (k as f32 / 5.0))]);
+    }
+    frame(&mut app, vec![button(b, false)]);
+    let after = app.session.view3d.unwrap();
+    assert_eq!((after.azimuth, after.elevation), (camera.azimuth, camera.elevation), "a layout drag doesn't orbit");
+    // A click at a point prompt is taken as the point.
+    app.session.set_selection(Vec::new());
+    app.session.start("line").unwrap();
+    let before = app.session.prompt_text();
+    let at = xf.to_screen(Vec2::new(4.0, 4.0));
+    frame(&mut app, vec![egui::Event::PointerMoved(at)]);
+    frame(&mut app, vec![button(at, true)]);
+    frame(&mut app, vec![button(at, false)]);
+    assert_ne!(app.session.prompt_text(), before, "the click reached the LINE prompt");
+}
