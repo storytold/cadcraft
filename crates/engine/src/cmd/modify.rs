@@ -13,7 +13,6 @@ use super::machines::{SelOutcome, SelectPhase, number};
 use super::trimextend::{self, TrimM};
 use super::{CommandSpec, bad, bool_or, f64_or, f64_req, point_param, point_req, points_param, str_param, targets};
 
-use crate::select::{SelectKind, SelectMode};
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 mod break_join;

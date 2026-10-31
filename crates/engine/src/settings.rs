@@ -71,9 +71,10 @@ pub struct Settings {
     /// FILEDIA: kept for routines that switch file dialogs off around a script; no command reads it yet.
     pub filedia: bool,
     pub pickadd: bool,
-    /// PICKDRAG: false = two-click windows (0), true = clicks or dragging (2).
-    /// Drag-only mode (1) is not supported yet.
-    pub pickdrag: bool,
+    /// PICKDRAG: how a selection window's second corner is given: 0 by a second click, 1 where
+    /// the button that set the first corner comes up (drag), 2 either way (a drag held past the
+    /// press tolerance closes it on release, a click leaves it for the next click).
+    pub pickdrag: u8,
     /// PICKSTYLE: bit 1 picks whole selectable groups ([`cmd::groups`]), bit 2 associative hatches
     /// with their boundaries (stored, not used yet).
     pub pickstyle: u8,
@@ -165,7 +166,7 @@ impl Default for Settings {
             cmdecho: true,
             filedia: true,
             pickadd: true,
-            pickdrag: true,
+            pickdrag: 2,
             pickstyle: 1,
             gripsize: 5.0,
             cursorsize: 5.0,
