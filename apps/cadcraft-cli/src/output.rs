@@ -151,7 +151,10 @@ pub(crate) fn export_framed(s: &Session, out: &Path, window: Option<Bounds2>, io
 pub(crate) fn undrawn_message(d: &cadcraft_engine::doc::Drawing, path: &str) -> Option<String> {
     let mut types: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
     for e in d.model.iter() {
-        if let cadcraft_engine::doc::EntityKind::Unknown(u) = &e.kind {
+        // An OLE2FRAME's frame outline is drawn (the OLE content is not), so it isn't reported.
+        if let cadcraft_engine::doc::EntityKind::Unknown(u) = &e.kind
+            && !u.dxf_type.eq_ignore_ascii_case("OLE2FRAME")
+        {
             let n = types.entry(u.dxf_type.as_str()).or_insert(0);
             *n = n.saturating_add(1);
         }

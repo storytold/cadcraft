@@ -51,3 +51,17 @@ fn convert_to_an_image_warns_about_entities_it_cannot_draw() {
     assert!(!String::from_utf8_lossy(&out.stderr).contains("not drawn"), "{}", String::from_utf8_lossy(&out.stderr));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// An OLE2FRAME's frame outline is drawn, so an image export doesn't call it undrawn (#2422).
+#[test]
+fn an_ole_frame_is_not_reported_as_undrawn() {
+    let dir = std::env::temp_dir().join(format!("cc-cli-ole-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let input = dir.join("ole.dxf");
+    let ole = "0\nSECTION\n2\nENTITIES\n0\nOLE2FRAME\n8\n0\n100\nAcDbOle2Frame\n10\n0\n20\n0\n30\n0\n11\n5\n21\n-3\n31\n0\n0\nENDSEC\n0\nEOF\n";
+    std::fs::write(&input, ole).unwrap();
+    let out = cli(&["convert", input.to_str().unwrap(), dir.join("out.png").to_str().unwrap()]);
+    assert!(out.status.success());
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("not drawn"), "{}", String::from_utf8_lossy(&out.stderr));
+    let _ = std::fs::remove_dir_all(&dir);
+}
