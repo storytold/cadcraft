@@ -117,6 +117,7 @@ mod refedit;
 mod region;
 mod rename_cmdline;
 mod rotate_reference;
+mod rotation_grip_input;
 mod scale_offset_z;
 mod select_keywords;
 mod select_similar;
