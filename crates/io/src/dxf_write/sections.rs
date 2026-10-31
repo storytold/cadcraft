@@ -90,9 +90,10 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
         w.f(50, s.oblique.to_degrees());
         w.i(71, if s.backwards { 2 } else { 0 } | if s.upside_down { 4 } else { 0 });
         w.f(42, 0.2);
-        // The built-in font goes out as `txt`, which every reader has; CADCraft's own name
-        // travels in `CADCRAFT` xdata (`1000 FONT`, name) so the style reopens with it.
-        let file = if s.font == cadcraft_fonts_name() { "txt" } else { s.font.as_str() };
+        // The built-in font goes out as `txt`, which every reader has, and a Linux font as its
+        // Windows one with portable fonts; CADCraft's own name travels in `CADCRAFT` xdata
+        // (`1000 FONT`, name) so the style reopens with it.
+        let file = if s.font == cadcraft_fonts_name() { "txt" } else { cadcraft_fonts::windows::written_font(&s.font, d.portable_fonts) };
         w.s(3, file);
         w.s(4, &s.big_font);
         if s.annotative {
