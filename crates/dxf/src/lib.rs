@@ -91,6 +91,13 @@ impl Tag {
     pub fn str(&self) -> String {
         self.value.as_str()
     }
+    /// The text of a string or hex tag, borrowed; `None` for a number or a flag.
+    pub fn text(&self) -> Option<&str> {
+        match &self.value {
+            Value::Str(s) | Value::Hex(s) => Some(s),
+            _ => None,
+        }
+    }
     pub fn f64(&self) -> f64 {
         self.value.as_f64()
     }
@@ -598,27 +605,29 @@ fn code_page_bytes(c: char, d: codepage::Decoder, before_escape: bool, out: &mut
     true
 }
 
-/// A section: `0 SECTION / 2 NAME ... 0 ENDSEC`.
-#[derive(Clone, Debug, Default)]
-pub struct Section {
-    pub name: String,
-    pub tags: Vec<Tag>,
+/// A section: `0 SECTION / 2 NAME ... 0 ENDSEC`. Its tags are a view into the parsed stream,
+/// not a copy: a 58 MB DWG converts to 33 million tags, and copying them once per section and
+/// once per record used to cost more memory than the drawing they describe (#1076).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Section<'a> {
+    pub name: &'a str,
+    pub tags: &'a [Tag],
 }
 
 /// Split a tag stream into sections.
-pub fn sections(tags: &[Tag]) -> Vec<Section> {
+pub fn sections(tags: &[Tag]) -> Vec<Section<'_>> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < tags.len() {
-        let is_sec = tags.get(i).is_some_and(|t| t.code == 0 && t.str() == "SECTION");
+        let is_sec = tags.get(i).is_some_and(|t| t.code == 0 && t.text() == Some("SECTION"));
         if is_sec {
-            let name = tags.get(i + 1).filter(|t| t.code == 2).map(Tag::str).unwrap_or_default();
+            let name = tags.get(i + 1).filter(|t| t.code == 2).and_then(Tag::text).unwrap_or_default();
             let start = i + 2;
             let mut j = start;
-            while j < tags.len() && !(tags.get(j).is_some_and(|t| t.code == 0 && t.str() == "ENDSEC")) {
+            while j < tags.len() && !(tags.get(j).is_some_and(|t| t.code == 0 && t.text() == Some("ENDSEC"))) {
                 j += 1;
             }
-            out.push(Section { name, tags: tags.get(start..j).unwrap_or(&[]).to_vec() });
+            out.push(Section { name, tags: tags.get(start..j).unwrap_or(&[]) });
             i = j + 1;
         } else {
             i += 1;
@@ -627,15 +636,25 @@ pub fn sections(tags: &[Tag]) -> Vec<Section> {
     out
 }
 
+/// A record of a section: its type (the value of the code-0 tag that starts it) and the tags
+/// after it, up to the next code-0 tag. A view into the stream, like [`Section`].
+pub type Record<'a> = (&'a str, &'a [Tag]);
+
 /// Split a run of tags into records starting at each code-0 tag: (type, tags after the 0).
-pub fn records(tags: &[Tag]) -> Vec<(String, Vec<Tag>)> {
-    let mut out: Vec<(String, Vec<Tag>)> = Vec::new();
-    for t in tags {
+/// Tags before the first code-0 tag belong to no record.
+pub fn records(tags: &[Tag]) -> Vec<Record<'_>> {
+    let mut out: Vec<Record<'_>> = Vec::new();
+    let mut start: Option<(usize, &str)> = None;
+    for (i, t) in tags.iter().enumerate() {
         if t.code == 0 {
-            out.push((t.str(), Vec::new()));
-        } else if let Some(last) = out.last_mut() {
-            last.1.push(t.clone());
+            if let Some((s, name)) = start {
+                out.push((name, tags.get(s..i).unwrap_or(&[])));
+            }
+            start = Some((i + 1, t.text().unwrap_or_default()));
         }
+    }
+    if let Some((s, name)) = start {
+        out.push((name, tags.get(s..).unwrap_or(&[])));
     }
     out
 }
@@ -682,7 +701,7 @@ mod tests {
         let secs = sections(&back);
         assert_eq!(secs.len(), 1);
         assert_eq!(secs[0].name, "ENTITIES");
-        let recs = records(&secs[0].tags);
+        let recs = records(secs[0].tags);
         assert_eq!(recs[0].0, "LINE");
         assert_eq!(recs[0].1.len(), 4);
     }

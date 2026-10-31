@@ -57,14 +57,14 @@ fn preserved(original: &Drawing, back: &Drawing, context: &str) {
 fn dxf_owner(bytes: &[u8]) {
     let tags = cadcraft_dxf::parse(bytes).unwrap();
     let sections = sections(&tags);
-    let tables = records(&sections.iter().find(|s| s.name == "TABLES").unwrap().tags);
+    let tables = records(sections.iter().find(|s| s.name == "TABLES").unwrap().tags);
     let (_, model) = tables
         .iter()
-        .find(|(kind, tags)| kind == "BLOCK_RECORD" && tags.iter().any(|t| t.code == 2 && t.str().eq_ignore_ascii_case("*Model_Space")))
+        .find(|(kind, tags)| *kind == "BLOCK_RECORD" && tags.iter().any(|t| t.code == 2 && t.str().eq_ignore_ascii_case("*Model_Space")))
         .unwrap();
     let model_handle = model.iter().find(|t| t.code == 5).unwrap().str();
-    let entities = records(&sections.iter().find(|s| s.name == "ENTITIES").unwrap().tags);
-    let (_, widget) = entities.iter().find(|(kind, _)| kind == "SYNTHETIC_WIDGET").unwrap();
+    let entities = records(sections.iter().find(|s| s.name == "ENTITIES").unwrap().tags);
+    let (_, widget) = entities.iter().find(|(kind, _)| *kind == "SYNTHETIC_WIDGET").unwrap();
     assert_eq!(widget.iter().find(|t| t.code == 330).unwrap().str(), model_handle, "unknown entity belongs to the model-space block");
 }
 

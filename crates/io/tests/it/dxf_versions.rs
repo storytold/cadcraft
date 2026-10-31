@@ -113,8 +113,8 @@ fn class_records_follow_the_version() {
             let classes: Vec<Vec<i32>> = cadcraft_dxf::sections(&tags)
                 .into_iter()
                 .filter(|s| s.name == "CLASSES")
-                .flat_map(|s| cadcraft_dxf::records(&s.tags))
-                .filter(|(kind, _)| kind == "CLASS")
+                .flat_map(|s| cadcraft_dxf::records(s.tags))
+                .filter(|(kind, _)| *kind == "CLASS")
                 .map(|(_, t)| t.iter().map(|x| x.code).collect())
                 .collect();
             assert!(!classes.is_empty(), "{v} binary={binary}");

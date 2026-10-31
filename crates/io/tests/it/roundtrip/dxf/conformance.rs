@@ -90,7 +90,7 @@ fn writes_standard_entity_groups_not_just_self_readable_data() {
             let bytes = write_with(&model(), "memory.dxf", &SaveOptions { version: Some(version), binary }).unwrap();
             let tags = cadcraft_dxf::parse(&bytes).unwrap();
             let sections = sections(&tags);
-            let entities = records(&sections.iter().find(|s| s.name == "ENTITIES").unwrap().tags);
+            let entities = records(sections.iter().find(|s| s.name == "ENTITIES").unwrap().tags);
             assert_eq!(entities.len(), expected.len());
             for ((kind, groups), (expected_kind, expected_groups)) in entities.iter().zip(&expected) {
                 let context = format!("{version} binary={binary} {expected_kind}");
@@ -99,7 +99,7 @@ fn writes_standard_entity_groups_not_just_self_readable_data() {
                     let values: Vec<_> = groups.iter().filter(|t| t.code == tag.code).collect();
                     assert_eq!(values, [tag], "{context}: group {}", tag.code);
                 }
-                if kind == "TEXT" {
+                if *kind == "TEXT" {
                     for (code, degrees) in [(50, 30.0), (51, -15.0)] {
                         let values: Vec<_> = groups.iter().filter(|t| t.code == code).collect();
                         assert_eq!(values.len(), 1, "{context}: group {code}");
@@ -163,10 +163,10 @@ fn writes_large_handles_as_exact_hex_groups() {
             let bytes = write_with(&drawing, "memory.dxf", &SaveOptions { version: Some(version), binary }).unwrap();
             let tags = cadcraft_dxf::parse(&bytes).unwrap();
             let sections = sections(&tags);
-            let entities = records(&sections.iter().find(|s| s.name == "ENTITIES").unwrap().tags);
+            let entities = records(sections.iter().find(|s| s.name == "ENTITIES").unwrap().tags);
             assert_eq!(entities.len(), LARGE_HANDLES.len());
             for ((kind, groups), (_, hex)) in entities.iter().zip(LARGE_HANDLES) {
-                assert_eq!(kind, "LINE");
+                assert_eq!(*kind, "LINE");
                 assert_eq!(groups.iter().filter(|t| t.code == 5).collect::<Vec<_>>(), [&Tag::s(5, hex)], "{version} binary={binary} handle={hex}");
             }
         }

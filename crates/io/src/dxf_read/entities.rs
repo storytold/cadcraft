@@ -375,7 +375,7 @@ pub(super) fn acad_table(tags: &[Tag], table_cells_left: &mut usize) -> Table {
 pub(super) fn plot_style_names(secs: &[cadcraft_dxf::Section]) -> HashMap<String, String> {
     let mut out = HashMap::new();
     let Some(objects) = secs.iter().find(|s| s.name == "OBJECTS") else { return out };
-    let recs = records(&objects.tags);
+    let recs = records(objects.tags);
     let entries = |tags: &[Tag]| {
         let mut v: Vec<(String, String)> = Vec::new();
         let mut name: Option<String> = None;
@@ -392,7 +392,7 @@ pub(super) fn plot_style_names(secs: &[cadcraft_dxf::Section]) -> HashMap<String
         }
         v
     };
-    let Some((_, root)) = recs.iter().find(|(k, _)| k == "DICTIONARY") else { return out };
+    let Some((_, root)) = recs.iter().find(|(k, _)| *k == "DICTIONARY") else { return out };
     let Some((_, dict)) = entries(root).into_iter().find(|(n, _)| n.eq_ignore_ascii_case(crate::dxf_ext::PLOT_STYLE_NAMES_KEY)) else {
         return out;
     };
@@ -483,13 +483,13 @@ pub(super) fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityK
 /// can't be placed are counted in `skipped`.
 /// The entity of a POLYLINE, with its mesh faces (advancing `i` past its VERTEX records). `None`
 /// for a mesh without faces.
-pub(super) fn polyline_entity(recs: &[(String, Vec<Tag>)], i: &mut usize, t: &T) -> Option<(Common, EntityKind, Vec<EntityKind>)> {
+pub(super) fn polyline_entity(recs: &[cadcraft_dxf::Record<'_>], i: &mut usize, t: &T) -> Option<(Common, EntityKind, Vec<EntityKind>)> {
     let flags = t.i(70).unwrap_or(0);
     let mut pts: Vec<(Vec3, f64, f64, f64)> = Vec::new();
     // Polyface face records (VERTEX 70 bit 128 without 64): vertex indices 71–74.
     let mut faces: Vec<[i64; 4]> = Vec::new();
     while let Some((k2, t2)) = recs.get(*i) {
-        if k2 == "VERTEX" {
+        if *k2 == "VERTEX" {
             let tt = T(t2);
             let vflags = tt.i(70).unwrap_or(0);
             if vflags & 128 != 0 && vflags & 64 == 0 {
@@ -499,7 +499,7 @@ pub(super) fn polyline_entity(recs: &[(String, Vec<Tag>)], i: &mut usize, t: &T)
             }
             *i += 1;
         } else {
-            if k2 == "SEQEND" {
+            if *k2 == "SEQEND" {
                 *i += 1;
             }
             break;
@@ -532,10 +532,10 @@ pub(super) fn polyline_entity(recs: &[(String, Vec<Tag>)], i: &mut usize, t: &T)
 }
 
 /// The ATTRIB records after an INSERT, advancing `i` past them and their SEQEND.
-pub(super) fn insert_attribs(recs: &[(String, Vec<Tag>)], i: &mut usize, ins_layer: &str) -> Vec<Attrib> {
+pub(super) fn insert_attribs(recs: &[cadcraft_dxf::Record<'_>], i: &mut usize, ins_layer: &str) -> Vec<Attrib> {
     let mut attribs = Vec::new();
     while let Some((k2, t2)) = recs.get(*i) {
-        if k2 == "ATTRIB" {
+        if *k2 == "ATTRIB" {
             let tt = T(t2);
             // A multiline attribute has its text as embedded MTEXT after its own groups.
             let (own, embedded) = split_embedded(t2);
@@ -557,7 +557,7 @@ pub(super) fn insert_attribs(recs: &[(String, Vec<Tag>)], i: &mut usize, ins_lay
             });
             *i += 1;
         } else {
-            if k2 == "SEQEND" {
+            if *k2 == "SEQEND" {
                 *i += 1;
             }
             break;
