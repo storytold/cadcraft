@@ -313,6 +313,17 @@ pub fn menu(source: &str) -> &str {
     CURRENT.with(|l| tr_menu(l.get(), source))
 }
 
+/// Justification names can differ from the same words elsewhere (German "Zentriert" for the
+/// Center justification, "Zentrum" for the Center object snap). Catalogs without a `justify`
+/// entry retain their ordinary translation.
+pub fn tr_justify<'a>(language: &str, source: &'a str) -> &'a str {
+    catalog(language).and_then(|c| c.get(&("justify", source))).copied().unwrap_or_else(|| tr(language, source))
+}
+
+pub fn justify(source: &str) -> &str {
+    CURRENT.with(|l| tr_justify(l.get(), source))
+}
+
 /// Named placeholders allow translations to reorder values. Inserted values are never looked up
 /// or substituted again, so a user's name containing `{n}` is preserved verbatim.
 pub fn format(source: &str, values: &[(&str, String)]) -> String {

@@ -8,7 +8,7 @@ mod rename;
 pub use matchprop::MatchProps;
 
 use cadcraft_color::Color;
-use cadcraft_doc::{EntityKind, Lineweight, Transparency};
+use cadcraft_doc::{Drawing, EntityKind, HAlign, Lineweight, Transparency, VAlign};
 use cadcraft_geom::Vec3;
 use serde_json::{Value, json};
 
@@ -222,12 +222,13 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         .map(|n| d.dim_style(n).map(|st| st.name.clone()).ok_or_else(|| bad("properties.set", format!("dimension style `{n}` not found"))))
         .transpose()?;
     let dim_over = dim_overrides(p)?;
+    let attdef = attdef_fields(p, d)?;
     let anno_scale = d.current_anno_scale();
     let common = CommonEntityProperties { anno_scale: &anno_scale, color, linetype: linetype.as_deref(), lineweight: lw, transparency, thickness };
     for h in &hs {
         d.modify_entity(*h, |e| {
             set_common_properties(e, p, &common);
-            apply_kind_properties(e, p, dim_style.as_ref(), &dim_over);
+            apply_kind_properties(e, p, dim_style.as_ref(), &dim_over, &attdef);
         })?;
     }
     Ok(json!({ "changed": hs.len() }))
@@ -238,6 +239,7 @@ fn apply_kind_properties(
     params: &Value,
     dim_style: Option<&String>,
     dim_overrides: &serde_json::Map<String, Value>,
+    attdef: &AttdefFields,
 ) {
     let num = |key: &str| params.get(key).and_then(Value::as_f64).filter(|value| value.is_finite());
     match &mut entity.kind {
@@ -338,7 +340,54 @@ fn apply_kind_properties(
         EntityKind::Insert(insert) => set_insert_properties(insert, params),
         EntityKind::Dimension(dimension) => set_dimension_properties(dimension, params, dim_style, dim_overrides),
         EntityKind::Hatch(hatch) => set_hatch_properties(hatch, params),
+        EntityKind::AttDef(a) => set_attdef_properties(a, params, attdef),
         _ => {}
+    }
+}
+
+fn set_attdef_properties(a: &mut cadcraft_doc::Attrib, params: &Value, fields: &AttdefFields) {
+    let num = |key: &str| params.get(key).and_then(Value::as_f64).filter(|value| value.is_finite());
+    if let Some(t) = &fields.tag {
+        a.tag.clone_from(t);
+    }
+    if let Some(v) = str_param(params, "prompt") {
+        a.prompt = v.to_string();
+    }
+    if let Some(v) = str_param(params, "text") {
+        a.text.value = v.to_string();
+    }
+    if let Some(x) = num("height").filter(|x| *x > 0.0) {
+        a.text.height = x;
+    }
+    if let Some(x) = num("rotation") {
+        a.text.rotation = x.to_radians();
+    }
+    if let Some(x) = num("widthFactor").filter(|x| *x > 0.0) {
+        a.text.width_factor = x;
+    }
+    if let Some(st) = &fields.style {
+        a.text.style.clone_from(st);
+    }
+    if let Some((h, v)) = fields.justify {
+        rejustify(&mut a.text, h, v, &a.tag, &fields.styles);
+    }
+    if let Some(to) = params.get("position").and_then(point_value) {
+        let d = to - a.text.justify_point();
+        for q in std::iter::once(&mut a.text.insert).chain(a.text.align_pt.as_mut()) {
+            q.x += d.x;
+            q.y += d.y;
+        }
+    }
+    for (key, flag) in [
+        ("invisible", &mut a.invisible),
+        ("constant", &mut a.constant),
+        ("verify", &mut a.modes.verify),
+        ("preset", &mut a.modes.preset),
+        ("lockPosition", &mut a.modes.lock_position),
+    ] {
+        if let Some(b) = params.get(key).and_then(Value::as_bool) {
+            *flag = b;
+        }
     }
 }
 
@@ -1226,6 +1275,73 @@ fn run_rename(s: &mut Session, p: &Value) -> Result<Value> {
         _ => return Err(bad("rename", "unsupported table")),
     }
     ok()
+}
+
+/// Give `t` justification (`h`, `v`): the point the text is placed by stays, the text re-justifies
+/// about it. Aligned and fit text, which take their angle from their two points, keep it when they
+/// become another justification; text that becomes aligned or fit gets a baseline as long as
+/// `shown` (what is drawn: the value, or a definition's tag) in its style's font, along its
+/// rotation, so it keeps its size and angle.
+fn rejustify(t: &mut cadcraft_doc::Text, h: HAlign, v: VAlign, shown: &str, styles: &[cadcraft_doc::TextStyle]) {
+    use super::draw::spans_baseline;
+    let was = t.halign;
+    if spans_baseline(was)
+        && let Some(p) = t.align_pt
+        && t.insert.xy().dist(p.xy()) > 1e-9
+    {
+        t.rotation = t.insert.xy().angle_to(p.xy());
+    }
+    let at = t.justify_point();
+    let at = Vec3 { x: at.x, y: at.y, z: t.insert.z };
+    // Align ↔ Fit: the baseline stays.
+    let keeps_baseline = spans_baseline(was) && spans_baseline(h) && t.align_pt.is_some_and(|p| at.xy().dist(p.xy()) > 1e-9);
+    t.halign = h;
+    t.valign = v;
+    t.insert = at;
+    t.align_pt = if h == HAlign::Left && v == VAlign::Baseline {
+        None
+    } else if keeps_baseline {
+        t.align_pt
+    } else if spans_baseline(h) {
+        let style = styles.iter().find(|st| st.name.eq_ignore_ascii_case(&t.style));
+        let end = super::draw::baseline_end(style, shown, t.height, t.width_factor, at.xy(), t.rotation);
+        Some(Vec3 { x: end.x, y: end.y, z: at.z })
+    } else {
+        Some(at)
+    };
+}
+
+/// `properties.set`'s attribute definition fields that can be wrong, checked before anything
+/// changes: `tag` (a word), `justify` (a TEXT justification code) and `style` (an existing text
+/// style); and the drawing's text styles, in whose fonts aligned and fit text get a baseline as
+/// long as the text.
+struct AttdefFields {
+    tag: Option<String>,
+    justify: Option<(HAlign, VAlign)>,
+    style: Option<String>,
+    styles: Vec<cadcraft_doc::TextStyle>,
+}
+
+fn attdef_fields(p: &Value, d: &Drawing) -> Result<AttdefFields> {
+    let tag = str_param(p, "tag")
+        .map(|t| {
+            let t = t.trim();
+            if t.is_empty() || t.contains(' ') {
+                Err(bad("properties.set", "an attribute tag must not be empty or contain spaces"))
+            } else {
+                Ok(t.to_ascii_uppercase())
+            }
+        })
+        .transpose()?;
+    let justify = str_param(p, "justify")
+        .map(|j| {
+            super::draw::justify(j).ok_or_else(|| bad("properties.set", "`justify` must be L, C, R, A, M, F, TL, TC, TR, ML, MC, MR, BL, BC or BR"))
+        })
+        .transpose()?;
+    let style = str_param(p, "style")
+        .map(|n| d.text_style(n).map(|st| st.name.clone()).ok_or_else(|| bad("properties.set", format!("text style `{n}` not found"))))
+        .transpose()?;
+    Ok(AttdefFields { tag, justify, style, styles: d.text_styles.clone() })
 }
 
 #[cfg(test)]

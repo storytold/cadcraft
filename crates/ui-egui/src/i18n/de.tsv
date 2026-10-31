@@ -1044,3 +1044,36 @@
 	Check for Updates…	Nach Updates suchen…
 	CADCraft is up to date.	CADCraft ist auf dem neuesten Stand.
 	Could not check for updates.	Die Suche nach Updates ist fehlgeschlagen.
+	Mode	Modus
+	Invisible	Unsichtbar
+	Constant	Konstant
+	Verify	Prüfen
+	Preset	Voreinstellung
+	Lock position	Position sperren
+	Tag	Bezeichnung
+	Prompt	Eingabeaufforderung
+	Insertion Point	Einfügepunkt
+	Specify on-screen	Am Bildschirm angeben
+	Text Settings	Texteinstellungen
+	Justification	Ausrichtung
+	Align below previous attribute definition	Unter vorheriger Attributdefinition ausrichten
+	The tag must not be empty or contain spaces	Die Bezeichnung darf nicht leer sein oder Leerzeichen enthalten
+	Not a positive height: {text}	Keine positive Höhe: {text}
+	Not an angle: {text}	Kein Winkel: {text}
+	Not a point: {text}	Kein Punkt: {text}
+	ATTDEF could not start	ATTDEF konnte nicht starten
+	Middle	Mitte
+	Fit	Eingepasst
+	Top left	Oben links
+	Top center	Oben zentriert
+	Top right	Oben rechts
+	Middle left	Mitte links
+	Middle center	Mitte zentriert
+	Middle right	Mitte rechts
+	Bottom left	Unten links
+	Bottom center	Unten zentriert
+	Bottom right	Unten rechts
+justify	Center	Zentriert
+justify	Align	Ausgerichtet
+	Specify first endpoint of text baseline	Geben Sie den ersten Endpunkt der Text-Basislinie an
+	Specify second endpoint of text baseline	Geben Sie den zweiten Endpunkt der Text-Basislinie an

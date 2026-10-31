@@ -25,6 +25,26 @@ pub(crate) fn justify(j: &str) -> Option<(HAlign, VAlign)> {
     })
 }
 
+/// Aligned and fit text span the baseline between their two points (and take its angle).
+pub(crate) fn spans_baseline(h: HAlign) -> bool {
+    matches!(h, HAlign::Aligned | HAlign::Fit)
+}
+
+/// The width of `s` in text style `style`'s font (the stroke font without a style).
+pub(crate) fn styled_width(style: Option<&cadcraft_doc::TextStyle>, s: &str, height: f64, width_factor: f64) -> f64 {
+    let font = cadcraft_fonts::TextFont::resolve(style.map_or("", |st| st.font.as_str()));
+    cadcraft_fonts::text_width(&font, s, height, width_factor)
+}
+
+/// The second baseline point that keeps aligned or fit text `s`, started at `at` along
+/// `rotation`, at its own size: its width away. Never `at` itself, which would lose the text's
+/// direction (an empty text gets one height).
+pub(crate) fn baseline_end(style: Option<&cadcraft_doc::TextStyle>, s: &str, height: f64, width_factor: f64, at: Vec2, rotation: f64) -> Vec2 {
+    let w = styled_width(style, s, height, width_factor);
+    let w = if w.is_finite() && w > 1e-9 { w } else { height.max(1e-6) };
+    at + Vec2::from_angle(rotation) * w
+}
+
 pub(crate) fn make_text(s: &Session, at: Vec2, value: &str, height: f64, rotation: f64, j: (HAlign, VAlign)) -> EntityKind {
     let style = s.doc().map(|d| d.header.str("TEXTSTYLE", "Standard")).unwrap_or_else(|_| "Standard".into());
     let (h, v) = j;
