@@ -70,8 +70,12 @@ pub fn specs() -> Vec<CommandSpec> {
             .enabled(has_doc),
         CommandSpec::new("purge", "Purge", purge::run)
             .alias(&["pu", "-purge"])
-            .params("{type?: all|blocks|dimstyles|groups|layers|linetypes|mleaderstyles|tablestyles|textstyles|zerolength|emptytext (default all: every named type), names?: \"A*,B\" (default *)} → purged")
+            .params("{type?: all|blocks|dimstyles|groups|layers|linetypes|mleaderstyles|mlinestyles|tablestyles|textstyles|zerolength|emptytext (default all: every named type), names?: \"A*,B\" (wildcards, default *) | [\"exact\", \"names\"] | {<kind>: [\"exact\", \"names\"]} (with type all: those names of those kinds only), unnamed?: bool (zero-length geometry and empty text too, in the same step)} → purged (typed: the Purge dialog; -PURGE asks at the command line)")
             .interactive(|_| Ok(Box::new(purge::PurgeM::default()))),
+        CommandSpec::new("purge.list", "List Purgeable Items", purge::run_list)
+            .params("{} → {named: {blocks, groups, dimstyles, mleaderstyles, mlinestyles, tablestyles, layers, linetypes, textstyles: [the names PURGE would remove now]}, zeroLength: count, emptyText: count}")
+            .enabled(has_doc)
+            .noundo(),
         CommandSpec::new("blocks.list", "List Blocks", run_list).enabled(has_doc).noundo(),
         battman::battman_spec(),
         attribs::attdisp_spec(),

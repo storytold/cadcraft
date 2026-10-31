@@ -4,7 +4,7 @@
 //! The JSON form takes `{type?, names?}` and purges without asking. Typed, it asks for the type,
 //! the names and whether to verify each one, as AutoCAD's -PURGE does.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use cadcraft_doc::{Drawing, EntityKind, Handle, STANDARD_MLINE_STYLE};
 use serde_json::{Map, Value, json};
@@ -260,9 +260,73 @@ pub(in crate::cmd) fn candidates(d: &Drawing, kind: Kind) -> Vec<String> {
     }
 }
 
-fn matching(d: &Drawing, kind: Kind, names: &str) -> Vec<String> {
-    let pats: Vec<&str> = names.split(',').map(str::trim).filter(|p| !p.is_empty()).take(1000).collect();
-    candidates(d, kind).into_iter().filter(|n| pats.iter().any(|p| wildcard(p, n))).collect()
+/// Most exact names one call takes.
+const MAX_EXACT_NAMES: usize = 100_000;
+
+/// The names of a kind to purge: wildcard patterns (`"A*,B"`, as typed), or exact names, which a
+/// name holding `*`, `?`, `#` or `,` needs, for every kind or per kind (the Purge dialog's
+/// checked items, in one call so they are one undo step whatever UNDO Control says).
+enum Names {
+    Patterns(Vec<String>),
+    /// Lower case.
+    Exact(HashSet<String>),
+    /// Lower case, by [`json_key`] of the kind; a kind not listed purges nothing.
+    ByKind(HashMap<&'static str, HashSet<String>>),
+}
+
+impl Names {
+    fn patterns(text: &str) -> Names {
+        Names::Patterns(text.split(',').map(str::trim).filter(|p| !p.is_empty()).take(1000).map(str::to_string).collect())
+    }
+    fn matches(&self, kind: Kind, name: &str) -> bool {
+        match self {
+            Names::Patterns(pats) => pats.iter().any(|p| wildcard(p, name)),
+            Names::Exact(names) => names.contains(&name.to_lowercase()),
+            Names::ByKind(kinds) => kinds.get(json_key(kind)).is_some_and(|names| names.contains(&name.to_lowercase())),
+        }
+    }
+
+    /// `names` of the JSON form: absent or null is every name, text is patterns, a list is exact
+    /// names, and an object lists exact names per kind.
+    fn from_json(v: Option<&Value>) -> Result<Names> {
+        let not_names = || bad("purge", "`names` must be text, a list of names or names by kind");
+        let exact = |v: &Value, room: &mut usize| -> Result<HashSet<String>> {
+            let a = v.as_array().ok_or_else(not_names)?;
+            *room = room.checked_sub(a.len()).ok_or_else(|| bad("purge", format!("at most {MAX_EXACT_NAMES} names")))?;
+            a.iter().map(|n| n.as_str().map(str::to_lowercase).ok_or_else(not_names)).collect()
+        };
+        let mut room = MAX_EXACT_NAMES;
+        Ok(match v {
+            None | Some(Value::Null) => Names::patterns("*"),
+            Some(Value::String(t)) => Names::patterns(t),
+            Some(a @ Value::Array(_)) => Names::Exact(exact(a, &mut room)?),
+            Some(Value::Object(m)) => {
+                let mut kinds = HashMap::new();
+                for (k, list) in m {
+                    let kind = kind_of(k).map(|(_, kind)| kind).filter(|kind| ALL.contains(kind));
+                    let kind = kind.ok_or_else(|| bad("purge", format!("`names`: `{k}` is not a kind of named object")))?;
+                    kinds.entry(json_key(kind)).or_insert_with(HashSet::new).extend(exact(list, &mut room)?);
+                }
+                Names::ByKind(kinds)
+            }
+            Some(_) => return Err(not_names()),
+        })
+    }
+}
+
+fn matching(d: &Drawing, kind: Kind, names: &Names) -> Vec<String> {
+    candidates(d, kind).into_iter().filter(|n| names.matches(kind, n)).collect()
+}
+
+/// PURGE.LIST: what PURGE would remove now, by kind, without removing anything.
+pub(in crate::cmd) fn run_list(s: &mut Session, _p: &Value) -> Result<Value> {
+    let d = s.doc()?;
+    let named: Map<String, Value> = ALL.iter().map(|k| (json_key(*k).to_string(), json!(candidates(d, *k)))).collect();
+    Ok(json!({
+        "named": named,
+        "zeroLength": degenerate(d, Kind::ZeroLength).len(),
+        "emptyText": degenerate(d, Kind::EmptyText).len(),
+    }))
 }
 
 /// Run a command body directly: the purge records a single undo step.
@@ -359,7 +423,7 @@ impl Report {
 }
 
 /// Purge everything matching `names` for one kind (zero-length and empty text ignore names).
-fn purge_kind(s: &mut Session, kind: Kind, names: &str, r: &mut Report) -> Result<()> {
+fn purge_kind(s: &mut Session, kind: Kind, names: &Names, r: &mut Report) -> Result<()> {
     match kind {
         Kind::All => {
             for k in ALL {
@@ -394,9 +458,19 @@ fn purge_kind(s: &mut Session, kind: Kind, names: &str, r: &mut Report) -> Resul
 pub(in crate::cmd) fn run(s: &mut Session, p: &Value) -> Result<Value> {
     let ty = str_param(p, "type").unwrap_or("all");
     let (_, kind) = kind_of(ty).ok_or_else(|| bad("purge", format!("unknown type `{ty}`")))?;
-    let names = str_param(p, "names").unwrap_or("*");
+    let names = Names::from_json(p.get("names"))?;
+    let unnamed = match p.get("unnamed") {
+        None | Some(Value::Null) => false,
+        Some(v) => v.as_bool().ok_or_else(|| bad("purge", "`unnamed` must be true or false"))?,
+    };
     let mut r = Report::default();
-    purge_kind(s, kind, names, &mut r)?;
+    purge_kind(s, kind, &names, &mut r)?;
+    // Zero-length geometry and empty text in the same step (the Purge dialog's option).
+    if unnamed && !matches!(kind, Kind::ZeroLength | Kind::EmptyText) {
+        for k in [Kind::ZeroLength, Kind::EmptyText] {
+            purge_kind(s, k, &names, &mut r)?;
+        }
+    }
     s.set_selection(Vec::new());
     Ok(r.json())
 }
@@ -442,7 +516,7 @@ impl PurgeM {
     /// Move to the next kind with candidates, echoing a summary for each finished one.
     fn next_confirm(&mut self, s: &mut Session, mut rest: VecDeque<Kind>, names: String) -> Result<Step> {
         while let Some(kind) = rest.pop_front() {
-            let queue: VecDeque<String> = matching(s.doc()?, kind, &names).into();
+            let queue: VecDeque<String> = matching(s.doc()?, kind, &Names::patterns(&names)).into();
             if queue.is_empty() {
                 self.report.summary(kind);
                 continue;
@@ -491,11 +565,11 @@ impl Interactive for PurgeM {
                 // Zero-length geometry, empty text and orphaned data take no names.
                 match kind {
                     Kind::ZeroLength | Kind::EmptyText => {
-                        purge_kind(s, kind, "*", &mut self.report)?;
+                        purge_kind(s, kind, &Names::patterns("*"), &mut self.report)?;
                         self.finish(s)
                     }
                     Kind::Absent if k == "Orphaned data" => {
-                        purge_kind(s, kind, "*", &mut self.report)?;
+                        purge_kind(s, kind, &Names::patterns("*"), &mut self.report)?;
                         self.finish(s)
                     }
                     _ => {
@@ -514,7 +588,7 @@ impl Interactive for PurgeM {
             }
             Stage::Verify(kind, names) => match &i {
                 Input::Keyword(k) if k == "No" => {
-                    purge_kind(s, kind, &names, &mut self.report)?;
+                    purge_kind(s, kind, &Names::patterns(&names), &mut self.report)?;
                     self.finish(s)
                 }
                 Input::Keyword(_) | Input::Enter => {

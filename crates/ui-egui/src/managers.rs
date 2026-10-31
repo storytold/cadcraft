@@ -1,6 +1,6 @@
 //! Style and settings dialogs opened from the menus: Linetype Manager, Point Style, Text Style,
-//! Table Style, Multileader Style, Page Setup Manager, Plot, Constraint Settings and Named
-//! Viewports.
+//! Table Style, Multileader Style, Page Setup Manager, Plot, Constraint Settings, Named
+//! Viewports and Purge.
 //!
 //! Typed or chosen from a menu (no parameters) these commands open their dialog; JSON calls run
 //! the command. The dialogs read the drawing and change it only through the same commands
@@ -19,6 +19,8 @@ use crate::theme::Tokens;
 mod battman;
 /// Named Viewports (View > Viewports > Named Viewports...).
 mod named_vports;
+/// Purge (PURGE typed).
+mod purge;
 
 /// Open the dialog for a typed or menu-invoked command. `None` if `id` has no dialog here or the
 /// call carries parameters.
@@ -36,6 +38,7 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
         "pagesetup" => "pagesetup",
         "constraintsettings" | "csettings" => "csettings",
         "vports.named" => "namedvports",
+        "purge" | "pu" => "purge",
         "plot" | "print" => {
             PLOT_GEN.fetch_add(1, Ordering::Relaxed);
             "plot"
@@ -58,6 +61,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, name: &str, open: &mut bool
         "pagesetup" => page_setup(app, ctx, open),
         "csettings" => constraint_settings(app, ctx, open),
         "namedvports" => named_vports::dialog(app, ctx, open),
+        "purge" => purge::dialog(app, ctx, open),
         "plot" => plot(app, ctx, open),
         _ => {
             *open = false;
