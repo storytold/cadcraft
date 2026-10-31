@@ -50,11 +50,78 @@ pub struct Limits {
     pub max_dwg_bytes: usize,
     /// Largest DXF rendition of a DWG (checked while it is written).
     pub max_dxf_bytes: usize,
+    /// The free memory `max_dxf_bytes` assumes, in bytes: what the rendition takes at
+    /// [`Self::MEMORY_PER_DXF_BYTE`]; named in the message when the limit is exceeded.
+    pub assumed_memory: u64,
 }
 
 impl Limits {
-    /// 512 MB of DWG, 1 GB of DXF (more than the DXF reader's group-code limit fills).
-    pub const DEFAULT: Limits = Limits { max_dwg_bytes: 512 << 20, max_dxf_bytes: 1 << 30 };
+    /// Bytes of memory opening a DWG takes per byte of its DXF rendition: the rendition, its
+    /// tag list, the entities staged while blocks are built and the finished drawing. Measured
+    /// on two architects' plans of 238 MB: 8.6 (a 1.65 GB rendition, 14.2 GB resident, #1076)
+    /// and 15.8 (a 1.61 GB rendition, 25.5 GB resident); 16 covers both.
+    pub const MEMORY_PER_DXF_BYTE: u64 = 16;
+
+    /// The free memory [`Self::DEFAULT`] assumes: 16 GB, for its 1 GB of DXF.
+    pub const DEFAULT_MEMORY: u64 = 16 << 30;
+
+    /// 512 MB of DWG, 1 GB of DXF (more than the DXF reader's group-code limit fills), assuming
+    /// 16 GB of free memory.
+    pub const DEFAULT: Limits = Limits { max_dwg_bytes: 512 << 20, max_dxf_bytes: 1 << 30, assumed_memory: Self::DEFAULT_MEMORY };
+
+    /// The limits for a machine with `free` bytes of memory to spare: the DXF rendition may take
+    /// what that holds at [`Self::MEMORY_PER_DXF_BYTE`], never less than [`Self::DEFAULT`]'s
+    /// 1 GB (the fixed limit so far, which a machine with less free memory already got). So a
+    /// damaged or hostile file can make the reader take what the machine has free and no more,
+    /// and a plain 238 MB architect's plan, whose rendition is 2.4 GB, opens on a workstation.
+    pub fn for_memory(free: u64) -> Limits {
+        let by_memory = usize::try_from(free / Self::MEMORY_PER_DXF_BYTE).unwrap_or(usize::MAX);
+        Limits { max_dxf_bytes: by_memory.max(Self::DEFAULT.max_dxf_bytes), assumed_memory: free.max(Self::DEFAULT_MEMORY), ..Self::DEFAULT }
+    }
+
+    /// The limits for this machine: [`Self::for_memory`] of its free memory ([`free_memory`]),
+    /// or [`Self::DEFAULT`] where that isn't known.
+    pub fn for_machine() -> Limits {
+        free_memory().map_or(Self::DEFAULT, Self::for_memory)
+    }
+}
+
+/// Free memory in bytes: the `CADCRAFT_MEMORY_GB` environment variable (gigabytes; for machines
+/// whose free memory CADCraft can't read, or to assume less than it has), else what the operating
+/// system reports where a file says it (Linux: `MemAvailable` in `/proc/meminfo`, the memory a
+/// program can take without swapping; CADCraft calls no platform API for it elsewhere), else
+/// nothing.
+pub fn free_memory() -> Option<u64> {
+    std::env::var("CADCRAFT_MEMORY_GB").ok().and_then(|v| memory_gb(&v)).or_else(os_free_memory)
+}
+
+/// `CADCRAFT_MEMORY_GB`'s value in bytes: a positive number of gigabytes, else nothing.
+fn memory_gb(value: &str) -> Option<u64> {
+    let gb: f64 = value.trim().parse().ok()?;
+    (gb.is_finite() && gb > 0.0 && gb < 1e9).then(|| (gb * f64::from(1u32 << 30)) as u64)
+}
+
+#[cfg(target_os = "linux")]
+fn os_free_memory() -> Option<u64> {
+    meminfo_available(&std::fs::read_to_string("/proc/meminfo").ok()?)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn os_free_memory() -> Option<u64> {
+    None
+}
+
+/// The `MemAvailable` line of a `/proc/meminfo` text ("MemAvailable:   104857600 kB"), in bytes.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn meminfo_available(text: &str) -> Option<u64> {
+    let kb = text.lines().find_map(|l| l.strip_prefix("MemAvailable:"))?.trim().trim_end_matches("kB").trim();
+    kb.parse::<u64>().ok()?.checked_mul(1024)
+}
+
+/// A byte count in gigabytes for messages ("10.0 GB", "0.5 GB").
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn gb(n: u64) -> String {
+    format!("{:.1} GB", n as f64 / f64::from(1u32 << 30))
 }
 
 /// A byte count in megabytes for messages ("9.9 MB", "1024 MB").
@@ -69,7 +136,7 @@ mod native {
     use std::io::{Cursor, Write};
     use std::panic::AssertUnwindSafe;
 
-    use super::{Limits, mb};
+    use super::{Limits, gb, mb};
 
     /// Read DWG bytes and return an ASCII DXF rendition, within [`Limits::DEFAULT`].
     pub fn dwg_to_dxf(bytes: &[u8]) -> Result<Vec<u8>, String> {
@@ -114,10 +181,13 @@ mod native {
             .map_err(|_| "the DWG→DXF conversion failed on this file".to_string())?;
         if out.exceeded {
             return Err(format!(
-                "DWG: converting this {} file produced more than {} of drawing data (the limit); \
+                "DWG: converting this {} file produced more than {} of drawing data (the limit); it assumes {} of free \
+                 memory at {} bytes per byte of drawing data (CADCRAFT_MEMORY_GB sets what to assume); \
                  the file is probably damaged, or uses objects the DWG reader misreads",
                 mb(bytes.len() as u64),
-                mb(limits.max_dxf_bytes as u64)
+                mb(limits.max_dxf_bytes as u64),
+                gb(limits.assumed_memory),
+                Limits::MEMORY_PER_DXF_BYTE
             ));
         }
         written.map_err(|e| format!("DWG→DXF: {e}"))?;
@@ -795,6 +865,29 @@ pub fn dxf_to_dwg_as(_dxf: &[u8], _version: &str) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
+    /// The DXF limit follows the free memory at 16 bytes per byte of rendition and never falls
+    /// below the fixed 1 GB; the message names the memory it assumes. `MemAvailable` is read
+    /// from a `/proc/meminfo` text; `CADCRAFT_MEMORY_GB` is a positive number of gigabytes.
+    #[test]
+    fn limits_follow_the_free_memory_and_never_fall_below_the_default() {
+        use super::{Limits, gb, meminfo_available, memory_gb};
+        assert_eq!(Limits::for_memory(Limits::DEFAULT_MEMORY), Limits::DEFAULT);
+        assert_eq!(Limits::for_memory(2 << 30), Limits::DEFAULT, "less free memory keeps today's limit");
+        let big = Limits::for_memory(125 << 30);
+        assert_eq!(big.max_dxf_bytes, (125usize << 30) / 16);
+        assert_eq!(big.assumed_memory, 125 << 30);
+        assert_eq!(big.max_dwg_bytes, Limits::DEFAULT.max_dwg_bytes);
+        assert_eq!(gb(big.assumed_memory), "125.0 GB");
+        assert_eq!(meminfo_available("MemTotal:       131072000 kB\nMemFree:          1 kB\nMemAvailable:   104857600 kB\n"), Some(100 << 30));
+        assert_eq!(meminfo_available("MemTotal:       131072000 kB\n"), None);
+        assert_eq!(meminfo_available("MemAvailable:   lots\n"), None);
+        assert_eq!(memory_gb("12"), Some(12 << 30));
+        assert_eq!(memory_gb(" 0.5 "), Some(1 << 29));
+        for bad in ["", "0", "-1", "x", "inf", "NaN"] {
+            assert_eq!(memory_gb(bad), None, "{bad:?}");
+        }
+    }
+
     use super::*;
 
     /// The DXF of an empty drawing, enough for the bridge to make a small DWG.
