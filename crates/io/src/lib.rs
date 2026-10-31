@@ -185,9 +185,25 @@ pub fn png(d: &Drawing, space: &Space, width: u32, height: u32) -> Result<Vec<u8
 /// screen.
 pub fn png_framed(d: &Drawing, space: &Space, width: u32, height: u32, window: Option<Bounds2>) -> Result<Vec<u8>> {
     let list = cadcraft_render::build(d, space, &cadcraft_render::Options { transparency: true, ..cadcraft_render::Options::default() });
-    let view = png_view(&list.bounds, width, height, window);
-    cadcraft_render::raster::render_png(&list, &view, &cadcraft_render::raster::RasterOptions::default())
-        .ok_or_else(|| IoError::Format("render failed".into()))
+    let view = png_view(&underlay_plot::plotted_bounds(&list), width, height, window);
+    let ro = cadcraft_render::raster::RasterOptions::default();
+    // PDF underlays' pages at the image's resolution, shown as on screen.
+    let images = underlay_plot::images(d, &list, None, view.scale, Some(ro.background));
+    let under: Vec<cadcraft_render::raster::Underlay> = images
+        .iter()
+        .map(|im| cadcraft_render::raster::Underlay {
+            at: im.at,
+            clip: &im.clip,
+            origin: im.origin,
+            u: im.u,
+            v: im.v,
+            width: im.width,
+            height: im.height,
+            rgb: &im.rgb,
+            alpha: &im.alpha,
+        })
+        .collect();
+    cadcraft_render::raster::render_png_over(&list, &view, &ro, &under).ok_or_else(|| IoError::Format("render failed".into()))
 }
 
 /// The raster view a PNG export uses.

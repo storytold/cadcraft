@@ -748,19 +748,8 @@ impl Interactive for AdjustM {
     }
 }
 
-/// Turn over the lightness of straight RGBA pixels, keeping their hues: white paper becomes
-/// black and black lines white, a red line stays red (an underlay's "adjust colors" on a dark
-/// background).
-pub fn turn_lightness(rgba: &mut [u8]) {
-    for [r, g, b, _] in rgba.as_chunks_mut::<4>().0 {
-        let (lo, hi) = ((*r).min(*g).min(*b), (*r).max(*g).max(*b));
-        // HSL lightness L = (max + min) / 2 becomes 1 - L: shift every channel by 255 - max - min.
-        let shift = 255 - i32::from(hi) - i32::from(lo);
-        for c in [r, g, b] {
-            *c = (i32::from(*c) + shift).clamp(0, 255) as u8;
-        }
-    }
-}
+/// Turn over the lightness of straight RGBA pixels, keeping their hues (see the document crate).
+pub use cadcraft_doc::turn_lightness;
 
 /// Read a PDF file named in a drawing or a command (capped at [`MAX_PDF_BYTES`]).
 pub fn read_pdf(path: &str) -> Result<Vec<u8>> {

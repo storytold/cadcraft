@@ -104,7 +104,7 @@ fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let px_per_mm = if lineweights { (k / sheet.unit_mm) as f32 } else { 0.0 };
     let ro = raster::RasterOptions { background: Rgb(255, 255, 255), hairline: 1.0, px_per_mm, antialias: true };
     // PDF underlays' pages at the image's resolution.
-    let images = crate::underlay_plot::images(d, &list, o.document.as_deref(), view.scale);
+    let images = crate::underlay_plot::images(d, &list, o.document.as_deref(), view.scale, None);
     let under: Vec<raster::Underlay> = images
         .iter()
         .map(|im| raster::Underlay {
@@ -145,7 +145,7 @@ fn svg(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let s = fit_scale(&window.unwrap_or_else(|| crate::underlay_plot::plotted_bounds(&list)), &sheet, &o);
     cadcraft_render::pen::apply(&mut list, s * sheet.unit_mm);
     // PDF underlays' pages at the plot resolution on paper.
-    let images = crate::underlay_plot::images(d, &list, o.document.as_deref(), s * sheet.unit_mm / 25.4 * crate::underlay_plot::DPI);
+    let images = crate::underlay_plot::images(d, &list, o.document.as_deref(), s * sheet.unit_mm / 25.4 * crate::underlay_plot::DPI, None);
     Ok(crate::svg::export_list_over(&list, window, &images).into_bytes())
 }
 

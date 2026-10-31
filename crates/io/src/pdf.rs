@@ -576,7 +576,7 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
     let links = links(&list, &map, &clip_pt, links_to);
     // Underlays at the plot resolution: drawing units → points → pixels.
     let px_per_unit = map.s * map.k / 72.0 * crate::underlay_plot::DPI;
-    let images = crate::underlay_plot::images(d, &list, o.document.as_deref(), px_per_unit)
+    let images = crate::underlay_plot::images(d, &list, o.document.as_deref(), px_per_unit, None)
         .into_iter()
         .map(|im| {
             let o = map.pt(im.origin);

@@ -40,8 +40,12 @@ pub(crate) struct PlotImage {
 /// The pages of the underlays plotted with `list` (built for plotting, so only visible ones on
 /// plotted layers, model space's seen through a layout's viewports included), drawn at
 /// `px_per_unit` pixels per list unit on paper; only the part each shows is drawn. Underlays
-/// whose file can't be read are left out.
-pub(crate) fn images(d: &Drawing, list: &DisplayList, document: Option<&str>, px_per_unit: f64) -> Vec<PlotImage> {
+/// whose file can't be read are left out. `on` is the background of an export drawn as on
+/// screen: a page is faded toward it, and on a dark one an underlay that adjusts its colors has
+/// its lightness turned over; `None` is paper (plots), faded toward white.
+pub(crate) fn images(d: &Drawing, list: &DisplayList, document: Option<&str>, px_per_unit: f64, on: Option<cadcraft_color::Rgb>) -> Vec<PlotImage> {
+    let to = on.unwrap_or(cadcraft_color::Rgb(255, 255, 255));
+    let dark = u32::from(to.0) * 299 + u32::from(to.1) * 587 + u32::from(to.2) * 114 < 128_000;
     let mut out = Vec::new();
     for lu in list.underlays.iter().take(MAX_UNDERLAYS) {
         let Some(u) = cadcraft_render::pdf_underlay(d, lu.handle) else { continue };
@@ -58,12 +62,13 @@ pub(crate) fn images(d: &Drawing, list: &DisplayList, document: Option<&str>, px
         let Ok(bytes) = crate::pdf_layers::with_layers(&bytes, &u.layer_visibility()) else { continue };
         let Ok(mut page) = PdfFile::open(&bytes).and_then(|f| f.render_region(u.page as usize, region, pw, ph)) else { continue };
         u.tone(&mut page.rgba);
+        if dark && u.adjust_colors {
+            cadcraft_doc::turn_lightness(&mut page.rgba);
+        }
         let fade = f64::from(u.fade.min(cadcraft_doc::UNDERLAY_MAX_FADE)) / 100.0;
         let px = page.rgba.as_chunks::<4>().0;
-        let rgb: Vec<u8> = px
-            .iter()
-            .flat_map(|[r, g, b, _]| [*r, *g, *b].map(|c| (f64::from(c) + (255.0 - f64::from(c)) * fade).round().clamp(0.0, 255.0) as u8))
-            .collect();
+        let mix = |c: u8, t: u8| (f64::from(c) + (f64::from(t) - f64::from(c)) * fade).round().clamp(0.0, 255.0) as u8;
+        let rgb: Vec<u8> = px.iter().flat_map(|[r, g, b, _]| [mix(*r, to.0), mix(*g, to.1), mix(*b, to.2)]).collect();
         let alpha: Vec<u8> = px.iter().map(|[.., a]| *a).collect();
         let clip = if lu.is_clipped() { lu.triangles() } else { Vec::new() };
         out.push(PlotImage {
@@ -216,6 +221,25 @@ mod tests {
         assert!(with > without + 500, "{with} vs {without}");
         let out = crate::plotter::plot(&d, &Space::Model, &json!({})).unwrap();
         assert!(!flat(&out).contains("/Subtype/Image"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A PNG export (EXPORT, `cadcraft-cli --export`) draws the page as the screen does: on its
+    /// dark background the page's black lines are light ("adjust colors"), its paper not drawn.
+    #[test]
+    fn png_exports_show_the_underlay_page() {
+        let dir = std::env::temp_dir().join(format!("cadcraft-underlay-png-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pdf = dir.join("Plan.pdf");
+        let d = drawing_with_underlay(&pdf, true);
+        let light = |png: &[u8]| tiny_skia::Pixmap::decode_png(png).unwrap().pixels().iter().filter(|p| p.red() > 150).count();
+        let png = crate::png(&d, &Space::Model, 800, 600).unwrap();
+        let with = light(&png);
+        assert!(dark_pixels(&png) > 400_000, "the background stays dark: the paper isn't drawn");
+        // Without its PDF only the frame is drawn.
+        std::fs::remove_file(&pdf).unwrap();
+        let without = light(&crate::png(&d, &Space::Model, 800, 600).unwrap());
+        assert!(with > without + 500, "{with} vs {without}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -394,7 +418,7 @@ mod tests {
         };
         d.add(&paper, Common::default(), EntityKind::Viewport(vp)).unwrap();
         let list = cadcraft_render::build_plot(&d, &paper, &cadcraft_render::Options::default());
-        let im = images(&d, &list, None, 2.0);
+        let im = images(&d, &list, None, 2.0, None);
         assert_eq!(im.len(), 1, "model space's underlay through the viewport");
         let im = im.first().unwrap();
         // Only the part in the viewport is drawn, at its place on paper, clipped to it.
@@ -429,8 +453,8 @@ mod tests {
         }
         let doc = dir.join("Site.dxf").to_string_lossy().to_string();
         let list = cadcraft_render::build_plot(&d, &Space::Model, &cadcraft_render::Options::default());
-        assert_eq!(images(&d, &list, Some(&doc), 1.0).len(), 1);
-        assert!(images(&d, &list, None, 1.0).is_empty(), "no drawing folder: not found");
+        assert_eq!(images(&d, &list, Some(&doc), 1.0, None).len(), 1);
+        assert!(images(&d, &list, None, 1.0, None).is_empty(), "no drawing folder: not found");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
