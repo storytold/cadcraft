@@ -256,6 +256,7 @@ pub(super) fn page_setup(t: &T) -> PageSetup {
         p.show_plot_styles = flags & 2 != 0;
         p.center = flags & 4 != 0;
         p.lineweights = flags & 128 != 0;
+        p.plot_transparency = flags & 2048 != 0;
         p.scale_to_fit = flags & 16 != 0 && t.i(75) == Some(0);
     }
     // Custom scale: 142 paper units per 143 drawing units; 147 is the scale factor.

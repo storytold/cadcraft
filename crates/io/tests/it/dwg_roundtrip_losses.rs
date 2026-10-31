@@ -81,6 +81,20 @@ fn dwg_keeps_true_colours_and_transparency() {
     assert_eq!(back.layers.iter().find(|l| l.name == "Fancy").map(|l| l.color), Some(Color::True(Rgb(12, 200, 99))));
 }
 
+/// A layout's plot-transparency setting survives a DWG round trip in either state.
+#[test]
+fn page_setup_plot_transparency_survives_dwg_roundtrip() {
+    let mut d = Drawing::new_metric();
+    let page = &mut d.layouts[0].page;
+    page.plot_transparency = true;
+    let back = through_dwg(&d);
+    assert!(back.layouts[0].page.plot_transparency, "setting should survive DWG roundtrip");
+
+    d.layouts[0].page.plot_transparency = false;
+    let back = through_dwg(&d);
+    assert!(!back.layouts[0].page.plot_transparency, "disabled setting should survive DWG roundtrip");
+}
+
 /// Entities of a layout other than the first stay in that layout.
 #[test]
 fn dwg_keeps_paper_space_entities_in_their_layout() {
