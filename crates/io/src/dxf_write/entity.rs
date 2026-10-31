@@ -257,8 +257,7 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
             w.f(40, t.height);
             w.f(41, t.width);
             w.i(71, i64::from(t.attach));
-            // Drawing direction: 5, by style.
-            w.i(72, 5);
+            w.i(72, t.direction.code());
             // Long contents go in 250-char 3-chunks, the remainder in 1.
             let chars: Vec<char> = crate::dxf_read::mtext_dxf::encode_contents(&t.contents).chars().collect();
             let chunks: Vec<String> = chars.chunks(250).map(|c| c.iter().collect()).collect();
@@ -276,6 +275,7 @@ fn write_text_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: boo
             // Line spacing style: 1 = at least, 2 = exactly.
             w.i(73, if t.line_spacing_exact { 2 } else { 1 });
             w.f(44, t.line_spacing);
+            w.t.extend(crate::dxf_read::mtext_dxf::mask_tags(t));
             w.t.extend(crate::dxf_read::mtext_dxf::column_tags(t, cx.target >= Version::R2018 && !cx.legacy_columns));
         }
         _ => {}

@@ -315,7 +315,7 @@ pub use display::{DPrim, DisplayList, Kind, MAX_TRANSPARENCY, NO_LAYER, PlotText
 pub use pipeline::{Options, build, build_entities, build_plot};
 use props::{default_lineweight, resolve_common};
 use text_entity::text_style;
-pub use text_entity::{layout_mtext_entity, place_text_entity, text_align};
+pub use text_entity::{layout_mtext_entity, mask_box, place_text_entity, text_align};
 pub use viewports::{viewport_clip, viewport_content};
 
 #[cfg(test)]
