@@ -1,6 +1,6 @@
 //! CADCraft desktop app.
 //!
-//! Usage: `cadcraft [--control <port>] [--sample] [files…]` (`cadcraft --help` lists the rest; see [`launch_args`])
+//! Usage: `cadcraft [--control <port>] [--sample] [--new-window] [files…]` (`cadcraft --help` lists the rest; see [`launch_args`])
 //!
 //! `--control <port>` (or `CADCRAFT_CONTROL_PORT`) starts a localhost JSON-lines control server:
 //! `{"id":1,"method":"cmdline.input","params":{"text":"circle 0,0 5"}}` → `{"id":1,"ok":true,…}`.
@@ -23,6 +23,7 @@ mod launch_args;
 mod logging;
 #[cfg(target_os = "macos")]
 mod native_menu;
+mod single_instance;
 mod spacemouse;
 mod system_animations;
 mod workspace;
@@ -40,6 +41,8 @@ struct App {
     system_animations: system_animations::SystemAnimations,
     workspace: workspace::Workspace,
     workspace_error: Option<String>,
+    /// The first CADCraft of this sign-in: files that later launches hand over (Windows).
+    single_instance: Option<single_instance::Server>,
     #[cfg(target_os = "macos")]
     native_menu: Option<native_menu::NativeMenu>,
     /// `CADCRAFT_NO_NATIVE_MENU`: the menus stay inside the window.
@@ -85,6 +88,17 @@ impl eframe::App for App {
     /// eframe logic callback: syncs the OS animation setting and runs `CadApp::logic`; when the pass index is 0 (the first pass or a hidden tick) it also installs/polls the macOS native menu, polls the spacemouse and persists the workspace; a quit request closes the viewport.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.cad.system_animations = self.system_animations.current();
+        // Files another launch handed over open as tabs here, and the window comes forward.
+        if let Some(server) = &self.single_instance {
+            let paths = server.take_paths();
+            if !paths.is_empty() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                for p in &paths {
+                    self.cad.open_path(p);
+                }
+            }
+        }
         // Consume control/open/screenshot queues and time-based autosave, including hidden ticks.
         self.cad.logic(ctx);
         // Host frame work runs here, once per frame, and so also on a hidden logic-only tick (which
@@ -243,6 +257,14 @@ fn main() -> eframe::Result {
             }
         }
     }
+    // A launch that only names files hands them to the CADCraft already running and exits.
+    let handed = single_instance::absolute(&files);
+    let may_hand_off = handed.is_some() && !launch.new_window && !files.is_empty() && control_port.is_none() && !sample;
+    let instance = match single_instance::claim(handed.as_deref().unwrap_or_default(), may_hand_off) {
+        single_instance::Claim::HandedOff => return Ok(()),
+        single_instance::Claim::Primary(server) => Some(server),
+        single_instance::Claim::Alone => None,
+    };
     install_io();
     cadcraft_engine::settings_dir::set(vars.config_dir.clone());
     if let Some(name) = &vars.font_alt {
@@ -359,6 +381,10 @@ fn main() -> eframe::Result {
                 let metric = app.session.settings.measureinit;
                 app.session.new_drawing(metric);
             }
+            if let Some(server) = &instance {
+                let ctx = cc.egui_ctx.clone();
+                server.set_wake(move || ctx.request_repaint());
+            }
             let ctx = cc.egui_ctx.clone();
             let desktop_theme = desktop_theme::DesktopTheme::start(move || ctx.request_repaint());
             let ctx = cc.egui_ctx.clone();
@@ -370,6 +396,7 @@ fn main() -> eframe::Result {
                 spacemouse: spacemouse::SpaceMouse::start(cc.egui_ctx.clone()),
                 workspace,
                 workspace_error,
+                single_instance: instance,
                 #[cfg(target_os = "macos")]
                 native_menu: None,
                 #[cfg(target_os = "macos")]
