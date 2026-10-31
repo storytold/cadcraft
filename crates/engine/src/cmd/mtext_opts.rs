@@ -56,8 +56,14 @@ impl Default for MTextOpts {
 
 impl MTextOpts {
     pub(super) fn new(s: &Session) -> Self {
-        let (height, style) =
-            s.doc().map(|d| (d.header.f64("TEXTSIZE", 0.2), d.header.str("TEXTSTYLE", "Standard"))).unwrap_or((0.2, "Standard".into()));
+        let (height, style) = s
+            .doc()
+            .map(|d| {
+                let style = d.header.str("TEXTSTYLE", "Standard");
+                // A fixed-height style sets the height new text starts with.
+                (super::draw::fixed_height(d, &style).unwrap_or_else(|| d.header.f64("TEXTSIZE", 0.2)), style)
+            })
+            .unwrap_or((0.2, "Standard".into()));
         MTextOpts { height, style, ..MTextOpts::default() }
     }
 
@@ -231,6 +237,9 @@ impl MTextAsk {
                     return Ok(Outcome::Ask(MTextAsk::Style));
                 }
                 o.style = d.text_style(&name).map(|t| t.name.clone()).ok_or_else(|| other(format!("Cannot find text style \"{name}\".")))?;
+                if let Some(h) = super::draw::fixed_height(d, &o.style) {
+                    o.height = h;
+                }
                 Ok(Outcome::Back)
             }
             (MTextAsk::Width, Input::Point(p)) => {
