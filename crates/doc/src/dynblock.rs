@@ -1,4 +1,5 @@
-//! Dynamic blocks made in another program, read from the data CADCraft keeps for them.
+//! Dynamic blocks made in another program, read from the data CADCraft keeps for them, and
+//! authored in CADCraft (`write`: the same objects, written).
 //!
 //! A dynamic block's behaviour lives in objects CADCraft does not write itself and keeps as
 //! [`Foreign`](crate::foreign::Foreign) data: the block's BLOCK_RECORD has an extension dictionary
@@ -20,11 +21,22 @@ use crate::foreign::ForeignObject;
 use crate::{Drawing, Handle, RawTag};
 
 mod apply;
+mod copy;
+mod edit;
 mod grips;
+mod marks;
 mod reference;
+mod write;
 pub use apply::{drag_grip, set_property};
+pub use copy::{copy_definition, remap_handles, restore_definition};
+pub use edit::{ElementPoint, element_points, erase_elements, move_element, set_element_point};
 pub use grips::{DynGrip, GripPart, GripShape, grips};
+pub use marks::{Mark, marks};
 pub use reference::{CustomProperty, Reference, Value, custom_properties, reference};
+pub use write::{
+    ActionSpec, MAX_ACTION_ITEMS, MAX_VISIBILITY_STATES, ParamPoint, ParameterSpec, add_action, add_parameter, adopt_objects, parameter_objects,
+    set_visibility, tag_elements,
+};
 
 /// Most objects one evaluation graph is read with.
 const MAX_NODES: usize = 10_000;

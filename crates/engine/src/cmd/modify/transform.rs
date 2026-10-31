@@ -53,9 +53,16 @@ fn edit_entities(s: &mut Session, hs: &[Handle], copy: bool, edit: impl Fn(&mut 
     Ok(out)
 }
 
-pub(super) fn erase(s: &mut Session, hs: &[Handle]) -> Result<usize> {
+/// Whether a JSON call acts on the selection (no `handles` or `handle` given): only then do the
+/// Block Editor's picked parameters and actions come along.
+fn default_selection(p: &Value) -> bool {
+    p.get("handles").is_none_or(Value::is_null) && p.get("handle").is_none_or(Value::is_null)
+}
+
+/// Erase `hs`, and with `picked` the Block Editor's picked parameters and actions too.
+pub(super) fn erase(s: &mut Session, hs: &[Handle], picked: bool) -> Result<usize> {
+    let mut n = if picked { s.erase_picked_elements()? } else { 0 };
     let d = s.doc_mut()?;
-    let mut n = 0;
     for h in hs {
         let locked = d.entity(*h).and_then(|e| d.layer(&e.common.layer)).is_some_and(|l| l.locked);
         if !locked && d.remove_entity(*h).is_some() {
@@ -68,7 +75,7 @@ pub(super) fn erase(s: &mut Session, hs: &[Handle]) -> Result<usize> {
 
 pub(super) fn run_erase(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
-    let n = erase(s, &hs)?;
+    let n = erase(s, &hs, default_selection(p))?;
     Ok(json!({ "erased": n }))
 }
 
@@ -85,7 +92,8 @@ pub(super) fn run_move(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
     let d = delta_of("move", p)?;
     let moved = transform_entities(s, &hs, &Mat3::translate(d), false)?;
-    Ok(json!({ "moved": moved.len() }))
+    let marks = if default_selection(p) { s.move_picked_elements(d)? } else { 0 };
+    Ok(json!({ "moved": moved.len() + marks }))
 }
 
 pub(super) fn run_copy(s: &mut Session, p: &Value) -> Result<Value> {

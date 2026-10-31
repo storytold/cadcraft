@@ -443,6 +443,8 @@ impl Session {
         } else {
             self.pending_window = None;
             self.set_selection(Vec::new());
+            // The Block Editor's picked parameters and actions too.
+            let _ = self.pick_elements(&[], false);
         }
     }
 

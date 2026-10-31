@@ -95,6 +95,9 @@ fn route_ui_subsystems(app: &mut CadApp, id: &str, params: &Value) -> Option<Res
     if let Some(r) = crate::bedit::route(app, id, params) {
         return Some(r);
     }
+    if let Some(r) = crate::bvstate::route(app, id, params) {
+        return Some(r);
+    }
     if let Some(r) = crate::managers::route(app, id, params) {
         return Some(r);
     }
@@ -577,6 +580,16 @@ pub enum Entry {
     Sub { label: String, children: Vec<Entry> },
 }
 
+impl Entry {
+    /// An item that can run, or a submenu with one.
+    pub fn enabled(&self) -> bool {
+        match self {
+            Entry::Item { enabled, .. } => *enabled,
+            Entry::Sub { children, .. } => children.iter().any(Entry::enabled),
+        }
+    }
+}
+
 /// The full menu tree from the command registry plus UI commands, in registration order.
 pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
     let mut out: Vec<(String, Vec<Entry>)> = MENUS.iter().map(|m| (m.to_string(), Vec::new())).collect();
@@ -667,10 +680,13 @@ pub(crate) fn entry_ui(ui: &mut egui::Ui, e: &Entry, clicked: &mut Option<String
             }
         }
         Entry::Sub { label, children } => {
-            ui.menu_button(crate::i18n::menu(label), |ui| {
-                for c in children {
-                    entry_ui(ui, c, clicked);
-                }
+            // A submenu none of whose items can run is greyed out.
+            ui.add_enabled_ui(children.iter().any(Entry::enabled), |ui| {
+                ui.menu_button(crate::i18n::menu(label), |ui| {
+                    for c in children {
+                        entry_ui(ui, c, clicked);
+                    }
+                });
             });
         }
     }
