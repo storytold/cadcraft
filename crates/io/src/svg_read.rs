@@ -589,8 +589,9 @@ fn num(e: &BytesStart, name: &[u8], fallback: f64) -> f64 {
     attr(e, name).as_deref().and_then(parse_length_mm).unwrap_or(fallback)
 }
 
-/// A bare number, or a number with an absolute CSS/SVG unit: millimetres here, everything
-/// else (px, the default; pt, pc, in, cm) through the CSS reference pixel (96 per inch).
+/// A bare number or `px` (returned as is, in CSS pixels), or a number with an absolute CSS/SVG
+/// unit (mm, cm, in, pt, pc) converted to millimetres. Relative units (`%`, `em`, `ex`) and
+/// unknown ones have no absolute size and give `None`.
 fn parse_length_mm(s: &str) -> Option<f64> {
     let s = s.trim();
     let cut = s.find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-' || c == '+' || c == 'e' || c == 'E')).unwrap_or(s.len());
@@ -606,7 +607,7 @@ fn parse_length_mm(s: &str) -> Option<f64> {
         "in" => Some(value * 25.4),
         "pt" => Some(value * 25.4 / 72.0),
         "pc" => Some(value * 25.4 / 6.0),
-        _ => Some(value * 25.4 / 96.0),
+        _ => None,
     }
 }
 
@@ -1075,6 +1076,16 @@ mod tests {
             Seg::Arc { large, sweep, end, .. } => (*large, *sweep, *end),
             _ => panic!("not an arc"),
         }
+    }
+
+    #[test]
+    fn relative_units_carry_no_absolute_length() {
+        assert_eq!(parse_length_mm("100%"), None);
+        assert_eq!(parse_length_mm("2em"), None);
+        assert_eq!(parse_length_mm("1ex"), None);
+        assert_eq!(parse_length_mm("10mm"), Some(10.0));
+        assert_eq!(parse_length_mm("100"), Some(100.0));
+        assert_eq!(parse_length_mm("100px"), Some(100.0));
     }
 
     #[test]
