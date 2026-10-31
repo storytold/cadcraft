@@ -489,7 +489,7 @@ pub fn handle(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -> Ou
             };
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(path) = s("path") {
-                if let Err(e) = std::fs::write(path, &png) {
+                if let Err(e) = cadcraft_engine::atomic_write::write_atomic(std::path::Path::new(&path), &png) {
                     return err(e);
                 }
                 return ok(render_reply(&png, w, h, Some(path)));
