@@ -1227,6 +1227,62 @@ fn pline_width_answers_taper_the_next_segment() {
     assert_eq!(widths(&p), (0.0, vec![(0.0, 0.0), (0.0, 0.0)]));
 }
 
+/// PLINE against what AutoCAD 2024 stores for the same typed input (black-box: synthetic input
+/// in accoreconsole, read back with `entget` and GETVAR).
+#[test]
+fn pline_undo_mode_and_plinewid_match_autocad() {
+    // Undo after an arc segment returns to line mode, where `_L` is Length (a point gives the
+    // length, along the last segment).
+    let p = typed_pline(
+        "pline -0.702422643378533,-28.46727901968281 -27.912058384977463,-34.74188138168937 -22.546524604415925,32.44142803067136 _U \
+         25.831317263304115,13.510616645626207 _A -33.2372517304228,12.083585785350365 _U _L -22.546524604415925,32.44142803067136",
+    );
+    let want = [
+        (-0.7024226433785329, -28.4672790196828),
+        (-27.91205838497746, -34.74188138168937),
+        (25.83131726330411, 13.5106166456262),
+        (64.48701958199356, 48.21692560701169),
+    ];
+    assert_eq!(p.vertices.len(), want.len(), "{p:?}");
+    for (v, (x, y)) in p.vertices.iter().zip(want) {
+        assert!(v.p.near(Vec2::new(x, y), 1e-9 * x.abs().max(y.abs())) && v.bulge == 0.0, "{p:?}");
+    }
+    // PLINEWID is the width a new polyline starts with…
+    let mut s = Session::new();
+    s.cmdline("(setvar \"PLINEWID\" 0.75)").unwrap();
+    s.cmdline("pline -21.06802233135781,9.943678105070298 -29.261665218975015,-28.460093326613574 7.898763272534772,6.73634194079888").unwrap();
+    s.cmdline("").unwrap();
+    assert!(matches!(&s.doc().unwrap().model.last().unwrap().kind, EntityKind::LwPolyline(p) if p.const_width == 0.75));
+    // …and the ending width of the last Width or Halfwidth answer (half-width 0.5: PLINEWID 1).
+    let mut s = Session::new();
+    s.cmdline("pline -9.151085154682761,12.9438035725412 _W 0.0934460985004879 1.547654372298795").unwrap();
+    assert_eq!(s.doc().unwrap().header.f64("PLINEWID", 0.0), 1.547654372298795);
+    s.cmdline("19.161590651864245,38.23079339857958 26.720225103092986,-9.028145532375504 _H 0.5 0.5 -24.7035288980598,-14.309723714209586").unwrap();
+    s.cmdline("").unwrap();
+    assert_eq!(s.doc().unwrap().header.f64("PLINEWID", 0.0), 1.0);
+    // PLINEWID is an ordinary system variable: 0 until set, typed at the command line or set
+    // with SETVAR, and that width is where the next polyline starts.
+    let mut s = Session::new();
+    let r = s.execute("getvar", &json!({"name": "PLINEWID"})).unwrap();
+    assert_eq!(r["value"].as_f64(), Some(0.0), "{r}");
+    s.cmdline("plinewid 0.5").unwrap();
+    assert_eq!(s.doc().unwrap().header.f64("PLINEWID", 0.0), 0.5);
+    s.cmdline("pline 0,0 10,0").unwrap();
+    s.cmdline("").unwrap();
+    assert!(matches!(&s.doc().unwrap().model.last().unwrap().kind, EntityKind::LwPolyline(p) if p.const_width == 0.5));
+    // The JSON form starts there too, unless it gives a width or its vertices give theirs.
+    let width = |s: &mut Session, p: serde_json::Value| {
+        s.execute("pline", &p).unwrap();
+        match &s.doc().unwrap().model.last().unwrap().kind {
+            EntityKind::LwPolyline(p) => p.const_width,
+            k => panic!("{k:?}"),
+        }
+    };
+    assert_eq!(width(&mut s, json!({"vertices": [[0, 0], [10, 0]]})), 0.5);
+    assert_eq!(width(&mut s, json!({"vertices": [[0, 0], [10, 0]], "width": 0})), 0.0);
+    assert_eq!(width(&mut s, json!({"vertices": [{"p": [0, 0], "startWidth": 1, "endWidth": 2}, [10, 0]]})), 0.0);
+}
+
 #[test]
 fn press_and_drag_selection_window() {
     let mut s = Session::new();
