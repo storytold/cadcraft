@@ -60,8 +60,10 @@ fn one_bad_byte_spoils_one_line_not_the_file() {
 }
 
 #[test]
-fn ascii_and_binary_decode_alike() {
-    // ANSI_1252 file with UTF-8 bytes in one string and a Latin-1 byte in another.
+fn ascii_uses_utf8_per_line_and_binary_stays_in_the_code_page() {
+    // ANSI_1252 file with UTF-8 bytes in one string and a Latin-1 byte in another. The ASCII
+    // reader takes a line that is valid UTF-8 as UTF-8; the binary reader reads every string
+    // from the code page, because a pre-R2007 binary file has no way to escape to UTF-8.
     let utf8 = "Größe".as_bytes();
     let latin = b"Caf\xE9";
     let mut a = b"9\n$DWGCODEPAGE\n3\nANSI_1252\n1\n".to_vec();
@@ -80,7 +82,7 @@ fn ascii_and_binary_decode_alike() {
     let from_binary = parse(&b).unwrap();
     assert_eq!(from_ascii[2].str(), "Größe");
     assert_eq!(from_ascii[3].str(), "Café");
-    assert_eq!(from_binary[2].str(), "Größe");
+    assert_eq!(from_binary[2].str(), "GrÃ¶ÃŸe");
     assert_eq!(from_binary[3].str(), "Café");
 }
 

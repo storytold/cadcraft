@@ -1181,6 +1181,11 @@ fn run_rename(s: &mut Session, p: &Value) -> Result<Value> {
             run_dimstyle_rename(s, &json!({ "from": from, "to": to }))?;
         }
         "linetype" | "ltype" => {
+            // Stored trimmed, as -RENAME types it: lookups compare names untrimmed.
+            let to = to.trim().to_string();
+            if !rename::valid_name(&to) {
+                return Err(bad("rename", format!("`{to}` is not a valid linetype name")));
+            }
             let d = s.doc_mut()?;
             if ["ByBlock", "ByLayer", "Continuous"].iter().any(|n| from.eq_ignore_ascii_case(n)) {
                 return Err(bad("rename", format!("the {from} linetype cannot be renamed")));
@@ -1244,6 +1249,19 @@ mod tests {
         assert_eq!(col(&s), Color::ByLayer);
         s.execute("properties.set", &json!({ "handles": [h], "color": 0 })).unwrap();
         assert_eq!(col(&s), Color::ByBlock);
+    }
+
+    #[test]
+    fn rename_linetype_rejects_invalid_names() {
+        let mut s = Session::new();
+        s.execute("linetype", &json!({ "load": "DASHED" })).unwrap();
+        for to in ["", "  ", "A;B", "A|B", "*X"] {
+            let r = s.execute("rename", &json!({ "table": "linetype", "from": "DASHED", "to": to }));
+            assert!(r.is_err(), "renamed DASHED to {to:?}: {r:?}");
+            assert!(s.doc().unwrap().linetype("DASHED").is_some());
+        }
+        s.execute("rename", &json!({ "table": "linetype", "from": "DASHED", "to": " DASH2 " })).unwrap();
+        assert!(s.doc().unwrap().linetype("DASH2").is_some());
     }
 
     #[test]

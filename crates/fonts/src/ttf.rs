@@ -709,6 +709,16 @@ impl OutlinePen for Pen {
     }
 }
 
+/// How far below the baseline a face reaches, as a fraction of the text height (which is the
+/// face's cap height): its descent over its cap height. A bottom-justified text's alignment
+/// point is there, as AutoCAD places it (#2229). `None` when the face has no usable descent.
+pub fn descent_ratio(face: &Face) -> Option<f64> {
+    let f = face.font()?;
+    let descent = -f64::from(f.metrics(Size::new(UPEM), LocationRef::default()).descent);
+    let r = descent / cap_height(&f);
+    (r.is_finite() && r > 0.0 && r < 2.0).then_some(r)
+}
+
 /// Cap height of a font in font units at 1000 units per em: the OS/2 value, else the height
 /// of its "H", else an estimate from the ascent.
 fn cap_height(f: &FontRef) -> f64 {

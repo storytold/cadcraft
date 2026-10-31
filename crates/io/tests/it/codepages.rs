@@ -116,6 +116,55 @@ fn code_page_text_survives_a_round_trip() {
     assert_eq!(names(&back), ("Слой".into(), "Блок".into(), "Привет".into()));
 }
 
+/// Saving a pre-2007 DXF writes the text in the file's code page, as the DXF Reference
+/// describes: a Portuguese drawing keeps `Elétrica`, `Ação` and `Função` as ANSI_1252 bytes
+/// instead of `\U+00E9` escapes, a Cyrillic one its ANSI_1251 bytes, and characters the code
+/// page lacks are still escaped. ASCII and binary, R2000 and R2004, read back the same.
+#[test]
+fn saving_writes_text_in_the_code_page() {
+    use cadcraft_io::{SaveOptions, Version};
+    let pt = ascii_dxf("AC1015", "ANSI_1252", b"El\xE9trica", b"A\xE7\xE3o", b"Fun\xE7\xE3o \\U+56FE");
+    let ru = ascii_dxf("AC1015", "ANSI_1251", b"\xD1\xEB\xEE\xE9", b"\xC1\xEB\xEE\xEA", b"\xCF\xF0\xE8\xE2\xE5\xF2 \\U+00E9");
+    let cases: [(&[u8], (&str, &str, &str), &[&[u8]]); 2] = [
+        (&pt, ("Elétrica", "Ação", "Função 图"), &[b"El\xE9trica", b"A\xE7\xE3o", b"Fun\xE7\xE3o \\U+56FE"]),
+        (&ru, ("Слой", "Блок", "Привет é"), &[b"\xD1\xEB\xEE\xE9", b"\xC1\xEB\xEE\xEA", b"\xCF\xF0\xE8\xE2\xE5\xF2 \\U+00E9"]),
+    ];
+    for (file, want, raw) in cases {
+        let d = cadcraft_io::read_dxf(file).unwrap();
+        assert_eq!(names(&d), (want.0.into(), want.1.into(), want.2.into()));
+        for version in [Version::R2000, Version::R2004] {
+            for binary in [false, true] {
+                let out = cadcraft_io::write_with(&d, "x.dxf", &SaveOptions { version: Some(version), binary }).unwrap();
+                for r in raw {
+                    assert!(out.windows(r.len()).any(|w| w == *r), "{version} binary={binary}: {}", String::from_utf8_lossy(r));
+                }
+                assert!(!out.windows(7).any(|w| w == b"\\U+00E7"), "{version} binary={binary}: ç is written as its byte");
+                let back = cadcraft_io::read_dxf(&out).unwrap();
+                assert_eq!(names(&back), (want.0.into(), want.1.into(), want.2.into()), "{version} binary={binary}");
+            }
+        }
+    }
+}
+
+/// A file whose header declares `ASCII` keeps that code page and stays ASCII when saved: its
+/// non-ASCII text is written as `\U+` escapes, not as Windows-1252 bytes.
+#[test]
+fn saving_an_ascii_file_keeps_it_ascii() {
+    use cadcraft_io::{SaveOptions, Version};
+    let d = cadcraft_io::read_dxf(&ascii_dxf("AC1015", "ASCII", b"El\\U+00E9trica", b"B", b"Eletrica \\U+00E9")).unwrap();
+    assert_eq!(names(&d), ("Elétrica".into(), "B".into(), "Eletrica é".into()));
+    for version in [Version::R2000, Version::R2004] {
+        let ascii = cadcraft_io::write_with(&d, "x.dxf", &SaveOptions { version: Some(version), binary: false }).unwrap();
+        assert!(ascii.is_ascii(), "{version}");
+        let binary = cadcraft_io::write_with(&d, "x.dxf", &SaveOptions { version: Some(version), binary: true }).unwrap();
+        for out in [&ascii, &binary] {
+            assert!(out.windows(14).any(|w| w == b"El\\U+00E9trica"), "{version}");
+            assert!(out.windows(5).any(|w| w == b"ASCII"), "{version}: the header keeps its code page");
+            assert_eq!(names(&cadcraft_io::read_dxf(out).unwrap()), ("Elétrica".into(), "B".into(), "Eletrica é".into()), "{version}");
+        }
+    }
+}
+
 /// A binary DXF: R2000 strings are in the code page, R2007+ strings UTF-8.
 #[test]
 fn binary_dxf_honours_the_code_page() {
@@ -156,10 +205,9 @@ fn binary_dxf_honours_the_code_page() {
     let read = |b: &[u8]| text_of(&cadcraft_io::read_dxf(b).unwrap());
     assert_eq!(read(&bin("AC1015", "ANSI_1251", b"\xCF\xF0\xE8\xE2\xE5\xF2")), "Привет");
     assert_eq!(read(&bin("AC1018", "ANSI_932", b"\x95\x5C\\U+00E9")), "表é");
-    // A string that is valid UTF-8 (D1 B2) is read as UTF-8 in binary files too, the same policy
-    // as ASCII files (#1025); a code-page string with a non-UTF-8 byte still uses the code page.
-    assert_eq!(read(&bin("AC1015", "ANSI_1251", b"\xD1\xB2")), "\u{0472}");
-    assert_eq!(read(&bin("AC1015", "ANSI_1252", "Größe".as_bytes())), "Größe");
+    // A short Cyrillic string that is also valid UTF-8 (D1 B2) is still read in the code page:
+    // a pre-R2007 binary file has no way to escape to UTF-8, so its strings are never read as it.
+    assert_eq!(read(&bin("AC1015", "ANSI_1251", b"\xD1\xB2")), "СІ");
     assert_eq!(read(&bin("AC1021", "ANSI_1251", "Привет".as_bytes())), "Привет");
     assert_eq!(read(&bin("AC1015", "ANSI_1361", b"Caf\xE9")), "Café");
 }
