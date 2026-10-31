@@ -61,6 +61,9 @@ struct Rx {
     block_arrays: HashMap<String, cadcraft_doc::ArrayParams>,
     /// LAYER record handle (upper case) → layer name (VIEWPORT group 341 frozen layers).
     layers: HashMap<String, String>,
+    /// Entities the reader renumbered (a handle at the top of the range): the file's handle →
+    /// the fresh one. References that name the file's handle follow the entity.
+    renamed: HashMap<Handle, Handle>,
 }
 
 /// Read a DXF file into a drawing.
@@ -125,6 +128,10 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
     let (paper_block_for, first_layout) = setup_layouts(&mut d, &mut layout_objs, &rx);
     place_blocks(&mut d, blocks, &mut rx, &paper_block_for, &first_layout);
     place_entities(&mut d, entities, &rx, &paper_block_for, &first_layout);
+    // A sortents table orders by the file's entity handles; those follow a renumbered entity.
+    for (_, order) in &mut objs.sortents {
+        *order = order.iter().map(|(h, o)| (rx.renamed.get(h).copied().unwrap_or(*h), *o)).collect();
+    }
     apply_sortents(&mut d, &objs.sortents, &rx.brs, &paper_block_for, &first_layout);
     objs.apply(&mut d, &rx);
     crate::dxf_image::resolve(&secs, &mut d);

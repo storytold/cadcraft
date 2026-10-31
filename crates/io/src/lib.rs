@@ -81,12 +81,14 @@ pub fn read(bytes: &[u8], name: impl AsRef<Path>) -> Result<Drawing> {
 /// model space fitted to its extents. DXF and DWG are written in the drawing's version
 /// ([`save_version`]), DXF as ASCII.
 pub fn write(d: &Drawing, name: impl AsRef<Path>) -> Result<Vec<u8>> {
+    refuse_exhausted_handles(d)?;
     write_framed(d, name, None)
 }
 
 /// Like [`write`], with the DXF/DWG version and binary DXF chosen by `opts`. Binary applies to
 /// DXF only; asking for it with another format is an error.
 pub fn write_with(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> Result<Vec<u8>> {
+    refuse_exhausted_handles(d)?;
     let name = name.as_ref();
     let version = opts.version.unwrap_or_else(|| save_version(d));
     match Format::from_path(name) {
@@ -110,6 +112,19 @@ pub fn write_with(d: &Drawing, name: impl AsRef<Path>, opts: &SaveOptions) -> Re
         }
         _ if opts.binary => Err(IoError::Format(format!("binary output is for DXF files, not `{}`", ext(name)))),
         _ => write_framed(d, name, None),
+    }
+}
+
+/// A drawing whose handle seed is saturated would write the same top handle for every object it
+/// still has to name, and the file would not reopen as written: saving refuses instead of
+/// corrupting (F-01 of #1921).
+fn refuse_exhausted_handles(d: &Drawing) -> Result<()> {
+    if d.handseed == u64::MAX {
+        Err(IoError::Format(
+            "the drawing's handle seed is exhausted (FFFFFFFFFFFFFFFF); every new object would share it. Copy the drawing into a new one".into(),
+        ))
+    } else {
+        Ok(())
     }
 }
 
