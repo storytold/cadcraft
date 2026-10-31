@@ -293,3 +293,17 @@ fn mspace_edits_model_through_viewport() {
     s.execute("layout.set", &json!({"name": "Model"})).unwrap();
     assert!(s.state().unwrap().mspace.is_none());
 }
+
+/// PLOT and EXPORTPDF help name the `device` parameter, and PLOT's help every built-in device (#2557).
+#[test]
+fn plot_help_names_the_device_and_the_built_in_devices() {
+    for id in ["plot", "exportpdf"] {
+        let help = crate::find_command(id).map(|c| c.params).unwrap_or_default();
+        assert!(help.contains("device?"), "{id}: {help}");
+    }
+    let help = crate::find_command("plot").map(|c| c.params).unwrap_or_default();
+    for name in ["CADCraft PDF", "CADCraft PNG", "CADCraft SVG"] {
+        assert!(super::super::plotters::find_device(name).is_some(), "{name} is not a device");
+        assert!(help.contains(name), "plot help lacks {name}");
+    }
+}
