@@ -67,6 +67,7 @@
 	Blend	Raccord lissé
 	Block	Bloc
 	Block Attribute Manager...	Gestionnaire des attributs de bloc...
+	Block Description...	Description de bloc...
 	Block Editor	Éditeur de blocs
 	Block Reference	Référence de bloc
 	Block...	Bloc...
@@ -452,6 +453,7 @@
 	N	N
 	Name	Nom
 	Name (A–Z)	Nom (A–Z)
+	Named Viewports...	Fenêtres nommées...
 	Nearest	Plus proche
 	New	Nouveau
 	New (metric)	Nouveau (métrique)
@@ -1012,3 +1014,6 @@
 	Not a number or distance: {text}	Ni un nombre ni une distance : {text}
 	Query Texts	Interroger les textes
 	Analyze Shapes	Analyser les formes
+	Check for Updates…	Rechercher des mises à jour…
+	CADCraft is up to date.	CADCraft est à jour.
+	Could not check for updates.	Impossible de rechercher les mises à jour.

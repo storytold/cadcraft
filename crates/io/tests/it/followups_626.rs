@@ -177,10 +177,9 @@ fn code_page_is_kept_before_2007() {
     .unwrap();
     for v in [Version::R2000, Version::R2004] {
         let bytes = save(&d, "x.dxf", v);
-        assert!(bytes.is_ascii(), "{v:?}: ASCII with escapes");
-        let text = String::from_utf8(bytes).unwrap();
-        assert_eq!(code_page(&text), "ANSI_1251", "{v:?}");
-        let back = cadcraft_io::read_dxf(text.as_bytes()).unwrap();
+        assert!(bytes.windows(6).any(|w| w == b"\xCF\xF0\xE8\xE2\xE5\xF2"), "{v:?}: the text in ANSI_1251");
+        assert_eq!(code_page(&String::from_utf8_lossy(&bytes)), "ANSI_1251", "{v:?}");
+        let back = cadcraft_io::read_dxf(&bytes).unwrap();
         assert_eq!(back.header.str("DWGCODEPAGE", ""), "ANSI_1251");
         assert!(back.model.iter().any(|e| matches!(&e.kind, EntityKind::Text(t) if t.value == "Привет")));
     }

@@ -114,6 +114,7 @@
 	Blend	Átmenetgörbe
 	Block	Blokk
 	Block Attribute Manager...	Blokkattribútum-kezelő...
+	Block Description...	Blokkleírás...
 	Block Editor	Blokkszerkesztő
 	Block Reference	Blokkhivatkozás
 	Block to create or edit	Létrehozandó vagy szerkesztendő blokk
@@ -650,6 +651,7 @@
 	Name	Név
 	Name (A–Z)	Név (A–Z)
 	Named	Elnevezett
+	Named Viewports...	Elnevezett nézetablakok...
 	Named Views...	Elnevezett nézetek...
 	Nearest	Legközelebbi
 	New	Új
@@ -1344,3 +1346,6 @@ menu	Dimension	Méretezés
 menu	Draw	Rajzolás
 menu	Modify	Módosítás
 menu	View	Nézet
+	Check for Updates…	Frissítések keresése…
+	CADCraft is up to date.	A CADCraft naprakész.
+	Could not check for updates.	A frissítések keresése nem sikerült.

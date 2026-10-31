@@ -69,7 +69,7 @@ fn window(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
     egui::Window::new(title).id(egui::Id::unique("Plot Style Manager")).open(open).default_size(vec2(760.0, 460.0)).resizable(true).show(ctx, |ui| {
         ui.horizontal(|ui| {
             ui.label(crate::tl!("Plot style table"));
-            egui::ComboBox::from_id_salt("pstyle_table").selected_text(sel.as_str()).width(200.0).show_ui(ui, |ui| {
+            craft_ui::ComboBox::from_id_salt("pstyle_table").selected_text(sel.as_str()).width(200.0).show_ui(ui, |ui| {
                 for n in &names {
                     if ui.selectable_label(n.eq_ignore_ascii_case(&sel), n).clicked() {
                         sel = n.clone();
@@ -160,7 +160,7 @@ fn window(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
                         action = set(&table.name, style("screening", json!(screen)));
                     }
                     let lt = st.linetype.clone().unwrap_or_else(|| crate::tl!("Use object linetype").to_string());
-                    egui::ComboBox::from_id_salt(("pstyle_lt", &st.name)).selected_text(lt).width(140.0).show_ui(ui, |ui| {
+                    craft_ui::ComboBox::from_id_salt(("pstyle_lt", &st.name)).selected_text(lt).width(140.0).show_ui(ui, |ui| {
                         if ui.selectable_label(st.linetype.is_none(), crate::tl!("Use object linetype")).clicked() {
                             action = set(&table.name, style("linetype", Value::Null));
                         }
@@ -174,7 +174,7 @@ fn window(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
                         .lineweight
                         .map(|w| format!("{:.2} mm", f64::from(w) / 100.0))
                         .unwrap_or_else(|| crate::tl!("Use object lineweight").to_string());
-                    egui::ComboBox::from_id_salt(("pstyle_lw", &st.name)).selected_text(lw).width(140.0).show_ui(ui, |ui| {
+                    craft_ui::ComboBox::from_id_salt(("pstyle_lw", &st.name)).selected_text(lw).width(140.0).show_ui(ui, |ui| {
                         if ui.selectable_label(st.lineweight.is_none(), crate::tl!("Use object lineweight")).clicked() {
                             action = set(&table.name, style("lineweight", Value::Null));
                         }

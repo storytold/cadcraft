@@ -18,7 +18,8 @@ use cadcraft_render::raster::{RasterOptions, View};
 use serde_json::{Value, json};
 
 use super::file::{base64_decode, base64_encode, io};
-use super::*;
+use super::{CommandSpec, bad, point_value, str_param};
+
 use crate::{EngineError, Result, Session};
 
 /// Formats EXPORT writes (the io layer picks the writer from the extension).
@@ -557,7 +558,10 @@ mod tests {
     use cadcraft_geom::Vec3;
 
     use super::super::file::{IoHooks, set_io};
+
+    use super::super::resolve_alias;
     use super::*;
+    use serde_json::json;
 
     static DELIVERED: std::sync::Mutex<Vec<(String, String, usize)>> = std::sync::Mutex::new(Vec::new());
 
@@ -750,19 +754,20 @@ mod tests {
         s.cmdline("").unwrap();
         s.cmdline("pline 0,900 50,900 50,950 0,950 c").unwrap();
         s.cmdline("").unwrap();
-        let r = s.execute("pdfbook", &json!({ "path": temp("a^b.pdf").to_string_lossy() }));
+        // `a^b.pdf` names one book per row, both in the folder of the path.
+        let dir = crate::temp_dir::TempDir::new("pdfbook");
+        let r = s.execute("pdfbook", &json!({ "path": dir.path_str("a^b.pdf") }));
         let r = r.unwrap();
         let books = r["books"].as_array().unwrap();
         assert_eq!(books.len(), 2);
         assert_eq!(books[0]["pages"], 3);
         assert_eq!(books[1]["pages"], 1);
-        let first = temp("a.pdf");
+        let first = dir.join("a.pdf");
         let text = String::from_utf8(std::fs::read(&first).unwrap()).unwrap();
         let (a4, a3) = (text.find("ISO A4").unwrap(), text.find("ISO A3").unwrap());
         assert!(a4 < a3, "frames go left to right: {text}");
         assert!(text.contains("\"landscape\":true"));
-        let _ = std::fs::remove_file(first);
-        let _ = std::fs::remove_file(temp("b.pdf"));
+        assert!(dir.join("b.pdf").is_file(), "the second row's book is written beside the first");
         // No frames: an error, not a panic.
         assert!(Session::new().execute("pdfbook", &json!({})).is_err());
     }

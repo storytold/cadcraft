@@ -17,7 +17,7 @@ use std::fmt::Write as _;
 use cadcraft_color::Rgb;
 use cadcraft_doc::{Drawing, Handle, PageSetup, Space};
 use cadcraft_geom::{Bounds2, Vec2};
-use cadcraft_render::{Kind, Sheet, clip, paper};
+use cadcraft_render::{DPrim, Kind, Sheet, clip, paper};
 use serde_json::Value;
 
 use craft_pdf::write::backend as kr;
@@ -808,7 +808,7 @@ fn krilla_failure(e: KrillaError) -> Failure {
 /// as text instead: the glyph at font size 1 under its glyph matrix (the matrix axes are one
 /// em).
 fn marks(s: &mut Surface<'_>, p: &SheetPage, groups: &Groups, fonts: &mut fonts::Fonts) -> std::result::Result<(), Failure> {
-    let (list, map) = (&p.list, &p.map);
+    let list = &p.list;
     let texts = fonts::texts(list);
     let white = Rgb(255, 255, 255);
     let mut batch: Option<(StrokeStyle, PathBuilder)> = None;
@@ -829,98 +829,124 @@ fn marks(s: &mut Surface<'_>, p: &SheetPage, groups: &Groups, fonts: &mut fonts:
         let t = if prim.kind == Kind::Mask { 0 } else { prim.transparency.min(cadcraft_render::MAX_TRANSPARENCY) };
         let w = f64::from(prim.lw) * PT_PER_MM;
         let w = if w.is_finite() && w > 0.0 { w.min(100.0) } else { 0.0 };
+        let m = Mark { rgb, t, w };
         match prim.kind {
-            Kind::Polyline | Kind::Infinite { .. } => {
-                let pts: Vec<Vec2> = match prim.kind {
-                    Kind::Infinite { ray } => match (raw.first(), raw.get(1)) {
-                        (Some(base), Some(dir)) => {
-                            let a = map.pt(*base);
-                            let dir_pt = map.pt(*base + *dir) - a;
-                            match clip::clip_infinite(a, dir_pt, ray, &p.clip_pt) {
-                                Some((x, y)) => vec![x, y],
-                                None => continue,
-                            }
-                        }
-                        _ => continue,
-                    },
-                    _ => raw.iter().map(|q| map.pt(*q)).collect(),
-                };
-                if pts.len() < 2 {
-                    continue;
-                }
-                // With a vertex out of range, keep the pieces inside the plot area, widened so
-                // a wide stroke just outside it still shows its edge.
-                let runs = if pts.iter().all(|q| coord(*q).is_some()) { vec![pts] } else { clip::clip_polyline(&pts, &p.clip_pt.expand(w + 1.0)) };
-                let style = StrokeStyle { rgb, width: w as f32, transparency: t };
-                if t > 0 || batch.as_ref().is_some_and(|(b, _)| *b != style) {
-                    flush(s, &mut batch);
-                }
-                for run in runs {
-                    let Some(pts) = run.iter().map(|q| coord(*q)).collect::<Option<Vec<_>>>() else { continue };
-                    // The writer leaves out a path without extent, so a zero-length line is
-                    // painted as the round-cap dot its stroke would make.
-                    if let Some(&(x, y)) = pts.first()
-                        && pts.iter().all(|q| *q == (x, y))
-                    {
-                        flush(s, &mut batch);
-                        let d = if w > 0.0 { w as f32 } else { HAIRLINE_DOT_PT };
-                        if let Some(path) = circle_path(x, y, d / 2.0) {
-                            fill_path(s, &path, rgb, t);
-                        }
-                        continue;
-                    }
-                    let (_, pb) = batch.get_or_insert_with(|| (style, PathBuilder::new()));
-                    for (j, (x, y)) in pts.iter().enumerate() {
-                        if j == 0 {
-                            pb.move_to(*x, *y);
-                        } else {
-                            pb.line_to(*x, *y);
-                        }
-                    }
-                }
-            }
+            Kind::Polyline | Kind::Infinite { .. } => polyline(s, &mut batch, p, prim, raw, m),
             Kind::Tris | Kind::Mask => {
                 flush(s, &mut batch);
                 // A wipeout's mask is paper white.
-                let rgb = if prim.kind == Kind::Mask { white } else { rgb };
-                if let Some(text) = u32::try_from(i).ok().and_then(|i| texts.get(&i))
-                    && let Some(font) = fonts.font(&text.glyph.face)
-                {
-                    glyph(s, font, text, map, rgb, t);
-                    continue;
-                }
-                let mapped: Vec<Vec2> = raw.iter().map(|q| map.pt(*q)).collect();
-                // With a vertex out of range, keep the parts inside the plot area.
-                let tris = if mapped.iter().all(|q| coord(*q).is_some()) { mapped } else { clip::clip_triangles(&mapped, &p.clip_pt) };
-                let mut pb = PathBuilder::new();
-                for tri in tris.as_chunks::<3>().0 {
-                    let Some(v) = tri.iter().map(|q| coord(*q)).collect::<Option<Vec<_>>>() else { continue };
-                    for (j, (x, y)) in v.iter().enumerate() {
-                        if j == 0 {
-                            pb.move_to(*x, *y);
-                        } else {
-                            pb.line_to(*x, *y);
-                        }
-                    }
-                    pb.close();
-                }
-                if let Some(path) = pb.finish() {
-                    fill_path(s, &path, rgb, t);
+                let m = if prim.kind == Kind::Mask { Mark { rgb: white, ..m } } else { m };
+                let text_font =
+                    u32::try_from(i).ok().and_then(|i| texts.get(&i).copied()).and_then(|text| fonts.font(&text.glyph.face).map(|font| (text, font)));
+                match text_font {
+                    Some((text, font)) => glyph(s, font, text, &p.map, m.rgb, m.t),
+                    None => fill_tris(s, p, raw, m.rgb, m.t),
                 }
             }
-            Kind::Point => {
-                let Some(q) = raw.first() else { continue };
-                flush(s, &mut batch);
-                let half = (w.max(0.5)) / 2.0;
-                let c = map.pt(*q);
-                if let Some(path) = rect_path(c - Vec2::new(half, half), c + Vec2::new(half, half)) {
-                    fill_path(s, &path, rgb, t);
-                }
-            }
+            Kind::Point => point(s, &mut batch, &p.map, raw, m),
         }
     }
     flush(s, &mut batch);
     layer_changed(s, layer, None)
+}
+
+/// How a primitive is painted: colour, transparency (percent) and lineweight (points).
+#[derive(Clone, Copy)]
+struct Mark {
+    rgb: Rgb,
+    t: u8,
+    w: f64,
+}
+
+/// Stroke a polyline or infinite line, clipped to the plot area, into the open batch.
+fn polyline(s: &mut Surface<'_>, batch: &mut Option<(StrokeStyle, PathBuilder)>, p: &SheetPage, prim: &DPrim, raw: &[Vec2], m: Mark) {
+    let Some(pts) = polyline_points(prim, raw, &p.map, &p.clip_pt) else { return };
+    if pts.len() < 2 {
+        return;
+    }
+    // With a vertex out of range, keep the pieces inside the plot area, widened so
+    // a wide stroke just outside it still shows its edge.
+    let runs = if pts.iter().all(|q| coord(*q).is_some()) { vec![pts] } else { clip::clip_polyline(&pts, &p.clip_pt.expand(m.w + 1.0)) };
+    let style = StrokeStyle { rgb: m.rgb, width: m.w as f32, transparency: m.t };
+    if m.t > 0 || batch.as_ref().is_some_and(|(b, _)| *b != style) {
+        flush(s, batch);
+    }
+    for run in runs {
+        stroke_run(s, batch, &run, style, m);
+    }
+}
+
+/// The page points of a polyline, or of an infinite line clipped to the plot area; `None` when
+/// there is nothing to draw.
+fn polyline_points(prim: &DPrim, raw: &[Vec2], map: &Map, clip_pt: &Bounds2) -> Option<Vec<Vec2>> {
+    match prim.kind {
+        Kind::Infinite { ray } => {
+            let (Some(base), Some(dir)) = (raw.first(), raw.get(1)) else { return None };
+            let a = map.pt(*base);
+            let dir_pt = map.pt(*base + *dir) - a;
+            let (x, y) = clip::clip_infinite(a, dir_pt, ray, clip_pt)?;
+            Some(vec![x, y])
+        }
+        _ => Some(raw.iter().map(|q| map.pt(*q)).collect()),
+    }
+}
+
+/// Add one run of a polyline to the batch, or paint it as a dot when it has no extent.
+fn stroke_run(s: &mut Surface<'_>, batch: &mut Option<(StrokeStyle, PathBuilder)>, run: &[Vec2], style: StrokeStyle, m: Mark) {
+    let Some(pts) = run.iter().map(|q| coord(*q)).collect::<Option<Vec<_>>>() else { return };
+    // The writer leaves out a path without extent, so a zero-length line is
+    // painted as the round-cap dot its stroke would make.
+    if let Some(&(x, y)) = pts.first()
+        && pts.iter().all(|q| *q == (x, y))
+    {
+        flush(s, batch);
+        let d = if m.w > 0.0 { m.w as f32 } else { HAIRLINE_DOT_PT };
+        if let Some(path) = circle_path(x, y, d / 2.0) {
+            fill_path(s, &path, m.rgb, m.t);
+        }
+        return;
+    }
+    let (_, pb) = batch.get_or_insert_with(|| (style, PathBuilder::new()));
+    for (j, (x, y)) in pts.iter().enumerate() {
+        if j == 0 {
+            pb.move_to(*x, *y);
+        } else {
+            pb.line_to(*x, *y);
+        }
+    }
+}
+
+/// Fill a set of triangles, clipped to the plot area.
+fn fill_tris(s: &mut Surface<'_>, p: &SheetPage, raw: &[Vec2], rgb: Rgb, t: u8) {
+    let mapped: Vec<Vec2> = raw.iter().map(|q| p.map.pt(*q)).collect();
+    // With a vertex out of range, keep the parts inside the plot area.
+    let tris = if mapped.iter().all(|q| coord(*q).is_some()) { mapped } else { clip::clip_triangles(&mapped, &p.clip_pt) };
+    let mut pb = PathBuilder::new();
+    for tri in tris.as_chunks::<3>().0 {
+        let Some(v) = tri.iter().map(|q| coord(*q)).collect::<Option<Vec<_>>>() else { continue };
+        for (j, (x, y)) in v.iter().enumerate() {
+            if j == 0 {
+                pb.move_to(*x, *y);
+            } else {
+                pb.line_to(*x, *y);
+            }
+        }
+        pb.close();
+    }
+    if let Some(path) = pb.finish() {
+        fill_path(s, &path, rgb, t);
+    }
+}
+
+/// Paint a point marker: a small square at the point.
+fn point(s: &mut Surface<'_>, batch: &mut Option<(StrokeStyle, PathBuilder)>, map: &Map, raw: &[Vec2], m: Mark) {
+    let Some(q) = raw.first() else { return };
+    flush(s, batch);
+    let half = (m.w.max(0.5)) / 2.0;
+    let c = map.pt(*q);
+    if let Some(path) = rect_path(c - Vec2::new(half, half), c + Vec2::new(half, half)) {
+        fill_path(s, &path, m.rgb, m.t);
+    }
 }
 
 /// Write one glyph as text in its embedded font: font size 1, placed by the glyph's matrix (one

@@ -67,6 +67,7 @@
 	Blend	Übergang
 	Block	Block
 	Block Attribute Manager...	Blockattribut-Manager...
+	Block Description...	Blockbeschreibung...
 	Block Editor	Blockeditor
 	Block Reference	Blockreferenz
 	Block...	Block...
@@ -457,6 +458,7 @@
 	N	N
 	Name	Name
 	Name (A–Z)	Name (A–Z)
+	Named Viewports...	Benannte Ansichtsfenster...
 	Nearest	Nächstgelegener
 	New	Neu
 	New (metric)	Neu (metrisch)
@@ -1039,3 +1041,6 @@
 	Justify	Blocksatz
 	Text color	Textfarbe
 	Click the ruler to add a tab stop, right-click to remove one	Klick auf das Lineal setzt einen Tabstopp, Rechtsklick entfernt ihn
+	Check for Updates…	Nach Updates suchen…
+	CADCraft is up to date.	CADCraft ist auf dem neuesten Stand.
+	Could not check for updates.	Die Suche nach Updates ist fehlgeschlagen.

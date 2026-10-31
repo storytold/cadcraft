@@ -9,7 +9,8 @@ use cadcraft_doc::{Drawing, Entity, EntityKind, Handle};
 use serde_json::{Value, json};
 
 use super::machines::{SelOutcome, SelectPhase, SelectRun};
-use super::*;
+use super::{CommandSpec, bad, targets};
+
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 /// Most objects one call looks at (a hostile drawing can be huge).

@@ -5,7 +5,8 @@ use cadcraft_geom::{Bounds2, Mat3, Vec2};
 use serde_json::{Value, json};
 
 use super::machines::{SelOutcome, SelectPhase, SelectRun};
-use super::*;
+use super::{CommandSpec, EngineError, bad, bool_or, clipboard, f64_or, has_selection, point_param, point_req, points_param, str_param, targets};
+
 use crate::undoctl::Control;
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 

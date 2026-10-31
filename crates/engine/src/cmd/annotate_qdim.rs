@@ -6,8 +6,10 @@ use cadcraft_doc::{DimKind, EntityKind, Handle, Prim};
 use cadcraft_geom::{Segment, Vec2};
 use serde_json::{Value, json};
 
-use super::machines::{SelOutcome, SelectPhase};
-use super::*;
+use super::super::machines::{SelOutcome, SelectPhase};
+use super::super::{bad, point_param, point_req, points_param, str_param, targets};
+use super::{MAX_CHAIN, assoc_enabled, dim};
+
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 
 pub(super) const PARAMS: &str = "{handles?, at: [x,y] (dimension line position), mode?: continuous|staggered|baseline|ordinate|radius|diameter (default continuous), vertical?: bool (default: from `at`), datum?: [x,y] (baseline and ordinate; default the first point, or the origin for ordinate), add?: [[x,y]], remove?: [[x,y]] (dimension points; removes those within `tolerance`)}";
@@ -94,9 +96,9 @@ fn plan(
             let dir = if dir == Vec2::ZERO || !dir.is_finite() { Vec2::from_angle(std::f64::consts::FRAC_PI_4) } else { dir };
             let p = *c + dir * *r;
             out.push(if mode == Mode::Diameter {
-                dim(s, DimKind::Diameter, *c - dir * *r, Vec2::ZERO, Vec2::ZERO, p, Vec2::ZERO, "")
+                dim(s, DimKind::Diameter, *c - dir * *r, Vec2::ZERO, Vec2::ZERO, p, "")
             } else {
-                dim(s, DimKind::Radius, *c, Vec2::ZERO, Vec2::ZERO, p, Vec2::ZERO, "")
+                dim(s, DimKind::Radius, *c, Vec2::ZERO, Vec2::ZERO, p, "")
             });
         }
         if out.is_empty() {
@@ -129,7 +131,7 @@ fn plan(
             .iter()
             .map(|p| {
                 let end = if vertical { Vec2::new(at.x, p.y) } else { Vec2::new(p.x, at.y) };
-                dim(s, DimKind::Ordinate { x_type: !vertical }, origin, *p, end, Vec2::ZERO, Vec2::ZERO, "")
+                dim(s, DimKind::Ordinate { x_type: !vertical }, origin, *p, end, Vec2::ZERO, "")
             })
             .collect());
     }
@@ -145,8 +147,7 @@ fn plan(
     let mid = bounds.center();
     let out_dir =
         if vertical { Vec2::new(if at.x >= mid.x { 1.0 } else { -1.0 }, 0.0) } else { Vec2::new(0.0, if at.y >= mid.y { 1.0 } else { -1.0 }) };
-    let lin =
-        |a: Vec2, b: Vec2, k: usize| dim(s, DimKind::Linear { rotation: rot }, at + out_dir * (step * k as f64), a, b, Vec2::ZERO, Vec2::ZERO, "");
+    let lin = |a: Vec2, b: Vec2, k: usize| dim(s, DimKind::Linear { rotation: rot }, at + out_dir * (step * k as f64), a, b, Vec2::ZERO, "");
     Ok(match mode {
         Mode::Baseline => {
             // From the datum (the point nearest it, by default the first) to every other point.

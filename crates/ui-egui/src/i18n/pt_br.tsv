@@ -86,6 +86,7 @@
 	Blend	Curva de transição
 	Block	Bloco
 	Block Attribute Manager...	Gerenciador de atributos de bloco...
+	Block Description...	Descrição do bloco...
 	Block Editor	Editor de blocos
 	Block Reference	Referência de bloco
 	Block...	Bloco...
@@ -565,6 +566,7 @@
 	N	N
 	Name	Nome
 	Name (A–Z)	Nome (A–Z)
+	Named Viewports...	Viewports nomeados...
 	Named Views...	Vistas nomeadas...
 	Nearest	Mais próximo
 	New	Novo
@@ -1251,3 +1253,6 @@
 	Not a number or distance: {text}	Não é um número nem uma distância: {text}
 	Select using two clicks only	Selecionar apenas com dois cliques
 	Define each corner of the selection window with a separate click.	Defina cada canto da janela de seleção com um clique separado.
+	Check for Updates…	Verificar atualizações…
+	CADCraft is up to date.	O CADCraft está atualizado.
+	Could not check for updates.	Não foi possível verificar atualizações.

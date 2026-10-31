@@ -358,6 +358,56 @@ fn components<'a>(cons: &[&'a Constraint]) -> Vec<Vec<&'a Constraint>> {
     groups.into_values().collect()
 }
 
+/// The solver weight of each unknown of `model`: kept handles weigh more, preferred-to-move ones
+/// less, angles and ratios by size², and contact parameters move freely.
+fn solver_weights(model: &Model, opts: &SolveOptions) -> Vec<f64> {
+    let mut weights = vec![1.0; model.x0.len()];
+    for s in &model.slots {
+        let w = if opts.keep.contains(&s.handle) {
+            1e4
+        } else if opts.prefer_move.contains(&s.handle) {
+            1e-2
+        } else {
+            1.0
+        };
+        for j in s.off..s.off + s.len {
+            if let Some(slot) = weights.get_mut(j) {
+                *slot = w;
+            }
+        }
+        for (j, f) in slot_scales(model, s) {
+            if let Some(slot) = weights.get_mut(j) {
+                *slot *= f;
+            }
+        }
+    }
+    // Contact parameters move freely.
+    let geo = model.slots.iter().map(|s| s.off + s.len).max().unwrap_or(0);
+    for w in weights.iter_mut().skip(geo) {
+        *w = 1e-3;
+    }
+    weights
+}
+
+/// Per-unknown factors for the angles and ratios of one slot: size², so that the movement of
+/// points is what is minimised.
+fn slot_scales(model: &Model, s: &model::Slot) -> Vec<(usize, f64)> {
+    let sq = |j: usize| model.x0.get(j).map_or(1.0, |r| (r * r).max(1e-6));
+    match s.shape {
+        model::Shape::Arc => vec![(s.off + 3, sq(s.off + 2)), (s.off + 4, sq(s.off + 2))],
+        model::Shape::Ellipse { arc } => {
+            let a2 = (sq(s.off + 2) + sq(s.off + 3)).max(1e-6);
+            let mut v = vec![(s.off + 4, a2)];
+            if arc {
+                v.extend([(s.off + 5, a2), (s.off + 6, a2)]);
+            }
+            v
+        }
+        model::Shape::Insert { .. } => vec![(s.off + 2, model.rigid_extent2(s.handle).max(1.0))],
+        _ => Vec::new(),
+    }
+}
+
 /// Build the component systems. Constraints that cannot be interpreted are returned as skipped.
 pub(crate) fn build(d: &Drawing, cons: &[&Constraint], opts: &SolveOptions) -> Result<(Vec<Comp>, Vec<(u32, String)>), SolveError> {
     let mut members_left = model::MAX_RIGID_WORK;
@@ -396,46 +446,7 @@ pub(crate) fn build_budgeted(
         if built.is_empty() {
             continue;
         }
-        let mut weights = vec![1.0; model.x0.len()];
-        for s in &model.slots {
-            let w = if opts.keep.contains(&s.handle) {
-                1e4
-            } else if opts.prefer_move.contains(&s.handle) {
-                1e-2
-            } else {
-                1.0
-            };
-            for j in s.off..s.off + s.len {
-                if let Some(slot) = weights.get_mut(j) {
-                    *slot = w;
-                }
-            }
-            // Angles and ratios: weight by size² so the movement of points is what is minimised.
-            let sq = |j: usize| model.x0.get(j).map_or(1.0, |r| (r * r).max(1e-6));
-            let scaled: Vec<(usize, f64)> = match s.shape {
-                model::Shape::Arc => vec![(s.off + 3, sq(s.off + 2)), (s.off + 4, sq(s.off + 2))],
-                model::Shape::Ellipse { arc } => {
-                    let a2 = (sq(s.off + 2) + sq(s.off + 3)).max(1e-6);
-                    let mut v = vec![(s.off + 4, a2)];
-                    if arc {
-                        v.extend([(s.off + 5, a2), (s.off + 6, a2)]);
-                    }
-                    v
-                }
-                model::Shape::Insert { .. } => vec![(s.off + 2, model.rigid_extent2(s.handle).max(1.0))],
-                _ => Vec::new(),
-            };
-            for (j, f) in scaled {
-                if let Some(slot) = weights.get_mut(j) {
-                    *slot *= f;
-                }
-            }
-        }
-        // Contact parameters move freely.
-        let geo = model.slots.iter().map(|s| s.off + s.len).max().unwrap_or(0);
-        for w in weights.iter_mut().skip(geo) {
-            *w = 1e-3;
-        }
+        let weights = solver_weights(&model, opts);
         let held = opts.hold.iter().filter_map(|r| model.lock_indices(r)).flatten().collect();
         let tol = scale_tol(&model.x0);
         comps.push(Comp { model, built, weights, held, tol });

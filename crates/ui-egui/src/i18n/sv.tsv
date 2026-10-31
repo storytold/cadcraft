@@ -90,6 +90,7 @@
 	Blend	Mjuk övergång
 	Block	Block
 	Block Attribute Manager...	Hantera blockattribut...
+	Block Description...	Blockbeskrivning...
 	Block Editor	Blockredigerare
 	Block Reference	Blockreferens
 	Block...	Block...
@@ -569,6 +570,7 @@
 	N	N
 	Name	Namn
 	Name (A–Z)	Namn (A–Ö)
+	Named Viewports...	Namngivna vyfönster...
 	Named Views...	Namngivna vyer...
 	Nearest	Närmaste
 	New	Ny
@@ -1446,3 +1448,6 @@ menu	Modify	Ändra
 	US Survey Yard	Lantmäteriyard (USA)
 	Yards	Yard
 	Your changes will be lost if you don't save them.	Dina ändringar går förlorade om du inte sparar dem.
+	Check for Updates…	Sök efter uppdateringar…
+	CADCraft is up to date.	CADCraft är uppdaterat.
+	Could not check for updates.	Det gick inte att söka efter uppdateringar.

@@ -92,6 +92,7 @@
 	Blend	Spojit křivky
 	Block	Blok
 	Block Attribute Manager...	Správce atributů bloků...
+	Block Description...	Popis bloku...
 	Block Editor	Editor bloků
 	Block Reference	Reference bloku
 	Block...	Blok...
@@ -537,6 +538,7 @@
 	N	S
 	Name	Název
 	Name (A–Z)	Název (A–Z)
+	Named Viewports...	Pojmenované výřezy...
 	Named Views...	Pojmenované pohledy...
 	Nearest	Nejbližší
 	New	Nový
@@ -1222,3 +1224,6 @@ menu	Modify	Modifikace
 	Not a number or distance: {text}	Není číslo ani vzdálenost: {text}
 	Query Texts	Dotaz na texty
 	Analyze Shapes	Analyzovat tvary
+	Check for Updates…	Zkontrolovat aktualizace…
+	CADCraft is up to date.	CADCraft je aktuální.
+	Could not check for updates.	Aktualizace se nepodařilo zkontrolovat.

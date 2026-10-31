@@ -67,6 +67,7 @@
 	Blend	Сгладить
 	Block	Блок
 	Block Attribute Manager...	Диспетчер атрибутов блоков...
+	Block Description...	Описание блока...
 	Block Editor	Редактор блоков
 	Block Reference	Вхождение блока
 	Block...	Блок...
@@ -452,6 +453,7 @@
 	N	С
 	Name	Название
 	Name (A–Z)	Название (А–Я)
+	Named Viewports...	Именованные видовые экраны...
 	Nearest	Ближайшая точка
 	New	Создать
 	New (metric)	Создать (метрический)
@@ -1013,3 +1015,6 @@
 	Not a number or distance: {text}	Не число и не расстояние: {text}
 	Query Texts	Запрос текстов
 	Analyze Shapes	Анализ фигур
+	Check for Updates…	Проверить обновления…
+	CADCraft is up to date.	У вас последняя версия CADCraft.
+	Could not check for updates.	Не удалось проверить обновления.

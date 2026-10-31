@@ -8,6 +8,15 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+/// CADCraft as craft-update knows it, with its 128 px icon and accent colour: the update
+/// prompt shows both, and an AppImage's menu entry gets the icon.
+#[cfg(not(target_arch = "wasm32"))]
+pub const UPDATE_APP: craft_update::app::App = craft_update::app::App {
+    icon_png: Some(include_bytes!("../../../assets/app-icon/hicolor/128x128/apps/ai.storyteller.cadcraft.png")),
+    accent: Some([0x3e, 0xa6, 0xe8]),
+    ..craft_update::suite::CADCRAFT
+};
+
 pub mod aliasdlg;
 pub mod animation;
 pub mod autosave;
@@ -27,6 +36,7 @@ pub mod hatchdlg;
 mod mtext_editor;
 mod panel_state;
 pub mod spacemouse;
+pub mod switch;
 // The External References palette.
 pub mod xrefs;
 
@@ -46,13 +56,17 @@ pub mod palettes;
 pub mod parametric;
 pub mod plotstyles;
 pub mod quick;
+pub mod save_loss;
 pub mod shortcut_menus;
 pub mod theme;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod updates_ui;
 pub mod viewcube;
 pub mod vpscale;
 
 pub mod exchange;
 
+use std::path::Path;
 use std::sync::mpsc::Receiver;
 
 use cadcraft_engine::Session;
@@ -86,7 +100,7 @@ pub struct UiState {
     /// Keep the system cursor visible over the drawing area (a small crosshair at the centre of the
     /// drawn one) instead of hiding it. Screen magnifiers (Windows Magnifier "follow the mouse
     /// pointer"), screen readers, recorders and remote desktops track the system cursor and lose it
-    /// when it is hidden. Off by default; `CADCRAFT_SYSTEM_CURSOR=1` turns it on at startup.
+    /// when it is hidden. Off unless the host defaults to it ([`CadApp::set_system_cursor_default`]).
     pub system_cursor: bool,
     /// "Drafting" or "Modeling".
     pub toolset_tab: String,
@@ -105,7 +119,7 @@ pub struct UiState {
     /// Animation effects (dialog and menu fades, smoothed scrolling): "system" (follow the OS
     /// setting), "on" or "off".
     pub animations: animation::AnimationPref,
-    /// The format Save As suggests for a drawing that has no file yet: "dxf" or "dwg".
+    /// The format Save As suggests: "dxf" or "dwg", for new drawings and opened files alike.
     pub save_format: SaveFormat,
     /// The version Save As writes for a drawing that has no file yet ("2000" … "2018"); a
     /// drawing opened from a file keeps that file's version.
@@ -119,8 +133,8 @@ pub struct UiState {
 /// A DXF/DWG file version (2000 … 2018).
 pub use cadcraft_engine::cmd::file::Version as SaveVersion;
 
-/// The default save format for new drawings, like AutoCAD's Options > Open and Save > "Save as".
-/// A drawing opened from a file keeps that file's format.
+/// The default save format, like AutoCAD's Options > Open and Save > "Save as": the format Save As
+/// suggests for every drawing, an opened DWG or DXF too. Save (QSAVE) of an opened file keeps its file.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SaveFormat {
@@ -145,13 +159,19 @@ impl SaveFormat {
         SaveFormat::ALL.into_iter().find(|f| f.as_str().eq_ignore_ascii_case(s.trim().trim_start_matches('.')))
     }
 
-    /// The name Save As suggests: a title that already has an extension (a drawing opened from a
-    /// file) keeps it; an untitled drawing gets this format's extension.
+    /// The name Save As suggests: this format's extension, replacing a drawing's own (DWG, DXF or
+    /// DWT, from a drawing opened from a file); any other extension is kept.
     pub fn suggested_name(self, title: Option<&str>) -> String {
-        match title.map(str::trim).filter(|t| !t.is_empty()) {
-            Some(t) if std::path::Path::new(t).extension().is_some() => t.to_owned(),
-            Some(t) => format!("{t}.{}", self.as_str()),
-            None => format!("Drawing.{}", self.as_str()),
+        let Some(t) = title.map(str::trim).filter(|t| !t.is_empty()) else { return format!("Drawing.{}", self.as_str()) };
+        let path = std::path::Path::new(t);
+        match path.extension().and_then(|e| e.to_str()) {
+            Some(e) if ["dwg", "dxf", "dwt"].iter().any(|d| d.eq_ignore_ascii_case(e)) => {
+                // the extension is ASCII, so this is a char boundary
+                let stem = t.get(..t.len().saturating_sub(e.len() + 1)).unwrap_or(t);
+                format!("{stem}.{}", self.as_str())
+            }
+            Some(_) => t.to_owned(),
+            None => format!("{t}.{}", self.as_str()),
         }
     }
 }
@@ -171,7 +191,7 @@ impl Default for UiState {
             show_viewcube: true,
             show_ucs_icon: true,
             show_layer_list: false,
-            system_cursor: std::env::var("CADCRAFT_SYSTEM_CURSOR").is_ok_and(|v| !matches!(v.trim(), "" | "0" | "false" | "off")),
+            system_cursor: false,
             toolset_tab: "Drafting".into(),
             collapsed_groups: Vec::new(),
             hidden_tools: Vec::new(),
@@ -209,6 +229,8 @@ pub struct CadApp {
     /// Whether the operating system shows animations, as the host reads it; `None` when the OS
     /// states nothing or the host cannot ask ([`animation`]).
     pub system_animations: Option<bool>,
+    /// What `ui.system_cursor` goes back to when the interface is reset ([`Self::set_system_cursor_default`]).
+    pub system_cursor_default: bool,
     pub session: Session,
     pub ui: UiState,
     /// The interface's own preferences from the Options dialog ([`options`]).
@@ -233,6 +255,15 @@ pub struct CadApp {
     /// Admitted `ui.screenshot` requests, including completed-but-undrained ones.
     pub(crate) shots: capture::Shots,
     pub synthetic: Vec<egui::Event>,
+    /// Keys, text and clipboard events a floating panel's own OS window left over, with the
+    /// modifiers held there, for the main window's next input ([`Self::forward_native_input`]).
+    forwarded: Vec<egui::Event>,
+    forwarded_modifiers: Option<egui::Modifiers>,
+    /// The main window's own modifiers, put back the frame after forwarded keys went in.
+    restore_modifiers: Option<egui::Modifiers>,
+    /// A panel opened from a menu or command, whose floating window comes to the front on the
+    /// next frame (craft-ui's `DockArea::raise_panel`).
+    pub raise_panel: Option<docking::Panel>,
     /// One synthetic batch has been put into `RawInput` and is waiting for a real `App::ui` call.
     synthetic_injected: bool,
     /// Counts settled UI passes (one per painted frame; never hidden logic-only ticks or
@@ -260,6 +291,10 @@ pub struct CadApp {
     pub quit_confirmed: bool,
     /// A close request waiting for "Save changes?" answers ([`closing`]).
     pub closing: Option<closing::Closing>,
+    /// A save waiting for an answer about the content the file can't keep ([`save_loss`]).
+    pub save_loss: Option<save_loss::Pending>,
+    /// The loss the user last agreed to, so saving again doesn't ask again ([`save_loss`]).
+    pub save_loss_accepted: Option<save_loss::Accepted>,
     /// Autosave (desktop; `None` until [`Self::enable_autosave`]).
     pub autosave: Option<cadcraft_engine::autosave::Autosaver>,
     /// Drawing Recovery: autosave files a crashed app left behind.
@@ -274,6 +309,9 @@ pub struct CadApp {
     pub hatch_dlg: Option<hatchdlg::HatchDlgState>,
     /// The Edit Block Definition dialog ([`bedit`]).
     pub bedit: bedit::State,
+    /// The startup update check and its prompt (desktop; [`updates_ui`]).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub updates_rt: updates_ui::Runtime,
 }
 
 impl CadApp {
@@ -282,6 +320,7 @@ impl CadApp {
         CadApp {
             system_languages: Vec::new(),
             system_animations: None,
+            system_cursor_default: false,
             session,
             ui: UiState::default(),
             options: options::UiOptions::default(),
@@ -298,6 +337,10 @@ impl CadApp {
             capture_identity_epoch: 0,
             shots: capture::Shots::default(),
             synthetic: Vec::new(),
+            forwarded: Vec::new(),
+            forwarded_modifiers: None,
+            restore_modifiers: None,
+            raise_panel: None,
             synthetic_injected: false,
             ui_frames: 0,
             #[cfg(not(target_arch = "wasm32"))]
@@ -312,6 +355,8 @@ impl CadApp {
             quit_requested: false,
             quit_confirmed: false,
             closing: None,
+            save_loss: None,
+            save_loss_accepted: None,
             autosave: None,
             recovery: autosave::Recovery::default(),
             gpu_faults: std::sync::Arc::default(),
@@ -319,6 +364,8 @@ impl CadApp {
             alias_dlg: None,
             hatch_dlg: None,
             bedit: bedit::State::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            updates_rt: updates_ui::Runtime::default(),
         }
     }
 
@@ -375,6 +422,13 @@ impl CadApp {
     /// Submit a line of command-line text. A refused line is echoed to the history; the error is
     /// also returned.
     pub fn cmdline(&mut self, text: &str) -> Option<String> {
+        self.cmdline_or(text, None)
+    }
+
+    /// [`CadApp::cmdline`], but a command name nothing knows (no command, alias, UI command, LISP
+    /// command or system variable) runs `fallback` instead: Enter on a partly typed name accepts
+    /// the highlighted AutoComplete suggestion.
+    pub fn cmdline_or(&mut self, text: &str, fallback: Option<&str>) -> Option<String> {
         if !self.session.prompting() {
             let first = text.split_whitespace().next().unwrap_or("");
             // `cmd {json}` is a programmatic call: the engine runs it with those parameters.
@@ -383,7 +437,11 @@ impl CadApp {
                 return None;
             }
         }
-        let e = self.session.cmdline(text).err()?.to_string();
+        let e = match (self.session.cmdline(text), fallback) {
+            (Ok(()), _) => return None,
+            (Err(cadcraft_engine::EngineError::UnknownCommand(_)), Some(f)) => return self.cmdline(f),
+            (Err(e), _) => e.to_string(),
+        };
         self.session.echo(e.clone());
         Some(e)
     }
@@ -449,6 +507,15 @@ impl CadApp {
         }
     }
 
+    /// Make the system cursor the interface default (`on`) and turn it on; saved preferences and
+    /// resets never turn it off then.
+    pub fn set_system_cursor_default(&mut self, on: bool) {
+        self.system_cursor_default = on;
+        if on {
+            self.ui.system_cursor = true;
+        }
+    }
+
     pub fn set_status(&mut self, s: impl Into<String>) {
         self.status = Some((s.into(), now_ms()));
     }
@@ -461,12 +528,12 @@ impl CadApp {
     /// Open the drawing at `path`. Natively the file is read on a worker thread while an
     /// "Opening ..." card shows ([`opening`]); [`Self::finish_opening`] adds it when ready. On the
     /// web it opens at once.
-    pub fn open_path(&mut self, path: &str) {
+    pub fn open_path(&mut self, path: &Path) {
         // A LISP file (dropped on the window): loaded as APPLOAD loads it.
         if is_lisp_file(path) {
             match cadcraft_engine::lisp::builtins::read_text_file(path) {
-                Some(text) => self.load_lisp(path, &text),
-                None => self.open_failed(format!("APPLOAD: can't read {path}")),
+                Some(text) => self.load_lisp(&path.to_string_lossy(), &text),
+                None => self.open_failed(format!("APPLOAD: can't read {}", path.display())),
             }
             return;
         }
@@ -476,7 +543,10 @@ impl CadApp {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let r = self.run("open", json!({ "path": path }));
+            let r = match path.to_str() {
+                Some(text) => self.run("open", json!({ "path": text })),
+                None => Err(format!("open: {}: the path is not valid Unicode", path.display())),
+            };
             self.opened(r);
         }
     }
@@ -597,6 +667,9 @@ impl CadApp {
         if ctx.current_pass_index() != 0 {
             return;
         }
+        if self.restore_modifiers.is_some() {
+            ctx.request_repaint();
+        }
         // Closing the window with unsaved changes asks first. `run_logic` refreshes viewport
         // close/focus state, so this must also work while hidden.
         if ctx.input(|i| i.viewport().close_requested()) && self.request_quit() {
@@ -607,6 +680,8 @@ impl CadApp {
         self.session.lisp_tick();
         // Time-based and idempotent by its own deadline; keeps autosave alive while hidden.
         self.autosave_tick(ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        updates_ui::tick(self, ctx);
         if !self.synthetic.is_empty() || self.synthetic_injected {
             request_paint_while_hidden(ctx);
         }
@@ -616,13 +691,56 @@ impl CadApp {
         capture::request_hidden_paint(self, ctx);
     }
 
-    /// Input hook: refresh the raw surface snapshot and release at most one synthetic batch.
+    /// Queue keys typed in a floating panel's own OS window (craft-ui's
+    /// `DockOutput::forwarded_events` and `forwarded_modifiers`) for the main window's next
+    /// input. egui gives each OS window only its own input, and the shortcuts, the command line
+    /// and the canvas all read the main window's, so the keys go in there as if typed in it.
+    pub fn forward_native_input(&mut self, ctx: &egui::Context, events: Vec<egui::Event>, modifiers: Option<egui::Modifiers>) {
+        if events.is_empty() {
+            return;
+        }
+        self.forwarded.extend(events);
+        if modifiers.is_some() {
+            self.forwarded_modifiers = modifiers;
+        }
+        if self.restore_modifiers.is_none() {
+            self.restore_modifiers = Some(ctx.input(|i| i.modifiers));
+        }
+        ctx.request_repaint_of(egui::ViewportId::ROOT);
+    }
+
+    /// Whether a modal dialog is up: the "Save changes?" prompt, the lossy-save warning or Drawing Recovery. The
+    /// floating panels' own OS windows take no input meanwhile (egui's `Modal` blocks only the
+    /// main window). The app's other dialogs are ordinary windows that leave the drawing usable.
+    pub fn shows_modal(&self) -> bool {
+        self.close_prompt().is_some() || self.save_loss.is_some() || !self.recovery.items.is_empty()
+    }
+
+    /// Input hook: refresh the raw surface snapshot, put in keys forwarded from floating panels'
+    /// OS windows, and release at most one synthetic batch.
     ///
     /// Eframe keeps the unused `RawInput` across hidden logic-only ticks, so a batch already in
     /// the buffer is never injected again; the next batch waits for a real `ui` pass to consume
     /// the previous one.
     pub fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
         capture::note_raw_geometry(self, ctx, raw);
+        // The forwarded window's modifiers hold for the frame its keys go in (Shift+Copy is
+        // COPYBASE); the next frame puts the main window's back, before its own changes.
+        if !self.forwarded.is_empty() {
+            // A modifier the main window changed meanwhile is the one to put back.
+            if let Some(own) = raw.events.iter().rev().find_map(|event| match event {
+                egui::Event::ModifiersChanged(modifiers) => Some(*modifiers),
+                _ => None,
+            }) {
+                self.restore_modifiers = Some(own);
+            }
+            if let Some(modifiers) = self.forwarded_modifiers.take() {
+                raw.events.push(egui::Event::ModifiersChanged(modifiers));
+            }
+            raw.events.append(&mut self.forwarded);
+        } else if let Some(modifiers) = self.restore_modifiers.take() {
+            raw.events.insert(0, egui::Event::ModifiersChanged(modifiers));
+        }
         if self.synthetic_injected || self.synthetic.is_empty() {
             return;
         }
@@ -732,9 +850,9 @@ impl CadApp {
         {
             let dropped = ctx.input_mut(|input| std::mem::take(&mut input.raw.dropped_files));
             for file in dropped {
-                let path = file.path().to_string_lossy().to_string();
-                if !path.is_empty() {
-                    self.open_path(&path);
+                let path = file.path();
+                if !path.as_os_str().is_empty() {
+                    self.open_path(path);
                 }
             }
         }
@@ -770,9 +888,12 @@ impl CadApp {
             }
         });
         self.opening.show(ui.ctx());
+        #[cfg(not(target_arch = "wasm32"))]
+        updates_ui::show(self, ui.ctx());
         dialogs::show(self, ui.ctx());
         palettes::patterns::prompt_picker(self, ui.ctx());
         closing::prompt(self, ui.ctx());
+        save_loss::prompt(self, ui.ctx());
         autosave::show(self, ui.ctx());
         autosave::gpu_notice(self, ui.ctx());
         self.frame_ms = now_ms() - t0;
@@ -819,8 +940,8 @@ pub fn now_ms() -> f64 {
 }
 
 /// A LISP source file, by its name.
-fn is_lisp_file(name: &str) -> bool {
-    std::path::Path::new(name).extension().is_some_and(|e| e.eq_ignore_ascii_case("lsp"))
+fn is_lisp_file(name: impl AsRef<Path>) -> bool {
+    name.as_ref().extension().is_some_and(|e| e.eq_ignore_ascii_case("lsp"))
 }
 
 #[cfg(test)]
@@ -1046,11 +1167,17 @@ mod tests {
         b.start("ui.saveformat.dwg");
         b.start("ui.resetpalettes");
         assert_eq!(b.ui.save_format, SaveFormat::Dwg);
-        // Untitled drawings get the format's extension; files keep their own.
+        // Untitled drawings get the format's extension, and so do opened drawings (#2199).
         assert_eq!(SaveFormat::Dwg.suggested_name(Some("Drawing1")), "Drawing1.dwg");
         assert_eq!(SaveFormat::Dxf.suggested_name(Some("Drawing1")), "Drawing1.dxf");
-        assert_eq!(SaveFormat::Dwg.suggested_name(Some("Floorplan.dxf")), "Floorplan.dxf");
-        assert_eq!(SaveFormat::Dxf.suggested_name(Some("Floorplan.DWG")), "Floorplan.DWG");
+        assert_eq!(SaveFormat::Dwg.suggested_name(Some("Floorplan.dxf")), "Floorplan.dwg");
+        assert_eq!(SaveFormat::Dxf.suggested_name(Some("Floorplan.DWG")), "Floorplan.dxf");
+        assert_eq!(SaveFormat::Dxf.suggested_name(Some("Floorplan.dxf")), "Floorplan.dxf");
+        assert_eq!(SaveFormat::Dwg.suggested_name(Some("Title block.dwt")), "Title block.dwg");
+        assert_eq!(SaveFormat::Dwg.suggested_name(Some("v1.2 plan.Dxf")), "v1.2 plan.dwg");
+        assert_eq!(SaveFormat::Dwg.suggested_name(Some("平面図.dxf")), "平面図.dwg");
+        assert_eq!(SaveFormat::Dwg.suggested_name(Some(".dxf")), ".dxf.dwg", "a dot file has no extension");
+        assert_eq!(SaveFormat::Dxf.suggested_name(Some("logo.svg")), "logo.svg", "other files keep their type");
         assert_eq!(SaveFormat::Dwg.suggested_name(None), "Drawing.dwg");
         assert_eq!(SaveFormat::Dwg.suggested_name(Some("  ")), "Drawing.dwg");
         let ui: UiState = serde_json::from_value(json!({ "saveFormat": "dwg" })).unwrap_or_default();
