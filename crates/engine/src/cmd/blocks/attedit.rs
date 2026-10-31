@@ -19,7 +19,7 @@ pub(super) fn attedit_spec() -> CommandSpec {
     CommandSpec::new("attedit", "Single...", run)
         .menu(&["Modify", "Object", "Attribute", "Single..."])
         .alias(&["ate", "eattedit"])
-        .params("{handle, values: {TAG: value} (tags in any case)} → {changed, unknownTags?}")
+        .params("{handle | handles (every block reference gets the values), values: {TAG: value} (tags in any case; constant attributes are left alone)} → {changed, unknownTags?, constantTags?}")
         .interactive(|_| Ok(Box::new(AtteditM::default())))
 }
 
@@ -59,21 +59,114 @@ pub(super) fn with_unknown_tags(s: &Session, h: Handle, values: &Map<String, Val
     r
 }
 
+/// `r` with `unknownTags`: the keys of `values` that none of the block references `hs` has an
+/// attribute for (left out when there are none).
+fn with_unknown_tags_of_all(s: &Session, hs: &[Handle], values: &Map<String, Value>, mut r: Value) -> Value {
+    let Ok(d) = s.doc() else { return r };
+    let known = |k: &str| {
+        hs.iter()
+            .any(|h| matches!(d.entity(*h).map(|e| &e.kind), Some(EntityKind::Insert(i)) if i.attribs.iter().any(|a| a.tag.eq_ignore_ascii_case(k))))
+    };
+    let unknown: Vec<&String> = values.keys().filter(|k| !known(k)).collect();
+    if !unknown.is_empty()
+        && let Some(o) = r.as_object_mut()
+    {
+        o.insert("unknownTags".into(), json!(unknown));
+    }
+    r
+}
+
+/// ATTEDIT on `handle` or `handles`: every block reference gets the values. The whole request is
+/// checked before the first edit, so a refused one changes nothing: each target must be a block
+/// reference on an unlocked layer and no value may be too long. Constant attributes are left alone
+/// and named in `constantTags`.
 fn run(s: &mut Session, p: &Value) -> Result<Value> {
-    let h = targets(s, p)?.first().copied().ok_or_else(|| bad("attedit", "`handle` is required"))?;
+    let hs = targets(s, p)?;
+    if hs.is_empty() {
+        return Err(bad("attedit", "`handle` or `handles` is required"));
+    }
     let vals = p.get("values").and_then(Value::as_object).cloned().unwrap_or_default();
-    let mut n = 0;
-    s.doc_mut()?.modify_entity(h, |e| {
-        if let EntityKind::Insert(i) = &mut e.kind {
-            for a in &mut i.attribs {
-                if let Some(v) = value_for(&vals, &a.tag) {
-                    set_value(&mut a.text, v);
-                    n += 1;
-                }
+    let mut constant: Vec<String> = Vec::new();
+    for h in &hs {
+        let Some(entity) = s.doc()?.entity(*h) else {
+            return Err(bad("attedit", format!("no object has handle {}", h.hex())));
+        };
+        let EntityKind::Insert(ins) = &entity.kind else {
+            return Err(bad("attedit", format!("{} is not a block reference", h.hex())));
+        };
+        if super::super::curves::is_locked(s, *h) {
+            return Err(bad("attedit", format!("the reference {} is on a locked layer", h.hex())));
+        }
+        if let Some(a) = ins.attribs.iter().find(|a| value_for(&vals, &a.tag).is_some_and(|v| v.len() > MAX_VALUE)) {
+            return Err(bad("attedit", format!("the value for {} is longer than {MAX_VALUE} bytes", a.tag)));
+        }
+        for a in ins.attribs.iter().filter(|a| a.constant && value_for(&vals, &a.tag).is_some()) {
+            if !constant.iter().any(|t| t.eq_ignore_ascii_case(&a.tag)) {
+                constant.push(a.tag.clone());
             }
         }
-    })?;
-    Ok(with_unknown_tags(s, h, &vals, json!({ "changed": n })))
+    }
+    let mut n = 0;
+    for h in &hs {
+        s.doc_mut()?.modify_entity(*h, |e| {
+            if let EntityKind::Insert(i) = &mut e.kind {
+                for a in i.attribs.iter_mut().filter(|a| !a.constant) {
+                    if let Some(v) = value_for(&vals, &a.tag) {
+                        set_value(&mut a.text, v);
+                        n += 1;
+                    }
+                }
+            }
+        })?;
+    }
+    let mut r = with_unknown_tags_of_all(s, &hs, &vals, json!({ "changed": n }));
+    if !constant.is_empty()
+        && let Some(o) = r.as_object_mut()
+    {
+        o.insert("constantTags".into(), json!(constant));
+    }
+    Ok(r)
+}
+
+/// One attribute of a block reference, as the Properties palette and the Edit Attributes dialog
+/// list it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AttributeRow {
+    pub tag: String,
+    /// The definition's prompt (the tag when it has none).
+    pub prompt: String,
+    pub value: String,
+    /// Not constant: the value can be changed.
+    pub editable: bool,
+    pub invisible: bool,
+    /// A multiline attribute: its value may hold line breaks.
+    pub multiline: bool,
+}
+
+/// The attributes of block reference `h`, in order (empty for other objects). The prompt comes
+/// from the attribute, else from its definition in the reference's block.
+pub fn attributes(d: &cadcraft_doc::Drawing, h: Handle) -> Vec<AttributeRow> {
+    let Some(EntityKind::Insert(ins)) = d.entity(h).map(|e| &e.kind) else { return Vec::new() };
+    let block = d.block(&ins.block);
+    let def_prompt = |tag: &str| {
+        block.and_then(|b| {
+            b.entities.iter().find_map(|e| match &e.kind {
+                EntityKind::AttDef(ad) if ad.tag.eq_ignore_ascii_case(tag) && !ad.prompt.is_empty() => Some(ad.prompt.clone()),
+                _ => None,
+            })
+        })
+    };
+    ins.attribs
+        .iter()
+        .map(|a| AttributeRow {
+            tag: a.tag.clone(),
+            prompt: if a.prompt.is_empty() { def_prompt(&a.tag).unwrap_or_else(|| a.tag.clone()) } else { a.prompt.clone() },
+            value: a.text.value.clone(),
+            editable: !a.constant,
+            invisible: a.invisible,
+            multiline: a.multiline.is_some(),
+        })
+        .collect()
 }
 
 /// A block name, tag or value specification: comma-separated wildcard patterns, any case. For
@@ -246,6 +339,14 @@ impl AtteditM {
 impl Interactive for AtteditM {
     fn name(&self) -> &'static str {
         "ATTEDIT"
+    }
+    /// A selected block reference is taken at once (Edit Attributes from the shortcut menu).
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        let pre = s.selection();
+        if s.settings.pickfirst && !pre.is_empty() && self.pick(s, &pre).is_ok() {
+            s.set_selection(Vec::new());
+        }
+        Ok(Step::Continue)
     }
     fn prompt(&self, _s: &Session) -> Prompt {
         match self.attribs.get(self.values.len()) {

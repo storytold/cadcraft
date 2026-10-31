@@ -518,9 +518,14 @@ pub(crate) fn layers_section(app: &mut CadApp, ui: &mut egui::Ui) {
 
 /// Properties row: a right-aligned translated label in a 106-point layout box that exposes a Label node to accessibility and names the control added by `add`.
 fn prop_row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
+    prop_row_literal(ui, crate::i18n::t(label), add);
+}
+
+/// A property row whose label comes from the drawing (an attribute tag): shown as it is.
+fn prop_row_literal(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
     let t = Tokens::get();
     ui.horizontal(|ui| {
-        let mut job = egui::text::LayoutJob::simple(crate::i18n::t(label).to_string(), crate::theme::body(), t.text_dim, 106.0);
+        let mut job = egui::text::LayoutJob::simple(label.to_string(), crate::theme::body(), t.text_dim, 106.0);
         job.halign = egui::Align::RIGHT;
         let galley = ui.painter().layout_job(job);
         let (lr, label_response) = ui.allocate_exact_size(vec2(118.0, galley.size().y.max(22.0)), Sense::hover());
@@ -627,7 +632,12 @@ fn custom_properties(ui: &egui::Ui, app: &CadApp, h: cadcraft_engine::doc::Handl
 
 /// A greyed value computed from the geometry.
 fn read_only(ui: &mut egui::Ui, text: &str) {
-    value_box(ui, crate::i18n::t(text), false, false).on_hover_text(crate::tl!("Read-only"));
+    read_only_literal(ui, crate::i18n::t(text));
+}
+
+/// A greyed value that comes from the drawing (a block name, an attribute value): shown as it is.
+fn read_only_literal(ui: &mut egui::Ui, text: &str) {
+    value_box(ui, text, false, false).on_hover_text(crate::tl!("Read-only"));
 }
 
 /// The Properties header: All/My, the selection-type filter and the PICKADD / Select Objects /
@@ -899,6 +909,7 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     let ids: Vec<String> = sel.iter().map(|h| h.hex()).collect();
     let mut set: Option<Value> = None;
     let mut custom_set: Option<Value> = None;
+    let mut att_set: Option<Value> = None;
     let group = |ui: &mut egui::Ui, title: &str| {
         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 20.0), Sense::hover());
         ui.painter().rect_filled(r.shrink2(vec2(6.0, 1.0)), 2.0, t.chrome_dark);
@@ -1156,6 +1167,26 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                         });
                     }
                 }
+                let atts = cadcraft_engine::attributes(d, e.handle);
+                if !atts.is_empty() {
+                    group(ui, "Attributes");
+                    for a in &atts {
+                        prop_row(ui, &a.tag, |ui| {
+                            // A value with line breaks is edited in the Edit Attributes dialog;
+                            // a single-line field would join its lines.
+                            if !a.editable || a.value.contains('\n') {
+                                let r = value_box(ui, &a.value.replace('\n', " "), false, false);
+                                r.on_hover_text(if a.editable {
+                                    crate::tl!("Multiline: edit it with Edit Attributes")
+                                } else {
+                                    crate::tl!("Constant")
+                                });
+                            } else if let Some(v) = edit_field(ui, ui.scope_id().with(("attval", e.handle, &a.tag)), a.value.clone()) {
+                                att_set = Some(json!({ "handle": e.handle.hex(), "values": { a.tag.clone(): v } }));
+                            }
+                        });
+                    }
+                }
             }
             _ => {}
         }
@@ -1173,6 +1204,165 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     report_bad(app, bad);
     if let Some(p) = custom_set {
         let _ = app.run("blocks.reference.set", p);
+    }
+    if let Some(p) = att_set {
+        let _ = app.run("attedit", p);
+    }
+}
+
+/// What the Attributes panel shows for attributes that differ between the selected block
+/// references, as the Properties palette does for any property.
+const VARIES: &str = "*VARIES*";
+
+/// The block references the Attributes panel edits: the selected objects, when every one of them
+/// is a block reference that has attributes.
+pub(crate) fn attributes_targets(app: &CadApp) -> Vec<cadcraft_engine::doc::Handle> {
+    let sel = app.session.selection();
+    let Ok(d) = app.session.doc() else { return Vec::new() };
+    if sel.iter().all(|h| !cadcraft_engine::attributes(d, *h).is_empty()) { sel } else { Vec::new() }
+}
+
+/// The Attributes panel's targets with the drawing they belong to (its uid), so the same handles in
+/// another open drawing are told apart.
+pub(crate) fn attributes_key(app: &CadApp) -> Option<(u64, Vec<cadcraft_engine::doc::Handle>)> {
+    let hs = attributes_targets(app);
+    if hs.is_empty() {
+        return None;
+    }
+    Some((app.session.state().ok()?.uid, hs))
+}
+
+/// Set attribute `tag` of the block references `hs` to `value` through ATTEDIT, which changes only
+/// the attributes of those references, in one undo step like any other edit.
+fn set_attribute(app: &mut CadApp, hs: &[cadcraft_engine::doc::Handle], tag: &str, value: String) {
+    let handles: Vec<String> = hs.iter().map(|h| h.hex()).collect();
+    let _ = app.run("attedit", json!({ "handles": handles, "values": { tag: value } }));
+}
+
+/// Why the Attributes panel can't edit a row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RowLock {
+    /// Constant: ATTEDIT leaves it alone.
+    Constant,
+    /// A value with line breaks: a single-line field would join its lines (the Properties palette
+    /// sends it to the Edit Attributes dialog).
+    Multiline,
+    /// The tag is used twice in one block, and ATTEDIT addresses an attribute by its tag.
+    Repeated,
+}
+
+/// One row of the Attributes panel: the tag, the value shared by the selected block references
+/// (`varies` when they differ, then `value` is empty) and why it can't be edited, if it can't.
+struct AttributeRow {
+    tag: String,
+    value: String,
+    varies: bool,
+    lock: Option<RowLock>,
+}
+
+/// The panel's rows for block references `hs`, from [`cadcraft_engine::attributes`]. One reference:
+/// its attributes in order, a tag used twice shown twice. Several: the tags of all of them in order
+/// of first appearance, locked when any reference has the tag locked.
+fn attribute_rows(d: &cadcraft_engine::doc::Drawing, hs: &[cadcraft_engine::doc::Handle]) -> Vec<AttributeRow> {
+    let per_reference: Vec<Vec<cadcraft_engine::AttributeRow>> = hs.iter().map(|h| cadcraft_engine::attributes(d, *h)).collect();
+    let lock_of = |a: &cadcraft_engine::AttributeRow, repeated: bool| {
+        if !a.editable {
+            Some(RowLock::Constant)
+        } else if a.value.contains('\n') {
+            Some(RowLock::Multiline)
+        } else if repeated {
+            Some(RowLock::Repeated)
+        } else {
+            None
+        }
+    };
+    let repeated = |rows: &[cadcraft_engine::AttributeRow], tag: &str| rows.iter().filter(|r| r.tag.eq_ignore_ascii_case(tag)).count() > 1;
+    if let [rows] = per_reference.as_slice() {
+        return rows
+            .iter()
+            .map(|a| AttributeRow { tag: a.tag.clone(), value: a.value.clone(), varies: false, lock: lock_of(a, repeated(rows, &a.tag)) })
+            .collect();
+    }
+    let mut out: Vec<AttributeRow> = Vec::new();
+    for rows in &per_reference {
+        for a in rows {
+            if !out.iter().any(|r| r.tag.eq_ignore_ascii_case(&a.tag)) {
+                out.push(AttributeRow { tag: a.tag.clone(), value: a.value.clone(), varies: false, lock: None });
+            }
+        }
+    }
+    for row in &mut out {
+        let mut first: Option<&str> = None;
+        for rows in &per_reference {
+            for a in rows.iter().filter(|a| a.tag.eq_ignore_ascii_case(&row.tag)) {
+                row.lock = row.lock.or(lock_of(a, repeated(rows, &a.tag)));
+                match first {
+                    None => first = Some(&a.value),
+                    Some(v) if v != a.value => row.varies = true,
+                    Some(_) => {}
+                }
+            }
+        }
+        row.value = if row.varies { String::new() } else { first.unwrap_or_default().to_string() };
+    }
+    out
+}
+
+/// The Attributes panel: the selected block reference's attributes as tag / value rows, edited in
+/// place through ATTEDIT. Constant attributes can't be edited. A tag used twice in one block
+/// stays read-only too, because ATTEDIT addresses an attribute by its tag. Block names, tags and
+/// values come from the drawing, so they are shown as they are, never translated.
+pub(crate) fn attributes_section(app: &mut CadApp, ui: &mut egui::Ui) {
+    let Some((uid, hs)) = attributes_key(app) else {
+        ui.add_space(8.0);
+        ui.horizontal_wrapped(|ui| ui.colored_label(Tokens::get().text_dim, crate::tl!("Select a block reference that has attributes.")));
+        return;
+    };
+    // A dynamic block reference shows its dynamic block's name, as Properties does.
+    let dynamic_name = match hs.as_slice() {
+        [h] => custom_properties(ui, app, *h).map(|(name, _)| name),
+        _ => None,
+    };
+    let Ok(d) = app.session.doc() else { return };
+    let names: Vec<&str> = hs
+        .iter()
+        .filter_map(|h| match d.entity(*h).map(|e| &e.kind) {
+            Some(EntityKind::Insert(i)) => Some(i.block.as_str()),
+            _ => None,
+        })
+        .collect();
+    let mut block = match names.first() {
+        Some(first) if names.iter().all(|n| n.eq_ignore_ascii_case(first)) => dynamic_name.unwrap_or_else(|| first.to_string()),
+        _ => crate::i18n::t(VARIES).to_string(),
+    };
+    if hs.len() > 1 {
+        block = format!("{block} (\u{d7}{})", hs.len());
+    }
+    let rows = attribute_rows(d, &hs);
+    ui.add_space(4.0);
+    prop_row(ui, "Block", |ui| read_only_literal(ui, &block));
+    let mut set: Option<(String, String)> = None;
+    let varies = crate::i18n::t(VARIES);
+    for row in &rows {
+        prop_row_literal(ui, &row.tag, |ui| match row.lock {
+            None => {
+                let shown = if row.varies { varies.to_string() } else { row.value.clone() };
+                if let Some(v) = edit_field(ui, ui.scope_id().with(("attrib", uid, &hs, &row.tag)), shown) {
+                    set = Some((row.tag.clone(), v));
+                }
+            }
+            Some(lock) => {
+                let shown = if row.varies { varies.to_string() } else { row.value.replace('\n', " ") };
+                value_box(ui, &shown, false, false).on_hover_text(match lock {
+                    RowLock::Constant => crate::tl!("Constant"),
+                    RowLock::Multiline => crate::tl!("Multiline: edit it with Edit Attributes"),
+                    RowLock::Repeated => crate::tl!("Tag used twice in this block"),
+                });
+            }
+        });
+    }
+    if let Some((tag, value)) = set {
+        set_attribute(app, &hs, &tag, value);
     }
 }
 
@@ -1208,5 +1398,180 @@ mod tests {
             output.textures_delta.clear();
         }
         assert!(painted_blue, "a ByLayer entity on a blue layer needs a blue Properties swatch");
+    }
+
+    /// The texts of a painted shape, one string per text.
+    fn collect_text(shape: &Shape, out: &mut Vec<String>) {
+        match shape {
+            Shape::Text(t) => out.push(t.galley.text().to_string()),
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_text(s, out)),
+            _ => {}
+        }
+    }
+
+    /// Everything the Properties palette paints for the current selection, one string per text.
+    fn painted_texts(app: &mut CadApp, section: fn(&mut CadApp, &mut egui::Ui)) -> Vec<String> {
+        let ctx = egui::Context::default();
+        let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 1200.0))), ..Default::default() };
+        let mut texts = Vec::new();
+        for _ in 0..2 {
+            app.logic(&ctx);
+            let mut output = ctx.run_ui(input.clone(), |ui| section(app, ui));
+            texts.clear();
+            output.shapes.iter().for_each(|s| collect_text(&s.shape, &mut texts));
+            output.textures_delta.clear();
+        }
+        texts
+    }
+
+    /// Block `B`: a line with the attributes `(tag, default)`.
+    fn app_with_block(attribs: &[(&str, &str)]) -> CadApp {
+        app_with_named_block("B", attribs)
+    }
+
+    /// Block `name`: a line with the attributes `(tag, default)`.
+    fn app_with_named_block(name: &str, attribs: &[(&str, &str)]) -> CadApp {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        for (n, (tag, default)) in attribs.iter().enumerate() {
+            app.run("attdef", json!({ "tag": tag, "default": default, "at": [0, n + 1] })).unwrap();
+        }
+        let line = app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+        let mut handles: Vec<String> = app.session.doc().unwrap().model.iter().map(|e| e.handle.hex()).collect();
+        handles.push(line["handles"][0].as_str().unwrap_or_default().to_string());
+        handles.sort();
+        handles.dedup();
+        app.run("block", json!({ "name": name, "base": [0, 0], "handles": handles, "keep": "delete" })).unwrap();
+        app
+    }
+
+    /// Insert block `B` at `x` and return the reference's handle.
+    fn insert_block(app: &mut CadApp, x: i32) -> cadcraft_engine::doc::Handle {
+        insert_named_block(app, "B", x)
+    }
+
+    /// Insert block `name` at `x` and return the reference's handle.
+    fn insert_named_block(app: &mut CadApp, name: &str, x: i32) -> cadcraft_engine::doc::Handle {
+        let r = app.run("insert", json!({ "name": name, "at": [x, 0] })).unwrap();
+        cadcraft_engine::doc::Handle::parse_hex(r["handle"].as_str().unwrap()).unwrap()
+    }
+
+    /// The value of attribute `tag` on block reference `h`.
+    fn attribute_value(app: &CadApp, h: cadcraft_engine::doc::Handle, tag: &str) -> String {
+        let EntityKind::Insert(i) = &app.session.doc().unwrap().entity(h).unwrap().kind else { panic!("not a block reference") };
+        i.attribs.iter().find(|a| a.tag == tag).unwrap().text.value.clone()
+    }
+
+    const CODICE_REV: [(&str, &str); 2] = [("CODICE", "8231"), ("REV", "A")];
+
+    /// Editing an attribute changes only the selected block reference.
+    #[test]
+    fn editing_an_attribute_changes_only_the_selected_block_reference() {
+        let mut app = app_with_block(&CODICE_REV);
+        let (first, second) = (insert_block(&mut app, 5), insert_block(&mut app, 50));
+        set_attribute(&mut app, &[first], "REV", "B".into());
+        assert_eq!(attribute_value(&app, first, "REV"), "B");
+        assert_eq!(attribute_value(&app, first, "CODICE"), "8231");
+        assert_eq!(attribute_value(&app, second, "REV"), "A");
+        assert_eq!(attribute_value(&app, second, "CODICE"), "8231");
+    }
+
+    /// Block names from the drawing are shown as they are, not translated.
+    #[test]
+    fn block_names_from_the_drawing_are_shown_untranslated() {
+        // A block named like an interface word ("Color" is "Colore" in Italian) must not be taken for one.
+        let mut app = app_with_named_block("Color", &CODICE_REV);
+        let h = insert_named_block(&mut app, "Color", 5);
+        app.run("select", json!({ "handles": [h.hex()] })).unwrap();
+        let texts = crate::i18n::with_language("it", || painted_texts(&mut app, attributes_section));
+        assert!(texts.iter().any(|t| t == "Blocco"), "the fixed label is translated: {texts:?}");
+        assert!(texts.iter().any(|t| t == "Color"), "the block name stays as the drawing has it: {texts:?}");
+        assert!(!texts.iter().any(|t| t == "Colore"), "the block name was translated: {texts:?}");
+    }
+
+    /// The panel lists the selected block reference's attributes.
+    #[test]
+    fn attributes_panel_lists_the_selected_block_reference_attributes() {
+        let mut app = app_with_block(&CODICE_REV);
+        let ins = insert_block(&mut app, 5);
+        app.run("select", json!({ "handles": [ins.hex()] })).unwrap();
+
+        assert_eq!(attributes_targets(&app), vec![ins]);
+        assert_eq!(attributes_key(&app).map(|(_, h)| h), Some(vec![ins]));
+        let texts = painted_texts(&mut app, attributes_section);
+        for want in ["CODICE", "REV"] {
+            assert!(texts.iter().any(|t| t == want), "the panel shows `{want}`; painted: {texts:?}");
+        }
+
+        // Anything else selected, or nothing, leaves the panel with just its hint.
+        app.run("select", json!({ "handles": [] })).unwrap();
+        assert!(attributes_targets(&app).is_empty());
+        assert!(!painted_texts(&mut app, attributes_section).iter().any(|t| t == "CODICE"));
+    }
+
+    /// Two block references with the same attributes: equal values are shown, different ones as
+    /// `*VARIES*`; a change goes to both in one undo step.
+    #[test]
+    fn several_block_references_show_equal_values_and_varies_for_different_ones() {
+        let mut app = app_with_block(&CODICE_REV);
+        let (first, second) = (insert_block(&mut app, 5), insert_block(&mut app, 50));
+        set_attribute(&mut app, &[second], "REV", "B".into());
+        app.run("select", json!({ "handles": [first.hex(), second.hex()] })).unwrap();
+
+        assert_eq!(attributes_targets(&app), vec![first, second]);
+        let d = app.session.doc().unwrap();
+        let rows: Vec<(String, String, bool)> =
+            attribute_rows(d, &attributes_targets(&app)).into_iter().map(|r| (r.tag, r.value, r.varies)).collect();
+        assert_eq!(rows, vec![("CODICE".to_string(), "8231".to_string(), false), ("REV".to_string(), String::new(), true)]);
+        let texts = painted_texts(&mut app, attributes_section);
+        assert!(texts.iter().any(|t| t == "8231") && texts.iter().any(|t| t == VARIES), "painted: {texts:?}");
+
+        let undo_depth = app.session.state().unwrap().undo.len();
+        set_attribute(&mut app, &[first, second], "REV", "C".into());
+        assert_eq!((attribute_value(&app, first, "REV"), attribute_value(&app, second, "REV")), ("C".into(), "C".into()));
+        assert_eq!(app.session.state().unwrap().undo.len(), undo_depth + 1, "one undo step for both");
+        let d = app.session.doc().unwrap();
+        assert!(attribute_rows(d, &[first, second]).iter().all(|r| !r.varies));
+    }
+
+    /// Anything that is not a block reference with attributes in the selection leaves the panel
+    /// empty, rather than editing some of the selection.
+    #[test]
+    fn a_mixed_selection_has_no_attributes_panel() {
+        let mut app = app_with_block(&CODICE_REV);
+        let ins = insert_block(&mut app, 5);
+        let line = app.run("line", json!({ "points": [[0, 20], [10, 20]] })).unwrap();
+        app.run("select", json!({ "handles": [ins.hex(), line["handles"][0].clone()] })).unwrap();
+        assert!(attributes_targets(&app).is_empty());
+        assert_eq!(attributes_key(&app), None);
+    }
+
+    /// Rows follow the Properties palette's rules: a constant attribute and a value with line
+    /// breaks are read-only, and with several references one such value locks the whole row.
+    #[test]
+    fn attribute_rows_lock_constant_and_multiline_values() {
+        let mut app = app_with_block(&[("T", "one"), ("U", "u"), ("M", "m")]);
+        let (first, second) = (insert_block(&mut app, 5), insert_block(&mut app, 50));
+        let doc = app.session.doc_mut().unwrap();
+        doc.modify_entity(second, |e| {
+            if let EntityKind::Insert(i) = &mut e.kind {
+                i.attribs[1].constant = true;
+            }
+        })
+        .unwrap();
+        doc.modify_entity(first, |e| {
+            if let EntityKind::Insert(i) = &mut e.kind {
+                i.attribs[2].text.value = "a\nb".into();
+            }
+        })
+        .unwrap();
+        let d = app.session.doc().unwrap();
+        let locks = |hs: &[cadcraft_engine::doc::Handle]| attribute_rows(d, hs).into_iter().map(|r| (r.tag, r.lock)).collect::<Vec<_>>();
+        assert_eq!(locks(&[first]), [("T".into(), None), ("U".into(), None), ("M".into(), Some(RowLock::Multiline))]);
+        assert_eq!(locks(&[second]), [("T".into(), None), ("U".into(), Some(RowLock::Constant)), ("M".into(), None)]);
+        assert_eq!(
+            locks(&[first, second]),
+            [("T".into(), None), ("U".into(), Some(RowLock::Constant)), ("M".into(), Some(RowLock::Multiline))],
+            "one locked reference locks the row for all"
+        );
     }
 }
