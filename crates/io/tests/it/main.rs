@@ -69,5 +69,6 @@ mod text_left_justify;
 mod tolerance_roundtrip;
 mod user_lin_pat_roundtrip;
 mod view_tables_roundtrip;
+mod view_target;
 mod viewport_clip_roundtrip;
 mod xref_roundtrip;

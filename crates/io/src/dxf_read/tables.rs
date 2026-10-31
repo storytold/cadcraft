@@ -215,7 +215,8 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 if name.is_empty() || !(h.is_finite() && w.is_finite() && h > 0.0 && w > 0.0) || d.views.len() >= MAX_OBJECTS {
                     continue;
                 }
-                let center = t.p(10).xy();
+                // The view centre 10/20 is in display coordinates, whose origin is the target 12/22/32.
+                let center = t.view_center(10, 12);
                 if !(center.x.is_finite() && center.y.is_finite()) {
                     continue;
                 }
@@ -314,7 +315,8 @@ const MAX_VPORT_TILES: usize = 64;
 /// are fractions of the drawing area; unusable tiles are skipped.
 fn vport_record(d: &mut Drawing, t: &T) {
     let name = t.s(2).map(|n| n.trim().to_string()).unwrap_or_default();
-    let (min, max, center) = (t.p(10).xy(), t.p(11).xy(), t.p(12).xy());
+    // The view centre 12/22 is in display coordinates, whose origin is the view target 17/27/37.
+    let (min, max, center) = (t.p(10).xy(), t.p(11).xy(), t.view_center(12, 17));
     let height = t.fd(40, 0.0);
     let unit = |v: f64| v.is_finite() && (-1e-9..=1.0 + 1e-9).contains(&v);
     let ok = [min.x, min.y, max.x, max.y].into_iter().all(unit)
