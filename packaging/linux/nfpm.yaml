@@ -42,9 +42,16 @@ overrides:
       - mesa-vulkan-drivers
       - xdg-desktop-portal
   rpm:
+    # Library sonames rather than package names, so the same requirements resolve on Fedora/RHEL
+    # and openSUSE (which has no libxkbcommon, vulkan-loader or libglvnd-egl package). The glibc
+    # floor names libm because the binaries' GLIBC_2.35 symbols (hypot, hypotf) are libm's: RHEL 9's
+    # glibc 2.34 provides libc.so.6(GLIBC_2.35) through backports, but not this, so it refuses.
     depends:
-      - libxkbcommon
-      - (vulkan-loader or libglvnd-egl)
+      - libc.so.6()(64bit)
+      - libm.so.6(GLIBC_2.35)(64bit)
+      - libgcc_s.so.1()(64bit)
+      - libxkbcommon.so.0()(64bit)
+      - (libvulkan.so.1()(64bit) or libEGL.so.1()(64bit))
     recommends:
       - libwayland-client
       - libX11
