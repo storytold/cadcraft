@@ -1117,14 +1117,27 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Ta
     }
     crate::dxf_raw::finish(&mut w.t, d);
     crate::dxf_raw::data_store(&mut w.t, d, target >= Version::R2013);
-    add_class_instance_counts(&mut w.t);
+    add_class_instance_counts(&mut w.t, target);
     mark_xrefs(&mut w.t, d);
     w.t
 }
 
-/// Write DXF Reference group 91 on every CLASS record. Count records after `dxf_raw::finish`
-/// restores foreign classes and objects so every class gets its actual instance count.
-fn add_class_instance_counts(tags: &mut Vec<Tag>) {
+/// DXF Reference group 91 of CLASS records, the instance count, which came with the 2004 format.
+/// From 2004 every CLASS record gets its actual count, counted after `dxf_raw::finish` restores
+/// foreign classes and objects (AutoCAD rejects a 2004+ file without it, #635). An R2000 file has
+/// none, not even on a class kept from a newer file: AutoCAD LT 2026 stops responding when an
+/// R2000 file's CLASS records carry a 91.
+fn add_class_instance_counts(tags: &mut Vec<Tag>, target: Version) {
+    if target < Version::R2004 {
+        let mut in_class = false;
+        tags.retain(|t| {
+            if t.code == 0 {
+                in_class = t.str() == "CLASS";
+            }
+            !(in_class && t.code == 91)
+        });
+        return;
+    }
     let mut counts: HashMap<String, i64> = HashMap::new();
     for t in tags.iter().filter(|t| t.code == 0) {
         let kind = t.str();

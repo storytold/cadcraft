@@ -25,6 +25,49 @@ fn square(size: f64) -> Vec<PolyVertex> {
 }
 
 #[test]
+fn line_extrusion_roundtrips_with_world_endpoints() {
+    // A LINE's endpoints are world coordinates whatever its extrusion, which only directs its
+    // thickness; a mirrored normal (0, 0, -1) must come back from DXF and DWG (#2241).
+    let mut d = Drawing::new_metric();
+    let common = Common { extrusion: Vec3::new(0.0, 0.0, -1.0), ..Common::default() };
+    let line = Line { a: Vec3::new(1.0, 2.0, 0.0), b: Vec3::new(11.0, 7.0, 0.0) };
+    let h = d.add(&Space::Model, common, EntityKind::Line(line.clone())).expect("add");
+    let dxf = write_dxf(&d);
+    assert!(dxf.contains("230\r\n-1.0\r\n"), "the extrusion is written");
+    let back = roundtrip(&d);
+    let e = get(&back, h);
+    assert_eq!(e.common.extrusion, Vec3::new(0.0, 0.0, -1.0));
+    assert_eq!(e.kind, EntityKind::Line(line.clone()));
+    let dwg = cadcraft_io::write(&d, "x.dwg").expect("dwg");
+    let back = cadcraft_io::read(&dwg, "x.dwg").expect("reopen dwg");
+    let Some(e) = back.model.iter().find(|e| matches!(e.kind, EntityKind::Line(_))) else { panic!("no line") };
+    assert_eq!(e.common.extrusion, Vec3::new(0.0, 0.0, -1.0), "through DWG");
+    assert_eq!(e.kind, EntityKind::Line(line));
+}
+
+#[test]
+fn line_extrusion_is_written_as_a_unit_vector_or_not_at_all() {
+    // A normal that is not a direction (zero, NaN) is dropped and one that is not unit length is
+    // normalized, so a bad 210/220/230 read from a file is not passed on as it is (#2241).
+    let line = Line { a: Vec3::ZERO, b: Vec3::new(1.0, 0.0, 0.0) };
+    let dxf = |extrusion| {
+        let mut d = Drawing::new_metric();
+        d.add(&Space::Model, Common { extrusion, ..Common::default() }, EntityKind::Line(line.clone())).expect("add");
+        write_dxf(&d)
+    };
+    let default = dxf(Vec3::Z);
+    for bad in [Vec3::ZERO, Vec3::new(f64::NAN, 0.0, 1.0), Vec3::new(f64::INFINITY, 0.0, 0.0), Vec3::new(0.0, 0.0, 5.0)] {
+        assert_eq!(dxf(bad), default, "{bad:?} writes nothing, like the Z axis");
+    }
+    assert!(dxf(Vec3::new(0.0, 0.0, -5.0)).contains("230\r\n-1.0\r\n"));
+    // A tiny normal is still a direction: it must not read back as +Z (it would flip a thickness).
+    assert!(dxf(Vec3::new(0.0, 0.0, -1e-10)).contains("230\r\n-1.0\r\n"), "a tiny normal keeps its direction");
+    // A huge finite normal's length overflows to infinity: it is a direction all the same.
+    let huge = dxf(Vec3::new(0.0, -1.5e308, 1.5e308));
+    assert!(huge.contains("220\r\n-0.7071067811865475\r\n230\r\n0.7071067811865475\r\n"), "a huge normal keeps its direction:\n{huge}");
+}
+
+#[test]
 fn thickness_roundtrips_on_every_entity_that_has_one() {
     let mut d = Drawing::new_metric();
     let p = |x, y| Vec3::new(x, y, 0.0);

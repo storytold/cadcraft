@@ -26,7 +26,7 @@ mod widgets;
 use cursor::{draw_crosshair, draw_snap_marker, draw_tracking, effective_point, override_cursor};
 use cycle::{CycleList, cycle_badge, cycle_click, cycle_list, over_canvas_menu, shift_space_cycle};
 pub(crate) use draw::{Look, draw_highlight, draw_list};
-use draw::{draw_drag_gpu, draw_highlight_gpu, draw_list_gpu, list_mesh_key, selection_area_fill};
+use draw::{dashed_outline, dashed_rect, draw_drag_gpu, draw_highlight_gpu, draw_list_gpu, list_mesh_key, selection_area_fill};
 use dyn_boxes::dynamic_input;
 pub(crate) use dyn_boxes::length_units;
 use grid::draw_grid;
@@ -1013,8 +1013,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
                 xf_paper.to_screen(Vec2::new(sh.printable.min.x, sh.printable.max.y)),
                 xf_paper.to_screen(Vec2::new(sh.printable.max.x, sh.printable.min.y)),
             );
-            let pts = [pa.left_top(), pa.right_top(), pa.right_bottom(), pa.left_bottom(), pa.left_top()];
-            painter.extend(Shape::dashed_line(&pts, Stroke::new(1.0, Color32::from_gray(150)), 4.0, 4.0));
+            painter.extend(dashed_rect(painter.clip_rect(), pa, Stroke::new(1.0, Color32::from_gray(150)), 4.0, 4.0));
             (Rgb(t.paper.r(), t.paper.g(), t.paper.b()), Some(paper))
         }
         None => {
@@ -1138,16 +1137,16 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
     if let (Some(pw), Some(c)) = (app.session.pending_window, raw_world) {
         // The box selected on the WCS XY plane, as it shows (a parallelogram in a 3D view).
         let (a, b) = (pw.corner, c);
-        let pts: Vec<Pos2> = [a, Vec2::new(b.x, a.y), b, Vec2::new(a.x, b.y), a].iter().map(|q| xf.to_screen(*q)).collect();
+        let pts = [a, Vec2::new(b.x, a.y), b, Vec2::new(a.x, b.y)].map(|q| xf.to_screen(q));
         let crossing = app.session.crossing(a, b).unwrap_or(false);
         if let Some(fill) = selection_area_fill(&app.session.settings, crossing) {
-            painter.add(Shape::convex_polygon(pts[..4].to_vec(), fill, Stroke::NONE));
+            painter.add(Shape::convex_polygon(pts.to_vec(), fill, Stroke::NONE));
         }
         let st = Stroke::new(1.0, if crossing { t.crossing_stroke } else { t.window_stroke });
         if crossing {
-            painter.extend(Shape::dashed_line(&pts, st, 5.0, 3.0));
+            painter.extend(dashed_outline(painter.clip_rect(), &pts, st, 5.0, 3.0));
         } else {
-            painter.add(Shape::line(pts, st));
+            painter.add(Shape::closed_line(pts.to_vec(), st));
         }
     }
     paint_pointer_overlay(
