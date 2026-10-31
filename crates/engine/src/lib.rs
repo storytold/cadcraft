@@ -303,6 +303,11 @@ impl Session {
         v.height / self.viewport_px.1.max(1.0)
     }
 
+    /// The running interactive command id, or `None` if the command line is idle.
+    pub fn active_command_id(&self) -> Option<&str> {
+        self.running.as_ref().map(|r| r.id.as_str())
+    }
+
     /// Serializable summary for inspect/automation.
     pub fn summary(&self) -> Value {
         let docs: Vec<Value> = self

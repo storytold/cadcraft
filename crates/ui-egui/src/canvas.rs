@@ -12,6 +12,7 @@ use egui::{Color32, Pos2, Rect, Sense, Shape, Stroke, pos2, vec2};
 use crate::CadApp;
 use crate::theme::Tokens;
 
+mod area_fill;
 mod cursor;
 mod cycle;
 mod draw;
@@ -23,6 +24,7 @@ mod pick;
 mod viewport;
 mod widgets;
 
+use area_fill::area_preview_fill;
 use cursor::{draw_crosshair, draw_snap_marker, draw_tracking, effective_point, override_cursor};
 use cycle::{CycleList, cycle_badge, cycle_click, cycle_list, over_canvas_menu, shift_space_cycle};
 pub(crate) use draw::{Look, draw_highlight, draw_list};
@@ -1096,6 +1098,10 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         if !ents.is_empty()
             && let Ok(st) = app.session.state()
         {
+            // Paint translucent AREA fill below the unchanged rubber-band outline.
+            if let Some(mesh) = area_preview_fill(app.session.active_command_id(), &ents, &xf) {
+                painter.add(Shape::mesh(mesh));
+            }
             let list = rebuilt_preview(&st.doc, ents.iter(), scale);
             draw_list(painter, &xf, &list, bg, false);
         }
