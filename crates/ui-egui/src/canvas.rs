@@ -77,6 +77,7 @@ fn same_content(a: &ListKey, b: &ListKey) -> bool {
 pub struct CanvasState {
     pub list: Option<DisplayList>,
     view3d_key: Option<(u64, u64, u64, u64, u64, u64, u64)>,
+    projection3d: Option<(cadcraft_render::Projection3d, u64)>,
     projector3d_cache: Option<(u64, u64, u64, u64, u64, cadcraft_render::view3d::Projector3d)>,
     snap3_index_cache: Option<(u64, u64, Option<ucs::Snap3Index>)>,
     /// Open state for the native 3D projection, style, light and material controls.

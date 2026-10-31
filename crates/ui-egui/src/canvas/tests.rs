@@ -304,6 +304,28 @@ fn depth_pick_keeps_solids_whole_and_honors_selection_settings() {
 }
 
 #[test]
+fn projection_changes_refit_without_resetting_zoom_for_material_edits() {
+    use serde_json::json;
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    app.session.execute("box", &json!({"p1": [10,20,30], "p2": [14,23,32]})).unwrap();
+    app.session.execute("view3d", &json!({"preset": "seiso"})).unwrap();
+    let ctx = egui::Context::default();
+    let xf = Xf { rect: Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0)), center: Vec2::ZERO, scale: 100.0 };
+    ensure_list(&mut app, &xf, &[], &ctx);
+    let orthographic = app.session.state().unwrap().view();
+    app.session.execute("view3d", &json!({"projection": "perspective"})).unwrap();
+    ensure_list(&mut app, &xf, &[], &ctx);
+    let perspective = app.session.state().unwrap().view();
+    assert!((perspective.center - orthographic.center).len() > 10.0);
+    assert!((perspective.center - app.canvas.list.as_ref().unwrap().bounds.center()).len() < 1e-10);
+    app.session.zoom_about(2.0, perspective.center).unwrap();
+    let zoomed = app.session.state().unwrap().view();
+    app.session.execute("view3d", &json!({"materialColor": [110,170,215]})).unwrap();
+    ensure_list(&mut app, &xf, &[], &ctx);
+    assert_eq!(app.session.state().unwrap().view(), zoomed, "appearance controls preserve navigation");
+}
+
+#[test]
 fn viewport_label_follows_3d_and_plan_modes() {
     let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
     let ctx = egui::Context::default();

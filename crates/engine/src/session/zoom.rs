@@ -23,7 +23,7 @@ impl Session {
         if let (Some(v), Space::Model) = (self.view3d, &space) {
             let opts = cadcraft_render::Options::default();
             let camera = cadcraft_render::view3d::Camera3d { azimuth: v.azimuth, elevation: v.elevation };
-            let b = cadcraft_render::view3d::build_3d(self.doc()?, &space, &opts, camera).bounds;
+            let b = cadcraft_render::view3d::build_3d_with_options(self.doc()?, &space, &opts, camera, self.render3d).bounds;
             if !b.is_empty() && b.min.is_finite() && b.max.is_finite() {
                 ext = b;
             }

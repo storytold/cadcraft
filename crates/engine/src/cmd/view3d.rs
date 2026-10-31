@@ -438,6 +438,28 @@ mod tests {
     }
 
     #[test]
+    fn zoom_extents_fits_translated_perspective_geometry() {
+        let mut s = Session::new();
+        run(&mut s, "box", json!({"p1": [10,20,30], "p2": [14,23,32]})).unwrap();
+        run(&mut s, "view3d", json!({"preset": "seiso", "projection": "perspective", "fov": 35})).unwrap();
+        s.zoom_extents().unwrap();
+        let st = s.state().unwrap();
+        let bounds = build_3d_with_options(
+            &st.doc,
+            &st.space,
+            &Options::default(),
+            Camera3d { azimuth: s.view3d.unwrap().azimuth, elevation: s.view3d.unwrap().elevation },
+            s.render3d,
+        )
+        .bounds;
+        let view = st.view();
+        assert!((view.center - bounds.center()).len() < 1e-10, "perspective bounds must determine the zoom center: {view:?}, {bounds:?}");
+        assert!(view.height >= bounds.height());
+        let (w, h) = s.viewport_px;
+        assert!(view.height * st.zoom_aspect(w / h.max(1.0)) >= bounds.width());
+    }
+
+    #[test]
     fn the_camera_belongs_to_the_drawing() {
         let mut s = Session::new();
         run(&mut s, "view3d", json!({ "preset": "nwiso" })).unwrap();

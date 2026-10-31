@@ -81,11 +81,12 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
         );
         if app.canvas.view3d_key != Some(key) {
             let first = app.canvas.view3d_key.is_none();
-            // Fit the drawing on entering 3D and whenever a command (VIEW3D, a preset, 3DORBIT)
-            // turns the camera; an edit or a drag in the canvas keeps the current zoom.
+            // Fit on entry, projection changes and command-driven camera turns. Geometry,
+            // appearance edits and canvas drags keep the current zoom.
             let turned = app.canvas.view3d_key.is_some_and(|k| (k.2, k.3) != (key.2, key.3));
             let dragged = std::mem::take(&mut app.canvas.orbit_dragged);
-            let refit = first || (turned && !dragged);
+            let projection = (render3d.projection, render3d.field_of_view.to_bits());
+            let refit = first || (turned && !dragged) || app.canvas.projection3d != Some(projection);
             if first {
                 app.canvas.plan_view = Some((st.uid, st.view()));
             }
@@ -108,6 +109,7 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
             app.canvas.list_gen = app.canvas.list_gen.wrapping_add(1);
             app.canvas.hover_at = None;
             app.canvas.view3d_key = Some(key);
+            app.canvas.projection3d = Some(projection);
             app.canvas.job = None;
             if refit && !bounds.is_empty() {
                 let height = bounds.height().max(bounds.width() * f64::from(xf.rect.height()) / f64::from(xf.rect.width().max(1.0))).max(1e-6) * 1.2;
