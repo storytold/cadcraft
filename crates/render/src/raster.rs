@@ -167,6 +167,35 @@ pub fn render(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Pixm
     Some(pm)
 }
 
+/// Decode a PNG to (width, height, premultiplied RGBA). `None` for bytes that aren't a PNG or
+/// an image larger than 4096 on a side.
+pub fn decode_png(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    // The size is checked from the header first, so a huge image is never decoded.
+    let (w, h) = png_size(bytes)?;
+    if w == 0 || h == 0 || w > 4096 || h > 4096 {
+        return None;
+    }
+    let pm = Pixmap::decode_png(bytes).ok()?;
+    (pm.width() <= 4096 && pm.height() <= 4096).then(|| (pm.width(), pm.height(), pm.data().to_vec()))
+}
+
+/// A PNG's width and height from its header (`IHDR`, the first chunk), without decoding it.
+fn png_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    const SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    if bytes.get(..8)? != SIGNATURE || bytes.get(12..16)? != b"IHDR" {
+        return None;
+    }
+    let be = |at: usize| bytes.get(at..at + 4).and_then(|b| <[u8; 4]>::try_from(b).ok()).map(u32::from_be_bytes);
+    Some((be(16)?, be(20)?))
+}
+
+/// Encode premultiplied RGBA pixels as a PNG.
+pub fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
+    let size = tiny_skia::IntSize::from_wh(width, height)?;
+    let pm = Pixmap::from_vec(rgba.to_vec(), size)?;
+    pm.encode_png().ok()
+}
+
 /// Whether tiny-skia strokes a line `width` pixels wide (untransformed) as a hairline: zero
 /// width, or at most one pixel when anti-aliased.
 fn is_hairline(width: f32, antialias: bool) -> bool {
@@ -225,4 +254,23 @@ impl Hairlines {
 /// Render and encode as PNG.
 pub fn render_png(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Vec<u8>> {
     render(list, view, o)?.encode_png().ok()
+}
+
+#[cfg(test)]
+mod png_tests {
+    use super::*;
+
+    #[test]
+    fn a_huge_png_is_refused_from_its_header() {
+        let ok = encode_png(2, 3, &[255; 2 * 3 * 4]).unwrap_or_default();
+        assert_eq!(png_size(&ok), Some((2, 3)));
+        assert_eq!(decode_png(&ok).map(|(w, h, _)| (w, h)), Some((2, 3)));
+        // The header says 100000 x 100000: refused before any pixel is decoded.
+        let mut big = ok.clone();
+        big[16..20].copy_from_slice(&100_000u32.to_be_bytes());
+        big[20..24].copy_from_slice(&100_000u32.to_be_bytes());
+        assert_eq!(decode_png(&big), None);
+        assert_eq!(decode_png(b"not a png"), None);
+        assert_eq!(png_size(&ok[..10]), None);
+    }
 }
