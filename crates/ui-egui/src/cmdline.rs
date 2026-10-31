@@ -753,7 +753,18 @@ mod tests {
     }
 
     #[test]
+    /// The command line's own IME, at a text prompt it collects (here without the in-place
+    /// editor, which takes the keyboard when it is shown and has its own composition).
     fn ime_preedit_is_shown_and_its_commit_is_inserted_once() {
+        fn keys(app: &mut CadApp, ctx: &egui::Context, events: Vec<Event>) -> egui::FullOutput {
+            let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))), events, ..Default::default() };
+            let mut out = ctx.run_ui(raw, |ui| {
+                app.logic(ui.ctx());
+                keyboard(app, ui.ctx());
+            });
+            out.textures_delta.clear();
+            out
+        }
         use cadcraft_engine::geom::Vec2;
         let mut app = CadApp::new(Session::new(), crate::Services::default());
         app.run("text", serde_json::json!({"at": [0, 0], "text": "HELLO", "height": 2.5})).unwrap();
@@ -761,26 +772,26 @@ mod tests {
         app.session.input(Input::Point(Vec2::new(1.0, 1.0))).unwrap();
         assert_eq!(app.session.current_prompt().map(|p| p.message.clone()).as_deref(), Some("Enter new text"));
         let ctx = egui::Context::default();
-        let out = frame(&mut app, &ctx, Vec::new());
+        let out = keys(&mut app, &ctx, Vec::new());
         // The IME is enabled for the command line while it is collecting text.
         assert!(out.platform_output.ime.is_some());
         // Composition is shown at the command line but is not part of the text being edited.
-        frame(&mut app, &ctx, vec![Event::Ime(egui::ImeEvent::Preedit { text: "zhong".into(), active_range_chars: None })]);
+        keys(&mut app, &ctx, vec![Event::Ime(egui::ImeEvent::Preedit { text: "zhong".into(), active_range_chars: None })]);
         assert_eq!(app.cmd.preedit, "zhong");
         assert!(app.cmd.buffer.is_empty());
         // The committed text replaces the pre-edit, exactly once.
-        frame(&mut app, &ctx, vec![Event::Ime(egui::ImeEvent::Commit("中文".into()))]);
+        keys(&mut app, &ctx, vec![Event::Ime(egui::ImeEvent::Commit("中文".into()))]);
         assert!(app.cmd.preedit.is_empty());
         assert_eq!(app.cmd.buffer, "中文");
         let enter = |pressed| Event::Key { key: Key::Enter, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::NONE };
-        frame(&mut app, &ctx, vec![enter(true), enter(false)]);
+        keys(&mut app, &ctx, vec![enter(true), enter(false)]);
         let text = app.session.doc().unwrap().model.iter().next().map(|e| match &e.kind {
             cadcraft_engine::doc::EntityKind::Text(t) => t.value.clone(),
             _ => String::new(),
         });
         assert_eq!(text.as_deref(), Some("中文"));
         // Back to selecting objects: the next frame lets the IME go, so it can't swallow ASCII typing.
-        let out = frame(&mut app, &ctx, Vec::new());
+        let out = keys(&mut app, &ctx, Vec::new());
         assert!(out.platform_output.ime.is_none());
     }
 

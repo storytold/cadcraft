@@ -75,6 +75,9 @@ fn same_content(a: &ListKey, b: &ListKey) -> bool {
 #[derive(Default)]
 pub struct CanvasState {
     pub list: Option<DisplayList>,
+    /// The font set the list was drawn with ([`cadcraft_fonts::ttf::generation`]): a new font
+    /// folder redraws the text.
+    font_generation: u64,
     key: ListKey,
     /// The area `list` was built for (hatch patterns exist only inside it); a view leaving it
     /// rebuilds the list.
@@ -549,6 +552,12 @@ fn handle_double_click(app: &mut CadApp, ctx: DoubleClickContext<'_>) -> Option<
         let pp = xf_paper.to_world(hp);
         let in_rect = |v: &cadcraft_doc::Viewport| (pp.x - v.center.x).abs() <= v.width / 2.0 && (pp.y - v.center.y).abs() <= v.height / 2.0;
         let in_active = active_viewport.as_ref().is_some_and(|v| active_clip.as_ref().map_or(in_rect(v), |c| c.contains(pp)));
+        // On the sheet itself (no viewport active), a block, text or dimension drawn on the sheet
+        // is edited as in model space; elsewhere the click goes into a viewport.
+        let on_sheet = app.session.state().is_ok_and(|st| st.mspace.is_none());
+        if on_sheet && app.session.running.is_none() && edit_text_at(app, pp) {
+            return None;
+        }
         if !in_active {
             app.canvas.hot_grips.clear();
             app.session.pending_window = None;
@@ -562,7 +571,8 @@ fn handle_double_click(app: &mut CadApp, ctx: DoubleClickContext<'_>) -> Option<
             return None;
         }
     }
-    // Double-click text to edit it, as in AutoCAD: TEXTEDIT with that object already picked.
+    // Double-click text, a dimension, a multileader or a table cell to edit it in place, as in
+    // AutoCAD: TEXTEDIT (TABLEDIT) with that object already picked.
     if inside
         && double
         && app.session.running.is_none()

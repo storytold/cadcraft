@@ -325,6 +325,36 @@ fn reset_ui(app: &mut CadApp) {
     app.options = UiOptions::default();
 }
 
+/// Fonts for font lists, refreshed when the font set changes: (text style font names — the
+/// user's folders' fonts first —, family names of the user's fonts).
+pub fn font_choices() -> (Vec<String>, Vec<String>) {
+    thread_local! {
+        static CACHE: std::cell::RefCell<Option<(u64, Vec<String>, Vec<String>)>> = const { std::cell::RefCell::new(None) };
+    }
+    let generation = cadcraft_fonts::ttf::generation();
+    CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        if let Some((g, names, families)) = c.as_ref()
+            && *g == generation
+        {
+            return (names.clone(), families.clone());
+        }
+        let fonts = cadcraft_fonts::ttf::installed();
+        let mut names = vec![cadcraft_fonts::BUILTIN_FONT.to_string()];
+        names.extend(fonts.iter().map(|f| f.name.clone()));
+        let mut families: Vec<String> = Vec::new();
+        for f in fonts.iter().filter(|f| f.user) {
+            if let Some(fam) = &f.family
+                && !families.contains(fam)
+            {
+                families.push(fam.clone());
+            }
+        }
+        *c = Some((generation, names.clone(), families.clone()));
+        (names, families)
+    })
+}
+
 impl CadApp {
     /// The user profile kept across restarts, as JSON for the host's storage ([`PROFILE_KEY`]):
     /// the engine's profile variables and the interface preferences the interface prefs
