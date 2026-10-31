@@ -254,7 +254,7 @@ pub(crate) fn z_at(s: &Session, p: Vec2) -> f64 {
 }
 
 /// The Z of `e` at the point of it nearest `p` (seen from above), when it has one there.
-fn entity_z(e: &Entity, p: Vec2) -> Option<f64> {
+pub(crate) fn entity_z(e: &Entity, p: Vec2) -> Option<f64> {
     let on_segment = |a: Vec3, b: Vec3| {
         let d = b.xy() - a.xy();
         let l2 = d.dot(d);

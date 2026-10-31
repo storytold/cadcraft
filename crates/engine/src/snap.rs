@@ -7,7 +7,7 @@ mod viewport;
 
 pub use viewport::ViewportPoint;
 
-use cadcraft_doc::{Drawing, EntityKind, Insert, MAX_BLOCK_DEPTH, Prim, Space};
+use cadcraft_doc::{Drawing, EntityKind, Handle, Insert, MAX_BLOCK_DEPTH, Prim, Space};
 use cadcraft_geom::{Bounds2, Circle, EPS, Ellipse, Mat3, PI, Segment, Vec2, intersect_ext};
 use serde::Serialize;
 
@@ -62,6 +62,10 @@ pub struct SnapHit {
     /// curve) until the other end of the line is known. See [`resolve_deferred`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deferred: Option<Deferred>,
+    /// The entity the snap point lies on (for an intersection, the first of the two), whose Z
+    /// the picked point takes.
+    #[serde(skip)]
+    pub source: Option<Handle>,
 }
 
 impl SnapHit {
@@ -308,7 +312,7 @@ fn osnap_in_with_prims(
     frozen: &[String],
     clip: Option<Bounds2>,
 ) -> Option<(Option<SnapHit>, Vec<Prim>)> {
-    let (mut cands, near_prims) = gather_in(d, space, ix, cursor, aperture, osmode, frozen)?;
+    let (mut cands, near_prims, mut src) = gather_in(d, space, ix, cursor, aperture, osmode, frozen)?;
     // Intersections between nearby primitives; Apparent Intersection also where their extensions
     // meet (lines extended, arcs as full circles: in 2D, the "apparent" crossing of objects
     // that don't reach each other).
@@ -331,12 +335,14 @@ fn osnap_in_with_prims(
                         for x in intersect_ext(&fix_circle(a), &fix_circle(b), false) {
                             if x.dist(cursor) <= aperture {
                                 cands.push((real, x));
+                                src.cands.push(src.prims.get(i).copied().flatten());
                             }
                         }
                         if extend {
                             for x in intersect_ext(a, b, true) {
                                 if x.is_finite() && x.dist(cursor) <= aperture {
                                     cands.push((mode::APP, x));
+                                    src.cands.push(src.prims.get(i).copied().flatten());
                                 }
                             }
                         }
@@ -345,7 +351,7 @@ fn osnap_in_with_prims(
             }
         }
     }
-    let hit = finish(cands, &near_prims, cursor, aperture, osmode, base, deferred, clip);
+    let hit = finish(cands, &near_prims, src, cursor, aperture, osmode, base, deferred, clip);
     Some((hit, near_prims))
 }
 
@@ -398,7 +404,14 @@ pub(crate) fn gather(
     aperture: f64,
     osmode: u32,
 ) -> Option<(Vec<(u32, Vec2)>, Vec<Prim>)> {
-    gather_in(d, space, ix, cursor, aperture, osmode, &[])
+    gather_in(d, space, ix, cursor, aperture, osmode, &[]).map(|(cands, prims, _)| (cands, prims))
+}
+
+/// The entity each gathered candidate and nearby primitive comes from (parallel to them).
+#[derive(Default)]
+struct Sources {
+    cands: Vec<Option<Handle>>,
+    prims: Vec<Option<Handle>>,
 }
 
 fn gather_in(
@@ -409,10 +422,11 @@ fn gather_in(
     aperture: f64,
     osmode: u32,
     frozen: &[String],
-) -> Option<(Vec<(u32, Vec2)>, Vec<Prim>)> {
+) -> Option<(Vec<(u32, Vec2)>, Vec<Prim>, Sources)> {
     let probe = Bounds2::new(cursor, cursor).expand(aperture);
     let mut cands: Vec<(u32, Vec2)> = Vec::new();
     let mut near_prims: Vec<Prim> = Vec::new();
+    let mut src = Sources::default();
     let mut count = 0usize;
     let mut budget = MAX_BLOCK_LEAVES;
     for (e, known) in crate::select::candidates(d, space, ix, &probe.expand(aperture), true, false)? {
@@ -454,8 +468,10 @@ fn gather_in(
         if let EntityKind::Dimension(dm) = &e.kind {
             sink.dimension(d, dm, &mut budget, frozen);
         }
+        src.cands.resize(cands.len(), Some(e.handle));
+        src.prims.resize(near_prims.len(), Some(e.handle));
     }
-    Some((cands, near_prims))
+    Some((cands, near_prims, src))
 }
 
 /// Picks the best of the gathered candidates, adding the base-dependent and deferred snaps.
@@ -463,6 +479,7 @@ fn gather_in(
 fn finish(
     mut cands: Vec<(u32, Vec2)>,
     near_prims: &[Prim],
+    mut src: Sources,
     cursor: Vec2,
     aperture: f64,
     osmode: u32,
@@ -472,7 +489,7 @@ fn finish(
 ) -> Option<SnapHit> {
     // Perpendicular / tangent from the base point.
     if let Some(bp) = base {
-        for p in near_prims {
+        for (p, from) in near_prims.iter().zip(&src.prims) {
             if osmode & mode::PER != 0 {
                 match p {
                     Prim::Seg(Segment::Line(l)) => cands.push((mode::PER, l.project(bp))),
@@ -504,43 +521,44 @@ fn finish(
                 };
                 cands.extend(pts.into_iter().map(|t| (mode::TAN, t)));
             }
+            src.cands.resize(cands.len(), *from);
         }
     }
     let visible = |p: Vec2| p.is_finite() && clip.is_none_or(|c| c.contains(p));
-    let best = cands.iter().filter(|(_, p)| visible(*p) && p.dist(cursor) <= aperture).min_by(|a, b| {
+    let best = cands.iter().zip(&src.cands).filter(|((_, p), _)| visible(*p) && p.dist(cursor) <= aperture).min_by(|(a, _), (b, _)| {
         // Prefer more specific modes when nearly equidistant.
         let da = snap_score(a.0, a.1, cursor, aperture);
         let db = snap_score(b.0, b.1, cursor, aperture);
         da.total_cmp(&db)
     });
-    if let Some((m, p)) = best {
-        return Some(SnapHit { point: *p, mode: *m, name: name_of(*m), viewport: None, deferred: None });
+    if let Some(((m, p), from)) = best {
+        return Some(SnapHit { point: *p, mode: *m, name: name_of(*m), viewport: None, deferred: None, source: *from });
     }
     if base.is_none()
         && deferred
-        && let Some(h) = deferred_hit(near_prims, cursor, aperture, osmode, clip)
+        && let Some(h) = deferred_hit(near_prims, &src.prims, cursor, aperture, osmode, clip)
     {
         return Some(h);
     }
     if osmode & mode::NEA != 0 {
         // The closest point of all nearby objects, whatever their drawing order.
-        let mut nb: Option<(f64, Vec2)> = None;
-        let mut consider = |c: Vec2| {
+        let mut nb: Option<(f64, Vec2, Option<Handle>)> = None;
+        let mut consider = |c: Vec2, from: Option<Handle>| {
             let dd = c.dist(cursor);
-            if visible(c) && dd <= aperture && nb.is_none_or(|(bd, _)| dd < bd) {
-                nb = Some((dd, c));
+            if visible(c) && dd <= aperture && nb.is_none_or(|(bd, ..)| dd < bd) {
+                nb = Some((dd, c, from));
             }
         };
-        for p in near_prims {
+        for (p, from) in near_prims.iter().zip(&src.prims) {
             for s in prim_segments(p) {
-                consider(fix_circle(&s).closest(cursor));
+                consider(fix_circle(&s).closest(cursor), *from);
             }
             if let Prim::Circle(c) = p {
-                consider(c.closest(cursor));
+                consider(c.closest(cursor), *from);
             }
         }
-        if let Some((_, p)) = nb {
-            return Some(SnapHit { point: p, mode: mode::NEA, name: "Nearest", viewport: None, deferred: None });
+        if let Some((_, p, source)) = nb {
+            return Some(SnapHit { point: p, mode: mode::NEA, name: "Nearest", viewport: None, deferred: None, source });
         }
     }
     None
@@ -875,9 +893,9 @@ fn xform_ellipse(e: &Ellipse, m: &Mat3) -> Ellipse {
 }
 
 /// The nearest deferred tangent/perpendicular within `aperture` of `cursor`.
-fn deferred_hit(prims: &[Prim], cursor: Vec2, aperture: f64, osmode: u32, clip: Option<Bounds2>) -> Option<SnapHit> {
+fn deferred_hit(prims: &[Prim], sources: &[Option<Handle>], cursor: Vec2, aperture: f64, osmode: u32, clip: Option<Bounds2>) -> Option<SnapHit> {
     let mut best: Option<(f64, SnapHit)> = None;
-    for p in prims {
+    for (i, p) in prims.iter().enumerate() {
         let curve = match p {
             Prim::Circle(c) => SnapCurve::Circle { center: c.center, radius: c.radius },
             Prim::Seg(Segment::Arc { arc, .. }) => SnapCurve::Arc { center: arc.center, radius: arc.radius, start: arc.start, end: arc.end },
@@ -907,7 +925,8 @@ fn deferred_hit(prims: &[Prim], cursor: Vec2, aperture: f64, osmode: u32, clip: 
         };
         let dd = at.dist(cursor);
         if at.is_finite() && clip.is_none_or(|c| c.contains(at)) && dd <= aperture && best.is_none_or(|(bd, _)| dd < bd) {
-            best = Some((dd, SnapHit { point: at, mode: m, name, viewport: None, deferred: Some(Deferred { mode: m, curve, at }) }));
+            let source = sources.get(i).copied().flatten();
+            best = Some((dd, SnapHit { point: at, mode: m, name, viewport: None, deferred: Some(Deferred { mode: m, curve, at }), source }));
         }
     }
     best.map(|(_, h)| h)
