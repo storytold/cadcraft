@@ -38,6 +38,9 @@ pub struct CmdLine {
     /// The command line's editing rectangle and caret (screen) from the last frame, for the IME's
     /// composition window (see `enable_ime`).
     pub ime_rect: Option<(Rect, Rect)>,
+    /// The bar and every inline keyword hit rectangle from the last frame; a click there is the
+    /// command line's, never a point on the canvas (a long prompt pushes keywords past the bar).
+    pub click_rect: Option<Rect>,
     /// The command line's IME context generation: a new one each time it starts collecting text,
     /// as egui asks of an IME owner that (re)gains focus.
     ime_generation: u64,
@@ -477,6 +480,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
     // Prompt glyph.
     p.text(pos2(bar.left() + 8.0, bar.center().y), egui::Align2::LEFT_CENTER, ">_", crate::theme::mono(), t.text_dim);
     let mut x = bar.left() + 30.0;
+    let mut click_rect = bar;
     let prompt = app.session.current_prompt();
     let font = crate::theme::body();
     match &prompt {
@@ -502,6 +506,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
                 for (i, k) in kws.iter().enumerate() {
                     let g = p.layout_no_wrap(k.clone(), font.clone(), t.cmd_keyword);
                     let r = Rect::from_min_size(pos2(x, bar.top() + 3.0), vec2(g.size().x, h - 6.0));
+                    click_rect = click_rect.union(r);
                     let resp = ui.interact(r, ui.scope_id().with(("kw", i)), Sense::click());
                     if resp.hovered() {
                         p.rect_filled(r, 2.0, t.cmd_keyword_hover);
@@ -571,6 +576,9 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
     // Where the IME's composition window follows: the whole command line and the caret in it.
     let caret = Rect::from_min_size(pos2(caret_x + 1.0, bar.top() + 5.0), vec2(1.0, h - 10.0));
     app.cmd.ime_rect = Some((bar, caret));
+    // The history lines or window, the resize grip and the AutoComplete rows are the command line's too.
+    let z = zones(app, canvas, bar);
+    app.cmd.click_rect = Some([Some(z.all), z.lines, z.window].into_iter().flatten().fold(click_rect, Rect::union));
     // History chevron.
     crate::icons::paint(
         &p,

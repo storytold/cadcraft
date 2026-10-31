@@ -344,6 +344,15 @@ mod tests {
     }
 
     #[test]
+    fn close_all_typed_with_an_argument_still_asks_before_discarding() {
+        let mut app = app_with(&["A", "B"]);
+        dirty(&mut app, 1);
+        app.cmdline("CLOSEALL Y");
+        assert_eq!(app.close_prompt(), Some("B"));
+        assert_eq!(titles(&app), ["B"]);
+    }
+
+    #[test]
     fn quitting_asks_about_each_dirty_drawing_then_quits() {
         let mut app = app_with(&["A", "B", "C"]);
         assert!(!app.request_quit(), "nothing unsaved: quit right away");

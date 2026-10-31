@@ -1227,3 +1227,12 @@ menu	Modify	Modifikace
 	Check for Updates…	Zkontrolovat aktualizace…
 	CADCraft is up to date.	CADCraft je aktuální.
 	Could not check for updates.	Aktualizace se nepodařilo zkontrolovat.
+	Preview pending	Náhled čeká na zpracování
+	Preview unavailable	Náhled není k dispozici
+	No visible content	Žádný viditelný obsah
+	Empty block	Prázdný blok
+	Excessive preview input	Příliš mnoho vstupních dat náhledu
+	Excessive preview computation	Příliš náročný výpočet náhledu
+	Excessive preview output	Příliš velký výstup náhledu
+	Invalid preview data	Neplatná data náhledu
+	Missing block reference	Chybí odkaz na blok

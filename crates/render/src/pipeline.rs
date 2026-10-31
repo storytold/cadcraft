@@ -2,6 +2,7 @@
 use super::display::append;
 use super::display::{DisplayList, Kind, NO_LAYER, PlotText, VIEWPORT_CONTENT};
 use super::draw::entity;
+use super::hatch::HatchBudget;
 use super::viewports::{MAX_VIEWPORTS, viewport};
 use super::{Bounds2, Builder, Color, Ctx, Drawing, Entity, EntityKind, Handle, Lineweight, Mat3, Space, Vec2, paper, pen, plotstyle, point};
 
@@ -17,6 +18,9 @@ pub struct Options {
     pub text: bool,
     /// Highlighted (selected) handles are not special here; the canvas overlays them.
     pub fill: bool,
+    /// Optional work budget shared by all hatches of a thumbnail, including nested blocks.
+    /// Exhausted hatches fall back to bounded contours; normal drawing/export uses `None`.
+    pub hatch_budget: Option<std::sync::Arc<HatchBudget>>,
     pub lineweights: bool,
     /// Height of the visible area in world units of the space being built. Relative point
     /// sizes (`PDSIZE` <= 0) are a percentage of it; 0 = the height of the space's extents.
@@ -53,6 +57,7 @@ impl Default for Options {
             min_dash: 0.0,
             text: true,
             fill: true,
+            hatch_budget: None,
             lineweights: false,
             view_height: 0.0,
             plot_style_table: None,
@@ -96,7 +101,17 @@ pub(crate) fn top_ctx<'a>(d: &'a Drawing, xf: Mat3, top: Handle, frozen: &'a [St
 fn build_space(d: &Drawing, space: &Space, opts: &Options, plotting: bool) -> DisplayList {
     let opts = &with_point_view(d, space, opts);
     let styler = style_table(d, space, opts, plotting).map(|t| plotstyle::Styler::new(d, t));
-    let mut b = Builder { list: DisplayList::default(), opts, plotting, styles: styler.as_ref(), named: None, shared_budget: None, transparency: 0 };
+    let mut b = Builder {
+        output_left: None,
+        output_failed: false,
+        list: DisplayList::default(),
+        opts,
+        plotting,
+        styles: styler.as_ref(),
+        named: None,
+        shared_budget: None,
+        transparency: 0,
+    };
     if let Space::Paper(name) = space {
         b.list.sheet = paper::sheet(d, name);
     }
@@ -147,8 +162,17 @@ fn build_parallel(b: &mut Builder, d: &Drawing, store: &cadcraft_doc::EntityStor
     let parts: Vec<DisplayList> = ents
         .par_chunks(PARALLEL_CHUNK)
         .map(|chunk| {
-            let mut part =
-                Builder { list: DisplayList::default(), opts, plotting, styles: None, named: None, shared_budget: Some(&budget), transparency: 0 };
+            let mut part = Builder {
+                output_left: None,
+                output_failed: false,
+                list: DisplayList::default(),
+                opts,
+                plotting,
+                styles: None,
+                named: None,
+                shared_budget: Some(&budget),
+                transparency: 0,
+            };
             for e in chunk {
                 entity(&mut part, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
             }
@@ -191,6 +215,29 @@ pub(crate) fn with_point_view(d: &Drawing, space: &Space, opts: &Options) -> Opt
 
 /// Build the display list for a set of loose entities (previews, rubber bands).
 pub fn build_entities<'a, I: IntoIterator<Item = &'a Entity>>(d: &Drawing, ents: I, opts: &Options) -> DisplayList {
+    build_entities_with_limit(d, ents, opts, None).0
+}
+
+/// Bounded retained output for preflighted thumbnail entities. A refused list is discarded whole.
+/// The caller must bound input and temporary geometry before invoking the renderer.
+pub fn build_entities_limited<'a, I: IntoIterator<Item = &'a Entity>>(
+    d: &Drawing,
+    ents: I,
+    opts: &Options,
+    max_primitives: usize,
+    max_vertices: usize,
+) -> Option<DisplayList> {
+    let (list, failed) = build_entities_with_limit(d, ents, opts, Some((max_primitives, max_vertices)));
+    (!failed).then_some(list)
+}
+
+/// Builds the render list for `entities`, or `None` when the hatch work budget is exhausted.
+fn build_entities_with_limit<'a, I: IntoIterator<Item = &'a Entity>>(
+    d: &Drawing,
+    ents: I,
+    opts: &Options,
+    limit: Option<(usize, usize)>,
+) -> (DisplayList, bool) {
     let ents: Vec<&Entity> = ents.into_iter().collect();
     // Only previews holding points need the model extents for relative point sizes.
     let with_view;
@@ -200,11 +247,21 @@ pub fn build_entities<'a, I: IntoIterator<Item = &'a Entity>>(d: &Drawing, ents:
     } else {
         opts
     };
-    let mut b = Builder { list: DisplayList::default(), opts, plotting: false, styles: None, named: None, shared_budget: None, transparency: 0 };
+    let mut b = Builder {
+        output_left: limit,
+        output_failed: false,
+        list: DisplayList::default(),
+        opts,
+        plotting: false,
+        styles: None,
+        named: None,
+        shared_budget: None,
+        transparency: 0,
+    };
     for e in ents {
         entity(&mut b, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
     }
-    b.list
+    (b.list, b.output_failed)
 }
 
 /// After a viewport is appended to a plot: the layers its contents carry in their handles

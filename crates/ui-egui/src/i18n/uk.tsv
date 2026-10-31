@@ -1375,4 +1375,13 @@
 	Check for Updates…	Перевірити оновлення…
 	CADCraft is up to date.	Встановлено найновішу версію CADCraft.
 	Could not check for updates.	Не вдалося перевірити оновлення.
+	Preview pending	Попередній перегляд очікується
+	Preview unavailable	Попередній перегляд недоступний
+	No visible content	Немає видимого вмісту
+	Empty block	Порожній блок
+	Excessive preview input	Забагато вхідних даних для попереднього перегляду
+	Excessive preview computation	Надто великий обсяг обчислень для попереднього перегляду
+	Excessive preview output	Надто великий результат попереднього перегляду
+	Invalid preview data	Недійсні дані попереднього перегляду
+	Missing block reference	Відсутнє посилання на блок
 	Save changes to block "{name}"?	Зберегти зміни в блоці «{name}»?

@@ -9,9 +9,21 @@ use cadcraft_geom::{Polyline, Vec2};
 /// crossing and each part is paired on its own. Robust for any input; output size is
 /// O(slabs × crossings), capped for hostile inputs.
 pub fn triangulate_evenodd(loops: &[Vec<Vec2>]) -> Vec<Vec2> {
+    triangulate_evenodd_limited(loops, None).unwrap_or_default()
+}
+
+/// Budgeted triangulation discards incomplete fills instead of displaying partial geometry.
+pub(crate) fn triangulate_evenodd_limited(loops: &[Vec<Vec2>], budget: Option<&crate::hatch::HatchBudget>) -> Option<Vec<Vec2>> {
+    use crate::hatch::charge;
+    if !charge(budget, loops.len()) {
+        return None;
+    }
     let mut edges: Vec<(Vec2, Vec2)> = Vec::new();
     for l in loops {
         let n = l.len();
+        if !charge(budget, n.saturating_mul(16)) {
+            return None;
+        }
         if n < 3 {
             continue;
         }
@@ -23,7 +35,7 @@ pub fn triangulate_evenodd(loops: &[Vec<Vec2>]) -> Vec<Vec2> {
         }
     }
     if edges.is_empty() || edges.len() > 200_000 {
-        return Vec::new();
+        return Some(Vec::new());
     }
     let mut ys: Vec<f64> = edges.iter().flat_map(|(a, b)| [a.y, b.y]).collect();
     ys.sort_by(f64::total_cmp);
@@ -51,6 +63,9 @@ pub fn triangulate_evenodd(loops: &[Vec<Vec2>]) -> Vec<Vec2> {
         pending.clear();
         pending.push((y0, y1));
         while let Some((ya, yb)) = pending.pop() {
+            if !charge(budget, active.len().saturating_mul(16).saturating_add(1)) {
+                return None;
+            }
             let ymid = (ya + yb) / 2.0;
             let mut xs: Vec<(f64, f64, f64)> = active.iter().map(|e| (x_at(e, ymid), x_at(e, ya), x_at(e, yb))).collect();
             xs.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -84,11 +99,11 @@ pub fn triangulate_evenodd(loops: &[Vec<Vec2>]) -> Vec<Vec2> {
                 }
             }
             if out.len() > 6_000_000 {
-                return out;
+                return Some(out);
             }
         }
     }
-    out
+    Some(out)
 }
 
 /// How many extra slab boundaries crossings may add over one region.

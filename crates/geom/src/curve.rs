@@ -353,6 +353,14 @@ impl Segment {
             Segment::Arc { arc, .. } => arc.bounds(),
         }
     }
+    /// Point count used by `tessellate`, including both ends, without allocating points.
+    pub fn tessellation_points(&self, tol: f64) -> usize {
+        match self {
+            Segment::Line(_) => 2,
+            Segment::Arc { arc, .. } => arc_segments(arc.radius, arc.sweep(), tol) + 1,
+        }
+    }
+
     /// Points along the segment in its direction, including both ends.
     pub fn tessellate(&self, tol: f64, out: &mut Vec<Vec2>) {
         match self {
@@ -498,6 +506,12 @@ impl Polyline {
         }
         b
     }
+    /// Conservative point count for `tessellate`, before allocating sampled vertices.
+    /// Shared segment endpoints are counted twice. Input must be bounded before this walk.
+    pub fn tessellation_points(&self, tol: f64) -> Option<usize> {
+        self.segments().iter().try_fold(usize::from(!self.vertices.is_empty()), |n, s| n.checked_add(s.tessellation_points(tol)))
+    }
+
     pub fn tessellate(&self, tol: f64) -> Vec<Vec2> {
         let mut out: Vec<Vec2> = Vec::new();
         for s in self.segments() {

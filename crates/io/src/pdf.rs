@@ -521,6 +521,7 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
         min_dash: 0.0,
         text: true,
         fill: true,
+        hatch_budget: None,
         lineweights,
         view_height: 0.0,
         plot_style_table,

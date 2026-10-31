@@ -1349,3 +1349,12 @@
 	Check for Updates…	检查更新…
 	CADCraft is up to date.	CADCraft 已是最新版本。
 	Could not check for updates.	无法检查更新。
+	Preview pending	预览待处理
+	Preview unavailable	预览不可用
+	No visible content	没有可见内容
+	Empty block	空块
+	Excessive preview input	预览输入数据过多
+	Excessive preview computation	预览计算量过大
+	Excessive preview output	预览输出过大
+	Invalid preview data	预览数据无效
+	Missing block reference	缺少块引用

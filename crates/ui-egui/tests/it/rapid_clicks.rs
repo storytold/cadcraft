@@ -96,3 +96,37 @@ fn a_click_made_while_the_mouse_moves_still_places_the_point() {
     assert_eq!(got.len(), 1, "{got:?}");
     assert!(got[0].1.near(h.state().canvas.xf.unwrap().to_world(up), 1e-4), "{got:?}");
 }
+
+/// Earlier pointer releases must respect controls on the same egui layer as the canvas.
+#[test]
+fn batched_clicks_skip_visible_navigation_controls() {
+    for show_controls in [true, false] {
+        for target in 0..4 {
+            let mut h = harness();
+            h.state_mut().ui.show_viewcube = show_controls;
+            h.state_mut().ui.show_ucs_icon = show_controls;
+            h.run_steps(2);
+            start_line_at(&mut h, Vec2::new(10.0, 10.0));
+            let rect = h.state().canvas.rect.unwrap();
+            let cube = cadcraft_ui_egui::viewcube::Layout::new(rect);
+            let [x, y] = cadcraft_ui_egui::viewcube::ucs_arms(rect);
+            let control = match target {
+                0 => cube.face.center(),
+                1 => cube.pill.center(),
+                2 => x.center(),
+                _ => y.center(),
+            };
+            let bare = screen(&h, Vec2::new(40.0, 40.0));
+            for pos in [control, bare] {
+                for pressed in [true, false] {
+                    h.input_mut().events.push(Event::PointerMoved(pos));
+                    h.input_mut().events.push(Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+                }
+            }
+            h.run_steps(2);
+            let got = lines(&h);
+            assert_eq!(got.len(), if show_controls { 1 } else { 2 }, "visible={show_controls}, target={target}: {got:?}");
+            assert!(got.last().unwrap().1.near(Vec2::new(40.0, 40.0), 1e-4));
+        }
+    }
+}

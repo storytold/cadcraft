@@ -122,7 +122,10 @@ impl Spline {
 
     /// How many segments a tessellation at `tol` takes: the control-polygon length guides it,
     /// capped at `MAX_SAMPLES`.
-    fn sample_count(&self, tol: f64) -> usize {
+    pub fn sample_count(&self, tol: f64) -> usize {
+        if !self.is_valid() {
+            return self.control.len().saturating_sub(1);
+        }
         self.segments_for(self.polygon_length() / tol.max(1e-9))
     }
 
@@ -160,49 +163,63 @@ impl Spline {
     /// box, which contains the curve (the box of the finite control points when one is not
     /// finite: `hull` skips it, but it would poison every sample).
     pub fn bounds(&self) -> Bounds2 {
-        let hull = Bounds2::from_points(self.control.iter().copied());
-        let diag = hull.min.dist(hull.max);
-        let finite = self.control.iter().all(|c| c.is_finite()) && self.weights.iter().all(|w| w.is_finite());
-        // The convex hull property, which makes the control box contain the curve and a
-        // degree-1 spline its control polygon, needs every weight positive.
-        let positive = self.weights.iter().all(|w| *w > 0.0);
-        if !self.is_valid() || !finite {
-            return hull;
-        }
-        // With a zero or negative weight even a degenerate control box is no bound (zero weights
-        // evaluate to the origin), so only positive weights take these shortcuts.
-        if positive && (self.degree == 1 || !(diag.is_finite() && diag > 0.0)) {
-            return hull;
-        }
-        let spans = self.knot_spans().count();
-        if spans == 0 {
-            return hull;
-        }
-        if spans > MAX_SAMPLES / 2 {
-            // Too many spans for two samples each: the control box contains the curve when no
-            // weight is negative (the convex hull property), so it is the safe answer; a grid could
-            // step over a narrow span. Negative weights void that property, so they keep the grid.
-            if positive {
-                return hull;
-            }
-            return Bounds2::from_points(self.samples(MAX_SAMPLES));
-        }
+        let (budget, floor) = match self.bounds_sampling() {
+            BoundsSampling::Hull => return Bounds2::from_points(self.control.iter().copied()),
+            BoundsSampling::Grid => return Bounds2::from_points(self.samples(MAX_SAMPLES)),
+            BoundsSampling::Spans { budget, floor } => (budget, floor),
+        };
         let (lo, hi) = self.domain();
-        let floor = 8.min(MAX_SAMPLES / spans);
-        // The span's share of the domain first: huge knots (1e308, from a hostile edit) would
-        // overflow `budget * (b - a)` to infinity and the cast to a boundless count.
-        let segments = |budget: usize, (a, b): (f64, f64)| floor.max((budget as f64 * ((b - a) / (hi - lo))) as usize).min(MAX_SAMPLES);
-        let n = self.segments_for(self.polygon_length() / (diag * 1e-3));
-        let budget = if self.knot_spans().map(|s| segments(n, s)).sum::<usize>() <= MAX_SAMPLES { n } else { MAX_SAMPLES - floor * spans };
         let mut out = Bounds2::EMPTY;
         for (a, b) in self.knot_spans() {
-            let seg = segments(budget, (a, b));
+            let seg = self.span_segments(budget, floor, a, b);
             for i in 0..seg {
                 out.add(self.eval_valid(a + (b - a) * i as f64 / seg as f64, lo, hi));
             }
         }
         out.add(self.eval_valid(hi, lo, hi));
         out
+    }
+
+    /// Evaluations performed by `bounds`, without evaluating the curve. Callers must first
+    /// bound the input arrays: planning walks the controls and knots too.
+    pub fn bounds_sample_count(&self) -> usize {
+        match self.bounds_sampling() {
+            BoundsSampling::Hull => 0,
+            BoundsSampling::Grid => MAX_SAMPLES + 1,
+            BoundsSampling::Spans { budget, floor } => self.knot_spans().map(|(a, b)| self.span_segments(budget, floor, a, b)).sum::<usize>() + 1,
+        }
+    }
+
+    /// Segments for the parameter span `a..b`: a share of `budget` proportional to its width, never below `floor` nor above `MAX_SAMPLES`.
+    fn span_segments(&self, budget: usize, floor: usize, a: f64, b: f64) -> usize {
+        let (lo, hi) = self.domain();
+        floor.max((budget as f64 * ((b - a) / (hi - lo))) as usize).min(MAX_SAMPLES)
+    }
+
+    /// The sampling plan used to bound the curve, matching the one the renderer draws.
+    fn bounds_sampling(&self) -> BoundsSampling {
+        let hull = Bounds2::from_points(self.control.iter().copied());
+        let diag = hull.min.dist(hull.max);
+        let finite = self.control.iter().all(|c| c.is_finite()) && self.weights.iter().all(|w| w.is_finite());
+        let positive = self.weights.iter().all(|w| *w > 0.0);
+        if !self.is_valid() || !finite || (positive && (self.degree == 1 || !(diag.is_finite() && diag > 0.0))) {
+            return BoundsSampling::Hull;
+        }
+        let spans = self.knot_spans().count();
+        if spans == 0 {
+            return BoundsSampling::Hull;
+        }
+        if spans > MAX_SAMPLES / 2 {
+            return if positive { BoundsSampling::Hull } else { BoundsSampling::Grid };
+        }
+        let floor = 8.min(MAX_SAMPLES / spans);
+        let n = self.segments_for(self.polygon_length() / (diag * 1e-3));
+        let budget = if self.knot_spans().map(|(a, b)| self.span_segments(n, floor, a, b)).sum::<usize>() <= MAX_SAMPLES {
+            n
+        } else {
+            MAX_SAMPLES - floor * spans
+        };
+        BoundsSampling::Spans { budget, floor }
     }
 
     /// The non-empty knot spans the curve is defined over, in parameter order.
@@ -215,6 +232,12 @@ impl Spline {
 /// Most segments `tessellate` and `bounds` evaluate for one spline (#268: a high degree on many
 /// control points took minutes).
 const MAX_SAMPLES: usize = 4000;
+
+enum BoundsSampling {
+    Hull,
+    Grid,
+    Spans { budget: usize, floor: usize },
+}
 
 pub(crate) fn clamped_uniform_knots(n: usize, degree: usize) -> Vec<f64> {
     let mut k = vec![0.0; degree + 1];

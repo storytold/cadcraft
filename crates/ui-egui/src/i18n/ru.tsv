@@ -1018,3 +1018,12 @@
 	Check for Updates…	Проверить обновления…
 	CADCraft is up to date.	У вас последняя версия CADCraft.
 	Could not check for updates.	Не удалось проверить обновления.
+	Preview pending	Предпросмотр ожидается
+	Preview unavailable	Предпросмотр недоступен
+	No visible content	Нет видимого содержимого
+	Empty block	Пустой блок
+	Excessive preview input	Слишком много входных данных для предпросмотра
+	Excessive preview computation	Слишком большой объём вычислений для предпросмотра
+	Excessive preview output	Слишком большой результат предпросмотра
+	Invalid preview data	Недопустимые данные предпросмотра
+	Missing block reference	Отсутствует ссылка на блок

@@ -1242,3 +1242,12 @@ menu	View	عرض
 	Check for Updates…	التحقق من وجود تحديثات…
 	CADCraft is up to date.	CADCraft محدّث.
 	Could not check for updates.	تعذّر التحقق من وجود تحديثات.
+	Preview pending	المعاينة قيد الانتظار
+	Preview unavailable	المعاينة غير متاحة
+	No visible content	لا يوجد محتوى مرئي
+	Empty block	كتلة فارغة
+	Excessive preview input	بيانات إدخال المعاينة كبيرة جدًا
+	Excessive preview computation	حساب المعاينة مفرط
+	Excessive preview output	مخرجات المعاينة كبيرة جدًا
+	Invalid preview data	بيانات معاينة غير صالحة
+	Missing block reference	مرجع الكتلة مفقود

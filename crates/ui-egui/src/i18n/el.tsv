@@ -1338,3 +1338,12 @@ menu	View	Προβολή
 	Check for Updates…	Έλεγχος για ενημερώσεις…
 	CADCraft is up to date.	Το CADCraft είναι ενημερωμένο.
 	Could not check for updates.	Δεν ήταν δυνατός ο έλεγχος για ενημερώσεις.
+	Preview pending	Η προεπισκόπηση εκκρεμεί
+	Preview unavailable	Η προεπισκόπηση δεν είναι διαθέσιμη
+	No visible content	Κανένα ορατό περιεχόμενο
+	Empty block	Κενό μπλοκ
+	Excessive preview input	Υπερβολικά δεδομένα εισόδου προεπισκόπησης
+	Excessive preview computation	Υπερβολικός υπολογισμός προεπισκόπησης
+	Excessive preview output	Υπερβολικά μεγάλη έξοδος προεπισκόπησης
+	Invalid preview data	Μη έγκυρα δεδομένα προεπισκόπησης
+	Missing block reference	Λείπει η αναφορά μπλοκ

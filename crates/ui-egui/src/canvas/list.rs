@@ -129,6 +129,7 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
         min_dash: 2f64.powi(lod_band) * 2.0,
         text: true,
         fill: true,
+        hatch_budget: None,
         lineweights: lwdisplay,
         view_height: st.paper_view().height,
         plot_style_table: None,

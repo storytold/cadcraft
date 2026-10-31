@@ -13,16 +13,86 @@ use cadcraft_color::{Color, Rgb};
 use cadcraft_doc::library::{PatternLine, pattern_for};
 use cadcraft_doc::{Drawing, Entity, Gradient, Hatch};
 use cadcraft_geom::{Bounds2, Polyline, Vec2, point_in_polygon};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-/// Draw a hatch entity: `rgb` is its resolved colour, `tol` the chord tolerance.
+/// Shared hatch work allowance for one thumbnail. Cloned render options share this allowance.
+#[derive(Debug)]
+pub struct HatchBudget {
+    remaining: AtomicUsize,
+    failed: AtomicBool,
+}
+
+impl HatchBudget {
+    /// A budget allowing `work` units of hatch computation.
+    pub fn new(work: usize) -> Self {
+        Self { remaining: AtomicUsize::new(work), failed: AtomicBool::new(false) }
+    }
+
+    /// Work units still available.
+    pub fn remaining(&self) -> usize {
+        self.remaining.load(Ordering::Relaxed)
+    }
+
+    /// Whether a reservation was refused. Spending the budget exactly is not a failure.
+    pub fn failed(&self) -> bool {
+        self.failed.load(Ordering::Relaxed)
+    }
+}
+
+/// Reserve work before allocation/iteration. Failed reservations exhaust the shared budget.
+pub(crate) fn charge(budget: Option<&HatchBudget>, amount: usize) -> bool {
+    let Some(budget) = budget else { return true };
+    let mut current = budget.remaining.load(Ordering::Relaxed);
+    loop {
+        let Some(next) = current.checked_sub(amount) else {
+            budget.failed.store(true, Ordering::Relaxed);
+            budget.remaining.store(0, Ordering::Relaxed);
+            return false;
+        };
+        match budget.remaining.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return true,
+            Err(actual) => current = actual,
+        }
+    }
+}
+
+/// Emergency contours remain bounded even when the caller supplies untrusted geometry directly.
+fn contours(b: &mut Builder, ctx: &Ctx, h: &Hatch, rgb: Ink, lw: f32, tol: f64) {
+    let mut left = 65_536usize;
+    if h.loops.len() > 8192 {
+        return;
+    }
+    for boundary in &h.loops {
+        if boundary.vertices.len() > 8192 || b.opts.cancelled() {
+            return;
+        }
+        let poly = Polyline { vertices: boundary.vertices.clone(), closed: true };
+        let cost = poly.tessellation_points(tol);
+        let Some(next) = cost.and_then(|cost| left.checked_sub(cost)) else { return };
+        left = next;
+        let points = poly.tessellate(tol);
+        b.polyline(ctx, rgb, lw, &points);
+    }
+}
+
 /// Whether a build's cancel flag has been set.
 fn is_set(cancel: Option<&AtomicBool>) -> bool {
     cancel.is_some_and(|c| c.load(Ordering::Relaxed))
 }
 
+/// Draw a hatch entity: `rgb` is its resolved colour, `tol` the chord tolerance.
 pub(super) fn draw(b: &mut Builder, ctx: &Ctx, e: &Entity, h: &Hatch, rgb: Ink, lw: f32, tol: f64) {
-    let loops = fill_loops(h, tol);
+    let allowance = b.opts.hatch_budget.clone();
+    let budget = allowance.as_deref();
+    let Some(loops) = fill_loops_limited(h, tol, budget) else {
+        contours(b, ctx, h, rgb, lw, tol);
+        return;
+    };
+    // Pattern definitions are drawing-controlled: charge before `lines_of` clones their dashes.
+    if !charge(budget, h.pattern_lines.len()) || h.pattern_lines.iter().any(|f| !charge(budget, f.dashes.len().saturating_mul(8))) {
+        contours(b, ctx, h, rgb, lw, tol);
+        return;
+    }
     // Gradient and background colours given ByLayer follow the hatch's own layer.
     let layer = if e.common.layer == "0" { ctx.block_layer.as_deref().unwrap_or("0") } else { e.common.layer.as_str() };
     let layer_color = ctx.layer_color(layer).unwrap_or(Color::Index(7));
@@ -33,9 +103,12 @@ pub(super) fn draw(b: &mut Builder, ctx: &Ctx, e: &Entity, h: &Hatch, rgb: Ink, 
     let dense = b.opts.fill && reads_solid(ctx.d, h, px);
     if h.solid || h.pattern.eq_ignore_ascii_case("SOLID") || h.gradient.is_some() || dense {
         if b.opts.fill {
-            let tris = fill::triangulate_evenodd(&loops);
+            let Some(tris) = fill::triangulate_evenodd_limited(&loops, budget) else {
+                contours(b, ctx, h, rgb, lw, tol);
+                return;
+            };
             match &h.gradient {
-                Some(g) => gradient(b, ctx, g, layer_color, &tris),
+                Some(g) => gradient(b, ctx, g, layer_color, &tris, budget),
                 None => b.tris(ctx, rgb, &tris),
             }
         }
@@ -44,14 +117,23 @@ pub(super) fn draw(b: &mut Builder, ctx: &Ctx, e: &Entity, h: &Hatch, rgb: Ink, 
     if let Some(bg) = h.background
         && b.opts.fill
     {
-        b.tris(ctx, ink(bg, layer_color, ctx.block_color), &fill::triangulate_evenodd(&loops));
+        let Some(tris) = fill::triangulate_evenodd_limited(&loops, budget) else {
+            contours(b, ctx, h, rgb, lw, tol);
+            return;
+        };
+        b.tris(ctx, ink(bg, layer_color, ctx.block_color), &tris);
     }
     // The area being looked at, in the hatch's units.
     let view = b.opts.view.and_then(|v| {
         let inv = ctx.xf.inverse()?;
         Some(Bounds2::from_points(v.corners().iter().map(|p| inv.apply(*p))))
     });
-    for seg in pattern_lines_until(ctx.d, h, &loops, px, view.as_ref(), b.opts.cancel.as_deref()) {
+    let lines = pattern_lines_limited(ctx.d, h, &loops, px, view.as_ref(), b.opts.cancel.as_deref(), budget);
+    if budget.is_some_and(|b| b.failed()) {
+        contours(b, ctx, h, rgb, lw, tol);
+        return;
+    }
+    for seg in lines {
         if seg.len() == 1 {
             if let Some(p) = seg.first() {
                 b.point(ctx, rgb, *p);
@@ -67,27 +149,41 @@ pub(super) fn draw(b: &mut Builder, ctx: &Ctx, e: &Entity, h: &Hatch, rgb: Ink, 
 const MAX_ISLAND_WORK: usize = 20_000_000;
 
 /// True when two polygons have the same vertices (ignoring cyclic shift and winding order).
-fn same_polygon(a: &[Vec2], b: &[Vec2]) -> bool {
+fn same_polygon(a: &[Vec2], b: &[Vec2], budget: Option<&HatchBudget>) -> Option<bool> {
     if a.len() != b.len() {
-        return false;
+        return Some(false);
     }
     let n = a.len();
     if n == 0 {
-        return true;
+        return Some(true);
     }
-    let near = |p1: Vec2, p2: Vec2| p1.near(p2, 1e-4);
-    (0..n).any(|k| (0..n).all(|i| near(a[i], b[(i + k) % n]))) || (0..n).any(|k| (0..n).all(|i| near(a[i], b[(k + n - (i % n)) % n])))
+    for k in 0..n {
+        for reverse in [false, true] {
+            let Some((left, right)) = b.get(..k).zip(b.get(k..)) else { return Some(false) };
+            let forward = right.iter().chain(left.iter());
+            let backward = b.get(..=k)?.iter().rev().chain(b.get(k + 1..)?.iter().rev());
+            let mut matches = true;
+            let iter: &mut dyn Iterator<Item = &Vec2> = if reverse { &mut backward.clone() } else { &mut forward.clone() };
+            for (p, q) in a.iter().zip(iter) {
+                if !charge(budget, 1) {
+                    return None;
+                }
+                if !p.near(*q, 1e-4) {
+                    matches = false;
+                    break;
+                }
+            }
+            if matches {
+                return Some(true);
+            }
+        }
+    }
+    Some(false)
 }
 
-/// Remove degenerate and duplicate boundary loops within a shared comparison budget.
-/// Retain remaining loops without further comparisons once the budget is exhausted.
-fn dedup_polygons(loops: &mut Vec<Vec<Vec2>>) {
-    // `same_polygon` is O(n²) in a polygon's vertex count (every cyclic alignment, both windings),
-    // and each loop is compared against every unique one kept so far, so adversarial boundary
-    // geometry could force quadratic-on-quadratic work. Charge every vertex comparison against a
-    // shared budget; once it is spent, stop deduplicating and keep the remaining loops as-is
-    // (CWE-407).
-    let mut budget: u64 = MAX_DEDUP_COMPARISONS;
+/// Remove degenerate and duplicate loops, limiting both pair checks and vertex comparisons.
+fn dedup_polygons(loops: &mut Vec<Vec<Vec2>>, budget: Option<&HatchBudget>) -> Option<()> {
+    let mut remaining = MAX_DEDUP_COMPARISONS;
     let mut unique: Vec<Vec<Vec2>> = Vec::with_capacity(loops.len());
     for l in loops.drain(..) {
         if l.len() < 3 {
@@ -95,20 +191,21 @@ fn dedup_polygons(loops: &mut Vec<Vec<Vec2>>) {
         }
         let mut dup = false;
         for u in &unique {
+            if !charge(budget, 1) {
+                return None;
+            }
             if u.len() != l.len() {
                 continue;
             }
-            // Each `same_polygon` call costs about 2·len² comparisons; stop if that would overrun.
             let cost = 2u64.saturating_mul((u.len() as u64).saturating_mul(l.len() as u64));
-            match budget.checked_sub(cost) {
-                Some(left) => budget = left,
+            match remaining.checked_sub(cost) {
+                Some(left) => remaining = left,
                 None => {
-                    // Out of budget: keep `l` without further comparison.
-                    budget = 0;
+                    remaining = 0;
                     break;
                 }
             }
-            if same_polygon(u, &l) {
+            if same_polygon(u, &l, budget)? {
                 dup = true;
                 break;
             }
@@ -118,6 +215,7 @@ fn dedup_polygons(loops: &mut Vec<Vec<Vec2>>) {
         }
     }
     *loops = unique;
+    Some(())
 }
 
 /// Vertex comparisons `dedup_polygons` may perform before it stops deduplicating.
@@ -128,22 +226,45 @@ const MAX_DEDUP_COMPARISONS: u64 = 50_000_000;
 /// within islands alternate), 1 outer keeps the outermost loops and their first islands, 2
 /// ignore keeps only the outermost loops. Nesting depth = how many other loops enclose a loop.
 pub fn fill_loops(h: &Hatch, tol: f64) -> Vec<Vec<Vec2>> {
+    fill_loops_limited(h, tol, None).unwrap_or_default()
+}
+
+/// Fill loops for `h`, or `None` when `budget` runs out first.
+fn fill_loops_limited(h: &Hatch, tol: f64, budget: Option<&HatchBudget>) -> Option<Vec<Vec<Vec2>>> {
+    if !charge(budget, h.loops.len()) {
+        return None;
+    }
+    if budget.is_some() {
+        for boundary in &h.loops {
+            if !charge(budget, boundary.vertices.len()) {
+                return None;
+            }
+            let poly = Polyline { vertices: boundary.vertices.clone(), closed: true };
+            if !poly.tessellation_points(tol).is_some_and(|n| charge(budget, n)) {
+                return None;
+            }
+        }
+    }
     let mut loops: Vec<Vec<Vec2>> = h.loops.iter().map(|l| Polyline { vertices: l.vertices.clone(), closed: true }.tessellate(tol)).collect();
-    dedup_polygons(&mut loops);
+    dedup_polygons(&mut loops, budget)?;
     let max_depth = match h.style {
         1 => 1,
         2 => 0,
-        _ => return loops,
+        _ => return Some(loops),
     };
     let verts: usize = loops.iter().map(Vec::len).sum();
-    if loops.len().saturating_mul(verts) > MAX_ISLAND_WORK {
-        return loops;
+    let island_work = loops.len().saturating_mul(verts);
+    if island_work > MAX_ISLAND_WORK {
+        return Some(loops);
+    }
+    if !charge(budget, island_work) {
+        return None;
     }
     let depth = |i: usize, l: &[Vec2]| {
         let Some(p) = probe(l) else { return 0 };
         loops.iter().enumerate().filter(|(j, o)| *j != i && point_in_polygon(o, p)).count()
     };
-    loops.iter().enumerate().filter(|(i, l)| depth(*i, l) <= max_depth).map(|(_, l)| l.clone()).collect()
+    Some(loops.iter().enumerate().filter(|(i, l)| depth(*i, l) <= max_depth).map(|(_, l)| l.clone()).collect())
 }
 
 /// A point of a loop to test its nesting with: the middle of its first non-degenerate edge
@@ -166,16 +287,22 @@ const MAX_GRADIENT_TRIS: usize = 200_000;
 /// A two-colour gradient over the fill triangles `tris`: a base fill in the middle colour (it
 /// hides seams between steps), then the triangles split into small pieces, each drawn in the
 /// colour step of the gradient value at its centroid.
-fn gradient(b: &mut Builder, ctx: &Ctx, g: &Gradient, layer: Color, tris: &[Vec2]) {
+fn gradient(b: &mut Builder, ctx: &Ctx, g: &Gradient, layer: Color, tris: &[Vec2], budget: Option<&HatchBudget>) {
     let c1 = ink(g.color1, layer, ctx.block_color);
     let c2 = ink(g.color2, layer, ctx.block_color);
     b.tris(ctx, mix(c1, c2, 0.5), tris);
     let Some(field) = Field::new(g, tris) else { return };
     let mut steps: Vec<Vec<Vec2>> = vec![Vec::new(); GRADIENT_LEVELS];
     let max2 = field.cell * field.cell;
+    if !charge(budget, tris.len()) {
+        return;
+    }
     let mut stack: Vec<[Vec2; 3]> = tris.as_chunks::<3>().0.to_vec();
     let mut drawn = 0usize;
     while let Some([a, bb, c]) = stack.pop() {
+        if !charge(budget, 12) {
+            break;
+        }
         // Split the longest edge while the budget allows.
         let edges = [(a, bb, c), (bb, c, a), (c, a, bb)];
         let (p, q, r) = edges.into_iter().max_by(|x, y| (x.0 - x.1).len2().total_cmp(&(y.0 - y.1).len2())).unwrap_or((a, bb, c));
@@ -381,6 +508,19 @@ pub(crate) fn pattern_lines_until(
     view: Option<&Bounds2>,
     cancel: Option<&AtomicBool>,
 ) -> Vec<Vec<Vec2>> {
+    pattern_lines_limited(d, h, loops, px, view, cancel, None)
+}
+
+/// Pattern lines for `h` clipped to `loops`, or `None` when the work budget runs out or `cancel` fires.
+fn pattern_lines_limited(
+    d: &Drawing,
+    h: &Hatch,
+    loops: &[Vec<Vec2>],
+    px: f64,
+    view: Option<&Bounds2>,
+    cancel: Option<&AtomicBool>,
+    budget: Option<&HatchBudget>,
+) -> Vec<Vec<Vec2>> {
     let lines = lines_of(d, h);
     let scale = scale_of(h);
     let px = if px.is_finite() && px > 0.0 { px } else { 0.0 };
@@ -390,6 +530,9 @@ pub(crate) fn pattern_lines_until(
     // their cost (CWE-400).
     let mut work: u64 = MAX_HATCH_WORK;
     for fam in &lines {
+        if !charge(budget, fam.dashes.len().saturating_add(1)) {
+            break;
+        }
         // A family with dashes but no positive (ink) element can never draw: skip it so its gaps
         // are not swept at all.
         if !fam.dashes.is_empty() && !fam.dashes.iter().any(|d| *d >= 0.0) {
@@ -403,7 +546,8 @@ pub(crate) fn pattern_lines_until(
             continue;
         }
         let dashes: Vec<f64> = fam.dashes.iter().map(|d| d * scale).collect();
-        Family { origin, ang, delta, spacing, dashes: &dashes }.sweep(loops, px, view, cancel, &mut out, &mut work);
+        let mut sink = Sink { out: &mut out, work: &mut work, budget };
+        Family { origin, ang, delta, spacing, dashes: &dashes }.sweep(loops, px, view, cancel, &mut sink);
         if out.len() >= MAX_RUNS || work == 0 || is_set(cancel) {
             break;
         }
@@ -456,6 +600,14 @@ struct Family<'a> {
     dashes: &'a [f64],
 }
 
+/// Where a family sweep writes its runs, and the limits it spends while doing so: the per-build
+/// dash-work count and the optional shared thumbnail budget.
+struct Sink<'s> {
+    out: &'s mut Vec<Vec<Vec2>>,
+    work: &'s mut u64,
+    budget: Option<&'s HatchBudget>,
+}
+
 impl Family<'_> {
     /// Into the frame where the family's lines are horizontal.
     fn to_local(&self, p: Vec2) -> Vec2 {
@@ -486,7 +638,12 @@ impl Family<'_> {
     }
 
     /// Intersect a pattern family with boundary loops, respecting view, output, cancellation, and shared dash-work limits.
-    fn sweep(&self, loops: &[Vec<Vec2>], px: f64, view: Option<&Bounds2>, cancel: Option<&AtomicBool>, out: &mut Vec<Vec<Vec2>>, work: &mut u64) {
+    fn sweep(&self, loops: &[Vec<Vec2>], px: f64, view: Option<&Bounds2>, cancel: Option<&AtomicBool>, sink: &mut Sink<'_>) {
+        let budget = sink.budget;
+        let points = loops.iter().fold(0usize, |n, l| n.saturating_add(l.len()));
+        if !charge(budget, points.saturating_add(loops.len())) {
+            return;
+        }
         let local: Vec<Vec<Vec2>> = loops.iter().map(|l| l.iter().map(|p| self.to_local(*p)).collect()).collect();
         let bb = Bounds2::from_points(local.iter().flatten().copied());
         if bb.is_empty() {
@@ -506,7 +663,10 @@ impl Family<'_> {
         let draws = self.dashes.iter().any(|d| *d >= 0.0);
         let solid_line = self.dashes.is_empty() || pat_len < 1e-12 || (px > 0.0 && pat_len < 2.0 * px && draws);
         for k in k0..=k1 {
-            if out.len() >= MAX_RUNS || *work == 0 || is_set(cancel) {
+            if !charge(budget, points.saturating_mul(16).saturating_add(1)) {
+                return;
+            }
+            if sink.out.len() >= MAX_RUNS || *sink.work == 0 || is_set(cancel) {
                 return;
             }
             let y = k as f64 * self.spacing;
@@ -522,24 +682,27 @@ impl Family<'_> {
                     continue;
                 }
                 if solid_line {
-                    out.push(vec![self.to_world(Vec2::new(x0, y)), self.to_world(Vec2::new(x1, y))]);
+                    sink.out.push(vec![self.to_world(Vec2::new(x0, y)), self.to_world(Vec2::new(x1, y))]);
                 } else {
-                    self.dash((x0, x1), y, offset, pat_len, out, work);
+                    self.dash((x0, x1), y, offset, pat_len, sink);
                 }
             }
         }
     }
 
     /// The dashes and dots of the span `x0..x1` of the line at `y`, phase anchored at x = `offset`.
-    fn dash(&self, (x0, x1): (f64, f64), y: f64, offset: f64, pat_len: f64, out: &mut Vec<Vec<Vec2>>, work: &mut u64) {
+    fn dash(&self, (x0, x1): (f64, f64), y: f64, offset: f64, pat_len: f64, sink: &mut Sink<'_>) {
         let start_rep = ((x0 - offset) / pat_len).floor();
         let mut x = offset + start_rep * pat_len;
         let mut guard = 0;
         'outer: while x < x1 {
             for d in self.dashes {
+                if !charge(sink.budget, 4) {
+                    return;
+                }
                 guard += 1;
-                *work = work.saturating_sub(1);
-                if guard > 100_000 || out.len() >= MAX_RUNS || *work == 0 {
+                *sink.work = sink.work.saturating_sub(1);
+                if guard > 100_000 || sink.out.len() >= MAX_RUNS || *sink.work == 0 {
                     break 'outer;
                 }
                 let len = d.abs();
@@ -547,10 +710,10 @@ impl Family<'_> {
                     let a = x.max(x0);
                     let b = (x + len).min(x1);
                     if b > a {
-                        out.push(vec![self.to_world(Vec2::new(a, y)), self.to_world(Vec2::new(b, y))]);
+                        sink.out.push(vec![self.to_world(Vec2::new(a, y)), self.to_world(Vec2::new(b, y))]);
                     }
                 } else if *d == 0.0 && x >= x0 && x <= x1 {
-                    out.push(vec![self.to_world(Vec2::new(x, y))]);
+                    sink.out.push(vec![self.to_world(Vec2::new(x, y))]);
                 }
                 x += len;
                 if x >= x1 {
@@ -582,6 +745,60 @@ mod tests {
     use super::*;
     use cadcraft_doc::{Hatch, HatchLoop};
     use cadcraft_geom::PolyVertex;
+
+    #[test]
+    fn thumbnail_budget_preserves_a_multi_island_fill() {
+        let polygon = |cx: f64, cy: f64, radius: f64| HatchLoop {
+            vertices: (0..24)
+                .map(|i| {
+                    let angle = f64::from(i) * std::f64::consts::TAU / 24.0;
+                    PolyVertex::new(Vec2::new(cx + radius * angle.cos(), cy + radius * angle.sin()))
+                })
+                .collect(),
+            outer: false,
+            sources: vec![],
+        };
+        let mut boundaries = vec![polygon(0.0, 0.0, 100.0)];
+        boundaries.extend((0..20).map(|i| polygon(f64::from(i % 5) * 12.0 - 24.0, f64::from(i / 5) * 12.0 - 18.0, 3.0)));
+        let hatch = Hatch {
+            origin: Vec2::ZERO,
+            pattern: "SOLID".into(),
+            solid: true,
+            loops: boundaries,
+            scale: 1.0,
+            angle: 0.0,
+            associative: false,
+            style: 0,
+            elevation: 0.0,
+            gradient: None,
+            background: None,
+            pattern_lines: vec![],
+        };
+        let budget = HatchBudget::new(250_000);
+        let loops = fill_loops_limited(&hatch, 0.01, Some(&budget)).expect("ordinary islands fit the thumbnail budget");
+        assert_eq!(loops.len(), 21);
+        let tris = fill::triangulate_evenodd_limited(&loops, Some(&budget)).expect("fill fits the thumbnail budget");
+        assert!(!tris.is_empty());
+        assert!(budget.remaining() > 0);
+    }
+
+    #[test]
+    fn spending_the_budget_exactly_is_not_a_failure() {
+        let budget = HatchBudget::new(10);
+        assert!(charge(Some(&budget), 10));
+        assert_eq!(budget.remaining(), 0);
+        assert!(!budget.failed());
+        assert!(!charge(Some(&budget), 1));
+        assert!(budget.failed());
+    }
+
+    #[test]
+    fn dedup_stops_when_the_shared_budget_is_exhausted() {
+        let mut loops = vec![vec![Vec2::ZERO; 100], vec![Vec2::new(1.0, 1.0); 100]];
+        let budget = HatchBudget::new(10);
+        assert!(dedup_polygons(&mut loops, Some(&budget)).is_none());
+        assert_eq!(budget.remaining(), 0);
+    }
 
     #[test]
     fn fill_loops_deduplicates_coincident_loops() {
@@ -629,7 +846,7 @@ mod dedup_budget_tests {
         let b = vec![Vec2::ZERO; 5_001];
         let tri = vec![Vec2::ZERO, Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0)];
         let mut loops = vec![a, b, tri.clone(), tri];
-        dedup_polygons(&mut loops);
+        assert!(dedup_polygons(&mut loops, None).is_some());
         assert_eq!(loops.len(), 3);
     }
 }

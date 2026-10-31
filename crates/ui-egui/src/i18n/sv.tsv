@@ -1451,3 +1451,12 @@ menu	Modify	Ändra
 	Check for Updates…	Sök efter uppdateringar…
 	CADCraft is up to date.	CADCraft är uppdaterat.
 	Could not check for updates.	Det gick inte att söka efter uppdateringar.
+	Preview pending	Förhandsvisning väntar
+	Preview unavailable	Förhandsvisning är inte tillgänglig
+	No visible content	Inget synligt innehåll
+	Empty block	Tomt block
+	Excessive preview input	För mycket indata för förhandsvisningen
+	Excessive preview computation	För omfattande beräkning för förhandsvisningen
+	Excessive preview output	För stor utdata från förhandsvisningen
+	Invalid preview data	Ogiltiga förhandsvisningsdata
+	Missing block reference	Blockreferens saknas

@@ -1247,3 +1247,12 @@ menu	Modify	수정
 	Check for Updates…	업데이트 확인…
 	CADCraft is up to date.	CADCraft가 최신 버전입니다.
 	Could not check for updates.	업데이트를 확인하지 못했습니다.
+	Preview pending	미리 보기 대기 중
+	Preview unavailable	미리 보기를 사용할 수 없음
+	No visible content	표시할 내용 없음
+	Empty block	빈 블록
+	Excessive preview input	미리 보기 입력 데이터가 너무 많음
+	Excessive preview computation	미리 보기 계산량이 너무 많음
+	Excessive preview output	미리 보기 출력이 너무 큼
+	Invalid preview data	잘못된 미리 보기 데이터
+	Missing block reference	블록 참조 없음

@@ -1367,3 +1367,12 @@ menu	Modify	Edita
 	Check for Updates…	Verifica aggiornamenti…
 	CADCraft is up to date.	CADCraft è aggiornato.
 	Could not check for updates.	Impossibile verificare gli aggiornamenti.
+	Preview pending	Anteprima in attesa
+	Preview unavailable	Anteprima non disponibile
+	No visible content	Nessun contenuto visibile
+	Empty block	Blocco vuoto
+	Excessive preview input	Dati di input dell'anteprima eccessivi
+	Excessive preview computation	Calcolo dell'anteprima eccessivo
+	Excessive preview output	Output dell'anteprima eccessivo
+	Invalid preview data	Dati di anteprima non validi
+	Missing block reference	Riferimento al blocco mancante

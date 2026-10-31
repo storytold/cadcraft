@@ -129,6 +129,7 @@ pub(super) fn ensure_vp_content(app: &mut CadApp, xf_paper: &Xf, ctx: &egui::Con
             min_dash: 2f64.powi(band) * 2.0,
             text: true,
             fill: true,
+            hatch_budget: None,
             lineweights: lwdisplay,
             view_height: st.paper_view().height,
             plot_style_table: None,

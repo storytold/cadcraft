@@ -32,7 +32,7 @@ use pen::Pen;
 
 pub use dim::{ArrowGeom, Arrowhead, DimGeometry, DimText, LineRole, arrowhead, dimension_geometry, dimension_geometry_with, format_linear_value};
 pub use fill::triangulate_evenodd;
-pub use hatch::{fill_loops as hatch_fill_loops, pattern_swatch};
+pub use hatch::{HatchBudget, fill_loops as hatch_fill_loops, pattern_swatch};
 pub use paper::{PAPER_SIZES, PaperSize, Sheet, paper_size, sheet};
 pub use tolerance::{gdt_points, tolerance_in};
 
@@ -113,6 +113,8 @@ impl Ctx<'_> {
 }
 
 struct Builder<'a> {
+    output_left: Option<(usize, usize)>,
+    output_failed: bool,
     list: DisplayList,
     opts: &'a Options,
     /// Plotting: skip layers marked "do not plot".
@@ -134,6 +136,23 @@ struct Builder<'a> {
 pub const MAX_BLOCK_EXPANSION: usize = 2_000_000;
 
 impl Builder<'_> {
+    /// Reserve retained primitives and vertices before growing display-list buffers. Temporary
+    /// geometry still requires the caller's input/work preflight (this is not a time limit).
+    fn reserve_output(&mut self, points: usize) -> bool {
+        if self.output_failed {
+            return false;
+        }
+        if let Some((prims, verts)) = self.output_left {
+            if let (Some(prims), Some(verts)) = (prims.checked_sub(1), verts.checked_sub(points)) {
+                self.output_left = Some((prims, verts));
+            } else {
+                self.output_failed = true;
+                return false;
+            }
+        }
+        true
+    }
+
     /// `color` and `lw` as the plot style table prints them.
     fn styled(&self, color: Ink, lw: f32) -> (Ink, f32) {
         match self.styles {
@@ -169,6 +188,9 @@ impl Builder<'_> {
         self.push_polyline(ctx, color, 0.0, pts);
     }
     fn push_polyline(&mut self, ctx: &Ctx, color: Ink, lw: f32, pts: &[Vec2]) {
+        if !self.reserve_output(pts.len()) {
+            return;
+        }
         let start = self.list.verts.len() as u32;
         for p in pts {
             let q = ctx.xf.apply(*p);
@@ -193,6 +215,9 @@ impl Builder<'_> {
         if tris.len() < 3 {
             return;
         }
+        if !self.reserve_output(tris.len()) {
+            return;
+        }
         self.note_pen(color);
         let (color, _) = self.styled(color, 0.0);
         let start = self.list.tris.len() as u32;
@@ -215,6 +240,9 @@ impl Builder<'_> {
     /// Shaped text: strokes as polylines; TrueType glyphs filled (TEXTFILL) or outlined.
     fn shaped(&mut self, ctx: &Ctx, color: Ink, lw: f32, sh: &cadcraft_fonts::Shaped) {
         for s in &sh.strokes {
+            if self.output_failed {
+                return;
+            }
             self.polyline(ctx, color, lw, s);
         }
         if sh.glyphs.is_empty() {
@@ -225,6 +253,9 @@ impl Builder<'_> {
         let mut text = sh.text.iter().peekable();
         let pixel = if self.plotting { 0.0 } else { self.opts.min_dash * 0.5 };
         for (i, g) in sh.glyphs.iter().enumerate() {
+            if self.output_failed {
+                return;
+            }
             if fill {
                 while text.next_if(|t| t.outline < i).is_some() {}
                 let glyph = text.next_if(|t| t.outline == i);
@@ -256,6 +287,9 @@ impl Builder<'_> {
         }
     }
     fn point(&mut self, ctx: &Ctx, color: Ink, p: Vec2) {
+        if !self.reserve_output(1) {
+            return;
+        }
         let (color, _) = self.styled(color, 0.0);
         let q = ctx.xf.apply(p);
         self.list.bounds.add(q);
@@ -273,6 +307,9 @@ impl Builder<'_> {
         });
     }
     fn infinite(&mut self, ctx: &Ctx, color: Ink, base: Vec2, dir: Vec2, ray: bool) {
+        if !self.reserve_output(2) {
+            return;
+        }
         let (color, _) = self.styled(color, 0.0);
         let start = self.list.verts.len() as u32;
         self.list.verts.push(ctx.xf.apply(base));
@@ -312,7 +349,7 @@ mod viewports;
 
 pub use dim_draw::{dim_text, dimension_in};
 pub use display::{DPrim, DisplayList, Kind, MAX_TRANSPARENCY, NO_LAYER, PlotText, VIEWPORT_CONTENT, alpha};
-pub use pipeline::{Options, build, build_entities, build_plot};
+pub use pipeline::{Options, build, build_entities, build_entities_limited, build_plot};
 use props::{default_lineweight, resolve_common};
 use text_entity::text_style;
 pub use text_entity::{layout_mtext_entity, place_text_entity, text_align};

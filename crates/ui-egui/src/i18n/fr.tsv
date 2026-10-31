@@ -1014,6 +1014,46 @@
 	Not a number or distance: {text}	Ni un nombre ni une distance : {text}
 	Query Texts	Interroger les textes
 	Analyze Shapes	Analyser les formes
+	View mode	Mode d'affichage
+	Medium Icons	Icône moyenne
+	Large Icons	Grande icône
+	Repeat placement	Répéter le placement
+	Grab on click	Prendre en main au clic
+	Specify scale on screen when placing	Spécifier l'échelle à l'écran lors de la pose
+	Specify rotation angle on screen when placing	Spécifier l'angle de rotation à l'écran lors de la pose
+	Click or drag to take in hand, then click on the drawing to place	Cliquer ou faire glisser pour prendre en main, puis cliquer sur le dessin pour déposer
+	Click or drag a block to take it in hand, then click on the drawing to place	Cliquer ou faire glisser un bloc pour le prendre en main, puis cliquer sur le dessin pour le déposer
+	No blocks match the search.	Aucun bloc ne correspond à la recherche.
+	Block Manager	Gestionnaire de blocs
+	Search:	Rechercher :
+	Making a preview...	Création de l'aperçu...
+	Edit Block	Modifier le bloc
+	Open in the Block Editor	Ouvrir dans l'éditeur de blocs
+	The block is in use and can't be deleted	Ce bloc est utilisé et ne peut pas être supprimé
+	Finish or cancel the running INSERT first	Termine ou annule d'abord la commande INSERT en cours
+	Exploded insertion uses the X scale for both axes	L'insertion éclatée utilise l'échelle X pour les deux axes
+	Delete a block that no object uses	Supprimer un bloc qu'aucun objet n'utilise
+	Save to File...	Enregistrer dans un fichier...
+	Write the block as a drawing (WBLOCK)	Enregistrer le bloc sous forme de dessin (WBLOCK)
+	Create...	Créer...
+	Make a block from objects (BLOCK)	Créer un bloc à partir d'objets (BLOCK)
+	Objects	Objets
+	References	Références
+	Base point	Point de base
+	Annotative	Annotatif
+	External reference	Référence externe
+	Options	Options
+	Float as a window	Détacher en fenêtre
+	Pin as a panel on the right	Épingler en panneau à droite
 	Check for Updates…	Rechercher des mises à jour…
 	CADCraft is up to date.	CADCraft est à jour.
 	Could not check for updates.	Impossible de rechercher les mises à jour.
+	Preview pending	Aperçu en attente
+	Preview unavailable	Aperçu indisponible
+	No visible content	Aucun contenu visible
+	Empty block	Bloc vide
+	Excessive preview input	Données d’entrée trop volumineuses
+	Excessive preview computation	Coût de calcul excessif
+	Excessive preview output	Sortie de l’aperçu trop volumineuse
+	Invalid preview data	Données invalides pour l’aperçu
+	Missing block reference	Référence de bloc manquante

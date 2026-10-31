@@ -78,7 +78,7 @@ impl Session {
                 if nested {
                     self.suspended = self.running.take();
                 }
-                self.running = Some(Running { id: spec.id.to_string(), machine, before, selection_before });
+                self.running = Some(Running::new(spec.id, machine, before, selection_before));
                 self.pending_window = None;
                 // Some commands complete immediately (e.g. ERASE with a pickfirst selection).
                 self.feed(None)?;
