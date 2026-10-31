@@ -337,7 +337,7 @@
 	Enter a vertex editing option	Εισαγάγετε επιλογή επεξεργασίας κορυφής
 	Enter an option	Εισαγάγετε επιλογή
 	Enter angle of xline	Εισαγάγετε γωνία βοηθητικής ευθείας
-	Enter angle of xline (0) or	Εισαγάγετε γωνία βοηθητικής ευθείας (0) ή
+	Enter angle of xline (0)	Εισαγάγετε γωνία βοηθητικής ευθείας (0)
 	Enter area of rectangle in current units	Εισαγάγετε το εμβαδόν ορθογωνίου στις τρέχουσες μονάδες
 	Enter attribute prompt	Εισαγάγετε μήνυμα προτροπής ιδιότητας
 	Enter attribute tag name	Εισαγάγετε όνομα ετικέτας ιδιότητας
@@ -348,7 +348,7 @@
 	Enter default attribute value	Εισαγάγετε προεπιλεγμένη τιμή ιδιότητας
 	Enter degree of spline	Εισαγάγετε βαθμό καμπύλης spline
 	Enter delta angle	Εισαγάγετε μεταβολή γωνίας
-	Enter delta length or	Εισαγάγετε μεταβολή μήκους ή
+	Enter delta length	Εισαγάγετε μεταβολή μήκους
 	Enter dimension text	Εισαγάγετε κείμενο διάστασης
 	Enter dimension text (<> = measurement)	Εισαγάγετε κείμενο διάστασης (<> = μέτρηση)
 	Enter dimension value or [name=expression]	Εισαγάγετε τιμή διάστασης ή [όνομα=έκφραση]
@@ -918,8 +918,8 @@
 	Select an arc or circle	Επιλέξτε τόξο ή κύκλο
 	Select an arc.	Επιλέξτε τόξο.
 	Select an object	Επιλέξτε αντικείμενο
-	Select an object to change or	Επιλέξτε αντικείμενο για αλλαγή ή
-	Select an object to measure or	Επιλέξτε αντικείμενο για μέτρηση ή
+	Select an object to change	Επιλέξτε αντικείμενο για αλλαγή
+	Select an object to measure	Επιλέξτε αντικείμενο για μέτρηση
 	Select an object.	Επιλέξτε αντικείμενο.
 	Select an open curve.	Επιλέξτε ανοικτή καμπύλη.
 	Select an open line, arc, polyline, ellipse arc or spline.	Επιλέξτε ανοικτή γραμμή, τόξο, πολυγραμμή, ελλειπτικό τόξο ή καμπύλη spline.
@@ -933,9 +933,8 @@
 	Select first line	Επιλέξτε πρώτη γραμμή
 	Select first line or arc	Επιλέξτε πρώτη γραμμή ή τόξο
 	Select first object	Επιλέξτε πρώτο αντικείμενο
-	Select first object or	Επιλέξτε πρώτο αντικείμενο ή
 	Select first point	Επιλέξτε πρώτο σημείο
-	Select nested objects to copy or	Επιλέξτε ένθετα αντικείμενα για αντιγραφή ή
+	Select nested objects to copy	Επιλέξτε ένθετα αντικείμενα για αντιγραφή
 	Select object	Επιλέξτε αντικείμενο
 	Select object to dimension	Επιλέξτε αντικείμενο για διαστασιολόγηση
 	Select object to divide	Επιλέξτε αντικείμενο για διαίρεση
@@ -953,7 +952,7 @@
 	Select one polyline (Multiple is available through the JSON form).	Επιλέξτε μία πολυγραμμή (η επιλογή Multiple διατίθεται μέσω JSON).
 	Select path curve	Επιλέξτε καμπύλη διαδρομής
 	Select point or object	Επιλέξτε σημείο ή αντικείμενο
-	Select polyline or	Επιλέξτε πολυγραμμή ή
+	Select polyline	Επιλέξτε πολυγραμμή
 	Select second line	Επιλέξτε δεύτερη γραμμή
 	Select second line or shift-select to apply corner	Επιλέξτε δεύτερη γραμμή ή κρατήστε Shift για εφαρμογή γωνίας
 	Select second object	Επιλέξτε δεύτερο αντικείμενο
@@ -1035,7 +1034,6 @@
 	Specify axis endpoint of ellipse	Καθορίστε τελικό σημείο άξονα έλλειψης
 	Specify base diameter	Καθορίστε διάμετρο βάσης
 	Specify base point	Καθορίστε σημείο βάσης
-	Specify base point or	Καθορίστε σημείο βάσης ή
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Καθορίστε σημείο βάσης ή μετατόπιση (σύρετε με το μεσαίο πλήκτρο του ποντικιού για μετατόπιση όψης σε πραγματικό χρόνο)
 	Specify base radius or	Καθορίστε ακτίνα βάσης ή
 	Specify center of donut	Καθορίστε κέντρο δακτυλίου
@@ -1079,7 +1077,7 @@
 	Specify first point on circle: _tan to	Καθορίστε πρώτο σημείο επάνω στον κύκλο: _tan προς
 	Specify first source point	Καθορίστε πρώτο σημείο προέλευσης
 	Specify height	Καθορίστε ύψος
-	Specify helix height or	Καθορίστε ύψος έλικας ή
+	Specify helix height	Καθορίστε ύψος έλικας
 	Specify included angle	Καθορίστε περιεχόμενη γωνία
 	Specify insertion base point	Καθορίστε σημείο βάσης εισαγωγής
 	Specify insertion point	Καθορίστε σημείο εισαγωγής
@@ -1098,7 +1096,6 @@
 	Specify new width for all segments	Καθορίστε νέο πλάτος για όλα τα τμήματα
 	Specify next point	Καθορίστε επόμενο σημείο
 	Specify offset distance	Καθορίστε απόσταση παράλληλης μετατόπισης (Offset)
-	Specify offset distance or	Καθορίστε απόσταση παράλληλης μετατόπισης ή
 	Specify opposite corner	Καθορίστε απέναντι γωνία
 	Specify other corner point	Καθορίστε το άλλο γωνιακό σημείο
 	Specify other endpoint of axis	Καθορίστε το άλλο τελικό σημείο άξονα
@@ -1146,7 +1143,7 @@
 	Specify top diameter	Καθορίστε άνω διάμετρο
 	Specify top radius or	Καθορίστε άνω ακτίνα ή
 	Specify total angle	Καθορίστε συνολική γωνία
-	Specify total length or	Καθορίστε συνολικό μήκος ή
+	Specify total length	Καθορίστε συνολικό μήκος
 	Specify width for rectangles	Καθορίστε πλάτος ορθογωνίων
 	Sphere	Σφαίρα
 	Spherical	Σφαιρικό

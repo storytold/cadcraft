@@ -165,7 +165,7 @@ impl Interactive for HelixM {
                     .default(format!("{rb:.4}"))
                     .base(c)
             }
-            (Some(c), Some(_), Some(_)) => Prompt::new("Specify helix height or", Accept::POINT_OR_NUMBER)
+            (Some(c), Some(_), Some(_)) => Prompt::new("Specify helix height", Accept::POINT_OR_NUMBER)
                 .kw(&["Axis endpoint", "Turns", "turn Height", "tWist"])
                 .default("1.0000")
                 .base(c),

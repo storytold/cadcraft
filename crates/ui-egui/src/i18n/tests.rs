@@ -40,6 +40,15 @@ fn catalog_is_valid_and_preserves_placeholders_and_ellipses() {
     assert_eq!(tr("unknown", "Open"), "Open");
 }
 
+/// A prompt with options is translated without its own "or": the command line adds the
+/// translated " or [" before the options ("Select polyline or [Multiple]").
+#[test]
+fn prompts_with_options_leave_or_to_the_command_line() {
+    assert_eq!(format!("{}{}", tr("de", "Select polyline"), tr("de", " or [")), "Wählen Sie eine Polylinie oder [");
+    assert_eq!(format!("{}{}", tr("ko", "Specify helix height"), tr("ko", " or [")), "나선 높이 지정 또는 [");
+    assert_eq!(format!("{}{}", tr("zh", "Enter delta length"), tr("zh", " or [")), "输入增量长度 或 [");
+}
+
 /// What each language shows in English for now. Missing translations never fail a build:
 /// `cargo xtask i18n`, a step of `cargo xtask ci`, runs this to print the list.
 #[test]

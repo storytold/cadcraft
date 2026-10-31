@@ -286,7 +286,7 @@
 	Enter a vertex editing option	Введіть параметр редагування вершини
 	Enter an option	Введіть параметр
 	Enter angle of xline	Введіть кут допоміжної прямої
-	Enter angle of xline (0) or	Введіть кут допоміжної прямої (0) або
+	Enter angle of xline (0)	Введіть кут допоміжної прямої (0)
 	Enter area of rectangle in current units	Введіть площу прямокутника в поточних одиницях
 	Enter attribute prompt	Введіть підказку атрибута
 	Enter attribute tag name	Введіть ім'я тегу атрибута
@@ -297,7 +297,7 @@
 	Enter default attribute value	Введіть типове значення атрибута
 	Enter degree of spline	Введіть степінь сплайна
 	Enter delta angle	Введіть зміну кута
-	Enter delta length or	Введіть зміну довжини або
+	Enter delta length	Введіть зміну довжини
 	Enter dimension text	Введіть розмірний текст
 	Enter dimension text (<> = measurement)	Введіть розмірний текст (<> = виміряне значення)
 	Enter dimension value or [name=expression]	Введіть розмірне значення або [name=expression]
@@ -802,8 +802,8 @@
 	Select an arc or circle	Виберіть дугу або коло
 	Select an arc.	Виберіть дугу.
 	Select an object	Виберіть об'єкт
-	Select an object to change or	Виберіть об'єкт для зміни або
-	Select an object to measure or	Виберіть об'єкт для вимірювання або
+	Select an object to change	Виберіть об'єкт для зміни
+	Select an object to measure	Виберіть об'єкт для вимірювання
 	Select an object.	Виберіть об'єкт.
 	Select an open curve.	Виберіть незамкнену криву.
 	Select an open line, arc, polyline, ellipse arc or spline.	Виберіть незамкнений відрізок, дугу, полілінію, еліптичну дугу або сплайн.
@@ -817,9 +817,8 @@
 	Select first line	Виберіть перший відрізок
 	Select first line or arc	Виберіть перший відрізок або дугу
 	Select first object	Виберіть перший об'єкт
-	Select first object or	Виберіть перший об'єкт або
 	Select first point	Виберіть першу точку
-	Select nested objects to copy or	Виберіть вкладені об'єкти для копіювання або
+	Select nested objects to copy	Виберіть вкладені об'єкти для копіювання
 	Select object	Виберіть об'єкт
 	Select object to dimension	Виберіть об'єкт для нанесення розміру
 	Select object to divide	Виберіть об'єкт для поділу
@@ -840,7 +839,7 @@
 	Select one polyline (Multiple is available through the JSON form).	Виберіть одну полілінію (Multiple доступно через JSON).
 	Select path curve	Виберіть криву траєкторії
 	Select point or object	Виберіть точку або об'єкт
-	Select polyline or	Виберіть полілінію або
+	Select polyline	Виберіть полілінію
 	Select second line	Виберіть другий відрізок
 	Select second line or shift-select to apply corner	Виберіть другий відрізок або виберіть із Shift, щоб утворити кут
 	Select second object	Виберіть другий об'єкт
@@ -900,7 +899,6 @@
 	Specify axis endpoint of ellipse	Укажіть кінцеву точку осі еліпса
 	Specify base diameter	Укажіть діаметр основи
 	Specify base point	Укажіть базову точку
-	Specify base point or	Укажіть базову точку або
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Укажіть базову точку або зміщення (перетягуйте середньою кнопкою миші для панорамування)
 	Specify base radius or	Укажіть радіус основи або
 	Specify center of donut	Укажіть центр кільця
@@ -944,7 +942,7 @@
 	Specify first point on circle: _tan to	Укажіть першу точку на колі: _tan до
 	Specify first source point	Укажіть першу вихідну точку
 	Specify height	Укажіть висоту
-	Specify helix height or	Укажіть висоту спіралі або
+	Specify helix height	Укажіть висоту спіралі
 	Specify included angle	Укажіть кут між сторонами
 	Specify insertion base point	Укажіть базову точку вставлення
 	Specify insertion point	Укажіть точку вставлення
@@ -1028,7 +1026,6 @@
 	Specify new width for all segments	Укажіть нову ширину всіх сегментів
 	Specify next point	Укажіть наступну точку
 	Specify offset distance	Укажіть відстань зміщення
-	Specify offset distance or	Укажіть відстань зміщення або
 	Specify opposite corner	Укажіть протилежний кут
 	Specify other corner point	Укажіть іншу кутову точку
 	Specify other endpoint of axis	Укажіть іншу кінцеву точку осі
@@ -1076,7 +1073,7 @@
 	Specify top diameter	Укажіть діаметр вершини
 	Specify top radius or	Укажіть радіус вершини або
 	Specify total angle	Укажіть загальний кут
-	Specify total length or	Укажіть загальну довжину або
+	Specify total length	Укажіть загальну довжину
 	Specify width for rectangles	Укажіть ширину прямокутників
 	Sphere	Сфера
 	Spline	Сплайн

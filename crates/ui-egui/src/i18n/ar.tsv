@@ -305,7 +305,7 @@
 	Enter a vertex editing option	أدخل خيار تحرير الرؤوس
 	Enter an option	أدخل خياراً
 	Enter angle of xline	أدخل زاوية الخط الإنشائي
-	Enter angle of xline (0) or	أدخل زاوية الخط الإنشائي (0) أو
+	Enter angle of xline (0)	أدخل زاوية الخط الإنشائي (0)
 	Enter area of rectangle in current units	أدخل مساحة المستطيل بالوحدات الحالية
 	Enter attribute prompt	أدخل موجه السمة
 	Enter attribute tag name	أدخل اسم وسم السمة
@@ -316,7 +316,7 @@
 	Enter default attribute value	أدخل قيمة السمة الافتراضية
 	Enter degree of spline	أدخل درجة السبلاين
 	Enter delta angle	أدخل زاوية دلتا
-	Enter delta length or	أدخل طول دلتا أو
+	Enter delta length	أدخل طول دلتا
 	Enter dimension text	أدخل نص التأشير
 	Enter dimension text (<> = measurement)	أدخل نص التأشير (<> = القياس)
 	Enter dimension value or [name=expression]	أدخل قيمة التأشير أو [name=expression]
@@ -851,8 +851,8 @@
 	Select an arc or circle	حدد قوساً أو دائرة
 	Select an arc.	حدد قوساً.
 	Select an object	حدد كائناً
-	Select an object to change or	حدد كائناً لتغييره أو
-	Select an object to measure or	حدد كائناً لقياسه أو
+	Select an object to change	حدد كائناً لتغييره
+	Select an object to measure	حدد كائناً لقياسه
 	Select an object.	حدد كائنًا.
 	Select an open curve.	حدد منحنى مفتوحاً.
 	Select an open line, arc, polyline, ellipse arc or spline.	حدد خطاً مفتوحاً أو قوساً أو متعدد خطوط أو قوس إهليلج أو سبلاين.
@@ -866,9 +866,8 @@
 	Select first line	حدد الخط الأول
 	Select first line or arc	حدد الخط الأول أو قوساً
 	Select first object	حدد الكائن الأول
-	Select first object or	حدد الكائن الأول أو
 	Select first point	حدد النقطة الأولى
-	Select nested objects to copy or	حدد الكائنات المتداخلة لنسخها أو
+	Select nested objects to copy	حدد الكائنات المتداخلة لنسخها
 	Select object	حدد كائناً
 	Select object to dimension	حدد كائناً لتأشيره
 	Select object to divide	حدد كائناً لتقسيمه
@@ -885,7 +884,7 @@
 	Select one polyline (Multiple is available through the JSON form).	حدد متعدد خطوط واحداً (يتوفر الوضع المتعدد عبر نموذج JSON).
 	Select path curve	حدد منحنى المسار
 	Select point or object	حدد نقطة أو كائناً
-	Select polyline or	حدد متعدد خطوط أو
+	Select polyline	حدد متعدد خطوط
 	Select second line	حدد الخط الثاني
 	Select second line or shift-select to apply corner	حدد الخط الثاني أو حدد مع Shift لتطبيق الزاوية
 	Select second object	حدد الكائن الثاني
@@ -955,7 +954,6 @@
 	Specify axis endpoint of ellipse	حدد نقطة نهاية محور الإهليلج
 	Specify base diameter	حدد القطر الأساسي
 	Specify base point	حدد نقطة الأساس
-	Specify base point or	حدد نقطة الأساس أو
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	حدد نقطة الأساس أو الإزاحة (اسحب بزر الفأرة الأوسط للإزاحة الفورية)
 	Specify base radius or	حدد نصف القطر الأساسي أو
 	Specify center of donut	حدد مركز الحلقة
@@ -999,7 +997,7 @@
 	Specify first point on circle: _tan to	حدد النقطة الأولى على الدائرة: _تماس إلى
 	Specify first source point	حدد نقطة المصدر الأولى
 	Specify height	حدد الارتفاع
-	Specify helix height or	حدد ارتفاع الحلزون أو
+	Specify helix height	حدد ارتفاع الحلزون
 	Specify included angle	حدد الزاوية المحصورة
 	Specify insertion base point	حدد نقطة الأساس للإدراج
 	Specify insertion point	حدد نقطة الإدراج
@@ -1018,7 +1016,6 @@
 	Specify new width for all segments	حدد عرضاً جديداً لكل المقاطع
 	Specify next point	حدد النقطة التالية
 	Specify offset distance	حدد مسافة الإزاحة
-	Specify offset distance or	حدد مسافة الإزاحة أو
 	Specify opposite corner	حدد الزاوية المقابلة
 	Specify other corner point	حدد نقطة الزاوية الأخرى
 	Specify other endpoint of axis	حدد نقطة النهاية الأخرى للمحور
@@ -1066,7 +1063,7 @@
 	Specify top diameter	حدد القطر العلوي
 	Specify top radius or	حدد نصف القطر العلوي أو
 	Specify total angle	حدد الزاوية الكلية
-	Specify total length or	حدد الطول الكلي أو
+	Specify total length	حدد الطول الكلي
 	Specify width for rectangles	حدد العرض للمستطيلات
 	Sphere	كرة
 	Spline	سبلاين

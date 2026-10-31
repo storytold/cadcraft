@@ -222,7 +222,7 @@
 	Enter a vertex editing option	输入顶点编辑选项
 	Enter an option	输入选项
 	Enter angle of xline	输入构造线角度
-	Enter angle of xline (0) or	输入构造线角度 (0) 或
+	Enter angle of xline (0)	输入构造线角度 (0)
 	Enter area of rectangle in current units	在当前单位中输入矩形面积
 	Enter attribute prompt	输入属性提示
 	Enter attribute tag name	输入属性标记名称
@@ -233,7 +233,7 @@
 	Enter default attribute value	输入默认属性值
 	Enter degree of spline	输入样条曲线次数
 	Enter delta angle	输入增量角度
-	Enter delta length or	输入增量长度或
+	Enter delta length	输入增量长度
 	Enter dimension text	输入标注文字
 	Enter dimension text (<> = measurement)	输入标注文字 (<> = 测量值)
 	Enter dimension value or [name=expression]	输入标注值或 [名称=表达式]
@@ -668,8 +668,8 @@
 	Select an arc or circle	选择圆弧或圆
 	Select an arc.	选择一段圆弧。
 	Select an object	选择对象
-	Select an object to change or	Select an object to change or
-	Select an object to measure or	Select an object to measure or
+	Select an object to change	Select an object to change
+	Select an object to measure	Select an object to measure
 	Add to Working Set	添加到工作集
 	Edit Reference In-Place	就地编辑参照
 	Save Reference Edits	保存参照编辑
@@ -688,9 +688,8 @@
 	Select first line	选择第一条直线
 	Select first line or arc	选择第一条直线或圆弧
 	Select first object	选择第一个对象
-	Select first object or	Select first object or
 	Select first point	指定第一点
-	Select nested objects to copy or	Select nested objects to copy or
+	Select nested objects to copy	Select nested objects to copy
 	Select object	选择对象
 	Select object to dimension	选择要标注的对象
 	Select object to divide	选择要定数等分的对象
@@ -706,7 +705,7 @@
 	Select one polyline (Multiple is available through the JSON form).	选择一条多段线（可通过 JSON 表单选择多个）。
 	Select path curve	选择路径曲线
 	Select point or object	选择点或对象
-	Select polyline or	选择多段线或
+	Select polyline	选择多段线
 	Select second line	选择第二条直线
 	Select second line or shift-select to apply corner	选择第二条直线，或按 Shift 键应用角点
 	Select second object	选择第二个对象
@@ -759,7 +758,6 @@
 	Specify axis endpoint of ellipse	指定椭圆的轴端点
 	Specify base diameter	指定底面直径
 	Specify base point	指定基点
-	Specify base point or	Specify base point or
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	指定基点或位移（按住鼠标中键拖动以进行实时平移）
 	Specify base radius or	Specify base radius or
 	Specify center of donut	指定圆环中心
@@ -803,7 +801,7 @@
 	Specify first point on circle: _tan to	指定圆上的第一点: _tan 到
 	Specify first source point	指定第一个源点
 	Specify height	指定高度
-	Specify helix height or	Specify helix height or
+	Specify helix height	Specify helix height
 	Specify included angle	指定夹角
 	Specify insertion base point	指定插入基点
 	Specify insertion point	指定插入点
@@ -822,7 +820,6 @@
 	Specify new width for all segments	指定所有段的新宽度
 	Specify next point	指定下一点
 	Specify offset distance	指定偏移距离
-	Specify offset distance or	Specify offset distance or
 	Specify opposite corner	指定对角点
 	Specify other corner point	指定另一角点
 	Specify other endpoint of axis	指定轴的另一端点
@@ -870,7 +867,7 @@
 	Specify top diameter	指定顶面直径
 	Specify top radius or	Specify top radius or
 	Specify total angle	指定总角度
-	Specify total length or	Specify total length or
+	Specify total length	Specify total length
 	Specify width for rectangles	指定矩形宽度
 	Sphere	球体
 	Spline	样条曲线

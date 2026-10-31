@@ -221,7 +221,7 @@
 	Enter a vertex editing option	Entrez une option d'édition de sommet
 	Enter an option	Entrez une option
 	Enter angle of xline	Entrez l'angle de la ligne de construction
-	Enter angle of xline (0) or	Entrez l'angle de la ligne de construction (0) ou
+	Enter angle of xline (0)	Entrez l'angle de la ligne de construction (0)
 	Enter area of rectangle in current units	Entrez l'aire du rectangle dans les unités courantes
 	Enter attribute prompt	Entrez l'invite de l'attribut
 	Enter attribute tag name	Entrez le nom de l'étiquette d'attribut
@@ -232,7 +232,7 @@
 	Enter default attribute value	Entrez la valeur par défaut de l'attribut
 	Enter degree of spline	Entrez le degré de la spline
 	Enter delta angle	Entrez l'écart d'angle
-	Enter delta length or	Entrez l'écart de longueur ou
+	Enter delta length	Entrez l'écart de longueur
 	Enter dimension text	Entrez le texte de cotation
 	Enter dimension text (<> = measurement)	Entrez le texte de cotation (<> = mesure)
 	Enter dimension value or [name=expression]	Entrez la valeur de cotation ou [name=expression]
@@ -674,8 +674,8 @@
 	Select an arc or circle	Sélectionner un arc ou un cercle
 	Select an arc.	Sélectionner un arc.
 	Select an object	Sélectionner un objet
-	Select an object to change or	Sélectionner un objet à modifier ou
-	Select an object to measure or	Sélectionner un objet à mesurer ou
+	Select an object to change	Sélectionner un objet à modifier
+	Select an object to measure	Sélectionner un objet à mesurer
 	Select an object.	Sélectionner un objet.
 	Select an open curve.	Sélectionner une courbe ouverte.
 	Select an open line, arc, polyline, ellipse arc or spline.	Sélectionner une ligne, un arc, une polyligne, un arc elliptique ou une spline ouverts.
@@ -689,9 +689,8 @@
 	Select first line	Sélectionner la première ligne
 	Select first line or arc	Sélectionner la première ligne ou le premier arc
 	Select first object	Sélectionner le premier objet
-	Select first object or	Sélectionner le premier objet ou
 	Select first point	Sélectionner le premier point
-	Select nested objects to copy or	Sélectionner des objets imbriqués à copier ou
+	Select nested objects to copy	Sélectionner des objets imbriqués à copier
 	Select object	Sélectionner un objet
 	Select object to dimension	Sélectionner un objet à coter
 	Select object to divide	Sélectionner un objet à diviser
@@ -707,7 +706,7 @@
 	Select one polyline (Multiple is available through the JSON form).	Sélectionner une polyligne (l'option Multiple est disponible via le formulaire JSON).
 	Select path curve	Sélectionner la courbe de trajectoire
 	Select point or object	Sélectionner un point ou un objet
-	Select polyline or	Sélectionner une polyligne ou
+	Select polyline	Sélectionner une polyligne
 	Select second line	Sélectionner la deuxième ligne
 	Select second line or shift-select to apply corner	Sélectionner la deuxième ligne ou sélectionner avec Maj pour former le coin
 	Select second object	Sélectionner le deuxième objet
@@ -760,7 +759,6 @@
 	Specify axis endpoint of ellipse	Spécifier l'extrémité de l'axe de l'ellipse
 	Specify base diameter	Spécifiez le diamètre de la base
 	Specify base point	Spécifiez le point de base
-	Specify base point or	Spécifiez le point de base ou
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Spécifiez le point de base ou le déplacement (faites glisser avec le bouton central de la souris pour un panoramique en temps réel)
 	Specify base radius or	Spécifiez le rayon de base ou
 	Specify center of donut	Spécifiez le centre de l'anneau
@@ -804,7 +802,7 @@
 	Specify first point on circle: _tan to	Spécifiez le premier point sur le cercle : _tan à
 	Specify first source point	Spécifiez le premier point source
 	Specify height	Spécifiez la hauteur
-	Specify helix height or	Spécifiez la hauteur de l'hélice ou
+	Specify helix height	Spécifiez la hauteur de l'hélice
 	Specify included angle	Spécifiez l'angle inclus
 	Specify insertion base point	Spécifiez le point de base d'insertion
 	Specify insertion point	Spécifiez le point d'insertion
@@ -823,7 +821,6 @@
 	Specify new width for all segments	Spécifiez la nouvelle largeur de tous les segments
 	Specify next point	Spécifiez le point suivant
 	Specify offset distance	Spécifiez la distance de décalage
-	Specify offset distance or	Spécifiez la distance de décalage ou
 	Specify opposite corner	Spécifiez le coin opposé
 	Specify other corner point	Spécifiez l'autre point d'angle
 	Specify other endpoint of axis	Spécifiez l'autre point final de l'axe
@@ -871,7 +868,7 @@
 	Specify top diameter	Spécifiez le diamètre supérieur
 	Specify top radius or	Spécifiez le rayon supérieur ou
 	Specify total angle	Spécifiez l'angle total
-	Specify total length or	Spécifiez la longueur totale ou
+	Specify total length	Spécifiez la longueur totale
 	Specify width for rectangles	Spécifiez la largeur des rectangles
 	Sphere	Sphère
 	Spline	Spline

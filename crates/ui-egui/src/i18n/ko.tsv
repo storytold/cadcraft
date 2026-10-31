@@ -281,7 +281,7 @@
 	Enter a vertex editing option	정점 편집 옵션 입력
 	Enter an option	옵션 입력
 	Enter angle of xline	구성선 각도 입력
-	Enter angle of xline (0) or	구성선 각도 입력(0) 또는
+	Enter angle of xline (0)	구성선 각도 입력(0)
 	Enter area of rectangle in current units	현재 단위로 직사각형 면적 입력
 	Enter attribute prompt	속성 프롬프트 입력
 	Enter attribute tag name	속성 태그 이름 입력
@@ -292,7 +292,7 @@
 	Enter default attribute value	기본 속성 값 입력
 	Enter degree of spline	스플라인 차수 입력
 	Enter delta angle	각도 변화량 입력
-	Enter delta length or	길이 변화량 입력 또는
+	Enter delta length	길이 변화량 입력
 	Enter dimension text	치수 문자 입력
 	Enter dimension text (<> = measurement)	치수 문자 입력(<> = 측정값)
 	Enter dimension value or [name=expression]	치수 값 또는 [name=expression] 입력
@@ -787,8 +787,8 @@
 	Select an arc or circle	호 또는 원 선택
 	Select an arc.	호를 선택하세요.
 	Select an object	객체 선택
-	Select an object to change or	변경할 객체 선택 또는
-	Select an object to measure or	측정할 객체 선택 또는
+	Select an object to change	변경할 객체 선택
+	Select an object to measure	측정할 객체 선택
 	Select an object.	객체를 선택하세요.
 	Select an open curve.	열린 곡선을 선택하세요.
 	Select an open line, arc, polyline, ellipse arc or spline.	열린 선, 호, 폴리선, 타원 호 또는 스플라인을 선택하세요.
@@ -802,9 +802,8 @@
 	Select first line	첫 번째 선 선택
 	Select first line or arc	첫 번째 선 또는 호 선택
 	Select first object	첫 번째 객체 선택
-	Select first object or	첫 번째 객체 선택 또는
 	Select first point	첫 번째 점 선택
-	Select nested objects to copy or	복사할 내포된 객체 선택 또는
+	Select nested objects to copy	복사할 내포된 객체 선택
 	Select object	객체 선택
 	Select object to dimension	치수를 기입할 객체 선택
 	Select object to divide	등분할할 객체 선택
@@ -820,7 +819,7 @@
 	Select one polyline (Multiple is available through the JSON form).	폴리선 하나를 선택하세요(다중 선택은 JSON 형식으로 사용할 수 있습니다).
 	Select path curve	경로 곡선 선택
 	Select point or object	점 또는 객체 선택
-	Select polyline or	폴리선 선택 또는
+	Select polyline	폴리선 선택
 	Select second line	두 번째 선 선택
 	Select second line or shift-select to apply corner	두 번째 선 선택 또는 Shift를 누른 채 선택하여 각진 모서리 적용
 	Select second object	두 번째 객체 선택
@@ -880,7 +879,6 @@
 	Specify axis endpoint of ellipse	타원 축 끝점 지정
 	Specify base diameter	밑면 지름 지정
 	Specify base point	기준점 지정
-	Specify base point or	기준점 지정 또는
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	기준점 또는 변위 지정(마우스 가운데 버튼으로 드래그하여 실시간 초점 이동)
 	Specify base radius or	밑면 반지름 지정 또는
 	Specify center of donut	도넛 중심 지정
@@ -924,7 +922,7 @@
 	Specify first point on circle: _tan to	원 위의 첫 번째 점 지정: _tan 접점
 	Specify first source point	첫 번째 원본점 지정
 	Specify height	높이 지정
-	Specify helix height or	나선 높이 지정 또는
+	Specify helix height	나선 높이 지정
 	Specify included angle	사이각 지정
 	Specify insertion base point	삽입 기준점 지정
 	Specify insertion point	삽입점 지정
@@ -978,7 +976,6 @@
 	Specify new width for all segments	모든 구간의 새 폭 지정
 	Specify next point	다음 점 지정
 	Specify offset distance	간격띄우기 거리 지정
-	Specify offset distance or	간격띄우기 거리 지정 또는
 	Specify opposite corner	반대 구석 지정
 	Specify other corner point	다른 구석점 지정
 	Specify other endpoint of axis	축의 다른 끝점 지정
@@ -1026,7 +1023,7 @@
 	Specify top diameter	윗면 지름 지정
 	Specify top radius or	윗면 반지름 지정 또는
 	Specify total angle	전체 각도 지정
-	Specify total length or	전체 길이 지정 또는
+	Specify total length	전체 길이 지정
 	Specify width for rectangles	직사각형 폭 지정
 	Sphere	구
 	Spline	스플라인

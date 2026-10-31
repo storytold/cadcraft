@@ -222,7 +222,7 @@
 	Enter a vertex editing option	Geben Sie eine Option zur Scheitelpunktbearbeitung ein
 	Enter an option	Geben Sie eine Option ein
 	Enter angle of xline	Geben Sie den Winkel der Konstruktionslinie ein
-	Enter angle of xline (0) or	Geben Sie den Winkel der Konstruktionslinie ein (0) oder
+	Enter angle of xline (0)	Geben Sie den Winkel der Konstruktionslinie ein (0)
 	Enter area of rectangle in current units	Geben Sie die Fläche des Rechtecks in den aktuellen Einheiten ein
 	Enter attribute prompt	Geben Sie die Attributaufforderung ein
 	Enter attribute tag name	Geben Sie den Attribut-Tag-Namen ein
@@ -233,7 +233,7 @@
 	Enter default attribute value	Geben Sie den Standard-Attributwert ein
 	Enter degree of spline	Geben Sie den Grad des Splines ein
 	Enter delta angle	Geben Sie den Delta-Winkel ein
-	Enter delta length or	Geben Sie die Delta-Länge ein oder
+	Enter delta length	Geben Sie die Delta-Länge ein
 	Enter dimension text	Geben Sie den Bemaßungstext ein
 	Enter dimension text (<> = measurement)	Geben Sie den Bemaßungstext ein (<> = Messwert)
 	Enter dimension value or [name=expression]	Geben Sie einen Bemaßungswert oder [name=expression] ein
@@ -675,8 +675,8 @@
 	Select an arc or circle	Wählen Sie einen Bogen oder Kreis
 	Select an arc.	Wählen Sie einen Bogen.
 	Select an object	Wählen Sie ein Objekt
-	Select an object to change or	Wählen Sie ein zu änderndes Objekt oder
-	Select an object to measure or	Wählen Sie ein zu messendes Objekt oder
+	Select an object to change	Wählen Sie ein zu änderndes Objekt
+	Select an object to measure	Wählen Sie ein zu messendes Objekt
 	Select an object.	Wählen Sie ein Objekt.
 	Add to Working Set	Zum Arbeitssatz hinzufügen
 	Edit Reference In-Place	Referenz an Ort und Stelle bearbeiten
@@ -695,9 +695,8 @@
 	Select first line	Wählen Sie die erste Linie
 	Select first line or arc	Wählen Sie die erste Linie oder den ersten Bogen
 	Select first object	Wählen Sie das erste Objekt
-	Select first object or	Wählen Sie das erste Objekt oder
 	Select first point	Wählen Sie den ersten Punkt
-	Select nested objects to copy or	Wählen Sie zu kopierende verschachtelte Objekte oder
+	Select nested objects to copy	Wählen Sie zu kopierende verschachtelte Objekte
 	Select object	Wählen Sie ein Objekt
 	Select object to dimension	Wählen Sie das zu bemaßende Objekt
 	Select object to divide	Wählen Sie das zu teilende Objekt
@@ -713,7 +712,7 @@
 	Select one polyline (Multiple is available through the JSON form).	Wählen Sie eine Polylinie (Multiple ist über die JSON-Form verfügbar).
 	Select path curve	Wählen Sie die Pfadkurve
 	Select point or object	Wählen Sie einen Punkt oder ein Objekt
-	Select polyline or	Wählen Sie eine Polylinie oder
+	Select polyline	Wählen Sie eine Polylinie
 	Select second line	Wählen Sie die zweite Linie
 	Select second line or shift-select to apply corner	Wählen Sie die zweite Linie oder wählen Sie mit der Umschalttaste, um eine Ecke anzuwenden
 	Select second object	Wählen Sie das zweite Objekt
@@ -766,7 +765,6 @@
 	Specify axis endpoint of ellipse	Geben Sie den Achsenendpunkt der Ellipse an
 	Specify base diameter	Geben Sie den Basisdurchmesser an
 	Specify base point	Geben Sie den Basispunkt an
-	Specify base point or	Geben Sie den Basispunkt an oder
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Geben Sie den Basispunkt oder die Verschiebung an (ziehen Sie mit der mittleren Maustaste zum Schwenken in Echtzeit)
 	Specify base radius or	Geben Sie den Basisradius an oder
 	Specify center of donut	Geben Sie den Mittelpunkt des Rings an
@@ -810,7 +808,7 @@
 	Specify first point on circle: _tan to	Geben Sie den ersten Punkt auf dem Kreis an: _tan zu
 	Specify first source point	Geben Sie den ersten Quellpunkt an
 	Specify height	Geben Sie die Höhe an
-	Specify helix height or	Geben Sie die Höhe der Helix an oder
+	Specify helix height	Geben Sie die Höhe der Helix an
 	Specify included angle	Geben Sie den eingeschlossenen Winkel an
 	Specify insertion base point	Geben Sie den Einfügebasispunkt an
 	Specify insertion point	Geben Sie den Einfügepunkt an
@@ -829,7 +827,6 @@
 	Specify new width for all segments	Geben Sie die neue Breite für alle Segmente an
 	Specify next point	Geben Sie den nächsten Punkt an
 	Specify offset distance	Geben Sie den Versatzabstand an
-	Specify offset distance or	Geben Sie den Versatzabstand an oder
 	Specify opposite corner	Geben Sie die gegenüberliegende Ecke an
 	Specify other corner point	Geben Sie den anderen Eckpunkt an
 	Specify other endpoint of axis	Geben Sie den anderen Endpunkt der Achse an
@@ -877,7 +874,7 @@
 	Specify top diameter	Geben Sie den oberen Durchmesser an
 	Specify top radius or	Geben Sie den oberen Radius an oder
 	Specify total angle	Geben Sie den Gesamtwinkel an
-	Specify total length or	Geben Sie die Gesamtlänge an oder
+	Specify total length	Geben Sie die Gesamtlänge an
 	Specify width for rectangles	Geben Sie die Breite für Rechtecke an
 	Sphere	Kugel
 	Spline	Spline

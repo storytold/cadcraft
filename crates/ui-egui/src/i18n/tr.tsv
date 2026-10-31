@@ -351,7 +351,7 @@
 	Enter a vertex editing option	Bir köşe noktası düzenleme seçeneği girin
 	Enter an option	Bir seçenek girin
 	Enter angle of xline	Yapı çizgisinin açısını girin
-	Enter angle of xline (0) or	Yapı çizgisinin açısını girin (0) veya
+	Enter angle of xline (0)	Yapı çizgisinin açısını girin (0)
 	Enter area of rectangle in current units	Dikdörtgenin alanını geçerli birimlerle girin
 	Enter attribute prompt	Öznitelik istemini girin
 	Enter attribute tag name	Öznitelik etiket adını girin
@@ -362,7 +362,7 @@
 	Enter default attribute value	Varsayılan öznitelik değerini girin
 	Enter degree of spline	Eğrinin derecesini girin
 	Enter delta angle	Açı farkını girin
-	Enter delta length or	Uzunluk farkını girin veya
+	Enter delta length	Uzunluk farkını girin
 	Enter dimension text	Ölçü metnini girin
 	Enter dimension text (<> = measurement)	Ölçü metnini girin (<> = ölçülen değer)
 	Enter dimension value or [name=expression]	Ölçü değerini girin veya [name=expression]
@@ -931,8 +931,8 @@
 	Select an arc or circle	Bir yay veya daire seçin
 	Select an arc.	Bir yay seçin.
 	Select an object	Bir nesne seçin
-	Select an object to change or	Değiştirilecek nesneyi seçin veya
-	Select an object to measure or	Ölçülecek nesneyi seçin veya
+	Select an object to change	Değiştirilecek nesneyi seçin
+	Select an object to measure	Ölçülecek nesneyi seçin
 	Select an object.	Bir nesne seçin.
 	Select an open curve.	Açık bir eğri seçin.
 	Select an open line, arc, polyline, ellipse arc or spline.	Açık bir çizgi, yay, çoklu çizgi, elips yayı veya eğri seçin.
@@ -946,9 +946,8 @@
 	Select first line	İlk çizgiyi seçin
 	Select first line or arc	İlk çizgiyi veya yayı seçin
 	Select first object	İlk nesneyi seçin
-	Select first object or	İlk nesneyi seçin veya
 	Select first point	İlk noktayı seçin
-	Select nested objects to copy or	Kopyalanacak iç içe nesneleri seçin veya
+	Select nested objects to copy	Kopyalanacak iç içe nesneleri seçin
 	Select object	Nesne seçin
 	Select object to dimension	Ölçülendirilecek nesneyi seçin
 	Select object to divide	Bölünecek nesneyi seçin
@@ -965,7 +964,7 @@
 	Select one polyline (Multiple is available through the JSON form).	Bir çoklu çizgi seçin (Multiple seçeneği JSON biçimiyle kullanılabilir).
 	Select path curve	Yol eğrisini seçin
 	Select point or object	Nokta veya nesne seçin
-	Select polyline or	Çoklu çizgi seçin veya
+	Select polyline	Çoklu çizgi seçin
 	Select second line	İkinci çizgiyi seçin
 	Select second line or shift-select to apply corner	İkinci çizgiyi seçin ya da köşe uygulamak için Shift ile seçin
 	Select second object	İkinci nesneyi seçin
@@ -1046,7 +1045,6 @@
 	Specify axis endpoint of ellipse	Elipsin eksen uç noktasını belirtin
 	Specify base diameter	Taban çapını belirtin
 	Specify base point	Taban noktasını belirtin
-	Specify base point or	Taban noktasını belirtin veya
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Taban noktasını veya yer değiştirmeyi belirtin (gerçek zamanlı kaydırma için orta fare düğmesiyle sürükleyin)
 	Specify base radius or	Taban yarıçapını belirtin veya
 	Specify center of donut	Halkanın merkezini belirtin
@@ -1090,7 +1088,7 @@
 	Specify first point on circle: _tan to	Daire üzerindeki ilk noktayı belirtin: _tan to
 	Specify first source point	İlk kaynak noktayı belirtin
 	Specify height	Yüksekliği belirtin
-	Specify helix height or	Helezon yüksekliğini belirtin veya
+	Specify helix height	Helezon yüksekliğini belirtin
 	Specify included angle	İç açıyı belirtin
 	Specify insertion base point	Ekleme taban noktasını belirtin
 	Specify insertion point	Ekleme noktasını belirtin
@@ -1109,7 +1107,6 @@
 	Specify new width for all segments	Tüm parçalar için yeni genişliği belirtin
 	Specify next point	Sonraki noktayı belirtin
 	Specify offset distance	Öteleme uzaklığını belirtin
-	Specify offset distance or	Öteleme uzaklığını belirtin veya
 	Specify opposite corner	Karşı köşeyi belirtin
 	Specify other corner point	Diğer köşe noktasını belirtin
 	Specify other endpoint of axis	Eksenin diğer uç noktasını belirtin
@@ -1157,7 +1154,7 @@
 	Specify top diameter	Üst çapı belirtin
 	Specify top radius or	Üst yarıçapı belirtin veya
 	Specify total angle	Toplam açıyı belirtin
-	Specify total length or	Toplam uzunluğu belirtin veya
+	Specify total length	Toplam uzunluğu belirtin
 	Specify width for rectangles	Dikdörtgenler için genişliği belirtin
 	Sphere	Küre
 	Spherical	Küresel

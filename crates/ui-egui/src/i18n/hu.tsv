@@ -350,7 +350,7 @@
 	Enter a vertex editing option	Válassz egy csúcspont-szerkesztési lehetőséget
 	Enter an option	Válassz egy lehetőséget
 	Enter angle of xline	Add meg a szerkesztővonal szögét
-	Enter angle of xline (0) or	Add meg a szerkesztővonal szögét (0)
+	Enter angle of xline (0)	Add meg a szerkesztővonal szögét (0)
 	Enter area of rectangle in current units	Add meg a téglalap területét az aktuális mértékegységben
 	Enter attribute prompt	Add meg az attribútum bekérő szövegét
 	Enter attribute tag name	Add meg az attribútum címkéjét
@@ -361,7 +361,7 @@
 	Enter default attribute value	Add meg az attribútum alapértelmezett értékét
 	Enter degree of spline	Add meg a spline fokszámát
 	Enter delta angle	Add meg a szögváltozást
-	Enter delta length or	Add meg a hosszváltozást
+	Enter delta length	Add meg a hosszváltozást
 	Enter dimension text	Add meg a méretszámot
 	Enter dimension text (<> = measurement)	Add meg a méretszámot (<> = mért érték)
 	Enter dimension value or [name=expression]	Add meg a méret értékét vagy [név=kifejezés]
@@ -930,8 +930,8 @@
 	Select an arc or circle	Válassz egy ívet vagy kört
 	Select an arc.	Válassz egy ívet.
 	Select an object	Válassz egy objektumot
-	Select an object to change or	Válaszd ki a módosítandó objektumot
-	Select an object to measure or	Válaszd ki a mérendő objektumot
+	Select an object to change	Válaszd ki a módosítandó objektumot
+	Select an object to measure	Válaszd ki a mérendő objektumot
 	Select an object.	Válassz egy objektumot.
 	Select an open curve.	Válassz egy nyitott görbét.
 	Select an open line, arc, polyline, ellipse arc or spline.	Válassz egy nyitott vonalat, ívet, vonalláncot, ellipszisívet vagy spline-t.
@@ -945,9 +945,8 @@
 	Select first line	Válaszd ki az első vonalat
 	Select first line or arc	Válaszd ki az első vonalat vagy ívet
 	Select first object	Válaszd ki az első objektumot
-	Select first object or	Válaszd ki az első objektumot
 	Select first point	Válaszd ki az első pontot
-	Select nested objects to copy or	Válaszd ki a másolandó beágyazott objektumokat
+	Select nested objects to copy	Válaszd ki a másolandó beágyazott objektumokat
 	Select object	Válassz objektumot
 	Select object to dimension	Válaszd ki a méretezendő objektumot
 	Select object to divide	Válaszd ki a felosztandó objektumot
@@ -964,7 +963,7 @@
 	Select one polyline (Multiple is available through the JSON form).	Egyetlen vonalláncot válassz (a Multiple a parancs JSON-hívásával érhető el).
 	Select path curve	Válaszd ki az útvonalgörbét
 	Select point or object	Válassz pontot vagy objektumot
-	Select polyline or	Válassz vonalláncot
+	Select polyline	Válassz vonalláncot
 	Select second line	Válaszd ki a második vonalat
 	Select second line or shift-select to apply corner	Válaszd ki a második vonalat, Shift+kijelöléssel éles sarkot képezhetsz
 	Select second object	Válaszd ki a második objektumot
@@ -1045,7 +1044,6 @@
 	Specify axis endpoint of ellipse	Add meg az ellipszis tengelyének végpontját
 	Specify base diameter	Add meg az alap átmérőjét
 	Specify base point	Add meg a bázispontot
-	Specify base point or	Add meg a bázispontot
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Add meg a bázispontot vagy az elmozdulást (a középső egérgombbal húzva a nézetet valós időben mozgathatod)
 	Specify base radius or	Add meg az alap sugarát
 	Specify center of donut	Add meg a gyűrű középpontját
@@ -1089,7 +1087,7 @@
 	Specify first point on circle: _tan to	Add meg a kör első pontját: _tan to
 	Specify first source point	Add meg az első forráspontot
 	Specify height	Add meg a magasságot
-	Specify helix height or	Add meg a csavarvonal magasságát
+	Specify helix height	Add meg a csavarvonal magasságát
 	Specify included angle	Add meg a középponti szöget
 	Specify insertion base point	Add meg a beszúrási bázispontot
 	Specify insertion point	Add meg a beszúrási pontot
@@ -1108,7 +1106,6 @@
 	Specify new width for all segments	Add meg az összes szakasz új szélességét
 	Specify next point	Add meg a következő pontot
 	Specify offset distance	Add meg az eltolási távolságot
-	Specify offset distance or	Add meg az eltolási távolságot
 	Specify opposite corner	Add meg az átellenes sarkot
 	Specify other corner point	Add meg a másik sarokpontot
 	Specify other endpoint of axis	Add meg a tengely másik végpontját
@@ -1156,7 +1153,7 @@
 	Specify top diameter	Add meg a felső átmérőt
 	Specify top radius or	Add meg a felső sugarat
 	Specify total angle	Add meg a teljes szöget
-	Specify total length or	Add meg a teljes hosszt
+	Specify total length	Add meg a teljes hosszt
 	Specify width for rectangles	Add meg a téglalapok szélességét
 	Sphere	Gömb
 	Spherical	Gömbszerű

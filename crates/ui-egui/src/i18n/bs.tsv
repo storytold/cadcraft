@@ -281,7 +281,7 @@
 	Enter a vertex editing option	Unesite opciju uređivanja tjemena
 	Enter an option	Unesite opciju
 	Enter angle of xline	Unesite ugao konstrukcijske linije
-	Enter angle of xline (0) or	Unesite ugao konstrukcijske linije (0) ili
+	Enter angle of xline (0)	Unesite ugao konstrukcijske linije (0)
 	Enter area of rectangle in current units	Unesite površinu pravougaonika u trenutnim jedinicama
 	Enter attribute prompt	Unesite upit atributa
 	Enter attribute tag name	Unesite naziv oznake atributa
@@ -292,7 +292,7 @@
 	Enter default attribute value	Unesite zadanu vrijednost atributa
 	Enter degree of spline	Unesite stepen splajna
 	Enter delta angle	Unesite delta ugao
-	Enter delta length or	Unesite delta dužinu ili
+	Enter delta length	Unesite delta dužinu
 	Enter dimension text	Unesite tekst kote
 	Enter dimension text (<> = measurement)	Unesite tekst kote (<> = mjera)
 	Enter dimension value or [name=expression]	Unesite vrijednost kote ili [naziv=izraz]
@@ -787,8 +787,8 @@
 	Select an arc or circle	Odaberite luk ili krug
 	Select an arc.	Odaberite luk.
 	Select an object	Odaberite objekat
-	Select an object to change or	Odaberite objekat za promjenu ili
-	Select an object to measure or	Odaberite objekat za mjerenje ili
+	Select an object to change	Odaberite objekat za promjenu
+	Select an object to measure	Odaberite objekat za mjerenje
 	Select an object.	Odaberite objekat.
 	Select an open curve.	Odaberite otvorenu krivu.
 	Select an open line, arc, polyline, ellipse arc or spline.	Odaberite otvorenu liniju, luk, poliliniju, eliptični luk ili splajn.
@@ -802,14 +802,13 @@
 	Select first line	Odaberite prvu liniju
 	Select first line or arc	Odaberite prvu liniju ili luk
 	Select first object	Odaberite prvi objekat
-	Select first object or	Odaberite prvi objekat ili
 	Select first point	Odaberite prvu tačku
 	Add to Working Set	Dodaj u radni skup
 	Edit Reference In-Place	Uredi referencu na mjestu
 	Save Reference Edits	Sačuvaj izmjene reference
 	Working Set	Radni skup
 	Xref and Block In-place Editing	Uređivanje vanjskih referenci i blokova na mjestu
-	Select nested objects to copy or	Odaberite ugniježđene objekte za kopiranje ili
+	Select nested objects to copy	Odaberite ugniježđene objekte za kopiranje
 	Select object	Odaberite objekat
 	Select object to dimension	Odaberite objekat za kotiranje
 	Select object to divide	Odaberite objekat za dijeljenje
@@ -825,7 +824,7 @@
 	Select one polyline (Multiple is available through the JSON form).	Odaberite jednu poliliniju (Višestruko je dostupno putem JSON oblika).
 	Select path curve	Odaberite krivu putanje
 	Select point or object	Odaberite tačku ili objekat
-	Select polyline or	Odaberite poliliniju ili
+	Select polyline	Odaberite poliliniju
 	Select second line	Odaberite drugu liniju
 	Select second line or shift-select to apply corner	Odaberite drugu liniju ili Shift+odabir za primjenu ugla
 	Select second object	Odaberite drugi objekat
@@ -883,7 +882,6 @@
 	Specify axis endpoint of ellipse	Navedite krajnju tačku ose elipse
 	Specify base diameter	Navedite prečnik baze
 	Specify base point	Navedite baznu tačku
-	Specify base point or	Navedite baznu tačku ili
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Navedite baznu tačku ili pomak (prevucite srednjim dugmetom miša za pomicanje pogleda u stvarnom vremenu)
 	Specify base radius or	Navedite poluprečnik baze ili
 	Specify center of donut	Navedite središte prstena
@@ -927,7 +925,7 @@
 	Specify first point on circle: _tan to	Navedite prvu tačku na krugu: _tan na
 	Specify first source point	Navedite prvu izvornu tačku
 	Specify height	Navedite visinu
-	Specify helix height or	Navedite visinu spirale ili
+	Specify helix height	Navedite visinu spirale
 	Specify included angle	Navedite obuhvaćeni ugao
 	Specify insertion base point	Navedite baznu tačku umetanja
 	Specify insertion point	Navedite tačku umetanja
@@ -981,7 +979,6 @@
 	Specify new width for all segments	Navedite novu širinu za sve segmente
 	Specify next point	Navedite sljedeću tačku
 	Specify offset distance	Navedite udaljenost odmaka
-	Specify offset distance or	Navedite udaljenost odmaka ili
 	Specify opposite corner	Navedite suprotni ugao
 	Specify other corner point	Navedite tačku drugog ugla
 	Specify other endpoint of axis	Navedite drugu krajnju tačku ose
@@ -1029,7 +1026,7 @@
 	Specify top diameter	Navedite gornji prečnik
 	Specify top radius or	Navedite gornji poluprečnik ili
 	Specify total angle	Navedite ukupni ugao
-	Specify total length or	Navedite ukupnu dužinu ili
+	Specify total length	Navedite ukupnu dužinu
 	Specify width for rectangles	Navedite širinu za pravougaonike
 	Sphere	Sfera
 	Spline	Splajn

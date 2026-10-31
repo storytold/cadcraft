@@ -221,7 +221,7 @@
 	Enter a vertex editing option	Введите параметр редактирования вершины
 	Enter an option	Введите параметр
 	Enter angle of xline	Введите угол вспомогательной прямой
-	Enter angle of xline (0) or	Введите угол вспомогательной прямой (0) или
+	Enter angle of xline (0)	Введите угол вспомогательной прямой (0)
 	Enter area of rectangle in current units	Введите площадь прямоугольника в текущих единицах
 	Enter attribute prompt	Введите подсказку атрибута
 	Enter attribute tag name	Введите имя тега атрибута
@@ -232,7 +232,7 @@
 	Enter default attribute value	Введите значение атрибута по умолчанию
 	Enter degree of spline	Введите степень сплайна
 	Enter delta angle	Введите изменение угла
-	Enter delta length or	Введите изменение длины или
+	Enter delta length	Введите изменение длины
 	Enter dimension text	Введите размерный текст
 	Enter dimension text (<> = measurement)	Введите размерный текст (<> = измеренное значение)
 	Enter dimension value or [name=expression]	Введите размерное значение или [имя=выражение]
@@ -674,8 +674,8 @@
 	Select an arc or circle	Выберите дугу или круг
 	Select an arc.	Выберите дугу.
 	Select an object	Выберите объект
-	Select an object to change or	Выберите объект для изменения или
-	Select an object to measure or	Выберите объект для измерения или
+	Select an object to change	Выберите объект для изменения
+	Select an object to measure	Выберите объект для измерения
 	Select an object.	Выберите объект.
 	Select an open curve.	Выберите незамкнутую кривую.
 	Select an open line, arc, polyline, ellipse arc or spline.	Выберите незамкнутый отрезок, дугу, полилинию, эллиптическую дугу или сплайн.
@@ -689,9 +689,8 @@
 	Select first line	Выберите первый отрезок
 	Select first line or arc	Выберите первый отрезок или дугу
 	Select first object	Выберите первый объект
-	Select first object or	Выберите первый объект или
 	Select first point	Выберите первую точку
-	Select nested objects to copy or	Выберите вложенные объекты для копирования или
+	Select nested objects to copy	Выберите вложенные объекты для копирования
 	Select object	Выберите объект
 	Select object to dimension	Выберите объект для нанесения размера
 	Select object to divide	Выберите объект для деления
@@ -707,7 +706,7 @@
 	Select one polyline (Multiple is available through the JSON form).	Выберите одну полилинию (Multiple доступно через JSON).
 	Select path curve	Выберите кривую траектории
 	Select point or object	Выберите точку или объект
-	Select polyline or	Выберите полилинию или
+	Select polyline	Выберите полилинию
 	Select second line	Выберите второй отрезок
 	Select second line or shift-select to apply corner	Выберите второй отрезок или выберите с Shift, чтобы построить угол
 	Select second object	Выберите второй объект
@@ -760,7 +759,6 @@
 	Specify axis endpoint of ellipse	Укажите конечную точку оси эллипса
 	Specify base diameter	Укажите базовый диаметр
 	Specify base point	Укажите базовую точку
-	Specify base point or	Укажите базовую точку или
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Укажите базовую точку или смещение (перетаскивайте средней кнопкой мыши для панорамирования)
 	Specify base radius or	Укажите базовый радиус или
 	Specify center of donut	Укажите центр кольца
@@ -804,7 +802,7 @@
 	Specify first point on circle: _tan to	Укажите первую точку на круге: _tan к
 	Specify first source point	Укажите первую исходную точку
 	Specify height	Укажите высоту
-	Specify helix height or	Укажите высоту спирали или
+	Specify helix height	Укажите высоту спирали
 	Specify included angle	Укажите угол между сторонами
 	Specify insertion base point	Укажите базовую точку вставки
 	Specify insertion point	Укажите точку вставки
@@ -823,7 +821,6 @@
 	Specify new width for all segments	Укажите новую ширину всех сегментов
 	Specify next point	Укажите следующую точку
 	Specify offset distance	Укажите расстояние смещения
-	Specify offset distance or	Укажите расстояние смещения или
 	Specify opposite corner	Укажите противоположный угол
 	Specify other corner point	Укажите другую угловую точку
 	Specify other endpoint of axis	Укажите другую конечную точку оси
@@ -871,7 +868,7 @@
 	Specify top diameter	Укажите диаметр вершины
 	Specify top radius or	Укажите радиус вершины или
 	Specify total angle	Укажите полный угол
-	Specify total length or	Укажите общую длину или
+	Specify total length	Укажите общую длину
 	Specify width for rectangles	Укажите ширину прямоугольников
 	Sphere	Сфера
 	Spline	Сплайн

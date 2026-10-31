@@ -279,7 +279,7 @@
 	Enter a vertex editing option	Zadejte možnost úpravy vrcholů
 	Enter an option	Zadejte možnost
 	Enter angle of xline	Zadejte úhel přímky
-	Enter angle of xline (0) or	Zadejte úhel přímky (0) nebo
+	Enter angle of xline (0)	Zadejte úhel přímky (0)
 	Enter area of rectangle in current units	Zadejte plochu obdélníku v aktuálních jednotkách
 	Enter attribute prompt	Zadejte výzvu atributu
 	Enter attribute tag name	Zadejte označení atributu
@@ -290,7 +290,7 @@
 	Enter default attribute value	Zadejte výchozí hodnotu atributu
 	Enter degree of spline	Zadejte stupeň spline
 	Enter delta angle	Zadejte změnu úhlu
-	Enter delta length or	Zadejte změnu délky nebo
+	Enter delta length	Zadejte změnu délky
 	Enter dimension text	Zadejte text kóty
 	Enter dimension text (<> = measurement)	Zadejte text kóty (<> = naměřená hodnota)
 	Enter dimension value or [name=expression]	Zadejte hodnotu kóty nebo [name=expression]
@@ -785,8 +785,8 @@
 	Select an arc or circle	Vyberte oblouk nebo kružnici
 	Select an arc.	Vyberte oblouk.
 	Select an object	Vyberte objekt
-	Select an object to change or	Vyberte objekt ke změně nebo
-	Select an object to measure or	Vyberte objekt k měření nebo
+	Select an object to change	Vyberte objekt ke změně
+	Select an object to measure	Vyberte objekt k měření
 	Select an object.	Vyberte objekt.
 	Select an open curve.	Vyberte otevřenou křivku.
 	Select an open line, arc, polyline, ellipse arc or spline.	Vyberte otevřenou úsečku, oblouk, křivku, eliptický oblouk nebo spline.
@@ -800,14 +800,13 @@
 	Select first line	Vyberte první úsečku
 	Select first line or arc	Vyberte první úsečku nebo oblouk
 	Select first object	Vyberte první objekt
-	Select first object or	Vyberte první objekt nebo
 	Select first point	Vyberte první bod
 	Add to Working Set	Přidat do pracovní sady
 	Edit Reference In-Place	Upravit referenci na místě
 	Save Reference Edits	Uložit úpravy reference
 	Working Set	Pracovní sada
 	Xref and Block In-place Editing	Úpravy xref a bloků na místě
-	Select nested objects to copy or	Vyberte vnořené objekty ke kopírování nebo
+	Select nested objects to copy	Vyberte vnořené objekty ke kopírování
 	Select object	Vyberte objekt
 	Select object to dimension	Vyberte objekt ke kótování
 	Select object to divide	Vyberte objekt k dělení
@@ -823,7 +822,7 @@
 	Select one polyline (Multiple is available through the JSON form).	Vyberte jednu křivku (možnost Multiple je dostupná ve formě JSON).
 	Select path curve	Vyberte křivku trajektorie
 	Select point or object	Vyberte bod nebo objekt
-	Select polyline or	Vyberte křivku nebo
+	Select polyline	Vyberte křivku
 	Select second line	Vyberte druhou úsečku
 	Select second line or shift-select to apply corner	Vyberte druhou úsečku; s klávesou Shift vytvoříte roh
 	Select second object	Vyberte druhý objekt
@@ -881,7 +880,6 @@
 	Specify axis endpoint of ellipse	Určete koncový bod osy elipsy
 	Specify base diameter	Určete průměr základny
 	Specify base point	Určete základní bod
-	Specify base point or	Určete základní bod nebo
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Určete základní bod nebo posunutí (tažením prostředním tlačítkem myši posunete pohled v reálném čase)
 	Specify base radius or	Určete poloměr základny nebo
 	Specify center of donut	Určete střed prstence
@@ -925,7 +923,7 @@
 	Specify first point on circle: _tan to	Určete první bod na kružnici: _tan k
 	Specify first source point	Určete první zdrojový bod
 	Specify height	Určete výšku
-	Specify helix height or	Určete výšku šroubovice nebo
+	Specify helix height	Určete výšku šroubovice
 	Specify included angle	Určete středový úhel
 	Specify insertion base point	Určete základní bod vložení
 	Specify insertion point	Určete bod vložení
@@ -979,7 +977,6 @@
 	Specify new width for all segments	Určete novou šířku všech segmentů
 	Specify next point	Určete další bod
 	Specify offset distance	Určete vzdálenost ekvidistanty
-	Specify offset distance or	Určete vzdálenost ekvidistanty nebo
 	Specify opposite corner	Určete protilehlý roh
 	Specify other corner point	Určete bod druhého rohu
 	Specify other endpoint of axis	Určete druhý koncový bod osy
@@ -1027,7 +1024,7 @@
 	Specify top diameter	Určete horní průměr
 	Specify top radius or	Určete horní poloměr nebo
 	Specify total angle	Určete celkový úhel
-	Specify total length or	Určete celkovou délku nebo
+	Specify total length	Určete celkovou délku
 	Specify width for rectangles	Určete šířku obdélníků
 	Sphere	Koule
 	Spline	Spline

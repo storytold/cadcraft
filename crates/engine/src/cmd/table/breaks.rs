@@ -112,7 +112,7 @@ impl Interactive for BreakM {
     fn prompt(&self, _s: &Session) -> Prompt {
         match self.table {
             None => Prompt::new("Select a table", Accept::SELECT),
-            Some(_) => Prompt::new("Enter maximum part height or", Accept::POINT_OR_NUMBER).kw(&["Off"]),
+            Some(_) => Prompt::new("Enter maximum part height", Accept::POINT_OR_NUMBER).kw(&["Off"]),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {

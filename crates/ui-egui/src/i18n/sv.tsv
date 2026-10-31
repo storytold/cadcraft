@@ -295,7 +295,7 @@
 	Enter a vertex editing option	Ange ett alternativ för hörnpunktsredigering
 	Enter an option	Ange ett alternativ
 	Enter angle of xline	Ange konstruktionslinjens vinkel
-	Enter angle of xline (0) or	Ange konstruktionslinjens vinkel (0) eller
+	Enter angle of xline (0)	Ange konstruktionslinjens vinkel (0)
 	Enter area of rectangle in current units	Ange rektangelns area i aktuella enheter
 	Enter attribute prompt	Ange attributets fråga
 	Enter attribute tag name	Ange attributets taggnamn
@@ -306,7 +306,7 @@
 	Enter default attribute value	Ange attributets standardvärde
 	Enter degree of spline	Ange splinens grad
 	Enter delta angle	Ange vinkeländring
-	Enter delta length or	Ange längdändring eller
+	Enter delta length	Ange längdändring
 	Enter dimension text	Ange måttal
 	Enter dimension text (<> = measurement)	Ange måttal (<> = mätvärde)
 	Enter dimension value or [name=expression]	Ange måttvärde eller [namn=uttryck]
@@ -877,8 +877,8 @@
 	Select an arc or circle	Markera en båge eller cirkel
 	Select an arc.	Markera en båge.
 	Select an object	Markera ett objekt
-	Select an object to change or	Markera ett objekt att ändra eller
-	Select an object to measure or	Markera ett objekt att mäta eller
+	Select an object to change	Markera ett objekt att ändra
+	Select an object to measure	Markera ett objekt att mäta
 	Select an object.	Markera ett objekt.
 	Select an open curve.	Markera en öppen kurva.
 	Select an open line, arc, polyline, ellipse arc or spline.	Markera en öppen linje, båge, polylinje, ellipsbåge eller spline.
@@ -892,9 +892,8 @@
 	Select first line	Markera första linjen
 	Select first line or arc	Markera första linjen eller bågen
 	Select first object	Markera första objektet
-	Select first object or	Markera första objektet eller
 	Select first point	Ange första punkten
-	Select nested objects to copy or	Markera nästlade objekt att kopiera eller
+	Select nested objects to copy	Markera nästlade objekt att kopiera
 	Select object	Markera objekt
 	Select object to dimension	Markera objekt att måttsätta
 	Select object to divide	Markera objekt att dela in
@@ -910,7 +909,7 @@
 	Select one polyline (Multiple is available through the JSON form).	Markera en polylinje (Multiple finns i JSON-formen).
 	Select path curve	Markera banans kurva
 	Select point or object	Ange punkt eller markera objekt
-	Select polyline or	Markera polylinje eller
+	Select polyline	Markera polylinje
 	Select second line	Markera andra linjen
 	Select second line or shift-select to apply corner	Markera andra linjen, eller Shift-markera för att skapa hörn
 	Select second object	Markera andra objektet
@@ -963,7 +962,6 @@
 	Specify axis endpoint of ellipse	Ange ellipsens axeländpunkt
 	Specify base diameter	Ange basdiameter
 	Specify base point	Ange baspunkt
-	Specify base point or	Ange baspunkt eller
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Ange baspunkt eller förskjutning (dra med mittenknappen för att panorera i realtid)
 	Specify base radius or	Ange basradie eller
 	Specify center of donut	Ange ringens centrum
@@ -1007,7 +1005,7 @@
 	Specify first point on circle: _tan to	Ange första punkten på cirkeln: _tan to
 	Specify first source point	Ange första källpunkten
 	Specify height	Ange höjd
-	Specify helix height or	Ange helixens höjd eller
+	Specify helix height	Ange helixens höjd
 	Specify included angle	Ange medelpunktsvinkel
 	Specify insertion base point	Ange insättningens baspunkt
 	Specify insertion point	Ange insättningspunkt
@@ -1026,7 +1024,6 @@
 	Specify new width for all segments	Ange ny bredd för alla segment
 	Specify next point	Ange nästa punkt
 	Specify offset distance	Ange förskjutningsavstånd
-	Specify offset distance or	Ange förskjutningsavstånd eller
 	Specify opposite corner	Ange motsatt hörn
 	Specify other corner point	Ange andra hörnpunkten
 	Specify other endpoint of axis	Ange axelns andra ändpunkt
@@ -1074,7 +1071,7 @@
 	Specify top diameter	Ange toppdiameter
 	Specify top radius or	Ange toppradie eller
 	Specify total angle	Ange total vinkel
-	Specify total length or	Ange total längd eller
+	Specify total length	Ange total längd
 	Specify width for rectangles	Ange bredd för rektanglar
 	Sphere	Sfär
 	Spline	Spline
