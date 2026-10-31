@@ -147,7 +147,7 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
 pub fn entity_from_groups(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
     // AutoLISP's strings are plain: escape them as the file has them (see `entity_groups`).
     let mut tags = tags.to_vec();
-    mtext_dxf::map_carets(kind, &mut tags, mtext_dxf::escape_carets);
+    mtext_dxf::map_carets(kind, &mut tags, mtext_dxf::encode_line);
     entity(&kind.to_ascii_uppercase(), &tags)
 }
 

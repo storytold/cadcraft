@@ -1,5 +1,5 @@
 //! Carets in TEXT, ATTDEF, ATTRIB and DIMENSION strings are written as `^ ` and read back: AutoCAD
-//! reads a bare `^2` in `10^2` as a control character.
+//! reads a bare `^2` in `10^2` as a control character. A tab is `^I`, as AutoCAD writes it.
 
 use cadcraft_doc::{Attrib, Common, DimKind, Dimension, Drawing, EntityKind, HAlign, Space, Text, VAlign};
 use cadcraft_geom::Vec3;
@@ -84,6 +84,10 @@ fn carets_are_written_escaped_and_read_back() {
     // Older files have bare carets: kept as they are.
     let old = read_dxf(dxf.replace("10^ 2 m", "10^2 m").as_bytes()).unwrap();
     assert_eq!(all_strings(&old)[0], "10^2 m, A^JB");
+    // AutoCAD writes a tab as `^I`: it is read as a tab and written back as `^I`.
+    let tab = read_dxf(dxf.replace("10^ 2 m, A^ JB", "A^IB").as_bytes()).unwrap();
+    assert_eq!(all_strings(&tab)[0], "A\tB");
+    assert!(write_dxf(&tab).contains("A^IB"));
 }
 
 #[test]

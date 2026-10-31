@@ -190,7 +190,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
                 p14: t.p(14),
                 p15: t.p(15),
                 p16: t.p(16),
-                text: mtext_dxf::unescape_carets(&t.s(1).unwrap_or_default()),
+                text: mtext_dxf::decode_contents(&t.s(1).unwrap_or_default()),
                 style: t.s(3).unwrap_or_else(|| "Standard".into()),
                 measurement: t.fd(42, 0.0),
                 text_rotation: t.fd(53, 0.0).to_radians(),

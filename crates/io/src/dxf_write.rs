@@ -154,6 +154,6 @@ pub fn entity_groups(d: &Drawing, e: &Entity) -> (String, Vec<Tag>) {
     let kind = tags.next().filter(|t| t.code == 0).map(|t| t.value.as_str()).unwrap_or_default();
     let mut tags: Vec<Tag> = tags.take_while(|t| t.code != 0).filter(|t| t.code != 330).collect();
     // Strings as AutoLISP sees them: `10^2`, not the file's `10^ 2`.
-    crate::dxf_read::mtext_dxf::map_carets(&kind, &mut tags, crate::dxf_read::mtext_dxf::unescape_carets);
+    crate::dxf_read::mtext_dxf::map_carets(&kind, &mut tags, crate::dxf_read::mtext_dxf::decode_contents);
     (kind, tags)
 }

@@ -355,7 +355,7 @@ fn write_dimension_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper
         // The actual measurement (read-only in DXF): AutoLISP's entget shows it.
         w.f(42, g.measurement);
         if !dm.text.is_empty() {
-            w.s(1, crate::dxf_read::mtext_dxf::escape_carets(&dm.text));
+            w.s(1, crate::dxf_read::mtext_dxf::encode_line(&dm.text));
         }
         w.s(3, &dm.style);
         if dm.text_rotation != 0.0 {

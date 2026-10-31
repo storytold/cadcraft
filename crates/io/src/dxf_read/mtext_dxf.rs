@@ -2,8 +2,8 @@
 //! as a caret and a letter (`^I` a tab, `^J` a line feed, `^ ` a caret), and the column groups
 //! 75 (type), 76 (count), 78 (flow reversed), 79 (auto height), 48 (width), 49 (gutter) and
 //! 50 (column heights, after the column type; before it, 50 is the rotation). TEXT, ATTDEF,
-//! ATTRIB and DIMENSION strings use the same caret encoding: AutoCAD reads a bare `^2` in
-//! `10^2` as a control character.
+//! ATTRIB and DIMENSION strings use the same encoding ([`encode_line`]): AutoCAD reads a bare
+//! `^2` in `10^2` as a control character.
 
 use cadcraft_doc::{MText, MTextColumnType, MTextColumns};
 use cadcraft_dxf::Tag;
@@ -38,20 +38,16 @@ pub(crate) fn decode_contents(s: &str) -> String {
     out
 }
 
-/// A single-line string (TEXT, ATTDEF/ATTRIB, DIMENSION) for a DXF file: a caret as `^ `, since
-/// AutoCAD reads `^x` as a control character. Other text stays as it is.
-pub(crate) fn escape_carets(s: &str) -> String {
-    s.replace('^', "^ ")
+/// A single-line string (TEXT, ATTDEF/ATTRIB, DIMENSION) for a DXF file: a caret as `^ ` and a
+/// tab as `^I`, read back by [`decode_contents`]. It holds no line break (the writer makes it a
+/// space).
+pub(crate) fn encode_line(s: &str) -> String {
+    s.replace('^', "^ ").replace('\t', "^I")
 }
 
-/// A single-line string as read: `^ ` back to a caret; a bare `^x` (older files) stays as it is.
-pub(crate) fn unescape_carets(s: &str) -> String {
-    s.replace("^ ", "^")
-}
-
-/// Apply `f` ([`escape_carets`] or [`unescape_carets`]) to the groups of a `kind` record that hold
-/// an escaped string: the text (1), and an ATTDEF's prompt (3). An embedded MTEXT (from group 101)
-/// has its own encoding and is left alone. AutoLISP's entget and entmake/entmod use it.
+/// Apply `f` ([`encode_line`] or [`decode_contents`]) to the groups of a `kind` record that hold
+/// an encoded string: the text (1), and an ATTDEF's prompt (3). An embedded MTEXT (from group 101)
+/// has its own and is left alone. AutoLISP's entget and entmake/entmod use it.
 pub(crate) fn map_carets(kind: &str, tags: &mut [Tag], f: fn(&str) -> String) {
     let kind = kind.to_ascii_uppercase();
     if !matches!(kind.as_str(), "TEXT" | "ATTRIB" | "ATTDEF" | "DIMENSION") {
