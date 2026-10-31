@@ -62,20 +62,42 @@ fn fit_scale(b: &Bounds2, sheet: &Sheet, o: &PdfOptions) -> f64 {
     pdf::plot_scale(b, sheet, o.fit != Some(false), o.scale)
 }
 
+/// The part of the sheet a PNG plot draws, from the `crop` option: `[x0, y0, x1, y1]` as fractions
+/// of the sheet, measured from its top-left corner (so `[0, 0, 1, 1]` is the whole sheet). A preview
+/// zoomed in on a detail asks for just that part at the resolution it needs.
+fn crop(opts: &Value) -> Result<Option<[f64; 4]>> {
+    let Some(raw) = opts.get("crop").filter(|v| !v.is_null()) else { return Ok(None) };
+    let v: Vec<f64> = raw.as_array().map(|a| a.iter().filter_map(Value::as_f64).collect()).unwrap_or_default();
+    match v[..] {
+        [x0, y0, x1, y1]
+            if raw.as_array().is_some_and(|a| a.len() == 4)
+                && [x0, y0, x1, y1].iter().all(|f| f.is_finite() && (0.0..=1.0).contains(f))
+                && x1 - x0 >= 1e-6
+                && y1 - y0 >= 1e-6 =>
+        {
+            Ok(Some([x0, y0, x1, y1]))
+        }
+        _ => Err(IoError::Format("`crop` must be [x0, y0, x1, y1]: fractions of the sheet from 0 to 1, with x0 < x1 and y0 < y1".into())),
+    }
+}
+
 fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let o = PdfOptions::from_json(opts);
     let (sheet, page) = sheet(d, space, &o)?;
+    let crop = crop(opts)?;
+    // The size of what is drawn, as fractions of the sheet.
+    let (frac_x, frac_y) = crop.map_or((1.0, 1.0), |c| (c[2] - c[0], c[3] - c[1]));
     let dpi = opts.get("resolution").and_then(Value::as_f64).filter(|r| r.is_finite()).unwrap_or(300.0).clamp(50.0, 2400.0);
     // Pixels per paper unit, lowered so the image stays within the caps.
     let mut k = sheet.unit_mm / 25.4 * dpi;
-    let (w, h) = (sheet.size.x * k, sheet.size.y * k);
+    let (w, h) = (sheet.size.x * frac_x * k, sheet.size.y * frac_y * k);
     let shrink = (MAX_PNG_PIXELS / (w * h).max(1.0)).sqrt().min(16384.0 / w.max(h).max(1.0)).min(1.0);
     if !(shrink.is_finite() && shrink > 0.0) {
         return Err(IoError::Format("the sheet is too large to plot as an image".into()));
     }
     k *= shrink;
     let px = |v: f64| (v * k).round().clamp(1.0, 16384.0) as u32;
-    let (width, height) = (px(sheet.size.x), px(sheet.size.y));
+    let (width, height) = (px(sheet.size.x * frac_x), px(sheet.size.y * frac_y));
     let lineweights = o.lineweights.unwrap_or(if space.is_paper() { page.lineweights } else { true });
     let table = cadcraft_doc::plot_style_table(d, &page.plot_style_table).map(Arc::new);
     // Paper units per drawing unit: 1 for a layout at 1:1, the fitted scale for model space.
@@ -87,7 +109,12 @@ fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let transparency = o.plot_transparency.unwrap_or(page.plot_transparency);
     let ropts = cadcraft_render::Options { tolerance, lineweights, plot_style_table: table, transparency, ..cadcraft_render::Options::default() };
     let mut list = cadcraft_render::build_plot(d, space, &ropts);
-    let half = Vec2::new(f64::from(width), f64::from(height)) / (2.0 * k);
+    // The paper point at the image centre (the sheet's centre, or the middle of the crop; the
+    // sheet's origin is its lower-left corner and the crop's is its top-left).
+    let half = match crop {
+        Some(c) => Vec2::new((c[0] + c[2]) / 2.0 * sheet.size.x, (1.0 - (c[1] + c[3]) / 2.0) * sheet.size.y),
+        None => Vec2::new(f64::from(width), f64::from(height)) / (2.0 * k),
+    };
     let b = window.unwrap_or(list.bounds);
     let s = if fit { fit_scale(&b, &sheet, &o) } else { 1.0 };
     // Plot style ends, joins and fill patterns at the plot scale, as PDF draws them (a layout's
@@ -148,6 +175,63 @@ mod tests {
         let mut d = Drawing::new_metric();
         d.add(&Space::Model, Common::default(), EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(100.0, 50.0, 0.0) })).unwrap();
         d
+    }
+
+    /// A PNG plot decoded.
+    fn decode(bytes: &[u8]) -> tiny_skia::Pixmap {
+        tiny_skia::Pixmap::decode_png(bytes).unwrap()
+    }
+
+    /// A PNG crop is that part of the sheet at the same scale.
+    #[test]
+    fn a_png_crop_is_that_part_of_the_sheet_at_the_same_scale() {
+        let d = drawing();
+        // 127 dpi is 5 pixels per mm: a 200 x 100 mm sheet is 1000 x 500 pixels, and a crop of its
+        // middle half starts on whole pixels.
+        let base = json!({"output": "png", "resolution": 127, "width": 100, "height": 200, "landscape": true, "margins": [0, 0, 0, 0]});
+        let full = decode(&plot(&d, &Space::Model, &base).unwrap());
+        assert_eq!((full.width(), full.height()), (1000, 500));
+        let mut cropped = base.clone();
+        cropped["crop"] = json!([0.25, 0.25, 0.75, 0.75]);
+        let part = decode(&plot(&d, &Space::Model, &cropped).unwrap());
+        assert_eq!((part.width(), part.height()), (500, 250), "half the sheet each way");
+        let mut drawn = 0;
+        for y in 0..part.height() {
+            for x in 0..part.width() {
+                let (a, b) = (part.pixel(x, y).unwrap(), full.pixel(x + 250, y + 125).unwrap());
+                let close = |p: u8, q: u8| p.abs_diff(q) <= 2;
+                assert!(close(a.red(), b.red()) && close(a.green(), b.green()) && close(a.blue(), b.blue()), "pixel {x},{y}");
+                drawn += usize::from(a.red() < 128);
+            }
+        }
+        assert!(drawn > 100, "the crop shows part of the drawing ({drawn} dark pixels)");
+        // A layout is cropped the same way.
+        let layout = Space::Paper(d.layouts[0].name.clone());
+        let lay = json!({"output": "png", "resolution": 127, "width": 100, "height": 200, "landscape": true, "margins": [0, 0, 0, 0]});
+        let l_full = decode(&plot(&d, &layout, &lay).unwrap());
+        let mut l_crop = lay.clone();
+        l_crop["crop"] = json!([0.0, 0.5, 0.5, 1.0]);
+        let l_part = decode(&plot(&d, &layout, &l_crop).unwrap());
+        assert_eq!((l_part.width(), l_part.height()), (l_full.width() / 2, l_full.height() / 2));
+    }
+
+    /// Bad crops are errors; no crop, or the whole sheet, is fine.
+    #[test]
+    fn a_bad_png_crop_is_an_error() {
+        let d = drawing();
+        for crop in [
+            json!([0.5, 0.0, 0.5, 1.0]),
+            json!([0.0, 0.8, 1.0, 0.2]),
+            json!([0, 0, 1]),
+            json!([0, 0, 1, 2]),
+            json!([-0.1, 0, 1, 1]),
+            json!("all"),
+            json!([0, 0, 1, f64::NAN]),
+        ] {
+            assert!(plot(&d, &Space::Model, &json!({"output": "png", "resolution": 50, "crop": crop})).is_err(), "{crop}");
+        }
+        assert!(plot(&d, &Space::Model, &json!({"output": "png", "resolution": 50, "crop": null})).is_ok(), "no crop is the whole sheet");
+        assert!(plot(&d, &Space::Model, &json!({"output": "png", "resolution": 50, "crop": [0, 0, 1, 1]})).is_ok());
     }
 
     #[test]

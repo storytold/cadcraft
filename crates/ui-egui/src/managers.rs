@@ -883,9 +883,9 @@ fn plot_params(st: &PlotState, preview_dpi: Option<f64>) -> Value {
                 o.insert("height".into(), json!(page.height_mm));
             }
         }
-        if style_label(page) != "None" {
-            o.insert("plotStyleTable".into(), json!(page.plot_style_table));
-        }
+        // Always sent, "None" included: left out, the layout's own table would apply to a plot
+        // the dialog shows without one.
+        o.insert("plotStyleTable".into(), json!(if style_label(page) == "None" { "None" } else { page.plot_style_table.as_str() }));
         if st.target == "Model" {
             o.insert("plotArea".into(), json!(page.plot_area));
             if output != "svg" {
@@ -1028,13 +1028,7 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
         return action;
     }
     if preview {
-        // A sheet about 1600 pixels on its long side.
-        let long_in = st.page.width_mm.max(st.page.height_mm).max(1.0) / 25.4;
-        let mut info = format!("{} · {}", st.target, st.page.paper);
-        if st.page.landscape {
-            info.push_str(" · landscape");
-        }
-        crate::exchange::preview_plot(app, ctx, plot_params(&st, Some((1600.0 / long_in).clamp(50.0, 300.0))), info);
+        crate::exchange::preview_plot(app, ctx, plot_params(&st, Some(preview_dpi(&st.page))), plot_caption(&st));
         return action;
     }
     if ok {
@@ -1063,6 +1057,32 @@ fn plot(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action {
         }
     }
     action
+}
+
+/// The resolution (dpi) that draws a sheet about 1600 pixels on its long side: the preview's
+/// starting image of the whole sheet.
+fn preview_dpi(page: &cadcraft_doc::PageSetup) -> f64 {
+    let long_in = page.width_mm.max(page.height_mm).max(1.0) / 25.4;
+    (1600.0 / long_in).clamp(50.0, 300.0)
+}
+
+/// The caption of a preview of these settings: the sheet and its paper.
+fn plot_caption(st: &PlotState) -> String {
+    let mut info = format!("{} · {}", st.target, st.page.paper);
+    if st.page.landscape {
+        info.push_str(" · landscape");
+    }
+    info
+}
+
+/// The Plot Preview of the tab being shown: the `plot` parameters of a PNG of its sheet as its page
+/// setup plots it (the Plot dialog's starting settings, so the two previews agree), and a caption.
+pub(crate) fn current_preview(app: &CadApp) -> Result<(Value, String), String> {
+    let d = app.session.doc().map_err(|e| e.to_string())?;
+    let target = app.session.layout_space().tab_name().to_string();
+    let page = plot_page(d, &target);
+    let st = PlotState { generation: 0, page, target, window: [0.0; 4], center: true, offset_mm: [0.0, 0.0] };
+    Ok((plot_params(&st, Some(preview_dpi(&st.page))), plot_caption(&st)))
 }
 
 /// The sheet in the chosen orientation with its printable area, and its size.
@@ -1190,8 +1210,10 @@ mod plot_dialog_tests {
         let p = plot_params(&st, None);
         let a3 = cadcraft_render::paper_size("A3").unwrap().name;
         assert_eq!((p["device"].as_str(), p["paper"].as_str()), (Some("None"), Some(a3)));
+        // "None" is sent as such: left out, a layout's own table would plot and preview in a dialog
+        // that shows none.
         apply_page_change(&mut st.page, "plotStyleTable", &json!("None"));
-        assert!(plot_params(&st, None).get("plotStyleTable").is_none());
+        assert_eq!(plot_params(&st, None)["plotStyleTable"], json!("None"));
     }
 
     #[test]
