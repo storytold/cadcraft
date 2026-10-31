@@ -1146,27 +1146,31 @@ fn add_class_instance_counts(tags: &mut Vec<Tag>, target: Version) {
         }
     }
 
-    let mut start = 0;
-    while start < tags.len() {
-        if tags.get(start).is_none_or(|t| t.code != 0 || t.str() != "CLASS") {
-            start += 1;
+    // One pass: the classes precede the drawing's tags, which an `insert` per CLASS would shift
+    // each time.
+    let src = std::mem::take(tags);
+    let mut out = Vec::with_capacity(src.len() + counts.len());
+    let mut it = src.into_iter().peekable();
+    while let Some(t) = it.next() {
+        let class = t.code == 0 && t.str() == "CLASS";
+        out.push(t);
+        if !class {
             continue;
         }
-        let end = tags[start + 1..].iter().position(|t| t.code == 0).map_or(tags.len(), |i| start + 1 + i);
-        let name = tags[start + 1..end].iter().find(|t| t.code == 1).map(Tag::str).unwrap_or_default().to_ascii_uppercase();
+        let mut rec: Vec<Tag> = Vec::new();
+        while let Some(t) = it.next_if(|t| t.code != 0) {
+            rec.push(t);
+        }
+        let name = rec.iter().find(|t| t.code == 1).map(Tag::str).unwrap_or_default().to_ascii_uppercase();
         let count = counts.get(&name).copied().unwrap_or(0);
-        let inserted = if let Some(i) = tags[start + 1..end].iter().position(|t| t.code == 91) {
-            tags[start + 1 + i] = Tag::i(91, count);
-            false
-        } else if let Some(i) = tags[start + 1..end].iter().position(|t| t.code == 90) {
-            tags.insert(start + 2 + i, Tag::i(91, count));
-            true
-        } else {
-            false
-        };
-        // Inserting the group shifts the next record's start by one.
-        start = end + usize::from(inserted);
+        if let Some(c) = rec.iter_mut().find(|t| t.code == 91) {
+            *c = Tag::i(91, count);
+        } else if let Some(i) = rec.iter().position(|t| t.code == 90) {
+            rec.insert(i + 1, Tag::i(91, count));
+        }
+        out.extend(rec);
     }
+    *tags = out;
 }
 
 /// Xref blocks (DXF Reference, BLOCK): bit 4 of group 70 and the external drawing's path in
