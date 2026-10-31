@@ -19,7 +19,7 @@ use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("properties", "Properties", run_get).menu(&["Modify", "Properties"]).alias(&["pr", "props", "ch"]).params("{handles?} → properties of the selection").noundo(),
-        CommandSpec::new("properties.set", "Set Properties", run_set).params("{handles?, layer?, color?, linetype?, lineweight?, ltscale?, thickness?, transparency?: \"ByLayer\" | \"ByBlock\" | 0..90, visible?, <geometry fields: radius, center, start, end, text, height, rotation…>; dimensions: textOverride, dimStyle, textHeight, arrowSize, dimScale, precision (per-dimension overrides)}"),
+        CommandSpec::new("properties.set", "Set Properties", run_set).params("{handles?, layer?, color?, linetype?, lineweight?, ltscale?, thickness?, transparency?: \"ByLayer\" | \"ByBlock\" | 0..90, visible?, <geometry fields: radius, center, start, end, text, height, rotation…>; dimensions: textOverride, dimStyle, textHeight, arrowSize, dimScale, precision, extOffset, fixedExt, fixedExtLength (per-dimension overrides)}"),
         CommandSpec::new("chprop", "Change Properties", chprop::run_chprop)
             .params("as properties.set, leaving out objects on locked layers → {changed, locked} (the command line asks Color, LAyer, LType, ltScale, LWeight, Thickness and TRansparency in turn)")
             .interactive(|_| Ok(Box::new(chprop::ChpropM::new()))),
@@ -1015,11 +1015,18 @@ fn run_dimstyle_delete(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(dimstyles_json(d))
 }
 
-/// A dimension's text height, arrow size, overall scale (DIMSCALE) and precision as Properties
-/// sets them: per-dimension overrides, as in AutoCAD's Properties palette.
+/// A dimension's text height, arrow size, overall scale (DIMSCALE), precision, extension line
+/// offset (DIMEXO) and fixed extension lines (DIMFXLON, DIMFXL) as Properties sets them:
+/// per-dimension overrides, as in AutoCAD's Properties palette.
 fn dim_overrides(p: &Value) -> Result<serde_json::Map<String, Value>> {
     let mut o = serde_json::Map::new();
-    for (key, field, zero_ok) in [("textHeight", "textHeight", false), ("arrowSize", "arrowSize", true), ("dimScale", "scale", false)] {
+    for (key, field, zero_ok) in [
+        ("textHeight", "textHeight", false),
+        ("arrowSize", "arrowSize", true),
+        ("dimScale", "scale", false),
+        ("extOffset", "extOffset", true),
+        ("fixedExtLength", "fixedExtLength", true),
+    ] {
         if let Some(v) = p.get(key).filter(|v| !v.is_null()) {
             let x = v
                 .as_f64()
@@ -1031,6 +1038,10 @@ fn dim_overrides(p: &Value) -> Result<serde_json::Map<String, Value>> {
     if let Some(v) = p.get("precision").filter(|v| !v.is_null()) {
         let n = v.as_u64().filter(|n| *n <= 8).ok_or_else(|| bad("properties.set", "`precision` must be 0 to 8 decimal places"))?;
         o.insert("decimals".into(), json!(n));
+    }
+    if let Some(v) = p.get("fixedExt").filter(|v| !v.is_null()) {
+        let on = v.as_bool().ok_or_else(|| bad("properties.set", "`fixedExt` must be true or false"))?;
+        o.insert("fixedExt".into(), json!(on));
     }
     Ok(o)
 }

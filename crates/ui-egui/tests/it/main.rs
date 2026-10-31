@@ -7,6 +7,7 @@ mod control_cmdline;
 mod control_cmdline_key;
 mod control_methods;
 mod dialog_dispatch;
+mod dimension_ext_lines;
 mod docking_workflows;
 mod drafting_polar_increment;
 mod drafting_spacing;
