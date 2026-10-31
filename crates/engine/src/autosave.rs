@@ -156,6 +156,9 @@ pub struct Autosaver {
     start: std::time::Instant,
     #[cfg(not(target_arch = "wasm32"))]
     last_beat: Option<f64>,
+    /// Who-has-it-open locks of the drawings open from files ([`crate::drawlock`]).
+    #[cfg(not(target_arch = "wasm32"))]
+    locks: crate::drawlock::Locks,
 }
 
 impl Autosaver {
@@ -170,6 +173,8 @@ impl Autosaver {
             start: std::time::Instant::now(),
             #[cfg(not(target_arch = "wasm32"))]
             last_beat: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            locks: crate::drawlock::Locks::default(),
         }
     }
 
@@ -390,7 +395,8 @@ mod native {
 
     impl Autosaver {
         /// Autosave what is due (writing in the background) and delete files no longer needed.
-        /// Returns how long until the next autosave is due, so the host can wake up for it.
+        /// Returns how long until the next autosave or drawing-lock heartbeat is due, so the host
+        /// can wake up for it.
         pub fn tick(&mut self, s: &Session) -> Option<Duration> {
             let now = self.start.elapsed().as_secs_f64();
             self.reap();
@@ -399,7 +405,23 @@ mod native {
             let jobs = self.plan(s, now, minutes, &dir);
             self.perform(jobs);
             self.heartbeat(&dir, now);
-            self.next_due(now, minutes).map(Duration::from_secs_f64)
+            self.locks.sync(s, &self.instance);
+            // The drawing locks need their heartbeat even with nothing to autosave (SAVETIME 0,
+            // every drawing saved): left untouched they go stale and another app takes them over.
+            let due = self.next_due(now, minutes).map(Duration::from_secs_f64);
+            due.into_iter().chain(self.locks.next_beat()).min()
+        }
+
+        /// Keep the drawing locks with `locks` instead of the default ones (e.g. a shorter
+        /// heartbeat, see [`crate::drawlock::Locks::with_heartbeat`]).
+        pub fn with_locks(mut self, locks: crate::drawlock::Locks) -> Self {
+            self.locks = locks;
+            self
+        }
+
+        /// What the drawing locks have to tell the user (someone else has a drawing open).
+        pub fn take_lock_notes(&mut self) -> Vec<String> {
+            self.locks.take_notes()
         }
 
         /// Autosave every drawing with changes not yet autosaved right away, without waiting for
@@ -498,6 +520,7 @@ mod native {
                 let _ = h.join();
             }
             self.busy.clear();
+            self.locks.release_all(&self.instance);
             for path in self.files() {
                 discard(&path);
             }
