@@ -296,6 +296,11 @@ pub trait Interactive: Send {
     fn display_only(&self, _s: &Session) -> Option<DisplayOnly> {
         None
     }
+    /// The single-line text (a TEXT or an attribute definition) whose new value is being asked
+    /// for (TEXTEDIT with one picked): where the UI puts its in-place field.
+    fn editing_text(&self) -> Option<cadcraft_doc::Text> {
+        None
+    }
 }
 
 /// See [`Interactive::display_only`]: the only things drawn in the current view while a command
