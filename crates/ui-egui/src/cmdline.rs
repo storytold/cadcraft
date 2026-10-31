@@ -756,10 +756,13 @@ mod tests {
     fn ime_preedit_is_shown_and_its_commit_is_inserted_once() {
         use cadcraft_engine::geom::Vec2;
         let mut app = CadApp::new(Session::new(), crate::Services::default());
-        app.run("text", serde_json::json!({"at": [0, 0], "text": "HELLO", "height": 2.5})).unwrap();
-        app.start("textedit");
-        app.session.input(Input::Point(Vec2::new(1.0, 1.0))).unwrap();
-        assert_eq!(app.session.current_prompt().map(|p| p.message.clone()).as_deref(), Some("Enter new text"));
+        // TEXT's lines are typed at the command line (TEXTEDIT on a single-line text edits it in a
+        // field over the text, which takes the IME itself).
+        app.start("text");
+        app.session.input(Input::Point(Vec2::new(0.0, 0.0))).unwrap();
+        app.session.input(Input::Enter).unwrap();
+        app.session.input(Input::Enter).unwrap();
+        assert_eq!(app.session.current_prompt().map(|p| p.message.clone()).as_deref(), Some("Enter text"));
         let ctx = egui::Context::default();
         let out = frame(&mut app, &ctx, Vec::new());
         // The IME is enabled for the command line while it is collecting text.
@@ -779,7 +782,10 @@ mod tests {
             _ => String::new(),
         });
         assert_eq!(text.as_deref(), Some("中文"));
-        // Back to selecting objects: the next frame lets the IME go, so it can't swallow ASCII typing.
+        // Enter on the next, empty line ends TEXT: the next frame lets the IME go, so it can't
+        // swallow ASCII typing.
+        frame(&mut app, &ctx, vec![enter(true), enter(false)]);
+        assert!(app.session.running.is_none());
         let out = frame(&mut app, &ctx, Vec::new());
         assert!(out.platform_output.ime.is_none());
     }
