@@ -44,6 +44,10 @@ pub struct Island {
     pub sources: Vec<usize>,
 }
 
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "Rounded tolerance-bin coordinates intentionally use the defined saturating f64-to-i64 conversion."
+)]
 fn key(p: Vec2, origin: Vec2, q: f64) -> (i64, i64) {
     // The drawing may be georeferenced far from (0, 0). Quantizing absolute
     // coordinates saturates i64 and aliases distinct vertices into one key.
@@ -75,7 +79,16 @@ fn split_pair(segs: &[(Vec2, Vec2)], splits: &mut [Vec<f64>], i: usize, j: usize
     }
 }
 
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "At most 60,000 segments and 512 grid cells bound the numeric conversions; cell coordinates are clamped before casting."
+)]
+#[expect(clippy::too_many_lines, reason = "Uniform-grid construction and bounded pair visits share local state and form one cohesive algorithm.")]
 fn build(polys: &[Vec<Vec2>], tol: f64) -> Option<Graph> {
+    const MAX_PAIR_VISITS: u64 = 60_000_000;
+
     let mut segs: Vec<(Vec2, Vec2)> = Vec::new();
     let mut owner: Vec<usize> = Vec::new();
     for (k, pl) in polys.iter().enumerate() {
@@ -131,7 +144,6 @@ fn build(polys: &[Vec<Vec2>], tol: f64) -> Option<Graph> {
     // cells makes the same pair reappear in each, so a budget on distinct pairs alone leaves the
     // repeated hashing unbounded (CWE-407).
     let mut visits: u64 = 0;
-    const MAX_PAIR_VISITS: u64 = 60_000_000;
     for list in grid.values() {
         for (k, &i) in list.iter().enumerate() {
             for &j in list.iter().skip(k + 1) {
@@ -293,6 +305,7 @@ fn points(g: &Graph, ids: &[usize]) -> Option<Vec<Vec2>> {
 }
 
 /// The face around `p`, as vertex indices (counter-clockwise).
+#[expect(clippy::many_single_char_names, reason = "Ray/edge traversal keeps conventional graph and point notation.")]
 fn outer_face(g: &Graph, p: Vec2) -> Option<Vec<usize>> {
     // Try hits along a ray to +X from nearest outward, so nested faces resolve to the innermost.
     let mut hits: Vec<(f64, usize, usize)> = Vec::new();
@@ -391,6 +404,11 @@ fn outside(core: &Graph, u: usize, steps: usize) -> Option<Vec<Vec2>> {
 }
 
 /// Outlines of the groups of curves inside the face `outer` (vertex indices into `g`).
+#[expect(
+    clippy::float_cmp,
+    clippy::many_single_char_names,
+    reason = "Exact x equality is required for the deterministic lexicographic tie-break; graph equations keep their conventional short names."
+)]
 fn islands(g: &Graph, outer: &[usize], p: Vec2) -> Vec<Island> {
     let comp = components(g);
     let outer_comp: std::collections::HashSet<usize> = outer.iter().filter_map(|&i| comp.get(i).copied()).collect();
@@ -450,6 +468,7 @@ fn islands(g: &Graph, outer: &[usize], p: Vec2) -> Vec<Island> {
 /// The point of the nearest other curve within `snap` of the end `e` of curve `i`, as (curve,
 /// segment, parameter, point). `None` when the end touches a curve, or none is near. `Err` when
 /// the budget of segment checks runs out.
+#[expect(clippy::many_single_char_names, reason = "Nearest-point search keeps conventional i/j/k/a/b/t/q/d geometry notation.")]
 fn nearest_curve(polys: &[Vec<Vec2>], i: usize, e: Vec2, snap: f64, tol: f64, budget: &mut usize) -> Result<Option<(usize, usize, f64, Vec2)>, ()> {
     let mut best: Option<(f64, usize, usize, f64, Vec2)> = None;
     let mut touching = false;
@@ -489,6 +508,8 @@ fn nearest_curve(polys: &[Vec<Vec2>], i: usize, e: Vec2, snap: f64, tol: f64, bu
 /// curve (which gains a vertex there), so the two meet exactly. A curve that is flattened
 /// into chords (an ellipse, a spline) lies up to the flattening tolerance off the true curve,
 /// so a line that ends on the true curve can stop just short of the chords.
+#[must_use]
+#[expect(clippy::many_single_char_names, reason = "Endpoint snapping keeps conventional polyline, segment and point notation.")]
 pub fn snap_ends(polys: &[Vec<Vec2>], snap: f64, tol: f64) -> Vec<Vec<Vec2>> {
     let mut out: Vec<Vec<Vec2>> = polys.to_vec();
     if !(snap.is_finite() && snap > tol) {
@@ -538,22 +559,26 @@ pub fn snap_ends(polys: &[Vec<Vec2>], snap: f64, tol: f64) -> Vec<Vec<Vec2>> {
 }
 
 /// The closed loop enclosing `p`, counter-clockwise, or `None`.
+#[must_use]
 pub fn enclosing_loop(polys: &[Vec<Vec2>], p: Vec2, tol: f64) -> Option<Vec<Vec2>> {
     enclosing_loop_gap(polys, p, tol, 0.0)
 }
 
 /// [`enclosing_loop`], with gaps of up to `gap` between curve ends closed (HPGAPTOL).
+#[must_use]
 pub fn enclosing_loop_gap(polys: &[Vec<Vec2>], p: Vec2, tol: f64, gap: f64) -> Option<Vec<Vec2>> {
     let g = build_gap(polys, tol, gap)?;
     points(&g, &outer_face(&g, p)?)
 }
 
 /// The closed loop enclosing `p` plus the islands inside it, or `None` when `p` isn't enclosed.
+#[must_use]
 pub fn boundary_at(polys: &[Vec<Vec2>], p: Vec2, tol: f64) -> Option<Boundary> {
     boundary_at_gap(polys, p, tol, 0.0)
 }
 
 /// [`boundary_at`], with gaps of up to `gap` between curve ends closed (HPGAPTOL).
+#[must_use]
 pub fn boundary_at_gap(polys: &[Vec<Vec2>], p: Vec2, tol: f64, gap: f64) -> Option<Boundary> {
     let g = build_gap(polys, tol, gap)?;
     let ids = outer_face(&g, p)?;
@@ -569,6 +594,8 @@ pub fn boundary_at_gap(polys: &[Vec<Vec2>], p: Vec2, tol: f64, gap: f64) -> Opti
 /// The outside outline of curves that together enclose an area (counter-clockwise, dangling
 /// ends removed), or `None` when they enclose nothing or form more than one separate group.
 /// Gaps of up to `gap` between curve ends are closed (HPGAPTOL).
+#[must_use]
+#[expect(clippy::float_cmp, reason = "Exact x equality is required for the deterministic lexicographic tie-break.")]
 pub fn outline(polys: &[Vec<Vec2>], tol: f64, gap: f64) -> Option<Vec<Vec2>> {
     let g = build_gap(polys, tol, gap)?;
     let core = prune(&g);
@@ -631,6 +658,7 @@ mod tests {
     }
 
     #[test]
+    #[expect(clippy::cast_precision_loss, reason = "The test generates 17,000 segments, so every grid index is exact as f64.")]
     fn long_segment_crossing_in_unsampled_cell_is_split() {
         // A diagonal long enough to skip the grid, and a short segment crossing it in a cell the old coarse sampling missed.
         let mut polys = vec![vec![Vec2::new(0.0, 0.0), Vec2::new(1000.0, 1000.0)], vec![Vec2::new(11.0, 12.0), Vec2::new(12.0, 11.0)]];
@@ -705,7 +733,7 @@ mod tests {
     }
 
     fn lines_of(poly: &[Vec2]) -> Vec<Vec<Vec2>> {
-        poly.windows(2).map(|w| w.to_vec()).collect()
+        poly.windows(2).map(<[Vec2]>::to_vec).collect()
     }
 
     #[test]
@@ -858,6 +886,7 @@ mod tests {
     }
 
     #[test]
+    #[expect(clippy::cast_precision_loss, reason = "The test is capped at MAX_SEGMENTS (60,000), so every generated coordinate is exact as f64.")]
     fn snap_ends_skips_input_over_the_segment_cap() {
         let mut polys: Vec<Vec<Vec2>> = (0..=MAX_SEGMENTS)
             .map(|i| {

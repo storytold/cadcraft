@@ -1,4 +1,4 @@
-//! CADCraft geometry: double-precision 2D/3D math for drafting.
+//! `CADCraft` geometry: double-precision 2D/3D math for drafting.
 //!
 //! Everything a CAD kernel needs below the document model: vectors and affine transforms,
 //! bounding boxes, angles, lines, circular arcs (and polyline bulges), ellipses, NURBS splines,
@@ -35,6 +35,7 @@ pub const TAU: f64 = std::f64::consts::TAU;
 pub const PI: f64 = std::f64::consts::PI;
 
 /// Normalize an angle to `[0, 2π)`.
+#[must_use]
 pub fn norm_angle(a: f64) -> f64 {
     if !a.is_finite() {
         return 0.0;
@@ -44,26 +45,36 @@ pub fn norm_angle(a: f64) -> f64 {
 }
 
 /// Counter-clockwise sweep from `start` to `end`, in `(0, 2π]`.
+#[must_use]
 pub fn ccw_sweep(start: f64, end: f64) -> f64 {
     let s = norm_angle(end - start);
     if s <= EPS { TAU } else { s }
 }
 
 /// True when angle `a` lies on the CCW sweep from `start` to `end` (inclusive, with tolerance).
+#[must_use]
 pub fn angle_in_sweep(a: f64, start: f64, end: f64) -> bool {
     let sweep = ccw_sweep(start, end);
     let d = norm_angle(a - start);
     d <= sweep + 1e-12 || (TAU - d) < 1e-12
 }
 
+#[must_use]
 pub fn deg(r: f64) -> f64 {
     r.to_degrees()
 }
+#[must_use]
 pub fn rad(d: f64) -> f64 {
     d.to_radians()
 }
 
 /// Number of segments needed to approximate an arc of `radius` and `sweep` within `tol`.
+#[must_use]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "The segment count is nonnegative and immediately clamped to 1..=4096; float-to-usize saturation handles out-of-range values."
+)]
 pub fn arc_segments(radius: f64, sweep: f64, tol: f64) -> usize {
     let r = radius.abs();
     if !(r.is_finite() && sweep.is_finite()) || r <= EPS {
