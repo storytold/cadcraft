@@ -22,6 +22,8 @@ serde = { workspace = true }
 miniz_oxide = "0.9"
 craft-pdf = { workspace = true, features = ["write"] }
 quick-xml = { workspace = true }
+# IGES global-section time stamps (all calendar conversion goes through chrono).
+chrono = { workspace = true }
 
 # Exact STEP geometry exchange (Apache-2.0).
 truck-stepio = "0.3"

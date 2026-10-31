@@ -218,6 +218,12 @@ impl Session {
             return None;
         }
         if let Some(f) = self.parse_modifier(prompt, t) {
+            // Modifiers work in the 2D plane; a 3D prompt keeps taking x,y,z points instead of
+            // waiting for a 2D point that can never come.
+            if prompt.point3d {
+                self.echo("Point modifiers are not available at 3D point prompts.");
+                return Some(Ok(()));
+            }
             if self.point_mods.len() >= MAX_FRAMES {
                 self.echo("Too many point modifiers.");
                 return Some(Ok(()));
@@ -290,9 +296,11 @@ impl Session {
                 self.point_mods.clear();
                 self.input(Input::Cancel)
             }
+            // A 3D point drops pending modifiers (they work in the plane) and goes to the command.
             Input::Point3(_) => {
-                self.echo("Point modifiers do not accept a 3D coordinate.");
-                Ok(())
+                self.echo("Point modifiers do not apply to a 3D coordinate; they were cleared.");
+                self.point_mods.clear();
+                self.input(input)
             }
             Input::Keyword(_) | Input::Text(_) | Input::Pick(_) => {
                 self.echo("Invalid point.");

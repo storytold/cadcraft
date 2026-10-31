@@ -7,7 +7,8 @@ use serde_json::json;
 use crate::CadApp;
 
 pub(crate) fn show(app: &mut CadApp, ctx: &egui::Context) {
-    if app.session.view3d.is_none() {
+    // A layout tab draws in 2D even while the model tab keeps its camera.
+    if !crate::canvas::showing_3d(app) {
         return;
     }
     if let Some(rect) = app.canvas.rect {

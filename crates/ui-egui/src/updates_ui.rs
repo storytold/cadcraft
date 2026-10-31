@@ -23,6 +23,9 @@ pub struct Runtime {
     result_open: bool,
     /// The current result was already written to the command history.
     result_echoed: bool,
+    /// Help ▸ Check for Updates… was chosen in a build with updates turned off: say so in a
+    /// window, which shows even when the Start page is open or the command line is hidden.
+    disabled_notice_open: bool,
 }
 
 impl Default for Runtime {
@@ -34,6 +37,7 @@ impl Default for Runtime {
             check_requested: false,
             result_open: false,
             result_echoed: false,
+            disabled_notice_open: false,
         }
     }
 }
@@ -48,7 +52,8 @@ impl CadApp {
 /// Help ▸ Check for Updates…: check now, and show the result when there is nothing newer.
 pub fn check_now(app: &mut CadApp) {
     if app.updates_rt.disabled {
-        app.session.echo("Release updates are disabled for this development build.");
+        app.session.echo(DISABLED_NOTICE);
+        app.updates_rt.disabled_notice_open = true;
         return;
     }
     app.updates_rt.check_requested = true;
@@ -90,6 +95,22 @@ pub fn tick(app: &mut CadApp, ctx: &egui::Context) {
 /// Draw the prompt while there is one and act on its answer.
 pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     if app.updates_rt.disabled {
+        if app.updates_rt.disabled_notice_open {
+            let mut open = true;
+            let mut close = false;
+            egui::Window::new("Check for Updates")
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ctx, |ui| {
+                    ui.label(DISABLED_NOTICE);
+                    let ok = ui.button("OK");
+                    crate::control::record_widget(ui, &ok, "OK", "button", None);
+                    close = ok.clicked();
+                });
+            app.updates_rt.disabled_notice_open = open && !close;
+        }
         return;
     }
     // The restart helper is scheduled before the app closes, so no update starts over unsaved work.
@@ -117,6 +138,9 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     }
 }
 
+/// What Help ▸ Check for Updates… says in a build with updates turned off.
+const DISABLED_NOTICE: &str = "Release updates are disabled for this development build.";
+
 /// Opt-in only: normal release packages retain their existing update behavior.
 fn updates_disabled(value: Option<&str>) -> bool {
     matches!(value, Some("1" | "true"))
@@ -133,6 +157,8 @@ mod tests {
         super::check_now(&mut app);
         assert!(!app.updates_rt.check_requested);
         assert!(!app.updates_rt.result_open);
+        // The answer is a window, not only a command-history line (#2544 review).
+        assert!(app.updates_rt.disabled_notice_open);
         let ctx = egui::Context::default();
         super::tick(&mut app, &ctx);
         assert!(matches!(app.updates_rt.updater.status(), craft_update::updater::Status::Idle));

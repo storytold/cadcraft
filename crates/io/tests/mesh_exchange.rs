@@ -83,6 +83,21 @@ fn binary_stl_preserves_vertices() {
     assert!(cadcraft_io::read(&data, "x.stl").is_err());
 }
 
+/// A colour-STL facet (non-zero attribute bytes) keeps its geometry; the attribute is noted,
+/// not a reason to refuse the file (#2544 review).
+#[test]
+fn binary_stl_attribute_bytes_are_skipped_with_a_note() {
+    let mut data = vec![0u8; 80];
+    data.extend_from_slice(&1u32.to_le_bytes());
+    for value in [0f32, 0., 1., 0., 0., 2., 1., 0., 2., 0., 1., 3.] {
+        data.extend_from_slice(&value.to_le_bytes());
+    }
+    data.extend_from_slice(&0x801fu16.to_le_bytes());
+    let d = cadcraft_io::read(&data, "colour.stl").unwrap();
+    assert_eq!(faces(&d)[0][2], Vec3::new(0., 1., 3.));
+    assert!(d.read_notes.iter().any(|n| n.contains("STL facet attribute")), "{:?}", d.read_notes);
+}
+
 #[test]
 fn rejects_concave_and_large_obj_polygons() {
     let vertices = "v 0 0 1\nv 2 0 1\nv 0.5 0.5 1\nv 0 2 1\nv -1 1 1\n";

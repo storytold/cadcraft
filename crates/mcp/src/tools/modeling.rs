@@ -61,8 +61,23 @@ pub(super) fn definitions() -> Vec<Value> {
             "undo"|"redo" => "Undo or redo one engine edit. Returns the affected command labels.",
             _ => {properties=json!({"params":{"type":"object"}});required=vec!["params"]; "Build a solid from profiles. Parameters follow the corresponding engine command; use list_commands to discover its full contract."}
         };
-        json!({"name":name,"description":description,"inputSchema":{"type":"object","properties":properties,"required":required}})
+        json!({"name":name,"description":description,"inputSchema":{"type":"object","properties":properties,"required":required},"annotations":annotations(command)})
     }).collect()
+}
+
+/// MCP behaviour hints. Read-only: only `solidinfo` leaves drawing and session alone. Additive
+/// commands create objects (or set the camera) without replacing any; the rest replace, consume
+/// or move existing solids, overwrite a saved UCS or a file, or step the history.
+/// Every edit is one undo step, but clients should still confirm destructive ones.
+fn annotations(command: &str) -> Value {
+    let (read_only, destructive, idempotent) = match command {
+        "solidinfo" => (true, false, true),
+        "view3d" => (false, false, true),
+        "box" | "cylinder" | "cone" | "sphere" | "torus" | "pyramid" | "extrude" | "revolve" | "sweep" | "loft" | "section" => (false, false, false),
+        "export" => (false, true, true),
+        _ => (false, true, false),
+    };
+    json!({"readOnlyHint": read_only, "destructiveHint": destructive, "idempotentHint": idempotent, "openWorldHint": false})
 }
 
 pub(super) fn dispatch(name: &str, args: &Value) -> Option<Value> {

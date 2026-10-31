@@ -437,16 +437,19 @@ pub fn read(bytes: &[u8]) -> Result<Drawing> {
         let mut stack = Vec::with_capacity(roots.len());
         for root_node in roots {
             let ni = root_node.as_u64().and_then(|i| usize::try_from(i).ok()).ok_or_else(|| error("invalid scene node index"))?;
-            stack.push((ni, identity(), 0, Vec::new()));
+            stack.push((ni, identity(), 0));
         }
-        while let Some((ni, parent, depth, mut path)) = stack.pop() {
+        // glTF nodes form strict trees: a node reached twice has two parents (a DAG whose
+        // traversal could grow exponentially) or lies on a cycle. Either way it is refused, so
+        // the walk visits each node at most once.
+        let mut visited = std::collections::HashSet::new();
+        while let Some((ni, parent, depth)) = stack.pop() {
             if depth > 128 {
                 return Err(error("node nesting exceeds limit"));
             }
-            if path.contains(&ni) {
-                return Err(error("node cycle"));
+            if !visited.insert(ni) {
+                return Err(error("node has more than one parent or forms a cycle"));
             }
-            path.push(ni);
             let node = nodes.get(ni).ok_or_else(|| error("node index out of range"))?;
             let world = mul(parent, node_matrix(node)?);
             if let Some(mesh_value) = node.get("mesh") {
@@ -459,7 +462,7 @@ pub fn read(bytes: &[u8]) -> Result<Drawing> {
             if let Some(children) = node.get("children").and_then(Value::as_array) {
                 for child_value in children {
                     let child = child_value.as_u64().and_then(|i| usize::try_from(i).ok()).ok_or_else(|| error("invalid child node index"))?;
-                    stack.push((child, world, depth + 1, path.clone()));
+                    stack.push((child, world, depth + 1));
                 }
             } else if node.get("children").is_some() {
                 return Err(error("node children must be an array"));
@@ -698,6 +701,31 @@ mod tests {
             assert!(b64_decode(value).is_err(), "{value}");
         }
         assert!(node_matrix(&json!({"rotation":[1e308,1e308,0.0,1.0]})).is_err());
+    }
+
+    /// A node DAG (each node naming the next twice) would take ~2^128 visits; it is refused at
+    /// once, like a cycle, and a valid tree still reads (#2544 review).
+    #[test]
+    fn rejects_shared_children_and_cycles_without_exponential_walk() {
+        let mut d = Drawing::new_metric();
+        add_triangle(&mut d, "0", Color::Index(1), Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0)).unwrap();
+        let base: Value = serde_json::from_slice(&write(&d, false).unwrap()).unwrap();
+        let with_nodes = |nodes: Vec<Value>| {
+            let mut root = base.clone();
+            root["nodes"] = Value::Array(nodes);
+            root["scenes"] = json!([{ "nodes": [0] }]);
+            root["scene"] = json!(0);
+            serde_json::to_vec(&root).unwrap()
+        };
+        let mut dag: Vec<Value> = (0..127).map(|i| json!({ "children": [i + 1, i + 1] })).collect();
+        dag.push(json!({ "mesh": 0 }));
+        let started = std::time::Instant::now();
+        assert!(read(&with_nodes(dag)).unwrap_err().to_string().contains("more than one parent"));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        let cycle = vec![json!({ "children": [1] }), json!({ "mesh": 0, "children": [0] })];
+        assert!(read(&with_nodes(cycle)).is_err());
+        let tree = vec![json!({ "children": [1, 2] }), json!({ "mesh": 0 }), json!({ "mesh": 0 })];
+        assert_eq!(read(&with_nodes(tree)).unwrap().model.len(), 2);
     }
 
     #[test]

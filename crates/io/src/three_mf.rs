@@ -171,10 +171,13 @@ fn parse_u32_attr(e: &BytesStart<'_>, key: &str, reader: &Reader<&[u8]>) -> Resu
 
 fn color(s: &str) -> Result<Color> {
     let s = s.strip_prefix('#').ok_or_else(|| error("invalid 3MF color"))?;
-    if s.len() != 8 {
-        return Err(error("3MF color must be RRGGBBAA"));
+    // ST_ColorValue: #RRGGBB or #RRGGBBAA (alpha is not kept).
+    let n = match s.len() {
+        6 => u32::from_str_radix(s, 16).map(|n| n << 8),
+        8 => u32::from_str_radix(s, 16),
+        _ => return Err(error("3MF color must be RRGGBB or RRGGBBAA")),
     }
-    let n = u32::from_str_radix(s, 16).map_err(|_| error("invalid 3MF color"))?;
+    .map_err(|_| error("invalid 3MF color"))?;
     Ok(Color::True(Rgb((n >> 24) as u8, (n >> 16) as u8, (n >> 8) as u8)))
 }
 
@@ -460,22 +463,36 @@ fn model_xml(d: &Drawing) -> Result<Vec<u8>> {
     for (oi, (name, tris)) in groups.iter().enumerate() {
         let oid = oi + 2;
         s.push_str(&format!("<object id=\"{oid}\" name=\"{}\" type=\"model\"><mesh><vertices>", xml(name)));
-        for (tri, _) in tris {
-            for p in tri {
+        // Weld corners with identical coordinates so neighbouring triangles share vertices and
+        // closed solids are manifold, as the core spec requires of `type="model"` objects.
+        let mut index: HashMap<[u64; 3], usize> = HashMap::new();
+        let mut triangles = Vec::with_capacity(tris.len());
+        for (tri, c) in tris {
+            let mut ids = [0usize; 3];
+            for (id, p) in ids.iter_mut().zip(tri) {
                 if [p.x, p.y, p.z].iter().any(|v| !v.is_finite() || v.abs() > 1.0e12) {
                     return Err(error("coordinate exceeds 3MF exchange bounds"));
                 }
-                s.push_str(&format!("<vertex x=\"{:.17}\" y=\"{:.17}\" z=\"{:.17}\"/>", p.x, p.y, p.z));
+                // -0.0 and 0.0 are the same point.
+                let key = [p.x, p.y, p.z].map(|v| if v == 0.0 { 0.0f64.to_bits() } else { v.to_bits() });
+                let next = index.len();
+                *id = *index.entry(key).or_insert_with(|| {
+                    s.push_str(&format!("<vertex x=\"{:.17}\" y=\"{:.17}\" z=\"{:.17}\"/>", p.x, p.y, p.z));
+                    next
+                });
             }
             if s.len() > MAX_BYTES {
                 return Err(error("output exceeds size limit"));
             }
+            // A triangle whose corners weld together has no area; 3MF requires distinct indices.
+            if ids[0] != ids[1] && ids[1] != ids[2] && ids[0] != ids[2] {
+                triangles.push((ids, *c));
+            }
         }
         s.push_str("</vertices><triangles>");
-        for (i, (_, c)) in tris.iter().enumerate() {
-            let base = i * 3;
+        for ([a, b, c3], c) in &triangles {
             let pi = color_index.get(c).copied().ok_or_else(|| error("material map missing"))?;
-            s.push_str(&format!("<triangle v1=\"{base}\" v2=\"{}\" v3=\"{}\" pid=\"1\" p1=\"{pi}\"/>", base + 1, base + 2));
+            s.push_str(&format!("<triangle v1=\"{a}\" v2=\"{b}\" v3=\"{c3}\" pid=\"1\" p1=\"{pi}\"/>"));
             if s.len() > MAX_BYTES {
                 return Err(error("output exceeds size limit"));
             }
@@ -629,5 +646,43 @@ mod tests {
         let reread = read(&write(&d).unwrap()).unwrap();
         let EntityKind::Face3d(face) = &reread.model.iter().next().unwrap().kind else { return };
         assert_eq!(face.corners[0].x, value);
+    }
+
+    /// Slicers often write `#RRGGBB`; both lengths of ST_ColorValue read (#2544 review).
+    #[test]
+    fn six_and_eight_digit_display_colours_read() {
+        assert_eq!(color("#1A2B3C").unwrap(), Color::True(Rgb(0x1a, 0x2b, 0x3c)));
+        assert_eq!(color("#1A2B3C80").unwrap(), Color::True(Rgb(0x1a, 0x2b, 0x3c)));
+        for bad in ["#1A2B3", "1A2B3C", "#GGGGGG", "#1A2B3C8"] {
+            assert!(color(bad).is_err(), "{bad}");
+        }
+        let model = br##"<?xml version="1.0"?><model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" unit="millimeter"><resources><basematerials id="1"><base name="red" displaycolor="#FF0000"/></basematerials><object id="2"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2" pid="1" p1="0"/></triangles></mesh></object></resources><build><item objectid="2"/></build></model>"##;
+        let d = read(&zip_write(&[("3D/3dmodel.model", model)]).unwrap()).unwrap();
+        assert_eq!(d.model.iter().next().unwrap().common.color, Color::True(Rgb(255, 0, 0)));
+    }
+
+    /// Triangles that share corners share vertex indices, so a closed solid is a manifold
+    /// `type="model"` object: a tetrahedron writes 4 vertices, every edge used twice.
+    #[test]
+    fn writer_welds_shared_vertices() {
+        let mut d = Drawing::new_metric();
+        let p = [Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, 0.0, 1.0)];
+        for [a, b, c] in [[0, 2, 1], [0, 1, 3], [1, 2, 3], [0, 3, 2]] {
+            crate::mesh::add_face3d(&mut d, "solid", Color::Index(7), [p[a], p[b], p[c]]).unwrap();
+        }
+        let xml = String::from_utf8(model_xml(&d).unwrap()).unwrap();
+        assert_eq!(xml.matches("<vertex ").count(), 4);
+        assert_eq!(xml.matches("<triangle ").count(), 4);
+        let mut edges = std::collections::HashMap::new();
+        for t in xml.split("<triangle ").skip(1) {
+            let v = |k: &str| t.split(&format!("{k}=\"")).nth(1).and_then(|r| r.split('"').next()).unwrap().parse::<usize>().unwrap();
+            let (a, b, c) = (v("v1"), v("v2"), v("v3"));
+            for (x, y) in [(a, b), (b, c), (c, a)] {
+                *edges.entry((x.min(y), x.max(y))).or_insert(0) += 1;
+            }
+        }
+        assert_eq!(edges.len(), 6);
+        assert!(edges.values().all(|n| *n == 2));
+        assert_eq!(read(&write(&d).unwrap()).unwrap().model.len(), 4);
     }
 }

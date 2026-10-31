@@ -50,7 +50,7 @@ fn export_help() -> &'static str {
         &C,
         "Export the drawing to this file; its extension picks the format ",
         Format::WRITE,
-        "; also .obj and .stl (a mesh of the 3D faces)",
+        "; also .obj, .stl, .gltf, .glb and .3mf (meshes of the 3D faces), and .step/.stp and .iges/.igs (exact solids)",
     )
 }
 
@@ -185,8 +185,8 @@ pub(crate) enum ViewMode {
 /// --cmd prints its JSON result on one line (JSON lines); a command with no result prints nothing.
 /// An image --export (png 2400x1600, svg, pdf) shows model space:
 /// the current view if the steps changed it (zoom, pan, view.set…), otherwise the drawing
-/// extents, unless --window or --view says otherwise. --export also writes .obj and .stl meshes
-/// of the 3D faces. With --view3d (or a 3dorbit, view3d step) a png or svg --export is drawn in 3D
+/// extents, unless --window or --view says otherwise. --export also writes .obj, .stl, .gltf, .glb
+/// and .3mf meshes of the 3D faces, and .step/.stp and .iges/.igs exact solids. With --view3d (or a 3dorbit, view3d step) a png or svg --export is drawn in 3D
 /// and ignores --window and --view; `plan` leaves the 3D view again.
 #[derive(Args)]
 #[command(group(ArgGroup::new("framing").args(["window", "view"]).multiple(true).requires("export")))]

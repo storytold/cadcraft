@@ -828,3 +828,32 @@ fn mesh_booleans_refuse_locked_group_members_atomically() {
         }
     }
 }
+
+/// Inputs within the command limits but past the exact builders' (more than 256 profile points,
+/// more than 64 loft sections) still make the solid, mesh-only, and say why (#2544 review).
+#[test]
+fn profiles_past_the_exact_limits_fall_back_to_mesh_only_solids() {
+    let mut s = Session::new();
+    let ring: Vec<Value> = (0..300)
+        .map(|i| {
+            let a = std::f64::consts::TAU * f64::from(i) / 300.0;
+            json!([10.0 * a.cos(), 10.0 * a.sin()])
+        })
+        .collect();
+    let r = s.execute("extrude", &json!({"profile": ring, "height": 3})).unwrap();
+    assert_eq!(r["representation"], "mesh", "{r}");
+    assert!(r["notes"][0].as_str().unwrap().contains("mesh-only"), "{r}");
+    assert_closed_outward(&s, &r);
+    let info = s.execute("solidinfo", &json!({"handles": [r["handles"][0]]}));
+    assert!(info.is_err(), "a mesh-only solid has no exact record");
+
+    let sections: Vec<Value> = (0..100).map(|i| json!([[0, 0, i], [2, 0, i], [2, 2, i], [0, 2, i]])).collect();
+    let r = s.execute("loft", &json!({"sections": sections})).unwrap();
+    assert_eq!(r["representation"], "mesh", "{r}");
+    assert_closed_outward(&s, &r);
+
+    // Within the exact limits nothing changes.
+    let r = s.execute("extrude", &json!({"profile": [[0, 0], [1, 0], [1, 1]], "height": 1})).unwrap();
+    assert_eq!(r["representation"], "analyticBrep");
+    assert!(r.get("notes").is_none());
+}

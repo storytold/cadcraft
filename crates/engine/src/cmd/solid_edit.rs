@@ -205,7 +205,14 @@ impl Interactive for EditMachine {
         Ok(Step::Continue)
     }
     fn prompt(&self, _: &Session) -> Prompt {
-        if !self.sel.done { self.sel.prompt() } else { Prompt::new(format!("Specify {} (all vertical edges)", self.key), Accept::NUMBER) }
+        if !self.sel.done {
+            self.sel.prompt()
+        } else {
+            // FILLETEDGE and CHAMFEREDGE finish every vertical edge; SHELL and RETESSELLATE
+            // don't work on edges.
+            let hint = if matches!(self.id, "filletedge" | "chamferedge") { " (all vertical edges)" } else { "" };
+            Prompt::new(format!("Specify {}{hint}", self.key), Accept::NUMBER)
+        }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         if !self.sel.done {

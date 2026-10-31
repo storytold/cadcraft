@@ -188,15 +188,16 @@ pub fn read_stl(bytes: &[u8]) -> Result<Drawing> {
         let count = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]) as usize;
         if count <= MAX_FACES && count.checked_mul(50).and_then(|n| n.checked_add(84)) == Some(bytes.len()) {
             let mut d = Drawing::default();
+            let mut attributes = false;
             for facet in bytes[84..].chunks_exact(50) {
                 for raw in facet[..12].chunks_exact(4) {
                     if !f32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]).is_finite() {
                         return Err(error("non-finite STL normal"));
                     }
                 }
-                if facet[48] != 0 || facet[49] != 0 {
-                    return Err(error("STL facet attributes are unsupported"));
-                }
+                // Some exporters keep a facet colour in the two attribute bytes; the geometry is
+                // still valid, so the bytes are skipped and reported once.
+                attributes |= facet[48] != 0 || facet[49] != 0;
                 let mut coords = [0.0; 9];
                 for (i, dest) in coords.iter_mut().enumerate() {
                     let p = 12 + i * 4;
@@ -216,6 +217,9 @@ pub fn read_stl(bytes: &[u8]) -> Result<Drawing> {
             }
             if count == 0 {
                 return Err(error("STL contains no facets"));
+            }
+            if attributes {
+                d.read_notes.push("STL facet attribute bytes (such as colours) are not retained".into());
             }
             return Ok(d);
         }

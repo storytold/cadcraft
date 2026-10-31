@@ -260,16 +260,22 @@ fn a_lazy_bridge_starts_without_the_app_and_says_how_to_open_it() {
     app.join().unwrap();
 }
 
-/// 3D from MCP only: open a mesh, look at it through `view3d`, render it from that camera, write
-/// it back as OBJ and STL, and return to the plan view. The tool descriptions name the formats
-/// and the commands.
-#[test]
-fn agent_views_and_exports_a_3d_mesh() {
+/// The real file hooks, as the desktop and CLI hosts install them. Hooks are process-wide and
+/// set once, so every test that reads or writes files installs the same ones and passes alone.
+fn install_io() {
     cadcraft_engine::cmd::file::set_io(cadcraft_engine::cmd::file::IoHooks {
         read: |b, name| cadcraft_io::read(b, name).map_err(|e| e.to_string()),
         write: |d, name| cadcraft_io::write(d, name).map_err(|e| e.to_string()),
         plot: None,
     });
+}
+
+/// 3D from MCP only: open a mesh, look at it through `view3d`, render it from that camera, write
+/// it back as OBJ and STL, and return to the plan view. The tool descriptions name the formats
+/// and the commands.
+#[test]
+fn agent_views_and_exports_a_3d_mesh() {
+    install_io();
     let mut s = Server::new(Box::new(Headless::default()));
     let tools = call(&mut s, 1, "tools/list", json!({}));
     let text = tools["result"]["tools"].to_string();
@@ -334,6 +340,7 @@ fn modeling_tools_reject_bad_schema_before_modification() {
 
 #[test]
 fn agent_finishes_exact_solid_and_exports_step() {
+    install_io();
     let mut s = Server::new(Box::new(Headless::default()));
     let a = tool(&mut s, "create_box", json!({"p1":[0,0,0],"p2":[4,4,3]}));
     let b = tool(&mut s, "fillet_edges", json!({"handles":[a["handles"][0]],"radius":0.3}));
@@ -345,4 +352,27 @@ fn agent_finishes_exact_solid_and_exports_step() {
     tool(&mut s, "undo_edit", json!({}));
     let restored = tool(&mut s, "inspect_solid", json!({"handles":[a["handles"][0]]}));
     assert_eq!(restored["edges"].as_array().unwrap().len(), 12);
+}
+
+/// Modeling tools carry MCP behaviour hints that match what they do: inspecting a solid leaves
+/// the drawing as it was, creating adds, and a boolean consumes its operands (#2544 review).
+#[test]
+fn modeling_tool_annotations_match_their_side_effects() {
+    let mut s = Server::new(Box::new(Headless::default()));
+    let tools = call(&mut s, 1, "tools/list", json!({}));
+    let hints =
+        |name: &str| tools["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == name).map(|t| t["annotations"].clone()).unwrap();
+    assert_eq!(hints("inspect_solid")["readOnlyHint"], true);
+    assert_eq!(hints("create_box")["readOnlyHint"], false);
+    assert_eq!(hints("create_box")["destructiveHint"], false);
+    for name in ["subtract_solids", "union_solids", "fillet_edges", "slice_solid", "move_3d", "undo_edit", "set_ucs"] {
+        assert_eq!(hints(name)["destructiveHint"], true, "{name}");
+    }
+    let a = tool(&mut s, "create_box", json!({"p1":[0,0,0],"p2":[4,4,3]}));
+    let b = tool(&mut s, "create_box", json!({"p1":[2,2,0],"p2":[6,6,3]}));
+    let before = tool(&mut s, "query_entities", json!({}));
+    tool(&mut s, "inspect_solid", json!({"handles":[a["handles"][0]]}));
+    assert_eq!(tool(&mut s, "query_entities", json!({})), before, "read-only inspection");
+    tool(&mut s, "subtract_solids", json!({"from":[a["handles"][0]],"remove":[b["handles"][0]]}));
+    assert_ne!(tool(&mut s, "query_entities", json!({})), before, "subtract replaces its operands");
 }

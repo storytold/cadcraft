@@ -19,8 +19,10 @@ impl Session {
     pub fn zoom_extents(&mut self) -> Result<()> {
         let space = self.space();
         let mut ext = self.doc()?.extents(&space);
-        // In a 3D view the screen shows the projection: fit the projected extents instead.
-        if let (Some(v), Space::Model) = (self.view3d, &space) {
+        // In a 3D view the model tab shows the projection: fit the projected extents instead. A
+        // layout (even working in one of its viewports) shows the plan, so it keeps the plan
+        // extents.
+        if let (Some(v), Space::Model, Space::Model) = (self.view3d, &space, &self.layout_space()) {
             let opts = cadcraft_render::Options::default();
             let camera = cadcraft_render::view3d::Camera3d { azimuth: v.azimuth, elevation: v.elevation };
             let b = cadcraft_render::view3d::build_3d_with_options(self.doc()?, &space, &opts, camera, self.render3d).bounds;

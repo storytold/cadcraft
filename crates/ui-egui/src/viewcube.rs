@@ -347,11 +347,13 @@ pub fn ucs_icon(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
     ucs_menu(app, egui::Popup::menu(&resp).open_memory(open).at_pointer_fixed());
 }
 
-/// The coordinate-system menu: the WCS (the only coordinate system so far) and the icon switch.
+/// The coordinate-system menu: the WCS (user coordinate systems come from the UCS command) and
+/// the icon switch.
 fn ucs_menu(app: &mut CadApp, popup: egui::Popup<'_>) {
     let mut hide = false;
     popup.show(|ui| {
-        ui.radio(true, "World (WCS)").on_hover_text("CADCraft draws in the World Coordinate System; user coordinate systems aren't available yet.");
+        ui.radio(true, "World (WCS)")
+            .on_hover_text("The World Coordinate System. Use the UCS command to set, save or restore a user coordinate system.");
         ui.separator();
         if ui.button("Hide UCS Icon").clicked() {
             hide = true;

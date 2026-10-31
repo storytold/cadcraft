@@ -272,39 +272,13 @@ fn validate_planar_section(section: &[Vec3]) -> Result<(), MeshError> {
     Ok(())
 }
 
+/// Matching boundary topology for sections with different point counts; every original corner
+/// stays a vertex so the exact body passes through the sections as given.
 fn resample_section(section: &[Vec3], count: usize) -> Result<Vec<Vec3>, MeshError> {
     if section.len() == count {
         return Ok(section.to_vec());
     }
-    let mut lengths = Vec::with_capacity(section.len() + 1);
-    lengths.push(0.0);
-    for i in 0..section.len() {
-        let edge = (section[(i + 1) % section.len()] - section[i]).len();
-        if !edge.is_finite() || edge <= EPS {
-            return Err(MeshError("exact loft section contains duplicate points"));
-        }
-        lengths.push(lengths.last().copied().unwrap_or(0.0) + edge);
-    }
-    let perimeter = *lengths.last().ok_or(MeshError("exact loft section has no perimeter"))?;
-    if !perimeter.is_finite() || perimeter <= EPS {
-        return Err(MeshError("exact loft section has a degenerate perimeter"));
-    }
-    let mut output = Vec::with_capacity(count);
-    let mut edge_index = 0usize;
-    for i in 0..count {
-        let target = perimeter * i as f64 / count as f64;
-        while edge_index + 1 < section.len() && lengths[edge_index + 1] < target {
-            edge_index += 1;
-        }
-        let a = section[edge_index];
-        let b = section[(edge_index + 1) % section.len()];
-        let span = lengths[edge_index + 1] - lengths[edge_index];
-        if span <= EPS {
-            return Err(MeshError("exact loft section contains a zero-length edge"));
-        }
-        output.push(a + (b - a) * ((target - lengths[edge_index]) / span));
-    }
-    Ok(output)
+    crate::mesh::resample_keep_corners(section, count)
 }
 
 #[cfg(test)]
@@ -323,5 +297,20 @@ mod tests {
         let upper = vec![Vec3::new(0.0, 0.0, 2.0), Vec3::new(1.0, 0.0, 2.0), Vec3::new(1.0, 1.0, 2.0), Vec3::new(0.0, 1.0, 2.0)];
         let loft = Body::loft_sections(&[lower, upper]).unwrap();
         assert!(loft.validate().is_ok());
+    }
+
+    #[test]
+    fn mismatched_exact_loft_keeps_every_section_corner() {
+        let lower = vec![Vec3::new(0.0, 0.0, 0.0), Vec3::new(2.0, 0.0, 0.0), Vec3::new(2.0, 2.0, 0.0), Vec3::new(0.0, 2.0, 0.0)];
+        let upper = vec![Vec3::new(0.0, 0.0, 3.0), Vec3::new(3.0, 0.0, 3.0), Vec3::new(1.5, 2.0, 4.0)];
+        let loft = Body::loft_sections(&[lower, upper.clone()]).unwrap();
+        assert!(loft.validate().is_ok());
+        let vertices = &loft.geometry.boundaries[0].vertices;
+        for corner in upper {
+            assert!(
+                vertices.iter().any(|v| (v.x - corner.x).abs() + (v.y - corner.y).abs() + (v.z - corner.z).abs() < 1e-9),
+                "corner {corner:?} kept"
+            );
+        }
     }
 }

@@ -69,7 +69,7 @@ enum Plan {
 /// Apply the transform to the objects `hs`: `point` moves a 3D point; `plane` is the equivalent
 /// sideways transform for objects in a plane, when there is one. Locked layers are skipped.
 /// Returns (changed, skipped). Nothing is touched when some object cannot be carried.
-fn affine_of(point: &dyn Fn(Vec3) -> Vec3) -> Result<Mat4> {
+pub(super) fn affine_of(point: &dyn Fn(Vec3) -> Vec3) -> Result<Mat4> {
     let o = point(Vec3::ZERO);
     let x = point(Vec3::new(1.0, 0.0, 0.0)) - o;
     let y = point(Vec3::new(0.0, 1.0, 0.0)) - o;
@@ -115,10 +115,12 @@ fn apply(s: &mut Session, cmd: &str, hs: &[Handle], point: &dyn Fn(Vec3) -> Vec3
     }
     // Exact bodies live in a grouped set of mesh proxies. Reject partial selections and locked
     // members before transforming either representation, then update the exact body and proxy
-    // fingerprint together.
+    // fingerprint together. A stale or damaged record (faces changed by a 2D edit) is not
+    // exact any more: its faces move as a mesh and the record stays as it is, so exact edits
+    // keep refusing it.
     let mut exact = Vec::<(Vec<Handle>, Body)>::new();
     for (_, members) in super::solids::solid_groups(d, hs) {
-        if let Some(body) = cadcraft_doc::brep::read(d, &members).map_err(|e| bad(cmd, e))? {
+        if let Ok(Some(body)) = cadcraft_doc::brep::read(d, &members) {
             if members.iter().any(|h| !selected.contains(h)) {
                 return Err(bad(cmd, "select every display face of an exact solid before transforming it"));
             }
@@ -405,6 +407,25 @@ mod tests {
         );
     }
 
+    /// A snap override typed at a 3D prompt out of habit is refused, and a 3D point given while
+    /// modifiers are pending clears them: the prompt never locks up (#2544 review).
+    #[test]
+    fn point_modifiers_do_not_lock_3d_prompts() {
+        let mut s = Session::new();
+        let h = face(&mut s, [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]);
+        s.set_selection(vec![h]);
+        s.start("move3d").unwrap();
+        s.cmdline("end").unwrap();
+        assert!(s.point_mods.is_empty(), "a modifier is refused at a 3D prompt");
+        s.cmdline("0,0,0").unwrap();
+        // A modifier left pending (pushed before the prompt became 3D) is dropped by a 3D point.
+        s.point_mods.push(crate::pointmod::Frame::Snap { mode: 0 });
+        s.input(Input::Point3(Vec3::new(2.0, 3.0, 4.0))).unwrap();
+        assert!(s.point_mods.is_empty());
+        s.input(Input::Enter).unwrap();
+        assert!(near(corners(&s, h)[0], [2.0, 3.0, 4.0]));
+    }
+
     #[test]
     fn typed_relative_xyz_moves_from_the_previous_wcs_point() {
         let mut s = Session::new();
@@ -457,6 +478,25 @@ mod tests {
         let locked_before = s.doc().unwrap().clone();
         assert!(s.execute("rotate3d", &json!({"handles":handles.clone(),"axis":"x","angle":15})).is_err());
         assert_eq!(&locked_before, s.doc().unwrap());
+    }
+
+    /// A 2D edit leaves the exact record stale; MOVE3D and ROTATE3D still move the faces as a
+    /// mesh, and the stale record keeps exact edits refusing the solid (#2544 review).
+    #[test]
+    fn stale_exact_record_transforms_as_mesh_only() {
+        let mut s = Session::new();
+        let created = s.execute("box", &json!({"p1":[0,0,0],"p2":[4,3,2]})).unwrap();
+        let handles = created["handles"].as_array().unwrap().clone();
+        let first = cadcraft_doc::Handle::parse_hex(handles[0].as_str().unwrap()).unwrap();
+        s.execute("move", &json!({"handles":handles.clone(),"from":[0,0],"to":[10,0]})).unwrap();
+        let stale = s.execute("solidinfo", &json!({"handles":[handles[0]]})).unwrap_err().to_string();
+        assert!(stale.contains("stale"), "{stale}");
+        let before = corners(&s, first);
+        s.execute("move3d", &json!({"handles":handles.clone(),"offset":[0,0,5]})).unwrap();
+        assert!((corners(&s, first)[0].z - before[0].z - 5.0).abs() < 1e-12);
+        s.execute("rotate3d", &json!({"handles":handles.clone(),"axis":"z","angle":90})).unwrap();
+        assert!(s.execute("solidinfo", &json!({"handles":[handles[0]]})).unwrap_err().to_string().contains("stale"));
+        assert!(s.execute("filletedge", &json!({"handles":[handles[0]],"radius":0.2})).is_err());
     }
 
     #[test]

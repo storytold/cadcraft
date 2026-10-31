@@ -450,12 +450,23 @@ fn emit_analytic(s: &mut Session, cmd: &str, mesh: &Mesh3, body: &cadcraft_geom:
     result
 }
 
-/// Emit profile solids as one undoable batch, attaching each exact source model to its mesh proxy.
-fn emit_analytic_many(s: &mut Session, cmd: &str, solids: &[(Mesh3, cadcraft_geom::brep::Body, &str)]) -> Result<Value> {
+/// A profile solid's exact source, or why it has none. The exact builders have tighter limits
+/// (profile points, path stations, sections) and a narrower shape subset than the mesh
+/// builders; past them the solid is still made, mesh-only like PYRAMID, and the reason is
+/// reported instead of failing the command.
+type Exact = std::result::Result<cadcraft_geom::brep::Body, String>;
+
+fn exact(body: std::result::Result<cadcraft_geom::brep::Body, cadcraft_geom::MeshError>) -> Exact {
+    body.map_err(|e| e.to_string())
+}
+
+/// Emit profile solids as one undoable batch, attaching each exact source model to its mesh
+/// proxy when there is one.
+fn emit_analytic_many(s: &mut Session, cmd: &str, solids: &[(Mesh3, Exact)]) -> Result<Value> {
     if solids.is_empty() {
         return Err(bad(cmd, "no solid to add"));
     }
-    if solids.iter().map(|(mesh, _, _)| mesh.triangles.len()).sum::<usize>() > MAX_FACES {
+    if solids.iter().map(|(mesh, _)| mesh.triangles.len()).sum::<usize>() > MAX_FACES {
         return Err(bad(cmd, format!("a command may add at most {MAX_FACES} faces")));
     }
     let backup = s.state()?.doc.clone();
@@ -463,8 +474,23 @@ fn emit_analytic_many(s: &mut Session, cmd: &str, solids: &[(Mesh3, cadcraft_geo
         let mut handles = Vec::new();
         let mut groups = Vec::new();
         let mut faces = 0usize;
-        for (mesh, body, label) in solids {
-            let result = emit_analytic(s, cmd, mesh, body)?;
+        let mut exact = 0usize;
+        let mut notes = Vec::new();
+        for (mesh, body) in solids {
+            let attached = match body {
+                Ok(body) => emit_analytic(s, cmd, mesh, body).map_err(|e| e.to_string()),
+                Err(reason) => Err(reason.clone()),
+            };
+            let result = match attached {
+                Ok(r) => {
+                    exact += 1;
+                    r
+                }
+                Err(reason) => {
+                    notes.push(format!("mesh-only solid: {reason}"));
+                    emit_mesh(s, cmd, mesh, cmd)?
+                }
+            };
             faces += result["faces"].as_u64().unwrap_or(0) as usize;
             if let Some(values) = result["handles"].as_array() {
                 handles.extend(values.iter().cloned());
@@ -472,17 +498,25 @@ fn emit_analytic_many(s: &mut Session, cmd: &str, solids: &[(Mesh3, cadcraft_geo
             if let Some(group) = result["group"].as_str() {
                 groups.push(group.to_owned());
             }
-            let _ = label;
         }
-        Ok(json!({
+        let representation = match exact {
+            0 => "mesh",
+            n if n == solids.len() => "analyticBrep",
+            _ => "mixed",
+        };
+        let mut r = json!({
             "handles": handles,
             "faces": faces,
             "group": groups.first(),
             "groups": groups,
             "solids": solids.len(),
             "kind": cmd,
-            "representation": "analyticBrep",
-        }))
+            "representation": representation,
+        });
+        if !notes.is_empty() {
+            r["notes"] = json!(notes);
+        }
+        Ok(r)
     })();
     if result.is_err()
         && let Ok(state) = s.state_mut()
@@ -612,11 +646,11 @@ fn run_extrude(s: &mut Session, p: &Value) -> Result<Value> {
             && let Some(entity) = s.doc()?.entity(handle)
             && let EntityKind::Circle(circle) = &entity.kind
         {
-            cadcraft_geom::brep::Body::cylinder(Vec3::new(circle.center.x, circle.center.y, z), circle.radius, h).map_err(mesh_err(c))?
+            cadcraft_geom::brep::Body::cylinder(Vec3::new(circle.center.x, circle.center.y, z), circle.radius, h)
         } else {
-            cadcraft_geom::brep::Body::extrude_profile(&x.pts, z, h).map_err(mesh_err(c))?
+            cadcraft_geom::brep::Body::extrude_profile(&x.pts, z, h)
         };
-        solids.push((mesh, body, "extrude"));
+        solids.push((mesh, exact(body)));
     }
     let r = emit_analytic_many(s, c, &solids)?;
     finish_sources(s, p, &src)?;
@@ -710,9 +744,8 @@ fn run_revolve(s: &mut Session, p: &Value) -> Result<Value> {
             )
         } else {
             cadcraft_geom::brep::Body::revolve_profile(&pts, axis_origin, axis_direction, exact_radial, start.to_radians(), angle.to_radians())
-        }
-        .map_err(mesh_err(c))?;
-        solids.push((m, body, "revolve"));
+        };
+        solids.push((m, exact(body)));
     }
     let r = emit_analytic_many(s, c, &solids)?;
     finish_sources(s, p, &src)?;
@@ -763,8 +796,8 @@ fn run_sweep(s: &mut Session, p: &Value) -> Result<Value> {
         };
         let pts = ccw(x.pts.iter().map(|q| *q - o).collect());
         let mesh = Mesh3::sweep_with_options(&pts, &path, twist.to_radians(), scale_start, scale_end).map_err(mesh_err(c))?;
-        let body = cadcraft_geom::brep::Body::sweep_profile(&pts, &path, twist.to_radians(), scale_start, scale_end).map_err(mesh_err(c))?;
-        solids.push((mesh, body, "sweep"));
+        let body = cadcraft_geom::brep::Body::sweep_profile(&pts, &path, twist.to_radians(), scale_start, scale_end);
+        solids.push((mesh, exact(body)));
     }
     let r = emit_analytic_many(s, c, &solids)?;
     finish_sources(s, p, &src)?;
@@ -827,8 +860,8 @@ fn run_loft(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let sections = orient_sections(c, sections)?;
     let m = Mesh3::loft_resampled(&sections).map_err(mesh_err(c))?;
-    let body = cadcraft_geom::brep::Body::loft_sections(&sections).map_err(mesh_err(c))?;
-    let r = emit_analytic_many(s, c, &[(m, body, "loft")])?;
+    let body = cadcraft_geom::brep::Body::loft_sections(&sections);
+    let r = emit_analytic_many(s, c, &[(m, exact(body))])?;
     finish_sources(s, p, &src)?;
     Ok(r)
 }

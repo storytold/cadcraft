@@ -1,5 +1,6 @@
-//! Moving drawings in and out: EXPORT (DXF, DWG, SVG, PNG, PDF, or OBJ/STL meshes of the 3D faces),
-//! IMPORT (the objects of another DXF/DWG/OBJ/STL/glTF/3MF file), PREVIEW (a picture of the plot) and
+//! Moving drawings in and out: EXPORT (DXF, DWG, SVG, PNG, PDF, OBJ/STL/glTF/GLB/3MF meshes of the
+//! 3D faces, or STEP/IGES exact solids), IMPORT (the objects and groups of another
+//! DXF/DWG/OBJ/STL/glTF/GLB/3MF/STEP/IGES file), PREVIEW (a picture of the plot) and
 //! PUBLISH (plot several sheets at once). ATTACH and SHARE are registered so the tool bar and
 //! command line say they are not available yet.
 //!
@@ -7,12 +8,12 @@
 //! stays I/O-agnostic; the JSON forms never open dialogs (the UI asks for files when these
 //! commands come from a menu, the tool bar or the command line).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use cadcraft_color::Rgb;
-use cadcraft_doc::{Drawing, Entity, EntityKind, PageSetup, Space};
-use cadcraft_geom::{Bounds2, Mat3, Vec2};
+use cadcraft_doc::{Drawing, Entity, EntityKind, Group, Handle, PageSetup, Space};
+use cadcraft_geom::{Bounds2, Mat3, Vec2, Vec3};
 use cadcraft_render::paper::{self, Sheet};
 use cadcraft_render::raster::{RasterOptions, View};
 use serde_json::{Value, json};
@@ -35,7 +36,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("import", "Import...", run_import)
             .menu(&["File", "Import..."])
             .alias(&["imp"])
-            .params("{path | data: base64, name?: \"x.dwg\"} (DXF, DWG, OBJ or STL), at?: [x,y] (default 0,0), scale?: (default 1) → {imported, handles, layers, styles, blocks}"),
+            .params("{path | data: base64, name?: \"x.dwg\"} (DXF, DWG, OBJ, STL, glTF, GLB, 3MF, STEP or IGES; the name's extension picks the reader), at?: [x,y] (default 0,0), scale?: (default 1) → {imported, handles, layers, styles, blocks, groups, notes?}: groups are kept, so exact STEP/IGES/DXF solids stay exact and editable (moved and scaled with the import)"),
         CommandSpec::new("export", "Export...", run_export)
             .menu(&["File", "Export..."])
             .alias(&["exp"])
@@ -189,26 +190,96 @@ fn import_drawing(s: &mut Session, src: &Drawing, at: Vec2, scale: f64, file: &s
         d.blocks.insert(to.clone(), Arc::new(nb));
     }
     let mut handles = Vec::new();
+    let mut adopted = HashMap::new();
     for e in src.model.iter() {
+        let from = e.handle;
         let mut e = adopt(d, e, &renames);
         if moved {
             e.kind.transform(&m);
         }
         d.ensure_layer(&e.common.layer);
         handles.push(e.handle);
+        adopted.insert(from, e.handle);
         if let Some(st) = d.space_mut(&space) {
             st.push(e);
         }
     }
+    let (groups, notes) = import_groups(d, src, &adopted, moved.then_some(m))?;
     s.set_selection(handles.clone());
-    Ok(json!({
+    let mut r = json!({
         "imported": handles.len(),
         "handles": handles.iter().map(|h| h.hex()).collect::<Vec<_>>(),
         "layers": layers,
         "styles": styles,
         "blocks": renames.len(),
+        "groups": groups,
         "message": format!("{} objects imported from {file}", handles.len()),
-    }))
+    });
+    if !notes.is_empty() {
+        r["notes"] = json!(notes);
+    }
+    Ok(r)
+}
+
+/// Copy `src`'s groups of model-space objects onto their imported copies (`adopted`: source
+/// handle → new handle), under names this drawing doesn't use yet. An exact solid's record is
+/// copied with its faces and stays valid, its fingerprint follows face order and coordinates,
+/// not handles; when the import moved or scaled the faces (`moved`), the exact body is
+/// transformed the same way and attached again. Returns the groups added and any notes.
+fn import_groups(d: &mut Drawing, src: &Drawing, adopted: &HashMap<Handle, Handle>, moved: Option<Mat3>) -> Result<(usize, Vec<String>)> {
+    let mut used: HashSet<String> = d.groups.iter().map(|g| g.name.to_ascii_uppercase()).collect();
+    let mut unnamed = 0usize;
+    let mut added = 0usize;
+    let mut notes = Vec::new();
+    // The import's plane transform as a 3D affine map (Z is kept, as for the faces).
+    let affine = match moved {
+        Some(m) => Some(super::xform3d::affine_of(&|p: Vec3| m.apply(p.xy()).to3(p.z))?),
+        None => None,
+    };
+    for g in &src.groups {
+        let members: Vec<Handle> = g.members.iter().filter_map(|h| adopted.get(h).copied()).collect();
+        if members.is_empty() {
+            continue;
+        }
+        if d.groups.len() >= super::groups::MAX_GROUPS {
+            notes.push(format!("{} source groups were not kept: the drawing has too many groups", src.groups.len() - added));
+            break;
+        }
+        let name = if g.name.starts_with('*') || g.name.trim().is_empty() {
+            loop {
+                unnamed += 1;
+                let n = format!("*A{unnamed}");
+                if !used.contains(&n) {
+                    break n;
+                }
+            }
+        } else {
+            let mut n = g.name.clone();
+            let mut i = 1usize;
+            while used.contains(&n.to_ascii_uppercase()) && i <= super::groups::MAX_GROUPS {
+                i += 1;
+                n = format!("{}_{i}", g.name);
+            }
+            n
+        };
+        used.insert(name.to_ascii_uppercase());
+        d.groups.push(Group { name, description: g.description.clone(), selectable: g.selectable, members: members.clone() });
+        added += 1;
+        if let Some(affine) = affine
+            && g.description == super::solids::SOLID_GROUP
+            && members.len() == g.members.len()
+            && let Ok(Some(body)) = cadcraft_doc::brep::read(src, &g.members)
+        {
+            let attached = body.transformed(affine).map_err(|e| e.to_string()).and_then(|b| cadcraft_doc::brep::attach(d, &members, &b));
+            if let Err(e) = attached {
+                for h in &members {
+                    d.modify_entity(*h, |e| cadcraft_doc::brep::strip(&mut e.common)).map_err(|e| bad("import", e.to_string()))?;
+                }
+                notes.push(format!("an exact solid was imported as a mesh only: {e}"));
+            }
+        }
+    }
+    Ok((added, notes))
 }
 
 fn read_file(_path: &str) -> Result<Vec<u8>> {

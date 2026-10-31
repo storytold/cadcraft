@@ -514,8 +514,9 @@ impl Mesh3 {
         }
         finish(sections.iter().flatten().copied().collect(), tris)
     }
-    /// Loft planar profiles with differing vertex counts by resampling their perimeters uniformly.
-    /// Sampling is bounded by the largest input section (at most 2048 vertices).
+    /// Loft planar profiles with differing vertex counts. Smaller sections keep every input
+    /// vertex and gain points on their edges ([`resample_keep_corners`]); sampling is bounded by
+    /// the largest input section (at most 2048 vertices).
     pub fn loft_resampled(sections: &[Vec<Vec3>]) -> Result<Self, MeshError> {
         if sections.len() < 2 || sections.len() > LIMIT || sections.iter().any(|s| s.len() < 3 || s.len() > 2048 || s.iter().any(|p| !valid(*p))) {
             return Err(MeshError("invalid loft sections"));
@@ -528,35 +529,40 @@ impl Mesh3 {
                 sampled.push(section.clone());
                 continue;
             }
-            let mut lengths = Vec::with_capacity(section.len() + 1);
-            lengths.push(0.0);
-            for i in 0..section.len() {
-                let edge = (section[(i + 1) % section.len()] - section[i]).len();
-                if !edge.is_finite() || edge <= EPS {
-                    return Err(MeshError("duplicate loft points"));
-                }
-                lengths.push(lengths.last().copied().unwrap_or(0.0) + edge);
-            }
-            let perimeter = lengths.last().copied().unwrap_or(0.0);
-            if !perimeter.is_finite() || perimeter <= EPS {
-                return Err(MeshError("degenerate loft section"));
-            }
-            let mut out = Vec::with_capacity(n);
-            let mut edge = 0;
-            for i in 0..n {
-                let target = perimeter * i as f64 / n as f64;
-                while edge + 1 < section.len() && lengths[edge + 1] < target {
-                    edge += 1;
-                }
-                let start = lengths[edge];
-                let end = lengths[edge + 1];
-                let t = ((target - start) / (end - start)).clamp(0.0, 1.0);
-                out.push(section[edge] + (section[(edge + 1) % section.len()] - section[edge]) * t);
-            }
-            sampled.push(out);
+            sampled.push(resample_keep_corners(section, n)?);
         }
         Self::loft(&sampled)
     }
+}
+
+/// `section` (a closed polygon) with `n` points: every input vertex, in order and starting with
+/// the first, plus `n - len` points that split edges evenly. Each extra point goes to the edge
+/// whose pieces are currently longest, so the outline (and a loft through it) is unchanged.
+pub(crate) fn resample_keep_corners(section: &[Vec3], n: usize) -> Result<Vec<Vec3>, MeshError> {
+    let len = section.len();
+    if len < 3 || n < len {
+        return Err(MeshError("loft section cannot be resampled to fewer points"));
+    }
+    let mut edges = Vec::with_capacity(len);
+    for (i, a) in section.iter().enumerate() {
+        let b = section.get((i + 1) % len).copied().ok_or(MeshError("invalid loft section"))?;
+        let edge = (b - *a).len();
+        if !edge.is_finite() || edge <= EPS {
+            return Err(MeshError("duplicate loft points"));
+        }
+        edges.push((*a, b, edge, 1usize));
+    }
+    for _ in len..n {
+        let longest = edges.iter_mut().max_by(|x, y| (x.2 / x.3 as f64).total_cmp(&(y.2 / y.3 as f64))).ok_or(MeshError("invalid loft section"))?;
+        longest.3 += 1;
+    }
+    let mut out = Vec::with_capacity(n);
+    for (a, b, _, pieces) in edges {
+        for k in 0..pieces {
+            out.push(a + (b - a) * (k as f64 / pieces as f64));
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -649,6 +655,16 @@ mod tests {
         let loft = Mesh3::loft_resampled(&[lower, upper])?;
         check(loft.clone());
         assert_eq!(loft.vertices.len(), 8);
+        // Every corner of the smaller section survives resampling (#2544 review): the top is
+        // still the given triangle, with one extra point on its longest edge.
+        for corner in [Vec3::new(0.0, 0.0, 3.0), Vec3::new(3.0, 0.0, 3.0), Vec3::new(1.5, 2.0, 4.0)] {
+            assert!(loft.vertices.iter().any(|v| (*v - corner).len() < 1e-12), "corner {corner:?} kept");
+        }
+        let resampled = resample_keep_corners(&[Vec3::ZERO, Vec3::new(4.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0)], 6)?;
+        assert_eq!(resampled.len(), 6);
+        assert_eq!(resampled[0], Vec3::ZERO);
+        assert!(resampled.contains(&Vec3::new(4.0, 0.0, 0.0)) && resampled.contains(&Vec3::new(0.0, 1.0, 0.0)));
+        assert!(resample_keep_corners(&[Vec3::ZERO, Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0)], 4).is_err());
 
         let p = [Vec2::new(-1.0, -1.0), Vec2::new(1.0, -1.0), Vec2::new(1.0, 1.0), Vec2::new(-1.0, 1.0)];
         let path = [Vec3::ZERO, Vec3::new(0.0, 0.0, 2.0), Vec3::new(0.0, 0.0, 6.0)];

@@ -798,6 +798,7 @@ dependencies = [
  "cadcraft-fonts",
  "cadcraft-geom",
  "cadcraft-render",
+ "chrono",
  "craft-pdf",
  "miniz_oxide 0.9.1",
  "quick-xml 0.42.0",

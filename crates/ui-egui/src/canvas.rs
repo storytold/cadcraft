@@ -393,7 +393,7 @@ fn paint_content_highlights(frame: &mut CanvasPaint<'_>, bg: Rgb, sel: &[Handle]
     if let Some(texture) = &app.canvas.depth_texture {
         painter.image(texture.id(), xf.rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
     }
-    if app.session.view3d.is_some() {
+    if showing_3d(app) {
         return;
     }
     if let Some(vp) = &active_vp {
@@ -738,6 +738,13 @@ fn point3_at_pointer(app: &mut CadApp, xf: &Xf, pointer: Pos2) -> Option<(cadcra
     Some((point, None))
 }
 
+/// The canvas shows the depth-tested 3D projection: a 3D camera is set and the model tab is
+/// displayed. The camera belongs to the drawing and stays set on a layout tab, which draws in
+/// 2D, so selection, hover, grips and window drags there take the 2D paths.
+pub(crate) fn showing_3d(app: &CadApp) -> bool {
+    app.session.view3d.is_some() && app.session.state().is_ok_and(|st| !st.space.is_paper())
+}
+
 fn depth_pick(canvas: &CanvasState, pos: Option<Pos2>) -> Option<Handle> {
     let (image, xf, p) = (canvas.depth_image.as_ref()?, canvas.xf?, pos?);
     if !xf.rect.contains(p) {
@@ -798,7 +805,7 @@ fn update_hover(app: &mut CadApp, ui: &egui::Ui, inside: bool, hover_pos: Option
             && let (Some(w), Ok(st)) = (raw_world, app.session.state())
         {
             let filter = app.session.settings.previewfilter;
-            app.canvas.hover = if app.session.view3d.is_some() {
+            app.canvas.hover = if showing_3d(app) {
                 depth_pick(&app.canvas, hover_pos)
             } else {
                 cadcraft_engine::select::pick(&st.doc, &st.edit_space(), w, app.session.settings.pickbox.max(1.0) * 1.5 / scale)
@@ -1051,7 +1058,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
                 app.cmd.buffer.clear();
             }
             // Preserve a snap's viewport origin for DIST, and its deferred curve where needed.
-            let result = if app.session.view3d.is_some() && app.session.current_prompt().is_some_and(|p| p.accept.select) {
+            let result = if showing_3d(app) && app.session.current_prompt().is_some_and(|p| p.accept.select) {
                 app.session.input(Input::Pick(depth_pick(&app.canvas, hover_pos).into_iter().collect()))
             } else if app.session.current_prompt().is_some_and(|prompt| prompt.point3d) {
                 match app.canvas.cursor3d {
@@ -1070,7 +1077,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             if let Err(e) = result {
                 app.session.echo(e.to_string());
             }
-        } else if app.session.view3d.is_some() {
+        } else if showing_3d(app) {
             select_depth(app, hover_pos, mods.shift);
         } else if let Some(g) = crate::dyngrips::at(app, &xf, hover_pos) {
             crate::dyngrips::click(app, g);
@@ -1087,7 +1094,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         app.canvas.drag_window = false;
     }
     if app.session.settings.pickdrag
-        && app.session.view3d.is_none()
+        && !showing_3d(app)
         && !orbiting
         && resp.drag_started_by(egui::PointerButton::Primary)
         && !middle_down
@@ -1205,7 +1212,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         }
         None => {
             blockedit::wash(app, painter, rect);
-            if app.session.view3d.is_none() {
+            if !showing_3d(app) {
                 draw_grid(app, painter, &xf);
             }
             (Rgb(t.canvas.r(), t.canvas.g(), t.canvas.b()), None)
@@ -1264,7 +1271,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         app.canvas.dyn_hot = None;
     }
     app.canvas.grip_editing = grip_edit;
-    if app.session.view3d.is_none()
+    if !showing_3d(app)
         && (!app.session.prompting() || grip_edit)
         && app.session.shows_grips(sel.len())
         && let Ok(st) = app.session.state()

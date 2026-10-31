@@ -338,3 +338,27 @@ fn viewport_label_follows_3d_and_plan_modes() {
     app.session.execute("plan", &serde_json::json!({})).unwrap();
     assert!(painted_text(&mut app, &ctx, at).contains("+  |  Top  |  2D Wireframe"));
 }
+
+/// The 3D camera belongs to the model tab. On a layout tab the canvas draws in 2D, so hover
+/// (and with it selection, grips and window drags) takes the 2D paths instead of the depth
+/// image a layout never builds (#2544 review).
+#[test]
+fn layout_tabs_hover_in_2d_while_the_model_tab_keeps_its_camera() {
+    use serde_json::json;
+    let mut app = CadApp::new(cadcraft_engine::Session::new(), crate::Services::default());
+    app.session.execute("box", &json!({"p1": [0, 0, 0], "p2": [10, 10, 10]})).unwrap();
+    app.session.execute("view3d", &json!({"preset": "seiso"})).unwrap();
+    assert!(showing_3d(&app));
+    app.session.execute("layout.set", &json!({"name": "Layout1"})).unwrap();
+    assert!(app.session.view3d.is_some(), "the camera stays with the drawing");
+    assert!(!showing_3d(&app), "a layout tab shows the 2D sheet");
+    let line = app.session.execute("line", &json!({"points": [[1, 2], [9, 2]]})).unwrap();
+    let h = Handle::parse_hex(line["handles"][0].as_str().or(line["handle"].as_str()).unwrap()).unwrap();
+    let ctx = egui::Context::default();
+    painted_text(&mut app, &ctx, pos2(5.0, 5.0));
+    let xf = app.canvas.xf.unwrap();
+    let on_line = xf.to_screen(Vec2::new(5.0, 2.0));
+    painted_text(&mut app, &ctx, on_line);
+    painted_text(&mut app, &ctx, on_line + vec2(0.5, 0.0));
+    assert_eq!(app.canvas.hover, Some(h), "the layout object under the cursor is found in 2D");
+}
