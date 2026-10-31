@@ -47,10 +47,12 @@ pub enum Preference {
     Turkish,
     #[serde(rename = "bs")]
     Bosnian,
+    #[serde(rename = "nl")]
+    Dutch,
 }
 
 impl Preference {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::Auto,
         Self::English,
         Self::Greek,
@@ -69,6 +71,7 @@ impl Preference {
         Self::Hungarian,
         Self::Turkish,
         Self::Bosnian,
+        Self::Dutch,
     ];
 
     /// Every preference in the order the Interface Language dialog lists them: Auto, then English
@@ -117,6 +120,7 @@ impl Preference {
             Self::Hungarian => "hu",
             Self::Turkish => "tr",
             Self::Bosnian => "bs",
+            Self::Dutch => "nl",
         }
     }
 
@@ -146,6 +150,7 @@ impl Preference {
             Self::Hungarian => "Magyar",
             Self::Turkish => "Türkçe",
             Self::Bosnian => "Bosanski",
+            Self::Dutch => "Nederlands",
         }
     }
 
@@ -177,6 +182,7 @@ impl Preference {
             Self::Hungarian => "hu",
             Self::Turkish => "tr",
             Self::Bosnian => "bs",
+            Self::Dutch => "nl",
             Self::Auto => locales.iter().find_map(|s| locale_language(s)).unwrap_or("en"),
         }
     }
@@ -193,7 +199,7 @@ pub struct Language {
     catalog: OnceLock<Catalog<'static>>,
 }
 
-pub static LANGUAGES: [Language; 17] = [
+pub static LANGUAGES: [Language; 18] = [
     Language { code: "en", name: "English", source: "", plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     // Greek: one for exactly 1; other for zero and all other integer counts.
     Language {
@@ -243,6 +249,8 @@ pub static LANGUAGES: [Language; 17] = [
     // Bosnian (Latin script, Ijekavian): one (1, 21), few (2–4, 22–24, not 12–14), other — the
     // Ukrainian rule for integer counts.
     Language { code: "bs", name: "Bosanski", source: include_str!("i18n/bs.tsv"), plural: plural_uk, plural_forms: 3, catalog: OnceLock::new() },
+    // Dutch integer plurals (CLDR `nl`) follow the English rule: one (1), other.
+    Language { code: "nl", name: "Nederlands", source: include_str!("i18n/nl.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
 ];
 
 /// BCP 47 and POSIX locale tags, including `uk-UA`, `uk_UA.UTF-8` and `pt_BR.UTF-8`.
