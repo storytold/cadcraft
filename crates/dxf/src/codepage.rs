@@ -24,7 +24,7 @@ pub(crate) enum Decoder {
     Table(&'static [char; 128]),
 }
 
-/// The decoder for a `$DWGCODEPAGE` value (case-insensitive), or `None` when CADCraft doesn't
+/// The decoder for a `$DWGCODEPAGE` value (case-insensitive), or `None` when `CADCraft` doesn't
 /// know the code page.
 pub(crate) fn decoder(code_page: &str) -> Option<Decoder> {
     use encoding_rs as e;
@@ -63,14 +63,15 @@ pub(crate) fn decoder(code_page: &str) -> Option<Decoder> {
 }
 
 /// Decode `bytes` from the code page `code_page` names (a `$DWGCODEPAGE` value such as
-/// `ANSI_1251`), or `None` when CADCraft doesn't know that code page. Invalid sequences become
+/// `ANSI_1251`), or `None` when `CADCraft` doesn't know that code page. Invalid sequences become
 /// U+FFFD; escapes (`\U+XXXX`, `\M+nXXXX`) are left as they are.
+#[must_use]
 pub fn decode_code_page(bytes: &[u8], code_page: &str) -> Option<String> {
     decoder(code_page).map(|d| decode(bytes, d).into_owned())
 }
 
 /// The code page a pre-2007 file's text is written in, or `None` for pure ASCII with escapes:
-/// when CADCraft doesn't know `code_page`, and for `ASCII` (the reader takes such files as
+/// when `CADCraft` doesn't know `code_page`, and for `ASCII` (the reader takes such files as
 /// Windows-1252, but a writer must keep them ASCII) and `UTF8`/`UNICODE`, which no pre-2007
 /// reader expects.
 pub(crate) fn encoder(code_page: &str) -> Option<Decoder> {
@@ -92,7 +93,7 @@ pub(crate) fn encode_char(c: char, d: Decoder, out: &mut Vec<u8>) -> bool {
             // A code page byte that is ASCII would read back as another character, and a NUL,
             // CR or LF would break the group, so only all-high-bit sequences or proper double-byte
             // characters are kept (their trail byte may be ASCII, as in Shift-JIS).
-            if unmappable || bytes.is_empty() || !bytes.first().is_some_and(|b| *b >= 0x80) || bytes.iter().any(|b| matches!(b, 0 | b'\r' | b'\n')) {
+            if unmappable || bytes.is_empty() || bytes.first().is_none_or(|b| *b < 0x80) || bytes.iter().any(|b| matches!(b, 0 | b'\r' | b'\n')) {
                 return false;
             }
             out.extend_from_slice(&bytes);

@@ -60,7 +60,7 @@ fn unknown_ascii_and_utf8_code_pages_are_pure_ascii() {
     }
 }
 
-/// Code page bytes that happen to form valid UTF-8 (`СІ` in ANSI_1251 is D1 B2, which is U+0472
+/// Code page bytes that happen to form valid UTF-8 (`СІ` in `ANSI_1251` is D1 B2, which is U+0472
 /// in UTF-8) would be read back as UTF-8 from an ASCII file, so that file is written with
 /// escapes. Binary DXF reads strings by the header's code page and keeps the bytes.
 #[test]
