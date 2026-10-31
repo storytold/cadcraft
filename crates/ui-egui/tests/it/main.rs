@@ -1,4 +1,5 @@
 mod animation_effects;
+mod attdef_dialog;
 mod block_description_palette;
 mod chrome_geometry;
 mod context_menu;
@@ -33,6 +34,7 @@ mod status_bar_toggles;
 mod style_dialogs;
 mod system_cursor;
 mod text_double_click;
+mod text_properties_rows;
 mod toolsets_gear;
 mod toolsets_parametric;
 mod viewport_double_click_selection;
