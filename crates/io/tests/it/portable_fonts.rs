@@ -44,6 +44,9 @@ fn styles_get_windows_fonts_and_reopen_with_their_own() {
     for back in [read_dxf(dxf.as_bytes()).unwrap(), read(&write(&d, "t.dwg").unwrap(), "t.dwg").unwrap()] {
         assert_eq!(fonts(&back), fonts(&drawing(false)));
     }
+    // The Windows font with a path is still the one written for the style's own.
+    let path = read_dxf(dxf.replace("verdanab.ttf", "C:\\Windows\\Fonts\\verdanab.ttf").as_bytes()).unwrap();
+    assert_eq!(fonts(&path), fonts(&drawing(false)));
     // A font changed in AutoCAD since (the xdata left as it was) is the font read.
     let edited = read_dxf(dxf.replace("verdanab.ttf", "times.ttf").as_bytes()).unwrap();
     assert!(fonts(&edited).contains(&("Notes".into(), "times.ttf".into())));
