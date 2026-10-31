@@ -408,20 +408,26 @@ pub(super) fn plot_style_names(secs: &[cadcraft_dxf::Section]) -> HashMap<String
     out
 }
 
-/// The named plot style an entity record points at (group 390 among its AcDbEntity groups).
+/// The plot style an entity record names among its AcDbEntity groups: a named style (group 390,
+/// its placeholder's handle) or ByBlock (group 380 = 1, AcDb::PlotStyleNameType).
 pub(super) fn entity_plot_style(tags: &[Tag], rx: &Rx) -> Option<String> {
     let mut in_entity = false;
+    let mut by_block = false;
     for t in tags {
         if t.code == 100 {
             if in_entity {
-                return None;
+                break;
             }
             in_entity = t.str() == "AcDbEntity";
-        } else if t.code == 390 && in_entity {
-            return rx.pstyles.get(&t.str().trim().to_ascii_uppercase()).cloned();
+        } else if in_entity {
+            match t.code {
+                390 => return rx.pstyles.get(&t.str().trim().to_ascii_uppercase()).cloned(),
+                380 => by_block = t.i64() == 1,
+                _ => {}
+            }
         }
     }
-    None
+    by_block.then(|| "ByBlock".to_string())
 }
 
 /// Dimension overrides and associativity, table references: data of an entity record that
