@@ -5,6 +5,8 @@ use serde_json::{Value, json};
 use crate::{EngineError, Result, Session};
 
 mod table;
+#[cfg(test)]
+mod tests;
 
 const SESSION_VARS: &[&str] = &[
     "AUDITCTL",
@@ -166,6 +168,9 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "CMDACTIVE" => json!(i32::from(s.running.is_some())),
         "TILEMODE" => json!(i32::from(s.state().is_ok_and(|d| d.space.layout().is_none()))),
         "PLATFORM" => json!(std::env::consts::OS),
+        // The clock, in UTC: the workspace's chrono has no time zone support (no `clock` feature).
+        "CDATE" => json!(cdate(now_secs()?)?),
+        "DATE" => json!(julian_date(now_secs()?)?),
         "BLOCKEDITOR" => json!(i32::from(s.state().is_ok_and(|d| d.block_edit.is_some()))),
         // The template NEW/QNEW start from (a profile setting, like FONTALT; "" = none).
         "QNEWTEMPLATE" => json!(crate::cmd::file::qnew_template()),
@@ -218,6 +223,35 @@ fn dwg_prefix(path: &str) -> String {
     }
 }
 
+/// Whole seconds since 1970 from the system clock (`None` for a clock set before 1970).
+#[cfg(not(target_arch = "wasm32"))]
+fn now_secs() -> Option<i64> {
+    let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?;
+    i64::try_from(since.as_secs()).ok()
+}
+/// The web build has no clock in std (`SystemTime::now` panics there), so CDATE and DATE read nil.
+#[cfg(target_arch = "wasm32")]
+fn now_secs() -> Option<i64> {
+    None
+}
+
+/// CDATE: `secs` since 1970 as the real YYYYMMDD.HHMMSS, to the second like AutoCAD 2017 on.
+fn cdate(secs: i64) -> Option<f64> {
+    use chrono::{Datelike, Timelike};
+    let t = chrono::DateTime::from_timestamp(secs, 0)?;
+    let day = f64::from(t.year()) * 10_000.0 + f64::from(t.month() * 100 + t.day());
+    let time = f64::from(t.hour() * 10_000 + t.minute() * 100 + t.second());
+    Some(day + time / 1_000_000.0)
+}
+
+/// DATE: `secs` since 1970 as a Julian day number plus the fraction of the day since midnight
+/// (AutoCAD's form: 1998-01-01 12:00 is 2450815.5). Day 1 CE is Julian day 1_721_426.
+fn julian_date(secs: i64) -> Option<f64> {
+    use chrono::{Datelike, Timelike};
+    let t = chrono::DateTime::from_timestamp(secs, 0)?;
+    Some(f64::from(t.num_days_from_ce()) + 1_721_425.0 + f64::from(t.num_seconds_from_midnight()) / 86_400.0)
+}
+
 fn as_bool(v: &Value) -> Option<bool> {
     v.as_bool().or_else(|| v.as_i64().map(|i| i != 0)).or_else(|| v.as_str().and_then(|s| s.trim().parse::<i64>().ok()).map(|i| i != 0))
 }
@@ -245,6 +279,8 @@ const READ_ONLY: &[&str] = &[
     "CMDACTIVE",
     "TILEMODE",
     "PLATFORM",
+    "CDATE",
+    "DATE",
     "DBMOD",
     "BLOCKEDITOR",
     "CTAB",
