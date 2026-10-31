@@ -6,11 +6,13 @@
 //! waits. Each drawing has its own symbols, as in AutoCAD. A run is one undo step.
 
 pub mod builtins;
+mod curve;
 mod drawing;
 pub mod eval;
 pub mod input;
 pub mod read;
 mod startup;
+mod system;
 pub mod value;
 
 use std::collections::HashMap;
@@ -557,6 +559,12 @@ impl Session {
                     r.waiting = Some(Need::Get(input::with_first(&req, p)));
                 }
             }
+            // The prompt goes on as another request (`getfiled`: replace the file, or a name again).
+            input::Answer::Ask(next) => {
+                if let Some(r) = self.lisp.run.as_mut() {
+                    r.waiting = Some(Need::Get(*next));
+                }
+            }
         }
         true
     }
@@ -636,6 +644,10 @@ fn file_key(name: &str) -> String {
     base.strip_suffix(".lsp").map(str::to_string).unwrap_or(base)
 }
 
+#[cfg(test)]
+mod curve_props;
+#[cfg(test)]
+mod curve_tests;
 #[cfg(test)]
 mod tests;
 

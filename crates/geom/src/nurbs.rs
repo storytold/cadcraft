@@ -54,14 +54,16 @@ fn gauss(a: f64, b: f64, f: impl Fn(f64) -> f64) -> f64 {
 const MAX_GAUSS_DEPTH: usize = 10;
 
 /// `gauss` over [a, b], halving until the two halves agree with the whole: a fixed panel count
-/// is far off on a tight bend, and the arc-length inverse must agree with the measure.
-fn adaptive_gauss(a: f64, b: f64, whole: f64, f: &impl Fn(f64) -> f64, depth: usize) -> f64 {
+/// is far off on a tight bend, and the arc-length inverse must agree with the measure. `floor`
+/// is the smallest size the agreement is measured against, for an integrand that may sum to
+/// about zero (a signed area); 0 for one that can't (a length).
+fn adaptive_gauss(a: f64, b: f64, whole: f64, f: &impl Fn(f64) -> f64, depth: usize, floor: f64) -> f64 {
     let m = (a + b) / 2.0;
     let (l, r) = (gauss(a, m, f), gauss(m, b, f));
-    if depth == 0 || !(l + r).is_finite() || (l + r - whole).abs() <= 1e-10 * (l + r).abs() {
+    if depth == 0 || !(l + r).is_finite() || (l + r - whole).abs() <= 1e-10 * (l + r).abs().max(floor) {
         return l + r;
     }
-    adaptive_gauss(a, m, l, f, depth - 1) + adaptive_gauss(m, b, r, f, depth - 1)
+    adaptive_gauss(a, m, l, f, depth - 1, floor) + adaptive_gauss(m, b, r, f, depth - 1, floor)
 }
 
 /// Clamped knots over Bézier pieces meeting at `breaks`, for degree `p`.
@@ -482,7 +484,30 @@ impl Spline {
     /// closure uses the unchecked derivative to avoid re-scanning the knots per sample.
     fn panel_length(&self, a: f64, b: f64) -> f64 {
         let speed = |t: f64| self.derivative_unchecked(t).len();
-        adaptive_gauss(a, b, gauss(a, b, speed), &speed, MAX_GAUSS_DEPTH)
+        adaptive_gauss(a, b, gauss(a, b, speed), &speed, MAX_GAUSS_DEPTH, 0.0)
+    }
+
+    /// ∫ ((x − o.x) dy − (y − o.y) dx) / 2 from parameter `a` to `b`, `o` being `origin`: the
+    /// signed area the curve sweeps as seen from `origin` (adaptive Gauss–Legendre over each knot
+    /// span, as for the arc length). From the start point, a whole spline's term is the area it
+    /// encloses with the chord back from its end.
+    pub fn area_term_between(&self, a: f64, b: f64, origin: Vec2) -> f64 {
+        if !self.is_valid() || !(a.is_finite() && b.is_finite() && origin.x.is_finite() && origin.y.is_finite()) {
+            return 0.0;
+        }
+        let (lo, hi) = self.domain();
+        let (a, b, sign) = if a <= b { (a, b, 1.0) } else { (b, a, -1.0) };
+        let (a, b) = (a.clamp(lo, hi), b.clamp(lo, hi));
+        let f = |t: f64| {
+            // Validated once above: no per-sample validity scan (it walks the knots).
+            let (p, d) = (self.eval_valid(t, lo, hi) - origin, self.derivative_unchecked(t));
+            (p.x * d.y - p.y * d.x) / 2.0
+        };
+        // A panel sweeping next to no area is judged against the size of the whole curve.
+        let size = self.control.iter().map(|c| c.dist(origin)).fold(0.0, f64::max);
+        let floor = 1e-3 * size * size / self.length_intervals(lo, hi).len().max(1) as f64;
+        let s: f64 = self.length_intervals(a, b).into_iter().map(|(x, y)| adaptive_gauss(x, y, gauss(x, y, f), &f, MAX_GAUSS_DEPTH, floor)).sum();
+        if s.is_finite() { sign * s } else { 0.0 }
     }
 
     /// Arc length between parameters `a` and `b` (adaptive Gauss–Legendre over each knot span).
@@ -562,7 +587,7 @@ impl Ellipse {
         let l: f64 = (0..n)
             .map(|i| {
                 let (a, b) = (t0 + h * i as f64, t0 + h * (i + 1) as f64);
-                adaptive_gauss(a, b, gauss(a, b, speed), &speed, MAX_GAUSS_DEPTH)
+                adaptive_gauss(a, b, gauss(a, b, speed), &speed, MAX_GAUSS_DEPTH, 0.0)
             })
             .sum();
         if l.is_finite() { l } else { 0.0 }
@@ -750,6 +775,36 @@ mod tests {
             let t = s.param_at_length(hi, -want);
             assert!((s.length_between(t, hi) - want).abs() < 1e-6, "{frac}: {}", s.length_between(t, hi));
         }
+    }
+
+    #[test]
+    fn spline_area_term() {
+        let pi = std::f64::consts::PI;
+        // A rational half circle of radius 2 closed by its diameter: half the disc.
+        let q = Spline::from_conic_arc(Vec2::ZERO, Vec2::X * 2.0, Vec2::Y * 2.0, 0.0, pi).unwrap();
+        let (lo, hi) = q.domain();
+        assert!((q.area_term_between(lo, hi, q.eval(lo)) - 2.0 * pi).abs() < 1e-10);
+        // Backwards is the same area turning the other way.
+        assert!((q.area_term_between(hi, lo, q.eval(lo)) + 2.0 * pi).abs() < 1e-10);
+        // The whole circle, seen from its centre or from a point on it.
+        let c = Spline::from_conic_arc(Vec2::new(5.0, -1.0), Vec2::X * 2.0, Vec2::Y * 2.0, 0.0, TAU).unwrap();
+        let (lo, hi) = c.domain();
+        assert!((c.area_term_between(lo, hi, Vec2::new(5.0, -1.0)) - 4.0 * pi).abs() < 1e-10);
+        assert!((c.area_term_between(lo, hi, c.eval(lo)) - 4.0 * pi).abs() < 1e-10);
+        // A cubic and its chord, against a polygon through 200 000 points on it.
+        let s = cubic();
+        let (lo, hi) = s.domain();
+        let pts: Vec<Vec2> = (0..=200_000).map(|i| s.eval(lo + (hi - lo) * i as f64 / 200_000.0)).collect();
+        let want = crate::shoelace(&pts);
+        let got = s.area_term_between(lo, hi, s.eval(lo));
+        assert!((got - want).abs() < 1e-8 * want.abs().max(1.0), "{got} vs {want}");
+        // Split anywhere, the parts add up.
+        let m = lo + (hi - lo) * 0.37;
+        let o = Vec2::new(-3.0, 7.0);
+        assert!((s.area_term_between(lo, m, o) + s.area_term_between(m, hi, o) - s.area_term_between(lo, hi, o)).abs() < 1e-10);
+        // Nothing to measure: zero, not NaN.
+        assert_eq!(s.area_term_between(f64::NAN, hi, o), 0.0);
+        assert_eq!(s.area_term_between(lo, hi, Vec2::new(f64::INFINITY, 0.0)), 0.0);
     }
 
     #[test]
