@@ -719,6 +719,9 @@ fn viewport_frozen_layers_read_from_331_or_341_once_each() {
         }
     }
     q.splice(r.end..r.end, [("331".into(), "FFFFF".into()), ("331".into(), layer_handle(&p, "Walls"))]);
+    // A 331 inside another application's `102 {…}` group isn't a frozen layer.
+    let app = [("102".into(), "{ACAD_OTHER".into()), ("331".into(), layer_handle(&p, "0")), ("102".into(), "}".into())];
+    q.splice(r.start + 2..r.start + 2, app);
     let back = read_dxf(join(&q).as_bytes()).unwrap();
     assert_eq!(viewport_frozen(&back, 2), ["Walls", "A B"]);
 }

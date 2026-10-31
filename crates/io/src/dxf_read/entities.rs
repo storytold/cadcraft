@@ -466,10 +466,17 @@ pub(super) fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityK
             }
             rx.mleader_fix.push((h, pending));
         }
-        // The frozen layers: the LAYER handles of group 331 (341 in DXF 2000), then the names in
-        // CADCraft's VPFROZEN xdata, which holds those without one; each layer once.
+        // The frozen layers: the LAYER handles of group 331 (341 in DXF 2000), outside `102 {…}`
+        // application groups, then the names in CADCraft's VPFROZEN xdata, which holds those
+        // without one; each layer once.
         ("VIEWPORT", EntityKind::Viewport(v)) => {
-            let handles = tags.iter().take_while(|t| t.code < 1000).filter(|t| t.code == 331 || t.code == 341);
+            let mut app_group = false;
+            let handles = tags.iter().take_while(|t| t.code < 1000).filter(|t| {
+                if t.code == 102 {
+                    app_group = t.str().starts_with('{');
+                }
+                !app_group && (t.code == 331 || t.code == 341)
+            });
             let named = handles.filter_map(|t| rx.layers.get(&t.str().trim().to_ascii_uppercase()));
             let mut seen = std::collections::HashSet::new();
             v.frozen_layers = named.chain(&v.frozen_layers).filter(|n| seen.insert(n.to_ascii_uppercase())).cloned().collect();
