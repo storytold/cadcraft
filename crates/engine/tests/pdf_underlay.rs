@@ -468,6 +468,33 @@ fn the_insertion_preview_has_the_dialog_s_scale_and_rotation() {
     assert!((b.max.x - cursor.x).abs() < 1e-9 && (b.min.y - cursor.y).abs() < 1e-9, "{b:?}");
 }
 
+/// Typed, at the scale prompt the frame is the page at the prompt's default scale (1, its size
+/// on paper), not a point.
+#[test]
+fn the_scale_prompt_shows_the_page_at_its_size_on_paper() {
+    use cadcraft_engine::doc::Line;
+    hooks();
+    let path = pdf_file("TypedScale.pdf", b"%PDF-1.7 fake");
+    let mut s = Session::empty();
+    s.new_drawing(true);
+    for input in ["pdfattach", path.as_str(), "1", "10,20"] {
+        s.cmdline(input).unwrap();
+    }
+    assert!(s.current_prompt().is_some_and(|p| p.message.contains("scale")), "{:?}", s.current_prompt().map(|p| p.message.clone()));
+    let pts: Vec<cadcraft_geom::Vec2> = s
+        .preview(cadcraft_geom::Vec2::new(500.0, 500.0))
+        .into_iter()
+        .filter_map(|e| match e.kind {
+            EntityKind::Line(l) => Some(l),
+            _ => None,
+        })
+        .flat_map(|l: Line| [l.a.xy(), l.b.xy()])
+        .collect();
+    let b = cadcraft_geom::Bounds2::from_points(pts);
+    assert!((b.width() - 297.0).abs() < 1e-9 && (b.height() - 210.0).abs() < 1e-9, "{b:?}");
+    assert!((b.min.x - 10.0).abs() < 1e-9 && (b.min.y - 20.0).abs() < 1e-9, "{b:?}");
+}
+
 #[test]
 fn the_dialog_fills_in_what_it_knows_and_the_screen_gives_the_rest() {
     hooks();

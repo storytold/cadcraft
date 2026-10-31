@@ -270,7 +270,9 @@ struct AttachM {
 impl AttachM {
     /// PDFATTACH, with what the dialog chose when it started it.
     fn new(s: &Session) -> AttachM {
-        let mut m = AttachM::default();
+        // Scale 1 (the page's size on paper) until one is given: the scale prompt's default, and
+        // the frame shown while it is asked.
+        let mut m = AttachM { scale: 1.0, ..AttachM::default() };
         let Some(p) = s.attach_preset.clone() else { return m };
         let first = p.pages.first().copied().unwrap_or(1);
         let Ok((pages, size)) = m.page_size(&p.path, first) else { return m };
