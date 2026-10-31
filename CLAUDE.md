@@ -18,7 +18,7 @@ People trust CADCraft with their drawings; a crash loses their work. **This outr
 - **Input-derived numbers are hostile** (DXF/DWG files, command-line text, MCP/control params): `get()` not `[i]`, checked arithmetic, no NaN casts, cap input-sized allocations and loop counts.
 - **Bound recursion** (nested/cyclic block references: `MAX_BLOCK_DEPTH`).
 - **Last-resort guard:** `Session::execute` and every step of an interactive command (its factory, `begin`, input, `prompt`, `preview` and the passes after it; `crates/engine/src/guard.rs`) run under `catch_unwind`; an escaped panic restores the drawing and reports an error. It does nothing on wasm, where a panic aborts.
-- **Prove it:** every crash fix lands with a regression test (see `crates/engine/tests/panic_hunt.rs`, `hostile_dxf_does_not_panic`).
+- **Prove it:** every crash fix lands with a regression test (see `crates/engine/tests/panic_hunt.rs` and `hostile_dxf_does_not_panic` in `crates/io/src/tests.rs`).
 - Every workspace crate manifest carries `[lints] workspace = true` to inherit `[workspace.lints]`; every production crate root carries `#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]`.
 
 ## Non-negotiables
