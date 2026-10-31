@@ -274,6 +274,9 @@ pub(super) fn page_setup(t: &T) -> PageSetup {
     .into();
     p.plot_window = [t.fd(48, 0.0), t.fd(49, 0.0), t.fd(140, 0.0), t.fd(141, 0.0)].map(|v| if v.is_finite() { v } else { 0.0 });
     p.plot_style_table = t.s(7).unwrap_or_default();
+    // Paper image origin (148/149); kept only when both values are finite and not 0,0 (what
+    // CADCraft writes for a page setup it created).
+    p.paper_image_origin = t.f(148).zip(t.f(149)).map(|(x, y)| Vec2::new(x, y)).filter(|o| o.x.is_finite() && o.y.is_finite() && *o != Vec2::ZERO);
     p
 }
 
