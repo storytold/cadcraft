@@ -43,6 +43,7 @@ mod table;
 mod tolerance;
 mod trimextend;
 mod txt2mtxt;
+pub mod underlay;
 pub use txt2mtxt::Txt2MtxtOptions;
 mod utility;
 mod view;
@@ -205,6 +206,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(utility::specs());
         v.extend(table::specs());
         v.extend(tolerance::specs());
+        v.extend(underlay::specs());
         v.extend(txt2mtxt::specs());
         v.extend(constraints::specs());
         v.extend(lisp::specs());

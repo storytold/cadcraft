@@ -16,6 +16,9 @@ pub struct Settings {
     pub snapunit: Vec2,
     /// OSNAPHATCH: object snaps find hatch objects (off by default, as in AutoCAD).
     pub osnaphatch: bool,
+    /// PDFOSNAP: object snaps find the lines of PDF underlays' pages (on by default). A session
+    /// setting: every drawing follows it and none saves it.
+    pub pdfosnap: bool,
     /// GRIDUNIT in a drafting settings snapshot; zero components follow SNAPUNIT.
     pub gridunit: Vec2,
     /// Major grid line every N minor lines (GRIDMAJOR).
@@ -129,6 +132,14 @@ pub struct Settings {
     pub auditctl: bool,
 }
 
+impl Settings {
+    /// The snap bits the settings add to OSMODE's: hatches found (OSNAPHATCH), PDF pages not
+    /// (PDFOSNAP 0).
+    pub fn snap_extras(&self) -> u32 {
+        (if self.osnaphatch { snap::mode::HATCH } else { 0 }) | if self.pdfosnap { 0 } else { snap::mode::NOPDF }
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Settings {
@@ -140,6 +151,7 @@ impl Default for Settings {
             snapmode: false,
             snapunit: Vec2::new(0.5, 0.5),
             osnaphatch: false,
+            pdfosnap: true,
             gridunit: Vec2::new(0.5, 0.5),
             gridmajor: 5,
             zoomfactor: 60,

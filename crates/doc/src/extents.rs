@@ -243,6 +243,8 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
             let v = i.v.xy() * i.size.y;
             Bounds2::from_points([o, o + u, o + v, o + u + v])
         }
+        EntityKind::PdfUnderlay(u) if u.unloaded => Bounds2::EMPTY,
+        EntityKind::PdfUnderlay(u) => Bounds2::from_points(u.outline()),
         EntityKind::LwPolyline(p) => lwpolyline_bounds(p),
         kind => {
             let mut b = Bounds2::EMPTY;

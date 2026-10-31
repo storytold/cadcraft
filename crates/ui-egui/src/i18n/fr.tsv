@@ -1014,6 +1014,24 @@
 	Not a number or distance: {text}	Ni un nombre ni une distance : {text}
 	Query Texts	Interroger les textes
 	Analyze Shapes	Analyser les formes
+	Adjust	Ajuster
+	Adjust PDF Underlay	Ajuster le fond de plan PDF
+	Attach PDF Underlay	Attacher un fond de plan PDF
+	Browse...	Parcourir...
+	File name only	Nom du fichier seul
+	Found at: {path}	Trouvé : {path}
+	Full path	Chemin complet
+	Only the first {count} pages are shown.	Seules les {count} premières pages sont affichées.
+	PDF Underlay	Fond de plan PDF
+	PDF Underlay...	Fond de plan PDF...
+	Pages to attach ({count} in the file)	Pages à attacher ({count} dans le fichier)
+	Path type	Type de chemin
+	Relative path	Chemin relatif
+	Save the drawing first	Enregistrez d'abord le dessin
+	Saved in the drawing as: {path}	Enregistré dans le dessin comme : {path}
+	Scale (1 = size on paper)	Échelle (1 = taille papier)
+	Specify on screen	Indiquer à l'écran
 	Check for Updates…	Rechercher des mises à jour…
 	CADCraft is up to date.	CADCraft est à jour.
 	Could not check for updates.	Impossible de rechercher les mises à jour.
+	Clip PDF Underlay	Découper le fond de plan PDF

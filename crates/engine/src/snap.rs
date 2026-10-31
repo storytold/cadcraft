@@ -31,6 +31,8 @@ pub mod mode {
     pub const OFF: u32 = 16384;
     /// Not an OSMODE bit: snaps also find hatch objects (OSNAPHATCH = 1).
     pub const HATCH: u32 = 1 << 16;
+    /// Not an OSMODE bit: snaps don't find PDF underlays' page lines (PDFOSNAP = 0).
+    pub const NOPDF: u32 = 1 << 17;
     pub const ALL: [(u32, &str); 14] = [
         (END, "Endpoint"),
         (MID, "Midpoint"),
@@ -449,13 +451,94 @@ fn gather_in(
         sink.object(&e.kind, None);
         // A block reference snaps to the objects inside it, placed by its transform.
         if let EntityKind::Insert(ins) = &e.kind {
-            block_leaves(d, ins, &Mat3::IDENTITY, 0, &mut budget, frozen, &mut |k, m| sink.object(k, Some(m)));
+            block_leaves(d, ins, &Mat3::IDENTITY, 0, &mut budget, frozen, &mut |k, m| {
+                sink.object(k, Some(m));
+                // A PDF underlay in the block: the lines of its page, placed by the reference.
+                if let EntityKind::PdfUnderlay(_) = k {
+                    let mut placed = k.clone();
+                    placed.transform(m);
+                    if let EntityKind::PdfUnderlay(u) = &placed {
+                        underlay_lines(u, &probe, osmode, &mut |l| sink.object(l, None));
+                    }
+                }
+            });
         }
         if let EntityKind::Dimension(dm) = &e.kind {
             sink.dimension(d, dm, &mut budget, frozen);
         }
+        // A PDF underlay snaps to the lines drawn on its page, met as lines near the cursor.
+        if let EntityKind::PdfUnderlay(u) = &e.kind {
+            underlay_lines(u, &probe, osmode, &mut |k| sink.object(k, None));
+        }
     }
     Some((cands, near_prims))
+}
+
+/// Most underlay segments one snap query looks at.
+const MAX_UNDERLAY_SEGMENTS: usize = 2000;
+
+/// The segments of underlay `u`'s page lines that cross `probe`, as lines in drawing units
+/// (only their parts inside its clip boundary when it is clipped, outside it when inverted).
+fn underlay_lines(u: &cadcraft_doc::PdfUnderlay, probe: &Bounds2, osmode: u32, f: &mut dyn FnMut(&EntityKind)) {
+    // PDFOSNAP 0: no snaps on PDF underlays' pages; none on an unloaded or hidden one.
+    if osmode & mode::NOPDF != 0 || u.unloaded || u.hidden {
+        return;
+    }
+    let Some(lines) = crate::cmd::underlay::page_lines(&u.path, u.page, &u.layers_key()) else { return };
+    let o = u.insert.xy();
+    let (ax, ay) = u.axes();
+    let to = |p: Vec2| o + ax * p.x + ay * p.y;
+    let clip = u.clip_outline().and_then(|c| cadcraft_render::clip::PolyClip::new(&c));
+    let mut n = 0usize;
+    for l in lines.iter() {
+        for w in l.windows(2) {
+            let (Some(a), Some(b)) = (w.first(), w.get(1)) else { continue };
+            let (a, b) = (to(*a), to(*b));
+            if !Bounds2::from_points([a, b]).intersects(probe) || a == b {
+                continue;
+            }
+            let pieces = match &clip {
+                Some(c) if u.clip_inverted => outside(c, a, b),
+                Some(c) => c.clip_polyline(&[a, b]),
+                None => vec![vec![a, b]],
+            };
+            for piece in pieces {
+                let (Some(a), Some(b)) = (piece.first(), piece.last()) else { continue };
+                n += 1;
+                if n > MAX_UNDERLAY_SEGMENTS {
+                    return;
+                }
+                f(&EntityKind::Line(cadcraft_doc::Line { a: a.to3(0.0), b: b.to3(0.0) }));
+            }
+        }
+    }
+}
+
+/// The parts of segment `a`–`b` outside clip region `c`.
+fn outside(c: &cadcraft_render::clip::PolyClip, a: Vec2, b: Vec2) -> Vec<Vec<Vec2>> {
+    let poly = c.polygon();
+    let d = b - a;
+    let mut ts = vec![0.0, 1.0];
+    for (i, p) in poly.iter().enumerate() {
+        let Some(q) = poly.get((i + 1) % poly.len()) else { continue };
+        let e = *q - *p;
+        let den = d.x * e.y - d.y * e.x;
+        if den.abs() < 1e-300 {
+            continue;
+        }
+        let w = *p - a;
+        let (t, s) = ((w.x * e.y - w.y * e.x) / den, (w.x * d.y - w.y * d.x) / den);
+        if t.is_finite() && (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&s) {
+            ts.push(t);
+        }
+    }
+    ts.sort_by(f64::total_cmp);
+    ts.windows(2)
+        .filter_map(|w| {
+            let (t0, t1) = (*w.first()?, *w.get(1)?);
+            (t1 - t0 > 1e-12 && !c.contains(a + d * ((t0 + t1) / 2.0))).then(|| vec![a + d * t0, a + d * t1])
+        })
+        .collect()
 }
 
 /// Picks the best of the gathered candidates, adding the base-dependent and deferred snaps.

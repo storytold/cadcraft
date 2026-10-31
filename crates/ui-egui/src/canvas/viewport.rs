@@ -1,5 +1,5 @@
-use super::draw::draw_list;
-use super::{Bounds2, CadApp, DisplayList, Handle, Kind, Rect, Rgb, Vec2, Xf};
+use super::draw::{draw_groups_with_pages, draw_list_with_pages};
+use super::{Bounds2, CadApp, DisplayList, Handle, Kind, Rect, Rgb, Shape, Vec2, Xf};
 
 /// The active MSPACE viewport when its contents are drawn apart from the layout's list (see
 /// [`VpContent`]), with its clip outline when it is clipped. A clipped viewport is clipped with
@@ -29,7 +29,7 @@ const VP_SETTLE_MS: f64 = 150.0;
 /// the view it was built for, when the view leaves the area, and once a zoom comes to rest.
 #[derive(Default)]
 pub(super) struct VpContent {
-    list: DisplayList,
+    pub(super) list: DisplayList,
     /// What the list was built from: drawing, revision, document, viewport, tessellation band
     /// and lineweight display.
     pub(super) key: Option<(u64, u64, usize, Handle, i32, bool, bool)>,
@@ -40,7 +40,7 @@ pub(super) struct VpContent {
     last_view: (Vec2, f64),
     moved_at: f64,
     /// Scale and offset drawing the list at the viewport's current view (see [`vp_motion`]).
-    motion: Option<(f64, Vec2)>,
+    pub(super) motion: Option<(f64, Vec2)>,
     /// Bumped on each rebuild.
     pub(super) builds: u64,
     mesh_key: Option<u64>,
@@ -73,7 +73,7 @@ fn vp_motion(vp: &cadcraft_doc::Viewport, built: (Vec2, f64)) -> Option<(f64, Ve
 /// How to draw the active viewport's [`VpContent`] this frame.
 pub(super) struct VpFrame {
     /// Draws the list at the viewport's current view.
-    xf: Xf,
+    pub(super) xf: Xf,
     /// The viewport's rectangle (a clipped one's outline bounds) on screen.
     pub(super) on_screen: Rect,
     /// A clipped viewport's outline on paper, masked with the stencil buffer.
@@ -156,10 +156,20 @@ pub(super) fn ensure_vp_content(app: &mut CadApp, xf_paper: &Xf, ctx: &egui::Con
 /// Draw the active viewport's contents (see [`VpContent`]) as [`ensure_vp_content`] set out;
 /// `p` clips them to the viewport's rectangle, and a clipped viewport's outline is masked with
 /// the stencil buffer first.
-pub(super) fn draw_vp_content(c: &mut VpContent, gpu: bool, p: &egui::Painter, f: &VpFrame, xf_paper: &Xf, bg: Rgb, lwdisplay: bool) {
+#[allow(clippy::too_many_arguments)]
+pub(super) fn draw_vp_content(
+    c: &mut VpContent,
+    gpu: bool,
+    p: &egui::Painter,
+    f: &VpFrame,
+    xf_paper: &Xf,
+    pages: Vec<(usize, Shape)>,
+    bg: Rgb,
+    lwdisplay: bool,
+) {
     let xf = &f.xf;
     if !gpu {
-        draw_list(p, xf, &c.list, bg, lwdisplay);
+        draw_list_with_pages(p, xf, &c.list, pages, bg, lwdisplay);
         return;
     }
     let mut stencil = crate::gpu::Stencil::Off;
@@ -183,20 +193,24 @@ pub(super) fn draw_vp_content(c: &mut VpContent, gpu: bool, p: &egui::Painter, f
         c.mesh_origin = origin;
     }
     let center = xf.rect.center();
-    p.add(egui_wgpu::Callback::new_paint_callback(
-        xf.rect,
-        crate::gpu::CanvasCallback {
-            key,
-            slot: c.mesh_slot.clone(),
-            offset: [(c.mesh_origin.x - xf.center.x) as f32, (c.mesh_origin.y - xf.center.y) as f32],
-            scale: xf.scale as f32,
-            center: [center.x, center.y],
-            layer: crate::gpu::LAYER_VIEWPORT,
-            xform: crate::gpu::IDENTITY_XFORM,
-            dash: 0.0,
-            stencil,
-        },
-    ));
+    let draw = |groups: std::ops::Range<usize>| {
+        p.add(egui_wgpu::Callback::new_paint_callback(
+            xf.rect,
+            crate::gpu::CanvasCallback {
+                key,
+                slot: c.mesh_slot.clone(),
+                offset: [(c.mesh_origin.x - xf.center.x) as f32, (c.mesh_origin.y - xf.center.y) as f32],
+                scale: xf.scale as f32,
+                center: [center.x, center.y],
+                layer: crate::gpu::LAYER_VIEWPORT,
+                xform: crate::gpu::IDENTITY_XFORM,
+                dash: 0.0,
+                stencil,
+                groups,
+            },
+        ));
+    };
+    draw_groups_with_pages(p, &c.list, pages, draw);
 }
 
 /// Mask a clipped viewport's `outline` (paper units) in the stencil buffer: a triangle fan from
@@ -250,6 +264,7 @@ fn draw_vp_mask(c: &mut VpContent, p: &egui::Painter, outline: &[Vec2], xf_paper
             xform: crate::gpu::IDENTITY_XFORM,
             dash: 0.0,
             stencil: crate::gpu::Stencil::Mask,
+            groups: crate::gpu::ALL_GROUPS,
         },
     ));
 }

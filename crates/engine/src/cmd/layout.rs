@@ -826,6 +826,10 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
             Some(t) => o.insert("plotTransparency".into(), json!(t)),
             None => o.remove("plotTransparency"),
         };
+        // PDF underlays' relative paths are found from the drawing's folder.
+        if let Some(path) = s.state().ok().and_then(|st| st.path.clone()) {
+            o.insert("document".into(), json!(path));
+        }
     }
     let bytes = hook(s.doc()?, &space, &opts).map_err(|e| bad(cmd, e))?;
     let layout = match &sheets {
