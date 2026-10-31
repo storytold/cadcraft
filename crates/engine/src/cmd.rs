@@ -41,6 +41,7 @@ mod settings;
 mod spline_opts;
 mod table;
 mod tolerance;
+mod trim_hatch;
 mod trimextend;
 mod txt2mtxt;
 pub use txt2mtxt::Txt2MtxtOptions;
