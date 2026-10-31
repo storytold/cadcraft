@@ -292,16 +292,28 @@ fn pattern_definition(tags: &[Tag], scale: f64, angle: f64, origin: Vec2) -> Vec
 }
 
 /// Hatch origin and background colour from `CADCRAFT` xdata: `1000 HATCH`, `1011` origin,
-/// `1000` background colour name (empty for none). Defaults when absent.
+/// `1000` background colour name (empty for none), the background from `HATCHBACKGROUNDCOLOR`
+/// where that is present. Defaults when absent.
 fn hatch_xdata(tags: &[Tag]) -> (Vec2, Option<Color>) {
     let x = crate::dxf_ext::xdata(tags, crate::dxf_ext::APP);
     let Some(at) = x.windows(2).position(|w| matches!(w, [m, o] if m.code == 1000 && m.str() == "HATCH" && o.code == 1011)) else {
-        return (Vec2::ZERO, None);
+        return (Vec2::ZERO, acad_background(tags));
     };
     let val = |k: usize, code: i32| x.get(at + k).filter(|t| t.code == code);
     let coord = |k: usize, code: i32| val(k, code).map(Tag::f64).filter(|v| v.is_finite()).unwrap_or(0.0);
     let origin = Vec2::new(coord(1, 1011), coord(2, 1021));
-    (origin, val(4, 1000).and_then(|t| Color::parse(&t.str())))
+    // The interoperable HATCHBACKGROUNDCOLOR first (another program may have changed it), our
+    // own copy when it is missing.
+    (origin, acad_background(tags).or_else(|| val(4, 1000).and_then(|t| Color::parse(&t.str()))))
+}
+
+/// The background colour AutoCAD keeps in `HATCHBACKGROUNDCOLOR` xdata (`1071`).
+fn acad_background(tags: &[Tag]) -> Option<Color> {
+    crate::dxf_ext::xdata(tags, crate::dxf_ext::HATCH_BACKGROUND_APP)
+        .iter()
+        .find(|t| t.code == 1071 || t.code == 1070)
+        .and_then(|t| t.str().trim().parse::<i64>().ok())
+        .and_then(crate::dxf_ext::acad_color)
 }
 
 /// Gradient values missing from a file fall back to the GRADIENT command's defaults.

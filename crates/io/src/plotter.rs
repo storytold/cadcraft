@@ -50,6 +50,11 @@ pub fn plot(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     }
 }
 
+/// One PDF of sheets from several drawings ([`pdf::pdf_book`]), with the file-wide options of `opts`.
+pub fn plot_book(items: &[(&Drawing, Space)], opts: &Value) -> Result<Vec<u8>> {
+    pdf::pdf_book(items, &PdfOptions::from_json(opts))
+}
+
 /// The sheet a plot draws on (a model-space plot's printable area inside the device margins).
 fn sheet(d: &Drawing, space: &Space, o: &PdfOptions) -> Result<(Sheet, cadcraft_doc::PageSetup)> {
     let page = pdf::page_for(d, space, o)?;
