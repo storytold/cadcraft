@@ -127,7 +127,7 @@ impl eframe::App for App {
         self.cad.cancel_screenshots();
         self.cad.shutdown_autosave();
     }
-    /// Preferences (the interface theme) survive restarts; window and egui state are not kept.
+    /// Preferences (the interface theme) survive restarts; native window geometry is kept by eframe, while egui widget state is not.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         storage.set_string(cadcraft_ui_egui::options::PROFILE_KEY, self.cad.profile_json());
         storage.set_string(cadcraft_ui_egui::PREFS_KEY, self.cad.prefs_json());
@@ -265,7 +265,7 @@ fn main() -> eframe::Result {
             .with_titlebar_shown(false)
             .with_title_shown(false)
             .with_app_id(APP_ID),
-        persist_window: false,
+        persist_window: true,
         // CADCraft installs its own capped font chain (`theme::install_fonts`); never run
         // system-font discovery as a hidden fallback.
         system_font_fallback: false,
@@ -292,7 +292,8 @@ fn main() -> eframe::Result {
     }
     // winit has no file drag-and-drop on Wayland (only on X11), so dropping files from the file
     // manager showed a "no" cursor. Run through XWayland when it's there; CADCRAFT_WAYLAND=1
-    // keeps the native Wayland backend.
+    // keeps the native Wayland backend. Under XWayland GNOME draws the window frame; only a native
+    // Wayland window draws winit's own caption buttons (Adwaita style, storytold/egui#3).
     #[cfg(all(unix, not(target_os = "macos")))]
     if std::env::var_os("DISPLAY").is_some() && vars.wayland != Switch::On {
         options.event_loop_builder = Some(Box::new(|b| {
