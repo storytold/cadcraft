@@ -461,6 +461,47 @@ fn pdf_model_fitted_to_sheet() {
     assert!(write(&d, "x.pdf").unwrap().starts_with(b"%PDF"));
 }
 
+/// Paper sizes reach the PDF page: the bare B4/B5/B6 are the ISO sizes, the JIS ones are reachable
+/// by their explicit names, and the Japanese postcards/envelopes/四六判 plot at theirs.
+#[test]
+fn pdf_plot_jis_and_japanese_paper_sizes() {
+    let d = sample();
+    for (name, w, h) in [
+        ("B4", 708.66, 1000.63),
+        ("B4 (ISO)", 708.66, 1000.63),
+        ("B5", 498.90, 708.66),
+        ("B5-iso", 498.90, 708.66),
+        ("B6", 354.33, 498.90),
+        ("B6 (ISO)", 354.33, 498.90),
+        ("B4 (JIS)", 728.50, 1031.81),
+        ("JIS B4", 728.50, 1031.81),
+        ("B5 (JIS)", 515.91, 728.50),
+        ("b5-jis", 515.91, 728.50),
+        ("B6 (JIS)", 362.83, 515.91),
+        ("Japanese Postcard", 283.46, 419.53),
+        ("はがき", 283.46, 419.53),
+        ("Japanese Double Postcard", 419.53, 566.93),
+        ("往復はがき", 419.53, 566.93),
+        ("Japanese Envelope #3", 340.16, 666.14),
+        ("長形3号", 340.16, 666.14),
+        ("Japanese Envelope Kaku #2", 680.31, 941.10),
+        ("角形2号", 680.31, 941.10),
+        ("四六判", 360.00, 532.91),
+    ] {
+        let bytes = plot(&d, &Space::Model, &serde_json::json!({"paper": name, "landscape": false})).unwrap();
+        check_pdf(&bytes);
+        let (got_w, got_h) = media_box(&bytes);
+        assert!((got_w - w).abs() < 0.01 && (got_h - h).abs() < 0.01, "{name}: {got_w} x {got_h}, wanted {w} x {h}");
+    }
+    // The ambiguous bare postcard aliases are gone.
+    assert!(plot(&d, &Space::Model, &serde_json::json!({"paper": "Postcard"})).is_err());
+    assert!(plot(&d, &Space::Model, &serde_json::json!({"paper": "Double Postcard"})).is_err());
+    // Existing ISO values and the unknown-name error are unchanged.
+    let (w, h) = media_box(&plot(&d, &Space::Model, &serde_json::json!({"paper": "A3", "landscape": false})).unwrap());
+    assert!((w - 841.89).abs() < 0.01 && (h - 1190.55).abs() < 0.01, "A3: {w} x {h}");
+    assert!(plot(&d, &Space::Model, &serde_json::json!({"paper": "Z9"})).is_err());
+}
+
 #[test]
 fn pdf_layout_one_to_one_with_viewport() {
     let mut d = sample();
