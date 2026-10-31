@@ -50,7 +50,7 @@
 	Area	Aire
 	Arrange Panel	Réorganiser le panneau
 	Array	Réseau
-	Attach	Joindre
+	Attach	Attacher
 	Attribute	Attribut
 	Attribute Definition	Définition d'attribut
 	Attribute Display	Affichage des attributs
@@ -64,7 +64,7 @@
 	Batch Publish	Publication par lots
 	Binary assets added	Ressources binaires ajoutées
 	Binary assets removed	Ressources binaires supprimées
-	Blend	Raccord lissé
+	Blend	Courbe de raccord
 	Block	Bloc
 	Block Attribute Manager...	Gestionnaire des attributs de bloc...
 	Block Description...	Description de bloc...
@@ -75,11 +75,11 @@
 	Blue	Bleu
 	Bold	Gras
 	Boolean	Opérations booléennes
-	Boundary	Frontière
-	Boundary...	Frontière...
+	Boundary	Contour
+	Boundary...	Contour...
 	Box	Pavé
-	Break	Rupture
-	Break At Point	Rupture en un point
+	Break	Coupure
+	Break At Point	Coupure en un point
 	Bring to Front	Mettre au premier plan
 	ByBlock	DuBloc
 	ByColor	Par couleur
@@ -100,7 +100,7 @@
 	Center, Start, Length	Centre, départ, longueur
 	Chamfer	Chanfrein
 	Change Space	Changer d'espace
-	Change to Current Layer	Déplacer vers le calque courant
+	Change to Current Layer	Transférer sur le calque courant
 	Circle	Cercle
 	Circumference	Circonférence
 	Clear	Effacer
@@ -127,8 +127,8 @@
 	Cone	Cône
 	Constraint Bars	Barres de contraintes
 	Constraint Settings	Paramètres de contraintes
-	Construction Line	Ligne de construction
-	Contents	Sommaire
+	Construction Line	Droite
+	Contents	Contenu
 	Continue	Continuer
 	Contributors	Contributeurs
 	Control Vertices	Sommets de contrôle
@@ -174,8 +174,8 @@
 	Diameter	Diamètre
 	Dim style	Style de cotation
 	Dimension	Cotation
-	Dimension Space	Espace entre cotations
-	Dimension Style Override	Substitution de style de cotation
+	Dimension Space	Espacer les cotes
+	Dimension Style Override	Remplacement de style de cotation
 	Dimension Style...	Style de cotation...
 	Dimension Text Edit	Modifier le texte de cotation
 	Dimension style	Style de cotation
@@ -220,8 +220,8 @@
 	Enter a pattern name	Entrez un nom de motif
 	Enter a vertex editing option	Entrez une option d'édition de sommet
 	Enter an option	Entrez une option
-	Enter angle of xline	Entrez l'angle de la ligne de construction
-	Enter angle of xline (0) or	Entrez l'angle de la ligne de construction (0) ou
+	Enter angle of xline	Entrez l'angle de la droite
+	Enter angle of xline (0) or	Entrez l'angle de la droite (0) ou
 	Enter area of rectangle in current units	Entrez l'aire du rectangle dans les unités courantes
 	Enter attribute prompt	Entrez l'invite de l'attribut
 	Enter attribute tag name	Entrez le nom de l'étiquette d'attribut
@@ -272,7 +272,7 @@
 	Extrude	Extruder
 	File	Fichier
 	File Tab	Onglet Fichier
-	Fillet	Congé
+	Fillet	Raccord
 	Filter	Filtre
 	Filters	Filtres
 	Find and Replace	Rechercher et remplacer
@@ -357,7 +357,7 @@
 	Isolate	Isoler
 	Isolate Layer	Isoler le calque
 	Isometric Drafting	Dessin isométrique
-	Join	Rejoindre
+	Join	Joindre
 	Join the ArtCraft Discord…	Rejoindre le Discord d'ArtCraft…
 	Join us on Discord	Rejoignez-nous sur Discord
 	Language	Langue
@@ -440,9 +440,9 @@
 	Models	Modèles
 	Modify	Modifier
 	Move	Déplacer
-	Multileader	Repère multiple
-	Multileader Style...	Style de repère multiple...
-	Multileader style	Style de repère multiple
+	Multileader	Ligne de repère multiple
+	Multileader Style...	Style de ligne de repère multiple...
+	Multileader style	Style de ligne de repère multiple
 	Multiline	Multiligne
 	Multiline Text	Texte multiligne
 	Multiline Text...	Texte multiligne...
@@ -482,11 +482,11 @@
 	Object Snap	Accrochage aux objets
 	Object Snap (F3)	Accrochage aux objets (F3)
 	Object Snap On (F3)	Activer l'accrochage aux objets (F3)
-	Object Snap Tracking	Suivi de l'accrochage aux objets
-	Object Snap Tracking (F11)	Suivi de l'accrochage aux objets (F11)
+	Object Snap Tracking	Repérage d'accrochage aux objets
+	Object Snap Tracking (F11)	Repérage d'accrochage aux objets (F11)
 	Object type:	Type d'objet :
 	Off	Désactivé
-	Offset	Décalage
+	Offset	Décaler
 	On	Activé
 	On/Off	Activer/Désactiver
 	One of the Crafting Apps by the ArtCraft team and community.	L'une des applications Crafting Apps de l'équipe et de la communauté ArtCraft.
@@ -496,13 +496,13 @@
 	Open...	Ouvrir...
 	Operator:	Opérateur :
 	Orbit	Orbite
-	Ordinate	Ordonnée
+	Ordinate	Superposée
 	Ortho (F8)	Ortho (F8)
 	Ortho Mode	Mode Ortho
 	Ortho Mode (F8)	Mode Ortho (F8)
 	Osnap Settings...	Paramètres d'accrochage aux objets...
 	Out	Zoom arrière
-	Override	Outrepasser
+	Override	Remplacer
 	PAPER	PAPIER
 	Percent	Pourcentage
 	Polar (distance < angle)	Polaire (distance < angle)
@@ -559,9 +559,9 @@
 	Point Filters	Filtres de points
 	Point Style...	Style de point...
 	Polar Array	Réseau polaire
-	Polar Tracking	Recherche polaire
-	Polar Tracking (F10)	Recherche polaire (F10)
-	Polar Tracking On (F10)	Activer la recherche polaire (F10)
+	Polar Tracking	Repérage polaire
+	Polar Tracking (F10)	Repérage polaire (F10)
+	Polar Tracking On (F10)	Activer le repérage polaire (F10)
 	Polar: {distance} < {angle}°	Polaire : {distance} < {angle}°
 	Polygon	Polygone
 	Polygonal	Polygonal
@@ -592,7 +592,7 @@
 	Quit CADCraft	Quitter CADCraft
 	Radius	Rayon
 	Raster Image	Image raster
-	Ray	Rayon
+	Ray	Demi-droite
 	Read-only	Lecture seule
 	Real name	Nom réel
 	Realtime	Temps réel
@@ -630,7 +630,7 @@
 	Revision Cloud	Nuage de révisions
 	Revolve	Révolution
 	Right	Droite
-	Rotate	Pivoter
+	Rotate	Rotation
 	Rotation	Rotation
 	S	S
 	Save	Enregistrer
@@ -786,8 +786,8 @@
 	Specify endpoint of axis	Spécifiez le point final de l'axe
 	Specify endpoint of line	Spécifiez le point final de la ligne
 	Specify feature location	Spécifiez l'emplacement de l'élément
-	Specify fillet radius	Spécifiez le rayon de congé
-	Specify fillet radius for rectangles	Spécifiez le rayon de congé des rectangles
+	Specify fillet radius	Spécifiez le rayon de raccord
+	Specify fillet radius for rectangles	Spécifiez le rayon de raccord des rectangles
 	Specify first angle endpoint	Spécifiez le premier point final de l'angle
 	Specify first chamfer distance	Spécifiez la première distance de chanfrein
 	Specify first chamfer distance for rectangles	Spécifiez la première distance de chanfrein des rectangles
@@ -839,7 +839,7 @@
 	Specify rotation angle or	Spécifiez l'angle de rotation ou
 	Specify scale factor	Spécifiez le facteur d'échelle
 	Specify second angle endpoint	Spécifiez le deuxième point final de l'angle
-	Specify second break point	Spécifiez le deuxième point de rupture
+	Specify second break point	Spécifiez le deuxième point de coupure
 	Specify second chamfer distance for rectangles	Spécifiez la deuxième distance de chanfrein des rectangles
 	Specify second constraint point	Spécifiez le deuxième point de contrainte
 	Specify second destination point	Spécifiez le deuxième point de destination
@@ -972,10 +972,10 @@
 	White	Blanc
 	Width factor	Facteur de largeur
 	Window	Fenêtre
-	Wipeout	Masquage
+	Wipeout	Masque
 	Workspace Switching	Changement d'espace de travail
 	Write Block	Enregistrer le bloc dans un fichier
-	Xline	Ligne de construction
+	Xline	Droite
 	Yellow	Jaune
 	Yes	Oui
 	Zoom	Zoom
