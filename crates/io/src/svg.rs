@@ -31,7 +31,7 @@ pub(crate) fn export_window_from(d: &Drawing, space: &Space, window: Option<Boun
     let list = cadcraft_render::build(d, space, &cadcraft_render::Options { transparency, ..cadcraft_render::Options::default() });
     let b = window.filter(|w| !w.is_empty()).unwrap_or_else(|| crate::underlay_plot::plotted_bounds(&list));
     let px_per_unit = 3200.0 / b.width().max(b.height()).max(1e-9);
-    let images = crate::underlay_plot::images(d, &list, document, px_per_unit);
+    let images = crate::underlay_plot::images(d, &list, document, px_per_unit, None);
     export_list_over(&list, window, &images)
 }
 
