@@ -1,6 +1,6 @@
 use super::draw::draw_list;
 use super::grid::draw_grid;
-use super::{CadApp, Color32, Pos2, Rect, Rgb, Shape, Stroke, Tokens, Xf, pos2, vec2};
+use super::{CadApp, Color32, Pos2, Rect, Rgb, Shape, Stroke, Tokens, Vec2, Xf, pos2, vec2};
 
 pub(super) fn tile_rects(app: &CadApp, full: Rect) -> Vec<(Rect, cadcraft_engine::ModelTile)> {
     let x = |f: f64| full.left() + full.width() * f.clamp(0.0, 1.0) as f32;
@@ -36,6 +36,79 @@ pub(super) fn draw_tiles(app: &CadApp, ui: &egui::Ui, tiles: &[(Rect, cadcraft_e
     for (r, tile) in tiles {
         let (w, c) = if tile.active { (2.0, t.accent) } else { (1.0, t.border) };
         p.rect_stroke(*r, 0.0, Stroke::new(w, c), egui::StrokeKind::Outside);
+    }
+}
+
+/// RECTANG's width and height boxes, each beside its side of the rubber-band rectangle (outside
+/// it), like dimensions: the width under or over the horizontal side through the first corner,
+/// the height beside the vertical side through the cursor. The active box (the one typing goes
+/// to; Tab moves on) has the accent outline, a locked one a lock.
+pub(super) fn rectangle_dims(
+    p: &egui::Painter,
+    xf: &crate::canvas::Xf,
+    f: &crate::dyninput::Frame,
+    e: &crate::dyninput::Entry<'_>,
+    cursor: Vec2,
+    second_locked: bool,
+    (lu, lp): (i64, i64),
+) {
+    let t = Tokens::get();
+    let font = crate::theme::small();
+    let o = f.origin();
+    let held = crate::dyninput::constrain(e, f, cursor, second_locked);
+    let (w, h) = f.live(crate::dyninput::Format::Cartesian, held);
+    let dist = |v: f64| cadcraft_engine::units::format_distance(v, lu, lp);
+    let a = xf.to_screen(o);
+    let b = xf.to_screen(held);
+    let (left, right) = (a.x.min(b.x), a.x.max(b.x));
+    let (top, bottom) = (a.y.min(b.y), a.y.max(b.y));
+    // Outside the rectangle: below a side at its bottom, above one at its top; right of a side at
+    // its right, left of one at its left.
+    let width_y = if (a.y - bottom).abs() < 0.5 { a.y + 16.0 } else { a.y - 16.0 };
+    let height_x = if (b.x - right).abs() < 0.5 { b.x + 10.0 } else { b.x - 10.0 };
+    let cells = [
+        (
+            pos2((left + right) / 2.0, width_y),
+            if e.first.is_empty() { dist(w) } else { e.first.to_owned() },
+            !e.first.is_empty(),
+            e.first_locked().is_some(),
+            !e.split,
+            0.5,
+        ),
+        (
+            pos2(height_x, (top + bottom) / 2.0),
+            if e.second.is_empty() { dist(h) } else { e.second.to_owned() },
+            !e.second.is_empty(),
+            second_locked,
+            e.split && !second_locked,
+            if height_x > b.x { 0.0 } else { 1.0 },
+        ),
+    ];
+    // Dimension-like guides along the two sides.
+    let guide = Stroke::new(1.0, t.text_faint);
+    p.line_segment([pos2(left, width_y - 6.0), pos2(right, width_y - 6.0)], guide);
+    let gx = if height_x > b.x { height_x - 4.0 } else { height_x + 4.0 };
+    p.line_segment([pos2(gx, top), pos2(gx, bottom)], guide);
+    let lock_w = 10.0;
+    for (at, text, typed, locked, active, anchor_x) in cells {
+        let value = p.layout_no_wrap(text, font.clone(), if typed { t.text } else { t.text_faint });
+        let bw = (value.size().x + 10.0 + if locked { lock_w } else { 0.0 }).max(48.0);
+        let bh = value.size().y + 6.0;
+        let min = pos2(at.x - bw * anchor_x, at.y - bh / 2.0);
+        let r = Rect::from_min_size(min, vec2(bw, bh));
+        p.rect_filled(r, 2.0, t.chrome_dark);
+        let stroke = if active { Stroke::new(1.5, t.accent) } else { Stroke::new(1.0, t.border) };
+        p.rect_stroke(r, 2.0, stroke, egui::StrokeKind::Inside);
+        let vw = value.size().x;
+        let vh = value.size().y;
+        p.galley(pos2(r.left() + 5.0, r.center().y - vh / 2.0), value, t.text);
+        if active {
+            let cx = r.left() + 6.0 + vw;
+            p.line_segment([pos2(cx, r.top() + 3.0), pos2(cx, r.bottom() - 3.0)], Stroke::new(1.0, t.text));
+        }
+        if locked {
+            draw_lock(p, pos2(r.right() - lock_w / 2.0 - 3.0, r.center().y), t.accent);
+        }
     }
 }
 

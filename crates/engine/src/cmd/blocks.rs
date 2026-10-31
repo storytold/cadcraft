@@ -330,6 +330,7 @@ fn attdef_kind(s: &Session, tag: &str, prompt: &str, default: &str, at: Vec2, he
     EntityKind::AttDef(Attrib {
         tag: tag.to_ascii_uppercase(),
         text: Text {
+            formula: None,
             insert: v3(at),
             align_pt: None,
             height,

@@ -6,8 +6,7 @@ use serde_json::{Value, json};
 
 use super::curves;
 use super::{CommandSpec, bad, bool_or, point_param, point_req, str_param, targets};
-
-use crate::grips::{GripAction, GripMode, grip_action, mode_matrix, stretch_grip};
+use crate::grips::{GripAction, GripMode, mode_matrix, stretch_grip};
 use crate::{EngineError, Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -23,12 +22,27 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("grip.mirror", "Grip Mirror", run_grip_mirror)
             .params("{handles?, base | baseHandle+index, to (second mirror point), copy?}"),
         CommandSpec::new("grip.option", "Grip Option", run_grip_option).params(
-            "{handle, index, option: addVertex|removeVertex|toArc|toLine|lengthen|radius, to? (point), value? (lengthen: length change; radius)}",
+            "{handle, index, option: addVertex|removeVertex|toArc|toLine|lengthen|radius|moveWithDimLine|moveTextOnly|moveWithLeader|aboveDimLine|centerVertically|resetTextPosition|addFitPoint|removeFitPoint, to? (point), value? (lengthen: length change; radius)}",
         ),
         CommandSpec::new("grip", "Grip Edit", run_grip)
             .params("interactive: select grips, then the grip modes with [Base point/Copy/Undo/Reference/eXit]; JSON: use grip.stretch/move/rotate/scale/mirror")
             .interactive(super::griphot::factory),
     ]
+}
+
+/// `kind` with a dimension's stored text position set to where the text is drawn (its grip),
+/// which differs while the text is not user-positioned. Grip drags then start from the shown
+/// text, not from a stale stored position.
+fn as_shown(d: &cadcraft_doc::Drawing, kind: &EntityKind) -> EntityKind {
+    let mut k = kind.clone();
+    if let EntityKind::Dimension(dm) = &mut k
+        && let Some(t) = crate::grips::grip_points(d, kind).get(3).copied()
+        && t.is_finite()
+    {
+        dm.text_mid.x = t.x;
+        dm.text_mid.y = t.y;
+    }
+    k
 }
 
 fn index_param(cmd: &str, p: &Value) -> Result<usize> {
@@ -46,33 +60,36 @@ fn stretch(s: &mut Session, cmd: &str, p: &Value) -> Result<Value> {
         return Err(EngineError::Other("The object is on a locked layer.".into()));
     }
     let e = curves::entity(s, h)?;
-    let k = stretch_grip(&e.kind, i, to).ok_or_else(|| bad(cmd, "no such grip, or the result would be degenerate"))?;
+    // `to` is where the grip as shown goes; a dimension's text grip shows where the text is drawn,
+    // which its stored position may not be.
+    let from = crate::grips::grip_points(s.doc()?, &e.kind).get(i).copied().unwrap_or(to);
+    // Start from the text where it is drawn, so the grip lands where it was dropped.
+    let base = as_shown(s.doc()?, &e.kind);
+    let raw = base.grips().get(i).copied().unwrap_or(from);
+    let k = stretch_grip(&base, i, raw + (to - from)).ok_or_else(|| bad(cmd, "no such grip, or the result would be degenerate"))?;
     let mut edits = vec![(h, k)];
     // The other `handles` with a grip on the same point stretch with it (connected objects stay
     // connected); locked ones and edits that would be degenerate are left alone.
-    let from = e.kind.grips().get(i).copied().unwrap_or(to);
     let tol = 1e-9 * (1.0 + from.len());
     for o in targets(s, p)? {
         if o == h || edits.iter().any(|(x, _)| *x == o) || curves::is_locked(s, o) {
             continue;
         }
         let Ok(oe) = curves::entity(s, o) else { continue };
-        if let Some(j) = oe.kind.grips().iter().position(|g| g.near(from, tol))
-            && let Some(k) = stretch_grip(&oe.kind, j, to)
-        {
-            edits.push((o, k));
+        // Matched where the grips are shown, and moved by the same amount from where each
+        // stored point is (a dimension's shown line grip may not be its stored point).
+        let d = s.doc()?;
+        if let Some(j) = crate::grips::grip_points(d, &oe.kind).iter().position(|g| g.near(from, tol)) {
+            let ob = as_shown(d, &oe.kind);
+            if let Some(raw) = ob.grips().get(j).copied()
+                && let Some(k) = stretch_grip(&ob, j, raw + (to - from))
+            {
+                edits.push((o, k));
+            }
         }
     }
     let d = s.doc_mut()?;
     for (o, k) in &mut edits {
-        // A dimension's text moved by its grip: with DIMTMOVE 0 the dimension line follows.
-        if let cadcraft_doc::EntityKind::Dimension(dm) = k
-            && let Some(cadcraft_doc::EntityKind::Dimension(old)) = d.entity(*o).map(|e| &e.kind)
-            && dm.text_mid != old.text_mid
-        {
-            let st = d.dim_style(&dm.style).cloned().unwrap_or_default().with_overrides(&dm.overrides);
-            st.follow_text(dm, d.header.f64("DIMSCALE", 1.0));
-        }
         d.modify_entity(*o, |e| e.kind = k.clone())?;
     }
     Ok(json!({ "handle": h.hex(), "handles": edits.iter().map(|(o, _)| o.hex()).collect::<Vec<_>>() }))
@@ -87,7 +104,7 @@ fn base_point(s: &Session, cmd: &str, p: &Value, hs: &[Handle]) -> Result<Vec2> 
         .or_else(|| hs.first().copied())
         .ok_or_else(|| bad(cmd, "`base` or `baseHandle` + `index` is required"))?;
     let i = index_param(cmd, p)?;
-    let g = curves::entity(s, h)?.kind.grips();
+    let g = crate::grips::grip_points(s.doc()?, &curves::entity(s, h)?.kind);
     g.get(i).copied().ok_or_else(|| bad(cmd, "no such grip"))
 }
 
@@ -116,7 +133,7 @@ fn run_grip_stretch(s: &mut Session, p: &Value) -> Result<Value> {
         None => {
             let base = match point_param(p, "base") {
                 Some(b) => b,
-                None => curves::entity(s, h0)?.kind.grips().get(i0).copied().ok_or_else(|| bad(cmd, "no such grip"))?,
+                None => crate::grips::grip_points(s.doc()?, &curves::entity(s, h0)?.kind).get(i0).copied().ok_or_else(|| bad(cmd, "no such grip"))?,
             };
             point_req(cmd, p, "to")? - base
         }
@@ -138,13 +155,18 @@ fn run_grip_option(s: &mut Session, p: &Value) -> Result<Value> {
     let action: GripAction = p
         .get("option")
         .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .ok_or_else(|| bad(cmd, "`option` must be addVertex, removeVertex, toArc, toLine, lengthen or radius"))?;
+        .ok_or_else(|| {
+            bad(
+                cmd,
+                "`option` must be addVertex, removeVertex, toArc, toLine, lengthen, radius, moveWithDimLine, moveTextOnly, moveWithLeader, aboveDimLine, centerVertically, resetTextPosition, addFitPoint or removeFitPoint",
+            )
+        })?;
     if curves::is_locked(s, h) {
         return Err(EngineError::Other("The object is on a locked layer.".into()));
     }
     let e = curves::entity(s, h)?;
     let value = p.get("value").and_then(Value::as_f64);
-    let k = grip_action(&e.kind, i, action, point_param(p, "to"), value)
+    let k = crate::grips::grip_action_in(s.doc()?, &e.kind, i, action, point_param(p, "to"), value)
         .ok_or_else(|| bad(cmd, "that option doesn't apply to this grip, or the result would be degenerate"))?;
     s.doc_mut()?.modify_entity(h, |e| e.kind = k)?;
     Ok(json!({ "handle": h.hex() }))
@@ -172,16 +194,24 @@ pub(super) fn stretched(s: &Session, hot: &[(Handle, usize)], others: &[Handle],
         }
         None => moves.push((h, vec![(i, to)])),
     };
+    // Grip `i` of `e`: where it is shown (to match connected grips) and its stored point (moved
+    // by `delta`); a dimension's line grip is shown on the dimension line, not at its point.
+    let grip = |e: &Entity, i: usize| -> Option<(Vec2, Vec2)> {
+        Some((*crate::grips::grip_points(d, &e.kind).get(i)?, *as_shown(d, &e.kind).grips().get(i)?))
+    };
     for &(h, i) in hot.iter().take(MAX_GRIPS) {
-        let Some(from) = d.entity(h).and_then(|e| e.kind.grips().get(i).copied()) else { continue };
-        add(h, i, from + delta);
+        let Some((from, raw)) = d.entity(h).and_then(|e| grip(e, i)) else { continue };
+        add(h, i, raw + delta);
         let tol = 1e-9 * (1.0 + from.len());
         for &o in others.iter().take(MAX_GRIPS) {
             if o == h {
                 continue;
             }
-            if let Some(j) = d.entity(o).and_then(|e| e.kind.grips().iter().position(|g| g.near(from, tol))) {
-                add(o, j, from + delta);
+            let Some(e) = d.entity(o) else { continue };
+            if let Some(j) = crate::grips::grip_points(d, &e.kind).iter().position(|g| g.near(from, tol))
+                && let Some((_, raw)) = grip(e, j)
+            {
+                add(o, j, raw + delta);
             }
         }
     }
@@ -191,7 +221,7 @@ pub(super) fn stretched(s: &Session, hot: &[(Handle, usize)], others: &[Handle],
             continue;
         }
         let Some(e) = d.entity(h) else { continue };
-        let mut k = e.kind.clone();
+        let mut k = as_shown(d, &e.kind);
         let mut changed = false;
         for (i, to) in mv {
             if let Some(nk) = stretch_grip(&k, i, to) {

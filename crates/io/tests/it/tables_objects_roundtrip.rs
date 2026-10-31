@@ -63,6 +63,7 @@ fn multileader_styles_and_current_style_round_trip() {
     let mut d = Drawing::new_imperial();
     d.text_styles.push(TextStyle { name: "Slanted".into(), oblique: 0.2, ..TextStyle::default() });
     let callout = MLeaderStyle {
+        arrow_block: String::new(),
         name: "Callout".into(),
         arrow_size: 2.0,
         text_height: 3.0,

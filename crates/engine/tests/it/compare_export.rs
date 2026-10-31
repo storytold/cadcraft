@@ -207,6 +207,8 @@ fn a_named_block_defined_differently_in_the_other_drawing_shows_the_other_defini
         part.entities.push(Entity::new(Handle(first), line(part_end)));
         part.entities.push(Entity::new(Handle(first + 1), EntityKind::Insert(insert("SUB"))));
         let leader = MLeader {
+            arrow: String::new(),
+            no_leader: false,
             leaders: Vec::new(),
             landing: Vec3::ZERO,
             dogleg: 0.0,
