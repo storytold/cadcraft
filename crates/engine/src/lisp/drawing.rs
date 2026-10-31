@@ -491,13 +491,20 @@ pub fn entmod(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
         return Err(LispError::bad_arg("lentityp", &Value::Nil));
     };
     let Some(old) = ctx.s.doc().ok().and_then(|d| d.entity(h)).cloned() else { return Ok(Flow::Value(Value::Nil)) };
-    let (kind_name, common, kind) = match entity_from_list(ctx, list) {
+    let (kind_name, common, mut kind) = match entity_from_list(ctx, list) {
         Ok(x) => x,
         Err(_) => return Ok(Flow::Value(Value::Nil)),
     };
     // entmod changes an entity, never its type.
     if !kind_name.eq_ignore_ascii_case(old.kind.dxf_name()) {
         return Ok(Flow::Value(Value::Nil));
+    }
+    // A block reference's attributes are entities of their own in AutoCAD, which entmod of the
+    // INSERT leaves alone; its list doesn't hold them, so they are kept from the reference.
+    if let (cadcraft_doc::EntityKind::Insert(new), cadcraft_doc::EntityKind::Insert(was)) = (&mut kind, &old.kind)
+        && new.attribs.is_empty()
+    {
+        new.attribs = was.attribs.clone();
     }
     let Ok(d) = ctx.s.doc_mut() else { return Ok(Flow::Value(Value::Nil)) };
     d.ensure_layer(&common.layer);
@@ -545,22 +552,24 @@ pub fn entdel(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
 }
 
 /// Every entity's handle in creation order (model space and layouts), cached per drawing.
+///
+/// The cache is keyed by content identity, as the spatial index is: it holds clones of the
+/// spaces it was taken from, so any edit (`entmake`, `entmod`, `entdel`, a command, undo) copies
+/// the chunk it touches and the cache no longer matches. The drawing's address is no key: an
+/// edit in place keeps it, and a new drawing can be given the address of a dropped one.
 fn handles_in_order(ctx: &mut Ctx<'_>) -> Arc<Vec<Handle>> {
-    let Ok(st) = ctx.s.state() else { return Arc::default() };
-    let key = Arc::as_ptr(&st.doc) as usize;
-    if let Some((k, v)) = &ctx.env.order
-        && *k == key
+    let Ok(d) = ctx.s.doc() else { return Arc::default() };
+    let spaces = || std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities));
+    if let Some((stores, v)) = &ctx.env.order
+        && stores.len() == 1 + d.layouts.len()
+        && stores.iter().zip(spaces()).all(|(a, b)| a.same_as(b))
     {
         return v.clone();
     }
-    let d = &st.doc;
-    let mut v: Vec<Handle> = d.model.handles();
-    for l in &d.layouts {
-        v.extend(l.entities.handles());
-    }
+    let mut v: Vec<Handle> = spaces().flat_map(|s| s.iter().map(|e| e.handle)).collect();
     v.sort_unstable();
     let v = Arc::new(v);
-    ctx.env.order = Some((key, v.clone()));
+    ctx.env.order = Some((spaces().cloned().collect(), v.clone()));
     v
 }
 
