@@ -22,6 +22,7 @@ mod named_viewports_dialog;
 mod native_menu_text_keys;
 mod native_windows;
 mod options_dialog;
+mod pagesetup_multi;
 mod parameters_rename;
 mod pickdrag;
 mod properties_units;

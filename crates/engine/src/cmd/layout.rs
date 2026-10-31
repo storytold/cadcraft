@@ -78,7 +78,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("pagesetup", "Page Setup Manager...", run_pagesetup)
             .menu(&["File", "Page Setup Manager..."])
             .params(
-                "{layout?: current, device?: plotter name (PLOTTERMANAGER) | \"None\", paper?: the device's paper | \"A4\"|\"A3\"|\"Letter\"|\"ANSI B\"|…, width?, height? (mm), landscape?, margins?: [l,b,r,t] mm, lineweights?, plotArea?, scale?, scaleToFit?, center?, plotStyleTable?: \"monochrome.ctb\"|\"grayscale.ctb\"|\"default.ctb\"|\"None\"|…, displayPlotStyles?: bool, plotTransparency?: bool}",
+                "{layout?: current | layouts?: [names] | \"all\" (the same changes to each, in one step), device?: plotter name (PLOTTERMANAGER) | \"None\", paper?: the device's paper | \"A4\"|\"A3\"|\"Letter\"|\"ANSI B\"|…, width?, height? (mm), landscape?, margins?: [l,b,r,t] mm, lineweights?, plotArea?, scale?, scaleToFit?, center?, plotStyleTable?: \"monochrome.ctb\"|\"grayscale.ctb\"|\"default.ctb\"|\"None\"|…, displayPlotStyles?: bool, plotTransparency?: bool}",
             ),
         CommandSpec::new("plot", "Print...", |s, p| run_plot(s, &super::plotters::plot_options(s, p, "plot")?, "plot"))
             .menu(&["File", "Print..."])
@@ -632,7 +632,57 @@ fn run_viewport_set(s: &mut Session, p: &Value) -> Result<Value> {
 
 // ---------- page setup ----------
 
+/// PAGESETUP. With `layouts` (a list of layout names, or "all") the same changes are applied to
+/// each of those layouts, as one step: if any of them refuses a change, none is changed.
 fn run_pagesetup(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "pagesetup";
+    let Some(list) = p.get("layouts").filter(|v| !v.is_null()) else { return pagesetup_one(s, p) };
+    if p.get("layout").is_some() {
+        return Err(bad(cmd, "pass `layout` or `layouts`, not both"));
+    }
+    let names: Vec<String> = match list {
+        Value::String(a) if a.eq_ignore_ascii_case("all") => {
+            let mut ls: Vec<&Layout> = s.doc()?.layouts.iter().collect();
+            ls.sort_by_key(|l| l.tab_order);
+            ls.iter().map(|l| l.name.clone()).collect()
+        }
+        Value::Array(a) => {
+            let mut names = Vec::new();
+            for n in a.iter().take(MAX_PLOT_SHEETS + 1) {
+                let n = n.as_str().ok_or_else(|| bad(cmd, "`layouts` must be a list of layout names or \"all\""))?;
+                let n = layout_name(cmd, s.doc()?, n)?;
+                if !names.contains(&n) {
+                    names.push(n);
+                }
+            }
+            names
+        }
+        _ => return Err(bad(cmd, "`layouts` must be a list of layout names or \"all\"")),
+    };
+    if names.is_empty() || names.len() > MAX_PLOT_SHEETS {
+        return Err(bad(cmd, format!("`layouts` needs between 1 and {MAX_PLOT_SHEETS} layouts")));
+    }
+    let before = s.state()?.doc.clone();
+    let mut done = Vec::new();
+    for n in &names {
+        let mut one = p.clone();
+        if let Some(o) = one.as_object_mut() {
+            o.remove("layouts");
+            o.insert("layout".into(), json!(n));
+        }
+        match pagesetup_one(s, &one) {
+            Ok(r) => done.push(r),
+            Err(e) => {
+                s.state_mut()?.doc = before;
+                return Err(e);
+            }
+        }
+    }
+    Ok(json!({ "layouts": done }))
+}
+
+/// PAGESETUP for one layout: the changes the options ask for, reported with the resulting page setup.
+fn pagesetup_one(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "pagesetup";
     let keys = [
         "device",
