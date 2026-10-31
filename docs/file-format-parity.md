@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-31 · **Change:** minor (viewport frozen layers) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-29 · **Change:** minor (R2000 DXF CLASS records without instance counts, so AutoCAD LT 2026 opens them) · **Target:** Autodesk AutoCAD 2027
 
 Every format AutoCAD 2027 reads or writes, with CADCraft's support, fidelity and tests. Work
 items are in [gaps.md](gaps.md#file-formats); the weighted score feeds
@@ -85,7 +85,7 @@ on read with a note, so such files no longer exceed the DXF limit (#1482). **DWG
 | HATCH gradient | yes | yes (#162, fixes #80) | |
 | SOLID, TRACE, 3DFACE | yes | yes | |
 | ACAD_TABLE | yes | yes (entity + block) | |
-| VIEWPORT | yes | yes; frozen-layer lists kept (#150), also as AutoCAD's layer handles (group 331; 341 in an R2000 DXF), which other programs and the DWG converter read; read from either | VP layer colour overrides lost (#99, PR #197) |
+| VIEWPORT | yes | yes; frozen-layer lists kept (#150), also as standard group 341 layer handles that other programs read | DWG: the DXF→DWG converter does not yet write group 341 (frozen layers survive a CADCraft round trip via xdata); VP layer colour overrides lost (#99, PR #197) |
 | IMAGE | yes, with IMAGEDEF | yes, with IMAGEDEF and IMAGEDEF_REACTOR | no attach command or display of the picture yet (FF10) |
 | WIPEOUT | yes | yes (#147, fixes #79) | Implicit or explicit closure in memory; explicit closing point on save. Same logical grips and edit results before/after DXF/DWG round trips (#2256). |
 | MLINE (+ MLINESTYLE), HELIX, TOLERANCE | yes (#510, #420) | yes | |
@@ -140,7 +140,6 @@ our output in AutoCAD black-box.
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-31 | minor | VIEWPORT frozen layers written as group 331 (341 in an R2000 DXF) and read from either, so AutoCAD and the DWG converter see them without CADCraft xdata; a viewport frozen only in group 331 (as AutoCAD 2026 and ezdxf write it) keeps its freeze through an open and save |
 | 2026-10-29 | minor | R2000 DXF: CLASS records written without group 91 (instance count), which came with the 2004 format; AutoCAD LT 2026 stopped responding on every R2000 DXF CADCraft saved (checked black-box in AutoCAD LT 2026) |
 | 2026-10-26 | minor | CC-046: ATTEDIT and -ATTEDIT value changes invalidate derived justified baselines before DXF/DWG export; preserve alignment anchors, unchanged values and Aligned/Fit endpoints. Review follow-up: baseline recomputation preserves insertion elevation independently of alignment elevation. The shared writer correction also applies to justified TEXT. Independent of attribute editor UI; reverting the follow-up restores elevation loss on recomputation, while reverting the value setter restores stale XY baselines. |
 | 2026-10-25 | minor | LAYOUT SAveas (`layout.saveas`) writes a layout as a drawing template: its page setup and paper space objects, no model space objects or other layouts, and only the named objects they use |
