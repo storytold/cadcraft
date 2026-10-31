@@ -88,6 +88,10 @@ sync_github_name = false
 real_name = "Robert Lee"
 sync_github_name = true
 
+[people.assamaral]
+real_name = "assamaral"
+sync_github_name = false
+
 [people.2ez4gcx]
 real_name = "Doan Huynh Huu Khuong"
 display_name = "Doan Huynh Huu Khuong"

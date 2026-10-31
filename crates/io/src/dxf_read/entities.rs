@@ -246,7 +246,8 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
             height: t.fd(41, 1.0),
             view_center: Vec2::new(t.fd(12, 0.0), t.fd(22, 0.0)),
             view_height: t.fd(45, 1.0),
-            id: t.i(69).unwrap_or(0) as u32,
+            // ZWCAD writes -1 (unknown): 0 here, numbered in order by the reader (#1463).
+            id: t.i(69).filter(|i| *i > 0).unwrap_or(0) as u32,
             locked: t.i(90).unwrap_or(0) & 16384 != 0,
             frozen_layers: crate::dxf_ext::read_frozen(tags),
             layer_colors: crate::dxf_ext::read_layer_colors(tags),
