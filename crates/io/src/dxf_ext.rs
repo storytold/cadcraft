@@ -20,6 +20,45 @@ use serde_json::Value;
 
 /// Registered application name of CADCraft's extended data.
 pub(crate) const APP: &str = "CADCRAFT";
+/// Extended data of a text's formula (`=...`), in 1000 strings of at most 250 characters.
+pub(crate) const FORMULA_APP: &str = "CADCRAFTFORMULA";
+
+/// A text's formula from its `CADCRAFTFORMULA` extended data.
+pub(crate) fn formula(tags: &[Tag]) -> Option<String> {
+    let x = xdata(tags, FORMULA_APP);
+    let s: String = x.iter().filter(|t| t.code == 1000).map(|t| t.str()).collect();
+    (!s.is_empty()).then_some(s)
+}
+
+/// A formula as 1000 strings of at most 250 bytes (whole characters).
+pub(crate) fn formula_chunks(f: &str) -> Vec<String> {
+    // An xdata string holds at most 255 bytes: Hebrew, Cyrillic or Chinese letters take 2 to 4
+    // bytes each, so the pieces are cut by bytes, between letters.
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    for c in f.chars() {
+        if cur.len() + c.len_utf8() > 250 {
+            out.push(std::mem::take(&mut cur));
+        }
+        cur.push(c);
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+#[cfg(test)]
+mod formula_chunk_tests {
+    #[test]
+    fn chunks_fit_an_xdata_string_in_bytes() {
+        let f = format!("=\"{}\"", "שלום ".repeat(200));
+        let chunks = super::formula_chunks(&f);
+        assert!(chunks.iter().all(|c| c.len() <= 250), "{:?}", chunks.iter().map(String::len).collect::<Vec<_>>());
+        assert_eq!(chunks.concat(), f, "nothing lost, no letter cut");
+        assert_eq!(super::formula_chunks("=1+1"), ["=1+1"]);
+    }
+}
 /// Named-object-dictionary key of the constraint XRECORD.
 pub(crate) const CONSTRAINTS_KEY: &str = "CADCRAFT_CONSTRAINTS";
 /// Named-object-dictionary key of the saved layer states XRECORD.
