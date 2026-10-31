@@ -43,3 +43,7 @@ naga = { version = "30", features = ["wgsl-in", "glsl-out"] }
 [build-dependencies]
 serde_json = { workspace = true }
 toml = "1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2.129"
+web-sys = { version = "0.3.106", features = ["Window", "Document", "Event", "EventTarget"] }

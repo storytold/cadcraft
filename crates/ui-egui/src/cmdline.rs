@@ -18,6 +18,8 @@ pub struct CmdLine {
     typed_since_selection: bool,
     pub history: Vec<String>,
     pub history_pos: Option<usize>,
+    /// Selected command autocomplete row (zero-based).
+    pub suggestion_index: usize,
     /// What was typed at command prompts (not command names), oldest first: the in-command
     /// shortcut menu's Recent Input.
     pub recent_input: Vec<String>,
@@ -343,6 +345,7 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
                 } else {
                     app.cmd.preedit.clear();
                     app.cmd.buffer.push_str(&t);
+                    app.cmd.suggestion_index = 0;
                 }
             }
             // IME composition: the pre-edit is shown but stays out of the buffer; the commit is
@@ -360,6 +363,7 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
                 Key::Enter => submit(app),
                 Key::Escape => {
                     app.cmd.buffer.clear();
+                    app.cmd.suggestion_index = 0;
                     app.cmd.preedit.clear();
                     app.session.cancel();
                 }
@@ -377,16 +381,25 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
                         let _ = app.run("erase.selection", serde_json::json!({}));
                     } else {
                         app.cmd.buffer.pop();
+                        app.cmd.suggestion_index = 0;
                     }
                 }
-                Key::ArrowUp if !modifiers.any() && !app.cmd.history.is_empty() => {
-                    let n = app.cmd.history.len();
-                    let pos = app.cmd.history_pos.map(|p| p.saturating_sub(1)).unwrap_or(n - 1);
-                    app.cmd.history_pos = Some(pos);
-                    app.cmd.buffer = app.cmd.history.get(pos).cloned().unwrap_or_default();
+                Key::ArrowUp if !modifiers.any() => {
+                    let count = if app.session.prompting() { 0 } else { suggestions(&app.cmd.buffer).len() };
+                    if count > 0 {
+                        app.cmd.suggestion_index = app.cmd.suggestion_index.min(count - 1).saturating_sub(1);
+                    } else if !app.cmd.history.is_empty() {
+                        let n = app.cmd.history.len();
+                        let pos = app.cmd.history_pos.map(|p| p.saturating_sub(1)).unwrap_or(n - 1);
+                        app.cmd.history_pos = Some(pos);
+                        app.cmd.buffer = app.cmd.history.get(pos).cloned().unwrap_or_default();
+                    }
                 }
                 Key::ArrowDown if !modifiers.any() => {
-                    if !options_key(app, 1)
+                    let count = if app.session.prompting() { 0 } else { suggestions(&app.cmd.buffer).len() };
+                    if count > 0 {
+                        app.cmd.suggestion_index = (app.cmd.suggestion_index + 1).min(count - 1);
+                    } else if !options_key(app, 1)
                         && let Some(p) = app.cmd.history_pos
                     {
                         let np = p + 1;
@@ -399,7 +412,10 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
                         }
                     }
                 }
-                Key::Tab => tab(app),
+                Key::Tab => {
+                    tab(app);
+                    app.cmd.suggestion_index = 0;
+                }
                 Key::Delete if app.cmd.buffer.is_empty() && !app.session.prompting() => {
                     let _ = app.run("erase.selection", serde_json::json!({}));
                 }
@@ -409,6 +425,12 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
         }
         app.cmd.note_typing();
     }
+}
+
+// CADCRAFT_AUTOCOMPLETE_1374
+/// Resolve an idle command-line entry to its highlighted suggestion.
+fn completed_command(text: &str, index: usize) -> Option<String> {
+    suggestions(text.trim()).get(index).map(|suggestion| suggestion.id.clone())
 }
 
 pub fn submit(app: &mut CadApp) {
@@ -428,6 +450,8 @@ pub fn submit(app: &mut CadApp) {
         }
     }
     let text = std::mem::take(&mut app.cmd.buffer);
+    let text = if !app.session.prompting() { completed_command(&text, app.cmd.suggestion_index).unwrap_or(text) } else { text };
+    app.cmd.suggestion_index = 0;
     app.cmd.locked_second = None;
     app.cmd.history_pos = None;
     if !text.trim().is_empty() && !app.session.prompting() {
@@ -595,7 +619,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
             for (i, s) in sug.iter().enumerate() {
                 let r = Rect::from_min_size(pos2(lr.left(), lr.top() + rh * i as f32), vec2(lr.width(), rh));
                 let resp = ui.interact(r, ui.scope_id().with(("sug", i)), Sense::click());
-                if resp.hovered() || i == 0 {
+                if resp.hovered() || i == app.cmd.suggestion_index {
                     p.rect_filled(r.shrink(1.0), 2.0, if resp.hovered() { t.cmd_keyword_hover } else { t.list_row });
                 }
                 p.text(Pos2::new(r.left() + 8.0, r.center().y), egui::Align2::LEFT_CENTER, &s.display, crate::theme::body(), t.text);
@@ -682,6 +706,23 @@ fn history(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect, bar: Rect) {
             app.cmd.resize_from = None;
         }
     }
+
+    if resp.clicked()
+        && resp.interact_pointer_pos().is_some_and(|p| bar.contains(p) && !on_toggle(p))
+        && ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::unique("cadcraft-mobile-mode")).unwrap_or(false))
+    {
+        #[cfg(target_arch = "wasm32")]
+        {
+            use wasm_bindgen::JsCast as _;
+
+            if let Some(document) = web_sys::window().and_then(|w| w.document()) {
+                if let Ok(event) = web_sys::Event::new("cadcraft-mobile-focus-input") {
+                    let _ = document.dispatch_event(&event);
+                }
+            }
+        }
+    }
+
     if resp.clicked() && resp.interact_pointer_pos().is_some_and(on_toggle) {
         let _ = app.run("ui.toggle.history", serde_json::json!({}));
     }
@@ -917,6 +958,31 @@ mod autocomplete_tests {
         let line = suggestions("line");
         assert_eq!(line[0].id, "LINE");
         assert_eq!(line[0].display, "LINE");
+    }
+
+    #[test]
+    fn enter_resolves_prefix_to_first_suggestion() {
+        assert_eq!(completed_command("LAYIS", 0).as_deref(), Some("LAYISO"));
+    }
+
+    #[test]
+    fn enter_preserves_exact_alias() {
+        assert_eq!(completed_command("REC", 0).as_deref(), Some("RECTANG"));
+    }
+
+    #[test]
+    fn arrow_selection_uses_selected_suggestion() {
+        assert_eq!(completed_command("REC", 1).as_deref(), Some("RECOVER"));
+    }
+
+    #[test]
+    fn unknown_command_does_not_complete() {
+        assert_eq!(completed_command("NOTACOMMANDXYZ", 0), None);
+    }
+
+    #[test]
+    fn empty_command_does_not_complete() {
+        assert_eq!(completed_command("", 0), None);
     }
 
     #[test]

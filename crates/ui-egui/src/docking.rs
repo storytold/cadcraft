@@ -378,6 +378,68 @@ pub fn show(app: &mut crate::CadApp, ui: &mut egui::Ui) {
     }
 }
 
+/// Compact layout for narrow WebAssembly viewports, including Android.
+///
+/// The desktop docking layout is kept intact. Mobile panels appear
+/// above the drawing and can be expanded or collapsed independently
+/// of the persisted desktop workspace.
+pub fn show_mobile(app: &mut crate::CadApp, ui: &mut egui::Ui) {
+    let t = crate::theme::Tokens::get();
+    let panel_id = egui::Id::unique("cadcraft-mobile-active-panel");
+
+    // 0 = canvas, 1 = tools, 2 = layers, 3 = properties.
+    let mut active = ui.ctx().data(|d| d.get_temp::<u8>(panel_id).unwrap_or(0));
+
+    ui.horizontal(|ui| {
+        for (id, label) in [(1u8, "Tools"), (2u8, "Layers"), (3u8, "Properties")] {
+            if ui.selectable_label(active == id, label).clicked() {
+                // Tap an active category again to close it.
+                active = if active == id { 0 } else { id };
+            }
+        }
+
+        if ui.button("Canvas").clicked() {
+            active = 0;
+        }
+
+        // CADCRAFT_MOBILE_PAN_MODE
+        let pan_id = egui::Id::unique("cadcraft-mobile-pan-enabled");
+        let mut pan_enabled = ui.ctx().data(|d| d.get_temp::<bool>(pan_id).unwrap_or(false));
+
+        if ui.selectable_label(pan_enabled, "Pan").clicked() {
+            pan_enabled = !pan_enabled;
+        }
+
+        ui.ctx().data_mut(|d| d.insert_temp(pan_id, pan_enabled));
+    });
+
+    ui.ctx().data_mut(|d| d.insert_temp(panel_id, active));
+
+    if active != 0 {
+        ui.separator();
+
+        egui::ScrollArea::vertical().id_salt("cadcraft-mobile-panel-scroll").max_height(190.0).auto_shrink([false, true]).show(
+            ui,
+            |ui| match active {
+                1 => crate::palettes::toolsets(app, ui),
+                2 => crate::palettes::layers_section(app, ui),
+                3 => {
+                    crate::shortcut_menus::palette(app, ui, crate::palettes::properties_section, crate::shortcut_menus::properties_entries);
+                }
+                _ => {}
+            },
+        );
+
+        ui.separator();
+    }
+
+    // Drawing canvas owns all remaining available space.
+    // No permanent left or right docking panels.
+    ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, t.canvas);
+
+    crate::canvas::show(app, ui);
+}
+
 /// Whether the floating panels' own OS windows ignore input: while a modal dialog is up, since
 /// egui's `Modal` blocks only the main window. egui's modal layer is last frame's; the app's
 /// state covers the frame a modal opens in.

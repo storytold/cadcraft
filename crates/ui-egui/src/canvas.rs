@@ -24,7 +24,8 @@ mod viewport;
 mod widgets;
 
 use cursor::{draw_crosshair, draw_snap_marker, draw_tracking, effective_point, override_cursor};
-use cycle::{CycleList, cycle_badge, cycle_click, cycle_list, over_canvas_menu, shift_space_cycle};
+pub(crate) use cycle::over_canvas_menu;
+use cycle::{CycleList, cycle_badge, cycle_click, cycle_list, shift_space_cycle};
 pub(crate) use draw::{Look, draw_highlight, draw_list};
 use draw::{draw_drag_gpu, draw_highlight_gpu, draw_list_gpu, list_mesh_key, selection_area_fill};
 use dyn_boxes::dynamic_input;
@@ -293,12 +294,66 @@ fn handle_scroll_zoom(app: &mut CadApp, ui: &mut egui::Ui, nav: &Navigation<'_>,
         let _ = app.session.zoom_about(factor, about);
     }
     let pinch = ui.input(|i| crate::animation::zoom_delta(i, &opts, app.shows_animations()));
+    // A touch-screen pinch zooms about the fingers, not the (virtual) mouse crosshair.
+    let pinch_centre = ui.input(|i| i.multi_touch().map(|t| t.center_pos)).filter(|at| nav.rect.contains(*at));
+    // Fingers that landed off the canvas (on a panel, a menu) belong there, wherever they move.
+    let touch_elsewhere = app.touch.passing();
     if inside
+        && !touch_elsewhere
         && (pinch - 1.0).abs() > 1e-4
-        && let Some(at) = p.hover_pos
+        && let Some(at) = pinch_centre.or(p.hover_pos)
     {
         let _ = app.session.zoom_about(f64::from(pinch), nav.xf.to_world(at));
     }
+    // CADCRAFT_MOBILE_TWO_FINGER_PAN
+    // Move the model viewport with the midpoint of a multitouch gesture.
+    // Keep the existing egui pinch-to-zoom handling above unchanged.
+    #[cfg(target_arch = "wasm32")]
+    if let Some(touch) = ui.input(|i| i.multi_touch()) {
+        if !touch_elsewhere && nav.rect.contains(touch.center_pos) && touch.translation_delta != egui::Vec2::ZERO {
+            if let Ok(st) = app.session.state_mut() {
+                let v = st.view();
+                st.set_view_quiet(cadcraft_engine::View {
+                    center: v.center
+                        - Vec2::new(f64::from(touch.translation_delta.x) / nav.xf.scale, -f64::from(touch.translation_delta.y) / nav.xf.scale),
+                    height: v.height,
+                });
+            }
+            ui.ctx().request_repaint();
+        }
+    }
+}
+
+/// CADCRAFT_MOBILE_PAN_MODE
+/// In mobile Pan Mode, one-finger primary dragging navigates the viewport instead of selecting or
+/// placing CAD entities. Returns whether Pan Mode is on.
+fn handle_mobile_pan(app: &mut CadApp, ui: &egui::Ui, response: &egui::Response, scale: f64) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    let mobile_pan = ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::unique("cadcraft-mobile-pan-enabled")).unwrap_or(false));
+    #[cfg(not(target_arch = "wasm32"))]
+    let mobile_pan = false;
+
+    if mobile_pan {
+        let delta = ui.input(|i| i.pointer.delta());
+        if response.dragged_by(egui::PointerButton::Primary) && delta != egui::Vec2::ZERO {
+            if let Ok(st) = app.session.state_mut() {
+                let v = st.view();
+                st.set_view_quiet(cadcraft_engine::View {
+                    center: v.center - Vec2::new(f64::from(delta.x) / scale, -f64::from(delta.y) / scale),
+                    height: v.height,
+                });
+            }
+            ui.ctx().request_repaint();
+        }
+
+        // Paint the drawing normally, but prevent this gesture
+        // from reaching entity selection and point-placement logic.
+        if response.dragged_by(egui::PointerButton::Primary) {
+            app.canvas.drag_window = false;
+            app.session.pending_window = None;
+        }
+    }
+    mobile_pan
 }
 
 fn handle_button_navigation(app: &mut CadApp, nav: &Navigation<'_>, inside: bool) {
@@ -680,6 +735,7 @@ struct PromptClickContext<'a> {
     inside: bool,
     middle_down: bool,
     primary_clicked: bool,
+    mobile_pan: bool,
     response: &'a egui::Response,
 }
 
@@ -690,7 +746,14 @@ fn collect_prompt_clicks(app: &mut CadApp, ui: &egui::Ui, context: PromptClickCo
         && app.session.pending_window.is_none()
         && !app.session.realtime_zoom_active();
     let pressed_primary = context.primary_clicked || (point_prompt && context.response.drag_stopped_by(egui::PointerButton::Primary));
-    if point_prompt && context.inside && pressed_primary && !context.middle_down && app.cmd.options.is_none() && app.cmd.buffer.is_empty() {
+    if !context.mobile_pan
+        && point_prompt
+        && context.inside
+        && pressed_primary
+        && !context.middle_down
+        && app.cmd.options.is_none()
+        && app.cmd.buffer.is_empty()
+    {
         let releases: Vec<egui::Pos2> = ui.input(|i| {
             i.events
                 .iter()
@@ -760,6 +823,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     });
     let navigation = Navigation { rect, tiles: &tiles, response: &resp, xf, pointer };
     let Some((inside, on_menu)) = navigate_canvas(app, ui, &navigation) else { return };
+    let mobile_pan = handle_mobile_pan(app, ui, &resp, scale);
     let PointerInput { hover_pos, mods, middle_down, pressed_primary, pressed_secondary, dbl_primary, .. } = pointer;
     // Re-read the view after navigation.
     let view = app.session.state().map(|s| s.view()).unwrap_or(view);
@@ -781,7 +845,8 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         app,
         DoubleClickContext {
             inside,
-            double: dbl_primary,
+            // Pan Mode's taps navigate: a double tap edits nothing.
+            double: dbl_primary && !mobile_pan,
             hover: hover_pos,
             xf,
             xf_paper,
@@ -793,8 +858,11 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         return;
     };
 
-    let pressed_primary =
-        collect_prompt_clicks(app, ui, PromptClickContext { rect, xf, inside, middle_down, primary_clicked: pressed_primary, response: &resp });
+    let pressed_primary = collect_prompt_clicks(
+        app,
+        ui,
+        PromptClickContext { rect, xf, inside, middle_down, primary_clicked: pressed_primary, mobile_pan, response: &resp },
+    );
 
     let (raw_world, dyn_frame) = update_canvas_cursor(app, ui, &xf, inside, hover_pos);
 
@@ -832,7 +900,8 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     }
     let cycled = pressed_primary && !middle_down && cycle_click(app, &xf, hover_pos, raw_world.filter(|_| inside), mods.shift);
     // Clicks.
-    if inside
+    if !mobile_pan
+        && inside
         && pressed_primary
         && !middle_down
         && !cycled
@@ -871,7 +940,8 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     if !app.session.settings.pickdrag {
         app.canvas.drag_window = false;
     }
-    if app.session.settings.pickdrag
+    if !mobile_pan
+        && app.session.settings.pickdrag
         && resp.drag_started_by(egui::PointerButton::Primary)
         && !middle_down
         && app.canvas.cycle.is_none()

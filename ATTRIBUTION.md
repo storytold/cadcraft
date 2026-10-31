@@ -38,6 +38,16 @@ Generated-in-code assets are original and have no file to list:
 | `assets/app-icon/hicolor/64x64/apps/ai.storyteller.cadcraft.png` | CADCraft contributors | generated from `assets/app-icon/cadcraft-1024.png` | MIT OR Apache-2.0 | Linux hicolor icon |
 | `assets/app-icon/cadcraft.icns` | CADCraft contributors | generated (packaging/icons.sh) | MIT OR Apache-2.0 | macOS icon |
 | `assets/app-icon/cadcraft.ico` | CADCraft contributors | generated (packaging/icons.sh) | MIT OR Apache-2.0 | Windows icon |
+| `apps/cadcraft-android/app/src/main/res/mipmap-hdpi/ic_launcher.png` | CADCraft contributors | generated from `assets/app-icon/cadcraft-1024.png` | MIT OR Apache-2.0 | Android launcher icon |
+| `apps/cadcraft-android/app/src/main/res/mipmap-hdpi/ic_launcher_round.png` | CADCraft contributors | generated from `assets/app-icon/cadcraft-1024.png` | MIT OR Apache-2.0 | Android launcher icon |
+| `apps/cadcraft-android/app/src/main/res/mipmap-mdpi/ic_launcher.png` | CADCraft contributors | generated from `assets/app-icon/cadcraft-1024.png` | MIT OR Apache-2.0 | Android launcher icon |
+| `apps/cadcraft-android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png` | CADCraft contributors | generated from `assets/app-icon/cadcraft-1024.png` | MIT OR Apache-2.0 | Android launcher icon |
+| `apps/cadcraft-android/app/src/main/res/mipmap-xhdpi/ic_launcher.png` | CADCraft contributors | generated from `assets/app-icon/cadcraft-1024.png` | MIT OR Apache-2.0 | Android launcher icon |
+| `apps/cadcraft-android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png` | CADCraft contributors | generated from `assets/app-icon/cadcraft-1024.png` | MIT OR Apache-2.0 | Android launcher icon |
+| `apps/cadcraft-android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png` | CADCraft contributors | generated from `assets/app-icon/cadcraft-1024.png` | MIT OR Apache-2.0 | Android launcher icon |
+| `apps/cadcraft-android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png` | CADCraft contributors | generated from `assets/app-icon/cadcraft-1024.png` | MIT OR Apache-2.0 | Android launcher icon |
+| `apps/cadcraft-android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png` | CADCraft contributors | generated from `assets/app-icon/cadcraft-1024.png` | MIT OR Apache-2.0 | Android launcher icon |
+| `apps/cadcraft-android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png` | CADCraft contributors | generated from `assets/app-icon/cadcraft-1024.png` | MIT OR Apache-2.0 | Android launcher icon |
 | `assets/app-icon/cadcraft-64.png` | CADCraft contributors | generated | MIT OR Apache-2.0 | |
 | `assets/app-icon/cadcraft-256.png` | CADCraft contributors | generated | MIT OR Apache-2.0 | |
 | `assets/app-icon/cadcraft-1024.png` | CADCraft contributors | generated | MIT OR Apache-2.0 | |
