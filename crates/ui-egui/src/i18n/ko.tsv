@@ -1247,3 +1247,10 @@ menu	Modify	수정
 	Check for Updates…	업데이트 확인…
 	CADCraft is up to date.	CADCraft가 최신 버전입니다.
 	Could not check for updates.	업데이트를 확인하지 못했습니다.
+	AutoSnap settings	AutoSnap 설정
+	Marker	마커
+	Magnet	자석
+	Display AutoSnap tooltip	AutoSnap 툴팁 표시
+	Display AutoSnap aperture box	AutoSnap 조준 상자 표시
+	Display AutoTrack tooltip	AutoTrack 툴팁 표시
+	The magnet locks the crosshair onto the snap point; the aperture box shows how near the cursor must come to find one.	자석은 십자선을 스냅점에 붙이고, 조준 상자는 커서가 얼마나 가까이 가야 스냅점을 찾는지 보여 줍니다.

@@ -1228,6 +1228,13 @@ menu	Modify	Hiệu chỉnh
 	Check for Updates…	Kiểm tra cập nhật…
 	CADCraft is up to date.	CADCraft đã là phiên bản mới nhất.
 	Could not check for updates.	Không thể kiểm tra cập nhật.
+	AutoSnap settings	Thiết lập AutoSnap
+	Marker	Dấu đánh dấu
+	Magnet	Nam châm
+	Display AutoSnap tooltip	Hiển thị chú giải AutoSnap
+	Display AutoSnap aperture box	Hiển thị khung khẩu độ AutoSnap
+	Display AutoTrack tooltip	Hiển thị chú giải AutoTrack
+	The magnet locks the crosshair onto the snap point; the aperture box shows how near the cursor must come to find one.	Nam châm giữ con trỏ chữ thập tại điểm bắt; khung khẩu độ cho biết con trỏ cần tiến gần đến mức nào để tìm thấy một điểm.
 	3D Mouse	Chuột 3D
 	3D Mouse Navigation	Điều hướng chuột 3D
 	3D Mouse...	Chuột 3D...

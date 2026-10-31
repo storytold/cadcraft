@@ -1367,3 +1367,10 @@ menu	Modify	Edita
 	Check for Updates…	Verifica aggiornamenti…
 	CADCraft is up to date.	CADCraft è aggiornato.
 	Could not check for updates.	Impossibile verificare gli aggiornamenti.
+	AutoSnap settings	Impostazioni AutoSnap
+	Marker	Marcatore
+	Magnet	Calamita
+	Display AutoSnap tooltip	Mostra il suggerimento AutoSnap
+	Display AutoSnap aperture box	Mostra il riquadro di apertura AutoSnap
+	Display AutoTrack tooltip	Mostra il suggerimento AutoTrack
+	The magnet locks the crosshair onto the snap point; the aperture box shows how near the cursor must come to find one.	La calamita aggancia il mirino al punto di snap; il riquadro di apertura mostra quanto il cursore deve avvicinarsi per trovarlo.

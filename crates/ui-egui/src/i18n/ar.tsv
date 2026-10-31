@@ -1242,3 +1242,10 @@ menu	View	عرض
 	Check for Updates…	التحقق من وجود تحديثات…
 	CADCraft is up to date.	CADCraft محدّث.
 	Could not check for updates.	تعذّر التحقق من وجود تحديثات.
+	AutoSnap settings	إعدادات AutoSnap
+	Marker	العلامة
+	Magnet	المغناطيس
+	Display AutoSnap tooltip	إظهار تلميح AutoSnap
+	Display AutoSnap aperture box	إظهار مربع فتحة AutoSnap
+	Display AutoTrack tooltip	إظهار تلميح AutoTrack
+	The magnet locks the crosshair onto the snap point; the aperture box shows how near the cursor must come to find one.	يثبّت المغناطيس الشعيرات المتصالبة على نقطة الالتقاط؛ ويبيّن مربع الفتحة مدى قرب المؤشر اللازم للعثور عليها.

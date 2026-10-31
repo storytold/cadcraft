@@ -1044,3 +1044,10 @@
 	Check for Updates…	Nach Updates suchen…
 	CADCraft is up to date.	CADCraft ist auf dem neuesten Stand.
 	Could not check for updates.	Die Suche nach Updates ist fehlgeschlagen.
+	AutoSnap settings	AutoSnap-Einstellungen
+	Marker	Markierung
+	Magnet	Magnet
+	Display AutoSnap tooltip	AutoSnap-Hinweis anzeigen
+	Display AutoSnap aperture box	AutoSnap-Fangrahmen anzeigen
+	Display AutoTrack tooltip	AutoTrack-Hinweis anzeigen
+	The magnet locks the crosshair onto the snap point; the aperture box shows how near the cursor must come to find one.	Der Magnet zieht das Fadenkreuz auf den Fangpunkt; der Fangrahmen zeigt, wie nah der Cursor an einen Punkt heran muss, um ihn zu finden.
