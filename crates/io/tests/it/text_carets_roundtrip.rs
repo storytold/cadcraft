@@ -87,8 +87,18 @@ fn carets_are_written_escaped_and_read_back() {
 }
 
 #[test]
-fn entmod_of_entget_keeps_the_strings() {
-    // entget gives the groups as the file has them (as for MTEXT), and entmod reads them back.
+fn entget_shows_plain_carets_and_entmake_takes_them() {
+    let mut d = Drawing::new_metric();
+    d.add(&Space::Model, Common::default(), EntityKind::Text(text("x^ y 10^2"))).unwrap();
+    let e = d.model.iter().next().unwrap();
+    let (kind, groups) = cadcraft_io::entity_groups(&d, e);
+    assert!(groups.iter().any(|t| t.code == 1 && t.str() == "x^ y 10^2"), "{groups:?}");
+    // entmod of entget changes nothing; entmake takes a plain string.
+    let (_, back) = cadcraft_io::entity_from_groups(&kind, &groups).unwrap();
+    assert_eq!(strings(&back), ["x^ y 10^2"]);
+    let made = [cadcraft_dxf::Tag::s(1, "p^ q")];
+    assert_eq!(strings(&cadcraft_io::entity_from_groups("TEXT", &made).unwrap().1), ["p^ q"]);
+    // Every kind, and a DIMENSION's style name (also group 3) as it is.
     let d = drawing();
     for e in d.model.iter() {
         let (kind, groups) = cadcraft_io::entity_groups(&d, e);

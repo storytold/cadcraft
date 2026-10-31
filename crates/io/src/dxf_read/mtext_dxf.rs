@@ -49,6 +49,21 @@ pub(crate) fn unescape_carets(s: &str) -> String {
     s.replace("^ ", "^")
 }
 
+/// Apply `f` ([`escape_carets`] or [`unescape_carets`]) to the groups of a `kind` record that hold
+/// an escaped string: the text (1), and an ATTDEF's prompt (3). An embedded MTEXT (from group 101)
+/// has its own encoding and is left alone. AutoLISP's entget and entmake/entmod use it.
+pub(crate) fn map_carets(kind: &str, tags: &mut [Tag], f: fn(&str) -> String) {
+    let kind = kind.to_ascii_uppercase();
+    if !matches!(kind.as_str(), "TEXT" | "ATTRIB" | "ATTDEF" | "DIMENSION") {
+        return;
+    }
+    for t in tags.iter_mut().take_while(|t| t.code != 101) {
+        if t.code == 1 || (t.code == 3 && kind == "ATTDEF") {
+            *t = Tag::s(t.code, f(&t.str()));
+        }
+    }
+}
+
 /// Encode the contents for a DXF string: a tab as `^I`, a line feed as `^J`, a caret as `^ `;
 /// other control characters (which draw nothing) are dropped.
 pub(crate) fn encode_contents(s: &str) -> String {
