@@ -366,6 +366,128 @@ fn entity_lists_round_trip() {
 }
 
 #[test]
+fn entity_lists_carry_xdata_in_group_minus_3() {
+    let mut s = session();
+    // entmake with a -3 group puts the xdata on the new entity; entget shows it only when asked.
+    let made = ok(
+        &mut s,
+        "(entmake '((0 . \"LINE\") (10 0 0 0) (11 5 0 0) (-3 (\"ACME\" (1000 . \"D-07\") (1070 . 3) (1040 . 2.5) (1010 1.0 2.0 0.0) (1005 . \"2A\")) (\"PE_URL\" (1000 . \"https://example.com\")))))",
+    );
+    assert!(made.contains("LINE"));
+    assert_eq!(ok(&mut s, "(assoc -3 (entget (entlast)))"), "nil");
+    assert_eq!(
+        ok(&mut s, "(cdr (assoc -3 (entget (entlast) '(\"acme\"))))"),
+        "((\"ACME\" (1000 . \"D-07\") (1070 . 3) (1040 . 2.5) (1010 1.0 2.0 0.0) (1005 . \"2A\")))"
+    );
+    assert_eq!(ok(&mut s, "(length (cdr (assoc -3 (entget (entlast) '(\"*\")))))"), "2");
+    assert_eq!(ok(&mut s, "(length (cdr (assoc -3 (entget (entlast) '(\"PE_*\" \"nope\")))))"), "1");
+    assert_eq!(ok(&mut s, "(assoc -3 (entget (entlast) '(\"nope\")))"), "nil");
+    // The xdata is what the drawing holds (the API sees it too).
+    let x = s.execute("entities", &serde_json::json!({"xdata": "ACME"})).unwrap();
+    assert_eq!(x["entities"][0]["xdata"]["ACME"][1], serde_json::json!([1070, 3]));
+    // entmod without -3 keeps the xdata; with -3 it replaces the named applications' data and
+    // removes one listed without groups; the others stay.
+    ok(&mut s, "(setq d (entget (entlast))) (entmod (subst (cons 8 \"WALLS\") (assoc 8 d) d))");
+    assert_eq!(ok(&mut s, "(length (cdr (assoc -3 (entget (entlast) '(\"*\")))))"), "2");
+    ok(&mut s, "(entmod (append (entget (entlast)) (list (list -3 (list \"ACME\" (cons 1070 9))))))");
+    assert_eq!(ok(&mut s, "(cdr (assoc -3 (entget (entlast) '(\"ACME\"))))"), "((\"ACME\" (1070 . 9)))");
+    assert_eq!(ok(&mut s, "(length (cdr (assoc -3 (entget (entlast) '(\"*\")))))"), "2");
+    ok(&mut s, "(entmod (append (entget (entlast)) '((-3 (\"PE_URL\")))))");
+    assert_eq!(ok(&mut s, "(cdr (assoc -3 (entget (entlast) '(\"*\"))))"), "((\"ACME\" (1070 . 9)))");
+    // Bad xdata is refused as a bad list (nil), and nothing changes.
+    for bad in [
+        "(-3 (\"ACME\" (1002 . \"{\")))",
+        "(-3 (\"ACME\" (8 . \"0\")))",
+        "(-3 (\"ACME\" (1070 . 70000)))",
+        "(-3 (\"ACME\" (1010 1.0)))",
+        "(-3 (\"CADCRAFT\" (1000 . \"x\")))",
+        "(-3 (\"\" (1000 . \"x\")))",
+        "(-3 (7 (1000 . \"x\")))",
+        "(-3 (\"ACME\" 5))",
+    ] {
+        assert_eq!(ok(&mut s, &format!("(entmod (append (entget (entlast)) '({bad})))")), "nil", "{bad}");
+        assert_eq!(ok(&mut s, "(cdr (assoc -3 (entget (entlast) '(\"*\"))))"), "((\"ACME\" (1070 . 9)))", "{bad}");
+    }
+    assert!(eval(&mut s, "(entget (entlast) \"ACME\")").is_err(), "the second argument is a list");
+    // regapp: the name when new, nil once registered (by regapp or by xdata an object carries);
+    // the APPID table lists both.
+    assert_eq!(ok(&mut s, "(regapp \"ACME\")"), "nil");
+    assert_eq!(ok(&mut s, "(regapp \"MYAPP\")"), "\"MYAPP\"");
+    assert_eq!(ok(&mut s, "(regapp \"myapp\")"), "nil");
+    assert_eq!(ok(&mut s, "(regapp \"bad*name\")"), "nil");
+    assert_eq!(ok(&mut s, "(cdr (assoc 2 (tblsearch \"APPID\" \"acme\")))"), "\"ACME\"");
+    assert_eq!(ok(&mut s, "(cdr (assoc 2 (tblsearch \"APPID\" \"MYAPP\")))"), "\"MYAPP\"");
+    assert_eq!(ok(&mut s, "(tblsearch \"APPID\" \"PE_URL\")"), "nil");
+}
+
+#[test]
+fn entmake_refuses_xdata_over_the_object_limit_across_applications() {
+    // Each application's groups fit the per-application cap; together they exceed what an object
+    // may hold, so the list is refused (nil) and nothing is made.
+    let mut s = session();
+    ok(&mut s, "(entmake '((0 . \"LINE\") (10 0 0 0) (11 5 0 0)))");
+    let last = ok(&mut s, "(entlast)");
+    let groups = "(1000 . \"x\") ".repeat(cadcraft_doc::MAX_XDATA_GROUPS / 2 + 8);
+    let code = format!("(entmake '((0 . \"LINE\") (10 0 0 0) (11 9 0 0) (-3 (\"A1\" {groups}) (\"A2\" {groups}))))");
+    assert_eq!(ok(&mut s, &code), "nil");
+    assert_eq!(ok(&mut s, "(entlast)"), last, "nothing was made");
+    // Half of that on one application is within the limit and is made.
+    let code = format!("(entmake '((0 . \"LINE\") (10 0 0 0) (11 9 0 0) (-3 (\"A1\" {groups}))))");
+    assert!(ok(&mut s, &code).contains("LINE"));
+    assert_ne!(ok(&mut s, "(entlast)"), last);
+}
+
+#[test]
+fn a_dotted_minus_3_group_is_refused() {
+    // `(-3 . 7)` names no applications; it is a bad list (nil), not an empty one.
+    let mut s = session();
+    ok(&mut s, "(entmake '((0 . \"LINE\") (10 0 0 0) (11 5 0 0) (-3 (\"ACME\" (1070 . 9)))))");
+    let last = ok(&mut s, "(entlast)");
+    assert_eq!(ok(&mut s, "(entmake '((0 . \"LINE\") (10 0 0 0) (11 9 0 0) (-3 . 7)))"), "nil");
+    assert_eq!(ok(&mut s, "(entlast)"), last, "nothing was made");
+    assert_eq!(ok(&mut s, "(entmod (append (entget (entlast)) '((-3 . 7))))"), "nil");
+    assert_eq!(ok(&mut s, "(cdr (assoc -3 (entget (entlast) '(\"*\"))))"), "((\"ACME\" (1070 . 9)))");
+    // The same one level down: an application whose groups are not a proper list is refused,
+    // not read as "no groups" (which would remove its data), and a dotted tail after real
+    // groups is not dropped.
+    for bad in ["(\"ACME\" . 7)", "(\"ACME\" (1070 . 1) . 5)", "(\"NEW\" . \"x\")"] {
+        assert_eq!(ok(&mut s, &format!("(entmod (append (entget (entlast)) '((-3 {bad}))))")), "nil", "{bad}");
+        assert_eq!(ok(&mut s, "(cdr (assoc -3 (entget (entlast) '(\"*\"))))"), "((\"ACME\" (1070 . 9)))", "{bad}");
+        assert_eq!(ok(&mut s, &format!("(entmake '((0 . \"LINE\") (10 0 0 0) (11 9 0 0) (-3 {bad})))")), "nil", "{bad}");
+        assert_eq!(ok(&mut s, "(entlast)"), last, "{bad}");
+    }
+}
+
+#[test]
+fn runs_of_one_application_in_any_case_are_one_list() {
+    // A file with `ACME` and `acme` runs on one entity: entget shows one application with every
+    // group, and writing that list back with entmod keeps them all.
+    let dxf = "0\nSECTION\n2\nENTITIES\n0\nLINE\n5\n2A\n8\n0\n10\n0\n20\n0\n30\n0\n11\n10\n21\n0\n31\n0\n\
+        1001\nACME\n1070\n1\n1001\nacme\n1070\n2\n1001\nOTHER\n1000\nx\n0\nENDSEC\n0\nEOF\n";
+    let mut s = session();
+    s.open_drawing(cadcraft_io::read_dxf(dxf.as_bytes()).unwrap(), "runs", None);
+    let want = "((\"ACME\" (1070 . 1) (1070 . 2)) (\"OTHER\" (1000 . \"x\")))";
+    assert_eq!(ok(&mut s, "(cdr (assoc -3 (entget (entlast) '(\"*\"))))"), want);
+    assert_eq!(ok(&mut s, "(cdr (assoc -3 (entget (entlast) '(\"acme\"))))"), "((\"ACME\" (1070 . 1) (1070 . 2)))");
+    assert!(ok(&mut s, "(entmod (entget (entlast) '(\"*\")))").contains("LINE"));
+    assert_eq!(ok(&mut s, "(cdr (assoc -3 (entget (entlast) '(\"*\"))))"), want);
+}
+
+#[test]
+fn acad_xdata_of_a_dimension_is_refused_but_kept_on_other_entities() {
+    // A dimension's ACAD run is its DSTYLE overrides, written from the model: raw ACAD groups
+    // on it are refused (nil, nothing changes). On a line, ACAD is foreign data and stays.
+    let mut s = session();
+    s.script("dimlinear 0,0 10,0 5,-3\n").unwrap();
+    assert_eq!(ok(&mut s, "(cdr (assoc 0 (entget (entlast))))"), "\"DIMENSION\"");
+    assert_eq!(ok(&mut s, "(entmod (append (entget (entlast)) '((-3 (\"ACAD\" (1070 . 1))))))"), "nil");
+    assert_eq!(ok(&mut s, "(assoc -3 (entget (entlast) '(\"*\")))"), "nil");
+    let made = ok(&mut s, "(entmake '((0 . \"LINE\") (10 0 0 0) (11 5 0 0) (-3 (\"ACAD\" (1000 . \"MINE\") (1070 . 42)))))");
+    assert!(made.contains("LINE"));
+    assert_eq!(ok(&mut s, "(cdr (assoc -3 (entget (entlast) '(\"ACAD\"))))"), "((\"ACAD\" (1000 . \"MINE\") (1070 . 42)))");
+}
+
+#[test]
 fn entity_lists_hold_angles_in_radians() {
     let mut s = session();
     let near = |s: &mut Session, expr: &str, want: &str| {

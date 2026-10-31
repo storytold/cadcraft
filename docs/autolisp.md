@@ -76,7 +76,7 @@ reached", malformed source is a reader error, and every built-in checks its argu
 - **Drawing:** `command` (also `command-s`, `vl-cmdf`) with `pause`, entity names and `entsel`
   lists at prompts picking one object (a bare name picks at its DXF group 10 point, as in AutoCAD),
   a command left open for the next call, and `(command)` to cancel; `getvar setvar`; `entget entmake entmod entdel entlast
-  entnext entupd handent`; `ssget` (modes X, L, P, I, W, C, F, WP, CP, a point, or the user
+  entnext entupd handent regapp`; `ssget` (modes X, L, P, I, W, C, F, WP, CP, a point, or the user
   selecting; filters with wildcards and `-4` operators) `ssadd ssdel sslength ssname ssmemb
   sssetfirst ssgetfirst`; `tblsearch tblnext` (LAYER, LTYPE, STYLE, BLOCK, DIMSTYLE, APPID)
 - **Input:** `initget getpoint getcorner getdist getangle getorient getreal getint getstring
@@ -90,6 +90,18 @@ Entity lists use the DXF group codes of CADCraft's DXF files: what `entget` retu
 DXF file holds for the object, plus `-1` (its name) and `410` (its layout). Angles (groups 50–58)
 are in radians, as in AutoCAD, where the file holds degrees; `entmake`, `entmod` and `ssget`
 filters take radians too.
+
+Extended data (xdata) is the `-3` group, as in AutoCAD. `(entget ename '("APP" "PE_*"))` adds
+`(-3 ("APP" (1000 . "text") (1070 . 3) (1040 . 2.5) (1010 x y z) (1005 . "2A") …) …)` for the
+applications whose names match (any case, `wcmatch` wildcards; `'("*")` lists every
+application); without the second argument the list holds no xdata. `entmake` puts a list's `-3`
+group on the new entity. `entmod` keeps an entity's xdata unless the list has a `-3` group,
+which replaces the data of the applications it names and removes one listed with no groups
+(`(-3 ("APP"))`); other applications stay. Group codes, values and brace nesting are checked as
+in a file (`entmod` and `entmake` answer nil to a bad `-3`). `(regapp "APP")` returns the name
+when it is new and nil when the drawing already has that application's xdata (or `regapp`
+registered it); saving writes an APPID record for every application with xdata anyway, and
+`tblsearch "APPID"` lists them.
 
 `entmake` defines blocks: a BLOCK list (2 name, 70 flags, 10 base point, 4 description) begins a
 definition, the entities made after it go into the block instead of the drawing, and an ENDBLK

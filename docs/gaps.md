@@ -1,6 +1,6 @@
 # Where CADCraft falls short of AutoCAD
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-30 · **Change:** minor (QSAVE asks before losing content and keeps a `.bak`: rows 1, FF1 and F20 updated) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-30 · **Change:** minor (xdata through `entities`, `properties.set` and LISP `-3`: FF1 and E1 narrowed) · **Target:** Autodesk AutoCAD 2027
 
 Every known shortfall, one row each, ranked within each section by user impact. This is the work
 list: agents pick from here (top of a section first). A PR names the rows it closes in its
@@ -73,7 +73,7 @@ Detail: [file-format-parity.md](file-format-parity.md).
 
 | # | Gap | User impact | Est. |
 |---|---|---|---|
-| FF1 | **[alpha blocker]** Round-trip what we don't model. DXF done (#528): unknown entities and objects (with their CLASS records), foreign xdata (hyperlinks included), extension dictionaries, persistent reactors, DICTIONARYVAR and XRECORDs, layer states, colour book colours, references remapped on save; IMAGE, VIEW/UCS, groups, block descriptions, true colours, transparency (#201, #204, #208, #209, #213, #223); WIPEOUT and gradients (#147, #162). Left: through DWG, acadrust drops custom-class entities and objects, xdata on table records and blocks, entity colour book names and reactors; UCS elevation; MTEXT background colours; unknown entities follow only layer edits, and renamed layers and blocks lose their foreign data A user's QSAVE now asks before such a loss and keeps the previous file as `.bak`; the loss itself remains. | High | 6–10 |
+| FF1 | **[alpha blocker]** Round-trip what we don't model. DXF done (#528): unknown entities and objects (with their CLASS records), foreign xdata (hyperlinks included), extension dictionaries, persistent reactors, DICTIONARYVAR and XRECORDs, layer states, colour book colours, references remapped on save; IMAGE, VIEW/UCS, groups, block descriptions, true colours, transparency (#201, #204, #208, #209, #213, #223); WIPEOUT and gradients (#147, #162). Left: through DWG, acadrust drops custom-class entities and objects, xdata on table records and blocks, entity colour book names and reactors; UCS elevation; MTEXT background colours; unknown entities follow only layer edits, and renamed layers and blocks lose their foreign data; a user's QSAVE now asks before such a loss and keeps the previous file as `.bak`, the loss itself remains; an entity's xdata is readable and editable through `entities`/`properties.set` and LISP's `-3` group, that of table records and blocks is not | High | 6–10 |
 | FF2 | Multileader leftovers (native MULTILEADER read/write landed, #459): several landings per multileader (extra leader roots are folded into the lines), per-object overrides (leader colour and linetype, arrowhead symbol, text frame), annotative scale contexts; check the text placement of our MULTILEADER output in AutoCAD | Medium | 3–5 |
 | FF3 | Save-version leftovers (DXF/DWG 2000–2018, binary DXF, SAVEAS `version`/`binary` and the default save version landed, #421): no R14 DWG or R12 DXF output; the Save dialog can't pick the version per file (the file picker doesn't report the chosen type; File > Default Save Format sets it); no command-line SAVEAS format prompt | Low | 2–4 |
 | FF4 | Code-page leftovers (pre-2007 DXF read in their `$DWGCODEPAGE` landed, #505): Johab (ANSI_1361) and DOS 855/857/860–865/869 read as ANSI_1252; saving declares `ANSI_1252` instead of the file's code page (the text is pure ASCII, so still correct); acadrust approximates DOS code pages in pre-2007 DWG (DOS437 as 866, DOS850 as 1252) | Low | 1–2 |
@@ -133,7 +133,7 @@ Detail: [localization-parity.md](localization-parity.md).
 
 | # | Gap | Est. |
 |---|---|---|
-| E1 | AutoLISP beyond the core (#758 landed the language, `command`, entity lists, selection sets, `get…` input, APPLOAD, `(load)`, `c:` commands and `acad.lsp`/`acaddoc.lsp` at startup; #1820 gave APPLOAD its `.lsp` file picker): Visual LISP ActiveX (`vlax-`, `vla-`), DCL dialogs, reactors, an APPLOAD Startup Suite, UCS-aware `trans` | 26–46 |
+| E1 | AutoLISP beyond the core (#758 landed the language, `command`, entity lists, selection sets, `get…` input, APPLOAD, `(load)`, `c:` commands and `acad.lsp`/`acaddoc.lsp` at startup; #1820 gave APPLOAD its `.lsp` file picker; xdata: `entget` with an application list, the `-3` group in `entmod`/`entmake`, `regapp`): Visual LISP ActiveX (`vlax-`, `vla-`), DCL dialogs, reactors, an APPLOAD Startup Suite, UCS-aware `trans` | 26–46 |
 | E3 | Express Tools equivalents (SUPERHATCH; NCOPY, BREAKLINE, TXT2MTXT, BURST and MOCORO exist: BREAKLINE's Block option takes a block of the drawing, not a `.dwg` file, and TXT2MTXT's Settings are command-line prompts rather than a dialog, without the uniform line spacing option) | 24–40 |
 | E4 | Plug-in API (owner decision: Rust/WASM plug-ins rather than ObjectARX/.NET) | 30–50 |
 | E5 | CUI customisation (the alias editor, ALIASEDIT's Command Aliases dialog, landed, #1381; edits stay for the session) | 13–23 |
@@ -150,6 +150,7 @@ Detail: [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-30 | minor | Xdata through the API: `entities {xdata}` and `properties` list an entity's extended data by application, `properties.set {xdata}` replaces or removes one application's data, AutoLISP `entget`/`entmod`/`entmake` carry the `-3` group and `regapp` registers names: FF1 and E1 narrowed |
 | 2026-10-30 | minor | QSAVE asks before replacing a file with content the DWG writer can't keep, and ISAVEBAK keeps the previous file as `.bak`: row 1 narrowed, FF1 and F20 updated |
 | 2026-10-25 | minor | Named Viewports (View ▸ Viewports ▸ Named Viewports..., `vports.named`) lists the saved viewport configurations with a preview and the current one's name, and restores or deletes one; in a layout Restore places it as MVIEW Restore does: U11 narrowed. F15 and U11 no longer list MVIEW Restore (#633), and F21 no longer says PURGE skips multiline styles |
 | 2026-10-25 | minor | DIMTFILL limits: with DIMTFILL 1 (the drawing's background color) the written `*D` block and EXPLODE keep no background mask (a WIPEOUT over the text box would), and a true-color DIMTFILLCLR is written to DXF as the nearest ACI: F7 updated |
