@@ -278,9 +278,23 @@ impl Paragraphs {
                     let code = chars.get(i + 1).copied().unwrap_or(' ');
                     i += 2;
                     match code {
-                        'P' => brk(&mut out, cur, false),
+                        'P' | 'X' | 'x' => brk(&mut out, cur, false),
                         'N' => brk(&mut out, cur, true),
                         '~' | '\\' | '{' | '}' | 'L' | 'l' | 'O' | 'o' | 'K' | 'k' => {}
+                        'U' if chars.get(i) == Some(&'+') => {
+                            let mut j = i + 1;
+                            while j < i + 5 && chars.get(j).is_some_and(|c| c.is_ascii_hexdigit()) {
+                                j += 1;
+                            }
+                            i = j;
+                        }
+                        'M' if chars.get(i) == Some(&'+') => {
+                            let mut j = i + 1;
+                            while j < i + 6 && chars.get(j).is_some_and(|c| c.is_ascii_hexdigit()) {
+                                j += 1;
+                            }
+                            i = j;
+                        }
                         'S' => {
                             let mut j = i;
                             while let Some(&ch) = chars.get(j) {
