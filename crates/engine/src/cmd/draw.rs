@@ -34,7 +34,7 @@ use polygon::{PolygonM, run_polygon};
 use solid::{SolidM, run_solid};
 use spline::{SplineM, run_spline};
 use text::{MTextM, TextM, run_mtext, run_text};
-pub(crate) use text::{baseline_end, justify, spans_baseline, styled_width};
+pub(crate) use text::{baseline_end, justify, justify_code, spans_baseline, styled_width};
 
 /// Every draw command's spec: JSON parameters, menu path, aliases and the interactive prompt
 /// machine each command starts.

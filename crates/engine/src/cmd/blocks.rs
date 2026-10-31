@@ -447,27 +447,6 @@ fn below_point(t: &Text) -> Vec2 {
     t.justify_point() + Vec2::from_angle(t.rotation - std::f64::consts::FRAC_PI_2) * (t.height * 5.0 / 3.0)
 }
 
-/// Justification → the name TEXT's and ATTDEF's status line gives it.
-fn justify_name(j: (HAlign, VAlign)) -> &'static str {
-    match j {
-        (HAlign::Left, VAlign::Baseline) => "Left",
-        (HAlign::Center, VAlign::Baseline) => "Center",
-        (HAlign::Right, VAlign::Baseline) => "Right",
-        (HAlign::Aligned, _) => "Align",
-        (HAlign::Middle, _) => "Middle",
-        (HAlign::Fit, _) => "Fit",
-        (HAlign::Left, VAlign::Top) => "TL",
-        (HAlign::Center, VAlign::Top) => "TC",
-        (HAlign::Right, VAlign::Top) => "TR",
-        (HAlign::Left, VAlign::Middle) => "ML",
-        (HAlign::Center, VAlign::Middle) => "MC",
-        (HAlign::Right, VAlign::Middle) => "MR",
-        (HAlign::Left, VAlign::Bottom) => "BL",
-        (HAlign::Center, VAlign::Bottom) => "BC",
-        (HAlign::Right, VAlign::Bottom) => "BR",
-    }
-}
-
 const JUSTIFY_ERROR: &str = "`justify` must be L, C, R, A, M, F, TL, TC, TR, ML, MC, MR, BL, BC or BR";
 
 fn run_attdef(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1194,8 +1173,10 @@ impl AttdefM {
         let d = s.doc()?;
         let height = if fixed > 0.0 { fixed } else { d.header.f64("TEXTSIZE", 0.2) };
         let anno = if d.text_style(&style).is_some_and(|st| st.annotative) { "Yes" } else { "No" };
-        let line =
-            format!("Current text style:  \"{style}\"  Text height:  {height:.4}  Annotative:  {anno}  Justify:  {}", justify_name(self.justify()));
+        let line = format!(
+            "Current text style:  \"{style}\"  Text height:  {height:.4}  Annotative:  {anno}  Justify:  {}",
+            super::draw::justify_code(self.justify())
+        );
         s.echo(line);
         Ok(())
     }

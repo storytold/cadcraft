@@ -625,6 +625,32 @@ fn custom_properties(ui: &egui::Ui, app: &CadApp, h: cadcraft_engine::doc::Handl
     c
 }
 
+/// The "Text style" row of a TEXT or attribute definition: the drawing's styles, `style` set on
+/// the selection.
+fn text_style_row(ui: &mut egui::Ui, d: &cadcraft_engine::doc::Drawing, t: &cadcraft_engine::doc::Text, set: &mut Option<Value>, ids: &Vec<String>) {
+    prop_row(ui, "Text style", |ui| {
+        if let Some(n) = pick_menu(ui, &t.style, d.text_styles.iter().map(|st| st.name.clone())) {
+            *set = Some(json!({ "handles": ids, "style": n }));
+        }
+    });
+}
+
+/// The "Justify" row of a TEXT or attribute definition: the fifteen justifications by name,
+/// `justify` set as TEXT's code.
+fn justify_row(ui: &mut egui::Ui, t: &cadcraft_engine::doc::Text, set: &mut Option<Value>, ids: &Vec<String>) {
+    prop_row(ui, "Justify", |ui| {
+        let current = crate::attdefdlg::justification_name(t.halign, t.valign);
+        ui.menu_button(crate::i18n::justify(current), |ui| {
+            for (name, code) in crate::attdefdlg::JUSTIFICATIONS {
+                if ui.button(crate::i18n::justify(name)).clicked() {
+                    *set = Some(json!({ "handles": ids, "justify": code }));
+                    ui.close();
+                }
+            }
+        });
+    });
+}
+
 /// A greyed value computed from the geometry.
 fn read_only(ui: &mut egui::Ui, text: &str) {
     value_box(ui, crate::i18n::t(text), false, false).on_hover_text(crate::tl!("Read-only"));
@@ -1063,6 +1089,8 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                         set = Some(json!({ "handles": ids, "text": s }));
                     }
                 });
+                text_style_row(ui, d, tx, &mut set, &ids);
+                justify_row(ui, tx, &mut set, &ids);
                 num(ui, "Height", "height", len(tx.height), &mut set, &mut bad, &ids);
                 num(ui, "Rotation", "rotation", real(angles.shown(tx.rotation).to_degrees()), &mut set, &mut bad, &ids);
                 num(ui, "Width factor", "widthFactor", real(tx.width_factor), &mut set, &mut bad, &ids);
@@ -1078,22 +1106,8 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                 text_row(ui, "Tag", "tag", a.tag.clone(), &mut set, &ids);
                 text_row(ui, "Prompt", "prompt", a.prompt.clone(), &mut set, &ids);
                 text_row(ui, "Default", "text", a.text.value.clone(), &mut set, &ids);
-                prop_row(ui, "Text style", |ui| {
-                    if let Some(n) = pick_menu(ui, &a.text.style, d.text_styles.iter().map(|st| st.name.clone())) {
-                        set = Some(json!({ "handles": ids, "style": n }));
-                    }
-                });
-                prop_row(ui, "Justify", |ui| {
-                    let current = crate::attdefdlg::justification_name(a.text.halign, a.text.valign);
-                    ui.menu_button(crate::i18n::justify(current), |ui| {
-                        for (name, code) in crate::attdefdlg::JUSTIFICATIONS {
-                            if ui.button(crate::i18n::justify(name)).clicked() {
-                                set = Some(json!({ "handles": ids, "justify": code }));
-                                ui.close();
-                            }
-                        }
-                    });
-                });
+                text_style_row(ui, d, &a.text, &mut set, &ids);
+                justify_row(ui, &a.text, &mut set, &ids);
                 num(ui, "Height", "height", len(a.text.height), &mut set, &mut bad, &ids);
                 num(ui, "Rotation", "rotation", real(angles.shown(a.text.rotation).to_degrees()), &mut set, &mut bad, &ids);
                 num(ui, "Width factor", "widthFactor", real(a.text.width_factor), &mut set, &mut bad, &ids);

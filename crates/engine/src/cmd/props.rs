@@ -19,7 +19,7 @@ use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("properties", "Properties", run_get).menu(&["Modify", "Properties"]).alias(&["pr", "props", "ch"]).params("{handles?} → properties of the selection").noundo(),
-        CommandSpec::new("properties.set", "Set Properties", run_set).params("{handles?, layer?, color?, linetype?, lineweight?, ltscale?, thickness?, transparency?: \"ByLayer\" | \"ByBlock\" | 0..90, visible?, <geometry fields: radius, center, start, end, text, height, rotation…>; dimensions: textOverride, dimStyle, textHeight, arrowSize, dimScale, precision (per-dimension overrides)}"),
+        CommandSpec::new("properties.set", "Set Properties", run_set).params("{handles?, layer?, color?, linetype?, lineweight?, ltscale?, thickness?, transparency?: \"ByLayer\" | \"ByBlock\" | 0..90, visible?, <geometry fields: radius, center, start, end, text, height, rotation…>; text and attribute definitions: style, justify (L|C|R|A|M|F|TL…BR), widthFactor, position; definitions: tag, prompt, invisible, constant, verify, preset, lockPosition; dimensions: textOverride, dimStyle, textHeight, arrowSize, dimScale, precision (per-dimension overrides)}"),
         CommandSpec::new("chprop", "Change Properties", chprop::run_chprop)
             .params("as properties.set, leaving out objects on locked layers → {changed, locked} (the command line asks Color, LAyer, LType, ltScale, LWeight, Thickness and TRansparency in turn)")
             .interactive(|_| Ok(Box::new(chprop::ChpropM::new()))),
@@ -222,13 +222,13 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         .map(|n| d.dim_style(n).map(|st| st.name.clone()).ok_or_else(|| bad("properties.set", format!("dimension style `{n}` not found"))))
         .transpose()?;
     let dim_over = dim_overrides(p)?;
-    let attdef = attdef_fields(p, d)?;
+    let fields = text_fields(p, d)?;
     let anno_scale = d.current_anno_scale();
     let common = CommonEntityProperties { anno_scale: &anno_scale, color, linetype: linetype.as_deref(), lineweight: lw, transparency, thickness };
     for h in &hs {
         d.modify_entity(*h, |e| {
             set_common_properties(e, p, &common);
-            apply_kind_properties(e, p, dim_style.as_ref(), &dim_over, &attdef);
+            apply_kind_properties(e, p, dim_style.as_ref(), &dim_over, &fields);
         })?;
     }
     Ok(json!({ "changed": hs.len() }))
@@ -239,7 +239,7 @@ fn apply_kind_properties(
     params: &Value,
     dim_style: Option<&String>,
     dim_overrides: &serde_json::Map<String, Value>,
-    attdef: &AttdefFields,
+    fields: &TextFields,
 ) {
     let num = |key: &str| params.get(key).and_then(Value::as_f64).filter(|value| value.is_finite());
     match &mut entity.kind {
@@ -306,6 +306,13 @@ fn apply_kind_properties(
             if let Some(x) = num("widthFactor").filter(|x| *x > 0.0) {
                 t.width_factor = x;
             }
+            if let Some(st) = &fields.style {
+                t.style.clone_from(st);
+            }
+            if let Some((h, v)) = fields.justify {
+                let shown = t.value.clone();
+                rejustify(t, h, v, &shown, &fields.styles);
+            }
             // The position is the point the text is placed by: moving it moves the text.
             if let Some(to) = params.get("position").and_then(point_value) {
                 let d = to - t.justify_point();
@@ -340,12 +347,12 @@ fn apply_kind_properties(
         EntityKind::Insert(insert) => set_insert_properties(insert, params),
         EntityKind::Dimension(dimension) => set_dimension_properties(dimension, params, dim_style, dim_overrides),
         EntityKind::Hatch(hatch) => set_hatch_properties(hatch, params),
-        EntityKind::AttDef(a) => set_attdef_properties(a, params, attdef),
+        EntityKind::AttDef(a) => set_attdef_properties(a, params, fields),
         _ => {}
     }
 }
 
-fn set_attdef_properties(a: &mut cadcraft_doc::Attrib, params: &Value, fields: &AttdefFields) {
+fn set_attdef_properties(a: &mut cadcraft_doc::Attrib, params: &Value, fields: &TextFields) {
     let num = |key: &str| params.get(key).and_then(Value::as_f64).filter(|value| value.is_finite());
     if let Some(t) = &fields.tag {
         a.tag.clone_from(t);
@@ -1311,18 +1318,18 @@ fn rejustify(t: &mut cadcraft_doc::Text, h: HAlign, v: VAlign, shown: &str, styl
     };
 }
 
-/// `properties.set`'s attribute definition fields that can be wrong, checked before anything
-/// changes: `tag` (a word), `justify` (a TEXT justification code) and `style` (an existing text
-/// style); and the drawing's text styles, in whose fonts aligned and fit text get a baseline as
-/// long as the text.
-struct AttdefFields {
+/// `properties.set`'s text and attribute definition fields that can be wrong, checked before
+/// anything changes: `tag` (a word; definitions only), `justify` (a TEXT justification code) and
+/// `style` (an existing text style); and the drawing's text styles, in whose fonts aligned and
+/// fit text get a baseline as long as the text.
+struct TextFields {
     tag: Option<String>,
     justify: Option<(HAlign, VAlign)>,
     style: Option<String>,
     styles: Vec<cadcraft_doc::TextStyle>,
 }
 
-fn attdef_fields(p: &Value, d: &Drawing) -> Result<AttdefFields> {
+fn text_fields(p: &Value, d: &Drawing) -> Result<TextFields> {
     let tag = str_param(p, "tag")
         .map(|t| {
             let t = t.trim();
@@ -1341,7 +1348,7 @@ fn attdef_fields(p: &Value, d: &Drawing) -> Result<AttdefFields> {
     let style = str_param(p, "style")
         .map(|n| d.text_style(n).map(|st| st.name.clone()).ok_or_else(|| bad("properties.set", format!("text style `{n}` not found"))))
         .transpose()?;
-    Ok(AttdefFields { tag, justify, style, styles: d.text_styles.clone() })
+    Ok(TextFields { tag, justify, style, styles: d.text_styles.clone() })
 }
 
 #[cfg(test)]
