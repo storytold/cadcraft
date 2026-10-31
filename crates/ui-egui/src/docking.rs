@@ -15,6 +15,7 @@ pub enum Panel {
     Canvas,
     ToolSets,
     QuickCalc,
+    Library,
     Layers,
     Properties,
     #[serde(rename = "externalReferences")]
@@ -28,6 +29,7 @@ impl Panel {
             Self::Canvas => "canvas",
             Self::ToolSets => "toolSets",
             Self::QuickCalc => "quickCalc",
+            Self::Library => "library",
             Self::Layers => "layers",
             Self::Properties => "properties",
             Self::ExternalRefs => "externalReferences",
@@ -38,6 +40,7 @@ impl Panel {
             Self::Canvas => "Drawing",
             Self::ToolSets => "Tool Sets",
             Self::QuickCalc => "QuickCalc",
+            Self::Library => "Library",
             Self::Layers => "Layers",
             Self::Properties => "Properties",
             Self::ExternalRefs => "External References",
@@ -50,13 +53,14 @@ impl Panel {
             Self::Canvas => None,
             Self::ToolSets => Some(Icon::Switcher),
             Self::QuickCalc => Some(Icon::Table),
+            Self::Library => Some(Icon::Blocks),
             Self::Layers => Some(Icon::Layers),
             Self::Properties => Some(Icon::Properties),
             Self::ExternalRefs => Some(Icon::Attach),
         }
     }
-    /// Palettes outside the default arrangement, opened on request (QUICKCALC).
-    pub const ON_DEMAND: &[Self] = &[Self::QuickCalc];
+    /// Palettes outside the default arrangement, opened on request (QUICKCALC, LIBRARY).
+    pub const ON_DEMAND: &[Self] = &[Self::QuickCalc, Self::Library];
 }
 
 /// The drawing view never moves, floats, closes or takes tabs; palettes dock beside it.
@@ -141,10 +145,11 @@ fn docked(layout: &Layout<Panel>, panel: Panel) -> bool {
 
 /// The docked neighbour a panel with no recorded place opens beside, as a new group above
 /// (`false`) or below (`true`) it: Layers above Properties, External References and QuickCalc
-/// below them, Tool Sets at the top of the left dock.
+/// below them, Tool Sets at the top of the left dock, the Library under the Tool Sets.
 fn home_anchor(layout: &Layout<Panel>, panel: Panel) -> Option<(Panel, bool)> {
     let neighbours: &[(Panel, bool)] = match panel {
         Panel::Canvas | Panel::ToolSets => &[],
+        Panel::Library => &[(Panel::ToolSets, true)],
         Panel::Layers => &[(Panel::Properties, false), (Panel::ExternalRefs, false)],
         Panel::Properties => &[(Panel::Layers, true), (Panel::ExternalRefs, false)],
         Panel::ExternalRefs => &[(Panel::Properties, true), (Panel::Layers, true)],
@@ -400,6 +405,7 @@ impl DockContent<Panel> for Panels<'_> {
             }
             Panel::ToolSets => crate::palettes::toolsets(app, ui),
             Panel::QuickCalc => crate::palettes::quickcalc::show(app, ui),
+            Panel::Library => crate::palettes::library::show(app, ui),
             Panel::Layers => {
                 egui::ScrollArea::vertical()
                     .id_salt("dock-layers")
@@ -440,6 +446,7 @@ fn panel_limits(panel: &Panel) -> PanelLimits {
     let (min, max_width) = match panel {
         Panel::Canvas => (egui::vec2(300.0, 180.0), 1_000_000.0),
         Panel::QuickCalc => (egui::vec2(240.0, 160.0), 600.0),
+        Panel::Library => (egui::vec2(220.0, 120.0), 600.0),
         Panel::ToolSets => (egui::vec2(220.0, 150.0), 480.0),
         Panel::Layers | Panel::Properties | Panel::ExternalRefs => (egui::vec2(220.0, 100.0), 720.0),
     };

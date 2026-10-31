@@ -11,6 +11,8 @@ use crate::theme::Tokens;
 
 #[cfg(test)]
 mod layer_menu_tests;
+/// The Library palette: a folder of block files to insert with a click.
+pub mod library;
 /// The hatch pattern picker.
 pub mod patterns;
 /// The QuickCalc palette.

@@ -178,6 +178,12 @@ fn services() -> Services {
             let dialog = if dir.is_empty() { dialog } else { dialog.set_directory(dir) };
             dialog.pick_file().map(|p| p.to_string_lossy().to_string())
         })),
+        // The Library palette's folder of block files.
+        pick_folder: Some(Box::new(|dir: &str| {
+            let dialog = rfd::FileDialog::new();
+            let dialog = if dir.is_empty() { dialog } else { dialog.set_directory(dir) };
+            dialog.pick_folder().map(|p| p.to_string_lossy().to_string())
+        })),
         no_file_system: false,
     }
 }

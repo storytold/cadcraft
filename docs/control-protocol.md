@@ -132,7 +132,7 @@ file before restarting to resume saving workspace choices.
 
 Tool Sets, Layers, and Properties can be regrouped, split, floated within the app window, closed, and reopened. The drawing canvas stays visible and cannot be closed or turned into a tab. The document/session view is protected. Layouts, active tabs, panel visibility, and floating rectangles are saved with the app's existing UI preferences. These operations do not edit document contents.
 
-Panel IDs: `toolSets`, `layers`, `properties`, `externalReferences`. The protected center is `canvas`.
+Panel IDs: `toolSets`, `layers`, `properties`, `externalReferences`, and on demand `quickCalc` and `library`. The protected center is `canvas`.
 
 `ui.dock` accepts `operation`; basic per-panel operations also require `panel`. The advanced `resizeSplit` operation below uses a split `path` instead of a panel. Basic operations are `open`, `close`, `activate`, `float` (with finite positive `rect: [x, y, width, height]`), or `move` (with `target` and `zone: center|tab|left|right|top|bottom|above|below`, default `center`). Center and tab group with the target; side zones split beside it; above and below add a group in a floating window. `open` and `activate` show a hidden panel at its last place and select it. `ui.dock.reset` restores the default arrangement. Invalid moves return an error without changing the layout.
 
