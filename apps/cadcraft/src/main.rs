@@ -40,6 +40,9 @@ struct App {
     system_animations: system_animations::SystemAnimations,
     workspace: workspace::Workspace,
     workspace_error: Option<String>,
+    /// `App::ui` ran after the last `App::logic`. A logic-only tick (window minimized or occluded) leaves it false, and
+    /// the next `logic` shows the system cursor.
+    ui_since_logic: bool,
     #[cfg(target_os = "macos")]
     native_menu: Option<native_menu::NativeMenu>,
     /// `CADCRAFT_NO_NATIVE_MENU`: the menus stay inside the window.
@@ -58,6 +61,13 @@ impl App {
         let hide = self.cad.canvas.hide_system_cursor && ctx.input(|i| i.focused);
         apply_system_cursor(hide);
     }
+}
+
+/// The system cursor must be shown now, from `App::logic`: the window is hidden (minimized or occluded) or has lost
+/// focus, or the last logic tick never reached `App::ui`. eframe runs only `logic` while the window is hidden, so
+/// `App::update_system_cursor` would never get to show a hidden cursor and it would stay hidden over other apps.
+fn system_cursor_must_show(viewport: &egui::ViewportInfo, focused: bool, ui_since_logic: bool) -> bool {
+    viewport.visible() == Some(false) || !focused || !ui_since_logic
 }
 
 /// The system cursor is hidden over the drawing area (see `App::update_system_cursor`). Global, so the native file
@@ -125,6 +135,11 @@ fn follow_desktop(raw: &mut egui::RawInput, desktop: Option<egui::Theme>) {
 impl eframe::App for App {
     /// eframe logic callback: syncs the OS animation setting and runs `CadApp::logic`; when the pass index is 0 (the first pass or a hidden tick) it also installs/polls the macOS native menu, polls the spacemouse and persists the workspace; a quit request closes the viewport.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Read from the raw input: a logic-only tick updates the viewport info and focus there, but not the ui input.
+        let (viewport, focused) = ctx.input(|i| (i.raw.viewport().clone(), i.raw.focused));
+        if system_cursor_must_show(&viewport, focused, std::mem::replace(&mut self.ui_since_logic, false)) {
+            apply_system_cursor(false);
+        }
         self.cad.system_animations = self.system_animations.current();
         // Consume control/open/screenshot queues and time-based autosave, including hidden ticks.
         self.cad.logic(ctx);
@@ -162,6 +177,7 @@ impl eframe::App for App {
         #[cfg(target_os = "macos")]
         craft_window::title_bar::sync_movable(ui.ctx(), &mut self.movable);
         self.update_system_cursor(ui.ctx());
+        self.ui_since_logic = true;
     }
     /// A normal exit: the workspace is saved, and this run's autosave files are not needed (a
     /// crash leaves them for recovery).
@@ -418,6 +434,7 @@ fn main() -> eframe::Result {
                 spacemouse: spacemouse::SpaceMouse::start(cc.egui_ctx.clone()),
                 workspace,
                 workspace_error,
+                ui_since_logic: true,
                 #[cfg(target_os = "macos")]
                 native_menu: None,
                 #[cfg(target_os = "macos")]
@@ -431,7 +448,22 @@ fn main() -> eframe::Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{filters_for_save, follow_desktop};
+    use super::{filters_for_save, follow_desktop, system_cursor_must_show};
+
+    /// A hidden window only gets `App::logic`, so `logic` itself must show a cursor hidden over the drawing area.
+    #[test]
+    fn a_hidden_or_unfocused_window_shows_the_system_cursor() {
+        let shown = egui::ViewportInfo { minimized: Some(false), occluded: Some(false), ..Default::default() };
+        assert!(!system_cursor_must_show(&shown, true, true), "a shown, focused window keeps the canvas's choice");
+        let minimized = egui::ViewportInfo { minimized: Some(true), ..shown.clone() };
+        assert!(system_cursor_must_show(&minimized, true, true));
+        let occluded = egui::ViewportInfo { occluded: Some(true), ..shown.clone() };
+        assert!(system_cursor_must_show(&occluded, true, true));
+        assert!(system_cursor_must_show(&shown, false, true), "focus lost");
+        assert!(system_cursor_must_show(&shown, true, false), "the last logic tick never reached App::ui");
+        let unknown = egui::ViewportInfo::default();
+        assert!(!system_cursor_must_show(&unknown, true, true), "no visibility report: the ui keeps running");
+    }
 
     #[test]
     fn save_dialog_offers_dwg_with_the_drawing_format_first() {
