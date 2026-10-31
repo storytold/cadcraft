@@ -454,6 +454,22 @@ mod tests {
         assert!(pairs.contains(&("2", LAYERS_APP)), "the application is registered");
     }
 
+    /// A DWF or DGN underlay, which CADCraft keeps without reading, keeps its layer overrides.
+    #[test]
+    fn another_underlay_keeps_its_layer_override_xdata() {
+        for kind in ["DWFUNDERLAY", "DGNUNDERLAY"] {
+            let text = format!(
+                "0\nSECTION\n2\nENTITIES\n0\n{kind}\n5\n2B\n100\nAcDbEntity\n8\n0\n100\nAcDbUnderlayReference\n\
+                 10\n0.0\n20\n0.0\n30\n0.0\n1001\n{LAYERS_APP}\n1000\nCOTES\n0\nENDSEC\n0\nEOF\n"
+            );
+            let d = crate::read(text.as_bytes(), "plan.dxf").unwrap();
+            let out = String::from_utf8(crate::write(&d, "plan.dxf").unwrap()).unwrap();
+            let lines: Vec<&str> = out.lines().map(str::trim).collect();
+            assert!(lines.windows(4).any(|w| w == ["1001", LAYERS_APP, "1000", "COTES"]), "{kind}: its overrides kept");
+            assert!(lines.windows(2).any(|w| w == ["2", LAYERS_APP]), "{kind}: their application registered");
+        }
+    }
+
     /// A drawing with no underlay hiding PDF layers doesn't register their application.
     #[test]
     fn the_layers_application_is_registered_only_when_an_underlay_hides_layers() {

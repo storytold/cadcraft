@@ -42,8 +42,9 @@ const MODELLED_KEYS: &[&str] = &[
 const MODELLED_XDICT_KEYS: &[&str] = &["ACAD_DIMASSOC", "ACAD_SORTENTS", "ACDBCONTEXTDATAMANAGER"];
 
 /// Applications whose xdata CADCraft reads and writes itself. `ACAD` holds dimension overrides
-/// (DSTYLE) on dimensions and dimension styles; elsewhere it is kept.
-const OWN_APPS: &[&str] = &["CADCRAFT", "ACADANNOTATIVE", "ACCMTRANSPARENCY", "ACAECLAYERSTANDARD", "ADESKUNDERLAYLAYEROVERRIDEDATA"];
+/// (DSTYLE) on dimensions and dimension styles, and `ADESKUNDERLAYLAYEROVERRIDEDATA` the hidden
+/// layers of a PDF underlay; elsewhere they are kept (a DWF or DGN underlay's, for one).
+const OWN_APPS: &[&str] = &["CADCRAFT", "ACADANNOTATIVE", "ACCMTRANSPARENCY", "ACAECLAYERSTANDARD"];
 
 /// Most objects kept from one file.
 const MAX_OBJECTS: usize = 1_000_000;
@@ -232,7 +233,9 @@ fn foreign_xdata(kind: &str, tags: &[Tag]) -> Vec<RawTag> {
         let chunk = rest.get(i..i + 1 + len).unwrap_or(&[]);
         i += 1 + len;
         let app = up(&first.str());
-        let own = OWN_APPS.contains(&app.as_str()) || (app == "ACAD" && matches!(kind, "DIMENSION" | "DIMSTYLE"));
+        let own = OWN_APPS.contains(&app.as_str())
+            || (app == "ACAD" && matches!(kind, "DIMENSION" | "DIMSTYLE"))
+            || (app == "ADESKUNDERLAYLAYEROVERRIDEDATA" && kind == "PDFUNDERLAY");
         if app.is_empty() || own || out.len() + chunk.len() > MAX_XDATA_GROUPS {
             continue;
         }
