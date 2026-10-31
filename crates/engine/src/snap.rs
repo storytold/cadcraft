@@ -401,6 +401,12 @@ pub(crate) fn gather(
     gather_in(d, space, ix, cursor, aperture, osmode, &[])
 }
 
+/// Whether `k` is snapped to as an object: a PDF underlay's frame only while it is shown
+/// (PDFFRAME 1 or 2).
+fn snaps_to(d: &Drawing, k: &EntityKind) -> bool {
+    !(matches!(k, EntityKind::PdfUnderlay(_)) && d.header.i64("PDFFRAME", 1) == 0)
+}
+
 fn gather_in(
     d: &Drawing,
     space: &Space,
@@ -415,9 +421,6 @@ fn gather_in(
     let mut near_prims: Vec<Prim> = Vec::new();
     let mut count = 0usize;
     let mut budget = MAX_BLOCK_LEAVES;
-    // A PDF underlay's frame is snapped to only while it is shown (PDFFRAME 1 or 2).
-    let frame_hidden = d.header.i64("PDFFRAME", 1) == 0;
-    let snaps = |k: &EntityKind| !(frame_hidden && matches!(k, EntityKind::PdfUnderlay(_)));
     for (e, known) in crate::select::candidates(d, space, ix, &probe.expand(aperture), true, false)? {
         if !d.is_visible(e) || frozen.iter().any(|l| l.eq_ignore_ascii_case(&e.common.layer)) {
             continue;
@@ -449,13 +452,13 @@ fn gather_in(
             }
         }
         let mut sink = Sink { osmode, aperture, probe, cands: &mut cands, near: &mut near_prims };
-        if snaps(&e.kind) {
+        if snaps_to(d, &e.kind) {
             sink.object(&e.kind, None);
         }
         // A block reference snaps to the objects inside it, placed by its transform.
         if let EntityKind::Insert(ins) = &e.kind {
             block_leaves(d, ins, &Mat3::IDENTITY, 0, &mut budget, frozen, &mut |k, m| {
-                if snaps(k) {
+                if snaps_to(d, k) {
                     sink.object(k, Some(m));
                 }
             });
@@ -724,7 +727,11 @@ impl Sink<'_> {
                     col_spacing: 0.0,
                     row_spacing: 0.0,
                 };
-                block_leaves(d, &ins, &Mat3::IDENTITY, 0, budget, frozen, &mut |k, m| self.object(k, Some(m)));
+                block_leaves(d, &ins, &Mat3::IDENTITY, 0, budget, frozen, &mut |k, m| {
+                    if snaps_to(d, k) {
+                        self.object(k, Some(m));
+                    }
+                });
             }
             None => {
                 let g = cadcraft_render::dimension_in(d, dm);
