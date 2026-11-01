@@ -26,6 +26,7 @@ pub mod lisp;
 pub mod mtext_edit;
 pub mod pointmod;
 pub mod prompt;
+pub mod properties;
 mod recent;
 pub mod sample;
 pub mod select;
@@ -267,17 +268,24 @@ impl Session {
 
     /// Add an entity to the current space with current properties.
     pub fn add_entity(&mut self, kind: EntityKind) -> Result<Handle> {
-        let common = self.current_common();
+        let common = self.placed_common(&kind)?;
         let space = self.space();
-        let true_color = self.doc()?.header.get("CECOLOR_RGB").and_then(|v| v.as_i64());
-        let mut common = common;
-        if let Some(rgb) = true_color {
+        let h = self.doc_mut()?.add(&space, common, kind)?;
+        Ok(h)
+    }
+
+    /// The properties `kind` is added with ([`Session::add_entity`]): the current ones, a true
+    /// color when one is current, the current annotation scale for an annotative style's, and
+    /// the current thickness for the objects that take one.
+    fn placed_common(&self, kind: &EntityKind) -> Result<Common> {
+        let mut common = self.current_common();
+        let d = self.doc()?;
+        if let Some(rgb) = d.header.get("CECOLOR_RGB").and_then(|v| v.as_i64()) {
             common.color = cadcraft_color::Color::True(cadcraft_color::Rgb::from_u32(rgb as u32));
         }
         // Text, dimensions, multileaders, hatches and block references of annotative styles are
         // annotative, supporting the current annotation scale.
-        let d = self.doc()?;
-        if d.annotative_by_style(&kind) {
+        if d.annotative_by_style(kind) {
             common.anno_scales = vec![d.current_anno_scale()];
         }
         // Lines, arcs, circles, points, polylines and 2D solids take the current 3D thickness
@@ -293,8 +301,7 @@ impl Session {
         ) {
             common.thickness = Some(d.header.f64("THICKNESS", 0.0)).filter(|t| t.is_finite()).unwrap_or(0.0);
         }
-        let h = self.doc_mut()?.add(&space, common, kind)?;
-        Ok(h)
+        Ok(common)
     }
 
     /// World units per pixel at the current view.
