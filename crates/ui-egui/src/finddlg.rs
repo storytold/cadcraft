@@ -68,6 +68,9 @@ struct State {
     replace: String,
     match_case: bool,
     whole_word: bool,
+    /// The `doc_epoch` the rows were found in. A row's handle is only meaningful in the drawing
+    /// it was found in, so when the epoch moves the rows must go.
+    epoch: u64,
     rows: Vec<Row>,
     /// The row Enter and Replace act on.
     current: Option<usize>,
@@ -130,8 +133,14 @@ fn replace(app: &mut CadApp, st: &mut State, only: Option<usize>) {
     });
     match app.run("find", params) {
         Ok(v) => {
-            st.message = v.get("message").and_then(Value::as_str).unwrap_or_default().to_string();
+            // The engine's reply reports what the replacement did; the re-search below would
+            // overwrite that message with a match count, so the replacement report is what
+            // the user ends up reading.
+            let replaced = v.get("message").and_then(Value::as_str).unwrap_or_default().to_string();
             search(app, st);
+            if !replaced.is_empty() {
+                st.message = replaced;
+            }
         }
         Err(e) => st.message = e,
     }
@@ -142,6 +151,15 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let t = Tokens::get();
     let sid = egui::Id::unique("find_state");
     let mut st: State = ctx.data_mut(|d| d.get_temp(sid)).unwrap_or_default();
+    // A handle from an earlier drawing now names whatever object took its place; if Replace All
+    // ran on such a row it would edit an object the search never matched. Clearing the rows on
+    // an epoch change costs a re-click on Find All, which is the cheap side of that trade.
+    if *open && st.epoch != app.session.doc_epoch {
+        st.epoch = app.session.doc_epoch;
+        st.rows.clear();
+        st.current = None;
+        st.message.clear();
+    }
     let mut do_search = false;
     let mut do_replace: Option<Option<usize>> = None;
     let mut do_select_all = false;
@@ -246,7 +264,13 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     if let Some(only) = do_replace {
         replace(app, &mut st, only);
     }
-    ctx.data_mut(|d| d.insert_temp(sid, st));
+    // The state lives exactly as long as the window does: a closed window leaves nothing behind,
+    // so reopening it reads the drawing instead of a stale result list.
+    if *open {
+        ctx.data_mut(|d| d.insert_temp(sid, st));
+    } else {
+        ctx.data_mut(|d| d.remove_temp::<State>(sid));
+    }
 }
 
 /// The colour a hit is drawn in: the theme's point colour, the same orange the drawing uses for
