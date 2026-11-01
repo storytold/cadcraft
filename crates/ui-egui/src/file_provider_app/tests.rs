@@ -12,6 +12,15 @@ fn pending() -> (CadApp, String, u64) {
     (app, request, uid)
 }
 #[test]
+fn rejected_provider_save_is_reported_without_consuming_the_capture() {
+    let (mut app, _, uid) = pending();
+    let error = save(&mut app, false).unwrap_err();
+    assert!(error.contains("already pending"));
+    assert_eq!(app.status.as_ref().map(|(text, _)| text.as_str()), Some(error.as_str()));
+    assert_eq!(app.session.log.last(), Some(&error));
+    assert!(app.file_providers.pending_for(uid));
+}
+#[test]
 fn ack_owns_its_document_and_does_not_clean_newer_edits() {
     let (mut app, request, uid) = pending();
     app.file_providers.resolve_dialog(&request, "provider", "Drawing.dxf").unwrap();

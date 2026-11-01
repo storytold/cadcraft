@@ -8,7 +8,7 @@ filesystem mount or cloud vendor is built into this feature.
 
 ## Contract
 
-window.dxfFileProviders has protocolVersion 1 and app cadcraft. Events are dispatched on window
+window.cadcraftFileProviders has protocolVersion 1 and app cadcraft. Events are dispatched on window
 as cadcraft-file-provider CustomEvents; detail contains bounded metadata and, on save,
 a Uint8Array named bytes. The host subscribes before registering, and can discover an already-ready
 editor through the protocol object. The capability is independent of the optional control API.

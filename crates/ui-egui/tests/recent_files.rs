@@ -144,7 +144,7 @@ fn provider_recents_render_separately_from_device_history() {
     if let Some(path) = &directory {
         std::fs::create_dir_all(path).unwrap();
     }
-    for enabled in [false, true] {
+    for (enabled, provider_count) in [(false, 0), (true, 1), (true, 100)] {
         let (_dir, plan, _) = drawings("provider-home");
         let mut app = CadApp::new(Session::empty(), Services::default());
         app.ui.recent_files = vec![plan];
@@ -154,11 +154,13 @@ fn provider_recents_render_separately_from_device_history() {
             let connection = host.connect("fixture".into(), "External storage".into(), "fixture-account".into()).unwrap();
             host.set_resources(
                 &connection,
-                vec![cadcraft_ui_egui::file_providers::Resource {
-                    id: "provider-drawing".into(),
-                    name: "Provider drawing.dxf".into(),
-                    updated_at: String::new(),
-                }],
+                (0..provider_count)
+                    .map(|index| cadcraft_ui_egui::file_providers::Resource {
+                        id: format!("provider-drawing-{index}"),
+                        name: if index == 0 { "Provider drawing.dxf".into() } else { format!("Provider drawing {index}.dxf") },
+                        updated_at: String::new(),
+                    })
+                    .collect(),
             )
             .unwrap();
         }
@@ -188,7 +190,15 @@ fn provider_recents_render_separately_from_device_history() {
         assert_eq!(found.iter().any(|(text, _)| text == "Provider drawing.dxf"), enabled, "{found:?}");
         assert_eq!(found.iter().any(|(text, _)| text == "Recent files — External storage"), enabled, "{found:?}");
         assert_eq!(found.iter().any(|(text, _)| text == "Recent files on this device"), enabled, "{found:?}");
-        if let Some(path) = &directory {
+        let mut visible = Vec::new();
+        for shape in &h.output().shapes {
+            let mut labels = Vec::new();
+            texts(&shape.shape, &mut labels);
+            visible.extend(labels.into_iter().filter(|(_, rect)| shape.clip_rect.contains_rect(*rect)));
+        }
+        assert_eq!(visible.iter().any(|(text, _)| text == "Recent files on this device"), enabled, "{visible:?}");
+        assert!(visible.iter().any(|(text, _)| text == "plan.dxf"), "device history remains visible even when provider files overflow: {visible:?}");
+        if let Some(path) = directory.as_ref().filter(|_| provider_count <= 1) {
             let state = if enabled { "on" } else { "off" };
             h.render().unwrap().save(path.join(format!("cadcraft-provider-recents-{state}.png"))).unwrap();
         }

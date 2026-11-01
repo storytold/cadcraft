@@ -4,6 +4,14 @@ use cadcraft_engine::cmd::file::{self, SaveAs};
 use serde_json::{Value, json};
 
 pub(crate) fn save(app: &mut CadApp, save_as: bool) -> Result<Value, String> {
+    let result = capture(app, save_as);
+    if let Err(error) = &result {
+        app.session.echo(error.clone());
+        app.set_status(error.clone());
+    }
+    result
+}
+fn capture(app: &mut CadApp, save_as: bool) -> Result<Value, String> {
     let host = app.file_providers.clone();
     let state = app.session.state().map_err(|e| e.to_string())?;
     if host.pending_for(state.uid) {

@@ -137,6 +137,7 @@ impl Host {
         s.bindings.clear();
         s.names.clear();
         s.events.clear();
+        s.documents = Value::Null;
         Ok(())
     }
     pub fn connected(&self) -> bool {
@@ -346,6 +347,10 @@ impl Host {
         }
     }
     pub fn recent_ui(&self, ui: &mut egui::Ui) {
+        self.provider_recent_ui(ui);
+        self.device_recent_ui(ui);
+    }
+    pub(crate) fn provider_recent_ui(&self, ui: &mut egui::Ui) {
         let (label, resources, enabled) = {
             let s = self.state();
             (s.provider.as_ref().map(|p| p.label.clone()), s.resources.clone(), s.enabled)
@@ -364,8 +369,12 @@ impl Host {
                 ui.ctx().request_repaint();
             }
         }
-        ui.separator();
-        ui.weak("Recent files on this device");
+    }
+    pub(crate) fn device_recent_ui(&self, ui: &mut egui::Ui) {
+        if self.enabled() {
+            ui.separator();
+            ui.weak("Recent files on this device");
+        }
     }
 }
 fn valid_id(value: &str) -> bool {

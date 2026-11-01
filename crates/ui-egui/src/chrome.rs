@@ -562,7 +562,8 @@ pub fn start_page(app: &mut CadApp, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical()
             .id_salt("provider-recents")
             .max_height((r.height() * 0.4).clamp(80.0, 240.0))
-            .show(&mut provider_ui, |ui| app.file_providers.recent_ui(ui));
+            .show(&mut provider_ui, |ui| app.file_providers.provider_recent_ui(ui));
+        app.file_providers.device_recent_ui(&mut provider_ui);
         local_top += provider_ui.min_rect().height() + 20.0;
     }
     p.text(pos2(main.left(), local_top), egui::Align2::LEFT_TOP, crate::tl!("Recent"), egui::FontId::proportional(22.0), t.text);
