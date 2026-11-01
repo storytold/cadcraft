@@ -166,7 +166,7 @@ impl Session {
             Frame::Track { last: Some(l) } => Prompt::new("Next point (Press ENTER to end tracking)", point).base(l),
             Frame::Angle { .. } | Frame::Snap { mode: 0 } => p,
             // "Endpoint of:", keeping the base and deferral PER/TAN need.
-            Frame::Snap { mode } => Prompt { message: format!("{} of", snap_name(mode)), keywords: Vec::new(), default: None, ..p },
+            Frame::Snap { mode } => Prompt { keywords: Vec::new(), default: None, ..p }.reworded(format!("{} of", snap_name(mode))),
         })
     }
 

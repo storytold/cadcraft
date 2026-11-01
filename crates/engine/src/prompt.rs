@@ -136,6 +136,13 @@ impl Prompt {
         let values = values.into();
         Prompt { message: fill(source, &values), template: Some(Template { source, values }), accept, ..Default::default() }
     }
+    /// The same prompt asking something else: `message` replaced, and its template with it (one
+    /// left behind would show the old message, translated).
+    pub fn reworded(mut self, message: impl Into<String>) -> Self {
+        self.message = message.into();
+        self.template = None;
+        self
+    }
     /// The grip being stretched (the `grip` field).
     pub fn grip(mut self, g: (Handle, usize)) -> Self {
         self.grip = Some(g);

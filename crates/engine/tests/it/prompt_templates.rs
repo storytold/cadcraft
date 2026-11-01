@@ -56,3 +56,14 @@ fn rename_asks_for_the_type_it_renames() {
     s.cmdline("0").unwrap();
     assert_eq!(shown(&s).0, "Enter new layer name");
 }
+
+/// A prompt that asks something else drops the template it was built over: an object snap typed
+/// after a point filter asks "Endpoint of", not ".X of" (#2616 review).
+#[test]
+fn a_snap_over_a_point_filter_shows_the_snap() {
+    let mut s = Session::new();
+    s.cmdline("line 0,0 .x").unwrap();
+    assert_eq!(shown(&s), (".X of".to_string(), Some("{filter} of")));
+    s.cmdline("end").unwrap();
+    assert_eq!(shown(&s), ("Endpoint of".to_string(), None));
+}

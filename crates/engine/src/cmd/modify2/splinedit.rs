@@ -623,11 +623,7 @@ impl Interactive for SplineditM {
             Sub::VertexDelete => Prompt::new("Specify control point <exit>", Accept::POINT),
             Sub::VertexAdd => Prompt::new("Specify a point on the spline <exit>", Accept::POINT),
             Sub::VertexOrder => Prompt::new("Enter new order", Accept::NUMBER).default((sp.degree + 1).to_string()),
-            Sub::Join => {
-                let mut p = self.join.prompt();
-                p.message = "Select objects to join to the spline".into();
-                p
-            }
+            Sub::Join => self.join.prompt().reworded("Select objects to join to the spline"),
             Sub::VertexMove => {
                 Prompt::new("Specify new location", Accept::POINT).kw(&marker).default("N").base_opt(sp.control.get(self.mark).copied())
             }

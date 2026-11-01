@@ -402,11 +402,7 @@ impl Interactive for RefsetM {
                 p.default = Some("Add".into());
                 p
             }
-            RStage::Pick(remove) => {
-                let mut p = self.sel.prompt();
-                p.message = format!("Select objects to {}", if remove { "remove" } else { "add" });
-                p
-            }
+            RStage::Pick(remove) => self.sel.prompt().reworded(if remove { "Select objects to remove" } else { "Select objects to add" }),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
