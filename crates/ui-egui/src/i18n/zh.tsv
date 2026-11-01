@@ -382,6 +382,8 @@
 	Layers displayed: {shown} of {total}.   Current layer: {layer}	显示的图层: {shown} / {total}。当前图层: {layer}
 	Layout	布局
 	Layout Mode	布局模式
+	Layout Areas	布局区域
+	Set Layout Area	设置布局区域
 	Layout list	布局列表
 	Leader	引线
 	Left	左

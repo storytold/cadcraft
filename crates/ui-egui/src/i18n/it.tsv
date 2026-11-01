@@ -475,6 +475,8 @@ menu	Modify	Edita
 	Layout	Layout
 	Layout list	Elenco layout
 	Layout Mode	Modalità layout
+	Layout Areas	Aree dei layout
+	Set Layout Area	Imposta area del layout
 	Layout mode: drag to move, drag a corner to resize, drag on empty ground to add a layout, double-click to open	Modalità layout: trascina per spostare, trascina un angolo per ridimensionare, trascina su un punto vuoto per aggiungere un layout, doppio clic per aprire
 	Leader	Direttrice
 	Leaders Only	Solo direttrici
