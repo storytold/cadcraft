@@ -41,6 +41,7 @@ mod mleader_roundtrip;
 mod mline_roundtrip;
 #[cfg(not(target_arch = "wasm32"))]
 mod model_layout_plot_type;
+mod mtext_caret_spaces;
 mod mtext_columns_roundtrip;
 mod mtext_embedded_object;
 mod mtext_line_spacing;

@@ -110,8 +110,11 @@ mod native {
             notes.push(format!("DWG: {orphans} DGN line style component{s} that no line style definition uses {were} left out"));
         }
         let mut out = CappedWriter { buf: Vec::new(), limit: limits.max_dxf_bytes, exceeded: false };
-        let written = std::panic::catch_unwind(AssertUnwindSafe(|| acadrust::DxfWriter::new(&doc).write_to_writer(&mut out)))
-            .map_err(|_| "the DWG→DXF conversion failed on this file".to_string())?;
+        let written = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            acadrust::DxfWriter::new(&doc).write_to_writer(&mut out)?;
+            mtext_contents(&doc, &mut out)
+        }))
+        .map_err(|_| "the DWG→DXF conversion failed on this file".to_string())?;
         if out.exceeded {
             return Err(format!(
                 "DWG: converting this {} file produced more than {} of drawing data (the limit); \
@@ -122,6 +125,94 @@ mod native {
         }
         written.map_err(|e| format!("DWG→DXF: {e}"))?;
         Ok((add_header_vars(out.buf, &doc.header), notes))
+    }
+
+    /// acadrust 0.6.6's ASCII writer treats a caret followed by a literal space as already
+    /// escaped, and turns line feeds into paragraph codes. Serialize affected MTEXT contents
+    /// from the native values instead, using its lossless string writer. All other groups,
+    /// including embedded-object data, remain byte-for-byte as the DXF writer emitted them.
+    fn mtext_contents(doc: &acadrust::CadDocument, out: &mut CappedWriter) -> acadrust::Result<()> {
+        use acadrust::io::dxf::{DxfStreamWriter, DxfTextWriter};
+        let contents: std::collections::HashMap<_, _> = doc
+            .entities()
+            .filter_map(|e| match e {
+                acadrust::EntityType::MText(t) if t.value.contains(['^', '\t', '\n']) => Some((t.common.handle.value(), t.value.as_str())),
+                _ => None,
+            })
+            .collect();
+        if contents.is_empty() {
+            return Ok(());
+        }
+        let dxf = std::mem::take(&mut out.buf);
+        let mut lines = dxf.split_inclusive(|b| *b == b'\n');
+        let (mut mtext, mut text, mut written) = (false, None, false);
+        while let Some(code) = lines.next() {
+            let value = lines.next().ok_or_else(|| std::io::Error::other("incomplete DWG bridge DXF pair"))?;
+            match code.trim_ascii() {
+                b"0" => {
+                    mtext = value.trim_ascii() == b"MTEXT";
+                    text = None;
+                    written = false;
+                }
+                b"5" if mtext => {
+                    text = std::str::from_utf8(value.trim_ascii()).ok().and_then(|s| u64::from_str_radix(s, 16).ok()).and_then(|h| contents.get(&h));
+                }
+                b"101" => mtext = false,
+                b"1" | b"3" if mtext && text.is_some() => {
+                    if let Some(&text) = text
+                        && !written
+                    {
+                        let mut writer = DxfTextWriter::new(&mut *out);
+                        if doc.version < acadrust::DxfVersion::AC1021
+                            && let Some(encoding) = acadrust::io::dxf::code_page::encoding_from_code_page(&doc.header.code_page)
+                        {
+                            writer.set_encoding(encoding);
+                        }
+                        // Each character can expand to two caret-escape characters. Keep
+                        // those pairs together and each group within 250 characters.
+                        let mut rest = text;
+                        while let Some((end, _)) = rest.char_indices().nth(125) {
+                            let (chunk, tail) = rest.split_at(end);
+                            writer.write_xrecord_string(3, chunk)?;
+                            rest = tail;
+                        }
+                        writer.write_xrecord_string(1, rest)?;
+                        written = true;
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+            out.write_all(code)?;
+            out.write_all(value)?;
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn mtext_contents_keeps_other_groups_and_the_output_limit() -> acadrust::Result<()> {
+        for version in [acadrust::DxfVersion::AC1015, acadrust::DxfVersion::AC1032] {
+            let mut doc = acadrust::CadDocument::new();
+            doc.version = version;
+            doc.header.code_page = "ANSI_1252".into();
+            let mut t = acadrust::MText::with_value("é ^ C", acadrust::Vector3::ZERO);
+            t.common.handle = acadrust::Handle::new(0x10);
+            doc.add_entity(acadrust::EntityType::MText(Box::new(t)))?;
+            // Only the MTEXT's own 1/3 groups change. The embedded object's groups and the
+            // following TEXT record must survive byte-for-byte, including their spaces.
+            let prefix = b"  0\r\nMTEXT\r\n  5\r\n10\r\n  8\r\n0\r\n";
+            let suffix = b"101\r\nEmbedded Object\r\n  1\r\n^ embedded\r\n  3\r\n^ tail\r\n  0\r\nTEXT\r\n  1\r\n^ plain\r\n";
+            let raw = [prefix.as_slice(), b"  3\r\nold\r\n  1\r\ntext\r\n", suffix.as_slice()].concat();
+            let mut out = CappedWriter { buf: raw.clone(), limit: 4096, exceeded: false };
+            mtext_contents(&doc, &mut out)?;
+            let value: &[u8] = if version == acadrust::DxfVersion::AC1015 { b"\xe9 ^  C" } else { "é ^  C".as_bytes() };
+            assert_eq!(out.buf, [prefix.as_slice(), b"  1\r\n", value, b"\r\n", suffix.as_slice()].concat());
+            let mut limited = CappedWriter { buf: raw, limit: 1, exceeded: false };
+            assert!(mtext_contents(&doc, &mut limited).is_err());
+            assert!(limited.exceeded);
+        }
+        Ok(())
     }
 
     /// Most record types named in the skipped-records note.
