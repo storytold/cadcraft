@@ -173,7 +173,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
         }
         EntityKind::LwPolyline(p) => {
             let pl = Polyline { vertices: p.vertices.clone(), closed: p.closed };
-            if p.plinegen || lt.is_none() {
+            if !b.opts.linetypes || p.plinegen || lt.is_none() {
                 stroke(b, &pl.tessellate(tol));
             } else {
                 for s in pl.segments() {
