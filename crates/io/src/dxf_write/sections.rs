@@ -171,7 +171,7 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
         w.f(146, 0.0);
     }
     w.s(0, "ENDTAB");
-    let apps = ["ACAD", dxf_ext::APP, "AcadAnnotative", dxf_ext::LAYER_TRANSPARENCY_APP, dxf_ext::LAYER_DESCRIPTION_APP];
+    let apps = ["ACAD", dxf_ext::APP, "AcadAnnotative", dxf_ext::LAYER_TRANSPARENCY_APP, dxf_ext::LAYER_DESCRIPTION_APP, dxf_ext::FORMULA_APP];
     let th = table_head(w, "APPID", apps.len());
     for app in apps {
         record_head(w, "APPID", &th, "AcDbRegAppTableRecord");
@@ -241,7 +241,19 @@ fn write_dimstyles(w: &mut W, d: &Drawing, cx: &mut Ctx, version: Version) {
         record_head(w, "DIMSTYLE", &th, "AcDbDimStyleTableRecord");
         w.s(2, &s.name);
         w.i(70, 0);
-        let v = serde_json::to_value(s).unwrap_or_default();
+        // With separate arrowheads (DIMSAH) an end without its own name follows DIMBLK here,
+        // which AutoCAD would draw closed filled: write DIMBLK's block for it.
+        let mut v = serde_json::to_value(s).unwrap_or_default();
+        if !s.arrow_block1.trim().is_empty() || !s.arrow_block2.trim().is_empty() {
+            let main = if s.arrow_block.trim().is_empty() { dxf_ext::SEPARATE_CLOSED_FILLED } else { s.arrow_block.as_str() };
+            for (f, own) in [("arrowBlock1", &s.arrow_block1), ("arrowBlock2", &s.arrow_block2)] {
+                if own.trim().is_empty()
+                    && let Some(m) = v.as_object_mut()
+                {
+                    m.insert(f.into(), serde_json::Value::String(main.to_string()));
+                }
+            }
+        }
         let defaults = serde_json::to_value(DimStyle::default()).unwrap_or_default();
         let mut newer = W { t: Vec::new(), next: 0, pstyles: HashMap::new(), layers: HashMap::new(), reactors: HashMap::new() };
         for (field, code, kind) in dxf_ext::DIM_CODES {
@@ -624,7 +636,8 @@ fn write_style_objects(w: &mut W, plan: &ObjectWritePlan<'_>, mleader_dict: &str
     }
     let byblock_ltype = ltype_handles.get("BYBLOCK").cloned();
     for (s, h) in mleader_styles.iter().zip(mleader_handles) {
-        mleader_style_obj(w, s, h, mleader_dict, byblock_ltype.as_deref(), cx.style(&s.text_style));
+        let arrow = Some(s.arrow_block.trim()).filter(|a| !a.is_empty()).and_then(|a| cx.arrow(a));
+        mleader_style_obj(w, s, h, mleader_dict, byblock_ltype.as_deref(), cx.style(&s.text_style), arrow);
     }
     // Multiline styles.
     w.t.extend(crate::dxf_mline::objects(&cx.mlines, root_dict));
@@ -807,7 +820,11 @@ fn arrow_block_definitions(
     for s in &d.dim_styles {
         arrow_names.extend([s.arrow_block.clone(), s.arrow_block1.clone(), s.arrow_block2.clone(), s.leader_arrow_block.clone()]);
     }
+    arrow_names.extend(d.mleader_styles.iter().map(|s| s.arrow_block.clone()));
     for e in every {
+        if let EntityKind::MLeader(m) = &e.kind {
+            arrow_names.push(m.arrow.clone());
+        }
         if let EntityKind::Dimension(dm) = &e.kind {
             for (k, v) in &dm.overrides {
                 let Some(f) = DimStyle::field_name(k).filter(|f| f.starts_with("arrowBlock") || *f == "leaderArrowBlock") else { continue };

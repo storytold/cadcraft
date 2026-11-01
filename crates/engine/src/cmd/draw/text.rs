@@ -30,6 +30,7 @@ pub(crate) fn make_text(s: &Session, at: Vec2, value: &str, height: f64, rotatio
     let (h, v) = j;
     let left = h == HAlign::Left && v == VAlign::Baseline;
     EntityKind::Text(Text {
+        formula: None,
         insert: v3(at),
         align_pt: if left { None } else { Some(v3(at)) },
         height,
@@ -72,6 +73,7 @@ pub(super) fn run_mtext(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let width = f64_or(p, "width", 0.0).max(0.0);
     let k = EntityKind::MText(MText {
+        formula: None,
         insert: v3(at),
         height,
         width,

@@ -65,6 +65,14 @@ pub(super) fn rebuilt_preview<'a>(doc: &cadcraft_doc::Drawing, ents: impl IntoIt
 /// yet, is built at once.
 pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], ctx: &egui::Context) {
     let px = 1.0 / xf.scale;
+    let fonts = cadcraft_fonts::ttf::generation();
+    if app.canvas.font_generation != fonts {
+        app.canvas.font_generation = fonts;
+        app.canvas.list = None;
+        app.canvas.job = None;
+        // The model space seen through a layout's active viewport is drawn apart: rebuilt too.
+        app.canvas.vp.key = None;
+    }
     let Ok(st) = app.session.state() else { return };
     // Rebuild when the drawing changes, the zoom moves by more than 2x (tessellation band) or a
     // view leaves the area the list was built for.

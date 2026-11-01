@@ -66,6 +66,7 @@ mod svg_arc_budget;
 mod svg_tiny_extents;
 mod table_cellstyle_roundtrip;
 mod tables_objects_roundtrip;
+mod text_formula_roundtrip;
 mod text_left_justify;
 mod tolerance_roundtrip;
 mod user_lin_pat_roundtrip;
