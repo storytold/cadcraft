@@ -13,6 +13,10 @@ pub(crate) struct Edges<'a> {
     /// Implied edges (EDGEMODE 1): lines and the end segments of open polylines count as running
     /// on without end, arcs as whole circles.
     pub implied: bool,
+    /// Quick mode (TRIMEXTENDMODE 1), where `only: None` means every object but the one trimmed.
+    /// A trimmed polyline that is one of the edges cuts itself too: picked as one, or with every
+    /// object in Standard mode.
+    pub quick: bool,
 }
 
 /// All primitives of the cutting edges (excluding `exclude`).
@@ -91,13 +95,15 @@ fn prim_to_segments(p: &Prim) -> Vec<Segment> {
     }
 }
 
-/// Trim `h` at the piece containing `pick`. Returns the handles that replace it.
+/// Trim `h` at the piece containing `pick`. Returns what it became: its pieces, `h` first
+/// ([`replace_with_pieces`]).
 pub(crate) fn trim(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Result<Vec<Handle>> {
     if crate::cmd::curves::is_locked(s, h) {
         return Err(EngineError::Other("The object is on a locked layer.".into()));
     }
     let e = s.doc()?.entity(h).map(|e| (**e).clone()).ok_or_else(|| EngineError::Other("no such object".into()))?;
     let cut = edge_segments(s, edges, h)?;
+    let itself = edges.only.map_or(!edges.quick, |o| o.contains(&h));
     let pieces: Vec<EntityKind> = match &e.kind {
         EntityKind::Line(l) => {
             let ln = Line::new(l.a.xy(), l.b.xy());
@@ -167,22 +173,76 @@ pub(crate) fn trim(s: &mut Session, h: Handle, pick: Vec2, edges: Edges) -> Resu
             }
             keep.into_iter().collect()
         }
-        EntityKind::LwPolyline(p) => trim_polyline(p, &cut, pick)?,
+        EntityKind::LwPolyline(p) => trim_polyline(p, &cut, pick, itself)?,
         k => crate::cmd::modify2::trim_other(k, &cut, pick)?,
     };
-    let common = e.common.clone();
-    let space = s.space();
+    replace_with_pieces(s, h, pieces)
+}
+
+/// Put `pieces` in place of object `h` as AutoCAD 2024's BREAK and TRIM leave them: the first
+/// piece (the one holding the object's start, or the only piece of a circle or closed polyline)
+/// is the object itself, keeping its handle, its place in the drawing order, its groups and its
+/// extended data; the others are new objects with its properties, added at the end of its space
+/// (`entlast`); with no pieces the object is erased. Returns the pieces' handles. (A line broken
+/// in its middle keeps its handle on the piece from its start point, the piece to its end point is
+/// new; a circle broken or trimmed becomes an arc with the circle's handle.)
+///
+/// Each piece keeps what the object had beyond its outline ([`inherit`]). Dimensions attached to
+/// the object follow [`crate::assoc::follow_pieces`]. Its parametric constraints are removed: its
+/// new shape no longer meets them, and solving them again would move the objects they tie it to.
+pub(super) fn replace_with_pieces(s: &mut Session, h: Handle, pieces: Vec<EntityKind>) -> Result<Vec<Handle>> {
     let d = s.doc_mut()?;
-    d.remove_entity(h);
-    let mut out = Vec::new();
-    for k in pieces {
-        let nh = d.new_handle();
+    if pieces.is_empty() {
+        d.remove_entity(h);
+        return Ok(Vec::new());
+    }
+    let (Some(space), Some(old)) = (d.space_of(h), d.entity(h).cloned()) else {
+        return Err(EngineError::Other("no such object".into()));
+    };
+    let mut pieces = pieces.into_iter().map(|k| inherit(&old.kind, k));
+    let Some(first) = pieces.next() else { return Ok(Vec::new()) };
+    d.modify_entity(h, |e| e.kind = first)?;
+    let mut out = vec![h];
+    for kind in pieces {
+        let handle = d.new_handle();
         if let Some(st) = d.space_mut(&space) {
-            st.push(Entity { handle: nh, common: common.clone(), kind: k });
-            out.push(nh);
+            st.push(Entity { handle, common: old.common.clone(), kind });
+            out.push(handle);
         }
     }
+    crate::assoc::follow_pieces(d, &old.kind, &out);
+    let n = d.constraints.len();
+    d.constraints.retain(|c| c.refs.iter().all(|r| r.handle != h));
+    let removed = n - d.constraints.len();
+    if removed > 0 {
+        s.echo(format!("{removed} constraint(s) of the broken or trimmed object removed."));
+    }
     Ok(out)
+}
+
+/// `piece`, cut from `source`, with what it keeps of it as AutoCAD 2024's BREAK and TRIM leave
+/// pieces: a line's Z along it, an arc's (or a circle's) centre Z, and a polyline's elevation,
+/// constant width and linetype generation.
+fn inherit(source: &EntityKind, mut piece: EntityKind) -> EntityKind {
+    match (source, &mut piece) {
+        (EntityKind::Line(s), EntityKind::Line(p)) => {
+            let ln = Line::new(s.a.xy(), s.b.xy());
+            if ln.len() > 0.0 {
+                let z = |t: f64| s.a.z + (s.b.z - s.a.z) * t;
+                p.a.z = z(ln.param_of(p.a.xy()));
+                p.b.z = z(ln.param_of(p.b.xy()));
+            }
+        }
+        (EntityKind::Arc(s), EntityKind::Arc(p)) => p.center.z = s.center.z,
+        (EntityKind::Circle(s), EntityKind::Arc(p)) => p.center.z = s.center.z,
+        (EntityKind::LwPolyline(s), EntityKind::LwPolyline(p)) => {
+            p.elevation = s.elevation;
+            p.const_width = s.const_width;
+            p.plinegen = s.plinegen;
+        }
+        _ => {}
+    }
+    piece
 }
 
 /// Sub-polyline between length parameters `a` and `b` (open polylines).
@@ -217,7 +277,53 @@ pub(super) fn sub_polyline(segs: &[Segment], a: f64, b: f64) -> Vec<PolyVertex> 
     out
 }
 
-fn trim_polyline(p: &cadcraft_doc::LwPolyline, cut: &[Segment], pick: Vec2) -> Result<Vec<EntityKind>> {
+/// Upper bounds on the segments of a polyline searched for crossings with itself (the pairs grow
+/// with the square) and on the crossings kept (hostile files); a longer polyline still cuts itself
+/// at its vertices.
+const MAX_SELF_CROSSING_SEGMENTS: usize = 2048;
+const MAX_SELF_CROSSINGS: usize = 10_000;
+
+/// Where a polyline cuts itself, as lengths along it: the vertices between its segments (every
+/// vertex of a closed one, its start included) and the points where two of its segments cross.
+/// AutoCAD 2024 trims a polyline that is one of the cutting edges at these.
+fn self_cuts(segs: &[Segment], closed: bool) -> Vec<f64> {
+    let mut starts = Vec::with_capacity(segs.len());
+    let mut acc = 0.0;
+    for s in segs {
+        starts.push(acc);
+        acc += s.len();
+    }
+    let mut ts: Vec<f64> = starts.iter().copied().skip(usize::from(!closed)).collect();
+    if segs.len() > MAX_SELF_CROSSING_SEGMENTS {
+        return ts;
+    }
+    let inside = |t: f64| t > 1e-9 && t < 1.0 - 1e-9;
+    let parts: Vec<_> = segs.iter().zip(starts).map(|(s, t0)| (s, s.bounds(), t0)).collect();
+    let mut crossings = 0;
+    for (i, (a, box_a, a0)) in parts.iter().enumerate() {
+        for (b, box_b, b0) in parts.iter().skip(i + 1) {
+            if !box_a.intersects(box_b) {
+                continue;
+            }
+            for x in intersect_ext(a, b, false) {
+                let (ta, tb) = (param_on(a, x), param_on(b, x));
+                if inside(ta) && inside(tb) {
+                    ts.push(a0 + ta * a.len());
+                    ts.push(b0 + tb * b.len());
+                    crossings += 1;
+                    if crossings >= MAX_SELF_CROSSINGS {
+                        return ts;
+                    }
+                }
+            }
+        }
+    }
+    ts
+}
+
+/// Trim a polyline at the piece containing `pick`, between the cuts by `cut` and, when it is one
+/// of the cutting edges (`itself`), by its own vertices and crossings ([`self_cuts`]).
+fn trim_polyline(p: &cadcraft_doc::LwPolyline, cut: &[Segment], pick: Vec2, itself: bool) -> Result<Vec<EntityKind>> {
     let pl = Polyline { vertices: p.vertices.clone(), closed: p.closed };
     let segs = pl.segments();
     let total: f64 = segs.iter().map(Segment::len).sum();
@@ -238,6 +344,10 @@ fn trim_polyline(p: &cadcraft_doc::LwPolyline, cut: &[Segment], pick: Vec2) -> R
         acc += len;
     }
     ts.retain(|t| *t > 1e-9 && *t < total - 1e-9);
+    if itself {
+        // A closed polyline also cuts itself at its start vertex.
+        ts.extend(self_cuts(&segs, p.closed).into_iter().filter(|t| (*t > 1e-9 || p.closed) && *t < total - 1e-9));
+    }
     ts.sort_by(f64::total_cmp);
     if ts.is_empty() {
         return Err(EngineError::Other("Object does not intersect a cutting edge.".into()));
