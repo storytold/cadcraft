@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::mpsc;
 
 use cadcraft_ui_egui::menus::{self, Entry};
 use cadcraft_ui_egui::{CadApp, i18n};
@@ -22,6 +23,7 @@ pub struct NativeMenu {
     /// The recent files File ▸ Open Recent lists now (it is rebuilt when they change).
     recent: Vec<String>,
     counter: usize,
+    events: mpsc::Receiver<MenuEvent>,
 }
 
 /// Accelerator for "Cmd+Shift+S" (modifier-less shortcuts stay in the app so typing works).
@@ -34,7 +36,15 @@ fn accel(sc: &str) -> Option<Accelerator> {
 
 impl NativeMenu {
     /// Build and register the macOS menu (app menu, Settings and the translated command tree); returns the state holding item ids and submenus.
-    pub fn install(app: &mut CadApp) -> Self {
+    pub fn install(app: &mut CadApp, ctx: &egui::Context) -> Self {
+        // A menu choice (or its shortcut, such as Cmd+W) is no window event, so winit would not
+        // wake the app for it: the handler does, and the choice runs in the next frame.
+        let (sender, events) = mpsc::channel();
+        let wake = ctx.clone();
+        MenuEvent::set_event_handler(Some(move |event| {
+            let _ = sender.send(event);
+            wake.request_repaint();
+        }));
         let menu = Menu::new();
         let mut items = HashMap::new();
         let language = app.language();
@@ -70,7 +80,17 @@ impl NativeMenu {
             submenus.push((title, sub));
         }
         menu.init_for_nsapp();
-        Self { _menu: menu, items, submenus, predefined, language, last_refresh: f64::NEG_INFINITY, recent: app.ui.recent_files.clone(), counter }
+        Self {
+            _menu: menu,
+            items,
+            submenus,
+            predefined,
+            language,
+            last_refresh: f64::NEG_INFINITY,
+            recent: app.ui.recent_files.clone(),
+            counter,
+            events,
+        }
     }
 
     /// Rebuild File ▸ Open Recent after a drawing was opened or the list was cleared: the native
@@ -93,12 +113,12 @@ impl NativeMenu {
 
     /// Drain queued menu events into commands (Discord opens externally), rebuild Open Recent, retranslate on a language change and refresh enablement when 300 ms have elapsed.
     pub fn poll(&mut self, app: &mut CadApp, ctx: &egui::Context) {
-        while let Ok(ev) = MenuEvent::receiver().try_recv() {
+        while let Ok(ev) = self.events.try_recv() {
             if let Some((cmd, _, _)) = self.items.get(ev.id.as_ref()) {
                 if cmd == "ui.discord" {
                     ctx.open_url(egui::OpenUrl::new_tab("https://discord.gg/artcraft"));
                 } else {
-                    menus::activate(app, &cmd.clone());
+                    menus::activate_native(app, ctx, &cmd.clone());
                 }
                 ctx.request_repaint();
             }
@@ -122,8 +142,9 @@ impl NativeMenu {
             return;
         }
         self.last_refresh = now;
+        let typing = menus::text_field_window(ctx).is_some();
         for (cmd, _, item) in self.items.values() {
-            let en = cadcraft_engine::find_command(cmd).is_none_or(|c| (c.enabled)(&app.session).is_ok());
+            let en = (typing && menus::edits_text(cmd)) || cadcraft_engine::find_command(cmd).is_none_or(|c| (c.enabled)(&app.session).is_ok());
             item.set_enabled(en);
         }
     }

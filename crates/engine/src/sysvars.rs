@@ -8,6 +8,7 @@ mod table;
 
 const SESSION_VARS: &[&str] = &[
     "AUDITCTL",
+    "ATTREQ",
     "OSMODE",
     "OSNAPHATCH",
     "ANNOAUTOSCALE",
@@ -70,6 +71,7 @@ const SESSION_VARS: &[&str] = &[
     "FONTFALLBACK",
     "SAVETIME",
     "SAVEFILEPATH",
+    "ISAVEBAK",
 ];
 
 pub fn get(s: &Session, name: &str) -> Option<Value> {
@@ -146,12 +148,15 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         // Held in radians (`$ANGBASE` in DXF is in degrees); reported in degrees, like POLARANG.
         "ANGBASE" => json!(s.doc().ok()?.header.f64("ANGBASE", 0.0).to_degrees()),
         "CONSTRAINTINFER" => json!(i32::from(s.doc().ok()?.parametric.settings.infer)),
+        // Text, as AutoCAD reads it back; the header keeps the index (and CECOLOR_RGB) for DXF.
+        "CECOLOR" => json!(crate::cmd::current_color_value(s.doc().ok()?)),
         // Process-wide font substitution (profile settings, not saved in the drawing).
         "FONTALT" => json!(cadcraft_fonts::ttf::font_alt()),
         "FONTFALLBACK" => json!(cadcraft_fonts::ttf::fallback_fonts()),
         // Autosave (profile settings too).
         "SAVETIME" => json!(crate::autosave::savetime()),
         "SAVEFILEPATH" => json!(crate::autosave::savefilepath()),
+        "ISAVEBAK" => json!(i32::from(crate::autosave::isavebak())),
         "CMDNAMES" => json!(s.running.as_ref().map(|r| r.id.to_ascii_uppercase()).unwrap_or_default()),
         "DWGNAME" => json!(s.state().map(|d| d.title.clone()).unwrap_or_default()),
         "DBMOD" => json!(s.state().map(|d| i32::from(d.is_dirty())).unwrap_or(0)),
@@ -277,7 +282,9 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
     let bad = || EngineError::BadParams { cmd: "setvar".into(), msg: format!("invalid value for {n}") };
     let st = &mut s.settings;
     match n.as_str() {
-        "OSMODE" => st.osmode = v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())).ok_or_else(bad)? as u32 & 0x7fff,
+        "OSMODE" => {
+            st.osmode = v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())).filter(|x| *x <= 0x7fff).ok_or_else(bad)? as u32
+        }
         // The `color` command's input: ByLayer, ByBlock, a name, an index or a true colour.
         "CECOLOR" => crate::cmd::set_current_color_value(s, v).ok_or_else(bad)?,
         "OSNAPHATCH" => st.osnaphatch = as_bool(v).ok_or_else(bad)?,
@@ -364,6 +371,7 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
             as_f64(v).filter(|m| *m >= 0.0 && *m <= f64::from(crate::autosave::MAX_SAVETIME)).ok_or_else(bad)?.round() as u32,
         ),
         "SAVEFILEPATH" => crate::autosave::set_savefilepath(v.as_str().ok_or_else(bad)?),
+        "ISAVEBAK" => crate::autosave::set_isavebak(as_bool(v).ok_or_else(bad)?),
         // A number is in degrees; text is an angle typed in AUNITS (SETVAR at the command line).
         "ANGBASE" => {
             let a = match v {
@@ -372,6 +380,15 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
             };
             let a = a.filter(|a| a.is_finite()).ok_or_else(bad)?;
             s.doc_mut()?.header.set_f64("ANGBASE", cadcraft_geom::norm_angle(a));
+        }
+        // Whole numbers inside the range UNITS clamps to.
+        "LUNITS" | "LUPREC" | "AUNITS" | "AUPREC" => {
+            let (_, lo, hi) = crate::cmd::UNIT_RANGES.iter().find(|(k, ..)| k.eq_ignore_ascii_case(&n)).copied().ok_or_else(bad)?;
+            let i = as_i(v)
+                .or_else(|| as_f64(v).filter(|f| f.fract() == 0.0 && f.abs() < 1e15).map(|f| f as i64))
+                .filter(|i| (lo..=hi).contains(i))
+                .ok_or_else(bad)?;
+            s.doc_mut()?.header.set_i64(&n, i);
         }
         "CONSTRAINTINFER" => s.doc_mut()?.parametric.settings.infer = as_bool(v).ok_or_else(bad)?,
         _ => {
@@ -384,6 +401,13 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
                 let mut st = d.dim_style(&d.header.str("DIMSTYLE", "Standard")).cloned().unwrap_or_default();
                 if !st.apply_fields(&serde_json::Map::from_iter([((*field).to_string(), v.clone())])).is_empty() {
                     return Err(bad());
+                }
+                // A real style field (DIMJOGANG, DIMSCALE...) is a real variable, even set to a
+                // whole number first, so a later fraction still fits. It takes the value the style
+                // took.
+                if let Some(f) = serde_json::to_value(&st).ok().and_then(|j| j.get(*field).filter(|f| f.is_f64()).and_then(|f| f.as_f64())) {
+                    d.header.set_f64(&n, f);
+                    return Ok(());
                 }
             }
             let val = match v {
@@ -403,7 +427,7 @@ pub fn set(s: &mut Session, name: &str, v: &Value) -> Result<()> {
             // Keep the header type stable for known numeric vars.
             match d.header.get(&n) {
                 Some(cadcraft_doc::HVal::Real(_)) => {
-                    d.header.set_f64(&n, val.as_f64().ok_or_else(bad)?);
+                    d.header.set_f64(&n, val.as_f64().filter(|f| f.is_finite()).ok_or_else(bad)?);
                     return Ok(());
                 }
                 Some(cadcraft_doc::HVal::Int(_)) => {
@@ -447,7 +471,7 @@ pub fn list(s: &Session) -> Value {
     }
     if let Ok(d) = s.doc() {
         for (k, v) in &d.header.vars {
-            if matches!(k.as_str(), "ANGBASE" | "SNAPUNIT" | "GRIDUNIT") {
+            if matches!(k.as_str(), "ANGBASE" | "SNAPUNIT" | "GRIDUNIT" | "CECOLOR") {
                 m.insert(k.clone(), get(s, k).unwrap_or(Value::Null));
             } else if !k.starts_with("CADCRAFT_") {
                 m.insert(k.clone(), serde_json::to_value(v).unwrap_or(Value::Null));

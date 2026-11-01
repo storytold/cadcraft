@@ -14,7 +14,8 @@ use cadcraft_doc::{DevicePaper, Orientation, PageSetup, PlotOutput, PlotterConfi
 use cadcraft_geom::{Bounds2, Vec2};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, Result, always, bad, has_doc, point_req, str_param};
+
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Session, Step};
 
 /// Where plotter configuration files live. Names are file names ending in
@@ -60,23 +61,13 @@ impl PlotterStore {
         }
     }
 
-    /// The `plotters` folder of the CADCraft settings directory (`CADCRAFT_CONFIG_DIR`, else
-    /// the platform's settings directory).
+    /// The `plotters` folder of the CADCraft settings directory ([`crate::settings_dir::current`]).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn settings_folder() -> PlotterStore {
         fn dir() -> std::result::Result<std::path::PathBuf, String> {
-            use std::path::PathBuf;
-            let get = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
-            let root = match std::env::var_os("CADCRAFT_CONFIG_DIR") {
-                Some(r) if !r.is_empty() => Some(PathBuf::from(r)),
-                Some(_) => None,
-                None => match std::env::consts::OS {
-                    "macos" => get("HOME").map(|h| h.join("Library/Application Support/CADCraft")),
-                    "windows" => get("APPDATA").map(|r| r.join("CADCraft")),
-                    _ => get("XDG_CONFIG_HOME").map(|r| r.join("cadcraft")).or_else(|| get("HOME").map(|h| h.join(".config/cadcraft"))),
-                },
-            };
-            root.map(|r| r.join("plotters")).ok_or_else(|| "there is no settings folder for plotter configurations".to_string())
+            crate::settings_dir::current()
+                .map(|r| r.join("plotters"))
+                .ok_or_else(|| "there is no settings folder for plotter configurations".to_string())
         }
         /// A plain file name of ours (no separators, no parent references).
         fn file(n: &str) -> std::result::Result<std::path::PathBuf, String> {
@@ -362,6 +353,8 @@ impl Interactive for PlotWindowM {
     fn name(&self) -> &'static str {
         "PLOTWINDOW"
     }
+    /// Ask for the first corner, then for the opposite one marked as a rectangle corner
+    /// (`Prompt::corner`), so ORTHO does not bend the pick and the window keeps its area.
     fn prompt(&self, _s: &Session) -> Prompt {
         match self.first {
             None => Prompt::new("Specify first corner", Accept::POINT),

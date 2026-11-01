@@ -87,9 +87,11 @@ fn dxf_at_every_version_reads_back_the_same() {
             assert_eq!(acadver(&bytes), v.code(), "{what}");
             assert_eq!(cadcraft_dxf::is_binary(&bytes), binary, "{what}");
             let raw = bytes.windows("图号".len()).any(|w| w == "图号".as_bytes());
-            assert_eq!(raw, v.utf8(), "{what}: UTF-8 text from 2007, \\U+ escapes before");
-            if !v.utf8() && !binary {
-                assert!(bytes.is_ascii(), "{what}");
+            assert_eq!(raw, v.utf8(), "{what}: UTF-8 text from 2007, the code page before");
+            if !v.utf8() {
+                // ANSI_1252 has the Latin characters; the others are escaped.
+                let has = |b: &[u8]| bytes.windows(b.len()).any(|w| w == b);
+                assert!(has(b"\\U+56FE\\U+53F7 Caf\xe9 \xd8 \\U+D83D\\U+DE00"), "{what}");
             }
             let back = read(&bytes, "x.dxf").unwrap();
             assert_eq!(first_text(&back).as_deref(), Some(INTL), "{what}");
@@ -99,11 +101,40 @@ fn dxf_at_every_version_reads_back_the_same() {
     }
 }
 
-/// R2000 ASCII is exactly the R2000 DXF CADCraft always wrote.
+/// CLASS records (DXF Reference, CLASSES): group 91, the instance count, came with the 2004
+/// format and follows the proxy flags. AutoCAD LT 2026 stops responding on an R2000 file whose
+/// CLASS records carry a 91, and AutoCAD rejects a 2004+ file without it (#635).
+#[test]
+fn class_records_follow_the_version() {
+    let d = sample();
+    for v in Version::ALL {
+        for binary in [false, true] {
+            let tags = cadcraft_dxf::parse(&write_with(&d, "x.dxf", &opts(v, binary)).unwrap()).unwrap();
+            let classes: Vec<Vec<i32>> = cadcraft_dxf::sections(&tags)
+                .into_iter()
+                .filter(|s| s.name == "CLASSES")
+                .flat_map(|s| cadcraft_dxf::records(&s.tags))
+                .filter(|(kind, _)| kind == "CLASS")
+                .map(|(_, t)| t.iter().map(|x| x.code).collect())
+                .collect();
+            assert!(!classes.is_empty(), "{v} binary={binary}");
+            let want: &[i32] = if v >= Version::R2004 { &[1, 2, 3, 90, 91, 280, 281] } else { &[1, 2, 3, 90, 280, 281] };
+            for codes in classes {
+                assert_eq!(codes, want, "{v} binary={binary}");
+            }
+        }
+    }
+}
+
+/// R2000 ASCII is the R2000 DXF CADCraft always wrote, tag for tag; only the text is in the
+/// code page instead of all `\U+` escapes.
 #[test]
 fn r2000_ascii_is_unchanged() {
     let d = sample();
-    assert_eq!(write_with(&d, "x.dxf", &opts(Version::R2000, false)).unwrap(), write_dxf(&d).into_bytes());
+    let saved = write_with(&d, "x.dxf", &opts(Version::R2000, false)).unwrap();
+    let escaped = write_dxf(&d);
+    assert_ne!(saved, escaped.as_bytes(), "Café is written in ANSI_1252");
+    assert_eq!(cadcraft_dxf::parse(&saved).unwrap(), cadcraft_dxf::parse(escaped.as_bytes()).unwrap());
 }
 
 /// Without a version asked for: 2018 for a new drawing, otherwise the file's own version (the

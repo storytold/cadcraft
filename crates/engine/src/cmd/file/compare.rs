@@ -12,7 +12,8 @@ use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, MAX_BLOCK_DEPTH, Space, 
 use cadcraft_geom::{Bounds2, Vec2};
 use serde_json::{Value, json};
 
-use super::super::*;
+use super::super::{CommandSpec, bad, str_param};
+
 use super::{base64_decode, io};
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 

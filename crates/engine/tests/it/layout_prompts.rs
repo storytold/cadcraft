@@ -39,7 +39,7 @@ fn typed_layout_options_prompt_for_names() {
     s.script("LAYOUT\n\nModel\n").unwrap();
     assert_eq!(s.layout_space(), Space::Model);
 
-    // ? lists; Template and SAveas report and end without taking the next input.
+    // ? lists; Template reports and ends without taking the next input.
     let n = s.log.len();
     s.cmdline("LAYOUT ? Sheet*").unwrap();
     assert!(s.log[n..].iter().any(|l| l == "Layout: Sheet A (2)"), "{:?}", &s.log[n..]);

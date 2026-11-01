@@ -17,7 +17,7 @@ use std::fmt::Write as _;
 use cadcraft_color::Rgb;
 use cadcraft_doc::{Drawing, Handle, PageSetup, Space};
 use cadcraft_geom::{Bounds2, Vec2};
-use cadcraft_render::{Kind, Sheet, clip, paper};
+use cadcraft_render::{DPrim, Kind, Sheet, clip, paper};
 use serde_json::Value;
 
 use craft_pdf::write::backend as kr;
@@ -509,8 +509,37 @@ struct SheetPage {
     label: String,
 }
 
+/// `o` with a layout's saved page setup filled in where the options don't say: its plot window,
+/// scale to fit or saved scale, and centring (#2493). Explicit options win; model space has no
+/// saved setup.
+pub(crate) fn with_saved_setup(d: &Drawing, space: &Space, o: &PdfOptions) -> PdfOptions {
+    let mut o = o.clone();
+    let Some(page) = space.layout().and_then(|n| d.layout(n)).map(|l| &l.page) else { return o };
+    // An explicit `fit: false` without a `scale` asks for the plain 1:1 plot of the sheet.
+    if o.fit == Some(false) && o.scale.is_none() {
+        o.window = None;
+        return o;
+    }
+    let saved = paper::saved_plot(page);
+    // A layout is plotted over its own sheet: only its saved window applies, not one in the options.
+    o.window = saved.window;
+    // An explicit scale beats a saved scale to fit (the scale is ignored while fitting).
+    if o.fit.is_none() && o.scale.is_none() && saved.fit {
+        o.fit = Some(true);
+    }
+    if o.scale.is_none() {
+        o.scale = saved.scale;
+    }
+    if o.center.is_none() && saved.window.is_some() {
+        o.center = Some(saved.center);
+    }
+    o
+}
+
 /// Plot one space.
 fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String)]) -> Result<SheetPage> {
+    let saved = with_saved_setup(d, space, o);
+    let o = &saved;
     let page = page_for(d, space, o)?;
     let unit_mm = paper::page_unit_mm(d, &page);
     let sheet = Sheet::from_page(&page, unit_mm);
@@ -521,6 +550,7 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
         tolerance: 0.001,
         min_dash: 0.0,
         text: true,
+        linetypes: true,
         fill: true,
         lineweights,
         view_height: 0.0,
@@ -530,8 +560,8 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
         cancel: None,
     };
     let k = unit_mm * PT_PER_MM;
-    let window = o.window.filter(|w| matches!(space, Space::Model) && !w.is_empty());
-    let fit = o.fit.unwrap_or(window.is_some() || matches!(space, Space::Model));
+    let window = o.window.filter(|w| !w.is_empty());
+    let fit = o.fit.unwrap_or(matches!(space, Space::Model));
     // Chord tolerance: about 0.05 mm on paper.
     let est = plot_scale(&window.unwrap_or_else(|| d.extents(space)), &sheet, fit, o.scale);
     let tol = 0.05 / unit_mm / est.max(1e-300);
@@ -541,8 +571,11 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
     let list = cadcraft_render::build_plot(d, space, &cadcraft_render::Options { tolerance, view_height, ..ropts });
     let b = window.unwrap_or(list.bounds);
     let s = plot_scale(&b, &sheet, fit, o.scale);
-    let map = if fit || matches!(space, Space::Model) {
-        let (from, to) = placement(space, &b, fit, &sheet, o);
+    // A layout plotted over a window is placed like model space: the window on the printable area.
+    let placed = fit || window.is_some() || matches!(space, Space::Model);
+    let map = if placed {
+        let by = if window.is_some() { &Space::Model } else { space };
+        let (from, to) = placement(by, &b, fit, &sheet, o);
         Map { from, s, to, k }
     } else {
         Map { from: Vec2::ZERO, s, to: Vec2::ZERO, k }
@@ -551,11 +584,7 @@ fn sheet(d: &Drawing, space: &Space, o: &PdfOptions, links_to: &[(Handle, String
     let mut list = list;
     cadcraft_render::pen::apply(&mut list, map.s * unit_mm);
     let media = sheet.size * k;
-    let clip_pt = if fit || matches!(space, Space::Model) {
-        Bounds2::new(sheet.printable.min * k, sheet.printable.max * k)
-    } else {
-        Bounds2::new(Vec2::ZERO, media)
-    };
+    let clip_pt = if placed { Bounds2::new(sheet.printable.min * k, sheet.printable.max * k) } else { Bounds2::new(Vec2::ZERO, media) };
     // The layers drawn on, in order of first use.
     let mut layers: Vec<u32> = Vec::new();
     if o.layers {
@@ -809,7 +838,7 @@ fn krilla_failure(e: KrillaError) -> Failure {
 /// as text instead: the glyph at font size 1 under its glyph matrix (the matrix axes are one
 /// em).
 fn marks(s: &mut Surface<'_>, p: &SheetPage, groups: &Groups, fonts: &mut fonts::Fonts) -> std::result::Result<(), Failure> {
-    let (list, map) = (&p.list, &p.map);
+    let list = &p.list;
     let texts = fonts::texts(list);
     let white = Rgb(255, 255, 255);
     let mut batch: Option<(StrokeStyle, PathBuilder)> = None;
@@ -830,98 +859,124 @@ fn marks(s: &mut Surface<'_>, p: &SheetPage, groups: &Groups, fonts: &mut fonts:
         let t = if prim.kind == Kind::Mask { 0 } else { prim.transparency.min(cadcraft_render::MAX_TRANSPARENCY) };
         let w = f64::from(prim.lw) * PT_PER_MM;
         let w = if w.is_finite() && w > 0.0 { w.min(100.0) } else { 0.0 };
+        let m = Mark { rgb, t, w };
         match prim.kind {
-            Kind::Polyline | Kind::Infinite { .. } => {
-                let pts: Vec<Vec2> = match prim.kind {
-                    Kind::Infinite { ray } => match (raw.first(), raw.get(1)) {
-                        (Some(base), Some(dir)) => {
-                            let a = map.pt(*base);
-                            let dir_pt = map.pt(*base + *dir) - a;
-                            match clip::clip_infinite(a, dir_pt, ray, &p.clip_pt) {
-                                Some((x, y)) => vec![x, y],
-                                None => continue,
-                            }
-                        }
-                        _ => continue,
-                    },
-                    _ => raw.iter().map(|q| map.pt(*q)).collect(),
-                };
-                if pts.len() < 2 {
-                    continue;
-                }
-                // With a vertex out of range, keep the pieces inside the plot area, widened so
-                // a wide stroke just outside it still shows its edge.
-                let runs = if pts.iter().all(|q| coord(*q).is_some()) { vec![pts] } else { clip::clip_polyline(&pts, &p.clip_pt.expand(w + 1.0)) };
-                let style = StrokeStyle { rgb, width: w as f32, transparency: t };
-                if t > 0 || batch.as_ref().is_some_and(|(b, _)| *b != style) {
-                    flush(s, &mut batch);
-                }
-                for run in runs {
-                    let Some(pts) = run.iter().map(|q| coord(*q)).collect::<Option<Vec<_>>>() else { continue };
-                    // The writer leaves out a path without extent, so a zero-length line is
-                    // painted as the round-cap dot its stroke would make.
-                    if let Some(&(x, y)) = pts.first()
-                        && pts.iter().all(|q| *q == (x, y))
-                    {
-                        flush(s, &mut batch);
-                        let d = if w > 0.0 { w as f32 } else { HAIRLINE_DOT_PT };
-                        if let Some(path) = circle_path(x, y, d / 2.0) {
-                            fill_path(s, &path, rgb, t);
-                        }
-                        continue;
-                    }
-                    let (_, pb) = batch.get_or_insert_with(|| (style, PathBuilder::new()));
-                    for (j, (x, y)) in pts.iter().enumerate() {
-                        if j == 0 {
-                            pb.move_to(*x, *y);
-                        } else {
-                            pb.line_to(*x, *y);
-                        }
-                    }
-                }
-            }
+            Kind::Polyline | Kind::Infinite { .. } => polyline(s, &mut batch, p, prim, raw, m),
             Kind::Tris | Kind::Mask => {
                 flush(s, &mut batch);
                 // A wipeout's mask is paper white.
-                let rgb = if prim.kind == Kind::Mask { white } else { rgb };
-                if let Some(text) = u32::try_from(i).ok().and_then(|i| texts.get(&i))
-                    && let Some(font) = fonts.font(&text.glyph.face)
-                {
-                    glyph(s, font, text, map, rgb, t);
-                    continue;
-                }
-                let mapped: Vec<Vec2> = raw.iter().map(|q| map.pt(*q)).collect();
-                // With a vertex out of range, keep the parts inside the plot area.
-                let tris = if mapped.iter().all(|q| coord(*q).is_some()) { mapped } else { clip::clip_triangles(&mapped, &p.clip_pt) };
-                let mut pb = PathBuilder::new();
-                for tri in tris.as_chunks::<3>().0 {
-                    let Some(v) = tri.iter().map(|q| coord(*q)).collect::<Option<Vec<_>>>() else { continue };
-                    for (j, (x, y)) in v.iter().enumerate() {
-                        if j == 0 {
-                            pb.move_to(*x, *y);
-                        } else {
-                            pb.line_to(*x, *y);
-                        }
-                    }
-                    pb.close();
-                }
-                if let Some(path) = pb.finish() {
-                    fill_path(s, &path, rgb, t);
+                let m = if prim.kind == Kind::Mask { Mark { rgb: white, ..m } } else { m };
+                let text_font =
+                    u32::try_from(i).ok().and_then(|i| texts.get(&i).copied()).and_then(|text| fonts.font(&text.glyph.face).map(|font| (text, font)));
+                match text_font {
+                    Some((text, font)) => glyph(s, font, text, &p.map, m.rgb, m.t),
+                    None => fill_tris(s, p, raw, m.rgb, m.t),
                 }
             }
-            Kind::Point => {
-                let Some(q) = raw.first() else { continue };
-                flush(s, &mut batch);
-                let half = (w.max(0.5)) / 2.0;
-                let c = map.pt(*q);
-                if let Some(path) = rect_path(c - Vec2::new(half, half), c + Vec2::new(half, half)) {
-                    fill_path(s, &path, rgb, t);
-                }
-            }
+            Kind::Point => point(s, &mut batch, &p.map, raw, m),
         }
     }
     flush(s, &mut batch);
     layer_changed(s, layer, None)
+}
+
+/// How a primitive is painted: colour, transparency (percent) and lineweight (points).
+#[derive(Clone, Copy)]
+struct Mark {
+    rgb: Rgb,
+    t: u8,
+    w: f64,
+}
+
+/// Stroke a polyline or infinite line, clipped to the plot area, into the open batch.
+fn polyline(s: &mut Surface<'_>, batch: &mut Option<(StrokeStyle, PathBuilder)>, p: &SheetPage, prim: &DPrim, raw: &[Vec2], m: Mark) {
+    let Some(pts) = polyline_points(prim, raw, &p.map, &p.clip_pt) else { return };
+    if pts.len() < 2 {
+        return;
+    }
+    // With a vertex out of range, keep the pieces inside the plot area, widened so
+    // a wide stroke just outside it still shows its edge.
+    let runs = if pts.iter().all(|q| coord(*q).is_some()) { vec![pts] } else { clip::clip_polyline(&pts, &p.clip_pt.expand(m.w + 1.0)) };
+    let style = StrokeStyle { rgb: m.rgb, width: m.w as f32, transparency: m.t };
+    if m.t > 0 || batch.as_ref().is_some_and(|(b, _)| *b != style) {
+        flush(s, batch);
+    }
+    for run in runs {
+        stroke_run(s, batch, &run, style, m);
+    }
+}
+
+/// The page points of a polyline, or of an infinite line clipped to the plot area; `None` when
+/// there is nothing to draw.
+fn polyline_points(prim: &DPrim, raw: &[Vec2], map: &Map, clip_pt: &Bounds2) -> Option<Vec<Vec2>> {
+    match prim.kind {
+        Kind::Infinite { ray } => {
+            let (Some(base), Some(dir)) = (raw.first(), raw.get(1)) else { return None };
+            let a = map.pt(*base);
+            let dir_pt = map.pt(*base + *dir) - a;
+            let (x, y) = clip::clip_infinite(a, dir_pt, ray, clip_pt)?;
+            Some(vec![x, y])
+        }
+        _ => Some(raw.iter().map(|q| map.pt(*q)).collect()),
+    }
+}
+
+/// Add one run of a polyline to the batch, or paint it as a dot when it has no extent.
+fn stroke_run(s: &mut Surface<'_>, batch: &mut Option<(StrokeStyle, PathBuilder)>, run: &[Vec2], style: StrokeStyle, m: Mark) {
+    let Some(pts) = run.iter().map(|q| coord(*q)).collect::<Option<Vec<_>>>() else { return };
+    // The writer leaves out a path without extent, so a zero-length line is
+    // painted as the round-cap dot its stroke would make.
+    if let Some(&(x, y)) = pts.first()
+        && pts.iter().all(|q| *q == (x, y))
+    {
+        flush(s, batch);
+        let d = if m.w > 0.0 { m.w as f32 } else { HAIRLINE_DOT_PT };
+        if let Some(path) = circle_path(x, y, d / 2.0) {
+            fill_path(s, &path, m.rgb, m.t);
+        }
+        return;
+    }
+    let (_, pb) = batch.get_or_insert_with(|| (style, PathBuilder::new()));
+    for (j, (x, y)) in pts.iter().enumerate() {
+        if j == 0 {
+            pb.move_to(*x, *y);
+        } else {
+            pb.line_to(*x, *y);
+        }
+    }
+}
+
+/// Fill a set of triangles, clipped to the plot area.
+fn fill_tris(s: &mut Surface<'_>, p: &SheetPage, raw: &[Vec2], rgb: Rgb, t: u8) {
+    let mapped: Vec<Vec2> = raw.iter().map(|q| p.map.pt(*q)).collect();
+    // With a vertex out of range, keep the parts inside the plot area.
+    let tris = if mapped.iter().all(|q| coord(*q).is_some()) { mapped } else { clip::clip_triangles(&mapped, &p.clip_pt) };
+    let mut pb = PathBuilder::new();
+    for tri in tris.as_chunks::<3>().0 {
+        let Some(v) = tri.iter().map(|q| coord(*q)).collect::<Option<Vec<_>>>() else { continue };
+        for (j, (x, y)) in v.iter().enumerate() {
+            if j == 0 {
+                pb.move_to(*x, *y);
+            } else {
+                pb.line_to(*x, *y);
+            }
+        }
+        pb.close();
+    }
+    if let Some(path) = pb.finish() {
+        fill_path(s, &path, rgb, t);
+    }
+}
+
+/// Paint a point marker: a small square at the point.
+fn point(s: &mut Surface<'_>, batch: &mut Option<(StrokeStyle, PathBuilder)>, map: &Map, raw: &[Vec2], m: Mark) {
+    let Some(q) = raw.first() else { return };
+    flush(s, batch);
+    let half = (m.w.max(0.5)) / 2.0;
+    let c = map.pt(*q);
+    if let Some(path) = rect_path(c - Vec2::new(half, half), c + Vec2::new(half, half)) {
+        fill_path(s, &path, m.rgb, m.t);
+    }
 }
 
 /// Write one glyph as text in its embedded font: font size 1, placed by the glyph's matrix (one
@@ -962,4 +1017,87 @@ fn uri(url: &str) -> Option<String> {
         }
     }
     Some(out)
+}
+
+#[cfg(test)]
+mod saved_setup_tests {
+    use super::*;
+    use cadcraft_doc::{Common, EntityKind, Layout, Line};
+    use cadcraft_geom::Vec3;
+    use serde_json::json;
+
+    /// A layout drawn in mm at A1 size (frame 20,5 - 836,589) whose page setup is A4 landscape
+    /// plotting that window, as in #2493.
+    fn drawing(scale_to_fit: bool, scale: f64) -> Drawing {
+        let mut d = Drawing::new_metric();
+        let mut l = Layout::new("L1", 3);
+        l.page = PageSetup {
+            width_mm: 297.0,
+            height_mm: 210.0,
+            landscape: true,
+            margins_mm: [0.0; 4],
+            plot_area: "window".into(),
+            plot_window: [20.0, 5.0, 836.0, 589.0],
+            scale_to_fit,
+            scale,
+            center: true,
+            ..PageSetup::default()
+        };
+        d.layouts.push(l);
+        let line = EntityKind::Line(Line { a: Vec3::new(20.0, 5.0, 0.0), b: Vec3::new(836.0, 589.0, 0.0) });
+        d.add(&Space::Paper("L1".into()), Common::default(), line).unwrap();
+        d
+    }
+
+    fn map(d: &Drawing, opts: serde_json::Value) -> Map {
+        sheet(d, &Space::Paper("L1".into()), &PdfOptions::from_json(&opts), &[]).unwrap().map
+    }
+
+    /// A layout plotted with no options uses its saved scale to fit and plot window, not 1:1.
+    #[test]
+    fn a_layout_plots_its_saved_window_scaled_to_fit_by_default() {
+        let d = drawing(true, 1.0);
+        let m = map(&d, json!({}));
+        let want = (297.0_f64 / 816.0).min(210.0 / 584.0);
+        assert!((m.s - want).abs() < 1e-9, "scale {} not {want}", m.s);
+        assert!(m.from.dist(Vec2::new(428.0, 297.0)) < 1e-9, "window centre, got {:?}", m.from);
+        assert!(m.to.dist(Vec2::new(148.5, 105.0)) < 1e-9, "page centre, got {:?}", m.to);
+    }
+
+    /// The options still win: `fit: false` is the plain 1:1 plot, and a `scale` is used as given.
+    #[test]
+    fn explicit_options_override_the_saved_setup() {
+        let d = drawing(true, 1.0);
+        let m = map(&d, json!({"fit": false}));
+        assert_eq!((m.s, m.from, m.to), (1.0, Vec2::ZERO, Vec2::ZERO));
+        let m = map(&d, json!({"fit": false, "scale": 0.25}));
+        assert!((m.s - 0.25).abs() < 1e-12, "{}", m.s);
+    }
+
+    /// A saved scale (not scale to fit) is used by default, with the window centred on the page.
+    #[test]
+    fn a_layout_plots_at_its_saved_scale_by_default() {
+        let d = drawing(false, 0.3394);
+        let m = map(&d, json!({}));
+        assert!((m.s - 0.3394).abs() < 1e-12, "{}", m.s);
+        assert!(m.from.dist(Vec2::new(428.0, 297.0)) < 1e-9 && m.to.dist(Vec2::new(148.5, 105.0)) < 1e-9, "{:?} {:?}", m.from, m.to);
+    }
+
+    /// A page setup with nothing saved to fit plots as it always did.
+    #[test]
+    fn a_layout_without_a_saved_window_or_scale_is_unchanged() {
+        let mut d = drawing(false, 1.0);
+        d.layouts.iter_mut().find(|l| l.name == "L1").unwrap().page.plot_area = "layout".into();
+        let m = map(&d, json!({}));
+        assert_eq!((m.s, m.from, m.to), (1.0, Vec2::ZERO, Vec2::ZERO));
+    }
+
+    /// An explicit `scale` beats a saved scale to fit, in the PDF as in the preview.
+    #[test]
+    fn an_explicit_scale_overrides_the_saved_scale_to_fit() {
+        let d = drawing(true, 1.0);
+        let m = map(&d, json!({"scale": 0.25}));
+        assert!((m.s - 0.25).abs() < 1e-12, "{}", m.s);
+        assert!(m.from.dist(Vec2::new(428.0, 297.0)) < 1e-9 && m.to.dist(Vec2::new(148.5, 105.0)) < 1e-9, "still placed: {:?} {:?}", m.from, m.to);
+    }
 }

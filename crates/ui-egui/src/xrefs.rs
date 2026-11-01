@@ -37,19 +37,10 @@ pub fn route(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value,
     }
 }
 
-/// Show the palette. The first time it docks below the Layers palette (where the palettes column
-/// is); after that it comes back where it was.
+/// Show the palette. The first time it docks below Properties in the right dock; after that it
+/// comes back where it was.
 fn open_palette(app: &mut CadApp) -> Result<Value, String> {
-    let panel = Panel::ExternalRefs;
-    let first = !app.ui.docking.layout.contains(&panel) && !app.ui.docking.hidden.iter().any(|(p, _)| *p == panel);
-    let r = crate::docking::command(app, false, &json!({ "operation": "open", "panel": panel.id() }))?;
-    if first && app.ui.docking.layout.contains(&Panel::Layers) {
-        let moved = json!({ "operation": "move", "panel": panel.id(), "target": Panel::Layers.id(), "zone": "bottom" });
-        if let Ok(r) = crate::docking::command(app, false, &moved) {
-            return Ok(r);
-        }
-    }
-    Ok(r)
+    crate::docking::command(app, false, &json!({ "operation": "open", "panel": Panel::ExternalRefs.id() }))
 }
 
 /// A picked file inside the host drawing's folder is attached by its relative path, so the

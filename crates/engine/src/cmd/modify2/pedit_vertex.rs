@@ -1,7 +1,10 @@
 //! PEDIT Edit vertex: Break and Straighten between two marked vertices, Tangent directions
 //! that Fit honours, and Regen.
 
-use super::*;
+use super::super::point_value;
+use super::{
+    EntityKind, Handle, Input, LwPolyline, PPhase, PeditM, PolyVertex, Result, Session, Value, Vec2, bad, curves, json, other, push_entity, set_kind,
+};
 
 fn ordered(pl: &LwPolyline, i: usize, j: usize) -> Result<(usize, usize)> {
     let n = pl.vertices.len();

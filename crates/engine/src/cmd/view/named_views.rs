@@ -10,7 +10,8 @@ use cadcraft_geom::{Bounds2, Vec2};
 use serde_json::{Value, json};
 
 use super::super::qselect::wildcard;
-use super::super::*;
+use super::super::{CommandSpec, bad, point_param, str_param};
+
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step, View};
 
 /// Most names one Delete or list takes.

@@ -11,7 +11,8 @@ use cadcraft_geom::{Line, Vec2, line_line, point_in_polygon};
 use serde_json::{Value, json};
 
 use super::super::machines::{SelOutcome, SelectPhase, SelectRun};
-use super::super::*;
+use super::super::{CommandSpec, bad, targets};
+
 use super::SelfCheck;
 use crate::{EngineError, Input, Interactive, Prompt, Result, Session, Step};
 

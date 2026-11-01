@@ -588,101 +588,110 @@ impl Sink<'_> {
                 }
                 None => p,
             };
-            let cands = &mut *self.cands;
-            match &p {
-                Prim::Seg(s) => {
-                    if osmode & mode::END != 0 {
-                        cands.push((mode::END, s.start()));
-                        cands.push((mode::END, s.end()));
-                    }
-                    if osmode & mode::MID != 0 {
-                        cands.push((mode::MID, s.mid()));
-                    }
-                    if let Segment::Arc { arc, .. } = s {
-                        if osmode & mode::CEN != 0 {
-                            cands.push((mode::CEN, arc.center));
-                        }
-                        if osmode & mode::QUA != 0 {
-                            for k in 0..4 {
-                                let a = k as f64 * PI / 2.0;
-                                if arc.contains_angle(a) {
-                                    cands.push((mode::QUA, Vec2::polar(arc.center, arc.radius, a)));
-                                }
-                            }
-                        }
-                    }
-                }
-                Prim::Circle(c) => {
-                    if osmode & mode::CEN != 0 {
-                        cands.push((mode::CEN, c.center));
-                    }
-                    if osmode & mode::QUA != 0 {
-                        for k in 0..4 {
-                            cands.push((mode::QUA, Vec2::polar(c.center, c.radius, k as f64 * PI / 2.0)));
-                        }
-                    }
-                }
-                Prim::Ellipse(el) => {
-                    if osmode & mode::CEN != 0 {
-                        cands.push((mode::CEN, el.center));
-                    }
-                    if osmode & mode::QUA != 0 {
-                        // Only the quadrant points the arc passes through.
-                        for k in 0..4 {
-                            let t = k as f64 * PI / 2.0;
-                            if cadcraft_geom::angle_in_sweep(t, el.start, el.end) {
-                                cands.push((mode::QUA, el.at_param(t)));
-                            }
-                        }
-                    }
-                    if osmode & mode::END != 0 && !el.is_full() {
-                        cands.push((mode::END, el.at_param(el.start)));
-                        cands.push((mode::END, el.at_param(el.end)));
-                    }
-                    if osmode & mode::MID != 0
-                        && let Some(m) = curves::ellipse_mid(el)
-                    {
-                        cands.push((mode::MID, m));
-                    }
-                }
-                Prim::Spline(s) => {
-                    if osmode & mode::END != 0 && !s.closed {
-                        let (lo, hi) = s.domain();
-                        cands.push((mode::END, s.eval(lo)));
-                        cands.push((mode::END, s.eval(hi)));
-                    }
-                    if osmode & mode::MID != 0
-                        && let Some(m) = curves::spline_mid(s)
-                    {
-                        cands.push((mode::MID, m));
-                    }
-                }
-                Prim::Point(pt) => {
-                    if osmode & mode::NOD != 0 && matches!(kind, EntityKind::Point(_)) {
-                        cands.push((mode::NOD, *pt));
-                    }
-                }
-                Prim::Infinite { base, .. } => {
-                    if osmode & mode::END != 0 && matches!(kind, EntityKind::Ray(_)) {
-                        cands.push((mode::END, *base));
-                    }
-                }
-                Prim::Fill(_) => {}
-            }
-            self.near.push(p);
+            self.primitive(kind, p);
         }
         if osmode & mode::GCEN != 0 {
-            // The centroid of the area a closed polyline or spline encloses.
-            let pts = match kind {
-                EntityKind::LwPolyline(pl) if pl.closed => {
-                    cadcraft_geom::Polyline { vertices: pl.vertices.clone(), closed: true }.tessellate(self.aperture / 10.0)
+            self.closed_centroid(kind, &at);
+        }
+    }
+
+    fn primitive(&mut self, kind: &EntityKind, p: Prim) {
+        let osmode = self.osmode;
+        let cands = &mut *self.cands;
+        match &p {
+            Prim::Seg(s) => {
+                if osmode & mode::END != 0 {
+                    cands.push((mode::END, s.start()));
+                    cands.push((mode::END, s.end()));
                 }
-                EntityKind::Spline(s) if s.closed => s.tessellate(1e-3),
-                _ => Vec::new(),
-            };
-            if let Some(c) = centroid(&pts) {
-                self.cands.push((mode::GCEN, at(c)));
+                if osmode & mode::MID != 0 {
+                    cands.push((mode::MID, s.mid()));
+                }
+                if let Segment::Arc { arc, .. } = s {
+                    if osmode & mode::CEN != 0 {
+                        cands.push((mode::CEN, arc.center));
+                    }
+                    if osmode & mode::QUA != 0 {
+                        for k in 0..4 {
+                            let a = k as f64 * PI / 2.0;
+                            if arc.contains_angle(a) {
+                                cands.push((mode::QUA, Vec2::polar(arc.center, arc.radius, a)));
+                            }
+                        }
+                    }
+                }
             }
+            Prim::Circle(c) => {
+                if osmode & mode::CEN != 0 {
+                    cands.push((mode::CEN, c.center));
+                }
+                if osmode & mode::QUA != 0 {
+                    for k in 0..4 {
+                        cands.push((mode::QUA, Vec2::polar(c.center, c.radius, k as f64 * PI / 2.0)));
+                    }
+                }
+            }
+            Prim::Ellipse(el) => {
+                if osmode & mode::CEN != 0 {
+                    cands.push((mode::CEN, el.center));
+                }
+                if osmode & mode::QUA != 0 {
+                    // Only the quadrant points the arc passes through.
+                    for k in 0..4 {
+                        let t = k as f64 * PI / 2.0;
+                        if cadcraft_geom::angle_in_sweep(t, el.start, el.end) {
+                            cands.push((mode::QUA, el.at_param(t)));
+                        }
+                    }
+                }
+                if osmode & mode::END != 0 && !el.is_full() {
+                    cands.push((mode::END, el.at_param(el.start)));
+                    cands.push((mode::END, el.at_param(el.end)));
+                }
+                if osmode & mode::MID != 0
+                    && let Some(m) = curves::ellipse_mid(el)
+                {
+                    cands.push((mode::MID, m));
+                }
+            }
+            Prim::Spline(s) => {
+                if osmode & mode::END != 0 && !s.closed {
+                    let (lo, hi) = s.domain();
+                    cands.push((mode::END, s.eval(lo)));
+                    cands.push((mode::END, s.eval(hi)));
+                }
+                if osmode & mode::MID != 0
+                    && let Some(m) = curves::spline_mid(s)
+                {
+                    cands.push((mode::MID, m));
+                }
+            }
+            Prim::Point(pt) => {
+                if osmode & mode::NOD != 0 && matches!(kind, EntityKind::Point(_)) {
+                    cands.push((mode::NOD, *pt));
+                }
+            }
+            Prim::Infinite { base, .. } => {
+                if osmode & mode::END != 0 && matches!(kind, EntityKind::Ray(_)) {
+                    cands.push((mode::END, *base));
+                }
+            }
+            Prim::Fill(_) => {}
+        }
+        self.near.push(p);
+    }
+
+    fn closed_centroid(&mut self, kind: &EntityKind, at: &impl Fn(Vec2) -> Vec2) {
+        // The centroid of the area a closed polyline or spline encloses.
+        let pts = match kind {
+            EntityKind::LwPolyline(pl) if pl.closed => {
+                cadcraft_geom::Polyline { vertices: pl.vertices.clone(), closed: true }.tessellate(self.aperture / 10.0)
+            }
+            EntityKind::Spline(s) if s.closed => s.tessellate(1e-3),
+            _ => Vec::new(),
+        };
+        if let Some(c) = centroid(&pts) {
+            self.cands.push((mode::GCEN, at(c)));
         }
     }
 }

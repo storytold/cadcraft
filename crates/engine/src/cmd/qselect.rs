@@ -5,7 +5,8 @@ use cadcraft_color::Color;
 use cadcraft_doc::{Drawing, Entity, Handle};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, bad, str_param};
+
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -320,9 +321,8 @@ fn run_info(s: &mut Session, p: &Value) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
     use super::*;
+    use serde_json::json;
 
     fn session() -> Session {
         let mut s = Session::new();
