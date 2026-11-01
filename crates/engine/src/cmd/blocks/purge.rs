@@ -189,6 +189,32 @@ fn is(name: &str, list: &[&str]) -> bool {
     list.iter().any(|n| n.eq_ignore_ascii_case(name))
 }
 
+/// The linetypes an object names besides its own: its attributes' overrides, its dimension
+/// overrides, and the copy of its style a multiline keeps.
+fn linetypes_inside(e: &cadcraft_doc::Entity) -> Vec<String> {
+    match &e.kind {
+        EntityKind::Insert(i) => i.attribs.iter().filter_map(|a| a.props.linetype.clone()).collect(),
+        EntityKind::Dimension(dm) => dm
+            .overrides
+            .iter()
+            .filter(|(k, _)| cadcraft_doc::DimStyle::field_name(k).is_some_and(|f| matches!(f, "dimLinetype" | "extLinetype1" | "extLinetype2")))
+            .filter_map(|(_, v)| v.as_str().map(|n| n.trim().to_string()))
+            .collect(),
+        EntityKind::MLine(m) => m.def.elements.iter().map(|e| e.linetype.clone()).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The linetypes named by objects, layers, dimension styles and multiline styles.
+fn linetypes_in_use(d: &Drawing) -> impl Iterator<Item = String> + '_ {
+    let objects = entities(d).map(|e| e.common.linetype.clone());
+    let inside = entities(d).flat_map(|e| linetypes_inside(e));
+    let layers = d.layers.iter().map(|l| l.linetype.clone());
+    let dims = d.dim_styles.iter().flat_map(|t| [t.dim_linetype.clone(), t.ext_linetype1.clone(), t.ext_linetype2.clone()]);
+    let mlines = d.mline_styles.iter().flat_map(|t| t.elements.iter().map(|e| e.linetype.clone()));
+    objects.chain(inside).chain(layers).chain(dims).chain(mlines)
+}
+
 /// Names of the unused objects of a named kind, in table order. This is PURGE's scan; `USAGE`
 /// reads it too, without purging anything.
 pub(in crate::cmd) fn candidates(d: &Drawing, kind: Kind) -> Vec<String> {
@@ -208,7 +234,7 @@ pub(in crate::cmd) fn candidates(d: &Drawing, kind: Kind) -> Vec<String> {
                 .collect()
         }
         Kind::Linetypes => {
-            let used = lower(&mut entities(d).map(|e| e.common.linetype.clone()).chain(d.layers.iter().map(|l| l.linetype.clone())));
+            let used = lower(&mut linetypes_in_use(d));
             let cur = d.header.str("CELTYPE", "ByLayer");
             d.linetypes
                 .iter()

@@ -211,15 +211,27 @@ fn run_import(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("blocklibimport", format!("\"{name}\" is not a valid block name")));
     }
     let mut src = (*cached_drawing(path)?).clone();
+    let mut picked = None;
     if let Some(block) = block {
         let b = src.block(block).cloned().ok_or_else(|| bad("blocklibimport", format!("{path} has no block \"{block}\"")))?;
         // The block is a drawing of its own: its objects as model space and its base point as
         // $INSBASE, with the file's other blocks around it.
         src.model = b.entities.clone();
         src.header.set("INSBASE", cadcraft_doc::HVal::Point(b.base));
+        picked = Some(b);
     }
     // Only the layers, linetypes and styles the block needs come along, not the whole file's.
     let name = define_from(s, &src, &name, true)?;
+    // The definition is a new one: what the block says about itself still comes along.
+    if let Some(from) = picked
+        && let Some(b) = s.doc_mut()?.blocks.get_mut(&name)
+    {
+        let b = Arc::make_mut(b);
+        b.annotative = from.annotative;
+        b.description.clone_from(&from.description);
+        b.units = from.units;
+        b.explodable = from.explodable;
+    }
     Ok(json!({ "name": name }))
 }
 

@@ -119,7 +119,8 @@ pub(super) fn define_from(s: &mut Session, src: &Drawing, name: &str, only_neede
         let need = needed_blocks(src);
         renames.retain(|from, _| need.contains(&from.to_ascii_uppercase()));
     }
-    for (from, to) in &renames {
+    let renames = Renames::new(renames);
+    for (from, to) in &renames.exact {
         let Some(b) = src.blocks.get(from) else { continue };
         let mut nb = (**b).clone();
         nb.name = to.clone();
@@ -316,9 +317,30 @@ fn block_names(d: &Drawing, src: &Drawing, defining: &str) -> BTreeMap<String, S
     out
 }
 
+/// The names the copied source blocks take, found as `Drawing::block` finds a block: a reference
+/// may spell a name differently from its definition.
+struct Renames {
+    exact: BTreeMap<String, String>,
+    upper: BTreeMap<String, String>,
+}
+
+impl Renames {
+    fn new(exact: BTreeMap<String, String>) -> Self {
+        let mut upper = BTreeMap::new();
+        for (from, to) in &exact {
+            upper.entry(from.to_ascii_uppercase()).or_insert_with(|| to.clone());
+        }
+        Renames { exact, upper }
+    }
+
+    fn get(&self, name: &str) -> Option<&String> {
+        self.exact.get(name).or_else(|| self.upper.get(&name.to_ascii_uppercase()))
+    }
+}
+
 /// A copy of a source entity for this drawing: a fresh handle, block references renamed, and
 /// links to other source objects (associative dimension points) dropped.
-fn adopt(d: &mut Drawing, e: &Entity, renames: &BTreeMap<String, String>) -> Entity {
+fn adopt(d: &mut Drawing, e: &Entity, renames: &Renames) -> Entity {
     let mut e = e.clone();
     e.handle = d.new_handle();
     match &mut e.kind {
@@ -331,6 +353,13 @@ fn adopt(d: &mut Drawing, e: &Entity, renames: &BTreeMap<String, String>) -> Ent
             dm.assoc.clear();
             if let Some(n) = dm.block.as_ref().and_then(|b| renames.get(b)) {
                 dm.block = Some(n.clone());
+            }
+        }
+        EntityKind::MLeader(m) => {
+            if let Some(b) = &mut m.block
+                && let Some(n) = renames.get(&b.block)
+            {
+                b.block = n.clone();
             }
         }
         _ => {}
@@ -475,5 +504,76 @@ mod tests {
         let before = d.mline_styles.len();
         merge_tables(&mut d, &src);
         assert_eq!(d.mline_styles.len(), before);
+    }
+
+    /// A block reference, for the fixtures below.
+    fn reference(handle: u64, block: &str) -> Entity {
+        let insert: cadcraft_doc::Insert = serde_json::from_value(json!({ "block": block, "insert": [0, 0, 0] })).unwrap();
+        Entity::new(Handle(handle), EntityKind::Insert(insert))
+    }
+
+    /// An anonymous block `*U1` that its description tells apart.
+    fn anonymous(description: &str) -> Arc<Block> {
+        let mut b = Block::new("*U1");
+        b.description = description.into();
+        Arc::new(b)
+    }
+
+    /// Takes `model`, whose `*U1` is the file's, into a drawing with a `*U1` of its own, and says
+    /// which of the two the one object of block "Part" refers to.
+    fn colliding_block_after_import(model: Entity) -> String {
+        let mut src = Drawing::new_metric();
+        src.blocks.insert("*U1".into(), anonymous("from the file"));
+        src.model.push(model);
+        let mut s = Session::new();
+        s.doc_mut().unwrap().blocks.insert("*U1".into(), anonymous("from the drawing"));
+        define_from(&mut s, &src, "Part", true).unwrap();
+        let d = s.doc().unwrap();
+        let part = d.block("Part").unwrap();
+        let to = part.entities.iter().next().and_then(|e| referenced_block(e)).unwrap();
+        d.block(&to).unwrap().description.clone()
+    }
+
+    /// Block names are case-insensitive, so `*u1` is the file's `*U1` and takes its new name.
+    #[test]
+    fn a_renamed_block_is_found_whatever_the_case_of_the_reference() {
+        assert_eq!(colliding_block_after_import(reference(0x500, "*u1")), "from the file");
+    }
+
+    /// The block content of a multileader takes the new name like any other reference.
+    #[test]
+    fn a_multileader_follows_its_renamed_block() {
+        let EntityKind::Insert(content) = reference(0x500, "*U1").kind else { return };
+        let mut m: cadcraft_doc::MLeader =
+            serde_json::from_value(json!({ "leaders": [], "landing": [0, 0, 0], "dogleg": 0.0, "text": null })).unwrap();
+        m.block = Some(content);
+        assert_eq!(colliding_block_after_import(Entity::new(Handle(0x501), EntityKind::MLeader(m))), "from the file");
+    }
+
+    /// A linetype of the file stays when a dimension style that came along names it, and stays out
+    /// when only a style that did not come along does.
+    #[test]
+    fn a_linetype_follows_the_dimension_style_that_names_it() {
+        let mut s = Session::new();
+        s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [4, 0], "at": [2, 2] })).unwrap();
+        let mut dim = (**s.doc().unwrap().model.iter().next().unwrap()).clone();
+        if let EntityKind::Dimension(dm) = &mut dim.kind {
+            dm.style = "Used".into();
+        }
+        let mut src = Drawing::new_metric();
+        for name in ["Kept", "Left"] {
+            let mut lt = src.linetypes[0].clone();
+            lt.name = name.into();
+            src.linetypes.push(lt);
+        }
+        src.dim_styles.push(cadcraft_doc::DimStyle { name: "Used".into(), dim_linetype: "Kept".into(), ..Default::default() });
+        src.dim_styles.push(cadcraft_doc::DimStyle { name: "Spare".into(), ext_linetype1: "Left".into(), ..Default::default() });
+        src.model.push(dim);
+        let mut t = Session::new();
+        define_from(&mut t, &src, "Part", true).unwrap();
+        let d = t.doc().unwrap();
+        assert!(d.linetypes.iter().any(|l| l.name == "Kept"));
+        assert!(!d.dim_styles.iter().any(|st| st.name == "Spare"));
+        assert!(!d.linetypes.iter().any(|l| l.name == "Left"));
     }
 }

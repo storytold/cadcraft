@@ -23,6 +23,9 @@ fn read(_bytes: &[u8], name: &str) -> Result<Drawing, String> {
     d.layers.push(Layer { name: "Spare".into(), ..Layer::default() });
     let mut valve = Block::new("Valve");
     valve.description = "Gate valve".into();
+    valve.annotative = true;
+    valve.units = 6;
+    valve.explodable = false;
     valve.base = Vec3::new(1.0, 1.0, 0.0);
     let mut line = Entity::new(Handle(0x70), EntityKind::Line(Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(4.0, 0.0, 0.0) }));
     line.common.layer = "Pipes".into();
@@ -82,6 +85,7 @@ fn lists_and_imports(s: &mut Session, file: &str) {
     let gate = d.block("Gate").unwrap();
     assert_eq!(gate.entities.iter().count(), 1);
     assert_eq!(gate.base, Vec3::new(1.0, 1.0, 0.0));
+    assert_eq!((gate.description.as_str(), gate.annotative, gate.units, gate.explodable), ("Gate valve", true, 6, false));
     assert!(d.layers.iter().any(|l| l.name == "Pipes"));
     // Only what the block needs comes along: not the file's other layers or blocks.
     assert!(!d.layers.iter().any(|l| l.name == "Spare"), "an unused layer of the library stays out");
