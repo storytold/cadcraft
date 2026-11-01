@@ -192,8 +192,10 @@ fn angle_from_xy(d: Vec3) -> f64 {
     d.z.atan2(d.xy().len())
 }
 
+/// DIST's report: the distance, the angles and the deltas, measured in the current UCS.
 fn dist_text(s: &Session, a: Vec3, b: Vec3) -> String {
-    let d = b - a;
+    let u = s.input_ucs();
+    let d = u.to_ucs3(b) - u.to_ucs3(a);
     format!(
         "Distance = {},  Angle in XY Plane = {},  Angle from XY Plane = {}\nDelta X = {},  Delta Y = {},   Delta Z = {}",
         fmt_d(s, (b - a).len()),
@@ -228,14 +230,17 @@ fn run_dist(s: &mut Session, p: &Value) -> Result<Value> {
     }))
 }
 
+/// ID's report: the point in the current UCS.
 fn id_text(s: &Session, a: Vec3) -> String {
-    format!("X = {}     Y = {}     Z = {}", fmt_d(s, a.x), fmt_d(s, a.y), fmt_d(s, a.z))
+    let u = s.input_ucs().to_ucs3(a);
+    format!("X = {}     Y = {}     Z = {}", fmt_d(s, u.x), fmt_d(s, u.y), fmt_d(s, u.z))
 }
 
 fn run_id(s: &mut Session, p: &Value) -> Result<Value> {
     let a = point3_req(s, "id", p, "at")?;
     s.last_point = a.xy();
-    Ok(json!({ "x": a.x, "y": a.y, "z": a.z, "message": id_text(s, a) }))
+    let u = s.input_ucs().to_ucs3(a);
+    Ok(json!({ "x": a.x, "y": a.y, "z": a.z, "ucs": [u.x, u.y, u.z], "message": id_text(s, a) }))
 }
 
 /// The Z of what is drawn at `p`: the object a pick finds there, at that point, or the current

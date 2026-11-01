@@ -114,7 +114,9 @@ pub fn command(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
             Value::PickSet(p) => feed(ctx.s, Input::Pick(items(p))),
             Value::Cons(_) => {
                 if let Some(p) = arg.as_point() {
-                    feed(ctx.s, Input::Point(Vec2::new(p[0], p[1])));
+                    // A routine's points are in the current UCS, as typed ones are.
+                    let w = ctx.s.input_ucs().to_wcs(Vec2::new(p[0], p[1]));
+                    feed(ctx.s, Input::Point(w));
                 } else if let Value::Ename(h) = arg.car() {
                     // An `entsel` result: (ename point).
                     named(ctx.s, h, arg.cdr().car().as_point().map(|p| Vec2::new(p[0], p[1])));
@@ -1105,11 +1107,62 @@ pub fn angtof(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     Ok(Flow::Value(settings.direction(&s).map(Value::Real).unwrap_or_default()))
 }
 
-/// `(trans pt from to [disp])`: points are in the world system throughout (no UCS yet).
-pub fn trans(_ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
+/// A coordinate system `trans` converts from or to: its origin and axes in world coordinates.
+fn trans_system(ctx: &Ctx<'_>, v: &Value) -> Result<crate::ucs::UcsFrame, LispError> {
+    use crate::ucs::UcsFrame;
+    match v {
+        // 0 the WCS; 1 the current UCS; 2 the display system and 3 paper space's, which in a plan
+        // view without a twist line up with the WCS.
+        Value::Int(0 | 2 | 3) => Ok(UcsFrame::WORLD),
+        Value::Int(1) => Ok(ctx.s.input_ucs()),
+        // An object: its OCS.
+        Value::Ename(h) => {
+            let d = ctx.s.doc().map_err(|e| LispError::new(e.to_string()))?;
+            let e = d.entity(*h).ok_or_else(|| LispError::bad_arg("lentityp", v))?;
+            ocs(e.common.extrusion).ok_or_else(|| LispError::bad_arg("lentityp", v))
+        }
+        // An extrusion direction: the OCS of objects with it.
+        Value::Cons(_) => {
+            let n = v.as_point().ok_or_else(|| LispError::bad_arg("coordinate system", v))?;
+            ocs(cadcraft_geom::Vec3::new(n[0], n[1], n[2])).ok_or_else(|| LispError::bad_arg("coordinate system", v))
+        }
+        other => Err(LispError::bad_arg("coordinate system", other)),
+    }
+}
+
+/// The object coordinate system of extrusion direction `n` (the arbitrary axis algorithm of the
+/// DXF Reference): `None` for a direction with no length.
+fn ocs(n: cadcraft_geom::Vec3) -> Option<crate::ucs::UcsFrame> {
+    use cadcraft_geom::Vec3;
+    let l = n.len();
+    if !(l > 1e-12 && l.is_finite()) {
+        return None;
+    }
+    let n = n * (1.0 / l);
+    let w = if n.x.abs() < 1.0 / 64.0 && n.y.abs() < 1.0 / 64.0 { Vec3::new(0.0, 1.0, 0.0) } else { Vec3::Z };
+    let ax = w.cross(n);
+    crate::ucs::UcsFrame::new(Vec3::ZERO, ax, n.cross(ax))
+}
+
+/// `(trans pt from to [disp])`: `pt` from coordinate system `from` to `to` (0 WCS, 1 UCS, 2 and 3
+/// display, an entity name for its OCS, or an extrusion direction); with `disp` non-nil `pt` is a
+/// displacement, which the systems' origins don't move.
+pub fn trans(ctx: &mut Ctx<'_>, a: Vec<Value>) -> Result<Flow, LispError> {
     arity(&a, 3, 4)?;
     let p = a[0].as_point().ok_or_else(|| LispError::bad_arg("2D/3D point", &a[0]))?;
-    Ok(Flow::Value(Value::point(&p)))
+    let (from, to) = (trans_system(ctx, &a[1])?, trans_system(ctx, &a[2])?);
+    let disp = a.get(3).is_some_and(|v| !v.is_nil());
+    let p = cadcraft_geom::Vec3::new(p[0], p[1], p[2]);
+    let q = if disp {
+        let w = from.x * p.x + from.y * p.y + from.z() * p.z;
+        cadcraft_geom::Vec3::new(w.dot(to.x), w.dot(to.y), w.dot(to.z()))
+    } else {
+        to.to_ucs3(from.to_wcs3(p))
+    };
+    if !q.is_finite() {
+        return Err(LispError::bad_arg("2D/3D point", &a[0]));
+    }
+    Ok(Flow::Value(Value::point(&[q.x, q.y, q.z])))
 }
 
 /// What `(load name)` reads: a file loaded through APPLOAD (the web), or one on disk, with

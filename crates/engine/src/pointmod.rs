@@ -236,7 +236,7 @@ impl Session {
         // A distance at "Next point" of TK: straight across or up from the last tracking point,
         // the way the cursor lies from it.
         if let Some(Frame::Track { last: Some(l) }) = self.point_mods.last().copied()
-            && crate::prompt::parse_point_with(t, self.last_point, &self.angle_settings()).is_none()
+            && self.parse_typed_point(t, self.last_point).is_none()
             && let Some(d) = crate::units::parse_distance(t)
         {
             let dir = (crate::snap::ortho(l, self.cursor) - l).normalized();
@@ -245,7 +245,7 @@ impl Session {
         }
         if let Some(Frame::Angle { base, dir }) = self.point_mods.last().copied() {
             // Typed coordinates are explicit: they win over the override.
-            if crate::prompt::parse_point_with(t, self.last_point, &self.angle_settings()).is_some() {
+            if self.parse_typed_point(t, self.last_point).is_some() {
                 self.point_mods.pop();
                 return None;
             }

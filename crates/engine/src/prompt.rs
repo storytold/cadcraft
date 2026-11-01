@@ -261,10 +261,9 @@ pub struct Drag {
 }
 
 /// Parse a typed point: `x,y[,z]`, `@dx,dy`, `@dist<angle`, `dist<angle`, `#x,y` (absolute),
-/// `*x,y` and `*@dx,dy`/`@*dx,dy` (world coordinates: the same as the plain forms, as there is no
-/// UCS yet).
+/// `*x,y` and `*@dx,dy`/`@*dx,dy` (world coordinates).
 /// Relative forms use `last`. Polar angles read the default angle settings (degrees from +X,
-/// counterclockwise); `parse_point_with` reads a drawing's.
+/// counterclockwise); `parse_point_with` reads a drawing's, `parse_point_in` a UCS too.
 pub fn parse_point(text: &str, last: Vec2) -> Option<Vec2> {
     parse_point_with(text, last, &crate::units::AngleSettings::default())
 }
@@ -272,14 +271,31 @@ pub fn parse_point(text: &str, last: Vec2) -> Option<Vec2> {
 /// `parse_point` with polar angles read per `angles` (AUNITS, ANGBASE, ANGDIR); `d<<a` and
 /// `d<<<a` measure from +X counterclockwise (in degrees and in AUNITS).
 pub fn parse_point_with(text: &str, last: Vec2, angles: &crate::units::AngleSettings) -> Option<Vec2> {
+    parse_point_in(text, last, angles, &crate::ucs::UcsFrame::WORLD)
+}
+
+/// `parse_point_with` in a UCS: coordinates are UCS coordinates (`x,y` from its origin along its
+/// axes, `@dx,dy` along its axes), and polar angles are measured as `angles` says (which carries
+/// the UCS rotation, [`crate::units::AngleSettings::ucs`]). A `*` prefix reads the point in
+/// world coordinates instead. `last` and the result are world points.
+pub fn parse_point_in(text: &str, last: Vec2, angles: &crate::units::AngleSettings, ucs: &crate::ucs::UcsFrame) -> Option<Vec2> {
     let t = text.trim();
     if t.is_empty() {
         return None;
     }
-    let t = t.strip_prefix('*').map_or(t, str::trim_start);
+    let (mut world, t) = match t.strip_prefix('*') {
+        Some(r) => (true, r.trim_start()),
+        None => (false, t),
+    };
     let (rel, body) = if let Some(b) = t.strip_prefix('@') {
         let b = b.trim();
-        (true, b.strip_prefix('*').map_or(b, str::trim_start))
+        match b.strip_prefix('*') {
+            Some(r) => {
+                world = true;
+                (true, r.trim_start())
+            }
+            None => (true, b),
+        }
     } else if let Some(b) = t.strip_prefix('#') {
         (false, b.trim())
     } else {
@@ -288,11 +304,15 @@ pub fn parse_point_with(text: &str, last: Vec2, angles: &crate::units::AngleSett
     if rel && body.is_empty() {
         return Some(last);
     }
+    let (frame, angles) = if world { (crate::ucs::UcsFrame::WORLD, angles.world()) } else { (*ucs, *angles) };
+    // `p`: a world displacement (polar, whose angle already says the UCS's direction), or UCS
+    // coordinates (`x,y`).
     let p = if let Some((d, a)) = body.split_once('<') {
         let dist = crate::units::parse_distance(d)?;
         // `d<<a` / `d<<<a`: the override prefixes keep their `<<` / `<<<`.
         let ang = if a.starts_with('<') { angles.direction(&format!("<{a}"))? } else { angles.direction(a)? };
-        Vec2::from_angle(ang) * dist
+        let v = Vec2::from_angle(ang) * dist;
+        if rel { last + v } else { frame.origin.xy() + v }
     } else {
         let parts: Vec<&str> = body.split(',').collect();
         if parts.len() < 2 || parts.len() > 3 {
@@ -303,10 +323,10 @@ pub fn parse_point_with(text: &str, last: Vec2, angles: &crate::units::AngleSett
         if let Some(z) = parts.get(2) {
             crate::units::parse_distance(z)?;
         }
-        Vec2::new(x, y)
+        let v = Vec2::new(x, y);
+        if rel { last + frame.vec_to_wcs(v) } else { frame.to_wcs(v) }
     };
-    let r = if rel { last + p } else { p };
-    r.is_finite().then_some(r)
+    p.is_finite().then_some(p)
 }
 
 #[cfg(test)]

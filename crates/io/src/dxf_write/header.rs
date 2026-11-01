@@ -1,4 +1,4 @@
-use super::{DimVal, Drawing, HVal, K, Version, W, dxf_ext};
+use super::{DimVal, Drawing, HVal, K, Ucs, Vec3, Version, W, dxf_ext};
 
 /// Header variables we write, with their group codes (DXF Reference, HEADER section).
 /// `P2`/`P3` = 2D/3D point.
@@ -36,6 +36,11 @@ const HEADER_VARS: &[(&str, i32)] = &[
     ("CHAMFERB", 40),
     ("ANGBASE", 50),
     ("ANGDIR", 70),
+    // Model space's current UCS (each layout's is in its LAYOUT object).
+    ("UCSNAME", 2),
+    ("UCSORG", -3),
+    ("UCSXDIR", -3),
+    ("UCSYDIR", -3),
     ("PDMODE", 70),
     ("PDSIZE", 40),
     ("PLINEWID", 40),
@@ -46,6 +51,25 @@ const HEADER_VARS: &[(&str, i32)] = &[
     ("MEASUREMENT", 70),
     ("PSLTSCALE", 70),
 ];
+
+/// Model space's current UCS from the header (UCSORG, UCSXDIR, UCSYDIR, UCSNAME): unusable
+/// values are the World UCS's, so a broken one read from a file isn't written back.
+pub(super) fn model_ucs(d: &Drawing) -> Ucs {
+    let h = &d.header;
+    let p = |name: &str| h.point(name).filter(|v| v.is_finite());
+    let axis = |name: &str| p(name).filter(|v| v.len() > 1e-12);
+    let (x, y, usable) = match (axis("UCSXDIR"), axis("UCSYDIR")) {
+        (Some(x), Some(y)) if x.cross(y).len() > 1e-9 * x.len() * y.len() => (x, y, true),
+        _ => (Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0), false),
+    };
+    // The name only of a UCS table record whose frame the current UCS still is: a name read from
+    // a file without its record, beside axes replaced by the World UCS's, or beside an origin or
+    // axes of its own (restoring the name would move the UCS) is dropped.
+    let origin = p("UCSORG").unwrap_or(Vec3::ZERO);
+    let raw = h.str("UCSNAME", "");
+    let name = crate::dxf_ext::named_ucs(&d.ucss, &raw, origin, x, y).filter(|_| usable).map(|u| u.name.clone()).unwrap_or_default();
+    Ucs { name, origin, x_axis: x, y_axis: y }
+}
 
 /// The current dimension style's variables as header variables (`$DIMTXT`, `$DIMDEC`…), after
 /// `$DIMSTYLE`: AutoCAD draws new and updated dimensions with the header's DIM* values, which
@@ -99,6 +123,9 @@ pub(super) fn header_vars(w: &mut W, d: &Drawing) {
                 let p = match *name {
                     "SNAPUNIT" => d.header.snap_unit().to3(0.0),
                     "GRIDUNIT" => d.header.grid_unit().to3(0.0),
+                    "UCSORG" => model_ucs(d).origin,
+                    "UCSXDIR" => model_ucs(d).x_axis,
+                    "UCSYDIR" => model_ucs(d).y_axis,
                     _ => *p,
                 };
                 w.s(9, format!("${name}"));
@@ -122,6 +149,11 @@ pub(super) fn header_vars(w: &mut W, d: &Drawing) {
                     w.s(9, format!("${name}"));
                     w.i(c, i);
                 }
+            }
+            // Only the name of a UCS the drawing has, with the axes written above.
+            (c, _) if *name == "UCSNAME" => {
+                w.s(9, "$UCSNAME");
+                w.s(c, model_ucs(d).name);
             }
             (c, v) => {
                 if let Some(t) = v.as_str() {
