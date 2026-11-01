@@ -151,6 +151,8 @@
 	Cylinder	圆柱体
 	DWG	DWG
 	DXF	DXF
+	DXF In	DXF 输入
+	DXF Out	DXF 输出
 	Dark	深色
 	Default	默认
 	Default Save Format	默认保存格式
