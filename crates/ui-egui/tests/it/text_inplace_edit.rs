@@ -147,3 +147,88 @@ fn enter_on_a_blank_field_keeps_the_text_as_the_command_line_does() {
     assert!(text_editor::editing(&h.ctx).is_none(), "the field is gone");
     assert_eq!(h.state().session.current_prompt().unwrap().message, "Select an annotation object");
 }
+
+/// TEXTEDIT's Undo option takes back an edit made in the field, as it takes back a typed one.
+#[test]
+fn the_undo_option_takes_back_an_edit_made_in_the_field() {
+    let mut h = harness();
+    double_click(&mut h, Vec2::new(4.0, 1.2));
+    h.event(Event::Text(" WORLD".into()));
+    h.run_steps(2);
+    key(&mut h, Key::Enter);
+    assert_eq!(value(&h, 0), "HELLO WORLD");
+    h.state_mut().session.input(Input::Keyword("Undo".into())).unwrap();
+    h.run_steps(2);
+    assert_eq!(value(&h, 0), "HELLO", "the Undo option");
+    assert!(text_editor::editing(&h.ctx).is_none(), "no field while TEXTEDIT asks for an object");
+    assert_eq!(h.state().session.current_prompt().unwrap().message, "Select an annotation object");
+}
+
+/// One text, `height` tall and turned `rotation` degrees at `at`, in a view `view` units tall
+/// around `center`.
+fn one_text(at: [f64; 2], height: f64, rotation: f64, center: [f64; 2], view: f64) -> Harness<'static, CadApp> {
+    let mut app = CadApp::new(Session::new(), Services::default());
+    app.run("text", json!({ "at": at, "text": "EDIT ME", "height": height, "rotation": rotation })).unwrap();
+    app.session.execute("view.set", &json!({ "center": center, "height": view })).unwrap();
+    app.canvas.zoom_pending = false;
+    let mut h = Harness::builder().with_size(vec2(1600.0, 1000.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+        |ui, app: &mut CadApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(5);
+    h
+}
+
+/// The field over the text, as a screen rectangle; that it lies inside the drawing area.
+fn field_inside_the_canvas(h: &mut Harness<'_, CadApp>, what: &str) -> egui::Rect {
+    let field = h.get_by_label("Enter new text").rect();
+    let canvas = h.state().canvas.xf.unwrap().rect;
+    assert!(canvas.expand(1.0).contains_rect(field), "{what}: the field {field:?} lies in the drawing area {canvas:?}");
+    if let Some(dir) = std::env::var_os("CADCRAFT_TEXTEDIT_SHOTS") {
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        h.render().unwrap().save(dir.join(format!("textedit-{what}.png"))).unwrap();
+    }
+    field
+}
+
+/// A turned text is edited in a level field at its start point (the field doesn't turn with it,
+/// as BricsCAD's doesn't); the text keeps its angle.
+#[test]
+fn a_turned_text_is_edited_in_a_level_field_and_keeps_its_angle() {
+    for (rotation, pick) in [(90.0, [-1.2, 4.0]), (180.0, [-4.0, -1.2])] {
+        let mut h = one_text([0.0, 0.0], 2.5, rotation, [0.0, 0.0], 40.0);
+        double_click(&mut h, Vec2::new(pick[0], pick[1]));
+        assert_eq!(text_editor::editing(&h.ctx).as_deref(), Some("EDIT ME"), "{rotation}°");
+        let field = field_inside_the_canvas(&mut h, &format!("turned-{rotation}"));
+        let start = h.state().canvas.xf.unwrap().to_screen(Vec2::new(0.0, 0.0));
+        assert!((field.left() - start.x).abs() < 6.0, "{rotation}°: the field starts at the text's start point ({field:?}, {start:?})");
+        assert!(field.width() > field.height(), "{rotation}°: a level field");
+        h.event(Event::Text("!".into()));
+        h.run_steps(2);
+        key(&mut h, Key::Enter);
+        assert_eq!(value(&h, 0), "EDIT ME!", "{rotation}°");
+        let d = h.state().session.doc().unwrap();
+        let EntityKind::Text(t) = &d.model.iter().next().unwrap().kind else { panic!("a text") };
+        assert!((t.rotation - f64::to_radians(rotation)).abs() < 1e-9, "{rotation}°: the angle stays");
+    }
+}
+
+/// However small or large the text is on screen, the field's letters are 13 to 48 pixels tall,
+/// so a text seen from far away can still be read and one seen up close still fits.
+#[test]
+fn the_field_stays_legible_for_a_tiny_and_a_huge_text_on_screen() {
+    // 2.5 units in a view 2,000 units tall: about a pixel. In one 2 units tall: over 1,000.
+    for (view, what, low, high) in [(2000.0, "tiny", 13.0, 30.0), (2.0, "huge", 40.0, 66.0)] {
+        let mut h = one_text([0.0, 0.0], 2.5, 0.0, [4.0, 1.2], view);
+        double_click(&mut h, Vec2::new(4.0, 1.2));
+        assert_eq!(text_editor::editing(&h.ctx).as_deref(), Some("EDIT ME"), "{what}");
+        let field = field_inside_the_canvas(&mut h, what);
+        assert!((low..=high).contains(&field.height()), "{what}: the field is {} px tall", field.height());
+        key(&mut h, Key::Escape);
+        assert_eq!(value(&h, 0), "EDIT ME", "{what}");
+    }
+}
