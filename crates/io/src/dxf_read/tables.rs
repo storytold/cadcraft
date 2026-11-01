@@ -4,6 +4,7 @@ use super::{
     Color, DashElement, DimStyle, Drawing, HVal, HashMap, Layer, Linetype, Lineweight, NamedView, Rgb, Rx, Tag, TextStyle, Ucs, Vec2, Vec3,
     VportConfig, VportTile, records,
 };
+use cadcraft_doc::ViewDir;
 
 pub(super) fn header(tags: &[Tag], d: &mut Drawing) {
     let mut i = 0;
@@ -65,6 +66,28 @@ fn annotative(tags: &[Tag]) -> bool {
     list.iter().filter(|t| t.code == 1070).nth(1).is_some_and(|t| t.i64() != 0)
 }
 
+/// The view centre (12/22) and 3D view (16/26/36 direction, 17/27/37 target) of a VIEWPORT or
+/// VPORT record. The centre is relative to the target: a plan view gets it added
+/// (DWG files often keep the view in the target with the centre at 0,0), a 3D view keeps both.
+pub(super) fn view(t: &T) -> (Vec2, Option<ViewDir>) {
+    view_at(t, Vec2::new(t.fd(12, 0.0), t.fd(22, 0.0)), 16, 17)
+}
+
+/// A view centre relative to the target, with the direction in group `dir_code` and the target
+/// in `target_code` (VIEWPORT and VPORT: 16, 17; VIEW: 11, 12), as [`view`] reads them.
+fn view_at(t: &T, center: Vec2, dir_code: i32, target_code: i32) -> (Vec2, Option<ViewDir>) {
+    let dir = if t.f(dir_code).is_some() { t.p(dir_code) } else { Vec3::Z };
+    let v = ViewDir { dir, target: t.p(target_code) };
+    if !(dir.is_finite() && dir.len() > 1e-12 && v.target.is_finite()) {
+        return (center, None);
+    }
+    if v.matrix().is_plan() {
+        let sum = center + v.target.xy();
+        return (if sum.is_finite() { sum } else { center }, None);
+    }
+    (center, Some(v))
+}
+
 /// A text style's font: CADCraft's own font name from `CADCRAFT` xdata (`1000 FONT`, name)
 /// while the font file is still the `txt` written for other readers; the TrueType family of the
 /// style's `ACAD` xdata (`1000` typeface) when it has no font file (how AutoCAD stores TrueType
@@ -85,6 +108,33 @@ fn style_font(tags: &[Tag], file: String) -> String {
     match own {
         Some(name) if !name.trim().is_empty() && (stem == "txt" || stem == "txt.shx") => name,
         _ => file,
+    }
+}
+
+/// A VIEW table record into `d.views` (replacing a view of its name); a record without a name,
+/// a size or a finite centre is skipped.
+fn named_view(t: &T, tg: &[Tag], d: &mut Drawing) {
+    let name = t.s(2).unwrap_or_default();
+    let (h, w) = (t.fd(40, 0.0), t.fd(41, 0.0));
+    if name.is_empty() || !(h.is_finite() && w.is_finite() && h > 0.0 && w > 0.0) || d.views.len() >= MAX_OBJECTS {
+        return;
+    }
+    let center = t.p(10).xy();
+    if !(center.x.is_finite() && center.y.is_finite()) {
+        return;
+    }
+    let x = crate::dxf_ext::xdata(tg, crate::dxf_ext::APP);
+    let field =
+        |key: &str| x.iter().position(|t| t.code == 1000 && t.str() == key).and_then(|i| x.get(i + 1)).filter(|t| t.code == 1000).map(Tag::str);
+    // 70 bit 1: a paper space view; its layout is CADCraft xdata.
+    let layout = (t.i(70).unwrap_or(0) & 1 != 0).then(|| field("LAYOUT").unwrap_or_default());
+    let twist = t.f(50).filter(|a| a.is_finite()).map_or(0.0, |a| a.rem_euclid(360.0).to_radians());
+    // 11 direction, 12 target: a model space view seen in 3D.
+    let (center, view3d) = if layout.is_none() { view_at(t, center, 11, 12) } else { (center, None) };
+    let v = NamedView { name: name.clone(), center, height: h, width: w, layer_state: field("LAYERSTATE"), twist, layout, view3d };
+    match d.views.iter_mut().find(|x| x.name.eq_ignore_ascii_case(&name)) {
+        Some(x) => *x = v,
+        None => d.views.push(v),
     }
 }
 
@@ -209,29 +259,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                     d.header.set_f64("SNAPANG", a);
                 }
             }
-            "VIEW" => {
-                let name = t.s(2).unwrap_or_default();
-                let (h, w) = (t.fd(40, 0.0), t.fd(41, 0.0));
-                if name.is_empty() || !(h.is_finite() && w.is_finite() && h > 0.0 && w > 0.0) || d.views.len() >= MAX_OBJECTS {
-                    continue;
-                }
-                let center = t.p(10).xy();
-                if !(center.x.is_finite() && center.y.is_finite()) {
-                    continue;
-                }
-                let x = crate::dxf_ext::xdata(&tg, crate::dxf_ext::APP);
-                let field = |key: &str| {
-                    x.iter().position(|t| t.code == 1000 && t.str() == key).and_then(|i| x.get(i + 1)).filter(|t| t.code == 1000).map(Tag::str)
-                };
-                // 70 bit 1: a paper space view; its layout is CADCraft xdata.
-                let layout = (t.i(70).unwrap_or(0) & 1 != 0).then(|| field("LAYOUT").unwrap_or_default());
-                let twist = t.f(50).filter(|a| a.is_finite()).map_or(0.0, |a| a.rem_euclid(360.0).to_radians());
-                let v = NamedView { name: name.clone(), center, height: h, width: w, layer_state: field("LAYERSTATE"), twist, layout };
-                match d.views.iter_mut().find(|x| x.name.eq_ignore_ascii_case(&name)) {
-                    Some(x) => *x = v,
-                    None => d.views.push(v),
-                }
-            }
+            "VIEW" => named_view(&t, &tg, d),
             "UCS" => {
                 let name = t.s(2).unwrap_or_default();
                 let (origin, x_axis, y_axis) = (t.p(10), t.p(11), t.p(12));
@@ -276,8 +304,9 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
             _ => {}
         }
     }
-    // One *Active viewport is no tiling: the view is the editor's (it zooms to the extents).
-    d.vports.retain(|c| c.tiles.len() > usize::from(c.is_active()));
+    // One *Active viewport is no tiling: the view is the editor's (it zooms to the extents), kept
+    // only when it is a 3D view for the editor to open in.
+    d.vports.retain(|c| c.tiles.len() > usize::from(c.is_active()) || c.tiles.iter().any(|t| t.view3d.is_some()));
 }
 
 fn index_table_handles(recs: &[(String, Vec<Tag>)], rx: &mut Rx) {
@@ -314,7 +343,8 @@ const MAX_VPORT_TILES: usize = 64;
 /// are fractions of the drawing area; unusable tiles are skipped.
 fn vport_record(d: &mut Drawing, t: &T) {
     let name = t.s(2).map(|n| n.trim().to_string()).unwrap_or_default();
-    let (min, max, center) = (t.p(10).xy(), t.p(11).xy(), t.p(12).xy());
+    let (min, max) = (t.p(10).xy(), t.p(11).xy());
+    let (center, view3d) = view(t);
     let height = t.fd(40, 0.0);
     let unit = |v: f64| v.is_finite() && (-1e-9..=1.0 + 1e-9).contains(&v);
     let ok = [min.x, min.y, max.x, max.y].into_iter().all(unit)
@@ -328,7 +358,7 @@ fn vport_record(d: &mut Drawing, t: &T) {
     }
     let aspect = t.f(41).filter(|a| a.is_finite() && *a > 0.0).unwrap_or(0.0);
     let clamp = |p: Vec2| Vec2::new(p.x.clamp(0.0, 1.0), p.y.clamp(0.0, 1.0));
-    let tile = VportTile { min: clamp(min), max: clamp(max), center, height, aspect };
+    let tile = VportTile { min: clamp(min), max: clamp(max), center, height, aspect, view3d };
     let name = if name.eq_ignore_ascii_case(VportConfig::ACTIVE) { VportConfig::ACTIVE.to_string() } else { name };
     let room = d.vports.len() < MAX_OBJECTS;
     match d.vports.iter_mut().find(|c| c.name.eq_ignore_ascii_case(&name)) {

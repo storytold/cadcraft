@@ -19,6 +19,7 @@ pub mod paper;
 pub mod pen;
 mod plotstyle;
 mod point;
+mod project;
 pub mod raster;
 mod text;
 mod tolerance;
@@ -27,7 +28,7 @@ mod wide;
 
 use cadcraft_color::{Color, Rgb};
 use cadcraft_doc::{Drawing, Entity, EntityKind, Handle, Lineweight, Prim, Space};
-use cadcraft_geom::{Bounds2, Mat3, Polyline, Vec2};
+use cadcraft_geom::{Bounds2, Mat3, Mat4, Polyline, Vec2};
 use pen::Pen;
 
 pub use dim::{ArrowGeom, Arrowhead, DimGeometry, DimText, LineRole, arrowhead, dimension_geometry, dimension_geometry_with, format_linear_value};
@@ -100,9 +101,16 @@ struct Ctx<'a> {
     block_pstyle: Option<usize>,
     /// Transparency (percent) of the block reference being expanded, for `ByBlock`.
     block_transparency: u8,
+    /// In a 3D view, this context's coordinates → the list's ([`project`]); `None` in plan view.
+    view: Option<Mat4>,
 }
 
 impl Ctx<'_> {
+    /// Drawing units of the list per unit of this context: the scale of `xf`, or in a 3D view the
+    /// largest one (an object's plane is foreshortened across the view, never along it).
+    fn scale(&self) -> f64 {
+        if self.view.is_some() { max_scale(&self.xf) } else { self.xf.scale_factor() }
+    }
     /// A layer's colour, honouring the viewport's override.
     fn layer_color(&self, name: &str) -> Option<Color> {
         if let Some((_, c)) = self.vp_colors.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) {

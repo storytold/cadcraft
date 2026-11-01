@@ -1,5 +1,5 @@
-//! View menu: ZOOM (with Realtime and Dynamic), PAN, REGEN, REDRAW, named views (VIEW), layout
-//! switching.
+//! View menu: ZOOM (with Realtime and Dynamic), PAN, REGEN, REDRAW, named views (VIEW), 3D views
+//! (VPOINT, PLAN), layout switching.
 
 use cadcraft_doc::{Space, entity_bounds};
 use cadcraft_geom::{Bounds2, Vec2};
@@ -11,6 +11,7 @@ use super::{CommandSpec, bad, bool_or, f64_or, f64_req, ok, point_param, point_r
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step, View};
 
 mod named_views;
+mod view3d;
 mod vports;
 
 pub(super) use vports::{config_names, config_tiles, model_vports, tile_model};
@@ -97,20 +98,24 @@ pub fn specs() -> Vec<CommandSpec> {
         .transparent(),
         CommandSpec::new("view.set", "Set View", run_view_set).params("{center: [x,y], height}").noundo(),
         CommandSpec::new("view.get", "Get View", |s, _| {
-            let v = s.state()?.view();
-            Ok(json!({"center": [v.center.x, v.center.y], "height": v.height, "viewportPx": [s.viewport_px.0, s.viewport_px.1]}))
+            let st = s.state()?;
+            let (v, d) = (st.view(), st.view_dir);
+            Ok(json!({"center": [v.center.x, v.center.y], "height": v.height, "viewportPx": [s.viewport_px.0, s.viewport_px.1], "direction": [d.x, d.y, d.z]}))
         })
         .noundo(),
         CommandSpec::new("layout.set", "Switch Layout", run_layout_set).params("{name: \"Model\" | layout name}").noundo(),
     ];
     v.extend(named_views::specs());
+    v.extend(view3d::specs());
     v.extend(vports::specs());
     v
 }
 
-fn ext_bounds(s: &Session) -> Result<Bounds2> {
-    let space = s.space();
-    Ok(s.doc()?.extents(&space))
+/// Fit the window between two points picked on the WCS XY plane (in view coordinates in a 3D view).
+fn fit_window(s: &mut Session, a: Vec2, b: Vec2) -> Result<()> {
+    let st = s.state()?;
+    let b = Bounds2::new(st.to_view(a), st.to_view(b));
+    fit(s, b)
 }
 
 fn fit(s: &mut Session, b: Bounds2) -> Result<()> {
@@ -129,14 +134,16 @@ pub(crate) fn zoom(s: &mut Session, p: &Value) -> Result<Value> {
     let mode = str_param(p, "mode").unwrap_or("extents").to_ascii_lowercase();
     match mode.as_str() {
         "extents" | "e" => s.zoom_extents()?,
+        // In a 3D view ZOOM All is ZOOM Extents: the limits frame the plan view.
+        "all" | "a" if s.state()?.projection().is_some() => s.zoom_extents()?,
         "all" | "a" => {
-            let b = ext_bounds(s)?.union(&s.zoom_limits()?);
+            let b = s.view_extents()?.union(&s.zoom_limits()?);
             fit(s, b.expand(b.height().max(b.width()) * 0.02))?;
         }
         "window" | "w" => {
             let a = point_req("zoom", p, "p1")?;
             let b = point_req("zoom", p, "p2")?;
-            fit(s, Bounds2::new(a, b))?;
+            fit_window(s, a, b)?;
         }
         "previous" | "p" => {
             let st = s.state_mut()?;
@@ -153,7 +160,7 @@ pub(crate) fn zoom(s: &mut Session, p: &Value) -> Result<Value> {
             st.set_zoom_frame(View { center: v.center, height: v.height / f });
         }
         "center" | "c" | "dynamic" | "d" => {
-            let c = point_req("zoom", p, "center")?;
+            let c = s.state()?.to_view(point_req("zoom", p, "center")?);
             let cur = s.state()?.zoom_frame().height;
             let h = if p.get("factor").is_some() { factor_height(s, p, cur)? } else { f64_or(p, "height", cur) };
             s.state_mut()?.set_zoom_frame(View { center: c, height: h.max(1e-9) });
@@ -174,7 +181,15 @@ pub(crate) fn zoom(s: &mut Session, p: &Value) -> Result<Value> {
         "object" | "o" => {
             let hs = targets(s, p)?;
             let d = s.doc()?;
-            let b = hs.iter().filter_map(|h| d.entity(*h)).fold(Bounds2::EMPTY, |a, e| a.union(&entity_bounds(d, e, 0)));
+            let ents = hs.iter().filter_map(|h| d.entity(*h));
+            // In a 3D view, what the view draws of them.
+            let b = match s.state()?.projection() {
+                Some(m) => {
+                    let opts = cadcraft_render::Options { projection: Some(m), ..cadcraft_render::Options::default() };
+                    cadcraft_render::build_entities(d, ents.map(|e| e.as_ref()), &opts).bounds
+                }
+                None => ents.fold(Bounds2::EMPTY, |a, e| a.union(&entity_bounds(d, e, 0))),
+            };
             fit(s, b.expand(b.height().max(b.width()) * 0.05))?;
         }
         _ => return Err(bad("zoom", "unknown mode")),
@@ -249,14 +264,15 @@ fn pan_frac(s: &mut Session, f: Vec2) -> Result<Value> {
 fn run_pan(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.state_mut()?;
     let v = st.view();
+    // Points on the WCS XY plane, displacements between them, in view coordinates in a 3D view.
     let c = if let Some(c) = point_param(p, "center") {
-        c
+        st.to_view(c)
     } else if let Some(d) = point_param(p, "delta") {
-        v.center - d
+        v.center - (st.to_view(d) - st.to_view(Vec2::ZERO))
     } else {
         let a = point_req("pan", p, "from")?;
         let b = point_req("pan", p, "to")?;
-        v.center - (b - a)
+        v.center - (st.to_view(b) - st.to_view(a))
     };
     st.set_view(View { center: c, height: v.height });
     ok()
@@ -384,7 +400,7 @@ impl ZoomM {
         let st = s.state()?;
         let (screen, frame) = (st.view(), st.zoom_frame());
         let aspect = st.zoom_aspect(w / h.max(1.0)).max(1e-6);
-        let ext = ext_bounds(s)?;
+        let ext = s.view_extents()?;
         let extents = if ext.is_empty() { s.zoom_limits()? } else { ext };
         let all = extents.union(&DynBox::rect(frame.center, frame.height, aspect));
         fit(s, all.expand(all.height().max(all.width()) * 0.05))?;
@@ -510,7 +526,7 @@ impl Interactive for ZoomM {
                     Ok(Step::Continue)
                 }
                 Some(a) => {
-                    fit(s, Bounds2::new(a, p))?;
+                    fit_window(s, a, p)?;
                     Ok(Step::Done)
                 }
             },

@@ -62,13 +62,18 @@ fn dashes(run: &[Pos2], along: f64, stroke: Stroke, dash: f32, gap: f32, out: &m
 /// show (#2299). Each edge keeps its direction and its dashes start where they would on the whole
 /// edge, so they don't crawl as the rectangle or the view moves.
 pub(super) fn dashed_rect(clip: Rect, r: Rect, stroke: Stroke, dash: f32, gap: f32) -> Vec<Shape> {
+    dashed_outline(clip, &[r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom()], stroke, dash, gap)
+}
+
+/// A closed dashed outline through `corners`, clipped edge by edge like [`dashed_rect`]: a
+/// selection window seen in a 3D view is a parallelogram.
+pub(super) fn dashed_outline(clip: Rect, corners: &[Pos2], stroke: Stroke, dash: f32, gap: f32) -> Vec<Shape> {
     let v = |p: Pos2| Vec2::new(f64::from(p.x), f64::from(p.y));
     let c = clip.expand(CLIP_MARGIN);
     let c = Bounds2::new(v(c.min), v(c.max));
     let mut out = Vec::new();
-    let edges =
-        [(r.left_top(), r.right_top()), (r.right_top(), r.right_bottom()), (r.right_bottom(), r.left_bottom()), (r.left_bottom(), r.left_top())];
-    for (a, b) in edges {
+    for (i, &a) in corners.iter().enumerate() {
+        let Some(&b) = corners.get((i + 1) % corners.len()) else { continue };
         if let Some((p, q)) = cadcraft_render::clip::clip_segment(v(a), v(b), &c) {
             let pos = |w: Vec2| Pos2::new(w.x as f32, w.y as f32);
             dashes(&[pos(p), pos(q)], v(a).dist(p), stroke, dash, gap, &mut out);
@@ -79,6 +84,8 @@ pub(super) fn dashed_rect(clip: Rect, r: Rect, stroke: Stroke, dash: f32, gap: f
 
 /// Draw a display list.
 pub(crate) fn draw_list(p: &egui::Painter, xf: &Xf, list: &DisplayList, bg: Rgb, lwdisplay: bool) {
+    // The list is in view coordinates.
+    let xf = &Xf { projection: None, ..*xf };
     let vis = xf.world_bounds();
     let mut shapes: Vec<Shape> = Vec::with_capacity(list.prims.len());
     let px = 1.0 / xf.scale;
@@ -226,7 +233,7 @@ pub(super) fn draw_drag_gpu(
     };
     if c.drag_key != Some(key) {
         let band_scale = 2f64.powi(band);
-        let opts = cadcraft_render::Options { transparency, ..preview_options(band_scale) };
+        let opts = cadcraft_render::Options { transparency, ..preview_options(band_scale, None) };
         let list = if drag.clipboard {
             cadcraft_render::build_entities(doc, clipboard.0.iter(), &opts)
         } else {
@@ -272,6 +279,8 @@ pub(super) fn list_mesh_key(key: &ListKey, list_gen: u64, origin: Vec2, bg: Rgb,
 /// Draw the display list through the GPU paint callback (uploading it when it changed), plus
 /// the infinite lines, which are clipped to the view on the CPU every frame.
 pub(super) fn draw_list_gpu(c: &mut CanvasState, p: &egui::Painter, xf: &Xf, bg: Rgb, lwdisplay: bool) {
+    // The list is in view coordinates.
+    let xf = &Xf { projection: None, ..*xf };
     let Some(list) = &c.list else { return };
     let origin = crate::gpu::choose_origin(&list.bounds, xf.center, f64::from(xf.rect.height()) / xf.scale.max(1e-300));
     let key = list_mesh_key(&c.key, c.list_gen, origin, bg, lwdisplay);
@@ -336,6 +345,8 @@ impl Look {
 /// [`PrimIndex::prims`], [`prims_of`], or all of a [`VpHighlight`] list), redrawn in `color` as `look` says. A wipeout is always
 /// outlined, since filling it would hide the drawing under it.
 pub(crate) fn draw_highlight(p: &egui::Painter, xf: &Xf, list: &DisplayList, prims: &[usize], color: Color32, look: Look) {
+    // The list is in view coordinates.
+    let xf = &Xf { projection: None, ..*xf };
     let stroke = Stroke::new(look.width, color);
     let screen_line = |pts: Vec<Pos2>, along: f64, out: &mut Vec<Shape>| {
         if look.dashed {
@@ -400,14 +411,19 @@ pub(super) fn selection_area_fill(s: &cadcraft_engine::Settings, crossing: bool)
 #[cfg(test)]
 mod highlight_stability_tests {
     use super::*;
+    use cadcraft_geom::Mat4;
     use egui::pos2;
 
     fn frame(list: &DisplayList, look: Look, pointer: Pos2) -> Vec<egui::epaint::ClippedShape> {
+        frame_in(list, look, pointer, None, &[0])
+    }
+
+    fn frame_in(list: &DisplayList, look: Look, pointer: Pos2, projection: Option<Mat4>, prims: &[usize]) -> Vec<egui::epaint::ClippedShape> {
         let ctx = egui::Context::default();
         let rect = Rect::from_min_size(Pos2::ZERO, vec2(600.0, 400.0));
         let input = egui::RawInput { screen_rect: Some(rect), events: vec![egui::Event::PointerMoved(pointer)], ..Default::default() };
         let mut output = ctx.run_ui(input, |ui| {
-            draw_highlight(ui.painter(), &Xf { rect, center: Vec2::ZERO, scale: 11.0 }, list, &[0], Color32::LIGHT_BLUE, look);
+            draw_highlight(ui.painter(), &Xf { rect, center: Vec2::ZERO, scale: 11.0, projection }, list, prims, Color32::LIGHT_BLUE, look);
         });
         let shapes = std::mem::take(&mut output.shapes);
         output.textures_delta.clear();
@@ -428,6 +444,30 @@ mod highlight_stability_tests {
             .collect();
         segments.sort_unstable();
         segments
+    }
+
+    #[test]
+    fn highlights_in_a_3d_view_are_drawn_where_the_list_is() {
+        // A display list in view coordinates: a polyline and an infinite line.
+        let p = |x, y| Vec2::new(x, y);
+        let mut list = DisplayList { verts: vec![p(-5.0, -3.0), p(4.0, 2.0), p(0.0, 1.0), p(1.0, 0.0)], ..Default::default() };
+        let prim = |kind, start, len| cadcraft_render::DPrim {
+            handle: Handle(256),
+            color: Rgb(255, 255, 255),
+            aci7: true,
+            lw: 0.0,
+            transparency: 0,
+            kind,
+            start,
+            len,
+        };
+        list.prims.extend([prim(Kind::Polyline, 0, 2), prim(Kind::Infinite { ray: false }, 2, 2)]);
+        let iso = Mat4::view(cadcraft_geom::Vec3::new(-1.0, -1.0, 1.0), cadcraft_geom::Vec3::ZERO, 0.0);
+        let look = Look { width: 2.0, dashed: true };
+        let plan = dash_positions(&frame_in(&list, look, pos2(0.0, 0.0), None, &[0, 1]));
+        assert!(!plan.is_empty());
+        // The 3D view's projection is already in the list: it must not be applied again.
+        assert_eq!(dash_positions(&frame_in(&list, look, pos2(0.0, 0.0), Some(iso), &[0, 1])), plan);
     }
 
     #[test]
@@ -464,7 +504,7 @@ mod highlight_stability_tests {
             let dir = std::path::PathBuf::from(dir);
             std::fs::create_dir_all(&dir).unwrap();
             let mut h = egui_kittest::Harness::builder().with_size(vec2(600.0, 400.0)).build_ui(|ui| {
-                let xf = Xf { rect: ui.max_rect(), center: Vec2::new(3.5, 1.5), scale: 31.0 };
+                let xf = Xf { rect: ui.max_rect(), center: Vec2::new(3.5, 1.5), scale: 31.0, projection: None };
                 draw_highlight(ui.painter(), &xf, &list, &[0], Color32::LIGHT_BLUE, Look { width: 2.0, dashed: true });
             });
             h.run_steps(3);
@@ -534,7 +574,7 @@ mod zoomed_highlight_tests {
         let list = line(Vec2::new(-1000.0, 0.0), Vec2::new(1000.0, 0.0));
         // The smaller zoom first, so a regression fails here instead of filling memory at 1e9.
         for scale in [1e3, 1e9] {
-            let n = dashes_of(&list, &Xf { rect: SCREEN, center: Vec2::new(0.3, 0.0), scale }).len();
+            let n = dashes_of(&list, &Xf { rect: SCREEN, center: Vec2::new(0.3, 0.0), scale, projection: None }).len();
             assert!((50..=70).contains(&n), "scale {scale}: {n} dashes for 600 points of line");
         }
     }
@@ -545,7 +585,7 @@ mod zoomed_highlight_tests {
     fn clipped_dashes_stay_where_the_whole_line_puts_them() {
         let list = line(Vec2::new(0.0, 0.0), Vec2::new(1000.0, 0.0));
         for x in [500.3, 512.9, 731.0] {
-            let xf = Xf { rect: SCREEN, center: Vec2::new(x, 0.0), scale: 1.0 };
+            let xf = Xf { rect: SCREEN, center: Vec2::new(x, 0.0), scale: 1.0, projection: None };
             let whole = Shape::dashed_line(
                 &[xf.to_screen(Vec2::ZERO), xf.to_screen(Vec2::new(1000.0, 0.0))],
                 Stroke::new(1.0, Color32::LIGHT_BLUE),

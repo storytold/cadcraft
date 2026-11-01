@@ -30,7 +30,7 @@ use info::info;
 use mcp::mcp;
 use output::Streams;
 #[cfg(test)]
-use output::{export_window, model_views, write_atomic};
+use output::{export_frame, export_window, model_views, write_atomic};
 use perf::perf;
 use run::run_cmds;
 #[cfg(test)]
@@ -263,6 +263,39 @@ mod tests {
         // A taller window keeps its height; the 3:2 image adds room left and right.
         s.execute("zoom", &json!({"mode": "center", "center": [5, 5], "height": 4})).unwrap();
         assert_near(export_window(&s, Framing::Auto, Some(&before)).unwrap().unwrap(), b(2.0, 3.0, 8.0, 7.0));
+    }
+
+    #[test]
+    fn current_view_export_draws_the_3d_view() {
+        let mut s = sample_session();
+        let before = model_views(&s);
+        let cmds = [("vpoint", json!({"preset": "swiso"})), ("zoom", json!({"mode": "extents"}))];
+        for (id, p) in &cmds {
+            s.execute(id, p).unwrap();
+        }
+        let (w, view) = export_frame(&s, Framing::Current, Some(&before)).unwrap();
+        let (w, view) = (w.unwrap(), view.unwrap());
+        assert!(!view.is_plan());
+        assert_eq!(export_frame(&s, Framing::Auto, Some(&before)).unwrap(), (Some(w), Some(view)));
+        // The window is in view coordinates and shows the whole drawing as the 3D view draws it.
+        let opts = cadcraft_engine::render::Options { projection: Some(view), ..Default::default() };
+        let drawn = cadcraft_engine::render::build(s.doc().unwrap(), &Space::Model, &opts).bounds;
+        assert!(w.contains(drawn.min) && w.contains(drawn.max), "{w:?} vs {drawn:?}");
+        // The other framings draw the plan.
+        assert_eq!(export_frame(&s, Framing::Extents, Some(&before)).unwrap(), (None, None));
+        let explicit = b(1.0, 1.0, 2.0, 2.0);
+        assert_eq!(export_frame(&s, Framing::Window(explicit), Some(&before)).unwrap(), (Some(explicit), None));
+        // End to end: `run --export --view current` writes the 3D view.
+        let out = std::env::temp_dir().join(format!("cadcraft-cli-3d-{}.svg", std::process::id())).to_string_lossy().to_string();
+        let mut args: Vec<String> = vec!["run".into(), "--sample".into()];
+        for (id, p) in &cmds {
+            args.extend(["--cmd".to_string(), format!("{id} {p}")]);
+        }
+        args.extend(["--export".into(), out.clone(), "--view".into(), "current".into()]);
+        assert_eq!(run(args, &mut Vec::new(), &mut Vec::new()), 0);
+        let written = std::fs::read(&out).unwrap();
+        let _ = std::fs::remove_file(&out);
+        assert_eq!(written, cadcraft_io::write_framed(s.doc().unwrap(), "a.svg", Some(w), Some(view)).unwrap());
     }
 
     #[test]

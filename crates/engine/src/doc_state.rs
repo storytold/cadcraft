@@ -1,5 +1,6 @@
-use super::view::{ModelTiles, View, usable_view};
+use super::view::{ModelTiles, View, tiled, usable_view};
 use super::{Arc, Drawing, Handle, Space, blockedit, undoctl};
+use cadcraft_geom::{Mat4, Vec2, Vec3};
 
 #[derive(Clone, Debug)]
 pub struct Snapshot {
@@ -29,6 +30,10 @@ pub struct DocState {
     pub mspace: Option<Handle>,
     pub views: Vec<(Space, View)>,
     pub view_history: Vec<View>,
+    /// Model space's viewing direction from the target towards the viewer (VPOINT, the ViewCube,
+    /// 3DORBIT; +Z = plan view): the view's centre and height are then in view coordinates
+    /// ([`DocState::projection`]).
+    pub view_dir: Vec3,
     pub uid: u64,
     /// The drawing is saved as binary DXF (it was opened from one, or last saved as one).
     pub binary_dxf: bool,
@@ -58,6 +63,7 @@ impl DocState {
             mspace: None,
             views: Vec::new(),
             view_history: Vec::new(),
+            view_dir: Vec3::Z,
             uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             binary_dxf: false,
             block_edit: None,
@@ -108,6 +114,34 @@ impl DocState {
         match &e.kind {
             cadcraft_doc::EntityKind::Viewport(v) if v.height > 1e-12 && v.view_height > 1e-12 => Some((h, v.clone())),
             _ => None,
+        }
+    }
+    /// Model space's 3D view (WCS → view coordinates), whatever tab is shown: `None` in plan view
+    /// and while model space is tiled (tiles are drawn in plan).
+    pub fn model_view(&self) -> Option<Mat4> {
+        let m = Mat4::view(self.view_dir, Vec3::ZERO, 0.0);
+        (!m.is_plan() && !tiled(&self.doc)).then_some(m)
+    }
+    /// The 3D view shown: [`DocState::model_view`] on the Model tab, `None` on layouts.
+    pub fn projection(&self) -> Option<Mat4> {
+        if self.space != Space::Model {
+            return None;
+        }
+        self.model_view()
+    }
+    /// A point picked on the WCS XY plane in view coordinates, where the view's centre is (the
+    /// identity in plan view). A plane seen edge-on maps to a line: picks are in view coordinates
+    /// already there, as the canvas gives them.
+    pub fn to_view(&self, p: Vec2) -> Vec2 {
+        let Some(plane) = self.projection().map(|m| m.plane(0.0)) else { return p };
+        if plane.inverse().is_some() { plane.apply(p) } else { p }
+    }
+    /// Look at model space from `dir` (a unit vector; +Z is plan). The previous views were in
+    /// another view's coordinates, so ZOOM Previous starts again.
+    pub fn set_view_dir(&mut self, dir: Vec3) {
+        if dir != self.view_dir {
+            self.view_dir = dir;
+            self.view_history.clear();
         }
     }
     pub fn paper_view(&self) -> View {

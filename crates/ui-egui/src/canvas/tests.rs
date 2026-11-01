@@ -21,7 +21,7 @@ fn dragged_objects_keep_their_transparency() {
     let h = d.add(&cadcraft_doc::Space::Model, common, cadcraft_doc::EntityKind::Line(line)).unwrap();
     let drag = cadcraft_engine::Drag { handles: vec![h], matrix: cadcraft_geom::Mat3::IDENTITY, extra: Vec::new(), clipboard: false };
     let rect = Rect::from_min_size(Pos2::ZERO, vec2(200.0, 100.0));
-    let xf = Xf { rect, center: Vec2::new(5.0, 0.0), scale: 10.0 };
+    let xf = Xf::new(rect, Vec2::new(5.0, 0.0), 10.0);
     let painter = egui::Painter::new(egui::Context::default(), egui::LayerId::background(), rect);
     // One canvas across the toggle: the cached drag mesh must be rebuilt.
     let mut c = CanvasState::default();
@@ -54,9 +54,9 @@ fn rebuilt_previews_stay_opaque_on_a_transparent_current_layer() {
     assert_eq!(ents[0].common.layer, "Glass");
     let doc = s.doc().unwrap();
     // Built with transparency, the preview would take CLAYER's 40 %.
-    let with = cadcraft_render::build_entities(doc, ents.iter(), &cadcraft_render::Options { transparency: true, ..preview_options(1.0) });
+    let with = cadcraft_render::build_entities(doc, ents.iter(), &cadcraft_render::Options { transparency: true, ..preview_options(1.0, None) });
     assert!(with.prims.iter().all(|p| p.transparency == 40));
-    let list = rebuilt_preview(doc, ents.iter(), 1.0);
+    let list = rebuilt_preview(doc, ents.iter(), 1.0, None);
     assert!(!list.prims.is_empty() && list.prims.iter().all(|p| p.transparency == 0));
     s.cancel();
     // MOVE's base-to-cursor rubber band (a drag extra).
@@ -67,7 +67,7 @@ fn rebuilt_previews_stay_opaque_on_a_transparent_current_layer() {
     s.cmdline("0,0").unwrap();
     let (_, extra) = s.drag(Vec2::new(4.0, 4.0)).unwrap();
     assert!(!extra.is_empty());
-    let list = rebuilt_preview(s.doc().unwrap(), extra.iter(), 1.0);
+    let list = rebuilt_preview(s.doc().unwrap(), extra.iter(), 1.0, None);
     assert!(!list.prims.is_empty() && list.prims.iter().all(|p| p.transparency == 0));
 }
 

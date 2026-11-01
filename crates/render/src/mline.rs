@@ -18,7 +18,7 @@ pub(super) fn draw(b: &mut Builder, ctx: &Ctx, e: &Entity, m: &MLine, rgb: Ink, 
         };
         b.tris(ctx, c, &fill::triangulate_evenodd(&g.fill));
     }
-    let min = b.opts.min_dash / ctx.xf.scale_factor().max(1e-12);
+    let min = b.opts.min_dash / ctx.scale().max(1e-12);
     // One look per element: colour, lineweight, linetype and its scale.
     let looks: Vec<_> = m
         .def

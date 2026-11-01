@@ -37,6 +37,9 @@ pub struct Options {
     /// rebuild the view no longer needs). A cancelled build returns a partial list, which the
     /// caller must discard; see [`Options::cancelled`].
     pub cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// A parallel 3D view of model space: WCS → view coordinates ([`cadcraft_geom::Mat4::view`]),
+    /// which the list is in. `None`: plan view. Layouts are always drawn in plan.
+    pub projection: Option<cadcraft_geom::Mat4>,
 }
 
 impl Options {
@@ -60,6 +63,7 @@ impl Default for Options {
             skip_viewport: None,
             transparency: false,
             cancel: None,
+            projection: None,
         }
     }
 }
@@ -90,6 +94,7 @@ pub(crate) fn top_ctx<'a>(d: &'a Drawing, xf: Mat3, top: Handle, frozen: &'a [St
         lt_factor: 1.0,
         block_pstyle: None,
         block_transparency: 0,
+        view: None,
     }
 }
 
@@ -108,6 +113,7 @@ fn build_space(d: &Drawing, space: &Space, opts: &Options, plotting: bool) -> Di
             return b.list;
         }
         let mut viewports = 0usize;
+        let view = if paper { None } else { opts.projection };
         for e in store.iter() {
             if paper && let EntityKind::Viewport(vp) = &e.kind {
                 if viewports < MAX_VIEWPORTS {
@@ -119,7 +125,7 @@ fn build_space(d: &Drawing, space: &Space, opts: &Options, plotting: bool) -> Di
                 }
                 continue;
             }
-            entity(&mut b, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
+            entity(&mut b, &Ctx { view, ..top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]) }, e);
         }
     }
     // A layout is drawn in paper units, so its pens become geometry now.
@@ -150,7 +156,7 @@ fn build_parallel(b: &mut Builder, d: &Drawing, store: &cadcraft_doc::EntityStor
             let mut part =
                 Builder { list: DisplayList::default(), opts, plotting, styles: None, named: None, shared_budget: Some(&budget), transparency: 0 };
             for e in chunk {
-                entity(&mut part, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
+                entity(&mut part, &Ctx { view: opts.projection, ..top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]) }, e);
             }
             part.list
         })
@@ -202,7 +208,7 @@ pub fn build_entities<'a, I: IntoIterator<Item = &'a Entity>>(d: &Drawing, ents:
     };
     let mut b = Builder { list: DisplayList::default(), opts, plotting: false, styles: None, named: None, shared_budget: None, transparency: 0 };
     for e in ents {
-        entity(&mut b, &top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]), e);
+        entity(&mut b, &Ctx { view: opts.projection, ..top_ctx(d, Mat3::IDENTITY, e.handle, &[], &[]) }, e);
     }
     b.list
 }

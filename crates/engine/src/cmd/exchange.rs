@@ -65,10 +65,6 @@ pub fn specs() -> Vec<CommandSpec> {
         })
         .params("not available yet")
         .noundo(),
-        CommandSpec::new("3dorbit", "Orbit", |_, _| Err(EngineError::Other("3DORBIT is not available yet: CADCraft draws in 2D (plan view) only".into())))
-            .alias(&["3do", "orbit"])
-            .params("not available yet")
-            .noundo(),
     ]
 }
 
@@ -117,7 +113,9 @@ fn run_export(s: &mut Session, p: &Value) -> Result<Value> {
     if !EXPORT_FORMATS.contains(&format.as_str()) {
         return Err(bad("export", "`format` must be dxf, dwg, svg, png or pdf (or give a `path` with one of those extensions)"));
     }
-    let bytes = (hooks.write)(s.doc()?, &format!("export.{format}")).map_err(|e| bad("export", e))?;
+    let name = format!("export.{format}");
+    let d = super::file::drawing_to_write(s, &name)?;
+    let bytes = (hooks.write)(&d, &name).map_err(|e| bad("export", e))?;
     match path {
         Some(path) => {
             write_file("export", path, &bytes)?;
@@ -798,9 +796,9 @@ mod tests {
     }
 
     #[test]
-    fn attach_share_and_orbit_say_they_are_not_available_yet() {
+    fn attach_and_share_say_they_are_not_available_yet() {
         let mut s = session();
-        for c in ["attach", "share", "3dorbit", "orbit"] {
+        for c in ["attach", "share"] {
             let e = s.execute(&resolve_alias(c), &Value::Null).unwrap_err().to_string();
             assert!(e.contains("not available yet"), "{c}: {e}");
         }

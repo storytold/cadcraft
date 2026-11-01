@@ -136,6 +136,7 @@ pub(super) fn ensure_vp_content(app: &mut CadApp, xf_paper: &Xf, ctx: &egui::Con
             skip_viewport: None,
             transparency,
             cancel: None,
+            projection: None,
         };
         c.list = cadcraft_render::viewport_content(&st.doc, &st.space, h, area, &opts);
         c.key = Some(key);
@@ -148,7 +149,7 @@ pub(super) fn ensure_vp_content(app: &mut CadApp, xf_paper: &Xf, ctx: &egui::Con
     let (k, b) = vp_motion(&vp, c.view)?;
     c.motion = Some((k, b));
     // Paper p = k·p0 + b, so the list is drawn by the paper transform scaled by k about b.
-    let xf = Xf { rect: xf_paper.rect, center: (xf_paper.center - b) / k, scale: xf_paper.scale * k };
+    let xf = Xf::new(xf_paper.rect, (xf_paper.center - b) / k, xf_paper.scale * k);
     let on_screen = Rect::from_two_pos(xf_paper.to_screen(Vec2::new(rect.min.x, rect.max.y)), xf_paper.to_screen(Vec2::new(rect.max.x, rect.min.y)));
     Some(VpFrame { xf, on_screen, outline: clip.map(|p| p.polygon().to_vec()) })
 }

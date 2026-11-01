@@ -146,8 +146,8 @@ fn write_bytes(s: &Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<Vec<
     if opts.binary && !is_dxf(path) {
         return Err(bad(cmd, "binary applies to DXF files only"));
     }
-    // A drawing file is the drawing outside the Block Editor; an image is what is shown.
-    let d: &cadcraft_doc::Drawing = if is_drawing_file(path) { s.state()?.drawing() } else { s.doc()? };
+    let d = drawing_to_write(s, path)?;
+    let d: &Drawing = &d;
     let r = if *opts == SaveAs::default() {
         (hooks.write)(d, path)
     } else {
@@ -155,6 +155,34 @@ fn write_bytes(s: &Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<Vec<
         w(d, path, opts)
     };
     r.map_err(|e| bad(cmd, e))
+}
+
+/// The drawing to write to `path`: for a drawing file, the drawing outside the Block Editor, with
+/// model space's 3D view as its single `*Active` viewport (so the file opens in that view, as
+/// AutoCAD saves it); for an image, what is shown.
+pub fn drawing_to_write<'a>(s: &'a Session, path: &str) -> Result<std::borrow::Cow<'a, Drawing>> {
+    use std::borrow::Cow;
+    if !is_drawing_file(path) {
+        return Ok(Cow::Borrowed(s.doc()?));
+    }
+    let st = s.state()?;
+    if st.model_view().is_none() {
+        return Ok(Cow::Borrowed(st.drawing().as_ref()));
+    }
+    let view = st.views.iter().find(|(sp, _)| *sp == cadcraft_doc::Space::Model).map(|(_, v)| *v).unwrap_or_default();
+    let (w, h) = s.viewport_px;
+    let tile = cadcraft_doc::VportTile {
+        max: cadcraft_geom::Vec2::new(1.0, 1.0),
+        center: view.center,
+        height: view.height,
+        aspect: w / h.max(1.0),
+        view3d: Some(cadcraft_doc::ViewDir { dir: st.view_dir, target: cadcraft_geom::Vec3::ZERO }),
+        ..Default::default()
+    };
+    let mut d = Drawing::clone(st.drawing());
+    d.vports.retain(|c| !c.is_active());
+    d.vports.push(cadcraft_doc::VportConfig { name: cadcraft_doc::VportConfig::ACTIVE.into(), tiles: vec![tile] });
+    Ok(Cow::Owned(d))
 }
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -740,6 +768,11 @@ pub fn not_saved_as(d: &Drawing, version: Version) -> std::collections::BTreeMap
     for e in stores.flat_map(|s| s.iter()) {
         if let cadcraft_doc::EntityKind::Unknown(u) = &e.kind {
             if MODELER_TYPES.iter().any(|t| u.dxf_type.eq_ignore_ascii_case(t)) && stored.contains(&e.handle) {
+                continue;
+            }
+            // A MESH a DWG keeps anyway: the DWG bridge reads its groups as its own entity and
+            // writes it (test `dwg_keeps_meshes`).
+            if u.dxf_type.eq_ignore_ascii_case("MESH") {
                 continue;
             }
             let n = out.entry(u.dxf_type.clone()).or_insert(0);

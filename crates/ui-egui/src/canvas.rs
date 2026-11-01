@@ -5,7 +5,7 @@ use cadcraft_color::Rgb;
 use cadcraft_doc::Handle;
 use cadcraft_engine::Input;
 use cadcraft_engine::snap::{self, SnapHit};
-use cadcraft_geom::{Bounds2, Vec2};
+use cadcraft_geom::{Bounds2, Mat4, Vec2};
 use cadcraft_render::{DisplayList, Kind};
 use egui::{Color32, Pos2, Rect, Sense, Shape, Stroke, pos2, vec2};
 
@@ -26,7 +26,7 @@ mod widgets;
 use cursor::{draw_crosshair, draw_snap_marker, draw_tracking, effective_point, override_cursor};
 use cycle::{CycleList, cycle_badge, cycle_click, cycle_list, over_canvas_menu, shift_space_cycle};
 pub(crate) use draw::{Look, draw_highlight, draw_list};
-use draw::{dashed_rect, draw_drag_gpu, draw_highlight_gpu, draw_list_gpu, list_mesh_key, selection_area_fill};
+use draw::{dashed_outline, dashed_rect, draw_drag_gpu, draw_highlight_gpu, draw_list_gpu, list_mesh_key, selection_area_fill};
 use dyn_boxes::dynamic_input;
 pub(crate) use dyn_boxes::length_units;
 use grid::draw_grid;
@@ -44,22 +44,46 @@ use widgets::{draw_tiles, draw_ucs_icon, draw_viewcube, tile_rects, tile_xf, vie
 #[derive(Clone, Copy, Debug)]
 pub struct Xf {
     pub rect: Rect,
+    /// The view centre, in view coordinates (WCS in plan view).
     pub center: Vec2,
     /// Pixels (points) per drawing unit.
     pub scale: f64,
+    /// A 3D view of model space (WCS → view coordinates): display lists are in view coordinates,
+    /// points ([`Xf::to_screen`], [`Xf::to_world`]) are on the WCS XY plane. `None` in plan view.
+    pub projection: Option<Mat4>,
 }
 
 impl Xf {
+    pub fn new(rect: Rect, center: Vec2, scale: f64) -> Xf {
+        Xf { rect, center, scale, projection: None }
+    }
+    /// A WCS point (on the XY plane in a 3D view) on screen.
     pub fn to_screen(&self, p: Vec2) -> Pos2 {
+        self.view_to_screen(self.projection.map_or(p, |m| m.plane(0.0).apply(p)))
+    }
+    /// The WCS point under a screen position: on the XY plane in a 3D view (in view coordinates
+    /// when the plane is seen edge-on).
+    pub fn to_world(&self, p: Pos2) -> Vec2 {
+        let v = self.screen_to_view(p);
+        self.projection.and_then(|m| m.plane(0.0).inverse()).map_or(v, |inv| inv.apply(v))
+    }
+    /// A point in view coordinates (a display list's) on screen.
+    pub fn view_to_screen(&self, p: Vec2) -> Pos2 {
         let c = self.rect.center();
         pos2(c.x + ((p.x - self.center.x) * self.scale) as f32, c.y - ((p.y - self.center.y) * self.scale) as f32)
     }
-    pub fn to_world(&self, p: Pos2) -> Vec2 {
+    pub(crate) fn screen_to_view(&self, p: Pos2) -> Vec2 {
         let c = self.rect.center();
         Vec2::new(self.center.x + f64::from(p.x - c.x) / self.scale, self.center.y - f64::from(p.y - c.y) / self.scale)
     }
+    /// The WCS area on screen (its bounds on the XY plane in a 3D view).
     pub fn world_bounds(&self) -> Bounds2 {
-        Bounds2::new(self.to_world(self.rect.left_bottom()), self.to_world(self.rect.right_top()))
+        let r = self.rect;
+        Bounds2::from_points([r.left_bottom(), r.right_top(), r.left_top(), r.right_bottom()].map(|q| self.to_world(q)))
+    }
+    /// The area on screen in view coordinates (what display lists are built for).
+    pub fn view_bounds(&self) -> Bounds2 {
+        Bounds2::new(self.screen_to_view(self.rect.left_bottom()), self.screen_to_view(self.rect.right_top()))
     }
 }
 
@@ -254,6 +278,11 @@ fn navigate_canvas(app: &mut CadApp, ui: &mut egui::Ui, nav: &Navigation<'_>) ->
     if nav.response.dragged_by(egui::PointerButton::Primary) && app.session.realtime_zoom_active() {
         let _ = app.session.realtime_zoom(f64::from(nav.response.drag_delta().y));
     }
+    // 3DORBIT: dragging turns the view.
+    if nav.response.dragged_by(egui::PointerButton::Primary) && app.session.orbit_active() {
+        let d = nav.response.drag_delta();
+        let _ = app.session.drag_view(f64::from(d.x), f64::from(d.y));
+    }
     if p.pressed_primary
         && let Some(at) = p.hover_pos
         && !nav.rect.contains(at)
@@ -288,16 +317,16 @@ fn handle_scroll_zoom(app: &mut CadApp, ui: &mut egui::Ui, nav: &Navigation<'_>,
         && wheel != 0.0
         && let Some(at) = p.hover_pos
     {
+        // About the point under the cursor, in view coordinates (where the view's centre is).
         let factor = app.session.wheel_zoom_factor(f64::from(wheel));
-        let about = nav.xf.to_world(at);
-        let _ = app.session.zoom_about(factor, about);
+        let _ = app.session.zoom_about(factor, nav.xf.screen_to_view(at));
     }
     let pinch = ui.input(|i| crate::animation::zoom_delta(i, &opts, app.shows_animations()));
     if inside
         && (pinch - 1.0).abs() > 1e-4
         && let Some(at) = p.hover_pos
     {
-        let _ = app.session.zoom_about(f64::from(pinch), nav.xf.to_world(at));
+        let _ = app.session.zoom_about(f64::from(pinch), nav.xf.screen_to_view(at));
     }
 }
 
@@ -475,7 +504,9 @@ fn paint_pointer_overlay(
     let view = frame.view;
     // Acquired tracking points and the polar / tracking paths under the cursor.
     if app.canvas.cursor.is_some() {
-        draw_tracking(painter, &xf, &app.session.tracking.acquired, app.canvas.track.as_ref(), view.height * 4.0);
+        // Lines reach past the screen, also where a 3D view foreshortens the XY plane.
+        let far = xf.world_bounds().width().max(xf.world_bounds().height()).max(view.height) * 4.0;
+        draw_tracking(painter, &xf, &app.session.tracking.acquired, app.canvas.track.as_ref(), far);
     }
     if let (Some(hit), Some(_)) = (app.canvas.snap, app.canvas.cursor) {
         draw_snap_marker(painter, xf.to_screen(hit.point), &hit);
@@ -489,7 +520,7 @@ fn paint_pointer_overlay(
     if app.ui.show_viewcube && sheet.is_none() {
         draw_viewcube(app, ui, rect);
     }
-    viewport_label(painter, rect);
+    viewport_label(painter, rect, app.session.view_name());
     // Typing and Escape reach the command line even when its overlay is hidden.
     crate::cmdline::keyboard(app, ui.ctx());
     // Command line overlay.
@@ -744,7 +775,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     let Ok(st) = app.session.state() else { return };
     let view = st.view();
     let scale = f64::from(rect.height()) / view.height.max(1e-12);
-    let xf = Xf { rect, center: view.center, scale };
+    let xf = Xf { projection: st.projection(), ..Xf::new(rect, view.center, scale) };
     app.canvas.xf = Some(xf);
 
     // ---------- input ----------
@@ -764,13 +795,13 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     // Re-read the view after navigation.
     let view = app.session.state().map(|s| s.view()).unwrap_or(view);
     let scale = f64::from(rect.height()) / view.height.max(1e-12);
-    let xf = Xf { rect, center: view.center, scale };
+    let xf = Xf { projection: app.session.state().ok().and_then(|s| s.projection()), ..Xf::new(rect, view.center, scale) };
     app.canvas.xf = Some(xf);
     // The paper (display) transform; equal to `xf` except inside an MSPACE viewport.
     let (xf_paper, active_vp) = match app.session.state() {
         Ok(st) => {
             let pv = st.paper_view();
-            let xp = Xf { rect, center: pv.center, scale: f64::from(rect.height()) / pv.height.max(1e-12) };
+            let xp = Xf::new(rect, pv.center, f64::from(rect.height()) / pv.height.max(1e-12));
             (if st.mspace.is_some() { xp } else { xf }, st.active_viewport().map(|(_, v)| v))
         }
         Err(_) => (xf, None),
@@ -961,10 +992,10 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
     let selecting = app.session.previews_selection();
     painter.rect_filled(rect, 0.0, t.canvas);
     let t0 = crate::now_ms();
-    let mut views = vec![(xf_paper.world_bounds(), 1.0 / xf_paper.scale)];
+    let mut views = vec![(xf_paper.view_bounds(), 1.0 / xf_paper.scale)];
     views.extend(tiles.iter().filter(|(r, tile)| !tile.active && r.width() >= 1.0 && r.height() >= 1.0).map(|(r, tile)| {
         let xf = tile_xf(*r, tile);
-        (xf.world_bounds(), 1.0 / xf.scale)
+        (xf.view_bounds(), 1.0 / xf.scale)
     }));
     ensure_list(app, &xf_paper, &views, ui.ctx());
     let sheet = app.canvas.list.as_ref().and_then(|l| l.sheet);
@@ -1079,7 +1110,9 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
     }
     // Rubber band preview of the active command.
     // `xf` is the space being edited: paper space, or model space inside the active viewport.
-    let drag = match (app.canvas.cursor, app.canvas.gpu.is_some()) {
+    // The GPU drag moves the objects' list by the command's WCS matrix: in a 3D view, whose list is
+    // in view coordinates, the session's transformed copies are drawn instead.
+    let drag = match (app.canvas.cursor, app.canvas.gpu.is_some() && xf.projection.is_none()) {
         (Some(c), true) => app.session.drag(c),
         _ => None,
     };
@@ -1088,7 +1121,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
             let serial = app.session.clipboard_source.as_ref().map_or(0, |c| c.serial);
             let transparency = app.session.settings.transparency_display;
             draw_drag_gpu(&mut app.canvas, painter, &xf, &st.doc, &drag, (&app.session.clipboard, serial), bg, transparency);
-            let list = rebuilt_preview(&st.doc, extra.iter(), scale);
+            let list = rebuilt_preview(&st.doc, extra.iter(), scale, xf.projection);
             draw_list(painter, &xf, &list, bg, false);
         }
     } else if let (Some(c), true) = (app.canvas.cursor, app.session.prompting()) {
@@ -1096,24 +1129,24 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
         if !ents.is_empty()
             && let Ok(st) = app.session.state()
         {
-            let list = rebuilt_preview(&st.doc, ents.iter(), scale);
+            let list = rebuilt_preview(&st.doc, ents.iter(), scale, xf.projection);
             draw_list(painter, &xf, &list, bg, false);
         }
     }
     // Pending selection window.
     if let (Some(pw), Some(c)) = (app.session.pending_window, raw_world) {
-        let a = xf.to_screen(pw.corner);
-        let b = xf.to_screen(c);
-        let r = Rect::from_two_pos(a, b);
-        let crossing = c.x < pw.corner.x;
+        // The box selected on the WCS XY plane, as it shows (a parallelogram in a 3D view).
+        let (a, b) = (pw.corner, c);
+        let pts = [a, Vec2::new(b.x, a.y), b, Vec2::new(a.x, b.y)].map(|q| xf.to_screen(q));
+        let crossing = app.session.crossing(a, b).unwrap_or(false);
         if let Some(fill) = selection_area_fill(&app.session.settings, crossing) {
-            painter.rect_filled(r, 0.0, fill);
+            painter.add(Shape::convex_polygon(pts.to_vec(), fill, Stroke::NONE));
         }
         let st = Stroke::new(1.0, if crossing { t.crossing_stroke } else { t.window_stroke });
         if crossing {
-            painter.extend(dashed_rect(painter.clip_rect(), r, st, 5.0, 3.0));
+            painter.extend(dashed_outline(painter.clip_rect(), &pts, st, 5.0, 3.0));
         } else {
-            painter.rect_stroke(r, 0.0, st, egui::StrokeKind::Middle);
+            painter.add(Shape::closed_line(pts.to_vec(), st));
         }
     }
     paint_pointer_overlay(

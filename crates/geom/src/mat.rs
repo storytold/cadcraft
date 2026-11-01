@@ -136,6 +136,38 @@ impl Mat4 {
     pub fn from_mat3(t: &Mat3) -> Mat4 {
         Mat4 { m: [[t.a, t.c, 0.0, t.e], [t.b, t.d, 0.0, t.f], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]] }
     }
+    /// WCS → view coordinates (AutoCAD's DCS) of a parallel view looking from `target + dir`
+    /// towards `target`: x right, y up, z towards the viewer. The axes are the arbitrary-axis
+    /// frame of `dir` ([`Mat4::ocs`]) turned by `twist` (radians, counterclockwise), so a plan
+    /// view (`dir` = +Z, no twist) of target 0 is the identity.
+    pub fn view(dir: Vec3, target: Vec3, twist: f64) -> Mat4 {
+        let f = Mat4::ocs(dir);
+        let (s, c) = (-twist).sin_cos();
+        // Rows of the OCS frame's transpose (WCS → OCS), turned in the view plane.
+        let ax = Vec3::new(f.m[0][0], f.m[1][0], f.m[2][0]);
+        let ay = Vec3::new(f.m[0][1], f.m[1][1], f.m[2][1]);
+        let az = Vec3::new(f.m[0][2], f.m[1][2], f.m[2][2]);
+        let x = ax * c - ay * s;
+        let y = ax * s + ay * c;
+        let row = |v: Vec3| [v.x, v.y, v.z, -(v.x * target.x + v.y * target.y + v.z * target.z)];
+        Mat4 { m: [row(x), row(y), row(az), [0.0, 0.0, 0.0, 1.0]] }
+    }
+    /// The 2D affine map of this transform on the plane `z = elevation`: (x, y) on the plane →
+    /// the transformed (x, y). Planar geometry drawn through it needs no 3D path.
+    pub fn plane(&self, elevation: f64) -> Mat3 {
+        let m = &self.m;
+        Mat3 { a: m[0][0], b: m[1][0], c: m[0][1], d: m[1][1], e: m[0][2] * elevation + m[0][3], f: m[1][2] * elevation + m[1][3] }
+    }
+    /// Whether this is a plan view: x and y kept (up to a translation), z ignored.
+    pub fn is_plan(&self) -> bool {
+        let m = &self.m;
+        (m[0][0] - 1.0).abs() < 1e-12
+            && (m[1][1] - 1.0).abs() < 1e-12
+            && m[0][1].abs() < 1e-12
+            && m[1][0].abs() < 1e-12
+            && m[0][2].abs() < 1e-12
+            && m[1][2].abs() < 1e-12
+    }
     /// The "arbitrary axis algorithm" frame for an extrusion direction (DXF OCS → WCS).
     pub fn ocs(normal: Vec3) -> Mat4 {
         let n = normal.normalized();
