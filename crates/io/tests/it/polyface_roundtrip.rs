@@ -107,3 +107,15 @@ fn faces_naming_missing_vertices_are_dropped_on_read() {
     let back = read_dxf(write_dxf(&d).as_bytes()).unwrap();
     assert_eq!(mesh(&back), expected());
 }
+
+#[test]
+fn faces_naming_missing_vertices_are_not_written() {
+    use cadcraft_doc::{Common, Space};
+    let mut m = expected();
+    m.faces.push([1, 2, 9, 0]);
+    let mut d = Drawing::new_metric();
+    d.add(&Space::Model, Common { layer: "0".into(), ..Common::default() }, EntityKind::PolyfaceMesh(m)).unwrap();
+    let text = write_dxf(&d);
+    assert_eq!(text.matches("AcDbFaceRecord").count(), 2, "only the faces that name its vertices");
+    assert_eq!(mesh(&read_dxf(text.as_bytes()).unwrap()), expected());
+}

@@ -33,10 +33,13 @@ pub(super) fn hatch_reactors(d: &Drawing) -> HashMap<Handle, Vec<String>> {
 }
 
 /// A polyface mesh as one POLYLINE record: the vertices (flags 64 | 128), then one face record
-/// (128) per face. Its counts and vertex indices are 16-bit groups (71–74): a mesh too large for
-/// them is written as its 3D faces rather than with indices cut short.
+/// (128) per face that names them (the others draw nothing and are dropped, as on read). Counts
+/// and indices are 16-bit groups (71–74), and no index is above the vertex count: a mesh too large
+/// for them is written as its 3D faces rather than with numbers cut short.
 fn polyface(w: &mut W, d: &Drawing, e: &Entity, m: &cadcraft_doc::PolyfaceMesh, owner: &str, paper: bool, cx: &Ctx) {
-    if !polyface_fits(m) {
+    let faces: Vec<&[i32; 4]> = m.faces.iter().filter(|f| m.face3d(f).is_some()).collect();
+    let max = usize::try_from(i16::MAX).unwrap_or(usize::MAX);
+    if m.vertices.len() > max || faces.len() > max {
         for (i, f) in m.faces3d().into_iter().enumerate() {
             let handle = if i == 0 { e.handle } else { Handle(w.next_handle()) };
             let face = Entity { handle, common: e.common.clone(), kind: EntityKind::Face3d(f) };
@@ -50,7 +53,7 @@ fn polyface(w: &mut W, d: &Drawing, e: &Entity, m: &cadcraft_doc::PolyfaceMesh, 
     w.p(10, Vec3::ZERO);
     w.i(70, 64);
     w.i(71, m.vertices.len() as i64);
-    w.i(72, m.faces.len() as i64);
+    w.i(72, faces.len() as i64);
     for q in &m.vertices {
         let vh = w.h();
         w.s(0, "VERTEX");
@@ -63,7 +66,7 @@ fn polyface(w: &mut W, d: &Drawing, e: &Entity, m: &cadcraft_doc::PolyfaceMesh, 
         w.p(10, *q);
         w.i(70, 192);
     }
-    for f in &m.faces {
+    for f in faces {
         let vh = w.h();
         w.s(0, "VERTEX");
         w.s(5, vh);
@@ -85,13 +88,6 @@ fn polyface(w: &mut W, d: &Drawing, e: &Entity, m: &cadcraft_doc::PolyfaceMesh, 
     w.s(330, e.handle.hex());
     w.s(100, "AcDbEntity");
     w.s(8, &e.common.layer);
-}
-
-/// Whether a polyface mesh fits its POLYLINE record: vertex and face counts and indices within
-/// the 16-bit groups 71–74.
-fn polyface_fits(m: &cadcraft_doc::PolyfaceMesh) -> bool {
-    let max = usize::try_from(i16::MAX).unwrap_or(usize::MAX);
-    m.vertices.len() <= max && m.faces.len() <= max && m.faces.iter().flatten().all(|ix| i16::try_from(*ix).is_ok())
 }
 
 pub(super) fn entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {
