@@ -326,12 +326,12 @@ pub fn install_fonts(ctx: &egui::Context, language: &str) {
     let chinese = language.starts_with("zh");
     #[cfg(not(target_arch = "wasm32"))]
     {
-        for path in system_ui_candidates() {
+        for path in installed(system_ui_candidates()) {
             // A Vietnamese interface takes the first one with its letters.
-            if language == "vi" && vietnamese_font() != Some(std::path::Path::new(path)) {
+            if language == "vi" && vietnamese_font() != Some(path.as_path()) {
                 continue;
             }
-            if let Ok(bytes) = std::fs::read(path) {
+            if let Some(bytes) = read_capped(&path, MAX_UI_FONT_BYTES) {
                 fonts.font_data.insert("system-ui".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
                 if let Some(f) = fonts.families.get_mut(&FontFamily::Proportional) {
                     f.insert(0, "system-ui".into());
@@ -513,6 +513,28 @@ fn read_capped(path: &std::path::Path, max: u64) -> Option<Vec<u8>> {
     (!bytes.is_empty() && bytes.len() as u64 <= max).then_some(bytes)
 }
 
+/// The files among `candidates` this system has: those at their absolute paths (where the OS or
+/// common packages put fonts), then the files with the same stems wherever the system keeps its
+/// fonts (NixOS, Guix and Flatpak keep them outside /usr/share/fonts; the fonts crate looks where
+/// fontconfig does, #674).
+#[cfg(not(target_arch = "wasm32"))]
+fn installed<'a>(candidates: &'a [&'a str]) -> impl Iterator<Item = std::path::PathBuf> + 'a {
+    // The usual places first: the font database is only asked when a caller needs more than they
+    // hold, because its first use walks every font directory on the machine.
+    let direct = candidates.iter().map(std::path::PathBuf::from).filter(|p| p.is_file());
+    let mut seen: Vec<std::path::PathBuf> = Vec::new();
+    let by_stem =
+        candidates.iter().filter_map(|c| std::path::Path::new(c).file_stem()?.to_str()).filter_map(cadcraft_fonts::ttf::installed_font_path).filter(
+            move |p| {
+                !candidates.iter().any(|c| std::path::Path::new(c) == p) && !seen.contains(p) && {
+                    seen.push(p.clone());
+                    true
+                }
+            },
+        );
+    direct.chain(by_stem)
+}
+
 /// An installed font with Chinese characters, for the Chinese interface; fonts are never bundled
 /// (only looked for where the OS or common packages put them). Checked once.
 pub fn cjk_font() -> Option<&'static std::path::Path> {
@@ -538,7 +560,7 @@ pub fn cjk_font() -> Option<&'static std::path::Path> {
                         "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
                     ]
                 };
-                candidates.iter().map(std::path::PathBuf::from).find(|p| p.is_file())
+                installed(candidates).next()
             })
             .as_deref()
     }
@@ -581,7 +603,7 @@ pub fn arabic_font() -> Option<&'static std::path::Path> {
                         "/usr/share/fonts/truetype/kacst/KacstOne.ttf",
                     ]
                 };
-                candidates.iter().map(std::path::PathBuf::from).find(|p| p.is_file())
+                installed(candidates).next()
             })
             .as_deref()
     }
@@ -609,7 +631,7 @@ fn japanese_font() -> Option<&'static std::path::Path> {
                         "/usr/share/fonts/vl-gothic/VL-PGothic-Regular.ttf",
                     ]
                 };
-                candidates.iter().map(std::path::PathBuf::from).find(|p| p.is_file())
+                installed(candidates).next()
             })
             .as_deref()
     }
@@ -706,10 +728,8 @@ pub fn korean_font() -> Option<&'static cadcraft_fonts::ttf::Face> {
                         "/usr/local/share/fonts/noto/NotoSansCJK-Regular.ttc",
                     ]
                 };
-                for path in candidates {
-                    if let Some(face) =
-                        read_capped(std::path::Path::new(path), MAX_UI_FONT_BYTES).and_then(|bytes| korean_face(std::sync::Arc::new(bytes)))
-                    {
+                for path in installed(candidates) {
+                    if let Some(face) = read_capped(&path, MAX_UI_FONT_BYTES).and_then(|bytes| korean_face(std::sync::Arc::new(bytes))) {
                         return Some(face);
                     }
                 }
