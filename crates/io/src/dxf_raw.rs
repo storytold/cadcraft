@@ -1111,6 +1111,12 @@ fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: Opti
     let rgb = b.iter().take(xdata_at).find(|t| t.code == 420).map(Tag::str);
     let has_book = b.iter().take(xdata_at).any(|t| t.code == 430);
     let handle_at = b.iter().position(|t| matches!(t.code, 5 | 105));
+    // A kept extension dictionary follows the reactors group, as the DXF reference orders them.
+    let reactors_end = b.iter().position(|t| t.code == 102 && t.str().trim() == "{ACAD_REACTORS").and_then(|s| {
+        let rest = b.get(s + 1..)?;
+        rest.iter().position(|t| t.code == 102 && t.str().trim() == "}").map(|e| s + 1 + e)
+    });
+    let xdict_at = if h.has_reactors { reactors_end.or(handle_at) } else { handle_at };
     let mut seen_owner = false;
     for (i, t) in b.iter().enumerate() {
         if i == props_at
@@ -1153,7 +1159,7 @@ fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: Opti
             out.extend(adds.iter().map(|a| Tag::s(330, a.clone())));
             out.push(Tag::s(102, "}"));
         }
-        if Some(i) == handle_at
+        if Some(i) == xdict_at
             && let Some(x) = x
             && h.xdict.is_none()
             && let Some(xd) = x.xdict

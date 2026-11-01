@@ -1121,8 +1121,9 @@ fn a_record_with_a_reactor_group_gets_one_group_with_every_handle_once() {
     assert!(reactors.iter().any(|r| o.handle(r).is_some_and(|(k, _)| k == "ACME_OBJECT")));
     let (_, line) = o.handle("2A").expect("line");
     let order: Vec<i32> = line.iter().map(|t| t.code).collect();
-    let (rx, xd) = (order.iter().position(|c| *c == 102), order.iter().rposition(|c| *c == 102));
-    assert!(rx < xd, "reactors group before the extension dictionary group: {order:?}");
+    let start = |name: &str| line.iter().position(|t| t.code == 102 && t.str() == format!("{{{name}"));
+    let (rx, xd) = (start("ACAD_REACTORS"), start("ACAD_XDICTIONARY"));
+    assert!(rx.is_some() && xd.is_some() && rx < xd, "reactors group before the extension dictionary group: {order:?}");
     assert_eq!(group(line, "ACAD_XDICTIONARY").len(), 1);
     // Our reader accepts it, the association survives, and a second save keeps the same group.
     let back = read_dxf(text.as_bytes()).expect("reopen");
@@ -1150,11 +1151,11 @@ fn a_record_without_a_reactor_group_gets_a_new_one_in_the_preamble() {
     let xdict_at = line.iter().position(|t| t.code == 102 && t.str() == "{ACAD_XDICTIONARY").expect("xdict group");
     let reactors = one_reactor_group(&o, "2A", true);
     assert_eq!(reactors, vec![dimassoc_handle(&o)]);
-    // The preamble is the handle, then the two 102 groups (the writer puts the extension
-    // dictionary first), then the owner: nothing else in between.
+    // The preamble is the handle, then the reactors group and the extension dictionary group in
+    // the DXF reference's order, then the owner: nothing else in between.
     let reactors_at = line.iter().position(|t| t.code == 102 && t.str() == "{ACAD_REACTORS").expect("reactor group");
     let owner_at = line.iter().position(|t| t.code == 330 && t.str() != reactors[0]).expect("owner");
-    assert!(xdict_at < reactors_at && reactors_at < owner_at, "xdict {xdict_at}, reactors {reactors_at}, owner {owner_at}");
+    assert!(reactors_at < xdict_at && xdict_at < owner_at, "reactors {reactors_at}, xdict {xdict_at}, owner {owner_at}");
     assert!(line.iter().take(owner_at).all(|t| matches!(t.code, 5 | 102 | 330 | 360)), "only handle and groups before the owner");
     // Reading it back keeps the association and the DIMASSOC still resolves.
     let back = read_dxf(text.as_bytes()).expect("reopen");
