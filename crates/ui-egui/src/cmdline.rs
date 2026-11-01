@@ -494,7 +494,12 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
             p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
             x += gw;
             if !pr.raw && !pr.keywords.is_empty() {
-                let g = p.layout_no_wrap(if pr.message.is_empty() { " [".into() } else { crate::tl!(" or [").into() }, font.clone(), t.text);
+                // As the engine's prompt text says it; only " or [" has words to translate.
+                let lead = match pr.keyword_lead() {
+                    " or [" => crate::tl!(" or ["),
+                    lead => lead,
+                };
+                let g = p.layout_no_wrap(lead.into(), font.clone(), t.text);
                 let gw = g.size().x;
                 p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
                 x += gw;
