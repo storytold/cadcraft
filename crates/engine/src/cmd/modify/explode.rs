@@ -89,6 +89,14 @@ fn explode_dimension(d: &cadcraft_doc::Drawing, e: &Entity, dm: &cadcraft_doc::D
             });
         }
     }
+    // DIMTFILL 1: a background-colour mask, over the lines and arrowheads, under the text.
+    if style.text_fill == 1 && g.text_fill.len() == 4 {
+        v.push(Entity {
+            handle: Handle(0),
+            common: e.common.clone(),
+            kind: EntityKind::Wipeout(cadcraft_doc::Wipeout { boundary: g.text_fill.clone() }),
+        });
+    }
     // DIMTFILL 2: the text background as a SOLID in DIMTFILLCLR, over the lines and
     // arrowheads, under the text and its marks (SOLID corners go 1, 2, 4, 3).
     if style.text_fill == 2
