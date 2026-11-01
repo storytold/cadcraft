@@ -172,8 +172,21 @@ impl Spline {
                         return true;
                     }
                 }
-                // Other writers use the parameters themselves as interior knots.
-                u.len() > 2 && u.iter().skip(1).take(u.len() - 2).all(|q| norm.iter().any(|k| close(*k, *q)))
+                // Other writers use the parameters themselves as interior knots. Both `u` and
+                // `norm` are ascending, so a single linear merge decides containment instead of
+                // re-scanning `norm` from the start for every parameter, which is quadratic on an
+                // otherwise valid spline (CWE-407).
+                if u.len() <= 2 {
+                    return false;
+                }
+                let interior = u.get(1..u.len() - 1).unwrap_or(&[]);
+                let mut j = 0usize;
+                interior.iter().all(|q| {
+                    while j < norm.len() && norm[j] < *q && !close(norm[j], *q) {
+                        j += 1;
+                    }
+                    norm.get(j).is_some_and(|k| close(*k, *q))
+                })
             })
             .unwrap_or(KnotParam::Chord)
     }
@@ -893,5 +906,19 @@ mod tests {
         let mut s = Spline::fit_with(&fit, false, FitOptions { start_tangent: Some(Vec2::X), ..FitOptions::default() });
         s.transform(&Mat3::rotate(std::f64::consts::FRAC_PI_2));
         assert!(s.fit_opts.start_tangent.is_some_and(|t| t.near(Vec2::Y, 1e-12)));
+    }
+}
+
+#[cfg(test)]
+mod knot_boundary_tests {
+    use super::*;
+    #[test]
+    fn uniform_knots_skip_the_strict_lower_tolerance_boundary() {
+        let q = 2.0 / 3.0;
+        let mut s = Spline::from_control(vec![Vec2::ZERO; 5], 1);
+        s.fit = vec![Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(4.0, 0.0), Vec2::new(9.0, 0.0)];
+        s.knots = vec![0.0, 0.0, 1.0 / 3.0, q - 1e-6, q, 1.0, 1.0];
+        assert!(s.is_valid());
+        assert_eq!(s.infer_knot_param(), KnotParam::Uniform);
     }
 }

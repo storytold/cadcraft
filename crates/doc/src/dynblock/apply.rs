@@ -29,16 +29,21 @@ fn tag(code: i32, value: impl Into<String>) -> RawTag {
     RawTag { code, value: value.into() }
 }
 
-/// The element tag (`AcDbBlockRepETag` 1071) of object `h`, if it has one.
-fn etag(d: &Drawing, h: Handle) -> Option<i64> {
-    let x = &d.foreign.entities.get(&h)?.xdata;
+/// The element tag (`AcDbBlockRepETag` 1071) in `x`, if it has one.
+fn etag_in(x: &[RawTag]) -> Option<i64> {
     let at = x.iter().position(|t| t.code == 1001 && t.value.eq_ignore_ascii_case(ETAG))?;
     x.iter().skip(at + 1).take_while(|t| t.code != 1001).find(|t| t.code == 1071).and_then(|t| t.value.trim().parse().ok())
 }
 
+/// The element tag of object `e`: its own xdata (where the importer keeps it), else any kept in the
+/// foreign data.
+fn etag(d: &Drawing, e: &Entity) -> Option<i64> {
+    etag_in(&e.common.xdata).or_else(|| etag_in(&d.foreign.entities.get(&e.handle)?.xdata))
+}
+
 /// Each object of `b` keyed by its element tag, or by its position when it has none.
 fn by_tag(d: &Drawing, b: &Block) -> Vec<(i64, Handle)> {
-    b.entities.iter().enumerate().map(|(i, e)| (etag(d, e.handle).unwrap_or(i as i64 + 1_000_000), e.handle)).collect()
+    b.entities.iter().enumerate().map(|(i, e)| (etag(d, e).unwrap_or(i as i64 + 1_000_000), e.handle)).collect()
 }
 
 /// The file handle of block `name`'s BLOCK_RECORD, as the kept data refers to it.
@@ -464,7 +469,15 @@ fn apply(
         if !(v.x.is_finite() && v.y.is_finite()) || (v.x == 0.0 && v.y == 0.0) {
             continue;
         }
+        // Index this action's vertex lists by handle once, and skip handles already handled in
+        // this action's selection, so a selection that repeats a handle does not re-scan the
+        // vertex list and re-clone its index vector per occurrence (CWE-400).
+        let vtx_by_handle: HashMap<Handle, &Vec<i32>> = vertices.iter().rev().map(|(vh, i)| (*vh, i)).collect();
+        let mut handled: HashSet<Handle> = HashSet::new();
         for h in &a.selection {
+            if !handled.insert(*h) {
+                continue;
+            }
             if let Some(node) = param_of.get(h) {
                 // A parameter in the selection is carried along: its points in the frame. Which
                 // points are in it is decided where the dynamic block has them (AutoCAD evaluates
@@ -489,7 +502,7 @@ fn apply(
                 continue;
             }
             let Some(c) = copy_of(h) else { continue };
-            let idx = vertices.iter().find(|(vh, _)| vh == h).map(|(_, i)| i.clone());
+            let idx = vtx_by_handle.get(h).map(|i| (*i).clone());
             moves.entry(c).or_default().push((idx, v));
         }
     }
@@ -534,6 +547,12 @@ fn apply(
         let Some(nh) = copies.get(&e.handle).copied() else { continue };
         let mut c: Entity = (**e).clone();
         c.handle = nh;
+        // The copy's own xdata names the copy, not its original (as the kept data below does).
+        for t in &mut c.common.xdata {
+            if t.code == 1005 && Handle::parse_hex(&t.value) == Some(e.handle) {
+                t.value = nh.hex();
+            }
+        }
         if let Some(v) = shown_copy.get(&e.handle) {
             c.common.visible = *v;
         }
@@ -954,5 +973,32 @@ fn drop_if_unused(d: &mut Drawing, name: &str) {
         for e in b.entities.iter() {
             f.entities.remove(&e.handle);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tagged(h: u64, tag_value: Option<&str>) -> Entity {
+        let mut e = Entity::new(Handle(h), EntityKind::Line(crate::Line { a: Vec3::ZERO, b: Vec3::ZERO }));
+        if let Some(v) = tag_value {
+            e.common.xdata = vec![tag(1001, ETAG), tag(1071, v)];
+        }
+        e
+    }
+
+    #[test]
+    fn element_tags_are_read_from_the_entitys_own_xdata() {
+        let d = Drawing::new_imperial();
+        let mut def = Block::new("DEF");
+        def.entities.push(tagged(1, Some("10")));
+        def.entities.push(tagged(2, Some("20")));
+        let mut anon = Block::new("*U1");
+        // Reordered, and the first object left out.
+        anon.entities.push(tagged(5, Some("20")));
+        anon.entities.push(tagged(6, None));
+        assert_eq!(by_tag(&d, &def), vec![(10, Handle(1)), (20, Handle(2))]);
+        assert_eq!(by_tag(&d, &anon), vec![(20, Handle(5)), (1_000_001, Handle(6))]);
     }
 }

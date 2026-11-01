@@ -109,9 +109,9 @@ impl Default for CellStyle {
 }
 
 impl CellStyle {
-    pub const TITLE: &'static str = "Title";
-    pub const HEADER: &'static str = "Header";
-    pub const DATA: &'static str = "Data";
+    pub const TITLE: &str = "Title";
+    pub const HEADER: &str = "Header";
+    pub const DATA: &str = "Data";
 
     /// Whether `name` is one of the three styles every table style has.
     pub fn is_builtin(name: &str) -> bool {
@@ -190,7 +190,7 @@ impl TableStyle {
 
     /// The names of its cell styles: Title, Header, Data, then the custom ones.
     pub fn cell_style_names(&self) -> Vec<String> {
-        let mut out: Vec<String> = [CellStyle::TITLE, CellStyle::HEADER, CellStyle::DATA].iter().map(|s| s.to_string()).collect();
+        let mut out: Vec<String> = [CellStyle::TITLE, CellStyle::HEADER, CellStyle::DATA].iter().map(ToString::to_string).collect();
         out.extend(self.cell_styles.iter().filter(|c| !CellStyle::is_builtin(&c.name)).map(|c| c.name.clone()));
         out
     }

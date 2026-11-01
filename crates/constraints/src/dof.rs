@@ -12,12 +12,15 @@ use cadcraft_doc::{Constraint, Drawing, Handle};
 use serde::Serialize;
 
 use crate::model::Model;
-use crate::{Comp, MAX_CONSTRAINTS, SolveError, SolveOptions, build, lm};
+use crate::{Comp, MAX_CONSTRAINTS, SolveError, SolveOptions, build_budgeted, lm};
 
 /// Most free parameters for which per-object freedom is analysed (null-space basis size).
 const MAX_NULL_COLS: usize = 600;
 /// Largest Jacobian (rows × columns × min) whose rank is computed.
 const MAX_RANK_WORK: f64 = 4e8;
+/// Largest residual-evaluation work (rows × free × per-residual cost, including spline
+/// reconstruction) allowed before building the Jacobian during numerical differentiation.
+const MAX_EVAL_WORK: f64 = 2e9;
 /// Most objects listed in one report.
 const MAX_OBJECTS: usize = 10_000;
 
@@ -86,12 +89,22 @@ struct CompDof {
     objects: Vec<Option<usize>>,
 }
 
+/// Compute component and object freedom only when rank and residual-evaluation work fit their budgets.
+/// Return unknown freedom before building the Jacobian when either work limit is exceeded.
 fn analyse(comp: &Comp) -> CompDof {
     let free = comp.free(None);
     let rows = comp.rows(None);
     let nf = free.len();
     let unknown = CompDof { dof: None, redundant: 0, objects: vec![None; comp.model.slots.len()] };
     if rows > lm::MAX_ROWS || (rows as f64) * (nf as f64) * (rows.min(nf) as f64) > MAX_RANK_WORK {
+        return unknown;
+    }
+    // Numerical differentiation evaluates every residual about `rows × free` times, and each
+    // spline-end residual reconstructs its spline through a dense solve. Account for that
+    // reconstruction cost before building the Jacobian so a component with few equations but large
+    // splines cannot pass the rank-work check yet still require billions of operations (row 43).
+    let eval_work = (rows as f64) * (nf as f64) * (1.0 + comp.built.iter().map(|b| b.spline_reconstruct_cost(&comp.model)).sum::<f64>());
+    if eval_work > MAX_EVAL_WORK {
         return unknown;
     }
     let f = |x: &[f64], out: &mut Vec<f64>| comp.eval(x, out, None);
@@ -126,7 +139,8 @@ fn plural(n: usize, one: &str, many: &str) -> String {
 /// (constrained or not) and the constraint components they belong to.
 pub fn dof(d: &Drawing, handles: &[Handle]) -> Result<DofReport, SolveError> {
     let cons: Vec<&Constraint> = d.constraints.iter().take(MAX_CONSTRAINTS).collect();
-    let (comps, _) = build(d, &cons, &SolveOptions::default())?;
+    let mut members_left = crate::model::MAX_RIGID_WORK;
+    let (comps, _) = build_budgeted(d, &cons, &SolveOptions::default(), &mut members_left)?;
     let want = |h: Handle| handles.is_empty() || handles.contains(&h);
     let mut objects = Vec::new();
     let mut seen = HashSet::new();
@@ -165,7 +179,7 @@ pub fn dof(d: &Drawing, handles: &[Handle]) -> Result<DofReport, SolveError> {
         if seen.contains(&h) {
             continue;
         }
-        let m = Model::build(d, &[h]);
+        let m = Model::build_budgeted(d, &[h], &mut members_left);
         let Some(s) = m.slots.first() else { continue };
         seen.insert(h);
         free_objects = true;
@@ -192,4 +206,36 @@ pub fn dof(d: &Drawing, handles: &[Handle]) -> Result<DofReport, SolveError> {
         (_, None) => "Too large to analyse".to_string(),
     };
     Ok(DofReport { dof: total, status, redundant, constraints, objects, message })
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use crate::residual::{Built, Form};
+    use cadcraft_doc::{Common, ConstraintKind, EntityKind, GeomRef, Space};
+    use cadcraft_geom::{Spline, Vec2};
+
+    /// An expensive fit-spline endpoint residual produces unknown freedom before numerical differentiation.
+    #[test]
+    fn endpoint_analysis_rejects_cubic_fit_work_before_differentiation() {
+        let mut d = Drawing::default();
+        let pts: Vec<_> = (0..500).map(|i| Vec2::new(i as f64, (i % 3) as f64)).collect();
+        let mut spline = Spline::from_control(pts.clone(), 3);
+        spline.fit = pts;
+        let h = d.add(&Space::Model, Common::default(), EntityKind::Spline(spline)).unwrap();
+        let model = Model::build(&d, &[h]);
+        let endpoint = Built {
+            id: 1,
+            kind: ConstraintKind::Tangent,
+            refs: vec![GeomRef::whole(h)],
+            form: Form::EndOn { spline: 0, at_end: false },
+            target: 0.0,
+            sign: 1.0,
+            rows: 2,
+            aux_init: Vec::new(),
+            aux: 0,
+        };
+        let comp = Comp { model, built: vec![endpoint], weights: vec![1.0; 2], held: Vec::new(), tol: 1e-9 };
+        assert!(analyse(&comp).dof.is_none());
+    }
 }

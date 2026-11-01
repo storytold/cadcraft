@@ -143,7 +143,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let mut pick_base = false;
 
     egui::Window::new(crate::tl!("Write Block"))
-        .id(egui::Id::new("Write Block"))
+        .id(egui::Id::unique("Write Block"))
         .open(open)
         .collapsible(false)
         .resizable(false)
@@ -163,7 +163,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                     ui.radio_value(&mut app.wblock.source, Source::Block, crate::tl!("Block"));
                     ui.add_space(8.0);
                     ui.add_enabled_ui(app.wblock.source == Source::Block, |ui| {
-                        egui::ComboBox::from_id_salt("wblock_block_name")
+                        craft_ui::ComboBox::from_id_salt("wblock_block_name")
                             .selected_text(if app.wblock.block_name.is_empty() { crate::tl!("(select)") } else { app.wblock.block_name.as_str() })
                             .width(220.0)
                             .show_ui(ui, |ui| {

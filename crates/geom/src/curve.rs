@@ -437,6 +437,10 @@ pub fn bulge_to_arc(a: Vec2, b: Vec2, bulge: f64) -> Option<(Arc, bool)> {
         return None;
     }
     let theta = 4.0 * bulge.atan(); // signed included angle
+    // A sweep at or below EPS would be read back as a full circle by `ccw_sweep`; it is a straight segment.
+    if theta.abs() <= EPS {
+        return None;
+    }
     let chord = a.dist(b);
     let r = chord / (2.0 * (theta / 2.0).sin().abs());
     let mid = a.mid(b);
@@ -565,7 +569,9 @@ impl Polyline {
             let (Some(a), Some(b)) = (self.vertices.get(i), self.vertices.get((i + 1) % n)) else { continue };
             let (pa, pb) = (a.p - origin, b.p - origin);
             add(pa.cross(pb) / 2.0, (pa + pb) * (1.0 / 3.0));
-            if let Some((arc, ccw)) = bulge_to_arc(a.p, b.p, a.bulge) {
+            if (i + 1 < n || self.closed)
+                && let Some((arc, ccw)) = bulge_to_arc(a.p, b.p, a.bulge)
+            {
                 let t = arc.sweep();
                 let seg = arc.radius * arc.radius * (t - t.sin()) / 2.0;
                 if seg > 0.0 {

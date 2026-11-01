@@ -163,7 +163,8 @@ pub struct Ctx<'a> {
 pub const MAX_STACK: usize = 100_000;
 /// Nesting depth of synchronous callbacks (`vl-sort` comparing with a LISP function, …).
 const MAX_SYNC_DEPTH: usize = 32;
-
+/// Steps per slice while driving a synchronous callback ([`Ctx::call_sync`]).
+const SYNC_SLICE: u64 = 400_000;
 enum State {
     Eval(Value),
     Ret(Value),
@@ -645,12 +646,31 @@ impl Ctx<'_> {
             super::value::charge_result(&v)?;
             return Ok(v);
         }
+        let cap = self.s.lisp.limits.callback_steps;
         let mut m = Machine::calling(f.clone(), args);
         let mut sub = Ctx { s: &mut *self.s, env: &mut *self.env, depth: self.depth + 1 };
-        match m.run(&mut sub, u64::MAX) {
-            Outcome::Done(v) => Ok(v),
-            Outcome::Error(e) => Err(e),
-            Outcome::Wait(_) => Err(LispError::new("this function can't ask for input here")),
+        // Drive the callback in bounded slices instead of granting it `u64::MAX` fuel. A `Yield`
+        // (the step budget ran out) is retried until a hard cap, so a constant-memory infinite
+        // loop inside a comparator or predicate terminates with an error rather than hanging the
+        // thread and bypassing the blocking execution cap (CWE-400).
+        let mut spent: u64 = 0;
+        loop {
+            let remaining = cap.saturating_sub(spent);
+            if remaining == 0 {
+                return Err(LispError::new(format!("callback stopped after {cap} steps")));
+            }
+            let slice = remaining.min(SYNC_SLICE);
+            match m.run(&mut sub, slice) {
+                Outcome::Done(v) => return Ok(v),
+                Outcome::Error(e) => return Err(e),
+                Outcome::Wait(Need::Yield) => {
+                    spent = spent.saturating_add(slice);
+                    if spent >= cap {
+                        return Err(LispError::new(format!("callback stopped after {cap} steps")));
+                    }
+                }
+                Outcome::Wait(_) => return Err(LispError::new("this function can't ask for input here")),
+            }
         }
     }
 }

@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-17 · **Change:** minor (DWG read leaves out orphaned DGN line style components) · **Target:** Autodesk AutoCAD 2027
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-29 · **Change:** minor (R2000 DXF CLASS records without instance counts, so AutoCAD LT 2026 opens them) · **Target:** Autodesk AutoCAD 2027
 
 Every format AutoCAD 2027 reads or writes, with CADCraft's support, fidelity and tests. Work
 items are in [gaps.md](gaps.md#file-formats); the weighted score feeds
@@ -64,9 +64,9 @@ on read with a note, so such files no longer exceed the DXF limit (#1482). **DWG
 |---|---|---|---|
 | R12 (AC1009), ASCII | read, write | yes: no version gating; old-style POLYLINE/VERTEX read (polyface meshes flattened to 3D polylines) | **no** |
 | R12 binary | read, write | **no** (binary parser expects R13+ 2-byte group codes) | no |
-| R13–R2018, ASCII | read, write each of 2000/2004/2007/2010/2013/2018 | yes, one reader for all versions | yes, each of 2000–2018 (#421): R2000 structure (later versions add only optional groups) with that `$ACADVER`; UTF-8 text from 2007; no CLASS instance counts (91) |
+| R13–R2018, ASCII | read, write each of 2000/2004/2007/2010/2013/2018 | yes, one reader for all versions | yes, each of 2000–2018 (#421): R2000 structure with that `$ACADVER`; UTF-8 text from 2007; CLASS instance counts (91) from 2004 only (#635; with them, AutoCAD LT 2026 stops responding on an R2000 file) |
 | R13–R2018, binary | read, write | yes | yes, each of 2000–2018 (SAVEAS `binary`; a binary file stays binary on QSAVE) |
-| Code pages (`$DWGCODEPAGE`, ANSI_932/936/949/950/125x) | yes | yes (#505): ASCII and binary DXF before 2007 decode from their code page (ANSI_874/932/936/949/950/1250–1258, DOS437/850/852/866, ISO 8859, Macintosh); a file that is valid UTF-8 reads as UTF-8; Johab and other DOS code pages read as ANSI_1252 (`dxf/src/codepage.rs`) | writes `\U+` escapes (#169), which is correct; declares `ANSI_1252` |
+| Code pages (`$DWGCODEPAGE`, ANSI_932/936/949/950/125x) | yes | yes (#505): ASCII and binary DXF before 2007 decode from their code page (ANSI_874/932/936/949/950/1250–1258, DOS437/850/852/866, ISO 8859, Macintosh); a file that is valid UTF-8 reads as UTF-8; Johab and other DOS code pages read as ANSI_1252 (`dxf/src/codepage.rs`) | before 2007 writes text in the declared code page (the one read from the file, else `ANSI_1252`), characters outside it as `\U+` escapes; an unknown code page, or ASCII DXF whose code page bytes would also read as UTF-8, gives pure ASCII with escapes (#169); a double-byte character whose trail byte is `\` (Shift-JIS, Big5, GBK) is escaped where `U+` or `M+` follows it |
 | `\U+`/`\M+` escapes | yes | yes (`\M+` since #505; Johab `\M+4` stays literal) | `\U+` yes |
 
 ### DXF content: read and write by object type
@@ -75,8 +75,10 @@ on read with a note, so such files no longer exceed the DXF limit (#1482). **DWG
 |---|---|---|---|
 | LINE, POINT, CIRCLE, ARC, ELLIPSE, LWPOLYLINE (widths, bulges, elevation), SPLINE, RAY, XLINE | yes | yes | round-trip tests |
 | POLYLINE 2D/3D | yes | yes (as LWPOLYLINE / 3D POLYLINE) | polyface and polygon meshes flattened: lossy |
-| TEXT, MTEXT, ATTDEF, INSERT + ATTRIB | yes; multiline attributes (embedded MTEXT) read and drawn | yes; multiline attributes written as embedded MTEXT (DXF 2007 and later; older versions: one line) | ATTDEF prompt kept (#137) |
-| DIMENSION (all 7 kinds) | yes | yes, with anonymous `*D` blocks | a reopened dimension's `*D` block is regenerated under its name, unreferenced ones dropped (#495); DIMASSOC objects written |
+| TEXT, MTEXT, ATTDEF, INSERT + ATTRIB | yes; multiline attributes (embedded MTEXT) read and drawn | yes; multiline attributes written as embedded MTEXT (DXF 2007 and later; older versions: one line); changed attribute values refresh justified baselines, including small width changes | ATTDEF prompt kept (#137); unchanged values retain imported-font placement; a justified TEXT's insertion point (group 10, which AutoCAD takes from a DWG as it is) is computed as AutoCAD computes it: Middle (M) centred on the string's own extents, bottom justifications at a TrueType face's descent (#2229) |
+| DIMENSION (all 7 kinds) | yes | yes, with anonymous `*D` blocks | a reopened dimension's `*D` block is regenerated under its name, unreferenced ones dropped (#495); DIMASSOC objects written for every associated kind — linear/aligned, angular, radial/diametric, ordinate and arc length — and read back without CADCraft's xdata (#1651) |
+| DIMENSION (all 7 kinds) | yes | yes, with anonymous `*D` blocks | a reopened dimension's `*D` block is regenerated under its name, unreferenced ones dropped (#495); DIMASSOC objects written; angular block text honors DIMDSEP, including per-dimension overrides (#1646) |
+| DIMENSION (all 7 kinds) | yes | yes, with anonymous `*D` blocks; their text keeps the diameter sign as `%%c`, so SHX styles plot it (#1645) | a reopened dimension's `*D` block is regenerated under its name, unreferenced ones dropped (#495); DIMASSOC objects written |
 | LEADER | yes | yes | |
 | MULTILEADER | yes (#459) | yes, native MULTILEADER with MLEADERSTYLE (#459) | several landings per multileader are folded into one; per-object overrides and annotative scale contexts not kept |
 | HATCH pattern / solid | yes | yes; associative hatches keep their boundary objects in blocks too, and the boundary carries the hatch reactor (stretched dynamic blocks drag the fill in AutoCAD) | |
@@ -85,16 +87,16 @@ on read with a note, so such files no longer exceed the DXF limit (#1482). **DWG
 | ACAD_TABLE | yes | yes (entity + block) | |
 | VIEWPORT | yes | yes; frozen-layer lists kept (#150), also as standard group 341 layer handles that other programs read | DWG: the DXF→DWG converter does not yet write group 341 (frozen layers survive a CADCraft round trip via xdata); VP layer colour overrides lost (#99, PR #197) |
 | IMAGE | yes, with IMAGEDEF | yes, with IMAGEDEF and IMAGEDEF_REACTOR | no attach command or display of the picture yet (FF10) |
-| WIPEOUT | yes | yes (#147, fixes #79) | |
+| WIPEOUT | yes | yes (#147, fixes #79) | Implicit or explicit closure in memory; explicit closing point on save. Same logical grips and edit results before/after DXF/DWG round trips (#2256). |
 | MLINE (+ MLINESTYLE), HELIX, TOLERANCE | yes (#510, #420) | yes | |
 | REGION | other programs' REGIONs (ACIS data) kept as Unknown | our regions are written as closed polylines tagged with CADCraft xdata (#510; ACIS has no public spec) | |
-| 3DSOLID, BODY, SURFACE, MESH, SHAPE, UNDERLAY, OLE2FRAME, LIGHT, CAMERA, SECTION, POINTCLOUD, proxy entities | kept as Unknown (raw tags) | written back as read, with their CLASS records (#528); **dropped by DWG save** (acadrust) | only their layer follows edits |
+| 3DSOLID, BODY, SURFACE, MESH, SHAPE, UNDERLAY, OLE2FRAME, LIGHT, CAMERA, SECTION, POINTCLOUD, proxy entities | kept as Unknown (raw tags) | written back as read, with their CLASS records (#528); a proxy entity's class number (group 91) is renumbered to its class's place in the written CLASSES (#1812); **dropped by DWG save** (acadrust) | only their layer follows edits |
 | Header variables | all read | 36 written | AutoCAD writes about 280 |
 | Tables: LAYER (+ transparency, description), LTYPE, STYLE, DIMSTYLE, BLOCK_RECORD | yes | yes | |
 | Tables: VPORT, VIEW, UCS, APPID | yes | yes: saved viewport configurations (#504), named views, UCSs | UCS elevation lost |
 | Objects: LAYOUT, DICTIONARY, XRECORD, TABLESTYLE, DIMASSOC | yes | yes | |
 | Objects: GROUP, MLINESTYLE, MLEADERSTYLE, IMAGEDEF, SCALE | yes | yes (groups #417, scale list #468) | |
-| Objects: VISUALSTYLE, PLOTSETTINGS, materials, field objects and other unmodelled objects | kept raw (#528) | written back as read | not editable |
+| Objects: VISUALSTYLE, PLOTSETTINGS, materials, field objects and other unmodelled objects | kept raw (#528) | written back as read; a proxy object (ACAD_PROXY_OBJECT) keeps its class: its group 91 is renumbered to the written CLASSES, which keep the class it names, and one whose number names no class is dropped (#1812) | not editable |
 | Foreign xdata, extension dictionaries, reactors, unmodelled objects, colour books | kept raw (#528); an entity's xdata is part of the entity, so COPY, MIRROR, ARRAY and paste keep it on the copies (EXPLODE pieces don't) | written back, handles remapped, references to deleted objects dropped | through DWG: xdata on table records and blocks, entity colour books and reactors, custom-class objects lost (acadrust) |
 | Objects: dynamic block data (ACAD_EVALUATION_GRAPH, BLOCK…PARAMETER, BLOCK…ACTION, grips) | read into a model (`dynblock`, `blocks.dynamic`): parameters, visibility states, value sets, stretch and lookup actions; references: their dynamic block, values and custom properties (`blocks.reference`, Properties ▸ Custom, read-only); kept raw (#528) | written back as read; a changed visibility state is written as AutoCAD writes it (a new anonymous block with its `AcDbBlockRepBTag`, the objects' `AcDbBlockRepETag`, the reference's representation data) | visibility states (and lookups that set only them) can be changed (`blocks.reference.set`, Properties ▸ Custom); distances, positions and the actions they drive not yet; DWG open and save keep it too (checked with an AutoCAD dynamic block) |
 | Handles and owners | entity handles kept; others regenerated | consistent | stable across CADCraft re-saves (#495); other programs' table and object handles renumbered once |
@@ -106,7 +108,7 @@ on read with a note, so such files no longer exceed the DXF limit (#1482). **DWG
 
 | Format | AutoCAD 2027 | CADCraft | Hours to parity (est.) |
 |---|---|---|---|
-| DWT templates | open, save | NEW/QNEW from `.dwt` and `.dxf` templates, SAVEAS `.dwt` (#552) | 0–1 |
+| DWT templates | open, save | NEW/QNEW from `.dwt` and `.dxf` templates, SAVEAS `.dwt` (#552); LAYOUT SAveas writes one layout and the named objects it uses as a `.dwt` (`layout.saveas`) | 0–1 |
 | DWS standards | open, save, CHECKSTANDARDS | no | 6–10 |
 | PDF output (PLOT, EXPORTPDF) | multi-sheet, layers, searchable text, hyperlinks | vector PDF with lineweights, real text in embedded TrueType subsets, layers (OCG), several sheets per file and hyperlinks (#567, #571); object transparency as PDF alpha when "Plot transparency" is on (the option isn't saved in DXF/DWG: no public plot layout flag) | 1–2 |
 | PDF import (PDFIMPORT) and PDF underlays (PDFATTACH) | yes | no | 15–25 |
@@ -138,6 +140,15 @@ our output in AutoCAD black-box.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-29 | minor | R2000 DXF: CLASS records written without group 91 (instance count), which came with the 2004 format; AutoCAD LT 2026 stopped responding on every R2000 DXF CADCraft saved (checked black-box in AutoCAD LT 2026) |
+| 2026-10-26 | minor | CC-046: ATTEDIT and -ATTEDIT value changes invalidate derived justified baselines before DXF/DWG export; preserve alignment anchors, unchanged values and Aligned/Fit endpoints. Review follow-up: baseline recomputation preserves insertion elevation independently of alignment elevation. The shared writer correction also applies to justified TEXT. Independent of attribute editor UI; reverting the follow-up restores elevation loss on recomputation, while reverting the value setter restores stale XY baselines. |
+| 2026-10-25 | minor | LAYOUT SAveas (`layout.saveas`) writes a layout as a drawing template: its page setup and paper space objects, no model space objects or other layouts, and only the named objects they use |
+| 2026-10-22 | minor | DXF/DWG save: angular, diametric and radial dimensions get standard DIMASSOC objects (one centre reference to the circle for radial/diametric, the definition points for angular), so AutoCAD follows their geometry; the standard objects of those kinds are read back too, without CADCraft's xdata (#1651) |
+| 2026-10-19 | minor | DXF/DWG save: angular dimension block text honors DIMDSEP, including per-dimension overrides (#1646) |
+| 2026-10-19 | minor | A file's own arrowhead blocks with standard names (AutoCAD's `_Dot`, `_DotSmall`), named only by a dimension style, are kept and saved as they were instead of being replaced by CADCraft's solids; PURGE keeps arrowhead blocks dimension styles name |
+| 2026-10-19 | minor | Pre-2007 DXF saves write text in the file's code page (`Ação` as ANSI_1252 bytes, not `A\U+00E7\U+00E3o`); characters outside it stay `\U+` escapes |
+| 2026-10-20 | minor | DIMENSION: the `*D` block's MTEXT, and the MTEXT EXPLODE leaves, hold the diameter sign as `%%c` instead of the decoded U+2300, which no SHX font has, so other programs plotted diameter dimensions in an SHX style without the sign (#1645) |
+| 2026-10-21 | minor | Proxy objects and entities keep their class through a save: group 91 renumbered to the written CLASSES (the class it names is kept), a proxy whose number names no class dropped (#1812) |
 | 2026-10-17 | minor | DWG read: DGN line style components no line style definition reaches are left out before the DXF bridge, with a read note; an 83 MB site plan with 888,483 of them (1.2 GB of DXF, over the limit) now opens (#1482) |
 | 2026-10-12 | minor | PDF output: object transparency plotted as PDF alpha (`/ExtGState` `/ca` `/CA`) when the page setup's or the plot's "Plot transparency" is on; PNG plots blend it, SVG uses `opacity`; plots without it are unchanged byte for byte |
 | 2026-10-12 | minor | DXF/DWG save: the Model layout's plot settings are written as CADCraft plots model space, drawing extents scaled to fit (PLOTSETTINGS 74 = 1, 75 = 0), instead of plot type 5 "Layout information", which other programs' Plot dialogs can't use for model space |

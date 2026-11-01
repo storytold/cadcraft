@@ -2,8 +2,8 @@
 //! contains the expected entities for Entire Drawing and Objects modes.
 
 use cadcraft_doc::{Common, Drawing, EntityKind, Line, Space};
-use cadcraft_engine::cmd::file::{IoHooks, set_io};
 use cadcraft_engine::Session;
+use cadcraft_engine::cmd::file::{IoHooks, set_io};
 use cadcraft_geom::Vec3;
 use cadcraft_ui_egui::{CadApp, Services, wblock};
 use serde_json::json;
@@ -21,13 +21,7 @@ fn setup_io() {
             let lines: Vec<_> = d
                 .model
                 .iter()
-                .filter_map(|e| {
-                    if let EntityKind::Line(l) = &e.kind {
-                        Some(json!([[l.a.x, l.a.y], [l.b.x, l.b.y]]))
-                    } else {
-                        None
-                    }
-                })
+                .filter_map(|e| if let EntityKind::Line(l) = &e.kind { Some(json!([[l.a.x, l.a.y], [l.b.x, l.b.y]])) } else { None })
                 .collect();
             Ok(serde_json::json!({
                 "model": model_n,
@@ -53,21 +47,14 @@ fn app_with_two_entities() -> (CadApp, cadcraft_doc::Handle, cadcraft_doc::Handl
     // Add one paper-space entity to verify the whole-drawing mode writes layouts too.
     s.doc_mut()
         .unwrap()
-        .add(
-            &Space::Paper("Layout1".into()),
-            Common::default(),
-            EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(10.0, 0.0, 0.0) }),
-        )
+        .add(&Space::Paper("Layout1".into()), Common::default(), EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(10.0, 0.0, 0.0) }))
         .unwrap();
     s.set_selection(Vec::new());
     (CadApp::new(s, Services::default()), h1, h2)
 }
 
 fn out_path(label: &str) -> String {
-    std::env::temp_dir()
-        .join(format!("cadcraft-wblock-{label}-{}.json", std::process::id()))
-        .to_string_lossy()
-        .into_owned()
+    std::env::temp_dir().join(format!("cadcraft-wblock-{label}-{}.json", std::process::id())).to_string_lossy().into_owned()
 }
 
 fn read_json(path: &str) -> serde_json::Value {
@@ -125,6 +112,6 @@ fn confirm_objects_with_base_point_translates_entity_coordinates() {
     let b = &lines[0][1];
     assert!(approx_eq(a[0].as_f64().unwrap(), -5.0), "line.a.x should be 0-5 = -5");
     assert!(approx_eq(a[1].as_f64().unwrap(), -3.0), "line.a.y should be 0-3 = -3");
-    assert!(approx_eq(b[0].as_f64().unwrap(),  5.0), "line.b.x should be 10-5 = 5");
+    assert!(approx_eq(b[0].as_f64().unwrap(), 5.0), "line.b.x should be 10-5 = 5");
     assert!(approx_eq(b[1].as_f64().unwrap(), -3.0), "line.b.y should be 0-3 = -3");
 }

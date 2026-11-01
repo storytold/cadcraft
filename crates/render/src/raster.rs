@@ -78,6 +78,8 @@ pub fn render(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Pixm
     let mut pm = Pixmap::new(view.width, view.height)?;
     pm.fill(tiny_skia::Color::from_rgba8(o.background.0, o.background.1, o.background.2, 255));
     let vis = view.world_bounds();
+    let mut hairlines = Hairlines::default();
+    let mut screen: Vec<(f32, f32)> = Vec::new();
     for p in &list.prims {
         let c = p.display_rgb(o.background);
         let mut paint = Paint::default();
@@ -85,23 +87,32 @@ pub fn render(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Pixm
         paint.set_color_rgba8(c.0, c.1, c.2, p.alpha());
         paint.anti_alias = o.antialias;
         let pts = list.points(p);
+        if p.kind != Kind::Polyline {
+            hairlines.flush(&mut pm, o.antialias);
+        }
         match p.kind {
             Kind::Polyline => {
                 let bb = Bounds2::from_points(pts.iter().copied());
                 if !bb.intersects(&vis) {
                     continue;
                 }
+                let w = if o.px_per_mm > 0.0 && p.lw > 0.0 { (p.lw * o.px_per_mm).max(o.hairline) } else { o.hairline };
+                screen.clear();
+                screen.extend(pts.iter().map(|q| view.to_screen(*q)));
+                if is_hairline(w, o.antialias) && screen.len() >= 2 && screen.iter().all(|&(x, y)| batchable(x) && batchable(y)) {
+                    hairlines.add(&mut pm, [c.0, c.1, c.2, p.alpha()], w, &screen, o.antialias);
+                    continue;
+                }
+                hairlines.flush(&mut pm, o.antialias);
                 let mut pb = PathBuilder::new();
-                for (i, q) in pts.iter().enumerate() {
-                    let (x, y) = view.to_screen(*q);
+                for (i, (x, y)) in screen.iter().enumerate() {
                     if i == 0 {
-                        pb.move_to(x, y);
+                        pb.move_to(*x, *y);
                     } else {
-                        pb.line_to(x, y);
+                        pb.line_to(*x, *y);
                     }
                 }
                 if let Some(path) = pb.finish() {
-                    let w = if o.px_per_mm > 0.0 && p.lw > 0.0 { (p.lw * o.px_per_mm).max(o.hairline) } else { o.hairline };
                     let stroke = Stroke { width: w, line_cap: LineCap::Round, line_join: LineJoin::Round, ..Default::default() };
                     pm.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
                 }
@@ -152,7 +163,94 @@ pub fn render(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Pixm
             }
         }
     }
+    hairlines.flush(&mut pm, o.antialias);
     Some(pm)
+}
+
+/// Whether tiny-skia strokes a line `width` pixels wide (untransformed) as a hairline: zero
+/// width, or at most one pixel when anti-aliased.
+fn is_hairline(width: f32, antialias: bool) -> bool {
+    width == 0.0 || (antialias && width <= 1.0)
+}
+
+/// Largest screen coordinate (pixels) of a polyline stroked together with others. Beyond it a
+/// path's integer bounds could overflow, so such a polyline is stroked on its own as before.
+const MAX_BATCH_COORD: f32 = 1.0e8;
+
+fn batchable(v: f32) -> bool {
+    v.is_finite() && v.abs() <= MAX_BATCH_COORD
+}
+
+/// Consecutive hairline polylines with the same colour, alpha and width, stroked as one path.
+///
+/// tiny-skia draws a hairline segment by segment straight onto the pixmap (each segment with
+/// its own caps, a polyline's first and last segment extended for round caps), so one path of
+/// several polylines paints exactly the pixels, in the same order, as stroking them one by one;
+/// it saves building a paint pipeline and a path per polyline. Thicker strokes are filled
+/// outlines, where overlaps would cover once instead of twice, and are never batched.
+#[derive(Default)]
+struct Hairlines {
+    key: Option<([u8; 4], f32)>,
+    pb: PathBuilder,
+}
+
+impl Hairlines {
+    fn add(&mut self, pm: &mut Pixmap, rgba: [u8; 4], width: f32, pts: &[(f32, f32)], antialias: bool) {
+        if self.key.is_some_and(|k| k != (rgba, width)) {
+            self.flush(pm, antialias);
+        }
+        self.key = Some((rgba, width));
+        for (i, (x, y)) in pts.iter().enumerate() {
+            if i == 0 {
+                self.pb.move_to(*x, *y);
+            } else {
+                self.pb.line_to(*x, *y);
+            }
+        }
+    }
+
+    fn flush(&mut self, pm: &mut Pixmap, antialias: bool) {
+        let Some(([r, g, b, a], width)) = self.key.take() else { return };
+        let pb = std::mem::take(&mut self.pb);
+        let Some(path) = pb.finish() else { return };
+        let mut paint = Paint::default();
+        paint.set_color_rgba8(r, g, b, a);
+        paint.anti_alias = antialias;
+        let stroke = Stroke { width, line_cap: LineCap::Round, line_join: LineJoin::Round, ..Default::default() };
+        pm.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+        self.pb = path.clear();
+    }
+}
+
+/// Blank (white) everything outside `printable`, a rectangle in paper units with the origin at the
+/// sheet's bottom-left, on a pixmap showing the whole sheet at `px_per_unit` pixels per paper unit.
+/// A placed plot is clipped to the printable area this way, in the PNG plot and in the preview.
+pub fn blank_outside_printable(pm: &mut Pixmap, printable: &Bounds2, px_per_unit: f64) {
+    let ph = f64::from(pm.height());
+    blank_outside_pixels(
+        pm,
+        (printable.min.x * px_per_unit, ph - printable.max.y * px_per_unit),
+        (printable.max.x * px_per_unit, ph - printable.min.y * px_per_unit),
+    );
+}
+
+/// Blank (white) everything outside the pixel rectangle from `top_left` to `bottom_right` (image
+/// coordinates, y down; rounded and clamped to the image). For a pixmap whose view does not map
+/// the sheet onto the whole image, map the printable corners through `View::to_screen`.
+pub fn blank_outside_pixels(pm: &mut Pixmap, top_left: (f64, f64), bottom_right: (f64, f64)) {
+    let (pw, ph) = (pm.width(), pm.height());
+    let col = |x: f64| x.round().clamp(0.0, f64::from(pw)) as usize;
+    let row = |y: f64| y.round().clamp(0.0, f64::from(ph)) as usize;
+    let (x0, x1) = (col(top_left.0), col(bottom_right.0));
+    let (y0, y1) = (row(top_left.1), row(bottom_right.1));
+    let stride = pw as usize * 4;
+    for (r, line) in pm.data_mut().chunks_exact_mut(stride.max(4)).enumerate() {
+        for (c, px) in line.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            if r < y0 || r >= y1 || c < x0 || c >= x1 {
+                px.copy_from_slice(&[255, 255, 255, 255]);
+            }
+        }
+    }
 }
 
 /// Render and encode as PNG.

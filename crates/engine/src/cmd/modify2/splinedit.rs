@@ -6,7 +6,11 @@
 //! parametrisation, end tangents and fit tolerance. Control-point edits change the curve
 //! directly and drop the fit data, as the curve no longer follows it.
 
-use super::*;
+use super::super::{point_value, points_param};
+use super::{
+    Accept, Entity, EntityKind, Handle, Input, Interactive, LwPolyline, MAX_GEN, PolyVertex, Prompt, Result, SelOutcome, SelectPhase, Session, Space,
+    Spline, Step, Value, Vec2, bad, bool_or, curves, f64_req, json, line, number, other, point_req, set_kind, str_param, targets,
+};
 
 /// The spline after a JSON SPLINEDIT option (`option` plus that option's parameters).
 pub(super) fn run_splinedit(s: &mut Session, p: &Value) -> Result<Value> {
@@ -495,6 +499,94 @@ impl SplineditM {
     }
 }
 
+impl SplineditM {
+    fn input_main(&mut self, s: &mut Session, h: Handle, sp: &Spline, enter: bool, kw: &str) -> Result<Option<Step>> {
+        match (enter, kw) {
+            (true, _) | (_, "exit" | "x") => {
+                s.set_selection(Vec::new());
+                return Ok(Some(Step::Done));
+            }
+            (_, "close" | "c") => self.apply(s, json!({ "option": "close" }))?,
+            (_, "open" | "o") => self.apply(s, json!({ "option": "open" }))?,
+            (_, "reverse" | "r") => self.apply(s, json!({ "option": "reverse" }))?,
+            (_, "convert to polyline" | "p") => self.sub = Sub::Precision,
+            (_, "fit data" | "f") if sp.fit.is_empty() => s.echo("The spline has no fit data."),
+            (_, "fit data" | "f") => self.sub = Sub::Fit,
+            (_, "edit vertex" | "e") => {
+                self.mark = 0;
+                self.sub = Sub::Vertex;
+            }
+            (_, "join" | "j") if sp.closed => s.echo("Cannot join to a closed spline."),
+            (_, "join" | "j") => {
+                self.join = SelectPhase::default();
+                self.sub = Sub::Join;
+            }
+            (_, "undo" | "u") => {
+                if let Some((at, ents)) = self.joined.last()
+                    && *at == self.history.len()
+                {
+                    let d = s.doc_mut()?;
+                    for (space, e) in ents {
+                        if let Some(st) = d.space_mut(space) {
+                            st.push(e.clone());
+                        }
+                    }
+                    self.joined.pop();
+                }
+                match self.history.pop() {
+                    Some(k) => set_kind(s, h, k)?,
+                    None => s.echo("All edits have been undone."),
+                }
+            }
+            (_, "") => {}
+            _ => return Err(other("Invalid option keyword.")),
+        }
+        Ok(None)
+    }
+
+    fn input_fit(&mut self, s: &mut Session, sp: &Spline, enter: bool, kw: &str) -> Result<()> {
+        match (enter, kw) {
+            (true, _) | (_, "exit" | "x") => self.sub = Sub::Main,
+            (_, "add" | "a") => self.sub = Sub::FitAddPick,
+            (_, "close" | "c") => self.apply(s, json!({ "option": "close" }))?,
+            (_, "open" | "o") => self.apply(s, json!({ "option": "open" }))?,
+            (_, "delete" | "d") => self.sub = Sub::FitDelete,
+            (_, "kink" | "k") => self.sub = Sub::FitKink,
+            (_, "move" | "m") => {
+                self.mark = 0;
+                self.sub = Sub::FitMove;
+            }
+            (_, "purge" | "p") => {
+                self.apply(s, json!({ "option": "purge" }))?;
+                self.sub = Sub::Main;
+            }
+            (_, "tangents" | "t") if sp.closed => s.echo("A closed spline has no end tangents."),
+            (_, "tangents" | "t") => self.sub = Sub::FitStartTangent,
+            (_, "tolerance" | "l") => self.sub = Sub::FitTolerance,
+            (_, "") => {}
+            _ => return Err(other("Invalid option keyword.")),
+        }
+        Ok(())
+    }
+
+    fn input_join(&mut self, s: &mut Session, h: Handle, sp: &Spline, input: &Input) -> Result<()> {
+        match self.join.feed(s, input)? {
+            SelOutcome::More => {}
+            SelOutcome::Empty => self.sub = Sub::Main,
+            SelOutcome::Done(handles) => {
+                self.sub = Sub::Main;
+                let before = curves::entity(s, h)?.kind;
+                let removed = join(s, h, sp, &handles)?;
+                self.history.push(before);
+                s.echo(format!("{} object(s) joined into the spline", removed.len()));
+                self.joined.push((self.history.len(), removed));
+                s.set_selection(vec![h]);
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Interactive for SplineditM {
     fn name(&self) -> &'static str {
         "SPLINEDIT"
@@ -574,60 +666,12 @@ impl Interactive for SplineditM {
         let enter = i == Input::Enter;
         let sp = self.spline(s).ok_or_else(|| other("The spline was erased."))?;
         match self.sub {
-            Sub::Main => match (enter, kw) {
-                (true, _) | (_, "exit" | "x") => {
-                    s.set_selection(Vec::new());
-                    return Ok(Step::Done);
+            Sub::Main => {
+                if let Some(step) = self.input_main(s, h, &sp, enter, kw)? {
+                    return Ok(step);
                 }
-                (_, "close" | "c") => self.apply(s, json!({ "option": "close" }))?,
-                (_, "open" | "o") => self.apply(s, json!({ "option": "open" }))?,
-                (_, "reverse" | "r") => self.apply(s, json!({ "option": "reverse" }))?,
-                (_, "convert to polyline" | "p") => self.sub = Sub::Precision,
-                (_, "fit data" | "f") if sp.fit.is_empty() => s.echo("The spline has no fit data."),
-                (_, "fit data" | "f") => self.sub = Sub::Fit,
-                (_, "edit vertex" | "e") => {
-                    self.mark = 0;
-                    self.sub = Sub::Vertex;
-                }
-                (_, "join" | "j") if sp.closed => s.echo("Cannot join to a closed spline."),
-                (_, "join" | "j") => {
-                    self.join = SelectPhase::default();
-                    self.sub = Sub::Join;
-                }
-                (_, "undo" | "u") => {
-                    // Undoing a join brings the joined objects back.
-                    if let Some((at, ents)) = self.joined.last()
-                        && *at == self.history.len()
-                    {
-                        let d = s.doc_mut()?;
-                        for (space, e) in ents {
-                            if let Some(st) = d.space_mut(space) {
-                                st.push(e.clone());
-                            }
-                        }
-                        self.joined.pop();
-                    }
-                    match self.history.pop() {
-                        Some(k) => set_kind(s, h, k)?,
-                        None => s.echo("All edits have been undone."),
-                    }
-                }
-                (_, "") => {}
-                _ => return Err(other("Invalid option keyword.")),
-            },
-            Sub::Join => match self.join.feed(s, &i)? {
-                SelOutcome::More => {}
-                SelOutcome::Empty => self.sub = Sub::Main,
-                SelOutcome::Done(hs) => {
-                    self.sub = Sub::Main;
-                    let before = curves::entity(s, h)?.kind;
-                    let removed = join(s, h, &sp, &hs)?;
-                    self.history.push(before);
-                    s.echo(format!("{} object(s) joined into the spline", removed.len()));
-                    self.joined.push((self.history.len(), removed));
-                    s.set_selection(vec![h]);
-                }
-            },
+            }
+            Sub::Join => self.input_join(s, h, &sp, &i)?,
             Sub::Precision => {
                 let precision = match &i {
                     Input::Text(t) => number(t).filter(|n| (0.0..=99.0).contains(n)).ok_or_else(|| other("Requires an integer between 0 and 99."))?,
@@ -637,27 +681,7 @@ impl Interactive for SplineditM {
                 s.set_selection(Vec::new());
                 return Ok(Step::Done);
             }
-            Sub::Fit => match (enter, kw) {
-                (true, _) | (_, "exit" | "x") => self.sub = Sub::Main,
-                (_, "add" | "a") => self.sub = Sub::FitAddPick,
-                (_, "close" | "c") => self.apply(s, json!({ "option": "close" }))?,
-                (_, "open" | "o") => self.apply(s, json!({ "option": "open" }))?,
-                (_, "delete" | "d") => self.sub = Sub::FitDelete,
-                (_, "kink" | "k") => self.sub = Sub::FitKink,
-                (_, "move" | "m") => {
-                    self.mark = 0;
-                    self.sub = Sub::FitMove;
-                }
-                (_, "purge" | "p") => {
-                    self.apply(s, json!({ "option": "purge" }))?;
-                    self.sub = Sub::Main;
-                }
-                (_, "tangents" | "t") if sp.closed => s.echo("A closed spline has no end tangents."),
-                (_, "tangents" | "t") => self.sub = Sub::FitStartTangent,
-                (_, "tolerance" | "l") => self.sub = Sub::FitTolerance,
-                (_, "") => {}
-                _ => return Err(other("Invalid option keyword.")),
-            },
+            Sub::Fit => self.input_fit(s, &sp, enter, kw)?,
             Sub::FitAddPick => match point {
                 Some(p) => {
                     self.mark = nearest(&sp.fit, p).ok_or_else(|| other("The spline has no fit data."))?;
@@ -802,6 +826,7 @@ impl Interactive for SplineditM {
         }
         Ok(Step::Continue)
     }
+
     fn preview(&self, s: &Session, c: Vec2) -> Vec<EntityKind> {
         let marked = matches!(self.sub, Sub::FitMove | Sub::VertexMove | Sub::VertexWeight | Sub::FitAddNew);
         let Some(v) = marked.then(|| self.marks(s).get(self.mark).copied()).flatten() else { return Vec::new() };

@@ -10,6 +10,7 @@ mod array;
 mod constraint;
 mod entity;
 mod extents;
+mod format;
 mod gdt;
 mod header;
 pub mod library;
@@ -26,7 +27,8 @@ pub use cadcraft_color as color;
 pub use cadcraft_geom as geom;
 pub use constraint::*;
 pub use entity::*;
-pub use extents::{MAX_BLOCK_DEPTH, entity_bounds};
+pub use extents::{MAX_BLOCK_DEPTH, entity_bounds, extent_bounds};
+pub use format::Format;
 pub use gdt::*;
 pub use header::{HVal, Header};
 pub use plotstyle::*;
@@ -98,6 +100,9 @@ pub struct Drawing {
     pub blocks: BTreeMap<String, std::sync::Arc<Block>>,
     pub model: EntityStore,
     pub layouts: Vec<Layout>,
+    /// The layout a file marks active (its block is `*Paper_Space`, the others `*Paper_SpaceN`),
+    /// written active again. `None`, or a layout that no longer exists: the first by tab order.
+    pub active_layout: Option<String>,
     pub views: Vec<NamedView>,
     /// Model space viewport configurations (VPORTS): the tiles shown and named ones.
     pub vports: Vec<VportConfig>,
@@ -127,6 +132,10 @@ pub struct Drawing {
     /// Records of the file this drawing was read from that the reader could not place (a damaged
     /// file), counted by the section they came from. Never written to a file.
     pub skipped_records: BTreeMap<String, usize>,
+    /// A save option, set on the copy SAVEAS `portableFonts` writes: the file gets Windows fonts
+    /// for the Linux fonts of text styles, and each style keeps its own in CADCraft xdata, so the
+    /// drawing reopens with it. Never set on an open drawing.
+    pub portable_fonts: bool,
 }
 
 impl Default for Drawing {
@@ -171,6 +180,7 @@ impl Drawing {
             blocks: BTreeMap::new(),
             model: EntityStore::new(),
             layouts: vec![Layout::new("Layout1", 1), Layout::new("Layout2", 2)],
+            active_layout: None,
             views: Vec::new(),
             vports: Vec::new(),
             ucss: Vec::new(),
@@ -185,6 +195,7 @@ impl Drawing {
             read_notes: Vec::new(),
             refedit: None,
             skipped_records: BTreeMap::new(),
+            portable_fonts: false,
         }
     }
 
@@ -298,6 +309,18 @@ impl Drawing {
         true
     }
 
+    /// The layouts in the order their paper space blocks are named in a file: the active one
+    /// (`*Paper_Space`) first, then the others by tab order (`*Paper_Space0`, `*Paper_Space1`, …).
+    pub fn paper_space_layouts(&self) -> Vec<&Layout> {
+        let mut ls: Vec<&Layout> = self.layouts.iter().collect();
+        ls.sort_by_key(|l| l.tab_order);
+        if let Some(i) = self.active_layout.as_ref().and_then(|a| ls.iter().position(|l| l.name.eq_ignore_ascii_case(a))) {
+            let active = ls.remove(i);
+            ls.insert(0, active);
+        }
+        ls
+    }
+
     pub fn space(&self, space: &Space) -> Option<&EntityStore> {
         match space {
             Space::Model => Some(&self.model),
@@ -351,13 +374,19 @@ impl Drawing {
         !self.hidden_objects.is_empty() && self.hidden_objects.contains(&h)
     }
 
-    /// Bounds of all visible entities in a space.
+    /// Whether an entity counts in the extents: as AutoCAD 2024 counts it for ZOOM Extents and
+    /// EXTMIN/EXTMAX, on a layer that is off too, but not on a frozen one.
+    pub fn in_extents(&self, e: &Entity) -> bool {
+        e.common.visible && self.layer(&e.common.layer).is_none_or(|l| !l.frozen) && !self.is_hidden_object(e.handle)
+    }
+
+    /// Bounds of the entities in a space that count in its extents ([`Drawing::in_extents`]).
     pub fn extents(&self, space: &Space) -> cadcraft_geom::Bounds2 {
         let mut b = cadcraft_geom::Bounds2::EMPTY;
         if let Some(store) = self.space(space) {
             for e in store.iter() {
-                if self.is_visible(e) {
-                    b = b.union(&entity_bounds(self, e, 0));
+                if self.in_extents(e) {
+                    b = b.union(&extent_bounds(self, e));
                 }
             }
         }
