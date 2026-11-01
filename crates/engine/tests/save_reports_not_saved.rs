@@ -82,3 +82,19 @@ fn solids_whose_geometry_the_data_store_keeps_are_not_reported_from_2013() {
     // Before 2013 a file has no data store: every solid loses its geometry.
     assert_eq!(not_saved_as(&d, Version::R2010), [("3DSOLID".to_string(), 2), ("REGION".to_string(), 1)].into_iter().collect());
 }
+
+/// Another program's proxy entity reaches a 2013 or later DWG with its class; before 2013 the DWG
+/// leaves it out and says so.
+#[test]
+fn proxy_entities_are_reported_only_before_2013() {
+    use cadcraft_engine::cmd::file::{Version, not_saved_as};
+    let mut d = Drawing::new_imperial();
+    d.add(&Space::Model, Common::default(), unknown("ACAD_PROXY_ENTITY")).unwrap();
+    d.add(&Space::Model, Common::default(), unknown("MLINE")).unwrap();
+    for v in [Version::R2013, Version::R2018] {
+        assert_eq!(not_saved_as(&d, v), [("MLINE".to_string(), 1)].into_iter().collect(), "{v:?}");
+    }
+    for v in [Version::R2004, Version::R2010] {
+        assert_eq!(not_saved_as(&d, v), [("ACAD_PROXY_ENTITY".to_string(), 1), ("MLINE".to_string(), 1)].into_iter().collect(), "{v:?}");
+    }
+}
