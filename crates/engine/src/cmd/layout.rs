@@ -785,10 +785,22 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
     // Checked here for a clear error; the plotter resolves the names the same way.
     let sheets = p.get("layouts").map(|v| plot_sheets(cmd, s.doc()?, v)).transpose()?;
 
+    let is_image = p.get("output").and_then(Value::as_str).is_some_and(|o| o.eq_ignore_ascii_case("png") || o.eq_ignore_ascii_case("svg"));
     let space = match str_param(p, "layout") {
         Some(n) if n.eq_ignore_ascii_case("model") => Space::Model,
         Some(n) => Space::Paper(layout_name(cmd, s.doc()?, n)?),
-        None => s.space(),
+        // A PNG or SVG holds one render: a single `layouts` entry names the sheet to draw (the PDF
+        // path resolves `layouts` itself), not whatever space the session happens to show.
+        None => match sheets.as_deref() {
+            Some([only]) if is_image => {
+                if only.eq_ignore_ascii_case("model") {
+                    Space::Model
+                } else {
+                    Space::Paper(only.clone())
+                }
+            }
+            _ => s.space(),
+        },
     };
     let mut opts = if p.is_object() { p.clone() } else { json!({}) };
     if let Some(raw) = p.get("offset") {
@@ -828,8 +840,7 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
         };
     }
     // A PNG or SVG holds one render: several sheets would report `pages: N` but write only one.
-    let image = opts.get("output").and_then(Value::as_str).is_some_and(|o| o.eq_ignore_ascii_case("png") || o.eq_ignore_ascii_case("svg"));
-    if image && sheets.as_ref().is_some_and(|names| names.len() > 1) {
+    if is_image && sheets.as_ref().is_some_and(|names| names.len() > 1) {
         return Err(bad(cmd, "`layouts` with several sheets needs PDF output; PNG and SVG hold one sheet, so plot each layout separately"));
     }
     let bytes = hook(s.doc()?, &space, &opts).map_err(|e| bad(cmd, e))?;

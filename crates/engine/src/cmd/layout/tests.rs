@@ -236,7 +236,10 @@ fn plot_goes_through_the_hook() {
         assert!(e.to_string().contains("layouts"), "{e}");
     }
     assert!(s.execute("plot", &json!({"output": "png", "layouts": ["Layout1", "Layout2"]})).is_err());
-    assert!(s.execute("plot", &json!({"output": "png", "layouts": ["Layout1"]})).is_ok(), "one sheet still fine as an image");
+    let one = s.execute("plot", &json!({"output": "png", "layouts": ["Layout1"]})).unwrap();
+    assert_eq!(one["layout"], "Layout1");
+    let text = String::from_utf8(super::super::file::base64_decode(one["data"].as_str().unwrap()).unwrap()).unwrap();
+    assert!(text.contains("Paper(\"Layout1\")"), "one sheet renders that layout, not the session space: {text}");
     #[cfg(not(target_arch = "wasm32"))]
     {
         let path = std::env::temp_dir().join(format!("cadcraft-plot-test-{}.pdf", std::process::id()));
