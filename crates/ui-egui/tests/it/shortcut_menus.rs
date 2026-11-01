@@ -110,6 +110,23 @@ fn layout_tab_menu() {
     assert_eq!(layout_names(&app).len(), n + 1);
     assert!(matches!(app.session.state().unwrap().space, cadcraft_doc::Space::Paper(_)), "the new layout is current");
 
+    // "New Layout from Area..." takes the next free name, then asks for the part of the model to show.
+    let n = layout_names(&app).len();
+    choose(&mut app, &model, "New Layout from Area...");
+    assert!(app.session.prompt_text().contains("first corner of the model area"), "{}", app.session.prompt_text());
+    assert_eq!(app.session.state().unwrap().space, cadcraft_doc::Space::Model);
+    app.cmdline("");
+    assert_eq!(layout_names(&app).len(), n + 1);
+    assert!(matches!(app.session.state().unwrap().space, cadcraft_doc::Space::Paper(_)), "the new layout is current");
+
+    // Esc at the area prompt creates nothing and returns to the tab it started in.
+    let g = sm::layout_tab_entries(&app, "Sheet A");
+    choose(&mut app, &g, "New Layout from Area...");
+    assert_eq!(app.session.state().unwrap().space, cadcraft_doc::Space::Model);
+    app.session.cancel();
+    assert_eq!(layout_names(&app).len(), n + 1, "cancelled: no layout added");
+    assert!(matches!(app.session.state().unwrap().space, cadcraft_doc::Space::Paper(_)), "back in the layout it started from");
+
     // Page Setup acts on the right-clicked tab.
     let g = sm::layout_tab_entries(&app, "Sheet A");
     assert!(find(&g, "Page Setup Manager...").is_some() && find(&g, "Print...").is_some());

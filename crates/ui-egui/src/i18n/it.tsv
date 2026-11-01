@@ -560,6 +560,7 @@ menu	Modify	Edita
 	New Drawing...	Nuovo disegno...
 	New Layer	Nuovo layer
 	New Layout	Nuovo layout
+	New Layout from Area...	Nuovo layout da area...
 	New VP Freeze	Congela nelle nuove FV
 	New Viewports...	Nuove finestre...
 	New from Template...	Nuovo da modello...
@@ -922,6 +923,7 @@ menu	Modify	Edita
 	Specify first constraint point	Specificare il primo punto del vincolo
 	Specify first corner	Specificare il primo angolo
 	Specify first corner point	Specificare il primo angolo
+	Specify first corner of the model area to show in the layout, or press ENTER for the whole drawing	Specificare il primo angolo dell'area del modello da mostrare nel layout, o premere INVIO per l'intero disegno
 	Specify first destination point	Specificare il primo punto di destinazione
 	Specify first end point of circle's diameter	Specificare il primo estremo del diametro del cerchio
 	Specify first endpoint of edge	Specificare il primo estremo del lato
