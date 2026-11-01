@@ -72,6 +72,25 @@ fn same_content(a: &ListKey, b: &ListKey) -> bool {
     (a.0, a.1, a.4, a.5, a.6, a.7) == (b.0, b.1, b.4, b.5, b.6, b.7)
 }
 
+/// A press-and-drag let go sooner than this (seconds) is a click made while the mouse moved,
+/// not a selection window drawn by dragging (#1001): drafting fast, the hand is already moving
+/// when the button goes down. A drag meant as a window takes longer than this.
+const FLICK_SECS: f64 = 0.3;
+
+/// A click made while the mouse moved ends this close (points) to where the button went down; a
+/// drag that goes further is a selection window, however fast.
+const FLICK_POINTS: f32 = 80.0;
+
+/// Where the button went down, when the primary drag that just ended was let go within
+/// [`FLICK_SECS`] and [`FLICK_POINTS`] of it (a click made while the mouse moved); `None` for a
+/// real drag. Forgets the press.
+fn flick_origin(app: &mut CadApp, ui: &egui::Ui) -> Option<Pos2> {
+    let (origin, since) = app.canvas.drag_press.take()?;
+    let (now, at) = ui.input(|i| (i.time, i.pointer.latest_pos()));
+    let near = at.is_none_or(|p| p.distance(origin) <= FLICK_POINTS);
+    (now - since < FLICK_SECS && near).then_some(origin)
+}
+
 #[derive(Default)]
 pub struct CanvasState {
     pub list: Option<DisplayList>,
@@ -149,6 +168,9 @@ pub struct CanvasState {
     pub param: crate::parametric::Cache,
     /// A selection window opened by a press-and-drag, to close where the button is let go.
     drag_window: bool,
+    /// Where (screen) and when (egui time) the button went down for the current primary drag: a
+    /// drag let go within [`FLICK_SECS`] is a click made while the mouse moved (#1001).
+    drag_press: Option<(Pos2, f64)>,
     /// The right-click that opened the shortcut menu held Shift or Ctrl: it is the object snap
     /// menu ([`crate::context_menu`]).
     pub snap_menu: bool,
@@ -690,6 +712,22 @@ fn collect_prompt_clicks(app: &mut CadApp, ui: &egui::Ui, context: PromptClickCo
         && app.session.pending_window.is_none()
         && !app.session.realtime_zoom_active();
     let pressed_primary = context.primary_clicked || (point_prompt && context.response.drag_stopped_by(egui::PointerButton::Primary));
+    // A prompt that picks objects with points (STRETCH's "Select objects", "Select object to
+    // trim", "Select first object"…): a click made while the mouse moves counts where the button
+    // went down, on the object aimed at (#1001); egui saw a drag and nothing picked anything.
+    let pick_prompt = app.session.current_prompt().is_some_and(|p| p.accept.point && p.picks_objects())
+        && app.session.pending_window.is_none()
+        && !app.session.realtime_zoom_active();
+    if pick_prompt
+        && context.response.drag_stopped_by(egui::PointerButton::Primary)
+        && context.inside
+        && !context.middle_down
+        && app.cmd.options.is_none()
+        && let Some(origin) = flick_origin(app, ui).filter(|o| context.rect.contains(*o))
+        && let Err(e) = app.session.input(Input::Point(context.xf.to_world(origin)))
+    {
+        app.session.echo(e.to_string());
+    }
     if point_prompt && context.inside && pressed_primary && !context.middle_down && app.cmd.options.is_none() && app.cmd.buffer.is_empty() {
         let releases: Vec<egui::Pos2> = ui.input(|i| {
             i.events
@@ -716,6 +754,56 @@ fn collect_prompt_clicks(app: &mut CadApp, ui: &egui::Ui, context: PromptClickCo
     }
 
     pressed_primary
+}
+
+/// Where and when any primary drag on the canvas started (egui forgets both once the button is
+/// up), to tell a click made while the mouse moved from a real drag (#1001).
+fn remember_drag_press(app: &mut CadApp, ui: &egui::Ui, resp: &egui::Response) {
+    if resp.drag_started_by(egui::PointerButton::Primary)
+        && let Some(origin) = ui.input(|i| i.pointer.press_origin())
+    {
+        let since = ui.input(|i| i.pointer.press_start_time().unwrap_or(i.time));
+        app.canvas.drag_press = Some((origin, since));
+    }
+}
+
+/// A selection-window drag let go at once: a click made while the mouse was moving, not a drag
+/// (#1001). It counts where the button went down, as a click: it picks the object there or starts
+/// a click-click window, instead of closing a tiny window that selects nothing. Returns whether
+/// the drag was such a click. With `keep_corner`, a click-click window already open keeps its
+/// first corner and the point closes it.
+fn flick_click(app: &mut CadApp, ui: &egui::Ui, xf: &Xf, shift: bool, keep_corner: bool) -> bool {
+    let Some(origin) = flick_origin(app, ui) else { return false };
+    if !keep_corner {
+        app.session.pending_window = None;
+    }
+    let at = xf.to_world(origin);
+    // Over overlapping objects it offers selection cycling's list, as a still click does.
+    if keep_corner || !cycle_click(app, xf, Some(origin), Some(at), shift) {
+        let done = if app.session.prompting() { app.session.input(Input::Point(at)) } else { app.session.idle_click(at, shift) };
+        if let Err(e) = done {
+            app.session.echo(e.to_string());
+        }
+    }
+    true
+}
+
+/// A drag that opened no selection window let go at once (#1001): with a click-click window
+/// open it is its second corner, and with PICKDRAG off and no command running it picks the
+/// object where the button went down. egui saw a drag, so no click path counted it.
+fn flick_without_window(app: &mut CadApp, ui: &egui::Ui, xf: &Xf, rect: Rect, shift: bool) {
+    let keep_corner = app.session.pending_window.is_some();
+    let idle_pick = !app.session.settings.pickdrag && !app.session.prompting();
+    let Some((origin, _)) = app.canvas.drag_press else { return };
+    if (keep_corner || idle_pick)
+        && rect.contains(origin)
+        && app.cmd.options.is_none()
+        && app.canvas.cycle.is_none()
+        && grip_at(app, xf, Some(origin)).is_none()
+        && crate::dyngrips::at(app, xf, Some(origin)).is_none()
+    {
+        flick_click(app, ui, xf, shift, keep_corner);
+    }
 }
 
 /// Draw the drawing area and handle its input (zoom and pan, picking, the crosshair) for this
@@ -865,6 +953,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             app.session.echo(e.to_string());
         }
     }
+    remember_drag_press(app, ui, &resp);
     // Press-and-drag selection window (PICKDRAG = 2; click-click still works): a drag
     // that starts while objects are being selected opens a window where the button went down,
     // and letting go closes it. Drags on grips and drags while drawing are left alone.
@@ -883,9 +972,12 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     {
         app.canvas.drag_window = app.session.begin_window(xf.to_world(origin));
     }
-    if app.canvas.drag_window && resp.drag_stopped_by(egui::PointerButton::Primary) {
+    if !app.canvas.drag_window && !middle_down && resp.drag_stopped_by(egui::PointerButton::Primary) {
+        flick_without_window(app, ui, &xf, rect, mods.shift);
+    } else if app.canvas.drag_window && resp.drag_stopped_by(egui::PointerButton::Primary) {
         app.canvas.drag_window = false;
-        if app.session.pending_window.is_some()
+        if !flick_click(app, ui, &xf, mods.shift, false)
+            && app.session.pending_window.is_some()
             && let Some(end) = ui.input(|i| i.pointer.interact_pos())
         {
             let end = xf.to_world(end);
