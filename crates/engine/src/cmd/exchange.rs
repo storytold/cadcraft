@@ -1,5 +1,6 @@
 //! Moving drawings in and out: EXPORT (DXF, DWG, SVG, PNG or PDF), IMPORT (the objects of another
-//! DXF/DWG file), PREVIEW (a picture of the plot) and PUBLISH (plot several sheets at once).
+//! DXF/DWG file), DXFOUT and DXFIN (AutoCAD's names for writing a DXF and bringing one in),
+//! PREVIEW (a picture of the plot) and PUBLISH (plot several sheets at once).
 //! ATTACH, SHARE and 3DORBIT are registered so the tool bar and command line say they are not
 //! available yet.
 //!
@@ -20,7 +21,7 @@ use serde_json::{Value, json};
 use super::file::{base64_decode, base64_encode, io};
 use super::{CommandSpec, bad, point_value, str_param};
 
-use crate::{EngineError, Result, Session};
+use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
 /// Formats EXPORT writes (the io layer picks the writer from the extension).
 pub const EXPORT_FORMATS: &[&str] = &["dxf", "dwg", "svg", "png", "pdf"];
@@ -41,6 +42,13 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["exp"])
             .params("{path? (else returns base64 `data`), format?: dxf|dwg|svg|png|pdf (default: the path's extension)} → {format, bytes, path? | data}")
             .noundo(),
+        CommandSpec::new("dxfin", "DXF In", run_dxfin)
+            .params("{path | data: base64, name?} (DXF or DWG), at?: [x,y] (default 0,0), scale?: (default 1) → as IMPORT; typed: the file name")
+            .interactive(|_| Ok(Box::new(DxfFileM { out: false }))),
+        CommandSpec::new("dxfout", "DXF Out", run_dxfout)
+            .params("{path? (else returns base64 `data`; `.dxf` is added when it ends otherwise)} → {format: \"dxf\", bytes, path? | data}; always DXF; typed: the file name (default: the drawing's, as .dxf)")
+            .noundo()
+            .interactive(|_| Ok(Box::new(DxfFileM { out: true }))),
         CommandSpec::new("preview", "Plot Preview", run_preview)
             .menu(&["File", "Plot Preview"])
             .alias(&["pre"])
@@ -107,9 +115,17 @@ pub(super) fn deliver_file(cmd: &str, path: &str, bytes: &[u8], hook: Option<sup
 
 // ---------- EXPORT ----------
 
+/// The optional `path`: absent or null is none; anything else must be a string, so a mistyped one
+/// is refused instead of the file coming back as base64 with nothing written.
+fn path_param<'a>(cmd: &str, p: &'a Value) -> Result<Option<&'a str>> {
+    match p.get("path") {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v.as_str().map(Some).ok_or_else(|| bad(cmd, format!("`path` must be a string, got {v}"))),
+    }
+}
+
 fn run_export(s: &mut Session, p: &Value) -> Result<Value> {
-    let hooks = io().ok_or_else(|| bad("export", "file formats are not available in this build"))?;
-    let path = str_param(p, "path");
+    let path = path_param("export", p)?;
     let format = match str_param(p, "format") {
         Some(f) => f.trim().trim_start_matches('.').to_ascii_lowercase(),
         None => path.map(extension).unwrap_or_default(),
@@ -117,13 +133,79 @@ fn run_export(s: &mut Session, p: &Value) -> Result<Value> {
     if !EXPORT_FORMATS.contains(&format.as_str()) {
         return Err(bad("export", "`format` must be dxf, dwg, svg, png or pdf (or give a `path` with one of those extensions)"));
     }
-    let bytes = (hooks.write)(s.doc()?, &format!("export.{format}")).map_err(|e| bad("export", e))?;
+    export_as(s, "export", path, &format)
+}
+
+/// Write the drawing as `format` to `path`, or return it as base64 without one.
+fn export_as(s: &Session, cmd: &str, path: Option<&str>, format: &str) -> Result<Value> {
+    let hooks = io().ok_or_else(|| bad(cmd, "file formats are not available in this build"))?;
+    let bytes = (hooks.write)(s.doc()?, &format!("export.{format}")).map_err(|e| bad(cmd, e))?;
     match path {
         Some(path) => {
-            write_file("export", path, &bytes)?;
+            write_file(cmd, path, &bytes)?;
             Ok(json!({ "path": path, "format": format, "bytes": bytes.len(), "message": format!("Exported to {path}") }))
         }
         None => Ok(json!({ "data": base64_encode(&bytes), "format": format, "bytes": bytes.len() })),
+    }
+}
+
+// ---------- DXFOUT, DXFIN ----------
+
+/// DXFOUT: the drawing as DXF. A name without the .dxf extension gets it, as AutoCAD adds it, so
+/// a DXF is never written under another format's name (EXPORT picks the format from the name).
+fn run_dxfout(s: &mut Session, p: &Value) -> Result<Value> {
+    let path = path_param("dxfout", p)?.map(|p| if extension(p) == "dxf" { p.to_string() } else { format!("{p}.dxf") });
+    export_as(s, "dxfout", path.as_deref(), "dxf")
+}
+
+/// DXFIN: a DXF's (or DWG's) objects into the current drawing, as IMPORT.
+fn run_dxfin(s: &mut Session, p: &Value) -> Result<Value> {
+    path_param("dxfin", p)?;
+    run_import(s, p)
+}
+
+/// DXFOUT's default file: the drawing's, with a .dxf extension.
+fn dxf_file_name(s: &Session) -> String {
+    let Ok(st) = s.state() else { return "Drawing1.dxf".into() };
+    let base = st.path.clone().unwrap_or_else(|| st.title.clone());
+    std::path::Path::new(&base).with_extension("dxf").to_string_lossy().into_owned()
+}
+
+/// DXFIN and DXFOUT typed at the command line, or in a script or LISP routine: the file name,
+/// then the import or the export, as AutoCAD asks with FILEDIA 0. The desktop app asks with a file
+/// dialog instead while FILEDIA is 1.
+struct DxfFileM {
+    out: bool,
+}
+
+impl Interactive for DxfFileM {
+    fn name(&self) -> &'static str {
+        if self.out { "DXFOUT" } else { "DXFIN" }
+    }
+    fn prompt(&self, s: &Session) -> Prompt {
+        if self.out {
+            Prompt::new("Enter file name", Accept::TEXT).default(dxf_file_name(s))
+        } else {
+            Prompt::new("Enter name of file to import", Accept::TEXT)
+        }
+    }
+    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
+        // A path typed with quotes, as AutoCAD takes one with spaces, is the path inside them.
+        let typed = match &i {
+            Input::Text(t) => t.trim().trim_matches('"').trim().to_string(),
+            Input::Enter => String::new(),
+            _ => return Ok(Step::Continue),
+        };
+        let r = match (self.out, typed.is_empty()) {
+            (true, true) => run_dxfout(s, &json!({ "path": dxf_file_name(s) }))?,
+            (true, false) => run_dxfout(s, &json!({ "path": typed }))?,
+            (false, true) => return Ok(Step::Cancel),
+            (false, false) => run_dxfin(s, &json!({ "path": typed }))?,
+        };
+        if let Some(m) = r["message"].as_str() {
+            s.echo(m);
+        }
+        Ok(Step::Done)
     }
 }
 
@@ -142,7 +224,7 @@ fn run_import(s: &mut Session, p: &Value) -> Result<Value> {
             .ok_or_else(|| bad("import", "`scale` must be a non-zero number"))?,
         None => 1.0,
     };
-    let (bytes, name) = if let Some(path) = str_param(p, "path") {
+    let (bytes, name) = if let Some(path) = path_param("import", p)? {
         (read_file(path)?, path.to_string())
     } else {
         let data = str_param(p, "data").ok_or_else(|| bad("import", "`path` or `data` (base64) is required"))?;

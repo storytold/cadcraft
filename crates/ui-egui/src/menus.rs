@@ -410,7 +410,9 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             app.ui.start_tab = false;
             Ok(Value::Null)
         }
-        "export" | "exp" | "import" | "imp" | "publish" | "preview" | "pre" if params.is_null() && app.session.state().is_ok() => {
+        "export" | "exp" | "import" | "imp" | "publish" | "preview" | "pre" | "dxfin" | "dxfout"
+            if params.is_null() && app.session.state().is_ok() && crate::exchange::wants_dialog(app, id) =>
+        {
             return Some(crate::exchange::route(app, id));
         }
         "ui.hidepalettes" => {
