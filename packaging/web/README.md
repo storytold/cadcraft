@@ -151,6 +151,12 @@ try {
 }
 ```
 
+### Trust and limits
+
+- **Who is trusted.** In page host mode the page and CADCraft share one document, so any script on the page can drive the app: open files in it and receive what it saves. Use this mode only for a page you control. The iframe mode (`?host=parent`) answers only the parent window, on the page's own origin.
+- **Files from the host are untrusted input.** An opened file goes through the same reading as one picked with File ▸ Open or dropped on the window, with the same format limits; before it is copied into the app's memory, its size is checked against the app's open size limit and a larger drawing is refused, and a name is cut to 255 characters.
+- **The event and message names are the interface.** `cadcraft:ready`, `cadcraft:open`, `cadcraft:save`, `cadcraft:dirty` and `cadcraft:failed`, and the fields they carry (the same as the `?host=parent` messages), stay stable; changing one is a breaking change.
+
 ## Renderer selection and fallback flags
 
 CADCraft renders with wgpu. It uses **WebGPU** when the browser has it and falls back to
