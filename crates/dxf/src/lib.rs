@@ -163,7 +163,9 @@ pub use codepage::decode_code_page;
 ///
 /// # Errors
 ///
-/// Returns an error when the input is not DXF, is malformed, ends unexpectedly, or exceeds the group-code limit.
+/// Returns an error for empty input, an invalid group code, an incomplete group-code/value pair,
+/// truncated binary data, or more than [`MAX_TAGS`] group codes. For ASCII input, invalid numeric
+/// text becomes `0.0` for real values or `0` for integer values, and an EOF tag is not required.
 pub fn parse(bytes: &[u8]) -> Result<Vec<Tag>> {
     parse_with_limit(bytes, MAX_TAGS)
 }
@@ -174,7 +176,9 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Tag>> {
 ///
 /// # Errors
 ///
-/// Returns an error when the input is not DXF, is malformed, ends unexpectedly, or exceeds `max_tags`.
+/// Returns an error for empty input, an invalid group code, an incomplete group-code/value pair,
+/// truncated binary data, or more than `max_tags` group codes. For ASCII input, invalid numeric
+/// text becomes `0.0` for real values or `0` for integer values, and an EOF tag is not required.
 pub fn parse_with_limit(bytes: &[u8], max_tags: usize) -> Result<Vec<Tag>> {
     if let Some(body) = bytes.strip_prefix(BINARY_SENTINEL) {
         return parse_binary_with_limit(body, max_tags);
@@ -271,7 +275,9 @@ fn unescape_unicode(s: &str) -> String {
 ///
 /// # Errors
 ///
-/// Returns an error for an empty or malformed file, an invalid group code, an unexpected end of file, or too many tags.
+/// Returns an error for empty input, an invalid group code, an incomplete group-code/value pair,
+/// or too many tags. Invalid numeric text becomes `0.0` for real values or `0` for integer values.
+/// A complete tag stream does not require an EOF tag.
 pub fn parse_ascii(text: &str) -> Result<Vec<Tag>> {
     parse_ascii_with_limit(text, MAX_TAGS)
 }
