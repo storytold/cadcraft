@@ -2168,6 +2168,20 @@ fn tilted_mixed_lwpolyline_keeps_its_straight_widths() {
     assert!((v[1].p.x + 2.0).abs() < 1e-9 && (v[v.len() - 1].p.x + 4.0).abs() < 1e-9, "{:?} {:?}", v[1].p, v[v.len() - 1].p);
 }
 
+/// A small arc next to a long straight edge stays an arc: its flattening tolerance comes from
+/// its own size. The half circle of radius 1 bulges a whole unit off its chord.
+#[test]
+fn tilted_small_arc_beside_a_long_edge_stays_curved() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\n0\n90\n3\n70\n0\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n\
+                10\n0\n20\n0\n10\n10000\n20\n0\n42\n1\n10\n10002\n20\n0\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "p.dxf").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    assert!(p.vertices.len() > 8, "{} vertices", p.vertices.len());
+    // OCS y maps to plan y times √3/2: the arc's far point is about 0.866 off the chord.
+    let off = p.vertices.iter().map(|v| v.p.y.abs()).fold(0.0, f64::max);
+    assert!((off - 3f64.sqrt() / 2.0).abs() < 1e-2, "the arc reaches {off} off its chord");
+}
+
 /// Issue #1886: a LWPOLYLINE circle (two half-circle bulges) in the same tilted plane is the
 /// ellipse it looks like from above, flattened; a plain one keeps its bulges.
 #[test]

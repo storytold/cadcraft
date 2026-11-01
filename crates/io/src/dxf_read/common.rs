@@ -114,13 +114,10 @@ pub(super) fn tilted(n: Vec3) -> bool {
 
 /// A run of OCS vertices at `elevation` in the plane of `n` as seen from above in the WCS. A
 /// tilted arc is an elliptical arc there, so each bulged edge is flattened (within a thousandth
-/// of the run's size), its points without widths; vertices that start straight edges keep their
+/// of the edge's own size), its points without widths; vertices that start straight edges keep their
 /// widths. Also gives the mean WCS Z, the elevation the flattened run takes.
 pub(super) fn plan_of_tilted(n: Vec3, elevation: f64, vertices: &[PolyVertex], closed: bool) -> (Vec<PolyVertex>, f64) {
     let m = cadcraft_geom::Mat4::ocs(n);
-    let b = cadcraft_geom::Polyline { vertices: vertices.to_vec(), closed }.bounds();
-    let size = (b.max - b.min).len();
-    let tol = if size.is_finite() && size > 0.0 { size * 1e-3 } else { 1e-6 };
     let mut local: Vec<PolyVertex> = Vec::with_capacity(vertices.len());
     for (i, v) in vertices.iter().enumerate() {
         let next = if i + 1 < vertices.len() {
@@ -133,7 +130,11 @@ pub(super) fn plan_of_tilted(n: Vec3, elevation: f64, vertices: &[PolyVertex], c
         match next {
             Some(w) if v.bulge != 0.0 => {
                 local.push(PolyVertex::new(v.p));
-                let edge = cadcraft_geom::Polyline { vertices: vec![*v, PolyVertex::new(w.p)], closed: false }.tessellate(tol);
+                let arc = cadcraft_geom::Polyline { vertices: vec![*v, PolyVertex::new(w.p)], closed: false };
+                // From the edge's own size, so a long edge elsewhere can't flatten a small arc away.
+                let b = arc.bounds();
+                let size = (b.max - b.min).len();
+                let edge = arc.tessellate(if size.is_finite() && size > 0.0 { size * 1e-3 } else { 1e-6 });
                 // The edge's own ends are this vertex and the next one.
                 local.extend(edge.iter().skip(1).take(edge.len().saturating_sub(2)).map(|p| PolyVertex::new(*p)));
             }
