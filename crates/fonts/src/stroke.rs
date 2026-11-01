@@ -1,4 +1,4 @@
-//! "`CADCraft` Stroke": an original single-stroke drafting font, designed for `CADCraft` on a
+//! "CADCraft Stroke": an original single-stroke drafting font, designed for CADCraft on a
 //! small grid (public domain / CC0 as part of this codebase).
 //!
 //! Each glyph is `(width, strokes)`. A stroke is a run of points; each point is two characters:

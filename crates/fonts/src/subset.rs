@@ -32,7 +32,6 @@ fn u16_at(b: &[u8], i: usize) -> Option<u16> {
 }
 
 /// The embedding permission of a face.
-#[must_use]
 pub fn embedding(face: &Face) -> Embedding {
     let Ok(f) = FontRef::from_index(&face.bytes, face.index) else { return Embedding::NotTrueType };
     if table(&f, *b"glyf").is_none() || table(&f, *b"loca").is_none() || table(&f, *b"head").is_none() {
