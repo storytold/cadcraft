@@ -175,7 +175,7 @@ fn claim_at(path: &std::path::Path, files: &[String], may_hand_off: bool) -> Cla
             // Only a refused or missing socket is stale: any other failure may come from a
             // listener that is alive, whose socket must not be taken over.
             Err(e) if !matches!(e.kind(), std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound) => {
-                log::info!("single instance off: can't reach {} ({e})", path.display());
+                log::warn!("single instance off: can't reach {} ({e})", path.display());
                 return Claim::Alone;
             }
             Err(_) => match std::fs::remove_file(path) {
@@ -186,7 +186,7 @@ fn claim_at(path: &std::path::Path, files: &[String], may_hand_off: bool) -> Cla
                     continue;
                 }
                 Err(e) => {
-                    log::info!("single instance off: can't clear {} ({e})", path.display());
+                    log::warn!("single instance off: can't clear {} ({e})", path.display());
                     return Claim::Alone;
                 }
             },
@@ -198,7 +198,7 @@ fn claim_at(path: &std::path::Path, files: &[String], may_hand_off: bool) -> Cla
             Ok(listener) => return serve(listener),
             Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => continue,
             Err(e) => {
-                log::info!("single instance off: can't listen at {} ({e})", path.display());
+                log::warn!("single instance off: can't listen at {} ({e})", path.display());
                 return Claim::Alone;
             }
         }
