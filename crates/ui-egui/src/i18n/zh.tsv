@@ -1353,6 +1353,7 @@
 	Align Multileaders	对齐多重引线
 	Analyze Usage	分析使用情况
 	Break-line Symbol	折断线符号
+	Change	更改
 	Change Properties	修改特性
 	Clear Recent Files	清除最近的文件
 	Close Block Editor	关闭块编辑器
@@ -1378,3 +1379,4 @@
 	Save Block As	块另存为
 	Save Layout as Template	将布局另存为样板
 	Set Dynamic Property	设置动态特性
+	Units	单位
