@@ -222,14 +222,17 @@ impl Interactive for AttdefM {
                 _ => {}
             },
             Ask::Justify => {
+                // A justification goes on to its point; anything else is asked again.
                 if let Input::Keyword(k) | Input::Text(k) = &i {
                     match justify(k) {
                         // Aligned and fitted text take two points: not here yet.
                         Some((HAlign::Aligned | HAlign::Fit, _)) => s.echo("Align and Fit are not available here yet."),
-                        Some(j) => self.justify = j,
+                        Some(j) => {
+                            self.justify = j;
+                            self.ask = Ask::Point;
+                        }
                         None => s.echo("Invalid option keyword."),
                     }
-                    self.ask = Ask::Point;
                 }
             }
             Ask::Style => {

@@ -127,6 +127,11 @@ fn the_prompts_are_autocads() {
     assert_eq!(s.log.last().map(String::as_str), Some("Current text style:  \"Standard\"  Text height:  2.5000  Justify:  Left"));
     assert!(s.prompt_text().ends_with("Specify start point of text or [Justify/Style]:"), "{}", s.prompt_text());
     s.cmdline("_J").unwrap();
+    // A wrong answer, or a justification not available here, is asked again.
+    for typed in ["X", "_A"] {
+        s.cmdline(typed).unwrap();
+        assert!(s.prompt_text().contains("[Left/Center/Right/Align/Middle/Fit/TL/"), "{typed}: {}", s.prompt_text());
+    }
     s.cmdline("_MC").unwrap();
     assert!(s.prompt_text().ends_with("Specify middle point of text:"), "{}", s.prompt_text());
     s.cmdline("0,0").unwrap();
