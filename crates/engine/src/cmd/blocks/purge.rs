@@ -198,13 +198,19 @@ pub(in crate::cmd) fn candidates(d: &Drawing, kind: Kind) -> Vec<String> {
         }
         Kind::Linetypes => {
             // Objects and layers use linetypes, and so do dimension styles and a dimension's own
-            // overrides (DIMLTYPE, DIMLTEX1, DIMLTEX2).
+            // overrides (DIMLTYPE, DIMLTEX1, DIMLTEX2), and multiline styles' elements.
             let styles = d.dim_styles.iter().flat_map(|s| [s.dim_linetype.clone(), s.ext_linetype1.clone(), s.ext_linetype2.clone()]);
             let overrides = entities(d).filter_map(|e| if let EntityKind::Dimension(dm) = &e.kind { Some(dm) } else { None }).flat_map(|dm| {
                 ["dimLinetype", "extLinetype1", "extLinetype2"].into_iter().filter_map(|k| dm.overrides.get(k)?.as_str().map(str::to_string))
             });
+            let mlines = d.mline_styles.iter().flat_map(|s| s.elements.iter().map(|el| el.linetype.clone()));
             let used = lower(
-                &mut entities(d).map(|e| e.common.linetype.clone()).chain(d.layers.iter().map(|l| l.linetype.clone())).chain(styles).chain(overrides),
+                &mut entities(d)
+                    .map(|e| e.common.linetype.clone())
+                    .chain(d.layers.iter().map(|l| l.linetype.clone()))
+                    .chain(styles)
+                    .chain(overrides)
+                    .chain(mlines),
             );
             let cur = d.header.str("CELTYPE", "ByLayer");
             d.linetypes

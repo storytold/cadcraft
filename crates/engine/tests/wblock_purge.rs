@@ -140,3 +140,26 @@ fn purge_keeps_a_leaders_dimension_style() {
     s.execute("purge", &json!({ "type": "all" })).unwrap();
     assert!(s.doc().unwrap().dim_style("LDR").is_some(), "the leader's style stays");
 }
+
+/// PURGE keeps a linetype only a multiline style's element uses, and a text style only a table
+/// style's cell style uses (from the review of #2621).
+#[test]
+fn purge_keeps_styles_used_by_multiline_and_table_styles() {
+    use cadcraft_engine::doc::{CellStyle, MLineElement, MLineStyle, TableStyle};
+    let mut s = Session::new();
+    s.execute("linetype", &json!({ "load": "DASHED" })).unwrap();
+    s.execute("style", &json!({ "name": "CELLTEXT" })).unwrap();
+    s.execute("style.current", &json!({ "name": "Standard" })).unwrap();
+    let d = s.doc_mut().unwrap();
+    let element = MLineElement { linetype: "DASHED".into(), ..MLineElement::default() };
+    d.mline_styles.push(MLineStyle { name: "ML".into(), elements: vec![element], ..MLineStyle::default() });
+    let cell = CellStyle { text_style: "CELLTEXT".into(), ..CellStyle::default() };
+    d.table_styles.push(TableStyle { name: "TS".into(), cell_styles: vec![cell], ..TableStyle::default() });
+    // Both styles are made current, so PURGE keeps them; what they use must stay with them.
+    d.header.set_str("CMLSTYLE", "ML");
+    d.header.set_str("CTABLESTYLE", "TS");
+    s.execute("purge", &json!({ "type": "all" })).unwrap();
+    let d = s.doc().unwrap();
+    assert!(d.linetype("DASHED").is_some(), "the multiline style's linetype stays");
+    assert!(d.text_style("CELLTEXT").is_some(), "the table style's text style stays");
+}

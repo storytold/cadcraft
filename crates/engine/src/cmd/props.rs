@@ -765,11 +765,12 @@ fn run_style_current(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
-/// Text style names used by entities (in model, paper spaces and blocks), dimension and
-/// multileader styles, and the text of complex linetypes.
+/// Text style names used by entities (in model, paper spaces and blocks), dimension,
+/// multileader and table styles (their cell styles), and the text of complex linetypes.
 pub(super) fn text_styles_in_use(d: &cadcraft_doc::Drawing) -> Vec<String> {
     let mut out: Vec<String> = d.dim_styles.iter().map(|s| s.text_style.clone()).collect();
     out.extend(d.mleader_styles.iter().map(|s| s.text_style.clone()));
+    out.extend(d.table_styles.iter().flat_map(|s| s.cell_styles.iter().map(|c| c.text_style.clone())));
     out.extend(d.linetypes.iter().flat_map(|lt| lt.pattern.iter().filter_map(|el| el.style.clone())));
     let stores = std::iter::once(&d.model).chain(d.layouts.iter().map(|l| &l.entities)).chain(d.blocks.values().map(|b| &b.entities));
     for st in stores {
