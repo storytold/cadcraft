@@ -52,6 +52,7 @@ mod pdf_layers;
 #[path = "../support/pdf_read.rs"]
 mod pdf_read;
 mod plot_layout_scale;
+mod plot_model_metric_units;
 mod plot_model_png_scale;
 mod plot_styles;
 mod region_roundtrip;

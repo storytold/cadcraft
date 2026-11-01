@@ -2,6 +2,8 @@
 //!
 //! Paper-space units are millimetres in metric drawings (`MEASUREMENT` = 1) and on layouts whose
 //! page setup is in millimetres, and inches otherwise. The sheet's lower-left corner is the paper-space origin.
+//! Model-space plots have no stored page setup, so they take their units from the paper itself
+//! ([`model_page`], [`model_unit_mm`]).
 
 use cadcraft_doc::{Drawing, PageSetup};
 use cadcraft_geom::{Bounds2, Vec2};
@@ -81,6 +83,59 @@ pub fn paper_unit_mm(d: &Drawing) -> f64 {
     if d.header.i64("MEASUREMENT", 0) == 1 { 1.0 } else { 25.4 }
 }
 
+/// Whether the drawing's length unit is metric: `INSUNITS` millimetres to kilometres and
+/// angstroms to parsecs (4..=7, 11..=20) are metric, inches to US survey units (1, 2, 3, 8, 9,
+/// 10, 21, 22, 23, 24) imperial. A unitless drawing (`INSUNITS` 0, absent or unknown, as files
+/// without `$INSUNITS` are read, #1209) falls back to `MEASUREMENT` = 1.
+///
+/// `MEASUREMENT` only chooses the imperial or ISO hatch and linetype libraries (#1649, #1826),
+/// so it is not what says a drawing is metric: a drawing whose units are millimetres but whose
+/// MEASUREMENT is 0 — what UNITS leaves when the user picks millimetres, and what AutoCAD writes
+/// for many metric drawings — is metric by this test (#1828).
+pub fn metric_length_unit(d: &Drawing) -> bool {
+    match d.header.i64("INSUNITS", 0) {
+        // Inches, feet, miles, microinches, mils, yards and US survey units.
+        1 | 2 | 3 | 8 | 9 | 10 | 21 | 22 | 23 | 24 => false,
+        // Millimetres, centimetres, metres, kilometres, angstroms, nanometres, microns,
+        // decimetres to gigametres, astronomical units, light years and parsecs.
+        4..=7 | 11..=20 => true,
+        // Unitless: as MEASUREMENT says.
+        _ => d.header.i64("MEASUREMENT", 0) == 1,
+    }
+}
+
+/// Millimetres per paper unit of the paper named by `page`, from the paper itself: 1.0 for ISO
+/// and user-defined millimetre sizes, 25.4 for the ANSI, ARCH and Legal sheets. A name that is
+/// no known paper size is treated as a user millimetre size (1.0).
+pub fn model_unit_mm(page: &PageSetup) -> f64 {
+    match paper_size(&page.paper) {
+        Some(p) if p.imperial => 25.4,
+        _ => 1.0,
+    }
+}
+
+/// The page a model-space plot starts from: ISO A4 in a drawing whose length unit is metric,
+/// ANSI A otherwise. Model space has no stored page setup, so the plot takes its sheet (and its
+/// units) from here unless the caller picks another paper.
+pub fn model_page(d: &Drawing) -> PageSetup {
+    let mut page = PageSetup::default();
+    if let Some(p) = paper_size(if metric_length_unit(d) { "A4" } else { "ANSI A" }) {
+        page.paper = p.name.into();
+        page.width_mm = p.width_mm;
+        page.height_mm = p.height_mm;
+    }
+    apply_model_paper_units(&mut page);
+    page
+}
+
+/// Set a model-space plot's paper units once its paper is known: the paper's own units decide
+/// (ISO and user millimetre sizes are millimetres, ANSI and ARCH sheets inches), as a model-space
+/// page setup's "plot paper units" would. Layouts keep their stored page setup and go through
+/// [`page_unit_mm`]; only model-space callers use this.
+pub fn apply_model_paper_units(page: &mut PageSetup) {
+    page.paper_mm = model_unit_mm(page) == 1.0;
+}
+
 /// Millimetres per paper-space unit on a layout with page setup `page`: millimetres when the
 /// page says so (plot paper units mm), else as the drawing's MEASUREMENT says. Drawings from
 /// AutoCAD often have MEASUREMENT 0 with layouts in millimetres (#1058).
@@ -138,6 +193,92 @@ pub fn sheet(d: &Drawing, layout: &str) -> Option<Sheet> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn metric_length_unit_reads_the_length_unit() {
+        // Metric units, whatever MEASUREMENT says.
+        let mut d = Drawing::new_imperial();
+        d.header.set_i64("MEASUREMENT", 0);
+        for u in [4, 5, 6, 7, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20] {
+            d.header.set_i64("INSUNITS", u);
+            assert!(metric_length_unit(&d), "INSUNITS {u} is metric");
+        }
+        // Imperial units, even with MEASUREMENT 1.
+        d.header.set_i64("MEASUREMENT", 1);
+        for u in [1, 2, 3, 8, 9, 10, 21, 22, 23, 24] {
+            d.header.set_i64("INSUNITS", u);
+            assert!(!metric_length_unit(&d), "INSUNITS {u} is imperial");
+        }
+        // Unitless: as MEASUREMENT says.
+        for u in [0, 25] {
+            d.header.set_i64("INSUNITS", u);
+            d.header.set_i64("MEASUREMENT", 1);
+            assert!(metric_length_unit(&d), "unitless with MEASUREMENT 1 is metric");
+            d.header.set_i64("MEASUREMENT", 0);
+            assert!(!metric_length_unit(&d), "unitless with MEASUREMENT 0 is imperial");
+        }
+        d.header.vars.remove("INSUNITS");
+        d.header.vars.remove("MEASUREMENT");
+        assert!(!metric_length_unit(&d), "no units at all is imperial, as before");
+    }
+
+    #[test]
+    fn paper_unit_mm_still_follows_measurement() {
+        let mut m = Drawing::new_metric();
+        assert_eq!(paper_unit_mm(&m), 1.0);
+        m.header.set_i64("MEASUREMENT", 0);
+        assert_eq!(paper_unit_mm(&m), 25.4, "layouts stay on MEASUREMENT (page setups in inches fit)");
+        let mut i = Drawing::new_imperial();
+        assert_eq!(paper_unit_mm(&i), 25.4);
+        i.header.set_i64("INSUNITS", 4);
+        assert_eq!(paper_unit_mm(&i), 25.4, "a metric length unit does not move layout paper units");
+        i.header.set_i64("MEASUREMENT", 1);
+        assert_eq!(paper_unit_mm(&i), 1.0);
+    }
+
+    #[test]
+    fn model_unit_mm_reads_the_paper() {
+        let page = |name: &str| PageSetup { paper: name.into(), ..PageSetup::default() };
+        assert_eq!(model_unit_mm(&page("ISO A4")), 1.0);
+        assert_eq!(model_unit_mm(&page("ISO A0")), 1.0);
+        assert_eq!(model_unit_mm(&page("ANSI A")), 25.4);
+        assert_eq!(model_unit_mm(&page("ARCH D")), 25.4);
+        assert_eq!(model_unit_mm(&page("User (300.00 x 400.00 MM)")), 1.0);
+        assert_eq!(model_unit_mm(&page("nope")), 1.0, "an unknown paper is a user millimetre size");
+        assert_eq!(model_unit_mm(&PageSetup::default()), 25.4, "the default page is ANSI A");
+    }
+
+    #[test]
+    fn model_page_is_a4_for_metric_drawings() {
+        let mut d = Drawing::new_metric();
+        let page = model_page(&d);
+        assert_eq!(page.paper, "ISO A4 (210.00 x 297.00 MM)");
+        assert_eq!((page.width_mm, page.height_mm), (210.0, 297.0));
+        assert!(page.paper_mm, "A4 in a metric drawing is in millimetres");
+        // The length unit decides, not MEASUREMENT.
+        d.header.set_i64("MEASUREMENT", 0);
+        assert_eq!(model_page(&d).paper, "ISO A4 (210.00 x 297.00 MM)");
+        // An imperial drawing starts on ANSI A.
+        let page = model_page(&Drawing::new_imperial());
+        assert_eq!(page.paper, "ANSI A (8.50 x 11.00 Inches)");
+        assert!((page.width_mm - 215.9).abs() < 1e-9 && (page.height_mm - 279.4).abs() < 1e-9);
+        assert!(!page.paper_mm, "ANSI A in an imperial drawing is in inches");
+    }
+
+    #[test]
+    fn model_paper_units_follow_the_chosen_paper() {
+        // The sheet decides, whatever the drawing's length unit is.
+        let mut a4 = PageSetup { paper: "ISO A4 (210.00 x 297.00 MM)".into(), ..PageSetup::default() };
+        apply_model_paper_units(&mut a4);
+        assert!(a4.paper_mm, "ISO A4 is a millimetre sheet");
+        let mut ansi = PageSetup { paper: "ANSI A (8.50 x 11.00 Inches)".into(), ..PageSetup::default() };
+        apply_model_paper_units(&mut ansi);
+        assert!(!ansi.paper_mm, "ANSI A is an inch sheet");
+        // A user size in millimetres is one to one.
+        let mut user = PageSetup { paper: "User (300.00 x 400.00 MM)".into(), ..PageSetup::default() };
+        apply_model_paper_units(&mut user);
+        assert!(user.paper_mm);
+    }
 
     #[test]
     fn lookup_and_sheet() {

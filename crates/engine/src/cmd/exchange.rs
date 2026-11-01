@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use cadcraft_color::Rgb;
-use cadcraft_doc::{Drawing, Entity, EntityKind, PageSetup, Space};
+use cadcraft_doc::{Drawing, Entity, EntityKind, Space};
 use cadcraft_geom::{Bounds2, Mat3, Vec2};
 use cadcraft_render::paper::{self, Sheet};
 use cadcraft_render::raster::{RasterOptions, View};
@@ -308,24 +308,18 @@ fn run_preview(s: &mut Session, p: &Value) -> Result<Value> {
     let d = s.doc()?;
     let mut page = match space.layout() {
         Some(n) => d.layout(n).map(|l| l.page.clone()).unwrap_or_default(),
-        None => {
-            // Model space plots on A4 (metric) or ANSI A, like the PDF plotter.
-            let mut page = PageSetup::default();
-            if paper::paper_unit_mm(d) == 1.0
-                && let Some(a4) = paper::paper_size("A4")
-            {
-                page.paper = a4.name.into();
-                page.width_mm = a4.width_mm;
-                page.height_mm = a4.height_mm;
-            }
-            page
-        }
+        // Model space plots on ISO A4 (metric) or ANSI A, like the PDF plotter.
+        None => paper::model_page(d),
     };
     if let Some(name) = str_param(p, "paper") {
         let ps = paper::paper_size(name).ok_or_else(|| bad("preview", format!("unknown paper size `{name}`")))?;
         page.paper = ps.name.into();
         page.width_mm = ps.width_mm;
         page.height_mm = ps.height_mm;
+    }
+    // A model-space plot takes its units from the paper it was given (a layout keeps its page setup's).
+    if matches!(space, Space::Model) {
+        paper::apply_model_paper_units(&mut page);
     }
     if let Some(l) = p.get("landscape").and_then(Value::as_bool) {
         page.landscape = l;

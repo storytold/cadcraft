@@ -290,17 +290,8 @@ fn links_json(v: Option<&Value>) -> Vec<(Handle, String)> {
 pub fn page_for(d: &Drawing, space: &Space, o: &PdfOptions) -> Result<PageSetup> {
     let mut page = match space.layout() {
         Some(n) => d.layout(n).map(|l| l.page.clone()).ok_or_else(|| IoError::Format(format!("no layout `{n}`")))?,
-        None => {
-            let mut p = PageSetup::default();
-            if paper::paper_unit_mm(d) == 1.0
-                && let Some(a4) = paper::paper_size("A4")
-            {
-                p.paper = a4.name.into();
-                p.width_mm = a4.width_mm;
-                p.height_mm = a4.height_mm;
-            }
-            p
-        }
+        // Model space has no stored page setup: ISO A4 in a metric drawing, ANSI A otherwise.
+        None => paper::model_page(d),
     };
     if let Some(name) = &o.paper {
         let ps = paper::paper_size(name).ok_or_else(|| IoError::Format(format!("unknown paper size `{name}`")))?;
@@ -322,6 +313,10 @@ pub fn page_for(d: &Drawing, space: &Space, o: &PdfOptions) -> Result<PageSetup>
     // The plot device's margins bound a model-space plot (a layout's come with its page setup).
     if let (Space::Model, Some(m)) = (space, o.margins) {
         page.margins_mm = m;
+    }
+    // A model-space plot takes its units from the paper it was given; a layout keeps its page setup's.
+    if matches!(space, Space::Model) {
+        paper::apply_model_paper_units(&mut page);
     }
     page.width_mm = page.width_mm.clamp(1.0, MAX_SHEET_MM);
     page.height_mm = page.height_mm.clamp(1.0, MAX_SHEET_MM);
