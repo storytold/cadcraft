@@ -1,9 +1,9 @@
 //! DWG support through a DXF bridge.
 //!
 //! DWG files are read with the `acadrust` crate (MPL-2.0, used unmodified as a dependency) and
-//! converted to DXF bytes, which `CADCraft`'s own DXF reader maps to its document model; saving
+//! converted to DXF bytes, which CADCraft's own DXF reader maps to its document model; saving
 //! goes the other way. Keeping the dependency behind this byte-level API isolates it: nothing
-//! else in `CADCraft` depends on its types. Native targets only (it memory-maps files).
+//! else in CADCraft depends on its types. Native targets only (it memory-maps files).
 //!
 //! # Guardrails around the third-party decoder
 //!
@@ -31,13 +31,11 @@ pub const VERSIONS: &[(&str, &str)] =
     &[("AC1015", "2000"), ("AC1018", "2004"), ("AC1021", "2007"), ("AC1024", "2010"), ("AC1027", "2013"), ("AC1032", "2018")];
 
 /// True when the bytes look like a DWG file (`AC10xx` magic).
-#[must_use]
 pub fn is_dwg(bytes: &[u8]) -> bool {
     bytes.len() > 6 && bytes.starts_with(b"AC10") && bytes.get(4..6).is_some_and(|v| v.iter().all(u8::is_ascii_digit))
 }
 
 /// The DWG version code of a file (e.g. "AC1032").
-#[must_use]
 pub fn version(bytes: &[u8]) -> Option<String> {
     is_dwg(bytes).then(|| String::from_utf8_lossy(bytes.get(0..6).unwrap_or_default()).to_string())
 }
@@ -251,7 +249,7 @@ mod native {
     /// merged cells into the table's `merged_ranges` only, while its DXF writer writes each cell's
     /// own merge groups (173, 175, 176), so without this the merges would be lost. Tables whose
     /// cells already carry merges are left alone. Each range's first cell gets the span; the
-    /// cells it covers are marked merged with no span of their own, as `CADCraft`'s DXF writer does.
+    /// cells it covers are marked merged with no span of their own, as CADCraft's DXF writer does.
     fn table_merges(doc: &mut acadrust::CadDocument) {
         table_merges_within(doc, MAX_MERGE_CELLS);
     }
@@ -362,7 +360,7 @@ mod native {
 
     /// The DWG dimension flags byte. Its bit 1 is DXF group 70's bit 32 (ODA DWG specification,
     /// common dimension data), which acadrust keeps no copy of from DXF: it is set here as
-    /// `CADCraft`'s DXF writer always sets it (#1094). Bit 0, the opposite of group 70's bit 128,
+    /// CADCraft's DXF writer always sets it (#1094). Bit 0, the opposite of group 70's bit 128,
     /// acadrust 0.6.5 reads and writes itself.
     fn dimension_flags(doc: &mut acadrust::CadDocument) {
         for e in doc.entities_mut() {
@@ -377,7 +375,7 @@ mod native {
     /// removes them as orphaned data): in a real 83 MB site plan they were 888,483 of 889,053
     /// components and made its DXF rendition 1.2 GB, over [`Limits::DEFAULT`], so the file
     /// didn't open at all. No definition that was read refers to them (a definition the reader
-    /// skipped can't use them either) and `CADCraft` doesn't draw DGN line styles, so nothing
+    /// skipped can't use them either) and CADCraft doesn't draw DGN line styles, so nothing
     /// visible is lost.
     /// Every component a definition reaches (directly, or through compound and point
     /// components) is kept, as are the definitions; dictionary entries that named a dropped
@@ -429,7 +427,7 @@ mod native {
 
     /// Leave out what acadrust can't write as this DWG version: other programs' custom entities
     /// and objects without raw DWG data of that version. acadrust 0.6.4 refuses the whole file
-    /// for one of them (0.6.3 left them out); `CADCraft` already tells the user which entity types
+    /// for one of them (0.6.3 left them out); CADCraft already tells the user which entity types
     /// a DWG doesn't keep (`not_saved`), so the rest of the drawing is written. Returns how many.
     fn drop_unwritable(doc: &mut acadrust::CadDocument) -> usize {
         let version = doc.version;
@@ -663,7 +661,7 @@ mod native {
     /// dictionary, with the variables it keeps there, when the drawing has none (#1813).
     /// Vectric Aspire 10.5 reads a 2004 (AC1018) DWG without it as empty ("No data was imported
     /// from the DXF / DWG file"), though it reads the same drawing as DXF — which has no such
-    /// dictionary either, as `CADCraft`'s and ezdxf's writers don't make one. `AutoCAD`'s AC1032 DWGs
+    /// dictionary either, as CADCraft's and ezdxf's writers don't make one. `AutoCAD`'s AC1032 DWGs
     /// read there without it, so newer output is left as it was, and a dictionary the drawing
     /// does have keeps its own entries and values.
     fn add_variable_dictionary(doc: &mut acadrust::CadDocument) {
@@ -788,7 +786,7 @@ fn fail_in_test(stage: &str) {
     assert!(PANIC_IN.with(std::cell::Cell::get) != Some(stage), "test-forced panic in {stage}");
 }
 
-/// The error for a DWG version `CADCraft` can't write.
+/// The error for a DWG version CADCraft can't write.
 #[cfg_attr(no_dwg_bridge, allow(dead_code))]
 fn unsupported(version: &str) -> String {
     let list: Vec<&str> = VERSIONS.iter().map(|(_, year)| *year).collect();
