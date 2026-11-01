@@ -232,15 +232,23 @@ fn selection_highlight_settings_set_save_and_show_in_the_selection_tab() {
     ] {
         assert!(text.contains(label), "{label} missing from:\n{text}");
     }
-    // HIGHLIGHT, SELECTIONEFFECT and PREVIEWEFFECT are typed, not offered (as in AutoCAD), so
-    // the highlight can't be switched off or changed by accident.
+    // HIGHLIGHT is typed, not offered (as in AutoCAD), so the highlight can't be switched off by
+    // accident; the effects are in Visual Effect Settings, not on the tab.
     for label in ["Highlight selected objects", "Preview effect", "Dashed"] {
         assert!(!text.contains(label), "{label} offered");
     }
-    // Visual Effect Settings: the selection area and the preview filter.
+    // Visual Effect Settings: the preview and selection effects, the selection area and the
+    // preview filter.
     ctx.data_mut(|d| d.insert_temp(egui::Id::unique("cc_options_visual_effects"), true));
     let text = render(&mut a, &ctx);
     for label in [
+        "Selection Preview Effect",
+        "Dash",
+        "Thicken",
+        "Both",
+        "Selected Objects Effect",
+        "Dashed",
+        "Selection color",
         "Selection Area Effect",
         "Indicate selection area",
         "Window selection color:",
@@ -250,5 +258,35 @@ fn selection_highlight_settings_set_save_and_show_in_the_selection_tab() {
         "Hatches",
     ] {
         assert!(text.contains(label), "{label} missing from:\n{text}");
+    }
+}
+
+/// Visual Effect Settings: each preview and selection effect choice sets its variable.
+#[test]
+fn the_visual_effect_choices_set_their_variables() {
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    let mut a = app();
+    a.cmdline("options");
+    a.ui.dialog = Some("options:selection".into());
+    let mut h = Harness::builder().with_size(egui::vec2(1600.0, 1000.0)).build_ui_state(
+        |ui, app: &mut CadApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        a,
+    );
+    h.ctx.data_mut(|d| d.insert_temp(egui::Id::unique("cc_options_visual_effects"), true));
+    h.run_steps(2);
+    for (label, v) in [("Thicken", 1), ("Both", 2), ("Dash", 0)] {
+        h.get_by_label(label).click();
+        h.run_steps(2);
+        assert_eq!(h.state().session.settings.previeweffect, v, "{label}");
+    }
+    for (label, v) in [("Dashed", 0), ("Selection color", 1), ("Dashed", 0)] {
+        h.get_by_label(label).click();
+        h.run_steps(2);
+        assert_eq!(h.state().session.settings.selectioneffect, v, "{label}");
     }
 }
