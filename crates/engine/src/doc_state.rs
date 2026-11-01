@@ -35,6 +35,9 @@ pub struct DocState {
     /// The Block Editor (BEDIT), when it is open: `doc` is then the editor's drawing, and the
     /// drawing itself waits in it ([`DocState::drawing`]).
     pub block_edit: Option<blockedit::BlockEdit>,
+    /// The fonts missing on Windows that a save last named: the next save names them again only
+    /// when they change.
+    pub(crate) fonts_noted: String,
 }
 
 static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -61,6 +64,7 @@ impl DocState {
             uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             binary_dxf: false,
             block_edit: None,
+            fonts_noted: String::new(),
         }
     }
     /// The drawing has changes not saved to its file, or the Block Editor has changes not yet

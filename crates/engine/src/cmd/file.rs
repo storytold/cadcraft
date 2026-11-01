@@ -816,8 +816,9 @@ fn save_reporting(s: &mut Session, p: &Value, run: fn(&mut Session, &Value) -> R
     Ok(r)
 }
 
-/// Name the text styles whose font in the saved file AutoCAD on Windows doesn't have. Styles from
-/// an xref (`XREF|name`) aren't saved: AutoCAD takes them from the xref.
+/// Name the text styles whose font in the saved file AutoCAD on Windows doesn't have: in the
+/// result, and at the command line when the list changed since the last save. Styles from an xref
+/// (`XREF|name`) aren't saved: AutoCAD takes them from the xref.
 fn report_fonts(s: &mut Session, r: &mut Value) {
     use cadcraft_fonts::windows::{missing_on_windows, windows_font, written_font};
     let portable = r.get("portableFonts").and_then(Value::as_bool).unwrap_or(false);
@@ -828,16 +829,19 @@ fn report_fonts(s: &mut Session, r: &mut Value) {
         .filter(|t| !t.name.contains('|') && missing_on_windows(written_font(&t.font, portable)))
         .map(|t| (t.name.clone(), t.font.clone()))
         .collect();
+    let list = fonts.iter().map(|(style, font)| format!("{style} ({font})")).collect::<Vec<_>>().join(", ");
+    let changed = s.state_mut().map(|st| std::mem::replace(&mut st.fonts_noted, list.clone()) != list).unwrap_or(true);
     if fonts.is_empty() {
         return;
     }
-    let list = fonts.iter().map(|(style, font)| format!("{style} ({font})")).collect::<Vec<_>>().join(", ");
-    let hint = if fonts.iter().any(|(_, font)| windows_font(font).is_some()) {
-        " SAVEAS with portableFonts writes Windows fonts for those that have one."
-    } else {
-        ""
-    };
-    s.echo(format!("Fonts AutoCAD on Windows doesn't have: {list}.{hint}"));
+    if changed {
+        let hint = if fonts.iter().any(|(_, font)| windows_font(font).is_some()) {
+            " SAVEAS with portableFonts writes Windows fonts for those that have one."
+        } else {
+            ""
+        };
+        s.echo(format!("Fonts AutoCAD on Windows doesn't have: {list}.{hint}"));
+    }
     if let Some(o) = r.as_object_mut() {
         o.insert("nonPortableFonts".into(), json!(fonts.iter().map(|(style, font)| json!({ "style": style, "font": font })).collect::<Vec<_>>()));
     }

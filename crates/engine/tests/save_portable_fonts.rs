@@ -43,6 +43,12 @@ fn portable_fonts_writes_windows_fonts_in_that_file() {
     assert!(s.log.last().is_some_and(|l| l.ends_with("SAVEAS with portableFonts writes Windows fonts for those that have one.")), "{:?}", s.log);
     assert!(!file("portable.dxf").contains("verdana.ttf"));
 
+    // The same list isn't said again on every save.
+    let lines = s.log.len();
+    let r = s.execute("qsave", &json!({})).unwrap();
+    assert_eq!(r["nonPortableFonts"], both);
+    assert!(s.log.iter().skip(lines).all(|l| !l.starts_with("Fonts AutoCAD")), "{:?}", s.log);
+
     assert!(s.execute("saveas", &json!({ "path": path("bad.dxf"), "portableFonts": "yes" })).is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
