@@ -253,6 +253,18 @@ mod native {
         for e in doc.entities_mut() {
             let acadrust::entities::EntityType::Table(t) = e else { continue };
             for cell in t.rows.iter_mut().flat_map(|r| r.cells.iter_mut()) {
+                // The content's own height (group 144) when its format override sets bit 128.
+                let content_height = cell
+                    .contents
+                    .iter()
+                    .find(|c| c.format_override_flags & CONTENT_TEXT_HEIGHT != 0)
+                    .map(|c| c.text_height)
+                    .filter(|h| h.is_finite() && *h > 0.0);
+                if let Some(h) = content_height {
+                    // CADCraft reads only the style's height (group 140), so carry it there.
+                    cell.style.get_or_insert_with(acadrust::entities::table::CellStyle::new).text_height = h;
+                    continue;
+                }
                 let content_flag = cell.contents.iter().any(|c| c.format_override_flags & CONTENT_TEXT_HEIGHT != 0);
                 if let Some(style) = cell.style.as_mut()
                     && !content_flag

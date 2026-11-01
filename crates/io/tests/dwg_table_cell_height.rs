@@ -114,15 +114,18 @@ fn a_cell_style_with_the_text_height_flag_keeps_its_height() {
 }
 
 #[test]
-fn content_with_format_override_bit_128_keeps_the_style_height() {
+fn content_with_format_override_bit_128_keeps_its_own_height() {
+    // acadrust writes the content's height as group 144 and the style's as 140; they differ here
+    // so the result shows which one CADCraft honoured.
     let h = first_cell_height(false, |c| {
         c.style = Some(styled(0.5, CellStylePropertyFlags::NONE));
         if c.contents.is_empty() {
             c.contents.push(CellContent::new());
         }
         c.contents[0].format_override_flags |= 128;
+        c.contents[0].text_height = 0.3125;
     });
-    assert_eq!(h, Some(0.5));
+    assert_eq!(h, Some(0.3125));
 }
 
 #[test]
