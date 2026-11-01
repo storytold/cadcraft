@@ -1,7 +1,49 @@
+use std::collections::HashSet;
+
 use super::common::T;
 use super::entities::{entity_extras, entity_plot_style, entity_with_table_budget, insert_attribs, polyline_entity};
 use super::objects::{MAX_OBJECTS, Objects, page_setup};
 use super::{Block, BlockDef, Drawing, Entity, EntityKind, Handle, HashMap, Layout, LayoutDef, Rx, Tag, records};
+
+/// Allocate an entity handle that is unique within the DXF, including against handles assigned
+/// to earlier malformed or generated entities.
+fn fresh_entity_handle(d: &mut Drawing, seen: &mut HashSet<Handle>, reserved: &HashSet<Handle>) -> Handle {
+    // The seed saturates at `u64::MAX`: once a file uses that handle, `new_handle` keeps
+    // returning it and a plain retry loop would never terminate. Stop as soon as it stops
+    // advancing.
+    let mut previous = None;
+    loop {
+        let h = d.new_handle();
+        if !reserved.contains(&h) && seen.insert(h) {
+            return h;
+        }
+        if previous == Some(h) {
+            break;
+        }
+        previous = Some(h);
+    }
+    // Every value the seed can still reach is taken, so scan from the bottom: the occupied set
+    // is finite, which guarantees a free handle within its size plus one candidates.
+    let limit = seen.len().saturating_add(reserved.len()).saturating_add(1);
+    let mut candidate = 1u64;
+    for _ in 0..limit {
+        let h = Handle(candidate);
+        if !reserved.contains(&h) && seen.insert(h) {
+            return h;
+        }
+        candidate = candidate.saturating_add(1);
+    }
+    // Unreachable in practice (pigeonhole over the finite occupied set); never lose the entity.
+    d.new_handle()
+}
+
+/// How an ENTITIES list assigns handles: the handles already seen anywhere in the file, the
+/// ones the block records reserved, and whether a record's own handle beats the reservation.
+pub(super) struct HandlePolicy<'a> {
+    pub seen: &'a mut HashSet<Handle>,
+    pub reserved: &'a HashSet<Handle>,
+    pub source_wins: bool,
+}
 
 pub(super) fn parse_entities(
     recs: &[(String, Vec<Tag>)],
@@ -9,6 +51,7 @@ pub(super) fn parse_entities(
     rx: &mut Rx,
     skipped: &mut usize,
     table_cells_left: &mut usize,
+    hp: &mut HandlePolicy<'_>,
 ) -> Vec<(Option<String>, bool, Entity)> {
     let mut out = Vec::new();
     let mut i = 0;
@@ -54,27 +97,24 @@ pub(super) fn parse_entities(
             let h = match handle {
                 Some(h) => {
                     d.bump_handseed(h);
-                    h
+                    // A file's own handle wins when it is the first copy on a source list that
+                    // keeps them (ENTITIES); block copies yield to the reserved top-level ones.
+                    let kept = if hp.source_wins { hp.seen.insert(h) } else { !hp.reserved.contains(&h) && hp.seen.insert(h) };
+                    if kept { h } else { fresh_entity_handle(d, hp.seen, hp.reserved) }
                 }
-                None => d.new_handle(),
+                None => fresh_entity_handle(d, hp.seen, hp.reserved),
             };
             entity_extras(kind, tags, h, &mut k, rx);
-            let more: Vec<_> =
-                extra.into_iter().map(|f| (owner.clone(), paper, Entity { handle: d.new_handle(), common: c.clone(), kind: f })).collect();
+            let more: Vec<_> = extra
+                .into_iter()
+                .map(|f| (owner.clone(), paper, Entity { handle: fresh_entity_handle(d, hp.seen, hp.reserved), common: c.clone(), kind: f }))
+                .collect();
             out.push((owner, paper, Entity { handle: h, common: c, kind: k }));
             out.extend(more);
         } else if kind == "HATCH" {
             // Without boundary data. The other records `entity` returns nothing for are read
             // elsewhere (the writer's paper viewport, the loops of a region).
             *skipped = skipped.saturating_add(1);
-        }
-    }
-    // Assign fresh handles to duplicates (hostile files).
-    let mut seen = std::collections::HashSet::new();
-    for (_, _, e) in &mut out {
-        if !seen.insert(e.handle) {
-            e.handle = d.new_handle();
-            seen.insert(e.handle);
         }
     }
     out
@@ -87,6 +127,8 @@ pub(super) fn read_blocks(
     rx: &mut Rx,
     table_cells_left: &mut usize,
     skipped: &mut std::collections::BTreeMap<String, usize>,
+    seen_handles: &mut HashSet<Handle>,
+    reserved_handles: &HashSet<Handle>,
 ) -> Vec<BlockDef> {
     let recs = records(tags);
     for (k, tg) in &recs {
@@ -111,7 +153,14 @@ pub(super) fn read_blocks(
                 j += 1;
             }
             let body = recs.get(i + 1..j).unwrap_or(&[]);
-            let ents = parse_entities(body, d, rx, &mut n, table_cells_left);
+            let ents = parse_entities(
+                body,
+                d,
+                rx,
+                &mut n,
+                table_cells_left,
+                &mut HandlePolicy { seen: seen_handles, reserved: reserved_handles, source_wins: false },
+            );
             blocks.push((name, base, description, ents, xref));
             i = j + 1;
         } else {
