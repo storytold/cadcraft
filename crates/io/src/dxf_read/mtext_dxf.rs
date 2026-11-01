@@ -1,7 +1,9 @@
 //! MTEXT specifics of DXF (DXF Reference, MTEXT): control characters in the contents written
 //! as a caret and a letter (`^I` a tab, `^J` a line feed, `^ ` a caret), and the column groups
 //! 75 (type), 76 (count), 78 (flow reversed), 79 (auto height), 48 (width), 49 (gutter) and
-//! 50 (column heights, after the column type; before it, 50 is the rotation).
+//! 50 (column heights, after the column type; before it, 50 is the rotation). TEXT, ATTDEF,
+//! ATTRIB and DIMENSION strings use the same encoding ([`encode_line`]): AutoCAD reads a bare
+//! `^2` in `10^2` as a control character.
 
 use cadcraft_doc::{MText, MTextColumnType, MTextColumns};
 use cadcraft_dxf::Tag;
@@ -12,6 +14,15 @@ const MAX_COLUMNS: usize = 1_000;
 /// Decode the contents' `^I` (tab), `^J` (line feed) and `^ ` (caret). Other carets stay as
 /// they are (older files write stacked tolerances `\S+0.1^-0.1;` with a bare caret).
 pub(crate) fn decode_contents(s: &str) -> String {
+    decode(s, true)
+}
+
+/// A single-line string as read: [`decode_contents`] without line feeds (`^J` stays as it is).
+pub(crate) fn decode_line(s: &str) -> String {
+    decode(s, false)
+}
+
+fn decode(s: &str, line_feeds: bool) -> String {
     if !s.contains('^') {
         return s.to_string();
     }
@@ -25,7 +36,7 @@ pub(crate) fn decode_contents(s: &str) -> String {
         match it.peek().copied() {
             Some(' ') => out.push('^'),
             Some('I') => out.push('\t'),
-            Some('J') => out.push('\n'),
+            Some('J') if line_feeds => out.push('\n'),
             _ => {
                 out.push('^');
                 continue;
@@ -34,6 +45,28 @@ pub(crate) fn decode_contents(s: &str) -> String {
         it.next();
     }
     out
+}
+
+/// A single-line string (TEXT, ATTDEF/ATTRIB, DIMENSION) for a DXF file: a caret as `^ ` and a
+/// tab as `^I`, read back by [`decode_line`]. It holds no line break (the writer makes it a
+/// space).
+pub(crate) fn encode_line(s: &str) -> String {
+    s.replace('^', "^ ").replace('\t', "^I")
+}
+
+/// Apply `f` ([`encode_line`] or [`decode_line`]) to the groups of a `kind` record that hold
+/// an encoded string: the text (1), and an ATTDEF's prompt (3). An embedded MTEXT (from group 101)
+/// has its own and is left alone. AutoLISP's entget and entmake/entmod use it.
+pub(crate) fn map_text_groups(kind: &str, tags: &mut [Tag], f: fn(&str) -> String) {
+    let kind = kind.to_ascii_uppercase();
+    if !matches!(kind.as_str(), "TEXT" | "ATTRIB" | "ATTDEF" | "DIMENSION") {
+        return;
+    }
+    for t in tags.iter_mut().take_while(|t| t.code != 101) {
+        if t.code == 1 || (t.code == 3 && kind == "ATTDEF") {
+            *t = Tag::s(t.code, f(&t.str()));
+        }
+    }
 }
 
 /// Encode the contents for a DXF string: a tab as `^I`, a line feed as `^J`, a caret as `^ `;

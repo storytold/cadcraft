@@ -59,7 +59,7 @@ struct Rx {
     pstyles: HashMap<String, String>,
     /// Upper-case block name → associative array parameters from its BLOCK_RECORD.
     block_arrays: HashMap<String, cadcraft_doc::ArrayParams>,
-    /// LAYER record handle (upper case) → layer name (VIEWPORT group 341 frozen layers).
+    /// LAYER record handle (upper case) → layer name (VIEWPORT group 331/341 frozen layers).
     layers: HashMap<String, String>,
 }
 
@@ -143,9 +143,13 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
 }
 
 /// An entity from the groups of a DXF record of type `kind` (without its `0` group), as the
-/// reader makes it. AutoLISP's `entmake` and `entmod` are built on it.
+/// reader makes it, with plain strings as [`crate::entity_groups`] gives them (not the file's
+/// `^ ` escapes). AutoLISP's `entmake` and `entmod` are built on it.
 pub fn entity_from_groups(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
-    entity(&kind.to_ascii_uppercase(), tags)
+    // AutoLISP's strings are plain: escape them as the file has them (see `entity_groups`).
+    let mut tags = tags.to_vec();
+    mtext_dxf::map_text_groups(kind, &mut tags, mtext_dxf::encode_line);
+    entity(&kind.to_ascii_uppercase(), &tags)
 }
 
 #[cfg(test)]

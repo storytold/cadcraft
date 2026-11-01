@@ -355,7 +355,7 @@ fn write_dimension_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper
         // The actual measurement (read-only in DXF): AutoLISP's entget shows it.
         w.f(42, g.measurement);
         if !dm.text.is_empty() {
-            w.s(1, &dm.text);
+            w.s(1, crate::dxf_read::mtext_dxf::encode_line(&dm.text));
         }
         w.s(3, &dm.style);
         if dm.text_rotation != 0.0 {
@@ -620,22 +620,24 @@ fn write_viewport_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper:
         // 340 entity, 131072 = off.
         let clip = v.clip.filter(|h| *h != e.handle && d.entity(*h).is_some());
         let flags = 32768 | if v.locked { 16384 } else { 0 } | if clip.is_some() { 65536 } else { 0 } | if v.on { 0 } else { 131072 };
+        // AutoCAD's frozen-layer list, before group 90 as in the DXF Reference: one pointer per
+        // layer, to its LAYER record. A name with no record goes in CADCraft's xdata below.
+        let mut unrecorded: Vec<String> = Vec::new();
+        for name in &v.frozen_layers {
+            match w.layers.get(&name.to_ascii_uppercase()).cloned() {
+                Some(h) => w.s(if cx.frozen_341 { 341 } else { 331 }, h),
+                None => unrecorded.push(name.clone()),
+            }
+        }
         w.i(90, flags);
         if let Some(h) = clip {
             w.s(340, h.hex());
         }
-        // AutoCAD's frozen-layer list: one soft pointer per layer, to its LAYER record. Other
-        // programs read only this; CADCraft prefers its own xdata below when present.
-        for name in &v.frozen_layers {
-            if let Some(h) = w.layers.get(&name.to_ascii_uppercase()).cloned() {
-                w.s(341, h);
-            }
-        }
         // One CADCraft xdata group holds both lists: readers stop at the first group of an app.
-        if !v.frozen_layers.is_empty() || !v.layer_colors.is_empty() {
+        if !unrecorded.is_empty() || !v.layer_colors.is_empty() {
             w.s(1001, dxf_ext::APP);
-            if !v.frozen_layers.is_empty() {
-                w.xdata(dxf_ext::frozen_xdata(&v.frozen_layers));
+            if !unrecorded.is_empty() {
+                w.xdata(dxf_ext::frozen_xdata(&unrecorded));
             }
             if !v.layer_colors.is_empty() {
                 w.xdata(dxf_ext::layer_colors_xdata(&v.layer_colors));
