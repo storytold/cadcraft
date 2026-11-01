@@ -395,7 +395,11 @@ impl CadApp {
         if let Some(r) = menus::run_ui_command(self, id, &params) {
             return r;
         }
+        // The bars as the interface shows them now (a `ui.set` may have just changed one), and any
+        // MENUBAR or TOOLBAR request applied at once.
+        self.sync_bars();
         let r = self.session.execute(id, &params).map_err(|e| e.to_string());
+        self.sync_bars();
         if let Ok(v) = &r
             && let Some(m) = v.get("message").and_then(Value::as_str)
         {
@@ -414,6 +418,7 @@ impl CadApp {
         if menus::run_ui_command(self, name, &Value::Null).is_some() {
             return;
         }
+        self.sync_bars();
         if let Err(e) = self.session.start(name) {
             self.session.echo(e.to_string());
         }
@@ -429,6 +434,7 @@ impl CadApp {
     /// command or system variable) runs `fallback` instead: Enter on a partly typed name accepts
     /// the highlighted AutoComplete suggestion.
     pub fn cmdline_or(&mut self, text: &str, fallback: Option<&str>) -> Option<String> {
+        self.sync_bars();
         if !self.session.prompting() {
             let first = text.split_whitespace().next().unwrap_or("");
             // `cmd {json}` is a programmatic call: the engine runs it with those parameters.
@@ -437,13 +443,27 @@ impl CadApp {
                 return None;
             }
         }
-        let e = match (self.session.cmdline(text), fallback) {
+        let r = self.session.cmdline(text);
+        self.sync_bars();
+        let e = match (r, fallback) {
             (Ok(()), _) => return None,
             (Err(cadcraft_engine::EngineError::UnknownCommand(_)), Some(f)) => return self.cmdline(f),
             (Err(e), _) => e.to_string(),
         };
         self.session.echo(e.clone());
         Some(e)
+    }
+
+    /// Apply a menu bar / tool bar change MENUBAR or TOOLBAR asked for, and report the bars shown.
+    fn sync_bars(&mut self) {
+        let b = std::mem::take(&mut self.session.bars_request);
+        if let Some(on) = b.menubar {
+            self.ui.in_window_menu = on;
+        }
+        if let Some(show) = b.toolbar {
+            self.ui.show_toolbar = show;
+        }
+        self.session.bars_shown = cadcraft_engine::cmd::interface::InterfaceBars { menubar: self.ui.in_window_menu, toolbar: self.ui.show_toolbar };
     }
 
     /// The theme the interface shows now (the choice resolved against the OS appearance).
@@ -864,6 +884,7 @@ impl CadApp {
     /// Draw one UI pass: title/toolbar, optional menu/status bar/file tabs, the standalone tool-set strip when a drawing is shown but Tool Sets is not docked, docking or the start page, and the floating overlays; record `frame_ms`. Runs on every pass, including one egui later discards.
     fn draw(&mut self, ui: &mut egui::Ui) {
         let t0 = now_ms();
+        self.sync_bars();
         control::begin_frame(ui.ctx());
         let t = theme::Tokens::get();
         chrome::title_and_toolbar(self, ui);
