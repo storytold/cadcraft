@@ -365,6 +365,98 @@ fn entity_lists_round_trip() {
     assert_eq!(ok(&mut s, "(handent \"ZZZZZZ\")"), "nil");
 }
 
+/// entlast, entnext and (ssget "L") see what the routine itself just made, changed or deleted:
+/// the order they share isn't kept past an edit, even one that leaves the drawing where it was.
+#[test]
+fn entlast_follows_edits_within_one_routine() {
+    let mut s = session();
+    assert_eq!(
+        ok(
+            &mut s,
+            "(entmake '((0 . \"LINE\") (10 0.0 0.0 0.0) (11 1.0 0.0 0.0))) (setq a (entlast))
+             (entmake '((0 . \"LINE\") (10 0.0 0.0 0.0) (11 2.0 0.0 0.0))) (setq b (entlast))
+             (list (eq a b) (cdr (assoc 11 (entget b))) (eq (entnext a) b) (eq (ssname (ssget \"L\") 0) b))"
+        ),
+        "(nil (2.0 0.0 0.0) T T)"
+    );
+    // Deleting the last makes the one before it last; entdel brings it back last again.
+    assert_eq!(ok(&mut s, "(entdel b) (setq c (entlast)) (entdel b) (list (eq c a) (eq (entlast) b))"), "(T T)");
+    // A command, an entmod and entlast, over and over in one routine: each entlast is the line
+    // just drawn.
+    assert_eq!(
+        ok(
+            &mut s,
+            "(setq seen nil i 0)
+             (repeat 40
+               (command \"_.LINE\" (list i 10) (list i 20) \"\")
+               (setq e (entlast) d (entget e))
+               (entmod (subst (cons 8 \"MOVED\") (assoc 8 d) d))
+               (if (and (not (member e seen)) (equal (cdr (assoc 10 (entget (entlast)))) (list (float i) 10.0 0.0) 1e-9))
+                 (setq seen (cons e seen)))
+               (setq i (1+ i)))
+             (list (length seen) (cdr (assoc 8 (entget (entlast)))))"
+        ),
+        "(40 \"MOVED\")"
+    );
+    // The same across routines, with an undo between them.
+    for i in 0..10 {
+        ok(&mut s, &format!("(entmake '((0 . \"CIRCLE\") (10 {i}.0 50.0 0.0) (40 . 1.0)))"));
+        assert_eq!(ok(&mut s, "(cadr (assoc 10 (entget (entlast))))"), format!("{i}.0"));
+        s.undo().unwrap();
+        ok(&mut s, &format!("(entmake '((0 . \"CIRCLE\") (10 {i}.0 60.0 0.0) (40 . 1.0)))"));
+        assert_eq!(ok(&mut s, "(caddr (assoc 10 (entget (entlast))))"), "60.0");
+    }
+}
+
+/// entmod of a block reference keeps its attributes and their values: they aren't in its list
+/// (in AutoCAD they are entities of their own, which entmod of the INSERT leaves alone).
+#[test]
+fn entmod_of_a_block_reference_keeps_its_attributes() {
+    let mut s = session();
+    ok(
+        &mut s,
+        "(entmake '((0 . \"BLOCK\") (2 . \"TAGGED\") (70 . 0) (10 0.0 0.0 0.0)))
+         (entmake '((0 . \"CIRCLE\") (10 0.0 0.0 0.0) (40 . 1.0)))
+         (entmake '((0 . \"ATTDEF\") (10 0.0 2.0 0.0) (40 . 1.0) (1 . \"\") (3 . \"Name\") (2 . \"PSTN\") (70 . 0)))
+         (entmake '((0 . \"ENDBLK\")))",
+    );
+    s.execute("insert", &serde_json::json!({"name": "TAGGED", "at": [10, 10], "attribs": {"PSTN": "ARK1"}})).unwrap();
+    let insert = |s: &Session| {
+        s.doc()
+            .unwrap()
+            .model
+            .iter()
+            .find_map(|e| match &e.kind {
+                cadcraft_doc::EntityKind::Insert(i) => {
+                    Some((e.common.layer.clone(), i.attribs.iter().map(|a| (a.tag.clone(), a.text.value.clone())).collect::<Vec<_>>()))
+                }
+                _ => None,
+            })
+            .unwrap()
+    };
+    let want = vec![("PSTN".to_string(), "ARK1".to_string())];
+    assert_eq!(insert(&s).1, want);
+    ok(&mut s, "(setq d (entget (entlast))) (entmod (subst (cons 8 \"UGO\") (assoc 8 d) d))");
+    assert_eq!(insert(&s), ("UGO".to_string(), want.clone()));
+    // A new rotation keeps them too.
+    ok(&mut s, "(setq d (entget (entlast))) (entmod (subst (cons 50 (/ pi 2)) (assoc 50 d) d))");
+    assert_eq!(insert(&s).1, want);
+}
+
+/// HANDSEED is the next handle the drawing gives out, in hex, and moves as objects are made.
+#[test]
+fn handseed_follows_new_objects() {
+    let mut s = session();
+    let seed = |s: &Session| format!("\"{:X}\"", s.doc().unwrap().handseed);
+    let before = ok(&mut s, "(getvar \"HANDSEED\")");
+    assert_eq!(before, seed(&s));
+    ok(&mut s, "(entmake '((0 . \"LINE\") (10 0.0 0.0 0.0) (11 1.0 0.0 0.0)))");
+    let after = ok(&mut s, "(getvar \"HANDSEED\")");
+    assert_eq!(after, seed(&s));
+    assert_ne!(after, before);
+    assert!(eval(&mut s, "(setvar \"HANDSEED\" \"FFFFFF\")").is_err(), "read-only");
+}
+
 #[test]
 fn entity_lists_hold_angles_in_radians() {
     let mut s = session();

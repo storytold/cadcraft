@@ -160,6 +160,9 @@ pub fn get(s: &Session, name: &str) -> Option<Value> {
         "CMDNAMES" => json!(s.running.as_ref().map(|r| r.id.to_ascii_uppercase()).unwrap_or_default()),
         "DWGNAME" => json!(s.state().map(|d| d.title.clone()).unwrap_or_default()),
         "DBMOD" => json!(s.state().map(|d| i32::from(d.is_dirty())).unwrap_or(0)),
+        // The next handle the drawing gives out, in hex as `$HANDSEED` (the header keeps the
+        // value the file was read with, which new objects don't move).
+        "HANDSEED" => json!(format!("{:X}", s.doc().ok()?.handseed)),
         // The drawing's folder with a trailing separator ("" while it has no file); DWGTITLED is 1 once it has one.
         "DWGPREFIX" => json!(s.state().ok().and_then(|d| d.path.as_deref()).map(dwg_prefix).unwrap_or_default()),
         "DWGTITLED" => json!(s.state().map(|d| i32::from(d.path.is_some())).unwrap_or(0)),
@@ -246,6 +249,7 @@ const READ_ONLY: &[&str] = &[
     "TILEMODE",
     "PLATFORM",
     "DBMOD",
+    "HANDSEED",
     "BLOCKEDITOR",
     "CTAB",
     "LASTPOINT",

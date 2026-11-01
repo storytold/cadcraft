@@ -54,8 +54,10 @@ pub struct Env {
     pub next_file: u32,
     /// Entities `entdel` deleted (it brings them back when called again), with their space.
     pub deleted: HashMap<Handle, (cadcraft_doc::Space, Arc<cadcraft_doc::Entity>)>,
-    /// Every entity's handle in creation order, for the drawing it was taken from (`entnext`).
-    pub order: Option<(usize, Arc<Vec<Handle>>)>,
+    /// Every entity's handle in creation order (`entlast`, `entnext`), with clones of the spaces
+    /// it was taken from (model space, then each layout): it is reused only while the drawing's
+    /// spaces still share every chunk with them ([`cadcraft_doc::EntityStore::same_as`]).
+    pub order: Option<(Vec<cadcraft_doc::EntityStore>, Arc<Vec<Handle>>)>,
     /// `tblnext`'s place in each table.
     pub tblnext: HashMap<String, usize>,
     /// A block definition `entmake` has begun (a BLOCK list) and not yet ended (ENDBLK): the
