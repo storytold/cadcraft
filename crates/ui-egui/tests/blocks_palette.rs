@@ -112,6 +112,42 @@ fn options_are_off_while_placing_and_the_block_is_placed_again_until_cancelled()
     assert!(!h.get_by_label("Repeat Placement").accesskit_node().is_disabled());
 }
 
+/// Commands that run from start to end between two frames (queued control requests do) add to
+/// the drawing too, but that is no placement of the block: nothing starts placing it again.
+#[test]
+fn another_command_between_two_frames_ends_the_repeat() {
+    use cadcraft_engine::Input;
+    use cadcraft_engine::geom::Vec2;
+    let mut app = drawing();
+    for panel in ["layers", "properties"] {
+        app.run("ui.dock", json!({ "operation": "close", "panel": panel })).unwrap();
+    }
+    app.cmdline("BLOCKSPALETTE");
+    app.ui.in_window_menu = false;
+    let mut h = harness(app);
+    h.get_by_label("Door").click();
+    h.run_steps(3);
+    assert!(h.state().session.prompt_text().starts_with("INSERT"), "{}", h.state().session.prompt_text());
+
+    let session = &mut h.state_mut().session;
+    session.start("line").unwrap();
+    session.input(Input::Point(Vec2::new(0.0, 0.0))).unwrap();
+    session.input(Input::Point(Vec2::new(1.0, 1.0))).unwrap();
+    session.input(Input::Enter).unwrap();
+    assert_eq!(session.prompt_text(), "Command:");
+    h.run_steps(3);
+    assert_eq!(h.state().session.prompt_text(), "Command:");
+
+    // INSERT cancelled, then a JSON command that goes through no prompt.
+    h.get_by_label("Door").click();
+    h.run_steps(3);
+    assert!(h.state().session.prompt_text().starts_with("INSERT"), "{}", h.state().session.prompt_text());
+    h.state_mut().session.input(Input::Cancel).unwrap();
+    h.state_mut().run("line", json!({ "points": [[2, 2], [3, 3]] })).unwrap();
+    h.run_steps(3);
+    assert_eq!(h.state().session.prompt_text(), "Command:");
+}
+
 #[test]
 fn insert_started_by_the_palette_flow_waits_for_the_point() {
     use cadcraft_engine::Input;

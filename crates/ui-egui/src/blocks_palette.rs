@@ -147,12 +147,30 @@ struct State {
     explode: bool,
     /// Place the block again once it is placed, until the command is cancelled.
     repeat: bool,
-    /// The block being placed again, the drawing it goes into, that drawing's handle counter when
-    /// its INSERT started and whether it is placed exploded: a finished INSERT that took no new
-    /// handle placed nothing (it was cancelled), and repeating stops. So does switching drawings.
-    repeating: Option<(Item, u64, u64, bool)>,
+    /// The block being placed again, while its INSERT runs.
+    repeating: Option<Repeating>,
     /// The pass that last drew the palette: what ran while it was hidden went unwatched.
     last_pass: u64,
+}
+
+/// A placement the palette started and repeats, until its INSERT ends without placing anything,
+/// another command starts or the drawing changes.
+#[derive(Clone, Debug)]
+struct Repeating {
+    item: Item,
+    /// The drawing it goes into.
+    uid: u64,
+    /// The INSERT's number in the session's count of commands.
+    started: u64,
+    explode: bool,
+}
+
+impl Repeating {
+    /// The placement of `item`, whose INSERT has just started; `None` with no drawing.
+    fn started_now(app: &CadApp, item: Item, explode: bool) -> Option<Self> {
+        let uid = drawing_uid(app)?;
+        Some(Repeating { item, uid, started: app.session.commands_started, explode })
+    }
 }
 
 impl Default for State {
@@ -860,8 +878,7 @@ pub fn section(app: &mut CadApp, ui: &mut egui::Ui) {
             st.selected = Some(item.id.clone());
             announce_existing(app, &item);
             if insert(app, &item, &st, explode) && st.repeat {
-                let seed = handseed(app);
-                st.repeating = drawing_uid(app).map(|uid| (item, uid, seed, explode));
+                st.repeating = Repeating::started_now(app, item, explode);
             }
         }
         Some(Act::PickLibrary) => {
@@ -887,8 +904,8 @@ fn repeat_placement(app: &mut CadApp, ui: &egui::Ui, st: &mut State) {
     let pass = ui.ctx().cumulative_pass_nr();
     let watched = pass == st.last_pass.wrapping_add(1);
     st.last_pass = pass;
-    let Some((item, uid, before, explode)) = st.repeating.clone() else { return };
-    if !st.repeat || !watched || drawing_uid(app) != Some(uid) {
+    let Some(placing) = st.repeating.clone() else { return };
+    if !st.repeat || !watched || drawing_uid(app) != Some(placing.uid) {
         st.repeating = None;
         return;
     }
@@ -901,12 +918,13 @@ fn repeat_placement(app: &mut CadApp, ui: &egui::Ui, st: &mut State) {
         return;
     }
     st.repeating = None;
-    if handseed(app) <= before {
-        // Nothing was placed: INSERT was cancelled.
+    // Only this INSERT placing something repeats it: it may have been cancelled, and other
+    // commands may have run to their end since the last frame (queued control requests do).
+    if app.session.last_finished != Some((placing.started, true)) {
         return;
     }
-    if insert(app, &item, st, explode) {
-        st.repeating = Some((item, uid, handseed(app), explode));
+    if insert(app, &placing.item, st, placing.explode) {
+        st.repeating = Repeating::started_now(app, placing.item, placing.explode);
         ui.ctx().request_repaint();
     }
 }
@@ -914,12 +932,6 @@ fn repeat_placement(app: &mut CadApp, ui: &egui::Ui, st: &mut State) {
 /// Which drawing is active: a repeat placement belongs to the one it started in.
 fn drawing_uid(app: &CadApp) -> Option<u64> {
     app.session.state().ok().map(|st| st.uid)
-}
-
-/// The drawing's handle counter: placing a block (exploded or not) takes new handles, and
-/// cancelling takes none.
-fn handseed(app: &CadApp) -> u64 {
-    app.session.doc().map_or(0, |d| d.handseed)
 }
 
 /// The library list after `params` (`{}` just reads it). An engine error goes to the status line.
