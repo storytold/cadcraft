@@ -270,8 +270,6 @@ fn lock() -> MutexGuard<'static, Db> {
     g
 }
 
-/// The installed font files by lower-case file stem, from the system's and the user's font
-/// folders (at most 20,000 directory entries); the first file found for a stem is kept.
 #[cfg(not(target_arch = "wasm32"))]
 fn scan() -> HashMap<String, PathBuf> {
     let mut out = HashMap::new();
@@ -287,8 +285,11 @@ fn scan() -> HashMap<String, PathBuf> {
             dirs.push(PathBuf::from(l).join("Microsoft\\Windows\\Fonts"));
         }
     } else {
-        let wsl = std::env::var_os("WSL_DISTRO_NAME").is_some() || std::path::Path::new("/proc/sys/fs/binfmt_misc/WSLInterop").exists();
-        dirs = unix_font_dirs(std::env::var_os("HOME"), wsl);
+        dirs.extend(["/usr/share/fonts", "/usr/local/share/fonts"].map(Into::into));
+        if let Some(h) = std::env::var_os("HOME") {
+            dirs.push(PathBuf::from(&h).join(".fonts"));
+            dirs.push(PathBuf::from(h).join(".local/share/fonts"));
+        }
     }
     let mut stack = dirs;
     let mut seen = 0usize;
@@ -300,10 +301,7 @@ fn scan() -> HashMap<String, PathBuf> {
                 return out;
             }
             let p = e.path();
-            // The entry's type from the directory listing: one `stat` per file costs seconds on
-            // a Windows drive under WSL. A link is followed.
-            let is_dir = e.file_type().map(|t| if t.is_symlink() { p.is_dir() } else { t.is_dir() }).unwrap_or(false);
-            if is_dir {
+            if p.is_dir() {
                 stack.push(p);
                 continue;
             }
@@ -317,25 +315,6 @@ fn scan() -> HashMap<String, PathBuf> {
         }
     }
     out
-}
-
-/// Font folders on Linux and the BSDs, lowest priority first (the scan takes them from the end,
-/// and the first file found for a name wins): the user's own fonts win, and under WSL (`wsl`)
-/// Windows' fonts come after all the others. Drawings made on Windows name Windows fonts (Thai
-/// drawings Cordia New, Angsana New), which a Linux system under WSL usually lacks; with them,
-/// text lays out as it did where it was drawn.
-#[cfg(not(target_arch = "wasm32"))]
-fn unix_font_dirs(home: Option<std::ffi::OsString>, wsl: bool) -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = Vec::new();
-    if wsl {
-        dirs.push("/mnt/c/Windows/Fonts".into());
-    }
-    dirs.extend(["/usr/share/fonts", "/usr/local/share/fonts"].map(Into::into));
-    if let Some(h) = home {
-        dirs.push(PathBuf::from(&h).join(".fonts"));
-        dirs.push(PathBuf::from(h).join(".local/share/fonts"));
-    }
-    dirs
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -983,16 +962,6 @@ pub fn layout_line(face: &Face, s: &str, height: f64, width_factor: f64, oblique
 #[cfg(test)]
 mod family_tests {
     use super::*;
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn wsl_adds_windows_fonts_below_the_linux_ones() {
-        let linux = unix_font_dirs(Some("/home/u".into()), false);
-        assert!(linux.iter().all(|d| !d.starts_with("/mnt")) && linux.last() == Some(&PathBuf::from("/home/u/.local/share/fonts")));
-        let wsl = unix_font_dirs(Some("/home/u".into()), true);
-        assert_eq!(wsl.first(), Some(&PathBuf::from("/mnt/c/Windows/Fonts")));
-        assert_eq!(wsl.get(1..), Some(linux.as_slice()));
-    }
 
     #[test]
     fn thai_looks_in_thai_fonts_before_the_general_search() {
