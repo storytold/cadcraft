@@ -1313,6 +1313,9 @@ fn inherit_fields(tags: &[Tag], d: &Drawing, saved_as: Option<&str>) -> Option<(
         let def = block.and_then(|b| b.entities.iter().find(|e| matches!(&e.kind, EntityKind::AttDef(a) if a.tag.eq_ignore_ascii_case(&tag))));
         let Some(xdict) = def.and_then(|e| f.entities.get(&e.handle)).and_then(|x| x.xdict) else { continue };
         let tree = f.tree(xdict);
+        if !has_field(f, &tree) {
+            continue;
+        }
         let text = val(body, 1).unwrap_or_default();
         let default_text = def.and_then(|e| match &e.kind {
             EntityKind::AttDef(a) => Some(a.text.value.as_str()),
@@ -1337,6 +1340,13 @@ fn inherit_fields(tags: &[Tag], d: &Drawing, saved_as: Option<&str>) -> Option<(
         attribs.insert(h.hex());
     }
     out.map(|o| (o, attribs))
+}
+
+/// Whether `tree` (the objects of an attribute definition's extension dictionary) holds a field:
+/// the definition's dictionary may be some other application's, and a field elsewhere in the
+/// drawing doesn't make it one.
+fn has_field(f: &Foreign, tree: &[Handle]) -> bool {
+    tree.iter().any(|h| f.objects.iter().any(|o| o.handle == *h && o.kind == "FIELD"))
 }
 
 /// Whether the field in `tree` (the objects of an attribute definition's extension dictionary)
@@ -1385,23 +1395,30 @@ fn retarget_text_field(o: &mut ForeignObject, text: &str) {
     {
         t.value = format!("{sum}.0");
     }
-    // The owner is the first 330 outside any 102 group (a reactor's 330 sits inside one), and a
-    // field that already reacts to something keeps the group it has.
-    let (mut depth, mut owner, mut reacts) = (0usize, None, false);
+    // The owner is the first 330 outside any 102 group (a reactor's 330 sits inside one). The field
+    // reacts to it: a reactors group it already has keeps its other handles, loses the null ones
+    // (a reactor outside the copied tree) and gains the owner; one without gets the group.
+    let (mut depth, mut owner) = (0usize, None);
     for t in &o.tags {
         match t.code {
-            102 if t.value.starts_with('{') => {
-                depth = depth.saturating_add(1);
-                reacts |= t.value.eq_ignore_ascii_case("{ACAD_REACTORS");
-            }
+            102 if t.value.starts_with('{') => depth = depth.saturating_add(1),
             102 => depth = depth.saturating_sub(1),
             330 if depth == 0 && owner.is_none() => owner = Some(t.clone()),
             _ => {}
         }
     }
-    let at = o.tags.iter().position(|t| t.code == 5).map_or(0, |i| i + 1);
-    if let (Some(owner), false) = (owner, reacts) {
-        let group = |code, value: &str| RawTag { code, value: value.to_string() };
+    let Some(owner) = owner else { return };
+    let group = |code, value: &str| RawTag { code, value: value.to_string() };
+    let start = o.tags.iter().position(|t| t.code == 102 && t.value.eq_ignore_ascii_case("{ACAD_REACTORS"));
+    let end = start.and_then(|s| o.tags.iter().skip(s + 1).position(|t| t.code == 102 && t.value == "}").map(|e| s + 1 + e));
+    if let (Some(start), Some(end)) = (start, end) {
+        let mut inside: Vec<RawTag> = o.tags.drain(start + 1..end).filter(|t| !(t.code == 330 && t.value.trim() == "0")).collect();
+        if !inside.iter().any(|t| t.code == 330 && t.value.eq_ignore_ascii_case(&owner.value)) {
+            inside.push(owner);
+        }
+        o.tags.splice(start + 1..start + 1, inside);
+    } else {
+        let at = o.tags.iter().position(|t| t.code == 5).map_or(0, |i| i + 1);
         o.tags.splice(at..at, [group(102, "{ACAD_REACTORS"), owner, group(102, "}")]);
     }
 }
@@ -1445,14 +1462,40 @@ mod field_tests {
         o.tags.iter().filter(|t| t.code == code && t.value == value).count()
     }
 
-    /// A `_text` field that already reacts to something keeps its one reactors group, and the
-    /// owner it is given is the 330 outside that group.
+    /// A `_text` field that already reacts to something keeps its one reactors group (a reactor
+    /// outside the copied tree is a null handle: dropped), and the group has the owner, which is the
+    /// 330 outside it.
     #[test]
     fn a_text_field_with_reactors_gets_no_second_group() {
-        let mut o = field(vec![tag(5, "10"), tag(102, "{ACAD_REACTORS"), tag(330, "AA"), tag(102, "}"), tag(330, "BB"), tag(1, "_text")]);
+        let mut o =
+            field(vec![tag(5, "10"), tag(102, "{ACAD_REACTORS"), tag(330, "AA"), tag(330, "0"), tag(102, "}"), tag(330, "BB"), tag(1, "_text")]);
         retarget_text_field(&mut o, "X");
         assert_eq!(count(&o, 102, "{ACAD_REACTORS"), 1);
-        assert_eq!(o.tags.iter().filter(|t| t.code == 330).count(), 2, "no reactor handle was copied");
+        let start = o.tags.iter().position(|t| t.value == "{ACAD_REACTORS").unwrap_or(0);
+        let end = o.tags.iter().skip(start).position(|t| t.code == 102 && t.value == "}").map_or(0, |e| start + e);
+        let inside: Vec<&str> = o.tags.iter().take(end).skip(start + 1).map(|t| t.value.as_str()).collect();
+        assert_eq!(inside, ["AA", "BB"], "the null reactor is gone and the owner is in the group");
+        assert_eq!(count(&o, 330, "BB"), 2, "the owner stays where it was");
+    }
+
+    /// A group that already names the owner is left as it is.
+    #[test]
+    fn a_reactors_group_with_the_owner_is_unchanged() {
+        let tags = vec![tag(5, "10"), tag(102, "{ACAD_REACTORS"), tag(330, "BB"), tag(102, "}"), tag(330, "BB"), tag(1, "_text")];
+        let mut o = field(tags.clone());
+        retarget_text_field(&mut o, "X");
+        assert_eq!(o.tags, tags);
+    }
+
+    /// Only a dictionary that holds a FIELD counts as a field's: another application's does not.
+    #[test]
+    fn a_dictionary_without_a_field_is_not_a_field() {
+        let mut f = Foreign::default();
+        let object = |h: u64, kind: &str| ForeignObject { handle: Handle(h), kind: kind.into(), tags: Vec::new() };
+        f.objects = vec![object(1, "DICTIONARY"), object(2, "XRECORD"), object(3, "DICTIONARY"), object(4, "FIELD")];
+        assert!(!has_field(&f, &[Handle(1), Handle(2)]));
+        assert!(has_field(&f, &[Handle(3), Handle(4)]));
+        assert!(!has_field(&f, &[]));
     }
 
     /// Without reactors, the group names the owner, not a handle inside some other group.
