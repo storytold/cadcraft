@@ -1,7 +1,9 @@
 //! Dynamic block grips on the canvas, as AutoCAD shows them on a selected dynamic block
 //! reference: an arrow at a distance's end (drag it to change the distance), a square at a
-//! position (drag it to move it) and a down-pointing triangle for a list (click it for the
-//! visibility states or lookup values). Dragging runs the engine's dynamic grip edit
+//! position (drag it to move it), a circle at an angle's end (drag it to turn), an arrow across a
+//! reflection line (click it to flip), a down-pointing triangle for a list (click it for the
+//! visibility states or lookup values) and a pentagon at an alignment's base point (drag it next to
+//! an object to align the reference with it). Dragging runs the engine's dynamic grip edit
 //! ([`cadcraft_engine::Session::start_dyn_grip`]); a list choice runs `blocks.reference.set`.
 
 use std::sync::Arc;
@@ -62,6 +64,37 @@ fn outline(xf: &Xf, g: &DynGrip, gs: f32) -> Vec<Pos2> {
             let w = gs * 1.3;
             vec![c + vec2(-w, -w * 0.6), c + vec2(w, -w * 0.6), c + vec2(0.0, w * 0.9)]
         }
+        GripShape::Rotation => (0..16)
+            .map(|i| {
+                let a = std::f32::consts::TAU * i as f32 / 16.0;
+                c + vec2(a.cos(), a.sin()) * (gs * 1.1)
+            })
+            .collect(),
+        // An arrow pointing across the reflection line, the way it flips.
+        GripShape::Flip => {
+            let ahead = xf.to_screen(g.at + g.dir) - c;
+            let u = if ahead.length() > 1e-6 { ahead / ahead.length() } else { vec2(0.0, -1.0) };
+            let n = vec2(-u.y, u.x);
+            // A block arrow, as AutoCAD draws it: a short shaft and a head about as wide as a
+            // square grip. Tail, shaft's end and head's back on one side, the tip, then back.
+            let (tail, neck, tip, shaft, head) = (gs * 1.4, gs * 0.2, gs * 1.4, gs * 0.5, gs * 1.4);
+            vec![
+                c - u * tail + n * shaft,
+                c - u * neck + n * shaft,
+                c - u * neck + n * head,
+                c + u * tip,
+                c - u * neck - n * head,
+                c - u * neck - n * shaft,
+                c - u * tail - n * shaft,
+            ]
+        }
+        // A square with a point on the side the grip points to (across the alignment direction).
+        GripShape::Alignment => {
+            let ahead = xf.to_screen(g.at + g.dir) - c;
+            let u = if ahead.length() > 1e-6 { ahead / ahead.length() } else { vec2(0.0, -1.0) };
+            let n = vec2(-u.y, u.x);
+            vec![c - u * gs - n * gs, c + u * (gs * 0.2) - n * gs, c + u * (gs * 1.4), c + u * (gs * 0.2) + n * gs, c - u * gs + n * gs]
+        }
     }
 }
 
@@ -91,7 +124,18 @@ pub(crate) fn draw(app: &mut CadApp, painter: &Painter, xf: &Xf, rect: Rect, hov
         } else {
             t.grip_dyn
         };
-        painter.add(Shape::convex_polygon(pts, fill, Stroke::new(1.0, Color32::from_rgb(0x10, 0x30, 0x80))));
+        let stroke = Stroke::new(1.0, Color32::from_rgb(0x10, 0x30, 0x80));
+        match (g.shape, pts.as_slice()) {
+            // The flip arrow isn't convex: its shaft and head are filled apart, then outlined.
+            (GripShape::Flip, [t0, n0, h0, tip, h1, n1, t1]) => {
+                painter.add(Shape::convex_polygon(vec![*t0, *n0, *n1, *t1], fill, Stroke::NONE));
+                painter.add(Shape::convex_polygon(vec![*h0, *tip, *h1], fill, Stroke::NONE));
+                painter.add(Shape::closed_line(pts.clone(), stroke));
+            }
+            _ => {
+                painter.add(Shape::convex_polygon(pts, fill, stroke));
+            }
+        }
     }
 }
 
@@ -104,6 +148,22 @@ pub(crate) fn at(app: &mut CadApp, xf: &Xf, hover: Option<Pos2>) -> Option<(Hand
 
 /// A click on dynamic grip `g` of reference `h`: drag it, or open its list.
 pub(crate) fn click(app: &mut CadApp, (h, g): (Handle, DynGrip)) {
+    // A flip grip flips at once: the state that isn't the current one.
+    if g.shape == GripShape::Flip {
+        let current = app
+            .session
+            .state()
+            .ok()
+            .and_then(|st| cadcraft_engine::doc::dynblock::custom_properties(&st.doc, h))
+            .and_then(|(_, ps)| ps.into_iter().find(|p| p.name.eq_ignore_ascii_case(&g.property)))
+            .map(|p| p.value)
+            .unwrap_or_default();
+        let Some(next) = g.choices.iter().find(|c| !c.eq_ignore_ascii_case(&current)).cloned() else { return };
+        if let Err(e) = app.run("blocks.reference.set", json!({ "handle": h.hex(), "name": g.property, "value": next })) {
+            app.session.echo(e);
+        }
+        return;
+    }
     if g.shape == GripShape::List {
         app.canvas.dyn_menu = Some((h, g));
         app.canvas.dyn_menu_fresh = true;
