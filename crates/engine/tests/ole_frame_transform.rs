@@ -124,3 +124,21 @@ fn move_leaves_malformed_or_short_ole_data_alone() {
         assert_eq!(corners(&s)[0].1, "40", "the corner groups still move");
     }
 }
+
+/// OLE data whose bytes are not this frame's corners (an unknown header, so the layout does not
+/// apply) is not rewritten by MOVE; the frame's own corner groups still move (review on #2587).
+#[test]
+fn move_leaves_ole_data_that_is_not_the_frames_corners_alone() {
+    let mut blob = vec![9u8, 9];
+    for (x, y) in [(1.0f64, 2.0f64), (3.0, 2.0), (3.0, 4.0), (1.0, 4.0)] {
+        for v in [x, y, 7.0] {
+            blob.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    let hex: String = blob.iter().map(|b| format!("{b:02X}")).collect();
+    let (mut s, h) = data_session(&[40, 100], Some(&hex));
+    let before = data_tags(&s);
+    s.execute("move", &json!({ "handles": [h], "delta": [10, 5] })).unwrap();
+    assert_eq!(data_tags(&s), before);
+    assert_eq!(corners(&s)[0].1, "40", "the corner groups still move");
+}

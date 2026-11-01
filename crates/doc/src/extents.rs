@@ -51,7 +51,7 @@ const OLE_CORNERS: usize = 12;
 
 /// Move the four corners at the start of the OLE data (the 310 groups' hex, in order) by `m`,
 /// keeping z and every tag's length. Data that is not valid hex or is too short is left alone.
-fn ole_data_transform(tags: &mut [crate::RawTag], m: &cadcraft_geom::Mat3) {
+fn ole_data_transform(tags: &mut [crate::RawTag], m: &cadcraft_geom::Mat3, frame: [f64; 4]) {
     let idx: Vec<usize> = outside_app(tags).into_iter().filter(|&i| tags.get(i).is_some_and(|t| t.code == 310)).collect();
     let mut bytes: Vec<u8> = Vec::new();
     let mut lens: Vec<usize> = Vec::new();
@@ -70,6 +70,19 @@ fn ole_data_transform(tags: &mut [crate::RawTag], m: &cadcraft_geom::Mat3) {
     let end = OLE_HEADER + OLE_CORNERS * 8;
     if bytes.len() < end {
         return;
+    }
+    // Only data whose corners are this frame's corners (UL, UR, LR, LL) has the layout above; any
+    // other header is not ours to rewrite.
+    let [x1, y1, x2, y2] = frame;
+    let want = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)];
+    let near = |a: f64, b: f64| (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1.0);
+    for (c, (wx, wy)) in want.iter().enumerate() {
+        let at = OLE_HEADER + c * 24;
+        let rd = |o: usize| bytes.get(o..o + 8).and_then(|s| <[u8; 8]>::try_from(s).ok()).map(f64::from_le_bytes);
+        let (Some(x), Some(y)) = (rd(at), rd(at + 8)) else { return };
+        if !(near(x, *wx) && near(y, *wy)) {
+            return;
+        }
     }
     let mut out = bytes.clone();
     for c in 0..4 {
@@ -103,6 +116,7 @@ fn ole_data_transform(tags: &mut [crate::RawTag], m: &cadcraft_geom::Mat3) {
 /// left alone.
 pub fn ole_frame_transform(tags: &mut [crate::RawTag], m: &cadcraft_geom::Mat3) {
     let Some([(ix1, x1), (iy1, y1), (ix2, x2), (iy2, y2)]) = ole_corner_groups(tags) else { return };
+    let frame = [x1, y1, x2, y2];
     let (a, b) = (m.apply(Vec2::new(x1, y1)), m.apply(Vec2::new(x2, y2)));
     if !(a.x.is_finite() && a.y.is_finite() && b.x.is_finite() && b.y.is_finite()) {
         return;
@@ -112,7 +126,7 @@ pub fn ole_frame_transform(tags: &mut [crate::RawTag], m: &cadcraft_geom::Mat3) 
             t.value = v.to_string();
         }
     }
-    ole_data_transform(tags, m);
+    ole_data_transform(tags, m, frame);
 }
 
 /// Whether `m` can move an OLE2FRAME: only a translation (move, copy, stretch of the whole frame).
