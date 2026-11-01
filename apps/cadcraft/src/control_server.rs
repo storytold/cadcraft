@@ -7,7 +7,7 @@
 //! ([`Limits`]): simultaneous connections, request line length, queued requests, and how long a
 //! socket may sit idle or blocked on a write.
 
-use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -24,6 +24,9 @@ struct Limits {
     max_clients: usize,
     /// Longest request line in bytes (newline excluded); a longer one closes the connection.
     max_line: usize,
+    /// Request-line bytes buffered at once across all connections; a request that would pass it
+    /// is refused with an error reply.
+    total_bytes: usize,
     /// Requests waiting for the app at once; more are answered `busy`.
     queue: usize,
     /// How long a connection may go without sending a byte before it is closed.
@@ -40,6 +43,8 @@ impl Default for Limits {
             max_clients: 16,
             // Generous, so requests that carry whole drawings or images as base64 still fit.
             max_line: 256 * 1024 * 1024,
+            // Room for one maximal request plus smaller ones, not `max_clients` maximal ones.
+            total_bytes: 512 * 1024 * 1024,
             queue: 64,
             idle_timeout: Duration::from_secs(600),
             write_timeout: Duration::from_secs(30),
@@ -106,6 +111,7 @@ impl Drop for Slot {
 /// Accept clients within the connection limit and give each worker the same session token.
 fn accept_loop(listener: TcpListener, tx: SyncSender<ControlRequest>, ctx: egui::Context, limits: Limits, token: Arc<String>) {
     let open = Arc::new(AtomicUsize::new(0));
+    let budget = Budget::new(limits.total_bytes);
     for mut stream in accepted(listener.incoming(), || std::thread::sleep(ACCEPT_RETRY)) {
         let _ = stream.set_write_timeout(Some(limits.write_timeout));
         if open.fetch_add(1, Ordering::SeqCst) >= limits.max_clients {
@@ -117,39 +123,102 @@ fn accept_loop(listener: TcpListener, tx: SyncSender<ControlRequest>, ctx: egui:
         let tx = tx.clone();
         let ctx = ctx.clone();
         let token = Arc::clone(&token);
+        let budget = budget.clone();
         let _ = std::thread::Builder::new().spawn(move || {
             let _slot = slot;
-            serve(stream, &tx, &ctx, limits, &token);
+            serve(stream, &tx, &ctx, limits, &token, budget);
         });
     }
 }
 
-/// Read one `\n`-terminated line of at most `max` bytes into `buf` (newline stripped).
-/// `Ok(false)` at end of stream; `Err` when the line is too long or the read fails.
-fn read_bounded_line(reader: &mut impl BufRead, buf: &mut Vec<u8>, max: usize) -> Result<bool, String> {
+/// A total-bytes budget for request lines buffered across all connections, so
+/// [`Limits::max_clients`] peers can't each hold a [`Limits::max_line`] line at once (#1925).
+#[derive(Clone, Debug)]
+struct Budget {
+    used: Arc<AtomicUsize>,
+    total: usize,
+}
+
+impl Budget {
+    fn new(total: usize) -> Self {
+        Self { used: Arc::new(AtomicUsize::new(0)), total }
+    }
+
+    /// Reserve `n` more bytes, or `false` (nothing reserved) when that would pass the total.
+    fn reserve(&self, n: usize) -> bool {
+        self.used.try_update(Ordering::SeqCst, Ordering::SeqCst, |u| u.checked_add(n).filter(|&t| t <= self.total)).is_ok()
+    }
+}
+
+/// Bytes a connection holds from the [`Budget`] for its current request line; given back when the
+/// next line starts or the connection ends.
+struct Held {
+    budget: Budget,
+    bytes: usize,
+}
+
+impl Held {
+    fn new(budget: Budget) -> Self {
+        Self { budget, bytes: 0 }
+    }
+
+    fn release(&mut self) {
+        self.budget.used.fetch_sub(self.bytes, Ordering::SeqCst);
+        self.bytes = 0;
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+/// Read one `\n`-terminated line of at most `max` bytes into `buf` (newline stripped), charging
+/// the bytes buffered to `held`. `Ok(false)` at end of stream; `Err` when the line is too long,
+/// the shared budget is used up, or the read fails.
+fn read_bounded_line(reader: &mut impl BufRead, buf: &mut Vec<u8>, max: usize, held: &mut Held) -> Result<bool, String> {
     buf.clear();
-    // `take` bounds the bytes buffered for one line: a peer can't make us allocate more than `max`.
-    let limit = u64::try_from(max).unwrap_or(u64::MAX).saturating_add(1);
-    let n = reader.take(limit).read_until(b'\n', buf).map_err(|e| match e.kind() {
-        // The idle timeout ran out (Windows reports it as TimedOut, Unix as WouldBlock).
-        ErrorKind::TimedOut | ErrorKind::WouldBlock => "request line not completed in time; closing the connection".to_string(),
-        _ => e.to_string(),
-    })?;
-    if n == 0 {
-        return Ok(false);
-    }
-    if buf.last() == Some(&b'\n') {
-        buf.pop();
-        if buf.last() == Some(&b'\r') {
-            buf.pop();
+    held.release();
+    // A line is at most `max` bytes plus its newline; never buffer more than that.
+    let cap = max.saturating_add(1);
+    loop {
+        let chunk = match reader.fill_buf() {
+            Ok(c) => c,
+            Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+            Err(e) => {
+                return Err(match e.kind() {
+                    // The idle timeout ran out (Windows reports it as TimedOut, Unix as WouldBlock).
+                    ErrorKind::TimedOut | ErrorKind::WouldBlock => "request line not completed in time; closing the connection".to_string(),
+                    _ => e.to_string(),
+                });
+            }
+        };
+        if chunk.is_empty() {
+            // End of stream: nothing read, or a last line without a newline.
+            return Ok(!buf.is_empty());
         }
-        return Ok(true);
+        let line_end = chunk.iter().position(|&b| b == b'\n').map(|i| i + 1);
+        let n = line_end.unwrap_or(chunk.len()).min(cap.saturating_sub(buf.len()));
+        buf.extend_from_slice(chunk.get(..n).unwrap_or(chunk));
+        reader.consume(n);
+        // The chunk is already buffered (a few KiB), so it is added before it is charged: a
+        // refusal still leaves `buf` non-empty and the connection gets an error reply.
+        if !held.budget.reserve(n) {
+            return Err("too many large requests in flight; try again later".to_string());
+        }
+        held.bytes += n;
+        if buf.last() == Some(&b'\n') {
+            buf.pop();
+            if buf.last() == Some(&b'\r') {
+                buf.pop();
+            }
+            return Ok(true);
+        }
+        if buf.len() > max {
+            return Err(format!("request line longer than {max} bytes; closing the connection"));
+        }
     }
-    if buf.len() > max {
-        return Err(format!("request line longer than {max} bytes; closing the connection"));
-    }
-    // Last line without a newline, then end of stream.
-    Ok(true)
 }
 
 /// One request line, parsed.
@@ -204,7 +273,7 @@ fn is_http_request_line(text: &str) -> bool {
 
 /// Serve bounded JSON lines, authenticating each request before enqueueing it for the UI.
 /// Invalid credentials close the connection; queue and reply limits report whether a request ran.
-fn serve(stream: TcpStream, tx: &SyncSender<ControlRequest>, ctx: &egui::Context, limits: Limits, token: &str) {
+fn serve(stream: TcpStream, tx: &SyncSender<ControlRequest>, ctx: &egui::Context, limits: Limits, token: &str, budget: Budget) {
     if stream.set_read_timeout(Some(limits.idle_timeout)).is_err() || stream.set_write_timeout(Some(limits.write_timeout)).is_err() {
         return;
     }
@@ -212,8 +281,9 @@ fn serve(stream: TcpStream, tx: &SyncSender<ControlRequest>, ctx: &egui::Context
     let mut out = stream;
     let mut reader = BufReader::new(read);
     let mut buf = Vec::new();
+    let mut held = Held::new(budget);
     loop {
-        let reject = match read_bounded_line(&mut reader, &mut buf, limits.max_line) {
+        let reject = match read_bounded_line(&mut reader, &mut buf, limits.max_line, &mut held) {
             Ok(false) => break,
             // Nothing of a line arrived (idle timeout, or the peer is gone): close without a word.
             // A line nobody asked for would be read as the reply to the client's next request.
@@ -264,6 +334,7 @@ fn serve(stream: TcpStream, tx: &SyncSender<ControlRequest>, ctx: &egui::Context
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
 
     /// A failed accept is followed by a wait before the next one, so a listener that keeps
     /// failing does not spin, and the connections around the failures still come through.
@@ -281,13 +352,13 @@ mod tests {
     fn lines_are_read_up_to_the_limit() {
         let mut buf = Vec::new();
         let mut input: &[u8] = b"aaaaaaaaaa\nbb\r\ncc";
-        assert_eq!(read_bounded_line(&mut input, &mut buf, 10), Ok(true));
+        assert_eq!(read_bounded_line(&mut input, &mut buf, 10, &mut held()), Ok(true));
         assert_eq!(buf, b"aaaaaaaaaa", "a line exactly at the limit is accepted");
-        assert_eq!(read_bounded_line(&mut input, &mut buf, 10), Ok(true));
+        assert_eq!(read_bounded_line(&mut input, &mut buf, 10, &mut held()), Ok(true));
         assert_eq!(buf, b"bb", "CRLF is stripped");
-        assert_eq!(read_bounded_line(&mut input, &mut buf, 10), Ok(true));
+        assert_eq!(read_bounded_line(&mut input, &mut buf, 10, &mut held()), Ok(true));
         assert_eq!(buf, b"cc", "a last line without a newline is still read");
-        assert_eq!(read_bounded_line(&mut input, &mut buf, 10), Ok(false), "then end of stream");
+        assert_eq!(read_bounded_line(&mut input, &mut buf, 10, &mut held()), Ok(false), "then end of stream");
     }
 
     #[test]
@@ -295,9 +366,13 @@ mod tests {
         let mut buf = Vec::new();
         let long = [b'x'; 100];
         let mut input: &[u8] = &long;
-        assert!(read_bounded_line(&mut input, &mut buf, 10).is_err());
+        assert!(read_bounded_line(&mut input, &mut buf, 10, &mut held()).is_err());
         assert!(buf.len() <= 11, "at most limit + 1 bytes are buffered, got {}", buf.len());
         assert_eq!(input.len(), 100 - 11, "the rest of the line is left unread");
+    }
+
+    fn held() -> Held {
+        Held::new(Budget::new(usize::MAX))
     }
 
     fn short() -> Limits {
@@ -412,6 +487,40 @@ mod tests {
         assert_eq!((busy["id"].as_i64(), busy["state"].as_str()), (Some(2), Some("not-run")), "{busy}");
         assert_eq!(first.join().unwrap()[0]["state"], "not-run");
         drop(rx);
+    }
+
+    /// Connections can't together buffer more request-line bytes than the budget: a second large
+    /// request is refused with an error reply while the first still holds its bytes (#1925).
+    #[test]
+    fn requests_past_the_total_budget_are_refused() {
+        let (addr, _rx) = serve_with(Limits { max_line: 1000, total_bytes: 300, idle_timeout: Duration::from_secs(5), ..short() });
+        // The first peer sends 200 bytes of an unfinished line and keeps the connection open.
+        let mut first = TcpStream::connect(addr).unwrap();
+        first.write_all(&[b'a'; 200]).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        // The second would take 200 more, past the 300 byte total.
+        let mut second = TcpStream::connect(addr).unwrap();
+        second.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        second.write_all(&[b'b'; 200]).unwrap();
+        let mut line = String::new();
+        BufReader::new(second).read_line(&mut line).unwrap();
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["ok"], json!(false));
+        assert!(v["error"].as_str().unwrap_or("").contains("too many large requests"), "{line}");
+        drop(first);
+    }
+
+    #[test]
+    fn the_budget_is_given_back_when_the_connection_ends() {
+        let budget = Budget::new(100);
+        {
+            let mut h = Held::new(budget.clone());
+            let mut buf = Vec::new();
+            let mut input: &[u8] = &[b'x'; 80];
+            assert_eq!(read_bounded_line(&mut input, &mut buf, 1000, &mut h), Ok(true));
+            assert!(!budget.reserve(30), "80 of 100 bytes are held");
+        }
+        assert!(budget.reserve(100), "all given back on drop");
     }
 
     /// Replies on one authenticated connection preserve the ID of each request.
