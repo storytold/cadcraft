@@ -73,6 +73,7 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.cmdline.lines", "Command Line History Lines", &[], None),
     ("ui.cmdline.clear", "Clear Command History", &[], None),
     ("ui.dialog.language", "Interface Language", &["Edit", "Interface Language"], None),
+    ("ui.dialog.find", "Find and Replace", &[], Some("Cmd+F")),
     ("ui.language", "Language", &[], None),
     ("ui.noop", "", &[], None),
     ("ui.quit", "Quit CADCraft", &[], Some("Cmd+Q")),
@@ -332,6 +333,12 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
     if let Some(result) = run_close_command(app, id, params) {
         return Some(result);
     }
+    // FIND typed, or chosen from Edit ▸ Find..., opens the window; a JSON call carries `find`
+    // and falls through to the engine, so scripts, LISP and the MCP server keep their answer.
+    if id == "find" && params.is_null() {
+        app.ui.dialog = Some("find".to_string());
+        return Some(Ok(Value::Null));
+    }
     let r = match id {
         "ui.open" | "open" if no_path => {
             let picked = app.services.pick_open.as_ref().and_then(|f| f());
@@ -456,7 +463,8 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
         | "ui.dialog.about"
         | "ui.dialog.commands"
         | "ui.dialog.qselect"
-        | "ui.dialog.parameters" => {
+        | "ui.dialog.parameters"
+        | "ui.dialog.find" => {
             app.ui.dialog = Some(id.trim_start_matches("ui.dialog.").to_string());
             Ok(Value::Null)
         }
@@ -816,6 +824,7 @@ pub(crate) fn builtin_shortcuts() -> Vec<(egui::KeyboardShortcut, &'static str)>
         (sc(cmd, Key::S), "qsave"),
         (sc(cmd, Key::P), "plot"),
         (sc(cmd, Key::A), "selectall"),
+        (sc(cmd, Key::F), "ui.dialog.find"),
         (sc(cmd_shift, Key::C), "copybase"),
         (sc(cmd, Key::C), "copyclip"),
         (sc(cmd, Key::X), "cutclip"),
