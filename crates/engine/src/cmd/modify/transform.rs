@@ -5,6 +5,7 @@ use super::{Entity, Handle, Mat3, Result, Session, Value, Vec2, bad, bool_or, f6
 // ---------------- core operations ----------------
 
 pub(crate) fn transform_entities(s: &mut Session, hs: &[Handle], m: &Mat3, copy: bool) -> Result<Vec<Handle>> {
+    refuse_ole_frames(s, hs, m)?;
     edit_entities(s, hs, copy, |e| e.kind.transform(m))
 }
 
@@ -12,11 +13,30 @@ pub(crate) fn transform_entities(s: &mut Session, hs: &[Handle], m: &Mat3, copy:
 /// and every height of the objects about its Z, their thickness too.
 pub(crate) fn scale_entities(s: &mut Session, hs: &[Handle], base: Vec3, f: f64, copy: bool) -> Result<Vec<Handle>> {
     let m = Mat3::scale_about(base.xy(), f);
+    refuse_ole_frames(s, hs, &m)?;
     edit_entities(s, hs, copy, |e| {
         e.kind.transform(&m);
         e.kind.scale_heights(base.z, f);
         e.common.thickness *= f;
     })
+}
+
+/// An OLE2FRAME only translates (its corners stay axis aligned): refuse any other `m` before anything
+/// changes, instead of reporting success and leaving the frame where it was.
+fn refuse_ole_frames(s: &Session, hs: &[Handle], m: &Mat3) -> Result<()> {
+    if cadcraft_doc::ole_frame_accepts(m) {
+        return Ok(());
+    }
+    let d = s.doc()?;
+    let ole = |h: &Handle| {
+        d.entity(*h).is_some_and(|e| matches!(&e.kind, cadcraft_doc::EntityKind::Unknown(u) if u.dxf_type.eq_ignore_ascii_case("OLE2FRAME")))
+    };
+    if hs.iter().any(ole) {
+        return Err(crate::EngineError::Other(
+            "An OLE object can only be moved or copied; rotating, scaling and mirroring it are not supported.".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// `p` at the current elevation (ELEVATION), the Z AutoCAD gives a point entered without one.
@@ -29,17 +49,6 @@ pub(crate) fn at_elevation(s: &Session, p: Vec2) -> Vec3 {
 /// on a locked layer is left alone unless it is copied. The handles edited or made.
 fn edit_entities(s: &mut Session, hs: &[Handle], copy: bool, edit: impl Fn(&mut Entity)) -> Result<Vec<Handle>> {
     let d = s.doc_mut()?;
-    // An OLE2FRAME only translates (its corners stay axis aligned); refuse the rest before anything
-    // changes, instead of reporting success and leaving the frame where it was.
-    if !cadcraft_doc::ole_frame_accepts(m)
-        && hs.iter().any(|h| {
-            d.entity(*h).is_some_and(|e| matches!(&e.kind, cadcraft_doc::EntityKind::Unknown(u) if u.dxf_type.eq_ignore_ascii_case("OLE2FRAME")))
-        })
-    {
-        return Err(crate::EngineError::Other(
-            "An OLE object can only be moved or copied; rotating, scaling and mirroring it are not supported.".into(),
-        ));
-    }
     let mut out = Vec::new();
     for h in hs {
         let Some(sp) = d.space_of(*h) else { continue };
