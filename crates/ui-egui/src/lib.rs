@@ -37,6 +37,8 @@ mod mtext_editor;
 mod panel_state;
 pub mod spacemouse;
 pub mod switch;
+// The Edit Text window, opened by a double-click on a text object.
+pub mod textdlg;
 // The External References palette.
 pub mod xrefs;
 

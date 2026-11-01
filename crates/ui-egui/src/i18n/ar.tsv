@@ -1372,3 +1372,6 @@ menu	View	عرض
 	overrides built-in	يتجاوز المدمج
 	{alias} is already defined; select it and use Edit.	{alias} معرَّف مسبقاً؛ حدده واستخدم «تحرير».
 	{command} is an unknown command.	{command} أمر غير معروف.
+	Ctrl+Enter to apply	Ctrl+Enter to apply
+	Edit Text	Edit Text
+	The drawing changed. Close the window and open it again.	تغيّر الرسم. أغلق النافذة وافتحها مرة أخرى.
