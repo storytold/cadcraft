@@ -2625,6 +2625,44 @@ fn drawing_without_insunits_stays_unitless() {
     assert_eq!(insunits(&write_dxf(&Drawing::new_imperial())), Some("1".into()));
 }
 
+/// Constraint groups with hostile node counts, truncated nodes and a registry that doesn't match
+/// the nodes are left as they are; nothing panics or loops for long.
+#[test]
+fn hostile_constraint_groups_never_panic() {
+    use cadcraft_dxf::Tag;
+    let group = |rest: &[(i32, &str)]| {
+        let mut t = vec![Tag::s(0, "ACDBASSOC2DCONSTRAINTGROUP"), Tag::s(100, "AcDbAssoc2dConstraintGroup"), Tag::s(360, "0"), Tag::s(90, "0")];
+        t.extend(rest.iter().map(|(c, v)| Tag::s(*c, *v)));
+        t
+    };
+    let many: Vec<(i32, &str)> = std::iter::repeat_n((90, "1"), 200_000).collect();
+    let cases: Vec<Vec<Tag>> = vec![
+        group(&[]),
+        group(&[(90, "3"), (90, "0"), (90, "99999999999"), (290, "0")]),
+        group(&[(90, "3"), (90, "0"), (90, "0"), (290, "0"), (90, "-5")]),
+        group(&[(90, "3"), (90, "0"), (90, "0"), (290, "0"), (90, "100000"), (1, "AcFixedConstraint"), (90, "1")]),
+        group(&[(90, "3"), (90, "0"), (90, "0"), (290, "0"), (90, "1"), (1, "AcFixedConstraint"), (90, "1"), (90, "1"), (90, "4")]),
+        group(
+            &[(90, "3"), (90, "0"), (90, "0"), (290, "0"), (90, "1"), (1, "AcFixedConstraint"), (90, "1")]
+                .iter()
+                .copied()
+                .chain(many)
+                .collect::<Vec<_>>(),
+        ),
+        vec![Tag::s(0, "ACDBASSOC2DCONSTRAINTGROUP")],
+    ];
+    // Each group's content (code, value), unchanged after each mode: a rotation keeps the
+    // length, and a second mode could rotate it back.
+    let pairs = |t: &[Tag]| t.iter().map(|x| (x.code, x.str())).collect::<Vec<_>>();
+    for mut tags in cases {
+        let before = pairs(&tags);
+        for modern in [false, true] {
+            crate::dxf_raw::constraint_node_order(&mut tags, modern);
+            assert_eq!(pairs(&tags), before, "modern: {modern}");
+        }
+    }
+}
+
 #[test]
 fn pdf_clips_a_primitive_beyond_the_coordinate_range() {
     let mut d = Drawing::new_metric();
