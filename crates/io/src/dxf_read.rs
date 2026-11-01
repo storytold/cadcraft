@@ -34,6 +34,15 @@ use tables::{header, tables};
 
 pub(crate) mod mtext_dxf;
 
+/// A block record's properties (see [`Rx::block_props`]).
+#[derive(Clone, Copy, Default)]
+struct BlockProps {
+    units: u8,
+    explodable: bool,
+    scale_uniformly: bool,
+    annotative: bool,
+}
+
 /// Handle maps and references gathered while reading.
 #[derive(Default)]
 struct Rx {
@@ -43,8 +52,9 @@ struct Rx {
     brs: HashMap<String, String>,
     /// LTYPE record handle (upper case) → linetype name (DIMLTYPE, DIMLTEX1, DIMLTEX2).
     ltypes: HashMap<String, String>,
-    /// Upper-case block name → (insertion units, explodable) from its BLOCK_RECORD.
-    block_props: HashMap<String, (u8, bool)>,
+    /// Upper-case block name → its BLOCK_RECORD's properties: units (70), explodable (280),
+    /// scale uniformly (281) and annotative (`AcadAnnotative` xdata).
+    block_props: HashMap<String, BlockProps>,
     /// Upper-case names of anonymous `*T` blocks drawn by ACAD_TABLE entities.
     table_blocks: std::collections::HashSet<String>,
     /// Upper-case block names used by INSERTs.
@@ -129,6 +139,9 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
     objs.apply(&mut d, &rx);
     crate::dxf_image::resolve(&secs, &mut d);
     crate::dxf_mline::resolve(&secs, &mut d);
+    // Annotation scale contexts, after CADCraft's own record (they are newer when AutoCAD edited
+    // the file since).
+    crate::dxf_anno::resolve(&secs, &mut d);
     // Keep handles unique against the header's seed.
     let seed = d.header.str("HANDSEED", "");
     if let Some(h) = own_seed.or_else(|| Handle::parse_hex(&seed)) {
