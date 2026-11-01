@@ -14,6 +14,11 @@ fn dxf(tags: &[(i32, &str)]) -> String {
 
 /// A layout viewport with view centre `center` (12/22) and view target `target` (17/27/37).
 fn with_viewport(center: [&str; 2], target: [&str; 3]) -> Drawing {
+    looking_along(center, target, ["0", "0", "1"])
+}
+
+/// The same, looking along view direction `dir` (16/26/36).
+fn looking_along(center: [&str; 2], target: [&str; 3], dir: [&str; 3]) -> Drawing {
     let tags: Vec<(i32, &str)> = vec![
         (0, "SECTION"),
         (2, "ENTITIES"),
@@ -30,9 +35,9 @@ fn with_viewport(center: [&str; 2], target: [&str; 3]) -> Drawing {
         (69, "2"),
         (12, center[0]),
         (22, center[1]),
-        (16, "0"),
-        (26, "0"),
-        (36, "1"),
+        (16, dir[0]),
+        (26, dir[1]),
+        (36, dir[2]),
         (17, target[0]),
         (27, target[1]),
         (37, target[2]),
@@ -73,6 +78,15 @@ fn a_viewport_looks_at_its_target_plus_its_centre() {
     // Both set: their sum. A target alone of 0 leaves the centre as it is.
     assert_eq!(view_center(&with_viewport(["10", "5"], ["100", "50", "7"])), Vec2::new(110.0, 55.0));
     assert_eq!(view_center(&with_viewport(["10", "5"], ["0", "0", "0"])), Vec2::new(10.0, 5.0));
+}
+
+/// CADCraft draws every viewport as a plan view (the view direction, 16/26/36, isn't applied). A
+/// viewport looking along another direction is centred on what it looks at, its target, as
+/// AutoCAD's view of it is; its centre is in that view's own axes, so only the target is exact.
+#[test]
+fn a_viewport_looking_along_another_direction_centres_on_its_target() {
+    let c = view_center(&looking_along(["0", "0"], ["500", "-200", "30"], ["1", "1", "1"]));
+    assert_eq!(c, Vec2::new(500.0, -200.0));
 }
 
 /// Saved and reopened, the viewport still looks at the same place: CADCraft writes the whole
