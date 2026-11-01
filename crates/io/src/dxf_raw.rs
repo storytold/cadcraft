@@ -1155,12 +1155,10 @@ fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: Opti
         }
         if Some(i) == handle_at
             && let Some(x) = x
+            && h.xdict.is_none()
+            && let Some(xd) = x.xdict
         {
-            if h.xdict.is_none()
-                && let Some(xd) = x.xdict
-            {
-                map.handle_group(out, "ACAD_XDICTIONARY", 360, &[xd.hex()]);
-            }
+            map.handle_group(out, "ACAD_XDICTIONARY", 360, &[xd.hex()]);
         }
     }
     if let Some(x) = x {
