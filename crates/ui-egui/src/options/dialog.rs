@@ -141,7 +141,7 @@ fn display(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
     grid(ui, "options_display", |ui| {
         let theme_caption = ui.label(crate::tl!("Interface theme"));
         let mut theme = app.ui.theme;
-        let theme_combo = egui::ComboBox::from_id_salt("options_theme").selected_text(theme_label(theme)).show_ui(ui, |ui| {
+        let theme_combo = craft_ui::ComboBox::from_id_salt("options_theme").selected_text(theme_label(theme)).show_ui(ui, |ui| {
             for t in ThemePref::ALL {
                 ui.selectable_value(&mut theme, t, theme_label(t));
             }
@@ -154,7 +154,7 @@ fn display(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
 
         let animations_caption = ui.label(crate::tl!("Animation effects"));
         let mut animations = app.ui.animations;
-        let animations_combo = egui::ComboBox::from_id_salt("options_animations").selected_text(animations_label(animations)).show_ui(ui, |ui| {
+        let animations_combo = craft_ui::ComboBox::from_id_salt("options_animations").selected_text(animations_label(animations)).show_ui(ui, |ui| {
             for a in AnimationPref::ALL {
                 ui.selectable_value(&mut animations, a, animations_label(a));
             }
@@ -168,7 +168,7 @@ fn display(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
         let scale_caption = ui.label(crate::tl!("Interface scale"));
         let scale = app.options.interface_scale;
         let percent = |s: f32| format!("{} %", (s * 100.0).round());
-        let scale_combo = egui::ComboBox::from_id_salt("options_interface_scale").selected_text(percent(scale)).show_ui(ui, |ui| {
+        let scale_combo = craft_ui::ComboBox::from_id_salt("options_interface_scale").selected_text(percent(scale)).show_ui(ui, |ui| {
             for n in [75u16, 100, 125, 150, 175, 200, 250, 300] {
                 let s = f32::from(n) / 100.0;
                 if ui.selectable_label((scale - s).abs() < 1e-4, format!("{n} %")).clicked() && (scale - s).abs() >= 1e-4 {
@@ -225,6 +225,8 @@ fn files(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
         ui.end_row();
         autosave_row(ui, changes);
         ui.end_row();
+        backup_row(ui, changes);
+        ui.end_row();
         savefile_row(ui, changes);
         ui.end_row();
     });
@@ -252,7 +254,7 @@ fn save_version_row(ui: &mut egui::Ui, app: &CadApp, changes: &mut Map<String, V
     let version_caption = ui.label(crate::tl!("Default save version"));
     let current = crate::SaveVersion::parse(&app.ui.save_version).unwrap_or_default();
     let mut version = current;
-    let version_combo = egui::ComboBox::from_id_salt("options_save_version").selected_text(version.year()).show_ui(ui, |ui| {
+    let version_combo = craft_ui::ComboBox::from_id_salt("options_save_version").selected_text(version.year()).show_ui(ui, |ui| {
         for v in crate::SaveVersion::ALL {
             ui.selectable_value(&mut version, v, v.year());
         }
@@ -282,6 +284,15 @@ fn autosave_row(ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
     let max = cadcraft_engine::autosave::MAX_SAVETIME;
     if ui.add(egui::DragValue::new(&mut minutes).range(0..=max).suffix(format!(" {}", crate::tl!("min")))).labelled_by(minutes_caption.id).changed() {
         changes.insert("SAVETIME".into(), json!(minutes));
+    }
+}
+
+/// ISAVEBAK: keep the previous file as `<name>.bak` when saving over a drawing.
+fn backup_row(ui: &mut egui::Ui, changes: &mut Map<String, Value>) {
+    ui.label(crate::tl!("Backup copy"));
+    let mut bak = cadcraft_engine::autosave::isavebak();
+    if ui.checkbox(&mut bak, crate::tl!("Create backup copy with each save")).changed() {
+        changes.insert("ISAVEBAK".into(), json!(i32::from(bak)));
     }
 }
 
@@ -531,7 +542,7 @@ fn preferences(app: &CadApp, ui: &mut egui::Ui, changes: &mut Map<String, Value>
     grid(ui, "options_preferences", |ui| {
         let language_caption = ui.label(crate::tl!("Interface language"));
         let mut lang = app.ui.interface_language;
-        let language_combo = egui::ComboBox::from_id_salt("options_language").selected_text(lang.name()).show_ui(ui, |ui| {
+        let language_combo = craft_ui::ComboBox::from_id_salt("options_language").selected_text(lang.name()).show_ui(ui, |ui| {
             for p in crate::i18n::Preference::for_picker() {
                 ui.selectable_value(&mut lang, p, p.name());
             }

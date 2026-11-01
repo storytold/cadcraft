@@ -8,7 +8,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::*;
+use super::{CommandSpec, always, bad};
 use crate::{Result, Session, Settings};
 
 /// The profile variables, in the order [`profile`] lists them.

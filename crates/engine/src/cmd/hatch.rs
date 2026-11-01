@@ -10,11 +10,12 @@ use cadcraft_geom::{Bounds2, PolyVertex, Polyline, Vec2, point_in_polygon};
 use serde_json::{Value, json};
 
 use super::helpers::lwpoly;
-use super::*;
+use super::{CommandSpec, bad, bool_or, f64_or, point_param, points_param, size_param, str_param, targets};
 
 use crate::{Accept, EngineError, Input, Interactive, Picker, Prompt, Result, Session, Step};
 
 mod assoc;
+pub(crate) use assoc::detach;
 mod edit;
 mod pick;
 use super::has_doc;
@@ -550,6 +551,9 @@ struct HatchM {
     /// Loops by pick (one hatch each when separate).
     loops: Vec<Vec<HatchLoop>>,
     asking: Option<HatchAsk>,
+    /// The pattern was asked by the Pattern option: its scale and angle follow, as at AutoCAD's
+    /// -HATCH Properties.
+    properties: bool,
     /// "Select objects" mode instead of "Pick internal point"; the next HATCH starts in it again.
     selecting: bool,
 }
@@ -561,6 +565,7 @@ impl HatchM {
             settings: HatchSettings::from(s, &Value::Null, gradient),
             loops: Vec::new(),
             asking: None,
+            properties: false,
             selecting: s.last_used.hatch_select,
         }
     }
@@ -582,11 +587,13 @@ impl HatchM {
         h.set_i64("HPORIGINMODE", mode.index());
         Ok(())
     }
-    fn answer(&mut self, s: &mut Session, a: HatchAsk, t: &str) -> Result<()> {
+    /// Take an answer to sub-prompt `a`; false when it was refused.
+    fn answer(&mut self, s: &mut Session, a: HatchAsk, t: &str) -> Result<bool> {
         match a {
             HatchAsk::Pattern => {
                 let up = match patfile::typed_file(s, t.trim()) {
-                    Some(n) if n.is_empty() => return Ok(()),
+                    // Nothing loaded from it: the pattern is asked again.
+                    Some(n) if n.is_empty() => return Ok(false),
                     Some(n) => n,
                     None => t.trim().to_ascii_uppercase(),
                 };
@@ -595,20 +602,19 @@ impl HatchM {
                     s.doc_mut()?.header.set_str("HPNAME", &up);
                 } else {
                     s.echo(format!("Unknown pattern {up}. Available: {}", patfile::names().join(", ")));
+                    return Ok(false);
                 }
             }
             HatchAsk::Scale => {
-                if let Some(v) = super::machines::number(t).filter(|v| v.is_finite() && *v > 0.0) {
-                    self.settings.scale = v;
-                    s.doc_mut()?.header.set_f64("HPSCALE", v);
-                }
+                let Some(v) = super::machines::number(t).filter(|v| v.is_finite() && *v > 0.0) else { return Ok(false) };
+                self.settings.scale = v;
+                s.doc_mut()?.header.set_f64("HPSCALE", v);
             }
             HatchAsk::Angle => {
                 // Turns the pattern from the X axis (not from ANGBASE), clockwise when ANGDIR is 1.
-                if let Some(a) = s.angle_settings().rotation(t).filter(|a| a.is_finite()) {
-                    self.settings.angle = a;
-                    s.doc_mut()?.header.set_f64("HPANG", a);
-                }
+                let Some(a) = s.angle_settings().rotation(t).filter(|a| a.is_finite()) else { return Ok(false) };
+                self.settings.angle = a;
+                s.doc_mut()?.header.set_f64("HPANG", a);
             }
             HatchAsk::Origin => {
                 let mode = match t {
@@ -622,7 +628,22 @@ impl HatchM {
                 self.set_origin(s, None, mode)?;
             }
         }
-        Ok(())
+        Ok(true)
+    }
+
+    /// The sub-prompt that follows `a` (`taken`: its answer was taken). The Pattern option goes
+    /// on, as AutoCAD 2024's -HATCH Properties does, from the pattern name to its scale and then
+    /// its angle (a solid fill has neither), and asks again for a pattern or a value it refused.
+    fn after(&self, a: HatchAsk, taken: bool) -> Option<HatchAsk> {
+        if !self.properties {
+            return None;
+        }
+        match a {
+            _ if !taken => Some(a),
+            HatchAsk::Pattern if self.settings.pattern != "SOLID" => Some(HatchAsk::Scale),
+            HatchAsk::Scale => Some(HatchAsk::Angle),
+            _ => None,
+        }
     }
 }
 
@@ -643,9 +664,10 @@ impl Interactive for HatchM {
         // The sub-prompts offer the current value: Enter keeps it.
         match self.asking {
             Some(HatchAsk::Pattern) => {
-                return Prompt::new("Enter a pattern name", Accept::TEXT)
+                let p = Prompt::new("Enter a pattern name", Accept::TEXT)
                     .default(self.settings.pattern.clone())
                     .picker(Picker::HatchPattern(self.settings.pattern.clone()));
+                return if self.gradient { p } else { p.kw(&["Solid"]) };
             }
             Some(HatchAsk::Scale) => {
                 return Prompt::new("Specify a scale for the hatch pattern", Accept::NUMBER).default(format!("{:.4}", self.settings.scale));
@@ -686,11 +708,19 @@ impl Interactive for HatchM {
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         if let Some(a) = self.asking.take() {
-            match &i {
-                Input::Point(p) if a == HatchAsk::Origin => self.set_origin(s, Some(*p), OriginMode::Current)?,
+            let taken = match &i {
+                Input::Point(p) if a == HatchAsk::Origin => {
+                    self.set_origin(s, Some(*p), OriginMode::Current)?;
+                    true
+                }
+                Input::Keyword(k) if a == HatchAsk::Pattern && k == "Solid" => self.answer(s, a, "SOLID")?,
                 Input::Text(t) | Input::Keyword(t) => self.answer(s, a, t)?,
-                _ => {}
-            }
+                // Enter keeps the current value; a point or a pick answers none of these prompts.
+                Input::Enter => true,
+                _ => false,
+            };
+            self.asking = self.after(a, taken);
+            self.properties &= self.asking.is_some();
             return Ok(Step::Continue);
         }
         match i {
@@ -723,7 +753,10 @@ impl Interactive for HatchM {
                     "Select objects" => self.set_mode(s, true),
                     "picK internal point" => self.set_mode(s, false),
                     "Undo" => self.loops.clear(),
-                    "Pattern" | "seTtings" => self.asking = Some(HatchAsk::Pattern),
+                    "Pattern" | "seTtings" => {
+                        self.asking = Some(HatchAsk::Pattern);
+                        self.properties = !self.gradient;
+                    }
                     "sCale" => self.asking = Some(HatchAsk::Scale),
                     "Angle" => self.asking = Some(HatchAsk::Angle),
                     "Origin" => self.asking = Some(HatchAsk::Origin),
@@ -738,7 +771,7 @@ impl Interactive for HatchM {
             }
             // A pattern chosen in the picker while boundaries are picked.
             Input::Text(t) if !self.gradient => {
-                self.answer(s, HatchAsk::Pattern, &t)?;
+                let _ = self.answer(s, HatchAsk::Pattern, &t)?;
                 Ok(Step::Continue)
             }
             // Enter ends boundary picking in either mode and creates the hatch.
@@ -838,6 +871,9 @@ mod tests {
         s.input(Input::Keyword("Pattern".into())).unwrap();
         assert!(s.current_prompt().unwrap().picker.is_some());
         s.input(Input::Text("BRICK".into())).unwrap();
+        // Its scale and angle follow; Enter keeps them.
+        s.input(Input::Enter).unwrap();
+        s.input(Input::Enter).unwrap();
         s.input(Input::Point(Vec2::new(5.0, 5.0))).unwrap();
         s.input(Input::Enter).unwrap();
         assert_eq!(only_hatch(&s).1.pattern, "BRICK");
@@ -849,6 +885,53 @@ mod tests {
         s.cancel();
         s.start("gradient").unwrap();
         assert!(s.current_prompt().unwrap().picker.is_none());
+    }
+
+    /// -HATCH's Properties as AutoCAD 2024 takes them from AutoLISP's `command` (accoreconsole, the
+    /// hatch read back with `entget`): a pattern name, then its scale and angle (Enter keeps them);
+    /// Solid (`S`, `_S` or SOLID) asks neither; an unknown name is asked again.
+    #[test]
+    fn hatch_properties_ask_pattern_scale_and_angle_as_autocad() {
+        // (properties given, pattern, solid, scale, angle in degrees)
+        let cases: [(&str, &str, bool, f64, f64); 7] = [
+            ("\"ANSI31\" 2 45 \"_S\" (entlast) \"\"", "ANSI31", false, 2.0, 45.0),
+            ("\"_S\" \"_S\" (entlast) \"\"", "SOLID", true, 1.0, 0.0),
+            ("\"ANSI37\" 0.5 30 '(5.0 5.0)", "ANSI37", false, 0.5, 30.0),
+            ("\"ANSI31\" \"\" \"\" '(5.0 5.0)", "ANSI31", false, 1.0, 0.0),
+            ("\"S\" '(5.0 5.0)", "SOLID", true, 1.0, 0.0),
+            ("\"SOLID\" '(5.0 5.0)", "SOLID", true, 1.0, 0.0),
+            ("\"XYZ\" \"ANSI31\" 1 0 '(5.0 5.0)", "ANSI31", false, 1.0, 0.0),
+        ];
+        for (props, pattern, solid, scale, angle) in cases {
+            let mut s = Session::new();
+            s.execute("circle", &json!({ "center": [20, 15], "radius": 8 })).unwrap();
+            s.execute("rectang", &json!({ "p1": [0, 0], "p2": [40, 30] })).unwrap();
+            s.cmdline("(setvar \"HPNAME\" \"ANSI31\")").unwrap();
+            s.cmdline("(setvar \"HPSCALE\" 1.0)").unwrap();
+            s.cmdline("(setvar \"HPANG\" 0.0)").unwrap();
+            s.cmdline(&format!("(command \"_.-HATCH\" \"_P\" {props} \"\")")).unwrap();
+            assert!(s.running.is_none(), "{props}: {}", s.prompt_text());
+            let h = only_hatch(&s).1;
+            assert!(
+                h.pattern == pattern && h.solid == solid && (h.scale - scale).abs() < 1e-12 && (h.angle - angle.to_radians()).abs() < 1e-12,
+                "{props}: {} {} {} {}",
+                h.pattern,
+                h.solid,
+                h.scale,
+                h.angle.to_degrees()
+            );
+        }
+        // An object (an entity name from LISP) answers none of these prompts: each is asked again.
+        let mut s = Session::new();
+        s.execute("rectang", &json!({ "p1": [0, 0], "p2": [40, 30] })).unwrap();
+        let h = s.doc().unwrap().model.handles()[0];
+        s.cmdline("(command \"_.-HATCH\" \"_P\")").unwrap();
+        s.input(crate::Input::Pick(vec![h])).unwrap();
+        assert!(s.prompt_text().contains("Enter a pattern name"), "{}", s.prompt_text());
+        s.cmdline("ANSI31").unwrap();
+        s.input(crate::Input::Pick(vec![h])).unwrap();
+        assert!(s.prompt_text().contains("Specify a scale for the hatch pattern"), "{}", s.prompt_text());
+        s.cancel();
     }
 
     #[test]

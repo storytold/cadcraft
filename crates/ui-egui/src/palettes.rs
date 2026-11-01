@@ -727,6 +727,22 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
         let tb_styles: Vec<String> = d.table_styles.iter().map(|l| l.name.clone()).collect();
         let mut action: Option<(&str, Value)> = None;
         let mut act = |c: &'static str, p: Value| action = Some((c, p));
+        // In the Block Editor, the edited block's name and description come first.
+        let edited = app.session.state().ok().and_then(|st| {
+            let be = st.block_edit.as_ref().filter(|be| !be.current)?;
+            let b = d.block(&be.name).or_else(|| be.host.doc.block(&be.name));
+            Some((be.name.clone(), b.map(|b| b.description.clone()).unwrap_or_default()))
+        });
+        if let Some((name, description)) = edited {
+            prop_row(ui, "Name", |ui| {
+                value_box(ui, &name, false, false).on_hover_text(crate::tl!("Read-only"));
+            });
+            prop_row(ui, "Description", |ui| {
+                if let Some(text) = edit_field(ui, ui.scope_id().with("block_description"), description) {
+                    act("blocks.description", json!({ "description": text }));
+                }
+            });
+        }
         prop_row(ui, "Color", |ui| {
             ui.menu_button(format!("■ {}", crate::i18n::t(&Color::from_aci(h.i64("CECOLOR", 256) as i16).name())), |ui| {
                 for (n, c) in [

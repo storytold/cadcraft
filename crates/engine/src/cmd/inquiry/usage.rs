@@ -432,5 +432,4 @@ pub fn run(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 #[cfg(test)]
-#[path = "usage_tests.rs"]
 mod tests;

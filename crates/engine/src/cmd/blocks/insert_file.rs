@@ -59,7 +59,7 @@ pub(super) fn file_ref(s: &Session, t: &str) -> Option<FileRef> {
 }
 
 /// The file name without folders and extension (either separator, so Windows paths work anywhere).
-fn stem(path: &str) -> String {
+pub(super) fn stem(path: &str) -> String {
     let file = path.rsplit(['/', '\\']).next().unwrap_or(path);
     match file.rsplit_once('.') {
         Some((stem, _)) if !stem.is_empty() => stem.to_string(),

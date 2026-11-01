@@ -93,6 +93,7 @@
 	Blend	Spojit křivky
 	Block	Blok
 	Block Attribute Manager...	Správce atributů bloků...
+	Block Description...	Popis bloku...
 	Block Editor	Editor bloků
 	Block Reference	Reference bloku
 	Block...	Blok...
@@ -554,6 +555,7 @@
 	N	S
 	Name	Název
 	Name (A–Z)	Název (A–Z)
+	Named Viewports...	Pojmenované výřezy...
 	Named Views...	Pojmenované pohledy...
 	Nearest	Nejbližší
 	New	Nový
@@ -598,6 +600,7 @@
 	One of the Crafting Apps by the ArtCraft team and community.	Jedna z aplikací Crafting Apps od týmu ArtCraft a komunity.
 	Only in this drawing: {n}	Pouze v tomto výkresu: {n}
 	Only in {name}: {n}	Pouze v {name}: {n}
+	Oops	Obnovit vymazané objekty
 	Open (⌘O)	Otevřít (⌘O)
 	Open Sample Drawing	Otevřít ukázkový výkres
 	Open sample drawing	Otevřít ukázku výkresu
@@ -1380,3 +1383,10 @@ menu	Modify	Modifikace
 	CADCraft is up to date.	CADCraft je aktuální.
 	Could not check for updates.	Aktualizace se nepodařilo zkontrolovat.
 	Font	Písmo
+	Backup copy	Záložní kopie
+	Create backup copy with each save	Při každém uložení vytvořit záložní kopii
+	Change	Změnit
+	Change Properties	Změnit vlastnosti
+	Units	Jednotky
+	Save Layout as Template	Uložit rozvržení jako šablonu
+	Save changes to block "{name}"?	Uložit změny do bloku „{name}“?

@@ -34,6 +34,18 @@ pub const STALE_LOCK_SECS: u64 = 5 * 60;
 const HEARTBEAT_SECS: f64 = 60.0;
 
 static SAVETIME: AtomicU32 = AtomicU32::new(DEFAULT_SAVETIME);
+static ISAVEBAK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// ISAVEBAK: whether saving over a drawing keeps the previous file as `<name>.bak` (on by
+/// default, as in AutoCAD). A profile setting like SAVETIME.
+pub fn isavebak() -> bool {
+    ISAVEBAK.load(Ordering::Relaxed)
+}
+
+/// Turn ISAVEBAK on or off.
+pub fn set_isavebak(on: bool) {
+    ISAVEBAK.store(on, Ordering::Relaxed);
+}
 static SAVEFILEPATH: Mutex<String> = Mutex::new(String::new());
 
 /// SAVETIME: minutes between autosaves; 0 turns autosave off.
@@ -59,10 +71,22 @@ pub fn set_savefilepath(path: &str) {
 
 /// The autosave file name for drawing `uid` titled `title`, written by app instance `instance`.
 pub fn file_name(title: &str, instance: &str, uid: u64) -> String {
-    let stem: String = title.chars().map(|c| if c.is_alphanumeric() || " .-_()".contains(c) { c } else { '-' }).take(80).collect();
+    // File systems limit a name to 255 bytes, so the stem gets what the suffix leaves, cut at a character boundary.
+    let suffix = format!("_{instance}_{uid}.{EXT}");
+    let budget = 255usize.saturating_sub(suffix.len());
+    let mut used = 0;
+    let stem: String = title
+        .chars()
+        .map(|c| if c.is_alphanumeric() || " .-_()".contains(c) { c } else { '-' })
+        .take(80)
+        .take_while(|c| {
+            used += c.len_utf8();
+            used <= budget
+        })
+        .collect();
     let stem = stem.trim().trim_matches('.');
     let stem = if stem.is_empty() { "Drawing" } else { stem };
-    format!("{stem}_{instance}_{uid}.{EXT}")
+    format!("{stem}{suffix}")
 }
 
 /// Whether `s` has the form of an app instance id (`<process id>-<start time in hex>`, see
@@ -256,7 +280,10 @@ mod native {
     use std::path::Path;
     use std::time::{Duration, SystemTime};
 
-    use super::*;
+    use super::{
+        Autosaver, Drawing, HEARTBEAT_SECS, HashMap, Job, Recoverable, STALE_LOCK_SECS, Session, is_instance_id, parse_file_name, parse_lock_name,
+        savefilepath, savetime,
+    };
 
     /// A new instance id: the process id and the start time.
     pub fn instance_id() -> String {
@@ -389,6 +416,13 @@ mod native {
             writes
         }
 
+        /// Whether a background write hasn't finished yet. Its file can exist before it finishes
+        /// (the folder is synced after the rename), and until [`Autosaver::reap`] takes it in, the
+        /// drawing is left out of planning.
+        pub fn writing(&self) -> bool {
+            self.running.iter().any(|(_, h)| !h.is_finished())
+        }
+
         /// Take in the writes that have finished ([`Autosaver::tick`] does this first). A drawing
         /// whose write failed is no longer counted as autosaved: the next plan restarts its clock,
         /// so it is tried again SAVETIME later even if it doesn't change.
@@ -472,6 +506,23 @@ mod native {
             if !dir.is_empty() && is_instance_id(&self.instance) {
                 let _ = std::fs::remove_file(lock_path(Path::new(&dir), &self.instance));
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_name_fits_255_bytes_for_multibyte_titles() {
+        let instance = "12345-abcdef0123456789";
+        for title in ["图".repeat(100), "😀".repeat(100), "aé图😀".repeat(40), "a".repeat(300)] {
+            let name = file_name(&title, instance, u64::MAX);
+            assert!(name.len() <= 255, "{} bytes", name.len());
+            let (t, i, u) = parse_file_name(&name).expect("round trips");
+            assert_eq!((i, u), (instance, u64::MAX));
+            assert!(!t.is_empty());
         }
     }
 }

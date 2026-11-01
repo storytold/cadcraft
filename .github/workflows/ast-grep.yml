@@ -1,0 +1,26 @@
+# Structural rules for the command-line code (RFC-0012): lint/ast-grep's rule tests, then a scan.
+# Seconds, no Rust build.
+name: ast-grep
+
+on:
+  push:
+    branches: [main]
+    paths: ["lint/ast-grep/**", "apps/cadcraft-cli/src/**", "apps/cadcraft/src/launch_args.rs", "apps/cadcraft/src/main.rs", ".github/workflows/ast-grep.yml"]
+  pull_request:
+    paths: ["lint/ast-grep/**", "apps/cadcraft-cli/src/**", "apps/cadcraft/src/launch_args.rs", "apps/cadcraft/src/main.rs", ".github/workflows/ast-grep.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ast-grep-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    # Tracked at @main like the other shared workflows.
+    uses: storytold/craft-common-actions/.github/workflows/ast-grep.yml@main
+    with:
+      config: lint/ast-grep/sgconfig.yml
+      paths: apps/cadcraft-cli/src apps/cadcraft/src/launch_args.rs apps/cadcraft/src/main.rs
