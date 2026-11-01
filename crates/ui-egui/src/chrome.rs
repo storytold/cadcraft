@@ -421,8 +421,6 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
         });
         // MODEL / PAPER (layouts only): toggles MSPACE and PSPACE like AutoCAD's status button.
         let mut coord_right = rx - 8.0;
-        // The Layout Mode toggle, right-aligned before the annotation scale and the sheet toggles.
-        coord_right = layout_mode_button(app, ui, &p, &t, coord_right, r.center().y);
         // The annotation scale list (model space).
         coord_right = annoscale::status(app, ui, coord_right, r.center().y);
         if matches!(app.session.layout_space(), cadcraft_doc::Space::Paper(_)) {
@@ -441,6 +439,8 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
             // Scale and lock of the active or selected viewport.
             coord_right = crate::vpscale::status(app, ui, coord_right + 4.0, r.center().y) - 10.0;
         }
+        // The Layout Mode toggle, right-aligned before the annotation scale, and left of the sheet toggle in a layout.
+        coord_right = layout_mode_button(app, ui, &p, &t, coord_right, r.center().y);
         // Layout tabs: Model, "+", then the layouts that fit before the right-hand controls (the
         // current one always); the layout list reaches the rest.
         let mut tabs: Vec<String> = vec!["Model".into()];

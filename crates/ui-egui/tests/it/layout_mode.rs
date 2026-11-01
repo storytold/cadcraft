@@ -408,3 +408,47 @@ fn the_status_bar_button_toggles_the_mode() {
     h.run_steps(3);
     assert!(h.state().canvas.layout.on, "and on again");
 }
+
+/// The Layout Mode button sits clear of the MODEL/PAPER button a layout tab shows.
+#[test]
+fn the_status_bar_button_does_not_overlap_the_model_paper_button() {
+    use egui_kittest::kittest::Queryable;
+    let mut h = harness();
+    h.state_mut().session.execute("layout.set", &json!({"name": "A"})).unwrap();
+    h.run_steps(4);
+    let button = h.get_by_label("Layout Mode").rect();
+    let paper = h.get_by_label("PAPER").rect();
+    assert!(!button.intersects(paper), "the Layout Mode button {button:?} overlaps the PAPER button {paper:?}");
+}
+
+/// A taken grip does not survive the mode being turned off: nothing is applied when it comes back.
+#[test]
+fn turning_the_mode_off_drops_a_taken_grip() {
+    let mut h = harness();
+    let before = areas(&mut h);
+    let b = select_a(&mut h);
+    click_world(&mut h, center(&b));
+    h.state_mut().run("ui.toggle.layoutmode", json!({"on": false})).unwrap();
+    h.run_steps(3);
+    h.state_mut().run("ui.toggle.layoutmode", json!({"on": true})).unwrap();
+    h.run_steps(3);
+    click_world(&mut h, (b[2] + 20.0, b[3] + 20.0));
+    assert_eq!(areas(&mut h), before, "the grip was dropped, so that click put nothing down");
+}
+
+/// A double-click on a rectangle opens its layout even over a text object, which would otherwise be edited.
+#[test]
+fn a_double_click_over_text_opens_the_layout_instead_of_editing_the_text() {
+    let mut h = harness();
+    h.state_mut().run("text", json!({ "at": [10, 10], "text": "HELLO", "height": 2.5 })).unwrap();
+    h.run_steps(2);
+    let p = px(&h, 12.0, 11.0);
+    h.event(Event::PointerMoved(p));
+    for _ in 0..2 {
+        h.event(Event::PointerButton { pos: p, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+        h.event(Event::PointerButton { pos: p, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+    }
+    h.run_steps(3);
+    assert_eq!(h.state().session.layout_space(), Space::Paper("A".into()), "the layout opened");
+    assert!(h.state().session.running.is_none(), "no text edit was started");
+}

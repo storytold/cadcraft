@@ -8,7 +8,7 @@ use cadcraft_doc::{EntityKind, Handle, Space, Viewport};
 use cadcraft_geom::{Bounds2, Vec2};
 use serde_json::{Value, json};
 
-use super::super::{bad, point_param, point_value};
+use super::super::{bad, point_param};
 use crate::{Result, Session};
 
 /// The largest model extent an area may have.
@@ -44,21 +44,6 @@ pub(super) fn run_areas(s: &mut Session, _p: &Value) -> Result<Value> {
         }
     }
     Ok(Value::Array(areas))
-}
-
-/// The model window `window: [[x1, y1], [x2, y2]]` of `p`, when it has one: finite, with a width and
-/// a height.
-fn window_of(p: &Value) -> Result<Option<Bounds2>> {
-    let Some(raw) = p.get("window").filter(|w| !w.is_null()) else { return Ok(None) };
-    let corners = raw.as_array();
-    let a = corners.and_then(|c| c.first()).and_then(point_value);
-    let b = corners.and_then(|c| c.get(1)).and_then(point_value);
-    let (Some(a), Some(b)) = (a, b) else {
-        return Err(bad("layout.setarea", "`window` needs two corners: [[x1, y1], [x2, y2]]"));
-    };
-    let w = Bounds2::new(a, b);
-    let fits = w.min.is_finite() && w.max.is_finite() && w.width() > 1e-9 && w.height() > 1e-9 && w.width() < MAX_EXTENT && w.height() < MAX_EXTENT;
-    if fits { Ok(Some(w)) } else { Err(bad("layout.setarea", "the window needs a width and a height")) }
 }
 
 /// Make viewport `h` show exactly the model window `w`, whatever its proportion. The viewport takes
@@ -104,7 +89,7 @@ pub(super) fn run_setarea(s: &mut Session, p: &Value) -> Result<Value> {
     if current.locked {
         return Err(bad("layout.setarea", "the viewport is locked"));
     }
-    if let Some(w) = window_of(p)? {
+    if let Some(w) = super::window_param(p, "layout.setarea")? {
         fit_viewport(s, h, w)?;
         return Ok(json!({ "layout": layout, "handle": h.hex(), "window": [[w.min.x, w.min.y], [w.max.x, w.max.y]] }));
     }

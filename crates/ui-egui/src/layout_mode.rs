@@ -233,7 +233,7 @@ fn say(app: &mut CadApp, message: String) {
 /// Handles the pointer over the canvas. Returns whether layout mode took the input, so the
 /// canvas does not also select or pick.
 pub fn interact(app: &mut CadApp, ui: &egui::Ui, xf: &Xf, inside: bool) -> bool {
-    if !app.canvas.layout.active(&app.session) && !app.canvas.layout.busy() {
+    if !app.canvas.layout.active(&app.session) {
         app.canvas.layout.cancel();
         return false;
     }
@@ -348,7 +348,7 @@ fn finish_window(app: &mut CadApp, w: NewWindow, end: Vec2) {
 
 /// Draws the rectangles over the model.
 pub fn paint(app: &mut CadApp, painter: &egui::Painter, xf: &Xf) {
-    if !app.canvas.layout.active(&app.session) && !app.canvas.layout.busy() {
+    if !app.canvas.layout.active(&app.session) {
         return;
     }
     app.canvas.layout.refresh(&mut app.session);

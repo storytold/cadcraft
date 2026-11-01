@@ -140,9 +140,9 @@ pub struct CanvasState {
     pub(crate) dyn_hot: Option<(Handle, i32, cadcraft_engine::doc::dynblock::GripPart)>,
     pub(crate) dyn_menu: Option<(Handle, cadcraft_engine::doc::dynblock::DynGrip)>,
     pub(crate) dyn_menu_fresh: bool,
-    /// Zoom to extents once the canvas size is known (after opening a drawing).
     /// Layout mode: the rectangles of the model areas the layouts show ([`crate::layout_mode`]).
     pub layout: crate::layout_mode::LayoutMode,
+    /// Zoom to extents once the canvas size is known (after opening a drawing).
     pub zoom_pending: bool,
     pub build_ms: f64,
     pub draw_ms: f64,
@@ -779,11 +779,13 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     };
     // A clipped active viewport's outline (picks and its heavy border follow it).
     let active_clip = app.session.state().ok().and_then(|st| st.active_viewport().and_then(|(h, v)| cadcraft_render::viewport_clip(&st.doc, h, &v)));
+    // Layout mode takes a double-click on a rectangle (it opens the layout) before text or hatch editing could.
+    let layout_on = app.canvas.layout.active(&app.session);
     let Some(hatch_dialog) = handle_double_click(
         app,
         DoubleClickContext {
             inside,
-            double: dbl_primary,
+            double: dbl_primary && !layout_on,
             hover: hover_pos,
             xf,
             xf_paper,

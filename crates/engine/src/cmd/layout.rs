@@ -37,7 +37,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("→ [{layout, tabOrder, handle, window: [[x1,y1],[x2,y2]] (the model area the viewport shows), on, locked}]")
             .noundo(),
         CommandSpec::new("layout.setarea", "Set Layout Area", areas::run_setarea)
-            .params("{handle: viewport, center?: [x,y], height?} (the model area it shows; the width follows the viewport's shape) → {layout, handle, center, height}"),
+            .params("{handle: viewport, window?: [[x1,y1],[x2,y2]] (shows exactly that area, in any proportion: the viewport takes its shape), center?: [x,y], height?} (without window: the model area it shows, keeping the viewport's shape) → {layout, handle, center, height}"),
         CommandSpec::new("layout.delete", "Delete Layout", run_delete).params("{name}"),
         CommandSpec::new("layout.rename", "Rename Layout", run_rename).params("{from?: current layout, to}"),
         CommandSpec::new("layout.copy", "Copy Layout", run_copy).params("{from, to?}"),
@@ -340,20 +340,21 @@ impl Interactive for NewLayoutAreaM {
     }
 }
 
-/// The model-space window of a `layout.new`, when it has one: `window: [[x1, y1], [x2, y2]]`.
-fn window_param(p: &Value) -> Result<Option<Bounds2>> {
+/// The model-space window of command `who`, when it has one: `window: [[x1, y1], [x2, y2]]`, finite, with
+/// a width and a height. LAYOUT.NEW and LAYOUT.SETAREA share these rules.
+fn window_param(p: &Value, who: &str) -> Result<Option<Bounds2>> {
     let Some(raw) = p.get("window").filter(|w| !w.is_null()) else { return Ok(None) };
     let corners = raw.as_array();
     let a = corners.and_then(|c| c.first()).and_then(point_value);
     let b = corners.and_then(|c| c.get(1)).and_then(point_value);
     let (Some(a), Some(b)) = (a, b) else {
-        return Err(bad("layout.new", "`window` needs two corners: [[x1, y1], [x2, y2]]"));
+        return Err(bad(who, "`window` needs two corners: [[x1, y1], [x2, y2]]"));
     };
     let w = Bounds2::new(a, b);
     if w.min.is_finite() && w.max.is_finite() && w.width() > 1e-9 && w.height() > 1e-9 && w.width() < 1e12 && w.height() < 1e12 {
         Ok(Some(w))
     } else {
-        Err(bad("layout.new", "the window needs a width and a height"))
+        Err(bad(who, "the window needs a width and a height"))
     }
 }
 
@@ -361,7 +362,7 @@ fn window_param(p: &Value) -> Result<Option<Bounds2>> {
 /// `window` when it has one and to the model extents otherwise.
 fn run_new(s: &mut Session, p: &Value) -> Result<Value> {
     // Checked before anything is added, so a bad window leaves no layout behind.
-    let window = window_param(p)?;
+    let window = window_param(p, "layout.new")?;
     let d = s.doc()?;
     let name = match str_param(p, "name") {
         Some(n) => check_name("layout.new", d, n, None)?,
