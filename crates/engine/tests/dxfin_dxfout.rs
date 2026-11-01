@@ -77,6 +77,11 @@ fn dxfout_always_writes_dxf_and_dxfin_brings_its_objects_in() {
     assert_eq!(count(&t), 4);
     assert!(t.execute("dxfin", &json!({})).is_err(), "a file is required");
     assert!(t.execute("dxfin", &json!({"path": dir.join("missing.dxf").to_string_lossy()})).is_err());
+    // A file named .dxf that holds something else is refused with a reason.
+    let notes = dir.join("notes.dxf");
+    std::fs::write(&notes, "These are meeting notes, not a drawing.\n").unwrap();
+    let e = t.execute("dxfin", &json!({"path": notes.to_string_lossy()})).unwrap_err().to_string();
+    assert!(!e.trim().is_empty(), "the refusal says why");
     assert_eq!(count(&t), 4, "a refused DXFIN adds nothing");
     let _ = std::fs::remove_dir_all(&dir);
 }
