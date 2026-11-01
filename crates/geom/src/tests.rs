@@ -225,7 +225,7 @@ fn segment_offset() {
 fn arc_segments_bounded() {
     assert_eq!(arc_segments(0.0, 1.0, 0.1), 1);
     assert!(arc_segments(1e9, TAU, 1e-12) <= 4096);
-    assert!(arc_segments(f64::NAN, TAU, 0.1) == 1);
+    assert_eq!(arc_segments(f64::NAN, TAU, 0.1), 1);
 }
 
 #[test]
