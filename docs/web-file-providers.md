@@ -100,3 +100,17 @@ source, as required by this contribution's development order. This document does
 have been executed merely because fixtures are present.
 
 Contributor credit: @alejocapo04.
+
+## Native UI evidence
+
+The existing recent-files test harness covers the real Start page with the optional provider absent
+and connected, retaining the separate device history in both states. It uses synthetic drawing names
+and metadata, with no storage or authentication backend. The native label assertions also run without
+a GPU when the output variable is unset.
+
+```sh
+CRAFT_PROVIDER_UI_FIXTURES=/absolute/output cargo test --locked -p cadcraft-ui-egui --test recent_files provider_recents_render_separately_from_device_history -- --exact --test-threads=1
+```
+
+This saves `cadcraft-provider-recents-off.png` and `cadcraft-provider-recents-on.png` using
+egui_kittest's existing offscreen renderer. Keep the generated review artifacts outside Git.

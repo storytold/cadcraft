@@ -135,3 +135,62 @@ fn start_page_lists_recent_files_and_opens_one_on_click() {
     assert_eq!(app.session.state().ok().and_then(|s| s.path.clone()), Some(plan.clone()));
     assert_eq!(app.ui.recent_files, [plan, section]);
 }
+
+/// The same native Start page with the storage capability absent and connected. Optional PNGs
+/// use the existing offscreen renderer; no app window, backend, or provider filesystem is made.
+#[test]
+fn provider_recents_render_separately_from_device_history() {
+    let directory = std::env::var_os("CRAFT_PROVIDER_UI_FIXTURES").map(std::path::PathBuf::from);
+    if let Some(path) = &directory {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    for enabled in [false, true] {
+        let (_dir, plan, _) = drawings("provider-home");
+        let mut app = CadApp::new(Session::empty(), Services::default());
+        app.ui.recent_files = vec![plan];
+        if enabled {
+            let host = &app.file_providers;
+            host.set_session("fixture-session-0123456789abcdef".into()).unwrap();
+            let connection = host.connect("fixture".into(), "External storage".into(), "fixture-account".into()).unwrap();
+            host.set_resources(
+                &connection,
+                vec![cadcraft_ui_egui::file_providers::Resource {
+                    id: "provider-drawing".into(),
+                    name: "Provider drawing.dxf".into(),
+                    updated_at: String::new(),
+                }],
+            )
+            .unwrap();
+        }
+        let mut builder = Harness::builder().with_size(vec2(1280.0, 900.0));
+        if directory.is_some() {
+            builder = builder.wgpu();
+        }
+        let mut ready = false;
+        let mut h = builder.build_ui_state(
+            move |ui, app: &mut CadApp| {
+                if !ready {
+                    ready = true;
+                    return;
+                }
+                app.logic(&ui.ctx().clone());
+                app.ui(ui);
+            },
+            app,
+        );
+        h.input_mut().max_texture_side = Some(8192);
+        h.run_steps(6);
+        let mut found = Vec::new();
+        for shape in &h.output().shapes {
+            texts(&shape.shape, &mut found);
+        }
+        assert!(found.iter().any(|(text, _)| text == "plan.dxf"), "{found:?}");
+        assert_eq!(found.iter().any(|(text, _)| text == "Provider drawing.dxf"), enabled, "{found:?}");
+        assert_eq!(found.iter().any(|(text, _)| text == "Recent files — External storage"), enabled, "{found:?}");
+        assert_eq!(found.iter().any(|(text, _)| text == "Recent files on this device"), enabled, "{found:?}");
+        if let Some(path) = &directory {
+            let state = if enabled { "on" } else { "off" };
+            h.render().unwrap().save(path.join(format!("cadcraft-provider-recents-{state}.png"))).unwrap();
+        }
+    }
+}
