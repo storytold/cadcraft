@@ -375,7 +375,9 @@ impl EntityKind {
                     t3(p);
                 }
                 if let DimKind::Linear { rotation } = &mut d.kind {
-                    *rotation = cadcraft_geom::norm_angle(*rotation + rot);
+                    // A mirror reflects the dimension line's direction about the mirror line:
+                    // `rot` is twice the mirror line's angle, so `a` lands at `rot - a`.
+                    *rotation = cadcraft_geom::norm_angle(if mirror { rot - *rotation } else { *rotation + rot });
                 }
                 d.marks.transform(&t3, rot, s, mirror);
                 d.block = None;
