@@ -122,11 +122,21 @@ fn socket_path() -> Option<std::path::PathBuf> {
     std::env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty()).map(|d| std::path::PathBuf::from(d).join("CADCraft").join(name))
 }
 
-/// The socket's file name for a Windows session (`SESSIONNAME`: `Console`, `RDP-Tcp#3`…).
+/// The socket's file name for a Windows session (`SESSIONNAME`: `Console`, `RDP-Tcp#3`…). The whole
+/// name is kept, each character other than ASCII letters, digits and `-` written as `_<hex>_`, so
+/// two sessions never share a socket (`RDP-Tcp#3` and `RDP-Tcp3` stay apart). Windows keeps session
+/// names to 32 characters; a path too long for a socket only turns single instance off.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn socket_name(session: Option<&str>) -> String {
-    let session: String = session.unwrap_or_default().chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').take(32).collect();
-    if session.is_empty() { "instance.sock".to_string() } else { format!("instance-{session}.sock") }
+    let mut key = String::new();
+    for c in session.unwrap_or_default().chars() {
+        if c.is_ascii_alphanumeric() || c == '-' {
+            key.push(c);
+        } else {
+            key.push_str(&format!("_{:x}_", u32::from(c)));
+        }
+    }
+    if key.is_empty() { "instance.sock".to_string() } else { format!("instance-{key}.sock") }
 }
 
 /// Held while a launch finds out whether it is the first, so launches that start together take turns.
@@ -277,10 +287,15 @@ mod tests {
     #[test]
     fn the_socket_is_named_after_the_session() {
         assert_eq!(socket_name(Some("Console")), "instance-Console.sock");
-        assert_eq!(socket_name(Some("RDP-Tcp#3")), "instance-RDP-Tcp3.sock");
-        assert_eq!(socket_name(Some(r"..\..\x")), "instance-x.sock");
+        assert_eq!(socket_name(Some("RDP-Tcp#3")), "instance-RDP-Tcp_23_3.sock");
+        assert_eq!(socket_name(Some("RDP-Tcp3")), "instance-RDP-Tcp3.sock");
+        assert_eq!(socket_name(Some(r"..\x")), "instance-_2e__2e__5c_x.sock");
+        assert_eq!(socket_name(Some("_23_")), "instance-_5f_23_5f_.sock");
         assert_eq!(socket_name(None), "instance.sock");
-        assert_eq!(socket_name(Some("#")), "instance.sock");
+        assert_eq!(socket_name(Some("#")), "instance-_23_.sock");
+        // Nothing is cut: names that differ only past the 32nd character stay apart.
+        let long = "S".repeat(40);
+        assert_ne!(socket_name(Some(&long)), socket_name(Some(&long[..39])));
     }
 
     #[test]
