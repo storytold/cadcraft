@@ -46,10 +46,10 @@ rayon = "1"
 # rendering / formats
 tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd", "png-format"] }
 lyon_tessellation = "1.0.22"
-skrifa = "0.48"
+skrifa = "0.49"
 # Text shaping (OpenType GSUB/GPOS, HarfBuzz port on read-fonts; egui's epaint is still on 0.12,
 # so the graph has both) and the Unicode Bidirectional Algorithm for right-to-left drawing text.
-harfrust = "0.14"
+harfrust = "0.15"
 unicode-bidi = "0.3.18"
 # Line-break opportunities between Thai words for MTEXT word wrap (Thai writes no spaces between
 # words): UAX #14 with ICU4X's compiled-in LSTM word model (not its dictionaries).
