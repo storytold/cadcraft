@@ -172,6 +172,7 @@ fn services() -> Services {
                 .save_file()
                 .map(|p| p.to_string_lossy().to_string())
         })),
+        pick_folder: Some(Box::new(|| rfd::FileDialog::new().pick_folder().map(|p| p.to_string_lossy().to_string()))),
         // APPLOAD: AutoLISP routines only, starting where the last one was loaded from.
         pick_lisp: Some(Box::new(|dir: &str| {
             let dialog = rfd::FileDialog::new().add_filter(i18n::t("AutoLISP (LSP)"), &["lsp"]).add_filter(i18n::t("All files"), &["*"]);

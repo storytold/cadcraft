@@ -196,7 +196,7 @@ fn triangulate(contours: &[Vec<Vec2>]) -> Vec<Vec2> {
 /// [`triangulate`] for a glyph outline already placed in drawing coordinates (complex-script
 /// runs carry no [`TextGlyph`]): tessellated relative to its first point so f32 keeps the
 /// precision. Outlines past the limits [`mesh`] applies keep the slab filler.
-pub(super) fn triangulate_placed(contours: &[Vec<Vec2>]) -> Vec<Vec2> {
+pub fn triangulate_placed(contours: &[Vec<Vec2>]) -> Vec<Vec2> {
     let Some(&origin) = contours.iter().flatten().next() else { return Vec::new() };
     let points = contours.iter().map(Vec::len).try_fold(0usize, usize::checked_add);
     let out_of_range = |p: &Vec2| {

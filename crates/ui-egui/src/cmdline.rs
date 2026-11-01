@@ -453,6 +453,13 @@ fn visible_lines(app: &CadApp, canvas: Rect, bar: Rect) -> usize {
     app.ui.history_lines.min(MAX_LINES).min(available)
 }
 
+/// One line of command-line text laid out in reading order: text holding right-to-left letters
+/// (a Hebrew text or layer name in a prompt, history line or typed value) would otherwise be
+/// turned around as a whole by the shaper, English words and numbers included.
+fn lay(p: &egui::Painter, s: String, font: egui::FontId, color: egui::Color32) -> std::sync::Arc<egui::Galley> {
+    p.layout_job(crate::i18n::job(&s, font, color))
+}
+
 /// Draw the floating command bar and its history over the bottom-centre of `canvas`; the bar is 48 % of the canvas width, clamped to 360–760 points and never wider than the canvas minus 8 points.
 pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
     let t = Tokens::get();
@@ -469,7 +476,14 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
         let hr = Rect::from_min_size(pos2(bar.left(), bar.top() - lh * lines.len() as f32 - 4.0), vec2(w, lh * lines.len() as f32 + 2.0));
         p.rect_filled(hr, 3.0, t.cmd_history);
         for (i, l) in lines.iter().enumerate() {
-            p.text(pos2(hr.left() + 8.0, hr.top() + 1.0 + lh * i as f32), egui::Align2::LEFT_TOP, l, crate::theme::small(), t.text_dim);
+            crate::i18n::paint(
+                &p,
+                pos2(hr.left() + 8.0, hr.top() + 1.0 + lh * i as f32),
+                egui::Align2::LEFT_TOP,
+                l,
+                crate::theme::small(),
+                t.text_dim,
+            );
         }
     }
     p.rect_filled(bar, 3.0, t.cmd_bg);
@@ -483,24 +497,24 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
         Some(pr) => {
             // The grip modes name themselves ("** STRETCH **…").
             let name = app.session.running.as_ref().filter(|r| r.id != "grip").map(|r| r.id.to_ascii_uppercase() + " ").unwrap_or_default();
-            let g = p.layout_no_wrap(name, font.clone(), t.text_faint);
+            let g = lay(&p, name, font.clone(), t.text_faint);
             let gw = g.size().x;
             p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text_faint);
             x += gw;
             // A LISP `get…` prompt shows as the routine wrote it (no keywords, default or colon added).
             let message = if pr.raw { pr.display() } else { crate::i18n::t(&pr.message).to_string() };
-            let g = p.layout_no_wrap(message, font.clone(), t.text);
+            let g = lay(&p, message, font.clone(), t.text);
             let gw = g.size().x;
             p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
             x += gw;
             if !pr.raw && !pr.keywords.is_empty() {
-                let g = p.layout_no_wrap(if pr.message.is_empty() { " [".into() } else { crate::tl!(" or [").into() }, font.clone(), t.text);
+                let g = lay(&p, if pr.message.is_empty() { " [".into() } else { crate::tl!(" or [").into() }, font.clone(), t.text);
                 let gw = g.size().x;
                 p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
                 x += gw;
                 let kws = pr.keywords.clone();
                 for (i, k) in kws.iter().enumerate() {
-                    let g = p.layout_no_wrap(k.clone(), font.clone(), t.cmd_keyword);
+                    let g = lay(&p, k.clone(), font.clone(), t.cmd_keyword);
                     let r = Rect::from_min_size(pos2(x, bar.top() + 3.0), vec2(g.size().x, h - 6.0));
                     let resp = ui.interact(r, ui.scope_id().with(("kw", i)), Sense::click());
                     if resp.hovered() {
@@ -513,25 +527,25 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
                         let _ = app.session.input(Input::Keyword(k.clone()));
                     }
                     if i + 1 < kws.len() {
-                        let g = p.layout_no_wrap("/".into(), font.clone(), t.text);
+                        let g = lay(&p, "/".into(), font.clone(), t.text);
                         let gw = g.size().x;
                         p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
                         x += gw;
                     }
                 }
-                let g = p.layout_no_wrap("]".into(), font.clone(), t.text);
+                let g = lay(&p, "]".into(), font.clone(), t.text);
                 let gw = g.size().x;
                 p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
                 x += gw;
             }
             if let Some(d) = pr.default.as_ref().filter(|_| !pr.raw) {
-                let g = p.layout_no_wrap(format!(" <{d}>"), font.clone(), t.text);
+                let g = lay(&p, format!(" <{d}>"), font.clone(), t.text);
                 let gw = g.size().x;
                 p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
                 x += gw;
             }
             if !pr.raw {
-                let g = p.layout_no_wrap(": ".into(), font.clone(), t.text);
+                let g = lay(&p, ": ".into(), font.clone(), t.text);
                 let gw = g.size().x;
                 p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
                 x += gw;
@@ -551,7 +565,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
             }
         }
     }
-    let g = p.layout_no_wrap(app.cmd.buffer.clone(), font.clone(), t.text);
+    let g = lay(&p, app.cmd.buffer.clone(), font.clone(), t.text);
     let gw = g.size().x;
     p.galley(pos2(x, bar.center().y - g.size().y / 2.0), g, t.text);
     let mut caret_x = x + gw;
@@ -708,7 +722,7 @@ fn history_window(app: &CadApp, ui: &mut egui::Ui, r: Rect) {
             for l in log.get(rows).into_iter().flatten() {
                 let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), LINE_H), Sense::hover());
                 let p = ui.painter().with_clip_rect(row.intersect(ui.clip_rect()));
-                p.text(pos2(row.left(), row.center().y), egui::Align2::LEFT_CENTER, l, crate::theme::small(), t.text_dim);
+                crate::i18n::paint(&p, pos2(row.left(), row.center().y), egui::Align2::LEFT_CENTER, l, crate::theme::small(), t.text_dim);
             }
         },
     );
@@ -753,7 +767,18 @@ mod tests {
     }
 
     #[test]
+    /// The command line's own IME, at a text prompt it collects (here without the in-place
+    /// editor, which takes the keyboard when it is shown and has its own composition).
     fn ime_preedit_is_shown_and_its_commit_is_inserted_once() {
+        fn keys(app: &mut CadApp, ctx: &egui::Context, events: Vec<Event>) -> egui::FullOutput {
+            let raw = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1400.0, 900.0))), events, ..Default::default() };
+            let mut out = ctx.run_ui(raw, |ui| {
+                app.logic(ui.ctx());
+                keyboard(app, ui.ctx());
+            });
+            out.textures_delta.clear();
+            out
+        }
         use cadcraft_engine::geom::Vec2;
         let mut app = CadApp::new(Session::new(), crate::Services::default());
         app.run("text", serde_json::json!({"at": [0, 0], "text": "HELLO", "height": 2.5})).unwrap();
@@ -761,26 +786,26 @@ mod tests {
         app.session.input(Input::Point(Vec2::new(1.0, 1.0))).unwrap();
         assert_eq!(app.session.current_prompt().map(|p| p.message.clone()).as_deref(), Some("Enter new text"));
         let ctx = egui::Context::default();
-        let out = frame(&mut app, &ctx, Vec::new());
+        let out = keys(&mut app, &ctx, Vec::new());
         // The IME is enabled for the command line while it is collecting text.
         assert!(out.platform_output.ime.is_some());
         // Composition is shown at the command line but is not part of the text being edited.
-        frame(&mut app, &ctx, vec![Event::Ime(egui::ImeEvent::Preedit { text: "zhong".into(), active_range_chars: None })]);
+        keys(&mut app, &ctx, vec![Event::Ime(egui::ImeEvent::Preedit { text: "zhong".into(), active_range_chars: None })]);
         assert_eq!(app.cmd.preedit, "zhong");
         assert!(app.cmd.buffer.is_empty());
         // The committed text replaces the pre-edit, exactly once.
-        frame(&mut app, &ctx, vec![Event::Ime(egui::ImeEvent::Commit("中文".into()))]);
+        keys(&mut app, &ctx, vec![Event::Ime(egui::ImeEvent::Commit("中文".into()))]);
         assert!(app.cmd.preedit.is_empty());
         assert_eq!(app.cmd.buffer, "中文");
         let enter = |pressed| Event::Key { key: Key::Enter, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::NONE };
-        frame(&mut app, &ctx, vec![enter(true), enter(false)]);
+        keys(&mut app, &ctx, vec![enter(true), enter(false)]);
         let text = app.session.doc().unwrap().model.iter().next().map(|e| match &e.kind {
             cadcraft_engine::doc::EntityKind::Text(t) => t.value.clone(),
             _ => String::new(),
         });
         assert_eq!(text.as_deref(), Some("中文"));
         // Back to selecting objects: the next frame lets the IME go, so it can't swallow ASCII typing.
-        let out = frame(&mut app, &ctx, Vec::new());
+        let out = keys(&mut app, &ctx, Vec::new());
         assert!(out.platform_output.ime.is_none());
     }
 

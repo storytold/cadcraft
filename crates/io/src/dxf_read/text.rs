@@ -74,6 +74,7 @@ pub(super) fn mtext_from(tags: &[Tag], c: &Common) -> MText {
         };
     }
     MText {
+        formula: crate::dxf_ext::formula(tags),
         insert: t.p(10),
         height: t.fd(40, 0.2).max(1e-9),
         // An MTEXT's width is one column's: with columns, the column width (48, or 44 of the
@@ -119,6 +120,7 @@ pub(super) fn text_from(t: &T) -> Text {
         style: t.s(7).unwrap_or_else(|| "Standard".into()),
         halign: h,
         valign: v,
+        formula: crate::dxf_ext::formula(t.0),
     };
     let n = Vec3::new(t.fd(210, 0.0), t.fd(220, 0.0), t.fd(230, 1.0));
     if n.z < 0.0 {
@@ -167,6 +169,8 @@ pub(super) fn attdef(tags: &[Tag], c: &Common) -> Attrib {
     if let Some(m) = &multiline {
         text.value.clone_from(&m.read_as);
     }
+    // The formula's xdata closes the record, after any embedded multiline text.
+    text.formula = crate::dxf_ext::formula(tags);
     Attrib {
         tag: own.s(2).unwrap_or_default(),
         text,
