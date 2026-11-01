@@ -260,11 +260,19 @@ impl EntityKind {
 
     /// Apply a 2D affine transform (move/rotate/uniform scale/mirror). Non-uniform scale turns
     /// circles into ellipses only where the kind supports it; otherwise radii use the mean scale.
+    /// Z coordinates pass through untouched; for a translation along Z see `transform_dz`.
     pub fn transform(&mut self, m: &Mat3) {
+        self.transform_dz(m, 0.0);
+    }
+
+    /// [`EntityKind::transform`] with an additional translation along Z (MOVE/COPY with a Z
+    /// delta). Planar operations (ROTATE/SCALE/MIRROR) pass 0 and leave Z untouched.
+    pub fn transform_dz(&mut self, m: &Mat3, dz: f64) {
         let t3 = |p: &mut Vec3| {
             let q = m.apply(p.xy());
             p.x = q.x;
             p.y = q.y;
+            p.z += dz;
         };
         let s = m.scale_factor();
         let rot = m.rotation();

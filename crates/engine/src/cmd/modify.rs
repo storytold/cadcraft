@@ -46,12 +46,12 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("move", "Move", run_move)
             .menu(&["Modify", "Move"])
             .alias(&["m"])
-            .params("{handles?, from?: [x,y], to?: [x,y] | delta: [dx,dy]}")
+            .params("{handles?, from?: [x,y], to?: [x,y] | delta: [dx,dy,dz?]}")
             .interactive(|_| Ok(Box::new(DisplaceM::new(Op::Move)))),
         CommandSpec::new("copy", "Copy", run_copy)
             .menu(&["Modify", "Copy"])
             .alias(&["co", "cp"])
-            .params("{handles?, delta: [dx,dy] | from,to, count?: n}")
+            .params("{handles?, delta: [dx,dy,dz?] | from,to, count?: n}")
             .interactive(|_| Ok(Box::new(DisplaceM::new(Op::Copy)))),
         CommandSpec::new("rotate", "Rotate", run_rotate)
             .menu(&["Modify", "Rotate"])

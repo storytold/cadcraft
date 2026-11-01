@@ -8,6 +8,12 @@ pub(crate) fn transform_entities(s: &mut Session, hs: &[Handle], m: &Mat3, copy:
     edit_entities(s, hs, copy, |e| e.kind.transform(m))
 }
 
+/// [`transform_entities`] with an additional translation along Z (MOVE/COPY with a Z delta).
+/// Every other caller passes 0 and leaves Z untouched.
+pub(crate) fn transform_entities_dz(s: &mut Session, hs: &[Handle], m: &Mat3, dz: f64, copy: bool) -> Result<Vec<Handle>> {
+    edit_entities(s, hs, copy, |e| e.kind.transform_dz(m, dz))
+}
+
 /// Scale `hs` by `f` about `base` in 3D, as AutoCAD 2024's SCALE does: about the base point's XY,
 /// and every height of the objects about its Z, their thickness too.
 pub(crate) fn scale_entities(s: &mut Session, hs: &[Handle], base: Vec3, f: f64, copy: bool) -> Result<Vec<Handle>> {
@@ -81,23 +87,47 @@ pub(super) fn delta_of(cmd: &str, p: &Value) -> Result<Vec2> {
     Ok(b - a)
 }
 
+/// A point param's Z offset: the optional third array element (or `z` field), else 0.
+fn dz_of(cmd: &str, v: &Value) -> Result<f64> {
+    let z = match v {
+        Value::Array(a) => match a.get(2) {
+            None | Some(Value::Null) => 0.0,
+            Some(z) => z.as_f64().ok_or_else(|| bad(cmd, "`delta` [dx, dy, dz] needs numbers"))?,
+        },
+        Value::Object(_) => v.get("z").and_then(Value::as_f64).unwrap_or(0.0),
+        _ => 0.0,
+    };
+    if z.is_finite() { Ok(z) } else { Err(bad(cmd, "the Z offset must be finite")) }
+}
+
+/// MOVE/COPY displacement with an optional Z: `delta[2]`, or `to[2] - from[2]`.
+fn delta3_of(cmd: &str, p: &Value) -> Result<(Vec2, f64)> {
+    let d = delta_of(cmd, p)?;
+    let dz = if let Some(v) = p.get("delta") {
+        dz_of(cmd, v)?
+    } else {
+        dz_of(cmd, p.get("to").unwrap_or(&Value::Null))? - dz_of(cmd, p.get("from").unwrap_or(&Value::Null))?
+    };
+    Ok((d, dz))
+}
+
 pub(super) fn run_move(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
-    let d = delta_of("move", p)?;
-    let moved = transform_entities(s, &hs, &Mat3::translate(d), false)?;
+    let (d, dz) = delta3_of("move", p)?;
+    let moved = transform_entities_dz(s, &hs, &Mat3::translate(d), dz, false)?;
     Ok(json!({ "moved": moved.len() }))
 }
 
 pub(super) fn run_copy(s: &mut Session, p: &Value) -> Result<Value> {
     let hs = targets(s, p)?;
-    let d = delta_of("copy", p)?;
+    let (d, dz) = delta3_of("copy", p)?;
     let n = match p.get("count") {
         None => 1,
         Some(v) => v.as_u64().filter(|n| (1..=10_000).contains(n)).ok_or_else(|| bad("copy", "`count` must be an integer from 1 to 10000"))?,
     };
     let mut out = Vec::new();
     for k in 1..=n {
-        out.extend(transform_entities(s, &hs, &Mat3::translate(d * k as f64), true)?.into_iter().map(|h| h.hex()));
+        out.extend(transform_entities_dz(s, &hs, &Mat3::translate(d * k as f64), dz * k as f64, true)?.into_iter().map(|h| h.hex()));
     }
     Ok(json!({ "handles": out }))
 }
