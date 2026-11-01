@@ -1,8 +1,9 @@
 //! A placed attribute keeps the field of its attribute definition: the definition's extension
 //! dictionary (ACAD_FIELD dictionary and FIELD objects) is written for the attribute too, with the
-//! checksum and cached result of the text the attribute shows.
+//! checksum and cached result of the text the attribute shows, and a DWG save keeps the cached
+//! values of the FIELD objects.
 
-use cadcraft_io::{read, write};
+use cadcraft_io::{SaveOptions, Version, read, write, write_with};
 
 /// An `_text` FIELD object (AutoCAD's R2007 and later layout) that owns the variable field `child`.
 fn text_field(handle: &str, owner: &str, child: &str) -> String {
@@ -130,6 +131,24 @@ fn a_block_without_a_field_is_unchanged() {
     assert!(records(&g, "FIELDLIST").is_empty());
     let attrib = records(&g, "ATTRIB").into_iter().next().expect("the attribute");
     assert_eq!(first(&attrib, 360), None);
+}
+
+/// The FIELD objects keep their cached values through a DWG save and reopen, and the attribute
+/// still has its field after saving the reopened drawing again.
+#[test]
+fn the_field_survives_a_dwg_save_and_reopen() {
+    let d = read(&drawing(true, "246-302-A"), "t.dxf").unwrap();
+    for version in [Version::R2007, Version::R2010, Version::R2013, Version::R2018] {
+        let save = |d: &_| write_with(d, "t.dwg", &SaveOptions { version: Some(version), binary: false }).unwrap();
+        let back = read(&save(&d), "t.dwg").unwrap();
+        assert_field_on_attribute(&write(&back, "t.dxf").unwrap(), "246-302-A");
+        let again = read(&save(&back), "t.dwg").unwrap();
+        assert_field_on_attribute(&write(&again, "t.dxf").unwrap(), "246-302-A");
+        let g = groups(&write(&again, "t.dxf").unwrap());
+        let cached =
+            records(&g, "FIELD").iter().any(|r| first(r, 1) == Some("AcVar") && r.iter().any(|t| t.0 == 1 && t.1.ends_with("246-302-A.dwg")));
+        assert!(cached, "{version:?}: the variable field keeps its cached path");
+    }
 }
 
 /// The object a dictionary's first entry names (hard owner 360 or soft owner 350).

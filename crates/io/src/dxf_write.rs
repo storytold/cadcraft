@@ -120,7 +120,23 @@ pub fn tags(d: &Drawing, version: Version) -> Vec<Tag> {
 pub(crate) fn dwg_bridge(d: &Drawing, dwg: Version) -> String {
     let mut tags = tags_for(d, Version::R2000, dwg);
     bridge_markers(&mut tags);
+    bridge_fields(&mut tags, dwg);
     cadcraft_dxf::write_ascii(&tags)
+}
+
+/// A FIELD object's cached values carry the R2007 layout (a flags group 93 before each value's
+/// type, a unit and format after it); the bridge reads an R2000 file's FIELD without them and the
+/// DWG loses the evaluated text, path and checksum. A drawing with fields for a 2007 or later DWG
+/// is declared R2007 (AC1021) instead.
+fn bridge_fields(tags: &mut [Tag], dwg: Version) {
+    if dwg < Version::R2007 || !tags.iter().any(|t| t.code == 0 && t.str() == "FIELD") {
+        return;
+    }
+    if let Some(i) = tags.iter().position(|t| t.code == 9 && t.str() == "$ACADVER")
+        && let Some(v) = tags.get_mut(i + 1).filter(|v| v.code == 1)
+    {
+        *v = Tag::s(1, "AC1021");
+    }
 }
 
 /// Subclass markers the DWG bridge knows by another spelling (it matches them exactly):
