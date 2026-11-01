@@ -512,6 +512,13 @@ fn write_annotations_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, pap
             common(w, e, owner, paper, "AcDbRasterImage");
             w.t.extend(crate::dxf_image::entity_tags(i, def, reactor));
         }
+        EntityKind::PdfUnderlay(u) => {
+            // Every underlay has its PDFDEFINITION (planned in `write`); the fallback never happens.
+            let Some(def) = cx.underlays.by_entity.get(&e.handle) else { return };
+            w.s(0, "PDFUNDERLAY");
+            common(w, e, owner, paper, "AcDbUnderlayReference");
+            w.t.extend(crate::dxf_underlay::entity_tags(u, def));
+        }
         EntityKind::Solid(s) | EntityKind::Trace(s) => {
             let solid = matches!(e.kind, EntityKind::Solid(_));
             w.s(0, if solid { "SOLID" } else { "TRACE" });

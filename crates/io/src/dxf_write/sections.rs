@@ -171,7 +171,11 @@ fn write_tables(w: &mut W, plan: TableWritePlan<'_>) -> HashMap<String, String> 
         w.f(146, 0.0);
     }
     w.s(0, "ENDTAB");
-    let apps = ["ACAD", dxf_ext::APP, "AcadAnnotative", dxf_ext::LAYER_TRANSPARENCY_APP, dxf_ext::LAYER_DESCRIPTION_APP];
+    let mut apps = vec!["ACAD", dxf_ext::APP, "AcadAnnotative", dxf_ext::LAYER_TRANSPARENCY_APP, dxf_ext::LAYER_DESCRIPTION_APP];
+    // Only a drawing whose underlays hide PDF layers uses it, so other files stay as they were.
+    if crate::dxf_underlay::hides_layers(d) {
+        apps.push(crate::dxf_underlay::LAYERS_APP);
+    }
     let th = table_head(w, "APPID", apps.len());
     for app in apps {
         record_head(w, "APPID", &th, "AcDbRegAppTableRecord");
@@ -342,6 +346,10 @@ fn write_classes(w: &mut W, cx: &Ctx, every: &[&Entity]) {
         classes.push(("IMAGEDEF", "AcDbRasterImageDef", 0, false));
         classes.push(("IMAGEDEF_REACTOR", "AcDbRasterImageDefReactor", 1, false));
         classes.push(("RASTERVARIABLES", "AcDbRasterVariables", 0, false));
+    }
+    if !cx.underlays.is_empty() {
+        classes.push(("PDFUNDERLAY", "AcDbPdfReference", 1, true));
+        classes.push(("PDFDEFINITION", "AcDbPdfDefinition", 1, false));
     }
     classes.push(("SCALE", "AcDbScale", 0, false));
     for (dxf_name, cpp, proxy, is_entity) in classes {
@@ -574,6 +582,10 @@ fn write_root_group_objects(
         w.s(3, "ACAD_IMAGE_VARS");
         w.s(350, cx.images.vars.clone());
     }
+    if !cx.underlays.is_empty() {
+        w.s(3, "ACAD_PDFDEFINITIONS");
+        w.s(350, cx.underlays.dict.clone());
+    }
     w.s(3, "ACAD_LAYOUT");
     w.s(350, layout_dict.clone());
     w.s(3, "ACAD_MLEADERSTYLE");
@@ -743,6 +755,8 @@ fn write_objects(w: &mut W, plan: ObjectWritePlan<'_>) {
     write_layout_objects(w, &plan);
     // Raster image definitions.
     w.t.extend(crate::dxf_image::objects(&plan.cx.images, plan.root_dict));
+    // PDF underlay definitions.
+    w.t.extend(crate::dxf_underlay::objects(&plan.cx.underlays, plan.root_dict));
     w.s(0, "ENDSEC");
 }
 
@@ -929,6 +943,7 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Ta
     let mut table_defs = table_block_definitions(d, &every, &mut w, &mut cx);
     // Image definitions (IMAGEDEF objects) of raster images anywhere in the drawing.
     cx.images = crate::dxf_image::plan(every.iter().copied(), || w.h());
+    cx.underlays = crate::dxf_underlay::plan(every.iter().copied(), || w.h());
     cx.mlines = crate::dxf_mline::plan(d, every.iter().copied(), || w.h());
     plan_dimension_associations(d, &all_spaces, &mut w, &mut cx);
     let default_table_style = [TableStyle::default()];
