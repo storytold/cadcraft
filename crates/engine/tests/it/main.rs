@@ -104,6 +104,7 @@ mod post_command_passes;
 mod prompt_keywords;
 mod props_bad_lineweight;
 mod props_insert_scale_attribs;
+mod purge_list;
 mod purge_mlinestyles;
 mod purge_prompts;
 mod qdim;
