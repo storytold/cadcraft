@@ -34,6 +34,10 @@ Do not trust a filename, user-supplied account ID, browser page or request ID as
 Only the hosting page's own script environment can use this capability; no postMessage listener,
 foreign-origin message channel or filesystem authority is added.
 
+Every script executing in the editor page, including third-party analytics, can call registerProvider
+and receive saved drawings through provider events. Load only scripts you trust with drawing contents.
+The host/backend remains responsible for authenticating users and authorizing each account-scoped operation.
+
 A resource is an object with id, name and optional updatedAt strings. IDs are opaque and never used as
 paths. The list is limited to 100 unique resources. Names must be native .dxf filenames, at most
 255 UTF-8 bytes, with no path separators or control characters. IDs/namespaces are at most 160 ASCII
