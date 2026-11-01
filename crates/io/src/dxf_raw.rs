@@ -757,6 +757,24 @@ impl Map<'_> {
     /// A kept object's groups, remapped.
     fn object(&self, o: &ForeignObject, out: &mut Vec<Tag>) {
         out.push(Tag::s(0, o.kind.clone()));
+        if o.kind == "FIELDLIST" {
+            // The list names every written field, and only those (no null entries).
+            let fields: Vec<&String> = self.f.objects.iter().filter(|x| x.kind == "FIELD").filter_map(|x| self.alive.get(&x.handle.hex())).collect();
+            let mut counted = false;
+            for r in &o.tags {
+                match r.code {
+                    90 if !counted => {
+                        counted = true;
+                        out.push(Tag::s(90, fields.len().to_string()));
+                        out.extend(fields.iter().map(|h| Tag::s(330, (*h).clone())));
+                    }
+                    330 if counted => {}
+                    5 => out.push(Tag::s(5, self.get(&r.value).unwrap_or_else(|| "0".into()))),
+                    _ => out.push(self.group(r)),
+                }
+            }
+            return;
+        }
         let dict = is_dictionary(&o.kind);
         let mut i = 0;
         while let Some(r) = o.tags.get(i) {
@@ -847,7 +865,8 @@ fn unknown_handles(d: &Drawing) -> HashSet<String> {
 
 /// Put the drawing's foreign data back into a written file's tags (see the module comment).
 pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
-    let f = d.foreign.as_ref();
+    let inherited = inherit_fields(tags, d);
+    let f = inherited.as_ref().map_or(d.foreign.as_ref(), |(f, _)| f);
     let unknown = unknown_handles(d);
     let xd: XdataOf = all_entities(d).filter(|e| !e.common.xdata.is_empty()).map(|e| (e.handle, e.common.xdata.as_slice())).collect();
     if f.is_empty() && unknown.is_empty() && xd.is_empty() {
@@ -960,7 +979,8 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
         alive.insert(o.handle.hex(), format!("{next:X}"));
         next = next.saturating_add(1);
     }
-    let entities: HashSet<String> = all_entities(d).map(|e| e.handle.hex()).filter(|h| written.contains(h)).collect();
+    let mut entities: HashSet<String> = all_entities(d).map(|e| e.handle.hex()).filter(|h| written.contains(h)).collect();
+    entities.extend(inherited.iter().flat_map(|(_, hs)| hs.iter().cloned()));
     let map = Map { f, alive, raw: objs.keys().cloned().collect(), roles, entities };
     let mut out: Vec<Tag> = Vec::with_capacity(tags.len() + f.objects.iter().map(|o| o.tags.len() + 1).sum::<usize>());
     let mut block = String::new();
@@ -1234,4 +1254,166 @@ fn seed(tags: &[Tag]) -> u64 {
 /// The largest handle of a record (groups 5 and 105).
 fn max_handle(tags: &[Tag]) -> u64 {
     tags.iter().filter(|t| t.code == 5 || t.code == 105).filter_map(|t| Handle::parse_hex(&t.str())).map(|h| h.0).max().unwrap_or(0)
+}
+
+/// A placed attribute keeps the field of its attribute definition: for each written ATTRIB whose
+/// definition has an extension dictionary, a copy of that dictionary (the ACAD_FIELD dictionary
+/// and its FIELD objects) is kept for the ATTRIB under its written handle. Returns the drawing's
+/// foreign data with those copies, and the ATTRIBs' handles.
+fn inherit_fields(tags: &[Tag], d: &Drawing) -> Option<(Foreign, HashSet<String>)> {
+    let f = d.foreign.as_ref();
+    if !f.objects.iter().any(|o| o.kind == "FIELD") {
+        return None;
+    }
+    let mut next = max_handle(tags).max(f.objects.iter().map(|o| o.handle.0).max().unwrap_or(0)).saturating_add(1);
+    let mut out: Option<Foreign> = None;
+    let mut attribs = HashSet::new();
+    let mut block = None;
+    for (kind, _, body) in split(tags) {
+        if kind == "INSERT" {
+            block = val(body, 2).and_then(|n| d.block(&n));
+        }
+        if kind != "ATTRIB" {
+            continue;
+        }
+        let (Some(h), Some(tag)) = (head(body).handle.and_then(|h| handle(&h)), val(body, 2)) else { continue };
+        let def = block.and_then(|b| b.entities.iter().find(|e| matches!(&e.kind, EntityKind::AttDef(a) if a.tag.eq_ignore_ascii_case(&tag))));
+        let Some(xdict) = def.and_then(|e| f.entities.get(&e.handle)).and_then(|x| x.xdict) else { continue };
+        let tree = f.tree(xdict);
+        let fresh: Vec<Handle> = (0..tree.len() as u64 + 2).map(|i| Handle(next.saturating_add(i))).collect();
+        next = next.saturating_add(fresh.len() as u64);
+        let target = out.get_or_insert_with(|| f.clone());
+        let first = target.objects.len();
+        target.adopt_tree(f, &tree, &fresh, h);
+        let text = val(body, 1).unwrap_or_default();
+        for o in target.objects.iter_mut().skip(first).filter(|o| o.kind == "FIELD") {
+            if o.tags.iter().any(|t| t.code == 1 && t.value == "_text") {
+                retarget_text_field(o, &text);
+            } else if o.tags.iter().any(|t| t.code == 1 && t.value == "AcVar") {
+                retarget_variable_field(o, &text);
+            }
+        }
+        target.entities.entry(h).or_default().xdict = fresh.first().copied();
+        attribs.insert(h.hex());
+    }
+    out.map(|o| (o, attribs))
+}
+
+/// The field on a placed attribute's text, as AutoCAD writes it: it reacts to its field
+/// dictionary, and its checksum is that of the text it shows (AutoCAD takes text that doesn't
+/// match as edited by hand and drops the field).
+fn retarget_text_field(o: &mut ForeignObject, text: &str) {
+    let sum: u64 = text.chars().zip(1u64..).map(|(c, i)| u64::from(c).saturating_mul(i)).sum();
+    if let Some(i) = o.tags.iter().position(|t| t.code == 6 && t.value == "ACFD_FIELDTEXT_CHECKSUM")
+        && let Some(t) = o.tags.iter_mut().skip(i).find(|t| t.code == 140)
+    {
+        t.value = format!("{sum}.0");
+    }
+    // The owner is the first 330 outside any 102 group (a reactor's 330 sits inside one), and a
+    // field that already reacts to something keeps the group it has.
+    let (mut depth, mut owner, mut reacts) = (0usize, None, false);
+    for t in &o.tags {
+        match t.code {
+            102 if t.value.starts_with('{') => {
+                depth = depth.saturating_add(1);
+                reacts |= t.value.eq_ignore_ascii_case("{ACAD_REACTORS");
+            }
+            102 => depth = depth.saturating_sub(1),
+            330 if depth == 0 && owner.is_none() => owner = Some(t.clone()),
+            _ => {}
+        }
+    }
+    let at = o.tags.iter().position(|t| t.code == 5).map_or(0, |i| i + 1);
+    if let (Some(owner), false) = (owner, reacts) {
+        let group = |code, value: &str| RawTag { code, value: value.to_string() };
+        o.tags.splice(at..at, [group(102, "{ACAD_REACTORS"), owner, group(102, "}")]);
+    }
+}
+
+/// The cached result of a placed attribute's variable field follows the text it shows: the
+/// result and its length, and the file name in the cached path (AutoCAD evaluates it again). Only
+/// the file name field (`\AcVar Filename`) follows the text; any other variable field is left as it is.
+fn retarget_variable_field(o: &mut ForeignObject, text: &str) {
+    let filename = o.tags.iter().any(|t| t.code == 2 && t.value.to_ascii_lowercase().contains("\\acvar filename"));
+    if !filename {
+        return;
+    }
+    let mut in_value = false;
+    for t in &mut o.tags {
+        match t.code {
+            7 if t.value == "ACFD_FIELD_VALUE" => in_value = true,
+            1 if in_value && t.value != "Filename" => {
+                let dir = t.value.rfind(['\\', '/']).map_or(0, |i| i + 1);
+                t.value = format!("{}{text}.dwg", t.value.get(..dir).unwrap_or_default());
+            }
+            301 | 302 if in_value => t.value = text.to_string(),
+            98 if in_value => t.value = text.chars().count().to_string(),
+            _ => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod field_tests {
+    use super::*;
+
+    fn tag(code: i32, value: &str) -> RawTag {
+        RawTag { code, value: value.to_string() }
+    }
+
+    fn field(tags: Vec<RawTag>) -> ForeignObject {
+        ForeignObject { handle: Handle(0x10), kind: "FIELD".into(), tags }
+    }
+
+    fn count(o: &ForeignObject, code: i32, value: &str) -> usize {
+        o.tags.iter().filter(|t| t.code == code && t.value == value).count()
+    }
+
+    /// A `_text` field that already reacts to something keeps its one reactors group, and the
+    /// owner it is given is the 330 outside that group.
+    #[test]
+    fn a_text_field_with_reactors_gets_no_second_group() {
+        let mut o = field(vec![tag(5, "10"), tag(102, "{ACAD_REACTORS"), tag(330, "AA"), tag(102, "}"), tag(330, "BB"), tag(1, "_text")]);
+        retarget_text_field(&mut o, "X");
+        assert_eq!(count(&o, 102, "{ACAD_REACTORS"), 1);
+        assert_eq!(o.tags.iter().filter(|t| t.code == 330).count(), 2, "no reactor handle was copied");
+    }
+
+    /// Without reactors, the group names the owner, not a handle inside some other group.
+    #[test]
+    fn a_text_field_reacts_to_its_owner() {
+        let mut o = field(vec![tag(5, "10"), tag(102, "{OTHER"), tag(330, "AA"), tag(102, "}"), tag(330, "BB"), tag(1, "_text")]);
+        retarget_text_field(&mut o, "X");
+        let at = o.tags.iter().position(|t| t.value == "{ACAD_REACTORS");
+        assert_eq!(at.and_then(|i| o.tags.get(i + 1)).map(|t| t.value.as_str()), Some("BB"));
+    }
+
+    /// Only the file name field follows the text, and only the cache after `ACFD_FIELD_VALUE`: the
+    /// results before it stay empty, as in a file AutoCAD wrote.
+    #[test]
+    fn only_the_filename_field_is_retargeted() {
+        let cache = || {
+            vec![
+                tag(1, "AcVar"),
+                tag(302, ""),
+                tag(7, "ACFD_FIELD_VALUE"),
+                tag(1, "C:\\Dir\\OLD.dwg"),
+                tag(302, "OLD"),
+                tag(301, "OLD"),
+                tag(98, "3"),
+            ]
+        };
+        let mut name = field([vec![tag(2, "\\AcVar Filename \\f \"%tc1%fn2\"")], cache()].concat());
+        retarget_variable_field(&mut name, "NEW-1");
+        let get = |o: &ForeignObject, code| o.tags.iter().filter(|t| t.code == code).map(|t| t.value.clone()).collect::<Vec<_>>();
+        assert_eq!(get(&name, 302), ["", "NEW-1"]);
+        assert_eq!(get(&name, 301), ["NEW-1"]);
+        assert_eq!(get(&name, 98), ["5"]);
+        assert_eq!(get(&name, 1), ["AcVar", "C:\\Dir\\NEW-1.dwg"]);
+
+        let mut other = field([vec![tag(2, "\\AcVar Author")], cache()].concat());
+        let before = other.tags.clone();
+        retarget_variable_field(&mut other, "NEW-1");
+        assert_eq!(other.tags, before, "another variable field is left alone");
+    }
 }

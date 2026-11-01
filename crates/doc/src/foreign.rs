@@ -94,3 +94,75 @@ impl Foreign {
         self.data_store.iter().filter(|t| t.code == 320).filter_map(|t| Handle::parse_hex(t.value.trim())).collect()
     }
 }
+
+impl Foreign {
+    /// The kept object `root` and the kept objects it owns, directly or not (dictionary entries
+    /// and child pointers, groups 350 and 360), `root` first.
+    pub fn tree(&self, root: Handle) -> Vec<Handle> {
+        let mut out = vec![root];
+        let mut i = 0;
+        while let Some(&h) = out.get(i) {
+            i += 1;
+            let Some(o) = self.objects.iter().find(|o| o.handle == h) else { continue };
+            for c in o.tags.iter().filter(|t| matches!(t.code, 350 | 360)).filter_map(|t| Handle::parse_hex(t.value.trim())) {
+                if !out.contains(&c) && out.len() < 4096 && self.objects.iter().any(|o| o.handle == c) {
+                    out.push(c);
+                }
+            }
+        }
+        out
+    }
+
+    /// Copy the objects of `tree` (see [`Foreign::tree`]) of `src` into this one under the handles
+    /// `fresh` (the same order; two more follow for a field list), `owner` taking the place of the
+    /// root's owner. References to objects outside the tree become null. Fields keep a field
+    /// list: this one gets a copy of the source's if it has none.
+    pub fn adopt_tree(&mut self, src: &Foreign, tree: &[Handle], fresh: &[Handle], owner: Handle) {
+        if fresh.len() < tree.len() + 2 {
+            return;
+        }
+        let map: BTreeMap<Handle, Handle> = tree.iter().copied().zip(fresh.iter().copied()).collect();
+        let mut kinds = Vec::new();
+        for (n, h) in tree.iter().enumerate() {
+            let Some(o) = src.objects.iter().find(|o| o.handle == *h) else { continue };
+            let mut c = o.clone();
+            let Some(&new) = fresh.get(n) else { continue };
+            c.handle = new;
+            for t in &mut c.tags {
+                if t.code == 5 {
+                    t.value = new.hex();
+                } else if matches!(t.code, 320..=369 | 390..=399) {
+                    let to = Handle::parse_hex(t.value.trim()).and_then(|h| map.get(&h).copied()).or((n == 0 && t.code == 330).then_some(owner));
+                    t.value = to.map_or_else(|| "0".to_string(), Handle::hex);
+                }
+            }
+            kinds.push(c.kind.clone());
+            self.objects.push(c);
+        }
+        if let Some(list) = src.objects.iter().find(|o| o.kind == "FIELDLIST").filter(|_| !self.objects.iter().any(|o| o.kind == "FIELDLIST")) {
+            let (Some(&h), Some(&nod)) = (fresh.get(tree.len()), fresh.get(tree.len() + 1)) else { return };
+            let mut c = list.clone();
+            c.handle = h;
+            for t in &mut c.tags {
+                match t.code {
+                    5 => t.value = h.hex(),
+                    330 => t.value = "0".to_string(),
+                    _ => {}
+                }
+            }
+            if let Some(t) = c.tags.iter_mut().find(|t| t.code == 330) {
+                t.value = nod.hex();
+            }
+            self.targets.insert(nod, ("NOD".to_string(), String::new()));
+            self.dictionary.push(("ACAD_FIELDLIST".to_string(), h));
+            kinds.push(c.kind.clone());
+            self.objects.push(c);
+        }
+        for k in kinds {
+            let named = |c: &Vec<RawTag>| c.iter().any(|t| t.code == 1 && t.value.eq_ignore_ascii_case(&k));
+            if !self.classes.iter().any(named) {
+                self.classes.extend(src.classes.iter().filter(|c| named(c)).cloned());
+            }
+        }
+    }
+}
