@@ -1381,3 +1381,33 @@
 	Save Layout as Template	将布局另存为样板
 	Set Dynamic Property	设置动态特性
 	Units	单位
+	Parameter	参数
+	Action	动作
+	Visibility States	可见性状态
+	Make Visible	使可见
+	Make Invisible	使不可见
+	Visibility states:	可见性状态:
+	Set current	置为当前
+	New...	新建...
+	Rename	重命名
+	Move Up	上移
+	Move Down	下移
+	New Visibility State	新建可见性状态
+	Visibility state name:	可见性状态名称:
+	Visibility options for new states	新状态的可见性选项
+	Hide all existing objects in new state	在新状态中隐藏所有现有对象
+	Show all existing objects in new state	在新状态中显示所有现有对象
+	Leave visibility of existing objects unchanged in new state	在新状态中保持现有对象的可见性不变
+	Visibility Mode	可见性模式
+	Object Visibility	对象可见性
+	Hide for Current State	在当前状态中隐藏
+	Show for Current State	在当前状态中显示
+	Hide for All States	在所有状态中隐藏
+	Show for All States	在所有状态中显示
+	A visibility state needs a name.	可见性状态需要名称。
+	A visibility state already has the name	已有可见性状态使用名称
+	Pick Parameters and Actions	拾取参数和动作
+	Erase Parameters and Actions	擦除参数和动作
+	Move Parameters and Actions	移动参数和动作
+	Move a Parameter's Point	移动参数的点
+	Parameter Points	参数点
