@@ -1065,6 +1065,37 @@ mod tests {
         assert!(e.contains("produced more than 0.0 MB of drawing data (the limit)"), "{e}");
     }
 
+    /// A sink that refuses the rendition partway (a full disk, a parser that rejects a chunk)
+    /// fails it with the sink's error, whether it refuses the first byte or the last.
+    #[cfg(not(no_dwg_bridge))]
+    #[test]
+    fn a_sink_that_refuses_fails_the_rendition() {
+        #[derive(Debug)]
+        struct Refuses {
+            after: usize,
+            took: usize,
+        }
+        impl std::io::Write for Refuses {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                if self.took.saturating_add(b.len()) > self.after {
+                    return Err(std::io::Error::other("sink refused"));
+                }
+                self.took += b.len();
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let linear: &[(i32, [f64; 2])] = &[(13, [0.0, 0.0]), (14, [100.0, 0.0])];
+        let dwg = dxf_to_dwg(dims_dxf(&[("HOME", 32, "AcDbAlignedDimension", linear)]).as_bytes()).unwrap();
+        let full = dwg_to_dxf_stream_noted(&dwg, Limits::DEFAULT, Vec::new()).unwrap().bytes;
+        for after in [0, full - 1] {
+            let e = dwg_to_dxf_stream_noted(&dwg, Limits::DEFAULT, Refuses { after, took: 0 }).unwrap_err();
+            assert!(e.contains("sink refused"), "after {after}: {e}");
+        }
+    }
+
     /// The handles a DXF text refers to or gives its records (groups 5, 105 and 330–369).
     #[cfg(not(no_dwg_bridge))]
     fn dxf_handles(dxf: &str) -> std::collections::HashSet<u64> {
