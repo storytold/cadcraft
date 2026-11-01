@@ -29,7 +29,11 @@ const fn inch(name: &'static str, aliases: &'static [&'static str], w: f64, h: f
     PaperSize { name, aliases, width_mm: w * 25.4, height_mm: h * 25.4, imperial: true }
 }
 
-/// Common ISO (A0–A6, B0–B5) and ANSI/ARCH sheet sizes (ISO 216, ANSI/ASME Y14.1).
+/// Common ISO (A0–A6, B0–B6), JIS (B4–B6), Japanese stationery and ANSI/ARCH sheet sizes
+/// (ISO 216, JIS P 0138, ANSI/ASME Y14.1).
+///
+/// The bare names `B4`/`B5`/`B6` are the ISO sizes (250×353, 176×250 and 125×176 mm); the JIS
+/// sheets (257×364, 182×257 and 128×182 mm) need explicit names (`JIS B4`, `B4 (JIS)`…).
 pub const PAPER_SIZES: &[PaperSize] = &[
     iso("ISO A0 (841.00 x 1189.00 MM)", &["A0", "ISO A0"], 841.0, 1189.0),
     iso("ISO A1 (594.00 x 841.00 MM)", &["A1", "ISO A1"], 594.0, 841.0),
@@ -42,8 +46,22 @@ pub const PAPER_SIZES: &[PaperSize] = &[
     iso("ISO B1 (707.00 x 1000.00 MM)", &["B1", "ISO B1"], 707.0, 1000.0),
     iso("ISO B2 (500.00 x 707.00 MM)", &["B2", "ISO B2"], 500.0, 707.0),
     iso("ISO B3 (353.00 x 500.00 MM)", &["B3", "ISO B3"], 353.0, 500.0),
-    iso("ISO B4 (250.00 x 353.00 MM)", &["B4", "ISO B4"], 250.0, 353.0),
-    iso("ISO B5 (176.00 x 250.00 MM)", &["B5", "ISO B5"], 176.0, 250.0),
+    iso("ISO B4 (250.00 x 353.00 MM)", &["B4", "ISO B4", "B4 (ISO)"], 250.0, 353.0),
+    iso("ISO B5 (176.00 x 250.00 MM)", &["B5", "ISO B5", "B5 (ISO)"], 176.0, 250.0),
+    iso("ISO B6 (125.00 x 176.00 MM)", &["B6", "ISO B6", "B6 (ISO)"], 125.0, 176.0),
+    // JIS B4–B6 (JIS P 0138): the sheets Japanese drafting and Excel call B4/B5/B6, a few
+    // millimetres larger than the ISO ones. Explicit names only, so the bare names stay ISO.
+    iso("JIS B4 (257.00 x 364.00 MM)", &["B4 (JIS)", "JIS B4"], 257.0, 364.0),
+    iso("JIS B5 (182.00 x 257.00 MM)", &["B5 (JIS)", "JIS B5"], 182.0, 257.0),
+    iso("JIS B6 (128.00 x 182.00 MM)", &["B6 (JIS)", "JIS B6"], 128.0, 182.0),
+    // Japanese stationery: postcards, the long (chou) and square (kaku) envelopes and 四六判, the
+    // 127×188 mm book/paper trade size. No bare `Postcard`: postcard sizes differ by country, so
+    // the name (and はがき) say which one is meant.
+    iso("Japanese Postcard (100.00 x 148.00 MM)", &["Japanese Postcard", "はがき"], 100.0, 148.0),
+    iso("Japanese Double Postcard (148.00 x 200.00 MM)", &["Japanese Double Postcard", "往復はがき"], 148.0, 200.0),
+    iso("Japanese Envelope #3 (120.00 x 235.00 MM)", &["Japanese Envelope #3", "Envelope #3", "長形3号"], 120.0, 235.0),
+    iso("Japanese Envelope Kaku #2 (240.00 x 332.00 MM)", &["Japanese Envelope Kaku #2", "Kaku #2", "角形2号"], 240.0, 332.0),
+    iso("Japanese Shirokuban (127.00 x 188.00 MM)", &["Shirokuban", "Yotsuro", "四六判"], 127.0, 188.0),
     inch("ANSI A (8.50 x 11.00 Inches)", &["ANSI A", "Letter", "A-size"], 8.5, 11.0),
     inch("Legal (8.50 x 14.00 Inches)", &["Legal"], 8.5, 14.0),
     inch("ANSI B (11.00 x 17.00 Inches)", &["ANSI B", "Tabloid", "Ledger", "B-size"], 11.0, 17.0),
@@ -66,9 +84,22 @@ impl PaperSize {
     }
 }
 
-/// Look up a paper size by canonical name or alias (case- and space-insensitive).
+/// Look up a paper size by canonical name or alias (case-insensitive; spaces, underscores, hyphens
+/// and parentheses are ignored, so `B5 (JIS)`, `b5-jis` and `b5jis` are one name).
 pub fn paper_size(name: &str) -> Option<&'static PaperSize> {
-    let norm = |s: &str| s.chars().filter(|c| !c.is_whitespace() && *c != '_' && *c != '-').collect::<String>().to_ascii_lowercase();
+    // Full-width forms are what a Japanese keyboard or IME produces (`Ｂ５ (ＪＩＳ)`), so fold them
+    // to ASCII before the rest of the normalisation: U+FF01..U+FF5E are ASCII + 0xFEE0.
+    let norm = |s: &str| {
+        s.chars()
+            .map(|c| match c {
+                '\u{FF01}'..='\u{FF5E}' => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c),
+                '\u{3000}' => ' ',
+                _ => c,
+            })
+            .filter(|c| !c.is_whitespace() && !matches!(c, '_' | '-' | '(' | ')'))
+            .collect::<String>()
+            .to_ascii_lowercase()
+    };
     let n = norm(name);
     if n.is_empty() {
         return None;
@@ -140,6 +171,73 @@ mod tests {
     use super::*;
 
     #[test]
+    fn jis_and_japanese_paper_sizes() {
+        // The bare names B4/B5/B6 are the ISO sizes, as they were before the JIS sheets arrived.
+        for (name, w, h) in [
+            ("B4", 250.0, 353.0),
+            ("b4", 250.0, 353.0),
+            ("ISO B4", 250.0, 353.0),
+            ("B4 (ISO)", 250.0, 353.0),
+            ("B5", 176.0, 250.0),
+            ("b5-iso", 176.0, 250.0),
+            ("B6", 125.0, 176.0),
+            ("B6 (ISO)", 125.0, 176.0),
+        ] {
+            let p = paper_size(name).unwrap_or_else(|| panic!("{name}"));
+            assert_eq!((p.width_mm, p.height_mm), (w, h), "{name}");
+            assert!(!p.imperial, "{name} is a metric sheet");
+        }
+        assert_eq!(paper_size("B4").map(|p| p.name), Some("ISO B4 (250.00 x 353.00 MM)"));
+        assert_eq!(paper_size("B6").map(|p| p.name), Some("ISO B6 (125.00 x 176.00 MM)"));
+        // The JIS sizes (JIS P 0138) are reachable by their explicit names only.
+        for (name, w, h) in [
+            ("B4 (JIS)", 257.0, 364.0),
+            ("b4-jis", 257.0, 364.0),
+            ("JIS B4", 257.0, 364.0),
+            ("B5 (JIS)", 182.0, 257.0),
+            ("b5 (jis)", 182.0, 257.0),
+            ("JIS B5", 182.0, 257.0),
+            ("B6 (JIS)", 128.0, 182.0),
+            ("b6jis", 128.0, 182.0),
+            ("JIS B6", 128.0, 182.0),
+        ] {
+            let p = paper_size(name).unwrap_or_else(|| panic!("{name}"));
+            assert_eq!((p.width_mm, p.height_mm), (w, h), "{name}");
+            assert!(!p.imperial, "{name} is a metric sheet");
+        }
+        assert_eq!(paper_size("JIS B5").map(|p| p.name), Some("JIS B5 (182.00 x 257.00 MM)"));
+        // A page setup stores the canonical name; the ISO and JIS names both keep resolving, so a
+        // drawing keeps the sheet it stored.
+        for name in ["ISO B4 (250.00 x 353.00 MM)", "JIS B4 (257.00 x 364.00 MM)"] {
+            assert_eq!(paper_size(name).map(|p| p.name), Some(name), "{name}");
+        }
+        // Japanese postcards, envelopes and 四六判.
+        for (name, w, h) in [
+            ("Japanese Postcard", 100.0, 148.0),
+            ("はがき", 100.0, 148.0),
+            ("Japanese Double Postcard", 148.0, 200.0),
+            ("往復はがき", 148.0, 200.0),
+            ("Japanese Envelope #3", 120.0, 235.0),
+            ("長形3号", 120.0, 235.0),
+            ("Japanese Envelope Kaku #2", 240.0, 332.0),
+            ("kaku #2", 240.0, 332.0),
+            ("角形2号", 240.0, 332.0),
+            ("Shirokuban", 127.0, 188.0),
+            ("四六判", 127.0, 188.0),
+        ] {
+            let p = paper_size(name).unwrap_or_else(|| panic!("{name}"));
+            assert_eq!((p.width_mm, p.height_mm), (w, h), "{name}");
+        }
+        // The bare postcard aliases are ambiguous and gone.
+        assert!(paper_size("Postcard").is_none());
+        assert!(paper_size("Double Postcard").is_none());
+        // A6 was already an ISO sheet.
+        assert_eq!(paper_size("A6").map(|p| (p.width_mm, p.height_mm)), Some((105.0, 148.0)));
+        // Unknown names still fail.
+        assert!(paper_size("Z9").is_none());
+    }
+
+    #[test]
     fn lookup_and_sheet() {
         assert_eq!(paper_size("a4").map(|p| p.width_mm), Some(210.0));
         assert_eq!(paper_size("ansi b").map(|p| p.height_mm), Some(17.0 * 25.4));
@@ -181,4 +279,23 @@ pub fn saved_plot(page: &PageSetup) -> SavedPlot {
     let fit = page.scale_to_fit && (window.is_some() || page.plot_area.eq_ignore_ascii_case("extents"));
     let scale = Some(page.scale).filter(|s| !page.scale_to_fit && s.is_finite() && *s > 0.0 && (*s - 1.0).abs() > 1e-9);
     SavedPlot { window, fit, scale, center: page.center }
+}
+
+#[cfg(test)]
+mod wide_name_tests {
+    use super::*;
+
+    /// A name typed on a Japanese keyboard arrives in full-width forms (`Ｂ５ (ＪＩＳ)`); it must
+    /// resolve to the same sheet as `B5 (JIS)`.
+    #[test]
+    fn full_width_names_resolve_like_their_ascii_forms() {
+        for (wide, ascii) in [("Ｂ５ (ＪＩＳ)", "B5 (JIS)"), ("Ａ４", "A4"), ("Ｂ４", "B4")] {
+            let w = paper_size(wide).unwrap_or_else(|| panic!("{wide}"));
+            let a = paper_size(ascii).unwrap_or_else(|| panic!("{ascii}"));
+            assert_eq!(w.name, a.name, "{wide} vs {ascii}");
+        }
+        // The Japanese spellings still work, and the ideographic space is a separator.
+        assert_eq!(paper_size("はがき").map(|p| p.name), paper_size("Japanese Postcard").map(|p| p.name));
+        assert_eq!(paper_size("　Ｂ５　").map(|p| p.name), Some(paper_size("B5").unwrap().name));
+    }
 }
