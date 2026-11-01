@@ -172,6 +172,12 @@ fn one_u() -> u32 {
 }
 
 impl Insert {
+    /// The attributes that have a grip of their own (grips 1, 2… after the insertion point), with
+    /// their index in `attribs`: those shown and not locked in position, as AutoCAD offers them.
+    pub fn grip_attribs(&self) -> impl Iterator<Item = (usize, &Attrib)> {
+        self.attribs.iter().enumerate().filter(|(_, a)| !a.invisible && !a.modes.lock_position)
+    }
+
     /// Block-to-world transform (2D part).
     pub fn transform(&self, base: Vec2) -> Mat3 {
         Mat3::translate(self.insert.xy())
