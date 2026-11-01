@@ -107,7 +107,13 @@ impl Session {
                 lisp::value::Value::Real(r) => self.typed_token(&format!("{r}"), false),
                 lisp::value::Value::Str(s) => self.typed_token(&s, false),
                 other => match other.as_point() {
-                    Some(p) => self.input(Input::Point(Vec2::new(p[0], p[1]))),
+                    // A 3D point keeps its Z, as a typed `x,y,z` does.
+                    Some(p) => {
+                        self.point_z = p.get(2).copied().filter(|z| z.is_finite()).unwrap_or(0.0);
+                        let r = self.input(Input::Point(Vec2::new(p[0], p[1])));
+                        self.point_z = 0.0;
+                        r
+                    }
                     None => {
                         self.echo(format!("Invalid input: {}", lisp::value::to_text(&other, true)));
                         Ok(())
@@ -129,9 +135,12 @@ impl Session {
             return self.input(Input::Keyword(k));
         }
         if prompt.accept.point {
-            if let Some(p) = prompt::parse_point_with(tt, self.last_point, &self.angle_settings()) {
+            if let Some(p) = prompt::parse_point3_with(tt, self.last_point3(), &self.angle_settings()) {
                 self.last_polar = prompt::parse_polar_text(tt, &self.angle_settings());
-                return self.input(Input::Point(p));
+                self.point_z = p.z;
+                let r = self.input(Input::Point(p.xy()));
+                self.point_z = 0.0;
+                return r;
             }
             // Direct distance entry along the tracking path the cursor is on, from the point it
             // comes from (an acquired or temporary tracking point needs no base point).

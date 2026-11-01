@@ -1,6 +1,6 @@
 use super::{
     Arc, Bounds2, Drag, Drawing, EngineError, Entity, Handle, Input, PendingWindow, Prompt, Result, Running, Session, Snapshot, Step, Value, Vec2,
-    assoc, cmd, find_command, guard, pointmod, select, snap, sysvars,
+    Vec3, assoc, cmd, find_command, guard, pointmod, select, snap, sysvars,
 };
 
 impl Session {
@@ -105,9 +105,49 @@ impl Session {
     pub fn input_snapped(&mut self, hit: snap::SnapHit) -> Result<()> {
         let source = hit.viewport.filter(|_| self.point_mods.iter().all(|f| matches!(f, pointmod::Frame::Snap { mode } if *mode != 0)));
         let previous = std::mem::replace(&mut self.picked_viewport, source);
+        // An object snap gives the Z of what it snapped to, as in AutoCAD: a survey point's
+        // level, a contour's elevation (OSNAPZ 1 uses the current elevation instead). A point
+        // picked through a layout viewport stays at z = 0.
+        self.point_z = if hit.viewport.is_none() && hit.mode != 0 { self.snap_z(&hit) } else { 0.0 };
         let result = self.input(hit.input());
+        self.point_z = 0.0;
         self.picked_viewport = previous;
         result
+    }
+
+    /// The Z an object snap gives a point: the Z of the object it snapped to at that point (of
+    /// the object found there, [`cmd::inquiry::z_at`], when the snap doesn't say), or ELEVATION
+    /// with OSNAPZ on.
+    pub(crate) fn snap_z(&self, hit: &snap::SnapHit) -> f64 {
+        let elevation = self.doc().map(|d| d.header.f64("ELEVATION", 0.0)).unwrap_or(0.0);
+        let on_source = || {
+            let d = self.doc().ok()?;
+            let src = hit.source?;
+            let z = match src.leaf {
+                // An object inside a block reference: its Z where the snap lies, placed by the reference.
+                Some(l) => {
+                    let e = d.blocks.values().find_map(|b| b.entities.get(l.handle))?;
+                    cmd::inquiry::entity_z(e, l.to_block.apply(hit.point)).map(|z| l.z0 + l.zs * z)
+                }
+                None => cmd::inquiry::entity_z(d.entity(src.handle)?, hit.point),
+            };
+            z.filter(|z| z.is_finite())
+        };
+        let z = if self.settings.osnapz { elevation } else { on_source().unwrap_or_else(|| cmd::inquiry::z_at(self, hit.point)) };
+        if z.is_finite() { z } else { 0.0 }
+    }
+
+    /// LASTPOINT with its Z (z = 0 unless the last point was typed with one, or relative to one).
+    pub fn last_point3(&self) -> Vec3 {
+        let (p, z) = self.last_point_z;
+        self.last_point.to3(if p == self.last_point { z } else { 0.0 })
+    }
+
+    /// The Z of the point a command is being given ([`Input::Point`] carries only X and Y): the
+    /// third number of a typed `x,y,z` or `@dx,dy,dz` (relative forms add to LASTPOINT's Z), 0
+    /// for a picked point. Commands that build 3D geometry (3DPOLY) read it with the point.
+    pub fn point_z(&self) -> f64 {
+        self.point_z
     }
 
     /// Give an input to the running command. With no command running, `Enter` repeats the last
@@ -283,6 +323,7 @@ impl Session {
             Some(i) => {
                 if let Input::Point(p) = &i {
                     self.last_point = *p;
+                    self.last_point_z = (*p, self.point_z);
                     if let Some(b) = base.filter(|b| b.is_finite() && p.is_finite() && b.dist(*p) > 1e-12) {
                         self.last_segment = Some((b, *p));
                     }

@@ -39,7 +39,7 @@ pub mod units;
 use std::sync::Arc;
 
 use cadcraft_doc::{Common, Drawing, Entity, EntityKind, Handle, Space};
-use cadcraft_geom::{Bounds2, Vec2};
+use cadcraft_geom::{Bounds2, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -92,6 +92,12 @@ pub struct Session {
     pub last_command: Option<String>,
     /// LASTPOINT.
     pub last_point: Vec2,
+    /// LASTPOINT's Z, as `(last_point, z)`: it holds only while `last_point` is still that point
+    /// (whatever sets `last_point` without a Z puts it back on z = 0). See [`Session::last_point3`].
+    last_point_z: (Vec2, f64),
+    /// The Z of the point being entered: the third number of a typed point
+    /// ([`prompt::parse_point3_with`]), 0 for a picked one. See [`Session::point_z`].
+    point_z: f64,
     /// The last segment given at a point prompt (its base point and the point): polar angles
     /// relative to the last segment (POLARMODE bit 1) are measured from it.
     pub last_segment: Option<(Vec2, Vec2)>,
@@ -173,6 +179,8 @@ impl Session {
             log: Vec::new(),
             last_command: None,
             last_point: Vec2::ZERO,
+            last_point_z: (Vec2::ZERO, 0.0),
+            point_z: 0.0,
             last_segment: None,
             last_polar: None,
             point_mods: Vec::new(),
