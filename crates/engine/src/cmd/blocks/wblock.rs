@@ -90,8 +90,9 @@ fn write(s: &Session, cmd: &str, path: &str, what: Source) -> Result<(usize, usi
     };
     let hooks = super::super::file::io().ok_or_else(|| bad(cmd, "file formats are not available in this build"))?;
     let bytes = (hooks.write)(&d, path).map_err(|e| bad(cmd, e))?;
+    // Through a temporary file, as SAVE writes, so a failed write keeps the file it replaces.
     #[cfg(not(target_arch = "wasm32"))]
-    std::fs::write(path, &bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
+    crate::atomic_write::write_atomic(std::path::Path::new(path), &bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
     Ok((d.model.len(), bytes.len()))
 }
 
