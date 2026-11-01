@@ -236,7 +236,7 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
         }
         // An OLE object's content is not drawn; its frame, from its two corner points, is.
         EntityKind::Unknown(u) if u.dxf_type.eq_ignore_ascii_case("OLE2FRAME") => {
-            if let Some(q) = ole_frame(&u.tags) {
+            if let Some(q) = cadcraft_doc::ole_frame(&u.tags) {
                 b.polyline(ctx, rgb, lw, &q);
             }
         }
@@ -384,12 +384,4 @@ fn table(b: &mut Builder, ctx: &Ctx, t: &cadcraft_doc::Table, rgb: Ink, lw: f32)
 fn leader_scale(d: &Drawing, st: Option<&cadcraft_doc::DimStyle>) -> f64 {
     let dimscale = d.header.f64("DIMSCALE", 1.0);
     st.map(|s| s.effective_scale(dimscale)).unwrap_or_else(|| cadcraft_doc::DimStyle::default().effective_scale(dimscale))
-}
-
-/// The closed outline of an OLE2FRAME from its upper-left (groups 10, 20) and lower-right
-/// (groups 11, 21) corners (DXF Reference, OLE2FRAME); `None` when either is missing or not finite.
-fn ole_frame(tags: &[cadcraft_doc::RawTag]) -> Option<[Vec2; 5]> {
-    let get = |code: i32| tags.iter().find(|t| t.code == code).and_then(|t| t.value.trim().parse::<f64>().ok()).filter(|v| v.is_finite());
-    let (a, b) = (Vec2::new(get(10)?, get(20)?), Vec2::new(get(11)?, get(21)?));
-    Some([a, Vec2::new(b.x, a.y), b, Vec2::new(a.x, b.y), a])
 }

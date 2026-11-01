@@ -9,6 +9,14 @@ use crate::{Drawing, Entity, EntityKind, LwPolyline, Prim};
 /// Nested block references deeper than this are ignored (cyclic or hostile files).
 pub const MAX_BLOCK_DEPTH: usize = 16;
 
+/// The closed outline of an OLE2FRAME from its upper-left (groups 10, 20) and lower-right
+/// (groups 11, 21) corners (DXF Reference, OLE2FRAME); `None` when either is missing or not finite.
+pub fn ole_frame(tags: &[crate::RawTag]) -> Option<[Vec2; 5]> {
+    let get = |code: i32| tags.iter().find(|t| t.code == code).and_then(|t| t.value.trim().parse::<f64>().ok()).filter(|v| v.is_finite());
+    let (a, b) = (Vec2::new(get(10)?, get(20)?), Vec2::new(get(11)?, get(21)?));
+    Some([a, Vec2::new(b.x, a.y), b, Vec2::new(a.x, b.y), a])
+}
+
 /// Bounds of a single-line TEXT / ATTDEF / ATTRIB of `len` characters, following its justification
 /// the same way the renderer places it (the stroke font is about 0.88 of the height per character).
 fn text_box(t: &crate::Text, len: usize) -> Bounds2 {
@@ -244,6 +252,10 @@ fn bounds_in<'a>(d: &'a Drawing, e: &Entity, depth: usize, blocks: &mut HashMap<
             Bounds2::from_points([o, o + u, o + v, o + u + v])
         }
         EntityKind::LwPolyline(p) => lwpolyline_bounds(p),
+        // An OLE object's content is not drawn, but its frame is, so the frame counts (#2422).
+        EntityKind::Unknown(u) if u.dxf_type.eq_ignore_ascii_case("OLE2FRAME") => {
+            ole_frame(&u.tags).map_or(Bounds2::EMPTY, Bounds2::from_points)
+        }
         kind => {
             let mut b = Bounds2::EMPTY;
             for p in kind.prims() {
@@ -437,5 +449,18 @@ mod tests {
         let mut empty = ml;
         empty.text = Some(crate::MText { contents: " ".into(), ..mtext });
         assert!(bounds(EntityKind::MLeader(empty)).max.x < 26.0);
+    }
+
+    /// An OLE2FRAME counts in the extents through its corner tags (#2422); a missing or
+    /// non-finite corner counts as nothing.
+    #[test]
+    fn ole_frame_counts_in_extents() {
+        let tag = |code: i32, value: &str| crate::RawTag { code, value: value.into() };
+        let frame = |tags: Vec<crate::RawTag>| EntityKind::Unknown(crate::Unknown { dxf_type: "OLE2FRAME".into(), tags });
+        let b = bounds(frame(vec![tag(10, "30"), tag(20, "-19"), tag(11, "35"), tag(21, "-22")]));
+        assert_eq!((b.min, b.max), (Vec2::new(30.0, -22.0), Vec2::new(35.0, -19.0)));
+        assert!(bounds(frame(vec![tag(10, "1"), tag(20, "2")])).is_empty(), "one corner is not a frame");
+        assert!(bounds(frame(vec![tag(10, "NaN"), tag(20, "0"), tag(11, "1"), tag(21, "inf")])).is_empty());
+        assert!(bounds(EntityKind::Unknown(crate::Unknown { dxf_type: "OTHER".into(), tags: vec![tag(10, "5"), tag(20, "5")] })).is_empty());
     }
 }

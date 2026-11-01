@@ -7,6 +7,25 @@ fn cli(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_cadcraft-cli")).args(args).output().unwrap()
 }
 
+/// A fresh scratch directory that is removed on drop, also when an assertion fails.
+struct Scratch(std::path::PathBuf);
+
+impl Scratch {
+    fn new(tag: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!("cc-cli-{tag}-{}", std::process::id()));
+        // A directory left behind by an earlier run with the same process id must not leak in.
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).expect("create scratch dir");
+        Scratch(dir)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// A line, two foreign REGIONs and a PDF underlay: the last three are kept as unknown entities.
 const PROXIES: &str = "0\nSECTION\n2\nENTITIES\n\
 0\nLINE\n8\n0\n10\n0\n20\n0\n11\n5\n21\n5\n\
@@ -17,8 +36,8 @@ const PROXIES: &str = "0\nSECTION\n2\nENTITIES\n\
 
 #[test]
 fn convert_to_an_image_warns_about_entities_it_cannot_draw() {
-    let dir = std::env::temp_dir().join(format!("cc-cli-undrawn-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let scratch = Scratch::new("undrawn");
+    let dir = scratch.0.clone();
     let input = dir.join("proxies.dxf");
     std::fs::write(&input, PROXIES).unwrap();
     let input = input.to_str().unwrap();
@@ -49,19 +68,17 @@ fn convert_to_an_image_warns_about_entities_it_cannot_draw() {
     let out = cli(&["convert", sample.to_str().unwrap(), dir.join("sample.svg").to_str().unwrap()]);
     assert!(out.status.success());
     assert!(!String::from_utf8_lossy(&out.stderr).contains("not drawn"), "{}", String::from_utf8_lossy(&out.stderr));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// An OLE2FRAME's frame outline is drawn, so an image export doesn't call it undrawn (#2422).
 #[test]
 fn an_ole_frame_is_not_reported_as_undrawn() {
-    let dir = std::env::temp_dir().join(format!("cc-cli-ole-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let scratch = Scratch::new("ole");
+    let dir = scratch.0.clone();
     let input = dir.join("ole.dxf");
     let ole = "0\nSECTION\n2\nENTITIES\n0\nOLE2FRAME\n8\n0\n100\nAcDbOle2Frame\n10\n0\n20\n0\n30\n0\n11\n5\n21\n-3\n31\n0\n0\nENDSEC\n0\nEOF\n";
     std::fs::write(&input, ole).unwrap();
     let out = cli(&["convert", input.to_str().unwrap(), dir.join("out.png").to_str().unwrap()]);
     assert!(out.status.success());
     assert!(!String::from_utf8_lossy(&out.stderr).contains("not drawn"), "{}", String::from_utf8_lossy(&out.stderr));
-    let _ = std::fs::remove_dir_all(&dir);
 }
