@@ -598,6 +598,8 @@ pub fn layout_mtext(contents: &str, insert: Vec2, height: f64, width: f64, attac
     layout_mtext_with(contents, &MTextParams { insert, height, width, attach, rotation, line_spacing, ..MTextParams::new(insert, height) })
 }
 
+/// The lines of MTEXT without paragraph codes: words wrap at spaces to `width` (0: no wrapping),
+/// and a word too wide for a line of its own wraps between its Thai words.
 fn plain_lines(atoms: &[Atom], fmts: &[Fmt], base: &Fmt, width: f64) -> Vec<Line> {
     let fmt = |index: usize| fmts.get(index).unwrap_or(base);
     let mut lines = Vec::new();

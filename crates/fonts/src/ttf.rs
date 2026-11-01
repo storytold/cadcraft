@@ -167,10 +167,12 @@ const HEBREW_FALLBACK: &[&str] = &["notosanshebrew", "notoserifhebrew", "arial",
 /// keeps its fit in title blocks and tables), then IBM Plex Sans Thai (installed, or embedded
 /// from craft-fonts, which makes it the web build's Thai font), then Noto and the fonts each OS
 /// ships (macOS Thonburi and Sukhumvit, Windows Leelawadee and Tahoma, the Linux TLWG fonts).
+/// Matched as parts of file names: `angsa` and `browa` find both today's Windows collections
+/// (`angsana.ttc`, `browalia.ttc`) and the older single faces (`angsa.ttf`, `browab.ttf`).
 const THAI_FALLBACK: &[&str] = &[
     "cordia",
-    "angsana",
-    "browalia",
+    "angsa",
+    "browa",
     "ibmplexsansthai",
     "notosansthai",
     "notoserifthai",
@@ -268,6 +270,8 @@ fn lock() -> MutexGuard<'static, Db> {
     g
 }
 
+/// The installed font files by lower-case file stem, from the system's and the user's font
+/// folders (at most 20,000 directory entries); the first file found for a stem is kept.
 #[cfg(not(target_arch = "wasm32"))]
 fn scan() -> HashMap<String, PathBuf> {
     let mut out = HashMap::new();
@@ -1019,6 +1023,9 @@ mod family_tests {
             .to_vec();
         let found = family_candidates(&stems, &norm("IBM Plex Sans Thai"), "ibm");
         assert_eq!(found.first().map(String::as_str), Some("ibmplexsansthai-regular"), "{found:?}");
+        // Angsana New and Browallia New under today's Windows file names and the older ones.
+        let stems: Vec<String> = ["browa", "notosansthai-regular", "angsana", "browalia", "angsa", "arial"].map(String::from).to_vec();
+        assert_eq!(script_candidates(&stems, THAI_FALLBACK), ["angsa", "angsana", "browa", "browalia", "notosansthai-regular"]);
     }
 
     #[test]

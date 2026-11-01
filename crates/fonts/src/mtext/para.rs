@@ -528,10 +528,13 @@ impl<'a> LineBuilder<'a> {
         }
     }
 
+    /// Width of a word's segments, each in its format.
     fn word_width(&self, segments: &[(Seg, usize)]) -> f64 {
         segments.iter().map(|(segment, format)| seg_width(segment, self.format(*format))).sum()
     }
 
+    /// Put a word, or a piece of one, on the current line after any pending space, or start a
+    /// new line when it doesn't fit (`index` as in [`Self::push_text`]).
     fn place(&mut self, index: usize, segments: &[(Seg, usize)]) {
         let word_width = self.word_width(segments);
         let space_width = if index == 0 {
