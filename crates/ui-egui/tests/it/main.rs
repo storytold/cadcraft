@@ -24,6 +24,7 @@ mod native_windows;
 mod options_dialog;
 mod parameters_rename;
 mod pickdrag;
+mod preview_zoom;
 mod properties_units;
 mod rapid_clicks;
 mod selection_cycling;
@@ -38,3 +39,7 @@ mod toolsets_parametric;
 mod viewport_double_click_selection;
 mod workspace_focus;
 mod zoomed_far_in;
+
+/// Plot Preview plots through a process-wide hook that `preview_zoom` records. The tests that open
+/// the preview take this lock, so one never plots while the other counts.
+pub(crate) static PLOT_PREVIEW: std::sync::Mutex<()> = std::sync::Mutex::new(());
