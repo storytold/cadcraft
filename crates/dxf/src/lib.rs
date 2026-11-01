@@ -165,7 +165,7 @@ fn typed(code: i32, text: &str) -> Value {
 const BINARY_SENTINEL: &[u8] = b"AutoCAD Binary DXF\r\n\x1a\0";
 /// Most group codes read from one file. A `Tag` takes 40 bytes plus its text, so this bounds the
 /// tag list to a few GB; real drawings stay far below (a 10 MB DWG is typically a few million).
-pub const MAX_TAGS: usize = 50_000_000;
+pub const MAX_TAGS: usize = 100_000_000;
 
 mod codepage;
 pub use codepage::decode_code_page;
