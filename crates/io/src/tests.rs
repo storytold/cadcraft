@@ -2319,6 +2319,30 @@ fn svg_rounded_rect_radius_rules() {
     }
 }
 
+/// A percentage radius is of the viewport's width (`rx`) or height (`ry`) in user units; with no
+/// viewport to refer to it reads as absent, so the radius rules apply.
+#[test]
+fn svg_rounded_rect_percentage_radii() {
+    let read_rect = |page: &str, attrs: &str| {
+        let svg = format!("{page}<rect x=\"1\" y=\"1\" width=\"6\" height=\"4\" {attrs}/></svg>");
+        read(svg.as_bytes(), "pct.svg").unwrap()
+    };
+    let outline = |d: &Drawing| {
+        let (p, mids) = polyline_and_arc_midpoints(d);
+        (p.vertices.iter().map(|v| (v.p.x, v.p.y, v.bulge)).collect::<Vec<_>>(), mids.len())
+    };
+    // The page's viewBox is 20 × 10: 5% of the width is 1, and 10% is 2 across and 1 down.
+    assert_eq!(outline(&read_rect(SVG_PAGE, "rx=\"5%\"")), outline(&read_rect(SVG_PAGE, "rx=\"1\"")));
+    assert_eq!(outline(&read_rect(SVG_PAGE, "rx=\"10%\" ry=\"10%\"")), outline(&read_rect(SVG_PAGE, "rx=\"2\" ry=\"1\"")));
+    // A bare width and height are the viewport without a viewBox.
+    let px_page = r#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10">"#;
+    assert_eq!(outline(&read_rect(px_page, "ry=\"10%\"")), outline(&read_rect(px_page, "rx=\"1\"")));
+    // Millimetre sizes with no viewBox give no user-unit viewport: the percentage is absent.
+    let mm_page = r#"<svg xmlns="http://www.w3.org/2000/svg" width="20mm" height="10mm">"#;
+    assert_eq!(outline(&read_rect(mm_page, "rx=\"5%\"")).1, 0);
+    assert_eq!(outline(&read_rect(mm_page, "rx=\"5%\"")).0.len(), 4);
+}
+
 /// Elliptical corners (`rx` ≠ `ry`), and circular ones under a non-uniform transform, aren't
 /// circular arcs, so they are traced as line vertices on the corner's ellipse.
 #[test]
@@ -2340,6 +2364,10 @@ fn svg_elliptical_rounded_corners_are_traced() {
     }
     let svg = format!("{SVG_PAGE}<g transform=\"scale(2,1)\"><rect x=\"1\" y=\"1\" width=\"3\" height=\"4\" rx=\"1\"/></g></svg>");
     let (p, mids) = polyline_and_arc_midpoints(&read(svg.as_bytes(), "stretched.svg").unwrap());
+    assert!(p.closed && mids.is_empty() && p.vertices.len() > 8, "{p:?}");
+    // A skew maps the circular corners to ellipses too: traced, with no circular arcs.
+    let svg = format!("{SVG_PAGE}<g transform=\"skewX(30)\"><rect x=\"1\" y=\"1\" width=\"6\" height=\"4\" rx=\"1\"/></g></svg>");
+    let (p, mids) = polyline_and_arc_midpoints(&read(svg.as_bytes(), "skewed.svg").unwrap());
     assert!(p.closed && mids.is_empty() && p.vertices.len() > 8, "{p:?}");
     // A tiny scale is still non-uniform: the test is relative to the scale, not absolute.
     let svg = format!("{SVG_PAGE}<g transform=\"scale(0.00001,0.00002)\"><rect width=\"200000\" height=\"100000\" rx=\"20000\"/></g></svg>");

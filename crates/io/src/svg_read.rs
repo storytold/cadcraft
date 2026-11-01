@@ -124,6 +124,8 @@ struct Parser {
     drawing: Drawing,
     /// Root viewBox/unit mapping composed with every open container transform.
     stack: Vec<Mat3>,
+    /// The root viewport's width and height in user units, which percentage radii refer to.
+    viewport_size: Option<(f64, f64)>,
     /// Current Inkscape layer name.
     layer: String,
     layers: HashSet<String>,
@@ -175,6 +177,7 @@ impl Parser {
         Parser {
             drawing: Drawing::new_metric(),
             stack: vec![Mat3::IDENTITY],
+            viewport_size: None,
             layer: "0".into(),
             layers: HashSet::from(["0".to_string()]),
             layer_color: 1,
@@ -287,6 +290,7 @@ impl Parser {
     fn enter_group(&mut self, name: &[u8], e: &BytesStart) -> Result<()> {
         if name == b"svg" && self.stack.len() == 1 {
             self.stack[0] = viewport(e)?;
+            self.viewport_size = viewport_size(e);
         }
         if name == b"g" && attr(e, b"inkscape:groupmode").as_deref() == Some("layer") {
             let raw = attr(e, b"inkscape:label").or_else(|| attr(e, b"id"));
@@ -361,7 +365,7 @@ impl Parser {
         if w <= 0.0 || h <= 0.0 {
             return Ok(());
         }
-        let (rx, ry) = corner_radii(e, w, h);
+        let (rx, ry) = corner_radii(e, w, h, self.viewport_size);
         if rx <= 0.0 || ry <= 0.0 {
             let pts = [Vec2::new(x, y), Vec2::new(x + w, y), Vec2::new(x + w, y + h), Vec2::new(x, y + h)];
             return self.add_polyline(&pts.map(|p| self.map(p)), true);
@@ -644,10 +648,18 @@ fn preserves_circles(m: &Mat3) -> bool {
 
 /// A `rect`'s corner radii (SVG 1.1 §9.2): a missing, negative or unreadable (`auto`) radius
 /// takes the other one's value, both missing means square corners, and each is at most half
-/// the side it rounds.
-fn corner_radii(e: &BytesStart, w: f64, h: f64) -> (f64, f64) {
-    let radius = |name: &[u8]| attr(e, name).as_deref().and_then(parse_length_mm).filter(|r| *r >= 0.0);
-    let (rx, ry) = match (radius(b"rx"), radius(b"ry")) {
+/// the side it rounds. A percentage is of the `viewport`'s width (`rx`) or height (`ry`); with
+/// no viewport to refer to it is unreadable.
+fn corner_radii(e: &BytesStart, w: f64, h: f64, viewport: Option<(f64, f64)>) -> (f64, f64) {
+    let radius = |name: &[u8], of: Option<f64>| {
+        let raw = attr(e, name)?;
+        let r = match raw.trim().strip_suffix('%') {
+            Some(pct) => pct.trim().parse::<f64>().ok().filter(|p| p.is_finite())? / 100.0 * of?,
+            None => parse_length_mm(&raw)?,
+        };
+        (r >= 0.0).then_some(r)
+    };
+    let (rx, ry) = match (radius(b"rx", viewport.map(|v| v.0)), radius(b"ry", viewport.map(|v| v.1))) {
         (Some(rx), Some(ry)) => (rx, ry),
         (Some(r), None) | (None, Some(r)) => (r, r),
         (None, None) => (0.0, 0.0),
@@ -674,6 +686,25 @@ fn parse_length_mm(s: &str) -> Option<f64> {
         "pc" => Some(value * 25.4 / 6.0),
         _ => Some(value * 25.4 / 96.0),
     }
+}
+
+/// The root viewport's size in user units (SVG 1.1 §7.10): the `viewBox`, else a bare or `px`
+/// `width` and `height`.
+fn viewport_size(e: &BytesStart) -> Option<(f64, f64)> {
+    let positive = |v: f64| v.is_finite() && v > 0.0;
+    if let Some(raw) = attr(e, b"viewBox")
+        && let [_, _, w, h] = Numbers::new(&raw).collect::<Vec<f64>>()[..]
+        && positive(w)
+        && positive(h)
+    {
+        return Some((w, h));
+    }
+    let px = |name: &[u8]| {
+        let raw = attr(e, name)?;
+        let n = raw.trim();
+        n.strip_suffix("px").unwrap_or(n).trim().parse::<f64>().ok().filter(|v| positive(*v))
+    };
+    Some((px(b"width")?, px(b"height")?))
 }
 
 /// The root mapping: `viewBox` and unit-bearing `width`/`height` become millimetres per user
