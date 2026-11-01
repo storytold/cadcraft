@@ -69,6 +69,7 @@ mod layer_cmdline;
 mod layer_merge_delete;
 mod layoff_repeat;
 mod layout_prompts;
+mod leader_command;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod lisp_corpus;
 mod malformed_handles;
