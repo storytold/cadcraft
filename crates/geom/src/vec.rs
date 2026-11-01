@@ -14,100 +14,78 @@ impl Vec2 {
     pub const X: Vec2 = Vec2 { x: 1.0, y: 0.0 };
     pub const Y: Vec2 = Vec2 { x: 0.0, y: 1.0 };
 
-    #[must_use]
     pub const fn new(x: f64, y: f64) -> Self {
         Vec2 { x, y }
     }
     /// Unit vector at `angle` radians.
-    #[must_use]
     pub fn from_angle(angle: f64) -> Self {
         Vec2::new(angle.cos(), angle.sin())
     }
-    #[must_use]
     pub fn polar(center: Vec2, radius: f64, angle: f64) -> Self {
         center + Vec2::from_angle(angle) * radius
     }
-    #[must_use]
     pub fn dot(self, o: Vec2) -> f64 {
         self.x * o.x + self.y * o.y
     }
     /// z of the 3D cross product.
-    #[must_use]
     pub fn cross(self, o: Vec2) -> f64 {
         self.x * o.y - self.y * o.x
     }
-    #[must_use]
     pub fn len(self) -> f64 {
         self.x.hypot(self.y)
     }
-    #[must_use]
     pub fn len2(self) -> f64 {
         self.dot(self)
     }
-    #[must_use]
     pub fn dist(self, o: Vec2) -> f64 {
         (self - o).len()
     }
-    #[must_use]
     pub fn angle(self) -> f64 {
         crate::norm_angle(self.y.atan2(self.x))
     }
-    #[must_use]
     pub fn angle_to(self, o: Vec2) -> f64 {
         (o - self).angle()
     }
     /// Unit vector, or zero for a zero-length vector.
-    #[must_use]
     pub fn normalized(self) -> Vec2 {
         let l = self.len();
         if l > crate::EPS { self / l } else { Vec2::ZERO }
     }
     /// Rotated 90° counter-clockwise.
-    #[must_use]
     pub fn perp(self) -> Vec2 {
         Vec2::new(-self.y, self.x)
     }
-    #[must_use]
     pub fn rotate(self, a: f64) -> Vec2 {
         let (s, c) = a.sin_cos();
         Vec2::new(self.x * c - self.y * s, self.x * s + self.y * c)
     }
-    #[must_use]
     pub fn rotate_about(self, center: Vec2, a: f64) -> Vec2 {
         center + (self - center).rotate(a)
     }
-    #[must_use]
     pub fn lerp(self, o: Vec2, t: f64) -> Vec2 {
         self + (o - self) * t
     }
-    #[must_use]
     pub fn mid(self, o: Vec2) -> Vec2 {
         Vec2::new(self.x.midpoint(o.x), self.y.midpoint(o.y))
     }
-    #[must_use]
     pub fn is_finite(self) -> bool {
         self.x.is_finite() && self.y.is_finite()
     }
-    #[must_use]
     pub fn near(self, o: Vec2, tol: f64) -> bool {
         // Squaring very large finite values can overflow on both sides and make
         // unrelated points compare equal (infinity <= infinity).
         tol.is_finite() && tol >= 0.0 && self.dist(o) <= tol
     }
-    #[must_use]
     pub fn to3(self, z: f64) -> Vec3 {
         Vec3::new(self.x, self.y, z)
     }
-    #[must_use]
     pub fn min(self, o: Vec2) -> Vec2 {
         Vec2::new(self.x.min(o.x), self.y.min(o.y))
     }
-    #[must_use]
     pub fn max(self, o: Vec2) -> Vec2 {
         Vec2::new(self.x.max(o.x), self.y.max(o.y))
     }
     /// Mirror across the infinite line through `a` and `b`.
-    #[must_use]
     pub fn mirror(self, a: Vec2, b: Vec2) -> Vec2 {
         let d = (b - a).normalized();
         if d == Vec2::ZERO {
@@ -173,33 +151,26 @@ pub struct Vec3 {
 impl Vec3 {
     pub const ZERO: Vec3 = Vec3 { x: 0.0, y: 0.0, z: 0.0 };
     pub const Z: Vec3 = Vec3 { x: 0.0, y: 0.0, z: 1.0 };
-    #[must_use]
     pub const fn new(x: f64, y: f64, z: f64) -> Self {
         Vec3 { x, y, z }
     }
-    #[must_use]
     pub fn xy(self) -> Vec2 {
         Vec2::new(self.x, self.y)
     }
-    #[must_use]
     pub fn dot(self, o: Vec3) -> f64 {
         self.x * o.x + self.y * o.y + self.z * o.z
     }
-    #[must_use]
     pub fn cross(self, o: Vec3) -> Vec3 {
         Vec3::new(self.y * o.z - self.z * o.y, self.z * o.x - self.x * o.z, self.x * o.y - self.y * o.x)
     }
-    #[must_use]
     pub fn len(self) -> f64 {
         // Avoid overflowing the squared components of large finite vectors.
         self.x.hypot(self.y).hypot(self.z)
     }
-    #[must_use]
     pub fn normalized(self) -> Vec3 {
         let l = self.len();
         if l > crate::EPS { self * (1.0 / l) } else { Vec3::ZERO }
     }
-    #[must_use]
     pub fn is_finite(self) -> bool {
         self.x.is_finite() && self.y.is_finite() && self.z.is_finite()
     }

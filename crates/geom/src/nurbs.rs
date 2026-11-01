@@ -100,7 +100,6 @@ impl Spline {
     }
 
     /// True when the spline carries weights (a NURBS rather than a plain B-spline).
-    #[must_use]
     pub fn is_rational(&self) -> bool {
         !self.weights.is_empty()
     }
@@ -127,7 +126,6 @@ impl Spline {
     }
 
     /// First derivative dC/dt (zero on an invalid spline).
-    #[must_use]
     pub fn derivative(&self, t: f64) -> Vec2 {
         if !self.is_valid() {
             return Vec2::ZERO;
@@ -177,7 +175,6 @@ impl Spline {
 
     /// Unit tangent at `t` in the direction of increasing parameter; a central difference stands
     /// in where the derivative vanishes. Zero when the curve does not move at all.
-    #[must_use]
     pub fn unit_tangent(&self, t: f64) -> Vec2 {
         let d = self.derivative(t).normalized();
         if d != Vec2::ZERO {
@@ -190,7 +187,6 @@ impl Spline {
 
     /// Insert knot `t` once (Boehm's algorithm, in homogeneous coordinates). The result has no
     /// fit data and is open.
-    #[must_use]
     #[expect(clippy::many_single_char_names, reason = "Boehm knot insertion keeps the standard p/n/k/i/h/a equation notation.")]
     pub fn insert_knot(&self, t: f64) -> Option<Spline> {
         if !self.is_valid() || !t.is_finite() || self.control.len() >= MAX_EDIT_CONTROL {
@@ -259,7 +255,6 @@ impl Spline {
     }
 
     /// Split at parameter `t` into (before, after). `None` at the ends or on invalid input.
-    #[must_use]
     pub fn split_at(&self, t: f64) -> Option<(Spline, Spline)> {
         let (lo, hi) = self.domain();
         if !(t > lo + 1e-12 && t < hi - 1e-12) {
@@ -270,7 +265,6 @@ impl Spline {
     }
 
     /// The open piece between parameters `a < b`.
-    #[must_use]
     pub fn sub_between(&self, a: f64, b: f64) -> Option<Spline> {
         let (lo, hi) = self.domain();
         let mut s = self.clone();
@@ -287,7 +281,6 @@ impl Spline {
 
     /// The same curve with clamped ends (end knots repeated degree + 1 times), so it starts and
     /// ends on its first and last control points. Fit data is dropped.
-    #[must_use]
     pub fn clamped(&self) -> Option<Spline> {
         if !self.is_valid() {
             return None;
@@ -310,7 +303,6 @@ impl Spline {
 
     /// Reversed direction: control points, weights, fit points and knots (and the fit end
     /// tangents swap ends and turn round).
-    #[must_use]
     pub fn reversed(&self) -> Spline {
         let (lo, hi) = (self.knots.first().copied().unwrap_or(0.0), self.knots.last().copied().unwrap_or(1.0));
         Spline {
@@ -363,7 +355,6 @@ impl Spline {
     }
 
     /// The same curve at a higher (or equal) degree, clamped.
-    #[must_use]
     pub fn elevated(&self, degree: usize) -> Option<Spline> {
         if degree < self.degree || degree > MAX_EDIT_DEGREE {
             return None;
@@ -389,7 +380,6 @@ impl Spline {
     /// point becomes their midpoint). Degrees are matched by elevation, weights rescaled so the
     /// junction carries one weight, and `other`'s parameters follow on at a similar speed. The
     /// junction is a knot of multiplicity `degree`, so the curve passes through it exactly.
-    #[must_use]
     #[expect(
         clippy::many_single_char_names,
         reason = "Spline joining keeps the two curves, homogeneous points and knot spans in standard short notation."
@@ -422,7 +412,6 @@ impl Spline {
 
     /// A straight line from `a` to `b` as a clamped spline of `degree` (evenly spaced control
     /// points, parameter = distance).
-    #[must_use]
     #[expect(clippy::cast_precision_loss, reason = "The degree is clamped by MAX_EDIT_DEGREE (25), so every control index is exact as f64.")]
     pub fn from_line(a: Vec2, b: Vec2, degree: usize) -> Spline {
         let p = degree.clamp(1, MAX_EDIT_DEGREE);
@@ -437,7 +426,6 @@ impl Spline {
     /// The elliptical arc `center + u·cos θ + v·sin θ` for θ from `start` over `sweep` (negative
     /// runs clockwise) as an exact rational quadratic spline, in pieces of at most a quarter
     /// turn. Circular arcs are the case `|u| = |v|`, `u ⟂ v`.
-    #[must_use]
     #[expect(
         clippy::cast_precision_loss,
         clippy::cast_possible_truncation,
@@ -474,7 +462,6 @@ impl Spline {
     }
 
     /// An ellipse or elliptical arc as an exact rational spline (counter-clockwise).
-    #[must_use]
     pub fn from_ellipse(e: &Ellipse) -> Option<Spline> {
         let s = Spline::from_conic_arc(e.center, e.major, e.minor(), e.start, e.sweep())?;
         Some(Spline { closed: e.is_full(), ..s })
@@ -482,7 +469,6 @@ impl Spline {
 
     /// Run the spline on in a straight line along its end tangent by `dist` > 0: past the end
     /// (`at_end`) or before the start. The result is clamped, open and has no fit data.
-    #[must_use]
     pub fn extended(&self, at_end: bool, dist: f64) -> Option<Spline> {
         if !(dist.is_finite() && dist > 0.0) || self.closed {
             return None;
@@ -524,7 +510,6 @@ impl Spline {
     }
 
     /// Arc length between parameters `a` and `b` (adaptive Gauss–Legendre over each knot span).
-    #[must_use]
     pub fn length_between(&self, a: f64, b: f64) -> f64 {
         if !(self.is_valid() && a.is_finite() && b.is_finite()) {
             return 0.0;
@@ -536,7 +521,6 @@ impl Spline {
     }
 
     /// Arc length of the whole spline.
-    #[must_use]
     pub fn length(&self) -> f64 {
         let (lo, hi) = self.domain();
         self.length_between(lo, hi)
@@ -544,7 +528,6 @@ impl Spline {
 
     /// The parameter `len` along the curve from parameter `from` (forward for positive `len`,
     /// backward for negative), clamped to the domain.
-    #[must_use]
     pub fn param_at_length(&self, from: f64, len: f64) -> f64 {
         let (lo, hi) = self.domain();
         if !self.is_valid() {
@@ -587,13 +570,11 @@ impl Spline {
 
 impl Ellipse {
     /// dP/dθ at parameter `t`.
-    #[must_use]
     pub fn derivative(&self, t: f64) -> Vec2 {
         self.minor() * t.cos() - self.major * t.sin()
     }
 
     /// Arc length from parameter `t0` counter-clockwise over `sweep` (radians, >= 0).
-    #[must_use]
     #[expect(
         clippy::cast_precision_loss,
         clippy::cast_possible_truncation,
@@ -618,14 +599,12 @@ impl Ellipse {
     }
 
     /// Arc length of the ellipse or elliptical arc.
-    #[must_use]
     pub fn length(&self) -> f64 {
         self.arc_length_from(self.start, self.sweep())
     }
 
     /// The parameter reached `len` along the ellipse from `t0`: counter-clockwise for positive
     /// `len`, clockwise for negative. `None` for a whole turn or more, or degenerate input.
-    #[must_use]
     pub fn param_at_length(&self, t0: f64, len: f64) -> Option<f64> {
         let full = self.arc_length_from(0.0, TAU);
         if !(t0.is_finite() && len.is_finite() && full > EPS) || len.abs() >= full {

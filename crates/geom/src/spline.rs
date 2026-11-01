@@ -30,7 +30,6 @@ pub struct Spline {
 
 impl Spline {
     /// A clamped uniform spline over control points.
-    #[must_use]
     pub fn from_control(control: Vec<Vec2>, degree: usize) -> Spline {
         let n = control.len();
         let degree = degree.clamp(1, n.saturating_sub(1).max(1));
@@ -40,7 +39,6 @@ impl Spline {
 
     /// Cubic interpolation through fit points (chord-length parametrisation, natural-ish ends
     /// via a clamped knot vector: solve the banded system for control points).
-    #[must_use]
     pub fn from_fit_points(fit: &[Vec2]) -> Spline {
         Spline::fit_with(fit, false, FitOptions::default())
     }
@@ -49,24 +47,20 @@ impl Spline {
     /// include the closing chord; the knot vector is the periodic (unclamped) extension and the
     /// first `degree` control points repeat at the end, so the curve has continuous tangent and
     /// curvature at the seam. A repeated closing fit point is dropped.
-    #[must_use]
     pub fn from_fit_points_closed(fit: &[Vec2]) -> Spline {
         Spline::fit_with(fit, true, FitOptions::default())
     }
 
     /// Interpolation through fit points, open or closed (see `from_fit_points_closed`).
-    #[must_use]
     pub fn from_fit(fit: &[Vec2], closed: bool) -> Spline {
         Spline::fit_with(fit, closed, FitOptions::default())
     }
 
     /// Closed with an unclamped (periodic) knot vector, as DXF flags it (group 70 bit 2).
-    #[must_use]
     pub fn is_periodic(&self) -> bool {
         self.closed && self.knots.first() != self.knots.get(self.degree)
     }
 
-    #[must_use]
     pub fn is_valid(&self) -> bool {
         let n = self.control.len();
         n > self.degree
@@ -76,7 +70,6 @@ impl Spline {
             && self.knots.windows(2).all(|w| w.first() <= w.get(1))
     }
 
-    #[must_use]
     pub fn domain(&self) -> (f64, f64) {
         let lo = self.knots.get(self.degree).copied().unwrap_or(0.0);
         let hi = self.knots.get(self.control.len()).copied().unwrap_or(1.0);
@@ -84,7 +77,6 @@ impl Spline {
     }
 
     /// Evaluate at parameter `t` (de Boor via basis functions).
-    #[must_use]
     pub fn eval(&self, t: f64) -> Vec2 {
         if !self.is_valid() {
             return self.control.first().copied().unwrap_or_default();
@@ -122,7 +114,6 @@ impl Spline {
         if wsum.abs() > 1e-300 { p / wsum } else { p }
     }
 
-    #[must_use]
     pub fn tessellate(&self, tol: f64) -> Vec<Vec2> {
         if !self.is_valid() {
             return self.control.clone();
@@ -175,7 +166,6 @@ impl Spline {
     /// is its control polygon, so its control box is exact; a degenerate spline gets its control
     /// box, which contains the curve (the box of the finite control points when one is not
     /// finite: `hull` skips it, but it would poison every sample).
-    #[must_use]
     #[expect(
         clippy::cast_precision_loss,
         clippy::cast_possible_truncation,

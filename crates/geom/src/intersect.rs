@@ -1,7 +1,6 @@
 use crate::{Arc, Circle, EPS, Line, Segment, Vec2};
 
 /// Intersection of two infinite lines through (a1,a2) and (b1,b2), with parameters on each.
-#[must_use]
 pub fn line_line_infinite(a1: Vec2, a2: Vec2, b1: Vec2, b2: Vec2) -> Option<(Vec2, f64, f64)> {
     let r = a2 - a1;
     let s = b2 - b1;
@@ -15,7 +14,6 @@ pub fn line_line_infinite(a1: Vec2, a2: Vec2, b1: Vec2, b2: Vec2) -> Option<(Vec
 }
 
 /// Intersection of two finite segments.
-#[must_use]
 #[expect(clippy::many_single_char_names, reason = "Segment endpoints and parameters use conventional a/b/p/t/u geometric notation.")]
 pub fn line_line(a: &Line, b: &Line) -> Option<Vec2> {
     let (p, t, u) = line_line_infinite(a.a, a.b, b.a, b.b)?;
@@ -24,7 +22,6 @@ pub fn line_line(a: &Line, b: &Line) -> Option<Vec2> {
 }
 
 /// Intersections of the infinite line through `l` with a circle. Returns points with line params.
-#[must_use]
 #[expect(clippy::many_single_char_names, reason = "The line/circle quadratic uses conventional a/d/f/t mathematical notation.")]
 pub fn line_circle(l: &Line, c: &Circle) -> Vec<(Vec2, f64)> {
     let d = l.b - l.a;
@@ -57,7 +54,6 @@ pub fn line_circle(l: &Line, c: &Circle) -> Vec<(Vec2, f64)> {
 }
 
 /// Intersections of two full circles.
-#[must_use]
 pub fn circle_circle(c1: &Circle, c2: &Circle) -> Vec<Vec2> {
     let delta = c2.center - c1.center;
     let d = delta.len();
@@ -107,14 +103,12 @@ fn on_arc(a: &Arc, p: Vec2) -> bool {
 }
 
 /// Intersections between two segments (finite).
-#[must_use]
 pub fn intersect_segments(s1: &Segment, s2: &Segment) -> Vec<Vec2> {
     intersect_segments_ext(s1, s2, false)
 }
 
 /// Intersections; with `extend` true, lines are infinite and arcs are full circles
 /// (used by TRIM/EXTEND edge mode and apparent intersections).
-#[must_use]
 pub fn intersect_segments_ext(s1: &Segment, s2: &Segment, extend: bool) -> Vec<Vec2> {
     let tol = 1e-9;
     match (s1, s2) {

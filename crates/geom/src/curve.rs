@@ -10,53 +10,42 @@ pub struct Line {
 }
 
 impl Line {
-    #[must_use]
     pub fn new(a: Vec2, b: Vec2) -> Self {
         Line { a, b }
     }
-    #[must_use]
     pub fn len(&self) -> f64 {
         self.a.dist(self.b)
     }
-    #[must_use]
     pub fn dir(&self) -> Vec2 {
         (self.b - self.a).normalized()
     }
-    #[must_use]
     pub fn mid(&self) -> Vec2 {
         self.a.mid(self.b)
     }
     /// Parameter (0..1 on the segment) of the projection of `p`.
-    #[must_use]
     pub fn param_of(&self, p: Vec2) -> f64 {
         let d = self.b - self.a;
         let l2 = d.len2();
         if l2 <= EPS * EPS { 0.0 } else { (p - self.a).dot(d) / l2 }
     }
-    #[must_use]
     pub fn at(&self, t: f64) -> Vec2 {
         self.a.lerp(self.b, t)
     }
     /// Closest point on the segment.
-    #[must_use]
     pub fn closest(&self, p: Vec2) -> Vec2 {
         self.at(self.param_of(p).clamp(0.0, 1.0))
     }
     /// Foot of the perpendicular on the infinite line.
-    #[must_use]
     pub fn project(&self, p: Vec2) -> Vec2 {
         self.at(self.param_of(p))
     }
-    #[must_use]
     pub fn dist(&self, p: Vec2) -> f64 {
         self.closest(p).dist(p)
     }
     /// Signed side: > 0 left of a→b.
-    #[must_use]
     pub fn side(&self, p: Vec2) -> f64 {
         (self.b - self.a).cross(p - self.a)
     }
-    #[must_use]
     pub fn offset(&self, d: f64) -> Line {
         let n = (self.b - self.a).normalized().perp() * d;
         Line::new(self.a + n, self.b + n)
@@ -73,41 +62,32 @@ pub struct Arc {
 }
 
 impl Arc {
-    #[must_use]
     pub fn new(center: Vec2, radius: f64, start: f64, end: f64) -> Self {
         Arc { center, radius: radius.abs(), start: norm_angle(start), end: norm_angle(end) }
     }
-    #[must_use]
     pub fn sweep(&self) -> f64 {
         ccw_sweep(self.start, self.end)
     }
-    #[must_use]
     pub fn start_point(&self) -> Vec2 {
         Vec2::polar(self.center, self.radius, self.start)
     }
-    #[must_use]
     pub fn end_point(&self) -> Vec2 {
         Vec2::polar(self.center, self.radius, self.end)
     }
-    #[must_use]
     pub fn mid_point(&self) -> Vec2 {
         Vec2::polar(self.center, self.radius, self.start + self.sweep() / 2.0)
     }
-    #[must_use]
     pub fn len(&self) -> f64 {
         self.radius * self.sweep()
     }
-    #[must_use]
     pub fn contains_angle(&self, a: f64) -> bool {
         angle_in_sweep(a, self.start, self.end)
     }
     /// Point at parameter `t` in 0..1 along the sweep.
-    #[must_use]
     pub fn at(&self, t: f64) -> Vec2 {
         Vec2::polar(self.center, self.radius, self.start + self.sweep() * t)
     }
     /// Arc through three points, or `None` when collinear.
-    #[must_use]
     pub fn from_3_points(p1: Vec2, p2: Vec2, p3: Vec2) -> Option<Arc> {
         let c = Circle::from_3_points(p1, p2, p3)?;
         let a1 = c.center.angle_to(p1);
@@ -117,11 +97,9 @@ impl Arc {
         if angle_in_sweep(a2, a1, a3) { Some(Arc::new(c.center, c.radius, a1, a3)) } else { Some(Arc::new(c.center, c.radius, a3, a1)) }
     }
     /// Arc from start point, center and end point (CCW).
-    #[must_use]
     pub fn from_start_center_end(s: Vec2, c: Vec2, e: Vec2) -> Arc {
         Arc::new(c, s.dist(c), c.angle_to(s), c.angle_to(e))
     }
-    #[must_use]
     pub fn closest(&self, p: Vec2) -> Vec2 {
         let a = self.center.angle_to(p);
         if self.contains_angle(a) && p.dist(self.center) > EPS {
@@ -132,7 +110,6 @@ impl Arc {
             if s.dist(p) <= e.dist(p) { s } else { e }
         }
     }
-    #[must_use]
     pub fn bounds(&self) -> Bounds2 {
         let mut b = Bounds2::from_points([self.start_point(), self.end_point()]);
         for k in 0..4 {
@@ -161,11 +138,9 @@ pub struct Circle {
 }
 
 impl Circle {
-    #[must_use]
     pub fn new(center: Vec2, radius: f64) -> Self {
         Circle { center, radius: radius.abs() }
     }
-    #[must_use]
     pub fn from_3_points(p1: Vec2, p2: Vec2, p3: Vec2) -> Option<Circle> {
         // Work in point-relative coordinates. Absolute coordinate squares lose the small
         // differences between points in drawings far from the origin.
@@ -191,16 +166,13 @@ impl Circle {
         }
         Some(Circle::new(c, radius))
     }
-    #[must_use]
     pub fn from_2_points(p1: Vec2, p2: Vec2) -> Circle {
         Circle::new(p1.mid(p2), p1.dist(p2) / 2.0)
     }
-    #[must_use]
     pub fn closest(&self, p: Vec2) -> Vec2 {
         let d = p - self.center;
         if d.len() < EPS { self.center + Vec2::X * self.radius } else { self.center + d.normalized() * self.radius }
     }
-    #[must_use]
     pub fn bounds(&self) -> Bounds2 {
         Bounds2::new(self.center - Vec2::new(self.radius, self.radius), self.center + Vec2::new(self.radius, self.radius))
     }
@@ -208,7 +180,6 @@ impl Circle {
         Arc { center: self.center, radius: self.radius, start: 0.0, end: TAU }.tessellate(tol, out);
     }
     /// Tangent points from external point `p`.
-    #[must_use]
     pub fn tangent_points(&self, p: Vec2) -> Vec<Vec2> {
         let d = p.dist(self.center);
         if d <= self.radius + EPS {
@@ -222,7 +193,6 @@ impl Circle {
     /// up to two outer (belt) tangents and two inner (crossed) tangents. Empty for concentric
     /// circles or when one circle lies inside the other; tangents that touch both circles at the
     /// same point (circles touching each other) are left out.
-    #[must_use]
     #[expect(clippy::many_single_char_names, reason = "Circle-tangent equations use conventional r/v/d/u/c/h/n/p/q notation.")]
     pub fn common_tangents(&self, other: &Circle) -> Vec<(Vec2, Vec2)> {
         let (r1, r2) = (self.radius, other.radius);
@@ -264,23 +234,18 @@ pub struct Ellipse {
 }
 
 impl Ellipse {
-    #[must_use]
     pub fn full(center: Vec2, major: Vec2, ratio: f64) -> Self {
         Ellipse { center, major, ratio, start: 0.0, end: TAU }
     }
-    #[must_use]
     pub fn is_full(&self) -> bool {
         (ccw_sweep(self.start, self.end) - TAU).abs() < 1e-9
     }
-    #[must_use]
     pub fn minor(&self) -> Vec2 {
         self.major.perp() * self.ratio
     }
-    #[must_use]
     pub fn at_param(&self, t: f64) -> Vec2 {
         self.center + self.major * t.cos() + self.minor() * t.sin()
     }
-    #[must_use]
     pub fn sweep(&self) -> f64 {
         ccw_sweep(self.start, self.end)
     }
@@ -293,7 +258,6 @@ impl Ellipse {
             out.push(self.at_param(self.start + sweep * i as f64 / n as f64));
         }
     }
-    #[must_use]
     pub fn bounds(&self) -> Bounds2 {
         // Sampled bounds can cut off the true extrema, especially on a small arc or
         // a large drawing. The derivative of each coordinate gives two exact
@@ -308,7 +272,6 @@ impl Ellipse {
         bounds
     }
     /// Parameter of the point on the ellipse nearest the direction of `p` (approximate).
-    #[must_use]
     pub fn param_of(&self, p: Vec2) -> f64 {
         let ma = self.major.len();
         if ma < EPS {
@@ -321,7 +284,6 @@ impl Ellipse {
         let mb = ma * self.ratio;
         norm_angle((y / mb.max(EPS)).atan2(x / ma))
     }
-    #[must_use]
     pub fn closest(&self, p: Vec2) -> Vec2 {
         let mut pts = Vec::new();
         self.tessellate(self.major.len() * 1e-3, &mut pts);
@@ -356,7 +318,6 @@ pub enum Segment {
 }
 
 impl Segment {
-    #[must_use]
     pub fn start(&self) -> Vec2 {
         match self {
             Segment::Line(l) => l.a,
@@ -364,7 +325,6 @@ impl Segment {
             Segment::Arc { arc, ccw: false } => arc.end_point(),
         }
     }
-    #[must_use]
     pub fn end(&self) -> Vec2 {
         match self {
             Segment::Line(l) => l.b,
@@ -372,28 +332,24 @@ impl Segment {
             Segment::Arc { arc, ccw: false } => arc.start_point(),
         }
     }
-    #[must_use]
     pub fn len(&self) -> f64 {
         match self {
             Segment::Line(l) => l.len(),
             Segment::Arc { arc, .. } => arc.len(),
         }
     }
-    #[must_use]
     pub fn mid(&self) -> Vec2 {
         match self {
             Segment::Line(l) => l.mid(),
             Segment::Arc { arc, .. } => arc.mid_point(),
         }
     }
-    #[must_use]
     pub fn closest(&self, p: Vec2) -> Vec2 {
         match self {
             Segment::Line(l) => l.closest(p),
             Segment::Arc { arc, .. } => arc.closest(p),
         }
     }
-    #[must_use]
     pub fn bounds(&self) -> Bounds2 {
         match self {
             Segment::Line(l) => Bounds2::new(l.a, l.b),
@@ -417,7 +373,6 @@ impl Segment {
         }
     }
     /// Point at parameter `t` (0..1) in segment direction.
-    #[must_use]
     pub fn at(&self, t: f64) -> Vec2 {
         match self {
             Segment::Line(l) => l.at(t),
@@ -425,7 +380,6 @@ impl Segment {
             Segment::Arc { arc, ccw: false } => arc.at(1.0 - t),
         }
     }
-    #[must_use]
     pub fn reversed(&self) -> Segment {
         match *self {
             Segment::Line(l) => Segment::Line(Line::new(l.b, l.a)),
@@ -433,7 +387,6 @@ impl Segment {
         }
     }
     /// Tangent direction (unit) at parameter t.
-    #[must_use]
     pub fn tangent(&self, t: f64) -> Vec2 {
         match self {
             Segment::Line(l) => l.dir(),
@@ -445,7 +398,6 @@ impl Segment {
         }
     }
     /// Offset by `d` to the left of travel direction. `None` if an arc collapses.
-    #[must_use]
     pub fn offset(&self, d: f64) -> Option<Segment> {
         match *self {
             Segment::Line(l) => Some(Segment::Line(l.offset(d))),
@@ -474,18 +426,15 @@ pub struct PolyVertex {
 }
 
 impl PolyVertex {
-    #[must_use]
     pub fn new(p: Vec2) -> Self {
         PolyVertex { p, ..Default::default() }
     }
-    #[must_use]
     pub fn with_bulge(p: Vec2, bulge: f64) -> Self {
         PolyVertex { p, bulge, ..Default::default() }
     }
 }
 
 /// Convert a bulge segment to an arc. `None` for a straight (zero-bulge or degenerate) segment.
-#[must_use]
 pub fn bulge_to_arc(a: Vec2, b: Vec2, bulge: f64) -> Option<(Arc, bool)> {
     if bulge.abs() < 1e-12 || !bulge.is_finite() || a.near(b, EPS) {
         return None;
@@ -510,7 +459,6 @@ pub fn bulge_to_arc(a: Vec2, b: Vec2, bulge: f64) -> Option<(Arc, bool)> {
 }
 
 /// Bulge for an arc traversed from `a` to `b` with the given sweep (signed: + = CCW).
-#[must_use]
 pub fn arc_to_bulge(signed_sweep: f64) -> f64 {
     (signed_sweep / 4.0).tan()
 }
@@ -523,12 +471,10 @@ pub struct Polyline {
 }
 
 impl Polyline {
-    #[must_use]
     pub fn from_points(pts: &[Vec2], closed: bool) -> Self {
         Polyline { vertices: pts.iter().map(|p| PolyVertex::new(*p)).collect(), closed }
     }
     /// The segments, including the closing segment when closed.
-    #[must_use]
     pub fn segments(&self) -> Vec<Segment> {
         let n = self.vertices.len();
         let mut out = Vec::with_capacity(n);
@@ -548,7 +494,6 @@ impl Polyline {
     pub fn len(&self) -> f64 {
         self.segments().iter().map(Segment::len).sum()
     }
-    #[must_use]
     pub fn bounds(&self) -> Bounds2 {
         let mut b = Bounds2::from_points(self.vertices.iter().map(|v| v.p));
         for s in self.segments() {
@@ -556,7 +501,6 @@ impl Polyline {
         }
         b
     }
-    #[must_use]
     pub fn tessellate(&self, tol: f64) -> Vec<Vec2> {
         let mut out: Vec<Vec2> = Vec::new();
         for s in self.segments() {
@@ -571,7 +515,6 @@ impl Polyline {
         out
     }
     /// Signed area (CCW positive) of a closed polyline including bulge areas.
-    #[must_use]
     pub fn area(&self) -> f64 {
         // Integrate the chords exactly and add the signed circular-segment area
         // for every bulge. A tessellated shoelace loses precision on large arcs.
@@ -599,7 +542,6 @@ impl Polyline {
         }
         twice_area / 2.0
     }
-    #[must_use]
     pub fn closest(&self, p: Vec2) -> Option<Vec2> {
         let mut best: Option<(f64, Vec2)> = None;
         for s in self.segments() {
@@ -612,7 +554,6 @@ impl Polyline {
         best.map(|(_, c)| c).or_else(|| self.vertices.first().map(|v| v.p))
     }
     /// True if `p` is inside a closed polyline (even-odd on the tessellation).
-    #[must_use]
     pub fn contains(&self, p: Vec2) -> bool {
         point_in_polygon(&self.tessellate(1e-3), p)
     }
@@ -651,13 +592,11 @@ impl Polyline {
 }
 
 /// Area centroid of a closed polygon. `None` at zero area.
-#[must_use]
 pub fn polygon_centroid(pts: &[Vec2]) -> Option<Vec2> {
     Polyline::from_points(pts, true).centroid()
 }
 
 /// Signed polygon area (CCW positive).
-#[must_use]
 pub fn shoelace(pts: &[Vec2]) -> f64 {
     let n = pts.len();
     if n < 3 {
@@ -678,7 +617,6 @@ pub fn shoelace(pts: &[Vec2]) -> f64 {
 }
 
 /// Even-odd point-in-polygon test.
-#[must_use]
 pub fn point_in_polygon(poly: &[Vec2], p: Vec2) -> bool {
     let n = poly.len();
     if n < 3 {
