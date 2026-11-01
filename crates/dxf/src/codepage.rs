@@ -24,7 +24,7 @@ pub(crate) enum Decoder {
     Table(&'static [char; 128]),
 }
 
-/// The decoder for a `$DWGCODEPAGE` value (case-insensitive), or `None` when `CADCraft` doesn't
+/// The decoder for a `$DWGCODEPAGE` value (case-insensitive), or `None` when CADCraft doesn't
 /// know the code page.
 pub(crate) fn decoder(code_page: &str) -> Option<Decoder> {
     use encoding_rs as e;
@@ -63,15 +63,14 @@ pub(crate) fn decoder(code_page: &str) -> Option<Decoder> {
 }
 
 /// Decode `bytes` from the code page `code_page` names (a `$DWGCODEPAGE` value such as
-/// `ANSI_1251`), or `None` when `CADCraft` doesn't know that code page. Invalid sequences become
+/// `ANSI_1251`), or `None` when CADCraft doesn't know that code page. Invalid sequences become
 /// U+FFFD; escapes (`\U+XXXX`, `\M+nXXXX`) are left as they are.
-#[must_use]
 pub fn decode_code_page(bytes: &[u8], code_page: &str) -> Option<String> {
     decoder(code_page).map(|d| decode(bytes, d).into_owned())
 }
 
 /// The code page a pre-2007 file's text is written in, or `None` for pure ASCII with escapes:
-/// when `CADCraft` doesn't know `code_page`, and for `ASCII` (the reader takes such files as
+/// when CADCraft doesn't know `code_page`, and for `ASCII` (the reader takes such files as
 /// Windows-1252, but a writer must keep them ASCII) and `UTF8`/`UNICODE`, which no pre-2007
 /// reader expects.
 pub(crate) fn encoder(code_page: &str) -> Option<Decoder> {
@@ -148,7 +147,7 @@ fn ascii_code_page(bytes: &[u8]) -> Option<&[u8]> {
 /// Decode a whole ASCII DXF file. Valid UTF-8 is read as UTF-8: R2007+ files, pure-ASCII files,
 /// and older files from writers that ignored the code page. Anything else is decoded from the
 /// file's `$DWGCODEPAGE`, or from Windows-1252 (the usual `ANSI_1252`) when the header has none
-/// or names a code page `CADCraft` doesn't know, which is logged as a warning.
+/// or names a code page CADCraft doesn't know, which is logged as a warning.
 pub(crate) fn decode_ascii_file(bytes: &[u8]) -> Cow<'_, str> {
     if let Ok(s) = std::str::from_utf8(bytes) {
         return Cow::Borrowed(s);
