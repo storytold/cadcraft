@@ -1,7 +1,7 @@
-//! CADCraft text layout.
+//! `CADCraft` text layout.
 //!
 //! Turns TEXT and MTEXT into stroke polylines with the built-in single-stroke font
-//! ("CADCraft Stroke") or glyph outlines of installed TrueType fonts ([`ttf`]), with a
+//! ("`CADCraft` Stroke") or glyph outlines of installed TrueType fonts ([`ttf`]), with a
 //! per-character fallback to installed fonts for characters the chosen font lacks. Handles the
 //! `%%` control codes, alignment modes, width factor, obliquing, MTEXT inline formatting
 //! (paragraphs, stacking, height changes), word wrap and attachment points.
@@ -41,16 +41,17 @@ pub struct Run {
 /// Replace `%%` control codes: `%%d` degree, `%%p` plus/minus, `%%c` diameter, `%%%` percent,
 /// `%%nnn` character code. Underline/overline toggles (`%%u`, `%%o`) are returned as flags
 /// per character.
-pub fn decode_controls(s: &str) -> Vec<(char, bool, bool)> {
-    let mut out = Vec::with_capacity(s.len());
+#[must_use]
+pub fn decode_controls(text: &str) -> Vec<(char, bool, bool)> {
+    let mut out = Vec::with_capacity(text.len());
     let mut under = false;
     let mut over = false;
-    let chars: Vec<char> = s.chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        let c = chars.get(i).copied().unwrap_or(' ');
-        if c == '%' && chars.get(i + 1) == Some(&'%') {
-            let code = chars.get(i + 2).copied().unwrap_or(' ');
+    let chars: Vec<char> = text.chars().collect();
+    let mut index = 0;
+    while index < chars.len() {
+        let character = chars.get(index).copied().unwrap_or(' ');
+        if character == '%' && chars.get(index + 1) == Some(&'%') {
+            let code = chars.get(index + 2).copied().unwrap_or(' ');
             match code.to_ascii_lowercase() {
                 'd' => out.push(('°', under, over)),
                 'p' => out.push(('±', under, over)),
@@ -58,29 +59,30 @@ pub fn decode_controls(s: &str) -> Vec<(char, bool, bool)> {
                 '%' => out.push(('%', under, over)),
                 'u' => under = !under,
                 'o' => over = !over,
-                d if d.is_ascii_digit() => {
-                    let digits: String = chars.iter().skip(i + 2).take(3).take_while(|c| c.is_ascii_digit()).collect();
-                    let n: u32 = digits.parse().unwrap_or(32);
-                    out.push((char::from_u32(n).unwrap_or('?'), under, over));
-                    i += 2 + digits.len();
+                digit if digit.is_ascii_digit() => {
+                    let digits: String = chars.iter().skip(index + 2).take(3).take_while(|character| character.is_ascii_digit()).collect();
+                    let codepoint: u32 = digits.parse().unwrap_or(32);
+                    out.push((char::from_u32(codepoint).unwrap_or('?'), under, over));
+                    index += 2 + digits.len();
                     continue;
                 }
                 _ => {
                     out.push(('%', under, over));
-                    i += 1;
+                    index += 1;
                     continue;
                 }
             }
-            i += 3;
+            index += 3;
             continue;
         }
-        out.push((c, under, over));
-        i += 1;
+        out.push((character, under, over));
+        index += 1;
     }
     out
 }
 
 /// Advance width of one character at height 1 and width factor 1.
+#[must_use]
 pub fn char_advance(c: char) -> f64 {
     match stroke::glyph(c) {
         Some((w, _)) => (w + stroke::GAP) / stroke::CAP,
@@ -91,6 +93,7 @@ pub fn char_advance(c: char) -> f64 {
 
 /// Whether `c` is an East Asian wide character (CJK ideographs and punctuation, kana, Hangul,
 /// fullwidth forms): drawn in a square cell, like a big font's characters.
+#[must_use]
 pub fn is_wide(c: char) -> bool {
     matches!(u32::from(c),
         0x1100..=0x115F
@@ -143,70 +146,74 @@ fn stroke_advance(c: char, h: f64, wf: f64) -> f64 {
 /// Shape a single line in the stroke font at `height`, with `width_factor` and `oblique`
 /// (radians). Characters the stroke font lacks are drawn from an installed font that has them
 /// (glyph outlines, sized like TrueType text), else as a missing-glyph box.
-pub fn shape_stroke(s: &str, height: f64, width_factor: f64, oblique: f64) -> Shaped {
-    let h = if height.is_finite() && height > 0.0 { height } else { 1.0 };
-    let wf = if width_factor.is_finite() && width_factor.abs() > 1e-6 { width_factor } else { 1.0 };
-    let sc = h / stroke::CAP;
+#[must_use]
+pub fn shape_stroke(text: &str, height: f64, width_factor: f64, oblique: f64) -> Shaped {
+    let normalized_height = if height.is_finite() && height > 0.0 { height } else { 1.0 };
+    let scale_x = if width_factor.is_finite() && width_factor.abs() > 1e-6 { width_factor } else { 1.0 };
+    let stroke_scale = normalized_height / stroke::CAP;
     let shear = oblique.tan().clamp(-10.0, 10.0);
     let mut out = Shaped::default();
-    let mut x = 0.0;
+    let mut pen_x = 0.0;
     let mut under_start: Option<f64> = None;
     let mut over_start: Option<f64> = None;
-    let mut gap = stroke::GAP * sc * wf;
-    if bidi::has_rtl(s)
-        && let Some(sh) = complex::shape(None, s, h, wf, oblique)
+    let mut gap = stroke::GAP * stroke_scale * scale_x;
+    if bidi::has_rtl(text)
+        && let Some(sh) = complex::shape(None, text, normalized_height, scale_x, oblique)
     {
         return sh;
     }
-    for (c, under, over) in decode_controls(s) {
-        if bidi::is_format_control(c) {
+    for (character, under, over) in decode_controls(text) {
+        if bidi::is_format_control(character) {
             continue;
         }
-        let mut adv = char_advance(c) * h * wf;
-        gap = stroke::GAP * sc * wf;
-        match stroke::glyph(c) {
-            Some((_, spec)) => draw_stroke_glyph(&mut out, spec, x, sc, wf, shear),
-            None if !c.is_whitespace() => match ttf::fallback_glyph(c) {
-                Some(g) => {
-                    let (y, scale) = stroke_fallback_metrics(&g, c, h);
-                    let contours = ttf::place_glyph_at(&g, Vec2::new(x, y), scale, wf, shear);
+        let mut adv = char_advance(character) * normalized_height * scale_x;
+        gap = stroke::GAP * stroke_scale * scale_x;
+        match stroke::glyph(character) {
+            Some((_, spec)) => draw_stroke_glyph(&mut out, spec, pen_x, stroke_scale, scale_x, shear),
+            None if !character.is_whitespace() => match ttf::fallback_glyph(character) {
+                Some(glyph) => {
+                    let (origin_y, scale) = stroke_fallback_metrics(&glyph, character, normalized_height);
+                    let contours = ttf::place_glyph_at(&glyph, Vec2::new(pen_x, origin_y), scale, scale_x, shear);
                     if !contours.is_empty() {
-                        out.push_glyph(contours, ttf::text_glyph_at(&g, c, Vec2::new(x + y * shear, y), scale, wf, shear));
+                        out.push_glyph(
+                            contours,
+                            ttf::text_glyph_at(&glyph, character, Vec2::new(pen_x + origin_y * shear, origin_y), scale, scale_x, shear),
+                        );
                     }
-                    adv = g.advance * scale * wf;
+                    adv = glyph.advance * scale * scale_x;
                     gap = 0.0;
                 }
-                None => missing_glyph_box(&mut out, x, h, sc * wf),
+                None => missing_glyph_box(&mut out, pen_x, normalized_height, stroke_scale * scale_x),
             },
             None => {}
         }
         // Decorations.
         match (under, under_start) {
-            (true, None) => under_start = Some(x),
+            (true, None) => under_start = Some(pen_x),
             (false, Some(sx)) => {
-                out.strokes.push(vec![Vec2::new(sx, -h * 0.2), Vec2::new(x, -h * 0.2)]);
+                out.strokes.push(vec![Vec2::new(sx, -normalized_height * 0.2), Vec2::new(pen_x, -normalized_height * 0.2)]);
                 under_start = None;
             }
             _ => {}
         }
         match (over, over_start) {
-            (true, None) => over_start = Some(x),
+            (true, None) => over_start = Some(pen_x),
             (false, Some(sx)) => {
-                out.strokes.push(vec![Vec2::new(sx, h * 1.2), Vec2::new(x, h * 1.2)]);
+                out.strokes.push(vec![Vec2::new(sx, normalized_height * 1.2), Vec2::new(pen_x, normalized_height * 1.2)]);
                 over_start = None;
             }
             _ => {}
         }
-        x += adv;
+        pen_x += adv;
     }
     // The stroke font's gap after the last character isn't part of the line; a fallback glyph
     // has none.
-    let end = (x - gap).max(0.0);
+    let end = (pen_x - gap).max(0.0);
     if let Some(sx) = under_start {
-        out.strokes.push(vec![Vec2::new(sx, -h * 0.2), Vec2::new(end, -h * 0.2)]);
+        out.strokes.push(vec![Vec2::new(sx, -normalized_height * 0.2), Vec2::new(end, -normalized_height * 0.2)]);
     }
     if let Some(sx) = over_start {
-        out.strokes.push(vec![Vec2::new(sx, h * 1.2), Vec2::new(end, h * 1.2)]);
+        out.strokes.push(vec![Vec2::new(sx, normalized_height * 1.2), Vec2::new(end, normalized_height * 1.2)]);
     }
     out.width = end;
     out
@@ -235,6 +242,7 @@ fn missing_glyph_box(out: &mut Shaped, x: f64, h: f64, k: f64) {
 
 /// Lay out a single line at `height`, with `width_factor` and `oblique` (radians), in the
 /// stroke font (fallback glyphs become closed outlines).
+#[must_use]
 pub fn layout_line(s: &str, height: f64, width_factor: f64, oblique: f64) -> Run {
     let sh = shape_stroke(s, height, width_factor, oblique);
     let mut strokes = sh.strokes;
@@ -243,6 +251,7 @@ pub fn layout_line(s: &str, height: f64, width_factor: f64, oblique: f64) -> Run
 }
 
 /// Width of a line without building strokes.
+#[must_use]
 pub fn line_width(s: &str, height: f64, width_factor: f64) -> f64 {
     if bidi::has_rtl(s) {
         let h = if height.is_finite() && height > 0.0 { height } else { 1.0 };
@@ -262,6 +271,7 @@ pub fn line_width(s: &str, height: f64, width_factor: f64) -> f64 {
 
 /// Width of the gap MTEXT leaves between two words. Words are measured without their trailing
 /// letter gap, so the stroke font's gap is added on both sides of the space, as TEXT lays it out.
+#[must_use]
 pub fn space_width(font: &TextFont, height: f64, width_factor: f64) -> f64 {
     if let TextFont::Outline(face) = font
         && let Some(w) = ttf::width(face, " ", height, width_factor)
@@ -292,8 +302,9 @@ impl TextFont {
         if n.is_empty() || n.eq_ignore_ascii_case(BUILTIN_FONT) {
             return TextFont::Stroke;
         }
-        ttf::find(&ttf::font_alt()).map(TextFont::Outline).unwrap_or(TextFont::Stroke)
+        ttf::find(&ttf::font_alt()).map_or(TextFont::Stroke, TextFont::Outline)
     }
+    #[must_use]
     pub fn is_outline(&self) -> bool {
         matches!(self, TextFont::Outline(_))
     }
@@ -372,10 +383,12 @@ impl Shaped {
         self.strokes.extend(other.strokes);
         self.glyphs.extend(other.glyphs);
     }
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.strokes.is_empty() && self.glyphs.is_empty()
     }
     /// All geometry as polylines (outlines become closed polylines).
+    #[must_use]
     pub fn outlines(&self) -> Vec<Vec<Vec2>> {
         let mut v = self.strokes.clone();
         v.extend(self.glyphs.iter().flatten().cloned());
@@ -413,6 +426,7 @@ pub(crate) fn decorations(spans: &[(f64, f64, bool, bool)], h: f64) -> Vec<Vec<V
 
 /// Shape one line in `font` (baseline at y = 0, x from 0). TrueType fonts that fail to parse
 /// fall back to the stroke font.
+#[must_use]
 pub fn shape_line(font: &TextFont, s: &str, height: f64, width_factor: f64, oblique: f64) -> Shaped {
     if let TextFont::Outline(face) = font
         && let Some(sh) = ttf::shape(face, s, height, width_factor, oblique)
@@ -423,6 +437,7 @@ pub fn shape_line(font: &TextFont, s: &str, height: f64, width_factor: f64, obli
 }
 
 /// Width of one line in `font`.
+#[must_use]
 pub fn text_width(font: &TextFont, s: &str, height: f64, width_factor: f64) -> f64 {
     if let TextFont::Outline(face) = font
         && let Some(w) = ttf::width(face, s, height, width_factor)
@@ -474,6 +489,7 @@ pub struct TextParams {
 }
 
 impl TextParams {
+    #[must_use]
     pub fn new(insert: Vec2, height: f64) -> Self {
         TextParams {
             insert,
@@ -489,6 +505,7 @@ impl TextParams {
         }
     }
     /// Centred on `p` both ways (dimension and table text).
+    #[must_use]
     pub fn centered(p: Vec2, height: f64, rotation: f64) -> Self {
         TextParams { align_pt: Some(p), rotation, h: Align::Middle, v: VAlign::Middle, ..TextParams::new(p, height) }
     }
@@ -497,13 +514,14 @@ impl TextParams {
 /// Where a single-line TEXT's baseline starts (the left end of its first character's baseline),
 /// in world coordinates: what DXF/DWG store as a justified text's insertion point (group 10),
 /// computed from its alignment point (group 11) and its width in `font`.
+#[must_use]
 pub fn baseline_start(font: &TextFont, s: &str, p: &TextParams) -> Vec2 {
     let (origin, local, rot, mirror) = frame(font, s, p);
     origin + Vec2::new(local.x * mirror.x, local.y * mirror.y).rotate(rot)
 }
 
 /// How far below the baseline a bottom-justified text's alignment point lies: a third of the
-/// height for the stroke font (as AutoCAD places it with SHX fonts), the face's descent for an
+/// height for the stroke font (as `AutoCAD` places it with SHX fonts), the face's descent for an
 /// outline font (#2229).
 fn bottom_depth(font: &TextFont, height: f64) -> f64 {
     match font {
@@ -513,12 +531,12 @@ fn bottom_depth(font: &TextFont, height: f64) -> f64 {
 }
 
 /// The vertical middle of shaped text's ink (its strokes and outlines), above the baseline;
-/// `None` when it draws nothing. A Middle (M) text is centred there: AutoCAD centres it on the
+/// `None` when it draws nothing. A Middle (M) text is centred there: `AutoCAD` centres it on the
 /// string's own extents, descenders included, not at half the height (#2229).
 fn ink_middle(sh: &Shaped) -> Option<f64> {
     let ys = sh.strokes.iter().flatten().chain(sh.glyphs.iter().flatten().flatten()).map(|q| q.y).filter(|y| y.is_finite());
     let (lo, hi) = ys.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), y| (lo.min(y), hi.max(y)));
-    (lo <= hi).then_some((lo + hi) / 2.0)
+    (lo <= hi).then_some(f64::midpoint(lo, hi))
 }
 
 /// The offset of a line's baseline start from its alignment point, for justification `h`/`v`.
@@ -559,6 +577,7 @@ fn frame(font: &TextFont, s: &str, p: &TextParams) -> (Vec2, Vec2, f64, Vec2) {
 
 /// Place a single-line TEXT in world coordinates with any font. Returns the shaped text and its
 /// bounding box.
+#[must_use]
 pub fn place(font: &TextFont, s: &str, p: &TextParams) -> (Shaped, Bounds2) {
     let mut height = if p.height > 0.0 && p.height.is_finite() { p.height } else { 1.0 };
     let mut wf = p.width_factor;
@@ -602,6 +621,7 @@ pub fn place(font: &TextFont, s: &str, p: &TextParams) -> (Shaped, Bounds2) {
 /// Place a single-line TEXT in world coordinates with the stroke font. Returns strokes and the
 /// text's bounding box.
 #[allow(clippy::too_many_arguments)]
+#[must_use]
 pub fn place_text(
     s: &str,
     insert: Vec2,
@@ -827,7 +847,7 @@ mod justify_tests {
         ys.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), y| (lo.min(y), hi.max(y)))
     }
 
-    /// A Middle (M) text is centred on its own ink, descenders included, as AutoCAD centres it,
+    /// A Middle (M) text is centred on its own ink, descenders included, as `AutoCAD` centres it,
     /// not at half the height: lowercase and descenders move the baseline (#2229).
     #[test]
     fn a_middle_text_is_centred_on_its_ink() {
@@ -836,11 +856,11 @@ mod justify_tests {
         for s in ["ABC 123", "gjpqy", "Tg 1234 ABC", "ace"] {
             let (sh, start) = placed(&font, s, Align::Middle, VAlign::Baseline);
             let (lo, hi) = ink_y(&sh);
-            assert!(((lo + hi) / 2.0).abs() < 1e-9, "{s}: ink {lo}..{hi} is centred on the alignment point");
+            assert!((f64::midpoint(lo, hi)).abs() < 1e-9, "{s}: ink {lo}..{hi} is centred on the alignment point");
             // The insertion point a DWG keeps (group 10) is the baseline start, below the ink's
             // middle by as much as the unplaced text's ink middle is above its baseline.
             let (lo0, hi0) = ink_y(&shape_line(&font, s, H, 1.0, 0.0));
-            assert!((start.y + (lo0 + hi0) / 2.0).abs() < 1e-9, "{s}: baseline start {start:?}");
+            assert!((start.y + f64::midpoint(lo0, hi0)).abs() < 1e-9, "{s}: baseline start {start:?}");
             baselines.push((s, start.y));
         }
         // Capitals and digits span the height, so they stay at half of it.
@@ -860,7 +880,7 @@ mod justify_tests {
         assert!((start.y + H / 2.0).abs() < 1e-9, "{start:?}");
     }
 
-    /// With the stroke font (as with AutoCAD's SHX fonts), a bottom-justified text's baseline is
+    /// With the stroke font (as with `AutoCAD`'s SHX fonts), a bottom-justified text's baseline is
     /// a third of the height above its alignment point, and Middle Center still uses half.
     #[test]
     fn stroke_font_bottom_and_middle_center_are_unchanged() {
@@ -874,7 +894,7 @@ mod justify_tests {
     }
 
     /// With a TrueType font, a bottom-justified text's alignment point is at the face's descent,
-    /// where its descenders end, as AutoCAD places it (#2229: Arial's is 0.296 of the height).
+    /// where its descenders end, as `AutoCAD` places it (#2229: Arial's is 0.296 of the height).
     /// Uses the first of these common fonts that is installed (Windows, macOS and Linux each have
     /// one); skips without any.
     #[test]
@@ -894,6 +914,6 @@ mod justify_tests {
         // And Middle centres the ink, as with the stroke font.
         let (sh, _) = placed(&font, "Tg 1234 ABC", Align::Middle, VAlign::Baseline);
         let (lo, hi) = ink_y(&sh);
-        assert!(((lo + hi) / 2.0).abs() < 1e-9, "{name}: {lo}..{hi}");
+        assert!((f64::midpoint(lo, hi)).abs() < 1e-9, "{name}: {lo}..{hi}");
     }
 }

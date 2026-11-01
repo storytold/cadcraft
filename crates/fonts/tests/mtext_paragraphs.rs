@@ -22,7 +22,7 @@ fn max_x(l: &MTextLayout) -> f64 {
 
 /// Leftmost x of the geometry of line `n` (0 = first; baselines 5/3 apart below -1).
 fn line_min_x(l: &MTextLayout, n: usize) -> f64 {
-    let base = -1.0 - n as f64 * 5.0 / 3.0;
+    let base = -1.0 - f64::from(u32::try_from(n).unwrap_or(u32::MAX)) * 5.0 / 3.0;
     l.strokes.iter().flatten().filter(|p| p.y >= base - 0.4 && p.y <= base + 1.3).map(|p| p.x).fold(f64::MAX, f64::min)
 }
 
@@ -59,7 +59,7 @@ fn paragraph_alignment_overrides_the_attachment() {
     let right = lay("\\pqr;ab", 10.0, None);
     assert!(max_x(&right) > 9.0 && max_x(&right) <= 10.0 + 1e-9, "{}", max_x(&right));
     let centre = lay("\\pqc;ab", 10.0, None);
-    let c = (min_x(&centre) + max_x(&centre)) / 2.0;
+    let c = f64::midpoint(min_x(&centre), max_x(&centre));
     assert!((c - 5.0).abs() < 0.5, "{c}");
 }
 
@@ -79,7 +79,7 @@ fn text_flows_through_static_columns() {
     assert!((l.bounds.width() - 34.0).abs() < 1e-9);
     assert!((l.bounds.height() - 6.0).abs() < 1e-9);
     for col in 0..3 {
-        let x0 = col as f64 * 12.0;
+        let x0 = f64::from(col) * 12.0;
         assert!(xs(&l).iter().any(|x| *x >= x0 && *x <= x0 + 10.0), "column {col} has text");
     }
     // The gutters stay empty.
