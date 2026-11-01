@@ -19,13 +19,11 @@ pub enum Panel {
     Properties,
     #[serde(rename = "externalReferences")]
     ExternalRefs,
-    /// The Block Manager as a panel.
     Blocks,
 }
 
 impl Panel {
     pub const ALL: &[Self] = &[Self::Canvas, Self::ToolSets, Self::Layers, Self::Properties, Self::ExternalRefs];
-    /// Stable JSON identifier for this dock panel.
     pub fn id(self) -> &'static str {
         match self {
             Self::Canvas => "canvas",
@@ -37,7 +35,6 @@ impl Panel {
             Self::Blocks => "blocks",
         }
     }
-    /// Human-readable panel title.
     fn label(self) -> &'static str {
         match self {
             Self::Canvas => "Drawing",
@@ -155,7 +152,8 @@ fn home_anchor(layout: &Layout<Panel>, panel: Panel) -> Option<(Panel, bool)> {
         Panel::Layers => &[(Panel::Properties, false), (Panel::ExternalRefs, false)],
         Panel::Properties => &[(Panel::Layers, true), (Panel::ExternalRefs, false)],
         Panel::ExternalRefs => &[(Panel::Properties, true), (Panel::Layers, true)],
-        Panel::QuickCalc | Panel::Blocks => &[(Panel::ExternalRefs, true), (Panel::Properties, true), (Panel::Layers, true)],
+        Panel::QuickCalc => &[(Panel::ExternalRefs, true), (Panel::Properties, true), (Panel::Layers, true)],
+        Panel::Blocks => &[(Panel::QuickCalc, true), (Panel::ExternalRefs, true), (Panel::Properties, true), (Panel::Layers, true)],
     };
     if let Some(found) = neighbours.iter().copied().find(|(neighbour, _)| docked(layout, *neighbour)) {
         return Some(found);
@@ -407,7 +405,6 @@ impl DockContent<Panel> for Panels<'_> {
             }
             Panel::ToolSets => crate::palettes::toolsets(app, ui),
             Panel::QuickCalc => crate::palettes::quickcalc::show(app, ui),
-            Panel::Blocks => crate::blockmgr::panel(app, ui),
             Panel::Layers => {
                 egui::ScrollArea::vertical()
                     .id_salt("dock-layers")
@@ -421,6 +418,12 @@ impl DockContent<Panel> for Panels<'_> {
             }
             Panel::ExternalRefs => {
                 egui::ScrollArea::both().id_salt("dock-xrefs").auto_shrink([false, false]).show(ui, |ui| crate::xrefs::section(app, ui));
+            }
+            Panel::Blocks => {
+                egui::ScrollArea::vertical()
+                    .id_salt("dock-blocks")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| crate::blocks_palette::section(app, ui));
             }
         }
     }
@@ -448,9 +451,9 @@ fn panel_limits(panel: &Panel) -> PanelLimits {
     let (min, max_width) = match panel {
         Panel::Canvas => (egui::vec2(300.0, 180.0), 1_000_000.0),
         Panel::QuickCalc => (egui::vec2(240.0, 160.0), 600.0),
-        Panel::Blocks => (egui::vec2(240.0, 200.0), 600.0),
         Panel::ToolSets => (egui::vec2(220.0, 150.0), 480.0),
         Panel::Layers | Panel::Properties | Panel::ExternalRefs => (egui::vec2(220.0, 100.0), 720.0),
+        Panel::Blocks => (egui::vec2(240.0, 260.0), 720.0),
     };
     PanelLimits { min, max: egui::vec2(max_width, 1_000_000.0) }
 }

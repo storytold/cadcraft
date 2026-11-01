@@ -1044,12 +1044,30 @@
 	Check for Updates…	Nach Updates suchen…
 	CADCraft is up to date.	CADCraft ist auf dem neuesten Stand.
 	Could not check for updates.	Die Suche nach Updates ist fehlgeschlagen.
-	Preview pending	Vorschau ausstehend
-	Preview unavailable	Vorschau nicht verfügbar
-	No visible content	Kein sichtbarer Inhalt
-	Empty block	Leerer Block
-	Excessive preview input	Zu viele Eingabedaten für die Vorschau
-	Excessive preview computation	Zu hoher Rechenaufwand für die Vorschau
-	Excessive preview output	Vorschau-Ausgabe zu groß
-	Invalid preview data	Ungültige Vorschaudaten
-	Missing block reference	Blockverweis fehlt
+	Add a drawing file as a block library	Zeichnungsdatei als Blockbibliothek hinzufügen
+	Add a folder of drawings or a drawing file to use its blocks.	Fügen Sie einen Ordner mit Zeichnungen oder eine Zeichnungsdatei hinzu, um deren Blöcke zu verwenden.
+	Block Libraries	Blockbibliotheken
+	Block Library	Blockbibliothek
+	Blocks Palette	Blockpalette
+	Click a block, then pick its insertion point.	Klicken Sie auf einen Block und geben Sie dann den Einfügepunkt an.
+	Current Drawing	Aktuelle Zeichnung
+	Details	Details
+	Extra Large Icons	Extragroße Symbole
+	Folder or file	Ordner oder Datei
+	Import Library Block	Bibliotheksblock importieren
+	Insert and Explode	Einfügen und auflösen
+	Large Icons	Große Symbole
+	Libraries	Bibliotheken
+	Medium Icons	Mittelgroße Symbole
+	No block matches the filter.	Kein Block entspricht dem Filter.
+	This block is already in the drawing, so its definition is used.	Dieser Block ist bereits in der Zeichnung, daher wird seine Definition verwendet.
+	Open Library...	Bibliothek öffnen...
+	Read the library again	Bibliothek erneut lesen
+	Refresh	Aktualisieren
+	Remove from the list	Aus der Liste entfernen
+	Repeat Placement	Platzierung wiederholen
+	Small Icons	Kleine Symbole
+	This drawing has no blocks.	Diese Zeichnung enthält keine Blöcke.
+	This library has no drawings or blocks.	Diese Bibliothek enthält keine Zeichnungen oder Blöcke.
+	Options	Optionen
+	Only the first {n} are shown.	Nur die ersten {n} werden angezeigt.

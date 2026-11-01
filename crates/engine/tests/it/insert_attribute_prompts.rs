@@ -80,20 +80,3 @@ fn a_verify_attribute_is_asked_again_with_the_value_typed() {
     s.cmdline("(command \"_.-INSERT\" \"K\" '(300.0 0.0) \"\" \"\" 0 \"X\" \"\")").unwrap();
     assert_eq!(values(&s), [pair("T1", "X")]);
 }
-
-#[test]
-fn a_repeated_insert_verifies_every_placement() {
-    let mut s = with_block(&[("T1", 4, "V1")]);
-    s.start("insert").unwrap();
-    s.cmdline("K").unwrap();
-    s.cmdline("Repeat").unwrap();
-    for x in [300.0, 400.0] {
-        s.input(Input::Point(Vec2::new(x, 0.0))).unwrap();
-        s.input(Input::Enter).unwrap(); // X scale
-        s.input(Input::Enter).unwrap(); // Y scale
-        s.input(Input::Text("0".into())).unwrap(); // rotation
-        s.cmdline("X").unwrap(); // the attribute value
-        assert!(s.prompt_text().contains("PT1 <X>"), "{}", s.prompt_text());
-        s.cmdline("X").unwrap(); // verified
-    }
-}

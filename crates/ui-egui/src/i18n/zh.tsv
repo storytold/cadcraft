@@ -1349,12 +1349,29 @@
 	Check for Updates…	检查更新…
 	CADCraft is up to date.	CADCraft 已是最新版本。
 	Could not check for updates.	无法检查更新。
-	Preview pending	预览待处理
-	Preview unavailable	预览不可用
-	No visible content	没有可见内容
-	Empty block	空块
-	Excessive preview input	预览输入数据过多
-	Excessive preview computation	预览计算量过大
-	Excessive preview output	预览输出过大
-	Invalid preview data	预览数据无效
-	Missing block reference	缺少块引用
+	Add a drawing file as a block library	将图形文件添加为块库
+	Add a folder of drawings or a drawing file to use its blocks.	添加包含图形的文件夹或图形文件，以使用其中的块。
+	Block Libraries	块库
+	Block Library	块库
+	Blocks Palette	块选项板
+	Click a block, then pick its insertion point.	单击块，然后指定其插入点。
+	Current Drawing	当前图形
+	Details	详细信息
+	Extra Large Icons	超大图标
+	Folder or file	文件夹或文件
+	Import Library Block	导入库中的块
+	Insert and Explode	插入并分解
+	Large Icons	大图标
+	Libraries	库
+	Medium Icons	中等图标
+	No block matches the filter.	没有与筛选器匹配的块。
+	This block is already in the drawing, so its definition is used.	此块已在图形中，因此使用其现有定义。
+	Open Library...	打开库...
+	Read the library again	重新读取库
+	Refresh	刷新
+	Remove from the list	从列表中移除
+	Repeat Placement	重复放置
+	Small Icons	小图标
+	This drawing has no blocks.	此图形中没有块。
+	This library has no drawings or blocks.	此库中没有图形或块。
+	Only the first {n} are shown.	仅显示前 {n} 个。

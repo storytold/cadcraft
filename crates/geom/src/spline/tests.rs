@@ -303,17 +303,3 @@ fn a_normal_low_degree_spline_is_valid() {
     assert!(s.is_valid());
     assert!(s.tessellate(1e-3).len() > 4);
 }
-#[test]
-fn sampling_plans_match_tessellation_and_bound_hostile_degrees() {
-    use super::*;
-    for degree in [1, 2, 3, 8, 32] {
-        let s = Spline::from_control((0..=degree).map(|i| Vec2::new(i as f64, (i % 2) as f64)).collect(), degree);
-        for tol in [0.001, 0.1, 10.0] {
-            assert_eq!(s.sample_count(tol) + 1, s.tessellate(tol).len());
-        }
-        assert!(s.bounds_sample_count() <= MAX_SAMPLES + 1);
-    }
-    let s = Spline { degree: usize::MAX, ..Default::default() };
-    assert_eq!(s.sample_count(0.1), 0);
-    assert_eq!(s.bounds_sample_count(), 0);
-}

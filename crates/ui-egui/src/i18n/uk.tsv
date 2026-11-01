@@ -1375,13 +1375,30 @@
 	Check for Updates…	Перевірити оновлення…
 	CADCraft is up to date.	Встановлено найновішу версію CADCraft.
 	Could not check for updates.	Не вдалося перевірити оновлення.
-	Preview pending	Попередній перегляд очікується
-	Preview unavailable	Попередній перегляд недоступний
-	No visible content	Немає видимого вмісту
-	Empty block	Порожній блок
-	Excessive preview input	Забагато вхідних даних для попереднього перегляду
-	Excessive preview computation	Надто великий обсяг обчислень для попереднього перегляду
-	Excessive preview output	Надто великий результат попереднього перегляду
-	Invalid preview data	Недійсні дані попереднього перегляду
-	Missing block reference	Відсутнє посилання на блок
 	Save changes to block "{name}"?	Зберегти зміни в блоці «{name}»?
+	Add a drawing file as a block library	Додати файл креслення як бібліотеку блоків
+	Add a folder of drawings or a drawing file to use its blocks.	Додайте теку з кресленнями або файл креслення, щоб використовувати його блоки.
+	Block Libraries	Бібліотеки блоків
+	Block Library	Бібліотека блоків
+	Blocks Palette	Палітра блоків
+	Click a block, then pick its insertion point.	Клацніть блок, потім укажіть точку вставлення.
+	Current Drawing	Поточне креслення
+	Details	Докладно
+	Extra Large Icons	Дуже великі піктограми
+	Folder or file	Тека або файл
+	Import Library Block	Імпортувати блок із бібліотеки
+	Insert and Explode	Вставити й розчленувати
+	Large Icons	Великі піктограми
+	Libraries	Бібліотеки
+	Medium Icons	Середні піктограми
+	No block matches the filter.	Жоден блок не відповідає фільтру.
+	This block is already in the drawing, so its definition is used.	Цей блок уже є в кресленні, тому використовується його визначення.
+	Open Library...	Відкрити бібліотеку...
+	Read the library again	Прочитати бібліотеку знову
+	Refresh	Оновити
+	Remove from the list	Прибрати зі списку
+	Repeat Placement	Повторювати розміщення
+	Small Icons	Малі піктограми
+	This drawing has no blocks.	У цьому кресленні немає блоків.
+	This library has no drawings or blocks.	У цій бібліотеці немає креслень і блоків.
+	Only the first {n} are shown.	Показано лише перші {n}.

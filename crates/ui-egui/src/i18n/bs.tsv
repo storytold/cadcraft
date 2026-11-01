@@ -1447,3 +1447,29 @@ menu	Modify	Izmijeni
 	Save changes to block "{name}"?	Sačuvati promjene u bloku „{name}”?
 	Layouts	Rasporedi
 	Associate	Poveži
+	Add a drawing file as a block library	Dodaj datoteku crteža kao biblioteku blokova
+	Add a folder of drawings or a drawing file to use its blocks.	Dodajte mapu s crtežima ili datoteku crteža da biste koristili njene blokove.
+	Block Libraries	Biblioteke blokova
+	Block Library	Biblioteka blokova
+	Blocks Palette	Paleta blokova
+	Click a block, then pick its insertion point.	Kliknite na blok, zatim odredite njegovu tačku umetanja.
+	Current Drawing	Trenutni crtež
+	Details	Detalji
+	Extra Large Icons	Veoma velike ikone
+	Folder or file	Mapa ili datoteka
+	Import Library Block	Uvezi blok iz biblioteke
+	Insert and Explode	Umetni i rastavi
+	Large Icons	Velike ikone
+	Libraries	Biblioteke
+	Medium Icons	Srednje ikone
+	No block matches the filter.	Nijedan blok ne odgovara filteru.
+	This block is already in the drawing, so its definition is used.	Ovaj blok već postoji u crtežu, pa se koristi njegova definicija.
+	Open Library...	Otvori biblioteku...
+	Read the library again	Ponovo učitaj biblioteku
+	Refresh	Osvježi
+	Remove from the list	Ukloni s liste
+	Repeat Placement	Ponovi postavljanje
+	Small Icons	Male ikone
+	This drawing has no blocks.	Ovaj crtež nema blokova.
+	This library has no drawings or blocks.	Ova biblioteka nema crteža ni blokova.
+	Only the first {n} are shown.	Prikazano je samo prvih {n}.

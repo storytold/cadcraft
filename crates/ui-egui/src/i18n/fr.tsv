@@ -1014,46 +1014,33 @@
 	Not a number or distance: {text}	Ni un nombre ni une distance : {text}
 	Query Texts	Interroger les textes
 	Analyze Shapes	Analyser les formes
-	View mode	Mode d'affichage
-	Medium Icons	Icône moyenne
-	Large Icons	Grande icône
-	Repeat placement	Répéter le placement
-	Grab on click	Prendre en main au clic
-	Specify scale on screen when placing	Spécifier l'échelle à l'écran lors de la pose
-	Specify rotation angle on screen when placing	Spécifier l'angle de rotation à l'écran lors de la pose
-	Click or drag to take in hand, then click on the drawing to place	Cliquer ou faire glisser pour prendre en main, puis cliquer sur le dessin pour déposer
-	Click or drag a block to take it in hand, then click on the drawing to place	Cliquer ou faire glisser un bloc pour le prendre en main, puis cliquer sur le dessin pour le déposer
-	No blocks match the search.	Aucun bloc ne correspond à la recherche.
-	Block Manager	Gestionnaire de blocs
-	Search:	Rechercher :
-	Making a preview...	Création de l'aperçu...
-	Edit Block	Modifier le bloc
-	Open in the Block Editor	Ouvrir dans l'éditeur de blocs
-	The block is in use and can't be deleted	Ce bloc est utilisé et ne peut pas être supprimé
-	Finish or cancel the running INSERT first	Termine ou annule d'abord la commande INSERT en cours
-	Exploded insertion uses the X scale for both axes	L'insertion éclatée utilise l'échelle X pour les deux axes
-	Delete a block that no object uses	Supprimer un bloc qu'aucun objet n'utilise
-	Save to File...	Enregistrer dans un fichier...
-	Write the block as a drawing (WBLOCK)	Enregistrer le bloc sous forme de dessin (WBLOCK)
-	Create...	Créer...
-	Make a block from objects (BLOCK)	Créer un bloc à partir d'objets (BLOCK)
-	Objects	Objets
-	References	Références
-	Base point	Point de base
-	Annotative	Annotatif
-	External reference	Référence externe
-	Options	Options
-	Float as a window	Détacher en fenêtre
-	Pin as a panel on the right	Épingler en panneau à droite
 	Check for Updates…	Rechercher des mises à jour…
 	CADCraft is up to date.	CADCraft est à jour.
 	Could not check for updates.	Impossible de rechercher les mises à jour.
-	Preview pending	Aperçu en attente
-	Preview unavailable	Aperçu indisponible
-	No visible content	Aucun contenu visible
-	Empty block	Bloc vide
-	Excessive preview input	Données d’entrée trop volumineuses
-	Excessive preview computation	Coût de calcul excessif
-	Excessive preview output	Sortie de l’aperçu trop volumineuse
-	Invalid preview data	Données invalides pour l’aperçu
-	Missing block reference	Référence de bloc manquante
+	Add a drawing file as a block library	Ajouter un fichier de dessin comme bibliothèque de blocs
+	Add a folder of drawings or a drawing file to use its blocks.	Ajoutez un dossier de dessins ou un fichier de dessin pour utiliser ses blocs.
+	Block Libraries	Bibliothèques de blocs
+	Block Library	Bibliothèque de blocs
+	Blocks Palette	Palette des blocs
+	Click a block, then pick its insertion point.	Cliquez sur un bloc, puis indiquez son point d'insertion.
+	Current Drawing	Dessin courant
+	Details	Détails
+	Extra Large Icons	Très grandes icônes
+	Folder or file	Dossier ou fichier
+	Import Library Block	Importer un bloc de bibliothèque
+	Insert and Explode	Insérer et décomposer
+	Large Icons	Grandes icônes
+	Libraries	Bibliothèques
+	Medium Icons	Icônes moyennes
+	No block matches the filter.	Aucun bloc ne correspond au filtre.
+	This block is already in the drawing, so its definition is used.	Ce bloc est déjà dans le dessin ; sa définition est utilisée.
+	Open Library...	Ouvrir une bibliothèque...
+	Read the library again	Relire la bibliothèque
+	Refresh	Actualiser
+	Remove from the list	Retirer de la liste
+	Repeat Placement	Répéter le placement
+	Small Icons	Petites icônes
+	This drawing has no blocks.	Ce dessin ne contient aucun bloc.
+	This library has no drawings or blocks.	Cette bibliothèque ne contient ni dessin ni bloc.
+	Options	Options
+	Only the first {n} are shown.	Seuls les {n} premiers sont affichés.

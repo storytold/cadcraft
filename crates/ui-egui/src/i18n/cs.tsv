@@ -1227,12 +1227,29 @@ menu	Modify	Modifikace
 	Check for Updates…	Zkontrolovat aktualizace…
 	CADCraft is up to date.	CADCraft je aktuální.
 	Could not check for updates.	Aktualizace se nepodařilo zkontrolovat.
-	Preview pending	Náhled čeká na zpracování
-	Preview unavailable	Náhled není k dispozici
-	No visible content	Žádný viditelný obsah
-	Empty block	Prázdný blok
-	Excessive preview input	Příliš mnoho vstupních dat náhledu
-	Excessive preview computation	Příliš náročný výpočet náhledu
-	Excessive preview output	Příliš velký výstup náhledu
-	Invalid preview data	Neplatná data náhledu
-	Missing block reference	Chybí odkaz na blok
+	Add a drawing file as a block library	Přidat výkresový soubor jako knihovnu bloků
+	Add a folder of drawings or a drawing file to use its blocks.	Přidejte složku s výkresy nebo výkresový soubor, abyste mohli používat jeho bloky.
+	Block Libraries	Knihovny bloků
+	Block Library	Knihovna bloků
+	Blocks Palette	Paleta bloků
+	Click a block, then pick its insertion point.	Klikněte na blok a poté určete jeho vkládací bod.
+	Current Drawing	Aktuální výkres
+	Details	Podrobnosti
+	Extra Large Icons	Extra velké ikony
+	Folder or file	Složka nebo soubor
+	Import Library Block	Importovat blok z knihovny
+	Insert and Explode	Vložit a rozložit
+	Large Icons	Velké ikony
+	Libraries	Knihovny
+	Medium Icons	Střední ikony
+	No block matches the filter.	Filtru neodpovídá žádný blok.
+	This block is already in the drawing, so its definition is used.	Tento blok už v kresbě je, proto se použije jeho definice.
+	Open Library...	Otevřít knihovnu...
+	Read the library again	Načíst knihovnu znovu
+	Refresh	Obnovit
+	Remove from the list	Odebrat ze seznamu
+	Repeat Placement	Opakovat umístění
+	Small Icons	Malé ikony
+	This drawing has no blocks.	Tento výkres neobsahuje žádné bloky.
+	This library has no drawings or blocks.	Tato knihovna neobsahuje žádné výkresy ani bloky.
+	Only the first {n} are shown.	Zobrazuje se pouze prvních {n}.

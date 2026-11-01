@@ -1258,12 +1258,29 @@
 	Check for Updates…	Buscar actualizaciones…
 	CADCraft is up to date.	CADCraft está actualizado.
 	Could not check for updates.	No se pudo buscar actualizaciones.
-	Preview pending	Vista previa pendiente
-	Preview unavailable	Vista previa no disponible
-	No visible content	Sin contenido visible
-	Empty block	Bloque vacío
-	Excessive preview input	Demasiados datos de entrada para la vista previa
-	Excessive preview computation	Cálculo excesivo para la vista previa
-	Excessive preview output	Salida de la vista previa demasiado grande
-	Invalid preview data	Datos de vista previa no válidos
-	Missing block reference	Falta la referencia de bloque
+	Add a drawing file as a block library	Añadir un archivo de dibujo como biblioteca de bloques
+	Add a folder of drawings or a drawing file to use its blocks.	Añada una carpeta de dibujos o un archivo de dibujo para usar sus bloques.
+	Block Libraries	Bibliotecas de bloques
+	Block Library	Biblioteca de bloques
+	Blocks Palette	Paleta de bloques
+	Click a block, then pick its insertion point.	Haga clic en un bloque y luego indique su punto de inserción.
+	Current Drawing	Dibujo actual
+	Details	Detalles
+	Extra Large Icons	Iconos extragrandes
+	Folder or file	Carpeta o archivo
+	Import Library Block	Importar bloque de biblioteca
+	Insert and Explode	Insertar y descomponer
+	Large Icons	Iconos grandes
+	Libraries	Bibliotecas
+	Medium Icons	Iconos medianos
+	No block matches the filter.	Ningún bloque coincide con el filtro.
+	This block is already in the drawing, so its definition is used.	Este bloque ya está en el dibujo, así que se usa su definición.
+	Open Library...	Abrir biblioteca...
+	Read the library again	Volver a leer la biblioteca
+	Refresh	Actualizar
+	Remove from the list	Quitar de la lista
+	Repeat Placement	Repetir colocación
+	Small Icons	Iconos pequeños
+	This drawing has no blocks.	Este dibujo no tiene bloques.
+	This library has no drawings or blocks.	Esta biblioteca no tiene dibujos ni bloques.
+	Only the first {n} are shown.	Solo se muestran los primeros {n}.

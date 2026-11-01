@@ -18,7 +18,7 @@ fn entity_layer(ctx: &Ctx, e: &Entity) -> u32 {
 pub(crate) fn entity(b: &mut Builder, ctx: &Ctx, e: &Entity) {
     // Hidden by ISOLATEOBJECTS / HIDEOBJECTS (and so in viewports and plots too). A cancelled
     // build stops here (block contents come through here too).
-    if b.output_failed || ctx.d.is_hidden_object(e.handle) || b.opts.cancelled() {
+    if ctx.d.is_hidden_object(e.handle) || b.opts.cancelled() {
         return;
     }
     // The entity's named plot style and transparency (set by `entity_parts`), for everything it
@@ -256,9 +256,8 @@ fn entity_parts(b: &mut Builder, ctx: &Ctx, e: &Entity) {
                     Prim::Point(p) => b.point(ctx, rgb, p),
                     Prim::Infinite { base, dir, ray } => b.infinite(ctx, rgb, base, dir, ray),
                     Prim::Fill(pts) => {
-                        if let Some(tris) = fill::triangulate_evenodd_limited(&[pts], b.opts.hatch_budget.as_deref()) {
-                            b.tris(ctx, rgb, &tris);
-                        }
+                        let tris = fill::triangulate_evenodd(&[pts]);
+                        b.tris(ctx, rgb, &tris);
                     }
                 }
             }
@@ -295,9 +294,7 @@ fn draw_wipeout(b: &mut Builder, ctx: &Ctx, w: &cadcraft_doc::Wipeout, rgb: Ink,
     // 0 = none, 1 = shown and plotted, 2 = shown but not plotted.
     if b.opts.fill {
         let n = b.list.prims.len();
-        if let Some(tris) = fill::triangulate_evenodd_limited(std::slice::from_ref(&w.boundary), b.opts.hatch_budget.as_deref()) {
-            b.tris(ctx, rgb, &tris);
-        }
+        b.tris(ctx, rgb, &fill::triangulate_evenodd(std::slice::from_ref(&w.boundary)));
         if let Some(p) = b.list.prims.get_mut(n) {
             p.kind = Kind::Mask;
         }

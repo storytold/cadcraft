@@ -12,9 +12,12 @@ use std::sync::Arc;
 use cadcraft_doc::{Block, Drawing, Entity, EntityKind, Handle};
 use serde_json::{Value, json};
 
+#[cfg(not(target_arch = "wasm32"))]
+use super::super::file::MAX_DRAWING_BYTES;
 use super::super::file::io;
 use super::super::modify::explode_kind;
-use super::{references_block, valid_block_name};
+use super::purge::{Kind, candidates, override_arrows};
+use super::{referenced_block, references_block, valid_block_name};
 use crate::cmd::{bad, str_param};
 use crate::{EngineError, Result, Session};
 
@@ -37,7 +40,7 @@ impl FileRef {
     /// Read the file and (re)define its block. Returns the block's name.
     pub fn define(&self, s: &mut Session) -> Result<String> {
         let src = read_drawing(&self.path)?;
-        define_from(s, &src, &self.name)
+        define_from(s, &src, &self.name, false)
     }
 }
 
@@ -45,6 +48,11 @@ impl FileRef {
 /// path (it has a folder separator or a .dwg/.dxf extension) that isn't the name of a block.
 pub(super) fn file_ref(s: &Session, t: &str) -> Option<FileRef> {
     let t = t.trim();
+    // A block of this drawing is that block, whatever its name looks like: a name read from a file
+    // must not pass for `name=path` and make INSERT read another file (CWE-74).
+    if s.doc().is_ok_and(|d| d.block(t).is_some()) {
+        return None;
+    }
     if let Some((name, path)) = t.split_once('=') {
         let name = name.trim();
         let path = if path.trim().is_empty() { name } else { path.trim() };
@@ -52,14 +60,14 @@ pub(super) fn file_ref(s: &Session, t: &str) -> Option<FileRef> {
     }
     let lower = t.to_ascii_lowercase();
     let pathlike = t.contains(['/', '\\']) || lower.ends_with(".dwg") || lower.ends_with(".dxf");
-    if !pathlike || s.doc().is_ok_and(|d| d.block(t).is_some()) {
+    if !pathlike {
         return None;
     }
     Some(FileRef { name: stem(t), path: t.to_string(), explicit: false })
 }
 
 /// The file name without folders and extension (either separator, so Windows paths work anywhere).
-fn stem(path: &str) -> String {
+pub(super) fn stem(path: &str) -> String {
     let file = path.rsplit(['/', '\\']).next().unwrap_or(path);
     match file.rsplit_once('.') {
         Some((stem, _)) if !stem.is_empty() => stem.to_string(),
@@ -68,7 +76,7 @@ fn stem(path: &str) -> String {
 }
 
 /// Read a drawing file through the io hooks; a path without extension tries .dwg, then .dxf.
-fn read_drawing(path: &str) -> Result<Drawing> {
+pub(super) fn read_drawing(path: &str) -> Result<Drawing> {
     let hooks = io().ok_or_else(|| bad("insert", "file formats are not available in this build"))?;
     let has_ext = stem(path) != path.rsplit(['/', '\\']).next().unwrap_or(path);
     let candidates = if has_ext { vec![path.to_string()] } else { vec![path.to_string(), format!("{path}.dwg"), format!("{path}.dxf")] };
@@ -85,24 +93,32 @@ fn read_drawing(path: &str) -> Result<Drawing> {
 fn read_file(_path: &str) -> Result<Vec<u8>> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        std::fs::read(_path).map_err(|e| bad("insert", format!("{_path}: {e}")))
+        crate::capped_read::read_capped(std::path::Path::new(_path), MAX_DRAWING_BYTES).map_err(|e| bad("insert", format!("{_path}: {e}")))
     }
     #[cfg(target_arch = "wasm32")]
     Err(bad("insert", "paths are not available on the web"))
 }
 
 /// (Re)define block `name` from `src`'s model space with base point `$INSBASE`, adding the
-/// layers, linetypes, styles and blocks of `src` this drawing doesn't have. Nothing changes when
-/// the definition fails (an invalid name, or a block that would contain itself).
-fn define_from(s: &mut Session, src: &Drawing, name: &str) -> Result<String> {
+/// layers, linetypes, styles and blocks of `src` this drawing doesn't have. With `only_needed`
+/// the layers, linetypes and styles that nothing uses are left out again, as when a block is
+/// taken from a library drawing: only what the block needs comes along. Nothing changes when the
+/// definition fails (an invalid name, or a block that would contain itself).
+pub(super) fn define_from(s: &mut Session, src: &Drawing, name: &str, only_needed: bool) -> Result<String> {
     if !valid_block_name(name) {
         return Err(bad("insert", format!("\"{name}\" is not a valid block name")));
     }
     let mut d = s.doc()?.clone();
+    let before = TableNames::of(&d);
     // Redefining keeps the existing definition's name (block names are case-insensitive).
     let name = d.blocks.keys().find(|k| k.eq_ignore_ascii_case(name)).cloned().unwrap_or_else(|| name.to_string());
     merge_tables(&mut d, src);
-    let renames = block_names(&d, src, &name);
+    let mut renames = block_names(&d, src, &name);
+    if only_needed {
+        // The other blocks of the file are not copied at all.
+        let need = needed_blocks(src);
+        renames.retain(|from, _| need.contains(&from.to_ascii_uppercase()));
+    }
     for (from, to) in &renames {
         let Some(b) = src.blocks.get(from) else { continue };
         let mut nb = (**b).clone();
@@ -129,8 +145,124 @@ fn define_from(s: &mut Session, src: &Drawing, name: &str) -> Result<String> {
         b.entities.push(e);
     }
     d.blocks.insert(name.clone(), Arc::new(b));
+    if only_needed {
+        drop_unused_new(&mut d, &before, &name);
+    }
     *s.doc_mut()? = d;
     Ok(name)
+}
+
+/// The tables a drawing merge adds to, in an order where removing the unused entries of one
+/// frees the next (blocks free layers, layers free linetypes, dimension styles free text styles).
+const MERGED: [Kind; 8] =
+    [Kind::Blocks, Kind::Dimstyles, Kind::MleaderStyles, Kind::MlineStyles, Kind::TableStyles, Kind::Layers, Kind::Linetypes, Kind::TextStyles];
+
+/// The names (lower case) in one of those tables.
+fn names_of(d: &Drawing, kind: Kind) -> BTreeSet<String> {
+    let lower = |it: &mut dyn Iterator<Item = &String>| it.map(|n| n.to_ascii_lowercase()).collect::<BTreeSet<String>>();
+    match kind {
+        Kind::Blocks => lower(&mut d.blocks.keys()),
+        Kind::Dimstyles => lower(&mut d.dim_styles.iter().map(|t| &t.name)),
+        Kind::MleaderStyles => lower(&mut d.mleader_styles.iter().map(|t| &t.name)),
+        Kind::MlineStyles => lower(&mut d.mline_styles.iter().map(|t| &t.name)),
+        Kind::TableStyles => lower(&mut d.table_styles.iter().map(|t| &t.name)),
+        Kind::Layers => lower(&mut d.layers.iter().map(|t| &t.name)),
+        Kind::Linetypes => lower(&mut d.linetypes.iter().map(|t| &t.name)),
+        Kind::TextStyles => lower(&mut d.text_styles.iter().map(|t| &t.name)),
+        _ => BTreeSet::new(),
+    }
+}
+
+/// The names in the merged tables, by kind.
+struct TableNames(Vec<(Kind, BTreeSet<String>)>);
+
+impl TableNames {
+    fn of(d: &Drawing) -> Self {
+        TableNames(MERGED.iter().map(|k| (*k, names_of(d, *k))).collect())
+    }
+}
+
+/// Upper-case names of the blocks `roots` and every block they need, through nested references,
+/// dimension blocks, multileader block content and dimension arrowheads.
+fn reachable(d: &Drawing, roots: Vec<String>) -> BTreeSet<String> {
+    let mut seen = BTreeSet::new();
+    let mut todo = roots;
+    let mut guard = 0;
+    while let Some(n) = todo.pop() {
+        guard += 1;
+        if guard > 100_000 || !seen.insert(n.to_ascii_uppercase()) {
+            continue;
+        }
+        let Some(b) = d.block(&n) else { continue };
+        for e in b.entities.iter() {
+            todo.extend(referenced_block(e));
+            if let EntityKind::Dimension(dm) = &e.kind {
+                todo.extend(override_arrows(dm));
+            }
+        }
+    }
+    seen
+}
+
+/// Upper-case names of the blocks the model space of `src` needs: the ones it refers to, what
+/// those need, and the arrowheads of its dimension styles.
+fn needed_blocks(src: &Drawing) -> BTreeSet<String> {
+    let mut roots: Vec<String> = Vec::new();
+    for e in src.model.iter() {
+        roots.extend(referenced_block(e));
+        if let EntityKind::Dimension(dm) = &e.kind {
+            roots.extend(override_arrows(dm));
+        }
+    }
+    for st in &src.dim_styles {
+        let arrows = [&st.arrow_block, &st.arrow_block1, &st.arrow_block2, &st.leader_arrow_block];
+        roots.extend(arrows.into_iter().map(|n| n.trim().to_string()).filter(|n| !n.is_empty()));
+    }
+    reachable(src, roots)
+}
+
+/// Remove the blocks, layers, linetypes and styles that were not in the drawing `before` and that
+/// nothing uses (PURGE's scan), in an order where removing one frees the next. `keep` is the
+/// block just defined: nothing refers to it yet, so it and the blocks it needs stay.
+fn drop_unused_new(d: &mut Drawing, before: &TableNames, keep: &str) {
+    // Removing a dimension style frees its arrowhead block, which an earlier table already
+    // scanned: scan again until a pass removes nothing (a chain is never longer than the tables).
+    for _ in 0..MERGED.len() {
+        if !drop_unused_pass(d, before, keep) {
+            break;
+        }
+    }
+}
+
+/// One scan of the merged tables; `true` when it removed something.
+fn drop_unused_pass(d: &mut Drawing, before: &TableNames, keep: &str) -> bool {
+    let mut removed = false;
+    for (kind, old) in &before.0 {
+        // Nothing was added to this table: nothing to scan for.
+        if names_of(d, *kind).is_subset(old) {
+            continue;
+        }
+        let keep_blocks = if matches!(kind, Kind::Blocks) { reachable(d, vec![keep.to_string()]) } else { BTreeSet::new() };
+        let fresh: BTreeSet<String> = candidates(d, *kind)
+            .into_iter()
+            .filter(|n| !old.contains(&n.to_ascii_lowercase()) && !keep_blocks.contains(&n.to_ascii_uppercase()))
+            .map(|n| n.to_ascii_lowercase())
+            .collect();
+        let gone = |name: &str| fresh.contains(&name.to_ascii_lowercase());
+        removed |= !fresh.is_empty();
+        match kind {
+            Kind::Blocks => d.blocks.retain(|k, _| !gone(k)),
+            Kind::Dimstyles => d.dim_styles.retain(|t| !gone(&t.name)),
+            Kind::MleaderStyles => d.mleader_styles.retain(|t| !gone(&t.name)),
+            Kind::MlineStyles => d.mline_styles.retain(|t| !gone(&t.name)),
+            Kind::TableStyles => d.table_styles.retain(|t| !gone(&t.name)),
+            Kind::Layers => d.layers.retain(|t| !gone(&t.name)),
+            Kind::Linetypes => d.linetypes.retain(|t| !gone(&t.name)),
+            Kind::TextStyles => d.text_styles.retain(|t| !gone(&t.name)),
+            _ => {}
+        }
+    }
+    removed
 }
 
 /// Add the source's layers, linetypes and styles that this drawing doesn't have (a name that

@@ -67,17 +67,8 @@ pub fn viewport_content(d: &Drawing, space: &Space, handle: Handle, area: Bounds
     }
     let opts = &with_point_view(d, space, opts);
     let styler = style_table(d, space, opts, false).map(|t| plotstyle::Styler::new(d, t));
-    let mut b = Builder {
-        output_left: None,
-        output_failed: false,
-        list: DisplayList::default(),
-        opts,
-        plotting: false,
-        styles: styler.as_ref(),
-        named: None,
-        shared_budget: None,
-        transparency: 0,
-    };
+    let mut b =
+        Builder { list: DisplayList::default(), opts, plotting: false, styles: styler.as_ref(), named: None, shared_budget: None, transparency: 0 };
     contents(&mut b, d, vp, area, &Clip::Rect(area), paper::unit_mm_of(d, handle));
     b.list
 }
@@ -121,8 +112,6 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
     // documented limit (CWE-400). Both the serial sub-builder and the parallel chunks share it.
     let budget = std::sync::atomic::AtomicUsize::new(b.list.expanded);
     let mut sub = Builder {
-        output_left: None,
-        output_failed: false,
         list: DisplayList::default(),
         opts: b.opts,
         plotting: b.plotting,
@@ -146,8 +135,6 @@ fn contents(b: &mut Builder, d: &Drawing, vp: &cadcraft_doc::Viewport, area: Bou
                 .par_chunks(PARALLEL_CHUNK)
                 .map(|chunk| {
                     let mut part = Builder {
-                        output_left: None,
-                        output_failed: false,
                         list: DisplayList::default(),
                         opts,
                         plotting: false,

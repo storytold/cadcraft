@@ -80,18 +80,19 @@ pub fn is_ui_command(id: &str) -> bool {
     UI_COMMANDS.iter().any(|c| c.0 == id)
 }
 
-/// Run a UI command. `interactive` permits typed/menu INSERT to open the palette;
-/// programmatic INSERT is left to the engine. `None` if `id` is not handled here.
-pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value, interactive: bool) -> Option<Result<Value, String>> {
-    crate::i18n::with_language(app.language(), || run_ui_command_inner(app, id, params, interactive))
+/// Run a UI-only command. `None` if `id` isn't one.
+pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    crate::i18n::with_language(app.language(), || run_ui_command_inner(app, id, params))
 }
 
-/// Routes `id` to the UI-only subsystems; `None` when none of them handles it.
-fn route_ui_subsystems(app: &mut CadApp, id: &str, params: &Value, interactive: bool) -> Option<Result<Value, String>> {
+fn route_ui_subsystems(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
     if let Some(result) = crate::spacemouse::route(app, id, params) {
         return Some(result);
     }
     if let Some(r) = crate::xrefs::route(app, id, params) {
+        return Some(r);
+    }
+    if let Some(r) = crate::blocks_palette::route(app, id, params) {
         return Some(r);
     }
     if let Some(r) = crate::bedit::route(app, id, params) {
@@ -109,11 +110,6 @@ fn route_ui_subsystems(app: &mut CadApp, id: &str, params: &Value, interactive: 
     }
     if id == "ui.toggle.quickcalc" {
         return Some(crate::palettes::quickcalc::toggle(app));
-    }
-    // The Blocks button and INSERT typed or from a menu open the Block Manager (as AutoCAD's
-    // INSERT opens its Blocks palette); -INSERT and programmatic calls run the engine command.
-    if id == "ui.dialog.blocks" || (interactive && matches!(id, "insert" | "i" | "ddinsert") && params.is_null()) {
-        return Some(crate::blockmgr::open(app));
     }
     // Explicit opens remain idempotent; typed QUICKCALC with JSON parameters uses the engine's CAL alias.
     if id == "ui.panel.quickcalc" || (matches!(id, "quickcalc" | "qc") && params.is_null()) {
@@ -309,14 +305,13 @@ fn should_pick_file_path(id: &str, params: &Value) -> bool {
 /// they report the loss in their result instead.
 fn user_qsave(app: &mut CadApp) -> Option<Result<Value, String>> {
     if app.session.state().is_ok_and(|s| s.path.is_none()) {
-        return run_ui_command(app, "ui.saveas", &Value::Null, true);
+        return run_ui_command(app, "ui.saveas", &Value::Null);
     }
     app.hold_lossy_save().then_some(Ok(Value::Null))
 }
 
-/// Runs the UI-only command `id`, or returns `None` so the engine handles it.
-fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value, interactive: bool) -> Option<Result<Value, String>> {
-    if let Some(result) = route_ui_subsystems(app, id, params, interactive) {
+fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
+    if let Some(result) = route_ui_subsystems(app, id, params) {
         return Some(result);
     }
     // When a file command should ask for a file. The `ui.*` commands are the pickers; the engine's
@@ -457,7 +452,6 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value, interactive:
         }
         "ui.dialog.language"
         | "ui.dialog.layers"
-        | "ui.dialog.blocks"
         | "ui.dialog.dsettings"
         | "ui.dialog.about"
         | "ui.dialog.commands"

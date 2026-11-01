@@ -1451,12 +1451,29 @@ menu	Modify	Ändra
 	Check for Updates…	Sök efter uppdateringar…
 	CADCraft is up to date.	CADCraft är uppdaterat.
 	Could not check for updates.	Det gick inte att söka efter uppdateringar.
-	Preview pending	Förhandsvisning väntar
-	Preview unavailable	Förhandsvisning är inte tillgänglig
-	No visible content	Inget synligt innehåll
-	Empty block	Tomt block
-	Excessive preview input	För mycket indata för förhandsvisningen
-	Excessive preview computation	För omfattande beräkning för förhandsvisningen
-	Excessive preview output	För stor utdata från förhandsvisningen
-	Invalid preview data	Ogiltiga förhandsvisningsdata
-	Missing block reference	Blockreferens saknas
+	Add a drawing file as a block library	Lägg till en ritningsfil som blockbibliotek
+	Add a folder of drawings or a drawing file to use its blocks.	Lägg till en mapp med ritningar eller en ritningsfil för att använda dess block.
+	Block Libraries	Blockbibliotek
+	Block Library	Blockbibliotek
+	Blocks Palette	Blockpalett
+	Click a block, then pick its insertion point.	Klicka på ett block och ange sedan dess infogningspunkt.
+	Current Drawing	Aktuell ritning
+	Details	Detaljer
+	Extra Large Icons	Extra stora ikoner
+	Folder or file	Mapp eller fil
+	Import Library Block	Importera biblioteksblock
+	Insert and Explode	Infoga och lös upp
+	Large Icons	Stora ikoner
+	Libraries	Bibliotek
+	Medium Icons	Medelstora ikoner
+	No block matches the filter.	Inget block matchar filtret.
+	This block is already in the drawing, so its definition is used.	Det här blocket finns redan i ritningen, så dess definition används.
+	Open Library...	Öppna bibliotek...
+	Read the library again	Läs in biblioteket igen
+	Refresh	Uppdatera
+	Remove from the list	Ta bort från listan
+	Repeat Placement	Upprepa placering
+	Small Icons	Små ikoner
+	This drawing has no blocks.	Den här ritningen har inga block.
+	This library has no drawings or blocks.	Det här biblioteket har inga ritningar eller block.
+	Only the first {n} are shown.	Endast de första {n} visas.

@@ -41,6 +41,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["i", "-insert", "ddinsert"])
             .params("{name (\"*NAME\": exploded), file?: DXF/DWG path (defines or redefines block `name`, default the file name, from its model space; base point $INSBASE), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y] (block coordinates), attribs?: {TAG: value}, explode?: bool}")
             .interactive(|_| Ok(Box::new(InsertM::default()))),
+        CommandSpec::new("blockspalette", "Blocks Palette", run_blockspalette)
+            .params("{} → {blocks: [{name, description, references}], truncated} (the app opens the Blocks palette instead)")
+            .enabled(has_doc)
+            .noundo(),
         CommandSpec::new("attdef", "Define Attributes...", run_attdef)
             .menu(&["Draw", "Block", "Define Attributes..."])
             .alias(&["att", "-attdef"])
@@ -85,6 +89,7 @@ pub fn specs() -> Vec<CommandSpec> {
     .into_iter()
     .chain(attribs::attdisp_menu_specs())
     .chain(xref::specs())
+    .chain(library::specs())
     .chain(refedit::specs())
     .chain(bedit::specs())
     .collect()
@@ -297,6 +302,35 @@ fn run_block(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     Ok(json!({ "block": name, "insert": r.map(|h| h.hex()) }))
+}
+
+/// BLOCKSPALETTE as a JSON call: the drawing's own blocks (no anonymous, layout or xref blocks)
+/// with their descriptions and how many references use each. The app opens the palette instead.
+fn run_blockspalette(s: &mut Session, _p: &Value) -> Result<Value> {
+    let d = s.doc()?;
+    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut count = |store: &cadcraft_doc::EntityStore| {
+        for e in store.iter() {
+            if let EntityKind::Insert(i) = &e.kind {
+                let n = counts.entry(i.block.to_ascii_lowercase()).or_insert(0);
+                *n = n.saturating_add(1);
+            }
+        }
+    };
+    count(&d.model);
+    d.layouts.iter().for_each(|l| count(&l.entities));
+    d.blocks.values().for_each(|b| count(&b.entities));
+    let mut blocks: Vec<&Arc<Block>> =
+        d.blocks.values().filter(|b| !b.anonymous && b.xref_path.is_none() && !b.name.starts_with('*') && !b.name.contains('|')).collect();
+    blocks.sort_by_key(|b| b.name.to_ascii_lowercase());
+    let list: Vec<Value> = blocks
+        .iter()
+        .take(library::MAX_LISTED)
+        .map(
+            |b| json!({ "name": b.name, "description": b.description, "references": counts.get(&b.name.to_ascii_lowercase()).copied().unwrap_or(0) }),
+        )
+        .collect();
+    Ok(json!({ "blocks": list, "truncated": blocks.len() > library::MAX_LISTED }))
 }
 
 fn run_insert(s: &mut Session, p: &Value) -> Result<Value> {
@@ -519,7 +553,6 @@ impl Interactive for BlockM {
             _ => self.sel.prompt(),
         }
     }
-    /// Feed user input into the interactive `BLOCK` state machine.
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         match (&self.name, self.base) {
             (None, _) if self.existing.is_some() => {
@@ -579,6 +612,7 @@ impl BlockM {
 }
 
 mod insert_file;
+pub(crate) mod library;
 pub(crate) mod xref;
 
 /// Where the command-line INSERT is in its prompt sequence.
@@ -626,10 +660,6 @@ struct InsertM {
     /// Where the block was dropped to pick a Basepoint on it.
     dropped: Option<Vec2>,
     rotation: Option<f64>,
-    preset_scale: Option<Vec2>,
-    /// The Z factor that goes with `preset_scale`, which a repeated placement starts from.
-    preset_z: Option<f64>,
-    preset_rotation: Option<f64>,
     /// The attributes asked for: tag, prompt, default value, and Verify (asked again).
     attdefs: Vec<(String, String, String, bool)>,
     values: serde_json::Map<String, Value>,
@@ -637,8 +667,6 @@ struct InsertM {
     verified: usize,
     /// `*name`: insert the block's objects (one uniform scale factor, no attribute values).
     explode: bool,
-    /// Keep prompting for another insertion point after each placement until cancelled.
-    repeat: bool,
     /// The file waiting for the Redefine answer.
     file: Option<insert_file::FileRef>,
 }
@@ -671,18 +699,6 @@ impl InsertM {
             let h = insert_scaled(s, &n, a, self.scale3(sc), r, self.base, &self.values)?;
             if self.explode {
                 insert_file::explode_insert(s, h)?;
-            }
-            if self.repeat {
-                self.at = None;
-                self.x_scale = None;
-                self.scale = self.preset_scale;
-                self.z_scale = self.preset_z;
-                self.xyz = false;
-                self.rotation = self.preset_rotation;
-                self.values.clear();
-                self.verified = 0;
-                self.stage = InsStage::Point;
-                return Ok(Step::Continue);
             }
             return Ok(Step::Done);
         }
@@ -759,9 +775,6 @@ impl InsertM {
     }
 }
 
-/// The keywords that switch repeat placement on or off, offered wherever INSERT waits for a number or a point.
-const REPEAT: &[&str] = &["REpeat", "NoRepeat"];
-
 fn nonzero(t: &str) -> Result<f64> {
     number(t).filter(|v| *v != 0.0).ok_or_else(|| EngineError::Other("Requires a non-zero number.".into()))
 }
@@ -782,24 +795,19 @@ impl Interactive for InsertM {
                 let name = self.file.as_ref().map(|f| f.name.clone()).unwrap_or_default();
                 Prompt::new(format!("Block \"{name}\" already exists. Redefine it?"), super::curves::KW).kw(&["Yes", "No"]).default("N")
             }
-            InsStage::Point => Prompt::new("Specify insertion point", Accept::POINT).kw(&["Basepoint", "Scale", "X", "Y", "Z", "Rotate", "REpeat", "NoRepeat"]),
-            InsStage::BasePoint => Prompt::new("Specify base point", Accept::POINT).kw(REPEAT),
-            InsStage::PresetScale => Prompt::new("Specify scale factor for XYZ axes", Accept::NUMBER).kw(REPEAT).default("1"),
-            InsStage::PresetAxis(i) => {
-                Prompt::new(format!("Specify {} scale factor", ["X", "Y", "Z"][i.min(2)]), Accept::NUMBER).kw(REPEAT).default("1")
+            InsStage::Point => Prompt::new("Specify insertion point", Accept::POINT).kw(&["Basepoint", "Scale", "X", "Y", "Z", "Rotate"]),
+            InsStage::BasePoint => Prompt::new("Specify base point", Accept::POINT),
+            InsStage::PresetScale => Prompt::new("Specify scale factor for XYZ axes", Accept::NUMBER).default("1"),
+            InsStage::PresetAxis(i) => Prompt::new(format!("Specify {} scale factor", ["X", "Y", "Z"][i.min(2)]), Accept::NUMBER).default("1"),
+            InsStage::PresetRotation => Prompt::new("Specify rotation angle", Accept::NUMBER).default("0"),
+            InsStage::XScale if self.xyz => Prompt::new("Specify X scale factor", Accept::POINT_OR_NUMBER).kw(&["Corner"]).default("1").base(at),
+            InsStage::XScale => {
+                Prompt::new("Enter X scale factor, specify opposite corner", Accept::POINT_OR_NUMBER).kw(&["Corner", "XYZ"]).default("1").base(at)
             }
-            InsStage::PresetRotation => Prompt::new("Specify rotation angle", Accept::NUMBER).kw(REPEAT).default("0"),
-            InsStage::XScale if self.xyz => {
-                Prompt::new("Specify X scale factor", Accept::POINT_OR_NUMBER).kw(&["Corner", "REpeat", "NoRepeat"]).default("1").base(at)
-            }
-            InsStage::XScale => Prompt::new("Enter X scale factor, specify opposite corner", Accept::POINT_OR_NUMBER)
-                .kw(&["Corner", "XYZ", "REpeat", "NoRepeat"])
-                .default("1")
-                .base(at),
-            InsStage::Corner => Prompt::new("Specify opposite corner", Accept::POINT).kw(REPEAT).base(at),
-            InsStage::YScale => Prompt::new("Enter Y scale factor", Accept::NUMBER).kw(REPEAT).default("use X scale factor"),
-            InsStage::ZScale => Prompt::new("Specify Z scale factor or", Accept::NUMBER).kw(REPEAT).default("use X scale factor"),
-            InsStage::Rotation => Prompt::new("Specify rotation angle", Accept::POINT_OR_NUMBER).kw(REPEAT).default("0").base(at),
+            InsStage::Corner => Prompt::new("Specify opposite corner", Accept::POINT).base(at),
+            InsStage::YScale => Prompt::new("Enter Y scale factor", Accept::NUMBER).default("use X scale factor"),
+            InsStage::ZScale => Prompt::new("Specify Z scale factor or", Accept::NUMBER).default("use X scale factor"),
+            InsStage::Rotation => Prompt::new("Specify rotation angle", Accept::POINT_OR_NUMBER).default("0").base(at),
             InsStage::Attribs => {
                 let (_, prompt, default, _) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
                 Prompt::new(if prompt.is_empty() { "Enter attribute value".into() } else { prompt }, Accept::TEXT).default(default)
@@ -811,18 +819,7 @@ impl Interactive for InsertM {
             }
         }
     }
-    /// Feed user input into the interactive `INSERT` state machine.
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
-        if let Input::Keyword(k) = &i {
-            if k.eq_ignore_ascii_case("Repeat") {
-                self.repeat = true;
-                return Ok(Step::Continue);
-            }
-            if k == "NoRepeat" {
-                self.repeat = false;
-                return Ok(Step::Continue);
-            }
-        }
         match self.stage {
             InsStage::Name => {
                 let n = match i {
@@ -874,6 +871,8 @@ impl Interactive for InsertM {
                 Input::Keyword(k) if k == "Y" => self.stage = InsStage::PresetAxis(1),
                 Input::Keyword(k) if k == "Z" => self.stage = InsStage::PresetAxis(2),
                 Input::Keyword(k) if k == "Rotate" => self.stage = InsStage::PresetRotation,
+                // Enter or Space at the insertion point ends the command, as in AutoCAD.
+                Input::Enter => return Ok(Step::Cancel),
                 _ => {}
             },
             InsStage::BasePoint => {
@@ -885,29 +884,12 @@ impl Interactive for InsertM {
                 }
             }
             InsStage::PresetScale => {
-                if let Input::Text(t) = &i
-                    && let Some((x, y)) = t.split_once(',').filter(|_| !self.explode)
-                {
-                    let sc = Vec2::new(nonzero(x.trim())?, nonzero(y.trim())?);
-                    self.scale = Some(sc);
-                    // Z follows the size of X, and an axis preset after this one starts from X and Y.
-                    self.z_scale = Some(sc.x.abs());
-                    self.axes = [Some(sc.x), Some(sc.y), Some(sc.x.abs())];
-                    if self.at.is_some() {
-                        return self.advance(s);
-                    }
-                    self.preset_scale = Some(sc);
-                    self.preset_z = self.z_scale;
-                    self.stage = InsStage::Point;
-                    return Ok(Step::Continue);
-                }
                 let f = match i {
                     Input::Text(t) => nonzero(&t)?,
                     Input::Enter => 1.0,
                     _ => return Ok(Step::Continue),
                 };
-                let sc = Vec2::new(f, f);
-                self.scale = Some(sc);
+                self.scale = Some(Vec2::new(f, f));
                 self.z_scale = Some(f.abs());
                 // An axis preset after it changes that axis alone (Scale -3 then X 2: 2/-3/3).
                 self.axes = [Some(f), Some(f), Some(f.abs())];
@@ -915,8 +897,6 @@ impl Interactive for InsertM {
                 if self.at.is_some() {
                     return self.advance(s);
                 }
-                self.preset_scale = Some(sc);
-                self.preset_z = self.z_scale;
                 self.stage = InsStage::Point;
             }
             // One axis preset: the others are 1, and no scale factors are asked after the point.
@@ -932,18 +912,14 @@ impl Interactive for InsertM {
                 let [x, y, z] = self.axes.map(|a| a.unwrap_or(1.0));
                 self.scale = Some(Vec2::new(x, y));
                 self.z_scale = Some(z.abs());
-                self.preset_scale = self.scale;
-                self.preset_z = self.z_scale;
                 self.stage = InsStage::Point;
             }
             InsStage::PresetRotation => {
-                let rot = match i {
+                self.rotation = Some(match i {
                     Input::Text(t) => s.angle_settings().direction(&t).ok_or_else(|| EngineError::Other("Requires an angle.".into()))?,
                     Input::Enter => 0.0,
                     _ => return Ok(Step::Continue),
-                };
-                self.rotation = Some(rot);
-                self.preset_rotation = Some(rot);
+                });
                 self.stage = InsStage::Point;
             }
             InsStage::XScale => match i {
@@ -1063,7 +1039,6 @@ impl Interactive for AttdefM {
             _ => Prompt::new("Specify start point of text", Accept::POINT),
         }
     }
-    /// Feed user input into the interactive `ATTDEF` state machine.
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         let text = match &i {
             Input::Text(t) => Some(t.clone()),
@@ -1094,95 +1069,3 @@ impl Interactive for AttdefM {
 mod attribs;
 mod battman;
 mod blockreplace;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A comma-separated scale preset also sets Z to the size of X, replacing an earlier preset's Z.
-    #[test]
-    fn a_comma_scale_preset_replaces_the_previous_z_factor() {
-        let mut s = Session::new();
-        s.execute("line", &serde_json::json!({ "points": [[0, 0], [5, 0]] })).unwrap();
-        s.execute("block", &serde_json::json!({ "name": "B1", "base": [0, 0], "keep": "delete", "handles": ["100"] })).unwrap();
-        s.start("insert").unwrap();
-        s.cmdline("B1").unwrap();
-        s.cmdline("Scale").unwrap();
-        s.input(Input::Text("2".into())).unwrap();
-        s.cmdline("Scale").unwrap();
-        s.input(Input::Text("3,4".into())).unwrap();
-        s.input(Input::Point(Vec2::new(10.0, 0.0))).unwrap();
-        s.input(Input::Text("0".into())).unwrap();
-        let last = s.doc().unwrap().model.iter().last().cloned().unwrap();
-        let EntityKind::Insert(ins) = &last.kind else { panic!("an insert") };
-        assert_eq!((ins.scale.x, ins.scale.y, ins.scale.z), (3.0, 4.0, 3.0));
-    }
-
-    /// A repeated INSERT asks the default scale prompts again, not the previous placement's XYZ ones.
-    #[test]
-    fn a_repeated_insert_starts_again_without_the_previous_xyz_choice() {
-        let mut s = Session::new();
-        s.execute("line", &serde_json::json!({ "points": [[0, 0], [5, 0]] })).unwrap();
-        s.execute("block", &serde_json::json!({ "name": "B1", "base": [0, 0], "keep": "delete", "handles": ["100"] })).unwrap();
-        s.start("insert").unwrap();
-        s.cmdline("B1").unwrap();
-        s.cmdline("Repeat").unwrap();
-        s.input(Input::Point(Vec2::new(10.0, 0.0))).unwrap();
-        s.cmdline("XYZ").unwrap();
-        s.input(Input::Enter).unwrap(); // X
-        s.input(Input::Enter).unwrap(); // Y
-        s.input(Input::Text("5".into())).unwrap(); // Z
-        s.input(Input::Text("0".into())).unwrap(); // Rotation
-        assert_eq!(s.current_prompt().unwrap().message, "Specify insertion point");
-        s.input(Input::Point(Vec2::new(20.0, 0.0))).unwrap();
-        let p = s.current_prompt().unwrap();
-        assert_eq!(p.message, "Enter X scale factor, specify opposite corner");
-        assert!(p.keywords.iter().any(|k| k == "XYZ"));
-    }
-
-    /// Verify that the interactive `INSERT` prompt advertises `Repeat` and `NoRepeat`, and that
-    /// `NoRepeat` disarms repeat placement at any stage without answering scale or rotation prompts.
-    #[test]
-    fn interactive_insert_accepts_repeat_and_norepeat_across_stages() {
-        let mut s = Session::new();
-        s.execute("line", &serde_json::json!({ "points": [[0, 0], [5, 0]] })).unwrap();
-        s.execute("block", &serde_json::json!({ "name": "B1", "base": [0, 0], "keep": "delete", "handles": ["100"] })).unwrap();
-
-        s.start("insert").unwrap();
-        s.input(Input::Text("B1".into())).unwrap();
-        let p = s.current_prompt().unwrap();
-        assert!(p.keywords.iter().any(|k| k == "REpeat"));
-        assert!(p.keywords.iter().any(|k| k == "NoRepeat"));
-        assert_eq!(p.match_keyword("R").as_deref(), Some("Rotate"));
-        assert_eq!(p.match_keyword("RE").as_deref(), Some("REpeat"));
-
-        // Complete a placement and verify Repeat returns INSERT to the insertion-point prompt.
-        s.cmdline("Repeat").unwrap();
-        s.input(Input::Point(Vec2::new(10.0, 0.0))).unwrap();
-        s.input(Input::Enter).unwrap(); // X scale
-        s.input(Input::Enter).unwrap(); // Y scale
-        s.input(Input::Text("0".into())).unwrap(); // Rotation
-        assert_eq!(s.running.as_ref().map(|r| r.id.as_str()), Some("insert"));
-        assert!(s.current_prompt().unwrap().accept.point);
-        assert_eq!(s.current_prompt().unwrap().message, "Specify insertion point");
-        assert_eq!(s.doc().unwrap().model.len(), 1);
-        s.cancel();
-
-        // Start INSERT, enable Repeat, pick insertion point, then disarm Repeat with NoRepeat during Rotation stage.
-        s.start("insert").unwrap();
-        s.cmdline("B1").unwrap();
-        s.cmdline("Repeat").unwrap();
-        s.input(Input::Point(Vec2::new(10.0, 0.0))).unwrap();
-        s.input(Input::Enter).unwrap(); // X scale = 1
-        s.input(Input::Enter).unwrap(); // Y scale = 1 -> now at Rotation stage
-        assert!(s.current_prompt().unwrap().message.contains("rotation"));
-        // Sending NoRepeat at the Rotation stage must not answer the rotation prompt or place the block yet.
-        assert!(s.current_prompt().unwrap().keywords.iter().any(|k| k == "NoRepeat"));
-        s.cmdline("NoRepeat").unwrap();
-        assert!(s.running.is_some());
-        assert!(s.current_prompt().unwrap().message.contains("rotation"));
-        // Answering rotation now places the block and finishes INSERT because repeat was disarmed.
-        s.input(Input::Text("45".into())).unwrap();
-        assert!(s.running.is_none());
-    }
-}

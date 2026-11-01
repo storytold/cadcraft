@@ -81,11 +81,11 @@ fn missing_commands_menus_tools_and_snap_labels(language: &str) -> Vec<String> {
     sources.into_iter().filter(|s| !s.is_empty() && !catalog.contains_key(&("", *s))).map(str::to_string).collect()
 }
 
-/// Collect UI string literals marked with `tl!` or `tf!` that are not yet present in `language`.
 fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
     let catalog = catalog(language).unwrap();
     let modules = [
         "xrefs",
+        "blocks_palette",
         "canvas",
         "chrome",
         "cmdline",
@@ -96,7 +96,6 @@ fn missing_marked_ui_literals(language: &str) -> BTreeSet<String> {
         "mtext_editor",
         "layers",
         "bedit",
-        "blockmgr",
         "palettes",
         "parametric",
         "quick",
@@ -414,7 +413,6 @@ fn dialogs_render_in_every_language_and_keep_their_source_ids() {
             ("dsettings", "Drafting Settings"),
             ("about", "About CADCraft"),
             ("commands", "Command Reference"),
-            ("blocks", "Blocks"),
             ("layers", "Layer Properties Manager"),
             ("qselect", "Quick Select"),
             ("parameters", "Parameters Manager"),

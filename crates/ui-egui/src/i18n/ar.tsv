@@ -1242,12 +1242,29 @@ menu	View	عرض
 	Check for Updates…	التحقق من وجود تحديثات…
 	CADCraft is up to date.	CADCraft محدّث.
 	Could not check for updates.	تعذّر التحقق من وجود تحديثات.
-	Preview pending	المعاينة قيد الانتظار
-	Preview unavailable	المعاينة غير متاحة
-	No visible content	لا يوجد محتوى مرئي
-	Empty block	كتلة فارغة
-	Excessive preview input	بيانات إدخال المعاينة كبيرة جدًا
-	Excessive preview computation	حساب المعاينة مفرط
-	Excessive preview output	مخرجات المعاينة كبيرة جدًا
-	Invalid preview data	بيانات معاينة غير صالحة
-	Missing block reference	مرجع الكتلة مفقود
+	Add a drawing file as a block library	إضافة ملف رسم كمكتبة كتل
+	Add a folder of drawings or a drawing file to use its blocks.	أضف مجلدًا يحتوي على رسومات أو ملف رسم لاستخدام كتله.
+	Block Libraries	مكتبات الكتل
+	Block Library	مكتبة الكتل
+	Blocks Palette	لوحة الكتل
+	Click a block, then pick its insertion point.	انقر على كتلة ثم حدّد نقطة إدراجها.
+	Current Drawing	الرسم الحالي
+	Details	التفاصيل
+	Extra Large Icons	أيقونات كبيرة جدًا
+	Folder or file	مجلد أو ملف
+	Import Library Block	استيراد كتلة من المكتبة
+	Insert and Explode	إدراج وتفجير
+	Large Icons	أيقونات كبيرة
+	Libraries	المكتبات
+	Medium Icons	أيقونات متوسطة
+	No block matches the filter.	لا توجد كتلة تطابق عامل التصفية.
+	This block is already in the drawing, so its definition is used.	هذه الكتلة موجودة بالفعل في الرسم، لذلك يتم استخدام تعريفها.
+	Open Library...	فتح مكتبة...
+	Read the library again	إعادة قراءة المكتبة
+	Refresh	تحديث
+	Remove from the list	إزالة من القائمة
+	Repeat Placement	تكرار الوضع
+	Small Icons	أيقونات صغيرة
+	This drawing has no blocks.	لا يحتوي هذا الرسم على كتل.
+	This library has no drawings or blocks.	لا تحتوي هذه المكتبة على رسومات أو كتل.
+	Only the first {n} are shown.	يتم عرض أول {n} فقط.

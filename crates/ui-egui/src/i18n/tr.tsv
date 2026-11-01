@@ -1352,12 +1352,29 @@ menu	View	Görünüm
 	Check for Updates…	Güncellemeleri denetle…
 	CADCraft is up to date.	CADCraft güncel.
 	Could not check for updates.	Güncellemeler denetlenemedi.
-	Preview pending	Önizleme bekleniyor
-	Preview unavailable	Önizleme kullanılamıyor
-	No visible content	Görünür içerik yok
-	Empty block	Boş blok
-	Excessive preview input	Önizleme için çok fazla girdi verisi
-	Excessive preview computation	Önizleme için aşırı hesaplama
-	Excessive preview output	Önizleme çıktısı çok büyük
-	Invalid preview data	Geçersiz önizleme verisi
-	Missing block reference	Blok başvurusu eksik
+	Add a drawing file as a block library	Çizim dosyasını blok kitaplığı olarak ekle
+	Add a folder of drawings or a drawing file to use its blocks.	Bloklarını kullanmak için çizim içeren bir klasör veya bir çizim dosyası ekleyin.
+	Block Libraries	Blok Kitaplıkları
+	Block Library	Blok Kitaplığı
+	Blocks Palette	Blok Paleti
+	Click a block, then pick its insertion point.	Bir bloğa tıklayın, ardından yerleştirme noktasını belirtin.
+	Current Drawing	Geçerli Çizim
+	Details	Ayrıntılar
+	Extra Large Icons	Çok Büyük Simgeler
+	Folder or file	Klasör veya dosya
+	Import Library Block	Kitaplık Bloğunu İçe Aktar
+	Insert and Explode	Ekle ve Patlat
+	Large Icons	Büyük Simgeler
+	Libraries	Kitaplıklar
+	Medium Icons	Orta Boy Simgeler
+	No block matches the filter.	Filtreyle eşleşen blok yok.
+	This block is already in the drawing, so its definition is used.	Bu blok çizimde zaten var, bu yüzden mevcut tanımı kullanılır.
+	Open Library...	Kitaplık Aç...
+	Read the library again	Kitaplığı yeniden oku
+	Refresh	Yenile
+	Remove from the list	Listeden kaldır
+	Repeat Placement	Yerleştirmeyi Tekrarla
+	Small Icons	Küçük Simgeler
+	This drawing has no blocks.	Bu çizimde blok yok.
+	This library has no drawings or blocks.	Bu kitaplıkta çizim veya blok yok.
+	Only the first {n} are shown.	Yalnızca ilk {n} gösteriliyor.

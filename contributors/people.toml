@@ -99,3 +99,7 @@ sync_github_name = true
 
 [people.GULERTOLGA]
 sync_github_name = true
+
+[people.Obtrusive8276]
+display_name = "Nicopicks"
+sync_github_name = false
