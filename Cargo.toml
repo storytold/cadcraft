@@ -1,4 +1,5 @@
 [workspace]
+exclude = ["apps/cadcraft-android"]
 resolver = "3"
 members = ["crates/*", "apps/*", "xtask"]
 # default-members

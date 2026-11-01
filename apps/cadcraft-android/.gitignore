@@ -1,0 +1,21 @@
+.gradle/
+.idea/
+build/
+**/build/
+local.properties
+
+# Generated WebAssembly assets
+app/src/main/assets/web/
+
+# APK/AAB packages
+*.apk
+*.aab
+
+# Signing credentials
+*.jks
+*.keystore
+
+# Editor and temporary files
+*.bak
+*.log
+*.swp

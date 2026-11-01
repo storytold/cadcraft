@@ -4,16 +4,575 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>CADCraft</title>
-  <link data-trunk rel="rust" data-bin="cadcraft-web" data-wasm-opt="z" data-weak-refs />
+  <link data-trunk rel="rust" data-bin="cadcraft-web" data-wasm-opt="0" data-weak-refs />
   <style>
-    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #22282f; }
-    #cadcraft_canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-    #cadcraft_loading { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
-      color: #b8b8b8; font: 14px system-ui, sans-serif; pointer-events: none; }
-  </style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #22282f;
+  }
+
+  body.cadcraft-mobile {
+    position: relative;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  #cadcraft_canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  #cadcraft_loading {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #b8b8b8;
+    font: 14px system-ui, sans-serif;
+    pointer-events: none;
+  }
+
+  #mobile_command_bar {
+    display: none;
+  }
+
+  body.cadcraft-mobile #cadcraft_canvas {
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 58px;
+    width: 100%;
+    height: calc(100% - 58px);
+  }
+
+  body.cadcraft-mobile #mobile_command_bar {
+    display: flex;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 58px;
+    box-sizing: border-box;
+    padding: 6px 8px;
+    gap: 6px;
+    align-items: center;
+    background: #303b4a;
+    border-top: 1px solid #566476;
+    z-index: 100;
+    font: 15px system-ui, sans-serif;
+  }
+
+  body.cadcraft-mobile #mobile_command_input {
+    flex: 1;
+    min-width: 0;
+    height: 42px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    font-size: 16px;
+    color: white;
+    background: #192631;
+    border: 1px solid #61748b;
+    border-radius: 7px;
+    outline: none;
+  }
+
+  body.cadcraft-mobile #mobile_command_send,
+  body.cadcraft-mobile #mobile_command_escape {
+    height: 42px;
+    flex-shrink: 0;
+    border-radius: 7px;
+    color: white;
+    font-size: 15px;
+    font-weight: 600;
+  }
+
+  body.cadcraft-mobile #mobile_command_send {
+    min-width: 58px;
+    background: #416a93;
+    border: none;
+  }
+
+  body.cadcraft-mobile #mobile_command_escape {
+    min-width: 48px;
+    background: #713c48;
+    border: 1px solid #9a6470;
+  }
+
+  @media (orientation: landscape) {
+    body.cadcraft-mobile #mobile_command_bar {
+      height: 46px;
+      padding: 3px 8px;
+    }
+
+    body.cadcraft-mobile #cadcraft_canvas {
+      bottom: 46px;
+      height: calc(100% - 46px);
+    }
+
+    body.cadcraft-mobile #mobile_command_input,
+    body.cadcraft-mobile #mobile_command_send,
+    body.cadcraft-mobile #mobile_command_escape {
+      height: 38px;
+    }
+  }
+
+
+</style>
 </head>
 <body>
+
+  <script>
+    if (new URLSearchParams(location.search).get("mobile") === "1") {
+      document.body.classList.add("cadcraft-mobile");
+    }
+  </script>
+
   <canvas id="cadcraft_canvas"></canvas>
   <div id="cadcraft_loading">Loading CADCraft&hellip;</div>
+
+
+<div id="cadcraft_mobile_controls">
+  <form id="mobile_command_bar" autocomplete="off">
+    <input id="mobile_command_input" type="text"
+           placeholder="Tap to type CAD command"
+           enterkeyhint="send"
+           autocomplete="off" autocorrect="off"
+           autocapitalize="off" spellcheck="false"
+           aria-label="CADCraft command input">
+  </form>
+
+  <div id="cadcraft_key_toolbar">
+    <button type="button" data-key="Escape">Esc</button>
+    <button type="button" data-key="Tab">Tab</button>
+    <button type="button" data-mod="ctrl">Ctrl</button>
+    <button type="button" data-mod="alt">Alt</button>
+    <button type="button" data-mod="shift">Shift</button>
+    <button type="button" data-key="Backspace">⌫</button>
+    <button type="button" data-key="Delete">Del</button>
+    <button type="button" data-key="Enter">↵</button>
+    <button type="button" data-key="ArrowLeft">←</button>
+    <button type="button" data-key="ArrowUp">↑</button>
+    <button type="button" data-key="ArrowDown">↓</button>
+    <button type="button" data-key="ArrowRight">→</button>
+    <button type="button" data-key="Space">Space</button>
+    <button type="button" id="cadcraft_keyboard_toggle">⌨</button>
+  </div>
+</div>
+
+
+<style>
+  #cadcraft_mobile_controls {
+    position: fixed !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    z-index: 10000 !important;
+    box-sizing: border-box;
+    padding: 4px 5px calc(5px + env(safe-area-inset-bottom));
+    background: #18202c;
+  }
+
+  /* Keep the Android IME bridge focusable but visually hidden. */
+  #mobile_command_bar {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    overflow: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  #mobile_command_input {
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    border: 0 !important;
+    font-size: 16px !important;
+  }
+
+  #cadcraft_key_toolbar {
+    display: grid !important;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    grid-template-rows: repeat(2, 38px);
+    gap: 4px;
+    margin: 0 !important;
+  }
+
+  #cadcraft_key_toolbar button {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    min-height: 0;
+    height: 38px;
+    padding: 0 2px;
+    border: 1px solid #526176;
+    border-radius: 5px;
+    background: #303d50;
+    color: white;
+    font-size: 12px;
+    font-weight: 600;
+    touch-action: manipulation;
+  }
+
+  #cadcraft_key_toolbar button.active {
+    background: #377bce;
+    border-color: #86b8ff;
+  }
+</style>
+
+
+
+<style id="cadcraft_stage_c_layout">
+  body.cadcraft-mobile {
+    height: 100dvh !important;
+    overflow: hidden !important;
+  }
+
+  body.cadcraft-mobile #cadcraft_canvas {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: auto !important;
+    width: 100% !important;
+    height: calc(
+      100% - var(--cadcraft-mobile-controls-height, 89px)
+    ) !important;
+    display: block !important;
+  }
+
+  body.cadcraft-mobile #cadcraft_mobile_controls {
+    position: absolute !important;
+    bottom: 0 !important;
+  }
+
+  body:not(.cadcraft-mobile) #cadcraft_mobile_controls {
+    display: none !important;
+  }
+</style>
+
+<script>
+(() => {
+  const input = document.getElementById("mobile_command_input");
+  const form = document.getElementById("mobile_command_bar");
+  const toolbar = document.getElementById("cadcraft_key_toolbar");
+
+  const mods = {ctrl: false, alt: false, shift: false};
+
+  // CADCRAFT_STAGE_D2_SHORTCUTS
+  // One-shot modifier buttons for Android keyboard shortcuts.
+  // Physical Ctrl/Alt/Meta combinations are forwarded as well.
+  document.addEventListener("keydown", event => {
+    const ctrl = mods.ctrl || event.ctrlKey || event.metaKey;
+    const alt = mods.alt || event.altKey;
+    const shift = mods.shift || event.shiftKey;
+
+    if (!ctrl && !alt) return;
+    if (!/^[a-z0-9]$/i.test(event.key)) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    document.dispatchEvent(new CustomEvent(
+      "cadcraft-mobile-control-key",
+      {
+        detail: {
+          key: event.key.toUpperCase(),
+          ctrl,
+          alt,
+          shift
+        }
+      }
+    ));
+
+    clearModifiers();
+  }, true);
+
+  function emit(name, detail) {
+    document.dispatchEvent(new CustomEvent(name, {detail}));
+  }
+
+  // CADCRAFT_STAGE_D1_SYNC
+  document.addEventListener("cadcraft-mobile-native-state", event => {
+    const state = event.detail;
+    if (!state || typeof state.buffer !== "string") return;
+    input.value = state.buffer;
+    input.setSelectionRange(input.value.length, input.value.length);
+  });
+
+  function sync() {
+    emit("cadcraft-mobile-live-input", input.value);
+  }
+
+  function clearModifiers() {
+    for (const key of Object.keys(mods)) mods[key] = false;
+    toolbar.querySelectorAll("[data-mod]").forEach(
+      button => button.classList.remove("active")
+    );
+  }
+
+  function submit() {
+    sync();
+    emit("cadcraft-mobile-control-key", {
+      key: "Enter",
+      ctrl: false,
+      alt: false,
+      shift: false
+    });
+    clearModifiers();
+    input.blur();
+  }
+
+  function escape() {
+    input.value = "";
+    emit("cadcraft-mobile-command", "\u001b");
+    clearModifiers();
+    input.blur();
+  }
+
+  function editInput(key) {
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+
+    if (key === "ArrowLeft") {
+      input.setSelectionRange(Math.max(0, start - 1), Math.max(0, start - 1));
+    } else if (key === "ArrowRight") {
+      input.setSelectionRange(Math.min(input.value.length, end + 1),
+                              Math.min(input.value.length, end + 1));
+    } else if (key === "Backspace") {
+      if (start !== end) {
+        input.setRangeText("", start, end, "start");
+      } else if (start > 0) {
+        input.setRangeText("", start - 1, start, "start");
+      }
+      sync();
+    } else if (key === "Delete") {
+      if (start !== end) {
+        input.setRangeText("", start, end, "start");
+      } else if (start < input.value.length) {
+        input.setRangeText("", start, start + 1, "start");
+      }
+      sync();
+    } else if (key === "Space") {
+      input.setRangeText(" ", start, end, "end");
+      sync();
+    }
+  }
+
+  function handleKey(key) {
+    if (key === "Escape") {
+      escape();
+      return;
+    }
+
+    if (key === "Enter") {
+      submit();
+      return;
+    }
+
+    if (key === "ArrowLeft" || key === "ArrowRight" ||
+        key === "Backspace" || key === "Delete" ||
+        key === "Space") {
+      editInput(key);
+      return;
+    }
+
+    // ArrowUp/Down and Tab are handled by CADCraft's native command system.
+    emit("cadcraft-mobile-control-key", {
+      key,
+      ctrl: mods.ctrl,
+      alt: mods.alt,
+      shift: mods.shift
+    });
+
+    clearModifiers();
+  }
+
+  toolbar.addEventListener("pointerdown", event => {
+    if (event.target.closest("button")) event.preventDefault();
+  });
+
+  toolbar.addEventListener("click", event => {
+    const button = event.target.closest("button");
+    if (!button) return;
+
+    if (button.dataset.mod) {
+      const key = button.dataset.mod;
+      mods[key] = !mods[key];
+      button.classList.toggle("active", mods[key]);
+
+      // Open the Android keyboard for modifier shortcuts.
+      if (mods.ctrl || mods.alt) {
+        input.focus({preventScroll: true});
+      }
+      return;
+    }
+
+    if (button.id === "cadcraft_keyboard_toggle") {
+      if (document.activeElement === input) input.blur();
+      else input.focus();
+      return;
+    }
+
+    handleKey(button.dataset.key);
+  });
+
+
+
+
+  // cadcraft_initial_focus_fix
+  // Initialize the hidden input without displaying the keyboard.
+  // A real user gesture is still required to activate the IME.
+  window.addEventListener("load", () => {
+    input.setAttribute("inputmode", "text");
+    input.setAttribute("enterkeyhint", "send");
+  });
+
+  // cadcraft_native_cmd_touch_bridge
+  // Focus the Android IME during the actual browser pointer gesture.
+  const canvas = document.getElementById("cadcraft_canvas");
+
+  canvas.addEventListener("pointerdown", event => {
+    if (!document.body.classList.contains("cadcraft-mobile")) return;
+
+    const rect = canvas.getBoundingClientRect();
+
+    // CADCraft's native command bar is near the bottom of the canvas.
+    // Restrict activation to its central area.
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+
+    const barWidth = Math.min(
+      Math.max(rect.width * 0.48, 360),
+      Math.min(760, Math.max(0, rect.width - 8))
+    );
+
+    const left = (rect.width - barWidth) / 2;
+    const top = rect.height - 34;
+
+    if (
+      x >= left &&
+      x <= left + barWidth - 30 &&
+      y >= top &&
+      y <= top + 24
+    ) {
+      input.focus({preventScroll: true});
+      if (document.activeElement !== input) {
+        requestAnimationFrame(() => {
+          input.focus({preventScroll: true});
+        });
+      }
+    }
+  }, {passive: true});
+
+  document.addEventListener("cadcraft-mobile-focus-input", () => {
+    if (document.body.classList.contains("cadcraft-mobile")) {
+      input.focus({preventScroll: true});
+    }
+  });
+
+  // CADCRAFT_STAGE_D21_IME_SHORTCUTS
+  // Android IMEs may insert characters without keydown events.
+  let shortcutBeforeValue = null;
+
+  input.addEventListener("beforeinput", event => {
+    if (!mods.ctrl && !mods.alt) return;
+
+    const data = event.data;
+
+    if (!data || !/^[a-z0-9]$/i.test(data)) return;
+
+    // Preserve the current command buffer.
+    shortcutBeforeValue = input.value;
+
+    if (event.cancelable) {
+      event.preventDefault();
+
+      emit("cadcraft-mobile-control-key", {
+        key: data.toUpperCase(),
+        ctrl: mods.ctrl,
+        alt: mods.alt,
+        shift: mods.shift
+      });
+
+      clearModifiers();
+      shortcutBeforeValue = null;
+    }
+  });
+
+  input.addEventListener("input", event => {
+    if ((mods.ctrl || mods.alt) &&
+        event.data &&
+        /^[a-z0-9]$/i.test(event.data)) {
+
+      const key = event.data.toUpperCase();
+
+      // Restore the text before the shortcut character was inserted.
+      if (shortcutBeforeValue !== null) {
+        input.value = shortcutBeforeValue;
+      } else {
+        const end = input.selectionStart ?? input.value.length;
+        const start = Math.max(0, end - event.data.length);
+        input.setRangeText("", start, end, "start");
+      }
+
+      shortcutBeforeValue = null;
+
+      emit("cadcraft-mobile-control-key", {
+        key,
+        ctrl: mods.ctrl,
+        alt: mods.alt,
+        shift: mods.shift
+      });
+
+      clearModifiers();
+      sync();
+      return;
+    }
+
+    shortcutBeforeValue = null;
+    sync();
+  });
+
+  input.addEventListener("keydown", event => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      submit();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      escape();
+    }
+  });
+
+  form.addEventListener("submit", event => {
+    event.preventDefault();
+    submit();
+  });
+
+  // Keep the native drawing canvas above the bottom controls.
+  const observer = new ResizeObserver(() => {
+    const height = document.getElementById("cadcraft_mobile_controls")
+      .getBoundingClientRect().height;
+    document.documentElement.style.setProperty(
+      "--cadcraft-mobile-controls-height", `${height}px`
+    );
+  });
+  observer.observe(document.getElementById("cadcraft_mobile_controls"));
+})();
+</script>
+
+
 </body>
 </html>
