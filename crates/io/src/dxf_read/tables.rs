@@ -94,7 +94,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
     // STYLE handle → name, or the shape file of an unnamed shape style (linetype elements).
     let ltype_styles: HashMap<String, String> = recs
         .iter()
-        .filter(|(k, _)| k == "STYLE")
+        .filter(|(k, _)| *k == "STYLE")
         .filter_map(|(_, tg)| {
             let t = T(tg);
             let name = t.s(2).filter(|n| !n.trim().is_empty());
@@ -109,8 +109,8 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
     // names make import quadratic (CWE-407).
     let mut layer_index: HashMap<String, usize> = d.layers.iter().enumerate().map(|(i, l)| (l.name.to_ascii_lowercase(), i)).collect();
     for (kind, tg) in recs {
-        let t = T(&tg);
-        match kind.as_str() {
+        let t = T(tg);
+        match kind {
             "LAYER" => {
                 let name = t.s(2).unwrap_or_default();
                 if name.is_empty() || d.layers.len() >= MAX_OBJECTS {
@@ -136,11 +136,11 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 if let Some(n) = t.s(390).and_then(|h| rx.pstyles.get(&h.trim().to_ascii_uppercase())) {
                     l.plot_style = n.clone();
                 }
-                let alpha = crate::dxf_ext::xdata(&tg, crate::dxf_ext::LAYER_TRANSPARENCY_APP).iter().find(|x| x.code == 1071);
+                let alpha = crate::dxf_ext::xdata(tg, crate::dxf_ext::LAYER_TRANSPARENCY_APP).iter().find(|x| x.code == 1071);
                 if let Some(pct) = alpha.and_then(|x| crate::dxf_ext::transparency_from_dxf(x.i64())) {
                     l.transparency = pct;
                 }
-                if let Some(desc) = crate::dxf_ext::xdata(&tg, crate::dxf_ext::LAYER_DESCRIPTION_APP).iter().filter(|x| x.code == 1000).nth(1) {
+                if let Some(desc) = crate::dxf_ext::xdata(tg, crate::dxf_ext::LAYER_DESCRIPTION_APP).iter().filter(|x| x.code == 1000).nth(1) {
                     l.description = desc.str();
                 }
                 match layer_index.get(&name.to_ascii_lowercase()) {
@@ -160,7 +160,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 if name.is_empty() || d.linetype(&name).is_some() || d.linetypes.len() >= MAX_OBJECTS {
                     continue;
                 }
-                let pattern = ltype_pattern(&tg, &ltype_styles);
+                let pattern = ltype_pattern(tg, &ltype_styles);
                 d.linetypes.push(Linetype { name, description: t.s(3).unwrap_or_default(), pattern });
             }
             "STYLE" => {
@@ -172,7 +172,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 let gen_flags = t.i(71).unwrap_or(0);
                 let st = TextStyle {
                     name: name.clone(),
-                    font: style_font(&tg, t.s(3).unwrap_or_default()),
+                    font: style_font(tg, t.s(3).unwrap_or_default()),
                     big_font: t.s(4).unwrap_or_default(),
                     height: t.fd(40, 0.0),
                     width_factor: t.fd(41, 1.0),
@@ -180,7 +180,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                     backwards: gen_flags & 2 != 0,
                     upside_down: gen_flags & 4 != 0,
                     vertical: t.i(70).unwrap_or(0) & 4 != 0,
-                    annotative: annotative(&tg),
+                    annotative: annotative(tg),
                 };
                 match d.text_styles.iter_mut().find(|s| s.name.eq_ignore_ascii_case(&name)) {
                     Some(x) => *x = st,
@@ -219,7 +219,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                 if !(center.x.is_finite() && center.y.is_finite()) {
                     continue;
                 }
-                let x = crate::dxf_ext::xdata(&tg, crate::dxf_ext::APP);
+                let x = crate::dxf_ext::xdata(tg, crate::dxf_ext::APP);
                 let field = |key: &str| {
                     x.iter().position(|t| t.code == 1000 && t.str() == key).and_then(|i| x.get(i + 1)).filter(|t| t.code == 1000).map(Tag::str)
                 };
@@ -264,8 +264,8 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
                         fields.insert(field.to_string(), v);
                     }
                 }
-                fields.extend(crate::dxf_ext::read_newer_dimvars(&tg, &rx.styles, &rx.brs, &rx.ltypes));
-                let mut st = DimStyle { name: name.clone(), annotative: annotative(&tg), ..DimStyle::default() };
+                fields.extend(crate::dxf_ext::read_newer_dimvars(tg, &rx.styles, &rx.brs, &rx.ltypes));
+                let mut st = DimStyle { name: name.clone(), annotative: annotative(tg), ..DimStyle::default() };
                 st.apply_fields(&fields);
                 match d.dim_styles.iter_mut().find(|s| s.name.eq_ignore_ascii_case(&name)) {
                     Some(x) => *x = st,
@@ -280,11 +280,11 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
     d.vports.retain(|c| c.tiles.len() > usize::from(c.is_active()));
 }
 
-fn index_table_handles(recs: &[(String, Vec<Tag>)], rx: &mut Rx) {
+fn index_table_handles(recs: &[cadcraft_dxf::Record<'_>], rx: &mut Rx) {
     for (kind, tags) in recs {
         let table = T(tags);
         let (Some(handle), Some(name)) = (table.s(5), table.s(2)) else { continue };
-        match kind.as_str() {
+        match *kind {
             "STYLE" => {
                 rx.styles.insert(handle.trim().to_ascii_uppercase(), name);
             }

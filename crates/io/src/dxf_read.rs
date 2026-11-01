@@ -105,17 +105,17 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
     let mut skipped = std::collections::BTreeMap::new();
     count_skipped(&mut skipped, "(no section)", outside_sections(&tags));
     for s in &secs {
-        match s.name.as_str() {
-            "HEADER" => header(&s.tags, &mut d),
-            "TABLES" => tables(&s.tags, &mut d, &mut rx),
-            "BLOCKS" => blocks.extend(read_blocks(&s.tags, &mut d, &mut rx, &mut table_cells_left, &mut skipped)),
+        match s.name {
+            "HEADER" => header(s.tags, &mut d),
+            "TABLES" => tables(s.tags, &mut d, &mut rx),
+            "BLOCKS" => blocks.extend(read_blocks(s.tags, &mut d, &mut rx, &mut table_cells_left, &mut skipped)),
             // A damaged file may split its entities over several ENTITIES sections (#865).
             "ENTITIES" => {
                 let mut n = 0;
-                entities.extend(parse_entities(&records(&s.tags), &mut d, &mut rx, &mut n, &mut table_cells_left));
+                entities.extend(parse_entities(&records(s.tags), &mut d, &mut rx, &mut n, &mut table_cells_left));
                 count_skipped(&mut skipped, "ENTITIES", n);
             }
-            "OBJECTS" => read_objects(&s.tags, &mut objs, &mut layout_objs),
+            "OBJECTS" => read_objects(s.tags, &mut objs, &mut layout_objs),
             _ => {}
         }
     }

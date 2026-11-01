@@ -568,8 +568,8 @@ impl Out {
         let tags = cadcraft_dxf::parse(text.as_bytes()).expect("parse written DXF");
         let mut recs = Vec::new();
         for s in sections(&tags) {
-            for (k, t) in records(&s.tags) {
-                recs.push((s.name.clone(), k, t));
+            for (k, t) in records(s.tags) {
+                recs.push((s.name.to_string(), k.to_string(), t.to_vec()));
             }
         }
         Out { recs }
@@ -902,8 +902,8 @@ fn class_records_have_instance_counts_from_2004_only() {
         let class = sections(&tags)
             .into_iter()
             .filter(|sec| sec.name == "CLASSES")
-            .flat_map(|sec| records(&sec.tags))
-            .find(|(kind, class)| kind == "CLASS" && s(class, 1) == "ACME_OBJECT")
+            .flat_map(|sec| records(sec.tags))
+            .find(|(kind, class)| *kind == "CLASS" && s(class, 1) == "ACME_OBJECT")
             .map(|(_, class)| class)
             .expect("ACME_OBJECT CLASS");
         let codes: Vec<i32> = class.iter().map(|t| t.code).collect();

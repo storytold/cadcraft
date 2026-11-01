@@ -28,8 +28,8 @@ fn records(text: &str, kind: &str) -> Vec<Vec<(String, String)>> {
 /// A LAYOUT record's name (the code 1 after the `AcDbLayout` marker), plot type (74) and
 /// standard scale type (75).
 fn layout_plot(rec: &[(String, String)]) -> (String, Option<i64>, Option<i64>) {
-    let at = rec.iter().position(|(c, v)| c == "100" && v == "AcDbLayout").unwrap_or(rec.len());
-    let name = rec.iter().skip(at).find(|(c, _)| c == "1").map(|(_, v)| v.clone()).unwrap_or_default();
+    let at = rec.iter().position(|(c, v)| *c == "100" && v == "AcDbLayout").unwrap_or(rec.len());
+    let name = rec.iter().skip(at).find(|(c, _)| *c == "1").map(|(_, v)| v.clone()).unwrap_or_default();
     let int = |code: &str| rec.iter().take(at).find(|(c, _)| c == code).and_then(|(_, v)| v.trim().parse().ok());
     (name, int("74"), int("75"))
 }

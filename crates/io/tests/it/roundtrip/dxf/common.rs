@@ -47,9 +47,9 @@ fn output(common: &Common, version: Version, binary: bool) -> Vec<(String, Vec<T
     let bytes = write_with(&drawing, "memory.dxf", &SaveOptions { version: Some(version), binary }).unwrap();
     let tags = cadcraft_dxf::parse(&bytes).unwrap();
     let sections = sections(&tags);
-    let entities = records(&sections.iter().find(|s| s.name == "ENTITIES").unwrap().tags);
-    assert_eq!(entities.iter().map(|(kind, _)| kind.as_str()).collect::<Vec<_>>(), ["LINE", "CIRCLE", "TEXT"]);
-    entities
+    let entities = records(sections.iter().find(|s| s.name == "ENTITIES").unwrap().tags);
+    assert_eq!(entities.iter().map(|(kind, _)| *kind).collect::<Vec<_>>(), ["LINE", "CIRCLE", "TEXT"]);
+    entities.into_iter().map(|(k, t)| (k.to_string(), t.to_vec())).collect()
 }
 
 fn assert_write(common: Common, present: &[Tag], absent: &[i32]) {
