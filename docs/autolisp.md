@@ -91,6 +91,10 @@ DXF file holds for the object, plus `-1` (its name) and `410` (its layout). Angl
 are in radians, as in AutoCAD, where the file holds degrees; `entmake`, `entmod` and `ssget`
 filters take radians too.
 
+Block definitions can be read: `(tblsearch "BLOCK" name)` gives the block's first entity in group
+-2, `entnext` goes from one entity of a definition to the next (nil after the last) and `entget`
+lists them (without a layout, group 410). So a routine can read what a block stores, such as the
+text of a dimension's `*D` block. `entmod` and `entdel` don't change a definition's entities.
 `entmake` defines blocks: a BLOCK list (2 name, 70 flags, 10 base point, 4 description) begins a
 definition, the entities made after it go into the block instead of the drawing, and an ENDBLK
 list adds the block (redefining one of the same name) and returns its name. Flag 1 with a `*U`
