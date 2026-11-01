@@ -230,6 +230,13 @@ fn plot_goes_through_the_hook() {
     assert!(s.execute("plot", &json!({"layout": "Model", "plotArea": "window"})).is_err(), "window needs corners");
     assert!(s.execute("plot", &json!({"layout": "Layout1", "plotArea": "display"})).is_err(), "layouts plot their sheet");
     assert!(s.execute("plot", &json!({"layout": "Model", "scale": -1})).is_err());
+    // Image output holds one sheet: several `layouts` would report pages:N but write one render.
+    for out in ["x.png", "x.svg"] {
+        let e = s.execute("plot", &json!({"path": out, "layouts": ["Layout1", "Layout2"]})).unwrap_err();
+        assert!(e.to_string().contains("layouts"), "{e}");
+    }
+    assert!(s.execute("plot", &json!({"output": "png", "layouts": ["Layout1", "Layout2"]})).is_err());
+    assert!(s.execute("plot", &json!({"output": "png", "layouts": ["Layout1"]})).is_ok(), "one sheet still fine as an image");
     #[cfg(not(target_arch = "wasm32"))]
     {
         let path = std::env::temp_dir().join(format!("cadcraft-plot-test-{}.pdf", std::process::id()));

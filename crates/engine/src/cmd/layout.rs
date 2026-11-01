@@ -827,6 +827,11 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
             None => o.remove("plotTransparency"),
         };
     }
+    // A PNG or SVG holds one render: several sheets would report `pages: N` but write only one.
+    let image = opts.get("output").and_then(Value::as_str).is_some_and(|o| o.eq_ignore_ascii_case("png") || o.eq_ignore_ascii_case("svg"));
+    if image && sheets.as_ref().is_some_and(|names| names.len() > 1) {
+        return Err(bad(cmd, "`layouts` with several sheets needs PDF output; PNG and SVG hold one sheet, so plot each layout separately"));
+    }
     let bytes = hook(s.doc()?, &space, &opts).map_err(|e| bad(cmd, e))?;
     let layout = match &sheets {
         Some(names) => names.first().cloned().unwrap_or_default(),
