@@ -1128,7 +1128,7 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Ta
     if let Some(t) = w.t.get_mut(seed_pos + 1) {
         *t = Tag::s(5, seed);
     }
-    crate::dxf_raw::finish(&mut w.t, d);
+    crate::dxf_raw::finish(&mut w.t, d, &w.reactors);
     crate::dxf_raw::data_store(&mut w.t, d, target >= Version::R2013);
     add_class_instance_counts(&mut w.t, target);
     mark_xrefs(&mut w.t, d);

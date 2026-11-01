@@ -846,7 +846,7 @@ fn unknown_handles(d: &Drawing) -> HashSet<String> {
 }
 
 /// Put the drawing's foreign data back into a written file's tags (see the module comment).
-pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
+pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing, reactors: &HashMap<Handle, Vec<String>>) {
     let f = d.foreign.as_ref();
     let unknown = unknown_handles(d);
     let xd: XdataOf = all_entities(d).filter(|e| !e.common.xdata.is_empty()).map(|e| (e.handle, e.common.xdata.as_slice())).collect();
@@ -993,8 +993,10 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
             let (Some(zero), Some(ub)) = (t.first(), t.get(1..)) else { continue };
             let ur = Rec { sec: sec.clone(), kind: zero.str(), start: 0, end: 0 };
             let x = head(ub).handle.and_then(|h| handle(&h)).and_then(|h| entity_extra(f, &xd, h));
+            // Reactors the writer planned for this source (a DIMASSOC, an associative hatch).
+            let extra = head(ub).handle.and_then(|h| handle(&h)).and_then(|h| reactors.get(&h)).map_or(&[][..], Vec::as_slice);
             out.push(zero.clone());
-            record(&map, &ur, ub, x.as_deref(), true, false, &[], &mut out);
+            record(&map, &ur, ub, x.as_deref(), true, false, extra, &mut out);
         }
         out.extend(tags.get(r.start).cloned());
         let x = extra_for(f, &xd, r, b, &block);

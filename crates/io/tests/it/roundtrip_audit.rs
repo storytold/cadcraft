@@ -1059,3 +1059,16 @@ fn a_dimension_source_keeps_its_foreign_reactors_next_to_the_dimassoc() {
     assert!(reactors.iter().any(|r| o.handle(r).is_some_and(|(k, _)| k == "ACME_OBJECT")), "foreign reactor kept: {reactors:?}");
     assert!(o.dangling().is_empty(), "{:?}", o.dangling());
 }
+/// An unmodelled entity a DIMASSOC refers to gets the reactor too, next to what it had (review on #2589).
+#[test]
+fn an_unknown_dimension_source_carries_the_dimassoc_reactor() {
+    let mut d = read_dxf(fixture().as_bytes()).expect("read fixture");
+    add_associated_dimension(&mut d, cadcraft_doc::Handle(0x30), cadcraft_doc::Handle(0x2A));
+    let o = Out::new(&write_dxf(&d));
+    let widget = entity_by_text(&o, "ACME_WIDGET", "widget-in-model");
+    let reactors = group(widget, "ACAD_REACTORS");
+    assert!(reactors.contains(&dimassoc_handle(&o)), "DIMASSOC reactor: {reactors:?}");
+    assert_eq!(widget.iter().filter(|t| t.code == 102 && t.str() == "{ACAD_REACTORS").count(), 1);
+    assert_eq!(owner(widget), h(o.named("BLOCK_RECORD", "*Model_Space")), "owner unchanged");
+    assert!(o.dangling().is_empty(), "{:?}", o.dangling());
+}
