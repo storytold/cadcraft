@@ -37,15 +37,21 @@ fn fresh_entity_handle(d: &mut Drawing, seen: &mut HashSet<Handle>, reserved: &H
     d.new_handle()
 }
 
+/// How an ENTITIES list assigns handles: the handles already seen anywhere in the file, the
+/// ones the block records reserved, and whether a record's own handle beats the reservation.
+pub(super) struct HandlePolicy<'a> {
+    pub seen: &'a mut HashSet<Handle>,
+    pub reserved: &'a HashSet<Handle>,
+    pub source_wins: bool,
+}
+
 pub(super) fn parse_entities(
     recs: &[(String, Vec<Tag>)],
     d: &mut Drawing,
     rx: &mut Rx,
     skipped: &mut usize,
     table_cells_left: &mut usize,
-    seen_handles: &mut HashSet<Handle>,
-    reserved_handles: &HashSet<Handle>,
-    source_handles_win: bool,
+    hp: &mut HandlePolicy<'_>,
 ) -> Vec<(Option<String>, bool, Entity)> {
     let mut out = Vec::new();
     let mut i = 0;
@@ -93,17 +99,15 @@ pub(super) fn parse_entities(
                     d.bump_handseed(h);
                     // A file's own handle wins when it is the first copy on a source list that
                     // keeps them (ENTITIES); block copies yield to the reserved top-level ones.
-                    let kept = if source_handles_win { seen_handles.insert(h) } else { !reserved_handles.contains(&h) && seen_handles.insert(h) };
-                    if kept { h } else { fresh_entity_handle(d, seen_handles, reserved_handles) }
+                    let kept = if hp.source_wins { hp.seen.insert(h) } else { !hp.reserved.contains(&h) && hp.seen.insert(h) };
+                    if kept { h } else { fresh_entity_handle(d, hp.seen, hp.reserved) }
                 }
-                None => fresh_entity_handle(d, seen_handles, reserved_handles),
+                None => fresh_entity_handle(d, hp.seen, hp.reserved),
             };
             entity_extras(kind, tags, h, &mut k, rx);
             let more: Vec<_> = extra
                 .into_iter()
-                .map(|f| {
-                    (owner.clone(), paper, Entity { handle: fresh_entity_handle(d, seen_handles, reserved_handles), common: c.clone(), kind: f })
-                })
+                .map(|f| (owner.clone(), paper, Entity { handle: fresh_entity_handle(d, hp.seen, hp.reserved), common: c.clone(), kind: f }))
                 .collect();
             out.push((owner, paper, Entity { handle: h, common: c, kind: k }));
             out.extend(more);
@@ -149,7 +153,14 @@ pub(super) fn read_blocks(
                 j += 1;
             }
             let body = recs.get(i + 1..j).unwrap_or(&[]);
-            let ents = parse_entities(body, d, rx, &mut n, table_cells_left, seen_handles, reserved_handles, false);
+            let ents = parse_entities(
+                body,
+                d,
+                rx,
+                &mut n,
+                table_cells_left,
+                &mut HandlePolicy { seen: seen_handles, reserved: reserved_handles, source_wins: false },
+            );
             blocks.push((name, base, description, ents, xref));
             i = j + 1;
         } else {

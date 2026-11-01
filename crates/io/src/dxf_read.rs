@@ -24,7 +24,8 @@ mod tables;
 mod text;
 
 use document::{
-    apply_sortents, count_skipped, outside_sections, parse_entities, place_blocks, place_entities, read_blocks, read_objects, setup_layouts,
+    HandlePolicy, apply_sortents, count_skipped, outside_sections, parse_entities, place_blocks, place_entities, read_blocks, read_objects,
+    setup_layouts,
 };
 #[cfg(test)]
 use entities::acad_table;
@@ -132,9 +133,7 @@ fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {
                     &mut rx,
                     &mut n,
                     &mut table_cells_left,
-                    &mut seen_handles,
-                    &reserved_entity_handles,
-                    true,
+                    &mut HandlePolicy { seen: &mut seen_handles, reserved: &reserved_entity_handles, source_wins: true },
                 ));
                 count_skipped(&mut skipped, "ENTITIES", n);
             }
