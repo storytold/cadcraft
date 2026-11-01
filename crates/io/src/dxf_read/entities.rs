@@ -115,6 +115,15 @@ fn spline(t: &T) -> Spline {
     sp
 }
 
+/// An untwisted top-down DXF viewport stores its centre relative to group 17 (WCS target).
+/// Twisted/3D views are left unchanged until the viewport model supports their projection.
+fn viewport_center(t: &T) -> Vec2 {
+    let center = Vec2::new(t.fd(12, 0.0), t.fd(22, 0.0));
+    let dir = Vec3::new(t.fd(16, 0.0), t.fd(26, 0.0), t.fd(36, 1.0));
+    let top = dir.is_finite() && dir.z > 0.0 && (dir.x / dir.z).abs() < 1e-12 && (dir.y / dir.z).abs() < 1e-12;
+    if top && t.fd(51, 0.0).abs() < 1e-12 { center + t.p(17).xy() } else { center }
+}
+
 pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_left: &mut usize) -> Option<(Common, EntityKind)> {
     // The paper-space viewport our writer adds (dxf_write::paper_view) stays implicit.
     if kind == "VIEWPORT" && crate::dxf_ext::is_paper_view(tags) {
@@ -133,7 +142,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
         "HELIX" => EntityKind::Helix(helix(tags)),
         "RAY" => EntityKind::Ray(RayLine { base: t.p(10), dir: t.p(11) }),
         "XLINE" => EntityKind::XLine(RayLine { base: t.p(10), dir: t.p(11) }),
-        "TEXT" => EntityKind::Text(text_from(&t)),
+        "TEXT" => EntityKind::Text(text_from(&t, false)),
         "MTEXT" => EntityKind::MText(mtext_from(tags, &c)),
         "ATTDEF" => EntityKind::AttDef(attdef(tags, &c)),
         "INSERT" => {
@@ -244,7 +253,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
             center: t.p(10),
             width: t.fd(40, 1.0),
             height: t.fd(41, 1.0),
-            view_center: Vec2::new(t.fd(12, 0.0), t.fd(22, 0.0)),
+            view_center: viewport_center(&t),
             view_height: t.fd(45, 1.0),
             id: t.i(69).unwrap_or(0) as u32,
             locked: t.i(90).unwrap_or(0) & 16384 != 0,
@@ -372,7 +381,7 @@ pub(super) fn acad_table(tags: &[Tag], table_cells_left: &mut usize) -> Table {
 
 /// The plot style names of a file: the entries of the `ACAD_PLOTSTYLENAME` dictionary of the
 /// named object dictionary (the first object), by placeholder handle.
-pub(super) fn plot_style_names(secs: &[cadcraft_dxf::Section]) -> HashMap<String, String> {
+pub(super) fn plot_style_names(secs: &[cadcraft_dxf::Section<&[Tag]>]) -> HashMap<String, String> {
     let mut out = HashMap::new();
     let Some(objects) = secs.iter().find(|s| s.name == "OBJECTS") else { return out };
     let recs = records(&objects.tags);
@@ -471,7 +480,8 @@ pub(super) fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityK
             v.frozen_layers = tags
                 .iter()
                 .take_while(|t| t.code < 1000)
-                .filter(|t| t.code == 341)
+                .filter(|t| matches!(t.code, 331 | 341))
+                .take(4096)
                 .filter_map(|t| rx.layers.get(&t.str().trim().to_ascii_uppercase()).cloned())
                 .collect();
         }
@@ -483,7 +493,7 @@ pub(super) fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityK
 /// can't be placed are counted in `skipped`.
 /// The entity of a POLYLINE, with its mesh faces (advancing `i` past its VERTEX records). `None`
 /// for a mesh without faces.
-pub(super) fn polyline_entity(recs: &[(String, Vec<Tag>)], i: &mut usize, t: &T) -> Option<(Common, EntityKind, Vec<EntityKind>)> {
+pub(super) fn polyline_entity(recs: &[(String, &[Tag])], i: &mut usize, t: &T) -> Option<(Common, EntityKind, Vec<EntityKind>)> {
     let flags = t.i(70).unwrap_or(0);
     let mut pts: Vec<(Vec3, f64, f64, f64)> = Vec::new();
     // Polyface face records (VERTEX 70 bit 128 without 64): vertex indices 71–74.
@@ -532,7 +542,7 @@ pub(super) fn polyline_entity(recs: &[(String, Vec<Tag>)], i: &mut usize, t: &T)
 }
 
 /// The ATTRIB records after an INSERT, advancing `i` past them and their SEQEND.
-pub(super) fn insert_attribs(recs: &[(String, Vec<Tag>)], i: &mut usize, ins_layer: &str) -> Vec<Attrib> {
+pub(super) fn insert_attribs(recs: &[(String, &[Tag])], i: &mut usize, ins_layer: &str) -> Vec<Attrib> {
     let mut attribs = Vec::new();
     while let Some((k2, t2)) = recs.get(*i) {
         if k2 == "ATTRIB" {
@@ -541,7 +551,7 @@ pub(super) fn insert_attribs(recs: &[(String, Vec<Tag>)], i: &mut usize, ins_lay
             let (own, embedded) = split_embedded(t2);
             let multiline = multiline_attrib(embedded, &common(&tt));
             let own = T(own);
-            let mut text = text_from(&own);
+            let mut text = text_from(&own, true);
             if let Some(m) = &multiline {
                 text.value.clone_from(&m.read_as);
             }

@@ -1,0 +1,50 @@
+name: Sync fork with upstream
+
+on:
+  schedule:
+    - cron: "59 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-main
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'danielmigueltejedor/cadcraft' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out fork with history
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Integrate upstream without rewriting commits
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/storytold/cadcraft.git
+          git fetch --no-tags upstream refs/heads/main:refs/remotes/upstream/main
+
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "Already contains upstream/main."
+            exit 0
+          elif git merge-base --is-ancestor HEAD upstream/main; then
+            git merge --ff-only upstream/main
+          else
+            if ! git -c merge.conflictStyle=zdiff3 merge --no-edit upstream/main; then
+              git merge --abort || true
+              echo "::error::Merge conflicts. No commit was lost or overwritten."
+              echo "Upstream changed files conflict with this fork. Resolve manually; no force push was attempted." >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+          fi
+
+          git push origin HEAD:main

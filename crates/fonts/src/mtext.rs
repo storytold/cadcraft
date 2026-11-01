@@ -196,6 +196,14 @@ fn num(a: &str) -> Option<f64> {
 }
 
 /// `\fArial|b1|i0|c0|p34;` → the font, trying a bold/italic face first.
+/// Strip known font-file suffixes when looking up built-in styled substitutions.
+fn font_substitute_stem(name: &str) -> &str {
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if ["ttf", "otf", "shx"].iter().any(|suffix| ext.eq_ignore_ascii_case(suffix)) => stem,
+        _ => name,
+    }
+}
+
 fn font_switch(a: &str) -> Option<TextFont> {
     let mut parts = a.split('|');
     let name = parts.next().unwrap_or("").trim();
@@ -221,6 +229,12 @@ fn font_switch(a: &str) -> Option<TextFont> {
             if let Some(f) = crate::ttf::find(&cand) {
                 return Some(TextFont::Outline(f));
             }
+        }
+        if let Some(f) = crate::ttf::find(&crate::ttf::font_alt()) {
+            return Some(TextFont::Outline(f));
+        }
+        if let Some(f) = crate::iso_substitutes(&format!("{} {st}", font_substitute_stem(name))).iter().find_map(|n| crate::ttf::find(n)) {
+            return Some(TextFont::Outline(f));
         }
     }
     Some(TextFont::resolve(name))
@@ -806,6 +820,17 @@ mod tests {
         let w: f64 = crate::line_width("alpha", 1.0, 1.0);
         assert!(w < 6.0);
         assert_eq!(l.lines.first().map(String::as_str), Some("alpha"));
+    }
+
+    #[test]
+    fn styled_iso_font_file_names_resolve_to_styled_substitutes() {
+        for (name, style) in [("isocpeur.ttf", "italic"), ("isocpeur.TTF", "bold"), ("isocpeur.otf", "bold italic")] {
+            let stem = font_substitute_stem(name);
+            let substitutes = crate::iso_substitutes(&format!("{stem} {style}"));
+            assert!(!substitutes.is_empty(), "missing styled substitution for {name} {style}");
+        }
+        assert_eq!(font_substitute_stem("isocpeur"), "isocpeur");
+        assert_eq!(font_substitute_stem("custom.family"), "custom.family");
     }
 
     #[test]

@@ -123,7 +123,7 @@ fn hex_chunks_keep_bytes_and_order() {
     // see hex_chunks.rs for the independent wire checks and pending writer regressions.
     for length in [0, 1, 2, 126, 127] {
         let hex: String = (0..length).map(|i| format!("{:02X}", (i * 37) % 256)).collect();
-        let tags: Vec<_> = (310..=319).chain([1004]).map(|code| Tag::new(code, Value::Hex(hex.clone()))).collect();
+        let tags: Vec<_> = (310..=319).chain([1004]).map(|code| Tag::new(code, Value::Hex(hex.clone().into_boxed_str()))).collect();
         check(&format!("hex/bytes={length}"), &tags);
     }
 }

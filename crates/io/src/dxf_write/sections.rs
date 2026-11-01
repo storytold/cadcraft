@@ -243,7 +243,7 @@ fn write_dimstyles(w: &mut W, d: &Drawing, cx: &mut Ctx, version: Version) {
         w.i(70, 0);
         let v = serde_json::to_value(s).unwrap_or_default();
         let defaults = serde_json::to_value(DimStyle::default()).unwrap_or_default();
-        let mut newer = W { t: Vec::new(), next: 0, pstyles: HashMap::new(), layers: HashMap::new(), reactors: HashMap::new() };
+        let mut newer = W::default();
         for (field, code, kind) in dxf_ext::DIM_CODES {
             let Some(enc) = v.get(*field).and_then(|x| cx.encode(*kind, x)) else { continue };
             // DIMPOST is written even when empty: a reader that defaults a missing one to "<>"
@@ -428,8 +428,8 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
         (43, page.margins_mm[3]),
         (44, page.width_mm),
         (45, page.height_mm),
-        (46, 0.0),
-        (47, 0.0),
+        (46, page.offset_mm[0]),
+        (47, page.offset_mm[1]),
         (48, page.plot_window[0]),
         (49, page.plot_window[1]),
         (140, page.plot_window[2]),
@@ -464,6 +464,10 @@ fn layout_obj(w: &mut W, context: LayoutWriteContext<'_>, data: LayoutWriteData<
     w.p(17, Vec3::new(0.0, 1.0, 0.0));
     w.i(76, 0);
     w.s(330, brh);
+    // The overall sheet viewport is referenced by LAYOUT 331, not the model viewport.
+    if let Some(vp) = w.paper_viewports.get(brh).cloned() {
+        w.s(331, vp);
+    }
     // The saved paper-space view (centre, height) as CADCraft xdata.
     if let Some((c, height)) = view.filter(|(c, v)| c.x.is_finite() && c.y.is_finite() && v.is_finite()) {
         w.s(1001, dxf_ext::APP);
@@ -887,13 +891,7 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version) -> Vec<Ta
     let committed = d.committed();
     let d: &Drawing = &committed;
     // Structural handles start above every entity handle.
-    let mut w = W {
-        t: Vec::new(),
-        next: d.handseed.max(0x100).saturating_add(0x1000),
-        pstyles: HashMap::new(),
-        layers: HashMap::new(),
-        reactors: hatch_reactors(d),
-    };
+    let mut w = W { next: d.handseed.max(0x100).saturating_add(0x1000), reactors: hatch_reactors(d), ..W::default() };
     // Pre-allocate handles for block records.
     let paper_layouts = d.paper_space_layouts();
     let ms_br = w.h();
@@ -1146,6 +1144,10 @@ fn add_class_instance_counts(tags: &mut Vec<Tag>, target: Version) {
         }
     }
 
+    // Each CLASS may need one group 91. Reserve before insertion so adding class
+    // counters cannot repeatedly reallocate a multi-million-tag drawing.
+    let class_count = tags.iter().filter(|t| t.code == 0 && t.str() == "CLASS").count();
+    tags.reserve_exact(class_count);
     let mut start = 0;
     while start < tags.len() {
         if tags.get(start).is_none_or(|t| t.code != 0 || t.str() != "CLASS") {

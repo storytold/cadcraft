@@ -1,7 +1,9 @@
 //! Paper sizes and the layout sheet (paper rectangle, printable area) for paper space.
 //!
 //! Paper-space units are millimetres in metric drawings (`MEASUREMENT` = 1) and on layouts whose
-//! page setup is in millimetres, and inches otherwise. The sheet's lower-left corner is the paper-space origin.
+//! page setup is in millimetres, and inches otherwise.
+//! Layout paper coordinates place the printable-area origin at the plot offset;
+//! the physical sheet may therefore extend into negative paper coordinates.
 
 use cadcraft_doc::{Drawing, PageSetup};
 use cadcraft_geom::{Bounds2, Vec2};
@@ -97,8 +99,10 @@ pub fn unit_mm_of(d: &Drawing, h: cadcraft_doc::Handle) -> f64 {
 /// The paper sheet of a layout, in paper-space units.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Sheet {
-    /// Sheet size (already rotated for landscape). The sheet spans `(0,0)..size`.
+    /// Sheet size (already rotated for landscape).
     pub size: Vec2,
+    /// Lower-left corner in paper coordinates (zero for a physical plot sheet).
+    pub origin: Vec2,
     /// Printable area (inside the margins).
     pub printable: Bounds2,
     /// Millimetres per paper-space unit.
@@ -107,7 +111,7 @@ pub struct Sheet {
 
 impl Sheet {
     pub fn bounds(&self) -> Bounds2 {
-        Bounds2::new(Vec2::ZERO, self.size)
+        Bounds2::new(self.origin, self.origin + self.size)
     }
     /// The sheet for a page setup in a drawing whose paper units are `unit_mm` millimetres.
     pub fn from_page(page: &PageSetup, unit_mm: f64) -> Sheet {
@@ -119,20 +123,29 @@ impl Sheet {
         let size = Vec2::new(w / u, h / u);
         let m = |i: usize| page.margins_mm.get(i).copied().filter(|v| v.is_finite() && *v >= 0.0).unwrap_or(0.0) / u;
         // Margins: left, bottom, right, top (DXF group codes 40..43).
-        let (l, b, r, t) = (m(0), m(1), m(2), m(3));
+        let (l, b, r, t) = if page.landscape { (m(3), m(0), m(1), m(2)) } else { (m(0), m(1), m(2), m(3)) };
         let printable = if l + r < size.x && b + t < size.y {
             Bounds2::new(Vec2::new(l, b), Vec2::new(size.x - r, size.y - t))
         } else {
             Bounds2::new(Vec2::ZERO, size)
         };
-        Sheet { size, printable, unit_mm: u }
+        Sheet { size, origin: Vec2::ZERO, printable, unit_mm: u }
+    }
+
+    /// The layout sheet in drawing coordinates, rather than physical plot coordinates.
+    pub fn for_layout(page: &PageSetup, unit_mm: f64) -> Sheet {
+        let mut sheet = Self::from_page(page, unit_mm);
+        let offset = |i: usize| page.offset_mm.get(i).copied().filter(|v| v.is_finite() && v.abs() <= MAX_PLOT_OFFSET_MM).unwrap_or(0.0);
+        sheet.origin = -sheet.printable.min - Vec2::new(offset(0), offset(1)) / sheet.unit_mm;
+        sheet.printable = Bounds2::new(sheet.printable.min + sheet.origin, sheet.printable.max + sheet.origin);
+        sheet
     }
 }
 
 /// The sheet of a named layout (`None` if there is no such layout).
 pub fn sheet(d: &Drawing, layout: &str) -> Option<Sheet> {
     let l = d.layouts.iter().find(|l| l.name == layout).or_else(|| d.layout(layout))?;
-    Some(Sheet::from_page(&l.page, page_unit_mm(d, &l.page)))
+    Some(Sheet::for_layout(&l.page, page_unit_mm(d, &l.page)))
 }
 
 #[cfg(test)]
@@ -153,5 +166,27 @@ mod tests {
         let hostile = PageSetup { width_mm: f64::NAN, height_mm: -1.0, margins_mm: [1e9; 4], ..PageSetup::default() };
         let s = Sheet::from_page(&hostile, 0.0);
         assert!(s.size.x > 0.0 && s.printable == s.bounds());
+    }
+
+    #[test]
+    fn layout_origin_rotates_asymmetric_margins_and_preserves_offsets() {
+        let mut page = PageSetup {
+            width_mm: 210.0,
+            height_mm: 297.0,
+            margins_mm: [7.5, 20.0, 9.0, 18.0],
+            offset_mm: [3.0, -2.0],
+            landscape: true,
+            ..PageSetup::default()
+        };
+        let s = Sheet::for_layout(&page, 1.0);
+        assert_eq!(s.origin, Vec2::new(-21.0, -5.5));
+        assert_eq!(s.bounds().center(), Vec2::new(127.5, 99.5));
+        assert_eq!(s.printable, Bounds2::new(Vec2::new(-3.0, 2.0), Vec2::new(256.0, 195.5)));
+        let inches = Sheet::for_layout(&page, 25.4);
+        assert!((inches.origin - s.origin / 25.4).len() < 1e-12);
+        page.landscape = false;
+        assert_eq!(Sheet::for_layout(&page, 1.0).origin, Vec2::new(-10.5, -18.0));
+        page.offset_mm = [f64::NAN, f64::INFINITY];
+        assert_eq!(Sheet::for_layout(&page, 1.0).origin, Vec2::new(-7.5, -20.0));
     }
 }

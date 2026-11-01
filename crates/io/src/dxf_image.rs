@@ -79,7 +79,7 @@ fn has_images(store: &EntityStore) -> bool {
 }
 
 /// Fill in each image's definition (path, name, pixel size) from the IMAGEDEF it points to.
-pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
+pub(crate) fn resolve(secs: &[Section<&[Tag]>], d: &mut Drawing) {
     if !has_images(&d.model) && !d.layouts.iter().any(|l| has_images(&l.entities)) && !d.blocks.values().any(|b| has_images(&b.entities)) {
         return;
     }

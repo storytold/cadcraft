@@ -38,9 +38,11 @@ pub(super) fn sheet_first(l: &Layout) -> Vec<&Entity> {
 /// leaves it implicit again.
 pub(super) fn paper_view(w: &mut W, d: &Drawing, e: &Entity, owner: &str, cx: &Ctx) {
     let Some(l) = cx.paper_views.get(&e.handle).and_then(|i| d.layouts.get(*i)) else { return };
-    let size = cadcraft_render::paper::sheet(d, &l.name).map(|s| s.size).unwrap_or(Vec2::new(12.0, 9.0));
-    let center = size * 0.5;
+    let sheet = cadcraft_render::paper::sheet(d, &l.name);
+    let size = sheet.map(|s| s.size).unwrap_or(Vec2::new(12.0, 9.0));
+    let center = sheet.map(|s| s.bounds().center()).unwrap_or(size * 0.5);
     let h = w.h();
+    w.paper_viewports.insert(owner.to_owned(), h.clone());
     w.s(0, "VIEWPORT");
     w.s(5, h);
     w.s(330, owner);

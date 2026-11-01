@@ -280,7 +280,7 @@ pub(super) fn tables(tags: &[Tag], d: &mut Drawing, rx: &mut Rx) {
     d.vports.retain(|c| c.tiles.len() > usize::from(c.is_active()));
 }
 
-fn index_table_handles(recs: &[(String, Vec<Tag>)], rx: &mut Rx) {
+fn index_table_handles(recs: &[(String, &[Tag])], rx: &mut Rx) {
     for (kind, tags) in recs {
         let table = T(tags);
         let (Some(handle), Some(name)) = (table.s(5), table.s(2)) else { continue };

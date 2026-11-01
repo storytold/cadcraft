@@ -233,6 +233,12 @@ pub(super) fn page_setup(t: &T) -> PageSetup {
         p.height_mm = w.max(h);
     }
     p.margins_mm = [mm(40, p.margins_mm[0]), mm(41, p.margins_mm[1]), mm(42, p.margins_mm[2]), mm(43, p.margins_mm[3])];
+    // PLOTSETTINGS group codes 46/47 are signed plot offsets in millimetres.
+    let offset = |code| {
+        let v = t.fd(code, 0.0);
+        if v.is_finite() && v.abs() <= cadcraft_render::paper::MAX_PLOT_OFFSET_MM { v } else { 0.0 }
+    };
+    p.offset_mm = [offset(46), offset(47)];
     // Plot paper units 1: millimetres. 0 (inches) is left to MEASUREMENT: earlier CADCraft
     // versions wrote 0 for every layout.
     p.paper_mm = t.i(72) == Some(1);

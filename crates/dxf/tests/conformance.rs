@@ -21,7 +21,7 @@ fn fixtures() -> Vec<(Tag, &'static [u8], &'static [u8])> {
         (Tag::new(290, Value::Bool(false)), b"290\r\n0\r\n", b"\x22\x01\0"),
         (Tag::new(299, Value::Bool(true)), b"299\r\n1\r\n", b"\x2b\x01\x01"),
         (Tag::new(310, Value::Hex("00FF80".into())), b"310\r\n00FF80\r\n", b"\x36\x01\x03\0\xff\x80"),
-        (Tag::new(1004, Value::Hex(String::new())), b"1004\r\n\r\n", b"\xec\x03\0"),
+        (Tag::new(1004, Value::Hex(String::new().into_boxed_str())), b"1004\r\n\r\n", b"\xec\x03\0"),
         (Tag::i(1070, -2), b"1070\r\n-2\r\n", b"\x2e\x04\xfe\xff"),
         (Tag::i(1071, 65536), b"1071\r\n65536\r\n", b"\x2f\x04\0\0\x01\0"),
     ]

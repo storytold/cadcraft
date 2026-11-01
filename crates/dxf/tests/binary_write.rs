@@ -40,7 +40,7 @@ fn binary_roundtrips_every_value_kind() {
 fn binary_converts_values_to_their_codes_kind() {
     // A number held as text at a numeric code, an out-of-range 16-bit value, a long chunk.
     let long = "AB".repeat(300);
-    let tags = vec![Tag::s(70, "12"), Tag::i(62, 1 << 20), Tag::new(310, Value::Hex(long)), Tag::s(0, "EOF")];
+    let tags = vec![Tag::s(70, "12"), Tag::i(62, 1 << 20), Tag::new(310, Value::Hex(long.into_boxed_str())), Tag::s(0, "EOF")];
     let back = parse(&write_binary(&tags, true)).unwrap();
     assert_eq!(back[0], Tag::i(70, 12));
     assert_eq!(back[1], Tag::i(62, i64::from(i16::MAX)));

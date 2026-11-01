@@ -99,7 +99,7 @@ fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
         let center = from + (half - to) / s;
         raster::View { center, scale: k * s, width, height }
     } else {
-        raster::View { center: half, scale: k, width, height }
+        raster::View { center: half + Sheet::for_layout(&page, sheet.unit_mm).origin, scale: k, width, height }
     };
     let px_per_mm = if lineweights { (k / sheet.unit_mm) as f32 } else { 0.0 };
     let ro = raster::RasterOptions { background: Rgb(255, 255, 255), hairline: 1.0, px_per_mm, antialias: true };
@@ -111,7 +111,8 @@ fn svg(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let Space::Model = space else {
         let (sheet, page) = sheet(d, space, &o)?;
         let transparency = o.plot_transparency.unwrap_or(page.plot_transparency);
-        return Ok(crate::svg::export_window_with(d, space, Some(sheet.bounds()), transparency).into_bytes());
+        let bounds = Sheet::for_layout(&page, sheet.unit_mm).bounds();
+        return Ok(crate::svg::export_window_with(d, space, Some(bounds), transparency).into_bytes());
     };
     // Model space as plotted: the plot style table, lineweights, and the table's ends, joins and
     // fills at the scale that fits the window (or the extents) on the device's paper.

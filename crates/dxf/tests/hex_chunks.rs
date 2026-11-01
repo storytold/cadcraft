@@ -21,7 +21,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 fn input(code: i32, bytes: &[u8]) -> [Tag; 2] {
-    [Tag::new(code, Value::Hex(hex(bytes))), Tag::i(70, -7)]
+    [Tag::new(code, Value::Hex(hex(bytes).into_boxed_str())), Tag::i(70, -7)]
 }
 
 fn check_ascii(code: i32, bytes: &[u8], utf8: bool) {

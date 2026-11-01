@@ -4,7 +4,7 @@ use super::objects::{MAX_OBJECTS, Objects, page_setup};
 use super::{Block, BlockDef, Drawing, Entity, EntityKind, Handle, HashMap, Layout, LayoutDef, Rx, Tag, records};
 
 pub(super) fn parse_entities(
-    recs: &[(String, Vec<Tag>)],
+    recs: &[(String, &[Tag])],
     d: &mut Drawing,
     rx: &mut Rx,
     skipped: &mut usize,
@@ -138,7 +138,11 @@ pub(super) fn read_objects(tags: &[Tag], objs: &mut Objects, layout_objs: &mut V
             // LAYOUT has two 330s: owner dict and the block record; take the last.
             let br = tg.iter().rfind(|x| x.code == 330).map(Tag::str).unwrap_or_default();
             let plot = T(tg.get(..start).unwrap_or(&[]));
-            layout_objs.push((t.s(1).unwrap_or_default(), t.i(71).unwrap_or(0) as u32, br.to_ascii_uppercase(), page_setup(&plot)));
+            // An unvisited AutoCAD layout has zero media dimensions and no sheet viewport.
+            let pending = plot.fd(44, 0.0) == 0.0 && plot.fd(45, 0.0) == 0.0
+                && plot.s(4).is_none_or(|n| n.is_empty())
+                && t.s(331).is_none_or(|h| Handle::parse_hex(&h).is_none_or(|h| h.0 == 0));
+            layout_objs.push((t.s(1).unwrap_or_default(), t.i(71).unwrap_or(0) as u32, br.to_ascii_uppercase(), page_setup(&plot), pending));
         }
     }
 }
@@ -148,11 +152,11 @@ pub(super) fn read_objects(tags: &[Tag], objs: &mut Objects, layout_objs: &mut V
 pub(super) fn setup_layouts(d: &mut Drawing, layout_objs: &mut [LayoutDef], rx: &Rx) -> (HashMap<String, String>, String) {
     let mut paper_block_for: HashMap<String, String> = HashMap::new();
     layout_objs.sort_by_key(|l| l.1);
-    for (name, order, br, page) in layout_objs.iter() {
+    for (name, order, br, page, pending) in layout_objs.iter() {
         if name.eq_ignore_ascii_case("Model") {
             continue;
         }
-        d.layouts.push(Layout { page: page.clone(), ..Layout::new(name, *order) });
+        d.layouts.push(Layout { page: page.clone(), needs_initialization: *pending, ..Layout::new(name, *order) });
         if let Some(bname) = rx.brs.get(br) {
             paper_block_for.insert(bname.to_ascii_uppercase(), name.clone());
         }

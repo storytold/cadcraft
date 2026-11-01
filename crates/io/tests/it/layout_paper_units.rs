@@ -70,3 +70,15 @@ fn plot_paper_units_round_trip_through_dxf() {
     let name = back.layouts.first().unwrap().name.clone();
     assert_eq!(cadcraft_render::sheet(&back, &name).unwrap().unit_mm, 1.0);
 }
+
+#[test]
+fn signed_layout_plot_offsets_round_trip_through_dxf() {
+    let mut d = drawing();
+    d.layouts.iter_mut().find(|l| l.name == "SHEET").unwrap().page.offset_mm = [3.0, -2.0];
+    let sheet = cadcraft_render::sheet(&d, "SHEET").unwrap();
+    assert_eq!(sheet.origin, Vec2::new(-3.0, 2.0));
+    let back = read(write_dxf(&d).as_bytes(), "offsets.dxf").unwrap();
+    let layout = back.layouts.iter().find(|l| l.name == "SHEET").unwrap();
+    assert_eq!(layout.page.offset_mm, [3.0, -2.0]);
+    assert_eq!(cadcraft_render::sheet(&back, "SHEET").unwrap().origin, sheet.origin);
+}

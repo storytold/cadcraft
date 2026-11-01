@@ -101,7 +101,12 @@
       <key>LSHandlerRank</key>
       <string>Alternate</string>
       <key>LSItemContentTypes</key>
-      <array><string>ai.storyteller.cadcraft.dwg</string></array>
+      <!-- AutoCAD registers this type for .dwg. Finder resolves the extension to that
+           existing type, so accepting only our fallback type hides CADCraft in Open With. -->
+      <array>
+        <string>ai.storyteller.cadcraft.dwg</string>
+        <string>com.autodesk.autocad.dwg</string>
+      </array>
       <key>CFBundleTypeIconFile</key>
       <string>CADCraft</string>
     </dict>

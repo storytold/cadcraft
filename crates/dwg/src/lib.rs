@@ -246,6 +246,7 @@ mod native {
     fn post_process(doc: &mut acadrust::CadDocument) -> usize {
         super::fail_in_test("post_process");
         current_style_names(doc);
+        viewport_ids(doc);
         table_merges(doc);
         table_style_rows(doc, false);
         keep_sort_handles(doc);
@@ -511,12 +512,17 @@ mod native {
     /// Convert DXF bytes into a DWG file of the DXF's version, and at least AutoCAD 2004
     /// (AC1018).
     pub fn dxf_to_dwg(dxf: &[u8]) -> Result<Vec<u8>, String> {
-        convert(dxf, None)
+        convert(dxf.to_vec(), None)
     }
 
     /// Convert DXF bytes into a DWG file of `version`, a code from [`super::VERSIONS`] ("AC1032"),
     /// whatever version the DXF declares.
     pub fn dxf_to_dwg_as(dxf: &[u8], version: &str) -> Result<Vec<u8>, String> {
+        dxf_to_dwg_owned_as(dxf.to_vec(), version)
+    }
+
+    /// Convert an owned intermediate DXF directly, avoiding an entire-file copy.
+    pub fn dxf_to_dwg_owned_as(dxf: Vec<u8>, version: &str) -> Result<Vec<u8>, String> {
         let v = match version.trim().to_ascii_uppercase().as_str() {
             "AC1015" => acadrust::DxfVersion::AC1015,
             "AC1018" => acadrust::DxfVersion::AC1018,
@@ -527,6 +533,25 @@ mod native {
             _ => return Err(super::unsupported(version)),
         };
         convert(dxf, Some(v))
+    }
+
+    /// Recreate each paper-space viewport's sequential ID before exporting DWG as DXF.
+    /// Some acadrust versions number only the active layout, leaving inactive IDs at zero.
+    fn viewport_ids(doc: &mut acadrust::CadDocument) {
+        use acadrust::tables::TableEntry;
+        let blocks: Vec<_> = doc.block_records.iter()
+            .filter(|b| b.name().to_ascii_uppercase().starts_with("*PAPER_SPACE"))
+            .map(|b| b.entity_handles.clone())
+            .collect();
+        for handles in blocks {
+            let mut id = 0i16;
+            for handle in handles {
+                if let Some(acadrust::entities::EntityType::Viewport(v)) = doc.get_entity_mut(handle) {
+                    id = id.saturating_add(1);
+                    if v.id == 0 { v.id = id; }
+                }
+            }
+        }
     }
 
     /// The current dimension and text styles' names from their handles: a DWG stores the
@@ -574,7 +599,7 @@ mod native {
         }
     }
 
-    fn convert(dxf: &[u8], version: Option<acadrust::DxfVersion>) -> Result<Vec<u8>, String> {
+    fn convert(dxf: Vec<u8>, version: Option<acadrust::DxfVersion>) -> Result<Vec<u8>, String> {
         // Reject a pathologically large DXF before handing it to the third-party decoder, which
         // allocates tables and section buffers from the input's declared sizes and cannot be
         // interrupted once it starts (CWE-789). This bounds the large-input variant; the decoder
@@ -586,8 +611,7 @@ mod native {
                 mb(Limits::DEFAULT.max_dxf_bytes as u64)
             ));
         }
-        let data = dxf.to_vec();
-        let mut doc = std::panic::catch_unwind(move || acadrust::DxfReader::from_reader(Cursor::new(data)).and_then(|r| r.read()))
+        let mut doc = std::panic::catch_unwind(move || acadrust::DxfReader::from_reader(Cursor::new(dxf)).and_then(|r| r.read()))
             .map_err(|_| "the DXF→DWG conversion failed".to_string())?
             .map_err(|e| format!("DXF: {e}"))?;
         match version {
@@ -742,7 +766,7 @@ mod native {
 }
 
 #[cfg(not(no_dwg_bridge))]
-pub use native::{dwg_to_dxf, dwg_to_dxf_noted, dwg_to_dxf_with, dxf_to_dwg, dxf_to_dwg_as};
+pub use native::{dwg_to_dxf, dwg_to_dxf_noted, dwg_to_dxf_with, dxf_to_dwg, dxf_to_dwg_as, dxf_to_dwg_owned_as};
 
 // Test-only: the stage ("post_process" or "convert") whose guard the current test checks. The
 // stage then panics on entry, so a test through the public API shows whether it is guarded.
@@ -787,6 +811,10 @@ pub fn dwg_to_dxf_with(_bytes: &[u8], _limits: Limits) -> Result<Vec<u8>, String
 #[cfg(no_dwg_bridge)]
 pub fn dxf_to_dwg(_dxf: &[u8]) -> Result<Vec<u8>, String> {
     Err(format!("DWG files can't be written in the {NO_BRIDGE_BUILD} build yet; save as DXF"))
+}
+#[cfg(no_dwg_bridge)]
+pub fn dxf_to_dwg_owned_as(dxf: Vec<u8>, version: &str) -> Result<Vec<u8>, String> {
+    dxf_to_dwg_as(&dxf, version)
 }
 #[cfg(no_dwg_bridge)]
 pub fn dxf_to_dwg_as(_dxf: &[u8], _version: &str) -> Result<Vec<u8>, String> {

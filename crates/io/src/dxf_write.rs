@@ -36,6 +36,7 @@ use entity::entity;
 pub(crate) use header::code_page;
 use sections::tags_for;
 
+#[derive(Default)]
 struct W {
     t: Vec<Tag>,
     next: u64,
@@ -46,6 +47,8 @@ struct W {
     /// Persistent reactors of boundary objects: each source object of an associative hatch →
     /// the hatches (groups `{ACAD_REACTORS 330 …}`), from [`hatch_reactors`].
     reactors: HashMap<Handle, Vec<String>>,
+    /// Paper-space BLOCK_RECORD handle → overall paper viewport handle (LAYOUT 331).
+    paper_viewports: HashMap<String, String>,
 }
 
 impl W {
@@ -115,10 +118,11 @@ pub fn tags(d: &Drawing, version: Version) -> Vec<Tag> {
     tags_for(d, version, version)
 }
 
-/// The R2000 DXF the DWG bridge converts to a `dwg` version DWG: its entity types are the DWG
-/// version's (MULTILEADER from 2007).
+/// The source-version DXF used for DWG conversion. Preserved foreign records must be
+/// decoded at their original version, not unconditionally as R2000; generated entity
+/// types still follow the requested DWG version (MULTILEADER from 2007).
 pub(crate) fn dwg_bridge(d: &Drawing, dwg: Version) -> String {
-    let mut tags = tags_for(d, Version::R2000, dwg);
+    let mut tags = tags_for(d, crate::save_version(d), dwg);
     bridge_markers(&mut tags);
     cadcraft_dxf::write_ascii(&tags)
 }
@@ -140,13 +144,7 @@ fn bridge_markers(tags: &mut [Tag]) {
 /// VERTEXes, gives its first). Handles of objects outside the entity (owner, styles) are left
 /// out. AutoLISP's `entget` is built on it.
 pub fn entity_groups(d: &Drawing, e: &Entity) -> (String, Vec<Tag>) {
-    let mut w = W {
-        t: Vec::new(),
-        next: d.handseed.max(0x100).saturating_add(0x1000),
-        pstyles: HashMap::new(),
-        layers: HashMap::new(),
-        reactors: HashMap::new(),
-    };
+    let mut w = W { next: d.handseed.max(0x100).saturating_add(0x1000), ..W::default() };
     let cx = Ctx { target: Version::R2018, legacy_columns: true, ..Ctx::default() };
     let paper = d.space_of(e.handle).is_some_and(|s| !matches!(s, cadcraft_doc::Space::Model));
     entity(&mut w, d, e, "0", paper, &cx);

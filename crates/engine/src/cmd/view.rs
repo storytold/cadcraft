@@ -282,6 +282,12 @@ fn run_layout_set(s: &mut Session, p: &Value) -> Result<Value> {
         let l = s.doc()?.layout(name).ok_or_else(|| bad("layout.set", format!("no layout `{name}`")))?;
         Space::Paper(l.name.clone())
     };
+    // Keep the initial page view framed around the positioned sheet, not (0, 0).
+    let (width, height) = s.viewport_px;
+    let aspect = if width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0 { (width / height).clamp(1e-6, 1e6) } else { 1.5 };
+    if let Space::Paper(n) = &space {
+        super::layout::initialize(s, n)?;
+    }
     s.pending_window = None;
     let st = s.state_mut()?;
     st.space = space.clone();
@@ -291,10 +297,9 @@ fn run_layout_set(s: &mut Session, p: &Value) -> Result<Value> {
         && !st.views.iter().any(|(sp, _)| sp == &space)
     {
         // Default paper view: the sheet.
-        let page = st.doc.layout(n).map(|l| l.page.clone()).unwrap_or_default();
-        let (w, h) = if page.landscape { (page.height_mm, page.width_mm) } else { (page.width_mm, page.height_mm) };
-        let unit = if st.doc.header.i64("MEASUREMENT", 0) == 1 { 1.0 } else { 1.0 / 25.4 };
-        st.set_view_quiet(View { center: Vec2::new(w * unit / 2.0, h * unit / 2.0), height: h * unit * 1.15 });
+        if let Some(sheet) = cadcraft_render::sheet(&st.doc, n) {
+            st.set_view_quiet(View { center: sheet.bounds().center(), height: sheet.size.y.max(sheet.size.x / aspect) * 1.15 });
+        }
     }
     s.touch();
     ok()
