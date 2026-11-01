@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use crate::{EngineError, Result, Session};
 
 mod table;
+pub(crate) use table::LINEWEIGHTS;
 
 const SESSION_VARS: &[&str] = &[
     "AUDITCTL",
