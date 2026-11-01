@@ -1046,7 +1046,7 @@
 	Specify base diameter	Taban çapını belirtin
 	Specify base point	Taban noktasını belirtin
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Taban noktasını veya yer değiştirmeyi belirtin (gerçek zamanlı kaydırma için orta fare düğmesiyle sürükleyin)
-	Specify base radius or	Taban yarıçapını belirtin veya
+	Specify base radius	Taban yarıçapını belirtin
 	Specify center of donut	Halkanın merkezini belirtin
 	Specify center of ellipse	Elipsin merkezini belirtin
 	Specify center of polygon	Çokgenin merkezini belirtin
@@ -1119,7 +1119,6 @@
 	Specify radius of circle	Dairenin yarıçapını belirtin
 	Specify rotation angle	Döndürme açısını belirtin
 	Specify rotation angle of text	Metnin döndürme açısını belirtin
-	Specify rotation angle or	Döndürme açısını belirtin veya
 	Specify scale factor	Ölçek faktörünü belirtin
 	Specify second angle endpoint	Açının ikinci uç noktasını belirtin
 	Specify second break point	İkinci kırma noktasını belirtin
@@ -1152,7 +1151,7 @@
 	Specify third source point or <continue>	Üçüncü kaynak noktayı belirtin veya <devam>
 	Specify through point	Geçiş noktasını belirtin
 	Specify top diameter	Üst çapı belirtin
-	Specify top radius or	Üst yarıçapı belirtin veya
+	Specify top radius	Üst yarıçapı belirtin
 	Specify total angle	Toplam açıyı belirtin
 	Specify total length	Toplam uzunluğu belirtin
 	Specify width for rectangles	Dikdörtgenler için genişliği belirtin

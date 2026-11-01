@@ -24,9 +24,13 @@ fn xline_angle_and_offset() {
 }
 
 #[test]
-fn helix_height() {
+fn helix_radii_and_height() {
     let mut s = Session::new();
-    s.script("helix\n0,0\n5\n\n").unwrap();
+    s.script("helix\n0,0\n").unwrap();
+    shows(&s, "Specify base radius or [Diameter] <1.0000>:");
+    s.cmdline("5").unwrap();
+    shows(&s, "Specify top radius or [Diameter] <5.0000>:");
+    s.cmdline("").unwrap();
     shows(&s, "Specify helix height or [Axis endpoint/Turns/turn Height/tWist] <1.0000>:");
 }
 

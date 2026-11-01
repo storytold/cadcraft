@@ -1035,7 +1035,7 @@
 	Specify base diameter	Καθορίστε διάμετρο βάσης
 	Specify base point	Καθορίστε σημείο βάσης
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Καθορίστε σημείο βάσης ή μετατόπιση (σύρετε με το μεσαίο πλήκτρο του ποντικιού για μετατόπιση όψης σε πραγματικό χρόνο)
-	Specify base radius or	Καθορίστε ακτίνα βάσης ή
+	Specify base radius	Καθορίστε ακτίνα βάσης
 	Specify center of donut	Καθορίστε κέντρο δακτυλίου
 	Specify center of ellipse	Καθορίστε κέντρο έλλειψης
 	Specify center of polygon	Καθορίστε κέντρο πολυγώνου
@@ -1108,7 +1108,6 @@
 	Specify radius of circle	Καθορίστε ακτίνα κύκλου
 	Specify rotation angle	Καθορίστε γωνία περιστροφής
 	Specify rotation angle of text	Καθορίστε γωνία περιστροφής κειμένου
-	Specify rotation angle or	Καθορίστε γωνία περιστροφής ή
 	Specify scale factor	Καθορίστε συντελεστή κλίμακας
 	Specify second angle endpoint	Καθορίστε δεύτερο τελικό σημείο γωνίας
 	Specify second break point	Καθορίστε δεύτερο σημείο διακοπής
@@ -1141,7 +1140,7 @@
 	Specify third source point or <continue>	Καθορίστε τρίτο σημείο προέλευσης ή <συνέχεια>
 	Specify through point	Καθορίστε σημείο διέλευσης
 	Specify top diameter	Καθορίστε άνω διάμετρο
-	Specify top radius or	Καθορίστε άνω ακτίνα ή
+	Specify top radius	Καθορίστε άνω ακτίνα
 	Specify total angle	Καθορίστε συνολική γωνία
 	Specify total length	Καθορίστε συνολικό μήκος
 	Specify width for rectangles	Καθορίστε πλάτος ορθογωνίων

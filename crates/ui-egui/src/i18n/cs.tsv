@@ -881,7 +881,7 @@
 	Specify base diameter	Určete průměr základny
 	Specify base point	Určete základní bod
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Určete základní bod nebo posunutí (tažením prostředním tlačítkem myši posunete pohled v reálném čase)
-	Specify base radius or	Určete poloměr základny nebo
+	Specify base radius	Určete poloměr základny
 	Specify center of donut	Určete střed prstence
 	Specify center of ellipse	Určete střed elipsy
 	Specify center of polygon	Určete střed mnohoúhelníku
@@ -989,7 +989,6 @@
 	Specify radius of circle	Určete poloměr kružnice
 	Specify rotation angle	Určete úhel otočení
 	Specify rotation angle of text	Určete úhel otočení textu
-	Specify rotation angle or	Určete úhel otočení nebo
 	Specify scale factor	Určete faktor měřítka
 	Specify second angle endpoint	Určete druhý koncový bod úhlu
 	Specify second break point	Určete druhý bod přerušení
@@ -1022,7 +1021,7 @@
 	Specify third source point or <continue>	Určete třetí zdrojový bod nebo <pokračovat>
 	Specify through point	Určete bod, kterým má procházet
 	Specify top diameter	Určete horní průměr
-	Specify top radius or	Určete horní poloměr nebo
+	Specify top radius	Určete horní poloměr
 	Specify total angle	Určete celkový úhel
 	Specify total length	Určete celkovou délku
 	Specify width for rectangles	Určete šířku obdélníků

@@ -883,7 +883,7 @@
 	Specify base diameter	Navedite prečnik baze
 	Specify base point	Navedite baznu tačku
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Navedite baznu tačku ili pomak (prevucite srednjim dugmetom miša za pomicanje pogleda u stvarnom vremenu)
-	Specify base radius or	Navedite poluprečnik baze ili
+	Specify base radius	Navedite poluprečnik baze
 	Specify center of donut	Navedite središte prstena
 	Specify center of ellipse	Navedite središte elipse
 	Specify center of polygon	Navedite središte mnogougla
@@ -991,7 +991,6 @@
 	Specify radius of circle	Navedite poluprečnik kruga
 	Specify rotation angle	Navedite ugao rotacije
 	Specify rotation angle of text	Navedite ugao rotacije teksta
-	Specify rotation angle or	Navedite ugao rotacije ili
 	Specify scale factor	Navedite faktor skale
 	Specify second angle endpoint	Navedite drugu krajnju tačku ugla
 	Specify second break point	Navedite drugu tačku prekida
@@ -1024,7 +1023,7 @@
 	Specify third source point or <continue>	Navedite treću izvornu tačku ili <nastavi>
 	Specify through point	Navedite tačku kroz koju prolazi
 	Specify top diameter	Navedite gornji prečnik
-	Specify top radius or	Navedite gornji poluprečnik ili
+	Specify top radius	Navedite gornji poluprečnik
 	Specify total angle	Navedite ukupni ugao
 	Specify total length	Navedite ukupnu dužinu
 	Specify width for rectangles	Navedite širinu za pravougaonike

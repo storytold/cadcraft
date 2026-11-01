@@ -1045,7 +1045,7 @@
 	Specify base diameter	Add meg az alap átmérőjét
 	Specify base point	Add meg a bázispontot
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Add meg a bázispontot vagy az elmozdulást (a középső egérgombbal húzva a nézetet valós időben mozgathatod)
-	Specify base radius or	Add meg az alap sugarát
+	Specify base radius	Add meg az alap sugarát
 	Specify center of donut	Add meg a gyűrű középpontját
 	Specify center of ellipse	Add meg az ellipszis középpontját
 	Specify center of polygon	Add meg a sokszög középpontját
@@ -1118,7 +1118,6 @@
 	Specify radius of circle	Add meg a kör sugarát
 	Specify rotation angle	Add meg az elforgatási szöget
 	Specify rotation angle of text	Add meg a szöveg elforgatási szögét
-	Specify rotation angle or	Add meg az elforgatási szöget
 	Specify scale factor	Add meg a léptéktényezőt
 	Specify second angle endpoint	Add meg a szög második végpontját
 	Specify second break point	Add meg a második megszakítási pontot
@@ -1151,7 +1150,7 @@
 	Specify third source point or <continue>	Add meg a harmadik forráspontot vagy <folytatás>
 	Specify through point	Add meg az átmenő pontot
 	Specify top diameter	Add meg a felső átmérőt
-	Specify top radius or	Add meg a felső sugarat
+	Specify top radius	Add meg a felső sugarat
 	Specify total angle	Add meg a teljes szöget
 	Specify total length	Add meg a teljes hosszt
 	Specify width for rectangles	Add meg a téglalapok szélességét

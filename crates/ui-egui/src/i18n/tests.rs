@@ -47,6 +47,8 @@ fn prompts_with_options_leave_or_to_the_command_line() {
     assert_eq!(format!("{}{}", tr("de", "Select polyline"), tr("de", " or [")), "Wählen Sie eine Polylinie oder [");
     assert_eq!(format!("{}{}", tr("ko", "Specify helix height"), tr("ko", " or [")), "나선 높이 지정 또는 [");
     assert_eq!(format!("{}{}", tr("zh", "Enter delta length"), tr("zh", " or [")), "输入增量长度 或 [");
+    assert_eq!(format!("{}{}", tr("vi", "Select polyline"), tr("vi", " or [")), "Chọn polyline hoặc [");
+    assert_eq!(format!("{}{}", tr("vi", "Specify base radius"), tr("vi", " or [")), "Chỉ định bán kính đáy hoặc [");
 }
 
 /// What each language shows in English for now. Missing translations never fail a build:

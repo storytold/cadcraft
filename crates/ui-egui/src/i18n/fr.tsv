@@ -760,7 +760,7 @@
 	Specify base diameter	Spécifiez le diamètre de la base
 	Specify base point	Spécifiez le point de base
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Spécifiez le point de base ou le déplacement (faites glisser avec le bouton central de la souris pour un panoramique en temps réel)
-	Specify base radius or	Spécifiez le rayon de base ou
+	Specify base radius	Spécifiez le rayon de base
 	Specify center of donut	Spécifiez le centre de l'anneau
 	Specify center of ellipse	Spécifiez le centre de l'ellipse
 	Specify center of polygon	Spécifiez le centre du polygone
@@ -833,7 +833,6 @@
 	Specify radius of circle	Spécifiez le rayon du cercle
 	Specify rotation angle	Spécifiez l'angle de rotation
 	Specify rotation angle of text	Spécifiez l'angle de rotation du texte
-	Specify rotation angle or	Spécifiez l'angle de rotation ou
 	Specify scale factor	Spécifiez le facteur d'échelle
 	Specify second angle endpoint	Spécifiez le deuxième point final de l'angle
 	Specify second break point	Spécifiez le deuxième point de rupture
@@ -866,7 +865,7 @@
 	Specify third source point or <continue>	Spécifiez le troisième point source ou <continuer>
 	Specify through point	Spécifiez le point de passage
 	Specify top diameter	Spécifiez le diamètre supérieur
-	Specify top radius or	Spécifiez le rayon supérieur ou
+	Specify top radius	Spécifiez le rayon supérieur
 	Specify total angle	Spécifiez l'angle total
 	Specify total length	Spécifiez la longueur totale
 	Specify width for rectangles	Spécifiez la largeur des rectangles

@@ -759,7 +759,7 @@
 	Specify base diameter	指定底面直径
 	Specify base point	指定基点
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	指定基点或位移（按住鼠标中键拖动以进行实时平移）
-	Specify base radius or	Specify base radius or
+	Specify base radius	Specify base radius
 	Specify center of donut	指定圆环中心
 	Specify center of ellipse	指定椭圆中心
 	Specify center of polygon	指定多边形中心
@@ -832,7 +832,6 @@
 	Specify radius of circle	指定圆半径
 	Specify rotation angle	指定旋转角度
 	Specify rotation angle of text	指定文字旋转角度
-	Specify rotation angle or	Specify rotation angle or
 	Specify scale factor	指定比例因子
 	Specify second angle endpoint	指定第二角度端点
 	Specify second break point	指定第二打断点
@@ -865,7 +864,7 @@
 	Specify third source point or <continue>	指定第三个源点或 <继续>
 	Specify through point	指定通过点
 	Specify top diameter	指定顶面直径
-	Specify top radius or	Specify top radius or
+	Specify top radius	Specify top radius
 	Specify total angle	指定总角度
 	Specify total length	Specify total length
 	Specify width for rectangles	指定矩形宽度

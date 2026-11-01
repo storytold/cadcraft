@@ -970,7 +970,7 @@
 	Specify base diameter	Indica el diámetro de la base
 	Specify base point	Indica el punto base
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Indica el punto base o el desplazamiento (arrastra con el botón central para encuadrar)
-	Specify base radius or	Indica el radio de la base o
+	Specify base radius	Indica el radio de la base
 	Specify center of donut	Indica el centro de la arandela
 	Specify center of ellipse	Indica el centro de la elipse
 	Specify center of polygon	Indica el centro del polígono
@@ -1043,7 +1043,6 @@
 	Specify radius of circle	Indica el radio del círculo
 	Specify rotation angle	Indica el ángulo de giro
 	Specify rotation angle of text	Indica el ángulo de giro del texto
-	Specify rotation angle or	Indica el ángulo de giro o
 	Specify scale factor	Indica el factor de escala
 	Specify second angle endpoint	Indica el segundo extremo del ángulo
 	Specify second break point	Indica el segundo punto de ruptura
@@ -1076,7 +1075,7 @@
 	Specify third source point or <continue>	Indica el tercer punto de origen o <continuar>
 	Specify through point	Indica el punto a atravesar
 	Specify top diameter	Indica el diámetro superior
-	Specify top radius or	Indica el radio superior o
+	Specify top radius	Indica el radio superior
 	Specify total angle	Indica el ángulo total
 	Specify total length	Indica la longitud total
 	Specify width for rectangles	Indica la anchura de los rectángulos

@@ -963,7 +963,7 @@
 	Specify base diameter	Ange basdiameter
 	Specify base point	Ange baspunkt
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Ange baspunkt eller förskjutning (dra med mittenknappen för att panorera i realtid)
-	Specify base radius or	Ange basradie eller
+	Specify base radius	Ange basradie
 	Specify center of donut	Ange ringens centrum
 	Specify center of ellipse	Ange ellipsens centrum
 	Specify center of polygon	Ange polygonens centrum
@@ -1036,7 +1036,6 @@
 	Specify radius of circle	Ange cirkelns radie
 	Specify rotation angle	Ange rotationsvinkel
 	Specify rotation angle of text	Ange textens rotationsvinkel
-	Specify rotation angle or	Ange rotationsvinkel eller
 	Specify scale factor	Ange skalfaktor
 	Specify second angle endpoint	Ange vinkelns andra ändpunkt
 	Specify second break point	Ange andra brytpunkten
@@ -1069,7 +1068,7 @@
 	Specify third source point or <continue>	Ange tredje källpunkten eller <fortsätt>
 	Specify through point	Ange genomgångspunkt
 	Specify top diameter	Ange toppdiameter
-	Specify top radius or	Ange toppradie eller
+	Specify top radius	Ange toppradie
 	Specify total angle	Ange total vinkel
 	Specify total length	Ange total längd
 	Specify width for rectangles	Ange bredd för rektanglar

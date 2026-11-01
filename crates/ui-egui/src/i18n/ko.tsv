@@ -880,7 +880,7 @@
 	Specify base diameter	밑면 지름 지정
 	Specify base point	기준점 지정
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	기준점 또는 변위 지정(마우스 가운데 버튼으로 드래그하여 실시간 초점 이동)
-	Specify base radius or	밑면 반지름 지정 또는
+	Specify base radius	밑면 반지름 지정
 	Specify center of donut	도넛 중심 지정
 	Specify center of ellipse	타원 중심 지정
 	Specify center of polygon	다각형 중심 지정
@@ -988,7 +988,6 @@
 	Specify radius of circle	원 반지름 지정
 	Specify rotation angle	회전 각도 지정
 	Specify rotation angle of text	문자 회전 각도 지정
-	Specify rotation angle or	회전 각도 지정 또는
 	Specify scale factor	축척 비율 지정
 	Specify second angle endpoint	두 번째 각도 끝점 지정
 	Specify second break point	두 번째 끊기점 지정
@@ -1021,7 +1020,7 @@
 	Specify third source point or <continue>	세 번째 원본점 지정 또는 <계속>
 	Specify through point	통과점 지정
 	Specify top diameter	윗면 지름 지정
-	Specify top radius or	윗면 반지름 지정 또는
+	Specify top radius	윗면 반지름 지정
 	Specify total angle	전체 각도 지정
 	Specify total length	전체 길이 지정
 	Specify width for rectangles	직사각형 폭 지정

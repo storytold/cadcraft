@@ -955,7 +955,7 @@
 	Specify base diameter	حدد القطر الأساسي
 	Specify base point	حدد نقطة الأساس
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	حدد نقطة الأساس أو الإزاحة (اسحب بزر الفأرة الأوسط للإزاحة الفورية)
-	Specify base radius or	حدد نصف القطر الأساسي أو
+	Specify base radius	حدد نصف القطر الأساسي
 	Specify center of donut	حدد مركز الحلقة
 	Specify center of ellipse	حدد مركز الإهليلج
 	Specify center of polygon	حدد مركز المضلع
@@ -1028,7 +1028,6 @@
 	Specify radius of circle	حدد نصف قطر الدائرة
 	Specify rotation angle	حدد زاوية التدوير
 	Specify rotation angle of text	حدد زاوية تدوير النص
-	Specify rotation angle or	حدد زاوية التدوير أو
 	Specify scale factor	حدد معامل المقياس
 	Specify second angle endpoint	حدد نقطة نهاية الزاوية الثانية
 	Specify second break point	حدد نقطة الفصل الثانية
@@ -1061,7 +1060,7 @@
 	Specify third source point or <continue>	حدد نقطة المصدر الثالثة أو <متابعة>
 	Specify through point	حدد نقطة العبور
 	Specify top diameter	حدد القطر العلوي
-	Specify top radius or	حدد نصف القطر العلوي أو
+	Specify top radius	حدد نصف القطر العلوي
 	Specify total angle	حدد الزاوية الكلية
 	Specify total length	حدد الطول الكلي
 	Specify width for rectangles	حدد العرض للمستطيلات

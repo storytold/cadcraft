@@ -153,14 +153,12 @@ impl Interactive for HelixM {
         }
         match (self.center, self.rb, self.rt) {
             (None, ..) => Prompt::new("Specify center point of base", Accept::POINT),
-            (Some(c), None, _) => {
-                Prompt::new(if self.diameter { "Specify base diameter" } else { "Specify base radius or" }, Accept::POINT_OR_NUMBER)
-                    .kw(if self.diameter { &[] } else { &["Diameter"] })
-                    .default("1.0000")
-                    .base(c)
-            }
+            (Some(c), None, _) => Prompt::new(if self.diameter { "Specify base diameter" } else { "Specify base radius" }, Accept::POINT_OR_NUMBER)
+                .kw(if self.diameter { &[] } else { &["Diameter"] })
+                .default("1.0000")
+                .base(c),
             (Some(c), Some(rb), None) => {
-                Prompt::new(if self.diameter { "Specify top diameter" } else { "Specify top radius or" }, Accept::POINT_OR_NUMBER)
+                Prompt::new(if self.diameter { "Specify top diameter" } else { "Specify top radius" }, Accept::POINT_OR_NUMBER)
                     .kw(if self.diameter { &[] } else { &["Diameter"] })
                     .default(format!("{rb:.4}"))
                     .base(c)

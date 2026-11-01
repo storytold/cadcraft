@@ -760,7 +760,7 @@
 	Specify base diameter	Укажите базовый диаметр
 	Specify base point	Укажите базовую точку
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Укажите базовую точку или смещение (перетаскивайте средней кнопкой мыши для панорамирования)
-	Specify base radius or	Укажите базовый радиус или
+	Specify base radius	Укажите базовый радиус
 	Specify center of donut	Укажите центр кольца
 	Specify center of ellipse	Укажите центр эллипса
 	Specify center of polygon	Укажите центр многоугольника
@@ -833,7 +833,6 @@
 	Specify radius of circle	Укажите радиус круга
 	Specify rotation angle	Укажите угол поворота
 	Specify rotation angle of text	Укажите угол поворота текста
-	Specify rotation angle or	Укажите угол поворота или
 	Specify scale factor	Укажите масштабный коэффициент
 	Specify second angle endpoint	Укажите вторую конечную точку угла
 	Specify second break point	Укажите вторую точку разрыва
@@ -866,7 +865,7 @@
 	Specify third source point or <continue>	Укажите третью исходную точку или <продолжить>
 	Specify through point	Укажите точку, через которую проходит прямая
 	Specify top diameter	Укажите диаметр вершины
-	Specify top radius or	Укажите радиус вершины или
+	Specify top radius	Укажите радиус вершины
 	Specify total angle	Укажите полный угол
 	Specify total length	Укажите общую длину
 	Specify width for rectangles	Укажите ширину прямоугольников

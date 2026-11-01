@@ -900,7 +900,7 @@
 	Specify base diameter	Укажіть діаметр основи
 	Specify base point	Укажіть базову точку
 	Specify base point or displacement (drag with the middle mouse button for realtime pan)	Укажіть базову точку або зміщення (перетягуйте середньою кнопкою миші для панорамування)
-	Specify base radius or	Укажіть радіус основи або
+	Specify base radius	Укажіть радіус основи
 	Specify center of donut	Укажіть центр кільця
 	Specify center of ellipse	Укажіть центр еліпса
 	Specify center of polygon	Укажіть центр багатокутника
@@ -1038,7 +1038,6 @@
 	Specify radius of circle	Укажіть радіус кола
 	Specify rotation angle	Укажіть кут повороту
 	Specify rotation angle of text	Укажіть кут повороту тексту
-	Specify rotation angle or	Укажіть кут повороту або
 	Specify scale factor	Укажіть коефіцієнт масштабу
 	Specify second angle endpoint	Укажіть другу кінцеву точку кута
 	Specify second break point	Укажіть другу точку розриву
@@ -1071,7 +1070,7 @@
 	Specify third source point or <continue>	Укажіть третю вихідну точку або <продовжити>
 	Specify through point	Укажіть точку, через яку проходить пряма
 	Specify top diameter	Укажіть діаметр вершини
-	Specify top radius or	Укажіть радіус вершини або
+	Specify top radius	Укажіть радіус вершини
 	Specify total angle	Укажіть загальний кут
 	Specify total length	Укажіть загальну довжину
 	Specify width for rectangles	Укажіть ширину прямокутників
