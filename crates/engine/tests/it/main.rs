@@ -100,6 +100,7 @@ mod pickdrag;
 mod pline_arc_xline_options;
 mod plot_styles;
 mod point_modifiers;
+mod polyface_explode;
 mod post_command_passes;
 mod prompt_keywords;
 mod props_bad_lineweight;
