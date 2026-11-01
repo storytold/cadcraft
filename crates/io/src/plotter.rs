@@ -113,21 +113,8 @@ fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let ro = raster::RasterOptions { background: Rgb(255, 255, 255), hairline: 1.0, px_per_mm, antialias: true };
     let mut pm = raster::render(&list, &view, &ro).ok_or_else(|| IoError::Format("render failed".into()))?;
     if placed {
-        // PDF clips a placed plot to the printable area: blank the rest of the sheet. Paper (x, y)
-        // is pixel (x * k, height - y * k).
-        let (pw, ph) = (pm.width(), pm.height());
-        let col = |x: f64| (x * k).round().clamp(0.0, f64::from(pw)) as usize;
-        let row = |y: f64| (f64::from(height) - y * k).round().clamp(0.0, f64::from(ph)) as usize;
-        let (x0, x1) = (col(sheet.printable.min.x), col(sheet.printable.max.x));
-        let (y0, y1) = (row(sheet.printable.max.y), row(sheet.printable.min.y));
-        let stride = pw as usize * 4;
-        for (r, line) in pm.data_mut().chunks_exact_mut(stride.max(4)).enumerate() {
-            for (c, px) in line.as_chunks_mut::<4>().0.iter_mut().enumerate() {
-                if r < y0 || r >= y1 || c < x0 || c >= x1 {
-                    px.copy_from_slice(&[255, 255, 255, 255]);
-                }
-            }
-        }
+        // PDF clips a placed plot to the printable area: blank the rest of the sheet.
+        raster::blank_outside_printable(&mut pm, &sheet.printable, k);
     }
     pm.encode_png().map_err(|_| IoError::Format("render failed".into()))
 }

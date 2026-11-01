@@ -222,6 +222,25 @@ impl Hairlines {
     }
 }
 
+/// Blank (white) everything outside `printable`, a rectangle in paper units with the origin at the
+/// sheet's bottom-left, on a pixmap showing the whole sheet at `px_per_unit` pixels per paper unit.
+/// A placed plot is clipped to the printable area this way, in the PNG plot and in the preview.
+pub fn blank_outside_printable(pm: &mut Pixmap, printable: &Bounds2, px_per_unit: f64) {
+    let (pw, ph) = (pm.width(), pm.height());
+    let col = |x: f64| (x * px_per_unit).round().clamp(0.0, f64::from(pw)) as usize;
+    let row = |y: f64| (f64::from(ph) - y * px_per_unit).round().clamp(0.0, f64::from(ph)) as usize;
+    let (x0, x1) = (col(printable.min.x), col(printable.max.x));
+    let (y0, y1) = (row(printable.max.y), row(printable.min.y));
+    let stride = pw as usize * 4;
+    for (r, line) in pm.data_mut().chunks_exact_mut(stride.max(4)).enumerate() {
+        for (c, px) in line.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            if r < y0 || r >= y1 || c < x0 || c >= x1 {
+                px.copy_from_slice(&[255, 255, 255, 255]);
+            }
+        }
+    }
+}
+
 /// Render and encode as PNG.
 pub fn render_png(list: &DisplayList, view: &View, o: &RasterOptions) -> Option<Vec<u8>> {
     render(list, view, o)?.encode_png().ok()

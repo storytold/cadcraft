@@ -382,7 +382,12 @@ fn run_preview(s: &mut Session, p: &Value) -> Result<Value> {
         px_per_mm: if lineweights && px_per_mm.is_finite() { px_per_mm } else { 0.0 },
         antialias: true,
     };
-    let png = cadcraft_render::raster::render_png(&list, &view, &ro).ok_or_else(|| bad("preview", "rendering the preview failed"))?;
+    let mut pm = cadcraft_render::raster::render(&list, &view, &ro).ok_or_else(|| bad("preview", "rendering the preview failed"))?;
+    // A placed plot (fitted, or a saved window) shows only inside the printable area, as the PDF and PNG plots clip it.
+    if fit || saved.window.is_some() || space == Space::Model {
+        cadcraft_render::raster::blank_outside_printable(&mut pm, &sheet.printable, px_per_paper_unit);
+    }
+    let png = pm.encode_png().map_err(|_| bad("preview", "rendering the preview failed"))?;
     let layout = space.tab_name();
     Ok(json!({ "data": base64_encode(&png), "width": w, "height": h, "layout": layout, "paper": page.paper, "landscape": page.landscape }))
 }
@@ -769,6 +774,28 @@ mod tests {
 
     /// With a saved plot window the preview follows the page setup's centring (fitted or not) and an
     /// explicit `scale` beats a saved scale to fit, as in the PDF.
+    /// A placed saved window shows only inside the printable area, as the PDF and PNG plots clip it:
+    /// geometry in the margin leaves the preview unchanged.
+    #[test]
+    fn preview_clips_a_saved_window_to_the_printable_area() {
+        let build = |margin_line: bool| {
+            let mut s = Session::new();
+            s.execute("layout.set", &json!({ "name": "Layout1" })).unwrap();
+            s.execute("line", &json!({ "points": [[0.0, 30.0], [100.0, 30.0]] })).unwrap();
+            if margin_line {
+                s.execute("line", &json!({ "points": [[-3.0, 0.0], [-3.0, 60.0]] })).unwrap();
+            }
+            s.execute("pagesetup", &json!({ "layout": "Layout1", "paper": "A4", "landscape": true, "margins": [10, 10, 10, 10] })).unwrap();
+            let page = &mut s.doc_mut().unwrap().layouts.iter_mut().find(|l| l.name == "Layout1").unwrap().page;
+            page.plot_area = "window".into();
+            page.plot_window = [0.0, 0.0, 100.0, 60.0];
+            page.scale_to_fit = true;
+            page.center = true;
+            s.execute("preview", &json!({ "layout": "Layout1", "width": 600 })).unwrap()["data"].as_str().unwrap_or_default().to_string()
+        };
+        assert_eq!(build(true), build(false), "a line in the margin is clipped away");
+    }
+
     #[test]
     fn preview_honours_saved_centering_and_an_explicit_scale() {
         let mut s = Session::new();
