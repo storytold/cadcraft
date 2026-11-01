@@ -12,13 +12,17 @@ mod temp_dir;
 
 use temp_dir::TempDir;
 
-/// Writes the written drawing's table names, one table a line: layers, text styles, blocks.
+/// Writes the written drawing's table names, one table a line: layers, text styles, blocks,
+/// dimension styles, linetypes. One hook for every test here: `set_io` is process-wide and the
+/// tests run in parallel.
 fn write(d: &Drawing, _path: &str) -> Result<Vec<u8>, String> {
     let mut blocks: Vec<&str> = d.blocks.values().map(|b| b.name.as_str()).collect();
     blocks.sort_unstable();
     let layers: Vec<&str> = d.layers.iter().map(|l| l.name.as_str()).collect();
     let styles: Vec<&str> = d.text_styles.iter().map(|t| t.name.as_str()).collect();
-    Ok(format!("{}\n{}\n{}", layers.join(","), styles.join(","), blocks.join(",")).into_bytes())
+    let dims: Vec<&str> = d.dim_styles.iter().map(|t| t.name.as_str()).collect();
+    let linetypes: Vec<&str> = d.linetypes.iter().map(|t| t.name.as_str()).collect();
+    Ok(format!("{}\n{}\n{}\n{}\n{}", layers.join(","), styles.join(","), blocks.join(","), dims.join(","), linetypes.join(",")).into_bytes())
 }
 
 /// The layers, text styles and blocks of the file WBLOCK writes with `p`.
@@ -88,4 +92,51 @@ fn selected_objects_are_written_with_what_they_use() {
     assert_eq!(blocks, "INNER", "only the block the selection references");
     let layers: Vec<&str> = layers.split(',').collect();
     assert!(layers.contains(&"INNER-LAYER") && !layers.contains(&"SYM-LAYER"), "{layers:?}");
+}
+
+/// What the block uses through its styles stays too: a leader's dimension style, the linetype a
+/// dimension style draws its dimension line with, and the text style of a complex linetype's text.
+#[test]
+fn styles_used_through_other_styles_stay() {
+    set_io(IoHooks { read: |_, _| Err("no reader in this test".into()), write, plot: None });
+    let mut s = Session::new();
+    s.execute("style", &json!({ "name": "LTEXT" })).unwrap();
+    s.execute("style.current", &json!({ "name": "Standard" })).unwrap();
+    let lin = "*TXT,Text --T--\nA,.5,-.2,[\"T\",LTEXT,S=.1,X=-.1,Y=-.05],-.2\n";
+    s.execute("linetype", &json!({ "load": "TXT", "text": lin })).unwrap();
+    s.execute("linetype", &json!({ "load": "DASHED" })).unwrap();
+    s.execute("dimstyle", &json!({ "name": "LDR", "current": true })).unwrap();
+    let leader = s.execute("leader", &json!({ "points": [[0, 0], [5, 5]], "text": "NOTE" })).unwrap()["handles"].clone();
+    s.execute("dimstyle", &json!({ "name": "DS", "dimLinetype": "DASHED", "current": true })).unwrap();
+    let dim = s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [10, 0], "at": [5, -3] })).unwrap()["handle"].clone();
+    s.execute("dimstyle", &json!({ "name": "Standard", "current": true })).unwrap();
+    let line = s.execute("line", &json!({ "points": [[0, 8], [9, 8]] })).unwrap()["handles"][0].clone();
+    s.execute("properties.set", &json!({ "handles": [line], "linetype": "TXT" })).unwrap();
+    let mut handles: Vec<Value> = leader.as_array().cloned().unwrap_or_default();
+    handles.extend([dim, line]);
+    s.execute("block", &json!({ "name": "SYM", "base": [0, 0], "handles": handles, "keep": "delete" })).unwrap();
+    let dir = TempDir::new("wblock-purge-styles");
+    let path = dir.path_str("out.dxf");
+    s.execute("wblock", &json!({ "name": "SYM", "path": path })).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    let table = |n: usize| text.lines().nth(n).unwrap_or("").split(',').map(str::to_string).collect::<Vec<_>>();
+    let (styles, dims, linetypes) = (table(1), table(3), table(4));
+    for kept in ["LDR", "DS"] {
+        assert!(dims.iter().any(|n| n == kept), "dimension style {kept} kept: {dims:?}");
+    }
+    for kept in ["DASHED", "TXT"] {
+        assert!(linetypes.iter().any(|n| n == kept), "linetype {kept} kept: {linetypes:?}");
+    }
+    assert!(styles.iter().any(|n| n == "LTEXT"), "text style LTEXT kept: {styles:?}");
+}
+
+/// PURGE keeps a dimension style a leader uses (it only counted dimensions and tolerances).
+#[test]
+fn purge_keeps_a_leaders_dimension_style() {
+    let mut s = Session::new();
+    s.execute("dimstyle", &json!({ "name": "LDR", "current": true })).unwrap();
+    s.execute("leader", &json!({ "points": [[0, 0], [5, 5]], "text": "NOTE" })).unwrap();
+    s.execute("dimstyle", &json!({ "name": "Standard", "current": true })).unwrap();
+    s.execute("purge", &json!({ "type": "all" })).unwrap();
+    assert!(s.doc().unwrap().dim_style("LDR").is_some(), "the leader's style stays");
 }

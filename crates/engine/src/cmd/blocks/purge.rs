@@ -197,7 +197,15 @@ pub(in crate::cmd) fn candidates(d: &Drawing, kind: Kind) -> Vec<String> {
                 .collect()
         }
         Kind::Linetypes => {
-            let used = lower(&mut entities(d).map(|e| e.common.linetype.clone()).chain(d.layers.iter().map(|l| l.linetype.clone())));
+            // Objects and layers use linetypes, and so do dimension styles and a dimension's own
+            // overrides (DIMLTYPE, DIMLTEX1, DIMLTEX2).
+            let styles = d.dim_styles.iter().flat_map(|s| [s.dim_linetype.clone(), s.ext_linetype1.clone(), s.ext_linetype2.clone()]);
+            let overrides = entities(d).filter_map(|e| if let EntityKind::Dimension(dm) = &e.kind { Some(dm) } else { None }).flat_map(|dm| {
+                ["dimLinetype", "extLinetype1", "extLinetype2"].into_iter().filter_map(|k| dm.overrides.get(k)?.as_str().map(str::to_string))
+            });
+            let used = lower(
+                &mut entities(d).map(|e| e.common.linetype.clone()).chain(d.layers.iter().map(|l| l.linetype.clone())).chain(styles).chain(overrides),
+            );
             let cur = d.header.str("CELTYPE", "ByLayer");
             d.linetypes
                 .iter()
@@ -218,6 +226,7 @@ pub(in crate::cmd) fn candidates(d: &Drawing, kind: Kind) -> Vec<String> {
             let used = lower(&mut entities(d).filter_map(|e| match &e.kind {
                 EntityKind::Dimension(dm) => Some(dm.style.clone()),
                 EntityKind::Tolerance(t) => Some(t.style.clone()),
+                EntityKind::Leader(l) => Some(l.style.clone()),
                 _ => None,
             }));
             let cur = d.header.str("DIMSTYLE", "Standard");
