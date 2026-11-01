@@ -537,6 +537,110 @@ fn dxf_roundtrips_page_setup() {
     assert_eq!(p.paper, a3.name);
 }
 
+/// Groups 44, 45 and 73 of a layout's AcDbPlotSettings in DXF text.
+fn plot_paper_groups(dxf: &str, layout: &str) -> (f64, f64, i64) {
+    let lines: Vec<&str> = dxf.lines().map(str::trim).collect();
+    let pairs: Vec<(&str, &str)> = lines.chunks(2).filter(|c| c.len() == 2).map(|c| (c[0], c[1])).collect();
+    let name = pairs.windows(2).position(|w| w[0] == ("100", "AcDbLayout") && w[1] == ("1", layout)).unwrap_or_else(|| panic!("no LAYOUT {layout}"));
+    let start = pairs[..name].iter().rposition(|p| *p == ("100", "AcDbPlotSettings")).unwrap();
+    let get = |code: &str| pairs[start..name].iter().find(|p| p.0 == code).map(|p| p.1).unwrap();
+    (get("44").parse().unwrap(), get("45").parse().unwrap(), get("73").parse().unwrap())
+}
+
+#[test]
+fn landscape_media_keeps_its_size_order_and_rotation() {
+    // A media defined wider than tall, as ZWCAD and AutoCAD name it (#1463).
+    let media = "ISO full bleed A3 (420.00 x 297.00 MM)";
+    for (landscape, rotation) in [(true, 0), (false, 1)] {
+        let mut d = sample();
+        {
+            let p = &mut d.layouts[0].page;
+            p.paper = media.into();
+            p.width_mm = 297.0;
+            p.height_mm = 420.0;
+            p.landscape = landscape;
+        }
+        let dxf = write_dxf(&d);
+        assert_eq!(plot_paper_groups(&dxf, "Layout1"), (420.0, 297.0, rotation), "DXF, landscape {landscape}");
+        let r = read_dxf(dxf.as_bytes()).unwrap();
+        let p = &r.layout("Layout1").unwrap().page;
+        assert_eq!((p.width_mm, p.height_mm, p.landscape), (297.0, 420.0, landscape), "DXF read back");
+        assert_eq!(p.paper, media);
+
+        let dwg = write(&d, "t.dwg").unwrap();
+        let back = String::from_utf8_lossy(&cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).into_owned();
+        assert_eq!(plot_paper_groups(&back, "Layout1"), (420.0, 297.0, rotation), "DWG, landscape {landscape}");
+        let r = read(&dwg, "t.dwg").unwrap();
+        let p = &r.layout("Layout1").unwrap().page;
+        assert_eq!((p.width_mm, p.height_mm, p.landscape), (297.0, 420.0, landscape), "DWG read back");
+    }
+}
+
+/// A file's own groups 44, 45 and 73 are written back unchanged, in DXF and DWG, whether they
+/// follow ZWCAD's convention (the media's size, no turn) or AutoCAD's (a portrait size and a
+/// quarter turn) for a media named wider than tall. Once the page setup changes, they no
+/// longer describe it and the size and rotation are derived again.
+#[test]
+fn a_files_own_paper_groups_are_written_back() {
+    let set = |dxf: &str, (w, h, r): (f64, f64, i64)| -> String {
+        let mut lines: Vec<String> = dxf.lines().map(String::from).collect();
+        let name = (0..lines.len() - 3)
+            .find(|&i| {
+                lines[i].trim() == "100" && lines[i + 1].trim() == "AcDbLayout" && lines[i + 2].trim() == "1" && lines[i + 3].trim() == "Layout1"
+            })
+            .unwrap();
+        let start = (0..name).rev().find(|&i| lines[i].trim() == "100" && lines[i + 1].trim() == "AcDbPlotSettings").unwrap();
+        for i in (start..name).step_by(2) {
+            match lines[i].trim() {
+                "44" => lines[i + 1] = w.to_string(),
+                "45" => lines[i + 1] = h.to_string(),
+                "73" => lines[i + 1] = r.to_string(),
+                _ => {}
+            }
+        }
+        lines.join("\n")
+    };
+    // (media, groups as the program wrote them, portrait size and landscape CADCraft reads)
+    let cases = [
+        ("ISO full bleed A3 (420.00 x 297.00 MM)", (420.0, 297.0, 0), (297.0, 420.0, true)),
+        ("ISO A4 (297.00 x 210.00 MM)", (210.0, 297.0, 1), (210.0, 297.0, true)),
+        ("ISO A4 (297.00 x 210.00 MM)", (210.0, 297.0, 0), (210.0, 297.0, false)),
+    ];
+    for (media, groups, (pw, ph, landscape)) in cases {
+        let mut d = sample();
+        d.layouts[0].page.paper = media.into();
+        let file = set(&write_dxf(&d), groups);
+        let r = read_dxf(file.as_bytes()).unwrap();
+        let p = &r.layout("Layout1").unwrap().page;
+        assert_eq!((p.width_mm, p.height_mm, p.landscape), (pw, ph, landscape), "{media} {groups:?} read");
+        assert_eq!(plot_paper_groups(&write_dxf(&r), "Layout1"), groups, "{media} {groups:?} DXF");
+        let dwg = write(&r, "t.dwg").unwrap();
+        let back = String::from_utf8_lossy(&cadcraft_dwg::dwg_to_dxf(&dwg).unwrap()).into_owned();
+        assert_eq!(plot_paper_groups(&back, "Layout1"), groups, "{media} {groups:?} DWG");
+        let r = read(&dwg, "t.dwg").unwrap();
+        assert_eq!(plot_paper_groups(&write_dxf(&r), "Layout1"), groups, "{media} {groups:?} DWG read and saved again");
+    }
+    // Turned in CADCraft after reading: the stored groups no longer apply.
+    let mut d = sample();
+    d.layouts[0].page.paper = "ISO full bleed A3 (420.00 x 297.00 MM)".into();
+    let mut r = read_dxf(set(&write_dxf(&d), (420.0, 297.0, 0)).as_bytes()).unwrap();
+    r.layouts.iter_mut().find(|l| l.name == "Layout1").unwrap().page.landscape = false;
+    assert_eq!(plot_paper_groups(&write_dxf(&r), "Layout1"), (420.0, 297.0, 1), "portrait after the change");
+}
+
+#[test]
+fn portrait_media_is_written_as_before() {
+    let mut d = sample();
+    {
+        let p = &mut d.layouts[0].page;
+        p.paper = "ISO A3 (297.00 x 420.00 MM)".into();
+        p.width_mm = 297.0;
+        p.height_mm = 420.0;
+        p.landscape = true;
+    }
+    assert_eq!(plot_paper_groups(&write_dxf(&d), "Layout1"), (297.0, 420.0, 1));
+}
+
 // ---------------------------------------------------------------------------------------------
 // Round trips of styles, overrides, associativity, constraints and tables.
 
