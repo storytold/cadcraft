@@ -7,7 +7,7 @@ pub(in crate::cmd) mod purge;
 use std::sync::Arc;
 
 use cadcraft_doc::{Attrib, Block, Entity, EntityKind, HAlign, Handle, Insert, Text, VAlign};
-use cadcraft_geom::{Mat3, Vec2, Vec3};
+use cadcraft_geom::{Vec2, Vec3};
 use serde_json::{Value, json};
 
 use super::helpers::v3;
@@ -17,12 +17,14 @@ use super::{CommandSpec, bad, bool_or, f64_or, find_command, ok, point_param, po
 use super::has_doc;
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
+mod attdef;
 mod attedit;
 mod burst;
 mod description;
 mod dyngrip;
 mod extract;
 pub(crate) mod refedit;
+mod wblock;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -45,10 +47,11 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["Draw", "Block", "Define Attributes..."])
             .alias(&["att", "-attdef"])
             .params("{tag, prompt?, default?, at, height?, invisible?}")
-            .interactive(|_| Ok(Box::new(AttdefM::default()))),
+            .interactive(|_| Ok(Box::new(attdef::AttdefM::default()))),
         attedit::attedit_spec(),
         attedit::dash_attedit_spec(),
-        CommandSpec::new("wblock", "Write Block", run_wblock).alias(&["w"]).params("{path, name? | handles?, base?}"),
+        wblock::wblock_spec(),
+        wblock::dash_wblock_spec(),
         CommandSpec::new("base", "Base", run_base).menu(&["Draw", "Block", "Base"]).params("{at: [x,y]}"),
         CommandSpec::new("blocks.dynamic", "Dynamic Block Data", run_dynamic)
             .params("{name (a block, or \"*Model_Space\" for a drawing that is a dynamic block's own)} → {parameters, actions, other} | null (not a dynamic block)")
@@ -359,61 +362,6 @@ fn run_attdef(s: &mut Session, p: &Value) -> Result<Value> {
     let h = f64_or(p, "height", s.doc()?.header.f64("TEXTSIZE", 0.2));
     let k = attdef_kind(s, tag, str_param(p, "prompt").unwrap_or(tag), str_param(p, "default").unwrap_or(""), at, h, bool_or(p, "invisible", false));
     Ok(json!({ "handle": s.add_entity(k)?.hex() }))
-}
-
-fn run_wblock(s: &mut Session, p: &Value) -> Result<Value> {
-    let path = str_param(p, "path").ok_or_else(|| bad("wblock", "`path` is required"))?.to_string();
-    let src = s.doc()?;
-    let mut d = cadcraft_doc::Drawing::new_imperial();
-    // The written drawing keeps the source's settings and styles, as AutoCAD's -WBLOCK does: its
-    // units ($INSUNITS, $MEASUREMENT), so a block from a metric drawing is not declared in inches
-    // and scaled on insert, and its defaults (text size, current styles, annotation scales).
-    d.header = src.header.clone();
-    d.layers = src.layers.clone();
-    d.linetypes = src.linetypes.clone();
-    d.text_styles = src.text_styles.clone();
-    d.dim_styles = src.dim_styles.clone();
-    d.mleader_styles = src.mleader_styles.clone();
-    d.table_styles = src.table_styles.clone();
-    d.mline_styles = src.mline_styles.clone();
-    d.scales = src.scales.clone();
-    d.blocks = src.blocks.clone();
-    // The base point becomes the written drawing's origin, its insertion base: by default 0,0 for
-    // objects and the block's base point for a block (`base` is then in block coordinates).
-    let base = point_param(p, "base");
-    d.header.set("INSBASE", cadcraft_doc::HVal::Point(Vec3::ZERO));
-    let m = Mat3::translate(-base.unwrap_or(Vec2::ZERO));
-    let ents: Vec<Entity> = if let Some(name) = str_param(p, "name") {
-        let b = src.block(name).ok_or_else(|| bad("wblock", format!("no block `{name}`")))?;
-        let m = Mat3::translate(-base.unwrap_or(b.base.xy()));
-        b.entities
-            .iter()
-            .map(|e| {
-                let mut e = (**e).clone();
-                e.kind.transform(&m);
-                e
-            })
-            .collect()
-    } else {
-        targets(s, p)?
-            .iter()
-            .filter_map(|h| src.entity(*h))
-            .map(|e| {
-                let mut e = (**e).clone();
-                e.kind.transform(&m);
-                e
-            })
-            .collect()
-    };
-    for mut e in ents {
-        e.handle = d.new_handle();
-        d.model.push(e);
-    }
-    let hooks = super::file::io().ok_or_else(|| bad("wblock", "file formats are not available in this build"))?;
-    let bytes = (hooks.write)(&d, &path).map_err(|e| bad("wblock", e))?;
-    #[cfg(not(target_arch = "wasm32"))]
-    std::fs::write(&path, &bytes).map_err(|e| bad("wblock", format!("{path}: {e}")))?;
-    Ok(json!({ "path": path, "entities": d.model.len(), "bytes": bytes.len() }))
 }
 
 fn run_base(s: &mut Session, p: &Value) -> Result<Value> {
@@ -980,52 +928,6 @@ impl Interactive for InsertM {
         });
         let rot = self.rotation.unwrap_or(if self.stage == InsStage::Rotation { at.angle_to(c) } else { 0.0 });
         vec![EntityKind::Insert(insert_entity(b, at, self.scale3(scale), rot, self.base))]
-    }
-}
-
-#[derive(Default)]
-struct AttdefM {
-    tag: Option<String>,
-    prompt: Option<String>,
-    default: Option<String>,
-}
-
-impl Interactive for AttdefM {
-    fn name(&self) -> &'static str {
-        "ATTDEF"
-    }
-    fn prompt(&self, _s: &Session) -> Prompt {
-        match (&self.tag, &self.prompt, &self.default) {
-            (None, ..) => Prompt::new("Enter attribute tag name", Accept::TEXT),
-            (Some(_), None, _) => Prompt::new("Enter attribute prompt", Accept::TEXT),
-            (Some(_), Some(_), None) => Prompt::new("Enter default attribute value", Accept::TEXT),
-            _ => Prompt::new("Specify start point of text", Accept::POINT),
-        }
-    }
-    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
-        let text = match &i {
-            Input::Text(t) => Some(t.clone()),
-            Input::Enter => Some(String::new()),
-            _ => None,
-        };
-        match (&self.tag, &self.prompt, &self.default) {
-            (None, ..) => {
-                if let Some(t) = text.filter(|t| !t.trim().is_empty() && !t.contains(' ')) {
-                    self.tag = Some(t.to_ascii_uppercase());
-                }
-            }
-            (Some(_), None, _) => self.prompt = text,
-            (Some(_), Some(_), None) => self.default = text,
-            (Some(tag), Some(pr), Some(def)) => {
-                if let Input::Point(p) = i {
-                    let h = s.doc()?.header.f64("TEXTSIZE", 0.2);
-                    let k = attdef_kind(s, tag, pr, def, p, h, false);
-                    s.add_entity(k)?;
-                    return Ok(Step::Done);
-                }
-            }
-        }
-        Ok(Step::Continue)
     }
 }
 
