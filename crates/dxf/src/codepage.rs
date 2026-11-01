@@ -24,7 +24,7 @@ pub(crate) enum Decoder {
     Table(&'static [char; 128]),
 }
 
-/// The decoder for a `$DWGCODEPAGE` value (case-insensitive), or `None` when `CADCraft` doesn't
+/// The decoder for a `$DWGCODEPAGE` value (case-insensitive), or `None` when CADCraft doesn't
 /// know the code page.
 pub(crate) fn decoder(code_page: &str) -> Option<Decoder> {
     use encoding_rs as e;
@@ -63,15 +63,14 @@ pub(crate) fn decoder(code_page: &str) -> Option<Decoder> {
 }
 
 /// Decode `bytes` from the code page `code_page` names (a `$DWGCODEPAGE` value such as
-/// `ANSI_1251`), or `None` when `CADCraft` doesn't know that code page. Invalid sequences become
+/// `ANSI_1251`), or `None` when CADCraft doesn't know that code page. Invalid sequences become
 /// U+FFFD; escapes (`\U+XXXX`, `\M+nXXXX`) are left as they are.
-#[must_use]
 pub fn decode_code_page(bytes: &[u8], code_page: &str) -> Option<String> {
     decoder(code_page).map(|d| decode(bytes, d).into_owned())
 }
 
 /// The code page a pre-2007 file's text is written in, or `None` for pure ASCII with escapes:
-/// when `CADCraft` doesn't know `code_page`, and for `ASCII` (the reader takes such files as
+/// when CADCraft doesn't know `code_page`, and for `ASCII` (the reader takes such files as
 /// Windows-1252, but a writer must keep them ASCII) and `UTF8`/`UNICODE`, which no pre-2007
 /// reader expects.
 pub(crate) fn encoder(code_page: &str) -> Option<Decoder> {

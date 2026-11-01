@@ -1,6 +1,6 @@
-//! The DXF/DWG file versions `CADCraft` writes (DXF Reference, HEADER `$ACADVER`).
+//! The DXF/DWG file versions CADCraft writes (DXF Reference, HEADER `$ACADVER`).
 
-/// A file version `CADCraft` can save: the `AutoCAD` release that introduced the format. Each format
+/// A file version CADCraft can save: the `AutoCAD` release that introduced the format. Each format
 /// also serves the releases after it (2018 is still `AutoCAD`'s current format).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Version {
@@ -24,7 +24,6 @@ impl Version {
     pub const ALL: [Version; 6] = [Version::R2000, Version::R2004, Version::R2007, Version::R2010, Version::R2013, Version::R2018];
 
     /// The `$ACADVER` code ("AC1032").
-    #[must_use]
     pub fn code(self) -> &'static str {
         match self {
             Version::R2000 => "AC1015",
@@ -37,7 +36,6 @@ impl Version {
     }
 
     /// The release year that names the version ("2018").
-    #[must_use]
     pub fn year(self) -> &'static str {
         match self {
             Version::R2000 => "2000",
@@ -50,17 +48,15 @@ impl Version {
     }
 
     /// A version named by its year ("2018", "R2018") or its `$ACADVER` code ("AC1032"), any case.
-    #[must_use]
     pub fn parse(s: &str) -> Option<Version> {
         let s = s.trim();
         let year = s.strip_prefix(['R', 'r']).unwrap_or(s);
         Version::ALL.into_iter().find(|v| v.year() == year || v.code().eq_ignore_ascii_case(s))
     }
 
-    /// The version to save a file of `$ACADVER` `code` in: the same version when `CADCraft` writes
+    /// The version to save a file of `$ACADVER` `code` in: the same version when CADCraft writes
     /// it, else the nearest one it does (R2000 for older files, 2018 for newer ones); `None` when
     /// the code isn't a version code at all.
-    #[must_use]
     pub fn for_acadver(code: &str) -> Option<Version> {
         let code = code.trim();
         if let Some(v) = Version::ALL.into_iter().find(|v| v.code().eq_ignore_ascii_case(code)) {
@@ -79,8 +75,7 @@ impl Version {
     }
 
     /// Whether text in this version's DXF is UTF-8 (2007 and later). Older versions keep text in
-    /// the `$DWGCODEPAGE` code page, which `CADCraft` avoids by escaping non-ASCII as `\U+XXXX`.
-    #[must_use]
+    /// the `$DWGCODEPAGE` code page, which CADCraft avoids by escaping non-ASCII as `\U+XXXX`.
     pub fn utf8(self) -> bool {
         self >= Version::R2007
     }

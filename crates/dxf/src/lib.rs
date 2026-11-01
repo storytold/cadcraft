@@ -44,7 +44,6 @@ pub enum Value {
 }
 
 impl Value {
-    #[must_use]
     pub fn as_str(&self) -> String {
         match self {
             Value::Str(s) | Value::Hex(s) => s.clone(),
@@ -53,7 +52,6 @@ impl Value {
             Value::Bool(b) => i64::from(*b).to_string(),
         }
     }
-    #[must_use]
     #[expect(
         clippy::cast_precision_loss,
         reason = "DXF numeric accessors intentionally convert integer values to f64, accepting precision loss beyond 2^53."
@@ -67,7 +65,6 @@ impl Value {
             _ => 0.0,
         }
     }
-    #[must_use]
     #[expect(clippy::cast_possible_truncation, reason = "DXF numeric accessors intentionally truncate finite real values to i64.")]
     pub fn as_i64(&self) -> i64 {
         match self {
@@ -89,31 +86,24 @@ pub struct Tag {
 }
 
 impl Tag {
-    #[must_use]
     pub fn new(code: i32, value: Value) -> Self {
         Tag { code, value }
     }
-    #[must_use]
     pub fn s(code: i32, v: impl Into<String>) -> Self {
         Tag { code, value: Value::Str(v.into()) }
     }
-    #[must_use]
     pub fn f(code: i32, v: f64) -> Self {
         Tag { code, value: Value::Real(if v.is_finite() { v } else { 0.0 }) }
     }
-    #[must_use]
     pub fn i(code: i32, v: i64) -> Self {
         Tag { code, value: Value::Int(v) }
     }
-    #[must_use]
     pub fn str(&self) -> String {
         self.value.as_str()
     }
-    #[must_use]
     pub fn f64(&self) -> f64 {
         self.value.as_f64()
     }
-    #[must_use]
     pub fn i64(&self) -> i64 {
         self.value.as_i64()
     }
@@ -131,7 +121,6 @@ pub enum Kind {
     Hex,
 }
 
-#[must_use]
 pub fn kind_of(code: i32) -> Kind {
     match code {
         10..=59 | 110..=149 | 210..=239 | 460..=469 | 1010..=1059 => Kind::Real,
@@ -499,7 +488,6 @@ fn parse_binary_pass(b: &[u8], max_tags: usize, text: &mut codepage::BinaryText)
 }
 
 /// Format a real the way DXF writers usually do (shortest round-trip, with a decimal point).
-#[must_use]
 pub fn format_real(v: f64) -> String {
     if !v.is_finite() {
         return "0.0".into();
@@ -512,7 +500,6 @@ pub fn format_real(v: f64) -> String {
 ///
 /// The output is pure ASCII: non-ASCII characters in strings are written as `\U+XXXX` escapes,
 /// the pre-R2007 convention, so it is correct whatever `$DWGCODEPAGE` the header declares.
-#[must_use]
 pub fn write_ascii(tags: &[Tag]) -> String {
     write_ascii_as(tags, false)
 }
@@ -520,7 +507,6 @@ pub fn write_ascii(tags: &[Tag]) -> String {
 /// Write tags as ASCII DXF with text in UTF-8 (`utf8`, the R2007+ convention: non-ASCII
 /// characters as they are) or escaped as `\U+XXXX` (older versions, see [`write_ascii`]). Line
 /// breaks inside strings become spaces either way.
-#[must_use]
 pub fn write_ascii_as(tags: &[Tag], utf8: bool) -> String {
     let bytes = ascii(tags, if utf8 { Strings::Utf8 } else { Strings::Escaped(None) });
     // Both forms are UTF-8 (the escaped one is ASCII).
@@ -530,11 +516,10 @@ pub fn write_ascii_as(tags: &[Tag], utf8: bool) -> String {
 /// Write tags as pre-R2007 ASCII DXF with text in the code page `code_page` names (a
 /// `$DWGCODEPAGE` value such as `ANSI_1252`), as the DXF Reference describes for those versions:
 /// a character the code page has is written as its bytes, any other as a `\U+XXXX` escape. A
-/// code page `CADCraft` doesn't know, `ASCII`, and `UTF8`/`UNICODE` (not a pre-2007 code page)
+/// code page CADCraft doesn't know, `ASCII`, and `UTF8`/`UNICODE` (not a pre-2007 code page)
 /// give [`write_ascii`]'s pure ASCII output. So does a file whose code page bytes happen to be
 /// valid UTF-8 (`СІ` in `ANSI_1251` is D1 B2, U+0472), since readers, ours included, take an ASCII
 /// DXF that is valid UTF-8 as UTF-8.
-#[must_use]
 pub fn write_ascii_in(tags: &[Tag], code_page: &str) -> Vec<u8> {
     let bytes = ascii(tags, Strings::Escaped(codepage::encoder(code_page)));
     if !bytes.is_ascii() && std::str::from_utf8(&bytes).is_ok() {
@@ -591,14 +576,12 @@ fn ascii(tags: &[Tag], strings: Strings) -> Vec<u8> {
 /// several groups of the same code). Strings are UTF-8 when `utf8` (R2007+), otherwise escaped as
 /// in [`write_ascii`]. A tag's value is converted to its code's kind, so a number written as text
 /// is stored as a number; a code outside the 16-bit range is skipped.
-#[must_use]
 pub fn write_binary(tags: &[Tag], utf8: bool) -> Vec<u8> {
     binary(tags, if utf8 { Strings::Utf8 } else { Strings::Escaped(None) })
 }
 
 /// Write tags as pre-R2007 binary DXF with text in the code page `code_page` names, as
 /// [`write_ascii_in`] does.
-#[must_use]
 pub fn write_binary_in(tags: &[Tag], code_page: &str) -> Vec<u8> {
     binary(tags, Strings::Escaped(codepage::encoder(code_page)))
 }
@@ -692,7 +675,6 @@ fn wrap_i32(v: i64) -> [u8; 4] {
 }
 
 /// Whether `bytes` are a binary DXF file (they start with the binary sentinel).
-#[must_use]
 pub fn is_binary(bytes: &[u8]) -> bool {
     bytes.starts_with(BINARY_SENTINEL)
 }
@@ -703,7 +685,7 @@ pub fn is_binary(bytes: &[u8]) -> bool {
 /// a code page the result is ASCII, so it is valid in any code page. In every form a backslash
 /// that would start a `\U+` or `\M+` sequence is written as `\U+005C`, so the reader gives back
 /// the literal text (#2050). So is a double-byte character whose trail byte is 0x5C (`\`) in that
-/// place, such as Shift-JIS `表` or Big5 `許`: `CADCraft` decodes the code page before it looks for
+/// place, such as Shift-JIS `表` or Big5 `許`: CADCraft decodes the code page before it looks for
 /// escapes, but a reader that looks first would take that byte and the `U+` after it for one.
 fn push_string(s: &str, strings: Strings, out: &mut Vec<u8>) {
     let chars: Vec<char> = s.chars().collect();
@@ -771,7 +753,6 @@ pub fn sections(tags: &[Tag]) -> Vec<Section> {
 }
 
 /// Split a run of tags into records starting at each code-0 tag: (type, tags after the 0).
-#[must_use]
 pub fn records(tags: &[Tag]) -> Vec<(String, Vec<Tag>)> {
     let mut out: Vec<(String, Vec<Tag>)> = Vec::new();
     for t in tags {
