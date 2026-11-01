@@ -105,7 +105,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .interactive(|_| Ok(Box::new(TanCircleM::new(false)))),
         CommandSpec::new("ellipse.axis", "Axis, End", run_ellipse_axis)
             .menu(&["Draw", "Ellipse", "Axis, End"])
-            .params("{p1, p2, distance} | {p1, p2, p3} (axis endpoints, then half the other axis)")
+            .params("{p1, p2, distance} | {p1, p2, p3} (axis endpoints, then half the other axis: a distance, or a point that far from the center)")
             .interactive(|_| Ok(super::draw::ellipse_machine(false, false))),
         CommandSpec::new("ellipse.arc", "Elliptical Arc", run_ellipse_arc)
             .menu(&["Draw", "Ellipse", "Arc"])

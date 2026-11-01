@@ -7,7 +7,7 @@ mod template;
 
 use std::sync::OnceLock;
 
-use cadcraft_doc::Drawing;
+use cadcraft_doc::{Drawing, Format};
 pub use cadcraft_dxf::Version;
 use serde_json::{Value, json};
 
@@ -136,8 +136,7 @@ fn save_options(cmd: &str, p: &Value) -> Result<SaveAs> {
 
 /// Whether `path` names a DXF file (or has no extension, which saves as DXF).
 fn is_dxf(path: &str) -> bool {
-    let ext = std::path::Path::new(path).extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
-    matches!(ext.as_str(), "dxf" | "")
+    Format::from_path(path) == Some(Format::Dxf)
 }
 
 /// The drawing written to `path` with `opts`: through [`IoHooks::write`] when no option is set,
@@ -273,17 +272,21 @@ pub struct ReadFile {
 }
 
 /// Read and decode `path` (the slow half of `OPEN {path}`). Needs no session; runs anywhere.
-pub fn read_file(path: &str) -> std::result::Result<ReadFile, String> {
+pub fn read_file(path: &std::path::Path) -> std::result::Result<ReadFile, String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let r = std::panic::catch_unwind(|| {
-            let bytes =
-                crate::capped_read::read_capped(std::path::Path::new(path), MAX_DRAWING_BYTES).map_err(|e| bad("open", format!("{path}: {e}")))?;
-            read_bytes(&bytes, path, Some(path.to_string()))
+            let shown = path.display();
+            // The session keeps paths as text; a name that isn't Unicode could never be saved back to.
+            let Some(text_path) = path.to_str() else {
+                return Err(bad("open", format!("{shown}: the file name is not valid Unicode, so CADCraft can't save back to it")));
+            };
+            let bytes = crate::capped_read::read_capped(path, MAX_DRAWING_BYTES).map_err(|e| bad("open", format!("{shown}: {e}")))?;
+            read_bytes(&bytes, text_path, Some(text_path.to_string()))
         });
         match r {
             Ok(r) => r.map_err(|e| e.to_string()),
-            Err(_) => Err(bad("open", format!("{path}: the file could not be read")).to_string()),
+            Err(_) => Err(bad("open", format!("{}: the file could not be read", path.display())).to_string()),
         }
     }
     #[cfg(target_arch = "wasm32")]
@@ -417,11 +420,20 @@ fn save_as(s: &mut Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<usiz
     Ok(n)
 }
 
-/// Put saved bytes where the user gets them: natively the file at `path` (written atomically); on
-/// the web, which has no file system, a browser download named after `path` via [`deliver`].
+/// Put saved bytes where the user gets them: natively the file at `path`; on the web, which has
+/// no file system, a browser download named after `path` via [`deliver`].
+///
+/// Natively the file is replaced atomically ([`crate::atomic_write`]: a fresh temporary file
+/// beside it, renamed over it), so a crash leaves either the old file or the new one, never a
+/// truncated one. Saving over a drawing first keeps the previous file as `<name>.bak` (ISAVEBAK,
+/// #540).
 fn store(path: &str, bytes: &[u8]) -> Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     {
+        if is_drawing_file(path) && crate::autosave::isavebak() {
+            backup(std::path::Path::new(path))
+                .map_err(|e| bad("save", format!("{path}: the backup copy could not be written ({e}); nothing was saved")))?;
+        }
         // Exclusively create a fresh temporary file and rename it over `path`, so a planted
         // `<path>.cadcraft-tmp` symlink cannot redirect the write onto another file (CWE-59).
         crate::atomic_write::write_atomic(std::path::Path::new(path), bytes).map_err(|e| bad("save", format!("{path}: {e}")))
@@ -432,6 +444,191 @@ fn store(path: &str, bytes: &[u8]) -> Result<()> {
         let deliver = deliver().ok_or_else(|| bad("save", "saving files is not available in this build; use document.bytes"))?;
         deliver(&name, "application/octet-stream", bytes).map_err(|e| bad("save", format!("{name}: {e}")))
     }
+}
+
+/// The backup of the drawing file `path`, beside it. A DWG's is `<name>.bak`, as AutoCAD names it,
+/// in the extension's letter case (`plan.DWG` to `plan.BAK`); any other drawing appends `.bak`
+/// (`plan.dxf.bak`), so `plan.dwg` and `plan.dxf` in one folder never overwrite each other's backup.
+pub fn backup_path(path: &std::path::Path) -> std::path::PathBuf {
+    match path.extension().map(|e| e.to_string_lossy()) {
+        Some(e) if e.eq_ignore_ascii_case("dwg") => path.with_extension(
+            e.chars().zip("bak".chars()).map(|(d, b)| if d.is_ascii_uppercase() { b.to_ascii_uppercase() } else { b }).collect::<String>(),
+        ),
+        _ => {
+            let mut name = path.as_os_str().to_os_string();
+            name.push(".bak");
+            name.into()
+        }
+    }
+}
+
+/// Whether `bytes` read as a DWG or a DXF (ASCII or binary) by their start: what a save keeps as
+/// the backup. A file that doesn't (truncated, overwritten by another program) never replaces a
+/// good `.bak`.
+pub fn looks_like_drawing(bytes: &[u8]) -> bool {
+    // DWG: a version tag like `AC1032` (R12 is `AC1009`).
+    let dwg = bytes.len() >= 6 && bytes.starts_with(b"AC") && bytes[2..6].iter().all(|b| b.is_ascii_digit());
+    if dwg || cadcraft_dxf::is_binary(bytes) {
+        return true;
+    }
+    // ASCII DXF: optional comments (999), then group 0 SECTION.
+    let text = String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]);
+    let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
+    loop {
+        match (lines.next(), lines.next()) {
+            (Some("999"), Some(_)) => continue,
+            (Some("0"), Some(v)) => return v.eq_ignore_ascii_case("SECTION"),
+            _ => return false,
+        }
+    }
+}
+
+/// How much of a drawing's end [`looks_complete`] reads.
+#[cfg(not(target_arch = "wasm32"))]
+const TAIL_BYTES: u64 = 256;
+
+/// Whether a drawing that [`looks_like_drawing`] (`head`, its first bytes, at least 256 of them
+/// for a DWG) is whole, from its end (`tail`, its last bytes) and size `len`, without reading it
+/// all: a DXF ends with `0`/`EOF` (a binary one with `EOF` and its NUL); a DWG reaches the end its
+/// own header gives ([`dwg_complete`]). `None` when that can't be told (a 2007 DWG), so a file cut
+/// off by a failed save or another program doesn't replace a good backup.
+pub fn completeness(head: &[u8], tail: &[u8], len: u64) -> Option<bool> {
+    let dwg = head.len() >= 6 && head.starts_with(b"AC") && head[2..6].iter().all(|b| b.is_ascii_digit());
+    if dwg {
+        // Too short for any DWG's header: cut off, not unknown.
+        return if head.len() < 256 { Some(false) } else { dwg_complete(head, len) };
+    }
+    if cadcraft_dxf::is_binary(head) {
+        return Some(tail.ends_with(b"EOF\0"));
+    }
+    let text = String::from_utf8_lossy(tail);
+    let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty()).rev();
+    Some(matches!((lines.next(), lines.next()), (Some(last), Some("0")) if last.eq_ignore_ascii_case("EOF")))
+}
+
+/// [`completeness`] known to be whole.
+pub fn looks_complete(head: &[u8], tail: &[u8], len: u64) -> bool {
+    completeness(head, tail, len) != Some(false)
+}
+
+/// Whether a DWG of `len` bytes reaches the end its header gives (Open Design Specification for
+/// .dwg files): from 2004 on, the copy of the file header that ends the file (its address is in
+/// the encrypted header at 0x80, and the copy is 0x6C bytes); up to 2000, the end of every section
+/// the locator records give. `None` for another layout (2007, or before R13).
+fn dwg_complete(head: &[u8], len: u64) -> Option<bool> {
+    let version = head.get(..6)?;
+    match version {
+        b"AC1018" | b"AC1024" | b"AC1027" | b"AC1032" => {
+            // The header at 0x80 is XORed with the generator the specification gives.
+            let enc = head.get(0x80..0x80 + 0x6C)?;
+            let mut seed: u32 = 1;
+            let h: Vec<u8> = enc
+                .iter()
+                .map(|b| {
+                    seed = seed.wrapping_mul(0x343FD).wrapping_add(0x0026_9EC3);
+                    b ^ (seed >> 16) as u8
+                })
+                .collect();
+            if h.get(..12) != Some(&b"AcFssFcAJMB\0"[..]) {
+                return Some(false);
+            }
+            let second = u64::from_le_bytes(h.get(0x34..0x3C)?.try_into().ok()?);
+            Some(second >= 0x100 && second.checked_add(0x6C).is_some_and(|end| len >= end))
+        }
+        b"AC1012" | b"AC1014" | b"AC1015" => {
+            let n = i32::from_le_bytes(head.get(0x15..0x19)?.try_into().ok()?);
+            if !(1..=16).contains(&n) {
+                return Some(false);
+            }
+            let mut end = 0u64;
+            for i in 0..n as usize {
+                let r = head.get(0x19 + i * 9..0x19 + i * 9 + 9)?;
+                let seek = u64::from(u32::from_le_bytes(r.get(1..5)?.try_into().ok()?));
+                let size = u64::from(u32::from_le_bytes(r.get(5..9)?.try_into().ok()?));
+                end = end.max(seek + size);
+            }
+            Some(len >= end)
+        }
+        _ => None,
+    }
+}
+
+/// A file's first bytes, last bytes and length, left positioned just after the first bytes.
+#[cfg(not(target_arch = "wasm32"))]
+fn ends(src: &mut std::fs::File) -> std::io::Result<(Vec<u8>, Vec<u8>, u64)> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut head = Vec::with_capacity(4096);
+    (&mut *src).take(4096).read_to_end(&mut head)?;
+    // Its end too (a DXF's EOF), then on from where the start left off for the copy.
+    let len = src.metadata()?.len();
+    let mut tail = Vec::new();
+    src.seek(SeekFrom::Start(len.saturating_sub(TAIL_BYTES)))?;
+    (&mut *src).take(TAIL_BYTES).read_to_end(&mut tail)?;
+    src.seek(SeekFrom::Start(head.len() as u64))?;
+    Ok((head, tail, len))
+}
+
+/// Whether saving replaces the `.bak` with this file. A file known to be cut off never replaces a
+/// backup already there. One that can't be told (a 2007 DWG) does: it is most likely fine, and it
+/// is about to be replaced. With no backup yet any file is kept, because the checks can be wrong
+/// about a real file and this save replaces the only copy.
+#[cfg(not(target_arch = "wasm32"))]
+fn backup_replaced(head: &[u8], tail: &[u8], len: u64, backup_exists: bool) -> bool {
+    (looks_like_drawing(head) && completeness(head, tail, len) != Some(false)) || (len > 0 && !backup_exists)
+}
+
+/// Whether a save over `path` now would leave the current file in its `.bak`, for a warning that
+/// must not promise a backup the save won't write.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn save_keeps_current(path: &std::path::Path) -> bool {
+    let Ok(mut src) = std::fs::File::open(path) else { return false };
+    crate::autosave::isavebak() && ends(&mut src).is_ok_and(|(head, tail, len)| backup_replaced(&head, &tail, len, backup_path(path).exists()))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn save_keeps_current(_path: &std::path::Path) -> bool {
+    false
+}
+
+/// Before `path` is replaced: copy it to its `.bak`, streamed and written atomically too
+/// ([`crate::atomic_write::write_atomic_with`]). Nothing
+/// to keep when there is no file yet. A file that doesn't look like a drawing
+/// ([`looks_like_drawing`]) is not backed up, and the `.bak` already there is left alone.
+#[cfg(not(target_arch = "wasm32"))]
+fn backup(path: &std::path::Path) -> std::io::Result<()> {
+    let mut src = match std::fs::File::open(path) {
+        Ok(f) if f.metadata()?.is_file() => f,
+        Ok(_) => return Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    let (head, tail, len) = ends(&mut src)?;
+    let bak = backup_path(path);
+    if !backup_replaced(&head, &tail, len, bak.exists()) {
+        log::warn!("save: {} doesn't look like a whole drawing; its backup is left as it was", path.display());
+        return Ok(());
+    }
+    // The backup is no more readable than the drawing, nor than the .bak it replaces (a private
+    // 0600 drawing or .bak stays private). The mode is set as the new file is created, so a
+    // failed write leaves the old .bak as it was; a symlink at the .bak is replaced, never
+    // written through.
+    #[cfg(unix)]
+    let permissions = {
+        use std::os::unix::fs::PermissionsExt;
+        let mut mode = src.metadata()?.permissions().mode() & 0o777;
+        if let Ok(m) = std::fs::symlink_metadata(&bak)
+            && m.is_file()
+        {
+            mode &= m.permissions().mode();
+        }
+        Some(std::fs::Permissions::from_mode(mode))
+    };
+    #[cfg(not(unix))]
+    let permissions = None;
+    crate::atomic_write::write_atomic_with(&bak, permissions, |out| {
+        std::io::Write::write_all(out, &head)?;
+        std::io::copy(&mut src, out).map(|_| ())
+    })
 }
 
 /// Store the bytes, then mark the drawing saved under `path`. If storing fails the drawing keeps
@@ -515,7 +712,7 @@ fn run_bytes(s: &mut Session, p: &Value) -> Result<Value> {
     let lost = not_saved_as(s.doc()?, version);
     let bytes = write_bytes(s, "document.bytes", &format!("drawing.{fmt}"), &opts)?;
     let mut r = json!({ "data": base64_encode(&bytes), "bytes": bytes.len() });
-    if drops_unknown(&format!("drawing.{fmt}")) {
+    if drops_unknown(format!("drawing.{fmt}")) {
         report_not_saved(s, &mut r, &lost);
     }
     Ok(r)
@@ -561,17 +758,26 @@ pub fn not_saved_message(lost: &std::collections::BTreeMap<String, usize>) -> Op
     Some(format!("Not saved in the DWG file (its writer can't write these object types yet; DXF keeps them): {}", list.join(", ")))
 }
 
+/// What saving the active drawing to `path` would leave out, before anything is written: empty
+/// when the format keeps everything. The interactive save asks with this; [`save_reporting`]
+/// reports the same list afterwards to callers that never get a dialog.
+pub fn loss_on_save(s: &Session, path: &str) -> std::collections::BTreeMap<String, usize> {
+    if !drops_unknown(path) {
+        return Default::default();
+    }
+    let version = drawing_version(s, path);
+    s.doc().map(|d| not_saved_as(d, version)).unwrap_or_default()
+}
+
 /// Whether saving to `path` leaves out the entities [`not_saved`] counts: DWG does (the DWG
 /// bridge drops types it doesn't know); DXF writes them back as read.
-pub fn drops_unknown(path: &str) -> bool {
-    // Templates (.dwt) are written as DWG too.
-    std::path::Path::new(path).extension().is_some_and(|e| e.eq_ignore_ascii_case("dwg") || e.eq_ignore_ascii_case("dwt"))
+pub fn drops_unknown(path: impl AsRef<std::path::Path>) -> bool {
+    Format::from_path(path).is_some_and(Format::drops_unknown)
 }
 
 /// Whether `path` is saved as a drawing (DXF, DWG) rather than exported as an image.
-fn is_drawing_file(path: &str) -> bool {
-    let ext = std::path::Path::new(path).extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
-    matches!(ext.as_str(), "dxf" | "dwg" | "dwt" | "")
+fn is_drawing_file(path: impl AsRef<std::path::Path>) -> bool {
+    Format::from_path(path).is_some_and(Format::is_drawing)
 }
 
 /// Say on the command line what the file couldn't keep, and list it in the result's `notSaved`.
@@ -651,20 +857,16 @@ mod tests {
     use serde_json::json;
 
     use crate::Session;
+    use crate::temp_dir::TempDir;
 
     fn active_title(s: &Session) -> String {
         s.state().unwrap().title.clone()
     }
 
-    fn temp_script(name: &str, text: &str) -> String {
-        let path = std::env::temp_dir().join(format!("cadcraft-script-{}-{name}", std::process::id()));
-        std::fs::write(&path, text).unwrap();
-        path.to_string_lossy().into_owned()
-    }
-
     #[test]
     fn script_command_runs_a_scr_file() {
-        let path = temp_script("run.scr", "; a comment\ncircle 50,25 20\nrectang 0,0 100,60\n");
+        let dir = TempDir::new("script");
+        let path = dir.file("run.scr", "; a comment\ncircle 50,25 20\nrectang 0,0 100,60\n");
         let mut s = Session::new();
         let r = s.execute("script", &json!({ "path": path })).unwrap();
         assert_eq!(r["lines"], 3);
@@ -682,8 +884,9 @@ mod tests {
     /// A script that runs itself must be refused, not recurse until the stack dies.
     #[test]
     fn a_script_cannot_start_a_script() {
-        let inner = temp_script("inner.scr", "circle 0,0 1\n");
-        let outer = temp_script("outer.scr", &format!("script {}\ncircle 0,0 2\n", json!({ "path": inner })));
+        let dir = TempDir::new("script");
+        let inner = dir.file("inner.scr", "circle 0,0 1\n");
+        let outer = dir.file("outer.scr", format!("script {}\ncircle 0,0 2\n", json!({ "path": inner })));
         let mut s = Session::new();
         let e = s.execute("script", &json!({ "path": outer })).unwrap_err().to_string();
         assert!(e.contains("already running"), "{e}");
@@ -691,7 +894,8 @@ mod tests {
 
     #[test]
     fn typed_script_prompts_for_the_file_then_runs_or_reports_it() {
-        let good = temp_script("typed.scr", "circle 0,0 1\n");
+        let dir = TempDir::new("script");
+        let good = dir.file("typed.scr", "circle 0,0 1\n");
         let mut s = Session::new();
         s.cmdline("script").unwrap();
         assert!(s.running.is_some(), "SCRIPT asks for the file name");

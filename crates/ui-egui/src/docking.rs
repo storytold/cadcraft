@@ -350,9 +350,9 @@ pub fn show(app: &mut crate::CadApp, ui: &mut egui::Ui) {
     #[cfg(not(target_arch = "wasm32"))]
     for files in std::mem::take(&mut output.window_files) {
         for file in files.dropped {
-            let path = file.path().to_string_lossy().to_string();
-            if !path.is_empty() {
-                app.open_path(&path);
+            let path = file.path();
+            if !path.as_os_str().is_empty() {
+                app.open_path(path);
             }
         }
     }

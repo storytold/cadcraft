@@ -68,23 +68,62 @@ pub fn format_distance(v: f64, lunits: i64, luprec: i64) -> String {
             };
             format!("{}{}{}", if neg { "-" } else { "" }, whole, fs)
         }
-        _ => format!("{:.*}", prec, v),
+        _ => fixed(v, prec),
     }
 }
 
-/// Scientific notation with a signed exponent of at least two digits (`1.7500E+01`, `1.00E-05`).
-fn scientific(v: f64, prec: usize) -> String {
-    let s = format!("{:.*E}", prec, v);
-    match s.split_once('E') {
-        Some((mantissa, exp)) => {
-            let (sign, digits) = match exp.strip_prefix('-') {
-                Some(d) => ('-', d),
-                None => ('+', exp),
-            };
-            format!("{mantissa}E{sign}{digits:0>2}")
-        }
-        None => s,
+/// `v` with `prec` decimals, rounded as AutoCAD rounds a number it shows (RTOS, LUNITS): at 15
+/// significant digits, with a half rounded away from zero. AutoCAD 2024 gives 1.01 for 1.005 to two
+/// places (its binary value is just below 1.005), 3 for 2.5 and -0.13 for -0.125, where Rust's
+/// formatting rounds the binary value and a half to even (1.00, 2 and -0.12).
+pub fn fixed(v: f64, prec: usize) -> String {
+    let plain = || format!("{v:.prec$}");
+    if !v.is_finite() {
+        return plain();
     }
+    let sci = format!("{:.14e}", v.abs());
+    let Some((mantissa, exp)) = sci.split_once('e') else { return plain() };
+    let Ok(exp) = exp.parse::<i64>() else { return plain() };
+    let sig: Vec<u8> = mantissa.bytes().filter(u8::is_ascii_digit).map(|b| b - b'0').collect();
+    // Digit `k` of `sig` is worth 10^(exp - k); keep those down to 10^-prec, in units of 10^-prec.
+    let digit = |k: i64| usize::try_from(k).ok().and_then(|k| sig.get(k)).copied().unwrap_or(0);
+    let keep = exp + 1 + prec as i64;
+    let mut units: Vec<u8> = (0..keep).map(digit).collect();
+    if keep >= 0 && digit(keep) >= 5 {
+        let mut carry = true;
+        for d in units.iter_mut().rev() {
+            if *d == 9 {
+                *d = 0;
+            } else {
+                *d += 1;
+                carry = false;
+                break;
+            }
+        }
+        if carry {
+            units.insert(0, 1);
+        }
+    }
+    let n: String = units.iter().map(|d| char::from(b'0' + d)).collect();
+    let n = format!("{:0>width$}", n.trim_start_matches('0'), width = prec + 1);
+    let (int, frac) = n.split_at(n.len() - prec);
+    let body = if prec == 0 { int.to_string() } else { format!("{int}.{frac}") };
+    if v < 0.0 && n.bytes().any(|b| b != b'0') { format!("-{body}") } else { body }
+}
+
+/// Scientific notation with a signed exponent of at least two digits (`1.7500E+01`, `1.00E-05`),
+/// the mantissa rounded as [`fixed`] rounds.
+fn scientific(v: f64, prec: usize) -> String {
+    let s = format!("{:.14e}", v);
+    let Some((m, e)) = s.split_once('e') else { return s };
+    let (Ok(m), Ok(mut e)) = (m.parse::<f64>(), e.parse::<i64>()) else { return s };
+    let mut mantissa = fixed(m, prec);
+    // 9.99… rounded up to 10: one more power of ten.
+    if mantissa.trim_start_matches('-').starts_with("10") {
+        e += 1;
+        mantissa = fixed(m / 10.0, prec);
+    }
+    format!("{mantissa}E{}{:0>2}", if e < 0 { '-' } else { '+' }, e.abs())
 }
 
 fn gcd(a: i64, b: i64) -> i64 {
@@ -133,7 +172,16 @@ pub fn format_angle(a: f64, aunits: i64, auprec: i64) -> String {
             } else {
                 ("S", "E", deg - 270.0)
             };
-            format!("{ns} {} {ew}", format_dms(ang, prec))
+            // A bearing shown as due north, south, east or west is that letter, as AutoCAD 2024
+            // shows it ("E" for 0), except to whole degrees ("N 90d E").
+            let dms = format_dms(ang, prec);
+            if prec > 0 && dms == format_dms(0.0, prec) {
+                ns.to_string()
+            } else if prec > 0 && dms == format_dms(90.0, prec) {
+                ew.to_string()
+            } else {
+                format!("{ns} {dms} {ew}")
+            }
         }
         _ => format!("{:.*}", prec, wrap_full_turn(deg, 360.0, prec)),
     }
@@ -293,6 +341,9 @@ fn parse_units(s: &str, aunits: i64) -> Option<(f64, bool)> {
         ((num(g)? * 0.9).to_radians(), false)
     } else if let Some(b) = bearing(&t) {
         (b, true)
+    } else if let Some(b) = (aunits == 4).then(|| cardinal(&t)).flatten() {
+        // A due bearing as surveyor's units show it: one letter.
+        (b, true)
     } else if let Some(v) = num(&t) {
         let a = match aunits {
             2 => (v * 0.9).to_radians(),
@@ -304,6 +355,17 @@ fn parse_units(s: &str, aunits: i64) -> Option<(f64, bool)> {
         (parse_dms(&t)?.to_radians(), false)
     };
     v.0.is_finite().then_some(v)
+}
+
+/// A due bearing (`n`, `e`, `s`, `w`, lower case) as radians counterclockwise from +X.
+fn cardinal(t: &str) -> Option<f64> {
+    match t {
+        "e" => Some(0.0),
+        "n" => Some(PI / 2.0),
+        "w" => Some(PI),
+        "s" => Some(1.5 * PI),
+        _ => None,
+    }
 }
 
 /// A surveyor's bearing (`n45d30'e`, lower case) as radians counterclockwise from +X.
@@ -435,11 +497,38 @@ mod tests {
         assert_eq!(format_distance(11.6, 3, 0), "1'-0\"");
     }
 
+    /// RTOS in AutoCAD 2024 (accoreconsole, DIMZIN 0): a half rounds away from zero, at 15
+    /// significant digits.
+    #[test]
+    fn numbers_round_as_autocad_rounds_them() {
+        for (v, prec, want) in [
+            (1500.5, 0, "1501"),
+            (2.5, 0, "3"),
+            (-2.5, 0, "-3"),
+            (0.125, 2, "0.13"),
+            (0.5, 0, "1"),
+            (1.005, 2, "1.01"),
+            (3.5, 0, "4"),
+            (0.0625, 3, "0.063"),
+            (-0.125, 2, "-0.13"),
+            (1234.5678, 3, "1234.568"),
+        ] {
+            assert_eq!(format_distance(v, 2, prec), want, "{v} to {prec}");
+        }
+        assert_eq!(format_distance(2.5, 1, 0), "3E+00");
+        assert_eq!(format_distance(0.125, 1, 1), "1.3E-01");
+        assert_eq!(format_distance(9.96, 1, 1), "1.0E+01");
+        assert_eq!(fixed(-0.004, 2), "0.00");
+        assert_eq!(fixed(1e-20, 3), "0.000");
+        assert_eq!(fixed(123456789012.0, 1), "123456789012.0");
+    }
+
     #[test]
     fn scientific_exponent_is_signed_and_padded() {
         assert_eq!(format_distance(17.5, 1, 4), "1.7500E+01");
         assert_eq!(format_distance(0.00001, 1, 2), "1.00E-05");
-        assert_eq!(format_distance(1234.5, 1, 3), "1.234E+03");
+        // 1.2345 is halfway: away from zero, as AutoCAD rounds 2.5 to 3E+00.
+        assert_eq!(format_distance(1234.5, 1, 3), "1.235E+03");
         assert_eq!(format_distance(12345678.0, 1, 3), "1.235E+07");
         assert_eq!(format_distance(-17.5, 1, 4), "-1.7500E+01");
         assert_eq!(format_distance(0.0, 1, 2), "0.00E+00");
@@ -473,6 +562,41 @@ mod tests {
         ];
         for (angle, prec, expected) in cases {
             assert_eq!(format_angle(angle, 1, prec), expected, "AUPREC {prec}");
+        }
+    }
+
+    #[test]
+    fn surveyors_units_read_a_due_bearing_typed_as_one_letter() {
+        // What surveyor's units show for a due bearing can be typed back, e.g. `@10<E`.
+        let a = AngleSettings { aunits: 4, angbase: 1.0, clockwise: true };
+        for (t, want) in [("E", 0.0), ("n", PI / 2.0), ("W", PI), ("s", 1.5 * PI)] {
+            let got = a.direction(t).unwrap();
+            assert!((got - want).abs() < 1e-12, "{t}: {got}");
+        }
+        // Other angle units don't take a bare letter.
+        assert_eq!(AngleSettings { aunits: 0, angbase: 0.0, clockwise: false }.direction("E"), None);
+    }
+
+    #[test]
+    fn surveyors_units_show_a_due_bearing_as_one_letter() {
+        // AutoCAD 2024's ANGTOS in surveyor's units (measured): due east, north, west and south are
+        // one letter, also when the bearing only rounds to one; to whole degrees east stays a
+        // bearing.
+        let cases = [
+            (0.0, 0, "N 90d E"),
+            (0.0, 1, "E"),
+            (0.0, 2, "E"),
+            (0.0, 4, "E"),
+            (PI / 2.0, 1, "N"),
+            (PI, 4, "W"),
+            (3.0 * PI / 2.0, 4, "S"),
+            (0.00001, 2, "E"),
+            (1.0, 1, "N 32d42' E"),
+            (1.0, 3, "N 32d42'15\" E"),
+            (1.0, 7, "N 32d42'15.194\" E"),
+        ];
+        for (angle, prec, expected) in cases {
+            assert_eq!(format_angle(angle, 4, prec), expected, "{angle} AUPREC {prec}");
         }
     }
 

@@ -50,6 +50,18 @@ location /cadcraft/ {
 
 Local test: `python3 -m http.server 8765` inside the folder, then open http://localhost:8765/.
 
+## Panel layout storage
+
+The browser host saves docked, floating and hidden palette arrangements alongside interface
+preferences in its local storage. Floating palettes remain embedded in the browser canvas;
+they do not become native operating-system windows. Window > Reset Palettes restores the
+default arrangement. This record contains panel placement and visibility, not drawing data.
+
+The optional `cadcraft.panel-layout` record uses the shared docking layout version and is
+limited to 64 KiB. Malformed, incompatible or invalid arrangements are ignored atomically,
+leaving the startup defaults usable. Storage availability and autosave follow the browser
+host's existing eframe persistence; clearing site data removes the saved layout.
+
 ## Embedding in a page (iframe)
 
 ```html
