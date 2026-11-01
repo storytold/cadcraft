@@ -33,13 +33,21 @@ pub(crate) fn is_mark(c: char) -> bool {
 }
 
 /// Base direction of a paragraph from its first strong character (rules P2/P3): `Some(true)`
-/// right-to-left, `Some(false)` left-to-right, `None` when it has no strong character.
+/// right-to-left, `Some(false)` left-to-right, `None` when it has no strong character. As rule
+/// P2 requires, characters between an isolate initiator and its matching PDI (or the end of the
+/// paragraph, when unmatched) are skipped.
 pub fn base_rtl(s: &str) -> Option<bool> {
-    s.chars().find_map(|c| match bidi_class(c) {
-        BidiClass::L => Some(false),
-        BidiClass::R | BidiClass::AL => Some(true),
-        _ => None,
-    })
+    let mut isolate_depth: usize = 0;
+    for c in s.chars() {
+        match bidi_class(c) {
+            BidiClass::LRI | BidiClass::RLI | BidiClass::FSI => isolate_depth = isolate_depth.saturating_add(1),
+            BidiClass::PDI => isolate_depth = isolate_depth.saturating_sub(1),
+            BidiClass::L if isolate_depth == 0 => return Some(false),
+            BidiClass::R | BidiClass::AL if isolate_depth == 0 => return Some(true),
+            _ => {}
+        }
+    }
+    None
 }
 
 fn para_level(base: Option<bool>) -> Option<Level> {
@@ -349,14 +357,24 @@ pub fn presentation_forms(chars: &[char], keep: impl Fn(char) -> bool) -> Vec<(c
     let mut i = 0;
     while let Some(&c) = chars.get(i) {
         let form = forms.get(i).copied().flatten();
+        // Combining marks (harakat) between lam and alef are transparent for joining, so they
+        // don't block the ligature; they stay after it, in logical order.
+        let alef_at =
+            if c == '\u{0644}' { chars.get(i + 1..).and_then(|rest| rest.iter().position(|ch| !is_mark(*ch))).map(|p| i + 1 + p) } else { None };
         if c == '\u{0644}'
             && let Some(f) = form
-            && let Some(&a) = chars.get(i + 1)
+            && let Some(j) = alef_at
+            && let Some(&a) = chars.get(j)
             && let Some(lig) = lam_alef(a, matches!(f, Form::Medial | Form::Final))
             && keep(lig)
         {
             out.push((lig, i));
-            i += 2;
+            for k in i + 1..j {
+                if let Some(&m) = chars.get(k) {
+                    out.push((m, k));
+                }
+            }
+            i = j + 1;
             continue;
         }
         let shaped = form.and_then(|f| presentation_form(c, f)).filter(|p| keep(*p)).unwrap_or(c);
@@ -440,6 +458,48 @@ mod tests {
         assert_eq!(reorder(&[1, 1, 2, 1]), vec![3, 2, 1, 0]);
         assert_eq!(reorder(&[0, 1, 1, 0]), vec![0, 2, 1, 3]);
         assert!(visual_runs(&[], None).is_empty() && char_levels("", None).is_empty());
+    }
+
+    #[test]
+    fn paragraph_direction_skips_isolate_contents() {
+        // RLI שלום PDI abc: the Hebrew sits inside the isolate, so the first strong character is "a".
+        assert_eq!(base_rtl("\u{2067}שלום\u{2069} abc"), Some(false));
+        assert_eq!(base_rtl("\u{2066}abc\u{2069} שלום"), Some(true));
+        assert_eq!(base_rtl("\u{2068}שלום\u{2069}abc"), Some(false));
+        // Nested isolates: only the outermost PDI closes the outer one.
+        assert_eq!(base_rtl("\u{2066}a\u{2067}ב\u{2069}a\u{2069}ב"), Some(true));
+        assert_eq!(base_rtl("\u{2067}\u{2066}a\u{2069}ב\u{2069}a"), Some(false));
+        // An unmatched initiator isolates the rest of the paragraph.
+        assert_eq!(base_rtl("\u{2067}שלום"), None);
+        assert_eq!(base_rtl("\u{2067}שלום\u{2069}"), None);
+        // A stray PDI does not close anything and does not underflow.
+        assert_eq!(base_rtl("\u{2069}\u{2069}שלום"), Some(true));
+        // No strong character outside the isolates.
+        assert_eq!(base_rtl("12 \u{2066}abc\u{2069} 34"), None);
+        // Without isolates nothing changes.
+        assert_eq!(base_rtl("  123 سلام abc"), Some(true));
+    }
+
+    #[test]
+    fn harakat_between_lam_and_alef_keep_the_ligature() {
+        let run = |s: &str| -> Vec<(char, usize)> {
+            let chars: Vec<char> = s.chars().collect();
+            presentation_forms(&chars, |_| true)
+        };
+        // Lam + fatha + alef: the ligature, then the fatha (logical order kept).
+        assert_eq!(run("ل\u{064E}ا"), vec![('\u{FEFB}', 0), ('\u{064E}', 1)]);
+        // Word-medial: س + lam + fatha + shadda + alef gives the final ligature, marks after it.
+        assert_eq!(run("سل\u{064E}\u{0651}ا"), vec![('\u{FEB3}', 0), ('\u{FEFC}', 1), ('\u{064E}', 2), ('\u{0651}', 3)]);
+        // Plain lam + alef is unchanged.
+        assert_eq!(run("لا"), vec![('\u{FEFB}', 0)]);
+        // Mark after the alef is not between them: unchanged behaviour.
+        assert_eq!(run("لا\u{064E}"), vec![('\u{FEFB}', 0), ('\u{064E}', 2)]);
+        // Lam + mark + a non-alef letter: no ligature, the lam joins forward as before.
+        assert_eq!(run("ل\u{064E}م"), vec![('\u{FEDF}', 0), ('\u{064E}', 1), ('\u{FEE2}', 2)]);
+        // Lam + mark at the end: no alef, nothing breaks.
+        assert_eq!(run("ل\u{064E}"), vec![('\u{FEDD}', 0), ('\u{064E}', 1)]);
+        // A non-mark between lam and alef blocks the ligature.
+        assert_eq!(run("ل-ا").len(), 3);
     }
 
     #[test]
