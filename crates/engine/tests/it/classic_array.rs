@@ -11,11 +11,7 @@ use serde_json::json;
 /// A session with the object `made` (an entity list) as `a` in LISP, after `code`.
 fn run(made: &str, code: &str) -> Session {
     // `entmake` goes through the DXF codec, as in the app.
-    set_entity_codec(EntityCodec {
-        groups: cadcraft_io::entity_groups,
-        entity: cadcraft_io::entity_from_groups,
-        objects: cadcraft_io::object_records,
-    });
+    set_entity_codec(EntityCodec { groups: cadcraft_io::entity_groups, entity: cadcraft_io::entity_from_groups });
     let mut s = Session::new();
     s.cmdline(&format!("(progn (setq a (progn (entmake '({made})) (entlast))) {code})")).unwrap();
     s

@@ -56,9 +56,6 @@ pub struct EntityCodec {
     pub groups: fn(&Drawing, &cadcraft_doc::Entity) -> (String, Vec<cadcraft_dxf::Tag>),
     /// An entity from a type name and groups.
     pub entity: fn(&str, &[cadcraft_dxf::Tag]) -> Option<(cadcraft_doc::Common, cadcraft_doc::EntityKind)>,
-    /// The drawing's non-graphic records as written (tables, BLOCK records, objects): each one's
-    /// type, groups after the type and role (see [`cadcraft_doc::foreign::ForeignKey`]).
-    pub objects: fn(&Drawing) -> Vec<(String, Vec<cadcraft_dxf::Tag>, Option<cadcraft_doc::foreign::ForeignKey>)>,
 }
 
 static CODEC: OnceLock<EntityCodec> = OnceLock::new();
@@ -68,6 +65,22 @@ pub fn set_entity_codec(c: EntityCodec) {
 }
 pub fn entity_codec() -> Option<&'static EntityCodec> {
     CODEC.get()
+}
+
+/// The drawing's non-graphic records as written (tables, BLOCK records, objects): each one's
+/// type, groups after the type and role (see [`cadcraft_doc::foreign::ForeignKey`]). AutoLISP's
+/// `namedobjdict`, `tblobjname` and `handent` of non-graphic objects read them (installed by the
+/// app with the DXF writer, a lower layer; kept apart from [`EntityCodec`] so hosts that only
+/// need entities don't have to provide it).
+pub type ObjectRecords = fn(&Drawing) -> Vec<(String, Vec<cadcraft_dxf::Tag>, Option<cadcraft_doc::foreign::ForeignKey>)>;
+
+static OBJECT_RECORDS: OnceLock<ObjectRecords> = OnceLock::new();
+
+pub fn set_object_records(f: ObjectRecords) {
+    let _ = OBJECT_RECORDS.set(f);
+}
+pub fn object_records() -> Option<ObjectRecords> {
+    OBJECT_RECORDS.get().copied()
 }
 
 /// COMPARE (drawing comparison).

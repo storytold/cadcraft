@@ -10,11 +10,7 @@ use cadcraft_engine::{Input, Session};
 /// prompt "P" + tag.
 fn with_block(defs: &[(&str, i32, &str)]) -> Session {
     // `entmake` goes through the DXF codec, as in the app.
-    set_entity_codec(EntityCodec {
-        groups: cadcraft_io::entity_groups,
-        entity: cadcraft_io::entity_from_groups,
-        objects: cadcraft_io::object_records,
-    });
+    set_entity_codec(EntityCodec { groups: cadcraft_io::entity_groups, entity: cadcraft_io::entity_from_groups });
     let mut s = Session::new();
     let mut code =
         String::from("(entmake '((0 . \"BLOCK\") (2 . \"K\") (70 . 2) (10 0.0 0.0 0.0))) (entmake '((0 . \"CIRCLE\") (10 0.0 0.0 0.0) (40 . 3.0)))");

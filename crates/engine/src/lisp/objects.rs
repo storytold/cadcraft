@@ -86,8 +86,7 @@ fn records(names: &mut Names, d: &Arc<Drawing>) -> Option<Arc<Records>> {
     {
         return Some(r.clone());
     }
-    let codec = crate::cmd::file::entity_codec()?;
-    let list = (codec.objects)(d);
+    let list = crate::cmd::file::object_records()?(d);
     let mut by_handle = HashMap::new();
     let mut by_role = HashMap::new();
     for (i, (_, tags, role)) in list.iter().enumerate() {

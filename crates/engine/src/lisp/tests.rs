@@ -2,14 +2,12 @@
 
 use super::value::{Value, to_text};
 use crate::Session;
-use crate::cmd::file::{EntityCodec, set_entity_codec};
+use crate::cmd::file::{EntityCodec, set_entity_codec, set_object_records};
 
 pub(super) fn session() -> Session {
-    set_entity_codec(EntityCodec {
-        groups: cadcraft_io::entity_groups,
-        entity: cadcraft_io::entity_from_groups,
-        objects: cadcraft_io::object_records,
-    });
+    set_entity_codec(EntityCodec { groups: cadcraft_io::entity_groups, entity: cadcraft_io::entity_from_groups });
+    // ... and non-graphic objects (tables, dictionaries, layouts) as DXF records.
+    set_object_records(cadcraft_io::object_records);
     Session::new()
 }
 

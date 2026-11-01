@@ -13,11 +13,7 @@ use serde_json::json;
 /// `code`.
 fn run(code: &str) -> Session {
     // `entmake` and `entget` go through the DXF codec, as in the app.
-    set_entity_codec(EntityCodec {
-        groups: cadcraft_io::entity_groups,
-        entity: cadcraft_io::entity_from_groups,
-        objects: cadcraft_io::object_records,
-    });
+    set_entity_codec(EntityCodec { groups: cadcraft_io::entity_groups, entity: cadcraft_io::entity_from_groups });
     let mut s = Session::new();
     s.doc_mut().unwrap().ensure_layer("L1");
     for (v, made) in [
