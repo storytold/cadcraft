@@ -114,11 +114,12 @@ pub(super) fn tilted(n: Vec3) -> bool {
 
 /// A run of OCS vertices at `elevation` in the plane of `n` as seen from above in the WCS. A
 /// tilted arc is an elliptical arc there, so bulged edges are flattened (within a thousandth of
-/// the run's size); straight runs keep their vertices. Also gives the mean WCS Z, the elevation
-/// the flattened run takes.
+/// the run's size, without widths); straight runs keep their vertices and widths. Also gives
+/// the mean WCS Z, the elevation the flattened run takes.
 pub(super) fn plan_of_tilted(n: Vec3, elevation: f64, vertices: &[PolyVertex], closed: bool) -> (Vec<PolyVertex>, f64) {
     let m = cadcraft_geom::Mat4::ocs(n);
-    let pts: Vec<Vec2> = if vertices.iter().all(|v| v.bulge == 0.0) {
+    let straight = vertices.iter().all(|v| v.bulge == 0.0);
+    let pts: Vec<Vec2> = if straight {
         vertices.iter().map(|v| v.p).collect()
     } else {
         let pl = cadcraft_geom::Polyline { vertices: vertices.to_vec(), closed };
@@ -133,5 +134,10 @@ pub(super) fn plan_of_tilted(n: Vec3, elevation: f64, vertices: &[PolyVertex], c
     };
     let world: Vec<Vec3> = pts.iter().map(|p| m.apply(Vec3::new(p.x, p.y, elevation))).collect();
     let z = if world.is_empty() { elevation } else { world.iter().map(|p| p.z).sum::<f64>() / world.len() as f64 };
-    (world.iter().map(|p| PolyVertex::new(p.xy())).collect(), z)
+    let out = if straight {
+        world.iter().zip(vertices).map(|(p, v)| PolyVertex { p: p.xy(), ..*v }).collect()
+    } else {
+        world.iter().map(|p| PolyVertex::new(p.xy())).collect()
+    };
+    (out, z)
 }

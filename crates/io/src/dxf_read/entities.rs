@@ -252,9 +252,14 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
                     count += v.len();
                     l.vertices = v;
                 }
-                let dir = m.apply(Vec3::new(h.angle.cos(), h.angle.sin(), 0.0)).xy();
-                if dir.len() > 1e-9 {
-                    h.angle = cadcraft_geom::norm_angle(dir.y.atan2(dir.x));
+                // The pattern keeps the spacing and dashes of its plane: only its direction turns.
+                let plan_angle = |a: f64| {
+                    let dir = m.apply(Vec3::new(a.cos(), a.sin(), 0.0)).xy();
+                    if dir.len() > 1e-9 { cadcraft_geom::norm_angle(dir.y.atan2(dir.x)) } else { a }
+                };
+                h.angle = plan_angle(h.angle);
+                if let Some(g) = h.gradient.as_mut() {
+                    g.angle = plan_angle(g.angle);
                 }
                 h.origin = m.apply(Vec3::new(h.origin.x, h.origin.y, h.elevation)).xy();
                 if count > 0 {

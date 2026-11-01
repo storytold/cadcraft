@@ -2128,6 +2128,31 @@ fn tilted_hatch_is_drawn_as_seen_from_above() {
     assert!((h.elevation - 0.5).abs() < 1e-9, "the mean height of its corners: {}", h.elevation);
 }
 
+/// A tilted gradient hatch turns its gradient's direction with its boundary: in that plane OCS +X
+/// is plan -X, so a gradient at 0 runs at 180°.
+#[test]
+fn tilted_hatch_turns_its_gradient() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nHATCH\n8\n0\n10\n0\n20\n0\n30\n0\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n2\nSOLID\n70\n1\n71\n0\n91\n1\n\
+                92\n2\n72\n0\n73\n1\n93\n4\n10\n1\n20\n0\n10\n3\n20\n0\n10\n3\n20\n2\n10\n1\n20\n2\n97\n0\n75\n0\n76\n1\n\
+                450\n1\n451\n0\n452\n0\n453\n2\n460\n0\n461\n0\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "h.dxf").unwrap();
+    let h = first(&d, |k| if let EntityKind::Hatch(h) = k { Some(h.clone()) } else { None });
+    let g = h.gradient.expect("a gradient");
+    assert!((g.angle - std::f64::consts::PI).abs() < 1e-9, "gradient angle {}", g.angle);
+}
+
+/// A straight tilted LWPOLYLINE keeps its vertex widths (groups 40/41) on the projected vertices.
+#[test]
+fn tilted_straight_lwpolyline_keeps_its_widths() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\n0\n90\n2\n70\n0\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n\
+                10\n1\n20\n0\n40\n0.5\n41\n1\n10\n3\n20\n2\n40\n1\n41\n0\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "p.dxf").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    let got: Vec<(f64, f64)> = p.vertices.iter().map(|v| (v.start_width, v.end_width)).collect();
+    assert_eq!(got, vec![(0.5, 1.0), (1.0, 0.0)]);
+    assert!((p.vertices[1].p.x + 3.0).abs() < 1e-9 && (p.vertices[1].p.y - 3f64.sqrt()).abs() < 1e-9, "{:?}", p.vertices[1].p);
+}
+
 /// Issue #1886: a LWPOLYLINE circle (two half-circle bulges) in the same tilted plane is the
 /// ellipse it looks like from above, flattened; a plain one keeps its bulges.
 #[test]
