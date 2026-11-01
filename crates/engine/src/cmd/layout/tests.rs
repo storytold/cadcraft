@@ -230,6 +230,24 @@ fn plot_goes_through_the_hook() {
     assert!(s.execute("plot", &json!({"layout": "Model", "plotArea": "window"})).is_err(), "window needs corners");
     assert!(s.execute("plot", &json!({"layout": "Layout1", "plotArea": "display"})).is_err(), "layouts plot their sheet");
     assert!(s.execute("plot", &json!({"layout": "Model", "scale": -1})).is_err());
+    // Image output holds one sheet: several `layouts` would report pages:N but write one render.
+    for out in ["x.png", "x.svg"] {
+        let e = s.execute("plot", &json!({"path": out, "layouts": ["Layout1", "Layout2"]})).unwrap_err();
+        assert!(e.to_string().contains("layouts"), "{e}");
+    }
+    assert!(s.execute("plot", &json!({"output": "png", "layouts": ["Layout1", "Layout2"]})).is_err());
+    // `layout` and `layouts` naming different sheets are refused (the reply would name one sheet and the render another); agreeing ones pass.
+    for p in
+        [json!({"output": "png", "layout": "Model", "layouts": ["Layout1"]}), json!({"output": "pdf", "layout": "Layout1", "layouts": ["Model"]})]
+    {
+        let e = s.execute("plot", &p).unwrap_err().to_string();
+        assert!(e.contains("different"), "{e}");
+    }
+    assert_eq!(s.execute("plot", &json!({"output": "png", "layout": "layout1", "layouts": ["Layout1"]})).unwrap()["layout"], "Layout1");
+    let one = s.execute("plot", &json!({"output": "png", "layouts": ["Layout1"]})).unwrap();
+    assert_eq!(one["layout"], "Layout1");
+    let text = String::from_utf8(super::super::file::base64_decode(one["data"].as_str().unwrap()).unwrap()).unwrap();
+    assert!(text.contains("Paper(\"Layout1\")"), "one sheet renders that layout, not the session space: {text}");
     #[cfg(not(target_arch = "wasm32"))]
     {
         let path = std::env::temp_dir().join(format!("cadcraft-plot-test-{}.pdf", std::process::id()));
@@ -292,4 +310,47 @@ fn mspace_edits_model_through_viewport() {
     s.execute("mspace", &json!({})).unwrap();
     s.execute("layout.set", &json!({"name": "Model"})).unwrap();
     assert!(s.state().unwrap().mspace.is_none());
+}
+
+/// The path's extension picks the plot format as EXPORT does, in any case; one that names no
+/// format (or none) is refused instead of writing a PDF under that name, and a device that writes
+/// another format is refused.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn plot_path_extension_picks_the_format_like_export() {
+    super::super::file::set_io(super::super::file::IoHooks {
+        read: |_, _| Err("no reader in tests".into()),
+        write: |_, _| Err("no writer in tests".into()),
+        plot: Some(fake_plot),
+    });
+    if io().and_then(|h| h.plot).is_none() {
+        return; // another test installed hooks without a plotter first
+    }
+    let mut s = session_with_model();
+    let dir = std::env::temp_dir().join(format!("cadcraft-plot-ext-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = |n: &str| dir.join(n).to_string_lossy().to_string();
+    let upper = s.execute("plot", &json!({"path": path("X.PNG")})).unwrap();
+    assert_eq!(upper["format"], "png", "an upper-case extension still picks png");
+    let e = s.execute("plot", &json!({"path": path("x.txt")})).unwrap_err().to_string();
+    assert!(e.contains("png") && e.contains("svg") && e.contains("pdf"), "{e}");
+    assert!(!dir.join("x.txt").exists(), "nothing written under an unknown extension");
+    let e = s.execute("plot", &json!({"path": path("noext")})).unwrap_err().to_string();
+    assert!(e.contains("png") && e.contains("svg") && e.contains("pdf"), "{e}");
+    assert!(!dir.join("noext").exists());
+    let e = s.execute("plot", &json!({"path": path("y.png"), "device": "CADCraft PDF"})).unwrap_err().to_string();
+    assert!(e.contains("writes pdf") && e.contains("png"), "{e}");
+    // A device that resolves to none, or a null/unknown `output`, names no format: the refusal stands.
+    for p in [
+        json!({"path": path("x.txt"), "device": "None"}),
+        json!({"path": path("x.txt"), "output": null}),
+        json!({"path": path("x.txt"), "output": "bogus"}),
+    ] {
+        let e = s.execute("plot", &p).unwrap_err().to_string();
+        assert!(e.contains("png") && e.contains("svg") && e.contains("pdf"), "{e}");
+        assert!(!dir.join("x.txt").exists(), "nothing written under an unknown extension");
+    }
+    // An explicit output still decides for an odd name.
+    assert_eq!(s.execute("plot", &json!({"path": path("z.txt"), "output": "pdf"})).unwrap()["format"], "pdf");
+    std::fs::remove_dir_all(&dir).ok();
 }
