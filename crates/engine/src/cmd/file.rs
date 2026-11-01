@@ -85,12 +85,13 @@ pub fn deliver() -> Option<DeliverHook> {
     DELIVER.get().copied()
 }
 
-/// How a drawing file is written: its version (`None`: the drawing's own, `$ACADVER`) and
-/// binary instead of ASCII DXF.
+/// How a drawing file is written: its version (`None`: the drawing's own, `$ACADVER`), binary
+/// instead of ASCII DXF, and Windows fonts for Linux ones ([`cadcraft_doc::Drawing::portable_fonts`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SaveAs {
     pub version: Option<Version>,
     pub binary: bool,
+    pub portable_fonts: bool,
 }
 
 /// Write a drawing with [`SaveAs`] options (installed by hosts whose writer supports them).
@@ -131,7 +132,12 @@ fn save_options(cmd: &str, p: &Value) -> Result<SaveAs> {
         Some(Value::Bool(b)) => *b,
         Some(_) => return Err(bad(cmd, "`binary` must be true or false")),
     };
-    Ok(SaveAs { version, binary })
+    let portable_fonts = match p.get("portableFonts") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err(bad(cmd, "`portableFonts` must be true or false")),
+    };
+    Ok(SaveAs { version, binary, portable_fonts })
 }
 
 /// Whether `path` names a DXF file (or has no extension, which saves as DXF).
@@ -148,7 +154,9 @@ fn write_bytes(s: &Session, cmd: &str, path: &str, opts: &SaveAs) -> Result<Vec<
     }
     // A drawing file is the drawing outside the Block Editor; an image is what is shown.
     let d: &cadcraft_doc::Drawing = if is_drawing_file(path) { s.state()?.drawing() } else { s.doc()? };
-    let r = if *opts == SaveAs::default() {
+    let copy = (opts.portable_fonts && is_drawing_file(path)).then(|| Drawing { portable_fonts: true, ..d.clone() });
+    let d = copy.as_ref().unwrap_or(d);
+    let r = if opts.version.is_none() && !opts.binary {
         (hooks.write)(d, path)
     } else {
         let w = write_as().ok_or_else(|| bad(cmd, "saving at a chosen version or as binary DXF is not available in this build"))?;
@@ -178,11 +186,13 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("saveas", "Save As...", run_saveas_reporting)
             .menu(&["File", "Save As..."])
             .key("Cmd+Shift+S")
-            .params("{path, version?: 2000|2004|2007|2010|2013|2018, binary?: bool}")
+            .params(
+                "{path, version?: 2000|2004|2007|2010|2013|2018, binary?: bool, portableFonts?: bool (Windows fonts for Linux ones, in this file)}",
+            )
             .noundo(),
         CommandSpec::new("document.switch", "Switch Drawing", run_switch).params("{index}").enabled(always).noundo(),
         CommandSpec::new("document.bytes", "Drawing as bytes", run_bytes)
-            .params("{format?: dxf, version?: 2000…2018, binary?: bool} → {data: base64}")
+            .params("{format?: dxf, version?: 2000…2018, binary?: bool, portableFonts?: bool} → {data: base64}")
             .noundo(),
         CommandSpec::new("script", "Run Script...", run_script)
             .menu(&["Tools", "Run Script..."])
@@ -395,7 +405,7 @@ fn run_closeall(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 pub(crate) fn save_to(s: &mut Session, path: &str) -> Result<usize> {
-    let opts = SaveAs { version: None, binary: s.state()?.binary_dxf && is_dxf(path) };
+    let opts = SaveAs { binary: s.state()?.binary_dxf && is_dxf(path), ..SaveAs::default() };
     save_as(s, "save", path, &opts)
 }
 
@@ -677,6 +687,7 @@ fn run_saveas(s: &mut Session, p: &Value) -> Result<Value> {
     if is_drawing_file(&path) {
         r["version"] = json!(opts.version.unwrap_or_else(|| drawing_version(s, &path)).year());
         r["binary"] = json!(opts.binary);
+        r["portableFonts"] = json!(opts.portable_fonts);
     }
     Ok(r)
 }
@@ -799,7 +810,41 @@ fn save_reporting(s: &mut Session, p: &Value, run: fn(&mut Session, &Value) -> R
     if r.get("path").and_then(Value::as_str).is_some_and(drops_unknown) {
         report_not_saved(s, &mut r, &lost);
     }
+    if r.get("path").and_then(Value::as_str).is_some_and(is_drawing_file) {
+        report_fonts(s, &mut r);
+    }
     Ok(r)
+}
+
+/// Name the text styles whose font in the saved file AutoCAD on Windows doesn't have: in the
+/// result, and at the command line when the list changed since the last save. Styles from an xref
+/// (`XREF|name`) aren't saved: AutoCAD takes them from the xref.
+fn report_fonts(s: &mut Session, r: &mut Value) {
+    use cadcraft_fonts::windows::{missing_on_windows, windows_font, written_font};
+    let portable = r.get("portableFonts").and_then(Value::as_bool).unwrap_or(false);
+    let Ok(d) = s.state().map(|st| st.drawing()) else { return };
+    let fonts: Vec<(String, String)> = d
+        .text_styles
+        .iter()
+        .filter(|t| !t.name.contains('|') && missing_on_windows(written_font(&t.font, portable)))
+        .map(|t| (t.name.clone(), t.font.clone()))
+        .collect();
+    let list = fonts.iter().map(|(style, font)| format!("{style} ({font})")).collect::<Vec<_>>().join(", ");
+    let changed = s.state_mut().map(|st| std::mem::replace(&mut st.fonts_noted, list.clone()) != list).unwrap_or(true);
+    if fonts.is_empty() {
+        return;
+    }
+    if changed {
+        let hint = if fonts.iter().any(|(_, font)| windows_font(font).is_some()) {
+            " SAVEAS with portableFonts writes Windows fonts for those that have one."
+        } else {
+            ""
+        };
+        s.echo(format!("Fonts AutoCAD on Windows doesn't have: {list}.{hint}"));
+    }
+    if let Some(o) = r.as_object_mut() {
+        o.insert("nonPortableFonts".into(), json!(fonts.iter().map(|(style, font)| json!({ "style": style, "font": font })).collect::<Vec<_>>()));
+    }
 }
 
 fn run_qsave_reporting(s: &mut Session, p: &Value) -> Result<Value> {

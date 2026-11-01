@@ -16,6 +16,7 @@ use crate::{Accept, EngineError, Input, Interactive, LeaderOrder, MLeaderOptions
 mod angular;
 mod common;
 mod edit;
+mod leader;
 mod linear;
 mod mleader;
 mod radial;
@@ -88,7 +89,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["mld"])
             .params("{points: [[arrow], ..., [landing]] ([location] with leaderType none), text?, leaderType?: straight|spline|none, block?: name, blockAttach?: center|insertion}")
             .interactive(|s| Ok(Box::new(MLeaderM::new(s)))),
-        CommandSpec::new("leader", "Leader", run_leader).alias(&["lead"]).params("{points: [[x,y]...], text?}"),
+        CommandSpec::new("leader", "Leader", run_leader)
+            .alias(&["lead"])
+            .params("{points: [[x,y]...], text?}")
+            .interactive(|_| Ok(Box::new(leader::LeaderM::default()))),
         CommandSpec::new("dimstyle.update", "Update", run_update)
             .menu(&["Dimension", "Update"])
             .params("{handles?}")
