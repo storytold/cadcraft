@@ -282,6 +282,18 @@ fn enable_ime(app: &mut CadApp, ctx: &egui::Context) {
     });
 }
 
+/// Whether the running prompt collects text (TEXT's "Enter text"), not a number or a point.
+fn collects_text(app: &CadApp) -> bool {
+    app.session.current_prompt().is_some_and(|p| p.accept.text && !p.accept.point && !p.accept.number)
+}
+
+/// Whether the keypad's comma is a decimal point here: at a prompt that reads only numbers or
+/// points, or with no prompt running. A prompt that takes any text keeps the comma, since there it
+/// separates list entries (`-LAYER` names, `-ATTEDIT` colours as `255,128,0`).
+fn keypad_types_point(app: &CadApp) -> bool {
+    !app.session.current_prompt().is_some_and(|p| p.accept.text)
+}
+
 /// Handle keyboard input destined for the command line (when no text field has focus).
 pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
     if ctx.egui_wants_keyboard_input() {
@@ -293,7 +305,7 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
     let selection = app.session.selection();
     app.cmd.watch_selection(&selection);
     let mac = ctx.os() == egui::os::OperatingSystem::Mac;
-    let text_prompt = app.session.current_prompt().is_some_and(|p| p.accept.text && !p.accept.point && !p.accept.number);
+    let text_prompt = collects_text(app);
     if text_prompt {
         enable_ime(app, ctx);
     } else {
@@ -302,7 +314,12 @@ pub fn keyboard(app: &mut CadApp, ctx: &egui::Context) {
         app.cmd.ime_on = false;
     }
     options_still_fit(app);
-    for ev in events {
+    // Numbers and points: the keypad's decimal key is a decimal point, a prompt taking text keeps its comma.
+    let mut keypad = crate::NumpadDecimal::default();
+    for mut ev in events {
+        // Asked per event: an Enter earlier in the same batch can move on to a text prompt.
+        let numeric = keypad_types_point(app);
+        keypad.step(&mut ev, numeric);
         // The options menu takes the arrows, Enter and Escape; typing closes it.
         if app.cmd.options.is_some() {
             let space = matches!(&ev, egui::Event::Text(t) if t == " ") && !text_prompt;
@@ -782,6 +799,71 @@ mod tests {
         // Back to selecting objects: the next frame lets the IME go, so it can't swallow ASCII typing.
         let out = frame(&mut app, &ctx, Vec::new());
         assert!(out.platform_output.ime.is_none());
+    }
+
+    #[test]
+    fn the_keypad_comma_is_a_point_at_the_command_line_but_not_in_a_text_prompt() {
+        use cadcraft_engine::geom::Vec2;
+        // The keypad's decimal key under a German layout on the desktop: no physical key, a comma typed.
+        let keypad = || {
+            vec![
+                Event::Key { key: Key::Comma, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE },
+                Event::Text(",".into()),
+            ]
+        };
+        let main_comma = || {
+            vec![
+                Event::Key { key: Key::Comma, physical_key: Some(Key::Comma), pressed: true, repeat: false, modifiers: egui::Modifiers::NONE },
+                Event::Text(",".into()),
+            ]
+        };
+        let ctx = egui::Context::default();
+        let mut app = CadApp::new(Session::new(), crate::Services::default());
+        frame(&mut app, &ctx, vec![Event::Text("2".into())]);
+        frame(&mut app, &ctx, keypad());
+        frame(&mut app, &ctx, vec![Event::Text("5".into())]);
+        frame(&mut app, &ctx, main_comma());
+        frame(&mut app, &ctx, vec![Event::Text("3".into())]);
+        assert_eq!(app.cmd.buffer, "2.5,3");
+
+        // A prompt collecting text keeps the comma the layout types.
+        let mut app = CadApp::new(Session::new(), crate::Services::default());
+        app.run("text", serde_json::json!({"at": [0, 0], "text": "HELLO", "height": 2.5})).unwrap();
+        app.start("textedit");
+        app.session.input(Input::Point(Vec2::new(1.0, 1.0))).unwrap();
+        frame(&mut app, &ctx, vec![Event::Text("2".into())]);
+        frame(&mut app, &ctx, keypad());
+        frame(&mut app, &ctx, vec![Event::Text("5".into())]);
+        assert_eq!(app.cmd.buffer, "2,5");
+    }
+
+    #[test]
+    fn the_keypad_comma_follows_the_prompt_in_force_when_it_is_typed() {
+        use cadcraft_engine::geom::Vec2;
+        let enter = |pressed| Event::Key { key: Key::Enter, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::NONE };
+        let keypad = Event::Key { key: Key::Comma, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+        let ctx = egui::Context::default();
+        let mut app = CadApp::new(Session::new(), crate::Services::default());
+        app.start("text");
+        app.session.input(Input::Point(Vec2::new(0.0, 0.0))).unwrap();
+        assert_eq!(app.session.current_prompt().map(|p| p.message.clone()).as_deref(), Some("Specify height"));
+        // One batch: Enter takes the default height, Enter the default rotation, then the keypad's
+        // comma arrives at "Enter text" and stays a comma.
+        frame(&mut app, &ctx, vec![enter(true), enter(false), enter(true), enter(false), keypad, Event::Text(",".into())]);
+        assert_eq!(app.session.current_prompt().map(|p| p.message.clone()).as_deref(), Some("Enter text"));
+        assert_eq!(app.cmd.buffer, ",");
+    }
+
+    #[test]
+    fn a_prompt_that_takes_names_keeps_the_keypad_comma() {
+        let keypad = Event::Key { key: Key::Comma, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+        let ctx = egui::Context::default();
+        let mut app = CadApp::new(Session::new(), crate::Services::default());
+        app.start("-layer");
+        app.session.input(Input::Keyword("New".into())).unwrap();
+        assert_eq!(app.session.current_prompt().map(|p| p.message.clone()).as_deref(), Some("Enter name list for new layer(s)"));
+        frame(&mut app, &ctx, vec![Event::Text("A".into()), keypad, Event::Text(",".into()), Event::Text("B".into())]);
+        assert_eq!(app.cmd.buffer, "A,B");
     }
 
     #[test]
