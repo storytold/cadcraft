@@ -28,19 +28,45 @@ pub fn app_drawn(x11: bool, titlebar: Option<&str>) -> Option<Layout> {
     drawn.then(|| Layout::or_default(read_button_layout().as_deref()))
 }
 
+/// Whether `CADCRAFT_TITLEBAR=app` asks for the app's frame, over Use system title bar too.
+pub fn forces_app(titlebar: Option<&str>) -> bool {
+    titlebar.map(str::trim) == Some("app")
+}
+
 /// Whether this is a Wayland session whose compositor draws no frames.
 #[cfg(all(unix, not(target_os = "macos")))]
 fn compositor_leaves_frame_to_app() -> bool {
     use wayland_client::Connection;
     use wayland_client::globals::registry_queue_init;
-    // No Wayland compositor: X11, whose window manager draws the frame (winit falls back to it).
-    let Ok(conn) = Connection::connect_to_env() else { return false };
+    // Not `Connection::connect_to_env`: given `WAYLAND_SOCKET`, it takes that descriptor (the
+    // launcher's one connection, meant for winit), removes the variable and closes it when the
+    // probe's connection drops, so winit could open no Wayland window.
+    let display = std::env::var_os("WAYLAND_DISPLAY");
+    let Some(path) = display_socket(display.as_deref(), std::env::var_os("XDG_RUNTIME_DIR").as_deref()) else {
+        // No Wayland compositor: X11, whose window manager draws the frame (winit falls back to
+        // it). Or only `WAYLAND_SOCKET`, which isn't probed; winit then draws its own frame.
+        return false;
+    };
+    let Ok(stream) = std::os::unix::net::UnixStream::connect(path) else { return false };
+    let Ok(conn) = Connection::from_socket(stream) else { return false };
     let Ok((globals, _queue)) = registry_queue_init::<Registry>(&conn) else { return false };
     let offered = globals.contents().with_list(|list| list.iter().any(|g| g.interface == "zxdg_decoration_manager_v1"));
     if !offered {
         log::info!("the Wayland compositor draws no window frames; CADCraft draws its own window buttons");
     }
     !offered
+}
+
+/// The compositor's socket named by `WAYLAND_DISPLAY`, as `wayland-client` finds it: an absolute
+/// path, or a name in `XDG_RUNTIME_DIR` (which must be absolute). `None` when either is missing.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn display_socket(display: Option<&std::ffi::OsStr>, runtime_dir: Option<&std::ffi::OsStr>) -> Option<std::path::PathBuf> {
+    let name = std::path::Path::new(display.filter(|d| !d.is_empty())?);
+    if name.is_absolute() {
+        return Some(name.to_path_buf());
+    }
+    let dir = std::path::Path::new(runtime_dir?);
+    dir.is_absolute().then(|| dir.join(name))
 }
 
 #[cfg(not(all(unix, not(target_os = "macos"))))]
@@ -86,5 +112,33 @@ impl wayland_client::Dispatch<wayland_client::protocol::wl_registry::WlRegistry,
         _: &wayland_client::Connection,
         _: &wayland_client::QueueHandle<Self>,
     ) {
+    }
+}
+
+#[cfg(all(test, unix, not(target_os = "macos")))]
+mod tests {
+    use std::ffi::OsStr;
+    use std::path::PathBuf;
+
+    use super::{display_socket, forces_app};
+
+    #[test]
+    fn the_probe_finds_the_socket_through_wayland_display_only() {
+        let some = |s: &'static str| Some(OsStr::new(s));
+        assert_eq!(display_socket(some("wayland-0"), some("/run/user/1000")), Some(PathBuf::from("/run/user/1000/wayland-0")));
+        assert_eq!(display_socket(some("/tmp/wl"), None), Some(PathBuf::from("/tmp/wl")), "an absolute WAYLAND_DISPLAY");
+        // Only WAYLAND_SOCKET (or nothing): no socket to probe, so the launcher's stays for winit.
+        assert_eq!(display_socket(None, some("/run/user/1000")), None);
+        assert_eq!(display_socket(some(""), some("/run/user/1000")), None, "empty counts as unset");
+        assert_eq!(display_socket(some("wayland-0"), None), None);
+        assert_eq!(display_socket(some("wayland-0"), some("relative")), None);
+    }
+
+    #[test]
+    fn only_titlebar_app_forces_the_apps_frame() {
+        assert!(forces_app(Some("app")));
+        assert!(forces_app(Some(" app ")));
+        assert!(!forces_app(Some("system")));
+        assert!(!forces_app(None));
     }
 }
