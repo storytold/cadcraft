@@ -4,6 +4,7 @@
 use cadcraft_engine::Session;
 use cadcraft_engine::doc::EntityKind;
 use cadcraft_engine::geom::Vec2;
+use cadcraft_engine::lisp::value::Value;
 use cadcraft_engine::units::AngleSettings;
 use serde_json::json;
 
@@ -40,8 +41,77 @@ fn polar_angles_measure_from_angbase_in_angdir() {
     assert_near(line_end(&mut s, "@10<<90"), 0.0, 10.0, "@10<<90");
     setvar(&mut s, "AUNITS", json!(3));
     assert_near(line_end(&mut s, "@10<<<3.141592653589793"), -10.0, 0.0, "@10<<<pi");
-    // A surveyor's bearing is absolute.
-    assert_near(line_end(&mut s, "@10<N90dE"), 10.0, 0.0, "@10<N90dE");
+    // A surveyor's bearing is an angle like any other, from ANGBASE in the ANGDIR sense: AutoCAD
+    // 2024 draws `@10<N45dE` at 45 degrees here, and `@10<N` east.
+    setvar(&mut s, "AUNITS", json!(0));
+    let h = 10.0 / 2f64.sqrt();
+    assert_near(line_end(&mut s, "@10<N45dE"), h, h, "@10<N45dE");
+    assert_near(line_end(&mut s, "@10<N"), 10.0, 0.0, "@10<N");
+}
+
+#[test]
+fn bearings_and_compass_points_turn_with_angbase_and_angdir() {
+    // AutoCAD 2024 (accoreconsole), LINE 0,0 to the point: (input, AUNITS, ANGBASE in degrees,
+    // ANGDIR, the direction of the line in degrees counterclockwise from east). A bearing or a
+    // compass point is an angle like any other, in any AUNITS; `<<<` measures it from east.
+    let cases = [
+        ("@10<N", 0, 0.0, 0, 90.0),
+        ("@10<N", 4, 0.0, 0, 90.0),
+        ("@10<E", 0, 0.0, 0, 0.0),
+        ("@10<W", 4, 0.0, 0, 180.0),
+        ("@10<S", 1, 0.0, 0, 270.0),
+        ("@10<N45dE", 0, 0.0, 0, 45.0),
+        ("@10<N", 4, 90.0, 1, 0.0),
+        ("@10<N45dE", 0, 90.0, 1, 45.0),
+        ("@10<N45dE", 0, 0.0, 1, 315.0),
+        ("@10<N45dE", 0, 90.0, 0, 135.0),
+        ("@10<N", 0, 90.0, 0, 180.0),
+        ("@10<E", 0, 0.0, 1, 0.0),
+        ("@10<N", 0, 0.0, 1, 270.0),
+        // ANGBASE 0.5 radians: AutoCAD drew it at 253.64789 degrees.
+        ("@10<S45dW", 0, 0.5f64.to_degrees(), 0, 225.0 + 0.5f64.to_degrees()),
+        ("@10<<<N45dE", 4, 90.0, 1, 45.0),
+        ("@10<<<N45dE", 0, 90.0, 1, 45.0),
+        ("@10<<<N", 4, 90.0, 1, 90.0),
+        ("@10<<<N", 0, 90.0, 1, 90.0),
+    ];
+    for (to, aunits, angbase, angdir, deg) in cases {
+        let mut s = Session::new();
+        setvar(&mut s, "AUNITS", json!(aunits));
+        setvar(&mut s, "ANGBASE", json!(angbase));
+        setvar(&mut s, "ANGDIR", json!(angdir));
+        let a = f64::to_radians(deg);
+        assert_near(line_end(&mut s, to), 10.0 * a.cos(), 10.0 * a.sin(), &format!("{to} AUNITS {aunits} ANGBASE {angbase} ANGDIR {angdir}"));
+    }
+    // `<<` is in degrees only: AutoCAD refuses a bearing or a compass point there.
+    let settings = AngleSettings { aunits: 0, angbase: std::f64::consts::FRAC_PI_2, clockwise: true };
+    assert_eq!(settings.direction("<<N45dE"), None);
+    assert_eq!(settings.direction("<<N"), None);
+    assert!(settings.direction("<<45").is_some_and(|a| (a - std::f64::consts::FRAC_PI_4).abs() < 1e-12));
+    // A compass point as an amount turns as ANGDIR says: ROTATE by N with ANGDIR 1 turns a line
+    // along +X to -Y in AutoCAD 2024.
+    let mut s = Session::new();
+    setvar(&mut s, "ANGDIR", json!(1));
+    s.execute("line", &json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+    for t in ["rotate", "all", "", "0,0", "N"] {
+        s.cmdline(t).unwrap();
+    }
+    match &s.doc().unwrap().model.last().unwrap().kind {
+        EntityKind::Line(l) => assert_near(l.b.xy(), 0.0, -10.0, "ROTATE by N with ANGDIR 1"),
+        k => panic!("expected a line, got {k:?}"),
+    }
+    // ANGTOF reads them the same way: AutoCAD 2024 returns 0 for "N" with ANGBASE 90, ANGDIR 1
+    // and AUNITS 3, and 4.18879020478639 for "S 30d W".
+    let mut s = Session::new();
+    setvar(&mut s, "AUNITS", json!(3));
+    setvar(&mut s, "ANGBASE", json!(90));
+    setvar(&mut s, "ANGDIR", json!(1));
+    let n = s.lisp_eval("(angtof \"N\")", false, true, Vec::new()).unwrap();
+    assert!(matches!(n, Some(Ok(Value::Real(a))) if a.abs() < 1e-12), "{n:?}");
+    let mut s = Session::new();
+    setvar(&mut s, "AUNITS", json!(4));
+    let sw = s.lisp_eval("(angtof \"S 30d W\")", false, true, Vec::new()).unwrap();
+    assert!(matches!(sw, Some(Ok(Value::Real(a))) if (a - 4.18879020478639).abs() < 1e-12), "{sw:?}");
 }
 
 #[test]

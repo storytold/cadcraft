@@ -23,7 +23,7 @@ pub(super) fn parse_entities(
         {
             c.plot_style = n;
         }
-        // More entities from this record (the faces of a polyface or polygon mesh).
+        // More entities from this record (the faces of a polygon mesh).
         let mut extra: Vec<EntityKind> = Vec::new();
         i += 1;
         match kind.as_str() {

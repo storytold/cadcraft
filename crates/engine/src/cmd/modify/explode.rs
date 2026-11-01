@@ -151,6 +151,12 @@ pub(crate) fn explode_kind(d: &cadcraft_doc::Drawing, e: &Entity) -> Option<Vec<
                 })
                 .collect(),
         ),
+        // A polyface mesh explodes into its 3D faces; one without any stays as it is.
+        EntityKind::PolyfaceMesh(m) => {
+            let faces = m.faces3d();
+            (!faces.is_empty())
+                .then(|| faces.into_iter().map(|f| Entity { handle: Handle(0), common: e.common.clone(), kind: EntityKind::Face3d(f) }).collect())
+        }
         EntityKind::MLine(m) => Some(crate::cmd::draw2::mline::explode(e, m)),
         EntityKind::MText(m) => Some(explode_mtext(e, m)),
         // A region explodes into its boundary's lines and arcs.

@@ -132,6 +132,10 @@ pub struct Drawing {
     /// Records of the file this drawing was read from that the reader could not place (a damaged
     /// file), counted by the section they came from. Never written to a file.
     pub skipped_records: BTreeMap<String, usize>,
+    /// A save option, set on the copy SAVEAS `portableFonts` writes: the file gets Windows fonts
+    /// for the Linux fonts of text styles, and each style keeps its own in CADCraft xdata, so the
+    /// drawing reopens with it. Never set on an open drawing.
+    pub portable_fonts: bool,
 }
 
 impl Default for Drawing {
@@ -191,6 +195,7 @@ impl Drawing {
             read_notes: Vec::new(),
             refedit: None,
             skipped_records: BTreeMap::new(),
+            portable_fonts: false,
         }
     }
 
