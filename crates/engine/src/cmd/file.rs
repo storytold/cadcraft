@@ -172,6 +172,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{path} | {data: base64, name} → {index, entities?, warnings: what reading left out}")
             .enabled(always)
             .noundo(),
+        CommandSpec::new("whohas", "Who Has", run_whohas)
+            .params("{path?: a drawing file (default: the current drawing's)} → {path, holder: {user, host, instance, opened} | null}")
+            .enabled(always)
+            .noundo(),
         CommandSpec::new("close", "Close", run_close).menu(&["File", "Close"]).key("Cmd+W").params("{index?}").noundo(),
         CommandSpec::new("closeall", "Close All", run_closeall).menu(&["File", "Close All"]).enabled(always).noundo(),
         CommandSpec::new("qsave", "Save", run_qsave_reporting).menu(&["File", "Save"]).key("Cmd+S").alias(&["save"]).params("{path?}").noundo(),
@@ -364,6 +368,34 @@ fn run_open(s: &mut Session, p: &Value) -> Result<Value> {
     let i = open_bytes(s, &bytes, name, None)?;
     super::blocks::xref::after_open(s, i);
     Ok(opened(s, i, false))
+}
+
+/// WHOHAS: who has a drawing open, from its lock file ([`crate::drawlock`]): the current
+/// drawing's, or the file `path`.
+fn run_whohas(s: &mut Session, p: &Value) -> Result<Value> {
+    // Left out (or null): the current drawing's file; anything but text is an error, not the
+    // current drawing asked about by mistake.
+    let path = match p.get("path") {
+        None | Some(Value::Null) => s.state()?.path.clone().ok_or_else(|| bad("whohas", "the drawing has no file yet; pass `path`"))?,
+        Some(Value::String(path)) => path.clone(),
+        Some(_) => return Err(bad("whohas", "`path` must be a file path")),
+    };
+    // The web has no lock files to look at: an error, not "nobody has it open".
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = path;
+        Err(bad("whohas", "drawing locks are not available on the web"))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let holder = crate::drawlock::holder(std::path::Path::new(&path));
+        let msg = match &holder {
+            Some(h) => format!("{} is open by {}.", file_name(&path), h.describe()),
+            None => format!("Nobody has {} open (no current lock).", file_name(&path)),
+        };
+        s.echo(msg);
+        Ok(json!({ "path": path, "holder": holder }))
+    }
 }
 
 /// `close [index]`: cancel the running command, remove the drawing (default: active), keep the active index valid, and bump the document epoch; an unknown index is an error.
