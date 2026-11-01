@@ -476,6 +476,7 @@ impl DimStyle {
         match field {
             "textHeight" | "tolScale" => x.is_some_and(|x| x <= 0.0),
             "scale" | "arrowSize" | "tickSize" | "fixedExtLength" => x.is_some_and(|x| x < 0.0),
+            "decimals" | "altDecimals" | "tolDecimals" => x.is_some_and(|x| !(0.0..=8.0).contains(&x)),
             "fit" | "angularZeroSuppression" => x.is_some_and(|x| x > 3.0),
             "textMove" | "tolJust" | "arcSymbol" | "textFill" => x.is_some_and(|x| x > 2.0),
             "dimLineweight" | "extLineweight" => x.is_some_and(|x| !(-3.0..=211.0).contains(&x)),
