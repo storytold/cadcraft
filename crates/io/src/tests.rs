@@ -2109,6 +2109,135 @@ fn mirrored_hatch_extrusion_flips_boundary() {
     }
 }
 
+/// Issue #1886: a HATCH in a tilted plane (a terrain face) is drawn as seen from above, not turned
+/// about the origin. With extrusion (0, 0.5, -√3/2) the OCS axes are x = (-1,0,0) and
+/// y = (0, √3/2, 1/2): the square (1,0)..(3,2) lies over (-3,0)..(-1,√3), from z 0 up to z 1.
+/// Before, the negative Z counted as a plain mirror and only x was flipped.
+#[test]
+fn tilted_hatch_is_drawn_as_seen_from_above() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nHATCH\n8\n0\n10\n0\n20\n0\n30\n0\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n2\nSOLID\n70\n1\n71\n0\n91\n1\n\
+                92\n2\n72\n0\n73\n1\n93\n4\n10\n1\n20\n0\n10\n3\n20\n0\n10\n3\n20\n2\n10\n1\n20\n2\n97\n0\n75\n0\n76\n1\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "h.dxf").unwrap();
+    let b = d.extents(&Space::Model);
+    for (got, want) in [(b.min.x, -3.0), (b.min.y, 0.0), (b.max.x, -1.0), (b.max.y, 3f64.sqrt())] {
+        assert!((got - want).abs() < 1e-9, "extents {b:?}");
+    }
+    let e = d.model.iter().next().unwrap();
+    assert_eq!(e.common.extrusion, Vec3::Z, "its points are plan coordinates now");
+    let EntityKind::Hatch(h) = &e.kind else { panic!("not a hatch") };
+    assert!((h.elevation - 0.5).abs() < 1e-9, "the mean height of its corners: {}", h.elevation);
+}
+
+/// A tilted gradient hatch turns its gradient's direction with its boundary: in that plane OCS +X
+/// is plan -X, so a gradient at 0 runs at 180°.
+#[test]
+fn tilted_hatch_turns_its_gradient() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nHATCH\n8\n0\n10\n0\n20\n0\n30\n0\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n2\nSOLID\n70\n1\n71\n0\n91\n1\n\
+                92\n2\n72\n0\n73\n1\n93\n4\n10\n1\n20\n0\n10\n3\n20\n0\n10\n3\n20\n2\n10\n1\n20\n2\n97\n0\n75\n0\n76\n1\n\
+                450\n1\n451\n0\n452\n0\n453\n2\n460\n0\n461\n0\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "h.dxf").unwrap();
+    let h = first(&d, |k| if let EntityKind::Hatch(h) = k { Some(h.clone()) } else { None });
+    let g = h.gradient.expect("a gradient");
+    assert!((g.angle - std::f64::consts::PI).abs() < 1e-9, "gradient angle {}", g.angle);
+}
+
+/// A straight tilted LWPOLYLINE keeps its vertex widths (groups 40/41) on the projected vertices.
+#[test]
+fn tilted_straight_lwpolyline_keeps_its_widths() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\n0\n90\n2\n70\n0\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n\
+                10\n1\n20\n0\n40\n0.5\n41\n1\n10\n3\n20\n2\n40\n1\n41\n0\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "p.dxf").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    let got: Vec<(f64, f64)> = p.vertices.iter().map(|v| (v.start_width, v.end_width)).collect();
+    assert_eq!(got, vec![(0.5, 1.0), (1.0, 0.0)]);
+    assert!((p.vertices[1].p.x + 3.0).abs() < 1e-9 && (p.vertices[1].p.y - 3f64.sqrt()).abs() < 1e-9, "{:?}", p.vertices[1].p);
+}
+
+/// A tilted LWPOLYLINE mixing straight and bulged edges keeps the widths of its straight edges;
+/// only the points of the flattened arc have none.
+#[test]
+fn tilted_mixed_lwpolyline_keeps_its_straight_widths() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\n0\n90\n3\n70\n0\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n\
+                10\n0\n20\n0\n40\n0.5\n41\n1\n10\n2\n20\n0\n42\n1\n10\n4\n20\n0\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "p.dxf").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    let v = &p.vertices;
+    assert!(v.len() > 4 && v.iter().all(|v| v.bulge == 0.0), "{} vertices", v.len());
+    assert_eq!((v[0].start_width, v[0].end_width), (0.5, 1.0), "the straight edge keeps its widths");
+    assert!(v[1..].iter().all(|v| v.start_width == 0.0 && v.end_width == 0.0), "the flattened arc has none");
+    assert!((v[1].p.x + 2.0).abs() < 1e-9 && (v[v.len() - 1].p.x + 4.0).abs() < 1e-9, "{:?} {:?}", v[1].p, v[v.len() - 1].p);
+}
+
+/// A small arc next to a long straight edge stays an arc: its flattening tolerance comes from
+/// its own size. The half circle of radius 1 bulges a whole unit off its chord.
+#[test]
+fn tilted_small_arc_beside_a_long_edge_stays_curved() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\n0\n90\n3\n70\n0\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n\
+                10\n0\n20\n0\n10\n10000\n20\n0\n42\n1\n10\n10002\n20\n0\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "p.dxf").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    assert!(p.vertices.len() > 8, "{} vertices", p.vertices.len());
+    // OCS y maps to plan y times √3/2: the arc's far point is about 0.866 off the chord.
+    let off = p.vertices.iter().map(|v| v.p.y.abs()).fold(0.0, f64::max);
+    assert!((off - 3f64.sqrt() / 2.0).abs() < 1e-2, "the arc reaches {off} off its chord");
+}
+
+/// A tilted tapered arc spreads its width evenly over its flattened segments: from 1 at its
+/// start to 3 at its end, each segment starting where the last one ended.
+#[test]
+fn tilted_tapered_arc_spreads_its_width() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\n0\n90\n2\n70\n0\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n\
+                10\n0\n20\n0\n40\n1\n41\n3\n42\n1\n10\n2\n20\n0\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "p.dxf").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    let v = &p.vertices;
+    assert!(v.len() > 4, "{} vertices", v.len());
+    let arc = &v[..v.len() - 1];
+    assert_eq!(arc.first().map(|v| v.start_width), Some(1.0));
+    assert!(arc.last().is_some_and(|v| (v.end_width - 3.0).abs() < 1e-9), "{:?}", arc.last());
+    assert!(arc.windows(2).all(|w| (w[0].end_width - w[1].start_width).abs() < 1e-9 && w[0].start_width < w[1].start_width));
+}
+
+/// Far from the origin even a tilt under a thousandth moves an object visibly, so it is
+/// projected: with normal (0, 0.0009, 1) a polyline at elevation 1,000,000 lies about 900 units
+/// up from its OCS y. Noise in a plan normal moves nothing visible and keeps the arcs.
+#[test]
+fn a_slight_tilt_far_away_is_projected_and_noise_is_not() {
+    let poly = |n: &str, more: &str| {
+        format!("0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\n0\n90\n2\n70\n0\n38\n1000000\n{n}10\n0\n20\n0\n{more}10\n1\n20\n0\n0\nENDSEC\n0\nEOF\n")
+    };
+    let d = read(poly("210\n0\n220\n0.0009\n230\n1\n", "").as_bytes(), "p.dxf").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    let ny = 0.0009 / (1.0f64 + 0.0009 * 0.0009).sqrt();
+    assert!((p.vertices[0].p.y - ny * 1.0e6).abs() < 1e-6, "{:?}", p.vertices[0].p);
+    assert_eq!(d.model.iter().next().unwrap().common.extrusion, Vec3::Z);
+    let d = read(poly("210\n0\n220\n1e-15\n230\n1\n", "42\n1\n").as_bytes(), "p.dxf").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    assert_eq!(p.vertices.iter().map(|v| v.bulge).collect::<Vec<_>>(), vec![1.0, 0.0], "a plan polyline keeps its arc");
+}
+
+/// Issue #1886: a LWPOLYLINE circle (two half-circle bulges) in the same tilted plane is the
+/// ellipse it looks like from above, flattened; a plain one keeps its bulges.
+#[test]
+fn tilted_lwpolyline_is_drawn_as_seen_from_above() {
+    let circle = |n: &str| {
+        format!("0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\n0\n90\n2\n70\n1\n{n}10\n1\n20\n0\n42\n1\n10\n-1\n20\n0\n42\n1\n0\nENDSEC\n0\nEOF\n")
+    };
+    let d = read(circle("210\n0\n220\n0.5\n230\n-0.8660254037844386\n").as_bytes(), "p.dxf").unwrap();
+    let b = d.extents(&Space::Model);
+    let ry = 3f64.sqrt() / 2.0;
+    for (got, want) in [(b.min.x, -1.0), (b.min.y, -ry), (b.max.x, 1.0), (b.max.y, ry)] {
+        assert!((got - want).abs() < 5e-3, "extents {b:?}");
+    }
+    let e = d.model.iter().next().unwrap();
+    assert_eq!(e.common.extrusion, Vec3::Z);
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    assert!(p.vertices.len() > 8 && p.vertices.iter().all(|v| v.bulge == 0.0), "{} vertices", p.vertices.len());
+    let plain = read(circle("").as_bytes(), "p.dxf").unwrap();
+    let p = first(&plain, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    assert_eq!(p.vertices.iter().map(|v| v.bulge).collect::<Vec<_>>(), vec![1.0, 1.0]);
+}
+
 /// The model extents of a one-loop solid HATCH whose edge boundary is `edges` (group 72 onwards).
 fn hatch_edge_extents(edges: &str) -> Bounds2 {
     let n = edges.matches("72\n").count();
