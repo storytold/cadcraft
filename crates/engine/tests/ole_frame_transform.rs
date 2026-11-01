@@ -142,3 +142,41 @@ fn move_leaves_ole_data_that_is_not_the_frames_corners_alone() {
     assert_eq!(data_tags(&s), before);
     assert_eq!(corners(&s)[0].1, "40", "the corner groups still move");
 }
+
+#[test]
+fn mocoro_refuses_before_it_changes_anything() {
+    let (mut s, h) = session();
+    let before = corners(&s);
+    let undo = s.state().unwrap().undo.len();
+    let ops = json!([{ "move": [10, 5] }, { "copy": [20, 0] }, { "rotate": 30 }]);
+    let e = s.execute("mocoro", &json!({ "handles": [h], "base": [0, 0], "ops": ops })).expect_err("rotate");
+    assert!(e.to_string().contains("OLE object"), "{e}");
+    assert_eq!(corners(&s), before, "the earlier move and copy were not applied");
+    assert_eq!(s.doc().unwrap().model.len(), 1);
+    assert_eq!(s.state().unwrap().undo.len(), undo);
+}
+
+#[test]
+fn a_locked_ole_frame_does_not_block_an_in_place_rotation() {
+    let tag = |code: i32, v: &str| RawTag { code, value: v.into() };
+    let mut d = Drawing::new_imperial();
+    d.ensure_layer("L");
+    let common = Common { layer: "L".into(), ..Common::default() };
+    let kind =
+        EntityKind::Unknown(Unknown { dxf_type: "OLE2FRAME".into(), tags: vec![tag(10, "30"), tag(20, "-19"), tag(11, "35"), tag(21, "-22")] });
+    let ole = d.add(&Space::Model, common, kind).unwrap();
+    if let Some(l) = d.layer_mut("L") {
+        l.locked = true;
+    }
+    let mut s = Session::empty();
+    s.open_drawing(d, "ole.dxf", None);
+    let ln = s.execute("line", &json!({ "points": [[0, 0], [10, 0]] })).unwrap();
+    let ln = ln["handle"].as_str().or_else(|| ln["handles"][0].as_str()).unwrap().to_string();
+    let before = corners(&s);
+    s.execute("rotate", &json!({ "handles": [ln.clone(), ole.hex()], "base": [0, 0], "angle": 90 })).unwrap();
+    assert_eq!(corners(&s), before, "the locked frame is left alone");
+    let d = s.doc().unwrap();
+    let e = d.entity(cadcraft_engine::doc::Handle::parse_hex(&ln).unwrap()).unwrap();
+    let cadcraft_engine::doc::EntityKind::Line(l) = &e.kind else { panic!("line") };
+    assert!((l.b.y - 10.0).abs() < 1e-9 && l.b.x.abs() < 1e-9, "{l:?}");
+}
