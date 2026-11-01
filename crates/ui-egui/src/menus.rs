@@ -716,11 +716,18 @@ fn switch_on_hover(ctx: &egui::Context, titles: &[egui::Response]) {
     }
 }
 
-/// Activate a menu command. QuickCalc toggles transparently; other items clear pending
-/// command-line text and start their command interactively.
+/// Activate a menu command. QuickCalc toggles transparently, and Reference Manager closes its
+/// palette when it is open (typed XREF only opens it); other items clear pending command-line
+/// text and start their command interactively.
 pub fn activate(app: &mut CadApp, id: &str) {
     if id == "ui.toggle.quickcalc" {
         run_transparent(app, id);
+        return;
+    }
+    if id == "xref" && app.ui.docking.layout.contains(&crate::docking::Panel::ExternalRefs) {
+        if let Err(e) = crate::xrefs::close_palette(app) {
+            app.set_status(e);
+        }
         return;
     }
     app.cmd.buffer.clear();
