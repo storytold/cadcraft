@@ -582,6 +582,8 @@ fn run_inspect(s: &mut Session, p: &Value) -> Result<Value> {
         "view": { "center": [st.view().center.x, st.view().center.y], "height": st.view().height },
         // Records of the file the drawing came from that the reader could not place.
         "skipped": { "count": d.skipped_records.values().fold(0usize, |a, n| a.saturating_add(*n)), "sections": d.skipped_records },
+        // What reading the file left out, in words (a damaged DWG's unreadable object records).
+        "readNotes": d.read_notes,
     });
     if bool_or(p, "entities", true)
         && let (Some(o), Some(store)) = (out.as_object_mut(), d.space(&space))
