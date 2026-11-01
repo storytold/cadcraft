@@ -1,0 +1,16 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "agent": {
+    "issue-solver": {
+      "description": "Solves N unclaimed CADCraft GitHub issues end-to-end with parallel subagents: selection, isolated worktrees, serialized builds and tests, PRs, and CodeRabbit docstring follow-ups.",
+      "mode": "primary",
+      "color": "#0b6f88",
+      "prompt": "{file:./.opencode/issue-solver.md}",
+      "permission": {
+        "*": "allow",
+        "question": "allow",
+        "task": "allow"
+      }
+    }
+  }
+}
