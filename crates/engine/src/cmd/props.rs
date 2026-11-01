@@ -267,11 +267,7 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
         .map(|v| v.as_f64().filter(|x| x.is_finite()).ok_or_else(|| bad("properties.set", "thickness must be a finite number")))
         .transpose()?;
     let lw = p.get("lineweight").map(|v| super::layer::parse_lw(v).ok_or_else(|| bad("properties.set", "bad lineweight"))).transpose()?;
-    if hs.is_empty() {
-        // Every object was left out: the drawing stays as it was, with no undo step.
-        return Ok(left_out.result(0));
-    }
-    let d = s.doc_mut()?;
+    let d = s.doc()?;
     // An explicit object linetype must be ByLayer, ByBlock or a loaded definition (as `linetype current` requires).
     let linetype = str_param(p, "linetype")
         .map(|n| {
@@ -282,13 +278,18 @@ fn run_set(s: &mut Session, p: &Value) -> Result<Value> {
             }
         })
         .transpose()?;
-    if let Some(l) = str_param(p, "layer") {
-        d.ensure_layer(l);
-    }
     let dim_style = str_param(p, "dimStyle")
         .map(|n| d.dim_style(n).map(|st| st.name.clone()).ok_or_else(|| bad("properties.set", format!("dimension style `{n}` not found"))))
         .transpose()?;
     let dim_over = dim_overrides(p)?;
+    if hs.is_empty() {
+        // Every object was left out: the drawing stays as it was, with no undo step.
+        return Ok(left_out.result(0));
+    }
+    let d = s.doc_mut()?;
+    if let Some(l) = str_param(p, "layer") {
+        d.ensure_layer(l);
+    }
     let anno_scale = d.current_anno_scale();
     let common = CommonEntityProperties { anno_scale: &anno_scale, color, linetype: linetype.as_deref(), lineweight: lw, transparency, thickness };
     for h in &hs {

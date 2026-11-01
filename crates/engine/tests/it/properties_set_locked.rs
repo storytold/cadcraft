@@ -64,8 +64,18 @@ fn with_every_object_locked_nothing_changes() {
     assert_eq!(colors(&s), [Color::ByLayer; 3]);
     assert!(s.doc().unwrap().layer("NEW").is_none(), "no layer is made");
     assert_eq!(s.state().unwrap().undo.len(), undo, "no undo step");
-    // A bad value is still refused.
-    assert!(s.execute("properties.set", &json!({ "handles": [b.hex()], "color": "nonsense" })).is_err());
+    // A bad value is still refused, whichever it is.
+    for bad in [
+        json!({ "color": "nonsense" }),
+        json!({ "linetype": "NOT_LOADED" }),
+        json!({ "dimStyle": "Missing" }),
+        json!({ "textHeight": -1 }),
+        json!({ "precision": 9 }),
+    ] {
+        let mut p = bad.clone();
+        p["handles"] = json!([b.hex()]);
+        assert!(s.execute("properties.set", &p).is_err(), "{bad}");
+    }
     // CHPROP's JSON form is properties.set.
     let r = s.execute("chprop", &json!({ "handles": [b.hex()], "color": 4 })).unwrap();
     assert_eq!(counts(&r), (Some(0), Some(1)), "{r}");
