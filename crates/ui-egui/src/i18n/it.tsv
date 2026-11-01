@@ -81,6 +81,8 @@ menu	Modify	Edita
 	Array	Serie
 	Attach	Associa
 	Attribute	Attributo
+	Select all	Seleziona tutti
+	{n} layouts selected: a change applies to all of them	{n} layout selezionati: una modifica vale per tutti
 	Attribute Definition	Definizione di attributo
 	Attribute Display	Visualizzazione attributi
 	Audit	Controlla
