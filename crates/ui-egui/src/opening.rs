@@ -253,6 +253,20 @@ mod tests {
         assert!(h.query_by_label(refused).is_none(), "on top, Escape closes it");
     }
 
+    /// A deep path with no spaces wraps inside the alert instead of widening it off the screen.
+    #[test]
+    fn a_long_path_wraps_inside_the_alert() {
+        let mut app = CadApp::new(Session::new(), Services::default());
+        let deep = format!("open: C:/{}drawing.dxf: not a drawing", "very-long-folder-name/".repeat(20));
+        app.open_failed(deep.as_str());
+        let mut h =
+            Harness::builder().with_size(vec2(800.0, 600.0)).build_ui_state(|ui, app: &mut CadApp| super::failed_alert(app, &ui.ctx().clone()), app);
+        h.run_steps(3);
+        let r = h.get_by_label(&deep).rect();
+        assert!(r.width() <= 440.0 && r.left() >= 0.0 && r.right() <= 800.0, "the path runs out of the alert: {r:?}");
+        assert!(r.height() > 20.0, "it wraps onto several lines: {r:?}");
+    }
+
     /// A "Save changes?" prompt reads Escape whether or not it is on top, so the alert waits
     /// until it is answered: one Escape cancels the close and leaves the alert, which then shows.
     #[test]
