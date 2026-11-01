@@ -106,16 +106,56 @@ pub(super) fn ocs_n(n: Vec3, p: Vec3) -> Vec3 {
     if (n.z - 1.0).abs() < 1e-12 && n.x.abs() < 1e-12 && n.y.abs() < 1e-12 { p } else { cadcraft_geom::Mat4::ocs(n).apply(p) }
 }
 
-/// Whether an extrusion tilts an object's plane off the XY plane (neither the Z axis nor the Z
-/// axis turned over, as MIRROR leaves it, allowing for noise in x and y like INSERT does).
-pub(super) fn tilted(n: Vec3) -> bool {
-    n.is_finite() && n.x.hypot(n.y) > 1e-3 * n.z.abs()
+/// Whether an object with OCS points `pts` (x, y and elevation) lies in a plane tilted off the
+/// XY plane: drawing its points as plan coordinates (x flipped for a mirrored plane, as the
+/// readers do) would put some of them off their place seen from above by more than a
+/// billionth of the object's size and distance from the origin. A normal that is the Z axis
+/// or the Z axis turned over moves nothing, and noise in one moves points by a negligible
+/// amount, so those objects keep their arcs; however small the tilt, an object far enough from
+/// the origin to be moved visibly is projected.
+pub(super) fn tilted(n: Vec3, pts: impl IntoIterator<Item = Vec3>) -> bool {
+    if !n.is_finite() || n.len() < 1e-12 {
+        return false;
+    }
+    let m = cadcraft_geom::Mat4::ocs(n);
+    let flip = if n.z < 0.0 { -1.0 } else { 1.0 };
+    let (mut moved, mut reach) = (0.0f64, 1.0f64);
+    for p in pts.into_iter().filter(|p| p.is_finite()) {
+        let shown = Vec2::new(flip * p.x, p.y);
+        moved = moved.max((m.apply(p).xy() - shown).len());
+        reach = reach.max(p.x.abs()).max(p.y.abs()).max(p.z.abs());
+    }
+    moved > 1e-9 * reach
+}
+
+/// Points along a run of OCS vertices at `elevation`, for [`tilted`]: its vertices and, on its
+/// arcs, points between them (an arc can bulge where its ends don't move).
+pub(super) fn run_points(vertices: &[PolyVertex], elevation: f64, closed: bool) -> Vec<Vec3> {
+    let mut pts = Vec::with_capacity(vertices.len());
+    for (i, v) in vertices.iter().enumerate() {
+        pts.push(v.p);
+        let next = if i + 1 < vertices.len() {
+            vertices.get(i + 1)
+        } else if closed {
+            vertices.first()
+        } else {
+            None
+        };
+        if let Some(w) = next.filter(|_| v.bulge != 0.0) {
+            // Each arc sampled from its own size, so a small one next to a long edge counts too.
+            let arc = cadcraft_geom::Polyline { vertices: vec![*v, PolyVertex::new(w.p)], closed: false };
+            let b = arc.bounds();
+            let size = (b.max - b.min).len();
+            pts.extend(arc.tessellate(if size.is_finite() && size > 0.0 { size * 0.05 } else { 1e-6 }));
+        }
+    }
+    pts.into_iter().map(|p| p.to3(elevation)).collect()
 }
 
 /// A run of OCS vertices at `elevation` in the plane of `n` as seen from above in the WCS. A
 /// tilted arc is an elliptical arc there, so each bulged edge is flattened (within a thousandth
-/// of the edge's own size), its points without widths; vertices that start straight edges keep their
-/// widths. Also gives the mean WCS Z, the elevation the flattened run takes.
+/// of the edge's own size), its width spread evenly along it; vertices that start straight
+/// edges keep their widths. Also gives the mean WCS Z, the elevation the flattened run takes.
 pub(super) fn plan_of_tilted(n: Vec3, elevation: f64, vertices: &[PolyVertex], closed: bool) -> (Vec<PolyVertex>, f64) {
     let m = cadcraft_geom::Mat4::ocs(n);
     let mut local: Vec<PolyVertex> = Vec::with_capacity(vertices.len());
@@ -129,14 +169,21 @@ pub(super) fn plan_of_tilted(n: Vec3, elevation: f64, vertices: &[PolyVertex], c
         };
         match next {
             Some(w) if v.bulge != 0.0 => {
-                local.push(PolyVertex::new(v.p));
                 let arc = cadcraft_geom::Polyline { vertices: vec![*v, PolyVertex::new(w.p)], closed: false };
                 // From the edge's own size, so a long edge elsewhere can't flatten a small arc away.
                 let b = arc.bounds();
                 let size = (b.max - b.min).len();
                 let edge = arc.tessellate(if size.is_finite() && size > 0.0 { size * 1e-3 } else { 1e-6 });
-                // The edge's own ends are this vertex and the next one.
-                local.extend(edge.iter().skip(1).take(edge.len().saturating_sub(2)).map(|p| PolyVertex::new(*p)));
+                // The edge runs from this vertex to the next one in equal turns of its arc; its
+                // width changes evenly along it, as a tapered segment's does.
+                let steps = edge.len().saturating_sub(1).max(1);
+                let width = |k: usize| v.start_width + (v.end_width - v.start_width) * k as f64 / steps as f64;
+                local.extend(edge.iter().take(steps).enumerate().map(|(k, p)| PolyVertex {
+                    p: *p,
+                    bulge: 0.0,
+                    start_width: width(k),
+                    end_width: width(k + 1),
+                }));
             }
             _ => local.push(PolyVertex { bulge: 0.0, ..*v }),
         }

@@ -2182,6 +2182,40 @@ fn tilted_small_arc_beside_a_long_edge_stays_curved() {
     assert!((off - 3f64.sqrt() / 2.0).abs() < 1e-2, "the arc reaches {off} off its chord");
 }
 
+/// A tilted tapered arc spreads its width evenly over its flattened segments: from 1 at its
+/// start to 3 at its end, each segment starting where the last one ended.
+#[test]
+fn tilted_tapered_arc_spreads_its_width() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\n0\n90\n2\n70\n0\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n\
+                10\n0\n20\n0\n40\n1\n41\n3\n42\n1\n10\n2\n20\n0\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "p.dxf").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    let v = &p.vertices;
+    assert!(v.len() > 4, "{} vertices", v.len());
+    let arc = &v[..v.len() - 1];
+    assert_eq!(arc.first().map(|v| v.start_width), Some(1.0));
+    assert!(arc.last().is_some_and(|v| (v.end_width - 3.0).abs() < 1e-9), "{:?}", arc.last());
+    assert!(arc.windows(2).all(|w| (w[0].end_width - w[1].start_width).abs() < 1e-9 && w[0].start_width < w[1].start_width));
+}
+
+/// Far from the origin even a tilt under a thousandth moves an object visibly, so it is
+/// projected: with normal (0, 0.0009, 1) a polyline at elevation 1,000,000 lies about 900 units
+/// up from its OCS y. Noise in a plan normal moves nothing visible and keeps the arcs.
+#[test]
+fn a_slight_tilt_far_away_is_projected_and_noise_is_not() {
+    let poly = |n: &str, more: &str| {
+        format!("0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\n0\n90\n2\n70\n0\n38\n1000000\n{n}10\n0\n20\n0\n{more}10\n1\n20\n0\n0\nENDSEC\n0\nEOF\n")
+    };
+    let d = read(poly("210\n0\n220\n0.0009\n230\n1\n", "").as_bytes(), "p.dxf").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    let ny = 0.0009 / (1.0f64 + 0.0009 * 0.0009).sqrt();
+    assert!((p.vertices[0].p.y - ny * 1.0e6).abs() < 1e-6, "{:?}", p.vertices[0].p);
+    assert_eq!(d.model.iter().next().unwrap().common.extrusion, Vec3::Z);
+    let d = read(poly("210\n0\n220\n1e-15\n230\n1\n", "42\n1\n").as_bytes(), "p.dxf").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    assert_eq!(p.vertices.iter().map(|v| v.bulge).collect::<Vec<_>>(), vec![1.0, 0.0], "a plan polyline keeps its arc");
+}
+
 /// Issue #1886: a LWPOLYLINE circle (two half-circle bulges) in the same tilted plane is the
 /// ellipse it looks like from above, flattened; a plain one keeps its bulges.
 #[test]

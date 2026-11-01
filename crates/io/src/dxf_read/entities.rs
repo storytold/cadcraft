@@ -1,4 +1,4 @@
-use super::common::{T, common, ocs, plan_of_tilted, tilted};
+use super::common::{T, common, ocs, plan_of_tilted, run_points, tilted};
 use super::hatch::hatch;
 use super::text::{attdef, attrib_modes, attrib_props, mtext_from, multiline_attrib, split_embedded, text_from};
 use super::{
@@ -45,7 +45,7 @@ fn ellipse(c: &Common, t: &T) -> Ellipse {
 }
 
 /// A LWPOLYLINE, or the region CADCraft wrote as one.
-fn lwpolyline(tags: &[Tag], c: &Common, t: &T) -> Option<EntityKind> {
+fn lwpolyline(tags: &[Tag], c: &mut Common, t: &T) -> Option<EntityKind> {
     let mut verts = Vec::new();
     let mut cur: Option<PolyVertex> = None;
     for tg in tags {
@@ -82,9 +82,11 @@ fn lwpolyline(tags: &[Tag], c: &Common, t: &T) -> Option<EntityKind> {
     verts.extend(cur);
     let flags = t.i(70).unwrap_or(0);
     let mut elevation = t.fd(38, 0.0);
-    if tilted(c.extrusion) {
-        // In a tilted plane: drawn as seen from above, at the vertices' mean height.
+    if tilted(c.extrusion, run_points(&verts, elevation, flags & 1 != 0)) {
+        // In a tilted plane: drawn as seen from above, at the vertices' mean height, its
+        // vertices now plan coordinates.
         (verts, elevation) = plan_of_tilted(c.extrusion, elevation, &verts, flags & 1 != 0);
+        c.extrusion = Vec3::Z;
     } else if c.extrusion.z < 0.0 {
         for v in &mut verts {
             v.p.x = -v.p.x;
@@ -132,14 +134,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
         "CIRCLE" => EntityKind::Circle(Circle { center: ocs(&c, t.p(10)), radius: t.fd(40, 1.0).abs() }),
         "ARC" => EntityKind::Arc(arc(&c, &t)),
         "ELLIPSE" => EntityKind::Ellipse(ellipse(&c, &t)),
-        "LWPOLYLINE" => {
-            let k = lwpolyline(tags, &c, &t)?;
-            if tilted(c.extrusion) {
-                // Its vertices are now WCS, seen from above (`lwpolyline`).
-                c.extrusion = Vec3::Z;
-            }
-            k
-        }
+        "LWPOLYLINE" => lwpolyline(tags, &mut c, &t)?,
         "SPLINE" => EntityKind::Spline(spline(&t)),
         "HELIX" => EntityKind::Helix(helix(tags)),
         "RAY" => EntityKind::Ray(RayLine { base: t.p(10), dir: t.p(11) }),
@@ -238,8 +233,8 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
         "3DFACE" => EntityKind::Face3d(Face3d { corners: [t.p(10), t.p(11), t.p(12), t.p(13)], hidden_edges: t.i(70).unwrap_or(0) as u8 }),
         "HATCH" => {
             let mut k = hatch(tags, &t)?;
-            if tilted(c.extrusion)
-                && let EntityKind::Hatch(h) = &mut k
+            if let EntityKind::Hatch(h) = &mut k
+                && tilted(c.extrusion, h.loops.iter().flat_map(|l| run_points(&l.vertices, h.elevation, true)))
             {
                 // In a tilted plane (a terrain face, a slope): the boundary as seen from above,
                 // at its mean height, and the pattern direction and origin projected the same way.
