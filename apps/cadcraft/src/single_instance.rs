@@ -122,21 +122,15 @@ fn socket_path() -> Option<std::path::PathBuf> {
     std::env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty()).map(|d| std::path::PathBuf::from(d).join("CADCraft").join(name))
 }
 
-/// The socket's file name for a Windows session (`SESSIONNAME`: `Console`, `RDP-Tcp#3`…). The whole
-/// name is kept, each character other than ASCII letters, digits and `-` written as `_<hex>_`, so
-/// two sessions never share a socket (`RDP-Tcp#3` and `RDP-Tcp3` stay apart). Windows keeps session
-/// names to 32 characters; a path too long for a socket only turns single instance off.
+/// The socket's file name for a Windows session (`SESSIONNAME`: `Console`, `RDP-Tcp#3`…): a 64-bit
+/// FNV-1a hash of the whole name, so two sessions of one user practically never share a socket
+/// (`RDP-Tcp#3` and `RDP-Tcp3` stay apart; a user has a handful of sessions, not billions), and the
+/// name has a fixed, short length. A Windows socket path holds at most 107
+/// bytes including `%LOCALAPPDATA%\CADCraft\`, so the name must not grow with the session's.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn socket_name(session: Option<&str>) -> String {
-    let mut key = String::new();
-    for c in session.unwrap_or_default().chars() {
-        if c.is_ascii_alphanumeric() || c == '-' {
-            key.push(c);
-        } else {
-            key.push_str(&format!("_{:x}_", u32::from(c)));
-        }
-    }
-    if key.is_empty() { "instance.sock".to_string() } else { format!("instance-{key}.sock") }
+    let hash = session.unwrap_or_default().bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3));
+    format!("{hash:016x}.sock")
 }
 
 /// Held while a launch finds out whether it is the first, so launches that start together take turns.
@@ -259,7 +253,9 @@ fn receive(stream: &uds_windows::UnixStream, server: &Server) -> std::io::Result
     if line.is_empty() {
         return Ok(());
     }
-    let paths = parse_request(&line).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "not an open request"))?;
+    let paths = parse_request(&line)
+        .filter(|paths| paths.iter().all(|p| std::path::Path::new(p).is_absolute()))
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "not an open request of absolute paths"))?;
     server.deliver(paths);
     let mut writer = stream;
     writer.write_all(b"ok\n")
@@ -286,14 +282,19 @@ mod tests {
 
     #[test]
     fn the_socket_is_named_after_the_session() {
-        assert_eq!(socket_name(Some("Console")), "instance-Console.sock");
-        assert_eq!(socket_name(Some("RDP-Tcp#3")), "instance-RDP-Tcp_23_3.sock");
-        assert_eq!(socket_name(Some("RDP-Tcp3")), "instance-RDP-Tcp3.sock");
-        assert_eq!(socket_name(Some(r"..\x")), "instance-_2e__2e__5c_x.sock");
-        assert_eq!(socket_name(Some("_23_")), "instance-_5f_23_5f_.sock");
-        assert_eq!(socket_name(None), "instance.sock");
-        assert_eq!(socket_name(Some("#")), "instance-_23_.sock");
-        // Nothing is cut: names that differ only past the 32nd character stay apart.
+        let names = [None, Some(""), Some("Console"), Some("RDP-Tcp#3"), Some("RDP-Tcp3"), Some(r"..\x")];
+        let sockets: Vec<String> = names.iter().map(|n| socket_name(*n)).collect();
+        // No session name is the same as an empty one; every other name gets its own socket.
+        assert_eq!(sockets[0], sockets[1]);
+        let distinct: std::collections::HashSet<&String> = sockets[1..].iter().collect();
+        assert_eq!(distinct.len(), names.len() - 1, "{sockets:?}");
+        // Short, fixed and safe as a file name, whatever the session is called.
+        let long = socket_name(Some(&"\u{10ffff}".repeat(32)));
+        for s in sockets.iter().chain([&long]) {
+            assert_eq!(s.len(), 21, "{s}");
+            assert!(s.strip_suffix(".sock").is_some_and(|h| h.bytes().all(|b| b.is_ascii_hexdigit())), "{s}");
+        }
+        // Names that differ only past the 32nd character stay apart.
         let long = "S".repeat(40);
         assert_ne!(socket_name(Some(&long)), socket_name(Some(&long[..39])));
     }
@@ -318,33 +319,75 @@ mod tests {
         assert!(server.take_paths().is_empty());
     }
 
+    /// Removes a test's folder when the test ends, best effort: the listener thread keeps its socket
+    /// open until the process exits.
+    #[cfg(windows)]
+    struct Cleanup(PathBuf);
+
+    #[cfg(windows)]
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A fresh folder for one test, and its socket path.
+    #[cfg(windows)]
+    fn socket_dir(test: &str) -> (Cleanup, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("cadcraft-single-instance-{}-{test}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("instance-test.sock");
+        (Cleanup(dir), path)
+    }
+
     /// The whole exchange over a real socket: a stale socket file is taken over, a later launch
-    /// hands its files to that listener, and one that asked for its own window gets it.
+    /// hands its files to that listener, one that asked for its own window gets it, and a request
+    /// naming a relative path is refused.
     #[cfg(windows)]
     #[test]
     fn a_later_launch_hands_its_files_to_the_first() {
-        /// Removes the test's folder when the test ends, best effort: the listener thread keeps its
-        /// socket open until the process exits.
-        struct Cleanup(PathBuf);
-        impl Drop for Cleanup {
-            fn drop(&mut self) {
-                let _ = std::fs::remove_dir_all(&self.0);
-            }
-        }
-        let dir = std::env::temp_dir().join(format!("cadcraft-single-instance-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let _cleanup = Cleanup(dir.clone());
-        let path = dir.join("instance-test.sock");
+        let (dir, path) = socket_dir("handoff");
         drop(uds_windows::UnixListener::bind(&path).unwrap());
         assert!(path.exists(), "the stale socket file stays behind");
 
         let Claim::Primary(server) = claim_at(&path, &[], false) else { panic!("the stale socket wasn't taken over") };
-        let files = vec![dir.join("a.dwg").to_string_lossy().into_owned()];
+        let files = vec![dir.0.join("a.dwg").to_string_lossy().into_owned()];
         // The listener queues the files before it confirms, so they are there once this returns.
         assert!(matches!(claim_at(&path, &files, true), Claim::HandedOff));
         assert_eq!(server.take_paths(), [PathBuf::from(&files[0])]);
         assert!(matches!(claim_at(&path, &files, false), Claim::Alone));
         assert!(server.take_paths().is_empty());
+        // Not confirmed, so that launch opens its own window and nothing is queued.
+        assert!(matches!(claim_at(&path, &["a.dwg".to_string()], true), Claim::Alone));
+        assert!(server.take_paths().is_empty());
+    }
+
+    /// Launches that start together take turns: one opens the window, the others hand it their files.
+    #[cfg(windows)]
+    #[test]
+    fn launches_at_once_open_one_window() {
+        const LAUNCHES: usize = 6;
+        let (dir, path) = socket_dir("together");
+        let start = Arc::new(std::sync::Barrier::new(LAUNCHES));
+        let launches: Vec<_> = (0..LAUNCHES)
+            .map(|i| {
+                let (path, start) = (path.clone(), Arc::clone(&start));
+                let file = dir.0.join(format!("{i}.dwg")).to_string_lossy().into_owned();
+                std::thread::spawn(move || {
+                    start.wait();
+                    (file.clone(), claim_at(&path, &[file], true))
+                })
+            })
+            .collect();
+        let results: Vec<(String, Claim)> = launches.into_iter().map(|t| t.join().unwrap()).collect();
+        let servers: Vec<&Server> = results.iter().filter_map(|(_, c)| if let Claim::Primary(s) = c { Some(s) } else { None }).collect();
+        assert_eq!(servers.len(), 1, "one window");
+        let mut handed: Vec<PathBuf> = results.iter().filter(|(_, c)| matches!(c, Claim::HandedOff)).map(|(f, _)| PathBuf::from(f)).collect();
+        assert_eq!(handed.len(), LAUNCHES - 1, "the rest handed their files over");
+        let mut received = servers[0].take_paths();
+        handed.sort();
+        received.sort();
+        assert_eq!(received, handed);
     }
 }
