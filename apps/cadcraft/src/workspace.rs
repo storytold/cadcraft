@@ -51,6 +51,7 @@ fn snapshot(ui: &UiState) -> Result<Value, String> {
         "propertiesAll": ui.properties_all,
         "inWindowMenu": ui.in_window_menu,
         "historyLines": ui.history_lines,
+        "systemTitleBar": ui.system_title_bar,
     }))
 }
 
@@ -220,6 +221,7 @@ mod tests {
             toolset_tab: "Modeling".into(),
             collapsed_groups: vec!["Solid".into()],
             history_lines: 5,
+            system_title_bar: true,
             dialog: Some("layers".into()),
             start_tab: true,
             ..Default::default()
@@ -229,6 +231,7 @@ mod tests {
         let value: Value = serde_json::from_slice(&bytes).unwrap();
         assert!(value["workspace"].get("dialog").is_none());
         assert!(value["workspace"].get("startTab").is_none());
+        assert_eq!(value["workspace"]["systemTitleBar"], true, "read before the window opens");
         let (_, restored, error) = Workspace::at(Some(path.clone()));
         assert!(error.is_none());
         let restored = restored.unwrap();
@@ -341,6 +344,7 @@ mod tests {
             assert_eq!(restored.toolset_tab, "Modeling");
             assert_eq!(restored.collapsed_groups, ["Draw"]);
             assert_eq!(restored.history_lines, 7);
+            assert!(!restored.system_title_bar, "older files keep the app's window buttons");
             assert_eq!(serde_json::to_value(restored.docking).unwrap(), serde_json::to_value(UiState::default().docking).unwrap());
         }
         fs::remove_dir_all(directory).unwrap();

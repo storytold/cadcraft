@@ -1017,3 +1017,7 @@
 	Check for Updates…	Rechercher des mises à jour…
 	CADCraft is up to date.	CADCraft est à jour.
 	Could not check for updates.	Impossible de rechercher les mises à jour.
+	Minimize	Réduire
+	Maximize	Agrandir
+	Use system title bar	Utiliser la barre de titre du système
+	Show a basic title bar for the window buttons above CADCraft's own. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme.	Affiche une barre de titre simple avec les boutons de la fenêtre au-dessus de celle de CADCraft. GNOME ne dessine pas de barre de titre pour les applications, celle-ci ne suit donc pas son thème.
