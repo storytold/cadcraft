@@ -58,6 +58,20 @@ fn objects_on_locked_layers_are_left_out() {
     assert_eq!(r["message"], "1 object was on a locked layer.");
 }
 
+/// CHPROP says so when it leaves an edit out: an object it moved onto a locked layer keeps its
+/// color.
+#[test]
+fn chprop_says_when_it_leaves_an_object_it_moved_onto_a_locked_layer_alone() {
+    let (mut s, _) = locked_drawing();
+    let d = line(&mut s, 60.0);
+    s.cmdline("(setq d (entlast))").unwrap();
+    s.log.clear();
+    s.cmdline("(command \"_.CHPROP\" d \"\" \"_LA\" \"L1\" \"_C\" 3 \"\")").unwrap();
+    let e = s.doc().unwrap().entity(d).unwrap().common.clone();
+    assert_eq!((e.layer.as_str(), e.color), ("L1", Color::ByLayer));
+    assert!(s.log.iter().any(|l| l == "1 object was on a locked layer. Nothing was changed."), "{:?}", s.log);
+}
+
 /// A handle that names no object is refused before anything changes.
 #[test]
 fn a_missing_object_is_refused_before_any_change() {

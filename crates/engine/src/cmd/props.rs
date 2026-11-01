@@ -209,19 +209,21 @@ impl LeftOut {
     /// handle that names no object is an error, before anything changes.
     fn split(s: &Session, hs: Vec<Handle>) -> Result<(Vec<Handle>, LeftOut)> {
         let d = s.doc()?;
+        // The working set, once: `RefEdit::is_working` searches a list.
+        let working: Option<std::collections::HashSet<Handle>> = d.refedit.as_ref().map(|r| r.items.iter().map(|i| i.copy).collect());
         let mut seen = std::collections::HashSet::new();
         let mut out = LeftOut::default();
         let mut free = Vec::new();
         for h in hs {
-            if d.entity(h).is_none() {
+            let Some(e) = d.entity(h) else {
                 return Err(cadcraft_doc::DocError::NoEntity(h).into());
-            }
+            };
             if !seen.insert(h) {
                 continue;
             }
-            if super::blocks::refedit::locked(d, h) {
+            if working.as_ref().is_some_and(|w| !w.contains(&h)) {
                 out.outside += 1;
-            } else if super::curves::is_locked(s, h) {
+            } else if d.layer(&e.common.layer).is_some_and(|l| l.locked) {
                 out.locked += 1;
             } else {
                 free.push(h);

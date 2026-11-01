@@ -89,13 +89,18 @@ impl ChpropM {
         if vals.all(|v| v == first) { first } else { "varies".into() }
     }
 
-    /// Apply `props` to the selection through `properties.set`.
+    /// Apply `props` to the selection through `properties.set`, saying what it left out: objects
+    /// this command moved onto a locked layer, say.
     fn apply(&self, s: &mut Session, props: Value) -> Result<()> {
         let mut p = json!({ "handles": self.handles.iter().map(|h| h.hex()).collect::<Vec<_>>() });
         if let (Some(p), Value::Object(props)) = (p.as_object_mut(), props) {
             p.extend(props);
         }
-        super::run_set(s, &p).map(|_| ())
+        let r = super::run_set(s, &p)?;
+        if let Some(m) = r.get("message").and_then(Value::as_str) {
+            s.echo(m.to_string());
+        }
+        Ok(())
     }
 
     /// Take an answer to `ask`; `false` when it was refused (the prompt comes again).
