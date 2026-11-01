@@ -2109,6 +2109,47 @@ fn mirrored_hatch_extrusion_flips_boundary() {
     }
 }
 
+/// Issue #1886: a HATCH in a tilted plane (a terrain face) is drawn as seen from above, not turned
+/// about the origin. With extrusion (0, 0.5, -√3/2) the OCS axes are x = (-1,0,0) and
+/// y = (0, √3/2, 1/2): the square (1,0)..(3,2) lies over (-3,0)..(-1,√3), from z 0 up to z 1.
+/// Before, the negative Z counted as a plain mirror and only x was flipped.
+#[test]
+fn tilted_hatch_is_drawn_as_seen_from_above() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nHATCH\n8\n0\n10\n0\n20\n0\n30\n0\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n2\nSOLID\n70\n1\n71\n0\n91\n1\n\
+                92\n2\n72\n0\n73\n1\n93\n4\n10\n1\n20\n0\n10\n3\n20\n0\n10\n3\n20\n2\n10\n1\n20\n2\n97\n0\n75\n0\n76\n1\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "h.dxf").unwrap();
+    let b = d.extents(&Space::Model);
+    for (got, want) in [(b.min.x, -3.0), (b.min.y, 0.0), (b.max.x, -1.0), (b.max.y, 3f64.sqrt())] {
+        assert!((got - want).abs() < 1e-9, "extents {b:?}");
+    }
+    let e = d.model.iter().next().unwrap();
+    assert_eq!(e.common.extrusion, Vec3::Z, "its points are plan coordinates now");
+    let EntityKind::Hatch(h) = &e.kind else { panic!("not a hatch") };
+    assert!((h.elevation - 0.5).abs() < 1e-9, "the mean height of its corners: {}", h.elevation);
+}
+
+/// Issue #1886: a LWPOLYLINE circle (two half-circle bulges) in the same tilted plane is the
+/// ellipse it looks like from above, flattened; a plain one keeps its bulges.
+#[test]
+fn tilted_lwpolyline_is_drawn_as_seen_from_above() {
+    let circle = |n: &str| {
+        format!("0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\n0\n90\n2\n70\n1\n{n}10\n1\n20\n0\n42\n1\n10\n-1\n20\n0\n42\n1\n0\nENDSEC\n0\nEOF\n")
+    };
+    let d = read(circle("210\n0\n220\n0.5\n230\n-0.8660254037844386\n").as_bytes(), "p.dxf").unwrap();
+    let b = d.extents(&Space::Model);
+    let ry = 3f64.sqrt() / 2.0;
+    for (got, want) in [(b.min.x, -1.0), (b.min.y, -ry), (b.max.x, 1.0), (b.max.y, ry)] {
+        assert!((got - want).abs() < 5e-3, "extents {b:?}");
+    }
+    let e = d.model.iter().next().unwrap();
+    assert_eq!(e.common.extrusion, Vec3::Z);
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    assert!(p.vertices.len() > 8 && p.vertices.iter().all(|v| v.bulge == 0.0), "{} vertices", p.vertices.len());
+    let plain = read(circle("").as_bytes(), "p.dxf").unwrap();
+    let p = first(&plain, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    assert_eq!(p.vertices.iter().map(|v| v.bulge).collect::<Vec<_>>(), vec![1.0, 1.0]);
+}
+
 /// The model extents of a one-loop solid HATCH whose edge boundary is `edges` (group 72 onwards).
 fn hatch_edge_extents(edges: &str) -> Bounds2 {
     let n = edges.matches("72\n").count();

@@ -1,4 +1,4 @@
-use super::common::{T, common, ocs};
+use super::common::{T, common, ocs, plan_of_tilted, tilted};
 use super::hatch::hatch;
 use super::text::{attdef, attrib_modes, attrib_props, mtext_from, multiline_attrib, split_embedded, text_from};
 use super::{
@@ -81,13 +81,17 @@ fn lwpolyline(tags: &[Tag], c: &Common, t: &T) -> Option<EntityKind> {
     }
     verts.extend(cur);
     let flags = t.i(70).unwrap_or(0);
-    if c.extrusion.z < 0.0 {
+    let mut elevation = t.fd(38, 0.0);
+    if tilted(c.extrusion) {
+        // In a tilted plane: drawn as seen from above, at the vertices' mean height.
+        (verts, elevation) = plan_of_tilted(c.extrusion, elevation, &verts, flags & 1 != 0);
+    } else if c.extrusion.z < 0.0 {
         for v in &mut verts {
             v.p.x = -v.p.x;
             v.bulge = -v.bulge;
         }
     }
-    let pl = LwPolyline { vertices: verts, closed: flags & 1 != 0, const_width: t.fd(43, 0.0), elevation: t.fd(38, 0.0), plinegen: flags & 128 != 0 };
+    let pl = LwPolyline { vertices: verts, closed: flags & 1 != 0, const_width: t.fd(43, 0.0), elevation, plinegen: flags & 128 != 0 };
     // A region CADCraft wrote as polylines (`dxf_region`).
     crate::dxf_region::from_polyline(tags, pl)
 }
@@ -121,14 +125,21 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
         return None;
     }
     let t = T(tags);
-    let c = common(&t);
+    let mut c = common(&t);
     let k = match kind {
         "LINE" => EntityKind::Line(Line { a: t.p(10), b: t.p(11) }),
         "POINT" => EntityKind::Point(Point { p: t.p(10), angle: t.fd(50, 0.0).to_radians() }),
         "CIRCLE" => EntityKind::Circle(Circle { center: ocs(&c, t.p(10)), radius: t.fd(40, 1.0).abs() }),
         "ARC" => EntityKind::Arc(arc(&c, &t)),
         "ELLIPSE" => EntityKind::Ellipse(ellipse(&c, &t)),
-        "LWPOLYLINE" => lwpolyline(tags, &c, &t)?,
+        "LWPOLYLINE" => {
+            let k = lwpolyline(tags, &c, &t)?;
+            if tilted(c.extrusion) {
+                // Its vertices are now WCS, seen from above (`lwpolyline`).
+                c.extrusion = Vec3::Z;
+            }
+            k
+        }
         "SPLINE" => EntityKind::Spline(spline(&t)),
         "HELIX" => EntityKind::Helix(helix(tags)),
         "RAY" => EntityKind::Ray(RayLine { base: t.p(10), dir: t.p(11) }),
@@ -227,7 +238,30 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
         "3DFACE" => EntityKind::Face3d(Face3d { corners: [t.p(10), t.p(11), t.p(12), t.p(13)], hidden_edges: t.i(70).unwrap_or(0) as u8 }),
         "HATCH" => {
             let mut k = hatch(tags, &t)?;
-            if c.extrusion.z < 0.0
+            if tilted(c.extrusion)
+                && let EntityKind::Hatch(h) = &mut k
+            {
+                // In a tilted plane (a terrain face, a slope): the boundary as seen from above,
+                // at its mean height, and the pattern direction and origin projected the same way.
+                let n = c.extrusion;
+                let m = cadcraft_geom::Mat4::ocs(n);
+                let (mut sum, mut count) = (0.0, 0usize);
+                for l in &mut h.loops {
+                    let (v, z) = plan_of_tilted(n, h.elevation, &l.vertices, true);
+                    sum += z * v.len() as f64;
+                    count += v.len();
+                    l.vertices = v;
+                }
+                let dir = m.apply(Vec3::new(h.angle.cos(), h.angle.sin(), 0.0)).xy();
+                if dir.len() > 1e-9 {
+                    h.angle = cadcraft_geom::norm_angle(dir.y.atan2(dir.x));
+                }
+                h.origin = m.apply(Vec3::new(h.origin.x, h.origin.y, h.elevation)).xy();
+                if count > 0 {
+                    h.elevation = sum / count as f64;
+                }
+                c.extrusion = Vec3::Z;
+            } else if c.extrusion.z < 0.0
                 && let EntityKind::Hatch(h) = &mut k
             {
                 // Boundary in the mirrored OCS, like LWPOLYLINE; the pattern direction mirrors too.

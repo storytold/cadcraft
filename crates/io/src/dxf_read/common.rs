@@ -1,4 +1,4 @@
-use super::{Color, Common, Lineweight, Rgb, Tag, Transparency, Vec2, Vec3};
+use super::{Color, Common, Lineweight, PolyVertex, Rgb, Tag, Transparency, Vec2, Vec3};
 
 /// Value lookup helpers over an entity's tags.
 pub(super) struct T<'a>(pub(super) &'a [Tag]);
@@ -104,4 +104,34 @@ pub(super) fn ocs(c: &Common, p: Vec3) -> Vec3 {
 
 pub(super) fn ocs_n(n: Vec3, p: Vec3) -> Vec3 {
     if (n.z - 1.0).abs() < 1e-12 && n.x.abs() < 1e-12 && n.y.abs() < 1e-12 { p } else { cadcraft_geom::Mat4::ocs(n).apply(p) }
+}
+
+/// Whether an extrusion tilts an object's plane off the XY plane (neither the Z axis nor the Z
+/// axis turned over, as MIRROR leaves it, allowing for noise in x and y like INSERT does).
+pub(super) fn tilted(n: Vec3) -> bool {
+    n.is_finite() && n.x.hypot(n.y) > 1e-3 * n.z.abs()
+}
+
+/// A run of OCS vertices at `elevation` in the plane of `n` as seen from above in the WCS. A
+/// tilted arc is an elliptical arc there, so bulged edges are flattened (within a thousandth of
+/// the run's size); straight runs keep their vertices. Also gives the mean WCS Z, the elevation
+/// the flattened run takes.
+pub(super) fn plan_of_tilted(n: Vec3, elevation: f64, vertices: &[PolyVertex], closed: bool) -> (Vec<PolyVertex>, f64) {
+    let m = cadcraft_geom::Mat4::ocs(n);
+    let pts: Vec<Vec2> = if vertices.iter().all(|v| v.bulge == 0.0) {
+        vertices.iter().map(|v| v.p).collect()
+    } else {
+        let pl = cadcraft_geom::Polyline { vertices: vertices.to_vec(), closed };
+        let b = pl.bounds();
+        let size = (b.max - b.min).len();
+        let tol = if size.is_finite() && size > 0.0 { size * 1e-3 } else { 1e-6 };
+        let mut pts = pl.tessellate(tol);
+        if closed && pts.len() > 1 && pts.first() == pts.last() {
+            pts.pop();
+        }
+        pts
+    };
+    let world: Vec<Vec3> = pts.iter().map(|p| m.apply(Vec3::new(p.x, p.y, elevation))).collect();
+    let z = if world.is_empty() { elevation } else { world.iter().map(|p| p.z).sum::<f64>() / world.len() as f64 };
+    (world.iter().map(|p| PolyVertex::new(p.xy())).collect(), z)
 }
