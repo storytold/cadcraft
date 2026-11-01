@@ -45,6 +45,7 @@ mod mtext_columns_roundtrip;
 mod mtext_embedded_object;
 mod mtext_line_spacing;
 mod multiline_attributes;
+mod native_cad_layout;
 mod paperview_marker;
 mod passthrough_image_roundtrip;
 mod pdf_followups;
@@ -72,3 +73,5 @@ mod user_lin_pat_roundtrip;
 mod view_tables_roundtrip;
 mod viewport_clip_roundtrip;
 mod xref_roundtrip;
+
+mod unvisited_layout;

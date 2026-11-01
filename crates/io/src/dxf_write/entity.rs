@@ -606,7 +606,9 @@ fn write_hatch_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bo
 fn write_viewport_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper: bool, cx: &Ctx) {
     if let EntityKind::Viewport(v) = &e.kind {
         paper_view(w, d, e, owner, cx);
-        if v.id == 1 { w.paper_viewports.insert(owner.to_owned(), e.handle.hex()); }
+        if v.id == 1 {
+            w.paper_viewports.insert(owner.to_owned(), e.handle.hex());
+        }
         w.s(0, "VIEWPORT");
         common(w, e, owner, paper, "AcDbViewport");
         w.p(10, v.center);
@@ -629,7 +631,7 @@ fn write_viewport_entity(w: &mut W, d: &Drawing, e: &Entity, owner: &str, paper:
         // programs read only this; CADCraft prefers its own xdata below when present.
         for name in &v.frozen_layers {
             if let Some(h) = w.layers.get(&name.to_ascii_uppercase()).cloned() {
-                w.s(341, h);
+                w.s(331, h);
             }
         }
         // One CADCraft xdata group holds both lists: readers stop at the first group of an app.

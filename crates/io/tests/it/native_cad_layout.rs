@@ -88,3 +88,52 @@ fn top_view_direction_length_and_rounding_noise_do_not_change_the_model_center()
     }
 }
 
+#[test]
+fn frozen_layers_use_native_331_and_leave_paper_entities_visible() {
+    use cadcraft_doc::{Common, Drawing, Layer, Line, Viewport};
+    use cadcraft_geom::Vec3;
+    let mut d = Drawing::new_metric();
+    d.layers.push(Layer { name: "Notes".into(), ..Layer::default() });
+    let paper = Space::Paper("Layout1".into());
+    let line = EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(10.0, 10.0, 0.0) });
+    d.add(&Space::Model, Common { layer: "Notes".into(), ..Common::default() }, line.clone()).unwrap();
+    let h = d.add(&paper, Common { layer: "Notes".into(), ..Common::default() }, line).unwrap();
+    d.add(&paper, Common::default(), EntityKind::Viewport(Viewport { id: 1, frozen_layers: vec!["Notes".into()], ..Viewport::default() })).unwrap();
+    let tags = cadcraft_dxf::parse(write_dxf(&d).as_bytes()).unwrap();
+    let sections = cadcraft_dxf::section_slices(&tags);
+    let entities = sections.iter().find(|s| s.name == "ENTITIES").unwrap();
+    let records = cadcraft_dxf::record_slices(entities.tags);
+    let vp = records.iter().find(|(kind, _)| kind == "VIEWPORT").unwrap();
+    assert!(vp.1.iter().any(|t| t.code == 331), "standard frozen-layer reference");
+    assert!(!vp.1.iter().any(|t| t.code == 341), "do not rely on the legacy CADCraft group");
+    // Strip application xdata: native references alone must carry the frozen layers.
+    let mut native = Vec::new();
+    let mut xdata = false;
+    for tag in tags {
+        if tag.code == 0 {
+            xdata = false;
+        }
+        if tag.code == 1001 {
+            xdata = true;
+        }
+        if !xdata {
+            native.push(tag);
+        }
+    }
+    let mut cases = vec![read_dxf(cadcraft_dxf::write_ascii(&native).as_bytes()).unwrap()];
+    cases.push(cadcraft_io::read(&cadcraft_io::write(&d, "freeze.dwg").unwrap(), "freeze.dwg").unwrap());
+    for reopened in cases {
+        let layout = reopened.layout("Layout1").unwrap();
+        let vp = layout
+            .entities
+            .iter()
+            .find_map(|e| match &e.kind {
+                EntityKind::Viewport(v) if v.id == 1 => Some(v),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(vp.frozen_layers, vec!["Notes"]);
+        let display = cadcraft_render::build(&reopened, &paper, &cadcraft_render::Options::default());
+        assert!(display.prims.iter().any(|p| p.handle == h), "paper annotations remain visible");
+    }
+}

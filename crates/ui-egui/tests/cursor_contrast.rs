@@ -134,7 +134,8 @@ fn paper_and_surround_follow_the_sheet_after_pan_and_zoom() {
 
     // One colour follows the centre even when long arms cross the sheet's boundary.
     c.app.run("options", json!({"CURSORSIZE": 100})).unwrap();
-    let edge = c.screen(Vec2::new(0.0, 40.0));
+    let sheet = cadcraft_render::sheet(c.app.session.doc().unwrap(), "Layout1").unwrap();
+    let edge = c.screen(Vec2::new(sheet.bounds().min.x, 40.0));
     c.assert_ink(edge + vec2(2.0, 0.0), DARK_INK, "just inside paper");
     c.assert_ink(edge - vec2(2.0, 0.0), LIGHT_INK, "just outside paper");
 }

@@ -488,8 +488,8 @@ fn pdf_layout_one_to_one_with_viewport() {
     let content = check_pdf(&bytes);
     // ANSI A landscape (inches → points).
     assert_eq!(media_box(&bytes), (792.0, 612.0));
-    // Viewport border at 1:1: x from 1in to 9in = 72pt..648pt.
-    let corner = |o: &pdf_read::Op| matches!(o.op.as_str(), "m" | "l") && (o.nums[0] - 72.0).abs() < 1e-6 && (o.nums[1] - 72.0).abs() < 1e-6;
+    // Viewport border at 1:1: 1in from the printable origin, plus the 0.25in margin.
+    let corner = |o: &pdf_read::Op| matches!(o.op.as_str(), "m" | "l") && (o.nums[0] - 90.0).abs() < 1e-6 && (o.nums[1] - 90.0).abs() < 1e-6;
     assert!(pdf_read::drawn(&content).iter().any(corner), "{content}");
     // Lineweights on: default 0.25 mm = 0.709 pt.
     assert!(widths(&content).iter().any(|w| (w - 0.709).abs() < 0.001), "{content}");
@@ -677,15 +677,15 @@ fn join(p: &[(String, String)]) -> String {
 }
 
 #[test]
-fn viewport_frozen_layers_written_as_341_handles() {
+fn viewport_frozen_layers_written_as_native_331_handles() {
     let (_, p) = frozen_vp_dxf();
     let r = vp_record(&p, "2");
     let rec = &p[r];
-    let h341: Vec<&str> = rec.iter().filter(|(c, _)| c == "341").map(|(_, v)| v.as_str()).collect();
-    assert_eq!(h341, vec![layer_handle(&p, "Walls").as_str(), layer_handle(&p, "A B").as_str()]);
-    let last341 = rec.iter().rposition(|(c, _)| c == "341").unwrap();
+    let h331: Vec<&str> = rec.iter().filter(|(c, _)| c == "331").map(|(_, v)| v.as_str()).collect();
+    assert_eq!(h331, vec![layer_handle(&p, "Walls").as_str(), layer_handle(&p, "A B").as_str()]);
+    let last331 = rec.iter().rposition(|(c, _)| c == "331").unwrap();
     let x = rec.iter().position(|(c, _)| c == "1001").expect("xdata");
-    assert!(last341 < x, "341 must precede the xdata");
+    assert!(last331 < x, "331 must precede the xdata");
 }
 
 #[test]
@@ -696,6 +696,11 @@ fn viewport_frozen_layers_read_from_341_without_xdata() {
     let x = p[r.clone()].iter().position(|(c, _)| c == "1001").unwrap() + r.start;
     let mut q: Vec<(String, String)> = p[..r.start].to_vec();
     let mut head = p[r.start..x].to_vec();
+    for (code, _) in &mut head {
+        if code == "331" {
+            *code = "341".into();
+        }
+    }
     head.push(("341".into(), "FFFFF".into()));
     q.extend(head);
     q.extend(p[r.end..].iter().cloned());
@@ -707,11 +712,11 @@ fn viewport_frozen_layers_read_from_341_without_xdata() {
 fn viewport_frozen_xdata_wins_over_341() {
     let (_, p) = frozen_vp_dxf();
     let r = vp_record(&p, "2");
-    // Point every 341 at layer 0: the xdata list must still be what is read.
+    // Point every native reference at layer 0: the xdata list must still be what is read.
     let zero = layer_handle(&p, "0");
     let mut q = p.clone();
     for t in &mut q[r] {
-        if t.0 == "341" {
+        if t.0 == "331" {
             t.1 = zero.clone();
         }
     }
@@ -725,7 +730,7 @@ fn viewport_frozen_layers_survive_dwg() {
     let dwg = write(&d, "t.dwg").unwrap();
     let back = read(&dwg, "t.dwg").unwrap();
     assert_eq!(viewport_frozen(&back, 2), vec!["Walls".to_string(), "A B".to_string()]);
-    // Survives via the CADCraft xdata: the DWG converter does not yet carry group 341 itself.
+    // The native frozen-layer references and the CADCraft xdata both survive.
 }
 
 #[test]

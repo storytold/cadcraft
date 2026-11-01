@@ -531,18 +531,18 @@ fn write_layout_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
     );
     for (i, (_, brh, l)) in ps_brs.iter().enumerate() {
         let h = layout_handles.get(i).cloned().unwrap_or_default();
+        // Fallback dimensions are for display only. An unvisited native layout must stay
+        // unsized until activation, including when it is saved through the DWG bridge.
+        let mut page = l.page.clone();
+        if l.needs_initialization && l.entities.is_empty() {
+            page.paper.clear();
+            page.width_mm = 0.0;
+            page.height_mm = 0.0;
+        }
         layout_obj(
             w,
             LayoutWriteContext { drawing: d, dictionary: layout_dict },
-            LayoutWriteData {
-                handle: &h,
-                name: &l.name,
-                tab: i64::from(l.tab_order.max(1)),
-                block_record: brh,
-                flags: 1,
-                page: &l.page,
-                view: l.view,
-            },
+            LayoutWriteData { handle: &h, name: &l.name, tab: i64::from(l.tab_order.max(1)), block_record: brh, flags: 1, page: &page, view: l.view },
         );
     }
 }
