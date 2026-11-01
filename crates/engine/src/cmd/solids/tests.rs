@@ -396,6 +396,42 @@ fn hostile_params_are_errors_and_leave_the_drawing_alone() {
     assert!(s.execute("loft", &json!({"sections": secs})).is_err());
 }
 
+/// A degenerate extrusion is an error that names the problem and adds nothing; drawn sources
+/// stay as they were (#2544 review).
+#[test]
+fn degenerate_extrusions_are_refused_with_a_reason() {
+    let mut s = Session::new();
+    let cases = [
+        (json!({"profile": [[0, 0], [1, 0], [2, 0]], "height": 1}), "degenerate profile"),
+        (json!({"profile": [[0, 0], [0, 0], [1, 0], [1, 1]], "height": 1}), "duplicate profile points"),
+        (json!({"profile": [[1, 1], [1, 1], [1, 1]], "height": 1}), "duplicate profile points"),
+        (json!({"profile": [[0, 0], [1e-12, 0], [0, 1e-12]], "height": 1}), "duplicate profile points"),
+        (json!({"profile": [[0, 0], [1, 0], [1, 1]], "height": -0.0}), "must not be zero"),
+        (json!({"profile": [[0, 0], [1, 0], [1, 1]], "height": 1e-14}), "invalid extrusion"),
+        (json!({"profile": [[0, 0], [1, 0], [1, 1]], "height": "NaN"}), "finite number"),
+    ];
+    for (p, reason) in cases {
+        let e = s.execute("extrude", &p).unwrap_err().to_string();
+        assert!(e.contains(reason), "{p}: {e}");
+    }
+    let circle = s.add_entity(EntityKind::Circle(Circle { center: Vec3::ZERO, radius: 0.0 })).unwrap();
+    let e = s.execute("extrude", &json!({"handles": [circle.hex()], "height": 1})).unwrap_err().to_string();
+    assert!(e.contains("degenerate"), "{e}");
+    let flat = LwPolyline {
+        vertices: vec![PolyVertex::new(Vec2::new(0.0, 0.0)), PolyVertex::new(Vec2::new(3.0, 0.0))],
+        closed: true,
+        const_width: 0.0,
+        elevation: 0.0,
+        plinegen: false,
+    };
+    let flat = s.add_entity(EntityKind::LwPolyline(flat)).unwrap();
+    let e = s.execute("extrude", &json!({"handles": [flat.hex()], "height": 1, "deleteSource": true})).unwrap_err().to_string();
+    assert!(e.contains("too few distinct points"), "{e}");
+    assert!(faces(&s).is_empty());
+    assert!(s.doc().unwrap().groups.is_empty());
+    assert!(s.doc().unwrap().entity(circle).is_some() && s.doc().unwrap().entity(flat).is_some());
+}
+
 #[test]
 fn the_face_cap_is_enforced() {
     let mut s = Session::new();
@@ -856,4 +892,76 @@ fn profiles_past_the_exact_limits_fall_back_to_mesh_only_solids() {
     let r = s.execute("extrude", &json!({"profile": [[0, 0], [1, 0], [1, 1]], "height": 1})).unwrap();
     assert_eq!(r["representation"], "analyticBrep");
     assert!(r.get("notes").is_none());
+}
+
+/// Coplanar faces, touching and disjoint solids, a cavity and an offset just inside the boolean
+/// tolerance (1e-9 of the model size) give closed solids of the right volume or a clear refusal
+/// that leaves both operands in place (#2544 review).
+#[test]
+fn booleans_on_coplanar_touching_and_disjoint_boxes() {
+    let ok = [
+        // Shared side faces, top half cut away.
+        ("subtract", [[0.0, 0.0, 0.0], [4.0, 4.0, 4.0]], [[0.0, 0.0, 2.0], [4.0, 4.0, 6.0]], 32.0),
+        // Two boxes sharing one whole face merge into one.
+        ("union", [[0.0, 0.0, 0.0], [2.0, 2.0, 2.0]], [[2.0, 0.0, 0.0], [4.0, 2.0, 2.0]], 16.0),
+        // A box wholly inside leaves a closed cavity.
+        ("subtract", [[0.0, 0.0, 0.0], [4.0, 4.0, 4.0]], [[1.0, 1.0, 1.0], [3.0, 3.0, 3.0]], 56.0),
+        // A cutter 1e-10 above the bottom face is coplanar within tolerance: a pocket open at the bottom.
+        ("subtract", [[0.0, 0.0, 0.0], [4.0, 4.0, 4.0]], [[1.0, 1.0, 1e-10], [3.0, 3.0, 3.0]], 52.0),
+        // Disjoint: subtracting leaves the solid, uniting makes one two-lump solid.
+        ("subtract", [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], [[5.0, 5.0, 5.0], [6.0, 6.0, 6.0]], 1.0),
+        ("union", [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], [[5.0, 5.0, 5.0], [6.0, 6.0, 6.0]], 2.0),
+        // Touching at one corner only: no edge is shared, so the two lumps make one valid solid.
+        ("union", [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], [[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]], 2.0),
+        // Identical solids unite into one copy.
+        ("union", [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], 1.0),
+    ];
+    for (op, a, b, volume) in ok {
+        let mut s = Session::new();
+        let a = handles(&s.execute("box", &json!({"p1": a[0], "p2": a[1]})).unwrap());
+        let b = handles(&s.execute("box", &json!({"p1": b[0], "p2": b[1]})).unwrap());
+        let p = if op == "subtract" { json!({"from": hex(&a[..1]), "remove": hex(&b[..1])}) } else { json!({"handles": hex(&[a[0], b[0]])}) };
+        let out = handles(&s.execute(op, &p).unwrap());
+        assert_closed(&s, &out);
+        assert!((volume_of(&s, &out) - volume).abs() < 1e-6, "{op} {a:?} {b:?}: {}", volume_of(&s, &out));
+        assert_eq!(s.doc().unwrap().groups.len(), 1);
+    }
+    let refused = [
+        ("intersect", [[0.0, 0.0, 0.0], [2.0, 2.0, 2.0]], [[2.0, 0.0, 0.0], [4.0, 2.0, 2.0]], "do not overlap"),
+        ("union", [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], [[1.0, 1.0, 0.0], [2.0, 2.0, 1.0]], "touch only along an edge"),
+        ("subtract", [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], "nothing remains"),
+    ];
+    for (op, a, b, reason) in refused {
+        let mut s = Session::new();
+        let a = handles(&s.execute("box", &json!({"p1": a[0], "p2": a[1]})).unwrap());
+        let b = handles(&s.execute("box", &json!({"p1": b[0], "p2": b[1]})).unwrap());
+        let before = faces(&s).len();
+        let p = if op == "subtract" { json!({"from": hex(&a[..1]), "remove": hex(&b[..1])}) } else { json!({"handles": hex(&[a[0], b[0]])}) };
+        let e = s.execute(op, &p).unwrap_err().to_string();
+        assert!(e.contains(reason), "{op}: {e}");
+        assert_eq!(faces(&s).len(), before, "{op}: operands stay");
+        assert_eq!(s.doc().unwrap().groups.len(), 2);
+    }
+}
+
+/// Box minus cylinder: a through hole, a blind hole and a hole whose caps are flush with both box
+/// faces all give the exact volume of the faceted cylinder removed, and the faceted volume tends
+/// to the analytic 32 - 2π as the segment count grows (#2544 review).
+#[test]
+fn box_minus_cylinder_volumes() {
+    let prism = |n: u32, h: f64| 0.5 * f64::from(n) * (TAU_F / f64::from(n)).sin() * h;
+    for (center_z, height, removed_height) in [(-1.0, 4.0, 2.0), (1.0, 4.0, 1.0), (0.0, 2.0, 2.0)] {
+        for segments in [24_u32, 96] {
+            let mut s = Session::new();
+            let a = handles(&s.execute("box", &json!({"p1": [-2, -2, 0], "p2": [2, 2, 2]})).unwrap());
+            let cyl = json!({"center": [0, 0, center_z], "radius": 1, "height": height, "segments": segments});
+            let b = handles(&s.execute("cylinder", &cyl).unwrap());
+            let out = handles(&s.execute("subtract", &json!({"from": hex(&a[..1]), "remove": hex(&b[..1])})).unwrap());
+            assert_closed(&s, &out);
+            let volume = volume_of(&s, &out);
+            assert!((volume - (32.0 - prism(segments, removed_height))).abs() < 1e-6, "z {center_z} n {segments}: {volume}");
+            let analytic = 32.0 - std::f64::consts::PI * removed_height;
+            assert!((volume - analytic).abs() < 0.3 * 576.0 / f64::from(segments * segments), "z {center_z} n {segments}: {volume} vs {analytic}");
+        }
+    }
 }

@@ -100,6 +100,15 @@ nested holes; SECTION creates grouped closed XYZ polylines. Their accuracy follo
 faceting, and their results do not reconstruct analytic curved source surfaces. Each boolean
 operand is capped at 16,384 triangles; each modeling command adds at most 50,000 faces.
 
+Boolean robustness: points within 1e-9 of the model size of a plane count as on it, so coplanar
+faces (shared side faces, flush hole caps, a cutter offset by less than the tolerance) merge
+instead of leaving slivers. Solids sharing a whole face unite into one; solids touching at one
+corner unite into one two-lump solid; disjoint solids unite into one multi-lump solid and subtract
+leaves the target unchanged. Results that would not be closed and manifold (solids touching only
+along an edge), an empty intersection or subtraction, and inputs that are open, inconsistently
+oriented or degenerate are refused with a reason and leave every operand in place. A work budget
+of 256 million classifications and a 65,536-piece cap bound the time and size of one operation.
+
 ## 3D input and navigation
 
 3D prompts accept absolute `x,y,z` and relative `@dx,dy,dz` in the active UCS. JSON points always
@@ -178,6 +187,7 @@ binary that carries unmerged features. Normal release packages retain their exis
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | patch | Boolean robustness notes; edge-touching unions refused with a reason; box-minus-cylinder, degenerate extrusion and save/reopen tests |
 | 2026-10-31 | minor | Review fixes: corner-preserving loft resampling, mesh-only fallback past exact limits, stale-record 3D transforms, IMPORT keeps groups/exact solids, IGES global/record/list correctness, glTF tree check, STL attributes, 3MF colours/welding, layout-tab 3D gating, MCP annotations |
 | 2026-10-31 | minor | Integrated with upstream v0.15.1; development update opt-out; profile, exchange and perspective-picking regressions |
 | 2026-10-30 | major | Exact source persistence, bounded finishing, slice/section, UCS/XYZ input/snaps, perspective/styles/light/material controls, STEP/IGES and GLB/glTF/3MF exchange, discoverable MCP editing |

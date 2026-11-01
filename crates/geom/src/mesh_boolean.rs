@@ -445,7 +445,9 @@ fn output(polys: Vec<Poly>, originals: &[Poly], budget: &mut Budget) -> Result<M
         return Err(MeshError("boolean output size limit"));
     }
     let result = Mesh3 { vertices: points, triangles };
-    input(&result, budget.tolerance)?;
+    // Solids that touch only along an edge give a non-manifold result: refuse it
+    // with a reason the user can act on rather than as if an input were broken.
+    input(&result, budget.tolerance).map_err(|_| MeshError("the result is not a closed solid (the solids touch only along an edge)"))?;
     Ok(result)
 }
 #[derive(Clone, Copy)]
