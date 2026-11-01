@@ -16,7 +16,7 @@ use super::other;
 use crate::cmd::curves::KW;
 use crate::cmd::helpers::line;
 use crate::cmd::machines::{SelOutcome, SelectPhase, number};
-use crate::cmd::modify::transform_entities;
+use crate::cmd::modify::{refuse_ole_frames, transform_entities};
 use crate::cmd::{bad, point_req, point_value, targets};
 use crate::prompt::Drag;
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
@@ -108,6 +108,15 @@ pub(super) fn run_mocoro(s: &mut Session, p: &Value) -> Result<Value> {
     }
     // Every option is checked before the drawing changes.
     let ops = list.iter().enumerate().map(|(i, v)| parse_op(i, v)).collect::<Result<Vec<_>>>()?;
+    // An OLE frame only translates: a rotate or scale step that would refuse it must do so before an
+    // earlier move or copy changes the drawing (a refused command is not rolled back).
+    for op in &ops {
+        match *op {
+            Op::Rotate(a) => refuse_ole_frames(s, &objs, &Mat3::rotate_about(base, a), false)?,
+            Op::Scale(f) => refuse_ole_frames(s, &objs, &Mat3::scale_about(base, f), false)?,
+            _ => {}
+        }
+    }
     let mut copies = Vec::new();
     for op in ops {
         copies.extend(apply(s, &objs, &mut base, op)?);

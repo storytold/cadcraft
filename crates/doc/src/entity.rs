@@ -461,6 +461,7 @@ impl EntityKind {
                 let a = if mirror { t.rotation() } else { t.rotation() + rot };
                 t.dir = Vec2::from_angle(cadcraft_geom::norm_angle(a)).to3(0.0);
             }
+            EntityKind::Unknown(u) if u.dxf_type.eq_ignore_ascii_case("OLE2FRAME") => crate::ole_frame_transform(&mut u.tags, m),
             EntityKind::Unknown(_) => {}
         }
     }

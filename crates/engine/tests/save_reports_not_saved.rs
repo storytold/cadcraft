@@ -82,3 +82,16 @@ fn solids_whose_geometry_the_data_store_keeps_are_not_reported_from_2013() {
     // Before 2013 a file has no data store: every solid loses its geometry.
     assert_eq!(not_saved_as(&d, Version::R2010), [("3DSOLID".to_string(), 2), ("REGION".to_string(), 1)].into_iter().collect());
 }
+
+/// An OLE2FRAME is written back whole by a DWG save, so the DWG note doesn't list it; other
+/// unmodelled types are still listed (#2422).
+#[test]
+fn a_dwg_save_does_not_list_an_ole_frame() {
+    use cadcraft_engine::cmd::file::{Version, not_saved_as};
+    let mut d = Drawing::new_imperial();
+    d.add(&Space::Model, Common::default(), unknown("OLE2FRAME")).unwrap();
+    d.add(&Space::Model, Common::default(), unknown("MLINE")).unwrap();
+    for v in [Version::R2000, Version::R2018] {
+        assert_eq!(not_saved_as(&d, v), [("MLINE".to_string(), 1)].into_iter().collect(), "{v:?}");
+    }
+}
