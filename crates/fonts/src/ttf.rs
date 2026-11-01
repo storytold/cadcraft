@@ -900,7 +900,8 @@ pub fn shape(face: &Face, s: &str, height: f64, width_factor: f64, oblique: f64)
 /// [`shape`] in the direction `base_rtl` (`None`: that of the line's first strong character).
 pub fn shape_dir(face: &Face, s: &str, height: f64, width_factor: f64, oblique: f64, base_rtl: Option<bool>) -> Option<Shaped> {
     face.font()?;
-    if crate::complex::needed(s)
+    // As in [`crate::shape_stroke_dir`]: a line asked to run right to left takes the bidi path.
+    if (crate::complex::needed(s) || base_rtl == Some(true))
         && let Some(sh) = crate::complex::shape(Some(face), s, height, width_factor, oblique, base_rtl)
     {
         return Some(sh);

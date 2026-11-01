@@ -162,7 +162,9 @@ pub fn shape_stroke_dir(s: &str, height: f64, width_factor: f64, oblique: f64, b
     let mut under_start: Option<f64> = None;
     let mut over_start: Option<f64> = None;
     let mut gap = stroke::GAP * sc * wf;
-    if complex::needed(s)
+    // The simple path lays a line out left to right: one asked to run right to left goes through
+    // the bidi path even without right-to-left letters.
+    if (complex::needed(s) || base_rtl == Some(true))
         && let Some(sh) = complex::shape(None, s, h, wf, oblique, base_rtl)
     {
         return sh;
@@ -588,7 +590,9 @@ pub fn place(font: &TextFont, s: &str, p: &TextParams) -> (Shaped, Bounds2) {
     {
         let len = insert.dist(p2);
         rot = insert.angle_to(p2);
-        let w = text_width(font, s, height, wf);
+        // Measured as it is placed, left to right: the stroke font's trailing gap follows the
+        // glyph that ends the line.
+        let w = shape_line_dir(font, s, height, wf, p.oblique, TEXT_BASE_RTL).width;
         if w > 1e-12 && len > 1e-12 {
             let k = len / w;
             if p.h == Align::Aligned {
@@ -656,6 +660,13 @@ mod tests {
         // character: right to left here, the dash after the word.
         let line = shape_stroke(s, 1.0, 1.0, 0.0);
         assert!(!has_dash_first(&line.strokes), "the dash ends a right-to-left line");
+        // A line asked to run right to left does so without right-to-left letters too.
+        assert!(has_dash_first(&shape_stroke_dir("- abc", 1.0, 1.0, 0.0, None).strokes));
+        assert!(!has_dash_first(&shape_stroke_dir("- abc", 1.0, 1.0, 0.0, Some(true)).strokes), "the dash after the word");
+        // Fit TEXT is measured as it is placed, so it spans its two points exactly.
+        let fit = TextParams { h: Align::Fit, align_pt: Some(Vec2::new(10.0, 0.0)), ..TextParams::new(Vec2::ZERO, 1.0) };
+        let (text, _) = place(&TextFont::Stroke, s, &fit);
+        assert!((text.width - 10.0).abs() < 1e-9, "{}", text.width);
     }
 
     #[test]
