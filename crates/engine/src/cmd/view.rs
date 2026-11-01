@@ -66,7 +66,12 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{delta: [dx,dy]} | {from, to} | {center}")
             .noundo()
             .transparent()
-            .interactive(|_| Ok(Box::new(PanM::default()))),
+            .interactive(|_| Ok(Box::new(PanM))),
+        CommandSpec::new("-pan", "Pan", run_pan)
+            .params("{delta: [dx,dy]} | {from, to} | {center}")
+            .noundo()
+            .transparent()
+            .interactive(|_| Ok(Box::new(PanPointsM::default()))),
         CommandSpec::new("pan.left", "Pan Left", |s, _| pan_frac(s, Vec2::new(-0.25, 0.0))).menu(&["View", "Pan", "Left"]).noundo().transparent(),
         CommandSpec::new("pan.right", "Pan Right", |s, _| pan_frac(s, Vec2::new(0.25, 0.0))).menu(&["View", "Pan", "Right"]).noundo().transparent(),
         CommandSpec::new("pan.up", "Pan Up", |s, _| pan_frac(s, Vec2::new(0.0, 0.25))).menu(&["View", "Pan", "Up"]).noundo().transparent(),
@@ -569,6 +574,24 @@ impl Session {
         self.touch();
         Ok(())
     }
+    /// PAN is in its realtime mode: the UI turns left-button drags into [`Session::realtime_pan`].
+    pub fn realtime_pan_active(&self) -> bool {
+        self.running.as_ref().is_some_and(|r| r.id == "pan") && self.current_prompt().is_some_and(|p| p.message == REALTIME_PAN_PROMPT)
+    }
+    /// One step of a realtime pan drag of `dx`, `dy` screen pixels (y down): the drawing follows
+    /// the cursor. Does nothing outside realtime PAN.
+    pub fn realtime_pan(&mut self, dx: f64, dy: f64) -> Result<()> {
+        if !self.realtime_pan_active() || !dx.is_finite() || !dy.is_finite() {
+            return Ok(());
+        }
+        let px = self.viewport_px.1.max(1.0);
+        let st = self.state_mut()?;
+        let v = st.view();
+        let scale = px / v.height;
+        st.set_view_quiet(View { center: v.center - Vec2::new(dx / scale, -dy / scale), height: v.height });
+        self.touch();
+        Ok(())
+    }
     /// The zoom of a mouse wheel scroll by `delta` points (up zooms in): ZOOMFACTOR scales it
     /// (60, the default, zooms about 18% per wheel step).
     pub fn wheel_zoom_factor(&self, delta: f64) -> f64 {
@@ -580,14 +603,46 @@ impl Session {
     }
 }
 
-#[derive(Default)]
-struct PanM {
-    first: Option<Vec2>,
-}
+/// The prompt of realtime PAN; [`Session::realtime_pan_active`] recognises the mode by it.
+const REALTIME_PAN_PROMPT: &str = "Drag to pan; press Esc or Enter to exit";
+
+/// PAN: realtime. Dragging with the left button moves the drawing with the cursor until Esc or
+/// Enter; the whole session is one Zoom Previous entry.
+struct PanM;
 
 impl Interactive for PanM {
     fn name(&self) -> &'static str {
         "PAN"
+    }
+    fn begin(&mut self, s: &mut Session) -> Result<Step> {
+        let st = s.state_mut()?;
+        let v = st.view();
+        st.view_history.push(v);
+        if st.view_history.len() > 50 {
+            st.view_history.remove(0);
+        }
+        Ok(Step::Continue)
+    }
+    fn prompt(&self, _s: &Session) -> Prompt {
+        Prompt::new(REALTIME_PAN_PROMPT, Accept { enter: true, ..Accept::default() })
+    }
+    fn input(&mut self, _s: &mut Session, i: Input) -> Result<Step> {
+        match i {
+            Input::Enter => Ok(Step::Done),
+            _ => Ok(Step::Continue),
+        }
+    }
+}
+
+/// -PAN: a base point and a second point, or a displacement (a point, then Enter).
+#[derive(Default)]
+struct PanPointsM {
+    first: Option<Vec2>,
+}
+
+impl Interactive for PanPointsM {
+    fn name(&self) -> &'static str {
+        "-PAN"
     }
     fn prompt(&self, _s: &Session) -> Prompt {
         match self.first {
@@ -605,7 +660,12 @@ impl Interactive for PanM {
                 run_pan(s, &json!({ "from": [a.x, a.y], "to": [b.x, b.y] }))?;
                 Ok(Step::Done)
             }
-            (_, Input::Enter) => Ok(Step::Done),
+            // Enter at the second point: the first point is the displacement.
+            (Some(d), Input::Enter) => {
+                run_pan(s, &json!({ "delta": [d.x, d.y] }))?;
+                Ok(Step::Done)
+            }
+            (None, Input::Enter) => Ok(Step::Done),
             _ => Ok(Step::Continue),
         }
     }

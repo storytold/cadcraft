@@ -30,7 +30,7 @@ fn transparent_zoom_resumes_the_running_command() {
     s.cmdline("").unwrap();
     s.cancel();
     // Scripts nest the same way.
-    s.script("LINE 0,0 'PAN 0,0 1,1 5,0\n\n").unwrap();
+    s.script("LINE 0,0 '-PAN 0,0 1,1 5,0\n\n").unwrap();
     assert!(s.running.is_none(), "{}", s.prompt_text());
     assert_eq!(lines(&s), 2);
     // Enter ends the nested command; Esc and a new command cancel both levels.
