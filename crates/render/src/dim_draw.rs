@@ -169,20 +169,31 @@ fn text_box(d: &Drawing, t: &cadcraft_doc::Text, gap: f64) -> Option<Vec<Vec2>> 
     Some(vec![at(s0 - gap, u0 - gap), at(s1 + gap, u0 - gap), at(s1 + gap, u1 + gap), at(s0 - gap, u1 + gap)])
 }
 
-/// Most texts of one dimension block that get a DIMTFILL background, and most of its SOLIDs
+/// Most texts of one dimension block that get a DIMTFILL background, and most of its fills
 /// checked for covering one.
 pub(crate) const MAX_FILL_TEXTS: usize = 64;
 
-pub(crate) const MAX_FILL_SOLIDS: usize = 256;
+pub(crate) const MAX_FILL_BACKGROUNDS: usize = 256;
 
-/// Whether `be` is a SOLID that covers `p` (a text background the block holds already, as the
-/// `*D` block of DIMTFILL 2 does).
-pub(crate) fn solid_covers(be: &Entity, p: Vec2) -> bool {
-    let EntityKind::Solid(s) = &be.kind else { return false };
-    // SOLID corners go 1, 2, 4, 3 around the outline.
-    let [c1, c2, c3, c4] = s.corners.map(|c| c.xy());
-    let ring = [c1, c2, c4, c3];
-    let next = [c2, c4, c3, c1];
+/// Whether a block already holds a text background covering `p`: a WIPEOUT for DIMTFILL 1
+/// or a SOLID for DIMTFILL 2.
+pub(crate) fn background_covers(be: &Entity, p: Vec2) -> bool {
+    let ring = match &be.kind {
+        EntityKind::Solid(s) => {
+            // SOLID corners go 1, 2, 4, 3 around the outline.
+            let [c1, c2, c3, c4] = s.corners.map(|c| c.xy());
+            [c1, c2, c4, c3]
+        }
+        EntityKind::Wipeout(w) => {
+            // Generated text backgrounds are quadrilaterals. Do not scan input-sized polygons
+            // for each text; other wipeouts still draw normally and get the fallback fill.
+            let [a, b, c, d] = w.vertices() else { return false };
+            [*a, *b, *c, *d]
+        }
+        _ => return false,
+    };
+    let [c1, c2, c3, c4] = ring;
+    let next = [c2, c3, c4, c1];
     let sides: Vec<f64> = ring.iter().zip(next.iter()).map(|(a, b)| (*b - *a).cross(p - *a)).filter(|c| c.abs() > 1e-12).collect();
     !sides.is_empty() && (sides.iter().all(|c| *c > 0.0) || sides.iter().all(|c| *c < 0.0))
 }

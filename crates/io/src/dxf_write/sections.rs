@@ -314,7 +314,7 @@ fn write_header(w: &mut W, d: &Drawing, version: Version) -> usize {
     seed_pos
 }
 
-fn write_classes(w: &mut W, cx: &Ctx, every: &[&Entity]) {
+fn write_classes(w: &mut W, cx: &Ctx, every: &[&Entity], has_wipeout: bool, has_wipeout_vars: bool) {
     w.s(0, "SECTION");
     w.s(2, "CLASSES");
     let mut classes = vec![
@@ -335,8 +335,11 @@ fn write_classes(w: &mut W, cx: &Ctx, every: &[&Entity]) {
     if cx.native_mleader() && every.iter().any(|e| matches!(e.kind, EntityKind::MLeader(_))) {
         classes.push(("MULTILEADER", "AcDbMLeader", 1025, true));
     }
-    if every.iter().any(|e| matches!(e.kind, EntityKind::Wipeout(_))) {
+    if has_wipeout {
         classes.push(("WIPEOUT", "AcDbWipeout", 127, true));
+    }
+    if has_wipeout_vars {
+        classes.push(("WIPEOUTVARIABLES", "AcDbWipeoutVariables", 0, false));
     }
     if !cx.images.is_empty() {
         classes.push(("IMAGE", "AcDbRasterImage", 127, true));
@@ -495,6 +498,7 @@ struct ObjectWritePlan<'a> {
     table_styles: &'a [TableStyle],
     mleader_styles: &'a [MLeaderStyle],
     ltype_handles: &'a HashMap<String, String>,
+    wipeout_vars: Option<&'a String>,
 }
 
 fn write_layout_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
@@ -575,6 +579,10 @@ fn write_root_group_objects(
         w.s(3, "ACAD_IMAGE_VARS");
         w.s(350, cx.images.vars.clone());
     }
+    if let Some(h) = plan.wipeout_vars {
+        w.s(3, "ACAD_WIPEOUT_VARS");
+        w.s(350, h);
+    }
     w.s(3, "ACAD_LAYOUT");
     w.s(350, layout_dict.clone());
     w.s(3, "ACAD_MLEADERSTYLE");
@@ -651,6 +659,17 @@ fn write_named_objects(w: &mut W, plan: &ObjectWritePlan<'_>) {
     let pstyles = plan.pstyles;
     let scales = plan.scales;
     let scale_dict = plan.scale_dict;
+    // A mask's outline follows the drawing's WIPEOUTFRAME, including after a save.
+    if let Some(h) = plan.wipeout_vars {
+        w.s(0, "WIPEOUTVARIABLES");
+        w.s(5, h);
+        w.group("ACAD_REACTORS", 330, &[root_dict]);
+        w.s(330, root_dict.clone());
+        w.s(100, "AcDbWipeoutVariables");
+        w.i(90, 0);
+        let frame = plan.d.header.i64("WIPEOUTFRAME", 1);
+        w.i(70, if (0..=2).contains(&frame) { frame } else { 1 });
+    }
     // Plot style names: a dictionary with a default (Normal) of placeholder objects.
     w.s(0, "ACDBDICTIONARYWDFLT");
     w.s(5, pstyle_dict.clone());
@@ -997,7 +1016,11 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
 
     let seed_pos = write_header(&mut w, d, version);
 
-    write_classes(&mut w, &cx, &every);
+    // A fresh dimension's generated block may be the file's only WIPEOUT.
+    let has_wipeout =
+        every.iter().copied().chain(dim_defs.iter().flat_map(|(_, _, ents)| ents.iter())).any(|e| matches!(e.kind, EntityKind::Wipeout(_)));
+    let wipeout_vars = (has_wipeout || d.header.get("WIPEOUTFRAME").is_some()).then(|| w.h());
+    write_classes(&mut w, &cx, &every, has_wipeout, wipeout_vars.is_some());
 
     let ltype_handles = write_tables(&mut w, TableWritePlan { d, version, cx: &mut cx, ext: d.extents(&Space::Model) });
 
@@ -1122,6 +1145,7 @@ pub(super) fn tags_for(d: &Drawing, version: Version, target: Version, frozen_34
             table_styles,
             mleader_styles,
             ltype_handles: &ltype_handles,
+            wipeout_vars: wipeout_vars.as_ref(),
         },
     );
 

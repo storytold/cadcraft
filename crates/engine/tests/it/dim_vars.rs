@@ -129,6 +129,44 @@ fn text_fill_variables_are_style_overrides() {
 }
 
 #[test]
+fn exploding_background_colour_fill_keeps_a_mask_and_undo_restores_the_dimension() {
+    let mut s = Session::new();
+    set(&mut s, "DIMTFILL", json!(1));
+    set(&mut s, "DIMSCALE", json!(2));
+    linear(&mut s, 10.0);
+    let (_, g) = last_dim(&s);
+    let before = s.doc().unwrap().clone();
+    let h = before.model.last().unwrap().handle;
+    let result = s.execute("explode", &json!({"handles": [h.hex()]})).unwrap();
+    let d = s.doc().unwrap();
+    assert!(d.entity(h).is_none());
+    let masks: Vec<_> = d
+        .model
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| match &e.kind {
+            EntityKind::Wipeout(w) => Some((i, e, w)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(masks.len(), 1);
+    let (mask_index, mask, w) = masks[0];
+    assert_eq!(w.boundary, g.text_fill);
+    assert_eq!(mask.common, before.entity(h).unwrap().common);
+    assert!(result["handles"].as_array().unwrap().contains(&json!(mask.handle.hex())));
+    let text = d.model.iter().position(|e| matches!(e.kind, EntityKind::MText(_))).unwrap();
+    assert!(mask_index < text);
+    assert!(
+        d.model.iter().enumerate().filter(|(_, e)| matches!(e.kind, EntityKind::Solid(_))).all(|(i, _)| i < mask_index),
+        "arrowheads stay behind the mask"
+    );
+    s.execute("undo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap(), &before);
+    s.execute("redo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().model.iter().filter(|e| matches!(e.kind, EntityKind::Wipeout(_))).count(), 1);
+}
+
+#[test]
 fn fit_moves_text_or_arrows_outside() {
     // 0.5 between the extension lines: the text "0.5000" doesn't fit, the arrows (2 × 0.18) do.
     let mut s = Session::new();

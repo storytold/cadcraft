@@ -19,3 +19,13 @@ fn wipeoutvariables_sets_the_frame_flag() {
     assert_eq!(frame(None), 1, "no object: the default shows frames");
     assert_eq!(frame(Some(7)), 1, "an out-of-range flag is ignored");
 }
+
+#[test]
+fn changed_frame_setting_survives_save_without_an_old_copy_overriding_it() {
+    let mut drawing = cadcraft_io::read_dxf(dxf(Some(0)).as_bytes()).unwrap();
+    for frame in [2, 1, 0] {
+        drawing.header.set_i64("WIPEOUTFRAME", frame);
+        drawing = cadcraft_io::read_dxf(cadcraft_io::write_dxf(&drawing).as_bytes()).unwrap();
+        assert_eq!(drawing.header.i64("WIPEOUTFRAME", 1), frame);
+    }
+}

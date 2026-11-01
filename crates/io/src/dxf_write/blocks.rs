@@ -97,8 +97,15 @@ pub(super) fn dim_block_entities(d: &Drawing, dm: &Dimension, layer: &str) -> Ve
             });
         }
     }
-    // DIMTFILL 2: the text background in DIMTFILLCLR, under the text and its marks (SOLID
-    // corners go 1, 2, 4, 3).
+    // DIMTFILL 1: a background-colour mask, under the text and its marks.
+    if style.text_fill == 1 && g.text_fill.len() == 4 {
+        out.push(Entity {
+            handle: Handle(0),
+            common: in_color(Color::ByBlock),
+            kind: EntityKind::Wipeout(cadcraft_doc::Wipeout { boundary: g.text_fill.clone() }),
+        });
+    }
+    // DIMTFILL 2: the text background in DIMTFILLCLR (SOLID corners go 1, 2, 4, 3).
     if style.text_fill == 2
         && let [p0, p1, p2, p3] = g.text_fill.as_slice()
     {

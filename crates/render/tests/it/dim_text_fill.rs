@@ -191,14 +191,20 @@ fn every_text_of_a_block_gets_a_background() {
 
 #[test]
 fn a_block_that_holds_its_background_gets_no_second_one() {
-    // A block with a SOLID, then its text at (20, 20), away from where CADCraft would put it: the
+    // A block with a SOLID or WIPEOUT, then text away from where CADCraft would put it: the
     // number of masks drawn.
-    let masks = |solid: [(f64, f64); 4]| {
+    let masks = |solid: [(f64, f64); 4], wipeout: bool| {
         let mut d = Drawing::new_imperial();
         d.dim_styles.push(style(1, Color::ByBlock));
         let mut blk = Block::new("*D1");
         let solid = cadcraft_doc::Solid { corners: solid.map(|(x, y)| Vec3::new(x, y, 0.0)) };
-        blk.entities.push(Entity::new(Handle(1), EntityKind::Solid(solid)));
+        let fill = if wipeout {
+            let [a, b, c, dd] = solid.corners.map(|p| p.xy());
+            EntityKind::Wipeout(cadcraft_doc::Wipeout { boundary: vec![a, b, dd, c] })
+        } else {
+            EntityKind::Solid(solid)
+        };
+        blk.entities.push(Entity::new(Handle(1), fill));
         let text = MText {
             insert: Vec3::new(20.0, 20.0, 0.0),
             height: 0.18,
@@ -217,9 +223,12 @@ fn a_block_that_holds_its_background_gets_no_second_one() {
         let list = build(&d, &Space::Model, &Options::default());
         list.prims.iter().filter(|p| p.kind == Kind::Mask).count()
     };
-    assert_eq!(masks([(19.0, 19.5), (21.0, 19.5), (19.0, 20.5), (21.0, 20.5)]), 0, "the SOLID covers the text");
-    // A small SOLID (an arrowhead) over the middle of the text only: the background is drawn.
-    assert_eq!(masks([(19.9, 19.95), (20.1, 20.0), (19.9, 20.05), (19.9, 20.05)]), 1, "the SOLID covers part of the text");
+    for wipeout in [false, true] {
+        let own_mask = usize::from(wipeout);
+        assert_eq!(masks([(19.0, 19.5), (21.0, 19.5), (19.0, 20.5), (21.0, 20.5)], wipeout), own_mask, "the fill covers the text");
+        // A small fill over the middle of the text only: the background is still drawn.
+        assert_eq!(masks([(19.9, 19.95), (20.1, 20.0), (19.9, 20.05), (19.9, 20.05)], wipeout), own_mask + 1, "the fill covers part of the text");
+    }
 }
 
 #[test]
