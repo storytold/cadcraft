@@ -365,10 +365,18 @@ fn run_wblock(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").ok_or_else(|| bad("wblock", "`path` is required"))?.to_string();
     let src = s.doc()?;
     let mut d = cadcraft_doc::Drawing::new_imperial();
+    // The written drawing keeps the source's settings and styles, as AutoCAD's -WBLOCK does: its
+    // units ($INSUNITS, $MEASUREMENT), so a block from a metric drawing is not declared in inches
+    // and scaled on insert, and its defaults (text size, current styles, annotation scales).
+    d.header = src.header.clone();
     d.layers = src.layers.clone();
     d.linetypes = src.linetypes.clone();
     d.text_styles = src.text_styles.clone();
     d.dim_styles = src.dim_styles.clone();
+    d.mleader_styles = src.mleader_styles.clone();
+    d.table_styles = src.table_styles.clone();
+    d.mline_styles = src.mline_styles.clone();
+    d.scales = src.scales.clone();
     d.blocks = src.blocks.clone();
     // The base point becomes the written drawing's origin, its insertion base: by default 0,0 for
     // objects and the block's base point for a block (`base` is then in block coordinates).
@@ -595,6 +603,8 @@ enum InsStage {
     ZScale,
     Rotation,
     Attribs,
+    /// A Verify attribute asked again.
+    Verify,
 }
 
 #[derive(Default)]
@@ -615,8 +625,11 @@ struct InsertM {
     /// Where the block was dropped to pick a Basepoint on it.
     dropped: Option<Vec2>,
     rotation: Option<f64>,
-    attdefs: Vec<(String, String, String)>,
+    /// The attributes asked for: tag, prompt, default value, and Verify (asked again).
+    attdefs: Vec<(String, String, String, bool)>,
     values: serde_json::Map<String, Value>,
+    /// Verify attributes asked again so far.
+    verified: usize,
     /// `*name`: insert the block's objects (one uniform scale factor, no attribute values).
     explode: bool,
     /// The file waiting for the Redefine answer.
@@ -633,6 +646,17 @@ impl InsertM {
         } else {
             InsStage::Attribs
         };
+        if self.stage == InsStage::Attribs && self.values.is_empty() && !self.attdefs.is_empty() {
+            s.echo("Enter attribute values");
+        }
+        // Then the Verify attributes are asked again, with the values typed.
+        if self.stage == InsStage::Attribs && self.values.len() >= self.attdefs.len() && self.verified < self.verifying().len() {
+            if self.verified == 0 {
+                s.echo("Verify attribute values");
+            }
+            self.stage = InsStage::Verify;
+            return Ok(Step::Continue);
+        }
         if self.stage == InsStage::Attribs
             && self.values.len() >= self.attdefs.len()
             && let (Some(n), Some(a), Some(sc), Some(r)) = (self.name.clone(), self.at, self.scale, self.rotation)
@@ -646,20 +670,26 @@ impl InsertM {
         Ok(Step::Continue)
     }
 
-    /// Block `name` chosen: collect its attribute prompts and ask for the insertion point.
+    /// The Verify attributes asked for.
+    fn verifying(&self) -> Vec<&(String, String, String, bool)> {
+        self.attdefs.iter().filter(|a| a.3).collect()
+    }
+
+    /// Block `name` chosen: collect its attribute prompts and ask for the insertion point. Constant
+    /// and Preset attributes take their values without asking, and so do all of them with ATTREQ 0.
     fn choose(&mut self, s: &mut Session, name: &str) -> Result<()> {
         let Some(b) = s.doc()?.block(name).cloned() else {
             s.echo(format!("Block \"{name}\" not found."));
             return Ok(());
         };
-        self.attdefs = if self.explode {
+        self.attdefs = if self.explode || !s.settings.attreq {
             Vec::new()
         } else {
             b.entities
                 .iter()
                 .filter_map(|e| {
                     if let EntityKind::AttDef(a) = &e.kind {
-                        (!a.constant).then(|| (a.tag.clone(), a.prompt.clone(), a.text.value.clone()))
+                        (!a.constant && !a.modes.preset).then(|| (a.tag.clone(), a.prompt.clone(), a.text.value.clone(), a.modes.verify))
                     } else {
                         None
                     }
@@ -744,8 +774,13 @@ impl Interactive for InsertM {
             InsStage::ZScale => Prompt::new("Specify Z scale factor or", Accept::NUMBER).default("use X scale factor"),
             InsStage::Rotation => Prompt::new("Specify rotation angle", Accept::POINT_OR_NUMBER).default("0").base(at),
             InsStage::Attribs => {
-                let (_, prompt, default) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
+                let (_, prompt, default, _) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
                 Prompt::new(if prompt.is_empty() { "Enter attribute value".into() } else { prompt }, Accept::TEXT).default(default)
+            }
+            InsStage::Verify => {
+                let (tag, prompt) = self.verifying().get(self.verified).map(|a| (a.0.clone(), a.1.clone())).unwrap_or_default();
+                let typed = self.values.get(&tag).and_then(Value::as_str).unwrap_or_default().to_string();
+                Prompt::new(if prompt.is_empty() { "Enter attribute value".into() } else { prompt }, Accept::TEXT).default(typed)
             }
         }
     }
@@ -905,12 +940,26 @@ impl Interactive for InsertM {
                 return self.advance(s);
             }
             InsStage::Attribs => {
-                let (tag, _, default) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
+                let (tag, _, default, _) = self.attdefs.get(self.values.len()).cloned().unwrap_or_default();
                 let v = match i {
                     Input::Text(t) => t,
                     _ => default,
                 };
                 self.values.insert(tag, Value::String(v));
+                return self.advance(s);
+            }
+            // Enter keeps the value typed.
+            InsStage::Verify => {
+                let tag = self.verifying().get(self.verified).map(|a| a.0.clone()).unwrap_or_default();
+                match i {
+                    Input::Text(t) => {
+                        self.values.insert(tag, Value::String(t));
+                    }
+                    Input::Enter => {}
+                    // A click or anything else is no answer: the value is asked for again.
+                    _ => return Ok(Step::Continue),
+                }
+                self.verified += 1;
                 return self.advance(s);
             }
         }
