@@ -14,10 +14,14 @@ const PICKED: &str = "QuickCalc: ";
 const MAX_HISTORY: usize = 100;
 /// Variables kept.
 const MAX_VARS: usize = 50;
+/// Bound each saved expression/result and variable name, including hand-edited preferences.
+// CAL accepts expressions up to 10,000 bytes, including a variable's name on its own.
+const MAX_TEXT_BYTES: usize = 10_000;
+const MAX_NAME_BYTES: usize = MAX_TEXT_BYTES;
 const KINDS: [(&str, &str); 4] = [("length", "Length"), ("area", "Area"), ("volume", "Volume"), ("angle", "Angle")];
 
 #[derive(Clone, Default)]
-struct State {
+pub(crate) struct State {
     input: String,
     /// (expression, result) newest last.
     history: Vec<(String, String)>,
@@ -39,8 +43,17 @@ struct State {
     pending: Option<usize>,
 }
 
-fn id() -> egui::Id {
-    egui::Id::unique("cadcraft-quickcalc")
+fn valid_name(name: &str) -> bool {
+    name.len() <= MAX_NAME_BYTES
+        && name.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && !["pi", "e", "ans"].contains(&name)
+}
+
+/// CAL variables are finite numbers or 2D points; no nested arrays or objects.
+fn valid_value(value: &Value) -> bool {
+    let number = |v: &Value| v.as_f64().is_some_and(f64::is_finite);
+    number(value) || value.as_array().is_some_and(|a| a.len() == 2 && a.iter().all(number))
 }
 
 /// A variable's value as typed into an expression: a number, or a point as `[x,y]`.
@@ -57,6 +70,61 @@ fn result_value(r: &Value) -> Option<Value> {
 }
 
 impl State {
+    /// Only durable calculator data: never resume an in-flight drawing pick after a restart.
+    pub(crate) fn prefs(&self) -> Value {
+        let history: Vec<_> = self
+            .history
+            .iter()
+            .rev()
+            .take(MAX_HISTORY)
+            .filter(|(expr, result)| expr.len() <= MAX_TEXT_BYTES && result.len() <= MAX_TEXT_BYTES)
+            .collect();
+        let vars: Vec<_> = self.vars.iter().filter(|(name, value)| valid_name(name) && valid_value(value)).take(MAX_VARS).collect();
+        json!({"history": history.into_iter().rev().collect::<Vec<_>>(), "vars": vars,
+            "ans": self.ans.as_ref().filter(|v| valid_value(v))})
+    }
+
+    /// Restore bounded, independently validated entries; older preferences have no calculator.
+    pub(crate) fn load_prefs(&mut self, value: &Value) {
+        if !value.is_object() {
+            return;
+        }
+        if let Some(history) = value.get("history").and_then(Value::as_array) {
+            self.history = history
+                .iter()
+                .rev()
+                .take(MAX_HISTORY)
+                .filter_map(|entry| {
+                    let pair = entry.as_array().filter(|a| a.len() == 2)?;
+                    let expr = pair.first()?.as_str().filter(|s| s.len() <= MAX_TEXT_BYTES)?;
+                    let result = pair.get(1)?.as_str().filter(|s| s.len() <= MAX_TEXT_BYTES)?;
+                    Some((expr.to_string(), result.to_string()))
+                })
+                .collect();
+            self.history.reverse();
+        }
+        if let Some(vars) = value.get("vars").and_then(Value::as_array) {
+            self.vars.clear();
+            for entry in vars {
+                // Only valid entries count toward the limit.
+                if self.vars.len() >= MAX_VARS {
+                    break;
+                }
+                let Some(pair) = entry.as_array().filter(|a| a.len() == 2) else { continue };
+                let Some(name) = pair.first().and_then(Value::as_str).filter(|s| s.len() <= MAX_NAME_BYTES) else { continue };
+                let name = name.to_ascii_lowercase();
+                let Some(value) = pair.get(1).filter(|v| valid_value(v)) else { continue };
+                if valid_name(&name) {
+                    self.vars.retain(|(key, _)| key != &name);
+                    self.vars.push((name, value.clone()));
+                }
+            }
+        }
+        if let Some(ans) = value.get("ans") {
+            self.ans = valid_value(ans).then(|| ans.clone());
+        }
+    }
+
     fn vars_json(&self) -> Value {
         let mut m = serde_json::Map::new();
         for (k, v) in &self.vars {
@@ -88,9 +156,7 @@ impl State {
     }
     fn add_var(&mut self, app: &mut CadApp) {
         let name = self.var_name.trim().to_ascii_lowercase();
-        let valid = name.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
-            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-            && !["pi", "e", "ans"].contains(&name.as_str());
+        let valid = valid_name(&name);
         if !valid {
             self.error = Some(crate::tl!("A variable name starts with a letter and has only letters, digits and _").into());
             return;
@@ -219,7 +285,7 @@ fn value_row(ui: &mut egui::Ui, value: &mut String) {
 /// Quick Calculator dock body: expression entry with evaluation, variables and unit conversion.
 pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
-    let mut st: State = ui.ctx().data_mut(|d| d.get_temp(id())).unwrap_or_default();
+    let mut st = std::mem::take(&mut app.quickcalc);
     st.collect(app);
     egui::ScrollArea::vertical().id_salt("dock-quickcalc").auto_shrink([false, false]).show(ui, |ui| {
         ui.add_space(6.0);
@@ -371,16 +437,98 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
             });
         });
     });
-    ui.ctx().data_mut(|d| d.insert_temp(id(), st));
+    app.quickcalc = st;
 }
 
 #[cfg(test)]
 mod tests {
+    use cadcraft_engine::Session;
     use egui::accesskit::Role;
     use egui_kittest::Harness;
     use egui_kittest::kittest::{NodeT, Queryable};
 
-    use super::value_row;
+    use super::{MAX_HISTORY, MAX_TEXT_BYTES, MAX_VARS, State, value_row};
+    use crate::{CadApp, Services};
+    use serde_json::{Value, json};
+
+    #[test]
+    fn preferences_restore_numbers_points_history_and_ans_without_pending_input() {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        let mut state = State { var_name: "Width".into(), var_expr: "2+3".into(), ..State::default() };
+        state.add_var(&mut app);
+        state.var_name = "origin".into();
+        state.var_expr = "[3,4]".into();
+        state.add_var(&mut app);
+        state.input = "origin*width".into();
+        state.evaluate(&mut app);
+        state.pending = Some(123);
+        state.error = Some("transient error".into());
+        app.quickcalc = state;
+
+        let mut restarted = CadApp::new(Session::default(), Services::default());
+        let drawing = restarted.session.doc().unwrap().clone();
+        restarted.load_prefs(&app.prefs_json());
+        let mut state = std::mem::take(&mut restarted.quickcalc);
+        assert_eq!(state.history, [("origin*width".into(), "15,20".into())]);
+        assert_eq!(state.vars, [("width".into(), json!(5.0)), ("origin".into(), json!([3.0, 4.0]))]);
+        assert_eq!(state.ans, Some(json!([15.0, 20.0])));
+        assert!(state.pending.is_none());
+        assert!(state.error.is_none());
+        assert!(state.input.is_empty());
+        state.input = "ans+origin".into();
+        state.evaluate(&mut restarted);
+        assert_eq!(state.ans, Some(json!([18.0, 24.0])));
+        assert_eq!(restarted.session.doc().unwrap(), &drawing);
+        assert!(restarted.session.running.is_none());
+    }
+
+    #[test]
+    fn malformed_entries_do_not_hide_valid_calculator_data_or_other_preferences() {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        app.load_prefs(
+            &json!({"theme": "light", "quickcalc": {
+                "history": [null, ["bad"], [false, 3], ["2+3", "5"]],
+                "vars": [["PI", 3], ["1bad", 5], ["nested", [[1,2],3]], ["bad", [1,2,3]],
+                    ["object", {"x":1}], ["WIDTH", 4], ["width", 5], ["origin", [3,4]]],
+                "ans": "NaN"
+            }})
+            .to_string(),
+        );
+        assert_eq!(app.ui.theme.as_str(), "light");
+        assert_eq!(app.quickcalc.history, [("2+3".into(), "5".into())]);
+        assert_eq!(app.quickcalc.vars, [("width".into(), json!(5)), ("origin".into(), json!([3, 4]))]);
+        assert!(app.quickcalc.ans.is_none());
+        let saved = app.prefs_json();
+        for malformed in ["not JSON", "{}", r#"{"quickcalc":null}"#, r#"{"quickcalc":{"vars":false,"history":0}}"#] {
+            app.load_prefs(malformed);
+            assert_eq!(app.prefs_json(), saved);
+        }
+    }
+
+    #[test]
+    fn stored_calculator_data_is_bounded_and_cleared_data_stays_cleared() {
+        let mut state = State::default();
+        let history: Vec<_> = (0..MAX_HISTORY + 10).map(|i| json!([i.to_string(), i.to_string()])).collect();
+        let vars: Vec<_> = (0..MAX_VARS + 10).map(|i| json!([format!("v{i}"), i])).collect();
+        state.load_prefs(&json!({"history": history, "vars": vars, "ans": 5}));
+        assert_eq!(state.history.len(), MAX_HISTORY);
+        assert_eq!(state.history.first().unwrap().0, "10");
+        assert_eq!(state.history.last().unwrap().0, (MAX_HISTORY + 9).to_string());
+        assert_eq!(state.vars.len(), MAX_VARS);
+        let oversized = "x".repeat(MAX_TEXT_BYTES + 1);
+        state.load_prefs(&json!({"history": [[oversized, "1"]], "vars": [[oversized, 1]]}));
+        assert!(state.history.is_empty());
+        assert!(state.vars.is_empty());
+        let mut restored = State { history: vec![("old".into(), "1".into())], vars: vec![("old".into(), json!(1))], ..State::default() };
+        restored.load_prefs(&state.prefs());
+        assert!(restored.history.is_empty());
+        assert!(restored.vars.is_empty());
+        assert_eq!(restored.ans, Some(json!(5)));
+        // An invalid answer is discarded rather than reused as a calculator value.
+        restored.load_prefs(&json!({"ans": [1, null]}));
+        assert_eq!(restored.ans, None);
+        assert_eq!(restored.prefs()["ans"], Value::Null);
+    }
 
     /// The conversion value field is named by its visible label under bundled fonts only, so a
     /// system face cannot hide a missing glyph and a bare "1" placeholder cannot pass as a name.

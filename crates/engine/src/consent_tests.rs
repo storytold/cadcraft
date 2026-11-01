@@ -22,6 +22,10 @@ fn the_shared_writer_refuses_without_consent() {
     let e = consent::with(Consent::NONE, || crate::atomic_write::write_atomic(&path, b"0\nSECTION")).unwrap_err();
     assert_eq!(e.kind(), std::io::ErrorKind::PermissionDenied);
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "the user's notes");
+    // QSAVE's `.bak` is streamed through the writer underneath.
+    let e = consent::with(Consent::NONE, || crate::atomic_write::write_atomic_with(&path, None, |_| Ok(()))).unwrap_err();
+    assert_eq!(e.kind(), std::io::ErrorKind::PermissionDenied);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "the user's notes");
     consent::with(WRITES, || crate::atomic_write::write_atomic(&path, b"new")).unwrap();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
     std::fs::remove_dir_all(&dir).ok();

@@ -309,7 +309,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "parking_lot",
  "percent-encoding",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
  "wl-clipboard-rs",
  "x11rb",
 ]
@@ -709,7 +709,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft"
-version = "0.14.0"
+version = "0.16.0"
 dependencies = [
  "cadcraft-assistant",
  "cadcraft-engine",
@@ -744,7 +744,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-assistant"
-version = "0.14.0"
+version = "0.16.0"
 dependencies = [
  "cadcraft-engine",
  "cadcraft-io",
@@ -755,7 +755,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-cli"
-version = "0.14.0"
+version = "0.16.0"
 dependencies = [
  "cadcraft-assistant",
  "cadcraft-engine",
@@ -773,14 +773,14 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-color"
-version = "0.14.0"
+version = "0.16.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "cadcraft-constraints"
-version = "0.14.0"
+version = "0.16.0"
 dependencies = [
  "cadcraft-doc",
  "cadcraft-geom",
@@ -790,7 +790,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-doc"
-version = "0.14.0"
+version = "0.16.0"
 dependencies = [
  "cadcraft-color",
  "cadcraft-geom",
@@ -801,14 +801,14 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-dwg"
-version = "0.14.0"
+version = "0.16.0"
 dependencies = [
  "acadrust",
 ]
 
 [[package]]
 name = "cadcraft-dxf"
-version = "0.14.0"
+version = "0.16.0"
 dependencies = [
  "encoding_rs",
  "log",
@@ -817,7 +817,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-engine"
-version = "0.14.0"
+version = "0.16.0"
 dependencies = [
  "cadcraft-color",
  "cadcraft-constraints",
@@ -838,24 +838,25 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-fonts"
-version = "0.14.0"
+version = "0.16.0"
 dependencies = [
  "cadcraft-geom",
  "harfrust 0.14.0",
+ "icu_segmenter",
  "skrifa 0.48.0",
  "unicode-bidi",
 ]
 
 [[package]]
 name = "cadcraft-geom"
-version = "0.14.0"
+version = "0.16.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "cadcraft-io"
-version = "0.14.0"
+version = "0.16.0"
 dependencies = [
  "acadrust",
  "cadcraft-color",
@@ -876,7 +877,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-mcp"
-version = "0.14.0"
+version = "0.16.0"
 dependencies = [
  "cadcraft-engine",
  "cadcraft-io",
@@ -889,7 +890,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-render"
-version = "0.14.0"
+version = "0.16.0"
 dependencies = [
  "cadcraft-color",
  "cadcraft-doc",
@@ -903,7 +904,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-ui-egui"
-version = "0.14.0"
+version = "0.16.0"
 dependencies = [
  "cadcraft-assistant",
  "cadcraft-color",
@@ -931,7 +932,7 @@ dependencies = [
 
 [[package]]
 name = "cadcraft-web"
-version = "0.14.0"
+version = "0.16.0"
 dependencies = [
  "cadcraft-engine",
  "cadcraft-io",
@@ -1287,6 +1288,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f8f80099a98041a3d1622845c271458a2d73e688351bf3cb999266764b81d48"
 
 [[package]]
+name = "core_maths"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77745e017f5edba1a9c1d854f6f3a52dac8a12dd5af5d2f54aecf61e43d80d30"
+dependencies = [
+ "libm",
+]
+
+[[package]]
 name = "cpubits"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1594,7 +1604,7 @@ dependencies = [
 [[package]]
 name = "craft-update"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=04aa1703b32d299e54f78fcde4182f2b393a9116#04aa1703b32d299e54f78fcde4182f2b393a9116"
+source = "git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7#c5a1cbfb5f9049f9270955caffb5bee5997aebf7"
 dependencies = [
  "chrono",
  "dunce",
@@ -2099,7 +2109,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2938,6 +2948,29 @@ dependencies = [
  "zerotrie",
  "zerovec",
 ]
+
+[[package]]
+name = "icu_segmenter"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82d07aafccd67af15d02512a6adf5896fbc5ed00f2e99b471d2efa14016db3db"
+dependencies = [
+ "core_maths",
+ "icu_collections",
+ "icu_locale_fallback",
+ "icu_provider",
+ "icu_segmenter_data",
+ "potential_utf",
+ "smallvec",
+ "utf8_iter",
+ "zerovec",
+]
+
+[[package]]
+name = "icu_segmenter_data"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae293c039020f9ec10710af98d29ce6aa2051486638b49c9a6409f3b4a9e98ad"
 
 [[package]]
 name = "idna"
@@ -4051,7 +4084,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4741,7 +4774,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4798,7 +4831,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5317,10 +5350,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.5",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6247,7 +6280,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6683,7 +6716,7 @@ checksum = "9440ea3e5aeabb0ac63af70daf835274065238cdd0cec83418f417eae38bacee"
 
 [[package]]
 name = "xtask"
-version = "0.14.0"
+version = "0.16.0"
 dependencies = [
  "chrono",
  "serde_json",
