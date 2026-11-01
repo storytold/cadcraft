@@ -23,7 +23,7 @@ mod pick;
 mod viewport;
 mod widgets;
 
-use cursor::{draw_crosshair, draw_snap_marker, draw_tracking, effective_point, override_cursor};
+use cursor::{aperture_box_shown, draw_aperture_box, draw_crosshair, draw_snap_marker, draw_tracking, effective_point, override_cursor};
 use cycle::{CycleList, cycle_badge, cycle_click, cycle_list, over_canvas_menu, shift_space_cycle};
 pub(crate) use draw::{Look, draw_highlight, draw_list};
 use draw::{dashed_rect, draw_drag_gpu, draw_highlight_gpu, draw_list_gpu, list_mesh_key, selection_area_fill};
@@ -475,10 +475,18 @@ fn paint_pointer_overlay(
     let view = frame.view;
     // Acquired tracking points and the polar / tracking paths under the cursor.
     if app.canvas.cursor.is_some() {
-        draw_tracking(painter, &xf, &app.session.tracking.acquired, app.canvas.track.as_ref(), view.height * 4.0);
+        draw_tracking(
+            painter,
+            &xf,
+            &app.session.tracking.acquired,
+            app.canvas.track.as_ref(),
+            view.height * 4.0,
+            app.session.settings.autotrack_tooltip,
+        );
     }
     if let (Some(hit), Some(_)) = (app.canvas.snap, app.canvas.cursor) {
-        draw_snap_marker(painter, xf.to_screen(hit.point), &hit);
+        let s = &app.session.settings;
+        draw_snap_marker(painter, xf.to_screen(hit.point), &hit, s.autosnap_marker, s.autosnap_tooltip);
     }
     draw_tiles(app, ui, tiles);
     // UCS icon, ViewCube and viewport label.
@@ -504,7 +512,17 @@ fn paint_pointer_overlay(
             // Use the painted sheet even in MSPACE, where the editing transform follows a
             // model viewport. The whole cursor takes one colour from its centre.
             let ink = paper_rect.map_or(t.crosshair, |paper| crate::theme::crosshair_color(if paper.contains(hp) { t.paper } else { surround }));
-            draw_crosshair(app, painter, rect, hp, selecting, ink);
+            // AutoSnap magnet (AUTOSNAP bit 4): the crosshair sits on the snap point while an
+            // object snap holds the cursor; off, it stays under the mouse and only the marker
+            // shows where the pick will land.
+            let at = match (app.session.settings.autosnap_magnet, app.canvas.snap, app.canvas.cursor) {
+                (true, Some(_), Some(c)) => xf.to_screen(c),
+                _ => hp,
+            };
+            draw_crosshair(app, painter, rect, at, selecting, ink);
+            if aperture_box_shown(app) {
+                draw_aperture_box(painter, at, app.session.settings.aperture, ink);
+            }
             if app.canvas.cycle_badge && app.canvas.cycle.is_none() {
                 cycle_badge(painter, hp);
             }

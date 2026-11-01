@@ -1,6 +1,7 @@
 use super::{CadApp, Color32, Pos2, Rect, Shape, SnapCycle, SnapHit, Stroke, Tokens, Vec2, Xf, pos2, snap, vec2};
 
-pub(super) fn draw_snap_marker(p: &egui::Painter, at: Pos2, hit: &SnapHit) {
+/// The marker shape of a snap mode, centred on `at`.
+fn draw_marker_shape(p: &egui::Painter, at: Pos2, hit: &SnapHit) {
     let t = Tokens::get();
     let s = crate::theme::snap_marker_half();
     let st = Stroke::new(2.0, t.snap);
@@ -56,16 +57,32 @@ pub(super) fn draw_snap_marker(p: &egui::Painter, at: Pos2, hit: &SnapHit) {
             p.line(vec![at + vec2(-s, -s), at + vec2(s, -s), at + vec2(-s, s), at + vec2(s, s), at + vec2(-s, -s)], st);
         }
     }
-    p.text(at + vec2(12.0, 12.0), egui::Align2::LEFT_TOP, crate::i18n::t(hit.name), crate::theme::small(), Color32::BLACK);
-    let galley = p.layout_no_wrap(crate::i18n::t(hit.name).to_string(), crate::theme::small(), Color32::BLACK);
-    let r = Rect::from_min_size(at + vec2(10.0, 10.0), galley.size() + vec2(6.0, 2.0));
-    p.rect_filled(r, 2.0, Color32::from_rgb(0xff, 0xff, 0xe1));
-    p.galley(r.min + vec2(3.0, 1.0), galley, Color32::BLACK);
+}
+
+/// The AutoSnap marker at the snap point and the tooltip naming the snap, each as AUTOSNAP
+/// allows (`marker`: bit 1, `tooltip`: bit 2).
+pub(super) fn draw_snap_marker(p: &egui::Painter, at: Pos2, hit: &SnapHit, marker: bool, tooltip: bool) {
+    if marker {
+        draw_marker_shape(p, at, hit);
+    }
+    if tooltip {
+        let galley = p.layout_no_wrap(crate::i18n::t(hit.name).to_string(), crate::theme::small(), Color32::BLACK);
+        let r = Rect::from_min_size(at + vec2(10.0, 10.0), galley.size() + vec2(6.0, 2.0));
+        p.rect_filled(r, 2.0, Color32::from_rgb(0xff, 0xff, 0xe1));
+        p.galley(r.min + vec2(3.0, 1.0), galley, Color32::BLACK);
+    }
 }
 
 /// Acquired tracking points (small `+`, `//` for a Parallel line), the dotted paths the cursor
 /// is on and the tooltip naming them ("Endpoint: 5.0000 < 90°").
-pub(super) fn draw_tracking(p: &egui::Painter, xf: &Xf, acquired: &[snap::tracking::Acquired], track: Option<&snap::tracking::Track>, far: f64) {
+pub(super) fn draw_tracking(
+    p: &egui::Painter,
+    xf: &Xf,
+    acquired: &[snap::tracking::Acquired],
+    track: Option<&snap::tracking::Track>,
+    far: f64,
+    tooltips: bool,
+) {
     use snap::tracking::{Acquired, PathShape};
     let t = Tokens::get();
     let st = Stroke::new(1.0, t.snap);
@@ -118,7 +135,10 @@ pub(super) fn draw_tracking(p: &egui::Painter, xf: &Xf, acquired: &[snap::tracki
         p.line_segment([at + vec2(-4.0, -4.0), at + vec2(4.0, 4.0)], st);
         p.line_segment([at + vec2(4.0, -4.0), at + vec2(-4.0, 4.0)], st);
     }
-    tooltip(p, at + vec2(16.0, 18.0), &tips.join(", "));
+    // AUTOSNAP bit 32: the AutoTrack tooltip.
+    if tooltips {
+        tooltip(p, at + vec2(16.0, 18.0), &tips.join(", "));
+    }
 }
 
 /// The rubber-band and snap-adjusted cursor point for the current prompt (the engine's
@@ -210,6 +230,28 @@ pub(super) fn override_cursor(app: &mut CadApp, raw: Vec2, xf: &Xf) {
     app.canvas.cursor = Some(p);
     app.session.cursor = p;
     app.session.cursor_deferred = app.canvas.snap.and_then(|h| h.deferred);
+}
+
+/// The aperture box (APBOX) shows while a point prompt runs object snaps: a square of APERTURE
+/// pixels around the crosshair's centre, the reach of the snap search. A one-off override
+/// (`END`, `NON`) decides for its pick, as it does in [`override_cursor`]: `END` shows the box
+/// while F3 has the running snaps off, `NON` hides it while they are on.
+pub(super) fn aperture_box_shown(app: &CadApp) -> bool {
+    let s = &app.session.settings;
+    let mode = app.session.snap_override().unwrap_or(s.osmode);
+    s.apbox
+        && mode != 0
+        && mode & snap::mode::OFF == 0
+        && app.session.pending_window.is_none()
+        && app.session.current_prompt().is_some_and(|p| cadcraft_engine::pointmod::accepts(&p))
+}
+
+/// The aperture box around `at`, in the crosshair's colour.
+pub(super) fn draw_aperture_box(p: &egui::Painter, at: Pos2, aperture: f64, ink: Color32) {
+    let half = aperture as f32;
+    if half.is_finite() && half >= 1.0 {
+        p.rect_stroke(Rect::from_center_size(at, vec2(2.0 * half, 2.0 * half)), 0.0, Stroke::new(1.0, ink), egui::StrokeKind::Middle);
+    }
 }
 
 fn pickbox_half(pickbox: f64) -> Option<f32> {

@@ -1018,3 +1018,10 @@
 	Check for Updates…	Rechercher des mises à jour…
 	CADCraft is up to date.	CADCraft est à jour.
 	Could not check for updates.	Impossible de rechercher les mises à jour.
+	AutoSnap settings	Réglages AutoSnap
+	Marker	Marqueur
+	Magnet	Aimant
+	Display AutoSnap tooltip	Afficher l'info-bulle AutoSnap
+	Display AutoSnap aperture box	Afficher la zone d'ouverture AutoSnap
+	Display AutoTrack tooltip	Afficher l'info-bulle AutoTrack
+	The magnet locks the crosshair onto the snap point; the aperture box shows how near the cursor must come to find one.	L'aimant accroche le réticule au point d'accrochage ; la zone d'ouverture montre à quelle distance le curseur doit s'approcher pour le trouver.

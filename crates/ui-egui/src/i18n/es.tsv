@@ -1259,3 +1259,10 @@
 	Check for Updates…	Buscar actualizaciones…
 	CADCraft is up to date.	CADCraft está actualizado.
 	Could not check for updates.	No se pudo buscar actualizaciones.
+	AutoSnap settings	Ajustes de AutoSnap
+	Marker	Marcador
+	Magnet	Imán
+	Display AutoSnap tooltip	Mostrar la información de AutoSnap
+	Display AutoSnap aperture box	Mostrar el cuadro de apertura de AutoSnap
+	Display AutoTrack tooltip	Mostrar la información de AutoTrack
+	The magnet locks the crosshair onto the snap point; the aperture box shows how near the cursor must come to find one.	El imán fija la cruz en el punto de referencia; el cuadro de apertura muestra a qué distancia debe acercarse el cursor para encontrarlo.

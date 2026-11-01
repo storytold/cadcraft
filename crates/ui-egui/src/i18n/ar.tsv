@@ -1372,3 +1372,10 @@ menu	View	عرض
 	overrides built-in	يتجاوز المدمج
 	{alias} is already defined; select it and use Edit.	{alias} معرَّف مسبقاً؛ حدده واستخدم «تحرير».
 	{command} is an unknown command.	{command} أمر غير معروف.
+	AutoSnap settings	إعدادات AutoSnap
+	Marker	العلامة
+	Magnet	المغناطيس
+	Display AutoSnap tooltip	إظهار تلميح AutoSnap
+	Display AutoSnap aperture box	إظهار مربع فتحة AutoSnap
+	Display AutoTrack tooltip	إظهار تلميح AutoTrack
+	The magnet locks the crosshair onto the snap point; the aperture box shows how near the cursor must come to find one.	يثبّت المغناطيس الشعيرات المتصالبة على نقطة الالتقاط؛ ويبيّن مربع الفتحة مدى قرب المؤشر اللازم للعثور عليها.
