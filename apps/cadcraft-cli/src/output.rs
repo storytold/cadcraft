@@ -155,7 +155,7 @@ pub(crate) fn undrawn_message(d: &cadcraft_engine::doc::Drawing, path: &str) -> 
         // An OLE2FRAME's frame outline is drawn, so it isn't an undrawn entity; its content is
         // not, which gets a note of its own.
         if let cadcraft_engine::doc::EntityKind::Unknown(u) = &e.kind {
-            if u.dxf_type.eq_ignore_ascii_case("OLE2FRAME") {
+            if u.dxf_type.eq_ignore_ascii_case("OLE2FRAME") && cadcraft_engine::doc::ole_frame(&u.tags).is_some() {
                 ole = ole.saturating_add(1);
                 continue;
             }

@@ -86,3 +86,19 @@ fn an_ole_frame_is_noted_as_frame_only() {
     let notes: Vec<&str> = err.lines().filter(|l| l.contains("OLE")).collect();
     assert_eq!(notes, [format!("{}: 1 OLE object shown as the frame only (the OLE content is not drawn)", input.display())], "{err}");
 }
+
+/// An OLE2FRAME without usable corners (here group 11/21 missing) has no outline to draw, so it is
+/// an undrawn entity, not "shown as the frame only" (review on #2587).
+#[test]
+fn an_ole_frame_without_corners_is_counted_as_not_drawn() {
+    let scratch = Scratch::new("ole-nocorner");
+    let dir = scratch.0.clone();
+    let input = dir.join("ole.dxf");
+    let ole = "0\nSECTION\n2\nENTITIES\n0\nOLE2FRAME\n8\n0\n100\nAcDbOle2Frame\n10\n0\n20\n0\n30\n0\n0\nENDSEC\n0\nEOF\n";
+    std::fs::write(&input, ole).unwrap();
+    let out = cli(&["convert", input.to_str().unwrap(), dir.join("out.png").to_str().unwrap()]);
+    assert!(out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains(&format!("{}: 1 entity not drawn (OLE2FRAME: 1)", input.display())), "{err}");
+    assert!(!err.contains("frame only"), "{err}");
+}
