@@ -7,7 +7,12 @@ use super::{Builder, Color, Ctx, DimGeometry, DimText, Drawing, Entity, EntityKi
 /// The font settings of a dimension style's text style.
 pub fn dim_text(d: &Drawing, st: &cadcraft_doc::DimStyle) -> DimText {
     let ts = text_style(d, &st.text_style);
-    DimText { font: cadcraft_fonts::TextFont::resolve(&ts.font), fixed_height: ts.height, width_factor: ts.width_factor, oblique: ts.oblique }
+    DimText {
+        font: cadcraft_fonts::TextFont::resolve_style(&ts.font, &ts.big_font),
+        fixed_height: ts.height,
+        width_factor: ts.width_factor,
+        oblique: ts.oblique,
+    }
 }
 
 /// Geometry of a dimension in a drawing: its style, overrides and text font.
