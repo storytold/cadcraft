@@ -4,7 +4,7 @@
 
 use cadcraft_doc::{AttribModes, HAlign, VAlign};
 
-use super::{Accept, Attrib, EntityKind, Input, Interactive, Prompt, Result, Session, Step, Text, Vec2, v3};
+use super::{Accept, Attrib, EntityKind, Input, Interactive, Prompt, Result, Session, Step, Text, Vec2, number, v3};
 use crate::cmd::curves::KW;
 use crate::cmd::draw::justify;
 
@@ -257,7 +257,8 @@ impl Interactive for AttdefM {
                 let h = match &i {
                     Input::Enter => th,
                     Input::Point(p) => self.at.dist(*p),
-                    Input::Text(t) => t.trim().parse::<f64>().unwrap_or(0.0),
+                    // A distance, as TEXT takes its height (1'6" in feet and inches, too).
+                    Input::Text(t) => number(t).unwrap_or(0.0),
                     _ => return Ok(Step::Continue),
                 };
                 if !(h.is_finite() && h > 0.0) {

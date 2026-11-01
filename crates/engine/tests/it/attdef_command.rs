@@ -152,3 +152,18 @@ fn a_constant_attribute_stays_in_the_block() {
     let tags: Vec<(String, String)> = ins.attribs.iter().map(|a| (a.tag.clone(), a.text.value.clone())).collect();
     assert_eq!(tags, [("TN".to_string(), "XN".to_string())]);
 }
+
+#[test]
+fn a_typed_height_is_a_distance() {
+    let mut s = session();
+    for typed in ["-attdef", "", "T1", "P", "V", "5,10", "x"] {
+        s.cmdline(typed).unwrap();
+    }
+    assert_eq!(s.log.last().map(String::as_str), Some("Requires a positive height."));
+    // Feet and inches, as TEXT takes them.
+    for typed in ["1'6\"", "0"] {
+        s.cmdline(typed).unwrap();
+    }
+    assert!(s.running.is_none(), "{}", s.prompt_text());
+    assert_eq!(attdefs(&s)[0].text.height, 18.0);
+}
