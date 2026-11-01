@@ -17,7 +17,7 @@ use super::{CommandSpec, bad, bool_or, f64_or, find_command, ok, point_param, po
 use super::has_doc;
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
-mod attedit;
+pub(crate) mod attedit;
 mod burst;
 mod description;
 mod dyngrip;

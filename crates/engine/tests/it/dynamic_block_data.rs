@@ -14,10 +14,19 @@ fn obj(handle: u64, kind: &str, tags: &[(i32, &str)]) -> ForeignObject {
 
 /// A session whose block "Door" has a visibility parameter with two states.
 fn session() -> Session {
+    session_with(false)
+}
+
+/// [`session`], with an attribute NO (default "1") in Door when `attribute`.
+fn session_with(attribute: bool) -> Session {
     let mut s = Session::new();
-    let l = s.execute("line", &json!({ "points": [[0, 0], [1, 0]] })).unwrap()["handles"][0].clone();
-    s.execute("block", &json!({ "name": "Door", "base": [0, 0], "handles": [l] })).unwrap();
-    let line = s.doc().unwrap().block("Door").unwrap().entities.handles()[0].hex();
+    let mut hs = vec![s.execute("line", &json!({ "points": [[0, 0], [1, 0]] })).unwrap()["handles"][0].clone()];
+    if attribute {
+        hs.push(s.execute("attdef", &json!({ "tag": "NO", "prompt": "Door number", "default": "1", "at": [0, 1] })).unwrap()["handle"].clone());
+    }
+    s.execute("block", &json!({ "name": "Door", "base": [0, 0], "handles": hs })).unwrap();
+    let b = s.doc().unwrap().block("Door").unwrap().clone();
+    let line = b.entities.iter().find(|e| matches!(e.kind, cadcraft_engine::doc::EntityKind::Line(_))).unwrap().handle.hex();
     let mut f = Foreign::default();
     f.records.insert(("BLOCK_RECORD".into(), "DOOR".into()), ForeignExtra { xdict: Some(Handle(0xF00)), ..Default::default() });
     f.objects.push(obj(0xF00, "DICTIONARY", &[(100, "AcDbDictionary"), (3, "ACAD_ENHANCEDBLOCK"), (360, "F01")]));
@@ -137,4 +146,31 @@ fn a_visibility_state_is_changed_in_one_undo_step() {
     ] {
         assert!(s.execute("blocks.reference.set", &p).is_err(), "{p}");
     }
+}
+
+#[test]
+fn a_dynamic_block_references_attributes_are_edited_and_refedit_says_why_not() {
+    let mut s = session_with(true);
+    let insert = s.doc().unwrap().model.handles()[0];
+    let value = |s: &Session| match s.doc().unwrap().entity(insert).map(|e| e.kind.clone()) {
+        Some(cadcraft_engine::doc::EntityKind::Insert(i)) => (i.block, i.attribs.iter().map(|a| a.text.value.clone()).collect::<Vec<_>>()),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(value(&s).1, ["1"]);
+    // A visibility state change makes the reference show an anonymous copy (*U).
+    s.execute("blocks.reference.set", &json!({ "handle": insert.hex(), "name": "Visibility1", "value": "Closed" })).unwrap();
+    assert!(value(&s).0.starts_with("*U"));
+    let rows = cadcraft_engine::attributes(s.doc().unwrap(), insert);
+    assert_eq!((rows[0].tag.as_str(), rows[0].prompt.as_str(), rows[0].editable), ("NO", "Door number", true));
+
+    let r = s.execute("attedit", &json!({ "handle": insert.hex(), "values": { "no": "12" } })).unwrap();
+    assert_eq!(r["changed"], 1);
+    assert_eq!(value(&s).1, ["12"]);
+    // The value stays through another change of state.
+    s.execute("blocks.reference.set", &json!({ "handle": insert.hex(), "name": "Visibility1", "value": "Open" })).unwrap();
+    assert_eq!(value(&s).1, ["12"]);
+
+    // REFEDIT names the dynamic block and where to edit it instead of "*U… is generated geometry".
+    let e = s.execute("refedit", &json!({ "handles": [insert.hex()] })).unwrap_err().to_string();
+    assert!(e.contains("\"Door\" is a dynamic block") && e.contains("BEDIT"), "{e}");
 }
