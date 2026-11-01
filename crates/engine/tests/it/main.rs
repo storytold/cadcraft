@@ -71,6 +71,7 @@ mod layoff_repeat;
 mod layout_prompts;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod lisp_corpus;
+mod lisp_undo_in_routine;
 mod malformed_handles;
 mod matchprop;
 mod measure_distance_snapping;
