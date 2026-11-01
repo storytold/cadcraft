@@ -684,7 +684,9 @@ impl InsertM {
         Ok(())
     }
 
-    /// Define the block from a file, then choose it; a file that can't be read is reported.
+    /// Define the block from a file, then choose it; a file that can't be read is reported. The
+    /// definition comes before the insertion point and stays when INSERT is then cancelled, as in
+    /// AutoCAD 2027.
     fn choose_file(&mut self, s: &mut Session, f: &insert_file::FileRef) -> Result<()> {
         match f.define(s) {
             Ok(name) => self.choose(s, &name),
@@ -818,8 +820,6 @@ impl Interactive for InsertM {
                 Input::Keyword(k) if k == "Y" => self.stage = InsStage::PresetAxis(1),
                 Input::Keyword(k) if k == "Z" => self.stage = InsStage::PresetAxis(2),
                 Input::Keyword(k) if k == "Rotate" => self.stage = InsStage::PresetRotation,
-                // Enter or Space at the insertion point ends the command, as in AutoCAD.
-                Input::Enter => return Ok(Step::Cancel),
                 _ => {}
             },
             InsStage::BasePoint => {

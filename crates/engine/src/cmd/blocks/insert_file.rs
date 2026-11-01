@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 use super::super::file::MAX_DRAWING_BYTES;
 use super::super::file::io;
 use super::super::modify::explode_kind;
-use super::purge::{Kind, candidates, override_arrows, scan_reads_everything};
+use super::purge::{Kind, candidates, is_arrow_override, override_arrows, scan_reads_everything};
 use super::{referenced_block, references_block, valid_block_name};
 use crate::cmd::{bad, str_param};
 use crate::{EngineError, Result, Session};
@@ -112,6 +112,7 @@ pub(super) fn define_from(s: &mut Session, src: &Drawing, name: &str, only_neede
     let before = TableNames::of(&d);
     // Redefining keeps the existing definition's name (block names are case-insensitive).
     let name = d.blocks.keys().find(|k| k.eq_ignore_ascii_case(name)).cloned().unwrap_or_else(|| name.to_string());
+    let own_dim_styles = names_of(&d, Kind::Dimstyles);
     merge_tables(&mut d, src);
     let mut renames = block_names(&d, src, &name);
     if only_needed {
@@ -120,6 +121,7 @@ pub(super) fn define_from(s: &mut Session, src: &Drawing, name: &str, only_neede
         renames.retain(|from, _| need.contains(&from.to_ascii_uppercase()));
     }
     let renames = Renames::new(renames);
+    rename_style_arrows(&mut d, &own_dim_styles, &renames);
     for (from, to) in &renames.exact {
         let Some(b) = src.blocks.get(from) else { continue };
         let mut nb = (**b).clone();
@@ -338,6 +340,18 @@ impl Renames {
     }
 }
 
+/// Point the dimension styles the source brought at their renamed arrowhead blocks. The styles
+/// this drawing already had (`own`) name this drawing's blocks.
+fn rename_style_arrows(d: &mut Drawing, own: &BTreeSet<String>, renames: &Renames) {
+    for st in d.dim_styles.iter_mut().filter(|t| !own.contains(&t.name.to_ascii_lowercase())) {
+        for arrow in [&mut st.arrow_block, &mut st.arrow_block1, &mut st.arrow_block2, &mut st.leader_arrow_block] {
+            if let Some(n) = renames.get(arrow.trim()) {
+                arrow.clone_from(n);
+            }
+        }
+    }
+}
+
 /// A copy of a source entity for this drawing: a fresh handle, block references renamed, and
 /// links to other source objects (associative dimension points) dropped.
 fn adopt(d: &mut Drawing, e: &Entity, renames: &Renames) -> Entity {
@@ -353,6 +367,13 @@ fn adopt(d: &mut Drawing, e: &Entity, renames: &Renames) -> Entity {
             dm.assoc.clear();
             if let Some(n) = dm.block.as_ref().and_then(|b| renames.get(b)) {
                 dm.block = Some(n.clone());
+            }
+            for (key, value) in dm.overrides.iter_mut() {
+                if is_arrow_override(key)
+                    && let Some(n) = value.as_str().and_then(|b| renames.get(b.trim()))
+                {
+                    *value = json!(n);
+                }
             }
         }
         EntityKind::MLeader(m) => {
@@ -548,6 +569,38 @@ mod tests {
             serde_json::from_value(json!({ "leaders": [], "landing": [0, 0, 0], "dogleg": 0.0, "text": null })).unwrap();
         m.block = Some(content);
         assert_eq!(colliding_block_after_import(Entity::new(Handle(0x501), EntityKind::MLeader(m))), "from the file");
+    }
+
+    /// Arrowheads are references too: a dimension style that came along and a dimension's override
+    /// follow the renamed block, and a style this drawing already had keeps its own.
+    #[test]
+    fn arrowheads_follow_a_renamed_block() {
+        let mut s = Session::new();
+        s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [4, 0], "at": [2, 2] })).unwrap();
+        let mut dim = (**s.doc().unwrap().model.iter().next().unwrap()).clone();
+        if let EntityKind::Dimension(dm) = &mut dim.kind {
+            dm.style = "Came".into();
+            dm.overrides.insert("DIMBLK1".into(), json!("*U1"));
+        }
+        let style = |name: &str| cadcraft_doc::DimStyle { name: name.into(), arrow_block: "*U1".into(), ..Default::default() };
+        let mut src = Drawing::new_metric();
+        src.blocks.insert("*U1".into(), anonymous("from the file"));
+        src.dim_styles.extend([style("Came"), style("Own")]);
+        src.model.push(dim);
+        let mut t = Session::new();
+        let d = t.doc_mut().unwrap();
+        d.blocks.insert("*U1".into(), anonymous("from the drawing"));
+        d.dim_styles.push(style("Own"));
+        define_from(&mut t, &src, "Part", true).unwrap();
+
+        let d = t.doc().unwrap();
+        let of = |name: &str| d.block(name).unwrap().description.clone();
+        let arrow = |name: &str| d.dim_styles.iter().find(|st| st.name == name).unwrap().arrow_block.clone();
+        assert_eq!(of(&arrow("Came")), "from the file");
+        assert_eq!(of(&arrow("Own")), "from the drawing");
+        let e = d.block("Part").unwrap().entities.iter().next().unwrap().clone();
+        let EntityKind::Dimension(dm) = &e.kind else { return };
+        assert_eq!(of(dm.overrides["DIMBLK1"].as_str().unwrap()), "from the file");
     }
 
     /// A linetype of the file stays when a dimension style that came along names it, and stays out

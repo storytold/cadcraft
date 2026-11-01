@@ -210,6 +210,19 @@ fn checks_the_list_file(s: &mut Session, dir: &std::path::Path, dir_s: &str) {
     assert!(s.execute("blocklibraries", &json!({ "op": "add", "path": "y".repeat(5000) })).is_err());
 }
 
+/// A file named at INSERT's prompt defines its block before the insertion point is asked for, and
+/// Escape there keeps the definition and places nothing, as in AutoCAD 2027.
+fn a_cancelled_insert_keeps_the_definition_from_a_file(s: &mut Session, file: &str) {
+    let placed = s.doc().unwrap().model.iter().count();
+    s.start("insert").unwrap();
+    s.input(Input::Text(format!("FromFile={file}"))).unwrap();
+    assert!(s.prompt_text().starts_with("INSERT Specify insertion point"), "{}", s.prompt_text());
+    assert!(s.doc().unwrap().block("FromFile").is_some());
+    s.input(Input::Cancel).unwrap();
+    assert!(s.doc().unwrap().block("FromFile").is_some());
+    assert_eq!(s.doc().unwrap().model.iter().count(), placed);
+}
+
 /// One test: the file hooks and the settings folder are global to the process.
 #[test]
 fn libraries_list_import_and_are_kept() {
@@ -242,6 +255,7 @@ fn libraries_list_import_and_are_kept() {
     assert_eq!(cadcraft_engine::cmd::list_library(&file).unwrap(), listed);
 
     leaves_out_an_unused_dimension_style(&mut s, &dir);
+    a_cancelled_insert_keeps_the_definition_from_a_file(&mut s, &file);
     keeps_the_list(&mut s, &dir, &dir_s, &file);
     refuses_hostile_input(&mut s, &dir, &dir_s);
     bounds_a_huge_table();

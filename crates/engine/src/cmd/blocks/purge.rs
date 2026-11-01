@@ -130,13 +130,14 @@ pub(in crate::cmd) fn scan_reads_everything(d: &Drawing) -> bool {
     all_entities(d).nth(MAX_SCAN).is_none()
 }
 
+/// Whether a dimension override sets an arrowhead block.
+pub(in crate::cmd) fn is_arrow_override(key: &str) -> bool {
+    cadcraft_doc::DimStyle::field_name(key).is_some_and(|f| f.starts_with("arrowBlock") || f == "leaderArrowBlock")
+}
+
 /// The arrowhead block names a dimension's overrides set.
 pub(in crate::cmd) fn override_arrows(dm: &cadcraft_doc::Dimension) -> impl Iterator<Item = String> + '_ {
-    dm.overrides
-        .iter()
-        .filter(|(k, _)| cadcraft_doc::DimStyle::field_name(k).is_some_and(|f| f.starts_with("arrowBlock") || f == "leaderArrowBlock"))
-        .filter_map(|(_, v)| v.as_str().map(|n| n.trim().to_string()))
-        .filter(|n| !n.is_empty())
+    dm.overrides.iter().filter(|(k, _)| is_arrow_override(k)).filter_map(|(_, v)| v.as_str().map(|n| n.trim().to_string())).filter(|n| !n.is_empty())
 }
 
 /// Upper-case names of blocks reachable from model space, the layouts and dimensions, and the
