@@ -209,9 +209,12 @@ impl Session {
     pub fn doc(&self) -> Result<&Drawing> {
         Ok(&self.state()?.doc)
     }
-    /// Copy-on-write access to the drawing.
+    /// Copy-on-write access to the drawing. The revision changes too: a drawing nothing else holds
+    /// is edited in place, so a cache keyed by the drawing's pointer alone would miss the edit.
     pub fn doc_mut(&mut self) -> Result<&mut Drawing> {
-        Ok(Arc::make_mut(&mut self.state_mut()?.doc))
+        let st = self.state_mut()?;
+        st.revision += 1;
+        Ok(Arc::make_mut(&mut st.doc))
     }
     /// Settings for the active drawing, without caching drawing variables in the profile.
     pub fn drafting_settings(&self) -> Settings {
