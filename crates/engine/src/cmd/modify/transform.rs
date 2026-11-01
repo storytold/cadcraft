@@ -4,6 +4,17 @@ use super::{Entity, Handle, Mat3, Result, Session, Value, Vec2, bad, bool_or, f6
 
 pub(crate) fn transform_entities(s: &mut Session, hs: &[Handle], m: &Mat3, copy: bool) -> Result<Vec<Handle>> {
     let d = s.doc_mut()?;
+    // An OLE2FRAME only translates (its corners stay axis aligned); refuse the rest before anything
+    // changes, instead of reporting success and leaving the frame where it was.
+    if !cadcraft_doc::ole_frame_accepts(m)
+        && hs.iter().any(|h| {
+            d.entity(*h).is_some_and(|e| matches!(&e.kind, cadcraft_doc::EntityKind::Unknown(u) if u.dxf_type.eq_ignore_ascii_case("OLE2FRAME")))
+        })
+    {
+        return Err(crate::EngineError::Other(
+            "An OLE object can only be moved or copied; rotating, scaling and mirroring it are not supported.".into(),
+        ));
+    }
     let mut out = Vec::new();
     for h in hs {
         let Some(sp) = d.space_of(*h) else { continue };

@@ -9,12 +9,61 @@ use crate::{Drawing, Entity, EntityKind, LwPolyline, Prim};
 /// Nested block references deeper than this are ignored (cyclic or hostile files).
 pub const MAX_BLOCK_DEPTH: usize = 16;
 
+/// Positions in `tags` of the groups outside application-defined `102 {` .. `102 }` groups, whose
+/// codes are the application's own and not the entity's.
+fn outside_app(tags: &[crate::RawTag]) -> Vec<usize> {
+    let mut in_app = false;
+    let mut out = Vec::new();
+    for (i, t) in tags.iter().enumerate() {
+        if t.code == 102 {
+            in_app = t.value.starts_with('{');
+        } else if !in_app {
+            out.push(i);
+        }
+    }
+    out
+}
+
+/// The positions of the frame's corner groups 10, 20, 11, 21 (in that order) and their values.
+fn ole_corner_groups(tags: &[crate::RawTag]) -> Option<[(usize, f64); 4]> {
+    let own = outside_app(tags);
+    let find = |code: i32| {
+        let i = own.iter().copied().find(|&i| tags.get(i).is_some_and(|t| t.code == code))?;
+        let v = tags.get(i)?.value.trim().parse::<f64>().ok().filter(|v| v.is_finite())?;
+        Some((i, v))
+    };
+    Some([find(10)?, find(20)?, find(11)?, find(21)?])
+}
+
 /// The closed outline of an OLE2FRAME from its upper-left (groups 10, 20) and lower-right
 /// (groups 11, 21) corners (DXF Reference, OLE2FRAME); `None` when either is missing or not finite.
 pub fn ole_frame(tags: &[crate::RawTag]) -> Option<[Vec2; 5]> {
-    let get = |code: i32| tags.iter().find(|t| t.code == code).and_then(|t| t.value.trim().parse::<f64>().ok()).filter(|v| v.is_finite());
-    let (a, b) = (Vec2::new(get(10)?, get(20)?), Vec2::new(get(11)?, get(21)?));
+    let [(_, x1), (_, y1), (_, x2), (_, y2)] = ole_corner_groups(tags)?;
+    let (a, b) = (Vec2::new(x1, y1), Vec2::new(x2, y2));
     Some([a, Vec2::new(b.x, a.y), b, Vec2::new(a.x, b.y), a])
+}
+
+/// Move an OLE2FRAME by `m`, a translation: its two corners are mapped through `m` (a DWG save
+/// writes the frame's position from these groups). Other transforms do not keep a frame axis
+/// aligned, so callers refuse them (see [`ole_frame_accepts`]). A frame with no usable corners is
+/// left alone.
+pub fn ole_frame_transform(tags: &mut [crate::RawTag], m: &cadcraft_geom::Mat3) {
+    let Some([(ix1, x1), (iy1, y1), (ix2, x2), (iy2, y2)]) = ole_corner_groups(tags) else { return };
+    let (a, b) = (m.apply(Vec2::new(x1, y1)), m.apply(Vec2::new(x2, y2)));
+    if !(a.x.is_finite() && a.y.is_finite() && b.x.is_finite() && b.y.is_finite()) {
+        return;
+    }
+    for (i, v) in [(ix1, a.x), (iy1, a.y), (ix2, b.x), (iy2, b.y)] {
+        if let Some(t) = tags.get_mut(i) {
+            t.value = v.to_string();
+        }
+    }
+}
+
+/// Whether `m` can move an OLE2FRAME: only a translation (move, copy, stretch of the whole frame).
+pub fn ole_frame_accepts(m: &cadcraft_geom::Mat3) -> bool {
+    const T: f64 = 1e-12;
+    (m.a - 1.0).abs() < T && m.b.abs() < T && m.c.abs() < T && (m.d - 1.0).abs() < T
 }
 
 /// Bounds of a single-line TEXT / ATTDEF / ATTRIB of `len` characters, following its justification
@@ -460,5 +509,27 @@ mod tests {
         assert!(bounds(frame(vec![tag(10, "1"), tag(20, "2")])).is_empty(), "one corner is not a frame");
         assert!(bounds(frame(vec![tag(10, "NaN"), tag(20, "0"), tag(11, "1"), tag(21, "inf")])).is_empty());
         assert!(bounds(EntityKind::Unknown(crate::Unknown { dxf_type: "OTHER".into(), tags: vec![tag(10, "5"), tag(20, "5")] })).is_empty());
+    }
+
+    /// Groups 10/20 inside an application-defined `102 {...}` group belong to the application, not
+    /// to the frame: the real corners come after it (review on #2587).
+    #[test]
+    fn ole_frame_skips_application_groups() {
+        let tag = |code: i32, value: &str| crate::RawTag { code, value: value.into() };
+        let tags = vec![
+            tag(102, "{ACAD_REACTORS"),
+            tag(10, "900"),
+            tag(20, "900"),
+            tag(11, "901"),
+            tag(21, "901"),
+            tag(102, "}"),
+            tag(10, "30"),
+            tag(20, "-19"),
+            tag(11, "35"),
+            tag(21, "-22"),
+        ];
+        let q = ole_frame(&tags).expect("frame");
+        assert_eq!((q[0], q[2]), (Vec2::new(30.0, -19.0), Vec2::new(35.0, -22.0)));
+        assert!(ole_frame(&tags[..6]).is_none(), "corners only inside the group are not a frame");
     }
 }

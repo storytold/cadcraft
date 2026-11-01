@@ -27,7 +27,7 @@ pub use cadcraft_color as color;
 pub use cadcraft_geom as geom;
 pub use constraint::*;
 pub use entity::*;
-pub use extents::{MAX_BLOCK_DEPTH, entity_bounds, extent_bounds, ole_frame};
+pub use extents::{MAX_BLOCK_DEPTH, entity_bounds, extent_bounds, ole_frame, ole_frame_accepts, ole_frame_transform};
 pub use format::Format;
 pub use gdt::*;
 pub use header::{HVal, Header};

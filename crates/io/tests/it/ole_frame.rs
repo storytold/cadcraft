@@ -60,3 +60,18 @@ fn a_dwg_keeps_an_ole_frame_with_its_data_and_position() {
         assert_eq!((corner(10), corner(20), corner(11), corner(21)), (Some(UL.0), Some(UL.1), Some(LR.0), Some(LR.1)), "{v:?}: frame corners");
     }
 }
+
+/// A frame moved through its corner tags (what MOVE does) keeps the new position in a DWG save
+/// and read-back (review on #2587).
+#[test]
+fn a_moved_ole_frame_keeps_its_position_in_a_dwg() {
+    let mut d = read_dxf(dxf().as_bytes()).unwrap();
+    for h in d.model.handles() {
+        d.model.modify(h, |e| e.kind.transform(&cadcraft_geom::Mat3::translate(cadcraft_geom::Vec2::new(100.0, -50.0))));
+    }
+    let dwg = write_with(&d, "x.dwg", &SaveOptions { version: Some(Version::R2018), binary: false }).unwrap();
+    let u = ole(&read(&dwg, "x.dwg").unwrap()).unwrap();
+    let c = |code: i32| u.tags.iter().find(|t| t.code == code).and_then(|t| t.value.trim().parse::<f64>().ok()).unwrap();
+    let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
+    assert!(near(c(10), UL.0 + 100.0) && near(c(20), UL.1 - 50.0) && near(c(11), LR.0 + 100.0) && near(c(21), LR.1 - 50.0), "{:?}", u.tags);
+}
