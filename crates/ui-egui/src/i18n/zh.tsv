@@ -381,6 +381,7 @@
 	Layers Palette	图层选项板
 	Layers displayed: {shown} of {total}.   Current layer: {layer}	显示的图层: {shown} / {total}。当前图层: {layer}
 	Layout	布局
+	Layout Mode	布局模式
 	Layout list	布局列表
 	Leader	引线
 	Left	左

@@ -14,6 +14,7 @@ use super::{CommandSpec, bad, bool_or, find_command, point_param, point_value, s
 use crate::{Accept, Input, Interactive, Prompt, Result, Session, Step};
 use viewports::MviewM;
 
+mod areas;
 mod plotstyle;
 mod prompts;
 mod viewports;
@@ -32,6 +33,11 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["Insert", "Layout", "New Layout from Area..."])
             .params("{name?, viewport?: bool (default true), window?: [[x1,y1],[x2,y2]] (the model area the viewport shows; default the model extents)} → {name, viewport} (typed: asks the name, then the area)")
             .interactive(|_| Ok(Box::new(NewLayoutAreaM::default()))),
+        CommandSpec::new("layout.areas", "Layout Areas", areas::run_areas)
+            .params("→ [{layout, tabOrder, handle, window: [[x1,y1],[x2,y2]] (the model area the viewport shows), on, locked}]")
+            .noundo(),
+        CommandSpec::new("layout.setarea", "Set Layout Area", areas::run_setarea)
+            .params("{handle: viewport, center?: [x,y], height?} (the model area it shows; the width follows the viewport's shape) → {layout, handle, center, height}"),
         CommandSpec::new("layout.delete", "Delete Layout", run_delete).params("{name}"),
         CommandSpec::new("layout.rename", "Rename Layout", run_rename).params("{from?: current layout, to}"),
         CommandSpec::new("layout.copy", "Copy Layout", run_copy).params("{from, to?}"),

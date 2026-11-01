@@ -141,6 +141,8 @@ pub struct CanvasState {
     pub(crate) dyn_menu: Option<(Handle, cadcraft_engine::doc::dynblock::DynGrip)>,
     pub(crate) dyn_menu_fresh: bool,
     /// Zoom to extents once the canvas size is known (after opening a drawing).
+    /// Layout mode: the rectangles of the model areas the layouts show ([`crate::layout_mode`]).
+    pub layout: crate::layout_mode::LayoutMode,
     pub zoom_pending: bool,
     pub build_ms: f64,
     pub draw_ms: f64,
@@ -797,6 +799,8 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         collect_prompt_clicks(app, ui, PromptClickContext { rect, xf, inside, middle_down, primary_clicked: pressed_primary, response: &resp });
 
     let (raw_world, dyn_frame) = update_canvas_cursor(app, ui, &xf, inside, hover_pos);
+    // Layout mode takes the pointer: the drawing's own objects are not picked meanwhile.
+    let layout_mode = crate::layout_mode::interact(app, ui, &xf, inside);
 
     // A click on the Dynamic Input options menu picks the keyword; elsewhere it closes the menu.
     let mut picked = false;
@@ -816,7 +820,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         app.session.pending_window = None;
         app.canvas.drag_window = false;
     }
-    let pressed_primary = pressed_primary && !picked && !hatch_dialog && !idle_dbl;
+    let pressed_primary = pressed_primary && !picked && !hatch_dialog && !idle_dbl && !layout_mode;
     let key: CycleKey = (
         app.session.running.as_ref().map(|r| r.id.clone()),
         app.session.current_prompt().map(|p| p.message),
@@ -872,6 +876,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui) {
         app.canvas.drag_window = false;
     }
     if app.session.settings.pickdrag
+        && !layout_mode
         && resp.drag_started_by(egui::PointerButton::Primary)
         && !middle_down
         && app.canvas.cycle.is_none()
@@ -1021,6 +1026,7 @@ fn paint_canvas(frame: CanvasPaint<'_>) {
     );
     app.canvas.draw_ms = crate::now_ms() - t0;
     compare::paint(app, ui.ctx(), painter, &xf_paper, rect);
+    crate::layout_mode::paint(app, painter, &xf);
     blockedit::paint(app, ui.ctx(), painter, &xf_paper, rect);
     // Constraint bars and dynamic dimensional constraints (model space, or inside a viewport).
     if sheet.is_none() || active_vp.is_some() {
