@@ -2,6 +2,7 @@ use super::common::T;
 use super::entities::{entity_extras, entity_plot_style, entity_with_table_budget, insert_attribs, polyline_entity};
 use super::objects::{MAX_OBJECTS, Objects, page_setup};
 use super::{Block, BlockDef, Drawing, Entity, EntityKind, Handle, HashMap, Layout, LayoutDef, Rx, Tag, records};
+use crate::dxf_ext::text;
 
 pub(super) fn parse_entities(
     recs: &[(String, Vec<Tag>)],
@@ -10,13 +11,16 @@ pub(super) fn parse_entities(
     skipped: &mut usize,
     table_cells_left: &mut usize,
 ) -> Vec<(Option<String>, bool, Entity)> {
-    let mut out = Vec::new();
+    // Every record but a polyline's vertices, a reference's attributes and their SEQEND becomes
+    // at most one entity (`recs` is already in memory, bounded by the tag limit), so the list is
+    // sized once rather than moved at every doubling; mesh faces past that grow it as usual.
+    let mut out = Vec::with_capacity(recs.iter().filter(|(kind, _)| !matches!(kind.as_str(), "VERTEX" | "ATTRIB" | "SEQEND")).count());
     let mut i = 0;
     while let Some((kind, tags)) = recs.get(i) {
         let t = T(tags);
         let owner = crate::dxf_ext::owner(tags);
         let paper = t.i(67) == Some(1);
-        let handle = t.s(5).and_then(|h| Handle::parse_hex(&h));
+        let handle = tags.iter().find(|t| t.code == 5).and_then(text).and_then(Handle::parse_hex);
         let mut kindent = entity_with_table_budget(kind, tags, table_cells_left);
         if let Some((c, _)) = kindent.as_mut()
             && let Some(n) = entity_plot_style(tags, rx)
