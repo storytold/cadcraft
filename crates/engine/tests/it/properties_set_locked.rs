@@ -139,6 +139,14 @@ fn during_refedit_objects_outside_the_working_set_are_left_out() {
     assert_eq!(d.entity(copy).unwrap().common.color, Color::Index(5));
     assert_eq!(d.entity(other).unwrap().common.color, Color::ByLayer);
     assert!(d.refedit.is_some(), "the edit goes on");
+    // With only objects outside the working set, nothing changes: no layer, no undo step.
+    let undo = s.state().unwrap().undo.len();
+    let r = s.execute("properties.set", &json!({ "handles": [other.hex()], "color": 6, "layer": "NEW" })).unwrap();
+    assert_eq!(counts(&r), (Some(0), Some(1)), "{r}");
+    assert_eq!(r["message"], "1 object was not in the working set. Nothing was changed.");
+    assert_eq!(s.doc().unwrap().entity(other).unwrap().common.color, Color::ByLayer);
+    assert!(s.doc().unwrap().layer("NEW").is_none(), "no layer is made");
+    assert_eq!(s.state().unwrap().undo.len(), undo, "no undo step");
     // A handle that names no object isn't counted as outside the working set: it's refused.
     assert!(s.execute("properties.set", &json!({ "handles": [copy.hex(), "FFFFF"], "color": 6 })).is_err());
     assert_eq!(s.doc().unwrap().entity(copy).unwrap().common.color, Color::Index(5));
