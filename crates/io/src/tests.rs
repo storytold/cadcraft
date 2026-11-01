@@ -2153,6 +2153,21 @@ fn tilted_straight_lwpolyline_keeps_its_widths() {
     assert!((p.vertices[1].p.x + 3.0).abs() < 1e-9 && (p.vertices[1].p.y - 3f64.sqrt()).abs() < 1e-9, "{:?}", p.vertices[1].p);
 }
 
+/// A tilted LWPOLYLINE mixing straight and bulged edges keeps the widths of its straight edges;
+/// only the points of the flattened arc have none.
+#[test]
+fn tilted_mixed_lwpolyline_keeps_its_straight_widths() {
+    let text = "0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\n0\n90\n3\n70\n0\n210\n0\n220\n0.5\n230\n-0.8660254037844386\n\
+                10\n0\n20\n0\n40\n0.5\n41\n1\n10\n2\n20\n0\n42\n1\n10\n4\n20\n0\n0\nENDSEC\n0\nEOF\n";
+    let d = read(text.as_bytes(), "p.dxf").unwrap();
+    let p = first(&d, |k| if let EntityKind::LwPolyline(p) = k { Some(p.clone()) } else { None });
+    let v = &p.vertices;
+    assert!(v.len() > 4 && v.iter().all(|v| v.bulge == 0.0), "{} vertices", v.len());
+    assert_eq!((v[0].start_width, v[0].end_width), (0.5, 1.0), "the straight edge keeps its widths");
+    assert!(v[1..].iter().all(|v| v.start_width == 0.0 && v.end_width == 0.0), "the flattened arc has none");
+    assert!((v[1].p.x + 2.0).abs() < 1e-9 && (v[v.len() - 1].p.x + 4.0).abs() < 1e-9, "{:?} {:?}", v[1].p, v[v.len() - 1].p);
+}
+
 /// Issue #1886: a LWPOLYLINE circle (two half-circle bulges) in the same tilted plane is the
 /// ellipse it looks like from above, flattened; a plain one keeps its bulges.
 #[test]

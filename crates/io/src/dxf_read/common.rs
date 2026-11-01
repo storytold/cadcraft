@@ -113,31 +113,34 @@ pub(super) fn tilted(n: Vec3) -> bool {
 }
 
 /// A run of OCS vertices at `elevation` in the plane of `n` as seen from above in the WCS. A
-/// tilted arc is an elliptical arc there, so bulged edges are flattened (within a thousandth of
-/// the run's size, without widths); straight runs keep their vertices and widths. Also gives
-/// the mean WCS Z, the elevation the flattened run takes.
+/// tilted arc is an elliptical arc there, so each bulged edge is flattened (within a thousandth
+/// of the run's size), its points without widths; vertices that start straight edges keep their
+/// widths. Also gives the mean WCS Z, the elevation the flattened run takes.
 pub(super) fn plan_of_tilted(n: Vec3, elevation: f64, vertices: &[PolyVertex], closed: bool) -> (Vec<PolyVertex>, f64) {
     let m = cadcraft_geom::Mat4::ocs(n);
-    let straight = vertices.iter().all(|v| v.bulge == 0.0);
-    let pts: Vec<Vec2> = if straight {
-        vertices.iter().map(|v| v.p).collect()
-    } else {
-        let pl = cadcraft_geom::Polyline { vertices: vertices.to_vec(), closed };
-        let b = pl.bounds();
-        let size = (b.max - b.min).len();
-        let tol = if size.is_finite() && size > 0.0 { size * 1e-3 } else { 1e-6 };
-        let mut pts = pl.tessellate(tol);
-        if closed && pts.len() > 1 && pts.first() == pts.last() {
-            pts.pop();
+    let b = cadcraft_geom::Polyline { vertices: vertices.to_vec(), closed }.bounds();
+    let size = (b.max - b.min).len();
+    let tol = if size.is_finite() && size > 0.0 { size * 1e-3 } else { 1e-6 };
+    let mut local: Vec<PolyVertex> = Vec::with_capacity(vertices.len());
+    for (i, v) in vertices.iter().enumerate() {
+        let next = if i + 1 < vertices.len() {
+            vertices.get(i + 1)
+        } else if closed {
+            vertices.first()
+        } else {
+            None
+        };
+        match next {
+            Some(w) if v.bulge != 0.0 => {
+                local.push(PolyVertex::new(v.p));
+                let edge = cadcraft_geom::Polyline { vertices: vec![*v, PolyVertex::new(w.p)], closed: false }.tessellate(tol);
+                // The edge's own ends are this vertex and the next one.
+                local.extend(edge.iter().skip(1).take(edge.len().saturating_sub(2)).map(|p| PolyVertex::new(*p)));
+            }
+            _ => local.push(PolyVertex { bulge: 0.0, ..*v }),
         }
-        pts
-    };
-    let world: Vec<Vec3> = pts.iter().map(|p| m.apply(Vec3::new(p.x, p.y, elevation))).collect();
-    let z = if world.is_empty() { elevation } else { world.iter().map(|p| p.z).sum::<f64>() / world.len() as f64 };
-    let out = if straight {
-        world.iter().zip(vertices).map(|(p, v)| PolyVertex { p: p.xy(), ..*v }).collect()
-    } else {
-        world.iter().map(|p| PolyVertex::new(p.xy())).collect()
-    };
-    (out, z)
+    }
+    let to_plan = |p: Vec2| m.apply(Vec3::new(p.x, p.y, elevation));
+    let z = if local.is_empty() { elevation } else { local.iter().map(|v| to_plan(v.p).z).sum::<f64>() / local.len() as f64 };
+    (local.into_iter().map(|v| PolyVertex { p: to_plan(v.p).xy(), ..v }).collect(), z)
 }
