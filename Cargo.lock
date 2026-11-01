@@ -635,6 +635,7 @@ dependencies = [
  "serde_json",
  "sys-locale",
  "thiserror 2.0.21",
+ "uds_windows",
  "windows",
  "winit",
  "winresource",
