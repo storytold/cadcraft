@@ -1010,3 +1010,52 @@ fn dwg_keeps_extension_dictionaries_xrecords_and_entity_xdata() {
     assert_eq!(d.block("DOOR").map(|b| b.description.as_str()), Some("A door leaf"));
     assert!(d.ucss.iter().any(|u| u.name == "TILTED"));
 }
+
+/// A linear dimension whose two extension origins are snapped to `a` and `b`, so the saved file
+/// carries a DIMASSOC naming both objects.
+fn add_associated_dimension(d: &mut Drawing, a: cadcraft_doc::Handle, b: cadcraft_doc::Handle) {
+    use cadcraft_doc::{AssocSnap, Common, DimAssoc, DimKind, Dimension, Space};
+    use cadcraft_geom::Vec3;
+    let at = |point: &str, handle| DimAssoc { point: point.into(), handle, snap: AssocSnap::Mid };
+    let dm = Dimension {
+        kind: DimKind::Linear { rotation: 0.0 },
+        defpt: Vec3::new(5.0, -3.0, 0.0),
+        text_mid: Vec3::ZERO,
+        p13: Vec3::ZERO,
+        p14: Vec3::new(10.0, 0.0, 0.0),
+        p15: Vec3::ZERO,
+        p16: Vec3::ZERO,
+        text: String::new(),
+        style: "Standard".into(),
+        measurement: 0.0,
+        text_rotation: 0.0,
+        user_text_pos: false,
+        block: None,
+        overrides: Default::default(),
+        assoc: vec![at("p13", a), at("p14", b)],
+        marks: Default::default(),
+    };
+    d.add(&Space::Model, Common::default(), EntityKind::Dimension(dm)).expect("add dimension");
+}
+
+/// The handle of the one DIMASSOC object of a written file.
+fn dimassoc_handle(o: &Out) -> String {
+    let assocs = o.of("DIMASSOC");
+    assert_eq!(assocs.len(), 1, "one DIMASSOC");
+    h(assocs.first().copied().unwrap_or_default())
+}
+
+/// A source object that already has a reactor to a kept foreign object (the fixture's line 2A
+/// names ACME_OBJECT 42) keeps it when a DIMASSOC reactor is added: one group with both (review on #2589).
+#[test]
+fn a_dimension_source_keeps_its_foreign_reactors_next_to_the_dimassoc() {
+    let mut d = read_dxf(fixture().as_bytes()).expect("read fixture");
+    add_associated_dimension(&mut d, cadcraft_doc::Handle(0x2A), cadcraft_doc::Handle(0x2A));
+    let o = Out::new(&write_dxf(&d));
+    let line = o.of("LINE").into_iter().find(|t| h(t).eq_ignore_ascii_case("2A")).expect("line 2A");
+    assert_eq!(line.iter().filter(|t| t.code == 102 && t.str() == "{ACAD_REACTORS").count(), 1, "one reactor group");
+    let reactors = group(line, "ACAD_REACTORS");
+    assert!(reactors.contains(&dimassoc_handle(&o)), "DIMASSOC reactor: {reactors:?}");
+    assert!(reactors.iter().any(|r| o.handle(r).is_some_and(|(k, _)| k == "ACME_OBJECT")), "foreign reactor kept: {reactors:?}");
+    assert!(o.dangling().is_empty(), "{:?}", o.dangling());
+}

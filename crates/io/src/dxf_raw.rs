@@ -994,7 +994,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
             let ur = Rec { sec: sec.clone(), kind: zero.str(), start: 0, end: 0 };
             let x = head(ub).handle.and_then(|h| handle(&h)).and_then(|h| entity_extra(f, &xd, h));
             out.push(zero.clone());
-            record(&map, &ur, ub, x.as_deref(), true, false, &mut out);
+            record(&map, &ur, ub, x.as_deref(), true, false, &[], &mut out);
         }
         out.extend(tags.get(r.start).cloned());
         let x = extra_for(f, &xd, r, b, &block);
@@ -1002,7 +1002,7 @@ pub(crate) fn finish(tags: &mut Vec<Tag>, d: &Drawing) {
             out.extend(b.iter().cloned());
             continue;
         }
-        record(&map, r, b, x.as_deref(), false, Some(r.start) == root, &mut out);
+        record(&map, r, b, x.as_deref(), false, Some(r.start) == root, &[], &mut out);
     }
     add_appids(&mut out);
     let top = max_handle(&out).saturating_add(1);
@@ -1076,10 +1076,22 @@ fn plan_unknown(d: &Drawing, recs: &[Rec], tags: &[Tag], roles: &HashMap<Foreign
     out
 }
 
+/// The reactor handles a written record gains: the kept foreign ones (remapped) unless the record
+/// is an unknown entity that already carries its own, then `extra` (handles of the written file,
+/// such as a DIMASSOC), without repeating any the record already names. They go into the one
+/// `{ACAD_REACTORS` group the record has, or a new one, so no reactor is lost to a second group.
+fn reactors_to_add(map: &Map, h: &Head, x: Option<&ForeignExtra>, unknown: bool, extra: &[String]) -> Vec<String> {
+    let mut have: HashSet<String> = h.reactors.iter().cloned().collect();
+    let kept = x.filter(|_| !(unknown && h.has_reactors)).into_iter().flat_map(|x| x.reactors.iter()).filter_map(|r| map.get(&r.hex()));
+    kept.chain(extra.iter().cloned()).filter(|r| r != "0" && have.insert(norm(r))).collect()
+}
+
 /// A written record with its kept extras, remapped references (unknown entities) and kept
 /// dictionary entries (the named object dictionary).
-fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: bool, root: bool, out: &mut Vec<Tag>) {
+fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: bool, root: bool, extra: &[String], out: &mut Vec<Tag>) {
     let h = head(b);
+    let adds = reactors_to_add(map, &h, x, unknown, extra);
+    let mut in_reactors = false;
     let entity = matches!(r.sec.as_str(), "ENTITIES" | "BLOCKS") && r.kind != "BLOCK";
     let xdata_at = b.iter().position(|t| t.code == 1001).unwrap_or(b.len());
     let own_apps: HashSet<String> = b.iter().filter(|t| t.code == 1001).map(|t| up(&t.str())).collect();
@@ -1114,6 +1126,16 @@ fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: bool
         {
             xdata(map, x, &own_apps, out);
         }
+        if t.code == 102 {
+            match t.str().trim() {
+                "{ACAD_REACTORS" => in_reactors = true,
+                "}" if in_reactors => {
+                    in_reactors = false;
+                    out.extend(adds.iter().map(|a| Tag::s(330, a.clone())));
+                }
+                _ => {}
+            }
+        }
         let mut t = t.clone();
         if unknown && i < xdata_at && is_pointer(t.code) && t.code != 102 {
             if t.code == 330 && !seen_owner {
@@ -1123,13 +1145,14 @@ fn record(map: &Map, r: &Rec, b: &[Tag], x: Option<&ForeignExtra>, unknown: bool
             }
         }
         out.push(t);
+        if Some(i) == handle_at && !h.has_reactors && !adds.is_empty() {
+            out.push(Tag::s(102, "{ACAD_REACTORS"));
+            out.extend(adds.iter().map(|a| Tag::s(330, a.clone())));
+            out.push(Tag::s(102, "}"));
+        }
         if Some(i) == handle_at
             && let Some(x) = x
         {
-            if !h.has_reactors {
-                let rs: Vec<String> = x.reactors.iter().map(|r| r.hex()).collect();
-                map.handle_group(out, "ACAD_REACTORS", 330, &rs);
-            }
             if h.xdict.is_none()
                 && let Some(xd) = x.xdict
             {
