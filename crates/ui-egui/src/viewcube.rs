@@ -80,7 +80,7 @@ impl Part {
 /// Paint the ViewCube's ring, compass letters, Top face and Home button, and handle the pointer.
 /// The canvas paints the WCS pill itself; this returns the pointer's part for its highlight.
 pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
-    let resp = ui.interact(l.bounds, ui.id().with("viewcube"), Sense::click_and_drag());
+    let resp = ui.interact(l.bounds, ui.scope_id().with("viewcube"), Sense::click_and_drag());
     let part = resp.hover_pos().and_then(|p| l.part_at(p));
     let p = ui.painter_at(l.bounds.union(l.pill));
     let ring_col = if part == Some(Part::Ring) { Color32::from_rgb(0x5c, 0x67, 0x7c) } else { Color32::from_rgb(0x48, 0x50, 0x5c) };
@@ -132,7 +132,7 @@ pub fn show(app: &mut CadApp, ui: &mut egui::Ui, l: &Layout) {
         let _ = app.run(id, params);
     }
     // The WCS pill (painted by the canvas) opens the coordinate-system menu.
-    let pill = ui.interact(l.pill, ui.id().with("viewcube_wcs"), Sense::click_and_drag()).on_hover_cursor(CursorIcon::PointingHand);
+    let pill = ui.interact(l.pill, ui.scope_id().with("viewcube_wcs"), Sense::click_and_drag()).on_hover_cursor(CursorIcon::PointingHand);
     let pill = pill.on_hover_text("Coordinate system");
     ucs_menu(app, egui::Popup::menu(&pill));
 }
@@ -164,8 +164,8 @@ pub fn ucs_arms(canvas: Rect) -> [Rect; 2] {
 pub fn ucs_icon(app: &mut CadApp, ui: &mut egui::Ui, canvas: Rect) {
     let t = Tokens::get();
     let [x, y] = ucs_arms(canvas);
-    let rx = ui.interact(x, ui.id().with("ucs_x"), Sense::click_and_drag());
-    let ry = ui.interact(y, ui.id().with("ucs_y"), Sense::click_and_drag());
+    let rx = ui.interact(x, ui.scope_id().with("ucs_x"), Sense::click_and_drag());
+    let ry = ui.interact(y, ui.scope_id().with("ucs_y"), Sense::click_and_drag());
     let resp = (rx | ry).on_hover_cursor(CursorIcon::PointingHand).on_hover_text("UCS icon: World Coordinate System");
     if resp.hovered() {
         let o = pos2(x.left() + 8.0, x.center().y);

@@ -4,7 +4,9 @@
 //! runs a few thousand cheap cases; the known-answer part of the suite works at 1e6–1e7
 //! coordinates, where double precision starts to show (geometry-parity.md §Tests).
 
-use crate::*;
+use crate::{
+    Arc, Bounds2, Circle, Line, Segment, Vec2, circle_circle, intersect_ext, intersect_segments, line_circle, line_line, line_line_infinite,
+};
 
 // ---------- generator ----------
 

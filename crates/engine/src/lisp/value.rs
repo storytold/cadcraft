@@ -343,18 +343,30 @@ pub fn eq(a: &Value, b: &Value) -> bool {
 
 /// `equal`: the same structure, numbers within `fuzz`.
 pub fn equal(a: &Value, b: &Value, fuzz: f64) -> bool {
-    equal_depth(a, b, fuzz, 0)
+    // A shared cons DAG can expand into exponentially many node visits when compared as a tree.
+    // Bound the total comparisons so `equal` on adversarial shared structure cannot monopolise the
+    // thread (CWE-407); exhausting the budget reports "not equal" rather than looping.
+    let mut budget: u64 = EQUAL_BUDGET;
+    equal_depth(a, b, fuzz, 0, &mut budget)
 }
 
-fn equal_depth(a: &Value, b: &Value, fuzz: f64, depth: usize) -> bool {
-    if depth > MAX_DEPTH {
+/// Largest number of node comparisons one `equal` call may perform.
+const EQUAL_BUDGET: u64 = 50_000_000;
+
+/// Compare nested values within depth and node-work limits, returning false when either limit is reached.
+fn equal_depth(a: &Value, b: &Value, fuzz: f64, depth: usize, budget: &mut u64) -> bool {
+    if depth > MAX_DEPTH || *budget == 0 {
         return false;
     }
+    *budget -= 1;
     let (mut a, mut b) = (a.clone(), b.clone());
     loop {
+        if *budget == 0 {
+            return false;
+        }
         match (&a, &b) {
             (Value::Cons(x), Value::Cons(y)) => {
-                if !equal_depth(&x.car, &y.car, fuzz, depth + 1) {
+                if !equal_depth(&x.car, &y.car, fuzz, depth + 1, budget) {
                     return false;
                 }
                 let (na, nb) = (x.cdr.clone(), y.cdr.clone());

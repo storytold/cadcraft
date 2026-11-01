@@ -10,6 +10,11 @@ use cadcraft_geom::{Vec2, Vec3};
 use cadcraft_io::plot;
 use serde_json::json;
 
+#[path = "support/pdf_read.rs"]
+mod pdf_read;
+
+use pdf_read::Doc;
+
 // ---------- a minimal TrueType font: .notdef, "A" (triangle), "B" (square) ----------
 
 fn be16(v: &mut Vec<u8>, x: u16) {
@@ -46,8 +51,9 @@ fn simple_glyph(pts: &[(i16, i16)]) -> Vec<u8> {
     g
 }
 
-/// A TrueType font with glyphs .notdef (empty), A and B, and OS/2 `fsType`.
-fn test_font(fs_type: u16) -> Vec<u8> {
+/// A TrueType font with glyphs .notdef (empty), A and B, and OS/2 `fsType`. `hmtx` holds
+/// `metrics` of the three metrics `hhea` declares.
+fn test_font(fs_type: u16, metrics: usize) -> Vec<u8> {
     let glyphs = [Vec::new(), simple_glyph(&[(50, 0), (550, 0), (300, 700)]), simple_glyph(&[(50, 0), (550, 0), (550, 700), (50, 700)])];
     let mut glyf = Vec::new();
     let mut loca = Vec::new();
@@ -82,7 +88,7 @@ fn test_font(fs_type: u16) -> Vec<u8> {
         be16(&mut maxp, v);
     }
     let mut hmtx = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..metrics {
         be16(&mut hmtx, 600);
         be16(&mut hmtx, 50);
     }
@@ -142,12 +148,14 @@ fn test_font(fs_type: u16) -> Vec<u8> {
     out
 }
 
-/// Register the test fonts once: an embeddable one and one with a restricted licence.
+/// Register the test fonts once: an embeddable one, one with a restricted licence, and one
+/// the PDF writer accepts but can't subset (its `hmtx` is short).
 fn fonts() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        cadcraft_fonts::ttf::register("cadcraft-pdf-test.ttf", test_font(0));
-        cadcraft_fonts::ttf::register("cadcraft-pdf-restricted.ttf", test_font(0x0002));
+        cadcraft_fonts::ttf::register("cadcraft-pdf-test.ttf", test_font(0, 3));
+        cadcraft_fonts::ttf::register("cadcraft-pdf-restricted.ttf", test_font(0x0002, 3));
+        cadcraft_fonts::ttf::register("cadcraft-pdf-short-hmtx.ttf", test_font(0, 1));
     });
 }
 
@@ -157,7 +165,7 @@ fn style(d: &mut Drawing, name: &str, font: &str) {
     d.text_styles.push(TextStyle { name: name.into(), font: font.into(), ..TextStyle::default() });
 }
 
-fn text(d: &mut Drawing, space: &Space, style: &str, at: (f64, f64), value: &str, rotation: f64, width_factor: f64, oblique: f64) {
+fn text(d: &mut Drawing, space: &Space, style: &str, at: (f64, f64), value: &str, (rotation, width_factor, oblique): (f64, f64, f64)) {
     let t = Text {
         insert: Vec3::new(at.0, at.1, 0.0),
         align_pt: None,
@@ -178,77 +186,72 @@ fn drawing() -> Drawing {
     let mut d = Drawing::new_metric();
     style(&mut d, "Real", "cadcraft-pdf-test.ttf");
     style(&mut d, "Locked", "cadcraft-pdf-restricted.ttf");
+    style(&mut d, "Short", "cadcraft-pdf-short-hmtx.ttf");
     d
 }
 
-/// The uncompressed PDF as text (offsets kept: non-ASCII bytes become `?`).
-fn pdf(d: &Drawing, space: &Space, extra: serde_json::Value) -> String {
+/// The uncompressed PDF, read back.
+fn pdf(d: &Drawing, space: &Space, extra: serde_json::Value) -> Doc {
     let mut o = json!({"compress": false});
     if let (Some(m), Some(e)) = (o.as_object_mut(), extra.as_object()) {
         m.extend(e.clone());
     }
-    let bytes = plot(d, space, &o).unwrap();
-    check_xref(&bytes);
-    bytes.iter().map(|b| if b.is_ascii() { char::from(*b) } else { '?' }).collect()
+    pdf_read::read(&plot(d, space, &o).unwrap())
 }
 
-/// The cross-reference table points at every object.
-fn check_xref(bytes: &[u8]) {
-    let text: String = bytes.iter().map(|b| if b.is_ascii() { char::from(*b) } else { '?' }).collect();
-    let sx = text.rfind("startxref\n").unwrap();
-    let xref: usize = text[sx + 10..].lines().next().unwrap().trim().parse().unwrap();
-    let mut lines = text[xref..].lines().skip(1);
-    let count: usize = lines.next().unwrap().split_whitespace().nth(1).unwrap().parse().unwrap();
-    for (i, e) in lines.take(count).enumerate().skip(1) {
-        let off: usize = e[..10].parse().unwrap();
-        assert!(text[off..].starts_with(&format!("{i} 0 obj\n")), "object {i}");
-    }
+/// The glyph matrices (`a b c d e f`: em axes and origin on the page) of the text, in order.
+fn matrices(doc: &Doc) -> Vec<[f64; 6]> {
+    pdf_read::text_matrices(doc.content())
 }
 
-/// The text matrices (`a b c d e f Tm`) of the content, in order.
-fn matrices(pdf: &str) -> Vec<[f64; 6]> {
-    pdf.lines()
-        .filter(|l| l.ends_with(" Tj") && l.contains(" Tm "))
-        .map(|l| {
-            let v: Vec<f64> = l.split(" Tm ").next().unwrap().split_whitespace().map(|x| x.parse().unwrap()).collect();
-            [v[0], v[1], v[2], v[3], v[4], v[5]]
-        })
+/// The glyph codes shown, in order (two bytes each).
+fn codes(doc: &Doc) -> Vec<u32> {
+    pdf_read::shown(&doc.pages[0].content_bytes)
+        .iter()
+        .flat_map(|s| s.chunks(2).map(|c| u32::from(c[0]) << 8 | u32::from(*c.get(1).unwrap_or(&0))).collect::<Vec<_>>())
         .collect()
 }
 
-/// The embedded font file (FontFile2 stream data).
-fn font_file(pdf: &str, bytes_of: &[u8]) -> Vec<u8> {
-    let i = pdf.find("/Length1 ").expect("a FontFile2 stream");
-    let head = &pdf[..i];
-    let len_at = head.rfind("/Length ").unwrap() + 8;
-    let len: usize = pdf[len_at..].split(|c: char| !c.is_ascii_digit()).next().unwrap().parse().unwrap();
-    let start = pdf[i..].find("stream\n").unwrap() + i + 7;
-    bytes_of[start..start + len].to_vec()
+/// Filled paths drawn (glyph outlines are fills).
+fn fills(doc: &Doc) -> usize {
+    pdf_read::count(doc.content(), "f")
+}
+
+/// Embedded font files.
+fn font_files(doc: &Doc) -> usize {
+    doc.pages.iter().flat_map(|p| &p.fonts).filter(|f| f.font_file.is_some()).count()
 }
 
 #[test]
 fn truetype_text_is_embedded_as_text() {
     let mut d = drawing();
-    text(&mut d, &Space::Model, "Real", (0.0, 0.0), "ABBA", 0.0, 1.0, 0.0);
-    let p = pdf(&d, &Space::Model, json!({}));
+    text(&mut d, &Space::Model, "Real", (0.0, 0.0), "ABBA", (0.0, 1.0, 0.0));
+    let doc = pdf(&d, &Space::Model, json!({}));
+    let page = &doc.pages[0];
     // A Type0 font over a CIDFontType2 subset with a ToUnicode map.
-    assert!(p.contains("/Subtype /Type0") && p.contains("/Encoding /Identity-H") && p.contains("/Subtype /CIDFontType2"), "{p}");
-    assert!(p.contains("/CIDToGIDMap /Identity") && p.contains("/FontFile2 ") && p.contains("/ToUnicode "));
-    let base = p.split("/BaseFont /").nth(1).unwrap().split_whitespace().next().unwrap();
-    assert!(base.len() == 11 && base.as_bytes()[6] == b'+' && base[..6].chars().all(|c| c.is_ascii_uppercase()), "{base}");
-    assert!(p.contains("<0001> <0041>") && p.contains("<0002> <0042>"), "ToUnicode maps glyphs to A and B");
-    assert!(p.contains("/W [1 [600] 2 [600]]"), "widths");
-    // The page uses the font; four glyphs written as text, in a text object.
-    assert!(p.contains("/Font << /F0 "));
-    let tj: Vec<&str> = p.lines().filter(|l| l.ends_with(" Tj")).map(|l| l.rsplit(' ').nth(1).unwrap()).collect();
-    assert_eq!(tj, ["<0001>", "<0002>", "<0002>", "<0001>"]);
-    assert!(p.contains("BT\n/F0 1 Tf\n") && p.contains("ET\n"));
-    assert_eq!(p.matches("BT\n").count(), p.matches("ET\n").count());
+    assert_eq!(page.fonts.len(), 1);
+    let f = &page.fonts[0];
+    assert_eq!((f.subtype.as_str(), f.encoding.as_deref(), f.descendant.as_deref()), ("Type0", Some("Identity-H"), Some("CIDFontType2")));
+    assert!(f.cid_to_gid.as_deref() == Some("Identity") && f.font_file.is_some() && f.to_unicode.is_some());
+    let base = f.base_font.as_bytes();
+    assert!(base.len() > 7 && base[6] == b'+' && base[..6].iter().all(u8::is_ascii_uppercase), "{}", f.base_font);
+    // Four glyphs written as text: A B B A.
+    let c = codes(&doc);
+    assert_eq!(c.len(), 4, "{c:?}");
+    assert!(c[0] == c[3] && c[1] == c[2] && c[0] != c[1], "{c:?}");
+    let map = pdf_read::to_unicode_map(f.to_unicode.as_deref().unwrap());
+    assert!(map.contains(&(c[0], "A".into())) && map.contains(&(c[1], "B".into())), "ToUnicode maps the glyphs to A and B: {map:?}");
+    for code in [c[0], c[1]] {
+        assert!(f.widths.contains(&(code, 600.0)), "width of {code}: {:?}", f.widths);
+    }
+    // Text objects are balanced, at font size 1.
+    assert_eq!(pdf_read::count(&page.content, "BT"), pdf_read::count(&page.content, "ET"));
+    assert!(pdf_read::ops(&page.content).iter().filter(|o| o.op == "Tf").all(|o| o.nums == [1.0]));
     // No filled outlines left for them.
-    assert!(!p.contains("h\nf\n"), "glyph outlines are not drawn: {p}");
+    assert_eq!(fills(&doc), 0, "glyph outlines are not drawn: {}", page.content);
     // The glyphs advance along the baseline by 600/1000 em, scaled like the outline would be.
-    let m = matrices(&p);
-    assert!(m.iter().all(|m| m[1].abs() < 1e-3 && m[2].abs() < 1e-3 && (m[0] - m[3]).abs() < 1e-3 && m[0] > 0.0));
+    let m = matrices(&doc);
+    assert!(m.iter().all(|m| m[1].abs() < 1e-3 && m[2].abs() < 1e-3 && (m[0] - m[3]).abs() < 1e-3 && m[0] > 0.0), "{m:?}");
     let step = m[1][4] - m[0][4];
     assert!((step - 0.6 * m[0][0]).abs() < 0.01, "advance {step} for em {}", m[0][0]);
     assert!(m.windows(2).all(|w| (w[0][5] - w[1][5]).abs() < 1e-3), "one baseline");
@@ -257,33 +260,24 @@ fn truetype_text_is_embedded_as_text() {
 #[test]
 fn the_subset_is_a_valid_truetype_font() {
     let mut d = drawing();
-    text(&mut d, &Space::Model, "Real", (0.0, 0.0), "A", 0.0, 1.0, 0.0);
-    let bytes = plot(&d, &Space::Model, &json!({"compress": false})).unwrap();
-    let p: String = bytes.iter().map(|b| if b.is_ascii() { char::from(*b) } else { '?' }).collect();
-    let file = font_file(&p, &bytes);
-    assert!(p.contains(&format!("/Length1 {}", file.len())));
+    text(&mut d, &Space::Model, "Real", (0.0, 0.0), "A", (0.0, 1.0, 0.0));
+    let doc = pdf(&d, &Space::Model, json!({}));
+    let file = doc.pages[0].fonts[0].font_file.clone().expect("an embedded font file");
     let face = cadcraft_fonts::ttf::Face::new(std::sync::Arc::new(file.clone()), 0).expect("the subset parses");
     assert_eq!(cadcraft_fonts::subset::embedding(&face), cadcraft_fonts::subset::Embedding::Allowed);
-    // Glyph A kept, B (unused) emptied: the subset is smaller than the font.
-    assert!(file.len() < test_font(0).len());
-    // Whole-file checksum adjusted.
-    let sum = file.chunks(4).fold(0u32, |s, c| {
-        let mut w = [0u8; 4];
-        w[..c.len()].copy_from_slice(c);
-        s.wrapping_add(u32::from_be_bytes(w))
-    });
-    assert_eq!(sum, 0xB1B0_AFBA);
+    // Glyph A kept, B (unused) left out: the subset is smaller than the font.
+    assert!(file.len() < test_font(0, 3).len());
 }
 
 #[test]
 fn rotation_width_factor_and_obliquing_go_into_the_text_matrix() {
     let mut d = drawing();
     let quarter = std::f64::consts::FRAC_PI_2;
-    text(&mut d, &Space::Model, "Real", (0.0, 0.0), "A", quarter, 1.0, 0.0);
-    text(&mut d, &Space::Model, "Real", (0.0, 50.0), "A", 0.0, 2.0, 0.0);
-    text(&mut d, &Space::Model, "Real", (0.0, 100.0), "A", 0.0, 1.0, 15f64.to_radians());
+    text(&mut d, &Space::Model, "Real", (0.0, 0.0), "A", (quarter, 1.0, 0.0));
+    text(&mut d, &Space::Model, "Real", (0.0, 50.0), "A", (0.0, 2.0, 0.0));
+    text(&mut d, &Space::Model, "Real", (0.0, 100.0), "A", (0.0, 1.0, 15f64.to_radians()));
     let m = matrices(&pdf(&d, &Space::Model, json!({})));
-    assert_eq!(m.len(), 3);
+    assert_eq!(m.len(), 3, "{m:?}");
     // Rotated a quarter turn: the baseline points up, "up" points left.
     let [a, b, c, dd, _, _] = m[0];
     assert!(a.abs() < 1e-3 && b > 0.0 && c < 0.0 && dd.abs() < 1e-3, "{:?}", m[0]);
@@ -298,20 +292,28 @@ fn rotation_width_factor_and_obliquing_go_into_the_text_matrix() {
 }
 
 #[test]
+fn a_font_the_writer_cannot_subset_plots_as_outlines() {
+    let mut d = drawing();
+    text(&mut d, &Space::Model, "Short", (0.0, 0.0), "AB", (0.0, 1.0, 0.0));
+    let p = pdf(&d, &Space::Model, json!({}));
+    assert!(font_files(&p) == 0 && pdf_read::count(p.content(), "BT") == 0 && fills(&p) > 0, "outlines: {}", p.content());
+}
+
+#[test]
 fn fonts_that_forbid_embedding_and_the_geometry_option_draw_outlines() {
     let mut d = drawing();
-    text(&mut d, &Space::Model, "Locked", (0.0, 0.0), "AB", 0.0, 1.0, 0.0);
+    text(&mut d, &Space::Model, "Locked", (0.0, 0.0), "AB", (0.0, 1.0, 0.0));
     let p = pdf(&d, &Space::Model, json!({}));
-    assert!(!p.contains("/FontFile2") && !p.contains("BT\n") && p.contains("h\nf\n"), "restricted licence: outlines");
+    assert!(font_files(&p) == 0 && pdf_read::count(p.content(), "BT") == 0 && fills(&p) > 0, "restricted licence: outlines");
     let mut d = drawing();
-    text(&mut d, &Space::Model, "Real", (0.0, 0.0), "AB", 0.0, 1.0, 0.0);
+    text(&mut d, &Space::Model, "Real", (0.0, 0.0), "AB", (0.0, 1.0, 0.0));
     let p = pdf(&d, &Space::Model, json!({"text": "geometry"}));
-    assert!(!p.contains("/FontFile2") && !p.contains("BT\n") && p.contains("h\nf\n"), "text as geometry");
+    assert!(font_files(&p) == 0 && pdf_read::count(p.content(), "BT") == 0 && fills(&p) > 0, "text as geometry");
     // The stroke font is always geometry.
     let mut d = drawing();
-    text(&mut d, &Space::Model, "Standard", (0.0, 0.0), "AB", 0.0, 1.0, 0.0);
+    text(&mut d, &Space::Model, "Standard", (0.0, 0.0), "AB", (0.0, 1.0, 0.0));
     let p = pdf(&d, &Space::Model, json!({}));
-    assert!(!p.contains("BT\n") && p.contains(" S\n") || p.contains("\nS\n"));
+    assert!(pdf_read::count(p.content(), "BT") == 0 && pdf_read::count(p.content(), "S") > 0);
 }
 
 #[test]
@@ -319,8 +321,8 @@ fn text_seen_through_a_viewport_and_on_layers() {
     let mut d = drawing();
     let paper = Space::Paper("Layout1".into());
     // Model: one word well inside the viewport, one cut by its right edge.
-    text(&mut d, &Space::Model, "Real", (0.0, 0.0), "AB", 0.0, 1.0, 0.0);
-    text(&mut d, &Space::Model, "Real", (88.0, 0.0), "BA", 0.0, 1.0, 0.0);
+    text(&mut d, &Space::Model, "Real", (0.0, 0.0), "AB", (0.0, 1.0, 0.0));
+    text(&mut d, &Space::Model, "Real", (88.0, 0.0), "BA", (0.0, 1.0, 0.0));
     let vp = Viewport {
         center: Vec3::new(150.0, 100.0, 0.0),
         width: 100.0,
@@ -335,16 +337,28 @@ fn text_seen_through_a_viewport_and_on_layers() {
         on: true,
     };
     d.add(&paper, Common::default(), EntityKind::Viewport(vp)).unwrap();
-    text(&mut d, &paper, "Real", (20.0, 20.0), "B", 0.0, 1.0, 0.0);
+    text(&mut d, &paper, "Real", (20.0, 20.0), "B", (0.0, 1.0, 0.0));
     let p = pdf(&d, &paper, json!({}));
-    let tj = p.lines().filter(|l| l.ends_with(" Tj")).count();
     // "AB" inside, the paper-space "B", and the glyph of "BA" left of the edge: real text. The
     // glyph the edge cuts stays a (clipped) outline.
-    assert_eq!(tj, 4, "{p}");
-    assert!(p.contains("h\nf\n"), "the cut glyph is an outline");
-    // Text sits in its layer's marked content.
-    let first_bt = p.find("BT\n").unwrap();
-    assert!(p[..first_bt].contains("/OC /L0 BDC"));
+    assert_eq!(pdf_read::count(p.content(), "Tj"), 4, "{}", p.content());
+    assert!(fills(&p) > 0, "the cut glyph is an outline");
+    // Text seen through the viewport sits in its layer's marked content.
+    let ops = pdf_read::ops(p.content());
+    let first_bt = ops.iter().position(|o| o.op == "BT").unwrap();
+    let layer0 = p.pages[0].properties.iter().find(|(_, g)| g == "0").map(|(k, _)| k.clone()).unwrap();
+    assert!(ops[..first_bt].iter().any(|o| o.op == "BDC" && o.names.get(1) == Some(&layer0)));
+}
+
+#[test]
+fn text_sits_in_its_layers_marked_content() {
+    let mut d = drawing();
+    text(&mut d, &Space::Model, "Real", (0.0, 0.0), "AB", (0.0, 1.0, 0.0));
+    let p = pdf(&d, &Space::Model, json!({}));
+    let ops = pdf_read::ops(p.content());
+    let first_bt = ops.iter().position(|o| o.op == "BT").unwrap();
+    let layer0 = p.pages[0].properties.iter().find(|(_, g)| g == "0").map(|(k, _)| k.clone()).unwrap();
+    assert!(ops[..first_bt].iter().any(|o| o.op == "BDC" && o.names.get(1) == Some(&layer0)));
 }
 
 #[test]

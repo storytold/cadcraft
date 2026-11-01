@@ -18,9 +18,11 @@ fn main() {
         match craft_fonts(&dir) {
             Ok(entries) => src.push_str(&entries),
             Err(e) if std::env::var_os("CRAFT_FONTS_REQUIRED").is_some() => {
-                println!("cargo::error=CRAFT_FONTS_DIR={}: {e}", dir.display());
+                println!("cargo::error=CRAFT_FONTS_DIR={}: {}", one_line(&dir.display().to_string()), one_line(&e));
             }
-            Err(e) => println!("cargo::warning=building without craft-fonts: CRAFT_FONTS_DIR={}: {e}", dir.display()),
+            Err(e) => {
+                println!("cargo::warning=building without craft-fonts: CRAFT_FONTS_DIR={}: {}", one_line(&dir.display().to_string()), one_line(&e))
+            }
         }
     }
     src.push_str("];\n");
@@ -37,7 +39,9 @@ const BARRED_FAMILIES: [&str; 5] = ["Source Han", "Source Serif", "Source Sans",
 /// One `CraftFont { .. }` initialiser per manifest line, in manifest order.
 fn craft_fonts(dir: &std::path::Path) -> Result<String, String> {
     let manifest = dir.join("fonts/manifest.txt");
-    println!("cargo::rerun-if-changed={}", manifest.display());
+    rerun_if_changed(&manifest)?;
+    // Resolve the checkout root once so every manifest file can be confined inside it.
+    let root = dir.canonicalize().map_err(|e| format!("{}: {e}", dir.display()))?;
     let text = std::fs::read_to_string(&manifest).map_err(|e| format!("{}: {e}", manifest.display()))?;
     let wasm = std::env::var("CARGO_CFG_TARGET_ARCH").is_ok_and(|a| a == "wasm32");
     let mut out = String::new();
@@ -55,8 +59,8 @@ fn craft_fonts(dir: &std::path::Path) -> Result<String, String> {
         if wasm && !web_face {
             continue;
         }
-        let path = dir.join(file).canonicalize().map_err(|e| format!("{file}: {e}"))?;
-        println!("cargo::rerun-if-changed={}", path.display());
+        let path = resolve_font(&root, file)?;
+        rerun_if_changed(&path)?;
         let scripts: Vec<String> = scripts.split(',').map(|s| format!("{:?}", s.trim())).collect();
         let _ = writeln!(
             out,
@@ -66,4 +70,39 @@ fn craft_fonts(dir: &std::path::Path) -> Result<String, String> {
         );
     }
     Ok(out)
+}
+
+/// Resolve a manifest `file` field to a real path *confined to the checkout* `root` (CWE-22).
+///
+/// The field is rejected if it is absolute or contains a parent (`..`) component, and the
+/// canonicalised result must still live inside `root`, so a crafted manifest or a symlink in the
+/// checkout cannot make the generated `include_bytes!` read an arbitrary file on the build host.
+fn resolve_font(root: &std::path::Path, file: &str) -> Result<PathBuf, String> {
+    let rel = std::path::Path::new(file);
+    if rel.is_absolute() || rel.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        return Err(format!("{file}: manifest paths must be relative and stay inside the checkout"));
+    }
+    let path = root.join(rel).canonicalize().map_err(|e| format!("{file}: {e}"))?;
+    if !path.starts_with(root) {
+        return Err(format!("{file}: resolves outside the craft-fonts checkout"));
+    }
+    Ok(path)
+}
+
+/// Collapse CR/LF in a diagnostic derived from checkout contents to a single space, so it cannot
+/// introduce an additional Cargo directive on the newline-delimited build-script stream (CWE-74).
+fn one_line(s: &str) -> String {
+    s.replace(['\n', '\r'], " ")
+}
+
+/// Emit a `cargo::rerun-if-changed` directive for `path`, refusing paths that contain a line
+/// separator (CWE-74): Cargo's build-script protocol is newline-delimited, so a path with an
+/// embedded CR/LF could smuggle an extra directive such as `cargo::rustc-env=OUT_DIR=…`.
+fn rerun_if_changed(path: &std::path::Path) -> Result<(), String> {
+    let shown = path.display().to_string();
+    if shown.contains(['\n', '\r']) {
+        return Err(format!("{shown:?}: path contains a line separator"));
+    }
+    println!("cargo::rerun-if-changed={shown}");
+    Ok(())
 }

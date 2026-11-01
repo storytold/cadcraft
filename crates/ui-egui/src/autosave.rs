@@ -1,5 +1,5 @@
 //! Autosave and Drawing Recovery in the app. The engine decides what to write and writes it
-//! ([`cadcraft_engine::autosave`]); this runs it every frame, keeps SAVETIME and SAVEFILEPATH with
+//! ([`cadcraft_engine::autosave`]); this runs it every frame, keeps SAVETIME, SAVEFILEPATH and ISAVEBAK with
 //! the preferences, and shows the Drawing Recovery list after a crash: each autosaved drawing can
 //! be opened (as an unsaved copy) or discarded. On the web there is no autosave yet.
 
@@ -13,9 +13,9 @@ use crate::theme::Tokens;
 /// The host storage key for [`prefs_json`].
 pub const PREFS_KEY: &str = "cadcraft.autosave";
 
-/// SAVETIME and SAVEFILEPATH as JSON for the host's storage.
+/// SAVETIME, SAVEFILEPATH and ISAVEBAK as JSON for the host's storage.
 pub fn prefs_json() -> String {
-    json!({ "savetime": autosave::savetime(), "saveFilePath": autosave::savefilepath() }).to_string()
+    json!({ "savetime": autosave::savetime(), "saveFilePath": autosave::savefilepath(), "backup": autosave::isavebak() }).to_string()
 }
 
 /// Restore what [`prefs_json`] saved; malformed values are ignored.
@@ -26,6 +26,9 @@ pub fn load_prefs(json: &str) {
     }
     if let Some(p) = v.get("saveFilePath").and_then(Value::as_str) {
         autosave::set_savefilepath(p);
+    }
+    if let Some(b) = v.get("backup").and_then(Value::as_bool) {
+        autosave::set_isavebak(b);
     }
 }
 
@@ -111,21 +114,34 @@ impl CadApp {
     }
 }
 
-/// `secs` since 1970 as `YYYY-MM-DD HH:MM` (UTC).
+/// `secs` since 1970 as `YYYY-MM-DD HH:MM` (UTC). Past chrono's year 262143 range the proleptic
+/// Gregorian date is kept via the 400-year cycle rather than falling back to the epoch.
 fn utc(secs: u64) -> String {
-    let days = (secs / 86_400) as i64;
     let (h, m) = ((secs % 86_400) / 3600, (secs % 3600) / 60);
-    // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let mo = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(mo <= 2);
+    let (y, mo, d) = civil_from_days(secs / 86_400);
+    // `{y:04}` rather than `%Y`, which writes a `+` before years past 9999.
     format!("{y:04}-{mo:02}-{d:02} {h:02}:{m:02}")
+}
+
+/// Days since 1970-01-01 → proleptic Gregorian (year, month, day).
+///
+/// A recovery file's mtime can in principle land past `NaiveDate`'s ±262143-year range; the old
+/// hand-rolled converter still produced a date there, so falling back to the epoch would change
+/// the shown time. The Gregorian calendar repeats every 400 years (146_097 days), so chrono
+/// converts the day within one cycle and whole cycles go back into the year (an `i128`, then
+/// saturated into `i64`), keeping chrono as the only calendar logic and reproducing the old
+/// result exactly. 1970-01-01 is `num_days_from_ce` 719_163.
+fn civil_from_days(days: u64) -> (i64, u32, u32) {
+    use chrono::Datelike;
+    let (cycles, rest) = (days / 146_097, days % 146_097);
+    // `rest + 719_163` is 719_163..865_259, always a valid CE day.
+    match i32::try_from(rest + 719_163).ok().and_then(chrono::NaiveDate::from_num_days_from_ce_opt) {
+        Some(d) => {
+            let y = i128::from(d.year()) + i128::from(cycles) * 400;
+            (i64::try_from(y).unwrap_or(i64::MAX), d.month(), d.day())
+        }
+        None => (1970, 1, 1), // unreachable
+    }
 }
 
 /// The Drawing Recovery window, while autosave files from a crash are waiting.
@@ -137,7 +153,7 @@ pub fn show(app: &mut CadApp, ctx: &egui::Context) {
     let mut open = None;
     let mut discard = None;
     let mut later = false;
-    egui::Modal::new(egui::Id::new("cc_drawing_recovery")).show(ctx, |ui| {
+    crate::modal::instant(ctx, egui::Id::unique("cc_drawing_recovery")).show(ctx, |ui| {
         ui.set_width(460.0);
         ui.label(RichText::new("Drawing Recovery").strong());
         ui.add_space(4.0);
@@ -191,7 +207,7 @@ pub fn gpu_notice(app: &mut CadApp, ctx: &egui::Context) {
     let t = Tokens::get();
     let mut dismiss = false;
     egui::Window::new("Graphics error")
-        .id(egui::Id::new("cc_gpu_notice"))
+        .id(egui::Id::unique("cc_gpu_notice"))
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_TOP, vec2(0.0, 48.0))
@@ -233,5 +249,9 @@ mod tests {
         assert_eq!(super::utc(0), "1970-01-01 00:00");
         assert_eq!(super::utc(951_782_400 + 3_660), "2000-02-29 01:01");
         assert_eq!(super::utc(1_791_676_800), "2026-10-11 00:00");
+        assert_eq!(super::utc(253_402_300_800), "10000-01-01 00:00");
+        // Past chrono's range the proleptic Gregorian date is kept, not the epoch (old output).
+        assert_eq!(super::utc(10_000_000_000_000), "318857-05-20 17:46");
+        assert_eq!(super::utc(u64::MAX), "584554051223-11-09 07:00");
     }
 }

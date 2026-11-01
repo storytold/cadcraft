@@ -149,6 +149,7 @@ fn merge_tables(d: &mut Drawing, src: &Drawing) {
     merge(&mut d.dim_styles, &src.dim_styles, |t| &t.name);
     merge(&mut d.mleader_styles, &src.mleader_styles, |t| &t.name);
     merge(&mut d.table_styles, &src.table_styles, |t| &t.name);
+    merge(&mut d.mline_styles, &src.mline_styles, |t| &t.name);
 }
 
 /// Which source blocks to copy, and under which name: new names keep theirs, generated
@@ -254,5 +255,18 @@ mod tests {
         assert_eq!((f.name.as_str(), f.path.as_str()), ("bolt", "bolt"));
         assert_eq!(file_ref(&s, "C:\\parts\\bolt.dxf").map(|f| f.name), Some("bolt".into()));
         assert!(file_ref(&s, "BOLT").is_none());
+    }
+
+    #[test]
+    fn inserted_file_brings_its_mline_styles() {
+        let mut src = Drawing::default();
+        src.mline_styles.push(cadcraft_doc::MLineStyle { name: "WALL".into(), ..Default::default() });
+        let mut d = Drawing::default();
+        merge_tables(&mut d, &src);
+        assert!(d.mline_styles.iter().any(|m| m.name == "WALL"));
+        // A style this drawing already has keeps its own definition.
+        let before = d.mline_styles.len();
+        merge_tables(&mut d, &src);
+        assert_eq!(d.mline_styles.len(), before);
     }
 }

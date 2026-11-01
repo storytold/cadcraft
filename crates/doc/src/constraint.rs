@@ -208,7 +208,7 @@ impl Default for ParametricSettings {
             angle_tolerance: 1.0,
             auto_types: ["Coincident", "Collinear", "Parallel", "Perpendicular", "Horizontal", "Vertical", "Tangent", "Concentric", "Equal"]
                 .iter()
-                .map(|s| s.to_string())
+                .map(ToString::to_string)
                 .collect(),
             bars_visible: true,
             bar_exceptions: Vec::new(),

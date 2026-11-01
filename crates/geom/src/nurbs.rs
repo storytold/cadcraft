@@ -124,8 +124,15 @@ impl Spline {
         if !self.is_valid() {
             return Vec2::ZERO;
         }
+        self.derivative_unchecked(t)
+    }
+
+    /// First derivative without re-validating the spline. The caller must have confirmed
+    /// [`Spline::is_valid`] already; integration calls this once per sample, and re-running the
+    /// O(knots) validity scan each time would make measuring a valid spline quadratic (CWE-407).
+    fn derivative_unchecked(&self, t: f64) -> Vec2 {
         let p = self.degree;
-        let n = self.control.len() - 1;
+        let Some(n) = self.control.len().checked_sub(1) else { return Vec2::ZERO };
         let (lo, hi) = self.domain();
         let t = if t.is_finite() { t.clamp(lo, hi) } else { lo };
         let span = find_span(n, p, t, &self.knots);
@@ -470,15 +477,17 @@ impl Spline {
         out
     }
 
-    /// Arc length of one integration panel.
+    /// Arc length of one integration panel. The spline is validated once by the public callers
+    /// ([`Spline::length_between`]/[`Spline::length`]) before any panel is measured, so the speed
+    /// closure uses the unchecked derivative to avoid re-scanning the knots per sample.
     fn panel_length(&self, a: f64, b: f64) -> f64 {
-        let speed = |t: f64| self.derivative(t).len();
+        let speed = |t: f64| self.derivative_unchecked(t).len();
         adaptive_gauss(a, b, gauss(a, b, speed), &speed, MAX_GAUSS_DEPTH)
     }
 
     /// Arc length between parameters `a` and `b` (adaptive Gauss–Legendre over each knot span).
     pub fn length_between(&self, a: f64, b: f64) -> f64 {
-        if !self.is_valid() || !(a.is_finite() && b.is_finite()) {
+        if !(self.is_valid() && a.is_finite() && b.is_finite()) {
             return 0.0;
         }
         let (lo, hi) = self.domain();

@@ -79,18 +79,49 @@ fn same_polygon(a: &[Vec2], b: &[Vec2]) -> bool {
     (0..n).any(|k| (0..n).all(|i| near(a[i], b[(i + k) % n]))) || (0..n).any(|k| (0..n).all(|i| near(a[i], b[(k + n - (i % n)) % n])))
 }
 
+/// Remove degenerate and duplicate boundary loops within a shared comparison budget.
+/// Retain remaining loops without further comparisons once the budget is exhausted.
 fn dedup_polygons(loops: &mut Vec<Vec<Vec2>>) {
+    // `same_polygon` is O(n²) in a polygon's vertex count (every cyclic alignment, both windings),
+    // and each loop is compared against every unique one kept so far, so adversarial boundary
+    // geometry could force quadratic-on-quadratic work. Charge every vertex comparison against a
+    // shared budget; once it is spent, stop deduplicating and keep the remaining loops as-is
+    // (CWE-407).
+    let mut budget: u64 = MAX_DEDUP_COMPARISONS;
     let mut unique: Vec<Vec<Vec2>> = Vec::with_capacity(loops.len());
     for l in loops.drain(..) {
         if l.len() < 3 {
             continue;
         }
-        if !unique.iter().any(|u| same_polygon(u, &l)) {
+        let mut dup = false;
+        for u in &unique {
+            if u.len() != l.len() {
+                continue;
+            }
+            // Each `same_polygon` call costs about 2·len² comparisons; stop if that would overrun.
+            let cost = 2u64.saturating_mul((u.len() as u64).saturating_mul(l.len() as u64));
+            match budget.checked_sub(cost) {
+                Some(left) => budget = left,
+                None => {
+                    // Out of budget: keep `l` without further comparison.
+                    budget = 0;
+                    break;
+                }
+            }
+            if same_polygon(u, &l) {
+                dup = true;
+                break;
+            }
+        }
+        if !dup {
             unique.push(l);
         }
     }
     *loops = unique;
 }
+
+/// Vertex comparisons `dedup_polygons` may perform before it stops deduplicating.
+const MAX_DEDUP_COMPARISONS: u64 = 50_000_000;
 
 /// The tessellated boundary loops that take part in the fill under the hatch's island
 /// detection style (DXF group 75), filled with odd parity: 0 normal keeps every loop (islands
@@ -261,6 +292,9 @@ const MAX_PATTERN_LINES: usize = 1024;
 /// (a hostile or mis-scaled pattern can't exhaust memory). A view-limited build makes at most the
 /// runs of a full build, so it never leaves out runs that a full build draws.
 const MAX_RUNS: usize = 1_000_000;
+/// Shared budget on dash-processing steps across all of a hatch's families and spans, counted
+/// independently of emitted geometry so gap-only patterns cannot spin without bound (CWE-400).
+const MAX_HATCH_WORK: u64 = 50_000_000;
 /// Upper bound on the lines one family sweeps over the whole hatch; past it the family is left
 /// out (a full-detail build of a pattern far too fine for its area).
 const MAX_FAMILY_LINES: i64 = 20_000;
@@ -351,7 +385,16 @@ pub(crate) fn pattern_lines_until(
     let scale = scale_of(h);
     let px = if px.is_finite() && px > 0.0 { px } else { 0.0 };
     let mut out = Vec::new();
+    // Shared work budget across all families and spans, counting dash-processing steps even when
+    // they emit no geometry: gap-only families produce no runs, so `out.len()` alone cannot bound
+    // their cost (CWE-400).
+    let mut work: u64 = MAX_HATCH_WORK;
     for fam in &lines {
+        // A family with dashes but no positive (ink) element can never draw: skip it so its gaps
+        // are not swept at all.
+        if !fam.dashes.is_empty() && !fam.dashes.iter().any(|d| *d >= 0.0) {
+            continue;
+        }
         let ang = fam.angle.to_radians() + h.angle;
         let origin = h.origin + Vec2::new(fam.origin.0, fam.origin.1).rotate(h.angle) * scale;
         let delta = Vec2::new(fam.delta.0, fam.delta.1).rotate(ang) * scale;
@@ -360,8 +403,8 @@ pub(crate) fn pattern_lines_until(
             continue;
         }
         let dashes: Vec<f64> = fam.dashes.iter().map(|d| d * scale).collect();
-        Family { origin, ang, delta, spacing, dashes: &dashes }.sweep(loops, px, view, cancel, &mut out);
-        if out.len() >= MAX_RUNS || is_set(cancel) {
+        Family { origin, ang, delta, spacing, dashes: &dashes }.sweep(loops, px, view, cancel, &mut out, &mut work);
+        if out.len() >= MAX_RUNS || work == 0 || is_set(cancel) {
             break;
         }
     }
@@ -422,27 +465,34 @@ impl Family<'_> {
         self.origin + p.rotate(self.ang)
     }
 
-    fn sweep(&self, loops: &[Vec<Vec2>], px: f64, view: Option<&Bounds2>, cancel: Option<&AtomicBool>, out: &mut Vec<Vec<Vec2>>) {
-        let local: Vec<Vec<Vec2>> = loops.iter().map(|l| l.iter().map(|p| self.to_local(*p)).collect()).collect();
-        let bb = Bounds2::from_points(local.iter().flatten().copied());
-        if bb.is_empty() {
-            return;
-        }
-        // The lines swept: the boundary's extent, cut to the view's (its corners in this frame)
-        // when there is one. Spans are cut to the view's extent only: they already lie within the
-        // boundary, and cutting them to its extent too would move an end that sits on a boundary
-        // corner by a rounding error, so a view covering the hatch would change its lines.
+    /// The range of the lines swept, in this frame: the boundary's extent, cut to the view's
+    /// when there is one, and the view's x extent that spans are cut to. Spans are cut to the
+    /// view's extent only: they already lie within the boundary, and cutting them to its extent
+    /// too would move an end that sits on a boundary corner by a rounding error, so a view
+    /// covering the hatch would change its lines. `None` when the view misses the boundary.
+    fn lines_range(&self, bb: &Bounds2, view: Option<&Bounds2>) -> Option<(Vec2, Vec2, Option<(f64, f64)>)> {
         let (mut lo, mut hi) = (bb.min, bb.max);
         let mut span_cut = None;
         if let Some(v) = view {
             let vb = Bounds2::from_points(v.corners().iter().map(|p| self.to_local(*p)));
-            if vb.is_empty() || !vb.intersects(&bb) {
-                return;
+            if vb.is_empty() || !vb.intersects(bb) {
+                return None;
             }
             lo = Vec2::new(lo.x.max(vb.min.x), lo.y.max(vb.min.y));
             hi = Vec2::new(hi.x.min(vb.max.x), hi.y.min(vb.max.y));
             span_cut = Some((vb.min.x, vb.max.x));
         }
+        Some((lo, hi, span_cut))
+    }
+
+    /// Intersect a pattern family with boundary loops, respecting view, output, cancellation, and shared dash-work limits.
+    fn sweep(&self, loops: &[Vec<Vec2>], px: f64, view: Option<&Bounds2>, cancel: Option<&AtomicBool>, out: &mut Vec<Vec<Vec2>>, work: &mut u64) {
+        let local: Vec<Vec<Vec2>> = loops.iter().map(|l| l.iter().map(|p| self.to_local(*p)).collect()).collect();
+        let bb = Bounds2::from_points(local.iter().flatten().copied());
+        if bb.is_empty() {
+            return;
+        }
+        let Some((lo, hi, span_cut)) = self.lines_range(&bb, view) else { return };
         let shift_per_line = self.delta.rotate(-self.ang).x;
         let k0 = (lo.y / self.spacing).floor() as i64;
         let k1 = (hi.y / self.spacing).ceil() as i64;
@@ -456,21 +506,11 @@ impl Family<'_> {
         let draws = self.dashes.iter().any(|d| *d >= 0.0);
         let solid_line = self.dashes.is_empty() || pat_len < 1e-12 || (px > 0.0 && pat_len < 2.0 * px && draws);
         for k in k0..=k1 {
-            if out.len() >= MAX_RUNS || is_set(cancel) {
+            if out.len() >= MAX_RUNS || *work == 0 || is_set(cancel) {
                 return;
             }
             let y = k as f64 * self.spacing;
-            let mut xs: Vec<f64> = Vec::new();
-            for l in &local {
-                let n = l.len();
-                for i in 0..n {
-                    let (Some(a), Some(b)) = (l.get(i), l.get((i + 1) % n)) else { continue };
-                    if (a.y > y) != (b.y > y) {
-                        xs.push(a.x + (b.x - a.x) * (y - a.y) / (b.y - a.y));
-                    }
-                }
-            }
-            xs.sort_by(f64::total_cmp);
+            let xs = crossings(&local, y);
             let offset = shift_per_line * k as f64;
             for span in xs.chunks(2) {
                 let [x0, x1] = span else { continue };
@@ -484,21 +524,22 @@ impl Family<'_> {
                 if solid_line {
                     out.push(vec![self.to_world(Vec2::new(x0, y)), self.to_world(Vec2::new(x1, y))]);
                 } else {
-                    self.dash(x0, x1, y, offset, pat_len, out);
+                    self.dash((x0, x1), y, offset, pat_len, out, work);
                 }
             }
         }
     }
 
     /// The dashes and dots of the span `x0..x1` of the line at `y`, phase anchored at x = `offset`.
-    fn dash(&self, x0: f64, x1: f64, y: f64, offset: f64, pat_len: f64, out: &mut Vec<Vec<Vec2>>) {
+    fn dash(&self, (x0, x1): (f64, f64), y: f64, offset: f64, pat_len: f64, out: &mut Vec<Vec<Vec2>>, work: &mut u64) {
         let start_rep = ((x0 - offset) / pat_len).floor();
         let mut x = offset + start_rep * pat_len;
         let mut guard = 0;
         'outer: while x < x1 {
             for d in self.dashes {
                 guard += 1;
-                if guard > 100_000 || out.len() >= MAX_RUNS {
+                *work = work.saturating_sub(1);
+                if guard > 100_000 || out.len() >= MAX_RUNS || *work == 0 {
                     break 'outer;
                 }
                 let len = d.abs();
@@ -518,6 +559,22 @@ impl Family<'_> {
             }
         }
     }
+}
+
+/// The x positions where the boundary loops cross the horizontal line at `y`, in order.
+fn crossings(local: &[Vec<Vec2>], y: f64) -> Vec<f64> {
+    let mut xs: Vec<f64> = Vec::new();
+    for l in local {
+        let n = l.len();
+        for i in 0..n {
+            let (Some(a), Some(b)) = (l.get(i), l.get((i + 1) % n)) else { continue };
+            if (a.y > y) != (b.y > y) {
+                xs.push(a.x + (b.x - a.x) * (y - a.y) / (b.y - a.y));
+            }
+        }
+    }
+    xs.sort_by(f64::total_cmp);
+    xs
 }
 
 #[cfg(test)]
@@ -558,5 +615,21 @@ mod tests {
         let tris = fill::triangulate_evenodd(&loops);
         let area: f64 = tris.chunks(3).map(|t| ((t[1] - t[0]).cross(t[2] - t[0]) / 2.0).abs()).sum();
         assert!((area - 100.0).abs() < 1e-6, "triangulated area must be 100.0, not zero");
+    }
+}
+
+#[cfg(test)]
+mod dedup_budget_tests {
+    use super::*;
+    /// Loops with different vertex counts leave enough comparison fuel to remove a later duplicate.
+    #[test]
+    fn unequal_loops_do_not_spend_the_comparison_budget() {
+        // The old estimate exhausted the budget on this unequal pair before seeing the triangle.
+        let a = vec![Vec2::ZERO; 5_000];
+        let b = vec![Vec2::ZERO; 5_001];
+        let tri = vec![Vec2::ZERO, Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0)];
+        let mut loops = vec![a, b, tri.clone(), tri];
+        dedup_polygons(&mut loops);
+        assert_eq!(loops.len(), 3);
     }
 }

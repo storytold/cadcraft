@@ -94,8 +94,16 @@ pub fn ranges(len: f64, lt: &Linetype, scale: f64, min_pattern: f64) -> Option<V
     }
     let mut out = Vec::new();
     let mut pos = 0.0;
+    // Gap-only patterns draw nothing, matching `apply`, without walking every repeat.
+    if !lt.pattern.iter().any(|d| d.length >= 0.0) {
+        return Some(Vec::new());
+    }
+    // Bound the pattern elements visited, independent of emitted ranges, so a pattern that emits
+    // little still cannot cycle hundreds of millions of times.
+    let mut visits: u64 = 0;
     for d in lt.pattern.iter().map(|d| d.length * scale).cycle() {
-        if pos >= len || out.len() > 2_000_000 {
+        visits += 1;
+        if pos >= len || out.len() > 2_000_000 || visits > 4_000_000 {
             break;
         }
         if d >= 0.0 {
@@ -109,6 +117,14 @@ pub fn ranges(len: f64, lt: &Linetype, scale: f64, min_pattern: f64) -> Option<V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// This gap-only pattern draws nothing, and `ranges` returns before cycling through its repeats.
+    #[test]
+    fn an_all_gap_pattern_draws_nothing_without_spinning() {
+        let lt = Linetype::simple("GAPS", "", &[-0.001, -0.002]);
+        assert_eq!(ranges(1.0, &lt, 1.0, 0.0), Some(Vec::new()));
+        assert!(apply(&[Vec2::ZERO, Vec2::new(1.0, 0.0)], &lt, 1.0, 0.0).is_empty());
+    }
 
     #[test]
     fn dashes_split_line() {

@@ -18,8 +18,7 @@ pub use craft_docpath::Refused;
 /// on other platforms.
 pub fn resolve(stored: &str, document: Option<&Path>) -> Result<PathBuf, Refused> {
     let document = document.filter(|d| !d.as_os_str().is_empty()).map(|d| std::path::absolute(d).unwrap_or_else(|_| d.to_path_buf()));
-    let path = craft_docpath::resolve(stored.trim(), document.as_deref())?;
-    if path.is_absolute() { Ok(path) } else { Err(Refused::Invalid) }
+    craft_docpath::resolve_absolute(stored.trim(), document.as_deref())
 }
 
 #[cfg(test)]

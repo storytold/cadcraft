@@ -60,6 +60,7 @@ pub(crate) fn shape(primary: Option<&Face>, s: &str, height: f64, width_factor: 
     catch_unwind(AssertUnwindSafe(|| shape_chars(primary, &chars, height, width_factor, oblique))).ok()
 }
 
+/// Lay out decoded directional runs, keeping advances and decoration spans for empty glyphs.
 fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64, width_factor: f64, oblique: f64) -> Shaped {
     let h = if height.is_finite() && height > 0.0 { height } else { 1.0 };
     let wf = if width_factor.is_finite() && width_factor.abs() > 1e-6 { width_factor } else { 1.0 };
@@ -68,6 +69,7 @@ fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64
     let cs: Vec<char> = chars.iter().map(|c| c.0).collect();
     let flags = |i: usize| chars.get(i).map(|c| (c.1, c.2)).unwrap_or((false, false));
     let mut out = Shaped::default();
+    let mut points_left = ttf::MAX_SHAPED_POINTS;
     let mut spans: Vec<(f64, f64, bool, bool)> = Vec::new();
     let mut x = 0.0;
     // Whether the rightmost glyph so far is a stroke-font glyph.
@@ -102,12 +104,11 @@ fn shape_chars(primary: Option<&Face>, chars: &[(char, bool, bool)], height: f64
                         let outline = ttf::glyph_by_id(face, g.gid);
                         let k = h / outline.cap * wf;
                         let dy = g.dy * h / outline.cap;
-                        let mut contours = ttf::place_glyph(&outline, x + g.dx * k, h, wf, shear);
-                        for p in contours.iter_mut().flatten() {
-                            *p += Vec2::new(dy * shear, dy);
-                        }
-                        if !contours.is_empty() {
-                            out.glyphs.push(contours);
+                        if let Some(mut contours) = ttf::place_glyph_budgeted(&outline, x + g.dx * k, h, wf, shear, &mut points_left) {
+                            for p in contours.iter_mut().flatten() {
+                                *p += Vec2::new(dy * shear, dy);
+                            }
+                            out.push_glyph(contours, None);
                         }
                         let adv = g.advance * k;
                         let (u, o) = flags(g.cluster);
@@ -181,28 +182,30 @@ struct Glyph {
 /// Shape characters `r` of `cs` (one direction, one face) into glyphs in display order.
 fn shape_run(face: &Face, cs: &[char], r: Range<usize>, rtl: bool) -> Vec<Glyph> {
     let run = cs.get(r.clone()).unwrap_or_default();
-    let Ok(font) = harfrust::FontRef::from_index(&face.bytes, face.index) else { return Vec::new() };
-    let data = harfrust::ShaperData::new(&font);
-    let shaper = data.shaper(&font).build();
-    let mut buf = harfrust::UnicodeBuffer::new();
+    // Keep the shared font bytes: shaping a run must not clone the entire font file.
+    let source = harfrust::font::Blob::Shared(face.bytes.clone());
+    let Some(font) = harfrust::Font::new(source, face.index) else { return Vec::new() };
+    let shaper = harfrust::ShaperFont::new(&font);
+    let mut buf = harfrust::Buffer::new();
     let arabic = run.iter().any(|c| matches!(*c, '\u{0600}'..='\u{08FF}'));
     if arabic && !face.has_joining_features() {
         for (c, i) in bidi::presentation_forms(run, |p| face.has_glyph(p)) {
-            buf.add(c, u32::try_from(r.start + i).unwrap_or(u32::MAX));
+            buf.push(u32::from(c), u32::try_from(r.start + i).unwrap_or(u32::MAX));
         }
     } else {
         for (i, c) in run.iter().enumerate() {
-            buf.add(*c, u32::try_from(r.start + i).unwrap_or(u32::MAX));
+            buf.push(u32::from(*c), u32::try_from(r.start + i).unwrap_or(u32::MAX));
         }
     }
     buf.set_direction(if rtl { harfrust::Direction::RightToLeft } else { harfrust::Direction::LeftToRight });
     buf.guess_segment_properties();
-    let shaped = shaper.shape(buf, harfrust::ShapeOptions::new());
+    if harfrust::shape(&shaper, &mut buf, harfrust::ShapeOptions::new()).is_err() {
+        return Vec::new();
+    }
     let k = 1000.0 / f64::from(shaper.units_per_em().max(1));
-    shaped
-        .glyph_infos()
+    buf.glyph_infos()
         .iter()
-        .zip(shaped.glyph_positions())
+        .zip(buf.glyph_positions())
         .map(|(gi, gp)| Glyph {
             gid: gi.glyph_id,
             cluster: usize::try_from(gi.cluster).unwrap_or(usize::MAX),
@@ -216,6 +219,59 @@ fn shape_run(face: &Face, cs: &[char], r: Range<usize>, rtl: bool) -> Vec<Glyph>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A single empty glyph with a positive advance, without relying on installed fonts.
+    fn empty_glyph_face() -> Face {
+        let mut head = vec![0_u8; 54];
+        head[..4].copy_from_slice(&0x0001_0000_u32.to_be_bytes());
+        head[18..20].copy_from_slice(&1000_u16.to_be_bytes());
+        let mut hhea = vec![0_u8; 36];
+        hhea[..4].copy_from_slice(&0x0001_0000_u32.to_be_bytes());
+        hhea[4..6].copy_from_slice(&800_i16.to_be_bytes());
+        hhea[6..8].copy_from_slice(&(-200_i16).to_be_bytes());
+        hhea[34..36].copy_from_slice(&1_u16.to_be_bytes());
+        let tables = [
+            (*b"head", head),
+            (*b"hhea", hhea),
+            (*b"hmtx", vec![1, 244, 0, 0]),      // Advance 500, left side bearing 0.
+            (*b"maxp", vec![0, 0, 80, 0, 0, 1]), // Version 0.5, one glyph.
+        ];
+        let mut bytes = vec![0_u8; 12 + tables.len() * 16];
+        bytes[..4].copy_from_slice(&0x0001_0000_u32.to_be_bytes());
+        bytes[4..6].copy_from_slice(&4_u16.to_be_bytes());
+        bytes[6..8].copy_from_slice(&64_u16.to_be_bytes());
+        bytes[8..10].copy_from_slice(&2_u16.to_be_bytes());
+        for (i, (tag, data)) in tables.into_iter().enumerate() {
+            while !bytes.len().is_multiple_of(4) {
+                bytes.push(0);
+            }
+            let record = 12 + i * 16;
+            let offset = u32::try_from(bytes.len()).unwrap();
+            let len = u32::try_from(data.len()).unwrap();
+            bytes[record..record + 4].copy_from_slice(&tag);
+            bytes[record + 8..record + 12].copy_from_slice(&offset.to_be_bytes());
+            bytes[record + 12..record + 16].copy_from_slice(&len.to_be_bytes());
+            bytes.extend(data);
+        }
+        Face::new(std::sync::Arc::new(bytes), 0).expect("synthetic font parses")
+    }
+
+    /// Empty complex glyphs retain spacing and underlines without adding geometry or text slots.
+    #[test]
+    fn empty_complex_glyph_keeps_advance_without_geometry() {
+        let face = empty_glyph_face();
+        let shaped = shape(Some(&face), " ", 1.0, 1.0, 0.0).expect("shapes empty glyph");
+        assert!(shaped.width > 0.0, "the font's advance is retained");
+        assert!(shaped.is_empty());
+        assert!(shaped.glyphs.is_empty());
+        assert!(shaped.text.is_empty());
+
+        let underlined = shape(Some(&face), "%%u ", 1.0, 1.0, 0.0).expect("shapes decorated empty glyph");
+        assert_eq!(underlined.width, shaped.width);
+        assert!(underlined.glyphs.is_empty());
+        assert!(underlined.text.is_empty());
+        assert!(!underlined.strokes.is_empty(), "decoration spans survive an empty outline");
+    }
 
     #[test]
     fn stroke_font_rtl_lines_keep_latin_and_digits_in_the_stroke_font() {
@@ -288,6 +344,32 @@ mod tests {
         let (lo, hi) = (stroke_x.iter().cloned().fold(f64::MAX, f64::min), stroke_x.iter().cloned().fold(f64::MIN, f64::max));
         assert!(lo > 0.2 * sh.width && hi < 0.8 * sh.width, "digits between the words: {lo}..{hi} of {}", sh.width);
         assert!((crate::line_width("قیمت 25 تومان", 1.0, 1.0) - sh.width).abs() < 1e-9);
+    }
+
+    #[test]
+    fn devanagari_run_is_reordered_with_line_clusters_and_advances_per_1000_em() {
+        use skrifa::MetadataProvider;
+        use skrifa::instance::{LocationRef, Size};
+        let Some(face) = ttf::fallback_for('\u{0915}') else { return };
+        let Some(ka) = nominal(&face, '\u{0915}') else { return };
+        // "कि" after two other characters of the line: the vowel sign i is drawn before the
+        // consonant (Indic reordering, which needs the script the shaper guesses from the text),
+        // both glyphs carry the cluster of the consonant's index in the line, not in the run.
+        let cs: Vec<char> = "ab\u{0915}\u{093F}".chars().collect();
+        let gs = shape_run(&face, &cs, 2..4, false);
+        let gids: Vec<u32> = gs.iter().map(|g| g.gid).collect();
+        assert_eq!(gids.len(), 2, "{gids:?}");
+        assert!(gids.first() != Some(&ka) && gids.last() == Some(&ka), "vowel sign before ka: {gids:?}");
+        assert!(gs.iter().all(|g| g.cluster == 2), "{:?}", gs.iter().map(|g| g.cluster).collect::<Vec<_>>());
+        // Advances come out at 1000 units per em, whatever the font's own em. A font that is
+        // already at 1000 per em could not tell a missing scale apart, so it checks nothing here.
+        let Some(font) = face.font() else { return };
+        if font.metrics(Size::unscaled(), LocationRef::default()).units_per_em == 1000 {
+            return;
+        }
+        let hmtx = font.glyph_metrics(Size::new(1000.0), LocationRef::default()).advance_width(skrifa::GlyphId::new(ka));
+        let adv = gs.last().map(|g| g.advance);
+        assert!(matches!((adv, hmtx), (Some(a), Some(h)) if (a - f64::from(h)).abs() < 1e-3), "{adv:?} vs {hmtx:?}");
     }
 
     #[test]

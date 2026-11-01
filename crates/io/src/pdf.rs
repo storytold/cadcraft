@@ -1,11 +1,12 @@
-//! Vector PDF plotting (PLOT / EXPORTPDF): a minimal PDF writer of our own (pure Rust, no file
-//! access, so it runs on the web too).
+//! Vector PDF plotting (PLOT / EXPORTPDF), written with craft-pdf's PDF writer (krilla; pure
+//! Rust, no file access, so it runs on the web too).
 //!
 //! One page per sheet: model-space extents fitted to a sheet, or a layout at 1:1 (or the given
 //! `scale`) on its paper (paper units are millimetres in metric drawings, inches otherwise).
-//! Lines are stroked paths (`m`/`l`/`S`), fills are `f` paths, colours are RGB with colour 7 printing black on white
-//! paper, and line widths come from lineweights when enabled. The page setup's plot style
-//! table (or the `plotStyleTable` option) sets the printed colours, linetypes and lineweights.
+//! Lines are stroked paths, fills are filled paths, colours are RGB with colour 7 printing
+//! black on white paper, and line widths come from lineweights when enabled. The page setup's
+//! plot style table (or the `plotStyleTable` option) sets the printed colours, linetypes and
+//! lineweights.
 //!
 //! Several sheets go into one file ([`pdf_sheets`], the `layouts` option), each page labelled
 //! with its layout name. Drawing layers become PDF layers (optional content groups) that a PDF
@@ -16,8 +17,21 @@ use std::fmt::Write as _;
 use cadcraft_color::Rgb;
 use cadcraft_doc::{Drawing, Handle, PageSetup, Space};
 use cadcraft_geom::{Bounds2, Vec2};
-use cadcraft_render::{Kind, Sheet, clip, paper};
+use cadcraft_render::{DPrim, Kind, Sheet, clip, paper};
 use serde_json::Value;
+
+use craft_pdf::write::backend as kr;
+use craft_pdf::write::{self, Metadata, WriteError, Writer};
+use kr::action::LinkAction;
+use kr::annotation::{Annotation, LinkAnnotation, Target};
+use kr::error::KrillaError;
+use kr::geom::{Path, PathBuilder, Point, Rect, Transform};
+use kr::num::NormalizedF32;
+use kr::optional_content::OcgId;
+use kr::page::{PageLabel, PageSettings};
+use kr::paint::{Fill, FillRule, LineCap, LineJoin, Stroke};
+use kr::surface::Surface;
+use kr::text::{GlyphId, KrillaGlyph};
 
 use crate::{IoError, Result};
 
@@ -31,9 +45,13 @@ const MAX_SHEET_MM: f64 = 5080.0;
 pub const MAX_PAGES: usize = 256;
 /// Most PDF layers in one file; objects on further layers print without one.
 const MAX_LAYERS: usize = 4096;
+/// Longest PDF layer name, in characters.
+const MAX_LAYER_NAME: usize = 1000;
 /// Most link annotations in one file, and the longest link target (bytes).
 const MAX_LINKS: usize = 10_000;
 const MAX_URL: usize = 2048;
+/// Longest title and page label written (characters).
+const MAX_TEXT: usize = 1000;
 
 /// Plot settings. `None` fields fall back to the layout's page setup (or sensible defaults for
 /// model space).
@@ -64,8 +82,8 @@ pub struct PdfOptions {
     pub window: Option<Bounds2>,
     /// Drawing layers become PDF layers (optional content groups). Default on.
     pub layers: bool,
-    /// With `layers`: objects on layers that are off are included on PDF layers that start
-    /// hidden (frozen layers are never included). Default off: they aren't plotted.
+    /// With `layers`: objects on layers that are off are plotted on PDF layers that start
+    /// hidden (frozen layers are never plotted). Default off: they aren't plotted.
     pub include_off_layers: bool,
     /// Hyperlinks: an entity's handle and its link target (a URL). The area the entity covers
     /// on the sheet becomes a link annotation.
@@ -356,23 +374,121 @@ pub fn pdf_items(d: &Drawing, items: &[(Space, PdfOptions)], o: &PdfOptions) -> 
     if items.len() > MAX_PAGES {
         return Err(IoError::Format(format!("at most {MAX_PAGES} sheets fit in one PDF")));
     }
-    // Layers that are off plot on PDF layers that start hidden: draw them from a copy with them on.
-    let with_off;
-    let drawn = if o.layers && o.include_off_layers && d.layers.iter().any(|l| !l.on && !l.frozen) {
-        let mut c = d.clone();
-        for l in c.layers.iter_mut().filter(|l| !l.frozen) {
-            l.on = true;
+    match write_pdf(d, items, o, o.text_as_geometry) {
+        // A font the PDF writer can't embed after all, or one that makes it fail internally:
+        // plot the text as outlines instead. Outlines embed no font, so this runs at most once.
+        Err(Failure::Write(e)) if !o.text_as_geometry && font_failure(&e) => write_pdf(d, items, o, true).map_err(Failure::into_io),
+        r => r.map_err(Failure::into_io),
+    }
+}
+
+/// Whether a writer failure may come from embedding a font: a font the writer refused, or a
+/// panic inside the writer (caught by `guard`), which a malformed font can cause.
+fn font_failure(e: &WriteError) -> bool {
+    match e {
+        WriteError::Serialization(e) => matches!(**e, kr::error::KrillaError::Font(..)),
+        WriteError::BackendPanic(_) => true,
+        _ => false,
+    }
+}
+
+/// Why writing failed: our own error, or the PDF writer's.
+enum Failure {
+    Io(IoError),
+    Write(WriteError),
+}
+
+impl From<IoError> for Failure {
+    fn from(e: IoError) -> Self {
+        Failure::Io(e)
+    }
+}
+
+impl From<WriteError> for Failure {
+    fn from(e: WriteError) -> Self {
+        Failure::Write(e)
+    }
+}
+
+impl Failure {
+    fn into_io(self) -> IoError {
+        match self {
+            Failure::Io(e) => e,
+            Failure::Write(e) => IoError::Format(format!("PDF export failed: {e}")),
         }
-        with_off = c;
-        &with_off
-    } else {
-        d
-    };
-    let links = all_links(d, o);
-    let pages = items.iter().map(|(s, po)| sheet(drawn, s, po, &links)).collect::<Result<Vec<_>>>()?;
-    let title = if o.title.is_empty() { pages.first().map(|p| p.label.clone()).unwrap_or_default() } else { o.title.clone() };
-    let fonts = if o.text_as_geometry { fonts::Fonts::default() } else { fonts::Fonts::collect(pages.iter().map(|p| &p.list)) };
-    Ok(assemble(d, &pages, &fonts, o, &title))
+    }
+}
+
+/// Write the file, one sheet at a time: each sheet's display list is built, written as its page
+/// and dropped before the next.
+fn write_pdf(d: &Drawing, items: &[(Space, PdfOptions)], o: &PdfOptions, text_as_geometry: bool) -> std::result::Result<Vec<u8>, Failure> {
+    write::guard(|| {
+        // Layers that are off plot on PDF layers that start hidden: draw them from a copy with
+        // them on.
+        let with_off;
+        let drawn = if o.layers && o.include_off_layers && d.layers.iter().any(|l| !l.on && !l.frozen) {
+            let mut c = d.clone();
+            for l in c.layers.iter_mut().filter(|l| !l.frozen) {
+                l.on = true;
+            }
+            with_off = c;
+            &with_off
+        } else {
+            d
+        };
+        let links = all_links(d, o);
+        let title = if o.title.is_empty() { items.first().map(|(s, _)| sheet_name(s)).unwrap_or_default() } else { o.title.clone() };
+        let metadata = Metadata {
+            creator: "CADCraft".into(),
+            producer: "CADCraft".into(),
+            title: Some(title.chars().take(MAX_TEXT).collect()),
+            ..Metadata::default()
+        };
+        let settings = kr::SerializeSettings {
+            compress_content_streams: o.compress,
+            xmp_metadata: false,
+            enable_tagging: false,
+            ..kr::SerializeSettings::default()
+        };
+        let mut writer = Writer::new(settings, metadata);
+        let mut fonts = fonts::Fonts::new(!text_as_geometry);
+        let mut groups = Groups::default();
+        for (s, po) in items {
+            let page = sheet(drawn, s, po, &links)?;
+            let doc = writer.document_mut();
+            // Groups are added to the document, so they must exist before the page starts.
+            groups.add(doc, d, &page.layers);
+            write_page(doc, &page, &groups, &mut fonts)?;
+        }
+        if items.len() == 1 && !groups.ids.is_empty() {
+            writer.document_mut().set_optional_content_page_mode(true);
+        }
+        Ok(writer.finish()?)
+    })
+}
+
+/// The PDF layers (optional content groups) of a file: one per drawing layer used, shared by
+/// all pages, at most [`MAX_LAYERS`].
+#[derive(Default)]
+struct Groups {
+    ids: std::collections::HashMap<u32, OcgId>,
+}
+
+impl Groups {
+    /// Add groups for the drawing layers in `layers` that don't have one yet, named after the
+    /// layer and visible when the layer is on in `d`, the drawing as given (not the copy that
+    /// turns layers that are off on to plot them).
+    fn add(&mut self, doc: &mut kr::Document, d: &Drawing, layers: &[u32]) {
+        for l in layers {
+            if self.ids.len() >= MAX_LAYERS || self.ids.contains_key(l) {
+                continue;
+            }
+            let Some(layer) = d.layers.get(*l as usize) else { continue };
+            let name: String = layer.name.chars().take(MAX_LAYER_NAME).collect();
+            let id = doc.add_optional_content_group(name, layer.on);
+            self.ids.insert(*l, id);
+        }
+    }
 }
 
 /// One plotted sheet, ready to be written as a page.
@@ -383,7 +499,8 @@ struct SheetPage {
     list: cadcraft_render::DisplayList,
     map: Map,
     clip_pt: Bounds2,
-    /// The drawing layers (indices in the layer table) of the content's `/L<i>` marks.
+    /// The drawing layers (indices in the layer table) drawn on, in order of first use: the
+    /// candidates for PDF layers.
     layers: Vec<u32>,
     /// Link annotations: rectangle in points and target.
     links: Vec<(Bounds2, String)>,
@@ -511,9 +628,12 @@ fn links(list: &cadcraft_render::DisplayList, map: &Map, clip_pt: &Bounds2, link
     if links.is_empty() {
         return Vec::new();
     }
+    // Membership by handle, built once, so scanning primitives is O(primitives) rather than
+    // O(primitives × links): otherwise the two counts multiply into excessive work (CWE-407).
+    let linked: std::collections::HashSet<Handle> = links.iter().map(|(h, _)| *h).collect();
     let mut areas: std::collections::HashMap<Handle, Bounds2> = std::collections::HashMap::new();
     for p in &list.prims {
-        if matches!(p.kind, Kind::Infinite { .. }) || !links.iter().any(|(h, _)| *h == p.handle) {
+        if matches!(p.kind, Kind::Infinite { .. }) || !linked.contains(&p.handle) {
             continue;
         }
         let b = areas.entry(p.handle).or_insert(Bounds2::EMPTY);
@@ -553,431 +673,318 @@ pub(crate) fn plot_scale(b: &Bounds2, sheet: &Sheet, fit: bool, scale: Option<f6
     if s.is_finite() && s > 0.0 { s } else { 1.0 }
 }
 
-/// A number for a content stream: short, finite, no exponent.
-fn num(out: &mut String, v: f64) {
-    let v = if v.is_finite() { v.clamp(-1.0e7, 1.0e7) } else { 0.0 };
-    let mut s = format!("{v:.3}");
-    if s.contains('.') {
-        while s.ends_with('0') {
-            s.pop();
-        }
-        if s.ends_with('.') {
-            s.pop();
-        }
-    }
-    if s == "-0" {
-        s = "0".into();
-    }
-    out.push_str(&s);
+/// Largest coordinate written (points); a primitive reaching further is clipped to the plot
+/// area first. The PDF writer's geometry is `f32`.
+const MAX_COORD: f64 = 1.0e7;
+
+/// A point in points as the writer's `f32`, or `None` when it is not finite or out of range.
+fn coord(p: Vec2) -> Option<(f32, f32)> {
+    let ok = |v: f64| v.is_finite() && v.abs() <= MAX_COORD;
+    (ok(p.x) && ok(p.y)).then_some((p.x as f32, p.y as f32))
 }
 
-fn pt(out: &mut String, p: Vec2) {
-    num(out, p.x);
-    out.push(' ');
-    num(out, p.y);
+/// A rectangle path between two corners (points), if it has an area.
+fn rect_path(min: Vec2, max: Vec2) -> Option<Path> {
+    let (x0, y0) = coord(min)?;
+    let (x1, y1) = coord(max)?;
+    let mut pb = PathBuilder::new();
+    pb.push_rect(Rect::from_ltrb(x0, y0, x1, y1)?);
+    pb.finish()
 }
 
-fn color(out: &mut String, c: Rgb, op: &str) {
-    for v in [c.0, c.1, c.2] {
-        num(out, f64::from(v) / 255.0);
-        out.push(' ');
+/// Diameter (points) of the dot a zero-length hairline plots: a hairline has no width of its
+/// own, and this is about the thinnest mark that still prints.
+const HAIRLINE_DOT_PT: f32 = 0.25;
+
+/// A circle path (points) around `(x, y)`: four cubic arcs.
+fn circle_path(x: f32, y: f32, r: f32) -> Option<Path> {
+    // Control-point distance of a quarter-circle cubic, as a fraction of the radius.
+    let k = r * 0.552_284_8;
+    let mut pb = PathBuilder::new();
+    pb.move_to(x + r, y);
+    pb.cubic_to(x + r, y + k, x + k, y + r, x, y + r);
+    pb.cubic_to(x - k, y + r, x - r, y + k, x - r, y);
+    pb.cubic_to(x - r, y - k, x - k, y - r, x, y - r);
+    pb.cubic_to(x + k, y - r, x + r, y - k, x + r, y);
+    pb.close();
+    pb.finish()
+}
+
+/// Write one sheet as a page: its size, label, link annotations and marks.
+fn write_page(doc: &mut kr::Document, p: &SheetPage, groups: &Groups, fonts: &mut fonts::Fonts) -> std::result::Result<(), Failure> {
+    let (w, h) = (p.media.x as f32, p.media.y as f32);
+    let label = PageLabel::new(None, Some(p.label.chars().take(MAX_TEXT).collect()), None);
+    let settings = PageSettings::from_wh(w, h).ok_or_else(|| IoError::Format("the sheet has no area".into()))?.with_page_label(label);
+    let mut page = doc.start_page_with(settings);
+    for (r, url) in &p.links {
+        let Some(uri) = uri(url) else { continue };
+        // Annotation rectangles are given top-down, like the writer's page surface.
+        let Some(rect) = Rect::from_ltrb(r.min.x as f32, h - r.max.y as f32, r.max.x as f32, h - r.min.y as f32) else { continue };
+        let link = LinkAnnotation::new(rect, Target::Action(LinkAction::new(uri).into()));
+        page.add_annotation(Annotation::new_link(link, None));
     }
-    out.push_str(op);
-    out.push('\n');
-}
-
-/// The page's marks; those of primitives on `layers` are marked as optional content
-/// (`/OC /L<layer> BDC` … `EMC`).
-///
-/// Primitives in `texts` (filled glyph outlines) are written as text instead: the glyph in its
-/// embedded font (`/F<font>`), placed by a text matrix.
-///
-/// Transparent primitives are drawn with a graphics state of their alpha (`/T<percent> gs`);
-/// the transparencies used are returned for the page's `/ExtGState` (see [`ext_gstates`]). A
-/// list without transparency writes no graphics states.
-fn content_stream(
-    list: &cadcraft_render::DisplayList,
-    map: &Map,
-    clip_pt: &Bounds2,
-    layers: &[u32],
-    texts: &std::collections::HashMap<u32, (usize, &cadcraft_render::PlotText)>,
-) -> (String, Vec<u8>) {
-    let marked: std::collections::HashSet<u32> = layers.iter().copied().collect();
-    let white = Rgb(255, 255, 255);
-    let mut c = String::new();
-    c.push_str("q\n1 J 1 j\n");
+    let mut surface = page.surface();
+    // The surface's y axis points down; flip it so we draw in PDF points (y up).
+    surface.push_transform(&Transform::from_row(1.0, 0.0, 0.0, -1.0, 0.0, h));
     // Clip to the plot area.
-    pt(&mut c, clip_pt.min);
-    c.push(' ');
-    num(&mut c, clip_pt.width());
-    c.push(' ');
-    num(&mut c, clip_pt.height());
-    c.push_str(" re W n\n");
-    let mut stroke: Option<Rgb> = None;
-    let mut fill: Option<Rgb> = None;
-    let mut width: Option<f64> = None;
-    let mut pending = false;
-    let flush = |c: &mut String, pending: &mut bool| {
-        if *pending {
-            c.push_str("S\n");
-            *pending = false;
-        }
-    };
-    // The PDF layer (optional content) the marks are in: `/OC /L<i> BDC` … `EMC`.
-    let mut layer: Option<u32> = None;
-    // Inside a text object (`BT` … `ET`), with this font set.
-    let mut text_font: Option<Option<usize>> = None;
-    // The transparency (percent) marks are drawn with, and those used on the page.
-    let mut alpha: u8 = 0;
-    let mut alphas: Vec<u8> = Vec::new();
-    for (i, p) in list.prims.iter().enumerate() {
-        let want = list.prim_layers.get(i).copied().filter(|l| marked.contains(l));
-        let text = u32::try_from(i).ok().and_then(|i| texts.get(&i));
-        if text_font.is_some() && (text.is_none() || want != layer) {
-            c.push_str("ET\n");
-            text_font = None;
-        }
+    let mut drawn = Ok(());
+    if let Some(clip) = rect_path(p.clip_pt.min, p.clip_pt.max) {
+        surface.push_clip_path(&clip, &FillRule::NonZero);
+        drawn = marks(&mut surface, p, groups, fonts);
+        surface.pop();
+    }
+    surface.pop();
+    surface.finish();
+    page.finish();
+    drawn
+}
+
+/// What consecutive strokes share to be painted as one path: colour, width (points) and
+/// transparency (percent).
+#[derive(Clone, Copy, PartialEq)]
+struct StrokeStyle {
+    rgb: Rgb,
+    width: f32,
+    transparency: u8,
+}
+
+/// Opacity of a transparency in percent.
+fn opacity(t: u8) -> NormalizedF32 {
+    NormalizedF32::new(f32::from(100 - t.min(cadcraft_render::MAX_TRANSPARENCY)) / 100.0).unwrap_or(NormalizedF32::ONE)
+}
+
+fn paint(c: Rgb) -> kr::paint::Paint {
+    kr::color::rgb::Color::new(c.0, c.1, c.2).into()
+}
+
+fn fill_path(s: &mut Surface<'_>, path: &Path, rgb: Rgb, t: u8) {
+    s.set_stroke(None);
+    s.set_fill(Some(Fill { paint: paint(rgb), opacity: opacity(t), rule: FillRule::NonZero }));
+    s.draw_path(path);
+}
+
+/// Paint the strokes collected so far as one path.
+fn flush(s: &mut Surface<'_>, batch: &mut Option<(StrokeStyle, PathBuilder)>) {
+    let Some((style, pb)) = batch.take() else { return };
+    let Some(path) = pb.finish() else { return };
+    s.set_fill(None);
+    s.set_stroke(Some(Stroke {
+        paint: paint(style.rgb),
+        width: style.width,
+        line_cap: LineCap::Round,
+        line_join: LineJoin::Round,
+        opacity: opacity(style.transparency),
+        ..Stroke::default()
+    }));
+    s.draw_path(&path);
+}
+
+/// The PDF layer of the following marks changed from `from` to `to` (`None`: no layer): end
+/// the old one's marked content and start the new one's.
+fn layer_changed(s: &mut Surface<'_>, from: Option<OcgId>, to: Option<OcgId>) -> std::result::Result<(), Failure> {
+    if from.is_some() {
+        s.end_optional_content().map_err(krilla_failure)?;
+    }
+    if let Some(id) = to {
+        s.start_optional_content(id).map_err(krilla_failure)?;
+    }
+    Ok(())
+}
+
+fn krilla_failure(e: KrillaError) -> Failure {
+    Failure::Io(IoError::Format(format!("PDF export failed: {e}")))
+}
+
+/// The page's marks, clipped to the plot area by the caller. Those of primitives on a layer
+/// with a PDF layer in `groups` are marked as its optional content.
+///
+/// Consecutive strokes with the same colour, width and transparency are one path; a
+/// transparent primitive is stroked on its own (one path is painted once), so where
+/// primitives overlap they build up, as in PNG plots and on screen. Block contents and
+/// viewport contents share their reference's handle, so this goes by primitive, not by object.
+/// Each filled primitive is one path of its triangles.
+///
+/// Primitives that stand for a glyph in an embeddable font (see [`fonts::Fonts`]) are written
+/// as text instead: the glyph at font size 1 under its glyph matrix (the matrix axes are one
+/// em).
+fn marks(s: &mut Surface<'_>, p: &SheetPage, groups: &Groups, fonts: &mut fonts::Fonts) -> std::result::Result<(), Failure> {
+    let list = &p.list;
+    let texts = fonts::texts(list);
+    let white = Rgb(255, 255, 255);
+    let mut batch: Option<(StrokeStyle, PathBuilder)> = None;
+    let mut layer: Option<OcgId> = None;
+    for (i, prim) in list.prims.iter().enumerate() {
+        let want = list.prim_layers.get(i).and_then(|l| groups.ids.get(l)).copied();
         if want != layer {
-            flush(&mut c, &mut pending);
-            if layer.is_some() {
-                c.push_str("EMC\n");
-            }
-            if let Some(l) = want {
-                let _ = writeln!(c, "/OC /L{l} BDC");
-            }
+            flush(s, &mut batch);
+            layer_changed(s, layer, want)?;
             layer = want;
         }
-        let rgb = p.display_rgb(white);
-        let raw = list.points(p);
+        let rgb = prim.display_rgb(white);
+        let raw = list.points(prim);
         if raw.iter().any(|q| !q.is_finite()) {
             continue;
         }
         // A wipeout's mask always hides what is under it.
-        let t = if p.kind == Kind::Mask { 0 } else { p.transparency.min(cadcraft_render::MAX_TRANSPARENCY) };
-        if t != alpha {
-            flush(&mut c, &mut pending);
-            let _ = writeln!(c, "/T{t} gs");
-            if !alphas.contains(&t) {
-                alphas.push(t);
-            }
-            alpha = t;
-        }
-        let w = f64::from(p.lw) * PT_PER_MM;
+        let t = if prim.kind == Kind::Mask { 0 } else { prim.transparency.min(cadcraft_render::MAX_TRANSPARENCY) };
+        let w = f64::from(prim.lw) * PT_PER_MM;
         let w = if w.is_finite() && w > 0.0 { w.min(100.0) } else { 0.0 };
-        match p.kind {
-            Kind::Polyline | Kind::Infinite { .. } => {
-                let pts: Vec<Vec2> = match p.kind {
-                    Kind::Infinite { ray } => match (raw.first(), raw.get(1)) {
-                        (Some(base), Some(dir)) => {
-                            let a = map.pt(*base);
-                            let dir_pt = map.pt(*base + *dir) - a;
-                            match clip::clip_infinite(a, dir_pt, ray, clip_pt) {
-                                Some((x, y)) => vec![x, y],
-                                None => continue,
-                            }
-                        }
-                        _ => continue,
-                    },
-                    _ => raw.iter().map(|q| map.pt(*q)).collect(),
-                };
-                if pts.len() < 2 {
-                    continue;
-                }
-                // A transparent primitive is stroked on its own (one path is painted once), so
-                // where primitives overlap they build up, as in PNG plots and on screen. Block
-                // contents and viewport contents share their reference's handle, so this goes
-                // by primitive, not by object.
-                if t > 0 {
-                    flush(&mut c, &mut pending);
-                }
-                if stroke != Some(rgb) || width != Some(w) {
-                    flush(&mut c, &mut pending);
-                    if stroke != Some(rgb) {
-                        color(&mut c, rgb, "RG");
-                        stroke = Some(rgb);
-                    }
-                    if width != Some(w) {
-                        num(&mut c, w);
-                        c.push_str(" w\n");
-                        width = Some(w);
-                    }
-                }
-                for (i, q) in pts.iter().enumerate() {
-                    pt(&mut c, *q);
-                    c.push_str(if i == 0 { " m\n" } else { " l\n" });
-                }
-                pending = true;
-            }
+        let m = Mark { rgb, t, w };
+        match prim.kind {
+            Kind::Polyline | Kind::Infinite { .. } => polyline(s, &mut batch, p, prim, raw, m),
             Kind::Tris | Kind::Mask => {
-                flush(&mut c, &mut pending);
+                flush(s, &mut batch);
                 // A wipeout's mask is paper white.
-                let rgb = if p.kind == Kind::Mask { white } else { rgb };
-                if fill != Some(rgb) {
-                    color(&mut c, rgb, "rg");
-                    fill = Some(rgb);
-                }
-                if let Some((font, t)) = text {
-                    glyph(&mut c, &mut text_font, *font, t, map);
-                    continue;
-                }
-                let mut any = false;
-                for t in raw.as_chunks::<3>().0 {
-                    for (i, q) in t.iter().enumerate() {
-                        pt(&mut c, map.pt(*q));
-                        c.push_str(if i == 0 { " m\n" } else { " l\n" });
-                    }
-                    c.push_str("h\n");
-                    any = true;
-                }
-                if any {
-                    c.push_str("f\n");
+                let m = if prim.kind == Kind::Mask { Mark { rgb: white, ..m } } else { m };
+                let text_font =
+                    u32::try_from(i).ok().and_then(|i| texts.get(&i).copied()).and_then(|text| fonts.font(&text.glyph.face).map(|font| (text, font)));
+                match text_font {
+                    Some((text, font)) => glyph(s, font, text, &p.map, m.rgb, m.t),
+                    None => fill_tris(s, p, raw, m.rgb, m.t),
                 }
             }
-            Kind::Point => {
-                let Some(q) = raw.first() else { continue };
-                flush(&mut c, &mut pending);
-                if fill != Some(rgb) {
-                    color(&mut c, rgb, "rg");
-                    fill = Some(rgb);
-                }
-                let half = (w.max(0.5)) / 2.0;
-                pt(&mut c, map.pt(*q) - Vec2::new(half, half));
-                c.push(' ');
-                num(&mut c, half * 2.0);
-                c.push(' ');
-                num(&mut c, half * 2.0);
-                c.push_str(" re f\n");
-            }
+            Kind::Point => point(s, &mut batch, &p.map, raw, m),
         }
     }
-    flush(&mut c, &mut pending);
-    if text_font.is_some() {
-        c.push_str("ET\n");
-    }
-    if layer.is_some() {
-        c.push_str("EMC\n");
-    }
-    c.push_str("Q\n");
-    (c, alphas)
+    flush(s, &mut batch);
+    layer_changed(s, layer, None)
 }
 
-/// The page resources' graphics states for transparencies `alphas` (percent): `/T<percent>`
-/// sets the stroke and fill alpha (`/CA`, `/ca`). Empty when there are none.
-fn ext_gstates(alphas: &[u8]) -> String {
-    if alphas.is_empty() {
-        return String::new();
-    }
-    let mut out = String::from(" /ExtGState <<");
-    for t in alphas {
-        let mut a = String::new();
-        num(&mut a, f64::from(100 - u32::from((*t).min(cadcraft_render::MAX_TRANSPARENCY))) / 100.0);
-        let _ = write!(out, " /T{t} << /Type /ExtGState /CA {a} /ca {a} >>");
-    }
-    out.push_str(" >>");
-    out
+/// How a primitive is painted: colour, transparency (percent) and lineweight (points).
+#[derive(Clone, Copy)]
+struct Mark {
+    rgb: Rgb,
+    t: u8,
+    w: f64,
 }
 
-/// Write one glyph as text: opens a text object and sets the font when needed, then places the
-/// glyph with a text matrix (font size 1: the matrix axes are one em).
-fn glyph(c: &mut String, text_font: &mut Option<Option<usize>>, font: usize, t: &cadcraft_render::PlotText, map: &Map) {
-    if text_font.is_none() {
-        c.push_str("BT\n");
-        *text_font = Some(None);
+/// Stroke a polyline or infinite line, clipped to the plot area, into the open batch.
+fn polyline(s: &mut Surface<'_>, batch: &mut Option<(StrokeStyle, PathBuilder)>, p: &SheetPage, prim: &DPrim, raw: &[Vec2], m: Mark) {
+    let Some(pts) = polyline_points(prim, raw, &p.map, &p.clip_pt) else { return };
+    if pts.len() < 2 {
+        return;
     }
-    if *text_font != Some(Some(font)) {
-        let _ = writeln!(c, "/F{font} 1 Tf");
-        *text_font = Some(Some(font));
+    // With a vertex out of range, keep the pieces inside the plot area, widened so
+    // a wide stroke just outside it still shows its edge.
+    let runs = if pts.iter().all(|q| coord(*q).is_some()) { vec![pts] } else { clip::clip_polyline(&pts, &p.clip_pt.expand(m.w + 1.0)) };
+    let style = StrokeStyle { rgb: m.rgb, width: m.w as f32, transparency: m.t };
+    if m.t > 0 || batch.as_ref().is_some_and(|(b, _)| *b != style) {
+        flush(s, batch);
     }
-    let s = map.s * map.k;
+    for run in runs {
+        stroke_run(s, batch, &run, style, m);
+    }
+}
+
+/// The page points of a polyline, or of an infinite line clipped to the plot area; `None` when
+/// there is nothing to draw.
+fn polyline_points(prim: &DPrim, raw: &[Vec2], map: &Map, clip_pt: &Bounds2) -> Option<Vec<Vec2>> {
+    match prim.kind {
+        Kind::Infinite { ray } => {
+            let (Some(base), Some(dir)) = (raw.first(), raw.get(1)) else { return None };
+            let a = map.pt(*base);
+            let dir_pt = map.pt(*base + *dir) - a;
+            let (x, y) = clip::clip_infinite(a, dir_pt, ray, clip_pt)?;
+            Some(vec![x, y])
+        }
+        _ => Some(raw.iter().map(|q| map.pt(*q)).collect()),
+    }
+}
+
+/// Add one run of a polyline to the batch, or paint it as a dot when it has no extent.
+fn stroke_run(s: &mut Surface<'_>, batch: &mut Option<(StrokeStyle, PathBuilder)>, run: &[Vec2], style: StrokeStyle, m: Mark) {
+    let Some(pts) = run.iter().map(|q| coord(*q)).collect::<Option<Vec<_>>>() else { return };
+    // The writer leaves out a path without extent, so a zero-length line is
+    // painted as the round-cap dot its stroke would make.
+    if let Some(&(x, y)) = pts.first()
+        && pts.iter().all(|q| *q == (x, y))
+    {
+        flush(s, batch);
+        let d = if m.w > 0.0 { m.w as f32 } else { HAIRLINE_DOT_PT };
+        if let Some(path) = circle_path(x, y, d / 2.0) {
+            fill_path(s, &path, m.rgb, m.t);
+        }
+        return;
+    }
+    let (_, pb) = batch.get_or_insert_with(|| (style, PathBuilder::new()));
+    for (j, (x, y)) in pts.iter().enumerate() {
+        if j == 0 {
+            pb.move_to(*x, *y);
+        } else {
+            pb.line_to(*x, *y);
+        }
+    }
+}
+
+/// Fill a set of triangles, clipped to the plot area.
+fn fill_tris(s: &mut Surface<'_>, p: &SheetPage, raw: &[Vec2], rgb: Rgb, t: u8) {
+    let mapped: Vec<Vec2> = raw.iter().map(|q| p.map.pt(*q)).collect();
+    // With a vertex out of range, keep the parts inside the plot area.
+    let tris = if mapped.iter().all(|q| coord(*q).is_some()) { mapped } else { clip::clip_triangles(&mapped, &p.clip_pt) };
+    let mut pb = PathBuilder::new();
+    for tri in tris.as_chunks::<3>().0 {
+        let Some(v) = tri.iter().map(|q| coord(*q)).collect::<Option<Vec<_>>>() else { continue };
+        for (j, (x, y)) in v.iter().enumerate() {
+            if j == 0 {
+                pb.move_to(*x, *y);
+            } else {
+                pb.line_to(*x, *y);
+            }
+        }
+        pb.close();
+    }
+    if let Some(path) = pb.finish() {
+        fill_path(s, &path, rgb, t);
+    }
+}
+
+/// Paint a point marker: a small square at the point.
+fn point(s: &mut Surface<'_>, batch: &mut Option<(StrokeStyle, PathBuilder)>, map: &Map, raw: &[Vec2], m: Mark) {
+    let Some(q) = raw.first() else { return };
+    flush(s, batch);
+    let half = (m.w.max(0.5)) / 2.0;
+    let c = map.pt(*q);
+    if let Some(path) = rect_path(c - Vec2::new(half, half), c + Vec2::new(half, half)) {
+        fill_path(s, &path, m.rgb, m.t);
+    }
+}
+
+/// Write one glyph as text in its embedded font: font size 1, placed by the glyph's matrix (one
+/// em along each axis). A glyph whose matrix is out of range or collapses is left out.
+fn glyph(s: &mut Surface<'_>, font: kr::text::Font, t: &cadcraft_render::PlotText, map: &Map, rgb: Rgb, transparency: u8) {
+    let k = map.s * map.k;
     let g = &t.glyph;
-    for v in [g.x.x * s, g.x.y * s, g.y.x * s, g.y.y * s] {
-        num(c, v);
-        c.push(' ');
+    let (Some((a, b)), Some((c, d)), Some((e, f))) = (coord(g.x * k), coord(g.y * k), coord(map.pt(g.origin))) else { return };
+    let det = a * d - b * c;
+    if !det.is_finite() || det == 0.0 {
+        return;
     }
-    pt(c, map.pt(g.origin));
-    let _ = writeln!(c, " Tm <{:04X}> Tj", g.gid);
+    let text = g.ch.to_string();
+    let glyphs = [KrillaGlyph::new(GlyphId::new(u32::from(g.gid)), 0.0, 0.0, 0.0, 0.0, 0..text.len(), None)];
+    // The writer sets glyphs upright on a y-down surface: flip the em's y axis back.
+    s.push_transform(&Transform::from_row(a, b, -c, -d, e, f));
+    s.set_stroke(None);
+    s.set_fill(Some(Fill { paint: paint(rgb), opacity: opacity(transparency), rule: FillRule::NonZero }));
+    s.draw_glyphs(Point::from_xy(0.0, 0.0), &glyphs, font, &text, 1.0, false);
+    s.pop();
 }
 
-/// A PDF text string: a literal with `(`, `)` and `\` escaped when it is printable ASCII,
-/// else UTF-16BE with a byte order mark (hex). At most 1000 characters.
-fn pdf_string(s: &str) -> String {
-    let s: String = s.chars().take(1000).collect();
-    if s.chars().all(|c| c.is_ascii() && !c.is_ascii_control()) {
-        let mut out = String::from("(");
-        for ch in s.chars() {
-            if matches!(ch, '(' | ')' | '\\') {
-                out.push('\\');
-            }
-            out.push(ch);
-        }
-        out.push(')');
-        return out;
-    }
-    let mut out = String::from("<FEFF");
-    for u in s.encode_utf16() {
-        let _ = write!(out, "{u:04X}");
-    }
-    out.push('>');
-    out
-}
-
-/// A link target as a PDF URI string: 7-bit ASCII (other bytes percent-encoded), `(`, `)` and
-/// `\` escaped. `None` for script and data URLs, which a plot never carries.
-fn uri_string(url: &str) -> Option<String> {
+/// A link target as a URI: 7-bit printable ASCII, other bytes percent-encoded. `None` for
+/// script and data URLs, which a plot never carries.
+fn uri(url: &str) -> Option<String> {
     let url = url.trim();
     let scheme = url.split(':').next().unwrap_or("").to_ascii_lowercase();
     if url.is_empty() || url.len() > MAX_URL || matches!(scheme.as_str(), "javascript" | "vbscript" | "data") {
         return None;
     }
-    let mut out = String::from("(");
+    let mut out = String::with_capacity(url.len());
     for b in url.bytes() {
         match b {
-            b'(' | b')' | b'\\' => {
-                out.push('\\');
-                out.push(char::from(b));
-            }
             0x21..=0x7E => out.push(char::from(b)),
             _ => {
                 let _ = write!(out, "%{b:02X}");
             }
         }
     }
-    out.push(')');
     Some(out)
-}
-
-/// A stream object body, Flate-compressed when asked.
-fn stream(data: &[u8], compress: bool, extra: &str) -> Vec<u8> {
-    let (data, filter) = if compress { (miniz_oxide::deflate::compress_to_vec_zlib(data, 6), " /Filter /FlateDecode") } else { (data.to_vec(), "") };
-    let mut out = format!("<< /Length {}{filter}{extra} >>\nstream\n", data.len()).into_bytes();
-    out.extend_from_slice(&data);
-    out.extend_from_slice(b"\nendstream");
-    out
-}
-
-/// PDF objects being written: bodies by object number - 1.
-#[derive(Default)]
-struct Objects {
-    bodies: Vec<Vec<u8>>,
-}
-
-impl Objects {
-    /// Reserve an object number (its body is set later).
-    fn reserve(&mut self) -> usize {
-        self.bodies.push(Vec::new());
-        self.bodies.len()
-    }
-    fn set(&mut self, n: usize, body: impl Into<Vec<u8>>) {
-        if let Some(b) = n.checked_sub(1).and_then(|i| self.bodies.get_mut(i)) {
-            *b = body.into();
-        }
-    }
-    fn add(&mut self, body: impl Into<Vec<u8>>) -> usize {
-        let n = self.reserve();
-        self.set(n, body);
-        n
-    }
-}
-
-/// `n 0 R` references, space-separated.
-fn refs(ids: impl IntoIterator<Item = usize>) -> String {
-    ids.into_iter().map(|i| format!("{i} 0 R")).collect::<Vec<_>>().join(" ")
-}
-
-/// Assemble the file: catalog, page tree, pages with their content streams and link
-/// annotations, the PDF layers (one optional content group per drawing layer used, named
-/// like it), page labels, document information, cross-reference table and trailer.
-fn assemble(d: &Drawing, pages: &[SheetPage], fonts: &fonts::Fonts, o: &PdfOptions, title: &str) -> Vec<u8> {
-    let mut objs = Objects::default();
-    let catalog = objs.reserve();
-    let tree = objs.reserve();
-    // Optional content groups shared by all pages, by layer index: (layer, object).
-    let mut ocg_ids: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
-    let mut ocgs: Vec<(u32, usize)> = Vec::new();
-    let mut kids = Vec::new();
-    // Page dictionaries are completed once the fonts are written: (page, its fonts, the rest).
-    let mut page_dicts: Vec<(usize, Vec<usize>, String, String, String)> = Vec::new();
-    for p in pages {
-        let page = objs.reserve();
-        let texts = fonts.texts(&p.list);
-        let (marks, alphas) = content_stream(&p.list, &p.map, &p.clip_pt, &p.layers, &texts);
-        let content = objs.add(stream(marks.as_bytes(), o.compress, ""));
-        let mut used: Vec<usize> = texts.values().map(|(f, _)| *f).collect();
-        used.sort_unstable();
-        used.dedup();
-        let mut props = String::new();
-        for l in &p.layers {
-            let Some(layer) = d.layers.get(*l as usize) else { continue };
-            let id = match ocg_ids.get(l) {
-                Some(id) => *id,
-                None => {
-                    let id = objs.add(format!("<< /Type /OCG /Name {} >>", pdf_string(&layer.name)));
-                    ocg_ids.insert(*l, id);
-                    ocgs.push((*l, id));
-                    id
-                }
-            };
-            let _ = write!(props, " /L{l} {id} 0 R");
-        }
-        let mut annots = Vec::new();
-        for (r, url) in &p.links {
-            let Some(uri) = uri_string(url) else { continue };
-            let mut rect = String::new();
-            pt(&mut rect, r.min);
-            rect.push(' ');
-            pt(&mut rect, r.max);
-            annots.push(objs.add(format!("<< /Type /Annot /Subtype /Link /Rect [{rect}] /Border [0 0 0] /A << /S /URI /URI {uri} >> >>")));
-        }
-        let mut mb = String::new();
-        pt(&mut mb, p.media);
-        let annots = if annots.is_empty() { String::new() } else { format!(" /Annots [{}]", refs(annots)) };
-        page_dicts.push((page, used, props, ext_gstates(&alphas), format!("/MediaBox [0 0 {mb}] /Contents {content} 0 R{annots}")));
-        kids.push(page);
-    }
-    let font_ids = if fonts.is_empty() { Vec::new() } else { fonts.write(&mut objs, o.compress) };
-    for (page, used, props, gstates, rest) in page_dicts {
-        let mut res = String::new();
-        if !props.is_empty() {
-            let _ = write!(res, " /Properties <<{props} >>");
-        }
-        res.push_str(&gstates);
-        let f: Vec<String> = used.iter().filter_map(|i| Some(format!("/F{i} {} 0 R", font_ids.get(*i)?))).collect();
-        if !f.is_empty() {
-            let _ = write!(res, " /Font << {} >>", f.join(" "));
-        }
-        objs.set(page, format!("<< /Type /Page /Parent {tree} 0 R /Resources <<{res} >> {rest} >>"));
-    }
-    objs.set(tree, format!("<< /Type /Pages /Kids [{}] /Count {} >>", refs(kids.iter().copied()), kids.len()));
-    let mut cat = format!("<< /Type /Catalog /Pages {tree} 0 R");
-    if !ocgs.is_empty() {
-        // Optional content needs PDF 1.5; the catalog's version overrides the header's.
-        let off: Vec<usize> = ocgs.iter().filter(|(l, _)| d.layers.get(*l as usize).is_some_and(|l| !l.on)).map(|(_, id)| *id).collect();
-        let all = refs(ocgs.iter().map(|(_, id)| *id));
-        let _ = write!(cat, " /Version /1.5 /OCProperties << /OCGs [{all}] /D << /Name (Layers) /Order [{all}] /OFF [{}] >> >>", refs(off));
-        if pages.len() == 1 {
-            cat.push_str(" /PageMode /UseOC");
-        }
-    }
-    let labels: Vec<String> = pages.iter().enumerate().map(|(i, p)| format!("{i} << /P {} >>", pdf_string(&p.label))).collect();
-    let _ = write!(cat, " /PageLabels << /Nums [{}] >> >>", labels.join(" "));
-    objs.set(catalog, cat);
-    let info = objs.add(format!("<< /Producer (CADCraft) /Creator (CADCraft) /Title {} >>", pdf_string(title)));
-    let size: usize = objs.bodies.iter().map(Vec::len).sum();
-    let mut out: Vec<u8> = Vec::with_capacity(size + 64 * objs.bodies.len() + 256);
-    out.extend_from_slice(b"%PDF-1.4\n%\xE2\xE3\xCF\xD3\n");
-    let mut offsets = Vec::with_capacity(objs.bodies.len());
-    for (i, body) in objs.bodies.iter().enumerate() {
-        offsets.push(out.len());
-        out.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
-        out.extend_from_slice(body);
-        out.extend_from_slice(b"\nendobj\n");
-    }
-    let xref = out.len();
-    let mut x = format!("xref\n0 {}\n0000000000 65535 f \n", offsets.len() + 1);
-    for o in &offsets {
-        let _ = writeln!(x, "{o:010} 00000 n ");
-    }
-    let _ = write!(x, "trailer\n<< /Size {} /Root {catalog} 0 R /Info {info} 0 R >>\nstartxref\n{xref}\n%%EOF\n", offsets.len() + 1);
-    out.extend_from_slice(x.as_bytes());
-    out
 }

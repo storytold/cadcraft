@@ -49,7 +49,7 @@
 	All Scales	Alla skalor
 	All Used Layers	Alla använda lager
 	All files	Alla filer
-	An array that would create more objects than this is refused.	Ett mönster som skulle skapa fler objekt än så avvisas.
+	An array that would create more objects than this is refused.	En array som skulle skapa fler objekt än så avvisas.
 	Angle	Vinkel
 	Angular	Vinkelmått
 	Annotation Visibility	Annoteringssynlighet
@@ -65,7 +65,7 @@
 	Arc Length	Båglängd
 	Area	Area
 	Arrange Panel	Panelen Ordna
-	Array	Mönster
+	Array	Array
 	Attach	Koppla
 	Attach DWG...	Koppla DWG...
 	Attribute	Attribut
@@ -90,6 +90,7 @@
 	Blend	Mjuk övergång
 	Block	Block
 	Block Attribute Manager...	Hantera blockattribut...
+	Block Description...	Blockbeskrivning...
 	Block Editor	Blockredigerare
 	Block Reference	Blockreferens
 	Block...	Block...
@@ -141,8 +142,9 @@
 	Close	Stäng
 	Close All	Stäng alla
 	Close All Other Drawings	Stäng alla andra ritningar
-	Close Array Editing	Avsluta redigering av mönster
+	Close Array Editing	Avsluta redigering av array
 	Close Comparison	Stäng jämförelse
+	Export Comparison	Exportera jämförelse
 	Closed	Sluten
 	Coincident	Sammanfallande
 	Collapse Palettes	Fäll ihop paletter
@@ -195,6 +197,7 @@
 	Current selection	Aktuell markering
 	Current: {color}	Aktuell: {color}
 	Cut	Klipp ut
+	Cut with Base Point	Klipp ut med baspunkt
 	Cyan	Cyan
 	Cylinder	Cylinder
 	DWG	DWG
@@ -238,7 +241,7 @@
 	Dimension Space	Måttavstånd
 	Dimension Style Override	Åsidosätt måttstil
 	Dimension Style...	Måttstil...
-	Dimension Text Edit	Redigera måttext
+	Dimension Text Edit	Redigera måttal
 	Dimension style	Måttstil
 	Dimensional Constraint	Måttvillkor
 	Dimensional Constraint Parameters	Parametrar för måttvillkor
@@ -271,7 +274,7 @@
 	Dynamic Input (F12)	Dynamisk inmatning (F12)
 	E	Ö
 	Edit	Redigera
-	Edit Array	Redigera mönster
+	Edit Array	Redigera array
 	Edit Attributes...	Redigera attribut...
 	Edit Table Cell	Redigera tabellcell
 	Edit Text...	Redigera text...
@@ -304,8 +307,8 @@
 	Enter degree of spline	Ange splinens grad
 	Enter delta angle	Ange vinkeländring
 	Enter delta length or	Ange längdändring eller
-	Enter dimension text	Ange måttext
-	Enter dimension text (<> = measurement)	Ange måttext (<> = mätvärde)
+	Enter dimension text	Ange måttal
+	Enter dimension text (<> = measurement)	Ange måttal (<> = mätvärde)
 	Enter dimension value or [name=expression]	Ange måttvärde eller [namn=uttryck]
 	Enter dimension variable name to override	Ange namnet på måttvariabeln som ska åsidosättas
 	Enter justification type	Ange justeringstyp
@@ -328,7 +331,7 @@
 	Enter text	Ange text
 	Enter text (use \P for new paragraphs)	Ange text (använd \P för nya stycken)
 	Enter the number of segments	Ange antal segment
-	Enter twist direction of helix	Ange spiralens vridriktning
+	Enter twist direction of helix	Ange helixens vridriktning
 	Entire drawing	Hela ritningen
 	Equal	Lika
 	Erase	Radera
@@ -379,8 +382,8 @@
 	Global	Global
 	Global width	Global bredd
 	Grab bag	Blandat
-	Gradient	Toning
-	Gradient...	Toning...
+	Gradient	Gradient
+	Gradient...	Gradient...
 	Green	Grön
 	Grid (F7)	Rutnät (F7)
 	Grid Display	Visa rutnät
@@ -404,7 +407,7 @@
 	Hatch...	Skraffering...
 	Height	Höjd
 	Height: {height}	Höjd: {height}
-	Helix	Spiral
+	Helix	Helix
 	Help	Hjälp
 	Hide All	Dölj alla
 	Hide All Constraint Bars	Dölj alla villkorsfält
@@ -463,7 +466,7 @@
 	Join us on Discord	Gå med i ArtCrafts community på Discord
 	Keep the system cursor visible over the drawing area	Visa systemets muspekare över ritytan
 	Language	Språk
-	Largest array	Största mönster
+	Largest array	Största array
 	Last	Senaste
 	Last commit	Senaste commit
 	Layer	Lager
@@ -567,6 +570,7 @@
 	N	N
 	Name	Namn
 	Name (A–Z)	Namn (A–Ö)
+	Named Viewports...	Namngivna vyfönster...
 	Named Views...	Namngivna vyer...
 	Nearest	Närmaste
 	New	Ny
@@ -657,7 +661,7 @@
 	Paste	Klistra in
 	Paste as Block	Klistra in som block
 	Paste to Original Coordinates	Klistra in på ursprungliga koordinater
-	Path Array	Mönster längs bana
+	Path Array	Array längs bana
 	Pattern	Mönster
 	Perpendicular	Vinkelrät
 	Plot	Plotta
@@ -762,7 +766,7 @@
 	Point	Punkt
 	Point Filters	Punktfilter
 	Point Style...	Punktstil...
-	Polar Array	Polärt mönster
+	Polar Array	Polär array
 	Polar Tracking	Polär spårning
 	Polar Tracking (F10)	Polär spårning (F10)
 	Polar Tracking On (F10)	Polär spårning på (F10)
@@ -805,7 +809,7 @@
 	Recover...	Reparera...
 	Rectangle	Rektangel
 	Rectangular	Rektangulär
-	Rectangular Array	Rektangulärt mönster
+	Rectangular Array	Rektangulär array
 	Red	Röd
 	Redo	Gör om
 	Redo (⇧⌘Z)	Gör om (⇧⌘Z)
@@ -824,6 +828,7 @@
 	Rename Text Style	Byt namn på textstil
 	Rename...	Byt namn...
 	Repeat {command}	Upprepa {command}
+	Replace Block...	Ersätt block...
 	Requires a point (x,y, @dx,dy or @d<a).	Kräver en punkt (x,y, @dx,dy eller @d<a).
 	Reset Palettes	Återställ paletter
 	Restore	Återställ
@@ -950,7 +955,7 @@
 	Specify an angle for the hatch pattern	Ange en vinkel för skrafferingsmönstret
 	Specify angle end point	Ange vinkelns slutpunkt
 	Specify angle of dimension line	Ange måttlinjens vinkel
-	Specify angle of dimension text	Ange måttextens vinkel
+	Specify angle of dimension text	Ange måttalets vinkel
 	Specify angle start point	Ange vinkelns startpunkt
 	Specify angle vertex	Ange vinkelns spets
 	Specify angle vertex point	Ange vinkelns spetspunkt
@@ -1002,7 +1007,7 @@
 	Specify first point on circle: _tan to	Ange första punkten på cirkeln: _tan to
 	Specify first source point	Ange första källpunkten
 	Specify height	Ange höjd
-	Specify helix height or	Ange spiralens höjd eller
+	Specify helix height or	Ange helixens höjd eller
 	Specify included angle	Ange medelpunktsvinkel
 	Specify insertion base point	Ange insättningens baspunkt
 	Specify insertion point	Ange insättningspunkt
@@ -1181,7 +1186,7 @@
 	Width factor	Breddfaktor
 	Window	Fönster
 	Wipeout	Maskering
-	Workspace Switching	Byt arbetsyta
+	Workspace Switching	Byt arbetslayout
 	Write Block	Skriv block till fil
 	X	X
 	Xline	Konstruktionslinje
@@ -1247,7 +1252,7 @@ menu	Dimension	Måttsättning
 menu	Modify	Ändra
 
 # Strings added upstream after the first Swedish catalog (Ukrainian reference order, then menus).
-	Hatch and Gradient	Skraffering och toning
+	Hatch and Gradient	Skraffering och gradient
 	Color 1	Färg 1
 	Color 2	Färg 2
 	Shape	Form
@@ -1342,3 +1347,107 @@ menu	Modify	Ändra
 	Groups	Grupper
 	Multiline text	Flerradstext
 	Hatches	Skrafferingar
+	Break-line Symbol	Brytlinjesymbol
+	Convert Text to Mtext	Konvertera text till MText
+	Explode Attributes to Text	Lös upp attribut till text
+	Express Tools	Express Tools
+	Move/Copy/Rotate	Flytta/kopiera/rotera
+	Interface scale	Gränssnittsskala
+	Analyze Shapes	Analysera former
+	Select boundaries to remove	Markera gränser att ta bort
+	Island	Ö
+	Select using two clicks only	Markera med endast två klick
+	Define each corner of the selection window with a separate click.	Definiera varje hörn av markeringsfönstret med ett separat klick.
+	Type an alias name.	Skriv ett aliasnamn.
+	Choose the command the alias starts.	Välj kommandot som aliaset startar.
+	{command} is an unknown command.	{command} är ett okänt kommando.
+	{alias} is already defined; select it and use Edit.	{alias} är redan definierat. Markera det och använd Redigera.
+	More than {n} aliases.	Fler än {n} alias.
+	Alias file: {file}	Aliasfil: {file}
+	No alias file loaded. REINIT replaces these aliases with a file's.	Ingen aliasfil inläst. REINIT ersätter dessa alias med en fils alias.
+	Alias	Alias
+	Command	Kommando
+	overrides built-in	åsidosätter inbyggt
+	built-in	inbyggt
+	Add…	Lägg till…
+	Edit…	Redigera…
+	Save alias	Spara alias
+	Discard	Släng
+	Customize	Anpassa
+	Edit Command Aliases (PGP)...	Redigera kommandoalias (PGP)...
+	Apply to Layout	Använd på layout
+	Arrow size	Pilstorlek
+	Center the plot	Centrera plotten
+	Dim scale overall	Total måttskala
+	Enter block names to extract	Ange blocknamn att extrahera
+	Enter geometric characteristic	Ange geometrisk egenskap
+	Enter name of LISP file to load	Ange namn på LISP-fil att läsa in
+	First corner	Första hörnet
+	Fit to paper	Anpassa till papper
+	Landscape	Liggande
+	Limits	Ritningsgränser
+	Opposite corner	Motsatt hörn
+	Orientation	Orientering
+	Paper size	Pappersstorlek
+	Plot area	Plottområde
+	Plot object lineweights	Plotta objektens linjebredder
+	Plot offset	Plottförskjutning
+	Plot transparency	Plotta genomskinlighet
+	Portrait	Stående
+	Precision	Precision
+	Printer/plotter	Skrivare/plotter
+	Window <	Fönster <
+	X offset (mm)	X-förskjutning (mm)
+	Y offset (mm)	Y-förskjutning (mm)
+	AutoLISP (LSP)	AutoLISP (LSP)
+	Units of new drawings	Enheter för nya ritningar
+	Imperial (inches)	Anglosaxiskt (tum)
+	Metric (millimetres)	Metriskt (millimeter)
+	New and the first drawing at startup use these units unless a default template is set (QNEWTEMPLATE).	Nya ritningar och den första ritningen vid start använder dessa enheter om ingen standardmall är angiven (QNEWTEMPLATE).
+	Analyze Usage	Analysera användning
+	Implied Loops	Implicita slingor
+	Angstroms	Ångström
+	Architectural	Arkitektonisk
+	Astronomical Units	Astronomiska enheter
+	Centimeters	Centimeter
+	Decameters	Dekameter
+	Decimal	Decimal
+	Decimal Degrees	Decimalgrader
+	Decimeters	Decimeter
+	Deg/Min/Sec	Grad/min/sek
+	Don't Save	Spara inte
+	Drawing Units	Ritningsenheter
+	Engineering	Teknisk
+	Feet	Fot
+	Fractional	Bråk
+	Gigameters	Gigameter
+	Grads	Gon
+	Hectometers	Hektometer
+	Inches	Tum
+	Insertion scale	Insättningsskala
+	Kilometers	Kilometer
+	Light Years	Ljusår
+	Meters	Meter
+	Microinches	Mikrotum
+	Microns	Mikrometer
+	Miles	Engelska mil
+	Millimeters	Millimeter
+	Mils	Tusendels tum
+	Nanometers	Nanometer
+	Parsecs	Parsek
+	Radians	Radianer
+	Sample output	Exempel på utdata
+	Save changes to {name}?	Spara ändringar i {name}?
+	Scientific	Vetenskaplig
+	Surveyor's Units	Lantmäterienheter
+	Unitless	Enhetslös
+	Units to scale inserted content	Enheter för skalning av infogat innehåll
+	US Survey Feet	Lantmäterifot (USA)
+	US Survey Inch	Lantmäteritum (USA)
+	US Survey Mile	Engelsk lantmäterimil (USA)
+	US Survey Yard	Lantmäteriyard (USA)
+	Yards	Yard
+	Your changes will be lost if you don't save them.	Dina ändringar går förlorade om du inte sparar dem.
+	Check for Updates…	Sök efter uppdateringar…
+	CADCraft is up to date.	CADCraft är uppdaterat.
+	Could not check for updates.	Det gick inte att söka efter uppdateringar.

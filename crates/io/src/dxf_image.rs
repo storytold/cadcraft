@@ -141,26 +141,38 @@ pub(crate) fn resolve(secs: &[Section], d: &mut Drawing) {
     if by_image.is_empty() {
         return;
     }
-    fill(&mut d.model, &by_image);
+    // Aggregate budget on the image-definition strings copied into referring images, so an
+    // attacker cannot multiply a long path/name across many references into gigabytes (CWE-400).
+    const MAX_RESOLVED_STRING_BYTES: usize = 64 << 20;
+    let mut budget = MAX_RESOLVED_STRING_BYTES;
+    fill(&mut d.model, &by_image, &mut budget);
     for l in &mut d.layouts {
-        fill(&mut l.entities, &by_image);
+        fill(&mut l.entities, &by_image, &mut budget);
     }
     for b in d.blocks.values_mut() {
         if b.entities.iter().any(|e| matches!(e.kind, EntityKind::Image(_)) && by_image.contains_key(&e.handle)) {
-            fill(&mut Arc::make_mut(b).entities, &by_image);
+            fill(&mut Arc::make_mut(b).entities, &by_image, &mut budget);
         }
     }
 }
 
-fn fill(store: &mut EntityStore, by_image: &HashMap<Handle, &Def>) {
+/// Resolve image definitions under a shared copied-string budget.
+/// When strings no longer fit, keep applying pixel-size and resolution metadata.
+fn fill(store: &mut EntityStore, by_image: &HashMap<Handle, &Def>, budget: &mut usize) {
     let hs: Vec<Handle> =
         store.iter().filter(|e| matches!(e.kind, EntityKind::Image(_)) && by_image.contains_key(&e.handle)).map(|e| e.handle).collect();
     for h in hs {
         let Some(def) = by_image.get(&h) else { continue };
+        // Charge the bytes this copy adds; once the shared budget is spent, stop copying strings
+        // (geometry fields are still applied) so retained memory stays bounded.
+        let cost = def.path.len() + def.name.len();
+        let copy_strings = budget.checked_sub(cost).map(|left| *budget = left).is_some();
         store.modify(h, |e| {
             if let EntityKind::Image(i) = &mut e.kind {
-                i.path = def.path.clone();
-                i.name = def.name.clone();
+                if copy_strings {
+                    i.path = def.path.clone();
+                    i.name = def.name.clone();
+                }
                 if let Some(p) = def.pixel_size {
                     i.pixel_size = p;
                 }
@@ -215,6 +227,10 @@ pub(crate) fn plan<'a>(entities: impl Iterator<Item = &'a cadcraft_doc::Entity>,
     let mut p = Plan::default();
     let mut index: HashMap<(String, String), usize> = HashMap::new();
     let mut used: HashSet<String> = HashSet::new();
+    // Next suffix to try for each normalised base name, so allocating a unique name resumes where
+    // the previous collision left off instead of re-probing `_2, _3, …` from the start — otherwise
+    // many images sharing a base name make name allocation quadratic (CWE-407).
+    let mut next_suffix: HashMap<String, usize> = HashMap::new();
     for e in entities {
         let EntityKind::Image(i) = &e.kind else { continue };
         if p.by_entity.contains_key(&e.handle) {
@@ -227,11 +243,12 @@ pub(crate) fn plan<'a>(entities: impl Iterator<Item = &'a cadcraft_doc::Entity>,
                 // Dictionary keys are unique regardless of case.
                 let base = def_name(i);
                 let mut name = base.clone();
-                let mut n = 2usize;
+                let mut n = next_suffix.get(&key(&base)).copied().unwrap_or(2);
                 while !used.insert(key(&name)) {
                     name = format!("{base}_{n}");
                     n = n.saturating_add(1);
                 }
+                next_suffix.insert(key(&base), n);
                 p.defs.push(PlannedDef {
                     handle: next(),
                     name,

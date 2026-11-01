@@ -71,6 +71,13 @@ impl<'a> Projection<'a> {
                     }
                     SnapCurve::Circle { center, radius }
                 }
+                SnapCurve::Arc { center, radius, start, end } => {
+                    let (center, radius) = (self.to_paper(center), radius * self.scale);
+                    if !(center.is_finite() && radius.is_finite() && radius > 0.0) {
+                        return None;
+                    }
+                    SnapCurve::Arc { center, radius, start, end }
+                }
                 SnapCurve::Line { a, b } => {
                     let (a, b) = (self.to_paper(a), self.to_paper(b));
                     if !(a.is_finite() && b.is_finite()) {
