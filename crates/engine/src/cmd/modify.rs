@@ -61,7 +61,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("scale", "Scale", run_scale)
             .menu(&["Modify", "Scale"])
             .alias(&["sc"])
-            .params("{handles?, base: [x,y], factor, copy?: bool}")
+            .params("{handles?, base: [x,y] or [x,y,z] (default Z: ELEVATION), factor, copy?: bool}")
             .interactive(|_| Ok(Box::new(SelectThen::new(Op::Scale)))),
         CommandSpec::new("mirror", "Mirror", run_mirror)
             .menu(&["Modify", "Mirror"])

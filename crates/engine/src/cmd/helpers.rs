@@ -34,7 +34,9 @@ pub fn polygon_vertices(center: Vec2, sides: usize, radius_pt: Vec2, inscribed: 
     let r = d.len();
     let a0 = d.angle();
     let step = cadcraft_geom::TAU / n as f64;
-    let (r, a0) = if inscribed { (r, a0) } else { (r / (step / 2.0).cos(), a0 - step / 2.0) };
+    // Circumscribed: the picked point is an edge's midpoint and the first vertex is the end of
+    // that edge counter-clockwise from it, as AutoCAD 2024 numbers them.
+    let (r, a0) = if inscribed { (r, a0) } else { (r / (step / 2.0).cos(), a0 + step / 2.0) };
     (0..n).map(|i| PolyVertex::new(Vec2::polar(center, r, a0 + step * i as f64))).collect()
 }
 
@@ -60,6 +62,33 @@ pub fn polygon_from_edge(p1: Vec2, p2: Vec2, sides: usize) -> Vec<PolyVertex> {
         pts.push(Vec2::polar(last, len, ang));
     }
     pts.into_iter().map(PolyVertex::new).collect()
+}
+
+/// Rectangle vertices from corner `a` to the opposite corner `b`, with a fillet radius or
+/// chamfer distances at every corner, in AutoCAD 2024's order: from `a` along X to `b`'s X, then
+/// `b`, then back along Y. A chamfer cuts the edge into each corner by its first distance and the
+/// edge out of it by its second; each fillet arc starts on the edge into its corner. A fillet or
+/// chamfer that doesn't fit leaves the corners square.
+pub fn rect_with_corners(a: Vec2, b: Vec2, fillet: f64, chamfer: (f64, f64)) -> Vec<PolyVertex> {
+    let corners = [a, Vec2::new(b.x, a.y), b, Vec2::new(a.x, b.y)];
+    let short = (b.x - a.x).abs().min((b.y - a.y).abs());
+    let (d_in, d_out, bulge) = if fillet > 0.0 && fillet * 2.0 <= short + 1e-12 {
+        // Counter-clockwise round the corners (a positive bulge) when `b` is up and right of `a`, or
+        // down and left.
+        let sign = if (b.x - a.x) * (b.y - a.y) >= 0.0 { 1.0 } else { -1.0 };
+        (fillet, fillet, sign * cadcraft_geom::arc_to_bulge(std::f64::consts::FRAC_PI_2))
+    } else if chamfer.0 > 0.0 && chamfer.1 > 0.0 && chamfer.0 + chamfer.1 <= short + 1e-12 {
+        (chamfer.0, chamfer.1, 0.0)
+    } else {
+        return corners.into_iter().map(PolyVertex::new).collect();
+    };
+    let mut out = Vec::with_capacity(8);
+    for (i, cur) in corners.iter().enumerate() {
+        let (Some(prev), Some(next)) = (corners.get((i + 3) % 4), corners.get((i + 1) % 4)) else { continue };
+        out.push(PolyVertex::with_bulge(*cur + (*prev - *cur).normalized() * d_in, bulge));
+        out.push(PolyVertex::new(*cur + (*next - *cur).normalized() * d_out));
+    }
+    out
 }
 
 // ---------- the user's support files ----------

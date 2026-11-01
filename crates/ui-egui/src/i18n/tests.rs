@@ -186,6 +186,8 @@ fn assert_additional_locale_aliases() {
         ("sv", &["sv", "sv-SE", "sv_SE.UTF-8", "SV-se", " sv-SE ", "sv-FI"]),
         ("hu", &["hu", "hu-HU", "hu_HU.UTF-8", "HU-hu", " hu-HU "]),
         ("tr", &["tr", "tr-TR", "tr_TR.UTF-8", "TR-tr", " tr-TR ", "tr-CY"]),
+        ("bs", &["bs", "bs-BA", "bs_BA.UTF-8", "BS-ba", " bs-BA ", "bs-Latn-BA"]),
+        ("vi", &["vi", "vi-VN", "vi_VN.UTF-8", "VI-vn", " vi-VN "]),
         ("el", &["el", "el-GR", "el_GR.UTF-8", "EL-cy"]),
         ("zh", &["zh", "zh-CN"]),
     ] {
@@ -431,12 +433,13 @@ fn dialogs_render_in_every_language_and_keep_their_source_ids() {
 }
 
 /// The letters of every catalog have glyphs in both UI families. Latin, Cyrillic and Greek come
-/// from egui's bundled fonts alone, as in the web build; the scripts they lack need a font that
-/// `install_fonts` finds, and are checked only where one is there.
+/// from egui's bundled fonts alone, as in the web build; the scripts they lack (and Vietnamese's
+/// tone-marked letters) need a font that `install_fonts` finds, and are checked only where one is
+/// there.
 #[test]
 fn interface_fonts_cover_every_letter_in_each_catalog() {
     for language in translated() {
-        let extra_font = ["ko", "zh", "ar"].contains(&language.code);
+        let extra_font = ["ko", "zh", "ar", "vi"].contains(&language.code);
         if extra_font && !crate::theme::can_show(language.code) {
             continue;
         }
@@ -555,4 +558,32 @@ fn production_font_chain_covers_latin_and_shortcut_symbols() {
         }
         assert!(view.has_glyph(&egui::FontId::monospace(12.0), '\u{21e7}'), "U+21E7 shift symbol missing in Monospace");
     });
+}
+
+/// Bosnian counts: 1, 21 `one`; 2–4, 22–24 (not 12–14) `few`; everything else `other`.
+#[test]
+fn bosnian_counts_take_one_few_other() {
+    let forms: Vec<usize> = [0, 1, 2, 4, 5, 11, 12, 14, 21, 22, 25, 111].into_iter().map(plural_uk).collect();
+    assert_eq!(forms, [2, 0, 1, 1, 2, 2, 2, 2, 0, 1, 2, 2]);
+    assert_eq!(Preference::parse("bs"), Some(Preference::Bosnian));
+    assert_eq!(Preference::Bosnian.native_name(), "Bosanski");
+}
+
+/// Vietnamese has one form for every count, and shows only with an interface font that has its
+/// tone-marked letters; without one it stays English and says why.
+#[test]
+fn vietnamese_takes_one_form_and_needs_a_font_with_its_letters() {
+    assert_eq!(Preference::parse("vi"), Some(Preference::Vietnamese));
+    assert_eq!(Preference::Vietnamese.native_name(), "Tiếng Việt");
+    let vi = LANGUAGES.iter().find(|l| l.code == "vi").unwrap();
+    assert_eq!(vi.plural_forms, 1);
+    assert!([0, 1, 2, 5, 21, 111].into_iter().all(|n| (vi.plural)(n) == 0));
+    let mut app = CadApp::new(Session::new(), Services::default());
+    let r = app.run("ui.language", json!({"lang": "vi"})).unwrap();
+    let shown = crate::theme::can_show("vi");
+    assert_eq!(r["shown"], if shown { "vi" } else { "en" });
+    if !shown {
+        assert!(app.status.as_ref().is_some_and(|(s, _)| s.contains("Vietnamese letters")));
+        assert_eq!(Preference::Vietnamese.name(), "Vietnamese");
+    }
 }

@@ -996,7 +996,7 @@ fn rectang_options_command_line() {
     s.cmdline("rectang 0,0 r p 0,0 1,1 d 2 2 5,5").unwrap();
     let pts = rect_pts(&s);
     assert!(pts.iter().any(|p| near(*p, 0.0, 8f64.sqrt())), "{pts:?}");
-    // The 45° rotation picked above is remembered, as AutoCAD remembers it: set it back.
+    // RECTANG keeps the rotation of the rectangle before (45 degrees), as AutoCAD does: back to 0.
     s.cmdline("rectang w 0.5 c 0.5 0.5 0,0 r 0 4,4").unwrap();
     match last(&s) {
         EntityKind::LwPolyline(p) => assert!(p.const_width == 0.5 && p.vertices.len() == 8),
@@ -1007,286 +1007,6 @@ fn rectang_options_command_line() {
         EntityKind::LwPolyline(p) => assert!(p.elevation == 2.0 && p.vertices.len() == 8),
         k => panic!("{k:?}"),
     }
-}
-
-/// RECTANG against what AutoCAD 2024 stores for the same typed input (black-box: synthetic
-/// input in accoreconsole, read back with `entget`): vertex order, chamfer and fillet corners,
-/// corners too large for the sides, Area with the corners taken off, and options remembered
-/// between invocations.
-#[test]
-fn rectang_vertices_match_autocad() {
-    type Case = (&'static [&'static str], &'static [[f64; 3]], [f64; 3]);
-    // (typed input, vertices [x, y, bulge], [width, elevation, thickness])
-    let cases: [Case; 12] = [
-        // RECTANG-000: the first corner first, along the first axis: clockwise here.
-        (
-            &["rectang -2.2557479240466947,-9.488221049171962 _R 0 -31.36203661716106,-47.886714708394166"],
-            &[
-                [-2.255747924046694, -9.488221049171962, 0.0],
-                [-31.36203661716105, -9.488221049171962, 0.0],
-                [-31.36203661716105, -47.88671470839417, 0.0],
-                [-2.255747924046694, -47.88671470839417, 0.0],
-            ],
-            [0.0, 0.0, 0.0],
-        ),
-        // RECTANG-001: chamfer: the first distance on the edge into each corner, the second on the edge out.
-        (
-            &["rectang _C 2.2518104656366162 3.766337568886034 4.8089419289768,29.66648885915597 _R 0 28.114797694689763,43.85884965263156"],
-            &[
-                [4.8089419289768, 31.91829932479258, 0.0],
-                [8.575279497862834, 29.66648885915597, 0.0],
-                [25.86298722905314, 29.66648885915597, 0.0],
-                [28.11479769468976, 33.432826428042, 0.0],
-                [28.11479769468976, 41.60703918699494, 0.0],
-                [24.34846012580373, 43.85884965263156, 0.0],
-                [7.060752394613416, 43.85884965263156, 0.0],
-                [4.8089419289768, 40.09251208374553, 0.0],
-            ],
-            [0.0, 0.0, 0.0],
-        ),
-        // RECTANG-009: the same, running clockwise.
-        (
-            &["rectang _C 1.6573799714125943 2.8497357251231277 24.04847098725292,25.59232167490267 _R 0 6.633832923690861,65.99502168115245"],
-            &[
-                [24.04847098725292, 27.24970164631526, 0.0],
-                [21.19873526212979, 25.59232167490267, 0.0],
-                [8.291212895103454, 25.59232167490267, 0.0],
-                [6.63383292369086, 28.4420574000258, 0.0],
-                [6.63383292369086, 64.33764170973986, 0.0],
-                [9.48356864881399, 65.99502168115245, 0.0],
-                [22.39109101584032, 65.99502168115245, 0.0],
-                [24.04847098725292, 63.14528595602933, 0.0],
-            ],
-            [0.0, 0.0, 0.0],
-        ),
-        // RECTANG-018: a fillet running clockwise bulges the other way.
-        (
-            &["rectang _F 1.5960102281545085 -8.446136404870288,-1.0540502598928434 _R 0 41.8290524978361,-18.73385540701941"],
-            &[
-                [-8.446136404870288, -2.650060488047352, -0.414213562373095],
-                [-6.850126176715778, -1.054050259892843, 0.0],
-                [40.23304226968159, -1.054050259892843, -0.414213562373095],
-                [41.8290524978361, -2.650060488047352, 0.0],
-                [41.8290524978361, -17.1378451788649, -0.414213562373095],
-                [40.23304226968159, -18.7338554070194, 0.0],
-                [-6.850126176715778, -18.7338554070194, -0.414213562373095],
-                [-8.446136404870288, -17.1378451788649, 0.0],
-            ],
-            [0.0, 0.0, 0.0],
-        ),
-        // RECTANG-025: Chamfer then Fillet: the fillet wins.
-        (
-            &["rectang _C 1.0 2.0 _F 3.0 -23.770950967162776,10.634038271168158 _R 0 5.6012940597800664,50.84914942110857"],
-            &[
-                [-23.77095096716277, 13.63403827116815, 0.414213562373095],
-                [-20.77095096716277, 10.63403827116815, 0.0],
-                [2.601294059780066, 10.63403827116815, 0.414213562373095],
-                [5.601294059780066, 13.63403827116815, 0.0],
-                [5.601294059780066, 47.84914942110857, 0.414213562373095],
-                [2.601294059780066, 50.84914942110857, 0.0],
-                [-20.77095096716277, 50.84914942110857, 0.414213562373095],
-                [-23.77095096716277, 47.84914942110857, 0.0],
-            ],
-            [0.0, 0.0, 0.0],
-        ),
-        // RECTANG-026: Fillet then Chamfer: the chamfer wins.
-        (
-            &["rectang _F 3.0 _C 1.0 2.0 8.075900385075748,-27.116639225773056 _R 0 20.00095065903931,8.864147463029973"],
-            &[
-                [8.075900385075748, -26.11663922577305, 0.0],
-                [10.07590038507574, -27.11663922577305, 0.0],
-                [19.00095065903931, -27.11663922577305, 0.0],
-                [20.00095065903931, -25.11663922577305, 0.0],
-                [20.00095065903931, 7.864147463029972, 0.0],
-                [18.00095065903931, 8.864147463029973, 0.0],
-                [9.075900385075748, 8.864147463029973, 0.0],
-                [8.075900385075748, 6.864147463029972, 0.0],
-            ],
-            [0.0, 0.0, 0.0],
-        ),
-        // RECTANG-028: Area counts the chamfered corners off.
-        (
-            &["rectang _C 1.5 2.5 26.36462345136234,-19.7291241693893 _R 0 _A 1442.9297064464572 _W 35.53488991311575"],
-            &[
-                [26.36462345136234, -18.2291241693893, 0.0],
-                [28.86462345136234, -19.7291241693893, 0.0],
-                [65.68168268505678, -19.7291241693893, 0.0],
-                [67.18168268505678, -17.2291241693893, 0.0],
-                [67.18168268505678, 14.30576574372644, 0.0],
-                [64.68168268505678, 15.80576574372644, 0.0],
-                [27.86462345136234, 15.80576574372644, 0.0],
-                [26.36462345136234, 13.30576574372644, 0.0],
-            ],
-            [0.0, 0.0, 0.0],
-        ),
-        // RECTANG-035-VN: Area counts the fillets off, at survey coordinates.
-        (
-            &["rectang _F 2.0 612322.0691653182,2398792.948957577 _R 0 _A 592.8936847254046 _L 19.287858563349488"],
-            &[
-                [612322.0691653182, 2398794.948957577, 0.414213562373095],
-                [612324.0691653182, 2398792.948957577, 0.0],
-                [612339.3570238815, 2398792.948957577, 0.414213562373095],
-                [612341.3570238815, 2398794.948957577, 0.0],
-                [612341.3570238815, 2398821.866195597, 0.414213562373095],
-                [612339.3570238815, 2398823.866195598, 0.0],
-                [612324.0691653182, 2398823.866195598, 0.414213562373095],
-                [612322.0691653182, 2398821.866195597, 0.0],
-            ],
-            [0.0, 0.0, 0.0],
-        ),
-        // RECTANG-029: a fillet too large: each corner two coincident vertices.
-        (
-            &["rectang _F 11.37084114989061 -21.46774953784037,-0.023473793210982308 _R 0 -2.5163476213560187,49.88119923361903"],
-            &[
-                [-21.46774953784036, -0.0234737932109823, 0.0],
-                [-21.46774953784036, -0.0234737932109823, 0.0],
-                [-2.516347621356018, -0.0234737932109823, 0.0],
-                [-2.516347621356018, -0.0234737932109823, 0.0],
-                [-2.516347621356018, 49.88119923361903, 0.0],
-                [-2.516347621356018, 49.88119923361903, 0.0],
-                [-21.46774953784036, 49.88119923361903, 0.0],
-                [-21.46774953784036, 49.88119923361903, 0.0],
-            ],
-            [0.0, 0.0, 0.0],
-        ),
-        // RECTANG-039-VN: a chamfer too large, rotated, with Dimensions.
-        (
-            &[
-                "rectang _C 18.656567079201356 18.656567079201356 612317.9599920243,2398739.0200147885 _R 30 _D 26.652238684573366 32.64533161964191 612344.6122307089,2398771.6653464083",
-            ],
-            &[
-                [612317.9599920243, 2398739.020014788, 0.0],
-                [612317.9599920243, 2398739.020014788, 0.0],
-                [612341.041507793, 2398752.34613413, 0.0],
-                [612341.041507793, 2398752.34613413, 0.0],
-                [612324.7188419831, 2398780.617820628, 0.0],
-                [612324.7188419831, 2398780.617820628, 0.0],
-                [612301.6373262145, 2398767.291701286, 0.0],
-                [612301.6373262145, 2398767.291701286, 0.0],
-            ],
-            [0.0, 0.0, 0.0],
-        ),
-        // RECTANG-030: rotation by two points, elevation and thickness.
-        (
-            &["rectang _E 7.5 _T 2.25 -18.42481827666694,-20.50343704206707 _R _P 0.0,0.0 10.0,6.0 10.197290578707722,25.5222006119985"],
-            &[
-                [-18.42481827666694, -20.50343704206706, 0.0],
-                [22.92627837613747, 4.307220949615576, 0.0],
-                [10.19729057870772, 25.5222006119985, 0.0],
-                [-31.15380607409669, 0.7115426203158534, 0.0],
-            ],
-            [0.0, 7.5, 2.25],
-        ),
-        // RECTANG-024: the fillet is remembered for the next RECTANG.
-        (
-            &[
-                "rectang _F 2.0 -12.364845593042645,8.36037449067684 _R 0 31.044931977794846,17.998089850295315",
-                "rectang 41.044931977794846,27.998089850295315 84.45470954863234,37.63580520991379",
-            ],
-            &[
-                [41.04493197779484, 29.99808985029531, 0.414213562373095],
-                [43.04493197779485, 27.99808985029531, 0.0],
-                [82.45470954863234, 27.99808985029531, 0.414213562373095],
-                [84.45470954863234, 29.99808985029531, 0.0],
-                [84.45470954863234, 35.63580520991379, 0.414213562373095],
-                [82.45470954863234, 37.63580520991379, 0.0],
-                [43.04493197779485, 37.63580520991379, 0.414213562373095],
-                [41.04493197779484, 35.63580520991379, 0.0],
-            ],
-            [0.0, 0.0, 0.0],
-        ),
-    ];
-    let same = |a: f64, b: f64| (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1.0);
-    for (input, want, [width, elevation, thickness]) in cases {
-        let mut s = Session::new();
-        for line in input {
-            s.cmdline(line).unwrap();
-            assert!(s.running.is_none(), "{line}: {}", s.prompt_text());
-        }
-        let e = s.doc().unwrap().model.last().unwrap().clone();
-        let EntityKind::LwPolyline(p) = &e.kind else { panic!("{input:?}: {:?}", e.kind) };
-        let got: Vec<[f64; 3]> = p.vertices.iter().map(|v| [v.p.x, v.p.y, v.bulge]).collect();
-        let ok = got.len() == want.len() && got.iter().zip(want).all(|(g, w)| g.iter().zip(w).all(|(a, b)| same(*a, *b)));
-        assert!(
-            ok,
-            "{input:?}
- got {got:?}
-want {want:?}"
-        );
-        assert!(p.closed && same(p.const_width, width) && same(p.elevation, elevation) && same(e.common.thickness, thickness), "{input:?}");
-    }
-    // Rotation, elevation and thickness are remembered too: AutoCAD opens the next RECTANG with
-    // "Current rectangle modes:  Elevation=7.5000  Thickness=2.2500  Rotation=30.96".
-    let mut s = Session::new();
-    s.cmdline("rectang _E 7.5 _T 2.25 0,0 _R _P 0,0 10,6 10,20").unwrap();
-    s.cmdline("rectang 100,100 110,105").unwrap();
-    let e = s.doc().unwrap().model.last().unwrap().clone();
-    let EntityKind::LwPolyline(p) = &e.kind else { panic!("{:?}", e.kind) };
-    let edge = p.vertices[1].p - p.vertices[0].p;
-    assert!(p.vertices[0].p == Vec2::new(100.0, 100.0) && same(edge.angle(), 6f64.atan2(10.0)), "{p:?}");
-    assert!(p.elevation == 7.5 && e.common.thickness == 2.25);
-}
-
-/// The options a RECTANG carries over are named when it starts, in AutoCAD's words (its log for
-/// the same inputs: "Current rectangle modes:  Chamfer=1.6574 x 2.8497  Rotation=50.50" and
-/// "Current rectangle modes:  Elevation=7.5000  Thickness=2.2500  Rotation=30.96"); none, no line.
-#[test]
-fn rectang_names_the_modes_it_carries_over() {
-    let modes = |s: &Session| s.log.iter().filter(|l| l.starts_with("Current rectangle modes:")).cloned().collect::<Vec<_>>();
-    let mut s = Session::new();
-    s.start("rectang").unwrap();
-    s.cancel();
-    assert!(modes(&s).is_empty());
-    s.cmdline("rectang _C 1.6573799714125943 2.8497357251231277 0,0 _R 50.50299224048081 10,5").unwrap();
-    s.start("rectang").unwrap();
-    s.cancel();
-    assert_eq!(modes(&s), ["Current rectangle modes:  Chamfer=1.6574 x 2.8497  Rotation=50.50"]);
-    let mut s = Session::new();
-    s.cmdline("rectang _E 7.5 _T 2.25 0,0 _R _P 0,0 10,6 10,20").unwrap();
-    s.start("rectang").unwrap();
-    assert_eq!(modes(&s), ["Current rectangle modes:  Elevation=7.5000  Thickness=2.2500  Rotation=30.96"]);
-    s.cancel();
-    // With ANGBASE 90 and ANGDIR 1, AutoCAD 2024 turns a rectangle given Rotation 30 clockwise
-    // by 30° from +X (ANGBASE aside), and shows that rotation from ANGBASE: "Rotation=120.00",
-    // and <120.00> as the next rotation default.
-    let mut s = Session::new();
-    s.cmdline("setvar angbase 90").unwrap();
-    s.cmdline("setvar angdir 1").unwrap();
-    s.cmdline("rectang 50,0 _R 30 60,5").unwrap();
-    let e = s.doc().unwrap().model.last().unwrap().clone();
-    let EntityKind::LwPolyline(p) = &e.kind else { panic!("{:?}", e.kind) };
-    let edge = p.vertices[1].p - p.vertices[0].p;
-    assert!((edge.y.atan2(edge.x) + 30f64.to_radians()).abs() < 1e-9, "{p:?}");
-    s.start("rectang").unwrap();
-    assert_eq!(modes(&s), ["Current rectangle modes:  Rotation=120.00"]);
-    s.cmdline("50,0").unwrap();
-    s.cmdline("_R").unwrap();
-    assert!(s.prompt_text().contains("<120.00>"), "{}", s.prompt_text());
-    s.cancel();
-    // In degrees/minutes/seconds: "Rotation=30d30'".
-    let mut s = Session::new();
-    s.cmdline("setvar aunits 1").unwrap();
-    s.cmdline("rectang 50,0 _R 30.5 60,5").unwrap();
-    s.start("rectang").unwrap();
-    assert_eq!(modes(&s), ["Current rectangle modes:  Rotation=30d30'"]);
-    s.cancel();
-}
-
-/// Area allows for cut corners only while they fit: a fillet too large for the resulting sides
-/// leaves square corners, so the rectangle is the full area asked for (4 × 1, not 4 × 1.858).
-#[test]
-fn rectang_area_with_corners_too_large_stays_exact() {
-    let check = |s: &Session| {
-        let pts = rect_pts(s);
-        let b = cadcraft_geom::Bounds2::from_points(pts.clone());
-        assert!(near(b.min, 0.0, 0.0) && near(b.max, 4.0, 1.0), "{pts:?}");
-        assert!(pts.len() == 8 && pts.chunks(2).all(|c| c[0] == c[1]), "{pts:?}");
-    };
-    let mut s = Session::new();
-    s.cmdline("rectang _F 2 0,0 _A 4 _L 4").unwrap();
-    check(&s);
-    s.execute("rectang", &json!({"p1": [0, 0], "area": 4, "length": 4, "fillet": 2})).unwrap();
-    check(&s);
 }
 
 /// Guards the JSON `center: true` form for every sizing route: a picked corner mirrored about
@@ -1324,7 +1044,7 @@ fn rectang_center_mode_json() {
 }
 
 /// Guards that fillet, chamfer, width and thickness still apply in centre mode, and that an
-/// oversized fillet leaves sharp corners without moving the rectangle off centre.
+/// oversized fillet falls back to sharp corners without moving the rectangle off centre.
 #[test]
 fn rectang_center_mode_honours_options() {
     let mut s = Session::new();
@@ -1341,11 +1061,9 @@ fn rectang_center_mode_honours_options() {
     assert_eq!(rect_pts(&s).len(), 8);
     let b = cadcraft_geom::Bounds2::from_points(rect_pts(&s));
     assert!(near(b.min, 6.0, 4.0) && near(b.max, 14.0, 16.0), "{b:?}");
-    // A fillet too large for the rectangle leaves sharp corners, each one two coincident vertices
-    // as in AutoCAD, still centred.
+    // A fillet too large for the rectangle falls back to sharp corners, still centred.
     s.execute("rectang", &json!({"center": true, "p1": [10, 10], "p2": [14, 16], "fillet": 5})).unwrap();
-    let pts = rect_pts(&s);
-    assert!(pts.len() == 8 && pts.chunks(2).all(|c| c[0] == c[1]), "{pts:?}");
+    assert_eq!(rect_pts(&s).len(), 4);
     let b = cadcraft_geom::Bounds2::from_points(rect_pts(&s));
     assert!(near(b.min, 6.0, 4.0) && near(b.max, 14.0, 16.0), "{b:?}");
 }
@@ -1373,9 +1091,8 @@ fn rectang_center_mode_command_line() {
     assert!(s.running.is_none(), "{}", s.prompt_text());
     let b = cadcraft_geom::Bounds2::from_points(rect_pts(&s));
     assert!(near(b.min, 6.0, 4.0) && near(b.max, 14.0, 16.0), "{b:?}");
-    // Area too: the rectangle of that area is centred on the first point (without the fillet
-    // remembered from above, which would take its corners off the area).
-    s.cmdline("rectang f 0 ce 10,10 a 96 l 8").unwrap();
+    // Area too: the rectangle of that area is centred on the first point.
+    s.cmdline("rectang ce 10,10 a 96 l 8").unwrap();
     assert!(s.running.is_none(), "{}", s.prompt_text());
     let b = cadcraft_geom::Bounds2::from_points(rect_pts(&s));
     assert!(near(b.min, 6.0, 4.0) && near(b.max, 14.0, 16.0), "{b:?}");

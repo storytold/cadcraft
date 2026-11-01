@@ -7,7 +7,7 @@ use cadcraft_geom::{Arc, Circle, Ellipse, Line, PolyVertex, Polyline, Spline, TA
 use serde_json::{Value, json};
 
 use super::curves::{self, Chain, MAX_GEN, TanObj};
-use super::helpers::{arc, circle, line, lwpoly, rect_vertices, v3};
+use super::helpers::{arc, circle, line, lwpoly, rect_vertices, rect_with_corners, v3};
 
 use super::machines::number;
 use super::{CommandSpec, bad, bool_or, f64_or, f64_req, point_param, point_req, point_value, points_param, size_param, str_param, targets};
@@ -31,7 +31,6 @@ use centermark::{CenterM, run_centerline, run_centermark};
 use curves3d::{HelixM, Poly3dM, SplineCvM, run_3dpoly, run_helix, run_spline_cv};
 use divide::{DivideM, run_divide, run_measure};
 use ellipse::{run_ellipse_arc, run_ellipse_axis};
-pub use rect::RectangModes;
 pub(crate) use rect::{RectM2, run_rectang2};
 use revcloud::{CloudKind, RevcloudM, run_revcloud};
 pub(crate) use tancircle::TanCircleM;
