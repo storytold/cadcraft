@@ -79,7 +79,7 @@ impl State {
             .take(MAX_HISTORY)
             .filter(|(expr, result)| expr.len() <= MAX_TEXT_BYTES && result.len() <= MAX_TEXT_BYTES)
             .collect();
-        let vars: Vec<_> = self.vars.iter().take(MAX_VARS).filter(|(name, value)| valid_name(name) && valid_value(value)).collect();
+        let vars: Vec<_> = self.vars.iter().filter(|(name, value)| valid_name(name) && valid_value(value)).take(MAX_VARS).collect();
         json!({"history": history.into_iter().rev().collect::<Vec<_>>(), "vars": vars,
             "ans": self.ans.as_ref().filter(|v| valid_value(v))})
     }
@@ -105,7 +105,11 @@ impl State {
         }
         if let Some(vars) = value.get("vars").and_then(Value::as_array) {
             self.vars.clear();
-            for entry in vars.iter().take(MAX_VARS) {
+            for entry in vars {
+                // Only valid entries count toward the limit.
+                if self.vars.len() >= MAX_VARS {
+                    break;
+                }
                 let Some(pair) = entry.as_array().filter(|a| a.len() == 2) else { continue };
                 let Some(name) = pair.first().and_then(Value::as_str).filter(|s| s.len() <= MAX_NAME_BYTES) else { continue };
                 let name = name.to_ascii_lowercase();
