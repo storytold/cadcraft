@@ -1,7 +1,7 @@
 use super::common::T;
 use super::entities::{entity_extras, entity_plot_style, entity_with_table_budget, insert_attribs, polyline_entity};
 use super::objects::{MAX_OBJECTS, Objects, page_setup};
-use super::{Block, BlockDef, Drawing, Entity, EntityKind, Handle, HashMap, Layout, LayoutDef, Rx, Tag, records};
+use super::{Block, BlockDef, Drawing, Entity, EntityKind, Handle, HashMap, Layout, LayoutDef, Rx, Tag, Vec2, records};
 
 pub(super) fn parse_entities(
     recs: &[(String, Vec<Tag>)],
@@ -138,9 +138,17 @@ pub(super) fn read_objects(tags: &[Tag], objs: &mut Objects, layout_objs: &mut V
             // LAYOUT has two 330s: owner dict and the block record; take the last.
             let br = tg.iter().rfind(|x| x.code == 330).map(Tag::str).unwrap_or_default();
             let plot = T(tg.get(..start).unwrap_or(&[]));
-            layout_objs.push((t.s(1).unwrap_or_default(), t.i(71).unwrap_or(0) as u32, br.to_ascii_uppercase(), page_setup(&plot)));
+            layout_objs.push((t.s(1).unwrap_or_default(), t.i(71).unwrap_or(0) as u32, br.to_ascii_uppercase(), page_setup(&plot), limits(&t)));
         }
     }
+}
+
+/// A LAYOUT's limits (groups 10/20 and 11/21 after the AcDbLayout marker), when both corners
+/// are there and usable, so a save writes back the file's own (#2109). The 0,0 to 12,9 a
+/// layout without its own limits writes reads back as none.
+fn limits(t: &T) -> Option<(Vec2, Vec2)> {
+    let corner = |x: i32, y: i32| Some(Vec2::new(t.f(x)?, t.f(y)?)).filter(|p| p.is_finite() && p.x.abs() < 1e12 && p.y.abs() < 1e12);
+    corner(10, 20).zip(corner(11, 21)).filter(|l| *l != (Vec2::ZERO, Vec2::new(12.0, 9.0)))
 }
 
 /// Add the drawing's layouts, and return the layout each paper-space block belongs to, and the
@@ -148,11 +156,11 @@ pub(super) fn read_objects(tags: &[Tag], objs: &mut Objects, layout_objs: &mut V
 pub(super) fn setup_layouts(d: &mut Drawing, layout_objs: &mut [LayoutDef], rx: &Rx) -> (HashMap<String, String>, String) {
     let mut paper_block_for: HashMap<String, String> = HashMap::new();
     layout_objs.sort_by_key(|l| l.1);
-    for (name, order, br, page) in layout_objs.iter() {
+    for (name, order, br, page, limits) in layout_objs.iter() {
         if name.eq_ignore_ascii_case("Model") {
             continue;
         }
-        d.layouts.push(Layout { page: page.clone(), ..Layout::new(name, *order) });
+        d.layouts.push(Layout { page: page.clone(), limits: *limits, ..Layout::new(name, *order) });
         if let Some(bname) = rx.brs.get(br) {
             paper_block_for.insert(bname.to_ascii_uppercase(), name.clone());
         }
