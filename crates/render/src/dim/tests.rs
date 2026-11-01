@@ -425,6 +425,36 @@ fn jogged_radius_with_nan_radius_draws_no_lines() {
     assert!(g.lines.is_empty() && g.fills.is_empty(), "{:?}", g.lines);
 }
 
+#[test]
+fn a_user_arrowhead_block_is_drawn_at_each_end_and_a_moved_text_sits_on_a_landing() {
+    let cross =
+        ArrowGeom { lines: vec![vec![Vec2::new(-1.0, 0.0), Vec2::new(1.0, 0.0)], vec![Vec2::new(0.0, -1.0), Vec2::new(0.0, 1.0)]], tris: Vec::new() };
+    let font = DimText { width_factor: 1.0, user_arrows: vec![("Hatz".into(), cross)], ..Default::default() };
+    let st = st_with(|s| {
+        s.arrow_block = "HATZ".into();
+        s.arrow_size = 0.5;
+    });
+    let d = lin((0.0, 0.0), (10.0, 0.0), (5.0, 3.0), 0.0);
+    let g = dimension_geometry_with(&d, &st, 1.0, &font);
+    // The cross's vertical stroke at both ends of the dimension line, half a unit each way.
+    for x in [0.0, 10.0] {
+        assert!(
+            g.lines.iter().any(|l| l.len() == 2 && (l[0] - Vec2::new(x, 2.5)).len() < 1e-9 && (l[1] - Vec2::new(x, 3.5)).len() < 1e-9)
+                || g.lines.iter().any(|l| l.len() == 2 && (l[1] - Vec2::new(x, 2.5)).len() < 1e-9 && (l[0] - Vec2::new(x, 3.5)).len() < 1e-9),
+            "{x}: {:?}",
+            g.lines
+        );
+    }
+    assert!(g.fills.is_empty(), "no closed filled arrows");
+    // DIMTMOVE 1, text moved well off the line: a leader and a landing under the text.
+    let st = st_with(|s| s.text_move = 1);
+    let moved = Dimension { user_text_pos: true, text_mid: cadcraft_geom::Vec3::new(14.0, 8.0, 0.0), ..d };
+    let g = dimension_geometry_with(&moved, &st, 1.0, &font);
+    let landing =
+        g.lines.iter().find(|l| l.len() == 2 && (l[0].y - l[1].y).abs() < 1e-9 && l[0].y < 8.0 && l[0].y > 7.0 && (l[0].x - l[1].x).abs() > 0.2);
+    assert!(landing.is_some(), "a landing under the text: {:?}", g.lines);
+}
+
 /// #1645: the MTEXT contents give back the dimension's text when decoded, with the diameter
 /// sign as `%%c` (no SHX font has U+2300) and a `%` that would start a code escaped.
 #[test]

@@ -75,6 +75,15 @@ impl Interactive for Guarded {
             Vec::new()
         })
     }
+    fn glow(&self, s: &Session, cursor: Vec2) -> Option<crate::prompt::Glow> {
+        if self.broken.get().is_some() {
+            return None;
+        }
+        catch_unwind(AssertUnwindSafe(|| self.inner.glow(s, cursor))).unwrap_or_else(|_| {
+            self.broken.set(Some("panic in preview"));
+            None
+        })
+    }
     fn preview_objects(&self, s: &Session, cursor: Vec2) -> Vec<cadcraft_doc::Entity> {
         if self.broken.get().is_some() {
             return Vec::new();
@@ -98,6 +107,15 @@ impl Interactive for Guarded {
             return None;
         }
         catch_unwind(AssertUnwindSafe(|| self.inner.editing_mtext())).unwrap_or_else(|_| {
+            self.broken.set(Some("panic in prompt"));
+            None
+        })
+    }
+    fn text_editor(&self) -> Option<crate::TextEditor> {
+        if self.broken.get().is_some() {
+            return None;
+        }
+        catch_unwind(AssertUnwindSafe(|| self.inner.text_editor())).unwrap_or_else(|_| {
             self.broken.set(Some("panic in prompt"));
             None
         })

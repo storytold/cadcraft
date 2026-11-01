@@ -318,6 +318,9 @@ fn invalid_references_and_purge() {
     let t = add_e(
         &mut d,
         EntityKind::Text(cadcraft_doc::Text {
+            backwards: false,
+            upside_down: false,
+            formula: None,
             insert: v(0.0, 0.0),
             align_pt: None,
             height: 1.0,

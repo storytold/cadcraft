@@ -42,6 +42,16 @@ pub struct Text {
     pub halign: HAlign,
     #[serde(default)]
     pub valign: VAlign,
+    /// Mirrored left to right (DXF 71 bit 2; set from the style when the text is made).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub backwards: bool,
+    /// Mirrored top to bottom (DXF 71 bit 4).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub upside_down: bool,
+    /// The formula the text shows the result of: `=...` (CADCraft text formulas) or an AutoCAD
+    /// field code (`%<\AcVar date \f "dd.MM.yyyy">%`). `value` holds the last result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub formula: Option<String>,
 }
 
 impl Text {
@@ -83,6 +93,13 @@ pub struct MText {
     /// one column.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub columns: Option<MTextColumns>,
+    /// A frame drawn around the text (DXF 90 bit 16, "Text frame").
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub frame: bool,
+    /// The formula the text shows the result of (see [`Text::formula`]); `contents` holds the
+    /// last result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub formula: Option<String>,
 }
 
 fn attach_tl() -> u8 {
