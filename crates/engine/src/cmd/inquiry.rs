@@ -50,7 +50,7 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("status", "Status", run_status).menu(&["Tools", "Inquiry", "Status"]).noundo(),
         CommandSpec::new("drawing.inspect", "Inspect Drawing", run_inspect).params("{entities?: bool, limit?: n}").noundo(),
         CommandSpec::new("entities", "Query Entities", run_entities)
-            .params("{type?, layer?, selected?: bool (default false; true = current selection in active space), window?: [[x,y],[x,y]], crossing?: bool (default true; false = entirely inside), limit?, offset?} → {count (all matches), returned, offset, entities}")
+            .params("{type?, layer?, selected?: bool (default false; true = current selection in active space), window?: [[x,y],[x,y]], crossing?: bool (default true; false = entirely inside), xdata?: true | \"APP\" | [\"APP\", …] (add each entity's extended data {\"APP\": [[code, value], …]}; a name also keeps only entities carrying that application's data), limit?, offset?} → {count (all matches), returned, offset, entities}")
             .noundo(),
         CommandSpec::new("shapes", "Analyze Shapes", shapes::run).params(shapes::PARAMS).noundo(),
         CommandSpec::new("usage", "Analyze Usage", usage::run).params(usage::PARAMS).noundo(),
@@ -607,6 +607,7 @@ fn run_entities(s: &mut Session, p: &Value) -> Result<Value> {
         .transpose()?;
     let crossing = given("crossing").map_or(Ok(true), |v| v.as_bool().ok_or_else(|| bad(CMD, "`crossing` must be true or false")))?;
     let selected = given("selected").map_or(Ok(false), |v| v.as_bool().ok_or_else(|| bad(CMD, "`selected` must be true or false")))?;
+    let xdata = super::props::xdata::XdataSelect::parse(given("xdata")).map_err(|m| bad(CMD, m))?;
     let limit = count("limit", 500)?;
     let offset = count("offset", 0)?;
     let st = s.state()?;
@@ -620,8 +621,20 @@ fn run_entities(s: &mut Session, p: &Value) -> Result<Value> {
         .filter(|e| ty.as_ref().is_none_or(|t| e.kind.type_name().to_ascii_lowercase() == *t || e.kind.dxf_name().to_ascii_lowercase() == *t))
         .filter(|e| layer.as_ref().is_none_or(|l| e.common.layer.to_ascii_lowercase() == *l))
         .filter(|e| window.as_ref().is_none_or(|w| crate::select::in_window(d, e, None, w, crossing, tol)))
+        .filter(|e| !xdata.filters() || xdata.matches(&e.common.xdata))
         .collect();
-    let page: Vec<Value> = matches.iter().skip(offset).take(limit).map(|e| entity_summary(e)).collect();
+    let page: Vec<Value> = matches
+        .iter()
+        .skip(offset)
+        .take(limit)
+        .map(|e| {
+            let mut v = entity_summary(e);
+            if let (Some(x), Some(o)) = (xdata.json(&e.common.xdata), v.as_object_mut()) {
+                o.insert("xdata".into(), x);
+            }
+            v
+        })
+        .collect();
     // `count` is every match; `returned` is this page of them (`offset`, `limit`).
     Ok(json!({ "count": matches.len(), "returned": page.len(), "offset": offset, "entities": page }))
 }
