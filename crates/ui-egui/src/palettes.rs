@@ -1143,21 +1143,19 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
     } else {
         // Several objects of one type: what they all have, set for all at once. A value they
         // don't share shows *VARIES*. Positions and contents stay per object (one centre or one
-        // text for all would wreck the drawing). Checked before anything is copied (a large
-        // selection is looked at every frame).
+        // text for all would wreck the drawing). A large selection is looked at every frame, so
+        // the type is checked first and nothing is copied.
         let kind0 = std::mem::discriminant(&e.kind);
         let same = sel.iter().all(|h| d.entity(*h).is_some_and(|x| std::mem::discriminant(&x.kind) == kind0));
-        let ents: Vec<cadcraft_doc::Entity> =
-            if same { sel.iter().filter_map(|h| d.entity(*h)).map(|x| (**x).clone()).collect() } else { Vec::new() };
-        if !ents.is_empty() {
-            let refs: Vec<&cadcraft_doc::Entity> = ents.iter().collect();
+        let refs: Vec<&cadcraft_doc::Entity> = if same { sel.iter().filter_map(|h| d.entity(*h)).map(|x| &**x).collect() } else { Vec::new() };
+        if !refs.is_empty() {
             let real = |v: f64| format!("{v:.4}");
             let angles = app.session.angle_settings();
             let each = |f: &dyn Fn(&EntityKind) -> Option<String>| -> Vec<String> { refs.iter().filter_map(|x| f(&x.kind)).collect() };
             let shared = |vals: &[String]| -> String {
                 match vals.first() {
                     Some(v0) if vals.iter().all(|v| v == v0) => v0.clone(),
-                    _ => "*VARIES*".into(),
+                    _ => crate::i18n::t("*VARIES*").to_string(),
                 }
             };
             let row = |ui: &mut egui::Ui, label: &str, key: &str, vals: Vec<String>, set: &mut Option<Value>, bad: &mut Option<String>| {

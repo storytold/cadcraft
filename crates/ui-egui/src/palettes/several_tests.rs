@@ -56,3 +56,23 @@ fn several_circles_show_varies_and_a_typed_radius_sets_them_all() {
     // Now they share every value: no box says *VARIES* any more.
     assert_eq!(varies(&h), 0);
 }
+
+#[test]
+fn varies_is_shown_in_the_interface_language() {
+    let mut app = CadApp::new(Session::default(), Services::default());
+    for (x, r) in [(0, 5), (30, 8)] {
+        app.run("circle", json!({ "center": [x, 0], "radius": r })).unwrap();
+    }
+    let handles: Vec<Value> = app.session.doc().unwrap().model.iter().map(|e| json!(e.handle.hex())).collect();
+    app.run("select", json!({ "handles": handles })).unwrap();
+    let mut h = Harness::builder().with_size(vec2(400.0, 800.0)).build_ui_state(
+        |ui, app: &mut CadApp| {
+            app.logic(&ui.ctx().clone());
+            crate::i18n::with_language("de", || properties_section(app, ui));
+        },
+        app,
+    );
+    h.run_steps(4);
+    assert_eq!(h.query_all(by().role(egui::accesskit::Role::TextInput).value("*VARIIERT*")).count(), 4);
+    assert_eq!(varies(&h), 0);
+}
