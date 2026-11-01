@@ -74,6 +74,11 @@ impl Face {
     pub fn has_glyph(&self, c: char) -> bool {
         self.font().is_some_and(|f| f.charmap().map(c).is_some())
     }
+    /// The face's family name as written in the font (the first localized family name).
+    pub fn family_name(&self) -> Option<String> {
+        let f = self.font()?;
+        f.localized_strings(skrifa::string::StringId::FAMILY_NAME).next().map(|s| s.to_string())
+    }
     fn names(&self) -> Vec<String> {
         let Some(f) = self.font() else { return Vec::new() };
         [skrifa::string::StringId::FAMILY_NAME, skrifa::string::StringId::TYPOGRAPHIC_FAMILY_NAME, skrifa::string::StringId::FULL_NAME]
