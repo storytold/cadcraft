@@ -243,15 +243,14 @@ impl Interactive for DashGroupM {
             Stage::NewName => Prompt::new("Enter new group name", Accept::TEXT).kw(&["?"]),
             Stage::Selectable => {
                 let on = s.doc().ok().and_then(|d| d.groups.iter().find(|x| x.name.eq_ignore_ascii_case(&g))).is_some_and(|x| x.selectable);
-                let msg = if on {
-                    format!("Group {g} is selectable. Make it unselectable?")
-                } else {
-                    format!("Group {g} is not selectable. Make it selectable?")
-                };
-                Prompt::new(msg, super::super::curves::KW).kw(&["Yes", "No"]).default("Y")
+                let msg =
+                    if on { "Group {group} is selectable. Make it unselectable?" } else { "Group {group} is not selectable. Make it selectable?" };
+                Prompt::with_values(msg, [("group", g.clone())], super::super::curves::KW).kw(&["Yes", "No"]).default("Y")
             }
-            Stage::From => Prompt::new(format!("Enter the position of the first object to move (0-{last})"), Accept::NUMBER),
-            Stage::To => Prompt::new(format!("Enter the position to move it to (0-{last})"), Accept::NUMBER),
+            Stage::From => {
+                Prompt::with_values("Enter the position of the first object to move (0-{last})", [("last", last.to_string())], Accept::NUMBER)
+            }
+            Stage::To => Prompt::with_values("Enter the position to move it to (0-{last})", [("last", last.to_string())], Accept::NUMBER),
             Stage::Count => Prompt::new("Number of objects to move", Accept::NUMBER).default("1"),
         }
     }

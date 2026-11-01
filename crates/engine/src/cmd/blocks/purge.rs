@@ -97,6 +97,25 @@ fn noun(kind: Kind) -> &'static str {
     }
 }
 
+/// The question asked before purging one `{name}` of `kind`, written whole so it can be
+/// translated (#2611).
+fn confirm_source(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Blocks => "Purge block \"{name}\"?",
+        Kind::Dimstyles => "Purge dimension style \"{name}\"?",
+        Kind::Groups => "Purge group \"{name}\"?",
+        Kind::Layers => "Purge layer \"{name}\"?",
+        Kind::Linetypes => "Purge linetype \"{name}\"?",
+        Kind::MleaderStyles => "Purge multileader style \"{name}\"?",
+        Kind::MlineStyles => "Purge multiline style \"{name}\"?",
+        Kind::TableStyles => "Purge table style \"{name}\"?",
+        Kind::TextStyles => "Purge text style \"{name}\"?",
+        Kind::ZeroLength => "Purge zero-length object \"{name}\"?",
+        Kind::EmptyText => "Purge empty text object \"{name}\"?",
+        Kind::Absent | Kind::All => "Purge object \"{name}\"?",
+    }
+}
+
 fn json_key(kind: Kind) -> &'static str {
     match kind {
         Kind::Blocks => "blocks",
@@ -471,7 +490,7 @@ impl Interactive for PurgeM {
             Stage::Verify(..) => Prompt::new("Verify each name to be purged?", KW).kw(&["Yes", "No"]).default("Y"),
             Stage::Confirm { kind, queue, .. } => {
                 let n = queue.front().map(String::as_str).unwrap_or("");
-                Prompt::new(format!("Purge {} \"{n}\"?", noun(*kind)), KW).kw(&["Yes", "No"]).default("N")
+                Prompt::with_values(confirm_source(*kind), [("name", n.to_string())], KW).kw(&["Yes", "No"]).default("N")
             }
         }
     }

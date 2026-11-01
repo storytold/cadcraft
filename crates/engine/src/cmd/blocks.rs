@@ -467,7 +467,9 @@ impl Interactive for BlockM {
     fn prompt(&self, _s: &Session) -> Prompt {
         match (&self.name, self.base) {
             (None, _) => match &self.existing {
-                Some(n) => Prompt::new(format!("Block \"{n}\" already exists. Redefine it?"), super::curves::KW).kw(&["Yes", "No"]).default("N"),
+                Some(n) => Prompt::with_values("Block \"{name}\" already exists. Redefine it?", [("name", n.clone())], super::curves::KW)
+                    .kw(&["Yes", "No"])
+                    .default("N"),
                 None => Prompt::new("Enter block name", Accept::TEXT).kw(&["?"]),
             },
             (Some(_), None) => Prompt::new("Specify insertion base point", Accept::POINT).kw(&["Annotative"]),
@@ -713,12 +715,21 @@ impl Interactive for InsertM {
             }
             InsStage::Redefine => {
                 let name = self.file.as_ref().map(|f| f.name.clone()).unwrap_or_default();
-                Prompt::new(format!("Block \"{name}\" already exists. Redefine it?"), super::curves::KW).kw(&["Yes", "No"]).default("N")
+                Prompt::with_values("Block \"{name}\" already exists. Redefine it?", [("name", name)], super::curves::KW)
+                    .kw(&["Yes", "No"])
+                    .default("N")
             }
             InsStage::Point => Prompt::new("Specify insertion point", Accept::POINT).kw(&["Basepoint", "Scale", "X", "Y", "Z", "Rotate"]),
             InsStage::BasePoint => Prompt::new("Specify base point", Accept::POINT),
             InsStage::PresetScale => Prompt::new("Specify scale factor for XYZ axes", Accept::NUMBER).default("1"),
-            InsStage::PresetAxis(i) => Prompt::new(format!("Specify {} scale factor", ["X", "Y", "Z"][i.min(2)]), Accept::NUMBER).default("1"),
+            InsStage::PresetAxis(i) => {
+                let msg = match i {
+                    0 => "Specify X scale factor",
+                    1 => "Specify Y scale factor",
+                    _ => "Specify Z scale factor",
+                };
+                Prompt::new(msg, Accept::NUMBER).default("1")
+            }
             InsStage::PresetRotation => Prompt::new("Specify rotation angle", Accept::NUMBER).default("0"),
             InsStage::XScale if self.xyz => Prompt::new("Specify X scale factor", Accept::POINT_OR_NUMBER).kw(&["Corner"]).default("1").base(at),
             InsStage::XScale => {

@@ -199,7 +199,7 @@ impl Interactive for ToleranceM {
             0 => Prompt::new("Enter geometric characteristic", VALUE).kw(SYMBOL_KW).default("Position"),
             1 => Prompt::new("Enter first tolerance value", VALUE).default("none"),
             2 => Prompt::new("Enter second tolerance value", VALUE).default("none"),
-            n @ 3..=5 => Prompt::new(format!("Enter datum reference {}", n - 2), VALUE).default("none"),
+            n @ 3..=5 => Prompt::with_values("Enter datum reference {n}", [("n", (n - 2).to_string())], VALUE).default("none"),
             _ => Prompt::new("Enter tolerance location", Accept::POINT),
         }
     }
