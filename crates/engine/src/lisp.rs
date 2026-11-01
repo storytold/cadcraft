@@ -42,6 +42,9 @@ impl LispError {
     }
 }
 
+/// A drawing's non-graphic records as a save writes them: handle, type, groups.
+pub type ObjectRecords = Vec<(Handle, String, Vec<cadcraft_dxf::Tag>)>;
+
 /// One drawing's LISP environment.
 pub struct Env {
     pub globals: HashMap<Sym, Value>,
@@ -58,6 +61,12 @@ pub struct Env {
     pub order: Option<(usize, Arc<Vec<Handle>>)>,
     /// `tblnext`'s place in each table.
     pub tblnext: HashMap<String, usize>,
+    /// The non-graphic records (table records, BLOCK records, objects) of the drawing they were
+    /// taken from, as a save writes them: handle, type, groups (`handent`, `entget`, `tblobjname`,
+    /// the dictionary functions).
+    pub objects: Option<((usize, u64), Arc<ObjectRecords>)>,
+    /// `dictnext`'s place in each dictionary.
+    pub dictnext: HashMap<Handle, usize>,
     /// A block definition `entmake` has begun (a BLOCK list) and not yet ended (ENDBLK): the
     /// entities made meanwhile go into it, numbered when it ends.
     pub pending_block: Option<(cadcraft_doc::Block, Vec<cadcraft_doc::Entity>)>,
@@ -78,6 +87,8 @@ impl Default for Env {
             deleted: HashMap::new(),
             order: None,
             tblnext: HashMap::new(),
+            objects: None,
+            dictnext: HashMap::new(),
             pending_block: None,
             printed_at: None,
         };
@@ -638,6 +649,9 @@ fn file_key(name: &str) -> String {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod object_tests;
 
 #[cfg(test)]
 mod block_tests;
