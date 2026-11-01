@@ -19,6 +19,15 @@ impl T<'_> {
     pub(super) fn p(&self, code: i32) -> Vec3 {
         Vec3::new(self.fd(code, 0.0), self.fd(code + 10, 0.0), self.fd(code + 20, 0.0))
     }
+    /// A view's centre in the drawing. The DXF stores it in display coordinates (`center`), whose
+    /// origin is the view target (`target`), so the point in the middle of a plan view is their
+    /// sum: a file whose view centre is 0,0 keeps the location in the target (#2492). A sum that
+    /// overflows leaves the stored centre.
+    pub(super) fn view_center(&self, center: i32, target: i32) -> Vec2 {
+        let c = self.p(center).xy();
+        let sum = c + self.p(target).xy();
+        if sum.is_finite() { sum } else { c }
+    }
     pub(super) fn all_f(&self, code: i32) -> Vec<f64> {
         self.0.iter().filter(|t| t.code == code).map(Tag::f64).collect()
     }
