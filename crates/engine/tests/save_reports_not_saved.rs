@@ -82,3 +82,23 @@ fn solids_whose_geometry_the_data_store_keeps_are_not_reported_from_2013() {
     // Before 2013 a file has no data store: every solid loses its geometry.
     assert_eq!(not_saved_as(&d, Version::R2010), [("3DSOLID".to_string(), 2), ("REGION".to_string(), 1)].into_iter().collect());
 }
+
+/// The DWG bridge writes OLE objects (`ole2frame_roundtrip` in the io tests), so saving one as
+/// DWG reports nothing for them, at any version, while other unmodelled types are still listed.
+/// The type is matched as stored: the bridge gets it as stored too, and acadrust reads only the
+/// upper-case spelling into its OLE entity, so any other spelling is still reported.
+#[test]
+fn ole_objects_are_not_reported() {
+    use cadcraft_engine::cmd::file::{Version, not_saved_as};
+    let mut d = Drawing::new_imperial();
+    d.add(&Space::Model, Common::default(), unknown("OLE2FRAME")).unwrap();
+    d.add(&Space::Model, Common::default(), unknown("MLINE")).unwrap();
+    d.add(&Space::Model, Common::default(), unknown("ole2frame")).unwrap();
+    let mut b = Block::new("Logo");
+    let h = d.new_handle();
+    b.entities.push(cadcraft_engine::doc::Entity { handle: h, common: Common::default(), kind: unknown("OLE2FRAME") });
+    d.blocks.insert("Logo".into(), std::sync::Arc::new(b));
+    for v in [Version::R2000, Version::R2010, Version::R2018] {
+        assert_eq!(not_saved_as(&d, v), [("MLINE".to_string(), 1), ("ole2frame".to_string(), 1)].into_iter().collect(), "{v:?}");
+    }
+}
