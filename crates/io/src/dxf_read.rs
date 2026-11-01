@@ -73,7 +73,7 @@ pub fn read(bytes: &[u8]) -> Result<Drawing> {
 type BlockDef = (String, Vec3, String, Vec<(Option<String>, bool, Entity)>, i64);
 
 /// A layout read from OBJECTS: name, tab order, paper block handle and page setup.
-type LayoutDef = (String, u32, String, PageSetup);
+type LayoutDef = (String, u32, String, PageSetup, Option<(Vec2, Vec2)>);
 
 /// Import DXF sections while sharing one materialized-table-cell budget across blocks and entity sections.
 fn read_budgeted(bytes: &[u8], mut table_cells_left: usize) -> Result<Drawing> {

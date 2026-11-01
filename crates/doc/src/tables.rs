@@ -799,6 +799,10 @@ pub struct PageSetup {
     /// The layout's paper units are millimetres (plot paper units 1 in DXF) whatever the
     /// drawing's MEASUREMENT says; otherwise paper units follow MEASUREMENT (#1058).
     pub paper_mm: bool,
+    /// Paper image origin (DXF plot settings groups 148/149) as read from a file; `None` for a
+    /// page setup CADCraft created (written as 0,0).
+    #[serde(default)]
+    pub paper_image_origin: Option<Vec2>,
 }
 
 impl Default for PageSetup {
@@ -820,6 +824,7 @@ impl Default for PageSetup {
             show_plot_styles: false,
             plot_transparency: false,
             paper_mm: false,
+            paper_image_origin: None,
         }
     }
 }
@@ -835,11 +840,15 @@ pub struct Layout {
     /// Saved paper-space view (centre, height).
     #[serde(default)]
     pub view: Option<(Vec2, f64)>,
+    /// The layout's limits (LIMMIN, LIMMAX; DXF AcDbLayout groups 10/11) as read from a file;
+    /// `None` for a layout CADCraft created (written as (0,0)-(12,9)).
+    #[serde(default)]
+    pub limits: Option<(Vec2, Vec2)>,
 }
 
 impl Layout {
     pub fn new(name: &str, tab_order: u32) -> Self {
-        Layout { name: name.into(), tab_order, page: PageSetup::default(), entities: EntityStore::new(), view: None }
+        Layout { name: name.into(), tab_order, page: PageSetup::default(), entities: EntityStore::new(), view: None, limits: None }
     }
 }
 
