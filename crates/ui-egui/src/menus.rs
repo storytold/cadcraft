@@ -10,6 +10,8 @@ pub const MENUS: &[&str] = &["File", "Edit", "View", "Insert", "Format", "Tools"
 
 /// File ▸ Open Recent: one `ui.recent.<n>` item per recent file, then Clear Recent Files.
 pub const OPEN_RECENT: &str = "Open Recent";
+/// The last item of File ▸ Open Recent.
+pub const CLEAR_RECENT: &str = "Clear Recent Files";
 const RECENT_ITEM: &str = "ui.recent.";
 const RECENT_CLEAR: &str = "ui.recent.clear";
 
@@ -280,10 +282,15 @@ fn run_language_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
     app.ui.interface_language = preference;
     let shown = app.language();
     if shown != preference.resolve(&app.system_languages) {
-        app.set_status(if preference.resolve(&app.system_languages) == "ko" {
-            "No font covers the Korean interface, so it stays in English. Install a Hangul font (Malgun Gothic or Nanum Gothic), or build with a Hang/Kore craft-fonts face."
-        } else {
-            "No Chinese font is installed, so the interface stays in English. Install one (Noto Sans CJK, for example) to use Chinese."
+        app.set_status(match preference.resolve(&app.system_languages) {
+            "ko" => {
+                "No font covers the Korean interface, so it stays in English. Install a Hangul font (Malgun Gothic or Nanum Gothic), or build with a Hang/Kore craft-fonts face."
+            }
+            "vi" => {
+                "No installed interface font has the Vietnamese letters, so the interface stays in English. Install one that does (Segoe UI, Arial, DejaVu Sans or Noto Sans) to use Vietnamese."
+            }
+            "ar" => "No Arabic font is installed, so the interface stays in English. Install one (Noto Sans Arabic, for example) to use Arabic.",
+            _ => "No Chinese font is installed, so the interface stays in English. Install one (Noto Sans CJK, for example) to use Chinese.",
         });
     }
     Some(Ok(json!({"interfaceLanguage": preference.code(), "shown": shown})))
@@ -644,7 +651,7 @@ pub fn recent_entries(app: &CadApp) -> Vec<Entry> {
         .map(|(i, path)| Entry::Item { label: file_name(path), id: format!("{RECENT_ITEM}{i}"), shortcut: None, enabled: true })
         .collect();
     let enabled = !app.ui.recent_files.is_empty();
-    entries.push(Entry::Item { label: "Clear Recent Files".into(), id: RECENT_CLEAR.into(), shortcut: None, enabled });
+    entries.push(Entry::Item { label: CLEAR_RECENT.into(), id: RECENT_CLEAR.into(), shortcut: None, enabled });
     entries
 }
 
