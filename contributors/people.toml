@@ -99,3 +99,7 @@ sync_github_name = true
 
 [people.GULERTOLGA]
 sync_github_name = true
+
+[people.Torentje]
+display_name = "The old Dutch Guy"
+sync_github_name = false

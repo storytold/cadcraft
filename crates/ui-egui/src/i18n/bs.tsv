@@ -1448,3 +1448,5 @@ menu	Modify	Izmijeni
 	Save changes to block "{name}"?	Sačuvati promjene u bloku „{name}”?
 	Layouts	Rasporedi
 	Associate	Poveži
+	New AppID (e.g. CAD_XDATA)	Novi AppID (npr. CAD_XDATA)
+	+ Create CAD_XDATA Application	+ Kreiraj CAD_XDATA aplikaciju
