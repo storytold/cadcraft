@@ -417,8 +417,9 @@ fn blocks(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
 }
 
 /// Start INSERT with `name` already given at its block name prompt, so the next prompt asks for
-/// the insertion point.
-fn insert_block(app: &mut CadApp, name: &str) {
+/// the insertion point. `name=path` defines the block from a drawing file first (the Library
+/// palette).
+pub(crate) fn insert_block(app: &mut CadApp, name: &str) {
     app.start("insert");
     if app.session.running.as_ref().is_none_or(|r| r.id != "insert") {
         return;

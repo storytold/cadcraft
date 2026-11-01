@@ -128,6 +128,8 @@ pub struct UiState {
     pub recent_files: Vec<String>,
     /// The folder the last APPLOAD file came from: the next pick starts there.
     pub last_lisp_dir: Option<String>,
+    /// The folder of block files the Library palette lists (`None`: its default, if any).
+    pub library_dir: Option<String>,
 }
 
 /// A DXF/DWG file version (2000 … 2018).
@@ -206,6 +208,7 @@ impl Default for UiState {
             save_version: SaveVersion::default().year().to_string(),
             recent_files: Vec::new(),
             last_lisp_dir: None,
+            library_dir: None,
         }
     }
 }
@@ -219,6 +222,9 @@ pub struct Services {
     /// `None` where there is no native file dialog: the desktop without one asks for the name,
     /// and the web (no file system) says to drop the file (`no_file_system`).
     pub pick_lisp: Option<Box<dyn Fn(&str) -> Option<String>>>,
+    /// Pick a folder for the Library palette, starting in the given one (empty for the default).
+    /// `None` where there is no native folder dialog: the palette then takes a typed path.
+    pub pick_folder: Option<Box<dyn Fn(&str) -> Option<String>>>,
     /// The host has no file system to read a path from (the browser): a dropped file's contents
     /// are what it loads, and APPLOAD says so instead of asking for a name it cannot read.
     pub no_file_system: bool,
@@ -475,6 +481,9 @@ impl CadApp {
         if let Some(dir) = &self.ui.last_lisp_dir {
             prefs["lispDir"] = json!(dir);
         }
+        if let Some(dir) = &self.ui.library_dir {
+            prefs["libraryDir"] = json!(dir);
+        }
         prefs.to_string()
     }
 
@@ -504,6 +513,9 @@ impl CadApp {
         }
         if let Some(dir) = v.get("lispDir").and_then(Value::as_str).filter(|d| !d.is_empty()) {
             self.ui.last_lisp_dir = Some(dir.to_string());
+        }
+        if let Some(dir) = v.get("libraryDir").and_then(Value::as_str).filter(|d| !d.is_empty()) {
+            self.ui.library_dir = Some(dir.to_string());
         }
     }
 

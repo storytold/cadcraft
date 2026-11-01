@@ -31,6 +31,8 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("ui.panel.layers", "Layers Palette", &["Window", "Layers Palette"], None),
     ("ui.toggle.quickcalc", "QuickCalc", &["Window", "QuickCalc"], Some("Cmd+8")),
     ("ui.panel.quickcalc", "QuickCalc", &[], None),
+    ("ui.toggle.library", "Library", &["Window", "Library"], None),
+    ("ui.panel.library", "Library", &[], None),
     ("ui.toggle.systemcursor", "Show System Cursor", &["View", "Accessibility", "Show System Cursor"], None),
     ("ui.animations.system", "Use System Setting", &["View", "Accessibility", "Animation Effects", "Use System Setting"], None),
     ("ui.animations.on", "On", &["View", "Accessibility", "Animation Effects", "On"], None),
@@ -113,6 +115,13 @@ fn route_ui_subsystems(app: &mut CadApp, id: &str, params: &Value) -> Option<Res
     // Explicit opens remain idempotent; typed QUICKCALC with JSON parameters uses the engine's CAL alias.
     if id == "ui.panel.quickcalc" || (matches!(id, "quickcalc" | "qc") && params.is_null()) {
         return Some(crate::palettes::quickcalc::open(app));
+    }
+    if id == "ui.toggle.library" {
+        return Some(crate::palettes::library::toggle(app));
+    }
+    // Typed LIBRARY opens the palette too.
+    if id == "ui.panel.library" || (id == "library" && params.is_null()) {
+        return Some(crate::palettes::library::open(app));
     }
     if let Some(r) = crate::plotstyles::route(app, id, params) {
         return Some(r);
@@ -719,7 +728,7 @@ fn switch_on_hover(ctx: &egui::Context, titles: &[egui::Response]) {
 /// Activate a menu command. QuickCalc toggles transparently; other items clear pending
 /// command-line text and start their command interactively.
 pub fn activate(app: &mut CadApp, id: &str) {
-    if id == "ui.toggle.quickcalc" {
+    if matches!(id, "ui.toggle.quickcalc" | "ui.toggle.library") {
         run_transparent(app, id);
         return;
     }
