@@ -1,4 +1,4 @@
-use super::{Bounds2, Builder, Color, Ctx, Drawing, Ink, Rgb, ink};
+use super::{Bounds2, Builder, Color, Ctx, Drawing, Ink, Rgb, Vec2, ink};
 
 /// The text style of an entity (Standard defaults when missing).
 pub(crate) fn text_style(d: &Drawing, name: &str) -> cadcraft_doc::TextStyle {
@@ -64,10 +64,63 @@ fn mtext_color(c: Option<cadcraft_fonts::MTextColor>, rgb: Ink) -> Ink {
 }
 
 pub(crate) fn mtext(b: &mut Builder, ctx: &Ctx, t: &cadcraft_doc::MText, rgb: Ink, lw: f32) {
+    let shown;
+    let t = if cadcraft_doc::fields::has_fields(&t.contents) {
+        if field_display(b, ctx) {
+            // The fields' glyphs, found by colouring them with a marker colour.
+            let marked =
+                cadcraft_doc::fields::display_with(&t.contents, |v| format!("{{\\c{FIELD_MARK};{}}}", cadcraft_doc::fields::mtext_escape(v)));
+            let probe = cadcraft_doc::MText { contents: marked.into_owned(), ..t.clone() };
+            let l = layout_mtext_entity(ctx.d, &probe);
+            for p in l.pieces.iter().filter(|p| p.color == Some(cadcraft_fonts::MTextColor::Rgb(FIELD_MARK))) {
+                field_background(b, ctx, &p.shaped.outlines(), t.insert.xy(), t.rotation, t.height);
+            }
+        }
+        shown = cadcraft_doc::MText { contents: cadcraft_doc::fields::display_mtext(&t.contents).into_owned(), ..t.clone() };
+        &shown
+    } else {
+        t
+    };
     let l = layout_mtext_entity(ctx.d, t);
     for p in &l.pieces {
         b.shaped(ctx, mtext_color(p.color, rgb), lw, &p.shaped);
     }
+}
+
+/// An inline colour that marks field values while their background is measured.
+const FIELD_MARK: u32 = 0x0F_1E2D;
+/// FIELDDISPLAY's grey behind field values.
+const FIELD_GREY: Ink = Ink { rgb: Rgb(128, 128, 128), aci7: false, aci: 8 };
+
+/// FIELDDISPLAY: field values get a grey background on screen (never on paper).
+fn field_display(b: &Builder, ctx: &Ctx) -> bool {
+    !b.plotting && b.opts.fill && ctx.d.header.i64("FIELDDISPLAY", 1) != 0
+}
+
+/// A grey box behind `pts` (geometry of text turned by `rotation` about `origin`), padded by a
+/// sixth of the text height.
+fn field_background(b: &mut Builder, ctx: &Ctx, strokes: &[Vec<Vec2>], origin: Vec2, rotation: f64, height: f64) {
+    let rot = if rotation.is_finite() { rotation } else { 0.0 };
+    let local = Bounds2::from_points(strokes.iter().flatten().map(|p| (*p - origin).rotate(-rot)));
+    if local.is_empty() {
+        return;
+    }
+    let pad = if height.is_finite() && height > 0.0 { height / 6.0 } else { 0.0 };
+    let (x0, y0, x1, y1) = (local.min.x - pad, local.min.y - pad, local.max.x + pad, local.max.y + pad);
+    let c = [Vec2::new(x0, y0), Vec2::new(x1, y0), Vec2::new(x1, y1), Vec2::new(x0, y1)].map(|q| origin + q.rotate(rot));
+    let [p0, p1, p2, p3] = c;
+    b.tris(ctx, FIELD_GREY, &[p0, p1, p2, p0, p2, p3]);
+}
+
+/// FIELDDISPLAY for a TEXT or attribute with fields: a grey box behind the whole text.
+pub(crate) fn field_text_background(b: &mut Builder, ctx: &Ctx, t: &cadcraft_doc::Text, shown: &str) {
+    if !field_display(b, ctx) || !cadcraft_doc::fields::has_fields(&t.value) {
+        return;
+    }
+    // Shaped unturned, then turned about the justification point with the text.
+    let flat = cadcraft_doc::Text { rotation: 0.0, ..t.clone() };
+    let (sh, _) = place_text_entity(ctx.d, &flat, shown);
+    field_background(b, ctx, &sh.outlines(), t.justify_point(), t.rotation, t.height);
 }
 
 /// A TEXT's justification as the fonts' alignment (used where text is placed outside a build).

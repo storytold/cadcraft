@@ -200,6 +200,7 @@
 	Cut with Base Point	Klipp ut med baspunkt
 	Cyan	Cyan
 	Cylinder	Cylinder
+	Drawing Properties...	Ritningsegenskaper...
 	DWG	DWG
 	DWG Reference...	DWG-referens...
 	DXF	DXF
@@ -289,6 +290,14 @@
 	End angle	Slutvinkel
 	Endpoint	Ändpunkt
 	Enter	Enter
+	Enter author	Ange författare
+	Enter comments	Ange kommentarer
+	Enter field name or system variable	Ange fältnamn eller systemvariabel
+	Enter keywords	Ange nyckelord
+	Enter property	Ange egenskap
+	Enter property to change	Ange egenskap att ändra
+	Enter subject	Ange ämne
+	Enter title	Ange titel
 	Enter Top, Zero or Bottom.	Ange Top, Zero eller Bottom.
 	Enter a fit data option	Ange ett alternativ för anpassningsdata
 	Enter a pattern name	Ange ett mönsternamn
@@ -349,6 +358,7 @@
 	External Reference	Extern referens
 	External References	Externa referenser
 	Extrude	Extrudera
+	Field...	Fält...
 	File	Arkiv
 	File Tab	Filflik
 	Fillet	Avrunda
@@ -701,6 +711,7 @@
 	Reset Panel Layout	Återställ panellayout
 	Reset keeps the interface language.	Återställningen behåller gränssnittsspråket.
 	Reset to Defaults	Återställ standardvärden
+	Spelling	Stavning
 	SVG drawings (SVG, SVGZ)	SVG-ritningar (SVG, SVGZ)
 	Save new drawings as	Spara nya ritningar som
 	Saved Path	Sparad sökväg
@@ -746,6 +757,7 @@
 	Unreferenced	Inte refererad
 	Unresolved	Hittades inte
 	Update Data Links	Uppdatera datalänkar
+	Update Fields	Uppdatera fält
 	Use for this layout	Använd för den här layouten
 	Display plot styles	Visa plottstilar
 	No plot style tables.	Inga plottstilstabeller.

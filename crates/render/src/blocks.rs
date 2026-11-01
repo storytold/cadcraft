@@ -1,6 +1,6 @@
 use super::draw::entity;
 use super::props::{resolve, resolve_common, transparency};
-use super::text_entity::{mtext, place_text_entity};
+use super::text_entity::{field_text_background, mtext, place_text_entity};
 use super::{Builder, Color, Ctx, Entity, EntityKind, Ink, Lineweight, Mat3, Vec2};
 
 pub(crate) fn sub_ctx<'a>(ctx: &Ctx<'a>, e: &Entity, m: Mat3) -> Ctx<'a> {
@@ -79,7 +79,8 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
             }
             // A multiline attribute is drawn as its multiline text.
             let multiline = a.multiline_text();
-            let sh = if multiline.is_none() { Some(place_text_entity(ctx.d, &a.text, &a.text.value).0) } else { None };
+            let value = cadcraft_doc::fields::display(&a.text.value);
+            let sh = if multiline.is_none() { Some(place_text_entity(ctx.d, &a.text, &value).0) } else { None };
             // Properties of the attribute's definition (as AutoCAD copies them to the attribute
             // on insertion), except those set on the attribute itself: ByBlock = the reference's,
             // layer 0 = the reference's layer.
@@ -98,7 +99,10 @@ pub(crate) fn insert(b: &mut Builder, ctx: &Ctx, e: &Entity, ins: &cadcraft_doc:
                 let lw = if b.opts.lineweights { lw } else { 0.0 };
                 match (&multiline, &sh) {
                     (Some(m), _) => mtext(b, ctx, m, ink, lw),
-                    (None, Some(sh)) => b.shaped(ctx, ink, lw, sh),
+                    (None, Some(sh)) => {
+                        field_text_background(b, ctx, &a.text, &value);
+                        b.shaped(ctx, ink, lw, sh);
+                    }
                     (None, None) => {}
                 }
             }
