@@ -2626,6 +2626,16 @@ fn drawing_without_insunits_stays_unitless() {
 }
 
 #[test]
+fn pstylemode_survives_dxf_roundtrip() {
+    let mut d = Drawing::new_imperial();
+    d.header.set_i64("PSTYLEMODE", 0);
+
+    let text = write_dxf(&d);
+    let header = text.lines().map(str::trim).collect::<Vec<_>>();
+    assert!(header.windows(3).any(|w| w[0] == "$PSTYLEMODE" && w[1] == "70" && w[2] == "0"), "$PSTYLEMODE should be written as group 70 value 0",);
+}
+
+#[test]
 fn pdf_clips_a_primitive_beyond_the_coordinate_range() {
     let mut d = Drawing::new_metric();
     let paper = Space::Paper("Layout1".into());
