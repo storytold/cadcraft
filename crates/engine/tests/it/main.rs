@@ -72,6 +72,7 @@ mod layoff_repeat;
 mod layout_prompts;
 mod leader_command;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod leader_text_scale;
 mod lisp_corpus;
 mod lisp_undo_in_routine;
 mod malformed_handles;

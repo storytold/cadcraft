@@ -60,9 +60,18 @@ pub struct DimGeometry {
     pub value: String,
     /// The text as MTEXT contents (stacked fractions and tolerances).
     pub mtext: String,
+    /// The part of the text after `\X`, drawn below the dimension line (DXF Reference: `\X`
+    /// starts the text below it), as plain text, and where its centre is (#1055).
+    pub below: Option<(String, Vec2)>,
     /// Indices into `lines` of the second extension line (DIMLTEX2); the other extension
     /// lines take DIMLTEX1.
     pub ext2_lines: Vec<usize>,
+    /// DIMTMOVE 1's leader to text moved off the dimension line (its two ends), which is drawn as
+    /// a dimension line but isn't the one the text measures.
+    pub text_leader: Option<(Vec2, Vec2)>,
+    /// A linear dimension's whole dimension line (its two feet), drawn or not: with DIMSD1 and
+    /// DIMSD2 both on nothing of it is drawn, yet the text above and below `\X` still sits by it.
+    pub dim_axis: Option<(Vec2, Vec2)>,
 }
 
 impl DimGeometry {
@@ -71,8 +80,12 @@ impl DimGeometry {
     /// so other programs plot nothing for it, while every font draws `%%c` (#1645). A `%`
     /// that would run into a code is written `%%%`.
     pub fn mtext_contents(&self) -> String {
-        let mut out = String::with_capacity(self.value.len() + 2);
-        let mut chars = self.value.chars().peekable();
+        Self::mtext_code(&self.value)
+    }
+    /// [`Self::mtext_contents`] for any piece of a dimension's text (the part below the line too).
+    pub fn mtext_code(text: &str) -> String {
+        let mut out = String::with_capacity(text.len() + 2);
+        let mut chars = text.chars().peekable();
         while let Some(c) = chars.next() {
             match c {
                 '⌀' => out.push_str("%%c"),
@@ -265,7 +278,19 @@ impl<'a> DimConfig<'a> {
         }
     }
 
+    /// Text with `\X`: as wide as its wider part, as high as the part above the line (the part
+    /// below goes on the other side of it).
     fn measure(&self, text: &str) -> (f64, f64) {
+        match split_below(text) {
+            (above, Some(below)) => {
+                let ((wa, ha), (wb, _)) = (self.measure_one(above), self.measure_one(below));
+                (wa.max(wb), ha)
+            }
+            (above, None) => self.measure_one(above),
+        }
+    }
+
+    fn measure_one(&self, text: &str) -> (f64, f64) {
         if text.is_empty() {
             return (0.0, 0.0);
         }
@@ -354,6 +379,70 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
             g.text_mark(ends);
         }
     }
+    // `\X`: the text before it goes above the dimension line, the text after it below.
+    if let (above, Some(below)) = split_below(&g.mtext) {
+        let (above, below) = (above.to_string(), below.to_string());
+        let n = Vec2::from_angle(text_angle).perp();
+        let ((_, ha), (_, hb)) = (config.measure_one(&above), config.measure_one(&below));
+        // The dimension line under the text: the line through its longest piece (arrowheads and
+        // ticks are short; the line may be broken round centred text), not DIMTMOVE 1's leader.
+        let leader = g.text_leader;
+        let on_leader = |a: Vec2, b: Vec2| {
+            leader.is_some_and(|(l0, l1)| {
+                let eps = 1e-9 * (1.0 + l0.dist(l1));
+                let near = |q: Vec2| on_line(q, l0, l1).dist(q) <= eps;
+                near(a) && near(b)
+            })
+        };
+        // The marks drawn with the text (DIMINSPECT's frame, the arc length symbol) aren't it either.
+        let foot = g
+            .lines
+            .iter()
+            .zip(&g.line_roles)
+            .enumerate()
+            .filter(|(i, (_, r))| **r == LineRole::Dim && !g.text_marks.contains(i))
+            .flat_map(|(_, (l, _))| l.windows(2))
+            .filter_map(|w| match w {
+                [a, b] if !on_leader(*a, *b) => Some((*a, *b)),
+                _ => None,
+            })
+            .max_by(|x, y| x.0.dist(x.1).total_cmp(&y.0.dist(y.1)))
+            // With both halves suppressed (DIMSD1, DIMSD2) the line isn't drawn but is still there.
+            .or(g.dim_axis);
+        if let Some((a, b)) = foot {
+            let f = on_line(text_mid, a, b);
+            // DIMJUST 3 and 4 turn the text along an extension line, beside it: it doesn't sit
+            // on the dimension line, so it stays where it is and the part below goes under it,
+            // in its own frame.
+            let across = (b - a).normalized().perp().dot(n).abs() < 0.5;
+            let below_mid = if across && st.text_just >= 3 && !d.user_text_pos {
+                text_mid - n * (ha / 2.0 + gap + hb / 2.0)
+            } else {
+                let off = (text_mid - f).dot(n);
+                // Text centred on the line moves above it; text already off it stays where it is.
+                let side = if off < 0.0 { -1.0 } else { 1.0 };
+                if off.abs() < ha / 2.0 + gap * 0.5 && !d.user_text_pos {
+                    text_mid = f + n * (side * (gap + ha / 2.0));
+                }
+                // As far from the line as the text above is when it sits at its place (whatever
+                // clearance placed it, #2004), on the other side; text moved away (DIMTEDIT,
+                // DIMTMOVE) leaves the part below at the usual clearance under the line. A taller
+                // or shorter part below moves by half the difference.
+                let above_off = (text_mid - f).dot(n).abs();
+                let clearance = if above_off <= gap + ha { above_off } else { gap + ha / 2.0 };
+                f - n * (side * (clearance + (hb - ha) / 2.0))
+            };
+            let l = cadcraft_fonts::layout_mtext_with(&below, &params(below_mid, text_angle));
+            for p in l.pieces {
+                let base = g.text_glyphs.len();
+                g.text_runs.extend(p.shaped.text.into_iter().map(|t| cadcraft_fonts::TextGlyph { outline: t.outline + base, ..t }));
+                g.text.extend(p.shaped.strokes);
+                g.text_glyphs.extend(p.shaped.glyphs);
+            }
+            g.below = Some((decode_value(&cadcraft_fonts::plain_mtext(&below)), below_mid));
+        }
+        g.mtext = above;
+    }
     // DIMTFILL: a background behind the text, the text box plus DIMGAP on every side.
     if st.text_fill != 0 && !g.mtext.is_empty() {
         let (w, h) = measure(&g.mtext);
@@ -378,6 +467,26 @@ pub fn dimension_geometry_with(d: &Dimension, st: &DimStyle, dimscale: f64, font
 
 mod linear;
 mod variants;
+
+/// The foot of `p` on the line through `a` and `b`.
+fn on_line(p: Vec2, a: Vec2, b: Vec2) -> Vec2 {
+    let ab = b - a;
+    let len2 = ab.dot(ab);
+    if len2 <= 0.0 || !len2.is_finite() {
+        return a;
+    }
+    a + ab * ((p - a).dot(ab) / len2)
+}
+
+/// Dimension text split at `\X` (text below the dimension line): the part above and, when there
+/// is one, the part below.
+fn split_below(text: &str) -> (&str, Option<&str>) {
+    match text.split_once("\\X") {
+        Some((above, below)) => (above, Some(below)),
+        None => (text, None),
+    }
+}
+
 /// `%%` codes in the plain value become their characters (`%%c` → ⌀, `%%p` → ±, `%%d` → °).
 fn decode_value(s: &str) -> String {
     cadcraft_fonts::decode_controls(s).into_iter().map(|(c, _, _)| c).collect()
