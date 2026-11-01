@@ -43,6 +43,28 @@ impl Opening {
         self.jobs.push(Job { path: path.to_path_buf(), started: Instant::now(), rx });
     }
 
+    /// Convert a PDF on a worker thread into an unsaved drawing.
+    pub fn start_pdf(&mut self, path: &Path, page: usize, import: crate::PdfImporter) {
+        let (tx, rx) = channel();
+        let p = path.to_path_buf();
+        let spawned = std::thread::Builder::new().name("cadcraft-pdf-import".into()).spawn(move || {
+            let result = std::panic::catch_unwind(|| import(&p, page))
+                .unwrap_or_else(|_| Err(format!("PDF import: {} could not be read", p.display())))
+                .map(|drawing| {
+                    let stem = p.file_stem().unwrap_or_default().to_string_lossy();
+                    ReadFile::imported(drawing, format!("{stem} - page {page}.dwg"))
+                });
+            let _ = tx.send(result);
+        });
+        if spawned.is_err() {
+            let (tx, rx2) = channel();
+            let _ = tx.send(Err(format!("PDF import: {}: could not start a reader thread", path.display())));
+            self.jobs.push(Job { path: path.to_path_buf(), started: Instant::now(), rx: rx2 });
+            return;
+        }
+        self.jobs.push(Job { path: path.to_path_buf(), started: Instant::now(), rx });
+    }
+
     /// Whether any file is still being read.
     pub fn busy(&self) -> bool {
         !self.jobs.is_empty()

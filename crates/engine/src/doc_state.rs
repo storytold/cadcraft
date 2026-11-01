@@ -32,6 +32,8 @@ pub struct DocState {
     pub uid: u64,
     /// The drawing is saved as binary DXF (it was opened from one, or last saved as one).
     pub binary_dxf: bool,
+    /// PDF imports suggest DWG on their first save without changing global defaults.
+    pub imported_pdf: bool,
     /// The Block Editor (BEDIT), when it is open: `doc` is then the editor's drawing, and the
     /// drawing itself waits in it ([`DocState::drawing`]).
     pub block_edit: Option<blockedit::BlockEdit>,
@@ -60,6 +62,7 @@ impl DocState {
             view_history: Vec::new(),
             uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             binary_dxf: false,
+            imported_pdf: false,
             block_edit: None,
         }
     }
