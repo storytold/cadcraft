@@ -3,6 +3,7 @@
 //! process-wide, so these tests run one at a time.
 
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use cadcraft_engine::Session;
 use cadcraft_engine::cmd::file::MAX_ALIASES;
@@ -163,7 +164,11 @@ fn a_full_file_validates_lines_before_stopping_at_the_next_valid_definition() {
     s.execute("aliasedit", &json!({ "clear": true })).unwrap();
     let mut text = alias_prefix(MAX_ALIASES);
     text.push_str("; comment\nZZP00000,*NO_SUCH_1933\nLINE,*CIRCLE\nZZEXTERNAL, START NOTHING\nmalformed\nZZP00000,*MOVE\nZZAFTER,*CIRCLE\nanother malformed sentinel\n");
-    let r = s.execute("aliasedit", &json!({ "text": text })).unwrap();
+    let params = json!({ "text": text });
+    let start = Instant::now();
+    let result = s.execute("aliasedit", &params);
+    let elapsed = start.elapsed();
+    let r = result.unwrap();
     assert_eq!(r["loaded"], json!(MAX_ALIASES));
     assert_eq!(r["aliases"].as_object().unwrap().len(), MAX_ALIASES);
     assert_eq!(r["aliases"]["zzp00000"], json!("line"), "the cap stops even a valid duplicate replacement");
@@ -185,6 +190,8 @@ fn a_full_file_validates_lines_before_stopping_at_the_next_valid_definition() {
     assert_eq!(r["loaded"], json!(1));
     assert!(s.execute("aliasedit", &json!({ "set": { "ZZNEW": "line" } })).is_err());
     s.execute("aliasedit", &json!({ "clear": true })).unwrap();
+    // A generous responsiveness guard, not a benchmark or a timeout for a hung import.
+    assert!(elapsed < Duration::from_secs(5), "importing {MAX_ALIASES} aliases took {elapsed:?}");
 }
 
 #[test]
