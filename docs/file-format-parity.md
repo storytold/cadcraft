@@ -73,7 +73,7 @@ on read with a note, so such files no longer exceed the DXF limit (#1482). **DWG
 
 | Content | Read | Write | Notes |
 |---|---|---|---|
-| LINE, POINT, CIRCLE, ARC, ELLIPSE, LWPOLYLINE (widths, bulges, elevation), SPLINE, RAY, XLINE | yes | yes | round-trip tests |
+| LINE, POINT, CIRCLE, ARC, ELLIPSE, LWPOLYLINE (widths, bulges, elevation), SPLINE, RAY, XLINE | yes | yes; a revision cloud is an LWPOLYLINE with `RevcloudProps` xdata and arcs of bulge 0.520567, so other programs recognise it (#1570) | round-trip tests; `revcloud_recognised` |
 | POLYLINE 2D/3D | yes | yes (as LWPOLYLINE / 3D POLYLINE) | polyface and polygon meshes flattened: lossy |
 | TEXT, MTEXT, ATTDEF, INSERT + ATTRIB | yes; multiline attributes (embedded MTEXT) read and drawn | yes; multiline attributes written as embedded MTEXT (DXF 2007 and later; older versions: one line); changed attribute values refresh justified baselines, including small width changes | ATTDEF prompt kept (#137); unchanged values retain imported-font placement; a justified TEXT's insertion point (group 10, which AutoCAD takes from a DWG as it is) is computed as AutoCAD computes it: Middle (M) centred on the string's own extents, bottom justifications at a TrueType face's descent (#2229) |
 | DIMENSION (all 7 kinds) | yes | yes, with anonymous `*D` blocks | a reopened dimension's `*D` block is regenerated under its name, unreferenced ones dropped (#495); DIMASSOC objects written for every associated kind — linear/aligned, angular, radial/diametric, ordinate and arc length — and read back without CADCraft's xdata (#1651) |
@@ -149,6 +149,7 @@ our output in AutoCAD black-box.
 | 2026-10-19 | minor | Pre-2007 DXF saves write text in the file's code page (`Ação` as ANSI_1252 bytes, not `A\U+00E7\U+00E3o`); characters outside it stay `\U+` escapes |
 | 2026-10-20 | minor | DIMENSION: the `*D` block's MTEXT, and the MTEXT EXPLODE leaves, hold the diameter sign as `%%c` instead of the decoded U+2300, which no SHX font has, so other programs plotted diameter dimensions in an SHX style without the sign (#1645) |
 | 2026-10-21 | minor | Proxy objects and entities keep their class through a save: group 91 renumbered to the written CLASSES (the class it names is kept), a proxy whose number names no class dropped (#1812) |
+| 2026-10-20 | minor | REVCLOUD: arcs use bulge 0.520567 instead of 0.5. With the `RevcloudProps` xdata (#1605), readers that check both (ezdxf's `is_revcloud`, other CAD programs) recognise a saved cloud as a revision cloud (#1570) |
 | 2026-10-17 | minor | DWG read: DGN line style components no line style definition reaches are left out before the DXF bridge, with a read note; an 83 MB site plan with 888,483 of them (1.2 GB of DXF, over the limit) now opens (#1482) |
 | 2026-10-12 | minor | PDF output: object transparency plotted as PDF alpha (`/ExtGState` `/ca` `/CA`) when the page setup's or the plot's "Plot transparency" is on; PNG plots blend it, SVG uses `opacity`; plots without it are unchanged byte for byte |
 | 2026-10-12 | minor | DXF/DWG save: the Model layout's plot settings are written as CADCraft plots model space, drawing extents scaled to fit (PLOTSETTINGS 74 = 1, 75 = 0), instead of plot type 5 "Layout information", which other programs' Plot dialogs can't use for model space |
