@@ -86,6 +86,48 @@ fn a_saved_drawing_keeps_the_dynamic_block_as_read() {
     assert_eq!(by_node(dynamic_block(&back, "Door").unwrap()), by_node(before));
 }
 
+/// The Door fixture with a scale action on the Width parameter: graph node 6, object 68.
+fn with_scale_action() -> String {
+    let node = "91 6\n93 32\n95 7\n360 68\n92 -1\n92 -1\n92 -1\n92 -1\n";
+    let action = "0 BLOCKSCALEACTION\n5 68\n330 61\n100 AcDbEvalExpr\n90 7\n98 33\n99 232\n\
+        100 AcDbBlockElement\n300 Scale\n98 33\n99 232\n1071 0\n\
+        100 AcDbBlockAction\n70 0\n71 1\n330 30\n1010 0\n1020 0\n1030 0\n\
+        100 AcDbBlockActionWithBasePt\n92 2\n93 2\n301 UpdatedBaseX\n302 UpdatedBaseY\n\
+        1011 0\n1021 0\n1031 0\n280 1\n1012 0\n1022 0\n1032 0\n\
+        100 AcDbBlockScaleAction\n94 2\n95 2\n96 2\n303 Scale\n304 XScale\n305 YScale\n";
+    fixture()
+        .replacen("96 6\n97 6\n", "96 7\n97 7\n", 1)
+        .replacen("0 BLOCKVISIBILITYPARAMETER\n", &format!("{node}0 BLOCKVISIBILITYPARAMETER\n"), 1)
+        .replacen("0 BLOCKLOOKUPPARAMETER\n", &format!("{action}0 BLOCKLOOKUPPARAMETER\n"), 1)
+}
+
+/// A scale action goes through CADCraft's own DWG save (the bridge DXF, then acadrust) whole:
+/// the DWG holds it with its connections, and it reads back as the same action. AutoCAD refused
+/// such DWGs while acadrust left out the byte after its connections (cadcraft-dwg's
+/// `scale_actions_keep_the_byte_autocad_reads_after_their_connections` covers the byte).
+#[test]
+fn a_scale_action_survives_a_dwg_save() {
+    use acadrust::objects::{DynamicBlockData, DynamicBlockObject, ObjectType};
+    let d = read_dxf(dxf(&with_scale_action()).as_bytes()).unwrap();
+    let before = dynamic_block(&d, "Door").unwrap();
+    assert!(before.actions.iter().any(|a| a.node == 7 && matches!(a.kind, ActionKind::Scale)), "{:?}", before.actions);
+    let dwg = cadcraft_io::write(&d, "x.dwg").unwrap();
+
+    let doc = acadrust::DwgReader::from_stream(std::io::Cursor::new(&dwg)).read().unwrap();
+    let scale = doc.objects.values().find_map(|o| match o {
+        ObjectType::DynamicBlock(DynamicBlockObject { data: DynamicBlockData::ScaleAction(s), .. }) => Some(s.clone()),
+        _ => None,
+    });
+    let scale = scale.expect("the DWG has no scale action");
+    let names = |c: &[acadrust::objects::BlockConnection]| c.iter().map(|c| (c.code, c.name.clone())).collect::<Vec<_>>();
+    assert_eq!(names(&scale.connections), [(2, "Scale".to_string()), (2, "XScale".into()), (2, "YScale".into())]);
+    assert_eq!(names(&scale.action.connections), [(2, "UpdatedBaseX".to_string()), (2, "UpdatedBaseY".into())]);
+    assert_eq!(scale.dwg_tail_byte, 0);
+
+    let back = cadcraft_io::read(&dwg, "x.dwg").unwrap();
+    assert_eq!(by_node(dynamic_block(&back, "Door").unwrap()), by_node(before));
+}
+
 /// The model with each parameter and action object named by its graph id instead of its handle.
 fn by_node(mut m: DynamicBlock) -> DynamicBlock {
     let ids: std::collections::HashMap<Handle, i32> = m
