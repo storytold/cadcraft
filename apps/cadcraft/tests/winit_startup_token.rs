@@ -5,7 +5,9 @@ use std::path::PathBuf;
 /// The source directory of the winit the workspace builds, from `cargo metadata`.
 fn winit_source() -> PathBuf {
     let out = std::process::Command::new(env!("CARGO"))
-        .args(["metadata", "--format-version", "1", "--offline", "--manifest-path"])
+        // `--offline` needs every resolved package in the local cache, and a build downloads only
+        // its own platform's, so resolve for the target the test was built for (from build.rs).
+        .args(["metadata", "--format-version", "1", "--offline", "--filter-platform", env!("CADCRAFT_TARGET"), "--manifest-path"])
         .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml"))
         .output()
         .unwrap();
