@@ -236,6 +236,14 @@ fn plot_goes_through_the_hook() {
         assert!(e.to_string().contains("layouts"), "{e}");
     }
     assert!(s.execute("plot", &json!({"output": "png", "layouts": ["Layout1", "Layout2"]})).is_err());
+    // `layout` and `layouts` naming different sheets are refused (the reply would name one sheet and the render another); agreeing ones pass.
+    for p in
+        [json!({"output": "png", "layout": "Model", "layouts": ["Layout1"]}), json!({"output": "pdf", "layout": "Layout1", "layouts": ["Model"]})]
+    {
+        let e = s.execute("plot", &p).unwrap_err().to_string();
+        assert!(e.contains("different"), "{e}");
+    }
+    assert_eq!(s.execute("plot", &json!({"output": "png", "layout": "layout1", "layouts": ["Layout1"]})).unwrap()["layout"], "Layout1");
     let one = s.execute("plot", &json!({"output": "png", "layouts": ["Layout1"]})).unwrap();
     assert_eq!(one["layout"], "Layout1");
     let text = String::from_utf8(super::super::file::base64_decode(one["data"].as_str().unwrap()).unwrap()).unwrap();

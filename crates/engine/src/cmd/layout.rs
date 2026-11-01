@@ -785,6 +785,12 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
     // Checked here for a clear error; the plotter resolves the names the same way.
     let sheets = p.get("layouts").map(|v| plot_sheets(cmd, s.doc()?, v)).transpose()?;
 
+    // `layout` and `layouts` must name the same sheet(s), or the reply would name one sheet and the render another.
+    if let (Some(n), Some(names)) = (str_param(p, "layout"), sheets.as_deref())
+        && !matches!(names, [only] if only.eq_ignore_ascii_case(n))
+    {
+        return Err(bad(cmd, "`layout` and `layouts` name different sheets; give only one of them"));
+    }
     let is_image = p.get("output").and_then(Value::as_str).is_some_and(|o| o.eq_ignore_ascii_case("png") || o.eq_ignore_ascii_case("svg"));
     let space = match str_param(p, "layout") {
         Some(n) if n.eq_ignore_ascii_case("model") => Space::Model,
