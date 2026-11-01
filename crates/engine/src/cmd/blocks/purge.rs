@@ -299,6 +299,41 @@ fn retain<T>(v: &mut Vec<T>, name: impl Fn(&T) -> &String, n: &str) -> bool {
     v.len() != before
 }
 
+/// Most passes [`purge_unused`] makes: each can free what the last one's objects used (a nested
+/// block, its layer, that layer's linetype).
+const MAX_PASSES: usize = 64;
+
+/// Remove every named object drawing `d` doesn't use, as PURGE All would, nested ones included;
+/// the defaults and the current ones stay. For a drawing being written (WBLOCK's), not the one
+/// being edited: nothing goes through the session or its undo.
+pub(in crate::cmd) fn purge_unused(d: &mut Drawing) {
+    for _ in 0..MAX_PASSES {
+        let mut removed = false;
+        for kind in ALL {
+            for name in candidates(d, *kind) {
+                removed |= match kind {
+                    Kind::Blocks => {
+                        let key = d.blocks.keys().find(|k| k.eq_ignore_ascii_case(&name)).cloned();
+                        key.is_some_and(|k| d.blocks.remove(&k).is_some())
+                    }
+                    Kind::Layers => retain(&mut d.layers, |l| &l.name, &name),
+                    Kind::TextStyles => retain(&mut d.text_styles, |t| &t.name, &name),
+                    Kind::Linetypes => retain(&mut d.linetypes, |t| &t.name, &name),
+                    Kind::Dimstyles => retain(&mut d.dim_styles, |t| &t.name, &name),
+                    Kind::MleaderStyles => retain(&mut d.mleader_styles, |t| &t.name, &name),
+                    Kind::MlineStyles => retain(&mut d.mline_styles, |t| &t.name, &name),
+                    Kind::TableStyles => retain(&mut d.table_styles, |t| &t.name, &name),
+                    Kind::Groups => retain(&mut d.groups, |g| &g.name, &name),
+                    Kind::ZeroLength | Kind::EmptyText | Kind::Absent | Kind::All => false,
+                };
+            }
+        }
+        if !removed {
+            break;
+        }
+    }
+}
+
 /// Model-space and layout objects with no length, or text with no characters.
 fn degenerate(d: &Drawing, kind: Kind) -> Vec<Handle> {
     let zero = |e: &EntityKind| match e {

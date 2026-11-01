@@ -96,7 +96,9 @@ fn write(s: &Session, cmd: &str, path: &str, what: Source) -> Result<(usize, usi
     Ok((d.model.len(), bytes.len()))
 }
 
-/// A new drawing of `ents`, with `src`'s settings, styles and blocks; its insertion base 0,0.
+/// A new drawing of `ents`, with `src`'s settings and the layers, linetypes, styles and blocks
+/// they use, as AutoCAD's WBLOCK writes them (#2423): what nothing in it uses is purged, and
+/// the defaults and the current ones stay. Its insertion base is 0,0.
 fn with_objects(src: &Drawing, ents: impl Iterator<Item = Entity>) -> Drawing {
     let mut d = Drawing::new_imperial();
     d.header = src.header.clone();
@@ -114,6 +116,7 @@ fn with_objects(src: &Drawing, ents: impl Iterator<Item = Entity>) -> Drawing {
         e.handle = d.new_handle();
         d.model.push(e);
     }
+    super::purge::purge_unused(&mut d);
     d
 }
 
