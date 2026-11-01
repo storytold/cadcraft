@@ -2274,6 +2274,48 @@ fn svg_group_transforms_apply() {
     assert!((l.b - Vec3::new(15.0, 8.0, 0.0)).len() < 1e-9, "{l:?}");
 }
 
+/// The geometry of everything read, for comparing two readings of one drawing.
+fn geometry(d: &Drawing) -> String {
+    format!("{:?}", d.model.iter().map(|e| &e.kind).collect::<Vec<_>>())
+}
+
+/// `transform` on a shape element (SVG 1.1 §7.5, every graphics element takes one) maps it as
+/// the same transform on a group around it would: for every shape kind, composed after the
+/// parent group's, and not passed on to the next sibling.
+#[test]
+fn svg_element_transforms_apply_like_a_group_around_the_element() {
+    let read_svg = |body: &str| read(format!("{SVG_PAGE}{body}</svg>").as_bytes(), "t.svg").unwrap();
+    let shapes = [
+        r#"<rect x="1" y="1" width="4" height="3"/>"#,
+        r#"<circle cx="5" cy="5" r="2"/>"#,
+        r#"<ellipse cx="5" cy="5" rx="3" ry="1"/>"#,
+        r#"<line x1="0" y1="0" x2="4" y2="2"/>"#,
+        r#"<polyline points="0,0 2,0 2,2"/>"#,
+        r#"<polygon points="0,0 2,0 1,1"/>"#,
+        r#"<path d="M1 1 L4 1 A2 2 0 0 1 6 3 C7 3 8 4 8 5"/>"#,
+    ];
+    for t in ["translate(5,2)", "rotate(30 5 5)", "scale(2,1)", "skewX(20)", "matrix(1 0.2 0 1 3 -1)"] {
+        for shape in shapes {
+            let on_element = shape.replacen("/>", &format!(r#" transform="{t}"/>"#), 1);
+            let in_group = format!(r#"<g transform="{t}">{shape}</g>"#);
+            assert_eq!(geometry(&read_svg(&on_element)), geometry(&read_svg(&in_group)), "{t} on {shape}");
+        }
+    }
+    // A rotated circle stays a circle; a skewed one is an ellipse.
+    assert_eq!(kinds(&read_svg(r#"<circle cx="5" cy="5" r="2" transform="rotate(30)"/>"#)), ["Circle"]);
+    assert_eq!(kinds(&read_svg(r#"<circle cx="5" cy="5" r="2" transform="skewX(20)"/>"#)), ["Ellipse"]);
+    // Inside a group: the group's transform, then the element's.
+    let nested = read_svg(r#"<g transform="scale(2)"><line x1="0" y1="0" x2="1" y2="0" transform="translate(1,0)"/></g>"#);
+    let both = read_svg(r#"<g transform="scale(2)"><g transform="translate(1,0)"><line x1="0" y1="0" x2="1" y2="0"/></g></g>"#);
+    assert_eq!(geometry(&nested), geometry(&both));
+    // Written with an end tag too, and the next sibling keeps its own place.
+    let d = read_svg(r#"<line x1="0" y1="0" x2="1" y2="0" transform="translate(5,0)"></line><line x1="0" y1="0" x2="1" y2="0"/>"#);
+    let lines: Vec<Line> = d.model.iter().filter_map(|e| if let EntityKind::Line(l) = &e.kind { Some(l.clone()) } else { None }).collect();
+    assert_eq!(lines.len(), 2);
+    assert!((lines[0].a - Vec3::new(5.0, 10.0, 0.0)).len() < 1e-9, "{:?}", lines[0]);
+    assert!((lines[1].a - Vec3::new(0.0, 10.0, 0.0)).len() < 1e-9, "{:?}", lines[1]);
+}
+
 #[test]
 fn svg_viewbox_scaling_and_mm_units() {
     let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="20mm" height="10mm" viewBox="0 0 200 100"><circle cx="100" cy="50" r="50"/></svg>"#;
