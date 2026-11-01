@@ -225,4 +225,10 @@ fn the_json_form_of_dash_wblock_erases_what_it_writes() {
     s.execute("-wblock", &json!({ "path": file(&dir, "erase.dwg"), "handles": [b.hex()], "base": [5, 5] })).unwrap();
     assert_eq!(read(&file(&dir, "erase.dwg")), ["CIRCLE"]);
     assert!(!alive(&s, b));
+    // Nothing selected writes no file, as at the command line.
+    let none = file(&dir, "none.dwg");
+    assert!(s.execute("-wblock", &json!({ "path": none, "handles": [] })).is_err());
+    assert!(s.execute("-wblock", &json!({ "path": none, "handles": [b.hex()] })).is_err(), "erased already");
+    assert!(s.execute("-wblock", &json!({ "path": none })).is_err());
+    assert!(!std::path::Path::new(&none).exists());
 }

@@ -56,6 +56,10 @@ fn run_dash_wblock(s: &mut Session, p: &Value) -> Result<Value> {
         Some(name) => write(s, "-wblock", &path, Source::Block(name, base))?,
         None => {
             let hs = targets(s, p)?;
+            // As at the command line, nothing selected writes no file.
+            if !hs.iter().any(|h| s.doc().is_ok_and(|d| d.entity(*h).is_some())) {
+                return Err(bad("-wblock", "no objects selected"));
+            }
             let written = write(s, "-wblock", &path, Source::Objects(&hs, base.unwrap_or(Vec2::ZERO)))?;
             erase(s, &hs)?;
             written
