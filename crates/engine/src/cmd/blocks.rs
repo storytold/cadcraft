@@ -17,6 +17,7 @@ use super::{CommandSpec, bad, bool_or, f64_or, find_command, ok, point_param, po
 use super::has_doc;
 use crate::{Accept, EngineError, Input, Interactive, Prompt, Result, Session, Step};
 
+mod attdef;
 mod attedit;
 mod burst;
 mod description;
@@ -45,7 +46,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .menu(&["Draw", "Block", "Define Attributes..."])
             .alias(&["att", "-attdef"])
             .params("{tag, prompt?, default?, at, height?, invisible?}")
-            .interactive(|_| Ok(Box::new(AttdefM::default()))),
+            .interactive(|_| Ok(Box::new(attdef::AttdefM::default()))),
         attedit::attedit_spec(),
         attedit::dash_attedit_spec(),
         CommandSpec::new("wblock", "Write Block", run_wblock).alias(&["w"]).params("{path, name? | handles?, base?}"),
@@ -980,52 +981,6 @@ impl Interactive for InsertM {
         });
         let rot = self.rotation.unwrap_or(if self.stage == InsStage::Rotation { at.angle_to(c) } else { 0.0 });
         vec![EntityKind::Insert(insert_entity(b, at, self.scale3(scale), rot, self.base))]
-    }
-}
-
-#[derive(Default)]
-struct AttdefM {
-    tag: Option<String>,
-    prompt: Option<String>,
-    default: Option<String>,
-}
-
-impl Interactive for AttdefM {
-    fn name(&self) -> &'static str {
-        "ATTDEF"
-    }
-    fn prompt(&self, _s: &Session) -> Prompt {
-        match (&self.tag, &self.prompt, &self.default) {
-            (None, ..) => Prompt::new("Enter attribute tag name", Accept::TEXT),
-            (Some(_), None, _) => Prompt::new("Enter attribute prompt", Accept::TEXT),
-            (Some(_), Some(_), None) => Prompt::new("Enter default attribute value", Accept::TEXT),
-            _ => Prompt::new("Specify start point of text", Accept::POINT),
-        }
-    }
-    fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
-        let text = match &i {
-            Input::Text(t) => Some(t.clone()),
-            Input::Enter => Some(String::new()),
-            _ => None,
-        };
-        match (&self.tag, &self.prompt, &self.default) {
-            (None, ..) => {
-                if let Some(t) = text.filter(|t| !t.trim().is_empty() && !t.contains(' ')) {
-                    self.tag = Some(t.to_ascii_uppercase());
-                }
-            }
-            (Some(_), None, _) => self.prompt = text,
-            (Some(_), Some(_), None) => self.default = text,
-            (Some(tag), Some(pr), Some(def)) => {
-                if let Input::Point(p) = i {
-                    let h = s.doc()?.header.f64("TEXTSIZE", 0.2);
-                    let k = attdef_kind(s, tag, pr, def, p, h, false);
-                    s.add_entity(k)?;
-                    return Ok(Step::Done);
-                }
-            }
-        }
-        Ok(Step::Continue)
     }
 }
 

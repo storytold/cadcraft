@@ -5,6 +5,7 @@ mod annotative;
 mod arc_ctrl_direction;
 mod array_commands;
 mod assoc_array;
+mod attdef_command;
 mod attdisp_attsync;
 mod attedit_prompts;
 mod attrib_modes;
