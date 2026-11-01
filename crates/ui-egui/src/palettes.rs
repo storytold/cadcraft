@@ -1600,27 +1600,94 @@ mod tests {
             .collect()
     }
 
+    /// The radius of each circle in `handles`, selected or not.
+    fn radii_of(app: &CadApp, handles: &[String]) -> Vec<f64> {
+        let d = app.session.doc().unwrap();
+        handles
+            .iter()
+            .filter_map(|h| d.entity(cadcraft_doc::Handle::parse_hex(h)?))
+            .filter_map(|e| if let EntityKind::Circle(c) = &e.kind { Some(c.radius) } else { None })
+            .collect()
+    }
+
+    /// A palette showing `app`'s selection, a few frames in.
+    fn palette(app: CadApp) -> egui_kittest::Harness<'static, CadApp> {
+        let mut h =
+            egui_kittest::Harness::builder().with_size(vec2(400.0, 1200.0)).build_ui_state(|ui, app: &mut CadApp| properties_section(app, ui), app);
+        h.run_steps(3);
+        h
+    }
+
+    /// Types `text` into the first `*VARIES*` field (the Radius, whose row comes first) and commits it.
+    fn type_into_first_varies(h: &mut egui_kittest::Harness<'static, CadApp>, text: &str) {
+        let field = h.get_all_by_value(VARIES).next().unwrap();
+        field.focus();
+        h.run_steps(2);
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        h.run_steps(2);
+        h.get_all_by_value(VARIES).next().unwrap().type_text(text);
+        h.run_steps(2);
+        h.key_press(egui::Key::Enter);
+        h.run_steps(3);
+    }
+
+    fn circles(app: &mut CadApp, radii: &[i32], extra: Value) -> Vec<String> {
+        radii
+            .iter()
+            .map(|r| {
+                let mut p = json!({ "center": [0, 0], "radius": r });
+                if let (Some(o), Some(e)) = (p.as_object_mut(), extra.as_object()) {
+                    o.extend(e.clone());
+                }
+                app.run("circle", p).unwrap()["handle"].as_str().unwrap().to_string()
+            })
+            .collect()
+    }
+
     /// A value typed into the palette goes to every selected object, not just the first.
     #[test]
     fn typing_a_shared_value_changes_every_selected_object() {
         let mut app = CadApp::new(Session::default(), Services::default());
-        let handles: Vec<String> =
-            [2, 5, 9].map(|r| app.run("circle", json!({ "center": [0, 0], "radius": r })).unwrap()["handle"].as_str().unwrap().to_string()).to_vec();
+        let handles = circles(&mut app, &[2, 5, 9], json!({}));
         app.run("select", json!({ "handles": handles })).unwrap();
-        let mut h =
-            egui_kittest::Harness::builder().with_size(vec2(400.0, 1200.0)).build_ui_state(|ui, app: &mut CadApp| properties_section(app, ui), app);
-        h.run_steps(3);
-        // The first `*VARIES*` field is the Radius: its row comes first.
-        let radius = h.get_all_by_value(VARIES).next().unwrap();
-        radius.focus();
-        h.run_steps(2);
-        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
-        h.run_steps(2);
-        h.get_all_by_value(VARIES).next().unwrap().type_text("7");
-        h.run_steps(2);
-        h.key_press(egui::Key::Enter);
-        h.run_steps(3);
+        let mut h = palette(app);
+        type_into_first_varies(&mut h, "7");
         assert_eq!(selected_radii(h.state()), vec![7.0, 7.0, 7.0], "all three circles take the typed radius");
+    }
+
+    /// The edit to several objects is one undo step.
+    #[test]
+    fn editing_several_objects_is_one_undo_step() {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        let handles = circles(&mut app, &[2, 5, 9], json!({}));
+        app.run("select", json!({ "handles": handles.clone() })).unwrap();
+        let mut h = palette(app);
+        type_into_first_varies(&mut h, "7");
+        assert_eq!(radii_of(h.state(), &handles), vec![7.0, 7.0, 7.0], "the edit reached all three");
+        h.state_mut().run("undo", json!({})).unwrap();
+        assert_eq!(radii_of(h.state(), &handles), vec![2.0, 5.0, 9.0], "one undo puts back all three radii");
+    }
+
+    /// A mixed selection has no type to show: only the properties every object has (General), so
+    /// no Radius row, however different the circles' radii are. One object is unchanged: its own
+    /// values, nothing varies.
+    #[test]
+    fn mixed_types_show_general_only_and_one_object_is_unchanged() {
+        let mut app = CadApp::new(Session::default(), Services::default());
+        let mut handles = circles(&mut app, &[2, 5], json!({}));
+        let line = app.run("line", json!({ "points": [[0, 0], [10, 0]] })).unwrap()["handles"][0].as_str().unwrap().to_string();
+        let circles_only = handles.clone();
+        handles.push(line);
+        app.run("select", json!({ "handles": handles })).unwrap();
+        let mut h = palette(app);
+        assert_eq!(h.query_all_by_value(VARIES).count(), 0, "two circles and a line show no Radius to vary");
+        h.state_mut().run("select", json!({ "handles": circles_only.clone() })).unwrap();
+        h.run_steps(3);
+        assert!(h.query_all_by_value(VARIES).count() > 0, "the two circles alone do show it");
+        h.state_mut().run("select", json!({ "handles": [circles_only[0].clone()] })).unwrap();
+        h.run_steps(3);
+        assert_eq!(h.query_all_by_value(VARIES).count(), 0, "one circle shows its own radius");
+        assert!(h.query_all_by_value("2.0000").count() > 0);
     }
 
     /// The values the palette works out are kept for a drawing revision and a selection, and
