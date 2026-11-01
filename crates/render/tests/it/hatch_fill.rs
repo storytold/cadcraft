@@ -183,6 +183,19 @@ fn pattern_swatches_stay_in_their_square_and_show_a_few_repeats() {
 }
 
 #[test]
+fn a_swatch_mostly_made_of_gaps_shows_every_family() {
+    // AR-CONC's dash repeats are mostly gaps: at the usual scale its swatch would pass the cap and
+    // lose its last families (the dots), leaving open stones.
+    let Some(p) = cadcraft_doc::library::pattern("AR-CONC") else { panic!("AR-CONC") };
+    let runs = cadcraft_render::pattern_swatch(&p.lines, 1.0);
+    // Zoomed in to about one tile, so the stones read at a swatch's size.
+    assert!(runs.len() <= 125, "{} runs", runs.len());
+    assert!(runs.iter().any(|r| r.len() == 1), "no dots");
+    // Zoomed in only that far: stones (three sides each) still show.
+    assert!(runs.iter().filter(|r| r.len() == 2).count() >= 15, "too few stone sides");
+}
+
+#[test]
 fn brick_joints_are_drawn_once_half_a_brick_apart_course_to_course() {
     let l = draw(hatch("BRICK", vec![square(0.0, 2.0)]), "0");
     // Vertical joints: (x, course) for every vertical segment, rounded.
