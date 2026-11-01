@@ -296,6 +296,14 @@ fn entity_z(e: &Entity, p: Vec2) -> Option<f64> {
         EntityKind::MText(t) => Some(t.insert.z),
         EntityKind::Insert(i) => Some(i.insert.z),
         EntityKind::Face3d(f) => face_z(&f.corners, p).or_else(|| along(&f.corners, true)),
+        // Drawn as its faces' visible edges: the Z on the nearest one.
+        EntityKind::PolyfaceMesh(m) => m
+            .faces3d()
+            .iter()
+            .flat_map(cadcraft_doc::Face3d::visible_edges)
+            .map(|(a, b)| on_segment(a, b))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(z, _)| z),
         _ => None,
     }
 }
@@ -932,11 +940,9 @@ impl Interactive for DistM {
                     let model = model_points(&self.sources);
                     s.echo(format!("Distance = {}", fmt_d(s, path_len(model.as_deref().unwrap_or(pts), &self.bulges))));
                 }
-                Input::Keyword(k) if k == "Undo" => {
-                    if pts.len() > 1 {
-                        self.arcs.undo(pts, &mut self.bulges);
-                        self.sources.pop();
-                    }
+                Input::Keyword(k) if k == "Undo" && pts.len() > 1 => {
+                    self.arcs.undo(pts, &mut self.bulges);
+                    self.sources.pop();
                 }
                 Input::Keyword(k) if k == "Length" => self.length = true,
                 Input::Keyword(k) if k == "Total" => return self.total(s, false),
@@ -944,10 +950,8 @@ impl Interactive for DistM {
                     self.arcs.close(pts, &mut self.bulges)?;
                     return self.total(s, true);
                 }
-                Input::Keyword(k) => {
-                    if !self.arcs.keyword(&k, pts) {
-                        s.echo(format!("{k}: not available yet"));
-                    }
+                Input::Keyword(k) if !self.arcs.keyword(&k, pts) => {
+                    s.echo(format!("{k}: not available yet"));
                 }
                 Input::Enter => return self.total(s, false),
                 _ => {}

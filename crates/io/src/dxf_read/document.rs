@@ -23,7 +23,7 @@ pub(super) fn parse_entities(
         {
             c.plot_style = n;
         }
-        // More entities from this record (the faces of a polyface or polygon mesh).
+        // More entities from this record (the faces of a polygon mesh).
         let mut extra: Vec<EntityKind> = Vec::new();
         i += 1;
         match kind.as_str() {
@@ -35,13 +35,11 @@ pub(super) fn parse_entities(
                 extra = more;
                 kindent = Some((c, k));
             }
-            "INSERT" => {
-                if t.i(66) == Some(1) {
-                    let ins_layer = kindent.as_ref().map(|(c, _)| c.layer.clone()).unwrap_or_default();
-                    let attribs = insert_attribs(recs, &mut i, &ins_layer);
-                    if let Some((_, EntityKind::Insert(ins))) = kindent.as_mut() {
-                        ins.attribs = attribs;
-                    }
+            "INSERT" if t.i(66) == Some(1) => {
+                let ins_layer = kindent.as_ref().map(|(c, _)| c.layer.clone()).unwrap_or_default();
+                let attribs = insert_attribs(recs, &mut i, &ins_layer);
+                if let Some((_, EntityKind::Insert(ins))) = kindent.as_mut() {
+                    ins.attribs = attribs;
                 }
             }
             // A VERTEX or ATTRIB with no POLYLINE or INSERT before it; a stray SEQEND holds nothing.
@@ -313,11 +311,13 @@ pub(super) fn apply_sortents(
         let up = name.to_ascii_uppercase();
         // Attribute definitions are not drawn in block references; preserve their record order so
         // INSERT prompts attributes in creation/BATTMAN order rather than draw order.
+        // A sort handle of 0 draws last (ezdxf `reorder`, which notes AutoCAD defines it, undocumented).
         let key = |e: &Entity| {
             if matches!(e.kind, EntityKind::AttDef(_)) {
-                (1u8, 0)
+                (1u8, false, 0)
             } else {
-                (0u8, map.get(&e.handle).copied().unwrap_or(e.handle.0))
+                let k = map.get(&e.handle).copied().unwrap_or(e.handle.0);
+                (0u8, k == 0, k)
             }
         };
         if up == "*MODEL_SPACE" {

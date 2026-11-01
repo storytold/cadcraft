@@ -3,7 +3,9 @@ use super::display::append;
 use super::display::{DisplayList, Kind, NO_LAYER, PlotText, VIEWPORT_CONTENT};
 use super::draw::entity;
 use super::viewports::{MAX_VIEWPORTS, viewport};
-use super::{Bounds2, Builder, Color, Ctx, Drawing, Entity, EntityKind, Handle, Lineweight, Mat3, Orbit3d, Space, Vec2, paper, pen, plotstyle, point};
+use super::{
+    Bounds2, Builder, Color, Ctx, Drawing, Entity, EntityKind, Handle, Lineweight, Mat3, Orbit3d, Space, Vec2, paper, pen, plotstyle, point,
+};
 
 /// Build options.
 #[derive(Clone, Debug)]
@@ -15,6 +17,10 @@ pub struct Options {
     pub min_dash: f64,
     /// Draw text (off for very coarse previews).
     pub text: bool,
+    /// Draw lines with their linetypes. Off, every line is drawn whole and continuous, as picking
+    /// sees it: a dashed line is hit across its gaps, and a small pattern on a long line makes
+    /// millions of dashes.
+    pub linetypes: bool,
     /// Highlighted (selected) handles are not special here; the canvas overlays them.
     pub fill: bool,
     pub lineweights: bool,
@@ -39,6 +45,9 @@ pub struct Options {
     pub cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// 3D Orbit camera orientation (defaults to 2D Top plan view).
     pub orbit: Orbit3d,
+    /// When set on a paper-space build, only the viewport with this handle uses [`Options::orbit`];
+    /// other viewports stay in 2D Top plan view.
+    pub orbit_viewport: Option<Handle>,
 }
 
 impl Options {
@@ -55,6 +64,7 @@ impl Default for Options {
             tolerance: 0.001,
             min_dash: 0.0,
             text: true,
+            linetypes: true,
             fill: true,
             lineweights: false,
             view_height: 0.0,
@@ -64,6 +74,7 @@ impl Default for Options {
             transparency: false,
             cancel: None,
             orbit: Orbit3d::default(),
+            orbit_viewport: None,
         }
     }
 }
@@ -106,7 +117,8 @@ fn build_space(d: &Drawing, space: &Space, opts: &Options, plotting: bool) -> Di
     let opts = &with_point_view(d, space, opts);
     let styler = style_table(d, space, opts, plotting).map(|t| plotstyle::Styler::new(d, t));
     let paper = matches!(space, Space::Paper(_));
-    let mut b = Builder { list: DisplayList::default(), opts, plotting, paper, styles: styler.as_ref(), named: None, shared_budget: None, transparency: 0 };
+    let mut b =
+        Builder { list: DisplayList::default(), opts, plotting, paper, styles: styler.as_ref(), named: None, shared_budget: None, transparency: 0 };
     if let Space::Paper(name) = space {
         b.list.sheet = paper::sheet(d, name);
     }

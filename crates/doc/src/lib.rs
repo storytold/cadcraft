@@ -27,7 +27,7 @@ pub use cadcraft_color as color;
 pub use cadcraft_geom as geom;
 pub use constraint::*;
 pub use entity::*;
-pub use extents::{MAX_BLOCK_DEPTH, entity_bounds};
+pub use extents::{MAX_BLOCK_DEPTH, entity_bounds, extent_bounds};
 pub use format::Format;
 pub use gdt::*;
 pub use header::{HVal, Header};
@@ -144,6 +144,10 @@ pub struct Drawing {
     pub image_assets: BTreeMap<String, std::sync::Arc<Vec<u8>>>,
     /// Embedded OLE object payloads for OLE2FRAME entities.
     pub ole_items: BTreeMap<String, OleItem>,
+    /// A save option, set on the copy SAVEAS `portableFonts` writes: the file gets Windows fonts
+    /// for the Linux fonts of text styles, and each style keeps its own in CADCraft xdata, so the
+    /// drawing reopens with it. Never set on an open drawing.
+    pub portable_fonts: bool,
 }
 
 impl Default for Drawing {
@@ -205,6 +209,7 @@ impl Drawing {
             skipped_records: BTreeMap::new(),
             image_assets: BTreeMap::new(),
             ole_items: BTreeMap::new(),
+            portable_fonts: false,
         }
     }
 
@@ -403,13 +408,19 @@ impl Drawing {
         !self.hidden_objects.is_empty() && self.hidden_objects.contains(&h)
     }
 
-    /// Bounds of all visible entities in a space.
+    /// Whether an entity counts in the extents: as AutoCAD 2024 counts it for ZOOM Extents and
+    /// EXTMIN/EXTMAX, on a layer that is off too, but not on a frozen one.
+    pub fn in_extents(&self, e: &Entity) -> bool {
+        e.common.visible && self.layer(&e.common.layer).is_none_or(|l| !l.frozen) && !self.is_hidden_object(e.handle)
+    }
+
+    /// Bounds of the entities in a space that count in its extents ([`Drawing::in_extents`]).
     pub fn extents(&self, space: &Space) -> cadcraft_geom::Bounds2 {
         let mut b = cadcraft_geom::Bounds2::EMPTY;
         if let Some(store) = self.space(space) {
             for e in store.iter() {
-                if self.is_visible(e) {
-                    b = b.union(&entity_bounds(self, e, 0));
+                if self.in_extents(e) {
+                    b = b.union(&extent_bounds(self, e));
                 }
             }
         }

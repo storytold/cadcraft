@@ -489,6 +489,7 @@
 	On	开启
 	On/Off	开/关
 	One of the Crafting Apps by the ArtCraft team and community.	由 ArtCraft 团队和社区打造的 Crafting 系列应用之一。
+	Oops	恢复已擦除对象
 	Open (⌘O)	打开 (⌘O)
 	Open Sample Drawing	打开示例图形
 	Open sample drawing	打开示例图形
@@ -1461,6 +1462,8 @@
 	Customize	自定义
 	Define each corner of the selection window with a separate click.	通过单独单击定义选择窗口的每个角点。
 	Discard	放弃
+# Menu and command labels the October 2026 update missed (#1129).
+	Change	更改
 	Drag Dynamic Grip	拖动动态夹点
 	Dynamic Block Data	动态块数据
 	Dynamic Block Grips	动态块夹点
@@ -1611,3 +1614,4 @@
 	no [CommandMethod] found	未找到 [CommandMethod]
 	Font	字体
 	Save Layout as Template	将布局另存为样板
+	Units	单位

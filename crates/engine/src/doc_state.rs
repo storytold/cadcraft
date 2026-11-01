@@ -35,6 +35,11 @@ pub struct DocState {
     /// The Block Editor (BEDIT), when it is open: `doc` is then the editor's drawing, and the
     /// drawing itself waits in it ([`DocState::drawing`]).
     pub block_edit: Option<blockedit::BlockEdit>,
+    /// What the last erase removed, for OOPS.
+    pub(crate) erased: crate::cmd::Erased,
+    /// The fonts missing on Windows that a save last named: the next save names them again only
+    /// when they change.
+    pub(crate) fonts_noted: String,
     /// 3D Orbit orientation of model space (`Orbit3d::default()` = Top 2D plan view).
     pub orbit: cadcraft_render::Orbit3d,
 }
@@ -63,6 +68,8 @@ impl DocState {
             uid: NEXT_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             binary_dxf: false,
             block_edit: None,
+            erased: Default::default(),
+            fonts_noted: String::new(),
             orbit: cadcraft_render::Orbit3d::default(),
         }
     }
@@ -70,6 +77,14 @@ impl DocState {
     /// saved into its block.
     pub fn is_dirty(&self) -> bool {
         !Arc::ptr_eq(self.drawing(), &self.saved) || self.block_unsaved()
+    }
+    /// Show the drawing an undo or redo step holds, with nothing selected; returns the drawing as
+    /// it was, as the step back.
+    pub(crate) fn swap_in(&mut self, snap: Snapshot) -> Snapshot {
+        let cur = Snapshot { label: snap.label, doc: std::mem::replace(&mut self.doc, snap.doc), selection: std::mem::take(&mut self.selection) };
+        self.follow_layout(&cur.doc);
+        self.revision += 1;
+        cur
     }
     /// After undo/redo replaced the drawing (`before` is the one shown until then): if the current
     /// layout no longer exists, follow it to its other name when it was renamed (same tab order,

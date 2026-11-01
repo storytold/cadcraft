@@ -412,7 +412,7 @@
 	Group Edit	تحرير المجموعة
 	Group Options	خيارات المجموعة
 	Group Selection	تحديد المجموعة
-	Hatch	تظليل
+	Hatch	تهشير
 	Hatch Edit	تحرير التهشير
 	Hatch Pattern	نمط التهشير
 	Hatch Patterns	أنماط التهشير
@@ -504,7 +504,7 @@
 	Layout list	قائمة التخطيطات
 	Layout paper	ورقة التخطيط
 	Layout {name}: {table}	التخطيط {name}: {table}
-	Leader	قائد
+	Leader	خط الإشارة
 	Leaders Only	خطوط الإشارة فقط
 	Left	يسار
 	Left device button: zoom extents. Right device button: calibrate.	زر الجهاز الأيسر: تكبير الحدود. زر الجهاز الأيمن: معايرة.
@@ -573,7 +573,7 @@
 	More toolbar commands	المزيد من أوامر شريط الأدوات
 	Move	نقل
 	Move sideways to pan; push/pull or twist to zoom.	حرّك جانبياً للإزاحة؛ ادفع أو اسحب أو لُف للتكبير.
-	Multileader	قائد متعدد
+	Multileader	خط الإشارة المتعدد
 	Multileader Style...	نمط خط الإشارة المتعدد...
 	Multileader style	نمط خط الإشارة المتعدد
 	Multiline	متعدد الأسطر
@@ -643,6 +643,7 @@
 	One of the Crafting Apps by the ArtCraft team and community.	أحد تطبيقات Crafting من فريق ArtCraft والمجتمع.
 	Only in this drawing: {n}	في هذا الرسم فقط: {n}
 	Only in {name}: {n}	في {name} فقط: {n}
+	Oops	استعادة الكائنات الممحوة
 	Open	فتح
 	Open (⌘O)	فتح (⌘O)
 	Open Sample Drawing	فتح رسم نموذجي
@@ -1352,6 +1353,7 @@ menu	View	عرض
 	AutoLISP / VBA IDE...	بيئة تطوير AutoLISP / VBA...
 	B	B
 	Back	خلفي
+	Backup copy	نسخة احتياطية
 	Block to create or edit	الكتلة المراد إنشاؤها أو تحريرها
 	Bottom left	أسفل اليسار
 	Bottom right	أسفل اليمين
@@ -1432,6 +1434,8 @@ menu	View	عرض
 	Inches	بوصات
 	Indicate selection area	إظهار منطقة التحديد
 	Insertion scale	مقياس الإدراج
+	Create backup copy with each save	إنشاء نسخة احتياطية عند كل حفظ
+	Font	الخط
 	Interface scale	مقياس الواجهة
 	Inverted	معكوس
 	Island	جزيرة
@@ -1501,6 +1505,8 @@ menu	View	عرض
 	Select using two clicks only	التحديد باستخدام نقرتين فقط
 	Selection Area Effect	تأثير منطقة التحديد
 	Selection Preview Filter	عامل تصفية معاينة التحديد
+	Save Layout as Template	حفظ التخطيط كقالب
+	Save changes to block "{name}"?	حفظ التغييرات على الكتلة "{name}"؟
 	Selection area opacity:	عتامة منطقة التحديد:
 	Selection effect color	لون تأثير التحديد
 	Selection modes	أوضاع التحديد
@@ -1613,5 +1619,3 @@ menu	View	عرض
 	cannot read file	لا يمكن قراءة الملف
 	e.g. (+ 1 2) or + 1 2	مثال: (+ 1 2) أو + 1 2
 	no [CommandMethod] found	لم يتم العثور على [CommandMethod]
-	Font	الخط
-	Save Layout as Template	حفظ التخطيط كقالب

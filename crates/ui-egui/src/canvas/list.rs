@@ -138,13 +138,7 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
     // While an orbit rotation build is already in flight for the same content, let it finish and
     // install its orientation before starting the next step, rather than cancelling every frame.
     let view_only = app.canvas.list.is_some() && same_content(&app.canvas.key, &key);
-    if view_only
-        && app
-            .canvas
-            .job
-            .as_ref()
-            .is_some_and(|j| j.serves(&key, &visible) || (same_content(&j.key, &key) && j.key.8 != app.canvas.key.8))
-    {
+    if view_only && app.canvas.job.as_ref().is_some_and(|j| j.serves(&key, &visible) || (same_content(&j.key, &key) && j.key.8 != app.canvas.key.8)) {
         return;
     }
     // A build for another view, or for a drawing that has since changed, is no longer wanted:
@@ -157,6 +151,7 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
         // level of detail must hold at the finest one.
         min_dash: 2f64.powi(lod_band) * 2.0,
         text: true,
+        linetypes: true,
         fill: true,
         lineweights: lwdisplay,
         view_height: st.paper_view().height,
@@ -166,6 +161,7 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
         skip_viewport: split,
         cancel: None,
         orbit: active_orbit,
+        orbit_viewport: if matches!(st.space, cadcraft_doc::Space::Paper(_)) { st.active_viewport().map(|(h, _)| h) } else { None },
     };
     if view_only {
         let t = Tokens::get();

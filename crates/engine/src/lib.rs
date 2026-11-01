@@ -161,6 +161,10 @@ pub struct Session {
     pub(crate) pending_point_z: Option<f64>,
     /// Directory of the most recently loaded LISP file, searched by `findfile`, `open` and `-INSERT`.
     pub lisp_file_dir: Option<String>,
+    /// The object named with a point for the input a prompt picking one object is taking
+    /// ([`Session::input_object`]): a pick at exactly that point picks that object
+    /// ([`Session::pick_object`]).
+    pick_hint: Option<(Handle, Vec2)>,
 }
 
 impl Default for Session {
@@ -215,6 +219,7 @@ impl Session {
             dotnet_pick: DotNetPickState::default(),
             pending_point_z: None,
             lisp_file_dir: None,
+            pick_hint: None,
         }
     }
 
@@ -365,3 +370,7 @@ impl Session {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "../tests/support/temp_dir.rs"]
+mod temp_dir;

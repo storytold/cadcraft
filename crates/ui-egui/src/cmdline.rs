@@ -288,11 +288,7 @@ fn suggestions_inner(prefix: &str, dynamic: &[(String, &'static str)]) -> Vec<Su
     for (alias, id, label) in alias_matches {
         let up_id = id.to_ascii_uppercase();
         if seen_ids.insert(up_id.clone()) {
-            out.push(Suggestion {
-                id: up_id.clone(),
-                display: format!("{} ({})", alias.to_ascii_uppercase(), up_id),
-                label,
-            });
+            out.push(Suggestion { id: up_id.clone(), display: format!("{} ({})", alias.to_ascii_uppercase(), up_id), label });
         }
     }
 
@@ -679,7 +675,9 @@ pub fn submit(app: &mut CadApp) {
         }
         return;
     }
-    app.cmdline(&text);
+    // A partly typed command name runs the highlighted (first) AutoComplete suggestion.
+    let completion = if app.session.prompting() { None } else { suggestions_with_plugins(app, text.trim()).into_iter().next() };
+    app.cmdline_or(&text, completion.map(|s| s.id.to_ascii_lowercase()).as_deref());
     if was_inquiry && !app.session.prompting() {
         app.cmd.expanded = true;
     }
@@ -951,11 +949,7 @@ fn history_window(app: &mut CadApp, ui: &mut egui::Ui, r: Rect) {
     let mut close_hist = false;
     child.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .small_button("×")
-                .on_hover_text(crate::tl!("Close History Window (F2)"))
-                .clicked()
-            {
+            if ui.small_button("×").on_hover_text(crate::tl!("Close History Window (F2)")).clicked() {
                 close_hist = true;
             }
             if let Some(&h) = app.session.selection().first()
@@ -966,18 +960,10 @@ fn history_window(app: &mut CadApp, ui: &mut egui::Ui, r: Rect) {
             {
                 open_xdedit = Some(h);
             }
-            if ui
-                .small_button(crate::tl!("Copy All"))
-                .on_hover_text(crate::tl!("Copy history output to clipboard"))
-                .clicked()
-            {
+            if ui.small_button(crate::tl!("Copy All")).on_hover_text(crate::tl!("Copy history output to clipboard")).clicked() {
                 ui.ctx().copy_text(app.session.log.join("\n"));
             }
-            if ui
-                .small_button(crate::tl!("Clear"))
-                .on_hover_text(crate::tl!("Clear Command History"))
-                .clicked()
-            {
+            if ui.small_button(crate::tl!("Clear")).on_hover_text(crate::tl!("Clear Command History")).clicked() {
                 app.session.log.clear();
             }
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -995,21 +981,17 @@ fn history_window(app: &mut CadApp, ui: &mut egui::Ui, r: Rect) {
     child.separator();
     let full_text = app.session.log.join("\n");
     let mut text_slice: &str = &full_text;
-    egui::ScrollArea::vertical()
-        .id_salt("cmd_history")
-        .stick_to_bottom(true)
-        .auto_shrink([false, false])
-        .show(&mut child, |ui| {
-            ui.add_sized(
-                ui.available_size(),
-                egui::TextEdit::multiline(&mut text_slice)
-                    .id(egui::Id::unique("cmd_history_log_text"))
-                    .font(crate::theme::mono())
-                    .text_color(t.text)
-                    .frame(egui::Frame::NONE)
-                    .desired_width(f32::INFINITY),
-            );
-        });
+    egui::ScrollArea::vertical().id_salt("cmd_history").stick_to_bottom(true).auto_shrink([false, false]).show(&mut child, |ui| {
+        ui.add_sized(
+            ui.available_size(),
+            egui::TextEdit::multiline(&mut text_slice)
+                .id(egui::Id::unique("cmd_history_log_text"))
+                .font(crate::theme::mono())
+                .text_color(t.text)
+                .frame(egui::Frame::NONE)
+                .desired_width(f32::INFINITY),
+        );
+    });
     if close_hist {
         app.cmd.expanded = false;
     }
@@ -1273,5 +1255,40 @@ mod autocomplete_tests {
         assert!(!cle.is_empty());
         assert_eq!(cle[0].id, "CLEAR");
         assert_eq!(cle[0].display, "CLEAR");
+    }
+
+    fn app() -> CadApp {
+        let mut app = CadApp::new(cadcraft_engine::Session::empty(), crate::Services::default());
+        app.start("ui.sample");
+        app
+    }
+
+    #[test]
+    fn enter_on_a_partial_name_runs_the_highlighted_suggestion() {
+        let mut app = app();
+        app.cmd.buffer = "RECT".to_string();
+        submit(&mut app);
+        assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("rectang"));
+        assert!(!app.session.log.iter().any(|l| l.contains("unknown command")), "{:?}", app.session.log);
+    }
+
+    #[test]
+    fn enter_keeps_exact_names_and_reports_names_nothing_matches() {
+        let mut app = app();
+        // An exact alias is not replaced by a longer suggestion.
+        app.cmd.buffer = "l".to_string();
+        submit(&mut app);
+        assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("line"));
+        app.session.cancel();
+        // A system variable name still acts as SETVAR.
+        app.cmd.buffer = "orthomode".to_string();
+        submit(&mut app);
+        assert_eq!(app.session.running.as_ref().map(|r| r.id.as_str()), Some("setvar"));
+        app.session.cancel();
+        // No suggestion: still an unknown command.
+        app.cmd.buffer = "zzqx".to_string();
+        submit(&mut app);
+        assert!(app.session.running.is_none());
+        assert!(app.session.log.iter().any(|l| l.contains("unknown command")), "{:?}", app.session.log);
     }
 }

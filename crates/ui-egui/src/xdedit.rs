@@ -53,13 +53,7 @@ impl XdRow {
                 };
             }
         }
-        Self {
-            code: tag.code,
-            key: String::new(),
-            val: raw.to_string(),
-            sep: "=".to_string(),
-            original_raw: Some(tag.value.clone()),
-        }
+        Self { code: tag.code, key: String::new(), val: raw.to_string(), sep: "=".to_string(), original_raw: Some(tag.value.clone()) }
     }
 
     pub fn to_raw_value(&self, _smart_kv: bool) -> String {
@@ -354,11 +348,7 @@ fn step_entity(app: &CadApp, current: Handle, selection_list: &[Handle], delta: 
     let d = app.session.doc().ok()?;
     let space = app.session.space();
     let store = d.space(&space)?;
-    let mut cands: Vec<Handle> = store
-        .iter()
-        .filter(|e| d.is_visible(e) && has_user_xdata(e))
-        .map(|e| e.handle)
-        .collect();
+    let mut cands: Vec<Handle> = store.iter().filter(|e| d.is_visible(e) && has_user_xdata(e)).map(|e| e.handle).collect();
     if cands.is_empty() {
         cands = store.iter().filter(|e| d.is_visible(e)).map(|e| e.handle).collect();
     }
@@ -366,8 +356,11 @@ fn step_entity(app: &CadApp, current: Handle, selection_list: &[Handle], delta: 
         return None;
     }
     let len = cands.len();
-    let pos = cands.iter().position(|&h| h == current).unwrap_or(0);
-    let next_idx = (pos as isize + delta).rem_euclid(len as isize) as usize;
+    let next_idx = match cands.iter().position(|&h| h == current) {
+        Some(pos) => (pos as isize + delta).rem_euclid(len as isize) as usize,
+        None if delta < 0 => len - 1,
+        None => 0,
+    };
     Some((cands[next_idx], next_idx + 1, len))
 }
 
@@ -375,13 +368,7 @@ fn step_entity(app: &CadApp, current: Handle, selection_list: &[Handle], delta: 
 fn resizable_header(ui: &mut egui::Ui, id_salt: &str, title: &str, width: &mut f32, min_w: f32, max_w: f32) {
     let t = Tokens::get();
     let (rect, _) = ui.allocate_exact_size(vec2(*width, 20.0), Sense::hover());
-    ui.painter().text(
-        pos2(rect.left() + 2.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        title,
-        crate::theme::body(),
-        t.text,
-    );
+    ui.painter().text(pos2(rect.left() + 2.0, rect.center().y), egui::Align2::LEFT_CENTER, title, crate::theme::body(), t.text);
     let grip_rect = egui::Rect::from_min_max(pos2(rect.right() - 14.0, rect.top()), rect.max);
     let grip_resp = ui.interact(grip_rect, ui.scope_id().with(id_salt), Sense::click_and_drag());
     let grip_color = if grip_resp.hovered() || grip_resp.dragged() {
@@ -409,10 +396,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         && let Ok(d) = app.session.doc()
         && let Some(e) = d.entity(h)
     {
-        let prev_cfg = app
-            .xdedit_dlg
-            .as_ref()
-            .map(|s| (s.key_col_width, s.val_col_width, s.smart_kv, s.filter.clone(), s.selection_list.clone()));
+        let prev_cfg = app.xdedit_dlg.as_ref().map(|s| (s.key_col_width, s.val_col_width, s.smart_kv, s.filter.clone(), s.selection_list.clone()));
         let list = if sel.len() > 1 {
             sel
         } else if let Some((_, _, _, _, ref prev_list)) = prev_cfg
@@ -514,19 +498,11 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                         step_dir = Some(-1);
                     }
                     ui.separator();
-                    if ui
-                        .button(crate::tl!("📋 Copy JSON"))
-                        .on_hover_text(crate::tl!("Copy all XData as structured JSON to clipboard"))
-                        .clicked()
-                    {
+                    if ui.button(crate::tl!("📋 Copy JSON")).on_hover_text(crate::tl!("Copy all XData as structured JSON to clipboard")).clicked() {
                         ctx.copy_text(st.format_export_json());
                         st.status_msg = Some(crate::tl!("✓ JSON copied to clipboard").into());
                     }
-                    if ui
-                        .button(crate::tl!("📋 Copy Text"))
-                        .on_hover_text(crate::tl!("Copy all XData as text to clipboard"))
-                        .clicked()
-                    {
+                    if ui.button(crate::tl!("📋 Copy Text")).on_hover_text(crate::tl!("Copy all XData as text to clipboard")).clicked() {
                         ctx.copy_text(st.format_plain_text());
                         st.status_msg = Some(crate::tl!("✓ XData text copied to clipboard").into());
                     }
@@ -547,18 +523,12 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 ui.separator();
                 let resp = ui.add_sized(
                     [155.0, 22.0],
-                    egui::TextEdit::singleline(&mut st.new_app_name)
-                        .hint_text(crate::tl!("New AppID (e.g. CAD_XDATA)"))
-                        .desired_width(f32::INFINITY),
+                    egui::TextEdit::singleline(&mut st.new_app_name).hint_text(crate::tl!("New AppID (e.g. CAD_XDATA)")).desired_width(f32::INFINITY),
                 );
                 let add_clicked = ui.button(crate::tl!("+ Add AppID")).clicked()
                     || (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !st.new_app_name.trim().is_empty());
                 if add_clicked {
-                    let name = if st.new_app_name.trim().is_empty() {
-                        "CAD_XDATA".to_string()
-                    } else {
-                        st.new_app_name.trim().to_string()
-                    };
+                    let name = if st.new_app_name.trim().is_empty() { "CAD_XDATA".to_string() } else { st.new_app_name.trim().to_string() };
                     if let Some(pos) = st.groups.iter().position(|g| g.app.eq_ignore_ascii_case(&name)) {
                         st.active_app = pos;
                     } else {
@@ -648,148 +618,124 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                 if let Some(group) = st.groups.get_mut(active_idx) {
                     let row_codes: Vec<i32> = group.rows.iter().map(|r| r.code).collect();
                     let scroll_h = (ui.available_height() - 78.0).max(420.0);
-                    egui::ScrollArea::vertical()
-                        .id_salt("xdedit_rows_scroll")
-                        .max_height(scroll_h)
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            egui::Grid::new("xdedit_table_grid")
-                                .striped(true)
-                                .num_columns(if smart_kv { 5 } else { 4 })
-                                .spacing(vec2(8.0, 6.0))
-                                .show(ui, |ui| {
-                                    ui.label(RichText::new("#").strong().color(t.text_dim));
-                                    ui.label(RichText::new(crate::tl!("DXF Code")).strong());
-                                    if smart_kv {
-                                        resizable_header(ui, "xd_hdr_key", crate::tl!("Property / Key ⇔"), &mut key_w, 140.0, 600.0);
-                                        resizable_header(
-                                            ui,
-                                            "xd_hdr_val",
-                                            crate::tl!("Value (Selectable & Editable) ⇔"),
-                                            &mut val_w,
-                                            200.0,
-                                            900.0,
-                                        );
-                                    } else {
-                                        let mut raw_w = key_w + val_w;
-                                        resizable_header(
-                                            ui,
-                                            "xd_hdr_raw",
-                                            crate::tl!("Raw Value (Selectable & Editable) ⇔"),
-                                            &mut raw_w,
-                                            340.0,
-                                            1200.0,
-                                        );
-                                        val_w = (raw_w - key_w).max(200.0);
-                                    }
-                                    ui.label(RichText::new(crate::tl!("Actions")).strong());
-                                    ui.end_row();
+                    egui::ScrollArea::vertical().id_salt("xdedit_rows_scroll").max_height(scroll_h).auto_shrink([false, false]).show(ui, |ui| {
+                        egui::Grid::new("xdedit_table_grid").striped(true).num_columns(if smart_kv { 5 } else { 4 }).spacing(vec2(8.0, 6.0)).show(
+                            ui,
+                            |ui| {
+                                ui.label(RichText::new("#").strong().color(t.text_dim));
+                                ui.label(RichText::new(crate::tl!("DXF Code")).strong());
+                                if smart_kv {
+                                    resizable_header(ui, "xd_hdr_key", crate::tl!("Property / Key ⇔"), &mut key_w, 140.0, 600.0);
+                                    resizable_header(ui, "xd_hdr_val", crate::tl!("Value (Selectable & Editable) ⇔"), &mut val_w, 200.0, 900.0);
+                                } else {
+                                    let mut raw_w = key_w + val_w;
+                                    resizable_header(ui, "xd_hdr_raw", crate::tl!("Raw Value (Selectable & Editable) ⇔"), &mut raw_w, 340.0, 1200.0);
+                                    val_w = (raw_w - key_w).max(200.0);
+                                }
+                                ui.label(RichText::new(crate::tl!("Actions")).strong());
+                                ui.end_row();
 
-                                    let mut vis_num = 0usize;
-                                    for (i, r) in group.rows.iter_mut().enumerate() {
-                                        if r.code == 1002 {
+                                let mut vis_num = 0usize;
+                                for (i, r) in group.rows.iter_mut().enumerate() {
+                                    if r.code == 1002 {
+                                        continue;
+                                    }
+                                    vis_num += 1;
+                                    if !filter_low.is_empty() {
+                                        let match_k = r.key.to_ascii_lowercase().contains(&filter_low);
+                                        let match_v = r.val.to_ascii_lowercase().contains(&filter_low);
+                                        if !match_k && !match_v {
                                             continue;
                                         }
-                                        vis_num += 1;
-                                        if !filter_low.is_empty() {
-                                            let match_k = r.key.to_ascii_lowercase().contains(&filter_low);
-                                            let match_v = r.val.to_ascii_lowercase().contains(&filter_low);
-                                            if !match_k && !match_v {
-                                                continue;
-                                            }
-                                        }
-                                        ui.label(RichText::new(format!("{vis_num}")).monospace().color(t.text_dim));
-
-                                        let code_label = CODES
-                                            .iter()
-                                            .find(|(c, _)| *c == r.code)
-                                            .map(|(_, l)| *l)
-                                            .unwrap_or("Custom");
-                                        craft_ui::ComboBox::from_id_salt(("xd_code", i))
-                                            .selected_text(code_label)
-                                            .width(105.0)
-                                            .show_ui(ui, |ui| {
-                                                for &(c, lbl) in CODES {
-                                                    if ui.selectable_value(&mut r.code, c, lbl).changed() {
-                                                        r.original_raw = None;
-                                                        row_changed = true;
-                                                    }
-                                                }
-                                            });
-
-                                        if smart_kv {
-                                            if ui
-                                                .add_sized(
-                                                    [key_w, 22.0],
-                                                    egui::TextEdit::singleline(&mut r.key)
-                                                        .id(egui::Id::unique(("xd_key", i)))
-                                                        .desired_width(f32::INFINITY)
-                                                        .hint_text("(key)"),
-                                                )
-                                                .changed()
-                                            {
-                                                r.original_raw = None;
-                                                row_changed = true;
-                                            }
-                                            if ui
-                                                .add_sized(
-                                                    [val_w, 22.0],
-                                                    egui::TextEdit::singleline(&mut r.val)
-                                                        .id(egui::Id::unique(("xd_val", i)))
-                                                        .desired_width(f32::INFINITY),
-                                                )
-                                                .changed()
-                                            {
-                                                r.original_raw = None;
-                                                row_changed = true;
-                                            }
-                                        } else {
-                                            let mut combined = r.to_raw_value(false);
-                                            if ui
-                                                .add_sized(
-                                                    [key_w + val_w, 22.0],
-                                                    egui::TextEdit::singleline(&mut combined)
-                                                        .id(egui::Id::unique(("xd_raw", i)))
-                                                        .desired_width(f32::INFINITY),
-                                                )
-                                                .changed()
-                                            {
-                                                r.key.clear();
-                                                r.val = combined;
-                                                r.original_raw = None;
-                                                row_changed = true;
-                                            }
-                                        }
-
-                                        ui.horizontal(|ui| {
-                                            if ui.small_button("📋").on_hover_text(crate::tl!("Copy value to clipboard")).clicked() {
-                                                ctx.copy_text(r.val.clone());
-                                                copied_msg = Some(crate::tf!("✓ Copied: {val}", val = r.val.as_str()));
-                                            }
-                                            let can_up = i.checked_sub(1).is_some_and(|j| row_codes.get(j).is_some_and(|&c| c != 1002));
-                                            if ui
-                                                .add_enabled(can_up, egui::Button::new("⬆").small())
-                                                .on_hover_text(crate::tl!("Move row up"))
-                                                .clicked()
-                                            {
-                                                move_up = Some(i);
-                                            }
-                                            let can_down = row_codes.get(i + 1).is_some_and(|&c| c != 1002);
-                                            if ui
-                                                .add_enabled(can_down, egui::Button::new("⬇").small())
-                                                .on_hover_text(crate::tl!("Move row down"))
-                                                .clicked()
-                                            {
-                                                move_down = Some(i);
-                                            }
-                                            if ui.small_button("🗑").on_hover_text(crate::tl!("Delete this XData row")).clicked() {
-                                                delete_row = Some(i);
-                                            }
-                                        });
-                                        ui.end_row();
                                     }
-                                });
-                        });
+                                    ui.label(RichText::new(format!("{vis_num}")).monospace().color(t.text_dim));
+
+                                    let code_label = CODES.iter().find(|(c, _)| *c == r.code).map(|(_, l)| *l).unwrap_or("Custom");
+                                    craft_ui::ComboBox::from_id_salt(("xd_code", i)).selected_text(code_label).width(105.0).show_ui(ui, |ui| {
+                                        for &(c, lbl) in CODES {
+                                            let prev_code = r.code;
+                                            if ui.selectable_value(&mut r.code, c, lbl).changed() {
+                                                if prev_code == 1000 && r.code != 1000 && !r.key.trim().is_empty() {
+                                                    r.val = format!("{}{}{}", r.key.trim(), r.sep, r.val.trim());
+                                                    r.key.clear();
+                                                }
+                                                r.original_raw = None;
+                                                row_changed = true;
+                                            }
+                                        }
+                                    });
+
+                                    if smart_kv {
+                                        if ui
+                                            .add_sized(
+                                                [key_w, 22.0],
+                                                egui::TextEdit::singleline(&mut r.key)
+                                                    .id(egui::Id::unique(("xd_key", i)))
+                                                    .desired_width(f32::INFINITY)
+                                                    .hint_text("(key)"),
+                                            )
+                                            .changed()
+                                        {
+                                            r.original_raw = None;
+                                            row_changed = true;
+                                        }
+                                        if ui
+                                            .add_sized(
+                                                [val_w, 22.0],
+                                                egui::TextEdit::singleline(&mut r.val)
+                                                    .id(egui::Id::unique(("xd_val", i)))
+                                                    .desired_width(f32::INFINITY),
+                                            )
+                                            .changed()
+                                        {
+                                            r.original_raw = None;
+                                            row_changed = true;
+                                        }
+                                    } else {
+                                        let mut combined = r.to_raw_value(false);
+                                        if ui
+                                            .add_sized(
+                                                [key_w + val_w, 22.0],
+                                                egui::TextEdit::singleline(&mut combined)
+                                                    .id(egui::Id::unique(("xd_raw", i)))
+                                                    .desired_width(f32::INFINITY),
+                                            )
+                                            .changed()
+                                        {
+                                            r.key.clear();
+                                            r.val = combined;
+                                            r.original_raw = None;
+                                            row_changed = true;
+                                        }
+                                    }
+
+                                    ui.horizontal(|ui| {
+                                        if ui.small_button("📋").on_hover_text(crate::tl!("Copy value to clipboard")).clicked() {
+                                            ctx.copy_text(r.val.clone());
+                                            copied_msg = Some(crate::tf!("✓ Copied: {val}", val = r.val.as_str()));
+                                        }
+                                        let can_up = i.checked_sub(1).is_some_and(|j| row_codes.get(j).is_some_and(|&c| c != 1002));
+                                        if ui.add_enabled(can_up, egui::Button::new("⬆").small()).on_hover_text(crate::tl!("Move row up")).clicked()
+                                        {
+                                            move_up = Some(i);
+                                        }
+                                        let can_down = row_codes.get(i + 1).is_some_and(|&c| c != 1002);
+                                        if ui
+                                            .add_enabled(can_down, egui::Button::new("⬇").small())
+                                            .on_hover_text(crate::tl!("Move row down"))
+                                            .clicked()
+                                        {
+                                            move_down = Some(i);
+                                        }
+                                        if ui.small_button("🗑").on_hover_text(crate::tl!("Delete this XData row")).clicked() {
+                                            delete_row = Some(i);
+                                        }
+                                    });
+                                    ui.end_row();
+                                }
+                            },
+                        );
+                    });
 
                     st.key_col_width = key_w;
                     st.val_col_width = val_w;
@@ -821,14 +767,11 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(crate::tl!("Add Row:")).strong());
                         let new_code_lbl = CODES.iter().find(|(c, _)| *c == st.new_code).map(|(_, l)| *l).unwrap_or("1000 String");
-                        craft_ui::ComboBox::from_id_salt("xd_new_code")
-                            .selected_text(new_code_lbl)
-                            .width(105.0)
-                            .show_ui(ui, |ui| {
-                                for &(c, lbl) in CODES {
-                                    ui.selectable_value(&mut st.new_code, c, lbl);
-                                }
-                            });
+                        craft_ui::ComboBox::from_id_salt("xd_new_code").selected_text(new_code_lbl).width(105.0).show_ui(ui, |ui| {
+                            for &(c, lbl) in CODES {
+                                ui.selectable_value(&mut st.new_code, c, lbl);
+                            }
+                        });
                         if st.new_code == 1000 && st.smart_kv {
                             ui.add_sized(
                                 [key_w, 22.0],
@@ -839,9 +782,7 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                         }
                         let val_resp = ui.add_sized(
                             [val_w.min(360.0), 22.0],
-                            egui::TextEdit::singleline(&mut st.new_val)
-                                .hint_text(crate::tl!("Value"))
-                                .desired_width(f32::INFINITY),
+                            egui::TextEdit::singleline(&mut st.new_val).hint_text(crate::tl!("Value")).desired_width(f32::INFINITY),
                         );
                         let enter_pressed = val_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                         if (ui.button(crate::tl!("+ Add Property")).clicked() || enter_pressed)
@@ -876,37 +817,25 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                     ui.label(RichText::new(crate::tl!("● Unsaved changes")).color(egui::Color32::from_rgb(245, 158, 11)));
                 } else {
                     ui.label(
-                        RichText::new(crate::tl!(
-                            "Ready — click '🎯 Select Next Object' or '◀ Previous / Next ▶' to switch objects."
-                        ))
-                        .color(t.text_dim),
+                        RichText::new(crate::tl!("Ready — click '🎯 Select Next Object' or '◀ Previous / Next ▶' to switch objects."))
+                            .color(t.text_dim),
                     );
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button(crate::tl!("Close")).clicked() {
                         close_clicked = true;
                     }
-                    if ui
-                        .add_enabled(st.dirty || external_changed, egui::Button::new(crate::tl!("↺ Revert")))
-                        .clicked()
-                    {
+                    if ui.add_enabled(st.dirty || external_changed, egui::Button::new(crate::tl!("↺ Revert"))).clicked() {
                         revert_changes = true;
                     }
                     if ui
-                        .add_enabled(
-                            st.dirty && !external_changed,
-                            egui::Button::new(RichText::new(crate::tl!("✔ Apply / Save XData")).strong()),
-                        )
+                        .add_enabled(st.dirty && !external_changed, egui::Button::new(RichText::new(crate::tl!("✔ Apply / Save XData")).strong()))
                         .on_hover_text(crate::tl!("Write modified XData to the entity (Undoable with Ctrl+Z)"))
                         .clicked()
                     {
                         apply_changes = true;
                     }
-                    let pick_label = if st.dirty {
-                        crate::tl!("✔ Save & Select Next Object")
-                    } else {
-                        crate::tl!("🎯 Select Next Object")
-                    };
+                    let pick_label = if st.dirty { crate::tl!("✔ Save & Select Next Object") } else { crate::tl!("🎯 Select Next Object") };
                     if ui
                         .button(RichText::new(pick_label).strong())
                         .on_hover_text(crate::tl!("Save any changes and directly pick the next object in the drawing"))
@@ -1070,11 +999,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let mut e = Entity {
-            handle: Handle(42),
-            common,
-            kind: EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(10.0, 0.0, 0.0) }),
-        };
+        let mut e = Entity { handle: Handle(42), common, kind: EntityKind::Line(Line { a: Vec3::ZERO, b: Vec3::new(10.0, 0.0, 0.0) }) };
         let mut st = XdEditState::from_entity(&e);
         assert_eq!(st.loaded_xdata, e.common.xdata);
         let json_out = st.to_xdata_json();
@@ -1089,10 +1014,7 @@ mod tests {
         assert_eq!(csv, "Object,LINE\nTHEMA,Middenspanning");
 
         // External entity XData modification is detected via loaded_xdata and reloaded cleanly.
-        e.common.xdata = vec![
-            RawTag { code: 1001, value: "CAD_XDATA".into() },
-            RawTag { code: 1000, value: "THEMA=Laagspanning".into() },
-        ];
+        e.common.xdata = vec![RawTag { code: 1001, value: "CAD_XDATA".into() }, RawTag { code: 1000, value: "THEMA=Laagspanning".into() }];
         assert_ne!(st.loaded_xdata, e.common.xdata);
         st.reload_from_entity(&e);
         assert_eq!(st.loaded_xdata, e.common.xdata);

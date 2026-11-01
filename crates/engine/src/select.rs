@@ -29,7 +29,7 @@ pub fn hit_polylines(d: &Drawing, e: &Entity, tol: f64) -> Vec<Vec<Vec2>> {
                 let list = cadcraft_render::build_entities(
                     d,
                     std::iter::once(e),
-                    &cadcraft_render::Options { tolerance: tol, text: false, ..Default::default() },
+                    &cadcraft_render::Options { tolerance: tol, text: false, linetypes: false, ..Default::default() },
                 );
                 v = list.prims.iter().map(|p| list.points(p).to_vec()).collect();
                 v.push(vec![c[0], c[1], c[2], c[3], c[0]]);
@@ -254,10 +254,8 @@ impl OrbitIndex {
         tolerance: f64,
         prev: Option<&OrbitIndex>,
     ) -> OrbitIndex {
-        let old: std::collections::HashMap<usize, std::sync::Arc<OrbitEnt>> = prev
-            .filter(|p| p.same_context(d, orbit, tol_band))
-            .map(|p| p.ents.iter().map(|e| (e.ptr, e.clone())).collect())
-            .unwrap_or_default();
+        let old: std::collections::HashMap<usize, std::sync::Arc<OrbitEnt>> =
+            prev.filter(|p| p.same_context(d, orbit, tol_band)).map(|p| p.ents.iter().map(|e| (e.ptr, e.clone())).collect()).unwrap_or_default();
         let opts = cadcraft_render::Options { tolerance, orbit, ..Default::default() };
         let mut ents = Vec::new();
         let mut items = Vec::new();
@@ -271,8 +269,7 @@ impl OrbitIndex {
                 Some(cached) => cached.clone(),
                 None => {
                     let list = cadcraft_render::build_entities(d, std::iter::once(e.as_ref()), &opts);
-                    let inf = is_infinite(e)
-                        || list.prims.iter().any(|p| matches!(p.kind, cadcraft_render::Kind::Infinite { .. }));
+                    let inf = is_infinite(e) || list.prims.iter().any(|p| matches!(p.kind, cadcraft_render::Kind::Infinite { .. }));
                     std::sync::Arc::new(OrbitEnt { ptr, handle: e.handle, infinite: inf, bounds: list.bounds, list })
                 }
             };
@@ -435,7 +432,9 @@ pub fn pick_all_in_orbit(d: &Drawing, space: &Space, orbit: cadcraft_render::Orb
     hits.into_iter().map(|(_, h)| h).collect()
 }
 
-/// The topmost entity within `aperture` of `p`.
+/// The topmost entity within `aperture` of `p`: the one drawn last (on top in the draw order), not
+/// the nearest, as AutoCAD 2024 picks (two objects under the pickbox: the one drawn later is
+/// picked, and DRAWORDER changes which).
 pub fn pick(d: &Drawing, space: &Space, p: Vec2, aperture: f64) -> Option<Handle> {
     let ix = spatial::index(d, space);
     pick_with(d, space, &ix, p, aperture)
@@ -443,7 +442,7 @@ pub fn pick(d: &Drawing, space: &Space, p: Vec2, aperture: f64) -> Option<Handle
 
 pub(crate) fn pick_with(d: &Drawing, space: &Space, ix: &Option<std::sync::Arc<SpatialIndex>>, p: Vec2, aperture: f64) -> Option<Handle> {
     let probe = Bounds2::new(p, p).expand(aperture);
-    let mut best: Option<(f64, Handle)> = None;
+    // Candidates come topmost first: the first within the aperture is the one.
     for (e, known) in candidates(d, space, ix, &probe.expand(aperture), true, true)? {
         if !selectable(d, e) {
             continue;
@@ -452,30 +451,24 @@ pub(crate) fn pick_with(d: &Drawing, space: &Space, ix: &Option<std::sync::Arc<S
         if !infinite && !bounds_of(d, e, known).expand(aperture).intersects(&probe) {
             continue;
         }
-        let dist = entity_distance(d, e, p, aperture / 4.0);
-        if dist <= aperture && best.is_none_or(|(bd, _)| dist < bd - 1e-12) {
-            best = Some((dist, e.handle));
-            if dist == 0.0 {
-                break;
-            }
+        if entity_distance(d, e, p, aperture / 4.0) <= aperture {
+            return Some(e.handle);
         }
     }
-    best.map(|(_, h)| h)
+    None
 }
 
-/// Every entity within `aperture` of `p`, nearest first and topmost among equals (so the first is
-/// what [`pick`] chooses): the objects selection cycling lists.
+/// Every entity within `aperture` of `p`, topmost first (so the first is what [`pick`] chooses):
+/// the objects selection cycling lists.
 pub fn pick_all(d: &Drawing, space: &Space, p: Vec2, aperture: f64) -> Vec<Handle> {
     let ix = spatial::index(d, space);
     let probe = Bounds2::new(p, p).expand(aperture);
     let Some(cands) = candidates(d, space, &ix, &probe.expand(aperture), true, true) else { return Vec::new() };
-    let mut hits: Vec<(f64, Handle)> = cands
+    cands
         .filter(|(e, known)| selectable(d, e) && (is_infinite(e) || bounds_of(d, e, *known).expand(aperture).intersects(&probe)))
-        .map(|(e, _)| (entity_distance(d, e, p, aperture / 4.0), e.handle))
-        .filter(|(dist, _)| *dist <= aperture)
-        .collect();
-    hits.sort_by(|a, b| a.0.total_cmp(&b.0));
-    hits.into_iter().map(|(_, h)| h).collect()
+        .filter(|(e, _)| entity_distance(d, e, p, aperture / 4.0) <= aperture)
+        .map(|(e, _)| e.handle)
+        .collect()
 }
 
 /// Whether PREVIEWFILTER keeps `e` from being highlighted under the cursor: bits 1 objects on
@@ -500,25 +493,14 @@ fn seg_hits_box(a: Vec2, b: Vec2, bx: &Bounds2) -> bool {
 
 /// Window selection (entirely inside) or crossing selection (inside or touching) under the given
 /// 3D `orbit` projection.
-pub fn select_window_in_orbit(
-    d: &Drawing,
-    space: &Space,
-    orbit: cadcraft_render::Orbit3d,
-    bx: Bounds2,
-    crossing: bool,
-) -> Vec<Handle> {
+pub fn select_window_in_orbit(d: &Drawing, space: &Space, orbit: cadcraft_render::Orbit3d, bx: Bounds2, crossing: bool) -> Vec<Handle> {
     if orbit.is_top() || matches!(space, Space::Paper(_)) {
         return select_window(d, space, bx, crossing);
     }
     let tol = window_tol(&bx);
     let Some(ix) = orbit_index(d, space, orbit, tol) else { return Vec::new() };
     let cands = ix.query(&bx, crossing);
-    cands
-        .into_iter()
-        .filter_map(|i| ix.ents.get(i))
-        .filter(|ent| in_orbit_window(ent, &bx, crossing))
-        .map(|ent| ent.handle)
-        .collect()
+    cands.into_iter().filter_map(|i| ix.ents.get(i)).filter(|ent| in_orbit_window(ent, &bx, crossing)).map(|ent| ent.handle).collect()
 }
 
 /// Whether a window or crossing box selects a projected [`OrbitEnt`].
@@ -877,9 +859,7 @@ impl SelectMode {
             (SelectKind::Window | SelectKind::Crossing, [a, b, ..]) => {
                 Some(select_window_in_orbit(d, space, orbit, Bounds2::new(*a, *b), self.kind == SelectKind::Crossing))
             }
-            (SelectKind::Box, [a, b, ..]) => {
-                Some(select_window_in_orbit(d, space, orbit, Bounds2::new(*a, *b), b.x < a.x))
-            }
+            (SelectKind::Box, [a, b, ..]) => Some(select_window_in_orbit(d, space, orbit, Bounds2::new(*a, *b), b.x < a.x)),
             (SelectKind::Fence, pts) if pts.len() >= 2 => Some(select_fence_in_orbit(d, space, orbit, pts)),
             (SelectKind::WPolygon | SelectKind::CPolygon, pts) if pts.len() >= 3 => {
                 Some(select_polygon_in_orbit(d, space, orbit, pts, self.kind == SelectKind::CPolygon))
@@ -913,6 +893,76 @@ mod tests {
         assert_eq!(fence_hits(EntityKind::Ray(line.clone()), [(-5.0, -5.0), (-5.0, 5.0)]), 0);
         assert_eq!(fence_hits(EntityKind::XLine(line.clone()), [(0.0, 1.0), (0.0, 5.0)]), 0);
         assert_eq!(fence_hits(EntityKind::Ray(line), [(5.0, 1.0), (5.0, 5.0)]), 0);
+    }
+
+    /// Two objects under the pickbox: AutoCAD 2024 picks the one drawn last, not the nearer one,
+    /// and DRAWORDER changes which (`(ssget pt)` in accoreconsole).
+    #[test]
+    fn a_pick_takes_the_object_drawn_last() {
+        let mut d = Drawing::new_metric();
+        let circle = d
+            .add(&Space::Model, Common::default(), EntityKind::Circle(cadcraft_doc::Circle { center: Vec3::new(50.0, 50.0, 0.0), radius: 10.0 }))
+            .unwrap();
+        let line = EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(40.5, 45.0, 0.0), b: Vec3::new(40.5, 55.0, 0.0) });
+        let line = d.add(&Space::Model, Common::default(), line).unwrap();
+        // 0.05 from the circle and 0.45 from the line, both inside an aperture of 1.
+        let p = Vec2::new(40.05, 50.0);
+        assert_eq!(pick(&d, &Space::Model, p, 1.0), Some(line));
+        assert_eq!(pick_all(&d, &Space::Model, p, 1.0), vec![line, circle]);
+        d.model.send_to_back(line);
+        assert_eq!(pick(&d, &Space::Model, p, 1.0), Some(circle));
+        // Only one within reach: that one, whatever the order.
+        assert_eq!(pick(&d, &Space::Model, Vec2::new(41.3, 50.0), 1.0), Some(line));
+    }
+
+    /// A block holding a diagonal dashed line, inserted at `scale`.
+    fn dashed_block(length: f64, scale: f64) -> (Drawing, Handle) {
+        let mut d = Drawing::new_imperial();
+        d.linetypes.extend(cadcraft_doc::library::standard_linetypes().into_iter().filter(|l| l.name == "DASHED"));
+        let mut line =
+            Entity::new(Handle(1), EntityKind::Line(cadcraft_doc::Line { a: Vec3::new(0.0, 0.0, 0.0), b: Vec3::new(length, length, 0.0) }));
+        line.common.linetype = "DASHED".into();
+        let mut blk = cadcraft_doc::Block::new("B");
+        blk.entities.push(line);
+        d.blocks.insert("B".into(), std::sync::Arc::new(blk));
+        let insert = cadcraft_doc::Insert {
+            block: "B".into(),
+            insert: Vec3::new(0.0, 0.0, 0.0),
+            scale: Vec3::new(scale, scale, 1.0),
+            rotation: 0.0,
+            attribs: Vec::new(),
+            cols: 1,
+            rows: 1,
+            col_spacing: 0.0,
+            row_spacing: 0.0,
+        };
+        let h = d.add(&Space::Model, Common::default(), EntityKind::Insert(insert)).unwrap();
+        (d, h)
+    }
+
+    /// Every mouse move over a block hit-tests what it draws. Two blocks with a fine pattern on
+    /// long lines (inserted at 0.001) made 5.8 million dashes, and half a second, per move (#1285).
+    #[test]
+    fn hit_testing_a_block_does_not_lay_out_its_dashes() {
+        let (d, h) = dashed_block(20_000.0, 0.001);
+        let e = d.entity(h).unwrap();
+        let drawn = cadcraft_render::build_entities(&d, std::iter::once(e.as_ref()), &cadcraft_render::Options { text: false, ..Default::default() });
+        assert!(drawn.prims.len() > 10_000, "the pattern draws {} dashes", drawn.prims.len());
+        // The line, and the block's bounding rectangle.
+        assert_eq!(hit_polylines(&d, e, 0.01).len(), 2);
+    }
+
+    /// A dashed line in a block is hit across its gaps, as one outside a block is.
+    #[test]
+    fn a_dashed_line_in_a_block_is_picked_in_a_gap() {
+        let (d, h) = dashed_block(100.0, 1.0);
+        let e = d.entity(h).unwrap();
+        let drawn = cadcraft_render::build_entities(&d, std::iter::once(e.as_ref()), &cadcraft_render::Options { text: false, ..Default::default() });
+        let (a, b) = (drawn.prims.first().unwrap(), drawn.prims.get(1).unwrap());
+        let (end, start) = (*drawn.points(a).last().unwrap(), *drawn.points(b).first().unwrap());
+        assert!(end.dist(start) > 0.01, "a gap between the first two dashes");
+        let gap = end + (start - end) * 0.5;
+        assert_eq!(pick(&d, &Space::Model, gap, end.dist(start) / 8.0), Some(h));
     }
 }
 

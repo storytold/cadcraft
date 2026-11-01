@@ -47,12 +47,16 @@ pub enum Preference {
     Hungarian,
     #[serde(rename = "tr")]
     Turkish,
+    #[serde(rename = "bs")]
+    Bosnian,
+    #[serde(rename = "vi")]
+    Vietnamese,
     #[serde(rename = "nl")]
     Dutch,
 }
 
 impl Preference {
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 21] = [
         Self::Auto,
         Self::English,
         Self::Greek,
@@ -71,6 +75,8 @@ impl Preference {
         Self::Arabic,
         Self::Hungarian,
         Self::Turkish,
+        Self::Bosnian,
+        Self::Vietnamese,
         Self::Dutch,
     ];
 
@@ -120,6 +126,8 @@ impl Preference {
             Self::Arabic => "ar",
             Self::Hungarian => "hu",
             Self::Turkish => "tr",
+            Self::Bosnian => "bs",
+            Self::Vietnamese => "vi",
             Self::Dutch => "nl",
         }
     }
@@ -150,6 +158,15 @@ impl Preference {
             Self::Arabic => "العربية",
             Self::Hungarian => "Magyar",
             Self::Turkish => "Türkçe",
+            Self::Bosnian => "Bosanski",
+            // Its letters need a font egui doesn't bundle ([`crate::theme::vietnamese_font`]).
+            Self::Vietnamese => {
+                if crate::theme::shows_vietnamese(CURRENT.with(Cell::get)) {
+                    "Tiếng Việt"
+                } else {
+                    "Vietnamese"
+                }
+            }
             Self::Dutch => "Nederlands",
         }
     }
@@ -182,6 +199,8 @@ impl Preference {
             Self::Arabic => "ar",
             Self::Hungarian => "hu",
             Self::Turkish => "tr",
+            Self::Bosnian => "bs",
+            Self::Vietnamese => "vi",
             Self::Dutch => "nl",
             Self::Auto => locales.iter().find_map(|s| locale_language(s)).unwrap_or("en"),
         }
@@ -199,7 +218,7 @@ pub struct Language {
     catalog: OnceLock<Catalog<'static>>,
 }
 
-pub static LANGUAGES: [Language; 18] = [
+pub static LANGUAGES: [Language; 20] = [
     Language { code: "en", name: "English", source: "", plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
     // Greek: one for exactly 1; other for zero and all other integer counts.
     Language {
@@ -255,6 +274,13 @@ pub static LANGUAGES: [Language; 18] = [
     Language { code: "hu", name: "Magyar", source: include_str!("i18n/hu.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new() },
     // Turkish keeps a noun singular after a number ("3 commit"), so like Korean it has one form.
     Language { code: "tr", name: "Türkçe", source: include_str!("i18n/tr.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new() },
+    // Bosnian (Latin script, Ijekavian): one (1, 21), few (2–4, 22–24, not 12–14), other — the
+    // Ukrainian rule for integer counts.
+    Language { code: "bs", name: "Bosanski", source: include_str!("i18n/bs.tsv"), plural: plural_uk, plural_forms: 3, catalog: OnceLock::new() },
+    // Vietnamese doesn't inflect a noun for number ("3 commit"), so like Korean it has one form.
+    Language {
+        code: "vi", name: "Tiếng Việt", source: include_str!("i18n/vi.tsv"), plural: plural_ko, plural_forms: 1, catalog: OnceLock::new()
+    },
     // Dutch integer plurals follow the English rule: one (1), other.
     Language { code: "nl", name: "Nederlands", source: include_str!("i18n/nl.tsv"), plural: plural_en, plural_forms: 2, catalog: OnceLock::new() },
 ];
@@ -268,8 +294,7 @@ pub fn locale_language(tag: &str) -> Option<&'static str> {
     for subtag in parts {
         if let Some(l) = LANGUAGES.iter().find(|l| {
             let mut lp = l.code.split('-');
-            lp.next().is_some_and(|p| p.eq_ignore_ascii_case(primary))
-                && lp.next().is_some_and(|r| r.eq_ignore_ascii_case(subtag))
+            lp.next().is_some_and(|p| p.eq_ignore_ascii_case(primary)) && lp.next().is_some_and(|r| r.eq_ignore_ascii_case(subtag))
         }) {
             return Some(l.code);
         }
@@ -471,6 +496,9 @@ mod picker_order_tests {
         assert!(pos(Preference::Czech) < pos(Preference::German), "Čeština sorts under C");
         assert!(pos(Preference::Italian) < pos(Preference::Hungarian), "Magyar sorts under M");
         assert!(pos(Preference::Turkish) < pos(Preference::Greek), "Latin names come before Greek");
+        assert!(pos(Preference::Bosnian) < pos(Preference::Czech), "Bosanski sorts under B");
+        assert!(pos(Preference::Swedish) < pos(Preference::Vietnamese), "Tiếng Việt sorts under T");
+        assert!(pos(Preference::Vietnamese) < pos(Preference::Turkish), "Tiếng comes before Türkçe");
         assert_eq!(name_sort_key("Türkçe"), "turkce");
     }
 }

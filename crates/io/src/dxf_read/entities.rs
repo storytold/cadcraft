@@ -1,11 +1,13 @@
 use super::common::{T, common, ocs};
 use super::hatch::hatch;
+use super::mtext_dxf;
 use super::text::{attdef, attrib_modes, attrib_props, mtext_from, multiline_attrib, split_embedded, text_from};
 use super::{
     Arc, Attrib, Circle, Common, DimKind, Dimension, Ellipse, EntityKind, Face3d, Handle, HashMap, Helix, HelixConstrain, Insert, Leader, Line,
     LwPolyline, MAX_FRAME_CHARS, Point, PolyVertex, Polyline3d, RawTag, RayLine, Rx, Solid, Spline, Table, TableCell, Tag, Tolerance, Unknown, Vec2,
     Vec3, Viewport, Wipeout, records,
 };
+use cadcraft_doc::PolyfaceMesh;
 
 /// Parse one entity record. POLYLINE/INSERT followers are handled by the caller.
 pub(super) fn entity(kind: &str, tags: &[Tag]) -> Option<(Common, EntityKind)> {
@@ -189,7 +191,7 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
                 p14: t.p(14),
                 p15: t.p(15),
                 p16: t.p(16),
-                text: t.s(1).unwrap_or_default(),
+                text: mtext_dxf::decode_line(&t.s(1).unwrap_or_default()),
                 style: t.s(3).unwrap_or_else(|| "Standard".into()),
                 measurement: t.fd(42, 0.0),
                 text_rotation: t.fd(53, 0.0).to_radians(),
@@ -201,7 +203,17 @@ pub(super) fn entity_with_table_budget(kind: &str, tags: &[Tag], table_cells_lef
             })
         }
         "LEADER" => EntityKind::Leader(Leader {
-            vertices: t.pts(10).into_iter().map(|p| p.to3(0.0)).collect(),
+            // Each group 10 starts a vertex. Scope Y/Z to it so an omitted Z cannot
+            // shift a later vertex's elevation onto this one.
+            vertices: t
+                .all_f(10)
+                .into_iter()
+                .zip(tags.split(|tag| tag.code == 10).skip(1))
+                .map(|(x, vertex)| {
+                    let v = T(vertex);
+                    Vec3::new(x, v.fd(20, 0.0), v.fd(30, 0.0))
+                })
+                .collect(),
             arrow: t.i(71).unwrap_or(1) != 0,
             spline: t.i(72).unwrap_or(0) != 0,
             style: t.s(3).unwrap_or_else(|| "Standard".into()),
@@ -457,14 +469,20 @@ pub(super) fn entity_extras(kind: &str, tags: &[Tag], h: Handle, k: &mut EntityK
             }
             rx.mleader_fix.push((h, pending));
         }
-        // CADCraft's VPFROZEN xdata wins; otherwise AutoCAD's group 341 layer handles.
-        ("VIEWPORT", EntityKind::Viewport(v)) if v.frozen_layers.is_empty() => {
-            v.frozen_layers = tags
-                .iter()
-                .take_while(|t| t.code < 1000)
-                .filter(|t| t.code == 341)
-                .filter_map(|t| rx.layers.get(&t.str().trim().to_ascii_uppercase()).cloned())
-                .collect();
+        // The frozen layers: the LAYER handles of group 331 (341 in DXF 2000), outside `102 {…}`
+        // application groups, then the names in CADCraft's VPFROZEN xdata, which holds those
+        // without one; each layer once.
+        ("VIEWPORT", EntityKind::Viewport(v)) => {
+            let mut app_group = false;
+            let handles = tags.iter().take_while(|t| t.code < 1000).filter(|t| {
+                if t.code == 102 {
+                    app_group = t.str().starts_with('{');
+                }
+                !app_group && (t.code == 331 || t.code == 341)
+            });
+            let named = handles.filter_map(|t| rx.layers.get(&t.str().trim().to_ascii_uppercase()));
+            let mut seen = std::collections::HashSet::new();
+            v.frozen_layers = named.chain(&v.frozen_layers).filter(|n| seen.insert(n.to_ascii_uppercase())).cloned().collect();
         }
         _ => {}
     }
@@ -498,11 +516,20 @@ pub(super) fn polyline_entity(recs: &[(String, Vec<Tag>)], i: &mut usize, t: &T)
     }
     let c = common(t);
     let mut extra: Vec<EntityKind> = Vec::new();
-    let k = if flags & (16 | 64) != 0 {
-        // Polyface (64) and polygon (16) meshes become 3D faces; the first takes the
-        // polyline's place.
+    let k = if flags & 64 != 0 {
+        // Face records that name a missing vertex (or fewer than three) are dropped: they draw
+        // nothing and would be written back broken. A mesh left with no face is skipped.
+        let mut mesh = PolyfaceMesh { vertices: pts.iter().map(|p| p.0).collect(), faces: Vec::new() };
+        let kept = faces.iter().map(|f| f.map(|ix| i32::try_from(ix).unwrap_or(i32::MAX))).filter(|f| mesh.face3d(f).is_some()).collect();
+        mesh.faces = kept;
+        if mesh.faces.is_empty() {
+            return None;
+        }
+        EntityKind::PolyfaceMesh(mesh)
+    } else if flags & 16 != 0 {
+        // Polygon meshes become 3D faces; the first takes the polyline's place.
         let verts: Vec<Vec3> = pts.iter().map(|p| p.0).collect();
-        let mut fs = if flags & 64 != 0 { polyface_faces(&verts, &faces) } else { mesh_faces(&verts, t, flags) }.into_iter().map(EntityKind::Face3d);
+        let mut fs = mesh_faces(&verts, t, flags).into_iter().map(EntityKind::Face3d);
         let first = fs.next()?;
         extra.extend(fs);
         first
@@ -540,7 +567,7 @@ pub(super) fn insert_attribs(recs: &[(String, Vec<Tag>)], i: &mut usize, ins_lay
                 tag: own.s(2).unwrap_or_default(),
                 text,
                 invisible: own.i(70).unwrap_or(0) & 1 != 0,
-                constant: false,
+                constant: own.i(70).unwrap_or(0) & 2 != 0,
                 prompt: String::new(),
                 props: attrib_props(&tt, ins_layer),
                 multiline,
@@ -555,36 +582,6 @@ pub(super) fn insert_attribs(recs: &[(String, Vec<Tag>)], i: &mut usize, ins_lay
         }
     }
     attribs
-}
-
-/// Faces of a polyface mesh: each face record names three or four vertices by 1-based index;
-/// a negative index hides the edge that starts at that vertex. Faces with fewer vertices or
-/// an index outside the vertex list are skipped.
-fn polyface_faces(verts: &[Vec3], faces: &[[i64; 4]]) -> Vec<Face3d> {
-    let mut out = Vec::new();
-    for f in faces {
-        let mut corners: Vec<Vec3> = Vec::with_capacity(4);
-        let mut hidden = 0u8;
-        let mut ok = true;
-        for &ix in f.iter().filter(|&&ix| ix != 0) {
-            let at = usize::try_from(ix.unsigned_abs()).ok().and_then(|n| n.checked_sub(1));
-            let Some(p) = at.and_then(|n| verts.get(n)) else {
-                ok = false;
-                break;
-            };
-            if ix < 0 {
-                hidden |= 1 << corners.len();
-            }
-            corners.push(*p);
-        }
-        match (ok, corners.as_slice()) {
-            // A triangle's closing edge is the 3DFACE's fourth (the third is degenerate).
-            (true, [a, b, c]) => out.push(Face3d { corners: [*a, *b, *c, *c], hidden_edges: hidden | if hidden & 4 != 0 { 8 } else { 0 } }),
-            (true, [a, b, c, d]) => out.push(Face3d { corners: [*a, *b, *c, *d], hidden_edges: hidden }),
-            _ => {}
-        }
-    }
-    out
 }
 
 /// Quads of an M×N polygon mesh (71/72, or the smoothed 73/74 when the vertex count matches
