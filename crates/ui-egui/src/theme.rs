@@ -710,6 +710,7 @@ fn installed_japanese_face_from(bytes: std::sync::Arc<Vec<u8>>) -> Option<cadcra
 /// else the first face that parses. Its collection index is kept so egui draws the face the gate
 /// checked. Checked once; collections are scanned with the fonts crate's face-count cap and reads
 /// are capped.
+#[cfg(not(target_arch = "wasm32"))]
 fn installed_japanese_face() -> Option<&'static cadcraft_fonts::ttf::Face> {
     static FOUND: std::sync::OnceLock<Option<cadcraft_fonts::ttf::Face>> = std::sync::OnceLock::new();
     FOUND
@@ -731,8 +732,16 @@ fn installed_japanese_face() -> Option<&'static cadcraft_fonts::ttf::Face> {
 }
 
 /// Whether the installed Japanese font covers the interface.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn japanese_font_covers() -> bool {
     installed_japanese_face().is_some_and(covers_japanese)
+}
+
+/// The web build has no file system, so it has no installed face to check: the Japanese gate
+/// relies on the CJK face the build embeds (as [`cjk_covers_japanese`] does).
+#[cfg(target_arch = "wasm32")]
+pub fn japanese_font_covers() -> bool {
+    false
 }
 
 /// Whether the CJK fonts [`install_fonts`] loads in every language already show Japanese
