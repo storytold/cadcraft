@@ -72,6 +72,33 @@ impl SnapHit {
             None => crate::Input::Point(self.point),
         }
     }
+
+    fn plain(mode: u32, point: Vec2) -> SnapHit {
+        SnapHit { point, mode, name: name_of(mode), viewport: None, deferred: None }
+    }
+
+    /// Where this hit sorts among the candidates near a cursor: specific snaps by distance
+    /// (Endpoint and Intersection favoured a little), then deferred snaps, then Nearest.
+    fn rank(&self, cursor: Vec2, aperture: f64) -> (u8, f64) {
+        let class = if self.deferred.is_some() {
+            1
+        } else if self.mode == mode::NEA {
+            2
+        } else {
+            0
+        };
+        (class, snap_score(self.mode, self.point, cursor, aperture))
+    }
+
+    /// The same snap as `o`: mode and point, from the same source (paper space, or one
+    /// viewport). Overlapping viewports can show different model points at one paper point;
+    /// each stays a candidate, since DIST measures in the model units of the viewport picked.
+    fn same(&self, o: &SnapHit) -> bool {
+        self.mode == o.mode
+            && self.deferred.is_some() == o.deferred.is_some()
+            && self.viewport.map(|v| v.viewport) == o.viewport.map(|v| v.viewport)
+            && self.point.near(o.point, 1e-9 * (1.0 + self.point.len()))
+    }
 }
 
 /// The curve a deferred snap refers to.
@@ -211,6 +238,14 @@ pub fn osnap(d: &Drawing, space: &Space, cursor: Vec2, aperture: f64, osmode: u3
     osnap_with(d, space, &ix, cursor, aperture, osmode, base, deferred)
 }
 
+/// Every object snap within `aperture` of `cursor`, the one [`osnap`] picks first and the rest
+/// in the order Tab cycles them: specific snaps nearest first, then deferred snaps, then Nearest.
+/// Snaps seen through layout viewports are included.
+pub fn osnap_all(d: &Drawing, space: &Space, cursor: Vec2, aperture: f64, osmode: u32, base: Option<Vec2>, deferred: bool) -> Vec<SnapHit> {
+    let ix = crate::spatial::index(d, space);
+    osnap_all_with_neighborhood(d, space, &ix, cursor, aperture, osmode, base, deferred).0
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn osnap_with(
     d: &Drawing,
@@ -237,19 +272,39 @@ pub(crate) fn osnap_with_neighborhood(
     base: Option<Vec2>,
     deferred: bool,
 ) -> (Option<SnapHit>, Option<Vec<Prim>>) {
+    let (all, prims) = osnap_all_with_neighborhood(d, space, ix, cursor, aperture, osmode, base, deferred);
+    (all.into_iter().next(), prims)
+}
+
+/// Every object snap near the cursor ([`osnap_all`]) and the local-space primitives gathered.
+#[allow(clippy::too_many_arguments)]
+fn osnap_all_with_neighborhood(
+    d: &Drawing,
+    space: &Space,
+    ix: &Option<std::sync::Arc<crate::spatial::SpatialIndex>>,
+    cursor: Vec2,
+    aperture: f64,
+    osmode: u32,
+    base: Option<Vec2>,
+    deferred: bool,
+) -> (Vec<SnapHit>, Option<Vec<Prim>>) {
     if osmode == 0 || osmode & mode::OFF != 0 || !cursor.is_finite() || !(aperture.is_finite() && aperture > 0.0) {
-        return (None, None);
+        return (Vec::new(), None);
     }
-    let (mut best, near_prims) = match osnap_in_with_prims(d, space, ix, cursor, aperture, osmode, base, deferred, &[], None) {
-        Some((hit, prims)) => (hit, Some(prims)),
-        None => (None, None),
+    let (mut all, near_prims) = match osnap_in_with_prims(d, space, ix, cursor, aperture, osmode, base, deferred, &[], None) {
+        Some((hits, prims)) => (hits, Some(prims)),
+        None => (Vec::new(), None),
     };
     let views = viewport::near(d, space, cursor, aperture);
     if views.is_empty() {
-        return (best, near_prims);
+        return (all, near_prims);
     }
     let model = Space::Model;
     let model_ix = crate::spatial::index(d, &model);
+    // What a click picks across spaces stays as it was: each space's best snap, and a viewport's
+    // replaces the best so far only when it scores closer. A paper-space Nearest can therefore
+    // beat an Endpoint seen through a viewport, which `ranked` alone would put first.
+    let mut pick = all.first().copied();
     for view in views {
         let model_cursor = view.to_model(cursor);
         let model_aperture = aperture / view.scale;
@@ -257,7 +312,7 @@ pub(crate) fn osnap_with_neighborhood(
         if !model_cursor.is_finite() || !(model_aperture.is_finite() && model_aperture > 0.0) || model_base.is_some_and(|p| !p.is_finite()) {
             continue;
         }
-        let hit = osnap_in(
+        let hits = osnap_in(
             d,
             &model,
             &model_ix,
@@ -268,15 +323,36 @@ pub(crate) fn osnap_with_neighborhood(
             deferred,
             &view.viewport.frozen_layers,
             Some(view.model_clip),
-        )
-        .and_then(|h| view.hit(h));
-        if let Some(hit) = hit
-            && best.as_ref().is_none_or(|b| snap_score(hit.mode, hit.point, cursor, aperture) < snap_score(b.mode, b.point, cursor, aperture))
+        );
+        if let Some(hit) = hits.first().and_then(|h| view.hit(*h))
+            && pick.as_ref().is_none_or(|b| snap_score(hit.mode, hit.point, cursor, aperture) < snap_score(b.mode, b.point, cursor, aperture))
         {
-            best = Some(hit);
+            pick = Some(hit);
+        }
+        all.extend(hits.into_iter().filter_map(|h| view.hit(h)));
+    }
+    let mut out = ranked(all, cursor, aperture);
+    if let Some(pick) = pick {
+        out.retain(|h| !h.same(&pick));
+        out.insert(0, pick);
+    }
+    (out, near_prims)
+}
+
+/// `hits` best first ([`SnapHit::rank`]), without repeats.
+fn ranked(mut hits: Vec<SnapHit>, cursor: Vec2, aperture: f64) -> Vec<SnapHit> {
+    hits.sort_by(|a, b| {
+        let (ca, sa) = a.rank(cursor, aperture);
+        let (cb, sb) = b.rank(cursor, aperture);
+        ca.cmp(&cb).then(sa.total_cmp(&sb))
+    });
+    let mut out: Vec<SnapHit> = Vec::with_capacity(hits.len());
+    for h in hits {
+        if !out.iter().any(|o| o.same(&h)) {
+            out.push(h);
         }
     }
-    (best, near_prims)
+    out
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -291,10 +367,11 @@ fn osnap_in(
     deferred: bool,
     frozen: &[String],
     clip: Option<Bounds2>,
-) -> Option<SnapHit> {
-    osnap_in_with_prims(d, space, ix, cursor, aperture, osmode, base, deferred, frozen, clip).and_then(|(hit, _)| hit)
+) -> Vec<SnapHit> {
+    osnap_in_with_prims(d, space, ix, cursor, aperture, osmode, base, deferred, frozen, clip).map(|(hits, _)| hits).unwrap_or_default()
 }
 
+/// The snaps near the cursor in one space, best first, and the primitives gathered there.
 #[allow(clippy::too_many_arguments)]
 fn osnap_in_with_prims(
     d: &Drawing,
@@ -307,7 +384,7 @@ fn osnap_in_with_prims(
     deferred: bool,
     frozen: &[String],
     clip: Option<Bounds2>,
-) -> Option<(Option<SnapHit>, Vec<Prim>)> {
+) -> Option<(Vec<SnapHit>, Vec<Prim>)> {
     let (mut cands, near_prims) = gather_in(d, space, ix, cursor, aperture, osmode, frozen)?;
     // Intersections between nearby primitives; Apparent Intersection also where their extensions
     // meet (lines extended, arcs as full circles: in 2D, the "apparent" crossing of objects
@@ -345,8 +422,8 @@ fn osnap_in_with_prims(
             }
         }
     }
-    let hit = finish(cands, &near_prims, cursor, aperture, osmode, base, deferred, clip);
-    Some((hit, near_prims))
+    let hits = finish(cands, &near_prims, cursor, aperture, osmode, base, deferred, clip);
+    Some((hits, near_prims))
 }
 
 fn finite_intersection_probe(cursor: Vec2, aperture: f64) -> Option<Bounds2> {
@@ -458,7 +535,8 @@ fn gather_in(
     Some((cands, near_prims))
 }
 
-/// Picks the best of the gathered candidates, adding the base-dependent and deferred snaps.
+/// Ranks the gathered candidates within the aperture ([`ranked`]), adding the base-dependent
+/// snaps, the deferred snaps and Nearest.
 #[allow(clippy::too_many_arguments)]
 fn finish(
     mut cands: Vec<(u32, Vec2)>,
@@ -469,7 +547,7 @@ fn finish(
     base: Option<Vec2>,
     deferred: bool,
     clip: Option<Bounds2>,
-) -> Option<SnapHit> {
+) -> Vec<SnapHit> {
     // Perpendicular / tangent from the base point.
     if let Some(bp) = base {
         for p in near_prims {
@@ -507,20 +585,10 @@ fn finish(
         }
     }
     let visible = |p: Vec2| p.is_finite() && clip.is_none_or(|c| c.contains(p));
-    let best = cands.iter().filter(|(_, p)| visible(*p) && p.dist(cursor) <= aperture).min_by(|a, b| {
-        // Prefer more specific modes when nearly equidistant.
-        let da = snap_score(a.0, a.1, cursor, aperture);
-        let db = snap_score(b.0, b.1, cursor, aperture);
-        da.total_cmp(&db)
-    });
-    if let Some((m, p)) = best {
-        return Some(SnapHit { point: *p, mode: *m, name: name_of(*m), viewport: None, deferred: None });
-    }
-    if base.is_none()
-        && deferred
-        && let Some(h) = deferred_hit(near_prims, cursor, aperture, osmode, clip)
-    {
-        return Some(h);
+    let mut hits: Vec<SnapHit> =
+        cands.into_iter().filter(|(_, p)| visible(*p) && p.dist(cursor) <= aperture).map(|(m, p)| SnapHit::plain(m, p)).collect();
+    if base.is_none() && deferred {
+        hits.extend(deferred_hits(near_prims, cursor, aperture, osmode, clip));
     }
     if osmode & mode::NEA != 0 {
         // The closest point of all nearby objects, whatever their drawing order.
@@ -540,12 +608,13 @@ fn finish(
             }
         }
         if let Some((_, p)) = nb {
-            return Some(SnapHit { point: p, mode: mode::NEA, name: "Nearest", viewport: None, deferred: None });
+            hits.push(SnapHit { point: p, mode: mode::NEA, name: "Nearest", viewport: None, deferred: None });
         }
     }
-    None
+    ranked(hits, cursor, aperture)
 }
 
+/// Prefer more specific modes when nearly equidistant.
 fn snap_score(mode: u32, point: Vec2, cursor: Vec2, aperture: f64) -> f64 {
     point.dist(cursor) - if mode == mode::INT || mode == mode::END { aperture * 0.15 } else { 0.0 }
 }
@@ -874,9 +943,11 @@ fn xform_ellipse(e: &Ellipse, m: &Mat3) -> Ellipse {
     Ellipse { center, major: u, ratio, start: cadcraft_geom::norm_angle(start), end: cadcraft_geom::norm_angle(end) }
 }
 
-/// The nearest deferred tangent/perpendicular within `aperture` of `cursor`.
-fn deferred_hit(prims: &[Prim], cursor: Vec2, aperture: f64, osmode: u32, clip: Option<Bounds2>) -> Option<SnapHit> {
-    let mut best: Option<(f64, SnapHit)> = None;
+/// Every deferred tangent and perpendicular within `aperture` of `cursor`: one per curve and
+/// mode, in drawing order (the caller ranks them), so Tab can cycle from the tangent to the
+/// perpendicular on the same circle.
+fn deferred_hits(prims: &[Prim], cursor: Vec2, aperture: f64, osmode: u32, clip: Option<Bounds2>) -> Vec<SnapHit> {
+    let mut hits = Vec::new();
     for p in prims {
         let curve = match p {
             Prim::Circle(c) => SnapCurve::Circle { center: c.center, radius: c.radius },
@@ -885,32 +956,28 @@ fn deferred_hit(prims: &[Prim], cursor: Vec2, aperture: f64, osmode: u32, clip: 
             Prim::Infinite { base, dir, .. } => SnapCurve::Line { a: *base, b: *base + *dir },
             _ => continue,
         };
-        let (m, name, at) = match curve {
-            SnapCurve::Circle { center, radius } if osmode & mode::TAN != 0 => {
-                (mode::TAN, "Deferred Tangent", Circle::new(center, radius).closest(cursor))
-            }
-            SnapCurve::Circle { center, radius } if osmode & mode::PER != 0 => {
-                (mode::PER, "Deferred Perpendicular", Circle::new(center, radius).closest(cursor))
-            }
-            SnapCurve::Arc { center, radius, start, end } if osmode & mode::TAN != 0 => {
-                (mode::TAN, "Deferred Tangent", cadcraft_geom::Arc::new(center, radius, start, end).closest(cursor))
-            }
-            SnapCurve::Arc { center, radius, start, end } if osmode & mode::PER != 0 => {
-                (mode::PER, "Deferred Perpendicular", cadcraft_geom::Arc::new(center, radius, start, end).closest(cursor))
-            }
-            SnapCurve::Line { a, b } if osmode & mode::PER != 0 => {
-                // Pick on the drawn extent: a segment's own span, an xline/ray anywhere.
+        // Where the curve was picked: a circle's, an arc's or a segment's own span, an xline/ray
+        // anywhere.
+        let at = match curve {
+            SnapCurve::Circle { center, radius } => Circle::new(center, radius).closest(cursor),
+            SnapCurve::Arc { center, radius, start, end } => cadcraft_geom::Arc::new(center, radius, start, end).closest(cursor),
+            SnapCurve::Line { a, b } => {
                 let l = cadcraft_geom::Line::new(a, b);
-                (mode::PER, "Deferred Perpendicular", if matches!(p, Prim::Seg(_)) { l.closest(cursor) } else { l.project(cursor) })
+                if matches!(p, Prim::Seg(_)) { l.closest(cursor) } else { l.project(cursor) }
             }
-            _ => continue,
         };
-        let dd = at.dist(cursor);
-        if at.is_finite() && clip.is_none_or(|c| c.contains(at)) && dd <= aperture && best.is_none_or(|(bd, _)| dd < bd) {
-            best = Some((dd, SnapHit { point: at, mode: m, name, viewport: None, deferred: Some(Deferred { mode: m, curve, at }) }));
+        if !(at.is_finite() && clip.is_none_or(|c| c.contains(at)) && at.dist(cursor) <= aperture) {
+            continue;
+        }
+        let modes: &[(u32, &'static str)] = match curve {
+            SnapCurve::Circle { .. } | SnapCurve::Arc { .. } => &[(mode::TAN, "Deferred Tangent"), (mode::PER, "Deferred Perpendicular")],
+            SnapCurve::Line { .. } => &[(mode::PER, "Deferred Perpendicular")],
+        };
+        for &(m, name) in modes.iter().filter(|(m, _)| osmode & m != 0) {
+            hits.push(SnapHit { point: at, mode: m, name, viewport: None, deferred: Some(Deferred { mode: m, curve, at }) });
         }
     }
-    best.map(|(_, h)| h)
+    hits
 }
 
 /// Solve a line whose ends may be deferred tangent/perpendicular snaps: returns its two
@@ -1120,6 +1187,23 @@ mod tests {
         let h = osnap(&d, &Space::Model, Vec2::new(5.2, 0.2), 0.5, mode::INT, None, false).unwrap();
         assert!(h.point.near(Vec2::new(5.0, 0.0), 1e-9));
         assert_eq!(h.name, "Intersection");
+    }
+
+    /// Tab cycling sees every snap within the aperture: specific snaps nearest first (Intersection
+    /// favoured), then deferred snaps, then Nearest, and no snap twice; the first is what `osnap`
+    /// picks.
+    #[test]
+    fn osnap_all_ranks_every_candidate() {
+        let d = drawing();
+        let modes = mode::END | mode::MID | mode::INT | mode::NEA;
+        let all = osnap_all(&d, &Space::Model, Vec2::new(5.2, 0.2), 0.5, modes, None, false);
+        assert_eq!(all.iter().map(|h| h.mode).collect::<Vec<_>>(), [mode::INT, mode::MID, mode::NEA], "{all:?}");
+        assert_eq!(all[0].point, osnap(&d, &Space::Model, Vec2::new(5.2, 0.2), 0.5, modes, None, false).unwrap().point);
+        // On the circle: its quadrant, then the deferred tangent and perpendicular at the same spot.
+        let all = osnap_all(&d, &Space::Model, Vec2::new(22.1, 0.1), 0.5, mode::QUA | mode::TAN | mode::PER, None, true);
+        let kinds: Vec<(u32, bool)> = all.iter().map(|h| (h.mode, h.deferred.is_some())).collect();
+        assert_eq!(kinds, [(mode::QUA, false), (mode::TAN, true), (mode::PER, true)], "{all:?}");
+        assert!(osnap_all(&d, &Space::Model, Vec2::new(50.0, 50.0), 0.5, modes, None, false).is_empty());
     }
 
     #[test]
