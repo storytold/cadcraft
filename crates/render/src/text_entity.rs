@@ -19,8 +19,8 @@ pub fn place_text_entity(d: &Drawing, t: &cadcraft_doc::Text, value: &str) -> (c
         oblique: t.oblique,
         h,
         v,
-        backwards: ts.backwards,
-        upside_down: ts.upside_down,
+        backwards: t.backwards,
+        upside_down: t.upside_down,
     };
     cadcraft_fonts::place(&font, value, &p)
 }

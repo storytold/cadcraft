@@ -257,6 +257,8 @@ fn multiline_attributes_are_read_with_their_text() {
     assert_eq!((ad.tag.as_str(), ad.prompt.as_str()), ("LABEL", "Site"));
     assert_eq!(ad.text.value, "SITE\nNAME");
     assert_eq!(ad.multiline.as_ref().map(|m| m.mtext.contents.as_str()), Some("SITE\\PNAME"));
+    // The attribute subclass's 71 is its multiline flag (4, 2), not text generation flags.
+    assert!(!ad.text.upside_down && !ad.text.backwards && !a.text.backwards && !a.text.upside_down);
 }
 
 #[test]
@@ -292,6 +294,7 @@ fn multiline_attributes_survive_a_save() {
     let again = read_dxf(out.as_bytes()).unwrap();
     assert_eq!(reference(&again).attribs[0], reference(&d).attribs[0]);
     assert_eq!(definition(&again), definition(&d));
+    assert!(!definition(&again).text.upside_down && !reference(&again).attribs[0].text.backwards);
 }
 
 #[test]
