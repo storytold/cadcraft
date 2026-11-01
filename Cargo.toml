@@ -117,4 +117,6 @@ egui_system_font_provider = { git = "https://github.com/storytold/egui.git", rev
 eframe = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
 egui_demo_lib = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
 egui_inspection = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
-winit = { git = "https://github.com/storytold/winit.git", rev = "a517b3846ee8457d84ee4975110bfda6797c44dc" }
+# storytold/winit a517b38 plus W30 (the launcher's activation token, storytold/winit#14); back to
+# storytold/winit once that merges.
+winit = { git = "https://github.com/bmh129/winit.git", rev = "78df1155809d1def666e0f31bd786f9b14732cf9" }
