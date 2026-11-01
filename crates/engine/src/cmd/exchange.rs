@@ -796,6 +796,44 @@ mod tests {
         assert_eq!(build(true), build(false), "a line in the margin is clipped away");
     }
 
+    /// Hostile saved setups (a degenerate or far-away window, a scale of 0 or not finite) fall back
+    /// to the plain preview and never panic, and a layout with no saved setup previews exactly as
+    /// the plain 1:1 sheet does.
+    #[test]
+    fn preview_survives_hostile_saved_setups_and_default_is_unchanged() {
+        let mut s = Session::new();
+        s.execute("layout.set", &json!({ "name": "Layout1" })).unwrap();
+        s.execute("line", &json!({ "points": [[20.0, 5.0], [200.0, 100.0]] })).unwrap();
+        s.execute("pagesetup", &json!({ "layout": "Layout1", "paper": "A4", "landscape": true })).unwrap();
+        let png = |s: &mut Session, p: Value| s.execute("preview", &p).unwrap()["data"].as_str().unwrap_or_default().to_string();
+        let call = json!({ "layout": "Layout1", "width": 200 });
+        let plain = png(&mut s, json!({ "layout": "Layout1", "width": 200, "fit": false }));
+        assert_eq!(png(&mut s, call.clone()), plain, "no saved setup: the default preview is the plain sheet");
+        let set = |s: &mut Session, window: [f64; 4], scale: f64, fit: bool| {
+            let page = &mut s.doc_mut().unwrap().layouts.iter_mut().find(|l| l.name == "Layout1").unwrap().page;
+            page.plot_area = "window".into();
+            page.plot_window = window;
+            page.scale = scale;
+            page.scale_to_fit = fit;
+        };
+        let good = [0.0, 0.0, 100.0, 60.0];
+        let (nan, inf) = (f64::NAN, f64::INFINITY);
+        for window in [[5.0, 5.0, 5.0, 40.0], [5.0, 5.0, 40.0, 5.0], [nan, 0.0, 10.0, 10.0], [0.0, 0.0, inf, 10.0]] {
+            set(&mut s, window, 1.0, true);
+            assert_eq!(png(&mut s, call.clone()), plain, "{window:?}: a degenerate window changes nothing");
+        }
+        for scale in [0.0, -2.0, nan, inf] {
+            set(&mut s, good, scale, false);
+            let _ = png(&mut s, call.clone());
+            set(&mut s, [5.0, 5.0, 5.0, 40.0], scale, false);
+            assert_eq!(png(&mut s, call.clone()), plain, "{scale}: an unusable saved scale is ignored");
+        }
+        set(&mut s, [1e9, 1e9, 1e9 + 10.0, 1e9 + 10.0], 1.0, true);
+        let _ = png(&mut s, call.clone());
+        set(&mut s, [-1e300, -1e300, 1e300, 1e300], 1.0, true);
+        let _ = png(&mut s, call.clone());
+    }
+
     #[test]
     fn preview_honours_saved_centering_and_an_explicit_scale() {
         let mut s = Session::new();

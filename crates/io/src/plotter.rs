@@ -321,4 +321,54 @@ mod tests {
         // The line 3 units left of the window lands about 1.7 mm from the sheet edge, in the margin.
         assert!(!inked(&png, 0.0, 9.0, 105.0), "the margin stays blank");
     }
+
+    /// A layout with `window`/`scale` saved (any values, hostile ones included).
+    fn saved_drawing(window: [f64; 4], scale: f64, fit: bool) -> Drawing {
+        let mut d = layout_drawing(fit);
+        let page = &mut d.layouts.iter_mut().find(|l| l.name == "L1").unwrap().page;
+        page.plot_window = window;
+        page.scale = scale;
+        d
+    }
+
+    /// Degenerate windows, a window off the drawing, and a saved scale of 0 or not finite fall back
+    /// to the plain plot: the setup resolves to no window or scale, and PDF and PNG still plot.
+    #[test]
+    fn hostile_saved_setups_fall_back_and_never_panic() {
+        let sp = Space::Paper("L1".into());
+        let nan = f64::NAN;
+        let inf = f64::INFINITY;
+        for window in [[5.0, 5.0, 5.0, 40.0], [5.0, 5.0, 40.0, 5.0], [nan, 0.0, 10.0, 10.0], [0.0, 0.0, inf, 10.0]] {
+            let d = saved_drawing(window, 1.0, true);
+            let o = pdf::with_saved_setup(&d, &sp, &PdfOptions::from_json(&json!({})));
+            assert!(o.window.is_none(), "{window:?}: a degenerate window is dropped, got {:?}", o.window);
+            assert!(plot(&d, &sp, &json!({})).unwrap().starts_with(b"%PDF"), "{window:?}");
+            assert!(plot(&d, &sp, &serde_json::from_str(LAYOUT_PNG).unwrap()).is_ok(), "{window:?}");
+        }
+        for scale in [0.0, -2.0, nan, inf] {
+            let d = saved_drawing([0.0, 0.0, 100.0, 60.0], scale, false);
+            let o = pdf::with_saved_setup(&d, &sp, &PdfOptions::from_json(&json!({})));
+            assert!(o.scale.is_none(), "{scale}: an unusable saved scale is ignored");
+            assert!(plot(&d, &sp, &json!({})).unwrap().starts_with(b"%PDF"), "{scale}");
+            assert!(plot(&d, &sp, &serde_json::from_str(LAYOUT_PNG).unwrap()).is_ok(), "{scale}");
+        }
+        // A window far from everything drawn is plotted (an empty sheet), not an error.
+        let d = saved_drawing([1e9, 1e9, 1e9 + 10.0, 1e9 + 10.0], 1.0, true);
+        assert!(plot(&d, &sp, &json!({})).unwrap().starts_with(b"%PDF"));
+        assert!(plot(&d, &sp, &serde_json::from_str(LAYOUT_PNG).unwrap()).is_ok());
+    }
+
+    /// A layout with no saved setup (`PageSetup::default()`) plots as the options say: nothing is
+    /// filled in from it.
+    #[test]
+    fn a_layout_without_saved_setup_changes_nothing() {
+        let mut d = Drawing::new_metric();
+        d.layouts.push(cadcraft_doc::Layout::new("L1", 3));
+        let sp = Space::Paper("L1".into());
+        let given = PdfOptions::from_json(&json!({"scale": 0.5}));
+        let o = pdf::with_saved_setup(&d, &sp, &given);
+        assert_eq!((o.window, o.fit, o.scale, o.center), (None, None, Some(0.5), None));
+        let o = pdf::with_saved_setup(&d, &sp, &PdfOptions::from_json(&json!({})));
+        assert_eq!((o.window, o.fit, o.scale, o.center), (None, None, None, None));
+    }
 }
