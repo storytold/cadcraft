@@ -711,6 +711,17 @@ mod ttf_tests {
     }
 
     #[test]
+    fn available_fonts_lists_builtin_stroke_font_first_and_common_families() {
+        crate::ttf::register("cadcraft-custom-picker-font.ttf", Vec::new());
+        let fonts = crate::ttf::available_fonts();
+        assert_eq!(fonts.first().map(String::as_str), Some(crate::BUILTIN_FONT));
+        for fam in ["Arial", "Times New Roman", "Courier New", "Verdana", "Georgia", "Calibri", "cadcraft-custom-picker-font"] {
+            assert!(fonts.iter().any(|f| f.eq_ignore_ascii_case(fam)), "missing {fam} in {fonts:?}");
+        }
+        assert_eq!(fonts.iter().filter(|f| f.eq_ignore_ascii_case("Arial")).count(), 1, "deduplicated case-insensitively");
+    }
+
+    #[test]
     fn stroke_names_are_not_ttf() {
         assert!(crate::ttf::find("txt.shx").is_none());
         assert!(crate::ttf::find("").is_none());

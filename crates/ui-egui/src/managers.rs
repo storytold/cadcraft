@@ -319,17 +319,31 @@ fn text_style(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) -> Action 
         no_drawing(ctx, "Text Style", open);
         return None;
     };
+    let available = cadcraft_fonts::ttf::available_fonts();
     let mut styles: Vec<Style> = d
         .text_styles
         .iter()
-        .map(|s| Style {
-            name: s.name.clone(),
-            fields: vec![
-                Field::Num("height", "Height (0 = ask)", s.height),
-                Field::Num("widthFactor", "Width factor", s.width_factor),
-                Field::Bool("backwards", "Backwards", s.backwards),
-                Field::Bool("upsideDown", "Upside down", s.upside_down),
-            ],
+        .map(|s| {
+            let trimmed = s.font.trim();
+            let font = if trimmed.is_empty() || trimmed.len() > 128 || !trimmed.chars().all(|c| c.is_ascii_graphic() || c == ' ') {
+                cadcraft_fonts::BUILTIN_FONT.to_string()
+            } else {
+                trimmed.to_string()
+            };
+            let mut fonts = available.clone();
+            if !fonts.iter().any(|f| f.eq_ignore_ascii_case(&font)) {
+                fonts.insert(0, font.clone());
+            }
+            Style {
+                name: s.name.clone(),
+                fields: vec![
+                    Field::Choice("font", "Font", font, fonts),
+                    Field::Num("height", "Height (0 = ask)", s.height),
+                    Field::Num("widthFactor", "Width factor", s.width_factor),
+                    Field::Bool("backwards", "Backwards", s.backwards),
+                    Field::Bool("upsideDown", "Upside down", s.upside_down),
+                ],
+            }
         })
         .collect();
     if styles.is_empty() {
@@ -424,7 +438,9 @@ fn style_manager(ctx: &egui::Context, open: &mut bool, title: &str, cmd: &'stati
                 action = Some((cmd, json!({ "name": sel })));
             }
             left.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut new_name).hint_text("New style name").desired_width(120.0)).on_hover_text("New style name");
+                ui.add(egui::TextEdit::singleline(&mut new_name).hint_text("New style name").desired_width(120.0))
+                    .accessible_name("New style name")
+                    .on_hover_text("New style name");
                 let name = new_name.trim().to_string();
                 let ok = !name.is_empty() && !styles.iter().any(|s| s.name.eq_ignore_ascii_case(&name));
                 if ui.add_enabled(ok, egui::Button::new("New")).clicked() {
@@ -448,15 +464,17 @@ fn style_manager(ctx: &egui::Context, open: &mut bool, title: &str, cmd: &'stati
                             ui.checkbox(&mut b, *label).changed().then(|| (*key, json!(b)))
                         }
                         Field::Choice(key, label, v, choices) => {
-                            ui.label(*label);
+                            let field_label = ui.label(*label);
                             let mut picked = None;
-                            craft_ui::ComboBox::from_id_salt((cmd, *key)).selected_text(v.as_str()).show_ui(ui, |ui| {
+                            let combo = craft_ui::ComboBox::from_id_salt((cmd, *key)).selected_text(v.as_str()).show_ui(ui, |ui| {
                                 for c in choices {
-                                    if ui.selectable_label(c == v, c).clicked() && c != v {
+                                    let same = c.eq_ignore_ascii_case(v);
+                                    if ui.selectable_label(same, c).clicked() && !same {
                                         picked = Some(c.clone());
                                     }
                                 }
                             });
+                            combo.response.labelled_by(field_label.id);
                             picked.map(|c| (*key, json!(c)))
                         }
                     };
