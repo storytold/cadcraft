@@ -6,7 +6,7 @@ pub(in crate::cmd) mod purge;
 
 use std::sync::Arc;
 
-use cadcraft_doc::{Attrib, Block, Entity, EntityKind, HAlign, Handle, Insert, Text, VAlign};
+use cadcraft_doc::{Attrib, Block, Entity, EntityKind, Handle, Insert};
 use cadcraft_geom::{Vec2, Vec3};
 use serde_json::{Value, json};
 
@@ -43,10 +43,16 @@ pub fn specs() -> Vec<CommandSpec> {
             .alias(&["i", "-insert", "ddinsert"])
             .params("{name (\"*NAME\": exploded), file?: DXF/DWG path (defines or redefines block `name`, default the file name, from its model space; base point $INSBASE), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y] (block coordinates), attribs?: {TAG: value}, explode?: bool}")
             .interactive(|_| Ok(Box::new(InsertM::default()))),
-        CommandSpec::new("attdef", "Define Attributes...", run_attdef)
+        CommandSpec::new("attdef", "Define Attributes...", attdef::run_attdef)
             .menu(&["Draw", "Block", "Define Attributes..."])
             .alias(&["att", "-attdef"])
-            .params("{tag, prompt?, default?, at, height?, invisible?}")
+            .params(
+                "{tag, prompt? (default: the tag), default?, at | below: true (one line under the previous definition, with its text settings), \
+                 height? (default: the style's fixed height, else TEXTSIZE), rotation? (degrees), \
+                 justify?: L|C|R|A|M|F|TL|TC|TR|ML|MC|MR|BL|BC|BR, end? (A and F: the baseline's second endpoint; \
+                 default: the tag's own width along rotation), style? (default: the current style), \
+                 invisible?, constant?, verify?, preset?, lockPosition?}",
+            )
             .interactive(|_| Ok(Box::new(attdef::AttdefM::default()))),
         attedit::attedit_spec(),
         attedit::dash_attedit_spec(),
@@ -333,42 +339,6 @@ fn run_insert(s: &mut Session, p: &Value) -> Result<Value> {
         return (explode.run)(s, &json!({ "handles": [h.hex()] }));
     }
     Ok(attedit::with_unknown_tags(s, h, &vals, json!({ "handle": h.hex() })))
-}
-
-fn attdef_kind(s: &Session, tag: &str, prompt: &str, default: &str, at: Vec2, height: f64, invisible: bool) -> EntityKind {
-    let style = s.doc().map(|d| d.header.str("TEXTSTYLE", "Standard")).unwrap_or_else(|_| "Standard".into());
-    EntityKind::AttDef(Attrib {
-        tag: tag.to_ascii_uppercase(),
-        text: Text {
-            insert: v3(at),
-            align_pt: None,
-            height,
-            value: default.into(),
-            rotation: 0.0,
-            width_factor: 1.0,
-            oblique: 0.0,
-            style,
-            halign: HAlign::Left,
-            valign: VAlign::Baseline,
-        },
-        invisible,
-        constant: false,
-        prompt: prompt.into(),
-        props: Default::default(),
-        multiline: None,
-        modes: Default::default(),
-    })
-}
-
-fn run_attdef(s: &mut Session, p: &Value) -> Result<Value> {
-    let tag = str_param(p, "tag").ok_or_else(|| bad("attdef", "`tag` is required"))?;
-    if tag.contains(' ') || tag.is_empty() {
-        return Err(bad("attdef", "tag must be non-empty without spaces"));
-    }
-    let at = point_req("attdef", p, "at")?;
-    let h = f64_or(p, "height", s.doc()?.header.f64("TEXTSIZE", 0.2));
-    let k = attdef_kind(s, tag, str_param(p, "prompt").unwrap_or(tag), str_param(p, "default").unwrap_or(""), at, h, bool_or(p, "invisible", false));
-    Ok(json!({ "handle": s.add_entity(k)?.hex() }))
 }
 
 fn run_base(s: &mut Session, p: &Value) -> Result<Value> {
