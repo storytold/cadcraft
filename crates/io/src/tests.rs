@@ -1675,8 +1675,8 @@ fn extension_sample_roundtrips_and_can_be_exported() {
 fn dwg_roundtrip_keeps_extension_data() {
     let d = extension_sample();
     let back = read(&write(&d, "x.dwg").unwrap(), "x.dwg").unwrap();
-    // The bridge loses DIMFXL and DIMJOGANG (0 and its 5° minimum come back).
-    let norm = |s: Option<&DimStyle>| s.cloned().map(|s| DimStyle { fixed_ext_length: 1.0, jog_angle: 45.0, ..s });
+    // The bridge loses DIMFXL (0 comes back).
+    let norm = |s: Option<&DimStyle>| s.cloned().map(|s| DimStyle { fixed_ext_length: 1.0, ..s });
     assert_eq!(norm(back.dim_style("Mech")), norm(d.dim_style("Mech")));
     assert_eq!(back.constraints, d.constraints);
     assert_eq!(back.parametric, d.parametric);

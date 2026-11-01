@@ -249,7 +249,22 @@ mod native {
         table_merges(doc);
         table_style_rows(doc, false);
         keep_sort_handles(doc);
+        jog_angles(doc);
         drop_orphaned_dgn_components(doc)
+    }
+
+    /// Dimension styles' jog angles in a DWG older than 2007 (AC1021), whose DIMSTYLE objects
+    /// have no DIMJOGANG (ODA DWG specification, DIMSTYLE: R2007+). acadrust 0.6.6 leaves 0
+    /// there, and its DXF writer then gives every style a group 50 of 5° (0 clamped to the
+    /// shortest jog) that isn't in the file. Its default, 45°, is left out of the DXF instead, so
+    /// a style's jog angle comes from its xdata or the reader's default.
+    fn jog_angles(doc: &mut acadrust::CadDocument) {
+        if doc.version >= acadrust::DxfVersion::AC1021 {
+            return;
+        }
+        for s in doc.dim_styles.iter_mut() {
+            s.dimjogang = std::f64::consts::FRAC_PI_4;
+        }
     }
 
     /// Runs `f`, turning a panic into an error (the reader and writer are guarded the same way).

@@ -141,7 +141,7 @@ fn newer_dimstyle_variables_are_table_groups_from_2004() {
             assert!(rec.chunks(2).any(|p| p[0] == code), "{v:?}: group {code}");
         }
         let jog = rec.chunks(2).find(|p| p[0] == "50").unwrap()[1].parse::<f64>().unwrap();
-        assert!((jog - 30f64.to_radians()).abs() < 1e-9, "DIMJOGANG in radians: {jog}");
+        assert_eq!(jog, 30.0, "DIMJOGANG in degrees, as AutoCAD reads group 50");
         let back = cadcraft_io::read_dxf(text.as_bytes()).unwrap();
         assert_eq!(back.dim_style("Detail").unwrap(), &st, "{v:?}");
     }
