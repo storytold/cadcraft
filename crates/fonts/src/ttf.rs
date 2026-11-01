@@ -719,9 +719,36 @@ pub fn descent_ratio(face: &Face) -> Option<f64> {
     (r.is_finite() && r > 0.0 && r < 2.0).then_some(r)
 }
 
-/// Cap height of a font in font units at 1000 units per em: the OS/2 value, else the height
-/// of its "H", else an estimate from the ascent.
+/// Cap heights the installation pins for metric-compatible substitutes, from `CADCRAFT_CAP_HEIGHT`
+/// (`LiberationSans=715.8;LiberationSans-Bold=715.8`): a substitute keeps the advance widths of
+/// the font it stands in for but not its cap height, so scaling by the substitute's own OS/2
+/// value draws text the size of the substitute, not of the requested font. Each entry names a
+/// PostScript name and its cap height in font units at 1000 per em.
+fn cap_height_overrides() -> &'static HashMap<String, f64> {
+    static OVERRIDES: OnceLock<HashMap<String, f64>> = OnceLock::new();
+    OVERRIDES.get_or_init(|| parse_cap_height_overrides(&std::env::var("CADCRAFT_CAP_HEIGHT").unwrap_or_default()))
+}
+
+/// Parse a `Name=height;…` list; entries without a name or with a non-positive or non-finite
+/// height are dropped. Names are matched normalised, like family names.
+fn parse_cap_height_overrides(spec: &str) -> HashMap<String, f64> {
+    spec.split(';')
+        .filter_map(|entry| {
+            let (name, height) = entry.split_once('=')?;
+            let height: f64 = height.trim().parse().ok()?;
+            (height.is_finite() && height > 0.0 && !name.trim().is_empty()).then(|| (norm(name.trim()), height))
+        })
+        .collect()
+}
+
+/// Cap height of a font in font units at 1000 units per em: the value `CADCRAFT_CAP_HEIGHT`
+/// pins for this font's PostScript name, else the OS/2 value, else the height of its "H",
+/// else an estimate from the ascent.
 fn cap_height(f: &FontRef) -> f64 {
+    let named = f.localized_strings(skrifa::string::StringId::POSTSCRIPT_NAME).next().map(|s| norm(&s.to_string()));
+    if let Some(height) = named.as_deref().and_then(|n| cap_height_overrides().get(n)) {
+        return *height;
+    }
     let metrics = f.metrics(Size::new(UPEM), LocationRef::default());
     let measured = || {
         let gid = f.charmap().map('H')?;
@@ -932,6 +959,70 @@ mod family_tests {
         assert!(family_candidates(&stems, &norm("gost type a"), "go").is_empty(), "too short a word matches nothing");
         let many: Vec<String> = (0..100).map(|i| format!("gost{i:03}")).collect();
         assert!(family_candidates(&many, "gosttypea", "gost").len() <= MAX_FAMILY_FILES + MAX_FIRST_WORD_FILES);
+    }
+}
+
+#[cfg(test)]
+mod cap_height_override_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn cap_height_env_parses_name_height_entries() {
+        let m = parse_cap_height_overrides("LiberationSans=715.8;LiberationSans-Bold=715.8");
+        let mut want = HashMap::new();
+        want.insert("liberationsans".to_string(), 715.8);
+        want.insert("liberationsansbold".to_string(), 715.8);
+        assert_eq!(m, want);
+        assert_eq!(
+            parse_cap_height_overrides("LiberationSans = 715.8 ; NotoSansCJK=1466"),
+            parse_cap_height_overrides("LiberationSans=715.8;NotoSansCJK=1466").into_iter().collect::<HashMap<_, _>>(),
+            "spaces around names and heights are tolerated"
+        );
+        assert!(
+            parse_cap_height_overrides("noheight;=5;Arial=0;Arial=-1;Arial=abc").is_empty(),
+            "entries without a name or a positive finite height are dropped"
+        );
+        assert!(parse_cap_height_overrides("").is_empty());
+    }
+
+    #[test]
+    fn cap_height_override_applies_only_to_the_named_font() {
+        let m = parse_cap_height_overrides("LiberationSans=715.8");
+        assert_eq!(m.get(&norm("LiberationSans")), Some(&715.8));
+        assert_eq!(m.get(&norm("Liberation Sans")), Some(&715.8), "names match normalised");
+        assert_eq!(m.get(&norm("DejaVuSans")), None);
+        assert_eq!(m.get(&norm("LiberationSans-Bold")), None);
+    }
+
+    /// With no override for the face, `cap_height` walks its chain: the OS/2 value when the face
+    /// has one, else the height of its "H", else an estimate from the ascent. Uses the first of
+    /// these common fonts that is installed (Windows, macOS and Linux each have one); skips
+    /// without any. No override is in play: `CADCRAFT_CAP_HEIGHT` names other faces, and the
+    /// test binary's env is read once — a face this test does not name stays unoverridden.
+    #[test]
+    fn cap_height_without_an_override_follows_the_fallback_chain() {
+        let found = ["Arial", "Helvetica", "DejaVuSans", "Verdana", "LiberationSans-Regular"].into_iter().find_map(find);
+        let Some(face) = found else { return };
+        let f = face.font().expect("the face parses");
+        let named = f.localized_strings(skrifa::string::StringId::POSTSCRIPT_NAME).next().map(|s| norm(&s.to_string())).unwrap_or_default();
+        let m = f.metrics(Size::new(UPEM), LocationRef::default());
+        let h_height = || {
+            let gid = f.charmap().map('H')?;
+            let b = f.glyph_metrics(Size::new(UPEM), LocationRef::default()).bounds(gid)?;
+            Some(b.y_max).filter(|y| y.is_finite() && *y > 0.0)
+        };
+        let got = cap_height(&f);
+        let want = if cap_height_overrides().contains_key(&named) {
+            return; // this installation pins the face: the override leg is covered by the parser tests
+        } else if let Some(cap) = m.cap_height.filter(|c| c.is_finite() && *c > 0.0) {
+            f64::from(cap)
+        } else if let Some(h) = h_height() {
+            f64::from(h)
+        } else {
+            f64::from(m.ascent) * 0.72
+        };
+        assert!((got - want.max(1.0)).abs() < 1.0, "cap height {got} tracks the chain's value {want}");
     }
 }
 
