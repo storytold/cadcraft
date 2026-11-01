@@ -522,7 +522,8 @@ pub(crate) fn with_saved_setup(d: &Drawing, space: &Space, o: &PdfOptions) -> Pd
     let saved = paper::saved_plot(page);
     // A layout is plotted over its own sheet: only its saved window applies, not one in the options.
     o.window = saved.window;
-    if o.fit.is_none() && saved.fit {
+    // An explicit scale beats a saved scale to fit (the scale is ignored while fitting).
+    if o.fit.is_none() && o.scale.is_none() && saved.fit {
         o.fit = Some(true);
     }
     if o.scale.is_none() {
@@ -1087,5 +1088,14 @@ mod saved_setup_tests {
         d.layouts.iter_mut().find(|l| l.name == "L1").unwrap().page.plot_area = "layout".into();
         let m = map(&d, json!({}));
         assert_eq!((m.s, m.from, m.to), (1.0, Vec2::ZERO, Vec2::ZERO));
+    }
+
+    /// An explicit `scale` beats a saved scale to fit, in the PDF as in the preview.
+    #[test]
+    fn an_explicit_scale_overrides_the_saved_scale_to_fit() {
+        let d = drawing(true, 1.0);
+        let m = map(&d, json!({"scale": 0.25}));
+        assert!((m.s - 0.25).abs() < 1e-12, "{}", m.s);
+        assert!(m.from.dist(Vec2::new(428.0, 297.0)) < 1e-9 && m.to.dist(Vec2::new(148.5, 105.0)) < 1e-9, "still placed: {:?} {:?}", m.from, m.to);
     }
 }

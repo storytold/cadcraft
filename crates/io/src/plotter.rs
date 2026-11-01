@@ -78,10 +78,17 @@ fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let (width, height) = (px(sheet.size.x), px(sheet.size.y));
     let lineweights = o.lineweights.unwrap_or(if space.is_paper() { page.lineweights } else { true });
     let table = cadcraft_doc::plot_style_table(d, &page.plot_style_table).map(Arc::new);
-    // Paper units per drawing unit: 1 for a layout at 1:1, the fitted scale for model space.
+    // Paper units per drawing unit: the fitted scale for model space or a fitted layout, else the
+    // `scale` option or 1:1, as PDF plots it.
     let fit = matches!(space, Space::Model) || o.fit == Some(true);
     let window = o.window.filter(|w| !w.is_empty());
-    let est = if fit { fit_scale(&window.unwrap_or_else(|| d.extents(space)), &sheet, &o) } else { 1.0 };
+    // A layout over a saved window is placed like model space, the window on the printable area.
+    let placed = fit || window.is_some();
+    let est = if fit {
+        fit_scale(&window.unwrap_or_else(|| d.extents(space)), &sheet, &o)
+    } else {
+        pdf::plot_scale(&Bounds2::EMPTY, &sheet, false, o.scale)
+    };
     // Chord tolerance: a fifth of a pixel.
     let tolerance = (0.2 / (k * est)).max(1e-9);
     let transparency = o.plot_transparency.unwrap_or(page.plot_transparency);
@@ -89,21 +96,40 @@ fn png(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
     let mut list = cadcraft_render::build_plot(d, space, &ropts);
     let half = Vec2::new(f64::from(width), f64::from(height)) / (2.0 * k);
     let b = window.unwrap_or(list.bounds);
-    let s = if fit { fit_scale(&b, &sheet, &o) } else { 1.0 };
+    let s = if fit { fit_scale(&b, &sheet, &o) } else { est };
     // Plot style ends, joins and fill patterns at the plot scale, as PDF draws them (a layout's
     // are already drawn).
     cadcraft_render::pen::apply(&mut list, s * sheet.unit_mm);
-    let view = if fit {
-        let (from, to) = pdf::placement(space, &b, true, &sheet, &o);
-        // The world point at the image centre, mapped through the same paper origin as PDF.
-        let center = from + (half - to) / s;
-        raster::View { center, scale: k * s, width, height }
+    let (from, to) = if placed {
+        // A window is placed like model space, whatever the space (as in PDF).
+        pdf::placement(if window.is_some() { &Space::Model } else { space }, &b, fit, &sheet, &o)
     } else {
-        raster::View { center: half, scale: k, width, height }
+        (Vec2::ZERO, Vec2::ZERO)
     };
+    // The world point at the image centre, mapped through the same paper origin as PDF.
+    let center = from + (half - to) / s;
+    let view = raster::View { center, scale: k * s, width, height };
     let px_per_mm = if lineweights { (k / sheet.unit_mm) as f32 } else { 0.0 };
     let ro = raster::RasterOptions { background: Rgb(255, 255, 255), hairline: 1.0, px_per_mm, antialias: true };
-    raster::render_png(&list, &view, &ro).ok_or_else(|| IoError::Format("render failed".into()))
+    let mut pm = raster::render(&list, &view, &ro).ok_or_else(|| IoError::Format("render failed".into()))?;
+    if placed {
+        // PDF clips a placed plot to the printable area: blank the rest of the sheet. Paper (x, y)
+        // is pixel (x * k, height - y * k).
+        let (pw, ph) = (pm.width(), pm.height());
+        let col = |x: f64| (x * k).round().clamp(0.0, f64::from(pw)) as usize;
+        let row = |y: f64| (f64::from(height) - y * k).round().clamp(0.0, f64::from(ph)) as usize;
+        let (x0, x1) = (col(sheet.printable.min.x), col(sheet.printable.max.x));
+        let (y0, y1) = (row(sheet.printable.max.y), row(sheet.printable.min.y));
+        let stride = pw as usize * 4;
+        for (r, line) in pm.data_mut().chunks_exact_mut(stride.max(4)).enumerate() {
+            for (c, px) in line.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                if r < y0 || r >= y1 || c < x0 || c >= x1 {
+                    px.copy_from_slice(&[255, 255, 255, 255]);
+                }
+            }
+        }
+    }
+    pm.encode_png().map_err(|_| IoError::Format("render failed".into()))
 }
 
 fn svg(d: &Drawing, space: &Space, opts: &Value) -> Result<Vec<u8>> {
@@ -236,5 +262,76 @@ mod tests {
         let err = plot(&d, &model, &json!({"output": "svg", "center": false, "offset": [0, 0]})).unwrap_err();
         assert!(err.to_string().contains("not supported for SVG"));
         assert!(plot(&d, &model, &json!({"output": "svg", "center": true})).unwrap().starts_with(b"<svg"));
+    }
+
+    /// A layout whose saved page setup plots the window (0,0)-(100,60): an A4 landscape sheet with
+    /// 10 mm margins. A line crosses the window at y = 30 and a vertical one lies 3 units left of it.
+    fn layout_drawing(scale_to_fit: bool) -> Drawing {
+        let mut d = Drawing::new_metric();
+        let mut l = cadcraft_doc::Layout::new("L1", 3);
+        l.page = cadcraft_doc::PageSetup {
+            width_mm: 297.0,
+            height_mm: 210.0,
+            landscape: true,
+            margins_mm: [10.0; 4],
+            plot_area: "window".into(),
+            plot_window: [0.0, 0.0, 100.0, 60.0],
+            scale_to_fit,
+            scale: 1.0,
+            center: true,
+            ..cadcraft_doc::PageSetup::default()
+        };
+        d.layouts.push(l);
+        let sp = Space::Paper("L1".into());
+        let mut line = |a: (f64, f64), b: (f64, f64)| {
+            d.add(&sp, Common::default(), EntityKind::Line(Line { a: Vec3::new(a.0, a.1, 0.0), b: Vec3::new(b.0, b.1, 0.0) })).unwrap();
+        };
+        line((0.0, 30.0), (100.0, 30.0));
+        line((-3.0, 0.0), (-3.0, 60.0));
+        d
+    }
+
+    /// Whether any pixel of the PNG in the column range `x0..=x1` (mm from the sheet's left edge)
+    /// at the row of `y_mm` (from the sheet's bottom edge, give or take 2 px) is not white.
+    fn inked(png: &[u8], x0_mm: f64, x1_mm: f64, y_mm: f64) -> bool {
+        let pm = tiny_skia::Pixmap::decode_png(png).unwrap();
+        let px_per_mm = f64::from(pm.width()) / 297.0;
+        let row = (f64::from(pm.height()) - y_mm * px_per_mm).round() as i64;
+        let (c0, c1) = ((x0_mm * px_per_mm).round() as i64, (x1_mm * px_per_mm).round() as i64);
+        (row - 2..=row + 2).any(|r| (c0..=c1).any(|c| pm.pixel(c as u32, r as u32).is_some_and(|p| p.red() < 200)))
+    }
+
+    const LAYOUT_PNG: &str = r#"{"output": "png", "resolution": 100}"#;
+
+    /// Without scale to fit, a saved window is still placed (centred on the printable area, 1:1) as PDF
+    /// places it, not left at the sheet origin.
+    #[test]
+    fn png_places_the_saved_window_when_fit_is_off() {
+        let d = layout_drawing(false);
+        let png = plot(&d, &Space::Paper("L1".into()), &serde_json::from_str(LAYOUT_PNG).unwrap()).unwrap();
+        // The 100 mm line is centred on the sheet: 98.5 to 198.5 mm. At the origin it would end at 100 mm.
+        assert!(inked(&png, 140.0, 160.0, 105.0), "the window's line crosses the sheet centre");
+        assert!(!inked(&png, 10.0, 90.0, 105.0), "nothing at the sheet origin");
+    }
+
+    /// An explicit scale overrides a saved scale to fit, and the PNG uses it.
+    #[test]
+    fn png_explicit_scale_beats_saved_fit() {
+        let d = layout_drawing(true);
+        let sp = Space::Paper("L1".into());
+        let fitted = plot(&d, &sp, &serde_json::from_str(LAYOUT_PNG).unwrap()).unwrap();
+        assert!(inked(&fitted, 200.0, 280.0, 105.0), "fitted, the 100 unit line is 277 mm wide");
+        let half = plot(&d, &sp, &json!({"output": "png", "resolution": 100, "scale": 0.5})).unwrap();
+        assert!(inked(&half, 130.0, 170.0, 105.0));
+        assert!(!inked(&half, 200.0, 280.0, 105.0), "at 0.5 the line is 50 mm wide, centred");
+    }
+
+    /// A placed window shows only inside the printable area, as PDF clips it.
+    #[test]
+    fn png_clips_a_placed_window_to_the_printable_area() {
+        let d = layout_drawing(true);
+        let png = plot(&d, &Space::Paper("L1".into()), &serde_json::from_str(LAYOUT_PNG).unwrap()).unwrap();
+        // The line 3 units left of the window lands about 1.7 mm from the sheet edge, in the margin.
+        assert!(!inked(&png, 0.0, 9.0, 105.0), "the margin stays blank");
     }
 }
