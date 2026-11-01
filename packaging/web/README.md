@@ -142,7 +142,13 @@ canvas.addEventListener("cadcraft:failed", (event) => {
   showError(event.detail.error);
 });
 
-await init({ module_or_path: "./cadcraft-web-<hash>_bg.wasm" });
+// If the wasm cannot be fetched or instantiated, `init` rejects before the app can post
+// `cadcraft:failed`, so report that here too.
+try {
+  await init({ module_or_path: "./cadcraft-web-<hash>_bg.wasm" });
+} catch (error) {
+  showError(String(error));
+}
 ```
 
 ## Renderer selection and fallback flags
