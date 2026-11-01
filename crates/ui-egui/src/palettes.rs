@@ -1067,6 +1067,52 @@ pub(crate) fn properties_section(app: &mut CadApp, ui: &mut egui::Ui) {
                 num(ui, "Rotation", "rotation", real(angles.shown(tx.rotation).to_degrees()), &mut set, &mut bad, &ids);
                 num(ui, "Width factor", "widthFactor", real(tx.width_factor), &mut set, &mut bad, &ids);
             }
+            EntityKind::AttDef(a) => {
+                let text_row = |ui: &mut egui::Ui, label: &str, key: &str, value: String, set: &mut Option<Value>, ids: &Vec<String>| {
+                    prop_row(ui, label, |ui| {
+                        if let Some(s) = edit_field(ui, ui.scope_id().with((key, ids)), value) {
+                            *set = Some(json!({ "handles": ids, key: s }));
+                        }
+                    });
+                };
+                text_row(ui, "Tag", "tag", a.tag.clone(), &mut set, &ids);
+                text_row(ui, "Prompt", "prompt", a.prompt.clone(), &mut set, &ids);
+                text_row(ui, "Default", "text", a.text.value.clone(), &mut set, &ids);
+                prop_row(ui, "Text style", |ui| {
+                    if let Some(n) = pick_menu(ui, &a.text.style, d.text_styles.iter().map(|st| st.name.clone())) {
+                        set = Some(json!({ "handles": ids, "style": n }));
+                    }
+                });
+                prop_row(ui, "Justify", |ui| {
+                    let current = crate::attdefdlg::justification_name(a.text.halign, a.text.valign);
+                    ui.menu_button(crate::i18n::justify(current), |ui| {
+                        for (name, code) in crate::attdefdlg::JUSTIFICATIONS {
+                            if ui.button(crate::i18n::justify(name)).clicked() {
+                                set = Some(json!({ "handles": ids, "justify": code }));
+                                ui.close();
+                            }
+                        }
+                    });
+                });
+                num(ui, "Height", "height", len(a.text.height), &mut set, &mut bad, &ids);
+                num(ui, "Rotation", "rotation", real(angles.shown(a.text.rotation).to_degrees()), &mut set, &mut bad, &ids);
+                num(ui, "Width factor", "widthFactor", real(a.text.width_factor), &mut set, &mut bad, &ids);
+                for (label, key, on) in [
+                    ("Invisible", "invisible", a.invisible),
+                    ("Constant", "constant", a.constant),
+                    ("Verify", "verify", a.modes.verify),
+                    ("Preset", "preset", a.modes.preset),
+                    ("Lock position", "lockPosition", a.modes.lock_position),
+                ] {
+                    prop_row(ui, label, |ui| {
+                        let mut c = on;
+                        let shown = if c { "Yes" } else { "No" };
+                        if ui.checkbox(&mut c, crate::i18n::t(shown)).changed() {
+                            set = Some(json!({ "handles": ids, key: c }));
+                        }
+                    });
+                }
+            }
             EntityKind::MText(tx) => {
                 prop_row(ui, "Contents", |ui| {
                     if let Some(s) = edit_field(ui, ui.scope_id().with(("mtxt", &ids)), tx.contents.clone()) {

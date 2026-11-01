@@ -1376,3 +1376,30 @@
 	CADCraft is up to date.	Встановлено найновішу версію CADCraft.
 	Could not check for updates.	Не вдалося перевірити оновлення.
 	Save changes to block "{name}"?	Зберегти зміни в блоці «{name}»?
+	Mode	Режим
+	Invisible	Невидимий
+	Constant	Постійний
+	Verify	Перевірка
+	Preset	Попередньо заданий
+	Lock position	Зафіксувати положення
+	Tag	Тег
+	Prompt	Підказка
+	Insertion Point	Точка вставки
+	Specify on-screen	Вказати на екрані
+	Text Settings	Параметри тексту
+	Justification	Вирівнювання
+	Align below previous attribute definition	Вирівняти під попереднім визначенням атрибута
+	The tag must not be empty or contain spaces	Тег не може бути порожнім або містити пробіли
+	Not a positive height: {text}	Не додатна висота: {text}
+	Not an angle: {text}	Не кут: {text}
+	Not a point: {text}	Не точка: {text}
+	ATTDEF could not start	Не вдалося запустити ATTDEF
+	Middle	Посередині
+	Fit	Вписати
+	Top center	Зверху по центру
+	Middle left	Посередині ліворуч
+	Middle center	Посередині по центру
+	Middle right	Посередині праворуч
+	Bottom center	Знизу по центру
+justify	Center	По центру
+justify	Align	Вирівняно
