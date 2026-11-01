@@ -68,9 +68,10 @@ struct State {
     replace: String,
     match_case: bool,
     whole_word: bool,
-    /// The `doc_epoch` the rows were found in. A row's handle is only meaningful in the drawing
-    /// it was found in, so when the epoch moves the rows must go.
+    /// The `doc_epoch` and space the rows were found in. A row's handle is only meaningful in
+    /// the drawing and the space it was found in, so when either moves the rows must go.
     epoch: u64,
+    space: cadcraft_doc::Space,
     rows: Vec<Row>,
     /// The row Enter and Replace act on.
     current: Option<usize>,
@@ -151,15 +152,21 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
     let t = Tokens::get();
     let sid = egui::Id::unique("find_state");
     let mut st: State = ctx.data_mut(|d| d.get_temp(sid)).unwrap_or_default();
-    // A handle from an earlier drawing now names whatever object took its place; if Replace All
-    // ran on such a row it would edit an object the search never matched. Clearing the rows on
-    // an epoch change costs a re-click on Find All, which is the cheap side of that trade.
-    if *open && st.epoch != app.session.doc_epoch {
+    // A handle from an earlier drawing or space now names whatever object took its place; if
+    // Replace All ran on such a row it would edit an object the search never matched. Clearing
+    // the rows on an epoch or space change costs a re-click on Find All, which is the cheap
+    // side of that trade.
+    if *open && (st.epoch != app.session.doc_epoch || st.space != app.session.space()) {
         st.epoch = app.session.doc_epoch;
+        st.space = app.session.space();
         st.rows.clear();
         st.current = None;
         st.message.clear();
     }
+    // The rows answer one question — this text, with these switches, in this drawing. Editing
+    // any of them makes the rows stale: Replace All would rewrite with the old switches while
+    // the user is looking at the new ones, so the rows go and a fresh search is owed.
+    let criteria = (st.find.clone(), st.match_case, st.whole_word);
     let mut do_search = false;
     let mut do_replace: Option<Option<usize>> = None;
     let mut do_select_all = false;
@@ -234,12 +241,12 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
                     do_select_all = true;
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let can_replace = has && !st.replace.is_empty();
-                    if ui.add_enabled(can_replace, egui::Button::new(crate::tl!("Replace All"))).clicked() {
+                    // An empty replacement is deleting the matched text, which is a legitimate
+                    // replacement, so the buttons care only about having something to act on.
+                    if ui.add_enabled(has, egui::Button::new(crate::tl!("Replace All"))).clicked() {
                         do_replace = Some(None);
                     }
-                    let one = st.current.is_some() && !st.replace.is_empty();
-                    if ui.add_enabled(one, egui::Button::new(crate::tl!("Replace"))).clicked() {
+                    if ui.add_enabled(st.current.is_some(), egui::Button::new(crate::tl!("Replace"))).clicked() {
                         do_replace = Some(st.current);
                     }
                 });
@@ -250,6 +257,13 @@ pub fn dialog(app: &mut CadApp, ctx: &egui::Context, open: &mut bool) {
         });
     if let Some(i) = pick {
         reveal(app, &st, i);
+    }
+    if criteria != (st.find.clone(), st.match_case, st.whole_word) {
+        st.rows.clear();
+        st.current = None;
+        if !do_search {
+            st.message.clear();
+        }
     }
     if do_search {
         search(app, &mut st);
