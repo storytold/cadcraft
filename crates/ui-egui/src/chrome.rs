@@ -327,11 +327,12 @@ fn draw_status_toggles(
     }
 }
 
-/// The status bar's Layout Mode toggle, at `x`: it shows the model area of every layout in the Model
-/// tab and edits them. Returns where the next control starts.
-fn layout_mode_button(app: &mut CadApp, ui: &mut egui::Ui, p: &egui::Painter, t: &Tokens, x: f32, cy: f32) -> f32 {
+/// The status bar's Layout Mode toggle, its right edge at `right`: it shows the model area of every
+/// layout in the Model tab and edits them. Returns the right edge left for the controls before it.
+fn layout_mode_button(app: &mut CadApp, ui: &mut egui::Ui, p: &egui::Painter, t: &Tokens, right: f32, cy: f32) -> f32 {
     let label = crate::i18n::t("Layout Mode");
-    let br = Rect::from_min_size(pos2(x, cy - 9.0), vec2(label.chars().count() as f32 * 6.6 + 16.0, 18.0));
+    let width = label.chars().count() as f32 * 6.6 + 16.0;
+    let br = Rect::from_min_size(pos2(right - width, cy - 9.0), vec2(width, 18.0));
     let resp = ui.interact(br, ui.scope_id().with("layout_mode_button"), Sense::click());
     let on = app.canvas.layout.on;
     p.rect_filled(
@@ -350,7 +351,7 @@ fn layout_mode_button(app: &mut CadApp, ui: &mut egui::Ui, p: &egui::Painter, t:
     if resp.on_hover_text(crate::tl!("Show, move, resize and add the model area of every layout")).clicked() {
         let _ = app.run("ui.toggle.layoutmode", json!({}));
     }
-    x + br.width() + 6.0
+    br.left() - 10.0
 }
 
 /// Status bar: layout tabs follow the left-hand layout actions, independent of palette docking.
@@ -384,7 +385,6 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
             }
             x += 22.0;
         }
-        x = layout_mode_button(app, ui, &p, &t, x, r.center().y);
 
         x += 8.0;
         // Right side: toggles, right-aligned.
@@ -421,6 +421,8 @@ pub fn status_bar(app: &mut CadApp, ui: &mut egui::Ui) {
         });
         // MODEL / PAPER (layouts only): toggles MSPACE and PSPACE like AutoCAD's status button.
         let mut coord_right = rx - 8.0;
+        // The Layout Mode toggle, right-aligned before the annotation scale and the sheet toggles.
+        coord_right = layout_mode_button(app, ui, &p, &t, coord_right, r.center().y);
         // The annotation scale list (model space).
         coord_right = annoscale::status(app, ui, coord_right, r.center().y);
         if matches!(app.session.layout_space(), cadcraft_doc::Space::Paper(_)) {

@@ -80,6 +80,16 @@ fn win(a: &Value) -> [f64; 4] {
     [g(0, 0), g(0, 1), g(1, 0), g(1, 1)]
 }
 
+/// The paper size of layout `name`'s viewport.
+fn viewport_size(h: &Harness<'_, CadApp>, name: &str) -> (f64, f64) {
+    let d = h.state().session.doc().unwrap();
+    let l = d.layout(name).unwrap();
+    l.entities
+        .iter()
+        .find_map(|e| if let cadcraft_doc::EntityKind::Viewport(v) = &e.kind { (v.id != 1).then_some((v.width, v.height)) } else { None })
+        .unwrap()
+}
+
 fn layouts(h: &Harness<'_, CadApp>) -> usize {
     h.state().session.doc().unwrap().layouts.len()
 }
@@ -101,19 +111,36 @@ fn dragging_the_rectangle_moves_the_area_in_one_undo_step() {
 }
 
 #[test]
-fn dragging_a_corner_resizes_around_the_opposite_one_keeping_the_shape() {
+fn dragging_a_corner_gives_the_area_any_proportion_and_the_viewport_follows() {
     let mut h = harness();
     let b = win(&areas(&mut h)[0]);
     // A click selects the rectangle, which shows its corners.
     click_world(&mut h, ((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0));
-    // The top-right corner out to twice the size.
+    // The top-right corner out to twice the width but only half as much taller: another proportion.
     let (w, ht) = (b[2] - b[0], b[3] - b[1]);
-    drag_world(&mut h, (b[2], b[3]), (b[0] + 2.0 * w, b[1] + 2.0 * ht));
+    drag_world(&mut h, (b[2], b[3]), (b[0] + 2.0 * w, b[1] + 1.25 * ht));
     let a = win(&areas(&mut h)[0]);
     let tol = 2.0 * pixel(&h);
     assert!((a[0] - b[0]).abs() < tol && (a[1] - b[1]).abs() < tol, "the opposite corner stays: {b:?} -> {a:?}");
-    assert!((a[2] - a[0] - 2.0 * w).abs() < tol && (a[3] - a[1] - 2.0 * ht).abs() < tol, "twice the size: {a:?}");
-    assert!(((a[2] - a[0]) / (a[3] - a[1]) - w / ht).abs() < 1e-6, "same shape");
+    assert!((a[2] - (b[0] + 2.0 * w)).abs() < tol && (a[3] - (b[1] + 1.25 * ht)).abs() < tol, "the dragged corner goes where it was dropped: {a:?}");
+    assert!(((a[2] - a[0]) / (a[3] - a[1]) - w / ht).abs() > 0.1, "a different proportion");
+    // The viewport on the sheet took the area's proportion.
+    let v = viewport_size(&h, "A");
+    assert!((v.0 / v.1 - (a[2] - a[0]) / (a[3] - a[1])).abs() < 1e-6, "viewport {v:?} follows the area");
+}
+
+#[test]
+fn a_dragged_corner_lands_exactly_on_an_object_snap() {
+    let mut h = harness();
+    h.state_mut().run("options", json!({"OSMODE": 1})).unwrap();
+    h.run_steps(2);
+    let b = win(&areas(&mut h)[0]);
+    click_world(&mut h, ((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0));
+    let p = pixel(&h);
+    // The line (0,0)-(100,0) ends at (100, 0): drop the top-right corner a few pixels from it.
+    drag_world(&mut h, (b[2], b[3]), (100.0 + 3.0 * p, 2.0 * p));
+    let a = win(&areas(&mut h)[0]);
+    assert!((a[2] - 100.0).abs() < 1e-6 && a[3].abs() < 1e-6, "both coordinates are on the endpoint: {a:?}");
 }
 
 #[test]

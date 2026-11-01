@@ -74,8 +74,8 @@ struct Drag {
     start_px: Pos2,
     /// For a move: the corner or centre of the area nearest the press, which lands on snap points.
     reference: Vec2,
-    /// The area as it looks now, when it is being edited (not yet applied).
-    shown: Option<(Vec2, f64)>,
+    /// The area as it looks now, when it is being edited (not yet applied): its corners.
+    shown: Option<(Vec2, Vec2)>,
 }
 
 /// Layout mode's state.
@@ -154,27 +154,24 @@ fn corner_px(r: Rect, i: usize) -> Pos2 {
     }
 }
 
-/// The new centre and height of `area` after a drag by `delta` (drawing units).
-fn dragged(area: &Area, grab: Grab, delta: Vec2, to: Vec2) -> (Vec2, f64) {
-    let c = area.center();
-    let size = area.size();
+/// The corners of `area` after a drag: a move shifts it by `delta` (drawing units); a corner drag keeps
+/// the opposite corner and puts the dragged one at `to`, in any proportion (the viewport adapts).
+fn dragged(area: &Area, grab: Grab, delta: Vec2, to: Vec2) -> (Vec2, Vec2) {
     match grab {
         Grab::Corner(i) => {
-            // The opposite corner stays; the pointer sets the new size, held to the viewport's shape.
             let anchor = match i {
-                0 => Vec2::new(area.max.x, area.max.y),
+                0 => area.max,
                 1 => Vec2::new(area.min.x, area.max.y),
-                2 => Vec2::new(area.min.x, area.min.y),
+                2 => area.min,
                 _ => Vec2::new(area.max.x, area.min.y),
             };
-            let aspect = size.x / size.y.max(1e-12);
-            let h = (to.y - anchor.y).abs().max((to.x - anchor.x).abs() / aspect.max(1e-12)).max(1e-9);
-            let w = h * aspect;
-            let sx = if to.x >= anchor.x { 1.0 } else { -1.0 };
-            let sy = if to.y >= anchor.y { 1.0 } else { -1.0 };
-            (Vec2::new(anchor.x + sx * w * 0.5, anchor.y + sy * h * 0.5), h)
+            // An edge that collapses onto the anchor stays a hair wide, so the area keeps an extent.
+            let eps = 1e-6 * area.size().x.max(area.size().y).max(1e-9);
+            let far = |a: f64, b: f64| if (b - a).abs() < eps { a + eps } else { b };
+            let to = Vec2::new(far(anchor.x, to.x), far(anchor.y, to.y));
+            (Vec2::new(anchor.x.min(to.x), anchor.y.min(to.y)), Vec2::new(anchor.x.max(to.x), anchor.y.max(to.y)))
         }
-        _ => (Vec2::new(c.x + delta.x, c.y + delta.y), size.y),
+        _ => (Vec2::new(area.min.x + delta.x, area.min.y + delta.y), Vec2::new(area.max.x + delta.x, area.max.y + delta.y)),
     }
 }
 
@@ -312,12 +309,20 @@ fn finish(app: &mut CadApp, drag: &Drag, pos: Pos2, to: Vec2, delta: Vec2) {
     let far = pos.distance(drag.start_px) >= MIN_DRAG;
     let result = match (&drag.area, drag.grab) {
         (Some(a), Grab::Move | Grab::Corner(_)) if far => {
-            let (c, h) = dragged(a, drag.grab, delta, to);
-            app.run("layout.setarea", json!({ "handle": a.handle.hex(), "center": [c.x, c.y], "height": h }))
+            let (lo, hi) = dragged(a, drag.grab, delta, to);
+            // A move keeps the viewport as it is; a corner gives the area a new proportion and the viewport follows.
+            let params = match drag.grab {
+                Grab::Move => {
+                    let c = a.center();
+                    json!({ "handle": a.handle.hex(), "center": [c.x + delta.x, c.y + delta.y] })
+                }
+                _ => json!({ "handle": a.handle.hex(), "window": [[lo.x, lo.y], [hi.x, hi.y]] }),
+            };
+            app.run("layout.setarea", params)
         }
         (None, Grab::New) if far => {
             let w = json!([[drag.start.x, drag.start.y], [to.x, to.y]]);
-            app.run("layout.new", json!({ "window": w }))
+            app.run("layout.new", json!({ "window": w, "adapt": true }))
         }
         _ => return,
     };
@@ -344,11 +349,7 @@ pub fn paint(app: &mut CadApp, painter: &egui::Painter, xf: &Xf) {
         let selected = lm.selected == Some(a.handle);
         let shown = lm.drag.as_ref().and_then(|d| d.area.as_ref().filter(|x| x.handle == a.handle).and(d.shown));
         let r = match shown {
-            Some((c, h)) => {
-                let size = a.size();
-                let w = h * size.x / size.y.max(1e-12);
-                Rect::from_two_pos(xf.to_screen(Vec2::new(c.x - w * 0.5, c.y + h * 0.5)), xf.to_screen(Vec2::new(c.x + w * 0.5, c.y - h * 0.5)))
-            }
+            Some((lo, hi)) => Rect::from_two_pos(xf.to_screen(Vec2::new(lo.x, hi.y)), xf.to_screen(Vec2::new(hi.x, lo.y))),
             None => a.rect(xf),
         };
         if !r.intersects(clip) {

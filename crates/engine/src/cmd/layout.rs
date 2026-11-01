@@ -27,11 +27,11 @@ pub fn specs() -> Vec<CommandSpec> {
             .interactive(|_| Ok(Box::new(prompts::LayoutM::default()))),
         CommandSpec::new("layout.new", "New Layout", run_new)
             .menu(&["Insert", "Layout", "New Layout"])
-            .params("{name?, viewport?: bool (default true), window?: [[x1,y1],[x2,y2]] (the model area the viewport shows; default the model extents)} → {name, viewport} (typed: asks the name only; LAYOUT.NEWAREA also asks the area)")
+            .params("{name?, viewport?: bool (default true), window?: [[x1,y1],[x2,y2]] (the model area the viewport shows; default the model extents), adapt?: bool (with window: the viewport takes the window's proportion instead of the printable area's)} → {name, viewport} (typed: asks the name only; LAYOUT.NEWAREA also asks the area)")
             .interactive(|_| Ok(Box::new(NewLayoutM))),
         CommandSpec::new("layout.newarea", "New Layout from Area...", run_new)
             .menu(&["Insert", "Layout", "New Layout from Area..."])
-            .params("{name?, viewport?: bool (default true), window?: [[x1,y1],[x2,y2]] (the model area the viewport shows; default the model extents)} → {name, viewport} (typed: asks the name, then the area)")
+            .params("{name?, viewport?: bool (default true), window?: [[x1,y1],[x2,y2]] (the model area the viewport shows; default the model extents), adapt?: bool (with window: the viewport takes the window's proportion instead of the printable area's)} → {name, viewport} (typed: asks the name, then the area)")
             .interactive(|_| Ok(Box::new(NewLayoutAreaM::default()))),
         CommandSpec::new("layout.areas", "Layout Areas", areas::run_areas)
             .params("→ [{layout, tabOrder, handle, window: [[x1,y1],[x2,y2]] (the model area the viewport shows), on, locked}]")
@@ -378,7 +378,11 @@ fn run_new(s: &mut Session, p: &Value) -> Result<Value> {
         let rect = printable(s, &name)?;
         if let Some(h) = add_viewports(s, &space, rect, 1, "")?.first() {
             if let Some(w) = window {
-                show_window(s, *h, w)?;
+                if bool_or(p, "adapt", false) {
+                    areas::fit_viewport(s, *h, w)?;
+                } else {
+                    show_window(s, *h, w)?;
+                }
             }
             vp = json!(h.hex());
         }

@@ -159,3 +159,105 @@ fn listing_areas_does_not_touch_the_undo_history() {
     s.undo().unwrap();
     assert!(s.doc().unwrap().layout("A").is_none(), "the undo step is still the layout's creation");
 }
+
+/// The viewport of the layout `name`: (paper width, paper height, view height).
+fn viewport_of(s: &Session, name: &str) -> (f64, f64, f64) {
+    let d = s.doc().unwrap();
+    d.layout(name)
+        .unwrap()
+        .entities
+        .iter()
+        .find_map(
+            |e| if let cadcraft_doc::EntityKind::Viewport(v) = &e.kind { (v.id != 1).then_some((v.width, v.height, v.view_height)) } else { None },
+        )
+        .unwrap()
+}
+
+#[test]
+fn a_window_of_any_proportion_is_shown_exactly_and_the_viewport_follows() {
+    let mut s = session();
+    s.execute("layout.new", &json!({"name": "A", "window": [[0, 0], [40, 20]]})).unwrap();
+    let before = viewport_of(&s, "A");
+    let h = areas(&mut s)[0]["handle"].as_str().unwrap().to_string();
+    // Three times as wide as it is tall: a proportion the viewport did not have.
+    s.execute("layout.setarea", &json!({"handle": h, "window": [[10, 10], [70, 30]]})).unwrap();
+    let a = area_of(&mut s, "A");
+    for (got, want) in [(corner(&a, 0, 0), 10.0), (corner(&a, 0, 1), 10.0), (corner(&a, 1, 0), 70.0), (corner(&a, 1, 1), 30.0)] {
+        assert!((got - want).abs() < 1e-9, "the area is the window: {a}");
+    }
+    let (w, ht, vh) = viewport_of(&s, "A");
+    assert!((w / ht - 3.0).abs() < 1e-9, "the viewport took the window's proportion: {w} x {ht}");
+    assert!(w <= before.0 + 1e-9 && ht <= before.1 + 1e-9, "and stays inside its old rectangle: {before:?} -> {w} x {ht}");
+    assert!((w - before.0).abs() < 1e-9 || (ht - before.1).abs() < 1e-9, "as large as it can be");
+    assert!((vh - 20.0).abs() < 1e-9, "the view height is the window's");
+    // One undo step.
+    s.undo().unwrap();
+    assert_eq!(viewport_of(&s, "A"), before, "undo restores the viewport and its view");
+}
+
+#[test]
+fn a_clipped_viewport_keeps_its_shape_and_shows_the_whole_window() {
+    let mut s = session();
+    s.execute("layout.new", &json!({"name": "A", "window": [[0, 0], [40, 20]]})).unwrap();
+    let h = areas(&mut s)[0]["handle"].as_str().unwrap().to_string();
+    let hh = cadcraft_doc::Handle::parse_hex(&h).unwrap();
+    // A viewport clipped by some object (the entity need only exist).
+    let any = s.doc().unwrap().layout("A").unwrap().entities.iter().map(|e| e.handle).find(|x| *x != hh).unwrap_or(hh);
+    s.doc_mut()
+        .unwrap()
+        .modify_entity(hh, |e| {
+            if let cadcraft_doc::EntityKind::Viewport(v) = &mut e.kind {
+                v.clip = Some(any);
+            }
+        })
+        .unwrap();
+    let before = viewport_of(&s, "A");
+    s.execute("layout.setarea", &json!({"handle": h, "window": [[10, 10], [70, 30]]})).unwrap();
+    let (w, ht, _) = viewport_of(&s, "A");
+    assert!((w - before.0).abs() < 1e-12 && (ht - before.1).abs() < 1e-12, "the clipped viewport keeps its shape");
+    let a = area_of(&mut s, "A");
+    assert!(
+        corner(&a, 0, 0) <= 10.0 && corner(&a, 1, 0) >= 70.0 && corner(&a, 0, 1) <= 10.0 && corner(&a, 1, 1) >= 30.0,
+        "the whole window is in view: {a}"
+    );
+}
+
+#[test]
+fn bad_windows_for_setarea_are_errors_that_change_nothing() {
+    let mut s = session();
+    s.execute("layout.new", &json!({"name": "A", "window": [[0, 0], [40, 20]]})).unwrap();
+    let before = areas(&mut s);
+    let h = before[0]["handle"].as_str().unwrap().to_string();
+    for w in [
+        json!([[1, 1], [1, 9]]),
+        json!([[1, 1], [9, 1]]),
+        json!([[1, 1]]),
+        json!("all"),
+        json!([[1, 1], ["a", 2]]),
+        json!([[0, 0], [1e300, 1]]),
+        json!([[-1e300, 0], [1e300, 1]]),
+        json!([[0, 0], [1e-12, 1e-12]]),
+    ] {
+        assert!(s.execute("layout.setarea", &json!({"handle": h, "window": w})).is_err(), "{w}");
+    }
+    assert_eq!(areas(&mut s), before, "nothing changed");
+    // A locked viewport is refused for a window too.
+    s.execute("mview", &json!({"option": "lock", "handles": [h], "locked": true, "layout": "A"})).unwrap();
+    assert!(s.execute("layout.setarea", &json!({"handle": h, "window": [[0, 0], [5, 5]]})).is_err());
+}
+
+#[test]
+fn a_new_layout_can_take_the_proportion_of_its_window() {
+    let mut s = session();
+    s.execute("layout.new", &json!({"name": "Plain", "window": [[0, 0], [60, 20]]})).unwrap();
+    s.execute("layout.new", &json!({"name": "Fitted", "window": [[0, 0], [60, 20]], "adapt": true})).unwrap();
+    let plain = viewport_of(&s, "Plain");
+    let fitted = viewport_of(&s, "Fitted");
+    assert!((fitted.0 / fitted.1 - 3.0).abs() < 1e-9, "the viewport has the window's proportion: {fitted:?}");
+    assert!(fitted.0 <= plain.0 + 1e-9 && fitted.1 <= plain.1 + 1e-9, "inside the printable area the plain one fills: {plain:?} / {fitted:?}");
+    assert!((plain.0 / plain.1 - 3.0).abs() > 1e-3, "without `adapt` the viewport keeps the printable area's shape");
+    let a = area_of(&mut s, "Fitted");
+    assert!((corner(&a, 0, 0) - 0.0).abs() < 1e-9 && (corner(&a, 1, 0) - 60.0).abs() < 1e-9, "the fitted layout shows exactly the window: {a}");
+    s.undo().unwrap();
+    assert!(s.doc().unwrap().layout("Fitted").is_none());
+}
