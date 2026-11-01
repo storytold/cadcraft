@@ -26,6 +26,7 @@ mod parameters_rename;
 mod pickdrag;
 mod properties_units;
 mod rapid_clicks;
+mod rtl_names;
 mod selection_cycling;
 mod shared_controls;
 mod shortcut_menus;

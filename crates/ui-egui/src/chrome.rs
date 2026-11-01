@@ -77,7 +77,7 @@ pub fn title_and_toolbar(app: &mut CadApp, ui: &mut egui::Ui) {
             };
             // Centred on the traffic lights' centre line (the row's middle): with the system font
             // the capitals' middle is the text box's middle, so no optical nudge.
-            let galley = ui.painter().layout_no_wrap(title, egui::FontId::proportional(13.0), t.text_dim);
+            let galley = ui.painter().layout_job(crate::i18n::job(&title, egui::FontId::proportional(13.0), t.text_dim));
             let x = title_left(r.left(), r.width(), galley.size().x);
             ui.painter().galley(pos2(x, r.top() + (title_h - galley.size().y) / 2.0), galley, t.text_dim);
         }
@@ -262,7 +262,7 @@ pub fn file_tabs(app: &mut CadApp, ui: &mut egui::Ui) {
 /// `text` laid out on one line no wider than `max_width`, ending in "…" when it had to be cut;
 /// and whether it was.
 fn elided(p: &egui::Painter, text: &str, font: egui::FontId, color: egui::Color32, max_width: f32) -> (std::sync::Arc<egui::Galley>, bool) {
-    let mut job = egui::text::LayoutJob::simple_singleline(text.to_string(), font, color);
+    let mut job = crate::i18n::job(text, font, color);
     job.wrap = egui::text::TextWrapping { max_width: max_width.max(0.0), max_rows: 1, break_anywhere: true, overflow_character: Some('…') };
     let galley = p.layout_job(job);
     let cut = galley.elided;
