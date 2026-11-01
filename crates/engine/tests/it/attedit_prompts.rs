@@ -110,6 +110,8 @@ fn attribute_tags_match_in_any_case_and_unknown_tags_are_reported() {
     assert_eq!(r, json!({"changed": 1}));
 }
 
+/// ATTEDIT with several handles writes the values into each reference, reports the tags none of them has,
+/// is one undo step, and refuses an empty list.
 #[test]
 fn attedit_takes_a_selected_block_reference_at_once() {
     let mut s = with_block();
@@ -182,4 +184,68 @@ fn attedit_at_changes_one_of_two_attributes_sharing_a_tag() {
         assert!(s.execute("attedit", &json!({"handle": h.hex(), "at": at})).is_err(), "{at}");
     }
     assert_eq!(values(&s), ["both", "both"]);
+}
+
+#[test]
+fn attedit_with_several_handles_edits_each_in_one_undo_step() {
+    let mut s = with_block();
+    let (a, b) = (handle(&insert(&mut s, 100.0, json!({"t": "one"}))), handle(&insert(&mut s, 200.0, json!({"t": "two"}))));
+    let r = s.execute("attedit", &json!({"handles": [a.hex(), b.hex()], "values": {"T": "same", "nope": "x"}})).unwrap();
+    assert_eq!(r["changed"], 2);
+    assert_eq!(r["unknownTags"], json!(["nope"]));
+    assert_eq!((value(&s, a, "T"), value(&s, b, "T")), ("same".into(), "same".into()));
+    s.execute("undo", &json!({})).unwrap();
+    assert_eq!((value(&s, a, "T"), value(&s, b, "T")), ("one".into(), "two".into()), "one undo restores both");
+    assert!(s.execute("attedit", &json!({"handles": [], "values": {"T": "x"}})).is_err(), "no targets is an error");
+}
+
+/// A handle no object has is refused before anything is edited, even when it comes after valid ones.
+#[test]
+fn attedit_with_a_missing_handle_changes_nothing() {
+    let mut s = with_block();
+    let a = handle(&insert(&mut s, 100.0, json!({"t": "one"})));
+    let undo_before = s.state().unwrap().undo.len();
+    let r = s.execute("attedit", &json!({"handles": [a.hex(), "FFFFF"], "values": {"T": "changed"}}));
+    assert!(r.is_err(), "a missing handle is an error: {r:?}");
+    assert_eq!(value(&s, a, "T"), "one", "the valid reference was not edited");
+    assert_eq!(s.state().unwrap().undo.len(), undo_before, "no undo step for a refused request");
+}
+
+/// With several handles the rules hold for every target: a constant attribute is named once and left
+/// alone, and one target on a locked layer refuses the whole request before anything changes.
+#[test]
+fn attedit_with_several_handles_keeps_the_rules_for_every_target() {
+    let mut s = with_block();
+    let a = handle(&insert(&mut s, 100.0, json!({"t": "one"})));
+    s.execute("layer.new", &json!({"name": "L2", "current": true})).unwrap();
+    let b = handle(&insert(&mut s, 200.0, json!({"t": "two"})));
+    for h in [a, b] {
+        s.doc_mut()
+            .unwrap()
+            .modify_entity(h, |e| {
+                if let EntityKind::Insert(i) = &mut e.kind {
+                    i.attribs[1].constant = true;
+                }
+            })
+            .unwrap();
+    }
+    let r = s.execute("attedit", &json!({"handles": [a.hex(), b.hex()], "values": {"T": "same", "U": "x"}})).unwrap();
+    assert_eq!((r["changed"].clone(), r["constantTags"].clone()), (json!(2), json!(["U"])));
+    assert_eq!((value(&s, a, "U"), value(&s, b, "U")), ("u".into(), "u".into()), "constant attributes keep their value");
+
+    // `a` is on layer 0, locked: `b` is not, and still is not edited.
+    s.execute("layer.set", &json!({"name": "0", "locked": true})).unwrap();
+    let e = s.execute("attedit", &json!({"handles": [b.hex(), a.hex()], "values": {"T": "later"}})).unwrap_err().to_string();
+    assert!(e.contains("locked"), "{e}");
+    assert_eq!((value(&s, a, "T"), value(&s, b, "T")), ("same".into(), "same".into()));
+}
+
+/// A place is one reference's attribute: with several handles `at` is refused and nothing changes.
+#[test]
+fn attedit_at_with_several_handles_is_refused() {
+    let mut s = with_block();
+    let (a, b) = (handle(&insert(&mut s, 100.0, json!({"t": "one"}))), handle(&insert(&mut s, 200.0, json!({"t": "two"}))));
+    let e = s.execute("attedit", &json!({"handles": [a.hex(), b.hex()], "at": {"0": "x"}})).unwrap_err().to_string();
+    assert!(e.contains("`at`"), "{e}");
+    assert_eq!((value(&s, a, "T"), value(&s, b, "T")), ("one".into(), "two".into()));
 }

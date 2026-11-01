@@ -19,7 +19,7 @@ pub(super) fn attedit_spec() -> CommandSpec {
     CommandSpec::new("attedit", "Single...", run)
         .menu(&["Modify", "Object", "Attribute", "Single..."])
         .alias(&["ate", "eattedit"])
-        .params("{handle, values?: {TAG: value} (tags in any case; every attribute with the tag), at?: {index: value} (one attribute, by its place in the reference, for repeated tags); constant attributes are left alone} → {changed, unknownTags?, constantTags?}")
+        .params("{handle | handles (every block reference gets the values), values?: {TAG: value} (tags in any case; every attribute with the tag), at?: {index: value} (one attribute, by its place in the reference, for repeated tags; with `handle`, not `handles`); constant attributes are left alone} → {changed, unknownTags?, constantTags?}")
         .interactive(|_| Ok(Box::new(AtteditM::default())))
 }
 
@@ -63,49 +63,85 @@ pub(super) fn with_unknown_tags(s: &Session, h: Handle, values: &Map<String, Val
     r
 }
 
-fn run(s: &mut Session, p: &Value) -> Result<Value> {
-    let h = targets(s, p)?.first().copied().ok_or_else(|| bad("attedit", "`handle` is required"))?;
-    let vals = p.get("values").and_then(Value::as_object).cloned().unwrap_or_default();
-    let Some(EntityKind::Insert(ins)) = s.doc()?.entity(h).map(|e| &e.kind) else {
-        return Err(bad("attedit", format!("{} is not a block reference", h.hex())));
+/// `r` with `unknownTags`: the keys of `values` that none of the block references `hs` has an
+/// attribute for (left out when there are none).
+fn with_unknown_tags_of_all(s: &Session, hs: &[Handle], values: &Map<String, Value>, mut r: Value) -> Value {
+    let Ok(d) = s.doc() else { return r };
+    let known = |k: &str| {
+        hs.iter()
+            .any(|h| matches!(d.entity(*h).map(|e| &e.kind), Some(EntityKind::Insert(i)) if i.attribs.iter().any(|a| a.tag.eq_ignore_ascii_case(k))))
     };
-    if super::super::curves::is_locked(s, h) {
-        return Err(bad("attedit", "the reference is on a locked layer"));
+    let unknown: Vec<&String> = values.keys().filter(|k| !known(k)).collect();
+    if !unknown.is_empty()
+        && let Some(o) = r.as_object_mut()
+    {
+        o.insert("unknownTags".into(), json!(unknown));
     }
+    r
+}
+
+/// ATTEDIT on `handle` or `handles`: every block reference gets the values. The whole request is
+/// checked before the first edit, so a refused one changes nothing: each target must be a block
+/// reference on an unlocked layer and no value may be too long. Constant attributes are left alone
+/// and named in `constantTags`.
+fn run(s: &mut Session, p: &Value) -> Result<Value> {
+    let hs = targets(s, p)?;
+    if hs.is_empty() {
+        return Err(bad("attedit", "`handle` or `handles` is required"));
+    }
+    let vals = p.get("values").and_then(Value::as_object).cloned().unwrap_or_default();
     // Values by place (`at`): one attribute each, where a tag repeats (a DXF reference may carry
-    // two attributes with one tag; `values` changes both).
+    // two attributes with one tag; `values` changes both). A place means one reference's attribute.
     let mut at: Vec<(usize, String)> = Vec::new();
     if let Some(m) = p.get("at").filter(|v| !v.is_null()) {
         let m = m.as_object().ok_or_else(|| bad("attedit", "`at` must be an object of {index: value}"))?;
+        if !m.is_empty() && hs.len() != 1 {
+            return Err(bad("attedit", "`at` goes with one `handle`: places differ from one reference to the next"));
+        }
         for (k, v) in m {
-            let i = k
-                .trim()
-                .parse::<usize>()
-                .ok()
-                .filter(|i| *i < ins.attribs.len())
-                .ok_or_else(|| bad("attedit", format!("`at`: {k} is not the index of one of the reference's attributes")))?;
+            let i =
+                k.trim().parse::<usize>().map_err(|_| bad("attedit", format!("`at`: {k} is not the index of one of the reference's attributes")))?;
             at.push((i, text_of(v).ok_or_else(|| bad("attedit", format!("`at`: the value for {k} must be text")))?));
         }
     }
     let given = |i: usize, tag: &str| at.iter().find(|(j, _)| *j == i).map(|(_, v)| v.clone()).or_else(|| value_for(&vals, tag));
-    // Constant attributes keep their definition's value.
-    let constant: Vec<String> =
-        ins.attribs.iter().enumerate().filter(|(i, a)| a.constant && given(*i, &a.tag).is_some()).map(|(_, a)| a.tag.clone()).collect();
-    if let Some((_, a)) = ins.attribs.iter().enumerate().find(|(i, a)| given(*i, &a.tag).is_some_and(|v| v.len() > MAX_VALUE)) {
-        return Err(bad("attedit", format!("the value for {} is longer than {MAX_VALUE} bytes", a.tag)));
-    }
-    let mut n = 0;
-    s.doc_mut()?.modify_entity(h, |e| {
-        if let EntityKind::Insert(i) = &mut e.kind {
-            for (j, a) in i.attribs.iter_mut().enumerate().filter(|(_, a)| !a.constant) {
-                if let Some(v) = given(j, &a.tag) {
-                    set_value(&mut a.text, v);
-                    n += 1;
-                }
+    let mut constant: Vec<String> = Vec::new();
+    for h in &hs {
+        let Some(entity) = s.doc()?.entity(*h) else {
+            return Err(bad("attedit", format!("no object has handle {}", h.hex())));
+        };
+        let EntityKind::Insert(ins) = &entity.kind else {
+            return Err(bad("attedit", format!("{} is not a block reference", h.hex())));
+        };
+        if super::super::curves::is_locked(s, *h) {
+            return Err(bad("attedit", format!("the reference {} is on a locked layer", h.hex())));
+        }
+        if let Some((i, _)) = at.iter().find(|(i, _)| *i >= ins.attribs.len()) {
+            return Err(bad("attedit", format!("`at`: {i} is not the index of one of the reference's attributes")));
+        }
+        if let Some((_, a)) = ins.attribs.iter().enumerate().find(|(i, a)| given(*i, &a.tag).is_some_and(|v| v.len() > MAX_VALUE)) {
+            return Err(bad("attedit", format!("the value for {} is longer than {MAX_VALUE} bytes", a.tag)));
+        }
+        for (_, a) in ins.attribs.iter().enumerate().filter(|(i, a)| a.constant && given(*i, &a.tag).is_some()) {
+            if !constant.iter().any(|t| t.eq_ignore_ascii_case(&a.tag)) {
+                constant.push(a.tag.clone());
             }
         }
-    })?;
-    let mut r = with_unknown_tags(s, h, &vals, json!({ "changed": n }));
+    }
+    let mut n = 0;
+    for h in &hs {
+        s.doc_mut()?.modify_entity(*h, |e| {
+            if let EntityKind::Insert(i) = &mut e.kind {
+                for (j, a) in i.attribs.iter_mut().enumerate().filter(|(_, a)| !a.constant) {
+                    if let Some(v) = given(j, &a.tag) {
+                        set_value(&mut a.text, v);
+                        n += 1;
+                    }
+                }
+            }
+        })?;
+    }
+    let mut r = with_unknown_tags_of_all(s, &hs, &vals, json!({ "changed": n }));
     if !constant.is_empty()
         && let Some(o) = r.as_object_mut()
     {
