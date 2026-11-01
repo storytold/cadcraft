@@ -267,6 +267,11 @@ pub fn page_device(cmd: &str, p: &Value, page: &mut PageSetup) -> Result<bool> {
     Ok(false)
 }
 
+/// The output a path's extension (any case) asks for: png, svg or pdf; other extensions ask for none.
+fn path_output(path: &str) -> Option<PlotOutput> {
+    PlotOutput::parse(&std::path::Path::new(path).extension()?.to_string_lossy())
+}
+
 /// The options PLOT / EXPORTPDF hand the plotter with `device` and the device's papers
 /// resolved: `device` (else the layout's page setup device) picks the output (`output`: pdf,
 /// png or svg; EXPORTPDF always writes PDF) and `resolution`; a paper of the device becomes
@@ -288,9 +293,22 @@ pub(crate) fn plot_options(s: &Session, p: &Value, cmd: &str) -> Result<Value> {
         None => layout.as_ref().and_then(|pg| find_device(&pg.device)),
     };
     let mut out = if p.is_object() { p.clone() } else { json!({}) };
-    let (Some(dev), Some(o)) = (dev, out.as_object_mut()) else { return Ok(out) };
+    // The path's extension names the format, like EXPORT, unless a device is given; a given
+    // device that writes another format is refused. EXPORTPDF always writes PDF.
+    let by_path = if cmd == "exportpdf" { None } else { str_param(p, "path").and_then(path_output) };
+    if let (Some(want), Some(dev), true) = (by_path, &dev, given.is_some_and(|n| !n.is_empty()))
+        && dev.output != want
+    {
+        return Err(bad(cmd, format!("plotter `{}` writes {}, but the path asks for {}", dev.name, dev.output.as_str(), want.as_str())));
+    }
+    let (Some(dev), Some(o)) = (dev, out.as_object_mut()) else {
+        if let (Some(want), Some(o)) = (by_path, out.as_object_mut()) {
+            o.insert("output".into(), json!(want.as_str()));
+        }
+        return Ok(out);
+    };
     o.remove("device");
-    let output = if cmd == "exportpdf" { PlotOutput::Pdf } else { dev.output };
+    let output = if cmd == "exportpdf" { PlotOutput::Pdf } else { by_path.unwrap_or(dev.output) };
     o.insert("output".into(), json!(output.as_str()));
     o.insert("resolution".into(), json!(dev.resolution));
     let paper = match str_param(p, "paper") {

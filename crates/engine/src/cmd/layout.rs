@@ -833,6 +833,7 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
         None => space.tab_name().to_string(),
     };
     let pages = sheets.as_ref().map_or(1, Vec::len);
+    let format = opts.get("output").and_then(Value::as_str).map(str::to_ascii_lowercase).unwrap_or_else(|| "pdf".into());
     match str_param(p, "path") {
         Some(_path) => {
             #[cfg(not(target_arch = "wasm32"))]
@@ -841,15 +842,15 @@ fn run_plot(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
                 // Exclusively create a fresh temporary file and rename it into place so a planted
                 // `<path>.cadcraft-tmp` symlink cannot redirect the plot write (CWE-59).
                 crate::atomic_write::write_atomic(std::path::Path::new(path), &bytes).map_err(|e| bad(cmd, format!("{path}: {e}")))?;
-                Ok(json!({ "path": path, "bytes": bytes.len(), "layout": layout, "pages": pages }))
+                Ok(json!({ "path": path, "bytes": bytes.len(), "layout": layout, "pages": pages, "format": format }))
             }
             #[cfg(target_arch = "wasm32")]
             {
                 super::exchange::deliver_file(cmd, _path, &bytes, super::file::deliver())?;
-                Ok(json!({ "path": _path, "bytes": bytes.len(), "layout": layout, "pages": pages }))
+                Ok(json!({ "path": _path, "bytes": bytes.len(), "layout": layout, "pages": pages, "format": format }))
             }
         }
-        None => Ok(json!({ "data": base64_encode(&bytes), "bytes": bytes.len(), "layout": layout, "pages": pages })),
+        None => Ok(json!({ "data": base64_encode(&bytes), "bytes": bytes.len(), "layout": layout, "pages": pages, "format": format })),
     }
 }
 
