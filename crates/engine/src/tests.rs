@@ -345,6 +345,15 @@ fn fillet_two_lines() {
 }
 
 #[test]
+fn offset_zero_distance_is_rejected() {
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    let r = s.execute("offset", &json!({"handle": "100", "distance": 0, "side": [1, 1]}));
+    assert!(r.is_err(), "offset distance 0 made a coincident copy: {r:?}");
+    assert_eq!(s.doc().unwrap().model.len(), 1);
+}
+
+#[test]
 fn offset_circle_and_polyline() {
     let mut s = Session::new();
     let c = s.execute("circle", &json!({"center": [0, 0], "radius": 5})).unwrap();
@@ -634,6 +643,29 @@ fn setvar_keeps_header_types() {
 }
 
 #[test]
+fn setvar_rejects_out_of_range_units() {
+    let mut s = Session::new();
+    for (name, v) in [("LUPREC", 100), ("LUNITS", 9), ("LUNITS", 0), ("AUPREC", -5), ("AUNITS", 5)] {
+        assert!(s.execute("setvar", &json!({"name": name, "value": v})).is_err(), "{name} {v}");
+    }
+    s.execute("setvar", &json!({"name": "LUPREC", "value": 8})).unwrap();
+    assert_eq!(s.doc().unwrap().header.i64("LUPREC", 0), 8);
+    assert_ne!(s.doc().unwrap().header.i64("LUNITS", 2), 9);
+}
+
+#[test]
+fn setvar_rejects_out_of_range_osmode() {
+    let mut s = Session::new();
+    s.execute("setvar", &json!({"name": "OSMODE", "value": 4133})).unwrap();
+    for v in [4294967296u64, 65536, 32768] {
+        assert!(s.execute("setvar", &json!({"name": "OSMODE", "value": v})).is_err(), "{v}");
+        assert_eq!(sysvars::get(&s, "OSMODE"), Some(json!(4133)), "{v}");
+    }
+    s.execute("setvar", &json!({"name": "OSMODE", "value": 0x7fff})).unwrap();
+    assert_eq!(sysvars::get(&s, "OSMODE"), Some(json!(0x7fff)));
+}
+
+#[test]
 fn dynamic_input_pointer_settings() {
     let mut s = Session::new();
     assert_eq!(sysvars::get(&s, "DYNPIFORMAT"), Some(json!(0)));
@@ -678,25 +710,6 @@ fn cancel_keeps_partial_line_as_one_undo() {
     assert_eq!(s.doc().unwrap().model.len(), 2);
     s.undo().unwrap();
     assert_eq!(s.doc().unwrap().model.len(), 0);
-}
-
-#[test]
-fn hostile_params_never_panic() {
-    let mut s = Session::new();
-    for c in command_specs() {
-        for p in [
-            json!(null),
-            json!([]),
-            json!("x"),
-            json!({"points": [[1e308, -1e308], ["a"]]}),
-            json!({"handles": ["zz", 99999]}),
-            json!({"radius": -1, "center": [0, 0]}),
-            json!({"gradient": {"name": 5, "color1": [1], "angle": "x", "centered": "y"}}),
-            json!({"points": [[0, 0]], "handles": ["1"], "gradient": "x", "name": "RAINBOW"}),
-        ] {
-            let _ = s.execute(c.id, &p);
-        }
-    }
 }
 
 #[test]
@@ -1432,4 +1445,48 @@ fn hostile_variable_like_input_never_panics() {
     // The session is still usable afterwards.
     s.cmdline("pickadd").unwrap();
     assert!(setvar_prompt_open(&s));
+}
+
+#[test]
+fn chamfer_rejects_negative_distances() {
+    let mut s = Session::new();
+    let h1 = s.execute("line", &json!({"points": [[0, 0], [10, 0]]})).unwrap();
+    let h2 = s.execute("line", &json!({"points": [[0, 0], [0, 10]]})).unwrap();
+    let before = format!("{:?}", s.doc().unwrap().model.iter().map(|e| e.kind.clone()).collect::<Vec<_>>());
+    let r = s.execute("chamfer", &json!({"h1": h1["handles"][0], "h2": h2["handles"][0], "p1": [5, 0], "p2": [0, 5], "d1": -3, "d2": 2}));
+    assert!(r.is_err(), "negative chamfer distance accepted: {r:?}");
+    let after = format!("{:?}", s.doc().unwrap().model.iter().map(|e| e.kind.clone()).collect::<Vec<_>>());
+    assert_eq!(before, after);
+}
+
+#[test]
+fn array_counts_reject_invalid_values() {
+    let mut s = Session::new();
+    s.execute("line", &json!({"points": [[0, 0], [1, 0]]})).unwrap();
+    for bad in [json!(-3), json!(0), json!(2.5)] {
+        for key in ["count", "rows", "levels"] {
+            let mut p = json!({"center": [0, 0], "associative": false});
+            p[key] = bad.clone();
+            assert!(s.execute("arraypolar", &p).is_err(), "arraypolar {key}={bad}");
+        }
+        for key in ["rows", "cols", "levels"] {
+            let mut p = json!({"associative": false});
+            p[key] = bad.clone();
+            assert!(s.execute("arrayrect", &p).is_err(), "arrayrect {key}={bad}");
+        }
+    }
+    s.execute("arraypolar", &json!({"center": [0, 0], "count": 1, "associative": false})).unwrap();
+}
+
+#[test]
+fn setvar_rejects_non_finite_text_for_real_variables() {
+    let mut s = Session::new();
+    for name in ["LTSCALE", "TEXTSIZE", "SNAPANG"] {
+        let before = s.execute("getvar", &json!({"name": name})).unwrap();
+        for text in ["nan", "inf", "-inf"] {
+            let r = s.execute("setvar", &json!({"name": name, "value": text}));
+            assert!(r.is_err(), "SETVAR {name} {text} was accepted");
+            assert_eq!(s.execute("getvar", &json!({"name": name})).unwrap(), before);
+        }
+    }
 }

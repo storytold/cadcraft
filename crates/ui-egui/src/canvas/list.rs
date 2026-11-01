@@ -128,6 +128,7 @@ pub(super) fn ensure_list(app: &mut CadApp, xf: &Xf, views: &[(Bounds2, f64)], c
         // level of detail must hold at the finest one.
         min_dash: 2f64.powi(lod_band) * 2.0,
         text: true,
+        linetypes: true,
         fill: true,
         lineweights: lwdisplay,
         view_height: st.paper_view().height,

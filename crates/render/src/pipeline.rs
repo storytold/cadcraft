@@ -15,6 +15,10 @@ pub struct Options {
     pub min_dash: f64,
     /// Draw text (off for very coarse previews).
     pub text: bool,
+    /// Draw lines with their linetypes. Off, every line is drawn whole and continuous, as picking
+    /// sees it: a dashed line is hit across its gaps, and a small pattern on a long line makes
+    /// millions of dashes.
+    pub linetypes: bool,
     /// Highlighted (selected) handles are not special here; the canvas overlays them.
     pub fill: bool,
     pub lineweights: bool,
@@ -52,6 +56,7 @@ impl Default for Options {
             tolerance: 0.001,
             min_dash: 0.0,
             text: true,
+            linetypes: true,
             fill: true,
             lineweights: false,
             view_height: 0.0,

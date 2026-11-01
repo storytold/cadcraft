@@ -155,3 +155,30 @@ mod tests {
         assert!(s.size.x > 0.0 && s.printable == s.bounds());
     }
 }
+
+/// What a layout's saved page setup says about how to plot it, for a plot that was not given the
+/// matching options (#2493): the plot window, whether to scale to fit, the saved scale, and
+/// centring.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SavedPlot {
+    /// The saved plot window, when the plot area is "window" and its corners are a real box.
+    pub window: Option<Bounds2>,
+    /// Scale to fit the window (or the extents) on the printable area.
+    pub fit: bool,
+    /// The saved plot scale, paper units per drawing unit, when it isn't scale to fit or 1:1.
+    pub scale: Option<f64>,
+    /// Centre the plot on the printable area.
+    pub center: bool,
+}
+
+/// The saved plot settings of `page`. A layout plotted over its whole sheet ("layout" plot area)
+/// has nothing to fit, so scale to fit only counts for a window or the extents.
+pub fn saved_plot(page: &PageSetup) -> SavedPlot {
+    let [x1, y1, x2, y2] = page.plot_window;
+    let window = (page.plot_area.eq_ignore_ascii_case("window") && [x1, y1, x2, y2].iter().all(|v| v.is_finite()))
+        .then(|| Bounds2::new(Vec2::new(x1, y1), Vec2::new(x2, y2)))
+        .filter(|w| w.width() > 0.0 && w.height() > 0.0);
+    let fit = page.scale_to_fit && (window.is_some() || page.plot_area.eq_ignore_ascii_case("extents"));
+    let scale = Some(page.scale).filter(|s| !page.scale_to_fit && s.is_finite() && *s > 0.0 && (*s - 1.0).abs() > 1e-9);
+    SavedPlot { window, fit, scale, center: page.center }
+}
