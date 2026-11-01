@@ -395,8 +395,7 @@ impl Backend for Headless {
                 let png =
                     cadcraft_render::raster::render_png(&list, &view, &cadcraft_render::raster::RasterOptions::default()).ok_or("render failed")?;
                 if let Some(path) = str_p("path") {
-                    cadcraft_engine::atomic_write::write_atomic(std::path::Path::new(&path), &png)
-                        .map_err(|e| format!("{path}: {e}"))?;
+                    cadcraft_engine::atomic_write::write_atomic(std::path::Path::new(&path), &png).map_err(|e| format!("{path}: {e}"))?;
                 }
                 Ok(json!({"pngBase64": cadcraft_engine::cmd::file::base64_encode(&png), "width": w, "height": h}))
             }
