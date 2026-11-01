@@ -193,17 +193,18 @@ fn is(name: &str, list: &[&str]) -> bool {
 /// The linetypes an object names besides its own: its attributes' overrides, its dimension
 /// overrides, and the copy of its style a multiline keeps.
 fn linetypes_inside(e: &cadcraft_doc::Entity) -> Vec<String> {
+    let mut out: Vec<String> = super::object_attribs(e).iter().filter_map(|a| a.props.linetype.clone()).collect();
     match &e.kind {
-        EntityKind::Insert(i) => i.attribs.iter().filter_map(|a| a.props.linetype.clone()).collect(),
-        EntityKind::Dimension(dm) => dm
-            .overrides
-            .iter()
-            .filter(|(k, _)| cadcraft_doc::DimStyle::field_name(k).is_some_and(|f| matches!(f, "dimLinetype" | "extLinetype1" | "extLinetype2")))
-            .filter_map(|(_, v)| v.as_str().map(|n| n.trim().to_string()))
-            .collect(),
-        EntityKind::MLine(m) => m.def.elements.iter().map(|e| e.linetype.clone()).collect(),
-        _ => Vec::new(),
+        EntityKind::Dimension(dm) => out.extend(
+            dm.overrides
+                .iter()
+                .filter(|(k, _)| cadcraft_doc::DimStyle::field_name(k).is_some_and(|f| matches!(f, "dimLinetype" | "extLinetype1" | "extLinetype2")))
+                .filter_map(|(_, v)| v.as_str().map(|n| n.trim().to_string())),
+        ),
+        EntityKind::MLine(m) => out.extend(m.def.elements.iter().map(|e| e.linetype.clone())),
+        _ => {}
     }
+    out
 }
 
 /// The linetypes named by objects, layers, dimension styles and multiline styles.
@@ -256,6 +257,7 @@ pub(in crate::cmd) fn candidates(d: &Drawing, kind: Kind) -> Vec<String> {
             let used = lower(&mut entities(d).filter_map(|e| match &e.kind {
                 EntityKind::Dimension(dm) => Some(dm.style.clone()),
                 EntityKind::Tolerance(t) => Some(t.style.clone()),
+                EntityKind::Leader(l) => Some(l.style.clone()),
                 _ => None,
             }));
             let cur = d.header.str("DIMSTYLE", "Standard");

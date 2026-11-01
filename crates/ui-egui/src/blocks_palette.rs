@@ -337,7 +337,8 @@ fn current_items(app: &mut CadApp, ui: &egui::Ui, pictures: &SharedPictures) -> 
     {
         return listing;
     }
-    let listed = app.run("blockspalette", json!({})).unwrap_or(Value::Null);
+    // The palette shows no reference counts, and counting reads every object after each edit.
+    let listed = app.run("blockspalette", json!({ "references": false })).unwrap_or(Value::Null);
     let Ok(st) = app.session.state() else { return Listing::default() };
     let defs: Arc<HashMap<String, usize>> = Arc::new(st.doc.blocks.iter().map(|(k, b)| (k.clone(), Arc::as_ptr(b) as usize)).collect());
     let defs_id = egui::Id::unique("blocks-definitions");
@@ -1186,6 +1187,10 @@ fn insert(app: &mut CadApp, item: &Item, st: &State, explode: bool) -> bool {
     let name = match &item.source {
         // The block (or the whole drawing) comes with only the layers, linetypes and styles it needs.
         Source::LibraryBlock { path } | Source::LibraryDrawing { path } if !here => {
+            // A running command ends first: it would take the import into its own undo step.
+            if app.session.current_prompt().is_some() {
+                app.session.cancel();
+            }
             let mut params = json!({ "path": path, "name": item.label });
             if matches!(item.source, Source::LibraryBlock { .. }) {
                 params["block"] = json!(item.label);

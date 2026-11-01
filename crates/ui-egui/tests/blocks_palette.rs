@@ -59,6 +59,9 @@ fn json_blockspalette_lists_and_never_opens_the_palette() {
             { "name": "Door", "description": "Hinged door", "references": 1 },
         ])
     );
+    // The palette itself asks for no counts, which would read every object.
+    let r = app.run("blockspalette", json!({ "references": false })).unwrap();
+    assert_eq!(r["blocks"][1], json!({ "name": "Door", "description": "Hinged door" }));
     assert!(!app.ui.docking.layout.contains(&Panel::Blocks));
 }
 
@@ -295,6 +298,18 @@ fn a_library_is_added_listed_placed_and_removed() {
     h.state_mut().run("undo", serde_json::Value::Null).unwrap();
     assert_eq!(references(h.state()), 0);
     assert!(h.state().session.doc().unwrap().block("Valve").is_some());
+    h.state_mut().run("undo", serde_json::Value::Null).unwrap();
+    assert!(h.state().session.doc().unwrap().block("Valve").is_none());
+
+    // A command still running ends before the import, so the only undo step is the import's.
+    let steps = h.state().session.state().unwrap().undo.len();
+    h.state_mut().session.start("circle").unwrap();
+    h.get_by_label("Valve").click();
+    h.run_steps(3);
+    assert!(h.state().session.prompt_text().starts_with("INSERT"), "{}", h.state().session.prompt_text());
+    assert_eq!(h.state().session.state().unwrap().undo.len(), steps + 1);
+    h.state_mut().session.input(cadcraft_engine::Input::Cancel).unwrap();
+    h.run_steps(3);
     h.state_mut().run("undo", serde_json::Value::Null).unwrap();
     assert!(h.state().session.doc().unwrap().block("Valve").is_none());
 

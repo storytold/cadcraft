@@ -603,6 +603,88 @@ mod tests {
         assert_eq!(of(dm.overrides["DIMBLK1"].as_str().unwrap()), "from the file");
     }
 
+    /// What the objects of an imported block name comes along, directly or through another table:
+    /// a leader's dimension style, a dimension's text style override, the text style in a linetype,
+    /// an attribute's layer and multiline text style, here on a block reference and on a
+    /// multileader's block content. What nothing names stays out.
+    #[test]
+    fn an_import_keeps_every_style_and_layer_its_objects_name() {
+        let mut s = Session::new();
+        s.execute("dimlinear", &json!({ "p1": [0, 0], "p2": [4, 0], "at": [2, 2] })).unwrap();
+        let mut dim = (**s.doc().unwrap().model.iter().next().unwrap()).clone();
+        if let EntityKind::Dimension(dm) = &mut dim.kind {
+            dm.overrides.insert("DIMTXSTY".into(), json!("InOverride"));
+        }
+        let attrib = |style: &str, layer: &str| {
+            let mut a: cadcraft_doc::Attrib = serde_json::from_value(json!({
+                "tag": "A",
+                "text": { "insert": [0, 0, 0], "height": 1.0, "value": "1" },
+                "multiline": { "mtext": { "insert": [0, 0, 0], "height": 1.0, "contents": "1", "style": style }, "readAs": "1" },
+            }))
+            .unwrap();
+            a.props.layer = Some(layer.into());
+            a
+        };
+        let mut placed = reference(0x500, "Inner");
+        if let EntityKind::Insert(i) = &mut placed.kind {
+            i.attribs.push(attrib("InAttribute", "OnAttribute"));
+        }
+        let EntityKind::Insert(mut content) = reference(0x501, "Inner").kind else { return };
+        content.attribs.push(attrib("InContent", "OnContent"));
+        let mut multileader: cadcraft_doc::MLeader =
+            serde_json::from_value(json!({ "leaders": [], "landing": [0, 0, 0], "dogleg": 0.0, "text": null })).unwrap();
+        multileader.block = Some(content);
+        let leader: cadcraft_doc::Leader = serde_json::from_value(json!({ "vertices": [], "style": "ForLeader" })).unwrap();
+        let line = cadcraft_doc::Line { a: cadcraft_geom::Vec3::ZERO, b: cadcraft_geom::Vec3::new(1.0, 0.0, 0.0) };
+        let mut line = Entity::new(Handle(0x502), EntityKind::Line(line));
+        line.common.linetype = "WithText".into();
+
+        let mut src = Drawing::new_metric();
+        src.blocks.insert("Inner".into(), Arc::new(Block::new("Inner")));
+        for name in ["InOverride", "InAttribute", "InContent", "InLinetype", "Spare"] {
+            let mut t = src.text_styles[0].clone();
+            t.name = name.into();
+            src.text_styles.push(t);
+        }
+        for name in ["OnAttribute", "OnContent", "Unused"] {
+            src.layers.push(cadcraft_doc::Layer { name: name.into(), ..Default::default() });
+        }
+        let dash = cadcraft_doc::DashElement { style: Some("InLinetype".into()), ..cadcraft_doc::DashElement::dash(1.0) };
+        src.linetypes.push(cadcraft_doc::Linetype { name: "WithText".into(), description: String::new(), pattern: vec![dash] });
+        src.dim_styles.push(cadcraft_doc::DimStyle { name: "ForLeader".into(), ..Default::default() });
+        src.model.push(dim);
+        src.model.push(placed);
+        src.model.push(Entity::new(Handle(0x503), EntityKind::MLeader(multileader)));
+        src.model.push(Entity::new(Handle(0x504), EntityKind::Leader(leader)));
+        src.model.push(line);
+        let mut t = Session::new();
+        define_from(&mut t, &src, "Part", true).unwrap();
+
+        let d = t.doc().unwrap();
+        let styles: Vec<&str> = d.text_styles.iter().map(|t| t.name.as_str()).collect();
+        for name in ["InOverride", "InAttribute", "InContent", "InLinetype"] {
+            assert!(styles.contains(&name), "{name}: {styles:?}");
+        }
+        assert!(!styles.contains(&"Spare"), "{styles:?}");
+        let layers: Vec<&str> = d.layers.iter().map(|l| l.name.as_str()).collect();
+        assert!(layers.contains(&"OnAttribute") && layers.contains(&"OnContent"), "{layers:?}");
+        assert!(!layers.contains(&"Unused"), "{layers:?}");
+        assert!(d.dim_styles.iter().any(|st| st.name == "ForLeader"));
+    }
+
+    /// The text style of a table style's cell style is in use.
+    #[test]
+    fn a_table_style_keeps_its_cell_styles_text_style() {
+        let mut d = Drawing::new_metric();
+        let mut t = d.text_styles[0].clone();
+        t.name = "InCell".into();
+        d.text_styles.push(t);
+        let mut cell = cadcraft_doc::TableStyle::default().cell_style("Data");
+        cell.text_style = "InCell".into();
+        d.table_styles[0].cell_styles.push(cell);
+        assert!(!candidates(&d, Kind::TextStyles).iter().any(|n| n == "InCell"));
+    }
+
     /// A linetype of the file stays when a dimension style that came along names it, and stays out
     /// when only a style that did not come along does.
     #[test]

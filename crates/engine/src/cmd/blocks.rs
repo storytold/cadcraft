@@ -44,7 +44,7 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{name (\"*NAME\": exploded), file?: DXF/DWG path (defines or redefines block `name`, default the file name, from its model space; base point $INSBASE), at: [x,y], scale?: number | [x, y], rotation? (degrees), basePoint?: [x,y] (block coordinates), attribs?: {TAG: value}, explode?: bool}")
             .interactive(|_| Ok(Box::new(InsertM::default()))),
         CommandSpec::new("blockspalette", "Blocks Palette", run_blockspalette)
-            .params("{} → {blocks: [{name, description, references}], truncated} (the app opens the Blocks palette instead)")
+            .params("{references?: bool (default true; counting reads every object)} → {blocks: [{name, description, references?}], truncated} (the app opens the Blocks palette instead)")
             .enabled(has_doc)
             .noundo(),
         CommandSpec::new("attdef", "Define Attributes...", run_attdef)
@@ -110,6 +110,15 @@ fn referenced_block(e: &Entity) -> Option<String> {
         EntityKind::Dimension(dm) => dm.block.clone(),
         EntityKind::MLeader(m) => m.block.as_ref().map(|b| b.block.clone()),
         _ => None,
+    }
+}
+
+/// The attributes an object carries: a block reference's, or those of a multileader's block content.
+pub(crate) fn object_attribs(e: &Entity) -> &[Attrib] {
+    match &e.kind {
+        EntityKind::Insert(i) => &i.attribs,
+        EntityKind::MLeader(m) => m.block.as_ref().map_or(&[][..], |b| b.attribs.as_slice()),
+        _ => &[],
     }
 }
 
@@ -309,26 +318,33 @@ fn run_block(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// BLOCKSPALETTE as a JSON call: the drawing's own blocks (no anonymous, layout or xref blocks)
 /// with their descriptions and how many references use each. The app opens the palette instead.
-fn run_blockspalette(s: &mut Session, _p: &Value) -> Result<Value> {
+fn run_blockspalette(s: &mut Session, p: &Value) -> Result<Value> {
     let d = s.doc()?;
+    let counting = bool_or(p, "references", true);
     let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    let mut count = |store: &cadcraft_doc::EntityStore| {
-        for e in store.iter() {
-            if let EntityKind::Insert(i) = &e.kind {
-                let n = counts.entry(i.block.to_ascii_lowercase()).or_insert(0);
-                *n = n.saturating_add(1);
+    if counting {
+        let mut count = |store: &cadcraft_doc::EntityStore| {
+            for e in store.iter() {
+                if let EntityKind::Insert(i) = &e.kind {
+                    let n = counts.entry(i.block.to_ascii_lowercase()).or_insert(0);
+                    *n = n.saturating_add(1);
+                }
             }
-        }
-    };
-    count(&d.model);
-    d.layouts.iter().for_each(|l| count(&l.entities));
-    d.blocks.values().for_each(|b| count(&b.entities));
+        };
+        count(&d.model);
+        d.layouts.iter().for_each(|l| count(&l.entities));
+        d.blocks.values().for_each(|b| count(&b.entities));
+    }
     let (blocks, truncated) = library::library_blocks(d);
     let list: Vec<Value> = blocks
         .iter()
-        .map(
-            |b| json!({ "name": b.name, "description": b.description, "references": counts.get(&b.name.to_ascii_lowercase()).copied().unwrap_or(0) }),
-        )
+        .map(|b| {
+            let mut block = json!({ "name": b.name, "description": b.description });
+            if counting {
+                block["references"] = json!(counts.get(&b.name.to_ascii_lowercase()).copied().unwrap_or(0));
+            }
+            block
+        })
         .collect();
     Ok(json!({ "blocks": list, "truncated": truncated }))
 }
