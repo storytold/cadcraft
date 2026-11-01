@@ -65,18 +65,27 @@ impl Limits {
     /// The free memory [`Self::DEFAULT`] assumes: 16 GB, for its 1 GB of DXF.
     pub const DEFAULT_MEMORY: u64 = 16 << 30;
 
+    /// The most DXF a rendition may take however much memory is free: 8 GB, which assumes
+    /// 128 GB, over three times what the largest plan measured so far needs (2.4 GB). On a
+    /// machine with a great deal free (a shared server), a damaged or hostile file can make the
+    /// reader take no more than that.
+    pub const MAX_DXF_BYTES: u64 = 8 << 30;
+
     /// 512 MB of DWG, 1 GB of DXF (more than the DXF reader's group-code limit fills), assuming
     /// 16 GB of free memory.
     pub const DEFAULT: Limits = Limits { max_dwg_bytes: 512 << 20, max_dxf_bytes: 1 << 30, assumed_memory: Self::DEFAULT_MEMORY };
 
     /// The limits for a machine with `free` bytes of memory to spare: the DXF rendition may take
     /// what that holds at [`Self::MEMORY_PER_DXF_BYTE`], never less than [`Self::DEFAULT`]'s
-    /// 1 GB (the fixed limit so far, which a machine with less free memory already got). So a
-    /// damaged or hostile file can make the reader take what the machine has free and no more,
-    /// and a plain 238 MB architect's plan, whose rendition is 2.4 GB, opens on a workstation.
+    /// 1 GB (the fixed limit so far, which a machine with less free memory already got) and
+    /// never more than [`Self::MAX_DXF_BYTES`]. So a damaged or hostile file can make the reader
+    /// take what the machine has free, up to that cap, and no more, and a plain 238 MB
+    /// architect's plan, whose rendition is 2.4 GB, opens on a workstation.
     pub fn for_memory(free: u64) -> Limits {
-        let by_memory = usize::try_from(free / Self::MEMORY_PER_DXF_BYTE).unwrap_or(usize::MAX);
-        Limits { max_dxf_bytes: by_memory.max(Self::DEFAULT.max_dxf_bytes), assumed_memory: free.max(Self::DEFAULT_MEMORY), ..Self::DEFAULT }
+        let free = free.clamp(Self::DEFAULT_MEMORY, Self::MAX_DXF_BYTES * Self::MEMORY_PER_DXF_BYTE);
+        // A 32-bit build can't hold more than its address space: the cap is `usize::MAX` there.
+        let max_dxf_bytes = usize::try_from(free / Self::MEMORY_PER_DXF_BYTE).unwrap_or(usize::MAX);
+        Limits { max_dxf_bytes, assumed_memory: free, ..Self::DEFAULT }
     }
 
     /// The limits for this machine: [`Self::for_memory`] of its free memory ([`free_memory`]),
@@ -90,7 +99,8 @@ impl Limits {
 /// whose free memory CADCraft can't read, or to assume less than it has), else what the operating
 /// system reports where a file says it (Linux: `MemAvailable` in `/proc/meminfo`, the memory a
 /// program can take without swapping; CADCraft calls no platform API for it elsewhere), else
-/// nothing.
+/// nothing. So on Windows and macOS the limit stays at [`Limits::DEFAULT`]'s 1 GB of DXF unless
+/// the variable is set: a plan whose rendition is larger opens there only with it.
 pub fn free_memory() -> Option<u64> {
     std::env::var("CADCRAFT_MEMORY_GB").ok().and_then(|v| memory_gb(&v)).or_else(os_free_memory)
 }
@@ -182,12 +192,13 @@ mod native {
         if out.exceeded {
             return Err(format!(
                 "DWG: converting this {} file produced more than {} of drawing data (the limit); it assumes {} of free \
-                 memory at {} bytes per byte of drawing data (CADCRAFT_MEMORY_GB sets what to assume); \
+                 memory at {} bytes per byte of drawing data (CADCRAFT_MEMORY_GB sets what to assume, up to {}); \
                  the file is probably damaged, or uses objects the DWG reader misreads",
                 mb(bytes.len() as u64),
                 mb(limits.max_dxf_bytes as u64),
                 gb(limits.assumed_memory),
-                Limits::MEMORY_PER_DXF_BYTE
+                Limits::MEMORY_PER_DXF_BYTE,
+                gb(Limits::MAX_DXF_BYTES * Limits::MEMORY_PER_DXF_BYTE)
             ));
         }
         written.map_err(|e| format!("DWG→DXF: {e}"))?;
@@ -865,8 +876,8 @@ pub fn dxf_to_dwg_as(_dxf: &[u8], _version: &str) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
-    /// The DXF limit follows the free memory at 16 bytes per byte of rendition and never falls
-    /// below the fixed 1 GB; the message names the memory it assumes. `MemAvailable` is read
+    /// The DXF limit follows the free memory at 16 bytes per byte of rendition, never falls
+    /// below the fixed 1 GB and never rises above 8 GB; the message names the memory it assumes. `MemAvailable` is read
     /// from a `/proc/meminfo` text; `CADCRAFT_MEMORY_GB` is a positive number of gigabytes.
     #[test]
     fn limits_follow_the_free_memory_and_never_fall_below_the_default() {
@@ -878,6 +889,11 @@ mod tests {
         assert_eq!(big.assumed_memory, 125 << 30);
         assert_eq!(big.max_dwg_bytes, Limits::DEFAULT.max_dwg_bytes);
         assert_eq!(gb(big.assumed_memory), "125.0 GB");
+        assert_eq!(Limits::for_memory(0), Limits::DEFAULT, "no free memory keeps today's limit too");
+        let cap = Limits::for_memory(200 << 30);
+        assert_eq!(cap.max_dxf_bytes as u64, Limits::MAX_DXF_BYTES, "200 GB free: capped at 8 GB of DXF");
+        assert_eq!(gb(cap.assumed_memory), "128.0 GB", "the message names the memory the cap assumes");
+        assert_eq!(Limits::for_memory(u64::MAX), cap, "the largest value: the cap, no overflow");
         assert_eq!(meminfo_available("MemTotal:       131072000 kB\nMemFree:          1 kB\nMemAvailable:   104857600 kB\n"), Some(100 << 30));
         assert_eq!(meminfo_available("MemTotal:       131072000 kB\n"), None);
         assert_eq!(meminfo_available("MemAvailable:   lots\n"), None);
