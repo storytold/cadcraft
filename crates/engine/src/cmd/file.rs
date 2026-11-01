@@ -446,9 +446,20 @@ fn store(path: &str, bytes: &[u8]) -> Result<()> {
     }
 }
 
-/// The backup of the drawing file `path`: `<name>.bak` beside it, as AutoCAD names it.
+/// The backup of the drawing file `path`, beside it. A DWG's is `<name>.bak`, as AutoCAD names it,
+/// in the extension's letter case (`plan.DWG` to `plan.BAK`); any other drawing appends `.bak`
+/// (`plan.dxf.bak`), so `plan.dwg` and `plan.dxf` in one folder never overwrite each other's backup.
 pub fn backup_path(path: &std::path::Path) -> std::path::PathBuf {
-    path.with_extension("bak")
+    match path.extension().map(|e| e.to_string_lossy()) {
+        Some(e) if e.eq_ignore_ascii_case("dwg") => path.with_extension(
+            e.chars().zip("bak".chars()).map(|(d, b)| if d.is_ascii_uppercase() { b.to_ascii_uppercase() } else { b }).collect::<String>(),
+        ),
+        _ => {
+            let mut name = path.as_os_str().to_os_string();
+            name.push(".bak");
+            name.into()
+        }
+    }
 }
 
 /// Whether `bytes` read as a DWG or a DXF (ASCII or binary) by their start: what a save keeps as
