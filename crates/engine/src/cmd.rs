@@ -25,6 +25,7 @@ mod lisp;
 mod mleader_content;
 mod mleader_edit;
 mod modify;
+pub(crate) use modify::Erased;
 mod modify2;
 mod mtext_opts;
 mod overkill;

@@ -51,6 +51,9 @@ skrifa = "0.48"
 # so the graph has both) and the Unicode Bidirectional Algorithm for right-to-left drawing text.
 harfrust = "0.14"
 unicode-bidi = "0.3.18"
+# Line-break opportunities between Thai words for MTEXT word wrap (Thai writes no spaces between
+# words): UAX #14 with ICU4X's compiled-in LSTM word model (not its dictionaries).
+icu_segmenter = { version = "~2.3", default-features = false, features = ["compiled_data", "lstm"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 encoding_rs = "0.8.35"
 # XML for the SVG reader (streaming parser, no entity expansion beyond the five predefined ones)

@@ -1,6 +1,6 @@
 use cadcraft_geom::Vec3;
 
-use super::{Entity, Handle, Mat3, Result, Session, Value, Vec2, bad, bool_or, f64_req, json, point_param, point_req, targets};
+use super::{Entity, Handle, Mat3, Result, Session, Value, Vec2, bad, bool_or, erase_kept, f64_req, json, point_param, point_req, targets};
 
 // ---------------- core operations ----------------
 
@@ -54,14 +54,9 @@ fn edit_entities(s: &mut Session, hs: &[Handle], copy: bool, edit: impl Fn(&mut 
 }
 
 pub(super) fn erase(s: &mut Session, hs: &[Handle]) -> Result<usize> {
-    let d = s.doc_mut()?;
-    let mut n = 0;
-    for h in hs {
-        let locked = d.entity(*h).and_then(|e| d.layer(&e.common.layer)).is_some_and(|l| l.locked);
-        if !locked && d.remove_entity(*h).is_some() {
-            n += 1;
-        }
-    }
+    let d = s.doc()?;
+    let free: Vec<Handle> = hs.iter().copied().filter(|h| !d.entity(*h).and_then(|e| d.layer(&e.common.layer)).is_some_and(|l| l.locked)).collect();
+    let n = erase_kept(s, &free)?;
     s.set_selection(Vec::new());
     Ok(n)
 }
