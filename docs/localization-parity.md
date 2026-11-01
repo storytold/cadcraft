@@ -46,7 +46,7 @@ shaping and right-to-left text through TrueType, vertical SHX text styles.
 
 ## Languages
 
-Order and columns from craftrules' progress-docs standard. Every UI percentage is **measured**
+Every UI percentage is **measured**
 from the catalogs (0 rows for every language without a catalog file). Hours are **estimated**:
 about 3–5 h per language for an Opus 5.5 agent to translate the ~990 catalog rows and fix layout,
 plus native review by a human; extending the catalog to the remaining English-only strings
